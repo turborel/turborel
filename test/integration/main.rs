@@ -254,6 +254,7 @@ mod sequences;
 mod served;
 mod set_statements;
 mod settings;
+mod simple_features;
 mod spatial_catalog;
 mod spatial_constructors;
 mod spatial_conversions;

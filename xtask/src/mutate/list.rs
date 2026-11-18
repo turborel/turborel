@@ -61,6 +61,7 @@ mod search_cycle;
 mod sequences;
 mod server;
 mod shadow;
+mod simple_features;
 mod spatial_curves;
 mod spatial_lr;
 mod spatial_mutators;

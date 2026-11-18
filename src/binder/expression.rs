@@ -256,7 +256,7 @@ impl Binder<'_> {
             return Ok(embedded);
         }
         let aggregate = self.db.functions.aggregate(name).is_some();
-        let called = || self.call((schema, name, extension), args, passed, scope);
+        let called = || self.simple_feature((schema, name, extension), (args, at), passed, scope);
         self.drawing(self.drawing.get() && !aggregate, called).or_at(at)
     }
 

@@ -43,7 +43,8 @@ behind it, and each can be replaced or added to.
   CHECK constraints over geometries,
   and [R-tree spatial queries](doc/data/02-spatial.md), distance searches
   and joins, outer joins too,
-  serializable over the windows they read.
+  serializable over the windows they read, and Simple feature access's
+  SQL option with GEOMETRY_COLUMNS, SPATIAL_REF_SYS and its unprefixed names.
 - [Topologies](doc/sql/16-topology.md) of nodes, edges and faces, and
   [spatial networks](doc/sql/18-spatial-networks.md) with shortest paths.
 - [Linear referencing](doc/sql/17-linear-referencing.md), locating along

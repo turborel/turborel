@@ -24,6 +24,7 @@ pub(crate) mod registered;
 mod representations;
 mod robust;
 pub mod routines;
+pub mod sfa;
 mod shape;
 mod solids;
 pub mod support;

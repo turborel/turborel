@@ -1509,6 +1509,111 @@ turborel: SQLCODE -201 (SQLSTATE 23000): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
 OK
 ```
 
+## Simple feature access
+
+The SQL option of Simple feature access, OGC 06-104r4 (ISO 19125-2), is
+built in its "SQL with Geometry Types" environment, over the types and
+routines of SQL/MM Spatial, so a tool written for either finds what it
+reads. Its tables are two views of the schema SF_INFORMTN_SCHEMA, and
+SELECT on each is everyone's.
+
+| View | Rows |
+|---|---|
+| GEOMETRY_COLUMNS | Each column of a geometry type the user may see, with its table as F_TABLE_* and G_TABLE_*, its type's code as GEOMETRY_TYPE (0 GEOMETRY, 1 POINT, 2 LINESTRING, 3 POLYGON and so on, 1000 more in three dimensions), COORD_DIMENSION 3 in a geocentric system and 2 otherwise, and its SRID. STORAGE_TYPE and MAX_PPR are NULL |
+| SPATIAL_REF_SYS | Each system supplied or defined, as SRID, AUTH_NAME, AUTH_SRID and SRTEXT |
+
+A column's SRID is the system it is registered with, else the one its
+type names, else 0, the unspecified system, which SPATIAL_REF_SYS has
+no row of. Written without a schema, `GEOMETRY_COLUMNS` and
+`SPATIAL_REF_SYS` name these views, unless the default schema has a
+table of that name. SQL/MM's own views of those names, with other
+columns, stay in ST_INFORMTN_SCHEMA.
+
+The type names POINT, CURVE, LINESTRING, SURFACE, POLYGON,
+POLYHEDSURFACE, GEOMCOLLECTION, MULTIPOINT, MULTICURVE,
+MULTILINESTRING, MULTISURFACE and MULTIPOLYGON name the ST_ types, as
+GEOMETRY names ST_GEOMETRY. A structured type a schema defines of one
+of these names is the type it names there. Every routine is called by
+its name without ST_ too: `Area(SHORE)` is `SHORE.ST_Area()`, and
+`PolyFromText` is `ST_PolyFromText`. A routine of a value whose declared
+type does not declare it, a collection held in a GEOMETRY column say,
+is the routine of the one subtype that does.
+
+```sql
+CREATE TABLE LAKES (FID INTEGER PRIMARY KEY, NAME VARCHAR(64), SHORE POLYGON);
+CALL ST_DEFINESRS('UTM_ZONE_14N', 101, 'POSC', 32214, 'PROJCS["UTM_ZONE_14N",GEOGCS["World Geodetic System 72",DATUM["WGS_72",SPHEROID["NWL_10D",6378135,298.26]],PRIMEM["Greenwich",0],UNIT["Meter",1.0]],PROJECTION["Transverse_Mercator"],PARAMETER["False_Easting",500000.0],PARAMETER["False_Northing",0.0],PARAMETER["Central_Meridian",-99.0],PARAMETER["Scale_Factor",0.9996],PARAMETER["Latitude_of_origin",0.0],UNIT["Meter",1.0]]', 'Blue Lake');
+CALL ST_REGISTERGEOMETRYCOLUMN('ANN', 'LAKES', 'SHORE', 'UTM_ZONE_14N');
+INSERT INTO LAKES VALUES (101, 'Blue Lake', PolyFromText('POLYGON ((52 18, 66 23, 73 9, 48 6, 52 18), (59 18, 67 18, 67 13, 59 13, 59 18))', 101));
+SELECT F_TABLE_NAME, F_GEOMETRY_COLUMN, GEOMETRY_TYPE, COORD_DIMENSION, SRID FROM GEOMETRY_COLUMNS WHERE F_TABLE_NAME IN ('LAKES', 'PLACES') ORDER BY F_TABLE_NAME;
+SELECT SRID, AUTH_NAME, AUTH_SRID FROM SPATIAL_REF_SYS WHERE SRID = 101;
+SELECT GeometryType(SHORE) AS KIND, Area(SHORE) AS WATER, NumInteriorRing(SHORE) AS ISLANDS, AsText(ExteriorRing(SHORE)) AS OUTLINE FROM LAKES;
+ROLLBACK;
+```
+
+```
+OK
+OK
+OK
+OK
+ F_TABLE_NAME                                                 | F_GEOMETRY_COLUMN                                            | GEOMETRY_TYPE | COORD_DIMENSION |         SRID
+--------------------------------------------------------------+--------------------------------------------------------------+---------------+-----------------+--------------
+ LAKES                                                        | SHORE                                                        |             3 |               2 |          101
+ PLACES                                                       | SHAPE                                                        |             0 |               2 |            0
+(2 rows)
+         SRID | AUTH_NAME                                                    |    AUTH_SRID
+--------------+--------------------------------------------------------------+--------------
+          101 | POSC                                                         |        32214
+(1 row)
+ KIND                             |                    WATER |      ISLANDS | OUTLINE
+----------------------------------+--------------------------+--------------+--------------------------------------------------------------
+ POLYGON                          |                  2.195E2 |            1 | LINESTRING (52 18, 66 23, 73 9, 48 6, 52 18)
+(1 row)
+OK
+```
+
+GeometryType, AsText and AsBinary mean what Simple feature access
+means by them, so they differ from SQL/MM's ST_GeometryType, ST_AsText
+and ST_AsBinary, which keep their meaning. GeometryType gives the type's
+name without ST_, POLYHEDSURFACE for a polyhedral surface. AsText and
+AsBinary write the forms of OGC 06-103r4, which differ from SQL/MM's
+only for a triangle, a polyhedral surface and a TIN. A triangle is the
+text of a polygon of one ring, and a surface's patches are listed
+without PATCHES. A TIN's elements and maximum side length have no such
+form and are left out. The readers take both forms.
+
+UNION and OVERLAPS are reserved words, and INTERSECTION is a set
+function of one argument, yet `Union(a, b)`, `Overlaps(a, b)` and
+`Intersection(a, b)` are the routines' calls. A PolyhedSurface is made
+by NEW from its text, its binary form or an array of surfaces, each
+with an SRID or not, and its NumSurfaces, SURFACE(n) and ST_Geometries
+are those of its patches.
+
+```sql
+SELECT AsText(G) AS PART_1, ST_AsText(G) AS SQLMM FROM (VALUES (GeomFromText('TRIANGLE ((0 0, 1 0, 0 1, 0 0))'))) AS T (G);
+SELECT GeometryType(G) AS SFA_NAME, ST_GeometryType(G) AS SQLMM_NAME FROM (VALUES (GeomFromText('MULTIPOINT ((1 1), (2 2))'))) AS T (G);
+SELECT AsText(Union(P, Q)) AS BOTH_POINTS, Overlaps(P, Q) AS OVERLAP FROM (VALUES (GeomFromText('POINT (1 1)'), GeomFromText('POINT (2 2)'))) AS T (P, Q);
+SELECT H.NumSurfaces() AS PATCHES, AsText(H.SURFACE(2)) AS PATCH_2 FROM (VALUES (NEW PolyhedSurface('POLYHEDRALSURFACE Z (((0 0 0, 0 1 0, 1 1 0, 0 0 0)), ((0 0 0, 0 1 0, 0 0 1, 0 0 0)))'))) AS T (H);
+```
+
+```
+ PART_1                                                       | SQLMM
+--------------------------------------------------------------+--------------------------------------------------------------
+ TRIANGLE ((0 0, 1 0, 0 1, 0 0))                              | TRIANGLE (0 0, 1 0, 0 1)
+(1 row)
+ SFA_NAME                         | SQLMM_NAME
+----------------------------------+----------------------------------
+ MULTIPOINT                       | ST_MultiPoint
+(1 row)
+ BOTH_POINTS                                                  |      OVERLAP
+--------------------------------------------------------------+--------------
+ MULTIPOINT ((1 1), (2 2))                                    |            0
+(1 row)
+      PATCHES | PATCH_2
+--------------+--------------------------------------------------------------
+            2 | POLYGON Z ((0 0 0, 0 1 0, 0 0 1, 0 0 0))
+(1 row)
+```
+
 ## Errors
 
 | SQLSTATE | SQLCODE | When |
@@ -1564,6 +1669,9 @@ named here are called as functions, or as methods, as
 turborel claims conformance to neither yet. The `rtree` index
 method is an extension. The choices made are listed in
 [CONFORMANCE.md](../../CONFORMANCE.md#geometry-representations).
+Simple feature access is that of OGC 06-104r4, the SQL option, in its
+"SQL with Geometry Types" environment, claimed with its readings in
+[CONFORMANCE.md](../../CONFORMANCE.md#simple-feature-access-sql-option).
 
 ## See also
 

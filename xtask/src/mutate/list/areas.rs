@@ -122,6 +122,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::spatial_lr::SPATIAL_LR,
         &super::spatial_network::SPATIAL_NETWORK,
         &super::check_rebind::CHECK_REBIND,
+        &super::simple_features::SIMPLE_FEATURES,
         &super::FILL,
         &super::ZONES,
         &super::STATS,

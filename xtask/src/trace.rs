@@ -17,7 +17,7 @@ const ATTRIBUTE: &str = "#[";
 /// Shown for a test with no requirements.
 const MISSING: &str = "MISSING";
 /// A `Verifies:` paragraph starts with one of these (RULES.md R-TRACE-1).
-const ALLOWED_TAGS: [&str; 6] = ["[X3.135-1986 §", "[ISO/IEC 9075", "[ISO/IEC 13249", "[EXTENSION]", "[DESIGN]", "[TOOL] R-"];
+const ALLOWED_TAGS: [&str; 7] = ["[X3.135-1986 §", "[ISO/IEC 9075", "[ISO/IEC 13249", "[OGC 06-10", "[EXTENSION]", "[DESIGN]", "[TOOL] R-"];
 
 /// One test and the requirements it names, if any.
 #[derive(Debug, PartialEq)]

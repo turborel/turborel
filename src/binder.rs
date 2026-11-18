@@ -90,6 +90,7 @@ mod search_cycle;
 mod sequences;
 mod set_functions;
 mod set_operations;
+mod simple_features;
 mod statements;
 mod strata;
 mod structured;

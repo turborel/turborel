@@ -258,10 +258,11 @@ fn information_columns(seen: &Seen<'_>) -> Result<Vec<Vec<ColumnDesc>>> {
 }
 
 /// [ISO/IEC 9075:1992 §21.3.4] Every schema: the catalog's, in the order
-/// created, then the system tables' and ST_INFORMTN_SCHEMA, in order of name.
+/// created, then the system tables', ST_INFORMTN_SCHEMA and
+/// SF_INFORMTN_SCHEMA, in order of name.
 pub(super) fn schemas(seen: &Seen<'_>) -> Vec<String> {
     let mut all: Vec<String> = seen.state.catalog.schemas().into_iter().map(str::to_owned).collect();
-    let views = std::iter::once(super::ST_INFORMTN_SCHEMA.to_owned());
+    let views = [super::ST_INFORMTN_SCHEMA, super::SF_INFORMTN_SCHEMA].map(str::to_owned);
     let mut system: Vec<String> = seen.state.system.keys().map(|t| t.auth.clone()).chain(views).filter(|s| !all.contains(s)).collect();
     system.sort_unstable();
     system.dedup();
