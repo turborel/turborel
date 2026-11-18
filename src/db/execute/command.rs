@@ -5,7 +5,8 @@
 use super::super::area::commands::{self, Command};
 use super::super::dynamic;
 use crate::ast::{
-    ConnectionStatement, DropObject, IndexStatement, RoleStatement, SchemaStatement, ServedStatement, SqlStatement, UserStatement,
+    ConnectionStatement, DropObject, IndexStatement, RoleStatement, SavepointStatement, SchemaStatement, ServedStatement, SqlStatement,
+    UserStatement,
 };
 use crate::lexer::{Tok, Token, kw, lex};
 
@@ -103,7 +104,9 @@ pub(in crate::db) fn command_of(stmt: &SqlStatement) -> Command {
         SqlStatement::Insert(_) => commands::INSERT,
         SqlStatement::Merge(_) => commands::MERGE,
         SqlStatement::Open(_) => commands::OPEN,
-        SqlStatement::Rollback => commands::ROLLBACK_WORK,
+        SqlStatement::Rollback | SqlStatement::Savepoint(SavepointStatement::RollbackTo(_)) => commands::ROLLBACK_WORK,
+        SqlStatement::Savepoint(SavepointStatement::Establish(_)) => commands::SAVEPOINT,
+        SqlStatement::Savepoint(SavepointStatement::Release(_)) => commands::RELEASE_SAVEPOINT,
         SqlStatement::Select { .. } => commands::SELECT_ROW,
         SqlStatement::SetTransaction(_) => commands::SET_TRANSACTION,
         SqlStatement::SetSchema(_) => commands::SET_SCHEMA,

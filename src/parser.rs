@@ -61,6 +61,7 @@ mod query;
 mod regex;
 mod roles;
 mod routines;
+mod savepoints;
 mod schema;
 mod search_cycle;
 mod sequences;
@@ -69,6 +70,7 @@ mod structured;
 mod user_types;
 mod window;
 pub(crate) use data_statements::{EXPLAIN, TRUNCATE, begins_word_statement};
+pub(crate) use savepoints::SAVEPOINT;
 pub(crate) use served::CANCEL;
 mod session;
 mod target;
@@ -506,15 +508,6 @@ impl Parser {
     // [X3.135-1986 §7.3] <SQL statement>
     // =====================================================================
 
-    /// [X3.135-1986 §8.2, §8.9] COMMIT WORK or ROLLBACK WORK, next;
-    /// [ISO/IEC 9075:1992 §14.3, §14.4] WORK optional.
-    fn transaction_end(&mut self) -> SqlStatement {
-        let commit = self.is_kw(kw::COMMIT);
-        self.advance();
-        self.accept_kw(kw::WORK);
-        if commit { SqlStatement::Commit } else { SqlStatement::Rollback }
-    }
-
     /// `<SQL statement>`: one statement of a procedure.
     ///
     /// # Errors
@@ -541,7 +534,7 @@ impl Parser {
             Tok::KeyWord(kw::ALLOCATE | kw::DEALLOCATE) => self.allocation()?,
             Tok::KeyWord(kw::PREPARE | kw::DESCRIBE | kw::EXECUTE) => self.dynamic_statement()?,
 
-            Tok::KeyWord(kw::COMMIT | kw::ROLLBACK) => self.transaction_end(),
+            Tok::KeyWord(kw::COMMIT | kw::ROLLBACK) => self.transaction_end()?,
             Tok::KeyWord(kw::SET) => self.set_statement()?,
             Tok::KeyWord(kw::FETCH) => self.fetch_statement()?,
             Tok::KeyWord(kw::GET) => {

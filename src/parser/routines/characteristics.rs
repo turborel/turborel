@@ -8,7 +8,7 @@ use super::{RESULT, RETURNS, SPECIFIC, not_supported};
 use crate::ast::{DataAccess, RoutineKind, TableName};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::kw;
-use crate::parser::Parser;
+use crate::parser::{Parser, SAVEPOINT};
 
 // [ISO/IEC 9075-2:2023 §11.60] The words of the <routine characteristics>
 // that are no key words of SQL-92.
@@ -39,8 +39,6 @@ const SETS: &str = "SETS";
 const NEW: &str = "NEW";
 /// OLD, of OLD SAVEPOINT LEVEL.
 const OLD: &str = "OLD";
-/// SAVEPOINT, of a `<savepoint level indication>`.
-const SAVEPOINT: &str = "SAVEPOINT";
 
 /// What the `<routine characteristics>` of an SQL routine say, checked.
 pub(super) struct Characteristics {
@@ -53,6 +51,9 @@ pub(super) struct Characteristics {
     /// RETURNS NULL ON NULL INPUT was written; CALLED ON NULL INPUT is
     /// implicit \[SR9f ii\].
     pub(super) null_call: bool,
+    /// NEW SAVEPOINT LEVEL was written; OLD SAVEPOINT LEVEL is implicit
+    /// \[SR9k\].
+    pub(super) new_savepoint_level: bool,
 }
 
 /// An `<SQL-data access indication>` as written.
@@ -132,7 +133,8 @@ impl Written {
             Some((Access::NoSql, at)) => return Err(broken("SR9m ii", at, "an SQL routine is not NO SQL")),
         };
         let deterministic = self.deterministic.is_some_and(|(deterministic, _)| deterministic);
-        Ok(Characteristics { specific: self.specific.map(|(name, _)| name), deterministic, access, null_call: false })
+        let specific = self.specific.map(|(name, _)| name);
+        Ok(Characteristics { specific, deterministic, access, null_call: false, new_savepoint_level: false })
     }
 
     /// [ISO/IEC 9075-2:2023 §11.60 SR9c, SR9f, SR9j, SR9l] The rules on
@@ -202,14 +204,10 @@ impl Parser {
                        turborel does not support";
             self.refuse_later(not_supported(at, msg));
         }
-        if let Some((true, at)) = written.savepoint {
-            let msg = "[ISO/IEC 9075-2:2023 §11.60 CR31] NEW SAVEPOINT LEVEL needs Feature T272, “Enhanced savepoint management”, which \
-                       turborel does not support";
-            self.refuse_later(not_supported(at, msg));
-        }
         let deterministic = written.deterministic.is_some_and(|(deterministic, _)| deterministic);
         let null_call = written.null_call.is_some_and(|(null_call, _)| null_call);
-        Ok(Characteristics { specific: written.specific.map(|(name, _)| name), deterministic, access, null_call })
+        let new_savepoint_level = written.savepoint.is_some_and(|(new, _)| new);
+        Ok(Characteristics { specific: written.specific.map(|(name, _)| name), deterministic, access, null_call, new_savepoint_level })
     }
 
     /// One `<routine characteristic>`, put in `written`, if one is next.

@@ -216,6 +216,24 @@ fn control_statements_are_not_preparable_4_10_6() {
     assert!(matches!(prepared("SIGNAL SQLSTATE '75001'"), Ok(SqlStatement::Signal(_))));
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075-4:2006 draft §14.1 SR6, §14.13 SR9; ISO/IEC 9075-2:2023
+/// §9.18 GR8b iv 2] ROLLBACK TO SAVEPOINT is read in an ATOMIC compound
+/// statement and in a routine's body, where ROLLBACK alone is refused,
+/// but no FOR holds one; SAVEPOINT and RELEASE SAVEPOINT are read in
+/// each.
+#[test]
+fn savepoints_in_a_program_14_1() {
+    control("BEGIN ATOMIC SAVEPOINT S; ROLLBACK TO SAVEPOINT S; RELEASE SAVEPOINT S; END");
+    assert!(parsed("CREATE PROCEDURE P () MODIFIES SQL DATA BEGIN SAVEPOINT S; ROLLBACK WORK TO SAVEPOINT S; END").is_ok());
+    control("BEGIN FOR SELECT 1 AS X FROM (VALUES (1)) AS O (Y) DO SAVEPOINT S; RELEASE SAVEPOINT S; END FOR; END");
+    let held = refusal("BEGIN FOR SELECT 1 AS X FROM (VALUES (1)) AS O (Y) DO ROLLBACK TO SAVEPOINT S; END FOR; END");
+    assert!(held.code == Code::SyntaxRule && held.rule.as_deref().is_some_and(|r| r.contains("§14.13 SR9")), "{held:?}");
+    let atomic = refusal("BEGIN ATOMIC ROLLBACK AND NO CHAIN; END");
+    assert!(atomic.code == Code::SyntaxRule && atomic.msg.contains("ATOMIC"), "{atomic:?}");
+    let chained = refusal("BEGIN ATOMIC ROLLBACK AND CHAIN TO SAVEPOINT S; END");
+    assert_eq!(chained.code, Code::SyntaxRule, "{chained:?}");
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075-4:2006 draft §14.1 SR6, §14.13 SR9, §4.10.4; ISO/IEC
 /// 9075-2:2023 §11.60 SR23f] COMMIT or ROLLBACK in an ATOMIC compound
 /// statement breaks SR6, in a FOR SR9, and in a routine's body is refused

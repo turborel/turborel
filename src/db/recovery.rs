@@ -72,14 +72,23 @@ pub(super) enum Definitions {
 }
 
 /// How reading the log replays definitions: which (`Definitions`), and
-/// those each transaction made, until its commit record makes them, or its
-/// abort record forgets them.
+/// those each transaction made, each with its place in the log, until its
+/// commit record makes them, or its abort record forgets them.
 struct Replaying {
     definitions: Definitions,
-    pending: HashMap<TxId, Vec<Change>>,
+    pending: HashMap<TxId, Vec<(Lsn, Change)>>,
 }
 
 impl Replaying {
+    /// [ISO/IEC 9075-2:2023 §17.8 GR3d] Forgets the definitions `tx` made
+    /// from `from` on: a failed statement, or a rollback to a savepoint,
+    /// cancelled them.
+    fn cancel(&mut self, tx: TxId, from: Lsn) {
+        if let Some(made) = self.pending.get_mut(&tx) {
+            made.retain(|(at, _)| *at < from);
+        }
+    }
+
     /// Whether a definition made at `lsn` is replayed.
     fn replays(&self, lsn: Lsn) -> bool {
         match self.definitions {
@@ -333,13 +342,13 @@ impl Database {
                 None
             }
             definition @ (Change::Drop { .. } | Change::AlterTable { .. } | Change::Defined { .. }) => {
-                replaying.pending.entry(tx).or_default().push(definition);
+                replaying.pending.entry(tx).or_default().push((lsn, definition));
                 None
             }
             Change::Commit { .. } => {
                 let made = replaying.pending.remove(&tx).unwrap_or_default();
                 if replaying.replays(lsn) {
-                    for definition in &made {
+                    for (_, definition) in &made {
                         self.replay_definition(definition)?;
                         report.definitions = report.definitions.saturating_add(1);
                     }
@@ -354,7 +363,11 @@ impl Database {
                 self.replay_kept(lsn, kept, &replaying.definitions)?;
                 None
             }
-            Change::StatementUndone { .. } | Change::Checkpoint => None,
+            Change::StatementUndone { from } => {
+                replaying.cancel(tx, from);
+                None
+            }
+            Change::Checkpoint => None,
         })
     }
 
@@ -369,7 +382,7 @@ impl Database {
         report: &mut RecoveryReport,
     ) -> Result<()> {
         if tx != NO_TRANSACTION && matches!(definition, Change::Schema { .. }) {
-            replaying.pending.entry(tx).or_default().push(definition);
+            replaying.pending.entry(tx).or_default().push((lsn, definition));
         } else if replaying.replays(lsn) {
             self.replay_definition(&definition)?;
             report.definitions = report.definitions.saturating_add(1);

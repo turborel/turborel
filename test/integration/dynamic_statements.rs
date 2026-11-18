@@ -71,6 +71,7 @@ fn extended_statement_names_5_4_17_6() {
 /// and DEALLOCATE PREPARE refuse: a literal for the statement (SQLCODE
 /// -103) or a variable of no character string (-103); a statement that is
 /// not preparable, or has a comment (37000); one not prepared (26000);
+/// COMMIT AND CHAIN, as Feature T261 is not supported (0A000);
 /// dynamic parameters with no using clause (07004), or arguments not one
 /// for each (07001), or of a type not cast to its (07006).
 #[test]
@@ -81,7 +82,10 @@ fn what_prepare_and_execute_refuse_17_6_17_10() {
     assert_eq!(code(&s, "PREPARE S FROM 'DELETE FROM T'", &mut p), Code::SyntaxRule, "SR1");
     assert_eq!(code(&s, "PREPARE S FROM K", &mut p), Code::SyntaxRule, "SR2");
     let continued = "DELETE FROM T WHERE NAME = 'A' -- and more\n'B'";
-    for refused in ["COMMIT AND CHAIN", "PREPARE X FROM TEXT", "GET DIAGNOSTICS N = NUMBER", "DELETE FROM T -- all\n", continued] {
+    // COMMIT is preparable [§20.6], and AND CHAIN needs Feature T261.
+    text(&mut p, "COMMIT AND CHAIN");
+    assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("0A000".to_owned()), "COMMIT AND CHAIN");
+    for refused in ["PREPARE X FROM TEXT", "GET DIAGNOSTICS N = NUMBER", "DELETE FROM T -- all\n", continued] {
         text(&mut p, refused);
         assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("37000".to_owned()), "{refused}");
     }

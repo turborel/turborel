@@ -27,6 +27,8 @@ behind it, and each can be replaced or added to.
 - Transactions at READ COMMITTED by default, or up to SERIALIZABLE, that run
   on many threads at once and survive a crash with multi-version concurrency
   control, a write-ahead log, checkpoints and recovery.
+- Savepoints, with SAVEPOINT, RELEASE SAVEPOINT and ROLLBACK TO SAVEPOINT
+  at the savepoint levels of routines and ATOMIC blocks.
 - Row and columnar storage, chosen per table.
 - Large objects up to 4G, stored, logged, read and sent a chunk at a
   time, and reached by locators.

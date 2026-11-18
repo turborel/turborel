@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use super::super::assignment::{assign_targets, check_targets};
 use super::super::compiled::plan;
+use super::super::savepoints::Level;
 use super::super::{Completion, Session, State, StatementContext, rule};
 use super::program::{Hosted, hosted_rows};
 use crate::ast::{
@@ -217,7 +218,10 @@ impl Session {
         let body = sql_statement(&definition)?;
         let owner = owner_of(&*cx.st.catalog, &desc.name.auth).to_owned();
         {
-            let _pushed = self.push(&desc.name, (owner, desc.schema.clone()))?;
+            // [§9.18 GR7, §11.60 GR3k] at a savepoint level of its own if
+            // NEW SAVEPOINT LEVEL, else at the caller's.
+            let level = definition.new_savepoint_level.then_some(Level::Procedure);
+            let _pushed = self.push(&desc.name, (owner, desc.schema.clone()), level)?;
             self.run_body(cx, body, &mut inner)?;
         }
         let out = inner.dynamic_values();

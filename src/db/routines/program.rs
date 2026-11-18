@@ -46,10 +46,13 @@ use crate::value::Value;
 
 /// [ISO/IEC 9075-2:2023 §4.41.5; ISO/IEC 9075-4:2006 draft §4.10.4]
 /// Whether `stmt` is atomic: undone whole if it fails. CALL, RETURN, a
-/// compound statement not ATOMIC, and the assignment, CASE, FOR, IF, LOOP,
+/// savepoint's statement [ISO/IEC 9075-2:2023 §4.41.5], a compound
+/// statement not ATOMIC, and the assignment, CASE, FOR, IF, LOOP,
 /// REPEAT and WHILE statements are not.
 pub(in crate::db) fn atomic(stmt: &SqlStatement) -> bool {
-    let SqlStatement::Control(c) = stmt else { return !matches!(stmt, SqlStatement::Call(_) | SqlStatement::Return(_)) };
+    let SqlStatement::Control(c) = stmt else {
+        return !matches!(stmt, SqlStatement::Call(_) | SqlStatement::Return(_) | SqlStatement::Savepoint(_));
+    };
     match &**c {
         ControlStatement::Compound(c) => c.atomic,
         ControlStatement::Iterate(_) | ControlStatement::Leave(_) => true,

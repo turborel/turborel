@@ -125,6 +125,7 @@ verification approach DO-178C expects (§8).
 | D85 | Geometry values start with XY representations through SqlType |
 | D86 | An inverted index keeps terms, places and counts in one B-link tree |
 | D87 | SQL/MM Full-Text is built in, its methods calls of registered functions |
+| D88 | Savepoints reuse the undo marks, and cancel staged definitions |
 
 ### The project
 
@@ -718,8 +719,9 @@ of the action is a statement of its own, with its own referential
 actions, checks and AFTER triggers [ISO/IEC 9075-2:2023 §15.21 GR6]. It
 neither opens a transaction statement nor takes a mark of its own. So a
 failure anywhere fails the outermost statement whole, as §15.21 GR6m
-asks, and the new savepoint level of §15.21 GR6 holds nothing, since
-there is no SAVEPOINT. The action shares its statement's instant [§9.17
+asks. The action runs at a savepoint level of its own [§15.21 GR6c,
+GR6j], which holds no savepoint, since no savepoint statement runs in it
+[GR6e iii] (D88). The action shares its statement's instant [§9.17
 GR5].
 
 Nesting is bounded by `MAX_NESTING`, 16, so the deepest chain runs on
@@ -3003,6 +3005,44 @@ for no row, so a lookup or a nearest read takes its value (`settled`).
 FT_INFORMATION_SCHEMA's views FT_FEATURES and FT_SCHEMATA [§9] are system
 tables (D37) of the views' columns, as clause 10's base tables are a
 model only [§10.1].
+
+#### D88. Savepoints reuse the undo marks, and cancel staged definitions
+
+A savepoint [ISO/IEC 9075-2:2023 §17.5] is taken as a statement's undo
+mark is, but held across statements (`txn/savepoints.rs`). It notes
+where the undo entries after it begin, takes a savepoint of each engine
+that undoes its own changes, an engine joining later taking one as it
+joins, and notes the place in the log of the first change after it.
+ROLLBACK TO SAVEPOINT applies the undo entries after it, returns each
+engine to its savepoint and logs the changes since as undone, with the
+record a failed statement logs (`StatementUndone`). So no new log
+record, undo entry or wire message is needed, and recovery and a
+standby leave out what was cancelled as they leave out a failed
+statement's changes. Going back may cross the start of the statement
+running, as a procedure's body goes back to its caller's savepoint, so
+that statement's own bookkeeping is clamped to the savepoint.
+
+Changes of definitions are staged on a copy until the transaction
+commits (D33). A savepoint notes how many are staged, and going back
+cancels those after, makes the copy again from the rest and discards
+the storage the cancelled ones made, which no other transaction saw.
+Recovery and a standby drop a pending definition logged after the place
+a `StatementUndone` names, so a cancelled one is never made at commit.
+In a routine's body going back is refused if it would cancel a change
+staged before the statement that invoked the routine began, since that
+statement runs on those definitions. The locks taken since stay held, as
+the transaction goes on [§17.8 NOTE 743].
+
+The session keeps the names and levels (`db/savepoints.rs`). A function,
+a procedure of NEW SAVEPOINT LEVEL, a triggered action and an ATOMIC
+compound statement each push a level, popped with the context that
+pushed it (`db/nested.rs`). A savepoint statement in a triggered action
+is refused as the trigger is defined (IA046), and one in a procedure an
+action calls raises 0W000 as it runs [§15.21 GR6e iii]. Going back
+closes every cursor (IA168), makes invalid the locators given since
+[GR3f] and deallocates no prepared statement (IA167). A transaction has
+at most 1,024 savepoints (IL208), each holding a savepoint of each
+engine that undoes its own changes.
 
 ## 2. Project layout
 

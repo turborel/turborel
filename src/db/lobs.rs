@@ -44,6 +44,11 @@ pub(super) struct Locators {
     /// not in use, never 0.
     last: u32,
     entries: HashMap<u32, Entry>,
+    /// How many locators it has given, and of each valid one, how many
+    /// it had given before, so a savepoint's rollback finds those given
+    /// after it [ISO/IEC 9075-2:2023 §17.8 GR3f].
+    issued: u64,
+    order: HashMap<u32, u64>,
 }
 
 /// What a locator names.
@@ -73,7 +78,24 @@ impl Locators {
         }
         self.last = next;
         self.entries.insert(next, entry);
+        self.order.insert(next, self.issued);
+        self.issued = self.issued.wrapping_add(1);
         next
+    }
+
+    /// How many locators it has given: those given from now on are
+    /// counted after.
+    pub(super) fn issued(&self) -> u64 {
+        self.issued
+    }
+
+    /// [ISO/IEC 9075-2:2023 §17.8 GR3f] Every locator given once `issued`
+    /// had been given marked invalid.
+    pub(super) fn given_after(&mut self, issued: u64) {
+        let order = &self.order;
+        self.entries.retain(|locator, _| order.get(locator).is_some_and(|&n| n < issued));
+        let entries = &self.entries;
+        self.order.retain(|locator, _| entries.contains_key(locator));
     }
 
     /// The transaction ended, committed or not: every locator but a held
@@ -84,6 +106,8 @@ impl Locators {
         } else {
             self.entries.clear();
         }
+        let entries = &self.entries;
+        self.order.retain(|locator, _| entries.contains_key(locator));
     }
 
     /// The value `locator` names, made whole if a client was making it.

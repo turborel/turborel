@@ -213,6 +213,7 @@ impl Parser {
             deterministic: traits.deterministic,
             access: traits.access,
             null_call: traits.null_call,
+            new_savepoint_level: traits.new_savepoint_level,
             body,
             text: self.text_from(start),
             body_text,

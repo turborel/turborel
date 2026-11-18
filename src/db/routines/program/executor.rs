@@ -20,8 +20,9 @@ use super::super::super::area::{Area, Reader};
 use super::super::super::cursor::movement;
 use super::super::super::cursor_error;
 use super::super::super::position::{Places, Position, Slot, fetch};
+use super::super::super::savepoints::{Level, Levels};
 use super::{diagnostics, step_command};
-use crate::ast::{DynamicStatement, FetchOrientation, SqlStatement};
+use crate::ast::{DynamicStatement, FetchOrientation, SavepointStatement, SqlStatement};
 use crate::binder;
 use crate::catalog::{Principal, Roles, owner_of};
 use crate::db::dynamic::no_ptf_area_here;
@@ -45,7 +46,8 @@ use crate::value::Value;
 pub(crate) fn run_unhosted(program: &Program, mut values: Vec<Value>, subqueries: &dyn Subqueries) -> Result<Option<Value>> {
     values.resize(program.base.saturating_add(program.variables.len()), Value::Null);
     let mut frame = Params::of_routine(values, Arc::clone(&program.scope));
-    let mut host = Executor { subqueries, area: Area::default(), cursors: HashMap::new(), executions: 0, ptf: None };
+    let mut host =
+        Executor { subqueries, area: Area::default(), cursors: HashMap::new(), executions: 0, ptf: None, savepoints: Levels::default() };
     match run_program(program, &mut frame, &mut host)? {
         Ended::Returned(v) => Ok(Some(v)),
         Ended::Completed(_) => Ok(None),
@@ -69,7 +71,14 @@ pub(crate) fn run_component(
 ) -> Result<Vec<Value>> {
     values.resize(program.base.saturating_add(program.variables.len()), Value::Null);
     let mut frame = Params::of_routine(values, Arc::clone(&program.scope));
-    let mut host = Executor { subqueries, area: Area::default(), cursors: HashMap::new(), executions: 0, ptf: Some(ptf) };
+    let mut host = Executor {
+        subqueries,
+        area: Area::default(),
+        cursors: HashMap::new(),
+        executions: 0,
+        ptf: Some(ptf),
+        savepoints: Levels::default(),
+    };
     run_program(program, &mut frame, &mut host)?;
     Ok(frame.dynamic_values().to_vec())
 }
@@ -86,6 +95,9 @@ struct Executor<'s> {
     /// procedure it runs, if it runs one: what the SQL dynamic statements
     /// of its body name (`db/ptf/statements.rs`).
     ptf: Option<&'s mut DataArea>,
+    /// [ISO/IEC 9075-2:2023 §9.18 GR7] Its savepoint levels and
+    /// savepoints, the function's level its own.
+    savepoints: Levels<()>,
 }
 
 /// The rows of an open local cursor, as a FETCH moves through them.
@@ -130,6 +142,24 @@ impl Executor<'_> {
         Principal::sole(st.catalog.roles(), owner_of(&*st.catalog, &c.scope.name.auth))
     }
 
+    /// [ISO/IEC 9075-2:2023 §17.5, §17.6, §17.8] The savepoint's statement
+    /// `s`, of a function that changes no SQL-data: its savepoints are
+    /// only named, as going back to one has no change to cancel.
+    fn savepoint(&mut self, s: &SavepointStatement) -> Result<()> {
+        match s {
+            SavepointStatement::Establish(name) => {
+                self.savepoints.make_room(name)?;
+                self.savepoints.establish(name, ());
+            }
+            SavepointStatement::Release(name) => drop(self.savepoints.release(name)?),
+            SavepointStatement::RollbackTo(name) => {
+                self.savepoints.target(name)?;
+                drop(self.savepoints.after(name));
+            }
+        }
+        Ok(())
+    }
+
     /// GET DIAGNOSTICS `c` of the area here.
     fn get_diagnostics(&self, c: &Contained, frame: &mut Params) -> Result<Completion> {
         let SqlStatement::GetDiagnostics(get) = &c.statement else { return Ok(Completion::Success) };
@@ -160,6 +190,9 @@ impl Host for Executor<'_> {
         frame.set_routine(Arc::clone(&c.scope));
         if let SqlStatement::GetDiagnostics(_) = c.statement {
             return self.get_diagnostics(c, frame);
+        }
+        if let SqlStatement::Savepoint(s) = &c.statement {
+            return self.savepoint(s).map(|()| Completion::Success);
         }
         if let SqlStatement::Dynamic(d) = &c.statement {
             // [DESIGN] A describe component procedure runs as a definition
@@ -248,6 +281,14 @@ impl Host for Executor<'_> {
     }
 
     fn release(&mut self, (): ()) {}
+
+    fn open_level(&mut self, atomic: bool) {
+        self.savepoints.open(if atomic { Level::Atomic } else { Level::Procedure });
+    }
+
+    fn close_level(&mut self) {
+        drop(self.savepoints.close());
+    }
 
     fn begin(&mut self, step: &Step) {
         if !diagnostics(step) {

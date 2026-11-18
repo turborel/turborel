@@ -4,9 +4,11 @@
 //! the trigger pushes on the session.
 //!
 //! As the action runs, the trigger's context is pushed on the session
-//! [GR6a, GR6b, GR6k, GR6l] (`db/nested.rs`). Its statement timestamp is the statement's that caused it [§9.17 GR5]. No
-//! savepoint is established [GR6c, GR6j]: one that fails fails that
-//! statement, undone whole [§4.46.2], so its own changes are undone too.
+//! [GR6a, GR6b, GR6k, GR6l] (`db/nested.rs`), with a savepoint level of
+//! its own [GR6c, GR6j] (`db/savepoints.rs`), in which no savepoint's
+//! statement runs [GR6e iii]. Its statement timestamp is the statement's
+//! that caused it [§9.17 GR5]. One that fails fails that statement,
+//! undone whole [§4.46.2], so its own changes are undone too.
 //!
 //! Each statement keeps its plans, bound once with the action's
 //! transition variables as slots and the handles of its transition
@@ -19,6 +21,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 
 use super::super::prepared::Plans;
+use super::super::savepoints::Level;
 use super::super::{Session, State, StatementContext};
 use crate::ast::{SchemaStatement, SearchCondition, SqlStatement, TriggerDefinition};
 use crate::binder::bind_when;
@@ -84,7 +87,7 @@ impl Session {
         give(action.transitions.new_table.as_ref().map(|(_, rows)| rows), new_table)?;
         let mut params = Params::transitional(values, Arc::clone(&action.transitions));
         let owner = owner_of(&*cx.st.catalog, &t.name.auth).to_owned();
-        let _pushed = self.push(&t.name, (owner, t.schema.clone()))?;
+        let _pushed = self.push(&t.name, (owner, t.schema.clone()), Some(Level::Trigger))?;
         if !self.when_holds(cx, &action, &params)? {
             return Ok(None);
         }

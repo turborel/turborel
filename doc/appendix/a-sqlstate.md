@@ -51,6 +51,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 0A000 | Feature not supported: valid SQL Turborel does not process |
 | 0A001 | Feature not supported: multiple server transactions |
 | 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
+| 0W000 | Prohibited statement encountered during trigger execution: a savepoint statement in a procedure a trigger's action calls; told in the message of the 09000 it raises |
 | 21000 | Cardinality violation: a subquery of one row gave more, or ELEMENT a multiset of more than one element |
 | 22000 | Data exception |
 | 22001 | String data, right truncation: a string too long for its type |
@@ -131,6 +132,9 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 35000 | Invalid condition number |
 | 36002 | Cursor sensitivity exception: request failed, of TRUNCATE TABLE while a cursor of the transaction reads the table |
 | 37000 | Syntax error or access rule violation in a dynamic SQL statement |
+| 3B000 | Savepoint exception: the class of 3B001 and 3B002 |
+| 3B001 | Savepoint exception: invalid specification: RELEASE or ROLLBACK TO a savepoint not of the current savepoint level, or established before the atomic execution context running began |
+| 3B002 | Savepoint exception: too many: a transaction's 1,025th savepoint |
 | 3C000 | Ambiguous cursor name: a cursor declared and one allocated, of one name |
 | 3D000 | Invalid catalog name: an identifier chain of four or more that names no catalog, column or field |
 | 3F000 | Invalid schema name |

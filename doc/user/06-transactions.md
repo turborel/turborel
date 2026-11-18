@@ -20,6 +20,52 @@ Definitions, as CREATE SCHEMA and CREATE TABLE, run within the
 transaction too, and are undone by ROLLBACK; the statements of users and
 indexes are made at once.
 
+## Savepoints
+
+A savepoint is a named place in a transaction.
+[SAVEPOINT](../sql/statements/savepoint.md) establishes one, and
+[ROLLBACK TO SAVEPOINT](../sql/statements/rollback.md) cancels every
+change made since, to data and to definitions, while the transaction
+goes on. The savepoint stays, to be gone back to again, and those
+established after it are destroyed.
+[RELEASE SAVEPOINT](../sql/statements/release-savepoint.md) destroys a
+savepoint and those after it, keeping the changes. COMMIT and ROLLBACK
+destroy them all. Here only the first row is committed:
+
+```sql
+CREATE TABLE PARCELS (ID INTEGER, STATUS VARCHAR(10));
+INSERT INTO PARCELS VALUES (1, 'new');
+SAVEPOINT FIRST_PARCEL;
+INSERT INTO PARCELS VALUES (2, 'new');
+ROLLBACK TO SAVEPOINT FIRST_PARCEL;
+COMMIT;
+SELECT ID, STATUS FROM PARCELS;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+OK
+           ID | STATUS
+--------------+------------
+            1 | new
+(1 row)
+```
+
+Going back closes every open cursor
+and makes invalid the large object locators given since. The locks
+taken since stay held until the transaction ends.
+
+A function, a procedure defined NEW SAVEPOINT LEVEL, an ATOMIC compound
+statement and a trigger's action each run at a savepoint level of their
+own: they see none of the savepoints established before they began, and
+theirs are destroyed as they end. A procedure of OLD SAVEPOINT LEVEL, the
+default, shares its caller's. A transaction has at most 1,024
+savepoints.
+
 ## Isolation levels
 
 A transaction is READ COMMITTED unless [SET

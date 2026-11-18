@@ -73,6 +73,13 @@ impl Made {
         self.tables.iter().for_each(|(_, made)| made.discard());
     }
 
+    /// The storage made, of each table, its own and its tables'.
+    pub(super) fn storages(&self) -> Vec<Arc<dyn TableStorage>> {
+        let mut all: Vec<Arc<dyn TableStorage>> = self.storage.iter().cloned().collect();
+        all.extend(self.tables.iter().flat_map(|(_, made)| made.storages()));
+        all
+    }
+
     /// What was made for table `name`, of a `<schema definition>`.
     pub(super) fn of_table(&self, name: &QualifiedName) -> Option<&Made> {
         self.tables.iter().find(|(n, _)| n == name).map(|(_, made)| made)

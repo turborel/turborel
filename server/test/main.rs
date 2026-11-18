@@ -44,6 +44,7 @@ mod logins;
 mod passwords;
 mod prepared;
 mod replication;
+mod savepoints;
 mod scram;
 mod settings;
 mod shown;

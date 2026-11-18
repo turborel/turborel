@@ -92,6 +92,7 @@ fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
         | SqlStatement::DeclareTable(_)
         | SqlStatement::Open(_)
         | SqlStatement::Rollback
+        | SqlStatement::Savepoint(_)
         | SqlStatement::SetTransaction(_)
         | SqlStatement::SetCatalog(_)
         | SqlStatement::SetSchema(_)

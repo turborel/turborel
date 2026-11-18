@@ -376,6 +376,13 @@ impl SqlState {
     /// Invalid transaction termination [ISO/IEC 9075-2:2023 §17.7 GR2,
     /// §17.8 GR2].
     pub const INVALID_TRANSACTION_TERMINATION: SqlState = SqlState(*b"2D000");
+    /// Savepoint exception [ISO/IEC 9075-2:2023 §24.1, Table 41].
+    pub const SAVEPOINT_EXCEPTION: SqlState = SqlState(*b"3B000");
+    /// Savepoint exception: invalid specification [ISO/IEC 9075-2:2023
+    /// §17.6 GR2, §17.8 GR3b, GR3c].
+    pub const SAVEPOINT_INVALID_SPECIFICATION: SqlState = SqlState(*b"3B001");
+    /// Savepoint exception: too many [ISO/IEC 9075-2:2023 §17.5 GR3].
+    pub const SAVEPOINT_TOO_MANY: SqlState = SqlState(*b"3B002");
     /// Invalid transaction state: active SQL-transaction [ISO/IEC
     /// 9075-2:2023 §19.3 GR1].
     pub const ACTIVE_TRANSACTION: SqlState = SqlState(*b"25001");

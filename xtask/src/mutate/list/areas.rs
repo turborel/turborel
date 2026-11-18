@@ -2,8 +2,13 @@
 
 use super::Mutation;
 
-/// Every area's mutations, in order.
-pub fn all() -> [&'static [Mutation]; 48] {
+/// Every area's mutations, in order: the first half's, then the second's.
+pub fn all() -> impl Iterator<Item = &'static [Mutation]> {
+    first().into_iter().chain(second())
+}
+
+/// The first half of the areas, in order.
+fn first() -> [&'static [Mutation]; 25] {
     [
         &super::predicates::PREDICATES,
         &super::psm::PSM,
@@ -30,6 +35,12 @@ pub fn all() -> [&'static [Mutation]; 48] {
         &super::window_distinct::WINDOW_DISTINCT,
         &super::width_bucket::WIDTH_BUCKET,
         &super::filter::FILTER,
+    ]
+}
+
+/// The second half of the areas, in order.
+fn second() -> [&'static [Mutation]; 24] {
+    [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
         &super::order_by::ORDER_BY,
@@ -53,5 +64,6 @@ pub fn all() -> [&'static [Mutation]; 48] {
         &super::temporal_references::TEMPORAL_REFERENCES,
         &super::system_versioned::SYSTEM_VERSIONED,
         &super::rename::RENAME,
+        &super::savepoints::SAVEPOINTS,
     ]
 }
