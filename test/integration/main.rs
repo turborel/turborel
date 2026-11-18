@@ -347,6 +347,7 @@ mod xml_composite;
 mod xml_elements;
 mod xml_index;
 mod xml_index_plans;
+mod xml_index_sequences;
 mod xml_information;
 mod xml_map;
 mod xml_names;

@@ -2,13 +2,14 @@
 //! cut, the numbers' order and their unordered candidates, the steps'
 //! axes and the dictionary's prefixes, the bounds, the entries of a value
 //! held as a large object taken back unread, the check's steps, order
-//! and filters, and the primary's parent join, descendants, versions and
-//! values cut (RULES.md R-TEST-9, D106).
+//! and filters, the primary's parent join, descendants, versions and
+//! values cut, and the values of no one document node a column of
+//! XML(SEQUENCE) holds (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 
 /// Each XML index mechanism broken alone, and the tests that fail.
-pub const XML_INDEX: [Mutation; 19] = [
+pub const XML_INDEX: [Mutation; 22] = [
     Mutation {
         name: "xml-index-ordpath-odd",
         package: Package::Core,
@@ -211,5 +212,41 @@ pub const XML_INDEX: [Mutation; 19] = [
         replacement: "        if self.pending.first().copied().into_iter().chain(waiting.take(0)).any(|w| w < *at) {",
         integration: &[],
         unit: &["index::xml::check::tests::a_node_waits_for_its_anchors_filter"],
+    },
+    Mutation {
+        name: "xml-index-others-given",
+        package: Package::Core,
+        breaks: "a lookup leaves out the rows of a value of no one document node",
+        file: "src/index/xml/search.rs",
+        original: "        Ok(Box::new(self.of_entries(lookup, seeks)?.chain(others)))",
+        replacement: "        Ok(Box::new(self.of_entries(lookup, seeks)?.chain(others.take(0))))",
+        integration: &["xml_index_sequences::values_a_query_fails_of_are_given"],
+        unit: &["index::xml::tests::sequences::a_value_not_one_document_is_given_by_every_lookup"],
+    },
+    Mutation {
+        name: "xml-index-others-marked",
+        package: Package::Core,
+        breaks: "a value of no one document node is not marked as it is added",
+        file: "src/index/xml/documents.rs",
+        original: "        if !document {",
+        replacement: "        if false {",
+        integration: &["xml_index_sequences::values_a_query_fails_of_are_given"],
+        unit: &[
+            "index::xml::tests::sequences::a_value_not_one_document_is_given_by_every_lookup",
+            "index::xml::tests::objects::an_object_not_one_document_is_given_and_taken_back_unread",
+        ],
+    },
+    Mutation {
+        name: "xml-sequence-query-exact",
+        package: Package::Core,
+        breaks: "a query of a column of XML(SEQUENCE) is taken as free of errors and answerable by an index",
+        file: "src/functions/xml/query.rs",
+        original: "    Some(if evaluation.one_node { reduction } else { Reduction { raise_free: false, exact: false, ..reduction } })",
+        replacement: "    Some(reduction)",
+        integration: &[
+            "xml_index_sequences::values_a_query_fails_of_are_given",
+            "xml_index_sequences::a_sequence_column_is_read_by_an_index",
+        ],
+        unit: &["functions::xml::query::tests::row_pattern_as_a_filter"],
     },
 ];

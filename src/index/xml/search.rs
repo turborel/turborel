@@ -4,16 +4,18 @@
 //! (`lookup.rs`); then, of `xml_path`, each matching path's entries in
 //! each range of values; of `xml_value`, each range's entries, their paths
 //! matched; of `xml_property`, of a row asked, each matching path's
-//! entries of that row, or every entry, each checked, of none. A row is
-//! given once (`Index::xml_rows`), a set of those given spilling to a work
-//! area past `ONCE_BYTES` (RULES.md D38).
+//! entries of that row, or every entry, each checked, of none. Then the
+//! rows of a value that is not one document node, of which the query of
+//! a caller may raise an error its entries do not show (`documents.rs`). A
+//! row is given once (`Index::xml_rows`), a set of those given spilling to
+//! a work area past `ONCE_BYTES` (RULES.md D38).
 
 use std::collections::HashMap;
 use std::ops::Bound;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::keys::{ENTRIES, ROW, after, ordinal_of, parse_entry};
+use super::keys::{Cursor, ENTRIES, OTHERS, ROW, after, ordinal_of, parse_entry};
 use super::lookup::{Resolved, ValueRange, XmlCost, XmlLookup, XmlQuery, value_ranges};
 use super::{Held, Method, VALUE_PREFIX_BYTES, XmlIndex};
 use crate::engine::tree::{Direction, Scan, scan_of};
@@ -121,8 +123,23 @@ pub(super) fn matched_paths(
 
 impl XmlIndex {
     /// The rows of each entry `lookup` reads, and the seeks it made, as
-    /// they are taken: none if a name it tests has no token.
+    /// they are taken, then those of a value not one document node.
     pub(super) fn found(self: &Arc<Self>, lookup: &XmlLookup, seeks: &Arc<AtomicUsize>) -> Result<Found> {
+        let others = self.others(lookup.row, seeks);
+        Ok(Box::new(self.of_entries(lookup, seeks)?.chain(others)))
+    }
+
+    /// The rows of a value not one document node, of `row` alone if
+    /// given, each as often as it is marked, as they are taken.
+    pub(super) fn others(self: &Arc<Self>, row: Option<RowId>, seeks: &AtomicUsize) -> Found {
+        let mut prefix = vec![OTHERS];
+        prefix.extend(row.iter().flat_map(|r| r.to_be_bytes()));
+        Box::new(scan(self, &prefix, &after(&prefix), seeks).map(|found| found.and_then(|(key, _)| Cursor { bytes: &key, at: 1 }.row())))
+    }
+
+    /// The rows of each entry `lookup` reads, and the seeks it made, as
+    /// they are taken: none if a name it tests has no token.
+    fn of_entries(self: &Arc<Self>, lookup: &XmlLookup, seeks: &Arc<AtomicUsize>) -> Result<Found> {
         let Some(resolved) = lookup.pattern.resolve(&self.dictionary())? else { return Ok(Box::new(std::iter::empty())) };
         let resolved = Arc::new(resolved);
         let values = value_ranges(&lookup.comparisons, VALUE_PREFIX_BYTES);

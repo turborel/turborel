@@ -118,7 +118,7 @@ fn an_element_item_is_the_context_of_its_paths() {
 #[test]
 fn keyed_nodes_are_bounded() {
     let elements = |n: usize| stored(&format!("<r>{}</r>", "<b/>".repeat(n)));
-    let count = |bytes: &[u8]| derive(bytes, VALUE_PREFIX_BYTES, &mut |_| Ok(Some(1)), &mut |_| Ok(()));
+    let count = |bytes: &[u8]| derive(bytes, VALUE_PREFIX_BYTES, &mut |_| Ok(Some(1)), &mut |_| Ok(())).map(|d| d.keyed);
     assert_eq!(count(&elements(MAX_KEYED_NODES - 1)).unwrap(), MAX_KEYED_NODES, "the r and its b's");
     assert_eq!(count(&elements(MAX_KEYED_NODES)).unwrap_err().sqlcode(), -900_i32);
 }
@@ -144,4 +144,29 @@ fn bytes_of_no_stored_form_are_refused() {
     let mut bytes = stored("<r/>");
     bytes.push(0);
     assert_eq!(derive(&bytes, VALUE_PREFIX_BYTES, &mut |_| Ok(Some(1)), &mut |_| Ok(())).unwrap_err().sqlcode(), -916_i32);
+}
+
+/// Verifies: [DESIGN] RULES.md D106 [ISO/IEC 9075-14:2006 draft §6.18
+/// GR1a ii 2]: a value is one document node only of one item, a document
+/// node; of several items, an element, an atomic value, or none, it is
+/// not, as a query of it as its context item is not one of a document.
+#[test]
+fn a_value_is_one_document_node_or_not() {
+    let shape = |sequence: &Sequence| derive(&encode(sequence), VALUE_PREFIX_BYTES, &mut |_| Ok(Some(1)), &mut |_| Ok(())).unwrap();
+    let tree = std::sync::Arc::new(parse("<a><b/></a><c/>", Syntax::Content, Whitespace::Preserve).unwrap());
+    let child = |n: usize| Item::Node(Node::new(std::sync::Arc::clone(&tree), tree.children(crate::xml::NodeId::ROOT).nth(n).unwrap()));
+    let atomic = Item::Atomic(crate::xml::Atomic::new(crate::xml::AtomicType::Integer, "7"));
+    let document = Sequence::document(parse("<a><b/></a>", Syntax::Content, Whitespace::Preserve).unwrap());
+    assert_eq!(shape(&document), Derived { keyed: 2, document: true });
+    let two = Sequence::new(document.items().iter().cloned().chain(document.items().iter().cloned()).collect());
+    for (sequence, keyed) in [
+        (two, 4),
+        (Sequence::new(vec![child(0)]), 1),
+        (Sequence::new(vec![child(0), child(1)]), 1),
+        (Sequence::new(vec![atomic.clone()]), 0),
+        (Sequence::new(vec![atomic, child(1)]), 0),
+        (Sequence::default(), 0),
+    ] {
+        assert_eq!(shape(&sequence), Derived { keyed, document: false }, "{sequence:?}");
+    }
 }

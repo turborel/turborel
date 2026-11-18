@@ -21,15 +21,24 @@
 //!            id, kind, the string value, the number value
 //! version:   8 | row u64 | identity, as a marker's -> count u32: the
 //!            primary's, of the values of a row's versions
+//! other:     10 | row u64 | identity, as a marker's -> count u32: of a
+//!            value that is not one document node
 //! ```
+//!
+//! A value that is not one document node, of several items, of an atomic
+//! value, of a node of another kind, or of none, as XML(SEQUENCE) holds,
+//! is marked too, by row and identity: a query of it as its context item
+//! may raise an error, or start from no document, where its entries alone
+//! would not say so [ISO/IEC 9075-14:2006 draft §6.18 GR1a ii 2], so
+//! every lookup gives its row, which its caller checks (`search.rs`).
 
 use std::ops::Bound;
 
-use super::derive::{Keyed, derive};
+use super::derive::{Derived, Keyed, derive};
 use super::dictionary::Dictionary;
 use super::keys::{
-    Cursor, DOCUMENTS, ELEMENT, Indexed, MARKS, MOST_ORDINAL, ROW, VERSIONS, after, corrupt, count_of, counted, entries_of, put_ordinal,
-    values_of,
+    Cursor, DOCUMENTS, ELEMENT, Indexed, MARKS, MOST_ORDINAL, OTHERS, ROW, VERSIONS, after, corrupt, count_of, counted, entries_of,
+    put_ordinal, values_of,
 };
 use super::{Method, XmlIndex, too_long};
 use crate::engine::tree::{Direction, Update};
@@ -112,6 +121,12 @@ fn mark_key(identity: &[u8], row: RowId) -> Vec<u8> {
     [&[MARKS][..], identity, &row.to_be_bytes()].concat()
 }
 
+/// The key of the mark of a value of identity `identity` of `row` that is
+/// not one document node.
+fn other_key(identity: &[u8], row: RowId) -> Vec<u8> {
+    [&[OTHERS][..], &row.to_be_bytes(), identity].concat()
+}
+
 /// The kind of node `keyed` is, its path's first octet.
 fn kind_of(keyed: &Keyed<'_>) -> u8 {
     keyed.path.first().copied().unwrap_or(ELEMENT)
@@ -161,16 +176,19 @@ impl XmlIndex {
     pub(super) fn add(&self, value: &Value, row: RowId) -> Result<()> {
         let held = held(value)?;
         let identity = identity(&held);
-        let mark = mark_key(&identity, row);
-        match held {
+        let (mark, other) = (mark_key(&identity, row), other_key(&identity, row));
+        let document = match held {
             Held::Octets(octets) => {
                 self.check(&octets)?;
-                self.write_all(&octets, row, None)?;
+                self.write_all(&octets, row, None)?
             }
             Held::Object { id, lob } => {
                 let _object = lock_builtin(self.stripe(id));
                 if self.count(&mark)? > 0 {
+                    // Another version of the row holds the object: its mark
+                    // of a value not one document node is there if it is one.
                     self.documents(id, row, Change::Add)?;
+                    self.count(&other)? == 0
                 } else {
                     let lob = lob.ok_or_else(|| {
                         SqlError::new(
@@ -180,9 +198,12 @@ impl XmlIndex {
                     })?;
                     let octets = octets_of(&lob)?;
                     self.check(&octets)?;
-                    self.write_all(&octets, row, Some(id))?;
+                    self.write_all(&octets, row, Some(id))?
                 }
             }
+        };
+        if !document {
+            self.bump(&other, Change::Add)?;
         }
         self.bump(&mark, Change::Add)?;
         self.version(&identity, row, Change::Add)
@@ -214,6 +235,8 @@ impl XmlIndex {
                 self.documents(id, row, Change::TakeBack)?;
             }
         }
+        // Of a value one document node, there is no such mark to take.
+        self.bump(&other_key(&identity, row), Change::TakeBack)?;
         self.bump(&mark, Change::TakeBack)?;
         self.version(&identity, row, Change::TakeBack)
     }
@@ -236,14 +259,15 @@ impl XmlIndex {
     /// As `take_back`.
     pub(super) fn rows_of(&self, value: &Value) -> Result<Vec<RowId>> {
         let held = held(value)?;
-        let prefix = [&[MARKS][..], &identity(&held)].concat();
+        let identity = identity(&held);
+        let prefix = [&[MARKS][..], &identity].concat();
         let upper = after(&prefix);
         let mut rows = Vec::new();
         for found in self.tree.scan(Bound::Included(&prefix), upper.as_ref().map(Vec::as_slice), Direction::Forward) {
             let key = found?.0;
             let row = Cursor { bytes: &key, at: key.len().saturating_sub(ROW) }.row()?;
             let complete = match &held {
-                Held::Octets(octets) => self.has_entries(octets, row)?,
+                Held::Octets(octets) => self.has_entries(octets, (row, &identity))?,
                 Held::Object { .. } => true,
             };
             if complete {
@@ -253,13 +277,14 @@ impl XmlIndex {
         Ok(rows)
     }
 
-    /// Whether every entry of `octets` of `row` is there: else the row's
-    /// marker is of another value of the same hash.
-    fn has_entries(&self, octets: &[u8], row: RowId) -> Result<bool> {
+    /// Whether every entry of `octets` of `row` is there, and its mark if
+    /// it is not one document node: else the row's marker is of another
+    /// value of the same hash.
+    fn has_entries(&self, octets: &[u8], (row, identity): (RowId, &[u8])) -> Result<bool> {
         let dictionary = self.dictionary();
         let mut all = true;
         let mut names = |n: &_| dictionary.name(n, false);
-        derive(octets, self.method.prefix(), &mut names, &mut |keyed| {
+        let derived = derive(octets, self.method.prefix(), &mut names, &mut |keyed| {
             let Some(path) = dictionary.path(keyed.path, false)? else {
                 all = false;
                 return Ok(());
@@ -271,7 +296,7 @@ impl XmlIndex {
             }
             Ok(())
         })?;
-        Ok(all)
+        Ok(all && (derived.document || self.tree.get(&other_key(identity, row))?.is_some()))
     }
 
     /// The lock of the values held as object `id`.
@@ -319,8 +344,8 @@ impl XmlIndex {
 
     /// Adds the entries of every node of `octets` of `row`, and its
     /// document entries if it is held as `object`; if one fails, takes
-    /// back those added before it.
-    fn write_all(&self, octets: &[u8], row: RowId, object: Option<u64>) -> Result<()> {
+    /// back those added before it. Whether the value is one document node.
+    fn write_all(&self, octets: &[u8], row: RowId, object: Option<u64>) -> Result<bool> {
         let dictionary = self.dictionary();
         let mut written = 0_usize;
         let mut names = |n: &_| dictionary.name(n, true);
@@ -329,7 +354,10 @@ impl XmlIndex {
             written = written.saturating_add(1);
             Ok(())
         });
-        let Err(error) = done else { return Ok(()) };
+        let error = match done {
+            Ok(Derived { document, .. }) => return Ok(document),
+            Err(error) => error,
+        };
         let mut taken = 0_usize;
         let mut known = |n: &_| dictionary.name(n, false);
         // The error is the first's: what the take-back meets is lost.

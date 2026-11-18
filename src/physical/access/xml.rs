@@ -2,11 +2,12 @@
 //! table's filter that keep only rows whose query's value is not empty:
 //! XMLEXISTS, XMLQUERY NULL ON EMPTY IS NOT NULL, and XMLTABLE's row
 //! pattern, implied where XMLTABLE joins the rows it is of (`implied`),
-//! each of a query reduced to a lookup (`xquery::Reduction`) of a value
-//! of one node: a column of XML(DOCUMENT) or XML(CONTENT). A value of
-//! XML(SEQUENCE) may be no one node, and the query raise an error of it
-//! as its context item [ISO/IEC 9075-14:2006 draft §6.18 GR1a ii 2 B
-//! III], which a lookup would not see: such a column is read whole.
+//! each of a query reduced to a lookup (`xquery::Reduction`) of the
+//! column. A value of XML(SEQUENCE) may be no one document node, and the
+//! query raise an error of it as its context item [ISO/IEC 9075-14:2006
+//! draft §6.18 GR1a ii 2 B III]: an index gives the row of every such
+//! value, so a lookup of such a column hides none, but its query is never
+//! answered by the index, nor free of errors (`functions::xml`).
 //!
 //! An index changes no result: a conjunct used stays in the filter, which
 //! checks each row fetched, as of a function lookup (D34); an implied one

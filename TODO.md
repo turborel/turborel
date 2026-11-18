@@ -101,9 +101,8 @@ is kept consistent under concurrent change and recovery as the B-tree is.
   the primary answers queries with filters of an ancestor; the planner
   reads them for XMLEXISTS, XMLQUERY NULL ON EMPTY IS NOT NULL and
   XMLTABLE of a path, the primary answering exact queries with filters of
-  an ancestor. Left: a column of XML(SEQUENCE), whose rows of a value of
-  other than one node an index would mark so a lookup gives them;
-  predicates of more than one step above, several paths joined by `and`,
+  an ancestor, of columns of every XML type. Left: predicates of more
+  than one step above, several paths joined by `and`,
   and paths of other axes, which no lookup takes yet; and an ON condition
   whose query may raise an error read by an index, which waits for the
   guard of D15 to be read below.

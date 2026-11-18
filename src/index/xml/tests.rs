@@ -8,6 +8,7 @@ use crate::value::xml::{Typing, XmlType};
 use crate::xml::{QName, Sequence, Syntax, Whitespace, encode, parse};
 
 mod objects;
+mod sequences;
 
 /// An empty tree in a pool in memory of its own.
 pub(super) fn tree() -> BLinkTree {
@@ -236,7 +237,7 @@ fn values_alike_to_their_cut_are_candidates() {
 
 /// Verifies: [DESIGN] RULES.md D106, D35: a lookup's cost counts its
 /// entries and prices its seeks by its tree's height; of a name no value
-/// has, nothing.
+/// has, no entry, and the one seek of the values not one document node.
 #[test]
 fn a_lookup_is_costed() {
     let index = filled(Method::Path);
@@ -245,7 +246,8 @@ fn a_lookup_is_costed() {
     assert_eq!(titles.entries, Some(6), "two values of each of three titles");
     assert!(titles.pages.is_some_and(|p| p >= 2.0_f64), "the dictionary's seek and a path's");
     let none = Arc::clone(&index).xml_cost(&ask(path(&[(Axis::Child, "nope")], Target::Element))).unwrap();
-    assert_eq!((none.entries, none.pages), (Some(0), Some(0.0_f64)));
+    let height = f64::from(index.tree.height().unwrap());
+    assert_eq!((none.entries, none.pages), (Some(0), Some(height)));
 }
 
 /// Verifies: [DESIGN] RULES.md D106, D18: a lookup of no step, or of more

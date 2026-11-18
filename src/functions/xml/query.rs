@@ -26,8 +26,9 @@ pub struct Evaluation {
     /// Whether the first argument is the context item.
     pub context: bool,
     /// Whether the context item is a value of one node, of XML(DOCUMENT)
-    /// or XML(CONTENT) [§4.2.2]: what a query is reduced to an XML
-    /// index's lookup of (`XmlFilter`).
+    /// or XML(CONTENT) [§4.2.2]: of which alone a query reduced to an XML
+    /// index's lookup (`XmlFilter`) may raise no error, or be the index's
+    /// own test.
     pub one_node: bool,
     /// The statement's current dateTime [XQuery Appendix C.2].
     pub now: Moment,
@@ -166,10 +167,15 @@ pub enum XmlFilter {
     Copy,
 }
 
-/// The reduction of `evaluation`'s query, of a context item passed of
-/// one node.
+/// The reduction of `evaluation`'s query, of a context item passed. Of
+/// one of XML(SEQUENCE), whose value may be no one document node, the
+/// query may raise an error of it as its context item [§6.18 GR1a ii 2
+/// B III], or start from no document, so the reduction neither raises none
+/// nor is exact: an index gives each row of such a value, which the query
+/// checks (RULES.md D106).
 fn reduction_of(evaluation: &Evaluation) -> Option<Reduction> {
-    (evaluation.context && evaluation.one_node).then(|| evaluation.query.reduced()).flatten()
+    let reduction = evaluation.context.then(|| evaluation.query.reduced()).flatten()?;
+    Some(if evaluation.one_node { reduction } else { Reduction { raise_free: false, exact: false, ..reduction } })
 }
 
 /// The value of XMLEXISTS of `evaluation` and `args` [§8.4 GR2].

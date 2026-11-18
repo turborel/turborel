@@ -914,8 +914,8 @@ keeps a row only if a query's value of the row's column is not empty:
 - XMLTABLE joined to the rows it is of, not by a LEFT join: a row its
   row pattern gives nothing of gives no row.
 
-The query's context item is the column, of XML(DOCUMENT) or
-XML(CONTENT), passed BY REF or BY VALUE, and nothing else is passed. Its
+The query's context item is the column, of any XML type, passed BY REF
+or BY VALUE, and nothing else is passed. Its
 body is one path from `.` or `/` of child, descendant (`//`) and
 attribute steps over names or `*`. Its last step may have one predicate:
 a relative path of such steps, or a comparison of one, or of `.`, with a
@@ -924,8 +924,7 @@ or a number narrows the rows the index gives; any other leaves the path
 alone. One step before the last, of child steps after it, may have a
 predicate too, of an ancestor of the nodes selected: a relative path, or
 its comparison with a string, as in `/order[@no = "17"]/item`. A query
-of another shape, a column of XML(SEQUENCE), whose value may be no one
-node, or a table too small to gain is read whole.
+of another shape, or a table too small to gain, is read whole.
 
 The index gives the rows whose values may hold such a node. Each is
 fetched and the condition checked on it, so the result is a full read's.
@@ -935,11 +934,18 @@ of the table may raise an error, the table is read whole, so the error
 is raised whatever rows the index would skip. In ON, a query that may
 raise an error, as a numeric comparison may, is read whole too.
 
+A value of XML(SEQUENCE) may be no one document node: several items, an
+atomic value, an element or none. A query of it may fail, as of several
+items (SQLSTATE 2200V), or start from no document, so the index gives
+the row of every such value, whatever the path; each is checked, and its
+error raised as by a full read.
+
 XML_PRIMARY answers of each row from the index alone a query of a path,
 its comparisons with strings and its predicate of an ancestor: a row it
 holds of is not checked, only one whose answer needs a value longer
-than it keeps whole. Of the other methods, and of a query compared with
-a number or by a value comparison, each row given is checked. The
+than it keeps whole. Of the other methods, of a query compared with a
+number or by a value comparison, and of a column of XML(SEQUENCE), each
+row given is checked. The
 planner weighs reading an index against reading every row and checking
 its value, by the values' average length. EXPLAIN shows the index read
 by its method, the path, predicate and comparison it looks up, and

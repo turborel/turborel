@@ -77,15 +77,20 @@ fn table_as_a_function() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §7.1 SR4h, §8.4 GR2]
 /// RULES.md D106: XMLTABLE's row pattern as a filter of the rows it is of
 /// is XMLEXISTS of it: true of a value it gives an item of, unknown of the
-/// null value; of a query of a value of one node passed, its reduction an
-/// implied filter's.
+/// null value; its reduction an implied filter's, exact and raising no
+/// error of a value of one node passed, neither of a sequence's.
 #[test]
 fn row_pattern_as_a_filter() {
     let rows = XmlRowsOf(evaluation(".", true));
     assert_eq!((rows.name(), rows.return_type(&[]).unwrap(), rows.in_statement()), ("XMLTABLE", DataType::Boolean, true));
     assert_eq!(shown(&rows.call(&[integers(&["1"])]).unwrap()), "Bool(true)");
     assert_eq!(shown(&rows.call(&[Value::Null]).unwrap()), "Null");
-    assert!(rows.xml_filter().is_none(), "of a context item of no one node");
-    let one_node = XmlRowsOf(Evaluation { one_node: true, ..evaluation("//a", true) });
-    assert!(matches!(one_node.xml_filter(), Some(XmlFilter::Implied(_))));
+    assert!(rows.xml_filter().is_none(), "of a query of no lookup");
+    for one_node in [true, false] {
+        let implied = XmlRowsOf(Evaluation { one_node, ..evaluation("//a", true) });
+        let Some(XmlFilter::Implied(reduction)) = implied.xml_filter() else { panic!("{one_node}") };
+        assert_eq!((reduction.raise_free, reduction.exact), (one_node, one_node));
+        let exists = XmlExistsOf(Evaluation { one_node, ..evaluation("//a", true) });
+        assert_eq!(exists.raise_free(), one_node, "a sequence's value may fail its query");
+    }
 }

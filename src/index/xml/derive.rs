@@ -39,6 +39,15 @@ pub(super) type Tokens<'n> = dyn FnMut(&QName) -> Result<Option<u64>> + 'n;
 /// What is done with each node keyed, in the order derived.
 pub(super) type Visit<'v> = dyn FnMut(&Keyed<'_>) -> Result<()> + 'v;
 
+/// What a derivation found of a value: how many nodes it keyed, and
+/// whether the value is one document node, the one item a query's paths
+/// start from as its index keys them (RULES.md D106).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Derived {
+    pub(super) keyed: usize,
+    pub(super) document: bool,
+}
+
 /// A node open: an element, or its item's root.
 struct Open {
     /// The ordinals of its name's token and of each element's above it to
@@ -66,6 +75,8 @@ struct Deriving<'d, 'n, 'v> {
     tokens: Vec<Option<u64>>,
     /// The items begun.
     items: u64,
+    /// The items that are document nodes.
+    documents: u64,
     /// The nodes keyed.
     keyed: usize,
     names: &'d mut Tokens<'n>,
@@ -78,24 +89,34 @@ struct Deriving<'d, 'n, 'v> {
 
 /// Derives the nodes `bytes`, a stored form, keys, each given to `visit`
 /// with the first `prefix` octets of its string value, each name's token
-/// by `names`; how many.
+/// by `names`; how many, and whether the value is one document node.
 ///
 /// # Errors
 ///
 /// SQLCODE -916 if the bytes are no stored form, or nest past
 /// `xml::MAX_NESTING`; -900 past `MAX_KEYED_NODES`; `names`' and
 /// `visit`'s.
-pub(super) fn derive(bytes: &[u8], prefix: usize, names: &mut Tokens<'_>, visit: &mut Visit<'_>) -> Result<usize> {
+pub(super) fn derive(bytes: &[u8], prefix: usize, names: &mut Tokens<'_>, visit: &mut Visit<'_>) -> Result<Derived> {
     let mut events = Events::new(bytes)?;
-    let mut deriving =
-        Deriving { open: Vec::new(), ordpath: Vec::new(), tokens: Vec::new(), items: 0, keyed: 0, names, visit, path: Vec::new(), prefix };
+    let mut deriving = Deriving {
+        open: Vec::new(),
+        ordpath: Vec::new(),
+        tokens: Vec::new(),
+        items: 0,
+        documents: 0,
+        keyed: 0,
+        names,
+        visit,
+        path: Vec::new(),
+        prefix,
+    };
     while let Some(event) = events.next_event()? {
         if event == Event::Node {
             deriving.tokens = events.names().iter().map(|n| (deriving.names)(n)).collect::<Result<_>>()?;
         }
         deriving.event(event)?;
     }
-    Ok(deriving.keyed)
+    Ok(Derived { keyed: deriving.keyed, document: deriving.items == 1 && deriving.documents == 1 })
 }
 
 /// The component of the `n`th child, from 0: the odd numbers, as a load
@@ -114,7 +135,10 @@ impl Deriving<'_, '_, '_> {
                 self.items = self.items.saturating_add(1);
                 Ok(())
             }
-            Event::Document => self.push(None),
+            Event::Document => {
+                self.documents = self.documents.saturating_add(1);
+                self.push(None)
+            }
             Event::Element { name, attributes } => {
                 self.push(Some(name))?;
                 attributes.into_iter().try_for_each(|(n, value)| self.attribute(n, value))

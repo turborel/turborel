@@ -4657,7 +4657,12 @@ value's identity: of a value its row holds, its octets' MurmurHash3, the
 octets there to derive its entries again; of one held as a large object,
 the object's id, never given twice, under which the index keeps the
 entries it made, by row, and takes them back, or adds them again, with no
-read of the value.
+read of the value. A value that is not one document node, of several
+items, an atomic value, a node of another kind or none, as XML(SEQUENCE)
+holds, is marked too, by row and identity, and every lookup gives its
+row: a query of it as its context item may raise an error, or start from
+no document, where its entries alone would not show it [ISO/IEC
+9075-14:2006 draft §6.18 GR1a ii 2].
 
 A lookup (`Index::xml_rows`, `xml_cost`) is given a path of child and
 descendant steps over expanded names or any name, ending at an element or
@@ -4698,10 +4703,12 @@ it is not empty (`ScalarFunction::xml_filter`): XMLEXISTS, XMLQUERY NULL
 ON EMPTY IS NOT NULL, and XMLTABLE's row pattern, which the planner adds
 as an implied filter of the rows XMLTABLE joins, not LEFT, and checks no
 row by (`XmlRowsOf`). The query is passed the column alone, or its copy,
-as its context item, of XML(DOCUMENT) or XML(CONTENT), so each value is
-one node; one of XML(SEQUENCE) may be several items or none, and the
-query raise an error of it [ISO/IEC 9075-14:2006 draft §6.18 GR1a ii 2]
-that a lookup would hide. The query is reduced to an index's query
+as its context item. Of XML(DOCUMENT) or XML(CONTENT) each value is one
+document node; one of XML(SEQUENCE) may not be, and the query raise an
+error of it [ISO/IEC 9075-14:2006 draft §6.18 GR1a ii 2] or start from
+no document. Every lookup gives such a value's row, so it hides none, but
+the query of such a column is neither free of errors nor answered by an
+index (`functions/xml/query.rs`). The query is reduced to an index's query
 (`xquery/lookup.rs`) if it is one path of child, descendant and
 attribute steps over names or `*`, its last step of at most one
 predicate: a relative path, or its comparison, or `.`'s, with a literal.

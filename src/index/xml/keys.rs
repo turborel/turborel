@@ -42,6 +42,9 @@ pub(super) const ENTRIES: u8 = 7;
 pub(super) const VERSIONS: u8 = 8;
 /// The primary's nodes by row, path and value [Pal et al. §3.2.2].
 pub(super) const PATHED: u8 = 9;
+/// The rows of a value that is not one document node, which every lookup
+/// gives (`documents.rs`).
+pub(super) const OTHERS: u8 = 10;
 
 // The classes of value, in their order.
 /// A number that is no number: its node's value does not cast to one, is

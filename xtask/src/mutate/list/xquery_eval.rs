@@ -11,7 +11,7 @@
 use super::{Mutation, Package};
 
 /// Each mechanism broken alone, and the tests that fail.
-pub const XQUERY_EVAL: [Mutation; 33] = [
+pub const XQUERY_EVAL: [Mutation; 32] = [
     Mutation {
         name: "xquery-depth-bound",
         package: Package::Core,
@@ -213,16 +213,6 @@ pub const XQUERY_EVAL: [Mutation; 33] = [
         original: "if !others.all(|(_, other)| raises_none(other)) {",
         replacement: "if false && !others.all(|(_, other)| raises_none(other)) {",
         integration: &["xml_index_plans::errors_are_raised_as_by_a_full_read"],
-        unit: &[],
-    },
-    Mutation {
-        name: "xml-index-sequence-column",
-        package: Package::Core,
-        breaks: "a query of a column of XML(SEQUENCE) is reduced to a lookup",
-        file: "src/functions/xml/query.rs",
-        original: "(evaluation.context && evaluation.one_node)",
-        replacement: "(evaluation.context || evaluation.one_node)",
-        integration: &["xml_index_plans::a_sequence_column_is_read_whole"],
         unit: &[],
     },
     Mutation {

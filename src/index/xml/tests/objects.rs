@@ -36,7 +36,12 @@ impl LobSource for Object {
 
 /// The large object of id `id` holding `text`, a document, stored.
 fn object(id: u64, text: &str) -> Arc<Object> {
-    let octets: Arc<[u8]> = Arc::from(stored(text));
+    object_of(id, stored(text))
+}
+
+/// The large object of id `id` holding `stored`, a stored form.
+fn object_of(id: u64, stored: Vec<u8>) -> Arc<Object> {
+    let octets: Arc<[u8]> = Arc::from(stored);
     let size = u32::try_from(octets.len()).unwrap();
     Arc::new(Object { id, octets, directory: Directory::new(vec![Chunk { octets: size, chars: size }]), freed: AtomicBool::new(false) })
 }
@@ -102,4 +107,26 @@ fn the_rows_of_an_object_are_its_rows() {
     index.insert(read_through(&source), 8).unwrap();
     assert_eq!(index.rows(&by_id(5, &source)).unwrap(), [8]);
     assert_eq!(index.rows(&by_id(6, &source)).unwrap(), Vec::<RowId>::new());
+}
+
+/// Verifies: [DESIGN] RULES.md D106, D79: a value of no one document node
+/// held as a large object is given by every lookup, added again by its id
+/// alone, and taken back unread, its object freed, leaving no mark.
+#[test]
+fn an_object_not_one_document_is_given_and_taken_back_unread() {
+    let index = index(Method::Value);
+    let tree = parse("<a/><b/>", Syntax::Content, Whitespace::Preserve).unwrap();
+    let tree = Arc::new(tree);
+    let items = tree.children(crate::xml::NodeId::ROOT).map(|c| crate::xml::Item::Node(crate::xml::Node::new(Arc::clone(&tree), c)));
+    let source = object_of(12, encode(&Sequence::new(items.collect())));
+    index.insert(read_through(&source), 6).unwrap();
+    index.insert(by_id(12, &source), 6).unwrap();
+    let nothing = path(&[(Axis::Child, "nope")], Target::Element);
+    assert_eq!(asked(&index, &nothing, &[], None), [6]);
+    source.freed.store(true, Ordering::Release);
+    index.remove(&by_id(12, &source), 6).unwrap();
+    assert_eq!(asked(&index, &nothing, &[], None), [6], "added twice");
+    index.remove(&by_id(12, &source), 6).unwrap();
+    assert_eq!(asked(&index, &nothing, &[], None), Vec::<RowId>::new());
+    assert_eq!(held(&index, keys::MARKS), 0);
 }

@@ -126,7 +126,7 @@ fn each_index_gives_the_rows_of_a_full_read() {
 /// Verifies: [EXTENSION] RULES.md D34, D106: EXPLAIN shows the XML index
 /// read for a condition it finds the rows of, by its method, the path and
 /// comparison its lookup selects by of the column; a full read for a
-/// condition of no lookup, or of a column of XML(SEQUENCE).
+/// condition of no lookup, or of a column the index is not of.
 #[test]
 fn explain_shows_the_index_read() {
     let db = database();
@@ -244,19 +244,19 @@ fn errors_are_raised_as_by_a_full_read() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §6.18 GR1a ii 2 B
-/// III] RULES.md D15, D106: a column of XML(SEQUENCE) is read whole, as a
-/// value of other than one node fails its query as its context item,
-/// SQLSTATE 2200V, which a lookup would not give; and its index is not
-/// read for a query of another column.
+/// III] RULES.md D15, D106: the index of a column of XML(SEQUENCE) gives
+/// a value of other than one node, which fails its query as its context
+/// item, SQLSTATE 2200V, as a full read does; and it is not read for a
+/// query of another column.
 #[test]
-fn a_sequence_column_is_read_whole() {
+fn a_sequence_columns_index_gives_its_failing_values() {
     let db = database();
     let a = db.session("A");
     a.run("INSERT INTO T VALUES (2000, NULL, XMLQUERY('<a/>, <b/>' RETURNING SEQUENCE BY REF EMPTY ON EMPTY))").unwrap();
     a.commit().unwrap();
     a.run("CREATE INDEX J ON T (S) USING XML_PATH").unwrap();
     let query = "SELECT K FROM T WHERE XMLEXISTS('//item[@price > 48]' PASSING BY REF S)";
-    assert!(!plan(&a, query).contains("IndexScan"), "{}", plan(&a, query));
+    assert!(plan(&a, query).contains("IndexScan"), "{}", plan(&a, query));
     assert_eq!(fetched(&a, query).unwrap_err().sqlstate(), SqlState::INVALID_XQUERY_CONTEXT_ITEM);
     let other = "SELECT K FROM T WHERE XMLEXISTS('//item[@price > 48]' PASSING BY REF X)";
     assert!(!plan(&a, other).contains("IndexScan"), "an index of another column: {}", plan(&a, other));

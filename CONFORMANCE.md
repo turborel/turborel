@@ -2623,8 +2623,10 @@ with a value a general comparison selects (`Index::xml_rows`,
 `Database::xml_candidates` reads those rows. The planner reads them, by
 cost against a full read, for a WHERE or ON conjunct of XMLEXISTS, of
 XMLQUERY NULL ON EMPTY IS NOT NULL, and for XMLTABLE joined to its rows
-not by LEFT, of a query of the column alone, of XML(DOCUMENT) or
-XML(CONTENT), that is one path of child, descendant and attribute steps,
+not by LEFT, of a query of the column alone, of any XML type (of
+XML(SEQUENCE), the row of every value not one document node given by each
+lookup and checked, its query never answered by the index), that is one
+path of child, descendant and attribute steps,
 its last of one predicate, a relative path or its comparison with a
 literal, and one step before it, of child steps after it, of a predicate
 of an ancestor, a relative path or its comparison with a string

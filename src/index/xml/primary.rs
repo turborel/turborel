@@ -201,12 +201,14 @@ impl XmlIndex {
         Ok(held.take(2).collect::<Result<Vec<_>>>()?.len() > 1)
     }
 
-    /// What the primary's lookup costs: the entries it reads, counted to
+    /// What the primary's lookup costs: the entries it reads, and the
+    /// rows of a value not one document node it gives too, counted to
     /// `MOST_COUNTED`, and a descent and the pages they fill.
     pub(super) fn primary_cost(self: &Arc<Self>, lookup: &XmlLookup) -> XmlCost {
         let read = Arc::new(AtomicUsize::new(0));
         let query = XmlQuery { lookup: lookup.clone(), filter: None };
-        for answer in self.answering(&query, Arc::clone(&read)) {
+        let others = self.others(lookup.row, &AtomicUsize::new(0)).map(|row| row.map(|_| read.fetch_add(1, atomic::Ordering::Relaxed)));
+        for answer in self.answering(&query, Arc::clone(&read)).map(|a| a.map(drop)).chain(others.map(|o| o.map(drop))) {
             if answer.is_err() || read.load(atomic::Ordering::Relaxed) > MOST_COUNTED {
                 return XmlCost { entries: None, pages: None };
             }
