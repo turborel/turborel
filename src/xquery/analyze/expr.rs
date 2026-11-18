@@ -20,32 +20,29 @@ impl Analysis<'_> {
         // frame the nesting of expressions recurs through holds none of
         // their locals (RULES.md R-CF-6).
         match e {
-            Expr::Sequence(items) => self.all(items).map(Op::Sequence),
+            Expr::Sequence(items) => self.sequence(items),
             Expr::Flwor(f) => self.flwor(f),
             Expr::Quantified(q) => self.quantified(q),
             Expr::Typeswitch(t) => self.typeswitch(t),
-            Expr::If(i) => Ok(Op::If(Box::new([self.expr(&i.test)?, self.expr(&i.then)?, self.expr(&i.otherwise)?]))),
-            Expr::Or(operands) => self.all(operands).map(Op::Or),
-            Expr::And(operands) => self.all(operands).map(Op::And),
+            Expr::If(i) => self.conditional(i),
+            Expr::Or(operands) => self.logical(operands, false),
+            Expr::And(operands) => self.logical(operands, true),
             Expr::Comparison(c) => self.comparison(c),
-            Expr::Range(operands) => {
-                let [from, to] = &**operands;
-                Ok(Op::Range(Box::new([self.expr(from)?, self.expr(to)?])))
-            }
+            Expr::Range(operands) => self.range(operands),
             Expr::Additive(first, rest) => self.additive(first, rest),
             Expr::Multiplicative(first, rest) => self.multiplicative(first, rest),
-            Expr::Union(operands) => self.all(operands).map(Op::Union),
+            Expr::Union(operands) => self.union(operands),
             Expr::IntersectExcept(first, rest) => self.intersect_except(first, rest),
-            Expr::InstanceOf(operand, t) => Ok(Op::InstanceOf(Box::new(self.expr(operand)?), self.sequence_type(t)?)),
-            Expr::Treat(operand, t) => Ok(Op::Treat(Box::new(self.expr(operand)?), self.sequence_type(t)?)),
+            Expr::InstanceOf(operand, t) => self.instance_of(operand, t, false),
+            Expr::Treat(operand, t) => self.instance_of(operand, t, true),
             Expr::Castable(operand, t) => self.cast_expr(operand, t, true),
             Expr::Cast(operand, t) => self.cast_expr(operand, t, false),
             Expr::Unary(signs, operand) => self.unary(signs, operand),
             Expr::Validate(mode, operand) => self.validate(*mode, operand),
             Expr::Extension(pragmas, operand) => self.extension(pragmas, operand.as_deref()),
             Expr::Path(path) => self.path(path),
-            Expr::Filter(primary, predicates) => Ok(Op::Filter(Box::new(self.expr(primary)?), self.all(predicates)?)),
-            Expr::Literal(literal) => literal_value(literal).map(Op::Atomic),
+            Expr::Filter(primary, predicates) => self.filter(primary, predicates),
+            Expr::Literal(literal) => literal_op(literal),
             Expr::Variable(name) => self.variable_reference(name),
             Expr::Parenthesized(None) => Ok(Op::Empty),
             Expr::Parenthesized(Some(inner)) | Expr::Ordered(inner) | Expr::Unordered(inner) => self.expr(inner),
@@ -53,6 +50,51 @@ impl Analysis<'_> {
             Expr::FunctionCall(name, arguments) => self.call(name, arguments),
             Expr::Constructor(c) => self.constructor_expr(c),
         }
+    }
+
+    /// The comma operator [XQuery §3.3.1].
+    fn sequence(&mut self, items: &[Expr]) -> Result<Op> {
+        Ok(Op::Sequence(self.all(items)?))
+    }
+
+    /// `if` [XQuery §3.10].
+    fn conditional(&mut self, i: &super::super::ast::If) -> Result<Op> {
+        let test = self.expr(&i.test)?;
+        let then = self.expr(&i.then)?;
+        let otherwise = self.expr(&i.otherwise)?;
+        Ok(Op::If(Box::new([test, then, otherwise])))
+    }
+
+    /// `and`, if `and`, else `or` [XQuery §3.6].
+    fn logical(&mut self, operands: &[Expr], and: bool) -> Result<Op> {
+        let all = self.all(operands)?;
+        Ok(if and { Op::And(all) } else { Op::Or(all) })
+    }
+
+    /// `to` [XQuery §3.3.1].
+    fn range(&mut self, operands: &[Expr; 2]) -> Result<Op> {
+        let [from, to] = operands;
+        let from = self.expr(from)?;
+        let to = self.expr(to)?;
+        Ok(Op::Range(Box::new([from, to])))
+    }
+
+    /// `union` [XQuery §3.3.3].
+    fn union(&mut self, operands: &[Expr]) -> Result<Op> {
+        Ok(Op::Union(self.all(operands)?))
+    }
+
+    /// `instance of`, or `treat as` if `treat` [XQuery §3.12.1, §3.12.6].
+    fn instance_of(&mut self, operand: &Expr, t: &super::super::ast::SequenceType, treat: bool) -> Result<Op> {
+        let operand = Box::new(self.expr(operand)?);
+        let t = self.sequence_type(t)?;
+        Ok(if treat { Op::Treat(operand, t) } else { Op::InstanceOf(operand, t) })
+    }
+
+    /// A filter expression [XQuery §3.3.2].
+    fn filter(&mut self, primary: &Expr, predicates: &[Expr]) -> Result<Op> {
+        let primary = Box::new(self.expr(primary)?);
+        Ok(Op::Filter(primary, self.all(predicates)?))
     }
 
     /// As `expr`, of an `ExprSingle`.
@@ -177,6 +219,11 @@ impl Analysis<'_> {
         };
         Ok(Op::Call(Box::new(CallOp { callee: Callee::Library(found), arguments: compiled })))
     }
+}
+
+/// A literal's operation [XQuery §3.1.1].
+fn literal_op(literal: &Literal) -> Result<Op> {
+    literal_value(literal).map(Op::Atomic)
 }
 
 /// The value of `literal` [XQuery §3.1.1]: a numeric literal cast from

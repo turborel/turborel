@@ -4046,8 +4046,10 @@ most items, and the root of documents is their type. The typing recurses
 as the plan nests, counting each expression, SQLCODE -900 past
 `xquery::MAX_DEPTH`, and each walk of a type is bounded by
 `MAX_TYPE_DEPTH`, 256, and an axis's closure by `MAX_CLOSURE`, 4,096
-item types. The deepest query of each shape is typed within a thread's
-default stack, as a test checks. The library
+item types. The deepest query of each shape is analysed, and typed,
+within half of a thread's default stack, as a test checks in a child
+process: the analysis dispatches each expression to a function of its
+own, so a level of nesting takes one small frame. The library
 (`xquery::Library`) is the built-in functions and those plug-ins
 register (`Database::register_xquery_function`), each an
 `XQueryFunction` of its expanded QName, parameter types and result type,

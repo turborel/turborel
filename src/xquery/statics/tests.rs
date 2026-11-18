@@ -403,25 +403,68 @@ fn prologs_and_clauses_are_typed() {
     assert_eq!(alone("declare function local:f() { a }; local:f()"), "err:XPST0001");
 }
 
-/// A thread's default stack, 2 MiB.
-const DEFAULT_STACK: usize = 2 * 1024 * 1024;
+/// The variable whose presence makes `deep_queries_are_analysed_within_half_a_stack`
+/// analyse its query in this process: the child process it started.
+const CHILD: &str = "TURBOREL_XQUERY_DEPTH_CHILD";
+/// The query the child analyses.
+const CHILD_QUERY: &str = "TURBOREL_XQUERY_DEPTH_QUERY";
+/// Whether the child types it statically, `1` if so.
+const CHILD_TYPED: &str = "TURBOREL_XQUERY_DEPTH_TYPED";
 
-/// Verifies: [DESIGN] RULES.md R-CF-6: the typing of the deepest query
-/// the parser takes, of each shape, runs within half of a thread's default
-/// stack, refused at worst, never overflowing it.
+/// Verifies: [DESIGN] RULES.md R-CF-6, D106: the deepest query the parser
+/// takes, of each shape, is analysed and, in a second run, statically
+/// typed within half of a thread's default stack, of a context item so
+/// each path is typed. Each runs in a child process this test starts, as a
+/// stack overflow aborts the process it happens in: an overflow fails
+/// this test rather than the run of every test.
 #[test]
-fn deep_queries_are_typed_within_the_stack() {
+fn deep_queries_are_analysed_within_half_a_stack() {
+    if let (Some(query), Some(typed)) = (std::env::var_os(CHILD_QUERY), std::env::var_os(CHILD_TYPED)) {
+        let (query, typed) = (query.into_string().unwrap(), typed == "1");
+        assert!(super::super::tests::on_half_stack(move || {
+            let (library, collations) = (Library::builtin(), collations());
+            let context = Some(formal(FormalKind::Content(Typed::Untyped), Occurrence::One));
+            let env = Environment {
+                namespaces: Vec::new(),
+                default_element: None,
+                variables: Vec::new(),
+                library: &library,
+                collations: &collations,
+                schemas: Vec::new(),
+                importable: Vec::new(),
+                modules: Vec::new(),
+                linked: Vec::new(),
+                static_typing: typed,
+                passed: Passed { context, variables: Vec::new(), item: None },
+            };
+            let _ = Query::compile(&query, &env);
+            true
+        }));
+        return;
+    }
+    if std::env::var_os(CHILD).is_some() {
+        return;
+    }
+    let path = module_path!().split_once("::").map_or("", |(_, path)| path);
+    let name = format!("{path}::deep_queries_are_analysed_within_half_a_stack");
     for (open, close) in super::super::tests::nesting_shapes() {
         let deepest = (1..=super::super::MAX_NESTING)
             .map(|n| format!("{}1{}", open.repeat(n), close.repeat(n)))
             .take_while(|q| super::super::parse(q, crate::xml::Version::V11).is_ok())
             .last()
             .unwrap();
-        let analysed = std::thread::Builder::new().name("xquery-typing".to_owned()).stack_size(DEFAULT_STACK).spawn(move || {
-            let context = formal(FormalKind::Content(Typed::Untyped), Occurrence::One);
-            let _ = typed(&deepest, Some(context), &[]);
-        });
-        analysed.unwrap().join().unwrap();
+        for typed in ["0", "1"] {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name.as_str(), "--test-threads=1"])
+                .env(CHILD, "1")
+                .env(CHILD_QUERY, &deepest)
+                .env(CHILD_TYPED, typed)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "the deepest query of {open} typed {typed} ended {status}");
+        }
     }
 }
 
