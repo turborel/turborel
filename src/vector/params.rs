@@ -23,6 +23,10 @@ use crate::value::types::{ExtensionType, TypeParams};
 
 /// The value of `*`, a dimension count or format left open.
 pub const ANY: u32 = 0;
+
+/// `*` written as the dimension count, told apart from a count of 0 until
+/// `pack_params` stores it as ANY.
+const STAR_DIMS: u32 = u32::MAX;
 /// The position of the format among the written parameters.
 pub const FORMAT_PARAM: usize = 1;
 /// The position of the layout among the written parameters.
@@ -56,7 +60,7 @@ pub(crate) const OPEN: Shape = Shape { dims: None, element: None, layout: None }
 pub fn param_word(at: usize, word: &str) -> Option<u32> {
     let star = word.trim() == STAR;
     match at {
-        0 => star.then_some(ANY),
+        0 => star.then_some(STAR_DIMS),
         FORMAT_PARAM => {
             if star {
                 return Some(ANY);
@@ -73,11 +77,20 @@ pub fn param_word(at: usize, word: &str) -> Option<u32> {
 
 /// The stored parameters of `written`, each as a number or as
 /// `param_word` gave it: a third, the layout, folded into the second.
+/// A dimension count of 0 is refused, as `*` is stored as ANY (R3.4).
 pub fn pack_params(written: &[u32]) -> Option<Vec<u32>> {
-    match written {
-        [dims, format, layout] => Some(vec![*dims, format.checked_add(*layout)?]),
-        _ => (written.len() < MOST_WRITTEN).then(|| written.to_vec()),
+    let mut packed = match written {
+        [dims, format, layout] => vec![*dims, format.checked_add(*layout)?],
+        _ => (written.len() < MOST_WRITTEN).then(|| written.to_vec())?,
+    };
+    if let Some(dims) = packed.first_mut() {
+        *dims = match *dims {
+            ANY => return None,
+            STAR_DIMS => ANY,
+            count => count,
+        };
     }
+    Some(packed)
 }
 
 /// The shape stored parameters `params` give.

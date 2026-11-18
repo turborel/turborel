@@ -363,8 +363,9 @@ fn vector_is_built_in_d88() {
 
 /// Verifies: [EXTENSION] vector_standard R3.11, R10.6: there is no CREATE
 /// UNIQUE INDEX statement (SQLCODE -102); a UNIQUE index is a UNIQUE
-/// constraint's, of TABLES.UNIQUE_INDEX_METHOD, and each vector method
-/// refuses to make one (-900), vectors being compared by no `=`.
+/// constraint's, of TABLES.UNIQUE_INDEX_METHOD, and a UNIQUE constraint
+/// of a vector column is refused (-103) whichever method that names,
+/// vectors being compared by no `=`.
 #[test]
 fn each_method_refuses_a_unique_index_r3_11() {
     let db = database(10);
@@ -374,7 +375,7 @@ fn each_method_refuses_a_unique_index_r3_11() {
         s.rollback().unwrap();
         db.set_setting("TABLES.UNIQUE_INDEX_METHOD", &Value::Char(method.to_owned())).unwrap();
         let unique = s.run(&format!("CREATE TABLE U_{method} (V VECTOR({DIMS}, FLOAT32) UNIQUE)")).unwrap_err();
-        assert_eq!(unique.code, Code::Unsupported, "{method}: {unique}");
+        assert_eq!(unique.code, Code::SyntaxRule, "{method}: {unique}");
         s.rollback().unwrap();
     }
 }

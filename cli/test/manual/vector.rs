@@ -24,3 +24,23 @@ fn the_vector_index_examples_run_as_printed() {
     let mut ann = Client::of(&db, "ANN");
     assert!(ann.page("sql/statements/create-vector-index.md") > 0, "it shows its examples' output");
 }
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D88: the examples of the Vectors
+/// chapter, and of CREATE then DROP VECTOR DISTANCE FUNCTION, each in a
+/// database of its own whose schema ANN they run in, and the vector guide,
+/// which makes its schema itself, run as printed, as ANN.
+#[test]
+fn the_vector_examples_run_as_printed() {
+    let pages: [&[&str]; 2] =
+        [&["sql/14-vectors.md"], &["sql/statements/create-vector-distance-function.md", "sql/statements/drop-vector-distance-function.md"]];
+    for pages in pages {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+        let mut ann = Client::of(&db, "ANN");
+        for page in pages {
+            assert!(ann.page(page) > 0, "{page} shows its examples' output");
+        }
+    }
+    let db = Database::new();
+    assert!(Client::of(&db, "ANN").page("data/04-vectors.md") > 0, "the guide shows its examples' output");
+}

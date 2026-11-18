@@ -12,7 +12,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::value::Value;
 
 /// The distance function a report searches by.
-const DISTANCE: &str = "VECTOR_DISTANCE";
+const DISTANCE: &str = crate::vector::functions::VECTOR_DISTANCE;
 
 /// What an accuracy report measured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

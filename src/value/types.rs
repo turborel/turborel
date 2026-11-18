@@ -224,6 +224,15 @@ pub trait SqlType: Send + Sync + fmt::Debug {
         Some(written.to_vec())
     }
 
+    /// \[EXTENSION\] Whether its values are ordered and grouped: compared
+    /// by `<`, `=` and the rest, sorted, grouped, made distinct and keyed.
+    /// A kind that says not keeps `compare` for its own use alone, and the
+    /// binder refuses every ordering, grouping and key of a type of it.
+    /// Default: ordered.
+    fn ordered(&self) -> bool {
+        true
+    }
+
     /// Appends `t`'s parameters to `out`, which `params` reads back.
     fn put_params(&self, t: &DataType, out: &mut Vec<u8>);
 

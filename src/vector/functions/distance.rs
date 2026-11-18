@@ -46,7 +46,7 @@ impl Distance {
     /// Its name.
     pub fn name(self) -> &'static str {
         match self {
-            Distance::VectorDistance => "VECTOR_DISTANCE",
+            Distance::VectorDistance => super::VECTOR_DISTANCE,
             Distance::L1 => "L1_DISTANCE",
             Distance::L2 => "L2_DISTANCE",
             Distance::Cosine => "COSINE_DISTANCE",

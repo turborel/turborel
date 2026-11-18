@@ -484,6 +484,8 @@ files, so the definitions that name one find it:
 | `register_hash_function` | a hash function for checksums, `HashFunction`, named by STORAGE.CHECKSUM |
 | `register_system_table` | a table of the Information Schema's kind, `SystemTable` |
 | `register_ranking` | a ranking of full-text search, `Ranking`, named by a full-text index's FULLTEXT.RANKING ([Full-text rankings](#full-text-rankings-extension)) |
+| `register_metric` | a distance metric of vectors, `turborel::vector::metric::VectorMetric`, named by VECTOR_DISTANCE and a vector index *(extension)* ([Vectors](../sql/14-vectors.md#distances)); its name a regular identifier in upper case, or a schema's name and its own joined by a period, none built in or registered, or it fails with SQLCODE -910, as a call does of a result that breaks its declared properties |
+| `register_quantizer` | a quantizer of vectors, `turborel::vector::quantizer::Quantizer`, named by a vector index *(extension)*; named as a metric is, without the period |
 | `set_diagnostics` | where the database's events go, `Diagnostics` ([Diagnostics](../operator/08-diagnostics.md)); `tell` gives it one of the program's own, as a server's, those below DIAGNOSTICS.LEVEL dropped |
 
 A plug-in of any kind above, and a catalog's or a log's storage, the

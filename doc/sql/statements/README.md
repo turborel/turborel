@@ -41,6 +41,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE TRIGGER](create-trigger.md): define a trigger
 - [CREATE TYPE](create-type.md): define a distinct or structured type
 - [CREATE USER](create-user.md): define a user
+- [CREATE VECTOR DISTANCE FUNCTION](create-vector-distance-function.md): define a metric of vectors in SQL *(extension)*
 - [CREATE VIEW](create-view.md): define a viewed table
 - [DECLARE CURSOR](declare-cursor.md): declare a cursor
 - [DECLARE HANDLER](declare-handler.md): say what runs when a condition is raised *(in a compound statement)*
@@ -66,6 +67,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP TRIGGER](drop-trigger.md): drop a trigger
 - [DROP TYPE](drop-type.md): drop a distinct or structured type
 - [DROP USER](drop-user.md): drop a user
+- [DROP VECTOR DISTANCE FUNCTION](drop-vector-distance-function.md): drop a distance function *(extension)*
 - [DROP VIEW](drop-view.md): drop a view
 - [END CONNECTION](end-connection.md): end a connection of the server
 - [EXECUTE](execute.md): run a statement prepared

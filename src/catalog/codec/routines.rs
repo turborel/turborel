@@ -11,7 +11,9 @@
 //!             horizon, invokes (count u32, names), sequences (count u32,
 //!             names), execute (as a domain's usage), created u64,
 //!             module (0 none, or 1 and its name (str)), PTF (0 none, or
-//!             1 and a ptf)
+//!             1 and a ptf), method, distance (0 none, or 1 and a distance)
+//! distance:   symmetric u8, non-negative u8, triangle u8, formats (count
+//!             u32, each a code u8), expression (str)
 //! parameter:  name (str), type, mode u8 (0 IN, 1 OUT, 2 INOUT), generic
 //!             u8 (0 none, 1 a generic table parameter, 2 a descriptor
 //!             parameter), and of a generic table parameter pass through
@@ -28,7 +30,7 @@
 //! ```
 
 use super::super::{
-    DataAccess, GenericParameter, GenericTable, ModuleDesc, ParameterMode, PtfDesc, QualifiedName, RoutineKind, SqlParameter,
+    DataAccess, DistanceDesc, GenericParameter, GenericTable, ModuleDesc, ParameterMode, PtfDesc, QualifiedName, RoutineKind, SqlParameter,
     SqlRoutineDesc, TableSemantics,
 };
 use super::{flag, get_all, horizon, put_all, put_flag, put_horizon, put_name, put_usage, qualified, usage};
@@ -120,6 +122,24 @@ pub(crate) fn put_routine(out: &mut Vec<u8>, routine: &SqlRoutineDesc) {
         put_ptf(out, ptf);
     }
     super::structured::put_method_of(out, routine.method.as_ref());
+    put_flag(out, routine.distance.is_some());
+    if let Some(d) = &routine.distance {
+        put_flag(out, d.symmetric);
+        put_flag(out, d.non_negative);
+        put_flag(out, d.triangle);
+        out.put_u32(u32::try_from(d.formats.len()).unwrap_or(u32::MAX));
+        d.formats.iter().for_each(|f| out.put_u8(*f));
+        out.put_str(&d.expression);
+    }
+}
+
+/// \[EXTENSION\] A distance function's declarations, as `put_routine`
+/// writes them.
+fn distance(r: &mut Reader<'_>) -> Result<DistanceDesc> {
+    let (symmetric, non_negative, triangle) = (flag(r)?, flag(r)?, flag(r)?);
+    let count = r.u32()?;
+    let formats = (0..count).map(|_| r.u8()).collect::<Result<Vec<u8>>>()?;
+    Ok(DistanceDesc { symmetric, non_negative, triangle, formats, expression: r.str()? })
 }
 
 /// [ISO/IEC 9075-2:2023 §4.35.4] What the descriptor of a polymorphic
@@ -191,6 +211,7 @@ pub(crate) fn routine(r: &mut Reader<'_>) -> Result<SqlRoutineDesc> {
     let module = if flag(r)? { Some(r.str()?) } else { None };
     let ptf = if flag(r)? { Some(Box::new(ptf(r)?)) } else { None };
     let method = super::structured::method_of(r)?;
+    let distance = if flag(r)? { Some(Box::new(distance(r)?)) } else { None };
     Ok(SqlRoutineDesc {
         name,
         specific,
@@ -211,6 +232,7 @@ pub(crate) fn routine(r: &mut Reader<'_>) -> Result<SqlRoutineDesc> {
         module,
         method,
         ptf,
+        distance,
     })
 }
 

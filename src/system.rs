@@ -44,6 +44,7 @@ mod memory;
 mod settings;
 mod totals;
 mod users;
+mod vectors;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -151,6 +152,7 @@ pub(crate) fn builtin() -> SystemTables {
     ];
     tables.extend(definition::tables());
     tables.extend(fulltext::tables());
+    tables.extend(vectors::tables());
     tables.into_iter().map(|t| (name_of(&*t), t)).collect()
 }
 

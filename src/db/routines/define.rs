@@ -84,6 +84,7 @@ impl State {
         let created = self.catalog.routines().iter().map(|d| d.created).max().unwrap_or(0).saturating_add(1);
         let mut desc = SqlRoutineDesc {
             method: None,
+            distance: r.distance.clone(),
             specific: self.specific_name(r, &name, created)?,
             name,
             kind: r.kind,
@@ -109,6 +110,7 @@ impl State {
         let bound = self.bind_routine_body(&desc, r)?;
         desc.horizon = Horizon::of(&*self.catalog, &bound.reads).invoking(bound.invokes);
         (desc.reads, desc.sequences) = (bound.reads, bound.sequences);
+        super::super::vectors::distance_defined(self, &desc).or_at(r.name.at)?;
         // [ISO/IEC 9075-4:2006 draft §9.21 GR2] of a module's, the
         // privilege is on the module.
         if module.is_none() {

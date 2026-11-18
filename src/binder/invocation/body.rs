@@ -93,6 +93,7 @@ pub fn routine_definition(text: &str, module: Option<String>) -> Result<RoutineD
         body: m.body,
         text: m.text,
         body_text: m.body_text,
+        distance: None,
     })
 }
 

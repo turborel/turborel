@@ -45,6 +45,9 @@ pub(crate) const TEXT_TYPE: DataType = DataType::varying(MAX_CHARACTER_LENGTH);
 /// CLOB.
 pub(crate) const CLOB_TYPE: DataType = DataType::Lob { kind: LobKind::Character, length: MAX_LOB_LENGTH, units: CharUnits::Characters };
 
+/// VECTOR_DISTANCE's name, which the distance operators call.
+pub const VECTOR_DISTANCE: &str = "VECTOR_DISTANCE";
+
 /// The distance operators of §6.3 and the metric each stands for, as
 /// `VECTOR_DISTANCE(a, b, metric)`.
 pub const OPERATORS: [(&str, &str); 6] =
@@ -276,6 +279,16 @@ impl ScalarFunction for VectorFunction {
             }
         }
         self.argument_type(position, known).map(ParameterType::Of)
+    }
+
+    /// A metric, format, layout, norm or property written as a key word
+    /// (R6.2): VECTOR_DISTANCE's first argument only if a metric is so
+    /// named, as it is otherwise a vector.
+    fn word_argument(&self, position: usize, word: &str, first: bool) -> bool {
+        if matches!(self.routine, Routine::Distance(Distance::VectorDistance)) && position == 0 {
+            return metric_named(&self.metrics, word).is_some();
+        }
+        self.routine.arg(position, first) == Some(Arg::Text)
     }
 
     /// A distance raises only of its arguments: of vectors of other

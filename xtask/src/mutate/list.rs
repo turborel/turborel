@@ -64,6 +64,7 @@ mod temporal;
 mod temporal_references;
 mod triggers;
 mod truncate;
+mod vector;
 mod vector_indexes;
 mod view_defaults;
 mod vr;
@@ -86,9 +87,8 @@ pub use server::SERVER;
 pub use shadow::SHADOW;
 pub use stats::STATS;
 pub use tailorings::TAILORINGS;
-pub use vr::VR;
-pub use waits::WAITS;
 pub use zones::ZONES;
+pub use {vr::VR, waits::WAITS};
 
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {

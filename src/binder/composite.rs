@@ -41,6 +41,7 @@ fn call(f: impl crate::functions::ScalarFunction + 'static, args: Vec<Expr>) -> 
 ///
 /// SQLCODE -103 if it is.
 pub(super) fn ordering_operand(db: &State, t: &DataType, what: &str) -> Result<()> {
+    orderless_operand(t, what)?;
     super::structured::udt_operand(db, t, super::structured::Need::Ordering, what)?;
     if let Some(these) = unordered(t) {
         return Err(rule(format!(
@@ -57,9 +58,27 @@ pub(super) fn ordering_operand(db: &State, t: &DataType, what: &str) -> Result<(
 ///
 /// SQLCODE -103 if it is.
 pub(crate) fn grouping_operand(db: &State, t: &DataType, what: &str) -> Result<()> {
+    orderless_operand(t, what)?;
     super::structured::udt_operand(db, t, super::structured::Need::Grouping, what)?;
     if let Some(these) = unordered(t) {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.12 SR3] {what} groups values of {t}, and {these} are grouped by no operation")));
+    }
+    Ok(())
+}
+
+/// \[EXTENSION\] An operand of an ordering, grouping or equality
+/// operation, or a key, `what`, of type `t`: of no kind whose values have
+/// no order, as VECTOR's have none and no `=` (design document §3.3
+/// R3.11, R3.12; RULES.md D88).
+///
+/// # Errors
+///
+/// SQLCODE -103 if it is.
+pub(crate) fn orderless_operand(t: &DataType, what: &str) -> Result<()> {
+    if crate::value::types::composite::orderless(t) {
+        return Err(rule(format!(
+            "[EXTENSION] {what} orders, groups, compares or keys values of {t}, which have no order and no equality; VECTOR_EQUALS compares vectors"
+        )));
     }
     Ok(())
 }

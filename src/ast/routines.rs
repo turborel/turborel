@@ -138,6 +138,9 @@ pub struct RoutineDefinition {
     /// The `<SQL routine body>` as written, which the Information Schema
     /// shows.
     pub body_text: String,
+    /// \[EXTENSION\] Of a distance function of VECTOR, what it declares
+    /// more (CREATE VECTOR DISTANCE FUNCTION, RULES.md D88).
+    pub distance: Option<Box<crate::catalog::DistanceDesc>>,
 }
 
 /// [ISO/IEC 9075-2:2023 §10.4] `<SQL argument>` of a CALL: a value
