@@ -3,10 +3,12 @@
 //! against FETCH EXACT, DML and rollback, recovery, options, memory and
 //! what each refuses. The fixture is `vector_indexes/fixture.rs`;
 //! recovery and refusals are `vector_indexes/durable.rs`; the built-in
-//! distances they serve, `vector_indexes/served.rs`.
+//! distances they serve, `vector_indexes/served.rs`; their quantizers'
+//! codes, `vector_indexes/quantized.rs`.
 
 mod durable;
 mod fixture;
+mod quantized;
 mod served;
 
 use fixture::{METHODS, database, literal, nearest_sql, plan, query_of, recall, vector_of};

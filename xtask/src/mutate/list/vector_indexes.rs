@@ -8,7 +8,7 @@ use super::{Mutation, Package};
 
 /// Independent mechanisms whose removal must fail the vector indexes'
 /// requirements.
-pub const VECTOR_INDEXES: [Mutation; 41] = [
+pub const VECTOR_INDEXES: [Mutation; 42] = [
     Mutation {
         name: "diskann-prune-alpha",
         package: Package::Core,
@@ -421,5 +421,15 @@ pub const VECTOR_INDEXES: [Mutation; 41] = [
         replacement: "out.extend_from_slice(&0_u32.to_le_bytes());",
         integration: &[],
         unit: &["index::vector::tests::cosine_by_kept_norms_is_bit_for_bit"],
+    },
+    Mutation {
+        name: "diskann-code-page-filled",
+        package: Package::Core,
+        breaks: "a DiskANN training writes its last code page short, and the index cannot be opened again",
+        file: "src/engine/diskann/codes.rs",
+        original: "            content.resize(per.saturating_mul(width), 0);",
+        replacement: "            content.shrink_to_fit();",
+        integration: &["vector_indexes::quantized::each_method_trains_and_reads_back_its_quantizers_codebook"],
+        unit: &[],
     },
 ];

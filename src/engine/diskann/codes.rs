@@ -2,7 +2,9 @@
 //! x̃_p for every database point p ∈ P in main memory, along with storing
 //! the graph on the SSD" [DiskANN, NeurIPS 2019 §3.1]. They are also kept
 //! in code pages, a chunk directory of their own, so an index reopens
-//! without re-encoding, and the codebook in a chain of pages.
+//! without re-encoding, and the codebook in a chain of pages. Each code
+//! page holds room for as many codes as a page takes, the last one's room
+//! past its codes zeros.
 //!
 //! The memory is reserved of the database's budget (D38). A codebook is
 //! trained when a build loads the index, or by maintenance once an index
@@ -165,7 +167,12 @@ impl DiskAnn {
                 drop(content);
                 book.pages.push(&self.inner.pool, self.inner.file, page.0)?;
             }
-            *self.inner.pool.write(self.inner.file, PageId(book.pages.page(chunk)?))? = piece.to_vec();
+            // Every code page holds room for `per` codes, as `set_code`
+            // keeps it and `open_codes` reads it: the last one's room past
+            // its codes is zeros.
+            let mut content = piece.to_vec();
+            content.resize(per.saturating_mul(width), 0);
+            *self.inner.pool.write(self.inner.file, PageId(book.pages.page(chunk)?))? = content;
         }
         let old = std::mem::take(&mut book.chain);
         old.iter().try_for_each(|&p| self.inner.pool.free(self.inner.file, p))?;
