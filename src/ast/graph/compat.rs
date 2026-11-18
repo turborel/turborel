@@ -51,32 +51,3 @@ pub struct GraphMeasure {
     /// Where it is written.
     pub at: usize,
 }
-
-/// \[EXTENSION\] [GS R16.8] A hint of a GRAPH_TABLE, written in a
-/// bracketed comment that begins with a plus sign just after its left
-/// parenthesis. A hint never changes the rows a match gives.
-#[derive(Debug, Clone)]
-pub enum GraphHint {
-    /// GRAPH_START ( x ): start the search at node variable x.
-    Start(String),
-    /// GRAPH_DIRECTION ( x , REVERSE ): search from x backward.
-    Reverse(String),
-    /// NO_WCOJ: no worst-case optimal join.
-    NoWcoj,
-    /// USE_ADJACENCY ( t ): expand through edge table t's adjacency index.
-    UseAdjacency(TableName),
-    /// PATH_ALGO ( BIBFS | DFS | DIJKSTRA ).
-    PathAlgo(PathAlgorithm),
-}
-
-/// \[EXTENSION\] [GS R16.8, §15] The path search algorithm PATH_ALGO
-/// names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PathAlgorithm {
-    /// BIBFS: bidirectional breadth-first search.
-    BiBfs,
-    /// DFS: depth-first search.
-    Dfs,
-    /// DIJKSTRA: least cost first.
-    Dijkstra,
-}

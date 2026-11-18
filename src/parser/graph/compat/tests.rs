@@ -3,8 +3,8 @@
 
 use super::super::tests::shape;
 use crate::ast::{
-    GraphColumn, GraphHint, GraphPattern, GraphTable, MatchClause, PathAlgorithm, Predicate, QueryExpression, QuerySpecification,
-    SearchCondition, SelectList, SelectSublist, TableReference, ValueExpression,
+    GraphColumn, GraphPattern, GraphTable, MatchClause, PathAlgorithm, Predicate, QueryExpression, QuerySpecification, SearchCondition,
+    SelectList, SelectSublist, TableReference, ValueExpression,
 };
 use crate::error::Result;
 use crate::lexer::Tok;
@@ -137,12 +137,12 @@ fn hints_are_read_and_checked() {
     let t1 = graph_table(
         "SELECT * FROM GRAPH_TABLE (/*+ GRAPH_START(a) NO_WCOJ PATH_ALGO(BIBFS) SOME_OTHER(1) */ g MATCH (a) -> (b) COLUMNS (a.x))",
     );
-    assert!(
-        matches!(t1.hints.as_slice(), [GraphHint::Start(a), GraphHint::NoWcoj, GraphHint::PathAlgo(PathAlgorithm::BiBfs)] if a == "A"),
-        "{:?}",
-        t1.hints
-    );
-    assert_eq!(refused("SELECT * FROM GRAPH_TABLE (/*+ GRAPH_START(z) */ g MATCH (a) -> (b) COLUMNS (a.x))"), -103_i32);
+    assert_eq!(t1.hints.start.as_ref().map(|(s, _)| s.as_str()), Some("A"));
+    assert!(t1.hints.no_wcoj && t1.hints.path_algo == Some(PathAlgorithm::Bibfs), "{:?}", t1.hints);
+    let t3 =
+        graph_table("SELECT * FROM GRAPH_TABLE (/*+ USE_ADJACENCY(e1) */ g MATCH (a) -> (b) COLUMNS (a.x) OPTIONS (USE_ADJACENCY (e2)))");
+    assert_eq!(t3.hints.use_adjacency.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>(), ["E2", "E1"]);
+    assert_eq!(refused("SELECT * FROM GRAPH_TABLE (/*+ PATH_ALGO(SIDEWAYS) */ g MATCH (a) -> (b) COLUMNS (a.x))"), -102_i32);
     let t2 = graph_table("SELECT * FROM GRAPH_TABLE (g MATCH (a) -> (b) COLUMNS (a.x))");
     assert!(t2.hints.is_empty());
 }

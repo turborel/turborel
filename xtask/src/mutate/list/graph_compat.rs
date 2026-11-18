@@ -1,13 +1,13 @@
 //! The mutations of the compatibility syntax of property graphs
 //! (RULES.md R-TEST-9): SQL Server's MATCH as GPML and its lowering to a
 //! GRAPH_TABLE joined with the FROM clause's tables, Cypher's lengths,
-//! labels and restrictor, PGQL's one graph, the frames that take a
-//! query's variables and GRAPH PATH aggregates, and hints.
+//! labels and restrictor, PGQL's one graph, and the frames that take a
+//! query's variables and GRAPH PATH aggregates.
 
 use super::{Mutation, Package};
 
 /// The mutations of the compatibility syntax, in the order they run.
-pub const GRAPH_COMPAT: [Mutation; 22] = [
+pub const GRAPH_COMPAT: [Mutation; 21] = [
     Mutation {
         name: "cypher-range-upper",
         package: Package::Core,
@@ -186,16 +186,6 @@ pub const GRAPH_COMPAT: [Mutation; 22] = [
         original: "return set_function(LISTAGG, arg, separator, at);",
         replacement: "return set_function(ARRAY_AGG, arg, None, at);",
         integration: &["graph_compat::shortest_path_aggregates_its_path_10_1"],
-        unit: &[],
-    },
-    Mutation {
-        name: "hint-node-variable",
-        package: Package::Core,
-        breaks: "a hint naming an edge variable is accepted [GS R16.8]",
-        file: "src/parser/graph/compat/hints.rs",
-        original: "is_none_or(|e| e.kind != Declared::Vertex)",
-        replacement: "is_none_or(|e| e.kind == Declared::Path)",
-        integration: &["graph_compat::oracle::hints_change_no_row_10_2"],
         unit: &[],
     },
     Mutation {

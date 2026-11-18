@@ -14,6 +14,7 @@
 mod compat;
 mod element;
 mod expression;
+mod hints;
 mod normalize;
 mod pattern;
 mod syntax;
@@ -22,7 +23,6 @@ mod syntax;
 mod tests;
 
 pub(in crate::parser) use compat::Frame;
-use compat::checked_hints;
 pub use compat::{LAST_NODE_PREFIX, MATCH_TABLE, checked_graph_table, element_key};
 pub use normalize::normalize;
 use syntax::check;
@@ -30,8 +30,8 @@ pub use syntax::{Declared, Degree, Exposed, Exposure, exposure};
 
 use super::Parser;
 use crate::ast::{
-    ColumnSpecification, GraphColumn, GraphLimits, GraphReference, GraphRows, GraphTable, GraphVariable, SystemTimeKind, SystemTimeRead,
-    TableName, TableReference, ValueExpression,
+    ColumnSpecification, GraphColumn, GraphHints, GraphLimits, GraphReference, GraphRows, GraphTable, GraphVariable, SystemTimeKind,
+    SystemTimeRead, TableName, TableReference, ValueExpression,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -97,20 +97,20 @@ impl Parser {
             table.system_time = Some(as_of);
         }
         check(&table)?;
-        checked_hints(&table)?;
         Ok(TableReference::Graph(Box::new(table)))
     }
 
     /// What GRAPH_TABLE's parentheses hold, and the right one.
     fn graph_table_body(&mut self, at: usize) -> Result<GraphTable> {
-        let hints = self.graph_hints()?;
+        let written = self.graph_hints()?;
         let graph = self.graph_reference()?;
         self.expect_kw(kw::MATCH)?;
         let pattern = self.graph_pattern()?;
         let rows = self.graph_rows()?;
         self.expect_word(super::json::COLUMNS)?;
         let columns = self.graph_columns()?;
-        let options = self.graph_limits()?;
+        let (options, mut hints) = self.graph_limits()?;
+        compat::merge_hints(&mut hints, written);
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(GraphTable { graph, pattern, rows, columns, correlation: None, system_time: None, options, hints, at })
     }
@@ -118,16 +118,18 @@ impl Parser {
     /// \[EXTENSION\] [GS §20] \[OPTIONS ( `<graph option>` \[, ...\] )\],
     /// each option at most once: MAX_PATH_LENGTH `n`,
     /// MAX_PATHS_PER_PARTITION `n`, MAX_SEARCH_STATES `n`, ON LIMIT
-    /// {ERROR | TRUNCATE}, DETERMINISTIC_PATHS.
-    fn graph_limits(&mut self) -> Result<GraphLimits> {
-        let mut limits = GraphLimits::default();
+    /// {ERROR | TRUNCATE}, DETERMINISTIC_PATHS; and the hints among them
+    /// (`graph/hints.rs`).
+    fn graph_limits(&mut self) -> Result<(GraphLimits, GraphHints)> {
+        let (mut limits, mut hints) = (GraphLimits::default(), GraphHints::default());
         if !self.accept_word(OPTIONS) {
-            return Ok(limits);
+            return Ok((limits, hints));
         }
         self.expect_delim(delim::LEFT_PAREN)?;
         loop {
             let at = self.here();
             let before = limits;
+            let mut hinted = false;
             if self.accept_word(MAX_PATH_LENGTH) && limits.max_path_length.is_none() {
                 limits.max_path_length = Some(self.unsigned_integer()?);
             } else if self.accept_word(MAX_PATHS_PER_PARTITION) && limits.max_paths_per_partition.is_none() {
@@ -143,8 +145,10 @@ impl Parser {
                 limits.truncate = Some(truncate);
             } else if self.accept_word(DETERMINISTIC_PATHS) && !limits.deterministic {
                 limits.deterministic = true;
+            } else {
+                hinted = self.graph_hint(&mut hints)?;
             }
-            if limits == before {
+            if limits == before && !hinted {
                 return Err(SqlError::at(Code::Syntax, at, "[EXTENSION] expected a GRAPH_TABLE option not yet written (GS §20)"));
             }
             if !self.accept_delim(delim::COMMA) {
@@ -152,7 +156,7 @@ impl Parser {
             }
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(limits)
+        Ok((limits, hints))
     }
 
     /// `<graph reference>` ::= `<graph name>` | \[EXTENSION\] LINE_GRAPH (

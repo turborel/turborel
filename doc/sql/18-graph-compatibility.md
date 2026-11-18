@@ -143,11 +143,13 @@ and `x.$EDGE_ID` are an element's identity too, its table's
 pseudo-column of a node or edge table's element.
 
 A comment that begins `/*+` just after GRAPH_TABLE's parenthesis holds
-hints. GRAPH_START (x) and GRAPH_DIRECTION (x, REVERSE) name where a
-search begins and which way it goes, NO_WCOJ asks for no worst-case
-optimal join, USE_ADJACENCY (t) names an edge table's adjacency index
-and PATH_ALGO (BIBFS | DFS | DIJKSTRA) a shortest path search. A hint
-changes no row, and a word that names no hint is passed over:
+hints, the ones its OPTIONS may write too. GRAPH_START (x) names the
+variable a search begins at, and GRAPH_DIRECTION (e, REVERSE) an edge
+variable walked from its destination. NO_WCOJ asks for no worst-case
+optimal join, USE_ADJACENCY (t) names an edge table's adjacency index,
+and PATH_ALGO (BFS | BIBFS | DFS | DIJKSTRA | MSBFS) a path search. A
+hint changes no row, and a word of the comment that names no hint is
+passed over:
 
 ```sql
 SELECT * FROM GRAPH_TABLE (/*+ GRAPH_START(a) PATH_ALGO(BIBFS) */ CHAIN

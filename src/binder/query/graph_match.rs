@@ -318,7 +318,7 @@ impl Scope<'_> {
             correlation,
             system_time: None,
             options: crate::ast::GraphLimits::default(),
-            hints: Vec::new(),
+            hints: crate::ast::GraphHints::default(),
             at,
         };
         checked_graph_table(&table)?;

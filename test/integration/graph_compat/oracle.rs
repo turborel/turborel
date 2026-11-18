@@ -51,7 +51,7 @@ fn json_property_dot_notation_10_2() {
 fn hints_change_no_row_10_2() {
     let (_db, s) = people();
     let plain = "SELECT a, b FROM GRAPH_TABLE (CHAIN MATCH ANY SHORTEST (x)-[e]->+(y) COLUMNS (x.name AS a, y.name AS b))";
-    let hinted = "SELECT a, b FROM GRAPH_TABLE (/*+ GRAPH_START(x) GRAPH_DIRECTION(y, REVERSE) NO_WCOJ USE_ADJACENCY(FOLLOWS) \
+    let hinted = "SELECT a, b FROM GRAPH_TABLE (/*+ GRAPH_START(x) GRAPH_DIRECTION(e, REVERSE) NO_WCOJ USE_ADJACENCY(FOLLOWS) \
                   PATH_ALGO(DFS) PARALLEL(4) */ CHAIN MATCH ANY SHORTEST (x)-[e]->+(y) COLUMNS (x.name AS a, y.name AS b))";
     assert_eq!(rows(&s, hinted), rows(&s, plain));
     for algo in ["BIBFS", "DIJKSTRA"] {
@@ -60,10 +60,10 @@ fn hints_change_no_row_10_2() {
         );
         assert_eq!(rows(&s, &q), rows(&s, plain));
     }
-    let q = "SELECT * FROM GRAPH_TABLE (/*+ GRAPH_START(e) */ CHAIN MATCH (x)-[e]->(y) COLUMNS (x.id))";
-    assert_eq!(refused(&s, q, "no node variable"), -103);
+    let q = "SELECT * FROM GRAPH_TABLE (/*+ GRAPH_START(z) */ CHAIN MATCH (x)-[e]->(y) COLUMNS (x.id))";
+    assert_eq!(refused(&s, q, "no variable"), -103);
     let q = "SELECT * FROM GRAPH_TABLE (/*+ PATH_ALGO(SIDEWAYS) */ CHAIN MATCH (x)-[e]->(y) COLUMNS (x.id))";
-    assert_eq!(refused(&s, q, "BIBFS"), -102);
+    assert_eq!(refused(&s, q, "PATH_ALGO"), -102);
 }
 
 /// Verifies: GS R5.1: `$node_id` and `$edge_id` of a variable inside

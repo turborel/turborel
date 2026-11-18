@@ -35,7 +35,7 @@ use crate::ast::{
 use crate::error::{Code, Result, SqlError};
 use crate::parser::Exposure;
 use crate::value::Decimal;
-pub(in crate::parser) use hints::checked_hints;
+pub(in crate::parser) use hints::merge_hints;
 pub use server::LAST_NODE_PREFIX;
 
 /// The row counts of LIMIT and OFFSET, each if written.
@@ -205,7 +205,7 @@ fn graph_table(
         correlation: Some(table.to_owned()),
         system_time: None,
         options: crate::ast::GraphLimits::default(),
-        hints: Vec::new(),
+        hints: crate::ast::GraphHints::default(),
         at,
     };
     super::syntax::check(&t)?;

@@ -11,6 +11,7 @@
 mod columns;
 mod elements;
 mod functions;
+mod hints;
 mod pattern;
 mod remap;
 mod scope;
@@ -213,6 +214,7 @@ impl Assembled {
         };
         let operand_count = operands.exprs.len();
         let options = columns::options(g);
+        let hints = hints::checked(&g.hints, &self.vars, &self.tables)?;
         Ok(GraphMatch {
             graph: desc.name.clone(),
             tables: self.tables,
@@ -228,6 +230,7 @@ impl Assembled {
             rows: self.rows,
             columns,
             options,
+            hints,
         })
     }
 }

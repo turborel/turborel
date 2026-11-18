@@ -84,7 +84,7 @@ pub use expression::{
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use graph::{
-    Cheapest, Directions, EdgePattern, ElementPattern, GRAPH_FUNCTIONS, GraphColumn, GraphFunction, GraphFunctionName, GraphHint,
+    Cheapest, Directions, EdgePattern, ElementPattern, GRAPH_FUNCTIONS, GraphColumn, GraphFunction, GraphFunctionName, GraphHints,
     GraphLimits, GraphMeasure, GraphPattern, GraphPredicate, GraphReference, GraphRows, GraphTable, GraphVariable, LabelExpression,
     MatchClause, MatchMode, ORIENTATIONS, Orientation, OrientationForm, ParenthesizedPath, PathAlgorithm, PathEnd, PathExpression,
     PathFactor, PathPattern, PathPrefix, PathPrimary, PathTable, PathTerm, PropertySpec, Quantifier, QuantifierSugar, Restrictor, SameKind,
