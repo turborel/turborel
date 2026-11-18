@@ -116,6 +116,7 @@ CONFORMANCE.md one by one as they are done.
 
 ### Spatial
 
+Nothing is open.
 
 ### Graph
 
