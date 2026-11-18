@@ -1953,7 +1953,7 @@ built in (RULES.md D87). Its types FULLTEXT and FT_PATTERN, the FullText
 methods and FullText_to_Character, Contains, Rank, the thesaurus tables
 of clause 8 and FT_INFORMATION_SCHEMA's views FT_FEATURES and FT_SCHEMATA
 are implemented, as is the whole pattern language of §5.3.1. The manual
-is [doc/sql/fulltext.md](doc/sql/fulltext.md).
+is [doc/sql/08-fulltext.md](doc/sql/08-fulltext.md).
 
 A method is written `doc.Contains(p)`, or as a call, `CONTAINS(doc, p)`,
 and `NEW FullText(t)` is `FULLTEXT(t)`. LANGUAGE is a reserved word, so

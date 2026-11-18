@@ -400,10 +400,10 @@ fn main() -> Result<()> {
     let db = Database::new();
     db.register_scalar_function(Box::new(Twice))?;
     let ann = db.session("ANN");
-    assert_eq!(ann.run("VALUES TWICE(21)").unwrap_err().sqlcode(), -102);
-    ann.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned()))?;
     let mut rows = ann.open_cursor("VALUES TWICE(21)")?;
     assert_eq!(rows.fetch()?.map(|r| r[0].to_string()), Some("42".to_owned()));
+    ann.set_setting("SQL.FUNCTION_CALLS", &Value::Char("OFF".to_owned()))?;
+    assert_eq!(ann.run("VALUES TWICE(21)").unwrap_err().sqlcode(), -102);
     Ok(())
 }
 ```
@@ -454,7 +454,6 @@ fn main() -> Result<()> {
     let db = Database::new();
     db.register_scalar_function(Box::new(Width))?;
     let ann = db.session("ANN");
-    ann.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned()))?;
     let mut rows = ann.open_cursor("VALUES WIDTH('abc')")?;
     assert_eq!(rows.fetch()?.map(|r| r[0].to_string()), Some("5".to_owned()));
     assert_eq!(ann.open_cursor("VALUES WIDTH(1)").err().map(|e| e.sqlcode()), Some(-103));
@@ -569,7 +568,7 @@ The example defines its own integer function and index. An application
 must register both before using them; `NEXT_TO` is not a built-in
 function. A plug-in supplies the search for an arbitrary Boolean function.
 The built-in geometry lookup has the separate contract described under
-[Geometry values](#geometry-values).
+[Spatial data](#spatial-data-extension).
 
 The function and index opt in separately:
 
@@ -751,7 +750,6 @@ fn main() -> Result<()> {
     db.register_index_method(Box::new(CandidateMethod))?;
     db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE ITEMS (N INTEGER)")?;
     let ann = db.session("ANN");
-    ann.run("SET SQL.FUNCTION_CALLS = 'ON'")?;
     for n in 0..ROWS {
         ann.run(&format!("INSERT INTO ITEMS VALUES ({n})"))?;
     }
@@ -790,7 +788,7 @@ recheck: true
 
 Rank scores a document by BM25, or by the ranking its column's
 full-text index names in FULLTEXT.RANKING ([Full-Text
-Search](../sql/fulltext.md#ranking)). A program adds a ranking with
+Search](../sql/08-fulltext.md#ranking)). A program adds a ranking with
 `register_ranking`, an implementation of
 `turborel::fulltext::rank::Ranking`. Its name is a regular identifier in
 upper case, not one built in or registered already, or registering it
@@ -859,17 +857,16 @@ Output:
 3 0E0
 ```
 
-## Geometry values
+## Spatial data *(extension)*
 
 Register GEOMETRY and its functions before opening a database containing
 spatial values. This example also shows a host application checking a
 courier route against a roadworks area, using the same local metre grid
-as the [SQL workflows](../data/spatial/00-sample-data.md):
+as the [Spatial Guide](../data/02-spatial.md):
 
 ```rust
 use turborel::db::Database;
 use turborel::geometry::{FUNCTIONS, Geometry, GeometryType};
-use turborel::value::Value;
 
 fn main() -> Result<(), turborel::error::SqlError> {
     let db = Database::new();
@@ -877,7 +874,6 @@ fn main() -> Result<(), turborel::error::SqlError> {
     for function in FUNCTIONS {
         db.register_scalar_function(Box::new(function))?;
     }
-    db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned()))?;
 
     let route = Geometry::from_wkt("LINESTRING (0 200, 1000 200)", 0)?;
     let roadworks = Geometry::rectangle([300.0, 100.0], [500.0, 300.0], 0)?;
@@ -898,7 +894,7 @@ Route: LINESTRING (0 200, 1e3 200)
 ```
 
 `stored_value` is the value to bind through the ordinary prepared-statement
-API. The spatial test checks the whole line: both route endpoints are
+API. The spatial test checks the whole line. Both route endpoints are
 outside the roadworks, but the path between them crosses it. It does not
 find a replacement route or calculate travel time.
 
@@ -928,8 +924,8 @@ The codecs accept at most 16 MiB of input, 100,000 components, rings and
 coordinates in total, and 16 geometry levels including the root. Counts
 and input lengths are checked before allocating from them. SQL functions
 retain the existing SQL string limits. Formats, errors and semantics are
-specified in the [SQL reference](../sql/spatial.md); the
-[Spatial Guide](../data/spatial/README.md) contains SQL workflows.
+specified in the [SQL reference](../sql/10-spatial.md); the
+[Spatial Guide](../data/02-spatial.md) contains SQL workflows.
 
 The version-1 payload contains the SRID and canonical little-endian WKB.
 Unknown versions and noncanonical stored encodings are refused. Existing
