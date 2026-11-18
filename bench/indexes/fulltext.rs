@@ -100,6 +100,6 @@ fn document(row: u64) -> String {
 
 /// The TEXT_MATCHES lookup of `words`.
 fn matches(words: &str) -> Probe {
-    let predicate = Box::new(Predicate { function: ScalarRef(Arc::new(TextMatches)), column: 0, argument: 0 });
+    let predicate = Box::new(Predicate { function: ScalarRef(Arc::new(TextMatches)), column: 0, argument: Some(0) });
     Probe::Predicate { predicate, value: Value::Char(words.to_owned()) }
 }

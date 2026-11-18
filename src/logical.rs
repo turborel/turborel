@@ -326,13 +326,18 @@ pub struct Unnest<P> {
     pub names: Vec<String>,
     /// The rows each gives the rows of its collections.
     pub input: P,
+    /// [ISO/IEC 9075-2:2023 §7.11] Of a `<JSON table>`, which is planned
+    /// as a collection derived table is, laterally: the table, its
+    /// operands being `collections` (`JsonTable::open`), its columns its
+    /// own, and `spread` and `ordinality` none.
+    pub json: Option<std::sync::Arc<crate::json::JsonTable>>,
 }
 
 impl<P> Unnest<P> {
     /// It apart from its input, and its input.
     pub fn split(self) -> (Unnest<()>, P) {
-        let Unnest { collections, spread, ordinality, outer, names, input } = self;
-        (Unnest { collections, spread, ordinality, outer, names, input: () }, input)
+        let Unnest { collections, spread, ordinality, outer, names, input, json } = self;
+        (Unnest { collections, spread, ordinality, outer, names, input: (), json }, input)
     }
 
     /// It over `f` of its input, the rest copied.
@@ -344,6 +349,7 @@ impl<P> Unnest<P> {
             outer: self.outer.clone(),
             names: self.names.clone(),
             input: f(&self.input),
+            json: self.json.clone(),
         }
     }
 
@@ -351,15 +357,16 @@ impl<P> Unnest<P> {
     /// ordinal's.
     pub fn width(&self) -> usize {
         let elements = self.spread.iter().map(|s| s.unwrap_or(1)).sum::<usize>();
-        elements.saturating_add(usize::from(self.ordinality))
+        let json = self.json.as_ref().map_or(0, |j| j.width);
+        elements.saturating_add(usize::from(self.ordinality)).saturating_add(json)
     }
 }
 
 impl Unnest<()> {
     /// The same collection derived table over `input`.
     pub fn over<Q>(self, input: Q) -> Unnest<Q> {
-        let Unnest { collections, spread, ordinality, outer, names, input: () } = self;
-        Unnest { collections, spread, ordinality, outer, names, input }
+        let Unnest { collections, spread, ordinality, outer, names, input: (), json } = self;
+        Unnest { collections, spread, ordinality, outer, names, input, json }
     }
 }
 

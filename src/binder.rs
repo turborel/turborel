@@ -43,6 +43,7 @@ pub(crate) use dependencies::{DescribedKey, described_key};
 mod interval;
 mod invocation;
 mod json;
+mod key_expression;
 mod listagg;
 mod lobs;
 mod merge;
@@ -106,6 +107,7 @@ pub use invocation::{
     Candidate, FunctionBody, alike, bind_function_body, definition_of, functions_named, grantably_held, held, resolve_procedure,
     routine_definition, sql_statement,
 };
+pub use key_expression::bind_key;
 pub use merge::{BoundAction, BoundMerge, BoundWhen, bind_merge};
 pub use parameters::{assigned_argument, bind_argument};
 pub(crate) use psm::{Frame, bind_program};

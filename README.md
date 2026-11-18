@@ -59,9 +59,16 @@ behind it, and each can be replaced or added to.
   the statistical set functions and math functions of T621.
 - Arrays, row types, distinct types, DECFLOAT, regular expressions,
   sequences and identity columns.
-- SQL/JSON's JSON_VALUE, JSON_QUERY and JSON_EXISTS, over JSON text, with
-  the SQL/JSON path language, strict and lax, and its filters; IS JSON,
-  JSON_OBJECT, JSON_ARRAY, JSON_OBJECTAGG and JSON_ARRAYAGG.
+- SQL/JSON's JSON_VALUE, JSON_QUERY and JSON_EXISTS, with the SQL/JSON
+  path language, strict and lax, and its filters; IS JSON, JSON_OBJECT,
+  JSON_ARRAY, JSON_OBJECTAGG and JSON_ARRAYAGG.
+- A JSON type stored parsed, with `doc.items[0].name` accessors, and
+  JSON in comparisons, grouping and ordering.
+- JSON_TABLE, with nested columns, plans and PASSING.
+- A json index method answering JSON_EXISTS, JSON_VALUE and
+  JSON_CONTAINS by an inverted index of paths and values.
+- Indexes of expressions, such as `UPPER(name)`, `a + b` or a JSON_VALUE
+  that cannot raise, used for lookups and ORDER BY.
 - Multisets, with MULTISET UNION, EXCEPT and INTERSECT, MEMBER,
   SUBMULTISET and IS A SET, and COLLECT, FUSION and INTERSECTION.
 - Structured types with attributes, methods and subtypes, typed tables

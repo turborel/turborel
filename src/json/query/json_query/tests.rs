@@ -127,19 +127,18 @@ fn no_item_is_as_on_empty_says() {
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §6.35 SR5, §9.49 GR6] an
-/// exception, of the path, of a context item that is no JSON text, of an
-/// item with no JSON text or of a text too long, is replaced as ON ERROR
-/// says: NULL, the default, the null value; EMPTY ARRAY and EMPTY OBJECT
-/// their text; ERROR raises it.
+/// exception, of the path, of a context item that is no JSON text, or of
+/// an item with no JSON text, is replaced as ON ERROR says: NULL, the
+/// default, the null value; EMPTY ARRAY and EMPTY OBJECT their text;
+/// ERROR raises it.
 #[test]
 fn an_exception_is_replaced_as_on_error_says() {
     let short = DataType::varying(3);
     let date = typed("2020-01-02", &DataType::Date);
-    let cases: [Case<'_>; 4] = [
+    let cases: [Case<'_>; 3] = [
         (text("{}"), "strict $.a", &[], "2203A"),
         (text("{"), "lax $", &[], "22032"),
         (text("0"), "lax $d", &[("d", date, false)], "22032"),
-        (text(r#"{"a": [1, 2]}"#), "lax $.a", &[], "22001"),
     ];
     for (context, path, passing, expected) in cases {
         let with = |on_error| {
@@ -195,4 +194,29 @@ fn the_status_in_is_replaced_or_raised() {
     assert_eq!(serialize_sequence(rule, &options).unwrap_err().sqlcode(), -103_i32);
     let e = on(&text("1"), "lax $x", &[], |common| json_query(common, &options)).unwrap_err();
     assert_eq!(e.sqlcode(), -103_i32);
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §9.43 GR2a iii] [ISO/IEC 9075-2:2023
+/// §9.49 GR5c, GR6] a JSON text longer than the returned type is raised,
+/// SQLSTATE 22001, whatever ON ERROR says: §9.43 raises it rather than
+/// return it as the STATUS GR6 replaces. A string cast with OMIT QUOTES
+/// is a cast's exception, which ON ERROR replaces \[GR5b i\]. MC/DC of the
+/// 22001 raised: of the serialization raised, of the cast replaced.
+/// Regression: NULL ON ERROR gave the null value before the fix.
+#[test]
+fn a_text_too_long_is_raised_whatever_on_error_says() {
+    let short = DataType::varying(3);
+    for on_error in [QueryBehavior::Null, QueryBehavior::EmptyArray, QueryBehavior::EmptyObject, QueryBehavior::Error] {
+        let options = QueryOptions { returning: &short, on_error, ..implicit() };
+        let e = query(&text(r#"{"a": [1, 2]}"#), "lax $.a", &options).unwrap_err();
+        assert_eq!(e.sqlstate().as_str(), "22001", "{on_error:?}");
+        assert_eq!(e.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.43 GR2a iii"));
+    }
+    let omit = QueryOptions { returning: &short, quotes: Quotes::Omit, on_error: QueryBehavior::Null, ..implicit() };
+    let (cut, warning) = query(&text(r#""abcdef""#), "lax $", &omit).unwrap();
+    assert_eq!(
+        (cut.to_string().as_str(), warning.map(|w| w.as_str().to_owned())),
+        ("abc", Some("01004".to_owned())),
+        "OMIT QUOTES casts, which warns"
+    );
 }

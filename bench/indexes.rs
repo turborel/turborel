@@ -2,11 +2,12 @@
 //! database uses: "btree" (`index/blink.rs`) and "hash" (`index/hash.rs`),
 //! entries added under scattered integer keys, found again by equality as
 //! a query's probe and as a UNIQUE check, on one and on several threads,
-//! in a buffer pool that holds every index; and "fulltext"
+//! in a buffer pool that holds every index; "fulltext"
 //! (`index/fulltext.rs`), documents added and searched (`fulltext.rs`);
-//! and the vector methods, built and searched by a sweep of their knobs
-//! (`vector.rs`). TURBOREL_INDEXES names one of btree, hash, fulltext and
-//! vector to run it alone. Run with `cargo xtask bench`, on the harness
+//! "json" (`index/json.rs`), JSON_EXISTS answered by the index beside a
+//! scan (`json.rs`); and the vector methods, built and searched by a sweep
+//! of their knobs (`vector.rs`). TURBOREL_INDEXES names one of btree, hash,
+//! fulltext, json and vector to run it alone. Run with `cargo xtask bench`, on the harness
 //! (RULES.md R-BENCH-1).
 
 #![allow(
@@ -26,6 +27,8 @@ mod fulltext;
 mod harness;
 #[path = "indexes/vector.rs"]
 mod vector;
+#[path = "indexes/json.rs"]
+mod json;
 
 use std::sync::Arc;
 
@@ -57,6 +60,9 @@ fn main() {
     }
     if runs("vector") {
         vector::workloads(&bench);
+    }
+    if runs("json") {
+        json::workloads(&bench);
     }
 }
 

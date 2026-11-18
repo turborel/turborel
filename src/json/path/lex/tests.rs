@@ -210,8 +210,8 @@ fn what_is_no_numeric_literal() {
 /// Verifies: [ISO/IEC 9075-2:2023 §9.45 Conformance Rule 1,
 /// GR1a] [ECMAScript 5.1 §7.8.3] Feature T840: a HexIntegerLiteral, `0x`
 /// or `0X` (MC/DC of `'x' | 'X'`: each) and hexadecimal digits of either case, is the exact number of
-/// its MV, of scale 0; of more than 18 decimal digits a DECFLOAT rounded to
-/// 34; past every DECFLOAT, SQLCODE -900. It is no `<unsigned integer>`.
+/// its MV, of scale 0; of more than 18 decimal digits a DECFLOAT of at most
+/// 34 significant digits, held exactly; past that, SQLCODE -900. It is no `<unsigned integer>`.
 #[test]
 fn hex_integer_literals_are_exact_numbers() {
     assert_eq!(exact_of("0x1F"), (31_i128, 0_u32));
@@ -219,9 +219,11 @@ fn hex_integer_literals_are_exact_numbers() {
     assert_eq!(exact_of("0x0"), (0_i128, 0_u32));
     assert_eq!(exact_of("0x000010"), (16_i128, 0_u32));
     assert_eq!(exact_of("0xDE0B6B3A763FFFF"), (999_999_999_999_999_999_i128, 0_u32));
-    let Value::DecFloat(big) = number("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF") else { panic!("a DECFLOAT") };
-    let expected = DecFloat::of_digits(false, "340282366920938463463374607431768211455", 0, MAX_DECFLOAT_PRECISION).unwrap();
+    let Value::DecFloat(big) = number("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFF") else { panic!("a DECFLOAT") };
+    let expected = DecFloat::of_digits(false, "5192296858534827628530496329220095", 0, MAX_DECFLOAT_PRECISION).unwrap();
     assert_eq!(big.to_string(), expected.to_string());
+    // Regression: of 39 significant digits it was rounded to 34 before the fix.
+    assert_eq!(refused("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF").sqlcode(), -900_i32);
     let huge = format!("0x{}", "F".repeat(6000));
     assert_eq!(refused(&huge).sqlcode(), -900_i32);
     assert_eq!(refused(&format!("0x1{}", "0".repeat(5200))).sqlcode(), -900_i32);

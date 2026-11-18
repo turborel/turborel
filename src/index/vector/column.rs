@@ -127,6 +127,7 @@ pub(crate) fn default_desc(method: &str) -> IndexDesc {
         options: Vec::new(),
         collations: Vec::new(),
         nulls: false,
+        expressions: Vec::new(),
     }
 }
 

@@ -20,6 +20,7 @@ mod collations;
 mod columns;
 mod constraints;
 mod domains;
+mod key_expressions;
 mod keys;
 mod memory;
 mod modules;
@@ -37,6 +38,7 @@ pub use collations::CollationDesc;
 pub use columns::{ColumnDefault, ColumnDesc, ColumnDomain, Generated, Generation, Identity};
 pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, MatchType, ReferentialAction};
 pub use domains::{DomainDesc, UsageDesc, usage_held};
+pub use key_expressions::{EXPRESSION_PART, KeyExpression};
 pub use keys::KeyShape;
 pub use memory::MemoryCatalog;
 pub use modules::{ModuleDesc, module_of_schema, module_schema, routine_path};
@@ -262,7 +264,9 @@ pub struct IndexDesc {
     pub name: String,
     /// The table indexed.
     pub table: QualifiedName,
-    /// The positions, in the table, of the indexed columns.
+    /// The positions, in the table, of the indexed columns: of each key
+    /// part, its column's, or `EXPRESSION_PART` of one that is an
+    /// expression (`expressions`).
     pub columns: Vec<usize>,
     /// The name of the `IndexMethod` that builds and searches the index.
     pub method: String,
@@ -283,6 +287,9 @@ pub struct IndexDesc {
     /// is true [X3.135-1986 §5.11 GR2]. Derived from the table's
     /// constraints, and not stored (`catalog/keys.rs`).
     pub nulls: bool,
+    /// \[EXTENSION\] Its key parts that are expressions, in key order
+    /// (`catalog/key_expressions.rs`, RULES.md D92).
+    pub expressions: Vec<KeyExpression>,
 }
 
 /// \[DESIGN\] Where schemas, tables and indexes are described.

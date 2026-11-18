@@ -13,15 +13,25 @@
 //!
 //! A call's arguments are its operands' values in this order: the context
 //! item's, each PASSING argument's, then the DEFAULT values of ON EMPTY
-//! and of ON ERROR, of those that are DEFAULT.
+//! and of ON ERROR, of those that are DEFAULT and that the binder passes
+//! as arguments: those that can raise no exception nor draw a value. The
+//! others are evaluated only when taken (`functions/json/lazy.rs`).
 
 mod aggregate;
 mod construct;
+mod contains;
+mod index_safe;
+mod lazy;
 mod operands;
+mod probe;
 
 pub use aggregate::{JsonArrayAggregate, JsonObjectAggregate};
+pub(crate) use construct::OPERANDS_PER_MEMBER;
 pub use construct::{Construction, IsJsonCall, JSON_ARRAY, JSON_ARRAYAGG, JSON_OBJECT, JSON_OBJECTAGG, JsonConstruct};
+pub use contains::{JSON_CONTAINS, JsonContains};
+pub(crate) use lazy::{JsonCastFails, JsonValueTaken, TAKEN_EMPTY, TAKEN_VALUE};
 pub(crate) use operands::{input_type, json_text, name_type, output_type};
+pub use probe::{JsonOperator, JsonProbe, OnError};
 
 use super::ScalarFunction;
 use crate::error::{Code, Result, SqlError};
@@ -101,6 +111,17 @@ pub struct JsonCall {
 }
 
 impl JsonCall {
+    /// The `<JSON argument>`s of the values `values`, the PASSING
+    /// arguments' in order.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if there are fewer values than arguments.
+    fn passing_of<'a>(&'a self, values: &'a [Value]) -> Result<Vec<Passing<'a>>> {
+        let values = values.get(..self.passing.len()).ok_or_else(arity)?;
+        Ok(self.passing.iter().zip(values).map(|((name, format_json), value)| Passing { name, value, format_json: *format_json }).collect())
+    }
+
     /// The call of `operation`, of the path expression `text` parsed to
     /// `path`, and of the PASSING arguments `passing`, each its
     /// identifier's value and whether it is FORMAT JSON.
@@ -210,6 +231,15 @@ impl ScalarFunction for JsonCall {
     fn name(&self) -> &str {
         &self.label
     }
+    /// \[EXTENSION\] Its operator, path and behaviours, for an index
+    /// (`functions/json/probe.rs`).
+    fn json_probe(&self) -> Option<JsonProbe<'_>> {
+        Some(self.probe())
+    }
+    /// \[EXTENSION\] (`functions/json/index_safe.rs`, RULES.md D92).
+    fn index_safe(&self, args: &[crate::index::expression::KeyArgument<'_>]) -> bool {
+        self.key_safe(args)
+    }
     /// [§8.23] BOOLEAN; [§6.28 SR3, §6.35 SR2] the returned type. The
     /// binder checks the operands' types, by the operator's Syntax Rules.
     fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
@@ -245,12 +275,7 @@ impl ScalarFunction for JsonCall {
     fn call_warned(&self, args: &[Value], _temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Warned> {
         let (context, rest) = args.split_first().ok_or_else(arity)?;
         let (values, defaults) = rest.split_at_checked(self.passing.len()).ok_or_else(arity)?;
-        let passing: Vec<Passing<'_>> = self
-            .passing
-            .iter()
-            .zip(values)
-            .map(|((name, format_json), value)| Passing { name, value, format_json: *format_json })
-            .collect();
+        let passing = self.passing_of(values)?;
         let common = CommonSyntax { context, path: &self.path, passing: &passing };
         match &self.operation {
             JsonOperation::Exists(on_error) => json_exists(&common, *on_error).map(|value| (value, None)),

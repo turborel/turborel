@@ -248,6 +248,7 @@ fn diskann_rerank_gives_the_whole_list_or_the_rows_asked() {
         options: vec![("DISKANN.RERANK".into(), Value::Char("OFF".into()))],
         collations: Vec::new(),
         nulls: false,
+        expressions: Vec::new(),
     };
     index.reconfigure((&table, &off));
     assert_eq!(found(&index, &q, None).unwrap().unwrap().len(), K);

@@ -93,6 +93,7 @@ fn text_of(v: &Value) -> Result<Option<String>> {
         | Value::Row(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Extension(_) => Err(data("takes a character string where a text goes")),
     }
 }

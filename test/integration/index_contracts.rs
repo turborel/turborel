@@ -275,7 +275,7 @@ fn document(text: &str) -> Key {
 
 /// The ids a TEXT_MATCHES lookup of `words` selects in `index`, sorted.
 fn matched(index: &Arc<dyn Index>, words: &str) -> Vec<RowId> {
-    let predicate = Box::new(Predicate { function: ScalarRef(Arc::new(TextMatches)), column: 0, argument: 0 });
+    let predicate = Box::new(Predicate { function: ScalarRef(Arc::new(TextMatches)), column: 0, argument: Some(0) });
     let probe = Probe::Predicate { predicate, value: Value::Char(words.to_owned()) };
     let mut ids: Vec<RowId> = searched(index, &probe).unwrap().into_iter().map(|(_, id)| id).collect();
     ids.sort_unstable();

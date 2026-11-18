@@ -286,7 +286,8 @@ fn groups_set_operations_and_collections() {
     let values = |rows: usize| of(&db, &LogicalPlan::Values { rows: vec![vec![one(), one()]; rows], types: vec![DataType::Boolean; 2] });
     assert!(values(1).determines(&[], 1) && !values(2).determines(&[], 1));
     let unnest = |ordinality: bool, collection: Expr| {
-        let u = Unnest { collections: vec![collection], spread: vec![None], ordinality, outer: None, names: vec![], input: scan() };
+        let u =
+            Unnest { collections: vec![collection], spread: vec![None], ordinality, outer: None, names: vec![], input: scan(), json: None };
         of(&loose, &LogicalPlan::Unnest(Box::new(u)))
     };
     let ordered = unnest(true, Expr::Column(1));

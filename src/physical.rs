@@ -19,6 +19,7 @@ mod access;
 mod collated;
 mod cost;
 mod estimate;
+mod expression_index;
 mod indexed;
 mod join_probe;
 pub use join_probe::{JoinComparison, JoinProbe};
@@ -562,8 +563,8 @@ impl<'a> PhysicalPlanner<'a> {
         let inner: Vec<SortKey> = want
             .iter()
             .map(|k| {
-                let Some(Expr::Column(c)) = exprs.get(k.column) else { return None };
-                Some(SortKey { column: *c, ..*k })
+                let column = expression_index::ordered_by(self.db, exprs.get(k.column)?, input)?;
+                Some(SortKey { column, ..*k })
             })
             .collect::<Option<_>>()
             .unwrap_or_default();

@@ -20,10 +20,9 @@ use std::sync::Arc;
 
 use crate::error::{Code, Result, fail};
 use crate::json::Warned;
-use crate::lexer::kw;
 use crate::params::ParameterType;
 use crate::storage::{Floats, Ints, Texts};
-use crate::value::{DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled, Value};
+use crate::value::{DataType, Value};
 
 mod any_value;
 pub use any_value::ANY_VALUE;
@@ -70,12 +69,14 @@ pub use json::{
     Construction, IsJsonCall, JSON_ARRAY, JSON_ARRAYAGG, JSON_EXISTS, JSON_OBJECT, JSON_OBJECTAGG, JSON_QUERY, JSON_VALUE,
     JsonArrayAggregate, JsonCall, JsonConstruct, JsonObjectAggregate, JsonOperation, ValueSlot,
 };
+pub use json::{JSON_CONTAINS, JsonContains, JsonOperator, JsonProbe, OnError};
+pub(crate) use json::{JsonCastFails, JsonValueTaken, OPERANDS_PER_MEMBER, TAKEN_EMPTY, TAKEN_VALUE};
 pub(crate) use json::{input_type, json_text, name_type, output_type};
 mod regex;
 mod registry;
 mod rows;
-pub use rows::{FieldOf, RowOf};
 mod statistics;
+pub use rows::{FieldOf, RowOf};
 mod strings;
 pub use statistics::{PAIRED, Statistic, paired};
 mod structured;
@@ -83,10 +84,12 @@ pub use structured::{
     Constructed, Instanced, Keyed, Mutator, Observer, SPECIFICTYPE, SPECIFICTYPE_LENGTH, SpecificType, Treat, TreatReference, TypeTest,
 };
 mod sum;
+mod totals;
+pub use totals::AVG_EXTRA_SCALE;
+use totals::{Avg, Sum};
 mod trim;
 mod truths;
 mod width_bucket;
-use sum::{AvgAcc, SumAcc};
 
 pub use regex::{
     AFTER, CHARACTERS, FLAG, LIKE_REGEX, LikeRegex, OCCURRENCE, OCCURRENCES_REGEX, OCTETS, POSITION_REGEX, REGEX_FUNCTIONS, START,
@@ -199,6 +202,14 @@ pub trait ScalarFunction: Send + Sync {
     fn index_predicate(&self) -> bool {
         false
     }
+    /// \[EXTENSION\] Whether a call of `args` may be part of an index's key
+    /// (`index/expression.rs`, RULES.md D92): true promises that
+    /// it raises no exception condition for any values of their types,
+    /// those constant being these, and gives one value of equal ones,
+    /// whatever its session. False by default.
+    fn index_safe(&self, _args: &[crate::index::expression::KeyArgument<'_>]) -> bool {
+        false
+    }
     /// \[EXTENSION\] The value a call of this function is compared equal
     /// to where the call stands for a predicate, as SQL/MM Full-Text's
     /// Contains, an INTEGER, is compared with 1 [ISO/IEC 13249-2:2002
@@ -226,6 +237,14 @@ pub trait ScalarFunction: Send + Sync {
     /// relations, which the index answers as a superset (RULES.md D87).
     /// None, all of them, by default.
     fn probe_arguments(&self) -> Option<usize> {
+        None
+    }
+    /// \[EXTENSION\] Of a call of an SQL/JSON query operator, or of
+    /// JSON_CONTAINS, what an index reads of it: its operator, parsed path,
+    /// PASSING names and behaviours (`JsonProbe`), so the planner finds
+    /// rows of `JSON_EXISTS(doc, 'lax $.a')`, a call of one argument whose
+    /// path the function holds (RULES.md D34). None by default.
+    fn json_probe(&self) -> Option<JsonProbe<'_>> {
         None
     }
     /// \[EXTENSION\] A query whose ARRAY the binder gives a call as its
@@ -376,6 +395,15 @@ pub trait AggregateFunction: Send + Sync {
     fn label_suffix(&self) -> String {
         String::new()
     }
+    /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.6 GR5] The type a `<dynamic
+    /// parameter specification>` takes as field `position`, from 0, of its
+    /// argument, if its argument is a ROW, as the binder makes the argument
+    /// of a JSON aggregate; as its argument itself, of `position` 0, if
+    /// not. None where it takes none, where it is refused \[GR4\]. By
+    /// default none.
+    fn parameter_type(&self, _position: usize) -> Option<ParameterType> {
+        None
+    }
 }
 
 /// The running state of a set function over one group.
@@ -485,110 +513,6 @@ impl fmt::Debug for ScalarRef {
 impl fmt::Debug for AggregateRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0.name())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// The SQL-86 set functions [X3.135-1986 §5.8]
-// ---------------------------------------------------------------------------
-
-/// [X3.135-1986 §5.8 SR9c] implementor-defined: AVG of an exact numeric with scale S has
-/// scale S + `AVG_EXTRA_SCALE`, truncated toward zero.
-pub const AVG_EXTRA_SCALE: u32 = 2;
-
-fn not_character(name: &str, arg: Option<DataType>) -> Result<DataType> {
-    match arg.filter(|t| t.is_numeric() || matches!(t, DataType::Interval(_))) {
-        Some(t) => Ok(t),
-        None => fail(
-            Code::SyntaxRule,
-            format!("[X3.135-1986 §5.8 SR9a; ISO/IEC 9075:1992 §6.5 SR9a] the argument of {name} shall be a number or an interval"),
-        ),
-    }
-}
-
-/// SUM. [X3.135-1986 §5.8 SR9b] exact with scale S stays exact with scale S. [ISO/IEC 9075:1992 §6.5 GR2b iv]
-/// the sum, not each sum on the way to it, shall be within range (`sum.rs`). [X3.135-1986 §5.8 GR4c] null when S is
-/// empty.
-struct Sum;
-
-impl AggregateFunction for Sum {
-    fn name(&self) -> &'static str {
-        kw::SUM
-    }
-    fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
-        Ok(match not_character(kw::SUM, arg)? {
-            DataType::Exact { scale, .. } => DataType::Exact { precision: MAX_EXACT_PRECISION, scale, spelled: Spelled::Numeric },
-            // [ISO/IEC 9075:1992 §6.5 SR9e] of the interval's precision.
-            DataType::Interval(q) => DataType::Interval(q),
-            // [ISO/IEC 9075-2:2023 §10.9 SR7g v] DECFLOAT of 34 digits (IV170).
-            DataType::DecFloat { .. } => DataType::DecFloat { precision: MAX_DECFLOAT_PRECISION },
-            // [X3.135-1986 §5.8 SR9d]; `not_character` has refused the types not
-            // numbers or intervals.
-            DataType::Approximate { .. }
-            | DataType::Character { .. }
-            | DataType::Varying { .. }
-            | DataType::Binary { .. }
-            | DataType::VarBinary { .. }
-            | DataType::Lob { .. }
-            | DataType::Boolean
-            | DataType::Date
-            | DataType::Time { .. }
-            | DataType::Timestamp { .. }
-            | DataType::Array(_)
-            | DataType::Multiset(_)
-            | DataType::Structured(_)
-            | DataType::Reference(_)
-            | DataType::Row(_)
-            | DataType::Distinct(_)
-            | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
-        })
-    }
-    fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
-        Box::new(SumAcc::new(result))
-    }
-}
-
-/// AVG. [ISO/IEC 9075:1992 §6.5 GR2b ii] the average, which alone shall be within range (`sum.rs`): SQL-92 drops
-/// the range of the sum that [X3.135-1986 §5.8 GR4f] sets (RULES.md D32).
-struct Avg;
-
-impl AggregateFunction for Avg {
-    fn name(&self) -> &'static str {
-        kw::AVG
-    }
-    fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
-        Ok(match not_character(kw::AVG, arg)? {
-            DataType::Exact { scale, .. } => DataType::Exact {
-                precision: MAX_EXACT_PRECISION,
-                scale: scale.saturating_add(AVG_EXTRA_SCALE).min(MAX_EXACT_PRECISION),
-                spelled: Spelled::Numeric,
-            },
-            // [ISO/IEC 9075:1992 §6.5 SR9e] of the interval's precision.
-            DataType::Interval(q) => DataType::Interval(q),
-            // [ISO/IEC 9075-2:2023 §10.9 SR7g v] DECFLOAT of 34 digits (IV170).
-            DataType::DecFloat { .. } => DataType::DecFloat { precision: MAX_DECFLOAT_PRECISION },
-            // `not_character` has refused the types not numbers or intervals.
-            DataType::Approximate { .. }
-            | DataType::Character { .. }
-            | DataType::Varying { .. }
-            | DataType::Binary { .. }
-            | DataType::VarBinary { .. }
-            | DataType::Lob { .. }
-            | DataType::Boolean
-            | DataType::Date
-            | DataType::Time { .. }
-            | DataType::Timestamp { .. }
-            | DataType::Array(_)
-            | DataType::Multiset(_)
-            | DataType::Structured(_)
-            | DataType::Reference(_)
-            | DataType::Row(_)
-            | DataType::Distinct(_)
-            | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
-        })
-    }
-    fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
-        Box::new(AvgAcc::new(result))
     }
 }
 

@@ -97,7 +97,7 @@ impl IndexMethod for Method {
         true
     }
     fn supports_predicate(&self, predicate: &Predicate, columns: &[DataType]) -> bool {
-        let accepted = self.argument.is_none_or(|arg| arg == predicate.argument);
+        let accepted = self.argument.is_none_or(|arg| Some(arg) == predicate.argument);
         let integer = columns.get(predicate.column).is_some_and(|t| matches!(t, DataType::Exact { scale: 0, .. }));
         predicate.function.0.name() == FUNCTION && accepted && integer
     }
@@ -132,7 +132,7 @@ impl Index for Candidates {
         let Probe::Predicate { predicate, value } = probe else {
             return Arc::clone(&self.inner).search(probe, order);
         };
-        self.method.seen.lock().unwrap().push((predicate.column, predicate.argument, value.clone()));
+        self.method.seen.lock().unwrap().push((predicate.column, predicate.argument.unwrap_or_default(), value.clone()));
         let (predicate, value, lossy) = (predicate.clone(), value.clone(), self.method.lossy);
         let entries = Arc::clone(&self.inner).search(&Probe::All, order);
         Box::new(entries.filter(move |entry| match entry {
@@ -145,7 +145,7 @@ impl Index for Candidates {
 fn candidate(predicate: &Predicate, value: &Value, key: &Key, lossy: bool) -> bool {
     let (Some(Value::Exact(column)), Value::Exact(constant)) = (key.0.get(predicate.column), value) else { return false };
     let difference =
-        if predicate.argument == 0 { column.units.checked_sub(constant.units) } else { constant.units.checked_sub(column.units) };
+        if predicate.argument == Some(0) { column.units.checked_sub(constant.units) } else { constant.units.checked_sub(column.units) };
     difference == Some(1) || lossy && difference == Some(2)
 }
 

@@ -9,8 +9,10 @@
 //! `ast/json/construct.rs`.
 
 mod construct;
+mod typed;
 
 pub use construct::{IsJson, JsonAggregate, JsonConstructor, JsonMember, JsonOutput};
+pub use typed::JsonTyped;
 
 use super::{Subquery, TypeName, ValueExpression};
 use crate::json::{ExistsBehavior, QueryBehavior, Quotes, Wrapper};
@@ -145,6 +147,9 @@ pub enum JsonExpression {
     Query(Box<JsonOperator>),
     /// JSON_OBJECT or JSON_ARRAY [§6.34].
     Constructor(JsonConstructor),
+    /// [§6.36 to §6.41] A function of the JSON type, or the simplified
+    /// accessor (`ast/json/typed.rs`).
+    Typed(JsonTyped),
 }
 
 impl JsonExpression {
@@ -154,6 +159,7 @@ impl JsonExpression {
         match self {
             JsonExpression::Query(j) => j.for_each_child(f),
             JsonExpression::Constructor(c) => c.for_each_child(f),
+            JsonExpression::Typed(t) => t.for_each_child(f),
         }
     }
 
@@ -161,7 +167,9 @@ impl JsonExpression {
     pub fn subquery(&self) -> Option<&Subquery> {
         match self {
             JsonExpression::Constructor(JsonConstructor::ArrayQuery { query, .. }) => Some(query),
-            JsonExpression::Query(_) | JsonExpression::Constructor(JsonConstructor::Object { .. } | JsonConstructor::Array { .. }) => None,
+            JsonExpression::Query(_)
+            | JsonExpression::Typed(_)
+            | JsonExpression::Constructor(JsonConstructor::Object { .. } | JsonConstructor::Array { .. }) => None,
         }
     }
 }

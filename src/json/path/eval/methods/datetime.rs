@@ -9,10 +9,13 @@
 //! TIME ZONE first, but a literal without a `<time zone interval>` is of a
 //! type without time zone [§5.3 SR34, SR35], so it is not taken to determine a
 //! value of the type with one. Its precision is the digits of its
-//! `<seconds fraction>` [§5.3 SR34, SR35]. \[DESIGN\] A datetime without
-//! time zone is taken in UTC, as `cast` takes it: the evaluator has no
-//! SQL-session. Of more than 6 digits of a second's fraction, turborel's
-//! most [§6.1 SR40], a string is SQLCODE -900 (RULES.md D18).
+//! `<seconds fraction>` [§5.3 SR34, SR35]. A datetime without time zone
+//! is taken in the SQL-session's time zone displacement, as a literal is
+//! and as a template's conversion takes it [§9.51 GR]: \[DESIGN\] the
+//! displacement as the path was parsed, which `Path::zone` keeps, as the
+//! template's conversion keeps it. Of more than 6 digits of a second's
+//! fraction, turborel's most [§6.1 SR40], a string is SQLCODE -900
+//! (RULES.md D18).
 //!
 //! (UA070) Of several items in error, the first is the exception raised.
 //!
@@ -21,6 +24,8 @@
 //! \[VII 1 b\], by the conversion made of the template as the path was
 //! parsed (`DatetimeTemplate`); an exception they raise is SQLSTATE 22031
 //! instead.
+
+use std::borrow::Cow;
 
 use super::super::{exception, item, string};
 use crate::error::{Code, Result, SqlError, SqlState};
@@ -38,11 +43,8 @@ const INTERPRETATIONS: [(Moment, bool); 5] =
 /// character string.
 const NOT_A_STRING: &str = "[ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 a] an SQL/JSON item of datetime() is not a character string";
 
-/// \[DESIGN\] The displacement, in minutes, a datetime of a type without
-/// time zone is taken in: UTC's, as `cast` takes the SQL-session's.
-const SESSION_ZONE: i16 = 0;
-
-/// [§9.46 GR11g ii 6 C VII] `datetime()` of each item of `base`.
+/// [§9.46 GR11g ii 6 C VII] `datetime()` of each item of `base`, one of a
+/// type without time zone taken in the displacement `zone`, in minutes.
 ///
 /// # Errors
 ///
@@ -50,11 +52,11 @@ const SESSION_ZONE: i16 = 0;
 /// that writes no datetime of any of the five types \[VII 1 c vi\]; SQLCODE
 /// -900 of one of more digits of a second's fraction than turborel's
 /// maximum.
-pub(super) fn datetime(base: &[Item]) -> Result<Vec<Item>> {
+pub(super) fn datetime(base: &[Cow<'_, Item>], zone: i16) -> Result<Vec<Item>> {
     base.iter()
         .map(|each| {
             let Some(text) = string(each) else { return Err(invalid(NOT_A_STRING)) };
-            interpreted(text)
+            interpreted(text, zone)
         })
         .collect()
 }
@@ -68,7 +70,7 @@ pub(super) fn datetime(base: &[Item]) -> Result<Vec<Item>> {
 /// SQLSTATE 22031 if an item is no character string \[VII 1 a\], or one
 /// of which §9.51's General Rules raise an exception condition \[VII 1
 /// b\].
-pub(super) fn templated(base: &[Item], template: &DatetimeTemplate) -> Result<Vec<Item>> {
+pub(super) fn templated(base: &[Cow<'_, Item>], template: &DatetimeTemplate) -> Result<Vec<Item>> {
     base.iter()
         .map(|each| {
             let Some(text) = string(each) else { return Err(invalid(NOT_A_STRING)) };
@@ -89,8 +91,8 @@ fn unread(text: &str, template: &DatetimeTemplate, raised: &SqlError) -> SqlErro
 }
 
 /// The datetime `text` writes, as the first of `INTERPRETATIONS` it is a
-/// valid value of.
-fn interpreted(text: &str) -> Result<Item> {
+/// valid value of, in the displacement `zone` if it writes none.
+fn interpreted(text: &str, zone: i16) -> Result<Item> {
     for (moment, zoned) in INTERPRETATIONS {
         let Some(written) = parse(moment, text) else { continue };
         if written.zone.is_some() != zoned {
@@ -104,7 +106,7 @@ fn interpreted(text: &str) -> Result<Item> {
                 ),
             ));
         }
-        let value = Datetime::of_local(moment, written.local, written.zone.unwrap_or(SESSION_ZONE), zoned, written.precision);
+        let value = Datetime::of_local(moment, written.local, written.zone.unwrap_or(zone), zoned, written.precision);
         // [§6.1 GR6] A valid value is of a year from 0001 to 9999.
         if value.in_range() {
             return Ok(item(Value::Datetime(value)));

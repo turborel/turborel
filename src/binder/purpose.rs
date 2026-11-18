@@ -20,12 +20,17 @@ pub enum Purpose {
     /// \[SR10d\], as a constraint's condition is not, and needing no
     /// privilege, as it reads no table but its own.
     Generation,
+    /// \[EXTENSION\] A key part of an index (RULES.md D92), bound
+    /// as a generation expression is, but for the JSON operators: each is
+    /// admitted only where it can raise nothing and reads no time zone
+    /// (`JsonCall::key_safe`), so it is deterministic there.
+    Key,
 }
 
 impl Purpose {
     /// Whether the query is part of a constraint [§11.9 SR5, SR6].
     pub(super) fn constrains(self) -> bool {
-        matches!(self, Purpose::Constraint | Purpose::UnderConstraint | Purpose::Generation)
+        matches!(self, Purpose::Constraint | Purpose::UnderConstraint | Purpose::Generation | Purpose::Key)
     }
 
     /// The purpose of a view the query reads.

@@ -210,6 +210,7 @@ fn kept(t: &DataType) -> bool {
         | DataType::Structured(_)
         | DataType::Reference(_)
         | DataType::Row(_)
+        | DataType::Json
         | DataType::Extension(_) => false,
     }
 }

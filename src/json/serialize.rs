@@ -72,6 +72,11 @@ pub fn serialize(item: &Item) -> Result<String> {
 /// (RULES.md D18); SQLSTATE 22001 if the text is longer than `target`'s
 /// length or maximum length \[GR2a iii\]; else as `serialize`.
 pub fn serialize_as(item: &Item, target: &DataType) -> Result<Value> {
+    // [§6.34 GR5b, §6.35 GR5a, §10.11 GR] Of RETURNING JSON, the item
+    // itself, a value of the JSON type, no text.
+    if let DataType::Json = target {
+        return crate::value::json::Json::of_item(item).map(Value::Json);
+    }
     let (length, units) = character_length(target)?;
     let text = serialize(item)?;
     let long = u64::try_from(units.count(&text)).unwrap_or(u64::MAX);
@@ -92,6 +97,9 @@ pub fn serialize_as(item: &Item, target: &DataType) -> Result<Value> {
 ///
 /// As `serialize_as`, of a type that is not one.
 pub(crate) fn string_type(target: &DataType) -> Result<()> {
+    if let DataType::Json = target {
+        return Ok(());
+    }
     character_length(target).map(|_| ())
 }
 
@@ -123,6 +131,7 @@ fn character_length(target: &DataType) -> Result<(u64, CharUnits)> {
         | DataType::Distinct(_)
         | DataType::Structured(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Extension(_) => Err(SqlError::new(
             Code::SyntaxRule,
             format!("[ISO/IEC 9075-2:2023 §9.43 SR2a] JSON text is serialized as a character or binary string type, not {target}"),
@@ -197,6 +206,7 @@ fn write_scalar(value: &Value, out: &mut String) -> Result<()> {
         | Value::Row(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Extension(_) => return Err(no_text("a value of no SQL/JSON scalar's type")),
     }
     Ok(())

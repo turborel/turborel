@@ -3,6 +3,9 @@
 
 use super::*;
 use crate::json::path::eval::tests::{error, gives, run, state, value};
+use crate::json::path::parse_path;
+use crate::json::{Keys, parse};
+use crate::value::datetime::Clocked;
 
 /// The datetime `datetime()` gives of the JSON string `text`.
 fn read(text: &str) -> Datetime {
@@ -61,7 +64,6 @@ fn datetime_of_what_is_no_datetime_string_is_an_error() {
 #[test]
 fn datetime_of_too_fine_a_fraction_is_beyond_limits() {
     assert_eq!(run("lax $.datetime()", "\"12:00:00.1234567\"").unwrap_err().sqlcode(), -900_i32);
-    assert_eq!(SESSION_ZONE, 0_i16);
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 a, VII 1 b]
@@ -90,4 +92,27 @@ fn datetime_of_a_template_reads_by_it() {
         assert_eq!(unread.sqlstate().as_str(), "22031", "{text}");
         assert_eq!(unread.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 b"), "{text}");
     }
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 6 C VII 1 b, VII 1 c v]
+/// [ISO/IEC 9075-2:2023 §9.51 GR] a datetime without time zone is taken in
+/// the SQL-session's displacement as the path was parsed, with a template
+/// and without one alike, so the two compare equal. Regression: without a
+/// template one was taken in UTC before the fix.
+#[test]
+fn datetime_takes_the_session_zone_with_a_template_and_without() {
+    let now = Clocked::from(crate::value::datetime::Now { utc: 0, zone: 120 });
+    let context = parse("\"2024-01-02 03:04:05\"", Keys::Any).unwrap();
+    let mut zones = Vec::new();
+    for text in ["lax $.datetime()", "lax $.datetime(\"YYYY-MM-DD HH24:MI:SS\")"] {
+        let path = parse_path(text, now).unwrap();
+        assert_eq!(path.zone, 120_i16);
+        let got = path.evaluate(&context, &[]).unwrap();
+        let [Item::Scalar(scalar)] = got.as_slice() else { panic!("{text} gave {got:?}") };
+        let Value::Datetime(d) = scalar.value() else { panic!("{text} gave no datetime") };
+        zones.push(d.zone);
+    }
+    assert_eq!(zones, vec![120_i16, 120_i16]);
+    let equal = parse_path("lax $ ? (@.datetime() == @.datetime(\"YYYY-MM-DD HH24:MI:SS\"))", now).unwrap();
+    assert_eq!(equal.evaluate(&context, &[]).unwrap().len(), 1);
 }

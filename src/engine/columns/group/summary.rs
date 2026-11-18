@@ -111,6 +111,7 @@ fn heap(v: &Value) -> usize {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_) => 0,
     }
 }

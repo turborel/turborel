@@ -43,7 +43,7 @@ impl State {
             if let Some(t) = params.transitions_shared() {
                 inner = inner.with_transitions(t);
             }
-            self.bind_triggered(Context { params: &inner, ..cx }, &c.statement, (owner, &inner))?;
+            self.bind_triggered(Context { params: &inner, ..cx }, c.statement(), (owner, &inner))?;
         }
         Ok(())
     }

@@ -188,6 +188,7 @@ mod tests {
             options,
             collations: Vec::new(),
             nulls: false,
+            expressions: Vec::new(),
         }
     }
 

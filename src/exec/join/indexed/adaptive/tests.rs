@@ -87,7 +87,10 @@ fn plan(regions: Vec<Row>, argument: usize) -> Plan {
         table: QualifiedName { auth: "A".into(), ident: "POINTS".into() },
         index: "POINTS_G".into(),
         method: "rtree".into(),
-        probe: JoinProbe::Predicate { predicate: Box::new(Predicate { function: function.clone(), column: 0, argument }), outer: 1 },
+        probe: JoinProbe::Predicate {
+            predicate: Box::new(Predicate { function: function.clone(), column: 0, argument: Some(argument) }),
+            outer: 1,
+        },
         cond: Some(Cond::Compare(Expr::Call(function, args), CompOp::Eq, Expr::Const(number(1)))),
         width: 2,
         columns: vec![0, 1],

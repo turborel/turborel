@@ -21,7 +21,7 @@ use crate::value::types::{ARRAY_NAME, Field, MAX_ARRAY_CARDINALITY, MAX_TYPE_NES
 /// [ISO/IEC 9075-2:2023 §7.6] The words of a `<collection derived table>`,
 /// no key words of SQL-92.
 const UNNEST: &str = "UNNEST";
-const ORDINALITY: &str = "ORDINALITY";
+pub(super) const ORDINALITY: &str = "ORDINALITY";
 
 /// [ISO/IEC 9075-2:2023 §6.5] The tokens of an `<empty specification>`,
 /// ARRAY `[` `]` or MULTISET `[` `]`.
@@ -309,6 +309,11 @@ impl Parser {
                 }
                 Err(primary) => primary,
             };
+            // [ISO/IEC 9075-2:2023 §6.36] an op of the JSON simplified
+            // accessor SQL reads none of, and those after it.
+            if self.at_json_only_op() {
+                return self.json_raw_chain(primary);
+            }
             let at = self.here();
             let part = if self.accept_delim(delim::LEFT_BRACKET) {
                 let index = self.nested(Parser::value_expression)?;

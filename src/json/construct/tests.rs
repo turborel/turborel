@@ -3,6 +3,7 @@
 //! the tests of the constructors share.
 
 use super::*;
+use crate::json::parse;
 use crate::value::datetime::Field;
 use crate::value::interval::{Interval, Qualifier};
 use crate::value::lob::{CHUNK_OCTETS, Lob};

@@ -14,6 +14,7 @@ mod distinct;
 mod distinct_predicate;
 mod distribution;
 mod explain;
+mod expression_index;
 mod fill;
 mod filter;
 mod fulltext;
@@ -22,6 +23,10 @@ mod geometry;
 mod grouping_sets;
 mod hypothetical;
 mod json;
+mod json_index;
+mod json_path;
+mod json_table;
+mod json_type;
 mod kept;
 mod limits;
 mod listagg;
@@ -92,15 +97,7 @@ pub use zones::ZONES;
 
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {
-    let core: [&[Mutation]; 10] =
-        [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    core.into_iter()
-        .chain(areas::all())
-        .chain([projection::PROJECTION.as_slice(), &json::JSON, &fulltext::FULLTEXT, &sqlmm_fulltext::SQLMM_FULLTEXT, &t621::T621])
-        .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
-        .flatten()
-        .copied()
-        .collect()
+    areas::core().into_iter().chain(areas::all()).chain(areas::late()).flatten().copied().collect()
 }
 
 /// The core's mutations: transactions, durability, constraints, assertions, the hash index. Rekeying's are in `rekey.rs`.

@@ -496,6 +496,7 @@ pub(crate) fn like_escape(escape: Option<&Value>) -> Result<Escape> {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_),
         ) => {
             return fail_with(

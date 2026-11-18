@@ -24,12 +24,12 @@ mod aggregate;
 mod array;
 mod object;
 
-pub use aggregate::{JsonArrayAgg, JsonObjectAgg};
+pub use aggregate::JsonObjectAgg;
 pub use array::{ArrayOptions, json_array, json_array_by_query};
 pub use object::{NameAndValue, ObjectOptions, json_object};
 
-use super::query::json_text;
-use super::{IMPLICIT_RETURNING, Item, Keys, Scalar, parse};
+use super::query::json_input;
+use super::{IMPLICIT_RETURNING, Item, Keys, Scalar};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::functions::lobs::like::held_text;
 use crate::value::lob::LobKind;
@@ -107,11 +107,9 @@ const NAME_TEXT: &str = "a JSON name";
 /// it have one key under `Keys::Unique` [§9.42 GR3a iii]; that of the cast
 /// \[IV 2\].
 fn input_item(input: &Input<'_>, keys: Keys) -> Result<Item> {
-    if input.format_json {
-        return match json_text(input.value, INPUT_RULE)? {
-            Some(text) => parse(&text, keys),
-            None => Ok(Item::Null),
-        };
+    // [§6.34 GR2d ii 1 F II] a value of the JSON type, its item.
+    if input.format_json || matches!(input.value, Value::Json(_)) {
+        return Ok(json_input(input.value, INPUT_RULE, keys)?.unwrap_or(Item::Null));
     }
     let kept = match input.value {
         Value::Null => return Ok(Item::Null),
@@ -128,6 +126,7 @@ fn input_item(input: &Input<'_>, keys: Keys) -> Result<Item> {
         | Value::Row(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Extension(_) => cast(input.value.clone(), &SDT)?,
     };
     Ok(Scalar::new(kept).map_or(Item::Null, Item::Scalar))
@@ -168,6 +167,7 @@ fn key(name: &Value) -> Result<String> {
         | Value::Row(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Extension(_) => Err(not_a_name(name)),
     }
 }

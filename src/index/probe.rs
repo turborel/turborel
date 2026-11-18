@@ -17,8 +17,12 @@ pub struct Predicate {
     pub function: ScalarRef,
     /// The indexed column's position in the key, from zero.
     pub column: usize,
-    /// The column's position among the function's two arguments, zero or one.
-    pub argument: usize,
+    /// The column's position among the function's two arguments, zero or
+    /// one; none of a call of an SQL/JSON operator or JSON_CONTAINS
+    /// (`ScalarFunction::json_probe`), whose first argument is the column
+    /// and whose others, its PASSING arguments' values and then the value
+    /// compared with or contained, the probe's value holds as a ROW.
+    pub argument: Option<usize>,
 }
 
 /// One SQL comparison of an independently constrained index column.

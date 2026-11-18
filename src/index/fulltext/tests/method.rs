@@ -51,6 +51,7 @@ pub(super) fn described(options: Vec<(String, Value)>) -> (TableDesc, IndexDesc)
         options,
         collations: Vec::new(),
         nulls: false,
+        expressions: Vec::new(),
     };
     (table, index)
 }
@@ -129,7 +130,7 @@ impl crate::functions::ScalarFunction for Other {
 #[test]
 fn the_method_supports_text_matches_of_its_column() {
     let method = FullTextMethod::in_memory();
-    let predicate = |argument: usize| Predicate { function: ScalarRef(Arc::new(TextMatches)), column: 0, argument };
+    let predicate = |argument: usize| Predicate { function: ScalarRef(Arc::new(TextMatches)), column: 0, argument: Some(argument) };
     let clob = DataType::Lob { kind: LobKind::Character, length: 1_000, units: CharUnits::Characters };
     let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
     assert!(method.supports_predicate(&predicate(0), &[DataType::varying(10)]));
@@ -138,7 +139,7 @@ fn the_method_supports_text_matches_of_its_column() {
     assert!(!method.supports_predicate(&predicate(1), &[DataType::varying(10)]));
     assert!(!method.supports_predicate(&predicate(0), std::slice::from_ref(&integer)));
     assert!(!method.supports_predicate(&predicate(0), &[clob.clone(), clob]));
-    let other = Predicate { function: ScalarRef(Arc::new(Other)), column: 0, argument: 0 };
+    let other = Predicate { function: ScalarRef(Arc::new(Other)), column: 0, argument: Some(0) };
     assert!(!method.supports_predicate(&other, &[DataType::varying(10)]));
     assert!([CompOp::Eq, CompOp::Ne, CompOp::Lt, CompOp::Gt, CompOp::Le, CompOp::Ge].iter().all(|op| !method.supports(*op)));
     assert!(!method.ordered() && !method.restores_keys());

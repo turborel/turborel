@@ -13,7 +13,7 @@ use crate::value::Decimal;
 /// The probe of CONTAINS(column, `pattern`).
 fn containing(pattern: &str) -> Probe {
     let function = ScalarRef(Arc::new(Contains));
-    Probe::Predicate { predicate: Box::new(Predicate { function, column: 0, argument: 0 }), value: Value::Char(pattern.into()) }
+    Probe::Predicate { predicate: Box::new(Predicate { function, column: 0, argument: Some(0) }), value: Value::Char(pattern.into()) }
 }
 
 /// The rows `pattern` finds in `index`, in row order.
@@ -143,7 +143,7 @@ fn a_bad_pattern_finds_every_row() {
     assert_eq!(found(&index, r#""the""#), [1, 2, 3], "of stop words only, 2FF03");
     assert_eq!(found(&index, r#""the" & "of""#), [1, 2, 3]);
     let null = Probe::Predicate {
-        predicate: Box::new(Predicate { function: ScalarRef(Arc::new(Contains)), column: 0, argument: 0 }),
+        predicate: Box::new(Predicate { function: ScalarRef(Arc::new(Contains)), column: 0, argument: Some(0) }),
         value: Value::Null,
     };
     assert_eq!(searched(&index, &null).unwrap().len(), 0);

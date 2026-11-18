@@ -48,6 +48,7 @@ fn compare_lob(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_),
             _,
         ) => None,
@@ -63,13 +64,16 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
             compare_composites(a, b)
         }
         (Value::Lob(_), _) | (_, Value::Lob(_)) => compare_lob(a, b),
+        // [ISO/IEC 9075-2:2023 §8.2 GR10] SQL/JSON values with each other
+        // alone [§4.8.2].
+        (Value::Json(x), Value::Json(y)) => x.compare(y),
         // A null makes the comparison unknown [X3.135-1986 §5.11 GR2]; a character
         // string and a number are not comparable [X3.135-1986 §5.11 SR1], nor a
         // binary string with either: binary strings are with each other
         // [ISO/IEC 9075-2:2023 §4.4.1]; nor a datetime or an interval with
         // another kind.
-        (Value::Null, _)
-        | (_, Value::Null)
+        (Value::Null | Value::Json(_), _)
+        | (_, Value::Null | Value::Json(_))
         | (Value::Char(_), Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_))
         | (Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_), Value::Char(_))
         | (Value::Binary(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_) | Value::Datetime(_))
@@ -214,6 +218,7 @@ fn holds_lob(v: &Value, depth: usize) -> Result<bool> {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Extension(_) => Ok(false),
     }
 }
@@ -323,6 +328,7 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_),
             _,
         )
@@ -340,6 +346,7 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Array(_)
             | Value::Multiset(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_),
         ) => None,
     }
@@ -397,6 +404,7 @@ pub fn bucket(v: &Value) -> Option<Bucket> {
         Value::Multiset(p) => super::multisets::bag_bucket(p),
         Value::Structured(s) => super::types::structured::bucket_structured(s),
         Value::Reference(r) => Some(Bucket::Binary(r.bytes().into())),
+        Value::Json(_) => super::types::JSON.bucket(v),
         Value::Extension(e) => e.kind.bucket(v),
     }
 }
@@ -420,6 +428,7 @@ pub(crate) fn number_bucket(v: &Value) -> Option<Bucket> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_) => {
             return None;
         }

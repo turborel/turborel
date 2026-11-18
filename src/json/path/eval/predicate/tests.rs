@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::json::path::ast::Accessor;
+use crate::json::path::eval::Identity;
 use crate::json::path::eval::tests::{gives, gives_with, json};
 use crate::json::path::parse_path;
 use crate::value::datetime::Clocked;
@@ -13,7 +14,17 @@ fn truth_of(mode: &str, predicate: &str, current: &str) -> Truth {
     let path = parse_path(&format!("{mode} $ ? ({predicate})"), Clocked::default()).unwrap_or_else(|e| panic!("{predicate}: {}", e.msg));
     let Expr::Access(_, Accessor::Filter(p)) = &path.expr else { panic!("{predicate}") };
     let context = json(current);
-    Evaluator { mode: path.mode, context: &context, variables: &[], current: Some(&context), last: None }.truth(p)
+    let identity = Identity::new(&context, &[]);
+    Evaluator {
+        mode: path.mode,
+        zone: path.zone,
+        context: &context,
+        variables: &[],
+        identity: &identity,
+        current: Some(&context),
+        last: None,
+    }
+    .truth(p)
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR12a] exists is True

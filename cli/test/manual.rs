@@ -256,12 +256,12 @@ fn the_users_guide_runs_as_printed() {
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8: the SQL Reference Manual's
-/// examples of value expressions, predicates and query expressions, of
-/// the tables the first makes, and INSERT's with UPDATE's, and with
+/// examples of value expressions, predicates, query expressions and
+/// JSON_TABLE, of the tables the first makes, and INSERT's with UPDATE's, and with
 /// DELETE's, of the table the first makes, run as printed, as ANN.
 #[test]
 fn the_reference_manuals_examples_run_as_printed() {
-    let chapters = ["sql/04-expressions.md", "sql/05-predicates.md", "sql/06-queries.md"];
+    let chapters = ["sql/04-expressions.md", "sql/05-predicates.md", "sql/06-queries.md", "sql/13-json-table.md"];
     let deleted = ["sql/statements/insert.md", "sql/statements/delete.md"];
     for pages in [chapters.as_slice(), &["sql/statements/insert.md", "sql/statements/update.md"], &deleted] {
         let db = Database::new();
@@ -271,6 +271,20 @@ fn the_reference_manuals_examples_run_as_printed() {
             assert!(ann.page(page) > 0, "{page} shows its examples' output");
         }
     }
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D84: the SQL Reference Manual's
+/// chapter of the SQL/JSON path language runs as printed, as ANN, and the
+/// guide to JSON data, which makes ANN's schema itself, does too.
+#[test]
+fn the_json_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("sql/11-json-path.md") > 0, "the chapter shows its examples' output");
+    let db = Database::new();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("data/03-json.md") > 0, "the guide shows its examples' output");
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D64: the examples of TRUNCATE
@@ -311,6 +325,20 @@ fn the_explain_examples_run_as_printed() {
     db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
     let mut ann = Client::of(&db, "ANN");
     assert!(ann.page("sql/statements/explain.md") > 0, "it shows its examples' output");
+}
+
+/// Verifies: [EXTENSION] RULES.md R-DOC-8, D92: the examples of
+/// CREATE INDEX of key parts that are expressions run as printed, as ANN:
+/// those of table PARCELS, made, read through its indexes and refused.
+#[test]
+fn the_expression_index_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    let page = "sql/statements/create-index.md";
+    let parcels: Vec<Example> =
+        examples(page).into_iter().filter(|e| matches!(e, Example::Sql { sql, .. } if sql.contains("PARCELS"))).collect();
+    assert_eq!(ann.run(page, &parcels, None), 2, "it shows its examples' output");
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D65, D66: the examples of CREATE
@@ -354,6 +382,17 @@ fn the_dynamic_sql_examples_run_as_printed() {
     ] {
         assert!(ann.page(page) > 0, "{page} shows its examples' output");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D89: the examples of the
+/// JSON type run as printed, through the client, as ANN, so a value of it
+/// crosses the wire both ways.
+#[test]
+fn the_json_type_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("sql/12-json-type.md") > 0, "it shows its examples' output");
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D69: the examples of CREATE TYPE,

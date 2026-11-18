@@ -39,6 +39,7 @@ fn holds_lob(v: &Value) -> bool {
         Value::Structured(s) => s.attributes.iter().any(holds_lob),
         Value::Null
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Char(_)
         | Value::Exact(_)
         | Value::Approx(_)
@@ -73,6 +74,7 @@ fn placed(session: &Session, v: Value, inline: usize, located: &mut bool) -> Res
         }
         Value::Null
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Char(_)
         | Value::Exact(_)
         | Value::Approx(_)

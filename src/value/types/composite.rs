@@ -68,6 +68,7 @@ fn ordered_by(t: &DataType, member: fn(&DataType) -> bool) -> bool {
             | DataType::Interval(_)
             | DataType::Structured(_)
             | DataType::Reference(_)
+            | DataType::Json
             | DataType::Extension(_) => false,
         }
 }
@@ -138,6 +139,7 @@ pub(crate) fn nesting(t: &DataType) -> usize {
         | DataType::Interval(_)
         | DataType::Structured(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Extension(_) => 0,
     }
 }
