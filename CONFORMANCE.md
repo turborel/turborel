@@ -2004,11 +2004,26 @@ Persistent stored modules, ISO/IEC 9075-4, written from its 2006 draft
 compound statement, local variables, conditions, cursors and handlers,
 the control statements, SIGNAL and RESIGNAL, and SQL-server modules.
 
-Features P002 (Computational completeness), P004 (Extended CASE
-statement), P005 (Qualified SQL variable references), P006 (Multiple
-assignment), P007 (Enhanced diagnostics management) and P008
-(Comma-separated predicates in simple CASE statement) are claimed, and
-P001 (Stored modules) and P003 (Information Schema views).
+Subfeatures P002-01 to P002-15 of P002 (Computational completeness) are
+claimed: the compound statement, the handler, condition and SQL variable
+declarations, the assignment, CASE, IF, ITERATE, LEAVE, LOOP, REPEAT,
+WHILE and FOR statements, and SIGNAL and RESIGNAL [Annex F Table 5].
+P002 itself is not. A feature claimed is claimed with every subfeature
+it has [ISO/IEC 9075-11:2006 draft §6.43 Description 7], and P002-16,
+`<control statement>`s as the SQL-statement of an externally-invoked
+procedure, needs the module language, which is not claimed (RULES.md
+D32). So conformance to this part is not claimed either, as it requires
+P002 [§21.1].
+
+P001 (Stored modules), P004 (Extended CASE statement), P005 (Qualified
+SQL variable references), P006 (Multiple assignment) and P007 (Enhanced
+diagnostics management) are implemented, and P003 (Information Schema
+views) as its four views, P003-01 to P003-04; its short name views
+MODULES_S and MODULE_COL_USAGE [§18.8] are not. None of them is
+claimed: each implies P002, P003 through P001 [§21.3 Table 4], and a
+feature is claimed only with the features it implies [ISO/IEC
+9075-2:2023 §25.3]. P008 (Comma-separated predicates in simple CASE
+statement), which implies none, is claimed.
 
 | Feature | Rules | What turborel does |
 |---|---|---|
