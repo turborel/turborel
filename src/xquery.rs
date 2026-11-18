@@ -124,6 +124,13 @@ impl Query {
         self.0.validates
     }
 
+    /// The names of the registered XML Schemas its prolog imports [XQuery
+    /// §4.10].
+    #[must_use]
+    pub fn imports(&self) -> &[String] {
+        &self.0.imports
+    }
+
     /// Its value, given `input` [XQuery §2.2.3.2].
     ///
     /// # Errors

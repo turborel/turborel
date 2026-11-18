@@ -25,6 +25,7 @@
 mod attributes;
 mod content;
 mod element;
+pub(super) use element::{ANONYMOUS, ANONYMOUS_SIMPLE, type_name};
 mod identity;
 mod run;
 

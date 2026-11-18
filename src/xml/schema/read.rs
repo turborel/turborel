@@ -18,6 +18,7 @@ mod attrs;
 mod build;
 mod complex;
 mod documents;
+pub(super) use documents::tree_namespace;
 mod element;
 mod identity;
 mod index;
@@ -76,7 +77,7 @@ impl Schema {
     /// read from, declares [Schema1 §3.15.2]; none if it declares none.
     #[must_use]
     pub fn target_namespace(&self) -> Option<&str> {
-        self.documents.first().and_then(|(tree, _)| documents::tree_namespace(tree))
+        self.documents.first().and_then(|(tree, _)| tree_namespace(tree))
     }
 }
 

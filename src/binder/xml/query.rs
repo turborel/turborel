@@ -98,7 +98,8 @@ impl Binder<'_> {
     /// definitions.
     fn xquery(&self, text: &str, names: &[String]) -> Result<Arc<Query>> {
         let (namespaces, default_element) = self.namespaces_in_scope();
-        let in_scope = self.schemas_in_scope();
+        let importable = self.importable();
+        let in_scope = in_scope(&importable);
         let env = Environment {
             namespaces,
             default_element,
@@ -106,28 +107,28 @@ impl Binder<'_> {
             library: &self.db.xquery_functions,
             collations: &self.db.collations,
             schemas: in_scope.iter().map(|(_, s)| s.clone()).collect(),
+            importable: importable.iter().map(|(_, s)| s.clone()).collect(),
         };
         let query = Query::compile(text, &env)?;
-        if query.validates()
-            && let Some(noted) = self.invoked
-        {
-            for (name, _) in &in_scope {
+        if let Some(noted) = self.invoked {
+            let validated = in_scope.iter().filter(|_| query.validates()).map(|(name, _)| name);
+            let imported = importable.iter().filter(|(_, s)| query.imports().contains(&s.name)).map(|(name, _)| name);
+            for name in validated.chain(imported) {
                 noted.indicated(name);
             }
         }
         Ok(Arc::new(query))
     }
 
-    /// [§10.20 SR2e] The in-scope schema definitions, implementation-
-    /// defined (RULES.md D86): of each target namespace, the registered XML
-    /// Schema of the least name the current user may use, as XMLVALIDATE's
-    /// data-driven validation chooses, and each one's name; the
-    /// permanently registered one of a namespace none of those has.
-    /// A definition whose query validates notes them as it is created, so
-    /// it depends on them (`Invoked::indicated`), and, bound again, has the
-    /// ones it noted, of each namespace the least name, never one
-    /// registered later [ISO/IEC 9075-14:2006 draft §4.2.6].
-    fn schemas_in_scope(&self) -> Vec<(QualifiedName, InScopeSchema)> {
+    /// The registered XML Schemas a query may validate by and import
+    /// [§10.20 SR2e] [XQuery §4.10], implementation-defined (RULES.md
+    /// D86): those the current user may use, in the order of their names,
+    /// then the permanently registered ones, each with its name. A
+    /// definition notes those its query validates by or imports as it is
+    /// created, so it depends on them (`Invoked::indicated`), and, bound
+    /// again, has those it noted alone, never one registered later
+    /// [ISO/IEC 9075-14:2006 draft §4.2.6].
+    fn importable(&self) -> Vec<(QualifiedName, InScopeSchema)> {
         let catalog = &*self.db.catalog;
         let pinned = self.horizon.routines.is_some().then_some(self.horizon.xml_schemas.as_slice());
         let mut usable: Vec<_> = catalog
@@ -136,24 +137,20 @@ impl Binder<'_> {
             .filter(|d| pinned.is_none_or(|p| p.contains(&d.name)) && may_use(catalog, &d.name, self.who()).is_ok())
             .collect();
         usable.sort_by(|a, b| a.name.cmp(&b.name));
-        let mut out: Vec<(QualifiedName, InScopeSchema)> = Vec::new();
-        for d in usable {
-            if let Some(schema) = d.schema.clone()
-                && !out.iter().any(|(_, s)| s.namespace == d.target_namespace)
-            {
-                out.push((d.name.clone(), InScopeSchema { namespace: d.target_namespace.clone(), name: d.name.to_string(), schema }));
-            }
-        }
-        for p in &PERMANENT {
+        let registered = usable.into_iter().filter_map(|d| {
+            let schema = d.schema.clone()?;
+            let read =
+                InScopeSchema { namespace: d.target_namespace.clone(), name: d.name.to_string(), location: d.location.clone(), schema };
+            Some((d.name.clone(), read))
+        });
+        let lasting = PERMANENT.iter().filter_map(|p| {
             let name = p.qualified();
-            if pinned.is_none_or(|kept| kept.contains(&name))
-                && !out.iter().any(|(_, s)| s.namespace == p.target_namespace)
-                && let Some(schema) = components(p.target_namespace)
-            {
-                out.push((name.clone(), InScopeSchema { namespace: p.target_namespace.to_owned(), name: name.to_string(), schema }));
-            }
-        }
-        out
+            let schema = components(p.target_namespace).filter(|_| pinned.is_none_or(|kept| kept.contains(&name)))?;
+            let namespace = p.target_namespace.to_owned();
+            let read = InScopeSchema { namespace, name: name.to_string(), location: p.location.to_owned(), schema };
+            Some((name, read))
+        });
+        registered.chain(lasting).collect()
     }
 
     /// What evaluates `text` of the arguments `bound`, at the statement's
@@ -295,4 +292,19 @@ impl Binder<'_> {
         let bound = self.value_expression(&value, Scope::Rows("[ISO/IEC 9075-14:2006 draft §7.1] a default has no set function"))?;
         Ok(self.cast_bound(bound, target.clone())?.0)
     }
+}
+
+/// [§10.20 SR2e] The in-scope schema definitions, implementation-defined
+/// (RULES.md D86): of each target namespace, the first of `importable`, so
+/// the registered XML Schema of the least name the current user may use,
+/// as XMLVALIDATE's data-driven validation chooses, or the permanently
+/// registered one of a namespace none of those has.
+fn in_scope(importable: &[(QualifiedName, InScopeSchema)]) -> Vec<(QualifiedName, InScopeSchema)> {
+    let mut out: Vec<(QualifiedName, InScopeSchema)> = Vec::new();
+    for (name, schema) in importable {
+        if !out.iter().any(|(_, s)| s.namespace == schema.namespace) {
+            out.push((name.clone(), schema.clone()));
+        }
+    }
+    out
 }

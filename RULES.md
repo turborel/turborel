@@ -2957,9 +2957,9 @@ one precedence is one node, so a long chain makes no deep tree. The
 parser raises what the text alone shows, as SQLSTATE 10000, XQuery
 error, naming the XQuery error code: syntax errors (err:XPST0003), and
 the static errors of the prolog and of direct constructors' attributes
-that need no static context. Imports and library modules are parsed and
-refused, as turborel supports neither the Schema Import nor the Module
-Feature.
+that need no static context. A module import and a library module are
+parsed and refused, as turborel does not support the Module Feature; a
+schema import is analysed (`xquery/analyze/import.rs`).
 
 The parser recurses, so its depth is bounded (R-CF-6): each
 `ExprSingle`, each direct element constructor and each operator's right
@@ -3150,9 +3150,11 @@ returns a `Failure` naming the rule and XQuery's error code apart from
 turborel's own errors, so XMLVALIDATE raises SQLSTATE 2201R and XQuery's
 validate expression err:XQDY0027 from one result. XQuery atomizes a node
 to its typed value, and matches its annotation in a node test: a
-built-in type's by the built-in hierarchy, a registered XML Schema's,
-which is no in-scope schema type as no schema is imported, as derived
-from `xs:anyType` alone. A copy made by construction mode preserve keeps
+built-in type's by the built-in hierarchy, a registered XML Schema's by
+that schema's Type Derivation OK if a schema import brought it into the
+in-scope schema types, its name, an anonymous type's too, resolved in the
+schema imported (`xml::schema::annotated_type`), else as derived from
+`xs:anyType` alone. A copy made by construction mode preserve keeps
 the annotations; one made of an unvalidated document node (§10.19), as
 XMLDOCUMENT of XML(CONTENT(UNTYPED)) and CAST BY VALUE to an UNTYPED type
 make it, keeps none (`Copying::UNVALIDATED`).
@@ -3224,8 +3226,26 @@ alone, and the components of several make no one schema, so the effective
 schema of a validation [XQuery §3.13] is the one of the namespace of the
 element it validates, with what that one imports; of none, a schema of no
 components, by which strict validation is err:XQDY0084 and lax validation
-assesses the element by `xs:anyType`. A query names none of their
-components, as no schema is imported.
+assesses the element by `xs:anyType`.
+
+A prolog's schema import [XQuery §4.10] imports, of the registered XML
+Schemas the current user may use (and of a definition bound again, those
+it kept), the one of the target namespace whose schema location is a
+location hint, else the one of the least name, the permanently
+registered ones last (`xquery/analyze/import.rs`); it brings the
+components of every namespace the schema has. Their type definitions
+are in-scope schema types, a node test's type matched by the schema's
+own derivations (`xquery::types::Defined`), and their global element and
+attribute declarations those of schema element and attribute tests,
+the substitution group a schema element test's element heads matching
+too. err:XQST0035 is raised of a name two imported schemas define from
+different documents, compared as the schema documents' trees; so
+err:XQST0012, of imported schemas not valid together, is never raised, as
+each registered XML Schema is valid and what two share is the same. A
+simple type of an imported schema names no atomic item type, as an
+atomic value carries its built-in type alone (err:XPST0051). A
+definition notes what its queries import, as what they validate by, and
+depends on it.
 
 Part 14 leaves how an XML Schema is registered to the implementation
 [ISO/IEC 9075-14:2006 draft §4.2.6]. These statements were decided, an

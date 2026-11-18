@@ -148,8 +148,6 @@ features.
   FULLY-NORMALIZED form of fn:normalize-unicode, and substring matching
   by UNICODE and its tailorings, which need collation units of more than
   one character;
-  schema imports, so a query names the types and declarations of
-  registered XML Schemas, which validate expressions already validate by;
   and more of a query's shapes answered by
   the XML indexes ([Index structures](#index-structures)).
 - XML Schema: registered XML Schemas, CREATE and DROP XML SCHEMA, the

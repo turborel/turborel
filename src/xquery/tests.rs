@@ -289,13 +289,14 @@ fn nesting_is_bounded_within_the_stack() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18] [XQuery §5.2.1, §5.2.5]
-/// [XQuery Appendix F] imports and library modules are parsed, and
-/// refused as turborel supports neither the Schema Import nor the Module
-/// Feature: err:XQST0009 for a schema import, err:XQST0016 for a module
-/// import or a library module; a module of neither needs nothing.
+/// [XQuery Appendix F] imports and library modules are parsed; a module
+/// import or a library module is refused as turborel does not support the
+/// Module Feature, err:XQST0016; a schema import, of the Schema Import
+/// Feature turborel supports, needs nothing of it, nor does a module of
+/// neither.
 #[test]
 fn imports_are_parsed_and_unsupported() {
-    assert_eq!(module("import schema 'u'; 1").unsupported(), Some(ErrorCode::XQST0009));
+    assert_eq!(module("import schema 'u'; 1").unsupported(), None);
     assert_eq!(module("declare namespace p = 'v'; import module 'u'; 1").unsupported(), Some(ErrorCode::XQST0016));
     assert_eq!(module("module namespace m = 'u';").unsupported(), Some(ErrorCode::XQST0016));
     assert_eq!(

@@ -12,8 +12,8 @@
 use std::collections::BTreeSet;
 
 use super::super::ast::{
-    BoundarySpace, Construction, Declaration, EmptyOrder, FunctionDecl, InheritMode, NamespaceKind, Param, PreserveMode, Setter, Setup,
-    VarDecl,
+    BoundarySpace, Construction, Declaration, EmptyOrder, FunctionDecl, Import, InheritMode, NamespaceKind, Param, PreserveMode, Setter,
+    Setup, VarDecl,
 };
 use super::super::collation::Collator;
 use super::super::error::{ErrorCode, error};
@@ -70,8 +70,10 @@ impl Analysis<'_> {
                     }
                 }
                 Setup::Setter(setter) => self.setter(setter)?,
-                Setup::Import(_) => {
-                    return Err(error(ErrorCode::XQST0009, "turborel does not support the Schema Import Feature [XQuery §5.2.1]"));
+                Setup::Import(Import::Schema(import)) => self.import_schema(import)?,
+                // Refused by `Module::unsupported` before the analysis.
+                Setup::Import(Import::Module(_)) => {
+                    return Err(error(ErrorCode::XQST0016, "turborel does not support the Module Feature [XQuery §5.2]"));
                 }
             }
         }

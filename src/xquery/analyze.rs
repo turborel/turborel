@@ -18,6 +18,7 @@
 mod construct;
 mod expr;
 mod flwor;
+mod import;
 mod path;
 mod prolog;
 mod scope;
@@ -61,6 +62,10 @@ pub struct Environment<'a> {
     /// The in-scope schema definitions [§10.20 SR2e], as validate takes
     /// them (`InScopeSchema`).
     pub schemas: Vec<InScopeSchema>,
+    /// The registered XML Schemas a schema import may import [XQuery
+    /// §4.10]: those the current user may use, in the order of their
+    /// names, the permanently registered ones last.
+    pub importable: Vec<InScopeSchema>,
 }
 
 /// [ISO/IEC 9075-14:2006 draft §10.20 SR2e] A registered XML Schema the
@@ -68,16 +73,18 @@ pub struct Environment<'a> {
 ///
 /// \[DESIGN\] Implementation-defined, RULES.md D86: of each target
 /// namespace, the one XMLVALIDATE's data-driven validation chooses, of the
-/// least name, chosen as the statement is bound; none permanently
-/// registered, as turborel holds no components of those to validate by. A
-/// validate expression takes, as its effective schema [XQuery §3.13], the
-/// one of the namespace of the element it validates, or none.
+/// least name, the permanently registered one of a namespace no other has,
+/// chosen as the statement is bound. A validate expression takes, as its
+/// effective schema [XQuery §3.13], the one of the namespace of the
+/// element it validates, or none.
 #[derive(Debug, Clone)]
 pub struct InScopeSchema {
     /// Its target namespace URI, the zero-length string of none.
     pub namespace: String,
     /// Its `<registered XML Schema name>`.
     pub name: String,
+    /// Its schema location URI.
+    pub location: String,
     /// Its schema, read.
     pub schema: Arc<Schema>,
 }
@@ -101,6 +108,8 @@ struct Analysis<'e> {
     globals: Vec<QName>,
     /// Whether the query has a validate expression [XQuery §3.13].
     validates: bool,
+    /// The registered XML Schemas its prolog imports [XQuery §4.10].
+    imported: Vec<InScopeSchema>,
 }
 
 /// The plan of `module`, analysed in the static context `env` gives
@@ -109,12 +118,12 @@ struct Analysis<'e> {
 /// # Errors
 ///
 /// SQLSTATE 10000, XQuery error, of the static error the module raises:
-/// err:XQST0009 or err:XQST0016 of an import or a library module, which
-/// turborel does not support [XQuery §5.2], or of a name or declaration
-/// the static context refuses.
+/// err:XQST0016 of a module import or a library module, as turborel does
+/// not support the Module Feature [XQuery §5.2], or of a name, import or
+/// declaration the static context refuses.
 pub fn compile(module: &Module, env: &Environment<'_>) -> Result<Plan> {
     if let Some(code) = module.unsupported() {
-        return Err(error(code, "turborel supports neither the Schema Import nor the Module Feature [XQuery §5.2]"));
+        return Err(error(code, "turborel does not support the Module Feature [XQuery §5.2]"));
     }
     let ModuleBody::Main(prolog, body) = &module.body else {
         return Err(error(ErrorCode::XQST0016, "a library module is evaluated by no query [XQuery §4]"));
@@ -126,7 +135,8 @@ pub fn compile(module: &Module, env: &Environment<'_>) -> Result<Plan> {
     let body = analysis.frame(&[], |a| a.expr(body))?.0;
     let validates = analysis.validates;
     let schemas = if validates { env.schemas.clone() } else { Vec::new() };
-    Ok(Plan { body, globals, functions, settings: analysis.settings, collations: env.collations.clone(), schemas, validates })
+    let imports = analysis.imported.iter().map(|i| i.name.clone()).collect();
+    Ok(Plan { body, globals, functions, settings: analysis.settings, collations: env.collations.clone(), schemas, validates, imports })
 }
 
 impl<'e> Analysis<'e> {
@@ -150,6 +160,7 @@ impl<'e> Analysis<'e> {
             declared: Vec::new(),
             globals: Vec::new(),
             validates: false,
+            imported: Vec::new(),
         }
     }
 

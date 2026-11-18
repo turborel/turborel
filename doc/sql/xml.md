@@ -667,9 +667,10 @@ expressions ([below](#the-validate-expression)), and a prolog's
 namespaces, setters, variables and functions, recursive ones too. Static
 typing is not done, so a type error is found as the query is evaluated.
 
-These are not supported: schema imports and library modules (error
-`err:XQST0009` or `err:XQST0016`), so a query names no type or element
-of a registered XML Schema.
+Library modules and module imports are not supported (error
+`err:XQST0016`). A prolog may import a registered XML Schema
+([below](#schema-imports)), whose types and declarations a query then
+names.
 
 An element a query constructs has the type annotation `xs:anyType`, and
 an element it copies keeps its own, a validated element its type; after
@@ -1497,6 +1498,48 @@ turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XQDY0084: [XQuery §3.
 ----------------------
  true true
 (1 row)
+```
+
+## Schema imports
+
+```
+import schema [ namespace <prefix> = | default element namespace ]
+    "<target namespace>" [ at "<location>" [ , "<location>" ]... ]
+```
+
+A query's prolog imports a registered XML Schema the user may use by
+its target namespace: of several, the one whose schema location is one
+of the locations after `at`, else the one of the least name,
+INFORMATION_SCHEMA.XS, XSI or SQLXML after the others. The prefix is
+bound to the namespace, or the namespace made the default element
+namespace. The schema's type definitions, element declarations and
+attribute declarations then name sequence types: `element(*, p:t)`
+matches an element whose type is `p:t` or derived from it,
+`schema-element(p:e)` one of the declaration `p:e` or of the
+substitution group it heads, nilled only if `p:e` is nillable, and
+`schema-attribute(p:a)` an attribute of the declaration `p:a`. A
+simple type the schema defines names no atomic item type, as an atomic
+value has a built-in type alone (`err:XPST0051`). A view, a constraint,
+a trigger or a routine depends on what its queries import.
+
+| Code | When |
+|---|---|
+| `err:XQST0058` | The prolog imports one target namespace twice |
+| `err:XQST0059` | No registered XML Schema the user may use has the target namespace |
+| `err:XQST0035` | Two schemas imported define one name from different schema documents |
+| `err:XQST0057` | A prefix is bound to no target namespace |
+
+```sql
+VALUES (XMLSERIALIZE(CONTENT XMLQUERY('import schema default element namespace ""; (validate { . })/size instance of schema-element(size)' PASSING BY REF XMLPARSE(DOCUMENT '<size>12</size>' PRESERVE WHITESPACE) RETURNING SEQUENCE EMPTY ON EMPTY) AS VARCHAR(10)));
+VALUES (XMLQUERY('import schema "urn:nowhere"; 1' RETURNING SEQUENCE BY REF EMPTY ON EMPTY));
+```
+
+```
+
+------------
+ true
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XQST0059: no registered XML Schema the current user may use has the target namespace 'urn:nowhere' [XQuery §4.10] [ISO/IEC 9075-14:2006 draft §6.18 GR3] (at character 8)
 ```
 
 ## Clients

@@ -33,6 +33,7 @@ pub(super) fn compile_in(text: &str, variables: &[&str], library: &Library) -> R
         library,
         collations: &collations,
         schemas: Vec::new(),
+        importable: Vec::new(),
     };
     Query::compile(text, &env)
 }

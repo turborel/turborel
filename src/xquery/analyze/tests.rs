@@ -32,6 +32,7 @@ fn statement_namespaces() {
         library: &library,
         collations: &collations,
         schemas: Vec::new(),
+        importable: Vec::new(),
     };
     assert!(Query::compile("<p:a/>, <b/>", &env).is_ok());
     assert!(Query::compile("xs:integer('1')", &env).is_err(), "xs is bound to another namespace");
@@ -44,8 +45,8 @@ fn statement_namespaces() {
 /// Appendix F] the static errors the analysis raises, each SQLSTATE 10000:
 /// an unbound prefix err:XPST0081, an undefined variable err:XPST0008, an
 /// unknown function err:XPST0017, a pragma unrecognized of no expression
-/// err:XQST0079, a schema element test err:XPST0008, a schema import
-/// err:XQST0009, a module import err:XQST0016.
+/// err:XQST0079, a schema element test err:XPST0008, a schema import of
+/// no registered XML Schema err:XQST0059, a module import err:XQST0016.
 #[test]
 fn static_errors() {
     assert_eq!(code_of("q:f()"), "err:XPST0081");
@@ -64,7 +65,7 @@ fn static_errors() {
 fn static_errors_of_types_and_prologs() {
     assert_eq!(code_of("1 instance of schema-element(a)"), "err:XPST0008");
     assert_eq!(code_of("1 instance of element(a, xs:nosuch)"), "err:XPST0008");
-    assert_eq!(code_of("import schema 'u'; 1"), "err:XQST0009");
+    assert_eq!(code_of("import schema 'u'; 1"), "err:XQST0059");
     assert_eq!(code_of("import module 'u'; 1"), "err:XQST0016");
     assert_eq!(code_of("module namespace m = 'u';"), "err:XQST0016");
     assert_eq!(code_of("declare option q:o 'v'; 1"), "err:XPST0081");

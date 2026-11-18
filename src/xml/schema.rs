@@ -40,6 +40,7 @@ mod check;
 mod component;
 mod determinism;
 mod facet;
+mod named;
 pub mod permanent;
 mod read;
 mod restrict;
@@ -59,6 +60,7 @@ pub use component::{
     Method, ModelGroup, ModelGroupDef, NamespaceConstraint, Notation, NotationId, Particle, Process, Schema, Scope, Simple, SimpleId,
     SimpleTypeDef, Term, TypeDef, Typed, ValueConstraint, ValueKind, Wildcard,
 };
+pub use named::{annotated_type, annotation_name, built_in_type, defined_twice};
 pub use read::{Library, Source, read};
 pub use xpath::{NameTest, Path, Step};
 

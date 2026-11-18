@@ -43,6 +43,9 @@ pub struct Plan {
     pub(super) schemas: Vec<InScopeSchema>,
     /// Whether it has a validate expression [XQuery §3.13].
     pub(super) validates: bool,
+    /// The names of the registered XML Schemas its prolog imports [XQuery
+    /// §4.10].
+    pub(super) imports: Vec<String>,
 }
 
 impl std::fmt::Debug for Plan {

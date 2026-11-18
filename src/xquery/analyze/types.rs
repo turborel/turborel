@@ -40,9 +40,9 @@ impl Analysis<'_> {
         })
     }
 
-    /// The kind test `test` resolved [XQuery §2.5.4]: no schema element or
-    /// attribute test, as no element or attribute is declared in scope
-    /// \[err:XPST0008\].
+    /// The kind test `test` resolved [XQuery §2.5.4]: a schema element or
+    /// attribute test of a declaration of an imported schema
+    /// (`analyze/import.rs`) \[err:XPST0008\].
     pub(super) fn kind_test(&self, test: &KindTest) -> Result<NodeKind> {
         Ok(match test {
             KindTest::AnyKind => NodeKind::Any,
@@ -55,10 +55,9 @@ impl Analysis<'_> {
             KindTest::Attribute(test) => NodeKind::Attribute(self.attribute_test(test.as_ref())?),
             KindTest::Document(None) => NodeKind::Document(None),
             KindTest::Document(Some(DocumentTest::Element(test))) => NodeKind::Document(Some(self.element_test(test.as_ref())?)),
-            KindTest::SchemaElement(name) | KindTest::Document(Some(DocumentTest::SchemaElement(name))) => {
-                return Err(undeclared(name, "element", "§2.5.4.4"));
-            }
-            KindTest::SchemaAttribute(name) => return Err(undeclared(name, "attribute", "§2.5.4.6")),
+            KindTest::SchemaElement(name) => NodeKind::Element(self.schema_element(name)?),
+            KindTest::Document(Some(DocumentTest::SchemaElement(name))) => NodeKind::Document(Some(self.schema_element(name)?)),
+            KindTest::SchemaAttribute(name) => NodeKind::Attribute(self.schema_attribute(name)?),
         })
     }
 
@@ -66,7 +65,9 @@ impl Analysis<'_> {
     /// element/type namespace if unprefixed, its type name one of the
     /// in-scope schema types.
     fn element_test(&self, test: Option<&ElementTest>) -> Result<ElementKind> {
-        let Some(test) = test else { return Ok(ElementKind { name: None, annotation: None, nillable: true }) };
+        let Some(test) = test else {
+            return Ok(ElementKind { name: None, substitutes: Vec::new(), annotation: None, nillable: true, imports: self.imports() });
+        };
         let name = match &test.name {
             NameOrWildcard::Name(n) => Some(self.scope.name(n, Unprefixed::Element)?),
             NameOrWildcard::Wildcard => None,
@@ -74,25 +75,29 @@ impl Analysis<'_> {
         // [XQuery §2.5.4.3] with no type name, any annotation and nilled
         // property match.
         let nillable = test.nillable || test.type_name.is_none();
-        Ok(ElementKind { name, annotation: test.type_name.as_ref().map(|t| self.type_name(t)).transpose()?, nillable })
+        let annotation = test.type_name.as_ref().map(|t| self.type_name(t)).transpose()?;
+        Ok(ElementKind { name, substitutes: Vec::new(), annotation, nillable, imports: self.imports() })
     }
 
     /// An attribute test resolved [XQuery §2.5.4.5]: its name in no
     /// namespace if unprefixed [XQuery §2.5.4].
     fn attribute_test(&self, test: Option<&AttributeTest>) -> Result<AttributeKind> {
-        let Some(test) = test else { return Ok(AttributeKind { name: None, annotation: None }) };
+        let Some(test) = test else { return Ok(AttributeKind { name: None, annotation: None, imports: self.imports() }) };
         let name = match &test.name {
             NameOrWildcard::Name(n) => Some(self.scope.name(n, Unprefixed::None)?),
             NameOrWildcard::Wildcard => None,
         };
-        Ok(AttributeKind { name, annotation: test.type_name.as_ref().map(|t| self.type_name(t)).transpose()? })
+        let annotation = test.type_name.as_ref().map(|t| self.type_name(t)).transpose()?;
+        Ok(AttributeKind { name, annotation, imports: self.imports() })
     }
 
     /// The schema type `name` names, one of the in-scope schema types
-    /// [XQuery §2.5.4.3] \[err:XPST0008\].
+    /// [XQuery §2.5.4.3]: a built-in one, or one of an imported schema
+    /// \[err:XPST0008\].
     fn type_name(&self, name: &Lexical) -> Result<SchemaType> {
         let expanded = self.scope.name(name, Unprefixed::Element)?;
         SchemaType::named(expanded.uri.as_deref(), &expanded.local)
+            .or_else(|| self.imported_type(&expanded))
             .ok_or_else(|| error(ErrorCode::XPST0008, &format!("{name} is no type of the in-scope schema types [XQuery §2.5.4.3]")))
     }
 
@@ -176,7 +181,12 @@ impl Analysis<'_> {
                 | Primitive::AnyUri => Ok(CastTarget { to, optional }),
             },
             Some(
-                SchemaType::AnyType | SchemaType::Untyped | SchemaType::AnySimpleType | SchemaType::AnyAtomicType | SchemaType::List(_),
+                SchemaType::AnyType
+                | SchemaType::Untyped
+                | SchemaType::AnySimpleType
+                | SchemaType::AnyAtomicType
+                | SchemaType::List(_)
+                | SchemaType::Defined(_),
             )
             | None => Err(refused()),
         }
@@ -194,6 +204,6 @@ impl Analysis<'_> {
 
 /// The error of a schema element or attribute test of `name`, `kind`,
 /// which no declaration in scope declares \[err:XPST0008\].
-fn undeclared(name: &Lexical, kind: &str, clause: &str) -> crate::error::SqlError {
+pub(super) fn undeclared(name: &Lexical, kind: &str, clause: &str) -> crate::error::SqlError {
     error(ErrorCode::XPST0008, &format!("no {kind} {name} is declared in the in-scope {kind} declarations [XQuery {clause}]"))
 }

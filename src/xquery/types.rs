@@ -4,15 +4,19 @@
 //!
 //! \[DESIGN\] RULES.md D86: a node no schema validated has the type
 //! annotation `xdt:untyped`, of an element, or `xdt:untypedAtomic`, of an
-//! attribute [XQuery §2.2.1]; one XMLVALIDATE validated has its type's, a
+//! attribute [XQuery §2.2.1]; one a validation typed has its type's, a
 //! built-in type's matched by the built-in hierarchy, a registered XML
-//! Schema's, which is no in-scope schema type as no schema is imported,
-//! as derived from `xs:anyType` alone. An atomic value is of an
+//! Schema's by that schema's derivations if a schema import brought it
+//! into the in-scope schema types (`types/defined.rs`), else as derived
+//! from `xs:anyType` alone. An atomic value is of an
 //! `xml::AtomicType`, every built-in atomic type of XML Schema and XQuery
 //! one; the hierarchy above them is `xdt:anyAtomicType`,
 //! `xs:anySimpleType` and `xs:anyType` [XQueryFO §1.6].
 
 use std::fmt;
+use std::sync::Arc;
+
+pub use defined::{Defined, Imports};
 
 use super::ast::Occurrence;
 use crate::xml::{AtomicType, Item, Kind, Node, QName, XS_NAMESPACE, XS_PREFIX};
@@ -50,6 +54,9 @@ pub enum SchemaType {
     Atomic(AtomicType),
     /// A built-in list type, by its local name in `xs`.
     List(&'static str),
+    /// A type definition of a registered XML Schema imported [XQuery
+    /// §4.10].
+    Defined(Arc<Defined>),
 }
 
 impl SchemaType {
@@ -88,7 +95,9 @@ impl SchemaType {
     /// [XQueryFO §1.6] [XQuery §2.5.1].
     fn base(&self) -> Option<SchemaType> {
         Some(match self {
-            SchemaType::AnyType => return None,
+            // `xs:anyType` is the root; a type of a schema imported has its
+            // derivations in its schema (`Defined::derives_from`).
+            SchemaType::AnyType | SchemaType::Defined(_) => return None,
             SchemaType::Untyped | SchemaType::AnySimpleType => SchemaType::AnyType,
             SchemaType::AnyAtomicType | SchemaType::List(_) => SchemaType::AnySimpleType,
             SchemaType::Atomic(t) => t.base().map_or(SchemaType::AnyAtomicType, SchemaType::Atomic),
@@ -101,6 +110,9 @@ impl SchemaType {
     /// `MAX_DERIVATION` steps.
     #[must_use]
     pub fn derives_from(&self, expected: &SchemaType) -> bool {
+        if let SchemaType::Defined(d) = self {
+            return d.derives_from(expected);
+        }
         std::iter::successors(Some(self.clone()), SchemaType::base).take(MAX_DERIVATION.saturating_add(1)).any(|t| t == *expected)
     }
 }
@@ -119,6 +131,7 @@ impl fmt::Display for SchemaType {
             SchemaType::AnyAtomicType => write!(f, "xdt:{ANY_ATOMIC_TYPE}"),
             SchemaType::Atomic(t) => write!(f, "{}", t.name()),
             SchemaType::List(local) => write!(f, "xs:{local}"),
+            SchemaType::Defined(d) => write!(f, "{d}"),
         }
     }
 }
@@ -130,10 +143,15 @@ impl fmt::Display for SchemaType {
 pub struct ElementKind {
     /// The name it matches, none for any.
     pub name: Option<QName>,
+    /// The names it matches besides `name`: of a schema element test, those
+    /// of the substitution group its element heads [XQuery §2.5.4.4].
+    pub substitutes: Vec<QName>,
     /// The type its annotation derives from, none for any.
     pub annotation: Option<SchemaType>,
     /// Whether a nilled element matches.
     pub nillable: bool,
+    /// The schemas imported, against which its annotation is resolved.
+    pub imports: Imports,
 }
 
 /// The test of an attribute [XQuery §2.5.4.5].
@@ -143,6 +161,8 @@ pub struct AttributeKind {
     pub name: Option<QName>,
     /// The type its annotation derives from, none for any.
     pub annotation: Option<SchemaType>,
+    /// The schemas imported, against which its annotation is resolved.
+    pub imports: Imports,
 }
 
 /// A kind test, resolved [XQuery §2.5.3, §2.5.4.2].
@@ -259,7 +279,7 @@ impl NodeKind {
             NodeKind::Element(test) => kind == Some(Kind::Element) && element_matches(test, node),
             NodeKind::Attribute(test) => {
                 let untyped = SchemaType::Atomic(AtomicType::UntypedAtomic);
-                let typed = test.annotation.as_ref().is_none_or(|t| annotation_derives(node, &untyped, t));
+                let typed = test.annotation.as_ref().is_none_or(|t| annotation_derives(node, &untyped, t, &test.imports));
                 kind == Some(Kind::Attribute) && named(node, test.name.as_ref()) && typed
             }
             NodeKind::Document(test) => kind == Some(Kind::Document) && test.as_ref().is_none_or(|t| document_matches(t, node)),
@@ -267,21 +287,25 @@ impl NodeKind {
     }
 }
 
-/// Whether element `node` matches `test` [XQuery §2.5.4.3]: its name, and
-/// its type annotation.
+/// Whether element `node` matches `test` [XQuery §2.5.3, §2.5.4.4]: its
+/// name, or one of the substitution group of a schema element test; its
+/// type annotation; and, if the test does not allow it, not nilled.
 fn element_matches(test: &ElementKind, node: &Node) -> bool {
-    named(node, test.name.as_ref()) && test.annotation.as_ref().is_none_or(|t| annotation_derives(node, &SchemaType::Untyped, t))
+    let substitute = node.tree().name(node.id()).is_some_and(|n| test.substitutes.iter().any(|s| n.same(s)));
+    let typed = test.annotation.as_ref().is_none_or(|t| annotation_derives(node, &SchemaType::Untyped, t, &test.imports));
+    (named(node, test.name.as_ref()) || substitute) && typed && (test.nillable || !node.tree().nilled(node.id()))
 }
 
 /// derives-from(the type annotation of `node`, `expected`) [XQuery
 /// §2.5.4]: of a node no schema validated, `untyped`'s; of a built-in
 /// type, by the built-in hierarchy; of a type of a registered XML Schema,
-/// no in-scope schema type, true of `xs:anyType` alone.
-fn annotation_derives(node: &Node, untyped: &SchemaType, expected: &SchemaType) -> bool {
+/// by its schema's derivations, the schema `expected`'s or one of
+/// `imports` (`defined::annotation_derives`).
+fn annotation_derives(node: &Node, untyped: &SchemaType, expected: &SchemaType, imports: &Imports) -> bool {
     let Some(annotation) = node.tree().annotation(node.id()) else { return untyped.derives_from(expected) };
     match SchemaType::named(annotation.name.uri.as_deref(), &annotation.name.local) {
         Some(t) => t.derives_from(expected),
-        None => *expected == SchemaType::AnyType,
+        None => defined::annotation_derives(&annotation.name, expected, imports),
     }
 }
 
@@ -298,5 +322,6 @@ fn document_matches(test: &ElementKind, node: &Node) -> bool {
     }
 }
 
+mod defined;
 #[cfg(test)]
 mod tests;

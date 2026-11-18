@@ -327,6 +327,7 @@ mod xml_query;
 mod xml_schema;
 mod xml_schema_catalog;
 mod xml_schema_dependents;
+mod xml_schema_import;
 mod xml_schema_types;
 mod xml_scoped_options;
 mod xml_storage;

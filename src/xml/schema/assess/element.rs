@@ -24,11 +24,11 @@ pub(super) const XSI_NIL: &str = "nil";
 /// \[DESIGN\] The prefix of the local name an anonymous complex type
 /// definition is annotated with, `#anonymous-` and its place, which no
 /// NCName is, so no named type has it [XQueryDM §3.3].
-const ANONYMOUS: &str = "#anonymous-";
+pub(in crate::xml::schema) const ANONYMOUS: &str = "#anonymous-";
 /// \[DESIGN\] The prefix of the local name an anonymous simple type
 /// definition is annotated with, `#anonymous-simple-` and its place, so no
 /// anonymous complex type's clashes with it.
-const ANONYMOUS_SIMPLE: &str = "#anonymous-simple-";
+pub(in crate::xml::schema) const ANONYMOUS_SIMPLE: &str = "#anonymous-simple-";
 
 /// The expanded name of node `id` of `tree`.
 pub(super) fn expanded(tree: &crate::xml::Tree, id: NodeId) -> Expanded {
@@ -37,7 +37,7 @@ pub(super) fn expanded(tree: &crate::xml::Tree, id: NodeId) -> Expanded {
 
 /// The name of type definition `t` of `schema` as a node's type-name
 /// [XQueryDM §3.3.1.1], an anonymous one's made from its place.
-pub(super) fn type_name(schema: &Schema, t: TypeDef) -> QName {
+pub(in crate::xml::schema) fn type_name(schema: &Schema, t: TypeDef) -> QName {
     let name = match t {
         TypeDef::Simple(Simple::Defined(id)) => schema.simple(id).map_or_else(
             || Expanded::new(None, ANONYMOUS_SIMPLE),
