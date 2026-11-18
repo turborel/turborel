@@ -4,6 +4,8 @@
 //! expressions, and the expressions on sequence types; function calls in
 //! `statics/functions.rs`, constructors in `statics/constructors.rs`.
 
+use std::sync::Arc;
+
 use super::super::ast::Comparator;
 use super::super::plan::{Arith, Callee, Clause, CompareOp, FlworOp, Op, PathOp, PathStart, QuantifiedOp, StepOp, TypeswitchOp};
 use super::axes::step;
@@ -128,7 +130,9 @@ impl Statics<'_> {
     /// [XQueryFS §4.12.3] `cast as`: of the target type, optional if `?`.
     fn cast(&mut self, operand: &Op, target: &super::super::plan::CastTarget, frame: &mut Frame) -> Result<Type> {
         self.cast_operand(operand, target.optional, frame)?;
-        Ok(Type::occur(Type::atomic(target.to), if target.optional { Occ::Optional } else { Occ::One }))
+        // [XQuery §3.12.3] of a user-defined type, a value of it.
+        let to = target.defined.as_ref().map_or(Atom::Of(target.to), |d| Atom::Defined(Arc::clone(d)));
+        Ok(Type::occur(Type::Item(Item::Atomic(to)), if target.optional { Occ::Optional } else { Occ::One }))
     }
 
     /// Each of `ops` typed.
@@ -167,12 +171,13 @@ impl Statics<'_> {
             Comparator::Value(_) => {
                 let string = Atom::Of(AtomicType::String);
                 let to_string = |t: &Type| super::values::convert_untyped(&data(t)?, &Type::atomic(AtomicType::String));
-                let values =
-                    move |a: Atom, b: Atom| comparable(convert(a, string), convert(b, string), equality).then_some(AtomicType::Boolean);
+                let values = move |a: &Atom, b: &Atom| {
+                    comparable(&convert(a, &string), &convert(b, &string), equality).then_some(AtomicType::Boolean)
+                };
                 binary(&to_string(&left)?, &to_string(&right)?, "a value comparison", &values)
             }
             Comparator::General(_) => {
-                let pairs = move |a: Atom, b: Atom| comparable(convert(a, b), convert(b, a), equality).then_some(AtomicType::Boolean);
+                let pairs = move |a: &Atom, b: &Atom| comparable(&convert(a, b), &convert(b, a), equality).then_some(AtomicType::Boolean);
                 let (l, r) = (data(&left)?, data(&right)?);
                 for a in prime(&l)? {
                     for b in prime(&r)? {
@@ -414,10 +419,8 @@ impl Statics<'_> {
         for key in &f.order {
             let t = data(&self.expr(&key.key, frame)?)?;
             let one = Type::of_prime(prime(&t)?, Occ::One);
-            let gt = |a: Atom, b: Atom| {
-                comparable(convert(a, Atom::Of(AtomicType::String)), convert(b, Atom::Of(AtomicType::String)), false)
-                    .then_some(AtomicType::Boolean)
-            };
+            let string = Atom::Of(AtomicType::String);
+            let gt = |a: &Atom, b: &Atom| comparable(&convert(a, &string), &convert(b, &string), false).then_some(AtomicType::Boolean);
             binary(&one, &one, "an order spec's gt", &gt)?;
         }
         Ok(Type::occur(self.expr(&f.result, frame)?, occ))
@@ -499,7 +502,7 @@ fn nodes_only(t: &Type, operator: &str) -> Result<()> {
 
 /// [XQueryFS Appendix B.2] The type of a unary operator of a number `a`:
 /// `a`'s numeric type.
-fn unary(a: Atom, _: Atom) -> Option<AtomicType> {
+fn unary(a: &Atom, _: &Atom) -> Option<AtomicType> {
     super::operators::rank(a).map(super::operators::numeric_at)
 }
 

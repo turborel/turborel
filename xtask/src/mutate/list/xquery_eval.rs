@@ -310,7 +310,7 @@ pub const XQUERY_EVAL: [Mutation; 36] = [
         package: Package::Core,
         breaks: "a value of a user-defined type matches every type of an imported schema",
         file: "src/xquery/types.rs",
-        original: "return defined::value_derives(name, expected);",
+        original: "return value_derives(name, expected);",
         replacement: "return true;",
         integration: &["xml_atomic_types::user_defined_types_are_atomic_item_types_2_5_4_2"],
         unit: &[],

@@ -91,10 +91,10 @@ fn has_boolean(t: &Type) -> Result<bool> {
     }
     let single = |i: &Item| match i {
         Item::Atomic(Atom::Numeric) => true,
-        Item::Atomic(Atom::Of(a)) => {
+        Item::Atomic(a @ (Atom::Of(_) | Atom::Defined(_))) => a.built_in().is_some_and(|a| {
             [AtomicType::Boolean, AtomicType::String, AtomicType::UntypedAtomic].iter().any(|b| a.derives_from(*b))
                 || a.primitive().numeric()
-        }
+        }),
         Item::Atomic(Atom::Any) | Item::Element(_) | Item::Attribute(_) | Item::Document(_) | Item::Text | Item::Comment | Item::Pi => {
             false
         }

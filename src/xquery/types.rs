@@ -19,7 +19,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-pub use defined::{Defined, Imports};
+pub use defined::{Defined, Imports, value_derives};
 
 use super::ast::Occurrence;
 use crate::xml::{Atomic, AtomicType, Item, Kind, Node, QName, XS_NAMESPACE, XS_PREFIX};
@@ -264,7 +264,7 @@ impl ItemKind {
 /// the built-in type `a` is of or its type restricts.
 fn atomic_derives(a: &Atomic, expected: &SchemaType) -> bool {
     if let (Some(name), SchemaType::Defined(_)) = (&a.annotation, expected) {
-        return defined::value_derives(name, expected);
+        return value_derives(name, expected);
     }
     !matches!(expected, SchemaType::Defined(_)) && SchemaType::Atomic(a.kind).derives_from(expected)
 }

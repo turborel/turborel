@@ -4047,7 +4047,12 @@ factored type by its item types and occurrence, a constructor's content
 by the order of its attributes too, a document test's interleaving part
 by part), any other shape refused, so a query is never admitted where
 it cannot be decided; a type of a schema expands to its content model's
-particles and attribute uses, with the types derived from it. A value
+particles and attribute uses, with the types derived from it. A
+user-defined atomic type is an atomic type of its own (`Atom::Defined`):
+a node's typed value, a cast and a constructor function are of it, it is
+a subtype of the types its name's derivation reaches, as a value's
+annotation is matched, and operators take it as the built-in type it
+restricts. A value
 passed is of its formal type [ISO/IEC 9075-14:2006 draft §10.21]. The
 built-in functions' signatures are a table of \[XQueryFO\]'s, as the
 functions declare `item()*` to the evaluation. Three static typing

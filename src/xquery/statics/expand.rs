@@ -23,15 +23,15 @@ use std::sync::Arc;
 
 use super::super::analyze::{heads, schema_type};
 use super::super::plan::Namespace;
-use super::super::types::SchemaType;
+use super::super::types::{Defined, SchemaType};
 use super::names::{Namespaces, name_within, narrowed};
 use super::sequence::{any_content, any_element, untyped_atomic};
 use super::types::{Atom, Item, Name, Node, Occ, Type, deeper};
 use crate::error::Result;
 use crate::xml::schema::{
-    ComplexId, Compositor, ContentType, NamespaceConstraint, Particle, Schema, Scope, Simple, Term, TypeDef, Wildcard,
+    ComplexId, Compositor, ContentType, NamespaceConstraint, Particle, Schema, Scope, Simple, Term, TypeDef, Wildcard, annotated_type,
 };
-use crate::xml::{AtomicType, SimpleType, Variety, XSI_NAMESPACE};
+use crate::xml::{AtomicType, QName, SimpleType, Variety, XSI_NAMESPACE};
 
 /// [XQueryFS §8.1.8] The built-in attributes: `xsi:type`, `xsi:nil`,
 /// `xsi:schemaLocation` and `xsi:noNamespaceSchemaLocation`, each with
@@ -111,6 +111,7 @@ fn text_optional() -> Type {
 fn any_attributes_of(data: &Type) -> Type {
     let of = match data {
         Type::Item(Item::Atomic(Atom::Of(t))) => SchemaType::Atomic(*t),
+        Type::Item(Item::Atomic(Atom::Defined(d))) => SchemaType::Defined(Arc::clone(d)),
         Type::Empty | Type::None | Type::Item(_) | Type::Seq(_) | Type::Choice(_) | Type::All(_) | Type::Occur(..) => {
             SchemaType::AnySimpleType
         }
@@ -132,13 +133,13 @@ fn list_items(local: &str) -> Type {
 }
 
 /// The typed value of a node of simple type `s` of `schema`.
-fn simple_data(schema: &Schema, s: Simple, depth: usize) -> Result<Type> {
+fn simple_data(schema: &Arc<Schema>, s: Simple, depth: usize) -> Result<Type> {
     Ok(match s {
         Simple::AnySimple => Type::occur(Type::Item(Item::Atomic(Atom::Any)), Occ::Star),
         Simple::Atomic(t) => Type::atomic(t),
         Simple::List(t) => Type::occur(Type::atomic(t), Occ::Plus),
         Simple::Defined(id) => match schema.simple(id) {
-            Some(d) => variety_data(&d.def, deeper(depth)?)?,
+            Some(d) => variety_data(schema, &d.def, deeper(depth)?)?,
             None => Type::Item(Item::Atomic(Atom::Any)),
         },
     })
@@ -146,13 +147,22 @@ fn simple_data(schema: &Schema, s: Simple, depth: usize) -> Result<Type> {
 
 /// The typed value of a node of the datatype `t`: of its atomic type, its
 /// list's items, or its union's members.
-fn variety_data(t: &SimpleType, depth: usize) -> Result<Type> {
+fn variety_data(schema: &Arc<Schema>, t: &SimpleType, depth: usize) -> Result<Type> {
     let next = deeper(depth)?;
     Ok(match t.variety() {
-        Variety::Atomic(a) => Type::atomic(*a),
-        Variety::List(item) => Type::occur(variety_data(item, next)?, Occ::Star),
-        Variety::Union(members) => Type::choice(members.iter().map(|m| variety_data(m, next)).collect::<Result<Vec<_>>>()?),
+        Variety::Atomic(a) => Type::Item(Item::Atomic(user_defined(schema, t).unwrap_or(Atom::Of(*a)))),
+        Variety::List(item) => Type::occur(variety_data(schema, item, next)?, Occ::Star),
+        Variety::Union(members) => Type::choice(members.iter().map(|m| variety_data(schema, m, next)).collect::<Result<Vec<_>>>()?),
     })
+}
+
+/// [XQuery §2.5.4.2] [XQueryDM §3.3.1.2] The user-defined atomic type of
+/// `schema` the datatype `t` is, of which a value it validates is
+/// annotated (`SimpleType::annotation`); none of a built-in type.
+fn user_defined(schema: &Arc<Schema>, t: &SimpleType) -> Option<Atom> {
+    let name = t.annotation()?;
+    let def = annotated_type(schema, name)?;
+    Some(Atom::Defined(Arc::new(Defined { name: QName::clone(name), schema: Arc::clone(schema), def })))
 }
 
 /// [XQueryFS §8.1.10] The union interpretation of complex type `id` of

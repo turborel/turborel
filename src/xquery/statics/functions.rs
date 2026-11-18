@@ -322,7 +322,7 @@ fn rounded(t: &Type) -> Result<Type> {
         return Err(type_error(&format!("a rounding function is given values of {t}, not one or none [XQueryFS §7.2.3]")));
     }
     let items = prime(&convert_untyped(t, &Type::atomic(AtomicType::Double))?)?;
-    let ranks: Vec<Option<usize>> = items.iter().map(|i| if let Item::Atomic(a) = i { rank(*a) } else { None }).collect();
+    let ranks: Vec<Option<usize>> = items.iter().map(|i| if let Item::Atomic(a) = i { rank(a) } else { None }).collect();
     let mut widest = 0_usize;
     for r in ranks {
         let Some(r) = r else {
@@ -390,13 +390,14 @@ fn converted(args: &[Type], parameters: &[Type], function: &str) -> Result<()> {
 }
 
 /// [XQueryFS §4.1.5, §7.1.2] What an untyped value is cast to for an
-/// atomic parameter of type `p`: its atomic type, `xs:double` of a
-/// numeric one, itself of `xdt:anyAtomicType`.
+/// atomic parameter of type `p`: its atomic type, a user-defined one too
+/// [XQuery §3.1.5], `xs:double` of a numeric one, itself of
+/// `xdt:anyAtomicType`.
 fn target_of(p: &Type) -> Result<Type> {
     let items = prime(p)?;
     Ok(match items.as_slice() {
         [Item::Atomic(Atom::Numeric)] => Type::atomic(AtomicType::Double),
-        [Item::Atomic(Atom::Of(t))] => Type::atomic(*t),
+        [Item::Atomic(a @ (Atom::Of(_) | Atom::Defined(_)))] => Type::Item(Item::Atomic(a.clone())),
         _ => Type::atomic(AtomicType::UntypedAtomic),
     })
 }

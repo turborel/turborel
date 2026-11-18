@@ -2,13 +2,14 @@
 //! empty type, the effective boolean value, subtyping's occurrences, the
 //! quantifier of the empty type, name tests, typed values of element-only
 //! content, the context item, the option and the setting that put it in
-//! effect, the typing a definition keeps, values known not null, and the
-//! names of wildcards (RULES.md R-TEST-9, D106).
+//! effect, the typing a definition keeps, values known not null, the
+//! names of wildcards, and user-defined atomic types (RULES.md R-TEST-9,
+//! D106).
 
 use super::{Mutation, Package};
 
 /// Each static typing mechanism broken alone, and the tests that fail.
-pub const XQUERY_STATICS: [Mutation; 19] = [
+pub const XQUERY_STATICS: [Mutation; 22] = [
     Mutation {
         name: "statics-operand-cardinality",
         package: Package::Core,
@@ -198,5 +199,35 @@ pub const XQUERY_STATICS: [Mutation; 19] = [
         replacement: "        (Namespaces::NotAmong(_), Namespaces::Among(_)) => true,",
         integration: &[],
         unit: &["xquery::statics::names::tests::wildcard_names_admit_their_namespaces_alone"],
+    },
+    Mutation {
+        name: "statics-defined-typed-value",
+        package: Package::Core,
+        breaks: "a node's typed value of a user-defined type is of the built-in type it restricts",
+        file: "src/xquery/statics/expand.rs",
+        original: "        Variety::Atomic(a) => Type::Item(Item::Atomic(user_defined(schema, t).unwrap_or(Atom::Of(*a)))),",
+        replacement: "        Variety::Atomic(a) => Type::Item(Item::Atomic(Atom::Of(*a))),",
+        integration: &["xml_static_typing::user_defined_atomic_types_are_typed"],
+        unit: &[],
+    },
+    Mutation {
+        name: "statics-defined-derivation",
+        package: Package::Core,
+        breaks: "a user-defined atomic type is a subtype of no other",
+        file: "src/xquery/statics/subtype.rs",
+        original: "        (Atom::Defined(d), Atom::Defined(e)) => value_derives(&d.name, &SchemaType::Defined(Arc::clone(e))),",
+        replacement: "        (Atom::Defined(d), Atom::Defined(e)) => d == e,",
+        integration: &["xml_static_typing::user_defined_atomic_types_are_typed"],
+        unit: &[],
+    },
+    Mutation {
+        name: "statics-defined-cast",
+        package: Package::Core,
+        breaks: "a cast to a user-defined atomic type is of the built-in type it restricts",
+        file: "src/xquery/statics/expr.rs",
+        original: "        let to = target.defined.as_ref().map_or(Atom::Of(target.to), |d| Atom::Defined(Arc::clone(d)));",
+        replacement: "        let to = Atom::Of(target.to);",
+        integration: &["xml_static_typing::user_defined_atomic_types_are_typed"],
+        unit: &[],
     },
 ];

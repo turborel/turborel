@@ -8,9 +8,10 @@
 //! `MAX_TYPE_DEPTH`.
 
 use std::fmt;
+use std::sync::Arc;
 
 use super::super::plan::Namespace;
-use super::super::types::SchemaType;
+use super::super::types::{Defined, SchemaType};
 use super::names::{Narrowed, except_written, namespaces_written};
 use crate::error::Result;
 use crate::xml::AtomicType;
@@ -84,7 +85,7 @@ impl Occ {
 }
 
 /// An atomic type name [XQueryFS §2.4.2, §3.5.1].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Atom {
     /// `xdt:anyAtomicType`.
     Any,
@@ -92,6 +93,24 @@ pub enum Atom {
     Numeric,
     /// A built-in atomic type.
     Of(AtomicType),
+    /// [XQuery §2.5.4.2] A user-defined atomic type of a schema, of an
+    /// imported schema's sequence type or cast, or the type of a node's
+    /// typed value: a value of it is a value of the built-in type it
+    /// restricts annotated with its name (`xml::Atomic::annotation`).
+    Defined(Arc<Defined>),
+}
+
+impl Atom {
+    /// The built-in atomic type it is, or restricts; none of
+    /// `xdt:anyAtomicType` and `fs:numeric`.
+    #[must_use]
+    pub fn built_in(&self) -> Option<AtomicType> {
+        match self {
+            Atom::Of(t) => Some(*t),
+            Atom::Defined(d) => d.built_in(),
+            Atom::Any | Atom::Numeric => None,
+        }
+    }
 }
 
 /// The name of an element or attribute type [XQueryFS §2.4.2]: a QName, or
@@ -373,6 +392,7 @@ impl fmt::Display for Item {
             Item::Atomic(Atom::Any) => f.write_str("xdt:anyAtomicType"),
             Item::Atomic(Atom::Numeric) => f.write_str("fs:numeric"),
             Item::Atomic(Atom::Of(t)) => f.write_str(t.name()),
+            Item::Atomic(Atom::Defined(d)) => write!(f, "{d}"),
             Item::Element(n) => write!(f, "element {}{} of type {}", n.name, if n.nillable { " nillable" } else { "" }, n.of),
             Item::Attribute(n) => write!(f, "attribute {} of type {}", n.name, n.of),
             Item::Document(_) => f.write_str("document"),

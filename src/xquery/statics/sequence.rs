@@ -1,6 +1,8 @@
 //! Sequence types normalized to types [XQueryFS §3.5.4], and the types
 //! `node()` and `item()` stand for.
 
+use std::sync::Arc;
+
 use super::super::types::{AttributeKind, ElementKind, ItemKind, NodeKind, SchemaType, SeqType};
 use super::types::{Atom, Item, Name, Node, Occ, Type};
 use crate::xml::AtomicType;
@@ -77,13 +79,13 @@ fn item_type(kind: &ItemKind) -> Type {
         ItemKind::Item => Type::of_prime(item_items(), Occ::One),
         ItemKind::Numeric => Type::Item(Item::Atomic(Atom::Numeric)),
         ItemKind::Atomic(SchemaType::Atomic(t)) => Type::atomic(*t),
+        // [XQuery §2.5.4.2] A user-defined atomic type of an imported
+        // schema, itself.
+        ItemKind::Atomic(SchemaType::Defined(d)) => {
+            Type::Item(Item::Atomic(if d.atomic() { Atom::Defined(Arc::clone(d)) } else { Atom::Any }))
+        }
         ItemKind::Atomic(
-            SchemaType::AnyAtomicType
-            | SchemaType::AnyType
-            | SchemaType::Untyped
-            | SchemaType::AnySimpleType
-            | SchemaType::List(_)
-            | SchemaType::Defined(_),
+            SchemaType::AnyAtomicType | SchemaType::AnyType | SchemaType::Untyped | SchemaType::AnySimpleType | SchemaType::List(_),
         ) => Type::Item(Item::Atomic(Atom::Any)),
         ItemKind::Node(node) => node_type(node),
     }

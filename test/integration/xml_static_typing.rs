@@ -14,8 +14,9 @@ use crate::common::{Scratch, after_crash, fetched, os, rows};
 
 /// A schema document of target namespace `urn:s`: a type `base` and its
 /// extension `more`, elements `item` of `base` and `big` of `more` in its
-/// substitution group, and a nillable `n` of a restriction of `xs:int`.
-const SHAPES: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:s="urn:s" targetNamespace="urn:s" elementFormDefault="qualified"><xs:complexType name="base"><xs:sequence><xs:element name="v" type="xs:int"/></xs:sequence></xs:complexType><xs:complexType name="more"><xs:complexContent><xs:extension base="s:base"><xs:sequence><xs:element name="w" type="xs:int"/></xs:sequence></xs:extension></xs:complexContent></xs:complexType><xs:simpleType name="small"><xs:restriction base="xs:int"><xs:maxInclusive value="9"/></xs:restriction></xs:simpleType><xs:element name="item" type="s:base"/><xs:element name="big" type="s:more" substitutionGroup="s:item"/><xs:element name="n" type="s:small" nillable="true"/></xs:schema>"#;
+/// substitution group, a nillable `n` of `small`, a restriction of
+/// `xs:int`, and `tiny`, a restriction of `small`.
+const SHAPES: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:s="urn:s" targetNamespace="urn:s" elementFormDefault="qualified"><xs:complexType name="base"><xs:sequence><xs:element name="v" type="xs:int"/></xs:sequence></xs:complexType><xs:complexType name="more"><xs:complexContent><xs:extension base="s:base"><xs:sequence><xs:element name="w" type="xs:int"/></xs:sequence></xs:extension></xs:complexContent></xs:complexType><xs:simpleType name="small"><xs:restriction base="xs:int"><xs:maxInclusive value="9"/></xs:restriction></xs:simpleType><xs:simpleType name="tiny"><xs:restriction base="s:small"><xs:maxInclusive value="3"/></xs:restriction></xs:simpleType><xs:element name="item" type="s:base"/><xs:element name="big" type="s:more" substitutionGroup="s:item"/><xs:element name="n" type="s:small" nillable="true"/></xs:schema>"#;
 
 /// Schema A's table T of an untyped XML column, empty, and S of a column
 /// of SHAPES's documents.
@@ -224,6 +225,44 @@ fn schema_types_are_read_10_21() {
     assert!(is_xquery(&failure(&a, &query("/s:item/s:zz")), "XPST0005"));
     assert!(is_xquery(&failure(&a, &query("/s:item + 1")), "XPTY0004"), "element-only content has no typed value");
     assert!(is_xquery(&failure(&a, &query("upper-case(/s:item/s:v)")), "XPTY0004"), "an xs:int is no xs:string");
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §10.21 SR4] [XQuery §2.5.4.2,
+/// §3.1.5, §3.12.3] [XQueryFS §8.3.2, §7.2.6] a user-defined atomic type
+/// is a static type of its own: a node's typed value of its type is of
+/// it, a cast and a constructor function to it give it, a type derived
+/// from it is its subtype, a built-in type none's; operators take its
+/// values as values of the built-in type it restricts, and an untyped
+/// value passed as it is cast to it.
+#[test]
+fn user_defined_atomic_types_are_typed() {
+    let db = database();
+    let a = db.session("A");
+    a.run("SET XQUERY.STATIC_TYPING = 'ON'").unwrap();
+    let query = |text: &str| {
+        format!(
+            "SELECT XMLQUERY('import schema namespace s = \"urn:s\"; {text}' PASSING BY REF X RETURNING SEQUENCE BY REF EMPTY ON EMPTY) FROM S"
+        )
+    };
+    for q in [
+        "let $v as s:small? := data(/s:n) return $v",
+        "/s:n * 2",
+        "s:small(\"5\") + 1",
+        "let $v as s:small := exactly-one(s:tiny(\"2\")) return $v",
+        "let $v as xs:int := exactly-one(s:small(\"2\")) return $v",
+        "declare function local:f($x as s:small) as s:small { $x }; local:f(exactly-one(xdt:untypedAtomic(\"5\")))",
+        "s:small(\"5\") cast as xs:int?",
+    ] {
+        assert_eq!(fetched(&a, &query(q)).unwrap(), 0, "{q}");
+    }
+    for q in [
+        "let $v as s:small := 5 return $v",
+        "let $v as s:tiny := exactly-one(s:small(\"2\")) return $v",
+        "let $v as xs:short? := data(/s:n) return $v",
+        "upper-case(s:small(\"5\"))",
+    ] {
+        assert!(is_xquery(&failure(&a, &query(q)), "XPTY0004"), "{q}");
+    }
 }
 
 /// A schema document of target namespace `urn:r`: an element `doc` of a

@@ -13,6 +13,9 @@
 //! so the analysis rejects, never admits, what it cannot decide.
 
 use super::names::name_within;
+use std::sync::Arc;
+
+use super::super::types::{SchemaType, value_derives};
 use super::types::{Atom, Item, Occ, Type, deeper, prime, quantifier};
 use crate::error::Result;
 use crate::xml::{AtomicType, Primitive};
@@ -244,7 +247,7 @@ fn order(t: &Type, depth: usize) -> Result<Order> {
 /// SQLCODE -900 past `MAX_TYPE_DEPTH`.
 pub fn item_sub(x: &Item, y: &Item, depth: usize) -> Result<bool> {
     Ok(match (x, y) {
-        (Item::Atomic(a), Item::Atomic(b)) => atom_sub(*a, *b),
+        (Item::Atomic(a), Item::Atomic(b)) => atom_sub(a, b),
         (Item::Element(a), Item::Element(b)) => name_within(&a.name, &b.name) && a.of.derives_from(&b.of) && (!a.nillable || b.nillable),
         (Item::Attribute(a), Item::Attribute(b)) => name_within(&a.name, &b.name) && a.of.derives_from(&b.of),
         (Item::Document(a), Item::Document(b)) => subtype_at(a, b, depth)?,
@@ -253,14 +256,23 @@ pub fn item_sub(x: &Item, y: &Item, depth: usize) -> Result<bool> {
     })
 }
 
-/// Whether atomic type `a` derives from `b` [XQueryFS §8.1.1, §3.5.1].
+/// Whether atomic type `a` derives from `b` [XQueryFS §8.1.1, §3.5.1]: a
+/// user-defined one from another by its derivation, its name's type in
+/// the other's schema derived from it as a value's is [XQuery §2.5.4.2],
+/// and from a built-in type as the built-in type it restricts does; a
+/// built-in type from no user-defined one.
 #[must_use]
-pub fn atom_sub(a: Atom, b: Atom) -> bool {
+pub fn atom_sub(a: &Atom, b: &Atom) -> bool {
     match (a, b) {
         (_, Atom::Any) | (Atom::Numeric, Atom::Numeric) => true,
         (Atom::Of(t), Atom::Numeric) => t.primitive().numeric(),
-        (Atom::Of(t), Atom::Of(u)) => t.derives_from(u),
-        (Atom::Any | Atom::Numeric, Atom::Of(_)) | (Atom::Any, Atom::Numeric) => false,
+        (Atom::Of(t), Atom::Of(u)) => t.derives_from(*u),
+        (Atom::Defined(d), Atom::Defined(e)) => value_derives(&d.name, &SchemaType::Defined(Arc::clone(e))),
+        (Atom::Defined(d), Atom::Of(u)) => d.built_in().is_some_and(|t| t.derives_from(*u)),
+        (Atom::Defined(d), Atom::Numeric) => d.built_in().is_some_and(|t| t.primitive().numeric()),
+        (Atom::Any | Atom::Numeric | Atom::Of(_), Atom::Defined(_))
+        | (Atom::Any | Atom::Numeric, Atom::Of(_))
+        | (Atom::Any, Atom::Numeric) => false,
     }
 }
 
@@ -287,15 +299,16 @@ fn promoted(x: &Item, y: &Item, depth: usize) -> Result<bool> {
     if item_sub(x, y, depth)? {
         return Ok(true);
     }
-    let (Item::Atomic(Atom::Of(from)), Item::Atomic(to)) = (x, y) else { return Ok(false) };
+    let (Item::Atomic(a), Item::Atomic(to)) = (x, y) else { return Ok(false) };
+    let Some(from) = a.built_in() else { return Ok(false) };
     let to_primitive = match to {
         Atom::Of(t) => Some(t.primitive()),
-        Atom::Any | Atom::Numeric => None,
+        Atom::Any | Atom::Numeric | Atom::Defined(_) => None,
     };
     Ok(match from.primitive() {
         Primitive::Untyped => true,
-        Primitive::Decimal | Primitive::Integer => matches!(to_primitive, Some(Primitive::Float | Primitive::Double)) && is_builtin(*to),
-        Primitive::Float => to_primitive == Some(Primitive::Double) && is_builtin(*to),
+        Primitive::Decimal | Primitive::Integer => matches!(to_primitive, Some(Primitive::Float | Primitive::Double)) && is_builtin(to),
+        Primitive::Float => to_primitive == Some(Primitive::Double) && is_builtin(to),
         Primitive::String
         | Primitive::Boolean
         | Primitive::Double
@@ -320,6 +333,6 @@ fn promoted(x: &Item, y: &Item, depth: usize) -> Result<bool> {
 
 /// Whether `to` is `xs:float` or `xs:double` itself, to which a number is
 /// promoted, not a type derived from one.
-fn is_builtin(to: Atom) -> bool {
+fn is_builtin(to: &Atom) -> bool {
     matches!(to, Atom::Of(AtomicType::Float | AtomicType::Double))
 }

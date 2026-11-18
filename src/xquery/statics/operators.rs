@@ -57,16 +57,16 @@ pub fn split(t: &Type) -> Result<Option<Split>> {
 /// the other is untyped, a double if it is numeric, else of the other's
 /// type; any other unchanged.
 #[must_use]
-pub fn convert(a: Atom, other: Atom) -> Atom {
-    if a != Atom::Of(AtomicType::UntypedAtomic) {
-        return a;
+pub fn convert(a: &Atom, other: &Atom) -> Atom {
+    if *a != Atom::Of(AtomicType::UntypedAtomic) {
+        return a.clone();
     }
-    if other == Atom::Of(AtomicType::UntypedAtomic) {
+    if *other == Atom::Of(AtomicType::UntypedAtomic) {
         Atom::Of(AtomicType::String)
-    } else if other == Atom::Numeric || rank(other).is_some() {
+    } else if *other == Atom::Numeric || rank(other).is_some() {
         Atom::Of(AtomicType::Double)
     } else {
-        other
+        other.clone()
     }
 }
 
@@ -74,11 +74,12 @@ pub fn convert(a: Atom, other: Atom) -> Atom {
 /// operator of numbers is the first of that both operands convert to.
 const NUMERIC: [AtomicType; 4] = [AtomicType::Integer, AtomicType::Decimal, AtomicType::Float, AtomicType::Double];
 
-/// Where `a` ranks among `NUMERIC`, by the primitive type it is derived
-/// from; none of a type that is no number.
+/// Where `a` ranks among `NUMERIC`, by the primitive type it, or the
+/// built-in type a user-defined one restricts, is derived from; none of a
+/// type that is no number.
 #[must_use]
-pub fn rank(a: Atom) -> Option<usize> {
-    let Atom::Of(t) = a else { return None };
+pub fn rank(a: &Atom) -> Option<usize> {
+    let t = a.built_in()?;
     NUMERIC.iter().position(|n| n.primitive() == t.primitive())
 }
 
@@ -90,10 +91,11 @@ pub fn numeric_at(at: usize) -> AtomicType {
 
 /// The primitive type a row of the operator mapping matches `a` by
 /// [XQuery Appendix B.2]: of `xs:anyURI` `xs:string`, to which it is
-/// promoted [XQuery Appendix B.1]; none of `xdt:anyAtomicType` and
-/// `fs:numeric`.
-fn primitive(a: Atom) -> Option<Primitive> {
-    let Atom::Of(t) = a else { return None };
+/// promoted [XQuery Appendix B.1]; of a user-defined type, the built-in
+/// type's it restricts, as operators take its values [XQuery §2.5.4.2];
+/// none of `xdt:anyAtomicType` and `fs:numeric`.
+fn primitive(a: &Atom) -> Option<Primitive> {
+    let t = a.built_in()?;
     let p = t.primitive();
     Some(if p == Primitive::AnyUri { Primitive::String } else { p })
 }
@@ -157,7 +159,7 @@ const DURATIONS: [(Arith, Operand, Operand, AtomicType); 6] = {
 };
 
 /// Whether `a` matches row operand `o`.
-fn matches(o: Operand, a: Atom) -> bool {
+fn matches(o: Operand, a: &Atom) -> bool {
     match o {
         Operand::Of(p) => primitive(a) == Some(p),
         Operand::Numeric => rank(a).is_some(),
@@ -169,7 +171,7 @@ fn matches(o: Operand, a: Atom) -> bool {
 /// numeric type both convert to, `xs:decimal` of `div` of two integers
 /// and `xs:integer` of `idiv`.
 #[must_use]
-pub fn arithmetic(op: Arith, a: Atom, b: Atom) -> Option<AtomicType> {
+pub fn arithmetic(op: Arith, a: &Atom, b: &Atom) -> Option<AtomicType> {
     if let (Some(x), Some(y)) = (rank(a), rank(b)) {
         let wider = x.max(y);
         return Some(match op {
@@ -210,7 +212,7 @@ const EQUAL: [Primitive; 9] = [
 /// [XQuery Appendix B.2] Whether the operator mapping compares `a` and `b`
 /// by `equality` alone, `eq` and `ne`, or by every value comparison.
 #[must_use]
-pub fn comparable(a: Atom, b: Atom, equality: bool) -> bool {
+pub fn comparable(a: &Atom, b: &Atom, equality: bool) -> bool {
     if rank(a).is_some() && rank(b).is_some() {
         return true;
     }
@@ -236,7 +238,7 @@ pub fn is_equality(op: Comparator) -> bool {
 ///
 /// err:XPTY0004 if an operand is no union of optional atomic types, or
 /// `typed` refuses a pair, `what` naming the operator.
-pub fn binary(left: &Type, right: &Type, what: &str, typed: &dyn Fn(Atom, Atom) -> Option<AtomicType>) -> Result<Type> {
+pub fn binary(left: &Type, right: &Type, what: &str, typed: &dyn Fn(&Atom, &Atom) -> Option<AtomicType>) -> Result<Type> {
     let (Some(lefts), Some(rights)) = (split(left)?, split(right)?) else {
         return Err(type_error(&format!(
             "an operand of {what} is of {left} and {right}, not each of one atomic value or none [XQueryFS Appendix B.2]"
@@ -252,13 +254,13 @@ pub fn binary(left: &Type, right: &Type, what: &str, typed: &dyn Fn(Atom, Atom) 
         return Ok(Type::Empty);
     }
     let mut out = Vec::new();
-    for &l in &lefts.atoms {
-        for &r in &rights.atoms {
+    for l in &lefts.atoms {
+        for r in &rights.atoms {
             let Some(result) = typed(l, r) else {
                 let why = format!(
                     "{what} has no operands of {} and {} [XQuery Appendix B.2] [XQueryFS Appendix B.2]",
-                    Item::Atomic(l),
-                    Item::Atomic(r)
+                    Item::Atomic(l.clone()),
+                    Item::Atomic(r.clone())
                 );
                 return Err(type_error(&why));
             };
