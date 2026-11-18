@@ -55,6 +55,11 @@ path = "bench/indexes.rs"
 harness = false
 
 [[bench]]
+name = "xml_index"
+path = "bench/xml_index.rs"
+harness = false
+
+[[bench]]
 name = "kept"
 path = "bench/kept.rs"
 harness = false

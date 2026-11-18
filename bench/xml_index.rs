@@ -1,0 +1,164 @@
+//! What a path predicate costs over XML values' stored form, of documents
+//! of several sizes, the measurement the primary XML index of Pal et al.
+//! (§3.1) waits for (RULES.md D86): it is built only if reading values'
+//! nodes from its rows would pay against reading the stored form.
+//!
+//! For each size, a predicate `/order/item[. = "thing N"]` asked of every
+//! value of a table's worth of documents:
+//!
+//! * decoded: each value's stored form decoded into a tree and the path
+//!   walked (`XmlLookup::matches`), as an evaluator reading values whole
+//!   does;
+//! * streamed: one pass over each value's events (`xml::Events`), the
+//!   path matched as elements open, no tree built, the least a reader of
+//!   the stored form can do;
+//! * rows found: the rows an `xml_path` and an `xml_value` index give for
+//!   it (`Index::xml_rows`), of an index of the first of those documents,
+//!   about 200,000 items';
+//! * looked up: those rows, each row's value then checked as decoded.
+//!
+//! Index building is outside the timer. Run with `cargo xtask bench
+//! xml_index`, on the harness (RULES.md R-BENCH-1). When the XQuery
+//! evaluator is there, its XMLEXISTS of the same predicate is a case of
+//! its own here.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::as_conversions,
+    clippy::arithmetic_side_effects,
+    clippy::integer_division,
+    clippy::indexing_slicing,
+    clippy::cast_possible_truncation,
+    missing_docs,
+    reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
+)]
+
+mod harness;
+
+use std::fmt::Write;
+use std::sync::Arc;
+
+use harness::{Bench, Case, note};
+use turborel::index::xml::{Axis, Comparison, Literal, Method, PathPattern, Step, Target, XmlLookup, XmlMethod};
+use turborel::index::{Index, IndexMethod, Key};
+use turborel::value::lob::Lob;
+use turborel::value::xml::{Typing, XmlType, XmlValue};
+use turborel::value::{CompOp, DataType, Value};
+use turborel::xml::{Event, Events, QName, Sequence, Syntax, Whitespace, encode, parse};
+
+/// Items of each order: a small, a middling and a large document.
+const SIZES: [usize; 3] = [10, 1_000, 50_000];
+/// The stored forms read in each run, about: fewer of larger documents.
+const OCTETS_READ: usize = 64 * 1024 * 1024;
+/// The documents read, at most.
+const INDEXED: usize = 2_000;
+/// The items of the documents an index holds, about: fewer of larger
+/// documents, so building it stays short.
+const INDEXED_ITEMS: usize = 200_000;
+
+fn main() {
+    let bench = Bench::new("xml_index");
+    for items in SIZES {
+        let document = stored(&order(items, 0));
+        let count = (OCTETS_READ / document.len()).clamp(1, INDEXED);
+        let values: Vec<Vec<u8>> = (0..count).map(|n| stored(&order(items, n))).collect();
+        note(&format!("{items} items: {} octets stored, {count} documents", document.len()));
+        let lookup = predicate(items / 2);
+        let bytes = document.len();
+        bench.measure(Case::new(format!("decoded, {items} items"), "values").bytes(bytes), || {
+            let held = values.iter().filter(|v| lookup.matches(&xml(v)).unwrap()).count();
+            assert_eq!(held, 1);
+            count as u64
+        });
+        bench.measure(Case::new(format!("streamed, {items} items"), "values").bytes(bytes), || {
+            let held = values.iter().filter(|v| streamed(v, &format!("thing {}", items / 2))).count();
+            assert_eq!(held, 1);
+            count as u64
+        });
+        let indexed_values = &values[..(INDEXED_ITEMS / items).clamp(1, count)];
+        for method in [Method::Path, Method::Value] {
+            let index = indexed(method, indexed_values);
+            bench.measure(Case::new(format!("rows found, {}, {items} items", method.name()), "lookups"), || {
+                assert_eq!(Arc::clone(&index).xml_rows(&lookup).unwrap().count(), 1);
+                1
+            });
+            bench.measure(Case::new(format!("looked up, {}, {items} items", method.name()), "lookups"), || {
+                let rows: Vec<u64> = Arc::clone(&index).xml_rows(&lookup).unwrap().map(Result::unwrap).collect();
+                let held = rows.iter().filter(|&&r| lookup.matches(&xml(&values[r as usize])).unwrap()).count();
+                assert_eq!(held, 1);
+                1
+            });
+        }
+    }
+}
+
+/// An order of `items` items, the `n`th of a table: each document's
+/// items but one named alike, so one document holds the item asked.
+fn order(items: usize, n: usize) -> String {
+    let mut text = format!("<order no=\"{n}\">");
+    for i in 0..items {
+        let name = if n == 0 { format!("thing {i}") } else { format!("other {i}") };
+        write!(text, "<item sku=\"{i}\">{name}</item><qty>{}</qty>", i % 7).unwrap();
+    }
+    text + "</order>"
+}
+
+/// The stored form of `text`.
+fn stored(text: &str) -> Vec<u8> {
+    encode(&Sequence::document(parse(text, Syntax::Content, Whitespace::Preserve).unwrap()))
+}
+
+/// The value of stored form `bytes`, held in memory.
+fn xml(bytes: &[u8]) -> XmlValue {
+    XmlValue::stored(Lob::of_octets(bytes))
+}
+
+/// `/order/item[. = "thing n"]`.
+fn predicate(n: usize) -> XmlLookup {
+    let step = |name: &str| Step { axis: Axis::Child, name: Some(QName::local(name)) };
+    XmlLookup {
+        pattern: PathPattern { steps: vec![step("order"), step("item")], target: Target::Element },
+        comparisons: vec![Comparison { op: CompOp::Eq, literal: Literal::String(format!("thing {n}")) }],
+        row: None,
+    }
+}
+
+/// Whether the value stored as `bytes` has an `/order/item` of text
+/// `wanted`, read in one pass over its events.
+fn streamed(bytes: &[u8], wanted: &str) -> bool {
+    let mut events = Events::new(bytes).unwrap();
+    let (mut depth, mut within, mut text) = (0_usize, false, String::new());
+    while let Some(event) = events.next_event().unwrap() {
+        match event {
+            Event::Element { name, .. } => {
+                depth += 1;
+                within = depth == 2 && &*events.names()[name as usize].local == "item";
+                text.clear();
+            }
+            Event::Text(t) => {
+                if within {
+                    text.push_str(t);
+                }
+            }
+            Event::End => {
+                if within && text == wanted {
+                    return true;
+                }
+                within = false;
+                depth = depth.saturating_sub(1);
+            }
+            Event::Node | Event::Atomic | Event::Document | Event::Other | Event::Attribute { .. } => {}
+        }
+    }
+    false
+}
+
+/// An index of `method` holding `values`, each of the row its place.
+fn indexed(method: Method, values: &[Vec<u8>]) -> Arc<dyn Index> {
+    let made = XmlMethod::in_memory(method);
+    let index: Arc<dyn Index> = Arc::from(made.create(&[DataType::Xml(XmlType::Document(Typing::Untyped))]).unwrap());
+    for (row, bytes) in values.iter().enumerate() {
+        index.insert(Key(vec![Value::Xml(xml(bytes))]), row as u64).unwrap();
+    }
+    index
+}
