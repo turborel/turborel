@@ -54,6 +54,11 @@ pub struct Invocation {
     /// that type's name, each of no arguments, as it takes these [GR3b v]
     /// (RULES.md D81). None of any other routine.
     pub overrides: Option<Vec<(UdtName, Arc<Invocation>)>>,
+    /// \[EXTENSION\] Of a procedure written in Rust invoked as a
+    /// function (`Procedure::returns`), it: run where an SQL-session runs
+    /// its statements, as it possibly modifies SQL-data. None of an
+    /// SQL-invoked function.
+    pub rust: Option<Arc<dyn crate::functions::builtin::Procedure>>,
 }
 
 impl Invocation {

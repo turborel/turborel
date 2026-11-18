@@ -22,7 +22,7 @@ CREATE ADJACENCY INDEX makes an index of the `adjacency` method on the
 table of an edge table of a property graph, named by its alias in the
 graph. Its key is the source key's columns, then the destination key's,
 then the columns INCLUDE names, so a search follows an edge from either
-end without a join ([Property Graphs](../16-property-graphs.md)). It is
+end without a join ([Property Graphs](../19-property-graphs.md)). It is
 the [CREATE INDEX](create-index.md) of that method with the option
 ADJACENCY.SOURCE_COLUMNS set to the source key's column count.
 

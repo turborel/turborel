@@ -51,6 +51,13 @@ pub(super) struct Unnested {
 }
 
 impl Unnested {
+    /// \[EXTENSION\] A table function written in Rust, of `width` columns,
+    /// its invocation `call` the multiset of its rows, which reads the
+    /// columns `reads` of the FROM row (`binder/builtin_table.rs`).
+    pub(super) fn rows_of(call: Expr, width: usize, reads: BTreeSet<usize>) -> Unnested {
+        Unnested { collections: vec![call], spread: vec![Some(width)], ordinality: false, reads, json: None, graph: None }
+    }
+
     /// [ISO/IEC 9075-2:2023 §7.11] The JSON table `table`, of the operands
     /// `operands`, which read the columns `reads` of the FROM row.
     pub(super) fn json(table: JsonTable, operands: Vec<Expr>, reads: BTreeSet<usize>) -> Unnested {

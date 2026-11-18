@@ -31,7 +31,7 @@ mod user_types;
 
 use std::sync::OnceLock;
 
-use super::{INFORMATION_SCHEMA, Seen, SystemTable, catalog_name, identifier};
+use super::{Seen, SystemTable, catalog_name, identifier};
 use crate::catalog::{ColumnDesc, QualifiedName};
 use crate::error::Result;
 use crate::storage::Row;
@@ -62,9 +62,9 @@ pub struct SystemView {
     pub query: &'static str,
 }
 
-/// The Information Schema view `name`, if there is one.
+/// The view `name` of the Information Schema, or of SQL/MM Spatial's.
 pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
-    views().iter().find(|v| name.auth == INFORMATION_SCHEMA && v.name == name.ident)
+    views().iter().find(|v| super::spatial::name_of(v) == *name)
 }
 
 /// The views of the Information Schema, in the standard's order, then this
@@ -77,11 +77,14 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 /// (`information/graphs.rs`), node and edge tables
 /// (`information/native.rs`) and graph types
 /// (`information/graph_types.rs`), then the extensions
-/// (`information/extensions.rs`).
+/// (`information/extensions.rs`), then SQL/MM Spatial's.
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
     let parts = [VIEWS, composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS];
-    ALL.get_or_init(|| [&parts[..], &[graphs::VIEWS, native::VIEWS, graph_types::VIEWS, extensions::VIEWS]].concat().concat())
+    ALL.get_or_init(|| {
+        let ours = [graphs::VIEWS, native::VIEWS, graph_types::VIEWS, extensions::VIEWS, super::spatial::SPATIAL_VIEWS];
+        [&parts[..], &ours[..]].concat().concat()
+    })
 }
 
 /// The views of ISO/IEC 9075:1992 [§21.2.4-§21.2.26].

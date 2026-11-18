@@ -191,9 +191,23 @@ impl<'a> Described<'a> {
     /// [ISO/IEC 9075-2:2023 §9.12 SR2j, SR2l] The columns at `columns`, of
     /// a unique or referential constraint `what`, operands of a grouping
     /// operation.
+    /// A column of a type of a family built in whose ordering is EQUALS
+    /// ONLY, as the geometry types' [ISO/IEC 13249-3:2016 (DIS, SC32
+    /// N2593) §5.1.65], is ST-EC-ordered, so no such constraint is of it
+    /// [ISO/IEC 9075-2:2023 §11.7 SR1, §11.8, §9.12 SR3] (RULES.md
+    /// D120).
     fn grouped(&self, columns: &[usize], what: &str) -> Result<()> {
         let types = columns.iter().filter_map(|&i| self.columns.get(i)).map(|c| &c.data_type);
-        types.into_iter().try_for_each(|t| binder::key_operand(t, what).and_then(|()| binder::orderless_operand(t, what)))
+        types.into_iter().try_for_each(|t| {
+            if let Some((family, kind)) = crate::value::types::family::family_of(t) {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075-2:2023 §9.12 SR3] {what} groups values of {}, which has an ordering of EQUALS ONLY ({}), so it is ST-EC-ordered",
+                    kind.name(),
+                    family.relative_ordering()
+                )));
+            }
+            binder::key_operand(t, what).and_then(|()| binder::orderless_operand(t, what))
+        })
     }
 
     /// Adds the constraint `kind`, named `name` if written.

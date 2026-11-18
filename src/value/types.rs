@@ -30,6 +30,7 @@ pub(crate) mod datetime;
 mod decfloat;
 pub(crate) mod distinct;
 mod exact;
+pub mod family;
 pub(crate) mod interval;
 mod json;
 pub(crate) mod lob;
@@ -117,6 +118,12 @@ pub trait SqlType: Send + Sync + fmt::Debug {
         None
     }
 
+    /// \[DESIGN\] The family of types built in it is of (`family.rs`,
+    /// RULES.md D120), if any. Default: none.
+    fn family(&self) -> Option<&'static dyn family::Family> {
+        None
+    }
+
     /// `t` as written in a `<data type>`.
     fn written(&self, t: &DataType) -> String;
 
@@ -170,6 +177,12 @@ pub trait SqlType: Send + Sync + fmt::Debug {
     /// As `cast`.
     fn cast_warned(&self, v: Value, t: &DataType) -> Result<(Value, Option<SqlState>)> {
         self.cast(v, t).map(|cast| (cast, None))
+    }
+
+    /// \[EXTENSION\] [ISO/IEC 9075-2:2023 §4.9.6] What CAST of `v` to `to`
+    /// casts instead, as a transform group's FROM SQL gives it; none by default.
+    fn lowered(&self, _v: &Value, _to: &DataType) -> Option<Value> {
+        None
     }
 
     /// How `v`, of its kind, is written as a `<literal>`.

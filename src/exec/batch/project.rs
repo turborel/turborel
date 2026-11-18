@@ -47,7 +47,7 @@ fn plain(e: &Expr) -> bool {
         Expr::Truth(c) => c.subqueries().is_empty(),
         Expr::Column(_) | Expr::Const(_) | Expr::Neg(_) | Expr::Arith(..) | Expr::Cast(..) | Expr::SortKey(..) | Expr::Domain(..) => true,
         // One that reads its statement is evaluated a row at a time (D87).
-        Expr::Call(function, _) => !function.0.uses_context(),
+        Expr::Call(function, args) => !function.0.uses_context(args.len()),
     };
     let mut all = own;
     e.for_each_child(&mut |child| all = all && plain(child));

@@ -119,6 +119,9 @@ impl Session {
     /// SQLCODE -910 of a function whose body is no program; as `push`'s;
     /// an exception of it no handler of it handles.
     pub(in crate::db) fn invoke_function(&self, cx: StatementContext<'_>, i: &Invocation, mut values: Vec<Value>) -> Result<Option<Value>> {
+        if let Some(p) = &i.rust {
+            return self.rust_function(cx, &**p, &values).map(Some);
+        }
         let program = i.program.as_ref().ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] function {} has no program", i.name)))?;
         values.resize(program.base.saturating_add(program.variables.len()), Value::Null);
         let mut frame = Params::of_routine(values, Arc::clone(&program.scope));

@@ -1,12 +1,10 @@
 //! Binding: AST -> logical plan.
 //!
-//! The binder enforces the Syntax Rules that need the catalog: names exist
-//! [X3.135-1986 §5.4 SR5], column references are unambiguous [X3.135-1986 §5.7 SR3], types are
-//! comparable [X3.135-1986 §5.11 SR1], privileges are held [X3.135-1986 §5.25 SR1], grouped queries
-//! reference only grouping columns and columns functionally dependent on them outside set functions
-//! ([X3.135-1986 §5.25 SR7, §5.23 SR1; ISO/IEC 9075-2:2023 §6.7 SR8]),
-//! set operations' operands correspond [ISO/IEC 9075:1992 §7.10 SR9], and sort keys are valid
-//! [X3.135-1986 §8.3 SR6].
+//! The binder enforces the Syntax Rules that need the catalog: names exist [X3.135-1986 §5.4 SR5],
+//! column references are unambiguous [X3.135-1986 §5.7 SR3], types are comparable [X3.135-1986 §5.11 SR1],
+//! privileges are held [X3.135-1986 §5.25 SR1], grouped queries reference only grouping columns and columns
+//! functionally dependent on them outside set functions ([X3.135-1986 §5.25 SR7, §5.23 SR1; ISO/IEC 9075-2:2023
+//! §6.7 SR8]), set operations' operands correspond [ISO/IEC 9075:1992 §7.10 SR9], and sort keys are valid [X3.135-1986 §8.3 SR6].
 //!
 //! It then builds the plan exactly as the General Rules describe it, with no
 //! optimization: the FROM product, then WHERE, GROUP BY, HAVING, the select
@@ -30,6 +28,8 @@ use crate::value::datetime::Clocked;
 mod appended;
 mod arguments;
 mod arithmetic;
+mod builtin_function;
+mod builtin_table;
 mod case;
 mod collation;
 mod composite;

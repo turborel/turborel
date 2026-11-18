@@ -19,7 +19,8 @@ in `86 §5.5 SR3`. One marked `2023` is ISO/IEC 9075-2:2023, as in
 Contents: [The claim](#the-claim) ·
 [SQL-86, clause by clause](#sql-86-clause-by-clause) ·
 [SQL-92](#sql-92) · [Collations](#collations) · [SQL:2023](#sql2023) ·
-[SQL/PSM](#sqlpsm) · [Extensions](#extensions) ·
+[SQL/PSM](#sqlpsm) · [SQL/MM Spatial](#sqlmm-spatial) ·
+[Extensions](#extensions) ·
 [Implementation-defined choices](#implementation-defined-choices) ·
 [Limits](#limits) · [Readings of ambiguous text](#readings-of-ambiguous-text)
 
@@ -35,6 +36,7 @@ The claim follows SQL-86 §3.4.
 | Facilities | Direct processing of SQL statements through the Rust binding (`Session`, `Params`). §3.4 leaves the method and time of binding to the implementation. The module language and embedded SQL (COBOL, FORTRAN, Pascal, PL/I) are not claimed. |
 | Environment [§4.6, §4.7] | A database kept in a directory (`Database::open_files`) keeps its schemas and committed changes, and is recovered after a failure [§4.16]. A database made with `Database::new` is held in memory and ends with the process. |
 | SQL/MM Full-Text | The public types and routines of ISO/IEC 13249-2:2002 (CD, SC32 N0640) §12.1, built in, with the choices that part leaves to an implementation listed [below](#sqlmm-full-text) [§12.2]. |
+| SQL/MM Spatial | The types and routines of ISO/IEC 13249-3:2016 (DIS, SC32 N2593), with topology, networks, shortest paths and linear referencing, built in. What is not built yet, and the choices that part leaves to an implementation, are listed [below](#sqlmm-spatial). No claim of its §23 is made yet. |
 | Limits | SQL-86 sets one limit of its own, 18 characters in an `<identifier>` [§5.3 SR3], which SQL-92 raises to 128. A statement past one of this implementation's [limits](#limits) gets SQLCODE -900 ("valid, but not processed"). |
 
 Every outcome has an SQLSTATE beside its SQLCODE [ISO/IEC 9075:1992 §22.1].
@@ -1459,7 +1461,7 @@ of a name and a type [§4.10].
 
 | Feature | Rules | What turborel does |
 |---|---|---|
-| Array types | §6.1 SR43 to SR47 | `<data type> ARRAY [n]`, of any data type of the standard, rows and arrays among them, n from 1 to 65,535 (SQLCODE -900 past it), 65,535 if not written. No type of an extension is an element's. |
+| Array types | §6.1 SR43 to SR47 | `<data type> ARRAY [n]`, of any data type of the standard, rows and arrays among them, n from 1 to 65,535 (SQLCODE -900 past it), 65,535 if not written. The geometry types may be an element's. No other type of an extension may. |
 | Row types | §6.1 SR35 to SR42 | `ROW (name type, ...)`, no field named twice (SQLCODE -103). A column, a domain, a CAST's target and a dynamic parameter's type may be either. |
 | Constructors | §6.49, §7.1 | `ARRAY[...]`, `ARRAY[]` where its type is known, `ARRAY(query)` of one column ordered by the query's ORDER BY, and `ROW(...)`, its fields named F1, F2 and so on. An empty array's type is its target's, so `ARRAY[]` alone is SQLCODE -103. |
 | Element reference | §6.25 | `A[i]`, null of a null array or index, SQLSTATE 2202E for an index not of 1 to the cardinality. |
@@ -1499,7 +1501,7 @@ collection of elements of one type, each possibly there more than once
 
 | Feature | Rules | What turborel does |
 |---|---|---|
-| Multiset types | §6.1 SR48, §4.12.3 | `<data type> MULTISET`, of any data type of the standard, rows, arrays, multisets and distinct types among them. No type of an extension is an element's. A multiset holds at most 65,535 elements, as an array may (see [Limits](#limits)); past it, SQLSTATE 2200Q [§10.9 GR3b]. |
+| Multiset types | §6.1 SR48, §4.12.3 | `<data type> MULTISET`, of any data type of the standard, rows, arrays, multisets and distinct types among them. The geometry types may be an element's. No other type of an extension may. A multiset holds at most 65,535 elements, as an array may (see [Limits](#limits)); past it, SQLSTATE 2200Q [§10.9 GR3b]. |
 | Constructors | §6.52 | `MULTISET[...]`, of the type its elements bring together [§9.5], `MULTISET[]` where its type is known, and `MULTISET(query)` of one column and `TABLE(query)` of a row of each row's columns, named F1, F2 and so on (UV076). Either query with ORDER BY, or MULTISET's of more than one column, is SQLCODE -103. Of no rows, either is the empty multiset. |
 | Element reference | §6.26 | `ELEMENT(m)`, null of a null or empty multiset, SQLSTATE 21000 of one of more than one element. |
 | CARDINALITY and SET | §6.31, §6.51 | CARDINALITY counts the elements, null of a null multiset. SET keeps one element of each not distinct from one another, nulls among them. |
@@ -2129,6 +2131,680 @@ index best first and stops early. A character string or CLOB document
 FT_DEFINITION_SCHEMA's base tables [§10] are a model only; the
 information schema views are system tables of the same columns.
 
+## SQL/MM Spatial
+
+ISO/IEC 13249-3:2016, cited by its draft international standard (DIS,
+SC32 N2593), is built in (RULES.md D119 to D132,
+over D85). A bare `§` in this part is of that text. The code cites it
+as `[ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §N]`.
+
+The manual is [doc/sql/10-spatial.md](doc/sql/10-spatial.md) for the
+types and routines, [doc/sql/16-topology.md](doc/sql/16-topology.md),
+[doc/sql/17-linear-referencing.md](doc/sql/17-linear-referencing.md)
+and [doc/sql/18-spatial-networks.md](doc/sql/18-spatial-networks.md).
+The guide is [doc/data/02-spatial.md](doc/data/02-spatial.md).
+
+The standard has no feature IDs. §23.3 lists lettered claims instead,
+and no claim of §23 is made yet. What is not built is said in each
+section below. What turborel adds beyond the standard is under
+[Geometry representations](#geometry-representations).
+
+### Types and the model [§4–§10]
+
+The geometry types are built in (`src/geometry.rs`, RULES.md D85,
+D119, D120). They are ST_GEOMETRY, also named
+GEOMETRY, and its 26 subtypes of §4.2. A value of any type and
+coordinate dimension is read from and written to WKB [§5.1.68] and
+stored canonically. No registration is needed.
+
+`=` and `<>` are ST_OrderingEquals [§5.1.65]. ORDER BY, GROUP BY,
+DISTINCT and the orderings are refused. No key is of a geometry value,
+so PRIMARY KEY, UNIQUE and FOREIGN KEY of a geometry column are refused
+when declared, with SQLCODE -103.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Type hierarchy | §4.2, Figure 1 | All 27 types are SQL type names, each with an optional SRID parameter. The four that hold no values of their own (ST_Geometry, ST_Curve, ST_Surface, ST_Solid) refuse NEW. |
+| Subtyping | 9075-2 §9.2 SR2, §6.17, §8.19 | A value can be assigned to a type above its own. Assigning it to a type below its own needs TREAT, which raises 0D000 at run time. IS OF and IS OF (ONLY) are supported. |
+| Casts | §4.2.1.5 Table 4 | CAST within the hierarchy, else 2FF08. The ST_ToXxx cast methods of §5.1.55, each also a function. |
+| Ordering | §5.1.65 | EQUALS ONLY BY RELATIVE with ST_OrderingEquals, the exact ST_Equals of x and y (RULES.md D126). Two empty values of one SRID are equal. PRIMARY KEY, UNIQUE and FOREIGN KEY of a geometry column are refused at declaration [9075-2 §11.7 SR1, §9.12 SR3], SQLSTATE 2A000. |
+| Methods | §4.2, 9075-2 §9.18 | A method table per type, with overriding. The collection types override ST_Geometries. `v.m()` binds by the declared type and runs by the most specific type. `(v AS T).m()` runs T's. |
+| SPECIFICTYPE | 9075-2 §6.15 | `v.SPECIFICTYPE` names the most specific type in INFORMATION_SCHEMA, the built-in types' schema. The function form SPECIFICTYPE(v) is not built. |
+| Collections | §10.1.3 to §10.1.5 | ST_NumGeometries, ST_GeometryN (01F01 out of range) and ST_Geometries, accessor and mutator. |
+| Relationships | §4.2.2, §5.1.43 to §5.1.54 | ST_Relate, ST_Equals, ST_Disjoint, ST_Intersects, ST_Touches, ST_Crosses, ST_Within, ST_Contains and ST_Overlaps, exact on binary64 (`src/spatial/planar`, RULES.md D126). An `rtree` index plans each as it plans ST_Intersects. |
+| Set operations | §5.1.31 to §5.1.40, Tables 6 to 11 | ST_Intersection, ST_Union, ST_Difference and ST_SymDifference over mixed dimensions, typed by Tables 8 to 11 (`routines/results.rs`). |
+| Buffer, hull and boundary | §5.1.17, §5.1.29, §5.1.30 | ST_Buffer with and without a unit, ST_ConvexHull and ST_Boundary. |
+| Validity and simplicity | §5.1.8, §5.1.10, §7.1.8 | ST_IsValid, ST_IsSimple and ST_IsRing. |
+| Measures | §5.1.41, §7.1.2, §8.1.2 to §8.1.8, §10.3.5, §10.5.3 to §10.5.9 | ST_Area, ST_Length, ST_Perimeter (each with a unit form), ST_Centroid, ST_PointOnSurface and ST_Distance with a unit. Values with arcs or other curves are measured exactly by the curve engine (RULES.md D124), linear ones by the planar engine. |
+| Polygons from rings | §8.3.9, §10.6.7 | ST_BdPolyFromText, ST_BdPolyFromWKB, ST_BdMPolyFromText and ST_BdMPolyFromWKB. The standard has no GML forms of them. |
+| Curves | §7 | The routines of the nine curve kinds (`src/geometry/observers.rs`, RULES.md D124), with the unit forms the clause gives, ST_DistanceToPoint's and ST_PointAtDistance's among them. ST_PerpPoints has none [§7.1.15]. ST_BulgeNormal and ST_Normal return ST_Vector values, ST_StartAngle and ST_EndAngle ST_Angle values, ST_RefLocation an ST_AffinePlacement whose reference directions are the axis vectors, and ST_ControlPoints and ST_Knots arrays of ST_NURBSPoint and ST_Knot (`src/geometry/observers/records.rs`). |
+| Surfaces and TINs | §8, §17.1 | The routines of the six surface kinds, ST_TIN of elements and of triangles, ST_TINElements as an observer and a mutator, and the ST_TINElement type with its empty constructor, observers, mutators and ST_IsEmpty (`src/geometry/tins.rs`, `src/geometry/tin_element.rs`). |
+| Constructors | §6.1.2, §7.2.2 to §7.10.2, §8.2.2 to §8.6.2, §10.1.2 to §10.6.2 | `NEW ST_X(...)` and the function ST_X of each instantiable type of §6 to §10, every form its clause defines: the text, binary and GML forms with an SRID, a point of x, y, z and m, a curve of its points or parameters, with measures, a unit and an SRID, a circular string of a center or of bulges, a circle of a center and a normal, a surface of its rings, a polyhedral surface of its patches and a collection of its elements (`src/geometry/mutators/constructors.rs`). |
+| Mutators and observers | §5.1, §6.1.3 to §6.1.7, §7.2 to §7.10, §8.1 to §8.6, §10.3 | Each attribute's mutator, checked as its clause checks it: ST_X, ST_Y, ST_Z and ST_M; ST_Points, ST_Curves, ST_ExteriorRing, ST_InteriorRings and ST_Patches; ST_RefLocation, the axis lengths, angles, measures, control points, knots, scale factor, distances, length, curvatures and spiral type, with the unit forms. Also ST_Dimension, ST_CoordDim, ST_Is3D, ST_IsMeasured, ST_Envelope, ST_EnvelopeAsPts, ST_MinZ to ST_MaxM, ST_ExplicitPoint, ST_IsWorld, ST_IsClosed and ST_PerpPoints of a multicurve, and the ToSQL methods (`src/geometry/mutators.rs`). Every routine of §5 to §10 binds and runs. |
+| Locating by measure | §5.1.13 to §5.1.16 | ST_LocateAlong and ST_LocateBetween, and their 3D forms. |
+| Routines in space | §5.1, §8, §9 | The 3D relationships, set operations, distance, measures, boundary, simplicity and closure, the shells of a solid, ST_MaxSideLength, ST_Clip and ST_TINTable (`src/geometry/solids.rs`, RULES.md D127). ST_BRepSolid's constructors from surfaces [§9.2.2] and the routines of ST_CompoundSurface beyond measures over its patches are not built. |
+| Table functions | §8.6, §11, §12, §13 | The mechanism of RULES.md D125. ST_TINTable, the topology and network checks and the shortest paths use it. |
+| SQLSTATEs | §22 Table 16 | All 98 conditions are defined, and the model raises 2FF05, 2FF06, 2FF07, 2FF08, 2FF10, 2FF11, 2FF12, 2FF16, 2FF18, 2FF23, 2FF25, 2FF66, 2FF67, 2FF75, 2FF77, 2FF78, 2FF84, 2FF86, 2FF96 and 2FF98. Defect, 2FF01 to 2FF03 clash with 13249-2's. Each part raises its own (RULES.md D132). |
+
+#### Readings of the standard
+
+- Casts [§4.2.1.5]. A subtype to a supertype is the identity. An empty
+  value becomes the target's empty value. A collection of one element
+  becomes that element, except when the target is a collection type.
+  Anything else raises 2FF08.
+- ST_Equals of two empty values is 1. ST_Intersects, ST_Disjoint and
+  the relationships give NULL of an empty operand.
+- Relationships [§4.2.2.1, §5.1.43 to §5.1.54]. All are exact on the
+  stored binary64 coordinates. There is one exception. When a crossing
+  binary64 cannot hold lies within half a unit in the last place of
+  another feature, snap rounding may make them meet. The standard
+  leaves the computation implementation-defined (Annex A).
+- ST_OrderingEquals and `=` [§5.1.65]. These are the exact ST_Equals of
+  x and y. When both values have z, GR2b asks for x, y and z, but the
+  engine is planar, so z is not compared.
+- Equals [§5.1.43]. Defined through SymDifference being empty, it is
+  evaluated as the equivalent pattern `**F**FFF*`. Two empty values are
+  equal.
+- Overlay operations [§5.1.31 to §5.1.37]. They work over mixed
+  dimensions and return the most specific type for what remains, one of
+  Tables 7 to 11's sets. Crossings binary64 cannot hold are rounded to
+  the nearest position.
+- Aggregates. The standard has no union or intersection aggregate, so
+  the engine has none.
+- Buffer [§5.1.30]. It takes only a distance. The result is the point
+  set at most that distance away, empty below zero and the value itself
+  at zero. Round joins and ends are 32-sided polygons inscribed in their
+  circles, so a buffer lies inside the exact set and within about 0.5%
+  of the distance of its edge. A distance that is not finite is an
+  error.
+- Scope. Nothing beyond the standard is offered. There is no covers or
+  covered-by relationship. The validity reason (`validate`) is an
+  engine diagnostic, not a routine.
+- ST_IsValid [§5.1.10]. It follows the well-formedness conditions of
+  §7.2.1, §8.2.1 Descriptions 11 to 14, §8.3.1 and §10.6.1. A polygon's
+  interior ring may touch its exterior ring, or another interior ring,
+  in one point, as long as the interior stays connected.
+- ST_IsSimple [§5.1.8]. Surfaces are always simple. Repeated
+  consecutive positions are not an anomaly.
+- ST_BdPolyFromText and ST_BdMPolyFromText [§8.3.9, §10.6.7]. The
+  implementation-dependent assembly takes faces inside an odd number of
+  rings, so ring order and direction do not matter. A ring that is not
+  a linear ring is "invalid argument". So are rings that do not make
+  exactly one polygon for the ST_Polygon form.
+- ST_Area, ST_Length, ST_Perimeter, ST_Centroid and ST_PointOnSurface
+  [§7.1.2, §8.1.2 to §8.1.8, §10.3.5, §10.5.3 to §10.5.9]. They are
+  Euclidean in coordinate units, summed with compensation. ST_Centroid
+  is the null value for a value with no surface, as only surfaces define
+  it. ST_PointOnSurface gives an interior point of the largest polygon,
+  checked exactly.
+- ST_Distance [§5.1.41]. It is exactly zero for operands that meet or
+  nest. Otherwise it is the least point-to-segment distance, accurate to
+  a few units in the last place.
+- Curves are paths of pieces. Arcs and segments are measured exactly,
+  splines, clothoids and spirals by adaptive Gauss-Legendre quadrature,
+  and linearized to a relative deviation of 1e-3 of the curve's extent
+  (RULES.md D124). ST_CurveToLine has no parameters in the
+  standard, so it linearizes so. There is no ST_LineToCurve in the
+  standard.
+- Surface measures are planar. Geodesic areas are measured in the
+  coordinate plane, and lengths through the geodesy of the value's
+  system.
+- ST_PointAtDistance gives z and m by linear interpolation along the
+  piece.
+- NURBS knots need not have end multiplicity degree+1. Any valid knot
+  vector of points + degree + 1 is taken.
+- A clothoid's t is arc length scaled by its scale factor (§7.8,
+  A² = R·L).
+- A 2D circle's normal orientation is the sign of z of its three points'
+  turn.
+- ST_MidPointRep, the center and the radius of a collinear arc return
+  null.
+- Point tolerance is 1e-12 relative for ends meeting, and ON_CURVE 1e-9
+  for ST_DistanceToPoint's point on a curve.
+- An invalid position gives the warning 01F01.
+- ST_PerpPoints joins arcs meeting end to start into one curve.
+- ST_LocateBetween interpolates M linearly along a curve's linear form.
+  Of a surface, which the standard leaves to the implementation, it
+  locates along its rings.
+- TIN [§8.6]. Stop lines remove the triangles they pierce (the ISO 19107
+  reading). A draped element takes the base surface's height.
+- §5.1.31 to §5.1.49 in space. A pair whose systems differ raises
+  2FF10, as the 2D routines do. Both values lacking z is checked first
+  (2FF72).
+- 3D set operation results are x, y and z, m dropped (§5.1.31
+  Description 4), in SELF's SRID, coplanar faces merged, the most
+  specific type. An empty result is an empty ST_GeomCollection.
+- ST_3DDistance with a unit. SRID 0 and SRIDs the catalog does not hold
+  measure in metres. A geographic system has no linear unit, so a named
+  unit raises 2FF14. Supported units are ST_UNITS_OF_MEASURE's LINEAR
+  rows. Area units are squared, volume cubed.
+- ST_3DIsSimple. Polygons and curve polygons are simple, as validity
+  covers them. Patch surfaces, multisurfaces and solids are simple when
+  no two patches meet except along both rims. A multicurve's curves
+  meet only at points on both their boundaries. A collection is simple
+  when its elements are.
+- ST_3DBoundary of a collection is the collection of its elements'
+  boundaries, of a solid its shells, and of a patch surface the edges
+  one patch uses, chained into line strings.
+- ST_3DLocateAlong and ST_3DLocateBetween interpolate z and m linearly
+  along each segment, and consecutive stretches join. Surfaces and
+  solids (implementation-defined, §5.1.16 D2f) give an empty point.
+- ST_3DSlope is rise over run, the tangent of the angle to the x-y
+  plane. A vertical triangle raises 2FF02.
+- ST_3DCentroid of a 2D surface returns an XY point, and with z an XYZ
+  point. Points returned by 3D methods carry no m.
+- ST_3DPointOnSolid is the centroid when inside, else a point just
+  inside a face, else a boundary vertex.
+- ST_3DIsClosed of a surface means no edge is used by exactly one patch
+  ring. ST_Surface's definition (§8.1.1) declares ST_Is3DClosed while
+  §8.1.11 is titled ST_3DIsClosed. Both spellings are registered, for
+  ST_Curve, ST_Surface and ST_MultiCurve, and run the same routine.
+- ST_IsShell is simple and closed (§8.1.13). A polygon is never a shell.
+- ST_ExteriorShell(ST_Surface) and ST_InteriorShells(ARRAY). Every shell
+  must be a closed simple surface with z and without m (2FF73, 2FF97
+  otherwise). Shells meeting in more than points, an interior shell not
+  within the exterior, or two interior shells overlapping raise 2FF02.
+  A null array element raises 2FF03. Interior shells of a solid with no
+  exterior raise 2FF98.
+- ST_InteriorShellN out of range gives null and warning 01F01.
+- ST_MaxSideLength(length, 1) with no elements retriangulates the
+  triangle corners as random points. A null length raises 2FF03 even of
+  a null SELF. A length not above 0 raises 2FF02.
+- ST_Clip cuts each triangle by the polygon in plan and lifts the pieces
+  to its plane. The clip polygon replaces the boundary elements, draped
+  on the surface (z of the triangle under it, else the nearest
+  corner's). Other elements are kept.
+- ST_TINTable(). Points are the elements' points plus the triangles'
+  corners, so each triangle can name its corners (D3c lists element
+  points only), unique, sorted by x, y, then z. Visibility is -1 within
+  a hole, else 0 within a void or crossed by a stop line, else 1 (the
+  least that applies). A multipoint element is a row of its points'
+  numbers (D3g covers only line strings and polygons, and D5c reads
+  them back). Hole rows use item '<type> hole'.
+- ST_TINTable() is the table function `TABLE(ST_TINTABLE(tin))`. A
+  method returning a table cannot be a scalar method, so there is no
+  `tin.ST_TINTable()` method form.
+- ST_TINTable(name, columns..., maxsidelength). Names are identifiers
+  (a table may be schema-qualified), regular ones folded to upper case
+  and delimited ones kept. Anything else, or a table that does not
+  exist, raises 2FF02. A column that does not exist raises 2FF02 too,
+  since AppendedQuery names the columns its first table must have and
+  the binder appends nothing without them. Rows alike count once. A
+  hole row joins the element of its type, ID and tag. The result has
+  SRID 0 with max side length set (D5's ST_MaxSideLength(.., 0)).
+- ST_3DDistanceToPt takes an ST_Point argument. An ST_Geometry needs
+  TREAT.
+- SQLSTATE 2FF01 to 2FF03 are shared with Full-Text's class (RULES.md
+  D132).
+- A curve's start and end measures are both set or both removed. A
+  mutator of one measure on a curve without measures sets both to the
+  value, and the null value removes both [§7.6.2 Description 24c].
+- The mutators of a curve given by parameters raise 2FF02 of an empty
+  curve, which has no parameters to keep.
+- ST_X and ST_Y of the empty point raise 2FF18, as no point has one
+  coordinate alone. ST_Z and ST_M of a value raise 2FF03 there.
+- The patches of a polyhedral surface are adjacent when they share an
+  edge, each with at least one other and no edge with more than two.
+- ST_IsWorld is 0. No surface stored covers the whole earth.
+- ST_MinZ, ST_MaxZ, ST_MinM and ST_MaxM are of the linear form of a
+  curve, its points and stroked arcs.
+- ST_Point(1, 2, 3) is x, y and the SRID 3, the form of three integers
+  [§6.1.2 Description 11]. NEW ST_Point(1E0, 2E0, 3E0) has z 3.
+- ST_Envelope widens a flat extent by a small amount, so that the
+  rectangle of a point or a line along an axis is a polygon.
+- A solid in the routines that ignore z [§5.1.29 to §5.1.54] is the
+  region of x and y its faces cover. Their results are values of x and
+  y, so the ST_Solid cells of Tables 8 to 11 give surfaces.
+- ST_IsValid of a solid is 1 when each shell is closed and the patches
+  meet only along their boundaries [§9.2.1 Description 8 to 10].
+  ST_IsSimple of a solid is that second test, in space, as z is what
+  makes a solid simple.
+- CAST of a character string to a geometry type reads it as
+  ST_GeomFromText does, of any type and coordinate dimension.
+- Negative zero is read as zero before a value is checked, so a ring
+  closed by -0 and 0 is closed.
+
+### Reference systems [§14, §20]
+
+The reference systems are those of ST_SPATIAL_REFERENCE_SYSTEMS
+[§20.3], seeded and defined, computed by one engine
+(`src/spatial/srs`, RULES.md D122, D121).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Spatial reference systems | §20.3, §14.1.9 | 125 seeded, EPSG 3857, 4258, 4269, 4326, 4978 and 32601 to 32660, 32701 to 32760, as well-known text. Others are defined and dropped by ST_DEFINESRS and ST_DROPSRS [EXTENSION], keeping §20.3's constraints. |
+| Well-known text of a system | §14.1.9 | PROJCS, GEOGCS and GEOCCS are read and written. |
+| ST_Transform | §5.1.6 | Moves points and the points that define curves between any two systems the statement's catalog holds (`routines/transform.rs`). Elliptical curves, clothoids, spirals and rational NURBS curves fail with 2FF15, as Description 3c allows. |
+| Geodetic measures | §5.1.41 | Distance, length and area of a geographic system by Karney's geodesics. |
+| Units | §19.4, §20.4 | 12 seeded units. A unit form converts through them. SRID 0 measures in metres. A geographic system has no linear unit and gives 2FF14. |
+| Registered columns | §4.11, §20.2 | A column registered with a system holds only values of that system, checked as each row is written and when it is registered, SQLSTATE 23000. |
+| The ST_SpatialRefSys type | §14.1 | Not built yet. ST_SpatialRefSys, ST_WKTSRSToSQL and the methods of §14.1 are not there. |
+
+#### Readings of the standard
+
+- §14.1.9 accepts the AUTHORITY, TOWGS84 and AXIS items of the OGC text
+  as [EXTENSION]s, and a signed number wherever a `<number>` appears.
+  Malformed text always raises 2FF22 (§14.1.2 Description 2 leaves it
+  optional).
+- §14.1.5 makes SRID 0 the unspecified Cartesian plane. It has no text,
+  and no transform reaches or leaves it (2FF15). Text with an EPSG
+  AUTHORITY takes that code as its SRID.
+- §14.1.6 ST_Equals holds when two systems place every coordinate at the
+  same point. The kind, the datum (normalized name, ellipsoid, TOWGS84),
+  the prime meridian, the unit factors, the axis directions, and the
+  projection method and parameters in metres and radians are compared.
+  Names and authorities are ignored.
+- §5.1.6 Description 3d, the transform pipeline, goes through the axes,
+  unprojection, geocentric Helmert shifts through WGS 84 when the datums
+  differ, then the target's steps reversed. Datums with no shift raise
+  2FF15. Points outside a projection's domain raise 2FF15. M values pass
+  through unchanged.
+- §5.1.41 Description 2a iv makes geodetic distance the shortest
+  ellipsoidal geodesic (Karney 2013).
+- The seeded GRS 1980 systems 4258 and 4269 have a zero TOWGS84, so
+  every seeded system transforms to every other.
+- Values' SRIDs are labels (D85). The standard asks no SRID to name a
+  defined system. SRIDs are implementation-dependent (§14.1.5
+  Description 2), and ST_SRID(INTEGER) sets any value (§5.1.5
+  Description 5). So a type naming an SRID that no system has still
+  takes values. Only a lookup, by ST_Transform or a unit form, needs the
+  system.
+- §4.11 ties a column to a system only through ST_GEOMETRY_COLUMNS, and
+  says such a column holds only values of that system, modelled as the
+  CHECK `COL.ST_SRID() = SRS_ID`. A column of `GEOMETRY(srid)` already
+  has its SRID checked on assignment.
+- A system ST_DEFINESRS defines as LOCAL_CS is stored, but every lookup
+  of it gives 2FF22. ST_DEFINESRS does not check its definition.
+- A constant folded at planning knows only the seeded systems, so a
+  call naming another is left for its statement. A seeded system cannot
+  be dropped and a defined one cannot reuse a seeded SRID, so the two
+  never disagree.
+- The units are those of ST_UNITS_OF_MEASURE, and a metre is the base
+  of the LINEAR ones.
+
+The accuracy of each projection against its published worked example
+is in RULES.md D122. The residuals are at most a few
+millimetres against EPSG Guidance Note 7-2, and tens of millimetres
+against Snyder's examples printed to 0.1 m.
+
+### Formats, angles, directions and support types [§16–§18]
+
+The well-known text, WKB and GML of the geometry types
+[§5.1.56 to §5.1.68] are read and written by `src/spatial/formats` and
+the model (`src/geometry/representations.rs`, RULES.md
+D124). The types of §14, §16 and §17.2 to §17.5 are SQL
+types with every routine the standard gives them, and the routines of
+§18 are built (`src/geometry/support`, RULES.md D123). The
+angle and direction engine of §16 computes them (`src/spatial/srs`).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Well-known text | §5.1.67 | Every instantiable type, in Z and M too, by every *FromText routine, ST_WKTToSQL, ST_GeomFromText and ST_AsText. ST_AsText of the seven basic XY kinds keeps D85's writer. |
+| WKB | §5.1.68 | Every type, both byte orders, the new Z/M/ZM codes and the deprecated codes on input. An empty value of each type is written in full. |
+| GML | §5.1.60 to §5.1.64, Table 14 | Every instantiable type, by every *FromGML routine, ST_GMLToSQL, ST_GeomFromGML and ST_AsGML. srsName is the organization and its identifier, read back through the Spatial Information Schema's systems as the statement is bound. GML carries no M. |
+| Large objects | §5.1.4, §5.1.5, §5.1.62, §5.1.63 | ST_GEOMFROMTEXT takes a CLOB and ST_GEOMFROMWKB a BLOB, each read whole up to 16 MiB. ST_AsText returns a CLOB and ST_AsBinary a BLOB, up to 16 MiB. |
+| ST_SpatialRefSys | §14.1 | Built, with its constructors of a definition and of an SRID, ST_WKTSRSToSQL, ST_SRID, ST_AsWKTSRS and ST_Equals. EQUALS ONLY by ST_OrderingEquals. A definition takes the SRID of a system supplied or defined with the same text. |
+| ST_Angle, ST_Direction | §16.1, §16.2 | Built, with every constructor, observer, mutator, method and function of both. ORDER FULL by ST_OrderingCompare, so `<`, ORDER BY, GROUP BY, MAX and an index work on them. |
+| ST_TINElement | §17.1 | Built, with its constructors, the empty one among them, its observers, mutators and ST_IsEmpty. |
+| ST_Vector | §17.2 | Built, with its constructors, observers, mutators and its text, WKB and GML routines. EQUALS ONLY by ST_OrderingEquals. |
+| ST_AffinePlacement, ST_NURBSPoint, ST_Knot | §17.3 to §17.5 | Built, with their constructors, observers, mutators and ST_IsEmpty, and ST_Transform of a placement. They declare no ordering, so nothing compares them. They are also read and written as parts of a curve's text and binary forms. |
+| Transform groups and casts | §14.1.8, §16.1.20, §16.2.22, §17.2.21 | Each group is a CAST: the well-known text to and from a character string, an angle's or a direction's radians to and from a number, a vector's WKB to and from a binary string. The GML groups are the types' GML routines. INFORMATION_SCHEMA.TRANSFORMS shows none, as a built-in type is no user-defined type. |
+| ST_Geometry ARRAY support routines | §18 | Built: ST_MaxDimension, ST_CheckSRID, ST_GetCoordDim, ST_GetIs3D and ST_GetIsMeasured, of geometry, vector and NURBS point arrays as each clause gives them; the procedures ST_CheckNulls and ST_CheckConsecDups; and the nineteen functions ST_ToPointAry to ST_ToBRepSolidAry. |
+
+#### Readings of the standard
+
+- Typos in the DIS text are read as meant. The WKB NURBS productions all
+  name `<wkbnurbszm>`. The WKT `<angle text>` cites "Subclause 15.1.21"
+  for §16.1.21. ST_TIN's elements clause cites a stale number.
+- A `<bit>` is one octet. A TIN element's id is an int32 in the
+  element's byte order, and BRepSolid is code 1025.
+- Defect. The representation of an empty parametric curve is not given,
+  so it is written as a NaN placement with no direction.
+- Bulges. GML ArcByBulge's bulge is the sagitta over half the chord. The
+  2D normal is its sign on z.
+- GML extensions where GML 3.2.1 has no element are EllipticalCurve (ISO
+  19107 form), SpiralCurve, a weights element on BSpline, and a
+  gml:element (type, id, tag) per TIN element. GML 3.2.1 Tin's
+  stopLines, breakLines, controlPoint and maxLength are read. GML 3.3
+  Tin is not read.
+- An empty value in GML is its element with no content.
+- WKT. A nested `<z m>` may be left out and is then the outermost one's.
+  Given, it must match (rule ai). `<just z>` is strict (rule ak). An
+  empty `<length text>` is NaN. A spiral type is any letters, and an
+  unknown one is 2FF02. A NURBS point or knot that is EMPTY is 2FF02.
+  Weights all 1 read as non-rational. Angles are written in radians. TIN
+  elements are written with ID always.
+- The well-known text and GML of the four non-instantiable kinds do not
+  exist. The 23 instantiable kinds are covered.
+- The standard has no worked WKT or GML examples to test against. Tests
+  use values built here.
+- §16.1.5 to §16.1.7 take the components by FLOOR, so −10.5° is
+  −11° 30′ 0″. The misplaced parenthesis of §16.1.7's Definition is read
+  as (degrees − D − M/60) × 3600.
+- §16.1.8 rounds the seconds and carries 60″ upward. ST_String(dms) reads
+  "D M S" as D + M/60 + S/3600, so it inverts ST_String.
+  ST_MaxAngleString and ST_MaxDirectionString are both 64.
+- §17.2.5's Definition and Description give ST_Z(DOUBLE PRECISION)'s two
+  conditions the other way round. The Description is followed: 2FF03 of
+  a value for an empty vector, 2FF16 of a null for one that is not.
+- ST_Vector's well-known text is `VECTOR (x y)` or `VECTOR Z (x y z)`,
+  a third coordinate needing the Z (2FF25). Its WKB is code 101, or 1101
+  with z, little endian on output. Its GML is a gml:vector with srsName.
+- ST_VectorFromGML(gml) is of SRID 0, as Description 2 says, whatever
+  srsName the GML names.
+- A §18 routine passes over a null element of the array where its
+  clause compares dimensions, as the comparison is unknown.
+- ST_CheckNulls and ST_CheckConsecDups are procedures, CALLed. They are
+  built in, so ST_CheckNulls takes either array type.
+- §16.1.2 Descriptions 17, 19 and 23 give the lesser clockwise angle in
+  [0, π]. The Definition's CASE, which yields the negative difference,
+  is not followed.
+- §16.2.2 directions between points are planar azimuths from +y,
+  clockwise. The constructor ST_Direction('S', a) follows Description
+  7c.
+- §16.2.17 and §16.2.18 reduce into [0, 2π), including the case where a
+  tiny negative result would reduce to exactly 2π.
+- §16.1.15 and §16.2.6 GML use a gml:Angle element and a
+  gml:DirectionVector with horizontalAngle and verticalAngle. `uom`
+  takes an EPSG URN or code (9101, 9102, 9103, 9104, 9105, 9122) or a
+  unit name. With no `uom`, the value is in radians. A missing element
+  is 2FF24 and a non-angular unit is 2FF14.
+- ST_ApproximatePi is the binary64 nearest π.
+
+### Topology [§11]
+
+Every routine of §11.3, the views of §11.1 and the topology exceptions
+of §22 Table 16 are built (`src/spatial/topology`, RULES.md
+D128).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| A topology | §11.1, §11.2 | A schema of its name, with base tables ST_TOPO_NODE, ST_TOPO_EDGE and ST_TOPO_FACE under the views ST_NODE, ST_EDGE and ST_FACE. |
+| ST_InitTopoGeo, ST_CreateTopoGeo | §11.3 | ST_InitTopoGeo makes a topology, and ST_CreateTopoGeo fills one from a geometry collection. |
+| Editing routines | §11.3 | Every routine that adds, moves, removes, splits, heals or changes nodes, edges and faces. |
+| Reading routines | §11.3 | ST_GetFaceEdges, ST_GetFaceGeometry and ST_ValidateTopoGeo are table functions. ST_GetFaceGeometry is also a function of any value expression. |
+| Privileges | §11.3 | Reading the views is the SELECT check (2FF63). A view that is not there is 2FF62. |
+
+#### Implementation-defined and implementation-dependent choices
+
+- ST_MaxTopologyName is 128, the identifier length.
+- §11.2's base tables are realised per topology schema without the
+  TOPOLOGY column. §11.2.1 makes them a model only, and §11.1.1 allows
+  objects of a topology beyond the clause.
+- Identifiers generated are max + 1 of the table. A replaced edge's id
+  is never reused by its replacements.
+- ST_RemEdgeModFace keeps the left face (§11.3.15 2e iv,
+  implementation-dependent).
+- ST_CreateTopoGeo numbers nodes by position (x, then y) and edges in
+  the order its noder finds them. The modification of the collection
+  (§11.3.18 2i v 1) is noding. Every curve is cut where it crosses or
+  touches another or passes through a point. Crossing points are
+  rounded to binary64.
+- The topology name of ST_GetFaceEdges, ST_GetFaceGeometry and
+  ST_ValidateTopoGeo must be known when the statement is prepared.
+- The functions that change a topology are invoked where a function
+  that possibly modifies SQL-data may be (INSERT VALUES rows, SET, CALL
+  arguments, program values), not in a query.
+
+#### Readings of the standard
+
+- ST_Crosses(curve, point) is undefined (§5.1.51). "Edge crosses node"
+  is read as the curve passing through the point off its ends.
+- A nonexistent node or edge in ST_MoveIsoNode, ST_RemIsoNode,
+  ST_RemIsoEdge and ST_ChangeEdgeGeom raises 2FF46 or 2FF43, as the text
+  updates no row.
+- ST_MoveIsoNode literally makes no face check, and its coincidence
+  check includes the node itself.
+- Table 16 has no "not isolated edge". ST_RemIsoEdge of a connected edge
+  raises 2FF50.
+- A closed isolated edge (start = end) is added as ST_AddEdgeModFace
+  adds it.
+- A heal of an edge with itself raises 2FF40.
+- ST_RemEdgeNewFace returns NULL unless a new face is made.
+- New ids are max + 1, taken before the replaced rows go, so
+  ST_NewEdgesSplit and ST_NewEdgeHeal never reuse the replaced edge's
+  id.
+- A split keeps the given point's z and m if it has the edge's
+  dimensions, else interpolates.
+- ST_ValidateTopoGeo lists each unordered pair once, lesser id first.
+  Face 0 is never "face without edges".
+- ST_GetFaceGeometry is XY. It gives an empty polygon if the rings make
+  no valid polygon.
+- ST_GetFaceEdges rotates rings to their least signed edge, sorted by
+  it.
+- ST_CreateTopoGeo nodes by an exact O(n²) noder, and orders nodes by
+  position.
+- A topology name is valid when it is not empty and at most 128
+  characters (ST_MaxTopologyName).
+
+### Networks [§12]
+
+All 16 routines of §12.3 and the views of §12.1 are built
+(`src/spatial/network`, RULES.md D129). The 7 that return
+INTEGER (ST_AddIsoNetNode, ST_AddLink, the four splits and
+ST_NewLinkHeal) are functions, the rest procedures. ST_ValidLogicalNet
+and ST_ValidSpatialNet are table functions.
+
+| Item | Reading |
+|---|---|
+| §12.1, §12.2 tables | A network is a schema with base tables ST_NET_NODE and ST_NET_LINK under views ST_NODE and ST_LINK (§12.2.1, the tables are a model) |
+| §12.3 Definitional Rule 1 | ST_MaxNetworkName is 128. A longer name fails on assignment (22001) |
+| §12.3 Description 2b, 2c | Views not there are 2FF64, not readable 2FF65 |
+| §12.3.2, §12.3.3, §12.3.6 | Moving or removing a node or link that is not there does nothing |
+| §12.3.5 | `anothernode` read as `alink`. A link not there is 2FF58 |
+| §12.3.4, §12.3.5 | An empty curve's ends match no node (2FF57, 2FF33). Ends are compared as ST_Equals |
+| §12.2.2 Description 5 | Mixed SRIDs are 2FF10, the replaced geometry left out |
+| §12.3.10, §12.3.11 | Splits act on the linear form. Results are linestrings. A point at an end is 2FF55 |
+| §12.3.8 to §12.3.11 | New link identifiers are found before the split link is removed |
+| §12.3.12, §12.3.13 | A link healed with itself is 2FF41, mixed dimensions 2FF25. Curves are joined without a repeated point |
+| §12.3.16 | Nodes merged by exact XY. Crossings not noded. Empty elements skipped. Surfaces and solids 2FF02 |
+| §12.3.14, §12.3.15 | Topology not there 2FF47, view not there 2FF48, name 2FF62, privilege 2FF63 |
+| §12.3.18 | One mixed-SRID row over all geometries |
+
+#### Readings of the standard
+
+- A network name is a character string of at most ST_MaxNetworkName
+  (128) characters, the parameter typed CHARACTER VARYING(128). A longer
+  one fails on assignment to the parameter (22001), before the routine.
+- ST_InitTopoNet of an empty name gives 2FF64. A schema of that name
+  already there gives 2FF56 (§12.3.7 Description 2b).
+- A network's views that cannot be read give 2FF64 when they are not
+  there and 2FF65 when the user lacks the privilege (§12.3 Description
+  2b, 2c).
+- Removing or moving a node, or removing a link, that is not there does
+  nothing. The Descriptions check only that the node is isolated, and a
+  node that is not there has no link.
+- ST_ChangeLinkGeom of a link that is not there, with a non-null curve,
+  gives 2FF58. Its Description checks the node geometries of the link's
+  nodes, and there are none.
+- The `anothernode` in §12.3.5 is a typo for `alink`.
+- Updates and inserts happen once all checks pass, with a null curve
+  too. A null curve makes a link logical.
+- An empty curve's end never equals a node's point, so it gives 2FF57
+  or 2FF33.
+- A node is compared with a curve's end as ST_Equals does. A point on a
+  link is decided by exact orientation, with no tolerance.
+- Mixed SRIDs give 2FF10, and the geometry being replaced is left out of
+  the check, so a network of one node can be moved to another system.
+- Splits work on the curve's linear form, and the parts are linestrings.
+  Z and M are interpolated along the segment. The point must lie within
+  the curve, not at either end, and an end gives 2FF55. A closed curve's
+  ends are within it, but a split there would make a part of no length,
+  so it is 2FF55 too.
+- A split's new link identifier is found before the split link is
+  removed, so no new link takes the old one's identifier.
+- A heal of a link with itself gives 2FF41.
+- Heals test the four ways two links meet in the order the text gives
+  them (end-start, end-end, start-start, start-end). The healed link
+  runs in the first link's direction. The curves are joined without
+  repeating the meeting point, and joined by a segment if their ends
+  differ.
+- A heal of curves of different coordinate dimensions gives 2FF25.
+- A heal where one link has a curve and the other none gives a link of
+  no curve.
+- ST_SpatNetFromGeom makes points nodes and curves links. Nodes are
+  merged where their XY bits are equal. Crossings are not noded. Ids are
+  numbered from 1 in the order of first appearance, and empty elements
+  are skipped. A surface or solid gives 2FF02.
+- ST_LogiNetFromTGeo and ST_SpatNetFromTGeo read a topology's ST_NODE
+  and ST_EDGE views. A topology that is not there gives 2FF47, a view
+  that is not there 2FF48, a name that is no name 2FF62, and a read the
+  user may not make 2FF63. A network not empty gives 2FF42.
+- ST_ValidSpatialNet's mixed-SRID row is one row over all geometries,
+  with both primitives null.
+- Both checks of an empty network give 2FF31.
+
+### Shortest paths [§13]
+
+ST_ShortestUndPath and ST_ShortestDirPath are built-in table functions,
+with and without the weight column (`src/spatial/paths`, RULES.md
+D130).
+
+| Item | Reading |
+|---|---|
+| §13.1 Description 6 | The unweighted cost is planar length in coordinate units |
+| §13.1 Description 8 | Rows of null values or non-curve geometry are skipped |
+| §13.1 Description 11 | Every tied path, as simple paths sorted by id list. Ties by exact equality. More than 65535 paths or 2^26 steps fail (-900) |
+| §13.1 | Names must be known at bind time. A point to itself is an empty path of weight 0 |
+
+#### Readings of the standard
+
+- The table name is parsed as a `<table name>` after spaces are trimmed.
+  Column names are matched exactly, as delimited identifiers.
+- The table and column names must be known when the query is bound,
+  that is literals or parameters known then. A column reference gives
+  SyntaxRule.
+- A table, view or column that is not there, or not readable, gives
+  2FF02.
+- Nodes are curve end points keyed by their XY bits, with -0 taken as 0.
+- A row with a null id, geometry, start point or weight is skipped. A
+  row whose geometry is not a curve is skipped (Description 8).
+- Two rows of one id give 2FF05.
+- A negative, non-finite or non-number weight gives 2FF02.
+- With no weight column the weight is the planar length, in coordinate
+  units (Description 6).
+- In the directed form, a start point at neither end of its curve gives
+  2FF02. A start point at the end reverses the curve.
+- A `from` or `to` point that is no curve's end gives 2FF02. An empty
+  table gives no rows, and so does a pair of points with no path.
+- Every tied shortest path is returned. Paths are simple, sorted by
+  their id lists. Ties are exact f64 equality of the sums.
+- The path from a point to itself is an empty array of weight 0.
+- Limits are MAX_PATHS = 65535 (the array's cardinality) and MAX_STEPS =
+  2^26 walk steps. Past either the query fails with SQLCODE -900
+  (Unsupported), never a partial answer. A path longer than the array
+  gives 2202F.
+
+### Linear referencing [§15, §21]
+
+The thirteen types of §15 are built with their constructors, observers,
+mutators and methods, the functions of their well-known text and GML,
+and the §21 catalog tables and views ST_LRMS and ST_LR_COLUMNS
+(`src/spatial/lr`, RULES.md D131).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Types | §15.1 to §15.13 | All thirteen, with their routines, ST_VectorOffsetExp's constructor of an ST_Vector array and ST_Vectors() among them. |
+| Text and GML | §15.14 | The functions of their well-known text and GML. A value's character form is its well-known text. |
+| Catalog | §21.1, §21.2 | ST_LRMS and ST_LR_COLUMNS, changed by ST_DEFINELRM, ST_DROPLRM, ST_REGISTERLRCOLUMN and ST_UNREGISTERLRCOLUMN [EXTENSION]. |
+| Lengths and cardinalities | Annex A | A routine checks each argument against its parameter's length and cardinality (22001, 2202F), as storing it would. |
+
+#### Readings of the standard
+
+- §15 defines no ST_AsText or ST_AsGML for the linear referencing types.
+  None is added. A value's character form, from a cast or a display, is
+  its well-known text.
+- §15.8.1 lists the observer as ST_LRMeasure(), and §15.8.4 defines it
+  as ST_Measure(). ST_Measure is what is built.
+- §15.3.1 declares ST_FeatureID() RETURNS ST_LinearElement. That reads as
+  a typo, since every other mention is a feature ID string. It returns
+  CHARACTER VARYING(ST_MaxFeatureIDLength).
+- §15.6 declares ST_Equals "INTEGER SELF AS RESULT". It is built as a
+  method returning INTEGER.
+- §21.1.3's view selects ORGANIZATION_COORDSYS_ID, a column the base
+  table does not have. ORGANIZATION_LRM_ID is used.
+- The §21.2.2 foreign key references ST_LINEAR_REFERENCING_METHODS, a
+  table §21 never defines. ST_LRMS is used.
+- §21 names its schema ST_DEFN_SCHEMA. The tables are in
+  ST_DEFINITION_SCHEMA, beside those of §20.
+- An offset vector has no spatial reference system. A vector given to
+  ST_VectorOffsetExp or ST_Vectors(ST_Vector ARRAY) loses its SRID, and
+  ST_Vectors() gives vectors of SRID 0. A null element is the empty
+  vector.
+- The standard gives no statement to change ST_LRMS or ST_LR_COLUMNS
+  (§21.1.1 leaves it implementation-defined). The procedures
+  ST_DEFINELRM, ST_DROPLRM, ST_REGISTERLRCOLUMN and ST_UNREGISTERLRCOLUMN
+  do it. ST_DEFINELRM checks the definition's ST_LRMID against LRM_ID
+  (§21.2.3 Description 8).
+- A routine that finds an LRM or a linear element by identifier reads
+  ST_LRMS and every registered column of a linear element type. The
+  query is appended as an ARRAY as the statement is bound, through the
+  `catalog_query` hook. Only registered columns are searched, and
+  reading them needs SELECT on them.
+- A geometry parameter accepts any geometry type at bind time. The
+  routine checks the subtype at run time (2FF08).
+- ST_Point and ST_Curve exist as geometry functions too. One dispatcher
+  per name picks the linear referencing routine when an argument is of a
+  linear referencing type, and otherwise the geometry function. Every
+  other capability the geometry function declares (its spatial
+  operation, index and batch promises, context, preparation) is the
+  dispatcher's too, read of the geometry arguments no routine of §15
+  takes, so its R-tree plans and unit forms are kept. A preparation of
+  the geometry function is wrapped again with the routines of its name.
+- The overload is chosen by declared types at bind time and by values at
+  run time. A null value matches any parameter, so an overload choice
+  can be ambiguous when every argument is null. The first routine in
+  table order wins.
+- The units are those of ST_UNITS_OF_MEASURE of type LINEAR, and a metre
+  is the base, so metres_per_unit is 1.
+- GML srsName resolves against the supplied reference systems only, not
+  ones defined by ST_DEFINESRS.
+
+### The Information Schema and sizings [§19, §20, Annex A]
+
+The views of ST_INFORMTN_SCHEMA are system views over the system tables
+of ST_DEFINITION_SCHEMA (RULES.md D121).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Information Schema | §19.1 to §19.6 | ST_INFORMTN_SCHEMA with all seven views. SELECT is PUBLIC's. |
+| Definition Schema | §20.2 to §20.5 | System tables, read only through the views. A statement naming one gets -103. |
+| Geometry columns | §20.2 | ST_REGISTERGEOMETRYCOLUMN and ST_UNREGISTERGEOMETRYCOLUMN [EXTENSION] keep §20.2's constraints. A registration goes with its column. |
+| ST_SIZINGS | §19.5, §20.5, Annex A.1 | A row for each A.1 meta-variable with an integer value, from the constants the code enforces. |
+
+#### Readings of the standard
+
+- Defect. §19.2 finds geometry columns through
+  INFORMATION_SCHEMA.DIRECT_SUPERTYPES, which has no rows for built-in
+  types. The view joins COLUMNS to the base table instead, which lists
+  the columns of a geometry type.
+- A column whose SRID is not a seeded system has SRS_NAME NULL, as of a
+  column with no system [§20.2 Description 3].
+- ST_SIZINGS leaves out ST_ApproximatePi, ST_TypeCatalogName and
+  ST_TypeSchemaName, which are not integers. 0 means no limit and NULL
+  means not supported.
+
+| Sizing [Annex A.1] | turborel |
+|---|---|
+| ST_MaxGeometryAsText, ST_MaxGeometryAsBinary | 16 MiB |
+| ST_MaxGeometryAsGML | 16777216 characters, the text limit; a longer GML representation, written or read, raises 22001 |
+| ST_MaxTopologyName | 128, the identifier length |
+| ST_MaxNetworkName | 128, the identifier length |
+| ST_MaxTopologyOrNetworkName | 128, the lesser of the topology and network name limits |
+| ST_MaxLRMNameLength, ST_MaxFeatureIDLength | 128 |
+| ST_MaxConstraintLength | 256 |
+| ST_MaxConstraintArrayElements, ST_MaxReferentArrayElements, ST_MaxStartValueArrayElements, ST_MaxPositionExpArrayElements | 1024 |
+| ST_MaxLRAsText, ST_MaxLRAsGML | 16 MiB, the geometry text limit |
+| ST_MaxArrayElements | 65535, the array cardinality limit, so the paths of one shortest path |
+| ST_MaxLEMeasureArrayElements | Not supported, since no ST_LEMeasure type is defined by the text |
+| ST_MaxAngleString, ST_MaxDirectionString | 64, the engine's longest strings |
+| ST_MaxAngleAsText, ST_MaxDirectionAsText | 64 |
+| ST_MaxAngleAsGML, ST_MaxDirectionAsGML | 4096 |
+| ST_MaxSRSAsText | 2048, the length of a system's definition |
+| ST_MaxVectorAsText, ST_MaxVectorAsGML | 8192 |
+| ST_MaxVectorAsBinary | 29 |
+| ST_MaxVectorArrayElements | 65535, the geometry array limit |
+
 ## Extensions
 
 These facilities go beyond the standards, and the code marks them
@@ -2152,46 +2828,46 @@ Plug-ins register these with `Database::register_type` (RULES.md D53).
 
 ### Geometry representations
 
-GEOMETRY is a registered type (`src/geometry.rs`, RULES.md D85),
-with the seven basic XY value kinds and their WKT/WKB representations
-from OGC 06-103r4 §§7–8. Its optional nonnegative SRID parameter, using
-D53's existing type syntax, enforces the reference on assignment, CAST
-and storage, including empty values; the unparameterized type permits
-any signed 32-bit identifier. The type descriptor and value payload each
-have a versioned encoding. Z/M, curves and EWKB flags are refused. Empty
-points use the GEOS NaN-pair WKB convention. Readers check structure,
-finite coordinates and representation limits, not polygon topology.
-Stored WKB also requires little-endian components, positive zero and
-the canonical empty-point NaN pair; these checks happen during decoding
-without changing the payload format or the accepted interchange forms.
-The server program registers the type and functions before opening files;
-embedding applications register them explicitly. Sessions call them by
-name while SQL.FUNCTION_CALLS is ON, its default.
+GEOMETRY is a second name of ST_GEOMETRY, the root type of
+[SQL/MM Spatial](#sqlmm-spatial) (`src/geometry.rs`, RULES.md D85,
+D120). This section lists what turborel adds beyond that
+standard. The types and functions are built in, so every database has
+them. Sessions call the functions by name while SQL.FUNCTION_CALLS is
+ON, its default.
 
-The free functions ST_POINT, ST_X, ST_Y, ST_GEOMFROMTEXT, ST_GEOMFROMWKB,
-ST_ASTEXT, ST_ASBINARY, ST_SRID, ST_SETSRID, ST_ISEMPTY and ST_GEOMETRYTYPE
-are extensions. Point ordinate observers return NULL for an empty point
-and refuse other geometry kinds. ST_GEOMETRYTYPE returns SQL/MM-style
-names, including ST_GeomCollection. ST_SETSRID changes only the identifier.
-ST_MAKEENVELOPE constructs a rectangular polygon from four numeric bounds
-and an optional SRID. It refuses non-finite, reversed and zero-area bounds
-(`Geometry::rectangle`); it does not implement SQL/MM's ST_Envelope method.
-ST_MINX, ST_MAXX, ST_MINY and ST_MAXY return DOUBLE PRECISION extrema of
-any supported kind, or NULL for an empty point set. They are free-function
-extensions, not structured-type methods.
-SRIDs are opaque identifiers, default zero; there is no CRS catalog or
-transformation. Ordinary comparisons use canonical representation bytes,
-not topological equality. ST_INTERSECTS and ST_DISJOINT implement closed
-XY intersection/disjointness for valid simple-feature topology
-(OGC 06-103r4 §6.1.2.3, `src/geometry/relate.rs`). Empty inputs intersect
-nothing; mixed SRIDs fail before empty/envelope shortcuts. Orientation
-signs are exact for finite binary64 coordinates (`src/geometry/robust.rs`).
-These functions return integer 1/0. A filter comparing ST_INTERSECTS to 1
-can use an R-tree on a `GEOMETRY(srid)` column with a constant or parameter
-query geometry (`physical/access/spatial.rs`, `index/rtree/geometry.rs`).
-Envelope candidates are rechecked against the visible geometry and full
-condition. Mixed-reference parameters fall back to all entries, preserving
-runtime errors. NULL/EMPTY behavior and representation equality are unchanged.
+The optional nonnegative SRID parameter of every geometry type, using
+D53's existing type syntax, enforces the reference on assignment, CAST
+and storage, including empty values. The unparameterized type permits
+any signed 32-bit identifier. EWKB flags are refused. Empty points of
+the seven XY kinds of D85 use the NaN-pair WKB convention, so their
+stored payloads are unchanged.
+
+The free functions ST_POINT(x, y), ST_X, ST_Y, ST_SETSRID,
+ST_MAKEENVELOPE, ST_MINX, ST_MAXX, ST_MINY and ST_MAXY are extensions,
+as are the function forms of the standard's methods (RULES.md D87).
+Point ordinate observers return NULL for an empty point and refuse
+other geometry kinds. ST_GEOMETRYTYPE returns the standard's names,
+including ST_GeomCollection. ST_SETSRID changes only the identifier.
+ST_MAKEENVELOPE constructs a rectangular polygon from four numeric
+bounds and an optional SRID. It refuses non-finite, reversed and
+zero-area bounds (`Geometry::rectangle`), and it does not implement
+SQL/MM's ST_Envelope method. ST_MINX, ST_MAXX, ST_MINY and ST_MAXY
+return DOUBLE PRECISION extrema of any kind, or NULL for an empty point
+set.
+
+The catalog procedures ST_DEFINESRS, ST_DROPSRS,
+ST_REGISTERGEOMETRYCOLUMN, ST_UNREGISTERGEOMETRYCOLUMN, ST_DEFINELRM,
+ST_DROPLRM, ST_REGISTERLRCOLUMN and ST_UNREGISTERLRCOLUMN are
+extensions, since the standard defines the tables but no procedure
+(RULES.md D121, D131).
+
+ST_INTERSECTS and the other relationships are exact
+(`src/spatial/planar`, RULES.md D126). A filter comparing
+one of them to 1 can use an R-tree on a `GEOMETRY(srid)` column with a
+constant or parameter query geometry (`physical/access/spatial.rs`,
+`index/rtree/geometry.rs`). Envelope candidates are rechecked against
+the visible geometry and full condition. Mixed-reference parameters
+fall back to all entries, preserving runtime errors.
 Inner joins between two columns constrained to the same SRID can probe
 one geometry index for each outer row (`physical/indexed/spatial.rs`).
 Both table orders and column projections are considered; the complete ON
@@ -2260,9 +2936,7 @@ candidates are supplemented with qualifying NULL distances when needed.
 Uncertified requests and an unaffordable threshold heap scan before output.
 WITH TIES, PERCENT and other orders retain ordinary plans. Serializable
 reads, cancellation, prepared values and runtime errors are preserved.
-Geometry metadata tables, other spatial relationships and measures,
-and SQL/MM structured types are not implemented.
-No Simple Features or SQL/MM Spatial conformance is claimed.
+Simple feature access (ISO 19125-2) is not claimed.
 
 ### Indexes
 
@@ -2643,7 +3317,7 @@ the schema of node and edge tables has SYS_GRAPH, which the database
 keeps ([CREATE PROPERTY GRAPH](doc/sql/statements/create-property-graph.md)).
 GRAPH_TABLE (RULES.md D108) matches its pattern of the property graph
 standard's GPML [GS §6] and gives rows to the query around it, which it
-may read laterally ([Property graphs](doc/sql/16-property-graphs.md)).
+may read laterally ([Property graphs](doc/sql/19-property-graphs.md)).
 It takes the selectors ANY, ANY k, ANY SHORTEST, ALL SHORTEST,
 SHORTEST k [GROUPS] and ANY, ALL or k CHEAPEST [COST expression]; the
 restrictors WALK, TRAIL, ACYCLIC and SIMPLE; the match modes REPEATABLE
@@ -2739,7 +3413,7 @@ GRAPH_ALGO.name(...) INTO PROPERTY column [OF table [(key)]]
 The functions of schema GRAPH_ALGO [GS §18] (RULES.md D111) run
 over a property graph or a table of edges, in parallel, the same rows
 on any number of threads
-([Graph Algorithms](doc/sql/17-graph-algorithms.md)).
+([Graph Algorithms](doc/sql/20-graph-algorithms.md)).
 
 | Clause | Behaviour |
 |---|---|

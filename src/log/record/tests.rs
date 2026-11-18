@@ -110,6 +110,14 @@ fn definitions() -> Vec<Change> {
             placed: None,
             epochs: vec![],
         },
+        Change::Spatial(crate::catalog::SpatialChange::Define(crate::catalog::SpatialRefSysDesc {
+            name: "ßystem".into(),
+            id: i32::MIN,
+            organization: Some((String::new(), i32::MAX)),
+            definition: "LOCAL_CS[\"x\"]".into(),
+            description: None,
+        })),
+        Change::Spatial(crate::catalog::SpatialChange::Unregister(table(), String::new())),
     ]
 }
 

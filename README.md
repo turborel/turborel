@@ -37,9 +37,14 @@ behind it, and each can be replaced or added to.
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match.
-- [Spatial data](doc/data/02-spatial.md), with XY geometries, WKT/WKB,
-  intersection filters and joins, planar distances and R-tree
-  nearest-neighbour queries.
+- [SQL/MM Spatial](doc/sql/10-spatial.md), its 27 geometry types in 2D
+  and 3D with every constructor and mutator, exact relationships and
+  set operations, reference systems, angles, directions and vectors,
+  and [R-tree spatial queries](doc/data/02-spatial.md) and joins.
+- [Topologies](doc/sql/16-topology.md) of nodes, edges and faces, and
+  [spatial networks](doc/sql/18-spatial-networks.md) with shortest paths.
+- [Linear referencing](doc/sql/17-linear-referencing.md), locating along
+  roads, rails and other linear features by measure and offset.
 - [Full-text search](doc/data/01-fulltext.md) by a text's words,
   whatever their case and accents, through an inverted index of
   block-compressed postings.
@@ -78,13 +83,13 @@ behind it, and each can be replaced or added to.
   top-k by RRF or weighted scores.
 - Embedding models, pipelines that chunk and embed text, and columns
   embedded after commit.
-- [Property graphs](doc/sql/16-property-graphs.md) over tables, queried
+- [Property graphs](doc/sql/19-property-graphs.md) over tables, queried
   by GRAPH_TABLE's path patterns through adjacency indexes.
 - Native graph tables, CREATE TABLE ... AS NODE and AS EDGE, with hidden
   identities, CONNECTION constraints and each schema's SYS_GRAPH.
 - [GQL](doc/sql/statements/execute-gql.md) by EXECUTE GQL, GQL_TABLE or
   a GQL session, over property graphs and typed or open graphs.
-- [Graph algorithms](doc/sql/17-graph-algorithms.md) such as PAGERANK,
+- [Graph algorithms](doc/sql/20-graph-algorithms.md) such as PAGERANK,
   WCC, LOUVAIN and SSSP over a property graph or a table of edges, in
   parallel, with INTO PROPERTY.
 - Multisets, with MULTISET UNION, EXCEPT and INTERSECT, MEMBER,

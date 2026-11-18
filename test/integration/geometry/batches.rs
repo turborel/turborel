@@ -22,7 +22,8 @@ fn batch_spatial_calls_match_rows_and_preserve_error_prefixes() {
                 let filter = format!("ST_INTERSECTS({arguments})");
                 assert_eq!(rows(&a, &format!("SELECT ID FROM SHAPES WHERE {filter} = 1")).unwrap(), ["1"]);
                 assert_eq!(rows(&a, &format!("SELECT ID FROM SHAPES WHERE 1 <= {filter}")).unwrap(), ["1"]);
-                assert_eq!(rows(&a, &format!("SELECT ID FROM SHAPES WHERE {filter} <> 1 ORDER BY ID")).unwrap(), ["2", "4"]);
+                // An empty value relates as NULL [ISO/IEC 13249-3:2016 §5.1.48].
+                assert_eq!(rows(&a, &format!("SELECT ID FROM SHAPES WHERE {filter} <> 1 ORDER BY ID")).unwrap(), ["4"]);
             }
             a.run("INSERT INTO SHAPES VALUES (5, ST_POINT(1, 1, 4326))").unwrap();
             let sql = "SELECT ID FROM SHAPES WHERE ST_INTERSECTS(G, ST_POINT(1, 1)) = 1";

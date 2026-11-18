@@ -121,7 +121,7 @@ fn no_target<T>(desc: &SqlRoutineDesc, (k, both): (usize, bool), a: &SqlArgument
 /// specification>` of an input parameter, or DEFAULT of one both input
 /// and output: the null value, as no parameter has a default [§9.18
 /// GR3b ii 1], but of Feature `feature`, not supported.
-fn defaulted<T>(feature: &str, rule_of: u8, at: usize) -> Result<T> {
+pub(super) fn defaulted<T>(feature: &str, rule_of: u8, at: usize) -> Result<T> {
     let msg = format!(
         "[ISO/IEC 9075-2:2023 §10.4 CR{rule_of}] NULL or DEFAULT as an argument of an input parameter of CALL is of Feature {feature}, not supported"
     );
@@ -199,7 +199,9 @@ impl State {
     pub(in crate::db) fn call_modifies(&self, call: &CallStatement, schema: &str) -> bool {
         let name = qualify(&call.name, schema);
         let invoked = |r: &&SqlRoutineDesc| r.kind == RoutineKind::Procedure && r.parameters.len() == call.arguments.len();
-        self.catalog.routines_named(&name).into_iter().filter(invoked).any(|r| r.access == DataAccess::Modifies)
+        // One written in Rust possibly modifies SQL-data.
+        Session::rust_procedure(self, call).is_some()
+            || self.catalog.routines_named(&name).into_iter().filter(invoked).any(|r| r.access == DataAccess::Modifies)
     }
 }
 
@@ -218,6 +220,9 @@ impl Session {
     /// SQLCODE -900 past `MAX_NESTING` contexts; the body's; an output
     /// parameter's, assigned to its target [GR10b].
     pub(in crate::db) fn call_statement(&self, cx: StatementContext<'_>, call: &CallStatement, params: &mut Params) -> Result<Completion> {
+        if let Some(p) = Session::rust_procedure(cx.st, call) {
+            return self.rust_call(cx, &*p, call, params);
+        }
         let bound = self.bound(cx.st, params, |b| State::bind_call(b, call))?;
         let values = call_values((self, cx), &bound)?;
         let desc = &bound.desc;

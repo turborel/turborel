@@ -13,13 +13,20 @@
 )]
 
 mod harness;
+#[path = "geometry/planar.rs"]
+mod planar;
+#[path = "geometry/srs.rs"]
+mod srs;
+
+#[path = "geometry/curves.rs"]
+mod curves;
 
 use std::hint::black_box;
 
 use harness::{Bench, Case, on_threads};
 use turborel::db::Database;
 use turborel::functions::ScalarFunction;
-use turborel::geometry::{FUNCTIONS, Geometry, GeometryFunction, GeometryType};
+use turborel::geometry::{Geometry, GeometryFunction};
 use turborel::memory::MemoryBudget;
 use turborel::value::Value;
 
@@ -44,6 +51,7 @@ const CODEC_ROUNDS: u32 = 4;
 
 fn main() {
     let bench = Bench::new("geometry");
+    srs::run(&bench);
     let points: Vec<_> = (0..ROWS).map(|n| Geometry::point(f64::from(n % SIDE), f64::from(n / SIDE), 0).unwrap()).collect();
     let square =
         Geometry::from_wkt(&format!("POLYGON (({LOWER} {LOWER}, {UPPER} {LOWER}, {UPPER} {UPPER}, {LOWER} {UPPER}, {LOWER} {LOWER}))"), 0)
@@ -73,6 +81,8 @@ fn main() {
     for edges in [4_u32, 8, 16, 32, 64, 128] {
         prepared(&bench, &format!("{edges}-edge polygon"), &points, &circle(edges));
     }
+    planar::run(&bench);
+    curves::run(&bench);
 }
 
 fn circle(edges: u32) -> Geometry {
@@ -133,10 +143,6 @@ fn prepared(bench: &Bench, name: &str, points: &[Geometry], geometry: &Geometry)
 
 fn sql(bench: &Bench, name: &str, polygon: &Geometry) {
     let db = Database::new();
-    db.register_type(Box::new(GeometryType)).unwrap();
-    for function in FUNCTIONS {
-        db.register_scalar_function(Box::new(function)).unwrap();
-    }
     db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE POINTS (ID INTEGER, G GEOMETRY)").unwrap();
     let load = db.session("B");

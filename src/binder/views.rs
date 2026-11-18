@@ -104,7 +104,7 @@ impl<'a> Reader<'a> {
 /// of the Information Schema, as `reader` reads it.
 pub(super) fn named(db: &State, name: &QualifiedName, reader: Reader<'_>) -> Result<Named> {
     if let Some(table) = db.system.get(name) {
-        if name.auth == DEFINITION_SCHEMA && !reader.definitions {
+        if (name.auth == DEFINITION_SCHEMA || name.auth == system::ST_DEFINITION_SCHEMA) && !reader.definitions {
             return Err(rule(format!("[ISO/IEC 9075:1992 §21.1] the Definition Schema cannot be accessed in an SQL-statement: {name}")));
         }
         return Ok(Named { desc: desc_of(&**table), source: Source::System(Arc::clone(table)) });
@@ -370,7 +370,7 @@ pub fn write_target(
     (read_only, user): (&str, Principal<'_>),
     noted: Option<&Cell<bool>>,
 ) -> Result<WriteTarget> {
-    if [INFORMATION_SCHEMA, DEFINITION_SCHEMA].contains(&name.auth.as_str()) {
+    if [INFORMATION_SCHEMA, DEFINITION_SCHEMA, system::ST_INFORMTN_SCHEMA, system::ST_DEFINITION_SCHEMA].contains(&name.auth.as_str()) {
         return Err(SqlError::new(
             Code::Privilege,
             format!("[ISO/IEC 9075:1992 §21.1] only SELECT is granted on {name}, so it cannot be updated"),

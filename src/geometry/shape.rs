@@ -17,8 +17,6 @@ pub(super) const MULTIPOLYGON: u32 = 6;
 pub(super) const COLLECTION: u32 = 7;
 pub(super) const NAMES: [&str; 7] =
     ["POINT", "LINESTRING", "POLYGON", "MULTIPOINT", "MULTILINESTRING", "MULTIPOLYGON", "GEOMETRYCOLLECTION"];
-const SQL_NAMES: [&str; 7] =
-    ["ST_Point", "ST_LineString", "ST_Polygon", "ST_MultiPoint", "ST_MultiLineString", "ST_MultiPolygon", "ST_GeomCollection"];
 pub(super) const EMPTY: &str = "EMPTY";
 /// A linear ring repeats its first point after at least three vertices.
 const MIN_RING: usize = 4;
@@ -60,10 +58,6 @@ impl Shape {
 
     pub(super) fn name(&self) -> &'static str {
         usize::try_from(self.code().saturating_sub(1)).ok().and_then(|i| NAMES.get(i)).copied().unwrap_or_default()
-    }
-
-    pub(super) fn sql_name(&self) -> &'static str {
-        usize::try_from(self.code().saturating_sub(1)).ok().and_then(|i| SQL_NAMES.get(i)).copied().unwrap_or_default()
     }
 
     pub(super) fn bounds(&self) -> Result<Option<Bounds>> {

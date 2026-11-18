@@ -46,7 +46,7 @@ fn the_graph_algorithm_examples_run_as_printed() {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
     let mut ann = Client::of(&db, "ANN");
-    assert!(ann.page("sql/17-graph-algorithms.md") > 0, "the chapter shows its examples' output");
+    assert!(ann.page("sql/20-graph-algorithms.md") > 0, "the chapter shows its examples' output");
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D107, D108: the SQL Reference
@@ -55,7 +55,7 @@ fn the_graph_algorithm_examples_run_as_printed() {
 /// the guide to graphs, which makes ANN's schema itself, does too.
 #[test]
 fn the_graph_table_examples_run_as_printed() {
-    for page in ["sql/16-property-graphs.md", "sql/statements/create-adjacency-index.md"] {
+    for page in ["sql/19-property-graphs.md", "sql/statements/create-adjacency-index.md"] {
         let db = Database::new();
         db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
         let mut ann = Client::of(&db, "ANN");

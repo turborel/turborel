@@ -16,7 +16,7 @@ use crate::value::types::ExtensionValue;
 /// A VECTOR key of `vector`'s image. The method reads only the image, so
 /// any kind carries it here.
 fn key(vector: &SparseVector) -> Key {
-    Key(vec![Value::Extension(ExtensionValue { kind: &crate::geometry::GEOMETRY, bytes: vector.image().into() })])
+    Key(vec![Value::Extension(ExtensionValue { kind: crate::geometry::GEOMETRY, bytes: vector.image().into() })])
 }
 
 fn sparse(entries: &[(u32, f32)]) -> SparseVector {
@@ -85,7 +85,7 @@ fn refusals() {
     assert_eq!(index.insert(Key(vec![Value::Null]), 1).unwrap_err().code, Code::Unsupported);
     let mut dense = sparse(&[(1, 1.0)]).image();
     dense[2] = 0;
-    let dense = Key(vec![Value::Extension(ExtensionValue { kind: &crate::geometry::GEOMETRY, bytes: dense.into() })]);
+    let dense = Key(vec![Value::Extension(ExtensionValue { kind: crate::geometry::GEOMETRY, bytes: dense.into() })]);
     assert_eq!(index.insert(dense, 1).unwrap_err().code, Code::Data);
     let probe = Probe::Compare { op: CompOp::Eq, value: Value::Null };
     assert!(Arc::clone(&index).search(&probe, KeyOrder::Ascending).next().unwrap().is_err());

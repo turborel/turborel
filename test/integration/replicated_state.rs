@@ -70,7 +70,7 @@ struct Writer {
 /// For every kind of record, a statement that writes it. Records that are
 /// not synced as written (an abort record) are followed by a commit, whose
 /// sync makes them durable.
-const WRITERS: [Writer; 22] = [
+const WRITERS: [Writer; 23] = [
     Writer { kind: 1, run: |db| committed(db, &["INSERT INTO T VALUES (100, 'new')"]) },
     Writer { kind: 2, run: |db| committed(db, &["UPDATE T SET V = 'changed' WHERE K = 1"]) },
     Writer { kind: 3, run: |db| committed(db, &["DELETE FROM T WHERE K = 2"]) },
@@ -150,6 +150,19 @@ const WRITERS: [Writer; 22] = [
             committed(db, &["UPDATE M SET C = 'short'"]);
             db.checkpoint().unwrap();
             reader.commit().unwrap();
+        },
+    },
+    Writer {
+        kind: 24,
+        run: |db| {
+            committed(db, &["CREATE TABLE S (G ST_GEOMETRY)"]);
+            committed(
+                db,
+                &[
+                    "CALL ST_DEFINESRS('GRID', 900001, 'APP', 1, 'GEOGCS[\"grid\",DATUM[\"d\",SPHEROID[\"s\",1,0]],PRIMEM[\"p\",0],UNIT[\"u\",1]]', 'a grid')",
+                ],
+            );
+            committed(db, &["CALL ST_REGISTERGEOMETRYCOLUMN('APP', 'S', 'G', 'GRID')"]);
         },
     },
 ];

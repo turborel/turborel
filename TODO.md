@@ -78,7 +78,7 @@ The access methods the other standards stand on. Each one is built, made
 durable and tested on its own before the extension that reads it. Each
 is kept consistent under concurrent change and recovery as the B-tree is.
 
-- Connect more geometry predicates and geometry outer joins to `rtree`.
+- Connect geometry outer joins to `rtree`.
   Extend nearest ordering beyond ascending ST_DISTANCE with FETCH FIRST ONLY;
   consider geometry distance predicates and distribution statistics beyond
   bounded R-tree sampling.
@@ -116,23 +116,12 @@ CONFORMANCE.md one by one as they are done.
 
 ### Spatial
 
-- Geometry predicates over the registered XY GEOMETRY representation:
-  topological validity, Contains/Within, Covers, Touches, Crosses, Overlaps,
-  topological Equals and Relate. Add area and length measures and geometry
-  component/vertex accessors.
-  Extend intersection's envelope candidates to geometry outer joins and distance
+- Extend intersection's envelope candidates to geometry outer joins and distance
   searches while preserving runtime errors. Track spatial serializable read
   regions instead of the current whole-table predicate read.
-  Add SQL large objects for WKT/WKB beyond the current string limits,
-  and Z/M representations.
-  Add enforced geometry kind constraints. Registered function calls
-  in stored CHECK conditions need their syntax permission retained across
-  rebinding and recovery, together with determinism checks.
-- SQL/MM Spatial (ISO/IEC 13249-3). The ST_Geometry type hierarchy of
-  points, curves, surfaces and their collections, their constructors from
-  well-known text and binary, measures, the spatial relationships of
-  ST_Intersects to ST_Relate, ST_Buffer and the set operations, and
-  spatial reference systems, over the R-tree.
+  Registered function calls in stored CHECK conditions need their syntax
+  permission retained across rebinding and recovery, together with
+  determinism checks.
 - Simple feature access, SQL option (ISO 19125-2). The schema of geometry
   columns and spatial reference systems it defines, and its
   geometry functions where they differ from SQL/MM's, so tools that read

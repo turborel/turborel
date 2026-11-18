@@ -3,7 +3,7 @@
 
 use super::scatter;
 use turborel::db::Database;
-use turborel::geometry::{FUNCTIONS, Geometry, GeometryType};
+use turborel::geometry::Geometry;
 use turborel::txn::LockWait;
 use turborel::value::{Decimal, Value};
 
@@ -16,10 +16,6 @@ pub const SELECT: &str = "SELECT ID FROM POINTS WHERE ST_INTERSECTS(G, ?) = 1";
 /// A fresh registered geometry database with points and their R-tree.
 pub fn database() -> Database {
     let db = Database::new();
-    db.register_type(Box::new(GeometryType)).unwrap();
-    for function in FUNCTIONS {
-        db.register_scalar_function(Box::new(function)).unwrap();
-    }
     db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
     db.set_lock_wait(LockWait::Wait).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE POINTS (ID INTEGER PRIMARY KEY, G GEOMETRY(0))").unwrap();

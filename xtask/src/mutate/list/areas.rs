@@ -3,9 +3,10 @@
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 10] {
+pub fn core() -> [&'static [Mutation]; 11] {
     [
         &super::MUTATIONS,
+        &super::hash::HASH,
         &super::rekey::REKEY,
         &super::KEPT,
         &super::READERS,
@@ -91,8 +92,8 @@ fn second() -> [&'static [Mutation]; 30] {
 }
 
 /// The areas after the rest, in order: projection's, JSON's, expression indexes', full-text's,
-/// T621's, the graph syntax's, path search's and GQL's, then the spatial areas', the adjacency index's,
-/// GRAPH_TABLE's, replication's and the server's.
+/// T621's, the graph syntax's, path search's and GQL's, then the spatial areas', the planar engine's,
+/// the adjacency index's, GRAPH_TABLE's, replication's and the server's.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     let json: [&'static [Mutation]; 14] = [
         &super::projection::PROJECTION,
@@ -110,10 +111,21 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::graph_search::algorithms::GRAPH_ALGO,
         &super::graph_gql::GRAPH_GQL,
     ];
-    let last: [&'static [Mutation]; 11] = [
+    let last: [&'static [Mutation]; 22] = [
         &super::near::NEAR,
         &super::rtree::RTREE,
         &super::geometry::GEOMETRY,
+        &super::spatial_types::SPATIAL_TYPES,
+        &super::spatial_curves::SPATIAL_CURVES,
+        &super::spatial_routines::SPATIAL_ROUTINES,
+        &super::spatial_mutators::SPATIAL_MUTATORS,
+        &super::spatial_planar::SPATIAL_PLANAR,
+        &super::spatial_srs::SPATIAL_SRS,
+        &super::spatial_support::SPATIAL_SUPPORT,
+        &super::spatial_solids::SPATIAL_SOLIDS,
+        &super::spatial_topology::SPATIAL_TOPOLOGY,
+        &super::spatial_lr::SPATIAL_LR,
+        &super::spatial_network::SPATIAL_NETWORK,
         &super::graph_adjacency::GRAPH_ADJACENCY,
         &super::graph_table::GRAPH_TABLE,
         &super::FILL,

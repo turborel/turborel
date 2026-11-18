@@ -10,7 +10,7 @@ use crate::value::DataType;
 fn reference_descriptors_are_validated_and_versioned() {
     for srid in [0_u32, 4326, 2_147_483_647] {
         let t = data_type_with_srid(srid).unwrap();
-        assert_eq!(t.to_string(), format!("GEOMETRY({srid})"));
+        assert_eq!(t.to_string(), format!("ST_GEOMETRY({srid})"));
         let mut bytes = Vec::new();
         GEOMETRY.put_params(&t, &mut bytes);
         assert_eq!(GEOMETRY.params(&mut Reader::new(&bytes, "test")).unwrap(), t);
@@ -48,9 +48,7 @@ fn typed_geometry_boundaries_enforce_reference() {
     assert!(GEOMETRY.encode_record(&wrong, &constrained).is_err());
     let raw = GEOMETRY.encode_record(&wrong, &data_type()).unwrap();
     assert!(GEOMETRY.decode_record(&raw, &constrained).is_none());
-    assert!(GEOMETRY.encode_key(&wrong, &constrained, &mut Vec::new()).is_err());
-    let mut key = Vec::new();
-    GEOMETRY.encode_key(&wrong, &data_type(), &mut key).unwrap();
-    assert_eq!(GEOMETRY.decode_key(&mut key.as_slice(), &constrained).unwrap_err().code, Code::Corrupt);
+    assert_eq!(GEOMETRY.encode_key(&wrong, &data_type(), &mut Vec::new()).unwrap_err().code, Code::Unsupported);
+    assert_eq!(GEOMETRY.decode_key(&mut [0_u8].as_slice(), &constrained).unwrap_err().code, Code::Unsupported);
     assert!(GEOMETRY.anchor(&wrong, &constrained).is_none());
 }

@@ -31,7 +31,9 @@
 //!           user-defined casts, orderings and transforms (likewise),
 //!           property graphs (count u32, each a graph, by name),
 //!           embedding models and vector pipelines (`catalog/embedding.rs`),
-//!           graph types and GQL graphs (count u32 and each, by name)
+//!           graph types and GQL graphs (count u32 and each, by name),
+//!           the spatial reference systems defined and the geometry
+//!           columns registered (as `catalog/codec/spatial.rs` writes them)
 //! ```
 
 use std::sync::Arc;
@@ -112,6 +114,9 @@ pub(super) struct Snapshot {
     graph_types: Vec<GraphTypeDesc>,
     /// The GQL graphs, by name.
     gql_graphs: Vec<GqlGraphDesc>,
+    /// The spatial reference systems defined and the geometry columns
+    /// registered.
+    spatial: crate::catalog::SpatialCatalog,
 }
 
 impl Snapshot {
@@ -135,7 +140,6 @@ impl Snapshot {
         let mut schemas: Vec<(String, String)> = st.catalog.schemas().into_iter().map(with_owner).collect();
         schemas.sort();
         let users = st.users.entries().map(|(n, v)| (n.clone(), v.clone())).collect();
-        let owner = st.users.owner().map(str::to_owned);
         let domains = st.catalog.domains().into_iter().cloned().collect();
         let collations = st.catalog.collations().into_iter().cloned().collect();
         let collation_versions = st.collation_versions();
@@ -157,7 +161,7 @@ impl Snapshot {
             user_types,
             settings: st.settings.database_values(),
             users,
-            owner,
+            owner: st.users.owner().map(str::to_owned),
             epochs,
             counters,
             triggers: st.catalog.triggers().into_iter().cloned().collect(),
@@ -173,6 +177,7 @@ impl Snapshot {
             embeddings: st.catalog.embeddings().clone(),
             graph_types: st.catalog.gql().graph_types().into_iter().cloned().collect(),
             gql_graphs: st.catalog.gql().gql_graphs().into_iter().cloned().collect(),
+            spatial: st.catalog.spatial().clone(),
         })
     }
 
@@ -264,6 +269,7 @@ impl Snapshot {
         self.graph_types.iter().for_each(|t| put_graph_type(out, t));
         out.put_u32(count(self.gql_graphs.len()));
         self.gql_graphs.iter().for_each(|g| put_gql_graph(out, g));
+        crate::catalog::codec::put_spatial(out, &self.spatial);
     }
 
     /// The snapshot `put` wrote.
@@ -304,6 +310,7 @@ impl Snapshot {
             embeddings: embeddings(r)?,
             graph_types: (0..r.u32()?).map(|_| graph_type(r)).collect::<Result<_>>()?,
             gql_graphs: (0..r.u32()?).map(|_| gql_graph(r)).collect::<Result<_>>()?,
+            spatial: crate::catalog::codec::spatial(r)?,
         })
     }
 }
@@ -434,6 +441,7 @@ fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     catalog.set_embeddings(snapshot.embeddings.clone());
     snapshot.graph_types.iter().cloned().for_each(|t| catalog.gql_mut().put_graph_type(t));
     snapshot.gql_graphs.iter().cloned().for_each(|g| catalog.gql_mut().put_gql_graph(g));
+    catalog.set_spatial(snapshot.spatial.clone());
 }
 
 /// [ISO/IEC 9075-4:2006 draft §12.8] Puts in `catalog` the declared tables
