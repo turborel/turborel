@@ -63,6 +63,7 @@ mod spatial_curves;
 mod spatial_lr;
 mod spatial_network;
 mod spatial_planar;
+mod spatial_routines;
 mod spatial_solids;
 mod spatial_srs;
 mod spatial_topology;

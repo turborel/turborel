@@ -83,10 +83,11 @@ type in italics.
 ST_GEOMETRYTYPE names a value's most specific type in the spelling of
 SQL/MM Spatial, case-sensitive, as `ST_Point`. The XY values of seven
 types, ST_POINT, ST_LINESTRING, ST_POLYGON, ST_MULTIPOINT,
-ST_MULTILINESTRING, ST_MULTIPOLYGON and ST_GEOMCOLLECTION, are read and
-written as text and related to each other. A value of any other type, or
-with Z or M coordinates, is read and written as WKB and has its type and
-SRID observed.
+ST_MULTILINESTRING, ST_MULTIPOLYGON and ST_GEOMCOLLECTION, are related
+to each other. A value of every instantiable type, with Z or M
+coordinates too, is read and written as text, WKB and GML, and the
+curves and surfaces have the methods of [Curves](#curves) and
+[Surfaces](#surfaces).
 
 ```sql
 CREATE TABLE MARKS (ID INTEGER, SPOT ST_POINT(0), ROUTE ST_CURVE(0));
@@ -331,10 +332,11 @@ VALUES ST_SRID(ST_SETSRID(ST_POINT(1, 2), 4326));
 
 A reader refuses input cut short or followed by more, a line of one
 point, a polygon ring of fewer than four coordinates or not closed, and
-a WKB collection holding a member of the wrong kind. Z and M
-coordinates, curves and the SRID and dimension flags of EWKB are not
-supported. A reader checks a value's structure, not its topology, so a
-ring may cross itself and a hole lie outside its shell:
+a WKB collection holding a member of the wrong kind. Text and WKB carry
+Z and M coordinates and every one of the 23 instantiable types. The SRID
+and dimension flags of EWKB are not supported. A reader checks a
+value's structure, not its topology, so a ring may cross itself and a
+hole lie outside its shell:
 
 ```sql
 VALUES ST_ASTEXT(ST_GEOMFROMTEXT('LINESTRING (1 1)'));
@@ -343,8 +345,11 @@ VALUES ST_ASTEXT(ST_GEOMFROMTEXT('POLYGON ((0 0, 4 4, 4 0, 0 4, 0 0))'));
 ```
 
 ```
-turborel: SQLCODE -301 (SQLSTATE 22000): invalid geometry: a nonempty line needs at least two points
-turborel: SQLCODE -900 (SQLSTATE 0A000): geometry does not support Z or M coordinates
+turborel: SQLCODE -301 (SQLSTATE 2FF02): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §7.2] a curve of points that is not empty has at least two
+
+--------------------------------------------------------------
+ POINT Z (1 2 3)
+(1 row)
 
 --------------------------------------------------------------
  POLYGON ((0 0, 4 4, 4 0, 0 4, 0 0))
@@ -354,6 +359,247 @@ turborel: SQLCODE -900 (SQLSTATE 0A000): geometry does not support Z or M coordi
 The functions take and give text and binary strings of at most 32,767
 characters or octets. Larger values are read by the library's codecs,
 within the limits of [Appendix D](../appendix/d-limits.md).
+
+Each instantiable type has its own constructors of each form, which
+return the value as that type and refuse a value of another with the
+form's SQLSTATE, 2FF22 for text, 2FF23 for WKB and 2FF24 for GML.
+ST_WKTTOSQL and ST_WKBTOSQL read any type of SRID 0:
+
+| Type | Text | WKB | GML |
+|---|---|---|---|
+| ST_Point | `ST_POINTFROMTEXT` | `ST_POINTFROMWKB` | `ST_POINTFROMGML` |
+| ST_LineString | `ST_LINEFROMTEXT` | `ST_LINEFROMWKB` | `ST_LINEFROMGML` |
+| ST_CircularString | `ST_CIRCULARFROMTXT` | `ST_CIRCULARFROMWKB` | `ST_CIRCULARFROMGML` |
+| ST_Circle | `ST_CIRCLEFROMTXT` | `ST_CIRCLEFROMWKB` | `ST_CIRCLEFROMGML` |
+| ST_GeodesicString | `ST_GEODESICFROMTXT` | `ST_GEODESICFROMWKB` | `ST_GEODESICFROMGML` |
+| ST_EllipticalCurve | `ST_ELLIPTICFROMTXT` | `ST_ELLIPTICFROMWKB` | `ST_ELLIPTICFROMGML` |
+| ST_NURBSCurve | `ST_NURBSFROMTXT` | `ST_NURBSFROMWKB` | `ST_NURBSFROMGML` |
+| ST_Clothoid | `ST_CLOTHOIDFROMTXT` | `ST_CLOTHOIDFROMWKB` | `ST_CLOTHOIDFROMGML` |
+| ST_SpiralCurve | `ST_SPIRALFROMTXT` | `ST_SPIRALFROMWKB` | `ST_SPIRALFROMGML` |
+| ST_CompoundCurve | `ST_COMPOUNDFROMTXT` | `ST_COMPOUNDFROMWKB` | `ST_COMPOUNDFROMGML` |
+| ST_CurvePolygon | `ST_CPOLYFROMTEXT` | `ST_CPOLYFROMWKB` | `ST_CPOLYFROMGML` |
+| ST_Polygon | `ST_POLYFROMTEXT` | `ST_POLYFROMWKB` | `ST_POLYFROMGML` |
+| ST_Triangle | `ST_TRIFROMTEXT` | `ST_TRIFROMWKB` | `ST_TRIFROMGML` |
+| ST_PolyhdrlSurface | `ST_PHSFROMTEXT` | `ST_PHSFROMWKB` | `ST_PHSFROMGML` |
+| ST_TIN | `ST_TINFROMTEXT` | `ST_TINFROMWKB` | `ST_TINFROMGML` |
+| ST_CompoundSurface | `ST_COMPSURFFROMTXT` | `ST_COMPSURFFROMWKB` | `ST_COMPSURFFROMGML` |
+| ST_BRepSolid | `ST_BREPFROMTEXT` | `ST_BREPFROMWKB` | `ST_BREPFROMGML` |
+| ST_GeomCollection | `ST_GEOMCOLLFROMTXT` | `ST_GEOMCOLLFROMWKB` | `ST_GEOMCOLLFROMGML` |
+| ST_MultiPoint | `ST_MPOINTFROMTEXT` | `ST_MPOINTFROMWKB` | `ST_MPOINTFROMGML` |
+| ST_MultiCurve | `ST_MCURVEFROMTEXT` | `ST_MCURVEFROMWKB` | `ST_MCURVEFROMGML` |
+| ST_MultiLineString | `ST_MLINEFROMTEXT` | `ST_MLINEFROMWKB` | `ST_MLINEFROMGML` |
+| ST_MultiSurface | `ST_MSURFACEFROMTXT` | `ST_MSURFACEFROMWKB` | `ST_MSURFACEFROMGML` |
+| ST_MultiPolygon | `ST_MPOLYFROMTEXT` | `ST_MPOLYFROMWKB` | `ST_MPOLYFROMGML` |
+
+```sql
+VALUES ST_ASTEXT(ST_CIRCULARFROMTXT('CIRCULARSTRING Z (0 0 1, 1 1 2, 2 0 3)', 4326));
+VALUES ST_GEOMETRYTYPE(ST_WKBTOSQL(ST_ASBINARY(ST_TRIFROMTEXT('TRIANGLE (0 0, 1 0, 0 1)'))));
+VALUES ST_POINTFROMTEXT('LINESTRING (0 0, 1 1)');
+```
+
+```
+
+--------------------------------------------------------------
+ CIRCULARSTRING Z (0 0 1, 1 1 2, 2 0 3)
+(1 row)
+
+----------------------------------
+ ST_Triangle
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2FF22): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.62] ST_POINTFROMTEXT reads a ST_LineString, no ST_Point
+```
+
+## GML
+
+ST_ASGML writes a value's GML 3.2, and ST_GMLTOSQL, ST_GEOMFROMGML and
+each type's FromGML read it. A value's SRID is written as the srsName
+of its reference system, the organization and its identifier there, or
+else the system's definition. A reader finds the SRID of an srsName
+among the systems of the Spatial Information Schema. ST_GEOMFROMGML
+and the typed readers take an SRID too, which replaces it. GML has no M
+coordinate, so a value's measures are left out:
+
+```sql
+VALUES ST_ASGML(ST_POINTFROMTEXT('POINT (1 2)', 4326));
+VALUES ST_SRID(ST_GMLTOSQL('<gml:Point srsName="EPSG:4326"><gml:pos>1 2</gml:pos></gml:Point>'));
+VALUES ST_ASTEXT(ST_LINEFROMGML(ST_ASGML(ST_LINEFROMTEXT('LINESTRING M (0 0 5, 3 4 6)'))));
+```
+
+```
+
+--------------------------------------------------------------
+ <gml:Point xmlns:gml="http://www.opengis.net/gml/3.2" srsName="EPSG:4326"><gml:pos>1 2</gml:pos></gml:Point>
+(1 row)
+
+--------------
+         4326
+(1 row)
+
+--------------------------------------------------------------
+ LINESTRING (0 0, 3 4)
+(1 row)
+```
+
+## Curves
+
+Every curve has a length, end points and a linear form. Its arcs,
+splines, clothoids and spirals are measured exactly or by quadrature,
+as [CONFORMANCE.md](../../CONFORMANCE.md#geometry-representations)
+describes. A method of a position, as ST_POINTN, gives NULL and the
+warning 01F01 where there is none.
+
+| Method | Of | Result |
+|---|---|---|
+| `ST_LENGTH()` | ST_Curve | Its length, DOUBLE PRECISION |
+| `ST_STARTPOINT()`, `ST_ENDPOINT()` | ST_Curve | Its first or last point |
+| `ST_ISCLOSED()`, `ST_ISRING()` | ST_Curve | INTEGER 1 if its ends meet, and if it is also simple |
+| `ST_CURVETOLINE()` | ST_Curve | Its linear form, an ST_LineString |
+| `ST_POINTATDISTANCE(d)` | ST_Curve | The point `d` along it; 2FF79 beyond its end |
+| `ST_DISTANCETOPOINT(p)` | ST_Curve | How far along it `p` lies; 2FF80 off it |
+| `ST_PERPPOINTS(p)` | ST_Curve | The perpendicular projections of `p` on it, a point, a curve or a collection |
+| `ST_POINTS()`, `ST_NUMPOINTS()`, `ST_POINTN(n)` | ST_LineString, ST_CircularString, ST_GeodesicString, ST_Circle | Its points, their count, the `n`th |
+| `ST_NUMSEGMENTS()`, `ST_SEGMENTN(n)`, `ST_MIDPOINTREP()` | ST_CircularString | Its arcs' count, the `n`th arc, its points with each arc's middle |
+| `ST_CENTER()`, `ST_RADIUS()`, `ST_BULGE()` | ST_CircularString of one arc, ST_Circle | Its center, radius or signed bulge; 2FF76 of more arcs |
+| `ST_STARTM()`, `ST_ENDM()` | ST_EllipticalCurve, ST_NURBSCurve, ST_Clothoid, ST_SpiralCurve | Its first or last measure |
+| `ST_DEGREE()` | ST_NURBSCurve | Its degree |
+| `ST_SCALEFACTOR()`, `ST_STARTDISTANCE()`, `ST_ENDDISTANCE()` | ST_Clothoid | Its parameters |
+| `ST_STARTCURVATURE()`, `ST_ENDCURVATURE()`, `ST_SPIRALTYPE()` | ST_SpiralCurve | Its parameters |
+| `ST_CURVES()`, `ST_NUMCURVES()`, `ST_CURVEN(n)` | ST_CompoundCurve | Its parts, their count, the `n`th |
+
+```sql
+CREATE TABLE ROADS (ID INTEGER, PATH ST_CURVE);
+INSERT INTO ROADS VALUES (1, ST_COMPOUNDFROMTXT('COMPOUNDCURVE (LINESTRING (0 0, 1 0), CIRCULARSTRING (1 0, 2 1, 3 0))'));
+SELECT CAST(PATH.ST_LENGTH() AS DECIMAL(9, 4)) AS LEN, PATH.ST_ISCLOSED() AS CLOSED,
+    ST_ASTEXT(PATH.ST_ENDPOINT()) AS LAST_POINT FROM ROADS;
+SELECT ST_ASTEXT(TREAT(PATH AS ST_COMPOUNDCURVE).ST_CURVEN(2)) AS ARC FROM ROADS;
+SELECT TREAT(PATH AS ST_COMPOUNDCURVE).ST_CURVEN(3) AS NONE FROM ROADS;
+ROLLBACK;
+```
+
+```
+OK
+OK
+         LEN |       CLOSED | LAST_POINT
+-------------+--------------+--------------------------------------------------------------
+      4.1416 |            0 | POINT (3 0)
+(1 row)
+ ARC
+--------------------------------------------------------------
+ CIRCULARSTRING (1 0, 2 1, 3 0)
+(1 row)
+ NONE
+--------------------------------------------------------------
+ NULL
+(1 row, with a warning: SQLSTATE 01F01)
+OK
+```
+
+## Surfaces
+
+Every surface and multisurface has an area, a perimeter, a centroid and
+a point on it, measured in the coordinate plane. The area and perimeter
+of a surface with arcs or other curves are those of its curves, and
+the perimeter of patches is their boundary's length. A polygon has its
+rings, a polyhedral surface and a TIN their patches, and a compound
+surface its parts.
+
+| Method | Of | Result |
+|---|---|---|
+| `ST_AREA()`, `ST_PERIMETER()` | ST_Surface, ST_MultiSurface | DOUBLE PRECISION |
+| `ST_CENTROID()`, `ST_POINTONSURFACE()` | ST_Surface, ST_MultiSurface | An ST_Point |
+| `ST_EXTERIORRING()`, `ST_INTERIORRINGS()`, `ST_NUMINTERIORRING()`, `ST_INTERIORRINGN(n)` | ST_CurvePolygon, ST_Polygon, ST_Triangle | Its rings, as curves, or line strings of a polygon |
+| `ST_CURVEPOLYTOPOLY()` | ST_CurvePolygon | Its linear form, an ST_Polygon |
+| `ST_PATCHES()`, `ST_NUMPATCHES()`, `ST_PATCHN(n)` | ST_PolyhdrlSurface, ST_TIN | Its patches, polygons or triangles |
+| `ST_SURFACES()`, `ST_NUMSURFACES()`, `ST_SURFACEN(n)` | ST_CompoundSurface | Its parts |
+
+```sql
+VALUES CAST(ST_CPOLYFROMTEXT('CURVEPOLYGON (CIRCULARSTRING (0 0, 2 2, 4 0, 2 -2, 0 0))').ST_AREA() AS DECIMAL(9, 4));
+VALUES ST_POLYFROMTEXT('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))').ST_PERIMETER();
+VALUES ST_ASTEXT(ST_POLYFROMTEXT('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))').ST_INTERIORRINGN(1));
+VALUES ST_ASTEXT(ST_POLYFROMTEXT('POLYGON ((0 0, 4 0, 4 2, 0 2, 0 0))').ST_CENTROID());
+```
+
+```
+
+-------------
+     12.5664
+(1 row)
+
+--------------------------
+                      2E1
+(1 row)
+
+--------------------------------------------------------------
+ LINESTRING (1 1, 1 2, 2 2, 2 1, 1 1)
+(1 row)
+
+--------------------------------------------------------------
+ POINT (2 1)
+(1 row)
+```
+
+## TINs
+
+A TIN is built from its elements, of the type ST_TINELEMENT, as their
+constrained Delaunay triangulation. Random points and spots are its
+vertices, breaklines and boundaries its edges, and voids and holes are
+cut out of it. A maximum side length above 0 removes the triangles of
+longer outer sides. ST_TIN takes the triangles too, and keeps them as
+they are.
+
+| Routine | Result |
+|---|---|
+| `ST_TINELEMENT(type, [id,] tag, geometry)` | An element, its type one of `random points`, `group spot`, `boundary`, `breakline`, `soft break`, `control contour`, `break void`, `drape void`, `void`, `hole` and `stop line`; 2FF74 of a geometry the type does not take |
+| `ST_ELEMENTTYPE(e)`, `ST_ELEMENTID(e)`, `ST_ELEMENTTAG(e)`, `ST_ELEMENTGEOMETRY(e)` | Its parts, and of a second argument the element with that part replaced |
+| `ST_TIN(elements, max_side [, srid])` | The triangulation of an ARRAY of elements |
+| `ST_TIN(triangles, elements, max_side [, srid])` | The TIN of an ARRAY of triangles and one of elements |
+| `tin.ST_TINELEMENTS()`, `tin.ST_MAXSIDELENGTH()` | Its elements, an ARRAY, and its maximum side length |
+
+```sql
+VALUES ST_TIN(ARRAY[ST_TINELEMENT('random points', 'spots',
+    ST_MPOINTFROMTEXT('MULTIPOINT Z ((0 0 0), (4 0 1), (4 4 2), (0 4 3), (2 2 5))'))], 0E0).ST_NUMPATCHES();
+VALUES ST_ELEMENTTAG(ST_TIN(ARRAY[ST_TINELEMENT('random points', 'spots',
+    ST_MPOINTFROMTEXT('MULTIPOINT Z ((0 0 0), (4 0 1), (4 4 2))'))], 0E0).ST_TINELEMENTS()[1]);
+VALUES ST_TINELEMENT('breakline', 'edge', ST_LINEFROMTEXT('LINESTRING (0 0, 1 1)'));
+```
+
+```
+
+--------------
+            4
+(1 row)
+
+--------------------------------------------------------------
+ spots
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2FF74): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §17.1.2 Description 2a] a breakline element is of an ST_LineString with z
+```
+
+## Measures
+
+A value with M coordinates locates its measures. ST_LOCATEBETWEEN(a, b)
+gives the parts whose M lies from `a` to `b`, interpolated along each
+curve, without Z. ST_LOCATEALONG(m) is ST_LOCATEBETWEEN(m, m). The parts
+are a multipoint, a multicurve or a collection of both, and the empty
+point where there are none. A surface's measures are those of its rings:
+
+```sql
+VALUES ST_ASTEXT(ST_LINEFROMTEXT('LINESTRING M (0 0 0, 10 0 10, 10 10 20)').ST_LOCATEBETWEEN(5E0, 15E0));
+VALUES ST_ASTEXT(ST_LINEFROMTEXT('LINESTRING M (0 0 0, 10 0 10, 10 10 20)').ST_LOCATEALONG(12E0));
+VALUES ST_LINEFROMTEXT('LINESTRING M (0 0 0, 10 0 10)').ST_LOCATEBETWEEN(2E0, 1E0);
+```
+
+```
+
+--------------------------------------------------------------
+ MULTICURVE M ((5 0 5, 10 0 10, 10 5 15))
+(1 row)
+
+--------------------------------------------------------------
+ MULTIPOINT M ((10 2 12))
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2FF02): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.15] the end measure is less than the start measure
+```
 
 ## Relationships
 
@@ -842,23 +1088,27 @@ OK
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 0A000 | -900 | Text of a value of a type beyond the seven, a relationship or measure of a solid, EWKB flags, more than the limits of [Appendix D](../appendix/d-limits.md), or an `rtree` index of a column of plain GEOMETRY |
+| 01F01 | warning | A method of a position is given one outside the value |
+| 0A000 | -900 | A relationship or measure of a solid, EWKB flags, more than the limits of [Appendix D](../appendix/d-limits.md), or an `rtree` index of a column of plain GEOMETRY |
 | 0D000 | -301 | TREAT is given a value of another type |
 | 22000 | -301 | WKT or WKB is malformed, a coordinate is not finite, ST_MAKEENVELOPE's bounds are reversed or of no area, ST_X or ST_Y is given another kind than a point, or two values' SRIDs differ |
 | 22000 | -301 | A value's SRID is not its column's or CAST's |
 | 22003 | -301 | A distance is greater than DOUBLE PRECISION holds |
 | 23000 | -201 | ST_DEFINESRS, ST_DROPSRS or ST_REGISTERGEOMETRYCOLUMN would break a constraint of the Spatial Information Schema's tables, or a column registered with a system would hold a value of another SRID |
 | 2A000 | -103 | A type's parameter is not one integer from 0 to 2147483647, a function's arguments are not of its types, a value of a supertype is assigned without TREAT, NEW names a type that holds no value of its own, geometry values are ordered, grouped or made distinct, a key names a geometry column, or a method is not of the value's declared type |
-| 2FF02 | -301 | A ring of ST_BDPOLYFROMTEXT's is not a closed simple ring, a measure is given a value of a type it does not measure, or a 3D routine's argument is out of its range: a TIN's maximum side length not above 0, a vertical triangle's slope, a measure range reversed, an interior shell outside the exterior one, or a TIN table or column that does not exist |
+| 2FF02 | -301 | A ring of ST_BDPOLYFROMTEXT's is not a closed simple ring, a measure is given a value of a type it does not measure, or a 3D routine's argument is out of its range: a TIN's maximum side length not above 0, a vertical triangle's slope, a measure range reversed, an interior shell outside the exterior one, a TIN table or column that does not exist, or a method given an argument it does not take |
 | 2FF03 | -301 | A TIN's maximum side length, or an array of shells or one of its elements, is null |
 | 2FF04 | -301 | ST_RELATE's matrix is not nine of `T`, `F`, `0`, `1`, `2` and `*` |
 | 2FF08 | -301 | CAST is given a value Table 4 does not convert, or a value is assigned to a type it is not of |
 | 2FF14 | -301 | A unit is not a linear unit of ST_UNITS_OF_MEASURE, or the SRID's system has no linear unit |
 | 2FF15 | -301 | ST_TRANSFORM cannot move a value to the system of the SRID |
-| 2FF22 | -301 | ST_BDPOLYFROMTEXT's text is of no multilinestring |
-| 2FF23 | -301 | WKB of a type is malformed, or ST_BDPOLYFROMWKB's is of no multilinestring |
+| 2FF22 | -301 | A text is malformed, a typed constructor reads a value of another type, or ST_BDPOLYFROMTEXT's text is of no multilinestring |
+| 2FF23 | -301 | WKB of a type is malformed, a typed constructor reads a value of another type, or ST_BDPOLYFROMWKB's is of no multilinestring |
+| 2FF24 | -301 | GML is malformed, or a typed constructor reads a value of another type |
 | 2FF59 | -301 | A unit form is given a value of an SRID no system has |
 | 2FF72 | -301 | A 3D routine of two values is given one without z |
+| 2FF74 | -301 | A TIN element's geometry is not of the type its element type takes |
+| 2FF76, 2FF79, 2FF80 | -301 | ST_CENTER of more than one arc, ST_POINTATDISTANCE beyond a curve's end, ST_DISTANCETOPOINT of a point off it |
 | TB916 | -916 | A stored value or index key is damaged, or of an unknown version |
 
 ## Standard

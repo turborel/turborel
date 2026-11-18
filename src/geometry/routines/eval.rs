@@ -3,6 +3,7 @@
 
 use super::super::engine::{engine_of, geom_of};
 use super::super::model::{Body, Collection, Dims, Geom, Kind, cast};
+use super::super::observers::{Exact, exact};
 use super::super::{SpatialOperation, invalid};
 use super::units::Systems;
 use super::{Routine, results, units};
@@ -250,9 +251,9 @@ fn observe(routine: Routine, (g, systems): (&Geom, Systems<'_>), planar: &Geomet
         }
         Routine::ConvexHull => built(&planar::convex_hull(planar)),
         Routine::Boundary => built(&planar::boundary(planar)?),
-        Routine::Area => measure(planar::area(planar), (g, systems), rest.first(), true),
-        Routine::Length => measure(planar::length(planar), (g, systems), rest.first(), false),
-        Routine::Perimeter => measure(planar::perimeter(planar), (g, systems), rest.first(), false),
+        Routine::Area => measure(exact(Exact::Area, g, || planar::area(planar))?, (g, systems), rest.first(), true),
+        Routine::Length => measure(exact(Exact::Length, g, || planar::length(planar))?, (g, systems), rest.first(), false),
+        Routine::Perimeter => measure(exact(Exact::Perimeter, g, || planar::perimeter(planar))?, (g, systems), rest.first(), false),
         Routine::Centroid => point(planar::centroid(planar), srid),
         Routine::PointOnSurface => point(planar::point_on_surface(planar), srid),
         Routine::Relate

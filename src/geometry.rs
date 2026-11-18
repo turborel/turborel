@@ -12,16 +12,20 @@ mod functions;
 mod kind;
 pub mod methods;
 pub mod model;
+mod observers;
 mod ordering;
 mod planar;
 mod prepared;
 mod procedures;
 mod reference;
 pub(crate) mod registered;
+mod representations;
 mod robust;
 pub mod routines;
 mod shape;
 mod solids;
+mod tin_element;
+mod tins;
 mod wkb;
 mod wkt;
 
@@ -35,6 +39,7 @@ pub use reference::data_type_with_srid;
 pub(crate) use reference::fixed_srid;
 use shape::Shape;
 pub use solids::{BRepSolid, SOLID_FUNCTIONS, SolidFunction, TinFromTable, TinTable, table_functions};
+pub use tin_element::kind as tin_element_kind;
 
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::spatial::{Bounds, DIMENSIONS};

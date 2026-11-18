@@ -16,8 +16,13 @@ use std::sync::Arc;
 use super::collections::CollectionFunction;
 use super::functions::GeometryFunction;
 use super::model::Kind;
+use super::observers::{
+    CompoundMethod, CurveMethod, MeasureMethod, ParameterMethod, PatchMethod, PointListMethod, RingMethod, Routine as Observed,
+};
+use super::representations::AsGml;
 use super::routines::Routine;
 use super::solids::{SolidFunction, TinFromTable};
+use super::tins::TinRoutine;
 use crate::error::{Result, SqlError, SqlState};
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::value::{DataType, Value};
@@ -64,7 +69,7 @@ macro_rules! routine {
 }
 
 /// The table: of each type, the methods it declares.
-pub static METHODS: [Method; 123] = [
+pub static METHODS: [Method; 190] = [
     // [§5.1.1] ST_Geometry.
     original(Kind::Geometry, "ST_SRID", 0, routine!(GeometryFunction::Srid)),
     original(Kind::Geometry, "ST_SRID", 1, routine!(GeometryFunction::SetSrid)),
@@ -142,6 +147,82 @@ pub static METHODS: [Method; 123] = [
     // [§10.6.1] ST_MultiPolygon.
     overriding(Kind::MultiPolygon, "ST_GEOMETRIES", 0, routine!(CollectionFunction::Geometries(Kind::MultiPolygon))),
     overriding(Kind::MultiPolygon, "ST_GEOMETRIES", 1, routine!(CollectionFunction::Geometries(Kind::MultiPolygon))),
+    // [§5.1.13, §5.1.15, §5.1.57, §5.1.61] ST_Geometry, of the formats and measures.
+    original(Kind::Geometry, "ST_ASGML", 0, routine!(AsGml)),
+    original(Kind::Geometry, "ST_LOCATEALONG", 1, routine!(Observed(MeasureMethod::LocateAlong))),
+    original(Kind::Geometry, "ST_LOCATEBETWEEN", 2, routine!(Observed(MeasureMethod::LocateBetween))),
+    // [§7.1.1] ST_Curve.
+    original(Kind::Curve, "ST_STARTPOINT", 0, routine!(Observed(CurveMethod::StartPoint))),
+    original(Kind::Curve, "ST_ENDPOINT", 0, routine!(Observed(CurveMethod::EndPoint))),
+    original(Kind::Curve, "ST_ISCLOSED", 0, routine!(Observed(CurveMethod::IsClosed))),
+    original(Kind::Curve, "ST_CURVETOLINE", 0, routine!(Observed(CurveMethod::CurveToLine))),
+    original(Kind::Curve, "ST_DISTANCETOPOINT", 1, routine!(Observed(CurveMethod::DistanceToPoint))),
+    original(Kind::Curve, "ST_POINTATDISTANCE", 1, routine!(Observed(CurveMethod::PointAtDistance))),
+    original(Kind::Curve, "ST_PERPPOINTS", 1, routine!(Observed(CurveMethod::PerpPoints))),
+    // [§7.2.1, §7.5.1] ST_LineString and ST_GeodesicString.
+    original(Kind::LineString, "ST_POINTS", 0, routine!(Observed(PointListMethod::Points))),
+    original(Kind::LineString, "ST_NUMPOINTS", 0, routine!(Observed(PointListMethod::NumPoints))),
+    original(Kind::LineString, "ST_POINTN", 1, routine!(Observed(PointListMethod::PointN))),
+    original(Kind::GeodesicString, "ST_POINTS", 0, routine!(Observed(PointListMethod::Points))),
+    original(Kind::GeodesicString, "ST_NUMPOINTS", 0, routine!(Observed(PointListMethod::NumPoints))),
+    original(Kind::GeodesicString, "ST_POINTN", 1, routine!(Observed(PointListMethod::PointN))),
+    // [§7.3.1] ST_CircularString.
+    original(Kind::CircularString, "ST_POINTS", 0, routine!(Observed(PointListMethod::Points))),
+    original(Kind::CircularString, "ST_NUMPOINTS", 0, routine!(Observed(PointListMethod::NumPoints))),
+    original(Kind::CircularString, "ST_POINTN", 1, routine!(Observed(PointListMethod::PointN))),
+    original(Kind::CircularString, "ST_NUMSEGMENTS", 0, routine!(Observed(PointListMethod::NumSegments))),
+    original(Kind::CircularString, "ST_SEGMENTN", 1, routine!(Observed(PointListMethod::SegmentN))),
+    original(Kind::CircularString, "ST_MIDPOINTREP", 0, routine!(Observed(PointListMethod::MidPointRep))),
+    original(Kind::CircularString, "ST_BULGE", 0, routine!(Observed(PointListMethod::Bulge))),
+    original(Kind::CircularString, "ST_CENTER", 0, routine!(Observed(PointListMethod::Center))),
+    original(Kind::CircularString, "ST_RADIUS", 0, routine!(Observed(PointListMethod::Radius))),
+    // [§7.4.1] ST_Circle.
+    original(Kind::Circle, "ST_POINTS", 0, routine!(Observed(PointListMethod::Points))),
+    original(Kind::Circle, "ST_POINTN", 1, routine!(Observed(PointListMethod::PointN))),
+    original(Kind::Circle, "ST_CENTER", 0, routine!(Observed(PointListMethod::Center))),
+    original(Kind::Circle, "ST_RADIUS", 0, routine!(Observed(PointListMethod::Radius))),
+    // [§7.6.1 to §7.9.1] The parametric curves.
+    original(Kind::EllipticalCurve, "ST_STARTM", 0, routine!(Observed(ParameterMethod::StartM))),
+    original(Kind::EllipticalCurve, "ST_ENDM", 0, routine!(Observed(ParameterMethod::EndM))),
+    original(Kind::NurbsCurve, "ST_STARTM", 0, routine!(Observed(ParameterMethod::StartM))),
+    original(Kind::NurbsCurve, "ST_ENDM", 0, routine!(Observed(ParameterMethod::EndM))),
+    original(Kind::Clothoid, "ST_STARTM", 0, routine!(Observed(ParameterMethod::StartM))),
+    original(Kind::Clothoid, "ST_ENDM", 0, routine!(Observed(ParameterMethod::EndM))),
+    original(Kind::SpiralCurve, "ST_STARTM", 0, routine!(Observed(ParameterMethod::StartM))),
+    original(Kind::SpiralCurve, "ST_ENDM", 0, routine!(Observed(ParameterMethod::EndM))),
+    original(Kind::NurbsCurve, "ST_DEGREE", 0, routine!(Observed(ParameterMethod::Degree))),
+    original(Kind::Clothoid, "ST_SCALEFACTOR", 0, routine!(Observed(ParameterMethod::ScaleFactor))),
+    original(Kind::Clothoid, "ST_STARTDISTANCE", 0, routine!(Observed(ParameterMethod::StartDistance))),
+    original(Kind::Clothoid, "ST_ENDDISTANCE", 0, routine!(Observed(ParameterMethod::EndDistance))),
+    original(Kind::SpiralCurve, "ST_STARTCURVATURE", 0, routine!(Observed(ParameterMethod::StartCurvature))),
+    original(Kind::SpiralCurve, "ST_ENDCURVATURE", 0, routine!(Observed(ParameterMethod::EndCurvature))),
+    original(Kind::SpiralCurve, "ST_SPIRALTYPE", 0, routine!(Observed(ParameterMethod::SpiralType))),
+    // [§7.10.1] ST_CompoundCurve.
+    original(Kind::CompoundCurve, "ST_CURVES", 0, routine!(Observed(CompoundMethod::Curves))),
+    original(Kind::CompoundCurve, "ST_NUMCURVES", 0, routine!(Observed(CompoundMethod::NumCurves))),
+    original(Kind::CompoundCurve, "ST_CURVEN", 1, routine!(Observed(CompoundMethod::CurveN))),
+    // [§8.2.1, §8.3.1, §8.4.1] ST_CurvePolygon, ST_Polygon and ST_Triangle.
+    original(Kind::CurvePolygon, "ST_EXTERIORRING", 0, routine!(Observed(RingMethod::ExteriorRing))),
+    original(Kind::CurvePolygon, "ST_INTERIORRINGS", 0, routine!(Observed(RingMethod::InteriorRings))),
+    original(Kind::CurvePolygon, "ST_NUMINTERIORRING", 0, routine!(Observed(RingMethod::NumInteriorRing))),
+    original(Kind::CurvePolygon, "ST_INTERIORRINGN", 1, routine!(Observed(RingMethod::InteriorRingN))),
+    original(Kind::CurvePolygon, "ST_CURVEPOLYTOPOLY", 0, routine!(Observed(RingMethod::CurvePolyToPoly))),
+    overriding(Kind::Polygon, "ST_EXTERIORRING", 0, routine!(Observed(RingMethod::ExteriorRing))),
+    overriding(Kind::Polygon, "ST_INTERIORRINGS", 0, routine!(Observed(RingMethod::InteriorRings))),
+    overriding(Kind::Polygon, "ST_INTERIORRINGN", 1, routine!(Observed(RingMethod::InteriorRingN))),
+    overriding(Kind::Triangle, "ST_EXTERIORRING", 0, routine!(Observed(RingMethod::ExteriorRing))),
+    overriding(Kind::Triangle, "ST_INTERIORRINGS", 0, routine!(Observed(RingMethod::InteriorRings))),
+    overriding(Kind::Triangle, "ST_INTERIORRINGN", 1, routine!(Observed(RingMethod::InteriorRingN))),
+    original(Kind::Triangle, "ST_POINTS", 0, routine!(Observed(PointListMethod::Points))),
+    // [§8.5.1, §8.6.1, §8.7.1] ST_PolyhdrlSurface, ST_TIN and ST_CompoundSurface.
+    original(Kind::PolyhdrlSurface, "ST_PATCHES", 0, routine!(Observed(PatchMethod::Patches))),
+    original(Kind::PolyhdrlSurface, "ST_NUMPATCHES", 0, routine!(Observed(PatchMethod::NumPatches))),
+    original(Kind::PolyhdrlSurface, "ST_PATCHN", 1, routine!(Observed(PatchMethod::PatchN))),
+    overriding(Kind::Tin, "ST_PATCHES", 0, routine!(Observed(PatchMethod::Patches))),
+    original(Kind::Tin, "ST_TINELEMENTS", 0, routine!(TinRoutine::Elements)),
+    original(Kind::CompoundSurface, "ST_SURFACES", 0, routine!(Observed(PatchMethod::Surfaces))),
+    original(Kind::CompoundSurface, "ST_NUMSURFACES", 0, routine!(Observed(PatchMethod::NumSurfaces))),
+    original(Kind::CompoundSurface, "ST_SURFACEN", 1, routine!(Observed(PatchMethod::SurfaceN))),
     // [§5.1] ST_Geometry, in space.
     original(Kind::Geometry, "ST_3DINTERSECTION", 1, routine!(SolidFunction::Intersection)),
     original(Kind::Geometry, "ST_3DUNION", 1, routine!(SolidFunction::Union)),

@@ -53,7 +53,8 @@ impl TypeRegistry {
             .into_iter()
             .chain(crate::vector::types())
             .chain(crate::geometry::kinds().iter().copied())
-            .chain(crate::spatial::lr::sql::kinds().iter().copied());
+            .chain(crate::spatial::lr::sql::kinds().iter().copied())
+            .chain(std::iter::once(crate::geometry::tin_element_kind()));
         let mut all: BTreeMap<String, Kind> = kinds.map(|kind: Kind| (kind.name().to_owned(), kind)).collect();
         // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.2] GEOMETRY names
         // ST_GEOMETRY too, as ISO/IEC 19125-2 and D85 wrote it.

@@ -120,7 +120,7 @@ fn values_of_every_dimension_through_wkb() {
         rows(&a, "SELECT ST_ASBINARY(G) FROM T WHERE ID = 1").unwrap(),
         ["01E9030000000000000000F03F00000000000000400000000000000840"]
     );
-    assert_eq!(rows(&a, "SELECT ST_ASTEXT(G) FROM T WHERE ID = 1").unwrap_err(), Code::Unsupported);
+    assert_eq!(rows(&a, "SELECT ST_ASTEXT(G) FROM T ORDER BY ID").unwrap(), ["POINT Z (1 2 3)", "CIRCULARSTRING (0 0, 1 1, 2 0)"]);
     assert_eq!(state(&a, "VALUES ST_GEOMFROMWKB(X'01FF000000')"), "2FF23");
 }
 

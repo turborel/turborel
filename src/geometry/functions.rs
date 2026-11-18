@@ -9,6 +9,7 @@ use super::{Geometry, UNSPECIFIED_SRID, data_type, data_type_of, invalid, kind, 
 use crate::error::{Code, Result, SqlError};
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::params::ParameterType;
+use crate::spatial::formats::wkt;
 use crate::value::lob::{Lob, LobKind};
 use crate::value::{DOUBLE_PRECISION, DataType, Decimal, Spelled, Value};
 
@@ -337,7 +338,7 @@ impl ScalarFunction for GeometryFunction {
         if self.constructs() {
             let srid = reference(rest)?;
             return match (self, first) {
-                (Self::FromText, Value::Char(text)) => Geometry::from_wkt(text, srid).map(|g| g.to_value()),
+                (Self::FromText, Value::Char(text)) => wkt::read_geom(text, srid).map(|g| g.to_value()),
                 (Self::FromBinary, Value::Binary(bytes)) => model::read_wkb(bytes.bytes(), srid).map(|g| g.to_value()),
                 (Self::FromText | Self::FromBinary, Value::Lob(lob)) => self.of_lob(lob, srid),
                 _ => Err(signature(self.name())),
@@ -384,7 +385,7 @@ impl GeometryFunction {
         match (self, lob.kind()) {
             (Self::FromText, LobKind::Character) => {
                 let text = whole()?;
-                Geometry::from_wkt(std::str::from_utf8(&text).map_err(|_| invalid("the text is not UTF-8"))?, srid).map(|g| g.to_value())
+                wkt::read_geom(std::str::from_utf8(&text).map_err(|_| invalid("the text is not UTF-8"))?, srid).map(|g| g.to_value())
             }
             (Self::FromBinary, LobKind::Binary) => model::read_wkb(&whole()?, srid).map(|g| g.to_value()),
             (_, LobKind::Character | LobKind::Binary) => Err(signature(self.name())),
@@ -393,8 +394,8 @@ impl GeometryFunction {
 
     /// What an observer reads of the payload of `g` alone, of a value of
     /// any type: its type, SRID and well-known binary representation, or
-    /// it relabelled. ST_AsText of a type D85 does not write is -900
-    /// until the writer of every type's well-known text takes it.
+    /// it relabelled. ST_AsText of a type D85 does not write is the
+    /// formats' writer's (RULES.md D-SPATIAL-CURVES).
     fn of_payload(self, g: &Value, rest: &[Value]) -> Result<Option<Value>> {
         let bytes = kind::payload(g).ok_or_else(|| invalid("expected a geometry value"))?;
         let (srid, wkb) = model::header(bytes)?;
@@ -421,7 +422,11 @@ impl GeometryFunction {
                 if basic {
                     return Ok(None);
                 }
-                return Err(unsupported("well-known text of this type or coordinate dimension yet"));
+                let text = wkt::write_geom(&model::Geom::decode(bytes)?)?;
+                if u64::try_from(text.len()).unwrap_or(u64::MAX) > MAX_REPRESENTATION {
+                    return Err(unsupported("well-known text longer than ST_MaxGeometryAsText"));
+                }
+                Value::Lob(Lob::of_text(&text))
             }
             Self::X
             | Self::Y
@@ -486,6 +491,9 @@ pub(crate) fn functions() -> Vec<Arc<dyn ScalarFunction>> {
     out.push(Arc::new(super::ordering::OrderingEquals));
     let collections = super::COLLECTION_FUNCTIONS.iter().take(3);
     out.extend(collections.map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }));
+    out.extend(super::representations::functions());
+    out.extend(super::observers::functions());
+    out.extend(super::tins::functions());
     out.extend(super::SOLID_FUNCTIONS.iter().map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }));
     out.push(Arc::new(super::TinFromTable));
     out.push(Arc::new(super::BRepSolid));

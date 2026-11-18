@@ -17,15 +17,18 @@ use turborel::spatial::formats::{gml, wkt};
 
 /// Repetitions of each curve operation.
 const ROUNDS: u64 = 2_000;
+/// The last point of the circular string, of 32 arcs.
+const ARC_POINTS: i32 = 64;
 /// Points the TIN is built from, on a side.
 const SIDE: u32 = 30;
 
 pub fn run(bench: &Bench) {
-    let arcs: Vec<Coord> = (0_i32..=64_i32).map(|n| Coord::xy(f64::from(n), if n % 2 == 0 { 0.0 } else { 1.0 })).collect();
+    let arcs: Vec<Coord> = (0_i32..=ARC_POINTS).map(|n| Coord::xy(f64::from(n), if n % 2 == 0 { 0.0 } else { 1.0 })).collect();
     let string = Curve::CircularString(arcs);
     let clothoid = Curve::Clothoid(Some(Clothoid {
         placement: Placement {
-            location: Coord::xy(0.0, 0.0),
+            // At the string's end, so the compound curve below is contiguous.
+            location: Coord::xy(f64::from(ARC_POINTS), 0.0),
             directions: vec![Vector { x: 1.0, y: 0.0, z: 0.0 }, Vector { x: 0.0, y: 1.0, z: 0.0 }],
         },
         scale: 10.0,

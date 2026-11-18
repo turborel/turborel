@@ -14,6 +14,7 @@ pub mod fresnel;
 pub mod geodesy;
 pub mod interior;
 pub mod linearize;
+pub mod measure;
 pub mod numeric;
 pub mod nurbs;
 pub mod observe;

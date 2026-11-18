@@ -2156,7 +2156,7 @@ from OGC 06-103r4 §§7–8. Its optional nonnegative SRID parameter, using
 D53's existing type syntax, enforces the reference on assignment, CAST
 and storage, including empty values; the unparameterized type permits
 any signed 32-bit identifier. The type descriptor and value payload each
-have a versioned encoding. Z/M, curves and EWKB flags are refused. Empty
+have a versioned encoding. EWKB flags are refused. Empty
 points use the GEOS NaN-pair WKB convention. Readers check structure,
 finite coordinates and representation limits, not polygon topology.
 Stored WKB also requires little-endian components, positive zero and
@@ -2174,6 +2174,27 @@ names, including ST_GeomCollection. ST_SETSRID changes only the identifier.
 ST_MAKEENVELOPE constructs a rectangular polygon from four numeric bounds
 and an optional SRID. It refuses non-finite, reversed and zero-area bounds
 (`Geometry::rectangle`); it does not implement SQL/MM's ST_Envelope method.
+SQL/MM Spatial's representations and the routines of its curves and
+surfaces (ISO/IEC 13249-3:2016, DIS SC32 N2593, §5.1.13 to §5.1.15,
+§5.1.56 to §5.1.64, §6 to §10, §17.1; `src/geometry/representations.rs`,
+`src/geometry/observers.rs`, `src/geometry/tins.rs`, RULES.md
+D-SPATIAL-CURVES) read and write the well-known text, WKB and GML of
+all 23 instantiable types, in Z and M too. ST_AsText of the seven basic
+XY kinds keeps D85's writer. GML's srsName is the organization and its
+identifier, read back through the Spatial Information Schema's systems
+as the statement is bound; GML carries no M. Curves are paths of
+pieces. Arcs and segments are measured exactly, splines, clothoids and
+spirals by adaptive Gauss-Legendre quadrature, and linearized to a
+relative deviation of 1e-3 of the curve's extent. Surface measures are
+planar. ST_LocateBetween interpolates M linearly along a curve's
+linear form, and of a surface, which the standard leaves to the
+implementation, locates along its rings. ST_TIN of elements is their
+constrained Delaunay triangulation, stop lines removing the triangles
+they cross. ST_PerpPoints joins arcs meeting end to start into one
+curve. The routines whose results are of the types ST_Vector,
+ST_AffinePlacement, ST_NURBSPoint, ST_Knot and ST_Angle, the unit
+forms, ST_TINElements as a mutator and ST_IsEmpty of an element are not
+implemented.
 ST_MINX, ST_MAXX, ST_MINY and ST_MAXY return DOUBLE PRECISION extrema of
 any supported kind, or NULL for an empty point set. They are free-function
 extensions, not structured-type methods.
@@ -2258,8 +2279,8 @@ candidates are supplemented with qualifying NULL distances when needed.
 Uncertified requests and an unaffordable threshold heap scan before output.
 WITH TIES, PERCENT and other orders retain ordinary plans. Serializable
 reads, cancellation, prepared values and runtime errors are preserved.
-Geometry metadata tables, other spatial relationships and measures,
-and SQL/MM structured types are not implemented.
+Geometry metadata tables, other spatial relationships and SQL/MM
+structured types are not implemented.
 No Simple Features or SQL/MM Spatial conformance is claimed.
 
 ### Indexes
