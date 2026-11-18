@@ -13,6 +13,8 @@
 )]
 
 mod harness;
+#[path = "geometry/srs.rs"]
+mod srs;
 
 use std::hint::black_box;
 
@@ -44,6 +46,7 @@ const CODEC_ROUNDS: u32 = 4;
 
 fn main() {
     let bench = Bench::new("geometry");
+    srs::run(&bench);
     let points: Vec<_> = (0..ROWS).map(|n| Geometry::point(f64::from(n % SIDE), f64::from(n / SIDE), 0).unwrap()).collect();
     let square =
         Geometry::from_wkt(&format!("POLYGON (({LOWER} {LOWER}, {UPPER} {LOWER}, {UPPER} {UPPER}, {LOWER} {UPPER}, {LOWER} {LOWER}))"), 0)
