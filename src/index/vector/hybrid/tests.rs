@@ -219,3 +219,26 @@ fn an_approximate_search_reads_the_vector_part() {
     assert!(found(TEXT, None).is_none());
     assert!(Arc::clone(&index).nearest(&query(VECTOR, &ONES, 1), &budget).unwrap().is_none());
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 13249-2:2002 (CD, SC32 N0640) §5.1.2],
+/// RULES.md D34, D85: TEXT_MATCHES of the text column is served by the
+/// text part, its rows found of the projected key; of the vector column
+/// it is not, and such a search is refused.
+#[test]
+fn a_predicate_of_the_text_column_reads_the_text_part() {
+    let method = in_memory();
+    let predicate =
+        |column: usize| Predicate { function: ScalarRef(Arc::new(crate::fulltext::matches::TextMatches)), column, argument: Some(0) };
+    assert!(method.supports_predicate(&predicate(0), &columns()));
+    assert!(!method.supports_predicate(&predicate(1), &columns()));
+    assert!(!method.supports_predicate(&predicate(0), &columns()[..1]));
+    let index: Arc<dyn Index> = Arc::from(method.create(&columns()).unwrap());
+    index.insert(key(Some("quick brown fox"), Some(&EAST)), 1).unwrap();
+    index.insert(key(Some("lazy dog"), None), 2).unwrap();
+    index.insert(key(None, Some(&NORTH)), 3).unwrap();
+    let probe = |column: usize| Probe::Predicate { predicate: Box::new(predicate(column)), value: Value::Char("fox".to_owned()) };
+    let found: Vec<(Key, RowId)> = Arc::clone(&index).search(&probe(0), KeyOrder::Ascending).map(Result::unwrap).collect();
+    assert_eq!(found, [(Key(vec![Value::Binary(crate::value::Binary::new(Vec::new()))]), 1)]);
+    assert!(index.estimate(&probe(0)).is_some());
+    assert!(Arc::clone(&index).search(&probe(1), KeyOrder::Ascending).any(|e| e.is_err()));
+}

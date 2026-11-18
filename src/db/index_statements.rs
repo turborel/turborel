@@ -23,6 +23,8 @@ use crate::settings::FUNCTION_CALLS;
 use crate::storage::chosen;
 use crate::value::Value;
 
+mod hybrid_embedded;
+
 /// \[EXTENSION\] The most rounds of maintenance MERGE DELTA runs.
 const MOST_MERGE_ROUNDS: usize = 1 << 16;
 
@@ -92,15 +94,14 @@ impl Session {
                 // A hybrid index holds keys with a null, each part the value of
                 // its own column (`index/vector/hybrid/index.rs`).
                 let nulls = method == crate::index::vector::hybrid::HYBRID_METHOD;
-                let spec = IndexSpec { name: name.clone(), table: qn, columns, method, options, nulls, expressions };
-                self.db.noted(self.db.make_index(&spec))?;
+                self.index_made(st, &IndexSpec { name: name.clone(), table: qn, columns, method, options, nulls, expressions })?;
             }
             IndexStatement::Drop { name: (name, at) } => {
                 let ix = self.index_owned(st, name).or_at(*at)?;
                 if ix.unique {
                     return Err(refused(&format!("index {name} is a UNIQUE constraint's: drop the constraint"))).or_at(*at);
                 }
-                self.db.drop_index(name)?;
+                self.index_dropped(&ix)?;
             }
             IndexStatement::Alter { name: (name, at), options } => {
                 let ix = self.index_owned(st, name).or_at(*at)?;

@@ -6,12 +6,16 @@
 //! FIRST CANDIDATES of them, fused and the first TOP_N kept.
 //!
 //! Each list is read through its part of the index, as an ordinary query
-//! reads it, so EXPLAIN shows both reads. A row of each list has its rank
-//! in it, 1 for the nearest or the highest ranked, and its score: of the
-//! vector list 1 minus its distance, of the text list its rank score
-//! (RULES.md D87), above 0. The lists are joined by the table's primary
-//! key, which is DOC_ID, a row found by one list alone given no rank or
-//! score of the other. Its SCORE is, by FUSION:
+//! reads it, so EXPLAIN shows both reads. Of an index that embeds its
+//! text (`db/index_statements/hybrid_embedded.rs`), a row of the table is
+//! a chunk, and each list keeps a document once, at its best chunk, of
+//! its candidates.
+//!
+//! A row of each list has its rank in it, 1 for the nearest or the
+//! highest ranked, and its score. Of the vector list that is 1 minus its
+//! distance, of the text list its rank score (RULES.md D87), above 0. The
+//! lists are joined by DOC_ID, a row found by one list alone given no
+//! rank or score of the other. Its SCORE is, by FUSION:
 //!
 //! - RRF, the sum over the lists holding it of the list's weight over
 //!   RRF_K and its rank in the list [§11.3];
@@ -36,6 +40,8 @@ use crate::parser::Parser;
 const CANDIDATES_PER_ROW: u32 = 4;
 /// The correlation name of the table in each list's query.
 const DOCUMENTS: &str = "HYBRID_SEARCH_DOCUMENTS";
+/// The correlation name of a list's best chunk of each document.
+const BEST: &str = "HYBRID_SEARCH_BEST";
 /// The correlation names of the lists.
 const VECTOR_SIDE: &str = "HYBRID_SEARCH_VECTOR_SIDE";
 const TEXT_SIDE: &str = "HYBRID_SEARCH_TEXT_SIDE";
@@ -87,23 +93,34 @@ impl Read {
         let ix = db.catalog.index(&search.index).filter(|ix| ix.method == HYBRID_METHOD);
         let ix = ix.ok_or_else(|| refused(format!("HYBRID_SEARCH's INDEX {} is no hybrid index", search.index)))?;
         let desc = db.catalog.table(&ix.table).ok_or_else(|| refused(format!("there is no table {}", ix.table)))?;
-        let key = match desc.primary_key() {
-            Some([key]) => *key,
-            Some(_) | None => {
-                return Err(refused(format!("HYBRID_SEARCH's DOC_ID is a primary key of one column, which {} has not", ix.table)));
-            }
-        };
         let column = |at: usize| column_name(desc, ix, at);
         Ok(Read {
             table: format!("{}.{}", quoted(&ix.table.auth), quoted(&ix.table.ident)),
             table_ident: quoted(&ix.table.ident),
-            key: desc.columns.get(key).map(|c| quoted(&c.name)).ok_or_else(|| refused("its key is no column"))?,
+            key: document_key(db, desc, ix)?,
             text: column(0)?,
             vector: column(1)?,
             index: quoted(&ix.name),
             metric: db.methods.get(HYBRID_METHOD).and_then(|m| m.metric(ix)),
         })
     }
+}
+
+/// The column of DOC_ID, quoted. Of a table of chunks a pipeline keeps, of
+/// a source of a key of one column, it is the chunks' column of that key
+/// (`db/index_statements/hybrid_embedded.rs`); else the table's primary
+/// key of one column.
+fn document_key(db: &State, desc: &TableDesc, ix: &IndexDesc) -> Result<String> {
+    let kept = db.catalog.embeddings().pipelines.iter().find(|p| p.target == ix.table && p.keys.len() == 1);
+    if let Some(column) = kept.and_then(|p| p.columns.first()) {
+        return Ok(quoted(column));
+    }
+    let key = match desc.primary_key() {
+        Some([key]) => desc.columns.get(*key),
+        Some(_) | None => None,
+    };
+    key.map(|c| quoted(&c.name))
+        .ok_or_else(|| refused(format!("HYBRID_SEARCH's DOC_ID is a primary key of one column, which {} has not", ix.table)))
 }
 
 /// The name of the column of `ix`'s key at `at`, quoted.
@@ -145,9 +162,10 @@ fn vector_side(read: &Read, search: &HybridSearch, candidates: u32) -> String {
     let metric = read.metric.as_deref().map(|m| format!(", {}", string(m))).unwrap_or_default();
     format!(
         "SELECT K, D, C, ROW_NUMBER() OVER (ORDER BY D, K) AS R, MIN(D) OVER () AS LO, MAX(D) OVER () AS HI \
+         FROM ( SELECT K, D, C, ROW_NUMBER() OVER (PARTITION BY K ORDER BY D, C) AS B \
          FROM ( SELECT {DOCUMENTS}.{key} AS K, VECTOR_DISTANCE({DOCUMENTS}.{vector}, ({query}){metric}) AS D, \
          {DOCUMENTS}.{text} AS C FROM {table} AS {DOCUMENTS} ORDER BY D FETCH APPROX FIRST {candidates} ROWS ONLY \
-         HINT (VECTOR_INDEX({table_ident} {index})) ) AS HYBRID_SEARCH_NEAREST WHERE D IS NOT NULL",
+         HINT (VECTOR_INDEX({table_ident} {index})) ) AS HYBRID_SEARCH_NEAREST WHERE D IS NOT NULL ) AS {BEST} WHERE B = 1",
         key = read.key,
         vector = read.vector,
         query = search.vector.text,
@@ -164,8 +182,10 @@ fn vector_side(read: &Read, search: &HybridSearch, candidates: u32) -> String {
 fn text_side(read: &Read, search: &HybridSearch, candidates: u32) -> String {
     format!(
         "SELECT K, S, C, ROW_NUMBER() OVER (ORDER BY S DESC, K) AS R, MIN(S) OVER () AS LO, MAX(S) OVER () AS HI \
+         FROM ( SELECT K, S, C, ROW_NUMBER() OVER (PARTITION BY K ORDER BY S DESC, C) AS B \
          FROM ( SELECT {DOCUMENTS}.{key} AS K, RANK({DOCUMENTS}.{text}, {pattern}) AS S, {DOCUMENTS}.{text} AS C \
-         FROM {table} AS {DOCUMENTS} ORDER BY S DESC NULLS LAST FETCH FIRST {candidates} ROWS ONLY ) AS HYBRID_SEARCH_RANKED WHERE S > 0",
+         FROM {table} AS {DOCUMENTS} ORDER BY S DESC NULLS LAST FETCH FIRST {candidates} ROWS ONLY ) AS HYBRID_SEARCH_RANKED \
+         WHERE S > 0 ) AS {BEST} WHERE B = 1",
         key = read.key,
         text = read.text,
         pattern = pattern(search),

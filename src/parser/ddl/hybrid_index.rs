@@ -5,15 +5,16 @@
 //! ```text
 //! <create hybrid index statement> ::=
 //!     CREATE HYBRID VECTOR INDEX <index name> ON <table name>
-//!         ( <text column name> , <vector column name> )
+//!         ( <text column name> [ , <vector column name> ] )
 //!     [ PARAMETERS ( <hybrid parameter> [ { , <hybrid parameter> }... ] )
 //!     | WITH <table options> ]
 //!
 //! <hybrid parameter> ::=
 //!       VECTOR_IDX <character string literal>
 //!     | TEXT_IDX <character string literal>
-//!     | MODEL <identifier> [ { . <identifier> }... ]
-//!     | CHUNKER <identifier>...
+//!     | MODEL <model name>
+//!     | CHUNKER <chunk specification>
+//!     | MODE { SYNC | ASYNC }
 //! ```
 //!
 //! VECTOR_IDX's string is a list of `<vector index parameter>`s by commas,
@@ -22,17 +23,22 @@
 //! METRIC; WITH TARGET ACCURACY, TARGET ACCURACY and QUANTIZATION their
 //! options; each other its own, of the method's group. TEXT_IDX's is a
 //! list of words and values, each an option of the group FULLTEXT, as
-//! `LANGUAGE english` sets FULLTEXT.LANGUAGE. The index of §11.1 embeds
-//! its text by a MODEL and a CHUNKER; this one indexes a vector column the
-//! table holds, so either is refused, SQLCODE -900.
+//! `LANGUAGE english` sets FULLTEXT.LANGUAGE.
+//!
+//! MODEL names the embedding model of an index that embeds its one text
+//! column itself, HYBRID.MODEL (`db/index_statements/hybrid_embedded.rs`).
+//! CHUNKER is how it cuts the text into chunks, as CHUNK_TEXT reads a
+//! chunking such as `BY WORDS MAX 256 OVERLAP 32`, HYBRID.CHUNKER. MODE is
+//! when it embeds them, HYBRID.MODE.
 
 use super::vector_index::{INVERTED, method_of_type, option_of};
-use crate::ast::{IndexStatement, OptionValue, SqlStatement, TableOptionValue, TableStorage};
+use crate::ast::{IndexStatement, Literal, OptionValue, SqlStatement, TableOptionValue, TableStorage};
 use crate::error::{Code, Result, SqlError};
-use crate::index::vector::hybrid::{HYBRID_METHOD, VECTOR_METHOD_OPTION};
+use crate::index::vector::hybrid::{CHUNKER_OPTION, HYBRID_METHOD, MODE_OPTION, MODEL_OPTION, VECTOR_METHOD_OPTION};
 use crate::index::{FULLTEXT_METHOD, HNSW_METHOD};
 use crate::lexer::{Tok, delim, kw};
 use crate::parser::Parser;
+use crate::vector::chunk::Spec;
 
 /// The words of the statement and its parameters.
 mod words {
@@ -44,6 +50,9 @@ mod words {
     pub const TEXT_IDX: &str = "TEXT_IDX";
     pub const MODEL: &str = "MODEL";
     pub const CHUNKER: &str = "CHUNKER";
+    pub const MODE: &str = "MODE";
+    pub const SYNC: &str = "SYNC";
+    pub const ASYNC: &str = "ASYNC";
     pub const TYPE: &str = "TYPE";
     pub const DISTANCE: &str = "DISTANCE";
     pub const METRIC: &str = "METRIC";
@@ -109,9 +118,11 @@ impl Parser {
         self.expect_delim(delim::LEFT_PAREN)?;
         let text_at = self.here();
         let text = (self.identifier()?, text_at);
-        self.expect_delim(delim::COMMA)?;
-        let vector_at = self.here();
-        let columns = vec![text, (self.identifier()?, vector_at)];
+        let mut columns = vec![text];
+        if self.accept_delim(delim::COMMA) {
+            let vector_at = self.here();
+            columns.push((self.identifier()?, vector_at));
+        }
         self.expect_delim(delim::RIGHT_PAREN)?;
         let options = if self.accept_kw(kw::WITH) {
             self.table_options()?
@@ -136,14 +147,18 @@ impl Parser {
             } else if self.accept_word(words::TEXT_IDX) {
                 let text = self.character_string_literal(words::TEXT_IDX)?;
                 options.extend(text_parameters(&text, at)?);
-            } else if self.is_word(words::MODEL) || self.is_word(words::CHUNKER) {
-                return Err(SqlError::at(
-                    Code::Unsupported,
-                    at,
-                    "[EXTENSION] a hybrid index indexes a vector column its table holds: it takes no MODEL or CHUNKER",
-                ));
+            } else if self.accept_word(words::MODEL) {
+                let start = self.here();
+                self.table_name()?;
+                options.push(text_option(MODEL_OPTION, self.text_from(start), at));
+            } else if self.accept_word(words::CHUNKER) {
+                options.push(text_option(CHUNKER_OPTION, self.chunker()?, at));
+            } else if self.accept_word(words::MODE) {
+                let mode =
+                    if self.accept_word(words::ASYNC) { words::ASYNC } else { self.expect_word(words::SYNC).map(|()| words::SYNC)? };
+                options.push(TableOptionValue { name: MODE_OPTION.to_owned(), at, value: Some(OptionValue::Word(mode.to_owned())) });
             } else {
-                return Err(self.syntax("expected VECTOR_IDX, TEXT_IDX, MODEL or CHUNKER"));
+                return Err(self.syntax("expected VECTOR_IDX, TEXT_IDX, MODEL, CHUNKER or MODE"));
             }
             if !self.accept_delim(delim::COMMA) {
                 break;
@@ -151,6 +166,17 @@ impl Parser {
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(options)
+    }
+
+    /// The `<chunk specification>` after CHUNKER, up to the next parameter
+    /// or the end of the list, as CHUNK_TEXT writes it (`vector/chunk.rs`).
+    fn chunker(&mut self) -> Result<String> {
+        let start = self.here();
+        while !matches!(self.peek(), Tok::End | Tok::Delimiter(delim::COMMA | delim::RIGHT_PAREN)) {
+            self.advance();
+        }
+        let at = start;
+        Spec::parse(&self.text_from(start)).map(|spec| spec.written()).map_err(|e| SqlError { pos: Some(at), ..e })
     }
 
     /// The parameters of a VECTOR_IDX or TEXT_IDX string, read whole: each
@@ -166,6 +192,11 @@ impl Parser {
         }
         if matches!(self.peek(), Tok::End) { Ok(given) } else { Err(self.syntax("expected \",\"")) }
     }
+}
+
+/// The option `name` of the text `text`, given at `at`.
+fn text_option(name: &str, text: String, at: usize) -> TableOptionValue {
+    TableOptionValue { name: name.to_owned(), at, value: Some(OptionValue::Literal(Literal::Character(text))) }
 }
 
 /// The parameters of the string `text`, read as `parameter_list` reads

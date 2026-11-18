@@ -213,7 +213,8 @@ impl Index for HybridIndex {
     fn estimate(&self, probe: &Probe) -> Option<usize> {
         match probe {
             Probe::All => self.text.estimate(probe).max(self.vector.estimate(probe)),
-            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Predicate { .. } => None,
+            Probe::Predicate { .. } => self.text.estimate(probe),
+            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } => None,
         }
     }
     fn distinct_keys(&self) -> Option<f64> {
@@ -227,14 +228,20 @@ impl Index for HybridIndex {
         Ok(self.vector.maintain()? || text)
     }
     /// Every row once, of the projected key: the rows of the text part,
-    /// then those of the vector part not among them.
-    fn search(self: Arc<Self>, probe: &Probe, _order: KeyOrder) -> Entries {
-        let refused = || SqlError::new(Code::Unsupported, "[EXTENSION] the hybrid index method answers every entry and nearest searches");
+    /// then those of the vector part not among them. A predicate of the
+    /// text column, CONTAINS or TEXT_MATCHES, the text part's candidates
+    /// (`HybridMethod::supports_predicate`), each of the projected key.
+    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries {
+        let refused = || SqlError::new(Code::Unsupported, "[EXTENSION] the hybrid index method answers no such search");
         let rows = match probe {
             Probe::All => self.every_row(),
-            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Predicate { .. } => {
-                Err(refused())
+            Probe::Predicate { predicate, .. } => {
+                if predicate.column != TEXT {
+                    return Box::new(std::iter::once(Err(refused())));
+                }
+                return Box::new(Arc::clone(&self.text).search(probe, order).map(|entry| entry.map(|(_, row)| (projected(), row))));
             }
+            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } => Err(refused()),
         };
         match rows {
             Ok(rows) => Box::new(rows.into_iter().map(|row| Ok((projected(), row)))),

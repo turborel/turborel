@@ -69,17 +69,18 @@ fn parameters_desugar_to_the_options_of_each_part_11_1() {
 }
 
 /// Verifies: [EXTENSION] vector_standard §11.1: a hybrid index is of two
-/// columns, a text and a vector; it takes no MODEL or CHUNKER, as it
-/// embeds nothing (SQLCODE -900); a VECTOR_IDX TYPE of no vector method
-/// is refused, as is a temporary table's.
+/// columns, a text and a vector, or of a text alone and a MODEL; a MODEL
+/// of two columns, a CHUNKER or MODE of no MODEL, and a VECTOR_IDX TYPE
+/// of no vector method are refused, as is a temporary table's index.
 #[test]
 fn what_a_hybrid_index_refuses_11_1() {
     let (db, s) = documents(None);
     let code = |sql: &str| crate::common::exec(&s, sql).expect_err(sql);
-    assert_eq!(code("CREATE HYBRID VECTOR INDEX H ON DOCS (BODY, EMB) PARAMETERS (MODEL app.minilm)"), Code::Unsupported);
-    assert_eq!(code("CREATE HYBRID VECTOR INDEX H ON DOCS (BODY, EMB) PARAMETERS (CHUNKER BY WORDS)"), Code::Unsupported);
+    assert_eq!(code("CREATE HYBRID VECTOR INDEX H ON DOCS (BODY, EMB) PARAMETERS (MODEL app.minilm)"), Code::SyntaxRule);
+    assert_eq!(code("CREATE HYBRID VECTOR INDEX H ON DOCS (BODY, EMB) PARAMETERS (CHUNKER BY WORDS MAX 9)"), Code::SyntaxRule);
+    assert_eq!(code("CREATE HYBRID VECTOR INDEX H ON DOCS (BODY, EMB) PARAMETERS (MODE ASYNC)"), Code::SyntaxRule);
     assert_eq!(code("CREATE HYBRID VECTOR INDEX H ON DOCS (BODY, EMB) PARAMETERS (VECTOR_IDX 'TYPE BTREE')"), Code::SyntaxRule);
-    assert_eq!(code("CREATE HYBRID VECTOR INDEX H ON DOCS (BODY)"), Code::Syntax);
+    assert_eq!(code("CREATE HYBRID VECTOR INDEX H ON DOCS (BODY)"), Code::Unsupported);
     assert_eq!(code("CREATE INDEX H ON DOCS (BODY) USING hybrid"), Code::Unsupported);
     assert_eq!(code("CREATE INDEX H ON DOCS (EMB, BODY) USING hybrid"), Code::Unsupported);
     let temporary = "CREATE SCHEMA AUTHORIZATION P CREATE GLOBAL TEMPORARY TABLE TD (ID INTEGER, BODY VARCHAR(40), EMB VECTOR(4)) \
@@ -115,7 +116,7 @@ fn the_hybrid_index_follows_the_rows() {
 /// Verifies: [DESIGN] RULES.md D25: a database of files keeps a hybrid
 /// index: reopened, it is read by its locator, both its parts answering
 /// as before, and it still holds a row of no embedding by its words, its
-/// text part still read for RANK.
+/// text part still read for RANK and for CONTAINS.
 #[test]
 fn a_hybrid_index_on_files_reopens() {
     let scratch = Scratch::new("vector-hybrid-reopen");
@@ -154,4 +155,9 @@ fn a_hybrid_index_on_files_reopens() {
     let shown = plan(&s, ranked);
     assert!(shown.contains("NearestScan S.DOCS using DOCS_H [hybrid]: RANK("), "{shown}");
     assert_eq!(read(&s, ranked), ["6"]);
+    // A row of no embedding is held, so the text part finds every row CONTAINS keeps.
+    let contains = "SELECT ID FROM DOCS WHERE CONTAINS(BODY, '\"zebra\"') = 1";
+    let shown = plan(&s, contains);
+    assert!(shown.contains("using DOCS_H [hybrid]"), "{shown}");
+    assert_eq!(read(&s, contains), ["6"]);
 }

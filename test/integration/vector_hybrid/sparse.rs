@@ -105,3 +105,20 @@ fn the_inverted_index_follows_the_rows_and_refuses_as_the_call_does() {
     s.commit().unwrap();
     assert_eq!(read(&s, &nearest("DOT", "APPROX", "")), ["5000", "1869", "1771"]);
 }
+
+/// Verifies: [EXTENSION] vector_standard §9.4, R9.1, §10.3: a DOT
+/// distance bounded in WHERE, by `<=` or `<`, is a range search of the
+/// inverted index, its rows the exact search's: those whose dot product
+/// with the query is at least, or above, the bound negated.
+#[test]
+fn a_radius_in_where_reads_the_inverted_index_9_4() {
+    let s = terms("CREATE VECTOR INDEX TERMS_SV ON TERMS (SV) ORGANIZATION INVERTED");
+    for (op, bound) in [("<=", "-1.9"), ("<", "-1.9")] {
+        let filter = format!("WHERE VECTOR_DISTANCE(SV, {}, 'DOT') {op} {bound}", sparse(&[(7, 1.0)]));
+        let approx = nearest("DOT", "APPROX", &filter);
+        let shown = plan(&s, &approx);
+        assert!(shown.contains("NearestScan S.TERMS using TERMS_SV [inverted]"), "{shown}");
+        assert_eq!(read(&s, &approx), read(&s, &nearest("DOT", "EXACT", &filter)), "{op}");
+        assert_eq!(read(&s, &approx), ["1967", "1869", "1771"], "{op}");
+    }
+}

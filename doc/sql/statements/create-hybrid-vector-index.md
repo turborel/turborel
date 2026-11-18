@@ -5,20 +5,23 @@
 ## NAME
 
 CREATE HYBRID VECTOR INDEX: make an index of a text column and a vector
-column together, for HYBRID_SEARCH *(extension)*
+column together, or of a text it embeds, for HYBRID_SEARCH *(extension)*
 
 ## SYNOPSIS
 
 ```
 <create hybrid index statement> ::=
     CREATE HYBRID VECTOR INDEX <index name> ON <table name>
-        ( <text column name> , <vector column name> )
+        ( <text column name> [ , <vector column name> ] )
     [ PARAMETERS ( <hybrid parameter> [ { , <hybrid parameter> }... ] )
     | WITH ( <table option> [ { , <table option> }... ] ) ]
 
 <hybrid parameter> ::=
       VECTOR_IDX <character string literal>
     | TEXT_IDX <character string literal>
+    | MODEL <model name>
+    | CHUNKER <chunk specification>
+    | MODE { SYNC | ASYNC }
 ```
 
 ## DESCRIPTION
@@ -42,6 +45,15 @@ writes it.
 A row whose text is null is held by the vector part alone, and one
 whose embedding is null by the text part alone.
 
+Of a MODEL, the index names its text column alone and embeds the text
+itself (HYBRID.MODEL). CHUNKER cuts the text into chunks as CHUNK_TEXT
+reads a chunking (HYBRID.CHUNKER), and MODE says whether a chunk is
+embedded as it is written or after commit (HYBRID.MODE). The chunks are
+kept in a table named after the index with `_CHUNKS`, by a vector
+pipeline named after it with `_PIPELINE`, and the index is of that
+table's CHUNK_TEXT and EMBEDDING. Both are made and filled, and
+committed, before the index is made, and dropped with it.
+
 ## RULES
 
 1. The session has no transaction open: COMMIT or ROLLBACK first.
@@ -52,7 +64,10 @@ whose embedding is null by the text part alone.
 4. No index has the name.
 5. TYPE names a vector method, and each option is one a part's method
    declares, of a value it accepts.
-6. No MODEL or CHUNKER is given: the index embeds nothing itself.
+6. Of a MODEL, one column is named, the table's primary key is one
+   column, the model is one the user may call, and no table or pipeline
+   has the name the index gives its own. Of none, two columns are named,
+   and no CHUNKER or MODE is given.
 
 ## PRIVILEGES
 
@@ -65,7 +80,8 @@ The table's schema is its user's.
 | 25000 | -917 | The session has a transaction open |
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | Its user does not own the table's schema |
-| 0A000 | -900 | A column is not of a type its part indexes, or a MODEL or a CHUNKER is given |
+| 22000 | -301 | CHUNKER is no chunking CHUNK_TEXT reads |
+| 0A000 | -900 | A column is not of a type its part indexes, or one column is named and no MODEL |
 
 ## EXAMPLES
 
@@ -89,25 +105,26 @@ OK
 (3 rows)
 ```
 
-An index of this design embeds nothing:
+An index of a MODEL embeds one text column:
 
 ```sql
 COMMIT;
-CREATE HYBRID VECTOR INDEX HELP_M ON HELP (BODY, EMB) PARAMETERS (MODEL app.minilm);
+CREATE HYBRID VECTOR INDEX HELP_M ON HELP (BODY, EMB) PARAMETERS (MODEL WORDS);
 ```
 
 ```
 OK
-turborel: SQLCODE -900 (SQLSTATE 0A000): a hybrid index indexes a vector column its table holds: it takes no MODEL or CHUNKER (at character 66)
+turborel: SQLCODE -103 (SQLSTATE 2A000): a hybrid index of a MODEL indexes its text column alone, and embeds it
 ```
 
 ## STANDARD
 
-An extension: neither SQL-86 nor SQL-92 has indexes. MODEL and CHUNKER
-are read and refused (SQLCODE -900).
+An extension: neither SQL-86 nor SQL-92 has indexes. The statement is
+the form of §11.1 of Turborel's vector design document, with MODE added.
 
 ## SEE ALSO
 
 [Hybrid Search](../15-hybrid-search.md),
 [CREATE VECTOR INDEX](create-vector-index.md),
-[CREATE INDEX](create-index.md), [DROP INDEX](drop-index.md)
+[CREATE INDEX](create-index.md), [DROP INDEX](drop-index.md),
+[CREATE VECTOR PIPELINE](create-vector-pipeline.md)
