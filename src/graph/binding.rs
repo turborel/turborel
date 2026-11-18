@@ -33,17 +33,27 @@ pub(super) type NoteId = u32;
 pub(super) struct Notes {
     all: Vec<Note>,
     ids: HashMap<Note, NoteId>,
+    /// The number of the note of nothing bound, the most common, once
+    /// interned: found without hashing.
+    empty: Option<NoteId>,
 }
 
 impl Notes {
     /// The number of `note`, interned.
     pub(super) fn id(&mut self, note: Note) -> NoteId {
+        let bare = note.vars.is_empty() && note.tags.is_empty();
+        if let Some(id) = self.empty.filter(|_| bare) {
+            return id;
+        }
         if let Some(&id) = self.ids.get(&note) {
             return id;
         }
         let id = NoteId::try_from(self.all.len()).unwrap_or(NoteId::MAX);
         self.all.push(note.clone());
         self.ids.insert(note, id);
+        if bare {
+            self.empty = Some(id);
+        }
         id
     }
 

@@ -158,7 +158,7 @@ impl Session {
         if let SqlStatement::Savepoint(s) = stmt {
             return self.db.noted(self.savepoint_direct(call, s));
         }
-        let ended = if let SqlStatement::Commit = stmt { self.commit_in(call.state()) } else { self.rollback_in(call.state()) };
+        let ended = if let SqlStatement::Commit = stmt { self.committing(call.state()) } else { self.rollback_in(call.state()) };
         self.db.noted(ended).map(|()| Completion::Success)
     }
 

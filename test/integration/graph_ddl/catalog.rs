@@ -1,5 +1,5 @@
 //! The `Catalog` contract of property graph descriptors (RULES.md
-//! D-GRAPH-CATALOG), for `MemoryCatalog`.
+//! D106), for `MemoryCatalog`.
 
 use turborel::catalog::{
     Catalog, ElementKind, ElementTableDesc, GraphDesc, GraphMode, Horizon, LabelDesc, MemoryCatalog, QualifiedName, TableDesc,
@@ -50,7 +50,7 @@ fn graph_desc(ident: &str, table: &QualifiedName) -> GraphDesc {
 }
 
 /// Verifies: [DESIGN] `Catalog` contract, for `MemoryCatalog`, of property
-/// graphs (RULES.md D-GRAPH-CATALOG): each recorded is found by name, in
+/// graphs (RULES.md D106): each recorded is found by name, in
 /// place of one of its name; `graphs` lists them in the order of their
 /// names; one removed is found by none, the others as before; a duplicate
 /// is independent; a graph is no table or view.

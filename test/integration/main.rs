@@ -133,6 +133,7 @@ mod get_diagnostics_items;
 mod graph_algo;
 mod graph_ddl;
 mod graph_native;
+mod graph_table;
 mod grouping_sets;
 mod hybrid_layout;
 mod hypothetical;

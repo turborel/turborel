@@ -154,17 +154,7 @@ impl LogicalPlan {
             LogicalPlan::WorkTable { member, .. } => writeln!(out, "{pad}Work table of member {member}"),
             LogicalPlan::Transition { names, .. } => writeln!(out, "{pad}Transition table ({})", names.join(", ")),
             LogicalPlan::Polymorphic(p) => writeln!(out, "{pad}Polymorphic table function {} ({})", p.function(), p.names.join(", ")),
-            LogicalPlan::Unnest(u) => {
-                let n = inner(&u.input);
-                let c: Vec<String> = u.collections.iter().map(|e| render_expr(e, &n)).collect();
-                if let Some(j) = &u.json {
-                    // [ISO/IEC 9075-2:2023 §7.11] a JSON table, of its operands.
-                    writeln!(out, "{pad}{}{} of {}", if u.outer.is_some() { "Left " } else { "" }, j.render(), c.join(", "))
-                } else {
-                    let left = if u.outer.is_some() { "Left unnest" } else { "Unnest" };
-                    writeln!(out, "{pad}{left} {}{}", c.join(", "), if u.ordinality { " with ordinality" } else { "" })
-                }
-            }
+            LogicalPlan::Unnest(u) => writeln!(out, "{}", unnest_line(u, &pad)),
             LogicalPlan::Window(w) => writeln!(out, "{pad}{}", w.render(&inner(&w.input))),
             LogicalPlan::Recognize(r) => writeln!(out, "{pad}{}", r.render(&inner(&r.input))),
         };
@@ -177,5 +167,22 @@ impl LogicalPlan {
             let _ = writeln!(out, "{pad}  Subquery");
             s.plan.write(out, depth.saturating_add(2));
         }
+    }
+}
+
+/// The line of unnest `u` in EXPLAIN, indented by `pad`.
+fn unnest_line(u: &super::Unnest<LogicalPlan>, pad: &str) -> String {
+    let c: Vec<String> = u.collections.iter().map(|e| render_expr(e, &u.input.names())).collect();
+    let left = if u.outer.is_some() { "Left " } else { "" };
+    if let Some(g) = &u.graph {
+        // [GS §16 R16.9] a GRAPH_TABLE, of its operands.
+        let lines: Vec<String> = g.render().lines().map(|l| format!("{pad}{left}{l}")).collect();
+        format!("{} of ({})", lines.join("\n"), c.join(", "))
+    } else if let Some(j) = &u.json {
+        // [ISO/IEC 9075-2:2023 §7.11] a JSON table, of its operands.
+        format!("{pad}{left}{} of {}", j.render(), c.join(", "))
+    } else {
+        let what = if u.outer.is_some() { "Left unnest" } else { "Unnest" };
+        format!("{pad}{what} {}{}", c.join(", "), if u.ordinality { " with ordinality" } else { "" })
     }
 }

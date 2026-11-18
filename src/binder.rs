@@ -58,8 +58,8 @@ mod expression;
 mod filter;
 mod from;
 mod generated;
+mod graph;
 mod graph_properties;
-mod graph_seam;
 mod greatest;
 mod grouping_sets;
 mod hierarchy;
@@ -106,8 +106,6 @@ mod views;
 mod window;
 mod with;
 
-pub use counterparts::defaulted_columns;
-pub use cursor::bind_cursor;
 use from::FromItem;
 pub use generated::{bind_generation, generations, noting_generation, written_generations};
 pub use graph_properties::{PropertyBinding, element_columns, property_bound, property_expression, property_type};
@@ -115,7 +113,6 @@ pub use invocation::{
     Candidate, FunctionBody, alike, bind_function_body, definition_of, functions_named, grantably_held, held, resolve_procedure,
     routine_definition, sql_statement,
 };
-pub use key_expression::bind_key;
 pub use merge::{BoundAction, BoundMerge, BoundWhen, bind_merge};
 pub use parameters::{assigned_argument, bind_argument};
 pub(crate) use psm::{Frame, bind_program};
@@ -128,12 +125,11 @@ pub use statements::{
 };
 pub(crate) use structured::assignment_cast;
 use subquery::Outer;
-pub use triggers::bind_when;
-pub use underlying::underlying;
 pub use values::{value_specification, value_specification_as};
 pub use views::{BoundView, ViewCheck, WriteTarget, bind_view, table_columns, view_degree, write_target};
 pub(crate) use views::{once_each, system_view_columns, view_uses};
 pub(crate) use with::Queries;
+pub use {counterparts::defaulted_columns, cursor::bind_cursor, key_expression::bind_key, triggers::bind_when, underlying::underlying};
 
 /// A column of a cursor's result.
 #[derive(Debug, Clone)]
@@ -419,6 +415,8 @@ struct Binder<'a> {
     /// condition>`s of row pattern recognition, what their row pattern
     /// column references read (`binder/pattern.rs`).
     recognizing: Option<Box<pattern::Recognizing>>,
+    /// \[EXTENSION\] A GRAPH_TABLE's variables (`binder/graph/scope.rs`).
+    graphing: Option<std::rc::Rc<graph::Graphing>>,
 }
 
 /// The FROM row a binder sees: its items, the display names of its
@@ -465,6 +463,7 @@ impl<'a> Binder<'a> {
             sort_names: RefCell::new(order_by::SortNames::default()),
             rows: RefCell::new(invariant::Rows::default()),
             recognizing: None,
+            graphing: None,
         }
     }
 

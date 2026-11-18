@@ -99,7 +99,7 @@ fn change(s: &Session) {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md D34, D-GRAPH-ADJACENCY: an adjacency
+/// Verifies: [EXTENSION] RULES.md D34, D107: an adjacency
 /// index's lookups of a source, of a source and destination, and of its
 /// covered columns, find what a scan of a table without it finds: read of
 /// its tree, of its compacted adjacency once maintenance builds it, of

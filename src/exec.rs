@@ -20,6 +20,7 @@ mod batch;
 mod distinct;
 mod entries;
 mod eval;
+mod graph_table;
 mod group;
 mod held;
 mod invoked;
@@ -127,7 +128,10 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         // [ISO/IEC 9075-2:2023 §7.6 SR8] each row of its input with its collections' elements.
         // [ISO/IEC 9075-2:2023 §7.11] or a JSON table's rows of each.
         Plan::Unnest(u) => {
-            if u.json.is_some() {
+            // [GS §8] or a GRAPH_TABLE's rows of each.
+            if u.graph.is_some() {
+                graph_table::graph_table
+            } else if u.json.is_some() {
                 json_table::json_table
             } else {
                 unnest::unnested

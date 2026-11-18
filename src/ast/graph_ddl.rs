@@ -1,5 +1,5 @@
 //! \[EXTENSION\] Abstract syntax of the statements that define property
-//! graphs over tables (RULES.md D-GRAPH-CATALOG): CREATE, ALTER and DROP
+//! graphs over tables (RULES.md D106): CREATE, ALTER and DROP
 //! PROPERTY GRAPH, Mode A of the property graph implementation standard
 //! (§4.1), the form of SQL/PGQ, ISO/IEC 9075-16:2023.
 
@@ -200,4 +200,22 @@ pub enum ElementAction {
         /// The `<drop behavior>`: RESTRICT if none is written.
         behavior: DropBehavior,
     },
+}
+
+/// \[EXTENSION\] [GS §13.2] CREATE ADJACENCY INDEX \[`<index name>`\] ON
+/// GRAPH `<graph name>` EDGE TABLE `<alias>` \[DIRECTION {FORWARD |
+/// REVERSE | BOTH}\] \[INCLUDE ( `<column name>` \[, ...\] )\]: an index
+/// of the adjacency method of the edge table's ends.
+#[derive(Debug, Clone)]
+pub struct AdjacencyIndex {
+    /// The `<index name>`, if written, and where it begins.
+    pub name: Option<(String, usize)>,
+    /// The graph.
+    pub graph: TableName,
+    /// The edge table's alias in the graph, and where it begins.
+    pub edge: (String, usize),
+    /// FORWARD, REVERSE or BOTH, if written.
+    pub direction: Option<String>,
+    /// The columns INCLUDE names, and where each begins.
+    pub include: Vec<(String, usize)>,
 }

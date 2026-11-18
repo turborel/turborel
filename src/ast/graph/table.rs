@@ -23,8 +23,27 @@ pub struct GraphTable {
     pub correlation: Option<String>,
     /// The point in time its element tables are read at, if written.
     pub system_time: Option<Box<SystemTimeRead>>,
+    /// \[EXTENSION\] [GS §20] Its OPTIONS, the limits of its search.
+    pub options: GraphLimits,
     /// Where GRAPH_TABLE is written.
     pub at: usize,
+}
+
+/// \[EXTENSION\] [GS §20] OPTIONS ( `<graph option>` \[, ...\] ) after
+/// COLUMNS: each limit of its path search written, in place of its
+/// setting's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GraphLimits {
+    /// MAX_PATH_LENGTH `n`.
+    pub max_path_length: Option<u32>,
+    /// MAX_PATHS_PER_PARTITION `n`.
+    pub max_paths_per_partition: Option<u32>,
+    /// MAX_SEARCH_STATES `n`.
+    pub max_search_states: Option<u32>,
+    /// ON LIMIT TRUNCATE, true, or ERROR.
+    pub truncate: Option<bool>,
+    /// DETERMINISTIC_PATHS.
+    pub deterministic: bool,
 }
 
 /// The graph a GRAPH_TABLE matches its pattern in.

@@ -50,6 +50,9 @@ impl Binder<'_> {
     /// non-deterministic [ISO/IEC 9075:1992 §11.9 SR6, §7.8 SR3b, §7.9
     /// SR13c ii].
     pub(super) fn column_in(&self, cs: &ColumnSpecification, (pos, t): (usize, &DataType), scope: Scope<'_>) -> Result<Expr> {
+        if let Some(graph) = self.graph_column(pos, scope) {
+            return Ok(graph);
+        }
         if let Some(pattern) = self.pattern_column(pos, scope)? {
             return Ok(pattern);
         }

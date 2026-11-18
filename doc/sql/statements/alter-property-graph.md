@@ -139,7 +139,7 @@ OK
 ISO/IEC 9075-16:2023 (SQL/PGQ) defines the ADD and DROP of element
 tables, labels and properties. turborel follows its implementation
 standard's Mode A (§4.1, R4.7 of INVALID graphs and COMPILE), an
-extension (RULES.md D-GRAPH-CATALOG).
+extension (RULES.md D106).
 
 ## SEE ALSO
 

@@ -84,14 +84,14 @@ pub use expression::{
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use graph::{
-    Cheapest, Directions, EdgePattern, ElementPattern, GRAPH_FUNCTIONS, GraphColumn, GraphFunction, GraphFunctionName, GraphPattern,
-    GraphPredicate, GraphReference, GraphRows, GraphTable, GraphVariable, LabelExpression, MatchMode, ORIENTATIONS, Orientation,
-    OrientationForm, ParenthesizedPath, PathEnd, PathExpression, PathFactor, PathPattern, PathPrefix, PathPrimary, PathTerm, PropertySpec,
-    Quantifier, QuantifierSugar, Restrictor, SameKind, SegmentFilter, Selector, VariableKind,
+    Cheapest, Directions, EdgePattern, ElementPattern, GRAPH_FUNCTIONS, GraphColumn, GraphFunction, GraphFunctionName, GraphLimits,
+    GraphPattern, GraphPredicate, GraphReference, GraphRows, GraphTable, GraphVariable, LabelExpression, MatchMode, ORIENTATIONS,
+    Orientation, OrientationForm, ParenthesizedPath, PathEnd, PathExpression, PathFactor, PathPattern, PathPrefix, PathPrimary, PathTerm,
+    PropertySpec, Quantifier, QuantifierSugar, Restrictor, SameKind, SegmentFilter, Selector, VariableKind,
 };
 pub use graph_ddl::{
-    AlterGraph, AlterGraphAction, DerivedProperty, ElementAction, ElementDefinition, EndpointDefinition, GraphDefinition, GraphModeOption,
-    LabelDefinition, PropertiesDefinition,
+    AdjacencyIndex, AlterGraph, AlterGraphAction, DerivedProperty, ElementAction, ElementDefinition, EndpointDefinition, GraphDefinition,
+    GraphModeOption, LabelDefinition, PropertiesDefinition,
 };
 pub use hybrid_search::{Fusion, HybridSearch, SearchArgument, SearchValue};
 pub use joined::{JoinKind, JoinSpecification, JoinedTable, Partitioning};
@@ -522,6 +522,8 @@ pub enum IndexStatement {
         /// The `<index name>`, and where it begins.
         name: (String, usize),
     },
+    /// \[EXTENSION\] [GS §13.2] CREATE ADJACENCY INDEX ON GRAPH.
+    Adjacency(Box<AdjacencyIndex>),
     /// `<alter index statement>` ::= ALTER INDEX `<index name>` SET
     /// `<table options>`
     Alter {

@@ -1,6 +1,6 @@
-//! \[DESIGN\] Parallel path search [GS §17]: a scoped set of workers, as
-//! many as the caller's width (EXECUTOR.GRAPH_THREADS), taking morsels of
-//! work, each worker its own run of them, stealing the last morsels of
+//! \[DESIGN\] Scoped workers taking morsels of work (RULES.md R-SAFE-5),
+//! as parallel path search runs them [GS §17]: as many as the caller's
+//! width (EXECUTOR.GRAPH_THREADS), each worker its own run of them, stealing the last morsels of
 //! another's once its own are done, so skewed degrees even out.
 //!
 //! The workers are threads of the statement that runs them, joined
@@ -67,7 +67,7 @@ fn worker<T>(
 ///
 /// The first error of a morsel, SQLCODE -920 if `stop` cancels, or -910
 /// if a worker could not be started or failed.
-pub(super) fn morsels<T, F>(width: usize, (items, size): (usize, usize), stop: Option<&Arc<Stop>>, work: F) -> Result<Vec<T>>
+pub(crate) fn morsels<T, F>(width: usize, (items, size): (usize, usize), stop: Option<&Arc<Stop>>, work: F) -> Result<Vec<T>>
 where
     T: Send,
     F: Fn(Range<usize>) -> Result<T> + Sync,
