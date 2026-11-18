@@ -32,8 +32,9 @@ pub struct HybridSearch {
     pub index: String,
     /// QUERY_TEXT: the words searched for.
     pub text: SearchValue,
-    /// QUERY_VECTOR: the vector searched for.
-    pub vector: SearchValue,
+    /// QUERY_VECTOR: the vector searched for. Of none, an index that
+    /// embeds its text embeds QUERY_TEXT by its model.
+    pub vector: Option<SearchValue>,
     /// Whether QUERY_VECTOR is written before QUERY_TEXT, so the binder
     /// writes the query's dynamic parameters in their order.
     pub vector_first: bool,

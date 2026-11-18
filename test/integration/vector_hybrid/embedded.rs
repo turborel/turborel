@@ -110,3 +110,31 @@ fn an_async_index_and_what_a_model_index_refuses_r12_6() {
     assert_eq!(code("CREATE HYBRID VECTOR INDEX Z ON E (T)"), Code::Unsupported);
     assert_eq!(code("CREATE HYBRID VECTOR INDEX Z ON E (T) PARAMETERS (MODEL WORDS, CHUNKER BY LINES MAX 2)"), Code::Data);
 }
+
+/// Verifies: [EXTENSION] vector_standard §11.2, §12.2: of an index of a
+/// MODEL, HYBRID_SEARCH of QUERY_TEXT alone embeds it by that model, as a
+/// query, and searches both lists, as QUERY_VECTOR of that embedding
+/// does; a QUERY_TEXT of a dynamic parameter needs its QUERY_VECTOR, as
+/// it would be read twice.
+#[test]
+fn query_text_alone_is_embedded_by_the_model_11_2() {
+    let (_db, s) = docs();
+    s.run("CREATE HYBRID VECTOR INDEX DOCS_H ON DOCS (BODY) PARAMETERS (MODEL WORDS, CHUNKER BY SENTENCES MAX 1 OVERLAP 0)").unwrap();
+    let columns = "SELECT DOC_ID, VECTOR_RANK, TEXT_RANK, CHUNK_TEXT FROM HYBRID_SEARCH(INDEX = DOCS_H";
+    let alone = read(&s, &format!("{columns}, QUERY_TEXT = 'damaged parcel', TOP_N = 3) AS H ORDER BY SCORE DESC, DOC_ID"));
+    let given = read(
+        &s,
+        &format!(
+            "{columns}, QUERY_VECTOR = EMBED('WORDS', 'damaged parcel', 'query'), QUERY_TEXT = 'damaged parcel', TOP_N = 3) AS H \
+             ORDER BY SCORE DESC, DOC_ID"
+        ),
+    );
+    assert_eq!(alone, given);
+    assert_eq!(alone.first().map(String::as_str), Some("3,1,1,a damaged parcel is returned."), "{alone:?}");
+    assert!(alone.iter().all(|r| !r.split(',').nth(1).is_some_and(str::is_empty)), "every row of the vector list: {alone:?}");
+    for text in ["?", "CAST(? AS VARCHAR(40))"] {
+        let dynamic = format!("SELECT DOC_ID FROM HYBRID_SEARCH(INDEX = DOCS_H, QUERY_TEXT = {text}, TOP_N = 3) AS H");
+        let refused = s.prepare(&dynamic).map(drop).unwrap_err();
+        assert!(refused.code == Code::SyntaxRule && refused.msg.contains("as its QUERY_TEXT holds a dynamic parameter"), "{refused:?}");
+    }
+}

@@ -129,8 +129,8 @@ COMMIT;
 CREATE HYBRID VECTOR INDEX NOTES_H ON NOTES (BODY)
     PARAMETERS (MODEL WORDS, CHUNKER BY SENTENCES MAX 1 OVERLAP 0);
 SELECT DOC_ID, CHUNK_ID, CHUNK_TEXT FROM NOTES_H_CHUNKS ORDER BY DOC_ID, CHUNK_ID;
-SELECT DOC_ID, CHUNK_TEXT FROM HYBRID_SEARCH(INDEX = NOTES_H, QUERY_TEXT = 'damaged',
-    QUERY_VECTOR = EMBED('WORDS', 'damaged'), TOP_N = 2) AS H ORDER BY SCORE DESC, DOC_ID;
+SELECT DOC_ID, CHUNK_TEXT FROM HYBRID_SEARCH(INDEX = NOTES_H, QUERY_TEXT = 'damaged', TOP_N = 2) AS H
+    ORDER BY SCORE DESC, DOC_ID;
 ```
 
 ```
@@ -153,9 +153,10 @@ OK
 (2 rows)
 ```
 
-Document 1 is found by its words and its embedding, at the chunk that
-holds them. Document 2 is the vector list's next nearest, at its nearest
-chunk.
+The search names no QUERY_VECTOR, so the index's model embeds the words
+as a query, and that is the vector searched for. Document 1 is found by
+its words and its embedding, at the chunk that holds them. Document 2 is
+the vector list's next nearest, at its nearest chunk.
 
 ## HYBRID_SEARCH
 
@@ -176,16 +177,17 @@ chunk.
     | RRF_K = <unsigned integer>
 ```
 
-HYBRID_SEARCH is a table in a FROM clause. INDEX, QUERY_TEXT,
-QUERY_VECTOR and TOP_N are written once each, and the others at most
-once, in any order. The correlation name is HYBRID_SEARCH if none is
+HYBRID_SEARCH is a table in a FROM clause. INDEX, QUERY_TEXT and TOP_N
+are written once each, and the others at most once, in any order.
+QUERY_VECTOR may be left out of a search of an index that embeds its
+text, whose model then embeds QUERY_TEXT as a query. The correlation name is HYBRID_SEARCH if none is
 written.
 
 | Argument | Is |
 |---|---|
 | INDEX | A hybrid index, of a table whose primary key is one column, or one that embeds its text |
 | QUERY_TEXT | The words searched for, each ranked as `IS ABOUT` ranks it ([Full-Text Patterns](09-fulltext-patterns.md)) |
-| QUERY_VECTOR | The vector searched for, of the vector column's type |
+| QUERY_VECTOR | The vector searched for, of the vector column's type, or of none QUERY_TEXT's embedding by the index's model |
 | TOP_N | The rows it gives |
 | CANDIDATES | The rows each list holds, TOP_N times 4 by default |
 | FUSION | How the lists are fused, RRF by default |
@@ -212,7 +214,9 @@ It gives the TOP_N rows of the highest SCORE, ties in DOC_ID order. The
 text column is the chunk: a row is one chunk of a document.
 
 QUERY_TEXT and QUERY_VECTOR may be any value expressions, dynamic
-parameters among them. The other arguments are literals.
+parameters among them. A QUERY_TEXT that holds a dynamic parameter needs
+its QUERY_VECTOR, as an embedded QUERY_TEXT is read twice. The other
+arguments are literals.
 
 ## Fusion
 
@@ -302,19 +306,21 @@ the query is at least 1.5.
 
 ## Errors
 
-A search names its index, its words, its vector and its count:
+A search names its index, its words and its count, and its vector
+unless the index embeds its text:
 
 ```sql
 SELECT * FROM HYBRID_SEARCH(INDEX = HELP_H, QUERY_TEXT = 'gift', TOP_N = 1) AS H;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): HYBRID_SEARCH names its QUERY_VECTOR (at character 80)
+turborel: SQLCODE -103 (SQLSTATE 2A000): HYBRID_SEARCH names its QUERY_VECTOR, as HELP_H embeds no text by a MODEL (at character 14)
 ```
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 2A000 | -103 | A required argument is missing, or one is written twice |
+| 2A000 | -103 | QUERY_VECTOR is left out of a search of an index of no MODEL, or of a QUERY_TEXT of a dynamic parameter |
 | 2A000 | -103 | INDEX names no hybrid index, or its table's primary key is not one column |
 | 2A000 | -103 | A weight is not a number |
 | 2A000 | -102 | An argument is not one of those above, or FUSION is neither RRF nor WEIGHTED |

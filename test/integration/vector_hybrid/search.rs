@@ -200,8 +200,9 @@ fn dynamic_parameters_keep_their_order() {
 
 /// Verifies: [EXTENSION] vector_standard §11.2: HYBRID_SEARCH names a
 /// hybrid index, of a table of a primary key of one column, its DOC_ID;
-/// INDEX, QUERY_TEXT, QUERY_VECTOR and TOP_N once each, the others at
-/// most once; FUSION is RRF or WEIGHTED, a weight a number.
+/// INDEX, QUERY_TEXT and TOP_N once each, the others at most once; no
+/// QUERY_VECTOR only of an index of a MODEL; FUSION is RRF or WEIGHTED, a
+/// weight a number.
 #[test]
 fn what_hybrid_search_refuses_11_2() {
     let (_db, s) = documents(Some(INDEX));
@@ -218,6 +219,8 @@ fn what_hybrid_search_refuses_11_2() {
     assert_eq!(refused(&format!("INDEX = NONE_SUCH, {all}")), Code::SyntaxRule);
     assert_eq!(refused(&format!("INDEX = NOKEY_H, {all}")), Code::SyntaxRule);
     assert_eq!(refused(&format!("INDEX = DOCS_H, QUERY_TEXT = 'a', QUERY_VECTOR = {VECTOR}")), Code::SyntaxRule);
+    assert_eq!(refused("INDEX = DOCS_H, QUERY_TEXT = 'a', TOP_N = 1"), Code::SyntaxRule);
+    assert_eq!(refused(&format!("INDEX = DOCS_H, QUERY_VECTOR = {VECTOR}, TOP_N = 1")), Code::SyntaxRule);
     assert_eq!(refused(&format!("INDEX = DOCS_H, INDEX = DOCS_H, {all}")), Code::SyntaxRule);
     assert_eq!(refused(&format!("INDEX = DOCS_H, {all}, FUSION = 'MAX'")), Code::Syntax);
     assert_eq!(refused(&format!("INDEX = DOCS_H, {all}, TEXT_WEIGHT = 'heavy'")), Code::SyntaxRule);
