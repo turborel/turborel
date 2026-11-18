@@ -39,6 +39,7 @@ pub fn render_expr(e: &Expr, names: &[String]) -> String {
             let operand = if let Expr::Cast(operand, _) = &**x { operand } else { x };
             format!("CAST({} AS {})", render_expr(operand, names), d.domain)
         }
+        Expr::Warned(x, _) => render_expr(x, names),
         Expr::Subquery(_, column) => format!("(<subquery>).{}", column.saturating_add(1)),
         Expr::Invoked(i) => format!("{}({})", i.name, i.args.iter().map(|a| render_expr(a, names)).collect::<Vec<_>>().join(", ")),
         Expr::Truth(c) => format!("({})", render_cond(c, names)),

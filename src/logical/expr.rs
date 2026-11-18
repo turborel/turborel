@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use super::{InSet, Invocation, Subquery};
 use crate::catalog::{MatchType, QualifiedName, SequenceDesc};
+use crate::error::SqlState;
 use crate::functions::ScalarRef;
 use crate::value::collation::CollationRef;
 use crate::value::{ArithOp, CompOp, DataType, Value, constant_prefix};
@@ -143,6 +144,12 @@ pub enum Expr {
     /// [ISO/IEC 9075-2:2023 §9.18] An invocation of an SQL-invoked
     /// function of an SQL routine body (`logical/invoked.rs`).
     Invoked(Arc<Invocation>),
+    /// \[DESIGN\] An expression whose evaluation raises the completion
+    /// condition, a warning, each time it returns [ISO/IEC 9075:1992
+    /// §3.3.4.1], as its binding found: XMLMAP of a column it cannot map
+    /// [ISO/IEC 9075-14:2006 draft §9.11 GR3] (RULES.md D53). Only these
+    /// raise one after they run, so no other expression pays for it.
+    Warned(Box<Expr>, SqlState),
 }
 
 /// A bound `<search condition>` [X3.135-1986 §5.18].
@@ -240,6 +247,7 @@ impl Expr {
             Expr::Subquery(s, column) => Expr::Subquery(s.map_outer(f), column),
             Expr::Truth(c) => Expr::Truth(Box::new(c.map_exprs(f))),
             Expr::Invoked(i) => Expr::Invoked(i.map_args(f)),
+            Expr::Warned(x, state) => Expr::Warned(Box::new(f(*x)), state),
         }
     }
 
@@ -248,7 +256,7 @@ impl Expr {
     pub fn for_each_child<'a>(&'a self, f: &mut dyn FnMut(&'a Expr)) {
         match self {
             Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::NextValue(_) => {}
-            Expr::Neg(x) | Expr::Cast(x, _) | Expr::Domain(x, _) | Expr::SortKey(x, _) => f(x),
+            Expr::Neg(x) | Expr::Cast(x, _) | Expr::Domain(x, _) | Expr::SortKey(x, _) | Expr::Warned(x, _) => f(x),
             Expr::Arith(a, _, b) => {
                 f(a);
                 f(b);
@@ -304,7 +312,14 @@ impl Expr {
                 (!f.0.raise_free() && (!f.0.index_predicate() || !f.0.deterministic())) || args.iter().any(Expr::can_raise)
             }
             Expr::Truth(c) => c.can_raise(),
-            Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::Case(..) | Expr::SortKey(..) => {
+            Expr::Column(_)
+            | Expr::Const(_)
+            | Expr::Outer(..)
+            | Expr::Dynamic(_)
+            | Expr::Neg(_)
+            | Expr::Case(..)
+            | Expr::SortKey(..)
+            | Expr::Warned(..) => {
                 let mut raises = false;
                 self.for_each_child(&mut |e| raises = raises || e.can_raise());
                 if let Expr::Case(whens, _) = self {

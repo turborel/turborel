@@ -75,6 +75,7 @@ pub(super) fn constant(expr: &Expr, values: Option<&[Value]>) -> Option<(Value, 
         | Expr::Subquery(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
+        | Expr::Warned(..)
         | Expr::Truth(_)
         | Expr::NextValue(_)
         | Expr::Invoked(_) => None,

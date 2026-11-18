@@ -49,7 +49,8 @@ fn plain(e: &Expr) -> bool {
         | Expr::Call(..)
         | Expr::Cast(..)
         | Expr::SortKey(..)
-        | Expr::Domain(..) => true,
+        | Expr::Domain(..)
+        | Expr::Warned(..) => true,
     };
     let mut all = own;
     e.for_each_child(&mut |child| all = all && plain(child));
@@ -75,6 +76,7 @@ pub(super) fn place_of(e: &Expr, columns: &[usize]) -> Option<Place> {
         | Expr::Cast(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
+        | Expr::Warned(..)
         | Expr::Subquery(..)
         | Expr::Truth(_)
         | Expr::NextValue(_)

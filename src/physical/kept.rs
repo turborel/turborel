@@ -198,6 +198,7 @@ fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
         | Expr::Subquery(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
+        | Expr::Warned(..)
         | Expr::Truth(_)
         | Expr::NextValue(_)
         | Expr::Invoked(_) => return fail(Code::Api, "[DESIGN] a slot filled is a constant"),

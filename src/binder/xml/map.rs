@@ -112,10 +112,14 @@ impl Binder<'_> {
             }
         };
         let source = source.ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] XMLMAP mapped no table"))?;
-        let map = XmlMap { catalog: self.db.catalog_name(), source, choices, unmappable };
+        let map = XmlMap { catalog: self.db.catalog_name(), source, choices };
         let result = map.result_type();
         let args = if map.choices.data { rows } else { Vec::new() };
-        Ok((Expr::Call(ScalarRef(Arc::new(map)), args), result))
+        let call = Expr::Call(ScalarRef(Arc::new(map)), args);
+        // [§9.11 GR3, §9.14 GR3, §9.17 GR3] Of a visible column that is an
+        // XML unmappable column, the warning column cannot be mapped.
+        let e = if unmappable { Expr::Warned(Box::new(call), SqlState::COLUMN_CANNOT_BE_MAPPED) } else { call };
+        Ok((e, result))
     }
 
     /// [§9.11] TABLE: the table `query` reads, `SELECT * FROM` it, a base

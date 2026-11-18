@@ -217,14 +217,6 @@ pub trait ScalarFunction: Send + Sync {
     fn spatial_operation(&self) -> Option<crate::geometry::SpatialOperation> {
         None
     }
-    /// \[DESIGN\] A completion condition, a warning, that each call of it
-    /// raises as it returns [ISO/IEC 9075:1992 §3.3.4.1]: one its binding
-    /// knows of, as a mapping's of a column it cannot map. A call whose
-    /// arguments are constants is then not evaluated as the statement is
-    /// planned, so the statement raises it. Default: none.
-    fn warning(&self) -> Option<crate::error::SqlState> {
-        None
-    }
     /// Same arguments always give the same result? If so, the optimizer may
     /// evaluate calls with constant arguments once, at planning time.
     fn deterministic(&self) -> bool {

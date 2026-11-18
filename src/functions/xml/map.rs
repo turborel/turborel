@@ -18,7 +18,7 @@ pub use rows::{RowShape, XmlMapRows, rows_type};
 pub use types::{Declared, XDT_NAMESPACE, XDT_PREFIX, declared_name, definitions, mappable, named_type, type_name};
 
 use super::super::{BinaryEncoding, ScalarFunction};
-use crate::error::{Result, SqlState};
+use crate::error::Result;
 use crate::value::xml::{Typing, XmlType, XmlValue};
 use crate::value::{DataType, Value};
 use crate::xml::{Item, Node, Sequence, Syntax, Whitespace, parse};
@@ -109,10 +109,6 @@ pub struct XmlMap {
     pub source: Source,
     /// The mapping's parameters.
     pub choices: Choices,
-    /// Whether a visible column of a table it maps, one of the tables of a
-    /// schema or the catalog it maps, is an XML unmappable column [§9.11
-    /// GR3, §9.14 GR3, §9.17 GR3].
-    pub unmappable: bool,
 }
 
 impl XmlMap {
@@ -160,12 +156,6 @@ impl ScalarFunction for XmlMap {
 
     fn return_type(&self, _: &[DataType]) -> Result<DataType> {
         Ok(self.result_type())
-    }
-
-    /// [§9.11 GR3, §9.14 GR3, §9.17 GR3] Of a visible column that is an
-    /// XML unmappable column, the warning column cannot be mapped.
-    fn warning(&self) -> Option<SqlState> {
-        self.unmappable.then_some(SqlState::COLUMN_CANNOT_BE_MAPPED)
     }
 
     /// [§9.11 GR10 to GR13, §9.14 GR11 to GR14, §9.17 GR11 to GR14] XS

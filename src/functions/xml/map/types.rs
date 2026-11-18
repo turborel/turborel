@@ -45,6 +45,12 @@ const DOMAIN_PART: &str = "Domain";
 const UDT_PART: &str = "UDT";
 /// [§9.4 GR23] The XML Name of an XML type.
 const XML_NAME: &str = "XML";
+/// [§9.4 GR2f] The designator of CHARACTER's XML Name.
+const CHAR: &str = "CHAR";
+/// [§9.4 GR2f] CHARACTER VARYING's.
+const VARCHAR: &str = "VARCHAR";
+/// [§9.4 GR2f] CHARACTER LARGE OBJECT's.
+const CLOB: &str = "CLOB";
 /// The radix of SQL's exact numbers' precision.
 const RADIX: i128 = 10;
 
@@ -148,9 +154,9 @@ pub fn declared_name(d: &Declared, catalog: &str) -> Option<String> {
 /// has one.
 fn predefined_name(t: &DataType) -> Option<String> {
     Some(match t {
-        DataType::Character { length, units } => character_name("CHAR", u64::from(*length), *units),
-        DataType::Varying { length, units } => character_name("VARCHAR", u64::from(*length), *units),
-        DataType::Lob { kind: LobKind::Character, length, units } => character_name("CLOB", *length, *units),
+        DataType::Character { length, units } => character_name(CHAR, u64::from(*length), *units),
+        DataType::Varying { length, units } => character_name(VARCHAR, u64::from(*length), *units),
+        DataType::Lob { kind: LobKind::Character, length, units } => character_name(CLOB, *length, *units),
         // [GR3] BLOB_XN; [EXTENSION] BINARY_XN and VARBINARY_XN.
         DataType::Lob { kind: LobKind::Binary, length, .. } => format!("BLOB_{length}"),
         DataType::Binary { length } => format!("BINARY_{length}"),
@@ -183,8 +189,10 @@ fn predefined_name(t: &DataType) -> Option<String> {
 fn character_name(designator: &str, length: u64, units: CharUnits) -> String {
     match units {
         CharUnits::Characters => format!("{designator}_{length}"),
-        CharUnits::Octets if designator == "CLOB" => format!("CLOB_{length}_{length}"),
-        CharUnits::Octets => format!("VARCHAR_{length}_{length}"),
+        CharUnits::Octets => {
+            let varying = if designator == CLOB { CLOB } else { VARCHAR };
+            format!("{varying}_{length}_{length}")
+        }
     }
 }
 
