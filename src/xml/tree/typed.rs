@@ -6,7 +6,7 @@
 
 use super::{Kind, NodeId, QName, Tree};
 use crate::error::{Code, Result, SqlError, SqlState};
-use crate::xml::{Atomic, AtomicType, from_lexical};
+use crate::xml::{Atomic, AtomicType, XS_NAMESPACE, from_lexical};
 
 /// How the typed value of a node of a type is determined [XQueryDM
 /// §3.3.1.2, §6.2.4]: by the variety of its simple type, or its content.
@@ -37,6 +37,17 @@ pub struct Annotation {
     pub name: QName,
     /// How its typed values are determined.
     pub typing: Typing,
+}
+
+impl Annotation {
+    /// `xs:anyType`, of mixed content [XQueryDM §3.3.1.1]: the annotation
+    /// of an element a constructor makes in construction mode preserve
+    /// [XQuery §3.7.1.3], or a validation does not assess, or assesses
+    /// laxly [XQuery §3.13].
+    #[must_use]
+    pub fn any_type() -> Annotation {
+        Annotation { name: QName { prefix: None, uri: Some(XS_NAMESPACE.into()), local: "anyType".into() }, typing: Typing::Mixed }
+    }
 }
 
 impl NodeId {

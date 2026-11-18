@@ -105,12 +105,6 @@ pub(super) fn annotation(schema: &Schema, t: TypeDef, value: Option<&Typed>) -> 
     Annotation { name: type_name(schema, t), typing }
 }
 
-/// The annotation of an element not assessed, or laxly assessed:
-/// `xs:anyType` [XQuery §3.13] [XQueryDM §3.3.1.1].
-pub(super) fn any_type() -> Annotation {
-    Annotation { name: QName { prefix: None, uri: Some(XS_NAMESPACE.into()), local: "anyType".into() }, typing: Typing::Mixed }
-}
-
 /// What a declaration asks of an element it validates.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Declared<'s> {
@@ -371,7 +365,7 @@ impl<'s> Run<'s> {
     /// attributes and children assessed as `how` says.
     fn unassessed(&mut self, input: NodeId, how: Assess) -> Step<Option<Frame<'s>>> {
         let attrs = self.other_attributes(input, how)?;
-        self.start(input, attrs, (any_type(), false))?;
+        self.start(input, attrs, (Annotation::any_type(), false))?;
         Ok(Some(Frame {
             next: self.tree.first_child(input),
             content: Content::Any(how),

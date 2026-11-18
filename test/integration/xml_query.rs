@@ -188,3 +188,44 @@ fn plug_in_functions_extend_the_library() {
     let q = "SELECT XMLCAST(XMLQUERY('declare namespace e = \"urn:example\"; declare function e:twice($x as xs:integer) as xs:integer external; e:twice(2)' EMPTY ON EMPTY) AS INTEGER) FROM T WHERE K = 1";
     assert_eq!(rows(&a, q).unwrap(), ["4"]);
 }
+
+/// The value of `query` of the table U's one row, serialized.
+fn annotation(a: &Session, query: &str) -> String {
+    let sql = format!(
+        "SELECT XMLSERIALIZE(CONTENT XMLQUERY('{}' PASSING BY REF C, S AS \"S\", E AS \"E\" EMPTY ON EMPTY) AS VARCHAR(80)) FROM U",
+        query.replace('\'', "''")
+    );
+    rows(a, &sql).unwrap_or_else(|code| panic!("{query}: {code:?}")).remove(0)
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.13 GR5, GR9a, §6.14, §6.18
+/// GR2, §10.13 GR4c viii, §10.18, §10.19, §10.20 SR2a] [XQuery §3.7.1.3,
+/// §3.7.3.1, §4.6] the type annotation of an element by the construction
+/// mode a query constructs it in: preserve, the default, `xs:anyType`, a
+/// copied element keeping its own; strip `xdt:untyped`, every copied one
+/// too; XMLELEMENT RETURNING SEQUENCE `xs:anyType`, as `element {} {}` in
+/// the default context; a value of XML(CONTENT(UNTYPED)), of XMLDOCUMENT,
+/// RETURNING CONTENT or a column of that type, every element
+/// `xdt:untyped`; one stored in XML(SEQUENCE) keeping its own; seen by
+/// `instance of`, typeswitch and fn:data.
+#[test]
+fn construction_modes_annotate_elements_3_7_1_3() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE U (S XML(SEQUENCE), C XML(CONTENT(UNTYPED)), E XML(SEQUENCE))").unwrap();
+    let a = db.session("A");
+    a.run("INSERT INTO U VALUES (XMLQUERY('<s/>' RETURNING SEQUENCE BY REF EMPTY ON EMPTY), XMLQUERY('<c/>' RETURNING CONTENT EMPTY ON EMPTY), XMLELEMENT(NAME \"e\" RETURNING SEQUENCE))").unwrap();
+    let untyped = "instance of element(*, xdt:untyped)";
+    let any = "instance of element(*, xs:anyType)";
+    assert_eq!(annotation(&a, &format!("<n/> {any}, <n/> {untyped}, element n {{}} {untyped}")), "true false false");
+    assert_eq!(annotation(&a, &format!("declare construction strip; <n/> {untyped}, element n {{}} {untyped}")), "true true");
+    assert_eq!(annotation(&a, &format!("$S {untyped}, $S {any}, ./c {untyped}, $E {untyped}")), "false true true false");
+    assert_eq!(annotation(&a, &format!("declare construction strip; <n>{{$S}}</n>/s {untyped}, <n>{{$E}}</n>/e {untyped}")), "true true");
+    assert_eq!(annotation(&a, &format!("<n>{{$S}}</n>/s {untyped}, document {{ $E }}/e {untyped}")), "false false");
+    let switched = "typeswitch ($S) case element(*, xdt:untyped) return \"untyped\" case element(*, xs:anyType) return \"any\" default return \"none\"";
+    assert_eq!(annotation(&a, switched), "any");
+    assert_eq!(annotation(&a, "data(<n>7</n>) instance of xdt:untypedAtomic, data(<n>7</n>) + 1"), "true 8");
+    let content = "SELECT XMLSERIALIZE(CONTENT XMLQUERY('./* instance of element(*, xdt:untyped)' PASSING BY REF XMLQUERY('<r/>' RETURNING CONTENT EMPTY ON EMPTY) EMPTY ON EMPTY) AS VARCHAR(10)) FROM U";
+    assert_eq!(rows(&a, content).unwrap(), ["true"]);
+    let element = "SELECT XMLSERIALIZE(CONTENT XMLQUERY('./* instance of element(*, xdt:untyped)' PASSING BY REF XMLELEMENT(NAME \"r\") EMPTY ON EMPTY) AS VARCHAR(10)) FROM U";
+    assert_eq!(rows(&a, element).unwrap(), ["true"]);
+}

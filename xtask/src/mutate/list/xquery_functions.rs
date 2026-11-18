@@ -5,13 +5,13 @@
 //! normalization, escaping and XQuery 1.0's regular expressions; dates
 //! in the implicit time zone and their arithmetic, fn:deep-equal, the
 //! functions on sequences and their bounds; the built-in functions and
-//! operators a query calls of it; and casts to `xs:QName` (RULES.md
-//! R-TEST-9, D86).
+//! operators a query calls of it; casts to `xs:QName`; and the type
+//! annotation of constructed elements (RULES.md R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of the library broken alone, and the tests that fail.
-pub const XQUERY_FUNCTIONS: [Mutation; 27] = [
+pub const XQUERY_FUNCTIONS: [Mutation; 29] = [
     Mutation {
         name: "xquery-decimal-division-scale",
         package: Package::Core,
@@ -284,5 +284,28 @@ pub const XQUERY_FUNCTIONS: [Mutation; 27] = [
         replacement: "\"true\"",
         integration: &["xquery_functions_10_to_16::casts_to_qnames_xquery_3_12"],
         unit: &["xquery::eval::tests::casts_to_qnames"],
+    },
+    Mutation {
+        name: "xquery-preserve-unannotated",
+        package: Package::Core,
+        breaks: "construction mode preserve makes an element `xdt:untyped`",
+        file: "src/xquery/eval/construct.rs",
+        original: "match builder.current().filter(|_| self.plan.settings.preserve) {",
+        replacement: "match builder.current().filter(|_| false) {",
+        integration: &[
+            "xml_query::construction_modes_annotate_elements_3_7_1_3",
+            "xml_validate_expression::construction_modes_of_validated_copies_3_7_1_3",
+        ],
+        unit: &["xquery::eval::tests::constructors::construction_modes_annotate_elements"],
+    },
+    Mutation {
+        name: "xmlelement-unannotated",
+        package: Package::Core,
+        breaks: "XMLELEMENT RETURNING SEQUENCE makes an element `xdt:untyped`",
+        file: "src/xml/element.rs",
+        original: "if let Some(element) = builder.current() {",
+        replacement: "if let Some(element) = builder.current().filter(|_| false) {",
+        integration: &["xml_query::construction_modes_annotate_elements_3_7_1_3"],
+        unit: &[],
     },
 ];

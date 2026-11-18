@@ -8,7 +8,7 @@
 //! recurses.
 
 use super::sequence::{Item, Node, Sequence};
-use super::tree::{Binding, Builder, ElementStart, Kind, NodeId, QName, Specified, Tree, XML_PREFIX};
+use super::tree::{Annotation, Binding, Builder, ElementStart, Kind, NodeId, QName, Specified, Tree, XML_PREFIX};
 use crate::error::{Code, Result, SqlError, SqlState};
 
 /// The one separator XQuery puts between adjacent atomic values made a
@@ -172,6 +172,12 @@ pub fn element(mut name: QName, mut attributes: Vec<Specified>, content: &[&Sequ
     }
     let mut builder = Builder::parentless();
     builder.start_element(ElementStart { name, bindings, attributes })?;
+    // [§10.13 GR4c viii] `element { $QNAME } { $SEQ }` in the static
+    // context of §10.20, whose construction mode is preserve [XQuery
+    // Appendix C.1], annotates the element `xs:anyType` [XQuery §3.7.3.1].
+    if let Some(element) = builder.current() {
+        builder.annotate(element, &Annotation::any_type(), (false, false, false))?;
+    }
     for child in children {
         match child {
             Piece::Text(text) => builder.text(&text)?,

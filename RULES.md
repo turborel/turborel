@@ -3001,7 +3001,11 @@ order of its nodes; between trees it is by where each tree is held,
 stable while any node of it is held (`xml::Node::document_order`). A
 constructor builds its element in a tree of its own with `Builder`, a
 direct element nested in it built in place, each node of an enclosed
-expression copied by the construction and copy-namespaces modes.
+expression copied by the construction and copy-namespaces modes. In
+construction mode preserve, the default, the element a constructor
+makes is annotated `xs:anyType` (`xml::Annotation::any_type`), as
+XMLELEMENT's is, which evaluates `element { $QNAME } { $SEQ }` in that
+default context; in strip it is `xdt:untyped`.
 
 The evaluation recurses as the plan nests and as functions call functions,
 so it counts each operation evaluated within another, each FLWOR clause

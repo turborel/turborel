@@ -1912,8 +1912,9 @@ expression of XQuery 1.0 is evaluated. Every function of XQuery 1.0
 Functions and Operators is built in, FULLY-NORMALIZED and substring
 matching by `UNICODE` and its tailorings excepted, which the text
 leaves optional, as the rows below say. Its Minimal Conformance [XQuery
-§5.1] is not claimed: an element constructed in construction mode
-preserve is annotated `xdt:untyped`, not `xs:anyType` [§3.7.1.3]. Of
+§5.1] is claimed: all of XQuery but its optional features, the
+implementation-defined items each defined below, the data model, and
+every function of XQuery 1.0 Functions and Operators. Of
 its optional features [XQuery §5.2] [§6.18 SR6 NOTE 28] the Full Axis
 Feature and the Schema Validation Feature [§5.2.2] are supported, the
 latter validating by registered XML Schemas whose components a query
@@ -2036,7 +2037,7 @@ err:XQST0009 [§5.2.1], Static Typing, Module and Serialization are not.
 | XQuery's limits | XQuery Appendix D | Expressions nested 64 deep; operations and function calls nested 256 deep as a query is evaluated; a sequence of 1,048,576 items; the nodes one evaluation constructs 64 MiB; past them SQLCODE -900 (`xquery/eval.rs`). |
 | Order of nodes of two trees | XQuery §2.4.1 | By where each tree is held in memory, stable while a query runs, every node of a tree together (`xml/sequence.rs`). |
 | XQuery's warnings | XQuery §2.3.1, Appendix D | None is raised. |
-| Type annotations | XQuery §2.2.1, §3.7.1.3 | No node has another than `xdt:untyped` of an element and `xdt:untypedAtomic` of an attribute; under construction mode preserve a constructed element too, where XQuery annotates it `xs:anyType`, so an element test of a type name matches it as it would an untyped one. |
+| Type annotations | XQuery §2.2.1, §3.7.1.3, §3.7.3.1, §4.6 | A validated node has the annotation its validation gives; a parsed one `xdt:untyped` of an element and `xdt:untypedAtomic` of an attribute. An element a query constructs is annotated `xs:anyType` in construction mode preserve, the default, and `xdt:untyped` in strip; preserve keeps a copied node's annotation, strip makes every copied element `xdt:untyped` and attribute `xdt:untypedAtomic`; an attribute a query constructs is `xdt:untypedAtomic`. XMLELEMENT and XMLFOREST RETURNING SEQUENCE make an element of `xs:anyType`, as `element { $QNAME } { $SEQ }` does in the default context of §10.20 [§10.13 GR4c viii]; a value of XML(CONTENT(UNTYPED)), as RETURNING CONTENT makes, has every element `xdt:untyped` [§10.19]. |
 | Copy-namespaces no-preserve | XQuery §3.7.1.3 | Each copied element declares the bindings its name and attributes' names use; one copied below another keeps too those its copied ancestors declare, as a tree holds bindings where they are declared. |
 | A prefix made for a constructed name | XQuery §3.7.4 | `ns1`, `ns2` and on, or the prefix taken followed by its next free number. |
 | XQuery's Unicode and XML versions | XQuery §2, §3.1.1, §3.7.1.1 | Names, characters, character references and attribute normalization of XML 1.1 and Namespaces in XML 1.1, as XMLQUERY reads by XML 1.1's lexical rules [§6.18 GR2a]. |

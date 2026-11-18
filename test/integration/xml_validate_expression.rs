@@ -113,3 +113,23 @@ fn which_schemas_are_in_scope_10_20() {
     b.commit().unwrap();
     assert_eq!(value(&b, "data((validate { . })/n) instance of xs:string", "<n>one</n>"), "true", "B.N, B's own");
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.7.1.3,
+/// §3.13, §4.6] an element validated then copied by a constructor keeps
+/// its type annotation, and so its typed value, in construction mode
+/// preserve, the default, the constructed element itself `xs:anyType`,
+/// not `xdt:untyped`; in strip the copy is `xdt:untyped`.
+#[test]
+fn construction_modes_of_validated_copies_3_7_1_3() {
+    let db = registered();
+    let a = db.session("A");
+    let copy = "let $v := validate { n } return <w>{$v}</w>";
+    let checks = |prolog: &str| {
+        format!(
+            "{prolog}({copy})/n instance of element(n, xs:integer), ({copy})/n instance of element(n, xdt:untyped), data(({copy})/n) instance of xs:integer"
+        )
+    };
+    assert_eq!(value(&a, &checks(""), "<n>7</n>"), "true false true");
+    assert_eq!(value(&a, &format!("({copy}) instance of element(w, xdt:untyped)"), "<n>7</n>"), "false");
+    assert_eq!(value(&a, &checks("declare construction strip; "), "<n>7</n>"), "false true false");
+}

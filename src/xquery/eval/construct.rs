@@ -18,7 +18,9 @@ use super::super::plan::{ComputedElement, Content, DirectElement, NameOp, Op, Pa
 use super::sequence::atomize;
 use super::{Evaluator, Focus, Frame, Seq};
 use crate::error::Result;
-use crate::xml::{Binding, Builder, Construction, Copying, ElementStart, Item, Kind, MAX_STORED, Node, QName, Specified, Tree, is_xml_id};
+use crate::xml::{
+    Annotation, Binding, Builder, Construction, Copying, ElementStart, Item, Kind, MAX_STORED, Node, QName, Specified, Tree, is_xml_id,
+};
 
 /// The one separator of adjacent atomic values made a text node or an
 /// attribute's value [XQuery §3.7.1.1, §3.7.1.3].
@@ -69,6 +71,20 @@ pub(super) fn id_value(name: &QName, value: String) -> String {
 }
 
 impl Evaluator<'_> {
+    /// The element just started in `builder` annotated `xs:anyType` in
+    /// construction mode preserve; in strip it is `xdt:untyped` [XQuery
+    /// §3.7.1.3, §3.7.3.1].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -900 if the tree would be too big.
+    fn annotated(&self, builder: &mut Builder) -> Result<()> {
+        match builder.current().filter(|_| self.plan.settings.preserve) {
+            Some(element) => builder.annotate(element, &Annotation::any_type(), (false, false, false)),
+            None => Ok(()),
+        }
+    }
+
     /// How a node of an enclosed expression is copied [XQuery §3.7.1.3].
     fn copying(&self) -> Copying {
         let s = &self.plan.settings;
@@ -173,6 +189,7 @@ impl Evaluator<'_> {
             None => (overridden(&e.inherited, &e.declared), Vec::new()),
         };
         let children = Self::start(builder, (e.name.clone(), attributes, declared), pieces, &own_scope)?;
+        self.annotated(builder)?;
         let inner_scope = [own_scope, children.1].concat();
         for piece in children.0 {
             self.add_piece(builder, piece, (frame, focus), &inner_scope)?;
@@ -249,6 +266,7 @@ impl Evaluator<'_> {
         let mut builder = Builder::parentless();
         let declared = overridden(&e.inherited, &[]);
         let (children, _) = Self::start(&mut builder, (name, Vec::new(), declared), pieces, &[])?;
+        self.annotated(&mut builder)?;
         for piece in children {
             self.add_piece(&mut builder, piece, (frame, focus), &[])?;
         }

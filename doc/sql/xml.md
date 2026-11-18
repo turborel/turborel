@@ -671,6 +671,29 @@ These are not supported: schema imports and library modules (error
 `err:XQST0009` or `err:XQST0016`), so a query names no type or element
 of a registered XML Schema.
 
+An element a query constructs has the type annotation `xs:anyType`, and
+an element it copies keeps its own, a validated element its type; after
+`declare construction strip;` each is `xdt:untyped`. An element test
+such as `element(*, xdt:untyped)` tells them apart. XMLELEMENT and
+XMLFOREST RETURNING SEQUENCE make an element of `xs:anyType` too. A
+value of XML(CONTENT(UNTYPED)), as RETURNING CONTENT makes, has every
+element `xdt:untyped`.
+
+```sql
+SELECT XMLCAST(XMLQUERY('<a/> instance of element(*, xdt:untyped)' NULL ON EMPTY) AS BOOLEAN), XMLCAST(XMLQUERY('declare construction strip; <a/> instance of element(*, xdt:untyped)' NULL ON EMPTY) AS BOOLEAN) FROM ORDERS2 WHERE ID = 1;
+SELECT XMLCAST(XMLQUERY('./* instance of element(*, xdt:untyped)' PASSING BY REF XMLELEMENT(NAME "e") NULL ON EMPTY) AS BOOLEAN) FROM ORDERS2 WHERE ID = 1;
+```
+```
+       |
+-------+-------
+ FALSE | TRUE
+(1 row)
+
+-------
+ TRUE
+(1 row)
+```
+
 A cast to `xs:QName`, and its constructor function, takes a string
 literal alone, as `xs:QName("h:td")` or `"td" cast as xs:QName`; any
 other operand fails as the query is prepared, with `err:XPST0083`. The

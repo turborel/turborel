@@ -150,8 +150,7 @@ features.
   one character;
   schema imports, so a query names the types and declarations of
   registered XML Schemas, which validate expressions already validate by;
-  the type annotation `xs:anyType` of an element constructed in
-  construction mode preserve; and more of a query's shapes answered by
+  and more of a query's shapes answered by
   the XML indexes ([Index structures](#index-structures)).
 - XML Schema: the Information Schema of registered XML Schemas (X160,
   X161). Registered XML Schemas, CREATE and DROP XML SCHEMA, the XMLSCHEMA

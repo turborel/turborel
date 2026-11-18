@@ -130,6 +130,29 @@ fn computed_names_and_prefixes() {
     assert_eq!(run(copied), "<p:e xmlns:p=\"urn:2\" xmlns:p1=\"urn:1\" p1:a=\"1\"/>");
     let taken = "<p:e xmlns:p=\"urn:2\" xmlns:p1=\"urn:3\">{<x xmlns:p=\"urn:1\" p:a=\"1\"/>/@*}</p:e>";
     assert_eq!(run(taken), "<p:e xmlns:p=\"urn:2\" xmlns:p1=\"urn:3\" xmlns:p2=\"urn:1\" p2:a=\"1\"/>");
-    assert_eq!(run("<a/> instance of element(*), <a/> instance of element(*, xdt:untyped)"), "true true");
+    assert_eq!(run("<a/> instance of element(*), <a/> instance of element(*, xs:anyType)"), "true true");
     assert_eq!(run("<a b=\"x&amp;y\" xmlns:q=\"urn:&amp;\"/>/@b/string()"), "x&amp;y", "serialized");
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.7.1.3,
+/// §3.7.3.1, §4.6, Appendix C.1] the type annotation of a constructed
+/// element by the construction mode: preserve, the default, `xs:anyType`,
+/// a copied element keeping its own; strip `xdt:untyped`, every copied
+/// element too; a direct and a computed constructor alike; an element of
+/// either typed value its string value, untyped.
+#[test]
+fn construction_modes_annotate_elements() {
+    let untyped = "instance of element(*, xdt:untyped)";
+    let any = "instance of element(*, xs:anyType)";
+    assert_eq!(run(&format!("<a/> {untyped}, element b {{}} {untyped}, <a/> {any}")), "false false true");
+    assert_eq!(run(&format!("declare construction strip; <a/> {untyped}, element b {{}} {untyped}")), "true true");
+    let copied = "declare variable $s := document { <s><t/></s> }; ";
+    assert_eq!(run(&format!("{copied}<a>{{$s/s}}</a>/s {untyped}")), "false");
+    assert_eq!(run(&format!("declare construction strip; {copied}<a>{{$s/s}}</a>/s {untyped}")), "true");
+    let kept = "declare construction preserve; declare variable $u := <u/>; ";
+    assert_eq!(run(&format!("{kept}<a>{{$u}}</a>/u {any}, <a>{{$u}}</a>/u {untyped}")), "true false");
+    let switched = "typeswitch (<a>1</a>) case element(*, xdt:untyped) return 'untyped' case element(*, xs:anyType) return 'any' default return 'none'";
+    assert_eq!(run(switched), "any");
+    assert_eq!(run(&format!("declare construction strip; {switched}")), "untyped");
+    assert_eq!(run("data(<a>1</a>) instance of xdt:untypedAtomic, data(<a b='2'/>/@b) instance of xdt:untypedAtomic"), "true true");
 }
