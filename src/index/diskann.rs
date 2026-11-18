@@ -12,7 +12,8 @@
 //! any index (D25). A bulk build (`Index::load`) runs Vamana's two passes
 //! [§2.3], or the merged build past its memory [§3.1]; an index filled
 //! row by row, as CREATE INDEX does while writers go on, grows by
-//! FreshDiskANN's inserts, its codes trained by maintenance.
+//! FreshDiskANN's inserts, its codes trained and its hot-node cache made
+//! again by maintenance.
 
 pub mod options;
 
@@ -43,6 +44,14 @@ pub const DISKANN_METHOD: &str = "diskann";
 /// \[DESIGN\] The most times an in-filtered search doubles its list while
 /// its filter leaves fewer rows than asked, as the engine's own filter.
 const MOST_ROUNDS: u32 = 16;
+/// \[DESIGN\] Dimensions a byte of the built-in PQ's code stands for when
+/// PQ_BYTES is 0, two. The PQ's own default of four leaves a 64-dimension
+/// vector 16 bytes, too coarse to guide a search to the true nearest of a
+/// cluster, whose distances differ little; at two the guided search
+/// reaches 0.99 recall@10 at a list of 80, the codes still an eighth of
+/// FLOAT32 vectors [DiskANN, NeurIPS 2019 §3.1, the compression a choice
+/// of memory].
+const DIMS_PER_CODE_BYTE: u32 = 2;
 
 /// \[EXTENSION\] The DiskANN index method, in one pager file.
 pub struct DiskAnnMethod {
@@ -56,9 +65,13 @@ impl DiskAnnMethod {
     }
 
     /// Creates its budgeted memory file lazily, when the first index is
-    /// made. A database attaches its memory budget before using it.
+    /// made. A database attaches its memory budget before using it. Its
+    /// pool is a database's default pool, not the 2 MiB of other methods
+    /// in memory, as a node is read from its page at every hop, and a
+    /// pool smaller than the graph misses on most hops, each miss a
+    /// checksum of the page.
     pub fn in_memory() -> DiskAnnMethod {
-        DiskAnnMethod { place: Place::in_memory() }
+        DiskAnnMethod { place: Place::sharing(MemoryPages::new(crate::db::POOL_BYTES)) }
     }
 
     pub(crate) fn sharing(memory: Arc<MemoryPages>) -> DiskAnnMethod {
@@ -82,7 +95,7 @@ impl DiskAnnMethod {
     fn plugins(&self, o: &Options, column: Column) -> Result<(Plugins, (String, String))> {
         let m = self.place.metric((&o.metric, true, o.shared.normalized), column)?;
         let metric = m.metric;
-        let quantizer = self.place.quantizer(&o.quantizer)?.map(|q| disk_quantizer(q, Arc::clone(&metric), o.shared.code_bytes));
+        let quantizer = self.place.quantizer(&o.quantizer)?.map(|q| disk_quantizer(q, Arc::clone(&metric), code_bytes(o, column)));
         let measure = distance(&metric, column);
         let plugins = Plugins { metric: Arc::new(move |a: &[f32], b: &[f32]| measure(a, b)), quantizer };
         Ok((plugins, m.names))
@@ -151,6 +164,16 @@ impl IndexMethod for DiskAnnMethod {
     fn checkpoint(&self) -> Result<()> {
         self.place.checkpoint()
     }
+}
+
+/// The bytes of a code of an index of `column` with options `o`, PQ_BYTES,
+/// or, if 0 and the quantizer is the built-in PQ, a byte for each
+/// `DIMS_PER_CODE_BYTE` dimensions; else 0, the quantizer's default.
+fn code_bytes(o: &Options, column: Column) -> usize {
+    if o.shared.code_bytes != 0 || o.quantizer != options::PQ {
+        return o.shared.code_bytes;
+    }
+    usize::try_from(column.dims.checked_div(DIMS_PER_CODE_BYTE).unwrap_or(1).max(1)).unwrap_or(1)
 }
 
 /// A DiskANN graph as a vector index's engine, and its RERANK.
@@ -262,5 +285,50 @@ impl Engine for DiskEngine {
             // old tuning, which still searches correctly.
             let _ = self.ann.retune(o.tuning);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::{Decimal, Value};
+    use crate::vector::Element;
+
+    /// The options of a DiskANN index setting `set`.
+    fn options_setting(set: &[(&str, Value)]) -> Options {
+        let mut desc = default_desc(DISKANN_METHOD);
+        desc.options = set.iter().map(|(name, value)| ((*name).to_owned(), value.clone())).collect();
+        options_of(&desc).unwrap()
+    }
+
+    /// Verifies: [EXTENSION] [DiskANN, NeurIPS 2019 §3.1] With PQ_BYTES 0
+    /// the built-in PQ's codes of a 64-dimension column are 32 bytes, half
+    /// the dimensions, not the PQ's own default of 16, too coarse to guide
+    /// a search on dense clusters; PQ_BYTES set is taken as set; another
+    /// quantizer keeps its own default (0); and the option says so.
+    #[test]
+    fn diskann_codes_default_to_half_the_dimensions() {
+        let column = Column { dims: 64, element: Element::Float32 };
+        assert_eq!(code_bytes(&options_setting(&[]), column), 32);
+        let eight = Value::Exact(Decimal::new(8, 0));
+        assert_eq!(code_bytes(&options_setting(&[(options::PQ_BYTES, eight)]), column), 8);
+        let other = Value::Char("BQ".into());
+        assert_eq!(code_bytes(&options_setting(&[(options::QUANTIZER, other)]), column), 0);
+        assert_eq!(code_bytes(&options_setting(&[]), Column { dims: 1, element: Element::Float32 }), 1);
+        let declared = options::options();
+        let doc = declared.iter().find(|o| o.name == options::PQ_BYTES).map(|o| o.doc.as_str());
+        assert!(doc.is_some_and(|d| d.contains("half the dimensions")), "{doc:?}");
+    }
+
+    /// Verifies: [DESIGN] A DiskANN method in memory pools its pages in a
+    /// database's default pool, not the 2 MiB of the other methods in
+    /// memory. Its searches read a node's page at every hop, and a pool
+    /// smaller than the graph missed on most of them, each miss a
+    /// checksum of the page (a 20000-node build took 80 s, not 17).
+    #[test]
+    fn diskann_in_memory_pools_as_a_database() {
+        let (pool, _) = DiskAnnMethod::in_memory().place.files().unwrap();
+        let page = usize::try_from(crate::disk::pager::DEFAULT_PAGE_SIZE).unwrap();
+        assert_eq!(pool.frames(), crate::db::POOL_BYTES.checked_div(page).unwrap());
     }
 }

@@ -81,7 +81,9 @@ and NORMALIZED in its own group. TARGET_ACCURACY, 90 by default, is the
 share of the true nearest rows a search aims at when the query names no
 accuracy or parameters of its own. Setting the method's own search list,
 EF_SEARCH or PROBES makes the index search by that instead. PQ_BYTES is
-the bytes of a quantizer's code, 0 for its default. NORMALIZED ON
+the bytes of a quantizer's code, 0 for its default. DiskANN's 0 with the
+built-in PQ is half the dimensions, a byte for each two, as codes any
+coarser guide its search poorly. NORMALIZED ON
 declares every vector of the column of norm 1, and a row whose vector is
 not is refused with SQLCODE -301.
 
@@ -103,6 +105,9 @@ ALTER INDEX REBUILD builds the index again, with the parameters given
 set first, each named as CREATE VECTOR INDEX names it. MERGE DELTA runs
 now the maintenance the index otherwise leaves to the database's
 maintenance job, such as merging the rows changed since it was built.
+A DiskANN index grown row by row also trains its codes then, once it
+holds DISKANN.TRAIN_AT rows, and caches again the nodes its searches
+pass first each time its rows double.
 LOAD takes the index's structure into memory, and UNLOAD lets it go, for
 a method that keeps it there. Each is made at once, apart from any
 transaction.

@@ -103,8 +103,16 @@ pub fn options() -> Vec<TableOption> {
     all.extend(kept_options());
     all.extend(answer_options());
     all.extend(shared(GROUP));
+    for option in all.iter_mut().filter(|o| o.name == PQ_BYTES) {
+        option.doc = PQ_BYTES_DOC.into();
+    }
     all
 }
+
+/// DISKANN.PQ_BYTES's description, whose 0 is the built-in PQ's default
+/// of DiskANN, half the dimensions (`index/diskann.rs`).
+const PQ_BYTES_DOC: &str =
+    "Bytes of a quantizer's code of a vector; 0 for the quantizer's default, which for the built-in PQ is half the dimensions.";
 
 /// An option naming a plug-in, which rebuilds the index.
 fn word(name: &str, default: &str, doc: &str) -> TableOption {
@@ -245,7 +253,7 @@ pub struct Options {
     /// Whether a search gives its whole list for the executor to order
     /// again, or only the rows asked.
     pub rerank: bool,
-    /// TARGET_ACCURACY, PQ_BYTES (0 for a quarter of the dimensions) and
+    /// TARGET_ACCURACY, PQ_BYTES (0 for half the dimensions of PQ) and
     /// NORMALIZED.
     pub(crate) shared: Shared,
 }

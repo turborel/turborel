@@ -5,7 +5,8 @@
 //! list L and beam width W, HNSW's efSearch, IVF's NPROBE. Each sweep
 //! point reports its queries a second and, as a note, its recall@10
 //! against the exact ten nearest by COSINE. Set TURBOREL_VECTOR_ROWS for
-//! scale (default 20000) and TURBOREL_VECTOR_METHOD to one method.
+//! scale (default 20000) and TURBOREL_VECTOR_METHOD to one method. The
+//! build's time includes the maintenance due as it goes.
 
 use std::collections::HashSet;
 use std::hint::black_box;
@@ -74,6 +75,11 @@ fn build(name: &str, method: &dyn IndexMethod, data: &[Vec<f32>]) -> Arc<dyn Ind
     let started = Instant::now();
     for (row, v) in data.iter().enumerate() {
         index.insert(Key(vec![vector_value(v)]), row as u64).unwrap();
+        // Maintenance as the database's job does it while writers go on,
+        // so DiskANN's codes are trained, and its cache made, as it grows.
+        if index.maintenance_due() {
+            index.maintain().unwrap();
+        }
     }
     let seconds = started.elapsed().as_secs_f64();
     harness::note(&format!("{name} built of {} inserts in {seconds:.2} s, {:.0} a second", data.len(), data.len() as f64 / seconds));

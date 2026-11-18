@@ -110,6 +110,24 @@ impl Frontier {
         }
     }
 
+    /// Gives expanded `id` its full-precision `distance` in place of its
+    /// guiding one, moving it to its place by it. The read that expanded
+    /// it brought its vector, so the list is ordered, and cut to L, by
+    /// exact distances wherever they are known, not by coarse codes
+    /// [DiskANN, NeurIPS 2019 §3.5, the re-rank folded into the list].
+    pub(super) fn settle(&mut self, id: u32, distance: f32) {
+        let Some(from) = self.items.iter().position(|e| e.id == id) else { return };
+        let entry = self.items.remove(from);
+        if from < self.first_open {
+            self.first_open = self.first_open.saturating_sub(1);
+        }
+        let to = self.items.partition_point(|e| (e.distance, e.id) < (distance, id));
+        self.items.insert(to, Entry { distance, ..entry });
+        if to <= self.first_open {
+            self.first_open = self.first_open.saturating_add(1);
+        }
+    }
+
     /// Empties it for another search of list size `limit`.
     pub(super) fn reset(&mut self, limit: usize) {
         self.items.clear();
@@ -143,5 +161,29 @@ mod tests {
         assert!(v.visit(2) && !v.visit(2) && !v.visit(9));
         v.start(4, None).unwrap();
         assert!(v.visit(2));
+    }
+
+    /// Verifies: [DESIGN] [DiskANN, NeurIPS 2019 §3.5] An expanded entry
+    /// takes its full-precision distance and moves to its place by it,
+    /// the unexpanded entries still taken nearest first; a farther exact
+    /// distance lets a nearer candidate in ahead of it, and one past L
+    /// drops it from the list.
+    #[test]
+    fn an_expanded_entry_takes_its_exact_distance() {
+        let mut f = Frontier::new(3);
+        for (d, id) in [(1.0_f32, 1), (2.0_f32, 2), (3.0_f32, 3)] {
+            f.add(d, id);
+        }
+        let mut out = Vec::new();
+        f.take(1, &mut out);
+        f.settle(1, 2.5_f32);
+        assert_eq!(f.items.iter().map(|e| e.id).collect::<Vec<_>>(), [2, 1, 3]);
+        f.take(1, &mut out);
+        assert_eq!(out.iter().map(|e| e.id).collect::<Vec<_>>(), [2]);
+        f.settle(2, 0.5_f32);
+        f.add(0.7_f32, 7);
+        assert_eq!(f.items.iter().map(|e| e.id).collect::<Vec<_>>(), [2, 7, 1]);
+        f.take(2, &mut out);
+        assert_eq!(out.iter().map(|e| e.id).collect::<Vec<_>>(), [7]);
     }
 }
