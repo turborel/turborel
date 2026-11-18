@@ -136,6 +136,11 @@ fn polygon_pairs(bench: &Bench) {
             PAIR_ROUNDS
         });
     }
+    let (left, right) = (ring(1_024, 50.0_f64, 25.0_f64), ring(1_024, 110.0_f64, 25.0_f64));
+    bench.measure(Case::new("1024-edge circles apart, decoded distance", "pairs"), || {
+        black_box(left.distance(black_box(&right)).unwrap());
+        1
+    });
 }
 
 /// A regular polygon of `edges` edges about (`x`, 50) with radius `r`.

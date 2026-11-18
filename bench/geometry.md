@@ -462,3 +462,30 @@ Preparation rates stayed within noise, apart from the square's at -6.2%
 with spreads of 3.2-4.2%; a square is never filed. The filed edges of a
 4,096-edge polygon hold its cells' offsets and each edge once per cell it
 may touch, reserved from the budget and released with the operand.
+
+## Distance by an expanding nearest-edge search
+
+The distance between two lines, or a line and a ring, or two rings, took
+the least measure over every pair of their edges. Chains with at least
+4,096 edge pairs now put one chain's edge envelopes in a packed
+hierarchy, and measure each edge of the other only against edges whose
+envelopes come within the best measure so far, widened by far more than
+a measure's rounding (RULES.md D85). Every pair whose measure could be
+least is still measured, so the distance is the same to the bit, which a
+test checks on 300 walks at scales from 1e-9 to 1e9.
+
+Measured on an Apple M4, Rust 1.99.0, second runs of each side:
+
+```text
+cargo xtask bench geometry --save near-before
+cargo xtask bench geometry --save near --compare near-before
+```
+
+| Decoded distance | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| 1,024-edge circles 10 units apart | 18 | 5,572 | 310x |
+
+The 8-edge and 128-edge preparation cases ran 9.3% and 11.9% slower in
+the second after-run; this change does not touch preparation, and those
+two cases moved by similar amounts between unchanged runs earlier in the
+night.

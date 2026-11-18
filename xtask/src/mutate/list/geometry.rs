@@ -4,6 +4,7 @@ pub(super) mod buckets;
 pub(super) mod cells;
 pub(super) mod filed;
 pub(super) mod orientation;
+pub(super) mod reach;
 
 use super::{Mutation, Package};
 

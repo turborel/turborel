@@ -3010,6 +3010,15 @@ or intermediate overflow. Final magnitudes remain approximate binary64
 values; underflow may round a positive distance to zero. Only a final
 minimum beyond the finite range raises SQLSTATE 22003, not an intermediate
 component distance. It is not a substitute for a topological predicate.
+Chains with at least 4,096 pairs of edges are measured by an expanding
+search: one chain's edge envelopes go into a packed hierarchy, and each
+edge of the other is measured only against edges whose envelopes come
+within the best measure so far, widened by 2^-20 of it plus 64 units in
+the last place of the largest coordinate, far more than any rounding of
+a measure. Every pair whose measure could be least is still measured, by
+the same per-pair measure, so the result is the nested loops' to the
+bit; where the search's arithmetic would leave the finite range, every
+pair is measured as before.
 
 Distance bounds round each positive operation down. The Euclidean term
 uses unscaled squares and a square root, combined with the greatest axis

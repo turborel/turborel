@@ -151,6 +151,7 @@ fn last() -> [&'static [Mutation]; 37] {
         &super::geometry::cells::CELLS,
         &super::geometry::buckets::BUCKETS,
         &super::geometry::filed::FILED,
+        &super::geometry::reach::REACH,
         &super::budget::BUDGET,
         &super::spatial_types::SPATIAL_TYPES,
         &super::spatial_curves::SPATIAL_CURVES,

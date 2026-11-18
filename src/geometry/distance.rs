@@ -3,6 +3,8 @@
 //! by points or line segments on their boundaries. Empty components
 //! contribute infinity, never a spurious zero or an early overflow error.
 
+mod near;
+
 use super::crossing::segments;
 use super::robust::distance::{point, segment};
 use super::shape::{Point, Shape};
@@ -44,9 +46,18 @@ fn to_point(p: Point, shape: &Shape) -> f64 {
     }
 }
 
+/// The least measure between the chains' edges: by an expanding search
+/// once the pairs are many enough to repay it, else, or where its
+/// arithmetic declines, over every pair.
 fn lines(left: &[Point], right: &[Point]) -> f64 {
-    minimum(segments(left).flat_map(|(a, b)| segments(right).map(move |(c, d)| between(a, b, c, d))))
+    let pairs = left.len().saturating_sub(1).saturating_mul(right.len().saturating_sub(1));
+    let searched = (pairs >= SEARCH_PAIRS).then(|| near::nearest(left, right)).flatten();
+    searched.unwrap_or_else(|| minimum(segments(left).flat_map(|(a, b)| segments(right).map(move |(c, d)| between(a, b, c, d)))))
 }
+
+/// \[DESIGN\] Edge pairs from which an expanding search repays building
+/// its hierarchy.
+const SEARCH_PAIRS: usize = 4_096;
 
 fn between(a: Point, b: Point, c: Point, d: Point) -> f64 {
     segment(a, c, d).min(segment(b, c, d)).min(segment(c, a, b)).min(segment(d, a, b))
