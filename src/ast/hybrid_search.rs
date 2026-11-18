@@ -24,6 +24,17 @@ pub struct SearchValue {
     pub literal: Option<String>,
 }
 
+/// Which value argument of HYBRID_SEARCH a copy of its text in the query
+/// it stands for is: each copy's dynamic parameters take that argument's
+/// numbers (`Parser::hybrid_expansion`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchArgument {
+    /// QUERY_TEXT.
+    Text,
+    /// QUERY_VECTOR.
+    Vector,
+}
+
 /// \[EXTENSION\] `HYBRID_SEARCH ( <hybrid argument> [{, <hybrid
 /// argument>}...] ) [AS] <correlation name> [(<derived column list>)]`.
 #[derive(Debug, Clone)]

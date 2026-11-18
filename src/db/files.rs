@@ -311,6 +311,9 @@ impl Database {
     /// of zones to settle (`rows/zones.rs`).
     pub(super) fn open_managed(&self, fs: &Arc<dyn FileSystem>, dir: &Path, options: &OpenOptions, mode: Mode) -> Result<Opened> {
         let opened = self.noted(self.open_from(fs, dir, options, mode))?;
+        if matches!(mode, Mode::Serve) {
+            self.hybrid_settled()?;
+        }
         self.due_at_open()?;
         self.emit(&Event::Opened(opened));
         Ok(opened)

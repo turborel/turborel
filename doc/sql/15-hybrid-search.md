@@ -112,12 +112,29 @@ model embeds each chunk. MODE SYNC, the default, embeds a chunk as it
 is written, and MODE ASYNC after commit, by the queue that fills
 pipelines.
 
-The index keeps its chunks in a table of its own, named after it with
-`_CHUNKS`, of the columns DOC_ID, CHUNK_ID, CHUNK_TEXT and EMBEDDING. A
-vector pipeline named after it with `_PIPELINE` keeps that table in
-step with the text. The index's parts are of CHUNK_TEXT and EMBEDDING.
-DROP INDEX drops the pipeline and the table with it. HYBRID_SEARCH of
-the index gives each document once, by its key, with its best chunk.
+The index is a full-text index of the text column, so CONTAINS and
+RANK of that column read it, a document a row. It keeps its chunks in a
+table of its own, named after it with `_CHUNKS`, of the columns DOC_ID,
+CHUNK_ID, CHUNK_TEXT and EMBEDDING. An index named after it with
+`_VECTORS`, of its vector part's method and options, orders their
+embeddings. A vector pipeline named after it with `_PIPELINE` keeps the
+table in step with the text. DROP INDEX drops them all.
+
+HYBRID_SEARCH of the index ranks the documents by their words, and
+finds the chunks nearest the vector searched for. It gives each
+document once, by its key, with its nearest chunk, or of a document
+found by its words alone, its chunk ranked highest for them.
+
+ALTER INDEX SET of HYBRID.MODEL, HYBRID.CHUNKER, HYBRID.MODE or
+HYBRID.VECTOR_METHOD makes the chunks and their index again, the text
+embedded again, as a rebuild does. A model not there or a chunking not
+one is refused first, and the index is left as it was. REBUILD builds
+the vector index of the chunks again too.
+
+Each of these is made, and committed, in turn. While they are,
+HYBRID.STATE is BUILDING, and while they are dropped, DROPPING. A
+database stopped between them drops, as it opens, each index left so
+and what it keeps, so none is left half made.
 
 ```sql
 CREATE TABLE NOTES (ID INTEGER PRIMARY KEY, BODY VARCHAR(400));
@@ -210,13 +227,12 @@ the best, 2 for the next, and so on, ties taken in DOC_ID order.
 | TEXT_RANK | Its rank in the text list, or null |
 | CHUNK_TEXT | Its text, or its best chunk |
 
-It gives the TOP_N rows of the highest SCORE, ties in DOC_ID order. The
-text column is the chunk: a row is one chunk of a document.
+It gives the TOP_N rows of the highest SCORE, ties in DOC_ID order.
 
 QUERY_TEXT and QUERY_VECTOR may be any value expressions, dynamic
-parameters among them. A QUERY_TEXT that holds a dynamic parameter needs
-its QUERY_VECTOR, as an embedded QUERY_TEXT is read twice. The other
-arguments are literals.
+parameters among them. A parameter of QUERY_TEXT is one parameter, of
+its place in the statement, however often the search reads it. The
+other arguments are literals.
 
 ## Fusion
 
@@ -320,13 +336,15 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): HYBRID_SEARCH names its QUERY_VECTOR, a
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 2A000 | -103 | A required argument is missing, or one is written twice |
-| 2A000 | -103 | QUERY_VECTOR is left out of a search of an index of no MODEL, or of a QUERY_TEXT of a dynamic parameter |
+| 2A000 | -103 | QUERY_VECTOR is left out of a search of an index of no MODEL |
 | 2A000 | -103 | INDEX names no hybrid index, or its table's primary key is not one column |
 | 2A000 | -103 | A weight is not a number |
 | 2A000 | -102 | An argument is not one of those above, or FUSION is neither RRF nor WEIGHTED |
 | 2A000 | -103 | A hybrid index of a MODEL names two columns, or its table's primary key is not one column, or its model is not there |
 | 22000 | -301 | CHUNKER is no chunking CHUNK_TEXT reads |
-| 2A000 | -103 | A hybrid index of no MODEL is given a CHUNKER or a MODE |
+| 2A000 | -103 | A hybrid index of no MODEL is given a CHUNKER or a MODE, or HYBRID.STATE is given |
+| 2A000 | -103 | ALTER INDEX gives an index of two columns a MODEL, or takes one's MODEL away, or names a model not there |
+| 2A000 | -103 | A table, pipeline or index of the name an index of a MODEL gives its own is there |
 | 0A000 | -900 | A hybrid index of no MODEL names one column |
 
 ## See also

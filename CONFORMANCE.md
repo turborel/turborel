@@ -2427,7 +2427,7 @@ and on that page.
 | `hnsw` | A layered graph in memory, an image and a log in pages (D97) | HNSW. |
 | `ivf` | k-means centroids in memory, lists in pages written through (D98) | IVF. |
 | `inverted` | Postings of a sparse vector's dimensions, searched by block-max WAND (D99) | INVERTED. |
-| `hybrid` | A `fulltext` part and a vector part of two columns, or of a table of chunks a pipeline keeps (D100) | HYBRID. and each part's |
+| `hybrid` | A `fulltext` part and a vector part of two columns, or of a MODEL a `fulltext` index of the text with a table of chunks, their vector index and a pipeline (D100) | HYBRID. and each part's |
 
 `Session::index_accuracy_report(index, samples, k)` gives an index's
 recall against the exact answer (`db/indexes/accuracy.rs`), as
@@ -2484,11 +2484,15 @@ HYBRID_SEARCH reads each part's top CANDIDATES rows, TOP_N × 4 by
 default, and fuses them by RRF, of K 60 by default, or by WEIGHTED
 min-max normalized scores. Its columns are DOC_ID (the table's
 one-column primary key), SCORE, VECTOR_SCORE, TEXT_SCORE, VECTOR_RANK,
-TEXT_RANK and CHUNK_TEXT. EXPLAIN shows both parts' reads. An index of
-a MODEL keeps a table of its text's chunks and their embeddings through
-a vector pipeline, and indexes that. Its search gives each document
-once, at its best chunk, and of no QUERY_VECTOR embeds QUERY_TEXT by the
-model. The text part serves CONTAINS of the text column too.
+TEXT_RANK and CHUNK_TEXT. EXPLAIN shows both parts' reads. The text
+part serves CONTAINS of the text column too. An index of a MODEL is a
+full-text index of its text, read by CONTAINS and RANK a document a
+row, with a table of the text's chunks, a vector index of their
+embeddings and a pipeline that keeps them. Its search gives each
+document once, at its best chunk, and of no QUERY_VECTOR embeds
+QUERY_TEXT by the model. ALTER INDEX of its MODEL, CHUNKER or MODE makes
+its chunks again, and a database that stopped while one was made or
+dropped drops it whole as it opens.
 
 ### Embedding models and pipelines
 
@@ -2580,8 +2584,8 @@ out of scope. A clause not yet done has no row.
 | §10.5 R10.8 | ONLINE as above; writes go to the index itself, with no delta store (R14.2) |
 | §10.6 | REBUILD [ONLINE] [PARAMETERS], MERGE DELTA, which runs the index's maintenance now, and LOAD and UNLOAD, which change nothing of a method whose structure is always resident or always paged. INDEX_ACCURACY_REPORT is the Rust call `Session::index_accuracy_report` |
 | §10.6 R10.10 | Maintenance consolidates or retrains past 20% dead entries |
-| §11.1 | CREATE HYBRID VECTOR INDEX of a text and a vector column, VECTOR_IDX and TEXT_IDX, or of a text column, MODEL, CHUNKER and MODE SYNC or ASYNC, by a table of chunks and a pipeline dropped with the index (D100); CONTAINS of the text column reads the text part |
-| §11.2 | HYBRID_SEARCH, its vector list of QUERY_VECTOR, or of QUERY_TEXT embedded by the index's MODEL, and its text list of QUERY_TEXT; a QUERY_TEXT of a dynamic parameter needs its QUERY_VECTOR; the plain SQL form is ordinary SQL, a radius in WHERE reading the index |
+| §11.1 | CREATE HYBRID VECTOR INDEX of a text and a vector column, VECTOR_IDX and TEXT_IDX, or of a text column, MODEL, CHUNKER and MODE SYNC or ASYNC: a full-text index on the text, the chunks, their embeddings and their vector index, kept by a pipeline, made in steps no crash leaves half done, dropped with the index, and made again by ALTER INDEX of MODEL, CHUNKER or MODE (D100); CONTAINS and RANK of the text read the index a document a row |
+| §11.2 | HYBRID_SEARCH, its vector list of QUERY_VECTOR, or of QUERY_TEXT embedded by the index's MODEL, and its text list of QUERY_TEXT; a dynamic parameter read twice is one; the plain SQL form is ordinary SQL, a radius in WHERE reading the index |
 | §11.3, R11.1, R11.2 | Yes; CHUNK_TEXT is the row's text column, or of an index of a MODEL the document's best chunk |
 | §12.1 | CREATE, ALTER and DROP EMBEDDING MODEL [FROM FILE] of a registered plug-in (D101); HASH_DENSE and HASH_SPARSE built in, others the host's |
 | §12.2 | EMBED(model, text [, 'query' \| 'document']) and VECTOR_EMBEDDING of EMBED's arguments, and EMBED_VERSION |

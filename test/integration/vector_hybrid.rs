@@ -2,6 +2,8 @@
 //! HYBRID_SEARCH (§11.2, §11.3), and the inverted index of sparse vectors
 //! (§10.3) as an approximate index, through SQL.
 
+mod altered;
+mod crash;
 mod ddl;
 mod embedded;
 mod fixture;

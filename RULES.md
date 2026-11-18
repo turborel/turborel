@@ -3616,19 +3616,35 @@ the projected key.
 An index of one text column and a MODEL embeds its text
 (`db/index_statements/hybrid_embedded.rs`). The parser keeps MODEL,
 CHUNKER and MODE as the options HYBRID.MODEL, HYBRID.CHUNKER and
-HYBRID.MODE. Making it runs, in a session of the same user, CREATE
-TABLE i_CHUNKS (DOC_ID, CHUNK_ID, CHUNK_TEXT, EMBEDDING) AS ... WITH NO
-DATA and CREATE VECTOR PIPELINE i_PIPELINE of the table's key and text,
-the CHUNKER, the MODEL and the MODE (D102), and commits. The hybrid
-index is then made on i_CHUNKS (CHUNK_TEXT, EMBEDDING), and if it is
-refused the pipeline and table are dropped. DROP INDEX drops them after
-the index. The statements run in a session of their own, as a busy
-session refuses another statement, so they commit apart from the index
-statement. Two columns and a MODEL, a CHUNKER or MODE of no MODEL, and
-a table whose primary key is not one column are -103. One column and no
-MODEL is -900. The text part indexes chunks, so RANK and CONTAINS of the
-chunks' table rank chunks, and ALTER INDEX of those options changes the
-option alone.
+HYBRID.MODE. §11.1 says the index stores "a full-text index on body,
+the chunks, their embeddings and an ANN index over the embeddings", so
+it is four objects. The hybrid index `i` is of the text column alone,
+its full-text part and nothing else, so CONTAINS and RANK of the text
+read it a document a row. A table i_CHUNKS (DOC_ID, CHUNK_ID,
+CHUNK_TEXT, EMBEDDING) holds the chunks. An index i_VECTORS of the
+vector part's method and options orders the embeddings. A vector
+pipeline i_PIPELINE (D102) keeps the table in step with the text.
+
+An index statement runs outside a transaction and its steps cannot
+share one, so they are ordered. `i` is made first with HYBRID.STATE
+BUILDING, then the table, the vector index, and the pipeline, which
+fills the table, each committed, then `i` is set READY. DROP INDEX sets
+DROPPING, then drops the pipeline, the vector index, the table and `i`.
+A failed step drops what was made. A database that opens to serve drops
+every such index not READY and what it keeps, before it serves
+(`hybrid_settled.rs`). HYBRID.STATE is the index's own, and a statement
+that gives it is -103. The helper statements run in a session of the
+same user, as a busy session refuses another statement.
+
+ALTER INDEX of MODEL, CHUNKER, MODE or VECTOR_METHOD is a rebuild, as
+§10.6's REBUILD PARAMETERS is (`hybrid_altered.rs`). The model is
+checked to be there and the chunking to parse before anything changes.
+Then `i` is set BUILDING with the new options, what it keeps is dropped
+and made again, the text embedded again, and `i` set READY. A vector
+part's other option goes to i_VECTORS too, and REBUILD rebuilds it.
+Two columns and a MODEL, a CHUNKER or MODE of no MODEL, a MODEL taken
+away, a table whose primary key is not one column, and a name of a
+helper already taken are -103. One column and no MODEL is -900.
 
 HYBRID_SEARCH (`parser/query/hybrid_search.rs`) is a table reference of
 its own. The binder (`binder/hybrid_search.rs`) writes the query it
@@ -3646,14 +3662,21 @@ weight to 1. The query is read again with the statement's dynamic
 parameters before the first value argument counted, so each `?` keeps
 its number.
 
-Of an index that embeds its text, DOC_ID is the pipeline's key column,
-and each list keeps a document once, at its best chunk, by ROW_NUMBER
-over the document. QUERY_VECTOR may then be left out, and the vector
-searched for is EMBED of the pipeline's model, QUERY_TEXT and 'query'
-(§11.2). QUERY_TEXT is then written twice in the query, so one that
-holds a dynamic parameter is refused with -103, as its second copy
-would take the next parameter's number. Of an index of no MODEL, a
-missing QUERY_VECTOR is -103.
+Of an index that embeds its text, the text list ranks the documents
+through `i`, DOC_ID being the table's key, and the vector list reads
+i_CHUNKS through i_VECTORS. Each list keeps a document once, the vector
+list at its nearest chunk, by ROW_NUMBER over the document. A document
+of the text list alone is given its chunk ranked highest for the words
+(R11.2). QUERY_VECTOR may then be left out, and the vector searched for
+is EMBED of the pipeline's model, QUERY_TEXT cast to CHARACTER VARYING
+and 'query' (§11.2). Of an index of no MODEL, a missing QUERY_VECTOR is
+-103.
+
+The binder notes which argument each copy of a value argument in the
+query is, as QUERY_TEXT may be written three times. The parser numbers
+the k-th dynamic parameter of the query by a table of numbers built
+from those copies, each copy's taking its argument's numbers in the
+statement, so a parameter read twice is one parameter.
 
 #### D101. Embedding models are schema objects bound to registered plug-ins
 

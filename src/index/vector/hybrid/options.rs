@@ -23,6 +23,17 @@ pub const CHUNKER_OPTION: &str = "HYBRID.CHUNKER";
 pub const MODE_OPTION: &str = "HYBRID.MODE";
 /// The modes, SYNC the default.
 const MODES: [&str; 2] = ["SYNC", "ASYNC"];
+/// \[EXTENSION\] The option of where an index that embeds its text is in
+/// making or dropping what it keeps beside it, which it sets itself.
+pub const STATE_OPTION: &str = "HYBRID.STATE";
+/// Its states: READY, the default, then being made and being dropped.
+pub const STATES: [&str; 3] = ["READY", "BUILDING", "DROPPING"];
+/// The suffixes of the names of what such an index keeps beside it, in
+/// its table's schema: its table of chunks, the pipeline that fills it,
+/// and the vector index of the chunks' embeddings.
+pub const CHUNKS_SUFFIX: &str = "_CHUNKS";
+pub const PIPELINE_SUFFIX: &str = "_PIPELINE";
+pub const VECTORS_SUFFIX: &str = "_VECTORS";
 /// The most characters of a model's name or a chunking.
 const MOST_TEXT: usize = 1024;
 /// The methods the vector part may be of, as the option names them.
@@ -58,7 +69,28 @@ pub(super) fn declared() -> Vec<TableOption> {
             Rebuild::No,
             "SYNC to embed a chunk as it is written, ASYNC after commit, if the index embeds its text (R12.6).",
         ),
+        TableOption::new(
+            (STATE_OPTION, Kind::Choice(&STATES), Value::Char(STATES[0].to_owned())),
+            Rebuild::No,
+            "READY, or BUILDING or DROPPING while an index that embeds its text makes or drops its chunks; set by the index alone.",
+        ),
     ]
+}
+
+/// \[EXTENSION\] Whether an index of `method` and `options` embeds its
+/// text by a MODEL.
+pub fn embeds(method: &str, options: &[(String, Value)]) -> bool {
+    let named = |(name, value): &(String, Value)| {
+        if let Value::Char(model) = value { name == MODEL_OPTION && !model.trim().is_empty() } else { false }
+    };
+    method == super::HYBRID_METHOD && options.iter().any(named)
+}
+
+/// \[EXTENSION\] Of an index that embeds its text, the method and the
+/// options of the vector index of its chunks' embeddings.
+pub fn vector_part(desc: &IndexDesc) -> (String, Vec<(String, Value)>) {
+    let (_, vector) = parts(desc);
+    (vector.method, vector.options)
 }
 
 /// The method of the vector part `desc` names.

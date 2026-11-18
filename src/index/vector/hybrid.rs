@@ -16,18 +16,23 @@
 //! index of the part's method (`index.rs`).
 //!
 //! An index that embeds its text itself, by a MODEL and a CHUNKER (§11.1,
-//! §12), is one of these over a table of the text's chunks and their
-//! embeddings, which a vector pipeline keeps
+//! §12), is one of these on the text column alone. It is then its text
+//! part, so CONTAINS and RANK are of whole documents. The chunks and
+//! their embeddings live in a table beside it, with a vector index of
+//! their own and a pipeline that keeps them
 //! (`db/index_statements/hybrid_embedded.rs`). Its options HYBRID.MODEL,
-//! HYBRID.CHUNKER and HYBRID.MODE say how, and its parts read none of
-//! them.
+//! HYBRID.CHUNKER and HYBRID.MODE say how, and HYBRID.STATE says whether
+//! those objects are whole.
 
 mod index;
 mod options;
 
 use std::sync::Arc;
 
-pub use options::{CHUNKER_OPTION, MODE_OPTION, MODEL_OPTION, VECTOR_METHOD_OPTION};
+pub use options::{
+    CHUNKER_OPTION, CHUNKS_SUFFIX, MODE_OPTION, MODEL_OPTION, PIPELINE_SUFFIX, STATE_OPTION, STATES, VECTOR_METHOD_OPTION, VECTORS_SUFFIX,
+    embeds, vector_part,
+};
 
 use self::index::{HybridIndex, TEXT, VECTOR};
 use crate::catalog::{IndexDesc, TableDesc};
@@ -125,7 +130,10 @@ impl HybridMethod {
     /// nothing to open.
     fn index(&self, columns: &[DataType], on: Option<(&TableDesc, &IndexDesc)>, locator: Option<&[u8]>) -> Result<Option<Box<dyn Index>>> {
         let [text_type, vector_type] = columns else {
-            return Err(unsupported("indexes two columns, a document's text and its embedding (§11.1)"));
+            return match columns {
+                [text_type] => self.text_alone(text_type, on, locator),
+                _ => Err(unsupported("indexes two columns, a document's text and its embedding, or a text alone (§11.1)")),
+            };
         };
         let (text_type, vector_type) = (std::slice::from_ref(text_type), std::slice::from_ref(vector_type));
         if on.is_some_and(|(_, desc)| desc.unique) {
@@ -147,6 +155,27 @@ impl HybridMethod {
             (None, None) => (Some(self.text.create(text_type)?), vector_method.create(vector_type).map(Some)),
         };
         both(text, vector)
+    }
+}
+
+impl HybridMethod {
+    /// The index of a text column alone, of an index that embeds its text
+    /// (`db/index_statements/hybrid_embedded.rs`): its text part, which
+    /// is the index, its locator the part's, its embeddings indexed apart.
+    fn text_alone(
+        &self,
+        text_type: &DataType,
+        on: Option<(&TableDesc, &IndexDesc)>,
+        locator: Option<&[u8]>,
+    ) -> Result<Option<Box<dyn Index>>> {
+        let text_type = std::slice::from_ref(text_type);
+        let part = on.map(|(table, desc)| (table, options::parts(desc).0));
+        match (locator, part) {
+            (Some(locator), Some((table, desc))) => self.text.open_on(text_type, locator, (table, &desc)),
+            (Some(locator), None) => self.text.open(text_type, locator),
+            (None, Some((table, desc))) => self.text.create_on(text_type, (table, &desc)).map(Some),
+            (None, None) => self.text.create(text_type).map(Some),
+        }
     }
 }
 
@@ -176,6 +205,9 @@ impl IndexMethod for HybridMethod {
     /// Of its text column, as the full-text method serves a score of it;
     /// of its vector column, as a vector method serves a distance of it.
     fn supports_nearest(&self, query: &NearestQuery, columns: &[DataType]) -> NearestSupport {
+        if let ([text], TEXT) = (columns, query.column) {
+            return self.text.supports_nearest(query, std::slice::from_ref(text));
+        }
         let ([text, vector], part) = (columns, NearestQuery { column: 0, ..query.clone() }) else { return NearestSupport::No };
         match query.column {
             TEXT => self.text.supports_nearest(&part, std::slice::from_ref(text)),
@@ -192,18 +224,19 @@ impl IndexMethod for HybridMethod {
     /// CONTAINS or TEXT_MATCHES of its text column, as the full-text
     /// method serves them of its one column.
     fn supports_predicate(&self, predicate: &Predicate, columns: &[DataType]) -> bool {
-        let ([text, _], TEXT) = (columns, predicate.column) else { return false };
+        let (Some(text), TEXT) = (columns.first().filter(|_| columns.len() <= 2), predicate.column) else { return false };
         self.text.supports_predicate(predicate, std::slice::from_ref(text))
     }
-    /// The metric of its vector part.
+    /// The metric of its vector part; none of a text alone.
     fn metric(&self, index: &IndexDesc) -> Option<String> {
         let (_, vector) = options::parts(index);
+        vector.columns.first()?;
         self.vector_method(index).ok()?.metric(&vector)
     }
     /// As its vector part's method serves it.
     fn serves_metric(&self, index: &IndexDesc, call: &str) -> bool {
         let (_, vector) = options::parts(index);
-        self.vector_method(index).is_ok_and(|m| m.serves_metric(&vector, call))
+        !vector.columns.is_empty() && self.vector_method(index).is_ok_and(|m| m.serves_metric(&vector, call))
     }
     fn name(&self) -> &'static str {
         HYBRID_METHOD

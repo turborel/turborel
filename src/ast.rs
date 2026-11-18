@@ -81,7 +81,7 @@ pub use expression::{
     ValueExpression, WhenOperand,
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
-pub use hybrid_search::{Fusion, HybridSearch, SearchValue};
+pub use hybrid_search::{Fusion, HybridSearch, SearchArgument, SearchValue};
 pub use joined::{JoinKind, JoinSpecification, JoinedTable, Partitioning};
 pub use json::{
     IsJson, JsonAggregate, JsonArgument, JsonClauses, JsonCommon, JsonConstructor, JsonExpression, JsonFormat, JsonInput, JsonMember,

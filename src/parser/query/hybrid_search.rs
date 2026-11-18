@@ -20,14 +20,13 @@
 //!
 //! INDEX, QUERY_TEXT and TOP_N are written, the others at most once each,
 //! in any order. Of no QUERY_VECTOR, QUERY_TEXT is embedded by the
-//! index's MODEL (§11.2), and holds no dynamic parameter, as it is read
-//! twice. The binder makes it
+//! index's MODEL (§11.2). The binder makes it
 //! the query it stands for (`binder/hybrid_search.rs`), reading each
 //! value argument again there, so it keeps their text.
 
-use crate::ast::{DerivedTable, Fusion, HybridSearch, SearchValue, TableReference};
+use crate::ast::{DerivedTable, Fusion, HybridSearch, SearchArgument, SearchValue, TableReference};
 use crate::error::{Code, Result, SqlError};
-use crate::lexer::{Tok, Token, delim};
+use crate::lexer::{Tok, Token, delim, lex};
 use crate::parser::Parser;
 
 /// The function's name.
@@ -56,7 +55,6 @@ struct Arguments {
     text: Option<SearchValue>,
     vector: Option<SearchValue>,
     vector_first: bool,
-    text_dynamic: bool,
     top_n: Option<u32>,
     candidates: Option<u32>,
     fusion: Option<Fusion>,
@@ -88,9 +86,6 @@ impl Parser {
         let correlation = self.correlation()?.unwrap_or_else(|| HYBRID_SEARCH.to_owned());
         let columns = self.derived_columns()?;
         let missing = |what: &str| self.rule(format!("[EXTENSION] HYBRID_SEARCH names its {what}"));
-        if given.vector.is_none() && given.text_dynamic {
-            return Err(missing("QUERY_VECTOR, as its QUERY_TEXT holds a dynamic parameter"));
-        }
         let search = HybridSearch {
             index: given.index.ok_or_else(|| missing(words::INDEX))?,
             text: given.text.ok_or_else(|| missing(words::QUERY_TEXT))?,
@@ -122,9 +117,7 @@ impl Parser {
         let fresh = match word.as_str() {
             words::INDEX => given.index.replace(self.identifier()?).is_none(),
             words::QUERY_TEXT => {
-                let before = self.dynamic;
                 let value = self.search_value(given)?;
-                given.text_dynamic = self.dynamic != before;
                 given.text.replace(value).is_none()
             }
             words::QUERY_VECTOR => {
@@ -214,14 +207,16 @@ impl Parser {
 
 impl Parser {
     /// \[EXTENSION\] The derived table of `text`, the query the binder
-    /// writes for HYBRID_SEARCH `search`, its value arguments' text in it
-    /// in their order: read as they were, in the statement `search` is of,
-    /// each dynamic parameter numbered as it was.
+    /// writes for HYBRID_SEARCH `search`, copies of its value arguments'
+    /// text in it, each of the argument `copies` names in their order:
+    /// read as they were, in the statement `search` is of, each dynamic
+    /// parameter of a copy numbered as it was in the argument, however
+    /// many copies there are.
     ///
     /// # Errors
     ///
     /// As a `<derived table>` read.
-    pub(crate) fn hybrid_expansion(text: &str, search: &HybridSearch) -> Result<DerivedTable> {
+    pub(crate) fn hybrid_expansion(text: &str, search: &HybridSearch, copies: &[SearchArgument]) -> Result<DerivedTable> {
         let mut parser = Parser::for_procedure(text, search.extensions, search.params.clone())?;
         parser.catalogs = super::super::Catalogs::Kept;
         if let Some(before) = search.dynamic {
@@ -229,6 +224,7 @@ impl Parser {
             parser.toks.splice(0..0, std::iter::repeat_n(earlier, before)).for_each(drop);
             parser.pos = before;
             parser.dynamic = Some(before);
+            parser.numbers = numbered(search, before, copies)?;
         }
         let read = parser.table_primary()?;
         if !matches!(parser.peek(), Tok::End) {
@@ -245,4 +241,29 @@ impl Parser {
             | TableReference::Hybrid(_) => Err(parser.syntax("expected HYBRID_SEARCH's query")),
         }
     }
+}
+
+/// The dynamic parameters of `value`'s text.
+fn dynamic_in(value: &SearchValue) -> Result<usize> {
+    Ok(lex(&value.text)?.iter().filter(|t| matches!(t.tok, Tok::Delimiter(delim::QUESTION))).count())
+}
+
+/// The number of each dynamic parameter of the query of `search`, by its
+/// place: the `before` of the statement before its first value argument,
+/// then each copy's, of its argument's numbers. The arguments' own are
+/// numbered in the order they are written in the statement.
+fn numbered(search: &HybridSearch, before: usize, copies: &[SearchArgument]) -> Result<Vec<usize>> {
+    let text = dynamic_in(&search.text)?;
+    let vector = search.vector.as_ref().map_or(Ok(0), dynamic_in)?;
+    let (text_from, vector_from) =
+        if search.vector_first { (before.saturating_add(vector), before) } else { (before, before.saturating_add(text)) };
+    let mut numbers: Vec<usize> = (0..before).collect();
+    for copy in copies {
+        let (from, count) = match copy {
+            SearchArgument::Text => (text_from, text),
+            SearchArgument::Vector => (vector_from, vector),
+        };
+        numbers.extend(from..from.saturating_add(count));
+    }
+    Ok(numbers)
 }

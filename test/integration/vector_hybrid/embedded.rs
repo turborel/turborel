@@ -5,6 +5,7 @@
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
+use turborel::value::Value;
 
 use super::fixture::{read, register};
 
@@ -13,7 +14,7 @@ const MODEL: &str = "CREATE EMBEDDING MODEL WORDS WITH (TYPE = 'HASH_DENSE', DIM
 
 /// Schema S's table DOCS (ID INTEGER PRIMARY KEY, BODY VARCHAR(400)) of
 /// three documents, each of two sentences, and the model WORDS.
-fn docs() -> (Database, Session) {
+pub(super) fn docs() -> (Database, Session) {
     let db = Database::new();
     register(&db);
     db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE DOCS (ID INTEGER PRIMARY KEY, BODY VARCHAR(400))").unwrap();
@@ -55,7 +56,13 @@ fn a_model_and_a_chunker_embed_the_text_11_1() {
                    WHERE INDEX_NAME = 'DOCS_H' AND OPTION_NAME LIKE 'HYBRID.%' ORDER BY OPTION_NAME";
     assert_eq!(
         read(&s, options),
-        ["HYBRID.CHUNKER=BY SENTENCES MAX 1 OVERLAP 0", "HYBRID.MODE=SYNC", "HYBRID.MODEL=WORDS", "HYBRID.VECTOR_METHOD=HNSW"]
+        [
+            "HYBRID.CHUNKER=BY SENTENCES MAX 1 OVERLAP 0",
+            "HYBRID.MODE=SYNC",
+            "HYBRID.MODEL=WORDS",
+            "HYBRID.STATE=READY",
+            "HYBRID.VECTOR_METHOD=HNSW"
+        ]
     );
     assert_eq!(read(&s, "SELECT COUNT(*) FROM DOCS_H_CHUNKS"), ["6"]);
     let found = searched(&s, "DOCS_H", "refund");
@@ -86,8 +93,9 @@ fn a_model_and_a_chunker_embed_the_text_11_1() {
 /// a chunk's embedding to the queue after commit, so a chunk is found by
 /// its words at once and by its embedding once the queue has run; an
 /// index of a MODEL names its text column alone, of a table keyed by one
-/// column, and a model there is, and a chunking CHUNK_TEXT reads; a
-/// refused index leaves no table of chunks behind.
+/// column, and a model there is, and a chunking CHUNK_TEXT reads, and
+/// no table has the name of its table of chunks, which is left as it
+/// was; a refused index leaves no table of chunks behind.
 #[test]
 fn an_async_index_and_what_a_model_index_refuses_r12_6() {
     let (db, s) = docs();
@@ -101,6 +109,12 @@ fn an_async_index_and_what_a_model_index_refuses_r12_6() {
     assert_eq!(code("CREATE HYBRID VECTOR INDEX X ON DOCS (BODY) PARAMETERS (MODEL NOSUCH)"), Code::SyntaxRule);
     assert_eq!(read(&s, "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME LIKE 'X%'"), Vec::<String>::new());
     s.commit().unwrap();
+    s.run("CREATE TABLE Z_CHUNKS (N INTEGER)").unwrap();
+    s.run("INSERT INTO Z_CHUNKS VALUES (7)").unwrap();
+    s.commit().unwrap();
+    assert_eq!(code("CREATE HYBRID VECTOR INDEX Z ON DOCS (BODY) PARAMETERS (MODEL WORDS)"), Code::SyntaxRule);
+    assert_eq!(read(&s, "SELECT N FROM Z_CHUNKS"), ["7"], "a table of the name kept");
+    s.commit().unwrap();
     s.run("CREATE TABLE PAIRS (A INTEGER, B INTEGER, T VARCHAR(40), PRIMARY KEY (A, B))").unwrap();
     s.commit().unwrap();
     assert_eq!(code("CREATE HYBRID VECTOR INDEX Y ON PAIRS (T) PARAMETERS (MODEL WORDS)"), Code::SyntaxRule);
@@ -111,16 +125,30 @@ fn an_async_index_and_what_a_model_index_refuses_r12_6() {
     assert_eq!(code("CREATE HYBRID VECTOR INDEX Z ON E (T) PARAMETERS (MODEL WORDS, CHUNKER BY LINES MAX 2)"), Code::Data);
 }
 
-/// Verifies: [EXTENSION] vector_standard §11.2, §12.2: of an index of a
-/// MODEL, HYBRID_SEARCH of QUERY_TEXT alone embeds it by that model, as a
-/// query, and searches both lists, as QUERY_VECTOR of that embedding
-/// does; a QUERY_TEXT of a dynamic parameter needs its QUERY_VECTOR, as
-/// it would be read twice.
+/// The rows of the statement `sql` prepared, of the dynamic parameters
+/// `values`, each its columns' values joined by commas.
+fn prepared(s: &Session, sql: &str, values: &[Value]) -> Vec<String> {
+    let p = s.prepare(sql).unwrap();
+    let mut c = s.open_prepared(&p, values).unwrap();
+    let mut found = Vec::new();
+    while let Some(row) = c.fetch().unwrap() {
+        found.push(row.iter().map(ToString::to_string).collect::<Vec<_>>().join(","));
+    }
+    found
+}
+
+/// Verifies: [EXTENSION] vector_standard §11.2, §12.2, [ISO/IEC 9075:1992
+/// §17.6]: of an index of a MODEL, HYBRID_SEARCH of QUERY_TEXT alone
+/// embeds it by that model, as a query, and searches both lists, as
+/// QUERY_VECTOR of that embedding does; a QUERY_TEXT of a dynamic
+/// parameter, read twice so, is one parameter, numbered among the
+/// statement's others in order, and gives the rows its value written
+/// gives.
 #[test]
 fn query_text_alone_is_embedded_by_the_model_11_2() {
     let (_db, s) = docs();
     s.run("CREATE HYBRID VECTOR INDEX DOCS_H ON DOCS (BODY) PARAMETERS (MODEL WORDS, CHUNKER BY SENTENCES MAX 1 OVERLAP 0)").unwrap();
-    let columns = "SELECT DOC_ID, VECTOR_RANK, TEXT_RANK, CHUNK_TEXT FROM HYBRID_SEARCH(INDEX = DOCS_H";
+    let columns = "SELECT DOC_ID, VECTOR_RANK, CHUNK_TEXT FROM HYBRID_SEARCH(INDEX = DOCS_H";
     let alone = read(&s, &format!("{columns}, QUERY_TEXT = 'damaged parcel', TOP_N = 3) AS H ORDER BY SCORE DESC, DOC_ID"));
     let given = read(
         &s,
@@ -130,11 +158,34 @@ fn query_text_alone_is_embedded_by_the_model_11_2() {
         ),
     );
     assert_eq!(alone, given);
-    assert_eq!(alone.first().map(String::as_str), Some("3,1,1,a damaged parcel is returned."), "{alone:?}");
-    assert!(alone.iter().all(|r| !r.split(',').nth(1).is_some_and(str::is_empty)), "every row of the vector list: {alone:?}");
+    assert_eq!(alone.first().map(String::as_str), Some("3,1,a damaged parcel is returned."), "{alone:?}");
+    let but_two: Vec<String> = alone.iter().filter(|r| !r.starts_with("2,")).map(|r| format!("x,{r}")).collect();
     for text in ["?", "CAST(? AS VARCHAR(40))"] {
-        let dynamic = format!("SELECT DOC_ID FROM HYBRID_SEARCH(INDEX = DOCS_H, QUERY_TEXT = {text}, TOP_N = 3) AS H");
-        let refused = s.prepare(&dynamic).map(drop).unwrap_err();
-        assert!(refused.code == Code::SyntaxRule && refused.msg.contains("as its QUERY_TEXT holds a dynamic parameter"), "{refused:?}");
+        let dynamic = format!(
+            "SELECT CAST(? AS VARCHAR(4)), DOC_ID, VECTOR_RANK, CHUNK_TEXT FROM HYBRID_SEARCH(INDEX = DOCS_H, QUERY_TEXT = {text}, \
+             TOP_N = 3) AS H WHERE DOC_ID <> CAST(? AS INTEGER) ORDER BY SCORE DESC, DOC_ID"
+        );
+        let values = [Value::Char("x".into()), Value::Char("damaged parcel".into()), Value::Char("2".into())];
+        assert_eq!(prepared(&s, &dynamic, &values), but_two, "{text}");
     }
+}
+
+/// Verifies: [EXTENSION] vector_standard §11.1 ("a full-text index on
+/// body"), §11.2, R11.2: of an index of a MODEL, CONTAINS and RANK of the
+/// table's text read the index, a document a row, not a chunk; a document
+/// found by the text list alone is given its chunk ranked highest.
+#[test]
+fn contains_and_rank_are_of_documents_11_2() {
+    let (_db, s) = docs();
+    s.run("CREATE HYBRID VECTOR INDEX DOCS_H ON DOCS (BODY) PARAMETERS (MODEL WORDS, CHUNKER BY SENTENCES MAX 1 OVERLAP 0)").unwrap();
+    let contains = "SELECT ID FROM DOCS WHERE CONTAINS(BODY, '\"refund\"') = 1 ORDER BY ID";
+    let shown = super::fixture::plan(&s, contains);
+    assert!(shown.contains("'DOCS_H'"), "ranked by the index's statistics: {shown}");
+    assert_eq!(read(&s, contains), ["1", "3"]);
+    let ranked = "SELECT ID FROM DOCS WHERE RANK(BODY, 'IS ABOUT \"damaged\"') > 0 ORDER BY RANK(BODY, 'IS ABOUT \"damaged\"') DESC, ID";
+    assert_eq!(read(&s, ranked), ["3", "1"], "one row a document");
+    let text_alone = "SELECT DOC_ID, CHUNK_TEXT FROM HYBRID_SEARCH(INDEX = DOCS_H, QUERY_TEXT = 'shipping', \
+                      QUERY_VECTOR = EMBED('WORDS', 'store opening hours'), TOP_N = 2, CANDIDATES = 1) AS H \
+                      WHERE VECTOR_RANK IS NULL";
+    assert_eq!(read(&s, text_alone), ["1,shipping is free"]);
 }

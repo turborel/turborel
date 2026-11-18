@@ -157,7 +157,7 @@ impl State {
         let nulls = ix.unique && table.nulls_not_distinct(&ix.columns);
         // A hybrid index's parts each hold their own column's value, so it
         // is given keys with a null too (`index/vector/hybrid/index.rs`).
-        let nulls = nulls || ix.method == crate::index::vector::hybrid::HYBRID_METHOD;
+        let nulls = nulls || (ix.method == crate::index::vector::hybrid::HYBRID_METHOD && ix.columns.len() == 2);
         Ok(IndexDesc { collations, nulls, ..ix })
     }
 

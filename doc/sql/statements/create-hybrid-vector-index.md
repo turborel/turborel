@@ -48,11 +48,15 @@ whose embedding is null by the text part alone.
 Of a MODEL, the index names its text column alone and embeds the text
 itself (HYBRID.MODEL). CHUNKER cuts the text into chunks as CHUNK_TEXT
 reads a chunking (HYBRID.CHUNKER), and MODE says whether a chunk is
-embedded as it is written or after commit (HYBRID.MODE). The chunks are
-kept in a table named after the index with `_CHUNKS`, by a vector
-pipeline named after it with `_PIPELINE`, and the index is of that
-table's CHUNK_TEXT and EMBEDDING. Both are made and filled, and
-committed, before the index is made, and dropped with it.
+embedded as it is written or after commit (HYBRID.MODE). The index is a
+full-text index of the text, read by CONTAINS and RANK of it. The chunks
+are kept in a table named after the index with `_CHUNKS`, by a vector
+pipeline named after it with `_PIPELINE`, and their embeddings in an
+index named after it with `_VECTORS`. Each is made, and committed, in
+turn, HYBRID.STATE BUILDING meanwhile, and dropped with the index. A
+database stopped between them drops what was made as it opens. ALTER
+INDEX of HYBRID.MODEL, CHUNKER, MODE or VECTOR_METHOD makes them again
+([Hybrid Search](../15-hybrid-search.md)).
 
 ## RULES
 
@@ -65,9 +69,9 @@ committed, before the index is made, and dropped with it.
 5. TYPE names a vector method, and each option is one a part's method
    declares, of a value it accepts.
 6. Of a MODEL, one column is named, the table's primary key is one
-   column, the model is one the user may call, and no table or pipeline
-   has the name the index gives its own. Of none, two columns are named,
-   and no CHUNKER or MODE is given.
+   column, the model is one the user may call, and no table, pipeline or
+   index has a name the index gives its own. Of none, two columns are
+   named, and no CHUNKER or MODE is given. HYBRID.STATE is not given.
 
 ## PRIVILEGES
 

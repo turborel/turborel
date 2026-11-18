@@ -164,7 +164,8 @@ fn each_part_has_its_options_and_locator() {
 /// Verifies: [EXTENSION] vector_standard §11.1, R13.1: the method serves a
 /// distance of its vector column approximately, as its vector method
 /// does, of that method's metric; of its text column, a score only; of
-/// no other column; it indexes a text and a vector, never UNIQUE.
+/// no other column; it indexes a text and a vector, or a text alone,
+/// never UNIQUE.
 #[test]
 fn the_method_serves_each_column_as_its_part_does() {
     let method = in_memory();
@@ -176,7 +177,7 @@ fn the_method_serves_each_column_as_its_part_does() {
     let ivf = desc(vec![(VECTOR_METHOD_OPTION.to_owned(), Value::Char("IVF".to_owned()))]);
     assert_eq!(method.metric(&ivf), IvfMethod::in_memory().metric(&parts(&ivf).1));
     assert!(method.metric(&desc(Vec::new())).is_some());
-    assert_eq!(method.create(&both[..1]).err().map(|e| e.code), Some(Code::Unsupported));
+    assert!(method.create(&both[..1]).is_ok(), "a text alone");
     let unique = IndexDesc { unique: true, ..desc(Vec::new()) };
     let table = TableDesc {
         periods: Vec::new(),
@@ -231,7 +232,7 @@ fn a_predicate_of_the_text_column_reads_the_text_part() {
         |column: usize| Predicate { function: ScalarRef(Arc::new(crate::fulltext::matches::TextMatches)), column, argument: Some(0) };
     assert!(method.supports_predicate(&predicate(0), &columns()));
     assert!(!method.supports_predicate(&predicate(1), &columns()));
-    assert!(!method.supports_predicate(&predicate(0), &columns()[..1]));
+    assert!(method.supports_predicate(&predicate(0), &columns()[..1]), "a text alone");
     let index: Arc<dyn Index> = Arc::from(method.create(&columns()).unwrap());
     index.insert(key(Some("quick brown fox"), Some(&EAST)), 1).unwrap();
     index.insert(key(Some("lazy dog"), None), 2).unwrap();
@@ -241,4 +242,28 @@ fn a_predicate_of_the_text_column_reads_the_text_part() {
     assert_eq!(found, [(Key(vec![Value::Binary(crate::value::Binary::new(Vec::new()))]), 1)]);
     assert!(index.estimate(&probe(0)).is_some());
     assert!(Arc::clone(&index).search(&probe(1), KeyOrder::Ascending).any(|e| e.is_err()));
+}
+
+/// Verifies: [EXTENSION] vector_standard §11.1 ("a full-text index on
+/// body"), RULES.md D100: of a text column alone, as an index that embeds
+/// its text is, the method makes its text part alone, which serves
+/// TEXT_MATCHES of it, a document a row, and no distance; of three columns
+/// it makes none.
+#[test]
+fn a_text_alone_is_its_text_part() {
+    let method = in_memory();
+    let text = [DataType::varying(100)];
+    let index: Arc<dyn Index> = Arc::from(method.create(&text).unwrap());
+    index.insert(Key(vec![Value::Char("quick brown fox".to_owned())]), 1).unwrap();
+    index.insert(Key(vec![Value::Char("lazy dog".to_owned())]), 2).unwrap();
+    let function = ScalarRef(Arc::new(crate::fulltext::matches::TextMatches));
+    let predicate = Predicate { function, column: 0, argument: Some(0) };
+    assert!(method.supports_predicate(&predicate, &text));
+    let probe = Probe::Predicate { predicate: Box::new(predicate), value: Value::Char("fox".to_owned()) };
+    let rows: Vec<RowId> = Arc::clone(&index).search(&probe, KeyOrder::Ascending).map(|e| e.unwrap().1).collect();
+    assert_eq!(rows, [1]);
+    assert_eq!(method.supports_nearest(&query(1, &EAST, 2), &text), NearestSupport::No);
+    assert_eq!(method.metric(&IndexDesc { columns: vec![3], ..desc(Vec::new()) }), None);
+    let three = [DataType::varying(100), DataType::varying(100), DataType::varying(100)];
+    assert!(method.create(&three).is_err());
 }

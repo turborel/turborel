@@ -143,6 +143,10 @@ pub struct Parser {
     blocks: Vec<psm::Block>,
     /// [ISO/IEC 9075-4:2006 draft §12.8] In an SQL-server module, its own schema, which MODULE names.
     module: Option<String>,
+    /// \[EXTENSION\] The number of each `<dynamic parameter specification>`
+    /// by its place among them, of a text that copies some of a statement's
+    /// (`Parser::hybrid_expansion`); of none, each is numbered by its place.
+    numbers: Vec<usize>,
 }
 
 /// How a parser takes a `<catalog name>` written in a qualified name or a
@@ -225,6 +229,7 @@ impl Parser {
             routine: None,
             blocks: Vec::new(),
             module: None,
+            numbers: Vec::new(),
         })
     }
 

@@ -23,7 +23,9 @@ use crate::settings::FUNCTION_CALLS;
 use crate::storage::chosen;
 use crate::value::Value;
 
+mod hybrid_altered;
 mod hybrid_embedded;
+mod hybrid_settled;
 
 /// \[EXTENSION\] The most rounds of maintenance MERGE DELTA runs.
 const MOST_MERGE_ROUNDS: usize = 1 << 16;
@@ -89,11 +91,11 @@ impl Session {
                 }
                 let options = options_of(st, &method, &storage.options)?;
                 admitted(st, (desc, name), &method, expressions)?;
-                let columns = columns.iter().map(|(c, _)| c.clone()).collect();
+                let columns: Vec<String> = columns.iter().map(|(c, _)| c.clone()).collect();
                 let expressions = expressions.iter().map(|(part, text, _)| (*part, text.clone())).collect();
                 // A hybrid index holds keys with a null, each part the value of
                 // its own column (`index/vector/hybrid/index.rs`).
-                let nulls = method == crate::index::vector::hybrid::HYBRID_METHOD;
+                let nulls = method == crate::index::vector::hybrid::HYBRID_METHOD && columns.len() == 2;
                 self.index_made(st, &IndexSpec { name: name.clone(), table: qn, columns, method, options, nulls, expressions })?;
             }
             IndexStatement::Drop { name: (name, at) } => {
@@ -109,7 +111,7 @@ impl Session {
                 options_of(st, &ix.method, options)?;
                 let given: Vec<(String, Option<Value>)> =
                     options.iter().map(|o| (o.name.clone(), o.value.as_ref().map(value_of))).collect();
-                self.db.alter_index(name, &given)?;
+                self.index_altered(st, &ix, &given, false)?;
             }
             IndexStatement::Maintain { name: (name, at), action } => {
                 let ix = self.index_owned(st, name).or_at(*at)?;
@@ -134,7 +136,7 @@ impl Session {
                     .collect();
                 options_of(st, &ix.method, &named)?;
                 let given: Vec<(String, Option<Value>)> = named.iter().map(|o| (o.name.clone(), o.value.as_ref().map(value_of))).collect();
-                self.db.altered_index(&ix.name, &given, true)
+                self.index_altered(st, ix, &given, true)
             }
             IndexMaintenance::MergeDelta => {
                 let index = Arc::clone(st.index_of(&ix.name)?);
