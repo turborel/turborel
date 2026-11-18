@@ -43,6 +43,7 @@ pub mod files;
 pub mod fulltext;
 pub mod functions;
 pub mod geometry;
+pub mod graph;
 pub mod hash;
 pub mod index;
 pub mod json;
