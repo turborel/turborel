@@ -17,16 +17,20 @@ mod adapt;
 mod ask;
 mod column;
 mod index;
+mod options;
 mod place;
 
 pub(crate) use adapt::{codec_quantizer, disk_quantizer, distance};
 pub(crate) use ask::Ask;
 pub(crate) use column::{Column, approximate_support, column_of, default_desc, plain, projection};
 pub(crate) use index::{Engine, Held, VectorIndex, located};
-pub(crate) use place::Place;
+pub(crate) use options::{Shared, serves, shared, shared_of};
+pub(crate) use place::{Named, Place};
 
 use super::{DISKANN_METHOD, HNSW_METHOD, IVF_METHOD};
 use crate::disk::buffer::{BufferPool, FileId};
+use crate::vector::metric::Metrics;
+use crate::vector::quantizer::Quantizers;
 
 /// Whether `method` names a vector index method: "diskann", "hnsw" or
 /// "ivf".
@@ -34,13 +38,19 @@ pub(crate) fn is_vector_method(method: &str) -> bool {
     [DISKANN_METHOD, HNSW_METHOD, IVF_METHOD].contains(&method)
 }
 
-/// The vector index methods, in the registered file `file` of `pool`.
-pub(crate) fn vector_methods(pool: &std::sync::Arc<BufferPool>, file: FileId) -> Vec<Box<dyn super::IndexMethod>> {
+/// The vector index methods, in the registered file `file` of `pool`, of
+/// the metrics and quantizers `plugins` gives.
+pub(crate) fn vector_methods(
+    pool: &std::sync::Arc<BufferPool>,
+    file: FileId,
+    (metrics, quantizers): &(Metrics, Quantizers),
+) -> Vec<Box<dyn super::IndexMethod>> {
     let pool = || std::sync::Arc::clone(pool);
+    let (m, q) = (|| std::sync::Arc::clone(metrics), || std::sync::Arc::clone(quantizers));
     vec![
-        Box::new(super::DiskAnnMethod::new(pool(), file)),
-        Box::new(super::HnswMethod::new(pool(), file)),
-        Box::new(super::IvfMethod::new(pool(), file)),
+        Box::new(super::DiskAnnMethod::new(pool(), file).with_metrics(m()).with_quantizers(q())),
+        Box::new(super::HnswMethod::new(pool(), file).with_metrics(m()).with_quantizers(q())),
+        Box::new(super::IvfMethod::new(pool(), file).with_metrics(m()).with_quantizers(q())),
     ]
 }
 

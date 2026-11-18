@@ -6,7 +6,8 @@ use super::Parser;
 use super::composite::within_nesting;
 use crate::ast::ColumnSpecification;
 use crate::ast::{
-    AlterDomain, AlterDomainAction, AssertionDefinition, DomainDefinition, TableConstraint, TableConstraintKind, TypeName, ValueExpression,
+    AlterDomain, AlterDomainAction, AssertionDefinition, DomainDefinition, TableConstraint, TableConstraintKind, TypeName, TypeParam,
+    ValueExpression,
 };
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
@@ -18,6 +19,11 @@ use crate::value::types::composite::nesting;
 /// [ISO/IEC 9075:1992 §6.2 SR5]: no regular identifier is VALUE, a
 /// reserved word.
 pub const VALUE_COLUMN: &str = "VALUE";
+
+/// \[EXTENSION\] The most parameters a type beyond the standard is
+/// written with: more than it keeps (`MAX_PARAMS`), as its kind may fold
+/// some into others (`SqlType::pack_params`), as VECTOR's layout is.
+const MOST_TYPE_PARAMS: usize = 4;
 
 impl Parser {
     /// [ISO/IEC 9075:1992 §11.21] `<domain definition>` ::= CREATE DOMAIN
@@ -158,12 +164,33 @@ impl Parser {
         if !self.accept_delim(delim::LEFT_PAREN) {
             return Ok(TypeName::Domain(name));
         }
-        let mut params = vec![self.unsigned_integer()?];
-        if self.accept_delim(delim::COMMA) {
-            params.push(self.unsigned_integer()?);
+        let mut params = vec![self.type_param()?];
+        while params.len() < MOST_TYPE_PARAMS && self.accept_delim(delim::COMMA) {
+            params.push(self.type_param()?);
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(TypeName::Extension { name, params })
+    }
+
+    /// \[EXTENSION\] A parameter of a type beyond the standard: an
+    /// unsigned integer, `*`, or an identifier or key word, which its kind
+    /// gives a number as the type is resolved (RULES.md D53).
+    fn type_param(&mut self) -> Result<TypeParam> {
+        let word = match self.peek() {
+            Tok::Identifier(word) => word.clone(),
+            Tok::KeyWord(word) => (*word).to_owned(),
+            Tok::Delimiter(delim::ASTERISK) => delim::ASTERISK.to_owned(),
+            Tok::Delimiter(_)
+            | Tok::ExactNumeric(_)
+            | Tok::ApproximateNumeric(_)
+            | Tok::CharacterString(_)
+            | Tok::BinaryString(_)
+            | Tok::Introducer(_)
+            | Tok::LargeObjectLength(_)
+            | Tok::End => return self.unsigned_integer().map(TypeParam::Number),
+        };
+        self.advance();
+        Ok(TypeParam::Word(word))
     }
 
     /// [ISO/IEC 9075:1992 §6.2 SR5] VALUE, in a domain constraint alone:

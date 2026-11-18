@@ -93,6 +93,10 @@ pub enum Extension {
     ServedConnections,
     /// \[EXTENSION\] A ranking of full-text search (`Database::register_ranking`).
     Ranking,
+    /// \[EXTENSION\] A metric of VECTOR (`Database::register_metric`).
+    Metric,
+    /// \[EXTENSION\] A quantizer of VECTOR (`Database::register_quantizer`).
+    Quantizer,
 }
 
 /// \[DESIGN\] An event of the database's.

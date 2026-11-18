@@ -5,9 +5,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::*;
+use crate::error::SqlError;
 use crate::functions::ScalarFunction;
 use crate::memory::MemoryBudget;
-use crate::error::SqlError;
 use crate::value::{Decimal, Value};
 use crate::vector::Vector;
 
@@ -94,8 +94,12 @@ fn embed_gives_the_models_vector() {
 #[test]
 fn embed_follows_on_error() {
     let models = Arc::new(Embedders::new());
-    let (failing, null, retry, wrong) =
-        (flaky("FAIL", 1, OnError::Fail, false), flaky("NUL", 1, OnError::Null, false), flaky("RETRY", 2, OnError::Retry(2), false), flaky("WRONG", 0, OnError::Fail, true));
+    let (failing, null, retry, wrong) = (
+        flaky("FAIL", 1, OnError::Fail, false),
+        flaky("NUL", 1, OnError::Null, false),
+        flaky("RETRY", 2, OnError::Retry(2), false),
+        flaky("WRONG", 0, OnError::Fail, true),
+    );
     for model in [&failing, &null, &retry, &wrong] {
         let model: Arc<dyn Embedder> = Arc::<Flaky>::clone(model);
         models.register(model).unwrap();
@@ -153,4 +157,3 @@ fn chunks_and_embeddings_in_sql() {
     s.run("INSERT INTO V VALUES (1, EMBED('HASH_DENSE', 'some words'))").unwrap();
     assert_eq!(rows(&s, "SELECT K FROM V WHERE E IS NOT NULL").unwrap(), ["1"]);
 }
-

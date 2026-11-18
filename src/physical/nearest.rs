@@ -238,8 +238,8 @@ impl PhysicalPlanner<'_> {
                     certified.get_or_insert(ix);
                 }
                 NearestSupport::Approximate => {
-                    let metric = method.metric(ix);
-                    approximate = approx::preferred(approximate, (ix.clone(), metric), (query, asked), self.hints());
+                    let served = query.metric.as_deref().is_some_and(|call| method.serves_metric(ix, call));
+                    approximate = approx::preferred(approximate, (ix.clone(), served), asked, self.hints());
                 }
             }
         }

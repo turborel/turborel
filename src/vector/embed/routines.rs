@@ -158,7 +158,8 @@ impl ScalarFunction for EmbedFunction {
         let prefix = match texts.get(2) {
             Some(Some(word)) => {
                 let wanted = word.trim().to_ascii_uppercase();
-                let (_, purpose) = PURPOSES.iter().find(|(w, _)| *w == wanted).ok_or_else(|| data("takes 'query' or 'document' as a purpose"))?;
+                let (_, purpose) =
+                    PURPOSES.iter().find(|(w, _)| *w == wanted).ok_or_else(|| data("takes 'query' or 'document' as a purpose"))?;
                 model.prefix(*purpose).to_owned()
             }
             Some(None) => return Ok(Value::Null),
@@ -185,7 +186,8 @@ fn integer() -> DataType {
 /// The type of CHUNK_TEXT's result.
 fn chunks_type() -> DataType {
     let types = [integer(), integer(), integer(), DataType::varying(MAX_CHARACTER_LENGTH)];
-    let fields = CHUNK_FIELDS.iter().zip(types).map(|(name, data_type)| Field { name: (*name).to_owned(), data_type, unnamed: false }).collect();
+    let fields =
+        CHUNK_FIELDS.iter().zip(types).map(|(name, data_type)| Field { name: (*name).to_owned(), data_type, unnamed: false }).collect();
     DataType::array(DataType::row(fields), MAX_ARRAY_CARDINALITY)
 }
 
@@ -271,7 +273,11 @@ impl ScalarFunction for ChunkFunction {
             }
             [] => false,
         };
-        if fits { Ok(chunks_type()) } else { Err(arguments(self.name, "a text and a specification, or a unit, MAX, OVERLAP, SPLIT_ON and NORMALIZE")) }
+        if fits {
+            Ok(chunks_type())
+        } else {
+            Err(arguments(self.name, "a text and a specification, or a unit, MAX, OVERLAP, SPLIT_ON and NORMALIZE"))
+        }
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let Some((first, rest)) = args.split_first() else { return Err(arguments(self.name, "a text")) };

@@ -175,8 +175,10 @@ impl SparseTree {
     /// Its layout now.
     pub fn layout(&self) -> Layout {
         let code = self.inner.quantization.load(Ordering::Acquire);
-        let quantization =
-            [Quantization::Float32, Quantization::Float16, Quantization::Uint8].into_iter().find(|q| q.code() == code).unwrap_or(Quantization::Uint8);
+        let quantization = [Quantization::Float32, Quantization::Float16, Quantization::Uint8]
+            .into_iter()
+            .find(|q| q.code() == code)
+            .unwrap_or(Quantization::Uint8);
         Layout { quantization, block: self.inner.block.load(Ordering::Acquire) }
     }
 

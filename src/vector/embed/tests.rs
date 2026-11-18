@@ -23,7 +23,7 @@ pub(super) fn rows(session: &Session, sql: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// A database with VECTOR, the routines of the built-in models, and a
+/// A database, VECTOR built in, with the routines of the built-in models and a
 /// schema U.
 pub(super) fn database() -> (Database, Arc<Embedders>) {
     let db = Database::new();
@@ -31,7 +31,6 @@ pub(super) fn database() -> (Database, Arc<Embedders>) {
     // Registered routines are called in generated columns and triggers
     // under the setting; built in, they would need none.
     db.set_setting("SQL.FUNCTION_CALLS", &crate::value::Value::Char("ON".to_owned())).unwrap();
-    db.register_type(Box::new(crate::vector::VectorType)).unwrap();
     let models = Arc::new(Embedders::built_in());
     for routine in routines(&models) {
         db.register_scalar_function(routine).unwrap();

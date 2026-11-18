@@ -87,7 +87,11 @@ fn vector(random: &mut Random, signed: bool) -> SparseVector {
     let terms = 8_u64.wrapping_add(random.below(32));
     let mut dims = std::collections::BTreeMap::new();
     for _ in 0..terms {
-        let skewed = random.below(u64::from(VOCABULARY)).wrapping_mul(random.below(u64::from(VOCABULARY))).checked_div(u64::from(VOCABULARY)).unwrap();
+        let skewed = random
+            .below(u64::from(VOCABULARY))
+            .wrapping_mul(random.below(u64::from(VOCABULARY)))
+            .checked_div(u64::from(VOCABULARY))
+            .unwrap();
         let mut weight = 0.05 + random.unit() * 3.0;
         if signed && random.below(4) == 0 {
             weight = -weight;

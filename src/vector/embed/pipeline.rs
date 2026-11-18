@@ -181,7 +181,10 @@ impl Tokens {
         if self.next() == Some(word) { Ok(()) } else { Err(refused(&format!("a pipeline has {word} here"))) }
     }
     fn name(&mut self) -> Result<String> {
-        let name = self.next().filter(|t| t.chars().next().is_some_and(char::is_alphabetic)).ok_or_else(|| refused("a pipeline names an object here"))?;
+        let name = self
+            .next()
+            .filter(|t| t.chars().next().is_some_and(char::is_alphabetic))
+            .ok_or_else(|| refused("a pipeline names an object here"))?;
         Ok(name.to_owned())
     }
     /// A parenthesized list of names.
@@ -286,7 +289,10 @@ impl Pipeline {
         let (old, new) = ("PIPELINE_OLD", "PIPELINE_NEW");
         let watched = self.keys.iter().chain(std::iter::once(&self.text)).cloned().collect::<Vec<_>>().join(", ");
         let trigger = |suffix: &str, event: &str, referencing: &str, action: String| {
-            format!("CREATE TRIGGER {}_{suffix} AFTER {event} ON {} REFERENCING {referencing} FOR EACH ROW {action}", self.name, self.source)
+            format!(
+                "CREATE TRIGGER {}_{suffix} AFTER {event} ON {} REFERENCING {referencing} FOR EACH ROW {action}",
+                self.name, self.source
+            )
         };
         let statements = vec![
             format!("DELETE FROM {}", self.target),

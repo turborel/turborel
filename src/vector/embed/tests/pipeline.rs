@@ -55,7 +55,8 @@ fn a_pipeline_keeps_its_chunks() {
     for statement in &plan.statements {
         s.run(statement).unwrap_or_else(|e| panic!("{statement}: {e:?}"));
     }
-    let chunks = |session: &Session| rows(session, "SELECT DOC_ID, CHUNK_ID, CHUNK_TEXT FROM DOC_CHUNKS ORDER BY DOC_ID, CHUNK_ID").unwrap();
+    let chunks =
+        |session: &Session| rows(session, "SELECT DOC_ID, CHUNK_ID, CHUNK_TEXT FROM DOC_CHUNKS ORDER BY DOC_ID, CHUNK_ID").unwrap();
     assert_eq!(chunks(&s), ["1,1,a b", "1,2,b c"]);
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM DOC_CHUNKS WHERE EMBEDDING IS NOT NULL").unwrap(), ["2"]);
     let Err(fired) = s.run("INSERT INTO DOCS VALUES (2, 'x y')") else { return in_step(&s, &chunks) };
@@ -82,9 +83,18 @@ fn an_auto_embedded_column_is_generated() {
     let (db, models) = database();
     let s = db.session("U");
     s.run("CREATE TABLE NOTES (ID INTEGER, BODY VARCHAR(100))").unwrap();
-    let column = AutoColumn { table: "NOTES".to_owned(), column: "E".to_owned(), source: "BODY".to_owned(), model: "hash_sparse".to_owned(), mode: Mode::Sync };
+    let column = AutoColumn {
+        table: "NOTES".to_owned(),
+        column: "E".to_owned(),
+        source: "BODY".to_owned(),
+        model: "hash_sparse".to_owned(),
+        mode: Mode::Sync,
+    };
     let plan = column.plan(&models).unwrap();
-    assert_eq!(plan.statements, ["ALTER TABLE NOTES ADD COLUMN E VECTOR(1048576, FLOAT32, SPARSE) GENERATED ALWAYS AS (EMBED('HASH_SPARSE', BODY))"]);
+    assert_eq!(
+        plan.statements,
+        ["ALTER TABLE NOTES ADD COLUMN E VECTOR(1048576, FLOAT32, SPARSE) GENERATED ALWAYS AS (EMBED('HASH_SPARSE', BODY))"]
+    );
     assert_eq!(plan.hooks, [Hook::ModelVersion, Hook::Batching]);
     // Until the parser reads VECTOR's key word parameters, the column is
     // made of plain VECTOR.

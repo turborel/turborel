@@ -110,6 +110,14 @@ impl SqlType for VectorType {
         NAME
     }
 
+    fn param_word(&self, at: usize, word: &str) -> Option<u32> {
+        params::param_word(at, word)
+    }
+
+    fn pack_params(&self, written: &[u32]) -> Option<Vec<u32>> {
+        params::pack_params(written)
+    }
+
     fn written(&self, t: &DataType) -> String {
         params::written_of(t)
     }

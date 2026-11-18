@@ -103,6 +103,9 @@ pub struct State {
     /// \[EXTENSION\] The rankings of full-text search (RULES.md D87),
     /// shared by every state.
     pub(crate) rankings: super::rankings::SharedRankings,
+    /// \[EXTENSION\] The metrics and quantizers of VECTOR (RULES.md D88),
+    /// shared by every state.
+    pub(crate) vectors: super::vectors::SharedVectors,
     /// The collations there are, by name (RULES.md D60).
     pub(crate) collations: BTreeMap<String, Arc<dyn Collation>>,
     /// The clock the datetime value functions read (`clock.rs`).
@@ -180,6 +183,7 @@ impl State {
             functions: Registry::with_set_functions(),
             types: TypeRegistry::builtin(),
             rankings: super::rankings::SharedRankings::default(),
+            vectors: super::vectors::SharedVectors::default(),
             clock: Arc::new(crate::clock::SystemClock),
             optimizer: Optimizer::with_builtin_rules(),
             tx: Arc::new(Transactions::default()),
@@ -199,15 +203,19 @@ impl State {
             building: HashSet::new(),
         };
         st.attach_builtins(&memory);
-        // The built-in engines' and rules' settings, of short names none
-        // declared yet, cannot be refused; a rule without one would be on,
-        // an engine without one at its default.
-        let engines: Vec<Arc<dyn StorageEngine>> = st.engines.values().cloned().collect();
-        for engine in engines {
-            let _ = st.declare_plugin(engine.name(), engine.configurable());
-        }
-        let _ = st.switch_rules();
+        st.declare_builtin_settings();
         st
+    }
+
+    /// Declares the built-in engines' and rules' settings, of short names
+    /// none declared yet, so none is refused; a rule without one would be
+    /// on, an engine without one at its default.
+    fn declare_builtin_settings(&mut self) {
+        let engines: Vec<Arc<dyn StorageEngine>> = self.engines.values().cloned().collect();
+        for engine in engines {
+            let _ = self.declare_plugin(engine.name(), engine.configurable());
+        }
+        let _ = self.switch_rules();
     }
 
     /// The built-in engines and index methods, given the budget `memory`
@@ -231,14 +239,18 @@ impl State {
         let hash = HashMethod::sharing(Arc::clone(&st.pages));
         let spatial = RTreeMethod::sharing(Arc::clone(&st.pages));
         let words = FullTextMethod::sharing(Arc::clone(&st.pages)).with_rankings(st.rankings.closure());
-        let graph = DiskAnnMethod::sharing(Arc::clone(&st.pages));
-        let layered = HnswMethod::sharing(Arc::clone(&st.pages));
-        let lists = IvfMethod::sharing(Arc::clone(&st.pages));
+        let (metrics, quantizers) = (st.vectors.metrics(), st.vectors.quantizers());
+        let graph =
+            DiskAnnMethod::sharing(Arc::clone(&st.pages)).with_metrics(Arc::clone(&metrics)).with_quantizers(Arc::clone(&quantizers));
+        let layered =
+            HnswMethod::sharing(Arc::clone(&st.pages)).with_metrics(Arc::clone(&metrics)).with_quantizers(Arc::clone(&quantizers));
+        let lists = IvfMethod::sharing(Arc::clone(&st.pages)).with_metrics(metrics).with_quantizers(quantizers);
         let methods: Vec<Arc<dyn IndexMethod>> =
             vec![Arc::new(btree), Arc::new(hash), Arc::new(spatial), Arc::new(words), Arc::new(graph), Arc::new(layered), Arc::new(lists)];
         for m in methods {
             st.methods.insert(m.name().to_string(), m);
         }
+        st.vector_functions();
     }
 
     /// Gives each table and index already in the catalog its storage and index

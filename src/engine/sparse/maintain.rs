@@ -62,7 +62,10 @@ impl SparseTree {
     /// The tree's; SQLCODE -916 if a block is malformed.
     pub fn compact(&self, dimension: u32) -> Result<()> {
         let _dimension = self.dimension_lock(dimension)?;
-        let placed: Vec<Placed> = self.scan(keys::dimension_range(dimension)).map(|entry| entry.and_then(|(k, v)| Ok((k, Header::read(&v)?)))).collect::<Result<_>>()?;
+        let placed: Vec<Placed> = self
+            .scan(keys::dimension_range(dimension))
+            .map(|entry| entry.and_then(|(k, v)| Ok((k, Header::read(&v)?))))
+            .collect::<Result<_>>()?;
         let layout = self.layout();
         for run in runs(&placed, layout.block) {
             let rewritten = run.len() > 1 || run.iter().any(|(_, h)| h.quantization != layout.quantization);

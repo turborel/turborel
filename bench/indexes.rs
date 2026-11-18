@@ -3,8 +3,11 @@
 //! entries added under scattered integer keys, found again by equality as
 //! a query's probe and as a UNIQUE check, on one and on several threads,
 //! in a buffer pool that holds every index; and "fulltext"
-//! (`index/fulltext.rs`), documents added and searched (`fulltext.rs`). Run with `cargo xtask bench`,
-//! on the harness (RULES.md R-BENCH-1).
+//! (`index/fulltext.rs`), documents added and searched (`fulltext.rs`);
+//! and the vector methods, built and searched by a sweep of their knobs
+//! (`vector.rs`). TURBOREL_INDEXES names one of btree, hash, fulltext and
+//! vector to run it alone. Run with `cargo xtask bench`, on the harness
+//! (RULES.md R-BENCH-1).
 
 #![allow(
     clippy::unwrap_used,
@@ -13,6 +16,7 @@
     clippy::integer_division,
     clippy::indexing_slicing,
     clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
     missing_docs,
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]
@@ -20,6 +24,8 @@
 #[path = "indexes/fulltext.rs"]
 mod fulltext;
 mod harness;
+#[path = "indexes/vector.rs"]
+mod vector;
 
 use std::sync::Arc;
 
@@ -39,12 +45,19 @@ const COLUMN: DataType = DataType::Exact { precision: 10, scale: 0, spelled: Spe
 
 fn main() {
     let bench = Bench::new("indexes");
-    for method in ["btree", "hash"] {
+    let only = std::env::var("TURBOREL_INDEXES").ok();
+    let runs = |name: &str| only.as_deref().is_none_or(|o| o == name);
+    for method in ["btree", "hash"].into_iter().filter(|m| runs(m)) {
         for threads in THREADS {
             workloads(&bench, method, threads);
         }
     }
-    fulltext::workloads(&bench);
+    if runs("fulltext") {
+        fulltext::workloads(&bench);
+    }
+    if runs("vector") {
+        vector::workloads(&bench);
+    }
 }
 
 /// The workloads of `method` on `threads` threads.

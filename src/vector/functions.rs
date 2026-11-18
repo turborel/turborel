@@ -21,7 +21,7 @@ mod utility;
 
 use std::sync::Arc;
 
-use super::metric::{COSINE, DOT, EUCLIDEAN, HAMMING, JACCARD, MANHATTAN, Metrics, built_in_metrics};
+use super::metric::{COSINE, DOT, EUCLIDEAN, HAMMING, JACCARD, MANHATTAN, Metrics, built_in_metrics, metric_named};
 use super::params::shape_of;
 use super::{VectorRef, data_type, mismatch, vector};
 use crate::error::{Code, Result, SqlError};
@@ -196,11 +196,30 @@ impl VectorFunction {
     /// The metric a distance shorthand always measures by, for an index
     /// to match (R13.1); none for VECTOR_DISTANCE, whose metric is an
     /// argument, and for every other function.
-    pub fn vector_metric(&self) -> Option<&'static str> {
+    pub fn fixed_metric(&self) -> Option<&'static str> {
         match self.routine {
             Routine::Distance(d) => d.metric(),
             Routine::Utility(_) | Routine::Convert(_) | Routine::Arithmetic(_) | Routine::Quantize(_) => None,
         }
+    }
+
+    /// The metric of a call of VECTOR_DISTANCE with `constants` and the
+    /// position of its first vector: of a metric named first, a constant,
+    /// the vectors after it; else of a metric named third, or COSINE if
+    /// none is written (R6.3). None of a metric that is no constant or
+    /// that no metric registered has.
+    fn named_metric(&self, constants: &[Option<&Value>]) -> Option<(String, usize)> {
+        let named = |at: usize| match constants.get(at) {
+            Some(Some(Value::Char(name))) => metric_named(&self.metrics, name).map(|m| m.name().to_owned()),
+            Some(_) | None => None,
+        };
+        if matches!(constants.first(), Some(Some(Value::Char(_)))) {
+            return named(0).map(|m| (m, 1));
+        }
+        if constants.len() < 3 {
+            return Some((COSINE.to_owned(), 0));
+        }
+        named(2).map(|m| (m, 0))
     }
 }
 
@@ -240,8 +259,46 @@ impl ScalarFunction for VectorFunction {
         }
     }
 
+    /// A `?` in a distance's vector place takes the type of the vector it
+    /// is measured against, if that is of a fixed shape: so a query vector
+    /// given as text is read in the column's dimensions and format, as an
+    /// index of the column searches by (R13.1). Elsewhere it takes the
+    /// type `argument_type` declares.
     fn parameter_type(&self, position: usize, known: &[Option<DataType>]) -> Option<ParameterType> {
+        let text_first = known.first().and_then(Option::as_ref).is_some_and(DataType::is_character);
+        let vector_place = matches!(self.routine, Routine::Distance(_)) && self.routine.arg(position, text_first) == Some(Arg::Vector);
+        if vector_place {
+            let first = usize::from(text_first && matches!(self.routine, Routine::Distance(Distance::VectorDistance)));
+            let other = if position == first { first.checked_add(1)? } else { first };
+            let shaped = known.get(other).and_then(Option::as_ref).filter(|t| shape_of(t).is_some());
+            if let Some(t) = shaped {
+                return Some(ParameterType::Of(t.clone()));
+            }
+        }
         self.argument_type(position, known).map(ParameterType::Of)
+    }
+
+    /// A distance raises only of its arguments: of vectors of other
+    /// dimensions or formats, of a format its metric does not measure, of
+    /// a metric no metric's name. A column of a fixed shape and a constant
+    /// operand raise alike for every row, and a null vector gives null; the
+    /// planner holds the call to that, and to a built-in metric, which
+    /// never fails of finite vectors, before it skips a row for it
+    /// (`physical/nearest/safe.rs`, D-APPROX).
+    fn rechecked_errors(&self) -> bool {
+        matches!(self.routine, Routine::Distance(_))
+    }
+
+    /// A shorthand's metric, but INNER_PRODUCT's, which orders greatest
+    /// first; VECTOR_DISTANCE's named by a constant, in either order, or
+    /// COSINE if none is written (R6.3, R13.1).
+    fn vector_metric(&self, constants: &[Option<&Value>]) -> Option<(String, usize)> {
+        let Routine::Distance(d) = self.routine else { return None };
+        match d {
+            Distance::InnerProduct => None,
+            Distance::VectorDistance => self.named_metric(constants),
+            Distance::L1 | Distance::L2 | Distance::Cosine | Distance::Hamming | Distance::Jaccard => d.metric().map(|m| (m.to_owned(), 0)),
+        }
     }
 
     fn call(&self, args: &[Value]) -> Result<Value> {

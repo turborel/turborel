@@ -196,4 +196,3 @@ mod tests {
         assert!(Shown::of(None).names().is_none());
     }
 }
-

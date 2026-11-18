@@ -8,6 +8,7 @@
 use crate::catalog::IndexDesc;
 use crate::engine::diskann::{Element, MOST_DEGREE, Tuning, defaults};
 use crate::error::{Code, Result, SqlError};
+use crate::index::vector::{Shared, shared, shared_of};
 use crate::settings::Kind;
 use crate::storage::{Rebuild, TableOption, option_value};
 use crate::value::{Decimal, Value};
@@ -26,7 +27,7 @@ pub const SEARCH_LIST: &str = "DISKANN.SEARCH_LIST";
 pub const BEAM_WIDTH: &str = "DISKANN.BEAM_WIDTH";
 /// The quantizer of the guiding codes, by name, or `NONE`.
 pub const QUANTIZER: &str = "DISKANN.QUANTIZER";
-/// Bytes of a code; 0 for a quarter of the dimensions.
+/// Bytes of a code; 0 for a quarter of the dimensions (`index/vector/options.rs`).
 pub const PQ_BYTES: &str = "DISKANN.PQ_BYTES";
 /// The metric, by name.
 pub const METRIC: &str = "DISKANN.METRIC";
@@ -38,7 +39,7 @@ pub const CACHE_PERCENT: &str = "DISKANN.CACHE_PERCENT";
 pub const CLUSTERS: &str = "DISKANN.CLUSTERS";
 /// ℓ of the merged build.
 pub const CLUSTER_COPIES: &str = "DISKANN.CLUSTER_COPIES";
-/// The recall a search aims at, a percentage.
+/// The recall a search aims at, a percentage (`index/vector/options.rs`).
 pub const TARGET_ACCURACY: &str = "DISKANN.TARGET_ACCURACY";
 /// Whether the executor re-ranks the final candidates by the SQL measure.
 pub const RERANK: &str = "DISKANN.RERANK";
@@ -83,12 +84,10 @@ const MOST_CLUSTERS: i128 = 4096;
 const MOST_COPIES: i128 = 4;
 /// A percentage's whole.
 const PERCENT: i128 = 100;
-/// The default target accuracy, a percentage.
-const DEFAULT_ACCURACY: i128 = 90;
 /// The least build memory, 1 MiB.
 const LEAST_MEMORY: i128 = 1 << 20;
-/// The most code bytes.
-const MOST_CODE: i128 = 65_535;
+/// The group of its options.
+const GROUP: &str = "DISKANN";
 
 fn whole(n: impl TryInto<i128>) -> Value {
     Value::Exact(Decimal::new(n.try_into().unwrap_or(i128::MAX), 0))
@@ -103,6 +102,7 @@ pub fn options() -> Vec<TableOption> {
     let mut all = graph_options();
     all.extend(kept_options());
     all.extend(answer_options());
+    all.extend(shared(GROUP));
     all
 }
 
@@ -154,7 +154,6 @@ fn graph_options() -> Vec<TableOption> {
             PQ,
             "The quantizer of the compressed codes in memory that guide a search, by name, or NONE to guide by full vectors.",
         ),
-        integer(PQ_BYTES, (0, MOST_CODE), whole(0_u32), (Rebuild::Yes, "Bytes of a node's code; 0 for a quarter of the dimensions.")),
         word(METRIC, COSINE, "The distance the index orders by, by name; a search uses it only for a distance of the same metric."),
     ]
 }
@@ -196,19 +195,10 @@ fn kept_options() -> Vec<TableOption> {
 /// memory.
 fn answer_options() -> Vec<TableOption> {
     vec![
-        integer(
-            TARGET_ACCURACY,
-            (1, PERCENT),
-            whole(DEFAULT_ACCURACY),
-            (
-                Rebuild::No,
-                "The share of the true nearest rows an approximate search aims to find, a percentage, unless the query sets its own.",
-            ),
-        ),
         TableOption::new(
             (RERANK, Kind::Choice(SWITCH), Value::Char(SWITCH.first().copied().unwrap_or_default().into())),
             Rebuild::No,
-            "Whether the final candidates are ordered again by the SQL distance of each row's vector: ON, or OFF to take the index's order.",
+            "Whether a search gives its whole candidate list for the executor to order again by the SQL distance of each row's vector: ON, or OFF to give only the rows asked, in the index's order.",
         ),
         TableOption::new(
             (NODE_VECTORS, Kind::Choice(ELEMENTS), Value::Char(FLOAT32.into())),
@@ -250,14 +240,14 @@ pub struct Options {
     pub tuning: Tuning,
     /// The quantizer's name, upper case; `NONE` for none.
     pub quantizer: String,
-    /// Code bytes; 0 for a quarter of the dimensions.
-    pub code_bytes: u32,
     /// The metric's name, upper case.
     pub metric: String,
-    /// The target accuracy, a percentage.
-    pub accuracy: u32,
-    /// Whether the executor re-ranks.
+    /// Whether a search gives its whole list for the executor to order
+    /// again, or only the rows asked.
     pub rerank: bool,
+    /// TARGET_ACCURACY, PQ_BYTES (0 for a quarter of the dimensions) and
+    /// NORMALIZED.
+    pub(crate) shared: Shared,
 }
 
 /// The options `desc` sets, the others their defaults.
@@ -301,10 +291,9 @@ pub fn options_of(desc: &IndexDesc) -> Result<Options> {
         element,
         tuning,
         quantizer: word(QUANTIZER, PQ),
-        code_bytes: small(PQ_BYTES),
         metric: word(METRIC, COSINE),
-        accuracy: small(TARGET_ACCURACY),
         rerank: word(RERANK, "ON") != "OFF",
+        shared: shared_of(desc, GROUP, SEARCH_LIST),
     })
 }
 
@@ -340,7 +329,7 @@ mod tests {
         assert!(names.iter().all(|n| n.starts_with("DISKANN.")));
         let read = options_of(&desc(Vec::new())).unwrap();
         assert_eq!((read.degree, read.element, read.tuning), (defaults::DEGREE, Element::Float32, Tuning::default()));
-        assert_eq!((read.quantizer.as_str(), read.metric.as_str(), read.accuracy, read.rerank), (PQ, COSINE, 90, true));
+        assert_eq!((read.quantizer.as_str(), read.metric.as_str(), read.shared.accuracy, read.rerank), (PQ, COSINE, Some(90), true));
         let set = vec![
             (MAX_DEGREE.into(), whole(32_u32)),
             (ALPHA.into(), Value::Approx(1.5_f64)),

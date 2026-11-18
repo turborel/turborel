@@ -57,4 +57,3 @@ fn shared_words_make_vectors_near() {
     assert!((weights[1] / weights[0] - (1.0_f64 + 2.0_f64.ln())).abs() < 1.0e-6_f64);
     assert_eq!(sparse.tokens("  Hi, there!"), [(2, 4), (6, 11)]);
 }
-

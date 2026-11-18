@@ -217,3 +217,38 @@ fn a_method_refuses_columns_it_cannot_index() {
         assert!(!method.supports(crate::value::CompOp::Eq), "{}", method.name());
     }
 }
+
+/// Verifies: [EXTENSION] vector_standard R7.1, §10.2 RERANK: DiskANN's
+/// RERANK ON gives the whole search list to be ordered again by the exact
+/// distance, and OFF the rows asked alone, as ALTER INDEX sets it.
+#[test]
+fn diskann_rerank_gives_the_whole_list_or_the_rows_asked() {
+    let index = filled(&DiskAnnMethod::in_memory());
+    let q = query("COSINE", 3, None);
+    let on = found(&index, &q, None).unwrap().unwrap();
+    assert!(on.len() > K, "the list of 64: {}", on.len());
+    let name = crate::catalog::QualifiedName { auth: "A".into(), ident: "T".into() };
+    let table = crate::catalog::TableDesc {
+        periods: Vec::new(),
+        typed: None,
+        name: name.clone(),
+        columns: vec![],
+        constraints: vec![],
+        engine: crate::engine::rows::ROW_STORE.into(),
+        options: Vec::new(),
+        generation: 0,
+        temporary: None,
+    };
+    let off = crate::catalog::IndexDesc {
+        name: "T_V".into(),
+        table: name,
+        columns: vec![0],
+        method: "diskann".into(),
+        unique: false,
+        options: vec![("DISKANN.RERANK".into(), Value::Char("OFF".into()))],
+        collations: Vec::new(),
+        nulls: false,
+    };
+    index.reconfigure((&table, &off));
+    assert_eq!(found(&index, &q, None).unwrap().unwrap().len(), K);
+}
