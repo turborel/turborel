@@ -22,6 +22,10 @@
 //!   schema by definition [Schema1 §3.2.7].
 //! - SQL/XML's: the XML Schema [ISO/IEC 9075-14:2006 draft §22.1] prints
 //!   (`sqlxml.xsd`).
+//!
+//! The notice of the two documents copied from W3C's Recommendations,
+//! `XMLSchema.xsd` and `datatypes.xsd`, is `LICENSE-W3C`, beside them;
+//! `xml.xsd` is turborel's own.
 
 use std::sync::{Arc, OnceLock};
 

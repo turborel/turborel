@@ -3319,7 +3319,8 @@ are read once, when first needed, from schema documents kept in the tree
 (`xml/schema/permanent/`), as no text turborel is written from fetches
 anything: XS's from the Schema for Schemas as [Schema1 Appendix A]
 prints it, with the schema of the datatypes it includes as [Schema2
-Appendix A] prints it, and a schema of the XML namespace it imports,
+Appendix A] prints it, both copied unchanged under their W3C notice
+(`xml/schema/permanent/LICENSE-W3C`), and a schema of the XML namespace it imports,
 which no text on hand prints, so turborel's own, of `xml:lang` and
 `xml:space` as XML 1.0 defines them; their definitions of the built-in
 type names are the built-in definitions they represent [Schema1 §3.4.7,
