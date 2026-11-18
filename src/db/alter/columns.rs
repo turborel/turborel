@@ -210,6 +210,8 @@ impl State {
                 }
                 (uses, false)
             }
+            // [EXTENSION] Of pseudo-columns, which are not dropped.
+            ConstraintKind::Connection(_) => (Vec::new(), false),
             ConstraintKind::Check { text, names, horizon, .. } => {
                 let mut uses = Vec::new();
                 cond_columns(&self.check_condition(&table.name, (text, names, horizon))?, &mut uses);
@@ -231,7 +233,7 @@ fn refers_from(without: &State, (table, at): (&TableDesc, usize), (other, c): (&
         ConstraintKind::Check { text, names, reads, horizon } => {
             reads.contains(&table.name) && without.check_condition(other, (text, names, &horizon.without(&table.name, at))).is_err()
         }
-        ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } => false,
+        ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::Connection(_) => false,
     }
 }
 
@@ -248,6 +250,7 @@ fn renumbered(c: &ConstraintDesc, table: &TableDesc, reshape: Reshape, own: bool
             nulls_distinct: *nulls_distinct,
             period: period.clone(),
         },
+        ConstraintKind::Connection(k) => ConstraintKind::Connection(k.clone()),
         ConstraintKind::ForeignKey(fk) => {
             let mut fk = fk.clone();
             if own {

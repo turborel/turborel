@@ -28,6 +28,7 @@
 
 mod actions;
 mod before;
+mod connections;
 mod gather;
 mod held;
 mod inherited;
@@ -511,6 +512,7 @@ impl State {
                     );
                 }
             }
+            ConstraintKind::Connection(k) => self.check_connection(tx, desc, (&c.name, k), &row)?,
             ConstraintKind::Unique { .. } => {}
         }
         Ok(())

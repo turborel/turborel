@@ -78,6 +78,7 @@ key_words! {
 }
 
 pub mod delim;
+mod pseudo;
 
 /// [ISO/IEC 9075-2:2023 §5.1] `<left bracket trigraph>` and `<right
 /// bracket trigraph>`, each the bracket it stands for.
@@ -327,6 +328,9 @@ impl Scanner {
         }
         if first == '_' && self.next_is(1, |c| c.is_ascii_alphabetic()) {
             return Ok(self.introducer());
+        }
+        if let Some(pseudo) = self.pseudo_column() {
+            return Ok(pseudo);
         }
         if is_identifier_start(first) {
             self.regular_identifier()

@@ -15,6 +15,7 @@ mod alter;
 mod dependents;
 mod describe;
 mod elements;
+pub(in crate::db) mod native;
 mod privileges;
 
 use std::sync::Arc;
@@ -52,6 +53,9 @@ impl State {
     /// a graph replaced, if a view that reads it binds no more.
     pub(in crate::db) fn create_graph(&mut self, schema: &str, def: &GraphDefinition) -> Result<Defined> {
         let qn = qualify(&def.name, schema);
+        if native::is_sys_graph(&qn) {
+            return Err(native::sys_graph_refused(&qn)).or_at(def.name.at);
+        }
         let earlier = self.catalog.graph(&qn).cloned();
         if earlier.is_some() && def.if_not_exists {
             return Ok(Defined::default());
@@ -135,7 +139,9 @@ impl State {
     /// SQLCODE -103, not `cascade`, if one reads one, as the Syntax Rule
     /// `cited` of a view that reads it says.
     pub(in crate::db) fn drop_graphing(&mut self, gone: &[&QualifiedName], (cascade, cited): (bool, &str)) -> Result<Dropped> {
+        // [EXTENSION] (§4.2) SYS_GRAPH is described anew instead.
         let reading: Vec<(QualifiedName, QualifiedName)> = (self.catalog.graphs().into_iter())
+            .filter(|g| !native::is_sys_graph(&g.name))
             .filter_map(|g| g.reads.iter().find(|r| gone.contains(r)).map(|r| (g.name.clone(), r.clone())))
             .collect();
         if let (Some((graph, read)), false) = (reading.first(), cascade) {

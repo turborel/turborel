@@ -171,6 +171,9 @@ impl State {
         (made, tx, epochs): (Option<&Made>, Option<&Txn>, &mut Epochs),
     ) -> Result<(Dropped, Made, Option<Reshape>)> {
         versioning::unversioned(self, qn, action)?;
+        if let Some(desc) = self.catalog.table(qn) {
+            Self::pseudo_unaltered(desc, action)?;
+        }
         let altered = match action {
             AlterAction::AddColumn(_) | AlterAction::DropColumn { .. } => {
                 let (dropped, built, reshape) = self.alter_columns((qn, names, zone), action, (made, epochs))?;
@@ -210,6 +213,7 @@ impl State {
         // [EXTENSION] The property graphs that read it (§4.1 R4.7).
         let (mut dropped, built, reshape) = altered?;
         dropped.absorb(self.graphs_altered(qn, action)?);
+        self.refresh_sys_graphs()?;
         Ok((dropped, built, reshape))
     }
 

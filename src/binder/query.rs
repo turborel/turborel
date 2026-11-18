@@ -210,7 +210,8 @@ pub(super) fn distinct(plan: LogicalPlan, (db, session): (&State, Option<&Collat
 /// `<column specification>` for every column of R, in order; [ISO/IEC
 /// 9075:1992 §7.9 SR3b] those of the FROM clause's results, a NATURAL
 /// join's common columns once. [SR4] `<qualifier>`.* is one for every
-/// column of the table it designates.
+/// column of the table it designates. \[EXTENSION\] (§4.2) Neither is
+/// one for a pseudo-column of a node or edge table, which is hidden.
 fn select_items(binder: &Binder<'_>, list: &SelectList) -> Result<Vec<SelectItem>> {
     let item_column = |i: usize, k: usize| {
         let it = binder.items.get(i)?;
@@ -219,7 +220,8 @@ fn select_items(binder: &Binder<'_>, list: &SelectList) -> Result<Vec<SelectItem
             Some(c) => TableName { auth: None, ident: c.clone(), at },
             None => TableName { auth: Some(it.table.auth.clone()), ident: it.table.ident.clone(), at },
         };
-        let column = ColumnSpecification { qualifier: Some(qualifier), column: it.desc.columns.get(k)?.name.clone(), catalog: None, at };
+        let column = it.desc.columns.get(k).filter(|c| !c.hidden())?;
+        let column = ColumnSpecification { qualifier: Some(qualifier), column: column.name.clone(), catalog: None, at };
         Some(SelectItem { value: ValueExpression::Column(column), alias: None, at })
     };
     let SelectList::Values(sublists) = list else {

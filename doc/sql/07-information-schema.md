@@ -262,6 +262,10 @@ Of another column the six are null. IS_GENERATED is ALWAYS of a generated
 column and NEVER of another, and GENERATION_EXPRESSION is a generated
 column's expression as written. COLUMN_DEFAULT is null of both kinds.
 
+COLUMNS has IS_HIDDEN last *(extension)*, YES of a pseudo-column of a
+node or edge table, which `*` does not show, and NO of another
+([CREATE TABLE](statements/create-table.md)).
+
 COLUMNS and DOMAINS have two more *(extension)*, as ISO/IEC 9075-11
 names them. DATA_TYPE is ARRAY, MULTISET or ROW of a column or domain
 of such a type, MAXIMUM_CARDINALITY an array's maximum cardinality, and null of
@@ -315,6 +319,8 @@ string as CHARACTER, its octet length four octets a character.
 | PG_KEY_COLUMNS | PROPERTY_GRAPH_CATALOG, PROPERTY_GRAPH_SCHEMA, PROPERTY_GRAPH_NAME, ELEMENT_TABLE_ALIAS, COLUMN_NAME, ORDINAL_POSITION | column of such an element table's key, in order |
 | PG_EDGE_ENDPOINTS | PROPERTY_GRAPH_CATALOG, PROPERTY_GRAPH_SCHEMA, PROPERTY_GRAPH_NAME, EDGE_TABLE_ALIAS, EDGE_END, VERTEX_TABLE_ALIAS, ORDINAL_POSITION, EDGE_COLUMN_NAME, VERTEX_COLUMN_NAME | column of such an edge table that joins it, at its SOURCE or DESTINATION end, to a vertex table, with the vertex table's column it matches |
 | PROPERTY_GRAPH_PRIVILEGES | GRANTOR, GRANTEE, PROPERTY_GRAPH_CATALOG, PROPERTY_GRAPH_SCHEMA, PROPERTY_GRAPH_NAME, PRIVILEGE_TYPE, IS_GRANTABLE | SELECT on a graph, the owner's of _SYSTEM among them, granted to or by the user, PUBLIC or an enabled role |
+| GRAPH_TABLES | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, GRAPH_TABLE_TYPE | node or edge table the user holds a privilege on: NODE or EDGE ([CREATE TABLE](statements/create-table.md)) |
+| CONNECTION_CONSTRAINTS | CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME, TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION, FROM_TABLE_CATALOG, FROM_TABLE_SCHEMA, FROM_TABLE_NAME, TO_TABLE_CATALOG, TO_TABLE_SCHEMA, TO_TABLE_NAME, DELETE_RULE | clause of a CONNECTION constraint of such an edge table, in order: the node tables its edges may join, and CASCADE or NO ACTION |
 
 VALUE_SOURCE says where a value comes from: DEFAULT, or the place it was
 set: DATABASE, SESSION, or NODE for a node's setting, whose value is

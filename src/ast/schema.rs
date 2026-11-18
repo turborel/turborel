@@ -330,6 +330,8 @@ pub struct TableDefinition {
     /// [ISO/IEC 9075-2:2023 §11.3] Where WITH SYSTEM VERSIONING begins, if
     /// written.
     pub versioning: Option<usize>,
+    /// \[EXTENSION\] (§4.2) AS NODE or AS EDGE, if written, and where.
+    pub graph: Option<(crate::catalog::NativeKind, usize)>,
 }
 
 /// \[EXTENSION\] `<table storage>` ::= \[USING `<engine name>`\] \[WITH
@@ -532,6 +534,16 @@ pub enum TableConstraintKind {
     },
     /// [§11.9] A `<check constraint definition>`.
     Check(Check),
+    /// \[EXTENSION\] (§4.2) `<connection constraint>` ::= CONNECTION (
+    /// `<connection clause>` \[{, `<connection clause>`}...\] ) \[ON DELETE
+    /// {CASCADE | NO ACTION}\], where `<connection clause>` ::= `<table
+    /// name>` TO `<table name>`.
+    Connection {
+        /// Each clause's source and destination node tables, in order.
+        clauses: Vec<(TableName, TableName)>,
+        /// ON DELETE CASCADE, rather than NO ACTION.
+        cascade: bool,
+    },
 }
 
 /// [ISO/IEC 9075:1992 §11.9] `<check constraint definition>` ::= CHECK

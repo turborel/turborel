@@ -11,6 +11,7 @@ CREATE TABLE: define a base table
 ```
 <table definition> ::=
     CREATE [ { GLOBAL | LOCAL } TEMPORARY ] TABLE <table name> <table contents source>
+    [ <graph table kind> ]
     [ WITH SYSTEM VERSIONING ]
     [ ON COMMIT { DELETE | PRESERVE } ROWS ]
     [ USING <engine name> ]
@@ -20,6 +21,8 @@ CREATE TABLE: define a base table
       ( <table element> [ { , <table element> }... ] )
     | OF <user-defined type name> [ UNDER <supertable name> ] [ ( <typed table element> [ { , <typed table element> }... ] ) ]
     | [ ( <column name> [ { , <column name> }... ] ) ] AS ( <query expression> ) WITH [ NO ] DATA
+
+<graph table kind> ::= AS { NODE | EDGE }
 
 <table element> ::= <column definition> | <table constraint definition> | <like clause> | <table period definition>
 
@@ -72,8 +75,13 @@ CREATE TABLE: define a base table
           ( <column name> [ { , <column name> }... ] [ , <period name> WITHOUT OVERLAPS ] )
       | FOREIGN KEY ( <column name> [ { , <column name> }... ] [ , PERIOD <period name> ] )
           <references specification>
-      | <check constraint definition> }
+      | <check constraint definition>
+      | <connection constraint> }
     [ <constraint attributes> ]
+
+<connection constraint> ::=
+    CONNECTION ( <table name> TO <table name> [ { , <table name> TO <table name> }... ] )
+    [ ON DELETE { CASCADE | NO ACTION } ]
 
 <references specification> ::=
     REFERENCES <table name> [ ( <column name> [ { , <column name> }... ] [ , PERIOD <period name> ] ) ]
@@ -92,6 +100,10 @@ CREATE TABLE: define a base table
 ```
 
 A column has a data type or a domain unless it has a generation clause.
+A node or edge table may write no `<table contents source>` before AS
+NODE or AS EDGE, and then has only its pseudo-columns. NODE, EDGE and CONNECTION's
+TO are read in their places alone, so NODE and EDGE may name a table or
+column.
 GENERATED, ALWAYS and EXPRESSION are non-reserved words, so a domain may
 be named GENERATED. INCLUDING, EXCLUDING, DEFAULTS, DATA and NULLS are
 non-reserved words too. ON UPDATE and ON DELETE may be written in either order, each once. The
@@ -257,6 +269,59 @@ ONLY reads its subtables' rows, cut to its columns, and its constraints
 hold of them. WITH OPTIONS gives a column a SCOPE, a default or
 constraints. ALTER TABLE adds or drops no column of a typed table.
 
+AS NODE or AS EDGE *(extension)* makes a node table or an edge table,
+the native graph tables of the property graph standard's Mode B. A node
+table is given a hidden column `$NODE_ID`, and an edge table `$EDGE_ID`,
+`$FROM_ID` and `$TO_ID`, after its own columns. These pseudo-columns are
+VARCHAR(2048) and NOT NULL. `*` does not show them, nor does an INSERT
+with no column list fill them, but a query names them like any other
+column, in any case. COLUMNS in the [Information
+Schema](../07-information-schema.md) shows each with IS_HIDDEN YES.
+
+Each row of a node table is given an identity in `$NODE_ID` as it is
+inserted, and each edge one in `$EDGE_ID`. The identity is the text
+`{"type":"node","schema":"S","table":"T","id":N}`, N counting from 0 in
+each table. No INSERT or UPDATE writes it. A number once given is not
+given again, but numbers may be skipped after the database reopens.
+
+An edge is inserted with the identities of the two nodes it joins, in
+`$FROM_ID` and `$TO_ID`, written as text or read by a subquery. Each is
+the identity of a node of a node table of the edge table's schema, kept
+in the one form above, so the same node written with its members in
+another order or spacing is still one node. Without a CONNECTION
+constraint, an edge may join any two nodes of the schema. A CONNECTION
+constraint lists the pairs of node tables, FROM TO, its edges may join,
+and each edge's endpoints must then be rows of those tables, as INSERT
+and UPDATE check at the end of the statement. With several CONNECTION
+constraints, an edge satisfies each.
+
+A node is not deleted while an edge of its schema joins it, unless
+every edge table that has such an edge has a CONNECTION constraint ON
+DELETE CASCADE that names the node's table. Those edges are then
+deleted with it, in the same statement. TRUNCATE of a node table is
+refused while its schema has an edge table.
+
+Each edge table has an adjacency index of its endpoints, named
+`S.T.ADJACENCY`, and each node and edge table a B-tree of its identity,
+named `S.T.$NODE_ID` or `S.T.$EDGE_ID`. INDEXES shows them. The node and
+edge tables of a schema make up its property graph SYS_GRAPH, which the
+database keeps. Each node table is a vertex table of it, keyed by
+`$NODE_ID` and labelled by its name, with its own columns as
+properties. Each edge table is an edge table of it once for each pair of
+node tables it may join, keyed by `$EDGE_ID` and labelled by its name.
+When it joins one pair, its alias is its name; else it is the edge
+table's name and the pair's, as in `KNOWS PERSON TO CITY`. SYS_GRAPH
+changes as the tables are created, altered and dropped, and goes with
+the schema's last node table. No statement creates, alters or drops it.
+GRAPH_TABLES and CONNECTION_CONSTRAINTS in the Information Schema show
+the node and edge tables and the clauses of each CONNECTION constraint.
+
+ALTER TABLE adds and drops a node or edge table's own columns, and adds
+or drops a CONNECTION constraint, which its edges must satisfy as it is
+added. It drops and alters no pseudo-column, and adds no system
+versioning. DROP TABLE of a node table that a CONNECTION constraint
+names needs CASCADE, which drops the constraint.
+
 CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
 
 ## RULES
@@ -330,6 +395,10 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
     needs the period, of a table with no column of a reference type,
     and no LIKE names a system-versioned table. No CHECK, UNIQUE,
     PRIMARY KEY or foreign key is of a ROW START or ROW END column.
+22. AS NODE and AS EDGE *(extension)* make no temporary, typed or
+    system-versioned table, and none from a query. The schema has no
+    table or view named SYS_GRAPH. A CONNECTION constraint is of an
+    edge table, and names node tables of its schema (GRF-0004).
 
 ## PRIVILEGES
 
@@ -350,6 +419,9 @@ names. The privileges the query of AS needs to be run.
 | 0A000 | -900 | A CHARACTER SET clause of another character set |
 | 2A000 | -103 | A COLLATE clause of no collation, or of a column not of a character string |
 | 02000 | 100 | Not an error: the query of AS ... WITH DATA had no row |
+| 2A000 | -103 | A CONNECTION constraint names no node table of the schema, GRF-0004 *(extension)* |
+| 23000 | -201 | An edge's endpoint is no node, or of tables no CONNECTION constraint allows, GRF-0053 *(extension)* |
+| 23000 | -201 | A node deleted has edges no CONNECTION constraint deletes with it, GRF-0052 *(extension)* |
 
 Any error running the query of AS ... WITH DATA, or inserting its rows,
 is the statement's.
@@ -624,6 +696,51 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): PRIMARY KEY writes no <unique null trea
 turborel: SQLCODE -103 (SQLSTATE 2A000): the columns of period P are of one type, DATE or a timestamp type, not DATE and TIMESTAMP(6) [ISO/IEC 9075-2:2023 §11.3 SR2e iii] (at character 71)
 ```
 
+The node and edge tables of a small social graph. The edge `LIVES`
+joins people to towns alone, and goes with either.
+
+```sql
+CREATE TABLE PEOPLE (NAME VARCHAR(10)) AS NODE;
+CREATE TABLE TOWNS (TOWN VARCHAR(10)) AS NODE;
+CREATE TABLE LIVES (SINCE INTEGER, CONSTRAINT LIVES_LINK CONNECTION (PEOPLE TO TOWNS) ON DELETE CASCADE) AS EDGE;
+INSERT INTO PEOPLE VALUES ('Ann');
+INSERT INTO TOWNS VALUES ('Rome');
+INSERT INTO LIVES ($FROM_ID, $TO_ID, SINCE) SELECT P.$NODE_ID, T.$NODE_ID, 2020 FROM PEOPLE P, TOWNS T;
+SELECT * FROM PEOPLE;
+SELECT $NODE_ID, NAME FROM PEOPLE;
+SELECT P.NAME, T.TOWN, L.SINCE FROM PEOPLE P, LIVES L, TOWNS T WHERE L.$FROM_ID = P.$NODE_ID AND L.$TO_ID = T.$NODE_ID;
+INSERT INTO LIVES ($FROM_ID, $TO_ID) SELECT T.$NODE_ID, P.$NODE_ID FROM PEOPLE P, TOWNS T;
+DELETE FROM TOWNS;
+SELECT COUNT(*) FROM LIVES;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+OK
+ NAME
+------------
+ Ann
+(1 row)
+ $NODE_ID                                                     | NAME
+--------------------------------------------------------------+------------
+ {"type":"node","schema":"ANN","table":"PEOPLE","id":0}       | Ann
+(1 row)
+ NAME       | TOWN       |        SINCE
+------------+------------+--------------
+ Ann        | Rome       |         2020
+(1 row)
+turborel: SQLCODE -201 (SQLSTATE 23000): GRF-0053 an edge of ANN.LIVES joins a node of ANN.TOWNS to one of ANN.PEOPLE, which CONNECTION ANN.LIVES_LINK does not allow
+OK
+
+----------------------
+                    0
+(1 row)
+```
+
 ## STANDARD
 
 ISO/IEC 9075:1992 §11.3 to §11.9, and §10.6 for constraint names and
@@ -645,11 +762,16 @@ and NULLS NOT DISTINCT takes two rows all null as the same, both choices
 the standard leaves to the implementation. Outside a `<schema definition>`, CREATE TABLE is SQL-92's
 `<SQL schema statement>` [§20.1], and a constraint's name written without
 a schema is of the default schema [§5.4 SR8b]. USING and WITH are
-extensions.
+extensions. AS NODE, AS EDGE, the pseudo-columns and CONNECTION
+constraints are the property graph implementation standard's Mode B,
+§4.2, R5.1 for the identities and R12.1 and R12.2 for a node's edges and
+CONNECTION; the views GRAPH_TABLES and CONNECTION_CONSTRAINTS and the
+column IS_HIDDEN are this implementation's own.
 
 ## SEE ALSO
 
 [ALTER TABLE](alter-table.md), [DROP TABLE](drop-table.md),
 [CREATE DOMAIN](create-domain.md), [CREATE INDEX](create-index.md),
 [CREATE SEQUENCE](create-sequence.md), [INSERT](insert.md),
+[CREATE PROPERTY GRAPH](create-property-graph.md),
 [Constraints](../../user/07-constraints.md)

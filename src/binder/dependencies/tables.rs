@@ -50,7 +50,10 @@ fn not_null(desc: &TableDesc) -> Vec<usize> {
         match &c.kind {
             ConstraintKind::NotNull(at) => columns.push(*at),
             ConstraintKind::Unique { columns: key, primary: true, .. } => columns.extend(key),
-            ConstraintKind::Unique { primary: false, .. } | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => {}
+            ConstraintKind::Unique { primary: false, .. }
+            | ConstraintKind::ForeignKey(_)
+            | ConstraintKind::Check { .. }
+            | ConstraintKind::Connection(_) => {}
         }
     }
     columns

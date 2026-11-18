@@ -72,6 +72,9 @@ pub enum ConstraintKind {
         /// once it is bound: none before.
         horizon: super::Horizon,
     },
+    /// \[EXTENSION\] (§4.2) CONNECTION, of an edge table: the node tables
+    /// its edges may join.
+    Connection(super::Connection),
 }
 
 /// [ISO/IEC 9075:1992 §11.8] A referential constraint: the referencing
@@ -129,7 +132,9 @@ impl TableDesc {
     pub fn unique(&self) -> impl Iterator<Item = Vec<usize>> + '_ {
         self.constraints.iter().filter_map(|c| match &c.kind {
             ConstraintKind::Unique { columns, period, .. } => Some(self.key_columns(columns, period.as_deref())),
-            ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => None,
+            ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } | ConstraintKind::Connection(_) => {
+                None
+            }
         })
     }
 
@@ -158,7 +163,9 @@ impl TableDesc {
             ConstraintKind::Unique { columns: on, nulls_distinct, period, .. } => {
                 !nulls_distinct && self.key_columns(on, period.as_deref()) == columns
             }
-            ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => false,
+            ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } | ConstraintKind::Connection(_) => {
+                false
+            }
         })
     }
 
@@ -169,7 +176,8 @@ impl TableDesc {
             ConstraintKind::Unique { primary: false, .. }
             | ConstraintKind::NotNull(_)
             | ConstraintKind::ForeignKey(_)
-            | ConstraintKind::Check { .. } => None,
+            | ConstraintKind::Check { .. }
+            | ConstraintKind::Connection(_) => None,
         })
     }
 
@@ -177,7 +185,9 @@ impl TableDesc {
     pub fn foreign_keys(&self) -> impl Iterator<Item = (&QualifiedName, &ForeignKey)> {
         self.constraints.iter().filter_map(|c| match &c.kind {
             ConstraintKind::ForeignKey(fk) => Some((&c.name, fk)),
-            ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::Check { .. } => None,
+            ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::Check { .. } | ConstraintKind::Connection(_) => {
+                None
+            }
         })
     }
 
@@ -185,7 +195,9 @@ impl TableDesc {
     pub fn checks(&self) -> impl Iterator<Item = (&QualifiedName, &str)> {
         self.constraints.iter().filter_map(|c| match &c.kind {
             ConstraintKind::Check { text, .. } => Some((&c.name, text.as_str())),
-            ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) => None,
+            ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) | ConstraintKind::Connection(_) => {
+                None
+            }
         })
     }
 

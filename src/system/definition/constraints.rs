@@ -15,6 +15,9 @@ use crate::storage::Row;
 use crate::system::{Rows, Seen, SystemTable, catalog_name, number, text, yes};
 use crate::value::Value;
 
+/// \[EXTENSION\] The CONSTRAINT_TYPE of a CONNECTION constraint (§4.2).
+pub(super) const CONNECTION: &str = "CONNECTION";
+
 /// The tables.
 pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     vec![
@@ -68,6 +71,7 @@ fn table_constraints(seen: &Seen<'_>) -> Vec<Row> {
                 ConstraintKind::Unique { primary: true, .. } => ("PRIMARY KEY", Value::Null),
                 ConstraintKind::Unique { primary: false, nulls_distinct, .. } => ("UNIQUE", yes(*nulls_distinct)),
                 ConstraintKind::ForeignKey(_) => ("FOREIGN KEY", Value::Null),
+                ConstraintKind::Connection(_) => (CONNECTION, Value::Null),
                 ConstraintKind::NotNull(_) | ConstraintKind::Check { .. } => ("CHECK", Value::Null),
             };
             let deferral = vec![yes(c.attributes.deferrable), yes(c.attributes.initially_deferred), nulls];
@@ -96,7 +100,7 @@ fn referenced<'c>(catalog: &'c dyn Catalog, fk: &ForeignKey) -> Option<(&'c Cons
             have.sort_unstable();
             (have == wanted).then_some((c, columns.as_slice()))
         }
-        ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => None,
+        ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } | ConstraintKind::Connection(_) => None,
     })
 }
 
@@ -115,7 +119,7 @@ fn key_columns(seen: &Seen<'_>) -> Vec<Row> {
                 let place = |j: usize, r: &usize| key.iter().position(|k| k == r).unwrap_or(j);
                 fk.columns.iter().zip(&fk.referenced).enumerate().map(|(j, (&at, r))| (at, place(j, r))).collect()
             }
-            ConstraintKind::NotNull(_) | ConstraintKind::Check { .. } => Vec::new(),
+            ConstraintKind::NotNull(_) | ConstraintKind::Check { .. } | ConstraintKind::Connection(_) => Vec::new(),
         };
         for (at, k) in positioned {
             let named = [ids(&catalog, &c.name), ids(&catalog, &t.name)].concat();
@@ -185,7 +189,7 @@ fn checks(seen: &Seen<'_>) -> Vec<Row> {
         let clause = match &c.kind {
             ConstraintKind::NotNull(at) => long(&format!("{} IS NOT NULL", t.columns.get(*at).map_or("", |col| col.name.as_str()))),
             ConstraintKind::Check { text: condition, .. } => long(condition),
-            ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) => continue,
+            ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) | ConstraintKind::Connection(_) => continue,
         };
         rows.push([ids(&catalog, &c.name).to_vec(), vec![clause]].concat());
     }
@@ -214,7 +218,7 @@ fn check_uses<'s>(seen: &Seen<'s>) -> Result<Vec<(&'s ConstraintDesc, Uses)>> {
         let uses = match &c.kind {
             ConstraintKind::NotNull(at) => t.columns.get(*at).map(|col| (t.name.clone(), col.name.clone())).into_iter().collect(),
             ConstraintKind::Check { text: condition, names, horizon, .. } => seen.state.check_uses(&t.name, (condition, names, horizon))?,
-            ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) => continue,
+            ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) | ConstraintKind::Connection(_) => continue,
         };
         all.push((c, uses));
     }
@@ -236,7 +240,9 @@ fn check_tables(seen: &Seen<'_>) -> Result<Vec<Row>> {
     for (c, uses) in check_uses(seen)? {
         let reads = match &c.kind {
             ConstraintKind::Check { reads, .. } => reads.as_slice(),
-            ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) => &[],
+            ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) | ConstraintKind::Connection(_) => {
+                &[]
+            }
         };
         let mut named: Vec<&QualifiedName> = Vec::new();
         for t in uses.iter().map(|(t, _)| t).chain(reads) {

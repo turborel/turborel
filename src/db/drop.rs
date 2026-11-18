@@ -34,6 +34,14 @@ impl State {
     ///
     /// As `drop_table`, `drop_view` and `drop_schema` say.
     pub(super) fn drop_object(&mut self, object: &DropTarget, cascade: bool) -> Result<Dropped> {
+        let dropped = self.drop_one(object, cascade)?;
+        // [EXTENSION] (§4.2) the implicit graph of what is left.
+        self.refresh_sys_graphs()?;
+        Ok(dropped)
+    }
+
+    /// Drops `object`, as `drop_object`.
+    fn drop_one(&mut self, object: &DropTarget, cascade: bool) -> Result<Dropped> {
         match object {
             DropTarget::Table(qn) => self.drop_table(qn, cascade),
             DropTarget::View(qn) => self.drop_view(qn, cascade),
@@ -49,7 +57,12 @@ impl State {
             DropTarget::Cast(types) => self.drop_cast(&types.0, &types.1, cascade),
             DropTarget::Ordering(qn) => self.drop_ordering(qn, cascade),
             DropTarget::Transform(qn, group) => self.drop_transform(qn, group.as_deref(), cascade),
-            DropTarget::Graph(qn) => self.drop_graph(qn, cascade),
+            DropTarget::Graph(qn) => {
+                if super::graphs::native::is_sys_graph(qn) {
+                    return Err(super::graphs::native::sys_graph_refused(qn));
+                }
+                self.drop_graph(qn, cascade)
+            }
         }
     }
 
@@ -264,6 +277,7 @@ impl State {
         let refers = |kind: &ConstraintKind| match kind {
             ConstraintKind::ForeignKey(fk) => gone.contains(&&fk.table),
             ConstraintKind::Check { reads, .. } => reads.iter().any(|r| gone.contains(&r)),
+            ConstraintKind::Connection(k) => k.clauses.iter().any(|(f, t)| gone.contains(&f) || gone.contains(&t)),
             ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } => false,
         };
         let mut catalog = self.catalog.duplicate();

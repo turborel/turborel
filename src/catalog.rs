@@ -25,6 +25,7 @@ mod key_expressions;
 mod keys;
 mod memory;
 mod modules;
+mod native;
 mod periods;
 mod privileges;
 mod roles;
@@ -47,6 +48,9 @@ pub use key_expressions::{EXPRESSION_PART, KeyExpression};
 pub use keys::KeyShape;
 pub use memory::MemoryCatalog;
 pub use modules::{ModuleDesc, module_of_schema, module_schema, routine_path};
+pub use native::{
+    Connection, EDGE_ID, ElementId, FROM_ID, GraphColumn, ID_LENGTH, NODE_ID, NativeKind, PSEUDO_COLUMNS, SYS_GRAPH, TO_ID, id_type,
+};
 pub use periods::PeriodDesc;
 pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, TypedActions, applicable, merged};
 pub use roles::{Authorization, Principal, RoleAuthorization, Roles, Who};

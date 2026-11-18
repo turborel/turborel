@@ -185,7 +185,8 @@ fn declared_keys(desc: &TableDesc) -> Vec<Vec<usize>> {
             ConstraintKind::Unique { period: Some(_), .. }
             | ConstraintKind::NotNull(_)
             | ConstraintKind::ForeignKey(_)
-            | ConstraintKind::Check { .. } => None,
+            | ConstraintKind::Check { .. }
+            | ConstraintKind::Connection(_) => None,
         })
         .filter(|k| not_null(k))
         .collect()
