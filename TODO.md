@@ -93,9 +93,6 @@ is kept consistent under concurrent change and recovery as the B-tree is.
   beyond probing one tree for each outer row. Add bulk packing
   and reclaim empty nodes without relocating entries under active scans;
   measure overlap and space after sustained updates as well as fresh loads.
-- HNSW, a hierarchical graph of vectors for approximate nearest neighbour
-  search. Vectors need it, and a structure kept on disk past what memory
-  holds may follow it.
 - Adjacency held for a graph's edges, so a path query follows an edge
   without a join's search. Graph queries need it.
 - An index of XML documents' paths and values, so XQuery and XPath read
@@ -159,10 +156,4 @@ CONFORMANCE.md one by one as they are done.
 
 ### Vectors
 
-- A VECTOR type and its search [EXTENSION]. No ISO standard defines one,
-  so it follows what Oracle and Microsoft SQL Server ship, from their
-  documentation. It covers a VECTOR column of a dimension and an element
-  type, VECTOR_DISTANCE by cosine, Euclidean, dot product, Manhattan and
-  Hamming metrics, norms and normalizing, and CREATE VECTOR INDEX over
-  HNSW. An approximate top-k query, ORDER BY a distance then FETCH APPROX
-  FIRST, reads the index, and an exact one sorts as ORDER BY does today.
+Nothing is open.

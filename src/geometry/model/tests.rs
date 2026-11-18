@@ -295,7 +295,8 @@ fn envelopes_hold_curves() {
 
 /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.2.1.6] the linear
 /// and x-y forms of a value: a TIN as a multipolygon, a compound curve of
-/// linestrings as one, z and m left out, and a curved one refused.
+/// linestrings as one, z and m left out, and a curved one linearized
+/// from its start to its end.
 #[test]
 fn linear_and_xy_forms() {
     let compound = Curve::Compound(vec![
@@ -308,7 +309,10 @@ fn linear_and_xy_forms() {
     let flat = tin.linear().unwrap().xy();
     assert_eq!((flat.kind(), flat.dims), (Kind::MultiPolygon, Dims::Xy));
     let arc = samples(Dims::Xy).into_iter().find(|s| s.kind() == Kind::CircularString).unwrap();
-    assert!(arc.linear().is_err());
+    let line = arc.linear().unwrap();
+    let Body::Curve(Curve::LineString(points)) = &line.body else { panic!("{line:?}") };
+    let Body::Curve(Curve::CircularString(given)) = &arc.body else { panic!("{arc:?}") };
+    assert_eq!((points.first(), points.get(points.len() - 2..)), (given.first(), given.get(given.len() - 2..)));
     for g in samples(Dims::Xyzm) {
         let xy = g.xy();
         assert_eq!(xy.kind(), g.kind());

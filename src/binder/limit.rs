@@ -13,9 +13,9 @@ use super::composite::integer;
 use super::order_by::{Ordered, of_result, ordered_query};
 use super::query::Nesting;
 use super::{Binder, Bound, Context, Scope, rule};
-use crate::ast::{FetchQuantity, OrderedQuery, RowCount};
+use crate::ast::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};
 use crate::error::{At, Result};
-use crate::logical::{Expr, Fetch, Limit};
+use crate::logical::{Expr, Fetch, Limit, Search};
 use crate::params::ParameterType;
 use crate::value::{DOUBLE_PRECISION, DataType, Decimal, Spelled, Value};
 
@@ -65,9 +65,27 @@ fn limit_of(cx: Context<'_>, o: &OrderedQuery) -> Result<Option<Limit>> {
         Some(FetchQuantity::Rows(c)) => (row_count(&binder, c, "SR28] the fetch first row count")?, false),
         Some(FetchQuantity::Percent(c)) => (percentage(&binder, c)?, true),
     };
+    searched(f, percent)?;
     // The keys of WITH TIES are those its rows are sorted by, found as
     // the sort is made (`Ordered::sorted`).
-    Ok(Some(Limit { offset, fetch: Some(Fetch { count, percent, ties: f.ties.then(Vec::new) }) }))
+    let fetch = Fetch { count, percent, ties: f.ties.then(Vec::new), search: f.search.clone(), hints: Box::new(f.hints.clone()) };
+    Ok(Some(Limit { offset, fetch: Some(fetch) }))
+}
+
+/// \[EXTENSION\] Whether the search `f` asks for is one it may: an
+/// approximate search finds a number of nearest rows, so neither their
+/// peers (WITH TIES) nor a share of all (PERCENT), which an index that
+/// may miss rows cannot count; and a target accuracy is of APPROX alone
+/// (the vector design document §9.2).
+fn searched(f: &FetchFirst, percent: bool) -> Result<()> {
+    let approximate = matches!(f.search, Search::Approximate(_));
+    if approximate && (f.ties || percent) {
+        return Err(rule("[EXTENSION] FETCH APPROX is of a count of rows ONLY: not WITH TIES, nor PERCENT").or_at(f.at));
+    }
+    if let (Some(at), false) = (f.accuracy_at, approximate) {
+        return Err(rule("[EXTENSION] a target accuracy is of FETCH APPROX").or_at(at));
+    }
+    Ok(())
 }
 
 /// [ISO/IEC 9075-2:2023 §7.17 SR29] The value `c` of a `<fetch first

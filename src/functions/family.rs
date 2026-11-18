@@ -76,6 +76,37 @@ impl ScalarFunction for FamilyTypeTest {
     }
 }
 
+/// [ISO/IEC 9075-2:2023 §6.33 GR15] SPECIFICTYPE of a value of a family:
+/// the name of its most specific type, qualified by the catalog's name and
+/// INFORMATION_SCHEMA, the schema of the types built in (RULES.md
+/// D-SPATIAL-FAMILY); null of the null value.
+#[derive(Debug)]
+pub struct FamilySpecificType {
+    /// The family.
+    pub family: &'static dyn Family,
+    /// The catalog's name.
+    pub catalog: String,
+}
+
+impl ScalarFunction for FamilySpecificType {
+    fn name(&self) -> &'static str {
+        super::SPECIFICTYPE
+    }
+    fn return_type(&self, _: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Varying { length: super::SPECIFICTYPE_LENGTH, units: crate::value::CharUnits::Characters })
+    }
+    fn call(&self, args: &[Value]) -> Result<Value> {
+        let Some(v) = args.first().filter(|v| !v.is_null()) else { return Ok(Value::Null) };
+        let most =
+            self.family.most_specific(v).ok_or_else(|| crate::error::SqlError::new(Code::Corrupt, "a value of no type of its family"))?;
+        let quoted = |part: &str| format!("\"{}\"", part.replace('"', "\"\""));
+        Ok(Value::Char(format!("{}.{}.{}", quoted(&self.catalog), quoted(crate::system::INFORMATION_SCHEMA), quoted(most.name()))))
+    }
+    fn deterministic(&self) -> bool {
+        true
+    }
+}
+
 /// The kind `top` and each kind of `family` below it.
 pub fn below(family: &dyn Family, top: &'static dyn crate::value::SqlType) -> Vec<Kind> {
     family.kinds().iter().copied().filter(|k| family.is_subtype(**k, top)).collect()

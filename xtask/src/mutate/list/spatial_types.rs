@@ -1,11 +1,12 @@
 //! Mutations of SQL/MM Spatial's type family, its ordering, its large
-//! object input and its Information Schema (RULES.md R-TEST-9,
-//! D-SPATIAL-FAMILY, D-SPATIAL-CATALOG).
+//! object input and its Information Schema, its methods, its catalog
+//! procedures and the routines written in Rust (RULES.md R-TEST-9,
+//! D-SPATIAL-FAMILY, D-SPATIAL-CATALOG, D-SPATIAL-ROUTINES).
 
 use super::{Mutation, Package};
 
 /// Each must fail the tests it names.
-pub const SPATIAL_TYPES: [Mutation; 13] = [
+pub const SPATIAL_TYPES: [Mutation; 21] = [
     Mutation {
         name: "spatial-family-assignable",
         package: Package::Core,
@@ -77,13 +78,16 @@ pub const SPATIAL_TYPES: [Mutation; 13] = [
         unit: &[],
     },
     Mutation {
-        name: "spatial-unkeyed",
+        name: "spatial-constraint-key",
         package: Package::Core,
-        breaks: "a geometry value gets a B-tree key though it is ordered by RELATIVE",
-        file: "src/geometry/kind/types.rs",
-        original: "    fn encode_key(&self, _: &Value, t: &DataType, _: &mut Vec<u8>) -> Result<()> {\n        Err(unkeyed(t))",
-        replacement: "    fn encode_key(&self, _: &Value, t: &DataType, _: &mut Vec<u8>) -> Result<()> {\n        drop(unkeyed(t));\n        Ok(())",
-        integration: &["spatial_types::geometry_values_are_equals_only_by_relative"],
+        breaks: "a UNIQUE, PRIMARY KEY or referential constraint of a geometry column is declared",
+        file: "src/db/constraints.rs",
+        original: "if let Some((family, kind)) = crate::value::types::family::family_of(t) {",
+        replacement: "if let Some((family, kind)) = crate::value::types::family::family_of(t).filter(|_| false) {",
+        integration: &[
+            "spatial_types::geometry_values_are_equals_only_by_relative",
+            "geometry::index::geometry_columns_are_no_key_of_a_constraint",
+        ],
         unit: &[],
     },
     Mutation {
@@ -135,5 +139,85 @@ pub const SPATIAL_TYPES: [Mutation; 13] = [
         replacement: "",
         integration: &[],
         unit: &["system::spatial::systems::tests::seed_systems_keep_the_table_constraints"],
+    },
+    Mutation {
+        name: "spatial-method-inherited",
+        package: Package::Core,
+        breaks: "a method of a supertype is not found of a subtype's value",
+        file: "src/geometry/methods.rs",
+        original: "std::iter::successors(Some(kind), |k| k.supertype()).find_map(|k| declared_by(k, name, arity))",
+        replacement: "declared_by(kind, name, arity)",
+        integration: &["spatial_methods::methods_are_their_types_and_inherited"],
+        unit: &[],
+    },
+    Mutation {
+        name: "spatial-srs-id-unique",
+        package: Package::Core,
+        breaks: "a second system takes an identifier already given",
+        file: "src/catalog/spatial.rs",
+        original: "if SpatialRefSys::by_id(d.id).is_some() || self.systems.iter().any(|s| s.id == d.id) {",
+        replacement: "if SpatialRefSys::by_id(d.id).is_some() {",
+        integration: &["spatial_catalog::systems_and_registrations_keep_their_tables_constraints"],
+        unit: &[],
+    },
+    Mutation {
+        name: "spatial-srs-drop-registered",
+        package: Package::Core,
+        breaks: "a system a column is registered with is dropped",
+        file: "src/catalog/spatial.rs",
+        original: "c.srs.as_deref() == Some(name))",
+        replacement: "c.srs.as_deref() == Some(name) && false)",
+        integration: &["spatial_catalog::systems_and_registrations_keep_their_tables_constraints"],
+        unit: &[],
+    },
+    Mutation {
+        name: "spatial-register-srid",
+        package: Package::Core,
+        breaks: "a column of one SRID is registered with a system of another",
+        file: "src/db/routines/builtin.rs",
+        original: "        && fixed != id\n",
+        replacement: "        && fixed != id && false\n",
+        integration: &["spatial_catalog::systems_and_registrations_keep_their_tables_constraints"],
+        unit: &[],
+    },
+    Mutation {
+        name: "spatial-registered-shown",
+        package: Package::Core,
+        breaks: "ST_GEOMETRY_COLUMNS shows a column's type's system, not the one it is registered with",
+        file: "src/system/spatial.rs",
+        original: "registered.unwrap_or_else(typed)",
+        replacement: "typed()",
+        integration: &["spatial_catalog::systems_and_registrations_keep_their_tables_constraints"],
+        unit: &[],
+    },
+    Mutation {
+        name: "spatial-snapshot-catalog",
+        package: Package::Core,
+        breaks: "a checkpoint forgets the systems defined",
+        file: "src/db/snapshot.rs",
+        original: "    catalog.set_spatial(snapshot.spatial.clone());\n",
+        replacement: "",
+        integration: &["spatial_catalog::systems_and_registrations_survive_recovery"],
+        unit: &[],
+    },
+    Mutation {
+        name: "spatial-call-undone",
+        package: Package::Core,
+        breaks: "a procedure written in Rust that fails keeps the rows it wrote",
+        file: "src/db/routines/builtin.rs",
+        original: "let undone = cx.st.undo_to(cx.tx, mark, &e);",
+        replacement: "let undone: Result<()> = { cx.tx.release_mark(mark); Ok(()) };",
+        integration: &["spatial_catalog::rust_routines_read_and_write_tables"],
+        unit: &[],
+    },
+    Mutation {
+        name: "spatial-table-reads",
+        package: Package::Core,
+        breaks: "a table function is given no rows of the queries it reads",
+        file: "src/binder/builtin_table.rs",
+        original: "        exprs.push(binder.value_expression(&read, scope)?.0);\n",
+        replacement: "        drop(binder.value_expression(&read, scope)?);\n",
+        integration: &["spatial_catalog::rust_routines_read_and_write_tables"],
+        unit: &[],
     },
 ];

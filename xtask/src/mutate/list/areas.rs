@@ -3,9 +3,10 @@
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 10] {
+pub fn core() -> [&'static [Mutation]; 11] {
     [
         &super::MUTATIONS,
+        &super::hash::HASH,
         &super::rekey::REKEY,
         &super::KEPT,
         &super::READERS,
@@ -55,7 +56,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order.
-fn second() -> [&'static [Mutation]; 24] {
+fn second() -> [&'static [Mutation]; 28] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -81,6 +82,10 @@ fn second() -> [&'static [Mutation]; 24] {
         &super::system_versioned::SYSTEM_VERSIONED,
         &super::rename::RENAME,
         &super::savepoints::SAVEPOINTS,
+        &super::vector_indexes::VECTOR_INDEXES,
+        &super::vector_embed::VECTOR_EMBED,
+        &super::vector_hybrid::VECTOR_HYBRID,
+        &super::vector::VECTOR,
     ]
 }
 
@@ -99,11 +104,12 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::sqlmm_fulltext::SQLMM_FULLTEXT,
         &super::t621::T621,
     ];
-    let last: [&'static [Mutation]; 12] = [
+    let last: [&'static [Mutation]; 13] = [
         &super::near::NEAR,
         &super::rtree::RTREE,
         &super::geometry::GEOMETRY,
         &super::spatial_types::SPATIAL_TYPES,
+        &super::spatial_curves::SPATIAL_CURVES,
         &super::spatial_planar::SPATIAL_PLANAR,
         &super::spatial_srs::SPATIAL_SRS,
         &super::FILL,

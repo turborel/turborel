@@ -222,7 +222,8 @@ fn subject_row(cx: StatementContext<'_>, merge: &Merge<'_>, subject: Subject, pl
             let old = target_part(merge, &joined)?;
             // [ISO/IEC 9075-2:2023 §15.16 GR3a] no base table written of a
             // clause a trigger takes, so no generated column of one.
-            let generated: &[(usize, Expr)] = if merge.route(clause).is_some() { &[] } else { &bound.generated };
+            let generated: &[(usize, Expr)] =
+                if merge.route(clause).is_some() { &[] } else { bound.generated.get(clause).map_or(&[], Vec::as_slice) };
             let assigned = Assigned { desc: &bound.desc, set, generated };
             let new = assigned.candidate((&old, &joined), (UPDATE_RULE, merge.runner))?;
             let new = merge.whole(cx, (&joined, id), new)?;

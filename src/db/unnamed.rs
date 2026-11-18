@@ -24,9 +24,16 @@ impl Session {
     ///
     /// Any error of the cursor specification or of reading its rows.
     pub fn open_cursor(&self, sql: &str) -> Result<Cursor> {
+        self.wait_if_hinted(sql)?;
         // [ISO/IEC 9075:1992 §18.1 Table 22] a <direct select statement:
         // multiple rows>.
         self.open_with((commands::SELECT_ROWS, commands::UNRECOGNIZED), |call| self.open_in(call, sql, &Params::new()))
+    }
+
+    /// \[EXTENSION\] `open_cursor` of `sql`, with the parameters `params`,
+    /// unhinted (`db/embedding/queue.rs`).
+    pub(in crate::db) fn open_cursor_with(&self, sql: &str, params: &Params) -> Result<Cursor> {
+        self.open_with((commands::SELECT_ROWS, commands::UNRECOGNIZED), |call| self.open_in(call, sql, params))
     }
 
     /// An unnamed cursor `open` opens in a call, as `open_cursor` opens

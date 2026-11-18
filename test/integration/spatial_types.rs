@@ -77,7 +77,7 @@ fn casts_and_new_follow_the_hierarchy() {
 /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.65] [ISO/IEC
 /// 9075-2:2023 §9.10 to §9.14] geometry values compare for equality by
 /// ST_OrderingEquals and are neither ordered, grouped, made distinct nor
-/// a B-tree key's (SQLCODE -103, and -900 of a key).
+/// a constraint's key (SQLCODE -103).
 #[test]
 fn geometry_values_are_equals_only_by_relative() {
     let db = database();
@@ -94,10 +94,7 @@ fn geometry_values_are_equals_only_by_relative() {
     {
         assert_eq!(rows(&a, refused).unwrap_err(), Code::SyntaxRule, "{refused}");
     }
-    assert_eq!(
-        exec(&a, "CREATE TABLE K (G ST_POINT PRIMARY KEY)").and_then(|_| exec(&a, "INSERT INTO K VALUES (ST_POINT(1, 1))")).err(),
-        Some(Code::Unsupported)
-    );
+    assert_eq!(exec(&a, "CREATE TABLE K (G ST_POINT PRIMARY KEY)").err(), Some(Code::SyntaxRule));
 }
 
 /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.68] a value of
@@ -117,8 +114,8 @@ fn values_of_every_dimension_through_wkb() {
         ["1,ST_Point,4326", "2,ST_CircularString,0"]
     );
     assert_eq!(rows(&a, "SELECT ST_X(G), ST_MAXY(G) FROM T WHERE ID = 1").unwrap(), ["1E0,2E0"]);
-    // Until a linearizer of arcs is given, an arc relates as no value.
-    assert_eq!(rows(&a, "SELECT ST_MINX(G) FROM T WHERE ID = 2").unwrap_err(), Code::Unsupported);
+    // An arc's envelope comes from its linear form.
+    assert_eq!(rows(&a, "SELECT ST_MINX(G), ST_MAXX(G) FROM T WHERE ID = 2").unwrap(), ["0E0,2E0"]);
     assert_eq!(
         rows(&a, "SELECT ST_ASBINARY(G) FROM T WHERE ID = 1").unwrap(),
         ["01E9030000000000000000F03F00000000000000400000000000000840"]

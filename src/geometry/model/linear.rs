@@ -14,14 +14,9 @@ use crate::geometry::MAX_DEPTH;
 
 /// \[DESIGN\] The linestring a curve of another interpolation than a
 /// linestring's is approximated by, its first point its start and its last
-/// its end: the module of curves (RULES.md D-SPATIAL-MODEL) puts its own
-/// here. None of a curve it does not take.
-pub const CURVE_LINEARIZER: fn(&Curve, Dims) -> Option<Result<Coords>> = no_linearizer;
-
-/// Takes no curve.
-fn no_linearizer(_: &Curve, _: Dims) -> Option<Result<Coords>> {
-    None
-}
+/// its end: ST_CurveToLine of the curve engines at their default
+/// tolerance (RULES.md D-SPATIAL-CURVES). None of a curve it does not take.
+pub const CURVE_LINEARIZER: fn(&Curve, Dims) -> Option<Result<Coords>> = crate::spatial::curves::adapt::linearizer;
 
 pub(super) fn of(g: &Geom) -> Result<Geom> {
     Ok(g.part(body(&g.body, g.dims, 1)?))

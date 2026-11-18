@@ -74,17 +74,17 @@ fn sql_geometry_values_and_failed_writes() {
 
 /// Verifies: [EXTENSION] D85: prepared constructors bind text and SRID
 /// independently, reject fractional/out-of-range SRIDs, compare by
-/// ST_OrderingEquals, and refuse a UNIQUE B-tree key of geometry values,
-/// which have no key of their own (D-SPATIAL-FAMILY).
+/// ST_OrderingEquals, and refuse a UNIQUE constraint of a geometry column
+/// when it is declared [ISO/IEC 9075-2:2023 §9.12 SR3] (D-SPATIAL-FAMILY).
 #[test]
 fn prepared_values_have_exact_srid_and_representation_keys() {
     let db = registered();
-    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE SHAPES (G GEOMETRY) CREATE TABLE KEYED (G GEOMETRY UNIQUE)").unwrap();
+    assert_eq!(db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE KEYED (G GEOMETRY UNIQUE)").unwrap_err().code, Code::SyntaxRule);
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE SHAPES (G GEOMETRY)").unwrap();
     let a = db.session("A");
     let insert = a.prepare("INSERT INTO SHAPES VALUES (ST_GEOMFROMTEXT(?, ?))").unwrap();
     let args = [Value::Char("POINT (-0 2)".into()), Value::Exact(Decimal::new(4326, 0))];
     a.execute_prepared(&insert, &args).unwrap();
-    assert_eq!(exec(&a, "INSERT INTO KEYED VALUES (ST_GEOMFROMTEXT('POINT (0.0 2e0)', 4326))").err(), Some(Code::Unsupported));
     a.run("INSERT INTO SHAPES VALUES (ST_GEOMFROMTEXT('POINT (0 2)', 28992))").unwrap();
     assert_eq!(rows(&a, "SELECT ST_SRID(G) FROM SHAPES WHERE G = ST_GEOMFROMTEXT('POINT (0 2)', 4326)").unwrap(), ["4326"]);
     assert_eq!(rows(&a, "VALUES ST_GEOMFROMTEXT('POINT EMPTY', 2147483648)").unwrap_err(), Code::Data);

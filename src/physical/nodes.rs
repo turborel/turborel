@@ -46,7 +46,7 @@ impl PhysicalPlanner<'_> {
     /// GR5a]. Its input is planned knowing how many of its first rows
     /// are read, if it is known.
     pub(super) fn limited(&self, limit: &Limit, input: &LogicalPlan, want: &[SortKey]) -> Built {
-        let b = PhysicalPlanner { first: limit.read_rows(), ..*self }.build(input, want);
+        let b = PhysicalPlanner { first: limit.read_rows(), fetch: limit.fetch.as_ref(), ..*self }.build(input, want);
         Built { plan: Plan::Limit { limit: limit.clone(), input: Box::new(b.plan) }, ordered: b.ordered }
     }
 

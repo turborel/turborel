@@ -75,6 +75,9 @@ fn every_grant(catalog: &dyn Catalog) -> Vec<String> {
     for r in catalog.routines() {
         all.extend(r.execute.iter().map(|u| line("routine", &r.specific, u)));
     }
+    for m in &catalog.embeddings().models {
+        all.extend(m.execute.iter().map(|u| line("embedding model", &m.name, u)));
+    }
     all
 }
 
@@ -133,6 +136,11 @@ impl State {
             r.execute.retain(to);
             catalog.put_routine(r);
         }
+        let mut embeddings = self.catalog.embeddings().clone();
+        for m in &mut embeddings.models {
+            m.execute.retain(to);
+        }
+        catalog.set_embeddings(embeddings);
         self.catalog = Arc::from(catalog);
     }
 
@@ -150,7 +158,7 @@ impl State {
     }
 
     /// USAGE on each domain, collation, sequence generator and type, and
-    /// EXECUTE on each routine, settled: whether any went.
+    /// EXECUTE on each routine and embedding model, settled: whether any went.
     ///
     /// # Errors
     ///
@@ -188,6 +196,12 @@ impl State {
             retained(&mut r.execute, &by);
             next.put_routine(r);
         }
+        let mut embeddings = cat.embeddings().clone();
+        for m in &mut embeddings.models {
+            let owner = owner_of(&*cat, &m.name.auth);
+            retained(&mut m.execute, &|held, a| usage_held(held, Who::sole(roles, a), owner).1);
+        }
+        next.set_embeddings(embeddings);
         self.catalog = Arc::from(next);
         Ok(every_grant(&*self.catalog).len() != before)
     }
