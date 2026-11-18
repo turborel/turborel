@@ -108,7 +108,7 @@ pub(crate) fn unordered(t: &DataType) -> Option<&'static str> {
 
 /// \[EXTENSION\] Whether `t` is S-ordered, S the types of the kinds
 /// beyond the standard whose values have no order (`SqlType::ordered`):
-/// VECTOR's (RULES.md D88).
+/// VECTOR's (RULES.md D93).
 pub(crate) fn orderless(t: &DataType) -> bool {
     ordered_by(t, orderless_kind)
 }

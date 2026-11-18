@@ -107,7 +107,7 @@ pub struct State {
     /// \[EXTENSION\] The rankings of full-text search (RULES.md D87),
     /// shared by every state.
     pub(crate) rankings: super::rankings::SharedRankings,
-    /// \[EXTENSION\] The metrics and quantizers of VECTOR (RULES.md D88),
+    /// \[EXTENSION\] The metrics and quantizers of VECTOR (RULES.md D93),
     /// shared by every state.
     pub(crate) vectors: super::vectors::SharedVectors,
     /// \[EXTENSION\] The model plug-ins registered and the models of the

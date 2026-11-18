@@ -40,7 +40,7 @@ fn rechecked(function: &crate::functions::ScalarRef, args: &[Expr]) -> bool {
 /// built-in metric, which never fails of finite vectors of one shape, its
 /// metric a constant, and each vector column of a fixed shape and no
 /// FLOAT64, whose squares could overflow; then only a constant operand
-/// of another shape raises, and for every row (D-APPROX). A call of no
+/// of another shape raises, and for every row (D94). A call of no
 /// vector column is not one.
 fn vectors_rechecked(call: &Expr, table: &TableDesc) -> bool {
     let Expr::Call(_, args) = call else { return true };

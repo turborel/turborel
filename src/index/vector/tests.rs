@@ -148,7 +148,7 @@ impl RowFilter for Failing {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md D-APPROX: an in-filter is asked of the
+/// Verifies: [EXTENSION] RULES.md D94: an in-filter is asked of the
 /// candidates and only rows it admits are answered, as many as asked, of
 /// one in twenty, past the list the search was asked for; its
 /// first error is the search's.
@@ -180,7 +180,7 @@ fn another_metric_or_a_refused_budget_declines() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D-DISKANN, D-HNSW, D-IVF: a locator names
+/// Verifies: [DESIGN] RULES.md D95: a locator names
 /// its version, its column's format and dimensions; another of each is
 /// SQLCODE -916.
 #[test]

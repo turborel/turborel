@@ -226,7 +226,7 @@ impl Binder<'_> {
         if let Some(subject) = schema.and_then(|c| self.lone_basis(c, at)) {
             return self.method_call(&subject, (name, written), scope).or_at(at);
         }
-        // [EXTENSION] key words as arguments, and a distance function of SQL (RULES.md D88).
+        // [EXTENSION] key words as arguments, and a distance function of SQL (RULES.md D93).
         let worded = match schema {
             None => self.index_metric(name, written).map_or_else(|| self.worded(name, written), std::borrow::Cow::Owned),
             Some(_) => std::borrow::Cow::Borrowed(written),

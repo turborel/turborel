@@ -1,5 +1,5 @@
 //! Distance candidates and their pruning contract (D15, D38, D85), and
-//! the relaxed contract of an approximate index (RULES.md D-APPROX).
+//! the relaxed contract of an approximate index (RULES.md D94).
 
 use std::fmt;
 use std::sync::Arc;

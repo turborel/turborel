@@ -4,7 +4,7 @@
 //! [ISO/IEC 9075:1992 §8.1], and the operators, sign, collation and
 //! qualifiers of a `<value expression>` [X3.135-1986 §5.9; ISO/IEC
 //! 9075:1992 §6.13, §6.15], and \[EXTENSION\] the distance operators of
-//! VECTOR (RULES.md D88).
+//! VECTOR (RULES.md D93).
 //!
 //! \[DESIGN\] Each is read apart from the production that reads its first
 //! operand, which is where a nesting of expressions recurs: so the frames
@@ -153,7 +153,7 @@ impl Parser {
 
     /// \[EXTENSION\] The rest of a `<common value expression>` whose
     /// first sum is `left`: a distance operator of VECTOR and another sum,
-    /// each (RULES.md D88). Binding less tightly than + and -, more than a
+    /// each (RULES.md D93). Binding less tightly than + and -, more than a
     /// comparison, `a <-> b + c < 1` is `(a <-> (b + c)) < 1`.
     ///
     /// ```text

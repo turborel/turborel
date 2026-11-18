@@ -1,5 +1,5 @@
 //! An inverted index's approximate search of a call of DOT (the vector
-//! design document §9.2, §9.4, R13.1, R13.2; RULES.md D-APPROX): which
+//! design document §9.2, §9.4, R13.1, R13.2; RULES.md D94, D99): which
 //! calls it serves, its candidates nearest first by the negated dot
 //! product, a radius, an in-filter, and what it declines.
 
@@ -128,7 +128,7 @@ fn a_radius_and_an_in_filter_narrow_the_candidates() {
     assert_eq!(failed.err().map(|e| e.code), Some(Code::Data));
 }
 
-/// Verifies: [EXTENSION] RULES.md D-APPROX, vector_standard R6.4, R13.1
+/// Verifies: [EXTENSION] RULES.md D94, D99, vector_standard R6.4, R13.1
 /// The search declines, for the executor to read the table, a call of
 /// another metric, a query vector of other dimensions or format, a null,
 /// an exact search, and an index of a column of open dimensions.

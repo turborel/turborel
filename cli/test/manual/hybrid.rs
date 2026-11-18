@@ -5,7 +5,7 @@ use turborel::db::Database;
 
 use super::Client;
 
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D-APPROX: the examples of hybrid
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D94, D100: the examples of hybrid
 /// search and of CREATE HYBRID VECTOR INDEX run as printed, as ANN, each
 /// in a database of its own, the second of a table HELP.
 #[test]

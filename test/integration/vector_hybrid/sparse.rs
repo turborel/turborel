@@ -88,7 +88,7 @@ fn a_filter_narrows_the_inverted_index() {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md D-APPROX, vector_standard R6.4: a query
+/// Verifies: [EXTENSION] RULES.md D94, D99, vector_standard R6.4: a query
 /// vector of other dimensions, which VECTOR_DISTANCE refuses, is refused
 /// by an approximate search as by an exact one; rows changed after the
 /// index was made are found, a deleted one no more.

@@ -63,7 +63,7 @@ impl Binder<'_> {
     /// locals is in the frame a chain of operators recurs through
     /// (RULES.md R-CF-6).
     fn arithmetic(&self, [left, right]: [(Expr, DataType); 2], op: ArithOp, dynamic: bool) -> Result<(Expr, DataType)> {
-        // [EXTENSION] of vectors, a function of VECTOR (RULES.md D88).
+        // [EXTENSION] of vectors, a function of VECTOR (RULES.md D93).
         if let Some(vectors) = self.vector_arithmetic(&left, op, &right) {
             return vectors;
         }

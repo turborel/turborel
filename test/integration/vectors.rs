@@ -1,4 +1,4 @@
-//! VECTOR (RULES.md D88) through SQL: its type and text forms, the
+//! VECTOR (RULES.md D93) through SQL: its type and text forms, the
 //! refusals of order and equality, its distances and operators, its
 //! functions and aggregates, distance functions of SQL and metrics
 //! registered, and its values kept by recovery. It is built in, so no

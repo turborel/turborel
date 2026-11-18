@@ -1,7 +1,7 @@
 //! The SQL-86 set functions SUM and AVG [X3.135-1986 §5.8], their
 //! accumulators in `sum.rs`; and \[EXTENSION\] of a VECTOR argument, the
 //! element-wise VECTOR_SUM and VECTOR_AVG (design document §6.5, RULES.md
-//! D88), so `AVG(v)` gives a centroid.
+//! D93), so `AVG(v)` gives a centroid.
 
 use super::sum::{AvgAcc, SumAcc};
 use super::{Accumulator, AggregateFunction};

@@ -1,5 +1,5 @@
 //! Mutations of the vector index methods and their engines (RULES.md
-//! R-TEST-9, D-DISKANN, D-HNSW, D-IVF, D-APPROX): DiskANN's pruning,
+//! R-TEST-9, D94 to D98): DiskANN's pruning,
 //! search lists and consolidation, HNSW's and IVF's searches and
 //! maintenance, the `Index` the three share, and the built-in distances
 //! they serve.

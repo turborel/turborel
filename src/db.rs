@@ -34,7 +34,7 @@
 //! | `BackgroundJob`     | none                  | plug-ins' jobs (RULES.md D55)    |
 //! | `StateSource`       | `Database::export`    | state transfer (RULES.md D57)    |
 //! | `Ranking`           | BM25                  | full-text Rank (RULES.md D87)    |
-//! | `VectorMetric`, `Quantizer` | COSINE and others; PQ, SQ8, BQ | VECTOR_DISTANCE, vector indexes (RULES.md D88) |
+//! | `VectorMetric`, `Quantizer` | COSINE and others; PQ, SQ8, BQ | VECTOR_DISTANCE, vector indexes (RULES.md D93) |
 //!
 //! Plus the settings (`settings.rs`, RULES.md D36), declared once in a
 //! registry, plug-ins' too; the database's values and each session's own.

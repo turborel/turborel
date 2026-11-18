@@ -139,7 +139,7 @@ pub struct RoutineDefinition {
     /// shows.
     pub body_text: String,
     /// \[EXTENSION\] Of a distance function of VECTOR, what it declares
-    /// more (CREATE VECTOR DISTANCE FUNCTION, RULES.md D88).
+    /// more (CREATE VECTOR DISTANCE FUNCTION, RULES.md D93).
     pub distance: Option<Box<crate::catalog::DistanceDesc>>,
 }
 

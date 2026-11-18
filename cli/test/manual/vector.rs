@@ -5,7 +5,7 @@ use turborel::db::Database;
 
 use super::Client;
 
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D-APPROX, D88: the examples of
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D94, D93: the examples of
 /// CREATE VECTOR INDEX run as printed, as ANN, of the tables DOCS and
 /// UNIT and the built-in methods `hnsw`, `diskann` and `ivf`.
 #[test]
@@ -25,7 +25,7 @@ fn the_vector_index_examples_run_as_printed() {
     assert!(ann.page("sql/statements/create-vector-index.md") > 0, "it shows its examples' output");
 }
 
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D88: the examples of the Vectors
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D93: the examples of the Vectors
 /// chapter, and of CREATE then DROP VECTOR DISTANCE FUNCTION, each in a
 /// database of its own whose schema ANN they run in, and the vector guide,
 /// which makes its schema itself, run as printed, as ANN.

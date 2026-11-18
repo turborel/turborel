@@ -1,4 +1,4 @@
-//! \[EXTENSION\] VECTOR built in, and its plug-ins (RULES.md D88): the
+//! \[EXTENSION\] VECTOR built in, and its plug-ins (RULES.md D93): the
 //! type and its functions, given every database as it is made; distance
 //! metrics (`VectorMetric`) and quantizers (`Quantizer`), built in and
 //! registered (`Database::register_metric`, `register_quantizer`).
@@ -79,7 +79,7 @@ impl SharedVectors {
 /// That the columns `keyed` of index `name` of method `m` group values, as
 /// keys do [ISO/IEC 9075-2:2023 §9.12 SR3]; and \[EXTENSION\] are no
 /// vectors, if `m` keys by value, by `=` or an order: a vector has neither
-/// (design document §17, RULES.md D88). A method of its own search, a
+/// (design document §17, RULES.md D93). A method of its own search, a
 /// vector index's, keys them.
 ///
 /// # Errors
@@ -137,7 +137,7 @@ fn metric_name(name: &str) -> bool {
 
 impl State {
     /// \[EXTENSION\] The functions of VECTOR, built in as full text's are
-    /// (RULES.md D88), VECTOR_DISTANCE naming every metric registered when
+    /// (RULES.md D93), VECTOR_DISTANCE naming every metric registered when
     /// it is called. Of no name another built-in function has, so none is
     /// refused.
     pub(super) fn vector_functions(&mut self) {
@@ -154,7 +154,7 @@ impl State {
 impl Database {
     /// \[EXTENSION\] Registers a distance metric, which VECTOR_DISTANCE
     /// and a vector index then name (design document §6.1 R6.2, §10.2,
-    /// RULES.md D88). Its name is a regular identifier in upper case, or a
+    /// RULES.md D93). Its name is a regular identifier in upper case, or a
     /// distance function's, a schema's name and its own joined by a
     /// period, which an index names by `DISTANCE schema.udf_name`. Its
     /// contract is `VectorMetric`'s; VECTOR_DISTANCE refuses a result that
@@ -176,7 +176,7 @@ impl Database {
     }
 
     /// \[EXTENSION\] Registers a quantizer, which a vector index then names
-    /// to compress its vectors (design document §7.2, RULES.md D88). Its
+    /// to compress its vectors (design document §7.2, RULES.md D93). Its
     /// contract is `Quantizer`'s.
     ///
     /// # Errors

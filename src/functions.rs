@@ -303,7 +303,7 @@ pub trait ScalarFunction: Send + Sync {
     /// measures by, upper case, and the position of its first vector, the
     /// second after it: a deterministic call, smaller the more similar its
     /// vectors. None of a call ordered otherwise (INNER_PRODUCT), of one
-    /// whose metric is no constant, and by default (R13.1, D-APPROX).
+    /// whose metric is no constant, and by default (R13.1, D94).
     fn vector_metric(&self, _constants: &[Option<&Value>]) -> Option<(String, usize)> {
         None
     }
@@ -316,7 +316,7 @@ pub trait ScalarFunction: Send + Sync {
     /// argument `position` (from 0), is a key word the function takes
     /// there, given as a character string of it, not read as a column:
     /// `first` says whether the first argument was one. So
-    /// `VECTOR_DISTANCE(a, b, COSINE)` names its metric (RULES.md D88).
+    /// `VECTOR_DISTANCE(a, b, COSINE)` names its metric (RULES.md D93).
     /// Qualified, `s.w`, the word is written so. Default: none.
     fn word_argument(&self, _position: usize, _word: &str, _first: bool) -> bool {
         false

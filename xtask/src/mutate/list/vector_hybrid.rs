@@ -1,5 +1,5 @@
 //! Mutations of hybrid search and of the inverted index's approximate
-//! search (RULES.md R-TEST-9, D-APPROX, D85): the sparse candidates'
+//! search (RULES.md R-TEST-9, D94, D99, D100, D85): the sparse candidates'
 //! distances, radius and metric, the hybrid index's two parts, the
 //! planner's position of a column in its key, RANK's index, and
 //! HYBRID_SEARCH's fusion and dynamic parameters.

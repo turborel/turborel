@@ -130,6 +130,19 @@ verification approach DO-178C expects (§8).
 | D90 | JSON_TABLE is a collection derived table, its plan a cursor of one tree |
 | D91 | An inverted index of JSON documents' paths and values, every row found rechecked |
 | D92 | An index's key part may be an expression that cannot raise, matched by its canonical form |
+| D93 | VECTOR is built in, without order or equality, its metrics plug-ins |
+| D94 | An approximate search may miss rows, never return a wrong one, and raises what an exact one would |
+| D95 | The vector index methods are one Index over engines, each serving its own metric approximately |
+| D96 | A DiskANN index keeps its graph in pages and its codes in budgeted memory |
+| D97 | An HNSW index is held in budgeted memory, kept as an image and a log in pages |
+| D98 | An IVF index writes its lists through, its centroids and directory held in budgeted memory |
+| D99 | The inverted index answers a sparse DOT approximately |
+| D100 | A hybrid index is a full-text part and a vector part, and HYBRID_SEARCH the query of their two lists fused |
+| D101 | Embedding models are schema objects bound to registered plug-ins |
+| D102 | A vector pipeline is four row triggers on its source |
+| D103 | What waits for an embedding is found in the rows, filled after commit |
+| D104 | A scalar function may take a batch's rows at once |
+| D105 | Bracketed comments are separators, and a leading `/*+` one carries hints |
 
 ### The project
 
@@ -498,6 +511,10 @@ take away (`db/generated/named.rs`). The statement's own change then finds
 none, and refuses if it does. Dropping a column copies rows, which a
 change of definitions alone cannot, and an expression left naming what is
 gone would no longer bind.
+
+A generated column of ASYNC \[EXTENSION\] is not computed as its row is
+written. It is the null value until the queue after commit sets it to
+DEFAULT (D103).
 
 #### D64. TRUNCATE TABLE replaces a table's storage
 
@@ -3266,6 +3283,441 @@ when the planned column is never null. EXPLAIN shows the probe as
 `(T.A + T.B) = 3`. INFORMATION_SCHEMA.INDEXES shows the key part as
 written, in parentheses. Expressions match by form only, so `B + A` is
 not `A + B`.
+
+#### D93. VECTOR is built in, without order or equality, its metrics plug-ins
+
+VECTOR is a type beyond the standard (D53), built in as FULLTEXT is
+(D87). `TypeRegistry::builtin` holds it, and its scalar functions and
+aggregates are registered as the database starts. A type may read words
+and `*` as its parameters (`SqlType::param_word`) and fold the
+parameters written into those it stores (`SqlType::pack_params`), so
+`VECTOR(768, INT8, SPARSE)` stores two numbers, `MAX_PARAMS`. `*` is
+told apart from a written 0 until it is packed, and VECTOR(0) is
+refused.
+
+A type says whether its values have an order (`SqlType::ordered`).
+VECTOR's have none, and no equality either (the vector design document
+R3.11, R3.12). The binder refuses one, with SQLCODE -103, as an operand
+of a comparison, `=` and `<>` among them, BETWEEN, IN, ORDER BY, GROUP
+BY, DISTINCT, a set operation, MAX and MIN, and as a column of a PRIMARY
+KEY, UNIQUE or FOREIGN KEY constraint. A UNIQUE constraint of a vector
+column is refused before any method is asked, whatever
+TABLES.UNIQUE_INDEX_METHOD names. An index method that keys by `=`
+refuses a vector column at CREATE INDEX (`db/vectors.rs`, `keyed_by`).
+A vector index method keys by its own search, `supports(CompOp::Eq)`
+false, and takes one. Recovery compares keys by their encoded bytes, not
+by `=`, so it is unaffected. VECTOR_EQUALS compares two vectors bit for
+bit.
+
+The distance operators `<-> <=> <#> <+> <~> <%>` are delimiters, read
+between additive expressions and comparisons, and parsed as a call of
+VECTOR_DISTANCE with the metric as a string. `+ - * /` with a vector
+operand are bound as VECTOR_ADD, VECTOR_SUBTRACT, VECTOR_MULTIPLY,
+VECTOR_SCALE and VECTOR_DIVIDE. SUM and AVG of a vector are VECTOR_SUM
+and VECTOR_AVG. A registered function says which of its arguments it
+takes as key words (`ScalarFunction::word_argument`), and the binder
+writes an identifier alone there as a string, so `VECTOR_DISTANCE(a, b,
+COSINE)` and `VECTOR_NORM(v, NORM1)` read as written. The binder
+appends to VECTOR_DISTANCE written without a metric the metric of an
+index on its first argument's column, if one describes one
+(`IndexMethod::metric`, R6.3). Otherwise it is COSINE.
+
+A metric is a plug-in (`VectorMetric`), as is a quantizer (`Quantizer`).
+They are kept in registries the database shares, not copied with each
+change of its state (`db/vectors.rs`), so VECTOR_DISTANCE and the vector
+index methods, which read them at each call, see a metric registered
+later. `Database::register_metric` and `register_quantizer` add to them,
+each told to the diagnostics sink as `Extension::Metric` or
+`Extension::Quantizer`. A metric is named by a regular identifier in
+upper case, or by two joined by a period, a schema and a name, which an
+index names by `DISTANCE schema.udf_name`. A second VECTOR type, a
+second metric of a name, or a metric whose result breaks its declared
+contract, a negative distance of one NON_NEGATIVE, is SQLCODE -910
+(R-SAFE-3).
+
+A distance function of SQL (CREATE VECTOR DISTANCE FUNCTION, §8) is an
+SQL-invoked function whose descriptor holds what it declares more
+(`DistanceDesc`), its properties, its formats and its body. It has
+EXECUTE, DROP, persistence and the Information Schema of any routine.
+VECTOR_DISTANCE naming it is bound to a `CallbackMetric` of its body,
+bound as a generation expression over a row of its two parameters, and
+checked for EXECUTE (R8.5). The call is noted as an invocation, so a
+view, constraint, trigger or routine naming it depends on it and DROP
+RESTRICT is refused. Its body binds at creation. Its name is no
+metric's, neither its own name nor `schema.name`. Only LANGUAGE SQL is
+built in, and another is SQLCODE -900. A vector index measures by a
+built-in or registered metric, never by a distance function of SQL, as
+an index's entries must not depend on a body a user may drop.
+
+INFORMATION_SCHEMA.VECTOR_COLUMNS and VECTOR_DISTANCE_FUNCTIONS are its
+catalog (§16), shown by privilege as the other views are.
+
+#### D94. An approximate search may miss rows, never return a wrong one, and raises what an exact one would
+
+FETCH APPROX, a VECTOR_SEARCH, a HYBRID_SEARCH, or VECTOR.APPROX_DEFAULT
+ON with a row limit asks for the nearest rows by a distance, and lets an
+index find them approximately (the vector design document §9.2, R13.1).
+Without one of these a query is exact, whatever indexes there are, and
+FETCH EXACT always is.
+
+An index method answers a nearest read in one of three ways
+(`index/nearest.rs`). `No` is no answer. `Exact` certifies lower bounds,
+as the R-tree does, and is D15-safe as the nearest read always was.
+`Approximate` is offered only to a query that asks for approximation,
+and only when the index serves the distance's metric. An approximate
+index's contract is relaxed. It may miss candidates, its distances need
+not bound anything, and its stream ends when it has no more. It must
+still certify that the call cannot raise, or decline with None.
+
+The executor never trusts an approximate index's distances
+(`exec/nearest/approx.rs`). Every candidate's row is read as the
+transaction sees it, the full WHERE condition is checked, and the exact
+distance is computed by the query's own expression. The rows kept are
+the first k by exact distance, then row identifier, R9.5's tie order,
+and the stable sort above keeps it. Too few rows widen the search
+(R9.3). The index is asked again twice as wide, at most
+`MOST_WIDENINGS` (4) times. Then the table is read exactly, giving the
+rows an exact query gives (R9.2). VECTOR.APPROX_FALLBACK OFF refuses
+instead, SQLSTATE 0A000, SQLCODE -900. An index that declines, or whose
+engine or reservation gets -918, falls back at once.
+
+The D15 reading is this. A query that asks for approximation raises
+whatever an exact one would. The planner reads an approximate index only
+under the gate the certified read has (`physical/nearest/safe.rs`). No
+part of the WHERE clause or the projection, the distance aside, may
+raise, unless it is a call that raises alike for every row of a value
+(`ScalarFunction::rechecked_errors`). Every distance promises that, so a
+distance in the WHERE clause, a range search (R9.1), does not bar the
+index. The gate also requires every vector column of the call to be of
+fixed shape and not FLOAT64, and the metric to be built in, so an error
+is raised alike for every row. Skipping a row then never hides an
+error. The read takes the whole table's serializable predicate first, as
+the certified read does, so a missed row is the request's allowance and
+never a phantom. Approximation may change which rows come back, never
+whether an error is raised, and a row that fails the WHERE clause never
+comes back.
+
+A distance function answers the planner through three hooks of
+`ScalarFunction`. `vector_metric` names the metric of a call,
+VECTOR_DISTANCE's from a constant in either order, COSINE if none is
+written, and each shorthand its own. INNER_PRODUCT has none, as it
+orders greatest first. `rechecked_errors` is true of every distance.
+`parameter_type` gives a `?` in a distance's vector place the type of
+the other vector operand, so a query vector given as text is read in the
+column's dimensions and format.
+
+`IndexMethod::serves_metric` says whether an index serves a call's
+metric. By default it is `same_metric` of `metric`, its own, with
+EUCLIDEAN and EUCLIDEAN_SQUARED serving each other as they are monotone
+in one another, the radius squared or rooted. An index whose column is
+declared NORMALIZED serves any of COSINE, DOT, EUCLIDEAN and
+EUCLIDEAN_SQUARED (R13.1), which order rows alike on vectors of norm 1
+since `|a − q|² = 1 + |q|² − 2 a·q`. Only the column's vectors need norm
+1, not the query's, and a radius is carried to EUCLIDEAN's terms
+(`index/vector/options.rs`, `unit_radius`).
+
+The filter strategy follows the condition's estimated selectivity
+(R13.2, `physical/nearest/approx.rs`). Below 1% it is a pre-filter, the
+ordinary plan with no approximate index. Up to 50% it is an in-filter,
+where the index asks a `RowFilter` of each candidate as it searches.
+Above 50% it is a post-filter, asking for more candidates and filtering
+them after. The `RowFilter` is called only during `Index::approximate`
+with no lock held (R-ERR-4), and reads the row as the statement sees it.
+
+Hints follow the fetch clause as `HINT ( ... )` (R13.4,
+`parser/query/ordered/approx.rs`). VECTOR_PREFILTER, VECTOR_INFILTER and
+VECTOR_POSTFILTER override the estimate, VECTOR_INDEX(t i) chooses the
+index, and NO_VECTOR_INDEX(t) bars approximate indexes of the table.
+VECTOR_WAIT_FRESH there changes no read, since every built-in index is
+changed as its table is, with no delta store merged later. The queue of
+embeddings is waited for by the statement's leading comment hint
+instead (D103, D105).
+
+#### D95. The vector index methods are one Index over engines, each serving its own metric approximately
+
+`index/vector.rs` adapts each engine to one `Engine` trait, and one
+`VectorIndex<E>` implements `Index` over it, for the methods `diskann`,
+`hnsw` and `ivf`. The methods differ only in their options and in how a
+search's knobs reach the engine.
+
+Each indexes one dense VECTOR column of fixed dimensions and format
+(R3.6, R10.3). FLOAT64 is refused, since the engines keep binary32. A
+SPARSE or open column, two columns, UNIQUE and NULLS NOT DISTINCT are
+refused with -900. A vector method makes no UNIQUE index, as vectors
+have no `=` (R3.11). There is no CREATE UNIQUE INDEX statement, so the
+refusal is reached by a UNIQUE constraint whose
+TABLES.UNIQUE_INDEX_METHOD names a vector method, and the method layer
+refuses as the one layer every path reaches. A null is not indexed
+(R10.6).
+
+The metric comes from the database's registry by name (D93), an unknown
+one -103. A graph index (diskann, hnsw) takes only a SYMMETRIC,
+NON_NEGATIVE metric (R8.2), so DOT is refused with -900 unless the
+column is declared NORMALIZED, when a graph of DOT or COSINE measures by
+EUCLIDEAN. ivf is no graph and takes DOT. A built-in metric is measured
+by the vector kernels on f32 slices. A registered metric gets the
+vectors packed in the column's own format, and a failure or null is
+taken as farthest, so a broken metric misplaces entries but never fails
+a write.
+
+Keys are projected (D85). Every vector projects to one constant key, a
+null to itself, as the engines keep no original values to return. The
+executor rechecks each candidate's row, then measures the exact distance
+itself (D94). Entries are counted (D29) by the engines. A search answers
+each row once, at its nearest entry.
+
+Each method declares TARGET_ACCURACY (1 to 100, default 90, changed in
+place), PQ_BYTES (0 to 65535, 0 for the quantizer's default, rebuilt)
+and NORMALIZED (ON or OFF, default OFF, rebuilt) in its own option group
+(`index/vector/options.rs`). The query's SEARCH_LIST, BEAM_WIDTH and
+PROBES win over the index's own options. TARGET ACCURACY a maps to a
+list of wanted × 100 / (101 − a), and to probes of lists × 100 / ((101 −
+a) × 80), capped at the list count (`index/vector/ask.rs`). A search
+whose query names no accuracy and no list aims at the index's
+TARGET_ACCURACY, unless the method's own SEARCH_LIST, EF_SEARCH or
+PROBES is set, which it then searches by. NORMALIZED ON refuses a
+vector whose norm is not 1 as it is written, SQLSTATE 22000, SQLCODE
+-301.
+
+A `RowFilter` is called with no lock held (R-ERR-4). HNSW and IVF call
+it from their walk. DiskANN's engine filter must be `Fn + Sync`, so the
+method asks the filter after each search instead, doubling the list
+while fewer rows than asked are admitted, as the engine's own filter
+would. Each row is asked once, and the filter's first error ends the
+search.
+
+CREATE INDEX on a table while writers go on fills the index one insert
+at a time (`build_index`, `fill_index`), since `Index::load`'s contract
+forbids concurrent writers. The locked path (`schema.rs`) and recovery's
+rebuild call `load_index`, which runs each engine's bulk build.
+
+The locator is version 1, the column's element code, its dimensions as
+u32 and the meta page as u64. Another version, element or dimension
+count is -916. Dropping an index marks it discarded, and the last
+reference let go frees its pages. The method's checkpoint flushes every
+live index it made, then syncs its file, so a database reopens with no
+rebuild (R14.6). ALTER INDEX SET of an option that needs no rebuild
+retunes in place.
+
+#### D96. A DiskANN index keeps its graph in pages and its codes in budgeted memory
+
+The graph's nodes are pages of the method's file (`index/diskann.rs`,
+`engine/diskann.rs`). Its PQ codes and the nodes within CACHE_HOPS of
+the medoid are held in memory reserved of the budget (D38). A bulk build
+is Vamana's two passes (the DiskANN paper, Subramanya et al., NeurIPS
+2019, §2.3), merged from overlapping clusters past BUILD_MEMORY [§3.1].
+An index filled by inserts grows by FreshDiskANN. Maintenance trains its
+codes at TRAIN_AT nodes and consolidates once CONSOLIDATE_PERCENT of its
+nodes are dead. A search's list grows by the dead share first. The
+codebook is borrowed per query (`Codes::table`), so a database
+quantizer's own distance table serves. A checkpoint writes the meta
+page, and recovery mends the index from the rows redone (D25).
+
+A search gives each node it expands the full-precision distance its read
+brought, in place of its code's, in the candidate list
+(`Frontier::settle`), so the list is ordered and cut by exact distances
+wherever they are known. With PQ_BYTES 0 the built-in PQ's codes of a
+DiskANN index are half the dimensions (`DIMS_PER_CODE_BYTE`), still an
+eighth of a FLOAT32 vector, as a byte for each four dimensions lost
+most of its recall on clustered data. An index grown by inserts prunes a
+list that a back edge takes past R to R × 10 / 13 (`fresh.rs`,
+`SLACK`), so the next back edges are appended with no prune; load's
+Vamana and consolidation still prune to R. Maintenance makes its
+hot-node cache again each time its live nodes double, and right after it
+trains its codes. `DiskAnnMethod::in_memory` pools its pages in a
+database's default pool (`db::POOL_BYTES`), as its searches read a page
+at every hop. RERANK ON gives the executor the whole search list to
+order again, OFF the rows asked.
+
+#### D97. An HNSW index is held in budgeted memory, kept as an image and a log in pages
+
+The graph is held in memory reserved of the budget (R10.7, D38,
+`engine/hnsw.rs`). Each change is appended to a log in pages as it is
+made, and a checkpoint folds the log into a new image, so reopening
+needs no rebuild (R14.6). The metric, codec and filter run outside the
+graph's locks (R-ERR-4).
+
+Maintenance repairs a copy of the graph with no lock held and swaps it
+in only if the graph had no change meanwhile. A swap lost to writers is
+counted, and after `MOST_LOST` (2) in a row maintenance raises a fence
+(`engine/hnsw/fence.rs`). Writers arriving wait at it, and it waits for
+those already writing, then copies, repairs and swaps with no writer
+between, so it makes progress under constant writes. A swap also waits
+for no writer past the fence, so an insert links its back edges in the
+epoch it published its node in. A back edge whose list another writer
+keeps changing is chosen again until it is written, never dropped, as
+it is the way searches reach the new node. Each try lost is another
+writer's change made, so the writers as a whole make progress.
+
+#### D98. An IVF index writes its lists through, its centroids and directory held in budgeted memory
+
+Lists are pages written through as each change is made
+(`engine/ivf.rs`). Only centroids, the lists' directory and an entry map
+are in memory reserved of the budget (D38). A checkpoint writes the
+directory records, then syncs. IVF.LISTS 0 is the square root of the
+rows, at least 16 (§10.4), and IVF.PROBES 0 scans one list in eight.
+IVF takes DOT, since it is no graph, and no metric property is checked
+for it.
+
+#### D99. The inverted index answers a sparse DOT approximately
+
+`index/sparse/nearest.rs` serves `NearestSupport::Approximate` for a
+call of DOT, asked approximately and ascending, of one column of SPARSE
+layout whose type fixes its dimension count and format (R10.3). The
+distance of a candidate is its dot product negated, as the built-in DOT
+measures a sparse vector. A radius r keeps the rows of a dot product at
+least −r. The query's filter is the engine's filter, asked of a row's
+projected key. A query vector of other dimensions or format, a null, or
+another metric is declined, and the executor reads the table, so a call
+that would raise still raises. A -918 from the engine declines too.
+
+Keys are projected to one constant key, as the dense indexes' are (D85,
+D95). The engine's hits carry no hash of their vector, so a hash
+projection could not be checked against them. The method's `metric` is
+DOT. It is among `vector_methods`, so it is registered on files too.
+
+#### D100. A hybrid index is a full-text part and a vector part, and HYBRID_SEARCH the query of their two lists fused
+
+The method `hybrid` (`index/vector/hybrid.rs`) indexes two columns, a
+text and a vector. It holds a full-text method and the four vector
+methods, and makes each index of two parts, a full-text index of the
+first column and an index of the second of the method
+HYBRID.VECTOR_METHOD names, HNSW by default (R10.2). Each part's
+descriptor is the index's, of its one column and of the options of its
+method's group alone (FULLTEXT., HNSW., IVF., DISKANN., INVERTED.). The
+method declares the union of the options. The locator is a version
+byte, the text part's locator's length as a u32, then the two locators.
+Another version or a cut locator is -916.
+
+The index holds keys with a null. `IndexSpec.nulls` is true for it, and
+`with_derived` sets it on reopen. Each part holds its own column's value
+and neither a null, so a document with no embedding is found by its
+words and one with no text by its vector. A change goes to the text
+part, then the vector part. If the vector part fails, the text part's
+change is taken back, so a failure leaves neither (D19). `load` streams
+the text part's bulk load and inserts each vector as it passes. Keys
+project to one constant key (D85), since a search of one part cannot
+know the other part's key of a row. `rows` of the projected key and
+`search(Probe::All)` give each row once, the text part's first.
+
+The planner (`physical/nearest.rs`) asks an index of several columns of
+the column's position in its key, carried in `NearestRead::position`.
+The hybrid method answers a query of position 0 as the full-text method
+does, a certified top-k of RANK (D87), and of position 1 as its vector
+method does, approximately (D94). RANK of the first column of a hybrid
+index is given the index's name, as of a full-text index
+(`binder/appended.rs`), so its statistics are the text part's. CREATE
+HYBRID VECTOR INDEX (`parser/ddl/hybrid_index.rs`) desugars to CREATE
+INDEX ... USING hybrid. MODEL and CHUNKER are refused with -900, since
+the index embeds nothing. Temporary tables refuse the method, as they
+refuse `inverted`.
+
+HYBRID_SEARCH (`parser/query/hybrid_search.rs`) is a table reference of
+its own. The binder (`binder/hybrid_search.rs`) writes the query it
+stands for from the catalog and reads it as a derived table. The vector list is
+FETCH APPROX FIRST CANDIDATES of VECTOR_DISTANCE of the index's metric,
+hinted to the index. The text list is FETCH FIRST CANDIDATES of RANK,
+DESC NULLS LAST, with a rank above 0. Each list numbers its rows by
+ROW_NUMBER and has MIN and MAX OVER () of its scores. A FULL JOIN on the
+primary key fuses them, ordered by SCORE DESC then DOC_ID. RRF is the
+sum over the lists holding a row of weight / (RRF_K + rank). WEIGHTED
+is the sum of weight × the score normalized min-max over the list's
+candidates, 1 if they all score alike, a vector score being 1 −
+distance. CANDIDATES defaults to TOP_N × 4 (R11.1), RRF_K to 60, each
+weight to 1. The query is read again with the statement's dynamic
+parameters before the first value argument counted, so each `?` keeps
+its number.
+
+#### D101. Embedding models are schema objects bound to registered plug-ins
+
+An embedding model is a schema object (`catalog/embedding.rs`), made by
+CREATE EMBEDDING MODEL and bound to the plug-in (`Embedder`) its TYPE
+option names, which the host registers (`Database::register_embedder`).
+The database reads VERSION, BATCH_SIZE, ON_ERROR, MAX_RETRIES and the
+shape options itself (`vector/embed/bind.rs`). The others go to
+`Embedder::configured`, with FROM FILE's path as the option FILE.
+CREATE and ALTER refuse a plug-in not registered. HASH_DENSE and
+HASH_SPARSE are built in (`vector/embed/hashed.rs`), feature hashing
+that gives equal vectors of equal texts on every machine. The database
+has no networked plug-in of its own, so a host registers one.
+
+The session appends `SHAPE = 'dims ELEMENT LAYOUT'` to the CREATE text
+it logs. Recovery re-parses that text before the host registers any
+plug-in, so a model of an unregistered plug-in is still defined, of its
+shape, bound to a stand-in that refuses each call with VEC-0030, SQLCODE
+-103. A table whose generated column calls the model is defined again
+with it. A binding is cached by the model's description and whether its
+plug-in is registered, so ALTER or a late registration binds again.
+
+EMBED, VECTOR_EMBEDDING and EMBED_VERSION whose first argument is a
+literal or bare name naming a model of the catalog bind in the binder
+(`binder/embedding.rs`), which checks EXECUTE, and give VECTOR of the
+model's shape (R12.1). A call naming no model calls the plug-in its
+argument names. A literal that names neither is refused, so what named
+a model dropped is found by binding it again. EXECUTE on a model is the
+schema owner's, grantably, granted and revoked as USAGE on a sequence
+generator is (`db/embedding/grants.rs`). DROP EMBEDDING MODEL RESTRICT
+is refused while a pipeline or a generated column embeds by the model,
+and CASCADE drops them.
+
+#### D102. A vector pipeline is four row triggers on its source
+
+A vector pipeline (CREATE VECTOR PIPELINE, §12.5) is four AFTER row
+triggers on its source, made with it and named after it (`_INSERT`,
+`_DELETE`, `_UPDATE_OLD`, `_UPDATE_NEW`), whose actions insert
+CHUNK_TEXT's chunks into the target and delete them
+(`db/embedding/pipeline.rs`). The target exists already, and is filled
+in the creating transaction. Triggers were chosen over a new write hook
+so that pipelines inherit statement atomicity, MERGE, cascaded changes,
+recovery and privileges from triggers unchanged. MODE SYNC embeds a
+chunk as it is inserted, with the model's version tag if the target
+names a version column (R12.5). MODE ASYNC leaves both null for the
+queue (D103). DROP of the pipeline drops the triggers and keeps the
+target's rows. DROP TABLE of source or target and DROP EMBEDDING MODEL
+drop it only with CASCADE.
+
+#### D103. What waits for an embedding is found in the rows, filled after commit
+
+What waits for an embedding is found in the rows themselves, never in a
+separate queue table (`db/embedding/queue.rs`). It is a null embedding
+of an ASYNC pipeline, a version column whose tag is not its model's, or
+a null ASYNC generated column whose inputs are not null. It therefore
+survives a crash with no log of its own. A round is one UPDATE per
+column, in a transaction of the table schema's owner, run by the job
+`turborel-embedding` after a commit that wrote and as the database
+opens. Before it, the texts waiting are embedded ahead, BATCH_SIZE at a
+time (R12.3), up to `MOST_PRIMED` (4096), so the UPDATE asks the model
+for none of them. A round failing leaves its rows waiting for the next,
+and INFORMATION_SCHEMA.EMBEDDING_QUEUE shows its error. A statement
+whose text begins with `/*+ VECTOR_WAIT_FRESH */` (D105), run outside a
+transaction, and `Database::wait_for_embeddings` run a round first.
+
+A generation clause may end `[STORED] [SYNC | ASYNC]` (§12.4). An ASYNC
+column, kept in the catalog codec as generation tag 6, is the null value
+on INSERT (`binder/generated.rs`, `written_generations`). On UPDATE and
+MERGE's update it is the null value if a column it reads is set, kept
+otherwise, and computed if it is set to DEFAULT. The queue sets it to
+DEFAULT later. The writing statement therefore never waits on a model,
+and D63's computing of generated columns is unchanged for SYNC.
+
+#### D104. A scalar function may take a batch's rows at once
+
+`ScalarFunction` has `batches()` and `call_many()`. The batch projection
+(`exec/batch/project.rs`) gives a function that batches the argument
+rows of a whole batch at once, and falls back to a row at a time if the
+batched call fails, so an error is raised at the row that causes it
+(D15). EMBED of a model of the catalog batches, asking the plug-in
+BATCH_SIZE texts at a time (R12.3).
+
+#### D105. Bracketed comments are separators, and a leading `/*+` one carries hints
+
+Bracketed comments [ISO/IEC 9075-2:2023 §5.2 SR11, SR12] (Feature T351)
+are separators and nest (`lexer/comments.rs`). A statement whose text
+begins with one whose contents begin with `+` is hinted by its words,
+read by `lexer::hinted`. VECTOR_WAIT_FRESH is the one hint read there
+(D103). An unknown hint is a comment alone, as hints never fail a
+statement. The approximate search's hints are written after the fetch
+clause instead (D94), where the parser reads them as syntax.
 
 ## 2. Project layout
 

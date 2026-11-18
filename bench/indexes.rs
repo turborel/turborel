@@ -25,10 +25,10 @@
 #[path = "indexes/fulltext.rs"]
 mod fulltext;
 mod harness;
-#[path = "indexes/vector.rs"]
-mod vector;
 #[path = "indexes/json.rs"]
 mod json;
+#[path = "indexes/vector.rs"]
+mod vector;
 
 use std::sync::Arc;
 

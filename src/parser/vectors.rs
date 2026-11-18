@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The definition and drop of a distance function of VECTOR
-//! (design document §8, RULES.md D88): an SQL-invoked function of two
+//! (design document §8, RULES.md D93): an SQL-invoked function of two
 //! vectors whose body is a `<value expression>` of them, which
 //! VECTOR_DISTANCE and a vector index then name as a metric.
 //!

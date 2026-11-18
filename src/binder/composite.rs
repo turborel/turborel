@@ -69,7 +69,7 @@ pub(crate) fn grouping_operand(db: &State, t: &DataType, what: &str) -> Result<(
 /// \[EXTENSION\] An operand of an ordering, grouping or equality
 /// operation, or a key, `what`, of type `t`: of no kind whose values have
 /// no order, as VECTOR's have none and no `=` (design document §3.3
-/// R3.11, R3.12; RULES.md D88).
+/// R3.11, R3.12; RULES.md D93).
 ///
 /// # Errors
 ///

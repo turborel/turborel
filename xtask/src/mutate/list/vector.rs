@@ -1,7 +1,7 @@
 //! Mutations of VECTOR in SQL: its refusals of order, equality and keys,
 //! its type parameters, operators, key word arguments and aggregates, and
 //! distance functions of SQL and metrics registered (RULES.md R-TEST-9,
-//! D88).
+//! D93).
 
 use super::{Mutation, Package};
 

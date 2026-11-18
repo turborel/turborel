@@ -194,7 +194,7 @@ fn the_method_serves_each_column_as_its_part_does() {
     assert!(method.index_options().iter().any(|o| o.name == VECTOR_METHOD_OPTION));
 }
 
-/// Verifies: [EXTENSION] RULES.md D-APPROX, D85: an approximate search of
+/// Verifies: [EXTENSION] RULES.md D94, D100, D85: an approximate search of
 /// the vector column is the vector part's, its entries of the projected
 /// key, the query's filter asked of each as of it; of the text column
 /// none is approximate.

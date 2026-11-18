@@ -1,5 +1,5 @@
 //! The built-in vector distances answered by the vector index methods
-//! (the vector design document §9, §10, R13.1; RULES.md D-APPROX, D88):
+//! (the vector design document §9, §10, R13.1; RULES.md D94, D93):
 //! VECTOR_DISTANCE in both orders and of a parameter, VECTOR_SEARCH, a
 //! range, the accuracy report, each index's TARGET_ACCURACY, a column
 //! declared NORMALIZED, and a registered metric named `schema.name`.
@@ -129,7 +129,7 @@ fn vector_search_reads_each_method_9_3() {
     }
 }
 
-/// Verifies: [EXTENSION] vector_standard §9.4 R9.1, RULES.md D-APPROX: a
+/// Verifies: [EXTENSION] vector_standard §9.4 R9.1, RULES.md D94: a
 /// WHERE condition of the distance itself, a range, does not bar the
 /// index, as a built-in distance of a fixed-shape column raises alike for
 /// every row (`rechecked_errors`); the rows are those within the range.
@@ -346,7 +346,7 @@ fn a_registered_distance_function_is_an_index_metric_10_2() {
     assert_eq!(unknown.code, Code::SyntaxRule);
 }
 
-/// Verifies: [EXTENSION] RULES.md D88, vector_standard §3.1 R3.2, R3.3:
+/// Verifies: [EXTENSION] RULES.md D93, vector_standard §3.1 R3.2, R3.3:
 /// VECTOR and its functions are built in, so a new database takes a
 /// VECTOR(n, FLOAT32) column and VECTOR_DISTANCE with nothing registered,
 /// and a second VECTOR type is refused (SQLCODE -910).

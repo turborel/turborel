@@ -1,5 +1,5 @@
 //! \[EXTENSION\] An approximate index's nearest read (the vector design
-//! document R9.2, R9.3, R9.5, R13.2; RULES.md D-APPROX). The index gives
+//! document R9.2, R9.3, R9.5, R13.2; RULES.md D94). The index gives
 //! candidates under its relaxed contract; each is fetched as the
 //! transaction sees it, checked against the whole WHERE condition, and
 //! measured by the exact SQL distance, its re-rank. The best of them, by

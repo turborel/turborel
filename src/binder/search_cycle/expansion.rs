@@ -333,7 +333,11 @@ fn extend_reference(from: &mut [TableReference], name: &str, added: &[String]) {
                 todo.extend([left, right]);
             }
             TableReference::Recognized(r) => todo.push(&mut r.input),
-            TableReference::Derived(_) | TableReference::Unnest(_) | TableReference::Json(_) | TableReference::Polymorphic(_) | TableReference::Hybrid(_) => {}
+            TableReference::Derived(_)
+            | TableReference::Unnest(_)
+            | TableReference::Json(_)
+            | TableReference::Polymorphic(_)
+            | TableReference::Hybrid(_) => {}
         }
     }
 }

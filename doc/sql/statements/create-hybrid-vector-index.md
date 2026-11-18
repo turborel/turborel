@@ -103,9 +103,8 @@ turborel: SQLCODE -900 (SQLSTATE 0A000): a hybrid index indexes a vector column 
 
 ## STANDARD
 
-An extension: neither SQL-86 nor SQL-92 has indexes. The statement is
-the form of §11.1 of Turborel's vector design document, without its
-MODEL and CHUNKER.
+An extension: neither SQL-86 nor SQL-92 has indexes. MODEL and CHUNKER
+are read and refused (SQLCODE -900).
 
 ## SEE ALSO
 

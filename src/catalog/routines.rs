@@ -149,12 +149,12 @@ pub struct SqlRoutineDesc {
     /// more.
     pub ptf: Option<Box<PtfDesc>>,
     /// \[EXTENSION\] Of a distance function of VECTOR, what it declares
-    /// more (design document §8, RULES.md D88).
+    /// more (design document §8, RULES.md D93).
     pub distance: Option<Box<DistanceDesc>>,
 }
 
 /// \[EXTENSION\] What CREATE VECTOR DISTANCE FUNCTION declares of a
-/// function beyond its routine (design document §8, RULES.md D88): its
+/// function beyond its routine (design document §8, RULES.md D93): its
 /// PROPERTIES, its VALID FORMATS, and its body's expression over its two
 /// parameters, which a metric of it evaluates.
 #[derive(Debug, Clone, PartialEq, Eq)]

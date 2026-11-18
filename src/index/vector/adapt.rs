@@ -7,7 +7,7 @@
 //!
 //! A built-in metric is measured on the slices at once, by the vector
 //! module's kernels: an index orders candidates only, and the executor
-//! measures each again by the SQL call (D-APPROX), so the `f32` sum of a
+//! measures each again by the SQL call (D94), so the `f32` sum of a
 //! FLOAT16 or INT8 column (R3.10) serves. A user-defined metric is given
 //! the two vectors in the column's own format, as a SQL call gives them;
 //! a failure or a null is taken as farthest, so a broken metric misplaces

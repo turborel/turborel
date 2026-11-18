@@ -58,7 +58,8 @@ A dense vector keeps every element. A sparse vector keeps only the
 elements that are not zero, with their positions, as the vectors a
 model of words makes are. BINARY is never sparse.
 
-A dimension count is from 1 to 65,535, and of BINARY from 8 to 65,528.
+A dimension count is from 1 to 65,535, of a sparse vector to
+2,147,483,647, and of BINARY from 8 to 65,528, a multiple of 8.
 A type out of these bounds, or of an unknown format, is refused with
 SQLSTATE 2A000 (SQLCODE -103). An element is never null, NaN or
 infinite.
@@ -354,9 +355,11 @@ SELECT TABLE_NAME, COLUMN_NAME, VECTOR_DIMENSIONS, VECTOR_FORMAT, VECTOR_LAYOUT 
 |---|---|---|
 | 2A000 | -103 | a VECTOR type out of its bounds; a vector ordered, compared or keyed; `/` of two vectors |
 | 22000 | -301 | vectors of other dimension counts or formats; a vector of another dimension count than its type's; a metric of none of the vectors' formats, or of no name |
+| 22001 | -301 | FROM_VECTOR of a vector whose text is longer than a character string |
 | 22003 | -301 | an element out of its format's range |
 | 22012 | -301 | a vector divided by zero |
 | 22018 | -301 | text that is no vector |
+| 2202E | -301 | VECTOR_ELEMENT or VECTOR_SLICE outside the vector; VECTOR_TO_ARRAY of more elements than an array holds |
 | 2A000 | -104 | a distance function used by a user without EXECUTE on it |
 | TB910 | -910 | a registered metric that breaks its contract, as a negative distance of one declared NON_NEGATIVE |
 
@@ -365,5 +368,6 @@ SELECT TABLE_NAME, COLUMN_NAME, VECTOR_DIMENSIONS, VECTOR_FORMAT, VECTOR_LAYOUT 
 [CREATE VECTOR DISTANCE FUNCTION](statements/create-vector-distance-function.md),
 [DROP VECTOR DISTANCE FUNCTION](statements/drop-vector-distance-function.md),
 [CREATE VECTOR INDEX](statements/create-vector-index.md),
+[Hybrid Search](15-hybrid-search.md),
 [Query Expressions](06-queries.md#fetch-approx-and-fetch-exact-extension),
 [Vector Guide](../data/04-vectors.md)

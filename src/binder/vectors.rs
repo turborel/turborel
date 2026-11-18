@@ -1,5 +1,5 @@
 //! \[EXTENSION\] VECTOR in expressions (design document §6, §8; RULES.md
-//! D88): the key words a function of it takes as arguments, given as
+//! D93): the key words a function of it takes as arguments, given as
 //! character strings (`VECTOR_DISTANCE(a, b, COSINE)`); `+`, `-`, `*` and
 //! `/` of vectors, calls of VECTOR_ADD and its kin; and VECTOR_DISTANCE by
 //! a distance function of SQL (CREATE VECTOR DISTANCE FUNCTION), whose

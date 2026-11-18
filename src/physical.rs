@@ -367,8 +367,7 @@ pub enum Plan {
 #[derive(Clone, Copy)]
 pub struct PhysicalPlanner<'a> {
     db: &'a State,
-    /// Whether the plan is made to be shown, its operators described
-    /// (`physical/shown.rs`), as EXPLAIN's is; one made to run is not.
+    /// Whether the plan is made to be shown, its operators described (`physical/shown.rs`), as EXPLAIN's is; one made to run is not.
     shown: bool,
     /// Of a plan made with a prepared statement's slots, the values of the
     /// execution its paths are chosen by (`physical/kept.rs`).

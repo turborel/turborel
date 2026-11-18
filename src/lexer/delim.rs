@@ -70,7 +70,7 @@ pub const CIRCUMFLEX: &str = "^";
 /// [ISO/IEC 9075-2:2023 §5.1] `<dollar sign>`: the end of a row pattern
 /// partition [§7.9].
 pub const DOLLAR_SIGN: &str = "$";
-/// \[EXTENSION\] The distance operators of VECTOR (RULES.md D88), each
+/// \[EXTENSION\] The distance operators of VECTOR (RULES.md D93), each
 /// a call of VECTOR_DISTANCE by its metric (`vector::functions::OPERATORS`):
 /// EUCLIDEAN.
 pub const EUCLIDEAN_DISTANCE: &str = "<->";

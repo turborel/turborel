@@ -1,5 +1,5 @@
 //! \[EXTENSION\] [ISO/IEC 9075:1992 §21.1] The catalog of VECTOR (design
-//! document §16, RULES.md D88), objects "associated with
+//! document §16, RULES.md D93), objects "associated with
 //! INFORMATION_SCHEMA" this implementation adds. VECTOR_COLUMNS has a row
 //! for each column of a VECTOR type, with the dimension count, format and
 //! layout it fixes, null of one it leaves flexible. VECTOR_DISTANCE_FUNCTIONS

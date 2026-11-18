@@ -8,7 +8,7 @@
 //! nothing. Writes go through the engines, each of which orders its
 //! changes so a failure leaves none (D19).
 //!
-//! An approximate search (`Index::approximate`, RULES.md D-APPROX) asks
+//! An approximate search (`Index::approximate`, RULES.md D94) asks
 //! the engine with no lock of this layer held. A filter of the query's
 //! condition is called by the engine's search outside its own locks too,
 //! as `RowFilter` requires; its first error ends the search and is

@@ -297,7 +297,7 @@ impl ScalarFunction for VectorFunction {
     /// operand raise alike for every row, and a null vector gives null; the
     /// planner holds the call to that, and to a built-in metric, which
     /// never fails of finite vectors, before it skips a row for it
-    /// (`physical/nearest/safe.rs`, D-APPROX).
+    /// (`physical/nearest/safe.rs`, D94).
     fn rechecked_errors(&self) -> bool {
         matches!(self.routine, Routine::Distance(_))
     }
