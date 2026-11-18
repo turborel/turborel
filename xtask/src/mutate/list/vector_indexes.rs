@@ -8,7 +8,7 @@ use super::{Mutation, Package};
 
 /// Independent mechanisms whose removal must fail the vector indexes'
 /// requirements.
-pub const VECTOR_INDEXES: [Mutation; 33] = [
+pub const VECTOR_INDEXES: [Mutation; 35] = [
     Mutation {
         name: "diskann-prune-alpha",
         package: Package::Core,
@@ -338,5 +338,25 @@ pub const VECTOR_INDEXES: [Mutation; 33] = [
         replacement: "const SLACK: (usize, usize) = (1, 1);",
         integration: &[],
         unit: &["engine::diskann::tests::guided::a_back_edge_past_r_prunes_with_slack"],
+    },
+    Mutation {
+        name: "vector-cosine-one-pass",
+        package: Package::Core,
+        breaks: "COSINE's one-pass sums take a·b for b·b, so an index's cosine distances change",
+        file: "src/vector/kernels.rs",
+        original: "*sb += q * q;",
+        replacement: "*sb += p * q;",
+        integration: &[],
+        unit: &["vector::tests::kernels::cosine_terms_are_the_folds_bit_for_bit"],
+    },
+    Mutation {
+        name: "pq-centroid-norms",
+        package: Package::Core,
+        breaks: "a PQ codebook's centroid norms are made as zeros, so its COSINE table measures every code as 1",
+        file: "src/vector/pq.rs",
+        original: "fold_f32(cent, cent, product)",
+        replacement: "fold_f32(cent, cent, square)",
+        integration: &[],
+        unit: &["vector::tests::quantizers::product_cosine_tables_use_the_centroid_norms"],
     },
 ];
