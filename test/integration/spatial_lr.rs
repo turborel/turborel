@@ -6,6 +6,7 @@
 
 use turborel::db::{Database, OpenOptions};
 use turborel::error::Code;
+use turborel::params::Params;
 use turborel::value::Value;
 
 use crate::common::{Scratch, after_crash, rows, state};
@@ -226,4 +227,67 @@ fn catalog_survives_recovery() {
     let db = open();
     assert_eq!(rows(&db.session("A"), COLUMNS).unwrap(), ["T,C,1"]);
     assert_eq!(rows(&db.session("A"), LRMS).unwrap(), ["KM,1,ACME,7,posts,absolute"]);
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15.1.1, §15.3.1,
+/// §15.5.1 Definitional Rules, §20.5, Annex A.1] the limits of linear
+/// referencing are reported as ST_SIZINGS rows; a name of more characters
+/// than its limit is refused as it is assigned to the parameter (22001).
+#[test]
+fn sizings_are_the_limits_enforced() {
+    let db = database();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE D (X INTEGER)").unwrap();
+    let a = db.session("A");
+    a.run("INSERT INTO D VALUES (1)").unwrap();
+    let sizings = "SELECT VARIABLE_NAME, SUPPORTED_VALUE FROM ST_INFORMTN_SCHEMA.ST_SIZINGS WHERE VARIABLE_NAME IN \
+                   ('ST_MaxConstraintArrayElements', 'ST_MaxConstraintLength', 'ST_MaxFeatureIDLength', 'ST_MaxLRAsGML', \
+                   'ST_MaxLRAsText', 'ST_MaxLRMNameLength', 'ST_MaxPositionExpArrayElements', 'ST_MaxReferentArrayElements', \
+                   'ST_MaxStartValueArrayElements', 'ST_MaxLEMeasureArrayElements') ORDER BY VARIABLE_NAME";
+    let bytes = turborel::geometry::MAX_BYTES;
+    assert_eq!(
+        rows(&a, sizings).unwrap(),
+        [
+            "ST_MaxConstraintArrayElements,1024".to_owned(),
+            "ST_MaxConstraintLength,256".to_owned(),
+            "ST_MaxFeatureIDLength,128".to_owned(),
+            "ST_MaxLEMeasureArrayElements,NULL".to_owned(),
+            format!("ST_MaxLRAsGML,{bytes}"),
+            format!("ST_MaxLRAsText,{bytes}"),
+            "ST_MaxLRMNameLength,128".to_owned(),
+            "ST_MaxPositionExpArrayElements,1024".to_owned(),
+            "ST_MaxReferentArrayElements,1024".to_owned(),
+            "ST_MaxStartValueArrayElements,1024".to_owned(),
+        ]
+    );
+    let lrm = format!("ST_LRMFROMTEXT('{}')", KM.replace('\'', "''"));
+    assert_eq!(rows(&a, &format!("SELECT {lrm}.ST_LRMNAME('{}').ST_LRMNAME() FROM D", "n".repeat(128))).unwrap(), ["n".repeat(128)]);
+    assert_eq!(state(&a, &format!("SELECT {lrm}.ST_LRMNAME('{}') FROM D", "n".repeat(129))), "22001");
+    let edge =
+        "NEW ST_LRDIRECTEDEDGE(3, 1, ST_LRMEASURE(0), CAST(NULL AS VARCHAR(8)), CAST(NULL AS ST_STARTVALUE ARRAY[2]), 'G', 'topo', 5)";
+    assert_eq!(state(&a, &format!("SELECT {edge}.ST_TOPOORNETNAME('{}') FROM D", "t".repeat(129))), "22001");
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15.6.8, RULES.md
+/// D85] ST_Equals and ST_Point are the geometry functions and the
+/// routines of §15 at once: a geometry call keeps its R-tree plan and its
+/// rows, prepared of its constant, while one of position expressions, a
+/// point of coordinates and one located along a curve are still taken.
+#[test]
+fn shared_names_keep_geometry_plans() {
+    let db = database();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE U (ID INTEGER, G GEOMETRY(0), C ST_LRCURVE)").unwrap();
+    let a = db.session("A");
+    let values: Vec<String> = (0..300_i32).map(|i| format!("({i}, ST_POINT({i}, 0), NULL)")).collect();
+    a.run(&format!("INSERT INTO U VALUES {}", values.join(", "))).unwrap();
+    a.run(&format!("INSERT INTO U VALUES (300, NULL, {ROAD})")).unwrap();
+    a.commit().unwrap();
+    db.create_index("U_G", "A.U", &["G"], "rtree").unwrap();
+    let a = db.session("A");
+    let equal = "SELECT ID FROM U WHERE ST_EQUALS(G, ST_POINT(7, 0)) = 1";
+    let plan = a.physical_plan(equal, &Params::new()).unwrap();
+    assert!(plan.contains("U_G"), "{plan}");
+    assert_eq!(rows(&a, equal).unwrap(), ["7"]);
+    let at = format!("ST_POSITIONEXP(C, ST_LRM('{}'), {D25})", KM.replace('\'', "''"));
+    let same = format!("SELECT {at}.ST_EQUALS({at}), ST_ASTEXT(C.ST_POINT({at})) FROM U WHERE ID = 300");
+    assert_eq!(rows(&a, &same).unwrap(), ["1,POINT (25 0)"]);
 }

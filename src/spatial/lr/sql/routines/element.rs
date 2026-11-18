@@ -5,7 +5,7 @@
 
 use super::super::args::{Args, P, element_out, geom_out, int, lr_array, lr_out, or_null, text};
 use super::super::routine::{Routine, called, null_call};
-use super::super::{FEATURE_ID_LENGTH, NAME_LENGTH, TYPE_LENGTH, from_gml_arg, from_text_arg, from_text_or_gml_arg};
+use super::super::{FEATURE_ID_LENGTH, TOPO_OR_NET_NAME_LENGTH, TYPE_LENGTH, from_gml_arg, from_text_arg, from_text_or_gml_arg};
 use super::{CURVE, DISTANCE, EDGE, ELEMENT, FEATURE, MEASURE, POSITION};
 use crate::error::Result;
 use crate::geometry::model::Kind as GeomKind;
@@ -18,7 +18,7 @@ const PARTS: [P; 5] = [P::Int, P::Int, MEASURE, P::Text(TYPE_LENGTH), P::LrArray
 const FEATURE_SIX: &[P] = &[PARTS[0], PARTS[1], PARTS[2], PARTS[3], PARTS[4], P::Text(FEATURE_ID_LENGTH)];
 const FEATURE_SEVEN: &[P] = &[PARTS[0], PARTS[1], PARTS[2], PARTS[3], PARTS[4], P::Text(FEATURE_ID_LENGTH), P::LrArray(LrKind::Referent)];
 const CURVE_SIX: &[P] = &[PARTS[0], PARTS[1], PARTS[2], PARTS[3], PARTS[4], P::Geo(GeomKind::Curve)];
-const EDGE_EIGHT: &[P] = &[PARTS[0], PARTS[1], PARTS[2], PARTS[3], PARTS[4], P::Char, P::Text(NAME_LENGTH), P::Int];
+const EDGE_EIGHT: &[P] = &[PARTS[0], PARTS[1], PARTS[2], PARTS[3], PARTS[4], P::Char, P::Text(TOPO_OR_NET_NAME_LENGTH), P::Int];
 
 /// SELF, a linear element or the null value.
 fn this(a: &Args<'_>) -> Result<Option<LinearElement>> {
@@ -159,10 +159,10 @@ pub static ROUTINES: &[Routine] = &[
     called("ST_TOPOLOGYTYPE", &[EDGE, P::Char], EDGE, |a| {
         edge_out(LrDirectedEdge::with_topology_type(a.edge(0)?.as_ref(), a.character(1)?)?)
     }),
-    null_call("ST_TOPOORNETNAME", &[EDGE], P::Text(NAME_LENGTH), |a| {
+    null_call("ST_TOPOORNETNAME", &[EDGE], P::Text(TOPO_OR_NET_NAME_LENGTH), |a| {
         Ok(or_null(a.edge(0)?.as_ref().map(LrDirectedEdge::topo_or_net_name), text))
     }),
-    called("ST_TOPOORNETNAME", &[EDGE, P::Text(NAME_LENGTH)], EDGE, |a| {
+    called("ST_TOPOORNETNAME", &[EDGE, P::Text(TOPO_OR_NET_NAME_LENGTH)], EDGE, |a| {
         edge_out(LrDirectedEdge::with_topo_or_net_name(a.edge(0)?.as_ref(), a.text(1)?)?)
     }),
     null_call("ST_EDGEORLINKID", &[EDGE], P::Int, |a| Ok(or_null(a.edge(0)?.map(|e| e.edge_or_link_id()), int))),

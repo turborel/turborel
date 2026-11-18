@@ -77,3 +77,46 @@ fn depth_is_bounded() {
     assert_eq!(deeper(0).unwrap(), 1);
     assert_eq!(deeper(MAX_DEPTH).unwrap_err().code, Code::Unsupported);
 }
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15.5.1 DR1, Annex
+/// A.1] ST_MaxTopologyOrNetworkName is the lesser of ST_MaxTopologyName
+/// and ST_MaxNetworkName, so a directed edge names any topology or network.
+#[test]
+fn topology_or_network_name_fits_both() {
+    let topology = crate::spatial::topology::sql::MAX_TOPOLOGY_NAME;
+    let network = crate::spatial::network::sql::MAX_NETWORK_NAME;
+    let lesser = u32::try_from(topology.min(network)).unwrap();
+    assert_eq!(sql::TOPO_OR_NET_NAME_LENGTH, lesser);
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15, RULES.md D34,
+/// D85] a geometry function sharing a name with a routine of §15 keeps,
+/// wrapped with them, what an index, a plan and a batch read of it: each
+/// is the only function of its name, declaring no parameter types, so
+/// the wrapper stands for it alone.
+#[test]
+fn wrapped_geometry_functions_keep_their_capabilities() {
+    let geometry = crate::geometry::functions();
+    let wrapped = sql::with_functions(geometry.clone());
+    let mut names = sql::routines_names();
+    names.sort_unstable();
+    names.dedup();
+    let shared: Vec<&str> = names.into_iter().filter(|n| geometry.iter().any(|f| f.name() == *n)).collect();
+    assert!(shared.contains(&"ST_EQUALS") && shared.contains(&"ST_POINT"), "{shared:?}");
+    for name in shared {
+        let mut of_name = geometry.iter().filter(|f| f.name() == name);
+        let before = of_name.next().unwrap();
+        assert!(of_name.next().is_none() && before.parameter_types().is_none(), "{name}");
+        let after = wrapped.iter().find(|f| f.name() == name).unwrap();
+        assert_eq!(after.spatial_operation(), before.spatial_operation(), "{name}");
+        assert_eq!(after.index_predicate(), before.index_predicate(), "{name}");
+        assert_eq!(after.rechecked_errors(), before.rechecked_errors(), "{name}");
+        assert_eq!(after.probe_arguments(), before.probe_arguments(), "{name}");
+        assert_eq!(format!("{:?}", after.predicate_truth()), format!("{:?}", before.predicate_truth()), "{name}");
+        assert_eq!((after.ranks(), after.ranked_by_index(), after.batches()), (before.ranks(), before.ranked_by_index(), before.batches()));
+        for arity in 0..4 {
+            assert_eq!(after.uses_context(arity), before.uses_context(arity), "{name} {arity}");
+        }
+        assert_eq!(after.deterministic(), before.deterministic(), "{name}");
+    }
+}

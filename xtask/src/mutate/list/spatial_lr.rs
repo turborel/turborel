@@ -6,7 +6,7 @@ use super::{Mutation, Package};
 
 /// Linear referencing's measures, offsets and catalog, each broken so
 /// its requirement tests fail.
-pub const SPATIAL_LR: [Mutation; 8] = [
+pub const SPATIAL_LR: [Mutation; 10] = [
     Mutation {
         name: "lr-absolute-start",
         package: Package::Core,
@@ -86,5 +86,25 @@ pub const SPATIAL_LR: [Mutation; 8] = [
         replacement: "if lrm.id != id && lrm.id == id {",
         integration: &["spatial_lr::catalog_defines_methods_and_columns"],
         unit: &[],
+    },
+    Mutation {
+        name: "lr-argument-length",
+        package: Package::Core,
+        breaks: "an argument longer than its parameter's length is taken, so ST_SIZINGS reports a limit not enforced",
+        file: "src/spatial/lr/sql/dispatch.rs",
+        original: "        routine.check_lengths(given)?;\n",
+        replacement: "",
+        integration: &["spatial_lr::sizings_are_the_limits_enforced"],
+        unit: &[],
+    },
+    Mutation {
+        name: "lr-forward-spatial-operation",
+        package: Package::Core,
+        breaks: "a geometry function wrapped with the routines of its name loses its spatial operation, so its R-tree plan",
+        file: "src/spatial/lr/sql/dispatch.rs",
+        original: "self.fallback.as_ref().and_then(|f| f.spatial_operation())",
+        replacement: "None",
+        integration: &["spatial_lr::shared_names_keep_geometry_plans"],
+        unit: &["spatial::lr::tests::types::wrapped_geometry_functions_keep_their_capabilities"],
     },
 ];

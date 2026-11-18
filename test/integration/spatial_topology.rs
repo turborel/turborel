@@ -203,3 +203,19 @@ fn a_topology_survives_recovery() {
     assert_eq!(rows(&a, "SELECT FACE_ID FROM \"T\".ST_FACE ORDER BY FACE_ID").unwrap(), ["0", "2", "3"]);
     assert_eq!(rows(&a, "SELECT * FROM TABLE(ST_VALIDATETOPOGEO('T')) AS V").unwrap(), Vec::<String>::new());
 }
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §11.3 Definitional
+/// Rule 1, §20.5, Annex A.1] ST_MaxTopologyName and
+/// ST_MaxTopologyOrNetworkName are reported; a topology name of so many
+/// characters is taken, and one of more refused as it is assigned to the
+/// parameter of that length (22001).
+#[test]
+fn the_longest_topology_name() {
+    let db = database();
+    let a = topology(&db);
+    let sizings = "SELECT VARIABLE_NAME, SUPPORTED_VALUE FROM ST_INFORMTN_SCHEMA.ST_SIZINGS \
+                   WHERE VARIABLE_NAME LIKE 'ST_MaxTopology%' ORDER BY VARIABLE_NAME";
+    assert_eq!(rows(&a, sizings).unwrap(), ["ST_MaxTopologyName,128", "ST_MaxTopologyOrNetworkName,128"]);
+    a.run(&format!("CALL ST_INITTOPOGEO('{}')", "M".repeat(128))).unwrap();
+    assert_eq!(state(&a, &format!("CALL ST_INITTOPOGEO('{}')", "M".repeat(129))), "22001");
+}
