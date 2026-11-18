@@ -5,7 +5,7 @@
 use super::{Mutation, Package};
 
 /// Each mapping mechanism broken alone, and the tests that fail.
-pub const XML_MAP: [Mutation; 22] = [
+pub const XML_MAP: [Mutation; 24] = [
     Mutation {
         name: "xml-map-nulls-nil",
         package: Package::Core,
@@ -225,5 +225,25 @@ pub const XML_MAP: [Mutation; 22] = [
         replacement: "            let _ = state;",
         integration: &["xml_map::column_cannot_be_mapped_9_11"],
         unit: &[],
+    },
+    Mutation {
+        name: "xml-map-type-nesting",
+        package: Package::Core,
+        breaks: "a type nested past MAX_TYPE_NESTING is named, not refused",
+        file: "src/functions/xml/map/types.rs",
+        original: "    if depth > MAX_TYPE_NESTING {",
+        replacement: "    if false {",
+        integration: &[],
+        unit: &["functions::xml::map::types::tests::types_nested_past_the_limit"],
+    },
+    Mutation {
+        name: "xml-interval-no-fraction",
+        package: Package::Core,
+        breaks: "an interval of no fractional seconds takes a fraction of no digits in its pattern",
+        file: "src/functions/xml/schema_type.rs",
+        original: "        if field == Field::Second && q.fraction > 0 {",
+        replacement: "        if field == Field::Second {",
+        integration: &["xml_cast::xml_values_cast_by_the_facets_6_6"],
+        unit: &["functions::xml::schema_type::tests::intervals_9_5"],
     },
 ];
