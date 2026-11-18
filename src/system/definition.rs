@@ -37,6 +37,7 @@
 
 mod constraints;
 mod descriptors;
+mod graphs;
 mod implicit;
 mod modules;
 mod options;
@@ -110,6 +111,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     tables.extend(roles::tables());
     tables.extend(triggers::tables());
     tables.extend(modules::tables());
+    tables.extend(graphs::tables());
     tables.extend(structured::tables());
     tables.extend(typed::tables());
     tables

@@ -20,6 +20,7 @@ mod filter;
 mod fulltext;
 mod generated;
 mod geometry;
+mod graph_catalog;
 mod grouping_sets;
 mod hypothetical;
 mod json;

@@ -104,9 +104,12 @@ impl State {
                 columns.dedup();
                 columns
             }
-            DropTarget::Table(_) | DropTarget::View(_) | DropTarget::Assertion(_) | DropTarget::Sequence(_) | DropTarget::Trigger(_) => {
-                Vec::new()
-            }
+            DropTarget::Table(_)
+            | DropTarget::View(_)
+            | DropTarget::Assertion(_)
+            | DropTarget::Sequence(_)
+            | DropTarget::Trigger(_)
+            | DropTarget::Graph(_) => Vec::new(),
             // [ISO/IEC 9075-2:2023 §11.64 GR, §11.66 GR, §11.71 GR] Those
             // that no longer bind without it.
             DropTarget::Cast(_) | DropTarget::Ordering(_) | DropTarget::Transform(..) => self.generations_without(target),

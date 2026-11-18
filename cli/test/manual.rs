@@ -16,6 +16,8 @@ use turborel_client::agent::Agent;
 
 use crate::common::{Running, Scratch, command, options, start};
 
+mod graph;
+
 /// What the manual's examples show a null value as.
 const NULL_SHOWN: &str = "NULL";
 

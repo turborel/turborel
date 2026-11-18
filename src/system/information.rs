@@ -20,6 +20,7 @@
 
 mod composites;
 mod extensions;
+mod graphs;
 mod modules;
 mod roles;
 mod structured;
@@ -69,15 +70,14 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 /// row types (`information/composites.rs`), those of user-defined types
 /// and their routines (`information/user_types.rs`), of structured types
 /// and typed tables (`information/structured.rs`), those of roles
-/// (`information/roles.rs`), of triggers (`information/triggers.rs`) and
-/// of SQL-server modules (`information/modules.rs`), then the extensions
+/// (`information/roles.rs`), of triggers (`information/triggers.rs`), of
+/// SQL-server modules (`information/modules.rs`) and of property graphs
+/// (`information/graphs.rs`), then the extensions
 /// (`information/extensions.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
-    ALL.get_or_init(|| {
-        [VIEWS, composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS, extensions::VIEWS]
-            .concat()
-    })
+    let parts = [VIEWS, composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS];
+    ALL.get_or_init(|| [&parts[..], &[graphs::VIEWS, extensions::VIEWS]].concat().concat())
 }
 
 /// The views of ISO/IEC 9075:1992 [§21.2.4-§21.2.26].

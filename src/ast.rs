@@ -35,6 +35,7 @@ mod drop;
 mod dynamic;
 mod expression;
 mod generated;
+mod graph_ddl;
 mod joined;
 mod json;
 mod json_table;
@@ -78,6 +79,10 @@ pub use expression::{
     ValueExpression, WhenOperand,
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
+pub use graph_ddl::{
+    AlterGraph, AlterGraphAction, DerivedProperty, ElementAction, ElementDefinition, EndpointDefinition, GraphDefinition, GraphModeOption,
+    LabelDefinition, PropertiesDefinition,
+};
 pub use joined::{JoinKind, JoinSpecification, JoinedTable, Partitioning};
 pub use json::{
     IsJson, JsonAggregate, JsonArgument, JsonClauses, JsonCommon, JsonConstructor, JsonExpression, JsonFormat, JsonInput, JsonMember,

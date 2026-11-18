@@ -37,6 +37,9 @@ pub enum DropObject {
     /// [ISO/IEC 9075-2:2023 §11.71] A type's transform group, or all of
     /// them.
     Transform(TableName, Option<String>),
+    /// \[EXTENSION\] A property graph (RULES.md D-GRAPH-CATALOG), and
+    /// whether IF EXISTS was written.
+    Graph(TableName, bool),
     /// A schema: `<schema name>` ::= \[`<catalog name>` .\] `<unqualified
     /// schema name>` [§5.4].
     Schema {
@@ -63,7 +66,8 @@ impl DropObject {
             | DropObject::Trigger(name)
             | DropObject::Module(name)
             | DropObject::Ordering(name)
-            | DropObject::Transform(name, _) => name.at,
+            | DropObject::Transform(name, _)
+            | DropObject::Graph(name, _) => name.at,
             DropObject::Cast(_, at) | DropObject::Schema { at, .. } => *at,
             DropObject::Routine(designator) => designator.name.at,
         }

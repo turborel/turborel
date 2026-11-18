@@ -82,6 +82,7 @@ fn every_kind() -> Vec<Record> {
 /// a transaction, with the epochs of sequence generators they gave.
 fn definitions() -> Vec<Change> {
     vec![
+        Change::Drop { object: DropTarget::Graph(table()), cascade: false },
         Change::Schema {
             sql: "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)".into(),
             owner: "A".into(),

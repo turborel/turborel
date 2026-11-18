@@ -55,6 +55,9 @@ pub struct Schema {
     /// The `<SQL-server module definition>`s, in order [ISO/IEC
     /// 9075-4:2006 draft §9.21].
     pub modules: Vec<ModuleDefinition>,
+    /// \[EXTENSION\] The `<create property graph statement>`s, in order
+    /// (RULES.md D-GRAPH-CATALOG).
+    pub graphs: Vec<super::GraphDefinition>,
     /// [ISO/IEC 9075-2:2023 §11.1] The `<SQL-invoked routine>`s of a
     /// method, the `<user-defined cast definition>`s, `<user-defined
     /// ordering definition>`s and `<transform definition>`s, in order,
@@ -114,6 +117,11 @@ pub enum SchemaStatement {
     Transform(super::TransformDefinition),
     /// An `<alter transform statement>` [ISO/IEC 9075-2:2023 §11.68].
     AlterTransform(super::AlterTransform),
+    /// \[EXTENSION\] A `<create property graph statement>` (RULES.md
+    /// D-GRAPH-CATALOG).
+    Graph(Box<super::GraphDefinition>),
+    /// \[EXTENSION\] An `<alter property graph statement>`.
+    AlterGraph(super::AlterGraph),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION

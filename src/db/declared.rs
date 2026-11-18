@@ -94,6 +94,8 @@ impl Session {
             | SchemaStatement::Trigger(_)
             | SchemaStatement::Routine(_)
             | SchemaStatement::Module(_)
+            | SchemaStatement::Graph(_)
+            | SchemaStatement::AlterGraph(_)
             | SchemaStatement::Role(_) => Ok(()),
         }
     }

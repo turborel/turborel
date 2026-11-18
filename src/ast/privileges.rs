@@ -25,6 +25,9 @@ pub enum PrivilegeObject {
     Routine(RoutineType),
     /// [ISO/IEC 9075-4:2006 draft §10.2] MODULE `<module name>`.
     Module,
+    /// \[EXTENSION\] PROPERTY GRAPH `<property graph name>` (RULES.md
+    /// D-GRAPH-CATALOG).
+    Graph,
 }
 
 /// [ISO/IEC 9075:1992 §11.37] `<revoke statement>` ::= REVOKE \[GRANT
