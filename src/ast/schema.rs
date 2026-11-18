@@ -114,6 +114,9 @@ pub enum SchemaStatement {
     Transform(super::TransformDefinition),
     /// An `<alter transform statement>` [ISO/IEC 9075-2:2023 §11.68].
     AlterTransform(super::AlterTransform),
+    /// \[EXTENSION\] An `<XML Schema definition>` [ISO/IEC 9075-14:2006
+    /// draft §4.2.6].
+    XmlSchema(Box<super::XmlSchemaDefinition>),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION

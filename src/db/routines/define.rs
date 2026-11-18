@@ -466,7 +466,8 @@ impl State {
             | SchemaStatement::Routine(_)
             | SchemaStatement::Module(_)
             | SchemaStatement::AlterType(_)
-            | SchemaStatement::AlterTransform(_) => {
+            | SchemaStatement::AlterTransform(_)
+            | SchemaStatement::XmlSchema(_) => {
                 Err(rule("[DESIGN] a schema element defined for a type is a method, cast, ordering or transform"))
             }
         }

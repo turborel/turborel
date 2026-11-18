@@ -134,7 +134,8 @@ pub use window::{
 };
 pub use xml::{
     ContentOption, ElementConstructor, ForestConstructor, LexicallyScopedOptions, MapResults, MapSource, Named, NamespaceItem, OnEmpty,
-    Passing, Returning, XmlArgument, XmlArguments, XmlMapping, XmlOperator, XmlQuery, XmlRegularColumn, XmlTable, XmlTableColumn, rows_of,
+    Passing, Returning, XmlArgument, XmlArguments, XmlMapping, XmlOperator, XmlQuery, XmlRegularColumn, XmlSchemaDefinition, XmlTable,
+    XmlTableColumn, rows_of,
 };
 
 // ---------------------------------------------------------------------------

@@ -3145,6 +3145,58 @@ nothing derived can disagree with what was registered. As the catalog is
 logged, checkpointed and replicated as opaque bytes (D57), registered XML
 Schemas need nothing of their own there.
 
+Part 14 leaves how an XML Schema is registered to the implementation
+[ISO/IEC 9075-14:2006 draft §4.2.6]. These statements were decided, an
+extension in the standard's notation:
+
+```
+<XML Schema definition> ::=
+    CREATE XML SCHEMA <registered XML Schema name>
+    [ LOCATION <XML valid schema location URI> ]
+    AS <XML Schema document>
+
+<XML Schema document> ::=
+    <value expression>
+
+<drop XML Schema statement> ::=
+    DROP XML SCHEMA <registered XML Schema name> <drop behavior>
+```
+
+`<registered XML Schema name>` is Part 14's `<schema qualified name>`
+[§5.2], and `<XML valid schema location URI>` its `<character string
+literal>` [§11.6]. A registered XML Schema is read from one document: a
+character string, a binary string or an XML value, evaluated once; a
+string is parsed as DOCUMENT, and its element is an `xs:schema`. Its
+target namespace is the document's targetNamespace, the empty string of
+none, as NO NAMESPACE indicates; LOCATION is the empty string if not
+written. Its `<include>`, `<redefine>` and `<import>` find documents
+among the registered XML Schemas alone, those the owner of its schema may
+use (`catalog::xml_schemas::may_use`), as Part 14 asks of a registered
+XML Schema an SQL schema statement names [§11.6 AR1a]: by LOCATION, or
+for an import by target namespace; nothing is fetched. Those it read are
+recorded and are what it depends on. A duplicate name is SQLCODE -103.
+Only the owner of its schema registers or drops one, as of a collation,
+and the owner may use it.
+
+DROP XML SCHEMA RESTRICT is refused while anything depends on the one
+named; CASCADE drops the registered XML Schemas that use it, directly or
+through others, and whatever names them. One function,
+`State::xml_schema_dependents`, finds what depends on a registered XML
+Schema, of the schemas a caller names; the views, constraints,
+routines, columns and domains that will name one through the XMLSCHEMA
+types, XMLVALIDATE and IS VALID are to be found there, a column or
+domain refusing even CASCADE, as no drop changes a column's values. DROP SCHEMA CASCADE drops the schema's registered XML Schemas
+as DROP XML SCHEMA CASCADE does.
+
+The statement is logged as its text with the document written in as a
+literal, so replay evaluates nothing again: a character string literal,
+or, as a `<newline>` is no character of one [X3.135-1986 §5.1 SR1], a
+binary string literal of its UTF-8 octets when the document holds one.
+The permanently registered XML Schemas of Table 1 [§4.2.6] are
+INFORMATION_SCHEMA.XS, XSI and SQLXML, constants
+(`catalog::xml_schemas::PERMANENT`), not catalog objects: none is
+registered again or dropped, and anyone may use each.
+
 XML values are not comparable, so they have no key, bucket or order, and
 the binder refuses them where an equality, grouping or ordering operation
 would take one, as one inside an array, a multiset, a row or a distinct

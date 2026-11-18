@@ -53,6 +53,7 @@ fn every_kind() -> Vec<Record> {
         Change::Drop { object: DropTarget::Assertion(table()), cascade: true },
         Change::Drop { object: DropTarget::Collation(table()), cascade: false },
         Change::Drop { object: DropTarget::Sequence(table()), cascade: true },
+        Change::Drop { object: DropTarget::XmlSchema(table()), cascade: false },
         Change::AlterTable {
             table: table(),
             action: "ADD COLUMN \"K\" INTEGER NOT NULL".into(),

@@ -3,7 +3,8 @@
 //! [§6.11], XMLCONCAT [§6.12], XMLDOCUMENT [§6.13], XMLELEMENT [§6.14],
 //! XMLFOREST [§6.15], XMLPARSE [§6.16], XMLPI [§6.17], XMLSERIALIZE [§6.8]
 //! and XMLTEXT [§6.19]; and \[EXTENSION\] XMLMAP, the mappings of a table, a
-//! schema or the catalog to XML [§9.11, §9.14, §9.17] (RULES.md D86).
+//! schema or the catalog to XML [§9.11, §9.14, §9.17] (RULES.md D86); and \[EXTENSION\] the
+//! definition of a registered XML Schema [§4.2.6].
 
 mod query;
 
@@ -354,4 +355,19 @@ impl XmlOperator {
             | XmlOperator::Table(_) => None,
         }
     }
+}
+
+/// \[EXTENSION\] [ISO/IEC 9075-14:2006 draft §4.2.6, §5.2] `<XML Schema
+/// definition>` ::= CREATE XML SCHEMA `<registered XML Schema name>` \[
+/// LOCATION `<XML valid schema location URI>` \] AS `<XML Schema
+/// document>`, where `<XML Schema document>` ::= `<value expression>`:
+/// registering an XML Schema, which Part 14 leaves to the implementation.
+#[derive(Debug, Clone)]
+pub struct XmlSchemaDefinition {
+    /// The `<registered XML Schema name>`.
+    pub name: TableName,
+    /// The `<XML valid schema location URI>`, if written.
+    pub location: Option<String>,
+    /// The `<XML Schema document>`.
+    pub document: ValueExpression,
 }

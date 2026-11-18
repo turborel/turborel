@@ -29,8 +29,9 @@ XML and to an XML Schema document.
 UNTYPED and ANY say whether a value may carry types from an XML Schema.
 Every value XMLPARSE makes is UNTYPED. DOCUMENT and CONTENT alone are
 ANY. An UNTYPED column takes values of an UNTYPED type only; the others
-take any XML value. XMLSCHEMA, the type of values valid by a registered
-XML Schema, is not yet implemented (SQLCODE -900).
+take any XML value. XMLSCHEMA, the type of values valid by a [registered
+XML Schema](#registered-xml-schemas), is not yet implemented (SQLCODE
+-900).
 
 A value stored in a DOCUMENT column that is not a document is refused
 with SQLSTATE 2200L. A short value is kept in its row, and a long one
@@ -1159,6 +1160,30 @@ OK
  <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:simpleType name="CHAR_4"><xs:restriction base="xs:string"><xs:length value="4"/></xs:restriction></xs:simpleType><xs:simpleType name="NUMERIC_6_2"><xs:restriction base="xs:decimal"><xs:totalDigits value="6"/><xs:fractionDigits value="2"/></xs:restriction></xs:simpleType><xs:complexType name="RowType.TURBOREL.SHOP.ITEMS"><xs:sequence><xs:element name="SKU" type="CHAR_4"/><xs:element name="PRICE" type="NUMERIC_6_2" minOccurs="0"/></xs:sequence></xs:complexType><xs:complexType name="TableType.TURBOREL.SHOP.ITEMS"><xs:sequence><xs:element name="row" type="RowType.TURBOREL.SHOP.ITEMS" minOccurs="0" maxOccurs="unbounded"/></xs:sequence></xs:complexType><xs:complexType name="SchemaType.TURBOREL.SHOP"><xs:all><xs:element name="ITEMS" type="TableType.TURBOREL.SHOP.ITEMS"/></xs:all></xs:complexType><xs:element name="SHOP" type="SchemaType.TURBOREL.SHOP"/></xs:schema>
 (1 row)
 turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.NOWHERE is not defined [X3.135-1986 §5.4 SR5] (at character 21)
+```
+
+## Registered XML Schemas
+
+An XML Schema is registered by [CREATE XML
+SCHEMA](statements/create-xml-schema.md) from one schema document, under
+a name in an SQL schema, and dropped by [DROP XML
+SCHEMA](statements/drop-xml-schema.md). Its document may include,
+redefine or import the documents of other registered XML Schemas of its
+schema's owner, and nothing outside the database. The XML Schemas of the namespaces of XML Schema, of XML
+Schema instances and of SQL/XML are registered always, as
+INFORMATION_SCHEMA.XS, XSI and SQLXML. The XMLSCHEMA types, XMLVALIDATE
+and IS VALID, which validate values by one, are not yet implemented.
+
+```sql
+CREATE XML SCHEMA NOTES AS '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:notes"><xs:complexType name="text"/></xs:schema>';
+CREATE XML SCHEMA PAGES AS '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:n="urn:notes" targetNamespace="urn:pages"><xs:import namespace="urn:notes"/><xs:element name="page" type="n:text"/></xs:schema>';
+DROP XML SCHEMA NOTES RESTRICT;
+```
+
+```
+OK
+OK
+turborel: SQLCODE -103 (SQLSTATE 2A000): registered XML Schema ANN.PAGES depends on registered XML Schema ANN.NOTES, so it is dropped only with CASCADE (at character 16)
 ```
 
 ## Clients

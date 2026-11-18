@@ -65,8 +65,8 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2200D | Invalid escape octet: an octet LIKE's escape octet not of one octet |
 | 2200E | Null value in array target: an element assigned of a null array |
 | 2200H | Sequence generator limit exceeded: NEXT VALUE FOR of a generator of NO CYCLE past its last value |
-| 2200L | Not an XML document: a value stored in, or cast to, an XML(DOCUMENT) type that is no document, or XMLSERIALIZE DOCUMENT of one |
-| 2200M | Invalid XML document: XMLPARSE DOCUMENT of text that is no well-formed document |
+| 2200L | Not an XML document: a value stored in, or cast to, an XML(DOCUMENT) type that is no document, or XMLSERIALIZE DOCUMENT of one; or the document of CREATE XML SCHEMA the null value or an XML value that is no document |
+| 2200M | Invalid XML document: XMLPARSE DOCUMENT of text that is no well-formed document, or CREATE XML SCHEMA of one |
 | 2200N | Invalid XML content: XMLPARSE CONTENT of text that is no well-formed content, or content XMLELEMENT or XMLFOREST maps to XML that is none |
 | 2200Q | Multiset value overflow: a multiset of more than 65,535 elements |
 | 2200R | XML value overflow: XMLAGG of values holding more than 64 MiB together |

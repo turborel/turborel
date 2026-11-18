@@ -41,6 +41,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE TYPE](create-type.md): define a distinct or structured type
 - [CREATE USER](create-user.md): define a user
 - [CREATE VIEW](create-view.md): define a viewed table
+- [CREATE XML SCHEMA](create-xml-schema.md): register an XML Schema
 - [DECLARE CURSOR](declare-cursor.md): declare a cursor
 - [DECLARE HANDLER](declare-handler.md): say what runs when a condition is raised *(in a compound statement)*
 - [DEALLOCATE DESCRIPTOR](deallocate-descriptor.md): deallocate an SQL descriptor area
@@ -66,6 +67,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP TYPE](drop-type.md): drop a distinct or structured type
 - [DROP USER](drop-user.md): drop a user
 - [DROP VIEW](drop-view.md): drop a view
+- [DROP XML SCHEMA](drop-xml-schema.md): drop a registered XML Schema
 - [END CONNECTION](end-connection.md): end a connection of the server
 - [EXECUTE](execute.md): run a statement prepared
 - [EXECUTE IMMEDIATE](execute-immediate.md): prepare a statement and run it at once

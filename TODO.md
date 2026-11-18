@@ -160,11 +160,15 @@ features.
   type are done; schema documents are read into schema components,
   checked against XML Schema Part 1's constraints, and nodes validated
   against them as XQuery's validate does, typed nodes stored with their
-  annotations (`src/xml/schema.rs`); the catalog describes registered
-  XML Schemas and keeps them through checkpoints. Left: simple type
-  definitions read from schema documents; the registration statements,
-  USAGE, dependencies, the Information Schema views, the XMLSCHEMA types,
-  XMLVALIDATE and IS VALID; the permanently registered schemas of Table 1.
+  annotations (`src/xml/schema.rs`); XML Schemas are registered by
+  CREATE XML SCHEMA and dropped by DROP XML SCHEMA, the permanently
+  registered ones of Table 1 there. Left: simple type definitions read
+  from schema documents; GRANT and REVOKE of USAGE on a registered XML
+  Schema, which `catalog::xml_schemas::may_use` is to check, and the
+  Information Schema's views of them (X160, X161); the XMLSCHEMA types,
+  XMLVALIDATE and IS VALID, and the views, constraints, routines,
+  columns and domains that name a registered XML Schema through them
+  found as its dependents (`State::xml_schema_dependents`).
 
 ### Full text
 

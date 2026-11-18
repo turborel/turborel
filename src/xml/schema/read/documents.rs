@@ -251,7 +251,11 @@ fn redefine<'a>(at: &At<'_>, doc: &Doc, place: usize, library: &'a Library) -> R
 
 /// The target namespace a schema document `source` declares, if any.
 fn declared_namespace(source: &Source) -> Option<&str> {
-    let tree = &source.tree;
+    tree_namespace(&source.tree)
+}
+
+/// The target namespace the schema document `tree` declares, if any.
+pub(in crate::xml::schema) fn tree_namespace(tree: &Tree) -> Option<&str> {
     tree.children(NodeId::ROOT).find(|&c| tree.kind(c) == Some(Kind::Element)).and_then(|c| At::new(tree, c).attr("targetNamespace"))
 }
 

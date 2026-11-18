@@ -32,7 +32,7 @@
 //!           registered XML Schemas (count u32, each an XML Schema)
 //! ```
 
-mod xml_schemas;
+pub(super) mod xml_schemas;
 
 use std::sync::Arc;
 

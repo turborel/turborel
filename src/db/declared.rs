@@ -94,6 +94,7 @@ impl Session {
             | SchemaStatement::Trigger(_)
             | SchemaStatement::Routine(_)
             | SchemaStatement::Module(_)
+            | SchemaStatement::XmlSchema(_)
             | SchemaStatement::Role(_) => Ok(()),
         }
     }

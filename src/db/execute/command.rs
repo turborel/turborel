@@ -56,6 +56,7 @@ fn schema_command(s: &SchemaStatement) -> Command {
         SchemaStatement::Trigger(_) => commands::CREATE_TRIGGER,
         SchemaStatement::Method(_) | SchemaStatement::Routine(_) => commands::CREATE_ROUTINE,
         SchemaStatement::Module(_) => commands::CREATE_MODULE,
+        SchemaStatement::XmlSchema(_) => commands::CREATE_XML_SCHEMA,
     }
 }
 
@@ -77,6 +78,7 @@ fn drop_command(object: &DropObject) -> Command {
         DropObject::Cast(..) => commands::DROP_CAST,
         DropObject::Ordering(_) => commands::DROP_ORDERING,
         DropObject::Transform(..) => commands::DROP_TRANSFORM,
+        DropObject::XmlSchema(_) => commands::DROP_XML_SCHEMA,
     }
 }
 

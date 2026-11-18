@@ -3,8 +3,9 @@
 //! TABLE [§11.3], CREATE VIEW [§11.19], CREATE and ALTER DOMAIN [§11.21,
 //! §11.22] (`db/domains.rs`), CREATE ASSERTION [§11.34]
 //! (`db/assertions.rs`), GRANT [§11.36] and REVOKE [§11.37]
-//! (`db/revoke.rs`), and of ISO/IEC 9075-2:2023, CREATE COLLATION
-//! (`db/collations.rs`) and CREATE and ALTER SEQUENCE (`db/sequences.rs`).
+//! (`db/revoke.rs`), of ISO/IEC 9075-2:2023, CREATE COLLATION
+//! (`db/collations.rs`) and CREATE and ALTER SEQUENCE (`db/sequences.rs`),
+//! and CREATE XML SCHEMA (`definitions/xml_schemas.rs`).
 //!
 //! An object is defined by the owner of its schema, its own name and the
 //! names in it written without a schema qualified by the session's default
@@ -15,6 +16,8 @@
 //! the definitions as they are once it holds them, so one that waited sees
 //! what the other did. Its change is logged as its text, and made again
 //! from it at commit (`Change::Defined`).
+
+pub(super) mod xml_schemas;
 
 use std::mem;
 use std::sync::Arc;
@@ -166,6 +169,8 @@ impl Session {
             SchemaStatement::Trigger(t) => self.own_object(st, &t.name, (schema, "ISO/IEC 9075-2:2023 §11.49 AR1")),
             SchemaStatement::Routine(r) => self.own_object(st, &r.name, (schema, "ISO/IEC 9075-2:2023 §11.60 AR1")),
             SchemaStatement::Module(m) => self.own_object(st, &m.name, (schema, "ISO/IEC 9075-4:2006 draft §9.21 AR1")),
+            // [EXTENSION] as CREATE COLLATION [ISO/IEC 9075-2:2023 §11.43 SR1].
+            SchemaStatement::XmlSchema(x) => self.own_object(st, &x.name, (schema, "EXTENSION")),
             SchemaStatement::AlterType(_)
             | SchemaStatement::Method(_)
             | SchemaStatement::Cast(_)
@@ -268,6 +273,7 @@ impl State {
             SchemaStatement::Ordering(o) => self.create_ordering(schema, o),
             SchemaStatement::Transform(t) => self.create_transform(schema, t),
             SchemaStatement::AlterTransform(t) => self.alter_transform(schema, t),
+            SchemaStatement::XmlSchema(x) => self.create_xml_schema(schema, x),
         }
     }
 

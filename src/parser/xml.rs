@@ -1,7 +1,8 @@
 //! The grammar of SQL/XML [ISO/IEC 9075-14:2006 draft §6]: the XML type
 //! [§6.1], XMLCAST [§6.6], XMLDOCUMENT [§6.13], XMLPARSE [§6.16],
 //! XMLSERIALIZE [§6.8], CAST's `<XML passing mechanism>` [§6.5], and the
-//! publishing operators (`publish`).
+//! publishing operators (`publish`); and \[EXTENSION\] the statements of
+//! registered XML Schemas (`registered`).
 //!
 //! [§5.1] XML and the names of the operators are reserved words of
 //! SQL/XML, and its other words non-reserved; as SQL-92's are the key
@@ -12,6 +13,7 @@ mod map;
 pub use map::{MappedSource, mapped_sources};
 mod publish;
 mod query;
+mod registered;
 mod scoped;
 
 use query::{XMLEXISTS, XMLQUERY};

@@ -280,6 +280,19 @@ fn the_xml_examples_run_as_printed() {
     assert!(ann.page("sql/xml.md") > 0, "it shows its examples' output");
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §4.2.6] [DESIGN]
+/// RULES.md R-DOC-8, D86: the examples of CREATE XML SCHEMA and of DROP
+/// XML SCHEMA run as printed, as ANN, each page in a database of its own.
+#[test]
+fn the_xml_schema_examples_run_as_printed() {
+    for page in ["sql/statements/create-xml-schema.md", "sql/statements/drop-xml-schema.md"] {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+        let mut ann = Client::of(&db, "ANN");
+        assert!(ann.page(page) > 0, "{page} shows its examples' output");
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D64: the examples of TRUNCATE
 /// TABLE run as printed, as ANN.
 #[test]

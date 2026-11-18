@@ -69,6 +69,15 @@ impl Library {
     }
 }
 
+impl Schema {
+    /// The target namespace its first schema document, the one it was
+    /// read from, declares [Schema1 §3.15.2]; none if it declares none.
+    #[must_use]
+    pub fn target_namespace(&self) -> Option<&str> {
+        self.documents.first().and_then(|(tree, _)| documents::tree_namespace(tree))
+    }
+}
+
 /// The schema `primary` corresponds to [Schema1 §3.15.2], with the
 /// components of what it includes, redefines and imports from `library`
 /// [Schema1 §4.2], checked against every schema component and schema

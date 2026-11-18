@@ -1,13 +1,15 @@
 //! Mutations of XML Schema Part 1, Structures: the schema component
 //! constraints a schema is checked against, the assessment of an
-//! element, and the type annotations validation gives and storage keeps
-//! (RULES.md R-TEST-9, D86).
+//! element, and the type annotations validation gives and storage keeps;
+//! and registered XML Schemas: their names, the documents they read,
+//! what depends on them, the permanent ones and how their documents are
+//! logged (RULES.md R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of XML Schema structures broken alone, and the tests
 /// that fail.
-pub const XML_SCHEMA: [Mutation; 10] = [
+pub const XML_SCHEMA: [Mutation; 15] = [
     Mutation {
         name: "xml-schema-unique-particle-attribution",
         package: Package::Core,
@@ -107,5 +109,58 @@ pub const XML_SCHEMA: [Mutation; 10] = [
         replacement: "    events.put_u32(tree.name(id).map_or(0, |n| names.number(n)));\n    events.put_u32(0);",
         integration: &[],
         unit: &["xml::schema::assess::tests::annotations_are_stored_and_copied"],
+    },
+    Mutation {
+        name: "xml-schema-registered-once",
+        package: Package::Core,
+        breaks: "a name registered already is registered again",
+        file: "src/db/definitions/xml_schemas.rs",
+        original: "        if permanent(&qn).is_some() || self.catalog.xml_schema(&qn).is_some() {",
+        replacement: "        if false && self.catalog.xml_schema(&qn).is_some() {",
+        integration: &["xml_schema::a_name_registered_is_refused_4_2_6"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-schema-library-usage",
+        package: Package::Core,
+        breaks: "a schema reads a registered one its schema's owner may not use",
+        file: "src/db/definitions/xml_schemas.rs",
+        original: ".filter(|d| may_use(defined, &d.name, sole(defined, owner)).is_ok())",
+        replacement: ".filter(|d| true || may_use(defined, &d.name, sole(defined, owner)).is_ok())",
+        integration: &["xml_schema::includes_and_imports_resolve_among_registered_schemas"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-schema-drop-restrict",
+        package: Package::Core,
+        breaks: "DROP XML SCHEMA RESTRICT drops a schema others use",
+        file: "src/db/definitions/xml_schemas.rs",
+        original: "        if cascade {\n            return Ok(());",
+        replacement: "        if true {\n            return Ok(());",
+        integration: &[
+            "xml_schema::drop_restrict_is_refused_while_used_and_cascade_drops_users",
+            "xml_schema::registered_schemas_survive_reopening",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-schema-permanent-kept",
+        package: Package::Core,
+        breaks: "a permanently registered XML Schema is taken for one that may be dropped",
+        file: "src/db/drop.rs",
+        original: "        if crate::catalog::xml_schemas::permanent(&qn).is_some() {",
+        replacement: "        if false && crate::catalog::xml_schemas::permanent(&qn).is_some() {",
+        integration: &["xml_schema::the_permanent_schemas_are_never_dropped_4_2_6"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-schema-logged-line-ends",
+        package: Package::Core,
+        breaks: "a document of a line end is logged as a character string literal, which replay cannot read",
+        file: "src/db/definitions/xml_schemas/document.rs",
+        original: "    if !text.contains(NEWLINE) {",
+        replacement: "    if true || !text.contains(NEWLINE) {",
+        integration: &["xml_schema::registered_schemas_survive_reopening"],
+        unit: &[],
     },
 ];

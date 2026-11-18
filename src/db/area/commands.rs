@@ -307,3 +307,7 @@ pub(in crate::db) const EXPLAIN: Command = command("EXPLAIN", -14);
 pub(in crate::db) const COPY_DESCRIPTOR: Command = command("COPY DESCRIPTOR", -15);
 /// [ISO/IEC 9075-2:2023 §20.28] PIPE ROW, which Table 39 has no row for.
 pub(in crate::db) const PIPE_ROW: Command = command("PIPE ROW", -16);
+/// \[EXTENSION\] CREATE XML SCHEMA [ISO/IEC 9075-14:2006 draft §4.2.6].
+pub(in crate::db) const CREATE_XML_SCHEMA: Command = command("CREATE XML SCHEMA", -17);
+/// \[EXTENSION\] DROP XML SCHEMA [ISO/IEC 9075-14:2006 draft §4.2.6].
+pub(in crate::db) const DROP_XML_SCHEMA: Command = command("DROP XML SCHEMA", -18);

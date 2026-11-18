@@ -378,7 +378,7 @@ impl Session {
             SqlStatement::Select { query, targets } => self.select_into(cx, query, targets, params),
             SqlStatement::Drop { object, behavior } => self.drop_object(st, tx, object, *behavior),
             SqlStatement::AlterTable { table, action, text } => self.alter_table(st, tx, (table, action, text)),
-            SqlStatement::Schema { statement, text } => self.schema_statement(st, tx, statement, text),
+            SqlStatement::Schema { statement, text } => self.schema_statement_in(cx, (statement, text), params),
             SqlStatement::Call(call) => self.call_statement(cx, call, params),
             SqlStatement::Control(_) | SqlStatement::Signal(_) => self.control_statement(cx, stmt, params),
             SqlStatement::Return(r) => super::routines::return_statement(r),
@@ -520,6 +520,7 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::AlterTransform(_)
         | SchemaStatement::Routine(_)
         | SchemaStatement::Module(_)
+        | SchemaStatement::XmlSchema(_)
         | SchemaStatement::Role(_) => None,
     }
 }

@@ -25,7 +25,7 @@ use super::area::commands::{self, Command};
 use super::collations::Collating;
 use super::dynamic::Name;
 use super::{Completion, Cursor, Session, State};
-use crate::ast::{InsertStatement, SearchCondition, SetClause, SetRole, SqlStatement, TableName, ValueSpecification};
+use crate::ast::{InsertStatement, SchemaStatement, SearchCondition, SetClause, SetRole, SqlStatement, TableName, ValueSpecification};
 use crate::binder::{self, DescribedKey, OutColumn, SearchedTarget, WriteKind, bind_searched_write};
 use crate::catalog::{QualifiedName, WHOLE};
 use crate::error::{Code, Result, SqlError, SqlState};
@@ -374,6 +374,8 @@ impl Session {
                 drop(self.value_in(st, v, params, Some(ParameterType::Varying))?);
             }
             SqlStatement::SetTimeZone(Some(v)) => drop(self.bound(st, params, |cx| binder::bind_value(cx, v))?),
+            // [EXTENSION] the document of CREATE XML SCHEMA.
+            SqlStatement::Schema { statement: SchemaStatement::XmlSchema(x), .. } => self.document_only(st, &x.document, params)?,
             // [ISO/IEC 9075-2:2023 §4.37.5] a locator, a four-octet integer.
             SqlStatement::Locator { references, .. } => self.locators_only(st, references, params)?,
             // Of a module's cursors and targets: FETCH and SELECT ... INTO

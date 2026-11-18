@@ -19,7 +19,11 @@ use crate::xml::{Syntax, Whitespace, parse};
 /// # Errors
 ///
 /// SQLSTATE 2200M if `document` is no XML document; as `xml::schema::read`.
-pub(super) fn read_registered(document: &str, location: &str, registered: &[&XmlSchemaDesc]) -> Result<(Arc<Schema>, Vec<QualifiedName>)> {
+pub(in crate::db) fn read_registered(
+    document: &str,
+    location: &str,
+    registered: &[&XmlSchemaDesc],
+) -> Result<(Arc<Schema>, Vec<QualifiedName>)> {
     let tree = Arc::new(parse(document, Syntax::Document, Whitespace::Preserve)?);
     let mut sources = Vec::new();
     let mut names = Vec::new();

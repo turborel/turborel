@@ -43,7 +43,8 @@ pub(in crate::db) fn type_named(statement: &SchemaStatement) -> (Option<&TableNa
         | SchemaStatement::Type(_)
         | SchemaStatement::Trigger(_)
         | SchemaStatement::Routine(_)
-        | SchemaStatement::Module(_) => (None, "§11.53 AR1"),
+        | SchemaStatement::Module(_)
+        | SchemaStatement::XmlSchema(_) => (None, "§11.53 AR1"),
     }
 }
 
@@ -117,6 +118,7 @@ impl Session {
                 Ok(DropTarget::Transform(self.owning(st, &qualify(name, &schema), (name, "§11.71 AR1"))?, group.clone()))
             }
             DropObject::Table(name)
+            | DropObject::XmlSchema(name)
             | DropObject::View(name)
             | DropObject::Domain(name)
             | DropObject::Assertion(name)
@@ -195,7 +197,8 @@ impl State {
             | DropTarget::Type(_)
             | DropTarget::Trigger(_)
             | DropTarget::Routine(_)
-            | DropTarget::Module(_) => return Vec::new(),
+            | DropTarget::Module(_)
+            | DropTarget::XmlSchema(_) => return Vec::new(),
         }
         let mut after = self.clone();
         after.catalog = Arc::from(catalog);

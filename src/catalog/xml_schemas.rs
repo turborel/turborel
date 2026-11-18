@@ -10,12 +10,21 @@
 //! catalog stores nothing derived. Whether the schema, a namespace or a
 //! global element declaration is non-deterministic is read from that
 //! schema, not stored [§4.2.6].
+//!
+//! The permanently registered XML Schemas are constants
+//! (`xml_schemas/permanent.rs`), and USAGE, as an Access Rule asks for it,
+//! is `may_use` (`xml_schemas/privileges.rs`).
+
+mod permanent;
+mod privileges;
 
 use std::sync::Arc;
 
 use super::domains::{UsageDesc, usage_held};
 use super::{QualifiedName, Who};
 use crate::xml::schema::Schema;
+pub use permanent::{PERMANENT, Permanent, permanent};
+pub use privileges::may_use;
 
 /// [ISO/IEC 9075-14:2006 draft §4.2.6] A registered XML Schema descriptor.
 #[derive(Clone)]

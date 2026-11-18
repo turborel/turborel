@@ -31,7 +31,7 @@ mod sequences;
 mod structured;
 mod triggers;
 mod user_types;
-mod xml_schemas;
+pub mod xml_schemas;
 
 use crate::value::collation::CollationRef;
 pub use collations::CollationDesc;
