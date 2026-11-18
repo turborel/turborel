@@ -12,6 +12,7 @@ use crate::geometry::{Geometry, SpatialOperation};
 use crate::index::{Entries, Key, KeyProjection, NearestQuery, NeighbourEntries, Predicate, Probe};
 use crate::memory::MemoryBudget;
 use crate::spatial::Bounds;
+use crate::storage::keyed_envelope;
 use crate::value::Value;
 
 const ARGUMENTS: usize = 2;
@@ -69,7 +70,7 @@ pub(super) fn bounds(key: &Key, srid: i32) -> Result<Bounds> {
     if geometry.srid() != srid {
         return Err(SqlError::new(Code::Data, "[EXTENSION] the geometry index key has a different SRID from its column"));
     }
-    geometry.bounds().map_or_else(|| Bounds::point([0.0_f64, 0.0_f64]), Ok)
+    keyed_envelope(&geometry)
 }
 
 enum Search {
@@ -95,6 +96,17 @@ fn search(probe: &Probe, srid: i32) -> Result<Search> {
     // ST_Equals holds of two empty sets, which an envelope window misses.
     let empty = if predicate.function.0.spatial_operation() == Some(SpatialOperation::Equals) { Search::All } else { Search::Empty };
     Ok(geometry.bounds().map_or(empty, Search::Window))
+}
+
+/// The envelopes `matching` reads for `probe` (`Index::read_region`):
+/// none of a search of every entry, or one that fails, which then reads as
+/// the whole table.
+pub(super) fn region(probe: &Probe, srid: i32) -> Option<Vec<Bounds>> {
+    match search(probe, srid).ok()? {
+        Search::Empty => Some(Vec::new()),
+        Search::All => None,
+        Search::Window(bounds) => Some(vec![bounds]),
+    }
 }
 
 pub(super) fn matching(tree: &RTree, probe: &Probe, srid: i32, budget: &Arc<MemoryBudget>) -> Entries {

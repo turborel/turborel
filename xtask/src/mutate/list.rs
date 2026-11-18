@@ -64,6 +64,7 @@ mod spatial_lr;
 mod spatial_mutators;
 mod spatial_network;
 mod spatial_planar;
+mod spatial_regions;
 mod spatial_routines;
 mod spatial_solids;
 mod spatial_srs;

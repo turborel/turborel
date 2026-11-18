@@ -11,6 +11,7 @@ use turborel::value::Value;
 mod estimates;
 mod joins;
 mod nearest;
+mod regions;
 mod windows;
 
 fn populated() -> Database {

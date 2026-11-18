@@ -26,6 +26,7 @@ mod cost;
 mod engine;
 mod newest;
 mod options;
+mod region;
 mod rows;
 
 pub use batch::{BATCH_ROWS, Batch, Batches, Cell, Coded, Column, FIRST_BATCH_ROWS, Floats, Ints, Nulls, Ramp, Texts, batches_of};
@@ -34,6 +35,8 @@ pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
 pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
+pub use region::Region;
+pub(crate) use region::{keyed_envelope, merged};
 pub use rows::{Near, ROW_ID, Row, RowId, Rows, ScanOrder, located, project, row_id_of};
 
 use std::sync::Arc;
@@ -214,6 +217,16 @@ pub trait TableStorage: Send + Sync {
     /// The engine cannot record the read; the statement fails.
     fn read_by_condition(&self, _tx: TxId, _condition: &Condition) -> Result<()> {
         Ok(())
+    }
+    /// \[DESIGN\] As `read_by_condition`, of the rows a spatial index chose
+    /// by their envelopes (RULES.md D133). Default: a read of the whole
+    /// table, never narrower than the region.
+    ///
+    /// # Errors
+    ///
+    /// As `read_by_condition`.
+    fn read_by_region(&self, tx: TxId, _region: &Region) -> Result<()> {
+        self.read_by_condition(tx, &Condition { columns: Vec::new(), probe: crate::index::Probe::All })
     }
     /// The newest state of row `id` and any change to it not yet committed,
     /// whichever transaction made them, for checking UNIQUE

@@ -37,6 +37,9 @@ impl Index for Counted {
     fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
         self.inner.key_projection()
     }
+    fn read_region(&self, probe: &Probe) -> Option<Vec<crate::spatial::Bounds>> {
+        self.inner.read_region(probe)
+    }
     fn estimate(&self, probe: &Probe) -> Option<usize> {
         self.estimates_made.fetch_add(1, Ordering::Relaxed);
         self.estimates.then(|| self.inner.estimate(probe)).flatten()

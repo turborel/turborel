@@ -2872,6 +2872,10 @@ Both table orders and column projections are considered; the complete ON
 condition rechecks each visible pair. Other raising conjuncts and raising
 inner filters prevent this path. Geometry outer joins and simultaneous
 traversal of two spatial indexes are not implemented.
+Under SERIALIZABLE, a filter's search and each join probe record the
+envelope window they read, not the whole table, and a change conflicts
+when its old or new envelope meets one (`exec/read.rs`,
+`storage/region.rs`, RULES.md D133).
 An unordered inner join whose remaining outer rows fit its memory
 budgets can choose a single visible table scan when index estimates price
 it below repeated probes (`exec/join/indexed/adaptive.rs`). A temporary
@@ -3670,6 +3674,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §20.1 GR2a whether direct invocation terminated unexpectedly | A server's connection that ends without its client terminating it, lost, failed or cut by the server stopping. Its transaction is rolled back. | `server/src/native.rs` |
 | §14.1 SR2 default isolation level | READ COMMITTED, where the standard says SERIALIZABLE, following PostgreSQL. TRANSACTION.ISOLATION = SERIALIZABLE conforms. | `db/session.rs` |
 | §14.1 GR5 isolation level | SERIALIZABLE as itself. REPEATABLE READ as snapshot isolation. READ COMMITTED and READ UNCOMMITTED with a snapshot for each statement, kept while a cursor is open. Each as SERIALIZABLE on an engine that does not read below it. | `db/session.rs`, `txn.rs` |
+| §14.1 GR5, §4.28 what a SERIALIZABLE read through a spatial index reads | The rows whose geometries' envelopes, as the `rtree` index keys them, meet the window its search read, each join probe's own. A NULL is in no window and an empty geometry is at the origin. Past TRANSACTIONS.TRACKED_ROWS windows of a table, they merge into one rectangle of each column (RULES.md D133). | `storage/region.rs`, `exec/read.rs`, `engine/rows/mvcc/reads.rs` |
 | §4.30 the initial default schema | The session's authorization identifier, for every statement the session binds | `db/session.rs` |
 | 2023 §14.10 GR4, IA234, the changes TRUNCATE TABLE disallows that are not significant | Any other transaction's write of the table until the truncating one ends, and any use of the table by a transaction or statement that began before it committed (SQLCODE -911) | `db/truncate.rs`, `txn/locks.rs` |
 | 2023 §14.12 GR4, IA234, the changes MERGE disallows that are not significant | As of UPDATE, DELETE and INSERT. The rows it changes, and under a coordinator's locks the tables it reads, are another transaction's to write only once it ends. | `db/merge.rs`, `txn/access.rs` |

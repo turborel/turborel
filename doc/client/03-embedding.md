@@ -1031,8 +1031,10 @@ entry until their last reference is removed. Equality lookups return
 candidates; constraints and foreign-key actions compare original values.
 The executor checks each visible row's projection and then the full SQL
 condition. Projected indexes cannot supply original values for covering
-reads or claim SQL key order. Spatial predicate reads currently record a
-whole-table serializable read. Geometry index locators use version 2 and
+reads or claim SQL key order. A spatial predicate read records the
+envelopes the index names (`Index::read_region`) as a serializable read
+region, given to `TableStorage::read_by_region`, whose default records the
+whole table (D133). Geometry index locators use version 2 and
 include the SRID; numeric locators remain version 1.
 
 An envelope is a candidate-search bound. `Geometry::intersects` checks

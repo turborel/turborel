@@ -40,7 +40,8 @@ behind it, and each can be replaced or added to.
 - [SQL/MM Spatial](doc/sql/10-spatial.md), its 27 geometry types in 2D
   and 3D with every constructor and mutator, exact relationships and
   set operations, reference systems, angles, directions and vectors,
-  and [R-tree spatial queries](doc/data/02-spatial.md) and joins.
+  and [R-tree spatial queries](doc/data/02-spatial.md) and joins,
+  serializable over the windows they read.
 - [Topologies](doc/sql/16-topology.md) of nodes, edges and faces, and
   [spatial networks](doc/sql/18-spatial-networks.md) with shortest paths.
 - [Linear referencing](doc/sql/17-linear-referencing.md), locating along

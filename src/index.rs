@@ -351,6 +351,15 @@ pub trait Index: Send + Sync {
     fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
         None
     }
+    /// \[DESIGN\] The envelopes a search for `probe` reads (RULES.md D133):
+    /// every entry it returns has a key whose envelope, as the index keys
+    /// it, meets one of them, so a serializable read of its rows is of
+    /// that region alone; empty if it returns none. Default: none, and the
+    /// read counts as of the whole table. It is asked with no storage
+    /// lock held, before the search.
+    fn read_region(&self, _probe: &Probe) -> Option<Vec<crate::spatial::Bounds>> {
+        None
+    }
     /// Adds an entry of `row` under `key`. Keys containing a null are
     /// inserted only into the index of a UNIQUE NULLS NOT DISTINCT
     /// constraint [ISO/IEC 9075-2:2023 §11.7], to be found by `rows`: a

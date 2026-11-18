@@ -1299,6 +1299,35 @@ read the table. A filter that may raise an error keeps the index from
 skipping rows. [CREATE INDEX](statements/create-index.md) gives the
 index's syntax, and its numeric forms of X and Y columns.
 
+Under SERIALIZABLE, a read through the index counts as reading the rows
+whose envelopes meet the window it searched, not the whole table, and
+each probe of a join reads its own window. Another transaction that
+commits first a row added, removed or moved whose envelope, before or
+after, meets that window refuses this one's commit, SQLSTATE 40001. A
+row elsewhere does not. A NULL is in no window, and an empty geometry is
+where the index keeps it, at the origin. A search of a NULL or empty
+value reads no row, and one the index answers by reading every entry,
+ST_EQUALS of an empty value or a value of another SRID, reads the whole
+table. Past TRANSACTIONS.TRACKED_ROWS windows in a table, a transaction's
+windows merge into one rectangle holding them all, which may refuse a
+commit that need not be, never let through one that must not be
+([Transactions](../user/06-transactions.md#conflicts)).
+
+```
+-- in one session, SERIALIZABLE, through PLACES_SHAPE:
+SELECT NAME FROM PLACES WHERE ST_INTERSECTS(SHAPE, ST_MAKEENVELOPE(0, 0, 3, 3)) = 1;
+INSERT INTO PLACES VALUES (8, 'Shed', ST_POINT(40, 40));
+-- in another, a point in that window:
+INSERT INTO PLACES VALUES (9, 'Stile', ST_POINT(1, 1));
+COMMIT;
+-- in the first:
+COMMIT;
+```
+
+```
+turborel: SQLCODE -911 (SQLSTATE 40001): the engine of ANN.PLACES refused to commit, so the transaction was rolled back: the transaction read rows another transaction changed meanwhile, or changed rows another read: it is not serializable; run it again [X3.135-1986 §8.2]
+```
+
 ## The Spatial Information Schema
 
 The schema ST_INFORMTN_SCHEMA holds SQL/MM Spatial's views, and SELECT

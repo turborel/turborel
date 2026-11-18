@@ -119,8 +119,7 @@ CONFORMANCE.md one by one as they are done.
 ### Spatial
 
 - Extend intersection's envelope candidates to geometry outer joins and distance
-  searches while preserving runtime errors. Track spatial serializable read
-  regions instead of the current whole-table predicate read.
+  searches while preserving runtime errors.
   Registered function calls in stored CHECK conditions need their syntax
   permission retained across rebinding and recovery, together with
   determinism checks.

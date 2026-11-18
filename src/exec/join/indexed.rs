@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use super::super::entries::{Reading, fetch};
 use super::super::project::Columns;
-use super::super::scan::asked;
+use super::super::read::Asked;
 use super::super::{RowIter, Runner, Subqueries, broken, eval_cond, execute, failed};
 use crate::catalog::{IndexDesc, KeyShape};
 use crate::db::State;
@@ -100,8 +100,9 @@ struct Probed {
 }
 
 impl Probed {
-    /// Binds the outer row and records the comparison read, or the whole
-    /// table for a spatial predicate. A NULL operand selects no entries.
+    /// Binds the outer row and records the comparison read, or for a
+    /// spatial predicate the region the index reads, or else the whole
+    /// table (`exec/read.rs`). A NULL operand selects no entries.
     fn entries(&mut self, binding: &JoinProbe, row: &Row) -> Result<Entries> {
         if let Some(stop) = &self.stop {
             stop.check()?;
@@ -109,7 +110,7 @@ impl Probed {
         let Some(probe) = binding.bind(row, self.ix.columns.len())? else {
             return Ok(Box::new(std::iter::empty()));
         };
-        self.storage.read_by_condition(self.tx, &asked(&self.ix, probe.clone()))?;
+        Asked::of(&*self.index, &self.ix, &probe).record(&*self.storage, self.tx)?;
         self.reading.next_probe();
         let entries = Arc::clone(&self.index).search(&probe, KeyOrder::Ascending);
         Ok(Box::new(checked(entries, self.stop.clone())))
