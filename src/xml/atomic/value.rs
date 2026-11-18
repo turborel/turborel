@@ -39,8 +39,11 @@ mod tests;
 /// A value of a value space.
 #[derive(Debug, Clone)]
 enum Datum {
-    /// A string, URI, QName or NOTATION: its characters.
+    /// A string or URI: its characters.
     Text(Box<str>),
+    /// A QName or NOTATION: its namespace URI and its local name, its
+    /// prefix no part of it [XQueryDM §3.3.3].
+    Name(Option<Box<str>>, Box<str>),
     /// A truth value.
     Truth(bool),
     /// A decimal.
@@ -73,11 +76,13 @@ fn datum(a: &Atomic) -> Option<Datum> {
         }
         Primitive::HexBinary => Datum::Octets(hex(text)?),
         Primitive::Base64Binary => Datum::Octets(base64(text)?),
+        Primitive::QName | Primitive::Notation => {
+            let local = text.split_once(':').map_or(text, |(_, local)| local);
+            Datum::Name(a.namespace.clone(), local.into())
+        }
         Primitive::Untyped
         | Primitive::String
         | Primitive::AnyUri
-        | Primitive::QName
-        | Primitive::Notation
         | Primitive::DateTime
         | Primitive::Time
         | Primitive::Date
@@ -118,10 +123,18 @@ pub fn equal(a: &Atomic, b: &Atomic) -> bool {
 fn same(x: &Datum, y: &Datum) -> bool {
     match (x, y) {
         (Datum::Text(s), Datum::Text(t)) => s == t,
+        (Datum::Name(su, sl), Datum::Name(tu, tl)) => su == tu && sl == tl,
         (Datum::Truth(s), Datum::Truth(t)) => s == t,
         (Datum::Octets(s), Datum::Octets(t)) => s == t,
         (
-            Datum::Text(_) | Datum::Truth(_) | Datum::Octets(_) | Datum::Exact(_) | Datum::Real(_) | Datum::Duration(..) | Datum::Moment(_),
+            Datum::Text(_)
+            | Datum::Name(..)
+            | Datum::Truth(_)
+            | Datum::Octets(_)
+            | Datum::Exact(_)
+            | Datum::Real(_)
+            | Datum::Duration(..)
+            | Datum::Moment(_),
             _,
         ) => false,
     }
@@ -235,7 +248,7 @@ pub fn canonical(a: &Atomic) -> String {
             let utc = m.zone.is_some() && matches!(m.shape, Shape::DateTime | Shape::Time);
             if utc { Moment { zone: Some(0), ..m.in_utc() }.text() } else { text() }
         }
-        Datum::Text(_) | Datum::Truth(_) | Datum::Duration(..) | Datum::Octets(_) => text(),
+        Datum::Text(_) | Datum::Name(..) | Datum::Truth(_) | Datum::Duration(..) | Datum::Octets(_) => text(),
     }
 }
 
@@ -249,7 +262,7 @@ pub fn length(a: &Atomic) -> Option<usize> {
         Datum::Text(s) => {
             matches!(a.kind.primitive(), Primitive::String | Primitive::Untyped | Primitive::AnyUri).then(|| s.chars().count())
         }
-        Datum::Truth(_) | Datum::Exact(_) | Datum::Real(_) | Datum::Duration(..) | Datum::Moment(_) => None,
+        Datum::Name(..) | Datum::Truth(_) | Datum::Exact(_) | Datum::Real(_) | Datum::Duration(..) | Datum::Moment(_) => None,
     }
 }
 
@@ -259,6 +272,8 @@ pub fn length(a: &Atomic) -> Option<usize> {
 pub fn digits(a: &Atomic) -> Option<(usize, usize)> {
     match datum(a)? {
         Datum::Exact(x) => Some((x.total_digits(), x.fraction_digits())),
-        Datum::Text(_) | Datum::Truth(_) | Datum::Real(_) | Datum::Duration(..) | Datum::Moment(_) | Datum::Octets(_) => None,
+        Datum::Text(_) | Datum::Name(..) | Datum::Truth(_) | Datum::Real(_) | Datum::Duration(..) | Datum::Moment(_) | Datum::Octets(_) => {
+            None
+        }
     }
 }

@@ -22,7 +22,7 @@ fn content(text: &str) -> Value {
 }
 
 fn atomic(lexical: &str) -> Value {
-    Value::Xml(XmlValue::of(Sequence::new(vec![Item::Atomic(Atomic { kind: AtomicType::String, lexical: lexical.into() })])))
+    Value::Xml(XmlValue::of(Sequence::new(vec![Item::Atomic(Atomic::new(AtomicType::String, lexical))])))
 }
 
 /// An attribute standing alone, which no text serializes.
@@ -162,6 +162,6 @@ fn forms_and_bounds() {
     let mut value = Value::Xml(stored.clone());
     assert!(value.as_lob().is_some() && value.as_lob_mut().is_some() && value.is_lob_stored());
     assert!(Value::Xml(held).as_lob().is_none());
-    let huge = XmlValue::of(Sequence::new(vec![Item::Atomic(Atomic { kind: AtomicType::String, lexical: "x".repeat(MAX_STORED).into() })]));
+    let huge = XmlValue::of(Sequence::new(vec![Item::Atomic(Atomic::new(AtomicType::String, "x".repeat(MAX_STORED)))]));
     assert_eq!(huge.lob().unwrap_err().sqlcode(), -900_i32);
 }

@@ -142,7 +142,7 @@ pub(super) fn number_value(number: f64) -> Vec<u8> {
 /// raises err:FORG0001.
 pub(super) fn number_of(text: &[u8], whole: bool) -> Option<f64> {
     let text = std::str::from_utf8(text).ok().filter(|_| whole)?;
-    let cast = cast(&Atomic { kind: AtomicType::UntypedAtomic, lexical: text.into() }, AtomicType::Double).ok()?;
+    let cast = cast(&Atomic::new(AtomicType::UntypedAtomic, text), AtomicType::Double).ok()?;
     match &*cast.lexical {
         "INF" => Some(f64::INFINITY),
         "-INF" => Some(f64::NEG_INFINITY),

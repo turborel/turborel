@@ -34,7 +34,7 @@ mod value;
 mod tests;
 
 pub use binary::{base64, base64_text, hex, hex_text};
-pub use duration::{day_time_text, year_month_text};
+pub use duration::{day_time_text, units as duration_value, year_month_text};
 pub use exact::Exact;
 pub use moment::{LAST_YEAR, Moment, Shape};
 pub use number::{double, real_text};
@@ -92,7 +92,7 @@ pub fn cast(value: &Atomic, to: AtomicType) -> Result<Atomic> {
         return Ok(value.clone());
     }
     if to == AtomicType::String || to == AtomicType::UntypedAtomic {
-        return Ok(Atomic { kind: to, lexical: value.lexical.clone() });
+        return Ok(Atomic::new(to, value.lexical.clone()));
     }
     refuse_names(value, to)?;
     let lexical = if value.kind.primitive().textual() {
@@ -102,7 +102,7 @@ pub fn cast(value: &Atomic, to: AtomicType) -> Result<Atomic> {
             .ok_or_else(|| xquery_error(&format!("{} is not cast as {}", value.kind.name(), to.name()), "[XQueryFO §17.1] err:XPTY0004"))?;
         derived(up, to).ok_or_else(|| not_of(&format!("{} is no value of {}", value.lexical, to.name())))?
     };
-    Ok(Atomic { kind: to, lexical: lexical.into() })
+    Ok(Atomic::new(to, lexical))
 }
 
 /// [XQueryFO §17.1, §17.1.1] The casts to `xs:NOTATION` and `xs:QName`
@@ -145,7 +145,7 @@ pub fn normalize(text: &str, white_space: WhiteSpace) -> String {
 /// SQLSTATE 10000 of a date or duration too large to hold, err:FODT0001
 /// or err:FODT0002.
 pub fn from_lexical(text: &str, to: AtomicType) -> Result<Option<Atomic>> {
-    Ok(of_text(text, to)?.map(|lexical| Atomic { kind: to, lexical: lexical.into() }))
+    Ok(of_text(text, to)?.map(|lexical| Atomic::new(to, lexical)))
 }
 
 /// The string of the value of `to` that `text`, normalized as `to`'s

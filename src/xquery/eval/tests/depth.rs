@@ -53,7 +53,7 @@ fn sizes_are_bounded() {
     let nodes = MAX_NODES + 1;
     assert_eq!(past(&format!("count(1 to {nodes})"), vec![Sequence::default()]), Code::Unsupported);
     let half = "x".repeat(MAX_TEXT.div_euclid(2) + 1);
-    let s = || vec![Sequence::new(vec![Item::Atomic(Atomic { kind: AtomicType::String, lexical: half.as_str().into() })])];
+    let s = || vec![Sequence::new(vec![Item::Atomic(Atomic::new(AtomicType::String, half.as_str()))])];
     assert_eq!(past("concat($s, $s)", s()), Code::Unsupported);
     let trees = MAX_STORED.div_euclid(half.len()) + 1;
     assert_eq!(past(&format!("for $i in 1 to {trees} return <a>{{$s}}</a>"), s()), Code::Unsupported);

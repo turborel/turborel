@@ -28,8 +28,8 @@ use crate::value::lob::LobKind;
 use crate::value::xml::{XmlType, XmlValue};
 use crate::value::{Binary, DataType, Decimal, Spelled, Value};
 use crate::xml::{
-    Atomic, AtomicType, Item, Kind, LAST_YEAR, Moment, NodeId, Primitive, Sequence, Shape, SimpleType, Syntax, Tree, Whitespace, base64,
-    cast, duration_units, hex, parse, xquery_error,
+    Atomic, AtomicType, Item, Kind, LAST_YEAR, Moment, NodeId, Primitive, Sequence, Shape, SimpleType, Syntax, Whitespace, base64, cast,
+    duration_units, hex, parse, xquery_error,
 };
 
 /// [§6.6 SR1b, SR2, §6.14 GR1b, §6.15 GR1b, §6.19 GR3b]
@@ -141,7 +141,7 @@ impl ScalarFunction for XmlCastIn {
         if self.target != XmlType::Sequence {
             return Ok(Value::Xml(XmlValue::of(Sequence::document(tree))));
         }
-        let text = Atomic { kind: AtomicType::UntypedAtomic, lexical: tree.string_value(NodeId::ROOT).into() };
+        let text = Atomic::new(AtomicType::UntypedAtomic, tree.string_value(NodeId::ROOT));
         Ok(Value::Xml(XmlValue::of(Sequence::new(vec![Item::Atomic(cast(&text, self.base)?)]))))
     }
 }
@@ -253,7 +253,7 @@ fn in_utc(value: &Atomic, kind: AtomicType) -> Result<Atomic> {
         let why = format!("'{}' is of the year {} in UTC", typed.lexical, utc.year());
         return Err(refused(&why, "GR4k vi 1, GR4k vii 1", SqlState::INVALID_DATETIME_FORMAT));
     }
-    Ok(Atomic { kind, lexical: utc.text().into() })
+    Ok(Atomic::new(kind, utc.text()))
 }
 
 /// [§6.6 GR4b, GR4c] The one atomic value of `value` with its document
@@ -276,7 +276,7 @@ fn atomized(value: &Sequence) -> Result<Option<Atomic>> {
                 let tree = node.tree();
                 let nodes: Vec<NodeId> =
                     if node.kind() == Some(Kind::Document) { tree.children(node.id()).collect() } else { vec![node.id()] };
-                items.extend(nodes.into_iter().map(|id| typed_value(tree, id)));
+                items.extend(nodes.into_iter().map(|id| node.at(id).typed_value()));
             }
         }
     }
@@ -285,16 +285,6 @@ fn atomized(value: &Sequence) -> Result<Option<Atomic>> {
         return Err(xquery_error(&why, "[XQuery §3.12.3] err:XPTY0004"));
     }
     Ok(items.pop())
-}
-
-/// The typed value of node `id` of `tree`, which no schema typed
-/// [XQueryDM §5.15].
-fn typed_value(tree: &Tree, id: NodeId) -> Atomic {
-    let kind = match tree.kind(id) {
-        Some(Kind::Comment | Kind::ProcessingInstruction) => AtomicType::String,
-        Some(Kind::Document | Kind::Element | Kind::Attribute | Kind::Text) | None => AtomicType::UntypedAtomic,
-    };
-    Atomic { kind, lexical: tree.string_value(id).into() }
 }
 
 /// The error of a value XMLCAST cannot give, `why`, by `rule` of §6.6,

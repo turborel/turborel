@@ -109,7 +109,7 @@ fn steps_at_the_edges() {
     assert_eq!(code_of("/a"), "err:XPDY0002");
     assert_eq!(code_of("child::a"), "err:XPDY0002");
     let slash = compile_with("/", &[]).unwrap();
-    let one = Item::Atomic(crate::xml::Atomic { kind: crate::xml::AtomicType::Integer, lexical: "1".into() });
+    let one = Item::Atomic(crate::xml::Atomic::new(crate::xml::AtomicType::Integer, "1"));
     assert!(evaluate(&slash, Some(one), Vec::new()).unwrap_err().msg.contains("err:XPTY0020"));
     let edges = "count(<a/>/preceding-sibling::node()), count(<a/>/following::node()), count(<a><b/></a>/b/following::node())";
     assert_eq!(run(edges), "0 0 0");

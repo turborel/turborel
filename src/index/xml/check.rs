@@ -212,7 +212,7 @@ fn holds(comparison: &Comparison, text: &str) -> Result<bool> {
     let order = match &comparison.literal {
         Literal::String(s) | Literal::Untyped(s) => Some(text.cmp(s.as_str())),
         Literal::Number(n) => {
-            let cast = cast(&Atomic { kind: AtomicType::UntypedAtomic, lexical: text.into() }, AtomicType::Double)?;
+            let cast = cast(&Atomic::new(AtomicType::UntypedAtomic, text), AtomicType::Double)?;
             let number = match &*cast.lexical {
                 "INF" => f64::INFINITY,
                 "-INF" => f64::NEG_INFINITY,

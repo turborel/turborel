@@ -7,7 +7,7 @@ use super::*;
 
 /// An atomic value of `kind` written `lexical`.
 fn of(kind: AtomicType, lexical: &str) -> Atomic {
-    Atomic { kind, lexical: lexical.into() }
+    Atomic::new(kind, lexical)
 }
 
 /// The order of the values of `kind` written `a` and `b`.
@@ -161,4 +161,19 @@ fn lengths_and_digits() {
     assert_eq!(digits(&of(AtomicType::Decimal, "-12.50")), Some((3, 1)));
     assert_eq!(digits(&of(AtomicType::Integer, "0")), Some((1, 0)));
     assert_eq!(digits(&of(AtomicType::String, "1")), None);
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 GR4j] [XQueryDM §3.3.3]
+/// [XQueryFO §11.2.1] two qualified names are equal if their namespace
+/// URIs and local names are, whatever their prefixes; a name of no
+/// namespace equals none in one.
+#[test]
+fn qualified_names_are_equal_by_namespace_and_local_name() {
+    let a = Atomic::qname(Some("http://e.org/"), "a:x");
+    assert!(equal(&a, &Atomic::qname(Some("http://e.org/"), "b:x")));
+    assert!(equal(&a, &Atomic::qname(Some("http://e.org/"), "x")));
+    assert!(!equal(&a, &Atomic::qname(Some("http://f.org/"), "a:x")));
+    assert!(!equal(&a, &Atomic::qname(None, "x")));
+    assert!(!equal(&a, &Atomic::qname(Some("http://e.org/"), "a:y")));
+    assert!(equal(&Atomic::qname(None, "x"), &Atomic::qname(Some(""), "x")));
 }

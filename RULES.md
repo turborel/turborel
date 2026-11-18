@@ -2881,7 +2881,8 @@ An XML value is a sequence (`xml::Sequence`) of items, each a node or an
 atomic value. A node is its tree, shared, and its place in it, so the
 nodes one tree gives many values keep their identity; storing a value
 copies it. An atomic value is its type and the string casting it to
-`xs:string` gives, one string for each value. Its type is a built-in
+`xs:string` gives, one string for each value, and of a qualified name
+its namespace URI, its prefix in the string. Its type is a built-in
 atomic type of XML Schema Part 2, primitive or derived, or one of the
 three XQuery adds, `xdt:untypedAtomic` and the two durations; a table of
 the 44 holds each one's name, base type, the primitive type a cast
@@ -2915,7 +2916,8 @@ A value's stored form (`xml::encode`, version 1) is binary and read in one
 pass, in document order, as Pal et al. store XML. Each node item has a
 table of its names, each once, then its nodes as events: document, element
 (with its bindings and attributes), end, text, comment and processing
-instruction; each atomic item its type's tag and its lexical form. Its
+instruction; each atomic item its type's tag and its lexical form, and
+of a QName or NOTATION its namespace URI. Its
 fields are D30's. A node below the root of its tree is stored as a copy,
 an element declaring every binding in its scope. The XML indexes read
 it, below.

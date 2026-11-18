@@ -73,7 +73,7 @@ impl super::super::super::XQueryFunction for Test {
     }
     fn call(&self, c: &Context<'_>, arguments: Vec<Sequence>) -> Result<Sequence> {
         match self.does {
-            Does::Probe => Ok(Sequence::new(vec![Item::Atomic(Atomic { kind: AtomicType::String, lexical: probe(c)?.into() })])),
+            Does::Probe => Ok(Sequence::new(vec![Item::Atomic(Atomic::new(AtomicType::String, probe(c)?))])),
             Does::Same => Ok(arguments.into_iter().next().unwrap_or_default()),
             Does::Fail => Err(error(ErrorCode::new("TEST0001"), "the test function fails")),
         }

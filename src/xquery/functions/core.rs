@@ -119,17 +119,17 @@ fn first(arguments: &[Sequence]) -> &[Item] {
 
 /// The sequence of the `xs:boolean` `b`.
 fn boolean(b: bool) -> Sequence {
-    Sequence::new(vec![Item::Atomic(Atomic { kind: AtomicType::Boolean, lexical: if b { "true" } else { "false" }.into() })])
+    Sequence::new(vec![Item::Atomic(Atomic::new(AtomicType::Boolean, if b { "true" } else { "false" }))])
 }
 
 /// The sequence of the `xs:integer` `n`.
 fn integer(n: usize) -> Sequence {
-    Sequence::new(vec![Item::Atomic(Atomic { kind: AtomicType::Integer, lexical: n.to_string().into() })])
+    Sequence::new(vec![Item::Atomic(Atomic::new(AtomicType::Integer, n.to_string()))])
 }
 
 /// The sequence of the `xs:string` `s`.
 fn string(s: String) -> Sequence {
-    Sequence::new(vec![Item::Atomic(Atomic { kind: AtomicType::String, lexical: s.into() })])
+    Sequence::new(vec![Item::Atomic(Atomic::new(AtomicType::String, s))])
 }
 
 /// The context item [XQueryFO §2.3, §16.1]: err:FONC0001 if it is

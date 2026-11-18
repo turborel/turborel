@@ -45,12 +45,12 @@ fn a_value_reads_back_as_stored() {
     let a = node.tree().children(NodeId::ROOT).next().unwrap();
     assert!(node.tree().is_id(node.tree().attributes(a).next().unwrap()));
     let atomics = Sequence::new(vec![
-        Item::Atomic(Atomic { kind: AtomicType::String, lexical: "x y".into() }),
-        Item::Atomic(Atomic { kind: AtomicType::UntypedAtomic, lexical: "1".into() }),
+        Item::Atomic(Atomic::new(AtomicType::String, "x y")),
+        Item::Atomic(Atomic::new(AtomicType::UntypedAtomic, "1")),
     ]);
     let read_atomics = again(&atomics);
     let [Item::Atomic(first), Item::Atomic(second)] = read_atomics.items() else { panic!("two atomic values") };
-    assert_eq!(first, &Atomic { kind: AtomicType::String, lexical: "x y".into() });
+    assert_eq!(first, &Atomic::new(AtomicType::String, "x y"));
     assert_eq!((second.kind, &*second.lexical), (AtomicType::UntypedAtomic, "1"));
     assert_eq!(again(&Sequence::default()).items().len(), 0);
     assert_eq!(encode(&Sequence::default()), [FORMAT_VERSION, 0, 0, 0, 0]);
@@ -128,7 +128,7 @@ fn events_of(bytes: &[u8]) -> Result<Vec<Event<'_>>> {
 #[test]
 fn the_stored_form_is_read_as_events() {
     let tree = parse("<a x=\"1\">t<!--c--><b/></a>", Syntax::Content, Whitespace::Preserve).unwrap();
-    let atomic = Atomic { kind: AtomicType::Integer, lexical: "1".into() };
+    let atomic = Atomic::new(AtomicType::Integer, "1");
     let bytes = encode(&Sequence::new(vec![Item::Node(Node::root(tree)), Item::Atomic(atomic)]));
     let element = |name, attributes| Event::Element { name, attributes };
     let expected = [
@@ -165,9 +165,23 @@ fn every_atomic_type_has_a_tag() {
     assert_eq!(ATOMIC_TYPES.get(43), Some(&AtomicType::PositiveInteger));
     for kind in AtomicType::all() {
         assert_eq!(ATOMIC_TYPES.iter().filter(|&&t| t == kind).count(), 1, "{}", kind.name());
-        let value = Sequence::new(vec![Item::Atomic(Atomic { kind, lexical: "v".into() })]);
+        let value = Sequence::new(vec![Item::Atomic(Atomic::new(kind, "v"))]);
         let back = again(&value);
         let [Item::Atomic(read)] = back.items() else { panic!("an atomic value") };
         assert_eq!(read.kind, kind);
     }
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.3] [XQueryDM §3.3.3] a
+/// qualified name is stored with its namespace URI, so its value reads
+/// back whole; one of no namespace reads back of none.
+#[test]
+fn qualified_names_keep_their_namespace() {
+    let named = Atomic::qname(Some("http://e.org/n"), "p:local");
+    let plain = Atomic::qname(None, "local");
+    let value = Sequence::new(vec![Item::Atomic(named.clone()), Item::Atomic(plain.clone())]);
+    let back = again(&value);
+    let [Item::Atomic(first), Item::Atomic(second)] = back.items() else { panic!("two atomic values") };
+    assert_eq!((first, second), (&named, &plain));
+    assert_eq!(first.namespace.as_deref(), Some("http://e.org/n"));
 }

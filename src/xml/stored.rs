@@ -15,11 +15,13 @@
 //!       u8 3 end                                       closes
 //!       u8 4 text str | u8 5 comment str | u8 6 processing instruction u32 name, str
 //!       u8 7 attribute u32 name, u8 flags, str         a root alone
-//!   u8 1, an atomic value: u8 type, str canonical lexical form; the types
-//!       0 xs:string, 1 xdt:untypedAtomic, 2 xs:boolean, 3 xs:decimal,
-//!       4 xs:integer, 5 xs:float, 6 xs:double, 7 xs:date, 8 xs:time,
-//!       9 xs:dateTime, 10 xdt:yearMonthDuration, 11 xdt:dayTimeDuration,
-//!       12 xs:hexBinary
+//!   u8 1, an atomic value: u8 type, str canonical lexical form, then of
+//!       an xs:QName or xs:NOTATION str namespace URI, empty of none; the
+//!       types 0 xs:string, 1 xdt:untypedAtomic, 2 xs:boolean,
+//!       3 xs:decimal, 4 xs:integer, 5 xs:float, 6 xs:double, 7 xs:date,
+//!       8 xs:time, 9 xs:dateTime, 10 xdt:yearMonthDuration,
+//!       11 xdt:dayTimeDuration, 12 xs:hexBinary, and the rest as
+//!       `ATOMIC_TYPES` numbers them
 //! ```
 //!
 //! A node stored is copied, as storing a value copies it
@@ -31,6 +33,7 @@ use std::collections::HashMap;
 
 pub use events::{Event, Events};
 
+use super::atomic::Primitive;
 use super::sequence::{Atomic, AtomicType, Item, Node, Sequence};
 use super::tree::{Binding, Builder, ElementStart, Kind, NodeId, QName, Specified, Tree, XML_PREFIX};
 use crate::bytes::{Put, Reader};
@@ -146,6 +149,9 @@ pub fn encode(value: &Sequence) -> Vec<u8> {
                 let tag = ATOMIC_TYPES.iter().position(|&t| t == atomic.kind).and_then(|p| u8::try_from(p).ok());
                 out.put_u8(tag.unwrap_or(0));
                 out.put_str(&atomic.lexical);
+                if is_name(atomic.kind) {
+                    out.put_str(atomic.namespace.as_deref().unwrap_or_default());
+                }
             }
         }
     }
@@ -315,7 +321,17 @@ fn decode_atomic(reader: &mut Reader<'_>) -> Result<Atomic> {
     let Some(&kind) = ATOMIC_TYPES.get(usize::from(tag)) else {
         return Err(reader.corrupt(&format!("an atomic value's type is {tag}")));
     };
-    Ok(Atomic { kind, lexical: reader.str()?.into() })
+    let mut atomic = Atomic::new(kind, reader.str()?);
+    if is_name(kind) {
+        atomic.namespace = Some(reader.str()?).filter(|uri| !uri.is_empty()).map(Into::into);
+    }
+    Ok(atomic)
+}
+
+/// Whether a value of `kind` is a qualified name, whose namespace URI is
+/// stored after its lexical form [XQueryDM §3.3.3].
+fn is_name(kind: AtomicType) -> bool {
+    matches!(kind.primitive(), Primitive::QName | Primitive::Notation)
 }
 
 /// A node's tree read: its names, then its events to the end of its

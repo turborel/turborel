@@ -13,7 +13,7 @@ fn tree(text: &str) -> Arc<crate::xml::Tree> {
 }
 
 fn atomic(lexical: &str) -> Item {
-    Item::Atomic(Atomic { kind: AtomicType::String, lexical: lexical.into() })
+    Item::Atomic(Atomic::new(AtomicType::String, lexical))
 }
 
 /// The one tree of `value`, a document node.

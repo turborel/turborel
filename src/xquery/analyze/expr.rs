@@ -181,7 +181,7 @@ fn literal_value(literal: &Literal) -> Result<Atomic> {
         Literal::Integer(text) => (text, AtomicType::Integer),
         Literal::Decimal(text) => (text, AtomicType::Decimal),
         Literal::Double(text) => (text, AtomicType::Double),
-        Literal::String(text) => return Ok(Atomic { kind: AtomicType::String, lexical: text.as_str().into() }),
+        Literal::String(text) => return Ok(Atomic::new(AtomicType::String, text.as_str())),
     };
-    cast(&Atomic { kind: AtomicType::UntypedAtomic, lexical: text.as_str().into() }, to)
+    cast(&Atomic::new(AtomicType::UntypedAtomic, text.as_str()), to)
 }

@@ -24,7 +24,7 @@ fn refused(sequence: &Sequence, parameters: &Parameters) -> String {
 }
 
 fn string(s: &str) -> Item {
-    Item::Atomic(Atomic { kind: AtomicType::String, lexical: s.into() })
+    Item::Atomic(Atomic::new(AtomicType::String, s))
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §10.15 GR11a] [Serialization §5]

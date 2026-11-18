@@ -75,7 +75,7 @@ impl Evaluator<'_> {
         }
         let count = to.checked_sub(from).and_then(|d| d.checked_add(1)).and_then(|n| usize::try_from(n).ok()).unwrap_or(usize::MAX);
         bounded(count)?;
-        Ok((from..=to).map(|i| Item::Atomic(Atomic { kind: AtomicType::Integer, lexical: i.to_string().into() })).collect())
+        Ok((from..=to).map(|i| Item::Atomic(Atomic::new(AtomicType::Integer, i.to_string()))).collect())
     }
 
     /// `union` [XQuery §3.3.3]: every node of its operands, in document

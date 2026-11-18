@@ -105,7 +105,7 @@ fn values_are_cut_past_their_prefix() {
 fn an_element_item_is_the_context_of_its_paths() {
     let tree = std::sync::Arc::new(parse("<r><a k=\"v\"><b>t</b></a></r>", Syntax::Content, Whitespace::Preserve).unwrap());
     let a = tree.descendants(crate::xml::NodeId::ROOT).find(|&n| tree.name(n).is_some_and(|q| &*q.local == "a")).unwrap();
-    let atomic = crate::xml::Atomic { kind: crate::xml::AtomicType::String, lexical: "x".into() };
+    let atomic = crate::xml::Atomic::new(crate::xml::AtomicType::String, "x");
     let sequence = Sequence::new(vec![Item::Atomic(atomic), Item::Node(Node::new(std::sync::Arc::clone(&tree), a))]);
     let seen = derived(&encode(&sequence));
     let expected = [("@k".to_owned(), "v".to_owned(), true, "3.1".to_owned()), ("b".to_owned(), "t".to_owned(), true, "3.3".to_owned())];

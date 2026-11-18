@@ -170,7 +170,9 @@ enum Number {
 fn number(value: &Atomic) -> Option<Number> {
     match value.kind.primitive() {
         Primitive::Decimal | Primitive::Integer => Some(Number::Exact(value.lexical.clone())),
-        Primitive::Float | Primitive::Double => double(&value.lexical).map(Number::Real),
+        // A float is its single precision value [Schema2 §3.2.4].
+        Primitive::Float => float(&value.lexical).map(Number::Real),
+        Primitive::Double => double(&value.lexical).map(Number::Real),
         Primitive::Boolean => boolean(&value.lexical).map(Number::Truth),
         Primitive::Untyped
         | Primitive::String
@@ -226,15 +228,73 @@ fn exact(n: Number) -> Result<String> {
 }
 
 /// `n` as a double, or a float if `single` [XQueryFO §17.1.3.1,
-/// §17.1.3.2]: of a decimal, the number its string writes; of a truth
-/// value, 1 or 0.
+/// §17.1.3.2]: of a decimal, the number its string writes; of a float or
+/// double, as a float its mantissa truncated; of a truth value, 1 or 0.
 fn real(n: &Number, single_precision: bool) -> f64 {
     let written = match n {
         Number::Exact(t) => t.to_string(),
-        Number::Real(x) => format!("{x:e}"),
+        Number::Real(x) => {
+            if single_precision {
+                return truncated_single(*x);
+            }
+            format!("{x:e}")
+        }
         Number::Truth(b) => if *b { "1" } else { "0" }.to_owned(),
     };
     if single_precision { single(&written) } else { double(&written) }.unwrap_or_default()
+}
+
+/// [XQueryFO §17.1.3.1] The bits of a double's fraction.
+const FRACTION_BITS: u32 = 52;
+/// The bits of a double's biased exponent, after its fraction.
+const EXPONENT_MASK: u64 = 0x7FF;
+/// The exponent of a double's least subnormal, 2^-1074, and what its
+/// biased exponent less one is to an exponent of an integer mantissa.
+const DOUBLE_LEAST_EXPONENT: i64 = -1074;
+/// [XQueryFO §17.1.3.1] A float's mantissa is below 2^24.
+const FLOAT_MANTISSA_BITS: u32 = 24;
+/// [XQueryFO §17.1.3.1] The greatest exponent of a float's value space.
+const FLOAT_MOST_EXPONENT: i32 = 104;
+/// [XQueryFO §17.1.3.1] The least exponent of a float's value space.
+const FLOAT_LEAST_EXPONENT: i32 = -149;
+/// The radix of a mantissa's exponent.
+const TWO: f64 = 2.0;
+
+/// [XQueryFO §17.1.3.1] The float a double `x` casts to: `x` as m × 2^e,
+/// m halved, its bits truncated on the right, until it is below 2^24, e
+/// raised as often; an infinity past 2^104; below 2^-149 its bits
+/// truncated further, so a float's subnormals are reached and a value below
+/// them is a zero, of `x`'s sign. NaN, infinities and zeros are themselves.
+fn truncated_single(x: f64) -> f64 {
+    if !x.is_finite() || x.classify() == FpCategory::Zero {
+        return x;
+    }
+    let bits = x.to_bits();
+    let biased = i64::try_from(bits.checked_shr(FRACTION_BITS).unwrap_or(0) & EXPONENT_MASK).unwrap_or(0);
+    let fraction = bits & 1_u64.checked_shl(FRACTION_BITS).unwrap_or(0).saturating_sub(1);
+    let (mut mantissa, mut exponent) = if biased == 0 {
+        (fraction, DOUBLE_LEAST_EXPONENT)
+    } else {
+        (fraction | 1_u64.checked_shl(FRACTION_BITS).unwrap_or(0), biased.saturating_sub(1).saturating_add(DOUBLE_LEAST_EXPONENT))
+    };
+    while mantissa >= 1_u64.checked_shl(FLOAT_MANTISSA_BITS).unwrap_or(u64::MAX) {
+        mantissa = mantissa.checked_shr(1).unwrap_or(0);
+        exponent = exponent.saturating_add(1);
+    }
+    let sign = if x.is_sign_negative() { -1.0_f64 } else { 1.0_f64 };
+    let exponent = i32::try_from(exponent).unwrap_or(i32::MIN);
+    if exponent > FLOAT_MOST_EXPONENT {
+        return sign * f64::INFINITY;
+    }
+    if exponent < FLOAT_LEAST_EXPONENT {
+        // A float below 2^-126 is a subnormal, m × 2^-149 of m below 2^23:
+        // the same truncation of m's bits makes it one, or a zero below.
+        let excess = u32::try_from(FLOAT_LEAST_EXPONENT.saturating_sub(exponent)).unwrap_or(u32::MAX);
+        mantissa = mantissa.checked_shr(excess).unwrap_or(0);
+        return sign * f64::from(u32::try_from(mantissa).unwrap_or(0)) * TWO.powi(FLOAT_LEAST_EXPONENT);
+    }
+    // m below 2^24 and 2^e within a float's range make m × 2^e exact.
+    sign * f64::from(u32::try_from(mantissa).unwrap_or(0)) * TWO.powi(exponent)
 }
 
 /// `value`, a number or truth value, cast as `to`, a number or truth

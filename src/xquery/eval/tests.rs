@@ -146,8 +146,8 @@ fn ranges_and_node_sets() {
 #[test]
 fn passed_variables_and_context_item() {
     let query = compile_with("$x + ., $y", &["x", "y"]).unwrap();
-    let one = |n: &str| Sequence::new(vec![Item::Atomic(Atomic { kind: AtomicType::Integer, lexical: n.into() })]);
-    let context = Some(Item::Atomic(Atomic { kind: AtomicType::Integer, lexical: "40".into() }));
+    let one = |n: &str| Sequence::new(vec![Item::Atomic(Atomic::new(AtomicType::Integer, n))]);
+    let context = Some(Item::Atomic(Atomic::new(AtomicType::Integer, "40")));
     let value = evaluate(&query, context, vec![one("2"), Sequence::default()]).unwrap();
     assert_eq!(shown(&value), "42");
     assert_eq!(code_of("."), "err:XPDY0002");

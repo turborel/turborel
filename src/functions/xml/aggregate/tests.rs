@@ -6,7 +6,7 @@ use crate::xml::{Atomic, AtomicType, Item};
 
 /// An XML value of one atomic value of `lexical`.
 fn atomic(lexical: &str) -> Value {
-    Value::Xml(XmlValue::of(Sequence::new(vec![Item::Atomic(Atomic { kind: AtomicType::String, lexical: lexical.into() })])))
+    Value::Xml(XmlValue::of(Sequence::new(vec![Item::Atomic(Atomic::new(AtomicType::String, lexical))])))
 }
 
 fn row(values: &[Value]) -> Value {

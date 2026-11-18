@@ -56,7 +56,7 @@ impl Node {
         Arc::ptr_eq(&self.tree, &other.tree) && self.id == other.id
     }
 
-    /// The node `id` of its tree.
+    /// The node `id` of its tree, sharing it.
     #[must_use]
     pub fn at(&self, id: NodeId) -> Node {
         Node { tree: Arc::clone(&self.tree), id }
@@ -74,6 +74,19 @@ impl Node {
             return self.id.cmp(&other.id);
         }
         Arc::as_ptr(&self.tree).addr().cmp(&Arc::as_ptr(&other.tree).addr())
+    }
+
+    /// Its typed value [XQueryDM §5.15], which no schema typed: of a
+    /// comment or processing instruction its content, a string [§6.5,
+    /// §6.6]; of a document, element, attribute or text node its string
+    /// value, untyped [§6.1, §6.2.3, §6.3.3, §6.7].
+    #[must_use]
+    pub fn typed_value(&self) -> Atomic {
+        let kind = match self.kind() {
+            Some(Kind::Comment | Kind::ProcessingInstruction) => AtomicType::String,
+            Some(Kind::Document | Kind::Element | Kind::Attribute | Kind::Text) | None => AtomicType::UntypedAtomic,
+        };
+        Atomic::new(kind, self.tree.string_value(self.id))
     }
 }
 
@@ -183,6 +196,28 @@ pub struct Atomic {
     pub kind: AtomicType,
     /// Its canonical lexical form.
     pub lexical: Box<str>,
+    /// The namespace URI of a qualified name, an `xs:QName` or
+    /// `xs:NOTATION` whose value is a local name, a prefix and a namespace
+    /// URI [XQueryDM §3.3.3], its lexical form the prefix and local name
+    /// alone; none of a name in no namespace, and of every other value.
+    pub namespace: Option<Box<str>>,
+}
+
+impl Atomic {
+    /// The value of `kind` whose canonical lexical form is `lexical`, of
+    /// no namespace.
+    #[must_use]
+    pub fn new(kind: AtomicType, lexical: impl Into<Box<str>>) -> Atomic {
+        Atomic { kind, lexical: lexical.into(), namespace: None }
+    }
+
+    /// The `xs:QName` of the namespace URI `uri`, none or empty for no
+    /// namespace, written `lexical`, a prefix perhaps and a local name
+    /// [XQueryDM §3.3.3].
+    #[must_use]
+    pub fn qname(uri: Option<&str>, lexical: &str) -> Atomic {
+        Atomic { kind: AtomicType::QName, lexical: lexical.into(), namespace: uri.filter(|u| !u.is_empty()).map(Into::into) }
+    }
 }
 
 /// An item of a sequence [XQueryDM §2.5].
@@ -206,6 +241,12 @@ impl Sequence {
     #[must_use]
     pub fn new(items: Vec<Item>) -> Sequence {
         Sequence { items }
+    }
+
+    /// The empty sequence.
+    #[must_use]
+    pub const fn empty() -> Sequence {
+        Sequence { items: Vec::new() }
     }
 
     /// The sequence of the one document node of `tree`, what a parse

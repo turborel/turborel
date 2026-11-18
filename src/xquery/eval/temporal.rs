@@ -66,7 +66,7 @@ fn moment_value(m: Moment, kind: AtomicType) -> Result<Atomic> {
     if !(1..=LAST_YEAR).contains(&year) {
         return Err(date_overflow());
     }
-    Ok(Atomic { kind, lexical: m.text().into() })
+    Ok(Atomic::new(kind, m.text()))
 }
 
 /// `m` plus `months` [Schema2 Appendix E]: its year and month moved, its
@@ -117,9 +117,9 @@ fn duration(a: &Atomic) -> Result<Option<(i128, bool)>> {
 /// The duration of `units`, months if `months`.
 fn duration_value(units: i128, months: bool) -> Atomic {
     if months {
-        Atomic { kind: AtomicType::YearMonthDuration, lexical: year_month_text(units).into() }
+        Atomic::new(AtomicType::YearMonthDuration, year_month_text(units))
     } else {
-        Atomic { kind: AtomicType::DayTimeDuration, lexical: day_time_text(units).into() }
+        Atomic::new(AtomicType::DayTimeDuration, day_time_text(units))
     }
 }
 

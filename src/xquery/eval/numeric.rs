@@ -103,7 +103,7 @@ pub(super) fn atomic(n: Num) -> Atomic {
         Num::Float(x) => (AtomicType::Float, real_text(x, true)),
         Num::Double(x) => (AtomicType::Double, real_text(x, false)),
     };
-    Atomic { kind, lexical: lexical.into() }
+    Atomic::new(kind, lexical)
 }
 
 /// Where `n`'s type is in the order of promotion [XQuery Appendix B.2].
@@ -327,6 +327,6 @@ fn magnitude(a: &str, b: &str) -> Ordering {
 
 /// Whether the number `a` is equal to `position` [XQuery §3.2.2].
 pub(super) fn is_position(a: &Atomic, position: usize) -> bool {
-    let place = Atomic { kind: AtomicType::Integer, lexical: position.to_string().into() };
+    let place = Atomic::new(AtomicType::Integer, position.to_string());
     compare(a, &place) == Some(Ordering::Equal)
 }

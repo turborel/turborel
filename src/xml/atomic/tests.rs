@@ -3,7 +3,7 @@
 use super::*;
 
 fn untyped(text: &str) -> Atomic {
-    Atomic { kind: AtomicType::UntypedAtomic, lexical: text.into() }
+    Atomic::new(AtomicType::UntypedAtomic, text)
 }
 
 /// `text`, untyped, cast as `to`: its canonical form, or the error code.
@@ -58,18 +58,30 @@ fn numbers_and_truth_values() {
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 GR4j] [XQueryFO §17.1.3,
 /// §17.1.6] casts among numbers and truth
 /// values: a decimal's fraction dropped as an integer; a float or double
-/// its shortest decimal; NaN and infinity no decimal, err:FOCA0002; zero
+/// its shortest decimal; a double as a float its mantissa truncated to 24
+/// bits, past the float's exponents an infinity or a zero
+/// [XQueryFO §17.1.3.1]; NaN and infinity no decimal, err:FOCA0002; zero
 /// and NaN false.
 #[test]
 fn casts_among_numbers() {
-    let of = |kind, lexical: &str| Atomic { kind, lexical: lexical.into() };
+    let of = |kind, lexical: &str| Atomic::new(kind, lexical);
     let cases = [
         (of(AtomicType::Decimal, "-3.9"), AtomicType::Integer, "-3"),
         (of(AtomicType::Decimal, "-0.5"), AtomicType::Integer, "0"),
         (of(AtomicType::Double, "2.5"), AtomicType::Decimal, "2.5"),
         (of(AtomicType::Double, "1.0E20"), AtomicType::Integer, "100000000000000000000"),
         (of(AtomicType::Integer, "7"), AtomicType::Double, "7"),
-        (of(AtomicType::Double, "0.1"), AtomicType::Float, "0.1"),
+        (of(AtomicType::Double, "0.1"), AtomicType::Float, "0.099999994"),
+        (of(AtomicType::Double, "0.5"), AtomicType::Float, "0.5"),
+        (of(AtomicType::Double, "-3.4028236E38"), AtomicType::Float, "-3.4028235E38"),
+        (of(AtomicType::Double, "1.0E39"), AtomicType::Float, "INF"),
+        (of(AtomicType::Double, "-1.0E-46"), AtomicType::Float, "-0"),
+        (of(AtomicType::Double, "1.0E-45"), AtomicType::Float, "0"),
+        (of(AtomicType::Double, "1.401298464324817E-45"), AtomicType::Float, "1.0E-45"),
+        (of(AtomicType::Double, "1.0E-40"), AtomicType::Float, "1.0E-40"),
+        (of(AtomicType::Double, "4.9E-324"), AtomicType::Float, "0"),
+        (of(AtomicType::Float, "0.1"), AtomicType::Float, "0.1"),
+        (of(AtomicType::Float, "0.1"), AtomicType::Double, "0.10000000149011612"),
         (of(AtomicType::Boolean, "true"), AtomicType::Decimal, "1"),
         (of(AtomicType::Decimal, "0"), AtomicType::Boolean, "false"),
         (of(AtomicType::Double, "NaN"), AtomicType::Boolean, "false"),
@@ -113,10 +125,10 @@ fn dates_and_times() {
     for (text, to, expected) in cases {
         assert_eq!(cast_text(text, to), expected, "{text} as {}", to.name());
     }
-    let instant = Atomic { kind: AtomicType::DateTime, lexical: "2020-01-02T03:04:05-08:00".into() };
+    let instant = Atomic::new(AtomicType::DateTime, "2020-01-02T03:04:05-08:00");
     assert_eq!(&*cast(&instant, AtomicType::Date).unwrap().lexical, "2020-01-02-08:00");
     assert_eq!(&*cast(&instant, AtomicType::Time).unwrap().lexical, "03:04:05-08:00");
-    let day = Atomic { kind: AtomicType::Date, lexical: "2020-01-02".into() };
+    let day = Atomic::new(AtomicType::Date, "2020-01-02");
     assert_eq!(&*cast(&day, AtomicType::DateTime).unwrap().lexical, "2020-01-02T00:00:00");
     assert!(cast(&day, AtomicType::Time).is_err());
 }
@@ -168,7 +180,7 @@ fn durations() {
     for (text, to, expected) in cases {
         assert_eq!(cast_text(text, to), expected, "{text} as {}", to.name());
     }
-    let months = Atomic { kind: AtomicType::YearMonthDuration, lexical: "P1Y".into() };
+    let months = Atomic::new(AtomicType::YearMonthDuration, "P1Y");
     assert_eq!(&*cast(&months, AtomicType::DayTimeDuration).unwrap().lexical, "PT0S");
     assert_eq!(duration_units("-P1DT1S", false).unwrap(), -86_401_000_000);
     assert!(duration_units("x", true).is_err());
@@ -313,7 +325,7 @@ fn derived_types_by_the_facets_they_fix() {
 /// not a literal, err:XPST0083.
 #[test]
 fn casts_within_and_across_the_hierarchy() {
-    let of = |kind, lexical: &str| Atomic { kind, lexical: lexical.into() };
+    let of = |kind, lexical: &str| Atomic::new(kind, lexical);
     let cases = [
         (of(AtomicType::Double, "3.7"), AtomicType::Int, "3"),
         (of(AtomicType::Int, "5"), AtomicType::Short, "5"),

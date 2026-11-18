@@ -260,9 +260,7 @@ impl Facets {
         let mut facets = Facets { white_space: Some(Held { value: t.white_space(), fixed }), ..Facets::default() };
         if t.derives_from(AtomicType::Integer) {
             facets.fraction_digits = Some(Held { value: 0, fixed: true });
-            let bound = |literal: Option<&str>| {
-                literal.map(|l| Held { value: Atomic { kind: AtomicType::Integer, lexical: l.into() }, fixed: false })
-            };
+            let bound = |literal: Option<&str>| literal.map(|l| Held { value: Atomic::new(AtomicType::Integer, l), fixed: false });
             let (least, most) = t.bounds();
             facets.min_inclusive = bound(least);
             facets.max_inclusive = bound(most);

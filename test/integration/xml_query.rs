@@ -164,7 +164,7 @@ impl XQueryFunction for Twice {
             Some(Item::Atomic(a)) => a.lexical.parse().unwrap(),
             _ => 0,
         };
-        Ok(Sequence::new(vec![Item::Atomic(Atomic { kind: AtomicType::Integer, lexical: (n * 2).to_string().into() })]))
+        Ok(Sequence::new(vec![Item::Atomic(Atomic::new(AtomicType::Integer, (n * 2).to_string()))]))
     }
 }
 

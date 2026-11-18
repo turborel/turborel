@@ -265,7 +265,7 @@ fn nesting_is_bounded() {
 /// list, err:XPST0051.
 #[test]
 fn casts_as_derived_types() {
-    let atomic = |kind, lexical: &str| Atomic { kind, lexical: lexical.into() };
+    let atomic = |kind, lexical: &str| Atomic::new(kind, lexical);
     let small = of(AtomicType::Decimal, vec![Facet::TotalDigits(3), Facet::FractionDigits(1)]);
     assert_eq!(small.cast(&atomic(AtomicType::UntypedAtomic, " 12.3 ")).unwrap().lexical.as_ref(), "12.3");
     assert_eq!(small.cast(&atomic(AtomicType::Double, "12.5")).unwrap().kind, AtomicType::Decimal);

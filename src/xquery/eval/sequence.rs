@@ -41,7 +41,7 @@ pub(super) fn boolean(b: bool) -> Seq {
 
 /// The `xs:boolean` `b` [Schema2 §3.2.2.2].
 pub(super) fn truth(b: bool) -> Atomic {
-    Atomic { kind: AtomicType::Boolean, lexical: if b { TRUE } else { FALSE }.into() }
+    Atomic::new(AtomicType::Boolean, if b { TRUE } else { FALSE })
 }
 
 /// The typed value of `node` [XQuery §2.5.2]: of a node no schema
@@ -52,7 +52,7 @@ pub(super) fn typed_value(node: &Node) -> Atomic {
         Some(Kind::Comment | Kind::ProcessingInstruction) => AtomicType::String,
         Some(Kind::Document | Kind::Element | Kind::Attribute | Kind::Text) | None => AtomicType::UntypedAtomic,
     };
-    Atomic { kind, lexical: node.tree().string_value(node.id()).into() }
+    Atomic::new(kind, node.tree().string_value(node.id()))
 }
 
 /// `items` atomized [XQuery §2.4.2]: each atomic value itself, each node

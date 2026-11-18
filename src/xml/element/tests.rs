@@ -15,7 +15,7 @@ fn content(text: &str) -> Sequence {
 }
 
 fn atomic(lexical: &str) -> Item {
-    Item::Atomic(Atomic { kind: AtomicType::String, lexical: lexical.into() })
+    Item::Atomic(Atomic::new(AtomicType::String, lexical))
 }
 
 fn name(prefix: Option<&str>, uri: Option<&str>, local: &str) -> QName {

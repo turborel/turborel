@@ -24,7 +24,7 @@ fn evaluation(text: &str, context: bool) -> Evaluation {
 
 /// An XML value of the integers `numbers`.
 fn integers(numbers: &[&str]) -> Value {
-    let items = numbers.iter().map(|n| Item::Atomic(Atomic { kind: AtomicType::Integer, lexical: (*n).into() })).collect();
+    let items = numbers.iter().map(|n| Item::Atomic(Atomic::new(AtomicType::Integer, *n))).collect();
     Value::Xml(XmlValue::of(Sequence::new(items)))
 }
 
