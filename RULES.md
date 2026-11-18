@@ -3306,7 +3306,7 @@ Rust's short-circuit `&&` and `||`.
 
 | ID | Rule | Checked by |
 |---|---|---|
-| R-PROC-1 | `cargo xtask verify` **shall** pass before every commit: format, lints, lint baselines, docs, file length, traceability and citations, every test. `--coverage` adds coverage. | pre-commit hook; CI |
+| R-PROC-1 | `cargo xtask verify` **shall** pass before every commit: format, lints, lint baselines, docs, file length, traceability and citations, no merge conflict marker in a source or document, every test. `--coverage` adds coverage. | pre-commit hook; CI |
 | R-PROC-2 | Every change **shall** be reviewed against the checklist below. | review |
 | R-PROC-3 | Commits **should** be small and single-purpose, in CONTRIBUTING.md's form (`area: summary`, then why), citing rules applied or changed. | review |
 | R-PROC-4 | A threshold change **shall** change RULES.md, `clippy.toml` and `xtask` together. | review |

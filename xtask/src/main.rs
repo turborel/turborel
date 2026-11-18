@@ -17,6 +17,7 @@ mod file_length;
 mod files;
 mod json;
 mod lint_audit;
+mod markers;
 mod mutate;
 mod threads;
 mod trace;
@@ -143,6 +144,8 @@ fn verify(root: &Path, with_coverage: bool) -> Result<()> {
     trace::check(root)?;
     step("citations (R-DOC-5)");
     citations::check(root)?;
+    step("merge markers (R-PROC-1)");
+    markers::check(root)?;
     step("threads (R-SAFE-5)");
     threads::check(root)?;
     step("tests: unit and integration (R-TEST)");
