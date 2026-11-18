@@ -29,7 +29,8 @@ TURBOREL, unless the setting CATALOG.NAME names it otherwise.
 
 ## The views
 
-The views of SQL-92, each with the columns the standard gives it:
+The views of SQL-92, each with the columns SQL-92 gives it and those
+ISO/IEC 9075-11 adds, described below:
 
 | View | One row of each |
 |---|---|
@@ -286,6 +287,43 @@ types](16-xml.md#the-xmlschema-types)). All seven are null of a type that is
 not XML. They follow the view's other columns, but in ROUTINES, where
 they follow DTD_IDENTIFIER.
 
+The views that describe a type have INTERVAL_TYPE and INTERVAL_PRECISION
+after DATETIME_PRECISION, as ISO/IEC 9075-11 names them. Of an interval
+type, DATA_TYPE is INTERVAL, INTERVAL_TYPE its fields, as `YEAR TO
+MONTH` or `SECOND`, INTERVAL_PRECISION its leading field's precision, and
+DATETIME_PRECISION its seconds' fractional digits; of another type both
+are null.
+
+TABLES has IS_INSERTABLE_INTO, YES of a base table and of an updatable
+view, and NO of another view and of the Information Schema's own tables
+and views, and COMMIT_ACTION, DELETE or PRESERVE of a temporary table as
+its ON COMMIT says, and null of another. VIEWS has INSERTABLE_INTO, as
+TABLES has it, and COLUMNS has IS_UPDATABLE, YES of each column of a
+base table or an updatable view, NO of another. SCHEMATA has SQL_PATH,
+null, as no schema is defined with a PATH. KEY_COLUMN_USAGE has
+POSITION_IN_UNIQUE_CONSTRAINT: of a foreign key's column, the position,
+in the key it references, of the column it references, which its
+ORDINAL_POSITION is too, as SQL-92 has it; null of a UNIQUE or PRIMARY
+KEY constraint's. CHARACTER_SETS has CHARACTER_REPERTOIRE, SQL_TEXT, and
+TRANSLATIONS has TRANSLATION_SOURCE_CATALOG, _SCHEMA and _NAME, of no
+row.
+
+ROUTINES has more columns ISO/IEC 9075-11 gives it. EXTERNAL_NAME,
+EXTERNAL_LANGUAGE and PARAMETER_STYLE are an external routine's, so
+null, as every routine is an SQL routine. SQL_PATH is the schemas a
+routine's names are found in: its module's PATH, or its own schema,
+each as `TURBOREL.ANN`. MAX_DYNAMIC_RESULT_SETS is 0. TO_SQL_SPECIFIC_
+CATALOG, _SCHEMA and _NAME are null, as only an external routine has a
+to-sql function. AS_LOCATOR is NO of a function and null of a
+procedure. IS_UDT_DEPENDENT is YES of a routine a type's definition
+makes, as an observer, and NO of another. The RESULT_CAST_ columns
+describe a result cast's type, which only an external routine has, so
+are null. PARAMETERS has FROM_SQL_SPECIFIC_ and TO_SQL_SPECIFIC_
+CATALOG, _SCHEMA and _NAME, null for the same reason, and
+METHOD_SPECIFICATIONS the RESULT_CAST_ columns, null. ROUTINES and
+METHOD_SPECIFICATIONS have no CREATED and LAST_ALTERED, as no
+timestamp is kept of a routine.
+
 ROUTINES and PARAMETERS end with twelve more, after the seven in
 PARAMETERS. XML_CHAR_TYPE, XML_CHAR_MAX_LEN, XML_CHAR_OCT_LEN,
 XML_CHAR_SET_CAT, XML_CHAR_SET_SCH, XML_CHAR_SET_NAME, XML_CHAR_COLL_CAT,
@@ -295,7 +333,10 @@ XML_OPTION says whether as DOCUMENT or CONTENT. Every routine is an SQL
 routine, so they are null. XML_RETURN_MECHANISM in ROUTINES and
 XML_PASSING_MECHANISM in PARAMETERS are BY REF of a result or parameter
 of an XML type, which is passed by reference, and null of another.
-[XML Values](16-xml.md#the-type) has an example.
+ROUTINES and METHOD_SPECIFICATIONS have the seven XML columns of a result
+cast's type too, named RESULT_CAST_XML_PRIMARY_MODIFIER and so on, before
+those twelve in ROUTINES, and last in METHOD_SPECIFICATIONS; null, as
+there is none. [XML Values](16-xml.md#the-type) has an example.
 
 Three views of SQL/XML describe the registered XML Schemas the user, PUBLIC
 or an enabled role holds USAGE on ([XML Values](16-xml.md#registered-xml-schemas)),
@@ -331,6 +372,66 @@ declared with, INTEGER, SMALLINT, BIGINT, DECIMAL or NUMERIC, of its precision
 and scale, radix 10, or REAL, DOUBLE PRECISION or FLOAT, of the binary
 precision it holds values of, 24 or 53, radix 2; a national character
 string as CHARACTER, its octet length four octets a character.
+
+## What depends on what
+
+Ten views of ISO/IEC 9075-11 show what definitions depend on. Each
+shows a row to the owner of one schema it names, or to an enabled role
+that owns it, as the standard chooses: of a table or column a routine
+names, the table's schema; of a routine a routine invokes, the invoked
+routine's; of a sequence generator drawn from, the routine's; of what a
+view invokes, the view's; of what a check constraint invokes, the
+routine's; of a generated column, its table's; of a column of a
+user-defined type, the type's; of a collation, its own.
+
+| View | One row of each |
+|---|---|
+| ROUTINE_TABLE_USAGE | table or view a routine's body names: the routine's SPECIFIC_ and ROUTINE_ names, and the table's |
+| ROUTINE_COLUMN_USAGE | column such a table's a routine's body references in a query or a condition, as the body binds now; not a column an INSERT's column list or an UPDATE's SET names alone |
+| ROUTINE_ROUTINE_USAGE | routine a routine's body invokes: the routine's specific name in SPECIFIC_, the one invoked in ROUTINE_ |
+| ROUTINE_SEQUENCE_USAGE | sequence generator a routine's body draws from |
+| VIEW_ROUTINE_USAGE | routine a view's query invokes, by its specific name |
+| CHECK_CONSTRAINT_ROUTINE_USAGE | routine an assertion's, a domain constraint's or a table check constraint's condition invokes |
+| COLUMN_COLUMN_USAGE | column a generated column depends on: COLUMN_NAME the column, DEPENDENT_COLUMN the generated one |
+| COLUMN_UDT_USAGE | column of a user-defined type, with the type |
+| COLLATION_CHARACTER_SET_APPLICABILITY | collation the user's schemas hold, and SQL_TEXT, the character set it is of |
+| DATA_TYPE_PRIVILEGES | data type descriptor the other views show the user: its object's name, OBJECT_TYPE TABLE, DOMAIN, ROUTINE or USER-DEFINED TYPE, and DTD_IDENTIFIER |
+
+What a routine, view or constraint invokes is fixed as it is defined, as
+the routine each invocation stands for is.
+
+Run by ANN, the owner of these:
+
+```sql
+CREATE TABLE STOCK (ID INTEGER, QTY INTEGER, DOUBLED INTEGER GENERATED ALWAYS AS (QTY * 2));
+CREATE FUNCTION TWICE (X INTEGER) RETURNS INTEGER DETERMINISTIC CONTAINS SQL RETURN X * 2;
+CREATE FUNCTION TOTAL () RETURNS INTEGER READS SQL DATA RETURN (SELECT SUM(TWICE(QTY)) FROM STOCK);
+CREATE VIEW BIG AS SELECT ID FROM STOCK WHERE TWICE(QTY) > 10;
+COMMIT;
+SELECT ROUTINE_NAME, TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.ROUTINE_COLUMN_USAGE;
+SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEW_ROUTINE_USAGE;
+SELECT COLUMN_NAME, DEPENDENT_COLUMN FROM INFORMATION_SCHEMA.COLUMN_COLUMN_USAGE;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+ ROUTINE_NAME                                                 | TABLE_NAME                                                   | COLUMN_NAME
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ TOTAL                                                        | STOCK                                                        | QTY
+(1 row)
+ TABLE_NAME
+--------------------------------------------------------------
+ BIG
+(1 row)
+ COLUMN_NAME                                                  | DEPENDENT_COLUMN
+--------------------------------------------------------------+--------------------------------------------------------------
+ QTY                                                          | DOUBLED
+(1 row)
+```
 
 ## The short name views
 
@@ -382,22 +483,21 @@ MAX_CARDINALITY, XML_SCHEMA_NAMESPACE XML_SCHEMA_NSPACE, and so on.
 | TRIG_SEQ_USAGE_S | TRIGGER_SEQUENCE_USAGE |
 | MODULE_COL_USAGE | MODULE_COLUMN_USAGE |
 | MODULES_S | MODULES |
+| COLLATION_APPLIC_S | COLLATION_CHARACTER_SET_APPLICABILITY |
+| COL_COL_USAGE | COLUMN_COLUMN_USAGE |
+| CONSTR_ROUT_USE_S | CHECK_CONSTRAINT_ROUTINE_USAGE |
+| ROUT_ROUT_USAGE_S | ROUTINE_ROUTINE_USAGE |
+| ROUT_SEQ_USAGE_S | ROUTINE_SEQUENCE_USAGE |
+| ROUTINE_COL_USAGE | ROUTINE_COLUMN_USAGE |
+| ROUT_TABLE_USAGE | ROUTINE_TABLE_USAGE |
 | XML_SCHEMAS_S | XML_SCHEMAS |
 | XML_SCH_NSPACES_S | XML_SCHEMA_NAMESPACES |
 | XML_SCH_ELEMENTS_S | XML_SCHEMA_ELEMENTS |
 
-A short name view has the standard's columns its view has here, and no
-other. None has INTERVAL_TYPE or INTERVAL_PRECISION; COLUMNS_S has no
-IS_UPDATABLE, TABLES_S no IS_INSERTABLE_INTO or COMMIT_ACTION,
-SCHEMATA_S no SQL_PATH, KEY_COLUMN_USAGE_S no POSITION_IN_UC,
-CHARACTER_SETS_S no CHAR_REPERTOIRE, and TRANSLATIONS_S no TRANS_SRC_
-columns. ROUTINES_S has none of the columns of an external routine, a
-result cast, a transform, a timestamp or result sets, PARAMETERS_S none
-of a transform's, and METHOD_SPECS none of a result cast's and no
-timestamps. Those of the views this implementation has not are not
-defined: COLLATION_APPLIC_S, COL_COL_USAGE, CONSTR_ROUT_USE_S,
-ROUT_ROUT_USAGE_S, ROUT_SEQ_USAGE_S, ROUTINE_COL_USAGE,
-ROUT_TABLE_USAGE, SQL_IMPL_INFO and SQL_SIZING_PROFS.
+A short name view has every column the standard gives it but CREATED
+and LAST_ALTERED of ROUTINES_S and METHOD_SPECS, which ROUTINES and
+METHOD_SPECIFICATIONS have not. SQL_IMPL_INFO and SQL_SIZING_PROFS are
+not defined, as SQL_IMPLEMENTATION_INFO and SQL_SIZING_PROFILES are not.
 
 The views that describe a type end with the seven columns of an XML
 type, named XML_PRIMARY_MOD, XML_SECONDARY_MOD, XML_SCHEMA_CATALOG,
@@ -405,6 +505,9 @@ XML_SCHEMA_SCHEMA, XML_SCHEMA_NAME, XML_SCHEMA_NSPACE and
 XML_SCHEMA_ELEMENT; ROUTINES_S has them after DTD_IDENTIFIER, named
 XML_PRIMARY_MOD, XML_SECOND_MOD, XML_SCHEMA_CAT, XML_SCH_SCH,
 XML_SCH_NAME, XML_SCH_NSPACE and XML_SCH_ELEMENT, as SQL/XML names them.
+ROUTINES_S and METHOD_SPECS have those of a result cast's type, named
+RC_XML_PRIMARY_MOD, RC_XML_SECOND_MOD, RC_XML_SCHEMA_CAT, RC_XML_SCH_SCH,
+RC_XML_SCH_NAME, RC_XML_SCH_NSPACE and RC_XML_SCH_ELEMENT.
 ROUTINES_S and PARAMETERS_S end with the columns of the associated
 string type, then XML_RETURN_MECH and XML_PASSING_MECH. MODULES_S calls
 DEFAULT_SCHEMA_NAME DEFAULT_SCHEMA, and the timestamps CREATED and
@@ -417,7 +520,7 @@ CREATE TABLE PARTS (ID INTEGER PRIMARY KEY, NAME CHARACTER VARYING(40), RADIUS D
 COMMIT;
 SELECT COLUMN_NAME, DATA_TYPE, CHAR_MAX_LENGTH, NUMERIC_PRECISION, NUMERIC_PREC_RADIX FROM INFORMATION_SCHEMA.COLUMNS_S
     WHERE TABLE_NAME = 'PARTS' ORDER BY ORDINAL_POSITION;
-SELECT TABLE_NAME, TABLE_TYPE, SELF_REF_COL_NAME FROM INFORMATION_SCHEMA.TABLES_S WHERE TABLE_SCHEMA = 'ANN';
+SELECT TABLE_NAME, TABLE_TYPE, SELF_REF_COL_NAME FROM INFORMATION_SCHEMA.TABLES_S WHERE TABLE_NAME = 'PARTS';
 SELECT CATALOG_NAME FROM INFORMATION_SCHEMA.CATALOG_NAME;
 ```
 

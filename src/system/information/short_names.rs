@@ -10,28 +10,36 @@
 //!
 //! The draft gives each a `<view column list>`; here each column is named
 //! by an `<as clause>` instead, which names it as the list would
-//! [ISO/IEC 9075:1992 §7.9 SR9a, §11.19 GR1]. A column the draft takes from
-//! a column its view does not have here is left out, as is a short name
-//! view of a view not defined here: COLLATION_APPLIC_S, COL_COL_USAGE,
-//! CONSTR_ROUT_USE_S, ROUT_ROUT_USAGE_S, ROUT_SEQ_USAGE_S,
-//! ROUTINE_COL_USAGE, ROUT_TABLE_USAGE, SQL_IMPL_INFO and
-//! SQL_SIZING_PROFS. The interval columns are left out of each view that
-//! describes a data type, as no view here has them. Each slip of the draft
-//! corrected is noted at its view.
+//! [ISO/IEC 9075:1992 §7.9 SR9a, §11.19 GR1]. ROUTINES_S and METHOD_SPECS
+//! leave out CREATED and LAST_ALTERED, the timestamps of Feature T011,
+//! which ROUTINES and METHOD_SPECIFICATIONS do not show. SQL_IMPL_INFO and
+//! SQL_SIZING_PROFS are not defined, as SQL_IMPLEMENTATION_INFO and
+//! SQL_SIZING_PROFILES are not. Each slip of the draft corrected is noted
+//! at its view.
 
 mod composites;
 mod modules;
 mod roles;
 mod structured;
 mod triggers;
+mod usage;
 mod user_types;
 mod xml_schemas;
 
 use super::SystemView;
 
 /// The short name views, in the order of the views they read.
-pub(super) const PARTS: [&[SystemView]; 8] =
-    [VIEWS, composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS, xml_schemas::VIEWS];
+pub(super) const PARTS: [&[SystemView]; 9] = [
+    VIEWS,
+    composites::VIEWS,
+    user_types::VIEWS,
+    structured::VIEWS,
+    roles::VIEWS,
+    triggers::VIEWS,
+    modules::VIEWS,
+    usage::VIEWS,
+    xml_schemas::VIEWS,
+];
 
 /// Those of the views of ISO/IEC 9075:1992, and of SEQUENCES.
 const VIEWS: &[SystemView] = &[
@@ -41,13 +49,14 @@ const VIEWS: &[SystemView] = &[
         query: r"SELECT CATALOG_NAME
     FROM INFORMATION_SCHEMA.INFORMATION_SCHEMA_CATALOG_NAME",
     },
-    // [ISO/IEC 9075-11:2006 draft §5.77] SCHEMATA_S; SQL_PATH left out.
+    // [ISO/IEC 9075-11:2006 draft §5.77] SCHEMATA_S.
     SystemView {
         name: "SCHEMATA_S",
         query: r"SELECT CATALOG_NAME, SCHEMA_NAME, SCHEMA_OWNER,
            DEFAULT_CHARACTER_SET_CATALOG AS DEF_CHAR_SET_CAT,
            DEFAULT_CHARACTER_SET_SCHEMA AS DEF_CHAR_SET_SCH,
-           DEFAULT_CHARACTER_SET_NAME AS DEF_CHAR_SET_NAME
+           DEFAULT_CHARACTER_SET_NAME AS DEF_CHAR_SET_NAME,
+           SQL_PATH
     FROM INFORMATION_SCHEMA.SCHEMATA",
     },
     // [ISO/IEC 9075-11:2006 draft §5.77] DOMAINS_S; with the XML columns,
@@ -61,7 +70,7 @@ const VIEWS: &[SystemView] = &[
            CHARACTER_SET_SCHEMA AS CHAR_SET_SCHEMA, CHARACTER_SET_NAME,
            COLLATION_CATALOG, COLLATION_SCHEMA, COLLATION_NAME,
            NUMERIC_PRECISION, NUMERIC_PRECISION_RADIX AS NUMERIC_PREC_RADIX,
-           NUMERIC_SCALE, DATETIME_PRECISION,
+           NUMERIC_SCALE, DATETIME_PRECISION, INTERVAL_TYPE, INTERVAL_PRECISION,
            DOMAIN_DEFAULT, MAXIMUM_CARDINALITY AS MAX_CARDINALITY, DTD_IDENTIFIER,
            XML_PRIMARY_MODIFIER AS XML_PRIMARY_MOD,
            XML_SECONDARY_MODIFIER AS XML_SECONDARY_MOD, XML_SCHEMA_CATALOG,
@@ -69,8 +78,7 @@ const VIEWS: &[SystemView] = &[
            XML_SCHEMA_NAMESPACE AS XML_SCHEMA_NSPACE, XML_SCHEMA_ELEMENT
     FROM INFORMATION_SCHEMA.DOMAINS",
     },
-    // [ISO/IEC 9075-11:2006 draft §5.77] TABLES_S; IS_INSERTABLE_INTO and
-    // COMMIT_ACTION left out.
+    // [ISO/IEC 9075-11:2006 draft §5.77] TABLES_S.
     SystemView {
         name: "TABLES_S",
         query: r"SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME,
@@ -78,12 +86,12 @@ const VIEWS: &[SystemView] = &[
            REFERENCE_GENERATION AS REF_GENERATION,
            USER_DEFINED_TYPE_CATALOG AS UDT_CATALOG,
            USER_DEFINED_TYPE_SCHEMA AS UDT_SCHEMA,
-           USER_DEFINED_TYPE_NAME AS UDT_NAME, IS_TYPED
+           USER_DEFINED_TYPE_NAME AS UDT_NAME,
+           IS_INSERTABLE_INTO, IS_TYPED, COMMIT_ACTION
     FROM INFORMATION_SCHEMA.TABLES",
     },
-    // [ISO/IEC 9075-11:2006 draft §5.77] COLUMNS_S; IS_UPDATABLE left out;
-    // with the XML columns, of the view ISO/IEC 9075-14:2006 draft §20.15
-    // calls COLUMN_S.
+    // [ISO/IEC 9075-11:2006 draft §5.77] COLUMNS_S; with the XML columns,
+    // of the view ISO/IEC 9075-14:2006 draft §20.15 calls COLUMN_S.
     SystemView {
         name: "COLUMNS_S",
         query: r"SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME,
@@ -91,7 +99,7 @@ const VIEWS: &[SystemView] = &[
            IS_NULLABLE, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH AS CHAR_MAX_LENGTH,
            CHARACTER_OCTET_LENGTH AS CHAR_OCTET_LENGTH, NUMERIC_PRECISION,
            NUMERIC_PRECISION_RADIX AS NUMERIC_PREC_RADIX,
-           NUMERIC_SCALE, DATETIME_PRECISION,
+           NUMERIC_SCALE, DATETIME_PRECISION, INTERVAL_TYPE, INTERVAL_PRECISION,
            CHARACTER_SET_CATALOG AS CHAR_SET_CATALOG,
            CHARACTER_SET_SCHEMA AS CHAR_SET_SCHEMA,
            CHARACTER_SET_NAME, COLLATION_CATALOG, COLLATION_SCHEMA,
@@ -103,7 +111,7 @@ const VIEWS: &[SystemView] = &[
            IDENTITY_GENERATION AS ID_GENERATION, IDENTITY_START AS ID_START,
            IDENTITY_INCREMENT AS ID_INCREMENT, IDENTITY_MAXIMUM AS ID_MAXIMUM,
            IDENTITY_MINIMUM AS ID_MINIMUM, IDENTITY_CYCLE AS ID_CYCLE,
-           IS_GENERATED, GENERATION_EXPRESSION AS GENERATION_EXPR,
+           IS_GENERATED, GENERATION_EXPRESSION AS GENERATION_EXPR, IS_UPDATABLE,
            XML_PRIMARY_MODIFIER AS XML_PRIMARY_MOD,
            XML_SECONDARY_MODIFIER AS XML_SECONDARY_MOD, XML_SCHEMA_CATALOG,
            XML_SCHEMA_SCHEMA, XML_SCHEMA_NAME,
@@ -120,23 +128,21 @@ const VIEWS: &[SystemView] = &[
            MATCH_OPTION, UPDATE_RULE, DELETE_RULE
     FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS",
     },
-    // [ISO/IEC 9075-11:2006 draft §5.77] KEY_COLUMN_USAGE_S; POSITION_IN_UC
-    // left out. Corrected: the space after the draft's
-    // "INFORMATION_SCHEMA." taken out.
+    // [ISO/IEC 9075-11:2006 draft §5.77] KEY_COLUMN_USAGE_S. Corrected: the
+    // space after the draft's "INFORMATION_SCHEMA." taken out.
     SystemView {
         name: "KEY_COLUMN_USAGE_S",
         query: r"SELECT CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME,
            TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME,
-           COLUMN_NAME, ORDINAL_POSITION
+           COLUMN_NAME, ORDINAL_POSITION, POSITION_IN_UNIQUE_CONSTRAINT AS POSITION_IN_UC
     FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE",
     },
-    // [ISO/IEC 9075-11:2006 draft §5.77] CHARACTER_SETS_S; CHAR_REPERTOIRE
-    // left out.
+    // [ISO/IEC 9075-11:2006 draft §5.77] CHARACTER_SETS_S.
     SystemView {
         name: "CHARACTER_SETS_S",
         query: r"SELECT CHARACTER_SET_CATALOG AS CHAR_SET_CATALOG,
            CHARACTER_SET_SCHEMA AS CHAR_SET_SCHEMA, CHARACTER_SET_NAME,
-           FORM_OF_USE,
+           CHARACTER_REPERTOIRE AS CHAR_REPERTOIRE, FORM_OF_USE,
            DEFAULT_COLLATE_CATALOG AS DEF_COLLATE_CAT,
            DEFAULT_COLLATE_SCHEMA AS DEF_COLLATE_SCHEMA,
            DEFAULT_COLLATE_NAME AS DEF_COLLATE_NAME
@@ -158,8 +164,7 @@ const VIEWS: &[SystemView] = &[
            INCREMENT, CYCLE_OPTION
     FROM INFORMATION_SCHEMA.SEQUENCES",
     },
-    // [ISO/IEC 9075-11:2006 draft §5.77] TRANSLATIONS_S; TRANS_SRC_CATALOG,
-    // TRANS_SRC_SCHEMA and TRANS_SRC_NAME left out.
+    // [ISO/IEC 9075-11:2006 draft §5.77] TRANSLATIONS_S.
     SystemView {
         name: "TRANSLATIONS_S",
         query: r"SELECT TRANSLATION_CATALOG AS TRANS_CATALOG, TRANSLATION_SCHEMA, TRANSLATION_NAME,
@@ -168,7 +173,10 @@ const VIEWS: &[SystemView] = &[
            SOURCE_CHARACTER_SET_NAME AS SRC_CHAR_SET_NAME,
            TARGET_CHARACTER_SET_CATALOG AS TGT_CHAR_SET_CAT,
            TARGET_CHARACTER_SET_SCHEMA AS TGT_CHAR_SET_SCH,
-           TARGET_CHARACTER_SET_NAME AS TGT_CHAR_SET_NAME
+           TARGET_CHARACTER_SET_NAME AS TGT_CHAR_SET_NAME,
+           TRANSLATION_SOURCE_CATALOG AS TRANS_SRC_CATALOG,
+           TRANSLATION_SOURCE_SCHEMA AS TRANS_SRC_SCHEMA,
+           TRANSLATION_SOURCE_NAME AS TRANS_SRC_NAME
     FROM INFORMATION_SCHEMA.TRANSLATIONS",
     },
     // [ISO/IEC 9075-11:2006 draft §5.77] CONSTR_TABLE_USAGE.

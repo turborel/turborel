@@ -212,7 +212,9 @@ fn methods_columns() -> Vec<ColumnDesc> {
         .data("SQL_DATA_ACCESS", true)
         .data("IS_NULL_CALL", true)
         .ids("TO_SQL_SPECIFIC", false)
-        .data("AS_LOCATOR", true);
+        .data("AS_LOCATOR", true)
+        .id("RESULT_CAST_FROM_DTD_IDENTIFIER", false)
+        .data("RESULT_CAST_AS_LOCATOR", false);
     described(columns).done()
 }
 
@@ -251,7 +253,11 @@ fn methods(seen: &Seen<'_>) -> Vec<Row> {
             let head = [ids(&catalog, &m.specific).to_vec(), ids(&catalog, s.name()).to_vec(), vec![text(m.name)]].concat();
             let kind = vec![yes(m.kind == MethodKind::Static), yes(m.overriding), yes(m.kind == MethodKind::Constructor)];
             let language = vec![text("SQL"), Value::Null, text(&method_dtd(at)), Value::Null];
-            let access = vec![text(super::routines::access(m.access)), yes(m.null_call), Value::Null, Value::Null, Value::Null, yes(false)];
+            // [§6.30 Description 15a] No `<result cast>`, which an SQL
+            // method has none of [ISO/IEC 9075-2:2023 §11.51 SR9b xiv 6 A I].
+            let cast = [Value::Null, Value::Null];
+            let access = [vec![text(super::routines::access(m.access)), yes(m.null_call)], vec![Value::Null; 3], vec![yes(false)]];
+            let access = [access.concat(), cast.to_vec()].concat();
             rows.push([head, kind, language, access, data_type(&catalog, &m.returns, None)].concat());
         }
     }

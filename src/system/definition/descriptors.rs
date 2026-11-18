@@ -34,6 +34,7 @@ use crate::catalog::{ColumnDesc, QualifiedName};
 use crate::error::Result;
 use crate::storage::Row;
 use crate::system::{Rows, Seen, SystemTable};
+use crate::value::interval::field_name;
 use crate::value::types::MAX_TYPE_NESTING;
 use crate::value::types::XmlSchemaNamed;
 use crate::value::{DataType, Value};
@@ -57,11 +58,12 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
 
 /// How many columns a data type descriptor's are, from DATA_TYPE on
 /// (`described`).
-pub(super) const DESCRIBED: usize = 24;
+pub(super) const DESCRIBED: usize = 26;
 
-/// Then the columns of a descriptor, from DATA_TYPE on: to a user-defined
-/// type's name [ISO/IEC 9075-2:2023 §4.9.2] and a reference type's scope
-/// [§4.11], as ISO/IEC 9075-11:2006 draft §6.21 orders them, then an XML
+/// Then the columns of a descriptor, from DATA_TYPE on: an interval type's
+/// fields and leading precision, a user-defined type's name [ISO/IEC
+/// 9075-2:2023 §4.9.2] and a reference type's scope [§4.11], as ISO/IEC
+/// 9075-11:2006 draft §6.21 orders them, then an XML
 /// type's modifiers and XML Schema, which ISO/IEC 9075-14:2006 draft §21.1
 /// adds.
 pub(super) fn described(columns: Columns) -> Columns {
@@ -80,6 +82,8 @@ pub(super) fn described_as(columns: Columns, not_null: bool) -> Columns {
         .number("NUMERIC_PRECISION_RADIX", false)
         .number("NUMERIC_SCALE", false)
         .number("DATETIME_PRECISION", false)
+        .data("INTERVAL_TYPE", false)
+        .number("INTERVAL_PRECISION", false)
         .number("MAXIMUM_CARDINALITY", false)
         .ids("USER_DEFINED_TYPE", false)
         .ids("SCOPE", false)
@@ -284,7 +288,8 @@ pub(super) fn data_type(catalog: &Value, t: &DataType, named: Option<&QualifiedN
     let collation = if d.collated { ids(catalog, named.unwrap_or(&default)).to_vec() } else { vec![Value::Null, Value::Null, Value::Null] };
     let long = |n: Option<u64>| n.map_or(Value::Null, |n| number(usize::try_from(n).unwrap_or(usize::MAX)));
     let head = vec![text(&d.name), long(d.length), long(d.octets)];
-    let tail = vec![optional(d.precision), optional(d.radix), optional(d.scale), optional(d.datetime_precision), optional(d.cardinality)];
+    let numbers = vec![optional(d.precision), optional(d.radix), optional(d.scale), optional(d.datetime_precision)];
+    let tail = [numbers, interval(t).to_vec(), vec![optional(d.cardinality)]].concat();
     let user_defined = match &d.user_defined {
         Some((auth, ident)) => ids(catalog, &QualifiedName { auth: auth.clone(), ident: ident.clone() }).to_vec(),
         None => vec![Value::Null, Value::Null, Value::Null],
@@ -293,6 +298,18 @@ pub(super) fn data_type(catalog: &Value, t: &DataType, named: Option<&QualifiedN
     let scope = scope.map(|s| ids(catalog, &QualifiedName { auth: s.schema.clone(), ident: s.name.clone() }));
     let scope = scope.map_or_else(|| vec![Value::Null, Value::Null, Value::Null], |s| s.to_vec());
     [head, collation, tail, user_defined, scope, xml(catalog, d.xml, d.xml_schema.as_ref())].concat()
+}
+
+/// [ISO/IEC 9075-11:2006 draft §6.21 Description 8, 9] Of an interval
+/// type, INTERVAL_TYPE, its `<interval qualifier>`'s fields as the
+/// draft's check constraint names them, `YEAR TO MONTH` or `DAY`, and
+/// INTERVAL_PRECISION, its interval leading field precision; of another
+/// type, each null.
+fn interval(t: &DataType) -> [Value; 2] {
+    let DataType::Interval(q) = t else { return [Value::Null, Value::Null] };
+    let fields =
+        if q.start == q.end { field_name(q.start).to_owned() } else { format!("{} TO {}", field_name(q.start), field_name(q.end)) };
+    [text(&fields), number(usize::from(q.leading))]
 }
 
 /// [ISO/IEC 9075-14:2006 draft §21.1 Description 1] Of an XML type, its

@@ -239,7 +239,7 @@ pub const ROLES: [Mutation; 20] = [
         name: "roles-views-schemata-blind",
         package: Package::Core,
         breaks: "SCHEMATA shows no schema an enabled role owns",
-        file: "src/system/information.rs",
+        file: "src/system/information/objects.rs",
         original: "WHERE ( SCHEMA_OWNER = CURRENT_USER OR SCHEMA_OWNER IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )\n         AND CATALOG_NAME",
         replacement: "WHERE SCHEMA_OWNER = CURRENT_USER\n         AND CATALOG_NAME",
         integration: &[READ],

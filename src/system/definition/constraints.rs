@@ -81,7 +81,8 @@ fn table_constraints(seen: &Seen<'_>) -> Vec<Row> {
 // ---------------------------------------------------------------------------
 
 fn key_columns_columns() -> Vec<ColumnDesc> {
-    Columns::of().ids("CONSTRAINT", true).ids("TABLE", true).id("COLUMN_NAME", true).number("ORDINAL_POSITION", true).done()
+    let columns = Columns::of().ids("CONSTRAINT", true).ids("TABLE", true).id("COLUMN_NAME", true);
+    columns.number("ORDINAL_POSITION", true).number("POSITION_IN_UNIQUE_CONSTRAINT", false).done()
 }
 
 /// The UNIQUE or PRIMARY KEY constraint of the table `fk` references whose
@@ -103,11 +104,14 @@ fn referenced<'c>(catalog: &'c dyn Catalog, fk: &ForeignKey) -> Option<(&'c Cons
 /// Each column of each UNIQUE, PRIMARY KEY and referential constraint, at
 /// its position in it, from 1; a referencing column at the position in the
 /// referenced unique constraint of the column it references \[Description
-/// 3\].
+/// 3\], which POSITION_IN_UNIQUE_CONSTRAINT shows too, null of a UNIQUE or
+/// PRIMARY KEY constraint's [ISO/IEC 9075-11:2006 draft §6.28 Description
+/// 4].
 fn key_columns(seen: &Seen<'_>) -> Vec<Row> {
     let catalog = catalog_name(seen);
     let mut rows = Vec::new();
     for (t, c) in constraints(seen) {
+        let referential = matches!(c.kind, ConstraintKind::ForeignKey(_));
         let positioned: Vec<(usize, usize)> = match &c.kind {
             ConstraintKind::Unique { columns, .. } => columns.iter().enumerate().map(|(k, &at)| (at, k)).collect(),
             ConstraintKind::ForeignKey(fk) => {
@@ -119,7 +123,9 @@ fn key_columns(seen: &Seen<'_>) -> Vec<Row> {
         };
         for (at, k) in positioned {
             let named = [ids(&catalog, &c.name), ids(&catalog, &t.name)].concat();
-            rows.push([named, vec![column(t, at), number(k.saturating_add(1))]].concat());
+            let position = number(k.saturating_add(1));
+            let unique = if referential { position.clone() } else { Value::Null };
+            rows.push([named, vec![column(t, at), position, unique]].concat());
         }
     }
     rows

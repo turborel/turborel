@@ -172,7 +172,8 @@ fn attributes_and_methods_20_3() {
     );
     let after = "IS_DERIVED_REFERENCE_ATTRIBUTE";
     assert_eq!(columns_of(&a, "ATTRIBUTES", (after, 9)), xml_columns_after(after));
-    assert_eq!(columns_of(&a, "METHOD_SPECIFICATIONS", ("AS_LOCATOR", 9)), xml_columns_after("AS_LOCATOR"));
+    let cast = "RESULT_CAST_DTD_IDENTIFIER";
+    assert_eq!(columns_of(&a, "METHOD_SPECIFICATIONS", (cast, 8)), xml_columns_after(cast));
     assert_eq!(columns_of(&a, "METHOD_SPECIFICATION_PARAMETERS", ("DTD_IDENTIFIER", 9)), xml_columns_after("DTD_IDENTIFIER"));
 }
 
@@ -218,10 +219,11 @@ fn routines_and_parameters_20_10() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §20.10, §20.11, §20.15] ROUTINES
-/// has an XML type's columns after DTD_IDENTIFIER, and the associated
-/// string type's, the XML option and the XML return mechanism last, after
-/// ISO/IEC 9075-11's NEW_SAVEPOINT_LEVEL, each once; PARAMETERS has them
-/// all last, in the draft's order.
+/// has an XML type's columns after DTD_IDENTIFIER, and, after ISO/IEC
+/// 9075-11's RESULT_CAST_DTD_IDENTIFIER, the `<result cast>`'s type's,
+/// then the associated string type's, the XML option and the XML return
+/// mechanism last, each once; PARAMETERS has them all last, in the draft's
+/// order.
 #[test]
 fn routine_columns_in_their_places_20_11() {
     let db = described();
@@ -240,8 +242,9 @@ fn routine_columns_in_their_places_20_11() {
         "XML_CHAR_DTD_ID",
         "XML_OPTION",
     ];
-    let last = [owned(&["SECURITY_TYPE", "NEW_SAVEPOINT_LEVEL"]), owned(&string_type), owned(&["XML_RETURN_MECHANISM"])].concat();
-    assert_eq!(columns_of(&a, "ROUTINES", ("SECURITY_TYPE", 15)), last);
+    let cast = xml_columns_after("RESULT_CAST_DTD_IDENTIFIER").into_iter().map(|c| c.replacen("XML_", "RESULT_CAST_XML_", 1));
+    let last = [cast.collect(), owned(&string_type), owned(&["XML_RETURN_MECHANISM"])].concat();
+    assert_eq!(columns_of(&a, "ROUTINES", ("RESULT_CAST_DTD_IDENTIFIER", 20)), last);
     let parameters = [xml_columns_after("DTD_IDENTIFIER"), owned(&string_type), owned(&["XML_PASSING_MECHANISM"])].concat();
     assert_eq!(columns_of(&a, "PARAMETERS", ("DTD_IDENTIFIER", 21)), parameters);
     let named = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS \

@@ -104,7 +104,7 @@ fn like_columns_11_3() {
     a.run("CREATE TABLE S (LIKE INFORMATION_SCHEMA.SCHEMATA)").unwrap();
     assert_eq!(
         query(&a, "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'S'"),
-        ["6"],
+        ["7"],
         "a view of the Information Schema's"
     );
     a.commit().unwrap();

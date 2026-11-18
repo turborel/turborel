@@ -2272,10 +2272,15 @@ System tables are plug-ins whose rows are made from the definitions as a
 statement runs. The Information Schema is the standard's own view
 definitions [ISO/IEC 9075:1992 §21.2] over Definition Schema tables only
 those views may read [§21.3]. That gives the standard's answers with no
-second description of the catalog to keep in step. The short name views
-[ISO/IEC 9075-11:2006 draft §5.77] are the standard's definitions too,
-each over its view, so they show what it shows. SELECT on them is
-PUBLIC's and nothing else is granted.
+second description of the catalog to keep in step. Each view has the
+columns ISO/IEC 9075-11:2006 draft Clause 5 gives it, and the views of
+usage are there too, their Definition Schema tables made from what each
+definition keeps for RESTRICT, or binding it again where it keeps
+nothing, as VIEW_COLUMN_USAGE binds a view; a column needing what the
+catalog does not keep, as a routine's timestamps, is not defined until
+the catalog keeps it. The short name views [§5.77] are the standard's
+definitions too, each over its view, so they show what it shows. SELECT
+on them is PUBLIC's and nothing else is granted.
 
 #### D38. The memory budget, and spilling
 

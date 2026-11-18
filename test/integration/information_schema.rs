@@ -59,8 +59,8 @@ fn tables_and_columns_are_described_21_2_7() {
     let own = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'INFORMATION_SCHEMA'";
     assert_eq!(
         seen(&db.session("NOBODY"), own),
-        ["118"],
-        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 7 of structured types, the 9 of roles, the 6 of triggers, the 5 of modules, the 3 of registered XML Schemas, the 38 short name views, TABLE_OPTIONS, PERIODS, INDEXES, INDEX_OPTIONS, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS, ASSERTION_TOTALS the 4 of embedding models and pipelines and the 2 of vectors"
+        ["135"],
+        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 7 of structured types, the 9 of roles, the 6 of triggers, the 5 of modules, the 10 of usage, the 3 of registered XML Schemas, the 45 short name views, TABLE_OPTIONS, PERIODS, INDEXES, INDEX_OPTIONS, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS, ASSERTION_TOTALS the 4 of embedding models and pipelines and the 2 of vectors"
     );
     assert_eq!(
         seen(&owner, "SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.SCHEMATA"),
@@ -100,7 +100,9 @@ fn tables_and_columns_are_described_21_2_7() {
             "7|USER_DEFINED_TYPE_CATALOG|CHARACTER VARYING|128",
             "8|USER_DEFINED_TYPE_SCHEMA|CHARACTER VARYING|128",
             "9|USER_DEFINED_TYPE_NAME|CHARACTER VARYING|128",
-            "10|IS_TYPED|CHARACTER VARYING|32767",
+            "10|IS_INSERTABLE_INTO|CHARACTER VARYING|32767",
+            "11|IS_TYPED|CHARACTER VARYING|32767",
+            "12|COMMIT_ACTION|CHARACTER VARYING|32767",
         ]
     );
 }

@@ -23,6 +23,7 @@ mod geometry;
 mod grouping_sets;
 mod hash;
 mod hypothetical;
+mod information;
 mod json;
 mod json_index;
 mod json_path;
