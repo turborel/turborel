@@ -114,6 +114,9 @@ pub enum SchemaStatement {
     Transform(super::TransformDefinition),
     /// An `<alter transform statement>` [ISO/IEC 9075-2:2023 §11.68].
     AlterTransform(super::AlterTransform),
+    /// \[EXTENSION\] A statement of an embedding model or a vector
+    /// pipeline (`ast/embedding.rs`).
+    Vector(Box<super::VectorStatement>),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION

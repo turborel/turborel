@@ -69,6 +69,7 @@ mod temporal;
 mod temporal_references;
 mod triggers;
 mod truncate;
+mod vector_embed;
 mod vector_indexes;
 mod view_defaults;
 mod vr;

@@ -149,7 +149,7 @@ fn chunk_text_forms_agree() {
 /// column stores.
 #[test]
 fn chunks_and_embeddings_in_sql() {
-    let (db, _) = database();
+    let db = database();
     let s = db.session("U");
     let chunks = rows(&s, "SELECT C.CHUNK_ID, C.CHUNK_OFFSET, C.CHUNK_TEXT FROM UNNEST(CHUNK_TEXT('a b c d e', 'BY WORDS MAX 2')) AS C (CHUNK_ID, CHUNK_OFFSET, CHUNK_LENGTH, CHUNK_TEXT)").unwrap();
     assert_eq!(chunks, ["1,1,a b", "2,5,c d", "3,9,e"]);

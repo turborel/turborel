@@ -33,6 +33,7 @@ mod cursor;
 mod diagnostics;
 mod drop;
 mod dynamic;
+mod embedding;
 mod expression;
 mod generated;
 mod joined;
@@ -73,6 +74,7 @@ pub use dynamic::{
     CopiedItem, CopyOptions, DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, GetDescriptor, HeaderItem,
     Scope, SetDescriptor, UsingClause,
 };
+pub use embedding::{ModelDefinition, PipelineDefinition, VectorObject, VectorStatement};
 pub use expression::{
     CaseExpression, ColumnSpecification, DatetimeFunction, ExtractField, Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue,
     ValueExpression, WhenOperand,

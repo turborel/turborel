@@ -4,7 +4,8 @@
 //! scans' read-ahead (`disk/buffer/ahead.rs`), the folding of its
 //! assertions' kept totals (`db/assertions/fold.rs`) and the sweep
 //! writing its files again in the formats its settings name
-//! (`db/rekey.rs`), run by the thread manager (`threads.rs`) as
+//! (`db/rekey.rs`) and the queue of embeddings after commit
+//! (`db/embedding/queue.rs`), run by the thread manager (`threads.rs`) as
 //! JOBS.POLICY says; and how a program runs them, sees them, and sets
 //! the policy.
 
@@ -14,6 +15,7 @@ use std::time::Duration;
 use super::Database;
 use super::assertions::folded;
 use super::checkpoint::checkpointed;
+use super::embedding::{EMBEDDING, embedded};
 use super::log_sync::log_synced;
 use super::maintenance::maintained;
 use super::rekey::rekeyed;
@@ -57,6 +59,7 @@ pub(super) struct Background {
     read_ahead: JobId,
     folds: JobId,
     rekey: JobId,
+    embedding: JobId,
     pub(super) maintenance_turn: Turn,
 }
 
@@ -71,7 +74,8 @@ impl Background {
         let read_ahead = jobs.add(READ_AHEAD, Work::Own(read_queued), None);
         let folds = jobs.add(ASSERTION_TOTALS, Work::Own(folded), None);
         let rekey = jobs.add(REKEY, Work::Own(rekeyed), Some(AGAIN));
-        Background { jobs, checkpoint, maintenance, log_sync, read_ahead, folds, rekey, maintenance_turn: Turn::default() }
+        let embedding = jobs.add(EMBEDDING, Work::Own(embedded), None);
+        Background { jobs, checkpoint, maintenance, log_sync, read_ahead, folds, rekey, embedding, maintenance_turn: Turn::default() }
     }
 }
 
@@ -184,6 +188,42 @@ impl Database {
     pub(super) fn fold_if_due(&self) {
         if self.snapshot().is_ok_and(|st| st.tx.folds_due()) {
             self.background().jobs.request(self.background().folds, self, self.job_policy());
+        }
+    }
+
+    /// What is due as the database opens: the maintenance its tables have
+    /// due, as of zones to settle (`rows/zones.rs`), and the queue of
+    /// embeddings after commit, if a column waits for it.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the database is closed.
+    pub(super) fn due_at_open(&self) -> Result<()> {
+        let st = self.snapshot()?;
+        st.note_due_maintenance();
+        self.maintain_if_due();
+        if st.queue_due() {
+            st.embedders.watch();
+            self.request_embedding();
+        }
+        Ok(())
+    }
+
+    /// What a commit that wrote leaves due: a checkpoint, a fold of kept
+    /// totals, the queue of embeddings after commit, a sync of the log.
+    pub(super) fn written(&self) {
+        self.checkpoint_if_due();
+        self.fold_if_due();
+        self.request_embedding();
+        self.sync_log_if_due();
+    }
+
+    /// Asks for the queue of embeddings after commit, if a column has been
+    /// embedded after commit or of a model's version since the database
+    /// opened (`db/embedding/queue.rs`).
+    pub(super) fn request_embedding(&self) {
+        if self.snapshot().is_ok_and(|st| st.embedders.watching()) {
+            self.background().jobs.request(self.background().embedding, self, self.job_policy());
         }
     }
 

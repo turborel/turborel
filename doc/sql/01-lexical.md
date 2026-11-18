@@ -153,8 +153,22 @@ SELECT NAME   -- the name alone
 ```
 
 A comment is a separator. It needs the newline that ends it; the client
-ends one that the end of its input cuts short. SQL-92 has no `/* */`
-comments.
+ends one that the end of its input cuts short.
+
+A bracketed comment, of SQL:2023's Feature T351, begins with `/*` and
+ends with `*/`, across lines if need be. One begun within it is nested
+and ends first, so a comment may hold one. A statement whose comment is
+not ended is refused (SQLSTATE 42000):
+
+```sql
+VALUES (1 /* one /* nested */ still the comment */ + 2);
+```
+
+A bracketed comment that begins a statement and whose text begins with
+`+` is a hint. `/*+ VECTOR_WAIT_FRESH */` asks for the vectors waiting
+for the queue after commit first (see [CREATE VECTOR
+PIPELINE](statements/create-vector-pipeline.md)). A hint not known is a
+comment alone.
 
 ## Key words
 

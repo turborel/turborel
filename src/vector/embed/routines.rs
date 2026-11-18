@@ -30,12 +30,14 @@ use crate::vector::chunk::{Chunk, Chunker, Span, Spec, quote};
 
 /// The names of EMBED.
 pub const EMBED_NAMES: [&str; 2] = ["EMBED", "VECTOR_EMBEDDING"];
+/// \[EXTENSION\] The name of EMBED_VERSION (R12.5).
+pub const EMBED_VERSION: &str = "EMBED_VERSION";
 /// The names of CHUNK_TEXT.
 pub const CHUNK_NAMES: [&str; 3] = ["CHUNK_TEXT", "VECTOR_CHUNKS", "AI_GENERATE_CHUNKS"];
 /// \[DESIGN\] The most octets of a large object a routine reads.
 pub const MOST_TEXT_BYTES: u64 = 1 << 24;
 /// The purposes EMBED's third argument names.
-const PURPOSES: [(&str, Purpose); 2] = [("QUERY", Purpose::Query), ("DOCUMENT", Purpose::Document)];
+pub(super) const PURPOSES: [(&str, Purpose); 2] = [("QUERY", Purpose::Query), ("DOCUMENT", Purpose::Document)];
 /// The fields of a chunk.
 const CHUNK_FIELDS: [&str; 4] = ["CHUNK_ID", "CHUNK_OFFSET", "CHUNK_LENGTH", "CHUNK_TEXT"];
 /// The digits of an INTEGER.
@@ -56,14 +58,43 @@ pub fn routines(models: &Arc<Embedders>) -> Vec<Box<dyn ScalarFunction>> {
     for name in CHUNK_NAMES {
         out.push(Box::new(ChunkFunction { name, models: Arc::clone(models) }));
     }
+    out.push(Box::new(VersionFunction { models: Arc::clone(models) }));
     out
 }
 
-fn data(detail: &str) -> SqlError {
+/// \[EXTENSION\] EMBED_VERSION of a model named by a value: the name and
+/// version of the plug-in it names (R12.5). Of a model of the catalog, the
+/// binder binds `BoundVersion` (`model.rs`).
+struct VersionFunction {
+    models: Arc<Embedders>,
+}
+
+impl ScalarFunction for VersionFunction {
+    fn name(&self) -> &str {
+        EMBED_VERSION
+    }
+    fn return_type(&self, args: &[DataType]) -> Result<DataType> {
+        if !(1..=2).contains(&args.len()) || !args.iter().all(character) {
+            return Err(arguments(EMBED_VERSION, "a model's name and, if any, a text"));
+        }
+        Ok(super::tag_type())
+    }
+    fn call(&self, args: &[Value]) -> Result<Value> {
+        let texts: Vec<Option<String>> = args.iter().map(text_of).collect::<Result<_>>()?;
+        let (Some(Some(name)), None | Some(Some(_))) = (texts.first(), texts.get(1)) else { return Ok(Value::Null) };
+        let model = self.models.named(name)?.ok_or_else(|| data(&format!("names no model {name}")))?;
+        Ok(Value::Char(format!("{}:{}", model.name(), model.version())))
+    }
+    fn deterministic(&self) -> bool {
+        false
+    }
+}
+
+pub(super) fn data(detail: &str) -> SqlError {
     SqlError::new(Code::Data, format!("[EXTENSION] {detail}"))
 }
 
-fn arguments(name: &str, what: &str) -> SqlError {
+pub(super) fn arguments(name: &str, what: &str) -> SqlError {
     SqlError::new(Code::SyntaxRule, format!("[EXTENSION] {name} takes {what}"))
 }
 
@@ -73,7 +104,7 @@ fn arguments(name: &str, what: &str) -> SqlError {
 ///
 /// SQLCODE -301 for a value not a character string, or a large object
 /// past `MOST_TEXT_BYTES`; SQLCODE -910 if one cannot be read.
-fn text_of(v: &Value) -> Result<Option<String>> {
+pub fn text_of(v: &Value) -> Result<Option<String>> {
     match v {
         Value::Null => Ok(None),
         Value::Char(s) => Ok(Some(s.clone())),

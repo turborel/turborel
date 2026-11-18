@@ -106,6 +106,9 @@ pub struct State {
     /// \[EXTENSION\] The metrics and quantizers of VECTOR (RULES.md D88),
     /// shared by every state.
     pub(crate) vectors: super::vectors::SharedVectors,
+    /// \[EXTENSION\] The model plug-ins registered and the models of the
+    /// catalog bound to them, shared by every state (`db/embedding.rs`).
+    pub(crate) embedders: Arc<crate::vector::embed::Embedders>,
     /// The collations there are, by name (RULES.md D60).
     pub(crate) collations: BTreeMap<String, Arc<dyn Collation>>,
     /// The clock the datetime value functions read (`clock.rs`).
@@ -184,6 +187,7 @@ impl State {
             types: TypeRegistry::builtin(),
             rankings: super::rankings::SharedRankings::default(),
             vectors: super::vectors::SharedVectors::default(),
+            embedders: Arc::new(crate::vector::embed::Embedders::built_in()),
             clock: Arc::new(crate::clock::SystemClock),
             optimizer: Optimizer::with_builtin_rules(),
             tx: Arc::new(Transactions::default()),
@@ -203,14 +207,14 @@ impl State {
             building: HashSet::new(),
         };
         st.attach_builtins(&memory);
-        st.declare_builtin_settings();
+        st.declare_builtins();
         st
     }
 
-    /// Declares the built-in engines' and rules' settings, of short names
-    /// none declared yet, so none is refused; a rule without one would be
-    /// on, an engine without one at its default.
-    fn declare_builtin_settings(&mut self) {
+    /// The built-in engines' and rules' settings declared. Of short names
+    /// none declared yet, they cannot be refused; a rule without one would
+    /// be on, an engine without one at its default.
+    fn declare_builtins(&mut self) {
         let engines: Vec<Arc<dyn StorageEngine>> = self.engines.values().cloned().collect();
         for engine in engines {
             let _ = self.declare_plugin(engine.name(), engine.configurable());
@@ -223,6 +227,10 @@ impl State {
     /// sized by STORAGE.POOL_BYTES.
     fn attach_builtins(&mut self, memory: &Arc<MemoryBudget>) {
         let st = self;
+        // EMBED, CHUNK_TEXT and EMBED_VERSION of the models registered, of no name taken yet.
+        for f in crate::vector::embed::routines(&st.embedders) {
+            let _ = st.functions.add_scalar(Arc::from(f));
+        }
         st.pages.use_budget(Arc::clone(memory));
         st.pages.use_reader(Arc::clone(&st.ahead));
         let engine = RowStore::sharing(TableOptions::default(), Arc::clone(&st.pages));

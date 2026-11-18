@@ -97,6 +97,8 @@ pub enum Extension {
     Metric,
     /// \[EXTENSION\] A quantizer of VECTOR (`Database::register_quantizer`).
     Quantizer,
+    /// \[EXTENSION\] A model of embeddings (`Database::register_embedder`).
+    Embedder,
 }
 
 /// \[DESIGN\] An event of the database's.

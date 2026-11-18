@@ -35,6 +35,7 @@
 //! binding it.
 
 mod definition;
+mod embedding;
 mod files;
 mod formats;
 mod fulltext;
@@ -151,6 +152,7 @@ pub(crate) fn builtin() -> SystemTables {
     ];
     tables.extend(definition::tables());
     tables.extend(fulltext::tables());
+    tables.extend(embedding::tables());
     tables.into_iter().map(|t| (name_of(&*t), t)).collect()
 }
 

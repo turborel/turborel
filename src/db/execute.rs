@@ -61,6 +61,7 @@ impl Session {
     /// statement as its DYNAMIC_FUNCTION [ISO/IEC 9075:1992 §18.1 GR1c,
     /// GR1d].
     pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: Option<(Command, &Plans)>) -> Result<Completion> {
+        self.wait_if_hinted(sql)?;
         let mut call = self.enter()?;
         call.timed = slow::Timed::of(call.state(), || sql, &self.auth());
         let keeping = prepared.map(|(_, plans)| self.keeping(call.state(), plans));
@@ -527,6 +528,7 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::AlterTransform(_)
         | SchemaStatement::Routine(_)
         | SchemaStatement::Module(_)
+        | SchemaStatement::Vector(_)
         | SchemaStatement::Role(_) => None,
     }
 }

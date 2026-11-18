@@ -18,9 +18,12 @@
 //! of the feature's UTF-8 with a fixed seed, and sums run in token order.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use super::{Embedder, ModelShape};
-use crate::error::Result;
+use super::bind::DIMENSIONS;
+use super::{Embedder, ModelShape, configure_shape, number_option};
+use crate::catalog::ModelOption;
+use crate::error::{Code, Result, SqlError};
 use crate::hash::murmur::murmur3_x64_128;
 use crate::vector::chunk::Span;
 use crate::vector::{Element, Layout, Vector};
@@ -39,6 +42,8 @@ const SEED: u32 = 0x454d_4244;
 const JOINER: u8 = 0x1f;
 /// The most tokens an n-gram has.
 pub const MOST_NGRAMS: usize = 4;
+/// The option of the most tokens an n-gram has.
+pub const NGRAMS: &str = "NGRAMS";
 
 /// \[EXTENSION\] A feature-hashing model.
 #[derive(Debug, Clone)]
@@ -148,6 +153,27 @@ impl Embedder for HashedEmbedder {
     }
     fn tokens(&self, text: &str) -> Vec<Span> {
         token_spans(&text.chars().collect::<Vec<_>>())
+    }
+    /// DIMENSIONS sets its dimensions and NGRAMS the most tokens of its
+    /// features, 1 to `MOST_NGRAMS`; FORMAT and LAYOUT agree with it.
+    fn configured(&self, options: &[ModelOption]) -> Result<Option<Arc<dyn Embedder>>> {
+        let mut made = self.clone();
+        for o in options {
+            match o.name.as_str() {
+                DIMENSIONS => made.shape.dims = number_option(o)?.max(1),
+                NGRAMS => {
+                    let n = usize::try_from(number_option(o)?).unwrap_or(0);
+                    if !(1..=MOST_NGRAMS).contains(&n) {
+                        return Err(SqlError::new(Code::SyntaxRule, format!("[EXTENSION] {NGRAMS} is 1 to {MOST_NGRAMS}, not {n}")));
+                    }
+                    made.ngrams = n;
+                }
+                _ => {
+                    configure_shape(made.shape, std::slice::from_ref(o))?;
+                }
+            }
+        }
+        Ok(Some(Arc::new(made)))
     }
     fn embed(&self, texts: &[&str]) -> Result<Vec<Vector>> {
         texts.iter().map(|text| self.vector(text)).collect()
