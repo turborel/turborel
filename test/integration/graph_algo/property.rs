@@ -28,8 +28,8 @@ fn ranked_accounts(s: &Session) -> Vec<String> {
 }
 
 /// Verifies: [EXTENSION] [GS §18] [GS §23.1] PAGERANK(BANK) INTO PROPERTY
-/// PR writes each vertex's rank to a column PR added to each of ACCOUNT,
-/// PLACE and PHONE, of DOUBLE PRECISION, its rows the vertices the
+/// PR runs PAGERANK once, one row of GRAPH_ALGO_RUNS, and writes each
+/// vertex's rank to a column PR added to each of ACCOUNT, PLACE and PHONE, of DOUBLE PRECISION, its rows the vertices the
 /// identities name, so the ranks sum to 1 and none is null; written
 /// again, replaced; OF names one vertex table alone, a component of
 /// VARCHAR identities; of the statement's transaction, so ROLLBACK undoes
@@ -41,8 +41,11 @@ fn a_graph_property_is_written_to_each_vertex_table() {
     banked(&db);
     let s = db.session("B");
     s.run("GRAPH_ALGO.PAGERANK(BANK) INTO PROPERTY PR").unwrap();
+    let runs = "SELECT COUNT(*), MAX(ROWS_RETURNED) FROM INFORMATION_SCHEMA.GRAPH_ALGO_RUNS WHERE ALGORITHM = 'PAGERANK'";
+    assert_eq!(query(&s, runs), ["1,10"], "one run for the three vertex tables");
     assert_eq!(summed(&s, "PR"), ["1000,0"]);
     assert_eq!(ranked_accounts(&s), ["6"]);
+    assert_eq!(query(&s, runs), ["2,10"], "a query after runs again");
     let types = "SELECT TABLE_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE COLUMN_NAME = 'PR' ORDER BY 1";
     assert_eq!(query(&s, types), ["ACCOUNT,DOUBLE PRECISION", "PHONE,DOUBLE PRECISION", "PLACE,DOUBLE PRECISION"]);
     s.run(&format!("GRAPH_ALGO.BFS_LEVELS(BANK, {}) INTO PROPERTY HOPS", identity("ACCOUNT", "6"))).unwrap();

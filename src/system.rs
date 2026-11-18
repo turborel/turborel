@@ -48,7 +48,7 @@ mod totals;
 mod users;
 mod vectors;
 
-pub use graph_runs::{GraphRun, GraphRuns, Status};
+pub use graph_runs::{GraphRun, GraphRuns, Held, Status};
 
 use std::collections::HashMap;
 use std::fmt;

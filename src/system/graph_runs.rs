@@ -5,15 +5,22 @@
 //! threads and how it ended. The log is the database's, in memory, of the
 //! latest `KEPT` runs: the database's owner sees them all, any other user
 //! their own.
+//!
+//! It holds too the result of a run a statement reads more than once: an
+//! INTO PROPERTY of a property graph, whose MERGE of each vertex table
+//! reads one invocation. While the statement holds its transaction's
+//! place (`GraphRuns::hold`), the first run's rows are kept and the others
+//! read them, so the algorithm runs once and is noted once.
 
-use std::collections::VecDeque;
-use std::sync::Mutex;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use super::{Seen, SystemTable, identifier, text, text_column};
 use crate::catalog::ColumnDesc;
 use crate::error::Result;
 use crate::storage::Row;
+use crate::txn::TxId;
 use crate::value::datetime::Moment;
 use crate::value::datetime::utc_of_unix;
 use crate::value::{DataType, Datetime, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
@@ -87,13 +94,32 @@ impl GraphRun {
 #[derive(Debug, Default)]
 pub struct GraphRuns {
     log: Mutex<(u64, VecDeque<GraphRun>)>,
+    /// Of each transaction whose statement holds results, the invocation
+    /// held and its rows, once run.
+    held: Mutex<HashMap<TxId, Option<HeldRows>>>,
+}
+
+/// An invocation held, as its text, and the rows it gave.
+type HeldRows = (String, Arc<Vec<Row>>);
+
+/// \[EXTENSION\] A statement's hold of the results of transaction `tx`'s
+/// runs: given up as it drops.
+pub struct Held {
+    runs: Arc<GraphRuns>,
+    tx: TxId,
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.runs.held.lock().unwrap_or_else(PoisonError::into_inner).remove(&self.tx);
+    }
 }
 
 impl GraphRuns {
     /// Notes `run`, numbered after the last, the oldest dropped past
     /// `KEPT`.
     pub fn note(&self, mut run: GraphRun) {
-        let mut log = self.log.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut log = self.log.lock().unwrap_or_else(PoisonError::into_inner);
         log.0 = log.0.saturating_add(1);
         run.id = log.0;
         if log.1.len() >= KEPT {
@@ -102,9 +128,31 @@ impl GraphRuns {
         log.1.push_back(run);
     }
 
+    /// A hold of the results of `tx`'s runs until it drops: the first
+    /// run's rows kept, each run after of the same invocation given them.
+    pub fn hold(self: &Arc<Self>, tx: TxId) -> Held {
+        self.held.lock().unwrap_or_else(PoisonError::into_inner).insert(tx, None);
+        Held { runs: Arc::clone(self), tx }
+    }
+
+    /// The rows held of `tx`'s invocation `call`, if they are.
+    pub fn held(&self, tx: TxId, call: &str) -> Option<Arc<Vec<Row>>> {
+        let held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        held.get(&tx).and_then(Option::as_ref).filter(|(c, _)| c == call).map(|(_, rows)| Arc::clone(rows))
+    }
+
+    /// Keeps `rows`, of `tx`'s invocation `call`, if a hold of `tx`'s has
+    /// none yet.
+    pub fn keep(&self, tx: TxId, call: &str, rows: &[Row]) {
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(slot @ None) = held.get_mut(&tx) {
+            *slot = Some((call.to_owned(), Arc::new(rows.to_vec())));
+        }
+    }
+
     /// The runs kept, oldest first.
     pub fn runs(&self) -> Vec<GraphRun> {
-        self.log.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1.iter().cloned().collect()
+        self.log.lock().unwrap_or_else(PoisonError::into_inner).1.iter().cloned().collect()
     }
 }
 

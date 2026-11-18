@@ -77,6 +77,11 @@ impl GraphCall {
     /// The run's (`library::run`); SQLCODE -301 (GRF-0034) if COST names
     /// no column of the edges.
     pub(crate) fn run(&self, values: Vec<Value>, inputs: &[Vec<Row>], (db, tx): (&Arc<State>, TxId)) -> Result<Vec<Row>> {
+        // An invocation its statement reads again, of the rows it gave.
+        let call = format!("{}({}) {:?}", self.algorithm.name(), self.shown(&values), self.edge_columns);
+        if let Some(rows) = db.graph_runs.held(tx, &call) {
+            return Ok(rows.to_vec());
+        }
         let started = Instant::now();
         let mut noted = GraphRun::new(self.algorithm.name(), self.shown(&values), &self.user, db.clock.now());
         let threads = db.settings.count(GRAPH_THREADS).max(1);
@@ -86,6 +91,7 @@ impl GraphCall {
         let rows = match found {
             Ok((rows, sizes)) => {
                 (noted.vertices, noted.edges, noted.rows) = (sizes.vertices, sizes.edges, rows.len());
+                db.graph_runs.keep(tx, &call, &rows);
                 Ok(rows)
             }
             Err(e) => {

@@ -10,7 +10,7 @@
 use super::super::{Mutation, Package};
 
 /// The mutations of the graph algorithm library, in the order they run.
-pub const GRAPH_ALGO: [Mutation; 19] = [
+pub const GRAPH_ALGO: [Mutation; 20] = [
     Mutation {
         name: "graph-algo-damping-past-one",
         package: Package::Core,
@@ -198,6 +198,16 @@ pub const GRAPH_ALGO: [Mutation; 19] = [
         file: "src/db/graphs/property/vertices.rs",
         original: "is_none_or(|t| *t == e.table)",
         replacement: "is_none_or(|t| *t != e.table)",
+        integration: &["graph_algo::property::a_graph_property_is_written_to_each_vertex_table"],
+        unit: &[],
+    },
+    Mutation {
+        name: "graph-algo-property-runs-per-table",
+        package: Package::Core,
+        breaks: "INTO PROPERTY of a graph holds no result, so the algorithm runs once for each vertex table",
+        file: "src/db/graphs/property/vertices.rs",
+        original: "let _held = cx.st.graph_runs.hold(cx.tx.id);",
+        replacement: "let _held = ();",
         integration: &["graph_algo::property::a_graph_property_is_written_to_each_vertex_table"],
         unit: &[],
     },

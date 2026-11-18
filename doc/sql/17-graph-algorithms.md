@@ -283,7 +283,8 @@ write alone, and no key column is written. Each table without the
 column has it added, of DOUBLE PRECISION, BIGINT, or the type of an
 identity: VARCHAR(8192), or of a SYS_GRAPH a `$NODE_ID`'s. Each vertex
 table is written by a MERGE of its own, so the statement needs UPDATE
-of the column on each, and the algorithm runs once for each.
+of the column on each. The algorithm runs once, and each MERGE reads
+the rows that run gave.
 
 ```sql
 GRAPH_ALGO.BFS_LEVELS(TABLE (F), 1) INTO PROPERTY HOPS OF P;
@@ -348,8 +349,7 @@ SELECT RUN_ID, ALGORITHM, ARGUMENTS, VERTICES, EDGES, ROWS_RETURNED, STATUS
                     7 | PAGERANK                                                     |                                                              |                    3 |                    3 |                    3 | DONE
                     8 | BFS_LEVELS                                                   | START => 1                                                   |                    4 |                    5 |                    4 | DONE
                     9 | PAGERANK                                                     |                                                              |                    7 |                    8 |                    7 | DONE
-                   10 | PAGERANK                                                     |                                                              |                    7 |                    8 |                    7 | DONE
-(10 rows)
+(9 rows)
 ```
 
 ## Errors

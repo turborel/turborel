@@ -11,7 +11,8 @@
 //! columns' types, and sets the column of the row of that key. Of a
 //! SYS_GRAPH a vertex is its `$NODE_ID`, which the MERGE matches as it is.
 //! The column is added first if the table has none of its name, of the
-//! result's value's type. Each MERGE checks SELECT and UPDATE as any
+//! result's value's type. The statement holds its runs' results
+//! (`GraphRuns::hold`), so the algorithm runs once for every table. Each MERGE checks SELECT and UPDATE as any
 //! does, and all are of the statement's transaction.
 
 use crate::ast::{IntoProperty, SqlStatement};
@@ -55,6 +56,8 @@ impl Session {
             return Err(rule(format!("[EXTENSION] INTO PROPERTY: {t} is no vertex table of graph {}", g.name)));
         }
         let native = g.name.ident == SYS_GRAPH;
+        // The algorithm runs once, its rows read by each table's MERGE.
+        let _held = cx.st.graph_runs.hold(cx.tx.id);
         let mut st = std::sync::Arc::clone(cx.st);
         let mut completion = Completion::NoData;
         for v in vertices {
