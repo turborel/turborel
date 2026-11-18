@@ -235,6 +235,7 @@ impl State {
                 PrivilegeObject::Sequence => self.grant_sequence_usage(owner, &s.name, p),
                 PrivilegeObject::Model => self.grant_model_execute(owner, &s.name, p),
                 PrivilegeObject::XmlSchema => self.grant_xml_schema_usage(owner, &s.name, p),
+                PrivilegeObject::XQueryModule => self.grant_xquery_module_usage(owner, &s.name, p),
                 // Granted once the schema's modules are made.
                 PrivilegeObject::Module => continue,
                 // Granted once the schema's routines are made.

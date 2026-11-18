@@ -51,6 +51,7 @@ GRANT: give privileges, or roles
     | SPECIFIC <routine type> <specific name>
     | <routine type> <routine name> [ ( [ <data type> [ { , <data type> }... ] ] ) ]
     | XML SCHEMA <registered XML Schema name>
+    | XQUERY MODULE <XQuery module name>
 
 <routine type> ::= ROUTINE | FUNCTION | PROCEDURE
 
@@ -63,7 +64,7 @@ GRANT gives each grantee privileges on a table, a view, a domain, a
 collation CREATE COLLATION made, a sequence generator, a user-defined
 type, a function a distinct type's definition made, a method, a function or procedure
 CREATE FUNCTION or CREATE PROCEDURE made, a module CREATE MODULE
-made, or a registered XML Schema:
+made, a registered XML Schema, or a registered XQuery module:
 
 | Privilege | Lets its holder |
 |---|---|
@@ -75,7 +76,7 @@ made, or a registered XML Schema:
 | SELECT (methods) | invoke those methods of the typed table's type through a reference whose scope is the table, `r -> m()` |
 | UNDER | define a subtype of the type, or a subtable or subview of the typed table or view |
 | TRIGGER | define a trigger on the table, in a schema of its own (see [CREATE TRIGGER](create-trigger.md)) |
-| USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE; use the sequence generator: take its values by NEXT VALUE FOR; use the distinct type: name it as a column's type or a CAST's; use the registered XML Schema: name it in a type of XMLSCHEMA, XMLVALIDATE or IS VALID, validate by it without naming it, or import it in CREATE XML SCHEMA |
+| USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE; use the sequence generator: take its values by NEXT VALUE FOR; use the distinct type: name it as a column's type or a CAST's; use the registered XML Schema: name it in a type of XMLSCHEMA, XMLVALIDATE or IS VALID, validate by it without naming it, or import it in CREATE XML SCHEMA; use the registered XQuery module: import it in a query or in CREATE XQUERY MODULE |
 | EXECUTE | invoke the function, by name or by a CAST to or from its distinct type; run the procedure by CALL; invoke the method; invoke each routine of the module |
 
 SELECT WITH HIERARCHY OPTION on a typed table is SELECT on each of its
@@ -141,8 +142,9 @@ MODULE_PRIVILEGES show the privileges.
 
 1. The object exists. A table named without a schema is of the
    session's default schema.
-2. Of a domain, a collation, a sequence generator, a type or a
-   registered XML Schema, USAGE alone is granted, and of a routine or a
+2. Of a domain, a collation, a sequence generator, a type, a
+   registered XML Schema or a registered XQuery module, USAGE alone is
+   granted, and of a routine or a
    module EXECUTE alone. Neither is granted of a table. No privilege is granted of a module's routine.
 3. A routine's name designates exactly one routine of its routine type,
    counting the functions of distinct types. A name alone of overloads
@@ -300,7 +302,8 @@ SQL-92's `<SQL schema statement>` [§20.1]. Of a collation or a sequence
 generator, ISO/IEC 9075-2:2023 §12.2 and §12.3. Of a registered XML
 Schema, ISO/IEC 9075-14 leaves how USAGE is granted to the
 implementation [§4.7.1], and XML SCHEMA is turborel's, granted as on a
-sequence generator. GRANT of roles is
+sequence generator; so is XQUERY MODULE, of the XQuery modules turborel
+registers. GRANT of roles is
 ISO/IEC 9075-2:2023 §12.5 (Feature T331), and GRANTED BY §12.8 (T332).
 
 ## SEE ALSO

@@ -53,7 +53,7 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::{DropBehavior, DropObject, SchemaStatement, SqlStatement, TableName, XQueryModuleDefinition};
+    use crate::ast::{DropBehavior, DropObject, PrivilegeObject, SchemaStatement, SqlStatement, TableName, XQueryModuleDefinition};
     use crate::error::Result;
     use crate::parser::Parser;
 
@@ -82,8 +82,9 @@ mod tests {
     /// MODULE reads a `<schema qualified name>`, LOCATION and its
     /// `<character string literal>` if written, and AS a `<character
     /// string literal>`, of quoted parts joined; DROP XQUERY MODULE its
-    /// name and a `<drop behavior>`, which it must have. A table named
-    /// XQUERY is still a table, as XQUERY is no key word.
+    /// name and a `<drop behavior>`, which it must have; GRANT reads
+    /// XQUERY MODULE as an object. A table named XQUERY is still a table,
+    /// as XQUERY is no key word.
     #[test]
     fn the_statements_of_registered_modules_parse() {
         let m =
@@ -98,6 +99,11 @@ mod tests {
         assert_eq!((name(&d), behavior), ((Some("A"), "M"), DropBehavior::Restrict));
         assert!(parsed("DROP XQUERY MODULE M").is_err(), "a <drop behavior> is required");
         assert!(parsed("CREATE XQUERY MODULE M AS 1").is_err(), "AS takes a <character string literal>");
+        let Ok(SqlStatement::Schema { statement: SchemaStatement::Grant(g), .. }) = parsed("GRANT USAGE ON XQUERY MODULE A.M TO B") else {
+            panic!("no grant")
+        };
+        assert_eq!((g.object, name(&g.table)), (PrivilegeObject::XQueryModule, (Some("A"), "M")));
+        assert!(matches!(parsed("GRANT SELECT ON XQUERY TO B"), Ok(SqlStatement::Schema { statement: SchemaStatement::Grant(_), .. })));
         assert!(matches!(parsed("CREATE TABLE XQUERY (A INT)"), Ok(SqlStatement::Schema { statement: SchemaStatement::Table(_), .. })));
         assert!(matches!(parsed("DROP TABLE XQUERY RESTRICT"), Ok(SqlStatement::Drop { object: DropObject::Table(_), .. })));
     }

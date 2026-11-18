@@ -4406,6 +4406,21 @@ dropped with CASCADE, or abandoned by a REVOKE, takes the modules that
 imported it the same way; DROP SCHEMA CASCADE drops the schema's
 modules.
 
+USAGE on a registered XQuery module is granted and revoked by GRANT and
+REVOKE USAGE ON XQUERY MODULE, as on a registered XML Schema, the grants
+kept and revoked by the same functions (`db/usage/xml_schemas.rs`); its
+schema's owner holds it with grant option. `catalog::xquery_modules::
+may_use` is the one check of it, of the modules a query's main module
+may import and of those a module being registered may. A library module
+imports what it imported as it was registered, so its importer needs
+USAGE on it alone, as a routine's invoker needs EXECUTE on the routine
+alone. REVOKE abandons, of each schema whose owner it leaves without
+USAGE, the modules that imported it (`State::xquery_module_dependents`),
+dropped with CASCADE, RESTRICT refused with 2B000. USAGE_PRIVILEGES shows
+each grant, of OBJECT_TYPE XQUERY MODULE, an extension of §21.4's list.
+No view of registered XQuery modules is added: Part 14 defines none, and
+USAGE_PRIVILEGES already names each module a user may import.
+
 Part 14 leaves how an XML Schema is registered to the implementation
 [ISO/IEC 9075-14:2006 draft §4.2.6]. These statements were decided, an
 extension in the standard's notation:

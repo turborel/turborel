@@ -24,7 +24,7 @@ use super::usage_alone;
 use crate::ast::{DropBehavior, PrivilegeDefinition, RevokeStatement};
 use crate::binder::qualify;
 use crate::catalog::xml_schemas::permanent;
-use crate::catalog::{QualifiedName, UsageDesc, XmlSchemaDesc, owner_of, sole};
+use crate::catalog::{Catalog, QualifiedName, UsageDesc, XmlSchemaDesc, owner_of, sole, usage_held};
 use crate::error::{Code, Result, SqlError, SqlState};
 
 /// What a GRANT or REVOKE names.
@@ -37,7 +37,7 @@ enum Named {
 
 /// A warning `state`, as a GRANT or REVOKE that did less than it named
 /// completes.
-fn warned(state: SqlState) -> Defined {
+pub(super) fn warned(state: SqlState) -> Defined {
     Defined { completion: Completion::Warning(state), ..Defined::default() }
 }
 
@@ -87,39 +87,9 @@ impl State {
         if !grantable {
             return Ok(warned(SqlState::PRIVILEGE_NOT_GRANTED));
         }
-        for grantee in &p.grantees {
-            match desc.usage.iter_mut().find(|u| u.grantor == auth && u.grantee == *grantee) {
-                Some(u) => u.grantable |= p.grant_option,
-                None => desc.usage.push(UsageDesc { grantor: auth.to_owned(), grantee: grantee.clone(), grantable: p.grant_option }),
-            }
-        }
+        granted(&mut desc.usage, auth, p);
         self.put_xml_schema_usage(desc);
         Ok(Defined::default())
-    }
-
-    /// The grants of `desc`, its schema's owner `owner`, as REVOKE `r` by
-    /// `auth` leaves them: those `auth` made those it names, or their grant
-    /// option alone, gone, then each left with no grantor holding it
-    /// grantably, abandoned [ISO/IEC 9075-2:2023 §12.7 GR9]. Whether a
-    /// grant not named went, and whether one named was not made \[GR12ai\].
-    fn usage_revoked(&self, (desc, owner): (&mut XmlSchemaDesc, &str), auth: &str, r: &RevokeStatement) -> (bool, bool) {
-        let named = |u: &UsageDesc| u.grantor == auth && r.grantees.contains(&u.grantee);
-        let granted = |grantee: &Option<String>| desc.usage.iter().any(|u| u.grantor == auth && u.grantee == *grantee);
-        let not_revoked = !r.grantees.iter().all(granted);
-        let before = desc.usage.clone();
-        if r.grant_option_for {
-            desc.usage.iter_mut().filter(|u| named(u)).for_each(|u| u.grantable = false);
-        } else {
-            desc.usage.retain(|u| !named(u));
-        }
-        loop {
-            let held = desc.clone();
-            desc.usage.retain(|u| held.usage_of(sole(&*self.catalog, &u.grantor), owner).1);
-            if desc.usage.len() == held.usage.len() {
-                break;
-            }
-        }
-        (before.iter().any(|u| !named(u) && !desc.usage.contains(u)), not_revoked)
     }
 
     /// \[EXTENSION\] [ISO/IEC 9075-2:2023 §12.7] REVOKE USAGE ON XML
@@ -148,7 +118,7 @@ impl State {
         let Named::Held(mut desc, owner) = self.xml_schema_named(&qn)? else {
             return Ok(warned(SqlState::PRIVILEGE_NOT_REVOKED));
         };
-        let (lost, not_revoked) = self.usage_revoked((&mut desc, &owner), auth, r);
+        let (lost, not_revoked) = usage_revoked(&*self.catalog, (&mut desc.usage, &owner), auth, r);
         let held = &*self.catalog;
         let loses = |s: &str| !desc.usage_of(sole(held, owner_of(held, s)), &owner).0;
         let dependents = self.xml_schema_dependents(&qn, &loses);
@@ -165,6 +135,50 @@ impl State {
         }
         Ok(defined)
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §12.2 GR4] `usage`, the grants of USAGE on a
+/// registered XML Schema or XQuery module, with GRANT `p` by `auth`: each
+/// grantee's grant by `auth` added, or made grantable if `p` grants the
+/// grant option.
+pub(super) fn granted(usage: &mut Vec<UsageDesc>, auth: &str, p: &PrivilegeDefinition) {
+    for grantee in &p.grantees {
+        match usage.iter_mut().find(|u| u.grantor == auth && u.grantee == *grantee) {
+            Some(u) => u.grantable |= p.grant_option,
+            None => usage.push(UsageDesc { grantor: auth.to_owned(), grantee: grantee.clone(), grantable: p.grant_option }),
+        }
+    }
+}
+
+/// `usage`, the grants of USAGE on a registered XML Schema or XQuery
+/// module of `catalog`, its schema's owner `owner`, as REVOKE `r` by
+/// `auth` leaves them: those `auth` made those it names, or their grant
+/// option alone, gone, then each left with no grantor holding it
+/// grantably, abandoned [ISO/IEC 9075-2:2023 §12.7 GR9]. Whether a grant
+/// not named went, and whether one named was not made \[GR12ai\].
+pub(super) fn usage_revoked(
+    catalog: &dyn Catalog,
+    (usage, owner): (&mut Vec<UsageDesc>, &str),
+    auth: &str,
+    r: &RevokeStatement,
+) -> (bool, bool) {
+    let named = |u: &UsageDesc| u.grantor == auth && r.grantees.contains(&u.grantee);
+    let made = |grantee: &Option<String>| usage.iter().any(|u| u.grantor == auth && u.grantee == *grantee);
+    let not_revoked = !r.grantees.iter().all(made);
+    let before = usage.clone();
+    if r.grant_option_for {
+        usage.iter_mut().filter(|u| named(u)).for_each(|u| u.grantable = false);
+    } else {
+        usage.retain(|u| !named(u));
+    }
+    loop {
+        let held = usage.clone();
+        usage.retain(|u| usage_held(&held, sole(catalog, &u.grantor), owner).1);
+        if usage.len() == held.len() {
+            break;
+        }
+    }
+    (before.iter().any(|u| !named(u) && !usage.contains(u)), not_revoked)
 }
 
 /// [ISO/IEC 9075-2:2023 §12.7 GR12q] That REVOKE USAGE on registered XML

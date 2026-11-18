@@ -407,6 +407,7 @@ pub(in crate::db) fn of_schema_routine(s: &Schema, p: &PrivilegeDefinition) -> b
         | PrivilegeObject::Module
         | PrivilegeObject::Model
         | PrivilegeObject::XmlSchema
+        | PrivilegeObject::XQueryModule
         | PrivilegeObject::Type => false,
     };
     // [ISO/IEC 9075-2:2023 §11.1] of a method of the schema, once it has

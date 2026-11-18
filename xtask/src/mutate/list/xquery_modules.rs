@@ -2,14 +2,14 @@
 //! finds, each module's own static context, a module analysed once into a
 //! query, the depth imports nest to, the static errors of library
 //! modules, the catalog's, and registered XQuery modules: their names,
-//! the modules they may import, and what depends on them (RULES.md
-//! R-TEST-9, D106).
+//! the modules they may import, what depends on them, and USAGE on
+//! them (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of library modules and module imports broken alone, and
 /// the tests that fail.
-pub const XQUERY_MODULES: [Mutation; 16] = [
+pub const XQUERY_MODULES: [Mutation; 19] = [
     Mutation {
         name: "xquery-module-target-namespace",
         package: Package::Core,
@@ -171,6 +171,39 @@ pub const XQUERY_MODULES: [Mutation; 16] = [
         original: "        names.extend(self.schema_xquery_modules(auth));",
         replacement: "",
         integration: &["xquery_modules::modules_depend_on_those_they_import"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-usage-granted",
+        package: Package::Core,
+        breaks: "GRANT USAGE ON XQUERY MODULE grants nothing",
+        file: "src/db/usage/xquery_modules.rs",
+        original: "        granted(&mut desc.usage, auth, p);",
+        replacement: "",
+        integration: &[
+            "xquery_modules::usage_on_modules_is_granted_12_2",
+            "xquery_modules::revoking_usage_abandons_what_imported_a_module_12_7",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-revoke-abandons",
+        package: Package::Core,
+        breaks: "REVOKE USAGE ON XQUERY MODULE abandons nothing that imported it",
+        file: "src/db/usage/xquery_modules.rs",
+        original: "self.xquery_module_dependents(std::slice::from_ref(&qn), &loses);",
+        replacement: "self.xquery_module_dependents(std::slice::from_ref(&qn), &|_| false);",
+        integration: &["xquery_modules::revoking_usage_abandons_what_imported_a_module_12_7"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-usage-privileges",
+        package: Package::Core,
+        breaks: "USAGE_PRIVILEGES shows no USAGE on a registered XQuery module",
+        file: "src/system/definition/privileges.rs",
+        original: "    rows.extend(xquery_module_usage(seen));",
+        replacement: "",
+        integration: &["xquery_modules::usage_on_modules_is_granted_12_2"],
         unit: &[],
     },
 ];

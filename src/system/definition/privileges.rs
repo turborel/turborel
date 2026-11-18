@@ -202,7 +202,7 @@ fn usage_privileges_columns() -> Vec<ColumnDesc> {
 /// owner's [ISO/IEC 9075-2:2023 §11.43 GR2], and each granted; and on each
 /// sequence generator, its owner's, grantable [§11.72 GR2], and each
 /// granted; and on each registered XML Schema
-/// (`definition/xml_schemas.rs`).
+/// (`definition/xml_schemas.rs`) and registered XQuery module.
 ///
 /// # Errors
 ///
@@ -242,5 +242,26 @@ fn usage_privileges(seen: &Seen<'_>) -> Result<Vec<Row>> {
         rows.extend(d.usage.iter().map(|u| row(&u.grantor, u.grantee.as_deref().unwrap_or(PUBLIC), u.grantable)));
     }
     rows.extend(super::xml_schemas::usage(seen));
+    rows.extend(xquery_module_usage(seen));
     Ok(rows)
+}
+
+/// \[EXTENSION\] The OBJECT_TYPE of USAGE on a registered XQuery module
+/// (RULES.md D106), the words that name one in GRANT.
+const XQUERY_MODULE_OBJECT: &str = "XQUERY MODULE";
+
+/// \[EXTENSION\] The rows of USAGE_PRIVILEGES of registered XQuery
+/// modules: on each, its schema's owner's, of "_SYSTEM", grantable, and
+/// each granted, as of a registered XML Schema.
+fn xquery_module_usage(seen: &Seen<'_>) -> Vec<Row> {
+    let catalog = catalog_name(seen);
+    let row = |name: &QualifiedName, (grantor, grantee): (&str, &str), grantable: bool| -> Row {
+        [vec![text(grantor), text(grantee)], ids(&catalog, name).to_vec(), vec![text(XQUERY_MODULE_OBJECT), yes(grantable)]].concat()
+    };
+    let mut rows = Vec::new();
+    for m in seen.state.catalog.xquery_modules() {
+        rows.push(row(&m.name, (SYSTEM_GRANTOR, owner_of(&*seen.state.catalog, &m.name.auth)), true));
+        rows.extend(m.usage.iter().map(|u| row(&m.name, (&u.grantor, u.grantee.as_deref().unwrap_or(PUBLIC)), u.grantable)));
+    }
+    rows
 }

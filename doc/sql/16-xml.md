@@ -1683,8 +1683,9 @@ modules it imports. Each module is analysed in its own static context: a
 module sees none of the namespaces the statement declares, and its
 functions keep its own setters, such as its construction mode. A library
 module imports the modules it imported as it was registered, whoever
-runs the query. The modules a user may use are those of its own
-schemas.
+runs the query, so a user needs USAGE alone on the modules its query
+imports. The modules a user may use are those of its own schemas and
+those it holds USAGE on ([GRANT](statements/grant.md)).
 
 | Code | When |
 |---|---|

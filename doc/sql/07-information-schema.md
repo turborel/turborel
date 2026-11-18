@@ -48,7 +48,7 @@ ISO/IEC 9075-11 adds, described below:
 | ASSERTIONS | assertion: whether deferrable |
 | TABLE_PRIVILEGES | privilege on a table |
 | COLUMN_PRIVILEGES | privilege on a column |
-| USAGE_PRIVILEGES | USAGE on a domain, a character set, a collation, a sequence generator, its OBJECT_TYPE SEQUENCE, or a registered XML Schema, its OBJECT_TYPE XML SCHEMA |
+| USAGE_PRIVILEGES | USAGE on a domain, a character set, a collation, a sequence generator, its OBJECT_TYPE SEQUENCE, a registered XML Schema, its OBJECT_TYPE XML SCHEMA, or a registered XQuery module, its OBJECT_TYPE XQUERY MODULE |
 | VIEW_TABLE_USAGE | table a view reads |
 | VIEW_COLUMN_USAGE | column a view reads |
 | CONSTRAINT_TABLE_USAGE | table a constraint refers to |

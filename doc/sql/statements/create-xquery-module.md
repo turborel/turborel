@@ -40,7 +40,7 @@ own: none of the namespaces a statement declares, its own setters,
 namespaces and imports. Its schema imports import among the registered
 XML Schemas, and its module imports among the registered XQuery modules,
 the owner of its schema may use, those of its own schemas and those it
-holds USAGE on. Those it imported are kept: it depends on them, and
+holds USAGE on ([GRANT](grant.md)). Those it imported are kept: it depends on them, and
 imports them again whenever a query imports it, whoever runs the query.
 
 CREATE XQUERY MODULE runs within the session's transaction: ROLLBACK

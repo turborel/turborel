@@ -11,7 +11,7 @@ use turborel::disk::io::{FileSystem, OsFileSystem};
 use turborel::error::SqlError;
 use turborel::log::{Log, Lsn, MemoryLog};
 
-use crate::common::{Scratch, after_crash};
+use crate::common::{Scratch, after_crash, rows};
 use crate::xml_validate::{one, refused};
 
 /// The library module of target namespace `urn:notes` that NOTES_LIB
@@ -243,4 +243,55 @@ fn a_standby_replays_registered_modules() {
     assert_eq!(code(&s, "import module \"urn:g\"; 1"), "err:XQST0059");
     standby.promote(Arc::new(MemoryLog::new())).unwrap();
     assert_eq!(refused(&s, "DROP XQUERY MODULE NOTES_LIB RESTRICT").0, -103);
+}
+
+/// The SQLSTATE `sql` completes with in `s`.
+fn completed(s: &Session, sql: &str) -> String {
+    s.run(sql).unwrap_or_else(|e| panic!("{sql}: {e:?}")).sqlstate().as_str().to_owned()
+}
+
+/// Verifies: [EXTENSION] RULES.md D106 [ISO/IEC 9075-2:2023 §12.2 AR1,
+/// GR9, §12.3 SR4a]: GRANT USAGE ON XQUERY MODULE lets the grantee import
+/// the module, in a query and in a module it registers; USAGE_PRIVILEGES
+/// shows its owner's and the grant, of OBJECT_TYPE XQUERY MODULE; a
+/// grantee without grant option grants nothing, warning 01007; one
+/// holding no USAGE is refused, -104; a privilege other than USAGE -103.
+#[test]
+fn usage_on_modules_is_granted_12_2() {
+    let db = database();
+    db.schema("CREATE SCHEMA AUTHORIZATION C").unwrap();
+    let (a, b, c) = (db.session("A"), db.session("B"), db.session("C"));
+    assert_eq!(completed(&a, "GRANT USAGE ON XQUERY MODULE NOTES_LIB TO B"), "00000");
+    a.commit().unwrap();
+    assert_eq!(value(&b, "import module namespace n = \"urn:notes\"; n:shout(\"b\")"), "B!");
+    register(&b, "LOUD_LIB", LOUD);
+    assert_eq!(value(&b, "import module namespace l = \"urn:loud\"; l:twice(\"b\")"), "B!!");
+    let usage = "SELECT GRANTOR, GRANTEE, OBJECT_NAME, OBJECT_TYPE, PRIVILEGE_TYPE, IS_GRANTABLE FROM INFORMATION_SCHEMA.USAGE_PRIVILEGES \
+                 WHERE OBJECT_TYPE = 'XQUERY MODULE' ORDER BY OBJECT_NAME, GRANTOR";
+    assert_eq!(rows(&a, usage).unwrap(), ["A,B,NOTES_LIB,XQUERY MODULE,USAGE,NO", "_SYSTEM,A,NOTES_LIB,XQUERY MODULE,USAGE,YES"]);
+    assert_eq!(completed(&b, "GRANT USAGE ON XQUERY MODULE A.NOTES_LIB TO C"), "01007");
+    b.commit().unwrap();
+    assert_eq!(code(&c, "import module \"urn:notes\"; 1"), "err:XQST0059");
+    assert_eq!(refused(&c, "GRANT USAGE ON XQUERY MODULE A.NOTES_LIB TO B").0, -104);
+    assert_eq!(refused(&a, "GRANT EXECUTE ON XQUERY MODULE NOTES_LIB TO C").0, -103);
+}
+
+/// Verifies: [EXTENSION] RULES.md D106 [ISO/IEC 9075-2:2023 §12.7 GR9,
+/// GR12a, GR12q, GR12ai]: REVOKE USAGE ON XQUERY MODULE abandons the
+/// modules of a schema whose owner it leaves without USAGE that imported
+/// it: RESTRICT is refused, SQLSTATE 2B000, and CASCADE drops them; the
+/// grantee then imports it no more; a grant not made warns 01006.
+#[test]
+fn revoking_usage_abandons_what_imported_a_module_12_7() {
+    let db = database();
+    let (a, b) = (db.session("A"), db.session("B"));
+    a.run("GRANT USAGE ON XQUERY MODULE NOTES_LIB TO B").unwrap();
+    a.commit().unwrap();
+    register(&b, "LOUD_LIB", LOUD);
+    assert_eq!(refused(&a, "REVOKE USAGE ON XQUERY MODULE NOTES_LIB FROM B RESTRICT"), (-103, "2B000".to_owned()));
+    assert_eq!(completed(&a, "REVOKE USAGE ON XQUERY MODULE NOTES_LIB FROM B CASCADE"), "00000");
+    a.commit().unwrap();
+    assert_eq!(refused(&b, "DROP XQUERY MODULE LOUD_LIB CASCADE").0, -103, "abandoned and dropped");
+    assert_eq!(code(&b, "import module \"urn:notes\"; 1"), "err:XQST0059");
+    assert_eq!(completed(&a, "REVOKE USAGE ON XQUERY MODULE NOTES_LIB FROM B RESTRICT"), "01006");
 }
