@@ -11,7 +11,7 @@ use super::{Mutation, Package};
 
 /// Each mechanism of XML Schema structures broken alone, and the tests
 /// that fail.
-pub const XML_SCHEMA: [Mutation; 35] = [
+pub const XML_SCHEMA: [Mutation; 36] = [
     Mutation {
         name: "xml-schema-unique-particle-attribution",
         package: Package::Core,
@@ -367,5 +367,15 @@ pub const XML_SCHEMA: [Mutation; 35] = [
         replacement: "        let disallowed = at.derivations(\"block\", all, Derivations::NONE)?;",
         integration: &[],
         unit: &["xml::schema::assess::tests::more::block_default_blocks"],
+    },
+    Mutation {
+        name: "xml-schema-bases-first",
+        package: Package::Core,
+        breaks: "a complex type's base is read within the frames of reading the type",
+        file: "src/xml/schema/read/build.rs",
+        original: "                    b.complete_base(place, deeper)?;",
+        replacement: "                    let _ = (place, deeper);",
+        integration: &[],
+        unit: &["xml::schema::tests::structures::depth::bases_are_read_first"],
     },
 ];

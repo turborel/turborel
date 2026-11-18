@@ -121,6 +121,34 @@ fn reading_nests_within_half_a_stack() {
     }
 }
 
+/// The variable whose presence makes `bases_are_read_first` read its
+/// schema in this process: the child process it started.
+const CHILD: &str = "TURBOREL_SCHEMA_DEPTH_CHILD";
+
+/// Verifies: [DESIGN] RULES.md R-CF-6, D86: a complex type's base is read
+/// before the type, not within the frames of reading it, so the deepest
+/// chain of derivations accepted is read within half of a thread's
+/// default stack. The chain is read in a child process this test starts,
+/// as a stack overflow aborts the process it happens in: an overflow
+/// fails this test rather than the run of every test.
+#[test]
+fn bases_are_read_first() {
+    if std::env::var_os(CHILD).is_some() {
+        assert!(deepest(derivations) > 0);
+        return;
+    }
+    let path = module_path!().split_once("::").map_or("", |(_, path)| path);
+    let name = format!("{path}::bases_are_read_first");
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name.as_str(), "--test-threads=1"])
+        .env(CHILD, "1")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success(), "reading the deepest chain of derivations ended {status}");
+}
+
 /// `n` elements `e` nested, each of a distinct ID `k`.
 fn nested_document(n: usize) -> String {
     let open = (1..=n).map(|i| format!(r#"<e k="k{i}">"#)).collect::<Vec<_>>().concat();
