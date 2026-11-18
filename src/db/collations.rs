@@ -446,8 +446,10 @@ mod tests {
         assert!(nulls(0, true), "the constraint's index");
         assert!(!nulls(0, false), "another on its columns");
         assert!(!nulls(1, true), "of NULLS DISTINCT");
-        let hybrid = IndexDesc { method: crate::index::vector::hybrid::HYBRID_METHOD.into(), ..index(1, false) };
-        assert!(st.with_derived(hybrid, &table).unwrap().nulls, "a hybrid index, each part of its own column");
+        let hybrid =
+            |columns: Vec<usize>| IndexDesc { method: crate::index::vector::hybrid::HYBRID_METHOD.into(), columns, ..index(1, false) };
+        assert!(st.with_derived(hybrid(vec![0, 1]), &table).unwrap().nulls, "a hybrid index, each part of its own column");
+        assert!(!st.with_derived(hybrid(vec![1]), &table).unwrap().nulls, "a hybrid index of its text alone");
     }
 
     /// Verifies: [DESIGN] RULES.md D60: a collation a database uses, of
