@@ -22,8 +22,9 @@ CREATE INDEX: make an index on a table *(extension)*
 
 CREATE INDEX makes an index on columns of a base table, kept by an index
 method: `btree`, a B-link tree, the default; `hash`, a linear hash table;
-`rtree`, a spatial tree over coordinate columns or fixed-SRID geometries; or a method a plug-in
-registers. The planner uses an index when its cost
+`rtree`, a spatial tree over coordinate columns or fixed-SRID geometries;
+`xml_path`, `xml_value` or `xml_property`, of an XML column's paths and
+values; or a method a plug-in registers. The planner uses an index when its cost
 says the index is the cheaper way to find a query's rows: by the
 comparisons of its columns with constants in a WHERE clause, BETWEEN,
 IN lists of constants, ORs of these of one column, and LIKE patterns
@@ -82,6 +83,15 @@ joins and distance filters are not indexed yet. See the
 [spatial guide](../../data/spatial/03-indexing.md) and
 [distance queries](../../data/spatial/05-distance.md) for runnable examples.
 
+An `xml_path`, `xml_value` or `xml_property` index keys one XML column:
+each element and attribute of its values, by its path, its value as a
+string and as a number, and its place in document order, each method in
+its own order ([XML indexes](../xml.md#xml-indexes)). No comparison of SQL
+reads it, as XML values are not comparable: it answers lookups of
+XQuery's paths. A value with more elements and attributes than it keys,
+or a name or path longer than the database's page size holds, is refused
+as it is written.
+
 The index is built from the rows there now, while other transactions go
 on reading and writing the table; it is then kept up to date with each
 change. It is made at once, apart from any transaction: no ROLLBACK
@@ -113,7 +123,10 @@ run again after COMMIT or ROLLBACK.
 4. No index has the name.
 5. The method is registered; its name is matched in any case. On a
    temporary table, it is `btree`, `hash` or `rtree`.
-6. Each option is declared, given once, of a value it accepts.
+6. The columns are of types the method keys: of `xml_path`, `xml_value`
+   and `xml_property`, one column of an XML type; of the others, types
+   whose values compare, so not of an XML type.
+7. Each option is declared, given once, of a value it accepts.
 
 ## PRIVILEGES
 
@@ -127,6 +140,7 @@ The table's schema is its user's.
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | Its user does not own the table's schema |
 | 0A000 | -900 | `rtree` is asked to index an unsupported column count or type |
+| 0A000 | -900 | A value of the table is past what an XML index keys |
 | TB910 | -910 | An `rtree` coordinate is non-finite or a rectangle has reversed bounds |
 
 ## EXAMPLES
@@ -245,6 +259,30 @@ OK
 ```
 
 These small tables can still use scans; index choice is based on cost.
+
+An XML index of a catalogue's entries, and one refused of a column not
+of an XML type:
+
+```sql
+COMMIT;
+CREATE TABLE CATALOGUE (ID INTEGER, ENTRY XML(DOCUMENT));
+COMMIT;
+CREATE INDEX CATALOGUE_PATHS ON CATALOGUE (ENTRY) USING XML_PATH;
+CREATE INDEX CATALOGUE_IDS ON CATALOGUE (ID) USING XML_PATH;
+SELECT INDEX_NAME, METHOD_NAME FROM INFORMATION_SCHEMA.INDEXES WHERE TABLE_NAME = 'CATALOGUE';
+```
+
+```
+OK
+OK
+OK
+OK
+turborel: SQLCODE -103 (SQLSTATE 2A000): index CATALOGUE_IDS of method xml_path keys one column, of an XML type (RULES.md D86)
+ INDEX_NAME                                                   | METHOD_NAME
+--------------------------------------------------------------+--------------------------------------------------------------
+ CATALOGUE_PATHS                                              | xml_path
+(1 row)
+```
 See the [dispatch guide](../../data/spatial/README.md) for service-area
 joins and nearest-depot searches using the same query patterns.
 
@@ -286,4 +324,5 @@ An extension: neither SQL-86 nor SQL-92 has indexes.
 
 [ALTER INDEX](alter-index.md), [DROP INDEX](drop-index.md),
 [CREATE TABLE](create-table.md),
-[R-tree queries](../../data/spatial/03-indexing.md)
+[R-tree queries](../../data/spatial/03-indexing.md),
+[XML indexes](../xml.md#xml-indexes)

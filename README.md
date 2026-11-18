@@ -42,7 +42,7 @@ behind it, and each can be replaced or added to.
   multisets too, by
   XMLELEMENT, XMLFOREST, XMLAGG, XMLCONCAT, XMLCOMMENT, XMLPI and XMLTEXT
   with namespaces, written in-house with no dependency, its modifiers shown in
-  the Information Schema.
+  the Information Schema, and XML indexes of its paths and values.
 - [Geospatial SQL](doc/data/spatial/README.md), with XY geometries, WKT/WKB,
   intersection filters and joins, planar distances and R-tree
   nearest-neighbour queries.

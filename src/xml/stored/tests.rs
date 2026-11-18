@@ -110,3 +110,45 @@ fn corrupt_bytes_are_refused() {
     let unclosed = [&one_name[..], &[ELEMENT, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]].concat();
     assert!(corrupt(&unclosed).contains(WHAT));
 }
+
+/// The events of `bytes`, read to their end or an error's SQLCODE.
+fn events_of(bytes: &[u8]) -> Result<Vec<Event<'_>>> {
+    let mut events = Events::new(bytes)?;
+    let mut read = Vec::new();
+    while let Some(event) = events.next_event()? {
+        read.push(event);
+    }
+    Ok(read)
+}
+
+/// Verifies: [DESIGN] RULES.md D86: the stored form is read as events in
+/// document order, each item begun, an element's attributes with it, a
+/// node standing alone its own item; and bytes that are no stored form
+/// are refused as `decode` refuses them, SQLCODE -916.
+#[test]
+fn the_stored_form_is_read_as_events() {
+    let tree = parse("<a x=\"1\">t<!--c--><b/></a>", Syntax::Content, Whitespace::Preserve).unwrap();
+    let atomic = Atomic { kind: AtomicType::Integer, lexical: "1".into() };
+    let bytes = encode(&Sequence::new(vec![Item::Node(Node::root(tree)), Item::Atomic(atomic)]));
+    let element = |name, attributes| Event::Element { name, attributes };
+    let expected = [
+        Event::Node,
+        Event::Document,
+        element(0, vec![(1, "1")]),
+        Event::Text("t"),
+        Event::Other,
+        element(2, vec![]),
+        Event::End,
+        Event::End,
+        Event::End,
+        Event::Atomic,
+    ];
+    assert_eq!(events_of(&bytes).unwrap(), expected);
+    let code = |given: &[u8]| events_of(given).map(drop).unwrap_err().sqlcode();
+    assert_eq!(code(&[2, 0, 0, 0, 0]), -916_i32, "another version");
+    assert_eq!(code(&[1, 1, 0, 0, 0, 9]), -916_i32, "an item's tag");
+    let no_names = [1, 1, 0, 0, 0, NODE, 0, 0, 0, 0];
+    assert_eq!(code(&[&no_names[..], &[9]].concat()), -916_i32, "an event's tag");
+    assert_eq!(code(&[&no_names[..], &[END]].concat()), -916_i32, "an end of nothing");
+    assert_eq!(code(&[bytes.as_slice(), &[0]].concat()), -916_i32, "bytes after the last item");
+}

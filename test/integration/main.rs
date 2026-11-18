@@ -317,6 +317,7 @@ mod xml;
 mod xml_cast;
 mod xml_composite;
 mod xml_elements;
+mod xml_index;
 mod xml_information;
 mod xml_operators;
 mod xml_publishing;

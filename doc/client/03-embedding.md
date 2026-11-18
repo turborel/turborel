@@ -497,7 +497,8 @@ off, as the built-in rules' do ([Settings](../appendix/c-settings.md)).
 
 The built-in engines are `rowstore`, the default, and `columnstore`
 ([Table Options](../appendix/g-table-options.md)); the built-in index
-methods are `btree`, `hash` and `rtree`. Each trait's contract, what the database
+methods are `btree`, `hash`, `rtree`, and `xml_path`, `xml_value` and
+`xml_property`, whose lookups `Index::xml_rows` gives. Each trait's contract, what the database
 calls and what an implementation must keep, is in the crate's own
 documentation, of the module the trait is in.
 

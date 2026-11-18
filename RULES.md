@@ -1941,6 +1941,8 @@ pool. `btree` is a B-link tree, ordered, for equality and ranges. `hash` is
 a linear hash table (Litwin, 1980), for equality only, and its readers lock
 nothing. `rtree` indexes two point coordinates or four rectangle coordinates
 (D72), or one fixed-SRID geometry through envelope projections (D85).
+`xml_path`, `xml_value` and `xml_property` index one XML column's paths
+and values for XQuery's lookups (D86); no comparison probes them.
 A method can support independent comparisons on several key columns
 without an equality prefix (`IndexMethod::supports_columns`).
 
@@ -2881,8 +2883,8 @@ table of its names, each once, then its nodes as events: document, element
 (with its bindings and attributes), end, text, comment and processing
 instruction; each atomic item its type's tag and its lexical form. Its
 fields are D30's. A node below the root of its tree is stored as a copy,
-an element declaring every binding in its scope. XML indexes (the primary,
-path, value and property indexes of Pal et al.) come with XQuery.
+an element declaring every binding in its scope. The XML indexes read
+it, below.
 
 The XML type's values are `Value::Xml` (`value::XmlValue`), held in one
 of three forms: a sequence; a binary large object of the stored form, as a
@@ -2953,6 +2955,63 @@ element, as §9.8 maps one, then parsed as other content is; its walk is
 bounded as types nest. The binder keeps the
 XMLNAMESPACES declarations in scope, innermost last, and searches a
 subquery's own first, then those of the query it is in.
+
+XML indexes are built-in index methods (D34) of one XML column, after Pal
+et al.'s secondary XML indexes: `xml_path` (PATH_VALUE, §3.2.1),
+`xml_value` (VALUE, §3.2.3) and `xml_property` (PROPERTY, §3.2.2), named
+in CREATE INDEX's USING as the others are, so a plug-in may add more.
+Each holds its own keys, a B-link tree in the data file beside the
+others, checkpointed, reopened and recovered as theirs are; none needs the
+primary index of Infoset rows (§3.1), which is built only if measurement
+shows it pays (`bench/xml_index.rs`). An index derives its keys from a
+value's stored form in one pass over its events, building no tree. It
+keys each element and attribute below each node item of the value, the
+item being the context its paths start from: its path, its value and its
+ORDPATH. A path is the node's kind and the tokens of its name and of each
+element's above it up to its item, the reversed path of §3.1.1. Each index
+keeps a dictionary in its tree, an expanded name to a token and a path to
+a path id, given under a lock from counters there and never taken back,
+so it is durable as the entries are; recovery makes again the entries of
+the rows the log touched (D25), with the index's own ids. A value is the
+node's typed value, its string value as `xdt:untypedAtomic` [XQueryDM
+§6.2.3, §6.3.3], keyed twice, as a general comparison casts it [XQuery
+§3.5.2]: as a string, by its first `VALUE_PREFIX_BYTES` (64) octets,
+marked whole or cut, ordered by code points; and as an `xs:double`
+[XQueryFO §17.1.1] if it is whole and casts, else as unordered. An ORDPATH
+(§2.2) labels the node by the odd components a load gives, from its item
+down, attributes before children; each component is its length in octets
+then its octets, so labels compare as bytes in document order and a
+node's begins with its ancestors'. Entries are counted, as a B-link
+tree's are (D34): `xml_path` keyed (path id, value, row, ORDPATH),
+`xml_value` (value, path id, row, ORDPATH), `xml_property` (row, path id,
+value, ORDPATH).
+
+An index is given a row's value whole, but may not be able to read it as
+it takes its entries back: garbage collection frees a version's large
+objects before its entries, and recovery and a spilled undo name an
+object by its id (D79). So each (value, row) pair held is marked by the
+value's identity: of a value its row holds, its octets' MurmurHash3, the
+octets there to derive its entries again; of one held as a large object,
+the object's id, never given twice, under which the index keeps the
+entries it made, by row, and takes them back, or adds them again, with no
+read of the value.
+
+A lookup (`Index::xml_rows`, `xml_cost`) is given a path of child and
+descendant steps over expanded names or any name, ending at an element or
+an attribute, and comparisons with string, `xdt:untypedAtomic` or number
+literals, and gives the rows whose value may hold a node of that path of
+which they hold, each once, with what it costs. The paths of the
+dictionary are found by the tokens the last steps fix and matched step by
+step; each matching path's entries are read in the comparisons' range of
+keys. The rows are a superset, as a value is cut and a reader sees one
+version of its row, so its caller checks each row it fetches, as for a
+function lookup (D34): an index changes no result. A number compared also
+selects the values keyed unordered, so no row whose comparison would raise
+err:FORG0001 is skipped (D15). D34's function lookup does not fit:
+XMLEXISTS and XMLQUERY are no registered function of a column and a
+value, and a lookup is a path, not a value. A value of more than
+`MAX_KEYED_NODES` (262,144) elements and attributes, or of a key longer
+than the tree's longest, is refused as it is indexed, SQLCODE -900 (D18).
 
 ## 2. Project layout
 

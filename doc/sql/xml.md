@@ -39,7 +39,8 @@ column store keeps no XML value, nor any inside another value.
 
 XML values are not comparable. `=`, IN, DISTINCT, GROUP BY, ORDER BY,
 MAX, MIN, UNION without ALL, a NATURAL or USING join on an XML column,
-and a key or an index of one are refused (SQLCODE -103).
+and a key or an index of one are refused (SQLCODE -103), but an index of
+an XML method ([XML indexes](#xml-indexes)).
 
 [The Information Schema](information-schema.md) shows a type's modifiers
 in XML_PRIMARY_MODIFIER and XML_SECONDARY_MODIFIER, the second null of
@@ -483,6 +484,59 @@ turborel: SQLCODE -301 (SQLSTATE 2200L): the value of XML(DOCUMENT(ANY)) is not 
 turborel: SQLCODE -103 (SQLSTATE 2A000): the comparison compares values of XML(CONTENT(ANY)) ARRAY[10], and XML values are not comparable [ISO/IEC 9075-14:2006 draft §10.8 SR1] (at character 27)
 ```
 
+## XML indexes
+
+```
+CREATE INDEX <index name> ON <table name> ( <XML column name> )
+    USING { XML_PATH | XML_VALUE | XML_PROPERTY }
+```
+
+An XML index keys the nodes of an XML column's values, so a query of a
+path reads the rows whose values hold it, not every row
+([CREATE INDEX](statements/create-index.md)). It keys each element and
+attribute below each item of a value: its path from the item, as names in
+namespaces; its value, the text of an element's descendants or an
+attribute's, as a string, by its first 64 octets, and as a number if the
+whole of it is one; and its place in document order. The three methods
+order their keys for different questions, after Pal et al., "Indexing XML
+Data Stored in a Relational Database" (VLDB 2004):
+
+| Method | Keyed by | Answers best |
+|---|---|---|
+| XML_PATH | path, value | a path, and a value at it, of any row |
+| XML_VALUE | value, path | a value, at a path given in part |
+| XML_PROPERTY | row, path, value | the values of paths of one row |
+
+Each indexes one XML column alone; another column, or more than one, is
+refused (SQLCODE -103). Like every index, it is built of the rows there,
+kept with each change, and changes no result. No SQL predicate reads it:
+XML values are not comparable, and XQuery's paths, in XMLEXISTS and
+XMLQUERY, are not yet evaluated. Its lookups are reached from Rust
+(`Database::xml_candidates`). A value with more than 262,144 elements and
+attributes, or one of a name or path too long for the database's page
+size, cannot be indexed, and its INSERT or UPDATE fails (SQLCODE -900).
+
+```sql
+COMMIT;
+CREATE INDEX ORDER_PATHS ON ORDERS (BODY) USING XML_PATH;
+CREATE INDEX ORDER_VALUES ON ORDERS (BODY) USING XML_VALUE;
+CREATE INDEX ORDER_IDS ON ORDERS (ID) USING XML_PROPERTY;
+DROP INDEX ORDER_VALUES;
+SELECT INDEX_NAME, METHOD_NAME, COLUMN_NAMES FROM INFORMATION_SCHEMA.INDEXES WHERE TABLE_NAME = 'ORDERS' ORDER BY INDEX_NAME;
+```
+
+```
+OK
+OK
+OK
+turborel: SQLCODE -103 (SQLSTATE 2A000): index ORDER_IDS of method xml_property keys one column, of an XML type (RULES.md D86)
+OK
+ INDEX_NAME                                                   | METHOD_NAME                                                  | COLUMN_NAMES
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ ORDER_PATHS                                                  | xml_path                                                     | BODY
+(1 row)
+```
+
 ## Clients
 
 A column of an XML type is described with its modifiers. A value is
@@ -500,5 +554,7 @@ standing alone, is refused with SQLSTATE 2200W when it is fetched.
 | Text entities add to one parse | 16 MiB |
 | Text XMLPARSE reads | 64 MiB |
 | A value's stored form | 64 MiB |
+| Elements and attributes an XML index keys of one value | 262,144 |
+| Octets of a value an XML index keys | 64 |
 
 A value past a limit fails with SQLCODE -900.

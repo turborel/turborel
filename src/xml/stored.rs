@@ -29,6 +29,8 @@
 
 use std::collections::HashMap;
 
+pub use events::{Event, Events};
+
 use super::sequence::{Atomic, AtomicType, Item, Node, Sequence};
 use super::tree::{Binding, Builder, ElementStart, Kind, NodeId, QName, Specified, Tree, XML_PREFIX};
 use crate::bytes::{Put, Reader};
@@ -379,5 +381,6 @@ fn decode_attribute(reader: &mut Reader<'_>, names: &[QName]) -> Result<Specifie
     Ok(Specified { name: attribute, value: reader.str()?, is_id: flags & IS_ID != 0, is_idrefs: flags & IS_IDREFS != 0 })
 }
 
+mod events;
 #[cfg(test)]
 mod tests;

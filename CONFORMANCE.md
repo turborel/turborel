@@ -1888,7 +1888,7 @@ external routines) is not, as turborel has no external routine.
 | XML values | §4.2.3 | An XQuery sequence of nodes and atomic values. A value held in a column is its stored form (RULES.md D86): in the row when short, else as the table's large objects, logged and recovered as large objects are. One inside an array, a multiset, a row or a structured value is held whole in that value's row, its stored form at most 64 MiB, else SQLCODE -900. |
 | Assignment | §4.2.4, §10.2 SR1, GR1 | An XML value to an XML site alone, an UNTYPED one's of an UNTYPED type, else SQLCODE -103. A DOCUMENT site takes a document, else SQLSTATE 2200L; a CONTENT site one document node, else 2200U. A value stored is a copy. |
 | XML within other types | §6.1 CR2, CR3, §6.2 CR1, §12.5 CR1, §12.6 CR1, §12.7 CR1, §10.4 SR1, §10.5 SR1 | An array or multiset of an XML type or of a distinct type of one; a distinct type whose source is an XML type, its function to its source named XML [§10.5 SR1], of no ordering; an attribute of a structured type, and a field of a row type, of either; a parameter or result of an SQL routine of any of them. Each is stored, read, assigned and cast part by part, an XML part checked as §10.2 GR1a and §6.5 GR1a check one. Every XML type's type precedence list is XML [§10.4 SR1], so a routine of an XML parameter takes an argument of any XML type that is assigned to it. |
-| Not comparable | §4.2.4, §10.8 SR1 to §10.11 SR1 | No equality, grouping or ordering operation takes an XML value: comparisons, IN, quantified comparisons, MATCH, UNIQUE, DISTINCT, IS DISTINCT FROM, NULLIF, a simple CASE, GROUP BY, ORDER BY, set operations but UNION ALL, MIN and MAX, a NATURAL or USING join's common column, keys and indexes, SQLCODE -103. |
+| Not comparable | §4.2.4, §10.8 SR1 to §10.11 SR1 | No equality, grouping or ordering operation takes an XML value: comparisons, IN, quantified comparisons, MATCH, UNIQUE, DISTINCT, IS DISTINCT FROM, NULLIF, a simple CASE, GROUP BY, ORDER BY, set operations but UNION ALL, MIN and MAX, a NATURAL or USING join's common column, keys, and indexes but the XML methods' ([Indexes](#indexes)), SQLCODE -103. |
 | Types brought together | §10.3 SR1 | XML types with XML types alone, of the type SR1b gives: SEQUENCE if one is, the one type, DOCUMENT(UNTYPED) if all are, CONTENT(UNTYPED) if all are UNTYPED, else CONTENT(ANY). |
 | IS DOCUMENT, IS CONTENT | §8.2, §8.3, §6.4 | Of one XML value, else SQLCODE -103 [SR1]. IS DOCUMENT is True of one document node whose children are one element and comments and processing instructions, IS CONTENT of one document node; Unknown of the null value; else False [GR2]. IS NOT is the negation [SR2]. Either is a `<when operand>` of a simple CASE. |
 | XMLCAST | §6.6, §9.5 GR8, §9.8 | Of or to an XML type [SR4], neither of nor to a collection, row, structured or reference type [SR5, SR10b i]; a passing mechanism of XML types alone [SR9]; NULL and `?` CAST to an XML type [SR10a, SR11]; to a domain, its data type [SR3a]. Of XML to XML, CAST [SR10b ii]. Of an SQL value to XML(CONTENT), XMLPARSE of its lexical form by §9.8, `&`, `<`, `>` and carriage returns mapped, a character no XML 1.1 character SQLSTATE 0N002 [GR3a to GR3c]; to XML(SEQUENCE), that cast as the built-in XML Schema type §9.5 maps its type to, one atomic value [GR3d]; to XML(DOCUMENT), SQLCODE -103 [SR7]. Of an XML value to an SQL type: document nodes replaced by their children, atomized, none the null value, more than one SQLSTATE 10000 [GR4b to GR4d]; cast as the XML Schema type, its lexical forms those of XML Schema Part 2, a value not of them 10000 [GR4j]; a date or time adjusted to UTC for a type without time zone [GR4j i to iii]; INF, -INF and NaN 22003 [GR4k v]; no time zone for a type WITH TIME ZONE, or a year past 0001 to 9999, 22007 [GR4k vi to viii]; then CAST to the SQL type [GR4l]. The types mapped are the character and binary strings, large objects too, the exact and approximate numbers, BOOLEAN, the datetimes and the intervals; DECFLOAT, which §9.5 does not map, SQLCODE -103. |
@@ -2129,6 +2129,19 @@ expression or another part of the filter can raise, the table is read
 whole so the lookup cannot hide the error (D15). The built-in `btree` and
 `hash` methods retain their comparison lookups; a plug-in supplies the
 function lookup.
+
+The methods `xml_path`, `xml_value` and `xml_property` index one XML
+column (RULES.md D86, `src/index/xml.rs`), after the PATH_VALUE, VALUE and
+PROPERTY indexes of Pal et al. (VLDB 2004): each element and attribute of
+a value by its path, its value as a string and as a number, and its
+ORDPATH, keyed in that method's order. CREATE INDEX refuses them on
+another column, or on more than one (SQLCODE -103). No SQL comparison
+probes them, as XML values are not comparable; the Rust API asks them for
+the rows that may hold a node of a path of child and descendant steps
+with a value a general comparison selects (`Index::xml_rows`,
+`xml_cost`, `index::xml::XmlLookup`), which the XQuery evaluator is to
+check, and `Database::xml_candidates` reads those rows. A value whose
+nodes or keys pass their bounds is refused, SQLCODE -900.
 
 ### Users
 

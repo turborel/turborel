@@ -44,7 +44,7 @@ pub(crate) use parse::{normalized, predefined};
 pub use publish::{comment, concatenate, processing_instruction, text};
 pub use sequence::{Atomic, AtomicType, Item, Node, Sequence};
 pub use serialize::{Parameters, serialize};
-pub use stored::{FORMAT_VERSION, decode, encode};
+pub use stored::{Event, Events, FORMAT_VERSION, decode, encode};
 pub use tree::{
     Binding, Builder, ElementStart, Kind, NodeId, QName, SQLXML_NAMESPACE, SQLXML_PREFIX, Specified, Tree, XML_NAMESPACE, XML_PREFIX,
     XMLNS_NAMESPACE, XS_NAMESPACE, XS_PREFIX, XSI_NAMESPACE, XSI_PREFIX,

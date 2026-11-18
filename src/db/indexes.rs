@@ -30,11 +30,12 @@ use std::sync::Arc;
 use super::{Database, State, api, qualified_name};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::error::{Code, Result, SqlError, fail};
+use crate::index::xml::XmlLookup;
 use crate::index::{BTREE_METHOD, HASH_METHOD, Index, KeyOrder, Probe, RTREE_METHOD};
 use crate::log::record::Change;
-use crate::storage::{TableOption, chosen, needs_rebuild};
-use crate::txn::{Concurrency, LockMode, TableLock, Timestamp, Transactions, Txn};
-use crate::value::Value;
+use crate::storage::{Row, TableOption, chosen, needs_rebuild};
+use crate::txn::{Concurrency, LockMode, NO_TRANSACTION, TableLock, Timestamp, Transactions, Txn};
+use crate::value::{DataType, Value};
 
 /// \[EXTENSION\] An index to make: its name, its table, its columns by
 /// name, its method, the method's options it sets (RULES.md D41), and
@@ -89,6 +90,22 @@ impl State {
     pub(crate) fn index_options_of(&self, method: &str) -> Vec<TableOption> {
         let own = self.methods.get(method).map(|m| m.index_options()).unwrap_or_default();
         own.into_iter().chain(self.index_options.iter().map(|(_, o)| o.clone())).collect()
+    }
+
+    /// That index `name` of `method` may key values of `types`: as its
+    /// method says, an XML method one XML column (RULES.md D86); as SQL
+    /// keys values, each compared [ISO/IEC 9075-2:2023 §9.12 SR3], if no
+    /// method of that name is there, whose absence is refused after.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 or -900 if they may not be keyed.
+    pub(super) fn check_index_columns(&self, method: &str, types: &[DataType], name: &str) -> Result<()> {
+        let what = format!("index {name}");
+        match self.methods.get(method) {
+            Some(m) => m.check_columns(types, &what),
+            None => types.iter().try_for_each(|t| crate::binder::key_operand(t, &what)),
+        }
     }
 
     /// Index `name` built again, `built`, put in its place: under its name,
@@ -214,6 +231,24 @@ impl Database {
     pub fn index_entries(&self, name: &str) -> Result<usize> {
         let entries = Arc::clone(self.snapshot()?.index_of(name)?).search(&Probe::All, KeyOrder::Ascending);
         entries.into_iter().try_fold(0_usize, |n, entry| entry.map(|_| n.saturating_add(1)))
+    }
+
+    /// \[EXTENSION\] RULES.md D86: a diagnostic, as `index_entries` is: the
+    /// rows index `name`, an XML index, gives for `lookup`, each once, as
+    /// its table holds them now, of the transactions committed: candidates,
+    /// which a caller checks again (`XmlLookup::matches`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if there is no such index, or it answers no XML
+    /// lookup; the index's and the table's errors.
+    pub fn xml_candidates(&self, name: &str, lookup: &XmlLookup) -> Result<Vec<Row>> {
+        let st = self.snapshot()?;
+        let table = st.catalog.index(name).map(|ix| ix.table.clone()).ok_or_else(|| api(format!("[EXTENSION] no index {name}")))?;
+        let found = Arc::clone(st.index_of(name)?).xml_rows(lookup);
+        let rows = found.ok_or_else(|| api(format!("[EXTENSION] the index {name} answers no XML lookup (RULES.md D86)")))?;
+        let storage = st.storage_of(&table)?;
+        rows.filter_map(|row| row.and_then(|id| storage.get(NO_TRANSACTION, id)).transpose()).collect()
     }
 
     /// \[EXTENSION\] Create a secondary index named `name` on `columns` of

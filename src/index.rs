@@ -7,7 +7,10 @@
 //! Built in: "btree" (`index/blink.rs`), a B-link tree in pages, ordered,
 //! for equality and ranges; "hash" (`index/hash.rs`), a linear hash table
 //! in pages, for equality; "rtree" (`index/rtree.rs`), an R-link tree with
-//! R* partitioning, for independent point or rectangle coordinate bounds.
+//! R* partitioning, for independent point or rectangle coordinate bounds;
+//! "xml_path", "xml_value" and "xml_property" (`index/xml.rs`), B-link
+//! trees of the paths and values of an XML column's nodes, for the
+//! lookups of XQuery's paths (RULES.md D86).
 
 mod blink;
 mod hash;
@@ -16,6 +19,7 @@ mod nearest;
 mod projection;
 mod rtree;
 mod stats;
+pub mod xml;
 
 use std::sync::Arc;
 
@@ -25,6 +29,7 @@ pub use key::Key;
 pub use nearest::{NearestQuery, NeighbourEntries};
 pub use projection::KeyProjection;
 pub use rtree::RTreeMethod;
+pub use xml::{XML_PATH_METHOD, XML_PROPERTY_METHOD, XML_VALUE_METHOD, XmlMethod};
 
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::error::Result;
@@ -324,6 +329,17 @@ pub trait IndexMethod: Send + Sync {
     fn checkpoint(&self) -> Result<()> {
         Ok(())
     }
+    /// \[EXTENSION\] That its indexes may key `columns`, of an index `what`
+    /// names. Default: as SQL keys values, each column's values compared
+    /// [ISO/IEC 9075-2:2023 §9.12 SR3]; an XML method's, one XML column
+    /// (RULES.md D86).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 or -900 if they may not be keyed.
+    fn check_columns(&self, columns: &[DataType], what: &str) -> Result<()> {
+        columns.iter().try_for_each(|t| crate::binder::key_operand(t, what))
+    }
 }
 
 /// Methods take `&self`, `search` the index held: an index guards its own
@@ -536,6 +552,20 @@ pub trait Index: Send + Sync {
     /// changed: `on` holds them now (RULES.md D41), as for
     /// `TableStorage::reconfigure`. Default: nothing.
     fn reconfigure(&self, _on: (&TableDesc, &IndexDesc)) {}
+    /// \[EXTENSION\] (RULES.md D86) The rows whose XML value may hold a
+    /// node `lookup` selects, each once, as they are taken: a superset,
+    /// each row's visible value checked again by the caller
+    /// (`XmlLookup::matches`), as a function lookup's (D34). It holds the
+    /// index, as `search` does. Default: none, for an index of no XML
+    /// lookup.
+    fn xml_rows(self: Arc<Self>, _lookup: &xml::XmlLookup) -> Option<RowIds> {
+        None
+    }
+    /// \[EXTENSION\] (RULES.md D86, D35) What `xml_rows` of `lookup` costs,
+    /// if it answers XML lookups: only a statistic. Default: none.
+    fn xml_cost(self: Arc<Self>, _lookup: &xml::XmlLookup) -> Option<xml::XmlCost> {
+        None
+    }
 }
 
 /// Every entry `probe` selects in `index`, in ascending key order if its
