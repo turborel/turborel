@@ -10,7 +10,8 @@
 //!     u32 annotation count, each a type annotation
 //!       u32 name, u8 typing (0 xs:anySimpleType, 1 mixed, 2 empty,
 //!       3 element-only, 4 atomic, 5 list, 6 items of several types),
-//!       [u8 atomic type, of 4 and 5], [u32 count, each u8 atomic type, of 6],
+//!       [an atomic type, of 4 and 5], [u32 count, each an atomic type, of 6],
+//!       an atomic type u8 type, u32 its user-defined type's name + 1 (0 none),
 //!     then its events, to the end of its root:
 //!       u8 1 document                                  opens
 //!       u8 2 element  u32 name, u32 annotation (0 none, else its number + 1),
@@ -23,7 +24,10 @@
 //!       u8 4 text str | u8 5 comment str | u8 6 processing instruction u32 name, str
 //!       u8 7 attribute u32 name, u8 flags, u32 annotation, str  a root alone
 //!   u8 1, an atomic value: u8 type, str canonical lexical form, then of
-//!       an xs:QName or xs:NOTATION str namespace URI, empty of none; the
+//!       an xs:QName or xs:NOTATION str namespace URI, empty of none, then
+//!       u8 0 of a built-in type, or 1 and its user-defined type's name,
+//!       u8 flags (1 prefix, 2 namespace URI), [str prefix], [str URI],
+//!       str local; the
 //!       types 0 xs:string, 1 xdt:untypedAtomic, 2 xs:boolean,
 //!       3 xs:decimal, 4 xs:integer, 5 xs:float, 6 xs:double, 7 xs:date,
 //!       8 xs:time, 9 xs:dateTime, 10 xdt:yearMonthDuration,
@@ -32,8 +36,10 @@
 //! ```
 //!
 //! A node's type annotation, nilled, is-id and is-idrefs properties are
-//! kept [XQueryDM §3.3]. The annotations were added to version 1 in place,
-//! as no database of an earlier layout is read (RULES.md D106).
+//! kept [XQueryDM §3.3], and the user-defined atomic type of an atomic
+//! value, of an atomic item or of a node's typed value [XQueryDM §2.6.1,
+//! §3.3.1.2]. The annotations were added to version 1 in place, as no
+//! database of an earlier layout is read (RULES.md D106).
 //!
 //! A node stored is copied, as storing a value copies it
 //! [ISO/IEC 9075-14:2006 draft §10.2 GR1b, §10.18]: its tree is its
@@ -42,11 +48,11 @@
 
 use std::collections::HashMap;
 
-use annotations::{decode_annotations, put_typing, skip_annotations};
+use annotations::{decode_annotations, put_typing, skip_annotations, value_types};
+use atomic::{decode_atomic, put_atomic, put_name, read_name};
 pub use events::{Event, Events};
 
-use super::atomic::Primitive;
-use super::sequence::{Atomic, AtomicType, Item, Node, Sequence};
+use super::sequence::{AtomicType, Item, Node, Sequence};
 use super::tree::{Annotation, Binding, Builder, ElementStart, Kind, NodeId, QName, Specified, Tree, XML_PREFIX};
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -164,12 +170,7 @@ pub fn encode(value: &Sequence) -> Vec<u8> {
             }
             Item::Atomic(atomic) => {
                 out.put_u8(ATOMIC);
-                let tag = ATOMIC_TYPES.iter().position(|&t| t == atomic.kind).and_then(|p| u8::try_from(p).ok());
-                out.put_u8(tag.unwrap_or(0));
-                out.put_str(&atomic.lexical);
-                if is_name(atomic.kind) {
-                    out.put_str(atomic.namespace.as_deref().unwrap_or_default());
-                }
+                put_atomic(&mut out, atomic);
             }
         }
     }
@@ -201,6 +202,11 @@ impl<'a> Names<'a> {
     fn annotation(&mut self, tree: &'a Tree, id: NodeId) -> u32 {
         let Some(annotation) = tree.annotation(id) else { return 0 };
         self.number(&annotation.name);
+        for t in value_types(&annotation.typing) {
+            if let Some(name) = &t.name {
+                self.number(name);
+            }
+        }
         let next = count(self.annotations.len()).saturating_add(1);
         *self.annotated.entry(annotation).or_insert_with(|| {
             self.annotations.push(annotation);
@@ -224,19 +230,12 @@ fn encode_node(node: &Node, out: &mut Vec<u8>) {
     }
     out.put_u32(count(names.list.len()));
     for name in names.list {
-        out.put_u8(if name.prefix.is_some() { HAS_PREFIX } else { 0 } | if name.uri.is_some() { HAS_URI } else { 0 });
-        if let Some(prefix) = &name.prefix {
-            out.put_str(prefix);
-        }
-        if let Some(uri) = &name.uri {
-            out.put_str(uri);
-        }
-        out.put_str(&name.local);
+        put_name(out, name);
     }
     out.put_u32(count(names.annotations.len()));
     for annotation in &names.annotations {
         out.put_u32(names.numbers.get(&annotation.name).copied().unwrap_or(0));
-        put_typing(out, &annotation.typing);
+        put_typing(out, &annotation.typing, &names.numbers);
     }
     out.extend(events);
 }
@@ -357,25 +356,6 @@ pub fn decode(bytes: &[u8]) -> Result<Sequence> {
     Ok(Sequence::new(sequence))
 }
 
-/// An atomic value read.
-fn decode_atomic(reader: &mut Reader<'_>) -> Result<Atomic> {
-    let tag = reader.u8()?;
-    let Some(&kind) = ATOMIC_TYPES.get(usize::from(tag)) else {
-        return Err(reader.corrupt(&format!("an atomic value's type is {tag}")));
-    };
-    let mut atomic = Atomic::new(kind, reader.str()?);
-    if is_name(kind) {
-        atomic.namespace = Some(reader.str()?).filter(|uri| !uri.is_empty()).map(Into::into);
-    }
-    Ok(atomic)
-}
-
-/// Whether a value of `kind` is a qualified name, whose namespace URI is
-/// stored after its lexical form [XQueryDM §3.3.3].
-fn is_name(kind: AtomicType) -> bool {
-    matches!(kind.primitive(), Primitive::QName | Primitive::Notation)
-}
-
 /// A node's tree read: its names, then its events to the end of its
 /// root.
 fn decode_node(reader: &mut Reader<'_>) -> Result<Tree> {
@@ -440,10 +420,7 @@ fn decode_names(reader: &mut Reader<'_>) -> Result<Vec<QName>> {
     let n = reader.u32()?;
     let mut names = Vec::new();
     for _ in 0..n {
-        let flags = reader.u8()?;
-        let prefix = if flags & HAS_PREFIX != 0 { Some(reader.str()?.into()) } else { None };
-        let uri = if flags & HAS_URI != 0 { Some(reader.str()?.into()) } else { None };
-        names.push(QName { prefix, uri, local: reader.str()?.into() });
+        names.push(read_name(reader)?);
     }
     Ok(names)
 }
@@ -526,6 +503,7 @@ fn decode_attribute(reader: &mut Reader<'_>, tables: &Tables) -> Result<(Specifi
 }
 
 mod annotations;
+mod atomic;
 mod events;
 #[cfg(test)]
 mod tests;

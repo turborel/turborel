@@ -289,3 +289,29 @@ fn casts_as_derived_types() {
     assert_eq!(list.atomic(), None);
     assert_eq!(Primitive::Decimal.schema(), Primitive::Decimal);
 }
+
+/// Verifies: [DESIGN] [XQueryDM §2.6.1, §3.3.1.2] [XQuery §3.12.3] RULES.md D106: a
+/// simple type of a schema annotates the values it validates and casts
+/// with its name, of a string read as a literal or of another value cast,
+/// a list's items with their item type's; a built-in type, or one made
+/// apart from a schema, annotates none; a cast to the built-in type a
+/// user-defined one restricts keeps the value and drops its type.
+#[test]
+fn values_of_a_schemas_types_are_annotated() {
+    let name = QName { prefix: None, uri: Some("urn:t".into()), local: "small".into() };
+    let small = of(AtomicType::Int, vec![Facet::MaxInclusive(lit("9"))]).annotated_as(name.clone());
+    let named = |a: &Atomic| a.annotation.as_deref().cloned();
+    assert_eq!(small.annotation().map(|n| (**n).clone()), Some(name.clone()));
+    assert_eq!(small.validate("5").unwrap().iter().map(named).collect::<Vec<_>>(), [Some(name.clone())]);
+    let cast = small.cast(&Atomic::new(AtomicType::Integer, "7")).unwrap();
+    assert_eq!((cast.kind, named(&cast)), (AtomicType::Int, Some(name.clone())));
+    assert_eq!(named(&small.cast(&Atomic::new(AtomicType::UntypedAtomic, "7")).unwrap()), Some(name.clone()));
+    let list = SimpleType::list(Arc::new(small)).unwrap();
+    assert!(list.validate("1 2").unwrap().iter().all(|a| named(a) == Some(name.clone())));
+    assert!(list.annotation().is_none());
+    let plain = of(AtomicType::Int, vec![Facet::MaxInclusive(lit("9"))]);
+    assert_eq!(named(&plain.validate("5").unwrap()[0]), None);
+    assert_eq!(named(&SimpleType::built_in(AtomicType::Int).cast(&Atomic::new(AtomicType::Integer, "7")).unwrap()), None);
+    let back = crate::xml::cast(&cast, AtomicType::Int).unwrap();
+    assert_eq!((back.lexical.as_ref(), named(&back)), ("7", None));
+}

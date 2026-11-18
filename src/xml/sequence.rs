@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use super::tree::{Kind, NodeId, Tree};
+use super::tree::{Kind, NodeId, QName, Tree};
 use crate::error::Result;
 
 /// A node of a tree [XQueryDM §6].
@@ -103,7 +103,8 @@ impl Node {
 /// datatype of XML Schema [Schema2 §3.2, §3.3], and the three XQuery adds,
 /// `xdt:untypedAtomic` and the two durations (`xml/atomic/types.rs`). A
 /// value of a type an XML Schema derives from one is of the built-in type
-/// it is derived from, with the facets checked (`xml/schema.rs`).
+/// it is derived from, with the facets checked (`xml/schema.rs`), and
+/// annotated with its own type's name (`Atomic::annotation`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AtomicType {
     /// `xs:string`.
@@ -199,9 +200,18 @@ pub enum AtomicType {
 
 /// An atomic value [XQueryDM §2.6.4]: its type and its canonical lexical
 /// form, which casting it to `xs:string` gives [XQueryFO §17.1.2].
+///
+/// \[DESIGN\] RULES.md D106: a value of a user-defined atomic type, one an
+/// XML Schema derives by restriction [XQueryDM §2.6.1], is held as a value
+/// of the built-in type it restricts, its value space a subset of that
+/// type's [Schema2 §2.5.2.1], with the name of its own type, its type
+/// annotation:
+/// so it is compared, cast and computed as a value of the built-in type,
+/// and matched by its own type's derivation [XQuery §2.5.4.2].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Atomic {
-    /// Its type.
+    /// Its type: the built-in type it is of, or its user-defined type
+    /// restricts.
     pub kind: AtomicType,
     /// Its canonical lexical form.
     pub lexical: Box<str>,
@@ -210,14 +220,18 @@ pub struct Atomic {
     /// URI [XQueryDM §3.3.3], its lexical form the prefix and local name
     /// alone; none of a name in no namespace, and of every other value.
     pub namespace: Option<Box<str>>,
+    /// The name of its user-defined atomic type, an anonymous one's the
+    /// validation made [XQueryDM §2.6.1, §3.3.1.2]; none of a value of a
+    /// built-in type.
+    pub annotation: Option<Arc<QName>>,
 }
 
 impl Atomic {
     /// The value of `kind` whose canonical lexical form is `lexical`, of
-    /// no namespace.
+    /// no namespace and no user-defined type.
     #[must_use]
     pub fn new(kind: AtomicType, lexical: impl Into<Box<str>>) -> Atomic {
-        Atomic { kind, lexical: lexical.into(), namespace: None }
+        Atomic { kind, lexical: lexical.into(), namespace: None, annotation: None }
     }
 
     /// The `xs:QName` of the namespace URI `uri`, none or empty for no
@@ -225,7 +239,15 @@ impl Atomic {
     /// [XQueryDM §3.3.3].
     #[must_use]
     pub fn qname(uri: Option<&str>, lexical: &str) -> Atomic {
-        Atomic { kind: AtomicType::QName, lexical: lexical.into(), namespace: uri.filter(|u| !u.is_empty()).map(Into::into) }
+        let namespace = uri.filter(|u| !u.is_empty()).map(Into::into);
+        Atomic { kind: AtomicType::QName, lexical: lexical.into(), namespace, annotation: None }
+    }
+
+    /// It of the user-defined atomic type named `annotation`, or of its
+    /// built-in type alone if none.
+    #[must_use]
+    pub fn annotated(self, annotation: Option<Arc<QName>>) -> Atomic {
+        Atomic { annotation, ..self }
     }
 }
 

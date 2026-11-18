@@ -9,8 +9,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::SchemaType;
-use crate::xml::QName;
+use crate::error::Result;
 use crate::xml::schema::{ComplexId, Derivations, Schema, Simple, TypeDef, Variety, annotated_type, built_in_type, type_derives};
+use crate::xml::{Atomic, AtomicType, QName, SimpleType, xquery_error};
 
 /// A type definition of an imported schema [XQuery §4.10].
 #[derive(Clone)]
@@ -77,13 +78,53 @@ impl Defined {
 
     /// Whether it is a simple type of the atomic variety, so derived from
     /// `xdt:anyAtomicType` [XQueryFO §1.6].
-    fn atomic(&self) -> bool {
+    #[must_use]
+    pub fn atomic(&self) -> bool {
+        self.datatype().is_some_and(|t| matches!(t.variety(), Variety::Atomic(_)))
+    }
+
+    /// The datatype it defines, of a simple type definition: a built-in
+    /// atomic type's, or the one its schema made.
+    fn datatype(&self) -> Option<Arc<SimpleType>> {
         match self.def {
-            TypeDef::Simple(Simple::Atomic(_)) => true,
-            TypeDef::Simple(Simple::Defined(id)) => self.schema.simple(id).is_some_and(|d| matches!(d.def.variety(), Variety::Atomic(_))),
-            TypeDef::Simple(Simple::AnySimple | Simple::List(_)) | TypeDef::Complex(_) => false,
+            TypeDef::Simple(Simple::Atomic(t)) => Some(Arc::new(SimpleType::built_in(t))),
+            TypeDef::Simple(Simple::Defined(id)) => self.schema.simple(id).map(|d| Arc::clone(&d.def)),
+            TypeDef::Simple(Simple::AnySimple | Simple::List(_)) | TypeDef::Complex(_) => None,
         }
     }
+
+    /// The built-in atomic type it restricts, if it is atomic.
+    #[must_use]
+    pub fn built_in(&self) -> Option<AtomicType> {
+        self.datatype().and_then(|t| t.atomic())
+    }
+
+    /// `value` cast as it [XQuery §3.12.3] [XQueryFO §17.2]: a string or
+    /// untyped value validated as a literal, another cast as its built-in
+    /// type and checked against its facets, made a value of it.
+    ///
+    /// # Errors
+    ///
+    /// SQLSTATE 10000: err:XPST0051 if it is no atomic type; as
+    /// `SimpleType::cast`.
+    pub fn cast(&self, value: &Atomic) -> Result<Atomic> {
+        let Some(datatype) = self.datatype() else {
+            return Err(xquery_error(&format!("{self} is no atomic type"), "[XQuery §2.5.4.2] err:XPST0051"));
+        };
+        datatype.cast(value)
+    }
+}
+
+/// derives-from(the user-defined atomic type `name` of a value,
+/// `expected`, a type of an imported schema) [XQuery §2.5.4.2]: the type
+/// of that name in the schema `expected` is of, if it has one, derived
+/// from `expected` by Type Derivation OK; else not, as the data model has
+/// one type of a name [XQueryDM §2.6.1].
+#[must_use]
+pub fn value_derives(name: &QName, expected: &SchemaType) -> bool {
+    let SchemaType::Defined(d) = expected else { return false };
+    annotated_type(&d.schema, name)
+        .is_some_and(|def| Defined { name: name.clone(), schema: Arc::clone(&d.schema), def }.derives_from(expected))
 }
 
 /// The schemas a query imports [XQuery §4.10], against which the type

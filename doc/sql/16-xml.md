@@ -712,7 +712,7 @@ SELECT XMLQUERY('xs:QName(concat("s", ":item"))' NULL ON EMPTY) FROM ORDERS2 WHE
 ----------------------
  urn:shop
 (1 row)
-turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XPST0083: a value cast to xs:QName is a string literal [XQuery §3.12.3, §3.12.5] [ISO/IEC 9075-14:2006 draft §6.18 GR3] (at character 7)
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XPST0083: a value cast to xs:QName, or a type derived from it or xs:NOTATION, is a string literal [XQuery §3.12.3, §3.12.5] [ISO/IEC 9075-14:2006 draft §6.18 GR3] (at character 7)
 ```
 
 ### Functions
@@ -1538,10 +1538,27 @@ attribute declarations then name sequence types: `element(*, p:t)`
 matches an element whose type is `p:t` or derived from it,
 `schema-element(p:e)` one of the declaration `p:e` or of the
 substitution group it heads, nilled only if `p:e` is nillable, and
-`schema-attribute(p:a)` an attribute of the declaration `p:a`. A
-simple type the schema defines names no atomic item type, as an atomic
-value has a built-in type alone (`err:XPST0051`). A view, a constraint,
-a trigger or a routine depends on what its queries import.
+`schema-attribute(p:a)` an attribute of the declaration `p:a`. A view,
+a constraint, a trigger or a routine depends on what its queries
+import.
+
+A simple type the schema defines, restricting a built-in atomic type,
+is an atomic type of the query as the built-in ones are. `$v instance
+of p:t` holds of a value of `p:t` or of a type derived from it,
+`treat as`, typeswitch and a function's parameters and result take it,
+and `cast as p:t` and the constructor function `p:t(...)` make a value
+of it, checking the type's facets: a value they refuse fails with
+`err:FORG0001`. A string is read as the type's literal, its whitespace
+normalized and its patterns matched first; another value is cast to the
+built-in type the type restricts, then its patterns are matched against
+its canonical form. A cast to a type derived from `xs:QName` is of a
+string literal alone. The typed value of an element or attribute a
+validation typed is of its own type, a list's items of the item type
+and a union's of the member that validated each, and a value keeps its
+type when stored. Otherwise a value of `p:t` is a value of the built-in
+type it restricts: it compares, computes and serializes as one, and a
+cast to that type keeps the value and drops `p:t`. A list or union type
+is no atomic type (`err:XPST0051`).
 
 | Code | When |
 |---|---|
@@ -1553,6 +1570,9 @@ a trigger or a routine depends on what its queries import.
 ```sql
 VALUES (XMLSERIALIZE(CONTENT XMLQUERY('import schema default element namespace ""; (validate { . })/size instance of schema-element(size)' PASSING BY REF XMLPARSE(DOCUMENT '<size>12</size>' PRESERVE WHITESPACE) RETURNING SEQUENCE EMPTY ON EMPTY) AS VARCHAR(10)));
 VALUES (XMLQUERY('import schema "urn:nowhere"; 1' RETURNING SEQUENCE BY REF EMPTY ON EMPTY));
+CREATE XML SCHEMA SHOES AS '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:s="urn:shoes" targetNamespace="urn:shoes"><xs:simpleType name="shoesize"><xs:restriction base="xs:integer"><xs:minInclusive value="1"/><xs:maxInclusive value="50"/></xs:restriction></xs:simpleType><xs:element name="shoe" type="s:shoesize"/></xs:schema>';
+VALUES (XMLSERIALIZE(CONTENT XMLQUERY('import schema namespace s = "urn:shoes"; let $v := data((validate { . })/s:shoe) return ($v instance of s:shoesize, $v + 1, s:shoesize("42") instance of xs:integer, 42 instance of s:shoesize)' PASSING BY REF XMLPARSE(DOCUMENT '<shoe xmlns="urn:shoes">44</shoe>' PRESERVE WHITESPACE) RETURNING SEQUENCE EMPTY ON EMPTY) AS VARCHAR(40)));
+VALUES (XMLQUERY('import schema namespace s = "urn:shoes"; 51 cast as s:shoesize' RETURNING SEQUENCE BY REF EMPTY ON EMPTY));
 ```
 
 ```
@@ -1561,6 +1581,12 @@ VALUES (XMLQUERY('import schema "urn:nowhere"; 1' RETURNING SEQUENCE BY REF EMPT
  true
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XQST0059: no registered XML Schema the current user may use has the target namespace 'urn:nowhere' [XQuery §4.10] [ISO/IEC 9075-14:2006 draft §6.18 GR3] (at character 8)
+OK
+
+------------------------------------------
+ true 45 true false
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error: '51' is not valid for {urn:shoes}shoesize: it is not within its maxInclusive [Schema2 §4.3.7.3] 50 [Schema2 §4.1.4] [XQueryFO §17.1.1] err:FORG0001 [ISO/IEC 9075-14:2006 draft §6.18 GR3]
 ```
 
 ## Clients

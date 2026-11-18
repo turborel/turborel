@@ -25,13 +25,39 @@ pub enum Typing {
     /// Element-only content: no typed value [XQueryDM §6.2.4].
     ElementOnly,
     /// An atomic type: one value of it.
-    Atomic(AtomicType),
+    Atomic(ValueType),
     /// A list of an atomic type: a value of it for each item.
-    List(AtomicType),
+    List(ValueType),
     /// A list whose items are of several atomic types, as a list of a
     /// union's are: a value of each item's own type, in order, the member
     /// type that validated it [XQueryDM §3.3.1.3] [Schema2 §2.5.1.3].
-    Items(Arc<[AtomicType]>),
+    Items(Arc<[ValueType]>),
+}
+
+/// The atomic type of a value of a typed value [XQueryDM §3.3.1.2]: the
+/// built-in type it is or restricts, and the name of the user-defined
+/// type, if it is one, whose instance the value is.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ValueType {
+    /// The built-in type.
+    pub kind: AtomicType,
+    /// The user-defined type's name, none of a built-in type.
+    pub name: Option<Arc<QName>>,
+}
+
+impl From<AtomicType> for ValueType {
+    /// The built-in type `kind`.
+    fn from(kind: AtomicType) -> ValueType {
+        ValueType { kind, name: None }
+    }
+}
+
+impl ValueType {
+    /// The type of `value`.
+    #[must_use]
+    pub fn of(value: &Atomic) -> ValueType {
+        ValueType { kind: value.kind, name: value.annotation.clone() }
+    }
 }
 
 /// A type annotation [XQueryDM §3.3.1.1]: the name of the type, an
@@ -94,15 +120,15 @@ impl Tree {
             Typing::ElementOnly => {
                 Err(xquery_error("an element of element-only content has no typed value", "[XQueryFO §2.4] err:FOTY0012"))
             }
-            Typing::Atomic(t) => Ok(vec![self.qualified(id, read(&text, *t)?)]),
-            Typing::List(t) => text.split_ascii_whitespace().map(|item| Ok(self.qualified(id, read(item, *t)?))).collect(),
+            Typing::Atomic(t) => Ok(vec![self.qualified(id, read(&text, t)?)]),
+            Typing::List(t) => text.split_ascii_whitespace().map(|item| Ok(self.qualified(id, read(item, t)?))).collect(),
             Typing::Items(kinds) => {
                 let items: Vec<&str> = text.split_ascii_whitespace().collect();
                 if items.len() != kinds.len() {
                     let why = format!("'{text}' is not {} items, as its type annotation says", kinds.len());
                     return Err(xquery_error(&why, "[XQueryFO §17.1.1] err:FORG0001"));
                 }
-                items.into_iter().zip(kinds.iter()).map(|(item, &t)| Ok(self.qualified(id, read(item, t)?))).collect()
+                items.into_iter().zip(kinds.iter()).map(|(item, t)| Ok(self.qualified(id, read(item, t)?))).collect()
             }
         }
     }
@@ -130,7 +156,11 @@ fn xquery_error(why: &str, code: &str) -> SqlError {
     SqlError::new(Code::Data, format!("{code} XQuery error: {why}")).with_state(SqlState::XQUERY_ERROR)
 }
 
-/// `text` read as a value of `t`.
-fn read(text: &str, t: AtomicType) -> Result<Atomic> {
-    from_lexical(text, t)?.ok_or_else(|| xquery_error(&format!("'{text}' is no value of {}", t.name()), "[XQueryFO §17.1.1] err:FORG0001"))
+/// `text` read as a value of `t`: of its built-in type, annotated with its
+/// user-defined type's name if it has one [XQueryDM §3.3.1.2].
+fn read(text: &str, t: &ValueType) -> Result<Atomic> {
+    let value = from_lexical(text, t.kind)?;
+    let value =
+        value.ok_or_else(|| xquery_error(&format!("'{text}' is no value of {}", t.kind.name()), "[XQueryFO §17.1.1] err:FORG0001"))?;
+    Ok(value.annotated(t.name.clone()))
 }

@@ -71,12 +71,14 @@ pub fn duration_units(text: &str, year_month: bool) -> Result<i128> {
     units.ok_or_else(|| xquery_error(&format!("'{text}' is no duration"), "[XQueryFO §17.1.1] err:FORG0001"))
 }
 
-/// `value` cast as `to` [XQueryFO §17]: itself if of `to`; as a string or
-/// untyped, its string; from a string, a type derived from one, or an
-/// untyped value, the value of `to` its normalized text is a lexical form
-/// of; else, cast as the type a cast treats `to`'s as primitive as the
-/// types' casting rules say, then checked against the facets `to` fixes
-/// [XQueryFO §17.4, §17.5].
+/// `value` cast as the built-in type `to` [XQueryFO §17]: itself if of
+/// `to`, of `to` alone if of a user-defined type restricting it; as a
+/// string or untyped, its string; from a string, a type derived from one,
+/// or an untyped value, the value of `to` its normalized text is a
+/// lexical form of; else, cast as the type a cast treats `to`'s as
+/// primitive as the types' casting rules say, then checked against the
+/// facets `to` fixes [XQueryFO §17.4, §17.5]. The value made is of no
+/// user-defined type.
 ///
 /// # Errors
 ///
@@ -89,7 +91,9 @@ pub fn duration_units(text: &str, year_month: bool) -> Result<i128> {
 /// integer, err:FOCA0002.
 pub fn cast(value: &Atomic, to: AtomicType) -> Result<Atomic> {
     if value.kind == to {
-        return Ok(value.clone());
+        // [XQuery §3.12.3] A value of a user-defined type restricting `to`
+        // is cast to it unchanged but for its type.
+        return Ok(value.clone().annotated(None));
     }
     if to == AtomicType::String || to == AtomicType::UntypedAtomic {
         return Ok(Atomic::new(to, value.lexical.clone()));

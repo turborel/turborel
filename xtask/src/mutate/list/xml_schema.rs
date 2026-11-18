@@ -343,7 +343,7 @@ pub const XML_SCHEMA: [Mutation; 50] = [
         package: Package::Core,
         breaks: "a list of a union whose items are of several types is typed xs:anySimpleType",
         file: "src/xml/schema/assess/element.rs",
-        original: "                Typing::Items(atoms.iter().map(|a| a.kind).collect())",
+        original: "                Typing::Items(atoms.iter().map(ValueType::of).collect())",
         replacement: "                Typing::AnySimple",
         integration: &[],
         unit: &["xml::schema::assess::tests::simple::a_list_of_a_union_types_each_item"],

@@ -1,7 +1,9 @@
 //! Tests of the types of queries.
 
-use super::{SchemaType, XDT_NAMESPACE};
-use crate::xml::{AtomicType, XS_NAMESPACE};
+use std::sync::Arc;
+
+use super::{ItemKind, SchemaType, XDT_NAMESPACE};
+use crate::xml::{Atomic, AtomicType, Item, QName, XS_NAMESPACE};
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18] [XQuery §2.5.1, §2.5.4] the in-scope schema types by name,
 /// atomic or not, and derives-from by the built-in hierarchy.
@@ -30,5 +32,22 @@ fn schema_types_and_derivation() {
         (SchemaType::Atomic(AtomicType::Date), "xs:date"),
     ] {
         assert_eq!(t.to_string(), shown);
+    }
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18] [XQuery §2.5.4.2]
+/// RULES.md D106: a value of a user-defined atomic type matches the
+/// built-in types above the one its type restricts, as a value of that
+/// type would, and no others; a value of a built-in type matches the
+/// same.
+#[test]
+fn values_of_user_defined_types_match_built_in_types() {
+    let name = Arc::new(QName { prefix: None, uri: Some("urn:t".into()), local: "small".into() });
+    let small = Item::Atomic(Atomic::new(AtomicType::Int, "5").annotated(Some(name)));
+    let plain = Item::Atomic(Atomic::new(AtomicType::Int, "5"));
+    for item in [&small, &plain] {
+        let of = |t| ItemKind::Atomic(SchemaType::Atomic(t)).matches(item);
+        assert!(of(AtomicType::Int) && of(AtomicType::Integer) && !of(AtomicType::Short) && !of(AtomicType::String));
+        assert!(ItemKind::Atomic(SchemaType::AnyAtomicType).matches(item));
     }
 }

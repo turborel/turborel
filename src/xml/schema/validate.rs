@@ -6,7 +6,9 @@
 //! restriction, as XQuery casts one [XQueryFO §17.1.1, §17.4, §17.5].
 //!
 //! A literal or value that is not valid is an XQuery error, err:FORG0001,
-//! as a cast reports it [XQueryFO §17.1.1]; SQLSTATE 10000.
+//! as a cast reports it [XQueryFO §17.1.1]; SQLSTATE 10000. A value a
+//! simple type definition of a schema validates, or a cast to one makes,
+//! is annotated with its name [XQueryDM §3.3.1.2].
 
 use std::cmp::Ordering;
 
@@ -64,7 +66,9 @@ impl SimpleType {
                 self.patterns(&normalized, literal)?;
                 let value =
                     from_lexical(&normalized, *t)?.ok_or_else(|| not_valid(self, literal, &format!("it is no literal of {}", t.name())))?;
-                (normalized, vec![value])
+                // [XQueryDM §3.3.1.2] An instance of this type, if it is a
+                // schema's.
+                (normalized, vec![value.annotated(self.annotation.clone())])
             }
             Variety::List(item) => {
                 let normalized = normalize(literal, self.white_space());
@@ -187,7 +191,8 @@ impl SimpleType {
     /// this is derived from, then checked against its facets, its patterns
     /// matched against the canonical representation of the value as of its
     /// own primitive type [XQueryFO §17.4], or as of this type's if they
-    /// differ [XQueryFO §17.5].
+    /// differ [XQueryFO §17.5]. The value made is of this type, if it is a
+    /// schema's [XQuery §3.12.3].
     ///
     /// # Errors
     ///
@@ -207,6 +212,6 @@ impl SimpleType {
         let source = if within { canonical(value) } else { canonical(&typed) };
         self.patterns(&source, &value.lexical)?;
         self.facet_valid(std::slice::from_ref(&typed), &value.lexical)?;
-        Ok(typed)
+        Ok(typed.annotated(self.annotation.clone()))
     }
 }

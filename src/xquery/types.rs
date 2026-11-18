@@ -11,7 +11,10 @@
 //! from `xs:anyType` alone. An atomic value is of an
 //! `xml::AtomicType`, every built-in atomic type of XML Schema and XQuery
 //! one; the hierarchy above them is `xdt:anyAtomicType`,
-//! `xs:anySimpleType` and `xs:anyType` [XQueryFO §1.6].
+//! `xs:anySimpleType` and `xs:anyType` [XQueryFO §1.6]. A value of a
+//! user-defined atomic type is annotated with its name, matched by that
+//! type's derivation in an imported schema, and by the built-in hierarchy
+//! of the built-in type it restricts.
 
 use std::fmt;
 use std::sync::Arc;
@@ -19,7 +22,7 @@ use std::sync::Arc;
 pub use defined::{Defined, Imports};
 
 use super::ast::Occurrence;
-use crate::xml::{AtomicType, Item, Kind, Node, QName, XS_NAMESPACE, XS_PREFIX};
+use crate::xml::{Atomic, AtomicType, Item, Kind, Node, QName, XS_NAMESPACE, XS_PREFIX};
 
 /// The namespace of the types XQuery adds to XML Schema's, `xdt` [XQuery
 /// §2].
@@ -85,10 +88,15 @@ impl SchemaType {
         AtomicType::all().find(|t| t.name().split_once(':') == Some((prefix, local))).map(SchemaType::Atomic)
     }
 
-    /// Whether it is an atomic type [XQuery §2.5.1].
+    /// Whether it is an atomic type [XQuery §2.5.1]: a built-in one, or a
+    /// simple type definition of the atomic variety of an imported schema.
     #[must_use]
     pub fn is_atomic(&self) -> bool {
-        matches!(self, SchemaType::AnyAtomicType | SchemaType::Atomic(_))
+        match self {
+            SchemaType::AnyAtomicType | SchemaType::Atomic(_) => true,
+            SchemaType::Defined(d) => d.atomic(),
+            SchemaType::AnyType | SchemaType::Untyped | SchemaType::AnySimpleType | SchemaType::List(_) => false,
+        }
     }
 
     /// The type it is derived from by restriction, none of `xs:anyType`
@@ -241,12 +249,24 @@ impl ItemKind {
     pub fn matches(&self, item: &Item) -> bool {
         match (self, item) {
             (ItemKind::Item, _) => true,
-            (ItemKind::Atomic(t), Item::Atomic(a)) => SchemaType::Atomic(a.kind).derives_from(t),
+            (ItemKind::Atomic(t), Item::Atomic(a)) => atomic_derives(a, t),
             (ItemKind::Numeric, Item::Atomic(a)) => numeric(a.kind),
             (ItemKind::Node(kind), Item::Node(node)) => kind.matches(node),
             (ItemKind::Atomic(_) | ItemKind::Numeric, Item::Node(_)) | (ItemKind::Node(_), Item::Atomic(_)) => false,
         }
     }
+}
+
+/// derives-from(the type of `a`, `expected`) [XQuery §2.5.4.2]: to a type
+/// of an imported schema, by the derivation of `a`'s user-defined type in
+/// that schema (`defined::value_derives`), so a value of a built-in type
+/// derives from none; to a built-in type, by the built-in hierarchy of
+/// the built-in type `a` is of or its type restricts.
+fn atomic_derives(a: &Atomic, expected: &SchemaType) -> bool {
+    if let (Some(name), SchemaType::Defined(_)) = (&a.annotation, expected) {
+        return defined::value_derives(name, expected);
+    }
+    !matches!(expected, SchemaType::Defined(_)) && SchemaType::Atomic(a.kind).derives_from(expected)
 }
 
 /// Whether `t` is a numeric type, or derived from one [XQuery Appendix

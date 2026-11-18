@@ -4,8 +4,8 @@
 //! stored bytes, and only the names of the item read are held.
 
 use super::{
-    ATOMIC, ATTRIBUTE, COMMENT, DOCUMENT, ELEMENT, END, FORMAT_VERSION, NODE, PROCESSING_INSTRUCTION, TEXT, WHAT, decode_names,
-    skip_annotations,
+    ATOMIC, ATTRIBUTE, COMMENT, DOCUMENT, ELEMENT, END, FORMAT_VERSION, NODE, PROCESSING_INSTRUCTION, TEXT, WHAT, decode_atomic,
+    decode_names, skip_annotations,
 };
 use crate::bytes::Reader;
 use crate::error::Result;
@@ -103,8 +103,7 @@ impl<'a> Events<'a> {
                 Ok(Some(Event::Node))
             }
             ATOMIC => {
-                self.reader.u8()?;
-                self.reader.bytes()?;
+                decode_atomic(&mut self.reader)?;
                 Ok(Some(Event::Atomic))
             }
             tag => Err(self.reader.corrupt(&format!("an item's tag is {tag}"))),

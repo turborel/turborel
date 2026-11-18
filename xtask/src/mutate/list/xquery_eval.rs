@@ -3,13 +3,15 @@
 //! predicates, general comparisons, order by, boundary whitespace,
 //! copy-namespaces, circular variables, cancellation, arithmetic,
 //! dates, constructors, NULL ON EMPTY, passing BY VALUE and XMLTABLE's
-//! defaults; and the reduction of a query to an XML index's lookup and
-//! the planner's reading of one (RULES.md R-TEST-9, D15, D44, D106).
+//! defaults; the reduction of a query to an XML index's lookup and the
+//! planner's reading of one; and the user-defined atomic types of values,
+//! as validated, cast, stored and matched (RULES.md R-TEST-9, D15, D44,
+//! D106).
 
 use super::{Mutation, Package};
 
 /// Each mechanism broken alone, and the tests that fail.
-pub const XQUERY_EVAL: [Mutation; 26] = [
+pub const XQUERY_EVAL: [Mutation; 33] = [
     Mutation {
         name: "xquery-depth-bound",
         package: Package::Core,
@@ -269,5 +271,75 @@ pub const XQUERY_EVAL: [Mutation; 26] = [
         replacement: "filter_of(predicate, at, &mut reduction)?;",
         integration: &["xml_index_plans::each_index_gives_the_rows_of_a_full_read"],
         unit: &["xquery::lookup::tests::ancestor_predicates_are_filters"],
+    },
+    Mutation {
+        name: "xml-atomic-annotation-stamped",
+        package: Package::Core,
+        breaks: "a value a schema's simple type validates is of the built-in type alone",
+        file: "src/xml/schema/validate.rs",
+        original: "(normalized, vec![value.annotated(self.annotation.clone())])",
+        replacement: "(normalized, vec![value])",
+        integration: &["xml_atomic_types::typed_values_keep_user_defined_types_3_3_1_2"],
+        unit: &["xml::schema::tests::values_of_a_schemas_types_are_annotated"],
+    },
+    Mutation {
+        name: "xml-cast-drops-annotation",
+        package: Package::Core,
+        breaks: "a value of a user-defined type cast to the built-in type it restricts keeps its type",
+        file: "src/xml/atomic.rs",
+        original: "return Ok(value.clone().annotated(None));",
+        replacement: "return Ok(value.clone());",
+        integration: &["xml_atomic_types::casts_to_user_defined_types_check_facets_3_12_3"],
+        unit: &["xml::schema::tests::values_of_a_schemas_types_are_annotated"],
+    },
+    Mutation {
+        name: "xml-stored-atomic-annotation",
+        package: Package::Core,
+        breaks: "an atomic value stored loses its user-defined type",
+        file: "src/xml/stored/atomic.rs",
+        original: "USER_DEFINED => Some(Arc::new(read_name(reader)?)),",
+        replacement: "USER_DEFINED => read_name(reader).map(|_| None)?,",
+        integration: &["xml_atomic_types::stored_atomic_values_keep_their_types"],
+        unit: &["xml::stored::tests::user_defined_atomic_types_are_stored"],
+    },
+    Mutation {
+        name: "xml-union-member-type",
+        package: Package::Core,
+        breaks: "a union's value is typed by its member's built-in type, not the member",
+        file: "src/xml/schema/assess/element.rs",
+        original: "[one] => Typing::Atomic(ValueType::of(one)),",
+        replacement: "[one] => Typing::Atomic(one.kind.into()),",
+        integration: &["xml_atomic_types::typed_values_keep_user_defined_types_3_3_1_2"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-user-type-derivation",
+        package: Package::Core,
+        breaks: "a value of a user-defined type matches every type of an imported schema",
+        file: "src/xquery/types.rs",
+        original: "return defined::value_derives(name, expected);",
+        replacement: "return true;",
+        integration: &["xml_atomic_types::user_defined_types_are_atomic_item_types_2_5_4_2"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-cast-user-facets",
+        package: Package::Core,
+        breaks: "a cast to a user-defined type casts to its built-in type alone, its facets unchecked",
+        file: "src/xquery/eval/types.rs",
+        original: "    defined.cast(a).map_err(within_query)\n}",
+        replacement: "    cast_atomic(a, defined.built_in().unwrap_or(target.to))\n}",
+        integration: &["xml_atomic_types::casts_to_user_defined_types_check_facets_3_12_3"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-untyped-to-user-type",
+        package: Package::Core,
+        breaks: "an untyped argument of a parameter of a user-defined type is not cast to it",
+        file: "src/xquery/eval/types.rs",
+        original: "    if let (SchemaType::Defined(defined), AtomicType::UntypedAtomic) = (t, a.kind) {",
+        replacement: "    if let (SchemaType::Defined(defined), AtomicType::UntypedAtomic) = (t, AtomicType::String) {",
+        integration: &["xml_atomic_types::sequence_types_of_user_defined_types_3_1_5"],
+        unit: &[],
     },
 ];

@@ -170,7 +170,7 @@ impl Analysis<'_> {
             ));
         }
         let arity = f.params.len();
-        if self.declared.iter().any(|(n, a)| n.same(&name) && *a == arity) || Self::constructor(&name, arity) {
+        if self.declared.iter().any(|(n, a)| n.same(&name) && *a == arity) || self.constructor(&name, arity) {
             let why = format!("the function {} of {arity} parameters is declared twice [XQuery §4.15]", display(&name));
             return Err(error(ErrorCode::XQST0034, &why));
         }

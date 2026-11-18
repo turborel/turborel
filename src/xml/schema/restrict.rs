@@ -122,7 +122,7 @@ impl SimpleType {
         }
         agree(&facets)?;
         let name = format!("a restriction of {}", base.name).into();
-        Ok(SimpleType { name, variety: base.variety.clone(), facets, depth: base.depth })
+        Ok(SimpleType { name, variety: base.variety.clone(), facets, depth: base.depth, annotation: None })
     }
 }
 

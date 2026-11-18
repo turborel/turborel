@@ -8,6 +8,7 @@ use super::super::error::{ErrorCode, error};
 use super::super::plan::{Arith, CallOp, Callee, CompareOp, Op};
 use super::Analysis;
 use super::scope::{Unprefixed, Var, display};
+use super::types::is_name;
 use crate::error::Result;
 use crate::xml::schema::Mode;
 use crate::xml::{Atomic, AtomicType, cast};
@@ -159,12 +160,13 @@ impl Analysis<'_> {
             self.scope.functions_called.insert(at);
             return Ok(Op::Call(Box::new(CallOp { callee: Callee::Declared(at), arguments: compiled })));
         }
-        if Self::constructor(&expanded, arity) {
+        if self.constructor(&expanded, arity) {
             // [XQuery §3.12.5] T($arg) is ($arg cast as T?), of a QName
-            // ($arg cast as T) [XQueryFO §5.1].
-            let target = Self::atomic_target(&expanded, true)?;
-            if let (Some(literal), AtomicType::QName) = (arguments.first(), target.to) {
-                return self.qname_cast(literal, false);
+            // ($arg cast as T) [XQueryFO §5.1], of a string literal alone of
+            // a type derived from xs:QName or xs:NOTATION.
+            let target = self.atomic_target(&expanded, true)?;
+            if let Some(literal) = arguments.first().filter(|_| is_name(target.to)) {
+                return self.qname_cast(literal, &target, false);
             }
             let argument = compiled.pop().unwrap_or(Op::Empty);
             return Ok(Op::Cast(Box::new(argument), target));

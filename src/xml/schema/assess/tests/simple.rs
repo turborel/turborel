@@ -4,7 +4,18 @@
 //! unions, IDs and IDREFs of derived types, simple content restricted.
 
 use super::*;
-use crate::xml::AtomicType;
+use crate::xml::{AtomicType, ValueType};
+
+/// The atomic type of node `n`'s typing, of an atomic type or a list, as
+/// its built-in type and its user-defined type's local name, if it has
+/// one.
+fn value_type(tree: &Tree, n: NodeId) -> (AtomicType, Option<String>) {
+    let t = match tree.annotation(n).map(|a| &a.typing) {
+        Some(Typing::Atomic(t) | Typing::List(t)) => t.clone(),
+        other => panic!("not of an atomic type: {other:?}"),
+    };
+    (t.kind, t.name.map(|name| name.local.to_string()))
+}
 
 /// [Schema1 §3.14] [Schema2 §4.1.2] Simple types of the examples, and
 /// elements and attributes of them.
@@ -42,7 +53,7 @@ fn defined_simple_types_validate_and_annotate() {
     let t = element(tree, "t");
     assert_eq!(type_of(tree, t), "farenheitWaterTemp");
     assert_eq!(tree.string_value(t), "50.25");
-    assert_eq!(tree.annotation(t).map(|a| a.typing.clone()), Some(Typing::Atomic(AtomicType::Decimal)));
+    assert_eq!(value_type(tree, t), (AtomicType::Decimal, Some("farenheitWaterTemp".to_owned())));
     let floats = attribute(tree, element(tree, "r"), "floats").unwrap();
     assert_eq!((tree.content(floats), type_of(tree, floats)), ("1.5 2", "listOfFloat".to_owned()));
     assert_eq!(tree.typed_value(floats).unwrap().len(), 2);
@@ -79,13 +90,16 @@ fn a_list_of_a_union_types_each_item() {
     let out = valid(&body, "<l>large 12 small</l>");
     let l = element(out.tree(), "l");
     let kinds = [AtomicType::NmToken, AtomicType::PositiveInteger, AtomicType::NmToken];
-    assert_eq!(out.tree().annotation(l).map(|a| a.typing.clone()), Some(Typing::Items(kinds.as_slice().into())));
-    let values: Vec<AtomicType> = out.tree().typed_value(l).unwrap().iter().map(|a| a.kind).collect();
-    assert_eq!(values, kinds);
+    let Some(Typing::Items(items)) = out.tree().annotation(l).map(|a| a.typing.clone()) else { panic!("a list of items") };
+    assert_eq!(items.iter().map(|t| t.kind).collect::<Vec<_>>(), kinds);
+    let anonymous = |t: &ValueType| t.name.as_ref().is_some_and(|n| n.local.starts_with("#anonymous-simple-"));
+    assert!(items.iter().all(anonymous), "each a member's own anonymous type: {items:?}");
+    let values: Vec<ValueType> = out.tree().typed_value(l).unwrap().iter().map(ValueType::of).collect();
+    assert_eq!(values, items.to_vec());
     let stored = crate::xml::decode(&crate::xml::encode(&crate::xml::Sequence::new(vec![crate::xml::Item::Node(out)]))).unwrap();
     let Some(crate::xml::Item::Node(back)) = stored.items().first() else { panic!("a node is stored") };
-    let read: Vec<AtomicType> = back.tree().typed_value(element(back.tree(), "l")).unwrap().iter().map(|a| a.kind).collect();
-    assert_eq!(read, kinds);
+    let read: Vec<ValueType> = back.tree().typed_value(element(back.tree(), "l")).unwrap().iter().map(ValueType::of).collect();
+    assert_eq!(read, items.to_vec());
     assert!(broken(&body, "<l>large 7</l>").contains("cvc-type.3.1.3"));
 }
 
@@ -108,7 +122,7 @@ fn ids_and_idrefs_of_derived_types() {
     assert!(tree.is_id(attribute(tree, p, "id").unwrap()));
     let to = attribute(tree, p, "to").unwrap();
     assert!(tree.is_idrefs(to));
-    assert_eq!(tree.annotation(to).map(|a| a.typing.clone()), Some(Typing::List(AtomicType::IdRef)));
+    assert_eq!(value_type(tree, to), (AtomicType::IdRef, Some("ref".to_owned())));
     assert!(broken(body, r#"<r><p id="k1" to="k3"/></r>"#).contains("cvc-id.1"));
     assert!(broken(body, r#"<r><p id="k1"/><p id="k1"/></r>"#).contains("cvc-id.2"));
     assert!(broken(body, r#"<r><p id="x1"/></r>"#).contains("cvc-attribute.3"));
@@ -127,7 +141,8 @@ fn simple_content_restricted_by_facets_validates() {
     let out = valid(body, r#"<p currency="EUR">9.50</p>"#);
     let p = element(out.tree(), "p");
     assert_eq!(type_of(out.tree(), p), "cheap");
-    assert_eq!(out.tree().annotation(p).map(|a| a.typing.clone()), Some(Typing::Atomic(AtomicType::Decimal)));
+    let (kind, name) = value_type(out.tree(), p);
+    assert!(kind == AtomicType::Decimal && name.is_some_and(|n| n.starts_with("#anonymous-simple-")));
     assert!(broken(body, r#"<p currency="EUR">10.5</p>"#).contains("cvc-type.3.1.3"));
 }
 

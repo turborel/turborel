@@ -19,7 +19,7 @@ mod build;
 mod typed;
 
 pub use build::{Builder, Construction, Copying, ElementStart, Specified, copied_attribute, is_xml_id};
-pub use typed::{Annotation, Typing};
+pub use typed::{Annotation, Typing, ValueType};
 
 use std::ops::Range;
 

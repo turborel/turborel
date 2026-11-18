@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::xml::serialize::{Parameters, serialize};
-use crate::xml::{Syntax, Version, Whitespace, parse};
+use crate::xml::{Atomic, Syntax, Version, Whitespace, parse};
 
 const TEXT: Parameters = Parameters { version: Version::V11, declaration: false, encoding: "UTF-8", undeclare: true };
 
@@ -188,4 +188,29 @@ fn qualified_names_keep_their_namespace() {
     let [Item::Atomic(first), Item::Atomic(second)] = back.items() else { panic!("two atomic values") };
     assert_eq!((first, second), (&named, &plain));
     assert_eq!(first.namespace.as_deref(), Some("http://e.org/n"));
+}
+
+/// Verifies: [DESIGN] [XQueryDM §2.6.1, §3.3.1.2] RULES.md D106: an atomic value of
+/// a user-defined type is stored with its type's name, so it reads back of
+/// that type, a qualified name with its namespace URI too; read as
+/// events, each atomic item is passed over whole, so the item after it is
+/// read (a regression: a qualified name's namespace URI was read as the
+/// next item's tag); a mark of its type of neither kind is corruption,
+/// SQLCODE -916.
+#[test]
+fn user_defined_atomic_types_are_stored() {
+    let name = Arc::new(QName { prefix: None, uri: Some("urn:t".into()), local: "small".into() });
+    let small = Atomic::new(AtomicType::Int, "5").annotated(Some(Arc::clone(&name)));
+    let qualified = Atomic::qname(Some("http://e.org/n"), "p:local").annotated(Some(name));
+    let node = Item::Node(Node::root(parse("<a/>", Syntax::Content, Whitespace::Preserve).unwrap()));
+    let value = Sequence::new(vec![Item::Atomic(small.clone()), Item::Atomic(qualified.clone()), node]);
+    let back = again(&value);
+    let [Item::Atomic(first), Item::Atomic(second), Item::Node(_)] = back.items() else { panic!("two atomic values and a node") };
+    assert_eq!((first, second), (&small, &qualified));
+    let bytes = encode(&value);
+    let events = events_of(&bytes).unwrap();
+    assert_eq!(events.get(..3), Some([Event::Atomic, Event::Atomic, Event::Node].as_slice()));
+    let plain = encode(&Sequence::new(vec![Item::Atomic(Atomic::new(AtomicType::Int, "5"))]));
+    let marked = [&plain[..plain.len() - 1], &[7]].concat();
+    assert!(corrupt(&marked).contains("marked 7"));
 }

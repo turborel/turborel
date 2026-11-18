@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::super::ast::{Comparator, SetOp};
 use super::super::collation::Collator;
 use super::super::functions::XQueryFunction;
-use super::super::types::{NodeKind, SeqType};
+use super::super::types::{Defined, NodeKind, SeqType};
 use crate::xml::schema::Mode;
 use crate::xml::{Atomic, AtomicType, Binding, Kind, QName};
 
@@ -293,12 +293,16 @@ pub struct TypeswitchOp {
 }
 
 /// The target type of a cast [XQuery §3.12.3].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CastTarget {
-    /// The atomic type.
+    /// The atomic type: a built-in one, or the one a user-defined type
+    /// restricts.
     pub(in crate::xquery) to: AtomicType,
     /// Whether `?` allows the empty sequence.
     pub(in crate::xquery) optional: bool,
+    /// The user-defined atomic type of an imported schema, if it is one
+    /// [XQuery §4.10].
+    pub(in crate::xquery) defined: Option<Arc<Defined>>,
 }
 
 /// A function call [XQuery §3.1.5].

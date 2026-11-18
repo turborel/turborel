@@ -27,19 +27,19 @@ fn database() -> Database {
 }
 
 /// XMLQUERY of `query`, its context item the document `xml`.
-fn xmlquery(query: &str, xml: &str) -> String {
+pub fn xmlquery(query: &str, xml: &str) -> String {
     let query = query.replace('\'', "''");
     format!("XMLQUERY('{query}' PASSING BY REF XMLPARSE(DOCUMENT '{xml}' PRESERVE WHITESPACE) RETURNING SEQUENCE EMPTY ON EMPTY)")
 }
 
 /// The value of `query` of the context item `xml`, serialized.
-fn value(s: &Session, query: &str, xml: &str) -> String {
+pub fn value(s: &Session, query: &str, xml: &str) -> String {
     one(s, &format!("XMLSERIALIZE(CONTENT {} AS VARCHAR(200))", xmlquery(query, xml)))
 }
 
 /// The XQuery error code `query` of the context item `xml` fails with;
 /// rolled back.
-fn code(s: &Session, query: &str, xml: &str) -> String {
+pub fn code(s: &Session, query: &str, xml: &str) -> String {
     let sql = format!("VALUES ({})", xmlquery(query, xml));
     let e: SqlError = crate::common::fetched(s, &sql).expect_err(&sql);
     s.rollback().unwrap();
@@ -105,8 +105,8 @@ fn schema_element_and_attribute_tests_2_5_4_4() {
 /// err:XQST0058; one no registered XML Schema the user may use has
 /// err:XQST0059, B's of A's; a prefix bound to no namespace err:XQST0057;
 /// a namespace's names defined by two imported schemas from different
-/// documents err:XQST0035, not from one; a user-defined atomic type is no
-/// atomic item type, err:XPST0051.
+/// documents err:XQST0035, not from one; a complex type is no atomic item
+/// type, err:XPST0051, while a simple type of the atomic variety is one.
 #[test]
 fn what_schema_imports_raise_4_10() {
     let db = database();
@@ -116,7 +116,8 @@ fn what_schema_imports_raise_4_10() {
     assert_eq!(code(&a, "import schema \"urn:none\"; 1", doc), "err:XQST0059");
     assert_eq!(code(&db.session("B"), &format!("{IMPORT}1"), doc), "err:XQST0059");
     assert_eq!(code(&a, "import schema namespace e = \"\"; 1", doc), "err:XQST0057");
-    assert_eq!(code(&a, &format!("{IMPORT}1 instance of s:small"), doc), "err:XPST0051");
+    assert_eq!(code(&a, &format!("{IMPORT}1 instance of s:base"), doc), "err:XPST0051");
+    assert_eq!(value(&a, &format!("{IMPORT}1 instance of s:small"), doc), "false");
     let x = |t: &str| {
         format!(
             r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:x"><xs:complexType name="shared"/><xs:complexType name="{t}"/></xs:schema>"#

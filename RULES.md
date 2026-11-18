@@ -3896,7 +3896,8 @@ atomic value. A node is its tree, shared, and its place in it, so the
 nodes one tree gives many values keep their identity; storing a value
 copies it. An atomic value is its type and the string casting it to
 `xs:string` gives, one string for each value, and of a qualified name
-its namespace URI, its prefix in the string. Its type is a built-in
+its namespace URI, its prefix in the string, and of a value of a
+user-defined atomic type that type's name (below). Its type is a built-in
 atomic type of XML Schema Part 2, primitive or derived, or one of the
 three XQuery adds, `xdt:untypedAtomic` and the two durations; a table of
 the 44 holds each one's name, base type, the primitive type a cast
@@ -3932,10 +3933,13 @@ table of its names, each once, and of its type annotations, each once,
 then its nodes as events: document, element (with its annotation, its
 nilled, is-id and is-idrefs properties, its bindings and attributes),
 end, text, comment and processing instruction; each atomic item its
-type's tag and its lexical form, and of a QName or NOTATION its
-namespace URI. Its fields are D30's. The annotations
-were added to version 1 in place, as formats stay at version 1 in alpha
-and no database of an earlier layout is read. A node below the root of
+type's tag and its lexical form, of a QName or NOTATION its namespace
+URI, and of a user-defined atomic type that type's name. A typing's
+atomic types, of a typed value's items, name their user-defined types
+too, from the item's table of names. Its fields are D30's. The
+annotations, those of atomic values too, were added to version 1 in
+place, as formats stay at version 1 in alpha and no database of an
+earlier layout is read. A node below the root of
 its tree is stored as a copy, an element declaring every binding in its
 scope. The XML indexes read it, below.
 
@@ -4267,10 +4271,34 @@ too. err:XQST0035 is raised of a name two imported schemas define from
 different documents, compared as the schema documents' trees; so
 err:XQST0012, of imported schemas not valid together, is never raised, as
 each registered XML Schema is valid and what two share is the same. A
-simple type of an imported schema names no atomic item type, as an
-atomic value carries its built-in type alone (err:XPST0051). A
-definition notes what its queries import, as what they validate by, and
-depends on it.
+simple type of the atomic variety of an imported schema is an atomic
+item type [XQuery §2.5.4.2]: of `instance of`, `treat as`, typeswitch
+and the sequence types of functions, whose conversion rules cast an
+untyped value to it; a cast's target [XQuery §3.12.3], a value cast
+to it checked against its facets by the `xml::SimpleType` it holds, a
+string read as a literal, its patterns matched first, another value
+cast as the built-in type and matched as its canonical form; and a
+constructor function's [XQuery §3.12.5]. A list or union type, or a
+complex one, is none (err:XPST0051). A definition notes what its
+queries import, as what they validate by, and depends on it.
+
+A value of a user-defined atomic type is a value of the built-in type
+it restricts, its value space a subset of that type's [Schema2
+§2.5.2.1], annotated with
+its own type's name (`xml::Atomic::annotation`), so comparison,
+arithmetic and the functions take it as a value of the built-in type,
+each giving a value of a built-in type, and a cast to that type drops
+the annotation [XQuery §3.12.3]. The `xml::SimpleType` of each simple
+type definition of a schema holds the definition's name, an anonymous
+one's made from its place as a node's annotation is, and annotates
+each atomic value it validates or casts with it; so a node's typed
+value is of its type [XQueryDM §3.3.1.2], a list's items of the item
+type, a union's of the member that validated each, as a node's typing
+(`xml::Typing`) records them. A value is matched against an atomic
+item type of an imported schema by its annotation, resolved in that
+schema as a node's is, and that schema's Type Derivation OK; a value of
+a built-in type derives from none of them; and against a built-in type
+by the built-in hierarchy of its built-in type.
 
 Part 14 leaves how an XML Schema is registered to the implementation
 [ISO/IEC 9075-14:2006 draft §4.2.6]. These statements were decided, an

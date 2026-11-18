@@ -18,6 +18,7 @@
 
 use std::sync::Arc;
 
+use super::super::assess::simple_type_name;
 use super::super::builtin::simple_type;
 use super::super::component::{Derivations, Expanded, Simple, SimpleId, SimpleTypeDef, TypeDef};
 use super::super::{Facet, FacetSpec, MAX_CHAIN, SimpleType, Variety, beyond, invalid};
@@ -100,7 +101,7 @@ impl Builder<'_> {
         let anonymous = self.originals.contains(&place);
         let def = self.in_context(place, |b| b.read_simple(place, anonymous));
         self.simple_depth = outer;
-        let def = def?;
+        let def = annotated(def?, id);
         if let Some(slot) = self.schema.simple_types.get_mut(id.0) {
             *slot = def;
         }
@@ -321,10 +322,19 @@ impl Builder<'_> {
         let (namespace, members) = (self.doc(doc)?.tns.clone(), self.members_of(start));
         let id = SimpleId(self.schema.simple_types.len());
         let final_ = Derivations::NONE;
-        self.schema.simple_types.push(SimpleTypeDef { name: None, namespace, base: start, final_, members, def, annotation: None });
+        let made = SimpleTypeDef { name: None, namespace, base: start, final_, members, def, annotation: None };
+        self.schema.simple_types.push(annotated(made, id));
         self.simple_state.push(State::Done);
         Ok(Simple::Defined(id))
     }
+}
+
+/// `def`, at place `id`, its datatype annotated with the name its values
+/// are of [XQueryDM §3.3.1.2]: its own, or an anonymous one's made from
+/// its place, as nodes of it are annotated.
+fn annotated(def: SimpleTypeDef, id: SimpleId) -> SimpleTypeDef {
+    let name = simple_type_name(&def, id);
+    SimpleTypeDef { def: Arc::new(Arc::unwrap_or_clone(Arc::clone(&def.def)).annotated_as(name)), ..def }
 }
 
 /// `def` named `name`.

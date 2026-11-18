@@ -6,15 +6,17 @@
 //! opened for its children. Its annotation is its type's [XQueryDM
 //! §3.3.1.1].
 
-use super::super::Variety;
 use super::super::automaton::Automaton;
 use super::super::builtin::{self, string_valid};
 use super::super::check::type_derives;
-use super::super::component::{ComplexId, ContentType, Derivations, ElementDecl, Expanded, Schema, Simple, TypeDef, Typed, ValueKind};
+use super::super::component::{
+    ComplexId, ContentType, Derivations, ElementDecl, Expanded, Schema, Simple, SimpleId, SimpleTypeDef, TypeDef, Typed, ValueKind,
+};
+use super::super::{SimpleType, Variety};
 use super::attributes::Attrs;
 use super::run::{Assess, Content, Frame, Run};
 use super::{Failure, Mode, Step, UNDECLARED};
-use crate::xml::{Annotation, AtomicType, ElementStart, Kind, NodeId, QName, Typing, XS_NAMESPACE, XSI_NAMESPACE};
+use crate::xml::{Annotation, AtomicType, ElementStart, Kind, NodeId, QName, Typing, ValueType, XS_NAMESPACE, XSI_NAMESPACE};
 
 /// [Schema1 §3.2.7] The local names of the built-in attributes of the
 /// XML Schema instance namespace.
@@ -39,15 +41,22 @@ pub(super) fn expanded(tree: &crate::xml::Tree, id: NodeId) -> Expanded {
 /// [XQueryDM §3.3.1.1], an anonymous one's made from its place.
 pub(in crate::xml::schema) fn type_name(schema: &Schema, t: TypeDef) -> QName {
     let name = match t {
-        TypeDef::Simple(Simple::Defined(id)) => schema.simple(id).map_or_else(
-            || Expanded::new(None, ANONYMOUS_SIMPLE),
-            |d| d.name.clone().unwrap_or_else(|| Expanded::new(d.namespace.as_deref(), &format!("{ANONYMOUS_SIMPLE}{}", id.0))),
-        ),
+        TypeDef::Simple(Simple::Defined(id)) => {
+            return schema.simple(id).map_or_else(|| QName::local(ANONYMOUS_SIMPLE), |d| simple_type_name(d, id));
+        }
         TypeDef::Simple(s) => builtin::simple_name(schema, s).unwrap_or_else(builtin::any_type_name),
         TypeDef::Complex(c) => schema.complex(c).map_or_else(builtin::any_type_name, |d| {
             d.name.clone().unwrap_or_else(|| Expanded::new(d.namespace.as_deref(), &format!("{ANONYMOUS}{}", c.0)))
         }),
     };
+    QName { prefix: None, uri: name.uri, local: name.local }
+}
+
+/// The name of simple type definition `def`, of place `id` in its schema,
+/// as a node's type-name [XQueryDM §3.3.1.1], an anonymous one's made from
+/// its place.
+pub(in crate::xml::schema) fn simple_type_name(def: &SimpleTypeDef, id: SimpleId) -> QName {
+    let name = def.name.clone().unwrap_or_else(|| Expanded::new(def.namespace.as_deref(), &format!("{ANONYMOUS_SIMPLE}{}", id.0)));
     QName { prefix: None, uri: name.uri, local: name.local }
 }
 
@@ -61,29 +70,34 @@ pub(in crate::xml::schema) fn type_name(schema: &Schema, t: TypeDef) -> QName {
 pub(super) fn simple_typing(schema: &Schema, s: Simple, value: Option<&Typed>) -> Typing {
     let id = match s {
         Simple::AnySimple => return Typing::AnySimple,
-        Simple::Atomic(a) => return Typing::Atomic(a),
-        Simple::List(a) => return Typing::List(a),
+        Simple::Atomic(a) => return Typing::Atomic(a.into()),
+        Simple::List(a) => return Typing::List(a.into()),
         Simple::Defined(id) => id,
     };
     let def = schema.simple(id).map(|d| &d.def);
-    let fixed = match def.map(|d| d.variety()) {
-        Some(Variety::Atomic(a)) => Some(Typing::Atomic(*a)),
-        Some(Variety::List(item)) => item.atomic().map(Typing::List),
-        Some(Variety::Union(_)) | None => None,
+    // [XQueryDM §3.3.1.2] A value of a type of the atomic variety is of
+    // that type, of a list's item type, both of the schema's when they are.
+    let of = |t: &SimpleType, a: AtomicType| ValueType { kind: a, name: t.annotation().cloned() };
+    let fixed = match def.map(|d| (d, d.variety())) {
+        Some((d, Variety::Atomic(a))) => Some(Typing::Atomic(of(d, *a))),
+        Some((_, Variety::List(item))) => item.atomic().map(|a| Typing::List(of(item, a))),
+        Some((_, Variety::Union(_))) | None => None,
     };
     fixed.unwrap_or_else(|| value.map_or(Typing::AnySimple, |v| typing_of(&v.atoms)))
 }
 
-/// [XQueryDM §3.3.1.2] The typing of a node whose typed value is `atoms`.
+/// [XQueryDM §3.3.1.2] The typing of a node whose typed value is `atoms`,
+/// each of its own type, a member's of a union.
 fn typing_of(atoms: &[crate::xml::Atomic]) -> Typing {
     match atoms {
         [] => Typing::Empty,
-        [one] => Typing::Atomic(one.kind),
+        [one] => Typing::Atomic(ValueType::of(one)),
         [first, rest @ ..] => {
-            if rest.iter().all(|a| a.kind == first.kind) {
-                Typing::List(first.kind)
+            let first = ValueType::of(first);
+            if rest.iter().all(|a| ValueType::of(a) == first) {
+                Typing::List(first)
             } else {
-                Typing::Items(atoms.iter().map(|a| a.kind).collect())
+                Typing::Items(atoms.iter().map(ValueType::of).collect())
             }
         }
     }
@@ -379,7 +393,7 @@ impl<'s> Run<'s> {
 /// Whether a node of `typing` is an ID [XQueryDM §6.2.4, §6.3.4].
 fn id_typing(typing: &Typing) -> bool {
     match typing {
-        Typing::Atomic(a) => a.derives_from(AtomicType::Id),
+        Typing::Atomic(a) => a.kind.derives_from(AtomicType::Id),
         Typing::List(_) | Typing::Items(_) | Typing::AnySimple | Typing::Mixed | Typing::Empty | Typing::ElementOnly => false,
     }
 }
@@ -387,8 +401,8 @@ fn id_typing(typing: &Typing) -> bool {
 /// Whether a node of `typing` is an IDREF or IDREFS [XQueryDM §6.3.4].
 fn idrefs_typing(typing: &Typing) -> bool {
     match typing {
-        Typing::Atomic(a) | Typing::List(a) => a.derives_from(AtomicType::IdRef),
-        Typing::Items(kinds) => kinds.iter().any(|a| a.derives_from(AtomicType::IdRef)),
+        Typing::Atomic(a) | Typing::List(a) => a.kind.derives_from(AtomicType::IdRef),
+        Typing::Items(kinds) => kinds.iter().any(|a| a.kind.derives_from(AtomicType::IdRef)),
         Typing::AnySimple | Typing::Mixed | Typing::Empty | Typing::ElementOnly => false,
     }
 }

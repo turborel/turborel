@@ -176,13 +176,13 @@ fn typed_values_by_annotation() {
         b.finish().unwrap().typed_value(NodeId::ROOT).unwrap()
     };
     let named = |local: &str, typing| Annotation { name: QName::local(local), typing };
-    let list = annotated(&named("sizes", Typing::List(crate::xml::AtomicType::Integer)), false);
+    let list = annotated(&named("sizes", Typing::List(crate::xml::AtomicType::Integer.into())), false);
     assert_eq!(
         list.iter().map(|a| (a.kind, &*a.lexical)).collect::<Vec<_>>(),
         [(crate::xml::AtomicType::Integer, "1"), (crate::xml::AtomicType::Integer, "20")]
     );
     assert_eq!(annotated(&named("mark", Typing::Empty), false), []);
-    assert_eq!(annotated(&named("sizes", Typing::List(crate::xml::AtomicType::Integer)), true), []);
+    assert_eq!(annotated(&named("sizes", Typing::List(crate::xml::AtomicType::Integer.into())), true), []);
     let mixed = annotated(&Annotation::any_type(), false);
     assert_eq!(mixed.iter().map(|a| (a.kind, &*a.lexical)).collect::<Vec<_>>(), [(crate::xml::AtomicType::UntypedAtomic, " 1 20 ")]);
     assert!(plain.finish().unwrap().annotation(NodeId::ROOT).is_none());

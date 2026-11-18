@@ -53,13 +53,13 @@ impl Evaluator<'_> {
 
     /// `cast as` [XQuery §3.12.3]: the operand atomized, one value cast as
     /// the target type, none allowed by `?` \[err:XPTY0004\].
-    pub(super) fn cast(&self, operand: &Op, target: CastTarget, frame: &mut Frame, focus: &Focus) -> Result<Seq> {
+    pub(super) fn cast(&self, operand: &Op, target: &CastTarget, frame: &mut Frame, focus: &Focus) -> Result<Seq> {
         let mut atomized = atomize(&self.eval(operand, frame, focus)?)?;
         if atomized.len() > 1 {
             return Err(error(ErrorCode::XPTY0004, "the operand of a cast is more than one atomic value [XQuery §3.12.3]"));
         }
         match atomized.pop() {
-            Some(a) => Ok(vec![Item::Atomic(cast_atomic(&a, target.to)?)]),
+            Some(a) => Ok(vec![Item::Atomic(cast_to(&a, target)?)]),
             None => {
                 if target.optional {
                     Ok(Vec::new())
@@ -71,14 +71,27 @@ impl Evaluator<'_> {
     }
 
     /// `castable as` [XQuery §3.12.4]: whether the cast would succeed.
-    pub(super) fn castable(&self, operand: &Op, target: CastTarget, frame: &mut Frame, focus: &Focus) -> Result<Seq> {
+    pub(super) fn castable(&self, operand: &Op, target: &CastTarget, frame: &mut Frame, focus: &Focus) -> Result<Seq> {
         let atomized = atomize(&self.eval(operand, frame, focus)?)?;
         Ok(boolean(match atomized.as_slice() {
             [] => target.optional,
-            [a] => cast(a, target.to).is_ok(),
+            [a] => cast_to(a, target).is_ok(),
             _ => false,
         }))
     }
+}
+
+/// `a` cast as `target` [XQuery §3.12.3]: as its built-in type, or as the
+/// user-defined atomic type of an imported schema, whose facets the value
+/// is checked against [XQueryFO §17.2, §17.4], made a value of that type.
+///
+/// # Errors
+///
+/// As `cast_atomic`; of a user-defined type, err:FORG0001 of a value its
+/// facets refuse.
+fn cast_to(a: &Atomic, target: &CastTarget) -> Result<Atomic> {
+    let Some(defined) = &target.defined else { return cast_atomic(a, target.to) };
+    defined.cast(a).map_err(within_query)
 }
 
 /// `value` converted to `expected` by the function conversion rules
@@ -108,10 +121,13 @@ fn untyped_to(a: Atomic, to: AtomicType) -> Result<Atomic> {
 }
 
 /// `a` converted to the atomic type `t` [XQuery §3.1.5]: an untyped value
-/// cast to it; a number promoted to `xs:float` or `xs:double`, an
-/// `xs:anyURI` to `xs:string` [XQuery Appendix B.1]; any other kept, to be
-/// matched.
+/// cast to it, a user-defined type of an imported schema too; a number
+/// promoted to `xs:float` or `xs:double`, an `xs:anyURI` to `xs:string`
+/// [XQuery Appendix B.1]; any other kept, to be matched.
 fn to_atomic_type(a: Atomic, t: &SchemaType) -> Result<Atomic> {
+    if let (SchemaType::Defined(defined), AtomicType::UntypedAtomic) = (t, a.kind) {
+        return defined.cast(&a).map_err(within_query);
+    }
     let SchemaType::Atomic(to) = t else { return Ok(a) };
     let from = a.kind.primitive();
     let exact = matches!(from, Primitive::Integer | Primitive::Decimal);

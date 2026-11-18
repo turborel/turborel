@@ -68,7 +68,7 @@ pub use facet::{Facet, FacetKind, FacetSpec, Facets, Held, Pattern, applicable};
 
 use std::sync::Arc;
 
-use super::{AtomicType, WhiteSpace};
+use super::{AtomicType, QName, WhiteSpace};
 use crate::error::{Code, Result, SqlError};
 
 /// \[DESIGN\] How deep lists and unions nest in a type at most, so a
@@ -107,6 +107,11 @@ pub struct SimpleType {
     variety: Variety,
     facets: Facets,
     depth: usize,
+    /// The name of the simple type definition of a schema it is, which
+    /// the values it validates are annotated with, of the atomic variety
+    /// (`Atomic::annotation`); none of a built-in type, or one made apart
+    /// from a schema.
+    annotation: Option<Arc<QName>>,
 }
 
 /// The error of a type definition no valid one, `why`, by `rule`: a
@@ -119,7 +124,7 @@ impl SimpleType {
     /// The built-in atomic type `t` [Schema2 §3.2, §3.3, Appendix A].
     #[must_use]
     pub fn built_in(t: AtomicType) -> SimpleType {
-        SimpleType { name: t.name().into(), variety: Variety::Atomic(t), facets: Facets::built_in(t), depth: 0 }
+        SimpleType { name: t.name().into(), variety: Variety::Atomic(t), facets: Facets::built_in(t), depth: 0, annotation: None }
     }
 
     /// The built-in list type `list` [Schema2 Appendix A]: a list of its
@@ -136,7 +141,7 @@ impl SimpleType {
             min_length: Some(Held { value: 1, fixed: false }),
             ..Facets::default()
         };
-        SimpleType { name: name.into(), variety: Variety::List(Arc::new(SimpleType::built_in(item))), facets, depth: 1 }
+        SimpleType { name: name.into(), variety: Variety::List(Arc::new(SimpleType::built_in(item))), facets, depth: 1, annotation: None }
     }
 
     /// The list type of `item` [Schema2 §4.1.2.2]: its whiteSpace collapse
@@ -152,7 +157,7 @@ impl SimpleType {
         }
         let depth = nested(item.depth)?;
         let facets = Facets { white_space: Some(Held { value: WhiteSpace::Collapse, fixed: true }), ..Facets::default() };
-        Ok(SimpleType { name: format!("a list of {}", item.name).into(), variety: Variety::List(item), facets, depth })
+        Ok(SimpleType { name: format!("a list of {}", item.name).into(), variety: Variety::List(item), facets, depth, annotation: None })
     }
 
     /// The union of `members` [Schema2 §4.1.2.3], each that is a union
@@ -173,13 +178,34 @@ impl SimpleType {
         let deepest = flat.iter().map(|m| m.depth).max().ok_or_else(|| invalid_type("§4.1.3", "a union has no member type"))?;
         let names: Vec<&str> = flat.iter().map(|m| &*m.name).collect();
         let name = format!("a union of {}", names.join(", "));
-        Ok(SimpleType { name: name.into(), variety: Variety::Union(flat), facets: Facets::default(), depth: nested(deepest)? })
+        Ok(SimpleType {
+            name: name.into(),
+            variety: Variety::Union(flat),
+            facets: Facets::default(),
+            depth: nested(deepest)?,
+            annotation: None,
+        })
     }
 
     /// It named `name`.
     #[must_use]
     pub fn named(self, name: &str) -> SimpleType {
         SimpleType { name: name.into(), ..self }
+    }
+
+    /// It as the simple type definition of a schema named `name`, an
+    /// anonymous one's the name its annotations have [XQueryDM §3.3.1.1],
+    /// so the values it validates are of that user-defined type.
+    #[must_use]
+    pub fn annotated_as(self, name: QName) -> SimpleType {
+        SimpleType { annotation: Some(Arc::new(name)), ..self }
+    }
+
+    /// The name of the simple type definition it is, if it is one of a
+    /// schema.
+    #[must_use]
+    pub fn annotation(&self) -> Option<&Arc<QName>> {
+        self.annotation.as_ref()
     }
 
     /// Its name, or a description of an anonymous type.
