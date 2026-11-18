@@ -10,9 +10,16 @@
 //! `gql/results.rs`). NEXT feeds one statement's table to the next, and
 //! the set operators combine tables by column name.
 //!
+//! MATCH is GRAPH_TABLE's: its pattern is written again as a
+//! GRAPH_TABLE's, which the shared binder binds and path search runs, and
+//! its COLUMNS give each variable's columns (`gql/matching.rs`,
+//! `gql/pattern.rs`).
+//!
 //! Each variable is held in named columns of the binding table (`Var`):
-//! an element's identity text, its label set and its properties; a
-//! path's elements and length; a value. Expressions are written again
+//! an element's identity, ELEMENT_ID's text, its label set and its
+//! properties; a path's elements as JSON, its length, vertices and edges
+//! and what it is; a group variable's identities, number and each
+//! property's values as arrays; a value. Expressions are written again
 //! from their GQL tokens over these columns (`gql/rewrite.rs`).
 //!
 //! The SQL text is built here, then read and bound as any query is: its
@@ -22,12 +29,11 @@
 
 mod linear;
 mod matching;
-mod paths;
+mod pattern;
 mod results;
 mod rewrite;
 pub(crate) mod sources;
 mod table;
-mod terms;
 
 use std::cell::Cell;
 
@@ -40,13 +46,28 @@ use crate::catalog::GraphDesc;
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Token, lex};
 
-/// What separates the labels of a label set held as text, and each
-/// element of a list of elements: `|A|B|`, `id|id|`.
+/// What separates the labels of a label set held as text, `|A|B|`.
 pub(crate) const LABEL_BAR: &str = "|";
-/// The type an element's identity text and label set are held as.
-pub(crate) const ID_TYPE: &str = "VARCHAR(1000)";
-/// The type a path's or a group variable's list of elements is held as.
-pub(crate) const LIST_TYPE: &str = "VARCHAR(32000)";
+/// The type an element's identity is held as, ELEMENT_ID's.
+pub(crate) const ID_TYPE: &str = "VARCHAR(8192)";
+/// The type an element's label set is held as.
+pub(crate) const LABELS_TYPE: &str = "VARCHAR(1000)";
+/// What a path variable's columns hold past its elements: its length,
+/// its vertices and edges, and whether it is acyclic, a trail, simple;
+/// each the path function's of GRAPH_TABLE that gives it [GS §6.9].
+pub(crate) const PATH_PARTS: [(&str, &str); 6] = [
+    ("$LENGTH", "PATH_LENGTH"),
+    ("$VERTICES", "VERTICES"),
+    ("$EDGES", "EDGES"),
+    ("$ACYCLIC", "IS_ACYCLIC"),
+    ("$TRAIL", "IS_TRAIL"),
+    ("$SIMPLE", "IS_SIMPLE"),
+];
+
+/// The type of an array of values of type `t`, written.
+pub(crate) fn array_of(t: &str) -> String {
+    format!("{t} ARRAY[{}]", crate::value::types::MAX_ARRAY_CARDINALITY)
+}
 
 /// What a variable of a binding table is.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,13 +81,17 @@ pub(crate) enum Kind {
         /// Its properties, or none of an open graph.
         properties: Option<Vec<(String, String)>>,
     },
-    /// A path: its elements and its length.
+    /// A path: its elements, its length, vertices and edges.
     Path,
     /// A value: of LET, FOR, RETURN or CALL.
     Value,
-    /// A group variable of a quantified pattern: its elements and their
-    /// number.
-    Group,
+    /// A group variable of a quantified pattern: its elements, their
+    /// number, and the values of each property, as arrays; none of an
+    /// open graph, whose elements' JSON maps are held as an array.
+    Group {
+        /// Its properties, or none of an open graph.
+        properties: Option<Vec<(String, String)>>,
+    },
 }
 
 /// A variable of a binding table, held in its columns.
@@ -94,9 +119,9 @@ impl Var {
         format!("{}$PROPS", self.name)
     }
 
-    /// The column of a path's length.
-    pub(crate) fn length_column(&self) -> String {
-        format!("{}$LENGTH", self.name)
+    /// The column of a path's part `part`, of `PATH_PARTS`.
+    pub(crate) fn part_column(&self, part: &str) -> String {
+        format!("{}{part}", self.name)
     }
 
     /// The column of a group variable's number of elements.
@@ -114,15 +139,27 @@ impl Var {
         let typed = |c: String, t: &str| (c, Some(t.to_owned()));
         match &self.kind {
             Kind::Element { properties, .. } => {
-                let mut all = vec![typed(self.name.clone(), ID_TYPE), typed(self.labels_column(), ID_TYPE)];
+                let mut all = vec![typed(self.name.clone(), ID_TYPE), typed(self.labels_column(), LABELS_TYPE)];
                 match properties {
                     Some(props) => all.extend(props.iter().map(|(p, t)| typed(self.property_column(p), t))),
                     None => all.push(typed(self.props_column(), "JSON")),
                 }
                 all
             }
-            Kind::Path => vec![typed(self.name.clone(), LIST_TYPE), typed(self.length_column(), "INTEGER")],
-            Kind::Group => vec![typed(self.name.clone(), LIST_TYPE), typed(self.count_column(), "INTEGER")],
+            Kind::Path => {
+                let ids = array_of(ID_TYPE);
+                let kinds = ["INTEGER", &ids, &ids, "BOOLEAN", "BOOLEAN", "BOOLEAN"];
+                let parts = PATH_PARTS.iter().zip(kinds).map(|((part, _), t)| typed(self.part_column(part), t));
+                std::iter::once(typed(self.name.clone(), "JSON")).chain(parts).collect()
+            }
+            Kind::Group { properties } => {
+                let mut all = vec![typed(self.name.clone(), &array_of(ID_TYPE)), typed(self.count_column(), "BIGINT")];
+                match properties {
+                    Some(props) => all.extend(props.iter().map(|(p, t)| typed(self.property_column(p), &array_of(t)))),
+                    None => all.push(typed(self.props_column(), &array_of("JSON"))),
+                }
+                all
+            }
             Kind::Value => vec![(self.name.clone(), None)],
         }
     }

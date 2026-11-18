@@ -11,7 +11,7 @@
 
 use super::graphs::SAVEPOINT;
 use super::writes::Typed;
-use crate::ast::{GqlCall, GqlClause, GqlLinear, GqlProcedure, GqlSetItem, PathPrimary, TableName};
+use crate::ast::{GqlCall, GqlClause, GqlLinear, GqlProcedure, GqlResult, GqlSetItem, PathPrimary, TableName};
 use crate::binder::gql::{Kind, Lowered, Lowering, Table, Var, quote};
 use crate::db::{Completion, Direct, Session};
 use crate::error::{Code, Result, SqlError};
@@ -153,9 +153,10 @@ impl Session {
         Ok(table)
     }
 
-    /// An inline CALL whose procedure modifies data: run once for each
-    /// distinct binding of the variables its scope imports, and joined
-    /// with `table` on them [P2 §5.1].
+    /// An inline CALL whose procedure modifies data: run for each row of
+    /// `table`, duplicates each their own, seeing the variables its scope
+    /// imports; each row joined with the rows its run returns, or kept as
+    /// it is if the procedure returns none [P2 §5.1].
     fn modifying_call(
         &self,
         (l, params): Run<'_, '_>,
@@ -172,9 +173,28 @@ impl Session {
                     .ok_or_else(|| SqlError::new(Code::SyntaxRule, format!("[EXTENSION] variable {n} is not in scope")))?,
             );
         }
-        let start = scope.map(|_| l.imported(&table, &imported));
+        let numbered = self.numbered((l, &mut *params), &table)?;
+        imported.push(Var::value(ROW));
+        let start = Some(l.imported(&numbered, &imported));
         let inner = self.modify_procedure((l, params), body, Scoped { start, graph, carry: &imported })?;
-        Ok(l.joined(table, &inner, optional))
+        let unit = matches!(body.statements.last().map(|c| &c.first.result), Some(GqlResult::None | GqlResult::Finish));
+        if unit {
+            return Ok(table);
+        }
+        Ok(without(l, l.joined(numbered, &inner, optional), ROW))
+    }
+
+    /// `table` read whole, each row numbered in "$ROW", as a table of
+    /// parameters.
+    fn numbered(&self, (l, params): Run<'_, '_>, table: &Table) -> Result<Table> {
+        let a = l.alias();
+        let sql = format!("SELECT {a}.*, ROW_NUMBER() OVER () AS {} FROM ({}) AS {a}", quote(ROW), table.sql);
+        let (types, rows) = self.read_all(&sql, params)?;
+        let mut vars = table.vars.clone();
+        vars.push(Var::value(ROW));
+        let mut b = binding(&vars, &types);
+        b.rows = rows;
+        Ok(materialized(l, &b, params))
     }
 
     /// `table` after the data-modifying statement `clause`.
@@ -188,15 +208,7 @@ impl Session {
         }
         let (types, rows) = self.read_all(&format!("SELECT {} FROM ({}) AS {a}", cols.join(", "), table.sql), params)?;
         let width = types.len().saturating_sub(ranges.len());
-        let mut names = vec!["$UNIT".to_owned()];
-        let mut texts = vec!["INTEGER".to_owned()];
-        for (c, t) in table.vars.iter().flat_map(Var::columns) {
-            names.push(c);
-            texts.push(t.unwrap_or_default());
-        }
-        let texts = texts.into_iter().zip(&types).map(|(t, d)| if t.is_empty() { d.to_string() } else { t }).collect();
-        let mut b =
-            Binding { names, texts, types: types.iter().take(width).cloned().collect(), rows: Vec::new(), vars: table.vars.clone() };
+        let mut b = binding(&table.vars, types.get(..width).unwrap_or_default());
         let mut inserts = Vec::new();
         if let GqlClause::Insert(paths) = clause {
             inserts = self.insert_plan(&graph, paths, &mut b, l)?;
@@ -221,6 +233,31 @@ impl Session {
         }
         Ok(materialized(l, &b, params))
     }
+}
+
+/// The column a modifying CALL numbers its incoming rows in.
+const ROW: &str = "$ROW";
+
+/// A binding table of `vars`, its columns of types `types`, and no row
+/// yet.
+fn binding(vars: &[Var], types: &[DataType]) -> Binding {
+    let mut names = vec!["$UNIT".to_owned()];
+    let mut texts = vec!["INTEGER".to_owned()];
+    for (c, t) in vars.iter().flat_map(Var::columns) {
+        names.push(c);
+        texts.push(t.unwrap_or_default());
+    }
+    let texts = texts.into_iter().zip(types).map(|(t, d)| if t.is_empty() { d.to_string() } else { t }).collect();
+    Binding { names, texts, types: types.to_vec(), rows: Vec::new(), vars: vars.to_vec() }
+}
+
+/// `table` without its variable `name`.
+fn without(l: &Lowering<'_>, table: Table, name: &str) -> Table {
+    let a = l.alias();
+    let vars: Vec<Var> = table.vars.into_iter().filter(|v| v.name != name).collect();
+    let mut cols = vec![format!("{a}.{}", quote("$UNIT"))];
+    cols.extend(vars.iter().flat_map(Var::columns).map(|(c, _)| format!("{a}.{}", quote(&c))));
+    Table { sql: format!("SELECT {} FROM ({}) AS {a}", cols.join(", "), table.sql), vars }
 }
 
 /// The tokens of each value `clause` writes, in order.

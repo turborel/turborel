@@ -56,17 +56,24 @@ both have, and OPTIONAL MATCH keeps each row that matches nothing, its
 new variables null. FILTER and WHERE keep the rows a condition is true
 of, LET adds a value, and FOR adds a row for each element of a list.
 CALL joins the rows of an inline procedure, which sees the variables
-its scope names, or of a table function. RETURN projects the table,
+its scope names, or of a table function. An inline procedure that
+writes runs once for each row of the binding table, rows of equal
+values each their own. RETURN projects the table,
 grouping by its items that call no aggregate if one does. NEXT feeds a
 statement's rows to the next. A set operator combines statements by
 their columns' names, and OTHERWISE gives the right's rows only if the
 left has none.
 
-The patterns are those of GRAPH_TABLE, with labels, property maps,
-quantifiers, the restrictors TRAIL, ACYCLIC and SIMPLE, and the
-selectors ANY, ALL SHORTEST and SHORTEST k. A property is written
-`x.name`, a label test `x:L` or `x IS LABELED L`, and ELEMENT_ID,
-LABELS, PATH_LENGTH and COUNT of a group variable read the bindings.
+A MATCH is a GRAPH_TABLE, read for each row of the binding table, so
+its patterns are GRAPH_TABLE's and are matched as they are. They have
+labels, property maps, quantifiers, the restrictors TRAIL, ACYCLIC and
+SIMPLE over the whole path, and the selectors ANY, ALL SHORTEST,
+SHORTEST k and CHEAPEST. A property is written `x.name`, and a label
+test `x:L` or `x IS LABELED L`. ELEMENT_ID gives GRAPH_TABLE's
+identity, and LABELS an element's labels. The path functions
+PATH_LENGTH, VERTICES, EDGES, IS_ACYCLIC, IS_TRAIL and IS_SIMPLE read a
+path variable. COUNT, SUM, AVG, MIN, MAX and the other aggregates of a
+group variable's property read that row's group.
 
 INSERT writes the vertices and edges of its patterns, a vertex the
 table binds already written no more. In a graph over tables an
@@ -105,7 +112,7 @@ DELETE on the tables a procedure writes.
 | 2A000 | -103 | A rule above is broken; the GRF codes are in [Appendix A](../../appendix/a-sqlstate.md) |
 | 42000 | -104 | Its user may not query the graph |
 | 23000 | -201 | A vertex with edges is deleted (GRF-0052), or a typed graph refuses a write (GRF-0053) |
-| 0A000 | -900 | CHEAPEST, or a path function GRAPH_TABLE alone reads |
+| 0A000 | -900 | GQL_TABLE's request writes, or is a session statement |
 
 ## EXAMPLES
 
@@ -136,12 +143,31 @@ OK
 (1 row)
 ```
 
-A write, and what it refuses:
+CHEAPEST, a path function, and the aggregates of a group variable:
+
+```sql
+EXECUTE GQL ON GRAPH NET 'MATCH ANY CHEAPEST COST k.since p = (a:PERSON)-[k:KNOWS]->+(b) RETURN a.name AS a, b.name AS b, PATH_LENGTH(p) AS n';
+EXECUTE GQL ON GRAPH NET 'MATCH (a:PERSON)-[k:KNOWS]->{1,2}(b) RETURN a.name AS a, COUNT(k) AS n, MIN(k.since) AS since';
+```
+
+```
+ A                                                            | B                                                            |            N
+--------------------------------------------------------------+--------------------------------------------------------------+--------------
+ Ann                                                          | Bob                                                          |            1
+(1 row)
+ A                                                            |                    N |        SINCE
+--------------------------------------------------------------+----------------------+--------------
+ Ann                                                          |                    1 |         2020
+(1 row)
+```
+
+A write, what it refuses, and a CALL that writes once for each row:
 
 ```sql
 EXECUTE GQL ON GRAPH NET 'MATCH (p:PERSON {name: ''Ann''}) SET p.age = 31 RETURN p.name AS name, p.age AS age';
 EXECUTE GQL ON GRAPH NET 'MATCH (p:PERSON {name: ''Bob''}) DELETE p';
 EXECUTE GQL ON GRAPH NET 'INSERT (:ROBOT {name: ''R2''})';
+EXECUTE GQL ON GRAPH NET 'MATCH (p:PERSON) CALL (p) { INSERT (:CITY {name: ''Home''}) } RETURN COUNT(*) AS n';
 ```
 
 ```
@@ -149,8 +175,12 @@ EXECUTE GQL ON GRAPH NET 'INSERT (:ROBOT {name: ''R2''})';
 --------------------------------------------------------------+--------------
  Ann                                                          |           31
 (1 row)
-turborel: SQLCODE -201 (SQLSTATE 23000): GRF-0052 vertex NET$PERSON|2 has edges, so DELETE does not delete it, but DETACH DELETE deletes them too
+turborel: SQLCODE -201 (SQLSTATE 23000): GRF-0052 vertex {"table":"NET$PERSON","key":[2]} has edges, so DELETE does not delete it, but DETACH DELETE deletes them too
 turborel: SQLCODE -201 (SQLSTATE 23000): GRF-0053 the labels ROBOT name no one element table, against the graph type of ANN.NET
+                    N
+----------------------
+                    2
+(1 row)
 ```
 
 GQL_TABLE in a query, and a session in GQL:

@@ -9,10 +9,11 @@
 //! base table the element's labels name, and of node and edge tables,
 //! the element table of an edge that joins its endpoints' tables (§4.2).
 
+use super::identities::{identity_of, key_value, open_element, table_of};
 use super::modify::Binding;
-use super::writes::{Typed, id_value, params, property_column, props_json, table_of, typed_for, written_tables};
+use super::writes::{Typed, id_value, params, property_column, props_json, typed_for, written_tables};
 use crate::ast::{EdgePattern, ElementPattern, LabelExpression, Orientation, PathPattern, PathPrimary};
-use crate::binder::gql::sources::{element_columns, element_var};
+use crate::binder::gql::sources::element_var;
 use crate::binder::gql::{Graph, Kind, LABEL_BAR, Lowering, Var};
 use crate::catalog::{ElementKind, ElementTableDesc, identifier, qualified_identifier};
 use crate::db::Session;
@@ -106,7 +107,7 @@ impl Session {
     fn insert_open(&self, graph: &Graph, element: &Insert, props: &[(String, Typed)], ends: Option<&(String, String)>) -> Result<Written> {
         let name = &graph.desc.name;
         let number = self.next_number(name)?;
-        let id = Session::open_identity(element.kind, &number.0);
+        let id = identity_of(open_element(graph, element.kind)?, std::slice::from_ref(&number.0))?;
         let labels = if element.labels.is_empty() {
             LABEL_BAR.to_owned()
         } else {
@@ -121,7 +122,9 @@ impl Session {
             Some((s, d)) => {
                 values.extend([id_value(s), id_value(d)]);
                 format!(
-                    "INSERT INTO {table} (\"ID\", \"LABELS\", \"PROPS\", \"SRC\", \"DST\", \"DIRECTED\") VALUES (GQL_P0, GQL_P1, GQL_P2, CAST(SUBSTRING(GQL_P3 FROM 3) AS BIGINT), CAST(SUBSTRING(GQL_P4 FROM 3) AS BIGINT), TRUE)"
+                    "INSERT INTO {table} (\"ID\", \"LABELS\", \"PROPS\", \"SRC\", \"DST\", \"DIRECTED\") VALUES (GQL_P0, GQL_P1, GQL_P2, {}, {}, TRUE)",
+                    key_value("GQL_P3", 0, "BIGINT"),
+                    key_value("GQL_P4", 0, "BIGINT")
                 )
             }
         };
@@ -144,14 +147,23 @@ impl Session {
         let q = qualified_identifier(&e.table);
         let (key_params, names) = params(&key);
         let at: Vec<String> = e.key.iter().zip(&names).map(|(k, p)| format!("{q}.{} = {p}", identifier(k))).collect();
-        let sql = format!("SELECT {} FROM {q} WHERE {}", element_columns(e, &var, &q).join(", "), at.join(" AND "));
-        let (types, rows) = self.read_all(&sql, &key_params)?;
-        let row = rows.into_iter().next().unwrap_or_default();
-        let mut id = String::new();
-        if let Some(Value::Char(s)) = row.first() {
-            id.clone_from(s);
+        let mut select: Vec<String> = e.key.iter().map(|k| format!("{q}.{}", identifier(k))).collect();
+        if let Kind::Element { properties: Some(declared), .. } = &var.kind {
+            for (p, t) in declared {
+                let value = e.property(p).map_or_else(|| "NULL".to_owned(), |d| format!("({})", d.expression));
+                select.push(format!("CAST({value} AS {t})"));
+            }
         }
-        Ok((id, row.into_iter().zip(types).collect()))
+        let sql = format!("SELECT {} FROM {q} WHERE {}", select.join(", "), at.join(" AND "));
+        let (types, rows) = self.read_all(&sql, &key_params)?;
+        let mut row = rows.into_iter().next().unwrap_or_default().into_iter().zip(types);
+        let keys: Vec<Value> = row.by_ref().take(e.key.len()).map(|(v, _)| v).collect();
+        let id = identity_of(e, &keys)?;
+        let labels: Vec<&str> = e.labels.iter().map(|l| l.name.as_str()).collect();
+        let set = format!("{LABEL_BAR}{}{LABEL_BAR}", labels.join(LABEL_BAR));
+        let mut written = vec![id_value(&id), (Value::Char(set), DataType::varying(1000))];
+        written.extend(row);
+        Ok((id, written))
     }
 }
 

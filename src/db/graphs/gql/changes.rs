@@ -9,19 +9,21 @@
 //! DELETE of a vertex with edges fails (R12.1, GRF-0052) unless DETACH,
 //! which deletes the edges first.
 
+use super::identities::{key_value, table_of};
 use super::modify::Binding;
-use super::writes::{Typed, id_value, params, property_column, props_json, refused, relabeled, table_of, typed_for};
+use super::writes::{Typed, id_value, params, property_column, props_json, refused, relabeled, typed_for};
 use crate::ast::{GqlRemoveItem, GqlSetItem};
 use crate::binder::gql::Graph;
-use crate::binder::gql::sources::endpoint;
 use crate::catalog::{ElementKind, ElementTableDesc, qualified_identifier};
 use crate::db::Session;
 use crate::error::{Code, Result, SqlError};
 use crate::value::{DataType, Value};
 
-/// The condition on an open graph's row of the element of identity
-/// parameter `GQL_P1`.
-const OPEN_ROW: &str = "\"ID\" = CAST(SUBSTRING(GQL_P1 FROM 3) AS BIGINT)";
+/// The condition on an open graph's row, column `column`, of the element
+/// of identity parameter `param`.
+fn open_row(column: &str, param: &str) -> String {
+    format!("\"{column}\" = {}", key_value(param, 0, "BIGINT"))
+}
 
 impl Session {
     /// SET `items` of `row`, the values they write `values`.
@@ -82,7 +84,7 @@ impl Session {
             let json = props_json(&base, &props.iter().map(|(k, (v, _))| (k.clone(), v.clone())).collect::<Vec<_>>())?;
             let table = Session::open_table(&graph.desc.name, kind_of(b, variable));
             self.write(
-                &format!("UPDATE {table} SET \"PROPS\" = GQL_P0 WHERE {OPEN_ROW}"),
+                &format!("UPDATE {table} SET \"PROPS\" = GQL_P0 WHERE {}", open_row("ID", "GQL_P1")),
                 &[(json.clone(), DataType::Json), id_value(&id)],
             )?;
             if let Some(slot) = at.and_then(|i| row.get_mut(i)) {
@@ -123,7 +125,7 @@ impl Session {
         let assigned: Vec<String> =
             sets.iter().zip(&names).map(|((c, _, _), p)| format!("{} = {p}", crate::catalog::identifier(c))).collect();
         let q = qualified_identifier(&e.table);
-        let at = Session::identified(e, &q, names.last().map_or("", String::as_str));
+        let at = self.keyed(e, &q, names.last().map_or("", String::as_str))?;
         self.write(&format!("UPDATE {q} SET {} WHERE {at}", assigned.join(", ")), &values)
     }
 
@@ -152,7 +154,8 @@ impl Session {
         let labels = relabeled(&now, label, add);
         let table = Session::open_table(&graph.desc.name, kind_of(b, variable));
         let value = (Value::Char(labels.as_str().into()), DataType::varying(1000));
-        self.write(&format!("UPDATE {table} SET \"LABELS\" = GQL_P0 WHERE {OPEN_ROW}"), &[value.clone(), id_value(&id)])?;
+        let row_at = open_row("ID", "GQL_P1");
+        self.write(&format!("UPDATE {table} SET \"LABELS\" = GQL_P0 WHERE {row_at}"), &[value.clone(), id_value(&id)])?;
         if let Some(slot) = at.and_then(|i| row.get_mut(i)) {
             *slot = value.0;
         }
@@ -187,11 +190,11 @@ impl Session {
         let g = &graph.desc.name;
         if kind == ElementKind::Vertex {
             let edges = Session::open_table(g, ElementKind::Edge);
-            let incident = "\"SRC\" = CAST(SUBSTRING(GQL_P0 FROM 3) AS BIGINT) OR \"DST\" = CAST(SUBSTRING(GQL_P0 FROM 3) AS BIGINT)";
-            self.detached(&edges, incident, (id, detach))?;
+            let incident = format!("{} OR {}", open_row("SRC", "GQL_P0"), open_row("DST", "GQL_P0"));
+            self.detached(&edges, &incident, (id, detach))?;
         }
         let table = Session::open_table(g, kind);
-        self.write(&format!("DELETE FROM {table} WHERE \"ID\" = CAST(SUBSTRING(GQL_P0 FROM 3) AS BIGINT)"), &[id_value(id)])
+        self.write(&format!("DELETE FROM {table} WHERE {}", open_row("ID", "GQL_P0")), &[id_value(id)])
     }
 
     /// Deletes the element `id` of a graph over tables, a vertex's edges
@@ -204,7 +207,7 @@ impl Session {
                 let q = qualified_identifier(&edge.table);
                 let mut incident = Vec::new();
                 for end in [&ends.source, &ends.destination].into_iter().filter(|x| x.vertex == e.alias) {
-                    incident.push(format!("{} = GQL_P0", endpoint(graph, end, &q)?));
+                    incident.push(self.ends_at((e, end), &q, "GQL_P0")?);
                 }
                 if !incident.is_empty() {
                     self.detached(&q, &incident.join(" OR "), (id, detach))?;
@@ -212,7 +215,7 @@ impl Session {
             }
         }
         let q = qualified_identifier(&e.table);
-        self.write(&format!("DELETE FROM {q} WHERE {}", Session::identified(e, &q, "GQL_P0")), &[id_value(id)])
+        self.write(&format!("DELETE FROM {q} WHERE {}", self.keyed(e, &q, "GQL_P0")?), &[id_value(id)])
     }
 
     /// The edges of `table` `incident` says meet vertex `id`: deleted if

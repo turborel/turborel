@@ -69,3 +69,37 @@ fn quantified_paths_are_recursion_p2_5_1() {
          SELECT DISTINCT X.OWNER FROM R JOIN A.ACCOUNT X ON X.ACCT_ID = R.ACCT",
     );
 }
+
+/// That GQL_TABLE of GQL `text` and the SQL GRAPH_TABLE `table` give the
+/// same rows, in any order.
+fn equivalent(s: &turborel::db::Session, text: &str, table: &str) {
+    let mut ours = direct(s, &format!("SELECT * FROM GQL_TABLE(BANK, '{}') AS G", text.replace('\'', "''")));
+    let mut theirs = direct(s, &format!("SELECT * FROM GRAPH_TABLE (BANK {table}) AS G"));
+    ours.sort();
+    theirs.sort();
+    assert_eq!(ours, theirs, "{text}");
+    assert!(!ours.is_empty(), "{text} gives no row");
+}
+
+/// Verifies: [EXTENSION] graph standard §9, [GS §7]: GQL_TABLE of a MATCH
+/// gives the rows GRAPH_TABLE of its pattern does: of a fixed path, of a
+/// quantified one with its identities and group, and of CHEAPEST.
+#[test]
+fn gql_table_is_graph_table_9() {
+    let (_db, s) = bank();
+    equivalent(
+        &s,
+        "MATCH (a:ACCOUNT)-[t:TRANSFER]->(b) WHERE t.amount > 30 RETURN a.owner AS a, t.amount AS m, b.owner AS b",
+        "MATCH (a:ACCOUNT)-[t:TRANSFER]->(b) WHERE t.amount > 30 COLUMNS (a.owner AS a, t.amount AS m, b.owner AS b)",
+    );
+    equivalent(
+        &s,
+        "MATCH TRAIL (a:ACCOUNT)-[t:TRANSFER]->{1,3}(b) RETURN ELEMENT_ID(a) AS a, ELEMENT_ID(b) AS b, COUNT(t) AS n",
+        "MATCH TRAIL (a:ACCOUNT)-[t:TRANSFER]->{1,3}(b) COLUMNS (ELEMENT_ID(a) AS a, ELEMENT_ID(b) AS b, COUNT(t.*) AS n)",
+    );
+    equivalent(
+        &s,
+        "MATCH ANY CHEAPEST COST t.amount p = (a:ACCOUNT {owner: 'Bob'})-[t:TRANSFER]->+(b) RETURN b.owner AS b, PATH_LENGTH(p) AS n",
+        "MATCH ANY CHEAPEST COST t.amount p = (a:ACCOUNT WHERE a.owner = 'Bob')-[t:TRANSFER]->+(b) COLUMNS (b.owner AS b, PATH_LENGTH(p) AS n)",
+    );
+}

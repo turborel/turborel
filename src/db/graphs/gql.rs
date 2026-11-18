@@ -12,6 +12,7 @@
 
 mod changes;
 mod graphs;
+mod identities;
 mod inserts;
 mod modify;
 mod session;

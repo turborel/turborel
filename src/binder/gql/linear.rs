@@ -74,10 +74,12 @@ impl Lowering<'_> {
         }
     }
 
-    /// MATCH or, if `optional`, OPTIONAL MATCH.
+    /// MATCH or, if `optional`, OPTIONAL MATCH: `table` joined with the
+    /// pattern's GRAPH_TABLE, read laterally, on the elements both bind; a
+    /// row of no match kept, null extended, if `optional`.
     fn match_clause(&self, table: Table, graph: &Graph, (pattern, span): (&GraphPattern, GqlSpan), optional: bool) -> Result<Table> {
-        let m = self.bind_match(graph, pattern, span)?;
         let (a, b) = (self.alias(), self.alias());
+        let m = self.bind_match(graph, (pattern, span), &table.scope(&a))?;
         let mut on = vec!["1 = 1".to_owned()];
         let mut fresh = Vec::new();
         for v in &m.vars {
@@ -91,15 +93,10 @@ impl Lowering<'_> {
                 None => fresh.push(v.clone()),
             }
         }
-        if let Some(range) = m.condition {
-            let mut scope = table.scope(&a);
-            scope.extend(m.vars.iter().map(|v| (v.name.clone(), (v, b.clone()))));
-            on.push(format!("({})", rewrite(self.text, range, &scope)?));
-        }
         let cols: Vec<String> = fresh.iter().flat_map(Var::columns).map(|(c, _)| column(&b, &c)).collect();
         let join = if optional { "LEFT JOIN" } else { "JOIN" };
         let extra = if cols.is_empty() { String::new() } else { format!(", {}", cols.join(", ")) };
-        let sql = format!("SELECT {a}.*{extra} FROM ({}) AS {a} {join} ({}) AS {b} ON {}", table.sql, m.sql, on.join(" AND "));
+        let sql = format!("SELECT {a}.*{extra} FROM ({}) AS {a} {join} {} AS {b} ON {}", table.sql, m.table, on.join(" AND "));
         let mut vars = table.vars;
         vars.extend(fresh);
         Ok(Table { sql, vars })

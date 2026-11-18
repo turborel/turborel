@@ -10,6 +10,7 @@ use turborel::db::{Database, Direct, Session};
 mod dml;
 mod modes;
 mod queries;
+mod seams;
 mod translation;
 
 /// The bank of the standard's example (§4.1) with its rows: accounts of

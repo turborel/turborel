@@ -1,12 +1,13 @@
-//! Mutations of GQL, of its queries lowered to SQL, a GQL session, the
-//! data-modifying statements over graphs of tables, of node and edge
-//! tables and of Mode C, and the views of graph types (RULES.md R-TEST-9,
-//! D-GQL).
+//! Mutations of GQL, of its queries lowered to SQL and their MATCH read
+//! through GRAPH_TABLE, a GQL session, the data-modifying statements over
+//! graphs of tables, of node and edge tables and of Mode C, the
+//! identities they read and draw, and the views of graph types (RULES.md
+//! R-TEST-9, D-GQL).
 
 use super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail GQL's requirements.
-pub const GRAPH_GQL: [Mutation; 15] = [
+pub const GRAPH_GQL: [Mutation; 20] = [
     Mutation {
         name: "gql-otherwise-when-empty",
         package: Package::Core,
@@ -25,36 +26,6 @@ pub const GRAPH_GQL: [Mutation; 15] = [
         original: "if grouped && !keys.is_empty() {",
         replacement: "if false && !keys.is_empty() {",
         integration: &["gql::queries::return_groups_and_pages_9"],
-        unit: &[],
-    },
-    Mutation {
-        name: "gql-zero-iterations",
-        package: Package::Core,
-        breaks: "a quantifier of lower bound 0 matches no path of no edge",
-        file: "src/binder/gql/paths.rs",
-        original: "if q.lower == 0 {",
-        replacement: "if q.lower == u32::MAX {",
-        integration: &["gql::queries::selectors_keep_the_shortest_6"],
-        unit: &[],
-    },
-    Mutation {
-        name: "gql-selector-keeps",
-        package: Package::Core,
-        breaks: "a selector keeps every path, not the shortest",
-        file: "src/binder/gql/paths.rs",
-        original: "\\\"$RANK\\\" <= {keep}",
-        replacement: "\\\"$RANK\\\" >= {keep}",
-        integration: &["gql::queries::selectors_keep_the_shortest_6"],
-        unit: &[],
-    },
-    Mutation {
-        name: "gql-group-count",
-        package: Package::Core,
-        breaks: "COUNT of a group variable counts the rows, not its elements",
-        file: "src/binder/gql/rewrite.rs",
-        original: "if name == COUNT && var.kind == Kind::Group {",
-        replacement: "if name == COUNT && var.kind == Kind::Path {",
-        integration: &["gql::queries::quantified_paths_and_restrictors_6"],
         unit: &[],
     },
     Mutation {
@@ -155,6 +126,86 @@ pub const GRAPH_GQL: [Mutation; 15] = [
         original: "seen.state.catalog.gql().graph_types().into_iter().map(row).collect()",
         replacement: "seen.state.catalog.gql().graph_types().into_iter().take(0).map(row).collect()",
         integration: &["gql::modes::information_schema_and_drop_20"],
+        unit: &[],
+    },
+    Mutation {
+        name: "gql-shared-variables-joined",
+        package: Package::Core,
+        breaks: "two MATCH clauses sharing a variable are not joined on it",
+        file: "src/binder/gql/linear.rs",
+        original: "on.push(format!(\"{} = {}\", column(&a, &v.name), column(&b, &v.name)));",
+        replacement: "on.push(\"1 = 1\".to_owned());",
+        integration: &["gql::translation::shared_variables_and_grouping_p2_5_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "gql-optional-left-join",
+        package: Package::Core,
+        breaks: "OPTIONAL MATCH drops the rows that match nothing",
+        file: "src/binder/gql/linear.rs",
+        original: "{join} {} AS {b} ON {}",
+        replacement: "JOIN {} AS {b} ON {}",
+        integration: &["gql::queries::optional_match_keeps_the_unmatched_9"],
+        unit: &[],
+    },
+    Mutation {
+        name: "gql-group-aggregate",
+        package: Package::Core,
+        breaks: "an aggregate of a group variable's property is MIN whatever it names",
+        file: "src/binder/gql/rewrite.rs",
+        original: "Ok((format!(\"(SELECT {name}({set}{value})",
+        replacement: "Ok((format!(\"(SELECT MIN({set}{value})",
+        integration: &["gql::seams::group_variables_aggregate_6"],
+        unit: &[],
+    },
+    Mutation {
+        name: "gql-path-functions",
+        package: Package::Core,
+        breaks: "each path function of a MATCH reads PATH_LENGTH",
+        file: "src/binder/gql/matching.rs",
+        original: "named(format!(\"{f}({x})\"), v.part_column(part))",
+        replacement: "named(format!(\"PATH_LENGTH({x})\"), v.part_column(part))",
+        integration: &["gql::seams::cheapest_and_path_functions_6"],
+        unit: &[],
+    },
+    Mutation {
+        name: "gql-label-set",
+        package: Package::Core,
+        breaks: "a MATCH's element has the labels it has not",
+        file: "src/binder/gql/matching.rs",
+        original: "THEN {has} ELSE '' END",
+        replacement: "THEN '' ELSE {has} END",
+        integration: &["gql::queries::identities_labels_and_unknowns_5"],
+        unit: &[],
+    },
+    Mutation {
+        name: "gql-identity-keyed",
+        package: Package::Core,
+        breaks: "a write finds every row but the element's",
+        file: "src/db/graphs/gql/identities.rs",
+        original: "at.push(format!(\"{q}.{} = {}\", identifier(k), key_value(param, i, &column)));",
+        replacement: "at.push(format!(\"{q}.{} <> {}\", identifier(k), key_value(param, i, &column)));",
+        integration: &["gql::dml::insert_and_set_over_tables_12_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "gql-drawn-identity",
+        package: Package::Core,
+        breaks: "an INSERT keeps no identity its node table drew",
+        file: "src/db/write.rs",
+        original: "self.note_drawn(target.generating.drawn_identity(), &mut rows)?;",
+        replacement: "self.note_drawn(None, &mut rows)?;",
+        integration: &["gql::seams::equal_nodes_keep_their_own_identities_4_2"],
+        unit: &[],
+    },
+    Mutation {
+        name: "gql-call-per-row",
+        package: Package::Core,
+        breaks: "a modifying CALL runs once for rows of equal values",
+        file: "src/db/graphs/gql/modify.rs",
+        original: "ROW_NUMBER() OVER () AS {}",
+        replacement: "1 AS {}",
+        integration: &["gql::seams::a_modifying_call_runs_per_row_12"],
         unit: &[],
     },
 ];

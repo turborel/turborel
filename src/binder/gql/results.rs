@@ -5,14 +5,11 @@
 //! none; NEXT feeds a statement's table to the next [P2 §5.1].
 
 use super::linear::fresh_name;
-use super::rewrite::{column, identifier_of};
+use super::rewrite::{AGGREGATES, column, identifier_of, word};
 use super::{Kind, Lowered, Lowering, Table, Var, quote};
 use crate::ast::{GqlComposite, GqlLinear, GqlProcedure, GqlResult, GqlReturn, GqlReturnItem, GqlSetOperator, TableName};
 use crate::error::{Code, Result, SqlError};
-use crate::lexer::{Tok, delim};
-
-/// The aggregate functions whose call makes RETURN group.
-const AGGREGATES: [&str; 9] = ["COUNT", "SUM", "AVG", "MIN", "MAX", "ARRAY_AGG", "COLLECT_LIST", "STDDEV_POP", "STDDEV_SAMP"];
+use crate::lexer::{Tok, delim, kw};
 
 impl Lowering<'_> {
     /// \[EXTENSION\] The table of procedure `p`, its first statement's
@@ -145,11 +142,14 @@ impl Lowering<'_> {
             return Ok(Item::Carried(v.clone(), v.renamed(&name)));
         }
         let value = self.value(table, a, &item.value)?;
-        let group = |i: usize| identifier_of(self.text.tok(i)).and_then(|n| table.var(n)).is_some_and(|v| v.kind == Kind::Group);
+        let group =
+            |i: usize| identifier_of(self.text.tok(i)).and_then(|n| table.var(n)).is_some_and(|v| matches!(v.kind, Kind::Group { .. }));
+        let quantified = |i: usize| matches!(self.text.tok(i), Tok::KeyWord(kw::DISTINCT | kw::ALL));
+        let across = |i: usize| group(i) || (quantified(i) && group(i.saturating_add(1)));
         let aggregate = (span.start..span.end).any(|i| {
             word(self.text.tok(i)).is_some_and(|w| AGGREGATES.contains(&w.as_str()))
                 && *self.text.tok(i.saturating_add(1)) == Tok::Delimiter(delim::LEFT_PAREN)
-                && !(group(i.saturating_add(2)) && *self.text.tok(i.saturating_add(3)) == Tok::Delimiter(delim::RIGHT_PAREN))
+                && !across(i.saturating_add(2))
         });
         let name = item.name.clone().unwrap_or_else(|| self.written_name(span.start, span.end));
         Ok(Item::Value(value, Var::value(&name), aggregate))
@@ -173,14 +173,6 @@ impl Lowering<'_> {
             })
             .collect()
     }
-}
-
-/// Token `t` as a word: an identifier, or a key word.
-fn word(t: &Tok) -> Option<String> {
-    if let Tok::KeyWord(k) = t {
-        return Some((*k).to_owned());
-    }
-    identifier_of(t).cloned()
 }
 
 /// A RETURN item.

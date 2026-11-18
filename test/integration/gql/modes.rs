@@ -71,6 +71,27 @@ fn open_graph_4_3() {
     assert_eq!(on(&s, "FREE", "MATCH (b:D) RETURN b.z AS z, LABELS(b) AS l"), ["set,|B|D|"]);
 }
 
+/// Verifies: [EXTENSION] graph standard §4.3, [GS §7]: GQL reads an open
+/// graph's elements as GRAPH_TABLE does its NODE and EDGE tables, of the
+/// same identities, labels and properties.
+#[test]
+fn open_graph_is_its_graph_table_4_3() {
+    let (_db, s) = session();
+    s.run("CREATE GRAPH FREE ANY").unwrap();
+    on(&s, "FREE", "INSERT (:A {x: 1})-[:R {w: 'heavy'}]->(:B {y: 2}), (:A {x: 3})");
+    let mut ours =
+        on(&s, "FREE", "MATCH (a)-[r]->(b) RETURN ELEMENT_ID(a) AS a, ELEMENT_ID(r) AS r, ELEMENT_ID(b) AS b, LABELS(b) AS l, b.y AS y");
+    let theirs = direct(
+        &s,
+        "SELECT * FROM GRAPH_TABLE (FREE MATCH (a IS NODE)-[r IS EDGE]->(b IS NODE) COLUMNS (ELEMENT_ID(a) AS a, ELEMENT_ID(r) AS r, \
+         ELEMENT_ID(b) AS b, b.LABELS AS l, JSON_VALUE(b.PROPS, 'lax $.\"Y\"' RETURNING INTEGER) AS y)) AS G",
+    );
+    ours.sort();
+    assert_eq!(ours, theirs);
+    assert_eq!(ours.len(), 1);
+    assert_eq!(on(&s, "FREE", "MATCH (a:A) RETURN COUNT(*) AS n"), ["2"]);
+}
+
 /// Verifies: [EXTENSION] graph standard §20: GRAPH_TYPES and GQL_GRAPHS
 /// show each graph type and GQL graph, and DROP takes them away.
 #[test]

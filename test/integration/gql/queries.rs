@@ -134,7 +134,10 @@ fn next_and_call_9() {
 #[test]
 fn identities_labels_and_unknowns_5() {
     let (_db, s) = bank();
-    assert_eq!(gql(&s, "MATCH (c:CITY {city_name: 'Rome'}) RETURN ELEMENT_ID(c) AS i, LABELS(c) AS l"), ["CITY|2,|CITY|PLACE|"]);
+    assert_eq!(
+        gql(&s, "MATCH (c:CITY {city_name: 'Rome'}) RETURN ELEMENT_ID(c) AS i, LABELS(c) AS l"),
+        [r#"{"table":"CITY","key":[2]},|CITY|PLACE|"#]
+    );
     let (code, msg) = super::failed(&s, "EXECUTE GQL ON GRAPH BANK 'MATCH (x:NOPE) RETURN x'");
     assert_eq!(code, -103);
     assert!(msg.contains("GRF-0012"), "{msg}");

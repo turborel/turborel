@@ -12,9 +12,9 @@
 //! JSON object built here.
 
 use super::graphs::{EDGES, NODES, SEQUENCE, graph_table};
-use crate::binder::gql::sources::{OPEN_EDGE, OPEN_NODE, identity};
+use super::identities::table_of;
 use crate::binder::gql::{Graph, LABEL_BAR};
-use crate::catalog::{ElementId, ElementKind, ElementTableDesc, Endpoints, QualifiedName, id_type, identifier, qualified_identifier};
+use crate::catalog::{ElementKind, ElementTableDesc, Endpoints, QualifiedName, id_type, identifier, qualified_identifier};
 use crate::db::Session;
 use crate::error::{Code, Result, SqlError};
 use crate::json::{Item, Member, Scalar};
@@ -34,15 +34,6 @@ pub(super) fn refused(graph: &Graph, closed: bool, what: &str) -> SqlError {
         return SqlError::new(Code::Constraint, format!("[EXTENSION] GRF-0053 {what}, against the graph type of {}", graph.desc.name));
     }
     SqlError::new(Code::SyntaxRule, format!("[EXTENSION] GRF-0051 {what}, in graph {}", graph.desc.name))
-}
-
-/// The element table of the element whose identity is `id`.
-pub(super) fn table_of<'g>(graph: &'g Graph, id: &str) -> Result<&'g ElementTableDesc> {
-    let alias = id.split(LABEL_BAR).next().unwrap_or_default();
-    graph
-        .desc
-        .element(alias)
-        .ok_or_else(|| SqlError::new(Code::Data, format!("[EXTENSION] {id} is no element of graph {}", graph.desc.name)))
 }
 
 /// The column property `p` of element table `e` is.
@@ -128,8 +119,8 @@ pub(super) type Written<'a> = (Vec<(String, Typed)>, Option<(&'a str, &'a str)>)
 /// GRF-0051, or GRF-0053 if `closed`, of a vertex of a table the edge
 /// does not join.
 fn edge_source(
-    graph: &Graph,
-    (e, ep): (&ElementTableDesc, &Endpoints),
+    s: &Session,
+    (graph, e, ep): (&Graph, &ElementTableDesc, &Endpoints),
     (names, values): (&mut Vec<String>, &mut Vec<Typed>),
     ((src, dst), closed): ((&str, &str), bool),
 ) -> Result<(String, String)> {
@@ -147,7 +138,7 @@ fn edge_source(
         selected.extend(end.references.iter().map(|r| format!("{q}.{}", identifier(r))));
         from.push(format!("{} AS {q}", qualified_identifier(&v.table)));
         let param = written.get(n.saturating_add(wheres.len())).cloned().unwrap_or_default();
-        wheres.push(Session::identified(v, q, &param));
+        wheres.push(s.keyed(v, q, &param)?);
     }
     Ok((selected.join(", "), format!("{} WHERE {}", from.join(", "), wheres.join(" AND "))))
 }
@@ -159,7 +150,7 @@ fn native_table(s: &Session, e: &ElementTableDesc) -> Result<bool> {
 
 /// An identity as a value to write.
 pub(super) fn id_value(id: &str) -> Typed {
-    (Value::Char(id.into()), DataType::varying(1000))
+    (Value::Char(id.into()), DataType::varying(crate::logical::IDENTITY_LENGTH))
 }
 
 impl Session {
@@ -220,7 +211,7 @@ impl Session {
         let mut values: Vec<Typed> = cols.iter().map(|(_, v)| v.clone()).collect();
         let table = qualified_identifier(&e.table);
         let sql = if let (Some(ends), Some(ep)) = (ends, &e.endpoints) {
-            let (selected, from) = edge_source(graph, (e, ep), (&mut names, &mut values), (ends, g.is_some()))?;
+            let (selected, from) = edge_source(self, (graph, e, ep), (&mut names, &mut values), (ends, g.is_some()))?;
             format!("INSERT INTO {table} ({}) SELECT {selected} FROM {from}", names.join(", "))
         } else {
             let (_, written) = params(&values);
@@ -230,46 +221,17 @@ impl Session {
         if keyed {
             return Ok(e.key.iter().filter_map(|k| cols.iter().find(|(c, _)| c == k).map(|(_, v)| v.clone())).collect());
         }
-        self.drawn(e, e.key.first().map_or("", String::as_str), &cols)
-    }
-
-    /// The identity the node or edge table of `e` drew for the row just
-    /// inserted of the columns and values `cols`, its key `k` (§4.2): of
-    /// the rows of those values, the one of the greatest number, as each
-    /// table's generator gives them in order.
-    fn drawn(&self, e: &ElementTableDesc, k: &str, cols: &[(String, Typed)]) -> Result<Vec<Typed>> {
-        let values: Vec<Typed> = cols.iter().map(|(_, v)| v.clone()).collect();
-        let (p, names) = params(&values);
-        let mut at = vec!["1 = 1".to_owned()];
-        for ((c, (v, _)), name) in cols.iter().zip(&names) {
-            let test = if v.is_null() { "IS NULL".to_owned() } else { format!("= {name}") };
-            at.push(format!("{} {test}", identifier(c)));
-        }
-        let sql = format!("SELECT {} FROM {} WHERE {}", identifier(k), qualified_identifier(&e.table), at.join(" AND "));
-        let (types, rows) = self.read_all(&sql, &p)?;
-        let number = |v: &Value| if let Value::Char(s) = v { ElementId::parse(s).map(|id| id.id) } else { None };
-        let newest = rows.into_iter().filter_map(|r| r.into_iter().next()).max_by_key(|v| number(v));
-        let t = types.into_iter().next().unwrap_or_else(id_type);
-        newest
-            .map(|v| vec![(v, t)])
-            .ok_or_else(|| SqlError::new(Code::Data, format!("[EXTENSION] the row inserted into {} is not found", e.alias)))
-    }
-
-    /// The identity of the open graph's element of `kind` numbered `n`.
-    pub(super) fn open_identity(kind: ElementKind, n: &Value) -> String {
-        let prefix = if kind == ElementKind::Edge { OPEN_EDGE } else { OPEN_NODE };
-        format!("{prefix}{LABEL_BAR}{n}")
+        // The node or edge table drew its key (§4.2): the INSERT tells
+        // which, so no other row of the same values is taken for it.
+        let drawn = self.drawn_identities().into_iter().next();
+        drawn
+            .map(|v| vec![(v, id_type())])
+            .ok_or_else(|| SqlError::new(Code::Data, format!("[EXTENSION] the row inserted into {} drew no identity", e.alias)))
     }
 
     /// The table of open graph `g` of elements of `kind`.
     pub(super) fn open_table(g: &QualifiedName, kind: ElementKind) -> String {
         qualified_identifier(&graph_table(g, if kind == ElementKind::Edge { EDGES } else { NODES }))
-    }
-
-    /// The condition that a row of `e`, of the table written `q`, is the
-    /// element of identity parameter `param`.
-    pub(super) fn identified(e: &ElementTableDesc, q: &str, param: &str) -> String {
-        format!("{} = {param}", identity(e, q))
     }
 }
 

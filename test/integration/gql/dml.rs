@@ -65,7 +65,7 @@ fn writes_are_the_transactions_12_3() {
 }
 
 /// Node and edge tables of schema A, and a session of A.
-fn native() -> (Database, Session) {
+pub(super) fn native() -> (Database, Session) {
     let db = Database::new();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A \

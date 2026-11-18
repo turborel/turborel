@@ -124,6 +124,12 @@ impl Generating {
         self.draw.iter().map(|(at, ..)| *at).chain(reference).chain(self.exprs.iter().map(|(at, ..)| *at))
     }
 
+    /// \[EXTENSION\] (§4.2) The position of the identity it draws for each
+    /// row inserted into a node or edge table, if it draws one.
+    pub(in crate::db) fn drawn_identity(&self) -> Option<usize> {
+        self.native.as_ref().and_then(crate::db::graphs::native::Native::drawn)
+    }
+
     /// Whether it gives each row its identity column's next value.
     pub(in crate::db) fn draws(&self) -> bool {
         self.draw.is_some()
