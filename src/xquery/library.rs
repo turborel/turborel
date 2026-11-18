@@ -25,18 +25,31 @@
 //! SQLCODE -900 (D18), so no call holds more than an XML value may.
 
 mod accessors;
+mod aggregates;
 pub mod args;
+mod binary;
 mod booleans;
+mod calendar;
 pub mod codes;
 mod collation;
+mod comparison;
 mod constructors;
+mod context;
 mod decimal;
+mod deep_equal;
+mod durations;
 mod escape;
+mod generate;
+mod moments;
+mod node_sets;
+mod nodes;
 mod normalize;
 mod numeric;
 mod patterns;
+mod qnames;
 mod raise;
 mod rounding;
+mod sequences;
 mod strings;
 mod substrings;
 mod unicode;
@@ -47,8 +60,10 @@ pub mod op;
 pub use booleans::effective_boolean_value;
 pub use codes::fail;
 pub use collation::Collator;
+pub use comparison::{value_equal, value_order};
 pub use constructors::{Constructor, construct};
 pub use decimal::{DIVISION_SCALE, Decimal, MAX_DIGITS, Rounding};
+pub use deep_equal::sequences_deep_equal;
 
 use std::ops::RangeInclusive;
 
@@ -186,6 +201,15 @@ const SECTIONS: &[&[Builtin]] = &[
     &patterns::FUNCTIONS,
     &uri::FUNCTIONS,
     &booleans::FUNCTIONS,
+    &durations::FUNCTIONS,
+    &moments::FUNCTIONS,
+    &qnames::FUNCTIONS,
+    &nodes::FUNCTIONS,
+    &sequences::FUNCTIONS,
+    &deep_equal::FUNCTIONS,
+    &aggregates::FUNCTIONS,
+    &generate::FUNCTIONS,
+    &context::FUNCTIONS,
 ];
 
 /// Every function of the library: each section's, then the constructors

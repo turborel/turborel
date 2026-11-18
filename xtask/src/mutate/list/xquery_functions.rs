@@ -2,13 +2,14 @@
 //! decimals and roundings, the promotion of numbers, the casts and
 //! equality of atomic values it rests on, the resolution of URIs, the
 //! effective boolean value, and its strings: positions, collations,
-//! normalization, escaping and XQuery 1.0's regular expressions
-//! (RULES.md R-TEST-9, D86).
+//! normalization, escaping and XQuery 1.0's regular expressions; dates
+//! in the implicit time zone and their arithmetic, fn:deep-equal, the
+//! functions on sequences and their bounds (RULES.md R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of the library broken alone, and the tests that fail.
-pub const XQUERY_FUNCTIONS: [Mutation; 14] = [
+pub const XQUERY_FUNCTIONS: [Mutation; 20] = [
     Mutation {
         name: "xquery-decimal-division-scale",
         package: Package::Core,
@@ -154,5 +155,65 @@ pub const XQUERY_FUNCTIONS: [Mutation; 14] = [
         replacement: "const UNRESERVED: &str = \"-_.!~*'()\";",
         integration: &[],
         unit: &["xquery::library::escape::tests::encode_for_uri_examples"],
+    },
+    Mutation {
+        name: "xquery-implicit-timezone",
+        package: Package::Core,
+        breaks: "a date or time of no time zone is compared as UTC, not in the implicit time zone",
+        file: "src/xquery/library/moments.rs",
+        original: "let minutes = own.map_or(zone, i32::from);",
+        replacement: "let minutes = own.map_or(0, i32::from);",
+        integration: &[],
+        unit: &["xquery::library::moments::tests::date_time_equality_examples"],
+    },
+    Mutation {
+        name: "xquery-day-kept-in-month",
+        package: Package::Core,
+        breaks: "a date plus months keeps a day past the end of its month",
+        file: "src/xquery/library/calendar.rs",
+        original: "day.min(days_in(year, month))",
+        replacement: "day",
+        integration: &[],
+        unit: &["xquery::library::calendar::tests::addition_examples"],
+    },
+    Mutation {
+        name: "xquery-deep-equal-attributes",
+        package: Package::Core,
+        breaks: "fn:deep-equal ignores elements' attributes",
+        file: "src/xquery/library/deep_equal.rs",
+        original: "Some(Kind::Element) => self.attributes((ours, mine), (theirs, other)),",
+        replacement: "Some(Kind::Element) => true,",
+        integration: &[],
+        unit: &["xquery::library::deep_equal::tests::deep_equal_examples"],
+    },
+    Mutation {
+        name: "xquery-distinct-nan",
+        package: Package::Core,
+        breaks: "fn:distinct-values keeps every NaN, as NaN equals nothing",
+        file: "src/xquery/library/sequences.rs",
+        original: "|| (super::numeric::is_nan(k) && super::numeric::is_nan(&value))",
+        replacement: "",
+        integration: &[],
+        unit: &["xquery::library::sequences::tests::distinct_values_examples"],
+    },
+    Mutation {
+        name: "xquery-id-document-order",
+        package: Package::Core,
+        breaks: "fn:id gives its elements in the order of its tokens, not document order",
+        file: "src/xquery/library/generate.rs",
+        original: "    found.sort_unstable();\n",
+        replacement: "",
+        integration: &[],
+        unit: &["xquery::library::generate::tests::ids"],
+    },
+    Mutation {
+        name: "xquery-to-bound",
+        package: Package::Core,
+        breaks: "op:to makes a sequence of any length",
+        file: "src/xquery/library/sequences.rs",
+        original: "    within_items(count)?;\n    let mut out",
+        replacement: "    let mut out",
+        integration: &[],
+        unit: &["xquery::library::sequences::tests::concatenate_and_to"],
     },
 ];

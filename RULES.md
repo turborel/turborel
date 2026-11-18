@@ -3056,6 +3056,15 @@ expressions, which `cargo xtask unicode` makes
 arithmetic. fn:matches, fn:replace and fn:tokenize use D61's matcher in
 XQuery 1.0's dialect.
 
+A date or time of no time zone is compared and subtracted in the
+implicit time zone; the current dateTime is the statement's instant
+(D54) in it. No function reads an external resource, as the parser
+reads none: the available documents and collections are empty and there
+is no default collection. The value comparison of two atomic values
+that fn:index-of, fn:distinct-values, fn:deep-equal, fn:max and fn:min
+compare by is `library::value_equal` and `value_order`, for an
+evaluator's value comparisons too.
+
 XML values are not comparable, so they have no key, bucket or order, and
 the binder refuses them where an equality, grouping or ordering operation
 would take one, as one inside an array, a multiset, a row or a distinct

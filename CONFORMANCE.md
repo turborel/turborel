@@ -2009,6 +2009,11 @@ Validation, Static Typing, Module and Serialization are not [XQuery §5.2].
 | Normalization forms | XQueryFO §7.4.6 | NFC, NFD, NFKC and NFKD, and the zero-length string for none; FULLY-NORMALIZED is err:FOCH0003. |
 | Case mappings | XQueryFO §7.4.7, §7.4.8 | Each character's full mapping, SpecialCasing's unconditional one or UnicodeData's simple one; none that a context or language governs. |
 | Regular expressions of fn:matches, fn:replace and fn:tokenize | XQueryFO §7.6.1 | XQuery 1.0's: a newline a line feed alone, `\s` XML Schema's, no `(?:` and no flag `q`, by the matcher of LIKE_REGEX (RULES.md D61) and its limits. |
+| Durations times or divided by a number | XQueryFO §10.6.3, §10.6.8 | Exact, the double as the shortest decimal that reads back as it, rounded to the month or microsecond, a half up. |
+| The current dateTime and the implicit time zone | XQueryFO §16.3, §16.6 | The instant the statement read its clock at (RULES.md D54), in the implicit time zone the evaluator gives. |
+| fn:doc, fn:doc-available and fn:collection | XQueryFO §15.5.4 to §15.5.6 | No document or collection is available and there is no default collection, as no query reads an external resource: fn:doc of a URI is err:FODC0005, fn:doc-available false, fn:collection err:FODC0002 or err:FODC0004. |
+| The order of fn:distinct-values and fn:unordered | XQueryFO §15.1.6, §15.1.11 | The first of each set of equal values, in the order they came; fn:unordered's items in the order they came. |
+| fn:id and fn:idref | XQueryFO §15.5.2, §15.5.3 | An element's or attribute's ID and IDREF properties are those its document type declaration gave it. |
 
 \[EXTENSION\] Part 14's 2006 draft gives no XML Name of a BINARY, a
 BINARY VARYING or an interval type [§9.4], though §9.5 maps each [GR8b,

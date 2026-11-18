@@ -143,8 +143,11 @@ features.
 
 - Publishing: the mapping of XML Names to identifiers (X400).
 - XQuery: XMLQUERY, XMLEXISTS and XMLTABLE evaluate every expression of
-  XQuery 1.0 (`src/xquery.rs`). Left: the rest of the functions and
-  operators library, on the `XQueryFunction` seam; casts to `xs:QName`;
+  XQuery 1.0 (`src/xquery.rs`). The library of XQuery 1.0 Functions and
+  Operators exists (`src/xquery/library.rs`); its FULLY-NORMALIZED form
+  of fn:normalize-unicode, and substring matching by UNICODE and its
+  tailorings, are not supported. Left: that library wired into the
+  `XQueryFunction` seam; casts to `xs:QName`;
   the validate expression's lax mode and schema imports, with XML Schema;
   the type annotation `xs:anyType` of an element constructed in
   construction mode preserve; and more of a query's shapes answered by

@@ -145,6 +145,14 @@ enum Rank {
     Double,
 }
 
+/// Whether `a` is a NaN of a float or double.
+pub(super) fn is_nan(a: &Atomic) -> bool {
+    match Number::of(a) {
+        Ok(Number::Float(x) | Number::Double(x)) => x.is_nan(),
+        Ok(Number::Integer(_) | Number::Decimal(_)) | Err(_) => false,
+    }
+}
+
 /// `a` and `b` promoted to one type, the greater of theirs.
 fn promote(a: Number, b: Number) -> (Number, Number) {
     let rank = a.rank().max(b.rank());
