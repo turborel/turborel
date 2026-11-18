@@ -79,6 +79,12 @@ impl Parser {
     /// predicate>`; or [ISO/IEC 9075-2:2023 §6.46] a `<boolean predicand>`,
     /// one value that no predicate's operator follows.
     fn predicate(&mut self) -> Result<SearchCondition> {
+        // [EXTENSION] [P1 §4.7] SAME, ALL_DIFFERENT, PROPERTY_EXISTS and
+        // EXISTS IN PATH, inside a GRAPH_TABLE.
+        let begins = self.here();
+        if let Some(graph) = self.graph_predicate_call()? {
+            return Ok(SearchCondition::Predicate(Box::new(graph), begins));
+        }
         if self.is_kw(kw::EXISTS) || self.is_kw(kw::UNIQUE) {
             return self.subquery_predicate();
         }
@@ -385,12 +391,17 @@ impl Parser {
     /// limit, as a nested condition does.
     pub(super) fn subquery(&mut self) -> Result<Subquery> {
         let at = self.here();
-        self.nested(|p| {
+        // [EXTENSION] A query of its own reads a graph function's name as
+        // a routine's, inside a GRAPH_TABLE too.
+        let graph = std::mem::take(&mut self.graph);
+        let read = self.nested(|p| {
             p.expect_delim(delim::LEFT_PAREN)?;
             let query = p.query_expression()?;
             p.expect_delim(delim::RIGHT_PAREN)?;
             Ok(Subquery { query, at })
-        })
+        });
+        self.graph = graph;
+        read
     }
 
     /// [ISO/IEC 9075:1992 §8.4] the rest of an `<in predicate>`, after

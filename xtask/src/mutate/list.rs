@@ -22,6 +22,7 @@ mod generated;
 mod geometry;
 mod graph_adjacency;
 mod graph_catalog;
+mod graph_syntax;
 mod grouping_sets;
 mod hypothetical;
 mod json;

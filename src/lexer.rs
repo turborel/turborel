@@ -115,6 +115,10 @@ const DELIMITERS: &[&str] = &[
     delim::RIGHT_BRACE,
     delim::CIRCUMFLEX,
     delim::DOLLAR_SIGN,
+    delim::PERCENT,
+    delim::AMPERSAND,
+    delim::TILDE,
+    delim::EXCLAMATION_MARK,
 ];
 
 /// The quote that delimits a `<character string literal>` [X3.135-1986 §5.2].
@@ -332,6 +336,10 @@ impl Scanner {
             self.character_string()
         } else if first == DOUBLE_QUOTE {
             self.delimited_identifier()
+        } else if first == '!' && self.peek(1) == Some('=') {
+            // [EXTENSION] "!" is a delimiter of label expressions, and
+            // "!=" still no token: not equals is written "<>".
+            Err(error(Code::Lexical, self.at, "[X3.135-1986 §5.3 F] \"!=\" is not a <token>; not equals is written \"<>\""))
         } else if let Some((d, length)) = self.delimiter() {
             self.advance(length);
             Ok(Tok::Delimiter(d))

@@ -81,7 +81,7 @@ impl Parser {
             Tok::KeyWord(kw::VALUE) => self.value_reference(),
             // [ISO/IEC 9075-2:2023 §6.27] NEXT, FIRST and LAST before "(".
             Tok::KeyWord(kw::NEXT) => self.next_primary(),
-            Tok::KeyWord(kw::FIRST | kw::LAST) => self.first_or_last_primary(),
+            Tok::KeyWord(kw::FIRST | kw::LAST) => self.first_primary(),
             Tok::KeyWord(
                 kw::COUNT
                 | kw::AVG
@@ -258,6 +258,11 @@ impl Parser {
     /// aggregate of a name no key word of SQL-92 [§10.9], or an SQL/JSON
     /// function [§6.28, §6.34, §6.35, §10.11], if one is next.
     fn composite_pattern_or_aggregate(&mut self) -> Result<Option<ValueExpression>> {
+        // [EXTENSION] [P1 §4.7] a graph function, or a graph predicate as
+        // a value, inside a GRAPH_TABLE.
+        if let Some(graph) = self.graph_primary()? {
+            return Ok(Some(graph));
+        }
         // [ISO/IEC 9075-2:2023 §6.31, §10.9] Feature T621's functions.
         if let Some(numeric) = self.numeric_or_statistical() {
             return numeric.map(Some);

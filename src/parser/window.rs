@@ -26,7 +26,7 @@ pub(super) const OVER: &str = "OVER";
 pub(super) const WINDOW: &str = "WINDOW";
 /// The words of a `<window frame clause>` that SQL-92 does not reserve.
 const RANGE: &str = "RANGE";
-const GROUPS: &str = "GROUPS";
+pub(super) const GROUPS: &str = "GROUPS";
 const PRECEDING: &str = "PRECEDING";
 const FOLLOWING: &str = "FOLLOWING";
 const UNBOUNDED: &str = "UNBOUNDED";

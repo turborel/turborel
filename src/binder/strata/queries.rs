@@ -47,6 +47,7 @@ pub(super) fn any_query(q: &QueryExpression, pred: &dyn Fn(&QueryExpression) -> 
                             v.for_each_subquery(&mut |s| nested.push(&s.query));
                         }
                     }
+                    TableReference::Graph(g) => g.for_each_subquery(&mut |s| nested.push(&s.query)),
                     TableReference::Joined(j) => refs.extend([&j.left, &j.right]),
                     TableReference::Recognized(r) => {
                         refs.push(&r.input);
@@ -88,7 +89,8 @@ pub(super) fn recognizes(q: &QueryExpression) -> bool {
             | TableReference::Derived(_)
             | TableReference::Unnest(_)
             | TableReference::Json(_)
-            | TableReference::Polymorphic(_) => {}
+            | TableReference::Polymorphic(_)
+            | TableReference::Graph(_) => {}
         }
     }
     false

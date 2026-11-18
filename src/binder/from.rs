@@ -276,6 +276,7 @@ pub(super) fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, fr
         TableReference::Json(j) => super::json::json_table_item(b, j, start, from).or_at(j.at)?,
         TableReference::Recognized(r) => super::pattern::recognized(b, r, start).or_at(r.at)?,
         TableReference::Polymorphic(p) => return super::ptf::ptf_reference(b, p, start, from),
+        TableReference::Graph(g) => return Err(super::graph_seam::not_yet_bound().or_at(g.at)),
     };
     from.items.push(item);
     Ok(Tree::Item(from.items.len().saturating_sub(1)))

@@ -190,6 +190,7 @@ impl Binder<'_> {
             Predicate::Submultiset { value, multiset, not } => self.submultiset(value, multiset, *not, scope)?,
             Predicate::Set { value, not } => self.set_predicate(value, *not, scope)?,
             Predicate::Type { value, types, not } => self.type_predicate(value, types, *not, scope)?,
+            Predicate::Graph(_) => return Err(super::graph_seam::outside_graph_table()),
             Predicate::Exists(s) => Cond::Exists(self.subquery(s, scope, Use::Exists)?.0),
             Predicate::Unique { subquery: s, nulls_distinct } => self.unique(s, *nulls_distinct, scope)?,
             Predicate::Match { value, unique, match_type, subquery } => {

@@ -373,6 +373,7 @@ fn named(binder: &Binder<'_>, v: &ValueExpression, scope: Scope<'_>) -> Result<(
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }
         | ValueExpression::MatchNumber { .. }
+        | ValueExpression::Graph(..)
         | ValueExpression::NestedWindow(_)
         | ValueExpression::NextValue { .. } => (None, false, None),
     })

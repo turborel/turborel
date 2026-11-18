@@ -180,6 +180,11 @@ impl<'w> Rules<'w> {
                 }
                 n
             }
+            TableReference::Graph(g) => {
+                let mut n = 0_usize;
+                g.for_each_subquery(&mut |s| n = n.saturating_add(self.refs(&s.query, scope)));
+                n
+            }
             TableReference::Recognized(r) => {
                 let mut n = self.reference_refs(&r.input, scope);
                 r.clause.for_each_subquery(&mut |s| n = n.saturating_add(self.refs(&s.query, scope)));
@@ -337,6 +342,7 @@ impl<'w> Rules<'w> {
                 }
                 self.elsewhere(subqueries, scope)
             }
+            TableReference::Graph(g) => self.elsewhere(graph_subqueries(g), scope),
             TableReference::Recognized(r) => {
                 let mut subqueries = Vec::new();
                 r.clause.for_each_subquery(&mut |s| subqueries.push(s));
@@ -491,4 +497,11 @@ fn simply_all(q: &QueryExpression) -> bool {
         QueryExpression::Ordered(o) => simply_all(&o.body),
         QueryExpression::Spec(_) | QueryExpression::Values(_) => false,
     }
+}
+
+/// The subqueries of the GRAPH_TABLE `g`'s conditions and values.
+fn graph_subqueries(g: &crate::ast::GraphTable) -> Vec<&Subquery> {
+    let mut subqueries = Vec::new();
+    g.for_each_subquery(&mut |s| subqueries.push(s));
+    subqueries
 }

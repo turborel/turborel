@@ -290,6 +290,13 @@ fn every_table(from: &[TableReference], at: usize) -> Result<Vec<SelectSublist>>
                 };
                 TableName { auth: None, ident: name.clone(), at }
             }
+            TableReference::Graph(g) => {
+                let Some(name) = &g.correlation else {
+                    let msg = "a <search or cycle clause> of a recursive query whose second operand selects * of a GRAPH_TABLE of no correlation name is not supported";
+                    return Err(SqlError::new(Code::Unsupported, msg));
+                };
+                TableName { auth: None, ident: name.clone(), at }
+            }
             TableReference::Polymorphic(_) => {
                 let msg = "a <search or cycle clause> of a recursive query whose second operand selects * of a <PTF derived table> is not supported";
                 return Err(SqlError::new(Code::Unsupported, msg));
@@ -333,7 +340,11 @@ fn extend_reference(from: &mut [TableReference], name: &str, added: &[String]) {
                 todo.extend([left, right]);
             }
             TableReference::Recognized(r) => todo.push(&mut r.input),
-            TableReference::Derived(_) | TableReference::Unnest(_) | TableReference::Json(_) | TableReference::Polymorphic(_) => {}
+            TableReference::Derived(_)
+            | TableReference::Unnest(_)
+            | TableReference::Json(_)
+            | TableReference::Polymorphic(_)
+            | TableReference::Graph(_) => {}
         }
     }
 }

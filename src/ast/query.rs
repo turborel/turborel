@@ -263,6 +263,7 @@ fn named_in_from<'a>(
             TableReference::Derived(d) => subqueries.push(&*d.query),
             TableReference::Unnest(u) => u.collections.iter().for_each(|v| v.for_each_subquery(&mut |s| subqueries.push(s))),
             TableReference::Json(j) => j.operands().into_iter().for_each(|v| v.for_each_subquery(&mut |s| subqueries.push(s))),
+            TableReference::Graph(g) => g.for_each_subquery(&mut |s| subqueries.push(s)),
             TableReference::Recognized(r) => {
                 refs.push(&r.input);
                 r.clause.for_each_subquery(&mut |s| subqueries.push(s));
@@ -491,6 +492,9 @@ pub enum TableReference {
     /// [ISO/IEC 9075-2:2023 §7.6, §7.11] A `<JSON table>` and its
     /// `<correlation or recognition>`.
     Json(Box<super::JsonTable>),
+    /// \[EXTENSION\] [ISO/IEC 9075-2:2023 §7.6] A GRAPH_TABLE and its
+    /// correlation name, if written.
+    Graph(Box<super::GraphTable>),
 }
 
 impl TableReference {

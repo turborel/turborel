@@ -30,9 +30,9 @@ const MATCH_RECOGNIZE: &str = "MATCH_RECOGNIZE";
 /// MEASURES, before a `<row pattern measure list>`.
 const MEASURES: &str = "MEASURES";
 /// ONE, of ONE ROW PER MATCH.
-const ONE: &str = "ONE";
+pub(super) const ONE: &str = "ONE";
 /// PER, of ONE ROW PER MATCH and ALL ROWS PER MATCH.
-const PER: &str = "PER";
+pub(super) const PER: &str = "PER";
 /// SHOW, of SHOW EMPTY MATCHES.
 const SHOW: &str = "SHOW";
 /// OMIT, of OMIT EMPTY MATCHES.

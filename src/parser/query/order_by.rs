@@ -45,6 +45,7 @@ impl Parser {
             | ValueExpression::Navigation(_)
             | ValueExpression::Classifier { .. }
             | ValueExpression::MatchNumber { .. }
+            | ValueExpression::Graph(..)
             | ValueExpression::NestedWindow(_)) => (v, None),
         };
         let key = sort_column(key, digits).map_err(|e| e.or_at(at))?;
@@ -101,6 +102,7 @@ fn sort_column(key: ValueExpression, digits: bool) -> Result<SortColumn> {
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }
         | ValueExpression::MatchNumber { .. }
+        | ValueExpression::Graph(..)
         | ValueExpression::NestedWindow(_)) => SortColumn::Value(other),
     })
 }
@@ -136,6 +138,7 @@ fn written_position(key: &ValueExpression, digits: bool) -> Option<i128> {
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }
         | ValueExpression::MatchNumber { .. }
+        | ValueExpression::Graph(..)
         | ValueExpression::NestedWindow(_) => None,
     }
 }

@@ -15,6 +15,8 @@ mod construct;
 mod table;
 mod typed;
 
+pub(super) use table::COLUMNS;
+
 use super::Parser;
 use super::dynamic::WITHOUT;
 use super::ptf::KEEP;
@@ -368,6 +370,7 @@ fn json_returning(value: &ValueExpression) -> bool {
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }
         | ValueExpression::MatchNumber { .. }
+        | ValueExpression::Graph(..)
         | ValueExpression::Difference { .. }
         | ValueExpression::AtZone { .. }
         | ValueExpression::Extract { .. }

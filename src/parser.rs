@@ -12,6 +12,7 @@
 pub use ddl::{RESEAL, REVERT_COLLATION};
 pub use domains::VALUE_COLUMN;
 pub(crate) use dynamic::descriptor_type;
+pub use graph::{Declared, Degree, Exposed, Exposure, exposure, normalize};
 pub(crate) use periods::period_constraint;
 use std::collections::{HashMap, HashSet};
 
@@ -39,6 +40,7 @@ mod dynamic;
 mod expression;
 mod filter;
 mod generated;
+mod graph;
 mod graph_ddl;
 mod grouping;
 mod hypothetical;
@@ -142,6 +144,10 @@ pub struct Parser {
     blocks: Vec<psm::Block>,
     /// [ISO/IEC 9075-4:2006 draft §12.8] In an SQL-server module, its own schema, which MODULE names.
     module: Option<String>,
+    /// \[EXTENSION\] The GRAPH_TABLEs being read around the token at
+    /// hand, where a graph function's or predicate's name before "(" is
+    /// that function's, and elsewhere a routine's.
+    graph: usize,
 }
 
 /// How a parser takes a `<catalog name>` written in a qualified name or a
@@ -224,6 +230,7 @@ impl Parser {
             routine: None,
             blocks: Vec::new(),
             module: None,
+            graph: 0,
         })
     }
 
