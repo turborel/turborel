@@ -158,12 +158,12 @@ features.
   The built-in datatypes, simple type definitions with their facets,
   lists and unions, the validation of a literal and the cast to a derived
   type are done; schema documents are read into schema components,
-  checked against XML Schema Part 1's constraints, and nodes validated
-  against them as XQuery's validate does, typed nodes stored with their
-  annotations (`src/xml/schema.rs`); XML Schemas are registered by
-  CREATE XML SCHEMA and dropped by DROP XML SCHEMA, the permanently
-  registered ones of Table 1 there. Left: simple type definitions read
-  from schema documents; GRANT and REVOKE of USAGE on a registered XML
+  their simple type definitions among them, checked against XML Schema
+  Part 1's constraints, and nodes validated against them as XQuery's
+  validate does, typed nodes stored with their annotations
+  (`src/xml/schema.rs`); XML Schemas are registered by CREATE XML SCHEMA
+  and dropped by DROP XML SCHEMA, the permanently registered ones of
+  Table 1 there. Left: GRANT and REVOKE of USAGE on a registered XML
   Schema, which `catalog::xml_schemas::may_use` is to check, and the
   Information Schema's views of them (X160, X161); the XMLSCHEMA types,
   XMLVALIDATE and IS VALID, and the views, constraints, routines,

@@ -17,7 +17,7 @@ use std::sync::Arc;
 use super::super::builtin;
 use super::super::component::{
     AttributeGroupId, AttributeId, ComplexId, ComplexType, Compositor, ConstraintId, ContentType, ElementId, Expanded, GroupDefId, GroupId,
-    ModelGroup, ModelGroupDef, Notation, NotationId, Schema, Simple, TypeDef, ValueKind,
+    ModelGroup, ModelGroupDef, Notation, NotationId, Schema, Simple, SimpleId, TypeDef, ValueKind,
 };
 use super::super::{MAX_DEPTH, beyond, invalid};
 use super::attrs::At;
@@ -80,6 +80,13 @@ pub(super) struct Builder<'a> {
     pub complex: BTreeMap<Place, ComplexId>,
     /// How far each complex type definition is built, by its place.
     pub complex_state: Vec<State>,
+    /// Each simple type definition's place, by its element.
+    pub simple: BTreeMap<Place, SimpleId>,
+    /// How far each simple type definition is built, by its place.
+    pub simple_state: Vec<State>,
+    /// How many simple type definitions are being filled, each within
+    /// the one before, which `MAX_CHAIN` bounds.
+    pub simple_depth: usize,
     /// Each top-level element declaration's place, by its element.
     pub elements: BTreeMap<Place, ElementId>,
     /// How far each element declaration is built, by its place.
@@ -132,6 +139,9 @@ impl<'a> Builder<'a> {
             schema,
             complex: BTreeMap::new(),
             complex_state: vec![State::Done],
+            simple: BTreeMap::new(),
+            simple_state: Vec::new(),
+            simple_depth: 0,
             elements: BTreeMap::new(),
             element_state: Vec::new(),
             attributes: BTreeMap::new(),
@@ -262,8 +272,18 @@ impl<'a> Builder<'a> {
     /// namespace nor one it imports [Schema1 §3.15.3 src-resolve.4].
     pub fn qname(&self, doc: usize, at: &At<'_>, attr: &str) -> Result<Option<Expanded>> {
         let Some(text) = at.token(attr) else { return Ok(None) };
+        self.qname_text(doc, at, &text).map(Some)
+    }
+
+    /// The QName `text`, of an attribute of `at` in document `doc`,
+    /// resolved as `qname` resolves one.
+    ///
+    /// # Errors
+    ///
+    /// As `qname`.
+    pub fn qname_text(&self, doc: usize, at: &At<'_>, text: &str) -> Result<Expanded> {
         let d = self.doc(doc)?;
-        let mut name = builtin::resolve(&text, &at.scope())
+        let mut name = builtin::resolve(text, &at.scope())
             .ok_or_else(|| invalid("[Schema1 §3.15.3]", &format!("'{text}' is no QName whose prefix is in scope")))?;
         if d.chameleon && name.uri.is_none() {
             name.uri.clone_from(&d.tns);
@@ -275,7 +295,7 @@ impl<'a> Builder<'a> {
                 &format!("{} is of a namespace the document does not import", name.text()),
             ));
         }
-        Ok(Some(name))
+        Ok(name)
     }
 
     /// The error of `name` resolving to no component of `what`.
@@ -315,14 +335,15 @@ impl<'a> Builder<'a> {
     }
 
     /// The type definition `<simpleType>` or `<complexType>` `place`
-    /// represents: a complex one's place, taken if new.
+    /// represents: a simple one read if new (`simple_at`), a complex one's
+    /// place taken if new.
     ///
     /// # Errors
     ///
-    /// SQLCODE -900 of a `<simpleType>` (`simple_types`).
+    /// As `simple_at`.
     pub fn type_at(&mut self, place: Place) -> Result<TypeDef> {
         if self.at(place)?.xs_name() == Some("simpleType") {
-            return Err(simple_types());
+            return Ok(TypeDef::Simple(Simple::Defined(self.simple_at(place)?)));
         }
         if let Some(&id) = self.complex.get(&place) {
             return Ok(TypeDef::Complex(id));
@@ -462,8 +483,9 @@ impl<'a> Builder<'a> {
         let name = name.clone();
         match space {
             Space::Type => {
-                if let Some(&id) = self.complex.get(&place) {
-                    schema.type_names.insert(name, TypeDef::Complex(id));
+                let simple = self.simple.get(&place).map(|&id| TypeDef::Simple(Simple::Defined(id)));
+                if let Some(t) = self.complex.get(&place).map(|&id| TypeDef::Complex(id)).or(simple) {
+                    schema.type_names.insert(name, t);
                 }
             }
             Space::Element => {
@@ -493,10 +515,4 @@ impl<'a> Builder<'a> {
             }
         }
     }
-}
-
-/// The error of a user-defined simple type definition: \[DESIGN\] they
-/// wait for XML Schema Part 2's facets [Schema2 §4.1, §4.3].
-pub(super) fn simple_types() -> SqlError {
-    beyond("user-defined simple type definitions [Schema2 §4.1] are not yet supported")
 }

@@ -60,14 +60,14 @@ impl Run<'_> {
         let Some(name) = self.tree.name(a).filter(|n| n.uri.as_deref() == Some(XSI_NAMESPACE)) else { return Ok(false) };
         let Some(s) = instance_type(&name.local) else { return Ok(false) };
         let value = self.read(s, self.tree.content(a), element)?;
-        out.push(name.clone(), value.normalized.to_string(), Some(annotation(self.schema, TypeDef::Simple(s))));
+        out.push(name.clone(), value.normalized.to_string(), Some(annotation(self.schema, TypeDef::Simple(s), Some(&value))));
         Ok(true)
     }
 
     /// `text` read against `s`, QNames by the namespaces in scope of
     /// `element` [Schema1 §3.14.4].
     fn read(&self, s: Simple, text: &str, element: NodeId) -> Step<Typed> {
-        let read = string_valid(s, text, &self.tree.in_scope(element))?;
+        let read = string_valid(self.schema, s, text, &self.tree.in_scope(element))?;
         read.ok_or_else(|| Failure::new("[Schema1 §3.2.4 cvc-attribute.3]", format!("'{text}' is no value of the attribute's type")).into())
     }
 
@@ -144,9 +144,10 @@ impl Run<'_> {
         {
             return Err(Failure::new("[Schema1 §3.2.4 cvc-attribute.4]", format!("{} is not its fixed value", decl.name.text())).into());
         }
-        self.note_ids(decl.type_def, &value);
+        self.note_ids(&value);
         let name = self.tree.name(a).cloned().unwrap_or_else(|| QName::local(""));
-        out.push(name, value.normalized.to_string(), Some(annotation(self.schema, TypeDef::Simple(decl.type_def))));
+        let typed = annotation(self.schema, TypeDef::Simple(decl.type_def), Some(&value));
+        out.push(name, value.normalized.to_string(), Some(typed));
         Ok(())
     }
 
@@ -183,7 +184,7 @@ impl Run<'_> {
         let found = self.schema.attribute_names.get(&name).and_then(|&d| self.schema.attribute(d)).filter(|_| how != Assess::Skip);
         if let Some(decl) = found {
             self.by_attribute_declaration(element, a, decl, out)?;
-            return Ok(is_id(decl.type_def));
+            return Ok(is_id(self.schema, decl.type_def));
         }
         if how == Assess::Strict {
             return Err(Failure::new("[Schema1 §3.2.4 cvc-assess-attr.1]", format!("attribute {} has no declaration", name.text())).into());
@@ -213,7 +214,7 @@ impl Run<'_> {
         if count > 1 {
             return Err(Failure::new("[Schema1 §3.4.4 cvc-complex-type.5.1]", "an element has at most one attribute of an ID type").into());
         }
-        let declared_id = uses.iter().filter_map(|u| self.schema.attribute(u.decl)).any(|d| is_id(d.type_def));
+        let declared_id = uses.iter().filter_map(|u| self.schema.attribute(u.decl)).any(|d| is_id(self.schema, d.type_def));
         if count == 1 && declared_id {
             return Err(Failure::new("[Schema1 §3.4.4 cvc-complex-type.5.2]", "an element has at most one attribute of an ID type").into());
         }
@@ -239,13 +240,13 @@ impl Run<'_> {
             let Some(value) = u.value.as_ref().or(decl.value.as_ref()) else { continue };
             let canonical = value.value.canonical();
             let read = self.read(decl.type_def, &canonical, element)?;
-            self.note_ids(decl.type_def, &read);
+            self.note_ids(&read);
             let name = QName {
                 prefix: self.prefix_of(element, decl.name.uri.as_deref()),
                 uri: decl.name.uri.clone(),
                 local: decl.name.local.clone(),
             };
-            out.push(name, read.normalized.to_string(), Some(annotation(self.schema, TypeDef::Simple(decl.type_def))));
+            out.push(name, read.normalized.to_string(), Some(annotation(self.schema, TypeDef::Simple(decl.type_def), Some(&read))));
         }
         Ok(())
     }

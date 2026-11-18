@@ -3100,15 +3100,23 @@ Glushkov's construction, numeric occurrence ranges unfolded into copies
 nested so they add no more follow edges than a sequence, then the subset
 construction with transitions labelled by particle, which is how Unique
 Particle Attribution is checked, as [Schema1] Appendix H describes. An all
-group is its particles, each taken at most once. Simple types are XML
-Schema Part 2's built-in datatypes; a user-defined simple type definition
-waits for Part 2's facets and is SQLCODE -900. These bounds keep reading
-finite, each SQLCODE -900 past it (D18):
+group is its particles, each taken at most once. A simple type definition
+of a schema document is read whole when first named, as it names no type
+but simple ones, so one named while it is read is circular. It holds the
+`xml::SimpleType` it defines by restriction, list or union, which keeps
+the rules of its facets as it is made, so a string is validated against a
+defined type as against a built-in one; the reader checks each {final}. A
+node of a union type is annotated with the union, its typed value read as
+the kind of the atomic values validating it gave, as a union's member
+varies from node to node. These bounds keep reading finite, each SQLCODE
+-900 past it (D18):
 
 - `schema::MAX_DEPTH`, 128: how deeply declarations, groups and types
   nest where reading recurses.
 - `schema::MAX_CHAIN`, 64: the types of a derivation, or the declarations
-  of a substitution group, a walk up one follows.
+  of a substitution group, a walk up one follows; and the simple type
+  definitions read within one another, each naming the next, read within
+  half of a thread's default stack, as a test checks.
 - `schema::MAX_DOCUMENTS`, 256: the documents one schema is read from.
 - `schema::MAX_POSITIONS`, 4,096: the particles of a content model once
   its occurrence ranges are unfolded.

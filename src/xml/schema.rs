@@ -21,9 +21,10 @@
 //! kind in a table of its own and referring to others by their place in
 //! it, so the cycles [Schema1 §3.1.1] allows (an element of a type whose
 //! content holds the element) are indexes, not references. Simple types
-//! are the built-in datatypes of XML Schema Part 2 (`xml/atomic.rs`); a
-//! user-defined simple type definition [Schema2 §4.1] is refused until
-//! Part 2's facets are built.
+//! are the built-in datatypes of XML Schema Part 2 (`xml/atomic.rs`) and
+//! the simple type definitions of the schema documents [Schema2 §4.1.2]
+//! [Schema1 §3.14.2], each holding the `SimpleType` it defines, so a
+//! string is validated against either by Datatype Valid [Schema2 §4.1.4].
 //!
 //! \[DESIGN\] No external resource is ever fetched [Schema1 §4.3.2
 //! clause 1]: an `<include>`, `<redefine>` or `<import>` names a schema
@@ -54,8 +55,8 @@ pub use check::{substitutable, type_derives};
 pub use component::{
     AnnotationRef, AttributeDecl, AttributeGroupDef, AttributeGroupId, AttributeId, AttributeUse, ComplexId, ComplexType, Compositor,
     ConstraintId, ContentType, Derivations, ElementDecl, ElementId, Expanded, GroupDefId, GroupId, IdentityCategory, IdentityConstraint,
-    Method, ModelGroup, ModelGroupDef, NamespaceConstraint, Notation, NotationId, Particle, Process, Schema, Scope, Simple, Term, TypeDef,
-    Typed, ValueConstraint, ValueKind, Wildcard,
+    Method, ModelGroup, ModelGroupDef, NamespaceConstraint, Notation, NotationId, Particle, Process, Schema, Scope, Simple, SimpleId,
+    SimpleTypeDef, Term, TypeDef, Typed, ValueConstraint, ValueKind, Wildcard,
 };
 pub use read::{Library, Source, read};
 pub use xpath::{NameTest, Path, Step};
@@ -242,7 +243,10 @@ pub const MAX_DEPTH: usize = 128;
 /// attribute group references a chain of them follows at most (RULES.md
 /// R-CF-6): a derivation [Schema1 §3.4.6 ct-props-correct.3], a
 /// substitution group [Schema1 §3.3.6] or attribute groups referring to
-/// others [Schema1 §3.6.3 src-attribute_group.3].
+/// others [Schema1 §3.6.3 src-attribute_group.3]; and how many simple type
+/// definitions are read within one another, each naming the next as its
+/// base, item or member type [Schema1 §3.14.2], which bounds the reader's
+/// stack.
 pub const MAX_CHAIN: usize = 64;
 
 /// \[DESIGN\] How many schema documents one schema is read from at most,

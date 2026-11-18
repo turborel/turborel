@@ -107,6 +107,41 @@ fn redefinitions_are_checked() {
     assert!(read(&nowhere, &library).unwrap_err().to_string().contains("src-redefine.1"));
 }
 
+/// Verifies: [EXTENSION] [Schema1 §4.2.2 clause 5, src-redefine.5,
+/// Individual Component Redefinition 1] a redefined simple type restricts
+/// the one it redefines, which becomes anonymous and its base, so the
+/// redefined document's references name the redefinition; a redefinition
+/// by list, or restricting another type, is refused.
+#[test]
+fn a_redefined_simple_type_restricts_itself() {
+    let v1 = source(
+        &document(
+            None,
+            r#"<xs:simpleType name="code"><xs:restriction base="xs:string"/></xs:simpleType><xs:attribute name="c" type="code"/>"#,
+        ),
+        Some("v1.xsd"),
+    );
+    let library = Library::new(vec![v1]);
+    let redefine = |body: &str| source(&document(None, &format!(r#"<xs:redefine schemaLocation="v1.xsd">{body}</xs:redefine>"#)), None);
+    let s = read(
+        &redefine(r#"<xs:simpleType name="code"><xs:restriction base="code"><xs:maxLength value="3"/></xs:restriction></xs:simpleType>"#),
+        &library,
+    )
+    .unwrap();
+    let code = s.type_names[&Expanded::new(None, "code")];
+    let TypeDef::Simple(Simple::Defined(id)) = code else { panic!("{code:?}") };
+    let Simple::Defined(original) = s.simple(id).unwrap().base else { panic!() };
+    assert!(s.simple(original).unwrap().name.is_none());
+    assert_eq!(TypeDef::Simple(s.attribute(s.attribute_names[&Expanded::new(None, "c")]).unwrap().type_def), code);
+    assert!(s.simple(id).unwrap().def.validate("abcd").is_err());
+    for wrong in [
+        r#"<xs:simpleType name="code"><xs:list itemType="xs:int"/></xs:simpleType>"#,
+        r#"<xs:simpleType name="code"><xs:restriction base="xs:string"/></xs:simpleType>"#,
+    ] {
+        assert!(read(&redefine(wrong), &library).unwrap_err().to_string().contains("src-redefine.5"), "{wrong}");
+    }
+}
+
 /// Verifies: [EXTENSION] [Schema1 §4.2.2 src-redefine.6] a redefined
 /// group refers to itself once, or restricts the group it redefines.
 #[test]

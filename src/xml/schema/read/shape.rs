@@ -7,10 +7,9 @@
 //! validated against the Schema for Schemas itself: each element's
 //! children are a sequence of stages, each a set of names that may occur
 //! once or any number of times. The contents of `<appinfo>` and
-//! `<documentation>`, which may be anything, are not checked, nor those of
-//! `<simpleType>`, whose definitions turborel does not yet read. What a
-//! stage cannot say (one of `<restriction>` or `<extension>`, a field at
-//! least) the readers of the components check.
+//! `<documentation>`, which may be anything, are not checked. What a stage
+//! cannot say (one of `<restriction>` or `<extension>`, a field at least,
+//! a facet's value) the readers of the components check.
 
 use super::super::invalid;
 use super::attrs::At;
@@ -107,6 +106,9 @@ const SCHEMA: Rule = Rule {
 /// none of an element not checked.
 fn rule(local: &str, parent: &str) -> Option<Rule> {
     let top = matches!(parent, "schema" | "redefine");
+    if let Some(simple) = simple_rule(local, parent, top) {
+        return Some(simple);
+    }
     let simple_content = parent == "simpleContent";
     Some(match (local, top, simple_content) {
         ("schema", _, _) => SCHEMA,
@@ -144,6 +146,34 @@ fn rule(local: &str, parent: &str) -> Option<Rule> {
         ("selector", _, _) | ("field", _, _) => Rule { attrs: &["id", "xpath"], stages: ANNOTATION_ONLY },
         ("notation", _, _) => Rule { attrs: &["id", "name", "public", "system"], stages: ANNOTATION_ONLY },
         _ => return None,
+    })
+}
+
+/// [Schema2 §4.1.2] The children of `<simpleType>`.
+const SIMPLE_TYPE: [Stage; 2] = [ANNOTATION, once(&["restriction", "list", "union"])];
+/// [Schema2 §4.1.2.1] The children of a `<restriction>` of `<simpleType>`.
+const SIMPLE_DERIVATION: [Stage; 3] = [ANNOTATION, once(&["simpleType"]), FACETS];
+/// [Schema2 §4.1.2.3] The children of `<union>`.
+const UNION: [Stage; 2] = [ANNOTATION, many(&["simpleType"])];
+
+/// [Schema2 §4.1.2, Appendix A] The rule of `<simpleType>`, of the
+/// children of its `<restriction>`, `<list>` or `<union>`, and of a facet,
+/// `local`, whose parent is `parent`, top-level if `top`; none of another.
+/// A local `<simpleType>` has no name and no final.
+fn simple_rule(local: &str, parent: &str, top: bool) -> Option<Rule> {
+    Some(match (local, parent, top) {
+        ("simpleType", _, true) => Rule { attrs: &["final", "id", "name"], stages: &SIMPLE_TYPE },
+        ("simpleType", _, false) => Rule { attrs: &["id"], stages: &SIMPLE_TYPE },
+        ("restriction", "simpleType", _) => Rule { attrs: &["base", "id"], stages: &SIMPLE_DERIVATION },
+        ("list", "simpleType", _) => Rule { attrs: &["id", "itemType"], stages: &STAGES_4 },
+        ("union", "simpleType", _) => Rule { attrs: &["id", "memberTypes"], stages: &UNION },
+        ("pattern", _, _) | ("enumeration", _, _) => Rule { attrs: &["id", "value"], stages: ANNOTATION_ONLY },
+        (facet, _, _) => {
+            if !FACETS.names.contains(&facet) {
+                return None;
+            }
+            Rule { attrs: &["fixed", "id", "value"], stages: ANNOTATION_ONLY }
+        }
     })
 }
 

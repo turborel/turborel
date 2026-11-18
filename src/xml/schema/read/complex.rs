@@ -11,7 +11,7 @@ use super::super::component::{
 use super::super::wildcard::namespace_constraint;
 use super::super::{check, invalid};
 use super::attrs::At;
-use super::build::{Builder, Place, State, simple_types};
+use super::build::{Builder, Place, State};
 use super::element::annotation;
 use super::element::{Local, UseRead};
 use super::index::Space;
@@ -20,22 +20,6 @@ use crate::error::Result;
 /// [Schema1 §3.4.2] The elements of the content models of complex
 /// content.
 pub(super) const GROUPS: [&str; 4] = ["group", "all", "choice", "sequence"];
-/// [Schema1 §3.4.2] The children of `<restriction>` of simple content
-/// that are facets [Schema2 §4.3].
-const FACETS: [&str; 12] = [
-    "minExclusive",
-    "minInclusive",
-    "maxExclusive",
-    "maxInclusive",
-    "totalDigits",
-    "fractionDigits",
-    "length",
-    "minLength",
-    "maxLength",
-    "enumeration",
-    "whiteSpace",
-    "pattern",
-];
 
 /// The attributes a complex type definition or an attribute group
 /// definition is given by its children [Schema1 §3.4.2, §3.6.2].
@@ -142,8 +126,7 @@ impl Builder<'_> {
     ///
     /// SQLSTATE 22000 if its base is neither a complex type of simple
     /// content nor, of an extension, a simple type [Schema1 §3.4.3
-    /// src-ct.2]; SQLCODE -900 of facets or an anonymous simple type,
-    /// which wait for Part 2's facets.
+    /// src-ct.2]; as `content_restriction`.
     fn simple_content(
         &mut self,
         def: &mut ComplexType,
@@ -165,9 +148,10 @@ impl Builder<'_> {
             invalid("[Schema1 §3.4.3 src-ct.2]", "simple content derives from a complex type of simple content, or extends a simple type")
         })?;
         let children = derivation.children()?;
-        if children.iter().any(|(_, l)| *l == "simpleType" || FACETS.contains(l)) {
-            return Err(simple_types());
-        }
+        let simple = match method {
+            Method::Restriction => self.content_restriction(simple, &children, local.doc)?,
+            Method::Extension => simple,
+        };
         let attributes = self.attributes(&children, local)?;
         def.base = base;
         def.method = method;

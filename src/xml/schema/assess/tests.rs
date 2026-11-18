@@ -7,6 +7,7 @@ use super::*;
 use crate::xml::{Kind, Node, NodeId, Syntax, Tree, Typing, Whitespace, parse};
 
 mod more;
+mod simple;
 
 /// The document node of `text`.
 fn document(text: &str) -> Node {

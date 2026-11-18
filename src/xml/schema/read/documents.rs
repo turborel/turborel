@@ -163,7 +163,11 @@ fn open(source: &Source, into: Reached) -> Result<Doc> {
             Derivations::EXTENSION.with(Derivations::RESTRICTION).with(Derivations::SUBSTITUTION),
             Derivations::NONE,
         )?,
-        final_default: at.derivations("finalDefault", Derivations::EXTENSION.with(Derivations::RESTRICTION), Derivations::NONE)?,
+        final_default: at.derivations_all(
+            "finalDefault",
+            (Derivations::EXTENSION.with(Derivations::RESTRICTION), Derivations::SIMPLE_FINAL),
+            Derivations::NONE,
+        )?,
         tree: Arc::clone(tree),
         root,
         tns,

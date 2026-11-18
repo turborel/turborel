@@ -23,6 +23,7 @@ mod identity;
 mod index;
 mod particle;
 mod shape;
+mod simple;
 
 use std::sync::Arc;
 

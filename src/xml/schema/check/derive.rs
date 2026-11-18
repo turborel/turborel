@@ -13,7 +13,7 @@
 
 use super::super::builtin::simple_base;
 use super::super::component::{
-    AttributeUse, ComplexId, ComplexType, ContentType, Derivations, ElementId, Method, Schema, TypeDef, ValueKind, Wildcard,
+    AttributeUse, ComplexId, ComplexType, ContentType, Derivations, ElementId, Method, Schema, Simple, TypeDef, ValueKind, Wildcard,
 };
 use super::super::{MAX_CHAIN, invalid};
 use super::{attribute_uses_correct, emptiable, particle_restricts};
@@ -33,15 +33,18 @@ fn step(schema: &Schema, t: TypeDef) -> Option<(Method, TypeDef)> {
     match t {
         TypeDef::Complex(ComplexId::ANY_TYPE) => None,
         TypeDef::Complex(c) => schema.complex(c).map(|c| (c.method, c.base)),
-        TypeDef::Simple(s) => Some((Method::Restriction, simple_base(s).map_or(TypeDef::Complex(ComplexId::ANY_TYPE), TypeDef::Simple))),
+        TypeDef::Simple(s) => {
+            Some((Method::Restriction, simple_base(schema, s).map_or(TypeDef::Complex(ComplexId::ANY_TYPE), TypeDef::Simple)))
+        }
     }
 }
 
 /// Type Derivation OK (Complex) and (Simple) [Schema1 §3.4.6, §3.14.6]:
 /// whether `d` is validly derived from `b` given the derivation methods
 /// `blocked`: `d` is `b`; or no step of the chain from `d` up to `b` is
-/// by a method in `blocked`, a list's base being the simple ur-type
-/// \[2.2.3\]; or `b` is the ur-type.
+/// by a method in `blocked`, a list's or union's base being the simple
+/// ur-type \[2.2.3\]; or `b` is a union and `d` so derived from one of
+/// its members \[2.2.4\]; or `b` is the ur-type.
 #[must_use]
 pub fn type_derives(schema: &Schema, d: TypeDef, b: TypeDef, blocked: Derivations) -> bool {
     if d == b {
@@ -50,7 +53,15 @@ pub fn type_derives(schema: &Schema, d: TypeDef, b: TypeDef, blocked: Derivation
     if b == TypeDef::Complex(ComplexId::ANY_TYPE) {
         return matches!(d, TypeDef::Simple(_)) || chain_avoids(schema, d, b, blocked);
     }
-    chain_avoids(schema, d, b, blocked)
+    chain_avoids(schema, d, b, blocked) || union_member(schema, d, b, blocked)
+}
+
+/// [Schema1 §3.14.6 Type Derivation OK (Simple) 2.2.4] Whether `b` is a
+/// union one of whose {member type definitions}, none of them a union,
+/// `d` is derived from by no method in `blocked`.
+fn union_member(schema: &Schema, d: TypeDef, b: TypeDef, blocked: Derivations) -> bool {
+    let TypeDef::Simple(Simple::Defined(id)) = b else { return false };
+    schema.simple(id).is_some_and(|u| u.members.iter().any(|m| chain_avoids(schema, d, TypeDef::Simple(*m), blocked)))
 }
 
 /// Whether the chain of bases from `d` reaches `b` within `MAX_CHAIN`
@@ -167,10 +178,13 @@ pub fn complex_type(schema: &Schema, id: ComplexId) -> Result<()> {
 fn extension(schema: &Schema, def: &ComplexType) -> Result<()> {
     let base = match def.base {
         TypeDef::Simple(s) => {
-            let same = def.content == ContentType::Simple(s);
-            return same
-                .then_some(())
-                .ok_or_else(|| invalid("[Schema1 §3.4.6 cos-ct-extends.2.1]", "an extension of a simple type has it as content"));
+            if def.content != ContentType::Simple(s) {
+                return Err(invalid("[Schema1 §3.4.6 cos-ct-extends.2.1]", "an extension of a simple type has it as content"));
+            }
+            if schema.simple_final(s).has(Derivations::EXTENSION) {
+                return Err(invalid("[Schema1 §3.4.6 cos-ct-extends.2.2]", "a simple type final for extension is not extended"));
+            }
+            return Ok(());
         }
         TypeDef::Complex(b) => schema.complex(b).ok_or_else(|| invalid("[Schema1 §3.4.1]", "a base type is missing"))?,
     };
@@ -232,7 +246,9 @@ fn restriction(schema: &Schema, def: &ComplexType) -> Result<()> {
     super::attributes_restrict(schema, (&def.attribute_uses, def.wildcard.as_ref()), (&base.attribute_uses, base.wildcard.as_ref()))
         .map_err(|clause| invalid(&format!("[Schema1 §3.4.6 {clause}]"), "a restriction's attributes restrict its base's"))?;
     let ok = match (&def.content, &base.content) {
-        (ContentType::Simple(s), ContentType::Simple(t)) => s == t,
+        (ContentType::Simple(s), ContentType::Simple(t)) => {
+            chain_avoids(schema, TypeDef::Simple(*s), TypeDef::Simple(*t), Derivations::NONE)
+        }
         (ContentType::Simple(_), ContentType::Mixed(p)) | (ContentType::Empty, ContentType::Mixed(p) | ContentType::ElementOnly(p)) => {
             emptiable(schema, p)
         }

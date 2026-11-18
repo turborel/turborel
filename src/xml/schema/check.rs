@@ -154,7 +154,7 @@ fn same_named_type(schema: &Schema, a: TypeDef, b: TypeDef) -> bool {
 #[must_use]
 pub fn type_name(schema: &Schema, t: TypeDef) -> Option<Expanded> {
     match t {
-        TypeDef::Simple(s) => Some(builtin::simple_name(s)),
+        TypeDef::Simple(s) => builtin::simple_name(schema, s),
         TypeDef::Complex(c) => schema.complex(c).and_then(|c| c.name.clone()),
     }
 }
@@ -173,7 +173,7 @@ pub fn attribute_uses_correct(schema: &Schema, uses: &[AttributeUse], names: &st
             return Err(invalid(names, &format!("two attribute uses declare {}", a.name.text())));
         }
     }
-    if decls.iter().filter(|a| builtin::is_id(a.type_def)).count() > 1 {
+    if decls.iter().filter(|a| builtin::is_id(schema, a.type_def)).count() > 1 {
         return Err(invalid(ids, "two attribute uses are of ID types"));
     }
     Ok(())

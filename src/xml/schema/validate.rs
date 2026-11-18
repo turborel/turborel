@@ -37,11 +37,23 @@ impl SimpleType {
     /// SQLSTATE 10000, err:FORG0001, if it is not valid; SQLCODE -900 if
     /// the type nests past `MAX_TYPE_NESTING`.
     pub fn validate(&self, literal: &str) -> Result<Vec<Atomic>> {
+        self.validate_at(literal, 0).map(|(_, values)| values)
+    }
+
+    /// `validate`, and the normalized value of `literal` [Schema1 §3.1.4]:
+    /// as its whiteSpace facet normalizes it; a union's as the member that
+    /// validates it does.
+    ///
+    /// # Errors
+    ///
+    /// As `validate`.
+    pub fn validate_normalized(&self, literal: &str) -> Result<(String, Vec<Atomic>)> {
         self.validate_at(literal, 0)
     }
 
-    /// `validate`, `depth` lists and unions within the type validated.
-    fn validate_at(&self, literal: &str, depth: usize) -> Result<Vec<Atomic>> {
+    /// `validate_normalized`, `depth` lists and unions within the type
+    /// validated.
+    fn validate_at(&self, literal: &str, depth: usize) -> Result<(String, Vec<Atomic>)> {
         if depth > MAX_TYPE_NESTING {
             return Err(SqlError::new(Code::Unsupported, format!("[DESIGN] lists and unions nest more than {MAX_TYPE_NESTING} deep")));
         }
@@ -59,13 +71,13 @@ impl SimpleType {
                 self.patterns(&normalized, literal)?;
                 let mut values = Vec::new();
                 for token in normalized.split(' ').filter(|t| !t.is_empty()) {
-                    values.extend(item.validate_at(token, depth.saturating_add(1))?);
+                    values.extend(item.validate_at(token, depth.saturating_add(1))?.1);
                 }
                 (normalized, values)
             }
         };
         self.facet_valid(&values, &normalized)?;
-        Ok(values)
+        Ok((normalized, values))
     }
 
     /// The literal `literal` normalized by, and its value in, the first of
@@ -73,8 +85,7 @@ impl SimpleType {
     /// union's own patterns.
     fn member_value(&self, literal: &str, members: &[std::sync::Arc<SimpleType>], depth: usize) -> Result<(String, Vec<Atomic>)> {
         for member in members {
-            if let Ok(values) = member.validate_at(literal, depth.saturating_add(1)) {
-                let normalized = normalize(literal, member.white_space());
+            if let Ok((normalized, values)) = member.validate_at(literal, depth.saturating_add(1)) {
                 self.patterns(&normalized, literal)?;
                 return Ok((normalized, values));
             }

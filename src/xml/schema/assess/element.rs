@@ -6,10 +6,11 @@
 //! opened for its children. Its annotation is its type's [XQueryDM
 //! §3.3.1.1].
 
+use super::super::Variety;
 use super::super::automaton::Automaton;
 use super::super::builtin::{self, string_valid};
 use super::super::check::type_derives;
-use super::super::component::{ComplexId, ContentType, Derivations, ElementDecl, Expanded, Simple, TypeDef, Typed, ValueKind};
+use super::super::component::{ComplexId, ContentType, Derivations, ElementDecl, Expanded, Schema, Simple, TypeDef, Typed, ValueKind};
 use super::attributes::Attrs;
 use super::run::{Assess, Content, Frame, Run};
 use super::{Failure, Mode, Step, UNDECLARED};
@@ -20,10 +21,14 @@ use crate::xml::{Annotation, AtomicType, ElementStart, Kind, NodeId, QName, Typi
 pub(super) const XSI_TYPE: &str = "type";
 /// `xsi:nil`.
 pub(super) const XSI_NIL: &str = "nil";
-/// \[DESIGN\] The prefix of the local name an anonymous type definition
-/// is annotated with, `#anonymous-` and its place, which no NCName is, so
-/// no named type has it [XQueryDM §3.3].
+/// \[DESIGN\] The prefix of the local name an anonymous complex type
+/// definition is annotated with, `#anonymous-` and its place, which no
+/// NCName is, so no named type has it [XQueryDM §3.3].
 const ANONYMOUS: &str = "#anonymous-";
+/// \[DESIGN\] The prefix of the local name an anonymous simple type
+/// definition is annotated with, `#anonymous-simple-` and its place, so no
+/// anonymous complex type's clashes with it.
+const ANONYMOUS_SIMPLE: &str = "#anonymous-simple-";
 
 /// The expanded name of node `id` of `tree`.
 pub(super) fn expanded(tree: &crate::xml::Tree, id: NodeId) -> Expanded {
@@ -32,9 +37,13 @@ pub(super) fn expanded(tree: &crate::xml::Tree, id: NodeId) -> Expanded {
 
 /// The name of type definition `t` of `schema` as a node's type-name
 /// [XQueryDM §3.3.1.1], an anonymous one's made from its place.
-pub(super) fn type_name(schema: &super::super::component::Schema, t: TypeDef) -> QName {
+pub(super) fn type_name(schema: &Schema, t: TypeDef) -> QName {
     let name = match t {
-        TypeDef::Simple(s) => builtin::simple_name(s),
+        TypeDef::Simple(Simple::Defined(id)) => schema.simple(id).map_or_else(
+            || Expanded::new(None, ANONYMOUS_SIMPLE),
+            |d| d.name.clone().unwrap_or_else(|| Expanded::new(d.namespace.as_deref(), &format!("{ANONYMOUS_SIMPLE}{}", id.0))),
+        ),
+        TypeDef::Simple(s) => builtin::simple_name(schema, s).unwrap_or_else(builtin::any_type_name),
         TypeDef::Complex(c) => schema.complex(c).map_or_else(builtin::any_type_name, |d| {
             d.name.clone().unwrap_or_else(|| Expanded::new(d.namespace.as_deref(), &format!("{ANONYMOUS}{}", c.0)))
         }),
@@ -42,22 +51,52 @@ pub(super) fn type_name(schema: &super::super::component::Schema, t: TypeDef) ->
     QName { prefix: None, uri: name.uri, local: name.local }
 }
 
-/// How the typed value of a node of simple type `s` is determined
-/// [XQueryDM §3.3.1.2].
-pub(super) fn simple_typing(s: Simple) -> Typing {
-    match s {
-        Simple::AnySimple => Typing::AnySimple,
-        Simple::Atomic(a) => Typing::Atomic(a),
-        Simple::List(a) => Typing::List(a),
+/// How the typed value of a node of simple type `s` of `schema`, of value
+/// `value` if it has one, is determined [XQueryDM §3.3.1.2]: by its
+/// atomic type, or a list's atomic item type; else, as a union's member
+/// varies from node to node, by the kind of the atomic values validating
+/// the node gave, one of an atomic type, more of a list, none the empty
+/// sequence. \[DESIGN\] A list whose items are of several kinds, of a
+/// union, is typed as `xs:anySimpleType`, its typed value
+/// `xdt:untypedAtomic`, as an annotation holds one item type.
+pub(super) fn simple_typing(schema: &Schema, s: Simple, value: Option<&Typed>) -> Typing {
+    let id = match s {
+        Simple::AnySimple => return Typing::AnySimple,
+        Simple::Atomic(a) => return Typing::Atomic(a),
+        Simple::List(a) => return Typing::List(a),
+        Simple::Defined(id) => id,
+    };
+    let def = schema.simple(id).map(|d| &d.def);
+    let fixed = match def.map(|d| d.variety()) {
+        Some(Variety::Atomic(a)) => Some(Typing::Atomic(*a)),
+        Some(Variety::List(item)) => item.atomic().map(Typing::List),
+        Some(Variety::Union(_)) | None => None,
+    };
+    fixed.unwrap_or_else(|| value.map_or(Typing::AnySimple, |v| typing_of(&v.atoms)))
+}
+
+/// [XQueryDM §3.3.1.2] The typing of a node whose typed value is `atoms`.
+fn typing_of(atoms: &[crate::xml::Atomic]) -> Typing {
+    match atoms {
+        [] => Typing::Empty,
+        [one] => Typing::Atomic(one.kind),
+        [first, rest @ ..] => {
+            if rest.iter().all(|a| a.kind == first.kind) {
+                Typing::List(first.kind)
+            } else {
+                Typing::AnySimple
+            }
+        }
     }
 }
 
-/// The annotation of a node of type `t` [XQueryDM §3.3.1, §6.2.4].
-pub(super) fn annotation(schema: &super::super::component::Schema, t: TypeDef) -> Annotation {
+/// The annotation of a node of type `t` [XQueryDM §3.3.1, §6.2.4], of
+/// value `value` if it is of a simple type or simple content and has one.
+pub(super) fn annotation(schema: &Schema, t: TypeDef, value: Option<&Typed>) -> Annotation {
     let typing = match t {
-        TypeDef::Simple(s) => simple_typing(s),
+        TypeDef::Simple(s) => simple_typing(schema, s, value),
         TypeDef::Complex(c) => match schema.complex(c).map(|d| &d.content) {
-            Some(ContentType::Simple(s)) => simple_typing(*s),
+            Some(ContentType::Simple(s)) => simple_typing(schema, *s, value),
             Some(ContentType::Empty) => Typing::Empty,
             Some(ContentType::ElementOnly(_)) => Typing::ElementOnly,
             Some(ContentType::Mixed(_)) | None => Typing::Mixed,
@@ -182,7 +221,7 @@ impl<'s> Run<'s> {
         if !decl.nillable {
             return Err(Failure::new("[Schema1 §3.3.4 cvc-elt.3.1]", format!("{} is not nillable", decl.name.text())).into());
         }
-        let Some(value) = string_valid(Simple::Atomic(AtomicType::Boolean), text, &[])? else {
+        let Some(value) = string_valid(self.schema, Simple::Atomic(AtomicType::Boolean), text, &[])? else {
             return Err(Failure::new("[Schema1 §3.3.4 cvc-elt.3.2]", format!("xsi:nil '{text}' is no boolean")).into());
         };
         let nil = value.atoms.first().is_some_and(|a| &*a.lexical == "true");
@@ -260,9 +299,9 @@ impl<'s> Run<'s> {
         let nil = declared.is_some_and(|d| d.nil);
         let value = if nil { None } else { Some(self.simple_value(input, s, declared)?) };
         if let Some(v) = &value {
-            self.note_ids(s, v);
+            self.note_ids(v);
         }
-        self.start(input, attrs, (annotation(self.schema, t), nil))?;
+        self.start(input, attrs, (annotation(self.schema, t, value.as_ref()), nil))?;
         if let Some(v) = value.filter(|v| !v.normalized.is_empty()) {
             self.out.text(&v.normalized)?;
         }
@@ -284,11 +323,11 @@ impl<'s> Run<'s> {
         let constraint = declared.and_then(|d| d.decl.value.as_ref());
         let scope = self.tree.in_scope(input);
         if let Some(c) = constraint.filter(|_| !filled) {
-            let read = string_valid(s, &c.value.canonical(), &scope)?;
+            let read = string_valid(self.schema, s, &c.value.canonical(), &scope)?;
             return read
                 .ok_or_else(|| Failure::new("[Schema1 §3.3.4 cvc-elt.5.1.2]", "the default is no value of the element's type").into());
         }
-        let value = string_valid(s, &text, &scope)?
+        let value = string_valid(self.schema, s, &text, &scope)?
             .ok_or_else(|| Failure::new("[Schema1 §3.3.4 cvc-type.3.1.3]", format!("'{text}' is no value of the element's type")))?;
         if let Some(fixed) = constraint.filter(|c| c.kind == ValueKind::Fixed)
             && !value.equal(&fixed.value)
@@ -303,7 +342,7 @@ impl<'s> Run<'s> {
     /// cvc-complex-type.2].
     fn complex_element(&mut self, input: NodeId, t: TypeDef, attrs: Attrs, declared: Option<Declared<'s>>) -> Step<Frame<'s>> {
         let nil = declared.is_some_and(|d| d.nil);
-        self.start(input, attrs, (annotation(self.schema, t), nil))?;
+        self.start(input, attrs, (annotation(self.schema, t, None), nil))?;
         let def = match t {
             TypeDef::Complex(c) => self.schema.complex(c).map(|d| (c, d)),
             TypeDef::Simple(_) => None,

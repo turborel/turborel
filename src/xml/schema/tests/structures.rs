@@ -9,6 +9,7 @@ use crate::error::{Result, SqlState};
 use crate::xml::{Syntax, Whitespace, parse};
 
 mod compose;
+mod simple;
 
 /// The declaration of the prefix `xs`.
 const XS: &str = r#"xmlns:xs="http://www.w3.org/2001/XMLSchema""#;
@@ -228,14 +229,6 @@ fn all_groups_are_limited() {
     assert!(refused(nested).contains("cos-all-limited"));
     let twice = r#"<xs:complexType name="t"><xs:all><xs:element name="a" maxOccurs="2"/></xs:all></xs:complexType>"#;
     assert!(refused(twice).contains("cos-all-limited.2"));
-}
-
-/// Verifies: [DESIGN] RULES.md D18: user-defined simple type definitions
-/// wait for XML Schema Part 2's facets, and are SQLCODE -900.
-#[test]
-fn simple_type_definitions_wait_for_facets() {
-    let e = schema(r#"<xs:simpleType name="s"><xs:restriction base="xs:string"/></xs:simpleType>"#).unwrap_err();
-    assert_eq!(e.sqlcode(), -900_i32);
 }
 
 /// Verifies: [EXTENSION] [Schema1 §3.2.3 src-attribute.1, .2] [Schema1

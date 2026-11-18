@@ -8,7 +8,7 @@
 
 use super::super::automaton::Leaf;
 use super::super::check::substitutable;
-use super::super::component::{ElementId, Process, Simple, Typed, ValueKind};
+use super::super::component::{ElementId, Process, Typed, ValueKind};
 use super::element::expanded;
 use super::run::{Assess, Content, Frame, Run};
 use super::{Failure, Step};
@@ -123,17 +123,15 @@ impl<'s> Run<'s> {
         Ok(())
     }
 
-    /// The IDs and IDREFs of `value`, of simple type `s`, noted for the
-    /// validation root's ID/IDREF table [Schema1 §3.15.5].
-    pub(super) fn note_ids(&mut self, s: Simple, value: &Typed) {
-        let item = match s {
-            Simple::Atomic(t) | Simple::List(t) => t,
-            Simple::AnySimple => return,
-        };
+    /// The IDs and IDREFs of `value` noted for the validation root's
+    /// ID/IDREF table [Schema1 §3.15.5]: each atomic value of a type that
+    /// is or is derived from `xs:ID` or `xs:IDREF`, as the type validating
+    /// it, a union's member or a list's item type, made it.
+    pub(super) fn note_ids(&mut self, value: &Typed) {
         for atom in &value.atoms {
-            if item.derives_from(AtomicType::Id) {
+            if atom.kind.derives_from(AtomicType::Id) {
                 self.ids.id(&atom.lexical);
-            } else if item.derives_from(AtomicType::IdRef) {
+            } else if atom.kind.derives_from(AtomicType::IdRef) {
                 self.ids.idref(&atom.lexical);
             }
         }

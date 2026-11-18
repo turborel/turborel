@@ -54,8 +54,12 @@ DROP XML SCHEMA RESTRICT of one of them is refused while it stands.
 
 The document is checked as XML Schema Part 1 says a schema is: each
 element as its representation allows, every name it refers to defined,
-each content model deterministic. A `<xs:simpleType>`, or facets of
-simple content, are refused (SQLCODE -900).
+each content model deterministic. Its simple types are XML Schema Part
+2's built-in datatypes and those its `<xs:simpleType>`s define, by
+restriction with facets, by list or by union, and those a restriction of
+simple content makes with facets. A facet that does not apply to its
+base, or widens or changes a fixed one of its base, a type derived as its
+base's final forbids, and a type defined by way of itself, are refused.
 
 Three XML Schemas are registered always, and are never registered again
 or dropped: INFORMATION_SCHEMA.XS, XSI and SQLXML, of the namespaces of
@@ -86,7 +90,7 @@ imports is found if that owner owns its schema too.
 | 2200L | -301 | The document is the null value, or an XML value that is no document |
 | 2200M | -301 | The document is no well-formed XML document |
 | 22000 | -301 | The document is no schema document, or not of a valid schema |
-| 0A000 | -900 | The schema defines a simple type, or is past a limit of [XML Values](../xml.md#limits) or of reading a schema |
+| 0A000 | -900 | The schema is past a limit of [XML Values](../xml.md#limits) or of reading a schema |
 
 ## EXAMPLES
 

@@ -7,11 +7,11 @@
 use super::super::builtin::{self, string_valid};
 use super::super::component::{
     AnnotationRef, AttributeDecl, AttributeId, AttributeUse, ComplexId, ContentType, Derivations, ElementDecl, ElementId, Expanded,
-    Particle, Scope, Simple, Term, TypeDef, ValueConstraint, ValueKind,
+    Particle, Schema, Scope, Simple, Term, TypeDef, ValueConstraint, ValueKind,
 };
 use super::super::{check, invalid};
 use super::attrs::At;
-use super::build::{Builder, PendingValue, Place, State, simple_types};
+use super::build::{Builder, PendingValue, Place, State};
 use super::documents::form;
 use super::index::Space;
 use crate::error::Result;
@@ -286,19 +286,17 @@ impl Builder<'_> {
     /// SQLSTATE 22000 if it has a type and an anonymous type [Schema1
     /// §3.2.3 src-attribute.4], is named xmlns [Schema1 §3.2.6 no-xmlns],
     /// is of the xsi namespace \[no-xsi\], or its value constraint breaks
-    /// a-props-correct; SQLCODE -900 of an anonymous type.
+    /// a-props-correct; as the reading of its type.
     fn read_attribute(&mut self, at: &At<'_>, doc: usize, name: Expanded, (scope, valued): (Scope, bool)) -> Result<AttributeDecl> {
-        let anonymous = at.children()?.iter().any(|(_, l)| *l == "simpleType");
+        let anonymous = at.children()?.into_iter().find(|(_, l)| *l == "simpleType").map(|(a, _)| a.node);
         let named = self.qname(doc, at, "type")?;
-        if anonymous && named.is_some() {
-            return Err(invalid("[Schema1 §3.2.3 src-attribute.4]", "an attribute has a type or an anonymous type, not both"));
-        }
-        if anonymous {
-            return Err(simple_types());
-        }
-        let type_def = match named {
-            Some(t) => self.simple_named(&t)?,
-            None => Simple::AnySimple,
+        let type_def = match (anonymous, named) {
+            (Some(_), Some(_)) => {
+                return Err(invalid("[Schema1 §3.2.3 src-attribute.4]", "an attribute has a type or an anonymous type, not both"));
+            }
+            (Some(node), None) => Simple::Defined(self.simple_at((doc, node))?),
+            (None, Some(t)) => self.simple_named(&t)?,
+            (None, None) => Simple::AnySimple,
         };
         if &*name.local == XMLNS {
             return Err(invalid("[Schema1 §3.2.6 no-xmlns]", "no attribute declaration is named xmlns"));
@@ -306,7 +304,7 @@ impl Builder<'_> {
         if name.uri.as_deref() == Some(XSI_NAMESPACE) {
             return Err(invalid("[Schema1 §3.2.6 no-xsi]", "no attribute declaration is of the XML Schema instance namespace"));
         }
-        let value = if valued { attribute_value(at, type_def)? } else { None };
+        let value = if valued { attribute_value(&self.schema, at, type_def)? } else { None };
         Ok(AttributeDecl { name, type_def, scope, value, annotation: annotation(doc, at)? })
     }
 
@@ -355,7 +353,7 @@ impl Builder<'_> {
         if use_.as_deref() == Some(PROHIBITED) {
             return Ok(UseRead::Prohibited(declared.name));
         }
-        let value = attribute_value(at, declared.type_def)?;
+        let value = attribute_value(&self.schema, at, declared.type_def)?;
         if let Some(fixed) = declared.value.as_ref().filter(|v| v.kind == ValueKind::Fixed) {
             let same = value.as_ref().is_none_or(|v| v.kind == ValueKind::Fixed && v.value.equal(&fixed.value));
             if !same {
@@ -389,10 +387,10 @@ impl Builder<'_> {
             let simple = simple.ok_or_else(|| {
                 invalid("[Schema1 §3.3.6 cos-valid-default.2]", "an element with a value constraint has simple or emptiable mixed content")
             })?;
-            if builtin::is_id(simple) {
+            if builtin::is_id(&self.schema, simple) {
                 return Err(invalid("[Schema1 §3.3.6 e-props-correct.4]", "an element of an ID type has no value constraint"));
             }
-            let value = string_valid(simple, &pending.text, &at.scope())?.ok_or_else(|| {
+            let value = string_valid(&self.schema, simple, &pending.text, &at.scope())?.ok_or_else(|| {
                 invalid("[Schema1 §3.3.6 e-props-correct.2]", &format!("'{}' is no value of the element's type", pending.text))
             })?;
             if let Some(e) = self.schema.elements.get_mut(pending.element.0) {
@@ -404,14 +402,14 @@ impl Builder<'_> {
 }
 
 /// The value constraint of `<attribute>` `at`, its default or fixed read
-/// against `type_def` [Schema1 §3.2.2].
+/// against `type_def` of `schema` [Schema1 §3.2.2].
 ///
 /// # Errors
 ///
 /// SQLSTATE 22000 if it has both [Schema1 §3.2.3 src-attribute.1], its
 /// type is or is derived from ID [Schema1 §3.2.6 a-props-correct.3], or
 /// the value is not valid for it \[2\].
-fn attribute_value(at: &At<'_>, type_def: Simple) -> Result<Option<ValueConstraint>> {
+fn attribute_value(schema: &Schema, at: &At<'_>, type_def: Simple) -> Result<Option<ValueConstraint>> {
     let (kind, text) = match (at.attr("default"), at.attr("fixed")) {
         (Some(_), Some(_)) => {
             return Err(invalid("[Schema1 §3.2.3 src-attribute.1]", "an attribute has a default or a fixed value, not both"));
@@ -420,10 +418,10 @@ fn attribute_value(at: &At<'_>, type_def: Simple) -> Result<Option<ValueConstrai
         (None, Some(text)) => (ValueKind::Fixed, text),
         (None, None) => return Ok(None),
     };
-    if builtin::is_id(type_def) {
+    if builtin::is_id(schema, type_def) {
         return Err(invalid("[Schema1 §3.2.6 a-props-correct.3]", "an attribute of an ID type has no value constraint"));
     }
-    let value = string_valid(type_def, text, &at.scope())?
+    let value = string_valid(schema, type_def, text, &at.scope())?
         .ok_or_else(|| invalid("[Schema1 §3.2.6 a-props-correct.2]", &format!("'{text}' is no value of the attribute's type")))?;
     Ok(Some(ValueConstraint { kind, value }))
 }

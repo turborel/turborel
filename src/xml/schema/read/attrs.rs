@@ -155,6 +155,21 @@ impl<'a> At<'a> {
         derivation_set(&value, allowed).ok_or_else(|| self.bad(local, &value))
     }
 
+    /// Its attribute `local` as `derivations` reads it, but `#all` the
+    /// methods `all`, wider than those it may list: of a finalDefault, as
+    /// a simple type's {final} reads it, and of a simple type's final
+    /// [Schema1 §3.14.2].
+    ///
+    /// # Errors
+    ///
+    /// As `derivations`.
+    pub fn derivations_all(&self, local: &str, (allowed, all): (Derivations, Derivations), default: Derivations) -> Result<Derivations> {
+        if self.token(local).as_deref() == Some(ALL) {
+            return Ok(all);
+        }
+        self.derivations(local, allowed, default)
+    }
+
     /// The error of attribute `local` of value `value`, not of its type.
     pub fn bad(&self, local: &str, value: &str) -> crate::error::SqlError {
         invalid("[Schema1 Appendix A]", &format!("'{value}' is no value of {local} of <{}>", self.local()))

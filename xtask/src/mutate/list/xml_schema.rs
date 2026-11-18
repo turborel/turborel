@@ -9,7 +9,7 @@ use super::{Mutation, Package};
 
 /// Each mechanism of XML Schema structures broken alone, and the tests
 /// that fail.
-pub const XML_SCHEMA: [Mutation; 15] = [
+pub const XML_SCHEMA: [Mutation; 16] = [
     Mutation {
         name: "xml-schema-unique-particle-attribution",
         package: Package::Core,
@@ -49,6 +49,19 @@ pub const XML_SCHEMA: [Mutation; 15] = [
         replacement: "            NamespaceConstraint::Not(test) => test.as_deref() != ns,",
         integration: &[],
         unit: &["xml::schema::tests::structures::compose::namespace_constraints_combine_as_the_text_says"],
+    },
+    Mutation {
+        name: "xml-schema-defined-type-facets",
+        package: Package::Core,
+        breaks: "a value of a simple type a schema document defines is validated by its built-in base alone, its facets not applied",
+        file: "src/xml/schema/builtin.rs",
+        original: "        Simple::Defined(id) => Arc::clone(&schema.simple(id).ok_or_else(|| beyond(\"a simple type definition is missing\"))?.def),",
+        replacement: "        Simple::Defined(id) => Arc::new(SimpleType::built_in(schema.simple(id).and_then(|d| d.def.atomic()).unwrap_or(AtomicType::String))),",
+        integration: &[],
+        unit: &[
+            "xml::schema::tests::structures::simple::the_farenheit_water_temp_example_reads",
+            "xml::schema::assess::tests::simple::defined_simple_types_validate_and_annotate",
+        ],
     },
     Mutation {
         name: "xml-schema-content-complete",

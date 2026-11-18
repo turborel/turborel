@@ -7,7 +7,12 @@
 //!
 //! \[DESIGN\] RULES.md D86: components refer to one another by their place
 //! in the schema's tables (`ElementId`, `ComplexId` and the others), so a
-//! schema is one value, shared by the sessions that validate by it.
+//! schema is one value, shared by the sessions that validate by it. Simple
+//! type definitions read from its documents are `component/simple.rs`.
+
+mod simple;
+
+pub use simple::{SimpleId, SimpleTypeDef};
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -62,6 +67,11 @@ impl Derivations {
     pub const LIST: Derivations = Derivations(8);
     /// union.
     pub const UNION: Derivations = Derivations(16);
+    /// [Schema1 §3.14.2] The relevant set of a simple type's {final}, and
+    /// what `#all` of final and finalDefault gives it: extension,
+    /// restriction, list and union.
+    pub const SIMPLE_FINAL: Derivations =
+        Derivations::EXTENSION.with(Derivations::RESTRICTION).with(Derivations::LIST).with(Derivations::UNION);
 
     /// Whether it holds every method of `other`.
     #[must_use]
@@ -71,7 +81,7 @@ impl Derivations {
 
     /// The union of it and `other`.
     #[must_use]
-    pub fn with(self, other: Derivations) -> Derivations {
+    pub const fn with(self, other: Derivations) -> Derivations {
         Derivations(self.0 | other.0)
     }
 
@@ -82,9 +92,10 @@ impl Derivations {
     }
 }
 
-/// A simple type definition [Schema1 §3.14] as turborel has them: the
-/// simple ur-type definition, a built-in atomic datatype, or a built-in
-/// list datatype [Schema1 §3.14.7] [Schema2 §3.2, §3.3].
+/// A simple type definition [Schema1 §3.14]: the simple ur-type
+/// definition, a built-in atomic datatype, or a built-in list datatype
+/// [Schema1 §3.14.7] [Schema2 §3.2, §3.3]; or one a schema document
+/// defines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Simple {
     /// `xs:anySimpleType`, the simple ur-type definition [Schema1 §3.14.7].
@@ -94,6 +105,9 @@ pub enum Simple {
     /// A built-in list datatype of the item type given: `xs:NMTOKENS`,
     /// `xs:IDREFS` or `xs:ENTITIES` [Schema2 §3.3.5, §3.3.10, §3.3.12].
     List(AtomicType),
+    /// A simple type definition of a schema document, by its place in the
+    /// schema's table of them.
+    Defined(SimpleId),
 }
 
 /// A type definition [Schema1 §2.2.1]: simple or complex.
@@ -482,6 +496,8 @@ pub struct Schema {
     /// Every complex type definition, named and anonymous, `xs:anyType`
     /// first.
     pub complex_types: Vec<ComplexType>,
+    /// Every simple type definition of its documents, named and anonymous.
+    pub simple_types: Vec<SimpleTypeDef>,
     /// Every attribute group definition.
     pub attribute_groups: Vec<AttributeGroupDef>,
     /// Every model group.
