@@ -15,11 +15,13 @@
 
 use super::Parser;
 use super::graph_ddl::PROPERTY;
-use crate::ast::{IntoProperty, PtfTable, SqlStatement, TableReference};
+use crate::ast::{IntoProperty, PtfArgument, PtfInvocation, PtfTable, SqlStatement, TableName, TableReference, ValueExpression};
 use crate::error::Result;
 use crate::graph::algo::{Algorithm, Output, SCHEMA};
 use crate::lexer::{Tok, delim, kw};
 
+/// The name of the edges' parameter.
+const EDGES: &str = "EDGES";
 /// The tokens of `GRAPH_ALGO . <name>` before its parenthesis.
 const NAME_TOKENS: usize = 3;
 
@@ -46,6 +48,20 @@ pub(crate) fn begins_property_statement<'t>(tokens: impl IntoIterator<Item = &'t
     false
 }
 
+/// The name the edges of `invocation` are written as, its first argument
+/// unnamed or named EDGES, if it is a name of no catalog: a property
+/// graph's, if any.
+fn named_edges(invocation: &PtfInvocation) -> Option<TableName> {
+    let edges = invocation.arguments.first().zip(invocation.names.first()).filter(|(_, n)| n.as_deref().is_none_or(|n| n == EDGES))?;
+    let PtfArgument::Value(ValueExpression::Column(spec)) = edges.0 else { return None };
+    let schema = spec.qualifier.as_ref().map(|q| (q.auth.is_none(), q.ident.clone()));
+    match (spec.catalog.is_some(), schema) {
+        (false, Some((true, auth))) => Some(TableName { auth: Some(auth), ident: spec.column.clone(), at: spec.at }),
+        (false, None) => Some(TableName { auth: None, ident: spec.column.clone(), at: spec.at }),
+        (false, Some((false, _))) | (true, _) => None,
+    }
+}
+
 impl Parser {
     /// Whether a function of GRAPH_ALGO is invoked here: GRAPH_ALGO, a
     /// period, a name and a left parenthesis.
@@ -70,6 +86,22 @@ impl Parser {
         Ok(TableReference::Polymorphic(Box::new(PtfTable { invocation, correlation, columns, at })))
     }
 
+    /// The table of an INTO PROPERTY after OF, as written, and its key
+    /// column if written.
+    fn property_table(&mut self) -> Result<(Option<String>, Option<String>)> {
+        let table_start = self.here();
+        self.table_name()?;
+        let table = self.text_from(table_start);
+        let key = if self.accept_delim(delim::LEFT_PAREN) {
+            let k = self.identifier()?;
+            self.expect_delim(delim::RIGHT_PAREN)?;
+            Some(k)
+        } else {
+            None
+        };
+        Ok((Some(table), key))
+    }
+
     /// `<into property statement>`, which begins here, read as its MERGE.
     ///
     /// # Errors
@@ -83,17 +115,11 @@ impl Parser {
         self.expect_kw(kw::INTO)?;
         self.expect_word(PROPERTY)?;
         let column = self.identifier()?;
-        self.expect_kw(kw::OF)?;
-        let table_start = self.here();
-        self.table_name()?;
-        let table = self.text_from(table_start);
-        let key = if self.accept_delim(delim::LEFT_PAREN) {
-            let k = self.identifier()?;
-            self.expect_delim(delim::RIGHT_PAREN)?;
-            Some(k)
-        } else {
-            None
-        };
+        let (table, key) = if self.accept_kw(kw::OF) { self.property_table()? } else { (None, None) };
+        let graph = named_edges(&invocation);
+        if table.is_none() && graph.is_none() {
+            return Err(self.rule("[EXTENSION] INTO PROPERTY of a table of edges names its vertices' table, OF <table name>"));
+        }
         let Some(algorithm) = Algorithm::named(&invocation.name) else {
             return Err(self.rule(format!("[EXTENSION] there is no graph algorithm {SCHEMA}.{}", invocation.name)));
         };
@@ -105,7 +131,7 @@ impl Parser {
             Output::Count => Some("BIGINT"),
             Output::Key => None,
         };
-        let property = IntoProperty { invocation: text, table, column, key, value: (*value).to_owned(), value_type };
+        let property = IntoProperty { invocation: text, table, graph, column, key, value: (*value).to_owned(), value_type };
         let merge = property.merge(property.key.as_deref().unwrap_or(&property.column));
         let SqlStatement::Merge(mut m) = Parser::new(&merge)?.sql_statement()? else {
             return Err(self.rule("[DESIGN] INTO PROPERTY is read as a MERGE"));

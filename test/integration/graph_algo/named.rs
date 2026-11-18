@@ -17,7 +17,7 @@ fn named(s: &Session, sql: &str) -> Vec<String> {
 
 /// The identity of the vertex of element table `table` whose key is
 /// `key`, as a literal.
-fn identity(table: &str, key: &str) -> String {
+pub(super) fn identity(table: &str, key: &str) -> String {
     format!("'{{\"table\":\"{table}\",\"key\":[{key}]}}'")
 }
 
@@ -57,6 +57,12 @@ fn property_graphs_by_name() {
 /// is, and its phones; and the graph BANK of them, `HAS_PHONE` undirected.
 fn bank() -> Database {
     let db = Database::new();
+    banked(&db);
+    db
+}
+
+/// `bank`'s schema B made in `db`, its rows committed.
+pub(super) fn banked(db: &Database) {
     db.schema(
         "CREATE SCHEMA AUTHORIZATION B \
          CREATE TABLE ACCOUNT (ACCT_ID INTEGER PRIMARY KEY, OWNER VARCHAR(10)) \
@@ -85,7 +91,6 @@ fn bank() -> Database {
         s.run(sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
     }
     s.commit().unwrap();
-    db
 }
 
 /// Verifies: [EXTENSION] [GS §18] [GS §23.1] [GS §5 R5.1] The bank graph
