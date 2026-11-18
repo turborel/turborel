@@ -51,11 +51,11 @@ const RANGE_LAST: &str = ", Last>";
 
 /// What the files hold: each code point's category, the blocks, and each
 /// character's full lower and upper case.
-struct Data {
-    categories: Vec<u8>,
-    blocks: Vec<(u32, u32, String)>,
-    lower: BTreeMap<u32, Vec<u32>>,
-    upper: BTreeMap<u32, Vec<u32>>,
+pub(super) struct Data {
+    pub(super) categories: Vec<u8>,
+    pub(super) blocks: Vec<(u32, u32, String)>,
+    pub(super) lower: BTreeMap<u32, Vec<u32>>,
+    pub(super) upper: BTreeMap<u32, Vec<u32>>,
 }
 
 /// Generates the table from the files in `from`.
@@ -75,12 +75,12 @@ pub fn generate(root: &Path, from: &Path) -> Result<()> {
 }
 
 /// The fields of each line of `text` that is no comment, split at `;`.
-fn lines(text: &str) -> impl Iterator<Item = Vec<&str>> {
+pub(super) fn lines(text: &str) -> impl Iterator<Item = Vec<&str>> {
     text.lines().map(|l| l.split('#').next().unwrap_or_default()).filter(|l| !l.trim().is_empty()).map(|l| l.split(';').collect())
 }
 
 /// `fields[n]`, or an error naming the line.
-fn field<'a>(fields: &[&'a str], n: usize) -> Result<&'a str> {
+pub(super) fn field<'a>(fields: &[&'a str], n: usize) -> Result<&'a str> {
     fields.get(n).copied().ok_or_else(|| Error::new(format!("a line has no field {n}: {}", fields.join(";"))))
 }
 
@@ -137,7 +137,7 @@ fn mapping(field: &str) -> Result<Vec<u32>> {
 /// `data` with each character's full lower and upper case: the simple
 /// mappings of `UnicodeData.txt`, then SpecialCasing's unconditional ones
 /// over them, those a context or language governs left out.
-fn cased(mut data: Data, unicode_data: &str, special: &str) -> Result<Data> {
+pub(super) fn cased(mut data: Data, unicode_data: &str, special: &str) -> Result<Data> {
     if special.lines().next() != Some(SPECIAL_CASING_VERSION) {
         return Err(Error::new(format!("{SPECIAL_CASING} is not of Unicode 13.0")));
     }

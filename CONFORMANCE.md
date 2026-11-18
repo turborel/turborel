@@ -2004,6 +2004,11 @@ Validation, Static Typing, Module and Serialization are not [XQuery §5.2].
 | fn:error and fn:trace | XQueryFO §3, §4 | The error is SQLSTATE 10000, its message the QName as `NS#LP` and the description; an error object is not returned. The trace is discarded. |
 | A node's base URI and document URI | XQueryFO §2.5, §2.6 | What the `xml:base` attributes of its element and that element's ancestors make, each resolved against the one above it, else none, as no tree keeps a base URI of its own; no document node has a document URI. |
 | fn:resolve-uri | XQueryFO §8.1 | RFC 3986 §5.2, strict; a base of no scheme is err:FORG0009. |
+| Collations of XQuery's functions | XQueryFO §7.3.1 | The code point collation, the default, and each built-in collation of turborel named by its SQL name (`UNICODE`, `UNICODE_SV`, `CASE_INSENSITIVE`, `UCS_BASIC`); another is err:FOCH0002. Strings compare by sort keys with no padding. |
+| Collation units | XQueryFO §7.5 | Characters, of the code point collation and of the collations that compare one character at a time, by their folds; `UNICODE` and its tailorings split no string into units, err:FOCH0004. |
+| Normalization forms | XQueryFO §7.4.6 | NFC, NFD, NFKC and NFKD, and the zero-length string for none; FULLY-NORMALIZED is err:FOCH0003. |
+| Case mappings | XQueryFO §7.4.7, §7.4.8 | Each character's full mapping, SpecialCasing's unconditional one or UnicodeData's simple one; none that a context or language governs. |
+| Regular expressions of fn:matches, fn:replace and fn:tokenize | XQueryFO §7.6.1 | XQuery 1.0's: a newline a line feed alone, `\s` XML Schema's, no `(?:` and no flag `q`, by the matcher of LIKE_REGEX (RULES.md D61) and its limits. |
 
 \[EXTENSION\] Part 14's 2006 draft gives no XML Name of a BINARY, a
 BINARY VARYING or an interval type [§9.4], though §9.5 maps each [GR8b,

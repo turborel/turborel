@@ -28,17 +28,25 @@ mod accessors;
 pub mod args;
 mod booleans;
 pub mod codes;
+mod collation;
 mod constructors;
 mod decimal;
+mod escape;
+mod normalize;
 mod numeric;
+mod patterns;
 mod raise;
 mod rounding;
+mod strings;
+mod substrings;
+mod unicode;
 mod uri;
 
 pub mod op;
 
 pub use booleans::effective_boolean_value;
 pub use codes::fail;
+pub use collation::Collator;
 pub use constructors::{Constructor, construct};
 pub use decimal::{DIVISION_SCALE, Decimal, MAX_DIGITS, Rounding};
 
@@ -165,8 +173,19 @@ impl LibraryFunction for Builtin {
 }
 
 /// Every section's functions.
-const SECTIONS: [&[Builtin]; 6] =
-    [&accessors::FUNCTIONS, &raise::FUNCTIONS, &constructors::FUNCTIONS, &rounding::FUNCTIONS, &uri::FUNCTIONS, &booleans::FUNCTIONS];
+const SECTIONS: [&[Builtin]; 11] = [
+    &accessors::FUNCTIONS,
+    &raise::FUNCTIONS,
+    &constructors::FUNCTIONS,
+    &rounding::FUNCTIONS,
+    &strings::FUNCTIONS,
+    &normalize::FUNCTIONS,
+    &escape::FUNCTIONS,
+    &substrings::FUNCTIONS,
+    &patterns::FUNCTIONS,
+    &uri::FUNCTIONS,
+    &booleans::FUNCTIONS,
+];
 
 /// Every function of the library: each section's, then the constructors
 /// [XQueryFO §5.1].

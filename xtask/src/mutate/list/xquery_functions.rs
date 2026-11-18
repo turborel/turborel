@@ -1,12 +1,14 @@
 //! Mutations of the library of XQuery 1.0 Functions and Operators: its
 //! decimals and roundings, the promotion of numbers, the casts and
-//! equality of atomic values it rests on, the resolution of URIs and the
-//! effective boolean value (RULES.md R-TEST-9, D86).
+//! equality of atomic values it rests on, the resolution of URIs, the
+//! effective boolean value, and its strings: positions, collations,
+//! normalization, escaping and XQuery 1.0's regular expressions
+//! (RULES.md R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of the library broken alone, and the tests that fail.
-pub const XQUERY_FUNCTIONS: [Mutation; 8] = [
+pub const XQUERY_FUNCTIONS: [Mutation; 14] = [
     Mutation {
         name: "xquery-decimal-division-scale",
         package: Package::Core,
@@ -89,5 +91,68 @@ pub const XQUERY_FUNCTIONS: [Mutation; 8] = [
         replacement: "!matches!(x.classify(), FpCategory::Zero)",
         integration: &[],
         unit: &["xquery::library::booleans::tests::effective_boolean_values"],
+    },
+    Mutation {
+        name: "xquery-substring-positions",
+        package: Package::Core,
+        breaks: "fn:substring leaves out the character at its starting position",
+        file: "src/xquery/library/strings.rs",
+        original: "position >= start && position < end",
+        replacement: "position > start && position < end",
+        integration: &[],
+        unit: &["xquery::library::strings::tests::substrings_by_position"],
+    },
+    Mutation {
+        name: "xquery-codepoint-order",
+        package: Package::Core,
+        breaks: "the code point collation orders strings backwards",
+        file: "src/xquery/library/collation.rs",
+        original: "Collator::Codepoint => first.cmp(second),",
+        replacement: "Collator::Codepoint => second.cmp(first),",
+        integration: &[],
+        unit: &[
+            "xquery::library::collation::tests::strings_are_ordered_by_collation",
+            "xquery::library::strings::tests::comparing_strings",
+        ],
+    },
+    Mutation {
+        name: "xquery-composition-blocked",
+        package: Package::Core,
+        breaks: "a mark is composed with its starter past a mark of its own class between them",
+        file: "src/xquery/library/normalize.rs",
+        original: "let unblocked = at.saturating_add(1) == out.len() || last_class < class;",
+        replacement: "let unblocked = at.saturating_add(1) == out.len() || last_class <= class;",
+        integration: &[],
+        unit: &["xquery::library::normalize::tests::exclusions_blocking_and_hangul"],
+    },
+    Mutation {
+        name: "xquery-canonical-order",
+        package: Package::Core,
+        breaks: "the marks of a decomposed string are left in the order they came, not canonical order",
+        file: "src/xquery/library/normalize.rs",
+        original: "        run.sort_by_key(|(class, _)| *class);\n",
+        replacement: "",
+        integration: &[],
+        unit: &["xquery::library::normalize::tests::normalization_forms"],
+    },
+    Mutation {
+        name: "xquery-regex-line-feeds",
+        package: Package::Core,
+        breaks: "XQuery 1.0's ^ of a line matches after a carriage return too",
+        file: "src/regex/text.rs",
+        original: "Lines::EachLineFeed => Ok(before(text, at)? == Some('\\n')),",
+        replacement: "Lines::EachLineFeed => Ok(newline(before(text, at)?)),",
+        integration: &[],
+        unit: &["regex::tests::xquery_one_dialect"],
+    },
+    Mutation {
+        name: "xquery-encode-for-uri-marks",
+        package: Package::Core,
+        breaks: "fn:encode-for-uri escapes the number sign the edition keeps",
+        file: "src/xquery/library/escape.rs",
+        original: "const UNRESERVED: &str = \"#-_.!~*'()\";",
+        replacement: "const UNRESERVED: &str = \"-_.!~*'()\";",
+        integration: &[],
+        unit: &["xquery::library::escape::tests::encode_for_uri_examples"],
     },
 ];

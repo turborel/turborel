@@ -3045,6 +3045,17 @@ recurses on a tree: fn:deep-equal compares trees from a list of the
 pairs of nodes left. A string or sequence a function would make past
 `MAX_TEXT` or `MAX_NODES` is SQLCODE -900.
 
+A collation is named by the code point collation's URI or by the SQL
+name of a collation of D60; strings compare by sort keys with no
+padding, and substring matching is by characters, of the code point
+collation and of the collations of one character at a time, others
+splitting no string into units. Normalization and full case mapping
+read a table of Unicode 13.0, the version of the collations and regular
+expressions, which `cargo xtask unicode` makes
+(`xquery/library/unicode13.bin`); Hangul syllables are composed by
+arithmetic. fn:matches, fn:replace and fn:tokenize use D61's matcher in
+XQuery 1.0's dialect.
+
 XML values are not comparable, so they have no key, bucket or order, and
 the binder refuses them where an equality, grouping or ordering operation
 would take one, as one inside an array, a multiset, a row or a distinct
