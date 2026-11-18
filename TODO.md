@@ -138,17 +138,17 @@ features.
 
 - Publishing: WITH XMLNAMESPACES and XMLBINARY of a
   query expression, and their scope in DML, DDL and compound statements
-  (X081 to X084, X131 to X135); XMLNAMESPACES in XMLTABLE (X086), with
-  XQuery; and the mapping of XML Names to identifiers (X400).
-- XQuery: XMLQUERY, XMLEXISTS and XMLTABLE over the XQuery 1.0 data
-  model, its functions and operators, passed BY VALUE or BY REF (X096,
-  X200 to X206, X221, X222, X300 to X305). Its indexes of documents'
-  paths and values are there ([Index structures](#index-structures)). The parser
-  exists (`src/xquery.rs`): the whole XQuery 1.0 grammar into a tree,
-  written back as text, with the static errors the text alone shows.
-  Left: the static context (namespaces, names, types, the boundary-space
-  policy applied), evaluation, and the imports, which are parsed and
-  refused.
+  (X081 to X084, X131 to X135);
+  and the mapping of XML Names to identifiers (X400).
+- XQuery: XMLQUERY, XMLEXISTS and XMLTABLE evaluate every expression of
+  XQuery 1.0 (`src/xquery.rs`). Left: the rest of the functions and
+  operators library, on the `XQueryFunction` seam; casts to `xs:QName`;
+  the validate expression's lax mode and schema imports, with XML Schema;
+  the type annotation `xs:anyType` of an element constructed in
+  construction mode preserve; and a query's paths answered by the XML
+  indexes of documents' paths and values, which are there
+  ([Index structures](#index-structures)), so a query reads only the rows
+  that hold the nodes it asks for.
 - XML Schema: registered XML schemas, XML(DOCUMENT(XMLSCHEMA)) and
   XML(CONTENT(XMLSCHEMA)), XMLVALIDATE and IS VALID, and their
   Information Schema (X141 to X161, X191, X192, X256, X257, X260 to X286).

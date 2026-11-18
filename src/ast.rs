@@ -132,7 +132,10 @@ pub use window::{
     Exclusion, Frame, FrameBound, FrameUnits, NestedWindow, OffsetFunction, RankKind, RowMarker, ValueFunction, Which, WindowDefinition,
     WindowFunction, WindowKind, WindowOver, WindowSpecification,
 };
-pub use xml::{ContentOption, ElementConstructor, ForestConstructor, Named, NamespaceItem, Passing, Returning, XmlOperator};
+pub use xml::{
+    ContentOption, ElementConstructor, ForestConstructor, Named, NamespaceItem, OnEmpty, Passing, Returning, XmlArgument, XmlArguments,
+    XmlOperator, XmlQuery, XmlRegularColumn, XmlTable, XmlTableColumn,
+};
 
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §8.7] <insert statement>

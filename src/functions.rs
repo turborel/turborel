@@ -90,6 +90,7 @@ pub use xml::{
     XmlCopy, XmlDocument, XmlElement, XmlForest, XmlIs, XmlParse, XmlPi, XmlSerialize, XmlText, xml_lexical, xml_mapped,
     xml_schema_restriction, xml_schema_type,
 };
+pub use xml::{Evaluation, RegularColumn, TableColumn, XmlExistsOf, XmlQueryOf, XmlTableOf};
 
 /// \[EXTENSION\] A function callable with the opt-in call syntax.
 ///
@@ -159,6 +160,23 @@ pub trait ScalarFunction: Send + Sync {
             [left, right] => self.call_with(&[(*left).clone(), (*right).clone()], temp),
             _ => self.call_with(&args.iter().map(|value| (*value).clone()).collect::<Vec<_>>(), temp),
         }
+    }
+    /// \[DESIGN\] Whether a call of it may run long, so the statement
+    /// running it passes itself, to be cancelled as the call goes
+    /// (`call_in`, RULES.md D44): of an XQuery evaluation. Default: no.
+    fn in_statement(&self) -> bool {
+        false
+    }
+    /// \[DESIGN\] As `call_with`, given the statement that runs it, which
+    /// says whether it was cancelled (`Subqueries::interrupted`) and
+    /// evaluates expressions of the function's own: a statement calls this
+    /// of a function that is `in_statement`. Default: `call_with`.
+    ///
+    /// # Errors
+    ///
+    /// As `call_with`, or the statement's cancellation.
+    fn call_in(&self, args: &[Value], statement: &dyn crate::exec::Subqueries) -> Result<Value> {
+        self.call_with(args, statement.temp_lobs())
     }
     /// \[EXTENSION\] Whether an index may find rows for this function in
     /// a WHERE filter, such as `f(column, ?)` (RULES.md D34).

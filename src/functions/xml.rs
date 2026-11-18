@@ -10,6 +10,7 @@ mod cast;
 mod element;
 mod mapping;
 mod publish;
+mod query;
 mod schema_type;
 
 pub use aggregate::{XMLAGG, XmlAggregate};
@@ -17,6 +18,7 @@ pub use cast::{IMPLICIT_BINARY_ENCODING, XmlCastIn, XmlCastOut, xml_schema_type}
 pub use element::{XmlElement, XmlForest};
 pub use mapping::{BinaryEncoding, Mapping, xml_lexical, xml_mapped};
 pub use publish::{XmlComment, XmlConcat, XmlPi, XmlText};
+pub use query::{Evaluation, RegularColumn, TableColumn, XmlExistsOf, XmlQueryOf, XmlTableOf};
 pub use schema_type::xml_schema_restriction;
 
 use super::ScalarFunction;

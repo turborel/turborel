@@ -9,6 +9,9 @@
 //! where the grammar takes it, as BOOLEAN and CLOB are.
 
 mod publish;
+mod query;
+
+use query::{XMLEXISTS, XMLQUERY};
 
 use super::Parser;
 use crate::ast::{Passing, Returning, ValueExpression, XmlOperator};
@@ -165,6 +168,12 @@ impl Parser {
         }
         if self.at_xml(XMLSERIALIZE) {
             return self.xml_serialize().map(Some);
+        }
+        if self.at_xml(XMLQUERY) {
+            return self.xml_query().map(Some);
+        }
+        if self.at_xml(XMLEXISTS) {
+            return self.xml_exists().map(Some);
         }
         self.xml_publishing()
     }

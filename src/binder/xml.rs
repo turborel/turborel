@@ -9,6 +9,7 @@ mod cast;
 mod element;
 mod namespaces;
 mod publish;
+mod query;
 
 use std::sync::Arc;
 
@@ -61,6 +62,9 @@ impl Binder<'_> {
             XmlOperator::Text { operand, returning } => self.xml_text(operand, *returning, scope),
             XmlOperator::Element(element) => self.xml_element(element, scope),
             XmlOperator::Forest(forest) => self.xml_forest(forest, scope),
+            XmlOperator::Query(q) => self.xml_query(q, scope),
+            XmlOperator::Exists(q) => self.xml_exists(q, scope),
+            XmlOperator::Table(t) => self.xml_table(t, scope),
             XmlOperator::Parse { syntax, operand, whitespace } => self.xml_parse(*syntax, operand, *whitespace, scope),
             XmlOperator::Serialize { syntax, operand, target, encoding, version, declaration } => {
                 let operand = self.xml_value_expression(operand, scope, "XMLSERIALIZE")?;

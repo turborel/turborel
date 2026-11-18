@@ -77,6 +77,28 @@ impl Binder<'_> {
         bound
     }
 
+    /// [§10.20 SR2d] The prefixes the `<XML namespace declaration>`s in
+    /// scope bind, each to its URI, the outermost first, so an inner one
+    /// overrides; and the default namespace the innermost that declares
+    /// one sets, the zero-length string of NO DEFAULT.
+    pub(super) fn namespaces_in_scope(&self) -> (Vec<(String, String)>, Option<String>) {
+        let mut stacks = Vec::new();
+        let mut binder = Some(self);
+        while let Some(b) = binder {
+            stacks.push(b.xml_namespaces.borrow().clone());
+            binder = b.outer.map(super::super::Outer::binder);
+        }
+        let (mut prefixes, mut default) = (Vec::new(), None);
+        for item in stacks.into_iter().rev().flatten().flatten() {
+            match item {
+                NamespaceItem::Regular { uri, prefix } => prefixes.push((prefix, uri)),
+                NamespaceItem::Default(uri) => default = Some(uri),
+                NamespaceItem::NoDefault => default = Some(String::new()),
+            }
+        }
+        (prefixes, default)
+    }
+
     /// The URI the innermost declaration in scope that declares `prefix`,
     /// or the default namespace if none, binds it to.
     fn declared_uri(&self, prefix: Option<&str>) -> Option<String> {

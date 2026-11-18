@@ -41,7 +41,8 @@ behind it, and each can be replaced or added to.
   DOCUMENT and IS CONTENT, and XML published from SQL values, arrays and
   multisets too, by
   XMLELEMENT, XMLFOREST, XMLAGG, XMLCONCAT, XMLCOMMENT, XMLPI and XMLTEXT
-  with namespaces, written in-house with no dependency, its modifiers shown in
+  with namespaces, and queried in XQuery 1.0 by XMLQUERY, XMLEXISTS and
+  XMLTABLE, written in-house with no dependency, its modifiers shown in
   the Information Schema, and XML indexes of its paths and values.
 - [Geospatial SQL](doc/data/spatial/README.md), with XY geometries, WKT/WKB,
   intersection filters and joins, planar distances and R-tree

@@ -6,7 +6,8 @@ The XML type holds XML documents and fragments of them, as SQL/XML
 (ISO/IEC 9075-14) defines it. XMLPARSE makes an XML value from text, and
 XMLSERIALIZE writes one back as text. XMLDOCUMENT makes a document node
 of a value, XMLCAST casts SQL values to XML and back, and IS DOCUMENT and
-IS CONTENT test what a value is.
+IS CONTENT test what a value is. XMLQUERY, XMLEXISTS and XMLTABLE query
+XML values with XQuery.
 
 ## The type
 
@@ -506,6 +507,161 @@ turborel: SQLCODE -301 (SQLSTATE 2200L): the value of XML(DOCUMENT(ANY)) is not 
 turborel: SQLCODE -103 (SQLSTATE 2A000): the comparison compares values of XML(CONTENT(ANY)) ARRAY[10], and XML values are not comparable [ISO/IEC 9075-14:2006 draft §10.8 SR1] (at character 27)
 ```
 
+## Querying XML
+
+XMLQUERY, XMLEXISTS and XMLTABLE evaluate a query of XQuery 1.0, the
+language of the W3C Candidate Recommendation of 3 November 2005, over
+XML values and SQL values passed to it.
+
+```
+XMLQUERY ( <XQuery expression>
+           [ PASSING { BY REF | BY VALUE } <argument> [ , <argument> ]... ]
+           [ RETURNING { CONTENT | SEQUENCE } [ BY REF | BY VALUE ] ]
+           { NULL | EMPTY } ON EMPTY )
+XMLEXISTS ( <XQuery expression> [ PASSING { BY REF | BY VALUE } <argument> [ , ... ] ] )
+XMLTABLE ( [ XMLNAMESPACES ( ... ) , ] <row pattern>
+           [ PASSING { BY REF | BY VALUE } <argument> [ , ... ] ]
+           COLUMNS <column> [ , <column> ]... ) [ AS ] <correlation name> [ ( <column name list> ) ]
+
+<argument> ::= <value expression> [ AS <identifier> ] [ BY REF | BY VALUE ]
+<column>   ::= <column name> FOR ORDINALITY
+             | <column name> <data type> [ BY REF | BY VALUE ] [ DEFAULT <default option> ] [ PATH <column pattern> ]
+```
+
+The XQuery expression, the row pattern and each column pattern are
+character string literals. The expression is parsed and analysed as the
+statement is prepared, so a syntax error or a name it does not know
+fails then. Every error the query raises, as it is analysed or
+evaluated, is SQLSTATE 10000, XQuery error, its message naming the
+error's code, such as `err:XPST0008`.
+
+### Arguments
+
+An argument with no name is the context item, `.`, of which there is at
+most one. One with a name is a variable, `$name`; a regular identifier is
+upper case, so `AS n` is `$N`, and a delimited one, `AS "n"`, keeps its
+case. An XML value is passed BY REF, its nodes themselves, or BY VALUE,
+a copy; the mechanism after PASSING applies to every argument that
+writes none. Another value is cast to XML(SEQUENCE) as XMLCAST casts it,
+and writes no mechanism. A null context item makes the result null; a
+null variable is the empty sequence. A context item of more than one
+item fails with SQLSTATE 2200V.
+
+The XMLNAMESPACES declarations in scope, of an XMLELEMENT, XMLFOREST or
+XMLTABLE around the query, are the query's namespaces too, beside `xml`,
+`xs`, `xsi`, `fn`, `xdt`, `local` and `sqlxml`.
+
+### XMLQUERY
+
+XMLQUERY gives the query's value. RETURNING SEQUENCE gives it as it is,
+of XML(SEQUENCE), BY REF or a copy BY VALUE; it needs a mechanism, its
+own or the one after PASSING. RETURNING CONTENT, the default, gives a
+document node of it, as XMLDOCUMENT does, of XML(CONTENT(UNTYPED)). NULL
+ON EMPTY makes the empty sequence null, EMPTY ON EMPTY keeps it.
+
+```sql
+CREATE TABLE ORDERS2 (ID INTEGER, DOC XML);
+INSERT INTO ORDERS2 VALUES (1, XMLPARSE(DOCUMENT '<order><item price="10">pen</item><item price="25">ink</item></order>' STRIP WHITESPACE)), (2, XMLPARSE(DOCUMENT '<order><item price="5">cap</item></order>' STRIP WHITESPACE));
+SELECT ID, XMLSERIALIZE(XMLQUERY('<total items="{count(//item)}">{//item[last()]/text()}</total>' PASSING BY REF DOC NULL ON EMPTY) AS VARCHAR(60)) FROM ORDERS2 ORDER BY ID;
+SELECT ID, XMLCAST(XMLQUERY('(for $i in //item where $i/@price > $min return string($i))[last()]' PASSING BY VALUE DOC, 8 AS "min" RETURNING SEQUENCE NULL ON EMPTY) AS VARCHAR(20)) FROM ORDERS2 ORDER BY ID;
+SELECT XMLQUERY('$x div 0' PASSING BY REF 1 AS "x" EMPTY ON EMPTY) FROM ORDERS2;
+```
+```
+OK
+OK
+           ID |
+--------------+--------------------------------------------------------------
+            1 | <total items="2">ink</total>
+            2 | <total items="1">cap</total>
+(2 rows)
+           ID |
+--------------+----------------------
+            1 | ink
+            2 | NULL
+(2 rows)
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:FOAR0001: a decimal or integer is divided by zero [XQueryFO §6.2.4] [ISO/IEC 9075-14:2006 draft §6.18 GR3]
+```
+
+### XMLEXISTS
+
+XMLEXISTS is true if the query's value is not the empty sequence, false
+if it is, and unknown if the context item passed is null. It is a
+predicate, and a boolean value.
+
+```sql
+SELECT ID FROM ORDERS2 WHERE XMLEXISTS('//item[. = $name]' PASSING BY REF DOC, 'ink' AS "name");
+SELECT ID, XMLEXISTS('/order[count(item) > 1]' PASSING BY REF DOC) FROM ORDERS2 ORDER BY ID;
+```
+```
+           ID
+--------------
+            1
+(1 row)
+           ID |
+--------------+-------
+            1 | TRUE
+            2 | FALSE
+(2 rows)
+```
+
+### XMLTABLE
+
+XMLTABLE is a table of FROM. It may refer to the columns of the tables
+before it, as a lateral derived table does. Each item of its row
+pattern's value is a row. FOR ORDINALITY numbers the rows from 1. A
+regular column's pattern, PATH or the column's name, is evaluated with
+the row's item as the context item. Its value is the empty sequence's
+DEFAULT, else null; or it is cast to the column's type: of XML(SEQUENCE),
+the value as it is, passed by the column's mechanism or the one after
+PASSING; of another XML type, a document node of it, copied; of another
+type, XMLCAST of a document node of it. An attribute cannot be made a
+document node, so a column of an attribute's value writes `data(@name)`,
+not `@name`.
+
+```sql
+SELECT O.ID, I.N, I.NAME, I.PRICE FROM ORDERS2 O, XMLTABLE('/order/item' PASSING BY REF O.DOC COLUMNS N FOR ORDINALITY, NAME VARCHAR(10) PATH '.', PRICE DECIMAL(5,2) DEFAULT 0 PATH 'data(@price)') AS I ORDER BY O.ID, I.N;
+SELECT * FROM XMLTABLE(XMLNAMESPACES('urn:t' AS "t"), '<t:r xmlns:t="urn:t"><t:v>1</t:v><t:v>2</t:v></t:r>/t:v' COLUMNS V INTEGER PATH '.') AS X;
+```
+```
+           ID |            N | NAME       |   PRICE
+--------------+--------------+------------+---------
+            1 |            1 | pen        |   10.00
+            1 |            2 | ink        |   25.00
+            2 |            1 | cap        |    5.00
+(3 rows)
+            V
+--------------
+            1
+            2
+(2 rows)
+```
+
+### What XQuery evaluates
+
+Every expression of XQuery 1.0 is evaluated: paths on every axis, in
+document order, predicates, sequences and ranges, arithmetic and
+comparisons, FLWOR expressions with order by, quantified, conditional
+and typeswitch expressions, instance of, treat, cast and castable, direct
+and computed constructors, ordered and unordered expressions, and a
+prolog's namespaces, setters, variables and functions, recursive ones
+too. Static typing is not done, so a type error is found as the query is
+evaluated.
+
+These are not supported: schema imports and library modules (error
+`err:XQST0009` or `err:XQST0016`), the validate expression's lax mode
+(SQLCODE -900; strict mode finds no element declared, `err:XQDY0084`),
+casts to `xs:QName`, and the documents of `fn:doc`, which finds none
+(`err:FODC0005`). The built-in functions are `fn:true`, `fn:false`,
+`fn:not`, `fn:boolean`, `fn:data`, `fn:string`, `fn:count`, `fn:empty`,
+`fn:exists`, `fn:position`, `fn:last`, `fn:concat`, `fn:root` and
+`fn:doc`, and a constructor function for each atomic type, such as
+`xs:date('2026-11-17')`.
+
+Strings compare by Unicode code points unless the query declares
+another collation. A collation of the database is the URI
+`urn:turborel:collation:` then its name, as
+`urn:turborel:collation:UNICODE`.
+
 ## XML indexes
 
 ```
@@ -532,8 +688,9 @@ Data Stored in a Relational Database" (VLDB 2004):
 Each indexes one XML column alone; another column, or more than one, is
 refused (SQLCODE -103). Like every index, it is built of the rows there,
 kept with each change, and changes no result. No SQL predicate reads it:
-XML values are not comparable, and XQuery's paths, in XMLEXISTS and
-XMLQUERY, are not yet evaluated. Its lookups are reached from Rust
+XML values are not comparable, and XMLQUERY, XMLEXISTS and XMLTABLE
+evaluate their queries over each row's value without it. Its lookups are
+reached from Rust
 (`Database::xml_candidates`). A value with more than 262,144 elements and
 attributes, or one of a name or path too long for the database's page
 size, cannot be indexed, and its INSERT or UPDATE fails (SQLCODE -900).
@@ -578,5 +735,10 @@ standing alone, is refused with SQLSTATE 2200W when it is fetched.
 | A value's stored form | 64 MiB |
 | Elements and attributes an XML index keys of one value | 262,144 |
 | Octets of a value an XML index keys | 64 |
+| Expressions nested in an XQuery query | 64 |
+| Operations and function calls nested as a query is evaluated | 256 |
+| Items of one sequence a query makes | 1,048,576 |
+| Text of one string a query makes | 16 MiB |
+| What the nodes one evaluation of a query constructs hold | 64 MiB |
 
-A value past a limit fails with SQLCODE -900.
+A value or query past a limit fails with SQLCODE -900.

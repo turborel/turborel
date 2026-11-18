@@ -91,6 +91,8 @@ pub enum Extension {
     DataType,
     /// \[EXTENSION\] A `ServedConnections` (`Database::set_served_connections`).
     ServedConnections,
+    /// \[EXTENSION\] An `XQueryFunction` (`Database::register_xquery_function`).
+    XQueryFunction,
 }
 
 /// \[DESIGN\] An event of the database's.

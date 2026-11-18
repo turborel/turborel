@@ -24,6 +24,7 @@ SQLSTATE 0A000.
 | An array's maximum cardinality | 65,535 elements, also the maximum of an array type written without one |
 | A multiset's elements | 65,535; past it, SQLSTATE 2200Q |
 | An XML value | Elements nested 512 deep; 16 MiB of text and 1,048,576 nodes and namespace bindings in one tree; 16 MiB more of entities' text in one parse; 64 MiB of text XMLPARSE reads; a stored form of 64 MiB |
+| An XQuery query | Expressions nested 64 deep; operations and function calls nested 256 deep as it is evaluated; 1,048,576 items in one sequence; 64 MiB of nodes one evaluation constructs |
 
 ## Nesting
 

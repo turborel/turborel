@@ -28,6 +28,7 @@
 //! | `ServedConnections` | none: no connection served | END and CANCEL CONNECTION (RULES.md D42) |
 //! | `SqlType`           | SQL's standard types  | data types (RULES.md D53)        |
 //! | `Collation`         | UCS_BASIC, UNICODE and others | comparison of strings (RULES.md D60) |
+//! | `XQueryFunction`    | the core of fn:       | XQuery's function calls (RULES.md D86) |
 //! | `Log`               | file log, memory log  | commit and recovery (RULES.md D25) |
 //! | `LogStorage`, `CatalogStorage` | files in the directory | opening a database (RULES.md D25) |
 //! | `SystemTable`       | the Information Schema's | system tables (RULES.md D37)  |
@@ -35,9 +36,8 @@
 //! | `BackgroundJob`     | none                  | plug-ins' jobs (RULES.md D55)    |
 //! | `StateSource`       | `Database::export`    | state transfer (RULES.md D57)    |
 //!
-//! Plus the settings (`settings.rs`, RULES.md D36): each declared once in a
-//! registry, plug-ins' among them; the database's values, kept with its
-//! definitions, and each session's own (`db/settings.rs`).
+//! Plus the settings (`settings.rs`, RULES.md D36): each declared once in a registry, plug-ins'
+//! among them; the database's values, kept with its definitions, and each session's own (`db/settings.rs`).
 //!
 //! \[DESIGN\] A `Database` is a cheap handle that sessions share, on any
 //! number of threads (RULES.md D27). Each statement runs against a snapshot

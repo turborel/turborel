@@ -4,6 +4,10 @@
 //! XMLFOREST [§6.15], XMLPARSE [§6.16], XMLPI [§6.17], XMLSERIALIZE [§6.8]
 //! and XMLTEXT [§6.19].
 
+mod query;
+
+pub use query::{OnEmpty, XmlArgument, XmlArguments, XmlQuery, XmlRegularColumn, XmlTable, XmlTableColumn};
+
 use super::{TypeName, ValueExpression};
 use crate::value::DataType;
 use crate::xml::{Syntax, Whitespace};
@@ -176,6 +180,13 @@ pub enum XmlOperator {
         /// PRESERVE or STRIP WHITESPACE.
         whitespace: Whitespace,
     },
+    /// [§6.18] `<XML query>`.
+    Query(XmlQuery),
+    /// [§8.4] `<XML exists predicate>`, a boolean value.
+    Exists(XmlQuery),
+    /// [§7.1] `<XML table>`, the collection of a table primary's rows
+    /// alone.
+    Table(XmlTable),
     /// [§6.8] `<XML character string serialization>` and `<XML binary
     /// string serialization>` ::= XMLSERIALIZE ( \[`<document or
     /// content>`\] `<XML value expression>` AS `<data type>` \[ENCODING
@@ -220,6 +231,8 @@ impl XmlOperator {
                 x.content.iter().for_each(f);
             }
             XmlOperator::Forest(x) => x.elements.iter().for_each(|e| f(&e.value)),
+            XmlOperator::Query(q) | XmlOperator::Exists(q) => q.arguments.iter().for_each(|a| a.for_each_child(f)),
+            XmlOperator::Table(t) => t.arguments.iter().for_each(|a| a.for_each_child(f)),
         }
     }
 }

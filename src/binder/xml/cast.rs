@@ -136,7 +136,7 @@ impl Binder<'_> {
     /// [§6.6 GR3] XMLCAST of `e`, of the SQL type `source`, to `target`, an
     /// XML type: not DOCUMENT \[SR7\]; of a type §9.5 maps; a datetime
     /// without time zone as the SQL-session shows it [§9.8 GR7].
-    fn cast_to_xml(&self, e: Expr, source: &DataType, target: DataType) -> Result<(Expr, DataType)> {
+    pub(super) fn cast_to_xml(&self, e: Expr, source: &DataType, target: DataType) -> Result<(Expr, DataType)> {
         let DataType::Xml(xml) = target else {
             return Err(rule(format!("[ISO/IEC 9075-14:2006 draft §6.6 SR4] {target} is no XML type")));
         };
@@ -184,7 +184,7 @@ impl Binder<'_> {
     /// \[GR4a\], of a type §9.5 maps, cast as the type it maps to with its
     /// facets \[GR4e, GR4j\]; the SQL value given CAST to SQLT \[GR4l\], of
     /// the declared type `target` \[SR6\].
-    fn cast_from_xml(&self, e: Expr, target: DataType) -> Result<(Expr, DataType)> {
+    pub(super) fn cast_from_xml(&self, e: Expr, target: DataType) -> Result<(Expr, DataType)> {
         let sqlt = target.represented().clone();
         let Some(xmlt) = xml_schema_restriction(&sqlt)? else {
             return Err(rule(format!("[ISO/IEC 9075-14:2006 draft §9.5 GR8] {target} maps to no XML Schema type")));

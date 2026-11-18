@@ -74,8 +74,10 @@ mod xml_composite;
 mod xml_index;
 mod xml_publishing;
 mod xquery;
+mod xquery_eval;
 mod zones;
 
+pub use self::{vr::VR, waits::WAITS, zones::ZONES};
 use super::{Mutation, Package};
 pub use collations::COLLATIONS;
 pub use fill::FILL;
@@ -86,9 +88,6 @@ pub use server::SERVER;
 pub use shadow::SHADOW;
 pub use stats::STATS;
 pub use tailorings::TAILORINGS;
-pub use vr::VR;
-pub use waits::WAITS;
-pub use zones::ZONES;
 
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {
@@ -101,6 +100,7 @@ pub fn all() -> Vec<Mutation> {
         .chain([xml_publishing::XML_PUBLISHING.as_slice()])
         .chain([xml_composite::XML_COMPOSITE.as_slice()])
         .chain([xml_index::XML_INDEX.as_slice()])
+        .chain([xquery_eval::XQUERY_EVAL.as_slice()])
         .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &xml::XML, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
         .flatten()
         .copied()

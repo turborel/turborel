@@ -2961,7 +2961,7 @@ function of the prolog, a constructor function's cast, or a function of
 the library. A static error is raised there; no static typing is done, so
 a type error is raised as the query is evaluated. The library
 (`xquery::Library`) is the built-in functions and those plug-ins
-add (`Library::add`), each an
+register (`Database::register_xquery_function`), each an
 `XQueryFunction` of its expanded QName, parameter types and result type,
 called with its arguments converted by the function conversion rules and
 its dynamic context (`xquery::Context`): the focus, the current dateTime
@@ -2991,7 +2991,16 @@ a string `xml::MAX_TEXT` octets, and the trees one evaluation constructs
 `xml::MAX_STORED` octets together, each past it SQLCODE -900. Each item
 of a FLWOR expression, a path step, a predicate and a quantified
 expression, and each call, looks whether the statement was cancelled
-(D44).
+(D44), through `ScalarFunction::call_in`, which a statement calls of a
+function that is `in_statement`.
+
+XMLQUERY and XMLEXISTS are each a call of a function holding the
+compiled query, their context item and variables its arguments, an SQL
+value cast to XML(SEQUENCE) by XMLCAST. XMLTABLE is a collection derived
+table, as UNNEST makes, of one collection: an array of rows, a row of each
+item of its row pattern's value, each column's value the XMLCAST of its
+own compiled pattern's value, which the function evaluates with the cast
+the binder made of it.
 
 XML values are not comparable, so they have no key, bucket or order, and
 the binder refuses them where an equality, grouping or ordering operation

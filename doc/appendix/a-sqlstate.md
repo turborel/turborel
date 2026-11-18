@@ -52,7 +52,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 0A001 | Feature not supported: multiple server transactions |
 | 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
 | 0N002 | SQL/XML mapping error: invalid XML character: XMLCAST, XMLELEMENT, XMLFOREST, XMLPI or XMLTEXT of a string holding a character no XML 1.1 character |
-| 10000 | XQuery error: XMLDOCUMENT of a value holding an attribute standing alone; XMLCAST of text that is no value of the XML Schema type cast to, or of more than one atomic value; XMLELEMENT of an attribute after other content, or of two attributes of one name |
+| 10000 | XQuery error: XMLDOCUMENT of a value holding an attribute standing alone; XMLCAST of text that is no value of the XML Schema type cast to, or of more than one atomic value; XMLELEMENT of an attribute after other content, or of two attributes of one name; any static, type or dynamic error of a query XMLQUERY, XMLEXISTS or XMLTABLE evaluates, its message naming the error's code, as err:XPST0008 |
 | 21000 | Cardinality violation: a subquery of one row gave more, or ELEMENT a multiset of more than one element |
 | 22000 | Data exception |
 | 22001 | String data, right truncation: a string too long for its type |
@@ -72,6 +72,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2200S | Invalid comment: XMLCOMMENT of text holding two hyphens together, ending with one, or holding a character no XML 1.1 character |
 | 2200T | Invalid processing instruction: XMLPI of text holding '?>' |
 | 2200U | Not an XQuery document node: a value stored in, or cast to, an XML(CONTENT) type that is not one document node |
+| 2200V | Invalid XQuery context item: XMLQUERY, XMLEXISTS or XMLTABLE passed a context item of more than one item |
 | 2200W | XQuery serialization error: an XML value with no serialization, as an attribute standing alone, serialized or sent to a client |
 | 22009 | Invalid time zone displacement value |
 | 22011 | Substring error |

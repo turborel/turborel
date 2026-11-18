@@ -127,6 +127,9 @@ fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> 
 /// argument list. Arrays preserve left-to-right evaluation and drop earlier
 /// values if a later argument fails, just as collecting into a vector does.
 fn called(function: &ScalarRef, args: &[Expr], row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
+    if function.0.in_statement() {
+        return function.0.call_in(&values(args, row, subqueries)?, subqueries);
+    }
     let temp = subqueries.temp_lobs();
     match args {
         [] => function.0.call_with(&[], temp),

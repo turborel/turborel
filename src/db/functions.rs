@@ -8,6 +8,7 @@ use super::Database;
 use crate::diagnostics::Extension;
 use crate::error::Result;
 use crate::functions::{AggregateFunction, ScalarFunction};
+use crate::xquery::XQueryFunction;
 
 impl Database {
     /// \[EXTENSION\] Register a scalar function. Callable only from sessions
@@ -48,5 +49,27 @@ impl Database {
             st.functions.add_aggregate(Arc::clone(&f))
         });
         self.registered((Extension::Function, &name), done.and_then(|()| self.tell_plugin(f.configurable())))
+    }
+
+    /// \[EXTENSION\] Register a function a query of XQuery calls by its
+    /// expanded QName and arity, or declares `external` [XQuery §3.1.5,
+    /// §4.15], in the library every query compiled from now on is analysed
+    /// with (`xquery::XQueryFunction`); its settings declared under its
+    /// local name, as `Configurable` declares them (RULES.md D36).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if it is in no namespace, or a function of its name
+    /// takes an arity it takes, a built-in one too: none is replaced, so no
+    /// query's calls change under it; or a setting it declares is refused
+    /// (D36).
+    pub fn register_xquery_function(&self, f: Box<dyn XQueryFunction>) -> Result<()> {
+        let f: Arc<dyn XQueryFunction> = Arc::from(f);
+        let name = f.name().local.to_string();
+        let done = self.change(|st| {
+            st.declare_plugin(&name, f.configurable())?;
+            st.xquery_functions.add(Arc::clone(&f))
+        });
+        self.registered((Extension::XQueryFunction, &name), done.and_then(|()| self.tell_plugin(f.configurable())))
     }
 }

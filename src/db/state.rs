@@ -98,6 +98,9 @@ pub struct State {
     /// until built (`Database::create_index`).
     pub(crate) building: HashSet<String>,
     pub(crate) functions: Registry,
+    /// \[EXTENSION\] The functions a query of XQuery calls by name: the
+    /// built-in ones and those registered (`xquery::Library`).
+    pub(crate) xquery_functions: crate::xquery::Library,
     /// The data types beyond the standard registered (RULES.md D53).
     pub(crate) types: TypeRegistry,
     /// The collations there are, by name (RULES.md D60).
@@ -175,6 +178,7 @@ impl State {
             locks: MurmurMap::default(),
             indexes: HashMap::new(),
             functions: Registry::with_set_functions(),
+            xquery_functions: crate::xquery::Library::builtin(),
             types: TypeRegistry::default(),
             clock: Arc::new(crate::clock::SystemClock),
             optimizer: Optimizer::with_builtin_rules(),

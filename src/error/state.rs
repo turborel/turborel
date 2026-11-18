@@ -239,6 +239,9 @@ impl SqlState {
     /// Data exception: XQuery serialization error [ISO/IEC 9075-14:2006
     /// draft §10.15 GR11, §23.1].
     pub const XQUERY_SERIALIZATION_ERROR: SqlState = SqlState(*b"2200W");
+    /// Data exception: invalid XQuery context item [ISO/IEC 9075-14:2006
+    /// draft §6.18 GR1a ii 2 B III, §23.1].
+    pub const INVALID_XQUERY_CONTEXT_ITEM: SqlState = SqlState(*b"2200V");
     /// Data exception: invalid comment [ISO/IEC 9075-14:2006 draft §6.11
     /// GR3, §23.1].
     pub const INVALID_COMMENT: SqlState = SqlState(*b"2200S");

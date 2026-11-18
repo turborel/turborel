@@ -502,6 +502,9 @@ impl Parser {
         if self.at_unnest() {
             return self.collection_derived_table();
         }
+        if self.at_xml_table() {
+            return self.xml_table();
+        }
         if self.at_ptf_table() {
             return self.ptf_table();
         }
