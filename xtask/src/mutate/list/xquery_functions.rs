@@ -11,7 +11,7 @@
 use super::{Mutation, Package};
 
 /// Each mechanism of the library broken alone, and the tests that fail.
-pub const XQUERY_FUNCTIONS: [Mutation; 33] = [
+pub const XQUERY_FUNCTIONS: [Mutation; 37] = [
     Mutation {
         name: "xquery-decimal-division-scale",
         package: Package::Core,
@@ -104,6 +104,49 @@ pub const XQUERY_FUNCTIONS: [Mutation; 33] = [
         replacement: "position > start && position < end",
         integration: &[],
         unit: &["xquery::library::strings::tests::substrings_by_position"],
+    },
+    Mutation {
+        name: "xquery-units-at-starters",
+        package: Package::Core,
+        breaks: "UNICODE begins no collation unit at a starter, so a string is one unit",
+        file: "src/value/collation/units.rs",
+        original: "            Some(start) => starts.push((elements.len(), start)),",
+        replacement: "            Some(_) => {}",
+        integration: &["xquery_functions::substring_matching_xqueryfo_7_5"],
+        unit: &[
+            "xquery::collation::tests::units_of_unicode_and_tailorings",
+            "xquery::library::substrings::tests::units_of_more_than_one_character",
+        ],
+    },
+    Mutation {
+        name: "xquery-units-marks-taken",
+        package: Package::Core,
+        breaks: "the marks S2.1.1 takes into a contraction are not taken from what marks the starters",
+        file: "src/value/collation/units.rs",
+        original: "        for _ in 0..held.saturating_sub(chars.len()) {",
+        replacement: "        for _ in 0..held.saturating_sub(chars.len()).min(0) {",
+        integration: &[],
+        unit: &["xquery::collation::tests::units_of_unicode_and_tailorings"],
+    },
+    Mutation {
+        name: "xquery-minimal-match-start",
+        package: Package::Core,
+        breaks: "a match may begin at an ignorable unit, so it is not minimal",
+        file: "src/xquery/library/substrings.rs",
+        original: "        if self.units.ignorable(first) {\n            return None;\n        }\n",
+        replacement: "",
+        integration: &[],
+        unit: &["xquery::library::substrings::tests::ignorable_units_before_and_after"],
+    },
+    Mutation {
+        name: "xquery-match-by-every-level",
+        package: Package::Core,
+        breaks: "a match is found by the first level's weights alone",
+        file: "src/xquery/library/substrings.rs",
+        original: "        let mut held = vec![0_usize; self.sought.levels()];",
+        replacement: "        let mut held = vec![0_usize; self.sought.levels().min(1)];",
+        integration: &[],
+        unit: &["xquery::library::substrings::tests::units_of_more_than_one_character"],
     },
     Mutation {
         name: "xquery-codepoint-order",

@@ -1,9 +1,21 @@
 //! The functions based on substring matching [XQueryFO §7.5]:
 //! `fn:contains`, `fn:starts-with`, `fn:ends-with`, `fn:substring-before`
 //! and `fn:substring-after`, each by the collation units of a collation
-//! (`collation.rs`), one for each character, so the characters a match
-//! covers are the units it matches.
+//! (`collation.rs`): of the codepoint collation and of one that compares a
+//! character at a time, a character each; of `UNICODE` and its tailorings,
+//! a character and what may not be cut from it, so a contraction or a
+//! character's marks.
+//!
+//! \[DESIGN\] RULES.md D106: a minimal match [XQueryFO §7.5.1] of the
+//! units sought is a run of the text's units whose weights at each level,
+//! joined, are those of the units sought, beginning and ending at a unit
+//! that is not ignorable, so no unit at either end could be left out. A
+//! run's weights are its units', joined, as a unit is weighed alone, so a
+//! run is matched unit by unit, each level's weights so far a beginning of
+//! the sought's. The characters a match covers are its units', so a
+//! substring before or after one never splits a unit.
 
+use super::super::collation::Units;
 use super::super::functions::Context;
 use super::Builtin;
 use super::args::{arg, boolean, collator, string_or_empty, string_value};
@@ -24,8 +36,8 @@ pub(super) const FUNCTIONS: [Builtin; 5] = [
 /// the default, and the first's characters.
 struct Operands {
     text: Vec<char>,
-    units: Vec<char>,
-    sought: Vec<char>,
+    units: Units,
+    sought: Units,
 }
 
 impl Operands {
@@ -37,13 +49,47 @@ impl Operands {
         Ok(Operands { units: collator.units(&text)?, sought: collator.units(&sought)?, text: text.chars().collect() })
     }
 
-    /// Where the units sought first occur in the text's, the first unit's
-    /// place; none if they do not.
-    fn first(&self) -> Option<usize> {
-        if self.sought.is_empty() {
-            return Some(0);
+    /// Whether the string sought is the zero-length string, or holds only
+    /// ignorable units, which is taken as it [XQueryFO §7.5.1].
+    fn nothing_sought(&self) -> bool {
+        (0..self.sought.len()).all(|u| self.sought.ignorable(u))
+    }
+
+    /// The text's units that are not ignorable, in order.
+    fn weighed(&self) -> impl DoubleEndedIterator<Item = usize> + '_ {
+        (0..self.units.len()).filter(|&u| !self.units.ignorable(u))
+    }
+
+    /// The last unit of the minimal match of the units sought beginning at
+    /// the text's unit `first`, if one does: the units from it taken while
+    /// each level's weights so far begin the sought's, the match ending
+    /// at the first that makes them all the sought's. None of an
+    /// ignorable unit, which no minimal match begins with.
+    fn match_from(&self, first: usize) -> Option<usize> {
+        if self.units.ignorable(first) {
+            return None;
         }
-        self.units.windows(self.sought.len()).position(|w| w == self.sought.as_slice())
+        let mut held = vec![0_usize; self.sought.levels()];
+        for unit in first..self.units.len() {
+            for (level, at) in held.iter_mut().enumerate() {
+                let weights = self.units.weights(level, unit);
+                let end = at.checked_add(weights.len())?;
+                if self.sought.joined(level).get(*at..end)? != weights {
+                    return None;
+                }
+                *at = end;
+            }
+            if held.iter().enumerate().all(|(level, &at)| at == self.sought.joined(level).len()) {
+                return Some(unit);
+            }
+        }
+        None
+    }
+
+    /// The first minimal match, the one beginning first: its first and
+    /// last units.
+    fn first(&self) -> Option<(usize, usize)> {
+        self.weighed().find_map(|f| self.match_from(f).map(|last| (f, last)))
     }
 
     /// The text's characters from `from` to `to`.
@@ -54,62 +100,69 @@ impl Operands {
 
 /// [XQueryFO §7.5.1] `fn:contains($arg1 as xs:string?, $arg2 as
 /// xs:string?, $collation as xs:string) as xs:boolean`: whether the first
-/// holds the units of the second; true of a zero-length second.
+/// holds a minimal match of the units of the second; true of a second of
+/// no units but ignorable ones.
 ///
 /// # Errors
 ///
 /// err:FOCH0002 of a collation not supported; err:FOCH0004 of one with no
 /// collation units.
 fn contains(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
-    Ok(boolean(Operands::of(focus, args)?.first().is_some()))
+    let o = Operands::of(focus, args)?;
+    Ok(boolean(o.nothing_sought() || o.first().is_some()))
 }
 
 /// [XQueryFO §7.5.2] `fn:starts-with($arg1 as xs:string?, $arg2 as
-/// xs:string?, $collation as xs:string) as xs:boolean`.
+/// xs:string?, $collation as xs:string) as xs:boolean`: whether a minimal
+/// match begins at the first unit that is not ignorable.
 ///
 /// # Errors
 ///
 /// As `contains`.
 fn starts_with(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let o = Operands::of(focus, args)?;
-    Ok(boolean(o.units.starts_with(&o.sought)))
+    Ok(boolean(o.nothing_sought() || o.weighed().next().and_then(|f| o.match_from(f)).is_some()))
 }
 
 /// [XQueryFO §7.5.3] `fn:ends-with($arg1 as xs:string?, $arg2 as
-/// xs:string?, $collation as xs:string) as xs:boolean`.
+/// xs:string?, $collation as xs:string) as xs:boolean`: whether a minimal
+/// match ends at the last unit that is not ignorable.
 ///
 /// # Errors
 ///
 /// As `contains`.
 fn ends_with(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let o = Operands::of(focus, args)?;
-    Ok(boolean(o.units.ends_with(&o.sought)))
+    let last = o.weighed().next_back();
+    Ok(boolean(o.nothing_sought() || o.weighed().any(|f| o.match_from(f) == last)))
 }
 
 /// [XQueryFO §7.5.4] `fn:substring-before($arg1 as xs:string?, $arg2 as
 /// xs:string?, $collation as xs:string) as xs:string`: what precedes the
-/// first occurrence of the second in the first; the zero-length string if
-/// it does not occur, or is zero-length.
+/// first minimal match of the second in the first; the zero-length string
+/// if there is none, or the second has no units but ignorable ones.
 ///
 /// # Errors
 ///
 /// As `contains`.
 fn substring_before(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let o = Operands::of(focus, args)?;
-    string_value(o.first().map_or_else(String::new, |at| o.characters(0, at)))
+    let before = o.first().filter(|_| !o.nothing_sought()).map(|(f, _)| o.units.characters(f).0);
+    string_value(before.map_or_else(String::new, |at| o.characters(0, at)))
 }
 
 /// [XQueryFO §7.5.5] `fn:substring-after($arg1 as xs:string?, $arg2 as
 /// xs:string?, $collation as xs:string) as xs:string`: what follows the
-/// first occurrence of the second in the first; the zero-length string if
-/// it does not occur; the first if the second is zero-length.
+/// first minimal match of the second in the first; the zero-length string
+/// if there is none; the first if the second has no units but ignorable
+/// ones, the zero-length string if the first has none but them too.
 ///
 /// # Errors
 ///
 /// As `contains`.
 fn substring_after(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let o = Operands::of(focus, args)?;
-    let after = o.first().map(|at| at.saturating_add(o.sought.len()));
+    let after = if o.nothing_sought() { o.weighed().next().map(|_| 0) } else { o.first().map(|(_, last)| o.units.characters(last).1) };
     string_value(after.map_or_else(String::new, |at| o.characters(at, o.text.len())))
 }
 

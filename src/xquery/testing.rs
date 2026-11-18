@@ -2,14 +2,94 @@
 //! static context of the built-in functions and collations, and a query
 //! run to its value serialized, or to its error.
 
+use std::sync::Arc;
+
 use super::{Collations, Environment, Input, Library, Query};
 use crate::error::{Result, SqlError};
-use crate::value::collation::builtin;
+use crate::value::collation::{Collation, Pad, Unit, builtin};
 use crate::xml::{Item, Moment, Parameters, Sequence, Shape, Version, serialize};
 
-/// The collations of a database (RULES.md D60).
+/// The name of `CollationA`, among the tests' collations.
+pub(super) const COLLATION_A: &str = "COLLATION_A";
+/// The name of `Unsplit`, among the tests' collations.
+pub(super) const UNSPLIT: &str = "UNSPLIT";
+
+/// [XQueryFO §7.5.1.1] CollationA of the examples of substring matching:
+/// `-` and `*` ignorable collation units, every other character a unit
+/// compared by its code point.
+struct CollationA;
+
+impl CollationA {
+    /// `text` without what is ignorable.
+    fn kept(text: &str) -> String {
+        text.chars().filter(|c| !matches!(c, '-' | '*')).collect()
+    }
+}
+
+impl Collation for CollationA {
+    fn name(&self) -> &str {
+        COLLATION_A
+    }
+
+    fn version(&self) -> &'static str {
+        "1"
+    }
+
+    fn sort_key(&self, text: &str, _: Pad, out: &mut Vec<u8>) {
+        out.extend_from_slice(Self::kept(text).as_bytes());
+    }
+
+    fn fold(&self, _: char) -> Option<char> {
+        None
+    }
+
+    fn weighs(&self, c: char) -> bool {
+        !matches!(c, '-' | '*')
+    }
+
+    fn level_weights(&self, text: &str, level: usize, out: &mut Vec<u8>) {
+        if level == 1 {
+            out.extend_from_slice(Self::kept(text).as_bytes());
+        }
+    }
+
+    fn units(&self, text: &str) -> Option<Vec<Unit>> {
+        Some(text.chars().enumerate().map(|(start, c)| Unit { start, weights: vec![Self::kept(&c.to_string()).into_bytes()] }).collect())
+    }
+}
+
+/// A collation that compares strings by code points but does not say how
+/// to split them into collation units [XQueryFO §7.5].
+struct Unsplit;
+
+impl Collation for Unsplit {
+    fn name(&self) -> &str {
+        UNSPLIT
+    }
+
+    fn version(&self) -> &'static str {
+        "1"
+    }
+
+    fn sort_key(&self, text: &str, _: Pad, out: &mut Vec<u8>) {
+        out.extend_from_slice(text.as_bytes());
+    }
+
+    fn fold(&self, _: char) -> Option<char> {
+        None
+    }
+
+    fn weighs(&self, _: char) -> bool {
+        true
+    }
+}
+
+/// The collations of a database (RULES.md D60), and the two above.
 pub(super) fn collations() -> Collations {
-    builtin().into_iter().map(|c| (c.name().to_owned(), c)).collect()
+    let mut all: Collations = builtin().into_iter().map(|c| (c.name().to_owned(), c)).collect();
+    all.insert(COLLATION_A.to_owned(), Arc::new(CollationA));
+    all.insert(UNSPLIT.to_owned(), Arc::new(Unsplit));
+    all
 }
 
 /// The current dateTime of the tests, 2026-11-17T10:30:00Z.

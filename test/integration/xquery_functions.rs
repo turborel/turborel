@@ -265,9 +265,9 @@ fn strings_mapped_xqueryfo_7_4() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2, GR3] [XQueryFO §7.5]
-/// substring matching by the code point collation and by one that
-/// compares a character at a time; a collation of no collation units
-/// err:FOCH0004.
+/// substring matching by the code point collation, by one that compares a
+/// character at a time, and by `UNICODE` and a tailoring, whose units are
+/// a character and its marks, or a contraction.
 #[test]
 fn substring_matching_xqueryfo_7_5() {
     let a = orders();
@@ -284,9 +284,16 @@ fn substring_matching_xqueryfo_7_5() {
                 "contains(\"Pen\", \"PEN\", \"urn:turborel:collation:CASE_INSENSITIVE\"), substring-before(\"aXbXc\", \"x\", \"urn:turborel:collation:CASE_INSENSITIVE\")",
                 "true a",
             ),
+            (
+                "contains(\"re&#x301;sume&#x301;\", \"&#xE9;s\", \"urn:turborel:collation:UNICODE\"), contains(\"e&#x301;\", \"e\", \"urn:turborel:collation:UNICODE\")",
+                "true false",
+            ),
+            (
+                "declare default collation \"urn:turborel:collation:UNICODE_CS\"; contains(\"chata\", \"c\"), substring-after(\"ochota\", \"ch\")",
+                "false ota",
+            ),
         ],
     );
-    assert_eq!(code(&a, "contains(\"a\", \"a\", \"urn:turborel:collation:UNICODE\")"), "FOCH0004");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2, GR3] [XQueryFO §7.6]

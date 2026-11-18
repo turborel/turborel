@@ -402,6 +402,9 @@ A collation also gives a string's weights one level at a time
 or reordering spans the cut (`safe_cut`). Equality of character large
 objects under a collation compares them so, a chunk at a time, never
 making a sort key of a whole value (`value/collation/streaming.rs`, D79).
+A collation splits a string into collation units too (`units`), each
+weighed at each level as the whole string weighs it, for XQuery's
+substring matching (D106).
 
 UNICODE_<LOCALE> [EXTENSION] is UNICODE tailored by CLDR 38's rules, one for
 each collation type of each locale but those for search. UNICODE_SV puts `å`,
@@ -4071,18 +4074,30 @@ cancelled at each value (D44).
 A collation is one of the evaluation's (`xquery::Collator`), named by
 the code point collation's URI or by `urn:turborel:collation:` and the
 name of a collation of D60; strings compare by sort keys with no
-padding, and substring matching is by characters, of the code point
-collation and of the collations of one character at a time, others
-splitting no string into units. Normalization and full case mapping
-read a table of Unicode 13.0, the version of the collations and regular
-expressions, which `cargo xtask unicode` makes
-(`xquery/library/unicode13.bin`); Hangul syllables are composed by
-arithmetic. The fully normalized form [XML 1.1 Appendix B] of a string,
-its one relevant construct, is its NFC, and a string whose NFC begins
-with a composing character has none (err:FOCH0003); the composing
-characters are read from the same table, the marks by their class and
-the others as second in a primary composite's pair. fn:matches, fn:replace and fn:tokenize use D61's matcher in
-XQuery 1.0's dialect.
+padding. Substring matching is by collation units
+(`Collation::units`): characters, of the code point collation and of
+the collations of one character at a time; of UNICODE and its
+tailorings each character their steps begin at whose normalized form
+begins with a starter, and what follows it up to the next, so a
+contraction, or a character and its marks, is one unit. A unit is
+weighed at every level as the whole string weighs it, each collation
+element's weights its unit's, so the units' weights, joined, are the
+string's and a match never depends on where the string is cut. A
+minimal match is a run of the text's units whose weights at each level,
+joined, are the sought string's, from a unit of some weight to another,
+found unit by unit, each level's weights so far a beginning of the
+sought's; a unit of no weight at any level is ignorable.
+
+Normalization and full case mapping read a table of Unicode 13.0, the
+version of the collations and regular expressions, which `cargo xtask
+unicode` makes (`xquery/library/unicode13.bin`); Hangul syllables are
+composed by arithmetic. The fully normalized form [XML 1.1 Appendix B]
+of a string, its one relevant construct, is its NFC, and a string whose
+NFC begins with a composing character has none (err:FOCH0003); the
+composing characters are read from the same table, the marks by their
+class and the others as second in a primary composite's pair.
+fn:matches, fn:replace and fn:tokenize use D61's matcher in XQuery
+1.0's dialect.
 
 A date or time of no time zone is compared and subtracted in the
 implicit time zone; the current dateTime is the statement's instant

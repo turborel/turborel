@@ -811,20 +811,31 @@ another collation or a function is given one. A collation of the
 database is the URI `urn:turborel:collation:` then its name, as
 `urn:turborel:collation:UNICODE`; another fails with `err:FOCH0002`.
 `fn:contains`, `fn:starts-with`, `fn:ends-with`, `fn:substring-before`
-and `fn:substring-after` match by a collation that compares one
-character at a time, as `CASE_INSENSITIVE` does; `UNICODE` and its
-tailorings fail with `err:FOCH0004`.
+and `fn:substring-after` match by the collation's collation units. Of
+the code point collation, and of one that compares one character at a
+time as `CASE_INSENSITIVE` does, each character is a unit. Of `UNICODE`
+and its tailorings a unit is a character and the marks after it, or a
+contraction, as `ch` is in `UNICODE_CS`, so a match never splits one: a
+precomposed `é` matches `e` and a combining acute accent, and `c` is
+not found in `chata` by `UNICODE_CS`. A unit matches another of the same
+weights at every level the collation compares, so `UNICODE` tells case
+and accents apart. A match is minimal: it begins and ends at a unit of
+some weight, so a character ignored at every level, as a control
+character is, is left outside it.
 
 ```sql
 SELECT XMLCAST(XMLQUERY('compare("pen", "PEN", "urn:turborel:collation:CASE_INSENSITIVE")' NULL ON EMPTY) AS INTEGER), XMLCAST(XMLQUERY('contains("Pen and Ink", "INK", "urn:turborel:collation:CASE_INSENSITIVE")' NULL ON EMPTY) AS BOOLEAN) FROM ORDERS2 WHERE ID = 1;
-SELECT XMLQUERY('declare default collation "urn:turborel:collation:UNICODE"; contains("a", "a")' NULL ON EMPTY) FROM ORDERS2 WHERE ID = 1;
+SELECT XMLCAST(XMLQUERY('contains("re&#x301;sume&#x301;", "&#xE9;s", "urn:turborel:collation:UNICODE")' NULL ON EMPTY) AS BOOLEAN), XMLCAST(XMLQUERY('declare default collation "urn:turborel:collation:UNICODE_CS"; concat(contains("chata", "c"), " ", substring-after("ochota", "ch"))' NULL ON EMPTY) AS VARCHAR(20)) FROM ORDERS2 WHERE ID = 1;
 ```
 ```
               |
 --------------+-------
             0 | TRUE
 (1 row)
-turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:FOCH0004: the collation urn:turborel:collation:UNICODE does not split strings into collation units [XQueryFO §7.5] [ISO/IEC 9075-14:2006 draft §6.18 GR3]
+       |
+-------+----------------------
+ TRUE  | false ota
+(1 row)
 ```
 
 ## XML indexes
