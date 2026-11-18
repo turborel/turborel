@@ -204,7 +204,7 @@ impl Binder<'_> {
             }
             XmlTableColumn::Regular(c) => c,
         };
-        let (target, _) = self.db.resolve_type(&c.data_type, (self.schema, self.who()))?;
+        let (target, _) = super::resolved_type(&self.context(), &c.data_type, self.who())?;
         let input = (Expr::Column(0), DataType::Xml(DOCUMENT_CONTENT));
         let (content, cast) = match (&target, c.passing) {
             (DataType::Xml(XmlType::Sequence), passing) => {

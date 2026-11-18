@@ -1303,6 +1303,13 @@ XML(DOCUMENT(XMLSCHEMA ...)) or XML(CONTENT(XMLSCHEMA ...)) of what the
 clause names; without, of XML(DOCUMENT(ANY)) or XML(CONTENT(ANY)). Of
 XML(SEQUENCE), the result is of XML(SEQUENCE).
 
+A view, a CHECK, a domain's constraint, an assertion, a trigger or a
+routine that names a registered XML Schema, by XMLVALIDATE, IS VALID or a
+type of XMLSCHEMA, takes the one it named when it was created, even if
+another of the same target namespace and a lesser name is registered
+later, and depends on it: DROP XML SCHEMA RESTRICT is refused, and
+CASCADE drops it too.
+
 | SQLSTATE | When |
 |---|---|
 | 2200M | DOCUMENT of a value that is no document |

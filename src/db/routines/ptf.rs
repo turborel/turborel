@@ -201,7 +201,7 @@ impl State {
             invokes.push(r.specific.clone());
         }
         let grantable = self.execute_grantable((&owner, desc.module_name()), &[], &invokes);
-        Ok(BodyBound { reads: Vec::new(), invokes, sequences: Vec::new(), grantable, columns: Vec::new() })
+        Ok(BodyBound { reads: Vec::new(), invokes, indicates: Vec::new(), sequences: Vec::new(), grantable, columns: Vec::new() })
     }
 
     /// [ISO/IEC 9075-2:2023 §11.60 SR10j, SR10k, SR10l] That the PTF

@@ -10,7 +10,7 @@ use super::{Mutation, Package};
 
 /// Each mechanism of XML Schema structures broken alone, and the tests
 /// that fail.
-pub const XML_SCHEMA: [Mutation; 27] = [
+pub const XML_SCHEMA: [Mutation; 29] = [
     Mutation {
         name: "xml-schema-unique-particle-attribution",
         package: Package::Core,
@@ -281,10 +281,30 @@ pub const XML_SCHEMA: [Mutation; 27] = [
         name: "xml-schema-typed-dependents",
         package: Package::Core,
         breaks: "a column of a type of XMLSCHEMA keeps no registered XML Schema from being dropped",
-        file: "src/db/definitions/xml_schemas/dependents.rs",
-        original: "        DataType::Xml(x) => x.schema().is_some_and(|n| gone.iter().any(|g| g.auth == n.schema && g.ident == n.name)),",
-        replacement: "        DataType::Xml(_) => false,",
+        file: "src/catalog/xml_schemas.rs",
+        original: "                found.extend(named.filter(|n| !found.contains(n)));",
+        replacement: "                found.extend(named.filter(|_| false));",
         integration: &["xml_schema_types::what_is_of_an_xmlschema_type_keeps_its_schema"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-schema-definition-pinned",
+        package: Package::Core,
+        breaks: "a definition bound again takes the registered XML Schema a URI indicates now",
+        file: "src/catalog.rs",
+        original: "        if self.routines.is_some() { &self.xml_schemas } else { &[] }",
+        replacement: "        &[]",
+        integration: &["xml_schema_dependents::a_view_keeps_the_schema_it_named_4_2_6"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-schema-definition-dependents",
+        package: Package::Core,
+        breaks: "a definition that names a registered XML Schema does not depend on it",
+        file: "src/db/definitions/xml_schemas/dependents.rs",
+        original: "        let on = |h: &Horizon| h.xml_schemas.iter().any(|s| gone.contains(s));",
+        replacement: "        let on = |_: &Horizon| false;",
+        integration: &["xml_schema_dependents::definitions_depend_on_what_they_name_4_2_6"],
         unit: &[],
     },
 ];

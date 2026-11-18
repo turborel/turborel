@@ -214,7 +214,7 @@ impl ProgramBinder<'_> {
         label: Option<&str>,
         (out, scope): (&mut Vec<Declared>, &mut RoutineScope),
     ) -> Result<()> {
-        let (data_type, domain) = self.cx.db.resolve_type(&v.data_type, (self.cx.schema, self.cx.user.cell))?;
+        let (data_type, domain) = super::xml::resolved_type(&self.cx, &v.data_type, self.cx.user.cell)?;
         let at = v.names.first().map_or(0, |n| n.at);
         let initial = match (v.default.as_ref(), domain.and_then(|d| d.default.clone())) {
             (None, Some(d)) => self.domain_initial(&d, &data_type, at)?,

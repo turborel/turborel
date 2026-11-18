@@ -41,6 +41,9 @@ pub(in crate::db) struct BodyBound {
     pub(in crate::db) reads: Vec<QualifiedName>,
     /// The specific names of the routines it invokes.
     pub(in crate::db) invokes: Vec<QualifiedName>,
+    /// [ISO/IEC 9075-14:2006 draft §4.2.6] The registered XML Schemas it
+    /// indicates.
+    pub(in crate::db) indicates: Vec<QualifiedName>,
     /// The sequence generators it draws from, each once.
     pub(in crate::db) sequences: Vec<QualifiedName>,
     /// Whether its owner's EXECUTE on the routine is grantable [GR1].
@@ -162,7 +165,7 @@ impl State {
         let stmt = sql_statement(definition)?;
         allowed(desc, stmt)?;
         let owner = owner_of(&*self.catalog, &desc.name.auth).to_owned();
-        let (uses, invoked, drawn): (Uses, Invoked, DrawnFrom) = (Uses::default(), RefCell::new(Vec::new()), RefCell::new(Vec::new()));
+        let (uses, invoked, drawn): (Uses, Invoked, DrawnFrom) = (Uses::default(), Invoked::default(), RefCell::new(Vec::new()));
         let scope = RoutineScope::of(desc, routine_path(&*self.catalog, desc));
         let params = Params::of_routine(vec![Value::Null; desc.parameters.len()], Arc::new(scope));
         let cx = Context {
@@ -187,6 +190,7 @@ impl State {
             self.bind_triggered(cx, stmt, (&owner, &params))?;
         }
         let reads = named(std::slice::from_ref(stmt), None, (&desc.schema, &TransitionNames::default()));
+        let indicates = invoked.take_xml_schemas();
         let invocations = invoked.into_inner();
         for r in invocations.iter().filter_map(|s| self.catalog.routine(s)) {
             access = if rank(r.access) > rank(access) { r.access } else { access };
@@ -200,7 +204,7 @@ impl State {
         sequences.sort();
         sequences.dedup();
         let columns = once_each(uses.into_inner());
-        Ok(BodyBound { reads, invokes: invocations, sequences, grantable, columns })
+        Ok(BodyBound { reads, invokes: invocations, indicates, sequences, grantable, columns })
     }
 
     /// The columns of tables and views the body of the routine `r`

@@ -157,11 +157,7 @@ features.
   types, XMLVALIDATE and IS VALID are done (`src/xml/schema.rs`,
   `db/definitions/xml_schemas.rs`, `binder/xml/valid.rs`). Left: GRANT
   and REVOKE of USAGE on a registered XML Schema, which
-  `catalog::xml_schemas::may_use` is to check; the views, constraints,
-  assertions, triggers and routines whose text names a registered XML
-  Schema through XMLVALIDATE, IS VALID or a type of XMLSCHEMA, bound to
-  the one it named as it was created [ISO/IEC 9075-14:2006 draft §4.2.6]
-  and found as its dependents (`State::xml_schema_dependents`); and the
+  `catalog::xml_schemas::may_use` is to check; and the
   components of the permanently registered XML Schemas, so they validate
   (XS's the Schema for Schemas).
 

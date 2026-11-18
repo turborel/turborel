@@ -67,7 +67,7 @@ impl State {
     ///
     /// As `indicated`.
     pub(crate) fn xml_schema_type(&self, syntax: Syntax, according: &XmlValidAccording, (schema, who): (&str, Who<'_>)) -> Result<XmlType> {
-        let typing = Typing::Schema(Arc::new(self.indicated(according, (schema, who), &[])?.named()));
+        let typing = Typing::Schema(Arc::new(self.indicated(according, (schema, who))?.named()));
         Ok(match syntax {
             Syntax::Document => XmlType::Document(typing),
             Syntax::Content => XmlType::Content(typing),
@@ -76,9 +76,9 @@ impl State {
 
     /// [§11.6] What `according` indicates, its `<registered XML Schema
     /// name>` in schema `schema` if it names none, for the cell `who`, as
-    /// AR1 says which: of a definition bound again, `pins`, the registered
-    /// XML Schemas it indicated as it was created [§4.2.6], the only ones a
-    /// URI may indicate; none of a statement, of which any may be.
+    /// AR1 says which. Of a definition bound again, its URI was made the
+    /// ID of the one it indicated as it was created [§4.2.6]
+    /// (`binder/xml/pinned.rs`).
     ///
     /// # Errors
     ///
@@ -86,15 +86,10 @@ impl State {
     /// -104 if `who` may not use it \[AR1\]; -900 if it is permanently
     /// registered; SQLSTATE 2201M if it has no namespace ENSURI, 2201N no
     /// global element declaration EN [SR4b, SR4d iii, GR1].
-    pub(crate) fn indicated(
-        &self,
-        according: &XmlValidAccording,
-        (schema, who): (&str, Who<'_>),
-        pins: &[QualifiedName],
-    ) -> Result<Indicated> {
+    pub(crate) fn indicated(&self, according: &XmlValidAccording, (schema, who): (&str, Who<'_>)) -> Result<Indicated> {
         let name = match &according.what {
             XmlValidWhat::Id(written) => qualify(written, schema),
-            XmlValidWhat::Uri { namespace, location } => self.of_namespace((namespace, location.as_deref()), who, pins)?,
+            XmlValidWhat::Uri { namespace, location } => self.of_namespace((namespace, location.as_deref()), who)?,
         };
         may_use(&*self.catalog, &name, who)?;
         if permanent(&name).is_some() {
@@ -115,14 +110,13 @@ impl State {
     /// [§11.6 SR2b ii] The registered XML Schema of target namespace
     /// `namespace`, and of schema location `location` if written, that
     /// `who` may use, of the least name, the permanently registered last;
-    /// of `pins`, if there are any.
-    fn of_namespace(&self, (namespace, location): (&str, Option<&str>), who: Who<'_>, pins: &[QualifiedName]) -> Result<QualifiedName> {
+    fn of_namespace(&self, (namespace, location): (&str, Option<&str>), who: Who<'_>) -> Result<QualifiedName> {
         let of = |target: &str, at: &str| target == namespace && location.is_none_or(|l| l == at);
         let catalog = &*self.catalog;
         let mut found: Vec<QualifiedName> = catalog
             .xml_schemas()
             .into_iter()
-            .filter(|d| of(&d.target_namespace, &d.location) && (pins.is_empty() || pins.contains(&d.name)))
+            .filter(|d| of(&d.target_namespace, &d.location))
             .filter(|d| may_use(catalog, &d.name, who).is_ok())
             .map(|d| d.name.clone())
             .collect();
@@ -131,7 +125,7 @@ impl State {
             .iter()
             .filter(|p| of(p.target_namespace, p.location))
             .map(crate::catalog::xml_schemas::Permanent::qualified);
-        found.extend(lasting.filter(|q| pins.is_empty() || pins.contains(q)));
+        found.extend(lasting);
         found.into_iter().next().ok_or_else(|| {
             let at = location.map(|l| format!(" and schema location '{l}'")).unwrap_or_default();
             SqlError::new(

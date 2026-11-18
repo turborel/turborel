@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use super::super::predicates::negated;
 use super::super::{Binder, Scope, rule};
+use super::pinned::pinned_according;
 use crate::ast::{Dcs, RowValue, ValueExpression, XmlValidAccording};
 use crate::catalog::QualifiedName;
 use crate::catalog::xml_schemas::{PERMANENT, may_use};
@@ -96,7 +97,13 @@ impl Binder<'_> {
     /// includes of the one indicated, if one is.
     fn valid_by(&self, according: Option<&XmlValidAccording>) -> Result<(ValidBy, Option<XmlSchemaNamed>)> {
         let Some(according) = according else { return Ok((ValidBy::Namespaces(self.candidates()), None)) };
-        let indicated = self.db.indicated(according, (self.schema, self.who()), &[]).or_at(according.at)?;
+        // [ISO/IEC 9075-14:2006 draft §4.2.6] Of a definition bound again,
+        // the one it indicated as it was created; noted, for one created.
+        let pinned = pinned_according(according, self.horizon.pins(), &*self.db.catalog);
+        let indicated = self.db.indicated(&pinned, (self.schema, self.who())).or_at(according.at)?;
+        if let Some(noted) = self.invoked {
+            noted.indicated(&indicated.name);
+        }
         let named = indicated.named();
         let by = According {
             name: indicated.name.to_string(),

@@ -80,7 +80,7 @@ impl State {
         let reads = plan.tables();
         // The columns it sees of each: those of now, as a CHECK's; and
         // [ISO/IEC 9075-2:2023 §4.35.2] its subject routines from now on.
-        let seen = Horizon::of(&*self.catalog, &reads).invoking(invoked.take());
+        let seen = Horizon::of(&*self.catalog, &reads).invoking(invoked.take()).indicating(invoked.take_xml_schemas());
         // [SR5] no temporary table.
         if let Some(t) = reads.iter().find(|t| self.catalog.table(t).is_some_and(|d| d.temporary.is_some())) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.34 SR5] assertion {name} reads {t}, a temporary table")));

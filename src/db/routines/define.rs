@@ -107,7 +107,7 @@ impl State {
             },
         };
         let bound = self.bind_routine_body(&desc, r)?;
-        desc.horizon = Horizon::of(&*self.catalog, &bound.reads).invoking(bound.invokes);
+        desc.horizon = Horizon::of(&*self.catalog, &bound.reads).invoking(bound.invokes).indicating(bound.indicates);
         (desc.reads, desc.sequences) = (bound.reads, bound.sequences);
         // [ISO/IEC 9075-4:2006 draft §9.21 GR2] of a module's, the
         // privilege is on the module.

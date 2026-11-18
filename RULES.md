@@ -3228,11 +3228,21 @@ named; CASCADE drops the registered XML Schemas that use it, directly or
 through others, and whatever names them. One function,
 `State::xml_schema_dependents`, finds what depends on a registered XML
 Schema, of the schemas a caller names: the routines of a parameter or
-result of a type of XMLSCHEMA of one, and what invokes them, which
-CASCADE drops; and the tables, domains and user-defined types of a
-column or type of one, and a table of a generated column that invokes
-such a routine, which refuse even CASCADE, as no drop changes a column's
-values. DROP SCHEMA CASCADE drops the schema's registered XML Schemas
+result of a type of XMLSCHEMA of one, the views, CHECKs, domain
+constraints, assertions, triggers and routines that indicated one as
+they were defined, and what invokes such a routine, which CASCADE drops;
+and the tables, domains and user-defined types of a column or type of
+one, and a table of a generated column that names one or invokes such a
+routine, which refuse even CASCADE, as no drop changes a column's
+values. A definition binds the registered XML Schemas its `<XML valid
+according to what>`s indicate as it is created [§4.2.6]: the binder
+notes each where it notes the routines invoked (`binder::Invoked`), the
+definition's horizon keeps them (`catalog::Horizon::xml_schemas`, in the
+catalog as the rest of the horizon is), which is how its dependents are
+found, with no binding again; and a URI of a definition bound again is
+made the ID of the one kept of its namespace (`binder/xml/pinned.rs`), so
+one of a lesser name, or one its owner may use later, never takes its
+place. DROP SCHEMA CASCADE drops the schema's registered XML Schemas
 as DROP XML SCHEMA CASCADE does.
 
 The statement is logged as its text with the document written in as a

@@ -173,7 +173,7 @@ impl State {
         }
         let gone: Vec<QualifiedName> = std::iter::once(qn.clone()).chain(schemas.iter().cloned()).collect();
         let mut typed = self.typed_by_xml_schemas(&gone, within);
-        let mut abandoned = self.routines_typed_by_xml_schemas(&gone, within);
+        let mut abandoned = self.naming_xml_schemas(&gone, within);
         // A generated column is no definition a drop takes away alone: its
         // table keeps it, as it keeps a column of such a type.
         let generated = std::mem::take(&mut abandoned.columns).into_iter().map(|(table, _)| table);

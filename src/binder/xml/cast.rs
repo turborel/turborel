@@ -97,7 +97,7 @@ impl Binder<'_> {
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
         // [SR3, SR13, AR3] a domain's data type, USAGE on it held.
-        let (target, _) = self.db.resolve_type(named, (self.schema, self.who()))?;
+        let (target, _) = super::resolved_type(&self.context(), named, self.who())?;
         if unmappable(&target) {
             return Err(rule(format!("[ISO/IEC 9075-14:2006 draft §6.6 SR5] XMLCAST casts to no value of {target}")));
         }

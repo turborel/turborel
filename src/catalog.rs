@@ -166,17 +166,21 @@ pub struct Horizon {
     /// none of a statement, whose invocations are of the routines there
     /// are as it is bound.
     pub routines: Option<Vec<QualifiedName>>,
+    /// [ISO/IEC 9075-14:2006 draft §4.2.6] The registered XML Schemas its
+    /// `<XML valid according to what>`s indicated as it was defined, the
+    /// ones they indicate whenever it is bound again; each once, in order.
+    pub xml_schemas: Vec<QualifiedName>,
 }
 
 /// No horizon at all: every table seen whole, every routine there is a
 /// candidate.
-pub static WHOLE: Horizon = Horizon { widths: Vec::new(), routines: None };
+pub static WHOLE: Horizon = Horizon { widths: Vec::new(), routines: None, xml_schemas: Vec::new() };
 
 impl Horizon {
     /// The degree of each base table of `tables` in `catalog` now.
     pub fn of(catalog: &dyn Catalog, tables: &[QualifiedName]) -> Horizon {
         let widths = tables.iter().filter_map(|t| catalog.table(t).map(|d| (t.clone(), d.columns.len()))).collect();
-        Horizon { widths, routines: None }
+        Horizon { widths, routines: None, xml_schemas: Vec::new() }
     }
 
     /// It with `invoked`, the specific names of the routines its definition
@@ -189,9 +193,27 @@ impl Horizon {
         self
     }
 
+    /// It with `indicated`, the registered XML Schemas its definition's
+    /// `<XML valid according to what>`s indicate, once each [ISO/IEC
+    /// 9075-14:2006 draft §4.2.6].
+    #[must_use]
+    pub fn indicating(mut self, mut indicated: Vec<QualifiedName>) -> Horizon {
+        indicated.sort();
+        indicated.dedup();
+        self.xml_schemas = indicated;
+        self
+    }
+
     /// The subject routines of its invocations; none of a statement's.
     pub fn subjects(&self) -> Option<&[QualifiedName]> {
         self.routines.as_deref()
+    }
+
+    /// [ISO/IEC 9075-14:2006 draft §4.2.6] The registered XML Schemas a URI
+    /// may indicate as it is bound: of a definition's, the ones indicated
+    /// as it was defined; none of a statement's, of which any may be.
+    pub fn pins(&self) -> &[QualifiedName] {
+        if self.routines.is_some() { &self.xml_schemas } else { &[] }
     }
 
     /// How many columns of `table` are seen, if not all.
@@ -204,7 +226,7 @@ impl Horizon {
     #[must_use]
     pub fn without(&self, table: &QualifiedName, at: usize) -> Horizon {
         let widths = self.widths.iter().map(|(t, w)| (t.clone(), if t == table && at < *w { w.saturating_sub(1) } else { *w })).collect();
-        Horizon { widths, routines: self.routines.clone() }
+        Horizon { widths, routines: self.routines.clone(), xml_schemas: self.xml_schemas.clone() }
     }
 }
 

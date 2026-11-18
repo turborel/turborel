@@ -465,7 +465,7 @@ impl Binder<'_> {
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
         // [§6.10 SR1, AR1] a domain's data type, if USAGE on it is held.
-        let (target, domain) = self.db.resolve_type(named, (self.schema, self.who()))?;
+        let (target, domain) = super::xml::resolved_type(&self.context(), named, self.who())?;
         let (e, t) = match (format, passing) {
             (Some(template), _) => self.formatted(operand, target, template, scope)?,
             (None, Some(passing)) => self.xml_cast_passing(operand, target, passing, scope)?,

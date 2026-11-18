@@ -19,7 +19,6 @@
 //! program of its own bound as the owner of the procedure's schema binds
 //! it [ISO/IEC 9075-4:2006 draft §11.2].
 
-use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -150,7 +149,7 @@ pub fn bind_function_body(cx: Context<'_>, desc: &SqlRoutineDesc, definition: &R
 /// which marks where the routines a body invokes begin. None if it has
 /// none, as a statement's own list has not.
 pub(super) fn chain_of(invoked: Option<&Invoked>) -> Vec<QualifiedName> {
-    let Some(list) = invoked.map(RefCell::borrow) else { return Vec::new() };
+    let Some(list) = invoked.map(Invoked::borrow) else { return Vec::new() };
     let end = list.iter().position(|q| q.auth.is_empty()).unwrap_or(0);
     list.get(..end).unwrap_or_default().to_vec()
 }
@@ -211,7 +210,8 @@ fn inline_frame(desc: &SqlRoutineDesc, path: Vec<String>) -> Frame {
 
 /// `f` of the context the body of `desc` is bound in, within the bodies of
 /// the routines of `chain`, as the owner of its schema binds it; with the
-/// specific names of the routines the body invokes.
+/// specific names of the routines the body invokes; the registered XML
+/// Schemas it indicates noted where `cx` notes them.
 fn within_body<T>(
     cx: Context<'_>,
     desc: &SqlRoutineDesc,
@@ -229,7 +229,7 @@ fn within_body<T>(
     let depth = chain.len();
     // The entry of no schema that ends the chain (`chain_of`).
     chain.push(QualifiedName { auth: String::new(), ident: String::new() });
-    let noted: Invoked = RefCell::new(chain);
+    let noted = Invoked::new(chain);
     let params = Params::new().with_path(routine_path(&*cx.db.catalog, desc));
     let owner = owner_of(&*cx.db.catalog, &desc.name.auth);
     let body_cx = Context {
@@ -254,6 +254,11 @@ fn within_body<T>(
         ..cx
     };
     let done = f(body_cx)?;
+    // [ISO/IEC 9075-14:2006 draft §4.2.6] The registered XML Schemas the
+    // body indicates are its definition's, as it is bound with them.
+    if let Some(outer) = cx.invoked {
+        noted.take_xml_schemas().iter().for_each(|name| outer.indicated(name));
+    }
     let invoked = noted.into_inner().split_off(depth.saturating_add(1));
     Ok((done, invoked))
 }

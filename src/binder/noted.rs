@@ -1,10 +1,11 @@
 //! What a binding notes of what it references, where its `Context` says:
 //! the columns of named tables and views [ISO/IEC 9075:1992 §21.3.12,
 //! §21.3.18], those of each select list item, the subject routines it
-//! invokes [ISO/IEC 9075-2:2023 §4.35.2], and the sequence generators it
-//! draws from [§11.74 SR3], each for a definition to keep.
+//! invokes [ISO/IEC 9075-2:2023 §4.35.2] and the registered XML Schemas it
+//! indicates [ISO/IEC 9075-14:2006 draft §4.2.6], and the sequence
+//! generators it draws from [§11.74 SR3], each for a definition to keep.
 
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell, RefMut};
 
 use crate::catalog::QualifiedName;
 
@@ -16,8 +17,57 @@ pub type Uses = RefCell<Vec<(QualifiedName, String)>>;
 /// them, its subqueries' too.
 pub type Selected = RefCell<Vec<Vec<(QualifiedName, String)>>>;
 
-/// The specific names of the SQL-invoked routines a statement invokes.
-pub type Invoked = RefCell<Vec<QualifiedName>>;
+/// The specific names of the SQL-invoked routines a statement invokes; and
+/// the registered XML Schemas its `<XML valid according to what>`s and
+/// types of XMLSCHEMA indicate [ISO/IEC 9075-14:2006 draft §4.2.6], which a
+/// definition binds as it is created, as it does its subject routines.
+#[derive(Debug, Default)]
+pub struct Invoked {
+    /// The routines' specific names, in the order invoked, once or more.
+    routines: RefCell<Vec<QualifiedName>>,
+    /// The registered XML Schemas' names, once or more.
+    xml_schemas: RefCell<Vec<QualifiedName>>,
+}
+
+impl Invoked {
+    /// Of the routines `routines` noted already, and no registered XML
+    /// Schema.
+    #[must_use]
+    pub fn new(routines: Vec<QualifiedName>) -> Invoked {
+        Invoked { routines: RefCell::new(routines), xml_schemas: RefCell::default() }
+    }
+
+    /// The routines noted.
+    pub fn borrow(&self) -> Ref<'_, Vec<QualifiedName>> {
+        self.routines.borrow()
+    }
+
+    /// The routines noted, to note more.
+    pub fn borrow_mut(&self) -> RefMut<'_, Vec<QualifiedName>> {
+        self.routines.borrow_mut()
+    }
+
+    /// The routines noted, taken.
+    pub fn take(&self) -> Vec<QualifiedName> {
+        self.routines.take()
+    }
+
+    /// The routines noted.
+    #[must_use]
+    pub fn into_inner(self) -> Vec<QualifiedName> {
+        self.routines.into_inner()
+    }
+
+    /// Notes the registered XML Schema `name` indicated.
+    pub fn indicated(&self, name: &QualifiedName) {
+        self.xml_schemas.borrow_mut().push(name.clone());
+    }
+
+    /// The registered XML Schemas noted, taken.
+    pub fn take_xml_schemas(&self) -> Vec<QualifiedName> {
+        self.xml_schemas.take()
+    }
+}
 
 /// [ISO/IEC 9075-2:2023 §6.14, §11.74 SR3] The names of the sequence
 /// generators a statement's NEXT VALUE FOR draws from, once or more.

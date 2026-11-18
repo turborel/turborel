@@ -22,9 +22,54 @@ use std::sync::Arc;
 
 use super::domains::{UsageDesc, usage_held};
 use super::{QualifiedName, Who};
+use crate::value::DataType;
+use crate::value::types::MAX_TYPE_NESTING;
 use crate::xml::schema::Schema;
 pub use permanent::{PERMANENT, Permanent, permanent};
 pub use privileges::may_use;
+
+/// [ISO/IEC 9075-14:2006 draft §4.2.2, §6.1 GR1d] The registered XML
+/// Schemas the types of XMLSCHEMA `t` is or holds indicate: itself, an
+/// element, a field or a distinct type's source, no deeper than types
+/// nest; each once, in the order met.
+#[must_use]
+pub fn xml_schemas_of(t: &DataType) -> Vec<QualifiedName> {
+    let mut found = Vec::new();
+    let mut pending: Vec<(&DataType, usize)> = vec![(t, 0)];
+    while let Some((part, depth)) = pending.pop() {
+        let deeper = depth.saturating_add(1);
+        if deeper > MAX_TYPE_NESTING.saturating_add(1) {
+            continue;
+        }
+        match part {
+            DataType::Xml(x) => {
+                let named = x.schema().map(|n| QualifiedName { auth: n.schema.clone(), ident: n.name.clone() });
+                found.extend(named.filter(|n| !found.contains(n)));
+            }
+            DataType::Array(a) => pending.push((&a.element, deeper)),
+            DataType::Multiset(m) => pending.push((&m.element, deeper)),
+            DataType::Row(r) => pending.extend(r.fields.iter().map(|f| (&f.data_type, deeper))),
+            DataType::Distinct(d) => pending.push((&d.source, deeper)),
+            DataType::Character { .. }
+            | DataType::Varying { .. }
+            | DataType::Exact { .. }
+            | DataType::Approximate { .. }
+            | DataType::DecFloat { .. }
+            | DataType::Binary { .. }
+            | DataType::VarBinary { .. }
+            | DataType::Lob { .. }
+            | DataType::Boolean
+            | DataType::Date
+            | DataType::Time { .. }
+            | DataType::Timestamp { .. }
+            | DataType::Interval(_)
+            | DataType::Structured(_)
+            | DataType::Reference(_)
+            | DataType::Extension(_) => {}
+        }
+    }
+    found
+}
 
 /// [ISO/IEC 9075-14:2006 draft §4.2.6] A registered XML Schema descriptor.
 #[derive(Clone)]
