@@ -95,6 +95,12 @@ impl Parser {
     /// [ISO/IEC 9075-2:2023 §7.13] A `<grouping column reference>` ::=
     /// `<column reference>` \[`<collate clause>`\].
     pub(super) fn grouping_column(&mut self) -> Result<GroupingColumn> {
-        Ok(GroupingColumn { column: self.column_specification()?, collate: self.collate_clause()? })
+        // [GS §10.3] Of a PGQL query, a variable's property is a column of
+        // the match.
+        let column = match self.compat_column()? {
+            Some(column) => column,
+            None => self.column_specification()?,
+        };
+        Ok(GroupingColumn { column, collate: self.collate_clause()? })
     }
 }

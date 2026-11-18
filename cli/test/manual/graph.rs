@@ -45,3 +45,13 @@ fn the_graph_table_examples_run_as_printed() {
     let mut ann = Client::of(&db, "ANN");
     assert!(ann.page("data/05-graphs.md") > 0, "the guide shows its examples' output");
 }
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8: the chapter of the graph
+/// compatibility syntax runs as printed, as ANN.
+#[test]
+fn the_graph_compatibility_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("sql/18-graph-compatibility.md") > 0, "the chapter shows its examples' output");
+}

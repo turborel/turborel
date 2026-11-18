@@ -67,6 +67,13 @@ impl Parser {
     /// clause>`\] `<query expression body>` \[`<order by clause>`\]
     /// \[`<result offset clause>`\] \[`<fetch first clause>`\]
     pub(super) fn query_expression(&mut self) -> Result<QueryExpression> {
+        // [GS §10.3] PGQL and Cypher queries.
+        if let Some(from) = self.pgql_from() {
+            return self.pgql_query(from);
+        }
+        if self.at_cypher() {
+            return self.cypher_query();
+        }
         if self.is_kw(kw::WITH) {
             return self.nested(Self::with_clause);
         }
@@ -294,6 +301,11 @@ impl Parser {
 
     /// [X3.135-1986 §5.25] `<query specification>` ::= SELECT \[ALL | DISTINCT\] `<select list>` `<table expression>`
     pub(super) fn query_specification(&mut self) -> Result<QuerySpecification> {
+        self.framed_specification(Self::plain_specification)
+    }
+
+    /// A `<query specification>`, read as its Format is.
+    fn plain_specification(&mut self) -> Result<QuerySpecification> {
         self.expect_kw(kw::SELECT)?;
         let distinct = if self.accept_kw(kw::DISTINCT) {
             true
@@ -531,7 +543,11 @@ impl Parser {
         // [ISO/IEC 9075-2:2023 §7.6] <query system time period
         // specification>, of a <table or query name>.
         let system_time = if only { None } else { self.system_time_read()? };
+        let path = self.for_path();
         let correlation = self.correlation()?;
+        if path {
+            self.path_table(&table, correlation.as_ref())?;
+        }
         let columns = if correlation.is_some() { self.derived_columns()? } else { None };
         self.recognized(TableReference::Table(NamedTable { table, only, correlation, columns, system_time }))
     }

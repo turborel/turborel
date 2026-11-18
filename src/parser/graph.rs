@@ -11,6 +11,7 @@
 //! (`graph/syntax.rs`); `graph/normalize.rs` gives the pattern's normal
 //! form the binder and the path search compiler start from.
 
+mod compat;
 mod element;
 mod expression;
 mod normalize;
@@ -20,6 +21,9 @@ mod syntax;
 #[cfg(test)]
 mod tests;
 
+pub(in crate::parser) use compat::Frame;
+use compat::checked_hints;
+pub use compat::{LAST_NODE_PREFIX, MATCH_TABLE, checked_graph_table, element_key};
 pub use normalize::normalize;
 use syntax::check;
 pub use syntax::{Declared, Degree, Exposed, Exposure, exposure};
@@ -93,11 +97,13 @@ impl Parser {
             table.system_time = Some(as_of);
         }
         check(&table)?;
+        checked_hints(&table)?;
         Ok(TableReference::Graph(Box::new(table)))
     }
 
     /// What GRAPH_TABLE's parentheses hold, and the right one.
     fn graph_table_body(&mut self, at: usize) -> Result<GraphTable> {
+        let hints = self.graph_hints()?;
         let graph = self.graph_reference()?;
         self.expect_kw(kw::MATCH)?;
         let pattern = self.graph_pattern()?;
@@ -106,7 +112,7 @@ impl Parser {
         let columns = self.graph_columns()?;
         let options = self.graph_limits()?;
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(GraphTable { graph, pattern, rows, columns, correlation: None, system_time: None, options, at })
+        Ok(GraphTable { graph, pattern, rows, columns, correlation: None, system_time: None, options, hints, at })
     }
 
     /// \[EXTENSION\] [GS §20] \[OPTIONS ( `<graph option>` \[, ...\] )\],

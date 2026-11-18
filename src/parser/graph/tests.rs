@@ -73,7 +73,7 @@ fn shaped(text: &str) -> String {
 /// `p` written back: each element pattern's parts, labels' operators in
 /// parentheses, each condition written `WHERE c` and each value `v`,
 /// edge patterns and quantifiers as written.
-fn shape(p: &GraphPattern) -> String {
+pub(super) fn shape(p: &GraphPattern) -> String {
     let mut out = String::new();
     match p.mode {
         Some(MatchMode::RepeatableElements) => out.push_str("REPEATABLE ELEMENTS "),

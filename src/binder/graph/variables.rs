@@ -16,15 +16,15 @@ use super::functions::label_holds;
 use super::grf;
 use super::scope::ScopeVar;
 use crate::ast::{GraphPattern, LabelExpression, PathExpression, PathPrimary, PathTerm};
-use crate::catalog::{ColumnDesc, QualifiedName, TableDesc};
+use crate::catalog::{ColumnDesc, EDGE_ID, NODE_ID, QualifiedName, TableDesc};
 use crate::error::Result;
 use crate::logical::{EDGE_COLUMNS, VERTEX_COLUMNS, identity_type};
 use crate::value::DataType;
 
 /// The names of the hidden columns of a vertex variable.
-const VERTEX_HIDDEN: [&str; VERTEX_COLUMNS] = ["$id", "$table"];
+const VERTEX_HIDDEN: [&str; VERTEX_COLUMNS] = [NODE_ID, "$table"];
 /// The names of the hidden columns of an edge variable.
-const EDGE_HIDDEN: [&str; EDGE_COLUMNS] = ["$id", "$table", "$source", "$destination", "$directed"];
+const EDGE_HIDDEN: [&str; EDGE_COLUMNS] = [EDGE_ID, "$table", "$source", "$destination", "$directed"];
 
 /// An element variable declared.
 pub(super) struct Declared {

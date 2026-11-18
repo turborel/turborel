@@ -247,6 +247,9 @@ pub enum Predicate {
     /// \[EXTENSION\] [P1 §4.7] A predicate of graph elements, which only
     /// a GRAPH_TABLE's conditions and columns may have.
     Graph(Box<super::GraphPredicate>),
+    /// \[EXTENSION\] [GS §10.1] MATCH ( `<graph search pattern>` ) over
+    /// the tables of the FROM clause, which only a WHERE clause may have.
+    GraphMatch(Box<super::MatchClause>),
     /// [ISO/IEC 9075-2:2023 §8.19] `<type predicate>` ::= `<row value
     /// predicand>` IS \[NOT\] OF ( `<type list>` )
     Type {

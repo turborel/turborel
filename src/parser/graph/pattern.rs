@@ -154,7 +154,7 @@ impl Parser {
     /// [P1 §4.2, §5.1] `<path pattern>` ::= \[`<path variable>` =\]
     /// \[`<path pattern prefix>`\] `<path pattern expression>`, the
     /// variable also after the prefix.
-    fn path_pattern(&mut self) -> Result<PathPattern> {
+    pub(super) fn path_pattern(&mut self) -> Result<PathPattern> {
         let at = self.here();
         let (variable, prefix) = self.variable_and_prefix()?;
         let expression = self.path_pattern_expression()?;

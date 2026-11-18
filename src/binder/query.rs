@@ -2,6 +2,8 @@
 //! HAVING and select list, bound and built into a plan in the order the
 //! General Rules give.
 
+mod graph_match;
+
 use std::cell::RefCell;
 
 use super::collation::{any_of, of_column};
@@ -17,6 +19,7 @@ use crate::db::State;
 use crate::error::{At, Result};
 use crate::logical::{Expr, LogicalPlan};
 use crate::value::collation::CollationRef;
+pub(super) use graph_match::misplaced as graph_match_misplaced;
 
 /// [X3.135-1986 §5.25] `<query specification>`, with the ORDER BY of its cursor if it is the
 /// whole `<query expression>`.
@@ -68,6 +71,10 @@ pub(super) fn bind_ordered(
     order_by: &[SortSpecification],
     nesting: &Nesting<'_>,
 ) -> Result<Ordered> {
+    // [GS §10.1] MATCH in the WHERE clause: the query of a GRAPH_TABLE.
+    if let Some(lowered) = graph_match::lowered(cx, spec)? {
+        return bind_ordered(cx, &lowered, order_by, nesting);
+    }
     let te = &spec.table_expression;
     let (outer, result) = match nesting {
         Nesting::Query | Nesting::Source { .. } => (None, None),

@@ -35,7 +35,7 @@ pub use fixpoint::Fixpoint;
 pub use graph::{
     CostShape, EDGE_COLUMNS, EdgeShape, ElementIdentity, ElementRead, ElementSource, EndShape, GraphMatch, GraphOptions, GraphValue,
     IDENTITY_LENGTH, IdentityJson, PathFunction, PathShape, PatternShape, Prefilter, RowsShape, TestShape, VERTEX_COLUMNS, VarShape,
-    identity_item, identity_text, identity_type,
+    element_text, identity_item, identity_text, identity_type,
 };
 pub use invoked::Invocation;
 pub use limit::{Fetch, Hints, Limit, Most, Search, SearchTarget, Strategy};

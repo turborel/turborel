@@ -25,6 +25,8 @@ pub struct GraphTable {
     pub system_time: Option<Box<SystemTimeRead>>,
     /// \[EXTENSION\] [GS §20] Its OPTIONS, the limits of its search.
     pub options: GraphLimits,
+    /// \[EXTENSION\] [GS R16.8] Its hints, none if none is written.
+    pub hints: Vec<super::GraphHint>,
     /// Where GRAPH_TABLE is written.
     pub at: usize,
 }

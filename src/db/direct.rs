@@ -33,8 +33,9 @@ impl Session {
         // \[EXTENSION\] CANCEL CONNECTION, whose CONNECTION, reserved, no
         // table's name is followed by, and TRUNCATE TABLE and MERGE INTO
         // [ISO/IEC 9075-2:2023 §14.10, §14.12] and INTO PROPERTY alike.
-        // \[EXTENSION\] EXPLAIN, no key word either, before a query.
-        if let (Some(Tok::Identifier(w)), Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE" | "WITH") | Tok::Delimiter("("))) =
+        // \[EXTENSION\] EXPLAIN, no key word either, before a query; and
+        // a Cypher query's MATCH [GS §10.3].
+        if let (Some(Tok::Identifier(w)), Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE" | "WITH" | "MATCH") | Tok::Delimiter("("))) =
             (first, second)
             && w == EXPLAIN
         {
@@ -49,7 +50,7 @@ impl Session {
         let property = crate::parser::graph_algo::begins_property_statement(tokens.iter().map(|t| &t.tok));
         let joined = (matches!(first, Some(Tok::Identifier(_) | Tok::Introducer(_))) && !cancel && !property)
             || matches!((first, second), (Some(Tok::KeyWord("MODULE")), Some(Tok::Delimiter("."))));
-        if joined || matches!(first, Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE" | "WITH") | Tok::Delimiter("("))) {
+        if joined || matches!(first, Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE" | "WITH" | "MATCH") | Tok::Delimiter("("))) {
             return self.open_cursor(sql).map(Direct::Rows);
         }
         if matches!((first, second), (Some(Tok::KeyWord("CREATE")), Some(Tok::KeyWord("SCHEMA")))) {

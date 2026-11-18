@@ -53,12 +53,29 @@ pub fn identity_text(alias: &str, key: &[Value]) -> Result<String> {
     serialize(&identity_item(alias, key))
 }
 
+/// The identity of the element of element table `alias` whose key is
+/// `key`, as its text; of a node or edge table's element, if `native`,
+/// its pseudo-column `$NODE_ID` or `$EDGE_ID`, its key, so a variable's
+/// `$NODE_ID` is its row's [GS §4.2, R5.1].
+///
+/// # Errors
+///
+/// SQLCODE -910 if it cannot be serialized.
+pub fn element_text(alias: &str, native: bool, key: &[Value]) -> Result<String> {
+    if let (true, [Value::Char(id)]) = (native, key) {
+        return Ok(id.clone());
+    }
+    identity_text(alias, key)
+}
+
 /// \[EXTENSION\] The identity of an element of one element table, of its
 /// key's values: called by no name, made by the binder alone.
 #[derive(Debug)]
 pub struct ElementIdentity {
     /// The element table's alias.
     pub alias: String,
+    /// Whether it is a node or edge table keyed by its pseudo-column.
+    pub native: bool,
 }
 
 impl ScalarFunction for ElementIdentity {
@@ -76,7 +93,7 @@ impl ScalarFunction for ElementIdentity {
         if args.iter().any(Value::is_null) {
             return Ok(Value::Null);
         }
-        Ok(Value::Char(identity_text(&self.alias, args)?))
+        Ok(Value::Char(element_text(&self.alias, self.native, args)?))
     }
 }
 

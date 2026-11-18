@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::exec::{Runner, eval, eval_cond};
 use crate::graph::program::{Bound, CostFn, Filter, Predicate};
 use crate::graph::view::{ElementId, GraphView};
-use crate::logical::{EDGE_COLUMNS, GraphMatch, Truth, identity_text};
+use crate::logical::{EDGE_COLUMNS, GraphMatch, Truth, element_text};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::Value;
@@ -54,7 +54,7 @@ impl Shared {
         let Some(source) = self.graph.tables.get(usize::try_from(element.table).unwrap_or(usize::MAX)) else { return Ok(Value::Null) };
         let Some(row) = self.store.row(element)? else { return Ok(Value::Null) };
         let key: Vec<Value> = source.key.iter().map(|&k| row.get(k).cloned().unwrap_or(Value::Null)).collect();
-        Ok(Value::Char(identity_text(&source.alias, &key)?))
+        Ok(Value::Char(element_text(&source.alias, source.native, &key)?))
     }
 
     /// Fills the columns of element variable `var` in `row` with those of

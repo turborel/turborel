@@ -231,7 +231,7 @@ impl Predicate {
             }
             Predicate::JsonExists(j) => j.for_each_child(f),
             Predicate::IsJson(j) => f(&j.input.value),
-            Predicate::Exists(_) | Predicate::Unique { .. } | Predicate::Graph(_) => {}
+            Predicate::Exists(_) | Predicate::Unique { .. } | Predicate::Graph(_) | Predicate::GraphMatch(_) => {}
         }
     }
 
@@ -258,6 +258,7 @@ impl Predicate {
             | Predicate::Set { .. }
             | Predicate::Type { .. }
             | Predicate::Graph(_)
+            | Predicate::GraphMatch(_)
             | Predicate::Null { .. } => None,
         }
     }

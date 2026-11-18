@@ -175,7 +175,7 @@ fn projection(t: usize, source: &ElementSource, names: &[String], edge: bool) ->
     let mut out: Vec<Expr> =
         names.iter().map(|n| source.properties.iter().find(|(p, _)| p == n).map_or(Expr::Const(Value::Null), |(_, e)| e.clone())).collect();
     let key = source.key.iter().map(|&k| Expr::Column(k)).collect();
-    out.push(Expr::Call(ScalarRef(Arc::new(ElementIdentity { alias: source.alias.clone() })), key));
+    out.push(Expr::Call(ScalarRef(Arc::new(ElementIdentity { alias: source.alias.clone(), native: source.native })), key));
     out.push(Expr::Const(Value::Exact(Decimal::new(i128::from(super::scope::table_number(t)), 0))));
     if edge {
         // Its ends' identities, which the search fills (`exec/graph_table`).

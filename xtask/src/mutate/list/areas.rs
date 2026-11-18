@@ -109,7 +109,8 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::graph_search::GRAPH_SEARCH,
         &super::graph_search::algorithms::GRAPH_ALGO,
     ];
-    let last: [&'static [Mutation]; 11] = [
+    let last: [&'static [Mutation]; 12] = [
+        &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
         &super::rtree::RTREE,
         &super::geometry::GEOMETRY,

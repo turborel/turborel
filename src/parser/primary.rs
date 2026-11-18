@@ -72,6 +72,16 @@ impl Parser {
     /// nesting of expressions recurs through holds no arm's locals
     /// (RULES.md R-CF-6).
     pub(super) fn primary(&mut self) -> Result<ValueExpression> {
+        // [GS §10] GRAPH PATH aggregates, and the variables of a PGQL or
+        // Cypher query.
+        match self.compat_primary()? {
+            Some(compat) => Ok(compat),
+            None => self.sql_primary(),
+        }
+    }
+
+    /// A `<value expression primary>` of SQL alone, as `primary` reads it.
+    fn sql_primary(&mut self) -> Result<ValueExpression> {
         match self.peek() {
             Tok::Delimiter(delim::LEFT_PAREN) => self.parenthesized_primary(),
             Tok::Identifier(_) => self.identifier_primary(),

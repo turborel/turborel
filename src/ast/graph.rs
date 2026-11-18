@@ -10,10 +10,12 @@
 //! in `graph/table.rs`, the expressions it adds in `graph/expression.rs`,
 //! and the edge orientations' table in `graph/orientation.rs`.
 
+mod compat;
 mod expression;
 mod orientation;
 mod table;
 
+pub use compat::{GraphHint, GraphMeasure, MatchClause, PathAlgorithm, PathTable};
 pub use expression::{GRAPH_FUNCTIONS, GraphFunction, GraphFunctionName, GraphPredicate, PathEnd, SameKind, VariableKind};
 pub use orientation::{Directions, ORIENTATIONS, Orientation, OrientationForm};
 pub use table::{GraphColumn, GraphLimits, GraphReference, GraphRows, GraphTable};

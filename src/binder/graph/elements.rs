@@ -15,7 +15,7 @@ use super::super::from::{Bounds, from_item, leaf};
 use super::super::{Binder, Context, Scope};
 use super::grf;
 use crate::ast::{NamedTable, SystemTimeRead, TableName};
-use crate::catalog::{ElementKind, ElementTableDesc, EndpointDesc, GraphDesc, Principal, TableDesc, owner_of};
+use crate::catalog::{EDGE_ID, ElementKind, ElementTableDesc, EndpointDesc, GraphDesc, NODE_ID, Principal, TableDesc, owner_of};
 use crate::error::Result;
 use crate::logical::{EdgeShape, ElementRead, ElementSource, EndShape, Expr};
 use crate::parser::Parser;
@@ -117,8 +117,19 @@ fn element_table(
         (ElementRead::Stored | ElementRead::Held(_), _) => None,
     };
     let width = columns.columns.len();
-    let source =
-        ElementSource { alias: e.alias.clone(), table: e.table.clone(), ends, key, labels: ids, properties, read, width, adjacency };
+    let native = e.key.len() == 1 && e.key.iter().all(|k| k == NODE_ID || k == EDGE_ID);
+    let source = ElementSource {
+        alias: e.alias.clone(),
+        table: e.table.clone(),
+        ends,
+        key,
+        native,
+        labels: ids,
+        properties,
+        read,
+        width,
+        adjacency,
+    };
     Ok((source, info))
 }
 

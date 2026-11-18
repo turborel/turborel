@@ -31,7 +31,7 @@ use crate::graph::program::{
 use crate::graph::search::{PathSearch, SearchOptions};
 use crate::graph::view::Orientation;
 
-pub use identity::{ElementIdentity, IDENTITY_LENGTH, IdentityJson, identity_item, identity_text, identity_type};
+pub use identity::{ElementIdentity, IDENTITY_LENGTH, IdentityJson, element_text, identity_item, identity_text, identity_type};
 
 /// The hidden columns of a vertex variable, after its properties: its
 /// element identity and the number of its element table.
@@ -121,6 +121,9 @@ pub struct ElementSource {
     pub ends: Option<EdgeShape>,
     /// Its key's columns.
     pub key: Vec<usize>,
+    /// Whether it is a node or edge table keyed by its pseudo-column, its
+    /// elements' identity that column's value.
+    pub native: bool,
     /// Its labels.
     pub labels: Vec<u32>,
     /// Each of its properties, its name and value over a row of it.

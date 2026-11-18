@@ -56,6 +56,10 @@ impl Parser {
     /// "(A + 1) = 2" is a `<predicate>`; "(A = 1 OR B = 2)" is a parenthesized
     /// `<search condition>`. Try `<predicate>` first; on failure, backtrack.
     fn boolean_primary(&mut self) -> Result<SearchCondition> {
+        // [GS §10.1] MATCH ( `<graph search pattern>` ).
+        if self.at_graph_match() {
+            return self.graph_match();
+        }
         let start = self.pos;
         let first = match self.predicate() {
             Ok(c) => return Ok(c),
