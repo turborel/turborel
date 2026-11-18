@@ -20,6 +20,7 @@ mod collations;
 mod columns;
 mod constraints;
 mod domains;
+mod embedding;
 mod keys;
 mod memory;
 mod modules;
@@ -37,6 +38,8 @@ pub use collations::CollationDesc;
 pub use columns::{ColumnDefault, ColumnDesc, ColumnDomain, Generated, Generation, Identity};
 pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, MatchType, ReferentialAction};
 pub use domains::{DomainDesc, UsageDesc, usage_held};
+pub use embedding::{Embeddings, ModelDesc, ModelOption, PipelineDesc, TRIGGER_SUFFIXES};
+pub(crate) use embedding::{embeddings, put_embeddings};
 pub use keys::KeyShape;
 pub use memory::MemoryCatalog;
 pub use modules::{ModuleDesc, module_of_schema, module_schema, routine_path};
@@ -528,6 +531,12 @@ pub trait Catalog: Send + Sync {
     /// a `<revoke role statement>` or a `<drop role statement>` left
     /// [§12.4 to §12.7].
     fn set_roles(&mut self, roles: Roles);
+    /// \[EXTENSION\] The embedding models and vector pipelines (the vector
+    /// design's §12.1, §12.5).
+    fn embeddings(&self) -> &Embeddings;
+    /// Make `embeddings` the embedding models and vector pipelines, in
+    /// place of those there were.
+    fn set_embeddings(&mut self, embeddings: Embeddings);
     /// An independent copy of this catalog.
     fn duplicate(&self) -> Box<dyn Catalog>;
 }

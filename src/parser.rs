@@ -36,6 +36,7 @@ mod diagnostics;
 mod distribution;
 mod domains;
 mod dynamic;
+mod embedding;
 mod expression;
 mod filter;
 mod generated;
@@ -542,7 +543,7 @@ impl Parser {
             Tok::KeyWord(kw::UPDATE) => self.update_statement()?,
             Tok::KeyWord(kw::SELECT) => self.select_statement()?,
             Tok::KeyWord(kw::GRANT | kw::REVOKE) => self.schema_statement()?,
-            Tok::KeyWord(kw::DROP | kw::ALTER | kw::CREATE) => self.schema_manipulation()?,
+            Tok::KeyWord(kw::DROP | kw::ALTER | kw::CREATE) => self.manipulation()?,
             // [ISO/IEC 9075:1992 §20.1] a <temporary table declaration>
             // is a <direct SQL data statement>.
             Tok::KeyWord(kw::DECLARE) => return self.declare_statement(),

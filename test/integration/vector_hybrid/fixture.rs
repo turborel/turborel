@@ -4,7 +4,6 @@
 use turborel::db::{Database, Session};
 use turborel::params::Params;
 use turborel::threads::JobPolicy;
-use turborel::value::Value;
 
 use crate::common::rows;
 

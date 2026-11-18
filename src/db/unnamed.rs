@@ -24,6 +24,7 @@ impl Session {
     ///
     /// Any error of the cursor specification or of reading its rows.
     pub fn open_cursor(&self, sql: &str) -> Result<Cursor> {
+        self.wait_if_hinted(sql)?;
         // [ISO/IEC 9075:1992 §18.1 Table 22] a <direct select statement:
         // multiple rows>.
         self.open_with((commands::SELECT_ROWS, commands::UNRECOGNIZED), |call| self.open_in(call, sql, &Params::new()))

@@ -180,6 +180,8 @@ impl Parser {
             // [ISO/IEC 9075-4:2006 draft §10.2] MODULE <module name>.
             self.advance();
             PrivilegeObject::Module
+        } else if self.accept_model_object() {
+            PrivilegeObject::Model
         } else if self.next_is_routine_designator() {
             let designator = self.routine_designator()?;
             let object = if designator.specific {

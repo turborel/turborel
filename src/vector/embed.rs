@@ -1,7 +1,8 @@
 //! \[EXTENSION\] Embedding generation, the vector design's §12: models
 //! as plug-ins (`Embedder`), the registry of them (`Embedders`), the
-//! routines EMBED and CHUNK_TEXT (`routines.rs`), and pipelines and
-//! auto-embedded columns as the statements that keep them (`pipeline.rs`).
+//! routines EMBED, CHUNK_TEXT and EMBED_VERSION (`routines.rs`), and the
+//! models of the catalog bound to their plug-ins (`bind.rs`, `model.rs`),
+//! which pipelines and auto-embedded columns embed by (`db/embedding.rs`).
 //!
 //! A model is a plug-in, as a ranking of full text is. A local ONNX
 //! model or a remote one over HTTP is an `Embedder` its host registers,
@@ -12,20 +13,25 @@
 //! An embedding is a `Vector`, whose value is the VECTOR type's canonical
 //! image (§4.1, §4.2).
 
+mod bind;
 mod hashed;
-mod pipeline;
+mod model;
 mod routines;
 
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 
+pub use bind::{Configured, DATABASE_OPTIONS, DIMENSIONS, FILE, FORMAT, LAYOUT, SHAPE, VERSION, configure_shape, number_option};
 pub use hashed::{HASH_DENSE, HASH_DENSE_DIMS, HASH_SPARSE, HASH_SPARSE_DIMS, HashedEmbedder};
-pub use pipeline::{AutoColumn, Hook, Mode, Pipeline, Plan};
-pub use routines::{CHUNK_NAMES, ChunkFunction, EMBED_NAMES, EmbedFunction, MOST_TEXT_BYTES, routines};
+pub use model::{BoundEmbed, BoundModel, BoundVersion, MOST_PRIMED, tag_type};
+pub use routines::text_of;
+pub use routines::{CHUNK_NAMES, ChunkFunction, EMBED_NAMES, EMBED_VERSION, EmbedFunction, MOST_TEXT_BYTES, routines};
+use routines::{PURPOSES, data};
 
 use super::chunk::{Span, words_of};
 use super::{Element, Layout, Vector};
 use crate::error::{Code, Result, SqlError};
-use crate::sync::{read, write};
+use crate::sync::{lock, read, write};
 use crate::value::DataType;
 
 /// \[EXTENSION\] R12.3: the texts a model is given at once by default.
@@ -141,6 +147,18 @@ pub trait Embedder: Send + Sync {
     fn on_error(&self) -> OnError {
         OnError::Fail
     }
+    /// The model this one is as a model of the catalog configures it
+    /// with `options` (§12.1's WITH, FROM FILE given as FILE): none if it
+    /// is this one as it is. Default: this one, if each option is
+    /// DIMENSIONS, FORMAT or LAYOUT agreeing with its shape
+    /// (`configure_shape`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 for an option it does not take, or a value it refuses.
+    fn configured(&self, options: &[crate::catalog::ModelOption]) -> Result<Option<Arc<dyn Embedder>>> {
+        configure_shape(self.shape(), options).map(|_| None)
+    }
     /// The spans of the tokens of `text`. Default: its words.
     fn tokens(&self, text: &str) -> Vec<Span> {
         words_of(&text.chars().collect::<Vec<_>>())
@@ -162,6 +180,38 @@ fn refused(detail: &str) -> SqlError {
 #[derive(Default)]
 pub struct Embedders {
     models: RwLock<Vec<Arc<dyn Embedder>>>,
+    /// The models of the catalog bound, each by what it was bound of
+    /// (`bind.rs`).
+    bound: Mutex<Vec<(String, Arc<BoundModel>)>>,
+    /// Whether the database has had, since it opened, a column embedded
+    /// after commit or of a model's version (`db/embedding/queue.rs`).
+    watching: AtomicBool,
+    /// What the queue of embeddings after commit did of each column.
+    queue: Mutex<Vec<QueueState>>,
+    /// Held by a round of the queue, so one runs at a time.
+    rounds: Mutex<()>,
+}
+
+/// \[EXTENSION\] What the queue of embeddings after commit did of one
+/// column, as INFORMATION_SCHEMA.EMBEDDING_QUEUE shows it (R12.6).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct QueueState {
+    /// The schema of the table.
+    pub schema: String,
+    /// The table.
+    pub table: String,
+    /// The column of vectors.
+    pub column: String,
+    /// The model, as its version tag names it.
+    pub model: String,
+    /// The rows waiting for a vector as the last round began.
+    pub pending: u64,
+    /// The rows given one since the database opened.
+    pub embedded: u64,
+    /// The rounds that failed since then.
+    pub failed: u64,
+    /// The last failure's message, if the last round failed.
+    pub error: Option<String>,
 }
 
 impl Embedders {
@@ -173,7 +223,7 @@ impl Embedders {
     /// The built-in models: HASH_DENSE and HASH_SPARSE.
     pub fn built_in() -> Embedders {
         let models: Vec<Arc<dyn Embedder>> = vec![Arc::new(HashedEmbedder::dense()), Arc::new(HashedEmbedder::sparse())];
-        Embedders { models: RwLock::new(models) }
+        Embedders { models: RwLock::new(models), ..Embedders::default() }
     }
 
     /// Registers `model`.
@@ -212,6 +262,50 @@ impl Embedders {
     /// SQLCODE -910 if the registry was poisoned.
     pub fn names(&self) -> Result<Vec<String>> {
         Ok(read(&self.models)?.iter().map(|m| m.name().to_owned()).collect())
+    }
+
+    /// Notes that a column is embedded after commit, or of a model's
+    /// version, so each commit that writes asks for the queue.
+    pub fn watch(&self) {
+        self.watching.store(true, Ordering::Release);
+    }
+
+    /// Whether a column has been embedded after commit, or of a model's
+    /// version, since the database opened.
+    pub fn watching(&self) -> bool {
+        self.watching.load(Ordering::Acquire)
+    }
+
+    /// A round of the queue's turn: held while it runs.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if it was poisoned.
+    pub fn round(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
+        lock(&self.rounds)
+    }
+
+    /// What the queue did of each column.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if it was poisoned.
+    pub fn queue(&self) -> Result<Vec<QueueState>> {
+        Ok(lock(&self.queue)?.clone())
+    }
+
+    /// `state` recorded, in place of the one of its column.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the queue's states were poisoned.
+    pub fn record(&self, state: QueueState) -> Result<()> {
+        let mut all = lock(&self.queue)?;
+        let key = |s: &QueueState| (s.schema.clone(), s.table.clone(), s.column.clone());
+        all.retain(|s| key(s) != key(&state));
+        all.push(state);
+        all.sort_by_key(key);
+        Ok(())
     }
 
     /// Whether every model registered is deterministic.

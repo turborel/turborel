@@ -221,12 +221,10 @@ impl Binder<'_> {
         args: &[ValueExpression],
         (at, scope): (usize, Scope<'_>),
     ) -> Result<(Expr, DataType)> {
-        // [ISO/IEC 9075-2:2023 §10.4, §9.18 SR10h iv 1] a function of
-        // the schema, an SQL-invoked function or a distinct type's
-        // (D69), then one registered (D53, D74); of a call grouping
-        // reads as a registered aggregate's, that aggregate.
-        // [ISO/IEC 9075-2:2023 §6.6 SR11, §6.18] of a column of a
-        // structured type, a method invocation of it.
+        // [ISO/IEC 9075-2:2023 §10.4, §9.18 SR10h iv 1] a function of the schema, an SQL-invoked function or a
+        // distinct type's (D69), then a model of the catalog's, then one registered (D53, D74); of a call grouping
+        // reads as a registered aggregate's, that aggregate. [§6.6 SR11, §6.18] of a column of a structured type,
+        // a method invocation of it.
         if let Some(subject) = schema.and_then(|c| self.lone_basis(c, at)) {
             return self.method_call(&subject, (name, args), scope).or_at(at);
         }
@@ -242,6 +240,9 @@ impl Binder<'_> {
                 Called::Pass(passed) => passed,
             }
         };
+        if let (None, Some(embedded)) = (schema, self.catalog_embed(name, args, scope).or_at(at)?) {
+            return Ok(embedded);
+        }
         let aggregate = self.db.functions.aggregate(name).is_some();
         let called = || self.call((schema, name, extension), args, passed, scope);
         self.drawing(self.drawing.get() && !aggregate, called).or_at(at)
@@ -399,10 +400,9 @@ impl Binder<'_> {
         &self,
         (schema, name, extension): (Option<&str>, &str, bool),
         args: &[ValueExpression],
-        passed: Passed,
+        Passed { bound, refusal }: Passed,
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
-        let Passed { bound, refusal } = passed;
         let registered = self.db.functions.scalars(name);
         let refusal = match refusal {
             Some(refused) if schema.is_some() || registered.is_empty() || !extension => return Err(refused),

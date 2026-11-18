@@ -310,8 +310,7 @@ impl Database {
     /// of zones to settle (`rows/zones.rs`).
     pub(super) fn open_managed(&self, fs: &Arc<dyn FileSystem>, dir: &Path, options: &OpenOptions, mode: Mode) -> Result<Opened> {
         let opened = self.noted(self.open_from(fs, dir, options, mode))?;
-        self.snapshot()?.note_due_maintenance();
-        self.maintain_if_due();
+        self.due_at_open()?;
         self.emit(&Event::Opened(opened));
         Ok(opened)
     }

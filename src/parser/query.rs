@@ -14,6 +14,7 @@ use crate::ast::{
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 
+mod chunk_table;
 mod hybrid_search;
 mod order_by;
 mod ordered;
@@ -503,6 +504,9 @@ impl Parser {
         }
         if self.at_unnest() {
             return self.collection_derived_table();
+        }
+        if self.at_chunk_table() {
+            return self.chunk_table();
         }
         if self.at_ptf_table() {
             return self.ptf_table();

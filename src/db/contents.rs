@@ -175,7 +175,12 @@ impl State {
             }
             if let (Some(true), Some(g)) = (like.generated, c.generation()) {
                 let text = renamed(&g.text, table)?;
-                kept.generated = Some(Generated::Expression(Generation { text, names: g.names.clone(), horizon: Horizon::default() }));
+                kept.generated = Some(Generated::Expression(Generation {
+                    text,
+                    names: g.names.clone(),
+                    horizon: Horizon::default(),
+                    asynchronous: g.asynchronous,
+                }));
             }
             copied.push((TableElement::Column(defined(c, like.at)), kept));
         }

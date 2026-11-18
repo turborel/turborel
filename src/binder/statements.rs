@@ -513,7 +513,7 @@ fn bind_write_of(
         Some(m) => db.catalog.table(m).cloned().ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] subtable {m} is not there")))?,
         None => target.base,
     };
-    let generated = super::generations(db, &base)?;
+    let generated = super::written_generations(db, &base, Some(set))?;
     let names = if member.is_some() { base.columns.iter().map(|c| c.name.clone()).collect() } else { names };
     let mut rows = LogicalPlan::Scan { table: base.name.clone(), names, needed: (0..base.columns.len()).collect(), located: false };
     if let Some(cond) = and_all(target.cond.into_iter().chain(cond).collect()) {
