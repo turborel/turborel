@@ -47,7 +47,8 @@ behind it, and each can be replaced or added to.
   tables, schemas and the catalog mapped to XML and XML Schema by
   XMLMAP, identifiers and XML Names mapped by XMLNAME_TO_IDENTIFIER and
   IDENTIFIER_TO_XMLNAME, and queried in XQuery 1.0 by XMLQUERY, XMLEXISTS and XMLTABLE,
-  written in-house with no dependency, its modifiers shown in the
+  importing library modules registered by CREATE XQUERY MODULE, written
+  in-house with no dependency, its modifiers shown in the
   Information Schema, XML indexes of its paths and values, and XML
   Schemas registered by CREATE XML SCHEMA, values validated by them with
   XMLVALIDATE, IS VALID and XQuery's validate and kept in columns of

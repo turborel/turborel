@@ -148,8 +148,8 @@ pub use window::{
 };
 pub use xml::{
     ContentOption, Dcs, ElementConstructor, ForestConstructor, LexicallyScopedOptions, MapResults, MapSource, Named, NamespaceItem,
-    OnEmpty, Passing, Returning, XmlArgument, XmlArguments, XmlMapping, XmlOperator, XmlQuery, XmlRegularColumn, XmlSchemaDefinition,
-    XmlTable, XmlTableColumn, XmlValidAccording, XmlValidWhat, rows_of,
+    OnEmpty, Passing, Returning, XQueryModuleDefinition, XmlArgument, XmlArguments, XmlMapping, XmlOperator, XmlQuery, XmlRegularColumn,
+    XmlSchemaDefinition, XmlTable, XmlTableColumn, XmlValidAccording, XmlValidWhat, rows_of,
 };
 
 // ---------------------------------------------------------------------------

@@ -669,10 +669,10 @@ typing is not done, so a type error is found as the query is evaluated.
 
 A prolog may import a registered XML Schema
 ([below](#schema-imports)), whose types and declarations a query then
-names. A module import imports a registered XQuery module of its target
-namespace, a library module; none is registered yet, so each is refused
-with `err:XQST0059`. A library module given as a query is refused with
-`err:XPST0003`, as a query is a main module.
+names. A prolog may import a library module registered by CREATE XQUERY
+MODULE ([below](#xquery-modules)) and call its functions. A library
+module given as a query is refused with `err:XPST0003`, as a query is a
+main module.
 
 An element a query constructs has the type annotation `xs:anyType`, and
 an element it copies keeps its own, a validated element its type; after
@@ -1661,6 +1661,56 @@ OK
  true 45 true false
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error: '51' is not valid for {urn:shoes}shoesize: it is not within its maxInclusive [Schema2 §4.3.7.3] 50 [Schema2 §4.1.4] [XQueryFO §17.1.1] err:FORG0001 [ISO/IEC 9075-14:2006 draft §6.18 GR3]
+```
+
+## XQuery modules
+
+```
+import module [ namespace <prefix> = ] "<target namespace>"
+    [ at "<location>" [ , "<location>" ]... ]
+```
+
+A query's prolog imports an XQuery library module registered by [CREATE
+XQUERY MODULE](statements/create-xquery-module.md) by its target
+namespace, and calls its functions and reads its variables. Of the
+modules of that namespace the user may use, it imports the one whose
+location, or name, alone or after its schema's, is one of the locations
+after `at`, else the one of the least name. The prefix is bound to the
+namespace.
+
+A query imports a module's own functions and variables, not those of the
+modules it imports. Each module is analysed in its own static context: a
+module sees none of the namespaces the statement declares, and its
+functions keep its own setters, such as its construction mode. A library
+module imports the modules it imported as it was registered, whoever
+runs the query. The modules a user may use are those of its own
+schemas.
+
+| Code | When |
+|---|---|
+| `err:XQST0047` | The prolog imports one target namespace twice |
+| `err:XQST0059` | No registered XQuery module the user may use has the target namespace |
+| `err:XQST0034` | A function imported has the name and arity of one declared or imported |
+| `err:XQST0049` | A variable imported has the name of one declared or imported |
+| `err:XQST0036` | A function or variable imported is of a schema type the prolog does not import |
+| `err:XQST0088` | The target namespace is the empty string |
+
+```sql
+CREATE XQUERY MODULE ORDERS_LIB AS
+  'module namespace o = "urn:orders";'
+  'declare function o:total($order as element(order)) as xs:double { fn:sum($order/item/@price) };';
+SELECT ID, XMLCAST(XMLQUERY('import module namespace o = "urn:orders" at "ORDERS_LIB"; o:total(/order)' PASSING BY REF DOC RETURNING CONTENT NULL ON EMPTY) AS INTEGER) FROM ORDERS2 ORDER BY ID;
+VALUES (XMLQUERY('import module "urn:nowhere"; 1' RETURNING SEQUENCE BY REF EMPTY ON EMPTY));
+```
+
+```
+OK
+           ID |
+--------------+--------------
+            1 |           35
+            2 |            5
+(2 rows)
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XQST0059: no registered XQuery module the module may import has the target namespace 'urn:nowhere' [XQuery §4.11] [ISO/IEC 9075-14:2006 draft §6.18 GR3] (at character 8)
 ```
 
 ## Clients

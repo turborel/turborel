@@ -55,7 +55,9 @@ impl Parser {
     /// then a `<sequence generator name>`; [§11.62] a `<specific routine
     /// designator>`; [§11.59] TYPE, then a `<schema-resolved user-defined
     /// type name>`; \[EXTENSION\] `<drop XML Schema statement>` ::= DROP
-    /// XML SCHEMA `<registered XML Schema name>` `<drop behavior>`.
+    /// XML SCHEMA `<registered XML Schema name>` `<drop behavior>`;
+    /// \[EXTENSION\] `<drop XQuery module statement>` ::= DROP XQUERY
+    /// MODULE `<XQuery module name>` `<drop behavior>`.
     ///
     /// # Errors
     ///
@@ -67,6 +69,10 @@ impl Parser {
         // [EXTENSION] XML SCHEMA <registered XML Schema name>.
         if self.accept_xml_schema() {
             return Ok(Some(DropObject::XmlSchema(self.table_name()?)));
+        }
+        // [EXTENSION] XQUERY MODULE <XQuery module name>.
+        if self.accept_xquery_module() {
+            return Ok(Some(DropObject::XQueryModule(self.table_name()?)));
         }
         if self.accept_word(super::sequences::SEQUENCE) {
             return Ok(Some(DropObject::Sequence(self.table_name()?)));
@@ -105,7 +111,7 @@ impl Parser {
         if self.at_role_definition() {
             return self.schema_statement();
         }
-        let other = self.next_is_module() || self.next_is_of_type() || self.at_xml_schema(1);
+        let other = self.next_is_module() || self.next_is_of_type() || self.at_xml_schema(1) || self.at_xquery_module(1);
         let defines = DEFINED.iter().any(|w| self.next_is_kw(w)) || self.next_is_trigger() || self.next_is_routine() || other;
         let altered = self.next_is_kw(kw::DOMAIN) || self.next_is_sequence() || self.next_is_type() || self.next_is_transform();
         if (self.is_kw(kw::CREATE) && (defines || self.next_is_sequence() || self.next_is_type())) || (self.is_kw(kw::ALTER) && altered) {

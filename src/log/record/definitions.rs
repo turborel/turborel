@@ -32,6 +32,8 @@ const DROPPED_MODEL: u8 = 15;
 const DROPPED_PIPELINE: u8 = 16;
 /// The tag of a registered XML Schema's drop.
 const DROPPED_XML_SCHEMA: u8 = 17;
+/// The tag of a registered XQuery module's drop.
+const DROPPED_XQUERY_MODULE: u8 = 18;
 
 /// \[EXTENSION\] What a `Change::Drop` drops.
 #[derive(Debug, Clone, PartialEq)]
@@ -73,6 +75,8 @@ pub enum DropTarget {
     Pipeline(QualifiedName),
     /// A registered XML Schema [ISO/IEC 9075-14:2006 draft §4.2.6].
     XmlSchema(QualifiedName),
+    /// \[EXTENSION\] A registered XQuery module (RULES.md D106).
+    XQueryModule(QualifiedName),
 }
 
 /// A schema's text, the engine of each table it created, its
@@ -197,6 +201,7 @@ pub(super) fn put_dropped(out: &mut Vec<u8>, object: &DropTarget, cascade: bool)
         DropTarget::Model(model) => (DROPPED_MODEL, model),
         DropTarget::Pipeline(pipeline) => (DROPPED_PIPELINE, pipeline),
         DropTarget::XmlSchema(name) => (DROPPED_XML_SCHEMA, name),
+        DropTarget::XQueryModule(name) => (DROPPED_XQUERY_MODULE, name),
         DropTarget::Cast(types) => {
             out.put_u8(DROPPED_CAST);
             crate::value::types::tags::put_type(out, &types.0);
@@ -238,6 +243,7 @@ pub(super) fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         DROPPED_MODEL => Ok(DropTarget::Model(table(r)?)),
         DROPPED_PIPELINE => Ok(DropTarget::Pipeline(table(r)?)),
         DROPPED_XML_SCHEMA => Ok(DropTarget::XmlSchema(table(r)?)),
+        DROPPED_XQUERY_MODULE => Ok(DropTarget::XQueryModule(table(r)?)),
         DROPPED_CAST => {
             let source = crate::value::types::tags::data_type(r)?;
             Ok(DropTarget::Cast(Box::new((source, crate::value::types::tags::data_type(r)?))))

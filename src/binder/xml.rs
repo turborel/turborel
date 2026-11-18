@@ -13,6 +13,7 @@ mod namespaces;
 mod pinned;
 mod publish;
 mod query;
+mod registered;
 mod scope;
 mod valid;
 
@@ -20,6 +21,7 @@ use std::sync::Arc;
 
 pub(crate) use namespaces::checked_namespaces;
 pub(in crate::binder) use pinned::resolved_type;
+pub(crate) use registered::{Registered, in_scope, registered};
 pub(in crate::binder) use scope::Scopes;
 
 use super::predicates::negated;

@@ -45,6 +45,7 @@ pub(in crate::db) fn type_named(statement: &SchemaStatement) -> (Option<&TableNa
         | SchemaStatement::Routine(_)
         | SchemaStatement::Module(_)
         | SchemaStatement::XmlSchema(_)
+        | SchemaStatement::XQueryModule(_)
         | SchemaStatement::Vector(_) => (None, "§11.53 AR1"),
     }
 }
@@ -120,6 +121,7 @@ impl Session {
             }
             DropObject::Table(name)
             | DropObject::XmlSchema(name)
+            | DropObject::XQueryModule(name)
             | DropObject::View(name)
             | DropObject::Domain(name)
             | DropObject::Assertion(name)
@@ -207,6 +209,7 @@ impl State {
             | DropTarget::Routine(_)
             | DropTarget::Module(_)
             | DropTarget::XmlSchema(_)
+            | DropTarget::XQueryModule(_)
             | DropTarget::Pipeline(_) => return Vec::new(),
         }
         let mut after = self.clone();

@@ -366,3 +366,4 @@ mod xml_validate;
 mod xml_validate_expression;
 mod xquery_functions;
 mod xquery_functions_10_to_16;
+mod xquery_modules;

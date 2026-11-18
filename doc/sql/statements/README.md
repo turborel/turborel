@@ -48,6 +48,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE VECTOR PIPELINE](create-vector-pipeline.md): keep a table of embedded chunks in step with a table of texts
 - [CREATE VIEW](create-view.md): define a viewed table
 - [CREATE XML SCHEMA](create-xml-schema.md): register an XML Schema
+- [CREATE XQUERY MODULE](create-xquery-module.md): register an XQuery library module
 - [DECLARE CURSOR](declare-cursor.md): declare a cursor
 - [DECLARE HANDLER](declare-handler.md): say what runs when a condition is raised *(in a compound statement)*
 - [DEALLOCATE DESCRIPTOR](deallocate-descriptor.md): deallocate an SQL descriptor area
@@ -77,6 +78,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP VECTOR PIPELINE](drop-vector-pipeline.md): stop keeping a table of embedded chunks
 - [DROP VIEW](drop-view.md): drop a view
 - [DROP XML SCHEMA](drop-xml-schema.md): drop a registered XML Schema
+- [DROP XQUERY MODULE](drop-xquery-module.md): drop a registered XQuery module
 - [END CONNECTION](end-connection.md): end a connection of the server
 - [EXECUTE](execute.md): run a statement prepared
 - [EXECUTE IMMEDIATE](execute-immediate.md): prepare a statement and run it at once

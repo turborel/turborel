@@ -82,6 +82,7 @@ fn drops() -> Vec<Change> {
         Change::Drop { object: DropTarget::Collation(table()), cascade: false },
         Change::Drop { object: DropTarget::Sequence(table()), cascade: true },
         Change::Drop { object: DropTarget::XmlSchema(table()), cascade: false },
+        Change::Drop { object: DropTarget::XQueryModule(table()), cascade: true },
     ]
 }
 

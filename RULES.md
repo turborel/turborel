@@ -4363,6 +4363,49 @@ catalog, SQLCODE -916. As the catalog is logged, checkpointed and
 replicated as opaque bytes (D57), registered XQuery modules need nothing
 of their own there.
 
+XQuery leaves where a module import finds its modules to the
+implementation [§4.11, §5.2.5], and Part 14 gives no statement for it.
+These statements were decided, an extension in the standard's notation:
+
+```
+<XQuery module definition> ::=
+    CREATE XQUERY MODULE <XQuery module name>
+    [ LOCATION <XQuery module location> ]
+    AS <XQuery module text>
+
+<XQuery module name> ::= <schema qualified name>
+
+<XQuery module location> ::= <character string literal>
+
+<XQuery module text> ::= <character string literal>
+
+<drop XQuery module statement> ::=
+    DROP XQUERY MODULE <XQuery module name> <drop behavior>
+```
+
+XQUERY is no key word: XQUERY MODULE is read as two words where these
+statements take them, so a table may still be named XQUERY. The text is
+a library module, analysed as it is registered
+(`xquery::library_module`) in a static context of its own, its schema
+imports and module imports importing among the registered XML Schemas
+and XQuery modules its schema's owner may use, as a registered XML
+Schema reads those of its owner (`db/definitions/xquery_modules.rs`);
+what it imported is kept in its descriptor, and it depends on that. Its
+target namespace is of nonzero length, as a module import names one
+[err:XQST0088], else SQLCODE -103; a duplicate name is SQLCODE -103.
+Only the owner of its schema registers or drops one. A literal holds no
+`<newline>` [X3.135-1986 §5.1 SR1], and XQuery reads any whitespace
+between tokens, so the statement is logged as its text, as every
+definition is, and replay registers it again from that text.
+DROP XQUERY MODULE is a drop record of tag 18, after DROPPED_XML_SCHEMA's
+17. RESTRICT is refused while a module imports it; CASCADE drops those,
+at any remove (`State::xquery_module_dependents`, the one place what
+depends on a module is found), as `Abandoned::xquery_modules`, which
+`State::destroy` drops after what imports them. A registered XML Schema
+dropped with CASCADE, or abandoned by a REVOKE, takes the modules that
+imported it the same way; DROP SCHEMA CASCADE drops the schema's
+modules.
+
 Part 14 leaves how an XML Schema is registered to the implementation
 [ISO/IEC 9075-14:2006 draft §4.2.6]. These statements were decided, an
 extension in the standard's notation:

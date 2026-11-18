@@ -31,8 +31,10 @@ impl Parser {
         at
     }
 
-    /// An `<XML Schema definition>`, if CREATE XML SCHEMA is next, else a
-    /// definition of a type's if one is (`defined_for_type`).
+    /// An `<XML Schema definition>`, if CREATE XML SCHEMA is next, an
+    /// `<XQuery module definition>` if CREATE XQUERY MODULE is
+    /// (`parser/xml/xquery_modules.rs`), else a definition of a type's if
+    /// one is (`defined_for_type`).
     ///
     /// # Errors
     ///
@@ -40,6 +42,9 @@ impl Parser {
     pub(in crate::parser) fn defined_elsewhere(&mut self) -> Result<Option<SchemaStatement>> {
         if self.at_xml_schema(1) {
             return Ok(Some(SchemaStatement::XmlSchema(Box::new(self.xml_schema_definition()?))));
+        }
+        if self.at_xquery_module(1) {
+            return Ok(Some(SchemaStatement::XQueryModule(Box::new(self.xquery_module_definition()?))));
         }
         self.defined_for_type()
     }

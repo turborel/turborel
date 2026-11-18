@@ -153,7 +153,9 @@ impl State {
     /// that use one of those, of any schema; and what holds an XML type of
     /// XMLSCHEMA of any of these (`xml_schemas/dependents.rs`): columns,
     /// domains and user-defined types, which nothing drops, and routines
-    /// of such a parameter or result, with what invokes them. The one
+    /// of such a parameter or result, with what invokes them; and the
+    /// registered XQuery modules that import any of these, with what
+    /// depends on them (`State::xquery_module_dependents`). The one
     /// place what depends on one is found: for DROP, and for a REVOKE of
     /// USAGE, the schemas of owners it leaves without USAGE as `within`.
     pub(in crate::db) fn xml_schema_dependents(&self, qn: &QualifiedName, within: &dyn Fn(&str) -> bool) -> XmlSchemaDependents {
@@ -178,6 +180,18 @@ impl State {
         // table keeps it, as it keeps a column of such a type.
         let generated = std::mem::take(&mut abandoned.columns).into_iter().map(|(table, _)| table);
         typed.extend(generated.collect::<Vec<_>>());
+        // The registered XQuery modules that import one, and what depends
+        // on them, go with it as a definition naming one does.
+        let importing: Vec<QualifiedName> = (self.catalog.xquery_modules().into_iter())
+            .filter(|d| within(&d.name.auth) && d.xml_schemas.iter().any(|s| gone.contains(s)))
+            .map(|d| d.name.clone())
+            .collect();
+        if !importing.is_empty() {
+            let (more, kept) = self.xquery_module_dependents(&importing, &|_| true);
+            abandoned.absorb(Abandoned { xquery_modules: importing, ..Abandoned::default() });
+            abandoned.absorb(more);
+            typed.extend(kept);
+        }
         XmlSchemaDependents { schemas, abandoned, typed }
     }
 

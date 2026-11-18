@@ -8,11 +8,10 @@ use std::sync::Arc;
 
 use super::super::{Binder, Scope, rule};
 use super::DOCUMENT_CONTENT;
+use super::registered::{Registered, in_scope, registered};
 use crate::ast::{
     DefaultOption, OnEmpty, Passing, Returning, ValueExpression, ValueSpecification, XmlArguments, XmlQuery, XmlTable, XmlTableColumn,
 };
-use crate::catalog::QualifiedName;
-use crate::catalog::xml_schemas::{PERMANENT, may_use};
 use crate::error::Result;
 use crate::functions::{Evaluation, RegularColumn, ScalarRef, TableColumn, XmlCopy, XmlDocument, XmlExistsOf, XmlQueryOf, XmlTableOf};
 use crate::logical::Expr;
@@ -20,9 +19,8 @@ use crate::value::datetime::{MICROS_PER_DAY, MICROS_PER_MINUTE};
 use crate::value::types::{Field, MAX_ARRAY_CARDINALITY};
 use crate::value::xml::XmlType;
 use crate::value::{DataType, Value};
-use crate::xml::schema::permanent::components;
 use crate::xml::{Moment, Shape, Version, is_ncname};
-use crate::xquery::{Environment, InScopeSchema, Query};
+use crate::xquery::{Environment, Query};
 
 /// [§6.18 SR3] implementation-defined: the `<XML returning clause>` of an
 /// XMLQUERY that writes none, RETURNING CONTENT, as XMLDOCUMENT's.
@@ -94,12 +92,13 @@ impl Binder<'_> {
 
     /// The query `text` analysed in the static context §10.20 makes \[SR2\]:
     /// the namespaces declared in scope, the variables `names` passed, the
-    /// database's functions and collations, and the in-scope schema
-    /// definitions.
+    /// database's functions and collations, the in-scope schema
+    /// definitions, and the registered XML Schemas and XQuery modules its
+    /// imports may import (`registered`).
     fn xquery(&self, text: &str, names: &[String]) -> Result<Arc<Query>> {
         let (namespaces, default_element) = self.namespaces_in_scope();
-        let importable = self.importable();
-        let in_scope = in_scope(&importable);
+        let found = self.registered();
+        let in_scope = in_scope(&found.importable);
         let env = Environment {
             namespaces,
             default_element,
@@ -107,14 +106,14 @@ impl Binder<'_> {
             library: &self.db.xquery_functions,
             collations: &self.db.collations,
             schemas: in_scope.iter().map(|(_, s)| s.clone()).collect(),
-            importable: importable.iter().map(|(_, s)| s.clone()).collect(),
-            modules: Vec::new(),
-            linked: Vec::new(),
+            importable: found.importable.iter().map(|(_, s)| s.clone()).collect(),
+            modules: found.modules.iter().map(|(_, m)| m.clone()).collect(),
+            linked: found.linked,
         };
         let query = Query::compile(text, &env)?;
         if let Some(noted) = self.invoked {
             let validated = in_scope.iter().filter(|_| query.validates()).map(|(name, _)| name);
-            let imported = importable.iter().filter(|(_, s)| query.imports().contains(&s.name)).map(|(name, _)| name);
+            let imported = found.importable.iter().filter(|(_, s)| query.imports().contains(&s.name)).map(|(name, _)| name);
             for name in validated.chain(imported) {
                 noted.indicated(name);
             }
@@ -122,37 +121,17 @@ impl Binder<'_> {
         Ok(Arc::new(query))
     }
 
-    /// The registered XML Schemas a query may validate by and import
-    /// [§10.20 SR2e] [XQuery §4.10], implementation-defined (RULES.md
-    /// D106): those the current user may use, in the order of their names,
-    /// then the permanently registered ones, each with its name. A
-    /// definition notes those its query validates by or imports as it is
+    /// The registered XML Schemas a query may validate by and import, and
+    /// the registered XQuery modules it may import [§10.20 SR2e] [XQuery
+    /// §4.10, §4.11], implementation-defined (RULES.md D106): those the
+    /// current user may use (`binder/xml/registered.rs`). A definition
+    /// notes the schemas its query validates by or imports as it is
     /// created, so it depends on them (`Invoked::indicated`), and, bound
     /// again, has those it noted alone, never one registered later
     /// [ISO/IEC 9075-14:2006 draft §4.2.6].
-    fn importable(&self) -> Vec<(QualifiedName, InScopeSchema)> {
-        let catalog = &*self.db.catalog;
-        let pinned = self.horizon.routines.is_some().then_some(self.horizon.xml_schemas.as_slice());
-        let mut usable: Vec<_> = catalog
-            .xml_schemas()
-            .into_iter()
-            .filter(|d| pinned.is_none_or(|p| p.contains(&d.name)) && may_use(catalog, &d.name, self.who()).is_ok())
-            .collect();
-        usable.sort_by(|a, b| a.name.cmp(&b.name));
-        let registered = usable.into_iter().filter_map(|d| {
-            let schema = d.schema.clone()?;
-            let read =
-                InScopeSchema { namespace: d.target_namespace.clone(), name: d.name.to_string(), location: d.location.clone(), schema };
-            Some((d.name.clone(), read))
-        });
-        let lasting = PERMANENT.iter().filter_map(|p| {
-            let name = p.qualified();
-            let schema = components(p.target_namespace).filter(|_| pinned.is_none_or(|kept| kept.contains(&name)))?;
-            let namespace = p.target_namespace.to_owned();
-            let read = InScopeSchema { namespace, name: name.to_string(), location: p.location.to_owned(), schema };
-            Some((name, read))
-        });
-        registered.chain(lasting).collect()
+    fn registered(&self) -> Registered {
+        let kept = self.horizon.routines.is_some().then_some((self.horizon.xml_schemas.as_slice(), &[][..]));
+        registered(&*self.db.catalog, self.who(), kept)
     }
 
     /// What evaluates `text` of the arguments `bound`, at the statement's
@@ -294,19 +273,4 @@ impl Binder<'_> {
         let bound = self.value_expression(&value, Scope::Rows("[ISO/IEC 9075-14:2006 draft §7.1] a default has no set function"))?;
         Ok(self.cast_bound(bound, target.clone())?.0)
     }
-}
-
-/// [§10.20 SR2e] The in-scope schema definitions, implementation-defined
-/// (RULES.md D106): of each target namespace, the first of `importable`, so
-/// the registered XML Schema of the least name the current user may use,
-/// as XMLVALIDATE's data-driven validation chooses, or the permanently
-/// registered one of a namespace none of those has.
-fn in_scope(importable: &[(QualifiedName, InScopeSchema)]) -> Vec<(QualifiedName, InScopeSchema)> {
-    let mut out: Vec<(QualifiedName, InScopeSchema)> = Vec::new();
-    for (name, schema) in importable {
-        if !out.iter().any(|(_, s)| s.namespace == schema.namespace) {
-            out.push((name.clone(), schema.clone()));
-        }
-    }
-    out
 }

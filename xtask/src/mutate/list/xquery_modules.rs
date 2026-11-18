@@ -1,13 +1,15 @@
 //! Mutations of XQuery's Module Feature: the modules a module import
 //! finds, each module's own static context, a module analysed once into a
 //! query, the depth imports nest to, the static errors of library
-//! modules, and the catalog's (RULES.md R-TEST-9, D106).
+//! modules, the catalog's, and registered XQuery modules: their names,
+//! the modules they may import, and what depends on them (RULES.md
+//! R-TEST-9, D106).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of library modules and module imports broken alone, and
 /// the tests that fail.
-pub const XQUERY_MODULES: [Mutation; 8] = [
+pub const XQUERY_MODULES: [Mutation; 16] = [
     Mutation {
         name: "xquery-module-target-namespace",
         package: Package::Core,
@@ -87,5 +89,88 @@ pub const XQUERY_MODULES: [Mutation; 8] = [
         replacement: "        if let Some(gone) = missing.or(schema).filter(|_| false) {",
         integration: &[],
         unit: &["db::snapshot::xquery_modules::tests::a_damaged_catalog_is_refused"],
+    },
+    Mutation {
+        name: "xquery-module-pinned-imports",
+        package: Package::Core,
+        breaks: "a library module imports among the modules the query may import, not those it was registered with",
+        file: "src/xquery/analyze/modules.rs",
+        original: "        let modules = library.modules.iter().filter_map(known).collect();",
+        replacement: "        let modules = env.modules.iter().filter(|m| known(&m.name).is_some()).collect();",
+        integration: &[],
+        unit: &["xquery::analyze::modules::tests::location_hints_choose_among_modules_of_a_namespace"],
+    },
+    Mutation {
+        name: "xquery-module-duplicate-name",
+        package: Package::Core,
+        breaks: "a registered XQuery module of a name registered replaces it",
+        file: "src/db/definitions/xquery_modules.rs",
+        original: "            return Err(rule(format!(\"[EXTENSION] registered XQuery module {qn} exists: one name identifies one\")).or_at(m.name.at));",
+        replacement: "            drop(m.name.at);",
+        integration: &["xquery_modules::registration_is_refused_4_2"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-usage-checked",
+        package: Package::Core,
+        breaks: "a user imports registered XQuery modules it may not use",
+        file: "src/binder/xml/registered.rs",
+        original: "pins.is_none_or(|(_, kept)| kept.contains(name)) && xquery_modules::may_use(catalog, name, who).is_ok();",
+        replacement: "pins.is_none_or(|(_, kept)| kept.contains(name));",
+        integration: &["xquery_modules::modules_are_imported_by_those_who_may_use_them"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-restrict",
+        package: Package::Core,
+        breaks: "DROP XQUERY MODULE RESTRICT drops what imports it",
+        file: "src/db/definitions/xquery_modules.rs",
+        original: "        if !cascade && !abandoned.is_empty() {",
+        replacement: "        if !cascade && !abandoned.is_empty() && false {",
+        integration: &["xquery_modules::modules_depend_on_those_they_import"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-importers",
+        package: Package::Core,
+        breaks: "a registered XQuery module that imports one dropped does not depend on it",
+        file: "src/db/definitions/xquery_modules.rs",
+        original: "d.modules.iter().any(|u| gone.contains(u))",
+        replacement: "d.modules.iter().any(|u| gone.contains(u) && false)",
+        integration: &["xquery_modules::modules_depend_on_those_they_import"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-abandoned-dropped",
+        package: Package::Core,
+        breaks: "a registered XQuery module abandoned stays",
+        file: "src/db/definitions/xquery_modules.rs",
+        original: "            catalog.remove_xquery_module(m);",
+        replacement: "",
+        integration: &[
+            "xquery_modules::modules_depend_on_those_they_import",
+            "xquery_modules::modules_depend_on_the_schemas_they_import_4_11",
+        ],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-schema-dependents",
+        package: Package::Core,
+        breaks: "a registered XQuery module does not depend on the XML Schemas it imports",
+        file: "src/db/definitions/xml_schemas.rs",
+        original: "within(&d.name.auth) && d.xml_schemas.iter().any(|s| gone.contains(s))",
+        replacement: "within(&d.name.auth) && d.xml_schemas.iter().any(|s| gone.contains(s)) && false",
+        integration: &["xquery_modules::modules_depend_on_the_schemas_they_import_4_11"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-module-schema-held",
+        package: Package::Core,
+        breaks: "DROP SCHEMA RESTRICT drops the registered XQuery modules it holds",
+        file: "src/db/definitions/xquery_modules.rs",
+        original: "        names.extend(self.schema_xquery_modules(auth));",
+        replacement: "",
+        integration: &["xquery_modules::modules_depend_on_those_they_import"],
+        unit: &[],
     },
 ];

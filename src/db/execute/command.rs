@@ -63,6 +63,7 @@ fn schema_command(s: &SchemaStatement) -> Command {
             VectorStatement::Pipeline(_) => commands::CREATE_VECTOR_PIPELINE,
         },
         SchemaStatement::XmlSchema(_) => commands::CREATE_XML_SCHEMA,
+        SchemaStatement::XQueryModule(_) => commands::CREATE_XQUERY_MODULE,
     }
 }
 
@@ -87,6 +88,7 @@ fn drop_command(object: &DropObject) -> Command {
         DropObject::Vector(VectorObject::Model, _) => commands::DROP_EMBEDDING_MODEL,
         DropObject::Vector(VectorObject::Pipeline, _) => commands::DROP_VECTOR_PIPELINE,
         DropObject::XmlSchema(_) => commands::DROP_XML_SCHEMA,
+        DropObject::XQueryModule(_) => commands::DROP_XQUERY_MODULE,
     }
 }
 

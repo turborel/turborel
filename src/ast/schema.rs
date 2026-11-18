@@ -120,6 +120,8 @@ pub enum SchemaStatement {
     /// \[EXTENSION\] An `<XML Schema definition>` [ISO/IEC 9075-14:2006
     /// draft §4.2.6].
     XmlSchema(Box<super::XmlSchemaDefinition>),
+    /// \[EXTENSION\] An `<XQuery module definition>` (RULES.md D106).
+    XQueryModule(Box<super::XQueryModuleDefinition>),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION

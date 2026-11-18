@@ -19,6 +19,7 @@ mod query;
 mod registered;
 mod scoped;
 mod valid;
+mod xquery_modules;
 
 use query::{XMLEXISTS, XMLQUERY};
 pub(super) use valid::VALID;

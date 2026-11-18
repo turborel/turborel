@@ -387,3 +387,20 @@ pub struct XmlSchemaDefinition {
     /// The `<XML Schema document>`.
     pub document: ValueExpression,
 }
+
+/// \[EXTENSION\] RULES.md D106 `<XQuery module definition>` ::= CREATE
+/// XQUERY MODULE `<XQuery module name>` \[ LOCATION `<XQuery module
+/// location>` \] AS `<XQuery module text>`, where `<XQuery module name>`
+/// ::= `<schema qualified name>` and `<XQuery module location>` and
+/// `<XQuery module text>` are `<character string literal>`s: registering
+/// an XQuery library module, which \[XQuery\] leaves to the
+/// implementation [XQuery §5.2.5].
+#[derive(Debug, Clone)]
+pub struct XQueryModuleDefinition {
+    /// The `<XQuery module name>`.
+    pub name: TableName,
+    /// The `<XQuery module location>`, if written.
+    pub location: Option<String>,
+    /// The `<XQuery module text>`.
+    pub text: String,
+}

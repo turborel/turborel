@@ -535,6 +535,7 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::Module(_)
         | SchemaStatement::Vector(_)
         | SchemaStatement::XmlSchema(_)
+        | SchemaStatement::XQueryModule(_)
         | SchemaStatement::Role(_) => None,
     }
 }

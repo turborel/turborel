@@ -313,6 +313,19 @@ fn the_xml_schema_examples_run_as_printed() {
     }
 }
 
+/// Verifies: [EXTENSION] RULES.md R-DOC-8, D106 [XQuery §5.2.5]: the
+/// examples of CREATE XQUERY MODULE and of DROP XQUERY MODULE run as
+/// printed, as ANN, each page in a database of its own.
+#[test]
+fn the_xquery_module_examples_run_as_printed() {
+    for page in ["sql/statements/create-xquery-module.md", "sql/statements/drop-xquery-module.md"] {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+        let mut ann = Client::of(&db, "ANN");
+        assert!(ann.page(page) > 0, "{page} shows its examples' output");
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D64: the examples of TRUNCATE
 /// TABLE run as printed, as ANN.
 #[test]

@@ -2,8 +2,9 @@
 //! DROP VIEW [§11.20], DROP DOMAIN [§11.27] (`db/domains.rs`), DROP
 //! ASSERTION [§11.35] (`db/assertions.rs`), and DROP COLLATION, DROP
 //! SEQUENCE and DROP TYPE [ISO/IEC 9075-2:2023 §11.44, §11.74, §11.59]
-//! (`db/user_types.rs`), and DROP XML SCHEMA (`definitions/xml_schemas.rs`),
-//! in a transaction (RULES.md D33):
+//! (`db/user_types.rs`), and DROP XML SCHEMA (`definitions/xml_schemas.rs`)
+//! and DROP XQUERY MODULE (`definitions/xquery_modules.rs`), in a
+//! transaction (RULES.md D33):
 //! each staged as one change (`Change::Drop`), made again on the definitions
 //! published when it commits, and by recovery.
 //!
@@ -58,6 +59,7 @@ impl State {
             DropTarget::Model(qn) => self.drop_model(qn, cascade),
             DropTarget::Pipeline(qn) => self.drop_pipeline(qn),
             DropTarget::XmlSchema(qn) => self.drop_xml_schema(qn, cascade),
+            DropTarget::XQueryModule(qn) => self.drop_xquery_module(qn, cascade),
         }
     }
 
@@ -141,14 +143,16 @@ impl State {
         Ok(dropped)
     }
 
-    /// The registered XML Schemas, collations and sequence generators of
-    /// schema `auth`, which nothing of it left depends on, dropped.
+    /// The registered XQuery modules and XML Schemas, collations and
+    /// sequence generators of schema `auth`, which nothing of it left
+    /// depends on, dropped.
     ///
     /// # Errors
     ///
     /// As each kind's drop.
     fn drop_schema_described(&mut self, auth: &str) -> Result<Dropped> {
-        let mut dropped = self.drop_schema_xml_schemas(auth)?;
+        let mut dropped = self.drop_schema_xquery_modules(auth)?;
+        dropped.absorb(self.drop_schema_xml_schemas(auth)?);
         dropped.absorb(self.drop_schema_collations(auth)?);
         dropped.absorb(self.drop_schema_sequences(auth)?);
         Ok(dropped)
@@ -159,8 +163,9 @@ impl State {
     /// CASCADE do [GR1, GR2], then its domains, as DROP DOMAIN with CASCADE
     /// does [GR3], then its assertions [GR4], then its triggers [ISO/IEC
     /// 9075-2:2023 §11.2 GR9], its routines, \[EXTENSION\] its registered
-    /// XML Schemas, as DROP XML SCHEMA with CASCADE does, and the rest of
-    /// what it holds, then the schema [GR8].
+    /// XQuery modules and XML Schemas, as DROP XQUERY MODULE and DROP XML
+    /// SCHEMA with CASCADE do, and the rest of what it holds, then the
+    /// schema [GR8].
     ///
     /// # Errors
     ///
@@ -168,7 +173,7 @@ impl State {
     /// not `cascade`, it holds a table, view, domain, assertion, collation,
     /// sequence generator, user-defined type [SR3], trigger or SQL-invoked
     /// routine [ISO/IEC 9075-2:2023 §11.2 SR4j, SR4l], or \[EXTENSION\] a
-    /// registered XML Schema.
+    /// registered XML Schema or XQuery module.
     fn drop_schema(&mut self, auth: &str, cascade: bool) -> Result<Dropped> {
         if !self.catalog.schema_exists(auth) {
             let msg = format!("[ISO/IEC 9075:1992 §11.2 SR2] there is no schema {auth}");
@@ -185,7 +190,7 @@ impl State {
         let sequences = self.schema_sequences(auth);
         let types = self.schema_user_types(auth);
         let (triggers, routines) = (self.schema_triggers_of(auth), self.schema_routines_of(auth));
-        let (modules, registered) = (self.modules_of_schema(auth), self.schema_xml_schemas(auth));
+        let (modules, registered) = (self.modules_of_schema(auth), self.schema_registered(auth));
         // [ISO/IEC 9075-4:2006 draft §9.2 SR1] a module of it named first.
         let held =
             (modules.iter().find(|m| m.auth == auth).or(tables.first()).or(views.first()).or(domains.first()).or(assertions.first()))
@@ -377,6 +382,7 @@ impl Session {
             | DropTarget::Cast(_)
             | DropTarget::Ordering(_)
             | DropTarget::XmlSchema(_)
+            | DropTarget::XQueryModule(_)
             | DropTarget::Transform(..)
             | DropTarget::Model(_)
             | DropTarget::Pipeline(_) => Vec::new(),
@@ -444,6 +450,8 @@ impl Session {
             DropObject::Cast(..) | DropObject::Ordering(_) | DropObject::Transform(..) => self.type_drop_target(st, object),
             DropObject::Vector(kind, name) => Ok(super::embedding::drop_target(*kind, self.owned(st, name, "EXTENSION")?)),
             DropObject::XmlSchema(name) => self.xml_schema_target(st, name),
+            // [EXTENSION] as of a collation [ISO/IEC 9075-2:2023 §11.44 AR1].
+            DropObject::XQueryModule(name) => Ok(DropTarget::XQueryModule(self.owned(st, name, "EXTENSION")?)),
             DropObject::Schema { catalog, name, at } => {
                 let ours = st.settings.get(CATALOG_NAME).to_string();
                 if let Some(other) = catalog.as_ref().filter(|c| **c != ours.trim_end()) {

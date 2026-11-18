@@ -19,13 +19,14 @@ DROP SCHEMA: drop a schema
 ## DESCRIPTION
 
 DROP SCHEMA drops a schema. RESTRICT refuses the drop if the schema
-holds a table, a view, a domain, an assertion, a routine, a module or
-a collation. CASCADE drops each of them first: its tables, as DROP TABLE
+holds a table, a view, a domain, an assertion, a routine, a module, a
+collation, or a registered XML Schema or XQuery module. CASCADE drops each of them first: its tables, as DROP TABLE
 CASCADE does, and so the views, constraints and assertions of other
 schemas that refer to them; its views left; its domains, as DROP DOMAIN
 CASCADE does; its assertions; and its routines, as DROP ROUTINE CASCADE
 does, with what of other schemas invokes them; and its modules, as DROP
-MODULE CASCADE does. Either way, a module of another schema whose SCHEMA
+MODULE CASCADE does; and its registered XML Schemas and XQuery modules,
+as DROP XML SCHEMA and DROP XQUERY MODULE CASCADE do. Either way, a module of another schema whose SCHEMA
 or PATH names it is dropped too ([CREATE MODULE](create-module.md)). A
 constraint named in the schema of a table or a domain of
 another schema is dropped too, as ALTER TABLE or ALTER DOMAIN DROP
