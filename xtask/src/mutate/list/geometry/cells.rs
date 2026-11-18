@@ -5,8 +5,10 @@
 //! reference side inverted or shared by several rings, another polygon's
 //! hold ignored, the run and the rise near a point ignored, edges
 //! through the corners of its path misplaced, the interval trees' work no
-//! longer counted toward building them, and a cell number's floor left
-//! unchecked where subtracting the shift rounds.
+//! longer counted toward building them, a cell number's floor left
+//! unchecked where subtracting the shift rounds, and the records of cells
+//! several rings touch losing a point's edges, crossings, shell, hole
+//! order or another part's hold.
 
 use super::{Mutation, Package};
 
@@ -18,9 +20,12 @@ const AGREE: &str = "geometry::prepared::cells::tests::certificates_agree_with_e
 const FINE: &str = "geometry::prepared::cells::tests::edges_near_a_point_decide_cells_finer_teeth_cross";
 const TIES: &str = "geometry::prepared::cells::tests::ties_on_a_points_path_are_placed_by_slope";
 const INVALID: &str = "geometry::prepared::cells::tests::invalid_topology_is_labelled_as_location_reads_it";
+const SEVERAL: &str = "geometry::prepared::cells::tests::cells_several_rings_touch_are_decided_by_their_rings";
+/// The files of the records of cells several rings touch.
+const SEVERAL_FILE: &str = "src/geometry/prepared/cells/several.rs";
 
 /// Mechanisms of the certificates whose removal must fail their tests.
-pub const CELLS: [Mutation; 15] = [
+pub const CELLS: [Mutation; 20] = [
     Mutation {
         name: "cells-crossing-parity",
         package: Package::Core,
@@ -56,8 +61,8 @@ pub const CELLS: [Mutation; 15] = [
         package: Package::Core,
         breaks: "a boundary cell of a shell takes the opposite side for its reference point",
         file: CELLS_FILE,
-        original: "if odd_holes == 0 { near(odd) } else { BOUNDARY }",
-        replacement: "if odd_holes == 0 { near(!odd) } else { BOUNDARY }",
+        original: "near(odd == shell)",
+        replacement: "near(odd != shell)",
         integration: &[],
         unit: &[AGREE, FINE],
     },
@@ -66,8 +71,8 @@ pub const CELLS: [Mutation; 15] = [
         package: Package::Core,
         breaks: "a boundary cell of a hole takes the hole's side for its polygon's",
         file: CELLS_FILE,
-        original: "if odd_holes == usize::from(odd) { near(!odd) } else { BOUNDARY }",
-        replacement: "if odd_holes == usize::from(odd) { near(odd) } else { BOUNDARY }",
+        original: "near(odd == shell)",
+        replacement: "near(odd)",
         integration: &[],
         unit: &[AGREE, FINE],
     },
@@ -76,8 +81,8 @@ pub const CELLS: [Mutation; 15] = [
         package: Package::Core,
         breaks: "a cell several rings' edges touch is decided as if only the last ring's did",
         file: CELLS_FILE,
-        original: "*owner = if *owner == UNTOUCHED || *owner == edge.ring { edge.ring } else { SEVERAL };",
-        replacement: "*owner = if *owner == UNTOUCHED || *owner == edge.ring || SEVERAL > 0 { edge.ring } else { SEVERAL };",
+        original: "if was == UNTOUCHED || was == ring {",
+        replacement: "if was == UNTOUCHED || was == ring || ring < usize::MAX {",
         integration: &[],
         unit: &[INVALID],
     },
@@ -170,5 +175,55 @@ pub const CELLS: [Mutation; 15] = [
         replacement: "Some(if floor + SHIFT > scaled { floor } else { floor })",
         integration: &[],
         unit: &["geometry::prepared::cells::tests::cells_are_found_exactly_below_negative_sides"],
+    },
+    Mutation {
+        name: "cells-several-on",
+        package: Package::Core,
+        breaks: "a point on an edge of a cell several rings touch is placed by its parities alone",
+        file: PATH_FILE,
+        original: "Event::On => slots.on |= bit,",
+        replacement: "Event::On => slots.on |= 0,",
+        integration: &[],
+        unit: &[SEVERAL],
+    },
+    Mutation {
+        name: "cells-several-flip",
+        package: Package::Core,
+        breaks: "a point in a cell several rings touch keeps every ring's side at the reference point",
+        file: PATH_FILE,
+        original: "Event::Crosses(true) => slots.odd ^= bit,",
+        replacement: "Event::Crosses(true) => slots.odd ^= 0,",
+        integration: &[],
+        unit: &[SEVERAL],
+    },
+    Mutation {
+        name: "cells-several-shell-holds",
+        package: Package::Core,
+        breaks: "a polygon whose shell holds a cell without touching it takes its first touching hole for its shell",
+        file: SEVERAL_FILE,
+        original: "let shell = if touches { SHELL_TOUCHES } else { SHELL_HOLDS };",
+        replacement: "let shell = if touches || !touches { SHELL_TOUCHES } else { SHELL_HOLDS };",
+        integration: &[],
+        unit: &[SEVERAL],
+    },
+    Mutation {
+        name: "cells-several-hole-order",
+        package: Package::Core,
+        breaks: "a hole listed after one that holds the cell still decides its points",
+        file: PATH_FILE,
+        original: "let passed = hole && (ring > holding || found == Location::Exterior);",
+        replacement: "let passed = hole && (ring > u32::MAX || found == Location::Exterior);",
+        integration: &[],
+        unit: &[SEVERAL],
+    },
+    Mutation {
+        name: "cells-several-other-polygon",
+        package: Package::Core,
+        breaks: "a cell several rings touch, held whole by another part, is decided by its own rings alone",
+        file: SEVERAL_FILE,
+        original: "    if parity.inside > holding {\n        return Some(INTERIOR);",
+        replacement: "    if parity.inside > holding && holding > usize::MAX.saturating_sub(1) {\n        return Some(INTERIOR);",
+        integration: &[],
+        unit: &[SEVERAL],
     },
 ];

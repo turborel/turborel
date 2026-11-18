@@ -38,6 +38,8 @@ const SQUARED_SLACK: f64 = 1.000_000_000_000_909_5;
 
 /// A closed envelope: lower x, lower y, upper x, upper y.
 pub(super) type Window = [f64; 4];
+/// An edge and the index of its ring, counted over the polygons in order.
+type Edge = (Point, Point, usize);
 
 struct Node {
     bounds: Window,
@@ -50,7 +52,7 @@ struct Node {
 
 /// The edges of a polygon or multipolygon, in leaf order.
 pub(super) struct EdgeTree {
-    edges: Vec<(Point, Point)>,
+    edges: Vec<Edge>,
     nodes: Vec<Node>,
     /// The largest coordinate magnitude of any edge.
     largest: f64,
@@ -65,21 +67,21 @@ impl EdgeTree {
         // there are at most count / (LEAF / 2) + 1 leaves and twice as
         // many nodes.
         let most = count.checked_div(LEAF.checked_div(2)?)?.checked_add(1)?.checked_mul(2)?;
-        let bytes = count.checked_mul(size_of::<(Point, Point)>())?.checked_add(most.checked_mul(size_of::<Node>())?)?;
+        let bytes = count.checked_mul(size_of::<Edge>())?.checked_add(most.checked_mul(size_of::<Node>())?)?;
         let mut held = budget.reserve(bytes, "a prepared polygon's edge hierarchy").ok()?;
         let mut edges = Vec::new();
         edges.try_reserve_exact(count).ok()?;
-        for ring in rings(shape)? {
-            edges.extend(segments(ring));
+        for (ring, points) in rings(shape)?.into_iter().enumerate() {
+            edges.extend(segments(points).map(|(a, b)| (a, b, ring)));
         }
         let mut nodes = Vec::new();
         nodes.try_reserve_exact(most).ok()?;
         if !edges.is_empty() {
             build(&mut edges, 0, &mut nodes, 0)?;
         }
-        let used = edges.capacity().checked_mul(size_of::<(Point, Point)>())?;
+        let used = edges.capacity().checked_mul(size_of::<Edge>())?;
         held.resize(used.checked_add(nodes.capacity().checked_mul(size_of::<Node>())?)?).ok()?;
-        let largest = edges.iter().flat_map(|&(a, b)| a.into_iter().chain(b)).map(f64::abs).fold(0.0_f64, f64::max);
+        let largest = edges.iter().flat_map(|&(a, b, _)| a.into_iter().chain(b)).map(f64::abs).fold(0.0_f64, f64::max);
         Some(Box::new(Self { edges, nodes, largest, _held: held }))
     }
 
@@ -122,23 +124,23 @@ impl EdgeTree {
         let edges = self.edges.get(leaf.start..leaf.end)?;
         Some(edges.iter().fold(
             best,
-            |best, &(a, b)| {
+            |best, &(a, b, _)| {
                 if beyond(point, envelope(a, b), reach(best, unit)) { best } else { best.min(segment(point, a, b)) }
             },
         ))
     }
 
     /// Calls `visit` with each edge whose envelope meets the closed
-    /// `window`, until it returns false; none if the hierarchy is
-    /// inconsistent.
-    pub(super) fn within(&self, window: Window, mut visit: impl FnMut(Point, Point) -> bool) -> Option<()> {
+    /// `window`, and its ring, until it returns false; none if the
+    /// hierarchy is inconsistent.
+    pub(super) fn within(&self, window: Window, mut visit: impl FnMut(Point, Point, usize) -> bool) -> Option<()> {
         let mut at = 0_usize;
         while let Some(node) = self.nodes.get(at) {
             if !meets(node.bounds, window) {
                 at = node.after;
             } else if node.end > node.start {
                 let edges = self.edges.get(node.start..node.end)?;
-                let finished = edges.iter().filter(|&&(a, b)| meets(envelope(a, b), window)).all(|&(a, b)| visit(a, b));
+                let finished = edges.iter().filter(|&&(a, b, _)| meets(envelope(a, b), window)).all(|&(a, b, ring)| visit(a, b, ring));
                 if !finished {
                     return Some(());
                 }
@@ -152,11 +154,11 @@ impl EdgeTree {
 }
 
 /// Builds the subtree of `edges`, which begin at `start` in leaf order.
-fn build(edges: &mut [(Point, Point)], start: usize, nodes: &mut Vec<Node>, depth: u32) -> Option<()> {
+fn build(edges: &mut [Edge], start: usize, nodes: &mut Vec<Node>, depth: u32) -> Option<()> {
     if depth >= MAX_DEPTH {
         return None;
     }
-    let bounds = edges.iter().map(|&(a, b)| envelope(a, b)).reduce(union)?;
+    let bounds = edges.iter().map(|&(a, b, _)| envelope(a, b)).reduce(union)?;
     let at = nodes.len();
     let leaf = edges.len() <= LEAF;
     let end = if leaf { start.checked_add(edges.len())? } else { start };
@@ -177,7 +179,7 @@ fn build(edges: &mut [(Point, Point)], start: usize, nodes: &mut Vec<Node>, dept
 /// Whether to split `edges` at their median along y rather than x: the
 /// axis whose halves' envelopes overlap least, then whose halves'
 /// envelopes have the least perimeter, then x. Leaves `edges` reordered.
-fn axis(edges: &mut [(Point, Point)]) -> Option<bool> {
+fn axis(edges: &mut [Edge]) -> Option<bool> {
     let middle = edges.len().checked_div(2)?;
     let mut costs = [(0.0_f64, 0.0_f64); 2];
     for (cost, vertical) in costs.iter_mut().zip([false, true]) {
@@ -192,13 +194,13 @@ fn axis(edges: &mut [(Point, Point)]) -> Option<bool> {
 
 /// Edges in order of their centres along y, if `vertical`, or x, and of
 /// their centres along the other axis where those are equal.
-fn order(a: (Point, Point), b: (Point, Point), vertical: bool) -> Ordering {
+fn order(a: Edge, b: Edge, vertical: bool) -> Ordering {
     centre(a, vertical).total_cmp(&centre(b, vertical)).then(centre(a, !vertical).total_cmp(&centre(b, !vertical)))
 }
 
 /// The envelope of some edges.
-fn bounds_of(edges: &[(Point, Point)]) -> Option<Window> {
-    edges.iter().map(|&(a, b)| envelope(a, b)).reduce(union)
+fn bounds_of(edges: &[Edge]) -> Option<Window> {
+    edges.iter().map(|&(a, b, _)| envelope(a, b)).reduce(union)
 }
 
 /// The area two envelopes share, as computed.
@@ -222,7 +224,7 @@ fn beyond(point: Point, bounds: Window, reach: f64) -> bool {
 
 /// An edge's centre along y, if `vertical`, or x; halved before adding so
 /// extreme finite coordinates cannot overflow.
-fn centre(([ax, ay], [bx, by]): (Point, Point), vertical: bool) -> f64 {
+fn centre(([ax, ay], [bx, by], _): Edge, vertical: bool) -> f64 {
     if vertical { ay * HALF + by * HALF } else { ax * HALF + bx * HALF }
 }
 

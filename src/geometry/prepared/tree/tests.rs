@@ -51,7 +51,7 @@ fn expected(shape: &Shape, window: Window) -> Vec<[u64; 4]> {
 
 fn found(tree: &EdgeTree, window: Window) -> Vec<[u64; 4]> {
     let mut edges = Vec::new();
-    tree.within(window, |a, b| {
+    tree.within(window, |a, b, _| {
         edges.push((a, b));
         true
     })
@@ -85,7 +85,7 @@ fn windows_find_exactly_the_edges_whose_envelopes_meet_them() {
             assert_eq!(found(&tree, [*x, *y, *x, *y]), expected(&shape, [*x, *y, *x, *y]));
         }
         let mut seen = 0_u32;
-        tree.within([x0, y0, x1, y1], |_, _| {
+        tree.within([x0, y0, x1, y1], |_, _, _| {
             seen = seen.saturating_add(1);
             seen < 3
         })

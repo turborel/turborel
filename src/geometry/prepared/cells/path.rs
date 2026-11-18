@@ -12,11 +12,14 @@
 //! equally often, modulo two. An edge through a corner of the path is
 //! placed by its slope, as the sweep places a crossing on a cell's side,
 //! so every point is decided. Every edge the path can cross touches the
-//! closed cell, so the edges whose envelopes meet it decide the point.
+//! closed cell, so the edges whose envelopes meet it decide the point. In
+//! a cell several rings touch, each ring's parity is followed apart and
+//! the polygons combined from the cell's record (`several.rs`).
 
 use std::cmp::Ordering;
 
 use super::super::tree::EdgeTree;
+use super::several::{MOST_RINGS, NO_HOLE, SHELL_HOLDS};
 use crate::geometry::crossing::{Location, on_segment};
 use crate::geometry::grid::Grid;
 use crate::geometry::robust::orient;
@@ -46,7 +49,7 @@ pub(super) fn locate(grid: &Grid, tree: &EdgeTree, point: Point, (row, col): (us
     let path = Path { point, right, centre: grid.centre(row)? };
     // The parity so far, or none once an edge holds the point.
     let mut odd = Some(inside);
-    tree.within(cell, |a, b| {
+    tree.within(cell, |a, b, _| {
         let Some(parity) = odd else { return false };
         odd = match path.event(a, b) {
             Event::On => None,
@@ -86,6 +89,109 @@ impl Path {
         let above = |h: f64| height(a, b, [x, h]) == Ordering::Greater;
         above(y) != above(self.centre)
     }
+}
+
+/// The rings a record keeps, each one's parity and whether an edge of it
+/// holds the point, one bit each.
+struct Slots {
+    rings: [u32; MOST_RINGS],
+    count: usize,
+    odd: u64,
+    on: u64,
+}
+
+impl Slots {
+    /// The rings of `record`, with their parities at the reference point.
+    fn read(record: &[u32]) -> Option<Self> {
+        let mut slots = Self { rings: [0; MOST_RINGS], count: 0, odd: 0, on: 0 };
+        let mut words = record.iter().copied();
+        for _ in 0..words.next()? {
+            let [_, _, count] = [words.next()?, words.next()?, words.next()?];
+            for _ in 0..count {
+                let word = words.next()?;
+                *slots.rings.get_mut(slots.count)? = word >> 1_u32;
+                slots.odd |= u64::from(word & 1) << slots.count;
+                slots.count = slots.count.checked_add(1)?;
+            }
+        }
+        Some(slots)
+    }
+
+    /// The bit of ring `ring`, none if the record does not keep it.
+    fn bit(&self, ring: usize) -> Option<u64> {
+        let ring = u32::try_from(ring).ok()?;
+        let at = self.rings.get(..self.count)?.iter().position(|&kept| kept == ring)?;
+        1_u64.checked_shl(u32::try_from(at).ok()?)
+    }
+
+    /// Where the point lies against the ring of slot `slot`.
+    fn location(&self, slot: usize) -> Location {
+        let bit = 1_u64.checked_shl(u32::try_from(slot).unwrap_or(u32::MAX)).unwrap_or(0);
+        if self.on & bit != 0 {
+            Location::Boundary
+        } else if self.odd & bit != 0 {
+            Location::Interior
+        } else {
+            Location::Exterior
+        }
+    }
+}
+
+/// Where `point`, in the cell at `row` and `col`, lies in the polygon,
+/// from the cell's record (`several.rs`): each kept ring's parity at the
+/// reference point, flipped by its edges that cross the point's path.
+/// Rings the record leaves out belong to polygons that hold none of the
+/// cell, so their edges change nothing.
+pub(super) fn locate_several(grid: &Grid, tree: &EdgeTree, point: Point, (row, col): (usize, usize), record: &[u32]) -> Option<Location> {
+    let mut slots = Slots::read(record)?;
+    let right = grid.column_start(col.checked_add(1)?)?;
+    let cell = [grid.column_start(col)?, grid.row_start(row)?, right, grid.row_start(row.checked_add(1)?)?];
+    let path = Path { point, right, centre: grid.centre(row)? };
+    tree.within(cell, |a, b, ring| {
+        let Some(bit) = slots.bit(ring) else { return true };
+        match path.event(a, b) {
+            Event::On => slots.on |= bit,
+            Event::Crosses(true) => slots.odd ^= bit,
+            Event::Crosses(false) => (),
+        }
+        true
+    })?;
+    combine(record, &slots)
+}
+
+/// The polygons of a record combined as exact location combines them: a
+/// shell that does not hold the point decides its polygon; otherwise the
+/// first hole, in order, that holds the point or has it on its boundary
+/// does; and a point inside any polygon is inside.
+fn combine(record: &[u32], slots: &Slots) -> Option<Location> {
+    let mut words = record.iter().copied();
+    let (mut slot, mut boundary) = (0_usize, false);
+    for _ in 0..words.next()? {
+        let [shell, holding, count] = [words.next()?, words.next()?, words.next()?];
+        let mut location = Location::Interior;
+        let mut decided = false;
+        for at in 0..count {
+            let ring = words.next()? >> 1_u32;
+            let found = slots.location(slot);
+            slot = slot.checked_add(1)?;
+            let hole = at > 0 || shell == SHELL_HOLDS;
+            let passed = hole && (ring > holding || found == Location::Exterior);
+            if decided || passed {
+                continue;
+            }
+            location = if hole && found == Location::Interior { Location::Exterior } else { found };
+            decided = location != Location::Interior;
+        }
+        if !decided && holding != NO_HOLE {
+            location = Location::Exterior;
+        }
+        match location {
+            Location::Interior => return Some(Location::Interior),
+            Location::Boundary => boundary = true,
+            Location::Exterior => (),
+        }
+    }
+    Some(if boundary { Location::Boundary } else { Location::Exterior })
 }
 
 /// Whether an edge crosses height `y` by the half-open rule: one end above

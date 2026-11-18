@@ -166,6 +166,54 @@ fn ties_on_a_points_path_are_placed_by_slope() {
     assert!(decided >= 1.0_f64, "decided only {decided}");
 }
 
+/// A subdivided ring around the rectangle from (`x0`, `y0`) to (`x1`, `y1`).
+fn rectangle(x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<Point> {
+    subdivided_ring(&[[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]])
+}
+
+/// Verifies: [DESIGN] D85: cells several rings' edges may touch, and cells
+/// whose one ring does not decide them alone, are located as exact
+/// location locates them: a hole hugging its shell, parts sharing sides
+/// and corners, holes near each other, holes near each other inside a
+/// third hole listed before or after them, a hole crossing its shell,
+/// overlapping parts and a holed part another covers; nearly every point
+/// is decided. Rows whose rings outgrow the room to note them stay exact.
+#[test]
+fn cells_several_rings_touch_are_decided_by_their_rings() {
+    let mut hugging = dense_ring(0.02_f64, 9.98_f64);
+    hugging.reverse();
+    let hugged = Shape::Polygon(vec![dense_ring(0.0_f64, 10.0_f64), hugging]);
+    let mut tiles = Vec::new();
+    for i in 0..4_u32 {
+        for j in 0..4_u32 {
+            let (x, y) = (f64::from(i) * 2.5_f64, f64::from(j) * 2.5_f64);
+            tiles.push(Shape::Polygon(vec![rectangle(x, y, x + 2.5_f64, y + 2.5_f64)]));
+        }
+    }
+    let tiles = Shape::Multi(MULTIPOLYGON, tiles);
+    let shell = dense_ring(0.0_f64, 10.0_f64);
+    let (left, right, outer) = (rectangle(3.0, 3.0, 4.99, 7.0), rectangle(5.01, 3.0, 7.0, 7.0), rectangle(1.0, 1.0, 9.0, 9.0));
+    let near_holes = Shape::Polygon(vec![shell.clone(), left.clone(), right.clone()]);
+    let outer_first = Shape::Polygon(vec![shell.clone(), outer.clone(), left.clone(), right.clone()]);
+    let outer_last = Shape::Polygon(vec![shell.clone(), left, right, outer]);
+    let crossing = Shape::Polygon(vec![shell.clone(), dense_ring(5.0_f64, 15.0_f64)]);
+    let overlapping =
+        Shape::Multi(MULTIPOLYGON, vec![Shape::Polygon(vec![shell.clone()]), Shape::Polygon(vec![dense_ring(5.0_f64, 15.0_f64)])]);
+    let mut inner_hole = dense_ring(2.02_f64, 7.98_f64);
+    inner_hole.reverse();
+    let covered =
+        Shape::Multi(MULTIPOLYGON, vec![Shape::Polygon(vec![dense_ring(2.0_f64, 8.0_f64), inner_hole]), Shape::Polygon(vec![shell])]);
+    for shape in [hugged, tiles, near_holes, outer_first, outer_last, crossing, overlapping, covered] {
+        let decided = agree_at(&shape, 150, &[]);
+        assert!(decided >= 0.999_f64, "decided only {decided} of {shape:?}");
+    }
+    let crowded = Shape::Multi(
+        MULTIPOLYGON,
+        vec![Shape::Polygon(vec![rectangle(0.0, 0.0, 10.0, 0.01)]), Shape::Polygon(vec![rectangle(0.0, 0.02, 10.0, 0.03)])],
+    );
+    agree_at(&crowded, 100, &[]);
+}
+
 /// A polygon whose right side lies one unit in the last place left of a
 /// cell side at a negative coordinate, where subtracting the grid's shift
 /// rounds, with a zigzag left side; or the same with its axes swapped, so

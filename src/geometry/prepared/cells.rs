@@ -15,7 +15,8 @@
 //! located by one lookup. A boundary cell only one ring's edges may touch
 //! keeps that ring's side where the cell's right side meets the centre
 //! line, and a point in it is located from the few edges near it
-//! (`path.rs`); a cell several rings touch takes the exact edge tests.
+//! (`path.rs`); a cell several rings touch keeps a record of their sides
+//! and polygons (`several.rs`).
 //! Lucene precomputes a grid of cell relations for polygon queries
 //! likewise (`GeoEncodingUtils.createComponentPredicate`), with
 //! approximate rather than exact cells, and none for boundary cells.
@@ -28,8 +29,10 @@ use crate::geometry::grid::Grid;
 use crate::geometry::shape::{MULTIPOLYGON, Point, Shape};
 use crate::memory::{MemoryBudget, Reservation};
 use crate::spatial::Bounds;
+use several::Records;
 
 mod path;
+mod several;
 
 /// A cell no boundary point touches, outside every polygon.
 const EXTERIOR: u8 = 0;
@@ -41,17 +44,29 @@ const BOUNDARY: u8 = 2;
 /// outside the polygon, or inside it.
 const NEAR_OUTSIDE: u8 = 3;
 const NEAR_INSIDE: u8 = 4;
-/// A column no edge has touched yet in the row being marked, and one that
-/// edges of several rings have.
+/// A cell several rings' edges may touch, or whose one ring does not
+/// decide it alone, with a record of their sides (`several.rs`).
+const NEAR_SEVERAL: u8 = 5;
+/// A column no edge has touched yet in the row being marked, one that
+/// edges of several rings have, and one whose rings outgrew the room to
+/// note them.
 const UNTOUCHED: usize = usize::MAX;
 const SEVERAL: usize = usize::MAX.saturating_sub(1);
+const CROWDED: usize = usize::MAX.saturating_sub(2);
+/// Room to note rings, per column of a row beyond one per edge: two rings
+/// running along a row through every column, twice over.
+const NOTED_PER_COLUMN: usize = 4;
 /// \[DESIGN\] Polygons with fewer edges are located as fast by a scan.
 pub(super) const MIN_EDGES: usize = 32;
 /// Cells per edge: fine enough that most cells hold no edge.
 const CELLS_PER_EDGE: u32 = 64;
 /// The sweep's room per edge: its record, its place among the edges of a
-/// row, and a crossing of that row's centre line.
-const SWEPT_BYTES: usize = size_of::<Edge>().saturating_add(size_of::<&Edge>()).saturating_add(size_of::<(usize, usize)>());
+/// row, a crossing of that row's centre line, and a ring noted for a cell
+/// several rings touch.
+const SWEPT_BYTES: usize = size_of::<Edge>()
+    .saturating_add(size_of::<&Edge>())
+    .saturating_add(size_of::<(usize, usize)>())
+    .saturating_add(size_of::<(usize, usize)>());
 
 /// The edges of a polygon or multipolygon, none for another kind; counted
 /// without allocating, as every prepared operand asks.
@@ -92,6 +107,7 @@ struct Edge {
 pub(super) struct Cells {
     grid: Grid,
     states: Vec<u8>,
+    records: Records,
     _held: Reservation,
 }
 
@@ -107,7 +123,8 @@ impl Cells {
         }
         let grid = Grid::new(bounds, count, CELLS_PER_EDGE)?;
         let cells = grid.rows.checked_mul(grid.cols)?;
-        let scratch = count.checked_mul(SWEPT_BYTES)?.checked_add(grid.cols.checked_mul(size_of::<usize>())?)?;
+        let per_column = size_of::<usize>().checked_add(NOTED_PER_COLUMN.checked_mul(size_of::<(usize, usize)>())?)?;
+        let scratch = count.checked_mul(SWEPT_BYTES)?.checked_add(grid.cols.checked_mul(per_column)?)?;
         let mut held = budget.reserve(cells.checked_add(scratch)?, "a prepared polygon's cell certificates").ok()?;
         let mut edges = Vec::new();
         edges.try_reserve_exact(count).ok()?;
@@ -120,15 +137,15 @@ impl Cells {
         let mut states = Vec::new();
         states.try_reserve_exact(cells).ok()?;
         states.resize(cells, EXTERIOR);
-        sweep(&grid, &ring_list(&polygons), &mut edges, &mut states)?;
+        let records = sweep(&grid, &ring_list(&polygons), &mut edges, &mut states)?;
         drop(edges);
-        held.resize(states.capacity()).ok()?;
-        Some(Box::new(Self { grid, states, _held: held }))
+        held.resize(states.capacity().checked_add(records.bytes()?)?).ok()?;
+        Some(Box::new(Self { grid, states, records, _held: held }))
     }
 
     /// Where `point` lies in the polygon, if its cell decides it: by the
-    /// label of a cell no edge touches, or, in a cell one ring's edges
-    /// touch, by those of them near the point, found in `tree`.
+    /// label of a cell no edge touches, or, in a cell rings' edges touch,
+    /// by those of them near the point, found in `tree`.
     pub(super) fn decide<'a>(&self, point: Point, tree: impl FnOnce() -> Option<&'a EdgeTree>) -> Option<Location> {
         let (row, col) = self.grid.place(point)?;
         let at = row.checked_mul(self.grid.cols)?.checked_add(col)?;
@@ -137,6 +154,7 @@ impl Cells {
             EXTERIOR => return Some(Location::Exterior),
             NEAR_INSIDE => true,
             NEAR_OUTSIDE => false,
+            NEAR_SEVERAL => return path::locate_several(&self.grid, tree()?, point, (row, col), self.records.get(at)?),
             _ => return None,
         };
         path::locate(&self.grid, tree()?, point, (row, col), inside)
@@ -144,14 +162,17 @@ impl Cells {
 }
 
 /// Marks and labels the grid a row at a time, from the edges that may
-/// touch that row, so only one row's crossings are ever held.
-fn sweep(grid: &Grid, rings: &[Ring], edges: &mut [Edge], states: &mut [u8]) -> Option<()> {
+/// touch that row, so only one row's crossings are ever held; returns the
+/// records of cells several rings touch.
+fn sweep(grid: &Grid, rings: &[Ring], edges: &mut [Edge], states: &mut [u8]) -> Option<Records> {
     edges.sort_unstable_by_key(|edge| edge.first);
     let mut waiting: &[Edge] = edges;
     let mut active: Vec<&Edge> = Vec::new();
     active.try_reserve_exact(waiting.len()).ok()?;
-    let mut row_of = Row { owners: Vec::new(), found: Vec::new() };
+    let mut row_of = Row { owners: Vec::new(), found: Vec::new(), shared: Vec::new() };
     row_of.found.try_reserve_exact(waiting.len()).ok()?;
+    row_of.shared.try_reserve_exact(waiting.len().checked_add(grid.cols.checked_mul(NOTED_PER_COLUMN)?)?).ok()?;
+    let mut records = Records::default();
     row_of.owners.try_reserve_exact(grid.cols).ok()?;
     row_of.owners.resize(grid.cols, UNTOUCHED);
     let polygons = rings.iter().map(|ring| ring.polygon.saturating_add(1)).max().unwrap_or(0);
@@ -163,22 +184,28 @@ fn sweep(grid: &Grid, rings: &[Ring], edges: &mut [Edge], states: &mut [u8]) -> 
         active.retain(|edge| edge.last >= row);
         row_of.owners.fill(UNTOUCHED);
         row_of.found.clear();
+        row_of.shared.clear();
         let base = row.checked_mul(grid.cols)?;
         let line = states.get_mut(base..base.checked_add(grid.cols)?)?;
         for edge in &active {
             row_of.mark(grid, edge, row, line)?;
         }
         row_of.found.sort_unstable();
-        parity.label(line, &row_of.owners, &row_of.found)?;
+        row_of.shared.sort_unstable();
+        row_of.shared.dedup();
+        parity.label(line, base, &row_of, &mut records)?;
     }
-    Some(())
+    records.sort();
+    Some(records)
 }
 
-/// What marking a row notes: each column's owner, and the column and ring
-/// of each crossing of the row's centre line.
+/// What marking a row notes: each column's owner, the column and ring of
+/// each crossing of the row's centre line, and the column and ring of each
+/// edge in a column several rings touch, while room is left.
 struct Row {
     owners: Vec<usize>,
     found: Vec<(usize, usize)>,
+    shared: Vec<(usize, usize)>,
 }
 
 impl Row {
@@ -188,15 +215,44 @@ impl Row {
     /// notes the column of that crossing too.
     fn mark(&mut self, grid: &Grid, edge: &Edge, row: usize, line: &mut [u8]) -> Option<()> {
         let (first, last) = grid.columns((edge.a, edge.b), row)?;
-        for (state, owner) in line.get_mut(first..=last)?.iter_mut().zip(self.owners.get_mut(first..=last)?) {
-            *state = BOUNDARY;
-            *owner = if *owner == UNTOUCHED || *owner == edge.ring { edge.ring } else { SEVERAL };
+        for col in first..=last {
+            *line.get_mut(col)? = BOUNDARY;
+            let was = *self.owners.get(col)?;
+            *self.owners.get_mut(col)? = self.owner(col, was, edge.ring);
         }
         let centre = grid.centre(row)?;
         if path::straddles(edge.a, edge.b, centre) {
             self.found.push((column(grid, edge, centre, first, last)?, edge.ring));
         }
         Some(())
+    }
+}
+
+impl Row {
+    /// The owner of column `col`, which `was` owned, once an edge of `ring`
+    /// touches it, noting the rings of a column several touch.
+    fn owner(&mut self, col: usize, was: usize, ring: usize) -> usize {
+        if was == UNTOUCHED || was == ring {
+            return ring;
+        }
+        let room = self.shared.capacity().saturating_sub(self.shared.len());
+        if was == CROWDED || room < 2 {
+            return CROWDED;
+        }
+        if was != SEVERAL {
+            self.shared.push((col, was));
+        }
+        if self.shared.last() != Some(&(col, ring)) {
+            self.shared.push((col, ring));
+        }
+        SEVERAL
+    }
+
+    /// The rings noted for column `col`, in order.
+    fn rings_of(&self, col: usize) -> impl Iterator<Item = usize> + '_ {
+        let first = self.shared.partition_point(|&(at, _)| at < col);
+        let end = self.shared.partition_point(|&(at, _)| at <= col);
+        self.shared.get(first..end).into_iter().flatten().map(|&(_, ring)| ring)
     }
 }
 
@@ -226,6 +282,9 @@ fn near(inside: bool) -> u8 {
 /// it puts the point inside.
 struct Parity<'a> {
     rings: &'a [Ring],
+    /// Each polygon's first ring, its shell, and after the last the count
+    /// of rings.
+    starts: Vec<usize>,
     odd: Vec<bool>,
     /// Per polygon: its shell's parity and its holes with odd parity.
     polygons: Vec<(bool, usize)>,
@@ -240,7 +299,12 @@ impl<'a> Parity<'a> {
         let mut each = Vec::new();
         each.try_reserve_exact(polygons).ok()?;
         each.resize(polygons, (false, 0));
-        Some(Self { rings, odd, polygons: each, inside: 0 })
+        let mut starts = Vec::new();
+        starts.try_reserve_exact(polygons.checked_add(1)?).ok()?;
+        for polygon in 0..=polygons {
+            starts.push(rings.partition_point(|ring| ring.polygon < polygon));
+        }
+        Some(Self { rings, starts, odd, polygons: each, inside: 0 })
     }
 
     fn clear(&mut self) {
@@ -276,17 +340,21 @@ impl<'a> Parity<'a> {
         Some(())
     }
 
-    /// Labels one row's cells, `line`, from right to left. A crossing is
-    /// passed once the sweep is left of its column, flipping its ring's
-    /// parity for every cell further left. An unmarked cell takes the
-    /// polygons' state; a boundary cell is classified from the state at its
-    /// reference point, where its right side meets the centre line.
-    fn label(&mut self, line: &mut [u8], owners: &[usize], found: &[(usize, usize)]) -> Option<()> {
+    /// Labels one row's cells, `line`, the first at cell index `base`, from
+    /// right to left. A crossing is passed once the sweep is left of its
+    /// column, flipping its ring's parity for every cell further left. An
+    /// unmarked cell takes the polygons' state; a boundary cell is
+    /// classified from the state at its reference point, where its right
+    /// side meets the centre line.
+    fn label(&mut self, line: &mut [u8], base: usize, row: &Row, records: &mut Records) -> Option<()> {
         self.clear();
-        let mut pending = found.iter().rev().peekable();
-        for (col, (state, &owner)) in line.iter_mut().zip(owners).enumerate().rev() {
-            *state = if *state == BOUNDARY {
-                self.classify(owner)?
+        let mut pending = row.found.iter().rev().peekable();
+        for (col, (state, &owner)) in line.iter_mut().zip(&row.owners).enumerate().rev() {
+            let cell = base.checked_add(col)?;
+            *state = if *state == BOUNDARY && owner == SEVERAL {
+                records.add(self, row.rings_of(col), cell)
+            } else if *state == BOUNDARY {
+                self.classify(owner, cell, records)?
             } else if self.inside() {
                 INTERIOR
             } else {
@@ -299,25 +367,27 @@ impl<'a> Parity<'a> {
         Some(())
     }
 
-    /// The state of a boundary cell whose edges are all of ring `owner`,
-    /// from the parities at its reference point. Rings without edges in the
-    /// cell have the same parity at every point of it. So another polygon
-    /// holding the reference point holds the cell, and a hole whose shell
-    /// does not hold it leaves the cell outside. Otherwise the owner alone
-    /// decides, unless another hole holds the reference point.
-    fn classify(&self, owner: usize) -> Option<u8> {
+    /// The state of boundary cell `cell`, whose edges are all of ring
+    /// `owner`, from the parities at its reference point. Rings without
+    /// edges in the cell have the same parity at every point of it. So
+    /// another polygon holding the reference point holds the cell, and a
+    /// hole whose shell does not hold it leaves the cell outside. Otherwise
+    /// the owner alone decides, unless another hole holds the reference
+    /// point: then the cell keeps a record (`several.rs`).
+    fn classify(&self, owner: usize, cell: usize, records: &mut Records) -> Option<u8> {
         let Some(&Ring { polygon, shell }) = self.rings.get(owner) else { return Some(BOUNDARY) };
         let (shell_odd, odd_holes) = *self.polygons.get(polygon)?;
         let odd = *self.odd.get(owner)?;
         if self.inside > usize::from(shell_odd && odd_holes == 0) {
             return Some(INTERIOR);
         }
-        let state = if shell {
-            if odd_holes == 0 { near(odd) } else { BOUNDARY }
-        } else if shell_odd {
-            if odd_holes == usize::from(odd) { near(!odd) } else { BOUNDARY }
-        } else {
+        let alone = if shell { odd_holes == 0 } else { odd_holes == usize::from(odd) };
+        let state = if !shell && !shell_odd {
             EXTERIOR
+        } else if alone {
+            near(odd == shell)
+        } else {
+            records.add(self, std::iter::once(owner), cell)
         };
         Some(state)
     }

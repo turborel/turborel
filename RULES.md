@@ -3133,7 +3133,16 @@ which cross a ring as often as the ray does, modulo two: the rise lies
 just left of the side, nearer to it than the run and the centre line lie
 above their heights, so no vertex lies on the path, and an edge through
 one of its corners is placed by its slope. A cell several rings' edges
-may touch leaves its points to the interval tree or the ring scan.
+may touch, or whose one ring does not decide it alone, keeps a record:
+for each polygon of its rings whose shell touches or holds it, the
+shell's part, the first hole, in order, that holds it without touching
+it, and each touching ring's parity at the reference point. A polygon
+that holds the cell untouched makes it interior, and one whose untouched
+shell does not hold it is left out. A point in it follows each ring's
+parity apart along the same path, and the polygons combine as location
+combines them. A cell with more than 64 such rings, or whose row's
+rings outgrow the room to note them, leaves its points to the interval
+tree or the ring scan.
 Certificates decline when a cell
 would be within 256 units in the last place of the largest coordinate, a
 scaled coordinate would reach 2^44, the side would fall below 1e-280, or
