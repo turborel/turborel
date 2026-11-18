@@ -1,5 +1,7 @@
 //! \[EXTENSION\] [GS §10] The compatibility syntax, each front end
-//! compiling to the one GPML tree GRAPH_TABLE reads [GS §14]:
+//! compiling to the one GPML tree GRAPH_TABLE reads [GS §14], bound by
+//! GRAPH_TABLE's binder and run by its operator, never a second one
+//! (RULES.md D112):
 //!
 //! * MATCH in a WHERE clause over the tables of the FROM clause, with
 //!   SHORTEST_PATH, LAST_NODE, FOR PATH tables and WITHIN GROUP (GRAPH
@@ -9,7 +11,7 @@
 //! * a GRAPH_TABLE's hints (`compat/hints.rs`) [GS §10.2, R16.8];
 //! * a PGQL query, SELECT ... FROM MATCH ... (`compat/pgql.rs`), and an
 //!   openCypher MATCH ... RETURN query (`compat/cypher.rs`) [GS §10.3],
-//!   each read as a query of a GRAPH_TABLE, its expressions reading the
+//!   each read as a query of GRAPH_TABLEs, its expressions reading the
 //!   pattern's variables through the match's columns
 //!   (`compat/rewrite.rs`).
 //!
@@ -66,18 +68,39 @@ pub(in crate::parser) struct Frame {
 }
 
 /// [GS §10.3] How the expressions of a PGQL or Cypher query read the
-/// variables of its pattern: each property, function of a variable and
-/// aggregate of a group variable a column of the GRAPH_TABLE, read by
-/// name.
-#[derive(Debug)]
+/// variables of its patterns: each property, function of a variable and
+/// aggregate of a group variable a column of a GRAPH_TABLE, read by
+/// name. A Cypher query of several MATCH clauses has a GRAPH_TABLE each,
+/// and a variable is read through the first that binds it.
+#[derive(Debug, Default)]
 struct Rewrite {
-    /// The pattern's variables, of each its kind and degree.
+    /// The GRAPH_TABLEs, in the order of their patterns.
+    tables: Vec<Bound>,
+}
+
+/// [GS §10.3] One GRAPH_TABLE of a PGQL or Cypher query.
+#[derive(Debug)]
+struct Bound {
+    /// Its pattern's variables, of each its kind and degree.
     vars: Exposure,
-    /// The GRAPH_TABLE's columns so far, each with the text it is of, so
-    /// one written twice is one column.
+    /// Its columns so far, each with the text it is of, so one written
+    /// twice is one column.
     columns: Vec<(String, GraphColumn)>,
-    /// The GRAPH_TABLE's correlation name.
-    table: &'static str,
+    /// Its correlation name.
+    table: String,
+}
+
+impl Rewrite {
+    /// The rewrite of one GRAPH_TABLE, named `table`, of a pattern of
+    /// variables `vars`.
+    fn of(vars: Exposure, table: &str) -> Rewrite {
+        Rewrite { tables: vec![Bound { vars, columns: Vec::new(), table: table.to_owned() }] }
+    }
+
+    /// The columns of each GRAPH_TABLE, in order.
+    fn into_columns(self) -> Vec<Vec<(String, GraphColumn)>> {
+        self.tables.into_iter().map(|b| b.columns).collect()
+    }
 }
 
 impl Parser {

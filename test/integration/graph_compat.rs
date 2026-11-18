@@ -7,8 +7,10 @@
 
 use turborel::db::{Database, Session};
 
+mod cypher_clauses;
 mod front_ends;
 mod oracle;
+mod reachability;
 
 /// Schema A of people as node tables and who befriends whom, Alice to
 /// Bob to Carol to Dave and Alice to Erin to Dave, as §10.1's samples

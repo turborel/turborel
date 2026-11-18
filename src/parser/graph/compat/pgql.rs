@@ -2,20 +2,23 @@
 //! read as a query of one GRAPH_TABLE:
 //!
 //! ```text
-//! <pgql query> ::= SELECT [ DISTINCT | ALL ] <select list>
+//! <pgql query> ::= [ <path macro>... ] SELECT [ DISTINCT | ALL ] <select list>
 //!     FROM <pgql match> [ { , <pgql match> }... ]
 //!     [ WHERE <search condition> ] [ <group by clause> ] [ <having clause> ]
 //!     [ ORDER BY <sort specification list> ] [ LIMIT <row count> ] [ OFFSET <row count> ]
 //! <pgql match> ::= MATCH <path pattern> [ { , <path pattern> }... ] [ ON <graph name> ]
 //! ```
 //!
-//! The path patterns are GPML's, as PGQL 2 writes them, and together are
-//! the graph pattern; the WHERE clause is its postfilter [GS §6.8]. A
+//! The path patterns are GPML's, as PGQL 2 writes them, or hold PGQL's
+//! reachabilities, of edges or of the path macros (`pgql/reach.rs`), and
+//! together are the graph pattern; the WHERE clause is its postfilter [GS §6.8]. A
 //! match names one graph, SYS_GRAPH of the default schema if it names
 //! none. The select list, GROUP BY, HAVING and ORDER BY read the
 //! variables through the GRAPH_TABLE's columns (`rewrite.rs`), so an
 //! aggregate of a group variable is of each path, and any other of the
 //! query's rows.
+
+mod reach;
 
 use super::{Frame, Rewrite};
 use crate::ast::{
@@ -51,14 +54,15 @@ struct Tail {
 }
 
 impl Parser {
-    /// The offset of FROM, if a PGQL query begins here: SELECT, and FROM
-    /// MATCH outside any parentheses after it.
+    /// The offset of FROM, if a PGQL query begins here: its path macros
+    /// if any, SELECT, and FROM MATCH outside any parentheses after it.
     pub(in crate::parser) fn pgql_from(&self) -> Option<usize> {
-        if !self.is_kw(kw::SELECT) {
+        let select = self.macros_length();
+        if *self.peek_at(select) != Tok::KeyWord(kw::SELECT) {
             return None;
         }
         let mut depth = 0_usize;
-        let mut n = 1_usize;
+        let mut n = select.saturating_add(1);
         loop {
             let t = self.peek_at(n);
             if *t == Tok::End || (depth == 0 && *t == Tok::Delimiter(delim::RIGHT_PAREN)) {
@@ -102,16 +106,18 @@ impl Parser {
     /// its ORDER BY, LIMIT and OFFSET.
     fn pgql(&mut self, from: usize, ordered: bool) -> Result<(QuerySpecification, super::Ordering)> {
         let (start, at) = (self.pos, self.here());
+        let macros = self.path_macros()?;
+        let select = self.pos;
         self.pos = start.saturating_add(from).saturating_add(1);
-        let (graph, paths) = self.pgql_matches()?;
+        let (graph, paths) = self.pgql_matches(&macros)?;
         let mut pattern = GraphPattern { mode: None, paths, keep: None, where_clause: None, segments: Vec::new(), at };
-        let rewrite = Rewrite { vars: exposure(&pattern)?, columns: Vec::new(), table: PGQL_TABLE };
+        let rewrite = Rewrite::of(exposure(&pattern)?, PGQL_TABLE);
         self.compat.push(Frame { rewrite: Some(rewrite), ..Frame::default() });
-        let read = self.pgql_tail(start, start.saturating_add(from), ordered);
+        let read = self.pgql_tail(select, start.saturating_add(from), ordered);
         let frame = self.compat.pop().unwrap_or_default();
         let tail = read?;
         pattern.where_clause = tail.where_clause;
-        let columns = frame.rewrite.map(|r| r.columns).unwrap_or_default();
+        let columns = frame.rewrite.map(Rewrite::into_columns).unwrap_or_default().into_iter().next().unwrap_or_default();
         let table = super::graph_table(GraphReference::Named(graph), pattern, columns, PGQL_TABLE, at)?;
         let mut table_expression = tail.table_expression;
         table_expression.from = vec![TableReference::Graph(Box::new(table))];
@@ -181,14 +187,14 @@ impl Parser {
     }
 
     /// The `<pgql match>`es: the graph they name, and their path patterns.
-    fn pgql_matches(&mut self) -> Result<(TableName, Vec<crate::ast::PathPattern>)> {
+    fn pgql_matches(&mut self, macros: &[reach::Macro]) -> Result<(TableName, Vec<crate::ast::PathPattern>)> {
         let (mut graph, mut paths) = (None::<TableName>, Vec::new());
         loop {
             self.expect_kw(kw::MATCH)?;
-            paths.push(self.in_pattern(Parser::path_pattern)?);
+            paths.extend(self.pgql_path(macros)?);
             while *self.peek() == Tok::Delimiter(delim::COMMA) && *self.peek_at(1) != Tok::KeyWord(kw::MATCH) {
                 self.advance();
-                paths.push(self.in_pattern(Parser::path_pattern)?);
+                paths.extend(self.pgql_path(macros)?);
             }
             if self.accept_kw(kw::ON) {
                 let named = self.table_name()?;

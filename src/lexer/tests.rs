@@ -90,3 +90,21 @@ fn the_graph_pattern_delimiters_4_1() {
     let refused = lex("A != B").map(|_| panic!("!= lexed")).unwrap_err();
     assert_eq!(refused.code, Code::Lexical);
 }
+
+/// Verifies: [EXTENSION] [GS §10.3] after MATCH, "--" glued between ")"
+/// or ")<" and "(" or ">(" is two minus signs, Cypher's relationships;
+/// anywhere else it begins a `<comment>`, MATCH or no MATCH.
+#[test]
+fn cypher_relationships_after_match_10_3() {
+    let d = Tok::Delimiter;
+    let m = Tok::KeyWord(kw::MATCH);
+    let (open, close) = (d(delim::LEFT_PAREN), d(delim::RIGHT_PAREN));
+    assert_eq!(toks("MATCH)--("), [m.clone(), close.clone(), d(delim::MINUS), d(delim::MINUS), open.clone()]);
+    assert_eq!(toks("MATCH)-->("), [m.clone(), close.clone(), d(delim::MINUS), d(delim::RIGHT_ARROW), open.clone()]);
+    assert_eq!(toks("MATCH)<--("), [m.clone(), close.clone(), d(delim::LESS), d(delim::MINUS), d(delim::MINUS), open.clone()]);
+    assert_eq!(toks("MATCH)<-->("), [m.clone(), close.clone(), d(delim::LESS), d(delim::MINUS), d(delim::RIGHT_ARROW), open]);
+    assert_eq!(toks(")--(\n"), std::slice::from_ref(&close), "no MATCH before it");
+    assert_eq!(toks("MATCH) --(\n"), [m.clone(), close.clone()]);
+    assert_eq!(toks("MATCH)-- (\n"), [m.clone(), close.clone()]);
+    assert_eq!(toks("MATCH]--(\n"), [m, d(delim::RIGHT_BRACKET)]);
+}

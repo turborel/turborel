@@ -16,7 +16,7 @@
 //! A group variable anywhere else is GRF-0022. A subquery reads none of
 //! the variables.
 
-use super::Rewrite;
+use super::{Bound, Rewrite};
 use crate::ast::{
     ColumnSpecification, GraphColumn, GraphFunction, GraphFunctionName, GraphVariable, SetArg, SetFunctionSpecification, TableName,
     ValueExpression,
@@ -41,15 +41,26 @@ const ALIASES: [(&str, GraphFunctionName); 4] = [
 ];
 
 impl Rewrite {
-    /// What variable `name` is, if the pattern has it.
+    /// What variable `name` is, if a pattern has it: as the first that
+    /// has it binds it.
     fn var(&self, name: &str) -> Option<Exposed> {
-        self.vars.get(name).copied()
+        self.tables.iter().find_map(|b| b.vars.get(name).copied())
     }
 
+    /// The column of `value`, of the text `key`, of the GRAPH_TABLE that
+    /// first binds variable `var`, as `Bound::column` makes it.
+    fn column(&mut self, var: &str, key: (String, Option<&str>), value: ValueExpression, at: usize) -> Result<ValueExpression> {
+        let found = self.tables.iter_mut().find(|b| b.vars.contains_key(var));
+        let bound = found.ok_or_else(|| SqlError::at(Code::Api, at, format!("[DESIGN] no pattern binds {var}")))?;
+        Ok(bound.column(key, value, at))
+    }
+}
+
+impl Bound {
     /// The column of `value`, of the text `key`: one already made of the
     /// same text, else a new one, named `preferred` if no other is, so a
     /// select list's column of it is named so, else by its place.
-    fn column(&mut self, (key, preferred): (String, Option<&str>), value: ValueExpression, at: usize) -> ValueExpression {
+    pub(super) fn column(&mut self, (key, preferred): (String, Option<&str>), value: ValueExpression, at: usize) -> ValueExpression {
         let found = self.columns.iter().find(|(k, _)| *k == key).map(|(_, c)| c.clone());
         let column = match found {
             Some(GraphColumn::Value { name: Some(n), .. }) => n,
@@ -62,7 +73,7 @@ impl Rewrite {
                 name
             }
         };
-        let qualifier = Some(TableName { auth: None, ident: self.table.to_owned(), at });
+        let qualifier = Some(TableName { auth: None, ident: self.table.clone(), at });
         ValueExpression::Column(ColumnSpecification { qualifier, column, catalog: None, at })
     }
 }
@@ -102,8 +113,8 @@ impl Parser {
         if let Some(f) = self.aliased_function() {
             return self.variable_function(f).map(Some);
         }
-        if self.graph == 0 && self.at_horizontal() {
-            return self.horizontal().map(Some);
+        if let Some(group) = self.horizontal_of() {
+            return self.horizontal(&group).map(Some);
         }
         if let Some(listagg) = self.pgql_listagg()? {
             return Ok(Some(listagg));
@@ -129,7 +140,7 @@ impl Parser {
 
     /// The rewrite of the frame at hand. Of none, as `compat_primary`
     /// sees to, an error.
-    fn rewrite(&mut self) -> Result<&mut Rewrite> {
+    pub(super) fn rewrite(&mut self) -> Result<&mut Rewrite> {
         let found = self.compat.last_mut().and_then(|f| f.rewrite.as_mut());
         found.ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a PGQL or Cypher query is read in a frame of its own"))
     }
@@ -152,25 +163,28 @@ impl Parser {
         self.advance();
         let operand = GraphVariable { at: self.here(), name: self.identifier()?, anonymous: false };
         self.advance();
-        let key = format!("{}({})", f.word(), operand.name);
+        let (key, var) = (format!("{}({})", f.word(), operand.name), operand.name.clone());
         let value = ValueExpression::Graph(Box::new(GraphFunction { name: f, operand, property: None }), at);
         if self.graph > 0 {
             return Ok(value);
         }
-        Ok(self.rewrite()?.column((key, None), value, at))
+        self.rewrite()?.column(&var, (key, None), value, at)
     }
 
     /// Cypher's `collect ( x )`: ARRAY_AGG ( x ), its argument read as an
     /// aggregate's is.
     fn collect(&mut self) -> Result<ValueExpression> {
-        let horizontal = self.graph == 0 && self.at_horizontal();
+        let horizontal = self.horizontal_of();
         let at = self.here();
         let key = self.text_to(self.past_closing(1).unwrap_or(1));
-        self.graph = self.graph.saturating_add(usize::from(horizontal));
+        self.graph = self.graph.saturating_add(usize::from(horizontal.is_some()));
         let read = self.collected(at);
-        self.graph = self.graph.saturating_sub(usize::from(horizontal));
+        self.graph = self.graph.saturating_sub(usize::from(horizontal.is_some()));
         let value = read?;
-        if horizontal { Ok(self.rewrite()?.column((key, None), value, at)) } else { Ok(value) }
+        match horizontal {
+            Some(group) => self.rewrite()?.column(&group, (key, None), value, at),
+            None => Ok(value),
+        }
     }
 
     /// `collect ( x )`, read.
@@ -199,9 +213,12 @@ impl Parser {
         self.src.get(self.here()..last).unwrap_or_default().iter().collect()
     }
 
-    /// Whether an aggregate begins here whose argument names a group
-    /// variable of the pattern.
-    fn at_horizontal(&self) -> bool {
+    /// Outside a pattern, the group variable of the patterns named first
+    /// in the argument of an aggregate beginning here, if one does.
+    fn horizontal_of(&self) -> Option<String> {
+        if self.graph > 0 {
+            return None;
+        }
         let named = match self.peek() {
             Tok::Identifier(w) => NAMED_AGGREGATES.contains(&w.as_str()),
             Tok::KeyWord(k) => KEY_WORD_AGGREGATES.contains(k),
@@ -214,20 +231,24 @@ impl Parser {
             | Tok::Delimiter(_)
             | Tok::End => false,
         };
-        let Some(rewrite) = self.compat.last().and_then(|f| f.rewrite.as_ref()) else { return false };
+        let rewrite = self.compat.last().and_then(|f| f.rewrite.as_ref())?;
         let past = if named && *self.peek_at(1) == Tok::Delimiter(delim::LEFT_PAREN) { self.past_closing(1).unwrap_or(0) } else { 0 };
-        (2..past).any(|n| matches!(self.peek_at(n), Tok::Identifier(v) if rewrite.var(v).is_some_and(|e| !single(e))))
+        let group = |n: usize| {
+            if let Tok::Identifier(v) = self.peek_at(n) { rewrite.var(v).filter(|e| !single(*e)).map(|_| v.clone()) } else { None }
+        };
+        (2..past).find_map(group)
     }
 
-    /// The aggregate here, of each match's group: a column of it.
-    fn horizontal(&mut self) -> Result<ValueExpression> {
+    /// The aggregate here, of each match's group of variable `group`: a
+    /// column of it.
+    fn horizontal(&mut self, group: &str) -> Result<ValueExpression> {
         let at = self.here();
         let key = self.text_to(self.past_closing(1).unwrap_or(1));
         self.graph = self.graph.saturating_add(1);
         let read = self.primary();
         self.graph = self.graph.saturating_sub(1);
         let value = read?;
-        Ok(self.rewrite()?.column((key, None), value, at))
+        self.rewrite()?.column(group, (key, None), value, at)
     }
 
     /// A read of a variable here, `v.p` or `v` alone, if one begins here:
@@ -249,12 +270,12 @@ impl Parser {
             let operand = GraphVariable { name: name.clone(), at, anonymous: false };
             let f = GraphFunction { name: GraphFunctionName::ElementId, operand, property: None };
             let value = ValueExpression::Graph(Box::new(f), at);
-            return Ok(Some(self.rewrite()?.column((format!("ELEMENT_ID({name})"), Some(&name)), value, at)));
+            return self.rewrite()?.column(&name, (format!("ELEMENT_ID({name})"), Some(&name)), value, at).map(Some);
         }
         self.advance();
         let column = self.identifier()?;
         let qualifier = Some(TableName { auth: None, ident: name.clone(), at });
         let value = ValueExpression::Column(ColumnSpecification { qualifier, column: column.clone(), catalog: None, at });
-        Ok(Some(self.rewrite()?.column((format!("{name}.{column}"), Some(&column)), value, at)))
+        self.rewrite()?.column(&name, (format!("{name}.{column}"), Some(&column)), value, at).map(Some)
     }
 }

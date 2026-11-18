@@ -3,9 +3,10 @@
 [Contents](README.md)
 
 Queries of property graphs may be written as SQL Server, Oracle, PGQL and
-openCypher write them. Each is read as a query of one GRAPH_TABLE
-([Property Graphs](16-property-graphs.md)), so it matches as GRAPH_TABLE
-does and gives the same rows. The examples here read schema ANN's node
+openCypher write them. Each is read as a query of GRAPH_TABLE
+([Property Graphs](16-property-graphs.md)), one for each MATCH clause of
+Cypher and one otherwise, so it matches as GRAPH_TABLE does and gives
+the same rows. The examples here read schema ANN's node
 table PERSON and edge table FRIEND_OF, and the graph CHAIN of the same
 friendships kept in plain tables.
 
@@ -167,11 +168,14 @@ SELECT * FROM GRAPH_TABLE (/*+ GRAPH_START(a) PATH_ALGO(BIBFS) */ CHAIN
 ## PGQL
 
 ```
-<pgql query> ::= SELECT [ DISTINCT | ALL ] <select list>
+<pgql query> ::= [ <path macro>... ] SELECT [ DISTINCT | ALL ] <select list>
     FROM <pgql match> [ { , <pgql match> }... ]
     [ WHERE <search condition> ] [ <group by clause> ] [ <having clause> ]
     [ ORDER BY <sort specification list> ] [ LIMIT <row count> ] [ OFFSET <row count> ]
 <pgql match> ::= MATCH <path pattern> [ { , <path pattern> }... ] [ ON <graph name> ]
+<path macro> ::= PATH <macro name> AS <path pattern> [ WHERE <search condition> ]
+<reachability> ::= -/ <reach> /-> | <-/ <reach> /- | -/ <reach> /-
+<reach> ::= : <label expression> [ <quantifier> ]
 ```
 
 A PGQL query is a query wherever SQL's is. Its patterns are GRAPH_TABLE's,
@@ -194,19 +198,56 @@ SELECT b.name, COUNT(*) AS followers
 (2 rows)
 ```
 
+A reachability, written between two nodes of a path pattern, asks only
+whether a path of its label's edges joins them. It binds no variable,
+and two nodes it joins match once, however many paths there are. Its
+quantifier counts the edges, and with none written there is one:
+
+```sql
+SELECT b.name FROM MATCH (a:Member)-/:Follows+/->(b) ON chain
+  WHERE a.name = 'Bob' ORDER BY b.name;
+```
+
+```
+ NAME
+------------
+ Carol
+ Dave
+(2 rows)
+```
+
+The label of a reachability may name a path macro the query defines
+first. The macro's pattern is then what repeats, each repetition ending
+where the next begins, and its WHERE clause tests each. The macro's
+variables are its own and are renamed at each use, so they never meet
+the query's. Here each step is two hops that do not pass through Erin:
+
+```sql
+PATH hop AS (x)-[:Follows]->(m)-[:Follows]->(y) WHERE m.name <> 'Erin'
+SELECT b.name FROM MATCH (a)-/:hop+/->(b) ON chain
+  WHERE a.name = 'Alice' ORDER BY b.name;
+```
+
+```
+ NAME
+------------
+ Carol
+(1 row)
+```
+
 ## openCypher
 
 ```
-<cypher query> ::= [ USE <graph name> ]
-    MATCH <cypher pattern> [ { , <cypher pattern> }... ] [ WHERE <search condition> ]
+<cypher query> ::= [ USE <graph name> ] <cypher match>...
     RETURN [ DISTINCT ] <return item> [ { , <return item> }... ]
     [ ORDER BY <sort specification list> ] [ SKIP <row count> ] [ LIMIT <row count> ]
+<cypher match> ::= [ OPTIONAL ] MATCH <cypher pattern> [ { , <cypher pattern> }... ]
+    [ WHERE <search condition> ]
 <cypher pattern> ::= [ <path variable> = ] <cypher path>
     | [ <path variable> = ] { shortestPath | allShortestPaths } ( <cypher path> )
 ```
 
-A Cypher query matches no relationship twice. A relationship is
-written in brackets, since `--` begins a comment in SQL, and its length
+A MATCH clause matches no relationship twice. A relationship's length
 `*n..m` is a quantifier. `:A:B` is both labels and `:A|B` either. A
 return item with an aggregate groups the rows by the others. Strings
 are SQL's, in single quotes. A query of no USE reads SYS_GRAPH:
@@ -234,4 +275,60 @@ USE chain MATCH p = shortestPath((a)-[*]->(d))
 --------------
             2
 (1 row)
+```
+
+A relationship with nothing to say in brackets may be written short, as
+`-->`, `<--`, or `--` and `<-->` for either direction. Since `--` begins
+a comment in SQL, the short form is read only with no space around it,
+between one node's `)` and the next node's `(`:
+
+```sql
+MATCH (a:PERSON {name: 'Dave'})<--(b) RETURN b.name ORDER BY b.name;
+```
+
+```
+ NAME
+------------
+ Carol
+ Erin
+(2 rows)
+```
+
+A query may have several MATCH clauses. Each is matched on its own, and
+a variable that a later clause shares with an earlier one is the same
+node or relationship in both:
+
+```sql
+USE chain MATCH (a)-->(b) MATCH (b)-->(c)
+  RETURN a.name AS origin, c.name AS reached ORDER BY origin, reached;
+```
+
+```
+ ORIGIN     | REACHED
+------------+------------
+ Alice      | Carol
+ Alice      | Dave
+ Bob        | Dave
+(3 rows)
+```
+
+An OPTIONAL MATCH keeps each earlier row it cannot extend, its own
+variables null. Its WHERE clause decides what it matches, so a row that
+fails it is kept too:
+
+```sql
+USE chain MATCH (a)
+  OPTIONAL MATCH (a)-->(b) WHERE b.name > 'C'
+  RETURN a.name AS who, b.name AS friend ORDER BY who, friend;
+```
+
+```
+ WHO        | FRIEND
+------------+------------
+ Alice      | Erin
+ Bob        | Carol
+ Carol      | Dave
+ Dave       | NULL
+ Erin       | Dave
+(5 rows)
 ```

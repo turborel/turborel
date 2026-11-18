@@ -7,16 +7,19 @@
 //! <cypher path> ::= <cypher node> [ { <cypher relationship> <cypher node> }... ]
 //! <cypher node> ::= ( [ <variable> ] [ <cypher labels> ] [ <property map> ] )
 //! <cypher labels> ::= : <label> [ { : <label> }... ] | : <label> [ { '|' [ : ] <label> }... ]
-//! <cypher relationship> ::= - '[' <cypher relationship detail> ']' -> | <- '[' ... ']' - | - '[' ... ']' -
+//! <cypher relationship> ::= [ < ] - [ '[' <cypher relationship detail> ']' ] - [ > ]
 //! <cypher relationship detail> ::= [ <variable> ] [ : <type> [ { '|' [ : ] <type> }... ] ]
 //!     [ * [ <unsigned integer> ] [ .. [ <unsigned integer> ] ] ] [ <property map> ]
 //! ```
 //!
 //! `:A:B` is the label conjunction A & B, `:A|B` the disjunction. A
-//! relationship of any direction is GPML's `-[ ]-`. `*` is `{1,}`, `*n`
-//! `{n}`, `*n..` `{n,}`, `*..m` `{1,m}` and `*n..m` `{n,m}`. shortestPath
-//! is ANY SHORTEST and allShortestPaths ALL SHORTEST. The abbreviations
-//! `-->` and `--` are not read: `--` begins a comment in SQL.
+//! relationship pointing neither way or both ways, `-[ ]-` or `<-[ ]->`,
+//! is of either direction, GPML's `-[ ]-`. With no detail, `-->`, `<--`,
+//! `--` and `<-->`, a relationship has no variable, type or length; the
+//! lexer reads "--" so only written with no space, between a node's ")"
+//! and the next "(". `*` is `{1,}`, `*n` `{n}`, `*n..` `{n,}`, `*..m`
+//! `{1,m}` and `*n..m` `{n,m}`. shortestPath is ANY SHORTEST and
+//! allShortestPaths ALL SHORTEST.
 
 use crate::ast::{
     EdgePattern, ElementPattern, LabelExpression, Orientation, PathExpression, PathFactor, PathPattern, PathPrefix, PathPrimary, PathTerm,
@@ -115,24 +118,30 @@ impl Parser {
         }
     }
 
-    /// `<cypher relationship>`.
+    /// `<cypher relationship>`: of a detail in brackets, or none, as the
+    /// abbreviations `-->`, `<--`, `--` and `<-->` are.
     fn cypher_relationship(&mut self) -> Result<PathFactor> {
         let at = self.here();
         let left = self.accept_delim(delim::LESS);
         self.expect_delim(delim::MINUS)?;
-        self.expect_delim(delim::LEFT_BRACKET)?;
-        let (filler, quantifier) = self.cypher_filler(at)?;
-        self.expect_delim(delim::RIGHT_BRACKET)?;
-        let right = !left && self.accept_delim(delim::RIGHT_ARROW);
+        let detailed = self.accept_delim(delim::LEFT_BRACKET);
+        let (filler, quantifier) = if detailed {
+            let read = self.cypher_filler(at)?;
+            self.expect_delim(delim::RIGHT_BRACKET)?;
+            read
+        } else {
+            (ElementPattern { variable: None, label: None, where_clause: None, properties: Vec::new(), at }, None)
+        };
+        let right = self.accept_delim(delim::RIGHT_ARROW);
         if !right {
             self.expect_delim(delim::MINUS)?;
         }
-        let orientation = if left {
-            Orientation::Left
-        } else if right {
-            Orientation::Right
-        } else {
-            Orientation::Any
+        // [GS §10.3] Pointing both ways, as `<-->` does, a relationship
+        // is of either direction.
+        let orientation = match (left, right) {
+            (true, false) => Orientation::Left,
+            (false, true) => Orientation::Right,
+            (false, false) | (true, true) => Orientation::Any,
         };
         Ok(PathFactor { primary: PathPrimary::Edge(EdgePattern { orientation, abbreviated: false, filler }), quantifier })
     }

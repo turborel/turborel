@@ -70,7 +70,7 @@ fn cypher_reads_node_tables_10_3() {
     assert_eq!(rows(&s, q), ["5"]);
 }
 
-/// Verifies: GS §10.3: what the front ends refuse.
+/// Verifies: GS §10.3, RULES.md D112: what the front ends refuse.
 #[test]
 fn front_end_refusals_10_3() {
     let (_db, s) = people();
