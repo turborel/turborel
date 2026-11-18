@@ -21,7 +21,7 @@
 //! likewise (`GeoEncodingUtils.createComponentPredicate`), with
 //! approximate rather than exact cells, and none for boundary cells.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::tree::EdgeTree;
 use crate::geometry::crossing::{Location, segments};
@@ -30,9 +30,11 @@ use crate::geometry::shape::{MULTIPOLYGON, Point, Shape};
 use crate::memory::{MemoryBudget, Reservation};
 use crate::spatial::Bounds;
 use several::Records;
+use within::Within;
 
 mod path;
 mod several;
+mod within;
 
 /// A cell no boundary point touches, outside every polygon.
 const EXTERIOR: u8 = 0;
@@ -108,6 +110,9 @@ pub(super) struct Cells {
     grid: Grid,
     states: Vec<u8>,
     records: Records,
+    /// Each cell's distance to the cells edges may touch, once a bound on
+    /// a point's distance is asked (`within.rs`).
+    within: OnceLock<Option<Box<Within>>>,
     _held: Reservation,
 }
 
@@ -140,7 +145,24 @@ impl Cells {
         let records = sweep(&grid, &ring_list(&polygons), &mut edges, &mut states)?;
         drop(edges);
         held.resize(states.capacity().checked_add(records.bytes()?)?).ok()?;
-        Some(Box::new(Self { grid, states, records, _held: held }))
+        Some(Box::new(Self { grid, states, records, within: OnceLock::new(), _held: held }))
+    }
+
+    /// Bounds on the distance from `point` to the polygon, as a point set,
+    /// by its cell's distance, in cells, to the cells edges may touch
+    /// (`within.rs`), counted the first time they are asked, in `budget`'s
+    /// room: none if they cannot be, or the point's cell number is not
+    /// exact.
+    pub(super) fn measure_bounds(&self, point: Point, budget: &Arc<MemoryBudget>) -> Option<(f64, f64)> {
+        let within = self.within.get_or_init(|| Within::new(&self.grid, &self.states, budget)).as_deref()?;
+        within.bounds(&self.grid, &self.states, point)
+    }
+
+    /// A unit in the last place of the largest magnitude among the grid's
+    /// coordinates and `point`'s.
+    pub(super) fn unit_at(&self, [x, y]: Point) -> Option<f64> {
+        let unit = crate::geometry::distance::unit_of(x.abs().max(y.abs()))?;
+        Some(unit.max(self.grid.unit()))
     }
 
     /// Where `point` lies in the polygon, if its cell decides it: by the

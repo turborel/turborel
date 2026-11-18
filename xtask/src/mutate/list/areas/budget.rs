@@ -3,7 +3,7 @@
 //! order the reservations were made, and an entry left at the size it was
 //! made with.
 
-use super::{Mutation, Package};
+use super::super::{Mutation, Package};
 
 /// The file of the memory budget.
 const BUDGET_FILE: &str = "src/memory.rs";

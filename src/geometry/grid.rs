@@ -73,6 +73,26 @@ impl Grid {
         Some(Self { side, inverse, origin, unit, cols, rows })
     }
 
+    /// The side of a cell, a power of two.
+    pub(in crate::geometry) fn side(&self) -> f64 {
+        self.side
+    }
+
+    /// A unit in the last place of the largest magnitude in the grid.
+    pub(in crate::geometry) fn unit(&self) -> f64 {
+        self.unit
+    }
+
+    /// The cell nearest `point`, and how many cells beyond the grid the
+    /// point lies along each axis, none within it: exact counts, for
+    /// bounds on the point's distance to what the grid holds
+    /// (`prepared/cells/within.rs`). None if a cell number is not exact.
+    pub(in crate::geometry) fn nearest(&self, [x, y]: Point) -> Option<((usize, usize), [f64; 2])> {
+        let (col, beyond_x) = clamped_offset(number(x, self.inverse)? - self.origin[0], self.cols)?;
+        let (row, beyond_y) = clamped_offset(number(y, self.inverse)? - self.origin[1], self.rows)?;
+        Some(((row, col), [beyond_x, beyond_y]))
+    }
+
     /// The row and column of the cell holding `point`, if the point is in
     /// the grid and its cell number is exact.
     pub(in crate::geometry) fn place(&self, [x, y]: Point) -> Option<(usize, usize)> {
@@ -155,6 +175,14 @@ impl Grid {
     pub(in crate::geometry) fn centre(&self, row: usize) -> Option<f64> {
         Some((self.origin[1] + small(row)? + SHIFT + 0.5_f64) * self.side)
     }
+}
+
+/// The cell at the integral `offset` from the first, clamped to
+/// `0..count`, and how far beyond the clamp the offset lies, exactly.
+fn clamped_offset(offset: f64, count: usize) -> Option<(usize, f64)> {
+    let top = small(count.checked_sub(1)?)?;
+    let clamped = offset.clamp(0.0_f64, top);
+    Some((integral(clamped)?, (offset - clamped).abs()))
 }
 
 /// An integral cell offset clamped to `0..count`.

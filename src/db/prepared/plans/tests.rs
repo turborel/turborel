@@ -218,3 +218,57 @@ fn a_point_write_keeps_its_plan_and_a_range_write_none() {
     assert_eq!(sum("SELECT COUNT(*) FROM P"), Some("1198".to_owned()), "rows 44 and 55 deleted");
     assert_eq!([update.plans_made(), delete.plans_made(), range.plans_made()], [1, 1, 1]);
 }
+
+/// Verifies: [DESIGN] D34, D85: a scan deciding a spatial conjunct of each
+/// entry, chosen under a count or a projection reading no other column,
+/// yields the rows a filter would: of an intersection with a triangle and
+/// of a distance within a constant of it, over points, counted of no row
+/// read where every reader sees the rows; a projection reading the column
+/// or another conjunct reading it reads each row; a row another session
+/// has not committed is not counted, though that session counts it; nor
+/// is a row the session deleted, until it takes that back.
+#[test]
+fn scans_decide_spatial_conjuncts_of_their_entries() {
+    use crate::geometry::Geometry;
+    let (db, s) = spatial_table();
+    db.maintain().unwrap();
+    let wkt = "POLYGON ((9.5 9.5, 20.5 9.5, 9.5 20.5, 9.5 9.5))";
+    let triangle = Geometry::from_wkt(wkt, 0).unwrap().to_value();
+    let count = |session: &Session, sql: &str| {
+        let query = session.prepare(sql).unwrap();
+        session.open_prepared(&query, std::slice::from_ref(&triangle)).unwrap().fetch().unwrap().unwrap()[0].to_string()
+    };
+    // The points (n, n) on or inside the triangle have n from 10 to 15;
+    // within 1 of it, (9, 9) too, 0.71 away; (16, 16) is 1.41 away.
+    for (sql, expected) in [
+        ("SELECT COUNT(*) FROM P WHERE ST_INTERSECTS(G, ?) = 1", "6"),
+        ("SELECT COUNT(*) FROM P WHERE 1 = ST_INTERSECTS(?, G)", "6"),
+        ("SELECT COUNT(*) FROM P WHERE ST_DISTANCE(G, ?) <= 1.0", "7"),
+        ("SELECT COUNT(*) FROM P WHERE ST_INTERSECTS(G, ?) = 1 AND G IS NOT NULL", "6"),
+        ("SELECT SUM(ST_X(G)) FROM P WHERE ST_INTERSECTS(G, ?) = 1", "7.5E1"),
+        ("SELECT SUM(ID) FROM P WHERE ST_INTERSECTS(G, ?) = 1", "75"),
+    ] {
+        assert_eq!(count(&s, sql), expected, "{sql}");
+        let literal = sql.replace('?', &format!("ST_GEOMFROMTEXT('{wkt}', 0)"));
+        let plan = s.explain(&literal, &Params::new()).unwrap();
+        assert!(plan.contains("IndexScan") && plan.contains(", decided of each entry"), "{sql}: {plan}");
+    }
+    let query = s.prepare("SELECT ST_X(G) FROM P WHERE ST_INTERSECTS(G, ?) = 1").unwrap();
+    let mut cursor = s.open_prepared(&query, std::slice::from_ref(&triangle)).unwrap();
+    let mut xs = Vec::new();
+    while let Some(row) = cursor.fetch().unwrap() {
+        xs.push(row[0].to_string());
+    }
+    xs.sort_unstable();
+    assert_eq!(xs, ["1.1E1", "1.2E1", "1.3E1", "1.4E1", "1.5E1", "1E1"]);
+    let other = db.session("A");
+    other.run("INSERT INTO P VALUES (2000, ST_POINT(12, 12))").unwrap();
+    let sql = "SELECT COUNT(*) FROM P WHERE ST_INTERSECTS(G, ?) = 1";
+    assert_eq!(count(&s, sql), "6", "another session's uncommitted row");
+    assert_eq!(count(&other, sql), "7", "the session's own row");
+    other.rollback().unwrap();
+    s.run("DELETE FROM P WHERE ID = 12").unwrap();
+    assert_eq!(count(&s, sql), "5", "the session's own deletion");
+    s.rollback().unwrap();
+    assert_eq!(count(&s, sql), "6");
+}

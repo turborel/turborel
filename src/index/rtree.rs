@@ -212,9 +212,10 @@ impl RTreeIndex {
         Ok(())
     }
 
-    fn matching(&self, probe: &Probe) -> Entries {
+    /// The entries `probe` finds, grouped for their rows' reads if `reading`.
+    fn matching(&self, probe: &Probe, reading: bool) -> Entries {
         if let Some(srid) = self.srid {
-            return geometry::matching(&self.tree, probe, srid, &self.budget);
+            return geometry::matching(&self.tree, probe, srid, reading.then_some(&self.budget));
         }
         let window = probe::window(probe, self.width);
         let (tree, width, probe) = (self.tree.clone(), self.width, probe.clone());
@@ -229,7 +230,7 @@ impl RTreeIndex {
             return geometry::equal(&self.tree, key, srid);
         }
         self.query_key(key)?;
-        Ok(self.matching(&Probe::Prefix { equal: key.0.clone(), then: None }))
+        Ok(self.matching(&Probe::Prefix { equal: key.0.clone(), then: None }, true))
     }
 }
 
@@ -298,11 +299,14 @@ impl Index for RTreeIndex {
             entry.map(|e| e.1)
         }))
     }
-    fn search(self: Arc<Self>, probe: &Probe, _order: KeyOrder) -> Entries {
+    fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries {
+        self.search_for(probe, order, true)
+    }
+    fn search_for(self: Arc<Self>, probe: &Probe, _order: KeyOrder, reading: bool) -> Entries {
         if self.srid.is_none() && matches!(probe, Probe::Predicate { .. }) {
             return Box::new(std::iter::once(Err(unsupported("does not support function lookups"))));
         }
-        let found = self.matching(probe);
+        let found = self.matching(probe, reading);
         Box::new(found.inspect(move |_| {
             let _held = &self;
         }))

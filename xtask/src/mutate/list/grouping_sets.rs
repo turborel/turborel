@@ -82,7 +82,7 @@ pub const GROUPING_SETS: [Mutation; 25] = [
         name: "grouping-seeds-taken-as-ordered",
         package: Package::Core,
         breaks: "the groups of grouping sets are taken to come in the order of the grouping columns, the total's first though",
-        file: "src/physical.rs",
+        file: "src/physical/grouping.rs",
         original: "        let ordered = collations.is_empty() && seeds.is_empty();",
         replacement: "        let ordered = collations.is_empty();",
         integration: &[],

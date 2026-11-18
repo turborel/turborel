@@ -230,3 +230,106 @@ fn prepared_geometry_respects_and_releases_its_memory_budget() {
         assert_eq!(GeometryFunction::Intersects.call(&[value.clone(), value.clone()]).unwrap().to_string(), "1");
     }
 }
+
+/// Verifies: [DESIGN] D85: a prepared polygon decides a comparison of a
+/// point's distance to it with a constant, either operand first, by each
+/// comparison operator, as SQL compares the call's value, by its cells
+/// once they are built, without measuring most points; a point's decision
+/// from its coordinates, as an index entry holds them, agrees; and so is
+/// an intersection compared with one decided. A null, an empty point, a
+/// changed operand and a line are left to the call, and a point of
+/// another reference raises as the call would.
+#[test]
+fn prepared_comparisons_decide_as_the_measures_compare() {
+    use crate::value::{CompOp, Decimal};
+    let budget = MemoryBudget::new(usize::MAX);
+    let mut teeth = vec![[0.0_f64, 0.0_f64]];
+    for t in 0..40_u32 {
+        let x = f64::from(t) * 0.25_f64;
+        teeth.extend([[x, 1.0_f64], [x, 9.0_f64], [x + 0.125_f64, 9.0_f64], [x + 0.125_f64, 1.0_f64]]);
+    }
+    teeth.extend([[10.0_f64, 1.0_f64], [10.0_f64, 0.0_f64], [0.0_f64, 0.0_f64]]);
+    let comb = Geometry::of(Shape::Polygon(vec![teeth]), 0).unwrap().to_value();
+    let holed = Geometry::of(Shape::Polygon(vec![dense_ring(0.0, 10.0), dense_ring(2.0, 8.0)]), 0).unwrap().to_value();
+    let radii: Vec<Value> = [0_i128, 1, 3, 10, 25, -1].into_iter().map(|tenths| Value::Exact(Decimal::new(tenths, 1_u32))).collect();
+    let operators = [CompOp::Le, CompOp::Lt, CompOp::Ge, CompOp::Gt, CompOp::Eq, CompOp::Ne];
+    for (polygon, other) in [(&comb, &holed), (&holed, &comb)] {
+        for position in [0_usize, 1] {
+            let mut arguments = [None, None];
+            arguments[position] = Some(polygon);
+            let prepared = GeometryFunction::Distance.specialize(&arguments, &budget).unwrap();
+            for i in 0..=100_u32 {
+                for j in 0..=100_u32 {
+                    let point = [f64::from(i) * 0.15_f64 - 2.5_f64, f64::from(j) * 0.15_f64 - 2.5_f64];
+                    let value = Geometry::point(point[0], point[1], 0_i32).unwrap().to_value();
+                    let mut pair = [&value, &value];
+                    pair[position] = polygon;
+                    point_decisions(&prepared, (pair, point, polygon), (&radii, &operators));
+                }
+            }
+            let reservations = budget.reservations();
+            assert!(reservations.iter().any(|(what, _)| what.contains("cell certificates")), "the cells were built");
+            assert!(reservations.iter().any(|(what, _)| what.contains("cell distances")), "the cell distances were counted");
+            intersections_decide(&arguments, position, polygon, &budget);
+            left_to_the_call(&prepared, position, (polygon, other), &radii[1]);
+        }
+    }
+}
+
+/// The comparisons of the call of `pair`, the point at `point` and
+/// `polygon`, with each of `radii` by each of `operators`, decided as
+/// the call's value compares: of the values, and of the point's
+/// coordinates as an index entry holds them.
+fn point_decisions(
+    prepared: &crate::functions::ScalarRef,
+    (pair, point, polygon): ([&Value; 2], [f64; 2], &Value),
+    (radii, operators): (&[Value], &[crate::value::CompOp]),
+) {
+    let measured = prepared.0.call_borrowed(&pair, None).unwrap();
+    for (radius, op) in radii.iter().flat_map(|radius| operators.iter().map(move |op| (radius, *op))) {
+        let expected = crate::value::compare(&measured, radius).map(|ordering| op.holds(ordering));
+        assert_eq!(prepared.0.call_compared(&pair, op, radius).unwrap().unwrap(), expected, "{point:?} {op:?} {radius}");
+        let entry = prepared.0.point_compared((point, 0_i32), polygon, op, radius).unwrap().unwrap();
+        assert_eq!(entry, expected, "{point:?} {op:?} {radius} of the entry");
+    }
+}
+
+/// An intersection of each of a few points with the polygon of
+/// `arguments`, compared with one, is decided as the call compares.
+fn intersections_decide(arguments: &[Option<&Value>; 2], position: usize, polygon: &Value, budget: &std::sync::Arc<MemoryBudget>) {
+    use crate::value::{CompOp, Decimal, compare};
+    let meets = GeometryFunction::Intersects.specialize(arguments, budget).unwrap();
+    let one = Value::Exact(Decimal::new(1, 0_u32));
+    for text in ["POINT (0.06 5)", "POINT (0.2 5)", "POINT (5 0.5)", "POINT (5 5)", "POINT (12 12)"] {
+        let value = Geometry::from_wkt(text, 0).unwrap().to_value();
+        let mut pair = [&value, &value];
+        pair[position] = polygon;
+        let expected = compare(&meets.0.call_borrowed(&pair, None).unwrap(), &one).map(std::cmp::Ordering::is_eq);
+        assert_eq!(meets.0.call_compared(&pair, CompOp::Eq, &one).unwrap().unwrap(), expected, "{text}");
+    }
+}
+
+/// The comparisons `prepared`, of `polygon` at `position`, leaves to the
+/// call: of a null, of `other`, another operand, of an empty point and a
+/// line; and a point of another reference raises as the call would.
+fn left_to_the_call(prepared: &crate::functions::ScalarRef, position: usize, (polygon, other): (&Value, &Value), radius: &Value) {
+    use crate::value::CompOp;
+    let point = Geometry::point(5.0_f64, 5.0_f64, 0_i32).unwrap().to_value();
+    for (left, right) in [(&Value::Null, polygon), (&point, other)] {
+        let pair = if position == 1 { [right, left] } else { [left, right] };
+        assert!(prepared.0.call_compared(&pair, CompOp::Le, radius).is_none(), "{pair:?}");
+    }
+    for text in ["POINT EMPTY", "LINESTRING (1 1, 2 2)"] {
+        let value = Geometry::from_wkt(text, 0).unwrap().to_value();
+        let mut pair = [&value, &value];
+        pair[position] = polygon;
+        assert!(prepared.0.call_compared(&pair, CompOp::Le, radius).is_none(), "{text}");
+    }
+    let foreign = Geometry::point(5.0_f64, 5.0_f64, 4326).unwrap().to_value();
+    let mut pair = [&foreign, &foreign];
+    pair[position] = polygon;
+    assert_eq!(prepared.0.call_compared(&pair, CompOp::Le, radius).unwrap().unwrap_err().code, Code::Data);
+    let at = [5.0_f64, 5.0_f64];
+    assert_eq!(prepared.0.point_compared((at, 4326_i32), polygon, CompOp::Le, radius).unwrap().unwrap_err().code, Code::Data);
+    assert!(prepared.0.point_compared((at, 0_i32), other, CompOp::Le, radius).is_none());
+}

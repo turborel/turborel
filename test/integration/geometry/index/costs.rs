@@ -87,21 +87,21 @@ fn clustered_rows_keep_a_broad_probe_and_scattered_rows_scan() {
     assert_eq!(found[0], found[1]);
 }
 
-/// The rows the Filter line of `plan` over `table` is estimated to keep.
+/// The rows the Filter line of `plan` over `table` is estimated to keep,
+/// or, of an index scan deciding the conjunct of each entry under no
+/// filter (D85), the scan's.
 fn filter_est(plan: &str, table: &str) -> f64 {
     let physical = plan.split("-- physical:").nth(1).unwrap_or(plan);
-    let line = physical
-        .lines()
-        .find(|l| l.contains("Filter ") && l.contains(&format!("{table}.G")))
-        .unwrap_or_else(|| panic!("no filter in {plan}"));
+    let judges = |l: &&str| (l.contains("Filter ") || l.contains("decided of each entry")) && l.contains(&format!("{table}.G"));
+    let line = physical.lines().find(judges).unwrap_or_else(|| panic!("no filter in {plan}"));
     let est = line.rsplit("(est. rows=").next().unwrap();
-    est.trim_end_matches(')').parse().unwrap_or_else(|_| panic!("{line}"))
+    est.split([',', ')']).next().unwrap().parse().unwrap_or_else(|_| panic!("{line}"))
 }
 
-/// Verifies: [DESIGN] D137: the filter over a table access estimates its
-/// windowed spatial conjunct to keep the rows the spatial probe priced is
-/// estimated to find, read by the probe or by a scan, so EXPLAIN agrees
-/// with itself.
+/// Verifies: [DESIGN] D137: the filter over a table access, or the index
+/// scan deciding the windowed conjunct of each entry in its place (D85),
+/// estimates it to keep the rows the spatial probe priced is estimated to
+/// find, read by the probe or by a scan, so EXPLAIN agrees with itself.
 #[test]
 fn the_filter_keeps_the_spatial_estimate() {
     let db = schema();

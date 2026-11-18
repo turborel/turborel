@@ -85,16 +85,25 @@ fn same_scan(one: &Plan, other: &Plan) -> bool {
 }
 
 /// Whether `one` and `other` are scans of one index, read one way, by
-/// probes of one shape (`same_probe`).
+/// probes of one shape (`same_probe`), both deciding a conjunct or neither.
 fn same_index_scan(one: &Plan, other: &Plan) -> bool {
-    let Plan::IndexScan { table, index, probe, reverse, columns, covering, .. } = one else { return false };
-    let Plan::IndexScan { table: table2, index: index2, probe: probe2, reverse: reverse2, columns: columns2, covering: covering2, .. } =
-        other
+    let Plan::IndexScan { table, index, probe, reverse, columns, covering, decided, .. } = one else { return false };
+    let Plan::IndexScan {
+        table: table2,
+        index: index2,
+        probe: probe2,
+        reverse: reverse2,
+        columns: columns2,
+        covering: covering2,
+        decided: decided2,
+        ..
+    } = other
     else {
         return false;
     };
     let read = table == table2 && index == index2 && reverse == reverse2;
-    read && columns == columns2 && covering == covering2 && same_probe(probe, probe2)
+    let made = columns == columns2 && covering == covering2 && decided.is_some() == decided2.is_some();
+    read && made && same_probe(probe, probe2)
 }
 
 fn same_nearest(one: &Plan, other: &Plan) -> bool {
@@ -113,7 +122,8 @@ fn same_nearest(one: &Plan, other: &Plan) -> bool {
 }
 
 /// Whether `one` and `other` are probes of one kind, holding as many
-/// values equal and comparing the rest by the same operators.
+/// values equal and comparing the rest by the same operators, or of one
+/// function's calls.
 fn same_probe(one: &Probe, other: &Probe) -> bool {
     match one {
         Probe::All => matches!(other, Probe::All),
@@ -230,6 +240,7 @@ mod tests {
             cost: 1.0_f64,
             covering: false,
             located: false,
+            decided: None,
         }
     }
 

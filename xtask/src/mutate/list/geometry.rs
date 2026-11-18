@@ -5,6 +5,7 @@ pub(super) mod cells;
 pub(super) mod filed;
 pub(super) mod orientation;
 pub(super) mod reach;
+pub(super) mod within;
 
 use super::{Mutation, Package};
 
@@ -208,8 +209,8 @@ pub const GEOMETRY: [Mutation; 58] = [
         package: Package::Core,
         breaks: "batch scalar arguments copy shared values instead of borrowing them",
         file: "src/exec/batch/judge/calls.rs",
-        original: "self.function.0.call_borrowed(&args, temp)",
-        replacement: "self.function.0.call_with(&args.iter().map(|value| (*value).clone()).collect::<Vec<_>>(), temp)",
+        original: "function.0.call_borrowed(args, temp)?",
+        replacement: "function.0.call_with(&args.iter().map(|value| (*value).clone()).collect::<Vec<_>>(), temp)?",
         integration: &[],
         unit: &["exec::batch::judge::calls::tests::batch_scalar_arguments_borrow_shared_values"],
     },

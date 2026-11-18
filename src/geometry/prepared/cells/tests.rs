@@ -305,3 +305,39 @@ fn certificates_hold_their_room_until_dropped() {
     drop(cells);
     assert_eq!(budget.reserved(), 0);
 }
+
+/// Verifies: [DESIGN] D85: the bounds a polygon's cells put on a point's
+/// distance to it hold for points of every cell, on cell sides and beyond
+/// the grid, of a comb, a star and a holed square: the exact minimum over
+/// the edges, zero inside, lies within them; and they decide four of five
+/// points within sixteen cells, the bands of undecided points lying
+/// along the polygon's offset by that radius.
+#[test]
+fn distance_bounds_hold_within_and_beyond_the_grid() {
+    use crate::geometry::Geometry;
+    use crate::memory::MemoryBudget;
+    let budget = Arc::new(MemoryBudget::new(usize::MAX));
+    for shape in [comb(40), star(64), Shape::Polygon(vec![dense_ring(0.0, 10.0), dense_ring(2.0, 8.0)])] {
+        let geometry = Geometry::of(shape, 0).unwrap();
+        let bounds = geometry.bounds().unwrap();
+        let cells = Cells::new(&geometry.shape, bounds, &budget).unwrap();
+        let ([x0, y0], [x1, y1]) = (bounds.lower(), bounds.upper());
+        let side = cells.grid.side();
+        let mut xs: Vec<f64> = (0..=120_u32).map(|i| x0 - 3.0_f64 + (x1 - x0 + 6.0_f64) * f64::from(i) / 120.0_f64).collect();
+        let mut ys: Vec<f64> = (0..=120_u32).map(|j| y0 - 3.0_f64 + (y1 - y0 + 6.0_f64) * f64::from(j) / 120.0_f64).collect();
+        xs.extend((0..cells.grid.cols).step_by(7).map(|col| cells.grid.column_start(col).unwrap()));
+        ys.extend((0..cells.grid.rows).step_by(5).map(|row| cells.grid.row_start(row).unwrap()));
+        let (mut all, mut close) = (0_u32, 0_u32);
+        for &x in &xs {
+            for &y in &ys {
+                let point = Geometry::point(x, y, 0).unwrap();
+                let exact = geometry.distance(&point).unwrap().unwrap();
+                let (lower, upper) = cells.measure_bounds([x, y], &budget).unwrap();
+                assert!(lower <= exact && exact <= upper, "{x} {y}: {exact} not within {lower}..{upper}");
+                all += 1;
+                close += u32::from(upper < 16.0_f64 * side || lower > 16.0_f64 * side);
+            }
+        }
+        assert!(close * 5 >= all * 4, "{close} of {all} points are decided within sixteen cells");
+    }
+}

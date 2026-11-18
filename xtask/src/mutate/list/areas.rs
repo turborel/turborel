@@ -1,5 +1,7 @@
 //! Each area's mutations, in the order they run, after the core's.
 
+mod budget;
+
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
@@ -136,7 +138,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, external plug-ins' and
 /// packages', partitioning's, replication's and the server's.
-fn last() -> [&'static [Mutation]; 37] {
+fn last() -> [&'static [Mutation]; 44] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -152,7 +154,8 @@ fn last() -> [&'static [Mutation]; 37] {
         &super::geometry::buckets::BUCKETS,
         &super::geometry::filed::FILED,
         &super::geometry::reach::REACH,
-        &super::budget::BUDGET,
+        &super::geometry::within::WITHIN,
+        &budget::BUDGET,
         &super::spatial_types::SPATIAL_TYPES,
         &super::spatial_curves::SPATIAL_CURVES,
         &super::spatial_routines::SPATIAL_ROUTINES,

@@ -600,3 +600,44 @@ and of points against a 128-edge polygon, run alternately three times
 on this version and its parent, measured 8.7 and 9.6 million pairs/s
 before and 9.6 and 9.5 million after for the squares after warm-up, and
 26.2 million against 26.4 million for the points.
+
+## Spatial conjuncts decided of index entries
+
+Counting the points inside a 4,096-edge circle, or within distance 1 of
+it, among a million points scanned every row: a scan priced with a fetch
+per entry lost to the sequential scan for a window holding a quarter of
+the rows, and every row found was judged by the filter's call. Two
+mechanisms (RULES.md D34, D85): a scan under a projection or grouping
+decides its spatial conjunct of each entry, a single-point entry by the
+call's function from the point, and makes a row of no column where every
+reader sees it; and a prepared polygon decides a point's distance within
+a constant from its cells' Chebyshev distances to the cells edges may
+touch, two passes over the grid, without locating or measuring the point.
+The R-tree is told when no row is read, and then sorts no candidates by
+row id; a measure and a radius apart by more than a decimal's conversion
+rounds compare as doubles, where SQL's comparison formats digits.
+
+Measured on an Apple M4, Rust 1.99.0, one core, a million points drawn
+uniformly over a 100 by 100 square, prepared statements executed four
+times and the median of the last three reported, each execution
+preparing the constant polygon again (D45): main as of PR #46 against
+this branch with all of its geometry commits, this one last:
+
+| Million points | Before, ms | After, ms |
+|---|---:|---:|
+| 4,096-edge circle, `ST_INTERSECTS(G, ?) = 1`, count | 198 | 31 |
+| 4,096-edge circle, `ST_DISTANCE(G, ?) <= 1`, count | 53,865 | 57 |
+| 4,096-edge circle, `SUM(ST_DISTANCE(G, ?))` of 10,000 rows | 2,248 | 13 |
+| 4,100-edge comb, `ST_DISTANCE(G, ?) <= 1`, count | 53,706 | 257 |
+| 32,772-edge comb, `ST_DISTANCE(G, ?) <= 1`, count | 568,398 | 732 |
+
+The combs' envelopes hold 90% of the points, so their counts keep the
+sequential scan, and their within-distance counts are decided by the
+cells' bounds over the batches: 332 and 76 ms for the 4,100-edge comb's
+intersection count and distance sum, 895 and 582 ms for the 32,772-edge
+comb's, against 13,670, 21,310, 85,413 and 291,230 before. Answers are
+equal on every query. The circle's loop of one query, sampled
+(`sample(1)`), spends a third of the within-distance query in the
+nearest-edge searches of the band of points the cells' bounds leave
+undecided, about 0.6 units wide at a cell side of 1/16; a Euclidean
+transform would halve that band.

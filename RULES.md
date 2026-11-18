@@ -2194,6 +2194,12 @@ life. Without the opt-in, or if an argument expression or any other part
 of the filter can raise, the planner reads the table whole. A lookup must
 not hide an error on a row it skips (D15).
 
+The executor checks the full WHERE condition on the rows a function
+lookup finds, but for a spatial conjunct a scan decides of each entry
+itself (D85, `Plan::IndexScan::decided`): the planner takes that
+conjunct from the filter, and the scan judges it of every entry, from
+the entry's point where the entry is one, else from its row.
+
 The index returns every matching inserted `(Key, RowId)` pair, each once.
 It may also return pairs that do not match, called extra candidates. The
 keys contain inserted values unless `Index::key_projection` explicitly
@@ -2900,6 +2906,31 @@ constant or parameter, and every other conjunct must be non-raising.
 The full condition remains a residual. If a later parameter has a different
 SRID, the index returns all entries, including empties, so pruning cannot
 hide the runtime error. NULL and matching-SRID EMPTY queries return none.
+
+Under a projection or a grouping, which read known columns of the rows,
+a scan of a windowed spatial lookup, an intersection's, a relate's or a
+distance's (D135), decides its conjunct of each entry itself, and the
+filter no longer judges it (D34). An entry whose envelope is one
+point, not the origin an empty geometry projects to, is the closed point
+set of its row's geometry, whatever its kind, so the call's function
+decides the comparison from the point and the column's SRID
+(`ScalarFunction::point_compared`), raising a reference mismatch as the
+call would; any other entry's row is read and the conjunct judged of
+it. Where nothing else reads the column, a point entry decided true
+needs no row if every reader sees it (`TableStorage::visible_to_all`),
+as an index-only scan's entry needs none; else its row is read. Such a
+scan is priced as a covering scan. A prepared polygon decides
+"distance op constant" of a point by bounds its cells put on the
+distance (`prepared/cells/within.rs`): each cell's Chebyshev distance,
+in cells, to the nearest cell edges may touch, counted by a two-pass
+chamfer; a point's distance is at least a cell less than that, and at
+most two cells more along a diagonal, so where the bound lies below the
+constant by more than the measures' rounding, or above by more, as the
+nearest-edge search's reach bounds it, the comparison is decided
+without measuring. The same decision serves a filter's comparison of
+the call with a constant, either way round, a row at a time or over a
+batch (`ScalarFunction::call_compared`, `exec/eval.rs`,
+`exec/batch/judge/calls.rs`).
 An empty stored geometry projects to an origin rectangle, adding candidates
 but no false negatives. NULL keys are omitted. Readers compare the visible
 version's projection with the entry before evaluating the full condition.

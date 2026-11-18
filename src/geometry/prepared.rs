@@ -24,7 +24,7 @@ use crate::error::Result;
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::memory::{MemoryBudget, Reservation};
 use crate::params::ParameterType;
-use crate::value::{DataType, Value};
+use crate::value::{CompOp, DataType, Value, compare};
 use cells::Cells;
 use locator::Locator;
 use shapes::FiledEdges;
@@ -55,6 +55,9 @@ struct Prepared {
     tree: OnceLock<Option<Box<EdgeTree>>>,
     /// Point distances measured before the hierarchy is searched.
     measured: AtomicUsize,
+    /// The constant a distance is compared with, as a binary64 number,
+    /// converted once for the first value compared with.
+    radius: OnceLock<(Value, Option<f64>)>,
     /// The budget certificates, filed edges and the hierarchy would reserve
     /// from, kept only for an operand that may build them.
     budget: Option<Arc<MemoryBudget>>,
@@ -84,6 +87,24 @@ const FILED_AFTER_USES: usize = 1;
 /// hierarchy is searched instead: building it costs about as much as
 /// twelve to sixteen scans of 4,100 to 32,772 edges.
 const MEASURED_AFTER_USES: usize = 16;
+/// Far more than the relative rounding of a decimal's conversion to a
+/// binary64 number (`Decimal::to_f64`, two roundings): numbers apart by
+/// more compare as their exact values do.
+const CONVERSION_ROUNDING: f64 = 8.0_f64 * f64::EPSILON;
+
+/// `value` as a finite binary64 number, if it is numeric.
+fn finite(value: &Value) -> Option<f64> {
+    value.as_f64().filter(|radius| radius.is_finite())
+}
+
+/// Whether `a` and `b` are one number, written alike.
+fn same_number(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Exact(a), Value::Exact(b)) => a.units == b.units && a.scale == b.scale,
+        (Value::Approx(a), Value::Approx(b)) => a.to_bits() == b.to_bits(),
+        _ => false,
+    }
+}
 
 pub(super) fn specialize(function: GeometryFunction, args: &[Option<&Value>], budget: &Arc<MemoryBudget>) -> Option<ScalarRef> {
     let [left, right] = args else { return None };
@@ -135,6 +156,7 @@ impl Prepared {
             edges,
             tree: OnceLock::new(),
             measured: AtomicUsize::new(0),
+            radius: OnceLock::new(),
             budget,
             rectangle,
             _held: held,
@@ -142,8 +164,96 @@ impl Prepared {
     }
 
     fn matches(&self, args: &[&Value]) -> bool {
-        let (Value::Extension(was), Some(Value::Extension(now))) = (&self.value, args.get(self.position).copied()) else { return false };
+        args.get(self.position).is_some_and(|now| self.holds(now))
+    }
+
+    /// Whether `now` is the operand prepared.
+    fn holds(&self, now: &Value) -> bool {
+        let (Value::Extension(was), Value::Extension(now)) = (&self.value, now) else { return false };
         kind::geometry_kind(now.kind).is_some() && (Arc::ptr_eq(&was.bytes, &now.bytes) || was.bytes == now.bytes)
+    }
+
+    /// "`f(other, polygon) op value`", or the polygon first, of `other` a
+    /// point: decided from the polygon's cells where a distance within a
+    /// constant needs no measure (`within_cells`), else by the call's
+    /// value, compared as SQL compares it [X3.135-1986 §5.11 GR2, GR3];
+    /// raising what the call would. None of no point.
+    fn point_decided(&self, other: &Geometry, op: CompOp, value: &Value) -> Option<Result<Option<bool>>> {
+        let super::Shape::Point(Some(point)) = other.shape else { return None };
+        Some(self.decide(point, other, op, value))
+    }
+
+    fn decide(&self, point: super::shape::Point, other: &Geometry, op: CompOp, value: &Value) -> Result<Option<bool>> {
+        let measuring = matches!(self.function, GeometryFunction::Distance);
+        if measuring {
+            // The cells' bounds decide a point's distance without locating
+            // it; the reference mismatch the call raises is raised first.
+            self.geometry.same_reference(other)?;
+            if let Some(decided) = self.within_bounded(point, op, value) {
+                return Ok(Some(decided));
+            }
+        }
+        let located = self.point_intersection(point, other)?;
+        if let Some(decided) = measuring.then(|| self.within_measured(located, op, value)).flatten() {
+            return Ok(Some(decided));
+        }
+        let measured = self.separation(other, located);
+        let result = if self.position == 0 {
+            self.function.pair_located(&self.geometry, other, located, measured)?
+        } else {
+            self.function.pair_located(other, &self.geometry, located, measured)?
+        };
+        Ok(self.compared(&result, op, value))
+    }
+
+    /// Whether a point's distance compares within `value` by `op`, decided
+    /// by the cells' bounds on it (`cells/within.rs`), once they are
+    /// built: where the measure lies below the value by more than its
+    /// rounding, or above by more, as the nearest-edge search's reach
+    /// bounds that rounding.
+    fn within_bounded(&self, point: super::shape::Point, op: CompOp, value: &Value) -> Option<bool> {
+        let radius = self.radius_of(value)?;
+        let cells = self.cells.get()?.as_deref()?;
+        let (lower, upper) = cells.measure_bounds(point, self.budget.as_ref()?)?;
+        let unit = cells.unit_at(point)?;
+        if super::distance::reach(upper, unit) < radius {
+            return Some(op.holds(std::cmp::Ordering::Less));
+        }
+        (lower > super::distance::reach(radius, unit)).then(|| op.holds(std::cmp::Ordering::Greater))
+    }
+
+    /// Whether a point's distance compares within `value` by `op`, decided
+    /// without the measure: zero, of a point the polygon holds, `located`,
+    /// unless no binary64 number tells the value from zero.
+    fn within_measured(&self, located: Option<bool>, op: CompOp, value: &Value) -> Option<bool> {
+        let radius = self.radius_of(value).filter(|_| located == Some(true))?;
+        Some(0.0_f64.partial_cmp(&radius)?).filter(|ordering| ordering.is_ne()).map(|ordering| op.holds(ordering))
+    }
+
+    /// "`result op value`", as SQL compares them [X3.135-1986 §5.11 GR2,
+    /// GR3]: two exact numbers of one scale by their units; a measure and
+    /// a radius by their binary64 numbers where those decide it, apart by
+    /// more than the radius's conversion rounds.
+    fn compared(&self, result: &Value, op: CompOp, value: &Value) -> Option<bool> {
+        if let (Value::Exact(result), Value::Exact(value)) = (result, value)
+            && result.scale == value.scale
+        {
+            return Some(op.holds(result.units.cmp(&value.units)));
+        }
+        if let (Value::Approx(measure), Some(radius)) = (result, self.radius_of(value)) {
+            let apart = (measure - radius).abs() > measure.abs().max(radius.abs()) * CONVERSION_ROUNDING;
+            if let Some(ordering) = apart.then(|| measure.partial_cmp(&radius)).flatten() {
+                return Some(op.holds(ordering));
+            }
+        }
+        compare(result, value).map(|ordering| op.holds(ordering))
+    }
+
+    /// `value` as a finite binary64 number, if it is numeric: converted
+    /// once for the first value asked, which every call of a scan is.
+    fn radius_of(&self, value: &Value) -> Option<f64> {
+        let (first, radius) = self.radius.get_or_init(|| (value.clone(), finite(value)));
+        if same_number(first, value) { *radius } else { finite(value) }
     }
 
     fn intersection(&self, other: &Geometry) -> Result<Option<bool>> {
@@ -300,6 +410,23 @@ impl ScalarFunction for Prepared {
     fn call(&self, args: &[Value]) -> Result<Value> {
         let [left, right] = args else { return self.function.call(args) };
         self.call_borrowed(&[left, right], None)
+    }
+
+    fn call_compared(&self, args: &[&Value], op: CompOp, value: &Value) -> Option<Result<Option<bool>>> {
+        let [left, right] = args else { return None };
+        if !self.matches(args) || left.is_null() || right.is_null() {
+            return None;
+        }
+        let other = Geometry::from_value(if self.position == 0 { right } else { left }).ok()?;
+        self.point_decided(&other, op, value)
+    }
+
+    fn point_compared(&self, ([x, y], srid): ([f64; 2], i32), other: &Value, op: CompOp, value: &Value) -> Option<Result<Option<bool>>> {
+        if !self.holds(other) {
+            return None;
+        }
+        let point = Geometry::point(x, y, srid).ok()?;
+        self.point_decided(&point, op, value)
     }
 
     fn call_borrowed(&self, args: &[&Value], temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Value> {

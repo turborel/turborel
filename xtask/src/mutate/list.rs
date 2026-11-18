@@ -6,7 +6,6 @@ mod array_targets;
 mod backup;
 mod bigint;
 mod bounded;
-mod budget;
 mod check_rebind;
 mod collations;
 mod composite;
