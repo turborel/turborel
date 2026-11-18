@@ -191,19 +191,40 @@ XML(CONTENT), written as XMLELEMENT writes it as content; cast to
 XML(SEQUENCE), it is refused (SQLCODE -900).
 
 An XML value cast to an SQL type gives the text of its one item: a
-document node's children, an element's text. That text, its white space
-collapsed, is read as a value of the XML Schema type the SQL type maps
-to, then cast to the SQL type, whose length, precision and range apply
-as CAST applies them. A date or time with a time zone is moved to UTC
-for a type without one; a type WITH TIME ZONE needs one (SQLSTATE
-22007). Text that is no such value, or more than one item, fails with
+document node's children, an element's text. That text is read as a
+value of the XML Schema type the SQL type maps to, restricted as the
+table below shows, its white space collapsed first unless the type is a
+string type. The value is then cast to the SQL type. A value the
+restriction does not take fails with SQLSTATE 10000 where CAST would
+round, pad or cut it: CHAR(5) takes text of five characters alone, and
+NUMERIC(6,1) no second digit of fraction.
+
+| SQL type | XML Schema type, and what it takes |
+|---|---|
+| CHARACTER(n) | `xs:string` of n characters; at most n of a length in OCTETS |
+| CHARACTER VARYING(n), CLOB(n) | `xs:string` of at most n characters |
+| BINARY(n), VARBINARY(n), BLOB(n) | `xs:hexBinary` of at most n octets |
+| NUMERIC(p,s), DECIMAL(p,s) | `xs:decimal` of at most p digits, s after the point |
+| INTEGER, SMALLINT, BIGINT | `xs:integer` within the type's range |
+| REAL, DOUBLE PRECISION, FLOAT | `xs:float` or `xs:double` |
+| BOOLEAN | `xs:boolean` |
+| DATE | `xs:date` of four digits of year and two of month and day |
+| TIME(p), TIMESTAMP(p) | `xs:time`, `xs:dateTime` of p digits of fraction, none if p is 0; WITH TIME ZONE, a zone written `+hh:mm` or `-hh:mm` |
+| INTERVAL | `xdt:yearMonthDuration` or `xdt:dayTimeDuration`, each field written as XMLCAST writes it: the first of the leading precision's digits, the others of two, the seconds' fraction of the fractional precision's |
+
+A date or time with a time zone is moved to UTC for a type without one,
+and is then checked as written in UTC, the zeros ending its fraction
+dropped. So TIMESTAMP, of precision 6, takes a value whose fraction has
+six digits, its last not zero, and TIMESTAMP(0) a value of whole
+seconds. Text that is no such value, or more than one item, fails with
 SQLSTATE 10000; a value with no item is null.
 
 ```sql
 SELECT ID, XMLCAST(BODY AS VARCHAR(20)) FROM ORDERS ORDER BY ID;
 VALUES (XMLSERIALIZE(XMLCAST(CAST(1.50 AS NUMERIC(5,2)) AS XML(CONTENT)) AS VARCHAR(20)), XMLSERIALIZE(XMLCAST(CAST(1.50 AS NUMERIC(5,2)) AS XML) AS VARCHAR(20)));
+VALUES (XMLCAST(XMLPARSE(CONTENT '<total currency="EUR"> 17.25 </total>' PRESERVE WHITESPACE) AS NUMERIC(6,2)));
+VALUES (XMLCAST(XMLPARSE(CONTENT '<due>2026-11-17T09:30:00-05:00</due>' PRESERVE WHITESPACE) AS TIMESTAMP(0)));
 VALUES (XMLCAST(XMLPARSE(CONTENT '<total currency="EUR"> 17.25 </total>' PRESERVE WHITESPACE) AS NUMERIC(6,1)));
-VALUES (XMLCAST(XMLPARSE(CONTENT '<due>2026-11-17T09:30:00-05:00</due>' PRESERVE WHITESPACE) AS TIMESTAMP));
 VALUES (XMLCAST(XMLPARSE(CONTENT '<qty>many</qty>' PRESERVE WHITESPACE) AS INTEGER));
 ```
 
@@ -219,13 +240,14 @@ VALUES (XMLCAST(XMLPARSE(CONTENT '<qty>many</qty>' PRESERVE WHITESPACE) AS INTEG
 (1 row)
 
 ----------
-     17.2
+    17.25
 (1 row)
 
-----------------------------
- 2026-11-17 14:30:00.000000
+---------------------
+ 2026-11-17 14:30:00
 (1 row)
-turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error: 'many' is no lexical form of xs:integer [XQueryFO §17.1.1, §17.4] err:FORG0001 [ISO/IEC 9075-14:2006 draft §6.6 GR3d vi, GR4j]
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error: '17.25' is not valid for NUMERIC(6,1): its 2 digits break its fractionDigits [Schema2 §4.3.12.3] [Schema2 §4.1.4] [XQueryFO §17.1.1] err:FORG0001 [ISO/IEC 9075-14:2006 draft §6.6 GR3d vi, GR4j]
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error: 'many' is not valid for INTEGER: it is no literal of xs:integer [Schema2 §4.1.4] [XQueryFO §17.1.1] err:FORG0001 [ISO/IEC 9075-14:2006 draft §6.6 GR3d vi, GR4j]
 ```
 
 ## XMLDOCUMENT

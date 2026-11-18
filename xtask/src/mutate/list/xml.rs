@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// Each XML mechanism broken alone, and the tests that fail.
-pub const XML: [Mutation; 36] = [
+pub const XML: [Mutation; 38] = [
     Mutation {
         name: "xml-element-type-match",
         package: Package::Core,
@@ -247,8 +247,8 @@ pub const XML: [Mutation; 36] = [
         package: Package::Core,
         breaks: "a date or time cast to a type without time zone keeps its local value",
         file: "src/functions/xml/cast.rs",
-        original: "    let m = if zoned { m } else { m.in_utc() };",
-        replacement: "    let m = if zoned { m } else { m };",
+        original: "    Ok(Atomic { kind, lexical: utc.text().into() })",
+        replacement: "    Ok(Atomic { kind, lexical: m.text().into() })",
         integration: &["xml_cast::xml_values_to_sql_6_6"],
         unit: &[],
     },
@@ -265,12 +265,12 @@ pub const XML: [Mutation; 36] = [
     Mutation {
         name: "xml-cast-zone-required",
         package: Package::Core,
-        breaks: "a value with no time zone is cast to a type WITH TIME ZONE",
-        file: "src/functions/xml/cast.rs",
-        original: "    if zoned && m.zone.is_none() {",
-        replacement: "    if false {",
-        integration: &["xml_cast::xml_values_that_cast_to_none_6_6"],
-        unit: &[],
+        breaks: "a value with no time zone is cast to a type WITH TIME ZONE, its pattern requiring none",
+        file: "src/functions/xml/schema_type.rs",
+        original: "    let zone = if zoned { TZ } else { \"\" };",
+        replacement: "    let zone = if zoned { \"\" } else { \"\" };",
+        integration: &["xml_cast::xml_values_cast_by_the_facets_6_6"],
+        unit: &["functions::xml::schema_type::tests::datetimes_9_5"],
     },
     Mutation {
         name: "xml-cast-document-target",
@@ -371,5 +371,25 @@ pub const XML: [Mutation; 36] = [
         replacement: "        let order: Option<Ordering> = None;",
         integration: &[],
         unit: &["xml::schema::tests::restriction_of_values"],
+    },
+    Mutation {
+        name: "xmlcast-facets",
+        package: Package::Core,
+        breaks: "XMLCAST casts an XML value as the built-in type alone, its facets unchecked",
+        file: "src/functions/xml/cast.rs",
+        original: "            None => self.xmlt.cast(&av)?,",
+        replacement: "            None => cast(&av, self.xmlt.atomic().unwrap_or(AtomicType::String))?,",
+        integration: &["xml_cast::xml_values_cast_by_the_facets_6_6"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xmlcast-adjust-first",
+        package: Package::Core,
+        breaks: "a date or time is matched against the pattern before it is adjusted to UTC",
+        file: "src/functions/xml/cast.rs",
+        original: "            Some(kind) => self.xmlt.cast(&in_utc(&av, kind)?)?,",
+        replacement: "            Some(_) => self.xmlt.cast(&av)?,",
+        integration: &["xml_cast::xml_values_to_sql_6_6", "xml_cast::xml_values_cast_by_the_facets_6_6"],
+        unit: &[],
     },
 ];

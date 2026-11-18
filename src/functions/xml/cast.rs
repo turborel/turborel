@@ -10,9 +10,12 @@
 //! of `xs:integer`; \[§9.5 GR8e viii, GR8f\] REAL and FLOAT of 24 bits or
 //! fewer are `xs:float`, DOUBLE PRECISION and other FLOATs `xs:double`,
 //! BOOLEAN `xs:boolean`. An XML value is cast to an SQL type through the
-//! XML Schema type its type maps to, without the facets that type
-//! restricts it by; SQL's CAST to the type applies its own length,
-//! precision and range \[GR4l\].
+//! XML Schema type its type maps to, restricted by the facets §9.5 gives
+//! it (`functions/xml/schema_type.rs`), so a value they refuse is an
+//! XQuery error \[GR4j\]; SQL's CAST to the type then applies its own
+//! rules \[GR4l\].
+
+use std::sync::Arc;
 
 use super::mapping::{BinaryEncoding, Mapping, xml_lexical, xml_mapped};
 use crate::error::{Code, Result, SqlError, SqlState};
@@ -23,8 +26,8 @@ use crate::value::lob::LobKind;
 use crate::value::xml::{XmlType, XmlValue};
 use crate::value::{Binary, DataType, Decimal, Spelled, Value};
 use crate::xml::{
-    Atomic, AtomicType, Item, Kind, LAST_YEAR, Moment, NodeId, Primitive, Sequence, Shape, Syntax, Tree, Whitespace, base64, cast,
-    duration_units, hex, parse, xquery_error,
+    Atomic, AtomicType, Item, Kind, LAST_YEAR, Moment, NodeId, Primitive, Sequence, Shape, SimpleType, Syntax, Tree, Whitespace, base64,
+    cast, duration_units, hex, parse, xquery_error,
 };
 
 /// [§6.6 SR1b, SR2, §6.14 GR1b, §6.15 GR1b, §6.19 GR3b]
@@ -129,15 +132,17 @@ impl ScalarFunction for XmlCastIn {
 
 /// [§6.6 GR4] XMLCAST of an XML value to an SQL type: its one atomic
 /// value, after its document nodes are replaced by their children and it
-/// is atomized \[GR4b, GR4c\], cast as the XML Schema type the SQL type
-/// maps to \[GR4j\], as the SQL value that is \[GR4k\], which the binder
-/// casts to the SQL type \[GR4l\].
+/// is atomized \[GR4b, GR4c\], cast as XT, the XML Schema type the SQL
+/// type maps to with its facets \[GR4e, GR4j\], as the SQL value that is
+/// \[GR4k\], which the binder casts to the SQL type \[GR4l\].
 #[derive(Debug)]
 pub struct XmlCastOut {
-    /// The XML Schema type the SQL type maps to.
-    pub base: AtomicType,
-    /// Whether the SQL type is a datetime type WITH TIME ZONE.
-    pub zoned: bool,
+    /// XT, the type §9.5 maps the SQL type to \[GR4e\].
+    pub xmlt: Arc<SimpleType>,
+    /// Of DATE, TIME and TIMESTAMP WITHOUT TIME ZONE, `xs:date`, `xs:time`
+    /// or `xs:dateTime`, which the value is cast as and adjusted to UTC
+    /// first, before it is cast as XT \[GR4j i to iii\].
+    pub adjust: Option<AtomicType>,
     /// The type of the value it gives, A of \[GR4k\].
     pub given: DataType,
 }
@@ -156,9 +161,34 @@ impl ScalarFunction for XmlCastOut {
     fn call(&self, args: &[Value]) -> Result<Value> {
         let Some(Value::Xml(x)) = args.first() else { return Ok(Value::Null) };
         let Some(av) = atomized(&*x.sequence()?)? else { return Ok(Value::Null) };
-        let bv = cast(&av, self.base)?;
-        sql_value(&bv, self.zoned)
+        let bv = match self.adjust {
+            Some(kind) => self.xmlt.cast(&in_utc(&av, kind)?)?,
+            None => self.xmlt.cast(&av)?,
+        };
+        sql_value(&bv)
     }
+}
+
+/// [§6.6 GR4j i to iii] `value` cast as `kind`, a date, a time or a date
+/// and time, adjusted to UTC and its time zone removed, as
+/// `fn:adjust-dateTime-to-timezone` to PT0H then to none adjusts it
+/// [XQueryFO §10.7].
+///
+/// # Errors
+///
+/// As `cast`; SQLSTATE 22007 if its year in UTC is before 0001 \[GR4k vi
+/// 1, GR4k vii 1\].
+fn in_utc(value: &Atomic, kind: AtomicType) -> Result<Atomic> {
+    let typed = cast(value, kind)?;
+    let Some(m) = Shape::of(kind.primitive()).and_then(|shape| Moment::parse(&typed.lexical, shape).ok().flatten()) else {
+        return Ok(typed);
+    };
+    let utc = m.in_utc();
+    if m.shape != Shape::Time && utc.year() < 1 {
+        let why = format!("'{}' is of the year {} in UTC", typed.lexical, utc.year());
+        return Err(refused(&why, "GR4k vi 1, GR4k vii 1", SqlState::INVALID_DATETIME_FORMAT));
+    }
+    Ok(Atomic { kind, lexical: utc.text().into() })
 }
 
 /// [§6.6 GR4b, GR4c] The one atomic value of `value` with its document
@@ -209,12 +239,12 @@ fn refused(why: &str, rule: &str, state: SqlState) -> SqlError {
 }
 
 /// [§6.6 GR4k] The SQL value of `bv`, an atomic value of the XML Schema
-/// type an SQL type maps to, for that type, WITH TIME ZONE if `zoned`: a
+/// type an SQL type maps to, XT, for that type: a
 /// string \[GR4k i\], the octets of hex \[GR4k ii\], an exact number
 /// \[GR4k iv\], an approximate one \[GR4k v\], a truth value \[GR4k
 /// xi\], an interval \[GR4k ix, GR4k x\], or a datetime's literal's
 /// string, CAST to the datetime type by the binder \[GR4k vi to viii\].
-fn sql_value(bv: &Atomic, zoned: bool) -> Result<Value> {
+fn sql_value(bv: &Atomic) -> Result<Value> {
     let text = &*bv.lexical;
     Ok(match bv.kind.primitive() {
         // [GR4k i] a string; XT is none of the other types here, as §9.5
@@ -237,9 +267,9 @@ fn sql_value(bv: &Atomic, zoned: bool) -> Result<Value> {
         Primitive::Boolean => Value::Bool(text == "true"),
         Primitive::YearMonthDuration => interval(text, true)?,
         Primitive::DayTimeDuration => interval(text, false)?,
-        Primitive::Date => Value::Char(datetime(text, Shape::Date, zoned)?),
-        Primitive::Time => Value::Char(datetime(text, Shape::Time, zoned)?),
-        Primitive::DateTime => Value::Char(datetime(text, Shape::DateTime, zoned)?),
+        Primitive::Date => Value::Char(datetime(text, Shape::Date)?),
+        Primitive::Time => Value::Char(datetime(text, Shape::Time)?),
+        Primitive::DateTime => Value::Char(datetime(text, Shape::DateTime)?),
     })
 }
 
@@ -289,23 +319,19 @@ fn interval(text: &str, year_month: bool) -> Result<Value> {
 }
 
 /// [§6.6 GR4j, GR4k vi to viii] The literal's string of the date, time or
-/// date and time `text`, of `shape`, for a type WITH TIME ZONE if `zoned`;
-/// for one without, adjusted to UTC and its time zone removed \[GR4j i
-/// to iii\].
+/// date and time `text`, of `shape`, a value of XT: of a type WITH TIME
+/// ZONE with its time zone, which XT's pattern requires [§9.5 GR8i,
+/// GR8k], so \[GR4k vii 3A, GR4k viii 2A\] find none missing; of one
+/// without, adjusted to UTC already \[GR4j i to iii\].
 ///
 /// # Errors
 ///
-/// SQLSTATE 22007 if its year is not from 0001 to 9999 \[GR4k vi 1, GR4k
-/// vii 1\], or, for a type WITH TIME ZONE, it has no time zone \[GR4k vii
-/// 3A, GR4k viii 2A\].
-fn datetime(text: &str, shape: Shape, zoned: bool) -> Result<String> {
+/// SQLSTATE 22007 if its year in UTC is not from 0001 to 9999 \[GR4k vi
+/// 1, GR4k vii 1\].
+fn datetime(text: &str, shape: Shape) -> Result<String> {
     let invalid = SqlState::INVALID_DATETIME_FORMAT;
     let m = Moment::parse(text, shape)?.ok_or_else(|| refused(&format!("'{text}' is no date or time"), "GR4k", invalid))?;
-    if zoned && m.zone.is_none() {
-        return Err(refused(&format!("'{text}' has no time zone"), "GR4k vii 3A, GR4k viii 2A", invalid));
-    }
-    let m = if zoned { m } else { m.in_utc() };
-    let year = m.year();
+    let year = m.in_utc().year();
     if shape != Shape::Time && !(1..=LAST_YEAR).contains(&year) {
         return Err(refused(&format!("'{text}' is of the year {year} in UTC"), "GR4k vi 1, GR4k vii 1", invalid));
     }

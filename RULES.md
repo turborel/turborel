@@ -2898,7 +2898,9 @@ compiled once, as `regex` reads XML Schema's (D61). Validating a literal
 normalizes its white space, matches each derivation step's patterns,
 reads its value, then checks each other facet; a literal or value not
 valid is err:FORG0001, as a cast reports it. Lists and unions nest at
-most `MAX_TYPE_NESTING`, 32, deep (D18).
+most `MAX_TYPE_NESTING`, 32, deep (D18). XMLCAST of an XML value to an
+SQL type casts as the restricted type §9.5 maps the SQL type to, made
+once as the statement is bound.
 
 A value's stored form (`xml::encode`, version 1) is binary and read in one
 pass, in document order, as Pal et al. store XML. Each node item has a

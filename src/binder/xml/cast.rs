@@ -9,7 +9,7 @@ use std::sync::Arc;
 use super::super::{Binder, Scope, rule};
 use crate::ast::{Passing, TypeName, ValueExpression, ValueSpecification};
 use crate::error::{Code, Result, SqlError};
-use crate::functions::{IMPLICIT_BINARY_ENCODING, Mapping, ScalarRef, XmlCastIn, XmlCastOut, xml_schema_type};
+use crate::functions::{IMPLICIT_BINARY_ENCODING, Mapping, ScalarRef, XmlCastIn, XmlCastOut, xml_schema_restriction, xml_schema_type};
 use crate::logical::Expr;
 use crate::params::ParameterType;
 use crate::value::datetime::{Field, MAX_TIME_PRECISION};
@@ -181,17 +181,26 @@ impl Binder<'_> {
 
     /// [§6.6 GR4] XMLCAST of `e`, an XML value, to `target`, an SQL type:
     /// a domain's data type, or a distinct type's source type, SQLT
-    /// \[GR4a\], of a type §9.5 maps; the SQL value given CAST to SQLT
-    /// \[GR4l\], of the declared type `target` \[SR6\].
+    /// \[GR4a\], of a type §9.5 maps, cast as the type it maps to with its
+    /// facets \[GR4e, GR4j\]; the SQL value given CAST to SQLT \[GR4l\], of
+    /// the declared type `target` \[SR6\].
     fn cast_from_xml(&self, e: Expr, target: DataType) -> Result<(Expr, DataType)> {
         let sqlt = target.represented().clone();
-        let Some(base) = xml_schema_type(&sqlt) else {
+        let Some(xmlt) = xml_schema_restriction(&sqlt)? else {
             return Err(rule(format!("[ISO/IEC 9075-14:2006 draft §9.5 GR8] {target} maps to no XML Schema type")));
         };
-        let zoned = matches!(sqlt, DataType::Time { zoned: true, .. } | DataType::Timestamp { zoned: true, .. });
+        let base = xmlt.atomic().unwrap_or(AtomicType::String);
+        // [GR4j i to iii] a date or time without time zone adjusted first.
+        let adjust = if matches!(sqlt, DataType::Timestamp { zoned: false, .. }) {
+            Some(AtomicType::DateTime)
+        } else if matches!(sqlt, DataType::Time { zoned: false, .. }) {
+            Some(AtomicType::Time)
+        } else {
+            (sqlt == DataType::Date).then_some(AtomicType::Date)
+        };
         let given = given_type(base, &sqlt);
-        let call = Expr::Call(ScalarRef(Arc::new(XmlCastOut { base, zoned, given: given.clone() })), vec![e]);
-        let (cast, _) = self.cast_bound((call, given), sqlt)?;
+        let function = XmlCastOut { xmlt: Arc::new(xmlt), adjust, given: given.clone() };
+        let (cast, _) = self.cast_bound((Expr::Call(ScalarRef(Arc::new(function)), vec![e]), given), sqlt)?;
         Ok((cast, target))
     }
 }

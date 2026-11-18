@@ -106,20 +106,20 @@ fn xml_values_to_sql_6_6() {
     let a = db.session("A");
     let cases = [
         ("<a> 42 </a>", "INTEGER", "42"),
-        ("<a>3.75</a>", "NUMERIC(5,1)", "3.7"),
+        ("<a>3.7</a>", "NUMERIC(5,1)", "3.7"),
         ("<a>3.75</a>", "DOUBLE PRECISION", "3.75E0"),
         ("<a>abc</a>", "VARCHAR(5)", "abc"),
-        ("<a>abc</a>", "CHAR(5)", "abc  "),
+        ("<a>abc  </a>", "CHAR(5)", "abc  "),
         ("<a>x<b>y</b></a>", "CLOB", "xy"),
         ("<!--note-->", "VARCHAR(9)", "note"),
         ("<b>1</b>", "BOOLEAN", "TRUE"),
         ("<x>0fb7</x>", "VARBINARY(4)", "0FB7"),
         ("<d>2020-01-02+05:00</d>", "DATE", "2020-01-01"),
-        ("<d>2020-01-02T03:04:05.123456789-01:00</d>", "TIMESTAMP(3)", "2020-01-02 04:04:05.123"),
-        ("<d>2020-01-02T03:04:05+05:30</d>", "TIMESTAMP WITH TIME ZONE", "2020-01-02 03:04:05.000000+05:30"),
+        ("<d>2020-01-02T03:04:05.125-01:00</d>", "TIMESTAMP(3)", "2020-01-02 04:04:05.125"),
+        ("<d>2020-01-02T03:04:05+05:30</d>", "TIMESTAMP(0) WITH TIME ZONE", "2020-01-02 03:04:05+05:30"),
         ("<t>24:00:00</t>", "TIME", "00:00:00"),
-        ("<d>P1Y2M</d>", "INTERVAL MONTH", "14"),
-        ("<d>-PT1H30M</d>", "INTERVAL MINUTE", "-90"),
+        ("<d>P14M</d>", "INTERVAL MONTH", "14"),
+        ("<d>-PT90M</d>", "INTERVAL MINUTE", "-90"),
         ("", "INTEGER", "NULL"),
     ];
     for (text, sql, expected) in cases {
@@ -129,11 +129,11 @@ fn xml_values_to_sql_6_6() {
     assert_eq!(from_xml(&a, "<a>5</a>", "D"), "5", "a domain's data type");
 }
 
-/// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 GR4j, GR4k] XML values that
-/// cast to no SQL value: not of the XML Schema type's lexical forms, or of
-/// more than one atomic value, XQuery error 10000; INF to a number, 22003;
-/// no time zone to a type WITH TIME ZONE, 22007; a year before 0001 in
-/// UTC, 22007; too long a string, CAST's 22001.
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 GR4j, GR4k, GR4l] XML
+/// values that cast to no SQL value: not of the XML Schema type's lexical
+/// forms, or of more than one atomic value, XQuery error 10000; INF to a
+/// number, 22003; a year before 0001 in UTC, 22007; a value the facets
+/// take that CAST to the SQL type does not, CAST's 22003.
 #[test]
 fn xml_values_that_cast_to_none_6_6() {
     let db = database();
@@ -145,15 +145,59 @@ fn xml_values_that_cast_to_none_6_6() {
         (parsed("<a>yes</a>"), "BOOLEAN", SqlState::XQUERY_ERROR),
         (parsed("<a>2021-02-29</a>"), "DATE", SqlState::XQUERY_ERROR),
         (parsed("<a>INF</a>"), "DOUBLE PRECISION", SqlState::NUMERIC_VALUE_OUT_OF_RANGE),
-        (parsed("<a>2020-01-02T03:04:05</a>"), "TIMESTAMP WITH TIME ZONE", SqlState::INVALID_DATETIME_FORMAT),
-        (parsed("<a>0001-01-01T00:00:00+01:00</a>"), "TIMESTAMP", SqlState::INVALID_DATETIME_FORMAT),
-        (parsed("<a>123456</a>"), "SMALLINT", SqlState::NUMERIC_VALUE_OUT_OF_RANGE),
+        (parsed("<a>0001-01-01T00:00:00+01:00</a>"), "TIMESTAMP(0)", SqlState::INVALID_DATETIME_FORMAT),
+        (parsed("<a>0001-01-01T00:00:00+01:00</a>"), "TIMESTAMP(0) WITH TIME ZONE", SqlState::INVALID_DATETIME_FORMAT),
+        (parsed("<a>1234.5</a>"), "NUMERIC(5,2)", SqlState::NUMERIC_VALUE_OUT_OF_RANGE),
     ];
     for (value, sql, state) in cases {
         assert_eq!(failure(&a, &format!("XMLCAST({value} AS {sql})")), state, "{value} AS {sql}");
     }
 }
 
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 GR4e, GR4j, §9.5 GR8a to
+/// GR8l] [XQueryFO §17.1.1, §17.4] an XML value is cast as the type §9.5
+/// maps the SQL type to, restricted by its facets, so a value they refuse
+/// is an XQuery error, SQLSTATE 10000: a CHARACTER's length, a CHARACTER
+/// VARYING's and a binary string's maxLength, a NUMERIC's digits, an
+/// INTEGER's bounds; a datetime's pattern, matched by its text, or of a
+/// type without time zone by its value's canonical form in UTC, so a
+/// TIMESTAMP(p) takes a value of p digits of fraction alone; an
+/// interval's pattern, of its leading precision's digits and two of each
+/// field after.
+#[test]
+fn xml_values_cast_by_the_facets_6_6() {
+    let db = database();
+    let a = db.session("A");
+    let taken = [
+        ("<a>1234.5</a>", "NUMERIC(5,1)", "1234.5"),
+        ("<a>99999</a>", "SMALLINT", "99999"),
+        ("<a>2026-11-17T09:30:00-05:00</a>", "TIMESTAMP(0)", "2026-11-17 14:30:00"),
+        ("<a>2026-11-17T09:30:00.123456-05:00</a>", "TIMESTAMP", "2026-11-17 14:30:00.123456"),
+        ("<a>12:00:00.500+05:30</a>", "TIME(3) WITH TIME ZONE", "12:00:00.500+05:30"),
+        ("<a>P01Y02M</a>", "INTERVAL YEAR TO MONTH", "1-02"),
+        ("<a>P03DT04H05M06.500000S</a>", "INTERVAL DAY TO SECOND", "3 04:05:06.500000"),
+    ];
+    for (text, sql, expected) in taken {
+        assert_eq!(from_xml(&a, text, sql), expected, "{text} AS {sql}");
+    }
+    let parsed = |text: &str| format!("XMLPARSE(CONTENT '{text}' PRESERVE WHITESPACE)");
+    let refused = [
+        ("<a>3.75</a>", "NUMERIC(5,1)"),
+        ("<a>123456</a>", "SMALLINT"),
+        ("<a>abc</a>", "CHAR(5)"),
+        ("<a>abcdef</a>", "VARCHAR(5)"),
+        ("<a>0FB7AA</a>", "VARBINARY(2)"),
+        ("<a>2026-11-17T09:30:00-05:00</a>", "TIMESTAMP"),
+        ("<a>2026-11-17T09:30:00.5</a>", "TIMESTAMP(0)"),
+        ("<a>12:00:00Z</a>", "TIME WITH TIME ZONE"),
+        ("<a>2020-01-02T03:04:05</a>", "TIMESTAMP(0) WITH TIME ZONE"),
+        ("<a>P1Y2M</a>", "INTERVAL YEAR TO MONTH"),
+        ("<a>P123M</a>", "INTERVAL MONTH"),
+    ];
+    for (text, sql) in refused {
+        assert_eq!(failure(&a, &format!("XMLCAST({} AS {sql})", parsed(text))), SqlState::XQUERY_ERROR, "{text} AS {sql}");
+    }
+}
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 SR4, SR5, SR7, SR9, SR10,
 /// SR11, §9.5 GR8, §9.8 GR9a ii] XMLCAST of or to an XML type alone; to no
 /// DOCUMENT type of an SQL value; a passing mechanism of XML types alone;

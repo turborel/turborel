@@ -2,19 +2,22 @@
 //! §6]: XMLDOCUMENT [§6.13], XMLPARSE [§6.16], XMLSERIALIZE [§6.8] and
 //! the publishing operators (`publish`, `element`), and of the document
 //! and content predicates [§8.2, §8.3], as the binder calls them
-//! (`binder/xml.rs`); XMLCAST's [§6.6] are in `xml/cast.rs`.
+//! (`binder/xml.rs`); XMLCAST's [§6.6] are in `xml/cast.rs`, the types
+//! it casts as [§9.5] in `xml/schema_type.rs`.
 
 mod aggregate;
 mod cast;
 mod element;
 mod mapping;
 mod publish;
+mod schema_type;
 
 pub use aggregate::{XMLAGG, XmlAggregate};
 pub use cast::{IMPLICIT_BINARY_ENCODING, XmlCastIn, XmlCastOut, xml_schema_type};
 pub use element::{XmlElement, XmlForest};
 pub use mapping::{BinaryEncoding, Mapping, xml_lexical, xml_mapped};
 pub use publish::{XmlComment, XmlConcat, XmlPi, XmlText};
+pub use schema_type::xml_schema_restriction;
 
 use super::ScalarFunction;
 use crate::error::{Code, Result, SqlError, SqlState};
