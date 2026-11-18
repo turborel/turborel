@@ -37,6 +37,8 @@ choices:
 | Whether a session may SET SESSION AUTHORIZATION | a session begun by the database's owner, to any; any other, only to its own |
 | The isolation levels | SERIALIZABLE as itself; REPEATABLE READ as snapshot isolation; READ COMMITTED and READ UNCOMMITTED with a snapshot of each statement |
 | A session's end with a transaction open | COMMIT, or ROLLBACK, as the setting SESSION.COMMIT_AT_END says |
+| The most savepoints of a transaction | 1,024 |
+| ROLLBACK TO SAVEPOINT: cursors, prepared statements, diagnostics | every open cursor closed, one opened before the savepoint too; no prepared statement deallocated; the diagnostics area tells of the ROLLBACK as of any statement |
 | The diagnostics area | one condition, of the last statement; MORE is N |
 | An SQL-server's name | an address, 'host:port' or a socket's path |
 | A view | not materialized: its query is read into each query that reads it |

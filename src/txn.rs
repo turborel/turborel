@@ -94,6 +94,7 @@ mod logging;
 mod marks;
 mod owed;
 mod reading;
+mod savepoints;
 mod stop;
 mod undo;
 mod write;
@@ -202,6 +203,8 @@ pub(crate) struct TxState {
     /// Of each mark open within the current statement, innermost last, the
     /// position of its first change in the log (`marks.rs`).
     marks_from: Vec<Option<Lsn>>,
+    /// Its savepoints (`txn/savepoints.rs`).
+    savepoints: savepoints::Savepoints,
     /// Whether it has written a table: one that has not commits at its
     /// snapshot, without validation (`State::commit`).
     wrote: bool,

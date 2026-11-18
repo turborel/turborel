@@ -348,6 +348,9 @@ pub(crate) struct Called {
     pub(crate) targets: Vec<(usize, ParameterSpecification)>,
     /// The variables in scope where the CALL is, which its targets name.
     pub(crate) scope: Arc<RoutineScope>,
+    /// [ISO/IEC 9075-2:2023 §9.18 GR7, §11.60 GR3k] Whether the procedure
+    /// is of NEW SAVEPOINT LEVEL: run at a savepoint level of its own.
+    pub(crate) new_level: bool,
 }
 
 /// A statement the session runs, and the scope it sees.

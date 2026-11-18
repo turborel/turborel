@@ -111,6 +111,7 @@ mod revoke;
 mod roles;
 mod routines;
 mod running;
+mod savepoints;
 mod schema;
 mod scroll;
 mod sealing;
@@ -594,7 +595,6 @@ impl Drop for Session {
     }
 }
 
-// Unit tests: a session refuses a call back into itself (RULES.md R-ERR-4,
-// R-TEST-2 robustness).
+// Unit tests: a session refuses a call back into itself (RULES.md R-ERR-4, R-TEST-2 robustness).
 #[cfg(test)]
 mod tests;

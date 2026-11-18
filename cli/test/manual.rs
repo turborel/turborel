@@ -281,6 +281,26 @@ fn the_truncate_examples_run_as_printed() {
     assert!(ann.page("sql/statements/truncate-table.md") > 0, "it shows its examples' output");
 }
 
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D88. The examples of SAVEPOINT,
+/// RELEASE SAVEPOINT and ROLLBACK run as printed, in that order, as ANN,
+/// whose ACCOUNTS holds one row of BALANCE 100.00, then those of the
+/// User's Guide's section on savepoints.
+#[test]
+fn the_savepoint_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE ACCOUNTS (ID INTEGER, BALANCE DECIMAL(9,2))").unwrap();
+    let setup = db.session("ANN");
+    setup.run("INSERT INTO ACCOUNTS VALUES (1, 100.00)").unwrap();
+    setup.commit().unwrap();
+    drop(setup);
+    let mut ann = Client::of(&db, "ANN");
+    for page in ["sql/statements/savepoint.md", "sql/statements/release-savepoint.md", "sql/statements/rollback.md"] {
+        assert!(ann.page(page) > 0, "{page} shows its examples' output");
+    }
+    let scratch = Scratch::new("manual-savepoints");
+    assert!(ann.section("user/06-transactions.md", "## Savepoints", &scratch) > 0, "the section shows its examples");
+}
+
 /// Verifies: [DESIGN] RULES.md R-DOC-8: the examples of EXPLAIN run as
 /// printed, as ANN, the client showing its plan's lines as rows.
 #[test]

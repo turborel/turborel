@@ -135,6 +135,7 @@ impl Session {
             | SqlStatement::Select { .. }
             | SqlStatement::Commit
             | SqlStatement::Rollback
+            | SqlStatement::Savepoint(_)
             | SqlStatement::SetConstraints { .. }
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetSchema(_)
@@ -165,12 +166,7 @@ impl Session {
             SqlStatement::Dynamic(d) => super::dynamic::changed_table(d).map_or((false, ""), |(table, rule)| (!temporary(table), rule)),
         };
         if changes && self.mode.get().access == AccessMode::ReadOnly {
-            // Of SQL:2023's subclass, which TRUNCATE TABLE and MERGE name.
-            if let SqlStatement::Truncate { .. } | SqlStatement::Merge(_) = stmt {
-                let msg = format!("[ISO/IEC 9075-2:2023 {rule}] the transaction is READ ONLY");
-                return Err(SqlError::new(Code::TransactionState, msg).with_state(SqlState::READ_ONLY_TRANSACTION));
-            }
-            return fail(Code::TransactionState, format!("[ISO/IEC 9075:1992 {rule}] the transaction is READ ONLY"));
+            return Err(read_only(stmt, rule));
         }
         Ok(())
     }
@@ -369,4 +365,14 @@ impl Session {
     pub fn default_schema(&self) -> String {
         self.schema.borrow().clone()
     }
+}
+
+/// SQLCODE -917 of `stmt`, refused by `rule` in a READ ONLY transaction:
+/// of SQL:2023's subclass, which TRUNCATE TABLE and MERGE name.
+fn read_only(stmt: &SqlStatement, rule: &str) -> SqlError {
+    if let SqlStatement::Truncate { .. } | SqlStatement::Merge(_) = stmt {
+        let msg = format!("[ISO/IEC 9075-2:2023 {rule}] the transaction is READ ONLY");
+        return SqlError::new(Code::TransactionState, msg).with_state(SqlState::READ_ONLY_TRANSACTION);
+    }
+    SqlError::new(Code::TransactionState, format!("[ISO/IEC 9075:1992 {rule}] the transaction is READ ONLY"))
 }

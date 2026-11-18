@@ -89,6 +89,7 @@ pub fn routine_definition(text: &str, module: Option<String>) -> Result<RoutineD
         deterministic: false,
         access: DataAccess::Contains,
         null_call: false,
+        new_savepoint_level: false,
         body: m.body,
         text: m.text,
         body_text: m.body_text,

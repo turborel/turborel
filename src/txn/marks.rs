@@ -35,6 +35,8 @@ pub(crate) struct Mark {
     joined: usize,
     /// Its place among the marks open.
     depth: usize,
+    /// The id the first savepoint taken within it has or would have.
+    savepoints_from: u64,
 }
 
 impl Txn {
@@ -51,7 +53,8 @@ impl Txn {
         // is the same before and after each engine's `savepoint`.
         let savepoints = st.statement_savepoints.iter().map(|(j, _)| (j.clone(), j.storage.savepoint(self.id))).collect();
         st.marks_from.push(None);
-        Ok(Mark { undo, savepoints, joined, depth: st.marks_from.len().saturating_sub(1) })
+        let (depth, within) = (st.marks_from.len().saturating_sub(1), st.savepoints.next());
+        Ok(Mark { undo, savepoints, joined, depth, savepoints_from: within })
     }
 
     /// Releases `mark`: what it marked completed, and stays as the
@@ -66,7 +69,7 @@ impl Txn {
     /// Marks the changes since `from`, the place in the log of the first
     /// change after a mark, undone in the log, as `statement_undone` does a
     /// statement's.
-    fn mark_undone(&self, from: Option<crate::log::Lsn>) {
+    pub(super) fn mark_undone(&self, from: Option<crate::log::Lsn>) {
         let (Some(log), Some(from)) = (&self.log, from) else { return };
         let record = Record { tx: self.id, change: Change::StatementUndone { from } }.encode();
         // Appended with the state unlocked: the log is a plug-in (RULES.md
@@ -97,6 +100,8 @@ impl State {
             let after = st.statement_savepoints.split_off(kept);
             let from = st.marks_from.get(mark.depth).copied().flatten();
             st.marks_from.truncate(mark.depth);
+            // A savepoint taken within it is cancelled with it.
+            st.savepoints.cancel_from(mark.savepoints_from);
             (entries, after, from)
         };
         let mut failures = entries.apply(tx.id);
@@ -120,10 +125,13 @@ impl super::TxState {
         for from in self.marks_from.iter_mut().filter(|f| f.is_none()) {
             *from = Some(lsn);
         }
+        self.savepoints.logged_at(lsn);
     }
 
-    /// Forgets every mark, as a statement begins.
+    /// Forgets every mark, as a statement begins, which savepoints taken
+    /// from now on are taken in (`txn/savepoints.rs`).
     pub(super) fn clear_marks(&mut self) {
         drop(mem::take(&mut self.marks_from));
+        self.savepoints.statement_began();
     }
 }

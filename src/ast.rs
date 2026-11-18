@@ -128,7 +128,7 @@ pub use structured::{
     TransformGroupSetting, TransformKind, TypeList, TypedTable,
 };
 pub use target::{ElementPosition, ParameterSpecification, TargetKind};
-pub use transaction::{AccessMode, IsolationLevel, TransactionModes};
+pub use transaction::{AccessMode, IsolationLevel, SavepointStatement, TransactionModes};
 pub use triggers::{ActionTime, Referencing, TriggerDefinition, TriggerEvent, TriggerLevel};
 pub use user_types::{TypeDefinition, TypeOption};
 pub use users::UserStatement;
@@ -370,6 +370,9 @@ pub enum SqlStatement {
     Open(String),
     /// [X3.135-1986 §8.9; ISO/IEC 9075:1992 §14.4] `<rollback statement>` ::= ROLLBACK \[WORK\]
     Rollback,
+    /// [ISO/IEC 9075-2:2023 §17.5, §17.6, §17.8] SAVEPOINT, RELEASE
+    /// SAVEPOINT, or ROLLBACK TO SAVEPOINT.
+    Savepoint(SavepointStatement),
     /// [X3.135-1986 §8.10] `<select statement>` ::= SELECT \[ALL | DISTINCT\] `<select list>`
     ///     INTO `<select target list>` `<table expression>`
     Select {

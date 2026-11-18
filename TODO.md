@@ -41,12 +41,7 @@ Nothing is open.
 
 ### Changing data
 
-- Savepoints (T271, T272) [§4.43.2, §17.5, §17.6, §17.8]. SAVEPOINT,
-  RELEASE SAVEPOINT and ROLLBACK TO SAVEPOINT, each savepoint a mark in
-  the transaction's undo, so rolling back to it undoes the changes after
-  it, their index entries included. Savepoint levels
-  for routines, NEW SAVEPOINT LEVEL and OLD SAVEPOINT LEVEL, take effect
-  as their characteristics already parse.
+Nothing is open.
 
 ### Triggers, routines and roles
 

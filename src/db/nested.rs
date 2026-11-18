@@ -12,12 +12,18 @@
 //! collation applies, as of a view. What the session was is put back as
 //! the context is popped.
 //!
+//! A triggered action and a function establish a new savepoint level as
+//! they run, and a procedure of NEW SAVEPOINT LEVEL too, destroyed as the
+//! context is popped [§15.21 GR6c, GR6j; §9.18 GR7, GR15]
+//! (`db/savepoints.rs`).
+//!
 //! \[DESIGN\] Triggered actions and procedures nest, each a statement of
 //! the one it is nested in, at most `MAX_NESTING` deep (RULES.md D71).
 
 use std::cell::{Cell, RefCell};
 
 use super::collations::Collating;
+use super::savepoints::{Held, Level, Levels};
 use super::{Session, area};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
@@ -36,6 +42,8 @@ pub(in crate::db) struct Nesting {
     /// [ISO/IEC 9075-4:2006 draft §14.1 SR15] The programs the session has
     /// run, which numbers each execution apart (`params::local_key`).
     executions: Cell<usize>,
+    /// Its savepoint levels and savepoints (`db/savepoints.rs`).
+    pub(in crate::db) savepoints: RefCell<Levels<Held>>,
 }
 
 impl Nesting {
@@ -61,6 +69,8 @@ pub(in crate::db) struct Pushed<'s> {
     schema: String,
     collating: Collating,
     area: area::Area,
+    /// Whether the context established a savepoint level.
+    level: bool,
 }
 
 impl Drop for Pushed<'_> {
@@ -72,25 +82,32 @@ impl Drop for Pushed<'_> {
         s.prepared_collation.replace(std::mem::replace(&mut self.collating, Collating::AsSet));
         s.inner.borrow_mut().area = std::mem::take(&mut self.area);
         s.nesting.executing.borrow_mut().pop();
+        if self.level {
+            s.close_level();
+        }
     }
 }
 
 impl Session {
     /// Pushes the context of the trigger or procedure `name`, of the
     /// authorization identifier `owner` and the default schema `schema`,
-    /// on the session, as the module says: popped as what is returned is
+    /// on the session, as the module says, a new savepoint level of
+    /// `level` established if given: popped as what is returned is
     /// dropped.
     ///
     /// # Errors
     ///
     /// SQLCODE -900 past `MAX_NESTING` contexts.
-    pub(in crate::db) fn push(&self, name: &QualifiedName, (owner, schema): (String, String)) -> Result<Pushed<'_>> {
+    pub(in crate::db) fn push(&self, name: &QualifiedName, (owner, schema): (String, String), level: Option<Level>) -> Result<Pushed<'_>> {
         if self.nesting.depth() >= MAX_NESTING {
             let msg =
                 format!("[DESIGN] triggered actions and SQL-invoked procedures nest at most {MAX_NESTING} deep: {name} would nest deeper");
             return Err(SqlError::new(Code::Unsupported, msg));
         }
         self.nesting.executing.borrow_mut().push(name.clone());
+        if let Some(level) = level {
+            self.open_level(level);
+        }
         Ok(Pushed {
             session: self,
             auth: self.auth.replace(owner),
@@ -98,6 +115,7 @@ impl Session {
             schema: self.schema.replace(schema),
             collating: self.prepared_collation.replace(Collating::Fixed(None)),
             area: std::mem::take(&mut self.inner.borrow_mut().area),
+            level: level.is_some(),
         })
     }
 }

@@ -147,6 +147,10 @@ pub(in crate::db) const CREATE_ROLE: Command = command("CREATE ROLE", 61);
 pub(in crate::db) const REVOKE_ROLE: Command = command("REVOKE ROLE", 129);
 /// `<rollback statement>`.
 pub(in crate::db) const ROLLBACK_WORK: Command = command("ROLLBACK WORK", 62);
+/// `<release savepoint statement>`.
+pub(in crate::db) const RELEASE_SAVEPOINT: Command = command("RELEASE SAVEPOINT", 57);
+/// `<savepoint statement>`.
+pub(in crate::db) const SAVEPOINT: Command = command("SAVEPOINT", 63);
 /// `<schema definition>`.
 pub(in crate::db) const CREATE_SCHEMA: Command = command("CREATE SCHEMA", 64);
 /// `<select statement: single row>`.

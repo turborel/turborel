@@ -48,6 +48,7 @@ mod rename;
 mod roles;
 mod routines;
 mod rtree;
+mod savepoints;
 mod search_cycle;
 mod sequences;
 mod server;

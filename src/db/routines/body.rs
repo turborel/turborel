@@ -12,10 +12,11 @@
 //!
 //! The statement is one an SQL routine body may contain: INSERT, a
 //! searched UPDATE or DELETE, MERGE, a `<select statement: single row>`,
-//! GET DIAGNOSTICS, CALL, and in a function's body RETURN. A schema,
-//! transaction, connection, session or dynamic statement, or one of a
-//! cursor, is refused (IA078) [SR23f, SR23g], so SQLSTATE 2F003 is never
-//! raised [§9.18 GR8b iii to vi]. So too a body that possibly reads
+//! GET DIAGNOSTICS, CALL, a savepoint's statement [§9.18 GR8b iv 2], and
+//! in a function's body RETURN. A schema, connection, session or dynamic
+//! statement, COMMIT, ROLLBACK but to a savepoint, or one of a cursor, is
+//! refused (IA078) [SR23f, SR23g], so SQLSTATE 2F003 is never raised
+//! [§9.18 GR8b iii to vi]. So too a body that possibly reads
 //! SQL-data of a routine of CONTAINS SQL (IA076), and one that possibly
 //! modifies SQL-data of a routine of READS SQL DATA (IA075) [SR23c, d]:
 //! so SQLSTATEs 2F002 and 2F004 are never raised [§9.18 GR6h, GR8b i, ii].
@@ -82,6 +83,9 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         // one a body may contain, as the parser read it.
         | SqlStatement::Control(_)
         | SqlStatement::Signal(_)
+        // [ISO/IEC 9075-2:2023 §9.18 GR8b iv 2] SAVEPOINT, RELEASE
+        // SAVEPOINT and ROLLBACK TO SAVEPOINT, with Feature T272.
+        | SqlStatement::Savepoint(_)
         // [ISO/IEC 9075-2:2023 §11.60 SR23f] (IA078) a statement of a PTF
         // data area alone, as the parser read it, of a PTF component
         // procedure.
@@ -121,7 +125,7 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         return Ok(());
     }
     Err(rule(
-        "[ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g; ISO/IEC 9075-4:2006 draft §11.60 SR23] an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS, SQL control statement, SIGNAL, RESIGNAL, a statement of a PTF data area or a function's RETURN (IA078)",
+        "[ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g; ISO/IEC 9075-4:2006 draft §11.60 SR23] an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS, SQL control statement, SIGNAL, RESIGNAL, savepoint's statement, a statement of a PTF data area or a function's RETURN (IA078)",
     ))
 }
 

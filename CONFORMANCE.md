@@ -1703,7 +1703,7 @@ CREATE TRIGGER defines a trigger [§11.49] and DROP TRIGGER drops one
 | Feature | Rules | What turborel does |
 |---|---|---|
 | Definition | §11.49 SR1 to SR9, SR15, AR1 | The name is new in its schema, and of the schema definition's in one. A BEFORE or AFTER trigger is on a persistent base table, an INSTEAD OF trigger on a view with no CHECK OPTION that no view WITH CHECK OPTION reads, one of each event, with no WHEN condition or column list. The column list's columns are the table's, once each. Each REFERENCING name once, none for the side the event has not, none the same, a transition variable only FOR EACH ROW. Each rule broken is SQLCODE -103, and a schema not owned -104. |
-| The action | SR10, SR12 to SR14, IA046, IA047; ISO/IEC 9075-4:2006 draft §9.19 | Bound as the trigger is defined, as the schema's owner, so its rules and privileges are checked then. INSERT, searched UPDATE and DELETE, MERGE, SELECT INTO, GET DIAGNOSTICS, CALL, or an SQL control statement, SIGNAL or RESIGNAL of [SQL/PSM](#sqlpsm), a compound statement ATOMIC, Part 2's BEGIN ATOMIC list one, else SQLCODE -103: a schema, transaction, connection, session, dynamic or cursor statement, or a parameter, is refused as the trigger is defined. A BEFORE trigger's action changes no SQL-data and has no transition tables, and references no generated column of its new transition variable, else SQLCODE -103. |
+| The action | SR10, SR12 to SR14, IA046, IA047; ISO/IEC 9075-4:2006 draft §9.19 | Bound as the trigger is defined, as the schema's owner, so its rules and privileges are checked then. INSERT, searched UPDATE and DELETE, MERGE, SELECT INTO, GET DIAGNOSTICS, CALL, or an SQL control statement, SIGNAL or RESIGNAL of [SQL/PSM](#sqlpsm), a compound statement ATOMIC, Part 2's BEGIN ATOMIC list one, else SQLCODE -103: a schema, transaction, savepoint, connection, session, dynamic or cursor statement, or a parameter, is refused as the trigger is defined. A BEFORE trigger's action changes no SQL-data and has no transition tables, and references no generated column of its new transition variable, else SQLCODE -103. |
 | Privileges | AR2, AR3, §12.3, §12.7 | The schema's owner holds TRIGGER on the table, and SELECT if a transition name is given, else SQLCODE -104. TRIGGER is granted, revoked and held in ALL PRIVILEGES as the other table privileges are, and TABLE_PRIVILEGES shows it. A view's owner holds TRIGGER on it, not grantable [§11.32 GR5]. REVOKE with RESTRICT is refused where it would abandon a trigger, its TRIGGER or SELECT or a privilege its action needs, and CASCADE drops it. |
 | Transition variables | §6.6 SR9, SR13, §6.4 SR7, §9.2 | OLD.C and NEW.C, where no table or correlation name of the statement is the qualifier, are the old and new row of the transition. A BEFORE row trigger's SELECT INTO and GET DIAGNOSTICS assign columns of NEW by store assignment, which the row then takes. |
 | Transition tables | §7.6 SR6, §4.46.2 | OLD TABLE and NEW TABLE name, where no query name does, the old and new rows of the state change, held up to the work area and spilled past it, read in subqueries too. |
@@ -1732,8 +1732,10 @@ The action is bound again only when the definitions change, and kept
 for each level of nesting it runs at. A trigger whose action executes
 it again recurses until its WHEN condition stops it or the limit of
 nesting is passed (see [Limits](#limits)). The statements IA046 and
-IA047 refuse are refused as Syntax Rules when the trigger is defined, so
-0W000 is never raised as an action runs [§15.21 GR6e iii, GR6h]. 11000
+IA047 refuse are refused as Syntax Rules when the trigger is defined. A
+savepoint statement of a procedure an action calls raises 0W000 as it
+runs [§15.21 GR6e iii], and the action fails with 09000; nothing else
+raises it [GR6h]. 11000
 and 0W001 are of system-time columns and data change delta tables,
 which turborel has none of. TRUNCATE TABLE executes no trigger [§14.10
 GR]. TRIGGER, BEFORE, AFTER, INSTEAD, REFERENCING, OLD, NEW,
@@ -1758,7 +1760,7 @@ RETURN [§16.2].
 | Definition | §11.60 SR1 to SR9, SR13 to SR16, SR19, AR1, CR2 | The schema exists (3F000) and its user owns it (-104). Each characteristic at most once, the SQL-data access written, NO SQL refused. A function's parameters have no mode, and a procedure has no null-call clause, a function no DYNAMIC RESULT SETS. Each parameter named, no two alike, none of a domain or a row type. The body has no host, dynamic or embedded parameter. Each rule broken is SQLCODE -103. |
 | Overloading | §11.60 SR20, SR22, §11.51 GR2b | A schema holds procedures of a name each of another number of parameters [SR20a], and functions of a name, its SQL-invoked functions and its distinct types' together, each told apart from the others [SR20b]. Of arguments of a function's own parameters' types, of the functions that take them, it must be the one subject routine, the values "arbitrarily selected" of SR20b ii taken to be of those types. Each exact numeric type is in NUMERIC's place of a precedence list and each approximate one in FLOAT's (RULES.md D74), so F(INTEGER) beside F(BIGINT) or F(DECIMAL(5, 2)) is refused, and beside F(DOUBLE PRECISION) is taken. CREATE TYPE checks its two functions so too. A regular function whose first parameter is of a user-defined type is told apart from each instance method of that type or a supertype of its name and schema, the others' types compatible [SR22]. Each refusal is SQLCODE -103. |
 | Specific names | SR9s, SR9t, SR9u, UV102 | SPECIFIC names the routine apart from its name, of its schema, new in it. Without it, the name is the routine's name, an underscore and its creation's sequence number, with a further `_n` if that is taken. |
-| The body | SR20, SR23, §16.2 SR1 to SR4, IA075, IA076, IA078 | Bound once as the routine is defined, as the owner of its schema, of that schema, so its rules and privileges are checked then and its names fixed [§4.35]. A function's body is a RETURN, of a type its result type stores, RETURN NULL a null of it. A procedure's is INSERT, searched UPDATE or DELETE, MERGE, SELECT INTO, GET DIAGNOSTICS or CALL, and no RETURN. Either may be an SQL control statement, SIGNAL or RESIGNAL, of [SQL/PSM](#sqlpsm), whose nested statements count for its SQL-data access. A schema, transaction, connection, session or dynamic statement is refused (IA078). A body of CONTAINS SQL that reads a table, or of READS SQL DATA that changes one, is refused (IA076, IA075). Each is SQLCODE -103. |
+| The body | SR20, SR23, §16.2 SR1 to SR4, IA075, IA076, IA078 | Bound once as the routine is defined, as the owner of its schema, of that schema, so its rules and privileges are checked then and its names fixed [§4.35]. A function's body is a RETURN, of a type its result type stores, RETURN NULL a null of it. A procedure's is INSERT, searched UPDATE or DELETE, MERGE, SELECT INTO, GET DIAGNOSTICS or CALL, and no RETURN. Either may be an SQL control statement, SIGNAL or RESIGNAL, of [SQL/PSM](#sqlpsm), whose nested statements count for its SQL-data access, or a savepoint statement [§9.18 GR8b iv 2]. A schema, connection, session or dynamic statement, COMMIT, or ROLLBACK but to a savepoint, is refused (IA078). A body of CONTAINS SQL that reads a table, or of READS SQL DATA that changes one, is refused (IA076, IA075). Each is SQLCODE -103. |
 | Determinism | IA077 | DETERMINISTIC is taken as written: a body is not checked for a source of non-determinism. |
 | Privileges | GR1, §12.3, §12.7 GR12o, GR12q | The owner holds EXECUTE from _SYSTEM, grantable if it holds grantable every SELECT, INSERT, UPDATE and DELETE on each table the body reads and EXECUTE on each routine it invokes. EXECUTE is granted and revoked as `<specific routine designator>` designates a routine, ALL PRIVILEGES on one being EXECUTE, and ROUTINE_PRIVILEGES shows it. A revoke that leaves the owner without a privilege the body needs, or EXECUTE on a routine it invokes, abandons the routine: RESTRICT refuses it (2B000), and CASCADE drops it and what invokes it. |
 | Invocation | §9.18 SR5, SR6, SR10, §9.6, §9.7, GR3 to GR10, ID047 | Of the functions of the name in the qualifying schema, else the statement's default schema, its SQL-invoked functions and its distinct types' alike, those the statement's authorization identifier holds EXECUTE on, of as many parameters as there are arguments [SR10a], each typed argument's precedence list holding its parameter's designator [SR10d]. Left to right, those whose parameter's designator comes first in the argument's list are kept [§9.6], and one must be left [SR10h iv 3]. None of the arity is SQLCODE -103 citing SR10a, none of the types -103 citing SR10d, two alike -103, and functions that take the arguments but none with EXECUTE -104. A `?` argument decides nothing and takes its parameter's type [§20.7] (B033). A routine is found before a registered function of the name, which is searched only if no function of the schema takes the arguments [SR10h iv 1] (RULES.md D74). Each argument is stored in its parameter, then a null-call function given a null returns null without its body, else the body's value is stored in the result type. Its errors are those of store assignment, 22001 and 22003, the parameter named in the condition [§23.1 GR4q]. A body that ends without executing a RETURN raises 2F005 [GR8b ix 1]. A function that possibly modifies SQL-data is run by the session, as a statement nested in the one invoking it, its changes undone with that statement (RULES.md D76). |
@@ -1771,7 +1773,7 @@ RETURN [§16.2].
 
 SQL SECURITY (Feature T324), a parameter's default and named arguments
 (T521, T522, T524, T525), a monomorphic table function's RETURNS TABLE (T326), DYNAMIC RESULT SETS
-above 0 (T471), NEW SAVEPOINT LEVEL (T272) and a language other than SQL
+above 0 (T471) and a language other than SQL
 are refused with SQLCODE -900. A routine's
 behaviour is always DEFINER's, as SR23b leaves it without T324.
 Routines do not recurse: a body binds before its routine exists, and a
@@ -1929,6 +1931,31 @@ has at most 1,048,576 members (IL051) and an array as many elements
 Where the text of §6.28, §9.45, §9.46 and §9.48 cannot be followed as
 printed, it is read as Readings of ambiguous text says.
 
+### Savepoints
+
+Features T271 (Savepoints) and T272 (Enhanced savepoint management).
+SAVEPOINT [§17.5], RELEASE SAVEPOINT [§17.6] and ROLLBACK TO SAVEPOINT
+[§17.8] at the savepoint levels of §4.43.2 (RULES.md D88).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| SAVEPOINT | §17.5 GR1 to GR4, §4.41.2.4, IL208 | A savepoint of the name at the current level is destroyed, then one is established here. Past 1,024 in the transaction, 3B002, the statement failing alone. With no transaction active, it initiates one. |
+| RELEASE SAVEPOINT | §17.6 GR2, GR3 | The savepoint of the name at the current level and every one established after it at that level are destroyed, the changes kept. A name of none, with no transaction active too, is 3B001. |
+| ROLLBACK TO SAVEPOINT | §17.8 SR1, SR2, GR3a to GR3j, IA167, IA168, IA211 | AND CHAIN with it is a syntax error (2A000), AND NO CHAIN its default. A name of no savepoint of the current level is 3B001, as is one established before the most recent atomic execution context began. Every change to SQL-data since is undone, in tables, temporary tables, every index and large objects, through the same undo a failed statement uses, and every change of definitions staged since is cancelled. Later savepoints are destroyed, it stays. Locators given since are invalid, those before stay valid. Every open cursor is closed. The transaction goes on, holding every lock it took. |
+| Savepoint levels | §4.43.2, §9.18 GR7, GR15, §11.60 SR9j to SR9l, GR3k, §15.21 GR6c, GR6j; ISO/IEC 9075-4:2006 draft §14.1 GR1, GR6 | A function, a procedure of NEW SAVEPOINT LEVEL, a triggered action and an ATOMIC compound statement each establish a level as they begin and destroy it with its savepoints as they end. A procedure of OLD SAVEPOINT LEVEL, written or implicit, runs at its caller's. A statement names only the savepoints of the current level. COMMIT and ROLLBACK destroy every savepoint [§17.7 GR7, §17.8 GR2c]. |
+| In routines and triggers | §9.18 GR8b iv 2, §15.21 GR6e iii, IA046; ISO/IEC 9075-4:2006 draft §14.13 SR9 | A routine's body may hold the savepoint statements, so 2F003 is never raised. A FOR holds no ROLLBACK TO SAVEPOINT (2A000). A trigger's action that is one is refused as the trigger is defined (2A000). One run while a triggered action executes, in a procedure it calls, raises 0W000, which fails the action with 09000. |
+| Atomic execution contexts | §4.41.5, §17.8 GR3c | A function, a triggered action and an ATOMIC compound statement are atomic execution contexts, a procedure's CALL is not. A savepoint statement of a program is not atomic itself, so ROLLBACK TO goes back past the start of the statement running. |
+| Recovery | §17.8 GR3d | Going back logs no record of its own. The changes since the savepoint are marked undone as a failed statement's are, so recovery and a standby replaying the log leave out the rows and the changes of definitions cancelled. |
+| ROUTINES | 11:2006 draft §5.49, §6.40 Description 21 | NEW_SAVEPOINT_LEVEL is YES of a function and of a procedure of NEW SAVEPOINT LEVEL, NO of another procedure. |
+
+SAVEPOINT and RELEASE are no key words of SQL-92, so each stays an
+identifier, read as a word where a savepoint statement reads it. A
+ROLLBACK TO SAVEPOINT in a routine's body that would cancel a change of
+definitions staged before the statement invoking the routine began is
+refused, SQLCODE -900, as that statement runs on those definitions. Run
+directly, it cancels them. The command codes are SAVEPOINT 63, RELEASE
+SAVEPOINT 57 and ROLLBACK WORK 62 [§23.1 Table 39].
+
 ## SQL/PSM
 
 Persistent stored modules, ISO/IEC 9075-4, written from its 2006 draft
@@ -1946,7 +1973,7 @@ P001 (Stored modules) and P003 (Information Schema views).
 | Feature | Rules | What turborel does |
 |---|---|---|
 | Where a program stands | §4.10.7, §9.19, §11.2, §4.10.6 | An SQL control statement is a routine's body, a trigger's action, a statement of another one, or a statement run directly, alone a procedure of no parameters. A compound statement and the other control statements are not preparable, SQLCODE -103, but SIGNAL and RESIGNAL are. |
-| COMMIT and ROLLBACK | §14.1 SR6, §14.13 SR9, §4.10.4; 2023 §11.60 SR23f | In an ATOMIC compound statement or a FOR, SQLCODE -103 [SR6, SR9]. In a routine's body, SQLCODE -103 (IA078). In a control statement NOT ATOMIC run directly, a non-atomic execution context, they end the transaction, its cursors closed [2023 §17.7 GR3], and the statements after run in a new one, begun as the first needs one. In a handler's action while an ATOMIC compound statement runs, an atomic execution context, SQLSTATE 2D000 [2023 §17.7 GR2, §17.8 GR2]. A statement after one that changes a definition sees it. |
+| COMMIT and ROLLBACK | §14.1 SR6, §14.13 SR9, §4.10.4; 2023 §11.60 SR23f | In an ATOMIC compound statement or a FOR, SQLCODE -103 [SR6, SR9], but ROLLBACK TO SAVEPOINT in an ATOMIC one, which goes back to a savepoint established in it [2023 §17.8 GR3c]. In a routine's body, SQLCODE -103 (IA078), but ROLLBACK TO SAVEPOINT. In a control statement NOT ATOMIC run directly, a non-atomic execution context, they end the transaction, its cursors closed [2023 §17.7 GR3], and the statements after run in a new one, begun as the first needs one. In a handler's action while an ATOMIC compound statement runs, an atomic execution context, SQLSTATE 2D000 [2023 §17.7 GR2, §17.8 GR2]. A statement after one that changes a definition sees it. |
 | Compound statement | §14.1 SR1 to SR17, GR1 to GR5 | Its declarations in order, variables and conditions, then cursors, then handlers, its statements, and its labels, the ending one the beginning one's. No two variables, conditions, cursors or handlers' condition values alike in it. NOT ATOMIC is the default. ATOMIC, an exception no handler handles undoes it whole. UNDO handlers only in an ATOMIC one. Its variables are created, of their defaults, as it begins, its cursors destroyed as it ends. |
 | Atomic statements | ISO/IEC 9075-2:2023 §4.41.5 | Each statement of a program but CALL, RETURN, a compound statement NOT ATOMIC and the control statements is atomic: one that fails is undone alone, its program's earlier changes kept for a handler. |
 | Variables | §14.4, §6.2 SR3 to SR7, §6.3 | Of a data type or a domain, several to one declaration. The default is a `<default option>`, else the domain's, else null. A name is found in the innermost scope that has it: a query's own columns first, then each compound statement's variables inward to outward, then the routine's parameters. A compound statement's label, written or implicit, qualifies its variables (P005). |
@@ -2687,6 +2714,15 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | ID047, ISO/IEC 9075-2:2023 §9.18 SR10b the SQL-path | The schema of the statement's names, the session's default schema or a schema statement's own | `binder/routines.rs` |
 | ID048, ISO/IEC 9075-2:2023 §4.9.6 a session's transform group of a distinct type | The one its definition makes, named FNUDT, in every session | `db/dynamic/using.rs`, `protocol/src/fields.rs` |
 
+### Savepoints
+
+| Rule | Choice | Where |
+|---|---|---|
+| IL208, ISO/IEC 9075-2:2023 §17.5 GR3 the maximum number of savepoints per SQL-transaction | 1,024, `MAX_SAVEPOINTS`. The 1,025th is 3B002. | `db/savepoints.rs` |
+| IA167, ISO/IEC 9075-2:2023 §17.8 GR3i, GR3j whether a rollback to a savepoint deallocates a prepared statement | None is deallocated, whether prepared before the savepoint or after | `db/savepoints.rs` |
+| IA168, ISO/IEC 9075-2:2023 §17.8 GR3h the status of a cursor opened before the savepoint | Closed, as every open cursor is [GR3g] | `db/savepoints.rs` |
+| IA211, ISO/IEC 9075-2:2023 §4.43.2 how a rollback to a savepoint affects the diagnostics area, SQL descriptor areas and prepared statements | As any statement completing does. The diagnostics area tells of the ROLLBACK, the descriptor areas are unchanged, and no prepared statement is deallocated | `db/savepoints.rs` |
+
 ### Memory
 
 The standards leave memory to the implementation (RULES.md D38). This is in
@@ -2736,6 +2772,7 @@ SQLCODE -900 (RULES.md D18).
 | Regular expression steps | 10,000,000, of a search with back-references | A back-reference matches no automaton, so its search goes back and can take time exponential in the string. One without any takes time linear in it, with no limit. | `regex/backtrack.rs` |
 | Grouping sets | 4,096 of a GROUP BY, and GROUPING of 59 columns | 2023 §7.13 SR14 and SR16 set no maximum, and a CUBE of n sets stands for 2 to the n. GROUPING's value is of 18 digits [§6.9 SR10b], which 2 to the 59 fits and 2 to the 60 does not. | `binder/grouping_sets.rs`, `binder/grouping_sets/expansion.rs` |
 | Trigger and procedure nesting | 16 levels of triggered actions and procedures executed within each other, past which the statement fails with SQLCODE -900, of a trigger's action SQLSTATE 09000 | §15.21 and §9.18 set no limit, and a trigger whose action executes it again would recurse until the stack overflowed. 16 levels run in half of Rust's default 2 MiB thread stack. | `db/nested.rs` |
+| Savepoints | 1,024 of a transaction, past which SAVEPOINT fails with SQLSTATE 3B002, SQLCODE -917, as §17.5 GR3 names | IL208 leaves the number to the implementation. Each savepoint holds a savepoint of each engine that undoes its own changes, so the number is bounded. | `db/savepoints.rs` |
 | Nesting depth | 64 levels of the syntax tree, about 30 nested parentheses, 60 chained `AND`, `OR`, `+` or `UNION`, or 60 tables in a FROM clause | Without a limit, deep nesting overflowed the stack and aborted the process. 64 levels run in half of Rust's default 2 MiB thread stack. | `parser.rs` |
 | SQL/JSON item nesting | 128 levels of arrays and objects, of JSON text parsed and of an item compared or serialized | §9.42 sets no limit, and RFC 8259 §9 lets a parser limit the depth of nesting. Every walk of an item recurses, and the limit bounds it (RULES.md R-CF-6). | `json.rs`, `json/text.rs`, `json/item.rs`, `json/serialize.rs` |
 | SQL/JSON path nesting | 64 levels of a path's syntax tree, `$` one of them, so at most 63 accessors or operators in a row, and parentheses, filters, subscripts and signs nested at most 64 deep | §9.46 sets no limit. The parser and the evaluator recurse over the tree, which has no counter of its own, and the limit bounds both (RULES.md R-CF-6). | `json/path.rs`, `json/path/parse.rs` |

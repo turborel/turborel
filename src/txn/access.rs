@@ -84,7 +84,10 @@ impl State {
         if tx.reading != Reading::Serializable {
             joined.storage.read_mode(tx.id, tx.read_mode())?;
         }
-        tx.state()?.joined.push(joined);
+        tx.state()?.joined.push(joined.clone());
+        if self.capabilities(table)?.undo == Undo::Native {
+            tx.joined_after_savepoints(&joined);
+        }
         Ok(())
     }
 

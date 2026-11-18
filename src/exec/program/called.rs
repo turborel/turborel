@@ -29,7 +29,16 @@ pub(super) fn call<H: Host>(host: &mut H, c: &Called, frame: &mut Params) -> Res
     }
     values.resize(c.program.base.saturating_add(c.program.variables.len()), Value::Null);
     let mut inner = Params::of_routine(values, Arc::clone(&c.program.scope));
-    let completion = match run_program(&c.program, &mut inner, host)? {
+    // [§9.18 GR7, GR15] at a savepoint level of its own, if of NEW
+    // SAVEPOINT LEVEL.
+    if c.new_level {
+        host.open_level(false);
+    }
+    let ran = run_program(&c.program, &mut inner, host);
+    if c.new_level {
+        host.close_level();
+    }
+    let completion = match ran? {
         Ended::Completed(completion) => completion,
         Ended::Returned(_) => Completion::Success,
     };

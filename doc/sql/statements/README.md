@@ -86,11 +86,13 @@ One reference page for each statement, in alphabetical order.
 - [OPEN](open.md): open a cursor
 - [PIPE ROW](pipe-row.md): give a row of a polymorphic table function's result *(in a component procedure)*
 - [PREPARE](prepare.md): prepare a statement, by name
+- [RELEASE SAVEPOINT](release-savepoint.md): destroy a savepoint, keeping the changes since
 - [REPEAT](repeat.md): run statements until a condition is true
 - [RESIGNAL](resignal.md): raise again the condition a handler handles *(in a handler)*
 - [RETURN](return.md): give the value of an SQL-invoked function
 - [REVOKE](revoke.md): revoke privileges, or roles
-- [ROLLBACK](rollback.md): end a transaction, undoing its changes
+- [ROLLBACK](rollback.md): end a transaction, undoing its changes, or undo them back to a savepoint
+- [SAVEPOINT](savepoint.md): mark a place in a transaction to roll back to
 - [SELECT](select.md): read rows
 - [SET](set-setting.md): change a session setting
 - [SET (assignment)](set-variable.md): assign a value to an SQL variable or parameter *(in a compound statement)*

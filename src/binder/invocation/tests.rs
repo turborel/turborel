@@ -109,6 +109,7 @@ fn defined(desc: &SqlRoutineDesc, statement: SqlStatement) -> RoutineDefinition 
         deterministic: desc.deterministic,
         access: desc.access,
         null_call: desc.null_call,
+        new_savepoint_level: false,
         body: crate::ast::RoutineBody::Sql(Box::new(statement)),
         text: desc.text.clone(),
         body_text: desc.body.clone(),

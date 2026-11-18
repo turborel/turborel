@@ -28,6 +28,7 @@ impl ProgramBinder<'_> {
         let params = self.params();
         let bound = State::bind_call(Context { params: &params, ..self.cx }, call)?;
         let program = bind_procedure_program(self.cx, &bound.desc)?;
+        let new_level = crate::binder::definition_of(&bound.desc)?.new_savepoint_level;
         let at = call.name.at;
         let plan = LogicalPlan::Values { rows: vec![bound.inputs], types: bound.desc.parameter_types() };
         let inputs = Leaf { query: Arc::new(Subquery::new(plan, Vec::new())), at };
@@ -41,6 +42,7 @@ impl ProgramBinder<'_> {
             program,
             targets: bound.targets,
             scope: Arc::clone(&self.scope),
+            new_level,
         };
         Ok(Step::Call(Box::new(called)))
     }

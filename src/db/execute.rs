@@ -150,6 +150,17 @@ impl Session {
         Ok(stmt)
     }
 
+    /// COMMIT, ROLLBACK or a savepoint's statement `stmt`, run directly in
+    /// `call`: of these only SAVEPOINT initiates a transaction
+    /// [ISO/IEC 9075-2:2023 §4.41.2.4].
+    fn transaction_statement(&self, call: &Call<'_>, stmt: &SqlStatement) -> Result<Completion> {
+        if let SqlStatement::Savepoint(s) = stmt {
+            return self.db.noted(self.savepoint_direct(call, s));
+        }
+        let ended = if let SqlStatement::Commit = stmt { self.commit_in(call.state()) } else { self.rollback_in(call.state()) };
+        self.db.noted(ended).map(|()| Completion::Success)
+    }
+
     /// `stmt`, parsed, run in the call `call`.
     fn execute_parsed(
         &self,
@@ -161,10 +172,9 @@ impl Session {
         let st = call.state();
         let done = |r: Result<()>| r.map(|()| Completion::Success);
         let tx = match stmt {
-            SqlStatement::Commit => return done(self.db.noted(self.commit_in(st))),
+            SqlStatement::Commit | SqlStatement::Rollback | SqlStatement::Savepoint(_) => return self.transaction_statement(call, stmt),
             // [ISO/IEC 9075:1992 §4.22.7] not transaction initiating.
             SqlStatement::SetConstraints { names, deferred } => return self.set_constraints(call, names.as_deref(), *deferred),
-            SqlStatement::Rollback => return done(self.db.noted(self.rollback_in(st))),
             // [ISO/IEC 9075:1992 §4.28, §4.30] not transaction initiating.
             SqlStatement::SetTransaction(modes) => return done(self.set_transaction(modes, params)),
             SqlStatement::SetSchema(v) => return done(self.set_schema(st, v, params)),
@@ -347,7 +357,6 @@ impl Session {
         params: &mut Params,
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
-        let StatementContext { st, tx } = cx;
         // [ISO/IEC 9075-2:2023 §15.10, §15.13, §15.16] a view's INSTEAD OF
         // trigger in place of the change.
         if let Some(n) = self.instead_of(cx, stmt, params)? {
@@ -371,13 +380,15 @@ impl Session {
             SqlStatement::Open(_) | SqlStatement::Fetch { .. } | SqlStatement::Close(_) => self.cursor_statement(cx, stmt, params),
             SqlStatement::Dynamic(d) => self.run_dynamic(cx, d, params),
             SqlStatement::Select { query, targets } => self.select_into(cx, query, targets, params),
-            SqlStatement::Drop { object, behavior } => self.drop_object(st, tx, object, *behavior),
-            SqlStatement::AlterTable { table, action, text } => self.alter_table(st, tx, (table, action, text)),
-            SqlStatement::Schema { statement, text } => self.schema_statement(st, tx, statement, text),
+            SqlStatement::Drop { object, behavior } => self.drop_object(cx.st, cx.tx, object, *behavior),
+            SqlStatement::AlterTable { table, action, text } => self.alter_table(cx.st, cx.tx, (table, action, text)),
+            SqlStatement::Schema { statement, text } => self.schema_statement(cx.st, cx.tx, statement, text),
             SqlStatement::Call(call) => self.call_statement(cx, call, params),
             SqlStatement::Control(_) | SqlStatement::Signal(_) => self.control_statement(cx, stmt, params),
             SqlStatement::Return(r) => super::routines::return_statement(r),
-            SqlStatement::Locator { hold, references } => self.locator_statement(st, *hold, references, params),
+            SqlStatement::Locator { hold, references } => self.locator_statement(cx.st, *hold, references, params),
+            // [ISO/IEC 9075-2:2023 §9.18 GR8b iv 2] of a routine's body.
+            SqlStatement::Savepoint(s) => self.savepoint_statement(cx, s, true),
             // `execute_parsed` runs these itself, and never here.
             SqlStatement::Commit
             | SqlStatement::Rollback
@@ -400,7 +411,7 @@ impl Session {
             | SqlStatement::DeclareTable(_) => Ok(Completion::Success),
             // [ISO/IEC 9075-2:2023 §15.21 GR6a, §9.18 GR6f] of a triggered
             // action's or a procedure body's own diagnostics area.
-            SqlStatement::GetDiagnostics(get) => self.get_diagnostics(st, get, params),
+            SqlStatement::GetDiagnostics(get) => self.get_diagnostics(cx.st, get, params),
         }
     }
 }
@@ -467,6 +478,7 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::GetDiagnostics(_)
         | SqlStatement::Open(_)
         | SqlStatement::Rollback
+        | SqlStatement::Savepoint(_)
         | SqlStatement::Select { .. }
         | SqlStatement::SetTransaction(_)
         | SqlStatement::SetCatalog(_)

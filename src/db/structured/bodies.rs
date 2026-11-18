@@ -247,6 +247,7 @@ fn definition(name: &QualifiedName, spec: &MethodSpecDesc, m: &MethodDefinition)
         deterministic: spec.deterministic,
         access: spec.access,
         null_call: spec.null_call,
+        new_savepoint_level: false,
         body: m.body.clone(),
         text: m.text.clone(),
         body_text: m.body_text.clone(),

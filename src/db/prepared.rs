@@ -393,6 +393,7 @@ impl Session {
             SqlStatement::Return(r) => return Err(super::routines::return_outside(r)),
             SqlStatement::Commit
             | SqlStatement::Rollback
+            | SqlStatement::Savepoint(_)
             | SqlStatement::SetConstraints { .. }
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetTimeZone(None)

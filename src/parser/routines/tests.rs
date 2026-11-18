@@ -187,20 +187,22 @@ fn sql_routine_characteristics_11_60() {
     refused_by("CREATE PROCEDURE P () PARAMETER STYLE GENERAL MODIFIES SQL DATA DELETE FROM T", "ISO/IEC 9075-2:2023 §11.60 SR9m iii");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.60 SR9c, SR9f i 1, SR9j, SR9l] a
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.60 SR9c, SR9f i 1, SR9j, SR9k, SR9l] a
 /// function has no `<returned result sets characteristic>` and no
 /// `<savepoint level indication>`, a procedure no `<null-call clause>`,
 /// and NEW SAVEPOINT LEVEL needs MODIFIES SQL DATA. MC/DC of `new &&
-/// !modifies`: NEW with READS refused, NEW with MODIFIES past SR9l (to
-/// CR31), OLD with READS taken.
+/// !modifies`: NEW with READS refused, NEW with MODIFIES taken and kept
+/// (Feature T272, no longer refused by CR31), OLD with READS taken, OLD
+/// implicit.
 #[test]
 fn characteristics_fit_the_routine_11_60() {
     refused_by("CREATE FUNCTION F () RETURNS INT CONTAINS SQL DYNAMIC RESULT SETS 0 RETURN 1", "ISO/IEC 9075-2:2023 §11.60 SR9c");
     refused_by("CREATE FUNCTION F () RETURNS INT CONTAINS SQL OLD SAVEPOINT LEVEL RETURN 1", "ISO/IEC 9075-2:2023 §11.60 SR9j");
     refused_by("CREATE PROCEDURE P () CONTAINS SQL CALLED ON NULL INPUT DELETE FROM T", "ISO/IEC 9075-2:2023 §11.60 SR9f i 1");
     refused_by("CREATE PROCEDURE P () READS SQL DATA NEW SAVEPOINT LEVEL SELECT A INTO B FROM T", "ISO/IEC 9075-2:2023 §11.60 SR9l");
-    unsupported("CREATE PROCEDURE P () MODIFIES SQL DATA NEW SAVEPOINT LEVEL DELETE FROM T", "ISO/IEC 9075-2:2023 §11.60 CR31");
-    routine("CREATE PROCEDURE P (OUT B INT) READS SQL DATA OLD SAVEPOINT LEVEL SELECT A INTO B FROM T");
+    assert!(routine("CREATE PROCEDURE P () MODIFIES SQL DATA NEW SAVEPOINT LEVEL DELETE FROM T").new_savepoint_level);
+    assert!(!routine("CREATE PROCEDURE P (OUT B INT) READS SQL DATA OLD SAVEPOINT LEVEL SELECT A INTO B FROM T").new_savepoint_level);
+    assert!(!routine("CREATE PROCEDURE P () MODIFIES SQL DATA DELETE FROM T").new_savepoint_level);
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.60 SR13, SR14, SR15, SR16a] a

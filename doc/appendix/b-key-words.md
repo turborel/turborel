@@ -174,6 +174,14 @@ may be named MERGE. MATCHED, which SQL:2023 does not reserve, is read only
 after WHEN or WHEN NOT in a MERGE, and OVERRIDING in its insert as in an
 INSERT's.
 
+SAVEPOINT and RELEASE, which SQL:2023 reserves and SQL-92 does not,
+begin a savepoint statement only where a savepoint's name follows
+SAVEPOINT, or SAVEPOINT follows RELEASE, at the start of a statement, so
+a table or a column may be named either. SAVEPOINT is read after ROLLBACK
+TO too, and in NEW SAVEPOINT LEVEL and OLD SAVEPOINT LEVEL. CHAIN, which
+SQL:2023 does not reserve, is read only after AND in COMMIT and
+ROLLBACK.
+
 INCLUDING, EXCLUDING, DEFAULTS and DATA, which SQL:2023 does not reserve,
 are key words only in a LIKE clause of CREATE TABLE and in its WITH DATA
 and WITH NO DATA. GENERATED is read there too, after INCLUDING or

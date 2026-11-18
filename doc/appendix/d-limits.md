@@ -84,6 +84,7 @@ their number less 1, has at most the 18 digits of its type.
 | A message to the server | SERVER.MAX_MESSAGE_BYTES, 16 MiB by default |
 | Connections at once | SERVER.MAX_CONNECTIONS, 100 by default |
 | Prepared statements of a connection | SERVER.MAX_STATEMENTS, 1,024 by default |
+| Savepoints of a transaction | 1,024; past it, SAVEPOINT fails with SQLSTATE 3B002, SQLCODE -917 |
 
 An index's key is compared whole in its page, so it is limited where a
 row is not; STORAGE.PAGE_BYTES, chosen as a database is made, raises the
