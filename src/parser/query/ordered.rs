@@ -1,11 +1,16 @@
 //! [ISO/IEC 9075-2:2023 §7.17] What follows a `<query expression body>`:
 //! its `<order by clause>`, `<result offset clause>` and `<fetch first
 //! clause>`. OFFSET, PERCENT, ROW and TIES, which SQL-92 does not reserve,
-//! are these words only here.
+//! are these words only here. \[EXTENSION\] APPROX and EXACT, a target
+//! accuracy and vector hints are the vector design document's
+//! (`ordered/approx.rs`).
+
+mod approx;
 
 use crate::ast::{FetchFirst, FetchQuantity, OrderedQuery, QueryExpression, RowCount, SortSpecification};
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
+use crate::logical::Search;
 use crate::parser::Parser;
 use crate::parser::window::{ROW, TIES};
 
@@ -76,6 +81,7 @@ impl Parser {
         if !self.accept_kw(kw::FETCH) {
             return Ok(None);
         }
+        let mut search = self.search_mode();
         if !self.accept_kw(kw::FIRST) {
             self.expect_kw(kw::NEXT)?;
         }
@@ -93,7 +99,13 @@ impl Parser {
             self.expect_kw(kw::ONLY)?;
             false
         };
-        Ok(Some(FetchFirst { quantity, ties, at }))
+        let target = self.target_accuracy_clause()?;
+        let accuracy_at = target.map(|(_, place)| place);
+        if let (Search::Approximate(asked), Some((written, _))) = (&mut search, target) {
+            *asked = written;
+        }
+        let hints = self.vector_hints()?;
+        Ok(Some(FetchFirst { quantity, ties, at, search, accuracy_at, hints }))
     }
 
     /// An `<offset row count>`, `<fetch first row count>` or the value of a

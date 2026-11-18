@@ -21,6 +21,7 @@ use crate::index::{
     self, ADJACENCY_METHOD, AdjacencyMethod, BTreeMethod, FULLTEXT_METHOD, FullTextMethod, HASH_METHOD, HashMethod, Index, IndexMethod,
     JSON_METHOD, JsonMethod, Key, KeyOrder, KeyProjection, Probe, RTREE_METHOD, RTreeMethod,
 };
+use crate::index::{DISKANN_METHOD, DiskAnnMethod, HNSW_METHOD, HnswMethod, IVF_METHOD, IvfMethod};
 use crate::log::Lsn;
 use crate::spill::{Area, WorkAreas};
 use crate::stats::Statistics;
@@ -428,6 +429,12 @@ impl Entries {
             Arc::from(HashMethod::new(pool, file).create_on(&types, on)?)
         } else if self.index.method == RTREE_METHOD {
             Arc::from(RTreeMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == DISKANN_METHOD {
+            Arc::from(DiskAnnMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == HNSW_METHOD {
+            Arc::from(HnswMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == IVF_METHOD {
+            Arc::from(IvfMethod::new(pool, file).create_on(&types, on)?)
         } else if self.index.method == FULLTEXT_METHOD {
             // Its documents' places sorted in the database's work areas
             // (RULES.md D38, D86).
@@ -496,7 +503,18 @@ impl Index for Entries {
     ) -> Result<Option<index::NeighbourEntries>> {
         self.read()?.map_or(Ok(None), |entries| entries.nearest(query, budget))
     }
+    fn approximate(
+        self: Arc<Self>,
+        query: &index::NearestQuery,
+        budget: &Arc<crate::memory::MemoryBudget>,
+        filter: Option<&mut dyn index::RowFilter>,
+    ) -> Result<Option<index::NeighbourEntries>> {
+        self.read()?.map_or(Ok(None), |entries| entries.approximate(query, budget, filter))
+    }
     fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
+        if index::vector::is_vector_method(&self.index.method) {
+            return Some(index::vector::projection());
+        }
         if self.index.method == FULLTEXT_METHOD {
             // The projection of the index made of this descriptor (RULES.md
             // D86); a descriptor it refuses makes no index either.

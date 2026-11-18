@@ -1,0 +1,354 @@
+# Hybrid Search *(extension)*
+
+[Contents](README.md)
+
+A hybrid search finds documents by their words and by their meaning at
+once. A hybrid index of a table holds a full-text index of a text column
+and a vector index of a column of embeddings, one row a document.
+HYBRID_SEARCH reads the best candidates of each index, ranked by BM25
+and by distance, and fuses the two lists into one.
+
+The examples on this page are run in order, by the user ANN, on a table
+of help articles, each with an embedding of four dimensions:
+
+```sql
+CREATE SCHEMA AUTHORIZATION ANN;
+CREATE TABLE HELP (ID INTEGER PRIMARY KEY, BODY VARCHAR(200), EMB VECTOR(4));
+INSERT INTO HELP VALUES
+    (1, 'Refund policy for damaged items', TO_VECTOR('[1,0,0,0]', 4, 'FLOAT32')),
+    (2, 'Shipping times and delivery', TO_VECTOR('[0.9,0.1,0,0]', 4, 'FLOAT32')),
+    (3, 'How to return a damaged parcel', TO_VECTOR('[0,1,0,0]', 4, 'FLOAT32')),
+    (4, 'Refund of a gift card', TO_VECTOR('[0.1,0,1,0]', 4, 'FLOAT32')),
+    (5, 'Store opening hours', TO_VECTOR('[0.7,0.7,0,0]', 4, 'FLOAT32'));
+COMMIT;
+```
+
+```
+OK
+OK
+OK
+OK
+```
+
+## The hybrid index
+
+```
+<create hybrid index statement> ::=
+    CREATE HYBRID VECTOR INDEX <index name> ON <table name>
+        ( <text column name> [ , <vector column name> ] )
+    [ PARAMETERS ( <hybrid parameter> [ { , <hybrid parameter> }... ] )
+    | WITH ( <table option> [ { , <table option> }... ] ) ]
+
+<hybrid parameter> ::=
+      VECTOR_IDX <character string literal>
+    | TEXT_IDX <character string literal>
+    | MODEL <model name>
+    | CHUNKER <chunk specification>
+    | MODE { SYNC | ASYNC }
+```
+
+The index is of the method `hybrid`. Its first column is a character
+string, read as the [full-text index](08-fulltext.md) reads one. Its
+second is a VECTOR column. The index holds a part of each: a full-text
+index of the text and a vector index of the embeddings. A row whose
+text is null is held by the vector part alone, and one whose embedding
+is null by the text part alone, so each is still found by the other.
+
+VECTOR_IDX's string is a list of parameters as
+[CREATE VECTOR INDEX](statements/create-vector-index.md) takes them.
+TYPE names the vector part's method: HNSW, the default, IVF, DISKANN,
+or INVERTED for a sparse column. It sets the option
+HYBRID.VECTOR_METHOD. DISTANCE sets the method's METRIC, and each other
+parameter the method's option of its name. TEXT_IDX's string is a list
+of words and values, each an option of the group FULLTEXT, so
+`LANGUAGE english` sets FULLTEXT.LANGUAGE. In the WITH form each option
+is written as CREATE INDEX writes it.
+
+```sql
+CREATE HYBRID VECTOR INDEX HELP_H ON HELP (BODY, EMB)
+    PARAMETERS (VECTOR_IDX 'TYPE HNSW, DISTANCE COSINE, NEIGHBORS 8', TEXT_IDX 'LANGUAGE english');
+SELECT METHOD_NAME, OPTION_NAME, OPTION_VALUE FROM INFORMATION_SCHEMA.INDEX_OPTIONS
+    WHERE INDEX_NAME = 'HELP_H' AND VALUE_SOURCE <> 'DEFAULT' ORDER BY OPTION_NAME;
+```
+
+```
+OK
+ METHOD_NAME                                                  | OPTION_NAME                                                  | OPTION_VALUE
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ hybrid                                                       | FULLTEXT.LANGUAGE                                            | ENGLISH
+ hybrid                                                       | HNSW.M                                                       | 8
+ hybrid                                                       | HNSW.METRIC                                                  | COSINE
+ hybrid                                                       | HYBRID.VECTOR_METHOD                                         | HNSW
+(4 rows)
+```
+
+Either part also serves an ordinary query, as an index of its method
+would. A FETCH APPROX of a distance of the vector column, of the index's
+metric, reads the vector part, and so does a range search, the distance
+bounded in WHERE. A FETCH FIRST of RANK of the text column, highest
+first, reads the text part, and so does CONTAINS of it:
+
+```sql
+SELECT ID FROM HELP WHERE CONTAINS(BODY, '"damaged"') = 1
+    ORDER BY VECTOR_DISTANCE(EMB, TO_VECTOR('[1,0,0,0]', 4, 'FLOAT32'), 'COSINE')
+    FETCH APPROX FIRST 2 ROWS ONLY;
+```
+
+```
+           ID
+--------------
+            1
+            3
+(2 rows)
+```
+
+## An index that embeds its text
+
+Of a MODEL, a hybrid index names its text column alone and embeds the
+text itself. Its table's primary key is one column. CHUNKER cuts each
+text into chunks, as [CHUNK_TEXT](statements/create-vector-pipeline.md)
+reads a chunking, `BY WORDS MAX 256 OVERLAP 32` if none is given. The
+model embeds each chunk. MODE SYNC, the default, embeds a chunk as it
+is written, and MODE ASYNC after commit, by the queue that fills
+pipelines.
+
+The index is a full-text index of the text column, so CONTAINS and
+RANK of that column read it, a document a row. It keeps its chunks in a
+table of its own, named after it with `_CHUNKS`, of the columns DOC_ID,
+CHUNK_ID, CHUNK_TEXT and EMBEDDING. An index named after it with
+`_VECTORS`, of its vector part's method and options, orders their
+embeddings. A vector pipeline named after it with `_PIPELINE` keeps the
+table in step with the text. DROP INDEX drops them all.
+
+HYBRID_SEARCH of the index ranks the documents by their words, and
+finds the chunks nearest the vector searched for. It gives each
+document once, by its key, with its nearest chunk, or of a document
+found by its words alone, its chunk ranked highest for them.
+
+ALTER INDEX SET of HYBRID.MODEL, HYBRID.CHUNKER, HYBRID.MODE or
+HYBRID.VECTOR_METHOD makes the chunks and their index again, the text
+embedded again, as a rebuild does. A model not there or a chunking not
+one is refused first, and the index is left as it was. REBUILD builds
+the vector index of the chunks again too.
+
+Each of these is made, and committed, in turn. While they are,
+HYBRID.STATE is BUILDING, and while they are dropped, DROPPING. A
+database stopped between them drops, as it opens, each index left so
+and what it keeps, so none is left half made.
+
+```sql
+CREATE TABLE NOTES (ID INTEGER PRIMARY KEY, BODY VARCHAR(400));
+INSERT INTO NOTES VALUES
+    (1, 'Refunds take a week. Damaged items are replaced.'),
+    (2, 'The store opens at nine. It closes at six.');
+CREATE EMBEDDING MODEL WORDS WITH (TYPE = 'HASH_DENSE', DIMENSIONS = 16, NGRAMS = 1);
+COMMIT;
+CREATE HYBRID VECTOR INDEX NOTES_H ON NOTES (BODY)
+    PARAMETERS (MODEL WORDS, CHUNKER BY SENTENCES MAX 1 OVERLAP 0);
+SELECT DOC_ID, CHUNK_ID, CHUNK_TEXT FROM NOTES_H_CHUNKS ORDER BY DOC_ID, CHUNK_ID;
+SELECT DOC_ID, CHUNK_TEXT FROM HYBRID_SEARCH(INDEX = NOTES_H, QUERY_TEXT = 'damaged', TOP_N = 2) AS H
+    ORDER BY SCORE DESC, DOC_ID;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+       DOC_ID |     CHUNK_ID | CHUNK_TEXT
+--------------+--------------+--------------------------------------------------------------
+            1 |            1 | Refunds take a week.
+            1 |            2 | Damaged items are replaced.
+            2 |            1 | The store opens at nine.
+            2 |            2 | It closes at six.
+(4 rows)
+       DOC_ID | CHUNK_TEXT
+--------------+--------------------------------------------------------------
+            1 | Damaged items are replaced.
+            2 | It closes at six.
+(2 rows)
+```
+
+The search names no QUERY_VECTOR, so the index's model embeds the words
+as a query, and that is the vector searched for. Document 1 is found by
+its words and its embedding, at the chunk that holds them. Document 2 is
+the vector list's next nearest, at its nearest chunk.
+
+## HYBRID_SEARCH
+
+```
+<hybrid search> ::=
+    HYBRID_SEARCH ( <hybrid argument> [ { , <hybrid argument> }... ] )
+    [ [ AS ] <correlation name> [ ( <derived column list> ) ] ]
+
+<hybrid argument> ::=
+      INDEX = <index name>
+    | QUERY_TEXT = <value expression>
+    | QUERY_VECTOR = <value expression>
+    | TOP_N = <unsigned integer>
+    | CANDIDATES = <unsigned integer>
+    | FUSION = { 'RRF' | 'WEIGHTED' }
+    | VECTOR_WEIGHT = <unsigned numeric literal>
+    | TEXT_WEIGHT = <unsigned numeric literal>
+    | RRF_K = <unsigned integer>
+```
+
+HYBRID_SEARCH is a table in a FROM clause. INDEX, QUERY_TEXT and TOP_N
+are written once each, and the others at most once, in any order.
+QUERY_VECTOR may be left out of a search of an index that embeds its
+text, whose model then embeds QUERY_TEXT as a query. The correlation name is HYBRID_SEARCH if none is
+written.
+
+| Argument | Is |
+|---|---|
+| INDEX | A hybrid index, of a table whose primary key is one column, or one that embeds its text |
+| QUERY_TEXT | The words searched for, each ranked as `IS ABOUT` ranks it ([Full-Text Patterns](09-fulltext-patterns.md)) |
+| QUERY_VECTOR | The vector searched for, of the vector column's type, or of none QUERY_TEXT's embedding by the index's model |
+| TOP_N | The rows it gives |
+| CANDIDATES | The rows each list holds, TOP_N times 4 by default |
+| FUSION | How the lists are fused, RRF by default |
+| VECTOR_WEIGHT, TEXT_WEIGHT | Each list's weight, 1 by default |
+| RRF_K | RRF's K, 60 by default |
+
+The vector list is the CANDIDATES rows nearest QUERY_VECTOR by the
+index's metric, read approximately from the vector part. The text list
+is the CANDIDATES rows ranked highest for QUERY_TEXT, read from the text
+part, of those whose rank is above 0. In each list a row's rank is 1 for
+the best, 2 for the next, and so on, ties taken in DOC_ID order.
+
+| Column | Is |
+|---|---|
+| DOC_ID | The row's primary key, or of an index that embeds its text, the document's |
+| SCORE | Its fused score |
+| VECTOR_SCORE | 1 minus its distance, or null if it is not in the vector list |
+| TEXT_SCORE | Its RANK, or null if it is not in the text list |
+| VECTOR_RANK | Its rank in the vector list, or null |
+| TEXT_RANK | Its rank in the text list, or null |
+| CHUNK_TEXT | Its text, or its best chunk |
+
+It gives the TOP_N rows of the highest SCORE, ties in DOC_ID order.
+
+QUERY_TEXT and QUERY_VECTOR may be any value expressions, dynamic
+parameters among them. A parameter of QUERY_TEXT is one parameter, of
+its place in the statement, however often the search reads it. The
+other arguments are literals.
+
+## Fusion
+
+RRF, reciprocal rank fusion, adds for each list that holds the row its
+weight divided by RRF_K plus its rank there. A row found by both lists
+gains from each:
+
+```sql
+SELECT DOC_ID, SCORE, VECTOR_RANK, TEXT_RANK FROM HYBRID_SEARCH(INDEX = HELP_H,
+    QUERY_TEXT = 'refund damaged', QUERY_VECTOR = TO_VECTOR('[1,0,0,0]', 4, 'FLOAT32'), TOP_N = 4) AS H
+    ORDER BY SCORE DESC, DOC_ID;
+```
+
+```
+       DOC_ID |                    SCORE |          VECTOR_RANK |            TEXT_RANK
+--------------+--------------------------+----------------------+----------------------
+            1 |     3.278688524590164E-2 |                    1 |                    1
+            3 |      3.15136476426799E-2 |                    5 |                    2
+            4 |     3.149801587301587E-2 |                    4 |                    3
+            2 |    1.6129032258064516E-2 |                    2 |                 NULL
+(4 rows)
+```
+
+WEIGHTED adds for each list that holds the row its weight times its
+score there, normalized min-max over the list's candidates: the lowest
+score of the list is 0, the highest 1. If every candidate of a list
+scores alike, each is 1. A vector score is 1 minus the distance, so the
+nearest row scores highest:
+
+```sql
+SELECT DOC_ID, SCORE, VECTOR_SCORE, TEXT_SCORE FROM HYBRID_SEARCH(INDEX = HELP_H,
+    QUERY_TEXT = 'refund damaged', QUERY_VECTOR = TO_VECTOR('[1,0,0,0]', 4, 'FLOAT32'), TOP_N = 4,
+    FUSION = 'WEIGHTED', VECTOR_WEIGHT = 0.7, TEXT_WEIGHT = 0.3) AS H
+    ORDER BY SCORE DESC, DOC_ID;
+```
+
+```
+       DOC_ID |                    SCORE |             VECTOR_SCORE |               TEXT_SCORE
+--------------+--------------------------+--------------------------+--------------------------
+            1 |                      1E0 |                      1E0 |     1.5884793584977979E0
+            2 |     6.957186069495863E-1 |     9.938837242136948E-1 |                     NULL
+            5 |     4.949747528328101E-1 |     7.071067897611574E-1 |                     NULL
+            4 |     6.965260190236647E-2 |     9.950371700338068E-2 |     8.984402202582297E-1
+(4 rows)
+```
+
+The rows of HYBRID_SEARCH keep no order in the query around it, so
+write ORDER BY there. Its DOC_ID joins it to its table:
+
+```sql
+SELECT D.ID, D.BODY FROM HYBRID_SEARCH(INDEX = HELP_H, QUERY_TEXT = 'gift',
+    QUERY_VECTOR = TO_VECTOR('[0,0,1,0]', 4, 'FLOAT32'), TOP_N = 2) AS H
+    JOIN HELP D ON D.ID = H.DOC_ID ORDER BY H.SCORE DESC, D.ID;
+```
+
+```
+           ID | BODY
+--------------+--------------------------------------------------------------
+            4 | Refund of a gift card
+            1 | Refund policy for damaged items
+(2 rows)
+```
+
+## The plan
+
+HYBRID_SEARCH is read as a query of the two lists joined by DOC_ID. Its
+EXPLAIN shows two reads of the hybrid index, each a NearestScan: one of
+RANK, of the text part, and one of the distance, of the vector part,
+marked approximate with the index's metric. Under them a FullOuterJoin
+puts the lists together.
+
+## Sparse vectors
+
+An index of ORGANIZATION INVERTED, the method `inverted`, holds sparse
+vectors, a column of SPARSE layout. It serves FETCH APPROX of a DOT
+distance of the column, if the column's type fixes its dimension count
+and its format. The distance is the dot product negated, so the
+greatest dot product comes first. A query vector of other dimensions, or
+of another format, is not searched approximately: the query reads the
+table, and gives the error the distance gives. A filter of the query is
+asked of the candidates as the index finds them under VECTOR_INFILTER,
+and of those it gives under VECTOR_POSTFILTER
+([FETCH APPROX](06-queries.md#fetch-approx-and-fetch-exact-extension)).
+A DOT distance bounded in WHERE, as `VECTOR_DISTANCE(SV, q, 'DOT') <=
+-1.5`, is a range search of the index: the rows whose dot product with
+the query is at least 1.5.
+
+## Errors
+
+A search names its index, its words and its count, and its vector
+unless the index embeds its text:
+
+```sql
+SELECT * FROM HYBRID_SEARCH(INDEX = HELP_H, QUERY_TEXT = 'gift', TOP_N = 1) AS H;
+```
+
+```
+turborel: SQLCODE -103 (SQLSTATE 2A000): HYBRID_SEARCH names its QUERY_VECTOR, as HELP_H embeds no text by a MODEL (at character 14)
+```
+
+| SQLSTATE | SQLCODE | When |
+|---|---|---|
+| 2A000 | -103 | A required argument is missing, or one is written twice |
+| 2A000 | -103 | QUERY_VECTOR is left out of a search of an index of no MODEL |
+| 2A000 | -103 | INDEX names no hybrid index, or its table's primary key is not one column |
+| 2A000 | -103 | A weight is not a number |
+| 2A000 | -102 | An argument is not one of those above, or FUSION is neither RRF nor WEIGHTED |
+| 2A000 | -103 | A hybrid index of a MODEL names two columns, or its table's primary key is not one column, or its model is not there |
+| 22000 | -301 | CHUNKER is no chunking CHUNK_TEXT reads |
+| 2A000 | -103 | A hybrid index of no MODEL is given a CHUNKER or a MODE, or HYBRID.STATE is given |
+| 2A000 | -103 | ALTER INDEX gives an index of two columns a MODEL, or takes one's MODEL away, or names a model not there |
+| 2A000 | -103 | A table, pipeline or index of the name an index of a MODEL gives its own is there |
+| 0A000 | -900 | A hybrid index of no MODEL names one column |
+
+## See also
+
+[CREATE HYBRID VECTOR INDEX](statements/create-hybrid-vector-index.md),
+[Vectors](14-vectors.md),
+[Full-Text Search](08-fulltext.md)

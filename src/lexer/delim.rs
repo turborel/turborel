@@ -82,3 +82,17 @@ pub const TILDE: &str = "~";
 /// \[EXTENSION\] The exclamation mark: the negation of a graph pattern's
 /// label expression.
 pub const EXCLAMATION_MARK: &str = "!";
+/// \[EXTENSION\] The distance operators of VECTOR (RULES.md D93), each
+/// a call of VECTOR_DISTANCE by its metric (`vector::functions::OPERATORS`):
+/// EUCLIDEAN.
+pub const EUCLIDEAN_DISTANCE: &str = "<->";
+/// \[EXTENSION\] COSINE.
+pub const COSINE_DISTANCE: &str = "<=>";
+/// \[EXTENSION\] DOT, negated.
+pub const DOT_DISTANCE: &str = "<#>";
+/// \[EXTENSION\] MANHATTAN.
+pub const MANHATTAN_DISTANCE: &str = "<+>";
+/// \[EXTENSION\] HAMMING.
+pub const HAMMING_DISTANCE: &str = "<~>";
+/// \[EXTENSION\] JACCARD.
+pub const JACCARD_DISTANCE: &str = "<%>";

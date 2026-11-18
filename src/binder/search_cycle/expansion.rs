@@ -297,8 +297,8 @@ fn every_table(from: &[TableReference], at: usize) -> Result<Vec<SelectSublist>>
                 };
                 TableName { auth: None, ident: name.clone(), at }
             }
-            TableReference::Polymorphic(_) => {
-                let msg = "a <search or cycle clause> of a recursive query whose second operand selects * of a <PTF derived table> is not supported";
+            TableReference::Polymorphic(_) | TableReference::Hybrid(_) => {
+                let msg = "a <search or cycle clause> of a recursive query whose second operand selects * of a <PTF derived table> or HYBRID_SEARCH is not supported";
                 return Err(SqlError::new(Code::Unsupported, msg));
             }
             TableReference::Joined(j) => {
@@ -344,7 +344,8 @@ fn extend_reference(from: &mut [TableReference], name: &str, added: &[String]) {
             | TableReference::Unnest(_)
             | TableReference::Json(_)
             | TableReference::Polymorphic(_)
-            | TableReference::Graph(_) => {}
+            | TableReference::Graph(_)
+            | TableReference::Hybrid(_) => {}
         }
     }
 }

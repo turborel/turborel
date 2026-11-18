@@ -202,7 +202,8 @@ pub(super) fn referenced<'f>(from: &'f [TableReference], name: &str) -> Option<&
             | TableReference::Unnest(_)
             | TableReference::Json(_)
             | TableReference::Polymorphic(_)
-            | TableReference::Graph(_) => {}
+            | TableReference::Graph(_)
+            | TableReference::Hybrid(_) => {}
         }
     }
     None

@@ -61,10 +61,11 @@ impl Session {
     /// statement as its DYNAMIC_FUNCTION [ISO/IEC 9075:1992 §18.1 GR1c,
     /// GR1d].
     pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: Option<(Command, &Plans)>) -> Result<Completion> {
+        self.wait_if_hinted(sql)?;
         let mut call = self.enter()?;
         call.timed = slow::Timed::of(call.state(), || sql, &self.auth());
         let keeping = prepared.map(|(_, plans)| self.keeping(call.state(), plans));
-        let parsed = Self::parsed(&call, sql, params, keeping.as_ref());
+        let parsed = Self::parsed(&call, sql, params, keeping.as_ref()).and_then(|s| super::embedding::blob_given(s, params));
         // [ISO/IEC 9075:1992 §4.19] GET DIAGNOSTICS reads the area as the
         // statement before left it, and leaves it so, refused too.
         if let Ok(SqlStatement::GetDiagnostics(get)) = parsed.as_deref() {
@@ -529,6 +530,7 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::Module(_)
         | SchemaStatement::Graph(_)
         | SchemaStatement::AlterGraph(_)
+        | SchemaStatement::Vector(_)
         | SchemaStatement::Role(_) => None,
     }
 }

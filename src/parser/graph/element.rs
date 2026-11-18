@@ -151,6 +151,9 @@ impl Parser {
             } else {
                 return Err(self.syntax("[EXTENSION] expected \"-\", \"~\" or \"->\" after \"<\" of an edge pattern"));
             }
+        } else if self.accept_delim(delim::EUCLIDEAN_DISTANCE) {
+            // "<->" is one token, as the vector distance operator.
+            Opening::LeftArrow
         } else if self.accept_delim(delim::TILDE) {
             Opening::Tilde
         } else if self.accept_delim(delim::MINUS) {

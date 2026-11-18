@@ -38,6 +38,8 @@ pub enum ColumnGeneration {
         text: String,
         /// Where GENERATED begins in the statement.
         at: usize,
+        /// \[EXTENSION\] ASYNC was written (vector design §12.4).
+        asynchronous: bool,
     },
 }
 

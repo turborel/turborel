@@ -337,9 +337,16 @@ impl Parser {
     /// edge pattern.
     fn at_path_primary(&self) -> bool {
         match self.peek() {
-            Tok::Delimiter(d) => {
-                [delim::LEFT_PAREN, delim::LEFT_BRACKET, delim::LESS, delim::MINUS, delim::RIGHT_ARROW, delim::TILDE].contains(d)
-            }
+            Tok::Delimiter(d) => [
+                delim::LEFT_PAREN,
+                delim::LEFT_BRACKET,
+                delim::LESS,
+                delim::EUCLIDEAN_DISTANCE,
+                delim::MINUS,
+                delim::RIGHT_ARROW,
+                delim::TILDE,
+            ]
+            .contains(d),
             Tok::KeyWord(_)
             | Tok::Identifier(_)
             | Tok::ExactNumeric(_)

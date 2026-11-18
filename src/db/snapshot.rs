@@ -29,7 +29,8 @@
 //!           u32, each a module, in the order of their timestamps of
 //!           creation), structured types (count u32, each a type),
 //!           user-defined casts, orderings and transforms (likewise),
-//!           property graphs (count u32, each a graph, by name)
+//!           property graphs (count u32, each a graph, by name),
+//!           embedding models and vector pipelines (`catalog/embedding.rs`)
 //! ```
 
 use std::sync::Arc;
@@ -45,7 +46,7 @@ use crate::catalog::codec::{
     put_privilege, put_roles, put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, roles, routine,
     sequence, table, trigger, user_type, view,
 };
-use crate::catalog::{CastDesc, GraphDesc, OrderingDesc, StructuredDesc, TransformGroupDesc};
+use crate::catalog::{CastDesc, Embeddings, GraphDesc, OrderingDesc, StructuredDesc, TransformGroupDesc, embeddings, put_embeddings};
 use crate::catalog::{
     Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, ModuleDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc,
     SqlRoutineDesc, TableDesc, TriggerDesc, UserTypeDesc, ViewDesc, module_of_schema,
@@ -100,6 +101,8 @@ pub(super) struct Snapshot {
     transforms: Vec<(QualifiedName, Vec<TransformGroupDesc>)>,
     /// The property graphs, by name.
     graphs: Vec<GraphDesc>,
+    /// \[EXTENSION\] The embedding models and vector pipelines.
+    embeddings: Embeddings,
 }
 
 impl Snapshot {
@@ -158,6 +161,7 @@ impl Snapshot {
             orderings: st.catalog.orderings().into_iter().cloned().collect(),
             transforms: st.catalog.all_transforms().into_iter().map(|(n, g)| (n.clone(), g.to_vec())).collect(),
             graphs: st.catalog.graphs().into_iter().cloned().collect(),
+            embeddings: st.catalog.embeddings().clone(),
         })
     }
 
@@ -244,6 +248,7 @@ impl Snapshot {
         self.transforms.iter().for_each(|(n, g)| put_transforms(out, (n, g)));
         out.put_u32(count(self.graphs.len()));
         self.graphs.iter().for_each(|g| put_graph(out, g));
+        put_embeddings(out, &self.embeddings);
     }
 
     /// The snapshot `put` wrote.
@@ -281,6 +286,7 @@ impl Snapshot {
             orderings: (0..r.u32()?).map(|_| ordering(r)).collect::<Result<_>>()?,
             transforms: (0..r.u32()?).map(|_| transforms(r)).collect::<Result<_>>()?,
             graphs: (0..r.u32()?).map(|_| graph(r)).collect::<Result<_>>()?,
+            embeddings: embeddings(r)?,
         })
     }
 }
@@ -408,6 +414,7 @@ fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.routines.iter().cloned().for_each(|r| catalog.put_routine(r));
     snapshot.modules.iter().cloned().for_each(|m| catalog.put_module(m));
     snapshot.graphs.iter().cloned().for_each(|g| catalog.put_graph(g));
+    catalog.set_embeddings(snapshot.embeddings.clone());
 }
 
 /// [ISO/IEC 9075-4:2006 draft §12.8] Puts in `catalog` the declared tables

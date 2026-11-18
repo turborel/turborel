@@ -75,6 +75,7 @@ impl State {
             | PrivilegeObject::Sequence
             | PrivilegeObject::Module
             | PrivilegeObject::Graph
+            | PrivilegeObject::Model
             | PrivilegeObject::Type => return Ok(None),
         };
         let qn = qualify(name, schema);

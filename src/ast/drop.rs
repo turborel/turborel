@@ -40,6 +40,8 @@ pub enum DropObject {
     /// \[EXTENSION\] A property graph (RULES.md D-GRAPH-CATALOG), and
     /// whether IF EXISTS was written.
     Graph(TableName, bool),
+    /// \[EXTENSION\] An embedding model or a vector pipeline.
+    Vector(super::VectorObject, TableName),
     /// A schema: `<schema name>` ::= \[`<catalog name>` .\] `<unqualified
     /// schema name>` [§5.4].
     Schema {
@@ -67,7 +69,8 @@ impl DropObject {
             | DropObject::Module(name)
             | DropObject::Ordering(name)
             | DropObject::Transform(name, _)
-            | DropObject::Graph(name, _) => name.at,
+            | DropObject::Graph(name, _)
+            | DropObject::Vector(_, name) => name.at,
             DropObject::Cast(_, at) | DropObject::Schema { at, .. } => *at,
             DropObject::Routine(designator) => designator.name.at,
         }

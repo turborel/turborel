@@ -74,6 +74,10 @@ mod temporal;
 mod temporal_references;
 mod triggers;
 mod truncate;
+mod vector;
+mod vector_embed;
+mod vector_hybrid;
+mod vector_indexes;
 mod view_defaults;
 mod vr;
 mod waits;
@@ -86,18 +90,13 @@ mod with;
 mod zones;
 
 use super::{Mutation, Package};
-pub use collations::COLLATIONS;
-pub use fill::FILL;
-pub use kept::KEPT;
-pub use readers::READERS;
-pub use reads::READS;
 pub use server::SERVER;
 pub use shadow::SHADOW;
 pub use stats::STATS;
 pub use tailorings::TAILORINGS;
-pub use vr::VR;
-pub use waits::WAITS;
 pub use zones::ZONES;
+pub use {collations::COLLATIONS, fill::FILL, kept::KEPT, readers::READERS, reads::READS};
+pub use {vr::VR, waits::WAITS};
 
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {

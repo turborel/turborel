@@ -6,7 +6,7 @@ use super::super::area::commands::{self, Command};
 use super::super::dynamic;
 use crate::ast::{
     ConnectionStatement, DropObject, IndexStatement, RoleStatement, SavepointStatement, SchemaStatement, ServedStatement, SqlStatement,
-    UserStatement,
+    UserStatement, VectorObject, VectorStatement,
 };
 use crate::lexer::{Tok, Token, kw, lex};
 
@@ -59,6 +59,11 @@ fn schema_command(s: &SchemaStatement) -> Command {
         SchemaStatement::Module(_) => commands::CREATE_MODULE,
         SchemaStatement::Graph(_) => commands::CREATE_PROPERTY_GRAPH,
         SchemaStatement::AlterGraph(_) => commands::ALTER_PROPERTY_GRAPH,
+        SchemaStatement::Vector(v) => match **v {
+            VectorStatement::Model(_) => commands::CREATE_EMBEDDING_MODEL,
+            VectorStatement::AlterModel(_) => commands::ALTER_EMBEDDING_MODEL,
+            VectorStatement::Pipeline(_) => commands::CREATE_VECTOR_PIPELINE,
+        },
     }
 }
 
@@ -81,6 +86,8 @@ fn drop_command(object: &DropObject) -> Command {
         DropObject::Ordering(_) => commands::DROP_ORDERING,
         DropObject::Transform(..) => commands::DROP_TRANSFORM,
         DropObject::Graph(..) => commands::DROP_PROPERTY_GRAPH,
+        DropObject::Vector(VectorObject::Model, _) => commands::DROP_EMBEDDING_MODEL,
+        DropObject::Vector(VectorObject::Pipeline, _) => commands::DROP_VECTOR_PIPELINE,
     }
 }
 
@@ -151,7 +158,7 @@ fn index_command(i: &IndexStatement) -> Command {
     match i {
         IndexStatement::Create { .. } => commands::CREATE_INDEX,
         IndexStatement::Drop { .. } => commands::DROP_INDEX,
-        IndexStatement::Alter { .. } => commands::ALTER_INDEX,
+        IndexStatement::Alter { .. } | IndexStatement::Maintain { .. } => commands::ALTER_INDEX,
     }
 }
 

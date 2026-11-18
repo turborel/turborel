@@ -94,6 +94,10 @@ pub struct Generation {
     /// invocations, fixed as its column was defined (RULES.md D73); of no
     /// table's columns, as it sees its own row alone.
     pub horizon: Horizon,
+    /// \[EXTENSION\] (vector design §12.4 R12.6) ASYNC: a row written is
+    /// given the null value, and the queue after commit its value
+    /// (`db/embedding/queue.rs`).
+    pub asynchronous: bool,
 }
 
 /// [ISO/IEC 9075:1992 §11.4 GR5] The domain a column is of.

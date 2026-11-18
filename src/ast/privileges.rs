@@ -28,6 +28,9 @@ pub enum PrivilegeObject {
     /// \[EXTENSION\] PROPERTY GRAPH `<property graph name>` (RULES.md
     /// D-GRAPH-CATALOG).
     Graph,
+    /// \[EXTENSION\] EMBEDDING MODEL `<model name>` (the vector design's
+    /// §16).
+    Model,
 }
 
 /// [ISO/IEC 9075:1992 §11.37] `<revoke statement>` ::= REVOKE \[GRANT

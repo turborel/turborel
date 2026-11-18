@@ -96,6 +96,7 @@ impl Session {
             | SchemaStatement::Module(_)
             | SchemaStatement::Graph(_)
             | SchemaStatement::AlterGraph(_)
+            | SchemaStatement::Vector(_)
             | SchemaStatement::Role(_) => Ok(()),
         }
     }

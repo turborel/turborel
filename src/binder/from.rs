@@ -277,6 +277,7 @@ pub(super) fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, fr
         TableReference::Recognized(r) => super::pattern::recognized(b, r, start).or_at(r.at)?,
         TableReference::Polymorphic(p) => return super::ptf::ptf_reference(b, p, start, from),
         TableReference::Graph(g) => return Err(super::graph_seam::not_yet_bound().or_at(g.at)),
+        TableReference::Hybrid(h) => super::hybrid_search::hybrid_item(b, h, start)?,
     };
     from.items.push(item);
     Ok(Tree::Item(from.items.len().saturating_sub(1)))
@@ -371,7 +372,7 @@ fn seen(horizon: &Horizon, name: &QualifiedName, (desc, source): (TableDesc, Sou
 /// `offset`: its query bound as a subquery of the query's own enclosing
 /// query, if it has one, its columns named by the derived column list or
 /// as the query names them; an unnamed column is named by its position.
-fn derived(b: Bounds<'_>, d: &DerivedTable, offset: usize) -> Result<FromItem> {
+pub(super) fn derived(b: Bounds<'_>, d: &DerivedTable, offset: usize) -> Result<FromItem> {
     let nesting = match b.outer {
         Some(outer) => Nesting::Subquery { outer, result: None },
         None => Nesting::Query,

@@ -71,7 +71,8 @@ fn the_right_arrow_and_double_colon_5_2() {
 /// Verifies: [EXTENSION] [P1 §4.1] the percent sign, ampersand, tilde and
 /// exclamation mark of label expressions and edge patterns are delimiters
 /// of one character, each ending the identifier before it, and `->` stays
-/// one token beside them; `!=` is still no token.
+/// one token beside them; `<->` is one token, the vector distance operator,
+/// which an edge pattern takes as `<` then `->`; `!=` is still no token.
 #[test]
 fn the_graph_pattern_delimiters_4_1() {
     let d = Tok::Delimiter;
@@ -84,7 +85,8 @@ fn the_graph_pattern_delimiters_4_1() {
         toks("<~[E]~>"),
         [d(delim::LESS), d(delim::TILDE), d(delim::LEFT_BRACKET), id("E"), d(delim::RIGHT_BRACKET), d(delim::TILDE), d(delim::GREATER)]
     );
-    assert_eq!(toks("<->"), [d(delim::LESS), d(delim::RIGHT_ARROW)]);
+    assert_eq!(toks("<->"), [d(delim::EUCLIDEAN_DISTANCE)]);
+    assert_eq!(toks("<-"), [d(delim::LESS), d(delim::MINUS)]);
     let refused = lex("A != B").map(|_| panic!("!= lexed")).unwrap_err();
     assert_eq!(refused.code, Code::Lexical);
 }

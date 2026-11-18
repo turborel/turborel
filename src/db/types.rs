@@ -5,7 +5,7 @@
 //! type [ISO/IEC 9075-2:2023 §6.1] (RULES.md D69), or a plug-in's.
 
 use super::{Database, State, api, rule};
-use crate::ast::{TableName, TypeName};
+use crate::ast::{TableName, TypeName, TypeParam};
 use crate::binder::qualify;
 use crate::catalog::{DomainDesc, Who, owner_of};
 use crate::diagnostics::Extension;
@@ -191,14 +191,25 @@ impl State {
 
     /// \[EXTENSION\] The type beyond the standard `name` with `params`,
     /// registered (RULES.md D53); else refused, `missing` the message.
-    fn extension_type(&self, (name, params): (&TableName, &[u32]), missing: &str) -> Result<DataType> {
+    fn extension_type(&self, (name, written): (&TableName, &[TypeParam]), missing: &str) -> Result<DataType> {
         let kind = self
             .types
             .kind(&name.ident)
             .filter(|_| name.auth.is_none())
             .ok_or_else(|| rule(format!("{missing} {}", name.ident)).or_at(name.at))?;
-        kind.check_params(params).or_at(name.at)?;
-        let params = TypeParams::of(params)
+        let mut numbers = Vec::with_capacity(written.len());
+        for (at, param) in written.iter().enumerate() {
+            numbers.push(match param {
+                TypeParam::Number(n) => *n,
+                TypeParam::Word(word) => kind
+                    .param_word(at, word)
+                    .ok_or_else(|| rule(format!("[DESIGN] the type {} takes no parameter {word} there", name.ident)).or_at(name.at))?,
+            });
+        }
+        let packed =
+            kind.pack_params(&numbers).ok_or_else(|| rule(format!("[DESIGN] the type {} takes no such parameters", name.ident)))?;
+        kind.check_params(&packed).or_at(name.at)?;
+        let params = TypeParams::of(&packed)
             .ok_or_else(|| rule(format!("[DESIGN] the type {} takes at most {MAX_PARAMS} parameters", name.ident)))?;
         Ok(DataType::Extension(ExtensionType { kind, params }))
     }

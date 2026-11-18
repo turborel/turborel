@@ -34,6 +34,7 @@
 //! | `BackgroundJob`     | none                  | plug-ins' jobs (RULES.md D55)    |
 //! | `StateSource`       | `Database::export`    | state transfer (RULES.md D57)    |
 //! | `Ranking`           | BM25                  | full-text Rank (RULES.md D87)    |
+//! | `VectorMetric`, `Quantizer` | COSINE and others; PQ, SQ8, BQ | VECTOR_DISTANCE, vector indexes (RULES.md D93) |
 //!
 //! Plus the settings (`settings.rs`, RULES.md D36), plug-ins' too, per database and session.
 //!
@@ -81,6 +82,8 @@ mod definitions;
 mod direct;
 mod domains;
 mod drop;
+mod embedding;
+pub(crate) use embedding::model_named;
 pub(crate) mod dynamic;
 mod execute;
 mod explain;
@@ -137,11 +140,11 @@ mod unnamed;
 mod usage;
 mod user_types;
 mod users;
+mod vectors;
 mod views;
 pub(crate) mod write;
 
 use compiled::{plan, plan_slotted};
-
 pub use lobs::LOB_READ_OCTETS;
 pub use prepared::Prepared;
 pub use served::ServedConnections;
@@ -163,11 +166,8 @@ pub use completion::{Completion, SQLCODE_NO_DATA};
 pub use database::Database;
 pub use export::{ExportedFile, RECORDS_FILE, StateSource, decode_records};
 pub use files::{CHECKPOINT_AFTER, CHECKPOINT_BYTES, OpenOptions, Opened, POOL_BYTES};
-pub use formats::FileFormats;
-pub use image::IMAGE_FORMAT;
 use integrity::Deferral;
 pub use log_sync::SYNC_AFTER_MS;
-pub use recovery::RecoveryReport;
 pub use session::TransactionMode;
 pub use standby::Standby;
 pub use stores::{CatalogStorage, CatalogStore, FileLogs, LogStorage, OpenedLog, StorePlace};
@@ -177,6 +177,8 @@ pub(crate) use {
     routines::run_unhosted,
     triggers::trigger_texts,
 };
+pub use {formats::FileFormats, image::IMAGE_FORMAT};
+pub use {indexes::AccuracyReport, recovery::RecoveryReport};
 
 /// The state and transaction a statement runs in.
 #[derive(Clone, Copy)]
@@ -497,7 +499,7 @@ impl Session {
         let staged = self.take_staged();
         let ending = self.end_transaction();
         let id = ending.as_ref().map(|tx| tx.id);
-        let wrote = ending.as_ref().is_some_and(|tx| tx.wrote());
+        let (wrote, tables) = ending.as_ref().map_or((false, Vec::new()), |tx| (tx.wrote(), tx.written_tables()));
         if let Some(tx) = &ending {
             tx.set_sync_commit(st.settings.is_on(COMMIT_SYNC));
         }
@@ -514,12 +516,10 @@ impl Session {
         self.locators_ended(ended.is_ok() || committed.get());
         self.temporaries_ended(st, id);
         // The transaction has ended. The garbage collected as it did may leave maintenance due; one that wrote
-        // may leave a checkpoint, a fold of kept totals, or a sync of the log its commit did not wait for, due.
+        // may leave a checkpoint, a fold of kept totals, embeddings, or a sync of the log its commit did not wait for, due.
         self.db.maintain_if_due();
         if wrote {
-            self.db.checkpoint_if_due();
-            self.db.fold_if_due();
-            self.db.sync_log_if_due();
+            self.db.written(&tables);
         }
         ended
     }

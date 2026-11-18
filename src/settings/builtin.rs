@@ -216,6 +216,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(read_ahead());
     all.push(log_durability());
     all.extend(later());
+    all.extend(super::vector::vector());
     all
 }
 

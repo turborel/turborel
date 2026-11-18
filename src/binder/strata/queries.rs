@@ -35,7 +35,7 @@ pub(super) fn any_query(q: &QueryExpression, pred: &dyn Fn(&QueryExpression) -> 
             let mut refs: Vec<&TableReference> = spec.table_expression.from.iter().collect();
             while let Some(r) = refs.pop() {
                 match r {
-                    TableReference::Table(_) => {}
+                    TableReference::Table(_) | TableReference::Hybrid(_) => {}
                     TableReference::Derived(d) => nested.push(&d.query.query),
                     TableReference::Unnest(u) => {
                         for v in &u.collections {
@@ -90,7 +90,8 @@ pub(super) fn recognizes(q: &QueryExpression) -> bool {
             | TableReference::Unnest(_)
             | TableReference::Json(_)
             | TableReference::Polymorphic(_)
-            | TableReference::Graph(_) => {}
+            | TableReference::Graph(_)
+            | TableReference::Hybrid(_) => {}
         }
     }
     false

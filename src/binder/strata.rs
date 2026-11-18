@@ -166,6 +166,7 @@ impl<'w> Rules<'w> {
                 usize::from(named && self.names.contains(&t.table.ident.as_str()))
             }
             TableReference::Derived(d) => self.refs(&d.query.query, scope),
+            TableReference::Hybrid(_) => 0,
             TableReference::Unnest(u) => {
                 let mut n = 0_usize;
                 for v in &u.collections {
@@ -323,7 +324,7 @@ impl<'w> Rules<'w> {
     /// `place`.
     fn reference(&self, r: &'w TableReference, (place, scope): (Place, &mut Vec<&'w str>)) -> Checked {
         match r {
-            TableReference::Table(_) => Ok(()),
+            TableReference::Table(_) | TableReference::Hybrid(_) => Ok(()),
             TableReference::Derived(d) => {
                 let inner = if place == Place::Body { Place::Derived } else { Place::Elsewhere };
                 self.query(&d.query.query, (inner, scope))

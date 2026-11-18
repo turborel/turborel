@@ -311,8 +311,10 @@ impl Database {
     /// of zones to settle (`rows/zones.rs`).
     pub(super) fn open_managed(&self, fs: &Arc<dyn FileSystem>, dir: &Path, options: &OpenOptions, mode: Mode) -> Result<Opened> {
         let opened = self.noted(self.open_from(fs, dir, options, mode))?;
-        self.snapshot()?.note_due_maintenance();
-        self.maintain_if_due();
+        if matches!(mode, Mode::Serve) {
+            self.hybrid_settled()?;
+        }
+        self.due_at_open()?;
         self.emit(&Event::Opened(opened));
         Ok(opened)
     }
@@ -507,10 +509,9 @@ impl Database {
     }
 
     /// Makes or opens the data file at `place`, as `how` says, in a buffer
-    /// pool, and registers the column and row stores and the B-link and
-    /// hash index methods on it:
-    /// tables and indexes in one shadowed file, so one commit holds both. A
-    /// file made replaces any there.
+    /// pool, and registers the column and row stores and the index methods
+    /// on it. Tables and indexes share one shadowed file, so one commit
+    /// holds both. A file made replaces any there.
     fn attach_pager(&self, place: &Place<'_>, how: Pagers) -> Result<()> {
         let (fs, path, hash) = (&*place.shadows, place.path(DATA), Arc::clone(&place.layout.formats.hash));
         let pager = match how {
@@ -539,6 +540,7 @@ impl Database {
         self.register_index_method(Box::new(RTreeMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(JsonMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(AdjacencyMethod::new(Arc::clone(&pool), file)))?;
+        self.register_vector_methods(&pool, file)?;
         let rankings = self.snapshot()?.rankings.closure();
         self.register_index_method(Box::new(FullTextMethod::new(pool, file).with_rankings(rankings)))
     }

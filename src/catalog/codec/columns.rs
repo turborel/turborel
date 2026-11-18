@@ -32,7 +32,7 @@ pub(super) fn put_column(out: &mut Vec<u8>, column: &ColumnDesc) {
 /// [ISO/IEC 9075-2:2023 §11.4 GR5f, GR5j] How a column's values are
 /// generated: 0 for a base column that is no identity column; 1, ALWAYS u8
 /// and its sequence generator, for an identity column; 2, the text and its
-/// names' schema, for a generated column; 3 and its sequence generator, for
+/// names' schema, for a generated column (6 for one ASYNC); 3 and its sequence generator, for
 /// a system-generated self-referencing column; 4, the count and names of
 /// its derivational attributes, for a derived one.
 fn put_generated(out: &mut Vec<u8>, generated: Option<&Generated>) {
@@ -43,8 +43,8 @@ fn put_generated(out: &mut Vec<u8>, generated: Option<&Generated>) {
             put_flag(out, *always);
             put_sequence(out, sequence);
         }
-        Some(Generated::Expression(Generation { text, names, horizon })) => {
-            out.put_u8(2);
+        Some(Generated::Expression(Generation { text, names, horizon, asynchronous })) => {
+            out.put_u8(if *asynchronous { 6 } else { 2 });
             out.put_str(text);
             out.put_str(names);
             put_horizon(out, horizon);
@@ -57,10 +57,10 @@ fn put_generated(out: &mut Vec<u8>, generated: Option<&Generated>) {
             out.put_u8(5);
             put_flag(out, *end);
         }
-        // [EXTENSION] 6, then 0 and its generator of $NODE_ID, 1 and its
+        // [EXTENSION] 7, then 0 and its generator of $NODE_ID, 1 and its
         // generator of $EDGE_ID, 2 of $FROM_ID or 3 of $TO_ID.
         Some(Generated::Graph(g)) => {
-            out.put_u8(6);
+            out.put_u8(7);
             match g {
                 GraphColumn::Node(sequence) => {
                     out.put_u8(0);
@@ -89,14 +89,15 @@ fn generated(r: &mut Reader<'_>) -> Result<Option<Generated>> {
     Ok(match r.u8()? {
         0 => None,
         1 => Some(Generated::Identity(Identity { always: flag(r)?, sequence: sequence(r)? })),
-        2 => Some(Generated::Expression(Generation { text: r.str()?, names: r.str()?, horizon: horizon(r)? })),
+        2 => Some(Generated::Expression(Generation { text: r.str()?, names: r.str()?, horizon: horizon(r)?, asynchronous: false })),
+        6 => Some(Generated::Expression(Generation { text: r.str()?, names: r.str()?, horizon: horizon(r)?, asynchronous: true })),
         3 => Some(Generated::SystemReference(sequence(r)?)),
         4 => {
             let n = r.u32()?;
             Some(Generated::DerivedReference((0..n).map(|_| r.str()).collect::<Result<_>>()?))
         }
         5 => Some(Generated::SystemTime { end: flag(r)? }),
-        6 => Some(Generated::Graph(match r.u8()? {
+        7 => Some(Generated::Graph(match r.u8()? {
             0 => GraphColumn::Node(sequence(r)?),
             1 => GraphColumn::Edge(sequence(r)?),
             2 => GraphColumn::From,

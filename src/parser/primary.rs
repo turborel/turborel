@@ -521,6 +521,10 @@ impl Parser {
             while self.accept_delim(delim::COMMA) {
                 args.push(self.common_value_expression()?);
             }
+            // [EXTENSION] FROM_VECTOR's clauses (RULES.md D93).
+            if schema.is_none() && name == super::vectors::FROM_VECTOR {
+                self.vector_text_clauses(&mut name, &mut args)?;
+            }
             self.expect_delim(delim::RIGHT_PAREN)?;
         }
         Ok(ValueExpression::Call { schema, name, args, at, extension: self.extensions })

@@ -45,7 +45,8 @@ pub(in crate::db) fn type_named(statement: &SchemaStatement) -> (Option<&TableNa
         | SchemaStatement::Routine(_)
         | SchemaStatement::Module(_)
         | SchemaStatement::Graph(_)
-        | SchemaStatement::AlterGraph(_) => (None, "§11.53 AR1"),
+        | SchemaStatement::AlterGraph(_)
+        | SchemaStatement::Vector(_) => (None, "§11.53 AR1"),
     }
 }
 
@@ -127,7 +128,8 @@ impl Session {
             | DropObject::Type(name)
             | DropObject::Trigger(name)
             | DropObject::Module(name)
-            | DropObject::Graph(name, _) => Err(rule(format!("[DESIGN] {} is no cast, ordering or transform", name.ident))),
+            | DropObject::Graph(name, _)
+            | DropObject::Vector(_, name) => Err(rule(format!("[DESIGN] {} is no cast, ordering or transform", name.ident))),
             DropObject::Routine(_) | DropObject::Schema { .. } => Err(rule("[DESIGN] no cast, ordering or transform is named")),
         }
     }
@@ -186,6 +188,12 @@ impl State {
         match target {
             DropTarget::Cast(types) => catalog.remove_cast(&types.0, &types.1),
             DropTarget::Ordering(qn) => catalog.remove_ordering(qn),
+            // [EXTENSION] Those that embed by the model.
+            DropTarget::Model(qn) => {
+                let mut embeddings = catalog.embeddings().clone();
+                embeddings.remove_model(qn);
+                catalog.set_embeddings(embeddings);
+            }
             // [§4.9.6] A transform applies at no expression's binding.
             DropTarget::Transform(..)
             | DropTarget::Table(_)
@@ -199,7 +207,8 @@ impl State {
             | DropTarget::Trigger(_)
             | DropTarget::Routine(_)
             | DropTarget::Module(_)
-            | DropTarget::Graph(_) => return Vec::new(),
+            | DropTarget::Graph(_)
+            | DropTarget::Pipeline(_) => return Vec::new(),
         }
         let mut after = self.clone();
         after.catalog = Arc::from(catalog);

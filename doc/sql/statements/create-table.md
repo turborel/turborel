@@ -56,7 +56,7 @@ CREATE TABLE: define a base table
     | MINVALUE <signed numeric literal> | NO MINVALUE
     | CYCLE | NO CYCLE
 
-<generation clause> ::= GENERATED ALWAYS AS ( <value expression> )
+<generation clause> ::= GENERATED ALWAYS AS ( <value expression> ) [ STORED ] [ SYNC | ASYNC ]
 
 <default option> ::=
       <literal>
@@ -141,6 +141,14 @@ the row. Its type is the one written, to which the expression's value is
 assigned, else the expression's own. A statement gives it no value of its
 own. An INSERT gives it only DEFAULT, and an UPDATE sets it only to
 DEFAULT. Constraints and indexes take its values as any column's.
+
+A generated column is STORED, whether or not that is written. SYNC, the
+default, computes it as the row is written. ASYNC, of a column whose
+expression embeds a text (see [CREATE EMBEDDING
+MODEL](create-embedding-model.md)), leaves it null as the row is
+inserted, or updated in a column the expression reads, by INSERT,
+UPDATE or MERGE, and the queue after commit fills it later. An update
+that sets it to DEFAULT computes it then.
 
 **Constraints.** NOT NULL refuses the null value. UNIQUE refuses two
 rows of the same values in its columns, of rows none of whose values is

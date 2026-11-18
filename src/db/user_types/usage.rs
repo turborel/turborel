@@ -334,6 +334,7 @@ impl State {
             | PrivilegeObject::Sequence
             | PrivilegeObject::Module
             | PrivilegeObject::Graph
+            | PrivilegeObject::Model
             | PrivilegeObject::Type => (false, None),
         };
         let types = match parameters {

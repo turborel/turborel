@@ -8,9 +8,8 @@ use std::sync::Arc;
 
 use super::arguments::registered_subject;
 use super::arithmetic::distinct_operand;
-use super::composite::{grouping_operand, ordering_operand};
 use super::invocation::{Called, Passed};
-use super::set_functions::{column_references, is_aggregate_call};
+use super::set_functions::{column_references, is_aggregate_call, operand_rules};
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, subquery, value_specification};
 use crate::ast::{Composite, Literal, SearchCondition, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
@@ -21,7 +20,7 @@ use crate::functions::{
 use crate::lexer::kw;
 use crate::logical::{AggCall, Expr, Slot, render_expr};
 use crate::params::ParameterType;
-use crate::value::{DataType, SortOrder, Value, collation::CollationRef, types::composite::row_ordered};
+use crate::value::{DataType, SortOrder, Value, collation::CollationRef};
 
 /// [ISO/IEC 9075:1992 §17.6 GR3] `e`, if it is a `<dynamic parameter
 /// specification>`, alone or in any number of parentheses: its index, and
@@ -211,23 +210,30 @@ impl Binder<'_> {
     }
 
     /// [ISO/IEC 9075-2:2023 §10.4] `v`, a call of `name` of `schema` with
-    /// `args`, written at `at`: a method invocation, an SQL-invoked
+    /// the arguments `written`, written at `at`: a method invocation, an SQL-invoked
     /// function's, or a function's of the database.
     fn routine_call(
         &self,
         v: &ValueExpression,
         (schema, name, extension): (Option<&str>, &str, bool),
-        args: &[ValueExpression],
+        written: &[ValueExpression],
         (at, scope): (usize, Scope<'_>),
     ) -> Result<(Expr, DataType)> {
-        // [ISO/IEC 9075-2:2023 §10.4, §9.18 SR10h iv 1] a function of
-        // the schema, an SQL-invoked function or a distinct type's
-        // (D69), then one registered (D53, D74); of a call grouping
-        // reads as a registered aggregate's, that aggregate.
-        // [ISO/IEC 9075-2:2023 §6.6 SR11, §6.18] of a column of a
-        // structured type, a method invocation of it.
+        // [ISO/IEC 9075-2:2023 §10.4, §9.18 SR10h iv 1] a function of the schema, an SQL-invoked function or a
+        // distinct type's (D69), then a model of the catalog's, then one registered (D53, D74); of a call grouping
+        // reads as a registered aggregate's, that aggregate. [§6.6 SR11, §6.18] of a column of a structured type,
+        // a method invocation of it.
         if let Some(subject) = schema.and_then(|c| self.lone_basis(c, at)) {
-            return self.method_call(&subject, (name, args), scope).or_at(at);
+            return self.method_call(&subject, (name, written), scope).or_at(at);
+        }
+        // [EXTENSION] key words as arguments, and a distance function of SQL (RULES.md D93).
+        let worded = match schema {
+            None => self.index_metric(name, written).map_or_else(|| self.worded(name, written), std::borrow::Cow::Owned),
+            Some(_) => std::borrow::Cow::Borrowed(written),
+        };
+        let args = &*worded;
+        if let Some(measured) = schema.map_or_else(|| self.distance_call(name, args, scope), |_| None) {
+            return measured.or_at(at);
         }
         // Of a column of a registered type, the method of it (RULES.md D87).
         if let Some(subject) = schema.and_then(|c| self.extension_basis(c, at)) {
@@ -241,6 +247,9 @@ impl Binder<'_> {
                 Called::Pass(passed) => passed,
             }
         };
+        if let (None, Some(embedded)) = (schema, self.catalog_embed(name, args, scope).or_at(at)?) {
+            return Ok(embedded);
+        }
         let aggregate = self.db.functions.aggregate(name).is_some();
         let called = || self.call((schema, name, extension), args, passed, scope);
         self.drawing(self.drawing.get() && !aggregate, called).or_at(at)
@@ -398,10 +407,9 @@ impl Binder<'_> {
         &self,
         (schema, name, extension): (Option<&str>, &str, bool),
         args: &[ValueExpression],
-        passed: Passed,
+        Passed { bound, refusal }: Passed,
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
-        let Passed { bound, refusal } = passed;
         let registered = self.db.functions.scalars(name);
         let refusal = match refusal {
             Some(refused) if schema.is_some() || registered.is_empty() || !extension => return Err(refused),
@@ -559,26 +567,6 @@ impl Binder<'_> {
         let label = self.filtered_label(label, filter.as_ref());
         Ok((AggCall { func, arg, distinct, filter, distribution: None, result, label }, named))
     }
-}
-
-/// [ISO/IEC 9075-2:2023 §10.9 SR7c, SR7d] The argument of set function
-/// `name`, of type `t`: an operand of a grouping operation under DISTINCT
-/// [§9.12]; of MAX or MIN, if `extreme`, of an ordering operation [§9.14],
-/// and not row-ordered \[SR7d ii\].
-fn operand_rules(db: &crate::db::State, t: &DataType, name: &str, (extreme, distinct): (bool, bool)) -> Result<()> {
-    if distinct {
-        grouping_operand(db, t, &format!("{name}(DISTINCT ...)"))?;
-    }
-    if !extreme {
-        return Ok(());
-    }
-    ordering_operand(db, t, name)?;
-    if row_ordered(t) {
-        return Err(rule(format!(
-            "[ISO/IEC 9075-2:2023 §10.9 SR7d ii] {name} of {t}: rows are not totally ordered, (1, NULL) and (NULL, 1) neither before the other"
-        )));
-    }
-    Ok(())
 }
 
 /// [ISO/IEC 9075-2:2023 §9.16 SR1, §11.9 CR2] A constraint's condition
