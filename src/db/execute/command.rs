@@ -148,7 +148,7 @@ fn index_command(i: &IndexStatement) -> Command {
     match i {
         IndexStatement::Create { .. } => commands::CREATE_INDEX,
         IndexStatement::Drop { .. } => commands::DROP_INDEX,
-        IndexStatement::Alter { .. } => commands::ALTER_INDEX,
+        IndexStatement::Alter { .. } | IndexStatement::Maintain { .. } => commands::ALTER_INDEX,
     }
 }
 

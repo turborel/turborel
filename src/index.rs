@@ -7,22 +7,32 @@
 //! "fulltext", an inverted index of words (RULES.md D86).
 
 mod blink;
+pub mod diskann;
 pub mod fulltext;
 mod hash;
+pub mod hnsw;
+pub mod ivf;
 mod nearest;
+mod probe;
 mod projection;
 mod rtree;
+mod sparse;
 mod stats;
+pub(crate) mod vector;
 
 use std::cmp::Ordering;
 use std::sync::Arc;
 
 pub use blink::BTreeMethod;
+pub use diskann::{DISKANN_METHOD, DiskAnnMethod};
 pub use fulltext::{FULLTEXT_METHOD, FullTextMethod};
 pub use hash::HashMethod;
-pub use nearest::{NearestQuery, NeighbourEntries};
+pub use hnsw::{HNSW_METHOD, HnswMethod};
+pub use ivf::{IVF_METHOD, IvfMethod};
+pub use nearest::{Approximation, FilterHint, NearestQuery, NearestSupport, NeighbourEntries, RowFilter, same_metric};
 pub use projection::KeyProjection;
 pub use rtree::RTreeMethod;
+pub use sparse::{BLOCK_SIZE_OPTION, QUANTIZATION_OPTION, SPARSE_METHOD, SparseIndex, SparseMethod, VECTOR_TYPE};
 
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::error::Result;
@@ -170,47 +180,6 @@ pub enum Probe {
     },
 }
 
-impl Probe {
-    /// Whether a key, its values in order, answers the probe by the
-    /// [X3.135-1986 §5.11] comparison rules: never with a null where a
-    /// value is compared (GR2). For `Probe::Predicate`, this always returns
-    /// true: storage uses it under locks, where calling a plug-in is
-    /// forbidden. The executor checks the function on fetched rows
-    /// (RULES.md D34).
-    pub fn answers<'v>(&self, key: impl IntoIterator<Item = &'v Value>) -> bool {
-        let mut key = key.into_iter();
-        let holds = |op: CompOp, k: Option<&Value>, v: &Value| k.and_then(|k| compare(k, v)).is_some_and(|o| op.holds(o));
-        match self {
-            Probe::All | Probe::Predicate { .. } => true,
-            Probe::Columns(each) => columns_answer(key, each),
-            Probe::Compare { op, value } => holds(*op, key.next(), value),
-            Probe::Prefix { equal, then } => {
-                equal.iter().all(|v| holds(CompOp::Eq, key.next(), v)) && then.as_ref().is_none_or(|(op, v)| holds(*op, key.next(), v))
-            }
-            Probe::Range { equal, low, high } => {
-                let equals = equal.iter().all(|v| holds(CompOp::Eq, key.next(), v));
-                let next = key.next();
-                equals && holds(low.0, next, &low.1) && holds(high.0, next, &high.1)
-            }
-        }
-    }
-}
-
-/// Test independent comparisons without allocating a copy of the key.
-/// Missing key columns cannot satisfy a comparison.
-fn columns_answer<'a>(key: impl Iterator<Item = &'a Value>, each: &[ColumnComparison]) -> bool {
-    let mut checked = 0_usize;
-    for (at, value) in key.enumerate() {
-        for c in each.iter().filter(|c| c.column == at) {
-            if !compare(value, &c.value).is_some_and(|o| c.op.holds(o)) {
-                return false;
-            }
-            checked = checked.saturating_add(1);
-        }
-    }
-    checked == each.len()
-}
-
 /// \[EXTENSION\] A kind of index: creates `Index`es and says which probes they answer.
 ///
 /// Contract (RULES.md R-SAFE-3; checked for btree and hash by
@@ -241,10 +210,19 @@ fn columns_answer<'a>(key: impl Iterator<Item = &'a Value>, each: &[ColumnCompar
 ///   R-ERR-4); the `Database` docs say what happens if one does.
 pub trait IndexMethod: Send + Sync {
     /// Whether indexes on these types offer distance candidates for this
-    /// call's declared semantics. Runtime requests may still decline under
-    /// [`NeighbourEntries`]' error and range contract. Default: unsupported.
-    fn supports_nearest(&self, _query: &NearestQuery, _columns: &[DataType]) -> bool {
-        false
+    /// call's declared semantics: certified ([`NeighbourEntries`]), or
+    /// approximate ([`Approximation`]), which only a query asking for an
+    /// approximate search reads, of the index's own metric (the query's
+    /// `metric`, [`same_metric`]). Runtime requests may still decline.
+    /// Default: unsupported.
+    fn supports_nearest(&self, _query: &NearestQuery, _columns: &[DataType]) -> NearestSupport {
+        NearestSupport::No
+    }
+    /// \[EXTENSION\] The metric the index `index` describes orders by, of
+    /// an approximate method, read only for a call of it (R13.1). None
+    /// by default.
+    fn metric(&self, _index: &IndexDesc) -> Option<String> {
+        None
     }
     /// The method's name, as `create_index` and `IndexDesc::method` give it.
     fn name(&self) -> &'static str;
@@ -437,6 +415,33 @@ pub trait Index: Send + Sync {
     /// Storage errors, or SQLCODE -918 if its frontier cannot be reserved.
     fn nearest(self: Arc<Self>, _query: &NearestQuery, _budget: &Arc<crate::memory::MemoryBudget>) -> Result<Option<NeighbourEntries>> {
         Ok(None)
+    }
+    /// \[EXTENSION\] Candidates of an approximate search, its query's
+    /// `approximate` given, under [`Approximation`]'s relaxed contract, or
+    /// `None` when the request needs an ordinary scan. `filter`, given of
+    /// `FilterHint::InFilter`, may be asked of candidates before this
+    /// returns, never after ([`RowFilter`]). Default: `nearest`.
+    ///
+    /// # Errors
+    ///
+    /// As `nearest`, and those of `filter`.
+    fn approximate(
+        self: Arc<Self>,
+        query: &NearestQuery,
+        budget: &Arc<crate::memory::MemoryBudget>,
+        _filter: Option<&mut dyn RowFilter>,
+    ) -> Result<Option<NeighbourEntries>> {
+        self.nearest(query, budget)
+    }
+    /// \[EXTENSION\] Takes its structure into memory, or lets it go (ALTER
+    /// INDEX LOAD, UNLOAD; vector design document §10.6): a hint, changing
+    /// nothing it holds. Default: nothing.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or SQLCODE -918 if the memory cannot be reserved.
+    fn reside(&self, _resident: bool) -> Result<()> {
+        Ok(())
     }
     /// \[EXTENSION\] A snapshot, taken now, of the statistics a rank of its
     /// column reads (RULES.md D87); none by default. It may retain the index.

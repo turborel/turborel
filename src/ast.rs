@@ -505,6 +505,29 @@ pub enum IndexStatement {
         /// The `<table option>`s, in order.
         options: Vec<TableOptionValue>,
     },
+    /// \[EXTENSION\] `ALTER INDEX <index name> <alter index maintenance>`
+    /// (the vector design document §10.6, `parser/ddl/vector_index.rs`).
+    Maintain {
+        /// The `<index name>`, and where it begins.
+        name: (String, usize),
+        /// What is done.
+        action: IndexMaintenance,
+    },
+}
+
+/// \[EXTENSION\] `<alter index maintenance>` (the vector design document
+/// §10.6).
+#[derive(Debug, Clone)]
+pub enum IndexMaintenance {
+    /// REBUILD \[ONLINE\] \[PARAMETERS (...)\]: built again, of these
+    /// parameters, each named as a parameter of CREATE VECTOR INDEX.
+    Rebuild(Vec<TableOptionValue>),
+    /// MERGE DELTA: its maintenance run now (`Index::maintain`).
+    MergeDelta,
+    /// LOAD: its structure taken into memory (`Index::reside`).
+    Load,
+    /// UNLOAD: its structure let go of memory.
+    Unload,
 }
 
 /// [X3.135-1986 §8.11, §8.12] `<set clause>` ::= `<object column>` = `<update source>`

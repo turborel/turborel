@@ -27,8 +27,8 @@ pub use join::JoinKey;
 mod kept;
 mod nearest;
 mod nodes;
-pub use nearest::NearestRead;
 pub(crate) use nearest::distance_call;
+pub use nearest::{ApproximateRead, NearestRead};
 mod order;
 mod probe;
 mod project;
@@ -377,6 +377,8 @@ pub struct PhysicalPlanner<'a> {
     /// projection to a scan, whose path in the order asked is priced by
     /// them (`physical/access.rs`). Below any other node, none.
     first: Option<usize>,
+    /// \[EXTENSION\] The FETCH FIRST whose count `first` is: its search.
+    fetch: Option<&'a crate::logical::Fetch>,
 }
 
 /// A built plan, and whether its rows come out in the order that was asked for.
@@ -405,20 +407,20 @@ struct TableRead<'a> {
 impl<'a> PhysicalPlanner<'a> {
     /// A planner over the state `db`, of plans to run.
     pub fn new(db: &'a State) -> Self {
-        PhysicalPlanner { db, shown: false, values: None, first: None }
+        PhysicalPlanner { db, shown: false, values: None, first: None, fetch: None }
     }
 
     /// A planner over the state `db`, of plans to run made with a prepared
     /// statement's slots, their paths chosen by `values`, one execution's,
     /// so that another's may fill them (`physical/kept.rs`).
     pub fn slotted(db: &'a State, values: &'a [Value]) -> Self {
-        PhysicalPlanner { db, shown: false, values: Some(values), first: None }
+        PhysicalPlanner { db, shown: false, values: Some(values), first: None, fetch: None }
     }
 
     /// A planner over the state `db`, of plans to show: each operator
     /// described, as EXPLAIN shows it.
     pub fn describing(db: &'a State) -> Self {
-        PhysicalPlanner { db, shown: true, values: None, first: None }
+        PhysicalPlanner { db, shown: true, values: None, first: None, fetch: None }
     }
 
     /// The physical plan for `logical`.

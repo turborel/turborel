@@ -536,6 +536,7 @@ impl Database {
         self.register_index_method(Box::new(BTreeMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(HashMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(RTreeMethod::new(Arc::clone(&pool), file)))?;
+        crate::index::vector::vector_methods(&pool, file).into_iter().try_for_each(|m| self.register_index_method(m))?;
         let rankings = self.snapshot()?.rankings.closure();
         self.register_index_method(Box::new(FullTextMethod::new(pool, file).with_rankings(rankings)))
     }

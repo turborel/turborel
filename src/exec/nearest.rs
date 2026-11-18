@@ -2,7 +2,9 @@
 //! D29, D38, D44, D85). A strict lower-bound cutoff retains distance ties;
 //! the existing sort decides their secondary order. An uncertified index
 //! or an unaffordable threshold heap falls back before producing rows.
+//! An approximate index's read is `nearest/approx.rs` (D-APPROX).
 
+mod approx;
 mod threshold;
 
 use std::sync::Arc;
@@ -36,6 +38,9 @@ fn open(read: NearestRead, db: &Arc<State>, tx: TxId) -> Result<RowIter> {
     let storage = Arc::clone(db.storage_of(&read.table)?);
     let Some(mut query) = read.query() else { return Err(broken("a nearest read has no constant distance operand")) };
     // A score's bounds and its calls read one snapshot (D87).
+    if read.approximate.is_some() {
+        return approx::approximate(read, storage, db, (tx, query));
+    }
     let runner = Runner::new(db, tx);
     if read.descending {
         query.statistics = runner.ranking_statistics(&read.index)?;

@@ -9,7 +9,7 @@
 //! Syntax that is valid SQL but not implemented reports `Code::Unsupported`
 //! rather than a misleading syntax error.
 
-pub use ddl::{RESEAL, REVERT_COLLATION};
+pub use ddl::{RESEAL, REVERT_COLLATION, method_of_type, option_of};
 pub use domains::VALUE_COLUMN;
 pub(crate) use dynamic::descriptor_type;
 pub(crate) use periods::period_constraint;

@@ -20,6 +20,10 @@
 //! anew as it is, its rows sealed again through the encodings it names
 //! now.
 
+mod vector_index;
+
+pub use vector_index::{method_of_type, option_of};
+
 use super::Parser;
 use crate::ast::{
     AlterAction, AlterColumnAction, DropBehavior, DropObject, IndexStatement, OptionValue, SqlStatement, TableOptionValue, TableStorage,
@@ -105,6 +109,9 @@ impl Parser {
             if self.character_set_definition()? {
                 return Ok(SqlStatement::Commit);
             }
+            if self.at_vector_index() {
+                return self.create_vector_index();
+            }
             return self.create_index();
         }
         let alter = self.accept_kw(kw::ALTER);
@@ -129,6 +136,9 @@ impl Parser {
             if !alter {
                 return Ok(SqlStatement::Index(IndexStatement::Drop { name }));
             }
+            if let Some(action) = self.index_maintenance()? {
+                return Ok(SqlStatement::Index(IndexStatement::Maintain { name, action }));
+            }
             self.expect_kw(kw::SET)?;
             return Ok(SqlStatement::Index(IndexStatement::Alter { name, options: self.table_options()? }));
         }
@@ -137,7 +147,8 @@ impl Parser {
 
     /// \[EXTENSION\] `<create index statement>` ::= CREATE INDEX `<index
     /// name>` ON `<table name>` ( `<column name>` \[{, `<column name>`}...\] )
-    /// \[USING `<method name>`\] \[WITH `<table options>`\], after CREATE.
+    /// \[USING `<method name>`\] \[WITH `<table options>`\], after CREATE;
+    /// CREATE VECTOR INDEX is `ddl/vector_index.rs`.
     fn create_index(&mut self) -> Result<SqlStatement> {
         if !self.accept_word("INDEX") {
             return Err(self.syntax("expected INDEX: a <schema> is processed by Database::schema"));
@@ -159,7 +170,10 @@ impl Parser {
         let mut storage = TableStorage::default();
         if self.accept_kw(kw::USING) {
             let at = self.here();
-            storage.engine = Some((self.identifier()?, at));
+            let given = self.identifier()?;
+            // [EXTENSION] SPARSE is the other name of the method `inverted`.
+            let method = if given.eq_ignore_ascii_case(vector_index::SPARSE) { vector_index::INVERTED.to_owned() } else { given };
+            storage.engine = Some((method, at));
         }
         if self.accept_kw(kw::WITH) {
             storage.options = self.table_options()?;

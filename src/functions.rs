@@ -281,6 +281,15 @@ pub trait ScalarFunction: Send + Sync {
     fn spatial_operation(&self) -> Option<crate::geometry::SpatialOperation> {
         None
     }
+    /// \[EXTENSION\] Of a vector distance (vector design document §6), the
+    /// metric a call of these constant arguments (none for each other one)
+    /// measures by, upper case, and the position of its first vector, the
+    /// second after it: a deterministic call, smaller the more similar its
+    /// vectors. None of a call ordered otherwise (INNER_PRODUCT), of one
+    /// whose metric is no constant, and by default (R13.1, D-APPROX).
+    fn vector_metric(&self, _constants: &[Option<&Value>]) -> Option<(String, usize)> {
+        None
+    }
     /// Same arguments always give the same result? If so, the optimizer may
     /// evaluate calls with constant arguments once, at planning time.
     fn deterministic(&self) -> bool {

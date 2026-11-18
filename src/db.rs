@@ -167,7 +167,6 @@ pub use formats::FileFormats;
 pub use image::IMAGE_FORMAT;
 use integrity::Deferral;
 pub use log_sync::SYNC_AFTER_MS;
-pub use recovery::RecoveryReport;
 pub use session::TransactionMode;
 pub use standby::Standby;
 pub use stores::{CatalogStorage, CatalogStore, FileLogs, LogStorage, OpenedLog, StorePlace};
@@ -177,6 +176,7 @@ pub(crate) use {
     routines::run_unhosted,
     triggers::trigger_texts,
 };
+pub use {indexes::AccuracyReport, recovery::RecoveryReport};
 
 /// The state and transaction a statement runs in.
 #[derive(Clone, Copy)]

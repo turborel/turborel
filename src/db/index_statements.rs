@@ -12,7 +12,7 @@ use std::sync::Arc;
 use super::alter::value_of;
 use super::indexes::IndexSpec;
 use super::{Completion, Session, State};
-use crate::ast::{IndexStatement, TableOptionValue};
+use crate::ast::{IndexMaintenance, IndexStatement, TableOptionValue};
 use crate::binder::qualify;
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::error::{At, Code, Result, SqlError, fail};
@@ -20,6 +20,9 @@ use crate::index::BTREE_METHOD;
 use crate::index::fulltext::RANKING_OPTION;
 use crate::storage::chosen;
 use crate::value::Value;
+
+/// \[EXTENSION\] The most rounds of maintenance MERGE DELTA runs.
+const MOST_MERGE_ROUNDS: usize = 1 << 16;
 
 /// A Syntax Rule of this extension broken (SQLCODE -103).
 fn refused(message: &str) -> SqlError {
@@ -79,8 +82,45 @@ impl Session {
                     options.iter().map(|o| (o.name.clone(), o.value.as_ref().map(value_of))).collect();
                 self.db.alter_index(name, &given)?;
             }
+            IndexStatement::Maintain { name: (name, at), action } => {
+                let ix = self.index_owned(st, name).or_at(*at)?;
+                self.maintain_index(st, &ix, action)?;
+            }
         }
         Ok(Completion::Success)
+    }
+
+    /// \[EXTENSION\] ALTER INDEX REBUILD, MERGE DELTA, LOAD or UNLOAD of
+    /// `ix` (the vector design document §10.6): built again, of its
+    /// options and the parameters given, each named as CREATE VECTOR INDEX
+    /// names it (`parser::option_of`); its maintenance run now, as the
+    /// maintenance job runs it, until it has none to do; or its structure
+    /// taken into memory or let go.
+    fn maintain_index(&self, st: &State, ix: &IndexDesc, action: &IndexMaintenance) -> Result<()> {
+        match action {
+            IndexMaintenance::Rebuild(parameters) => {
+                let named: Vec<TableOptionValue> = parameters
+                    .iter()
+                    .map(|p| TableOptionValue { name: crate::parser::option_of(&ix.method, &p.name), ..p.clone() })
+                    .collect();
+                options_of(st, &ix.method, &named)?;
+                let given: Vec<(String, Option<Value>)> = named.iter().map(|o| (o.name.clone(), o.value.as_ref().map(value_of))).collect();
+                self.db.altered_index(&ix.name, &given, true)
+            }
+            IndexMaintenance::MergeDelta => {
+                let index = Arc::clone(st.index_of(&ix.name)?);
+                let _turn = self.db.background().maintenance_turn.take("maintenance")?;
+                // Bounded, so an index that always finds more to do ends.
+                for _ in 0..MOST_MERGE_ROUNDS {
+                    if !index.maintain()? {
+                        break;
+                    }
+                }
+                Ok(())
+            }
+            IndexMaintenance::Load => st.index_of(&ix.name)?.reside(true),
+            IndexMaintenance::Unload => st.index_of(&ix.name)?.reside(false),
+        }
     }
 
     /// [ISO/IEC 9075:1992 §11.10 AR1] Its identifier owns the schema of

@@ -90,11 +90,7 @@ impl Plan {
                 if *reverse { " backward" } else { "" }
             ),
             Plan::Filter { detail, est: None, .. } => writeln!(out, "{pad}Filter {detail}"),
-            Plan::Nearest(read) => writeln!(
-                out,
-                "{pad}NearestScan {} using {} [{}]: {}  (first={}, cost={:.1}; certified bounds or scan)",
-                read.table, read.index, read.method, read.detail, read.first, read.cost
-            ),
+            Plan::Nearest(read) => writeln!(out, "{pad}{}", nearest_line(read)),
             Plan::Filter { detail, est: Some(est), .. } => writeln!(out, "{pad}Filter {detail}  (est. rows={est:.0})"),
             Plan::Product { .. } => writeln!(out, "{pad}NestedLoop (Cartesian product)"),
             Plan::HashJoin { detail, .. } => writeln!(out, "{pad}HashJoin {detail}"),
@@ -175,6 +171,16 @@ fn scan_order(order: &[usize], backward: bool) -> String {
 }
 
 // Unit tests: a plan shown is described, one run is not (RULES.md R-TEST-1).
+/// The line of a nearest read: its index, measure and cost, and how it
+/// reads, certified or approximate (R13.5).
+fn nearest_line(read: &super::NearestRead) -> String {
+    let how = read.approximate.as_ref().map_or_else(|| "certified bounds or scan".to_owned(), super::ApproximateRead::render);
+    format!(
+        "NearestScan {} using {} [{}]: {}  (first={}, cost={:.1}; {how})",
+        read.table, read.index, read.method, read.detail, read.first, read.cost
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,3 +196,4 @@ mod tests {
         assert!(Shown::of(None).names().is_none());
     }
 }
+

@@ -25,6 +25,8 @@
 //! A table whose engine leaves concurrency to the coordinator keeps no
 //! versions: its index is built under the table's exclusive lock.
 
+mod accuracy;
+
 use std::sync::Arc;
 
 use super::{Database, State, api, qualified_name};
@@ -35,6 +37,7 @@ use crate::log::record::Change;
 use crate::storage::{TableOption, chosen, needs_rebuild};
 use crate::txn::{Concurrency, LockMode, TableLock, Timestamp, Transactions, Txn};
 use crate::value::Value;
+pub use accuracy::AccuracyReport;
 
 /// \[EXTENSION\] An index to make: its name, its table, its columns by
 /// name, its method, the method's options it sets (RULES.md D41), and
@@ -252,7 +255,8 @@ impl Database {
         // session's instance makes its entries, in memory, of its own rows,
         // once no transaction has them open (`db/temporary/storage.rs`).
         if current.catalog.table(qn).is_some_and(|t| t.temporary.is_some()) {
-            if ![BTREE_METHOD, HASH_METHOD, RTREE_METHOD, FULLTEXT_METHOD].contains(&spec.method.as_str()) {
+            let vector = crate::index::vector::is_vector_method(&spec.method);
+            if !vector && ![BTREE_METHOD, HASH_METHOD, RTREE_METHOD, FULLTEXT_METHOD].contains(&spec.method.as_str()) {
                 return Err(SqlError::new(
                     Code::SyntaxRule,
                     format!(
@@ -358,6 +362,17 @@ impl Database {
     /// SQLCODE -910 if there is no such index; -103 for an option not
     /// declared, or a value not of its kind; as `create_index`, building it.
     pub(super) fn alter_index(&self, name: &str, given: &[(String, Option<Value>)]) -> Result<()> {
+        self.altered_index(name, given, false)
+    }
+
+    /// \[EXTENSION\] As `alter_index`, the index built again whatever
+    /// changes, of `rebuilt` (ALTER INDEX REBUILD, the vector design
+    /// document §10.6).
+    ///
+    /// # Errors
+    ///
+    /// As `alter_index`.
+    pub(super) fn altered_index(&self, name: &str, given: &[(String, Option<Value>)], rebuilt: bool) -> Result<()> {
         let current = self.snapshot()?;
         let ix = current.catalog.index(name).cloned().ok_or_else(|| api(format!("[EXTENSION] no index {name}")))?;
         let declared = current.index_options_of(&ix.method);
@@ -366,7 +381,7 @@ impl Database {
             options = chosen(&ix.method, (&declared, &options), (option, value.as_ref()))?;
         }
         let change = Change::AlterIndex { name: name.to_owned(), options: options.clone() };
-        if needs_rebuild(&declared, &ix.options, &options) {
+        if rebuilt || needs_rebuild(&declared, &ix.options, &options) {
             let built = format!("{name} (rebuilt)");
             if current.catalog.index(&built).is_some() {
                 return fail(Code::Api, format!("[EXTENSION] index {name} is built again as {built}, the name of another index"));
