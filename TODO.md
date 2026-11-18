@@ -96,12 +96,11 @@ is kept consistent under concurrent change and recovery as the B-tree is.
   measure overlap and space after sustained updates as well as fresh loads.
 - Adjacency held for a graph's edges, so a path query follows an edge
   without a join's search. Graph queries need it.
-- XML indexes (RULES.md D106): `xml_path`, `xml_value`, `xml_property`
-  and `xml_primary` are built, answer lookups of paths and values, and
-  the primary answers queries with filters of their steps; the planner
-  reads them for XMLEXISTS, XMLQUERY NULL ON EMPTY IS NOT NULL and
-  XMLTABLE of a path and the predicates of its steps, of columns of every
-  XML type. Left: paths of other axes, which no lookup takes yet.
+- XML indexes (RULES.md D106): a last step of the following, preceding
+  or ancestor axes, of a name no step before tests, is read by lookups
+  and each row checked. The primary could answer it exactly by comparing
+  a row's nodes of two paths in ORDPATH order [Pal et al. §2.2], a join
+  its answers, a seek and an anchor's range, do not make yet.
 
 ---
 
@@ -113,17 +112,7 @@ CONFORMANCE.md one by one as they are done.
 
 ### XML
 
-SQL/XML, ISO/IEC 9075-14, written from its 2006 draft as SQL/PSM was,
-and the W3C texts it names: XML 1.0 and 1.1, Namespaces, the XQuery 1.0
-data model, XQuery 1.0, its functions and operators, its serialization,
-and XML Schema 1.0. Each series below stands alone, by the draft's
-features.
-
-- XQuery: XMLQUERY, XMLEXISTS and XMLTABLE evaluate every expression of
-  XQuery 1.0 (`src/xquery.rs`), and call every function of XQuery 1.0
-  Functions and Operators (`src/xquery/library.rs`). Left: more of a
-  query's shapes answered by the XML indexes ([Index
-  structures](#index-structures)).
+Nothing is open.
 
 ### Full text
 

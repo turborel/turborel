@@ -129,17 +129,14 @@ fn a_querys_lookups_are_its_own_and_its_filters() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §8.4 GR2] RULES.md
 /// D106: a query of any other shape reduces to none: a comparison, whose
-/// value is never empty; a step of another axis or a kind test; a
-/// positional predicate, or one of `or`; a wildcard of a part of a name;
+/// value is never empty; a step of a kind test not last; a positional
+/// predicate, or one of `or`; a wildcard of a part of a name;
 /// a prolog's variable or function; `/` alone, `.`, or a path ending at
 /// `//`.
 #[test]
 fn other_queries_reduce_to_none() {
     for text in [
         "//item = 'pen'",
-        "//item/..",
-        "//item/text()",
-        "//item/following-sibling::x",
         "//item[1]",
         "//p:*",
         "declare namespace p = 'urn:p'; //p:*",
@@ -161,8 +158,67 @@ fn other_queries_reduce_to_none() {
         "//item[. is 1]",
         "//item[a or b]",
         "//item[a[b]]",
+        "//item/text()/x",
+        "//comment()",
     ] {
         let reduced = compile_with(text, &[]).ok().and_then(|q| q.reduced()).map(|r| r.query.to_string());
         assert_eq!(reduced, None, "{text}");
+    }
+}
+
+/// Verifies: [EXTENSION] [XQuery §3.2.1.1, §3.2.1.2, §3.2.4] [Pal et al.
+/// §2.2, §3.1.2] RULES.md D106: steps of other axes reduce: `self` of a
+/// name narrows the step before's name, or from the item after `//` is
+/// `descendant`, as is `descendant-or-self` of a name from the item;
+/// `element()` and `attribute()` of a name are its name test; `parent`
+/// takes back a child or attribute step, a condition of the step before,
+/// and after a descendant step, last, is the path before; each exactly;
+/// a last `ancestor` or `ancestor-or-self` of a name a step reaches is
+/// the path, exactly, of another, the path and an element of that name
+/// below the item, not exactly, as are `following`, `preceding` and their
+/// siblings of a name; a last kind test is the path before, not exactly.
+#[test]
+fn steps_of_other_axes_reduce() {
+    for (text, lookup, exact) in [
+        ("/order/self::order/item", "/order/item", true),
+        ("//*/self::item[name]", "//item/name", true),
+        ("//self::item", "//item", true),
+        ("descendant-or-self::item/@id", "//item/@id", true),
+        ("/order/element(item)/attribute::attribute(id)", "/order/item/@id", true),
+        ("/order/item/..", "/order/item", true),
+        ("/order/item/../note", "/order[item]/note", true),
+        ("/order/item[@id = '1']/../note", "/order[item/@id = '1']/note", true),
+        ("/order/item/@id/parent::item", "/order/item/@id", true),
+        ("/order/item/parent::order/note", "/order[item]/note", true),
+        ("//item/..", "//item", true),
+        ("/order/item/ancestor::order", "/order/item", true),
+        ("/order/item/ancestor-or-self::item", "/order/item", true),
+        ("/order/item/ancestor::*", "/order/item", true),
+        ("//item/@id/ancestor::node()", "//item/@id", true),
+        ("//item/ancestor::order", ".[.//order]//item", false),
+        ("/order/ancestor::*", ".[.//*]/order", false),
+        ("//item/following-sibling::note", ".[.//note]//item", false),
+        ("//item/preceding::*", ".[.//*]//item", false),
+        ("//item/following::text()", "//item", false),
+        ("//item/text()", "//item", false),
+        ("/order/item/node()", "/order/item", false),
+    ] {
+        let reduced = exactly(text).map(|(q, _, e, _)| (q, e));
+        assert_eq!(reduced, Some((lookup.to_owned(), exact)), "{text}");
+    }
+    for text in [
+        "/order/self::item",
+        "/self::order",
+        "/order/self::node()//self::item",
+        "/..",
+        "/order/parent::x",
+        "/order/item[a][b]/..",
+        "//item/../note",
+        "//item/ancestor::order/x",
+        "//item/following::x[1]",
+        "/order/item/@id/x/..",
+        "//item/element(x, xs:string)",
+    ] {
+        assert_eq!(exactly(text), None, "{text}");
     }
 }

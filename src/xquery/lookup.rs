@@ -6,7 +6,9 @@
 //!
 //! A query reduces if its body is one path [XQuery §3.2] from the context
 //! item or `/` whose steps `steps.rs` takes: of the child, descendant and
-//! attribute axes over names, `*` or `node()`, `//`, and of the self axis.
+//! attribute axes over names or `*`, `//`, and of the self and parent
+//! axes, and a last step of the ancestor, following and preceding axes
+//! or of a kind test, its lookup then not exact.
 //! Each step's predicates are conditions of its node, their conjuncts
 //! [XQuery §3.6] each a relative path of such steps, or a general or value
 //! comparison of one, or of `.`, with a literal [XQuery §3.5.1, §3.5.2]

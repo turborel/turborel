@@ -3,7 +3,8 @@
 //! joined by AND, each a filter whose lookup's rows the index's rows are
 //! among, the rows of each lookup intersected; a predicate that may raise
 //! an error read by the lookups that give every row it raises of; the
-//! primary answering a query whose every filter's anchor is fixed.
+//! primary answering a query whose every filter's anchor is fixed; and
+//! steps of other axes.
 
 use turborel::db::{Database, Session};
 use turborel::error::SqlState;
@@ -162,6 +163,55 @@ fn a_predicate_that_may_raise_is_read_by_its_lookup() {
         assert_eq!(error.sqlstate(), SqlState::XQUERY_ERROR, "{method}: {error}");
         assert!(error.msg.contains("err:FORG0001"), "{error}");
         a.rollback().unwrap();
+        a.run("DROP INDEX I").unwrap();
+    }
+}
+
+/// Conditions of T's rows of steps of other axes, each with what EXPLAIN
+/// shows of the XML_PATH index's query of it, and whether XML_PRIMARY
+/// answers it.
+const AXES: [(&str, &str, bool); 9] = [
+    ("XMLEXISTS('/order/item/../customer[@tier = \"gold\"]' PASSING BY REF X)", "/order[item]/customer/@tier = 'gold'", true),
+    ("XMLEXISTS('/order/item/gift/ancestor::item' PASSING BY REF X)", "/order/item/gift", true),
+    ("XMLEXISTS('//*/self::gift' PASSING BY REF X)", "//gift", true),
+    (
+        "XMLEXISTS('/order[@id = \"35\"]/item[name = \"cap\"]/@price/..' PASSING BY REF X)",
+        "/order[@id = '35']/item[@price]/name = 'cap'",
+        true,
+    ),
+    ("XMLEXISTS('//gift/..' PASSING BY REF X)", "//gift", true),
+    ("XMLEXISTS('//gift/ancestor::order' PASSING BY REF X)", ".[.//order]//gift", false),
+    ("XMLEXISTS('//name/following-sibling::gift' PASSING BY REF X)", ".[.//gift]//name", false),
+    ("XMLEXISTS('//gift/preceding::customer' PASSING BY REF X)", ".[.//customer]//gift", false),
+    ("XMLEXISTS('//item[gift]/name/text()' PASSING BY REF X)", "//item[gift]/name", false),
+];
+
+/// Verifies: [EXTENSION] [XQuery §3.2.1.1] [Pal et al. §2.2, §3.1.2]
+/// RULES.md D34, D106: of each XML index method, every condition of steps
+/// of the self, parent, ancestor, following and preceding axes, and of a
+/// kind test, gives the rows a full read gives, the index read for it,
+/// EXPLAIN showing its query; XML_PRIMARY answers those the path and its
+/// predicates select exactly, and checks the rows of the others.
+#[test]
+fn other_axes_give_the_rows_of_a_full_read() {
+    let db = database();
+    let a = db.session("A");
+    let full: Vec<Vec<String>> = AXES.iter().map(|(c, _, _)| keys(&a, c)).collect();
+    assert!(full.iter().all(|k| !k.is_empty()), "{full:?}");
+    a.commit().unwrap();
+    for method in METHODS {
+        a.run(&format!("CREATE INDEX I ON T (X) USING {method}")).unwrap();
+        for ((condition, shown, answered), expected) in AXES.iter().zip(&full) {
+            assert_eq!(&keys(&a, condition), expected, "{method}: {condition}");
+            let found = plan(&a, &format!("SELECT K FROM T WHERE {condition}"));
+            if method == "XML_PATH" {
+                assert!(found.contains(&format!("using I [xml_path]: T.X has {shown}")), "{condition}: {found}");
+            }
+            if method == "XML_PRIMARY" {
+                assert_eq!(found.contains("answered by the index"), *answered, "{condition}: {found}");
+            }
+        }
+        a.commit().unwrap();
         a.run("DROP INDEX I").unwrap();
     }
 }

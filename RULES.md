@@ -4726,7 +4726,16 @@ no document. Every lookup gives such a value's row, so it hides none, but
 the query of such a column is neither free of errors nor answered by an
 index (`functions/xml/query.rs`). The query is reduced to an index's query
 (`xquery/lookup.rs`) if it is one path of child, descendant and
-attribute steps over names or `*`, each step of predicates whose
+attribute steps over names or `*` (`lookup/steps.rs`): `self` of a name
+narrows the step before's; `parent` takes back a child or attribute step
+as a condition of the step before, as `a/b/..` is `a[b]`, after a
+descendant step, last, the path before; a last `ancestor` of a name a
+step before tests, the path, exactly; of another, and `following`,
+`preceding` and their siblings of a name, the path and an element of
+that name below the item, and a last kind test the path before, none of
+them exactly, as the order of nodes outside a node's anchors is no
+range of ORDPATHs a seek or an anchor reads [Pal et al. §2.2]. Each step
+may have predicates whose
 conjuncts [XQuery §3.6] are each a relative path of such steps, or its
 comparison, or `.`'s, with a literal. A general comparison with a number,
 or with a string by the codepoint collation, is kept; any other is left

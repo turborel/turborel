@@ -917,7 +917,11 @@ keeps a row only if a query's value of the row's column is not empty:
 The query's context item is the column, of any XML type, passed BY REF
 or BY VALUE, and nothing else is passed. Its
 body is one path from `.` or `/` of child, descendant (`//`) and
-attribute steps over names or `*`. Any step may have predicates, each a
+attribute steps over names or `*`, among which `self` of a name and
+`parent` (`..`) of a child or attribute step may stand, and as its last
+step `ancestor`, `ancestor-or-self`, `following`, `following-sibling`,
+`preceding` or `preceding-sibling` of a name, or a kind test such as
+`text()`. Any step may have predicates, each a
 relative path of such steps, or a comparison of one, or of `.` of the
 last step, with a literal, or several of these joined by `and`, as in
 `/order[@no = "17"][customer]/item[qty = "2" and name]`. A comparison by
@@ -1043,6 +1047,42 @@ OK
  Project PARCELS.ID
    IndexScan ANN.PARCELS using PARCEL_NODES [xml_primary]: PARCELS.LABEL has /parcel[to = '398']/fragile, answered by the index  (est. rows=1, cost=60.5)
 (12 rows)
+```
+
+A parent step is a predicate of the step before it, which the primary
+answers; a predicate compared with a number is read by its own lookup,
+each row it gives checked:
+
+```sql
+SELECT ID FROM PARCELS WHERE XMLEXISTS('/parcel/fragile/../to[. = "397"]' PASSING BY REF LABEL);
+EXPLAIN SELECT ID FROM PARCELS WHERE XMLEXISTS('/parcel/fragile/../to[. = "397"]' PASSING BY REF LABEL);
+SELECT COUNT(*) FROM PARCELS WHERE XMLEXISTS('/parcel[to > 398][fragile]' PASSING BY REF LABEL);
+```
+
+```
+           ID
+--------------
+          397
+(1 row)
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project PARCELS.ID
+   Filter XMLEXISTS(PARCELS.LABEL)
+     Scan ANN.PARCELS
+ -- rules: none
+ -- optimized:
+ Project PARCELS.ID
+   Filter XMLEXISTS(PARCELS.LABEL)
+     Scan ANN.PARCELS
+ -- physical:
+ Project PARCELS.ID
+   IndexScan ANN.PARCELS using PARCEL_NODES [xml_primary]: PARCELS.LABEL has /parcel[fragile]/to = '397', answered by the index  (est. rows=1, cost=60.5)
+(12 rows)
+
+----------------------
+                    2
+(1 row)
 ```
 
 ## XML options of a scope

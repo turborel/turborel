@@ -32,6 +32,18 @@ impl Branch {
         Branch { pattern, comparisons: Vec::new(), raises: false, dropped: false }
     }
 
+    /// The branch of the path of `self`, of no comparison, then `below`'s
+    /// path from its node, and its comparisons; none if `self` ends at an
+    /// attribute, below which no path goes.
+    pub(super) fn then(self, below: Branch) -> Option<Branch> {
+        if self.pattern.target == Target::Attribute && !below.pattern.steps.is_empty() {
+            return None;
+        }
+        let target = if below.pattern.steps.is_empty() { self.pattern.target } else { below.pattern.target };
+        let steps = self.pattern.steps.into_iter().chain(below.pattern.steps).collect();
+        Some(Branch { pattern: PathPattern { steps, target }, ..below })
+    }
+
     /// Whether its path has steps, each a child step.
     pub(super) fn child_steps(&self) -> bool {
         !self.pattern.steps.is_empty() && self.pattern.steps.iter().all(|s| s.axis == Axis::Child)

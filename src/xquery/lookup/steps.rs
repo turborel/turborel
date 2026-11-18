@@ -1,21 +1,48 @@
 //! \[EXTENSION\] RULES.md D106: a path's steps taken as an index's
-//! [XQuery §3.2.1]: each step of the child, descendant or attribute axis
-//! over a name or `*` a step of the lookup, `descendant-or-self::node()`
-//! (`//`) making the next a descendant step [XQuery §3.2.4], and
-//! `self::node()` and `.` the node before; each with the conditions of its
-//! node, its predicates (`conditions.rs`).
+//! [XQuery §3.2.1], each with the conditions of its node, its predicates
+//! (`conditions.rs`):
+//!
+//! - a step of the child, descendant or attribute axis, of a name, `*`,
+//!   or `element()` or `attribute()` of a name or none and of no type, is
+//!   a step of the lookup; `descendant-or-self::node()` (`//`) makes the
+//!   next a descendant step [XQuery §3.2.4], and of the item, a document
+//!   node, `descendant-or-self` of a name is `descendant` of it;
+//! - `self::node()` and `.` are the node before; `self` of a name narrows
+//!   the name the step before tests, none if they differ;
+//! - `parent` of a node a child or attribute step selects is the node of
+//!   the step before, which has such a child: that step is taken back, a
+//!   condition of the step before, as `a/b/..` is `a[b]`, its name tested
+//!   there [Pal et al. §2.2, §3.1.2];
+//! - as the last step, `ancestor` or `ancestor-or-self` of a name a step
+//!   it reaches tests, or of any name and a step it reaches, selects a
+//!   node whenever the path before does, so the path is the lookup,
+//!   exactly; of another name, a node only if the value has an element of
+//!   that name, a condition of the item, though not exactly; so do
+//!   `following`, `following-sibling`, `preceding` and `preceding-sibling`
+//!   of a name; and of a kind test, or a last step of the child or
+//!   descendant axis of `text()`, `comment()`, `node()` or
+//!   `processing-instruction()`, a node only if the path before selects
+//!   one, its lookup, not exactly.
+//!
+//! The order of nodes the last kinds of step need is the ORDPATHs' the
+//! primary keeps [Pal et al. §2.2], but a node's following or preceding
+//! nodes are neither below an anchor of it, the one range of ORDPATHs a
+//! filter reads, nor of one path, the one seek a node is found by: the
+//! primary answers none of them, and each row given is checked.
 
 use super::super::plan::{Axis, Namespace, Op, PathOp, StepOp, StepTest};
-use super::super::types::NodeKind;
+use super::super::types::{ElementKind, NodeKind};
 use super::conditions::{Branch, branches};
-use crate::index::xml::{Axis as Along, Step, Target};
+use crate::index::xml::{Axis as Along, PathPattern, Step, Target};
 use crate::xml::QName;
 
-/// A condition of a node: a predicate as written.
+/// A condition of a node.
 #[derive(Debug)]
 pub(super) enum Condition<'a> {
-    /// A predicate of a step.
+    /// A predicate of a step, as written.
     Written(&'a Op),
+    /// A step taken back by a `parent` step, and what is below it.
+    Made(Branch),
 }
 
 impl Condition<'_> {
@@ -23,6 +50,7 @@ impl Condition<'_> {
     pub(super) fn branches(self) -> Option<Vec<Branch>> {
         match self {
             Condition::Written(op) => branches(op),
+            Condition::Made(branch) => Some(vec![branch]),
         }
     }
 }
@@ -55,6 +83,21 @@ impl<'a> Twig<'a> {
     }
 }
 
+/// A step to take: its axis, its node test and its predicates; whether a
+/// descendant step comes next, of `//` before it; whether it is the
+/// path's last.
+#[derive(Clone, Copy)]
+struct Stepping<'s, 'a> {
+    axis: Axis,
+    test: &'s StepTest,
+    own: &'a [Op],
+    descend: bool,
+    last: bool,
+}
+
+/// The name a step tests: an expanded QName, or none of any.
+struct Tested(Option<QName>);
+
 /// `path`'s steps taken, from the context item or `/`, which of a value's
 /// one node is that node; none if a step is of another kind.
 pub(super) fn twig(path: &PathOp) -> Option<Twig<'_>> {
@@ -72,66 +115,216 @@ pub(super) fn twig(path: &PathOp) -> Option<Twig<'_>> {
                 made.current().extend(own.iter().map(Condition::Written));
             }
             StepOp::Filter(..) => return None,
-            StepOp::Axis(axis, test, own) => taken(&mut made, (*axis, test, own), (&mut descend, last))?,
+            StepOp::Axis(axis, test, own) => {
+                descend = taken(&mut made, Stepping { axis: *axis, test, own, descend, last })?;
+            }
         }
     }
     (!descend).then_some(made)
 }
 
-/// `made` with the step of `axis`, `test` and predicates `own` taken,
-/// `descend` if a descendant step comes next, `last` if it is the last;
+/// `made` with `stepping` taken; whether a descendant step comes next;
 /// none if it cannot be taken.
-fn taken<'a>(made: &mut Twig<'a>, (axis, test, own): (Axis, &StepTest, &'a [Op]), (descend, last): (&mut bool, bool)) -> Option<()> {
-    let any_node = matches!(test, StepTest::Kind(NodeKind::Any));
-    match axis {
-        Axis::SelfNode => {
-            if !any_node || (*descend && !own.is_empty()) {
-                return None;
-            }
-            made.current().extend(own.iter().map(Condition::Written));
-            Some(())
-        }
+fn taken<'a>(made: &mut Twig<'a>, stepping: Stepping<'_, 'a>) -> Option<bool> {
+    let any_node = matches!(stepping.test, StepTest::Kind(NodeKind::Any));
+    match stepping.axis {
+        Axis::SelfNode => self_step(made, stepping, any_node),
         Axis::DescendantOrSelf => {
-            if !any_node || last || !own.is_empty() {
-                return None;
+            if any_node && !stepping.last && stepping.own.is_empty() {
+                return Some(true);
             }
-            *descend = true;
-            Some(())
+            from_item(made, stepping).map(|()| false)
         }
-        Axis::Child | Axis::Descendant | Axis::Attribute => {
-            if made.target == Target::Attribute {
-                return None;
-            }
-            let along = if *descend || axis == Axis::Descendant { Along::Descendant } else { Along::Child };
-            if axis == Axis::Attribute {
-                made.target = Target::Attribute;
-            }
-            made.steps
-                .push(Taken { step: Step { axis: along, name: named(test)?.0 }, conditions: own.iter().map(Condition::Written).collect() });
-            *descend = false;
-            Some(())
-        }
-        Axis::FollowingSibling
-        | Axis::Following
-        | Axis::Parent
-        | Axis::Ancestor
-        | Axis::PrecedingSibling
-        | Axis::Preceding
-        | Axis::AncestorOrSelf => None,
+        Axis::Child | Axis::Descendant | Axis::Attribute => forward(made, stepping).map(|()| false),
+        Axis::Parent => parent(made, stepping).map(|()| false),
+        Axis::Ancestor | Axis::AncestorOrSelf => ancestor(made, stepping).map(|()| false),
+        Axis::FollowingSibling | Axis::Following | Axis::PrecedingSibling | Axis::Preceding => elsewhere(made, stepping).map(|()| false),
     }
 }
 
-/// The name a step tests: an expanded QName, or none of `*`.
-struct Tested(Option<QName>);
-
-/// The name `test` tests; none if it is a kind test, or a wildcard of a
-/// part of a name.
-fn named(test: &StepTest) -> Option<Tested> {
-    let StepTest::Name(namespace, local) = test else { return None };
-    match (namespace, local) {
-        (Namespace::Any, None) => Some(Tested(None)),
-        (Namespace::Absent, Some(local)) => Some(Tested(Some(QName { prefix: None, uri: None, local: local.clone() }))),
-        (Namespace::Uri(uri), Some(local)) => Some(Tested(Some(QName { prefix: None, uri: Some(uri.clone()), local: local.clone() }))),
-        (Namespace::Any, Some(_)) | (Namespace::Absent | Namespace::Uri(_), None) => None,
+/// A step of the self axis: `self::node()` the node before, its
+/// predicates the node's; `self` of a name narrowing it.
+fn self_step<'a>(made: &mut Twig<'a>, stepping: Stepping<'_, 'a>, any_node: bool) -> Option<bool> {
+    if !any_node {
+        return narrowed(made, stepping).map(|()| false);
     }
+    if stepping.descend && !stepping.own.is_empty() {
+        return None;
+    }
+    made.current().extend(stepping.own.iter().map(Condition::Written));
+    Some(stepping.descend)
+}
+
+/// The name a step of `axis` tests by `test`: of a name test, or a kind
+/// test of an element, or along the attribute axis of an attribute, of a
+/// name or none and of no type; none if it is another, or a wildcard of a
+/// part of a name.
+fn named(axis: Axis, test: &StepTest) -> Option<Tested> {
+    match test {
+        StepTest::Name(namespace, local) => match (namespace, local) {
+            (Namespace::Any, None) => Some(Tested(None)),
+            (Namespace::Absent, Some(local)) => Some(Tested(Some(QName { prefix: None, uri: None, local: local.clone() }))),
+            (Namespace::Uri(uri), Some(local)) => Some(Tested(Some(QName { prefix: None, uri: Some(uri.clone()), local: local.clone() }))),
+            (Namespace::Any, Some(_)) | (Namespace::Absent | Namespace::Uri(_), None) => None,
+        },
+        StepTest::Kind(NodeKind::Element(kind)) => untyped(kind).filter(|_| axis != Axis::Attribute),
+        StepTest::Kind(NodeKind::Attribute(kind)) => {
+            (axis == Axis::Attribute && kind.annotation.is_none()).then(|| Tested(kind.name.clone()))
+        }
+        StepTest::Kind(NodeKind::Any | NodeKind::Document(_) | NodeKind::Pi(_) | NodeKind::Comment | NodeKind::Text) => None,
+    }
+}
+
+/// The name an element test of `kind` tests, if it tests a name alone.
+fn untyped(kind: &ElementKind) -> Option<Tested> {
+    (kind.annotation.is_none() && kind.substitutes.is_empty()).then(|| Tested(kind.name.clone()))
+}
+
+/// `made` with a step of the child, descendant or attribute axis taken; a
+/// last one of a kind test of no name the path before's, not exactly.
+fn forward<'a>(made: &mut Twig<'a>, stepping: Stepping<'_, 'a>) -> Option<()> {
+    if made.target == Target::Attribute {
+        return None;
+    }
+    let Some(Tested(name)) = named(stepping.axis, stepping.test) else { return trailing(made, stepping) };
+    let along = if stepping.descend || stepping.axis == Axis::Descendant { Along::Descendant } else { Along::Child };
+    if stepping.axis == Axis::Attribute {
+        made.target = Target::Attribute;
+    }
+    made.steps.push(Taken { step: Step { axis: along, name }, conditions: stepping.own.iter().map(Condition::Written).collect() });
+    Some(())
+}
+
+/// A last step of `text()`, `comment()`, `node()` or
+/// `processing-instruction()`, of no predicate: a node it selects is of a
+/// node the path before selects, so the path before is its lookup, not
+/// exactly.
+fn trailing(made: &mut Twig<'_>, stepping: Stepping<'_, '_>) -> Option<()> {
+    let StepTest::Kind(NodeKind::Any | NodeKind::Pi(_) | NodeKind::Comment | NodeKind::Text) = stepping.test else { return None };
+    if !stepping.last || !stepping.own.is_empty() || made.steps.is_empty() || stepping.axis == Axis::Attribute {
+        return None;
+    }
+    made.exact = false;
+    Some(())
+}
+
+/// `descendant-or-self` of a name, of the item, a document node, which
+/// is no element: `descendant` of it.
+fn from_item<'a>(made: &mut Twig<'a>, stepping: Stepping<'_, 'a>) -> Option<()> {
+    if !made.steps.is_empty() || !made.root.is_empty() || matches!(stepping.test, StepTest::Kind(NodeKind::Any)) {
+        return None;
+    }
+    forward(made, Stepping { axis: Axis::Descendant, ..stepping })
+}
+
+/// `self` of a name: the name the step before tests narrowed to it, its
+/// predicates the step's; after `//` of the item, `descendant` of it;
+/// none of the item, of an attribute, or of names apart.
+fn narrowed<'a>(made: &mut Twig<'a>, stepping: Stepping<'_, 'a>) -> Option<()> {
+    if stepping.descend {
+        return from_item(made, Stepping { axis: Axis::Descendant, descend: false, ..stepping });
+    }
+    let Tested(name) = named(Axis::Child, stepping.test)?;
+    if made.target == Target::Attribute {
+        return None;
+    }
+    let taken = made.steps.last_mut()?;
+    taken.step.name = both(taken.step.name.take(), name)?.0;
+    taken.conditions.extend(stepping.own.iter().map(Condition::Written));
+    Some(())
+}
+
+/// The name both tests of `one` and `other` pass, none of either of any;
+/// none if they differ.
+fn both(one: Option<QName>, other: Option<QName>) -> Option<Tested> {
+    match (one, other) {
+        (None, other) => Some(Tested(other)),
+        (Some(one), None) => Some(Tested(Some(one))),
+        (Some(one), Some(other)) => one.same(&other).then_some(Tested(Some(one))),
+    }
+}
+
+/// `parent`: the last step, a child or attribute step, taken back, a
+/// condition of the step before, whose name the parent's test narrows;
+/// none of a descendant step, of the item, or of a step taken back of
+/// more than one condition.
+fn parent<'a>(made: &mut Twig<'a>, stepping: Stepping<'_, 'a>) -> Option<()> {
+    if stepping.descend {
+        return None;
+    }
+    let name = if matches!(stepping.test, StepTest::Kind(NodeKind::Any)) { None } else { Some(named(Axis::Child, stepping.test)?.0) };
+    let popped = made.steps.pop()?;
+    if popped.step.axis != Along::Child {
+        // A node a descendant step selects has a parent, an element or the
+        // item, so a last `..` of it selects a node exactly when the path
+        // before does.
+        let alone = stepping.last && name.is_none() && stepping.own.is_empty();
+        made.steps.push(popped);
+        return alone.then_some(());
+    }
+    let mut branch = Branch::of(PathPattern { steps: vec![popped.step], target: made.target });
+    made.target = Target::Element;
+    let mut conditions = popped.conditions.into_iter();
+    if let Some(below) = conditions.next() {
+        let [below] = <[Branch; 1]>::try_from(below.branches()?).ok()?;
+        branch = branch.then(below)?;
+    }
+    if conditions.next().is_some() {
+        return None;
+    }
+    if let Some(name) = name {
+        let taken = made.steps.last_mut()?;
+        taken.step.name = both(taken.step.name.take(), name)?.0;
+    }
+    let current = made.current();
+    current.push(Condition::Made(branch));
+    current.extend(stepping.own.iter().map(Condition::Written));
+    Some(())
+}
+
+/// A last step of `ancestor` or `ancestor-or-self`, of no predicate: of
+/// `node()`, of a name a step it reaches tests, or of any name and a step
+/// it reaches, the path alone, exactly; of another name, the path and the
+/// condition of the item that an element of that name is below it, not
+/// exactly.
+fn ancestor(made: &mut Twig<'_>, stepping: Stepping<'_, '_>) -> Option<()> {
+    if !stepping.last || stepping.descend || !stepping.own.is_empty() || made.steps.is_empty() {
+        return None;
+    }
+    if matches!(stepping.test, StepTest::Kind(NodeKind::Any)) {
+        return Some(());
+    }
+    let Tested(name) = named(Axis::Child, stepping.test)?;
+    // An attribute is no element, and its own element is an ancestor of it.
+    let own = stepping.axis == Axis::AncestorOrSelf && made.target == Target::Element;
+    let reached = made.steps.len().saturating_sub(usize::from(!own));
+    let tests = |taken: &Taken<'_>| name.as_ref().is_none_or(|n| taken.step.name.as_ref().is_some_and(|t| t.same(n)));
+    if !made.steps.iter().take(reached).any(tests) {
+        below_item(made, name);
+    }
+    Some(())
+}
+
+/// A last step of `following`, `preceding` or their siblings, of no
+/// predicate: of a name, the path and the condition of the item that an
+/// element of that name is below it; of a kind test, the path; neither
+/// exactly.
+fn elsewhere(made: &mut Twig<'_>, stepping: Stepping<'_, '_>) -> Option<()> {
+    if !stepping.last || stepping.descend || !stepping.own.is_empty() || made.steps.is_empty() {
+        return None;
+    }
+    let StepTest::Name(..) = stepping.test else {
+        made.exact = false;
+        return Some(());
+    };
+    below_item(made, named(Axis::Child, stepping.test)?.0);
+    Some(())
+}
+
+/// `made`, its item's condition that an element named `name`, or any, is
+/// below it added, not exactly.
+fn below_item(made: &mut Twig<'_>, name: Option<QName>) {
+    made.exact = false;
+    let pattern = PathPattern { steps: vec![Step { axis: Along::Descendant, name }], target: Target::Element };
+    made.root.push(Condition::Made(Branch::of(pattern)));
 }

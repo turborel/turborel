@@ -3,15 +3,15 @@
 //! predicates, general comparisons, order by, boundary whitespace,
 //! copy-namespaces, circular variables, cancellation, arithmetic,
 //! dates, constructors, NULL ON EMPTY, passing BY VALUE and XMLTABLE's
-//! defaults; the reduction of a query to an XML index's lookup and the
-//! planner's reading of one; and the user-defined atomic types of values,
-//! as validated, cast, stored and matched (RULES.md R-TEST-9, D15, D44,
-//! D106).
+//! defaults; the reduction of a query to an XML index's lookup, its
+//! steps of other axes among it, and the planner's reading of one; and
+//! the user-defined atomic types of values, as validated, cast, stored and
+//! matched (RULES.md R-TEST-9, D15, D44, D106).
 
 use super::{Mutation, Package};
 
 /// Each mechanism broken alone, and the tests that fail.
-pub const XQUERY_EVAL: [Mutation; 32] = [
+pub const XQUERY_EVAL: [Mutation; 37] = [
     Mutation {
         name: "xquery-depth-bound",
         package: Package::Core,
@@ -170,8 +170,8 @@ pub const XQUERY_EVAL: [Mutation; 32] = [
         package: Package::Core,
         breaks: "a step after `//` is reduced to a child step",
         file: "src/xquery/lookup/steps.rs",
-        original: "let along = if *descend || axis == Axis::Descendant { Along::Descendant } else { Along::Child };",
-        replacement: "let along = if axis == Axis::Descendant { Along::Descendant } else { Along::Child };",
+        original: "let along = if stepping.descend || stepping.axis == Axis::Descendant { Along::Descendant } else { Along::Child };",
+        replacement: "let along = if stepping.axis == Axis::Descendant { Along::Descendant } else { Along::Child };",
         integration: &["xml_index_plans::each_index_gives_the_rows_of_a_full_read"],
         unit: &["xquery::lookup::tests::paths_reduce"],
     },
@@ -334,5 +334,55 @@ pub const XQUERY_EVAL: [Mutation; 32] = [
         replacement: "    if let (SchemaType::Defined(defined), AtomicType::UntypedAtomic) = (t, AtomicType::String) {",
         integration: &["xml_atomic_types::sequence_types_of_user_defined_types_3_1_5"],
         unit: &[],
+    },
+    Mutation {
+        name: "xml-axis-parent",
+        package: Package::Core,
+        breaks: "a step a parent step takes back is dropped, not a condition of the step before",
+        file: "src/xquery/lookup/steps.rs",
+        original: "    current.push(Condition::Made(branch));",
+        replacement: "    drop(branch);",
+        integration: &["xml_index_shapes::other_axes_give_the_rows_of_a_full_read"],
+        unit: &["xquery::lookup::tests::steps_of_other_axes_reduce"],
+    },
+    Mutation {
+        name: "xml-axis-self-descendant",
+        package: Package::Core,
+        breaks: "a step of the self axis of a name after `//` reduces to none",
+        file: "src/xquery/lookup/steps.rs",
+        original: "        return from_item(made, Stepping { axis: Axis::Descendant, descend: false, ..stepping });",
+        replacement: "        return None;",
+        integration: &[],
+        unit: &["xquery::lookup::tests::steps_of_other_axes_reduce"],
+    },
+    Mutation {
+        name: "xml-axis-ancestor-reached",
+        package: Package::Core,
+        breaks: "a last ancestor step of a name a step before tests is taken as of an element anywhere, not exactly",
+        file: "src/xquery/lookup/steps.rs",
+        original: "    let reached = made.steps.len().saturating_sub(usize::from(!own));",
+        replacement: "    let reached = 0_usize.saturating_sub(usize::from(!own));",
+        integration: &["xml_index_shapes::other_axes_give_the_rows_of_a_full_read"],
+        unit: &["xquery::lookup::tests::steps_of_other_axes_reduce"],
+    },
+    Mutation {
+        name: "xml-axis-elsewhere",
+        package: Package::Core,
+        breaks: "a last following, preceding or ancestor step of a name leaves out that an element of the name is below the item",
+        file: "src/xquery/lookup/steps.rs",
+        original: "    made.root.push(Condition::Made(Branch::of(pattern)));",
+        replacement: "    drop(pattern);",
+        integration: &["xml_index_shapes::other_axes_give_the_rows_of_a_full_read"],
+        unit: &["xquery::lookup::tests::steps_of_other_axes_reduce"],
+    },
+    Mutation {
+        name: "xml-axis-trailing-exact",
+        package: Package::Core,
+        breaks: "a last kind test's path before is taken as its exact lookup",
+        file: "src/xquery/lookup/steps.rs",
+        original: "        return None;\n    }\n    made.exact = false;\n    Some(())\n}\n\n/// `descendant-or-self`",
+        replacement: "        return None;\n    }\n    Some(())\n}\n\n/// `descendant-or-self`",
+        integration: &["xml_index_shapes::other_axes_give_the_rows_of_a_full_read"],
+        unit: &["xquery::lookup::tests::steps_of_other_axes_reduce"],
     },
 ];

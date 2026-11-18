@@ -2626,8 +2626,10 @@ XMLQUERY NULL ON EMPTY IS NOT NULL, and for XMLTABLE joined to its rows
 not by LEFT, of a query of the column alone, of any XML type (of
 XML(SEQUENCE), the row of every value not one document node given by each
 lookup and checked, its query never answered by the index), that is one
-path of child, descendant and attribute steps,
-each step of predicates, each a relative path or its comparison with a
+path of child, descendant and attribute steps, `self` and `parent`
+steps among them, and a last step of the ancestor, following or preceding
+axes or a kind test, read by the lookups a node it selects needs, not
+exactly; each step of predicates, each a relative path or its comparison with a
 literal, or a conjunction of them [XQuery §3.6]; several such conjuncts
 of the column are read together (`xquery/lookup.rs`,
 `physical/access/xml.rs`). A probe gives the rows every lookup of the
