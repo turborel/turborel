@@ -18,6 +18,9 @@ mod planar;
 #[path = "geometry/srs.rs"]
 mod srs;
 
+#[path = "geometry/curves.rs"]
+mod curves;
+
 use std::hint::black_box;
 
 use harness::{Bench, Case, on_threads};
@@ -79,6 +82,7 @@ fn main() {
         prepared(&bench, &format!("{edges}-edge polygon"), &points, &circle(edges));
     }
     planar::run(&bench);
+    curves::run(&bench);
 }
 
 fn circle(edges: u32) -> Geometry {
