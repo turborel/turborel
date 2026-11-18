@@ -85,7 +85,7 @@ fn second() -> [&'static [Mutation]; 24] {
 }
 
 /// The areas after the rest, in order: projection's, JSON's, expression indexes', full-text's
-/// and T621's, then the spatial areas', replication's and the server's.
+/// and T621's, then the spatial areas', the planar engine's, replication's and the server's.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     let json: [&'static [Mutation]; 10] = [
         &super::projection::PROJECTION,
@@ -99,11 +99,12 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::sqlmm_fulltext::SQLMM_FULLTEXT,
         &super::t621::T621,
     ];
-    let last: [&'static [Mutation]; 11] = [
+    let last: [&'static [Mutation]; 12] = [
         &super::near::NEAR,
         &super::rtree::RTREE,
         &super::geometry::GEOMETRY,
         &super::spatial_types::SPATIAL_TYPES,
+        &super::spatial_planar::SPATIAL_PLANAR,
         &super::spatial_srs::SPATIAL_SRS,
         &super::FILL,
         &super::ZONES,

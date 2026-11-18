@@ -8,6 +8,7 @@ use crate::error::{Code, Result, SqlError};
 pub(crate) mod masks;
 pub(crate) mod packed;
 pub(crate) mod partition;
+pub mod planar;
 pub mod srs;
 
 /// The two coordinate axes of Cartesian spatial bounds.
