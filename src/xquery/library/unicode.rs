@@ -187,6 +187,16 @@ impl Table {
         let at = self.composites.find(&[u32::from(first), u32::from(second)])?;
         self.composites.number(at, 2).and_then(char::from_u32)
     }
+
+    /// Whether `c` is the second character of the canonical decomposition
+    /// mapping of a primary composite of the table, one of its pairs \[UAX
+    /// #15 §1.3\]. The pairs are sorted by their first character, so all are
+    /// read; each string asks once.
+    #[must_use]
+    pub fn composes_second(&self, c: char) -> bool {
+        let code = u32::from(c);
+        (0..self.composites.records).any(|at| self.composites.number(at, 1) == Some(code))
+    }
 }
 
 /// The digest of the table, by FNV-1a.

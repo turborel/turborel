@@ -239,7 +239,9 @@ fn strings_xqueryfo_7() {
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2, GR3] [XQueryFO §7.4.6
 /// to §7.4.12] normalization by Unicode 13.0, case mapping in full,
-/// translation and the escapes of URIs; FULLY-NORMALIZED err:FOCH0003.
+/// translation and the escapes of URIs; FULLY-NORMALIZED the NFC of a
+/// string [XML 1.1 Appendix B], and of one beginning with a composing
+/// character err:FOCH0003.
 #[test]
 fn strings_mapped_xqueryfo_7_4() {
     let a = orders();
@@ -248,6 +250,7 @@ fn strings_mapped_xqueryfo_7_4() {
         &[
             ("string-to-codepoints(normalize-unicode(\"e\u{301}\")), string-length(normalize-unicode(\"\u{e9}\", \"NFD\"))", "233 2"),
             ("normalize-unicode(\"\u{fb01}\", \"NFKC\"), normalize-unicode(\"x\", \"\")", "fi x"),
+            ("string-to-codepoints(normalize-unicode(\"e\u{301}x\", \"fully-normalized\"))", "233 120"),
             ("upper-case(\"abCd0\"), lower-case(\"ABc!D\"), upper-case(\"stra\u{df}e\")", "ABCD0 abc!d STRASSE"),
             (
                 "translate(\"bar\", \"abc\", \"ABC\"), translate(\"--aaa--\", \"abc-\", \"ABC\"), translate(\"abcdabc\", \"abc\", \"AB\")",
@@ -257,7 +260,8 @@ fn strings_mapped_xqueryfo_7_4() {
             ("escape-html-uri(\"http://e.org/\u{e9}?a=b c\")", "http://e.org/%C3%A9?a=b c"),
         ],
     );
-    assert_eq!(code(&a, "normalize-unicode(\"a\", \"FULLY-NORMALIZED\")"), "FOCH0003");
+    assert_eq!(code(&a, "normalize-unicode(\"\u{301}a\", \"FULLY-NORMALIZED\")"), "FOCH0003");
+    assert_eq!(code(&a, "normalize-unicode(\"a\", \"NFX\")"), "FOCH0003");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2, GR3] [XQueryFO §7.5]

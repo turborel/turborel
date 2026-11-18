@@ -4,11 +4,20 @@
 //! full case mapping, of Unicode 13.0 (`unicode.rs`).
 //!
 //! \[DESIGN\] RULES.md D106: the normalization forms supported are NFC,
-//! NFD, NFKC and NFKD, and the zero-length string, which normalizes
-//! nothing [XQueryFO §7.4.6]; FULLY-NORMALIZED is not, err:FOCH0003, as a
-//! string beginning with a composing character has no fully normalized
-//! form to give. A case mapping is SpecialCasing's unconditional one where
-//! it has one, else UnicodeData's simple one, as no language is known;
+//! NFD, NFKC, NFKD and FULLY-NORMALIZED, and the zero-length string, which
+//! normalizes nothing [XQueryFO §7.4.6]. Fully normalized text is defined
+//! by [XML 1.1 Appendix B]: include-normalized, which a string, holding no
+//! character escape and no include, is when it is in NFC, and with no
+//! relevant construct beginning with a composing character. A string has
+//! no markup, so it is its one construct: its fully normalized form is its
+//! NFC, and one whose NFC begins with a composing character has none to
+//! give, err:FOCH0003, as no form of it is supported. A composing
+//! character is one of a canonical combining class not zero, or second in
+//! the canonical decomposition mapping of a primary composite: of the
+//! table's pairs, or a vowel or trailing consonant jamo, second in a
+//! Hangul syllable's [Unicode §3.12]. A case mapping is SpecialCasing's
+//! unconditional one where it has one, else UnicodeData's simple one, as
+//! no language is known;
 //! those a context or a language governs are not applied. Hangul
 //! syllables are decomposed and composed by the arithmetic of [Unicode
 //! §3.12], which \[UAX #15 §14.1.4\] points to, of the jamo \[UAX #15\]'s
@@ -29,6 +38,9 @@ pub(super) const FUNCTIONS: [Builtin; 3] = [
     Builtin::function("upper-case", 1, 1, upper_case),
     Builtin::function("lower-case", 1, 1, lower_case),
 ];
+
+/// [XQueryFO §7.4.6] The name of the fully normalized form.
+const FULLY_NORMALIZED: &str = "FULLY-NORMALIZED";
 
 /// The first Hangul syllable, U+AC00, `UnicodeData.txt`'s first of its
 /// range of syllables.
@@ -153,6 +165,37 @@ pub fn normalized(text: &str, form: Form) -> Result<String> {
     Ok(out.into_iter().collect())
 }
 
+/// Whether `c` is a composing character [XML 1.1 Appendix B]: of a
+/// canonical combining class not zero, or second in the canonical
+/// decomposition mapping of a primary composite (D3 of \[UAX #15\]): a
+/// pair of the table, or a Hangul syllable's, whose mapping is a leading
+/// consonant and a vowel, or a syllable of no trailing consonant and a
+/// trailing one [Unicode §3.12].
+fn composing(table: &Table, c: char) -> bool {
+    let code = u32::from(c);
+    let vowel = code.checked_sub(V_BASE).is_some_and(|v| v < V_COUNT);
+    let trailing = code.checked_sub(T_BASE).is_some_and(|t| t > 0 && t < T_COUNT);
+    table.class(c) != 0 || vowel || trailing || table.composes_second(c)
+}
+
+/// `text` in fully normalized form [XQueryFO §7.4.6] [XML 1.1 Appendix B]:
+/// its NFC, if that does not begin with a composing character.
+///
+/// # Errors
+///
+/// err:FOCH0003 of a string whose NFC begins with a composing character,
+/// which has no fully normalized form; SQLCODE -916 if the table is
+/// damaged.
+fn fully_normalized(text: &str) -> Result<String> {
+    let table = Table::read()?;
+    let out = normalized(text, Form::Nfc)?;
+    if out.chars().next().is_some_and(|first| composing(&table, first)) {
+        let why = "a string beginning with a composing character has no fully normalized form [XQueryFO §7.4.6] [XML 1.1 Appendix B]";
+        return Err(error(ErrorCode::FOCH0003, why));
+    }
+    Ok(out)
+}
+
 /// [XQueryFO §7.4.6] `fn:normalize-unicode($arg as xs:string?,
 /// $normalizationForm as xs:string) as xs:string`: the string in the form
 /// the second names, its blanks at either end removed and in upper case,
@@ -160,7 +203,8 @@ pub fn normalized(text: &str, form: Form) -> Result<String> {
 ///
 /// # Errors
 ///
-/// err:FOCH0003 of a form not supported.
+/// err:FOCH0003 of a form not supported, and, of FULLY-NORMALIZED, of a
+/// string that has no fully normalized form.
 fn normalize_unicode(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let text = string_or_empty(arg(args, 0))?;
     let named = match args.get(1) {
@@ -173,6 +217,7 @@ fn normalize_unicode(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
         "NFD" => Form::Nfd,
         "NFKC" => Form::Nfkc,
         "NFKD" => Form::Nfkd,
+        FULLY_NORMALIZED => return string_value(fully_normalized(&text)?),
         other => return Err(error(ErrorCode::FOCH0003, &format!("the normalization form '{other}' is not supported [XQueryFO §7.4.6]"))),
     };
     string_value(normalized(&text, form)?)

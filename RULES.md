@@ -4077,7 +4077,11 @@ splitting no string into units. Normalization and full case mapping
 read a table of Unicode 13.0, the version of the collations and regular
 expressions, which `cargo xtask unicode` makes
 (`xquery/library/unicode13.bin`); Hangul syllables are composed by
-arithmetic. fn:matches, fn:replace and fn:tokenize use D61's matcher in
+arithmetic. The fully normalized form [XML 1.1 Appendix B] of a string,
+its one relevant construct, is its NFC, and a string whose NFC begins
+with a composing character has none (err:FOCH0003); the composing
+characters are read from the same table, the marks by their class and
+the others as second in a primary composite's pair. fn:matches, fn:replace and fn:tokenize use D61's matcher in
 XQuery 1.0's dialect.
 
 A date or time of no time zone is compared and subtracted in the

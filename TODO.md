@@ -127,10 +127,9 @@ features.
 - Publishing: the mapping of XML Names to identifiers (X400).
 - XQuery: XMLQUERY, XMLEXISTS and XMLTABLE evaluate every expression of
   XQuery 1.0 (`src/xquery.rs`), and call every function of XQuery 1.0
-  Functions and Operators (`src/xquery/library.rs`). Left: the
-  FULLY-NORMALIZED form of fn:normalize-unicode, and substring matching
-  by UNICODE and its tailorings, which need collation units of more than
-  one character;
+  Functions and Operators (`src/xquery/library.rs`). Left: substring
+  matching by UNICODE and its tailorings, which need collation units of
+  more than one character;
   and more of a query's shapes answered by
   the XML indexes ([Index structures](#index-structures)).
 - XML Schema: registered XML Schemas, CREATE and DROP XML SCHEMA, the

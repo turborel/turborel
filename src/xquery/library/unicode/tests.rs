@@ -31,6 +31,18 @@ fn the_table_reads_back() {
     assert_eq!(table.composite('a', 'b'), None);
 }
 
+/// Verifies: [DESIGN] \[UAX #15 §1.3\] [XML 1.1 Appendix B] the characters
+/// second in a primary composite's pair are found, a mark and one of class
+/// zero among them; a starter that is never second is not.
+#[test]
+fn second_characters_of_composites() {
+    let table = Table::read().unwrap();
+    assert!(table.composes_second('\u{30A}'));
+    assert!(table.composes_second('\u{CD5}'));
+    assert!(!table.composes_second('A'));
+    assert!(!table.composes_second('z'));
+}
+
 /// Verifies: [DESIGN] RULES.md D30 a table that is not what its header
 /// says is corruption, SQLCODE -916: another magic number, a header cut
 /// short, or more or fewer bytes than its sections count.

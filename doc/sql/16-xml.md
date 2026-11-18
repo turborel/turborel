@@ -757,8 +757,11 @@ operation past them fails with `err:FOAR0002`. A quotient of decimals is
 exact when it ends within 18 digits after the point, or within the
 scale of an operand, and is cut there otherwise. Floats and doubles
 compute as IEEE 754 does. `fn:normalize-unicode` normalizes by Unicode
-13.0, to NFC, NFD, NFKC or NFKD; FULLY-NORMALIZED fails with
-`err:FOCH0003`. `fn:upper-case` and `fn:lower-case` map each character
+13.0, to NFC, NFD, NFKC, NFKD or FULLY-NORMALIZED. A fully normalized
+string is its NFC, as XML 1.1 defines full normalization, the string
+being its one construct; a string whose NFC begins with a composing
+character, a combining mark or a character second in a canonical
+composition, has none and fails with `err:FOCH0003`. `fn:upper-case` and `fn:lower-case` map each character
 in full, as Unicode's tables do apart from language and context.
 `fn:matches`, `fn:replace` and `fn:tokenize` read XQuery 1.0's regular
 expressions, with the flags `s`, `m`, `i` and `x`.
@@ -770,6 +773,8 @@ SELECT XMLCAST(XMLQUERY('replace("2026-11-17", "(\d+)-(\d+)-(\d+)", "$3.$2.$1")'
 SELECT XMLCAST(XMLQUERY('year-from-date(xs:date("2026-11-17") + xdt:yearMonthDuration("P1Y2M"))' NULL ON EMPTY) AS INTEGER), XMLCAST(XMLQUERY('days-from-duration(xs:date("2026-12-25") - xs:date("2026-11-17"))' NULL ON EMPTY) AS INTEGER) FROM ORDERS2 WHERE ID = 1;
 SELECT XMLCAST(XMLQUERY('count(distinct-values(("b", "a", "B", "a")))' NULL ON EMPTY) AS INTEGER), XMLCAST(XMLQUERY('string-join(for $n in (round-half-to-even(2.5), round(2.5), abs(-3)) return string($n), " ")' NULL ON EMPTY) AS VARCHAR(20)) FROM ORDERS2 WHERE ID = 1;
 SELECT XMLQUERY('exactly-one(())' EMPTY ON EMPTY) FROM ORDERS2 WHERE ID = 1;
+SELECT XMLCAST(XMLQUERY('string-join(for $c in string-to-codepoints(normalize-unicode("e&#x301;t", "FULLY-NORMALIZED")) return string($c), " ")' NULL ON EMPTY) AS VARCHAR(20)) FROM ORDERS2 WHERE ID = 1;
+SELECT XMLQUERY('normalize-unicode("&#x301;e", "FULLY-NORMALIZED")' NULL ON EMPTY) FROM ORDERS2 WHERE ID = 1;
 ```
 ```
 
@@ -794,6 +799,11 @@ SELECT XMLQUERY('exactly-one(())' EMPTY ON EMPTY) FROM ORDERS2 WHERE ID = 1;
             3 | 2 3 3
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:FORG0005: fn:exactly-one is given 0 items [XQueryFO §15.2.3] [ISO/IEC 9075-14:2006 draft §6.18 GR3]
+
+----------------------
+ 233 116
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:FOCH0003: a string beginning with a composing character has no fully normalized form [XQueryFO §7.4.6] [XML 1.1 Appendix B] [ISO/IEC 9075-14:2006 draft §6.18 GR3]
 ```
 
 Strings compare by Unicode code points unless the query declares

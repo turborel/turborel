@@ -2085,9 +2085,9 @@ DOCUMENT, CONTENT and SEQUENCE options, NAMESPACE without ELEMENT, NO
 NAMESPACE with ELEMENT) are claimed. X121 (XML parameters in
 external routines) is not, as turborel has no external routine. Every
 expression of XQuery 1.0 is evaluated. Every function of XQuery 1.0
-Functions and Operators is built in, FULLY-NORMALIZED and substring
-matching by `UNICODE` and its tailorings excepted, which the text
-leaves optional, as the rows below say. Its Minimal Conformance [XQuery
+Functions and Operators is built in, substring matching by `UNICODE`
+and its tailorings excepted, which the text leaves optional, as the
+rows below say. Its Minimal Conformance [XQuery
 §5.1] is claimed: all of XQuery but its optional features, the
 implementation-defined items each defined below, the data model, and
 every function of XQuery 1.0 Functions and Operators. Of
@@ -2230,7 +2230,7 @@ XML Schemas; Static Typing, Module and Serialization are not.
 | fn:resolve-uri | XQueryFO §8.1 | RFC 3986 §5.2, strict; a base of no scheme is err:FORG0009. |
 | Collations of XQuery's functions | XQueryFO §7.3.1 | The code point collation and each collation of the database, named `urn:turborel:collation:` and its name, as `urn:turborel:collation:CASE_INSENSITIVE`; another is err:FOCH0002. Strings compare by sort keys with no padding. |
 | Collation units | XQueryFO §7.5 | Characters, of the code point collation and of the collations that compare one character at a time, by their folds; `UNICODE` and its tailorings split no string into units, err:FOCH0004. |
-| Normalization forms | XQueryFO §7.4.6 | NFC, NFD, NFKC and NFKD, and the zero-length string for none; FULLY-NORMALIZED is err:FOCH0003. |
+| Normalization forms | XQueryFO §7.4.6; XML 1.1 Appendix B | NFC, NFD, NFKC, NFKD and FULLY-NORMALIZED, and the zero-length string for none. A fully normalized string is its NFC, as a string holds no character escape or include, and it is its one relevant construct; one whose NFC begins with a composing character, of a canonical combining class not zero or second in the canonical decomposition mapping of a primary composite, has no fully normalized form, err:FOCH0003 (`xquery/library/normalize.rs`). |
 | Case mappings | XQueryFO §7.4.7, §7.4.8 | Each character's full mapping, SpecialCasing's unconditional one or UnicodeData's simple one; none that a context or language governs. |
 | Regular expressions of fn:matches, fn:replace and fn:tokenize | XQueryFO §7.6.1 | XQuery 1.0's: a newline a line feed alone, `\s` XML Schema's, no `(?:` and no flag `q`, by the matcher of LIKE_REGEX (RULES.md D61) and its limits. |
 | Durations times or divided by a number | XQueryFO §10.6.3, §10.6.8 | Exact, the double as the shortest decimal that reads back as it, rounded to the month or microsecond, a half up. |

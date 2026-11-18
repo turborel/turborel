@@ -11,7 +11,7 @@
 use super::{Mutation, Package};
 
 /// Each mechanism of the library broken alone, and the tests that fail.
-pub const XQUERY_FUNCTIONS: [Mutation; 31] = [
+pub const XQUERY_FUNCTIONS: [Mutation; 33] = [
     Mutation {
         name: "xquery-decimal-division-scale",
         package: Package::Core,
@@ -134,6 +134,26 @@ pub const XQUERY_FUNCTIONS: [Mutation; 31] = [
         replacement: "",
         integration: &[],
         unit: &["xquery::library::normalize::tests::normalization_forms"],
+    },
+    Mutation {
+        name: "xquery-fully-normalized-start",
+        package: Package::Core,
+        breaks: "FULLY-NORMALIZED gives the NFC of a string beginning with a composing character",
+        file: "src/xquery/library/normalize.rs",
+        original: "if out.chars().next().is_some_and(|first| composing(&table, first)) {",
+        replacement: "if out.chars().next().is_some_and(|first| composing(&table, first) && first == '\\0') {",
+        integration: &["xquery_functions::strings_mapped_xqueryfo_7_4"],
+        unit: &["xquery::library::normalize::tests::fully_normalized_form"],
+    },
+    Mutation {
+        name: "xquery-composing-second",
+        package: Package::Core,
+        breaks: "a character second in a primary composite's pair, of class zero, is not composing",
+        file: "src/xquery/library/normalize.rs",
+        original: "table.class(c) != 0 || vowel || trailing || table.composes_second(c)",
+        replacement: "table.class(c) != 0 || vowel || trailing",
+        integration: &[],
+        unit: &["xquery::library::normalize::tests::fully_normalized_form"],
     },
     Mutation {
         name: "xquery-regex-line-feeds",

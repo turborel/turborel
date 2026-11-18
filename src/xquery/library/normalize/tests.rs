@@ -47,16 +47,44 @@ fn exclusions_blocking_and_hangul() {
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQueryFO §7.4.6]
 /// the form named, blanks at either end removed and in upper case; no
 /// normalization of the zero-length string; the empty sequence the
-/// zero-length string; FULLY-NORMALIZED and other forms err:FOCH0003.
+/// zero-length string; other forms err:FOCH0003.
 #[test]
 fn forms_by_name() {
     assert_eq!(text(call("normalize-unicode", &[s("e\u{301}"), s(" nfd ")])), "e\u{301}");
+    assert_eq!(text(call("normalize-unicode", &[s("e\u{301}"), s(" fully-normalized ")])), "\u{E9}");
     assert_eq!(text(call("normalize-unicode", &[s("e\u{301}"), s("NFKC")])), "\u{E9}");
     assert_eq!(text(call("normalize-unicode", &[s("\u{FB01}"), s("nfkd")])), "fi");
     assert_eq!(text(call("normalize-unicode", &[s("e\u{301}"), s("")])), "e\u{301}");
     assert_eq!(text(call("normalize-unicode", &[empty()])), "");
-    assert_eq!(code(call("normalize-unicode", &[s("a"), s("FULLY-NORMALIZED")])), "FOCH0003");
     assert_eq!(code(call("normalize-unicode", &[s("a"), s("NFX")])), "FOCH0003");
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQueryFO §7.4.6]
+/// [XML 1.1 Appendix B] FULLY-NORMALIZED gives a string's NFC, a string
+/// its one relevant construct; one whose NFC begins with a composing
+/// character has no fully normalized form, err:FOCH0003. MC/DC of
+/// `composing`, each condition alone making a character composing: a
+/// class not zero (U+0301), a vowel jamo (U+1161, to U+1175, not U+1176),
+/// a trailing consonant jamo (U+11A8, to U+11C2, not U+11A7 nor U+11C3),
+/// and second in a composite's pair, of class zero (U+0CD5); none of them
+/// (`a`). A string beginning with a character excluded from composition
+/// whose decomposition begins with a mark (U+0F73) is not fully
+/// normalized, its NFC beginning with the mark; the empty string is.
+#[test]
+fn fully_normalized_form() {
+    let table = Table::read().unwrap();
+    let composes = |c: char| composing(&table, c);
+    assert!(composes('\u{301}') && composes('\u{1161}') && composes('\u{1175}') && composes('\u{11A8}'));
+    assert!(composes('\u{11C2}') && composes('\u{CD5}'));
+    assert!(!composes('a') && !composes('\u{1176}') && !composes('\u{11A7}') && !composes('\u{11C3}'));
+    let full = |t: &str| call("normalize-unicode", &[s(t), s("FULLY-NORMALIZED")]);
+    assert_eq!(text(full("A\u{30A}b")), "\u{C5}b");
+    assert_eq!(text(full("\u{1100}\u{1161}")), "\u{AC00}");
+    assert_eq!(text(full("")), "");
+    assert_eq!(text(call("normalize-unicode", &[empty(), s("FULLY-NORMALIZED")])), "");
+    for begins in ["\u{301}a", "\u{1161}", "\u{11A8}", "\u{CD5}", "\u{F73}"] {
+        assert_eq!(code(full(begins)), "FOCH0003", "{begins:?}");
+    }
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQueryFO §7.4.7.1,
