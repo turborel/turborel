@@ -40,7 +40,7 @@ pub const SPATIAL_ROUTINES: [Mutation; 10] = [
         package: Package::Core,
         breaks: "a method is not given the reference systems its routine reads",
         file: "src/binder/structured/family_methods.rs",
-        original: "for (appended, its_type) in self.appended_arguments(&*routine, (&written, &exprs), scope)? {",
+        original: "for (appended, its_type) in self.appended_arguments(&*routine, (&written, &exprs, &types), scope)? {",
         replacement: "for (appended, its_type) in Vec::<(Expr, DataType)>::new() {",
         integration: &["spatial_routines::every_type_reads_and_writes_its_gml"],
         unit: &[],
