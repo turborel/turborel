@@ -76,7 +76,17 @@ pub use partitioned::Partitions;
 pub trait Metric: Send + Sync {
     /// The distance from `a` to `b`, smaller nearer.
     fn distance(&self, a: &[f32], b: &[f32]) -> f32;
+    /// The distance from `a` to `b`, each given with its squared norm
+    /// (`kernels::squared_norm`), which a node record keeps and a search
+    /// works out once for its query: `distance`'s bit for bit, by
+    /// default `distance` itself, the norms unused.
+    fn normed(&self, a: Probe<'_>, b: Probe<'_>) -> f32 {
+        self.distance(a.0, b.0)
+    }
 }
+
+/// A vector and its squared norm.
+pub type Probe<'a> = (&'a [f32], f32);
 
 impl<F: Fn(&[f32], &[f32]) -> f32 + Send + Sync> Metric for F {
     fn distance(&self, a: &[f32], b: &[f32]) -> f32 {

@@ -8,7 +8,7 @@ use super::{Mutation, Package};
 
 /// Independent mechanisms whose removal must fail the vector indexes'
 /// requirements.
-pub const VECTOR_INDEXES: [Mutation; 35] = [
+pub const VECTOR_INDEXES: [Mutation; 41] = [
     Mutation {
         name: "diskann-prune-alpha",
         package: Package::Core,
@@ -114,8 +114,8 @@ pub const VECTOR_INDEXES: [Mutation; 35] = [
         package: Package::Core,
         breaks: "a nearest search gives every live row as a result, whatever its filter takes",
         file: "src/engine/hnsw/query.rs",
-        original: "knn(src, (&inner.metric, q), (wanted, ef), s, &mut |_, row| takes(row, &mut filter))",
-        replacement: "knn(src, (&inner.metric, q), (wanted, ef), s, &mut |_, row| row.is_some() || takes(row, &mut filter))",
+        original: "knn(src, (&inner.metric, probe), (wanted, ef), s, &mut |_, row| takes(row, &mut filter))",
+        replacement: "knn(src, (&inner.metric, probe), (wanted, ef), s, &mut |_, row| row.is_some() || takes(row, &mut filter))",
         integration: &[],
         unit: &["engine::hnsw::tests::hnsw_filtered_recall"],
     },
@@ -358,5 +358,68 @@ pub const VECTOR_INDEXES: [Mutation; 35] = [
         replacement: "fold_f32(cent, cent, square)",
         integration: &[],
         unit: &["vector::tests::quantizers::product_cosine_tables_use_the_centroid_norms"],
+    },
+    Mutation {
+        name: "vector-squared-norm",
+        package: Package::Core,
+        breaks: "a kept norm is summed as a squared gap of a vector and itself, so every kept norm is 0 and COSINE measures 1",
+        file: "src/vector/kernels.rs",
+        original: "    fold_f32(v, v, product)\n}",
+        replacement: "    fold_f32(v, v, square)\n}",
+        integration: &[],
+        unit: &["index::vector::tests::normed_cosine_is_the_folded_one_bit_for_bit"],
+    },
+    Mutation {
+        name: "vector-normed-cosine",
+        package: Package::Core,
+        breaks: "COSINE is not measured by kept norms, and DOT is given COSINE's normed distance",
+        file: "src/index/vector/adapt.rs",
+        original: "(metric.name() == COSINE).then(",
+        replacement: "(metric.name() == DOT).then(",
+        integration: &[],
+        unit: &["index::vector::tests::normed_cosine_is_the_folded_one_bit_for_bit"],
+    },
+    Mutation {
+        name: "diskann-node-norm",
+        package: Package::Core,
+        breaks: "a node record's norm is not read, so a search's COSINE of every node is 1",
+        file: "src/engine/diskann/node.rs",
+        original: "node.norm = f32::from_bits(u32_at(header, NORM_AT));",
+        replacement: "node.norm = 0.0;",
+        integration: &[],
+        unit: &[
+            "engine::diskann::node::tests::records_are_fixed_width_and_round_trip",
+            "index::vector::tests::cosine_by_kept_norms_is_bit_for_bit",
+        ],
+    },
+    Mutation {
+        name: "hnsw-hop-norm",
+        package: Package::Core,
+        breaks: "a shared hop gives each neighbour a norm of 0, so HNSW's COSINE of every neighbour is 1",
+        file: "src/engine/hnsw/view.rs",
+        original: "self.hop.norms.push(g.norm(e));",
+        replacement: "self.hop.norms.push(0.0);",
+        integration: &[],
+        unit: &["index::vector::tests::cosine_by_kept_norms_is_bit_for_bit"],
+    },
+    Mutation {
+        name: "hnsw-recode-norms",
+        package: Package::Core,
+        breaks: "coding the store keeps the full vectors' norms, not the decoded codes' a search reads",
+        file: "src/engine/hnsw/graph.rs",
+        original: "        self.norms.clear();\n",
+        replacement: "",
+        integration: &[],
+        unit: &["engine::hnsw::tests::changes::hnsw_nodes_keep_the_norms_searches_read"],
+    },
+    Mutation {
+        name: "ivf-entry-norm",
+        package: Package::Core,
+        breaks: "an IVF entry keeps a norm of 0, so a scan's COSINE of every entry is 1",
+        file: "src/engine/ivf/lists.rs",
+        original: "out.extend_from_slice(&norm.to_bits().to_le_bytes());",
+        replacement: "out.extend_from_slice(&0_u32.to_le_bytes());",
+        integration: &[],
+        unit: &["index::vector::tests::cosine_by_kept_norms_is_bit_for_bit"],
     },
 ];

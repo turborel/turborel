@@ -28,6 +28,11 @@ use super::Column;
 /// A distance the engines compute with.
 pub(crate) type Distance = Arc<dyn Fn(&[f32], &[f32]) -> f32 + Send + Sync>;
 
+/// A distance of two vectors each given with its squared norm
+/// (`kernels::squared_norm`), which the engines keep with what they hold
+/// and work out once for a query.
+pub(crate) type NormedDistance = Arc<dyn Fn((&[f32], f32), (&[f32], f32)) -> f32 + Send + Sync>;
+
 /// The distance of a metric that gave none, or failed: farthest, finite.
 const FARTHEST: f32 = f32::MAX;
 /// Half of one: an element of a BINARY vector at least this is a set bit.
@@ -53,6 +58,44 @@ pub(crate) fn distance(metric: &Arc<dyn VectorMetric>, column: Column) -> Distan
             Arc::new(move |a: &[f32], b: &[f32]| called(&*metric, column, (a, b)))
         }
     }
+}
+
+/// `metric` as DiskANN measures with it: `distance`, and of a metric
+/// measured by norms, `normed` given the norms its node records keep.
+pub(crate) fn disk_metric(metric: &Arc<dyn VectorMetric>, column: Column) -> Arc<dyn diskann::Metric> {
+    Arc::new(DiskMetric { distance: distance(metric, column), normed: normed(metric) })
+}
+
+/// DiskANN's metric over a database metric.
+struct DiskMetric {
+    distance: Distance,
+    normed: Option<NormedDistance>,
+}
+
+impl diskann::Metric for DiskMetric {
+    fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+        (self.distance)(a, b)
+    }
+    fn normed(&self, a: diskann::Probe<'_>, b: diskann::Probe<'_>) -> f32 {
+        match &self.normed {
+            Some(normed) => normed(a, b),
+            None => (self.distance)(a.0, b.0),
+        }
+    }
+}
+
+/// `metric` measured by norms the engines keep, for a metric that sums
+/// them (COSINE), giving bit for bit `distance`'s distance; none for any
+/// other, which the engines measure by `distance`.
+pub(crate) fn normed(metric: &Arc<dyn VectorMetric>) -> Option<NormedDistance> {
+    (metric.name() == COSINE).then(|| -> NormedDistance { Arc::new(cosine_normed) })
+}
+
+/// COSINE of `a` and `b` given `a·a` and `b·b`, each summed as
+/// `cosine_terms` sums it, so the distance is `cosine`'s bit for bit.
+fn cosine_normed((a, aa): (&[f32], f32), (b, bb): (&[f32], f32)) -> f32 {
+    let scale = (aa * bb).sqrt();
+    if scale > 0.0_f32 { 1.0_f32 - fold_f32(a, b, product) / scale } else { 1.0_f32 }
 }
 
 /// COSINE: `1 - a·b / (|a| |b|)`; of a zero vector, whose SQL distance is

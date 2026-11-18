@@ -5,14 +5,18 @@
 //! slot i mod n of chunk i / n, and its vector and edges come in one read.
 //!
 //! A record is a header (flags u8, degree u16, row id u64, version count
-//! u32), the vector in its element format, then R u32 neighbours.
+//! u32, squared norm f32), the vector in its element format, then R u32
+//! neighbours. The norm is of the vector as stored, so a metric measured
+//! by norms (COSINE) reads it with the vector and sums only `q·v`.
+
+use crate::vector::kernels::squared_norm;
 
 use crate::error::{Code, Result, SqlError};
 
 use super::half::{from_half, to_half};
 
-/// The flags, degree, row id and version count before the vector.
-pub(super) const HEADER: usize = 15;
+/// The flags, degree, row id, version count and norm before the vector.
+pub(super) const HEADER: usize = 19;
 /// Bytes of a neighbour's node number.
 const EDGE: usize = size_of::<u32>();
 /// Bytes of a binary32 coordinate.
@@ -29,6 +33,8 @@ const DEGREE_AT: usize = 1;
 const ROW_AT: usize = 3;
 /// Where the version count is.
 const COUNT_AT: usize = 11;
+/// Where the vector's squared norm is.
+const NORM_AT: usize = 15;
 /// The most neighbours a record holds (DISKANN.MAX_DEGREE's greatest).
 pub const MOST_DEGREE: u32 = 512;
 /// The most dimensions a node's vector has.
@@ -84,6 +90,9 @@ pub(super) struct Node {
     pub(super) row: u64,
     pub(super) count: u32,
     pub(super) vector: Vec<f32>,
+    /// `vector`'s squared norm as stored: set as a record is decoded, and
+    /// worked out from the stored vector as it is encoded.
+    pub(super) norm: f32,
     pub(super) neighbours: Vec<u32>,
 }
 
@@ -180,6 +189,7 @@ impl Shape {
         node.flags = flags;
         node.row = u64_at(header, ROW_AT);
         node.count = u32_at(header, COUNT_AT);
+        node.norm = f32::from_bits(u32_at(header, NORM_AT));
         self.decode_vector(self.stored_vector(record)?, &mut node.vector);
         let edges = HEADER.saturating_add(self.vector);
         let end = edges.saturating_add(usize::from(degree).saturating_mul(EDGE));
@@ -196,6 +206,14 @@ impl Shape {
             Element::Float32 => out.extend(bytes.as_chunks::<F32>().0.iter().map(|c| f32::from_le_bytes(*c))),
             Element::Float16 => out.extend(bytes.as_chunks::<F16>().0.iter().map(|c| from_half(u16::from_le_bytes(*c)))),
         }
+    }
+
+    /// The squared norm of stored vector bytes, of their coordinates as a
+    /// read decodes them, so it is the norm of the vector searches measure.
+    fn stored_norm(&self, bytes: &[u8]) -> f32 {
+        let mut back = Vec::with_capacity(self.dims);
+        self.decode_vector(bytes, &mut back);
+        squared_norm(&back)
     }
 
     /// Writes `node` over the record at the start of `record`, its unused
@@ -217,6 +235,7 @@ impl Shape {
         head.extend_from_slice(&node.count.to_le_bytes());
         let mut stored = Vec::with_capacity(self.vector);
         self.vector_bytes(&node.vector, &mut stored);
+        head.extend_from_slice(&self.stored_norm(&stored).to_bits().to_le_bytes());
         head.extend_from_slice(&stored);
         node.neighbours.iter().for_each(|n| head.extend_from_slice(&n.to_le_bytes()));
         slot.get_mut(..head.len()).ok_or_else(short)?.copy_from_slice(&head);
@@ -267,17 +286,17 @@ mod tests {
         let shape = Shape::new(3, 4, Element::Float32, 100).unwrap();
         assert_eq!((shape.record, shape.per_page), (HEADER + 12 + 16, 2));
         assert_eq!(shape.place(5), (2, shape.record));
-        let node = Node { flags: LIVE, row: 9, count: 2, vector: vec![1.0_f32, -2.5_f32, 3.25_f32], neighbours: vec![7, 3] };
+        let node = Node { flags: LIVE, row: 9, count: 2, vector: vec![1.0_f32, -2.5_f32, 3.25_f32], norm: 0.0, neighbours: vec![7, 3] };
         let mut page = vec![0xAA_u8; shape.page_bytes()];
         shape.encode(&node, &mut page).unwrap();
         let mut back = Node::default();
         shape.decode(&page, &mut back).unwrap();
-        assert_eq!(back, node);
+        assert_eq!(back, Node { norm: 1.0 + 6.25 + 10.5625, ..node.clone() });
         let half = Shape::new(3, 4, Element::Float16, 100).unwrap();
         assert_eq!(half.vector, 6);
         let wide = Shape::new(1000, 64, Element::Float32, 4096).unwrap_err();
         assert_eq!(wide.code, Code::Unsupported);
-        assert!(wide.msg.contains("4271 bytes"), "{}", wide.msg);
+        assert!(wide.msg.contains("4275 bytes"), "{}", wide.msg);
         page[0] = 0x80;
         assert_eq!(shape.decode(&page, &mut back).unwrap_err().code, Code::Corrupt);
     }

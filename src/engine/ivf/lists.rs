@@ -1,7 +1,9 @@
 //! \[DESIGN\] IVF posting lists and their directory in pages, format 1.
 //! A list is a chain of pages, each a header (tag, version, next page)
-//! then fixed-width entries: row, count, vector hash, then the vector's
-//! floats or its code. Entries are appended at the list's last page, and
+//! then fixed-width entries: row, count, vector hash, the squared norm of
+//! the vector a scan reads (its code's decoded, if coded), then the
+//! vector's floats or its code. A metric measured by norms (COSINE) reads
+//! the norm with the vector, and sums only `q·v` an entry. Entries are appended at the list's last page, and
 //! a remove lowers a count in place, a count of 0 a tombstone, so a page
 //! never moves an entry and a scan never misses one. A new last page is
 //! written whole before the old one links to it.
@@ -24,12 +26,14 @@ const VERSION: u8 = 1;
 pub const HEADER: usize = 10;
 /// Where the next page's id is.
 const NEXT_AT: usize = 2;
-/// An entry's bytes before its vector: row, count, hash.
-pub const ENTRY_HEAD: usize = 20;
+/// An entry's bytes before its vector: row, count, hash, norm.
+pub const ENTRY_HEAD: usize = 24;
 /// Where an entry's count is.
 const COUNT_AT: usize = 8;
 /// Where an entry's hash is.
 const HASH_AT: usize = 12;
+/// Where an entry's squared norm is.
+const NORM_AT: usize = 20;
 /// A directory record's bytes: first page, last page, live, dead.
 const RECORD: usize = 32;
 /// The bytes of a count.
@@ -152,19 +156,26 @@ fn link(pool: &BufferPool, file: FileId, id: PageId, next: u64) -> Result<()> {
     Ok(())
 }
 
-/// An entry's bytes, appended to `out`.
-pub fn entry(out: &mut Vec<u8>, (row, count, hash): (u64, u32, u64), payload: &[u8]) {
+/// An entry's bytes, appended to `out`: its vector stored as `payload`,
+/// which reads back as a vector of squared norm `norm`.
+pub fn entry(out: &mut Vec<u8>, (row, count, hash): (u64, u32, u64), (payload, norm): (&[u8], f32)) {
     out.extend_from_slice(&row.to_le_bytes());
     out.extend_from_slice(&count.to_le_bytes());
     out.extend_from_slice(&hash.to_le_bytes());
+    out.extend_from_slice(&norm.to_bits().to_le_bytes());
     out.extend_from_slice(payload);
+}
+
+/// An entry's squared norm.
+pub fn norm(entry: &[u8]) -> f32 {
+    entry.get(NORM_AT..ENTRY_HEAD).and_then(|b| b.try_into().ok()).map_or(0.0, |b| f32::from_bits(u32::from_le_bytes(b)))
 }
 
 /// An entry's row, count and hash.
 pub fn fields(entry: &[u8]) -> Option<(u64, u32, u64)> {
     let row = u64::from_le_bytes(entry.get(..COUNT_AT)?.try_into().ok()?);
     let count = u32::from_le_bytes(entry.get(COUNT_AT..HASH_AT)?.try_into().ok()?);
-    let hash = u64::from_le_bytes(entry.get(HASH_AT..ENTRY_HEAD)?.try_into().ok()?);
+    let hash = u64::from_le_bytes(entry.get(HASH_AT..NORM_AT)?.try_into().ok()?);
     Some((row, count, hash))
 }
 

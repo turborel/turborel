@@ -76,9 +76,10 @@ impl Hnsw {
         let Search { mut filter, exact, .. } = search;
         let rerank = inner.tuning.rerank.load(Relaxed);
         let mut wanted = k;
+        let probe = inner.metric.probe(q);
         let mut found = self.searched(&mut |src, s| {
             wanted = if src.codec().is_some() && rerank { k.saturating_mul(RERANK_FACTOR) } else { k };
-            knn(src, (&inner.metric, q), (wanted, ef), s, &mut |_, row| takes(row, &mut filter))
+            knn(src, (&inner.metric, probe), (wanted, ef), s, &mut |_, row| takes(row, &mut filter))
         })?;
         let keep = if exact.is_some() { k } else { wanted };
         finish(&mut found, exact, keep);
@@ -97,8 +98,9 @@ impl Hnsw {
         inner.metric.check(q, inner.dims)?;
         let ef = search.ef.unwrap_or_else(|| inner.tuning.ef_search.load(Relaxed)).max(1);
         let Search { mut filter, exact, .. } = search;
+        let probe = inner.metric.probe(q);
         let mut found =
-            self.searched(&mut |src, s| range(src, (&inner.metric, q), (radius, ef), s, &mut |_, row| takes(row, &mut filter)))?;
+            self.searched(&mut |src, s| range(src, (&inner.metric, probe), (radius, ef), s, &mut |_, row| takes(row, &mut filter)))?;
         let rescored = exact.is_some();
         finish(&mut found, exact, usize::MAX);
         if rescored {

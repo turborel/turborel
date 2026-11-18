@@ -187,3 +187,33 @@ fn hnsw_entries_gives_each_live_node() {
     hnsw.insert(&[9.0, 9.0, 9.0, 9.0], 7_777).unwrap();
     assert_eq!(reading.count(), 2_499, "a node appended meanwhile is given too");
 }
+
+/// Verifies: [DESIGN] RULES.md D97: a node keeps the squared norm of the
+/// vector a search reads, its floats' and, once coded, its code's decoded,
+/// through compaction too.
+#[test]
+fn hnsw_nodes_keep_the_norms_searches_read() {
+    use crate::vector::kernels::squared_norm;
+    let mut graph = Graph::new(2, (4, 8), Store::Full(Vec::new()));
+    let vectors = [[0.31_f32, -1.7], [2.25, 0.1], [0.0, 0.0]];
+    for (n, v) in vectors.iter().enumerate() {
+        graph.push((row(n), row(n), 1), 0, v);
+    }
+    let read = |g: &Graph, id: u32| {
+        let mut buf = [0.0_f32; 2];
+        squared_norm(g.vector(id, &mut buf)).to_bits()
+    };
+    assert_eq!(graph.norm(1).to_bits(), squared_norm(&vectors[1]).to_bits());
+    let codec = Sq8.train(&vectors.concat(), 2, 0).unwrap();
+    let mut each = [[0_u8; 2]; 3];
+    for (v, out) in vectors.iter().zip(&mut each) {
+        codec.encode(v, out);
+    }
+    graph.recode(Store::Coded { codec, codes: each.concat() });
+    let compacted = graph.compacted();
+    for id in 0..3 {
+        assert_eq!(graph.norm(id).to_bits(), read(&graph, id), "{id}");
+        assert_eq!(compacted.norm(id).to_bits(), read(&graph, id), "{id}");
+    }
+    assert_ne!(graph.norm(0).to_bits(), squared_norm(&vectors[0]).to_bits());
+}
