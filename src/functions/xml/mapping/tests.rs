@@ -40,7 +40,7 @@ fn values_as_text() {
 }
 
 /// The mapping XMLELEMENT's content takes: hex, characters mapped, UTC.
-const CONTENT: Mapping = Mapping { encoding: BinaryEncoding::Hex, charmapping: true, zone: 0 };
+const CONTENT: Mapping = Mapping { encoding: BinaryEncoding::Hex, charmapping: true, zone: 0, nil: false };
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §9.8 GR9i, GR9j, GR9a] an array
 /// an element `element` of each element, a null one nilled, its prefix

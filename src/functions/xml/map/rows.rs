@@ -11,7 +11,7 @@
 use std::fmt::Write;
 use std::sync::Arc;
 
-use super::super::super::{Accumulator, AggregateFunction, BinaryEncoding, ScalarFunction, xml_lexical};
+use super::super::super::{Accumulator, AggregateFunction, Mapping, ScalarFunction, xml_mapped};
 use super::super::{Input, input, too_long};
 use super::data::{DataShape, DataWriter};
 use super::documents::{ROW, attribute, xml_name};
@@ -19,23 +19,22 @@ use super::{Choices, Nulls, Table, XMLMAP};
 use crate::error::{Code, Result, SqlError};
 use crate::value::lob::{Lob, LobKind};
 use crate::value::{CharUnits, DataType, Value};
-use crate::xml::{MAX_INPUT, Parameters, Version, XSI_NAMESPACE, serialize};
+use crate::xml::{MAX_INPUT, XSI_NAMESPACE};
 
 /// [§9.10 GR6c] How each row of a table is written: its element, the
-/// attributes of that element, and the element's name of each of its
-/// columns; the nulls and binary encoding of the mapping.
+/// attributes of that element, and the element's name and the data type
+/// of each of its columns; how its values are mapped [§9.8].
 #[derive(Debug)]
 pub struct RowShape {
     /// `row`, or XMLTN mapped as a forest.
     element: String,
     /// XSI and the target namespace, mapped as a forest.
     attributes: String,
-    /// XMLCNj of each column.
-    columns: Vec<String>,
-    /// NULLS.
-    nulls: Nulls,
-    /// ENCODING.
-    encoding: BinaryEncoding,
+    /// XMLCNj of each column, and its data type.
+    columns: Vec<(String, DataType)>,
+    /// NULLS, ENCODING, CHARMAPPING True [§9.10 GR6b v 3 A] and the
+    /// SQL-session's time zone displacement.
+    mapping: Mapping,
 }
 
 impl RowShape {
@@ -53,33 +52,29 @@ impl RowShape {
         if choices.forest && alone && !choices.target.is_empty() {
             let _ = write!(attributes, r#" xmlns="{}""#, attribute(&choices.target));
         }
-        let columns = table.columns.iter().map(|c| xml_name(&c.name)).collect();
-        RowShape { element, attributes, columns, nulls: choices.nulls, encoding: choices.encoding }
+        let columns = table.columns.iter().map(|c| (xml_name(&c.name), c.declared.data_type().clone())).collect();
+        let mapping = Mapping { encoding: choices.encoding, charmapping: true, zone: choices.zone, nil: choices.nulls == Nulls::Nil };
+        RowShape { element, attributes, columns, mapping }
     }
 
-    /// [§9.10 GR6b v] XMLCj, of the value `v` of the column named `name`:
-    /// of the null value nothing, NULLS absent, or an element nilled, NULLS
-    /// nil; else the element of the value mapped by §9.8, characters
-    /// mapped \[GR6b v 3 A\], an XML value serialized as CONTENT [§9.8
-    /// GR9k].
-    fn column(&self, out: &mut String, name: &str, v: &Value) -> Result<()> {
+    /// [§9.10 GR6b v] XMLCj, of the value `v` of the column named `name`
+    /// of the data type `t`: of the null value nothing, NULLS absent, or an
+    /// element nilled, NULLS nil; else the element of the value mapped by
+    /// §9.8 \[GR6b v 3 A\]: of a distinct type its source's \[GR1a\], of a
+    /// row, an array or a multiset an element of each field or element
+    /// \[GR9i, GR9j\], an XML value serialized as CONTENT \[GR9k\].
+    fn column(&self, out: &mut String, (name, t): (&str, &DataType), v: &Value) -> Result<()> {
         // Writing to a String cannot fail.
         if v.is_null() {
-            if self.nulls == Nulls::Nil {
+            if self.mapping.nil {
                 let _ = write!(out, r#"<{name} xsi:nil="true"/>"#);
             }
             return Ok(());
         }
-        let text = if let Value::Xml(x) = v { serialize(&*x.sequence()?, &CONTENT)? } else { xml_lexical(v, self.encoding, true)? };
-        let _ = write!(out, "<{name}>{text}</{name}>");
+        let _ = write!(out, "<{name}>{}</{name}>", xml_mapped(v, t, self.mapping)?);
         Ok(())
     }
 }
-
-/// [§9.8 GR9k] XMLSERIALIZE(CONTENT ... AS CLOB): of XML 1.0, the
-/// version XMLSERIALIZE writes of none [§6.8 SR2d], without a
-/// declaration.
-const CONTENT: Parameters = Parameters { version: Version::V10, declaration: false, encoding: "UTF-8", undeclare: false };
 
 /// The type of a row's text and of a mapping's data: a CHARACTER LARGE
 /// OBJECT of the longest text XMLPARSE reads.
@@ -110,8 +105,8 @@ impl ScalarFunction for XmlMapRow {
         let mut text = String::new();
         // Writing to a String cannot fail.
         let _ = write!(text, "<{}{}>", shape.element, shape.attributes);
-        for (value, name) in args.iter().zip(&shape.columns) {
-            shape.column(&mut text, name, value)?;
+        for (value, (name, t)) in args.iter().zip(&shape.columns) {
+            shape.column(&mut text, (name, t), value)?;
             if text.len() > MAX_INPUT {
                 return Err(too_long());
             }

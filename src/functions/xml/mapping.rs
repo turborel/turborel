@@ -155,9 +155,11 @@ const MAX_MAPPED_DEPTH: usize = MAX_TYPE_NESTING;
 /// strings are encoded \[GR3\]; whether `&`, `<`, `>` and a carriage
 /// return are written as references \[GR4\]; and the SQL-session's time
 /// zone displacement, in which a datetime without time zone is written,
-/// as CAST to a character string writes it \[GR7\]. NULLS \[GR2\] is absent
-/// wherever SQL/XML maps a value [§6.6 GR3a, §10.13 GR4c i 1 B], so a
-/// null field is no element \[GR9i ii 2 A\] and no choice here.
+/// as CAST to a character string writes it \[GR7\]; and NULLS \[GR2\],
+/// absent wherever SQL/XML's operators map a value [§6.6 GR3a, §10.13
+/// GR4c i 1 B], so a null field is no element \[GR9i ii 2 A\], and nil
+/// where a mapping of a table says so [§9.10 GR6b v 3 A], a null field
+/// then an element nilled \[GR9i ii 2 B\].
 #[derive(Debug, Clone, Copy)]
 pub struct Mapping {
     /// How binary strings are encoded.
@@ -166,6 +168,8 @@ pub struct Mapping {
     pub charmapping: bool,
     /// The SQL-session's time zone displacement, in minutes.
     pub zone: i16,
+    /// Whether NULLS is nil, rather than absent.
+    pub nil: bool,
 }
 
 /// [§9.8] The XML text of `v`, not null, of the declared type `t`: of a
@@ -253,6 +257,14 @@ fn mapped_into(v: &Value, t: &DataType, m: Mapping, depth: usize, out: &mut Stri
     Ok(())
 }
 
+/// Appends an element `name` nilled, `xsi:nil="true"`, declaring the
+/// namespace of its prefix `xsi`.
+fn nilled(out: &mut String, name: &str) {
+    for piece in ["<", name, " xmlns:", XSI_PREFIX, "=\"", XSI_NAMESPACE, "\" ", XSI_PREFIX, ":nil=\"true\"/>"] {
+        out.push_str(piece);
+    }
+}
+
 /// Appends the start tag of an element `name`, or its end tag if `end`.
 fn tag(out: &mut String, name: &str, end: bool) {
     out.push_str(if end { "</" } else { "<" });
@@ -266,9 +278,7 @@ fn tag(out: &mut String, name: &str, end: bool) {
 fn elements_into(items: &[Value], element: &DataType, (m, depth): (Mapping, usize), out: &mut String) -> Result<()> {
     for item in items {
         if item.is_null() {
-            for piece in ["<", ELEMENT, " xmlns:", XSI_PREFIX, "=\"", XSI_NAMESPACE, "\" ", XSI_PREFIX, ":nil=\"true\"/>"] {
-                out.push_str(piece);
-            }
+            nilled(out, ELEMENT);
             continue;
         }
         tag(out, ELEMENT, false);
@@ -278,16 +288,20 @@ fn elements_into(items: &[Value], element: &DataType, (m, depth): (Mapping, usiz
     Ok(())
 }
 
-/// [§9.8 GR9i] Appends each of `values`, the fields `fields` declare: none
-/// of a null one, NULLS absent \[GR9i ii 2 A\]; else `<FN>X</FN>`, FN its
+/// [§9.8 GR9i] Appends each of `values`, the fields `fields` declare: of a
+/// null one none, NULLS absent \[GR9i ii 2 A\], or `<FN xsi:nil="true"/>`,
+/// NULLS nil \[GR9i ii 2 B\]; else `<FN>X</FN>`, FN its
 /// name mapped by §9.1 fully escaped \[GR9i ii 1\], X its mapping \[GR9i
 /// ii 2 C\].
 fn fields_into(values: &[Value], fields: &[RowField], (m, depth): (Mapping, usize), out: &mut String) -> Result<()> {
     for (v, f) in values.iter().zip(fields) {
+        let name = name_of(&f.name, Escape::Full);
         if v.is_null() {
+            if m.nil {
+                nilled(out, &name);
+            }
             continue;
         }
-        let name = name_of(&f.name, Escape::Full);
         tag(out, &name, false);
         mapped_into(v, &f.data_type, m, depth.saturating_add(1), out)?;
         tag(out, &name, true);

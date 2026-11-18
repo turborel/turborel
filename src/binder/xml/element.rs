@@ -93,7 +93,7 @@ impl Binder<'_> {
     /// characters mapped, a datetime in the SQL-session's displacement
     /// [§9.8 GR7].
     fn mapping(&self) -> Mapping {
-        Mapping { encoding: self.binary_encoding(), charmapping: true, zone: self.now.zone() }
+        Mapping { encoding: self.binary_encoding(), charmapping: true, zone: self.now.zone(), nil: false }
     }
 
     /// `operand`, bound as a value §9.8 maps [§6.14 SR3c, SR7, §6.15

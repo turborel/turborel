@@ -283,16 +283,17 @@ fn types_of_columns_9_5() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §4.10.8, §9.9 GR4,
-/// GR5a, §9.10 GR4] an XML unmappable column, of XML(SEQUENCE), and one
-/// of a type no XML Name is given, DECFLOAT or an array, is in neither
-/// document; a table of no other column maps to rows of no element.
+/// GR5a, §9.10 GR4] an XML unmappable column, of XML(SEQUENCE) or an
+/// array of it, and [EXTENSION] one of DECFLOAT, which §9.5 maps to no
+/// type, is in neither document; a table of no other column maps to rows
+/// of no element.
 #[test]
 fn unmappable_columns_left_out_4_10_8() {
     let db = Database::new();
-    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, X XML, F DECFLOAT(16), R INTEGER ARRAY[3]) CREATE TABLE E (X XML)")
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, X XML, F DECFLOAT(16), R XML ARRAY[3]) CREATE TABLE E (X XML)")
         .unwrap();
     let a = db.session("A");
-    a.run("INSERT INTO T VALUES (1, XMLCOMMENT('c' RETURNING SEQUENCE), 1.5, ARRAY[1, 2])").unwrap();
+    a.run("INSERT INTO T VALUES (1, XMLCOMMENT('c' RETURNING SEQUENCE), 1.5, NULL)").unwrap();
     a.run("INSERT INTO E VALUES (NULL)").unwrap();
     assert_eq!(text(&a, "XMLMAP(TABLE T)"), format!("<T {XSI}><row><K>1</K></row></T>"));
     let schema = text(&a, "XMLMAP(TABLE T METADATA)");
@@ -539,4 +540,40 @@ fn mappings_never_hold_themselves() {
     a.commit().unwrap();
     assert_eq!(code(&a, "VALUES (XMLMAP(SCHEMA A))"), Code::SyntaxRule);
     assert!(text(&a, "XMLMAP(TABLE L)").contains("<K>1</K>"), "a mapping of a table holds no other");
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §4.10.8, §9.4 GR19,
+/// GR21, GR22, §9.5 GR8n, GR8o, GR8p, GR8q, §9.8 GR1a, GR9i, GR9j] columns
+/// of row, array and multiset types, and of a distinct type of an array,
+/// are mapped: an element of each field and of each element, a null
+/// element nilled, a null field left out, NULLS absent, or nilled, NULLS
+/// nil; their types complex types, defined with the types they are made
+/// of; the schema document describes the data.
+#[test]
+fn composite_columns_9_8() {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A CREATE TYPE TRIO AS INTEGER ARRAY[3] \
+         CREATE TABLE C (K INTEGER, P ROW(X INTEGER, Y VARCHAR(5)), L INTEGER ARRAY[3], M VARCHAR(2) MULTISET, D TRIO)",
+    )
+    .unwrap();
+    let a = db.session("A");
+    a.run("INSERT INTO C VALUES (1, ROW(2, CAST(NULL AS VARCHAR(5))), ARRAY[4, CAST(NULL AS INTEGER)], MULTISET['a'], CAST(ARRAY[7] AS TRIO))").unwrap();
+    let nil = r#"<element xsi:nil="true"/>"#;
+    let row = format!("<K>1</K><P><X>2</X></P><L><element>4</element>{nil}</L><M><element>a</element></M><D><element>7</element></D>");
+    assert_eq!(text(&a, "XMLMAP(TABLE C)"), format!("<C {XSI}><row>{row}</row></C>"));
+    let nilled = text(&a, "XMLMAP(TABLE C NULLS NIL)");
+    assert!(nilled.contains(r#"<P><X>2</X><Y xsi:nil="true"/></P>"#), "{nilled}");
+    let schema = text(&a, "XMLMAP(TABLE C METADATA)");
+    for expected in [
+        r#"<xs:complexType name="Row.X.INTEGER.Y.VARCHAR_5"><xs:sequence><xs:element name="X" type="INTEGER" minOccurs="0"/><xs:element name="Y" type="VARCHAR_5" minOccurs="0"/></xs:sequence></xs:complexType>"#,
+        r#"<xs:complexType name="Array_3.INTEGER"><xs:sequence><xs:element name="element" minOccurs="0" maxOccurs="3" nillable="true" type="INTEGER"/></xs:sequence></xs:complexType>"#,
+        r#"<xs:element name="element" minOccurs="0" maxOccurs="unbounded" nillable="true" type="VARCHAR_2"/>"#,
+        r#"<xs:complexType name="UDT.TURBOREL.A.TRIO"><xs:complexContent><xs:extension base="Array_3.INTEGER"/></xs:complexContent></xs:complexType>"#,
+    ] {
+        assert!(schema.contains(expected), "{expected} in {schema}");
+    }
+    assert_eq!(warning(&a, "VALUES (XMLMAP(TABLE C))"), None, "every column maps");
+    validates(&a, "TABLE C", ("NULLS NIL TARGETNAMESPACE 'urn:c'", ""));
+    validates(&a, "SCHEMA A", ("AS FOREST", "ENCODING BASE64"));
 }

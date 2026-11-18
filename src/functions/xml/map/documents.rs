@@ -95,7 +95,7 @@ impl XmlMap {
     pub(super) fn schema_document(&self) -> Text {
         let mut text = Text::default();
         let declared: Vec<Declared> = self.tables().into_iter().flat_map(|t| t.columns.iter().map(|c| c.declared.clone())).collect();
-        let (xsct, xdt) = definitions(&declared, &self.catalog, self.choices.encoding);
+        let (xsct, xdt) = definitions(&declared, &self.catalog, (self.choices.encoding, self.choices.nulls));
         for d in &declared {
             if let Some(name) = declared_name(d, &self.catalog) {
                 text.v11 |= !is_ncname(Version::V10, &name);

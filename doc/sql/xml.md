@@ -980,9 +980,12 @@ Only what the user may read is mapped. TABLE needs SELECT on the table
 (SQLCODE -104). A schema or the catalog holds only the tables the user
 may SELECT that have a column to map, and the catalog only the schemas
 of such tables, the Information Schema among them. A column is left out
-if it is of XML(SEQUENCE) (XML alone), a structured, reference, row,
-array or multiset type, DECFLOAT or a plug-in's type, or of a distinct
-type whose cast to its source type the user may not execute. A mapping
+if it is of XML(SEQUENCE) (XML alone), a structured or reference type,
+DECFLOAT or a plug-in's type, or of a row, array, multiset or distinct
+type made of one, or of a distinct type whose cast to its source type
+the user may not execute. A row is an element of each field, a null one
+left out or nilled as NULLS says, and an array or a multiset an element
+`element` of each element, a null one nilled. A mapping
 that leaves out a column the user may read, as its type does not map,
 completes with the warning 01010 (column cannot be mapped).
 

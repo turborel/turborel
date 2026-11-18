@@ -3266,6 +3266,12 @@ limits of the value it makes, SQLCODE -900. A function of the data
 writes the XML Schema document [§9.11 GR10] and parses each, as the
 draft's XMLPARSE does, PRESERVE WHITESPACE.
 
+A column is left out, as an XML unmappable column, if its type is
+XML(SEQUENCE), a structured or reference type [§4.10.8], or, as §9.5
+maps no type of them, DECFLOAT or a plug-in's type, or is made of one.
+Rows, arrays and multisets are mapped as §9.8 maps them, each a complex
+type of the types it is made of.
+
 The value is what that parse gives, which XMLSERIALIZE writes as the
 draft's XSR and XDR [§9.11 GR10f, GR12d]. Of METADATA it is the XML
 Schema document, of XML(DOCUMENT(UNTYPED)). Of DATA it is the data, of

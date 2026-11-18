@@ -85,14 +85,15 @@ fn source_of(kind: &MapSource, mut tables: Vec<Table>) -> Result<Source> {
 
 /// [§9.11 SR1, §9.14 SR1, §9.17 SR1] The parameters `m` gives, each
 /// written or implicit: TARGETNS the zero-length string if none is
-/// written, no namespace [§9.10 GR1].
+/// written, no namespace [§9.10 GR1]; and the SQL-session's time zone
+/// displacement `zone` [§9.8 GR7].
 ///
 /// # Errors
 ///
 /// SQLCODE -103 if the target namespace is the namespace of `xml` or of
 /// `xmlns`, as no namespace XMLNAMESPACES declares is [§11.3 SR6], or
 /// holds a character no XML character [XML 1.1 §2.2].
-fn choices(m: &XmlMapping) -> Result<Choices> {
+fn choices(m: &XmlMapping, zone: i16) -> Result<Choices> {
     let target = m.target.clone().unwrap_or_default();
     if let Some(bad) = target.chars().find(|&c| !is_char(Version::V11, c)) {
         return Err(rule(format!("[EXTENSION] [XML 1.1 §2.2] the target namespace holds U+{:04X}, no XML character", u32::from(bad))));
@@ -112,6 +113,7 @@ fn choices(m: &XmlMapping) -> Result<Choices> {
         data,
         metadata,
         encoding: m.encoding.unwrap_or(IMPLICIT_BINARY_ENCODING),
+        zone,
     })
 }
 
@@ -137,7 +139,7 @@ impl Binder<'_> {
                 "[EXTENSION] RULES.md D86: a mapping of a schema or the catalog reads no table, view or routine that maps a schema or the catalog, as such a mapping could hold itself",
             ));
         }
-        let choices = choices(m)?;
+        let choices = choices(m, self.now.zone())?;
         let reads = match &m.source {
             MapSource::Table(query) => vec![self.table_read(query)?],
             MapSource::Schema(name, at) => self.schema_reads(name).or_at(*at)?,

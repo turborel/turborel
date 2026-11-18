@@ -5,14 +5,14 @@
 use super::{Mutation, Package};
 
 /// Each mapping mechanism broken alone, and the tests that fail.
-pub const XML_MAP: [Mutation; 20] = [
+pub const XML_MAP: [Mutation; 22] = [
     Mutation {
         name: "xml-map-nulls-nil",
         package: Package::Core,
         breaks: "a null value's element is left out of NULLS NIL, and nilled of NULLS ABSENT",
         file: "src/functions/xml/map/rows.rs",
-        original: "            if self.nulls == Nulls::Nil {",
-        replacement: "            if self.nulls == Nulls::Absent {",
+        original: "            if self.mapping.nil {",
+        replacement: "            if !self.mapping.nil {",
         integration: &["xml_map::table_as_element_9_10"],
         unit: &["functions::xml::map::tests::rows_written_9_10"],
     },
@@ -64,6 +64,26 @@ pub const XML_MAP: [Mutation; 20] = [
         original: "            if !mapped_sources(&view.query).is_empty() {",
         replacement: "            if false {",
         integration: &["xml_map::mappings_never_hold_themselves"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-map-array-cardinality",
+        package: Package::Core,
+        breaks: "an array type's complex type takes elements past its maximum cardinality",
+        file: "src/functions/xml/map/composites.rs",
+        original: "&a.max.to_string()",
+        replacement: "\"unbounded\"",
+        integration: &["xml_map::composite_columns_9_8"],
+        unit: &["functions::xml::map::types::tests::composite_types_9_5"],
+    },
+    Mutation {
+        name: "xml-map-row-field-nil",
+        package: Package::Core,
+        breaks: "a row's null field is left out of NULLS NIL",
+        file: "src/functions/xml/mapping.rs",
+        original: "            if m.nil {",
+        replacement: "            if false {",
+        integration: &["xml_map::composite_columns_9_8"],
         unit: &[],
     },
     Mutation {

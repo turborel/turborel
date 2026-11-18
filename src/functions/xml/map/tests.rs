@@ -26,7 +26,7 @@ fn table() -> Table {
 
 /// The choices of NULLS `nulls`, AS FOREST if `forest`, of DATA alone.
 fn choices(nulls: Nulls, forest: bool, target: &str) -> Choices {
-    Choices { nulls, forest, target: target.to_owned(), data: true, metadata: false, encoding: BinaryEncoding::Hex }
+    Choices { nulls, forest, target: target.to_owned(), data: true, metadata: false, encoding: BinaryEncoding::Hex, zone: 0 }
 }
 
 /// The text of a large object `v`.

@@ -177,7 +177,7 @@ impl Binder<'_> {
         }
         // [SR1, SR2] The encoding in scope; [GR3a] characters mapped.
         let encoding = self.binary_encoding();
-        let mapping = Mapping { encoding, charmapping: true, zone: self.now.zone() };
+        let mapping = Mapping { encoding, charmapping: true, zone: self.now.zone(), nil: false };
         // The atomic type is not read, as the value is cast to CONTENT.
         let cast = XmlCastIn { target: xml, base: AtomicType::UntypedAtomic, collection: Some((source.clone(), mapping)), encoding };
         Ok(Expr::Call(ScalarRef(Arc::new(cast)), vec![e]))

@@ -67,14 +67,16 @@ fn xml_names_of_types_9_4() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §4.10.8] an XML unmappable data
-/// type, XML(SEQUENCE), has no XML Name, nor [EXTENSION] DECFLOAT, an
-/// array, or a distinct type of one; [§9.4 GR18, §9.2] a domain's is of
-/// "Domain", its catalog, schema and name, each fully escaped [§9.1].
+/// type, XML(SEQUENCE), has no XML Name, nor a type based on one, an
+/// array of it; nor [EXTENSION] DECFLOAT, or a distinct type of an array
+/// of it; [§9.4 GR18, §9.2] a domain's is of "Domain", its catalog, schema
+/// and name, each fully escaped [§9.1].
 #[test]
 fn unmappable_types_and_domains_9_4() {
     let decfloat = DataType::DecFloat { precision: 16 };
-    let array = DataType::array(DataType::Boolean, 3);
-    for t in [DataType::Xml(XmlType::Sequence), decfloat, array.clone(), DataType::distinct("S", "A", array)] {
+    let sequences = DataType::array(DataType::Xml(XmlType::Sequence), 3);
+    let decfloats = DataType::distinct("S", "A", DataType::array(decfloat.clone(), 3));
+    for t in [DataType::Xml(XmlType::Sequence), decfloat, sequences, decfloats] {
         assert!(!mappable(&t) && type_name(&t, CATALOG).is_none(), "{t:?}");
     }
     let domain = Declared::of(&DataType::Boolean, Some(("S", "A.B:C")));
@@ -92,7 +94,7 @@ fn unmappable_types_and_domains_9_4() {
 /// built-in type restricted by nothing.
 #[test]
 fn simple_types_9_5() {
-    let named = |t: DataType, encoding| named_type(&Declared::Type(t), CATALOG, encoding).unwrap();
+    let named = |t: DataType, encoding| named_type(&Declared::Type(t), CATALOG, encoding, Nulls::Absent).unwrap();
     let cases = [
         (
             DataType::character(10),
@@ -132,7 +134,7 @@ fn simple_types_9_5() {
         r#"<xs:simpleType name="BLOB_9"><xs:restriction base="xs:hexBinary"><xs:maxLength value="9"/></xs:restriction></xs:simpleType>"#;
     assert_eq!(named(blob.clone(), BinaryEncoding::Hex), hex);
     assert_eq!(named(blob, BinaryEncoding::Base64), hex.replace("hexBinary", "base64Binary"));
-    assert!(named_type(&Declared::Type(DataType::DecFloat { precision: 34 }), CATALOG, BinaryEncoding::Hex).is_none());
+    assert!(named_type(&Declared::Type(DataType::DecFloat { precision: 34 }), CATALOG, BinaryEncoding::Hex, Nulls::Absent).is_none());
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §9.5 GR8g to GR8l] a datetime's
@@ -185,7 +187,7 @@ fn collections_of_types_9_7() {
         Declared::Type(DataType::Xml(XmlType::Content(Typing::Untyped))),
         Declared::Type(DataType::Xml(XmlType::Document(Typing::Any))),
     ];
-    let (text, xdt) = definitions(&declared, CATALOG, BinaryEncoding::Hex);
+    let (text, xdt) = definitions(&declared, CATALOG, (BinaryEncoding::Hex, Nulls::Absent));
     let expected = [
         r#"<xs:simpleType name="Domain.TURBOREL.S.FLAG"><xs:restriction base="BOOLEAN"/></xs:simpleType>"#,
         r#"<xs:simpleType name="BOOLEAN"><xs:restriction base="xs:boolean"/></xs:simpleType>"#,
@@ -195,8 +197,66 @@ fn collections_of_types_9_7() {
     ];
     assert_eq!(text, expected.concat());
     assert!(!xdt && parses(&text));
-    let (durations, of_xdt) = definitions(&[Declared::Type(interval(Field::Day, Field::Day, 2, 0))], CATALOG, BinaryEncoding::Hex);
+    let (durations, of_xdt) =
+        definitions(&[Declared::Type(interval(Field::Day, Field::Day, 2, 0))], CATALOG, (BinaryEncoding::Hex, Nulls::Absent));
     assert!(of_xdt && parses(&durations), "{durations}");
-    let unmapped = definitions(&[Declared::Type(DataType::Xml(XmlType::Sequence))], CATALOG, BinaryEncoding::Hex);
+    let unmapped = definitions(&[Declared::Type(DataType::Xml(XmlType::Sequence))], CATALOG, (BinaryEncoding::Hex, Nulls::Absent));
     assert_eq!(unmapped, (String::new(), false));
+}
+
+/// A row type of the fields `fields`, each a name and a type.
+fn row_of(fields: &[(&str, DataType)]) -> DataType {
+    use crate::value::types::Field as RowField;
+    DataType::row(fields.iter().map(|(name, t)| RowField { name: (*name).to_owned(), data_type: t.clone(), unnamed: false }).collect())
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §9.4 GR19, GR21, GR22] the XML
+/// Names of a row type, Row and its fields' names and types' Names, an
+/// array type's of its maximum cardinality and element type, a multiset
+/// type's of its element type, each nested; a distinct type of an array
+/// is mappable.
+#[test]
+fn xml_names_of_composite_types_9_4() {
+    let row = row_of(&[("a b", DataType::Boolean), ("N", DataType::array(DataType::Date, 2))]);
+    assert_eq!(type_name(&row, CATALOG).as_deref(), Some("Row.a_x0020_b.BOOLEAN.N.Array_2_x002E_DATE"));
+    let multiset = DataType::multiset(DataType::array(DataType::Boolean, 4));
+    assert_eq!(type_name(&multiset, CATALOG).as_deref(), Some("Multiset.Array_4.BOOLEAN"));
+    let distinct = DataType::distinct("S", "LIST", DataType::array(DataType::varying(3), 5));
+    assert_eq!(type_name(&distinct, CATALOG).as_deref(), Some("UDT.TURBOREL.S.LIST"));
+    let other = row_of(&[("a b", DataType::Boolean), ("N", DataType::array(DataType::Date, 3))]);
+    assert_ne!(type_name(&row, CATALOG), type_name(&other, CATALOG), "row types of other fields' types have other IDIs");
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §9.5 GR8n, GR8p, GR8q, GR8o,
+/// §9.6 GR6b ii, §9.7 GR3b, GR3d] a row type's complex type of an element
+/// of each field, left out or nilled of a null value as NULLS says; an
+/// array's of `element`s, at most its maximum cardinality, nilled; a
+/// multiset's unbounded; a distinct type of an array extending it by
+/// nothing; the collection augmented by the types they are made of, each
+/// once, every definition well-formed.
+#[test]
+fn composite_types_9_5() {
+    let row = row_of(&[("A", DataType::Boolean)]);
+    let nil = named_type(&Declared::Type(row.clone()), CATALOG, BinaryEncoding::Hex, Nulls::Nil).unwrap();
+    let field = r#"<xs:element name="A" type="BOOLEAN" nillable="true"/>"#;
+    assert_eq!(nil, format!(r#"<xs:complexType name="Row.A.BOOLEAN"><xs:sequence>{field}</xs:sequence></xs:complexType>"#));
+    let absent = named_type(&Declared::Type(row), CATALOG, BinaryEncoding::Hex, Nulls::Absent).unwrap();
+    assert!(absent.contains(r#"type="BOOLEAN" minOccurs="0"/>"#), "{absent}");
+    let array = DataType::array(DataType::Boolean, 3);
+    let elements = r#"<xs:element name="element" minOccurs="0" maxOccurs="3" nillable="true" type="BOOLEAN"/>"#;
+    assert_eq!(
+        named_type(&Declared::Type(array.clone()), CATALOG, BinaryEncoding::Hex, Nulls::Absent).unwrap(),
+        format!(r#"<xs:complexType name="Array_3.BOOLEAN"><xs:sequence>{elements}</xs:sequence></xs:complexType>"#)
+    );
+    let multiset = named_type(&Declared::Type(DataType::multiset(DataType::Boolean)), CATALOG, BinaryEncoding::Hex, Nulls::Absent).unwrap();
+    assert!(multiset.contains(r#"maxOccurs="unbounded""#), "{multiset}");
+    let distinct = DataType::distinct("S", "TRIO", array);
+    let (text, _) = definitions(&[Declared::Type(distinct)], CATALOG, (BinaryEncoding::Hex, Nulls::Absent));
+    let expected = [
+        r#"<xs:complexType name="UDT.TURBOREL.S.TRIO"><xs:complexContent><xs:extension base="Array_3.BOOLEAN"/></xs:complexContent></xs:complexType>"#,
+        r#"<xs:complexType name="Array_3.BOOLEAN"><xs:sequence>"#,
+    ];
+    assert!(text.starts_with(&expected.concat()), "{text}");
+    assert!(text.ends_with(r#"<xs:simpleType name="BOOLEAN"><xs:restriction base="xs:boolean"/></xs:simpleType>"#), "{text}");
+    assert!(parses(&text), "{text}");
 }

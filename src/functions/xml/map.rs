@@ -9,6 +9,7 @@
 //! the function of the data (`map/documents.rs`), each parsed as the
 //! draft's XMLPARSE parses them.
 
+mod composites;
 mod data;
 mod documents;
 mod durations;
@@ -63,6 +64,9 @@ pub struct Choices {
     pub metadata: bool,
     /// ENCODING.
     pub encoding: BinaryEncoding,
+    /// The SQL-session's time zone displacement, in minutes, in which a
+    /// datetime without time zone is written [§9.8 GR7].
+    pub zone: i16,
 }
 
 /// An XML visible column [§4.10.8] a mapping writes.
