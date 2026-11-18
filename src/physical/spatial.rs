@@ -17,7 +17,7 @@ pub(crate) fn intersection(cond: &Cond) -> Option<(&ScalarRef, &[Expr])> {
         return None;
     };
     let Expr::Call(function, args) = expression else { return None };
-    let spatial = function.0.spatial_operation() == Some(SpatialOperation::Intersects);
+    let spatial = function.0.spatial_operation().is_some_and(SpatialOperation::windowed);
     (spatial && function.0.deterministic()).then_some((function, args))
 }
 

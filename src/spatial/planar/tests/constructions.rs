@@ -1,7 +1,10 @@
 //! Buffer, convex hull, boundary and polygons from rings.
 
-use super::super::{Geometry, area, boundary, buffer, convex_hull, equals, multipolygon_from_rings, polygon_from_rings, within};
-use super::{text, wkt};
+use super::super::{
+    Geometry, Point, area, boundary, buffer, convex_hull, distance as distance_between, equals, intersects, multipolygon_from_rings,
+    polygon_from_rings, within,
+};
+use super::{Seeded, text, wkt};
 
 fn same_set(actual: &Geometry, expected: &str) {
     assert_eq!(equals(actual, &wkt(expected)).unwrap(), Some(true), "{} is not {expected}", text(actual));
@@ -118,4 +121,50 @@ fn mod_2_union_rule_example() {
     let curves =
         wkt("MULTILINESTRING ((10 0, 20 20, 30 0), (30 0, 35 5, 40 0), (30 0, 35 -5, 40 0), (20 0, 30 10, 40 0), (20 0, 30 -10, 40 0))");
     assert_eq!(text(&boundary(&curves).unwrap()), "MULTIPOINT (10 0, 30 0)");
+}
+
+/// Whether every sample point nearer than the inscribed radius lies in
+/// the buffer and every one beyond the distance, past the rounding of
+/// the offset points, lies outside it.
+fn buffer_holds(geometry: &Geometry, distance: f64, samples: &mut Seeded) {
+    let grown = buffer(geometry, distance).unwrap();
+    let inscribed = distance * 0.99_f64;
+    for _ in 0..200_u32 {
+        let [x, y] = samples.point(160);
+        let point = Geometry::Point([x / 10.0_f64 - 2.0_f64, y / 10.0_f64 - 2.0_f64]);
+        let Some(apart) = distance_between(&point, geometry) else { continue };
+        let inside = intersects(&point, &grown).unwrap();
+        if apart < inscribed {
+            assert_eq!(inside, Some(true), "{} at {apart} from {}", text(&point), text(geometry));
+        } else if apart > distance * 1.000_001_f64 {
+            assert_eq!(inside, Some(false), "{} at {apart} from {}", text(&point), text(geometry));
+        }
+    }
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 §5.1.30] on fixed-seed random lines,
+/// zigzags that turn back on themselves and concave polygons with holes,
+/// the buffer holds every point nearer than the inscribed arcs and no
+/// point beyond the distance.
+#[test]
+fn buffers_match_distances() {
+    let mut seeded = Seeded(0x5eed_b0ff);
+    let mut samples = Seeded(0x05a3_e9e5);
+    for round in 0..40_u32 {
+        let count = seeded.below(5).saturating_add(2);
+        let line: Vec<Point> = (0..count).map(|_| seeded.point(12)).collect();
+        let distance = f64::from(round % 4_u32).mul_add(0.5_f64, 0.25_f64);
+        buffer_holds(&Geometry::Line(line), distance, &mut samples);
+    }
+    let shapes = [
+        "LINESTRING (0 0, 10 0, 0 0.5, 10 1)",
+        "POLYGON ((0 0, 12 0, 12 12, 6 3, 0 12, 0 0), (2 1, 4 1, 4 2, 2 2, 2 1))",
+        "MULTIPOLYGON (((0 0, 4 0, 4 4, 0 4, 0 0)), ((5 0, 9 0, 9 4, 5 4, 5 0)))",
+        "GEOMETRYCOLLECTION (POINT (3 9), LINESTRING (8 8, 8 8.1), POLYGON ((0 0, 3 0, 0 3, 0 0)))",
+    ];
+    for shape in shapes {
+        for distance in [0.2_f64, 0.7_f64, 1.5_f64] {
+            buffer_holds(&wkt(shape), distance, &mut samples);
+        }
+    }
 }

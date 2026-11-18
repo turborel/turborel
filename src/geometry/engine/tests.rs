@@ -33,6 +33,7 @@ fn equality_is_spatial() {
 }
 
 /// Verifies: [DESIGN] a result comes back as the most specific XY value,
+/// an empty one as the empty point of R00 [§5.1.39 Table 7],
 /// which the casts of §4.2.1.5 Table 4 take to a wider type.
 #[test]
 fn results_come_back_as_values() {
@@ -48,7 +49,7 @@ fn results_come_back_as_values() {
     let nothing = planar::difference(&engine_of(&first).unwrap(), &engine_of(&first).unwrap()).unwrap();
     let empty = geom_of(&nothing, 7).unwrap();
     assert!(empty.is_empty());
-    assert_eq!(empty.kind(), Kind::GeomCollection);
+    assert_eq!(empty.kind(), Kind::Point);
 }
 
 /// Verifies: [DESIGN] collections of every linear kind reach the engine

@@ -62,6 +62,7 @@ mod shadow;
 mod spatial_curves;
 mod spatial_planar;
 mod spatial_routines;
+mod spatial_solids;
 mod spatial_srs;
 mod spatial_types;
 mod sql2023;

@@ -8,12 +8,14 @@
 //! D-SPATIAL-CURVES).
 
 mod curves;
+mod measures;
 mod surfaces;
 
 use std::sync::Arc;
 
 pub use curves::{CompoundMethod, CurveMethod, ParameterMethod, PointListMethod};
-pub use surfaces::{MeasureMethod, PatchMethod, RingMethod, SurfaceMethod};
+pub use measures::{Exact, exact};
+pub use surfaces::{MeasureMethod, PatchMethod, RingMethod};
 
 use super::model::{Dims, Geom, Kind};
 use super::{data_type, data_type_of, kind};
@@ -211,7 +213,6 @@ pub(crate) fn functions() -> Vec<Arc<dyn ScalarFunction>> {
     out.extend(curves::POINT_LIST_METHODS.iter().map(|m| -> Arc<dyn ScalarFunction> { Arc::new(Routine(*m)) }));
     out.extend(curves::PARAMETER_METHODS.iter().map(|m| -> Arc<dyn ScalarFunction> { Arc::new(Routine(*m)) }));
     out.extend(curves::COMPOUND_METHODS.iter().map(|m| -> Arc<dyn ScalarFunction> { Arc::new(Routine(*m)) }));
-    out.extend(surfaces::SURFACE_METHODS.iter().map(|m| -> Arc<dyn ScalarFunction> { Arc::new(Routine(*m)) }));
     out.extend(surfaces::RING_METHODS.iter().map(|m| -> Arc<dyn ScalarFunction> { Arc::new(Routine(*m)) }));
     out.extend(surfaces::PATCH_METHODS.iter().map(|m| -> Arc<dyn ScalarFunction> { Arc::new(Routine(*m)) }));
     out.extend(surfaces::MEASURE_METHODS.iter().map(|m| -> Arc<dyn ScalarFunction> { Arc::new(Routine(*m)) }));

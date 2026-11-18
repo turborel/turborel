@@ -147,7 +147,7 @@ fn called_warned(function: &ScalarRef, args: &[Expr], row: &Row, subqueries: &dy
 /// argument list. Arrays preserve left-to-right evaluation and drop earlier
 /// values if a later argument fails, just as collecting into a vector does.
 fn called(function: &ScalarRef, args: &[Expr], row: &Row, subqueries: &dyn Subqueries) -> Result<Value> {
-    if function.0.uses_context() {
+    if function.0.uses_context(args.len()) {
         let values = args.iter().map(|arg| eval(arg, row, subqueries)).collect::<Result<Vec<_>>>()?;
         return function.0.call_in(&values, &Context(subqueries));
     }

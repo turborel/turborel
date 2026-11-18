@@ -156,6 +156,7 @@ fn systems_query() -> AppendedQuery {
             "SELECT ROW(SRS_ID, ORGANIZATION, ORGANIZATION_COORDSYS_ID, DEFINITION) FROM ST_INFORMTN_SCHEMA.ST_SPATIAL_REFERENCE_SYSTEMS"
                 .to_owned(),
         tables: Vec::new(),
+        columns: Vec::new(),
     }
 }
 

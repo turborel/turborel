@@ -36,16 +36,12 @@ fn point_argument(v: Option<&Value>, name: &str) -> Result<Option<Coord>> {
 /// [§7.1] The methods of ST_Curve.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CurveMethod {
-    /// [§7.1.2] ST_Length().
-    Length,
     /// [§7.1.4] ST_StartPoint().
     StartPoint,
     /// [§7.1.5] ST_EndPoint().
     EndPoint,
     /// [§7.1.6] ST_IsClosed().
     IsClosed,
-    /// [§7.1.8] ST_IsRing().
-    IsRing,
     /// [§7.1.10] ST_CurveToLine().
     CurveToLine,
     /// [§7.1.11] ST_DistanceToPoint(ST_Point).
@@ -57,12 +53,10 @@ pub enum CurveMethod {
 }
 
 /// The methods of ST_Curve.
-pub const CURVE_METHODS: [CurveMethod; 9] = [
-    CurveMethod::Length,
+pub const CURVE_METHODS: [CurveMethod; 7] = [
     CurveMethod::StartPoint,
     CurveMethod::EndPoint,
     CurveMethod::IsClosed,
-    CurveMethod::IsRing,
     CurveMethod::CurveToLine,
     CurveMethod::DistanceToPoint,
     CurveMethod::PointAtDistance,
@@ -72,11 +66,9 @@ pub const CURVE_METHODS: [CurveMethod; 9] = [
 impl Observer for CurveMethod {
     fn name(self) -> &'static str {
         match self {
-            Self::Length => "ST_LENGTH",
             Self::StartPoint => "ST_STARTPOINT",
             Self::EndPoint => "ST_ENDPOINT",
             Self::IsClosed => "ST_ISCLOSED",
-            Self::IsRing => "ST_ISRING",
             Self::CurveToLine => "ST_CURVETOLINE",
             Self::DistanceToPoint => "ST_DISTANCETOPOINT",
             Self::PointAtDistance => "ST_POINTATDISTANCE",
@@ -88,14 +80,14 @@ impl Observer for CurveMethod {
         match self {
             Self::DistanceToPoint | Self::PerpPoints => &[Parameter::Point],
             Self::PointAtDistance => &[Parameter::Double],
-            Self::Length | Self::StartPoint | Self::EndPoint | Self::IsClosed | Self::IsRing | Self::CurveToLine => &[],
+            Self::StartPoint | Self::EndPoint | Self::IsClosed | Self::CurveToLine => &[],
         }
     }
 
     fn returns(self, _: Kind) -> Returns {
         match self {
-            Self::Length | Self::DistanceToPoint => Returns::Double,
-            Self::IsClosed | Self::IsRing => Returns::Integer,
+            Self::DistanceToPoint => Returns::Double,
+            Self::IsClosed => Returns::Integer,
             Self::StartPoint | Self::EndPoint | Self::PointAtDistance => Returns::Of(Kind::Point),
             Self::CurveToLine => Returns::Of(Kind::LineString),
             Self::PerpPoints => Returns::Of(Kind::Geometry),
@@ -111,11 +103,9 @@ impl Observer for CurveMethod {
         let geo = &Planar;
         let point = |p: Option<Coord>| p.map_or(Ok(Value::Null), |p| part(g, g.dims, Body::Point(Some(p))));
         let result = match self {
-            Self::Length => double(observe::length(c, Metric::Plane, geo)?),
             Self::StartPoint => point(observe::start_point(c, geo)?)?,
             Self::EndPoint => point(observe::end_point(c, geo)?)?,
             Self::IsClosed => truth(observe::is_closed(c, Metric::Plane, geo)?),
-            Self::IsRing => truth(observe::is_ring(c, Metric::Plane, geo)?),
             Self::CurveToLine => part(g, g.dims, Body::Curve(Curve::LineString(observe::curve_to_line(c, &Tolerance::DEFAULT, geo)?)))?,
             Self::PointAtDistance => point(observe::point_at_distance(c, number(rest.first(), self.name())?, Metric::Plane, geo)?)?,
             Self::DistanceToPoint => match point_argument(rest.first(), self.name())? {

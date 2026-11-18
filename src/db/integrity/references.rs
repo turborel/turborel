@@ -100,7 +100,13 @@ impl State {
 
     /// Calls `each` with the rows of `table`, with their ids, that `keep`
     /// keeps, until it breaks: read in full, a row at a time.
-    pub(super) fn each_row_where(&self, tx: &Txn, table: &QualifiedName, keep: &dyn Fn(&Row) -> bool, each: Visit<'_>) -> Result<()> {
+    pub(in crate::db) fn each_row_where(
+        &self,
+        tx: &Txn,
+        table: &QualifiedName,
+        keep: &dyn Fn(&Row) -> bool,
+        each: Visit<'_>,
+    ) -> Result<()> {
         self.read_lock(tx, table)?;
         let width = self.catalog.table(table).map_or(0, |t| t.columns.len());
         let all: Vec<usize> = (0..width).collect();

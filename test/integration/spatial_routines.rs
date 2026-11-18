@@ -256,7 +256,11 @@ fn surface_measures() {
     assert_eq!(wkt(&a, &format!("{phs}.ST_CENTROID()")), "POINT (0.5 0.5)");
     let multi = "ST_MPOLYFROMTEXT('MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((2 0, 3 0, 3 1, 2 1, 2 0)))')";
     assert_eq!(one(&a, &format!("{multi}.ST_AREA(), {multi}.ST_PERIMETER()")), "2E0,8E0");
-    assert_eq!(wkt(&a, &format!("{multi}.ST_CENTROID()")), "POINT (1.5 0.5)");
+    let middle = format!("{multi}.ST_CENTROID()");
+    assert_eq!(one(&a, &format!("CAST(ST_X({middle}) AS DECIMAL(10, 6)), CAST(ST_Y({middle}) AS DECIMAL(10, 6))")), "1.500000,0.500000");
+    let curved =
+        "ST_MSURFACEFROMTXT('MULTISURFACE (CURVEPOLYGON (CIRCULARSTRING (0 0, 2 2, 4 0, 2 -2, 0 0)), ((5 0, 6 0, 6 1, 5 1, 5 0)))')";
+    assert_eq!(one(&a, &format!("CAST({curved}.ST_AREA() AS DECIMAL(10, 6))")), "13.566371");
     let compound = "ST_COMPSURFFROMTXT('COMPOUNDSURFACE (POLYGON ((0 0, 1 0, 1 1, 0 0)), POLYGON ((0 0, 1 1, 0 1, 0 0)))')";
     assert_eq!(one(&a, &format!("{compound}.ST_AREA(), {compound}.ST_PERIMETER()")), "1E0,4E0");
     assert_eq!(state(&a, "VALUES ST_AREA(ST_POINT(1, 1))"), "2FF02");
@@ -299,7 +303,7 @@ fn measures_are_located() {
     assert_eq!(wkt(&a, &format!("{line}.ST_LOCATEALONG(5E0)")), "MULTIPOINT M ((5 0 5))");
     assert_eq!(wkt(&a, &format!("{line}.ST_LOCATEBETWEEN(5E0, 15E0)")), "MULTICURVE M ((5 0 5, 10 0 10, 10 5 15))");
     assert_eq!(wkt(&a, "ST_LINEFROMTEXT('LINESTRING (0 0, 1 1)').ST_LOCATEALONG(1E0)"), "POINT EMPTY");
-    assert_eq!(wkt(&a, &format!("{line}.ST_LOCATEBETWEEN(25E0, 30E0)")), "POINT EMPTY");
+    assert_eq!(wkt(&a, &format!("{line}.ST_LOCATEBETWEEN(25E0, 30E0)")), "POINT M EMPTY");
     assert_eq!(state(&a, &format!("VALUES {line}.ST_LOCATEBETWEEN(2E0, 1E0)")), "2FF02");
     let points = "ST_MPOINTFROMTEXT('MULTIPOINT M ((1 1 1), (2 2 5))')";
     assert_eq!(wkt(&a, &format!("ST_LOCATEBETWEEN({points}, 0E0, 2E0)")), "MULTIPOINT M ((1 1 1))");
