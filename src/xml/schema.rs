@@ -8,13 +8,54 @@
 //! types shared, and its facets merged with its base's as it is made, so
 //! validating a literal never walks its derivation. Lists and unions nest
 //! at most `MAX_TYPE_NESTING` deep, so validating walks a bounded depth.
+//!
+//! XML Schema Part 1, Structures \[Schema1\], over those simple types: the schema components of
+//! [Schema1 §3] (`schema/component.rs`), read from schema documents
+//! [Schema1 §3.x.2, §4.2] (`schema/read.rs`), checked against the schema
+//! component constraints and schema representation constraints [Schema1
+//! §3.x.3, §3.x.6] (`schema/check.rs`), their content models compiled to
+//! automata (`schema/automaton.rs`). A schema is what a registered XML
+//! Schema holds [ISO/IEC 9075-14:2006 draft §4.2.6].
+//!
+//! \[DESIGN\] RULES.md D86: a schema is an arena of its components, each
+//! kind in a table of its own and referring to others by their place in
+//! it, so the cycles [Schema1 §3.1.1] allows (an element of a type whose
+//! content holds the element) are indexes, not references. Simple types
+//! are the built-in datatypes of XML Schema Part 2 (`xml/atomic.rs`); a
+//! user-defined simple type definition [Schema2 §4.1] is refused until
+//! Part 2's facets are built.
+//!
+//! \[DESIGN\] No external resource is ever fetched [Schema1 §4.3.2
+//! clause 1]: an `<include>`, `<redefine>` or `<import>` names a schema
+//! document only among those it is read with (`Library`), by its schema
+//! location or, for an import, its namespace. Reading recurses through
+//! nested declarations, derivation chains and references, each bounded by
+//! a named depth, and a schema past one is SQLCODE -900 (RULES.md D18).
 
+mod automaton;
+mod builtin;
+mod check;
+mod component;
 mod facet;
+mod read;
 mod restrict;
 mod validate;
+mod wildcard;
+mod xpath;
 
 #[cfg(test)]
 mod tests;
+
+pub use automaton::{Automaton, MAX_POSITIONS, MAX_STATES, StateId};
+pub use check::{substitutable, type_derives};
+pub use component::{
+    AnnotationRef, AttributeDecl, AttributeGroupDef, AttributeGroupId, AttributeId, AttributeUse, ComplexId, ComplexType, Compositor,
+    ConstraintId, ContentType, Derivations, ElementDecl, ElementId, Expanded, GroupDefId, GroupId, IdentityCategory, IdentityConstraint,
+    Method, ModelGroup, ModelGroupDef, NamespaceConstraint, Notation, NotationId, Particle, Process, Schema, Scope, Simple, Term, TypeDef,
+    Typed, ValueConstraint, ValueKind, Wildcard,
+};
+pub use read::{Library, Source, read};
+pub use xpath::{NameTest, Path, Step};
 
 pub use facet::{Facet, FacetKind, FacetSpec, Facets, Held, Pattern, applicable};
 
@@ -63,7 +104,7 @@ pub struct SimpleType {
 
 /// The error of a type definition no valid one, `why`, by `rule`: a
 /// constraint on schemas broken [Schema2 §5].
-fn invalid(rule: &str, why: &str) -> SqlError {
+fn invalid_type(rule: &str, why: &str) -> SqlError {
     SqlError::new(Code::Data, format!("[Schema2 {rule}] the simple type definition is not valid: {why}"))
 }
 
@@ -100,7 +141,7 @@ impl SimpleType {
     /// SQLCODE -900 if it nests past `MAX_TYPE_NESTING`.
     pub fn list(item: Arc<SimpleType>) -> Result<SimpleType> {
         if matches!(item.variety, Variety::List(_)) {
-            return Err(invalid("§4.1.5 list of atomic", &format!("the item type {} is a list", item.name)));
+            return Err(invalid_type("§4.1.5 list of atomic", &format!("the item type {} is a list", item.name)));
         }
         let depth = nested(item.depth)?;
         let facets = Facets { white_space: Some(Held { value: WhiteSpace::Collapse, fixed: true }), ..Facets::default() };
@@ -122,7 +163,7 @@ impl SimpleType {
                 Variety::Atomic(_) | Variety::List(_) => flat.push(member),
             }
         }
-        let deepest = flat.iter().map(|m| m.depth).max().ok_or_else(|| invalid("§4.1.3", "a union has no member type"))?;
+        let deepest = flat.iter().map(|m| m.depth).max().ok_or_else(|| invalid_type("§4.1.3", "a union has no member type"))?;
         let names: Vec<&str> = flat.iter().map(|m| &*m.name).collect();
         let name = format!("a union of {}", names.join(", "));
         Ok(SimpleType { name: name.into(), variety: Variety::Union(flat), facets: Facets::default(), depth: nested(deepest)? })
@@ -184,4 +225,38 @@ fn nested(depth: usize) -> Result<usize> {
         ));
     }
     Ok(deeper)
+}
+
+/// \[DESIGN\] How deeply the elements of a schema document nest at most
+/// where reading them recurses: local declarations within anonymous types
+/// within model groups (RULES.md R-CF-6). \[Schema1\] sets no limit; the
+/// value is no measurement, but a bound well past the nesting of the
+/// schemas applications write, each level of which takes a few frames of
+/// the reader's stack.
+pub const MAX_DEPTH: usize = 128;
+
+/// \[DESIGN\] How many type definitions, substitution group affiliations or
+/// attribute group references a chain of them follows at most (RULES.md
+/// R-CF-6): a derivation [Schema1 §3.4.6 ct-props-correct.3], a
+/// substitution group [Schema1 §3.3.6] or attribute groups referring to
+/// others [Schema1 §3.6.3 src-attribute_group.3].
+pub const MAX_CHAIN: usize = 64;
+
+/// \[DESIGN\] How many schema documents one schema is read from at most,
+/// its own and those it includes, redefines or imports [Schema1 §4.2],
+/// each counted once.
+pub const MAX_DOCUMENTS: usize = 256;
+
+/// The error of a text that is no schema document, or of components that
+/// are no schema, by the constraint `rule` it breaks, `why`: SQLSTATE
+/// 22000. \[EXTENSION\] Part 14 leaves how an XML Schema is registered to
+/// the implementation [ISO/IEC 9075-14:2006 draft §4.2.6], and so the
+/// condition of a schema that cannot be registered.
+fn invalid(rule: &str, why: &str) -> SqlError {
+    SqlError::new(Code::Data, format!("[EXTENSION] {rule} the schema is not valid: {why}"))
+}
+
+/// The error of a schema beyond turborel's limits, `why` (RULES.md D18).
+fn beyond(why: &str) -> SqlError {
+    SqlError::new(Code::Unsupported, format!("[DESIGN] the XML Schema is beyond turborel's limits: {why}"))
 }

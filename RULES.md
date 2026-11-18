@@ -3077,6 +3077,40 @@ compare by is `library::value_equal` and `value_order`, and a value
 comparison's `library::value_comparison`, which raises err:XPTY0004 of
 types the operator mapping does not compare.
 
+XML Schema Part 1, Structures, is `xml::schema`, written here as D3
+requires. A schema is read from schema documents (`schema::read`) into an
+arena of its components, each kind in a table of its own, components
+referring to others by their place, so the cycles a schema has (an
+element of a type whose content holds the element) are indexes. A named
+component takes its place when first referred to and is filled in when its
+properties are needed, so a reference may come before what it names; a
+reference that names nothing is refused as the schema is read, so a
+schema read is complete and no validation meets a missing component. A
+document is checked against the structure the Schema for Schemas gives
+each element, kept as a table of the attributes each may have and the
+stages its children come in, not by validating it against the Schema for
+Schemas. `<include>`, `<redefine>` and `<import>` find documents only in
+the `Library` the schema is read with, by schema location, or for an
+import by namespace, so reading a schema opens no file and no URL. Each
+content model is compiled to a deterministic automaton (`Automaton`):
+Glushkov's construction, numeric occurrence ranges unfolded into copies
+nested so they add no more follow edges than a sequence, then the subset
+construction with transitions labelled by particle, which is how Unique
+Particle Attribution is checked, as [Schema1] Appendix H describes. An all
+group is its particles, each taken at most once. Simple types are XML
+Schema Part 2's built-in datatypes; a user-defined simple type definition
+waits for Part 2's facets and is SQLCODE -900. These bounds keep reading
+finite, each SQLCODE -900 past it (D18):
+
+- `schema::MAX_DEPTH`, 128: how deeply declarations, groups and types
+  nest where reading recurses.
+- `schema::MAX_CHAIN`, 64: the types of a derivation, or the declarations
+  of a substitution group, a walk up one follows.
+- `schema::MAX_DOCUMENTS`, 256: the documents one schema is read from.
+- `schema::MAX_POSITIONS`, 4,096: the particles of a content model once
+  its occurrence ranges are unfolded.
+- `schema::MAX_STATES`, 16,384: the states of a content model's automaton.
+
 XML values are not comparable, so they have no key, bucket or order, and
 the binder refuses them where an equality, grouping or ordering operation
 would take one, as one inside an array, a multiset, a row or a distinct

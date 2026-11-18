@@ -26,7 +26,7 @@ mod element;
 mod identifiers;
 mod parse;
 mod publish;
-mod schema;
+pub mod schema;
 mod sequence;
 mod serialize;
 mod stored;

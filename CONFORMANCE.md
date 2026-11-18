@@ -1987,6 +1987,13 @@ Validation, Static Typing, Module and Serialization are not [XQuery §5.2].
 | The standalone declaration | §10.15 GR7 | None is written. |
 | An XML declaration not asked for | §10.15 GR8c ii | None, of a document of XML 1.0 in UTF8 or UTF16; one of a document of XML 1.1 [GR8c i]. |
 | Prefixes undeclared | §10.15 GR9b | Of XML 1.1, written so. |
+| Schema documents read | Schema1 §2.4, §4.2, §4.3.2, §5.1 | A schema is read from schema documents, each a `<schema>` that is its tree's element (`xml/schema/read.rs`). `<include>`, `<redefine>` and `<import>` find documents among those the schema is read with alone, by schema location, or for an import by namespace; none is fetched, so turborel is a processor in conformance to the XML Representation of Schemas, not a fully conforming one. A location naming no such document adds no components [§4.2.1]. The XML Schema namespace's components are its built-in ones, named without an `<import>`. |
+| Missing sub-components | Schema1 §5.3 | None: a reference that resolves to nothing is refused as the schema is read. |
+| The Schema for Schemas | Schema1 §5.1, Appendix A | Each element of a schema document is checked against the attributes of no namespace and the order of children its XML Representation Summary gives (`xml/schema/read/shape.rs`), not validated against the Schema for Schemas. |
+| Simple type definitions | Schema1 §3.14 | The built-in datatypes of XML Schema Part 2 alone, the lists `xs:NMTOKENS`, `xs:IDREFS` and `xs:ENTITIES` among them; a `<simpleType>`, or facets of simple content, SQLCODE -900, until Part 2's facets are built. `xs:NOTATION` named as a type is refused, as Part 2 asks [Schema2 §3.2.19]. |
+| Unique Particle Attribution | Schema1 §3.8.6, Appendix H | Checked on the automaton of each content model (`xml/schema/automaton.rs`), its transitions labelled by particle: one particle reached by two paths, as a group referred to twice, is one particle. Occurrence ranges unfold to at most 4,096 particles and the automaton to 16,384 states, SQLCODE -900 past either. |
+| Type Derivation OK from the ur-type | Schema1 §3.4.6, §3.14.6 | Every type is validly derived from `xs:anyType` [§2.2.1.1]. Clause 1.5 of Derivation Valid (Extension) is not checked. |
+| Limits of reading a schema | RULES.md D18, D86 | Declarations, groups and types nested 128 deep where reading recurses; 64 types of a derivation or declarations of a substitution group; 256 documents. Past one, SQLCODE -900. |
 | The other serialization parameters | §10.15 GR10 | No CDATA section, document type declaration, indentation, URI escaping, content type, Unicode normalization or character map. |
 | Notations and unparsed entities | §10.16 GR7a ii, iii | Not kept. |
 | Base URI | §10.16 GR7b | None. |

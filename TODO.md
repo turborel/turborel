@@ -157,9 +157,10 @@ features.
   Information Schema (X141 to X161, X191, X192, X256, X257, X260 to X286).
   The built-in datatypes, simple type definitions with their facets,
   lists and unions, the validation of a literal and the cast to a derived
-  type are done; what is left is reading schema documents into
-  components, complex types, element and attribute declarations and the
-  validation of documents [Schema1], and registering schemas.
+  type are done, and schema documents are read into schema components,
+  checked against XML Schema Part 1's constraints (`src/xml/schema.rs`).
+  Left: simple type definitions read from schema documents; validation;
+  the registration statements and the rest of the SQL.
 
 ### Full text
 

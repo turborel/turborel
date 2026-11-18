@@ -14,7 +14,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::facet::{Facet, FacetKind, FacetSpec, Facets, Held, Pattern, applicable};
-use super::{SimpleType, invalid};
+use super::{SimpleType, invalid_type};
 use crate::error::Result;
 use crate::regex::Regex;
 use crate::xml::{WhiteSpace, compare, equal};
@@ -98,7 +98,7 @@ impl SimpleType {
             match &s.facet {
                 Facet::Pattern(p) => patterns.push(pattern(p)?),
                 Facet::Enumeration(literal) => enumeration.push(base.validate(literal).map_err(|_| {
-                    invalid("§4.3.5.5 enumeration valid restriction", &format!("'{literal}' is no value of {}", base.name))
+                    invalid_type("§4.3.5.5 enumeration valid restriction", &format!("'{literal}' is no value of {}", base.name))
                 })?),
                 Facet::MaxInclusive(literal)
                 | Facet::MaxExclusive(literal)
@@ -134,18 +134,18 @@ fn step(base: &SimpleType, specified: &[FacetSpec]) -> Result<()> {
     for s in specified {
         let kind = s.facet.kind();
         if !applicable(&base.variety, kind) {
-            return Err(invalid("§4.1.5 applicable facets", &format!("{kind} does not apply to {}", base.name)));
+            return Err(invalid_type("§4.1.5 applicable facets", &format!("{kind} does not apply to {}", base.name)));
         }
         if seen.contains(&kind) && !matches!(kind, FacetKind::Pattern | FacetKind::Enumeration) {
-            return Err(invalid("§4.1.3 Single Facet Value", &format!("{kind} is specified twice")));
+            return Err(invalid_type("§4.1.3 Single Facet Value", &format!("{kind} is specified twice")));
         }
         seen.push(kind);
     }
     if seen.contains(&FacetKind::MaxInclusive) && seen.contains(&FacetKind::MaxExclusive) {
-        return Err(invalid("§4.3.8.4 maxInclusive and maxExclusive", "both are specified"));
+        return Err(invalid_type("§4.3.8.4 maxInclusive and maxExclusive", "both are specified"));
     }
     if seen.contains(&FacetKind::MinInclusive) && seen.contains(&FacetKind::MinExclusive) {
-        return Err(invalid("§4.3.9.4 minInclusive and minExclusive", "both are specified"));
+        return Err(invalid_type("§4.3.9.4 minInclusive and minExclusive", "both are specified"));
     }
     Ok(())
 }
@@ -153,14 +153,14 @@ fn step(base: &SimpleType, specified: &[FacetSpec]) -> Result<()> {
 /// [Schema2 §4.3.4.2] A pattern's value, compiled: a regular expression
 /// of [Schema2 Appendix F].
 fn pattern(text: &str) -> Result<Pattern> {
-    let regex = Regex::schema(text).map_err(|e| invalid("§4.3.4.2", &format!("'{text}' is no regular expression: {e}")))?;
+    let regex = Regex::schema(text).map_err(|e| invalid_type("§4.3.4.2", &format!("'{text}' is no regular expression: {e}")))?;
     Ok(Pattern { text: text.into(), regex })
 }
 
 /// The error of a fixed facet `kind` given another value [Schema2
 /// §4.3.1.1 and the like].
 fn fixed(kind: FacetKind) -> crate::error::SqlError {
-    invalid("§4.3", &format!("{kind} is fixed by the base type, and given another value"))
+    invalid_type("§4.3", &format!("{kind} is fixed by the base type, and given another value"))
 }
 
 /// A bound of `kind` whose value is `literal`, of `base`'s value space,
@@ -181,8 +181,8 @@ fn bound(facets: &mut Facets, base: &SimpleType, (kind, literal): (FacetKind, &s
     ] {
         *slot = None;
     }
-    let values = unbounded.validate(literal).map_err(|_| invalid("§4.3.7.2", &why()))?;
-    let [value] = values.as_slice() else { return Err(invalid("§4.3.7.2", &why())) };
+    let values = unbounded.validate(literal).map_err(|_| invalid_type("§4.3.7.2", &why()))?;
+    let [value] = values.as_slice() else { return Err(invalid_type("§4.3.7.2", &why())) };
     if base.facets.bound(kind).is_some_and(|held| held.fixed && !equal(&held.value, value)) {
         return Err(fixed(kind));
     }
@@ -191,7 +191,7 @@ fn bound(facets: &mut Facets, base: &SimpleType, (kind, literal): (FacetKind, &s
     for (parent, wrong) in rules {
         let order = base.facets.bound(*parent).and_then(|held| compare(value, &held.value));
         if order.is_some_and(|o| wrong.contains(&o)) {
-            return Err(invalid(rule, &format!("{kind} '{literal}' is beyond the base type's {parent}")));
+            return Err(invalid_type(rule, &format!("{kind} '{literal}' is beyond the base type's {parent}")));
         }
     }
     let held = Some(Held { value: value.clone(), fixed: fixed_now });
@@ -236,7 +236,7 @@ fn count(facets: &mut Facets, s: &FacetSpec) -> Result<()> {
         }
         Facet::TotalDigits(n) => {
             if n == 0 {
-                return Err(invalid("§4.3.11", "totalDigits is a positive integer"));
+                return Err(invalid_type("§4.3.11", "totalDigits is a positive integer"));
             }
             narrower(facets.total_digits.as_ref(), (kind, n), &[Ordering::Greater], "§4.3.11.4 totalDigits valid restriction")?;
             facets.total_digits = held(n);
@@ -265,7 +265,7 @@ fn narrower(slot: Option<&Held<u64>>, (kind, n): (FacetKind, u64), wider: &[Orde
         return Err(fixed(kind));
     }
     if wider.contains(&n.cmp(&parent.value)) {
-        return Err(invalid(rule, &format!("{kind} {n} is wider than the base type's {}", parent.value)));
+        return Err(invalid_type(rule, &format!("{kind} {n} is wider than the base type's {}", parent.value)));
     }
     Ok(())
 }
@@ -279,7 +279,7 @@ fn white_space(facets: &mut Facets, w: WhiteSpace, fixed_now: bool) -> Result<()
             return Err(fixed(FacetKind::WhiteSpace));
         }
         if w < parent.value {
-            return Err(invalid(
+            return Err(invalid_type(
                 "§4.3.6.4 whiteSpace valid restriction",
                 &format!("{w:?} is less than the base type's {:?}", parent.value),
             ));
@@ -295,24 +295,27 @@ fn white_space(facets: &mut Facets, w: WhiteSpace, fixed_now: bool) -> Result<()
 /// upper one; fractionDigits no more than totalDigits.
 fn agree(facets: &Facets) -> Result<()> {
     if facets.length.is_some() && (facets.min_length.is_some() || facets.max_length.is_some()) {
-        return Err(invalid("§4.3.1.4 length and minLength or maxLength", "both are facets of the type"));
+        return Err(invalid_type("§4.3.1.4 length and minLength or maxLength", "both are facets of the type"));
     }
     let value = |slot: &Option<Held<u64>>| slot.as_ref().map(|h| h.value);
     if let (Some(least), Some(most)) = (value(&facets.min_length), value(&facets.max_length))
         && least > most
     {
-        return Err(invalid("§4.3.2.4 minLength <= maxLength", &format!("{least} is more than {most}")));
+        return Err(invalid_type("§4.3.2.4 minLength <= maxLength", &format!("{least} is more than {most}")));
     }
     for (lower, upper, wrong, rule) in ORDERED {
         let order = facets.bound(lower).zip(facets.bound(upper)).and_then(|(l, u)| compare(&l.value, &u.value));
         if order.is_some_and(|o| wrong.contains(&o)) {
-            return Err(invalid(rule, &format!("{lower} is not below {upper}")));
+            return Err(invalid_type(rule, &format!("{lower} is not below {upper}")));
         }
     }
     if let (Some(fraction), Some(total)) = (value(&facets.fraction_digits), value(&facets.total_digits))
         && fraction > total
     {
-        return Err(invalid("§4.3.12.4 fractionDigits less than or equal to totalDigits", &format!("{fraction} is more than {total}")));
+        return Err(invalid_type(
+            "§4.3.12.4 fractionDigits less than or equal to totalDigits",
+            &format!("{fraction} is more than {total}"),
+        ));
     }
     Ok(())
 }
