@@ -113,6 +113,60 @@ pub fn compare(a: &Atomic, b: &Atomic) -> Option<Ordering> {
     }
 }
 
+/// A key of an atomic value's value, for hashing [Schema2 §4.2.1]: two
+/// values `equal` holds equal have one key, and values of different keys
+/// are not equal, so a value is found among others by its key alone.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EqualityKey(Primitive, Keyed);
+
+/// The part of an equality key a value space's value gives: the value
+/// itself where equality is identity, a decimal's canonical
+/// representation, which zero's minus is not part of, a float's bits,
+/// not-a-number's one, and a date or
+/// time's instant in UTC of one with a time zone, its local value of one
+/// without, as those are never equal [Schema2 §3.2.7.3].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Keyed {
+    /// A string or URI.
+    Text(Box<str>),
+    /// A QName or NOTATION: its namespace URI and local name.
+    Name(Option<Box<str>>, Box<str>),
+    /// A truth value.
+    Truth(bool),
+    /// A decimal's canonical representation [Schema2 §3.2.3.2].
+    Exact(String),
+    /// A float or double's bits.
+    Real(u64),
+    /// A duration's months and microseconds.
+    Duration(i128, i128),
+    /// A date or time of a time zone: its instant in UTC.
+    Zoned(i128),
+    /// A date or time of none: its local value.
+    Local(i128),
+    /// Octets.
+    Octets(Vec<u8>),
+}
+
+/// The equality key of `a`; none if its string is no lexical form of its
+/// type, so it is equal to no value.
+#[must_use]
+pub fn equality_key(a: &Atomic) -> Option<EqualityKey> {
+    let keyed = match datum(a)? {
+        Datum::Text(t) => Keyed::Text(t),
+        Datum::Name(uri, local) => Keyed::Name(uri, local),
+        Datum::Truth(b) => Keyed::Truth(b),
+        Datum::Exact(x) => Keyed::Exact(x.canonical(false)),
+        Datum::Real(x) => Keyed::Real(if x.is_nan() { f64::NAN.to_bits() } else { x.to_bits() }),
+        Datum::Duration(months, micros) => Keyed::Duration(months, micros),
+        Datum::Moment(m) => match m.local() {
+            (local, Some(zone)) => Keyed::Zoned(local.saturating_sub(i128::from(zone).saturating_mul(i128::from(MICROS_PER_MINUTE)))),
+            (local, None) => Keyed::Local(local),
+        },
+        Datum::Octets(o) => Keyed::Octets(o),
+    };
+    Some(EqualityKey(a.kind.primitive().schema(), keyed))
+}
+
 /// Whether `a` and `b` are equal [Schema2 §4.2.1].
 #[must_use]
 pub fn equal(a: &Atomic, b: &Atomic) -> bool {

@@ -177,3 +177,37 @@ fn qualified_names_are_equal_by_namespace_and_local_name() {
     assert!(!equal(&a, &Atomic::qname(Some("http://e.org/"), "a:y")));
     assert!(equal(&Atomic::qname(None, "x"), &Atomic::qname(Some(""), "x")));
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §10.22] [Schema2 §4.2.1,
+/// §3.2.3, §3.2.4, §3.2.6.2, §3.2.7.3] two values have one equality key
+/// exactly when they are equal: decimals and integers of one value,
+/// zero and its minus, not-a-number and itself, floats' zeros not, date
+/// and times of one instant in different time zones, one of a time zone
+/// and one of none not, durations of the same months and microseconds,
+/// a string and a URI of the same characters not, qualified names of one
+/// namespace and local name.
+#[test]
+fn equality_keys_agree_with_equality() {
+    let qname = |uri: &str, lexical: &str| Atomic::qname(Some(uri), lexical);
+    let pairs = [
+        (of(AtomicType::Integer, "1"), of(AtomicType::Decimal, "1.00")),
+        (of(AtomicType::Decimal, "012.50"), of(AtomicType::Decimal, "12.5")),
+        (of(AtomicType::NonPositiveInteger, "-0"), of(AtomicType::Integer, "0")),
+        (of(AtomicType::Double, "NaN"), of(AtomicType::Double, "NaN")),
+        (of(AtomicType::Float, "0"), of(AtomicType::Float, "-0")),
+        (of(AtomicType::DateTime, "2026-01-01T12:00:00Z"), of(AtomicType::DateTime, "2026-01-01T13:00:00+01:00")),
+        (of(AtomicType::DateTime, "2026-01-01T12:00:00Z"), of(AtomicType::DateTime, "2026-01-01T12:00:00")),
+        (of(AtomicType::Duration, "P1Y"), of(AtomicType::YearMonthDuration, "P12M")),
+        (of(AtomicType::Duration, "P1M"), of(AtomicType::Duration, "P30D")),
+        (of(AtomicType::String, "a"), of(AtomicType::AnyUri, "a")),
+        (of(AtomicType::String, "a"), of(AtomicType::UntypedAtomic, "a")),
+        (qname("urn:a", "p:x"), qname("urn:a", "q:x")),
+        (qname("urn:a", "x"), qname("urn:b", "x")),
+        (of(AtomicType::HexBinary, "0f"), of(AtomicType::HexBinary, "0F")),
+    ];
+    for (a, b) in pairs {
+        let same = equality_key(&a).is_some() && equality_key(&a) == equality_key(&b);
+        assert_eq!(same, equal(&a, &b), "{a:?} and {b:?}");
+    }
+    assert_eq!(equality_key(&of(AtomicType::Integer, "one")), None);
+}

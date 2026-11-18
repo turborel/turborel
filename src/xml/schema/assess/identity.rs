@@ -3,14 +3,16 @@
 //! cvc-identity-constraint], checked over the tree validation made: each
 //! constraint's selector and fields evaluated from each element whose
 //! declaration has it, the fields' typed values [XQueryDM §3.3.1.2] its
-//! key-sequences.
+//! key-sequences. Key-sequences are compared by the equality keys of their
+//! values (`xml::equality_key`), hashed, so a constraint of many targets
+//! is checked in time near its targets' number, not its square.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::super::component::{ConstraintId, ElementId, IdentityCategory, IdentityConstraint, Schema};
 use super::super::xpath::{Path, Step as PathStep};
 use super::{Failure, Step};
-use crate::xml::{Atomic, Kind, NodeId, Tree, Typing, equal};
+use crate::xml::{Atomic, EqualityKey, Kind, NodeId, Tree, Typing, equality_key};
 
 /// The IDs and IDREFs of what was validated [Schema1 §3.15.5]: how many
 /// times each ID came, and each IDREF.
@@ -49,11 +51,20 @@ impl Ids {
 /// field.
 type KeySequence = Vec<Vec<Atomic>>;
 
-/// Whether `a` and `b` are equal member for member, as Equal in [Schema2
-/// §4.2.1] compares values.
-fn same(a: &KeySequence, b: &KeySequence) -> bool {
-    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.len() == y.len() && x.iter().zip(y).all(|(p, q)| equal(p, q)))
+/// The key of a key-sequence: each field's values' equality keys, so two
+/// key-sequences are equal member for member, as Equal in [Schema2
+/// §4.2.1] compares values, exactly when their keys are; none if a value
+/// has no key, as such a key-sequence is equal to none.
+type Key = Vec<Vec<EqualityKey>>;
+
+/// The key of `k`.
+fn keyed(k: &KeySequence) -> Option<Key> {
+    k.iter().map(|field| field.iter().map(equality_key).collect::<Option<Vec<_>>>()).collect()
 }
+
+/// [Schema1 §3.11.5] A node table: each key-sequence's key, and its node,
+/// or none if two nodes have it, as such a pair is not in the table.
+type Table = HashMap<Key, Option<NodeId>>;
 
 /// [Schema1 §3.11.4 cvc-identity-constraint] Every identity constraint of
 /// each element of `tree` validated by a declaration, `decls`, satisfied.
@@ -91,42 +102,39 @@ fn satisfied(
             let Some(key) = constraint.refer else { return Ok(()) };
             let table = node_table(schema, (tree, decls), element, key)?;
             let Some(table) = table else { return Err(fail("4.3", "refers to a key not in scope").into()) };
-            let found = qualified.iter().all(|(_, k)| table.iter().any(|(_, t)| same(k, t)));
+            let found = qualified.iter().all(|(_, k)| keyed(k).is_some_and(|sought| table.get(&sought).is_some_and(Option::is_some)));
             found.then_some(()).ok_or_else(|| fail("4.3", "refers to a key-sequence its key does not have").into())
         }
     }
 }
 
-/// Whether no two of `qualified` have equal key-sequences.
+/// Whether no two of `qualified` have equal key-sequences: each one's key
+/// not among those before it.
 fn unique(qualified: &[(NodeId, KeySequence)]) -> bool {
-    qualified.iter().enumerate().all(|(i, (_, a))| qualified.iter().skip(i.saturating_add(1)).all(|(_, b)| !same(a, b)))
+    let mut seen = HashSet::new();
+    qualified.iter().filter_map(|(_, k)| keyed(k)).all(|key| seen.insert(key))
 }
 
 /// [Schema1 §3.11.5] The node table of key or unique `key` at `element`:
 /// the qualified nodes of it at `element` and at each element below
-/// declared with it, an entry of one key-sequence but two nodes dropped;
-/// none if no such element is.
-fn node_table(
-    schema: &Schema,
-    (tree, decls): (&Tree, &[(NodeId, ElementId)]),
-    element: NodeId,
-    key: ConstraintId,
-) -> Step<Option<Vec<(NodeId, KeySequence)>>> {
+/// declared with it, `decls` being in document order, a key-sequence of
+/// two nodes marked conflicting; none if no such element is.
+fn node_table(schema: &Schema, (tree, decls): (&Tree, &[(NodeId, ElementId)]), element: NodeId, key: ConstraintId) -> Step<Option<Table>> {
     let Some(definition) = schema.constraint(key) else { return Ok(None) };
     let end = tree.descendants(element).last().unwrap_or(element);
-    let mut table: Option<Vec<(NodeId, KeySequence)>> = None;
-    for &(e, d) in decls.iter().filter(|(e, _)| *e >= element && *e <= end) {
+    let below = decls.get(decls.partition_point(|(e, _)| *e < element)..decls.partition_point(|(e, _)| *e <= end));
+    let mut table: Option<Table> = None;
+    for &(e, d) in below.unwrap_or_default() {
         if schema.element(d).is_none_or(|d| !d.constraints.contains(&key)) {
             continue;
         }
         let (_, qualified) = node_sets(schema, (tree, decls), e, definition)?;
-        let entries = table.get_or_insert_with(Vec::new);
+        let entries = table.get_or_insert_with(HashMap::new);
         for (node, k) in qualified {
-            match entries.iter().position(|(n, t)| same(t, &k) && *n != node) {
-                Some(i) => {
-                    entries.remove(i);
-                }
-                None => entries.push((node, k)),
+            let Some(found) = keyed(&k) else { continue };
+            let entry = entries.entry(found).or_insert(Some(node));
+            if *entry != Some(node) {
+                *entry = None;
             }
         }
     }

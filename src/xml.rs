@@ -33,9 +33,9 @@ mod stored;
 mod tree;
 
 pub use atomic::{
-    Exact, LAST_YEAR, Moment, Ordered, Primitive, Production, Shape, WhiteSpace, base64, base64_text, canonical, cast, compare,
-    day_time_text, digits, double, duration_units, duration_value, equal, from_lexical, hex, hex_text, length, normalize, real_text,
-    xquery_error, year_month_text,
+    EqualityKey, Exact, LAST_YEAR, Moment, Ordered, Primitive, Production, Shape, WhiteSpace, base64, base64_text, canonical, cast,
+    compare, day_time_text, digits, double, duration_units, duration_value, equal, equality_key, from_lexical, hex, hex_text, length,
+    normalize, real_text, xquery_error, year_month_text,
 };
 pub use chars::{
     COLON, VERSION_10, VERSION_11, Version, is_char, is_literal, is_name, is_name_char, is_name_start, is_ncname, is_nmtoken,

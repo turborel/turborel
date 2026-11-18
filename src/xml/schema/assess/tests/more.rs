@@ -181,3 +181,39 @@ fn block_default_blocks() {
     let all = with_block_default("#all", body);
     assert!(breaks(&all, &typed).contains("cvc-elt.4.3"));
 }
+
+/// How many items `identity_constraints_scale` validates.
+const MANY: usize = 20_000;
+
+/// The longest validating `MANY` items may take: far more than they take
+/// with key-sequences hashed, far less than comparing every pair would.
+const BOUNDED: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §10.22] [Schema1 §3.11.4
+/// cvc-identity-constraint, §3.11.5] a document of `MANY` items under a
+/// key, a unique constraint and a keyref of them is validated in a
+/// bounded time, its key-sequences hashed rather than compared pair by
+/// pair: valid, and invalid with one key twice or one reference to no
+/// key.
+#[test]
+fn identity_constraints_scale() {
+    let body = r#"<xs:element name="r"><xs:complexType><xs:sequence>
+        <xs:element name="i" maxOccurs="unbounded"><xs:complexType>
+        <xs:attribute name="k" type="xs:integer"/><xs:attribute name="n" type="xs:string"/><xs:attribute name="to" type="xs:decimal"/>
+        </xs:complexType></xs:element></xs:sequence></xs:complexType>
+        <xs:key name="k"><xs:selector xpath="i"/><xs:field xpath="@k"/></xs:key>
+        <xs:unique name="n"><xs:selector xpath=".//i"/><xs:field xpath="@n"/></xs:unique>
+        <xs:keyref name="to" refer="k"><xs:selector xpath="i"/><xs:field xpath="@to"/></xs:keyref></xs:element>"#;
+    let items = |k: &dyn Fn(usize) -> usize| {
+        let to = |i: usize| MANY.saturating_sub(1).saturating_sub(i);
+        (0..MANY).map(|i| format!(r#"<i k="{}" n="n{i}" to="{}.0"/>"#, k(i), to(i))).collect::<Vec<_>>().concat()
+    };
+    let started = std::time::Instant::now();
+    valid(body, &format!("<r>{}</r>", items(&|i| i)));
+    let twice = format!("<r>{}</r>", items(&|i| if i == MANY.saturating_sub(1) { 0 } else { i }));
+    assert!(broken(body, &twice).contains("cvc-identity-constraint.4.2.2"));
+    let dangling = format!("<r>{}<i k=\"{MANY}\" n=\"x\" to=\"-1\"/></r>", items(&|i| i));
+    assert!(broken(body, &dangling).contains("cvc-identity-constraint.4.3"));
+    let took = started.elapsed();
+    assert!(took < BOUNDED, "{took:?}");
+}

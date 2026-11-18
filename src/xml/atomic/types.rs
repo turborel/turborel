@@ -13,7 +13,7 @@ use super::super::sequence::AtomicType;
 /// The type a cast treats as primitive [XQueryFO §17.1]: the 19 primitive
 /// types of [Schema2 §3.2], and `xdt:untypedAtomic`, `xs:integer` and the
 /// two durations, treated as primitive there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Primitive {
     /// `xdt:untypedAtomic`.
     Untyped,

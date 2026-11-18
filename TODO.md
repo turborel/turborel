@@ -161,10 +161,7 @@ features.
   XML_SCH_NSPACES_S and XML_SCH_ELEMENTS_S, with short-name views of the
   Information Schema at all; the components of the permanently
   registered XML Schemas, so they validate
-  (XS's the Schema for Schemas). Identity constraints compare every pair
-  of key-sequences, and a `.//` selector walks each target's subtree
-  again, so a document of many keys is validated in quadratic time or
-  worse: key-sequences want a hash or an order, as a unique index has.
+  (XS's the Schema for Schemas).
 
 ### Full text
 

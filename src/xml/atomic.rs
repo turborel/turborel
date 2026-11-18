@@ -39,7 +39,7 @@ pub use exact::Exact;
 pub use moment::{LAST_YEAR, Moment, Shape};
 pub use number::{double, real_text};
 pub use types::{Ordered, Primitive, Production, WhiteSpace};
-pub use value::{canonical, compare, digits, equal, length};
+pub use value::{EqualityKey, canonical, compare, digits, equal, equality_key, length};
 
 use super::chars::is_space;
 use super::sequence::{Atomic, AtomicType};

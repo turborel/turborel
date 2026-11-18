@@ -11,7 +11,7 @@ use super::{Mutation, Package};
 
 /// Each mechanism of XML Schema structures broken alone, and the tests
 /// that fail.
-pub const XML_SCHEMA: [Mutation; 36] = [
+pub const XML_SCHEMA: [Mutation; 37] = [
     Mutation {
         name: "xml-schema-unique-particle-attribution",
         package: Package::Core,
@@ -377,5 +377,15 @@ pub const XML_SCHEMA: [Mutation; 36] = [
         replacement: "                    let _ = (place, deeper);",
         integration: &[],
         unit: &["xml::schema::tests::structures::depth::bases_are_read_first"],
+    },
+    Mutation {
+        name: "xml-schema-unique-hashed",
+        package: Package::Core,
+        breaks: "a unique constraint takes two equal key-sequences",
+        file: "src/xml/schema/assess/identity.rs",
+        original: "    qualified.iter().filter_map(|(_, k)| keyed(k)).all(|key| seen.insert(key))",
+        replacement: "    qualified.iter().filter_map(|(_, k)| keyed(k)).all(|key| seen.insert(key) || true)",
+        integration: &[],
+        unit: &["xml::schema::assess::tests::more::identity_constraints_scale"],
     },
 ];
