@@ -8,14 +8,14 @@
 //! prefilter and every place the variable is bound, a group if a
 //! quantifier lies between [P1 §4.4]. `PREV(x)` reads x's binding in the
 //! previous iteration of the quantifier around the prefilter [GS §11.1
-//! R11.2]. Only what is read or joined on is kept, so a thread of a
+//! R11.2], and `FIRST(x)` its binding in the first. Only what is read or joined on is kept, so a thread of a
 //! pattern with neither is an instruction alone.
 
 use std::collections::HashMap;
 
 use super::{Compiled, Scope, ScopeKind, Test};
 use crate::error::Result;
-use crate::graph::program::{ElementTest, Filter, Restrictor, Selector, VarId, termination};
+use crate::graph::program::{ElementTest, Filter, Read, Restrictor, Selector, VarId, termination};
 
 /// A numbered scope: its parent, kind, restrictor and prefilter.
 type Numbered = (Option<usize>, ScopeKind, Restrictor, Option<Filter>);
@@ -26,6 +26,8 @@ pub(super) struct Registers {
     current: HashMap<(usize, VarId), (usize, bool)>,
     /// Each PREV register by its quantifier and variable, and its source.
     previous: HashMap<(usize, VarId), (usize, usize)>,
+    /// Each FIRST register by its quantifier and variable, and its source.
+    first: HashMap<(usize, VarId), (usize, usize)>,
     count: usize,
     /// The parent of each scope.
     parents: Vec<Option<usize>>,
@@ -40,7 +42,7 @@ impl Registers {
     /// SQLCODE -103 if either rule is broken.
     pub(super) fn allocate(numbering: &super::Numbering, selector: Selector) -> Result<Registers> {
         let parents = numbering.scopes.iter().map(|s| s.0).collect();
-        let mut chosen = Registers { current: HashMap::new(), previous: HashMap::new(), count: 0, parents };
+        let mut chosen = Registers { current: HashMap::new(), previous: HashMap::new(), first: HashMap::new(), count: 0, parents };
         chosen.unbounded(&numbering.scopes, selector)?;
         chosen.joins(&numbering.tests, &numbering.scopes);
         let sites = sites(&numbering.tests);
@@ -126,8 +128,8 @@ impl Registers {
     ) -> Result<()> {
         for read in &filter.reads {
             let bound = sites.get(&read.var).map_or(&[][..], Vec::as_slice);
-            if read.previous {
-                self.previous_of(read.var, scope, scopes);
+            if read.previous || read.first {
+                self.iteration_of(*read, scope, scopes);
             } else if own != Some(read.var) {
                 let holder = self.holder(scope, bound);
                 self.bounded(read.var, holder, bound, scopes)?;
@@ -165,15 +167,18 @@ impl Registers {
         Ok(())
     }
 
-    /// \[GS §11.1 R11.2\] The PREV register of `var` for a prefilter of
-    /// `scope`: kept by the innermost quantifier around it, set from the
-    /// register of `var` in its iteration as each iteration begins.
-    fn previous_of(&mut self, var: VarId, scope: usize, scopes: &[Numbered]) {
+    /// \[GS §11.1 R11.2\] The PREV or FIRST register of `read`'s variable
+    /// for a prefilter of `scope`: kept by the innermost quantifier around
+    /// it, set from the register of the variable in its iteration as each
+    /// iteration begins, FIRST's only if not set yet.
+    fn iteration_of(&mut self, read: Read, scope: usize, scopes: &[Numbered]) {
+        let var = read.var;
         let chain = self.ancestors(scope);
         let at = chain.iter().position(|&s| scopes.get(s).is_some_and(|n| matches!(n.1, ScopeKind::Quantifier { .. })));
         let (Some(at), Some(iteration)) = (at, at.and_then(|a| a.checked_sub(1)).and_then(|i| chain.get(i).copied())) else { return };
         let Some(&quantifier) = chain.get(at) else { return };
-        if self.previous.contains_key(&(quantifier, var)) {
+        let kept = if read.first { &self.first } else { &self.previous };
+        if kept.contains_key(&(quantifier, var)) {
             return;
         }
         let source = if let Some(&(register, _)) = self.current.get(&(iteration, var)) {
@@ -184,7 +189,8 @@ impl Registers {
             register
         };
         let register = self.register();
-        self.previous.insert((quantifier, var), (register, source));
+        let held = if read.first { &mut self.first } else { &mut self.previous };
+        held.insert((quantifier, var), (register, source));
     }
 
     /// A prefilter with its reads resolved, of a pattern of `scope`.
@@ -197,7 +203,9 @@ impl Registers {
                 let holder = self.holder(scope, sites.get(&read.var).map_or(&[][..], Vec::as_slice));
                 let current = self.current.get(&(holder, read.var)).map(|r| r.0);
                 let previous = chain.iter().find_map(|&q| self.previous.get(&(q, read.var))).map(|r| r.0);
-                (read.var, current.filter(|_| !read.previous), previous.filter(|_| read.previous))
+                let first = chain.iter().find_map(|&q| self.first.get(&(q, read.var))).copied();
+                let current = if read.first { first.map(|r| r.1) } else { current.filter(|_| !read.previous) };
+                (read.var, current, previous.filter(|_| read.previous), first.map(|r| r.0).filter(|_| read.first))
             })
             .collect();
         Compiled { test: filter.test.clone(), reads }
@@ -240,15 +248,20 @@ impl Registers {
         let iterations: Vec<usize> = (0..self.parents.len()).filter(|&s| self.parents.get(s).copied().flatten() == Some(scope)).collect();
         let owned = |s: &usize| *s == scope || (matches!(numbered.1, ScopeKind::Quantifier { .. }) && iterations.contains(s));
         let mut clears: Vec<usize> = self.current.iter().filter(|((s, _), _)| owned(s)).map(|(_, r)| r.0).collect();
-        clears.extend(self.previous.iter().filter(|((s, _), _)| *s == scope).map(|(_, r)| r.0));
+        clears.extend(self.previous.iter().chain(&self.first).filter(|((s, _), _)| *s == scope).map(|(_, r)| r.0));
         clears.sort_unstable();
         let mut previous: Vec<(usize, usize)> = match (numbered.1, numbered.0) {
             (ScopeKind::Iteration, Some(q)) => self.previous.iter().filter(|((s, _), _)| *s == q).map(|(_, r)| *r).collect(),
             (ScopeKind::Iteration | ScopeKind::Path | ScopeKind::Group | ScopeKind::Quantifier { .. }, _) => Vec::new(),
         };
         previous.sort_unstable();
+        let mut first: Vec<(usize, usize)> = match (numbered.1, numbered.0) {
+            (ScopeKind::Iteration, Some(q)) => self.first.iter().filter(|((s, _), _)| *s == q).map(|(_, r)| *r).collect(),
+            (ScopeKind::Iteration | ScopeKind::Path | ScopeKind::Group | ScopeKind::Quantifier { .. }, _) => Vec::new(),
+        };
+        first.sort_unstable();
         let filter = numbered.3.as_ref().map(|f| self.compiled(f, scope, sites));
-        Scope { restrictor: numbered.2, slot: slots.get(&scope).copied(), filter, clears, previous }
+        Scope { restrictor: numbered.2, slot: slots.get(&scope).copied(), filter, clears, previous, first }
     }
 }
 

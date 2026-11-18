@@ -85,9 +85,14 @@ impl fmt::Display for LabelExpr {
 pub struct Bound<'a> {
     pub(super) element: Option<(Option<VarId>, ElementId)>,
     pub(super) registers: &'a [Box<[ElementId]>],
-    /// For each variable read, its register and its PREV register.
-    pub(super) reads: &'a [(VarId, Option<usize>, Option<usize>)],
+    /// For each variable read, its register, its PREV register and its
+    /// FIRST register.
+    pub(super) reads: &'a [Resolved],
 }
+
+/// A variable a prefilter reads, resolved: its register, its PREV
+/// register and its FIRST register, each if it reads it so.
+pub(super) type Resolved = (VarId, Option<usize>, Option<usize>, Option<usize>);
 
 impl Bound<'_> {
     /// The element tested, for an element pattern's prefilter.
@@ -98,7 +103,7 @@ impl Bound<'_> {
     /// The elements `var` is bound to so far, within the prefilter's
     /// pattern: one for a singleton, a list for a group [P1 §4.4].
     pub fn group(&self, var: VarId) -> &[ElementId] {
-        let register = self.reads.iter().find(|r| r.0 == var).and_then(|r| r.1);
+        let register = self.reads.iter().find_map(|r| r.1.filter(|_| r.0 == var && r.3.is_none()));
         register.and_then(|r| self.registers.get(r)).map_or(&[], |elements| &**elements)
     }
 
@@ -112,8 +117,18 @@ impl Bound<'_> {
     /// \[GS §11.1\] `PREV(var)`: its binding in the previous iteration of
     /// the quantifier the prefilter is within, none in the first.
     pub fn previous(&self, var: VarId) -> Option<ElementId> {
-        let register = self.reads.iter().find(|r| r.0 == var).and_then(|r| r.2)?;
+        let register = self.reads.iter().find_map(|r| r.2.filter(|_| r.0 == var))?;
         self.registers.get(register).and_then(|elements| elements.last().copied())
+    }
+
+    /// \[GS §11.1\] `FIRST(var)`: its binding in the first iteration of
+    /// the quantifier the prefilter is within; in the first, its binding
+    /// in this one.
+    pub fn first(&self, var: VarId) -> Option<ElementId> {
+        let read = self.reads.iter().find(|r| r.0 == var && r.3.is_some())?;
+        let last = |register: Option<usize>| register.and_then(|r| self.registers.get(r)).and_then(|elements| elements.last().copied());
+        let own = self.element.and_then(|(own, element)| (own == Some(var)).then_some(element));
+        last(read.3).or_else(|| last(read.1)).or(own)
     }
 }
 
@@ -134,6 +149,8 @@ pub struct Read {
     pub var: VarId,
     /// Whether it reads `PREV(var)` [GS §11.1] rather than its binding.
     pub previous: bool,
+    /// Whether it reads `FIRST(var)` [GS §11.1] rather than its binding.
+    pub first: bool,
 }
 
 /// \[GS §6.8\] A prefilter: what it reads and its test.

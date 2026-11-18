@@ -23,6 +23,7 @@ mod geometry;
 mod graph_adjacency;
 mod graph_catalog;
 mod graph_gql;
+mod graph_iterations;
 mod graph_native;
 mod graph_search;
 mod graph_syntax;

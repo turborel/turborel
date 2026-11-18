@@ -3852,12 +3852,21 @@ compiled to the automaton of `graph/nfa.rs` and searched by PathSearch
 (`graph/search.rs`) over a view of the element tables, from every
 vertex of the tables a match may start at. A base table is read where
 it is stored. A view, or a table read FOR SYSTEM_TIME, is read once
-into the statement. The bindings of the path patterns are joined on
+into the statement, as is one read AS OF SCN n. An SCN is a transaction
+timestamp's microseconds of UTC, which a history keeps (D82), since the
+logical timestamps of D29 are kept with no row. The bindings of the
+path patterns are joined on
 the variables they share and kept by the match mode (§7.3). Element
 WHERE clauses are prefilters, run as the search binds the element; a
 prefilter that reads a later variable outside a quantifier is run on
 the walk's group. A set function of a group variable is a slot of the
-match row, as is each path function. The search is bounded by OPTIONS
+match row, as is each path function. A subpath variable is two hidden
+variables of its path pattern, bound to the vertices where its
+parenthesized pattern begins and ends, so its path functions are of
+the binding between them. A set function, PREV or FIRST in a
+parenthesized WHERE is a slot the prefilter computes as it runs, of the
+group, PREV or FIRST register of the automaton (§11.1). FOR EACH
+SEGMENT is a postfilter of two edge variables of its own. The search is bounded by OPTIONS
 and else by the settings GRAPH.* (§20). Passing a bound fails with
 54061 (GRF-0061), or, ON LIMIT TRUNCATE, keeps the paths found and warns
 01W61. The rigid parts of a pattern are searched by the automaton, as

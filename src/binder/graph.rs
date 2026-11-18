@@ -15,6 +15,7 @@ mod pattern;
 mod remap;
 mod scope;
 mod seam;
+mod segments;
 mod variables;
 
 use std::collections::BTreeSet;
@@ -91,13 +92,11 @@ fn declared_vars(declared: &[variables::Declared], infos: &[elements::TableInfo]
 pub(in crate::binder) fn graph_table_item(b: Bounds<'_>, g: &GraphTable, offset: usize, from: &mut From) -> Result<FromItem> {
     let lateral = lateral_binder(b, from);
     let desc = graph_desc(b.cx, &g.graph)?;
-    if let Some(s) = g.pattern.segments.first() {
-        return Err(scope::unsupported("FOR EACH SEGMENT [GS §11.3]").or_at(s.first.at));
-    }
     let pattern = normalize(&g.pattern);
     let exposed = exposure(&pattern)?;
     let (tables, infos, labels) = elements::element_tables(b, &desc, g.system_time.as_deref())?;
-    let extra = columns::row_variables(&g.rows);
+    let mut extra = columns::row_variables(&g.rows);
+    extra.extend(segments::segment_variables(&pattern));
     let declared = variables::declared(&pattern, &extra)?;
     for d in &declared {
         d.labels.iter().flatten().try_for_each(|l| variables::labels_known(l, &labels))?;
@@ -109,13 +108,15 @@ pub(in crate::binder) fn graph_table_item(b: Bounds<'_>, g: &GraphTable, offset:
     let names: Vec<String> = declared.iter().map(|d| d.name.clone()).collect();
     let built = Built { lateral: &lateral, items, graphing: Rc::clone(&graphing) };
     let bind = |f: &Filtered<'_>| built.filter(f, &exposed);
-    let (mut path_shapes, prefilters) = pattern::paths(&pattern, (&names, &labels), &bind)?;
+    let (mut path_shapes, prefilters, subpaths) = pattern::paths(&pattern, (&names, &labels), &bind)?;
+    graphing.subpaths.replace(subpaths);
     let measure = built.binder(None);
     let scope = super::Scope::Groups(&graphing.measure, MEASURE);
     let postfilter = match &pattern.where_clause {
         Some(c) => Some(measure.search_condition(c, scope)?),
         None => None,
     };
+    let segments = segments::segments(&measure, scope, (&pattern, &names, &graphing))?;
     let (columns, out) = columns::columns(&measure, g, scope)?;
     let costs = columns::costs(&measure, &pattern, &graphing)?;
     let rows = columns::rows(&g.rows, &names)?;
@@ -123,7 +124,8 @@ pub(in crate::binder) fn graph_table_item(b: Bounds<'_>, g: &GraphTable, offset:
     columns::fill_shapes(&mut shapes, &mut path_shapes, (&tables, &infos, &declared));
     let slots = graphing.slots.take();
     let mut operands = Operands::new(offset, width.saturating_add(slots.len()));
-    let assembled = Assembled { tables, labels, paths: path_shapes, prefilters, vars: shapes, slots, postfilter, columns, costs, rows };
+    let assembled =
+        Assembled { tables, labels, paths: path_shapes, prefilters, vars: shapes, slots, postfilter, segments, columns, costs, rows };
     let graph = assembled.remapped(&mut operands, (&desc, &pattern, width), g)?;
     let reads: BTreeSet<usize> = operands.reads.clone();
     from.used.extend(reads.iter().copied());
@@ -159,19 +161,33 @@ impl Built<'_> {
         binder
     }
 
-    /// Prefilter `f` bound: its condition and the variables it reads.
-    fn filter(&self, f: &Filtered<'_>, exposed: &crate::parser::Exposure) -> Result<(crate::logical::Cond, BTreeSet<usize>)> {
+    /// Prefilter `f` bound: its condition, the variables it reads and the
+    /// slots of its set functions.
+    fn filter(&self, f: &Filtered<'_>, exposed: &crate::parser::Exposure) -> Result<pattern::BoundFilter> {
         self.graphing.take_reads();
         let made = self.graphing.slots.borrow().len();
-        let cond = match f {
-            Filtered::Element(p, own) => columns::element_condition(&self.binder(Some(*own)), p, (*own, &self.graphing), ELEMENT_SCOPE)?,
-            Filtered::Path(c) => {
-                let scope = super::Scope::Groups(&self.graphing.measure, MEASURE);
-                self.binder(None).search_condition(c, scope)?
+        self.graphing.filtering.set(true);
+        let bound = self.filter_condition(f);
+        self.graphing.filtering.set(false);
+        let (cond, local) = bound?;
+        let (slots, vars) = columns::slots_in_prefilter(&self.graphing, made, (local.as_ref(), exposed))?;
+        let mut reads = self.graphing.take_reads();
+        reads.extend(vars);
+        Ok((cond, reads, slots))
+    }
+
+    /// The condition of prefilter `f`, and of a parenthesized path
+    /// pattern's, the variables it exposes to its WHERE.
+    fn filter_condition(&self, f: &Filtered<'_>) -> Result<(crate::logical::Cond, Option<crate::parser::Exposure>)> {
+        Ok(match f {
+            Filtered::Element(p, own) => {
+                (columns::element_condition(&self.binder(Some(*own)), p, (*own, &self.graphing), ELEMENT_SCOPE)?, None)
             }
-        };
-        columns::slots_in_prefilter(&self.graphing, made, exposed)?;
-        Ok((cond, self.graphing.take_reads()))
+            Filtered::Path(c, p) => {
+                let scope = super::Scope::Groups(&self.graphing.measure, MEASURE);
+                (self.binder(None).search_condition(c, scope)?, Some(crate::parser::parenthesized_exposure(p)?))
+            }
+        })
     }
 }
 
@@ -184,6 +200,7 @@ struct Assembled {
     vars: Vec<VarShape>,
     slots: Vec<crate::logical::GraphValue>,
     postfilter: Option<crate::logical::Cond>,
+    segments: Vec<crate::logical::SegmentShape>,
     columns: Vec<crate::logical::Expr>,
     costs: Vec<Option<crate::logical::CostShape>>,
     rows: crate::logical::RowsShape,
@@ -200,6 +217,7 @@ impl Assembled {
         let prefilters = self.prefilters.into_iter().map(|p| crate::logical::Prefilter { cond: operands.cond(p.cond), ..p }).collect();
         let slots = self.slots.into_iter().map(|s| columns::slot_remapped(s, operands)).collect::<Result<Vec<_>>>()?;
         let postfilter = self.postfilter.map(|c| operands.cond(c));
+        let segments = self.segments.into_iter().map(|s| crate::logical::SegmentShape { cond: operands.cond(s.cond), ..s }).collect();
         let columns = self.columns.into_iter().map(|e| operands.expr(e)).collect();
         let mut paths = self.paths;
         for (path, cost) in paths.iter_mut().zip(self.costs) {
@@ -225,6 +243,7 @@ impl Assembled {
             width,
             operands: operand_count,
             postfilter,
+            segments,
             rows: self.rows,
             columns,
             options,

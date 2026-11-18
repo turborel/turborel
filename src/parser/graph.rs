@@ -22,7 +22,7 @@ mod tests;
 
 pub use normalize::normalize;
 pub(super) use syntax::check;
-pub use syntax::{Declared, Degree, Exposed, Exposure, exposure};
+pub use syntax::{Declared, Degree, Exposed, Exposure, exposure, parenthesized_exposure};
 
 use super::Parser;
 use crate::ast::{
@@ -75,7 +75,7 @@ impl Parser {
     /// # Errors
     ///
     /// SQLCODE -102 if it does not conform to the Format; -103 if it
-    /// breaks a Syntax Rule, its GRF condition named; -900 of AS OF SCN.
+    /// breaks a Syntax Rule, its GRF condition named.
     pub(in crate::parser) fn graph_table(&mut self) -> Result<TableReference> {
         let at = self.here();
         self.advance();
@@ -225,13 +225,14 @@ impl Parser {
         Ok(GraphColumn::Value { value, name, at })
     }
 
-    /// \[EXTENSION\] AS OF TIMESTAMP `<value expression>`, if written: the
-    /// rows current then, as FOR SYSTEM_TIME AS OF reads them.
+    /// \[EXTENSION\] AS OF TIMESTAMP `<value expression>` or AS OF SCN
+    /// `<value expression>`, if written: the rows current then, as FOR
+    /// SYSTEM_TIME AS OF reads them, an SCN read as the instant
+    /// SCN_TO_TIMESTAMP gives (`functions/scn.rs`).
     ///
     /// # Errors
     ///
-    /// SQLCODE -900 of AS OF SCN: this implementation numbers no system
-    /// changes a statement may name.
+    /// SQLCODE -102 if it does not conform to the Format.
     fn as_of_timestamp(&mut self) -> Result<Option<Box<SystemTimeRead>>> {
         if !self.is_kw(kw::AS) || !self.next_is_kw(kw::OF) {
             return Ok(None);
@@ -239,15 +240,14 @@ impl Parser {
         let at = self.here();
         self.advance();
         self.advance();
-        if self.is_word(SCN) {
-            return Err(SqlError::at(
-                Code::Unsupported,
-                self.here(),
-                "[EXTENSION] AS OF SCN is not supported: no system change number is kept",
-            ));
-        }
-        self.expect_kw(kw::TIMESTAMP)?;
-        let point = self.common_value_expression()?;
+        let point = if self.accept_word(SCN) {
+            let scn = self.here();
+            let n = self.common_value_expression()?;
+            ValueExpression::Function { name: crate::functions::SCN_TO_TIMESTAMP, args: vec![n], at: scn }
+        } else {
+            self.expect_kw(kw::TIMESTAMP)?;
+            self.common_value_expression()?
+        };
         Ok(Some(Box::new(SystemTimeRead { kind: SystemTimeKind::AsOf(point), at })))
     }
 

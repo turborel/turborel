@@ -5,17 +5,20 @@
 //! if its postfilter is true [R6.4], its COLUMNS of the match, of each
 //! vertex of its paths, or of each step.
 
+use std::cmp::Ordering;
+
 use super::shared::Shared;
 use crate::error::Result;
 use crate::error::SqlState;
 use crate::exec::{Runner, eval, eval_cond, warn};
+use crate::functions::{picked, picked_value};
 use crate::graph::binding::PathBinding;
 use crate::graph::view::ElementId;
 use crate::json::Item;
-use crate::logical::{AggCall, GraphValue, PathFunction, RowsShape, Truth, identity_item};
+use crate::logical::{AggCall, Distribution, GraphValue, PathFunction, RowsShape, Truth, identity_item};
 use crate::storage::Row;
 use crate::value::json::Json;
-use crate::value::{Decimal, Value};
+use crate::value::{DataType, Decimal, Value, compare};
 
 /// The bindings of a match: one of each path pattern.
 pub(super) type Chosen<'b> = Vec<&'b PathBinding>;
@@ -35,12 +38,26 @@ impl Shared {
             }
         }
         for (k, slot) in self.graph.slots.iter().enumerate() {
+            if self.graph.prefilters.iter().any(|p| p.slots.iter().any(|s| s.0 == k)) {
+                continue;
+            }
             let value = match slot {
-                GraphValue::Aggregate { call, var } => self.aggregate(call, *var, (chosen, &row), runner)?,
-                GraphValue::Path { path, function } => match chosen.get(*path) {
-                    Some(b) => self.path_value(b, *function)?,
-                    None => Value::Null,
-                },
+                GraphValue::Aggregate { call, var } => {
+                    let shape = self.graph.vars.get(*var);
+                    let bound = shape.into_iter().flat_map(|s| &s.bound);
+                    let elements: Vec<ElementId> =
+                        bound.flat_map(|&(path, id)| chosen.get(path).map(|b| b.group(id)).unwrap_or_default()).collect();
+                    self.aggregate(call, (*var, &elements), &row, runner)?
+                }
+                GraphValue::Path { path, function, span } => {
+                    let whole = chosen.get(*path).copied();
+                    let part = span.and_then(|(start, end)| whole.and_then(|b| b.span(start, end)));
+                    match (span, whole, &part) {
+                        (None, Some(b), _) | (Some(_), _, Some(b)) => self.path_value(b, *function)?,
+                        (None | Some(_), _, _) => Value::Null,
+                    }
+                }
+                GraphValue::Iteration { .. } => Value::Null,
             };
             if let Some(cell) = row.get_mut(self.graph.width.saturating_add(k)) {
                 *cell = value;
@@ -49,18 +66,13 @@ impl Shared {
         Ok(row)
     }
 
-    /// Set function `call` over the elements of group variable `var` in
-    /// `chosen`, each in the columns of `row`.
-    fn aggregate(&self, call: &AggCall, var: usize, (chosen, row): (&Chosen<'_>, &Row), runner: &Runner) -> Result<Value> {
+    /// Set function `call` over `elements`, those group variable `var` is
+    /// bound to, each in the columns of `row`.
+    pub(super) fn aggregate(&self, call: &AggCall, (var, elements): (usize, &[ElementId]), row: &Row, runner: &Runner) -> Result<Value> {
         let mut acc = call.func.0.accumulator(call.result.clone());
         let mut seen: Vec<String> = Vec::new();
-        let shape = self.graph.vars.get(var);
-        let elements: Vec<ElementId> = shape
-            .into_iter()
-            .flat_map(|s| &s.bound)
-            .flat_map(|&(path, id)| chosen.get(path).map(|b| b.group(id)).unwrap_or_default())
-            .collect();
-        for element in elements {
+        let mut sorted: Vec<Value> = Vec::new();
+        for &element in elements {
             let mut each = row.clone();
             self.fill(&mut each, var, element)?;
             if let Some(c) = &call.filter
@@ -84,9 +96,44 @@ impl Shared {
                 }
                 seen.push(text);
             }
+            if call.distribution.is_some() {
+                sorted.push(v);
+                continue;
+            }
             acc.update(&v)?;
         }
-        acc.finish()
+        let Some(d) = &call.distribution else { return acc.finish() };
+        distributed(d, (sorted, &call.result), row, runner)
+    }
+
+    /// \[GS §11.1\] Whether every FOR EACH SEGMENT of the match `chosen`
+    /// holds: its condition true of each two edges one after the other
+    /// in its path, of the match row `row` and the two bound to its
+    /// variables.
+    ///
+    /// # Errors
+    ///
+    /// Any error reading an element or evaluating a condition.
+    pub(super) fn segments_hold(&self, chosen: &Chosen<'_>, row: &Row, runner: &Runner) -> Result<bool> {
+        for s in &self.graph.segments {
+            let whole = chosen.get(s.path).copied();
+            let part = s.span.and_then(|(start, end)| whole.and_then(|b| b.span(start, end)));
+            let path = match s.span {
+                Some(_) => part.as_ref(),
+                None => whole,
+            };
+            let edges = path.map(PathBinding::edges).unwrap_or_default();
+            for pair in edges.windows(2) {
+                let (Some(&first), Some(&second)) = (pair.first(), pair.get(1)) else { continue };
+                let mut each = row.clone();
+                self.fill(&mut each, s.first, first)?;
+                self.fill(&mut each, s.second, second)?;
+                if eval_cond(&s.cond, &each, runner)? != Truth::True {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 
     /// The identities of `elements`, as an array.
@@ -164,4 +211,20 @@ fn steps(b: &PathBinding) -> Vec<(ElementId, Option<ElementId>, Option<ElementId
         return vertices.first().map(|&v| (v, None, None)).into_iter().collect();
     }
     edges.iter().enumerate().filter_map(|(i, &e)| Some((*vertices.get(i)?, Some(e), vertices.get(i.saturating_add(1)).copied()))).collect()
+}
+
+/// [ISO/IEC 9075-2:2023 §10.9 GR10] The value inverse distribution function
+/// `d` of result type `result` picks of `values`, its fraction over
+/// `row`: null of no value; SQLSTATE 22003 of a fraction not from 0 to 1.
+fn distributed(d: &Distribution, (mut values, result): (Vec<Value>, &DataType), row: &Row, runner: &Runner) -> Result<Value> {
+    let fraction = eval(&d.fraction, row, runner)?;
+    let n = u64::try_from(values.len()).unwrap_or(u64::MAX);
+    let Some(chosen) = picked(d.continuous, &fraction, n)? else { return Ok(Value::Null) };
+    values.sort_by(|a, b| compare(a, b).unwrap_or(Ordering::Equal));
+    if d.order.descending {
+        values.reverse();
+    }
+    let at = |k: u64| usize::try_from(k).ok().and_then(|k| values.get(k)).cloned();
+    let (Some(low), Some(high)) = (at(chosen.low), at(chosen.high)) else { return Ok(Value::Null) };
+    picked_value(d.continuous, (low, high), chosen.factor, result)
 }

@@ -72,7 +72,7 @@ pub(super) struct Test {
 #[derive(Clone)]
 pub(super) struct Compiled {
     pub(super) test: Predicate,
-    pub(super) reads: Vec<(VarId, Option<usize>, Option<usize>)>,
+    pub(super) reads: Vec<super::program::Resolved>,
 }
 
 impl fmt::Debug for Compiled {
@@ -105,6 +105,9 @@ pub(super) struct Scope {
     pub(super) clears: Vec<usize>,
     /// The PREV registers set as it begins, each from its source.
     pub(super) previous: Vec<(usize, usize)>,
+    /// The FIRST registers set as it begins, each from its source, if
+    /// not set yet.
+    pub(super) first: Vec<(usize, usize)>,
 }
 
 /// A compiled path pattern.

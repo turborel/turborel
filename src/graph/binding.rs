@@ -141,6 +141,16 @@ impl PathBinding {
         self.group(var).first().copied()
     }
 
+    /// \[GS §6.4\] Its subpath from where `start` is bound to where `end`
+    /// is, the marks of a subpath variable: none if either is unbound,
+    /// as in an alternative not declaring it.
+    pub fn span(&self, start: VarId, end: VarId) -> Option<PathBinding> {
+        let at = |var: VarId| self.vars.iter().position(|vars| vars.contains(&var));
+        let (from, to) = (at(start)?, at(end)?);
+        let tags = self.tags.get(from.div_euclid(2)..=to.div_euclid(2)).unwrap_or_default().to_vec();
+        Some(PathBinding { elements: self.elements.get(from..=to)?.to_vec(), vars: self.vars.get(from..=to)?.to_vec(), tags, cost: None })
+    }
+
     /// \[GS §6.9\] IS_TRAIL: whether no edge repeats.
     pub fn is_trail(&self) -> bool {
         distinct(&self.edges())

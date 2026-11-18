@@ -5,7 +5,8 @@
 
 use super::*;
 use crate::ast::{
-    GraphColumn, GraphFunctionName, GraphPredicate, GraphReference, PathEnd, Predicate, SameKind, SearchCondition, ValueExpression,
+    GraphColumn, GraphFunctionName, GraphPredicate, GraphReference, PathEnd, Predicate, SameKind, SearchCondition, SystemTimeKind,
+    ValueExpression,
 };
 use GraphFunctionName as F;
 
@@ -176,7 +177,7 @@ fn columns_read_values_and_stars_8() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.6; graph standard §8,
 /// §11.3] a GRAPH_TABLE's graph, schema-qualified or LINE_GRAPH of a
 /// label, its correlation name with or without AS, FOR SYSTEM_TIME or AS
-/// OF TIMESTAMP, and AS OF SCN SQLCODE -900.
+/// OF TIMESTAMP, and AS OF SCN, read as AS OF SCN_TO_TIMESTAMP(n).
 #[test]
 fn graph_table_reads_its_graph_and_correlation_7_6() {
     let read1 = table("GRAPH_TABLE (S.G MATCH (a) COLUMNS (a.x)) AS GT").unwrap();
@@ -193,8 +194,9 @@ fn graph_table_reads_its_graph_and_correlation_7_6() {
     assert!(read5.correlation.is_none());
     let read6 = table("GRAPH_TABLE (G MATCH (a) COLUMNS (a.x)) FOR SYSTEM_TIME AS OF CURRENT_TIMESTAMP GT").unwrap();
     assert!(read6.system_time.is_some());
-    let scn = table("GRAPH_TABLE (G MATCH (a) COLUMNS (a.x)) AS OF SCN 5").unwrap_err();
-    assert_eq!(scn.sqlcode(), -900_i32);
+    let scn = table("GRAPH_TABLE (G MATCH (a) COLUMNS (a.x)) AS OF SCN 5").unwrap();
+    let Some(SystemTimeKind::AsOf(ValueExpression::Function { name, .. })) = scn.system_time.map(|s| s.kind) else { panic!("AS OF SCN") };
+    assert_eq!(name, crate::functions::SCN_TO_TIMESTAMP);
     let twice = "GRAPH_TABLE (G MATCH (a) COLUMNS (a.x)) FOR SYSTEM_TIME AS OF CURRENT_TIMESTAMP AS OF TIMESTAMP CURRENT_TIMESTAMP";
     assert_eq!(table(twice).unwrap_err().sqlcode(), -102_i32);
 }

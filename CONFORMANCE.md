@@ -3309,7 +3309,7 @@ SELECT ... FROM GRAPH_TABLE (g MATCH pattern [WHERE condition]
     COLUMNS (expression [AS name], ... | v.*)
     [OPTIONS (MAX_PATH_LENGTH n, MAX_PATHS_PER_PARTITION n,
     MAX_SEARCH_STATES n, ON LIMIT {ERROR | TRUNCATE}, DETERMINISTIC_PATHS)])
-    [FOR SYSTEM_TIME AS OF t] [[AS] name]
+    [FOR SYSTEM_TIME AS OF t] [[AS] name] [AS OF {TIMESTAMP t | SCN n}]
 ```
 
 A property graph (RULES.md D106) is defined over tables and views, and
@@ -3328,7 +3328,17 @@ ELEMENT_ID, VERTEX_ID, EDGE_ID, LABELS, PROPERTY_EXISTS, SAME,
 ALL_DIFFERENT, IS [NOT] SOURCE OF, IS [NOT] DESTINATION OF, IS [NOT]
 DIRECTED, IS [NOT] LABELED, PATH_LENGTH, VERTICES, EDGES, IS_ACYCLIC,
 IS_TRAIL, IS_SIMPLE, PATH_TO_JSON and the set functions of a group
-variable's elements, COUNT(e.*) among them. EXPLAIN shows each path's
+variable's elements, COUNT(e.*) and the inverse distribution functions
+among them. A subpath variable `(q = ...)` names the part of the path
+its parenthesized pattern matches, of which the path functions are. A
+parenthesized WHERE takes set functions over the elements bound within
+it, each iteration's own, and PREV and FIRST of an element variable,
+its binding in the iteration before or the first [GS §11.1]. FOR EACH
+SEGMENT (e1, e2) IN p WHERE condition keeps the matches whose every two
+edges one after the other meet it. AS OF SCN n reads the element tables
+at SCN n, the microseconds of UTC from 0001-01-01 of a transaction
+timestamp, which TIMESTAMP_TO_SCN and SCN_TO_TIMESTAMP convert; an SCN
+no instant is 22008. EXPLAIN shows each path's
 automaton, the algorithm chosen and how each edge table is followed.
 An edge table is followed through its adjacency index (RULES.md D107)
 if it has one, and an ENFORCED graph's base edge tables are given one
@@ -3337,10 +3347,10 @@ LIMIT TRUNCATE ends with warning 01W61. A negative COST is 22W34.
 
 | Not taken | Behaviour |
 |---|---|
-| A subpath variable | -900 |
-| A prefilter of a quantified element that reads a later variable | -900 |
-| A set function in the filter of a bounded group | -900 |
-| AS OF SCN | -900 |
+| A prefilter of a quantified element that reads a later variable, or a variable of another path pattern | -900 |
+| A path function in a prefilter | -900 |
+| EXISTS IN PATH [GS §11.2] | -900 |
+| LINE_GRAPH [GS §11.3] | -900 |
 
 ### Property graphs (Mode B)
 
@@ -4034,7 +4044,12 @@ Where the standards are unclear, turborel reads them as follows.
 | One variable of several labels [GS §6.2] | An element variable written twice with different label expressions may bind the tables of either, each occurrence then testing its own. T5 needs Zembla, a country only, bound by `(c:City) \| (c:Country)`. |
 | Anonymous variables of a union [GS §6.4] | An element written without a variable is bound by no variable, so the branches of a union that match one path give one binding (T9). |
 | A prefilter of a later variable [GS §6.8] | One outside a quantifier is run on the walk once every variable it reads is bound, as a parenthesized WHERE would be. One inside a quantifier is refused, as no binding of the later variable exists as the element is bound. |
-| A set function in a group's filter [GS §5 R5.6] | Of an unbounded group it is GRF-0032 (T12). Of a bounded one it is not taken. |
+| A set function in a group's filter [GS §5 R5.6, §7.4 R7.4] | It is over the elements its variable is bound to within the parenthesized pattern, so of a quantified one, within each iteration. A variable unbounded there is GRF-0032 (T12), one a restrictor inside bounds is not. |
+| A subpath variable [GS §6.4, §6.6] | It names the part of the path from where its parenthesized pattern begins to where it ends, of which the path functions are. Within a quantifier it would be a list of subpaths, of which no path function is, so it is SQLCODE -103. One of an alternative of a union is null of a match through another. A path or subpath variable declared twice is -103, as no join is on a path. |
+| A selector in a parenthesized path pattern [GS §7.2] | GRF-0033, SQLCODE -103. |
+| AS OF SCN [GS §8, §19] | No SCN is named elsewhere in the standard. A system-versioned table keeps the transaction timestamp of each change, and the logical timestamps commits are ordered by are kept with no row (RULES.md D29, D82). So the SCN of a change is its transaction timestamp's microseconds from 0001-01-01 00:00:00 UTC, AS OF SCN n is AS OF TIMESTAMP SCN_TO_TIMESTAMP(n), and TIMESTAMP_TO_SCN(CURRENT_TIMESTAMP) is the current SCN. An SCN below 0 or past 9999-12-31 is SQLSTATE 22008. |
+| PREV and FIRST [GS §11.1] | Each is of a prefilter, elsewhere SQLCODE -103. Outside a quantifier PREV and FIRST are null. In a quantifier's first iteration PREV is null and FIRST the binding of that iteration. Without a property each gives the element's identity, as ELEMENT_ID does. |
+| FOR EACH SEGMENT [GS §11.1] | It is a postfilter, tested with the WHERE after the pattern. Its two variables are edges of every edge table, and a path of fewer than two edges meets it. |
 | An undirected self-loop [GS §4.1] | It is followed once, its source and destination the same vertex. |
 | ONE ROW PER STEP of a path of no edge [GS §8 R8.3] | It gives one row, of its vertex, the edge and the next vertex null. |
 | FOR SYSTEM_TIME of a GRAPH_TABLE [GS §8] | It reads every element table as of that time. A table not system-versioned is refused as in FROM. |

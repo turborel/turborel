@@ -10,10 +10,12 @@ use turborel::db::{Database, Session};
 mod adjacency;
 mod conformance;
 mod functions;
+mod iterations;
 mod limits;
 mod native;
 mod reads;
 mod refusals;
+mod subpaths;
 
 /// The bank of the standard's fixture (§23.1): accounts a1 to a6, the
 /// country Zembla c1 and the city Ankh-Morpork c2, which is a country too,

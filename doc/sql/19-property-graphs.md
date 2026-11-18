@@ -53,6 +53,7 @@ GRAPH_TABLE ( <graph name>
     COLUMNS ( { <value expression> [ AS <column name> ] | <variable>.* } [ , ... ] )
     [ OPTIONS ( <option> [ , ... ] ) ] )
   [ FOR SYSTEM_TIME AS OF <value expression> ] [ [ AS ] <correlation name> ]
+  [ AS OF { TIMESTAMP <value expression> | SCN <value expression> } ]
 
 <match mode> ::= REPEATABLE ELEMENTS | DIFFERENT EDGES | DIFFERENT VERTICES
 
@@ -169,6 +170,111 @@ SELECT * FROM GRAPH_TABLE (BANK
 (2 rows)
 ```
 
+## Subpaths and iterations
+
+A subpath variable `(q = ...)` names the part of the path its
+parenthesized pattern matches, and the path functions are of that part.
+Here q is the last two transfers of a path of three:
+
+```sql
+SELECT * FROM GRAPH_TABLE (BANK
+    MATCH p = (a WHERE a.owner = 'Scott')-[s:Transfer]->(m) (q = (b)-[t:Transfer]->{2}(c))
+    COLUMNS (c.owner AS TO_OWNER, PATH_LENGTH(q) AS Q_LENGTH, PATH_LENGTH(p) AS P_LENGTH, IS_ACYCLIC(q) AS Q_ACYCLIC))
+  ORDER BY TO_OWNER;
+```
+
+```
+ TO_OWNER             |     Q_LENGTH |     P_LENGTH | Q_ACYCLIC
+----------------------+--------------+--------------+-----------
+ Jay                  |            2 |            3 | TRUE
+ Scott                |            2 |            3 | TRUE
+(2 rows)
+```
+
+A subpath variable within a quantifier would name a list of subpaths,
+and is SQLCODE -103. One of an alternative of a union is null of a
+match through another.
+
+A set function in the WHERE of a parenthesized pattern reads the
+elements its variable is bound to within it, and of a quantified
+pattern, within each iteration. A variable a quantifier of no bound
+gives a list without end there, so a restrictor must bound it, else
+GRF-0032:
+
+```sql
+SELECT PATH, TOTAL FROM GRAPH_TABLE (BANK
+    MATCH (a WHERE a.owner = 'Scott') ((b)-[t:Transfer]->{1,3}(c) WHERE SUM(t.amount) >= 20)
+    COLUMNS (ARRAY_AGG(t.id) AS PATH, LISTAGG(t.id, ' ') WITHIN GROUP (ORDER BY t.id) AS K, SUM(t.amount) AS TOTAL))
+  ORDER BY K;
+```
+
+```
+ PATH                                                         |                TOTAL
+--------------------------------------------------------------+----------------------
+ ARRAY['t1', 't2', 't3']                                      |                   28
+(1 row)
+```
+
+In such a WHERE, `PREV(v)` is the element v was bound to in the
+iteration before, null in the first, and `FIRST(v)` the one of the
+first. Each gives the element's identity, or a property written after
+it. Here each transfer is at least the one before:
+
+```sql
+SELECT PATH FROM GRAPH_TABLE (BANK
+    MATCH TRAIL (a WHERE a.owner = 'Scott') [-[t:Transfer]-> WHERE PREV(t) IS NULL OR t.amount >= PREV(t).amount]+ (b)
+    COLUMNS (ARRAY_AGG(t.id) AS PATH, LISTAGG(t.id, ' ') WITHIN GROUP (ORDER BY t.id) AS K))
+  ORDER BY K;
+```
+
+```
+ PATH
+--------------------------------------------------------------
+ ARRAY['t1']
+ ARRAY['t1', 't2']
+ ARRAY['t1', 't2', 't3']
+(3 rows)
+```
+
+FOR EACH SEGMENT (e1, e2) IN p WHERE ... keeps the matches whose every
+two edges one after the other in path or subpath p meet its condition.
+It is tested with the WHERE after the pattern:
+
+```sql
+SELECT PATH FROM GRAPH_TABLE (BANK
+    MATCH p = (a WHERE a.owner = 'Scott')-[t:Transfer]->{1,3}(b)
+    FOR EACH SEGMENT (e1, e2) IN p WHERE e1.amount <= e2.amount
+    COLUMNS (ARRAY_AGG(t.id) AS PATH, LISTAGG(t.id, ' ') WITHIN GROUP (ORDER BY t.id) AS K))
+  ORDER BY K;
+```
+
+```
+ PATH
+--------------------------------------------------------------
+ ARRAY['t1']
+ ARRAY['t1', 't2']
+ ARRAY['t1', 't2', 't3']
+(3 rows)
+```
+
+PERCENTILE_CONT and PERCENTILE_DISC of a group variable sort its
+elements' values:
+
+```sql
+SELECT * FROM GRAPH_TABLE (BANK
+    MATCH (a WHERE a.owner = 'Scott')-[t:Transfer]->{3}(b)
+    COLUMNS (b.owner AS TO_OWNER, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY t.amount) AS MEDIAN))
+  ORDER BY TO_OWNER;
+```
+
+```
+ TO_OWNER             |                   MEDIAN
+----------------------+--------------------------
+ Jay                  |                      1E1
+ Scott                |                      6E0
+(2 rows)
+```
+
 ## Rows
 
 ONE ROW PER MATCH, the default, gives a row of each match. ONE ROW PER
@@ -196,6 +302,32 @@ A GRAPH_TABLE may read the columns of the table references before it,
 each row its own matches; of a LEFT JOIN, a row of none is kept, null
 extended. FOR SYSTEM_TIME AS OF reads every element table as it was
 then.
+
+AS OF TIMESTAMP t is the same, and AS OF SCN n reads them at system
+change number n. A change's SCN is its transaction timestamp's
+microseconds of UTC from 0001-01-01, which TIMESTAMP_TO_SCN gives of a
+timestamp and SCN_TO_TIMESTAMP turns back, so
+`TIMESTAMP_TO_SCN(CURRENT_TIMESTAMP)` is the current SCN. An SCN that is no instant is SQLSTATE 22008:
+
+```sql
+SELECT TIMESTAMP_TO_SCN(TIMESTAMP '2026-01-01 00:00:00+00:00') AS SCN,
+    SCN_TO_TIMESTAMP(63902822400000000) AS INSTANT FROM ACCOUNT WHERE ID = 'a1';
+```
+
+```
+                  SCN | INSTANT
+----------------------+----------------------------------
+    63902822400000000 | 2026-01-01 00:00:00.000000+00:00
+(1 row)
+```
+
+```sql
+SELECT SCN_TO_TIMESTAMP(-1) AS INSTANT FROM ACCOUNT WHERE ID = 'a1';
+```
+
+```
+turborel: SQLCODE -301 (SQLSTATE 22008): SCN -1 is out of range: an SCN is from 0 to 315537897599999999
+```
 
 ## Limits
 

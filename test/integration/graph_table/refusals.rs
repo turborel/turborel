@@ -21,23 +21,6 @@ fn refused_patterns_8() {
     }
 }
 
-/// Verifies: [EXTENSION] [GS §6.6, §6.7, §7.4] the forms CONFORMANCE.md
-/// lists as not taken are each SQLCODE -900: a subpath variable, a set
-/// function in a bounded group's filter, and AS OF SCN.
-#[test]
-fn forms_not_taken_are_900() {
-    let (_db, s) = bank();
-    let cases = [
-        "SELECT 1 FROM GRAPH_TABLE (BANK MATCH (a) (q = (b)-[t]->(c)) COLUMNS (a.id AS A))",
-        "SELECT 1 FROM GRAPH_TABLE (BANK MATCH (a) ((b)-[t]->(c) WHERE COUNT(t.*) > 0){1,2} COLUMNS (a.id AS A))",
-        "SELECT 1 FROM GRAPH_TABLE (BANK MATCH (a) COLUMNS (a.id AS A)) AS OF SCN 5",
-    ];
-    for q in cases {
-        let (code, msg) = refused(&s, q);
-        assert_eq!(code, -900, "{q}: {msg}");
-    }
-}
-
 /// Verifies: [EXTENSION] [GS §4.1 R4.3] a TRUSTED graph's key that
 /// repeats binds each of its rows; an edge whose end is no vertex is no
 /// edge.

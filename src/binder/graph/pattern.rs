@@ -11,33 +11,38 @@
 
 use std::collections::BTreeSet;
 
-use super::super::Scope;
+use super::super::{Scope, rule};
 use super::grf;
 use super::scope::unsupported;
 use crate::ast::{
-    ElementPattern, GraphPattern, LabelExpression, Orientation as Written, ParenthesizedPath, PathExpression, PathFactor, PathPrimary,
-    PathTerm, Restrictor as WrittenRestrictor, Selector as WrittenSelector,
+    ElementPattern, GraphPattern, GraphVariable, LabelExpression, Orientation as Written, ParenthesizedPath, PathExpression, PathFactor,
+    PathPrimary, PathTerm, Restrictor as WrittenRestrictor, Selector as WrittenSelector,
 };
 use crate::error::Result;
 use crate::graph::program::{LabelExpr, Restrictor, Selector, VarId};
 use crate::graph::view::Orientation;
-use crate::logical::{Cond, PathShape, PatternShape, Prefilter, TestShape};
+use crate::logical::{Cond, PathShape, PatternShape, Prefilter, SUBPATH_MARK, TestShape};
 
 /// The rule a set function in an element pattern's WHERE breaks.
 const ELEMENT_ROWS: &str = "[GS §6.8] the WHERE of an element pattern is of one element, so it holds no set function";
 
 /// What binds a prefilter: of its condition, the element variable whose
 /// properties it sees unqualified, if any, and whether it is of a path
-/// (set functions allowed); its condition and the variables it reads.
-pub(super) type BindFilter<'f> = dyn Fn(&Filtered<'_>) -> Result<(Cond, BTreeSet<usize>)> + 'f;
+/// (set functions allowed); its condition, the variables it reads and
+/// the slots of its set functions.
+pub(super) type BindFilter<'f> = dyn Fn(&Filtered<'_>) -> Result<BoundFilter> + 'f;
+
+/// A prefilter bound: its condition, the element variables it reads, and
+/// the slots it computes, each with its element variable.
+pub(super) type BoundFilter = (Cond, BTreeSet<usize>, Vec<(usize, usize)>);
 
 /// A prefilter to bind.
 pub(super) enum Filtered<'p> {
     /// An element pattern's WHERE and property specifications, of the
     /// element variable `own`.
     Element(&'p ElementPattern, usize),
-    /// A parenthesized path pattern's WHERE.
-    Path(&'p crate::ast::SearchCondition),
+    /// A parenthesized path pattern's WHERE, and the pattern.
+    Path(&'p crate::ast::SearchCondition, &'p ParenthesizedPath),
 }
 
 /// The scope of an `Element` prefilter.
@@ -59,13 +64,20 @@ struct Walk<'w> {
     depth: usize,
     /// The prefilters bound.
     prefilters: &'w mut Vec<Prefilter>,
+    /// Its subpath variables, each with the variables marking where its
+    /// subpath begins and ends.
+    subpaths: Vec<(String, VarId, VarId)>,
     /// Prefilters of the path itself, lifted from its elements.
     lifted: Vec<usize>,
     bind: &'w BindFilter<'w>,
 }
 
-/// The path patterns of `pattern` and their prefilters, of the element
-/// variables `names` and graph labels `labels`.
+/// A subpath variable: its name, its path pattern, and the variables
+/// marking where its subpath begins and ends there.
+pub(super) type Subpath = (String, usize, VarId, VarId);
+
+/// The path patterns of `pattern`, their prefilters and their subpath
+/// variables, of the element variables `names` and graph labels `labels`.
 ///
 /// # Errors
 ///
@@ -75,10 +87,11 @@ pub(super) fn paths(
     pattern: &GraphPattern,
     (names, labels): (&[String], &[String]),
     bind: &BindFilter<'_>,
-) -> Result<(Vec<PathShape>, Vec<Prefilter>)> {
+) -> Result<(Vec<PathShape>, Vec<Prefilter>, Vec<Subpath>)> {
     let mut prefilters = Vec::new();
     let mut shapes = Vec::new();
-    for path in &pattern.paths {
+    let mut subpaths = Vec::new();
+    for (n, path) in pattern.paths.iter().enumerate() {
         let prefix = path.prefix.as_ref().or(pattern.keep.as_ref());
         let mut walk = Walk {
             names,
@@ -88,6 +101,7 @@ pub(super) fn paths(
             walked: 0,
             depth: 0,
             prefilters: &mut prefilters,
+            subpaths: Vec::new(),
             lifted: Vec::new(),
             bind,
         };
@@ -103,9 +117,10 @@ pub(super) fn paths(
         }
         let selector = prefix.and_then(|p| p.selector.as_ref()).map_or(Selector::All, selector);
         let restrictor = prefix.and_then(|p| p.restrictor).map_or(Restrictor::Walk, restrictor);
+        subpaths.extend(walk.subpaths.drain(..).map(|(name, start, end)| (name, n, start, end)));
         shapes.push(PathShape { variables: walk.vars, selector, restrictor, pattern: shape, cost: None, starts: Vec::new() });
     }
-    Ok((shapes, prefilters))
+    Ok((shapes, prefilters, subpaths))
 }
 
 /// Each element pattern's variable in `e`, in the order written.
@@ -171,28 +186,57 @@ impl Walk<'_> {
         }
     }
 
-    /// A parenthesized path pattern `p` bound.
+    /// A parenthesized path pattern `p` bound: of a subpath variable,
+    /// between the marks of where its subpath begins and ends.
     fn parenthesized(&mut self, p: &ParenthesizedPath) -> Result<PatternShape> {
-        if let Some(v) = &p.variable {
-            return Err(unsupported("a subpath variable").or_at(v.at));
-        }
         if p.prefix.as_ref().is_some_and(|x| x.selector.is_some()) {
-            return Err(unsupported("a selector within a path pattern").or_at(p.at));
+            return Err(grf("GRF-0033", "a selector is placed inside a parenthesized path pattern").or_at(p.at));
         }
         let restrictor = p.prefix.as_ref().and_then(|x| x.restrictor).map_or(Restrictor::Walk, restrictor);
         let body = self.expression(&p.expression)?;
         let filter = match &p.where_clause {
-            Some(c) => Some(self.path_filter(c)?),
+            Some(c) => Some(self.path_filter(c, p)?),
             None => None,
         };
-        Ok(PatternShape::Group(restrictor, Box::new(body), filter))
+        let group = PatternShape::Group(restrictor, Box::new(body), filter);
+        let Some(v) = &p.variable else { return Ok(group) };
+        let (start, end) = self.subpath(v)?;
+        let mark = |var: VarId| PatternShape::Vertex(TestShape { var: Some(var), shape: SUBPATH_MARK, labels: None, filter: None });
+        Ok(PatternShape::Concat(vec![mark(start), group, mark(end)]))
+    }
+
+    /// \[GS §6.4\] The variables marking where subpath variable `v`'s
+    /// subpath begins and ends: each bound to the vertex there, the
+    /// same of each alternative declaring it.
+    fn subpath(&mut self, v: &GraphVariable) -> Result<(VarId, VarId)> {
+        if self.depth > 0 {
+            let msg = format!(
+                "[GS §6.6, §6.9] subpath variable {} is within a quantifier, so is bound to a list of subpaths, of which no path function is",
+                v.name
+            );
+            return Err(rule(msg).or_at(v.at));
+        }
+        if let Some(&(_, start, end)) = self.subpaths.iter().find(|s| s.0 == v.name) {
+            return Ok((start, end));
+        }
+        let start = self.mark(format!("$<{}", v.name))?;
+        let end = self.mark(format!("$>{}", v.name))?;
+        self.subpaths.push((v.name.clone(), start, end));
+        Ok((start, end))
+    }
+
+    /// A new variable of the path, a mark of no element variable.
+    fn mark(&mut self, name: String) -> Result<VarId> {
+        self.vars.push((name, false, SUBPATH_MARK));
+        VarId::try_from(self.vars.len().saturating_sub(1)).map_err(|_| grf("GRF-0024", "too many variables"))
     }
 
     /// The prefilter of a parenthesized path pattern's WHERE `c`.
-    fn path_filter(&mut self, c: &crate::ast::SearchCondition) -> Result<usize> {
-        let (cond, reads) = (self.bind)(&Filtered::Path(c))?;
+    fn path_filter(&mut self, c: &crate::ast::SearchCondition, p: &ParenthesizedPath) -> Result<usize> {
+        let (cond, reads, slots) = (self.bind)(&Filtered::Path(c, p))?;
         let reads = reads.into_iter().map(|v| Ok((v, self.var_of(v)?))).collect::<Result<Vec<_>>>()?;
-        self.prefilters.push(Prefilter { cond, own: None, reads });
+        let slots = slots.into_iter().map(|(k, v)| Ok((k, self.var_of(v)?))).collect::<Result<Vec<_>>>()?;
+        self.prefilters.push(Prefilter { cond, own: None, reads, slots });
         Ok(self.prefilters.len().saturating_sub(1))
     }
 
@@ -234,7 +278,7 @@ impl Walk<'_> {
     /// The prefilter of element pattern `p` of variable `shape`, the
     /// `ordinal`th written: its own, or the path's.
     fn element_filter(&mut self, p: &ElementPattern, shape: usize, ordinal: usize) -> Result<Option<usize>> {
-        let (cond, reads) = (self.bind)(&Filtered::Element(p, shape))?;
+        let (cond, reads, slots) = (self.bind)(&Filtered::Element(p, shape))?;
         let later = |v: &usize| self.order.iter().enumerate().any(|(k, s)| s == v && k >= ordinal);
         let lifted = reads.iter().any(|v| *v != shape && later(v));
         if lifted && self.depth > 0 {
@@ -245,7 +289,8 @@ impl Walk<'_> {
         for v in reads.into_iter().filter(|v| lifted || *v != shape) {
             read.push((v, if lifted { VarId::MAX } else { self.var_of(v)? }));
         }
-        self.prefilters.push(Prefilter { cond, own, reads: read });
+        let slots = slots.into_iter().map(|(k, v)| Ok((k, self.var_of(v)?))).collect::<Result<Vec<_>>>()?;
+        self.prefilters.push(Prefilter { cond, own, reads: read, slots });
         let k = self.prefilters.len().saturating_sub(1);
         if lifted {
             self.lifted.push(k);

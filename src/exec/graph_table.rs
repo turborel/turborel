@@ -179,6 +179,9 @@ impl Rows {
             {
                 continue;
             }
+            if !shared.segments_hold(&chosen, &matched, &self.runner)? {
+                continue;
+            }
             shared.columns_of(&chosen, &matched, &self.runner, &mut out)?;
         }
         let _ = self.runner.warnings();

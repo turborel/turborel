@@ -159,6 +159,20 @@ pub fn exposure(pattern: &GraphPattern) -> Result<Exposure> {
     Ok(top)
 }
 
+/// [P1 §4.4, §5.3] The variables of parenthesized path pattern `p`, seen
+/// from its WHERE: bound within it, its restrictor applied.
+///
+/// # Errors
+///
+/// As `exposure`.
+pub fn parenthesized_exposure(p: &crate::ast::ParenthesizedPath) -> Result<Exposure> {
+    let mut seen = expression_exposure(&p.expression)?;
+    if restricts(p.prefix.as_ref()) {
+        bound(&mut seen);
+    }
+    Ok(seen)
+}
+
 /// The variables of `expression`, seen from outside it, its own
 /// quantifier, if any, not applied.
 ///
@@ -218,6 +232,9 @@ fn join(mut left: Exposure, right: Exposure) -> Result<Exposure> {
             continue;
         };
         same_kind(&name, *l, r)?;
+        if r.kind == Declared::Path {
+            return Err(rule(r.at, &format!("[P1 §4.2] path variable {name} is declared twice, where no join is on a path")));
+        }
         let degrees = (l.degree, r.degree);
         if matches!(degrees, (Degree::Conditional, _) | (_, Degree::Conditional)) {
             return Err(

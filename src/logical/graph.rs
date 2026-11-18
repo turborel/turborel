@@ -67,6 +67,8 @@ pub struct GraphMatch {
     pub operands: usize,
     /// The postfilter, the WHERE after the graph pattern [GS §6.8 R6.4].
     pub postfilter: Option<Cond>,
+    /// The segment filters, postfilters too [GS §11.1].
+    pub segments: Vec<SegmentShape>,
     /// Which rows a match gives [GS §8 R8.3].
     pub rows: RowsShape,
     /// COLUMNS, over the match row.
@@ -174,6 +176,12 @@ impl VarShape {
     }
 }
 
+/// \[DESIGN\] The element variable of a test marking where a subpath
+/// variable's subpath begins or ends [GS §6.4]: none, so the vertex there
+/// is bound to a variable of the path pattern alone, which no column
+/// holds.
+pub const SUBPATH_MARK: usize = usize::MAX;
+
 /// \[EXTENSION\] An element test of a path pattern [GS §6.1, §6.3].
 #[derive(Debug, Clone)]
 pub struct TestShape {
@@ -219,6 +227,11 @@ pub struct Prefilter {
     /// The element variables read, each with its number in the path
     /// pattern.
     pub reads: Vec<(usize, VarId)>,
+    /// The slots it computes, each with the number in the path pattern
+    /// of its variable: of a set function, over the elements the variable
+    /// is bound to within the parenthesized path pattern [P1 §4.4]; of
+    /// PREV or FIRST, of its binding in an iteration before [GS §11.1].
+    pub slots: Vec<(usize, VarId)>,
 }
 
 /// \[EXTENSION\] The COST of a CHEAPEST selector [GS §7.2]: an expression
@@ -318,13 +331,43 @@ pub enum GraphValue {
         /// The group variable.
         var: usize,
     },
-    /// A function of a path pattern's path.
+    /// A function of a path pattern's path, or of a subpath of it.
     Path {
         /// The path pattern.
         path: usize,
         /// The function.
         function: PathFunction,
+        /// Of a subpath variable, the variables of the path pattern
+        /// marking where its subpath begins and ends.
+        span: Option<(VarId, VarId)>,
     },
+    /// \[GS §11.1\] PREV or FIRST of an element variable, of a prefilter
+    /// within a quantified pattern: its element's identity, or one of its
+    /// properties.
+    Iteration {
+        /// The element variable.
+        var: usize,
+        /// FIRST rather than PREV.
+        first: bool,
+        /// The property, by its place among the variable's.
+        property: Option<usize>,
+    },
+}
+
+/// \[EXTENSION\] FOR EACH SEGMENT [GS §11.1]: a condition every two
+/// edges one after the other in a path meet.
+#[derive(Debug, Clone)]
+pub struct SegmentShape {
+    /// The path pattern.
+    pub path: usize,
+    /// Of a subpath variable, the variables marking its subpath.
+    pub span: Option<(VarId, VarId)>,
+    /// The element variable of the earlier edge.
+    pub first: usize,
+    /// The element variable of the later edge.
+    pub second: usize,
+    /// The condition, over the match row.
+    pub cond: Cond,
 }
 
 /// \[EXTENSION\] The rows a match gives [GS §8 R8.3].
@@ -363,8 +406,14 @@ fn shown(reads: Vec<Read>) -> Filter {
 impl GraphMatch {
     /// The reads of prefilter `k`, as path search takes them.
     pub fn reads(&self, k: usize) -> Vec<Read> {
-        let reads = self.prefilters.get(k).map(|p| p.reads.as_slice()).unwrap_or_default();
-        reads.iter().map(|&(_, var)| Read { var, previous: false }).collect()
+        let Some(p) = self.prefilters.get(k) else { return Vec::new() };
+        let mut reads: Vec<Read> = p.reads.iter().map(|&(_, var)| Read { var, previous: false, first: false }).collect();
+        for &(slot, var) in &p.slots {
+            if let Some(GraphValue::Iteration { first, .. }) = self.slots.get(slot) {
+                reads.push(Read { var, previous: !first, first: *first });
+            }
+        }
+        reads
     }
 
     /// \[GS §16 R16.9\] EXPLAIN of it: each path pattern's search and

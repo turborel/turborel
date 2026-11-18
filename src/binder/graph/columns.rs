@@ -18,8 +18,8 @@ use crate::error::Result;
 use crate::functions::ScalarRef;
 use crate::graph::limits::OnLimit;
 use crate::logical::{
-    AggCall, Cond, CostShape, ElementIdentity, ElementSource, Expr, GraphOptions, GraphValue, PathShape, PatternShape, RowsShape, VarShape,
-    and_all,
+    AggCall, Cond, CostShape, Distribution, ElementIdentity, ElementSource, Expr, GraphOptions, GraphValue, PathShape, PatternShape,
+    RowsShape, SUBPATH_MARK, VarShape, and_all,
 };
 use crate::parser::{Degree, Exposure};
 use crate::value::{CompOp, DataType, Decimal, Value};
@@ -67,17 +67,33 @@ pub(super) fn element_condition(binder: &Binder<'_>, p: &ElementPattern, (own, g
     Ok(and_all(conds).unwrap_or(Cond::Const(crate::logical::Truth::True)))
 }
 
-/// \[GS §7.4 R7.4\] That a prefilter made no slot past `made`: a set
-/// function of a group variable unbounded where it reads it is GRF-0032.
-pub(super) fn slots_in_prefilter(g: &Graphing, made: usize, exposed: &Exposure) -> Result<()> {
+/// The slots a prefilter made, each with its element variable, and the
+/// variables its set functions aggregate.
+type Made = (Vec<(usize, usize)>, Vec<usize>);
+
+/// \[GS §7.4 R7.4\] The slots a prefilter made past `made`, each with its
+/// element variable, and the variables its set functions aggregate, each
+/// over the elements bound to it within its parenthesized path pattern:
+/// one of a variable unbounded where it reads it, seen first as `local`
+/// exposes it, is GRF-0032.
+pub(super) fn slots_in_prefilter(g: &Graphing, made: usize, (local, exposed): (Option<&Exposure>, &Exposure)) -> Result<Made> {
     let slots = g.slots.borrow();
-    let Some(slot) = slots.get(made) else { return Ok(()) };
-    let GraphValue::Aggregate { var, .. } = slot else { return Err(unsupported("a path function in a prefilter")) };
-    let name = g.vars.get(*var).map_or("", |v| v.name.as_str());
-    if let Some(Degree::Group { unbounded: true }) = exposed.get(name).map(|e| e.degree) {
-        return Err(grf("GRF-0032", format!("a prefilter aggregates group variable {name}, unbounded where it reads it (R7.4)")));
+    let (mut made_here, mut vars) = (Vec::new(), Vec::new());
+    for (k, slot) in slots.iter().enumerate().skip(made) {
+        let var = match slot {
+            GraphValue::Iteration { var, .. } | GraphValue::Aggregate { var, .. } => *var,
+            GraphValue::Path { .. } => return Err(unsupported("a path function in a prefilter")),
+        };
+        let name = g.vars.get(var).map_or("", |v| v.name.as_str());
+        let seen = local.and_then(|l| l.get(name)).or_else(|| exposed.get(name));
+        let aggregate = matches!(slot, GraphValue::Aggregate { .. });
+        if aggregate && let Some(Degree::Group { unbounded: true }) = seen.map(|e| e.degree) {
+            return Err(grf("GRF-0032", format!("a prefilter aggregates group variable {name}, unbounded where it reads it (R7.4)")));
+        }
+        made_here.extend(g.vars.get(var).map(|_| (k, var)));
+        vars.extend(g.vars.get(var).filter(|_| aggregate).map(|_| var));
     }
-    Err(unsupported("a set function in a prefilter"))
+    Ok((made_here, vars))
 }
 
 /// The name of COLUMNS item `v`, as written or of the property it reads.
@@ -216,10 +232,17 @@ pub(super) fn fill_shapes(
 fn first_vertex(p: &PatternShape) -> Option<usize> {
     match p {
         PatternShape::Vertex(t) => Some(t.shape),
-        PatternShape::Concat(parts) => parts.first().and_then(first_vertex),
+        PatternShape::Concat(parts) => parts.iter().find(|part| !marks(part)).and_then(first_vertex),
         PatternShape::Group(_, body, _) => first_vertex(body),
         PatternShape::Edge(..) | PatternShape::Union(_) | PatternShape::Alternation(_) | PatternShape::Quantified(..) => None,
     }
+}
+
+/// Whether `p` marks where a subpath begins or ends, a test of no
+/// element variable at the vertex after it, or the one before.
+fn marks(p: &PatternShape) -> bool {
+    let PatternShape::Vertex(t) = p else { return false };
+    t.shape == SUBPATH_MARK
 }
 
 /// Slot `s` over the match row.
@@ -232,9 +255,10 @@ pub(super) fn slot_remapped(s: GraphValue, operands: &mut Operands) -> Result<Gr
             let AggCall { func, arg, distinct, filter, distribution, result, label } = *call;
             let arg = arg.map(|e| operands.expr(e));
             let filter = filter.map(|c| operands.cond(c));
+            let distribution = distribution.map(|d| Box::new(Distribution { fraction: operands.expr(d.fraction), ..*d }));
             Ok(GraphValue::Aggregate { call: Box::new(AggCall { func, arg, distinct, filter, distribution, result, label }), var })
         }
-        GraphValue::Path { .. } => Ok(s),
+        GraphValue::Path { .. } | GraphValue::Iteration { .. } => Ok(s),
     }
 }
 

@@ -65,6 +65,10 @@ pub(in crate::binder) struct Graphing {
     pub(super) vars: Vec<ScopeVar>,
     /// The path variables, by path pattern.
     pub(super) paths: Vec<Option<String>>,
+    /// The subpath variables, once their path patterns are bound.
+    pub(super) subpaths: RefCell<Vec<super::pattern::Subpath>>,
+    /// Whether a prefilter is being bound, where PREV and FIRST are.
+    pub(super) filtering: Cell<bool>,
     /// The groups its expressions are bound in, whose set functions are
     /// slots.
     pub(super) measure: Grouping,
@@ -85,6 +89,8 @@ impl Graphing {
         Graphing {
             vars,
             paths,
+            subpaths: RefCell::new(Vec::new()),
+            filtering: Cell::new(false),
             measure: Grouping::empty(),
             slot_base,
             slots: RefCell::new(Vec::new()),
@@ -104,7 +110,7 @@ impl Graphing {
     }
 
     /// The element variable named `name`.
-    fn var_named(&self, name: &str) -> Result<usize> {
+    pub(super) fn var_named(&self, name: &str) -> Result<usize> {
         let found = self.vars.iter().position(|v| v.name == name);
         found.ok_or_else(|| rule(format!("[EXTENSION] {name} is no element variable of the graph pattern")))
     }
@@ -116,7 +122,7 @@ impl Graphing {
     }
 
     /// A new slot of `value`: its column.
-    fn slot(&self, value: GraphValue) -> Expr {
+    pub(super) fn slot(&self, value: GraphValue) -> Expr {
         let mut slots = self.slots.borrow_mut();
         slots.push(value);
         Expr::Column(self.slot_base.saturating_add(slots.len().saturating_sub(1)))
@@ -188,9 +194,6 @@ impl Binder<'_> {
                 call.label
             ))));
         };
-        if call.distribution.is_some() {
-            return Some(Err(unsupported("an inverse distribution function of a group variable")));
-        }
         let result = call.result.clone();
         Some(Ok((graphing.slot(GraphValue::Aggregate { call: Box::new(call.clone()), var }), result)))
     }
@@ -225,12 +228,14 @@ impl Binder<'_> {
     ///
     /// # Errors
     ///
-    /// SQLCODE -103 outside a GRAPH_TABLE, or of no variable of its kind;
-    /// -900 of PREV or FIRST.
+    /// SQLCODE -103 outside a GRAPH_TABLE, of no variable of its kind,
+    /// or of PREV or FIRST outside a prefilter.
     pub(in crate::binder) fn graph_function(&self, f: &GraphFunction) -> Result<(Expr, DataType)> {
         let Some(g) = self.graphing.as_deref() else { return Err(super::seam::outside_graph_table()) };
         let name = &f.operand.name;
-        let path = g.paths.iter().position(|p| p.as_deref() == Some(name.as_str()));
+        let subpath = g.subpaths.borrow().iter().find(|s| &s.0 == name).map(|s| (s.1, (s.2, s.3)));
+        let path = g.paths.iter().position(|p| p.as_deref() == Some(name.as_str())).map(|p| (p, None));
+        let path = path.or_else(|| subpath.map(|(p, span)| (p, Some(span))));
         let function = match f.name {
             GraphFunctionName::PathLength => PathFunction::Length,
             GraphFunctionName::Vertices => PathFunction::Vertices,
@@ -243,11 +248,11 @@ impl Binder<'_> {
             GraphFunctionName::ElementId | GraphFunctionName::VertexId | GraphFunctionName::EdgeId | GraphFunctionName::Labels => {
                 return super::functions::element_function(self, g, (f.name, g.var_named(name)?));
             }
-            GraphFunctionName::Prev | GraphFunctionName::First => return Err(unsupported("PREV and FIRST [GS §11.1]")),
+            GraphFunctionName::Prev | GraphFunctionName::First => return super::functions::iteration(g, f),
         };
-        let path = path.ok_or_else(|| rule(format!("[GS §6.9] {name} is no path variable of the graph pattern")))?;
+        let (path, span) = path.ok_or_else(|| rule(format!("[GS §6.9] {name} is no path variable of the graph pattern")))?;
         let t = super::functions::path_type(function);
-        Ok((g.slot(GraphValue::Path { path, function }), t))
+        Ok((g.slot(GraphValue::Path { path, function, span }), t))
     }
 
     /// \[GS §5 R5.2 to R5.5\] A graph predicate `p` of a GRAPH_TABLE's

@@ -453,12 +453,19 @@ impl<'a> Runner<'a> {
     }
 
     /// Scope `scope` begins `position` edges into the path: its PREV
-    /// registers set, its registers cleared, its start noted.
+    /// registers set, its FIRST registers if not yet, its registers
+    /// cleared, its start noted.
     fn enter(&self, scope: usize, position: usize, thread: &mut Thread) {
         let Some(scope) = self.nfa.scopes.get(scope) else { return };
         for &(previous, source) in &scope.previous {
             let last: Box<[ElementId]> = thread.registers.get(source).and_then(|r| r.last()).copied().into_iter().collect();
             if let Some(r) = thread.registers.get_mut(previous) {
+                *r = last;
+            }
+        }
+        for &(first, source) in &scope.first {
+            let last: Box<[ElementId]> = thread.registers.get(source).and_then(|r| r.last()).copied().into_iter().collect();
+            if let Some(r) = thread.registers.get_mut(first).filter(|r| r.is_empty()) {
                 *r = last;
             }
         }

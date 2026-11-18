@@ -132,3 +132,25 @@ fn read_as_of_a_point_in_time_7_6() {
     assert_eq!(edges(&format!("FOR SYSTEM_TIME AS OF {start}")), ["10"]);
     assert_eq!(edges(&format!("AS G AS OF TIMESTAMP {start}")), ["10"]);
 }
+
+/// Verifies: [EXTENSION] [GS §8, §19] AS OF SCN n reads each element
+/// table at the instant SCN n is, the SCN of a change its transaction
+/// timestamp's microseconds; an SCN no instant is SQLSTATE 22008.
+#[test]
+fn read_as_of_an_scn_8() {
+    let (_db, s) = bank();
+    let start = history(&s);
+    let scn = rows(&s, &format!("SELECT TIMESTAMP_TO_SCN({start}) FROM P WHERE ID = 1")).remove(0);
+    let edges = |at: &str| rows(&s, &format!("SELECT I FROM GRAPH_TABLE (H MATCH (a)-[t]->(b) COLUMNS (t.id AS I)) {at}"));
+    assert_eq!(edges(&format!("AS OF SCN {scn}")), ["10"]);
+    assert_eq!(edges(&format!("AS OF SCN {scn} - 1")), Vec::<String>::new());
+    let now = rows(&s, &format!("SELECT TIMESTAMP_TO_SCN(CURRENT_TIMESTAMP) - {scn} > 0 FROM P WHERE ID = 1"));
+    assert_eq!(now, ["TRUE"]);
+    let back = rows(&s, &format!("SELECT SCN_TO_TIMESTAMP({scn}) = {start} FROM P WHERE ID = 1"));
+    assert_eq!(back, ["TRUE"]);
+    for out in ["-1", "999999999999999999"] {
+        let q = format!("SELECT I FROM GRAPH_TABLE (H MATCH (a)-[t]->(b) COLUMNS (t.id AS I)) AS OF SCN {out}");
+        let e = s.open_cursor(&q).and_then(|mut c| c.fetch().map(|_| ())).unwrap_err();
+        assert_eq!(e.sqlstate().as_str(), "22008", "{out}: {}", e.msg);
+    }
+}

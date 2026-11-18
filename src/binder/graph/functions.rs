@@ -6,11 +6,12 @@
 
 use std::sync::Arc;
 
+use super::super::rule;
 use super::scope::{Graphing, ID, TABLE, table_number};
-use crate::ast::{GraphFunctionName, LabelExpression};
+use crate::ast::{GraphFunction, GraphFunctionName, LabelExpression};
 use crate::error::Result;
 use crate::functions::ScalarRef;
-use crate::logical::{Cond, Expr, IdentityJson, PathFunction, identity_type};
+use crate::logical::{Cond, Expr, GraphValue, IdentityJson, PathFunction, identity_type};
 use crate::value::{CharUnits, CompOp, DataType, Decimal, Value};
 
 /// \[DESIGN\] The most elements of a path, or labels of an element, an
@@ -33,6 +34,33 @@ pub(super) fn path_type(f: PathFunction) -> DataType {
         PathFunction::Acyclic | PathFunction::Trail | PathFunction::Simple => DataType::Boolean,
         PathFunction::Json => DataType::Json,
     }
+}
+
+/// \[GS §11.1\] PREV or FIRST, as `f` writes it, a slot of a prefilter:
+/// the identity of the element of its variable, or the property named.
+///
+/// # Errors
+///
+/// SQLCODE -103 outside a prefilter, of no element variable, or of a
+/// property the variable has none of (GRF-0012).
+pub(super) fn iteration(g: &Graphing, f: &GraphFunction) -> Result<(Expr, DataType)> {
+    if !g.filtering.get() {
+        return Err(rule("[GS §11.1] PREV and FIRST are written in a prefilter, of an iteration of a quantified pattern"));
+    }
+    let var = g.var_named(&f.operand.name)?;
+    let columns = g.vars.get(var).map(|v| v.columns.as_slice()).unwrap_or_default();
+    let (property, t) = match &f.property {
+        Some(name) => {
+            let k = columns
+                .iter()
+                .position(|(n, _)| n == name)
+                .ok_or_else(|| super::grf("GRF-0012", format!("{} has no property {name}", f.operand.name)))?;
+            (Some(k), columns.get(k).map_or(DataType::Boolean, |c| c.1.clone()))
+        }
+        None => (None, identity_type()),
+    };
+    let first = f.name == GraphFunctionName::First;
+    Ok((g.slot(GraphValue::Iteration { var, first, property }), t))
 }
 
 /// \[GS §6.2\] Whether an element of labels `labels` satisfies `e`.
@@ -64,13 +92,13 @@ pub(super) fn element_function(
     g: &Graphing,
     (name, v): (GraphFunctionName, usize),
 ) -> Result<(Expr, DataType)> {
-    let var = g.vars.get(v).ok_or_else(|| super::super::rule("[DESIGN] a variable is gone"))?;
+    let var = g.vars.get(v).ok_or_else(|| rule("[DESIGN] a variable is gone"))?;
     let id = binder.graph_column(var.hidden(ID), super::super::Scope::Select).unwrap_or(Expr::Column(var.hidden(ID)));
     match name {
         GraphFunctionName::VertexId | GraphFunctionName::EdgeId => {
             if (name == GraphFunctionName::EdgeId) != var.edge {
                 let what = if var.edge { "an edge" } else { "a vertex" };
-                return Err(super::super::rule(format!("[GS §5 R5.1] {} of {}, {what}", name.word(), var.name)));
+                return Err(rule(format!("[GS §5 R5.1] {} of {}, {what}", name.word(), var.name)));
             }
             Ok((Expr::Call(ScalarRef(Arc::new(IdentityJson)), vec![id]), DataType::Json))
         }

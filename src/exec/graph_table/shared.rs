@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::exec::{Runner, eval, eval_cond};
 use crate::graph::program::{Bound, CostFn, Filter, Predicate};
 use crate::graph::view::{ElementId, GraphView};
-use crate::logical::{EDGE_COLUMNS, GraphMatch, Truth, identity_text};
+use crate::logical::{EDGE_COLUMNS, GraphMatch, GraphValue, Truth, identity_text};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::Value;
@@ -103,7 +103,37 @@ impl Shared {
                 self.fill(&mut row, var, element)?;
             }
         }
-        Ok(eval_cond(&p.cond, &row, &self.runner())? == Truth::True)
+        let runner = self.runner();
+        for &(slot, id) in &p.slots {
+            let value = match self.graph.slots.get(slot) {
+                Some(GraphValue::Aggregate { call, var }) => self.aggregate(call, (*var, bound.group(id)), &row, &runner)?,
+                Some(GraphValue::Iteration { var, first, property }) => {
+                    let element = if *first { bound.first(id) } else { bound.previous(id) };
+                    self.iteration(element, *var, *property)?
+                }
+                Some(GraphValue::Path { .. }) | None => Value::Null,
+            };
+            if let Some(cell) = row.get_mut(self.graph.width.saturating_add(slot)) {
+                *cell = value;
+            }
+        }
+        Ok(eval_cond(&p.cond, &row, &runner)? == Truth::True)
+    }
+
+    /// \[GS §11.1\] PREV or FIRST of element variable `var`, its binding
+    /// then `element`: its identity, or its property numbered `property`;
+    /// null of none.
+    ///
+    /// # Errors
+    ///
+    /// Any error reading the element or evaluating the property.
+    fn iteration(&self, element: Option<ElementId>, var: usize, property: Option<usize>) -> Result<Value> {
+        let Some(element) = element else { return Ok(Value::Null) };
+        let Some(k) = property else { return self.identity(element) };
+        let mut row = self.blank();
+        self.fill(&mut row, var, element)?;
+        let at = self.graph.vars.get(var).map_or(usize::MAX, |v| v.offset.saturating_add(k));
+        Ok(row.get(at).cloned().unwrap_or(Value::Null))
     }
 
     /// \[GS §7.2\] The COST of path pattern `path` of following `edge`.
