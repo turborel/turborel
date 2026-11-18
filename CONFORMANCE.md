@@ -37,6 +37,7 @@ The claim follows SQL-86 §3.4.
 | Environment [§4.6, §4.7] | A database kept in a directory (`Database::open_files`) keeps its schemas and committed changes, and is recovered after a failure [§4.16]. A database made with `Database::new` is held in memory and ends with the process. |
 | SQL/MM Full-Text | The public types and routines of ISO/IEC 13249-2:2002 (CD, SC32 N0640) §12.1, built in, with the choices that part leaves to an implementation listed [below](#sqlmm-full-text) [§12.2]. |
 | SQL/MM Spatial | The types and routines of ISO/IEC 13249-3:2016 (DIS, SC32 N2593), with topology, networks, shortest paths and linear referencing, built in. What is not built yet, and the choices that part leaves to an implementation, are listed [below](#sqlmm-spatial). No claim of its §23 is made yet. |
+| Simple feature access | The SQL option of OGC 06-104r4 (ISO 19125-2), "SQL with Geometry Types", conformance class (gS, f, 3D, M, tN) of Annex A.4, listed [below](#simple-feature-access-sql-option). |
 | Limits | SQL-86 sets one limit of its own, 18 characters in an `<identifier>` [§5.3 SR3], which SQL-92 raises to 128. A statement past one of this implementation's [limits](#limits) gets SQLCODE -900 ("valid, but not processed"). |
 
 Every outcome has an SQLSTATE beside its SQLCODE [ISO/IEC 9075:1992 §22.1].
@@ -2803,6 +2804,86 @@ of ST_DEFINITION_SCHEMA (RULES.md D121).
 | ST_MaxVectorAsBinary | 29 |
 | ST_MaxVectorArrayElements | 65535, the geometry array limit |
 
+## Simple feature access, SQL option
+
+OGC 06-104r4, Simple feature access part 2, SQL option (ISO 19125-2), is
+built in its "SQL with Geometry Types" environment over SQL/MM Spatial
+(RULES.md D136). A bare `§` in this part is of that text, which the code
+cites as `[OGC 06-104r4 §N]`. Part 1, OGC 06-103r4, is cited for the
+text and binary forms. The manual is the section "Simple feature access"
+of [doc/sql/10-spatial.md](doc/sql/10-spatial.md).
+
+The claim is the conformance class (gS, f, 3D, M, tN) of Annex A.4: the
+geometry types environment, its features, values of z and of m, and no
+annotation text. Its tests T1 to T52 of Annex C.3.3 run in
+`test/integration/simple_features/blue_lake.rs`.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| SPATIAL_REF_SYS | §7.1.2 | A view of SF_INFORMTN_SCHEMA over the systems supplied and those ST_DEFINESRS defines, with §7.1.2.2's columns. SELECT is PUBLIC's. |
+| GEOMETRY_COLUMNS | §7.1.3 | A view of SF_INFORMTN_SCHEMA of every column of a geometry type a user may see, of a table or view, typed or registered, with §7.1.3.2's columns. |
+| Unqualified names | §7.1, Annex C.3.3.3 | `GEOMETRY_COLUMNS` and `SPATIAL_REF_SYS` name the views where the default schema has no table of the name. |
+| Geometry types | §7.2.2 | GEOMETRY, POINT, CURVE, LINESTRING, SURFACE, POLYGON, POLYHEDSURFACE, GEOMCOLLECTION, MULTIPOINT, MULTICURVE, MULTILINESTRING, MULTISURFACE and MULTIPOLYGON name SQL/MM's ST_ types. |
+| Feature tables | §7.2.3 | Tables of columns of those types. |
+| Routines | §7.2.4 to §7.2.19 | SQL/MM's routines, called by their names without ST_ too, functions and methods. |
+| GeometryType, AsText, AsBinary | §7.2.8, Annex C.3.3.3 | Functions of their own, giving the type's name without ST_ and Part 1's text and binary forms. |
+| PolyhedSurface | §7.2.14 | Its six constructors through NEW, and NumSurfaces, SURFACE and ST_Geometries, ST_NumGeometries and ST_GeometryN of its patches. |
+| Text | §7.2.20 | Not built (tN). |
+| Well-known text and binary | OGC 06-103r4 §7, §8 | Read in both standards' forms; Part 1's written by AsText and AsBinary. |
+
+### Readings of the standard
+
+- §7.1.1 lets the tables be views. Both live in SF_INFORMTN_SCHEMA, as
+  SQL/MM's ST_INFORMTN_SCHEMA already holds views of those names with
+  other columns. Procedures, ST_DEFINESRS and ST_REGISTERGEOMETRYCOLUMN,
+  change what they show, and they are read only.
+- An unqualified name of a view takes it as its correlation name, so
+  `GEOMETRY_COLUMNS.SRID` is its column.
+- A column's SRID is the one it is registered with, else its type's,
+  else 0, SQL/MM's unspecified system. SPATIAL_REF_SYS has no row of 0,
+  so §7.1.3.2's foreign key holds of every other SRID only.
+- STORAGE_TYPE and MAX_PPR are NULL, as nothing is stored normalized
+  [§7.1.3.3 d, h]. G_TABLE_* equal F_TABLE_* [§7.1.3.3 c].
+- COORD_DIMENSION is 3 for a column in a geocentric system and 2
+  otherwise, since a type does not say whether its values have z.
+  GEOMETRY_TYPE then adds Table 4's 1000 of z.
+- GEOMETRY_TYPE is Table 4's code, or the code of Part 1's Table 7 it
+  is a subset of. Codes 8 to 12, 16 and 17 are those of the curves,
+  surfaces and collections Table 4 leaves out. A type neither codes, a circle,
+  NURBS curve, compound surface or solid, has NULL.
+- SPATIAL_REF_SYS's SRTEXT is NOT NULL, as every system has a
+  definition. AUTH_NAME and AUTH_SRID are its organization's, NULL when
+  ST_DEFINESRS gave none.
+- A routine without ST_ of a first argument of a geometry type is the
+  method of its declared type, chosen before a registered function of
+  the name, so CONTAINS of two geometries is spatial. Of a supertype's
+  value it is SQL/MM's function of the name, or the method of the one
+  subtype declaring it, of the value treated as that type. A value of
+  another type raises the routine's exception.
+- GeometryType gives `MULTILINESTRING`, as T7 expects, and
+  POLYHEDSURFACE for a polyhedral surface. ST_GeometryType keeps
+  SQL/MM's `ST_MultiLineString`.
+- AsText and AsBinary write Part 1's forms. They differ from SQL/MM's
+  only for a triangle (a polygon of one ring), a polyhedral surface
+  (patches without PATCHES) and a TIN (triangles as polygons, nothing
+  after them). ST_AsText and ST_AsBinary keep SQL/MM's. A TIN's elements
+  and maximum side length have no Part 1 form and are left out.
+- The readers take both forms. A Part 1 TIN has no elements and no
+  maximum side length. Binary bytes are read as SQL/MM's first, then as
+  Part 1's.
+- The constructors are SQL/MM's without ST_. GeomCollFromText calls
+  ST_GeomCollFromTxt.
+- UNION and OVERLAPS are reserved words, and INTERSECTION is a set
+  function. Each before `(` at the start of an operand is a call, so
+  `Union(a, b)`, `Overlaps(a, b)` and `Intersection(a, b)` work.
+  INTERSECTION of one argument is still the set function.
+- POSITION, the column of Annex C.3.3.1's bridges and buildings, is a
+  key word and is delimited, `"POSITION"`.
+- T37 compares a value of SRID 101 with one of SRID 1, which SQL/MM's
+  ST_Equals refuses. The test uses SRID 101 for both.
+- A structured type a schema defines of a name of §7.2.2.2, POINT say,
+  is the type that name names in that schema.
+
 ## Extensions
 
 These facilities go beyond the standards, and the code marks them
@@ -2940,7 +3021,8 @@ candidates are supplemented with qualifying NULL distances when needed.
 Uncertified requests and an unaffordable threshold heap scan before output.
 WITH TIES, PERCENT and other orders retain ordinary plans. Serializable
 reads, cancellation, prepared values and runtime errors are preserved.
-Simple feature access (ISO 19125-2) is not claimed.
+Simple feature access (ISO 19125-2) is claimed in its own part,
+[below](#simple-feature-access-sql-option).
 
 ### Indexes
 

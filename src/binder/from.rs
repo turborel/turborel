@@ -301,7 +301,7 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
         return super::system_time::unversioned(t).map(|()| transition);
     }
     let cx = b.cx;
-    let name = qualify(&t.table, cx.schema);
+    let (name, correlation) = super::views::public_view(cx.db, &t.table, cx.schema).unwrap_or_else(|| (qualify(&t.table, cx.schema), None));
     let Named { desc, source } = named(cx.db, &name, Reader::of(&cx)).map_err(|e| SqlError { pos: None, ..e })?;
     if cx.purpose == Purpose::Constraint {
         // [ISO/IEC 9075:1992 §11.9 AR1] REFERENCES, not SELECT, for a
@@ -328,7 +328,7 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
     Ok(FromItem {
         table: name,
         at: t.table.at,
-        correlation: t.correlation.clone(),
+        correlation: t.correlation.clone().or(correlation),
         desc,
         offset,
         source,

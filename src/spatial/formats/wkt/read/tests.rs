@@ -118,3 +118,33 @@ fn lenient_forms() {
     assert!(k.scale.is_nan() && k.placement.location.x.is_nan());
     assert!(write(&empty).contains("AFFINEPLACEMENT EMPTY, SCALEFACTOR EMPTY"));
 }
+
+/// Verifies: [EXTENSION] [OGC 06-103r4 §7.2.2] A triangle, polyhedral
+/// surface and TIN in Simple feature access's text are the values of
+/// their text of ISO/IEC 13249-3, and `write_simple` writes that form,
+/// read back alike; a TIN's elements are not written there.
+#[test]
+fn simple_feature_access_forms_read_as_the_standards() {
+    use crate::spatial::formats::wkt::write_simple;
+    let pairs = [
+        ("TRIANGLE ((0 0, 1 0, 0 1, 0 0))", "TRIANGLE (0 0, 1 0, 0 1)"),
+        ("TRIANGLE Z EMPTY", "TRIANGLE Z EMPTY"),
+        (
+            "POLYHEDRALSURFACE Z (((0 0 0, 0 1 0, 1 1 0, 0 0 0)), EMPTY)",
+            "POLYHEDRALSURFACE Z (PATCHES (POLYGON Z ((0 0 0, 0 1 0, 1 1 0, 0 0 0)), POLYGON Z EMPTY))",
+        ),
+        ("TIN (((0 0, 1 0, 0 1, 0 0)), ((1 0, 1 1, 0 1, 1 0)))", "TIN (PATCHES ((0 0, 1 0, 0 1), (1 0, 1 1, 0 1)))"),
+        ("TIN M EMPTY", "TIN M EMPTY"),
+    ];
+    for (simple, standard) in pairs {
+        let value = read(simple).unwrap_or_else(|e| panic!("{simple}: {e:?}"));
+        assert_eq!(value, read(standard).unwrap(), "{simple}");
+        assert_eq!(write_simple(&value), simple);
+        assert_eq!(write(&value), standard);
+    }
+    let tin = read("TIN (PATCHES ((0 0, 1 0, 0 1)) MAXSIDELENGTH 3)").unwrap();
+    assert_eq!(write_simple(&tin), "TIN (((0 0, 1 0, 0 1, 0 0)))");
+    for bad in ["TRIANGLE ((0 0, 1 0, 0 1))", "TRIANGLE ((0 0, 1 0, 0 1, 0 0), (0 0, 1 0, 0 1, 0 0))", "TIN ((0 0, 1 0, 0 1, 0 0))"] {
+        assert_eq!(state(bad), "2FF22", "{bad}");
+    }
+}

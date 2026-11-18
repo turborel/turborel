@@ -159,6 +159,7 @@ verification approach DO-178C expects (§8).
 | D132 | Class 2FF is shared by the SQL/MM parts, each routine raising its own part's conditions |
 | D133 | A registered function's own word decides whether it is deterministic, and constraints call only deterministic ones |
 | D134 | A spatial read records the envelopes it read, merged into their hull past a bound |
+| D136 | Simple feature access is views over the SQL/MM catalog and routines named without ST_ |
 
 ### The project
 
@@ -4376,6 +4377,60 @@ Regions are kept in memory with the rest of a transaction's reads, so
 neither recovery nor replication sees them. A transaction open at a
 crash is undone and validates nothing.
 
+#### D136. Simple feature access is views over the SQL/MM catalog and routines named without ST_
+
+The SQL option of Simple feature access [OGC 06-104r4] in its "SQL with
+Geometry Types" environment takes SQL/MM's types and routines [§7.2.1].
+So it adds no second geometry, only the names and tables its clients
+read. Its tables GEOMETRY_COLUMNS and SPATIAL_REF_SYS [§7.1] are views
+of a schema SF_INFORMTN_SCHEMA, as §7.1.1 lets them be, read as the
+Information Schema is (D121). SQL/MM's ST_INFORMTN_SCHEMA already names
+views GEOMETRY_COLUMNS and SPATIAL_REF_SYS of other columns, so the
+schemas stay apart, and a view is told from its namesake by its query.
+An unqualified name of either view that the default schema has no table
+of names it, with its own name as correlation name, as a client writes
+`FROM geometry_columns`. A table of the schema of that name comes first.
+
+GEOMETRY_COLUMNS reads a base table of ST_DEFINITION_SCHEMA made from the
+catalog as the statement reads it, joined to INFORMATION_SCHEMA.COLUMNS
+so a user sees the columns that view shows. A column's SRID is the one
+it is registered with, else its type's, else 0, the unspecified system
+of SQL/MM, which SPATIAL_REF_SYS has no row for. That is the one place
+the foreign key of §7.1.3.2 does not hold. COORD_DIMENSION is 3 in a
+geocentric system and 2 otherwise, as a column type does not say
+whether its values have z. GEOMETRY_TYPE is Table 4's code, or Part 1's
+Table 7 code it is a subset of, with 1000 of z in three dimensions. A
+type neither table codes, a circle or a solid, has none. STORAGE_TYPE
+and MAX_PPR are null, as no normalized storage exists.
+
+The routines are SQL/MM's under their names without ST_ [§7.2.2.2
+Note]. A call of such a name with a first argument of a geometry type is
+the method of its declared type, before any registered function of the
+name, so CONTAINS of geometries is spatial and of a FULLTEXT is
+full-text's. When the declared type has no such method, SQL/MM's
+function of the name is called, or else TREAT of the argument as the one
+subtype declaring it, as a GEOMETRY column holds collections. The
+constructors map to SQL/MM's, GeomCollFromText to ST_GeomCollFromTxt.
+GeometryType, AsText and AsBinary differ in meaning, so they are
+functions of their own. The first gives `MULTILINESTRING`, not
+`ST_MultiLineString`, and the other two write Part 1's forms. Those
+differ from SQL/MM's only for a triangle, polyhedral surface and TIN.
+The ST_ names keep SQL/MM's meaning. The readers take both forms, which
+never begin alike. A TIN read from Part 1 has no elements and no
+maximum side length, and Part 1 writes none.
+
+PolyhedSurface names ST_PolyhdrlSurface, and NumSurfaces, SURFACE,
+ST_NumGeometries, ST_GeometryN and ST_Geometries of one are its patches'
+[§7.2.14]. Each SQL type name of §7.2.2.2 names its ST_ type. A
+structured type a schema defines of one of these names comes first,
+in a column's type and in NEW.
+
+UNION and OVERLAPS are reserved words, and INTERSECTION a set function.
+Before a parenthesis at the start of an operand none of them can begin
+anything else, so `Union(a, b)` and `Overlaps(a, b)` are calls, and
+INTERSECTION of two arguments or more is one. The annotation text of
+§7.2.20 is an optional choice and is not built.
+
 ## 2. Project layout
 
 ```
@@ -4537,7 +4592,7 @@ R-TEST-6 was withdrawn with the golden-file tests (D6).
 
 | ID | Rule | Checked by |
 |---|---|---|
-| R-TRACE-1 | Every test **shall** have a `/// Verifies:` paragraph starting with a tag: `[X3.135-1986 §…]`, `[ISO/IEC 9075…]` of any part, `[ISO/IEC 13249…]` (SQL/MM) of any part, `[EXTENSION]`, `[DESIGN]` or `[TOOL] R-…`. | `cargo xtask verify` |
+| R-TRACE-1 | Every test **shall** have a `/// Verifies:` paragraph starting with a tag: `[X3.135-1986 §…]`, `[ISO/IEC 9075…]` of any part, `[ISO/IEC 13249…]` (SQL/MM) of any part, `[OGC 06-10…]` (Simple feature access) of either part, `[EXTENSION]`, `[DESIGN]` or `[TOOL] R-…`. | `cargo xtask verify` |
 | R-TRACE-2 | Code implementing a requirement **shall** cite it (R-DOC-4). `cargo xtask trace '§8.6'` lists a clause's tests. | review; `xtask trace` |
 | R-TRACE-3 | CONFORMANCE.md **shall** change with the change implementing or changing a clause. | review |
 

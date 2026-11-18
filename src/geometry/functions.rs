@@ -504,6 +504,8 @@ pub(crate) fn functions() -> Vec<Arc<dyn ScalarFunction>> {
     out.extend(super::conversions::CONVERSIONS.iter().map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }));
     out.extend(super::routines::functions());
     out.extend(super::support::functions());
+    // [OGC 06-104r4 §7.2.8] Simple feature access's own (RULES.md D136).
+    out.extend(super::sfa::functions());
     out
 }
 

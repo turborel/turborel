@@ -9,7 +9,7 @@ mod read;
 mod write;
 
 pub use read::read;
-pub use write::write;
+pub use write::{write, write_simple};
 
 use crate::error::Result;
 use crate::geometry::model::Geom;
@@ -31,4 +31,14 @@ pub fn read_geom(text: &str, srid: i32) -> Result<Geom> {
 /// As [`super::model::from_geom`]'s.
 pub fn write_geom(g: &Geom) -> Result<String> {
     Ok(write(&super::model::from_geom(g)?))
+}
+
+/// AsText of Simple feature access: the text of `g` in its form [OGC
+/// 06-103r4 §7.2] (RULES.md D136).
+///
+/// # Errors
+///
+/// As [`super::model::from_geom`]'s.
+pub fn write_simple_geom(g: &Geom) -> Result<String> {
+    Ok(write_simple(&super::model::from_geom(g)?))
 }

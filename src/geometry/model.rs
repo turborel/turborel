@@ -28,12 +28,13 @@ mod kind;
 mod linear;
 mod parts;
 mod payload;
+mod simple;
 mod xy;
 
 pub use cast::cast;
 pub(crate) use cast::empty as empty_body;
 pub use decode::{read_wkb, read_wkb_typed};
-pub use encode::write_wkb;
+pub use encode::{write_simple_wkb, write_wkb};
 pub use kind::*;
 pub use payload::{PAYLOAD_VERSION, header};
 
