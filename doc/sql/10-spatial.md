@@ -859,6 +859,119 @@ VALUES ST_TRANSFORM(ST_POINT(5, 5), 4326);
 turborel: SQLCODE -301 (SQLSTATE 2FF15): [ISO/IEC 13249-3:2016 §5.1.6 Description 3c] the unspecified plane, SRID 0, has no transform to or from another system
 ```
 
+## Systems, angles, directions and vectors
+
+SQL/MM Spatial has types beside the geometry types, and each is a type
+of columns, variables and CASTs here. ST_SPATIALREFSYS is a spatial
+reference system, made of its SRID or of its well-known text. ST_ANGLE
+is an angle and ST_DIRECTION a direction, a bearing from north, each
+made of radians, of degrees or gradians, of points or of lines.
+ST_VECTOR is a displacement of two or three coordinates and an SRID.
+ST_TINELEMENT, ST_AFFINEPLACEMENT, ST_NURBSPOINT and ST_KNOT are the
+parts that TINs, placements and NURBS curves are built of. A type's
+constructor is a function of its name, or `NEW`, and its observers and
+mutators are methods. A mutator returns a changed copy:
+
+```sql
+VALUES NEW ST_ANGLE('D', 90e0).ST_RADIANS();
+VALUES NEW ST_DIRECTION('N', NEW ST_ANGLE('D', 30e0), 'E').ST_DEGREESNAZIMUTH(1);
+VALUES ST_DIRECTION(ST_POINT(0, 0), ST_POINT(1, 1)).ST_DMSBEARING(0);
+VALUES ST_SPATIALREFSYS(4326).ST_ASWKTSRS();
+VALUES ST_VECTOR(1e0, 2e0, 3e0, 4326).ST_X(5e0).ST_ASTEXT();
+VALUES NEW ST_KNOT(0.5e0, 2).ST_MULTIPLICITY();
+```
+
+```
+
+--------------------------
+     1.5707963267948966E0
+(1 row)
+
+--------------------------------------------------------------
+ N 30.0
+(1 row)
+
+--------------------------------------------------------------
+ N 45 0 0 E
+(1 row)
+
+--------------------------------------------------------------
+ GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]
+(1 row)
+
+--------------------------------------------------------------
+ VECTOR Z (5 2 3)
+(1 row)
+
+--------------
+            2
+(1 row)
+```
+
+Exact numbers such as `1.0` choose an INTEGER parameter before a
+DOUBLE PRECISION one, as SQL chooses among routines of one name, so
+`ST_VECTOR(1.0, 2.0, 3.0)` is the 2D vector of SRID 3. Write the
+coordinates as `1e0` or CAST them.
+
+Angles and directions are ordered by their radians, so `<`, ORDER BY,
+GROUP BY, MAX and an index work on them, and ST_ORDERINGCOMPARE gives
+-1, 0 or 1. Systems and vectors are compared for equality alone, by
+`=` and ST_ORDERINGEQUALS, and nothing sorts them. The four types of
+parts are not compared at all. Each value CASTs to and from its
+well-known text, an angle and a direction to and from a number of
+radians, and a vector to and from its well-known binary:
+
+```sql
+CREATE TABLE HEADINGS (ID INTEGER, D ST_DIRECTION);
+INSERT INTO HEADINGS VALUES (1, ST_DIRECTION(2e0)), (2, ST_DIRECTION(0.5e0)), (3, CAST('DIRECTION(N 1)' AS ST_DIRECTION));
+SELECT ID, CAST(D AS DOUBLE PRECISION) AS RADIANS FROM HEADINGS ORDER BY D;
+VALUES CAST(ST_VECTOR(1e0, 2e0) AS VARBINARY(29));
+VALUES ST_VECTOR(1e0, 2e0) < ST_VECTOR(3e0, 4e0);
+```
+
+```
+OK
+OK
+           ID |                  RADIANS
+--------------+--------------------------
+            2 |                     5E-1
+            3 |                      1E0
+            1 |                      2E0
+(3 rows)
+
+------------------------------------------------------------
+ 0165000000000000000000F03F0000000000000040
+(1 row)
+turborel: SQLCODE -103 (SQLSTATE 2A000): the comparison compares values of ST_VECTOR, which has an ordering of EQUALS ONLY (ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §17.2.20, ST_ORDERINGEQUALS) [ISO/IEC 9075-2:2023 §9.14 SR3] (at character 7)
+```
+
+The support routines of §18 work on arrays. ST_MAXDIMENSION,
+ST_CHECKSRID and ST_GETCOORDDIM look over an array of geometries or
+vectors, the procedures ST_CHECKNULLS and ST_CHECKCONSECDUPS check one,
+and ST_TOPOINTARY and its peers check that every element is of one
+type. ST_DEFINESRS reads its definition before it stores it, and
+refuses one that is no spatial reference system:
+
+```sql
+VALUES ST_MAXDIMENSION(ARRAY[ST_POINT(1, 2), ST_GEOMFROMTEXT('LINESTRING (0 0, 1 1)')]);
+VALUES ST_CHECKSRID(ARRAY[ST_VECTOR(1e0, 2e0, 4326), ST_VECTOR(3e0, 4e0, 4326)]);
+VALUES ST_TOPOINTARY(ARRAY[ST_GEOMFROMTEXT('LINESTRING (0 0, 1 1)')]);
+CALL ST_DEFINESRS('GRID', 900001, 'APP', 1, 'GRID[1]', 'a grid');
+```
+
+```
+
+---------
+       1
+(1 row)
+
+--------------
+         4326
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2FF08): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §18.1.8 Description 2b i] element is not an ST_Point type
+turborel: SQLCODE -301 (SQLSTATE 2FF22): [ISO/IEC 13249-3:2016 §14.1.9] GRID is not PROJCS, GEOGCS or GEOCCS
+```
+
 ## Routines in space
 
 The routines named ST_3D take z into account. ST_3DLENGTH, ST_3DAREA,
@@ -1094,15 +1207,23 @@ OK
 | 22000 | -301 | WKT or WKB is malformed, a coordinate is not finite, ST_MAKEENVELOPE's bounds are reversed or of no area, ST_X or ST_Y is given another kind than a point, or two values' SRIDs differ |
 | 22000 | -301 | A value's SRID is not its column's or CAST's |
 | 22003 | -301 | A distance is greater than DOUBLE PRECISION holds |
+| 2202F | -301 | ST_VECTOROFFSETEXP is given more than three vectors |
 | 23000 | -201 | ST_DEFINESRS, ST_DROPSRS or ST_REGISTERGEOMETRYCOLUMN would break a constraint of the Spatial Information Schema's tables, or a column registered with a system would hold a value of another SRID |
 | 2A000 | -103 | A type's parameter is not one integer from 0 to 2147483647, a function's arguments are not of its types, a value of a supertype is assigned without TREAT, NEW names a type that holds no value of its own, geometry values are ordered, grouped or made distinct, a key names a geometry column, or a method is not of the value's declared type |
 | 2FF02 | -301 | A ring of ST_BDPOLYFROMTEXT's is not a closed simple ring, a measure is given a value of a type it does not measure, or a 3D routine's argument is out of its range: a TIN's maximum side length not above 0, a vertical triangle's slope, a measure range reversed, an interior shell outside the exterior one, a TIN table or column that does not exist, or a method given an argument it does not take |
-| 2FF03 | -301 | A TIN's maximum side length, or an array of shells or one of its elements, is null |
+| 2FF03 | -301 | A TIN's maximum side length, an array of shells or one of its elements, an array ST_CHECKNULLS checks, or a mutator's argument is null |
+| 2FF05 | -301 | ST_CHECKCONSECDUPS finds two equal values in a row |
+| 2FF06 | -301 | ST_CHECKNULLS, or ST_TOPOINTARY and its peers, find an empty element |
+| 2FF09 | -301 | ST_CHECKNULLS, or ST_TOPOINTARY and its peers, find a null element |
+| 2FF10 | -301 | ST_CHECKSRID's elements are of several SRIDs |
+| 2FF16 | -301 | ST_Z of a vector is given a null value of a vector that is not empty |
+| 2FF25 | -301 | A vector's text has a dimension not its tag's, or ST_GETCOORDDIM's elements are of several dimensions |
+| 2FF68, 2FF69, 2FF70 | -301 | ST_TOTRIANGLEARY, ST_TOPOLYHDRLARY (and ST_TOCOMPSURFARY, ST_TOBREPSOLIDARY) or ST_TOTINARY finds an element of another type |
 | 2FF04 | -301 | ST_RELATE's matrix is not nine of `T`, `F`, `0`, `1`, `2` and `*` |
-| 2FF08 | -301 | CAST is given a value Table 4 does not convert, or a value is assigned to a type it is not of |
+| 2FF08 | -301 | CAST is given a value Table 4 does not convert, a value is assigned to a type it is not of, or ST_TOPOINTARY and its peers find an element of another type |
 | 2FF14 | -301 | A unit is not a linear unit of ST_UNITS_OF_MEASURE, or the SRID's system has no linear unit |
 | 2FF15 | -301 | ST_TRANSFORM cannot move a value to the system of the SRID |
-| 2FF22 | -301 | A text is malformed, a typed constructor reads a value of another type, or ST_BDPOLYFROMTEXT's text is of no multilinestring |
+| 2FF22 | -301 | A text is malformed, a typed constructor reads a value of another type, ST_BDPOLYFROMTEXT's text is of no multilinestring, or ST_DEFINESRS's definition is no spatial reference system |
 | 2FF23 | -301 | WKB of a type is malformed, a typed constructor reads a value of another type, or ST_BDPOLYFROMWKB's is of no multilinestring |
 | 2FF24 | -301 | GML is malformed, or a typed constructor reads a value of another type |
 | 2FF59 | -301 | A unit form is given a value of an SRID no system has |

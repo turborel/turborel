@@ -1,0 +1,90 @@
+//! Mutations of SQL/MM Spatial's types beside the geometry types and of
+//! the support routines of arrays (RULES.md R-TEST-9, D-SPATIAL-SUPPORT).
+
+use super::{Mutation, Package};
+
+/// The orderings, keys, casts and checks of ST_SpatialRefSys, ST_Angle,
+/// ST_Direction and ST_Vector, the routines of §18 and ST_Vectors, each
+/// broken so its requirement tests fail.
+pub const SPATIAL_SUPPORT: [Mutation; 8] = [
+    Mutation {
+        name: "support-angle-key",
+        package: Package::Core,
+        breaks: "an angle's key is its radians' raw bits, which do not sort negative values",
+        file: "src/geometry/support/types.rs",
+        original: "let ordered = if bits & SIGN == 0 { bits | SIGN } else { !bits };",
+        replacement: "let ordered = bits;",
+        integration: &[],
+        unit: &["geometry::support::tests::angle_keys_order_by_radians"],
+    },
+    Mutation {
+        name: "support-angle-order",
+        package: Package::Core,
+        breaks: "angles and directions compare by radians the wrong way round",
+        file: "src/geometry/support/types.rs",
+        original: "return Some(x.total_cmp(&y));",
+        replacement: "return Some(y.total_cmp(&x));",
+        integration: &["spatial_support::angles_and_directions_order_full"],
+        unit: &[],
+    },
+    Mutation {
+        name: "support-definesrs-unchecked",
+        package: Package::Core,
+        breaks: "ST_DEFINESRS stores a definition no reader can read",
+        file: "src/geometry/procedures.rs",
+        original: "crate::spatial::srs::system::SpatialRefSys::from_text(&definition).map_err(|f| super::routines::fault(&f))?;",
+        replacement: "let _ = crate::spatial::srs::system::SpatialRefSys::from_text(&definition);",
+        integration: &["spatial_support::definesrs_checks_its_definition"],
+        unit: &[],
+    },
+    Mutation {
+        name: "support-vector-equals-srid",
+        package: Package::Core,
+        breaks: "ST_Equals of two vectors ignores their SRIDs",
+        file: "src/geometry/support/values.rs",
+        original: "self.srid == other.srid && [(self.x, other.x)",
+        replacement: "[(self.x, other.x)",
+        integration: &["spatial_support_vectors::vector_ordering_and_casts"],
+        unit: &[],
+    },
+    Mutation {
+        name: "support-checknulls-empty",
+        package: Package::Core,
+        breaks: "ST_CheckNulls passes an empty element",
+        file: "src/geometry/support/arrays.rs",
+        original: "if empty(v)? {",
+        replacement: "if empty(v)? && v.is_null() {",
+        integration: &["spatial_support_vectors::array_support_routines_18_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "support-to-triangle-state",
+        package: Package::Core,
+        breaks: "ST_ToTriangleAry raises 2FF08 rather than 2FF68",
+        file: "src/geometry/support/arrays.rs",
+        original: "Kind::Triangle => SqlState::SPATIAL_NOT_A_TRIANGLE,",
+        replacement: "Kind::Triangle => SqlState::SPATIAL_ELEMENT_IS_NOT_A_VALID_TYPE,",
+        integration: &["spatial_support_vectors::array_support_routines_18_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "support-cast-lowered",
+        package: Package::Core,
+        breaks: "CAST of an angle, a direction or a vector to a predefined type skips its transform group",
+        file: "src/value/cast.rs",
+        original: "&& let Some(lowered) = e.kind.lowered(&v, to)",
+        replacement: "&& let Some(lowered) = e.kind.lowered(&v, to).filter(|_| false)",
+        integration: &["spatial_support::angle_and_direction_casts"],
+        unit: &[],
+    },
+    Mutation {
+        name: "support-offset-vectors-z",
+        package: Package::Core,
+        breaks: "ST_VectorOffsetExp of ST_Vector values drops each vector's z",
+        file: "src/spatial/lr/sql/args.rs",
+        original: "Ok(super::super::Vector { x, y, z })",
+        replacement: "Ok(super::super::Vector { x, y, z: z.and(None) })",
+        integration: &["spatial_support_vectors::vector_offset_expressions_15_13"],
+        unit: &[],
+    },
+];

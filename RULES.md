@@ -147,6 +147,7 @@ verification approach DO-178C expects (§8).
 | D-SPATIAL-FAMILY | The geometry types are a built-in type family, with subtyping, TREAT, IS OF, CAST and an ordering of EQUALS ONLY BY RELATIVE |
 | D-SPATIAL-CATALOG | The SQL/MM Spatial Information Schema is standard views over system tables of seeded and defined rows |
 | D-SPATIAL-SRS | Reference systems, transforms, geodesics, angles and directions are one pure engine |
+| D-SPATIAL-SUPPORT | SQL/MM Spatial's types beside the geometry types are built-in kinds, ordered as their clauses declare |
 | D-SPATIAL-CURVES | Curves are paths of pieces, a TIN a constrained Delaunay triangulation, and the formats canonical |
 | D-SPATIAL-ROUTINES | Table functions and procedures written in Rust read and write tables through SQL in the caller's transaction |
 | D-SPATIAL-PLANAR | Spatial relationships and operations come from one exact planar graph |
@@ -3978,6 +3979,47 @@ systems a user defines.
 
 Geodetic distance, length and area use Karney's geodesic algorithms, so
 no result depends on a spherical approximation.
+
+#### D-SPATIAL-SUPPORT. SQL/MM Spatial's types beside the geometry types are built-in kinds, ordered as their clauses declare
+
+This extends D53, D-SPATIAL-FAMILY and D-SPATIAL-SRS.
+
+ST_SpatialRefSys, ST_Angle, ST_Direction, ST_Vector,
+ST_AffinePlacement, ST_NURBSPoint and ST_Knot are each a `SqlType`
+registered beside the geometry types (`src/geometry/support`).
+ST_TINElement is D-SPATIAL-CURVES's. The SQL layer wraps the engine of
+D-SPATIAL-SRS and adds nothing numeric. Each type's routines are rows of
+one table. A constructor or function is a registered scalar function,
+one per signature, and a call picks among the signatures of a name by
+type precedence [ISO/IEC 9075-2:2023 §9.6]. A method binds by its
+subject's type, name, arity and arguments' types.
+
+Each type is ordered as its clause declares.
+
+- ST_SpatialRefSys and ST_Vector are EQUALS ONLY BY RELATIVE WITH
+  ST_OrderingEquals [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §14.1.7,
+  §17.2.20]. Each is a family of one type, so `=` runs
+  ST_OrderingEquals and nothing sorts, groups or keys them, as for the
+  geometry types.
+- ST_Angle and ST_Direction are ORDER FULL BY RELATIVE WITH
+  ST_OrderingCompare [§16.1.19, §16.2.21], which compares radians. Their
+  values compare, sort and group by radians natively, and an index keys
+  them as DOUBLE PRECISION.
+- The other three declare no ordering, so no comparison takes them.
+
+A transform group is a CAST. `SqlType::lowered` gives the value of a
+group's SQL type that a CAST to a predefined type then casts: the
+well-known text to a character string, the radians of an angle or a
+direction to a number, a vector's well-known binary to a binary string.
+The type's `cast` reads each back. A built-in type is no row of
+USER_DEFINED_TYPES, so INFORMATION_SCHEMA.TRANSFORMS shows none of
+these groups.
+
+A built-in procedure may take arguments of several types for one count
+(`Procedure::overload`), so ST_CheckNulls takes an array of geometries
+or of vectors. ST_DEFINESRS reads its definition with the engine's WKT
+reader when called and refuses an unreadable one with 2FF22, so nothing
+unreadable is stored.
 
 #### D-SPATIAL-CURVES. Curves are paths of pieces, a TIN a constrained Delaunay triangulation, and the formats canonical
 

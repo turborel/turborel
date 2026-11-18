@@ -262,6 +262,8 @@ mod spatial_paths;
 mod spatial_planar;
 mod spatial_routines;
 mod spatial_solids;
+mod spatial_support;
+mod spatial_support_vectors;
 mod spatial_systems;
 mod spatial_topology;
 mod spatial_types;

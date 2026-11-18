@@ -7,7 +7,8 @@
 //! does (RULES.md D-SPATIAL-CATALOG):
 //!
 //! - `ST_DEFINESRS(name, id, organization, organization id, definition,
-//!   description)`;
+//!   description)`, its definition a `<spatial reference system>`
+//!   [§14.1.9], else 2FF22 when it is called;
 //! - `ST_DROPSRS(name)`;
 //! - `ST_REGISTERGEOMETRYCOLUMN(schema, table, column, system name)`;
 //! - `ST_UNREGISTERGEOMETRYCOLUMN(schema, table, column)`.
@@ -41,6 +42,7 @@ pub fn procedures() -> Vec<Arc<dyn Procedure>> {
     [CatalogProcedure::DefineSrs, CatalogProcedure::DropSrs, CatalogProcedure::Register, CatalogProcedure::Unregister]
         .into_iter()
         .map(|p| -> Arc<dyn Procedure> { Arc::new(p) })
+        .chain(super::support::procedures())
         .collect()
 }
 
@@ -90,6 +92,9 @@ impl CatalogProcedure {
             }
         };
         let definition = text(args.get(4)).ok_or_else(|| required("DEFINITION"))?;
+        // [§14.1.9] Nothing unreadable is stored: the definition is a
+        // `<spatial reference system>`, else 2FF22.
+        crate::spatial::srs::system::SpatialRefSys::from_text(&definition).map_err(|f| super::routines::fault(&f))?;
         Ok(SpatialRefSysDesc { name, id, organization, definition, description: text(args.get(5)) })
     }
 

@@ -156,7 +156,12 @@ const WRITERS: [Writer; 23] = [
         kind: 24,
         run: |db| {
             committed(db, &["CREATE TABLE S (G ST_GEOMETRY)"]);
-            committed(db, &["CALL ST_DEFINESRS('GRID', 900001, 'APP', 1, 'LOCAL_CS[\"grid\"]', 'a grid')"]);
+            committed(
+                db,
+                &[
+                    "CALL ST_DEFINESRS('GRID', 900001, 'APP', 1, 'GEOGCS[\"grid\",DATUM[\"d\",SPHEROID[\"s\",1,0]],PRIMEM[\"p\",0],UNIT[\"u\",1]]', 'a grid')",
+                ],
+            );
             committed(db, &["CALL ST_REGISTERGEOMETRYCOLUMN('APP', 'S', 'G', 'GRID')"]);
         },
     },

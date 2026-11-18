@@ -18,8 +18,7 @@ fn database() -> Database {
     db
 }
 
-const DEFINE: &str =
-    "CALL ST_DEFINESRS('LOCAL GRID', 900001, 'ACME', 7, 'LOCAL_CS[\"grid\",LOCAL_DATUM[\"site\",0],UNIT[\"metre\",1]]', 'a site grid')";
+const DEFINE: &str = "CALL ST_DEFINESRS('LOCAL GRID', 900001, 'ACME', 7, 'GEOGCS[\"grid\",DATUM[\"d\",SPHEROID[\"s\",1,0]],PRIMEM[\"p\",0],UNIT[\"u\",1]]', 'a site grid')";
 const SYSTEMS: &str = "SELECT SRS_NAME, ORGANIZATION, ORGANIZATION_COORDSYS_ID, DESCRIPTION FROM ST_INFORMTN_SCHEMA.ST_SPATIAL_REFERENCE_SYSTEMS WHERE SRS_ID > 900000";
 const COLUMNS: &str = "SELECT COLUMN_NAME, SRS_NAME, SRS_ID FROM ST_INFORMTN_SCHEMA.ST_GEOMETRY_COLUMNS ORDER BY COLUMN_NAME";
 
@@ -44,12 +43,29 @@ fn systems_and_registrations_keep_their_tables_constraints() {
     let code = |sql: &str| a.run(sql).unwrap_err().code;
     assert_eq!(code(DEFINE), Code::Constraint);
     assert_eq!(
-        code("CALL ST_DEFINESRS('OTHER', 900001, CAST(NULL AS VARCHAR(1)), CAST(NULL AS INTEGER), 'LOCAL_CS[\"x\"]', 'x')"),
+        code(
+            "CALL ST_DEFINESRS('OTHER', 900001, CAST(NULL AS VARCHAR(1)), CAST(NULL AS INTEGER), 'GEOGCS[\"x\",DATUM[\"d\",SPHEROID[\"s\",1,0]],PRIMEM[\"p\",0],UNIT[\"u\",1]]', 'x')"
+        ),
         Code::Constraint
     );
-    assert_eq!(code("CALL ST_DEFINESRS('OTHER', 900002, 'ACME', CAST(NULL AS INTEGER), 'LOCAL_CS[\"x\"]', 'x')"), Code::Constraint);
-    assert_eq!(code("CALL ST_DEFINESRS('OTHER', 900002, 'EPSG', 4326, 'LOCAL_CS[\"x\"]', 'x')"), Code::Constraint);
-    assert_eq!(code("CALL ST_DEFINESRS('WGS 84', 900002, 'X', 1, 'LOCAL_CS[\"x\"]', 'x')"), Code::Constraint);
+    assert_eq!(
+        code(
+            "CALL ST_DEFINESRS('OTHER', 900002, 'ACME', CAST(NULL AS INTEGER), 'GEOGCS[\"x\",DATUM[\"d\",SPHEROID[\"s\",1,0]],PRIMEM[\"p\",0],UNIT[\"u\",1]]', 'x')"
+        ),
+        Code::Constraint
+    );
+    assert_eq!(
+        code(
+            "CALL ST_DEFINESRS('OTHER', 900002, 'EPSG', 4326, 'GEOGCS[\"x\",DATUM[\"d\",SPHEROID[\"s\",1,0]],PRIMEM[\"p\",0],UNIT[\"u\",1]]', 'x')"
+        ),
+        Code::Constraint
+    );
+    assert_eq!(
+        code(
+            "CALL ST_DEFINESRS('WGS 84', 900002, 'X', 1, 'GEOGCS[\"x\",DATUM[\"d\",SPHEROID[\"s\",1,0]],PRIMEM[\"p\",0],UNIT[\"u\",1]]', 'x')"
+        ),
+        Code::Constraint
+    );
     assert_eq!(code("CALL ST_DEFINESRS('OTHER', 900002)"), Code::SyntaxRule);
     a.run("CALL ST_REGISTERGEOMETRYCOLUMN('A', 'T', 'G', 'LOCAL GRID')").unwrap();
     assert_eq!(rows(&a, COLUMNS).unwrap(), ["G,LOCAL GRID,900001", "P,WGS 84,4326"]);
@@ -91,7 +107,7 @@ fn systems_and_registrations_survive_recovery() {
     a.commit().unwrap();
     a.run("ALTER TABLE T DROP COLUMN H RESTRICT").unwrap();
     a.commit().unwrap();
-    a.run("CALL ST_DEFINESRS('LOST', 900009, 'ACME', 9, 'LOCAL_CS[\"lost\"]', 'never committed')").unwrap();
+    a.run("CALL ST_DEFINESRS('LOST', 900009, 'ACME', 9, 'GEOGCS[\"lost\",DATUM[\"d\",SPHEROID[\"s\",1,0]],PRIMEM[\"p\",0],UNIT[\"u\",1]]', 'never committed')").unwrap();
     let crashed = a;
     drop(db);
     let db = open();

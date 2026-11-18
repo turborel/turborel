@@ -498,6 +498,7 @@ pub(crate) fn functions() -> Vec<Arc<dyn ScalarFunction>> {
     out.push(Arc::new(super::TinFromTable));
     out.push(Arc::new(super::BRepSolid));
     out.extend(super::routines::functions());
+    out.extend(super::support::functions());
     out
 }
 

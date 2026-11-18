@@ -179,6 +179,12 @@ pub trait SqlType: Send + Sync + fmt::Debug {
         self.cast(v, t).map(|cast| (cast, None))
     }
 
+    /// \[EXTENSION\] [ISO/IEC 9075-2:2023 §4.9.6] What CAST of `v` to `to`
+    /// casts instead, as a transform group's FROM SQL gives it; none by default.
+    fn lowered(&self, _v: &Value, _to: &DataType) -> Option<Value> {
+        None
+    }
+
     /// How `v`, of its kind, is written as a `<literal>`.
     fn literal(&self, v: &Value) -> String;
 

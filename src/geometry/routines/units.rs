@@ -20,7 +20,7 @@ use crate::spatial::srs::units::{self, Kind};
 use crate::spatial::srs::{Fault, system};
 
 /// The SQL exception condition of an engine fault, its §22 subclass.
-pub(super) fn fault(f: &Fault) -> SqlError {
+pub(in crate::geometry) fn fault(f: &Fault) -> SqlError {
     let state = SqlState::parse(&format!("2F{}", f.condition.subclass())).unwrap_or(SqlState::SPATIAL_INVALID_ARGUMENT);
     SqlError::new(Code::Data, f.message.clone()).with_state(state)
 }

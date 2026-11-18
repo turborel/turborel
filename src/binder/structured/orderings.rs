@@ -109,8 +109,11 @@ pub(in crate::binder) fn udt_operand(db: &State, t: &DataType, need: Need, what:
         if let Some((f, kind)) = family_of(u)
             && need != Need::Equality
         {
+            // [§14.1.7, §17.2.20] ST_SpatialRefSys's and ST_Vector's, else
+            // the geometry types'.
+            let clause = crate::geometry::support::of_data_type(u).map_or("§5.1.65", |s| s.ordering_clause());
             return Err(rule(format!(
-                "[ISO/IEC 9075-2:2023 {}] {what} compares values of {}, which has an ordering of EQUALS ONLY (ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.65, {})",
+                "[ISO/IEC 9075-2:2023 {}] {what} compares values of {}, which has an ordering of EQUALS ONLY (ISO/IEC 13249-3:2016 (DIS, SC32 N2593) {clause}, {})",
                 need.rule(),
                 kind.name(),
                 f.relative_ordering()
