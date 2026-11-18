@@ -1,6 +1,6 @@
 //! The ST_SpatialRefSys type of ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
-//! §14.1: a spatial reference system made from its <spatial reference
-//! system> text or its identifier, its canonical text, its identifier,
+//! §14.1: a spatial reference system made from its `<spatial reference
+//! system>` text or its identifier, its canonical text, its identifier,
 //! and equality.
 //!
 //! These are the implementation-defined parts.
@@ -51,7 +51,7 @@ impl SpatialRefSys {
     ///
     /// # Errors
     ///
-    /// F22 if `text` is not a <spatial reference system>.
+    /// F22 if `text` is not a `<spatial reference system>`.
     pub fn from_text(text: &str) -> Outcome<SpatialRefSys> {
         let definition = wkt::read(text)?;
         Ok(SpatialRefSys { srid: epsg_code(&definition), definition: Some(definition) })

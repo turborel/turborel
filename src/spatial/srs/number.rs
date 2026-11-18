@@ -1,5 +1,5 @@
-//! Numbers in the text representations: the <exact numeric literal> and
-//! <approximate numeric literal> of ISO/IEC 9075-2 §5.3 that §14.1.9,
+//! Numbers in the text representations: the `<exact numeric literal>` and
+//! `<approximate numeric literal>` of ISO/IEC 9075-2 §5.3 that §14.1.9,
 //! §16.1.21 and §16.2.23 of ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
 //! reference, and the rounded decimal strings of ST_String and the
 //! bearing and azimuth methods.
@@ -9,7 +9,7 @@ const RADIX: u32 = 10;
 /// The largest magnitude an `f64` holds as an exact integer, 2^53.
 const EXACT: f64 = 9_007_199_254_740_992.0;
 
-/// The length of the <signed numeric literal> at the start of `text`, or
+/// The length of the `<signed numeric literal>` at the start of `text`, or
 /// none if it does not start with one. A sign is accepted because
 /// longitudes and parameters are negative in practice (§14.1.9 reading);
 /// `<unsigned integer> [ <period> [ <unsigned integer> ] ]`,

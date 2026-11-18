@@ -299,7 +299,7 @@ impl Direction {
         format!("DIRECTION(N {})", number::shortest(self.radians()))
     }
 
-    /// ST_DirectionFrmTxt: the <direction text representation>.
+    /// ST_DirectionFrmTxt: the `<direction text representation>`.
     ///
     /// # Errors
     ///

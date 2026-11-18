@@ -1,6 +1,6 @@
 //! The well-known text representation, ISO/IEC 13249-3:2016 (DIS, SC32
 //! N2593) §5.1.67: [`read`] for ST_GeomFromText and the type
-//! constructors, [`write`] for ST_AsText.
+//! constructors, [`write()`] for ST_AsText.
 
 pub mod cursor;
 pub mod curves;

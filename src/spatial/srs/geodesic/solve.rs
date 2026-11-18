@@ -3,7 +3,7 @@
 //! directly, otherwise start from the auxiliary sphere or the astroid
 //! (§5) and solve for the azimuth by Newton's method on λ12, safeguarded
 //! by bisection. Only oblate and spherical ellipsoids occur, as the
-//! <inverse flattening> is zero or above one.
+//! `<inverse flattening>` is zero or above one.
 
 use std::f64::consts::{FRAC_1_SQRT_2, PI};
 

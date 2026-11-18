@@ -53,7 +53,11 @@ impl Binder<'_> {
         let mut bound = vec![Some((e, subject_type))];
         bound.extend(self.prebound(args, scope)?);
         let written: Vec<ValueExpression> = std::iter::once(subject.clone()).chain(args.iter().cloned()).collect();
-        let (exprs, types) = self.arguments_of(&*routine, &written, bound, scope)?;
+        let (mut exprs, mut types) = self.arguments_of(&*routine, &written, bound, scope)?;
+        for (arg, ty) in self.appended_arguments(&*routine, (&written, &exprs), scope)? {
+            exprs.push(arg);
+            types.push(ty);
+        }
         let result = routine.return_type(&types)?;
         let set = overriding_set(method);
         if let ([_], None) = (set.as_slice(), fixed) {

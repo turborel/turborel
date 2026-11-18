@@ -28,6 +28,7 @@ its own; class TB is turborel's own.
 | 01007 | Warning: privilege not granted |
 | 01009 | Warning: search condition too long for the Information Schema |
 | 0100A | Warning: query expression too long for the Information Schema |
+| 01F01 | SQL/MM Spatial warning: invalid position: a method of a position given one outside the value, its result null |
 | 02000 | No data |
 | 07000 | Dynamic SQL error |
 | 07001 | Dynamic SQL error: the arguments do not match the dynamic parameters |
@@ -134,10 +135,16 @@ its own; class TB is turborel's own.
 | 2FF08 | SQL/MM Spatial exception: element is not a valid type: a value not of the type it is assigned or cast to, or a solid's shell of another type |
 | 2FF11 | SQL/MM Spatial exception: non-contiguous curves: a compound curve whose parts do not meet end to start |
 | 2FF18 | SQL/MM Spatial exception: point value not well formed: a coordinate not finite |
+| 2FF22 | SQL/MM Spatial exception: invalid well-known text representation, or a typed constructor's text of another type |
 | 2FF23 | SQL/MM Spatial exception: invalid well-known binary representation |
+| 2FF24 | SQL/MM Spatial exception: invalid GML representation, or a typed constructor's GML of another type |
 | 2FF25 | SQL/MM Spatial exception: mixed coordinate dimensions: parts of one value with and without Z or M |
+| 2FF74 | SQL/MM Spatial exception: invalid geometry: a TIN element's geometry not of the type its element type takes |
 | 2FF75 | SQL/MM Spatial exception: exterior ring not four points: a triangle's ring |
+| 2FF76 | SQL/MM Spatial exception: curve has multiple segments: ST_CENTER, ST_RADIUS or ST_BULGE of more than one arc |
 | 2FF77 | SQL/MM Spatial exception: exactly three points: a circle not of three points |
+| 2FF79 | SQL/MM Spatial exception: the given distance is longer than curve: ST_POINTATDISTANCE |
+| 2FF80 | SQL/MM Spatial exception: the point is not on the curve: ST_DISTANCETOPOINT |
 | 2FF84 | SQL/MM Spatial exception: missing measure values: a curve given by parameters with M but no measures, or measures without M |
 | 2FF98 | SQL/MM Spatial exception: null exterior shell: a solid's shell empty |
 | 2H000 | Invalid collation name |

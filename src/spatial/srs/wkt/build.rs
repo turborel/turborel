@@ -1,7 +1,7 @@
 //! Checks a tree of items against the productions of ISO/IEC 13249-3:2016
 //! (DIS, SC32 N2593) §14.1.9 and builds the coordinate system it holds.
 //! Items appear in the order the productions give. The \[EXTENSION\] items
-//! come last in their parent: TOWGS84 after a <spheroid>, AXIS after a
+//! come last in their parent: TOWGS84 after a `<spheroid>`, AXIS after a
 //! system's units, AUTHORITY at the end of any item.
 
 use std::iter::Peekable;
@@ -25,7 +25,7 @@ const SEVEN: usize = 7;
 const PLANE: usize = 2;
 const SPACE: usize = 3;
 
-/// The <spatial reference system> `root` is.
+/// The `<spatial reference system>` `root` is.
 pub(super) fn system(root: Node) -> Outcome<CoordinateSystem> {
     match root.keyword.as_str() {
         PROJCS => Ok(CoordinateSystem::Projected(Box::new(projected(root)?))),
@@ -52,8 +52,8 @@ fn projected(node: Node) -> Outcome<Projected> {
     Ok(Projected { name, geographic, projection, parameters, linear_unit, axes, authority })
 }
 
-/// `<geographic cs>`. The <angular unit> and optional <linear unit> are
-/// read as separated by a <comma>, which the production omits.
+/// `<geographic cs>`. The `<angular unit>` and optional `<linear unit>` are
+/// read as separated by a `<comma>`, which the production omits.
 fn geographic(node: Node) -> Outcome<Geographic> {
     let mut args = Args::new(node);
     let name = args.text("<name>")?;

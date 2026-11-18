@@ -1,5 +1,5 @@
 //! The coordinate transform of ST_Transform (ISO/IEC 13249-3:2016 (DIS,
-//! SC32 N2593) §5.1.6), from one <spatial reference system> to another.
+//! SC32 N2593) §5.1.6), from one `<spatial reference system>` to another.
 //! §5.1.6 Description 3d leaves the transform implementation-defined;
 //! this one is the following pipeline.
 //!
@@ -122,7 +122,7 @@ fn axes(list: &[Axis]) -> Outcome<Axes> {
 }
 
 /// The prime meridian's longitude in radians; a geocentric system has no
-/// angular unit, so its <longitude> is read in degrees.
+/// angular unit, so its `<longitude>` is read in degrees.
 fn meridian(pm: &PrimeMeridian, angular: Option<f64>) -> f64 {
     pm.longitude * angular.unwrap_or(DEGREE_RADIANS)
 }
