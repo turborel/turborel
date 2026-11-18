@@ -4,6 +4,7 @@
 //! valid for spatial relationships. No coordinate transformation occurs.
 
 mod collections;
+mod conversions;
 mod crossing;
 mod distance;
 pub mod engine;

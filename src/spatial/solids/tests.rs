@@ -39,6 +39,8 @@ fn close(a: f64, b: f64) -> bool {
     (a - b).abs() < 1e-9
 }
 
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §9.1.2 to §9.1.5] a box's
+/// volume, surface area and centroid, and a point inside it.
 #[test]
 fn a_cube_measures() {
     let g = cube([0.0_f64; 3], [1.0_f64, 2.0_f64, 3.0_f64]);
@@ -50,6 +52,10 @@ fn a_cube_measures() {
     assert!(close(p[0], 0.5_f64) && close(p[2], 1.5_f64));
 }
 
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.31, §5.1.34,
+/// §5.1.36, §5.1.38, §5.1.44, §5.1.49] two overlapping cubes' union,
+/// intersection, difference and symmetric difference measure as their
+/// overlap says; they intersect and are not equal.
 #[test]
 fn overlapping_cubes_combine() {
     let (a, b) = (cube([0.0_f64; 3], [2.0_f64; 3]), cube([1.0_f64; 3], [3.0_f64; 3]));
@@ -62,6 +68,9 @@ fn overlapping_cubes_combine() {
     assert!(!equals(&a, &b).unwrap());
 }
 
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.34, §5.1.31]
+/// two cubes sharing a face unite into one box of six merged faces, and
+/// meet in that face.
 #[test]
 fn adjacent_cubes_merge_into_a_box() {
     let (a, b) = (cube([0.0_f64; 3], [1.0_f64; 3]), cube([1.0_f64, 0.0_f64, 0.0_f64], [2.0_f64, 1.0_f64, 1.0_f64]));
@@ -74,6 +83,9 @@ fn adjacent_cubes_merge_into_a_box() {
     assert_eq!(write_geom(&touch).unwrap(), "POLYGON Z ((1 0 0, 1 1 0, 1 1 1, 1 0 1, 1 0 0))");
 }
 
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.36, §9.2.1] a cube
+/// taken out of a larger one leaves a solid of two shells, the inner one
+/// a cavity.
 #[test]
 fn a_cavity_stays_a_cavity() {
     let hollow = set_op(SetOp::Difference, &cube([0.0_f64; 3], [3.0_f64; 3]), &cube([1.0_f64; 3], [2.0_f64; 3])).unwrap();
@@ -82,6 +94,8 @@ fn a_cavity_stays_a_cavity() {
     assert_eq!(shells.len(), 2);
 }
 
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.31, §5.1.36,
+/// §5.1.49] lines, points and planes meet a solid in the parts within it.
 #[test]
 fn lower_dimensions_meet_solids() {
     let solid = cube([0.0_f64; 3], [2.0_f64; 3]);
@@ -97,6 +111,8 @@ fn lower_dimensions_meet_solids() {
     assert_eq!(write_geom(&cut).unwrap(), "POLYGON Z ((0 0 1, 2 0 1, 2 2 1, 0 2 1, 0 0 1))");
 }
 
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.31] two
+/// crossing polygons in space meet in a segment.
 #[test]
 fn crossing_surfaces_meet_in_a_segment() {
     let one = wkt("POLYGON Z ((0 0 0, 2 0 0, 2 2 0, 0 2 0, 0 0 0))");
@@ -104,6 +120,8 @@ fn crossing_surfaces_meet_in_a_segment() {
     assert_eq!(write_geom(&set_op(SetOp::Intersection, &one, &other).unwrap()).unwrap(), "LINESTRING Z (1 0 0, 1 2 0)");
 }
 
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.42] the least distance in
+/// space between solids, a point and a line.
 #[test]
 fn distances_in_space() {
     let (a, b) = (cube([0.0_f64; 3], [1.0_f64; 3]), cube([2.0_f64, 0.0_f64, 0.0_f64], [3.0_f64, 1.0_f64, 1.0_f64]));
@@ -112,6 +130,9 @@ fn distances_in_space() {
     assert!(close(distance(&wkt("POINT Z (0 0 5)"), &wkt("LINESTRING Z (0 0 0, 3 0 4)")).unwrap().unwrap(), 3.0_f64));
 }
 
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §8.1.11, §8.1.13,
+/// §5.1.9, §5.1.18] a box's faces are a closed, simple shell; an open
+/// surface's boundary is its rim, and crossing patches are not simple.
 #[test]
 fn shells_close_and_are_simple() {
     let shell = wkt(&box_faces([0.0_f64; 3], [1.0_f64; 3]));
@@ -128,6 +149,8 @@ fn shells_close_and_are_simple() {
     assert!(!patches_simple(&[crossed], crossing.dims).unwrap());
 }
 
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §8.4.4] a triangle's slope is its rise
+/// over its run, none of a vertical one.
 #[test]
 fn slopes() {
     assert_eq!(slope([[0.0_f64; 3], [1.0_f64, 0.0_f64, 1.0_f64], [0.0_f64, 1.0_f64, 0.0_f64]]), Some(1.0_f64));
@@ -138,6 +161,9 @@ fn slopes() {
 /// as random points.
 const SQUARE: &str = "TIN Z (PATCHES ((0 0 0, 2 0 2, 2 2 4), (0 0 0, 2 2 4, 0 2 2)) ELEMENTS (POINTS ID 1 TAG \"p\" MULTIPOINT Z ((0 0 0), (2 0 2), (2 2 4), (0 2 2))))";
 
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §8.6.4, §8.6.6] a TIN
+/// retriangulates under a maximum side length, and its clip keeps the
+/// area within a polygon, lifted onto its planes, the polygon a boundary.
 #[test]
 fn a_tin_retriangulates_and_clips() {
     let tin = wkt(SQUARE);
@@ -161,6 +187,8 @@ fn a_tin_retriangulates_and_clips() {
     assert!(cut.elements.iter().any(|e| e.element_type == "boundary"));
 }
 
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §8.6.5] a TIN's points,
+/// triangles and elements as rows, and the TIN built back from them.
 #[test]
 fn a_tin_becomes_rows_and_back() {
     let rows = super::table::table(&wkt(SQUARE)).unwrap();

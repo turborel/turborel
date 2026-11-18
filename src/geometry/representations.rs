@@ -150,7 +150,7 @@ fn signature(name: &str) -> SqlError {
 
 /// The reference systems' query a GML routine is given last: each
 /// system's identifier, organization, its identifier there and text.
-fn systems_query() -> AppendedQuery {
+pub(crate) fn systems_query() -> AppendedQuery {
     AppendedQuery {
         query:
             "SELECT ROW(SRS_ID, ORGANIZATION, ORGANIZATION_COORDSYS_ID, DEFINITION) FROM ST_INFORMTN_SCHEMA.ST_SPATIAL_REFERENCE_SYSTEMS"

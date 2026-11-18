@@ -14,6 +14,7 @@
 use std::sync::Arc;
 
 use super::collections::CollectionFunction;
+use super::conversions::ToKind;
 use super::functions::GeometryFunction;
 use super::model::Kind;
 use super::observers::{
@@ -21,7 +22,7 @@ use super::observers::{
 };
 use super::representations::AsGml;
 use super::routines::Routine;
-use super::solids::{SolidFunction, TinFromTable};
+use super::solids::{SolidFunction, Surfaces, TinFromTable};
 use super::tins::TinRoutine;
 use crate::error::{Result, SqlError, SqlState};
 use crate::functions::{ScalarFunction, ScalarRef};
@@ -69,8 +70,34 @@ macro_rules! routine {
 }
 
 /// The table: of each type, the methods it declares.
-pub static METHODS: [Method; 190] = [
+pub static METHODS: [Method; 216] = [
     // [§5.1.1] ST_Geometry.
+    // [§5.1.55] The cast methods of ST_Geometry.
+    original(Kind::Geometry, "ST_TOPOINT", 0, routine!(ToKind { name: "ST_TOPOINT", target: Kind::Point })),
+    original(Kind::Geometry, "ST_TOLINESTRING", 0, routine!(ToKind { name: "ST_TOLINESTRING", target: Kind::LineString })),
+    original(Kind::Geometry, "ST_TOCIRCULAR", 0, routine!(ToKind { name: "ST_TOCIRCULAR", target: Kind::CircularString })),
+    original(Kind::Geometry, "ST_TOCIRCLE", 0, routine!(ToKind { name: "ST_TOCIRCLE", target: Kind::Circle })),
+    original(Kind::Geometry, "ST_TOGEODESIC", 0, routine!(ToKind { name: "ST_TOGEODESIC", target: Kind::GeodesicString })),
+    original(Kind::Geometry, "ST_TOELLIPTICAL", 0, routine!(ToKind { name: "ST_TOELLIPTICAL", target: Kind::EllipticalCurve })),
+    original(Kind::Geometry, "ST_TONURBS", 0, routine!(ToKind { name: "ST_TONURBS", target: Kind::NurbsCurve })),
+    original(Kind::Geometry, "ST_TONURBSCURVE", 0, routine!(ToKind { name: "ST_TONURBSCURVE", target: Kind::NurbsCurve })),
+    original(Kind::Geometry, "ST_TOCLOTHOID", 0, routine!(ToKind { name: "ST_TOCLOTHOID", target: Kind::Clothoid })),
+    original(Kind::Geometry, "ST_TOSPIRAL", 0, routine!(ToKind { name: "ST_TOSPIRAL", target: Kind::SpiralCurve })),
+    original(Kind::Geometry, "ST_TOSPIRALCURVE", 0, routine!(ToKind { name: "ST_TOSPIRALCURVE", target: Kind::SpiralCurve })),
+    original(Kind::Geometry, "ST_TOCOMPOUND", 0, routine!(ToKind { name: "ST_TOCOMPOUND", target: Kind::CompoundCurve })),
+    original(Kind::Geometry, "ST_TOCURVEPOLY", 0, routine!(ToKind { name: "ST_TOCURVEPOLY", target: Kind::CurvePolygon })),
+    original(Kind::Geometry, "ST_TOPOLYGON", 0, routine!(ToKind { name: "ST_TOPOLYGON", target: Kind::Polygon })),
+    original(Kind::Geometry, "ST_TOTRIANGLE", 0, routine!(ToKind { name: "ST_TOTRIANGLE", target: Kind::Triangle })),
+    original(Kind::Geometry, "ST_TOPOLYHDRLSURF", 0, routine!(ToKind { name: "ST_TOPOLYHDRLSURF", target: Kind::PolyhdrlSurface })),
+    original(Kind::Geometry, "ST_TOTIN", 0, routine!(ToKind { name: "ST_TOTIN", target: Kind::Tin })),
+    original(Kind::Geometry, "ST_TOCOMPSURFACE", 0, routine!(ToKind { name: "ST_TOCOMPSURFACE", target: Kind::CompoundSurface })),
+    original(Kind::Geometry, "ST_TOBREPSOLID", 0, routine!(ToKind { name: "ST_TOBREPSOLID", target: Kind::BRepSolid })),
+    original(Kind::Geometry, "ST_TOGEOMCOLL", 0, routine!(ToKind { name: "ST_TOGEOMCOLL", target: Kind::GeomCollection })),
+    original(Kind::Geometry, "ST_TOMULTIPOINT", 0, routine!(ToKind { name: "ST_TOMULTIPOINT", target: Kind::MultiPoint })),
+    original(Kind::Geometry, "ST_TOMULTICURVE", 0, routine!(ToKind { name: "ST_TOMULTICURVE", target: Kind::MultiCurve })),
+    original(Kind::Geometry, "ST_TOMULTILINE", 0, routine!(ToKind { name: "ST_TOMULTILINE", target: Kind::MultiLineString })),
+    original(Kind::Geometry, "ST_TOMULTISURFACE", 0, routine!(ToKind { name: "ST_TOMULTISURFACE", target: Kind::MultiSurface })),
+    original(Kind::Geometry, "ST_TOMULTIPOLYGON", 0, routine!(ToKind { name: "ST_TOMULTIPOLYGON", target: Kind::MultiPolygon })),
     original(Kind::Geometry, "ST_SRID", 0, routine!(GeometryFunction::Srid)),
     original(Kind::Geometry, "ST_SRID", 1, routine!(GeometryFunction::SetSrid)),
     original(Kind::Geometry, "ST_ISEMPTY", 0, routine!(GeometryFunction::IsEmpty)),
@@ -221,6 +248,7 @@ pub static METHODS: [Method; 190] = [
     overriding(Kind::Tin, "ST_PATCHES", 0, routine!(Observed(PatchMethod::Patches))),
     original(Kind::Tin, "ST_TINELEMENTS", 0, routine!(TinRoutine::Elements)),
     original(Kind::CompoundSurface, "ST_SURFACES", 0, routine!(Observed(PatchMethod::Surfaces))),
+    original(Kind::CompoundSurface, "ST_SURFACES", 1, routine!(Surfaces)),
     original(Kind::CompoundSurface, "ST_NUMSURFACES", 0, routine!(Observed(PatchMethod::NumSurfaces))),
     original(Kind::CompoundSurface, "ST_SURFACEN", 1, routine!(Observed(PatchMethod::SurfaceN))),
     // [§5.1] ST_Geometry, in space.

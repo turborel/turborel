@@ -6,14 +6,17 @@
 //! a method (`geometry/methods.rs`) or as a function of SELF first; the
 //! 3D engine (`spatial::solids`) does the work.
 
+mod compound;
 mod construct;
 mod locate;
 mod measures;
 mod relations;
+mod represented;
 mod shells;
 mod table;
 mod units;
 
+pub use compound::{CompoundSurface, Surfaces};
 pub use construct::BRepSolid;
 pub use table::{TinFromTable, TinTable};
 

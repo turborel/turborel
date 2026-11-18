@@ -291,6 +291,65 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): ST_Geometry and its supertypes have no 
 OK
 ```
 
+## Cast methods
+
+Each instantiable type has a cast method of ST_GEOMETRY, also called
+as a function of the value. A value of the type, or of a subtype, is
+returned as it is. ST_TOLINESTRING makes a line string of a curve and
+ST_TOPOLYGON a polygon of a curve polygon. ST_TOCOMPOUND,
+ST_TOCOMPSURFACE and ST_TOGEOMCOLL put a curve, a surface or any
+point, curve or surface in a compound or collection of one element.
+The multi types are made of a collection's elements, or of one value of
+their element type, and raise 2FF08 of an element they do not hold. A
+collection of one element, or a compound curve of one, gives that
+element cast by the method. Any other value raises 2FF16, unless it is
+empty, which gives the empty value of the type in the value's SRID.
+
+| Method | Result type |
+|---|---|
+| `ST_TOPOINT()` | ST_Point |
+| `ST_TOLINESTRING()`, `ST_TOCIRCULAR()`, `ST_TOCIRCLE()`, `ST_TOGEODESIC()` | ST_LineString, ST_CircularString, ST_Circle, ST_GeodesicString |
+| `ST_TOELLIPTICAL()`, `ST_TONURBS()`, `ST_TOCLOTHOID()`, `ST_TOSPIRAL()` | ST_EllipticalCurve, ST_NURBSCurve, ST_Clothoid, ST_SpiralCurve |
+| `ST_TOCOMPOUND()` | ST_CompoundCurve |
+| `ST_TOCURVEPOLY()`, `ST_TOPOLYGON()`, `ST_TOTRIANGLE()` | ST_CurvePolygon, ST_Polygon, ST_Triangle |
+| `ST_TOPOLYHDRLSURF()`, `ST_TOTIN()`, `ST_TOCOMPSURFACE()` | ST_PolyhdrlSurface, ST_TIN, ST_CompoundSurface |
+| `ST_TOBREPSOLID()` | ST_BRepSolid |
+| `ST_TOGEOMCOLL()` | ST_GeomCollection |
+| `ST_TOMULTIPOINT()`, `ST_TOMULTICURVE()`, `ST_TOMULTILINE()` | ST_MultiPoint, ST_MultiCurve, ST_MultiLineString |
+| `ST_TOMULTISURFACE()`, `ST_TOMULTIPOLYGON()` | ST_MultiSurface, ST_MultiPolygon |
+
+ST_TONURBSCURVE and ST_TOSPIRALCURVE are the same methods as ST_TONURBS
+and ST_TOSPIRAL. CAST follows the table of casts instead, so CAST of a
+line string to ST_POINT raises 2FF08 where ST_TOPOINT raises 2FF16:
+
+```sql
+VALUES ST_ASTEXT(ST_GEOMFROMTEXT('GEOMETRYCOLLECTION (POINT (1 2))').ST_TOPOINT());
+VALUES ST_ASTEXT(ST_TOCOMPOUND(ST_GEOMFROMTEXT('LINESTRING (0 0, 1 1)')));
+VALUES ST_ASTEXT(ST_TOMULTIPOINT(ST_GEOMFROMTEXT('GEOMETRYCOLLECTION (POINT (1 2), POINT (3 4))')));
+VALUES ST_ASTEXT(ST_TOPOINT(ST_GEOMFROMTEXT('LINESTRING EMPTY')));
+VALUES ST_TOPOINT(ST_GEOMFROMTEXT('LINESTRING (0 0, 1 1)'));
+```
+
+```
+
+--------------------------------------------------------------
+ POINT (1 2)
+(1 row)
+
+--------------------------------------------------------------
+ COMPOUNDCURVE ((0 0, 1 1))
+(1 row)
+
+--------------------------------------------------------------
+ MULTIPOINT ((1 2), (3 4))
+(1 row)
+
+--------------------------------------------------------------
+ POINT EMPTY
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2FF16): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.55] not an empty set
+```
+
 ## Text and binary forms
 
 WKT is read in any case, with decimal and exponent coordinates. A
@@ -511,12 +570,24 @@ surface its parts.
 | `ST_CURVEPOLYTOPOLY()` | ST_CurvePolygon | Its linear form, an ST_Polygon |
 | `ST_PATCHES()`, `ST_NUMPATCHES()`, `ST_PATCHN(n)` | ST_PolyhdrlSurface, ST_TIN | Its patches, polygons or triangles |
 | `ST_SURFACES()`, `ST_NUMSURFACES()`, `ST_SURFACEN(n)` | ST_CompoundSurface | Its parts |
+| `ST_SURFACES(array)` | ST_CompoundSurface | The value with the surfaces of an ARRAY |
+
+ST_COMPOUNDSURFACE makes a compound surface of its text, GML or WKB,
+of a surface, or of an ARRAY of surfaces, with an SRID or 0, and with no
+argument the empty one. Each surface of the ARRAY must meet the one
+before it in a curve, else 2FF85, and ST_SURFACES(array) checks its
+surfaces so too. They are of one SRID, 2FF10 else, and of one
+coordinate dimension, 2FF25 else.
 
 ```sql
 VALUES CAST(ST_CPOLYFROMTEXT('CURVEPOLYGON (CIRCULARSTRING (0 0, 2 2, 4 0, 2 -2, 0 0))').ST_AREA() AS DECIMAL(9, 4));
 VALUES ST_POLYFROMTEXT('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))').ST_PERIMETER();
 VALUES ST_ASTEXT(ST_POLYFROMTEXT('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))').ST_INTERIORRINGN(1));
 VALUES ST_ASTEXT(ST_POLYFROMTEXT('POLYGON ((0 0, 4 0, 4 2, 0 2, 0 0))').ST_CENTROID());
+VALUES ST_COMPOUNDSURFACE(ARRAY[ST_POLYFROMTEXT('POLYGON ((0 0, 1 0, 1 1, 0 0))'),
+    ST_POLYFROMTEXT('POLYGON ((0 0, 1 1, 0 1, 0 0))')]).ST_NUMSURFACES();
+VALUES ST_COMPOUNDSURFACE(ARRAY[ST_POLYFROMTEXT('POLYGON ((0 0, 1 0, 1 1, 0 0))'),
+    ST_POLYFROMTEXT('POLYGON ((5 5, 6 5, 6 6, 5 5))')]);
 ```
 
 ```
@@ -536,6 +607,11 @@ VALUES ST_ASTEXT(ST_POLYFROMTEXT('POLYGON ((0 0, 4 0, 4 2, 0 2, 0 0))').ST_CENTR
 --------------------------------------------------------------
  POINT (2 1)
 (1 row)
+
+--------------
+            2
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2FF85): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §8.7.3 Description 4b iii] non-contiguous surfaces
 ```
 
 ## TINs
@@ -873,7 +949,9 @@ A solid has ST_3DVOLUME, ST_3DSURFACEAREA, ST_3DCENTROID and
 ST_3DPOINTONSOLID. A B-rep solid has its exterior and interior shells,
 which ST_ISSHELL tests: a shell is a closed surface whose patches meet
 only along their edges. ST_3DISCLOSED, also spelled ST_IS3DCLOSED as
-the standard spells it too, tests a curve or surface for closure. ST_BREPSOLID makes one of shells. A triangle
+the standard spells it too, tests a curve or surface for closure.
+ST_BREPSOLID makes a B-rep solid of shells, or of its text, GML or WKB
+with an SRID or 0, and with no argument the empty solid. A triangle
 has ST_3DSLOPE, its rise over its run. A TIN has ST_MAXSIDELENGTH,
 which can retriangulate it, and ST_CLIP, which keeps what lies within a
 polygon. `TABLE(ST_TINTABLE(tin))` lists a TIN's points, triangles and
@@ -1102,13 +1180,16 @@ OK
 | 2FF08 | -301 | CAST is given a value Table 4 does not convert, or a value is assigned to a type it is not of |
 | 2FF14 | -301 | A unit is not a linear unit of ST_UNITS_OF_MEASURE, or the SRID's system has no linear unit |
 | 2FF15 | -301 | ST_TRANSFORM cannot move a value to the system of the SRID |
+| 2FF16 | -301 | A cast method is given a value it does not cast that is not empty |
 | 2FF22 | -301 | A text is malformed, a typed constructor reads a value of another type, or ST_BDPOLYFROMTEXT's text is of no multilinestring |
 | 2FF23 | -301 | WKB of a type is malformed, a typed constructor reads a value of another type, or ST_BDPOLYFROMWKB's is of no multilinestring |
 | 2FF24 | -301 | GML is malformed, or a typed constructor reads a value of another type |
+| 2FF25 | -301 | The surfaces of a compound surface are of different coordinate dimensions |
 | 2FF59 | -301 | A unit form is given a value of an SRID no system has |
 | 2FF72 | -301 | A 3D routine of two values is given one without z |
 | 2FF74 | -301 | A TIN element's geometry is not of the type its element type takes |
 | 2FF76, 2FF79, 2FF80 | -301 | ST_CENTER of more than one arc, ST_POINTATDISTANCE beyond a curve's end, ST_DISTANCETOPOINT of a point off it |
+| 2FF85 | -301 | A surface of a compound surface does not meet the one before it in a curve |
 | TB916 | -916 | A stored value or index key is damaged, or of an unknown version |
 
 ## Standard

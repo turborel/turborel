@@ -59,7 +59,7 @@ fn is_wrapper(target: Kind) -> bool {
 
 /// [Table 3 E] The empty value of `target`, none of a type not
 /// instantiable.
-fn empty(target: Kind) -> Option<Body> {
+pub(crate) fn empty(target: Kind) -> Option<Body> {
     Some(match target {
         Kind::Point => Body::Point(Vec::new()),
         Kind::LineString => Body::Curve(Curve::LineString(Vec::new())),

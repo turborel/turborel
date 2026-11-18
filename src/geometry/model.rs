@@ -31,6 +31,7 @@ mod payload;
 mod xy;
 
 pub use cast::cast;
+pub(crate) use cast::empty as empty_body;
 pub use decode::{read_wkb, read_wkb_typed};
 pub use encode::write_wkb;
 pub use kind::*;

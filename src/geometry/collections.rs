@@ -104,7 +104,7 @@ pub fn elements(g: &Geom) -> Option<Vec<Body>> {
 /// # Errors
 ///
 /// SQLSTATE 2FF08 if an element is of no type the collection holds.
-fn collected(of: Kind, bodies: Vec<Body>) -> Result<Collection> {
+pub(super) fn collected(of: Kind, bodies: Vec<Body>) -> Result<Collection> {
     if bodies.iter().any(|b| !b.kind().is_subtype_of(element_kind(of))) {
         return Err(spatial(SqlState::SPATIAL_ELEMENT_IS_NOT_A_VALID_TYPE, &format!("an element is of no type {} holds", of.sql_name())));
     }
@@ -129,8 +129,13 @@ fn linestring(c: Curve) -> Option<Vec<f64>> {
     if let Curve::LineString(p) = c { Some(p) } else { None }
 }
 
+/// The rings of a polygon, or of a triangle as a polygon of its ring.
 fn polygon(s: Surface) -> Option<Vec<Vec<f64>>> {
-    if let Surface::Polygon(r) = s { Some(r) } else { None }
+    match s {
+        Surface::Polygon(r) => Some(r),
+        Surface::Triangle(r) => Some(vec![r]),
+        Surface::CurvePolygon(_) | Surface::PolyhdrlSurface(_) | Surface::Tin(_) | Surface::Compound(_) => None,
+    }
 }
 
 impl CollectionFunction {

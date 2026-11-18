@@ -497,6 +497,8 @@ pub(crate) fn functions() -> Vec<Arc<dyn ScalarFunction>> {
     out.extend(super::SOLID_FUNCTIONS.iter().map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }));
     out.push(Arc::new(super::TinFromTable));
     out.push(Arc::new(super::BRepSolid));
+    out.push(Arc::new(super::solids::CompoundSurface));
+    out.extend(super::conversions::CONVERSIONS.iter().map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }));
     out.extend(super::routines::functions());
     out
 }
