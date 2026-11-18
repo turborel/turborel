@@ -4,7 +4,7 @@
 //! parameters of the parametric curves (§7.6 to §7.9) and the parts of a
 //! compound curve (§7.10).
 
-use super::{Observer, Parameter, Returns, Warned, array, double, found, int, number, part, signature, truth, whole};
+use super::{Observer, Parameter, Returns, Unit, Warned, array, double, found, int, number, part, signature, truth, whole};
 use crate::error::{Result, SqlState};
 use crate::geometry::model::{Dims, Geom, Kind};
 use crate::geometry::representations::spatial;
@@ -96,6 +96,14 @@ impl Observer for CurveMethod {
 
     fn warns(self) -> bool {
         false
+    }
+
+    fn unit(self) -> Unit {
+        match self {
+            Self::DistanceToPoint => Unit::Result,
+            Self::PointAtDistance => Unit::Argument,
+            Self::StartPoint | Self::EndPoint | Self::IsClosed | Self::CurveToLine | Self::PerpPoints => Unit::None,
+        }
     }
 
     fn of(self, g: &Geom, value: &Geometry, rest: &[Value]) -> Result<Warned> {
@@ -242,6 +250,10 @@ impl Observer for PointListMethod {
         matches!(self, Self::PointN | Self::SegmentN)
     }
 
+    fn unit(self) -> Unit {
+        if self == Self::Radius { Unit::Result } else { Unit::None }
+    }
+
     fn of(self, g: &Geom, value: &Geometry, rest: &[Value]) -> Result<Warned> {
         let points = points_of(value, self.name())?;
         let point = |p: Coord| part(g, g.dims, Body::Point(Some(p)));
@@ -296,6 +308,10 @@ pub enum ParameterMethod {
     StartM,
     /// [§7.6.9, §7.7.7, §7.8.8, §7.9.9] ST_EndM().
     EndM,
+    /// [§7.6.4] ST_UAxisLength().
+    UAxisLength,
+    /// [§7.6.5] ST_VAxisLength().
+    VAxisLength,
     /// [§7.7.3] ST_Degree().
     Degree,
     /// [§7.8.4] ST_ScaleFactor().
@@ -313,9 +329,11 @@ pub enum ParameterMethod {
 }
 
 /// The parameters of the parametric curves.
-pub const PARAMETER_METHODS: [ParameterMethod; 9] = [
+pub const PARAMETER_METHODS: [ParameterMethod; 11] = [
     ParameterMethod::StartM,
     ParameterMethod::EndM,
+    ParameterMethod::UAxisLength,
+    ParameterMethod::VAxisLength,
     ParameterMethod::Degree,
     ParameterMethod::ScaleFactor,
     ParameterMethod::StartDistance,
@@ -330,6 +348,8 @@ impl Observer for ParameterMethod {
         match self {
             Self::StartM => "ST_STARTM",
             Self::EndM => "ST_ENDM",
+            Self::UAxisLength => "ST_UAXISLENGTH",
+            Self::VAxisLength => "ST_VAXISLENGTH",
             Self::Degree => "ST_DEGREE",
             Self::ScaleFactor => "ST_SCALEFACTOR",
             Self::StartDistance => "ST_STARTDISTANCE",
@@ -350,6 +370,8 @@ impl Observer for ParameterMethod {
             Self::SpiralType => Returns::Text,
             Self::StartM
             | Self::EndM
+            | Self::UAxisLength
+            | Self::VAxisLength
             | Self::ScaleFactor
             | Self::StartDistance
             | Self::EndDistance
@@ -360,6 +382,15 @@ impl Observer for ParameterMethod {
 
     fn warns(self) -> bool {
         false
+    }
+
+    fn unit(self) -> Unit {
+        match self {
+            Self::UAxisLength | Self::VAxisLength | Self::StartDistance | Self::EndDistance => Unit::Result,
+            Self::StartM | Self::EndM | Self::Degree | Self::ScaleFactor | Self::StartCurvature | Self::EndCurvature | Self::SpiralType => {
+                Unit::None
+            }
+        }
     }
 
     fn of(self, _: &Geom, value: &Geometry, _: &[Value]) -> Result<Warned> {
@@ -375,6 +406,8 @@ impl Observer for ParameterMethod {
             (Self::StartM, _) => double(measures.flatten().map(|[start, _]| start)),
             (Self::EndM, _) => double(measures.flatten().map(|[_, end]| end)),
             (Self::Degree, Curve::Nurbs(n)) => n.as_ref().map_or(Value::Null, |n| int(usize::try_from(n.degree).unwrap_or(usize::MAX))),
+            (Self::UAxisLength, Curve::Elliptical(e)) => double(e.as_ref().map(|e| e.u_axis)),
+            (Self::VAxisLength, Curve::Elliptical(e)) => double(e.as_ref().map(|e| e.v_axis)),
             (Self::ScaleFactor, Curve::Clothoid(k)) => double(k.as_ref().map(|k| k.scale)),
             (Self::StartDistance, Curve::Clothoid(k)) => double(k.as_ref().map(|k| k.start)),
             (Self::EndDistance, Curve::Clothoid(k)) => double(k.as_ref().map(|k| k.end)),
@@ -382,7 +415,9 @@ impl Observer for ParameterMethod {
             (Self::EndCurvature, Curve::Spiral(s)) => double(s.as_ref().map(|s| s.end_curvature)),
             (Self::SpiralType, Curve::Spiral(s)) => s.as_ref().map_or(Value::Null, |s| Value::Char(s.kind.name().to_owned())),
             (
-                Self::Degree
+                Self::UAxisLength
+                | Self::VAxisLength
+                | Self::Degree
                 | Self::ScaleFactor
                 | Self::StartDistance
                 | Self::EndDistance

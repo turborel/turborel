@@ -217,7 +217,7 @@ fn the_spatial_information_schema() {
     );
     let units = "SELECT UNIT_NAME FROM ST_INFORMTN_SCHEMA.ST_UNITS_OF_MEASURE WHERE CONVERSION_FACTOR = 1 ORDER BY UNIT_NAME";
     assert_eq!(rows(&a, units).unwrap(), ["METRE", "RADIAN"]);
-    let sizings = "SELECT SUPPORTED_VALUE FROM ST_INFORMTN_SCHEMA.ST_SIZINGS WHERE VARIABLE_NAME IN ('ST_MaxTypeNameLength', 'ST_MaxGeometryAsGML') ORDER BY VARIABLE_NAME";
+    let sizings = "SELECT SUPPORTED_VALUE FROM ST_INFORMTN_SCHEMA.ST_SIZINGS WHERE VARIABLE_NAME IN ('ST_MaxTypeNameLength', 'ST_MaxLEMeasureArrayElements') ORDER BY VARIABLE_NAME";
     assert_eq!(rows(&a, sizings).unwrap(), ["NULL", "32"]);
     assert_eq!(rows(&a, "SELECT * FROM ST_DEFINITION_SCHEMA.ST_SIZINGS").unwrap_err(), Code::SyntaxRule);
     let listed = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'ST_INFORMTN_SCHEMA' ORDER BY TABLE_NAME";

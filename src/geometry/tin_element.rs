@@ -1,9 +1,11 @@
 //! [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §17.1] The ST_TINElement type:
 //! a TIN element's type, identifier, tag and geometry, which ST_TIN is
 //! built from and ST_TINElements returns. Built in as a kind of type of
-//! its own (RULES.md D53), its value a version octet, the identifier, the
-//! type and the tag each after its length, and then the geometry's
-//! payload. It has no ordering, so no key [§17.1.1].
+//! its own (RULES.md D53), its value a version octet, an octet of the
+//! parts it has, then of those the identifier, the type and the tag each
+//! after its length, and the geometry's payload. The constructor
+//! function's value has none, the empty set [§17.1.1 Description 3]. It
+//! has no ordering, so no key [§17.1.1].
 
 use std::cmp::Ordering;
 use std::sync::Arc;
@@ -66,6 +68,12 @@ fn takes(kind: ElementKind) -> (Kind, bool) {
     }
 }
 
+/// The flags of the parts a payload holds.
+const HAS_TYPE: u8 = 1;
+const HAS_ID: u8 = 2;
+const HAS_TAG: u8 = 4;
+const HAS_GEOMETRY: u8 = 8;
+
 /// [§17.1.2] The element of type `element_type`, identifier `id`, tag
 /// `tag` and geometry `g`, checked.
 ///
@@ -74,54 +82,69 @@ fn takes(kind: ElementKind) -> (Kind, bool) {
 /// SQLSTATE 2FF02 of an unknown type or a tag longer than 64
 /// characters; 2FF74 of a geometry the type does not take.
 pub fn element(element_type: &str, id: i32, tag: &str, g: &Geom) -> Result<Value> {
-    let kind = ElementKind::from_name(element_type.trim())
-        .ok_or_else(|| spatial(SqlState::SPATIAL_INVALID_ARGUMENT, "§17.1.2", &format!("'{element_type}' is no TIN element type")))?;
-    if tag.chars().count() > TAG_LENGTH {
-        return Err(spatial(SqlState::SPATIAL_INVALID_ARGUMENT, "§17.1.2", "the tag is longer than 64 characters"));
-    }
+    Parts { element_type: Some(element_type.to_owned()), id: Some(id), tag: Some(tag.to_owned()), geometry: Some(g.clone()) }.to_value()
+}
+
+/// [§17.1.1 Description 3] The value the constructor function returns,
+/// the empty set.
+pub fn empty() -> Value {
+    Value::Extension(ExtensionValue { kind: &TIN_ELEMENT_TYPE, bytes: Arc::from(vec![VERSION, 0]) })
+}
+
+/// The kind of element type `name`.
+fn kind_of(name: &str) -> Result<ElementKind> {
+    ElementKind::from_name(name.trim())
+        .ok_or_else(|| spatial(SqlState::SPATIAL_INVALID_ARGUMENT, "§17.1.2", &format!("'{name}' is no TIN element type")))
+}
+
+/// [§17.1.2 Description 2a, §17.1.6 Description 4c] That `g` is of the
+/// geometry type the element type `kind` takes.
+fn check(kind: ElementKind, g: &Geom) -> Result<()> {
     let (wanted, z) = takes(kind);
     if g.kind() != wanted || (z && !g.dims.has_z()) {
         let msg = format!("a {} element is of an {}{}", kind.name(), wanted.sql_name(), if z { " with z" } else { "" });
         return Err(spatial(SqlState::SPATIAL_INVALID_GEOMETRY, "§17.1.2 Description 2a", &msg));
     }
-    let name = kind.name().as_bytes();
-    let mut bytes = vec![VERSION];
-    bytes.extend_from_slice(&id.to_le_bytes());
-    for part in [name, tag.as_bytes()] {
-        bytes.push(u8::try_from(part.len()).map_err(|_| spatial(SqlState::SPATIAL_INVALID_ARGUMENT, "§17.1.2", "a name too long"))?);
-        bytes.extend_from_slice(part);
-    }
-    bytes.extend_from_slice(&g.encode());
-    Ok(Value::Extension(ExtensionValue { kind: &TIN_ELEMENT_TYPE, bytes: bytes.into() }))
+    Ok(())
 }
 
-/// An element's parts, as its payload holds them.
-#[derive(Debug, Clone)]
+/// An element's parts, as its payload holds them; none of each it has
+/// not been given.
+#[derive(Debug, Clone, Default)]
 pub struct Parts {
     /// Its type's name.
-    pub element_type: String,
+    pub element_type: Option<String>,
     /// Its identifier.
-    pub id: i32,
+    pub id: Option<i32>,
     /// Its tag.
-    pub tag: String,
+    pub tag: Option<String>,
     /// Its geometry.
-    pub geometry: Geom,
+    pub geometry: Option<Geom>,
 }
 
 impl Parts {
     /// The parts of payload `bytes`, if they are one.
     fn of(bytes: &[u8]) -> Option<Parts> {
         let (&VERSION, rest) = bytes.split_first()? else { return None };
-        let id = i32::from_le_bytes(rest.get(..ID_BYTES)?.try_into().ok()?);
-        let mut rest = rest.get(ID_BYTES..)?;
-        let mut text = || -> Option<String> {
+        let (&flags, mut rest) = rest.split_first()?;
+        let id = if flags & HAS_ID == 0 {
+            None
+        } else {
+            let (id, after) = rest.split_at_checked(ID_BYTES)?;
+            rest = after;
+            Some(i32::from_le_bytes(id.try_into().ok()?))
+        };
+        let mut text = |flag: u8| -> Option<Option<String>> {
+            if flags & flag == 0 {
+                return Some(None);
+            }
             let (&n, after) = rest.split_first()?;
             let (s, after) = after.split_at_checked(usize::from(n))?;
             rest = after;
-            String::from_utf8(s.to_vec()).ok()
+            String::from_utf8(s.to_vec()).ok().map(Some)
         };
-        let (element_type, tag) = (text()?, text()?);
-        let geometry = Geom::decode(rest).ok()?;
+        let (element_type, tag) = (text(HAS_TYPE)?, text(HAS_TAG)?);
+        let geometry = if flags & HAS_GEOMETRY == 0 { rest.is_empty().then_some(None)? } else { Some(Geom::decode(rest).ok()?) };
         Some(Parts { element_type, id, tag, geometry })
     }
 
@@ -136,26 +159,63 @@ impl Parts {
         })
     }
 
-    /// The element of the parts.
+    /// [§17.1.7] Whether it is the empty set the constructor function
+    /// returns: it has none of its parts.
+    pub fn is_empty(&self) -> bool {
+        self.element_type.is_none() && self.id.is_none() && self.tag.is_none() && self.geometry.is_none()
+    }
+
+    /// The element of the parts, checked: its type is one of §17.1.1
+    /// Description 4, its tag no longer than 64 characters, and its
+    /// geometry of the type its type takes.
     ///
     /// # Errors
     ///
-    /// As `element`.
+    /// SQLSTATE 2FF02 of an unknown type or a tag too long; 2FF74 of a
+    /// geometry the type does not take.
     pub fn to_value(&self) -> Result<Value> {
-        element(&self.element_type, self.id, &self.tag, &self.geometry)
+        let kind = self.element_type.as_deref().map(kind_of).transpose()?;
+        if let (Some(kind), Some(g)) = (kind, &self.geometry) {
+            check(kind, g)?;
+        }
+        if self.tag.as_ref().is_some_and(|t| t.chars().count() > TAG_LENGTH) {
+            return Err(spatial(SqlState::SPATIAL_INVALID_ARGUMENT, "§17.1.2", "the tag is longer than 64 characters"));
+        }
+        let flags = [
+            (self.element_type.is_some(), HAS_TYPE),
+            (self.id.is_some(), HAS_ID),
+            (self.tag.is_some(), HAS_TAG),
+            (self.geometry.is_some(), HAS_GEOMETRY),
+        ]
+        .into_iter()
+        .fold(0_u8, |all, (has, flag)| if has { all | flag } else { all });
+        let mut bytes = vec![VERSION, flags];
+        if let Some(id) = self.id {
+            bytes.extend_from_slice(&id.to_le_bytes());
+        }
+        let name = kind.map(ElementKind::name);
+        for part in [name, self.tag.as_deref()].into_iter().flatten() {
+            bytes.push(u8::try_from(part.len()).map_err(|_| spatial(SqlState::SPATIAL_INVALID_ARGUMENT, "§17.1.2", "a name too long"))?);
+            bytes.extend_from_slice(part.as_bytes());
+        }
+        if let Some(g) = &self.geometry {
+            bytes.extend_from_slice(&g.encode());
+        }
+        Ok(Value::Extension(ExtensionValue { kind: &TIN_ELEMENT_TYPE, bytes: bytes.into() }))
     }
 
     /// The parts of the model's element `e` of the TIN `tin`.
     pub fn of_model(e: &TinElement, tin: &Geom) -> Parts {
         let geometry = Geom { srid: tin.srid, dims: tin.dims, body: ModelBody::clone(&e.geometry) };
-        Parts { element_type: e.element_type.clone(), id: e.id, tag: e.tag.clone(), geometry }
+        Parts { element_type: Some(e.element_type.clone()), id: Some(e.id), tag: Some(e.tag.clone()), geometry: Some(geometry) }
     }
 
-    /// The element as the well-known text of a TIN writes it.
+    /// The element as the well-known text of a TIN writes it, of an
+    /// element with a type and a geometry.
     fn text(&self) -> String {
-        let keyword = ElementKind::from_name(&self.element_type).map_or("", ElementKind::keyword);
-        let geometry = wkt::write_geom(&self.geometry).unwrap_or_default();
-        format!("{keyword} ID {} TAG \"{}\" {geometry}", self.id, self.tag)
+        let keyword = self.element_type.as_deref().and_then(ElementKind::from_name).map_or("", ElementKind::keyword);
+        let geometry = self.geometry.as_ref().map(|g| wkt::write_geom(g).unwrap_or_default()).unwrap_or_default();
+        format!("{keyword} ID {} TAG \"{}\" {geometry}", self.id.unwrap_or(0), self.tag.as_deref().unwrap_or_default())
     }
 }
 

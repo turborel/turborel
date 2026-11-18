@@ -2175,8 +2175,8 @@ when declared, with SQLCODE -103.
 | Validity and simplicity | §5.1.8, §5.1.10, §7.1.8 | ST_IsValid, ST_IsSimple and ST_IsRing. |
 | Measures | §5.1.41, §7.1.2, §8.1.2 to §8.1.8, §10.3.5, §10.5.3 to §10.5.9 | ST_Area, ST_Length, ST_Perimeter (each with a unit form), ST_Centroid, ST_PointOnSurface and ST_Distance with a unit. Values with arcs or other curves are measured exactly by the curve engine (RULES.md D-SPATIAL-CURVES), linear ones by the planar engine. |
 | Polygons from rings | §8.3.9, §10.6.7 | ST_BdPolyFromText, ST_BdPolyFromWKB, ST_BdMPolyFromText and ST_BdMPolyFromWKB. The standard has no GML forms of them. |
-| Curves | §7 | The routines of the nine curve kinds (`src/geometry/observers.rs`, RULES.md D-SPATIAL-CURVES). Not built are the routines returning ST_Vector (ST_BulgeNormal, ST_Normal and the axis vectors), ST_AffinePlacement (ST_RefLocation), arrays of ST_NURBSPoint and ST_Knot (ST_ControlPoints, ST_Knots) and ST_Angle (ST_StartAngle, ST_EndAngle), and the unit forms of ST_DistanceToPoint, ST_PointAtDistance and ST_PerpPoints. |
-| Surfaces and TINs | §8, §17.1 | The routines of the six surface kinds, ST_TIN of elements and of triangles, ST_TINElements as an observer, and the ST_TINElement type with its observers and mutators (`src/geometry/tins.rs`, `src/geometry/tin_element.rs`). ST_TINElements as a mutator and ST_IsEmpty of an element are not built. |
+| Curves | §7 | The routines of the nine curve kinds (`src/geometry/observers.rs`, RULES.md D-SPATIAL-CURVES), with the unit forms the clause gives, ST_DistanceToPoint's and ST_PointAtDistance's among them. ST_PerpPoints has none [§7.1.15]. ST_BulgeNormal and ST_Normal return ST_Vector values, ST_StartAngle and ST_EndAngle ST_Angle values, ST_RefLocation an ST_AffinePlacement whose reference directions are the axis vectors, and ST_ControlPoints and ST_Knots arrays of ST_NURBSPoint and ST_Knot (`src/geometry/observers/records.rs`). The mutators of a curve's attributes, such as ST_UAxisLength(DOUBLE PRECISION), are not built. |
+| Surfaces and TINs | §8, §17.1 | The routines of the six surface kinds, ST_TIN of elements and of triangles, ST_TINElements as an observer and a mutator, and the ST_TINElement type with its empty constructor, observers, mutators and ST_IsEmpty (`src/geometry/tins.rs`, `src/geometry/tin_element.rs`). |
 | Locating by measure | §5.1.13 to §5.1.16 | ST_LocateAlong and ST_LocateBetween, and their 3D forms. |
 | Routines in space | §5.1, §8, §9 | The 3D relationships, set operations, distance, measures, boundary, simplicity and closure, the shells of a solid, ST_MaxSideLength, ST_Clip and ST_TINTable (`src/geometry/solids.rs`, RULES.md D-SPATIAL-SOLIDS). ST_BRepSolid's constructors from surfaces [§9.2.2] and the routines of ST_CompoundSurface beyond measures over its patches are not built. |
 | Table functions | §8.6, §11, §12, §13 | The mechanism of RULES.md D-SPATIAL-ROUTINES. ST_TINTable, the topology and network checks and the shortest paths use it. |
@@ -2414,7 +2414,7 @@ angle and direction engine of §16 computes them (`src/spatial/srs`).
 | Large objects | §5.1.4, §5.1.5, §5.1.62, §5.1.63 | ST_GEOMFROMTEXT takes a CLOB and ST_GEOMFROMWKB a BLOB, each read whole up to 16 MiB. ST_AsText returns a CLOB and ST_AsBinary a BLOB, up to 16 MiB. |
 | ST_SpatialRefSys | §14.1 | Built, with its constructors of a definition and of an SRID, ST_WKTSRSToSQL, ST_SRID, ST_AsWKTSRS and ST_Equals. EQUALS ONLY by ST_OrderingEquals. A definition takes the SRID of a system supplied or defined with the same text. |
 | ST_Angle, ST_Direction | §16.1, §16.2 | Built, with every constructor, observer, mutator, method and function of both. ORDER FULL by ST_OrderingCompare, so `<`, ORDER BY, GROUP BY, MAX and an index work on them. |
-| ST_TINElement | §17.1 | Built, with its constructors, observers and mutators. ST_IsEmpty of an element is not built. |
+| ST_TINElement | §17.1 | Built, with its constructors, the empty one among them, its observers, mutators and ST_IsEmpty. |
 | ST_Vector | §17.2 | Built, with its constructors, observers, mutators and its text, WKB and GML routines. EQUALS ONLY by ST_OrderingEquals. |
 | ST_AffinePlacement, ST_NURBSPoint, ST_Knot | §17.3 to §17.5 | Built, with their constructors, observers, mutators and ST_IsEmpty, and ST_Transform of a placement. They declare no ordering, so nothing compares them. They are also read and written as parts of a curve's text and binary forms. |
 | Transform groups and casts | §14.1.8, §16.1.20, §16.2.22, §17.2.21 | Each group is a CAST: the well-known text to and from a character string, an angle's or a direction's radians to and from a number, a vector's WKB to and from a binary string. The GML groups are the types' GML routines. INFORMATION_SCHEMA.TRANSFORMS shows none, as a built-in type is no user-defined type. |
@@ -2756,6 +2756,7 @@ of ST_DEFINITION_SCHEMA (RULES.md D-SPATIAL-CATALOG).
 | Sizing [Annex A.1] | turborel |
 |---|---|
 | ST_MaxGeometryAsText, ST_MaxGeometryAsBinary | 16 MiB |
+| ST_MaxGeometryAsGML | 16777216 characters, the text limit; a longer GML representation, written or read, raises 22001 |
 | ST_MaxTopologyName | 128, the identifier length |
 | ST_MaxNetworkName | 128, the identifier length |
 | ST_MaxTopologyOrNetworkName | 128, the lesser of the topology and network name limits |

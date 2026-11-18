@@ -60,6 +60,6 @@ pub(super) fn area_in(value: f64, (srid, systems): (i32, Systems<'_>), name: &st
 
 /// A length `value` in the unit `name` as numbers of a value of SRID
 /// `srid`, which a buffer's distance is.
-pub(super) fn length_of(value: f64, (srid, systems): (i32, Systems<'_>), name: &str) -> Result<f64> {
+pub(in super::super) fn length_of(value: f64, (srid, systems): (i32, Systems<'_>), name: &str) -> Result<f64> {
     Ok(units::convert(value, metres_per(name)?, metres_per_unit(srid, systems)?))
 }

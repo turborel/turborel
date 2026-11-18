@@ -475,7 +475,9 @@ each type's FromGML read it. A value's SRID is written as the srsName
 of its reference system, the organization and its identifier there, or
 else the system's definition. A reader finds the SRID of an srsName
 among the systems of the Spatial Information Schema. ST_GEOMFROMGML
-and the typed readers take an SRID too, which replaces it. GML has no M
+and the typed readers take an SRID too, which replaces it. A GML
+representation is at most ST_MaxGeometryAsGML characters, 16777216,
+and a longer one, written or read, raises 22001. GML has no M
 coordinate, so a value's measures are left out:
 
 ```sql
@@ -513,15 +515,21 @@ warning 01F01 where there is none.
 | `ST_STARTPOINT()`, `ST_ENDPOINT()` | ST_Curve | Its first or last point |
 | `ST_ISCLOSED()`, `ST_ISRING()` | ST_Curve | INTEGER 1 if its ends meet, and if it is also simple |
 | `ST_CURVETOLINE()` | ST_Curve | Its linear form, an ST_LineString |
-| `ST_POINTATDISTANCE(d)` | ST_Curve | The point `d` along it; 2FF79 beyond its end |
-| `ST_DISTANCETOPOINT(p)` | ST_Curve | How far along it `p` lies; 2FF80 off it |
+| `ST_POINTATDISTANCE(d [, unit])` | ST_Curve | The point `d` along it; 2FF79 beyond its end |
+| `ST_DISTANCETOPOINT(p [, unit])` | ST_Curve | How far along it `p` lies; 2FF80 off it |
 | `ST_PERPPOINTS(p)` | ST_Curve | The perpendicular projections of `p` on it, a point, a curve or a collection |
 | `ST_POINTS()`, `ST_NUMPOINTS()`, `ST_POINTN(n)` | ST_LineString, ST_CircularString, ST_GeodesicString, ST_Circle | Its points, their count, the `n`th |
 | `ST_NUMSEGMENTS()`, `ST_SEGMENTN(n)`, `ST_MIDPOINTREP()` | ST_CircularString | Its arcs' count, the `n`th arc, its points with each arc's middle |
-| `ST_CENTER()`, `ST_RADIUS()`, `ST_BULGE()` | ST_CircularString of one arc, ST_Circle | Its center, radius or signed bulge; 2FF76 of more arcs |
+| `ST_CENTER()`, `ST_RADIUS([unit])`, `ST_BULGE()` | ST_CircularString of one arc, ST_Circle | Its center, radius or signed bulge; 2FF76 of more arcs |
+| `ST_STARTANGLE()`, `ST_ENDANGLE()`, `ST_BULGENORMAL()` | ST_CircularString of one arc | The angles of its ends about its center, ST_Angle values, and the normal of its bulge, an ST_Vector; 2FF76 of more arcs |
+| `ST_NORMAL()` | ST_Circle | The normal of its plane, an ST_Vector |
 | `ST_STARTM()`, `ST_ENDM()` | ST_EllipticalCurve, ST_NURBSCurve, ST_Clothoid, ST_SpiralCurve | Its first or last measure |
+| `ST_UAXISLENGTH([unit])`, `ST_VAXISLENGTH([unit])` | ST_EllipticalCurve | Its axis lengths |
+| `ST_STARTANGLE()`, `ST_ENDANGLE()` | ST_EllipticalCurve | Its start and end angles, ST_Angle values |
+| `ST_REFLOCATION()` | ST_EllipticalCurve, ST_Clothoid, ST_SpiralCurve | Its placement, an ST_AffinePlacement whose reference directions are its axis vectors |
 | `ST_DEGREE()` | ST_NURBSCurve | Its degree |
-| `ST_SCALEFACTOR()`, `ST_STARTDISTANCE()`, `ST_ENDDISTANCE()` | ST_Clothoid | Its parameters |
+| `ST_CONTROLPOINTS()`, `ST_KNOTS()` | ST_NURBSCurve | Its control points, an ARRAY of ST_NURBSPoint, and its knots, an ARRAY of ST_Knot |
+| `ST_SCALEFACTOR()`, `ST_STARTDISTANCE([unit])`, `ST_ENDDISTANCE([unit])` | ST_Clothoid | Its parameters |
 | `ST_STARTCURVATURE()`, `ST_ENDCURVATURE()`, `ST_SPIRALTYPE()` | ST_SpiralCurve | Its parameters |
 | `ST_CURVES()`, `ST_NUMCURVES()`, `ST_CURVEN(n)` | ST_CompoundCurve | Its parts, their count, the `n`th |
 
@@ -551,6 +559,58 @@ OK
  NULL
 (1 row, with a warning: SQLSTATE 01F01)
 OK
+```
+
+A unit form takes the name of a linear unit of ST_UNITS_OF_MEASURE
+last, as the measures of [Validity and measures](#validity-and-measures)
+do. Its length, or the distance it is given, is in that unit, converted
+from the unit of the value's SRID, the metre for SRID 0:
+
+```sql
+VALUES ST_LINEFROMTEXT('LINESTRING (0 0, 1000 0)').ST_DISTANCETOPOINT(ST_POINT(250, 0), 'KILOMETRE');
+VALUES ST_ASTEXT(ST_LINEFROMTEXT('LINESTRING (0 0, 1000 0)').ST_POINTATDISTANCE(5E-1, 'KILOMETRE'));
+VALUES ST_CIRCLEFROMTXT('CIRCLE (0 0, 1000 1000, 2000 0)').ST_RADIUS('KILOMETRE');
+```
+
+```
+
+--------------------------
+                   2.5E-1
+(1 row)
+
+--------------------------------------------------------------
+ POINT (500 0)
+(1 row)
+
+--------------------------
+                      1E0
+(1 row)
+```
+
+The curves' angles, vectors, placements, control points and knots are
+values of the types of [Systems, angles, directions and
+vectors](#systems-angles-directions-and-vectors), whose methods observe
+them:
+
+```sql
+VALUES CAST(ST_CIRCULARFROMTXT('CIRCULARSTRING (1 0, 0 1, -1 0)').ST_ENDANGLE().ST_DEGREES() AS DECIMAL(6, 2));
+VALUES ST_ASTEXT(ST_CLOTHOIDFROMTXT('CLOTHOID (REFERENCELOCATION AFFINEPLACEMENT (LOCATION (1 2), REFERENCEDIRECTIONS (VECTOR (0 1), VECTOR (-1 0))), SCALEFACTOR 10, STARTDISTANCE 0, ENDDISTANCE 5)').ST_REFLOCATION().ST_LOCATION());
+VALUES ST_NURBSFROMTXT('NURBSCURVE (DEGREE 2, CONTROLPOINTS (NURBSPOINT (WEIGHTEDPOINT (0 0), WEIGHT 1), NURBSPOINT (WEIGHTEDPOINT (2 2), WEIGHT 2), NURBSPOINT (WEIGHTEDPOINT (2 0), WEIGHT 1)), KNOTS (KNOT (VALUE 0, MULTIPLICITY 3), KNOT (VALUE 1, MULTIPLICITY 3)))').ST_CONTROLPOINTS()[2].ST_WEIGHT();
+```
+
+```
+
+----------
+   180.00
+(1 row)
+
+--------------------------------------------------------------
+ POINT (1 2)
+(1 row)
+
+--------------------------
+                      2E0
+(1 row)
 ```
 
 ## Surfaces
@@ -626,17 +686,23 @@ they are.
 | Routine | Result |
 |---|---|
 | `ST_TINELEMENT(type, [id,] tag, geometry)` | An element, its type one of `random points`, `group spot`, `boundary`, `breakline`, `soft break`, `control contour`, `break void`, `drape void`, `void`, `hole` and `stop line`; 2FF74 of a geometry the type does not take |
+| `ST_TINELEMENT()` | The empty element, whose parts are NULL until a mutator gives them |
 | `ST_ELEMENTTYPE(e)`, `ST_ELEMENTID(e)`, `ST_ELEMENTTAG(e)`, `ST_ELEMENTGEOMETRY(e)` | Its parts, and of a second argument the element with that part replaced |
+| `e.ST_ISEMPTY()` | INTEGER 1 if the element is empty, 0 else |
 | `ST_TIN(elements, max_side [, srid])` | The triangulation of an ARRAY of elements |
 | `ST_TIN(triangles, elements, max_side [, srid])` | The TIN of an ARRAY of triangles and one of elements |
 | `tin.ST_TINELEMENTS()`, `tin.ST_MAXSIDELENGTH()` | Its elements, an ARRAY, and its maximum side length |
+| `tin.ST_TINELEMENTS(elements, triangulate)` | The TIN with an ARRAY of elements in place of its own, its triangles those of their triangulation if `triangulate` is 1; 2FF10 of an element of another SRID |
 
 ```sql
 VALUES ST_TIN(ARRAY[ST_TINELEMENT('random points', 'spots',
     ST_MPOINTFROMTEXT('MULTIPOINT Z ((0 0 0), (4 0 1), (4 4 2), (0 4 3), (2 2 5))'))], 0E0).ST_NUMPATCHES();
 VALUES ST_ELEMENTTAG(ST_TIN(ARRAY[ST_TINELEMENT('random points', 'spots',
     ST_MPOINTFROMTEXT('MULTIPOINT Z ((0 0 0), (4 0 1), (4 4 2))'))], 0E0).ST_TINELEMENTS()[1]);
+VALUES ST_TINFROMTEXT('TIN Z (PATCHES ((0 0 0, 1 0 0, 0 1 0)))').ST_TINELEMENTS(ARRAY[ST_TINELEMENT('random points', 'spots',
+    ST_MPOINTFROMTEXT('MULTIPOINT Z ((0 0 0), (4 0 1), (4 4 2), (0 4 3), (2 2 5))'))], 1).ST_NUMPATCHES();
 VALUES ST_TINELEMENT('breakline', 'edge', ST_LINEFROMTEXT('LINESTRING (0 0, 1 1)'));
+VALUES ST_TINELEMENT().ST_ISEMPTY(), ST_TINELEMENT().ST_ELEMENTTAG('t').ST_ISEMPTY();
 ```
 
 ```
@@ -648,7 +714,16 @@ VALUES ST_TINELEMENT('breakline', 'edge', ST_LINEFROMTEXT('LINESTRING (0 0, 1 1)
 --------------------------------------------------------------
  spots
 (1 row)
+
+--------------
+            4
+(1 row)
 turborel: SQLCODE -301 (SQLSTATE 2FF74): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §17.1.2 Description 2a] a breakline element is of an ST_LineString with z
+
+--------------
+            1
+            0
+(2 rows)
 ```
 
 ## Measures

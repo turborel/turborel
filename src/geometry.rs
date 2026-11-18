@@ -39,13 +39,22 @@ pub use ordering::{EQUALITY, ORDERING_EQUALS, OrderingEquals};
 pub use procedures::{CatalogProcedure, procedures};
 pub use reference::data_type_with_srid;
 pub(crate) use reference::fixed_srid;
+pub use representations::MAX_GEOMETRY_AS_GML;
 use shape::Shape;
 pub use solids::{BRepSolid, SOLID_FUNCTIONS, SolidFunction, TinFromTable, TinTable, table_functions};
 pub use tin_element::kind as tin_element_kind;
 
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::spatial::{Bounds, DIMENSIONS};
-use crate::value::Value;
+use crate::value::{DataType, Value};
+
+/// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §17.1.7] The method
+/// ST_IsEmpty() of an ST_TINElement value, if `t` is its type, which a function of the name, the geometry types', does not take.
+pub fn tin_element_is_empty(t: &DataType) -> Option<std::sync::Arc<dyn crate::functions::ScalarFunction>> {
+    let DataType::Extension(e) = t else { return None };
+    (e.kind.name() == tin_element::ST_TINELEMENT)
+        .then(|| -> std::sync::Arc<dyn crate::functions::ScalarFunction> { std::sync::Arc::new(tins::TinRoutine::IsEmpty) })
+}
 
 /// Maximum nesting, including the outer geometry (RULES.md R-CF-6).
 pub const MAX_DEPTH: usize = 16;

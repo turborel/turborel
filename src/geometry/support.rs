@@ -231,6 +231,39 @@ pub fn vector_value(x: Option<f64>, y: Option<f64>, z: Option<f64>) -> Value {
     values::Vector { x, y, z, srid: 0 }.value()
 }
 
+/// [§17.2] The ST_Vector value of coordinates `x`, `y` and `z`, of SRID
+/// `srid`.
+pub fn vector_in(x: f64, y: f64, z: Option<f64>, srid: i32) -> Value {
+    values::Vector { x: Some(x), y: Some(y), z, srid }.value()
+}
+
+/// [§16.1] The ST_Angle value of `radians`.
+pub fn angle_value(radians: f64) -> Value {
+    values::angle_value(crate::spatial::srs::angle::Angle::new(radians))
+}
+
+/// [§17.3] The ST_AffinePlacement value of a location, an ST_Point's
+/// payload, and reference directions, ST_Vector values.
+///
+/// # Errors
+///
+/// SQLCODE -301 if a direction is no ST_Vector value.
+pub fn placement_value(location: Vec<u8>, directions: &[Value]) -> crate::error::Result<Value> {
+    let directions = directions.iter().map(values::Vector::of).collect::<crate::error::Result<Vec<_>>>()?;
+    Ok(values::Placement { location: Some(location), directions: Some(directions) }.value())
+}
+
+/// [§17.4] The ST_NURBSPoint value of a weighted point, an ST_Point's
+/// payload, and its weight.
+pub fn nurbs_point_value(point: Vec<u8>, weight: Option<f64>) -> Value {
+    values::NurbsPoint { point: Some(point), weight }.value()
+}
+
+/// [§17.5] The ST_Knot value of a knot value and its multiplicity.
+pub fn knot_value(value: f64, multiplicity: i32) -> Value {
+    values::Knot { value: Some(value), multiplicity: Some(multiplicity) }.value()
+}
+
 /// [Annex A.1] The meta-variables of the types' sizes: each name, value
 /// and description, as ST_SIZINGS shows them [§20.5].
 pub fn sizings() -> Vec<(&'static str, Option<i64>, &'static str)> {

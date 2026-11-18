@@ -3,7 +3,8 @@
 //! constructors, observers and mutators, the ST_TIN constructors of
 //! triangles and of elements, which the constrained Delaunay
 //! triangulation of `crate::spatial::curves::tin` builds, and
-//! ST_TINElements (RULES.md D-SPATIAL-CURVES).
+//! ST_TINElements, its observer and its mutator (RULES.md
+//! D-SPATIAL-CURVES).
 
 use std::sync::Arc;
 
@@ -35,8 +36,13 @@ pub enum TinRoutine {
     /// [§8.6.2] ST_TIN(triangles, elements, maxsidelength [, srid]) and
     /// ST_TIN(elements, maxsidelength [, srid]).
     Tin,
-    /// [§8.6.3] ST_TINElements().
+    /// [§8.6.3] ST_TINElements() and ST_TINElements(elements,
+    /// triangulate).
     Elements,
+    /// [§17.1.7] ST_IsEmpty() of an element, a method alone: the
+    /// geometry types' ST_IsEmpty has its name as a function
+    /// (`binder/structured.rs`).
+    IsEmpty,
 }
 
 /// The routines.
@@ -111,10 +117,11 @@ impl TinRoutine {
     /// The arities it takes.
     fn arities(self) -> &'static [usize] {
         match self {
-            Self::Element => &[WITHOUT_ID, WITH_ID],
+            Self::Element => &[0, WITHOUT_ID, WITH_ID],
+            Self::IsEmpty => &[1],
             Self::ElementType | Self::ElementId | Self::ElementTag | Self::ElementGeometry => &[1, MUTATOR],
             Self::Tin => &[MUTATOR, WITHOUT_ID, WITH_ID],
-            Self::Elements => &[1],
+            Self::Elements => &[1, WITHOUT_ID],
         }
     }
 
@@ -128,17 +135,24 @@ impl TinRoutine {
         if self == Self::Tin {
             return tin_parameter(position, known);
         }
+        if self == Self::Elements && position > 0 {
+            // The elements are taken as they are given, the flag is INTEGER.
+            return (position == MUTATOR).then_some(INTEGER);
+        }
         let first = if self == Self::Elements { data_type_of(Kind::Tin) } else { tin_element::data_type() };
         let second = match self {
             Self::ElementType => varying(TYPE_LENGTH),
             Self::ElementId => INTEGER,
             Self::ElementTag => varying(TAG_LENGTH),
-            Self::ElementGeometry | Self::Element | Self::Tin | Self::Elements => data_type(),
+            Self::ElementGeometry | Self::Element | Self::Tin | Self::Elements | Self::IsEmpty => data_type(),
         };
         [first, second].get(position).cloned()
     }
 
     fn element(self, args: &[Value]) -> Result<Value> {
+        if args.is_empty() {
+            return Ok(tin_element::empty());
+        }
         let name = self.name_of();
         let element_type = text(args.first(), name)?;
         let (id, rest) = if args.len() == WITH_ID { (integer(args.get(1), name)?, args.get(MUTATOR..)) } else { (0_i32, args.get(1..)) };
@@ -151,18 +165,23 @@ impl TinRoutine {
         let name = self.name_of();
         let mut parts = Parts::of_value(args.first().ok_or_else(|| signature(name))?)?;
         let Some(new) = args.get(1) else {
+            // [§17.1.3 Description 2a] An observer of the empty set gives
+            // the null value, as of a part not given.
             return Ok(match self {
-                Self::ElementType => Value::Char(parts.element_type),
-                Self::ElementId => Value::Exact(crate::value::Decimal::new(i128::from(parts.id), 0)),
-                Self::ElementTag => Value::Char(parts.tag),
-                Self::ElementGeometry | Self::Element | Self::Tin | Self::Elements => parts.geometry.to_value(),
+                Self::ElementType => parts.element_type.map_or(Value::Null, Value::Char),
+                Self::ElementId => parts.id.map_or(Value::Null, |id| Value::Exact(crate::value::Decimal::new(i128::from(id), 0))),
+                Self::ElementTag => parts.tag.map_or(Value::Null, Value::Char),
+                Self::IsEmpty => Value::Exact(crate::value::Decimal::new(i128::from(parts.is_empty()), 0)),
+                Self::ElementGeometry | Self::Element | Self::Tin | Self::Elements => parts.geometry.map_or(Value::Null, |g| g.to_value()),
             });
         };
         match self {
-            Self::ElementType => parts.element_type = text(Some(new), name)?,
-            Self::ElementId => parts.id = integer(Some(new), name)?,
-            Self::ElementTag => parts.tag = text(Some(new), name)?,
-            Self::ElementGeometry | Self::Element | Self::Tin | Self::Elements => parts.geometry = geometry(Some(new), name)?,
+            Self::ElementType => parts.element_type = Some(text(Some(new), name)?),
+            Self::ElementId => parts.id = Some(integer(Some(new), name)?),
+            Self::ElementTag => parts.tag = Some(text(Some(new), name)?),
+            Self::ElementGeometry | Self::Element | Self::Tin | Self::Elements | Self::IsEmpty => {
+                parts.geometry = Some(geometry(Some(new), name)?);
+            }
         }
         parts.to_value()
     }
@@ -176,16 +195,24 @@ impl TinRoutine {
             Self::ElementGeometry => "ST_ELEMENTGEOMETRY",
             Self::Tin => "ST_TIN",
             Self::Elements => "ST_TINELEMENTS",
+            Self::IsEmpty => "ST_ISEMPTY",
         }
     }
 }
 
 /// The tree's element of `parts`.
+///
+/// [§8.6.2 Description 4] An element of a TIN has a type and a geometry.
 fn tree_element(parts: &Parts) -> Result<(Element, Geometry)> {
-    let kind = ElementKind::from_name(&parts.element_type)
-        .ok_or_else(|| spatial(SqlState::SPATIAL_INVALID_ARGUMENT, "§17.1.2", "an unknown TIN element type"))?;
-    let value = from_geom(&parts.geometry)?;
-    Ok((Element { kind, id: parts.id, tag: parts.tag.clone(), body: value.body.clone() }, value))
+    let kind = parts
+        .element_type
+        .as_deref()
+        .and_then(ElementKind::from_name)
+        .ok_or_else(|| spatial(SqlState::SPATIAL_INVALID_ARGUMENT, "§17.1.2", "an element of no known TIN element type"))?;
+    let g = parts.geometry.as_ref().ok_or_else(|| spatial(SqlState::SPATIAL_INVALID_ARGUMENT, "§17.1.2", "an element of no geometry"))?;
+    let value = from_geom(g)?;
+    let tag = parts.tag.clone().unwrap_or_default();
+    Ok((Element { kind, id: parts.id.unwrap_or(0), tag, body: value.body.clone() }, value))
 }
 
 /// [§8.6.2] ST_TIN of `triangles`, if given, else of the triangulation
@@ -212,6 +239,27 @@ fn tin(triangles: Option<Vec<Value>>, elements: &[Value], max_side: f64, srid: i
     Ok(to_geom(&Geometry { dims, body }, srid)?.to_value())
 }
 
+/// [§8.6.3 Description 4] ST_TINElements(elements, triangulate): `g`
+/// with `elements`, its triangles those of their triangulation within
+/// its maximum side length if `triangulate` is 1 and there are any, and
+/// its own else.
+fn with_elements(g: &Geom, elements: &[Value], again: bool) -> Result<Value> {
+    let parts = elements.iter().filter(|v| !v.is_null()).map(Parts::of_value).collect::<Result<Vec<_>>>()?;
+    if parts.iter().any(|p| p.geometry.as_ref().is_some_and(|e| e.srid != g.srid)) {
+        return Err(spatial(SqlState::SPATIAL_MIXED_SPATIAL_REFERENCE_SYSTEMS, "§8.6.3 Description 4b", "mixed spatial reference systems"));
+    }
+    let trees = parts.iter().map(tree_element).collect::<Result<Vec<_>>>()?;
+    let mut tree = from_geom(g)?;
+    let dims = tree.dims;
+    let Body::Surface(Surface::Tin(t)) = &mut tree.body else { return Err(signature("ST_TINELEMENTS")) };
+    t.elements = trees.into_iter().map(|(e, _)| e).collect();
+    if again && !t.elements.is_empty() {
+        let constraints: Vec<_> = t.elements.iter().map(|e| tree::constraint(e, dims)).collect();
+        t.triangles = triangulate(&constraints, t.max_side)?.into_iter().map(|[a, b, c]| vec![a, b, c, a]).collect();
+    }
+    Ok(to_geom(&tree, g.srid)?.to_value())
+}
+
 impl ScalarFunction for TinRoutine {
     fn name(&self) -> &str {
         self.name_of()
@@ -226,10 +274,10 @@ impl ScalarFunction for TinRoutine {
                 tin_element::data_type()
             }
             (Self::ElementType, _) => varying(TYPE_LENGTH),
-            (Self::ElementId, _) => INTEGER,
+            (Self::ElementId | Self::IsEmpty, _) => INTEGER,
             (Self::ElementTag, _) => varying(TAG_LENGTH),
             (Self::ElementGeometry, _) => data_type(),
-            (Self::Tin, _) => data_type_of(Kind::Tin),
+            (Self::Tin, _) | (Self::Elements, WITHOUT_ID) => data_type_of(Kind::Tin),
             (Self::Elements, _) => elements_type(),
         })
     }
@@ -244,9 +292,13 @@ impl ScalarFunction for TinRoutine {
         }
         match self {
             Self::Element => self.element(args),
-            Self::ElementType | Self::ElementId | Self::ElementTag | Self::ElementGeometry => self.part(args),
+            Self::ElementType | Self::ElementId | Self::ElementTag | Self::ElementGeometry | Self::IsEmpty => self.part(args),
             Self::Elements => {
-                let g = geometry(args.first(), self.name_of())?;
+                let name = self.name_of();
+                let g = geometry(args.first(), name)?;
+                if args.len() == WITHOUT_ID {
+                    return with_elements(&g, &items(args.get(1), name)?, integer(args.get(MUTATOR), name)? == 1);
+                }
                 let ModelBody::Surface(ModelSurface::Tin(t)) = &g.body else { return Err(signature(self.name_of())) };
                 let all = t.elements.iter().map(|e| Parts::of_model(e, &g).to_value()).collect::<Result<Vec<_>>>()?;
                 Ok(Value::Array(all.into()))

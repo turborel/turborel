@@ -350,3 +350,77 @@ fn tins_are_built_from_elements_and_triangles() {
     let given = format!("ST_TIN({triangles}, ARRAY[{SPOTS}], 0E0)");
     assert_eq!(one(&a, &format!("{given}.ST_NUMPATCHES(), CARDINALITY({given}.ST_TINELEMENTS())")), "1,1");
 }
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §8.6.3 Description
+/// 4] ST_TINElements(elements, triangulate) replaces a TIN's elements,
+/// keeping its triangles at 0 and triangulating the new elements at 1;
+/// an element of another system raises 2FF10.
+#[test]
+fn tin_elements_are_replaced() {
+    let (_db, a) = session();
+    let tin = "ST_TINFROMTEXT('TIN Z (PATCHES ((0 0 0, 1 0 0, 0 1 0)))')";
+    let kept = format!("{tin}.ST_TINELEMENTS(ARRAY[{SPOTS}], 0)");
+    assert_eq!(one(&a, &format!("{kept}.ST_NUMPATCHES(), CARDINALITY({kept}.ST_TINELEMENTS())")), "1,1");
+    let again = format!("{tin}.ST_TINELEMENTS(ARRAY[{SPOTS}], 1)");
+    assert_eq!(one(&a, &format!("{again}.ST_NUMPATCHES(), ST_ELEMENTTAG({again}.ST_TINELEMENTS()[1])")), "4,spots");
+    let elsewhere = "ST_TINELEMENT('random points', 'far', ST_MPOINTFROMTEXT('MULTIPOINT Z ((0 0 0), (4 0 1), (4 4 2))', 4326))";
+    assert_eq!(state(&a, &format!("VALUES {tin}.ST_TINELEMENTS(ARRAY[{elsewhere}], 1)")), "2FF10");
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §7.1.11, §7.1.13,
+/// §7.3.12, §7.4.5, §7.6.4, §7.6.5, §7.8.5, §7.8.6] The unit forms of
+/// ST_DistanceToPoint, ST_PointAtDistance, ST_Radius, ST_UAxisLength,
+/// ST_VAxisLength, ST_StartDistance and ST_EndDistance, in a unit of
+/// ST_UNITS_OF_MEASURE; SRID 0 measures in metres, and a unit that is no
+/// linear unit raises 2FF14.
+#[test]
+fn unit_forms_measure_in_a_unit() {
+    let (_db, a) = session();
+    let line = "ST_LINEFROMTEXT('LINESTRING (0 0, 1000 0)')";
+    assert_eq!(one(&a, &format!("{line}.ST_DISTANCETOPOINT(ST_POINT(500, 0), 'KILOMETRE')")), "5E-1");
+    assert_eq!(wkt(&a, &format!("{line}.ST_POINTATDISTANCE(5E-1, 'KILOMETRE')")), "POINT (500 0)");
+    let circle = "ST_CIRCLEFROMTXT('CIRCLE (0 0, 1000 1000, 2000 0)')";
+    assert_eq!(one(&a, &format!("{circle}.ST_RADIUS(), {circle}.ST_RADIUS('KILOMETRE')")), "1E3,1E0");
+    let arc = "ST_CIRCULARFROMTXT('CIRCULARSTRING (0 0, 1000 1000, 2000 0)')";
+    assert_eq!(one(&a, &format!("{arc}.ST_RADIUS('KILOMETRE')")), "1E0");
+    let ellipse = "ST_ELLIPTICFROMTXT('ELLIPTICALCURVE (REFERENCELOCATION AFFINEPLACEMENT (LOCATION (0 0), \
+                   REFERENCEDIRECTIONS (VECTOR (1 0), VECTOR (0 1))), UAXISLENGTH 2000, VAXISLENGTH 1000, STARTANGLE RADIANS (0), \
+                   ENDANGLE RADIANS (1.5))')";
+    let axes = format!("{ellipse}.ST_UAXISLENGTH(), {ellipse}.ST_UAXISLENGTH('KILOMETRE'), {ellipse}.ST_VAXISLENGTH('KILOMETRE')");
+    assert_eq!(one(&a, &axes), "2E3,2E0,1E0");
+    let clothoid = "ST_CLOTHOIDFROMTXT('CLOTHOID (REFERENCELOCATION AFFINEPLACEMENT (LOCATION (0 0), \
+                    REFERENCEDIRECTIONS (VECTOR (1 0), VECTOR (0 1))), SCALEFACTOR 10, STARTDISTANCE 0, ENDDISTANCE 500)')";
+    assert_eq!(one(&a, &format!("{clothoid}.ST_STARTDISTANCE('KILOMETRE'), {clothoid}.ST_ENDDISTANCE('KILOMETRE')")), "0E0,5E-1");
+    assert_eq!(state(&a, &format!("VALUES {circle}.ST_RADIUS('RADIAN')")), "2FF14");
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.60 DR 1,
+/// §5.1.64; ISO/IEC 9075-2:2023 §9.2 GR 3b vii] GML of more characters
+/// than ST_MaxGeometryAsGML, which ST_SIZINGS gives, raises 22001.
+#[test]
+fn gml_is_bounded_by_its_sizing() {
+    let (_db, a) = session();
+    let sizing = "SELECT SUPPORTED_VALUE FROM ST_INFORMTN_SCHEMA.ST_SIZINGS WHERE VARIABLE_NAME = 'ST_MaxGeometryAsGML'";
+    let limit = turborel::geometry::MAX_GEOMETRY_AS_GML;
+    assert_eq!(rows(&a, sizing).unwrap(), [limit.to_string()]);
+    let point = "<gml:Point><gml:pos>1 2</gml:pos></gml:Point>";
+    let padded = format!("{point}{}", " ".repeat(usize::try_from(limit).unwrap().saturating_sub(point.len())));
+    assert_eq!(wkt(&a, &format!("ST_GEOMFROMGML('{padded}')")), "POINT (1 2)");
+    assert_eq!(state(&a, &format!("VALUES ST_GEOMFROMGML('{padded}x')")), "22001");
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §17.1.1
+/// Description 3, §17.1.3 to §17.1.7] ST_TINElement() is the empty set,
+/// whose ST_IsEmpty is 1 and whose observers give NULL; a mutator gives
+/// it a part, so it is no longer empty; an element made whole is 0.
+#[test]
+fn tin_elements_can_be_empty() {
+    let (_db, a) = session();
+    assert_eq!(
+        one(&a, "ST_TINELEMENT().ST_ISEMPTY(), ST_TINELEMENT().ST_ELEMENTTYPE() IS NULL, ST_TINELEMENT().ST_ELEMENTID() IS NULL"),
+        "1,TRUE,TRUE"
+    );
+    assert_eq!(one(&a, "ST_TINELEMENT().ST_ELEMENTTAG('t').ST_ISEMPTY(), ST_TINELEMENT().ST_ELEMENTTAG('t').ST_ELEMENTTAG()"), "0,t");
+    let whole = "ST_TINELEMENT('breakline', 7, 'b', ST_LINEFROMTEXT('LINESTRING Z (0 0 1, 1 1 1)'))";
+    assert_eq!(one(&a, &format!("{whole}.ST_ISEMPTY(), {whole}.ST_ELEMENTID()")), "0,7");
+}

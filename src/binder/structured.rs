@@ -226,6 +226,13 @@ impl Binder<'_> {
         if let Some(bound) = self.support_method((subject, as_type), name, args, scope)? {
             return Ok(bound);
         }
+        if as_type.is_none() && args.is_empty() && name.eq_ignore_ascii_case("ST_ISEMPTY") {
+            let (e, t) = self.value_expression(subject, scope)?;
+            if let Some(f) = crate::geometry::tin_element_is_empty(&t) {
+                let result = f.return_type(&[t])?;
+                return Ok((Expr::Call(ScalarRef(f), vec![e]), result));
+            }
+        }
         if as_type.is_some() {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.18, §9.18 SR10a] a value of a registered type has no supertype for {name}")));
         }

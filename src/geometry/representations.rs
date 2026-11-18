@@ -14,11 +14,20 @@ use super::{data_type, data_type_of, kind};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::functions::{AppendedQuery, ScalarFunction};
 use crate::spatial::formats::{gml, wkt};
-use crate::value::lob::Lob;
-use crate::value::{DataType, Spelled, Value};
+use crate::value::lob::{Lob, LobKind};
+use crate::value::{CharUnits, DataType, Spelled, Value};
 
 /// The arguments of a constructor given an SRID.
 const WITH_SRID: usize = 2;
+
+/// ST_MaxGeometryAsGML [§5.1.60 DR 1, §5.1.61 DR 1]: the characters of
+/// the GML representation ST_AsGML returns and the GML constructors take,
+/// the codecs' limit, as ST_MaxGeometryAsText's.
+pub const MAX_GEOMETRY_AS_GML: u64 = MAX_REPRESENTATION;
+/// CHARACTER LARGE OBJECT(ST_MaxGeometryAsGML).
+const GML: DataType = DataType::Lob { kind: LobKind::Character, length: MAX_GEOMETRY_AS_GML, units: CharUnits::Characters };
+/// The most octets of a character in UTF-8.
+const UTF8_MOST: u64 = 4;
 
 const INTEGER: DataType = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
 
@@ -211,6 +220,32 @@ fn content(v: &Value) -> Result<Vec<u8>> {
     lob.bounded(MAX_REPRESENTATION)?.ok_or_else(|| super::unsupported("this representation size (RULES.md D85)"))
 }
 
+/// [ISO/IEC 9075-2:2023 §9.2 GR 3b vii] GML of more characters than
+/// ST_MaxGeometryAsGML, assigned to or returned as a CHARACTER LARGE
+/// OBJECT(ST_MaxGeometryAsGML), raises string data, right truncation.
+fn too_long() -> SqlError {
+    SqlError::new(
+        Code::Data,
+        format!("[ISO/IEC 9075-2:2023 §9.2 GR 3b vii] GML is longer than ST_MaxGeometryAsGML, {MAX_GEOMETRY_AS_GML} characters"),
+    )
+    .with_state(SqlState::STRING_DATA_RIGHT_TRUNCATION)
+}
+
+/// `text`, if no longer than ST_MaxGeometryAsGML.
+pub(super) fn gml_limited(text: String) -> Result<String> {
+    if u64::try_from(text.chars().count()).unwrap_or(u64::MAX) > MAX_GEOMETRY_AS_GML {
+        return Err(too_long());
+    }
+    Ok(text)
+}
+
+/// The characters of a GML argument, up to ST_MaxGeometryAsGML.
+fn gml_content(v: &Value) -> Result<String> {
+    let Value::Lob(lob) = v else { return gml_limited(utf8(&content(v)?)?.to_owned()) };
+    let bytes = lob.bounded(MAX_GEOMETRY_AS_GML.saturating_mul(UTF8_MOST))?.ok_or_else(too_long)?;
+    gml_limited(utf8(&bytes)?.to_owned())
+}
+
 fn utf8(bytes: &[u8]) -> Result<&str> {
     std::str::from_utf8(bytes).map_err(|_| super::invalid("the text is not UTF-8"))
 }
@@ -223,7 +258,7 @@ impl FromRepresentation {
             Format::Text => (wkt::read_geom(utf8(&bytes)?, srid.unwrap_or(0_i32))?, SqlState::SPATIAL_INVALID_WKT, "§5.1.62"),
             Format::Binary => (model::read_wkb(&bytes, srid.unwrap_or(0_i32))?, SqlState::SPATIAL_INVALID_WKB, "§5.1.63"),
             Format::Gml => {
-                let g = gml::read_geom(utf8(&bytes)?, systems)?;
+                let g = gml::read_geom(&gml_content(v)?, systems)?;
                 (srid.map_or(g.clone(), |s| g.with_srid(s)), SqlState::SPATIAL_INVALID_GML, "§5.1.64")
             }
         };
@@ -234,7 +269,11 @@ impl FromRepresentation {
     }
 
     fn input(self) -> DataType {
-        if self.format == Format::Binary { BINARY } else { TEXT }
+        match self.format {
+            Format::Text => TEXT,
+            Format::Binary => BINARY,
+            Format::Gml => GML,
+        }
     }
 }
 
@@ -301,7 +340,7 @@ impl ScalarFunction for AsGml {
 
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
         args.first().filter(|t| super::of_data_type(t).is_some()).ok_or_else(|| signature(self.name()))?;
-        Ok(TEXT)
+        Ok(GML)
     }
 
     fn argument_type(&self, position: usize, known: &[Option<DataType>]) -> Option<DataType> {
@@ -318,10 +357,7 @@ impl ScalarFunction for AsGml {
             return Ok(Value::Null);
         }
         kind::payload(first).ok_or_else(|| signature(self.name()))?;
-        let text = gml::write_geom(&Geom::from_value(first)?, &Systems::of(systems))?;
-        if u64::try_from(text.len()).unwrap_or(u64::MAX) > MAX_REPRESENTATION {
-            return Err(super::unsupported("a representation longer than ST_MaxGeometryAsText"));
-        }
+        let text = gml_limited(gml::write_geom(&Geom::from_value(first)?, &Systems::of(systems))?)?;
         Ok(Value::Lob(Lob::of_text(&text)))
     }
 

@@ -261,6 +261,7 @@ mod spatial_methods;
 mod spatial_network;
 mod spatial_paths;
 mod spatial_planar;
+mod spatial_records;
 mod spatial_routines;
 mod spatial_solids;
 mod spatial_support;

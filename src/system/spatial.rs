@@ -191,12 +191,13 @@ fn units(_seen: &Seen<'_>) -> Vec<Row> {
 // ---------------------------------------------------------------------------
 
 /// [Annex A.1] The meta-variables of what is not supported.
-const UNSUPPORTED: [&str; 2] = ["ST_MaxGeometryAsGML", "ST_MaxLEMeasureArrayElements"];
+const UNSUPPORTED: [&str; 1] = ["ST_MaxLEMeasureArrayElements"];
 
 /// [Annex A.1] Each meta-variable of an integer value: its value, 0 of no
 /// limit, none of what is not supported [§20.5 Description 2].
 pub fn sizing_values() -> Vec<(&'static str, Option<i64>, &'static str)> {
     let bytes = i64::try_from(crate::geometry::MAX_BYTES).unwrap_or(0);
+    let gml = i64::try_from(crate::geometry::MAX_GEOMETRY_AS_GML).unwrap_or(0);
     let network = i64::try_from(crate::spatial::network::sql::MAX_NETWORK_NAME).unwrap_or(0);
     let mut all = vec![
         (
@@ -212,6 +213,7 @@ pub fn sizing_values() -> Vec<(&'static str, Option<i64>, &'static str)> {
             "the elements of the array ST_Geometries returns",
         ),
         ("ST_MaxGeometryAsBinary", Some(bytes), "the octets of a well-known binary representation"),
+        ("ST_MaxGeometryAsGML", Some(gml), "the characters of a GML representation"),
         ("ST_MaxGeometryAsText", Some(bytes), "the characters of a well-known text representation"),
         ("ST_MaxIntegerArrayElements", Some(0), "an array's cardinality is its declared type's"),
         ("ST_MaxKnotArrayElements", Some(0), "the knots of a NURBS curve, limited by the representation's octets"),

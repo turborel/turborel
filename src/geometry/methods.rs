@@ -18,7 +18,8 @@ use super::conversions::ToKind;
 use super::functions::GeometryFunction;
 use super::model::Kind;
 use super::observers::{
-    CompoundMethod, CurveMethod, MeasureMethod, ParameterMethod, PatchMethod, PointListMethod, RingMethod, Routine as Observed,
+    CompoundMethod, CurveMethod, MeasureMethod, ParameterMethod, PatchMethod, PointListMethod, RecordMethod, RingMethod,
+    Routine as Observed,
 };
 use super::representations::AsGml;
 use super::routines::Routine;
@@ -70,7 +71,7 @@ macro_rules! routine {
 }
 
 /// The table: of each type, the methods it declares.
-pub static METHODS: [Method; 216] = [
+pub static METHODS: [Method; 238] = [
     // [§5.1.1] ST_Geometry.
     // [§5.1.55] The cast methods of ST_Geometry.
     original(Kind::Geometry, "ST_TOPOINT", 0, routine!(ToKind { name: "ST_TOPOINT", target: Kind::Point })),
@@ -185,6 +186,8 @@ pub static METHODS: [Method; 216] = [
     original(Kind::Curve, "ST_CURVETOLINE", 0, routine!(Observed(CurveMethod::CurveToLine))),
     original(Kind::Curve, "ST_DISTANCETOPOINT", 1, routine!(Observed(CurveMethod::DistanceToPoint))),
     original(Kind::Curve, "ST_POINTATDISTANCE", 1, routine!(Observed(CurveMethod::PointAtDistance))),
+    original(Kind::Curve, "ST_DISTANCETOPOINT", 2, routine!(Observed(CurveMethod::DistanceToPoint))),
+    original(Kind::Curve, "ST_POINTATDISTANCE", 2, routine!(Observed(CurveMethod::PointAtDistance))),
     original(Kind::Curve, "ST_PERPPOINTS", 1, routine!(Observed(CurveMethod::PerpPoints))),
     // [§7.2.1, §7.5.1] ST_LineString and ST_GeodesicString.
     original(Kind::LineString, "ST_POINTS", 0, routine!(Observed(PointListMethod::Points))),
@@ -203,14 +206,27 @@ pub static METHODS: [Method; 216] = [
     original(Kind::CircularString, "ST_BULGE", 0, routine!(Observed(PointListMethod::Bulge))),
     original(Kind::CircularString, "ST_CENTER", 0, routine!(Observed(PointListMethod::Center))),
     original(Kind::CircularString, "ST_RADIUS", 0, routine!(Observed(PointListMethod::Radius))),
+    original(Kind::CircularString, "ST_RADIUS", 1, routine!(Observed(PointListMethod::Radius))),
+    original(Kind::CircularString, "ST_BULGENORMAL", 0, routine!(Observed(RecordMethod::BulgeNormal))),
+    original(Kind::CircularString, "ST_STARTANGLE", 0, routine!(Observed(RecordMethod::StartAngle))),
+    original(Kind::CircularString, "ST_ENDANGLE", 0, routine!(Observed(RecordMethod::EndAngle))),
     // [§7.4.1] ST_Circle.
     original(Kind::Circle, "ST_POINTS", 0, routine!(Observed(PointListMethod::Points))),
     original(Kind::Circle, "ST_POINTN", 1, routine!(Observed(PointListMethod::PointN))),
     original(Kind::Circle, "ST_CENTER", 0, routine!(Observed(PointListMethod::Center))),
     original(Kind::Circle, "ST_RADIUS", 0, routine!(Observed(PointListMethod::Radius))),
+    original(Kind::Circle, "ST_RADIUS", 1, routine!(Observed(PointListMethod::Radius))),
+    original(Kind::Circle, "ST_NORMAL", 0, routine!(Observed(RecordMethod::Normal))),
     // [§7.6.1 to §7.9.1] The parametric curves.
     original(Kind::EllipticalCurve, "ST_STARTM", 0, routine!(Observed(ParameterMethod::StartM))),
     original(Kind::EllipticalCurve, "ST_ENDM", 0, routine!(Observed(ParameterMethod::EndM))),
+    original(Kind::EllipticalCurve, "ST_UAXISLENGTH", 0, routine!(Observed(ParameterMethod::UAxisLength))),
+    original(Kind::EllipticalCurve, "ST_UAXISLENGTH", 1, routine!(Observed(ParameterMethod::UAxisLength))),
+    original(Kind::EllipticalCurve, "ST_VAXISLENGTH", 0, routine!(Observed(ParameterMethod::VAxisLength))),
+    original(Kind::EllipticalCurve, "ST_VAXISLENGTH", 1, routine!(Observed(ParameterMethod::VAxisLength))),
+    original(Kind::EllipticalCurve, "ST_REFLOCATION", 0, routine!(Observed(RecordMethod::RefLocation))),
+    original(Kind::EllipticalCurve, "ST_STARTANGLE", 0, routine!(Observed(RecordMethod::StartAngle))),
+    original(Kind::EllipticalCurve, "ST_ENDANGLE", 0, routine!(Observed(RecordMethod::EndAngle))),
     original(Kind::NurbsCurve, "ST_STARTM", 0, routine!(Observed(ParameterMethod::StartM))),
     original(Kind::NurbsCurve, "ST_ENDM", 0, routine!(Observed(ParameterMethod::EndM))),
     original(Kind::Clothoid, "ST_STARTM", 0, routine!(Observed(ParameterMethod::StartM))),
@@ -218,10 +234,16 @@ pub static METHODS: [Method; 216] = [
     original(Kind::SpiralCurve, "ST_STARTM", 0, routine!(Observed(ParameterMethod::StartM))),
     original(Kind::SpiralCurve, "ST_ENDM", 0, routine!(Observed(ParameterMethod::EndM))),
     original(Kind::NurbsCurve, "ST_DEGREE", 0, routine!(Observed(ParameterMethod::Degree))),
+    original(Kind::NurbsCurve, "ST_CONTROLPOINTS", 0, routine!(Observed(RecordMethod::ControlPoints))),
+    original(Kind::NurbsCurve, "ST_KNOTS", 0, routine!(Observed(RecordMethod::Knots))),
     original(Kind::Clothoid, "ST_SCALEFACTOR", 0, routine!(Observed(ParameterMethod::ScaleFactor))),
+    original(Kind::Clothoid, "ST_REFLOCATION", 0, routine!(Observed(RecordMethod::RefLocation))),
     original(Kind::Clothoid, "ST_STARTDISTANCE", 0, routine!(Observed(ParameterMethod::StartDistance))),
     original(Kind::Clothoid, "ST_ENDDISTANCE", 0, routine!(Observed(ParameterMethod::EndDistance))),
+    original(Kind::Clothoid, "ST_STARTDISTANCE", 1, routine!(Observed(ParameterMethod::StartDistance))),
+    original(Kind::Clothoid, "ST_ENDDISTANCE", 1, routine!(Observed(ParameterMethod::EndDistance))),
     original(Kind::SpiralCurve, "ST_STARTCURVATURE", 0, routine!(Observed(ParameterMethod::StartCurvature))),
+    original(Kind::SpiralCurve, "ST_REFLOCATION", 0, routine!(Observed(RecordMethod::RefLocation))),
     original(Kind::SpiralCurve, "ST_ENDCURVATURE", 0, routine!(Observed(ParameterMethod::EndCurvature))),
     original(Kind::SpiralCurve, "ST_SPIRALTYPE", 0, routine!(Observed(ParameterMethod::SpiralType))),
     // [§7.10.1] ST_CompoundCurve.
@@ -247,6 +269,7 @@ pub static METHODS: [Method; 216] = [
     original(Kind::PolyhdrlSurface, "ST_PATCHN", 1, routine!(Observed(PatchMethod::PatchN))),
     overriding(Kind::Tin, "ST_PATCHES", 0, routine!(Observed(PatchMethod::Patches))),
     original(Kind::Tin, "ST_TINELEMENTS", 0, routine!(TinRoutine::Elements)),
+    original(Kind::Tin, "ST_TINELEMENTS", 2, routine!(TinRoutine::Elements)),
     original(Kind::CompoundSurface, "ST_SURFACES", 0, routine!(Observed(PatchMethod::Surfaces))),
     original(Kind::CompoundSurface, "ST_SURFACES", 1, routine!(Surfaces)),
     original(Kind::CompoundSurface, "ST_NUMSURFACES", 0, routine!(Observed(PatchMethod::NumSurfaces))),

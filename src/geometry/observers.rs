@@ -9,12 +9,14 @@
 
 mod curves;
 mod measures;
+mod records;
 mod surfaces;
 
 use std::sync::Arc;
 
 pub use curves::{CompoundMethod, CurveMethod, ParameterMethod, PointListMethod};
 pub use measures::{Exact, exact};
+pub use records::RecordMethod;
 pub use surfaces::{MeasureMethod, PatchMethod, RingMethod};
 
 use super::model::{Dims, Geom, Kind};
@@ -32,6 +34,8 @@ pub(crate) const INTEGER: DataType = DataType::Exact { precision: 10, scale: 0, 
 pub(crate) const DOUBLE: DataType = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::DoublePrecision };
 /// The length of ST_SpiralType's CHARACTER VARYING result.
 const SPIRAL_TYPE_LENGTH: u32 = 128;
+/// ST_MaxUnitNameLength, implementation-defined [§5.1.30 DR 1].
+const UNIT_NAME_LENGTH: u32 = 128;
 
 /// The result of a call and the warning it raises, if one.
 pub type Warned = (Value, Option<SqlState>);
@@ -70,6 +74,10 @@ pub enum Returns {
     Of(Kind),
     /// An ARRAY of a geometry type.
     Array(Kind),
+    /// A type of §16 or §17 (`geometry::support`).
+    Support(super::support::Support),
+    /// An ARRAY of a type of §16 or §17.
+    Supports(super::support::Support),
 }
 
 impl Returns {
@@ -80,9 +88,25 @@ impl Returns {
             Self::Text => DataType::Varying { length: SPIRAL_TYPE_LENGTH, units: crate::value::CharUnits::Characters },
             Self::Of(k) => data_type_of(k),
             Self::Array(k) => DataType::array(data_type_of(k), super::MAX_GEOMETRY_ARRAY_ELEMENTS),
+            Self::Support(s) => super::support::data_type(s),
+            Self::Supports(s) => DataType::array(super::support::data_type(s), super::MAX_GEOMETRY_ARRAY_ELEMENTS),
         }
     }
 }
+
+/// How a unit form, given a unit name last, takes its unit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unit {
+    /// It has no unit form.
+    None,
+    /// Its DOUBLE PRECISION result is a length in the unit.
+    Result,
+    /// Its DOUBLE PRECISION argument after SELF is a length in the unit.
+    Argument,
+}
+
+/// The reference systems a unit form reads: the statement's catalog.
+type Systems<'a> = Option<&'a crate::catalog::SpatialCatalog>;
 
 /// A method of a curve or a surface.
 pub trait Observer: Copy + std::fmt::Debug + Send + Sync + 'static {
@@ -94,6 +118,10 @@ pub trait Observer: Copy + std::fmt::Debug + Send + Sync + 'static {
     fn returns(self, of: Kind) -> Returns;
     /// Whether it raises 01F01 of a position outside the value.
     fn warns(self) -> bool;
+    /// How its unit form takes its unit, if it has one.
+    fn unit(self) -> Unit {
+        Unit::None
+    }
     /// Its result of SELF `g`, read as `value`, and the other arguments.
     ///
     /// # Errors
@@ -119,7 +147,9 @@ impl<T: Observer> ScalarFunction for Routine<T> {
 
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
         let of = args.first().and_then(super::of_data_type).ok_or_else(|| signature(self.0.name()))?;
-        if args.len() != self.0.parameters().len().saturating_add(1) {
+        let plain = self.0.parameters().len().saturating_add(1);
+        let unit_form = self.0.unit() != Unit::None && args.len() == plain.saturating_add(1);
+        if args.len() != plain && !(unit_form && args.last().is_some_and(DataType::is_character)) {
             return Err(signature(self.0.name()));
         }
         Ok(self.0.returns(of).data_type())
@@ -129,7 +159,9 @@ impl<T: Observer> ScalarFunction for Routine<T> {
         if position == 0 {
             return Some(known.first().cloned().flatten().filter(|t| super::of_data_type(t).is_some()).unwrap_or_else(data_type));
         }
-        self.0.parameters().get(position.saturating_sub(1)).map(|p| p.data_type())
+        let at = position.saturating_sub(1);
+        let unit = (self.0.unit() != Unit::None && at == self.0.parameters().len()).then(|| DataType::varying(UNIT_NAME_LENGTH));
+        self.0.parameters().get(at).map(|p| p.data_type()).or(unit)
     }
 
     fn call(&self, args: &[Value]) -> Result<Value> {
@@ -141,6 +173,26 @@ impl<T: Observer> ScalarFunction for Routine<T> {
     }
 
     fn call_warned(&self, args: &[Value], _temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Warned> {
+        self.run(args, None)
+    }
+
+    /// A unit form reads the statement's reference systems.
+    fn uses_context(&self, arity: usize) -> bool {
+        self.0.unit() != Unit::None && arity == self.0.parameters().len().saturating_add(2)
+    }
+
+    fn call_in(&self, args: &[Value], cx: &dyn crate::functions::CallContext) -> Result<Value> {
+        self.run(args, cx.spatial()).map(|(v, _)| v)
+    }
+
+    fn deterministic(&self) -> bool {
+        true
+    }
+}
+
+impl<T: Observer> Routine<T> {
+    /// A call of `args`, a unit form's in the reference systems `systems`.
+    fn run(&self, args: &[Value], systems: Systems<'_>) -> Result<Warned> {
         let [first, rest @ ..] = args else { return Err(signature(self.0.name())) };
         if args.iter().any(Value::is_null) {
             return Ok((Value::Null, None));
@@ -148,11 +200,21 @@ impl<T: Observer> ScalarFunction for Routine<T> {
         kind::payload(first).ok_or_else(|| signature(self.0.name()))?;
         let g = Geom::from_value(first)?;
         let value = from_geom(&g)?;
-        self.0.of(&g, &value, rest)
-    }
-
-    fn deterministic(&self) -> bool {
-        true
+        let (given, unit) = rest.split_at_checked(self.0.parameters().len()).unwrap_or((rest, &[]));
+        let [Value::Char(unit)] = unit else { return self.0.of(&g, &value, rest) };
+        let of = (g.srid, systems);
+        match self.0.unit() {
+            Unit::None => Err(signature(self.0.name())),
+            Unit::Result => {
+                let (result, warning) = self.0.of(&g, &value, given)?;
+                let Value::Approx(x) = result else { return Ok((result, warning)) };
+                Ok((Value::Approx(super::routines::length_in(x, of, unit)?), warning))
+            }
+            Unit::Argument => {
+                let distance = super::routines::length_of(number(given.first(), self.0.name())?, of, unit)?;
+                self.0.of(&g, &value, &[Value::Approx(distance)])
+            }
+        }
     }
 }
 
@@ -215,6 +277,7 @@ pub(crate) fn functions() -> Vec<Arc<dyn ScalarFunction>> {
     out.extend(curves::COMPOUND_METHODS.iter().map(|m| -> Arc<dyn ScalarFunction> { Arc::new(Routine(*m)) }));
     out.extend(surfaces::RING_METHODS.iter().map(|m| -> Arc<dyn ScalarFunction> { Arc::new(Routine(*m)) }));
     out.extend(surfaces::PATCH_METHODS.iter().map(|m| -> Arc<dyn ScalarFunction> { Arc::new(Routine(*m)) }));
+    out.extend(records::RECORD_METHODS.iter().map(|m| -> Arc<dyn ScalarFunction> { Arc::new(Routine(*m)) }));
     out.extend(surfaces::MEASURE_METHODS.iter().map(|m| -> Arc<dyn ScalarFunction> { Arc::new(Routine(*m)) }));
     out
 }
