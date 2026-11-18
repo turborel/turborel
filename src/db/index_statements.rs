@@ -89,7 +89,10 @@ impl Session {
                 admitted(st, (desc, name), &method, expressions)?;
                 let columns = columns.iter().map(|(c, _)| c.clone()).collect();
                 let expressions = expressions.iter().map(|(part, text, _)| (*part, text.clone())).collect();
-                let spec = IndexSpec { name: name.clone(), table: qn, columns, method, options, nulls: false, expressions };
+                // A hybrid index holds keys with a null, each part the value of
+                // its own column (`index/vector/hybrid/index.rs`).
+                let nulls = method == crate::index::vector::hybrid::HYBRID_METHOD;
+                let spec = IndexSpec { name: name.clone(), table: qn, columns, method, options, nulls, expressions };
                 self.db.noted(self.db.make_index(&spec))?;
             }
             IndexStatement::Drop { name: (name, at) } => {

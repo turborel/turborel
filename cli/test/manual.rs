@@ -5,6 +5,7 @@
 //! The client runs with `--null NULL`, as the manual says its examples do.
 
 mod embedding;
+mod hybrid;
 mod vector;
 
 use std::cell::RefCell;

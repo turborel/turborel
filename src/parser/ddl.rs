@@ -20,6 +20,7 @@
 //! anew as it is, its rows sealed again through the encodings it names
 //! now.
 
+mod hybrid_index;
 mod vector_index;
 
 pub use vector_index::{method_of_type, option_of};
@@ -109,10 +110,7 @@ impl Parser {
             if self.character_set_definition()? {
                 return Ok(SqlStatement::Commit);
             }
-            if self.at_vector_index() {
-                return self.create_vector_index();
-            }
-            return self.create_index();
+            return self.create_any_index();
         }
         let alter = self.accept_kw(kw::ALTER);
         if !alter {
@@ -149,7 +147,8 @@ impl Parser {
     /// name>` ON `<table name>` ( `<key part>` \[{, `<key part>`}...\] )
     /// \[USING `<method name>`\] \[WITH `<table options>`\], after CREATE;
     /// `<key part>` ::= `<column name>` | ( `<value expression>` ) (RULES.md
-    /// D92); CREATE VECTOR INDEX is `ddl/vector_index.rs`.
+    /// D92); CREATE VECTOR INDEX is `ddl/vector_index.rs`, CREATE HYBRID
+    /// VECTOR INDEX `ddl/hybrid_index.rs`.
     fn create_index(&mut self) -> Result<SqlStatement> {
         if !self.accept_word("INDEX") {
             return Err(self.syntax("expected INDEX: a <schema> is processed by Database::schema"));

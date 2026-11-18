@@ -273,6 +273,8 @@ fn named_in_from<'a>(
                     c.for_each_subquery(&mut |s| subqueries.push(s));
                 }
             }
+            // Its arguments are read again when it is bound.
+            TableReference::Hybrid(_) => {}
             // [§7.6, §10.4] Its table arguments name tables and queries.
             TableReference::Polymorphic(p) => {
                 let named = |t: &NamedTable| t.table.auth.is_none() && scope.contains(&t.table.ident.as_str());
@@ -491,6 +493,8 @@ pub enum TableReference {
     /// [ISO/IEC 9075-2:2023 §7.6, §7.11] A `<JSON table>` and its
     /// `<correlation or recognition>`.
     Json(Box<super::JsonTable>),
+    /// \[EXTENSION\] HYBRID_SEARCH (the vector design document §11.2).
+    Hybrid(Box<super::HybridSearch>),
 }
 
 impl TableReference {

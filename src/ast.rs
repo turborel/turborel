@@ -36,6 +36,7 @@ mod dynamic;
 mod embedding;
 mod expression;
 mod generated;
+mod hybrid_search;
 mod joined;
 mod json;
 mod json_table;
@@ -80,6 +81,7 @@ pub use expression::{
     ValueExpression, WhenOperand,
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
+pub use hybrid_search::{Fusion, HybridSearch, SearchValue};
 pub use joined::{JoinKind, JoinSpecification, JoinedTable, Partitioning};
 pub use json::{
     IsJson, JsonAggregate, JsonArgument, JsonClauses, JsonCommon, JsonConstructor, JsonExpression, JsonFormat, JsonInput, JsonMember,

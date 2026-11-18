@@ -15,6 +15,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 
 mod chunk_table;
+mod hybrid_search;
 mod order_by;
 mod ordered;
 mod sets;
@@ -515,6 +516,9 @@ impl Parser {
         }
         if self.at_json_table() {
             return self.json_table();
+        }
+        if self.at_hybrid_search() {
+            return self.hybrid_search();
         }
         // [ISO/IEC 9075-2:2023 §7.6] <only spec>.
         let (table, only) = self.target_table()?;

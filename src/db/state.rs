@@ -18,7 +18,11 @@ use crate::error::Result;
 use crate::functions::Registry;
 use crate::hash::HashFunction;
 use crate::hash::murmur::MurmurMap;
-use crate::index::{BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, JsonMethod, RTreeMethod};
+use crate::index::vector::hybrid::HybridMethod;
+use crate::index::{
+    BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, JsonMethod, RTreeMethod,
+    SparseMethod,
+};
 use crate::log::Log;
 use crate::optimizer::Optimizer;
 use crate::physical::CostModel;
@@ -252,7 +256,9 @@ impl State {
             DiskAnnMethod::sharing(Arc::clone(&st.pages)).with_metrics(Arc::clone(&metrics)).with_quantizers(Arc::clone(&quantizers));
         let layered =
             HnswMethod::sharing(Arc::clone(&st.pages)).with_metrics(Arc::clone(&metrics)).with_quantizers(Arc::clone(&quantizers));
-        let lists = IvfMethod::sharing(Arc::clone(&st.pages)).with_metrics(metrics).with_quantizers(quantizers);
+        let lists = IvfMethod::sharing(Arc::clone(&st.pages)).with_metrics(Arc::clone(&metrics)).with_quantizers(Arc::clone(&quantizers));
+        let sparse = SparseMethod::sharing(Arc::clone(&st.pages));
+        let hybrid = HybridMethod::sharing(&st.pages).with_plugins(&(metrics, quantizers)).with_rankings(st.rankings.closure());
         let documents = JsonMethod::sharing(Arc::clone(&st.pages));
         let methods: Vec<Arc<dyn IndexMethod>> = vec![
             Arc::new(btree),
@@ -263,6 +269,8 @@ impl State {
             Arc::new(graph),
             Arc::new(layered),
             Arc::new(lists),
+            Arc::new(sparse),
+            Arc::new(hybrid),
         ];
         for m in methods {
             st.methods.insert(m.name().to_string(), m);

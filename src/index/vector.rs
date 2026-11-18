@@ -16,19 +16,21 @@
 mod adapt;
 mod ask;
 mod column;
+pub(crate) mod hybrid;
 mod index;
 mod options;
 mod place;
 
 pub(crate) use adapt::{codec_quantizer, disk_quantizer, distance};
 pub(crate) use ask::Ask;
-pub(crate) use column::{Column, approximate_support, column_of, default_desc, plain, projection};
+pub(crate) use column::{Column, approximate_support, column_of, default_desc, entry_key, plain, projection};
 pub(crate) use index::{Engine, Held, VectorIndex, located};
 pub(crate) use options::{Shared, serves, shared, shared_of};
 pub(crate) use place::{Named, Place};
 
 use super::{DISKANN_METHOD, HNSW_METHOD, IVF_METHOD};
 use crate::disk::buffer::{BufferPool, FileId};
+use crate::fulltext::rank::Rankings;
 use crate::vector::metric::Metrics;
 use crate::vector::quantizer::Quantizers;
 
@@ -39,11 +41,14 @@ pub(crate) fn is_vector_method(method: &str) -> bool {
 }
 
 /// The vector index methods, in the registered file `file` of `pool`, of
-/// the metrics and quantizers `plugins` gives.
+/// the metrics and quantizers `plugins` gives, the inverted index of
+/// sparse vectors among them, and the hybrid method, its text parts
+/// naming their rankings among `rankings`.
 pub(crate) fn vector_methods(
     pool: &std::sync::Arc<BufferPool>,
     file: FileId,
-    (metrics, quantizers): &(Metrics, Quantizers),
+    plugins @ (metrics, quantizers): &(Metrics, Quantizers),
+    rankings: &Rankings,
 ) -> Vec<Box<dyn super::IndexMethod>> {
     let pool = || std::sync::Arc::clone(pool);
     let (m, q) = (|| std::sync::Arc::clone(metrics), || std::sync::Arc::clone(quantizers));
@@ -51,6 +56,8 @@ pub(crate) fn vector_methods(
         Box::new(super::DiskAnnMethod::new(pool(), file).with_metrics(m()).with_quantizers(q())),
         Box::new(super::HnswMethod::new(pool(), file).with_metrics(m()).with_quantizers(q())),
         Box::new(super::IvfMethod::new(pool(), file).with_metrics(m()).with_quantizers(q())),
+        Box::new(super::SparseMethod::new(pool(), file)),
+        Box::new(hybrid::HybridMethod::new(&pool(), file).with_plugins(plugins).with_rankings(std::sync::Arc::clone(rankings))),
     ]
 }
 

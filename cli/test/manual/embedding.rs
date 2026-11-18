@@ -1,9 +1,8 @@
 //! The examples of the statements of embedding models and vector
-//! pipelines, run as printed, each page of a database of its own, with
-//! VECTOR registered.
+//! pipelines, run as printed, each page of a database of its own, VECTOR
+//! built in.
 
 use turborel::db::Database;
-use turborel::vector::VectorType;
 
 use super::Client;
 
@@ -21,7 +20,6 @@ fn the_embedding_examples_run_as_printed() {
     ];
     for page in pages {
         let db = Database::new();
-        db.register_type(Box::new(VectorType)).unwrap();
         db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
         assert!(Client::of(&db, "ANN").page(page) > 0, "{page} shows its examples' output");
     }

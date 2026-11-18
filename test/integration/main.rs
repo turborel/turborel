@@ -313,6 +313,7 @@ mod unnest;
 mod user_casts;
 mod users;
 mod varying;
+mod vector_hybrid;
 mod vector_indexes;
 mod vector_operators;
 mod vector_pipelines;

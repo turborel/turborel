@@ -29,6 +29,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE DOMAIN](create-domain.md): define a domain
 - [CREATE EMBEDDING MODEL](create-embedding-model.md): define an embedding model of a plug-in
 - [CREATE FUNCTION](create-function.md): define an SQL-invoked function, or a polymorphic table function
+- [CREATE HYBRID VECTOR INDEX](create-hybrid-vector-index.md): define an index of a text and a vector column, for hybrid search
 - [CREATE INDEX](create-index.md): define an index
 - [CREATE VECTOR INDEX](create-vector-index.md): define an approximate nearest-neighbour index
 - [CREATE METHOD](create-method.md): give a method of a user-defined type its body

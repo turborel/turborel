@@ -152,8 +152,8 @@ impl Database {
     /// of the database's metrics and quantizers.
     pub(super) fn register_vector_methods(&self, pool: &Arc<BufferPool>, file: FileId) -> Result<()> {
         let st = self.snapshot()?;
-        let plugins = (st.vectors.metrics(), st.vectors.quantizers());
+        let (plugins, rankings) = ((st.vectors.metrics(), st.vectors.quantizers()), st.rankings.closure());
         drop(st);
-        crate::index::vector::vector_methods(pool, file, &plugins).into_iter().try_for_each(|m| self.register_index_method(m))
+        crate::index::vector::vector_methods(pool, file, &plugins, &rankings).into_iter().try_for_each(|m| self.register_index_method(m))
     }
 }

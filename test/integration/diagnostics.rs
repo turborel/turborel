@@ -50,6 +50,8 @@ fn a_database_tells_its_sink_of_its_life() {
             registered(Extension::IndexMethod, "diskann"),
             registered(Extension::IndexMethod, "hnsw"),
             registered(Extension::IndexMethod, "ivf"),
+            registered(Extension::IndexMethod, "inverted"),
+            registered(Extension::IndexMethod, "hybrid"),
             registered(Extension::IndexMethod, "fulltext"),
             info("Opened(Created)"),
             info("Thread { label: \"turborel-maintenance\", change: Started }"),
