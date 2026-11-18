@@ -441,6 +441,7 @@ impl Binder<'_> {
                     refusal.unwrap_or_else(|| rule(format!("[EXTENSION] no function {name} registered takes arguments of ({shown})")))
                 );
             };
+            self.registered_permitted(name, f.0.deterministic())?;
             let (mut exprs, mut types) = self.arguments_of(&*f.0, args, bound, scope)?;
             for (e, t) in self.appended_arguments(&*f.0, (args, &exprs, &types), scope)? {
                 exprs.push(e);

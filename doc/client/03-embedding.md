@@ -371,7 +371,12 @@ default, and refuses it while it is OFF, as SQL does (SQLCODE -102).
 The setting is checked as a definition is made. A view, constraint,
 trigger, domain, generated column or routine that calls a registered
 function goes on calling it while a session using it has the setting
-OFF, and after the database is opened again.
+OFF, after the database is opened again or recovered, and on a replica.
+CREATE and ALTER check the setting of the session writing the new
+definition. A function whose `deterministic` returns false is refused
+in a CHECK, an assertion, a domain's constraint, a generated column and
+an index's key part (SQLCODE -103), as the standard refuses a routine
+that is possibly non-deterministic there.
 
 ```rust
 use turborel::db::Database;

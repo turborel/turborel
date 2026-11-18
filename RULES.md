@@ -157,6 +157,7 @@ verification approach DO-178C expects (§8).
 | D130 | Shortest paths are table functions over a named table, every tied path listed within bounds |
 | D131 | Linear referencing types are built-in kinds, their routines one dispatcher per name over the §21 catalog |
 | D132 | Class 2FF is shared by the SQL/MM parts, each routine raising its own part's conditions |
+| D133 | A registered function's own word decides whether it is deterministic, and constraints call only deterministic ones |
 
 ### The project
 
@@ -4304,6 +4305,31 @@ part the error comes from.
 (`SqlState::SPATIAL_*`), and the warnings 01F01, 01F26 and 01F82. The
 routines ported from D85 keep their SQLSTATE 22000, so their behaviour
 is unchanged.
+
+#### D133. A registered function's own word decides whether it is deterministic, and constraints call only deterministic ones
+
+The standard keeps a CHECK, an assertion and a generation expression
+free of any potential source of non-determinism [ISO/IEC 9075-2:2023
+§11.9 SR5, CR2, §11.4 SR10d]. Item am of §9.16 SR1 names a routine
+invocation whose subject routine is possibly non-deterministic. A
+registered function is no SQL-invoked routine, so the standard says
+nothing of it. Its `ScalarFunction::deterministic` is taken as the
+routine's characteristic would be. A call of one that says false is
+refused in those places and in an index's key part (D92), SQLCODE -103,
+as a call of such an SQL-invoked function is. A query still calls it.
+
+Feature F672 is not claimed, so nothing lets a retrospective CHECK call
+one. Trusting the function's word costs no check per row, and a wrong
+word is the program's to fix, as with `uses_context` or
+`index_predicate`. A function that later says false makes a stored
+definition calling it fail as it is bound again. That is the same
+failure as a function no longer registered.
+
+The setting SQL.FUNCTION_CALLS is checked when a definition is written
+(D74). ALTER TABLE reads its own CHECKs and generation expressions as
+its session read them, as CREATE does. So a constraint it adds while the
+session's setting is OFF calls no registered function, and the
+constraints made before are bound again with their calls taken.
 
 ## 2. Project layout
 

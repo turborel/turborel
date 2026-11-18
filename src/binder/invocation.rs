@@ -229,6 +229,31 @@ impl Binder<'_> {
 }
 
 impl Binder<'_> {
+    /// \[EXTENSION\] That what the binder binds may call the registered
+    /// function `name`, which `ScalarFunction::deterministic` says is
+    /// `deterministic` or not (RULES.md D133). A CHECK, an assertion, a
+    /// generation expression and a key part of an index call none that is
+    /// not, as they invoke no such SQL-invoked function
+    /// (`constraint_permits`, `generation_permits`) [ISO/IEC 9075-2:2023
+    /// §11.9 SR5, CR2, §11.4 SR10d, §9.16 SR1am].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if it may not.
+    pub(super) fn registered_permitted(&self, name: &str, deterministic: bool) -> Result<()> {
+        if deterministic {
+            return Ok(());
+        }
+        let what = format!("a call of function {name}, registered, which is not deterministic");
+        match self.purpose {
+            Purpose::Query => Ok(()),
+            Purpose::Constraint | Purpose::UnderConstraint => Err(nondeterministic_source("am", &what)),
+            Purpose::Generation | Purpose::Key => {
+                Err(rule(format!("[ISO/IEC 9075-2:2023 §11.4 SR10d, §9.16 SR1am] a generation expression shall not contain {what}")))
+            }
+        }
+    }
+
     /// `bind` run with `hosting` saying whether what it binds may invoke a
     /// function that possibly modifies SQL-data; as it was after.
     pub(super) fn hosting<T>(&self, hosting: bool, bind: impl FnOnce() -> T) -> T {

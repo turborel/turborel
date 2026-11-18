@@ -5,6 +5,7 @@ mod areas;
 mod array_targets;
 mod bigint;
 mod bounded;
+mod check_rebind;
 mod collations;
 mod composite;
 mod contents;

@@ -212,6 +212,10 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCKS.WAIT =
 14. A system-versioned table's columns are not added, altered or
     dropped. A system-time period column has no default.
 7. A constraint added follows the rules of [CREATE TABLE](create-table.md).
+   A CHECK or a generation expression added calls a function the program
+   registered only if the session's SQL.FUNCTION_CALLS is ON
+   *(extension)*. The table's constraints and generated columns made
+   before keep their calls whatever it is.
 8. SET and USING: the engine is registered, and takes each option, of a
    value it accepts; an option of columns names the table's. A temporary table names no engine or options,
    and is not resealed.

@@ -292,6 +292,51 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): ST_Geometry and its supertypes have no 
 OK
 ```
 
+## Constraints
+
+The routines are deterministic, so a CHECK, an assertion, a domain's
+constraint or a generated column may call them. SQL.FUNCTION_CALLS is
+checked as the constraint is written, by CREATE or ALTER. A constraint
+written while the setting was ON keeps its calls when the setting is
+OFF, in later statements, after the database is opened again or
+recovered, and on a replica that replays it. A new constraint written
+while the setting is OFF is refused (SQLCODE -102):
+
+```sql
+CREATE TABLE SITES (ID INTEGER, P ST_POINT CHECK (ST_X(P) >= 0));
+COMMIT;
+SET SQL.FUNCTION_CALLS = 'OFF';
+INSERT INTO SITES VALUES (1, NEW ST_POINT(2, 3));
+INSERT INTO SITES VALUES (2, NEW ST_POINT(-1, 3));
+ALTER TABLE SITES ADD CONSTRAINT NORTH CHECK (ST_Y(P) >= 0);
+SET SQL.FUNCTION_CALLS = 'ON';
+ALTER TABLE SITES ADD CONSTRAINT NORTH CHECK (ST_Y(P) >= 0);
+SET SQL.FUNCTION_CALLS = 'OFF';
+INSERT INTO SITES VALUES (3, NEW ST_POINT(1, -3));
+SELECT ID FROM SITES;
+ROLLBACK;
+SET SQL.FUNCTION_CALLS = 'ON';
+```
+
+```
+OK
+OK
+OK
+OK
+turborel: SQLCODE -201 (SQLSTATE 23000): CHECK ANN.SITES_CHECK1 of ANN.SITES is false for a row [ISO/IEC 9075:1992 §11.6 GR3]
+turborel: SQLCODE -102 (SQLSTATE 2A000): CHECK ANN.NORTH: no function of the schema is of this name, and a call of a function registered is an [EXTENSION] taken while SQL.FUNCTION_CALLS is ON [ISO/IEC 9075-2:2023 §10.4] (at character 22)
+OK
+OK
+OK
+turborel: SQLCODE -201 (SQLSTATE 23000): CHECK ANN.NORTH of ANN.SITES is false for a row [ISO/IEC 9075:1992 §11.6 GR3]
+           ID
+--------------
+            1
+(1 row)
+OK
+OK
+```
+
 ## Cast methods
 
 Each instantiable type has a cast method of ST_GEOMETRY, also called
