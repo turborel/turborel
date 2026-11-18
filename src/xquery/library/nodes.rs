@@ -86,7 +86,7 @@ fn namespace_uri(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
 /// err:XPTY0004 of more than one value.
 fn number(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let value = or_context(args, 0, focus)?;
-    let mut values = atomized(&value);
+    let mut values = atomized(&value)?;
     if values.len() > 1 {
         return Err(super::args::wrong_type("one atomic value", &format!("it is {} of them", values.len())));
     }

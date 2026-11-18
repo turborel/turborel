@@ -11,7 +11,7 @@ use super::*;
 fn arguments_are_atomized() {
     let doc = document("<a>12</a>");
     let node = Sequence::new(vec![Item::Node(doc)]);
-    assert_eq!(atomized(&node), vec![Atomic::new(AtomicType::UntypedAtomic, "12")]);
+    assert_eq!(atomized(&node).ok(), Some(vec![Atomic::new(AtomicType::UntypedAtomic, "12")]));
     assert_eq!(optional_atomic(&empty()).unwrap(), None);
     assert_eq!(code(optional_atomic(&seq(&[int(1), int(2)])).map(|_| empty())), "XPTY0004");
     assert_eq!(code(atomic(&empty()).map(|_| empty())), "XPTY0004");

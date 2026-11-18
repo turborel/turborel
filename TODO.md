@@ -152,23 +152,18 @@ features.
   the type annotation `xs:anyType` of an element constructed in
   construction mode preserve; and more of a query's shapes answered by
   the XML indexes ([Index structures](#index-structures)).
-- XML Schema: registered XML schemas, XML(DOCUMENT(XMLSCHEMA)) and
-  XML(CONTENT(XMLSCHEMA)), XMLVALIDATE and IS VALID, and their
-  Information Schema (X141 to X161, X191, X192, X256, X257, X260 to X286).
-  The built-in datatypes, simple type definitions with their facets,
-  lists and unions, the validation of a literal and the cast to a derived
-  type are done; schema documents are read into schema components,
-  their simple type definitions among them, checked against XML Schema
-  Part 1's constraints, and nodes validated against them as XQuery's
-  validate does, typed nodes stored with their annotations
-  (`src/xml/schema.rs`); XML Schemas are registered by CREATE XML SCHEMA
-  and dropped by DROP XML SCHEMA, the permanently registered ones of
-  Table 1 there. Left: GRANT and REVOKE of USAGE on a registered XML
-  Schema, which `catalog::xml_schemas::may_use` is to check, and the
-  Information Schema's views of them (X160, X161); the XMLSCHEMA types,
-  XMLVALIDATE and IS VALID, and the views, constraints, routines,
-  columns and domains that name a registered XML Schema through them
-  found as its dependents (`State::xml_schema_dependents`).
+- XML Schema: the Information Schema of registered XML Schemas (X160,
+  X161). Registered XML Schemas, CREATE and DROP XML SCHEMA, the XMLSCHEMA
+  types, XMLVALIDATE and IS VALID are done (`src/xml/schema.rs`,
+  `db/definitions/xml_schemas.rs`, `binder/xml/valid.rs`). Left: GRANT
+  and REVOKE of USAGE on a registered XML Schema, which
+  `catalog::xml_schemas::may_use` is to check; the views, constraints,
+  assertions, triggers and routines whose text names a registered XML
+  Schema through XMLVALIDATE, IS VALID or a type of XMLSCHEMA, bound to
+  the one it named as it was created [ISO/IEC 9075-14:2006 draft §4.2.6]
+  and found as its dependents (`State::xml_schema_dependents`); and the
+  components of the permanently registered XML Schemas, so they validate
+  (XS's the Schema for Schemas).
 
 ### Full text
 

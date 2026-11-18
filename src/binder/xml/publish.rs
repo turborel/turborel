@@ -6,13 +6,13 @@
 use std::sync::Arc;
 
 use super::super::{Binder, Scope, rule};
-use super::{DOCUMENT_CONTENT, xml_cast};
-use crate::ast::{Passing, Returning, ValueExpression};
+use super::DOCUMENT_CONTENT;
+use crate::ast::{Returning, ValueExpression};
 use crate::error::Result;
 use crate::functions::{ScalarRef, XmlComment, XmlConcat, XmlDocument, XmlPi, XmlText};
 use crate::logical::Expr;
 use crate::value::DataType;
-use crate::value::xml::{Typing, XmlType};
+use crate::value::xml::{Typing, XmlType, schema_combined};
 use crate::xml::{Version, is_ncname};
 
 /// [§6.11 SR1, §6.12 SR1, §6.17 SR4, §6.19 SR1] implementation-defined:
@@ -36,13 +36,16 @@ pub(super) fn returned(call: Expr, returning: Option<Returning>) -> (Expr, DataT
 
 /// [§6.12 SR2a ii 2] The declared type of XMLCONCAT RETURNING CONTENT of
 /// values of `types`, two or more: XML(CONTENT(UNTYPED)) if each is
-/// XML(DOCUMENT(UNTYPED)) or XML(CONTENT(UNTYPED)) \[A\], else
-/// XML(CONTENT(ANY)) \[E\], as no type of XMLSCHEMA is one turborel has
-/// \[B to D\]. The grammar takes two values or more, so a type of one
-/// \[1\] never is.
+/// XML(DOCUMENT(UNTYPED)) or XML(CONTENT(UNTYPED)) \[A\]; XML(CONTENT(
+/// XMLSCHEMA)) of what types of XMLSCHEMA of one registered XML Schema
+/// have in common, if each is one \[B to D\]; else XML(CONTENT(ANY))
+/// \[E\]. The grammar takes two values or more, so a type of one \[1\]
+/// never is.
 fn concatenation_type(types: &[XmlType]) -> XmlType {
-    let untyped = |t: &XmlType| matches!(t, XmlType::Document(Typing::Untyped) | XmlType::Content(Typing::Untyped));
-    if types.iter().all(untyped) { XmlType::Content(Typing::Untyped) } else { XmlType::Content(Typing::Any) }
+    if types.iter().all(XmlType::is_untyped) {
+        return XmlType::Content(Typing::Untyped);
+    }
+    schema_combined(types).map_or(XmlType::Content(Typing::Any), |named| XmlType::Content(Typing::Schema(Arc::new(named))))
 }
 
 impl Binder<'_> {
@@ -96,7 +99,11 @@ impl Binder<'_> {
 
     /// [§6.12] XMLCONCAT of `operands`, XML values: RETURNING SEQUENCE,
     /// of XML(SEQUENCE) \[SR2b\]; RETURNING CONTENT, XMLDOCUMENT of that,
-    /// cast BY REF to the type the operands' make \[SR2a, SR4\].
+    /// of the type the operands' make \[SR2a, SR4\]. \[DESIGN\] RULES.md
+    /// D86: the document node is made as XMLDOCUMENT of that type makes
+    /// one, not of XML(CONTENT(UNTYPED)) and cast after, so the types of
+    /// nodes of XMLSCHEMA or ANY are kept, as SR4's cast to one of
+    /// XMLSCHEMA needs [§6.5 SR4b].
     pub(super) fn xml_concatenation(
         &self,
         operands: &[ValueExpression],
@@ -114,11 +121,10 @@ impl Binder<'_> {
             types.push(x);
         }
         let call = Expr::Call(ScalarRef(Arc::new(XmlConcat)), args);
-        let (e, t) = returned(call, returning);
-        let target = DataType::Xml(concatenation_type(&types));
-        if returning.unwrap_or(IMPLICIT_PUBLISHING) == Returning::Sequence || t == target {
-            return Ok((e, t));
+        if returning.unwrap_or(IMPLICIT_PUBLISHING) == Returning::Sequence {
+            return Ok(returned(call, returning));
         }
-        xml_cast((e, t), target, Passing::ByRef)
+        let target = DataType::Xml(concatenation_type(&types));
+        Ok((Expr::Call(ScalarRef(Arc::new(XmlDocument(target.clone()))), vec![call]), target))
     }
 }

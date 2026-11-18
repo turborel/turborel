@@ -104,7 +104,7 @@ impl Evaluator<'_> {
     /// The value of an order spec of a tuple [XQuery §3.8.3]: atomized,
     /// one value or none \[err:XPTY0004\], an untyped one a string.
     fn key(&self, spec: &OrderKey, frame: &mut Frame, focus: &Focus) -> Result<Key> {
-        let mut atomized = atomize(&self.eval(&spec.key, frame, focus)?);
+        let mut atomized = atomize(&self.eval(&spec.key, frame, focus)?)?;
         if atomized.len() > 1 {
             return Err(error(ErrorCode::XPTY0004, "an order spec's value is more than one atomic value [XQuery §3.8.3]"));
         }

@@ -211,7 +211,7 @@ impl Binder<'_> {
                 let Some(mechanism) = passing.or(t.arguments.as_ref().map(|a| a.default)) else {
                     return Err(rule("[ISO/IEC 9075-14:2006 draft §7.1 SR4e ii 2 A I] a column of XML(SEQUENCE) has a passing mechanism, as the XMLTABLE has no argument list").or_at(c.at));
                 };
-                (false, super::xml_cast((Expr::Column(0), target.clone()), target.clone(), mechanism)?.0)
+                (false, self.xml_cast((Expr::Column(0), target.clone()), target.clone(), mechanism)?.0)
             }
             (_, Some(_)) => {
                 return Err(rule(format!(
@@ -219,7 +219,7 @@ impl Binder<'_> {
                 ))
                 .or_at(c.at));
             }
-            (DataType::Xml(_), None) => (true, super::xml_cast(input, target.clone(), Passing::ByValue)?.0),
+            (DataType::Xml(_), None) => (true, self.xml_cast(input, target.clone(), Passing::ByValue)?.0),
             (_, None) => (true, self.cast_from_xml(Expr::Column(0), target.clone()).map_err(|e| e.or_at(c.at))?.0),
         };
         let query = self.xquery(c.path.as_deref().unwrap_or(&c.name), &[]).map_err(|e| e.or_at(c.at))?;

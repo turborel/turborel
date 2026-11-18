@@ -137,7 +137,7 @@ impl Session {
 fn type_written(t: &TypeName) -> Option<&TableName> {
     match t {
         TypeName::Domain(name) | TypeName::Reference(name, _) => Some(name),
-        TypeName::Data(_) | TypeName::Collection(..) | TypeName::Row(_) | TypeName::Extension { .. } => None,
+        TypeName::Data(_) | TypeName::Collection(..) | TypeName::Row(_) | TypeName::Extension { .. } | TypeName::XmlSchema(..) => None,
     }
 }
 

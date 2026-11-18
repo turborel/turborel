@@ -25,8 +25,9 @@ CREATE XML SCHEMA: register an XML Schema
 
 CREATE XML SCHEMA registers an XML Schema, a schema of XML Schema Part 1
 read from one schema document, under a name in an SQL schema. A
-registered XML Schema is what SQL/XML's types of XMLSCHEMA, XMLVALIDATE
-and IS VALID name; turborel does not implement those yet.
+registered XML Schema is what SQL/XML's [types of
+XMLSCHEMA](../xml.md#the-xmlschema-types), [XMLVALIDATE](../xml.md#xmlvalidate)
+and [IS VALID](../xml.md#is-valid) validate XML values by.
 
 The document is a character string, a binary string or an XML value,
 evaluated once. A character string is the document as written. A binary

@@ -221,6 +221,7 @@ impl Predicate {
             | Predicate::Set { value, .. }
             | Predicate::Type { value, .. }
             | Predicate::Xml { value, .. }
+            | Predicate::XmlValid { value, .. }
             | Predicate::Null { value, .. }
             | Predicate::Quantified { value, .. }
             | Predicate::Match { value, .. } => {
@@ -255,6 +256,7 @@ impl Predicate {
             | Predicate::Set { .. }
             | Predicate::Type { .. }
             | Predicate::Xml { .. }
+            | Predicate::XmlValid { .. }
             | Predicate::Null { .. } => None,
         }
     }

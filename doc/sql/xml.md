@@ -8,16 +8,21 @@ XMLSERIALIZE writes one back as text. XMLDOCUMENT makes a document node
 of a value, XMLCAST casts SQL values to XML and back, and IS DOCUMENT and
 IS CONTENT test what a value is. XMLQUERY, XMLEXISTS and XMLTABLE query
 XML values with XQuery. XMLMAP maps a table, a schema or the catalog to
-XML and to an XML Schema document.
+XML and to an XML Schema document. XMLVALIDATE validates a value by a
+registered XML Schema, and IS VALID tests whether it is valid by one.
 
 ## The type
 
 ```
 <XML type> ::= XML [ ( <XML type modifier> ) ]
 <XML type modifier> ::=
-      DOCUMENT [ ( { ANY | UNTYPED } ) ]
-    | CONTENT [ ( { ANY | UNTYPED } ) ]
+      DOCUMENT [ ( <secondary XML type modifier> ) ]
+    | CONTENT [ ( <secondary XML type modifier> ) ]
     | SEQUENCE
+<secondary XML type modifier> ::=
+      ANY
+    | UNTYPED
+    | XMLSCHEMA <XML valid according to what> [ <XML valid element clause> ]
 ```
 
 | Type | Holds |
@@ -26,12 +31,12 @@ XML and to an XML Schema document.
 | XML(CONTENT) | A document node of any children: elements, text, comments and processing instructions. |
 | XML(SEQUENCE) | Any XML value. XML alone is XML(SEQUENCE). |
 
-UNTYPED and ANY say whether a value may carry types from an XML Schema.
-Every value XMLPARSE makes is UNTYPED. DOCUMENT and CONTENT alone are
-ANY. An UNTYPED column takes values of an UNTYPED type only; the others
-take any XML value. XMLSCHEMA, the type of values valid by a [registered
-XML Schema](#registered-xml-schemas), is not yet implemented (SQLCODE
--900).
+UNTYPED, ANY and XMLSCHEMA say whether a value may carry types from an
+XML Schema. Every value XMLPARSE makes is UNTYPED. DOCUMENT and CONTENT
+alone are ANY. An UNTYPED column takes values of an UNTYPED type only;
+an ANY or SEQUENCE column takes any XML value. A type of XMLSCHEMA holds
+values valid by a [registered XML Schema](#registered-xml-schemas),
+which [The XMLSCHEMA types](#the-xmlschema-types) describes.
 
 A value stored in a DOCUMENT column that is not a document is refused
 with SQLSTATE 2200L. A short value is kept in its row, and a long one
@@ -143,7 +148,10 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): ORDER BY orders values of XML(DOCUMENT(
 CAST takes an XML value to another XML type, and nothing else to or from
 one. A value cast to a DOCUMENT or CONTENT type is checked as one stored
 in such a column. BY REF, the default, keeps the value's nodes, and casts
-to an UNTYPED type only from an UNTYPED one. BY VALUE copies them.
+to an UNTYPED type only from an UNTYPED one, and to a type of XMLSCHEMA
+only from one its column would take. BY VALUE copies them: to an UNTYPED
+type without their types, to a type of XMLSCHEMA validating them by its
+registered XML Schema, as [XMLVALIDATE](#xmlvalidate) does.
 
 ```
 CAST ( <value expression> AS <XML type> [ BY REF | BY VALUE ] )
@@ -178,7 +186,8 @@ XMLCAST ( { <value expression> | NULL } AS { <data type> | <domain name> }
 ```
 
 XMLCAST casts a value of an SQL type to an XML type, or an XML value to
-an SQL type. Between two XML types it is CAST.
+an SQL type. Between two XML types it is CAST. No SQL value is cast to a
+type of XMLSCHEMA.
 
 An SQL value cast to XML(CONTENT) becomes a document node holding its
 text: a string's characters, a number as CAST writes it, a truth value
@@ -197,7 +206,8 @@ XML(CONTENT), written as XMLELEMENT writes it as content; cast to
 XML(SEQUENCE), it is refused (SQLCODE -900).
 
 An XML value cast to an SQL type gives the text of its one item: a
-document node's children, an element's text. That text is read as a
+document node's children, an element's text, or, of an element a
+validation typed, its typed value ([XMLVALIDATE](#xmlvalidate)). That text is read as a
 value of the XML Schema type the SQL type maps to, restricted as the
 table below shows, its white space collapsed first unless the type is a
 string type. The value is then cast to the SQL type. A value the
@@ -1171,8 +1181,9 @@ SCHEMA](statements/drop-xml-schema.md). Its document may include,
 redefine or import the documents of other registered XML Schemas of its
 schema's owner, and nothing outside the database. The XML Schemas of the namespaces of XML Schema, of XML
 Schema instances and of SQL/XML are registered always, as
-INFORMATION_SCHEMA.XS, XSI and SQLXML. The XMLSCHEMA types, XMLVALIDATE
-and IS VALID, which validate values by one, are not yet implemented.
+INFORMATION_SCHEMA.XS, XSI and SQLXML. [XMLVALIDATE](#xmlvalidate) and
+[IS VALID](#is-valid) validate values by one, and [the XMLSCHEMA
+types](#the-xmlschema-types) hold the values it validates.
 
 ```sql
 CREATE XML SCHEMA NOTES AS '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:notes"><xs:complexType name="text"/></xs:schema>';
@@ -1184,6 +1195,180 @@ DROP XML SCHEMA NOTES RESTRICT;
 OK
 OK
 turborel: SQLCODE -103 (SQLSTATE 2A000): registered XML Schema ANN.PAGES depends on registered XML Schema ANN.NOTES, so it is dropped only with CASCADE (at character 16)
+```
+
+## The XMLSCHEMA types
+
+```
+<secondary XML type modifier> ::=
+    XMLSCHEMA <XML valid according to what> [ <XML valid element clause> ]
+
+<XML valid according to what> ::=
+      URI <XML URI> [ LOCATION <XML URI> ]
+    | NO NAMESPACE [ LOCATION <XML URI> ]
+    | ID <registered XML Schema name>
+
+<XML valid element clause> ::=
+      ELEMENT <identifier>
+    | { NO NAMESPACE | NAMESPACE <XML URI> } [ ELEMENT <identifier> ]
+
+<XML URI> ::= <character string literal>
+```
+
+XML(DOCUMENT(XMLSCHEMA ...)) and XML(CONTENT(XMLSCHEMA ...)) hold
+values valid by a registered XML Schema. ID names it. URI names it by its
+target namespace, NO NAMESPACE by having none, and LOCATION by its
+schema location too: of those its user may use, the one of the least
+name is taken. The element clause narrows the type to elements of a
+namespace of the schema, or to one global element declaration, whose
+name is the identifier's text as written, so `ELEMENT "book"` names the
+element `book`. ELEMENT alone takes the schema's target namespace. A
+namespace the schema has not is refused with SQLSTATE 2201M, an element
+it does not declare with 2201N, as the type is written.
+
+A column of such a type takes a value of a type of XMLSCHEMA of the
+same registered XML Schema, of the namespace and the element the column
+names, if it names them; anything else is refused with SQLCODE -103. Such
+a value is made by XMLVALIDATE, or by CAST BY VALUE, which validates as
+XMLVALIDATE does. A value sent by a client as a parameter of such a type
+is refused with SQLSTATE 2201R, as no validation made it. A column, a
+domain and a distinct type of such a type keep its registered XML Schema
+from being dropped, even with CASCADE; a routine with a parameter or
+result of one is dropped with it by DROP XML SCHEMA CASCADE.
+
+The elements and attributes of a validated value are typed: XQuery reads
+an `xs:integer` element as an integer, and XMLCAST to an SQL type casts
+that value. Values of types of XMLSCHEMA of one registered XML Schema
+brought together by UNION or CASE are of a type of it that names what
+all name; with any other type, XML(CONTENT(ANY)). A type of XMLSCHEMA is
+written with ID and the registered XML Schema's full name.
+
+```sql
+CREATE XML SCHEMA BOOKS AS
+  '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:books" elementFormDefault="qualified">'
+  '<xs:element name="book"><xs:complexType><xs:sequence>'
+  '<xs:element name="title" type="xs:string"/><xs:element name="pages" type="xs:integer"/>'
+  '</xs:sequence></xs:complexType></xs:element></xs:schema>';
+CREATE TABLE SHELF (ID INTEGER, BOOK XML(DOCUMENT(XMLSCHEMA URI 'urn:books' ELEMENT "book")));
+INSERT INTO SHELF VALUES (1, XMLVALIDATE(DOCUMENT XMLPARSE(DOCUMENT '<book xmlns="urn:books"><title>Dune</title><pages>412</pages></book>' PRESERVE WHITESPACE) ACCORDING TO XMLSCHEMA ID BOOKS ELEMENT "book"));
+INSERT INTO SHELF VALUES (2, CAST(XMLPARSE(DOCUMENT '<book xmlns="urn:books"><title>Emma</title><pages>474</pages></book>' PRESERVE WHITESPACE) AS XML(DOCUMENT(XMLSCHEMA ID BOOKS ELEMENT "book")) BY VALUE));
+INSERT INTO SHELF VALUES (3, XMLPARSE(DOCUMENT '<book xmlns="urn:books"><title>Kim</title><pages>368</pages></book>' PRESERVE WHITESPACE));
+SELECT ID, XMLCAST(XMLQUERY('declare default element namespace "urn:books"; data(/book/pages) instance of xs:integer' PASSING BY REF BOOK RETURNING SEQUENCE EMPTY ON EMPTY) AS BOOLEAN) AS TYPED, XMLCAST(XMLQUERY('declare default element namespace "urn:books"; /book/pages' PASSING BY REF BOOK RETURNING SEQUENCE EMPTY ON EMPTY) AS INTEGER) + 1 AS MORE FROM SHELF ORDER BY ID;
+DROP XML SCHEMA BOOKS CASCADE;
+```
+
+```
+OK
+OK
+OK
+OK
+turborel: SQLCODE -103 (SQLSTATE 2A000): cannot assign a XML(DOCUMENT(UNTYPED)) value to column BOOK (XML(DOCUMENT(XMLSCHEMA ID ANN.BOOKS NAMESPACE 'urn:books' ELEMENT "book"))) [ISO/IEC 9075:1992 §13.8 SR6; ISO/IEC 9075-14:2006 draft §10.2 SR1b] (at character 29)
+           ID | TYPED |                 MORE
+--------------+-------+----------------------
+            1 | TRUE  |                  413
+            2 | TRUE  |                  475
+(2 rows)
+turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.SHELF is of an XML type of registered XML Schema ANN.BOOKS, so it is not dropped, even with CASCADE (at character 16)
+```
+
+## XMLVALIDATE
+
+```
+XMLVALIDATE ( { DOCUMENT | CONTENT | SEQUENCE } <XML value expression>
+              [ ACCORDING TO XMLSCHEMA <XML valid according to what>
+                [ <XML valid element clause> ] ] )
+```
+
+XMLVALIDATE validates an XML value by a registered XML Schema, as
+XQuery's `validate strict` does, and gives a copy of it whose elements
+and attributes carry their types, with the default values the schema
+gives added. DOCUMENT takes a document and validates it whole, its IDs
+and identity constraints checked. CONTENT takes a document node and
+validates each element child of it alone; SEQUENCE takes document,
+element, comment and processing instruction nodes, and validates each
+element, and each element child of a document node, alone. Comments and
+processing instructions are copied. The null value gives the null value.
+
+ACCORDING TO names the registered XML Schema, as a type of XMLSCHEMA
+does, and its user must be able to use it. Its element clause makes each
+element validated be of that namespace or that name. Without it, each
+element is validated by the registered XML Schema of its namespace that
+the user may use, the one of the least name if there are several; an
+element of no namespace by one of no target namespace. The registered
+XML Schemas INFORMATION_SCHEMA.XS, XSI and SQLXML validate nothing, as
+turborel holds no components of them (SQLCODE -900).
+
+Of a DOCUMENT or CONTENT value with ACCORDING TO, the result is of
+XML(DOCUMENT(XMLSCHEMA ...)) or XML(CONTENT(XMLSCHEMA ...)) of what the
+clause names; without, of XML(DOCUMENT(ANY)) or XML(CONTENT(ANY)). Of
+XML(SEQUENCE), the result is of XML(SEQUENCE).
+
+| SQLSTATE | When |
+|---|---|
+| 2200M | DOCUMENT of a value that is no document |
+| 2200N | CONTENT of a value that is not one document node |
+| 2201J | SEQUENCE of an atomic value, an attribute or a text node |
+| 2201K | A document node validated has a text child |
+| 2201L | No registered XML Schema the user may use is of an element's namespace |
+| 2201M | The element clause names a namespace the schema has not |
+| 2201N | The element clause names an element the schema does not declare |
+| 2201P | An element is not of the name the element clause gives |
+| 2201Q | An element is not of the namespace the element clause gives |
+| 2201R | An element is not valid |
+
+```sql
+CREATE XML SCHEMA SIZES AS '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:element name="size" type="xs:positiveInteger"/></xs:schema>';
+VALUES (XMLSERIALIZE(CONTENT XMLVALIDATE(CONTENT XMLPARSE(CONTENT '<size>12</size><!--and--><size>4</size>' PRESERVE WHITESPACE)) AS VARCHAR(60)));
+VALUES (XMLVALIDATE(CONTENT XMLPARSE(CONTENT '<size>0</size>' PRESERVE WHITESPACE) ACCORDING TO XMLSCHEMA ID SIZES));
+VALUES (XMLVALIDATE(CONTENT XMLPARSE(CONTENT '<size>3</size>' PRESERVE WHITESPACE) ACCORDING TO XMLSCHEMA NO NAMESPACE ELEMENT "width"));
+VALUES (XMLVALIDATE(DOCUMENT XMLPARSE(DOCUMENT '<weight xmlns="urn:weights">3</weight>' PRESERVE WHITESPACE)));
+```
+
+```
+OK
+
+--------------------------------------------------------------
+ <size>12</size><!--and--><size>4</size>
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2201R): validation failure: [Schema1 §3.3.4 cvc-type.3.1.3] '0' is no value of the element's type [ISO/IEC 9075-14:2006 draft §6.20 GR6b iv]
+turborel: SQLCODE -301 (SQLSTATE 2201N): registered XML Schema ANN.SIZES declares no global element width of namespace '' [ISO/IEC 9075-14:2006 draft §11.6 GR1b] (at character 106)
+turborel: SQLCODE -301 (SQLSTATE 2201L): no registered XML Schema of namespace 'urn:weights' may be used: no XML schema found [ISO/IEC 9075-14:2006 draft §6.20 GR6b i 2]
+```
+
+## IS VALID
+
+```
+<XML valid predicate> ::= <XML value expression> IS [ NOT ] VALID
+    { DOCUMENT | CONTENT | SEQUENCE }
+    [ ACCORDING TO XMLSCHEMA <XML valid according to what>
+      [ <XML valid element clause> ] ]
+```
+
+IS VALID is True if XMLVALIDATE of the value would succeed, and raises
+nothing: it is False of a value not of the shape DOCUMENT, CONTENT or
+SEQUENCE asks, or of an element not valid, or not of the element
+clause's name or namespace. Without ACCORDING TO, an element of a
+namespace of no registered XML Schema the user may use makes it Unknown,
+unless another makes it False. It is Unknown of the null value. A CHECK
+of IS VALID keeps a column of an UNTYPED type valid by a schema.
+
+```sql
+CREATE TABLE SIZED (S XML(CONTENT(UNTYPED)) CHECK (S IS VALID CONTENT ACCORDING TO XMLSCHEMA ID SIZES));
+INSERT INTO SIZED VALUES (XMLPARSE(CONTENT '<size>8</size>' PRESERVE WHITESPACE));
+INSERT INTO SIZED VALUES (XMLPARSE(CONTENT '<size>-8</size>' PRESERVE WHITESPACE));
+SELECT CASE WHEN X IS VALID CONTENT THEN 'valid' WHEN X IS NOT VALID CONTENT THEN 'not valid' ELSE 'unknown' END AS IT FROM (VALUES (XMLPARSE(CONTENT '<size>8</size>' PRESERVE WHITESPACE)), (XMLPARSE(CONTENT '<size>eight</size>' PRESERVE WHITESPACE)), (XMLPARSE(CONTENT '<w xmlns="urn:none"/>' PRESERVE WHITESPACE))) AS V (X);
+```
+
+```
+OK
+OK
+turborel: SQLCODE -201 (SQLSTATE 23000): CHECK ANN.SIZED_CHECK1 of ANN.SIZED is false for a row [ISO/IEC 9075:1992 §11.6 GR3]
+ IT
+-----------
+ valid
+ not valid
+ unknown
+(3 rows)
 ```
 
 ## Clients

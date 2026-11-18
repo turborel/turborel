@@ -133,9 +133,9 @@ pub use window::{
     WindowFunction, WindowKind, WindowOver, WindowSpecification,
 };
 pub use xml::{
-    ContentOption, ElementConstructor, ForestConstructor, LexicallyScopedOptions, MapResults, MapSource, Named, NamespaceItem, OnEmpty,
-    Passing, Returning, XmlArgument, XmlArguments, XmlMapping, XmlOperator, XmlQuery, XmlRegularColumn, XmlSchemaDefinition, XmlTable,
-    XmlTableColumn, rows_of,
+    ContentOption, Dcs, ElementConstructor, ForestConstructor, LexicallyScopedOptions, MapResults, MapSource, Named, NamespaceItem,
+    OnEmpty, Passing, Returning, XmlArgument, XmlArguments, XmlMapping, XmlOperator, XmlQuery, XmlRegularColumn, XmlSchemaDefinition,
+    XmlTable, XmlTableColumn, XmlValidAccording, XmlValidWhat, rows_of,
 };
 
 // ---------------------------------------------------------------------------

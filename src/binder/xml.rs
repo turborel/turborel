@@ -13,6 +13,7 @@ mod namespaces;
 mod publish;
 mod query;
 mod scope;
+mod valid;
 
 use std::sync::Arc;
 
@@ -26,7 +27,7 @@ use crate::error::Result;
 use crate::functions::{ScalarRef, Serialization, XmlCopy, XmlDocument, XmlIs, XmlParse, XmlSerialize};
 use crate::logical::{Cond, Expr};
 use crate::value::DataType;
-use crate::value::xml::{Typing, XmlType};
+use crate::value::xml::{Typing, XmlType, schema_combined};
 use crate::xml::{Syntax, VERSION_10, VERSION_11, Version, Whitespace};
 
 /// [§6.8 SR2d, SR4g] implementation-defined: the version a serialization
@@ -44,8 +45,9 @@ pub const ENCODINGS: [&str; 2] = ["UTF8", "UTF16"];
 pub const IMPLICIT_RETURNING: Returning = Returning::Content;
 
 /// [§6.13 SR3a] implementation-defined: the declared type of XMLDOCUMENT
-/// RETURNING CONTENT, XML(CONTENT(UNTYPED)), as no node turborel holds has
-/// a type of an XML Schema, and §10.19 makes its value so \[GR9a\].
+/// RETURNING CONTENT, XML(CONTENT(UNTYPED)), so the publishing operators
+/// make what an UNTYPED column takes; §10.19 makes its value so, its nodes'
+/// types dropped \[GR9a\].
 pub const DOCUMENT_CONTENT: XmlType = XmlType::Content(Typing::Untyped);
 
 impl Binder<'_> {
@@ -69,6 +71,7 @@ impl Binder<'_> {
             XmlOperator::Element(element) => self.xml_element(element, scope),
             XmlOperator::Forest(forest) => self.xml_forest(forest, scope),
             XmlOperator::Query(q) => self.xml_query(q, scope),
+            XmlOperator::Validate { dcs, operand, according } => self.xml_validate(*dcs, operand, according.as_deref(), scope),
             XmlOperator::Exists(q) => self.xml_exists(q, scope),
             XmlOperator::Table(t) => self.xml_table(t, scope),
             XmlOperator::Map(mapping) => self.xml_map(mapping, scope),
@@ -120,7 +123,7 @@ impl Binder<'_> {
                 bound.1
             )));
         }
-        xml_cast(bound, target, passing)
+        self.xml_cast(bound, target, passing)
     }
 
     /// [§8.2, §8.3] `value` IS \[NOT\] DOCUMENT or CONTENT, as `syntax`
@@ -151,35 +154,52 @@ impl Binder<'_> {
     }
 }
 
-/// [§6.5] CAST of `e`, of type `t`, to `target`, one of them an XML type,
-/// passed as `passing` says: of an XML type to an XML type alone \[SR3\];
-/// BY REF, to an UNTYPED type of an UNTYPED one \[SR4a\], its nodes
-/// themselves; BY VALUE, a copy of them [§10.18] \[GR1b i\].
-///
-/// # Errors
-///
-/// SQLCODE -103 if it is not valid.
-pub(super) fn xml_cast((e, t): (Expr, DataType), target: DataType, passing: Passing) -> Result<(Expr, DataType)> {
-    let (DataType::Xml(source), DataType::Xml(to)) = (&t, &target) else {
-        return Err(rule(format!("[ISO/IEC 9075-14:2006 draft §6.5 SR3] CAST of {t} to {target} is not valid")));
-    };
-    if passing == Passing::ByRef && !to.takes(*source) {
-        return Err(rule(format!("[ISO/IEC 9075-14:2006 draft §6.5 SR4a] CAST BY REF of {t} to {target} is not valid")));
+impl Binder<'_> {
+    /// [§6.5] CAST of `e`, of type `t`, to `target`, one of them an XML
+    /// type, passed as `passing` says: of an XML type to an XML type alone
+    /// \[SR3\]; BY REF, of a type assignable to `target` \[SR4\], its nodes
+    /// themselves; BY VALUE, to a type of XMLSCHEMA XMLVALIDATE of the
+    /// value \[GR1b i 1\], to an XML(DOCUMENT(ANY)), XML(CONTENT(ANY)) or
+    /// XML(SEQUENCE) type a copy of it [§10.18] \[GR1b i 2\], to an UNTYPED
+    /// type an unvalidated document node [§10.19] \[GR1b i 3\]. Each is
+    /// first of `target`'s primary type \[GR1a\].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if it is not valid.
+    pub(super) fn xml_cast(&self, (e, t): (Expr, DataType), target: DataType, passing: Passing) -> Result<(Expr, DataType)> {
+        let (DataType::Xml(source), DataType::Xml(to)) = (&t, &target) else {
+            return Err(rule(format!("[ISO/IEC 9075-14:2006 draft §6.5 SR3] CAST of {t} to {target} is not valid")));
+        };
+        if passing == Passing::ByRef && !to.takes(source) {
+            let clause = if to.schema().is_some() { "§6.5 SR4b" } else { "§6.5 SR4a" };
+            return Err(rule(format!("[ISO/IEC 9075-14:2006 draft {clause}] CAST BY REF of {t} to {target} is not valid")));
+        }
+        let cast = |into: DataType| Expr::Cast(Box::new(e), into);
+        let passed = match (passing, to.schema().is_some(), to.is_untyped()) {
+            (Passing::ByRef, _, _) => cast(target.clone()),
+            // [GR1a] Of the primary type, of any typing, then validated.
+            (Passing::ByValue, true, _) => {
+                let any = match to {
+                    XmlType::Document(_) => XmlType::Document(Typing::Any),
+                    XmlType::Content(_) | XmlType::Sequence => XmlType::Content(Typing::Any),
+                };
+                self.validated_cast(cast(DataType::Xml(any)), &target)?
+            }
+            (Passing::ByValue, false, true) => Expr::Call(ScalarRef(Arc::new(XmlDocument(target.clone()))), vec![cast(target.clone())]),
+            (Passing::ByValue, false, false) => Expr::Call(ScalarRef(Arc::new(XmlCopy)), vec![cast(target.clone())]),
+        };
+        Ok((passed, target))
     }
-    let cast = Expr::Cast(Box::new(e), target.clone());
-    let passed = match passing {
-        Passing::ByRef => cast,
-        Passing::ByValue => Expr::Call(ScalarRef(Arc::new(XmlCopy)), vec![cast]),
-    };
-    Ok((passed, target))
 }
 
 /// [§10.3 SR1] The result type of values of `types`, one an XML type:
 /// all XML types \[SR1a\]; XML(SEQUENCE) if one is \[SR1b i\]; the one
 /// type, if one \[SR1b ii 2 A\]; XML(DOCUMENT(UNTYPED)) if all are
 /// \[SR1b ii 2 B I\]; XML(CONTENT(UNTYPED)) if all are UNTYPED \[SR1b ii
-/// 2 B II\]; else XML(CONTENT(ANY)) \[SR1b ii 2 B IX\], no type of
-/// XMLSCHEMA being one turborel has. `clause` is the rule to cite.
+/// 2 B II\]; of XMLSCHEMA, if all are, of one registered XML Schema, what
+/// they have in common, DOCUMENT if all are \[SR1b ii 2 B III to VIII\];
+/// else XML(CONTENT(ANY)) \[SR1b ii 2 B IX\]. `clause` is the rule to cite.
 ///
 /// # Errors
 ///
@@ -192,17 +212,19 @@ pub(super) fn xml_set_type(types: &[DataType], clause: &str) -> Result<DataType>
                 "[ISO/IEC 9075-14:2006 draft §10.3 SR1a] {clause}: XML values are brought together with values of {t}"
             )));
         };
-        xml.push(*x);
+        xml.push(x.clone());
     }
-    let untyped = |x: &XmlType| matches!(x, XmlType::Document(Typing::Untyped) | XmlType::Content(Typing::Untyped));
     let combined = if xml.is_empty() || xml.contains(&XmlType::Sequence) {
         XmlType::Sequence
     } else if let [only] = xml.as_slice() {
-        *only
+        only.clone()
     } else if xml.iter().all(|x| *x == XmlType::Document(Typing::Untyped)) {
         XmlType::Document(Typing::Untyped)
-    } else if xml.iter().all(untyped) {
+    } else if xml.iter().all(XmlType::is_untyped) {
         XmlType::Content(Typing::Untyped)
+    } else if let Some(named) = schema_combined(&xml) {
+        let typing = Typing::Schema(Arc::new(named));
+        if xml.iter().all(|x| matches!(x, XmlType::Document(_))) { XmlType::Document(typing) } else { XmlType::Content(typing) }
     } else {
         XmlType::Content(Typing::Any)
     };

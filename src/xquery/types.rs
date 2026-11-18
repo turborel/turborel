@@ -2,10 +2,12 @@
 //! types of the in-scope schema types [XQuery §2.5.1], the sequence types
 //! a value is matched against [XQuery §2.5.3, §2.5.4], and the matching.
 //!
-//! \[DESIGN\] RULES.md D86: no node turborel holds has a type annotation
-//! but those of nodes no schema validated, `xdt:untyped` of an element
-//! and `xdt:untypedAtomic` of an attribute [XQuery §2.2.1], so a type
-//! annotation is matched as theirs. An atomic value is of an
+//! \[DESIGN\] RULES.md D86: a node no schema validated has the type
+//! annotation `xdt:untyped`, of an element, or `xdt:untypedAtomic`, of an
+//! attribute [XQuery §2.2.1]; one XMLVALIDATE validated has its type's, a
+//! built-in type's matched by the built-in hierarchy, a registered XML
+//! Schema's, which is no in-scope schema type as no schema is imported,
+//! as derived from `xs:anyType` alone. An atomic value is of an
 //! `xml::AtomicType`, every built-in atomic type of XML Schema and XQuery
 //! one; the hierarchy above them is `xdt:anyAtomicType`,
 //! `xs:anySimpleType` and `xs:anyType` [XQueryFO §1.6].
@@ -241,9 +243,8 @@ fn named(node: &Node, name: Option<&QName>) -> bool {
 }
 
 impl NodeKind {
-    /// Whether `node` matches it [XQuery §2.5.4.2 to §2.5.4.5]: an
-    /// element's annotation `xdt:untyped`, never nilled, an attribute's
-    /// `xdt:untypedAtomic`.
+    /// Whether `node` matches it [XQuery §2.5.4.2 to §2.5.4.5]: by its
+    /// name and its type annotation (`annotation_derives`).
     #[must_use]
     pub fn matches(&self, node: &Node) -> bool {
         let kind = node.kind();
@@ -257,7 +258,8 @@ impl NodeKind {
             }
             NodeKind::Element(test) => kind == Some(Kind::Element) && element_matches(test, node),
             NodeKind::Attribute(test) => {
-                let typed = test.annotation.as_ref().is_none_or(|t| SchemaType::Atomic(AtomicType::UntypedAtomic).derives_from(t));
+                let untyped = SchemaType::Atomic(AtomicType::UntypedAtomic);
+                let typed = test.annotation.as_ref().is_none_or(|t| annotation_derives(node, &untyped, t));
                 kind == Some(Kind::Attribute) && named(node, test.name.as_ref()) && typed
             }
             NodeKind::Document(test) => kind == Some(Kind::Document) && test.as_ref().is_none_or(|t| document_matches(t, node)),
@@ -266,9 +268,21 @@ impl NodeKind {
 }
 
 /// Whether element `node` matches `test` [XQuery §2.5.4.3]: its name, and
-/// its annotation `xdt:untyped`.
+/// its type annotation.
 fn element_matches(test: &ElementKind, node: &Node) -> bool {
-    named(node, test.name.as_ref()) && test.annotation.as_ref().is_none_or(|t| SchemaType::Untyped.derives_from(t))
+    named(node, test.name.as_ref()) && test.annotation.as_ref().is_none_or(|t| annotation_derives(node, &SchemaType::Untyped, t))
+}
+
+/// derives-from(the type annotation of `node`, `expected`) [XQuery
+/// §2.5.4]: of a node no schema validated, `untyped`'s; of a built-in
+/// type, by the built-in hierarchy; of a type of a registered XML Schema,
+/// no in-scope schema type, true of `xs:anyType` alone.
+fn annotation_derives(node: &Node, untyped: &SchemaType, expected: &SchemaType) -> bool {
+    let Some(annotation) = node.tree().annotation(node.id()) else { return untyped.derives_from(expected) };
+    match SchemaType::named(annotation.name.uri.as_deref(), &annotation.name.local) {
+        Some(t) => t.derives_from(expected),
+        None => *expected == SchemaType::AnyType,
+    }
 }
 
 /// Whether document `node` has exactly one element child, matching

@@ -72,7 +72,7 @@ impl Evaluator<'_> {
             GeneralComp::Gt => ValueComp::Gt,
             GeneralComp::Ge => ValueComp::Ge,
         };
-        let (left, right) = (atomize(left), atomize(right));
+        let (left, right) = (atomize(left)?, atomize(right)?);
         for a in &left {
             self.check()?;
             for b in &right {
@@ -99,7 +99,7 @@ fn textual(p: Primitive) -> bool {
 ///
 /// err:XPTY0004 of more than one.
 fn one_atomic(items: &[Item]) -> Result<Option<Atomic>> {
-    let mut atomized = atomize(items);
+    let mut atomized = atomize(items)?;
     if atomized.len() > 1 {
         return Err(error(ErrorCode::XPTY0004, "an operand of a value comparison is more than one atomic value [XQuery §3.5.1]"));
     }

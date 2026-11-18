@@ -74,7 +74,7 @@ pub(super) fn bind(scope: &[Binding], declared: &mut Vec<Binding>, name: &mut QN
 /// unprefixed in the default element/type namespace of an element,
 /// none of an attribute.
 pub(super) fn computed(value: &Seq, names: &StaticNames) -> Result<QName> {
-    let atomized = atomize(value);
+    let atomized = atomize(value)?;
     let [name] = atomized.as_slice() else {
         return Err(error(ErrorCode::XPTY0004, "a name expression is not one atomic value [XQuery §3.7.3.1]"));
     };

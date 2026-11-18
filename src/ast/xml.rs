@@ -7,8 +7,10 @@
 //! definition of a registered XML Schema [§4.2.6].
 
 mod query;
+mod valid;
 
 pub use query::{OnEmpty, XmlArgument, XmlArguments, XmlQuery, XmlRegularColumn, XmlTable, XmlTableColumn};
+pub use valid::{Dcs, XmlValidAccording, XmlValidWhat};
 
 use super::{
     NamedTable, QueryExpression, QuerySpecification, SelectList, SqlStatement, Subquery, TableExpression, TableName, TableReference,
@@ -278,6 +280,18 @@ pub enum XmlOperator {
         /// PRESERVE or STRIP WHITESPACE.
         whitespace: Whitespace,
     },
+    /// [§6.20] `<XML validate>` ::= XMLVALIDATE ( `<document or content
+    /// or sequence>` `<XML value expression>` \[`<XML valid according to
+    /// clause>`\] ).
+    Validate {
+        /// The `<document or content or sequence>`, DCS \[SR1\].
+        dcs: Dcs,
+        /// The XML value validated.
+        operand: ValueExpression,
+        /// The `<XML valid according to clause>`, if written; else each
+        /// element is validated by its namespace's registered XML Schema.
+        according: Option<Box<XmlValidAccording>>,
+    },
     /// [§6.18] `<XML query>`.
     Query(XmlQuery),
     /// [§8.4] `<XML exists predicate>`, a boolean value.
@@ -321,6 +335,7 @@ impl XmlOperator {
             | XmlOperator::Document { operand, .. }
             | XmlOperator::Parse { operand, .. }
             | XmlOperator::Serialize { operand, .. }
+            | XmlOperator::Validate { operand, .. }
             | XmlOperator::Text { operand, .. } => f(operand),
             XmlOperator::Concat { operands, .. } => operands.iter().for_each(f),
             XmlOperator::Pi { operand, .. } => operand.iter().for_each(f),
@@ -352,7 +367,8 @@ impl XmlOperator {
             | XmlOperator::Forest(_)
             | XmlOperator::Query(_)
             | XmlOperator::Exists(_)
-            | XmlOperator::Table(_) => None,
+            | XmlOperator::Table(_)
+            | XmlOperator::Validate { .. } => None,
         }
     }
 }

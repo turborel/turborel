@@ -66,8 +66,8 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2200E | Null value in array target: an element assigned of a null array |
 | 2200H | Sequence generator limit exceeded: NEXT VALUE FOR of a generator of NO CYCLE past its last value |
 | 2200L | Not an XML document: a value stored in, or cast to, an XML(DOCUMENT) type that is no document, or XMLSERIALIZE DOCUMENT of one; or the document of CREATE XML SCHEMA the null value or an XML value that is no document |
-| 2200M | Invalid XML document: XMLPARSE DOCUMENT of text that is no well-formed document, or CREATE XML SCHEMA of one |
-| 2200N | Invalid XML content: XMLPARSE CONTENT of text that is no well-formed content, or content XMLELEMENT or XMLFOREST maps to XML that is none |
+| 2200M | Invalid XML document: XMLPARSE DOCUMENT of text that is no well-formed document, or CREATE XML SCHEMA of one; XMLVALIDATE DOCUMENT of a value that is no document |
+| 2200N | Invalid XML content: XMLPARSE CONTENT of text that is no well-formed content, or content XMLELEMENT or XMLFOREST maps to XML that is none; XMLVALIDATE CONTENT of a value that is not one document node |
 | 2200Q | Multiset value overflow: a multiset of more than 65,535 elements |
 | 2200R | XML value overflow: XMLAGG of values holding more than 64 MiB together |
 | 2200S | Invalid comment: XMLCOMMENT of text holding two hyphens together, ending with one, or holding a character no XML 1.1 character |
@@ -84,6 +84,14 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22016 | Invalid argument for NTH_VALUE function: a row below 1 |
 | 22018 | Invalid character value for cast |
 | 22019 | Invalid escape character |
+| 2201J | XQuery sequence cannot be validated: XMLVALIDATE SEQUENCE of an atomic value, an attribute or a text node |
+| 2201K | XQuery document node cannot be validated: XMLVALIDATE of a document node with a text child |
+| 2201L | No XML schema found: XMLVALIDATE of no ACCORDING TO of an element whose namespace has no registered XML Schema the user may use |
+| 2201M | Element namespace not declared: an element clause names a namespace its registered XML Schema has not |
+| 2201N | Global element not declared: an element clause names an element its registered XML Schema does not declare |
+| 2201P | No XML element with the specified QName: XMLVALIDATE of an element not of the name its element clause gives |
+| 2201Q | No XML element with the specified namespace: XMLVALIDATE of an element not of the namespace its element clause gives |
+| 2201R | Validation failure: XMLVALIDATE, or CAST BY VALUE to a type of XMLSCHEMA, of an element not valid; a value no validation made stored in, or cast to, a type of XMLSCHEMA |
 | 2201S | Invalid XQuery regular expression: a pattern no XQuery regular expression |
 | 2201T | Invalid XQuery option flag: a flag of a character none of s, m, i, x and q |
 | 2201U | Attempt to replace a zero-length string: TRANSLATE_REGEX of a match of no characters, or of a pattern that matches the empty string |

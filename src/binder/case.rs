@@ -499,7 +499,7 @@ impl Binder<'_> {
         // 9075-2:2023 §11.51 GR2b, §6.13 SR12] (Feature X013).
         let xml = |x: &DataType| matches!(x, DataType::Xml(_));
         if (xml(&t) || xml(&target)) && !user_defined(&t) && !user_defined(&target) {
-            return super::xml::xml_cast((e, t), target, Passing::ByRef);
+            return self.xml_cast((e, t), target, Passing::ByRef);
         }
         let e = if t != target && (user_defined(&t) || user_defined(&target)) {
             match self.user_cast((e, t.clone()), &target)? {

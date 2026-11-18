@@ -46,7 +46,7 @@ impl Evaluator<'_> {
             return Err(error(ErrorCode::XQDY0044, "a computed attribute is named xmlns, or in its namespace [XQuery §3.7.3.2]"));
         }
         let value = match content {
-            Some(op) => joined(&self.eval(op, frame, focus)?),
+            Some(op) => joined(&self.eval(op, frame, focus)?)?,
             None => String::new(),
         };
         if name.uri.is_none() {
@@ -67,7 +67,7 @@ impl Evaluator<'_> {
             return Ok(Vec::new());
         }
         let mut builder = Builder::parentless();
-        builder.text(&joined(&value))?;
+        builder.text(&joined(&value)?)?;
         self.built(builder)
     }
 
@@ -75,7 +75,7 @@ impl Evaluator<'_> {
     /// strings a space apart, holding no two hyphens together nor ending
     /// with one \[err:XQDY0072\].
     pub(in super::super) fn comment(&self, content: &Op, frame: &mut Frame, focus: &Focus) -> Result<Seq> {
-        let value = joined(&self.eval(content, frame, focus)?);
+        let value = joined(&self.eval(content, frame, focus)?)?;
         if value.contains(TWO_HYPHENS) || value.ends_with('-') {
             return Err(error(ErrorCode::XQDY0072, "a computed comment holds two hyphens together or ends with one [XQuery §3.7.3.6]"));
         }
@@ -99,7 +99,7 @@ impl Evaluator<'_> {
             Ok(target) => target.to_string(),
             Err(op) => {
                 let value = self.eval(op, frame, focus)?;
-                let target = joined(&value);
+                let target = joined(&value)?;
                 let atomic = matches!(value.as_slice(), [_]);
                 if !atomic || !is_ncname(Version::V11, target.trim_matches(is_space)) {
                     let why = format!("'{target}' is no NCName a processing instruction is named [XQuery §3.7.3.5]");
@@ -115,7 +115,7 @@ impl Evaluator<'_> {
             Ok(content) => content.to_string(),
             Err(op) => {
                 let value = match op {
-                    Some(op) => joined(&self.eval(op, frame, focus)?),
+                    Some(op) => joined(&self.eval(op, frame, focus)?)?,
                     None => String::new(),
                 };
                 if value.contains(PI_END) {

@@ -257,6 +257,19 @@ pub enum Predicate {
         /// IS NOT was written \[SR2\].
         not: bool,
     },
+    /// [ISO/IEC 9075-14:2006 draft §8.5] `<XML valid predicate>` ::= `<row
+    /// value predicand>` IS \[NOT\] VALID `<document or content or
+    /// sequence>` \[`<XML valid according to clause>`\].
+    XmlValid {
+        /// The XML value tested, XVE: a row of one value \[SR1\].
+        value: RowValue,
+        /// DOCUMENT, CONTENT or SEQUENCE, DCS \[SR2\].
+        dcs: super::Dcs,
+        /// The `<XML valid according to clause>`, if written.
+        according: Option<Box<super::XmlValidAccording>>,
+        /// IS NOT was written \[SR3\].
+        not: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------

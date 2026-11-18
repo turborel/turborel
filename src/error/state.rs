@@ -257,6 +257,28 @@ impl SqlState {
     /// Data exception: validation failure [ISO/IEC 9075-14:2006 draft
     /// §6.20 GR6a iii 2 D, GR6b iv, §23.1].
     pub const VALIDATION_FAILURE: SqlState = SqlState(*b"2201R");
+    /// Data exception: XQuery sequence cannot be validated [ISO/IEC
+    /// 9075-14:2006 draft §6.20 GR3c, §23.1].
+    pub const XQUERY_SEQUENCE_CANNOT_BE_VALIDATED: SqlState = SqlState(*b"2201J");
+    /// Data exception: XQuery document node cannot be validated [ISO/IEC
+    /// 9075-14:2006 draft §6.20 GR6a iii 1, §23.1].
+    pub const XQUERY_DOCUMENT_NODE_CANNOT_BE_VALIDATED: SqlState = SqlState(*b"2201K");
+    /// Data exception: no XML schema found [ISO/IEC 9075-14:2006 draft
+    /// §6.20 GR6a iii 2 A II 2, GR6b i 2, §23.1].
+    pub const NO_XML_SCHEMA_FOUND: SqlState = SqlState(*b"2201L");
+    /// Data exception: no XML element with the specified QName [ISO/IEC
+    /// 9075-14:2006 draft §6.20 GR6a iii 2 B I, GR6b ii 1, §23.1].
+    pub const NO_XML_ELEMENT_WITH_THE_SPECIFIED_QNAME: SqlState = SqlState(*b"2201P");
+    /// Data exception: no XML element with the specified namespace
+    /// [ISO/IEC 9075-14:2006 draft §6.20 GR6a iii 2 B II, GR6b ii 2,
+    /// §23.1].
+    pub const NO_XML_ELEMENT_WITH_THE_SPECIFIED_NAMESPACE: SqlState = SqlState(*b"2201Q");
+    /// Data exception: element namespace not declared [ISO/IEC
+    /// 9075-14:2006 draft §11.6 GR1a, §23.1].
+    pub const ELEMENT_NAMESPACE_NOT_DECLARED: SqlState = SqlState(*b"2201M");
+    /// Data exception: global element not declared [ISO/IEC 9075-14:2006
+    /// draft §11.6 GR1b, §23.1].
+    pub const GLOBAL_ELEMENT_NOT_DECLARED: SqlState = SqlState(*b"2201N");
     /// XQuery error: a static error, type error or dynamic error XQuery
     /// raises [ISO/IEC 9075-14:2006 draft §3.1.3.56, §6.6 GR3d vi, GR4j,
     /// §6.13 GR8, §6.18 GR3, §23.1].

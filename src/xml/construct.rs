@@ -7,7 +7,7 @@
 //! links, so nothing recurses.
 
 use super::sequence::{Item, Sequence};
-use super::tree::{Builder, Kind};
+use super::tree::{Builder, Copying, Kind};
 use crate::error::{Code, Result, SqlError, SqlState};
 
 /// The one separator XQuery puts between adjacent atomic values made a
@@ -37,6 +37,18 @@ fn attribute_in_content() -> SqlError {
 /// \[err:XPTY0004\]; SQLCODE -900 if the tree would be beyond turborel's
 /// limits.
 pub fn document(value: &Sequence) -> Result<Sequence> {
+    document_as(value, Copying::PRESERVE)
+}
+
+/// As `document`, each node copied by `mode`: `Copying::UNVALIDATED` makes
+/// an unvalidated document node, as XMLDOCUMENT of XML(CONTENT(UNTYPED))
+/// and CAST BY VALUE to an UNTYPED type do [ISO/IEC 9075-14:2006 draft
+/// §10.19, §6.13 GR9a, §6.5 GR1b i 3].
+///
+/// # Errors
+///
+/// As `document`.
+pub fn document_as(value: &Sequence, mode: Copying) -> Result<Sequence> {
     let mut builder = Builder::document();
     let mut after_atomic = false;
     for item in value.items() {
@@ -52,7 +64,7 @@ pub fn document(value: &Sequence) -> Result<Sequence> {
                 if node.kind() == Some(Kind::Attribute) {
                     return Err(attribute_in_content());
                 }
-                builder.copy(node.tree(), node.id())?;
+                builder.copy_as(node.tree(), node.id(), mode)?;
                 after_atomic = false;
             }
         }

@@ -129,7 +129,7 @@ impl State {
             TypeName::Data(DataType::Extension(t)) => refused(t.kind.name(), 0),
             TypeName::Data(t) => Ok(t.clone()),
             TypeName::Domain(name) | TypeName::Extension { name, .. } | TypeName::Reference(name, _) => refused(&name.ident, name.at),
-            TypeName::Collection(..) => self.data_type_of(of, (schema, sole(&*self.catalog, owner))),
+            TypeName::Collection(..) | TypeName::XmlSchema(..) => self.data_type_of(of, (schema, sole(&*self.catalog, owner))),
         }
     }
 

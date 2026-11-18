@@ -87,7 +87,7 @@ fn string(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
 /// atomic value itself, each node its typed value; every node of a tree
 /// no schema typed has one.
 fn data(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
-    items(atomized(arg(args, 0)).into_iter().map(Item::Atomic).collect())
+    items(atomized(arg(args, 0))?.into_iter().map(Item::Atomic).collect())
 }
 
 /// [XQueryDM §5.2, §6.2.3] The base URI of `node`: what the `xml:base` attributes

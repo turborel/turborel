@@ -42,8 +42,9 @@ impl AggregateFunction for XmlAggregate {
     /// [§11.2 SR2] Of an XML value [§6.9 SR1], ordered by keys an
     /// ordering operation takes: RETURNING SEQUENCE, XML(SEQUENCE)
     /// \[SR2b\]; RETURNING CONTENT, XML(CONTENT(UNTYPED)) of an UNTYPED
-    /// value, else XML(CONTENT(ANY)) \[SR2a\], no type of XMLSCHEMA being
-    /// one turborel has.
+    /// value \[SR2a i\], XML(CONTENT(XMLSCHEMA)) of what the value's type
+    /// of XMLSCHEMA indicates \[SR2a ii\], else XML(CONTENT(ANY)) \[SR2a
+    /// iii\]; its document node made of that type, its nodes' types kept.
     fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
         let Some(DataType::Row(row)) = arg else { return Err(no_argument()) };
         let value = row.fields.first().map(|f| f.data_type.clone()).ok_or_else(no_argument)?;
@@ -54,12 +55,12 @@ impl AggregateFunction for XmlAggregate {
             ));
         };
         ordered_keys(&row, XMLAGG)?;
-        let untyped = matches!(t, XmlType::Document(Typing::Untyped) | XmlType::Content(Typing::Untyped));
-        Ok(DataType::Xml(match (self.content, untyped) {
-            (false, _) => XmlType::Sequence,
-            (true, true) => XmlType::Content(Typing::Untyped),
-            (true, false) => XmlType::Content(Typing::Any),
-        }))
+        let typing = match (t.is_untyped(), t.schema()) {
+            (true, _) => Typing::Untyped,
+            (false, Some(named)) => Typing::Schema(Arc::new(named.clone())),
+            (false, None) => Typing::Any,
+        };
+        Ok(DataType::Xml(if self.content { XmlType::Content(typing) } else { XmlType::Sequence }))
     }
 
     fn accumulator(&self, _: DataType) -> Box<dyn Accumulator> {

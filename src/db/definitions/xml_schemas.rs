@@ -13,6 +13,8 @@
 //! SQL-schema statement names needs [§11.6 AR1a]; nothing is fetched.
 //! Those it read are recorded and are what it depends on.
 
+mod according;
+mod dependents;
 mod document;
 
 use std::sync::Arc;
@@ -39,8 +41,10 @@ pub(in crate::db) struct XmlSchemaDependents {
     /// The views, constraints, assertions, triggers and routines that
     /// name it or one of `schemas`, which DROP ... CASCADE drops.
     pub(in crate::db) abandoned: Abandoned,
-    /// The tables and domains with a column or type of an XML type of it
-    /// or one of `schemas`, which nothing drops.
+    /// The tables, domains and user-defined types with a column or type of
+    /// an XML type of XMLSCHEMA of it or one of `schemas`, and the tables
+    /// of a generated column that invokes a routine of one, which nothing
+    /// drops.
     pub(in crate::db) typed: Vec<QualifiedName>,
 }
 
@@ -146,12 +150,12 @@ impl State {
 
     /// What depends on registered XML Schema `qn`, of the schemas `within`
     /// takes: the registered XML Schemas of them that use it, and those
-    /// that use one of those, of any schema; and what names any of these,
-    /// which no SQL does but the statements of registered XML Schemas
-    /// themselves until the XML types of XMLSCHEMA, XMLVALIDATE and IS
-    /// VALID name one. The one place what depends on one is found: for
-    /// DROP, and for a REVOKE of USAGE, the schemas of owners it leaves
-    /// without USAGE as `within`.
+    /// that use one of those, of any schema; and what holds an XML type of
+    /// XMLSCHEMA of any of these (`xml_schemas/dependents.rs`): columns,
+    /// domains and user-defined types, which nothing drops, and routines
+    /// of such a parameter or result, with what invokes them. The one
+    /// place what depends on one is found: for DROP, and for a REVOKE of
+    /// USAGE, the schemas of owners it leaves without USAGE as `within`.
     pub(in crate::db) fn xml_schema_dependents(&self, qn: &QualifiedName, within: &dyn Fn(&str) -> bool) -> XmlSchemaDependents {
         let all = self.catalog.xml_schemas();
         let mut schemas: Vec<QualifiedName> =
@@ -167,7 +171,14 @@ impl State {
             schemas.extend(found);
             next = next.saturating_add(1);
         }
-        XmlSchemaDependents { schemas, ..XmlSchemaDependents::default() }
+        let gone: Vec<QualifiedName> = std::iter::once(qn.clone()).chain(schemas.iter().cloned()).collect();
+        let mut typed = self.typed_by_xml_schemas(&gone, within);
+        let mut abandoned = self.routines_typed_by_xml_schemas(&gone, within);
+        // A generated column is no definition a drop takes away alone: its
+        // table keeps it, as it keeps a column of such a type.
+        let generated = std::mem::take(&mut abandoned.columns).into_iter().map(|(table, _)| table);
+        typed.extend(generated.collect::<Vec<_>>());
+        XmlSchemaDependents { schemas, abandoned, typed }
     }
 
     /// [ISO/IEC 9075:1992 §11.2 GR5] The registered XML Schemas of schema

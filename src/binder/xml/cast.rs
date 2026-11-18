@@ -110,7 +110,7 @@ impl Binder<'_> {
             }
             let Some(v) = operand else { return Ok((Expr::Const(Value::Null), target)) };
             let bound = self.typed(v, ParameterType::Of(target.clone()), scope)?;
-            return super::xml_cast(bound, target, passing.unwrap_or(Passing::ByRef));
+            return self.xml_cast(bound, target, passing.unwrap_or(Passing::ByRef));
         };
         let (e, source) = self.value_expression(v, scope)?;
         if unmappable(&source) {
@@ -124,7 +124,7 @@ impl Binder<'_> {
         }
         match (from_xml, to_xml) {
             // [SR10b ii] CAST ( VE AS TD XPM ), BY REF implicit.
-            (true, true) => super::xml_cast((e, source), target, passing.unwrap_or(Passing::ByRef)),
+            (true, true) => self.xml_cast((e, source), target, passing.unwrap_or(Passing::ByRef)),
             (false, true) => self.cast_to_xml(e, &source, target),
             (true, false) => self.cast_from_xml(e, target),
             (false, false) => {
@@ -134,14 +134,15 @@ impl Binder<'_> {
     }
 
     /// [§6.6 GR3] XMLCAST of `e`, of the SQL type `source`, to `target`, an
-    /// XML type: not DOCUMENT \[SR7\]; of a type §9.5 maps, binary strings
-    /// in the `<XML binary encoding>` in scope \[SR1, SR2\]; a datetime
-    /// without time zone as the SQL-session shows it [§9.8 GR7].
+    /// XML type: not DOCUMENT nor of XMLSCHEMA \[SR7\]; of a type §9.5
+    /// maps, binary strings in the `<XML binary encoding>` in scope \[SR1,
+    /// SR2\]; a datetime without time zone as the SQL-session shows it
+    /// [§9.8 GR7].
     pub(super) fn cast_to_xml(&self, e: Expr, source: &DataType, target: DataType) -> Result<(Expr, DataType)> {
-        let DataType::Xml(xml) = target else {
+        let DataType::Xml(xml) = target.clone() else {
             return Err(rule(format!("[ISO/IEC 9075-14:2006 draft §6.6 SR4] {target} is no XML type")));
         };
-        if matches!(xml, XmlType::Document(_)) {
+        if matches!(xml, XmlType::Document(_)) || xml.schema().is_some() {
             return Err(rule(format!(
                 "[ISO/IEC 9075-14:2006 draft §6.6 SR7] XMLCAST to {target} casts an XML value or NULL, not a value of {source}"
             )));

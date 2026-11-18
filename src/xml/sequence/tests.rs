@@ -72,9 +72,9 @@ fn document_order_within_and_across_trees() {
 fn typed_values_of_nodes() {
     let tree = Arc::new(parse("<a x='1'>t<b>u</b><!--c--></a>", Syntax::Document, Whitespace::Preserve).unwrap());
     let a = Node::new(Arc::clone(&tree), tree.children(NodeId::ROOT).next().unwrap());
-    assert_eq!(a.typed_value(), Atomic::new(AtomicType::UntypedAtomic, "tu"));
+    assert_eq!(a.typed_value().ok(), Some(vec![Atomic::new(AtomicType::UntypedAtomic, "tu")]));
     let x = a.at(tree.attributes(a.id()).next().unwrap());
-    assert_eq!(x.typed_value(), Atomic::new(AtomicType::UntypedAtomic, "1"));
+    assert_eq!(x.typed_value().ok(), Some(vec![Atomic::new(AtomicType::UntypedAtomic, "1")]));
     let comment = a.at(tree.children(a.id()).last().unwrap());
-    assert_eq!(comment.typed_value(), Atomic::new(AtomicType::String, "c"));
+    assert_eq!(comment.typed_value().ok(), Some(vec![Atomic::new(AtomicType::String, "c")]));
 }

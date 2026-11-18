@@ -41,7 +41,7 @@ pub use chars::{
     COLON, VERSION_10, VERSION_11, Version, is_char, is_literal, is_name, is_name_char, is_name_start, is_ncname, is_nmtoken,
     is_pubid_char, is_restricted, is_space, qname_parts,
 };
-pub use construct::document;
+pub use construct::{document, document_as};
 pub use element::element;
 pub use identifiers::{Escape, identifier_of, name_of, name_of_parts};
 pub use parse::{Syntax, Whitespace, parse, parse_bytes};
@@ -52,8 +52,9 @@ pub use sequence::{Atomic, AtomicType, Item, Node, Sequence};
 pub use serialize::{Parameters, serialize};
 pub use stored::{Event, Events, FORMAT_VERSION, decode, encode};
 pub use tree::{
-    Annotation, Binding, Builder, Copying, ElementStart, Kind, NodeId, QName, SQLXML_NAMESPACE, SQLXML_PREFIX, Specified, Tree, Typing,
-    XML_NAMESPACE, XML_PREFIX, XMLNS_NAMESPACE, XS_NAMESPACE, XS_PREFIX, XSI_NAMESPACE, XSI_PREFIX, copied_attribute, is_xml_id,
+    Annotation, Binding, Builder, Construction, Copying, ElementStart, Kind, NodeId, QName, SQLXML_NAMESPACE, SQLXML_PREFIX, Specified,
+    Tree, Typing, XML_NAMESPACE, XML_PREFIX, XMLNS_NAMESPACE, XS_NAMESPACE, XS_PREFIX, XSI_NAMESPACE, XSI_PREFIX, copied_attribute,
+    is_xml_id,
 };
 
 use crate::error::{Code, SqlError};

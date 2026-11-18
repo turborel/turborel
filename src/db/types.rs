@@ -7,7 +7,7 @@
 use super::{Database, State, api, rule};
 use crate::ast::{TableName, TypeName};
 use crate::binder::qualify;
-use crate::catalog::{DomainDesc, Who, owner_of};
+use crate::catalog::{DomainDesc, Who, owner_of, sole};
 use crate::diagnostics::Extension;
 use crate::error::{At, Code, Result, fail};
 use crate::lexer::authorization_identifier;
@@ -110,6 +110,9 @@ impl State {
                 self.named_type(name, (schema, who))?
             }
             TypeName::Extension { name, params } => self.extension_type((name, params), MISSING)?,
+            // [ISO/IEC 9075-14:2006 draft §6.1 SR4] of the registered XML
+            // Schema it indicates [§11.6].
+            TypeName::XmlSchema(syntax, according) => DataType::Xml(self.xml_schema_type(*syntax, according, (schema, who))?),
             TypeName::Reference(referenced, scope) => self.reference_type((referenced, scope.as_ref()), (schema, who))?,
             TypeName::Collection(element, kind) => kind.of(self.data_type_of(element, (schema, who))?),
             TypeName::Row(fields) => {
@@ -182,6 +185,12 @@ impl State {
                 self.extension_type((name, &[]), missing)
             }
             TypeName::Extension { name, params } => self.extension_type((name, params), missing),
+            // [ISO/IEC 9075-14:2006 draft §11.6 AR1a] the registered XML
+            // Schema indicated, as the schema's owner may use it.
+            TypeName::XmlSchema(syntax, according) => {
+                let owner = sole(&*self.catalog, owner_of(&*self.catalog, schema));
+                Ok(DataType::Xml(self.xml_schema_type(*syntax, according, (schema, owner))?))
+            }
             TypeName::Collection(..) | TypeName::Row(_) | TypeName::Reference(..) => Err(rule(
                 "[ISO/IEC 9075-2:2023 §11.34] a domain's data type is a <predefined type>, and names no type as an element or a field"
                     .to_owned(),

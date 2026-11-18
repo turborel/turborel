@@ -354,6 +354,26 @@ pub struct Descriptor {
     /// XML_PRIMARY_MODIFIER and XML_SECONDARY_MODIFIER, of an XML type
     /// [ISO/IEC 9075-14:2006 draft §21.1 Description 1a].
     pub xml: Option<(&'static str, Option<&'static str>)>,
+    /// Of an XML type of XMLSCHEMA, its registered XML Schema, indicated
+    /// XML namespace and global element declaration [ISO/IEC 9075-14:2006
+    /// draft §6.1 GR1d to GR1f, §21.1 Description 1a iii 1].
+    pub xml_schema: Option<XmlSchemaNamed>,
+}
+
+/// What an XML type of XMLSCHEMA names [ISO/IEC 9075-14:2006 draft §6.1
+/// GR1d to GR1f], as XML_SCHEMA_SCHEMA, XML_SCHEMA_NAME,
+/// XML_SCHEMA_NAMESPACE and XML_SCHEMA_ELEMENT show it [§21.1
+/// Description 1a iii 1].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XmlSchemaNamed {
+    /// The schema of its registered XML Schema.
+    pub schema: String,
+    /// The name of its registered XML Schema, in that schema.
+    pub name: String,
+    /// The URI of its indicated XML namespace, if any.
+    pub namespace: Option<String>,
+    /// The NCName of its indicated global element declaration, if any.
+    pub element: Option<String>,
 }
 
 impl Descriptor {
@@ -371,6 +391,7 @@ impl Descriptor {
             cardinality: None,
             user_defined: None,
             xml: None,
+            xml_schema: None,
         }
     }
 }

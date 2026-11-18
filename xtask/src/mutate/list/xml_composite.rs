@@ -122,7 +122,7 @@ pub const XML_COMPOSITE: [Mutation; 22] = [
         package: Package::Core,
         breaks: "a part of an array is cast to an UNTYPED XML type from an ANY one",
         file: "src/binder/composite.rs",
-        original: "return target.takes(*source);",
+        original: "return target.takes(source);",
         replacement: "return true;",
         integration: &["xml_composite::assigned_and_cast_part_by_part_10_2"],
         unit: &[],

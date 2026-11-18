@@ -1,8 +1,9 @@
 //! The grammar of SQL/XML [ISO/IEC 9075-14:2006 draft §6]: the XML type
 //! [§6.1], XMLCAST [§6.6], XMLDOCUMENT [§6.13], XMLPARSE [§6.16],
-//! XMLSERIALIZE [§6.8], CAST's `<XML passing mechanism>` [§6.5], and the
-//! publishing operators (`publish`); and \[EXTENSION\] the statements of
-//! registered XML Schemas (`registered`).
+//! XMLSERIALIZE [§6.8], CAST's `<XML passing mechanism>` [§6.5], the
+//! publishing operators (`publish`), XMLVALIDATE [§6.20] and the `<XML
+//! valid according to clause>` [§11.6] (`valid`); and \[EXTENSION\] the
+//! statements of registered XML Schemas (`registered`).
 //!
 //! [§5.1] XML and the names of the operators are reserved words of
 //! SQL/XML, and its other words non-reserved; as SQL-92's are the key
@@ -15,11 +16,14 @@ mod publish;
 mod query;
 mod registered;
 mod scoped;
+mod valid;
 
 use query::{XMLEXISTS, XMLQUERY};
+pub(super) use valid::VALID;
+use valid::{ELEMENT, XMLVALIDATE};
 
 use super::Parser;
-use crate::ast::{Passing, Returning, ValueExpression, XmlOperator};
+use crate::ast::{Passing, Returning, TypeName, ValueExpression, XmlOperator, XmlValidAccording};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::DataType;
@@ -60,18 +64,16 @@ const INCLUDING: &str = "INCLUDING";
 const EXCLUDING: &str = "EXCLUDING";
 /// XMLDECLARATION.
 const XMLDECLARATION: &str = "XMLDECLARATION";
-/// [§11.6] ID, of a registered XML Schema.
-const ID: &str = "ID";
-/// URI.
-const URI: &str = "URI";
-/// LOCATION.
-const LOCATION: &str = "LOCATION";
-/// NAMESPACE.
-const NAMESPACE: &str = "NAMESPACE";
-/// ELEMENT.
-const ELEMENT: &str = "ELEMENT";
 /// [§11.4] RETURNING, of an `<XML returning clause>`.
 const RETURNING: &str = "RETURNING";
+
+/// [§6.1] A `<secondary XML type modifier>`, as read.
+enum Secondary {
+    /// ANY or UNTYPED.
+    Typing(Typing),
+    /// XMLSCHEMA and what indicates its registered XML Schema.
+    Schema(Box<XmlValidAccording>),
+}
 
 impl Parser {
     /// Whether the `<XML type>` is next [§6.1].
@@ -81,77 +83,71 @@ impl Parser {
 
     /// [§6.1] `<XML type>` ::= XML \[( `<XML type modifier>` )\]: XML alone
     /// \[SR2\], and DOCUMENT or CONTENT alone \[SR3b\], the implicit types
-    /// (`value::xml::IMPLICIT`).
-    pub(super) fn xml_type(&mut self) -> Result<DataType> {
+    /// (`value::xml::IMPLICIT`); of XMLSCHEMA, the registered XML Schema
+    /// it indicates named, to be resolved as the statement is processed
+    /// \[SR4\].
+    pub(super) fn xml_type_name(&mut self) -> Result<TypeName> {
         self.expect_word(XML_NAME)?;
         if !self.accept_delim(delim::LEFT_PAREN) {
-            return Ok(DataType::Xml(IMPLICIT));
+            return Ok(TypeName::Data(DataType::Xml(IMPLICIT)));
         }
-        let t = if self.accept_word(SEQUENCE) {
-            XmlType::Sequence
+        let primary = if self.accept_word(SEQUENCE) {
+            None
         } else if self.accept_word(DOCUMENT) {
-            XmlType::Document(self.secondary_modifier()?)
+            Some(Syntax::Document)
         } else if self.accept_word(CONTENT) {
-            XmlType::Content(self.secondary_modifier()?)
+            Some(Syntax::Content)
         } else {
             return Err(self.syntax("expected DOCUMENT, CONTENT or SEQUENCE [ISO/IEC 9075-14:2006 draft §6.1]"));
         };
+        let secondary = primary.map(|_| self.secondary_modifier()).transpose()?;
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(DataType::Xml(t))
+        Ok(match (primary, secondary) {
+            (Some(syntax), Some(Secondary::Schema(according))) => TypeName::XmlSchema(syntax, according),
+            (Some(Syntax::Document), Some(Secondary::Typing(typing))) => TypeName::Data(DataType::Xml(XmlType::Document(typing))),
+            (Some(Syntax::Content), Some(Secondary::Typing(typing))) => TypeName::Data(DataType::Xml(XmlType::Content(typing))),
+            (None, _) | (Some(_), None) => TypeName::Data(DataType::Xml(XmlType::Sequence)),
+        })
+    }
+
+    /// [§6.1] An `<XML type>` where a `<data type>` naming no type is
+    /// read: not of XMLSCHEMA, which names a registered XML Schema.
+    pub(super) fn xml_type(&mut self) -> Result<DataType> {
+        let at = self.here();
+        match self.xml_type_name()? {
+            TypeName::Data(t) => Ok(t),
+            TypeName::XmlSchema(..)
+            | TypeName::Domain(_)
+            | TypeName::Reference(..)
+            | TypeName::Collection(..)
+            | TypeName::Row(_)
+            | TypeName::Extension { .. } => Err(SqlError::new(
+                Code::SyntaxRule,
+                "[ISO/IEC 9075-14:2006 draft §6.1 SR4] an XML type of XMLSCHEMA names a registered XML Schema, which is not taken here"
+                    .to_owned(),
+            )
+            .or_at(at)),
+        }
     }
 
     /// [§6.1] \[( `<secondary XML type modifier>` )\], after DOCUMENT or
-    /// CONTENT: ANY or UNTYPED. XMLSCHEMA waits for registered XML Schemas.
-    fn secondary_modifier(&mut self) -> Result<Typing> {
+    /// CONTENT: ANY, UNTYPED, or XMLSCHEMA `<XML valid according to what>`
+    /// \[`<XML valid element clause>`\].
+    fn secondary_modifier(&mut self) -> Result<Secondary> {
         if !self.accept_delim(delim::LEFT_PAREN) {
-            return Ok(IMPLICIT_TYPING);
+            return Ok(Secondary::Typing(IMPLICIT_TYPING));
         }
-        let typing = if self.accept_kw(kw::ANY) {
-            Typing::Any
+        let secondary = if self.accept_kw(kw::ANY) {
+            Secondary::Typing(Typing::Any)
         } else if self.accept_word(UNTYPED) {
-            Typing::Untyped
-        } else if self.is_word(XMLSCHEMA) {
-            let refused = self.unsupported("an XML type of XMLSCHEMA [ISO/IEC 9075-14:2006 draft §6.1]");
-            self.advance();
-            self.xml_schema_reference()?;
-            self.refuse_later(refused);
-            Typing::Any
+            Secondary::Typing(Typing::Untyped)
+        } else if self.accept_word(XMLSCHEMA) {
+            Secondary::Schema(Box::new(self.xml_schema_reference()?))
         } else {
             return Err(self.syntax("expected ANY, UNTYPED or XMLSCHEMA [ISO/IEC 9075-14:2006 draft §6.1]"));
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(typing)
-    }
-
-    /// [§11.6] `<XML valid according to what>` \[`<XML valid element
-    /// clause>`\], after XMLSCHEMA, read: URI `<XML URI>` \[LOCATION
-    /// `<XML URI>`\], NO NAMESPACE \[LOCATION `<XML URI>`\], or ID
-    /// `<registered XML Schema name>`; then ELEMENT `<identifier>`, or NO
-    /// NAMESPACE or NAMESPACE `<XML URI>`, each \[ELEMENT
-    /// `<identifier>`\].
-    fn xml_schema_reference(&mut self) -> Result<()> {
-        if self.accept_word(ID) {
-            self.table_name()?;
-        } else {
-            if self.accept_word(URI) {
-                self.character_string_literal("<XML valid target namespace URI>")?;
-            } else {
-                self.expect_kw(kw::NO)?;
-                self.expect_word(NAMESPACE)?;
-            }
-            if self.accept_word(LOCATION) {
-                self.character_string_literal("<XML valid schema location URI>")?;
-            }
-        }
-        if self.accept_kw(kw::NO) {
-            self.expect_word(NAMESPACE)?;
-        } else if self.accept_word(NAMESPACE) {
-            self.character_string_literal("<XML valid element namespace URI>")?;
-        }
-        if self.accept_word(ELEMENT) {
-            self.identifier()?;
-        }
-        Ok(())
+        Ok(secondary)
     }
 
     /// Whether the SQL/XML operator `name` is next: its word, then "(".
@@ -182,6 +178,9 @@ impl Parser {
         }
         if self.at_xml(map::XMLMAP) {
             return self.xml_map().map(Some);
+        }
+        if self.at_xml(XMLVALIDATE) {
+            return self.xml_validate().map(Some);
         }
         self.xml_publishing()
     }

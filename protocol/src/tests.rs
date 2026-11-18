@@ -298,11 +298,13 @@ fn later_types_and_values_read_back_as_written() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.2, §4.2.3] [DESIGN] RULES.md
-/// D42, D86: XML types read back with their modifiers, and XML values as
-/// their serialization, the text a value held in its tree is serialized
-/// to; `row_size` is the bytes each row takes.
+/// D42, D86: XML types read back with their modifiers, of XMLSCHEMA with
+/// the registered XML Schema, namespace and element they indicate [§6.1
+/// GR1], and XML values as their serialization, the text a value held in
+/// its tree is serialized to; `row_size` is the bytes each row takes.
 #[test]
 fn xml_types_and_values_read_back_as_written() {
+    use turborel::value::types::XmlSchemaNamed;
     use turborel::value::xml::{Typing, XmlType, XmlValue};
     use turborel::xml::{Sequence, Syntax, Whitespace, parse};
     let column = |name: &str, x: XmlType| Column { name: Some(name.into()), data_type: DataType::Xml(x), not_null: false };
@@ -312,8 +314,20 @@ fn xml_types_and_values_read_back_as_written() {
         XmlType::Document(Typing::Any),
         XmlType::Content(Typing::Untyped),
         XmlType::Content(Typing::Any),
+        XmlType::Document(Typing::Schema(std::sync::Arc::new(XmlSchemaNamed {
+            schema: "A".into(),
+            name: "S".into(),
+            namespace: Some("urn:s".into()),
+            element: Some("e".into()),
+        }))),
+        XmlType::Content(Typing::Schema(std::sync::Arc::new(XmlSchemaNamed {
+            schema: "A".into(),
+            name: "S".into(),
+            namespace: None,
+            element: None,
+        }))),
     ];
-    reply_round_trip(&Reply::Description(types.iter().map(|&x| column("X", x)).collect()));
+    reply_round_trip(&Reply::Description(types.iter().map(|x| column("X", x.clone())).collect()));
     let held = Value::Xml(XmlValue::of(Sequence::document(parse("<a>&lt;</a>", Syntax::Document, Whitespace::Preserve).unwrap())));
     let rows: Vec<Row> = vec![vec![Value::Xml(XmlValue::serialized("<b/>")), held, Value::Null]];
     reply_round_trip(&Reply::Rows(rows.clone()));

@@ -53,7 +53,8 @@ fn values_are_kept_and_serialized() {
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.1 SR1 to SR3, §4.2.2] [DESIGN]
 /// RULES.md D86: the XML types, as written and as described: XML alone is
 /// XML(SEQUENCE), and DOCUMENT or CONTENT alone is ANY; SEQUENCE takes no
-/// secondary modifier; XMLSCHEMA is valid SQL not yet taken.
+/// secondary modifier; XMLSCHEMA names a registered XML Schema, so one of
+/// none registered is SQLCODE -103 [§11.6 SR1, SR2b ii].
 #[test]
 fn the_xml_types_6_1() {
     let db = documents();
@@ -65,7 +66,7 @@ fn the_xml_types_6_1() {
     assert_eq!(a.run("CREATE TABLE V (A XML(TREE))").unwrap_err().code, Code::Syntax);
     for schema in ["ID S.X", "URI 'u' LOCATION 'l' ELEMENT E", "NO NAMESPACE NAMESPACE 'n'", "ID X NO NAMESPACE ELEMENT E"] {
         let statement = format!("CREATE TABLE V (A XML(DOCUMENT(XMLSCHEMA {schema})))");
-        assert_eq!(a.run(&statement).unwrap_err().code, Code::Unsupported, "{statement}");
+        assert_eq!(a.run(&statement).unwrap_err().code, Code::SyntaxRule, "{statement}");
     }
     assert_eq!(a.run("CREATE TABLE V (A XML(DOCUMENT(XMLSCHEMA URI)))").unwrap_err().code, Code::Syntax);
     assert_eq!(a.run("CREATE TABLE V (A XML(CONTENT(NONE)))").unwrap_err().code, Code::Syntax);

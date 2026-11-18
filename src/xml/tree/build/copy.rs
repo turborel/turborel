@@ -13,12 +13,26 @@ use crate::xml::{XML_NAMESPACE, beyond};
 /// [XQuery §3.7.1.1] The local name of `xml:id`.
 const ID: &str = "id";
 
+/// What a copy keeps of the types of what it copies [XQuery §3.7.1.3].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Construction {
+    /// Construction mode strip: no type annotation, and no copied
+    /// attribute an ID but `xml:id`, none an IDREF.
+    Strip,
+    /// Construction mode preserve: the type annotations, the nilled
+    /// property and the ID and IDREFS properties kept.
+    Preserve,
+    /// The copy of an unvalidated document node [ISO/IEC 9075-14:2006
+    /// draft §10.19 GR2]: every element `xdt:untyped` and not nilled, every
+    /// attribute `xdt:untypedAtomic`, the ID and IDREFS properties kept.
+    Unvalidated,
+}
+
 /// How a copy treats the properties of what it copies [XQuery §3.7.1.3].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Copying {
-    /// Construction mode strip: no copied attribute is an ID but
-    /// `xml:id`, and none an IDREF; preserve keeps them.
-    pub strip: bool,
+    /// The construction mode, or §10.19's unvalidated copy.
+    pub construction: Construction,
     /// Copy-namespaces mode preserve: a copied element keeps every
     /// binding in its scope; no-preserve those its name and attributes'
     /// names use.
@@ -32,7 +46,12 @@ impl Copying {
     /// Construction mode preserve, copy-namespaces mode preserve and
     /// inherit: the defaults [XQuery Appendix C.1], as XMLDOCUMENT copies
     /// [ISO/IEC 9075-14:2006 draft §6.13 GR5].
-    pub const PRESERVE: Copying = Copying { strip: false, preserve: true, inherit: true };
+    pub const PRESERVE: Copying = Copying { construction: Construction::Preserve, preserve: true, inherit: true };
+
+    /// As `PRESERVE`, but every element `xdt:untyped` and not nilled, every
+    /// attribute `xdt:untypedAtomic`: the copy of an unvalidated document
+    /// node [ISO/IEC 9075-14:2006 draft §10.19 GR2].
+    pub const UNVALIDATED: Copying = Copying { construction: Construction::Unvalidated, ..Copying::PRESERVE };
 }
 
 impl Builder {
@@ -88,7 +107,7 @@ impl Builder {
                 let attributes = tree.attributes(id).map(|a| copied_attribute(tree, a, mode)).collect::<Result<Vec<_>>>()?;
                 let bindings = self.copied_bindings((tree, id), root, mode, &attributes);
                 self.start_element(ElementStart { name, bindings, attributes })?;
-                if !mode.strip {
+                if mode.construction == Construction::Preserve {
                     self.copy_annotations(tree, id)?;
                 }
                 Ok(true)
@@ -191,7 +210,8 @@ impl Builder {
 /// SQLCODE -900 if it has no name, which no attribute of a tree lacks.
 pub fn copied_attribute(tree: &Tree, id: NodeId, mode: Copying) -> Result<Specified> {
     let name = tree.name(id).cloned().ok_or_else(|| beyond("an attribute has no name"))?;
-    let (is_id, is_idrefs) = if mode.strip { (is_xml_id(&name), false) } else { (tree.is_id(id), tree.is_idrefs(id)) };
+    let stripped = mode.construction == Construction::Strip;
+    let (is_id, is_idrefs) = if stripped { (is_xml_id(&name), false) } else { (tree.is_id(id), tree.is_idrefs(id)) };
     Ok(Specified { name, value: tree.content(id).to_owned(), is_id, is_idrefs })
 }
 

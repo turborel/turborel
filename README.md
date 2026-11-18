@@ -46,7 +46,8 @@ behind it, and each can be replaced or added to.
   XMLMAP, and queried in XQuery 1.0 by XMLQUERY, XMLEXISTS and XMLTABLE,
   written in-house with no dependency, its modifiers shown in the
   Information Schema, XML indexes of its paths and values, and XML
-  Schemas registered by CREATE XML SCHEMA.
+  Schemas registered by CREATE XML SCHEMA, values validated by them with
+  XMLVALIDATE and IS VALID and kept in columns of their XMLSCHEMA types.
 - [Geospatial SQL](doc/data/spatial/README.md), with XY geometries, WKT/WKB,
   intersection filters and joins, planar distances and R-tree
   nearest-neighbour queries.

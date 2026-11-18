@@ -18,7 +18,7 @@ use super::super::plan::{ComputedElement, Content, DirectElement, NameOp, Op, Pa
 use super::sequence::atomize;
 use super::{Evaluator, Focus, Frame, Seq};
 use crate::error::Result;
-use crate::xml::{Binding, Builder, Copying, ElementStart, Item, Kind, MAX_STORED, Node, QName, Specified, Tree, is_xml_id};
+use crate::xml::{Binding, Builder, Construction, Copying, ElementStart, Item, Kind, MAX_STORED, Node, QName, Specified, Tree, is_xml_id};
 
 /// The one separator of adjacent atomic values made a text node or an
 /// attribute's value [XQuery §3.7.1.1, §3.7.1.3].
@@ -51,8 +51,12 @@ fn push<'p>(out: &mut Vec<Piece<'p>>, piece: Piece<'p>) {
 }
 
 /// The strings of `items` atomized, a space apart [XQuery §3.7.1.1].
-pub(super) fn joined(items: &[Item]) -> String {
-    atomize(items).iter().map(|a| &*a.lexical).collect::<Vec<_>>().join(SEPARATOR)
+///
+/// # Errors
+///
+/// As `atomize`.
+pub(super) fn joined(items: &[Item]) -> Result<String> {
+    Ok(atomize(items)?.iter().map(|a| &*a.lexical).collect::<Vec<_>>().join(SEPARATOR))
 }
 
 /// `value` of an attribute named `xml:id`, its spaces collapsed [XQuery
@@ -68,7 +72,8 @@ impl Evaluator<'_> {
     /// How a node of an enclosed expression is copied [XQuery §3.7.1.3].
     fn copying(&self) -> Copying {
         let s = &self.plan.settings;
-        Copying { strip: !s.preserve, preserve: s.copy_preserve, inherit: s.copy_inherit }
+        let construction = if s.preserve { Construction::Preserve } else { Construction::Strip };
+        Copying { construction, preserve: s.copy_preserve, inherit: s.copy_inherit }
     }
 
     /// The error if the trees constructed would hold more than
@@ -147,7 +152,7 @@ impl Evaluator<'_> {
             for part in parts {
                 match part {
                     Part::Text(text) => value.push_str(text),
-                    Part::Enclosed(op) => value.push_str(&joined(&self.eval(op, frame, focus)?)),
+                    Part::Enclosed(op) => value.push_str(&joined(&self.eval(op, frame, focus)?)?),
                 }
             }
             let is_id = is_xml_id(name);

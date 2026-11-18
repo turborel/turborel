@@ -33,7 +33,7 @@ fn mixed(why: &str) -> SqlError {
 /// The converted sequence of `value`: its atomic values, each untyped one
 /// cast to a double.
 fn converted(value: &Sequence) -> Result<Vec<Atomic>> {
-    atomized(value).into_iter().map(|a| if a.kind == AtomicType::UntypedAtomic { cast(&a, AtomicType::Double) } else { Ok(a) }).collect()
+    atomized(value)?.into_iter().map(|a| if a.kind == AtomicType::UntypedAtomic { cast(&a, AtomicType::Double) } else { Ok(a) }).collect()
 }
 
 /// What `values`, converted, are summed as: numbers, year-month or

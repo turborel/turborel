@@ -13,6 +13,7 @@ mod mapping;
 mod publish;
 mod query;
 mod schema_type;
+mod validate;
 
 pub use aggregate::{XMLAGG, XmlAggregate};
 pub use cast::{IMPLICIT_BINARY_ENCODING, XmlCastIn, XmlCastOut, xml_schema_type};
@@ -21,12 +22,13 @@ pub use mapping::{BinaryEncoding, Mapping, xml_lexical, xml_mapped};
 pub use publish::{XmlComment, XmlConcat, XmlPi, XmlText};
 pub use query::{Evaluation, RegularColumn, TableColumn, XmlExistsOf, XmlFilter, XmlQueryOf, XmlRowsOf, XmlTableOf};
 pub use schema_type::xml_schema_restriction;
+pub use validate::{According, Candidate, ValidBy, XmlValid, XmlValidate};
 
 use super::ScalarFunction;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::value::xml::XmlValue;
 use crate::value::{Binary, DataType, Value};
-use crate::xml::{MAX_INPUT, Parameters, Sequence, Syntax, Version, Whitespace, document, parse, parse_bytes, serialize};
+use crate::xml::{Copying, MAX_INPUT, Parameters, Sequence, Syntax, Version, Whitespace, document_as, parse, parse_bytes, serialize};
 
 /// [§6.16] XMLPARSE, of a character string, or a binary string if
 /// `binary`.
@@ -157,12 +159,14 @@ impl ScalarFunction for XmlDocument {
     }
 
     /// [§6.13 GR2] The null value of the null value; else `document {
-    /// $EXPR }` of the value \[GR8\], a new document node of nodes no
-    /// schema types, so of XML(CONTENT(UNTYPED)) as §10.19 makes one
-    /// \[GR9a\].
+    /// $EXPR }` of the value \[GR8\], construction mode preserve \[GR5\];
+    /// of an UNTYPED declared type, unvalidated, its nodes' types dropped
+    /// as §10.19 drops them \[GR9a\].
     fn call(&self, args: &[Value]) -> Result<Value> {
         let Some(Value::Xml(x)) = args.first() else { return Ok(Value::Null) };
-        Ok(Value::Xml(XmlValue::of(document(&*x.sequence()?)?)))
+        let untyped = if let DataType::Xml(t) = &self.0 { t.is_untyped() } else { false };
+        let mode = if untyped { Copying::UNVALIDATED } else { Copying::PRESERVE };
+        Ok(Value::Xml(XmlValue::of(document_as(&*x.sequence()?, mode)?)))
     }
 
     fn xml_filter(&self) -> Option<XmlFilter> {

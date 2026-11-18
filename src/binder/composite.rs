@@ -181,7 +181,7 @@ pub(super) fn bounded(t: DataType) -> Result<DataType> {
 /// SR4a].
 fn element_castable(from: &DataType, to: &DataType) -> bool {
     if let (DataType::Xml(source), DataType::Xml(target)) = (from, to) {
-        return target.takes(*source);
+        return target.takes(source);
     }
     !matches!(from, DataType::Xml(_)) && !matches!(to, DataType::Xml(_)) && super::datetime::binary_castable(from, to)
 }

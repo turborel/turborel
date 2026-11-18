@@ -121,7 +121,7 @@ impl ScalarFunction for XmlCastIn {
     }
 
     fn return_type(&self, _: &[DataType]) -> Result<DataType> {
-        Ok(DataType::Xml(self.target))
+        Ok(DataType::Xml(self.target.clone()))
     }
 
     /// [§6.6 GR2] The null value of the null value; else \[GR3b\] XMLPARSE
@@ -276,7 +276,9 @@ fn atomized(value: &Sequence) -> Result<Option<Atomic>> {
                 let tree = node.tree();
                 let nodes: Vec<NodeId> =
                     if node.kind() == Some(Kind::Document) { tree.children(node.id()).collect() } else { vec![node.id()] };
-                items.extend(nodes.into_iter().map(|id| node.at(id).typed_value()));
+                for id in nodes {
+                    items.extend(node.at(id).typed_value()?);
+                }
             }
         }
     }

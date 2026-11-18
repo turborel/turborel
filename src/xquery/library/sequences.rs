@@ -52,7 +52,7 @@ fn index_of(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let collation = collator(focus, args, 2)?;
     let sought = super::args::atomic(arg(args, 1))?;
     let mut found = Vec::new();
-    for (at, value) in atomized(arg(args, 0)).iter().enumerate() {
+    for (at, value) in atomized(arg(args, 0))?.iter().enumerate() {
         if value_equal(value, &sought, &collation, i32::from(focus.timezone()))? == Some(true) {
             let position = i128::try_from(at.saturating_add(1)).unwrap_or(i128::MAX);
             found.push(Item::Atomic(integer_value(&Decimal::integer(position))));
@@ -72,7 +72,7 @@ fn index_of(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
 fn distinct_values(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let collation = collator(focus, args, 1)?;
     let mut kept: Vec<Atomic> = Vec::new();
-    for value in atomized(arg(args, 0)) {
+    for value in atomized(arg(args, 0))? {
         // [DESIGN] RULES.md D44: each value is compared with those kept,
         // so the statement's cancellation is looked at as it goes.
         focus.check()?;

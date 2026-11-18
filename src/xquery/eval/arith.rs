@@ -240,7 +240,7 @@ impl Evaluator<'_> {
 /// An arithmetic operand [XQuery §3.4]: atomized, none or one value
 /// \[err:XPTY0004\], an untyped one cast to `xs:double` \[err:FORG0001\].
 fn operand(items: &[Item]) -> Result<Operand> {
-    let mut atomized = atomize(items);
+    let mut atomized = atomize(items)?;
     if atomized.len() > 1 {
         return Err(error(ErrorCode::XPTY0004, "an arithmetic operand is more than one atomic value [XQuery §3.4]"));
     }
@@ -251,7 +251,7 @@ fn operand(items: &[Item]) -> Result<Operand> {
 /// An operand of a range [XQuery §3.3.1]: atomized, none or one value
 /// \[err:XPTY0004\], which op:to converts as an `xs:integer`.
 fn range_operand(items: &[Item]) -> Result<Operand> {
-    let mut atomized = atomize(items);
+    let mut atomized = atomize(items)?;
     if atomized.len() > 1 {
         return Err(error(ErrorCode::XPTY0004, "an operand of a range is more than one atomic value [XQuery §3.3.1]"));
     }

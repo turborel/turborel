@@ -3141,7 +3141,14 @@ once it is built, of a document node alone, as XQuery asks. A copy keeps
 the annotations, as construction mode preserve does. `schema::validate`
 returns a `Failure` naming the rule and XQuery's error code apart from
 turborel's own errors, so XMLVALIDATE raises SQLSTATE 2201R and XQuery's
-validate expression err:XQDY0027 from one result.
+validate expression err:XQDY0027 from one result. XQuery atomizes a node
+to its typed value, and matches its annotation in a node test: a
+built-in type's by the built-in hierarchy, a registered XML Schema's,
+which is no in-scope schema type as no schema is imported, as derived
+from `xs:anyType` alone. A copy made by construction mode preserve keeps
+the annotations; one made of an unvalidated document node (§10.19), as
+XMLDOCUMENT of XML(CONTENT(UNTYPED)) and CAST BY VALUE to an UNTYPED type
+make it, keeps none (`Copying::UNVALIDATED`).
 
 A registered XML Schema is a catalog object (`catalog::XmlSchemaDesc`):
 its name, target namespace, schema location, the text of the document it
@@ -3152,6 +3159,36 @@ each after those it uses, with their documents alone as its library, so
 nothing derived can disagree with what was registered. As the catalog is
 logged, checkpointed and replicated as opaque bytes (D57), registered XML
 Schemas need nothing of their own there.
+
+An XML type of XMLSCHEMA (`value::xml::Typing::Schema`) holds what its
+descriptor includes, `value::types::XmlSchemaNamed`: the registered XML
+Schema's name, as a registered XML Schema is identified by its name
+[§4.2.6], and the namespace and element its element clause indicates.
+It is held behind an `Arc`, so the type, once `Copy`, is cloned as
+cheaply; the name, not the schema, is held, so the type is written,
+stored in the catalog and described over a connection as itself, and
+reads back the same; a function that validates holds the schema read,
+taken from the catalog as its statement is bound. The type is resolved
+from what is written (`ast::TypeName::XmlSchema`) as a statement is
+processed (`State::indicated`): a URI indicates, of the registered XML
+Schemas of its target namespace, and of its location if written, that
+the user may use, the one of the least name, the permanently registered
+ones last; the namespace and element an element clause indicates must be
+the schema's, else 2201M or 2201N as the type is bound. A value of a
+type of XMLSCHEMA is one XMLVALIDATE, or CAST BY VALUE, made; one whose
+elements are not all typed is refused at such a site with 2201R, so a
+value sent as text is not taken for one, while a value a table holds is
+taken as it is, as it was checked as it was stored.
+
+XMLVALIDATE and IS VALID are each a function holding how an element finds
+its registered XML Schema: the one indicated, or, data-driven, of each
+namespace the one the user may use of the least name, chosen as the
+statement is bound. Each validates by `schema::validate` in strict mode
+the item §10.22 is given: of DOCUMENT the document node, so its identity
+constraints and IDs are checked; of CONTENT and SEQUENCE each element
+child of a document node alone, so they are not. turborel holds no
+components of the permanently registered XML Schemas, so one indicated,
+or chosen, validates nothing, SQLCODE -900.
 
 Part 14 leaves how an XML Schema is registered to the implementation
 [ISO/IEC 9075-14:2006 draft §4.2.6]. These statements were decided, an
@@ -3190,10 +3227,12 @@ DROP XML SCHEMA RESTRICT is refused while anything depends on the one
 named; CASCADE drops the registered XML Schemas that use it, directly or
 through others, and whatever names them. One function,
 `State::xml_schema_dependents`, finds what depends on a registered XML
-Schema, of the schemas a caller names; the views, constraints,
-routines, columns and domains that will name one through the XMLSCHEMA
-types, XMLVALIDATE and IS VALID are to be found there, a column or
-domain refusing even CASCADE, as no drop changes a column's values. DROP SCHEMA CASCADE drops the schema's registered XML Schemas
+Schema, of the schemas a caller names: the routines of a parameter or
+result of a type of XMLSCHEMA of one, and what invokes them, which
+CASCADE drops; and the tables, domains and user-defined types of a
+column or type of one, and a table of a generated column that invokes
+such a routine, which refuse even CASCADE, as no drop changes a column's
+values. DROP SCHEMA CASCADE drops the schema's registered XML Schemas
 as DROP XML SCHEMA CASCADE does.
 
 The statement is logged as its text with the document written in as a

@@ -115,7 +115,13 @@ pub fn check_assignment(col: &ColumnDesc, t: &DataType, r: AssignRule) -> Result
     if assignable(&col.data_type, t) {
         return Ok(());
     }
-    Err(rule(format!("[{}; ISO/IEC 9075:1992 §9.2 SR2] cannot assign a {t} value to column {} ({})", r.rule, col.name, col.data_type)))
+    // [ISO/IEC 9075-14:2006 draft §10.2 SR1b] of XML types, Part 14's rule.
+    let store = if let (DataType::Xml(_), DataType::Xml(_)) = (&col.data_type, t) {
+        "ISO/IEC 9075-14:2006 draft §10.2 SR1b"
+    } else {
+        "ISO/IEC 9075:1992 §9.2 SR2"
+    };
+    Err(rule(format!("[{}; {store}] cannot assign a {t} value to column {} ({})", r.rule, col.name, col.data_type)))
 }
 
 /// [ISO/IEC 9075:1992 §9.2 SR2] Can a value of type `t` be stored in a
@@ -156,7 +162,7 @@ pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
     // [ISO/IEC 9075-14:2006 draft §10.2 SR1b] An XML value to an XML site
     // alone, an UNTYPED one taking a value of an UNTYPED type alone.
     if let (DataType::Xml(x), DataType::Xml(y)) = (target, t) {
-        return x.takes(*y);
+        return x.takes(y);
     }
     if matches!(target, DataType::Xml(_)) || matches!(t, DataType::Xml(_)) {
         return false;

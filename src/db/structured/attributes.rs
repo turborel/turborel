@@ -183,6 +183,6 @@ fn names_type(t: &TypeName, (qn, supertypes): Owning<'_>, depth: usize) -> bool 
         }
         TypeName::Collection(element, _) => names_type(element, (qn, supertypes), deeper),
         TypeName::Row(fields) => fields.iter().any(|(_, f)| names_type(f, (qn, supertypes), deeper)),
-        TypeName::Data(_) | TypeName::Reference(..) | TypeName::Extension { .. } => false,
+        TypeName::Data(_) | TypeName::Reference(..) | TypeName::Extension { .. } | TypeName::XmlSchema(..) => false,
     }
 }

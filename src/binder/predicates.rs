@@ -188,6 +188,9 @@ impl Binder<'_> {
             Predicate::Set { value, not } => self.set_predicate(value, *not, scope)?,
             Predicate::Type { value, types, not } => self.type_predicate(value, types, *not, scope)?,
             Predicate::Xml { value, syntax, not } => self.xml_predicate(value, *syntax, *not, scope)?,
+            Predicate::XmlValid { value, dcs, according, not } => {
+                self.xml_valid_predicate(value, (*dcs, according.as_deref()), *not, scope)?
+            }
             Predicate::Exists(s) => Cond::Exists(self.subquery(s, scope, Use::Exists)?.0),
             Predicate::Unique { subquery: s, nulls_distinct } => self.unique(s, *nulls_distinct, scope)?,
             Predicate::Match { value, unique, match_type, subquery } => {

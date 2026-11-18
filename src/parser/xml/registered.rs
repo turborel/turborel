@@ -8,7 +8,7 @@
 //! read together.
 
 use super::super::Parser;
-use super::LOCATION;
+use super::valid::LOCATION;
 use crate::ast::{SchemaStatement, XmlSchemaDefinition};
 use crate::error::Result;
 use crate::lexer::{Tok, kw};

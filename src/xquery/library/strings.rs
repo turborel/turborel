@@ -46,7 +46,7 @@ pub(super) const FUNCTIONS: [Builtin; 10] = [
 /// err:FOCH0001 of a code point that is no character of XML.
 fn codepoints_to_string(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let mut out = String::new();
-    for a in atomized(arg(args, 0)) {
+    for a in atomized(arg(args, 0))? {
         let n = super::args::integer_of(&a)?;
         let c = n.to_i128().and_then(|n| u32::try_from(n).ok()).and_then(char::from_u32).filter(|&c| is_char(Version::V11, c));
         let c = c.ok_or_else(|| error(ErrorCode::FOCH0001, &format!("{} is no character of XML [XQueryFO §7.2.1]", n.text())))?;

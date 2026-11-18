@@ -1,9 +1,9 @@
 //! [ISO/IEC 9075-14:2006 draft §4.2] XML types and their values.
 //!
-//! An XML type is XML(DOCUMENT), XML(CONTENT), each UNTYPED or ANY, or
-//! XML(SEQUENCE) [§4.2.2, §6.1]; XMLSCHEMA, the types of values valid by a
-//! registered XML Schema, waits for registered schemas. An XML value is
-//! an XQuery sequence (`xml::Sequence`) [§4.2.3].
+//! An XML type is XML(DOCUMENT), XML(CONTENT), each UNTYPED, ANY or
+//! XMLSCHEMA, the types of values valid according to a registered XML
+//! Schema, or XML(SEQUENCE) [§4.2.2, §6.1]. An XML value is an XQuery
+//! sequence (`xml::Sequence`) [§4.2.3].
 //!
 //! \[DESIGN\] RULES.md D86: a value is held as its sequence, or as a binary
 //! large object of its stored form (`xml::encode`), as a table keeps it:
@@ -16,22 +16,34 @@ use std::sync::Arc;
 
 use super::Value;
 use super::lob::{Lob, LobKind};
+use super::types::XmlSchemaNamed;
 use crate::error::{Code, Result, SqlError};
 use crate::xml::{self, MAX_STORED, Parameters, Sequence, Syntax, Version, Whitespace};
 
 /// [§6.1] The `<secondary XML type modifier>` of a DOCUMENT or CONTENT
-/// type: whether its values are untyped, or of any type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// type: whether its values are untyped, of any type, or valid according
+/// to a registered XML Schema.
+///
+/// \[DESIGN\] RULES.md D86: XMLSCHEMA holds what its type descriptor
+/// includes [§4.2.2, §6.1 GR1d to GR1f] behind an `Arc`, so a type is
+/// cloned as cheaply as it was copied before it had one; a registered XML
+/// Schema is identified by its name [§4.2.6], so the type holds the name,
+/// not the schema, and is stored and sent as itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Typing {
     /// UNTYPED: every element is `xdt:untyped`, every attribute
     /// `xdt:untypedAtomic` [§4.2.3].
     Untyped,
     /// ANY.
     Any,
+    /// XMLSCHEMA: valid according to the indicated registered XML Schema,
+    /// and its indicated XML namespace and global element declaration, if
+    /// any [§4.2.3, §11.6].
+    Schema(Arc<XmlSchemaNamed>),
 }
 
 /// [§4.2.2] An XML type, as its descriptor gives it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum XmlType {
     /// XML(DOCUMENT(...)): one document node of one element and comments
     /// and processing instructions.
@@ -50,19 +62,22 @@ pub const IMPLICIT: XmlType = XmlType::Sequence;
 pub const IMPLICIT_TYPING: Typing = Typing::Any;
 
 impl XmlType {
-    /// The type as a `<data type>` writes it [§6.1].
+    /// The type as a `<data type>` writes it [§6.1]: of XMLSCHEMA, its
+    /// registered XML Schema by ID, then its namespace and element as an
+    /// `<XML valid element clause>` writes them [§11.6].
     #[must_use]
-    pub fn written(self) -> String {
-        match self.secondary() {
-            Some(secondary) => format!("XML({}({secondary}))", self.primary()),
-            None => format!("XML({})", self.primary()),
+    pub fn written(&self) -> String {
+        match (self.schema(), self.secondary()) {
+            (Some(named), _) => format!("XML({}(XMLSCHEMA {}))", self.primary(), according_written(named)),
+            (None, Some(secondary)) => format!("XML({}({secondary}))", self.primary()),
+            (None, None) => format!("XML({})", self.primary()),
         }
     }
 
     /// Its `<primary XML type modifier>`, as XML_PRIMARY_MODIFIER shows it
     /// [§6.1] [§21.1 Description 1a i].
     #[must_use]
-    pub fn primary(self) -> &'static str {
+    pub fn primary(&self) -> &'static str {
         match self {
             XmlType::Document(_) => "DOCUMENT",
             XmlType::Content(_) => "CONTENT",
@@ -73,10 +88,11 @@ impl XmlType {
     /// Its `<secondary XML type modifier>`, as XML_SECONDARY_MODIFIER shows
     /// it: none of SEQUENCE [§6.1] [§21.1 Description 1a ii].
     #[must_use]
-    pub fn secondary(self) -> Option<&'static str> {
-        let typing = |t: Typing| match t {
+    pub fn secondary(&self) -> Option<&'static str> {
+        let typing = |t: &Typing| match t {
             Typing::Untyped => "UNTYPED",
             Typing::Any => "ANY",
+            Typing::Schema(_) => "XMLSCHEMA",
         };
         match self {
             XmlType::Document(t) | XmlType::Content(t) => Some(typing(t)),
@@ -84,18 +100,92 @@ impl XmlType {
         }
     }
 
-    /// Whether a value of `source` may be assigned to a site of `self`
-    /// [§4.2.4] [§10.2 SR1b]: to an UNTYPED type, a value of an UNTYPED
-    /// one; to another, any.
+    /// Of XMLSCHEMA, what its descriptor includes of the registered XML
+    /// Schema it indicates [§6.1 GR1d to GR1f].
     #[must_use]
-    pub fn takes(self, source: XmlType) -> bool {
+    pub fn schema(&self) -> Option<&XmlSchemaNamed> {
         match self {
-            XmlType::Document(Typing::Untyped) | XmlType::Content(Typing::Untyped) => {
-                matches!(source, XmlType::Document(Typing::Untyped) | XmlType::Content(Typing::Untyped))
+            XmlType::Document(Typing::Schema(named)) | XmlType::Content(Typing::Schema(named)) => Some(named),
+            XmlType::Document(Typing::Untyped | Typing::Any) | XmlType::Content(Typing::Untyped | Typing::Any) | XmlType::Sequence => None,
+        }
+    }
+
+    /// Whether it is XML(DOCUMENT(UNTYPED)) or XML(CONTENT(UNTYPED)).
+    #[must_use]
+    pub fn is_untyped(&self) -> bool {
+        matches!(self, XmlType::Document(Typing::Untyped) | XmlType::Content(Typing::Untyped))
+    }
+
+    /// Whether a value of `source` may be assigned to a site of `self`
+    /// [§4.2.4] [§10.1 SR1, §10.2 SR1b], as CAST BY REF casts one [§6.5
+    /// SR4]: to an UNTYPED type, a value of an UNTYPED one; to one of
+    /// XMLSCHEMA, a value of one of XMLSCHEMA of the same registered XML
+    /// Schema, of the namespace and element `self` indicates, if any
+    /// \[SR1b ii\]; to another, any.
+    #[must_use]
+    pub fn takes(&self, source: &XmlType) -> bool {
+        match self {
+            XmlType::Document(Typing::Untyped) | XmlType::Content(Typing::Untyped) => source.is_untyped(),
+            XmlType::Document(Typing::Schema(target)) | XmlType::Content(Typing::Schema(target)) => {
+                source.schema().is_some_and(|s| indicates_within(target, s))
             }
             XmlType::Document(Typing::Any) | XmlType::Content(Typing::Any) | XmlType::Sequence => true,
         }
     }
+}
+
+/// [§10.3 SR1b ii 2 B III to VIII] What types of XMLSCHEMA have in common,
+/// if each of `types` is one, of one registered XML Schema S: S, and the
+/// namespace NS each includes, if each includes one identical \[IV, VII\],
+/// and the element each includes, if each includes NS and one equivalent
+/// \[III, VI\]. None if one is of another type or of another schema \[IX\].
+#[must_use]
+pub fn schema_combined(types: &[XmlType]) -> Option<XmlSchemaNamed> {
+    let named: Vec<&XmlSchemaNamed> = types.iter().map(XmlType::schema).collect::<Option<_>>()?;
+    let first = *named.first()?;
+    if !named.iter().all(|n| n.schema == first.schema && n.name == first.name) {
+        return None;
+    }
+    let namespace = first.namespace.clone().filter(|ns| named.iter().all(|n| n.namespace.as_ref() == Some(ns)));
+    let element = first.element.clone().filter(|e| namespace.is_some() && named.iter().all(|n| n.element.as_ref() == Some(e)));
+    Some(XmlSchemaNamed { schema: first.schema.clone(), name: first.name.clone(), namespace, element })
+}
+
+/// [§10.2 SR1b ii] Whether a type of XMLSCHEMA indicating `source` is
+/// assignable to one indicating `target`: the same registered XML Schema,
+/// identified by its name [§4.2.6]; the namespace `target` indicates, if
+/// any, identical [SR1b ii 2]; and its element's NCName, if any,
+/// equivalent [SR1b ii 1].
+fn indicates_within(target: &XmlSchemaNamed, source: &XmlSchemaNamed) -> bool {
+    let same_schema = target.schema == source.schema && target.name == source.name;
+    let namespace = target.namespace.is_none() || target.namespace == source.namespace;
+    let element = target.element.is_none() || target.element == source.element;
+    same_schema && namespace && element
+}
+
+/// [§11.6] The `<XML valid according to what>` and `<XML valid element
+/// clause>` that indicate `named`: ID and its `<registered XML Schema
+/// name>`; then NAMESPACE and its URI, or NO NAMESPACE of the zero-length
+/// one \[SR4a i\]; then ELEMENT and its NCName, a delimited identifier, so
+/// the text reads back as it was.
+#[must_use]
+pub fn according_written(named: &XmlSchemaNamed) -> String {
+    let mut out = format!("ID {}.{}", named.schema, named.name);
+    match named.namespace.as_deref() {
+        Some("") => out.push_str(" NO NAMESPACE"),
+        Some(uri) => {
+            out.push_str(" NAMESPACE '");
+            out.push_str(&uri.replace('\'', "''"));
+            out.push('\'');
+        }
+        None => {}
+    }
+    if let Some(element) = &named.element {
+        out.push_str(" ELEMENT \"");
+        out.push_str(&element.replace('"', "\"\""));
+        out.push('"');
+    }
+    out
 }
 
 /// A value held, stored, or sent.
@@ -171,6 +261,31 @@ impl XmlValue {
         let v10 = Parameters { version: Version::V10, declaration: false, encoding: "UTF-8", undeclare: false };
         xml::serialize(&sequence, &v10)
             .or_else(|_| xml::serialize(&sequence, &Parameters { version: Version::V11, declaration: true, undeclare: true, ..v10 }))
+    }
+
+    /// \[DESIGN\] Whether it may be a value of a type of XMLSCHEMA [§4.2.3]:
+    /// each element of it has a type annotation, which only a validation
+    /// gives (`xml::schema::validate`). A value held stored is one a table
+    /// keeps, of a column whose type was checked as it was stored; a value
+    /// sent as text is parsed, so untyped.
+    ///
+    /// # Errors
+    ///
+    /// The errors of reading it.
+    pub fn annotated(&self) -> Result<bool> {
+        if let Form::Stored(_) = &self.0 {
+            return Ok(true);
+        }
+        let sequence = self.sequence()?;
+        Ok(sequence.items().iter().all(|item| match item {
+            xml::Item::Atomic(_) => true,
+            xml::Item::Node(node) => {
+                let tree = node.tree();
+                std::iter::once(node.id())
+                    .chain(tree.descendants(node.id()))
+                    .all(|id| tree.kind(id) != Some(xml::Kind::Element) || tree.annotation(id).is_some())
+            }
+        }))
     }
 
     /// Its stored form, as a binary large object.

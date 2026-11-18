@@ -19,9 +19,15 @@ DROP XML SCHEMA drops an XML Schema CREATE XML SCHEMA registered, and
 the privileges on it.
 
 A registered XML Schema whose document includes, redefines or imports
-one depends on it, and so on through each that depends on that.
-With RESTRICT the drop is refused while anything depends on the one
-named. With CASCADE each that does is dropped too.
+one depends on it, and so on through each that depends on that. So
+does an SQL-invoked routine with a parameter or result of a [type of
+XMLSCHEMA](../xml.md#the-xmlschema-types) of one of them, and what
+invokes it. With RESTRICT the drop is refused while anything depends on
+the one named. With CASCADE each that does is dropped too.
+
+A column, a domain or a user-defined type of a type of XMLSCHEMA of one
+of them keeps it from being dropped, even with CASCADE, as dropping it
+would change no value of the column: drop or alter that first.
 
 The permanently registered XML Schemas, INFORMATION_SCHEMA.XS, XSI and
 SQLXML, are never dropped. DROP SCHEMA with CASCADE drops the registered
@@ -33,7 +39,9 @@ it.
 ## RULES
 
 1. It names a registered XML Schema, not a permanently registered one.
-2. RESTRICT: no registered XML Schema depends on it.
+2. RESTRICT: nothing depends on it.
+3. No column, domain or user-defined type is of a type of XMLSCHEMA of it
+   or of one that depends on it.
 
 ## PRIVILEGES
 

@@ -5,7 +5,7 @@
 
 mod copy;
 
-pub use copy::{Copying, copied_attribute, is_xml_id};
+pub use copy::{Construction, Copying, copied_attribute, is_xml_id};
 
 use std::collections::HashMap;
 

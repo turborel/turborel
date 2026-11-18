@@ -26,20 +26,31 @@ pub fn arg(args: &[Sequence], n: usize) -> &Sequence {
 
 /// [XQueryFO §2.4] The atomic values of `value`: each atomic value itself,
 /// each node its typed value.
-pub fn atomized(value: &Sequence) -> Vec<Atomic> {
+///
+/// # Errors
+///
+/// As `atomize`.
+pub fn atomized(value: &Sequence) -> Result<Vec<Atomic>> {
     atomize(value.items())
 }
 
 /// [XQueryFO §2.4] [XQuery §2.4.2] `items` atomized: each atomic value
-/// itself, each node its typed value.
-pub fn atomize(items: &[Item]) -> Vec<Atomic> {
-    items
-        .iter()
-        .map(|item| match item {
-            Item::Atomic(a) => a.clone(),
-            Item::Node(node) => node.typed_value(),
-        })
-        .collect()
+/// itself, each node its typed value (`xml::Node::typed_value`).
+///
+/// # Errors
+///
+/// err:FOTY0012 of an element of element-only content, which has no typed
+/// value, and err:FORG0001 of a string value its type annotation does not
+/// read.
+pub fn atomize(items: &[Item]) -> Result<Vec<Atomic>> {
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        match item {
+            Item::Atomic(a) => out.push(a.clone()),
+            Item::Node(node) => out.extend(node.typed_value()?),
+        }
+    }
+    Ok(out)
 }
 
 /// `value` atomized, as a parameter of `xdt:anyAtomicType?` takes it.
@@ -48,7 +59,7 @@ pub fn atomize(items: &[Item]) -> Vec<Atomic> {
 ///
 /// err:XPTY0004 of more than one value.
 pub fn optional_atomic(value: &Sequence) -> Result<Option<Atomic>> {
-    let mut values = atomized(value);
+    let mut values = atomized(value)?;
     if values.len() > 1 {
         return Err(wrong_type("one atomic value", &format!("it is {} of them", values.len())));
     }
@@ -132,7 +143,7 @@ pub fn string(value: &Sequence) -> Result<String> {
 ///
 /// err:XPTY0004 of a value not a string.
 pub fn strings(value: &Sequence) -> Result<Vec<String>> {
-    atomized(value).iter().map(text_of).collect()
+    atomized(value)?.iter().map(text_of).collect()
 }
 
 /// `a` as a parameter of `xs:integer` takes it: an integer, or an untyped

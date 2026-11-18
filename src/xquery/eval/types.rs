@@ -54,7 +54,7 @@ impl Evaluator<'_> {
     /// `cast as` [XQuery §3.12.3]: the operand atomized, one value cast as
     /// the target type, none allowed by `?` \[err:XPTY0004\].
     pub(super) fn cast(&self, operand: &Op, target: CastTarget, frame: &mut Frame, focus: &Focus) -> Result<Seq> {
-        let mut atomized = atomize(&self.eval(operand, frame, focus)?);
+        let mut atomized = atomize(&self.eval(operand, frame, focus)?)?;
         if atomized.len() > 1 {
             return Err(error(ErrorCode::XPTY0004, "the operand of a cast is more than one atomic value [XQuery §3.12.3]"));
         }
@@ -72,7 +72,7 @@ impl Evaluator<'_> {
 
     /// `castable as` [XQuery §3.12.4]: whether the cast would succeed.
     pub(super) fn castable(&self, operand: &Op, target: CastTarget, frame: &mut Frame, focus: &Focus) -> Result<Seq> {
-        let atomized = atomize(&self.eval(operand, frame, focus)?);
+        let atomized = atomize(&self.eval(operand, frame, focus)?)?;
         Ok(boolean(match atomized.as_slice() {
             [] => target.optional,
             [a] => cast(a, target.to).is_ok(),
@@ -89,10 +89,10 @@ impl Evaluator<'_> {
 pub(super) fn converted(value: Seq, expected: &SeqType, what: &str) -> Result<Seq> {
     let converted = match expected {
         SeqType::Of(ItemKind::Atomic(t), _) => {
-            atomize(&value).into_iter().map(|a| to_atomic_type(a, t).map(Item::Atomic)).collect::<Result<Seq>>()?
+            atomize(&value)?.into_iter().map(|a| to_atomic_type(a, t).map(Item::Atomic)).collect::<Result<Seq>>()?
         }
         SeqType::Of(ItemKind::Numeric, _) => {
-            atomize(&value).into_iter().map(|a| untyped_to(a, AtomicType::Double).map(Item::Atomic)).collect::<Result<Seq>>()?
+            atomize(&value)?.into_iter().map(|a| untyped_to(a, AtomicType::Double).map(Item::Atomic)).collect::<Result<Seq>>()?
         }
         SeqType::Empty | SeqType::Of(ItemKind::Item | ItemKind::Node(_), _) => value,
     };

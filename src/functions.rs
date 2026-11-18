@@ -88,6 +88,7 @@ pub use width_bucket::{WIDTH_BUCKET, width_bucket};
 /// [ISO/IEC 9075-14:2006 draft §9.4 to §9.7] SQL data types mapped to
 /// XML Schema data types (`functions/xml/map.rs`).
 pub use xml::map as xml_map;
+pub use xml::{According, Candidate, ValidBy, XmlValid, XmlValidate};
 pub use xml::{
     BinaryEncoding, IMPLICIT_BINARY_ENCODING, Mapping, Serialization, XMLAGG, XmlAggregate, XmlCastIn, XmlCastOut, XmlComment, XmlConcat,
     XmlCopy, XmlDocument, XmlElement, XmlForest, XmlIs, XmlParse, XmlPi, XmlSerialize, XmlText, xml_lexical, xml_mapped,

@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use super::tree::{Kind, NodeId, Tree};
+use crate::error::Result;
 
 /// A node of a tree [XQueryDM §6].
 #[derive(Debug, Clone)]
@@ -76,17 +77,25 @@ impl Node {
         Arc::as_ptr(&self.tree).addr().cmp(&Arc::as_ptr(&other.tree).addr())
     }
 
-    /// Its typed value [XQueryDM §5.15], which no schema typed: of a
-    /// comment or processing instruction its content, a string [§6.5,
-    /// §6.6]; of a document, element, attribute or text node its string
-    /// value, untyped [§6.1, §6.2.3, §6.3.3, §6.7].
-    #[must_use]
-    pub fn typed_value(&self) -> Atomic {
+    /// Its typed value [XQueryDM §5.15]: of an element or attribute a
+    /// validation typed, what its type annotation reads from its string
+    /// value (`Tree::typed_value`), and of one no schema typed its string
+    /// value, untyped [§6.2.3, §6.3.3]; of a comment or processing
+    /// instruction its content, a string [§6.5, §6.6]; of a document or
+    /// text node its string value, untyped [§6.1, §6.7].
+    ///
+    /// # Errors
+    ///
+    /// SQLSTATE 10000 of an element of element-only content, which has no
+    /// typed value [XQueryFO §2.4 err:FOTY0012], or of a string value its
+    /// type annotation does not read, err:FORG0001.
+    pub fn typed_value(&self) -> Result<Vec<Atomic>> {
         let kind = match self.kind() {
+            Some(Kind::Element | Kind::Attribute) => return self.tree.typed_value(self.id),
             Some(Kind::Comment | Kind::ProcessingInstruction) => AtomicType::String,
-            Some(Kind::Document | Kind::Element | Kind::Attribute | Kind::Text) | None => AtomicType::UntypedAtomic,
+            Some(Kind::Document | Kind::Text) | None => AtomicType::UntypedAtomic,
         };
-        Atomic::new(kind, self.tree.string_value(self.id))
+        Ok(vec![Atomic::new(kind, self.tree.string_value(self.id))])
     }
 }
 

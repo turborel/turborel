@@ -253,6 +253,12 @@ pub enum TypeName {
     /// [ISO/IEC 9075-2:2023 §6.1] `<row type>`, a field's type naming a
     /// type: each field's name and type.
     Row(Vec<(String, TypeName)>),
+    /// [ISO/IEC 9075-14:2006 draft §6.1] XML(DOCUMENT(XMLSCHEMA ...)) or
+    /// XML(CONTENT(XMLSCHEMA ...)): its primary modifier, and the
+    /// registered XML Schema its `<XML valid according to what>` and
+    /// `<XML valid element clause>` indicate \[SR4\] [§11.6], resolved as a
+    /// statement is processed.
+    XmlSchema(crate::xml::Syntax, Box<super::XmlValidAccording>),
     /// \[EXTENSION\] A type beyond the standard with parameters, as its
     /// name and `(a [, b])` write it (RULES.md D53): no domain takes
     /// parameters.

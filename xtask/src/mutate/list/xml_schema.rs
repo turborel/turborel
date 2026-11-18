@@ -1,15 +1,16 @@
 //! Mutations of XML Schema Part 1, Structures: the schema component
 //! constraints a schema is checked against, the assessment of an
 //! element, and the type annotations validation gives and storage keeps;
-//! and registered XML Schemas: their names, the documents they read,
-//! what depends on them, the permanent ones and how their documents are
-//! logged (RULES.md R-TEST-9, D86).
+//! registered XML Schemas: their names, the documents they read, what
+//! depends on them, the permanent ones and how their documents are
+//! logged; and the XML types of XMLSCHEMA, XMLVALIDATE and IS VALID, and
+//! the typed values XQuery reads (RULES.md R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of XML Schema structures broken alone, and the tests
 /// that fail.
-pub const XML_SCHEMA: [Mutation; 16] = [
+pub const XML_SCHEMA: [Mutation; 27] = [
     Mutation {
         name: "xml-schema-unique-particle-attribution",
         package: Package::Core,
@@ -174,6 +175,116 @@ pub const XML_SCHEMA: [Mutation; 16] = [
         original: "    if !text.contains(NEWLINE) {",
         replacement: "    if true || !text.contains(NEWLINE) {",
         integration: &["xml_schema::registered_schemas_survive_reopening"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xmlschema-type-element",
+        package: Package::Core,
+        breaks: "a site of a type of XMLSCHEMA of an element takes a value of no element",
+        file: "src/value/xml.rs",
+        original: "    let element = target.element.is_none() || target.element == source.element;",
+        replacement: "    let element = true;",
+        integration: &["xml_schema_types::what_a_column_of_xmlschema_takes_10_2"],
+        unit: &["value::types::xml::tests::assignability_of_xmlschema_types_10_2"],
+    },
+    Mutation {
+        name: "xmlschema-type-combined-element",
+        package: Package::Core,
+        breaks: "types of XMLSCHEMA of two elements brought together are of the first's",
+        file: "src/value/xml.rs",
+        original: "    let element = first.element.clone().filter(|e| namespace.is_some() && named.iter().all(|n| n.element.as_ref() == Some(e)));",
+        replacement: "    let element = first.element.clone().filter(|_| namespace.is_some());",
+        integration: &["xml_schema_types::xmlschema_types_brought_together_10_3"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xmlschema-site-validated",
+        package: Package::Core,
+        breaks: "a site of a type of XMLSCHEMA takes a value no validation made",
+        file: "src/value/types/xml.rs",
+        original: "    if fits && (t.schema().is_none() || v.annotated()?) {",
+        replacement: "    if fits {",
+        integration: &["xml_schema_types::a_parameter_of_an_xmlschema_type_is_validated_first"],
+        unit: &["value::types::xml::tests::a_site_of_xmlschema_takes_what_validation_made"],
+    },
+    Mutation {
+        name: "xmlschema-cast-by-value",
+        package: Package::Core,
+        breaks: "CAST BY VALUE to a type of XMLSCHEMA does not validate",
+        file: "src/binder/xml.rs",
+        original: "                self.validated_cast(cast(DataType::Xml(any)), &target)?",
+        replacement: "                cast(target.clone())",
+        integration: &["xml_schema_types::cast_to_and_from_xmlschema_types_6_5"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-valid-element-clause-checked",
+        package: Package::Core,
+        breaks: "an element clause names a namespace its registered XML Schema has not",
+        file: "src/db/definitions/xml_schemas/according.rs",
+        original: "    let declared = desc.target_namespace == ensuri || read.namespaces().contains(&uri);",
+        replacement: "    let declared = true;",
+        integration: &["xml_schema_types::an_xmlschema_type_indicates_what_is_there_11_6"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xmlvalidate-data-driven-namespace",
+        package: Package::Core,
+        breaks: "a data-driven validation takes a registered XML Schema of another namespace",
+        file: "src/functions/xml/validate.rs",
+        original: "candidates.iter().find(|c| c.namespace == ns)",
+        replacement: "candidates.iter().find(|c| c.namespace != ns)",
+        integration: &["xml_validate::data_driven_validation_6_20"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xmlvalidate-element-namespace",
+        package: Package::Core,
+        breaks: "an element clause's QName is matched by its local name alone",
+        file: "src/functions/xml/validate.rs",
+        original: "            let named = local == Some(en.as_str()) && self.namespace.as_deref() == Some(ns);",
+        replacement: "            let named = local == Some(en.as_str());",
+        integration: &["xml_validate::what_xmlvalidate_raises_6_20"],
+        unit: &[],
+    },
+    Mutation {
+        name: "is-valid-unknown",
+        package: Package::Core,
+        breaks: "IS VALID of an element of no registered XML Schema is True",
+        file: "src/functions/xml/validate.rs",
+        original: "        Ok(if unknown { Value::Null } else { Value::Bool(true) })",
+        replacement: "        Ok(Value::Bool(true))",
+        integration: &["xml_valid::data_driven_is_valid_is_unknown_without_a_schema_8_5"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-typed-value",
+        package: Package::Core,
+        breaks: "XQuery atomizes a validated element to its string value, untyped",
+        file: "src/xml/sequence.rs",
+        original: "            Some(Kind::Element | Kind::Attribute) => return self.tree.typed_value(self.id),",
+        replacement: "            Some(Kind::Element | Kind::Attribute) => AtomicType::UntypedAtomic,",
+        integration: &["xml_validate::what_xmlvalidate_makes_6_20"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-unvalidated-copy",
+        package: Package::Core,
+        breaks: "XMLDOCUMENT of XML(CONTENT(UNTYPED)) keeps the types of the nodes it copies",
+        file: "src/xml/tree/build/copy.rs",
+        original: "                if mode.construction == Construction::Preserve {",
+        replacement: "                if mode.construction != Construction::Strip {",
+        integration: &["xml_validate::what_publishing_keeps_of_validated_values_6_13"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-schema-typed-dependents",
+        package: Package::Core,
+        breaks: "a column of a type of XMLSCHEMA keeps no registered XML Schema from being dropped",
+        file: "src/db/definitions/xml_schemas/dependents.rs",
+        original: "        DataType::Xml(x) => x.schema().is_some_and(|n| gone.iter().any(|g| g.auth == n.schema && g.ident == n.name)),",
+        replacement: "        DataType::Xml(_) => false,",
+        integration: &["xml_schema_types::what_is_of_an_xmlschema_type_keeps_its_schema"],
         unit: &[],
     },
 ];
