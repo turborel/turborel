@@ -18,9 +18,10 @@
 //!     | RRF_K = <unsigned integer>
 //! ```
 //!
-//! INDEX, QUERY_TEXT, QUERY_VECTOR and TOP_N are written, the others at
-//! most once each, in any order. The index of §11.1 embeds QUERY_TEXT by
-//! its model; this one is given the query's vector. The binder makes it
+//! INDEX, QUERY_TEXT and TOP_N are written, the others at most once each,
+//! in any order. Of no QUERY_VECTOR, QUERY_TEXT is embedded by the
+//! index's MODEL (§11.2), and holds no dynamic parameter, as it is read
+//! twice. The binder makes it
 //! the query it stands for (`binder/hybrid_search.rs`), reading each
 //! value argument again there, so it keeps their text.
 
@@ -55,6 +56,7 @@ struct Arguments {
     text: Option<SearchValue>,
     vector: Option<SearchValue>,
     vector_first: bool,
+    text_dynamic: bool,
     top_n: Option<u32>,
     candidates: Option<u32>,
     fusion: Option<Fusion>,
@@ -86,10 +88,13 @@ impl Parser {
         let correlation = self.correlation()?.unwrap_or_else(|| HYBRID_SEARCH.to_owned());
         let columns = self.derived_columns()?;
         let missing = |what: &str| self.rule(format!("[EXTENSION] HYBRID_SEARCH names its {what}"));
+        if given.vector.is_none() && given.text_dynamic {
+            return Err(missing("QUERY_VECTOR, as its QUERY_TEXT holds a dynamic parameter"));
+        }
         let search = HybridSearch {
             index: given.index.ok_or_else(|| missing(words::INDEX))?,
             text: given.text.ok_or_else(|| missing(words::QUERY_TEXT))?,
-            vector: given.vector.ok_or_else(|| missing(words::QUERY_VECTOR))?,
+            vector: given.vector,
             vector_first: given.vector_first,
             top_n: given.top_n.ok_or_else(|| missing(words::TOP_N))?,
             candidates: given.candidates,
@@ -117,7 +122,9 @@ impl Parser {
         let fresh = match word.as_str() {
             words::INDEX => given.index.replace(self.identifier()?).is_none(),
             words::QUERY_TEXT => {
+                let before = self.dynamic;
                 let value = self.search_value(given)?;
+                given.text_dynamic = self.dynamic != before;
                 given.text.replace(value).is_none()
             }
             words::QUERY_VECTOR => {

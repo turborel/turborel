@@ -4,13 +4,13 @@
 //! planner's position of a column in its key, RANK's index, CONTAINS of
 //! the text part, a sparse radius in WHERE, HYBRID_SEARCH's fusion,
 //! dynamic parameters and best chunk, and an index embedding its text by
-//! a MODEL.
+//! a MODEL, and its QUERY_TEXT.
 
 use super::{Mutation, Package};
 
 /// Independent mechanisms whose removal must fail hybrid search's
 /// requirements.
-pub const VECTOR_HYBRID: [Mutation; 22] = [
+pub const VECTOR_HYBRID: [Mutation; 24] = [
     Mutation {
         name: "sparse-approx-negated",
         package: Package::Core,
@@ -229,6 +229,26 @@ pub const VECTOR_HYBRID: [Mutation; 22] = [
         original: "[CHUNKER_OPTION, MODE_OPTION].iter().any(",
         replacement: "[CHUNKER_OPTION, MODE_OPTION].iter().all(",
         integration: &["vector_hybrid::ddl::what_a_hybrid_index_refuses_11_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "hybrid-query-text-unembedded",
+        package: Package::Core,
+        breaks: "a search of no QUERY_VECTOR finds no model of the index, so QUERY_TEXT is never embedded",
+        file: "src/binder/hybrid_search.rs",
+        original: ".find(|p| modelled && p.target == ix.table)",
+        replacement: ".find(|p| !modelled && p.target == ix.table)",
+        integration: &["vector_hybrid::embedded::query_text_alone_is_embedded_by_the_model_11_2"],
+        unit: &[],
+    },
+    Mutation {
+        name: "hybrid-query-text-dynamic",
+        package: Package::Core,
+        breaks: "a QUERY_TEXT of a dynamic parameter is embedded too, its second copy taking the next parameter's number",
+        file: "src/parser/query/hybrid_search.rs",
+        original: "if given.vector.is_none() && given.text_dynamic {",
+        replacement: "if given.vector.is_none() && given.text_dynamic && false {",
+        integration: &["vector_hybrid::embedded::query_text_alone_is_embedded_by_the_model_11_2"],
         unit: &[],
     },
 ];

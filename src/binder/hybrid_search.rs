@@ -3,7 +3,9 @@
 //! (`index/vector/hybrid.rs`), the table's rows nearest QUERY_VECTOR by the
 //! index's metric, FETCH APPROX FIRST CANDIDATES of them, and those
 //! ranked highest for QUERY_TEXT by the index's full-text part, FETCH
-//! FIRST CANDIDATES of them, fused and the first TOP_N kept.
+//! FIRST CANDIDATES of them, fused and the first TOP_N kept. Of no
+//! QUERY_VECTOR, the index's MODEL embeds QUERY_TEXT as a query, and that
+//! is the vector searched for [§11.2].
 //!
 //! Each list is read through its part of the index, as an ordinary query
 //! reads it, so EXPLAIN shows both reads. Of an index that embeds its
@@ -33,8 +35,9 @@ use crate::ast::{Fusion, HybridSearch};
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
-use crate::index::vector::hybrid::HYBRID_METHOD;
+use crate::index::vector::hybrid::{HYBRID_METHOD, MODEL_OPTION};
 use crate::parser::Parser;
+use crate::value::Value;
 
 /// [R11.1] Each list's candidates, of TOP_N, by default.
 const CANDIDATES_PER_ROW: u32 = 4;
@@ -85,6 +88,7 @@ struct Read {
     vector: String,
     index: String,
     metric: Option<String>,
+    query: String,
 }
 
 impl Read {
@@ -102,6 +106,7 @@ impl Read {
             vector: column(1)?,
             index: quoted(&ix.name),
             metric: db.methods.get(HYBRID_METHOD).and_then(|m| m.metric(ix)),
+            query: query_vector(db, ix, search)?,
         })
     }
 }
@@ -123,6 +128,21 @@ fn document_key(db: &State, desc: &TableDesc, ix: &IndexDesc) -> Result<String> 
         .ok_or_else(|| refused(format!("HYBRID_SEARCH's DOC_ID is a primary key of one column, which {} has not", ix.table)))
 }
 
+/// \[§11.2\] The text of the vector searched for: QUERY_VECTOR, or of
+/// none, of an index of a MODEL, QUERY_TEXT embedded as a query by the
+/// model of the pipeline that keeps the index's table.
+fn query_vector(db: &State, ix: &IndexDesc, search: &HybridSearch) -> Result<String> {
+    if let Some(vector) = &search.vector {
+        return Ok(vector.text.clone());
+    }
+    let modelled = ix.options.iter().any(|(name, value)| name == MODEL_OPTION && matches!(value, Value::Char(_)));
+    let kept = db.catalog.embeddings().pipelines.iter().find(|p| modelled && p.target == ix.table);
+    let model = kept.map(|p| string(&format!("{}.{}", quoted(&p.model.auth), quoted(&p.model.ident))));
+    model
+        .map(|m| format!("EMBED({m}, {}, 'query')", search.text.text))
+        .ok_or_else(|| refused(format!("HYBRID_SEARCH names its QUERY_VECTOR, as {} embeds no text by a MODEL", ix.name)))
+}
+
 /// The name of the column of `ix`'s key at `at`, quoted.
 fn column_name(desc: &TableDesc, ix: &IndexDesc, at: usize) -> Result<String> {
     let column = ix.columns.get(at).and_then(|c| desc.columns.get(*c));
@@ -136,7 +156,7 @@ fn query_of(db: &State, search: &HybridSearch) -> Result<String> {
         Some(n) => n,
         None => search.top_n.checked_mul(CANDIDATES_PER_ROW).ok_or_else(|| refused("HYBRID_SEARCH's TOP_N is too large"))?,
     };
-    let (vector, text) = (vector_side(&read, search, candidates), text_side(&read, search, candidates));
+    let (vector, text) = (vector_side(&read, candidates), text_side(&read, search, candidates));
     let sides = if search.vector_first {
         format!("( {vector} ) AS {VECTOR_SIDE} FULL JOIN ( {text} ) AS {TEXT_SIDE}")
     } else {
@@ -155,10 +175,10 @@ fn query_of(db: &State, search: &HybridSearch) -> Result<String> {
     ))
 }
 
-/// The query of the vector list: the candidates nearest QUERY_VECTOR,
+/// The query of the vector list: the candidates nearest the vector searched for,
 /// each its key, distance D, text C, rank R, and the least and greatest
 /// distance of the list, LO and HI.
-fn vector_side(read: &Read, search: &HybridSearch, candidates: u32) -> String {
+fn vector_side(read: &Read, candidates: u32) -> String {
     let metric = read.metric.as_deref().map(|m| format!(", {}", string(m))).unwrap_or_default();
     format!(
         "SELECT K, D, C, ROW_NUMBER() OVER (ORDER BY D, K) AS R, MIN(D) OVER () AS LO, MAX(D) OVER () AS HI \
@@ -168,7 +188,7 @@ fn vector_side(read: &Read, search: &HybridSearch, candidates: u32) -> String {
          HINT (VECTOR_INDEX({table_ident} {index})) ) AS HYBRID_SEARCH_NEAREST WHERE D IS NOT NULL ) AS {BEST} WHERE B = 1",
         key = read.key,
         vector = read.vector,
-        query = search.vector.text,
+        query = read.query,
         text = read.text,
         table = read.table,
         table_ident = read.table_ident,
