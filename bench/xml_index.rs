@@ -23,6 +23,12 @@
 //!   `/order[@no = 0]/item[. = "thing N"]`, beside the check of each value
 //!   of that.
 //!
+//! And statements of a table of 2,000 orders of 10 items, read whole and
+//! by each method's index, of the shapes the planner reads an index for:
+//! a predicate of two steps, of each step, of `and`; queries joined by
+//! AND; a parent step; a numeric predicate in ON, read below its guard;
+//! and a query of a column of XML(SEQUENCE).
+//!
 //! Index building is outside the timer. Run with `cargo xtask bench
 //! xml_index`, on the harness (RULES.md R-BENCH-1). When the XQuery
 //! evaluator is there, its XMLEXISTS of the same predicate is a case of
@@ -45,6 +51,7 @@ use std::fmt::Write;
 use std::sync::Arc;
 
 use harness::{Bench, Case, note};
+use turborel::db::{Database, Session};
 use turborel::index::xml::{
     Axis, Comparison, Literal, Method, PathPattern, Step, Target, XmlAnswer, XmlFilter, XmlLookup, XmlMethod, XmlQuery,
 };
@@ -111,6 +118,7 @@ fn main() {
         }
         primary(&bench, items, (&values, indexed_values), &lookup);
     }
+    statements(&bench);
 }
 
 /// The primary's cases of `items` items, of an index of `indexed`: its
@@ -230,4 +238,71 @@ fn indexed(method: Method, values: &[Vec<u8>]) -> Arc<dyn Index> {
         index.insert(Key(vec![Value::Xml(xml(bytes))]), row as u64).unwrap();
     }
     index
+}
+
+/// Orders of the table the statements read.
+const ORDERS: usize = 2_000;
+
+/// The statements of each shape the planner reads an index for, each a
+/// count of the rows it holds of, with that count.
+const SHAPES: [(&str, &str, u64); 7] = [
+    ("two predicates", "SELECT COUNT(*) FROM T WHERE XMLEXISTS('/order[@no = \"7\"]/item[@sku = \"3\"]' PASSING BY REF X)", 1),
+    (
+        "a predicate of each step",
+        "SELECT COUNT(*) FROM T WHERE XMLEXISTS('/order[@no = \"7\"][qty]/item[@sku = \"3\"]' PASSING BY REF X)",
+        1,
+    ),
+    ("and", "SELECT COUNT(*) FROM T WHERE XMLEXISTS('/order[@no = \"7\" and item]' PASSING BY REF X)", 1),
+    (
+        "queries joined by AND",
+        "SELECT COUNT(*) FROM T WHERE XMLEXISTS('//item[@sku = \"3\"]' PASSING BY REF X) AND XMLEXISTS('/order[@no = \"7\"]' PASSING BY REF X)",
+        1,
+    ),
+    ("parent", "SELECT COUNT(*) FROM T WHERE XMLEXISTS('/order/item[@sku = \"3\"]/../@no[. = \"7\"]' PASSING BY REF X)", 1),
+    (
+        "a numeric predicate in ON",
+        "SELECT COUNT(*) FROM O JOIN T ON O.K = T.K AND XMLEXISTS('/order[@no > 1990]/item' PASSING BY REF T.X)",
+        9,
+    ),
+    ("a sequence", "SELECT COUNT(*) FROM T WHERE XMLEXISTS('/order[@no = \"7\"]/item' PASSING BY REF S)", 1),
+];
+
+/// The statements of `SHAPES` of a table T (K, X, S) of `ORDERS` orders of
+/// 10 items each, S of XML(SEQUENCE) the same, and a table O of their
+/// numbers: read whole, then by each method's index on X and on S.
+fn statements(bench: &Bench) {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER, X XML(DOCUMENT), S XML) CREATE TABLE O (K INTEGER)").unwrap();
+    let a = db.session("A");
+    for n in 0..ORDERS {
+        let parsed = format!("XMLPARSE(DOCUMENT '{}' STRIP WHITESPACE)", order(10, n));
+        a.run(&format!("INSERT INTO T VALUES ({n}, {parsed}, {parsed})")).unwrap();
+        a.run(&format!("INSERT INTO O VALUES ({n})")).unwrap();
+    }
+    a.commit().unwrap();
+    for method in ["", "XML_PATH", "XML_VALUE", "XML_PRIMARY"] {
+        if !method.is_empty() {
+            a.run(&format!("CREATE INDEX I ON T (X) USING {method}")).unwrap();
+            a.run(&format!("CREATE INDEX J ON T (S) USING {method}")).unwrap();
+        }
+        let read = if method.is_empty() { "read whole" } else { method };
+        for (shape, sql, held) in SHAPES {
+            bench.measure(Case::new(format!("{shape}, {read}"), "statements"), || {
+                assert_eq!(count(&a, sql), held, "{sql}");
+                1
+            });
+        }
+        a.commit().unwrap();
+        if !method.is_empty() {
+            a.run("DROP INDEX I").unwrap();
+            a.run("DROP INDEX J").unwrap();
+        }
+    }
+}
+
+/// The count `sql`, a SELECT COUNT(*), gives.
+fn count(a: &Session, sql: &str) -> u64 {
+    let mut cursor = a.open_cursor(sql).unwrap();
+    let row = cursor.fetch().unwrap().unwrap();
+    row[0].to_string().parse().unwrap()
 }
