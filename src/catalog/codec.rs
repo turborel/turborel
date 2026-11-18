@@ -68,7 +68,7 @@ mod triggers;
 use crate::value::types::tags::{data_type, put_type};
 use columns::{collation_name, column, put_collation_name, put_column};
 pub(crate) use columns::{default, put_default};
-pub(crate) use objects::{collation, put_collation, put_sequence, put_user_type, sequence, user_type};
+pub(crate) use objects::{collation, put_collation, put_sequence, put_user_type, put_xml_schema, sequence, user_type, xml_schema};
 pub(crate) use roles::{put_roles, roles};
 pub(crate) use routines::{module, put_module, put_routine, routine};
 pub(crate) use structured::{cast, ordering, put_cast, put_ordering, put_structured_type, put_transforms, structured_type, transforms};

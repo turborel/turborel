@@ -28,8 +28,11 @@
 //!           create roles (count u32, each str), SQL-server modules (count
 //!           u32, each a module, in the order of their timestamps of
 //!           creation), structured types (count u32, each a type),
-//!           user-defined casts, orderings and transforms (likewise)
+//!           user-defined casts, orderings and transforms (likewise),
+//!           registered XML Schemas (count u32, each an XML Schema)
 //! ```
+
+mod xml_schemas;
 
 use std::sync::Arc;
 
@@ -42,7 +45,8 @@ use crate::catalog::codec::{
     put_privilege, put_roles, put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, roles, routine,
     sequence, table, trigger, user_type, view,
 };
-use crate::catalog::{CastDesc, OrderingDesc, StructuredDesc, TransformGroupDesc};
+use crate::catalog::codec::{put_xml_schema, xml_schema};
+use crate::catalog::{CastDesc, OrderingDesc, StructuredDesc, TransformGroupDesc, XmlSchemaDesc};
 use crate::catalog::{
     Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, ModuleDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc,
     SqlRoutineDesc, TableDesc, TriggerDesc, UserTypeDesc, ViewDesc, module_of_schema,
@@ -95,6 +99,8 @@ pub(super) struct Snapshot {
     orderings: Vec<OrderingDesc>,
     /// The types' transform groups, by the types' names.
     transforms: Vec<(QualifiedName, Vec<TransformGroupDesc>)>,
+    /// The registered XML Schemas, by name.
+    xml_schemas: Vec<XmlSchemaDesc>,
 }
 
 impl Snapshot {
@@ -152,6 +158,7 @@ impl Snapshot {
             casts: st.catalog.casts().into_iter().cloned().collect(),
             orderings: st.catalog.orderings().into_iter().cloned().collect(),
             transforms: st.catalog.all_transforms().into_iter().map(|(n, g)| (n.clone(), g.to_vec())).collect(),
+            xml_schemas: st.catalog.xml_schemas().into_iter().cloned().collect(),
         })
     }
 
@@ -236,6 +243,8 @@ impl Snapshot {
         self.orderings.iter().for_each(|o| put_ordering(out, o));
         out.put_u32(count(self.transforms.len()));
         self.transforms.iter().for_each(|(n, g)| put_transforms(out, (n, g)));
+        out.put_u32(count(self.xml_schemas.len()));
+        self.xml_schemas.iter().for_each(|x| put_xml_schema(out, x));
     }
 
     /// The snapshot `put` wrote.
@@ -272,6 +281,7 @@ impl Snapshot {
             casts: (0..r.u32()?).map(|_| cast(r)).collect::<Result<_>>()?,
             orderings: (0..r.u32()?).map(|_| ordering(r)).collect::<Result<_>>()?,
             transforms: (0..r.u32()?).map(|_| transforms(r)).collect::<Result<_>>()?,
+            xml_schemas: (0..r.u32()?).map(|_| xml_schema(r)).collect::<Result<_>>()?,
         })
     }
 }
@@ -311,6 +321,7 @@ impl State {
         }
         put_module_tables(&mut *catalog, snapshot);
         put_described(&mut *catalog, snapshot);
+        xml_schemas::read_all(&mut *catalog)?;
         self.install_counters(snapshot)?;
         // Before the indexes, whose keys are by them.
         self.catalog = Arc::from(catalog.duplicate());
@@ -386,6 +397,7 @@ fn put_described(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.casts.iter().cloned().for_each(|c| catalog.put_cast(c));
     snapshot.orderings.iter().cloned().for_each(|o| catalog.put_ordering(o));
     snapshot.transforms.iter().for_each(|(n, g)| catalog.put_transforms(n, g.clone()));
+    snapshot.xml_schemas.iter().cloned().for_each(|x| catalog.put_xml_schema(x));
 }
 
 /// The assertions, views, privileges, triggers and SQL-invoked routines

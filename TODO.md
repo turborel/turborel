@@ -160,9 +160,11 @@ features.
   type are done; schema documents are read into schema components,
   checked against XML Schema Part 1's constraints, and nodes validated
   against them as XQuery's validate does, typed nodes stored with their
-  annotations (`src/xml/schema.rs`). Left: simple type definitions read
-  from schema documents; the registration statements and the rest of the
-  SQL.
+  annotations (`src/xml/schema.rs`); the catalog describes registered
+  XML Schemas and keeps them through checkpoints. Left: simple type
+  definitions read from schema documents; the registration statements,
+  USAGE, dependencies, the Information Schema views, the XMLSCHEMA types,
+  XMLVALIDATE and IS VALID; the permanently registered schemas of Table 1.
 
 ### Full text
 

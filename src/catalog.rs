@@ -1,6 +1,6 @@
 //! The catalog: descriptions of schemas, tables, views, columns,
 //! constraints, domains, assertions, collations, sequence generators,
-//! user-defined types, indexes and privileges.
+//! user-defined types, indexes, privileges and registered XML Schemas.
 //!
 //! [X3.135-1986 §4.6] a `<schema>` is a "persistent object" created by implementor-defined
 //! mechanisms, so where descriptions live is up to us. The `Catalog` trait is
@@ -31,6 +31,7 @@ mod sequences;
 mod structured;
 mod triggers;
 mod user_types;
+mod xml_schemas;
 
 use crate::value::collation::CollationRef;
 pub use collations::CollationDesc;
@@ -55,6 +56,7 @@ pub use structured::{
 };
 pub use triggers::{ActionTime, TransitionNames, TriggerDesc, TriggerEvent, TriggerLevel};
 pub use user_types::{Routine, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, based_on, types_in};
+pub use xml_schemas::XmlSchemaDesc;
 
 /// A `<table name>` with its `<authorization identifier>` made explicit.
 /// [X3.135-1986 §5.4 SR3] two table names are equal iff both parts are equal.
@@ -315,6 +317,8 @@ pub struct IndexDesc {
 ///   `remove_collation`; `put_sequence`, `sequence`, `sequences` and
 ///   `remove_sequence`; and `put_user_type`, `user_type`, `user_types` and
 ///   `remove_user_type`.
+///   So too `put_xml_schema`, `xml_schema`, `xml_schemas` and
+///   `remove_xml_schema`.
 ///   So too `put_assertion`, `assertion`, `assertions` and
 ///   `remove_assertion`; and `put_trigger`, `trigger`, `triggers` and
 ///   `remove_trigger`, `triggers` and `triggers_on` in the order of
@@ -460,6 +464,15 @@ pub trait Catalog: Send + Sync {
     fn all_transforms(&self) -> Vec<(&QualifiedName, &[TransformGroupDesc])>;
     /// Forget the domain with this name: one dropped [§11.27 GR3].
     fn remove_domain(&mut self, name: &QualifiedName);
+    /// Record a registered XML Schema, in place of one of its name
+    /// [ISO/IEC 9075-14:2006 draft §4.2.6].
+    fn put_xml_schema(&mut self, xml_schema: XmlSchemaDesc);
+    /// The registered XML Schema of this name, if any.
+    fn xml_schema(&self, name: &QualifiedName) -> Option<&XmlSchemaDesc>;
+    /// Every registered XML Schema, in a stable order.
+    fn xml_schemas(&self) -> Vec<&XmlSchemaDesc>;
+    /// Forget the registered XML Schema of this name.
+    fn remove_xml_schema(&mut self, name: &QualifiedName);
     /// Record the assertion `assertion`, a CHECK of no table, in place of
     /// any of its name [ISO/IEC 9075:1992 §11.34].
     fn put_assertion(&mut self, assertion: ConstraintDesc);

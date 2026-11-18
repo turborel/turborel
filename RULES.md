@@ -3135,6 +3135,16 @@ returns a `Failure` naming the rule and XQuery's error code apart from
 turborel's own errors, so XMLVALIDATE raises SQLSTATE 2201R and XQuery's
 validate expression err:XQDY0027 from one result.
 
+A registered XML Schema is a catalog object (`catalog::XmlSchemaDesc`):
+its name, target namespace, schema location, the text of the document it
+was registered with, the registered XML Schemas whose documents it read,
+and the USAGE granted on it. The catalog stores those alone; the schema
+read from the document is not stored but read again as the catalog is,
+each after those it uses, with their documents alone as its library, so
+nothing derived can disagree with what was registered. As the catalog is
+logged, checkpointed and replicated as opaque bytes (D57), registered XML
+Schemas need nothing of their own there.
+
 XML values are not comparable, so they have no key, bucket or order, and
 the binder refuses them where an equality, grouping or ordering operation
 would take one, as one inside an array, a multiset, a row or a distinct

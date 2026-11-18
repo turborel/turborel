@@ -9,10 +9,13 @@
 //! user type:  name, source type, the routine to it, the routine to its
 //!             source, usage
 //! routine:    name (str), specific name (str), EXECUTE grants as usage
+//! XML Schema: name, target namespace (str), schema location (str),
+//!             document (str), the XML Schemas it uses (count u32, each
+//!             a name), usage
 //! usage:      as a domain's
 //! ```
 
-use super::super::{CollationDesc, RoutineDesc, SequenceDesc, UserTypeDesc};
+use super::super::{CollationDesc, RoutineDesc, SequenceDesc, UserTypeDesc, XmlSchemaDesc};
 use super::{data_type, flag, put_flag, put_name, put_type, put_usage, qualified, usage};
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -32,6 +35,28 @@ pub(crate) fn collation(r: &mut Reader<'_>) -> Result<CollationDesc> {
     let (name, base) = (qualified(r)?, r.str()?);
     let pad = if flag(r)? { Pad::None } else { Pad::Space };
     Ok(CollationDesc { name, base, pad, usage: usage(r)? })
+}
+
+/// [ISO/IEC 9075-14:2006 draft §4.2.6] `xml_schema` in bytes: its name,
+/// target namespace, schema location and document, the registered XML
+/// Schemas it uses, and its USAGE grants; not the schema read from it,
+/// which is read again (RULES.md D86).
+pub(crate) fn put_xml_schema(out: &mut Vec<u8>, xml_schema: &XmlSchemaDesc) {
+    put_name(out, &xml_schema.name);
+    out.put_str(&xml_schema.target_namespace);
+    out.put_str(&xml_schema.location);
+    out.put_str(&xml_schema.document);
+    out.put_u32(u32::try_from(xml_schema.uses.len()).unwrap_or(u32::MAX));
+    xml_schema.uses.iter().for_each(|u| put_name(out, u));
+    put_usage(out, &xml_schema.usage);
+}
+
+/// The registered XML Schema `put_xml_schema` wrote, its schema not yet
+/// read.
+pub(crate) fn xml_schema(r: &mut Reader<'_>) -> Result<XmlSchemaDesc> {
+    let (name, target_namespace, location, document) = (qualified(r)?, r.str()?, r.str()?, r.str()?);
+    let uses = (0..r.u32()?).map(|_| qualified(r)).collect::<Result<_>>()?;
+    Ok(XmlSchemaDesc { name, target_namespace, location, document, uses, usage: usage(r)?, schema: None })
 }
 
 /// [ISO/IEC 9075-2:2023 §4.29.1] `sequence` in bytes: its name, type,
