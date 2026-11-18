@@ -2648,15 +2648,11 @@ type and the functions in `geometry::FUNCTIONS` before opening files.
 The server program registers them automatically before opening files;
 calls still require the existing SQL.FUNCTION_CALLS setting.
 
-The interchange subset is XY WKT and WKB from OGC 06-103r4 §§7–8. Readers
-check complete input, finite coordinates, line cardinality, ring length
-and closure, and homogeneous collection member types. They do not check
-polygon self-intersection, hole placement or other topological validity.
-Z/M, curves, surfaces beyond polygons and EWKB flags are refused. WKB
-accepts either byte order per component and is written little-endian.
-For empty points it uses the NaN-pair interchange convention documented
-by [GEOS](https://libgeos.org/specifications/wkb/); no non-finite coordinate
-enters the geometry's envelope. An empty geometry is not SQL NULL.
+Its well-known text and binary are read and written by the model of
+D119, every type with Z and M, as ST_GeomFromText and ST_GeomFromWKB read
+them. CAST of text reads as they do. Readers check complete input and
+finite coordinates; validity is ST_IsValid's (D126). EWKB flags are
+refused with 2FF23. An empty geometry is not SQL NULL.
 
 The existing D53 type-parameter syntax also permits `GEOMETRY(srid)`.
 Its one unsigned parameter must fit a nonnegative signed 32-bit integer.
@@ -2668,14 +2664,12 @@ The descriptor's own version 1 encoding is a version byte, a parameter
 count byte (0 or 1), and, if present, the SRID as a little-endian u32.
 Unknown versions, invalid counts and out-of-range parameters are refused.
 
-Every value has an opaque signed 32-bit SRID, zero if not supplied. No
-identifier is validated against a CRS catalog, no axis order is changed,
-and no coordinate transformation or geodesic operation is implied.
-WKT and WKB omit SRID; the versioned stored payload retains it. Version 1
-is a byte of version, an i32 little-endian SRID and canonical XY WKB.
-Unknown versions and noncanonical stored encodings are refused. Existing
-file, catalog, log and wire formats keep their versions: this payload is
-carried by the existing extension-value representation.
+Every value has a signed 32-bit SRID, zero if not supplied. Reference
+systems, transforms and the SRID checks of registered columns are
+D121's and D122's. The stored payload is a byte of version, an i32
+little-endian SRID and the model's canonical well-known binary (D119).
+Existing file, catalog, log and wire formats keep their versions, as this
+payload is carried by the existing extension-value representation.
 
 The stored WKB reader checks little-endian order at every component,
 positive zero and the writer's exact empty-point NaN bits while parsing.
