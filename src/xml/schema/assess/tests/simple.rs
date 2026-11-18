@@ -42,7 +42,7 @@ fn defined_simple_types_validate_and_annotate() {
     let t = element(tree, "t");
     assert_eq!(type_of(tree, t), "farenheitWaterTemp");
     assert_eq!(tree.string_value(t), "50.25");
-    assert_eq!(tree.annotation(t).map(|a| a.typing), Some(Typing::Atomic(AtomicType::Decimal)));
+    assert_eq!(tree.annotation(t).map(|a| a.typing.clone()), Some(Typing::Atomic(AtomicType::Decimal)));
     let floats = attribute(tree, element(tree, "r"), "floats").unwrap();
     assert_eq!((tree.content(floats), type_of(tree, floats)), ("1.5 2", "listOfFloat".to_owned()));
     assert_eq!(tree.typed_value(floats).unwrap().len(), 2);
@@ -61,6 +61,32 @@ fn defined_simple_types_validate_and_annotate() {
     for (text, rule) in cases {
         assert!(broken(TYPES, text).contains(rule), "{text}");
     }
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §10.22] [Schema2 §2.5.1.3,
+/// §4.1.2] [XQueryDM §3.3.1.3] a list of a union: each item validated by
+/// the first member type that takes it, the node annotated with the item
+/// types in order, so its typed value is each item of its own member
+/// type, kept so when stored and read back; an item no member takes is
+/// invalid.
+#[test]
+fn a_list_of_a_union_types_each_item() {
+    let types = TYPES.split_once("<xs:element").map_or(TYPES, |(types, _)| types);
+    let body = format!(
+        "{types}{}",
+        r#"<xs:simpleType name="sizeList"><xs:list itemType="sizes"/></xs:simpleType><xs:element name="l" type="sizeList"/>"#
+    );
+    let out = valid(&body, "<l>large 12 small</l>");
+    let l = element(out.tree(), "l");
+    let kinds = [AtomicType::NmToken, AtomicType::PositiveInteger, AtomicType::NmToken];
+    assert_eq!(out.tree().annotation(l).map(|a| a.typing.clone()), Some(Typing::Items(kinds.as_slice().into())));
+    let values: Vec<AtomicType> = out.tree().typed_value(l).unwrap().iter().map(|a| a.kind).collect();
+    assert_eq!(values, kinds);
+    let stored = crate::xml::decode(&crate::xml::encode(&crate::xml::Sequence::new(vec![crate::xml::Item::Node(out)]))).unwrap();
+    let Some(crate::xml::Item::Node(back)) = stored.items().first() else { panic!("a node is stored") };
+    let read: Vec<AtomicType> = back.tree().typed_value(element(back.tree(), "l")).unwrap().iter().map(|a| a.kind).collect();
+    assert_eq!(read, kinds);
+    assert!(broken(&body, "<l>large 7</l>").contains("cvc-type.3.1.3"));
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §10.22] [Schema1 §3.3.4 cvc-id]
@@ -82,7 +108,7 @@ fn ids_and_idrefs_of_derived_types() {
     assert!(tree.is_id(attribute(tree, p, "id").unwrap()));
     let to = attribute(tree, p, "to").unwrap();
     assert!(tree.is_idrefs(to));
-    assert_eq!(tree.annotation(to).map(|a| a.typing), Some(Typing::List(AtomicType::IdRef)));
+    assert_eq!(tree.annotation(to).map(|a| a.typing.clone()), Some(Typing::List(AtomicType::IdRef)));
     assert!(broken(body, r#"<r><p id="k1" to="k3"/></r>"#).contains("cvc-id.1"));
     assert!(broken(body, r#"<r><p id="k1"/><p id="k1"/></r>"#).contains("cvc-id.2"));
     assert!(broken(body, r#"<r><p id="x1"/></r>"#).contains("cvc-attribute.3"));
@@ -101,7 +127,7 @@ fn simple_content_restricted_by_facets_validates() {
     let out = valid(body, r#"<p currency="EUR">9.50</p>"#);
     let p = element(out.tree(), "p");
     assert_eq!(type_of(out.tree(), p), "cheap");
-    assert_eq!(out.tree().annotation(p).map(|a| a.typing), Some(Typing::Atomic(AtomicType::Decimal)));
+    assert_eq!(out.tree().annotation(p).map(|a| a.typing.clone()), Some(Typing::Atomic(AtomicType::Decimal)));
     assert!(broken(body, r#"<p currency="EUR">10.5</p>"#).contains("cvc-type.3.1.3"));
 }
 

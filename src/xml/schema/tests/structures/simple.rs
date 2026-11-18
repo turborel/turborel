@@ -157,10 +157,13 @@ fn with_final_default(default: &str, body: &str) -> Result<Schema> {
 }
 
 /// Verifies: [EXTENSION] [Schema1 §3.14.2 {final}, §3.14.1, §3.14.6
-/// st-props-correct.3] [Schema1 §3.4.6 cos-ct-extends.2.2] a simple type's
-/// {final}, from its final or its document's finalDefault, `#all` being
-/// extension, restriction, list and union, prevents the derivations it
-/// names, and no other.
+/// st-props-correct.3] [Schema1 §3.4.6 cos-ct-extends.2.2] [Schema2
+/// §4.1.1, §4.1.2] a simple type's {final}, from its final or its
+/// document's finalDefault, `#all` being extension, restriction, list and
+/// union, prevents the derivations it names, and no other; a finalDefault
+/// of list or union, which Part 2 reads into a simple type's {final},
+/// prevents a list or union of a simple type of its document, and is no
+/// part of a complex type's {final}.
 #[test]
 fn final_prevents_derivation() {
     let base = |final_: &str| format!(r#"<xs:simpleType name="s" final="{final_}"><xs:restriction base="xs:int"/></xs:simpleType>"#);
@@ -179,6 +182,12 @@ fn final_prevents_derivation() {
     assert!(with_final_default("restriction", &format!("{plain}{restriction}")).unwrap_err().to_string().contains("st-props-correct.3"));
     assert!(with_final_default("#all", &format!("{plain}{list}")).unwrap_err().to_string().contains("§3.14.1"));
     with_final_default("extension", &format!("{plain}{list}{union}{restriction}")).unwrap();
+    assert!(with_final_default("list", &format!("{plain}{list}")).unwrap_err().to_string().contains("§3.14.1"));
+    assert!(with_final_default("union", &format!("{plain}{union}")).unwrap_err().to_string().contains("§3.14.1"));
+    let complex = r#"<xs:complexType name="b"><xs:sequence><xs:element name="x"/></xs:sequence></xs:complexType>
+        <xs:complexType name="e"><xs:complexContent><xs:extension base="b"><xs:sequence><xs:element name="y"/></xs:sequence></xs:extension></xs:complexContent></xs:complexType>"#;
+    with_final_default("list union", &format!("{plain}{restriction}{complex}")).unwrap();
+    assert!(with_final_default("extension list", complex).unwrap_err().to_string().contains("cos-ct-extends.1.1"));
 }
 
 /// Verifies: [EXTENSION] [Schema1 §3.14.6 st-props-correct.2] [Schema1

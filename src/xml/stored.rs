@@ -9,7 +9,8 @@
 //!       u8 flags (1 prefix, 2 namespace URI), [str prefix], [str URI], str local,
 //!     u32 annotation count, each a type annotation
 //!       u32 name, u8 typing (0 xs:anySimpleType, 1 mixed, 2 empty,
-//!       3 element-only, 4 atomic, 5 list), [u8 atomic type, of 4 and 5],
+//!       3 element-only, 4 atomic, 5 list, 6 items of several types),
+//!       [u8 atomic type, of 4 and 5], [u32 count, each u8 atomic type, of 6],
 //!     then its events, to the end of its root:
 //!       u8 1 document                                  opens
 //!       u8 2 element  u32 name, u32 annotation (0 none, else its number + 1),
@@ -41,11 +42,12 @@
 
 use std::collections::HashMap;
 
+use annotations::{decode_annotations, put_typing, skip_annotations};
 pub use events::{Event, Events};
 
 use super::atomic::Primitive;
 use super::sequence::{Atomic, AtomicType, Item, Node, Sequence};
-use super::tree::{Annotation, Binding, Builder, ElementStart, Kind, NodeId, QName, Specified, Tree, Typing, XML_PREFIX};
+use super::tree::{Annotation, Binding, Builder, ElementStart, Kind, NodeId, QName, Specified, Tree, XML_PREFIX};
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 
@@ -89,20 +91,6 @@ const ELEMENT_NILLED: u8 = 1;
 const ELEMENT_ID: u8 = 2;
 /// An element is an IDREF or IDREFS.
 const ELEMENT_IDREFS: u8 = 4;
-
-// Typings of annotations.
-/// `xs:anySimpleType`.
-const ANY_SIMPLE: u8 = 0;
-/// Mixed content.
-const MIXED: u8 = 1;
-/// Empty content.
-const EMPTY: u8 = 2;
-/// Element-only content.
-const ELEMENT_ONLY: u8 = 3;
-/// An atomic type, whose tag follows.
-const ATOMIC_TYPING: u8 = 4;
-/// A list of an atomic type, whose tag follows.
-const LIST_TYPING: u8 = 5;
 
 /// The atomic types, each stored as its place here, its tag, written
 /// beside it. The tags are part of the stored form, version 1: a type
@@ -221,19 +209,6 @@ impl<'a> Names<'a> {
     }
 }
 
-/// The tag of `typing`, and of its atomic type if it has one.
-fn typing_tags(typing: Typing) -> (u8, Option<u8>) {
-    let tag = |t: AtomicType| ATOMIC_TYPES.iter().position(|&a| a == t).and_then(|p| u8::try_from(p).ok()).unwrap_or(0);
-    match typing {
-        Typing::AnySimple => (ANY_SIMPLE, None),
-        Typing::Mixed => (MIXED, None),
-        Typing::Empty => (EMPTY, None),
-        Typing::ElementOnly => (ELEMENT_ONLY, None),
-        Typing::Atomic(t) => (ATOMIC_TYPING, Some(tag(t))),
-        Typing::List(t) => (LIST_TYPING, Some(tag(t))),
-    }
-}
-
 /// `node` and the nodes below it, stored: its names, then its events.
 fn encode_node(node: &Node, out: &mut Vec<u8>) {
     let tree = node.tree();
@@ -261,11 +236,7 @@ fn encode_node(node: &Node, out: &mut Vec<u8>) {
     out.put_u32(count(names.annotations.len()));
     for annotation in &names.annotations {
         out.put_u32(names.numbers.get(&annotation.name).copied().unwrap_or(0));
-        let (typing, atomic) = typing_tags(annotation.typing);
-        out.put_u8(typing);
-        if let Some(atomic) = atomic {
-            out.put_u8(atomic);
-        }
+        put_typing(out, &annotation.typing);
     }
     out.extend(events);
 }
@@ -489,47 +460,6 @@ struct Tables {
     annotations: Vec<Annotation>,
 }
 
-/// A node's type annotations read, their names numbered in `names`.
-fn decode_annotations(reader: &mut Reader<'_>, names: &[QName]) -> Result<Vec<Annotation>> {
-    let n = reader.u32()?;
-    let mut out = Vec::new();
-    for _ in 0..n {
-        let type_name = name(reader, names)?.clone();
-        let tag = reader.u8()?;
-        let mut atomic = || {
-            let t = reader.u8()?;
-            ATOMIC_TYPES.get(usize::from(t)).copied().ok_or_else(|| reader.corrupt(&format!("an annotation's atomic type is {t}")))
-        };
-        let typing = match tag {
-            ANY_SIMPLE => Typing::AnySimple,
-            MIXED => Typing::Mixed,
-            EMPTY => Typing::Empty,
-            ELEMENT_ONLY => Typing::ElementOnly,
-            ATOMIC_TYPING => Typing::Atomic(atomic()?),
-            LIST_TYPING => Typing::List(atomic()?),
-            _ => return Err(reader.corrupt(&format!("an annotation's typing is {tag}"))),
-        };
-        out.push(Annotation { name: type_name, typing });
-    }
-    Ok(out)
-}
-
-/// A node's table of type annotations passed over, as a reader of its
-/// events alone does (`stored/events.rs`).
-///
-/// # Errors
-///
-/// SQLCODE -916 if it is cut short.
-fn skip_annotations(reader: &mut Reader<'_>) -> Result<()> {
-    for _ in 0..reader.u32()? {
-        reader.u32()?;
-        if matches!(reader.u8()?, ATOMIC_TYPING | LIST_TYPING) {
-            reader.u8()?;
-        }
-    }
-    Ok(())
-}
-
 /// The annotation numbered `number` plus 1, none of 0.
 fn annotation_of(reader: &mut Reader<'_>, tables: &Tables) -> Result<Option<Annotation>> {
     let number = reader.u32()?;
@@ -595,6 +525,7 @@ fn decode_attribute(reader: &mut Reader<'_>, tables: &Tables) -> Result<(Specifi
     Ok((Specified { name: attribute, value, is_id: flags & IS_ID != 0, is_idrefs: flags & IS_IDREFS != 0 }, annotation))
 }
 
+mod annotations;
 mod events;
 #[cfg(test)]
 mod tests;

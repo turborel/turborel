@@ -11,7 +11,7 @@ use super::{Mutation, Package};
 
 /// Each mechanism of XML Schema structures broken alone, and the tests
 /// that fail.
-pub const XML_SCHEMA: [Mutation; 32] = [
+pub const XML_SCHEMA: [Mutation; 35] = [
     Mutation {
         name: "xml-schema-unique-particle-attribution",
         package: Package::Core,
@@ -337,5 +337,35 @@ pub const XML_SCHEMA: [Mutation; 32] = [
         replacement: "        if !matches!(value.kind.primitive(), Primitive::Notation) {",
         integration: &["xml_validate_expression::qualified_names_keep_their_namespaces_10_22"],
         unit: &[],
+    },
+    Mutation {
+        name: "xml-schema-list-of-union-items",
+        package: Package::Core,
+        breaks: "a list of a union whose items are of several types is typed xs:anySimpleType",
+        file: "src/xml/schema/assess/element.rs",
+        original: "                Typing::Items(atoms.iter().map(|a| a.kind).collect())",
+        replacement: "                Typing::AnySimple",
+        integration: &[],
+        unit: &["xml::schema::assess::tests::simple::a_list_of_a_union_types_each_item"],
+    },
+    Mutation {
+        name: "xml-schema-final-default-list",
+        package: Package::Core,
+        breaks: "finalDefault refuses list and union",
+        file: "src/xml/schema/read/documents.rs",
+        original: "        final_default: at.derivations(\"finalDefault\", Derivations::SIMPLE_FINAL, Derivations::NONE)?,",
+        replacement: "        final_default: at.derivations(\"finalDefault\", Derivations::EXTENSION.with(Derivations::RESTRICTION), Derivations::NONE)?,",
+        integration: &[],
+        unit: &["xml::schema::tests::structures::simple::final_prevents_derivation"],
+    },
+    Mutation {
+        name: "xml-schema-block-default",
+        package: Package::Core,
+        breaks: "an element declaration's {disallowed substitutions} ignores blockDefault",
+        file: "src/xml/schema/read/element.rs",
+        original: "        let disallowed = at.derivations(\"block\", all, doc.block_default)?;",
+        replacement: "        let disallowed = at.derivations(\"block\", all, Derivations::NONE)?;",
+        integration: &[],
+        unit: &["xml::schema::assess::tests::more::block_default_blocks"],
     },
 ];

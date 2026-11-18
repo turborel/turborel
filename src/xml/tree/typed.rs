@@ -4,13 +4,15 @@
 //! lets an implementation that keeps the string value alone do it
 //! [XQueryDM §3.3.1.3].
 
+use std::sync::Arc;
+
 use super::{Kind, NodeId, QName, Tree};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::xml::{Atomic, AtomicType, Primitive, XS_NAMESPACE, from_lexical};
 
 /// How the typed value of a node of a type is determined [XQueryDM
 /// §3.3.1.2, §6.2.4]: by the variety of its simple type, or its content.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Typing {
     /// `xs:anySimpleType`: its schema normalized value as
     /// `xdt:untypedAtomic`.
@@ -26,6 +28,10 @@ pub enum Typing {
     Atomic(AtomicType),
     /// A list of an atomic type: a value of it for each item.
     List(AtomicType),
+    /// A list whose items are of several atomic types, as a list of a
+    /// union's are: a value of each item's own type, in order, the member
+    /// type that validated it [XQueryDM §3.3.1.3] [Schema2 §2.5.1.3].
+    Items(Arc<[AtomicType]>),
 }
 
 /// A type annotation [XQueryDM §3.3.1.1]: the name of the type, an
@@ -82,14 +88,22 @@ impl Tree {
         let Some(annotation) = self.annotation(id).filter(|_| matches!(self.kind(id), Some(Kind::Element | Kind::Attribute))) else {
             return Ok(untyped(text));
         };
-        match annotation.typing {
+        match &annotation.typing {
             Typing::AnySimple | Typing::Mixed => Ok(untyped(text)),
             Typing::Empty => Ok(Vec::new()),
             Typing::ElementOnly => {
                 Err(xquery_error("an element of element-only content has no typed value", "[XQueryFO §2.4] err:FOTY0012"))
             }
-            Typing::Atomic(t) => Ok(vec![self.qualified(id, read(&text, t)?)]),
-            Typing::List(t) => text.split_ascii_whitespace().map(|item| Ok(self.qualified(id, read(item, t)?))).collect(),
+            Typing::Atomic(t) => Ok(vec![self.qualified(id, read(&text, *t)?)]),
+            Typing::List(t) => text.split_ascii_whitespace().map(|item| Ok(self.qualified(id, read(item, *t)?))).collect(),
+            Typing::Items(kinds) => {
+                let items: Vec<&str> = text.split_ascii_whitespace().collect();
+                if items.len() != kinds.len() {
+                    let why = format!("'{text}' is not {} items, as its type annotation says", kinds.len());
+                    return Err(xquery_error(&why, "[XQueryFO §17.1.1] err:FORG0001"));
+                }
+                items.into_iter().zip(kinds.iter()).map(|(item, &t)| Ok(self.qualified(id, read(item, t)?))).collect()
+            }
         }
     }
 

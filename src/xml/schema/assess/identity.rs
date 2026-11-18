@@ -176,7 +176,9 @@ fn key_sequence(
             _ => return Err(fail("3", "has a field selecting more than one node").into()),
         };
         let simple = tree.kind(node) == Some(Kind::Attribute)
-            || tree.annotation(node).is_some_and(|a| matches!(a.typing, Typing::Atomic(_) | Typing::List(_) | Typing::AnySimple));
+            || tree
+                .annotation(node)
+                .is_some_and(|a| matches!(a.typing, Typing::Atomic(_) | Typing::List(_) | Typing::Items(_) | Typing::AnySimple));
         if !simple {
             return Err(fail("3", "has a field selecting a node of no simple type").into());
         }

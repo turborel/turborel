@@ -56,9 +56,8 @@ pub(super) fn type_name(schema: &Schema, t: TypeDef) -> QName {
 /// atomic type, or a list's atomic item type; else, as a union's member
 /// varies from node to node, by the kind of the atomic values validating
 /// the node gave, one of an atomic type, more of a list, none the empty
-/// sequence. \[DESIGN\] A list whose items are of several kinds, of a
-/// union, is typed as `xs:anySimpleType`, its typed value
-/// `xdt:untypedAtomic`, as an annotation holds one item type.
+/// sequence; a list whose items are of several kinds, of a union, each
+/// item of its own [XQueryDM §3.3.1.3] [Schema2 §2.5.1.3].
 pub(super) fn simple_typing(schema: &Schema, s: Simple, value: Option<&Typed>) -> Typing {
     let id = match s {
         Simple::AnySimple => return Typing::AnySimple,
@@ -84,7 +83,7 @@ fn typing_of(atoms: &[crate::xml::Atomic]) -> Typing {
             if rest.iter().all(|a| a.kind == first.kind) {
                 Typing::List(first.kind)
             } else {
-                Typing::AnySimple
+                Typing::Items(atoms.iter().map(|a| a.kind).collect())
             }
         }
     }
@@ -268,10 +267,10 @@ impl<'s> Run<'s> {
         let Attrs { specified, annotations } = attrs;
         self.out.start_element(ElementStart { name, bindings, attributes: specified })?;
         let element = self.out.current().ok_or_else(|| super::super::beyond("an element started is not open"))?;
-        self.out.annotate(element, &annotation, (nil, id_typing(annotation.typing), idrefs_typing(annotation.typing)))?;
+        self.out.annotate(element, &annotation, (nil, id_typing(&annotation.typing), idrefs_typing(&annotation.typing)))?;
         for (i, a) in annotations.iter().enumerate() {
             let (Some(a), Some(at)) = (a, element.nth_attribute(i)) else { continue };
-            self.out.annotate(at, a, (false, id_typing(a.typing), idrefs_typing(a.typing)))?;
+            self.out.annotate(at, a, (false, id_typing(&a.typing), idrefs_typing(&a.typing)))?;
         }
         if let Some(d) = self.decls_pending.take() {
             self.decls.push((element, d));
@@ -378,17 +377,18 @@ impl<'s> Run<'s> {
 }
 
 /// Whether a node of `typing` is an ID [XQueryDM §6.2.4, §6.3.4].
-fn id_typing(typing: Typing) -> bool {
+fn id_typing(typing: &Typing) -> bool {
     match typing {
         Typing::Atomic(a) => a.derives_from(AtomicType::Id),
-        Typing::List(_) | Typing::AnySimple | Typing::Mixed | Typing::Empty | Typing::ElementOnly => false,
+        Typing::List(_) | Typing::Items(_) | Typing::AnySimple | Typing::Mixed | Typing::Empty | Typing::ElementOnly => false,
     }
 }
 
 /// Whether a node of `typing` is an IDREF or IDREFS [XQueryDM §6.3.4].
-fn idrefs_typing(typing: Typing) -> bool {
+fn idrefs_typing(typing: &Typing) -> bool {
     match typing {
         Typing::Atomic(a) | Typing::List(a) => a.derives_from(AtomicType::IdRef),
+        Typing::Items(kinds) => kinds.iter().any(|a| a.derives_from(AtomicType::IdRef)),
         Typing::AnySimple | Typing::Mixed | Typing::Empty | Typing::ElementOnly => false,
     }
 }

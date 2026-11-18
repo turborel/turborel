@@ -92,7 +92,7 @@ fn a_valid_order_is_annotated() {
     assert_eq!(type_of(tree, date), "date");
     let priority = attribute(tree, order, "priority").unwrap();
     assert_eq!((tree.content(priority), type_of(tree, priority)), ("3", "int".to_owned()));
-    assert_eq!(tree.annotation(order).map(|a| a.typing), Some(Typing::ElementOnly));
+    assert_eq!(tree.annotation(order).map(|a| a.typing.clone()), Some(Typing::ElementOnly));
     assert!(tree.typed_value(order).is_err());
 }
 

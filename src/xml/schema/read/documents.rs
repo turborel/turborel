@@ -57,7 +57,9 @@ pub(super) struct Doc {
     pub elements_qualified: bool,
     /// blockDefault, of every method.
     pub block_default: Derivations,
-    /// finalDefault, of every method.
+    /// finalDefault, of every method: extension and restriction, which
+    /// [Schema1 Appendix A] lets it list, and list and union, which
+    /// [Schema2 §4.1.2] reads from it into a simple type's {final}.
     pub final_default: Derivations,
     /// The namespaces it imports [Schema1 §3.15.3 clause 4].
     pub imports: Vec<Option<Box<str>>>,
@@ -163,11 +165,7 @@ fn open(source: &Source, into: Reached) -> Result<Doc> {
             Derivations::EXTENSION.with(Derivations::RESTRICTION).with(Derivations::SUBSTITUTION),
             Derivations::NONE,
         )?,
-        final_default: at.derivations_all(
-            "finalDefault",
-            (Derivations::EXTENSION.with(Derivations::RESTRICTION), Derivations::SIMPLE_FINAL),
-            Derivations::NONE,
-        )?,
+        final_default: at.derivations("finalDefault", Derivations::SIMPLE_FINAL, Derivations::NONE)?,
         tree: Arc::clone(tree),
         root,
         tns,

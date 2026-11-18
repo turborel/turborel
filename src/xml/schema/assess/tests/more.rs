@@ -19,7 +19,7 @@ fn mixed_content_and_its_value_constraints() {
     let tree = out.tree();
     assert_eq!(tree.string_value(element(tree, "p")), "ac");
     assert_eq!(tree.string_value(element(tree, "d")), "dv");
-    assert_eq!(tree.annotation(element(tree, "p")).map(|a| a.typing), Some(Typing::Mixed));
+    assert_eq!(tree.annotation(element(tree, "p")).map(|a| a.typing.clone()), Some(Typing::Mixed));
     assert!(broken(body, "<r><p/><d/><f>other</f></r>").contains("cvc-elt.5.2.2.2.1"));
 }
 
@@ -133,4 +133,51 @@ fn non_deterministic_declarations() {
     assert!(!s.non_deterministic(decl("d")) && !s.non_deterministic(decl("e")));
     assert!(s.namespace_non_deterministic(None) && !s.namespace_non_deterministic(Some("urn:x")));
     assert!(s.is_non_deterministic());
+}
+
+/// The schema of `body` in a `<xs:schema>` of no target namespace whose
+/// blockDefault is `default`.
+fn with_block_default(default: &str, body: &str) -> Schema {
+    let text = format!(r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" blockDefault="{default}">{body}</xs:schema>"#);
+    crate::xml::schema::read(&super::super::super::tests::structures::source(&text, None), &crate::xml::schema::Library::default()).unwrap()
+}
+
+/// The rule `text` breaks against `schema`, validated strictly.
+fn breaks(schema: &Schema, text: &str) -> String {
+    let Err(f) = validate(schema, &document(text), Mode::Strict).unwrap() else { panic!("{text} is valid") };
+    f.rule
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §10.22] [Schema1 §3.3.2
+/// {disallowed substitutions}, §3.4.2 {prohibited substitutions}, §3.3.4
+/// cvc-elt.4.3, §3.3.6 Substitution Group OK (Transitive)] a document's
+/// blockDefault blocks what its declarations and complex types do not
+/// block themselves: substitution, a member of a substitution group in
+/// place of its head; extension, an `xsi:type` derived by extension, by
+/// the declaration and by the type; a `block` of its own overrides it.
+#[test]
+fn block_default_blocks() {
+    let body = r#"<xs:complexType name="base"><xs:sequence><xs:element name="x" type="xs:int"/></xs:sequence></xs:complexType>
+        <xs:complexType name="more"><xs:complexContent><xs:extension base="base"><xs:sequence><xs:element name="y" type="xs:int"/></xs:sequence></xs:extension></xs:complexContent></xs:complexType>
+        <xs:element name="head" type="base"/>
+        <xs:element name="member" type="more" substitutionGroup="head"/>
+        <xs:element name="open" type="base" block=""/>
+        <xs:element name="r"><xs:complexType><xs:sequence><xs:element ref="head"/></xs:sequence></xs:complexType></xs:element>"#;
+    let xsi = r#"xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance""#;
+    let member = "<r><member><x>1</x><y>2</y></member></r>";
+    let typed = format!(r#"<head {xsi} xsi:type="more"><x>1</x><y>2</y></head>"#);
+    let open = format!(r#"<open {xsi} xsi:type="more"><x>1</x><y>2</y></open>"#);
+    let none = with_block_default("", body);
+    for text in [member, typed.as_str(), open.as_str()] {
+        assert!(validate(&none, &document(text), Mode::Strict).unwrap().is_ok(), "{text}");
+    }
+    let substitution = with_block_default("substitution", body);
+    assert!(breaks(&substitution, member).contains("cvc-complex-type"), "substitution blocked");
+    assert!(validate(&substitution, &document(&typed), Mode::Strict).unwrap().is_ok());
+    let extension = with_block_default("extension", body);
+    assert!(breaks(&extension, &typed).contains("cvc-elt.4.3"), "extension blocked");
+    assert!(breaks(&extension, member).contains("cvc-complex-type"), "the member's type is an extension");
+    assert!(breaks(&extension, &open).contains("cvc-elt.4.3"), "the type base prohibits extension");
+    let all = with_block_default("#all", body);
+    assert!(breaks(&all, &typed).contains("cvc-elt.4.3"));
 }
