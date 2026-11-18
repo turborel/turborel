@@ -11,7 +11,7 @@ use super::{Mutation, Package};
 
 /// Each mechanism of XML Schema structures broken alone, and the tests
 /// that fail.
-pub const XML_SCHEMA: [Mutation; 31] = [
+pub const XML_SCHEMA: [Mutation; 32] = [
     Mutation {
         name: "xml-schema-unique-particle-attribution",
         package: Package::Core,
@@ -327,5 +327,15 @@ pub const XML_SCHEMA: [Mutation; 31] = [
         replacement: "            Some(ValidationMode::Lax) => Mode::Strict,",
         integration: &["xml_validate_expression::lax_validation_3_13"],
         unit: &["xquery::eval::tests::constructors::validate"],
+    },
+    Mutation {
+        name: "xml-schema-qname-namespace",
+        package: Package::Core,
+        breaks: "a schema-typed xs:QName value has no namespace URI",
+        file: "src/xml/tree/typed.rs",
+        original: "        if !matches!(value.kind.primitive(), Primitive::QName | Primitive::Notation) {",
+        replacement: "        if !matches!(value.kind.primitive(), Primitive::Notation) {",
+        integration: &["xml_validate_expression::qualified_names_keep_their_namespaces_10_22"],
+        unit: &[],
     },
 ];

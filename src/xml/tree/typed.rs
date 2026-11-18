@@ -6,7 +6,7 @@
 
 use super::{Kind, NodeId, QName, Tree};
 use crate::error::{Code, Result, SqlError, SqlState};
-use crate::xml::{Atomic, AtomicType, XS_NAMESPACE, from_lexical};
+use crate::xml::{Atomic, AtomicType, Primitive, XS_NAMESPACE, from_lexical};
 
 /// How the typed value of a node of a type is determined [XQueryDM
 /// §3.3.1.2, §6.2.4]: by the variety of its simple type, or its content.
@@ -64,7 +64,8 @@ impl Tree {
     /// §6.3.4]: none of a nilled element; of a node no schema typed, or of
     /// mixed content or `xs:anySimpleType`, its string value as an
     /// `xdt:untypedAtomic`; of empty content, none; of a simple type, its
-    /// string value read as that type's, a list's item by item; of
+    /// string value read as that type's, a list's item by item, a
+    /// qualified name's with its namespace URI (`Tree::qualified`); of
     /// another node, its string value as XQuery's data model gives it.
     ///
     /// # Errors
@@ -87,9 +88,26 @@ impl Tree {
             Typing::ElementOnly => {
                 Err(xquery_error("an element of element-only content has no typed value", "[XQueryFO §2.4] err:FOTY0012"))
             }
-            Typing::Atomic(t) => Ok(vec![read(&text, t)?]),
-            Typing::List(t) => text.split_ascii_whitespace().map(|item| read(item, t)).collect(),
+            Typing::Atomic(t) => Ok(vec![self.qualified(id, read(&text, t)?)]),
+            Typing::List(t) => text.split_ascii_whitespace().map(|item| Ok(self.qualified(id, read(item, t)?))).collect(),
         }
+    }
+
+    /// `value`, read from the string value of node `id`; of a qualified
+    /// name, an `xs:QName`, an `xs:NOTATION` or a type derived from one,
+    /// with the namespace URI its prefix is bound to, or the default
+    /// namespace of none, among the namespaces in scope of the element
+    /// `id` is or is an attribute of [Schema2 §3.2.18 NOTE] [XQueryDM
+    /// §3.3.1.3, §3.3.3]. A parentless attribute has no namespaces in
+    /// scope, so its qualified names have no namespace URI.
+    fn qualified(&self, id: NodeId, mut value: Atomic) -> Atomic {
+        if !matches!(value.kind.primitive(), Primitive::QName | Primitive::Notation) {
+            return value;
+        }
+        let element = if self.kind(id) == Some(Kind::Attribute) { self.parent(id) } else { Some(id) };
+        let prefix = value.lexical.split_once(':').map(|(prefix, _)| prefix);
+        value.namespace = element.and_then(|e| self.in_scope(e).into_iter().find(|(p, _)| *p == prefix).map(|(_, uri)| uri.into()));
+        value
     }
 }
 

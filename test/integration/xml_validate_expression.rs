@@ -166,3 +166,28 @@ fn typed_values_of_lists_and_empty_content_3_13() {
     );
     assert_eq!(one(&a, &validated), "3");
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §10.22] [XQueryDM §3.3.1.3,
+/// §3.3.3] [Schema2 §3.2.18 NOTE] the typed value of an element or
+/// attribute of `xs:QName`, or of a list of them, is each name with the
+/// namespace URI its prefix is bound to among the element's namespaces in
+/// scope, the default namespace's of no prefix.
+#[test]
+fn qualified_names_keep_their_namespaces_10_22() {
+    let db = registered();
+    let a = db.session("A");
+    let names = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:q" elementFormDefault="qualified"><xs:element name="ref" type="xs:QName"/><xs:element name="item"><xs:complexType><xs:attribute name="a" type="xs:QName"/></xs:complexType></xs:element><xs:element name="refs"><xs:simpleType><xs:list itemType="xs:QName"/></xs:simpleType></xs:element></xs:schema>"#;
+    a.run(&format!("CREATE XML SCHEMA QN AS '{names}'")).unwrap();
+    a.commit().unwrap();
+    let uri = |path: &str| {
+        format!(
+            "declare namespace q = \"urn:q\"; string-join(for $n in data((validate {{ . }}){path}) return string(namespace-uri-from-QName($n)), \" \")"
+        )
+    };
+    assert_eq!(value(&a, &uri("/q:ref"), r#"<ref xmlns="urn:q" xmlns:p="urn:p">p:x</ref>"#), "urn:p");
+    assert_eq!(value(&a, &uri("/q:ref"), r#"<ref xmlns="urn:q">x</ref>"#), "urn:q", "the default namespace");
+    assert_eq!(value(&a, &uri("/q:item/@a"), r#"<item xmlns="urn:q" xmlns:p="urn:p" a="p:y"/>"#), "urn:p");
+    assert_eq!(value(&a, &uri("/q:refs"), r#"<refs xmlns="urn:q" xmlns:p="urn:p">p:a b</refs>"#), "urn:p urn:q");
+    let local = "declare namespace q = \"urn:q\"; local-name-from-QName(data((validate { . })/q:ref))";
+    assert_eq!(value(&a, local, r#"<ref xmlns="urn:q" xmlns:p="urn:p">p:x</ref>"#), "x");
+}
