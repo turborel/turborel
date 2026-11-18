@@ -3,9 +3,10 @@
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 10] {
+pub fn core() -> [&'static [Mutation]; 11] {
     [
         &super::MUTATIONS,
+        &super::hash::HASH,
         &super::rekey::REKEY,
         &super::KEPT,
         &super::READERS,
