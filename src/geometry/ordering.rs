@@ -32,17 +32,24 @@ impl ScalarFunction for OrderingEquals {
     }
 
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
-        if args.len() != 2 || !args.iter().all(|t| super::of_data_type(t).is_some()) {
+        let geometries = args.iter().all(|t| super::of_data_type(t).is_some());
+        // [§14.1.7, §17.2.20] of two ST_SpatialRefSys or two ST_Vector values.
+        let support = |t: &DataType| super::support::of_data_type(t).filter(|s| s.ordering() == super::support::Ordering::EqualsOnly);
+        let supported = if let [a, b] = args { support(a).is_some() && support(a) == support(b) } else { false };
+        if args.len() != 2 || !(geometries || supported) {
             return Err(SqlError::new(
                 Code::SyntaxRule,
-                "[ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.65] ST_OrderingEquals takes two ST_Geometry values",
+                "[ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.65, §14.1.7, §17.2.20] ST_OrderingEquals takes two ST_Geometry values, two ST_SpatialRefSys values or two ST_Vector values",
             ));
         }
         Ok(DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer })
     }
 
-    fn argument_type(&self, position: usize, _: &[Option<DataType>]) -> Option<DataType> {
-        (position < 2).then(data_type)
+    fn argument_type(&self, position: usize, args: &[Option<DataType>]) -> Option<DataType> {
+        // [§14.1.7, §17.2.20] two ST_SpatialRefSys or two ST_Vector values
+        // keep their type.
+        let kept = args.get(position).cloned().flatten().filter(|t| super::support::of_data_type(t).is_some());
+        (position < 2).then(|| kept.unwrap_or_else(data_type))
     }
 
     fn call(&self, args: &[Value]) -> Result<Value> {
@@ -54,6 +61,9 @@ impl ScalarFunction for OrderingEquals {
         };
         if a.is_null() || b.is_null() {
             return Ok(Value::Null);
+        }
+        if let Some(equal) = super::support::ordering_equals(a, b) {
+            return Ok(Value::Exact(Decimal::new(i128::from(!equal?), 0)));
         }
         let same = payload(a).zip(payload(b)).is_some_and(|(x, y)| x == y);
         let equal = same || EQUALITY(&Geom::from_value(a)?, &Geom::from_value(b)?)?;

@@ -14,7 +14,7 @@ mod transform;
 mod units;
 
 pub use transform::Transform;
-pub(super) use units::length_in;
+pub(super) use units::{fault, length_in};
 
 use super::model::Kind;
 use super::{GeometryFunction, data_type, data_type_of, fixed_srid, of_data_type};

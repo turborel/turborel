@@ -124,6 +124,14 @@ pub trait Procedure: Send + Sync + Debug {
     /// invoked with `count` arguments; none if it takes no such count.
     fn parameters(&self, count: usize) -> Option<Vec<DataType>>;
 
+    /// The declared types of its parameters when its arguments are of the
+    /// types `args`, bound as `parameters` types them, if they choose
+    /// others: of a procedure of one name and count of parameters of
+    /// several types [ISO/IEC 9075-2:2023 §9.6]. By default none.
+    fn overload(&self, _args: &[DataType]) -> Option<Vec<DataType>> {
+        None
+    }
+
     /// Runs it of `args` in `cx`.
     ///
     /// # Errors

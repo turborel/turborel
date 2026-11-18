@@ -500,6 +500,7 @@ pub(crate) fn functions() -> Vec<Arc<dyn ScalarFunction>> {
     out.push(Arc::new(super::solids::CompoundSurface));
     out.extend(super::conversions::CONVERSIONS.iter().map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }));
     out.extend(super::routines::functions());
+    out.extend(super::support::functions());
     out
 }
 

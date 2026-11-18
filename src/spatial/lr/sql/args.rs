@@ -31,6 +31,9 @@ pub enum P {
     LrArray(LrKind),
     /// A geometry type.
     Geo(GeomKind),
+    /// [§15.13.1] ST_Vector ARRAY[3], of §17.2's ST_Vector type
+    /// (`geometry/support.rs`).
+    Vectors,
     /// SELF's declared type, of a type-preserving method [ISO/IEC
     /// 9075-2:2023 §9.18 SR10] (a result alone).
     SelfType,
@@ -56,6 +59,7 @@ impl P {
             P::Lr(k) => of_data_type(t).is_some_and(|own| own.is_subtype_of(k)),
             P::LrArray(k) => element_of(t).and_then(of_data_type).is_some_and(|own| own.is_subtype_of(k)),
             P::Geo(_) => crate::geometry::of_data_type(t).is_some(),
+            P::Vectors => element_of(t).and_then(crate::geometry::support::of_data_type) == Some(crate::geometry::support::Support::Vector),
             P::SelfType => false,
         }
     }
@@ -65,7 +69,7 @@ impl P {
         match self {
             P::Int | P::Double => v.as_f64().is_some(),
             P::Text(_) | P::Char | P::Clob => matches!(v, Value::Char(_) | Value::Lob(_)),
-            P::TextArray | P::LrArray(_) => matches!(v, Value::Array(_)),
+            P::TextArray | P::LrArray(_) | P::Vectors => matches!(v, Value::Array(_)),
             P::Lr(k) => kind_of_value(v).is_some_and(|own| own.is_subtype_of(k)),
             P::Geo(_) => payload(v).is_none() && matches!(v, Value::Extension(_)),
             P::SelfType => false,
@@ -88,6 +92,10 @@ impl P {
             P::Lr(k) => data_type_of(k),
             P::LrArray(k) => DataType::array(data_type_of(k), MAX_ARRAY),
             P::Geo(k) => crate::geometry::data_type_of(k),
+            P::Vectors => {
+                let most = u32::try_from(super::super::MAX_VECTORS).unwrap_or(u32::MAX);
+                DataType::array(crate::geometry::support::data_type(crate::geometry::support::Support::Vector), most)
+            }
             P::SelfType => own.cloned().unwrap_or_else(|| data_type_of(LrKind::LinearElement)),
         }
     }
@@ -379,6 +387,30 @@ macro_rules! arrays {
             }
         }
     };
+}
+
+impl Args<'_> {
+    /// [§15.13] Argument `at` as an ARRAY of ST_Vector values, each an
+    /// offset vector; a null element is the empty vector.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -301 if it, or an element, is of another type.
+    pub fn vectors(&self, at: usize) -> Result<Option<Vec<super::super::Vector>>> {
+        let Some(v) = self.values.get(at).filter(|v| !v.is_null()) else { return Ok(None) };
+        let Value::Array(all) = v else { return Err(not_of(at, "an ARRAY of ST_Vector values")) };
+        let one = |each: &Value| {
+            let (x, y, z) = crate::geometry::support::vector_coordinates(each)?;
+            Ok(super::super::Vector { x, y, z })
+        };
+        all.iter().map(one).collect::<Result<Vec<_>>>().map(Some)
+    }
+}
+
+/// [§15.13] The ARRAY of ST_Vector values of the offset vectors
+/// `vectors`, of no spatial reference system.
+pub fn vectors_out(vectors: &[super::super::Vector]) -> Value {
+    Value::Array(vectors.iter().map(|v| crate::geometry::support::vector_value(v.x, v.y, v.z)).collect())
 }
 
 arrays!(start_values, StartValue, super::super::StartValue, "ST_StartValue values");

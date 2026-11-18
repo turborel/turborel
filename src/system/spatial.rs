@@ -191,21 +191,7 @@ fn units(_seen: &Seen<'_>) -> Vec<Row> {
 // ---------------------------------------------------------------------------
 
 /// [Annex A.1] The meta-variables of what is not supported.
-const UNSUPPORTED: [&str; 13] = [
-    "ST_MaxAngleAsGML",
-    "ST_MaxAngleAsText",
-    "ST_MaxAngleString",
-    "ST_MaxDirectionAsGML",
-    "ST_MaxDirectionAsText",
-    "ST_MaxDirectionString",
-    "ST_MaxGeometryAsGML",
-    "ST_MaxLEMeasureArrayElements",
-    "ST_MaxSRSAsText",
-    "ST_MaxVectorArrayElements",
-    "ST_MaxVectorAsBinary",
-    "ST_MaxVectorAsGML",
-    "ST_MaxVectorAsText",
-];
+const UNSUPPORTED: [&str; 2] = ["ST_MaxGeometryAsGML", "ST_MaxLEMeasureArrayElements"];
 
 /// [Annex A.1] Each meta-variable of an integer value: its value, 0 of no
 /// limit, none of what is not supported [§20.5 Description 2].
@@ -240,6 +226,7 @@ pub fn sizing_values() -> Vec<(&'static str, Option<i64>, &'static str)> {
         ("ST_MaxVariableNameLength", Some(i64::from(VARIABLE_NAME_LENGTH)), "the characters of a meta-variable's name"),
     ];
     all.extend(linear_referencing_sizings());
+    all.extend(crate::geometry::support::sizings());
     all.extend(UNSUPPORTED.iter().map(|n| (*n, None, "not supported")));
     all.sort_unstable_by_key(|(name, ..)| *name);
     all

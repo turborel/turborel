@@ -72,6 +72,29 @@ OK
 (1 row)
 ```
 
+## Vector offsets
+
+A position can lie off its element by up to three offset vectors, an
+ST_VectorOffsetExp. It is made of an ARRAY of ST_VECTOR values, and
+ST_VECTORS gives them back, or a copy with others:
+
+```sql
+SELECT ST_VECTOROFFSETEXP(ARRAY[ST_VECTOR(1e0, 2e0), ST_VECTOR(0e0, 1e0)]) AS OFFSETS FROM ROADS WHERE ID = 1;
+SELECT ST_VECTOROFFSETEXP(ARRAY[ST_VECTOR(1e0, 2e0)]).ST_VECTORS(ARRAY[ST_VECTOR(3e0, 4e0, 5e0)]).ST_VECTORS()[1].ST_Z() AS Z
+    FROM ROADS WHERE ID = 1;
+```
+
+```
+ OFFSETS
+--------------------------------------------------------------
+ VECTOROFFSETS (VECTOR (1 2), VECTOR (0 1))
+(1 row)
+                        Z
+--------------------------
+                      5E0
+(1 row)
+```
+
 ## Methods and columns in the catalog
 
 A method defined by ST_DEFINELRM is a row of

@@ -38,7 +38,8 @@ behind it, and each can be replaced or added to.
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match.
 - [SQL/MM Spatial](doc/sql/10-spatial.md), its 27 geometry types in 2D
-  and 3D, exact relationships and set operations, reference systems, and
+  and 3D, exact relationships and set operations, reference systems,
+  angles, directions and vectors, and
   [R-tree spatial queries](doc/data/02-spatial.md) and joins.
 - [Topologies](doc/sql/16-topology.md) of nodes, edges and faces, and
   [spatial networks](doc/sql/18-spatial-networks.md) with shortest paths.

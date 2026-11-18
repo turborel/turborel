@@ -78,13 +78,16 @@ impl Registry {
             AggregateRef(Arc::new(Sum)),
             AggregateRef(Arc::new(Avg)),
         ];
-        let scalars = strings::functions()
-            .into_iter()
-            .chain(trim::functions())
-            .chain(numeric::functions())
-            .chain(words())
-            .map(|f| (f.name().to_string(), vec![ScalarRef(f)]))
-            .collect();
+        // Of a name, each function that declares its parameter types, as
+        // SQL/MM Spatial's of several types do; else the last.
+        let mut scalars: HashMap<String, Vec<ScalarRef>> = HashMap::new();
+        for f in strings::functions().into_iter().chain(trim::functions()).chain(numeric::functions()).chain(words()) {
+            let of_name = scalars.entry(f.name().to_string()).or_default();
+            if f.parameter_types().is_none() || of_name.iter().any(|g| g.0.parameter_types().is_none()) {
+                of_name.clear();
+            }
+            of_name.push(ScalarRef(f));
+        }
         let truths = [Truths::EVERY, Truths::ANY, Truths::SOME].map(|t| AggregateRef(Arc::new(t)));
         let any_value = [AggregateRef(Arc::new(any_value::AnyValue))];
         let statistics = statistics::functions().into_iter().map(AggregateRef).collect::<Vec<_>>();

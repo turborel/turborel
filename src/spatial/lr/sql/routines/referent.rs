@@ -2,17 +2,17 @@
 //! routines of ST_Referent, ST_LatOffsetExp and ST_VerOffsetExp.
 //!
 //! [§15.13] ST_VectorOffsetExp's constructor and ST_Vectors take and
-//! give ST_Vector values, of §17.2's ST_Vector type, which is not a type
-//! here: a vector offset is read and written in its well-known text and
-//! GML representations alone.
+//! give an ARRAY of §17.2's ST_Vector values (`geometry/support.rs`); an
+//! offset vector has no spatial reference system, so one given loses its
+//! SRID and one returned is of SRID 0.
 
-use super::super::args::{Args, P, geom_out, lr_out, or_null, text};
+use super::super::args::{Args, P, geom_out, lr_out, or_null, text, vectors_out};
 use super::super::routine::{Routine, called, null_call};
 use super::super::{DESCRIPTION_LENGTH, NAME_LENGTH, TYPE_LENGTH};
-use super::{LATERAL, MEASURE, POSITION, REFERENT, VERTICAL};
+use super::{LATERAL, MEASURE, POSITION, REFERENT, VECTOR, VERTICAL};
 use crate::error::Result;
 use crate::geometry::model::Kind as GeomKind;
-use crate::spatial::lr::{LatOffsetExp, LrValue, Referent, VerOffsetExp};
+use crate::spatial::lr::{LatOffsetExp, LrValue, Referent, VectorOffsetExp, VerOffsetExp};
 use crate::value::Value;
 
 const NAME: P = P::Text(NAME_LENGTH);
@@ -136,5 +136,13 @@ pub static ROUTINES: &[Routine] = &[
     }),
     called("ST_OFFSETREFDESC", &[VERTICAL, DESCRIPTION], VERTICAL, |a| {
         vertical_out(VerOffsetExp::with_offset_ref_desc(a.vertical(0)?.as_ref(), a.text(1)?)?)
+    }),
+    // [§15.13] ST_VectorOffsetExp.
+    null_call("ST_VECTOROFFSETEXP", &[P::Vectors], VECTOR, |a| {
+        lr_out(Some(LrValue::VectorOffsetExp(VectorOffsetExp::new(a.vectors(0)?.unwrap_or_default())?)))
+    }),
+    null_call("ST_VECTORS", &[VECTOR], P::Vectors, |a| Ok(a.vector(0)?.map_or(Value::Null, |v| vectors_out(v.vectors())))),
+    called("ST_VECTORS", &[VECTOR, P::Vectors], VECTOR, |a| {
+        lr_out(VectorOffsetExp::with_vectors(a.vector(0)?.as_ref(), a.vectors(1)?)?.map(LrValue::VectorOffsetExp))
     }),
 ];

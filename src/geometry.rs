@@ -25,6 +25,7 @@ mod robust;
 pub mod routines;
 mod shape;
 mod solids;
+pub mod support;
 mod tin_element;
 mod tins;
 mod wkb;

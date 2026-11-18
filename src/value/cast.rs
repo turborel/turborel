@@ -44,6 +44,14 @@ pub fn cast_warned(v: Value, to: &DataType) -> Result<(Value, Option<SqlState>)>
     {
         return crate::json::serialize_as(&j.item()?, to).map(|text| (text, None));
     }
+    // [EXTENSION] A value of an extension kind, as its kind lowers it
+    // to a predefined type (`SqlType::lowered`).
+    if let Value::Extension(e) = &v
+        && !matches!(to, DataType::Extension(_))
+        && let Some(lowered) = e.kind.lowered(&v, to)
+    {
+        return to.kind().cast_warned(lowered, to);
+    }
     to.kind().cast_warned(v, to)
 }
 

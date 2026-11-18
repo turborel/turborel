@@ -2401,9 +2401,10 @@ against Snyder's examples printed to 0.1 m.
 The well-known text, WKB and GML of the geometry types
 [§5.1.56 to §5.1.68] are read and written by `src/spatial/formats` and
 the model (`src/geometry/representations.rs`, RULES.md
-D-SPATIAL-CURVES). The angle and direction engine of §16 is built
-(`src/spatial/srs/angle.rs`, `direction.rs`). The SQL types of §16,
-§17.2 to §17.5 and the routines of §18 are not built yet.
+D-SPATIAL-CURVES). The types of §14, §16 and §17.2 to §17.5 are SQL
+types with every routine the standard gives them, and the routines of
+§18 are built (`src/geometry/support`, RULES.md D-SPATIAL-SUPPORT). The
+angle and direction engine of §16 computes them (`src/spatial/srs`).
 
 | Feature | Rules | What turborel does |
 |---|---|---|
@@ -2411,10 +2412,13 @@ D-SPATIAL-CURVES). The angle and direction engine of §16 is built
 | WKB | §5.1.68 | Every type, both byte orders, the new Z/M/ZM codes and the deprecated codes on input. An empty value of each type is written in full. |
 | GML | §5.1.60 to §5.1.64, Table 14 | Every instantiable type, by every *FromGML routine, ST_GMLToSQL, ST_GeomFromGML and ST_AsGML. srsName is the organization and its identifier, read back through the Spatial Information Schema's systems as the statement is bound. GML carries no M. |
 | Large objects | §5.1.4, §5.1.5, §5.1.62, §5.1.63 | ST_GEOMFROMTEXT takes a CLOB and ST_GEOMFROMWKB a BLOB, each read whole up to 16 MiB. ST_AsText returns a CLOB and ST_AsBinary a BLOB, up to 16 MiB. |
-| ST_Angle, ST_Direction | §16.1, §16.2 | The engine computes every routine of both (RULES.md D-SPATIAL-SRS). The SQL types and their routines are not built yet. |
+| ST_SpatialRefSys | §14.1 | Built, with its constructors of a definition and of an SRID, ST_WKTSRSToSQL, ST_SRID, ST_AsWKTSRS and ST_Equals. EQUALS ONLY by ST_OrderingEquals. A definition takes the SRID of a system supplied or defined with the same text. |
+| ST_Angle, ST_Direction | §16.1, §16.2 | Built, with every constructor, observer, mutator, method and function of both. ORDER FULL by ST_OrderingCompare, so `<`, ORDER BY, GROUP BY, MAX and an index work on them. |
 | ST_TINElement | §17.1 | Built, with its constructors, observers and mutators. ST_IsEmpty of an element is not built. |
-| ST_Vector, ST_AffinePlacement, ST_NURBSPoint, ST_Knot | §17.2 to §17.5 | Not built yet as SQL types. NURBS points, knots and placements are read and written as parts of a curve's text and binary forms. |
-| ST_Geometry ARRAY support routines | §18 | Not built. |
+| ST_Vector | §17.2 | Built, with its constructors, observers, mutators and its text, WKB and GML routines. EQUALS ONLY by ST_OrderingEquals. |
+| ST_AffinePlacement, ST_NURBSPoint, ST_Knot | §17.3 to §17.5 | Built, with their constructors, observers, mutators and ST_IsEmpty, and ST_Transform of a placement. They declare no ordering, so nothing compares them. They are also read and written as parts of a curve's text and binary forms. |
+| Transform groups and casts | §14.1.8, §16.1.20, §16.2.22, §17.2.21 | Each group is a CAST: the well-known text to and from a character string, an angle's or a direction's radians to and from a number, a vector's WKB to and from a binary string. The GML groups are the types' GML routines. INFORMATION_SCHEMA.TRANSFORMS shows none, as a built-in type is no user-defined type. |
+| ST_Geometry ARRAY support routines | §18 | Built: ST_MaxDimension, ST_CheckSRID, ST_GetCoordDim, ST_GetIs3D and ST_GetIsMeasured, of geometry, vector and NURBS point arrays as each clause gives them; the procedures ST_CheckNulls and ST_CheckConsecDups; and the nineteen functions ST_ToPointAry to ST_ToBRepSolidAry. |
 
 #### Readings of the standard
 
@@ -2449,6 +2453,18 @@ D-SPATIAL-CURVES). The angle and direction engine of §16 is built
 - §16.1.8 rounds the seconds and carries 60″ upward. ST_String(dms) reads
   "D M S" as D + M/60 + S/3600, so it inverts ST_String.
   ST_MaxAngleString and ST_MaxDirectionString are both 64.
+- §17.2.5's Definition and Description give ST_Z(DOUBLE PRECISION)'s two
+  conditions the other way round. The Description is followed: 2FF03 of
+  a value for an empty vector, 2FF16 of a null for one that is not.
+- ST_Vector's well-known text is `VECTOR (x y)` or `VECTOR Z (x y z)`,
+  a third coordinate needing the Z (2FF25). Its WKB is code 101, or 1101
+  with z, little endian on output. Its GML is a gml:vector with srsName.
+- ST_VectorFromGML(gml) is of SRID 0, as Description 2 says, whatever
+  srsName the GML names.
+- A §18 routine passes over a null element of the array where its
+  clause compares dimensions, as the comparison is unknown.
+- ST_CheckNulls and ST_CheckConsecDups are procedures, CALLed. They are
+  built in, so ST_CheckNulls takes either array type.
 - §16.1.2 Descriptions 17, 19 and 23 give the lesser clockwise angle in
   [0, π]. The Definition's CASE, which yields the negative difference,
   is not followed.
@@ -2657,7 +2673,7 @@ and the §21 catalog tables and views ST_LRMS and ST_LR_COLUMNS
 
 | Feature | Rules | What turborel does |
 |---|---|---|
-| Types | §15.1 to §15.13 | All thirteen, with their routines. ST_VectorOffsetExp's constructor of an ST_Vector array and ST_Vectors() [§15.13] are not built, since they need §17.2's ST_Vector. |
+| Types | §15.1 to §15.13 | All thirteen, with their routines, ST_VectorOffsetExp's constructor of an ST_Vector array and ST_Vectors() among them. |
 | Text and GML | §15.14 | The functions of their well-known text and GML. A value's character form is its well-known text. |
 | Catalog | §21.1, §21.2 | ST_LRMS and ST_LR_COLUMNS, changed by ST_DEFINELRM, ST_DROPLRM, ST_REGISTERLRCOLUMN and ST_UNREGISTERLRCOLUMN [EXTENSION]. |
 | Lengths and cardinalities | Annex A | A routine checks each argument against its parameter's length and cardinality (22001, 2202F), as storing it would. |
@@ -2680,9 +2696,10 @@ and the §21 catalog tables and views ST_LRMS and ST_LR_COLUMNS
   table §21 never defines. ST_LRMS is used.
 - §21 names its schema ST_DEFN_SCHEMA. The tables are in
   ST_DEFINITION_SCHEMA, beside those of §20.
-- ST_Vector (§17.2) is not a type yet. §15.13's ST_VectorOffsetExp type
-  is built with its other routines, but its constructor of a vector
-  array and ST_Vectors() wait for ST_Vector.
+- An offset vector has no spatial reference system. A vector given to
+  ST_VectorOffsetExp or ST_Vectors(ST_Vector ARRAY) loses its SRID, and
+  ST_Vectors() gives vectors of SRID 0. A null element is the empty
+  vector.
 - The standard gives no statement to change ST_LRMS or ST_LR_COLUMNS
   (§21.1.1 leaves it implementation-defined). The procedures
   ST_DEFINELRM, ST_DROPLRM, ST_REGISTERLRCOLUMN and ST_UNREGISTERLRCOLUMN
@@ -2748,7 +2765,13 @@ of ST_DEFINITION_SCHEMA (RULES.md D-SPATIAL-CATALOG).
 | ST_MaxLRAsText, ST_MaxLRAsGML | 16 MiB, the geometry text limit |
 | ST_MaxArrayElements | 65535, the array cardinality limit, so the paths of one shortest path |
 | ST_MaxLEMeasureArrayElements | Not supported, since no ST_LEMeasure type is defined by the text |
-| ST_MaxAngleString, ST_MaxDirectionString | Not supported until the SQL types of §16 are built. The engine's strings are at most 64 characters |
+| ST_MaxAngleString, ST_MaxDirectionString | 64, the engine's longest strings |
+| ST_MaxAngleAsText, ST_MaxDirectionAsText | 64 |
+| ST_MaxAngleAsGML, ST_MaxDirectionAsGML | 4096 |
+| ST_MaxSRSAsText | 2048, the length of a system's definition |
+| ST_MaxVectorAsText, ST_MaxVectorAsGML | 8192 |
+| ST_MaxVectorAsBinary | 29 |
+| ST_MaxVectorArrayElements | 65535, the geometry array limit |
 
 ## Extensions
 

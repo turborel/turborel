@@ -211,14 +211,18 @@ pub(in crate::db) fn rust_arguments(cx: Context<'_>, p: &dyn Procedure, call: &C
         rule(format!("[ISO/IEC 9075-2:2023 §9.18 SR10] procedure {} takes no {} arguments", p.name(), call.arguments.len()))
     })?;
     let mut inputs = Vec::with_capacity(types.len());
+    let mut bound = Vec::with_capacity(types.len());
     for (a, t) in call.arguments.iter().zip(&types) {
         let v = match a {
             SqlArgument::Value(v) => v,
             SqlArgument::Default(at) | SqlArgument::Null(at) => return defaulted("T522", 6, *at),
         };
-        inputs.push(bind_argument(cx, v, t)?.0);
+        let (e, of) = bind_argument(cx, v, t)?;
+        inputs.push(e);
+        bound.push(of);
     }
-    Ok((inputs, types))
+    // [§9.6] the arguments' types choose among its parameters' types.
+    Ok((inputs, p.overload(&bound).unwrap_or(types)))
 }
 
 /// What a procedure written in Rust runs in: the session and transaction
