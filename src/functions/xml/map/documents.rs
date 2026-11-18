@@ -29,8 +29,9 @@
 //! no type uses `sqlxml` (`map/types.rs`), so XSDIMP and XSDECL are too.
 //! \[§9.9 GR5f i 7, GR9, §9.12 GR8, §9.15 GR7\] no annotation is written.
 
-use super::types::{Declared, XDT_NAMESPACE, XDT_PREFIX, declared_name, definitions};
+use super::types::{Declared, XDT_NAMESPACE, XDT_PREFIX, definitions};
 use super::{Column, Source, Table, XmlMap};
+use crate::error::Result;
 use crate::xml::{Escape, Version, XS_NAMESPACE, is_ncname, name_of, name_of_parts};
 
 /// [§9.10 GR6c i] The element of a row of a table mapped as an element.
@@ -92,15 +93,12 @@ pub(super) fn xml_name(identifier: &str) -> String {
 impl XmlMap {
     /// [§9.11 GR10e, §9.14 GR11e, §9.17 GR11e] XS: the XML Schema
     /// document, XSCT the types of the columns [§9.7], then XST.
-    pub(super) fn schema_document(&self) -> Text {
+    pub(super) fn schema_document(&self) -> Result<Text> {
         let mut text = Text::default();
-        let declared: Vec<Declared> = self.tables().into_iter().flat_map(|t| t.columns.iter().map(|c| c.declared.clone())).collect();
-        let (xsct, xdt) = definitions(&declared, &self.catalog, (self.choices.encoding, self.choices.nulls));
-        for d in &declared {
-            if let Some(name) = declared_name(d, &self.catalog) {
-                text.v11 |= !is_ncname(Version::V10, &name);
-            }
-        }
+        let columns: Vec<&Column> = self.tables().into_iter().flat_map(|t| &t.columns).collect();
+        let declared: Vec<Declared> = columns.iter().map(|c| c.declared.clone()).collect();
+        let (xsct, xdt) = definitions(&declared, &self.catalog, (self.choices.encoding, self.choices.nulls))?;
+        text.v11 = columns.iter().any(|c| !is_ncname(Version::V10, &c.type_name));
         text.push(&format!(r#"<xs:schema xmlns:xs="{XS_NAMESPACE}""#));
         if xdt {
             text.push(&format!(r#" xmlns:{XDT_PREFIX}="{XDT_NAMESPACE}""#));
@@ -116,7 +114,7 @@ impl XmlMap {
         text.push(&xsct);
         self.structure(&mut text);
         text.push("</xs:schema>");
-        text
+        Ok(text)
     }
 
     /// XST, and the element of the document's root [§9.11 GR10e, §9.14
@@ -186,8 +184,7 @@ impl XmlMap {
             (true, super::Nulls::Absent) => r#" minOccurs="0""#,
             (true, super::Nulls::Nil) => r#" nillable="true""#,
         };
-        let type_name = declared_name(&c.declared, &self.catalog).unwrap_or_default();
-        text.element(&xml_name(&c.name), &type_name, nulls);
+        text.element(&xml_name(&c.name), &c.type_name, nulls);
     }
 
     /// [§9.12] A schema's type, of the element of each XML visible table

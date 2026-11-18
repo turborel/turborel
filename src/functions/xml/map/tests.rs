@@ -12,8 +12,10 @@ use crate::xml::MAX_INPUT;
 
 /// Table A.T of an INTEGER K NOT NULL and a VARCHAR(5) "s t".
 fn table() -> Table {
-    let column =
-        |name: &str, data_type: DataType, nullable| Column { name: name.to_owned(), declared: Declared::Type(data_type), nullable };
+    let column = |name: &str, data_type: DataType, nullable| {
+        let type_name = type_name(&data_type, "").unwrap().unwrap();
+        Column { name: name.to_owned(), declared: Declared::Type(data_type), nullable, type_name }
+    };
     Table {
         schema: "A".to_owned(),
         name: "T".to_owned(),

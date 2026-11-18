@@ -78,6 +78,8 @@ pub struct Column {
     pub declared: Declared,
     /// Whether it is not known not nullable [§9.9 GR5e].
     pub nullable: bool,
+    /// The XML Name of what it is declared of [§9.9 GR5d, §9.4].
+    pub type_name: String,
 }
 
 /// An XML visible table [§4.10.8] a mapping writes.
@@ -173,7 +175,7 @@ impl ScalarFunction for XmlMap {
     /// \[GR7a\], else \[GR7b\] implementation-defined, of XML 1.0. Past
     /// `MAX_INPUT` octets, SQLCODE -900.
     fn call(&self, args: &[Value]) -> Result<Value> {
-        let schema = self.schema_document();
+        let schema = self.schema_document()?;
         if schema.out.len() > MAX_INPUT {
             return Err(too_long());
         }

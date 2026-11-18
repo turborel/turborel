@@ -25,7 +25,7 @@ use crate::ast::{MapResults, MapSource, Subquery, TableName, XmlMapping, rows_of
 use crate::catalog::{QualifiedName, Routine, applicable};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::functions::xml_map::{
-    Choices, Column, DataShape, Declared, Nulls, RowShape, Source, Table, XMLMAP, XmlMap, XmlMapRow, XmlMapRows, mappable, rows_type,
+    Choices, Column, DataShape, Declared, Nulls, RowShape, Source, Table, XMLMAP, XmlMap, XmlMapRow, XmlMapRows, declared_name, rows_type,
 };
 use crate::functions::{AggregateRef, IMPLICIT_BINARY_ENCODING, RowOf, ScalarRef};
 use crate::logical::Expr;
@@ -176,7 +176,7 @@ impl Binder<'_> {
     /// its index among the tables mapped and the text of each row, written
     /// as `choices` say; and noted in `found`.
     fn branch(&self, read: &Read, columns: &[OutColumn], choices: &Choices, found: &mut Found) -> Result<Option<Vec<Expr>>> {
-        let (table, positions, unmappable) = self.visible_columns(&read.name, columns);
+        let (table, positions, unmappable) = self.visible_columns(&read.name, columns)?;
         found.unmappable |= unmappable;
         if !read.alone && table.columns.is_empty() {
             return Ok(None);
@@ -287,25 +287,27 @@ impl Binder<'_> {
 
     /// [§4.10.8] The table `name` of the columns `columns`, as `SELECT *`
     /// gives them: its XML visible columns, their positions there, and
-    /// whether a visible column is an XML unmappable column.
-    fn visible_columns(&self, name: &QualifiedName, columns: &[OutColumn]) -> (Table, Vec<usize>, bool) {
+    /// whether a visible column is an XML unmappable column; SQLCODE -900
+    /// of a type nested too deep to map.
+    fn visible_columns(&self, name: &QualifiedName, columns: &[OutColumn]) -> Result<(Table, Vec<usize>, bool)> {
         let mut table = Table { schema: name.auth.clone(), name: name.ident.clone(), columns: Vec::new() };
         let (mut positions, mut unmappable) = (Vec::new(), false);
+        let catalog = self.db.catalog_name();
         for (i, c) in columns.iter().enumerate() {
             if !self.cast_visible(&c.data_type) {
-                continue;
-            }
-            if !mappable(&c.data_type) {
-                unmappable = true;
                 continue;
             }
             let column = c.name.clone().unwrap_or_default();
             let domain = self.domain_of(name, &column);
             let declared = Declared::of(&c.data_type, domain.as_ref().map(|(s, d)| (s.as_str(), d.as_str())));
-            table.columns.push(Column { name: column, declared, nullable: !c.not_null });
+            let Some(type_name) = declared_name(&declared, &catalog)? else {
+                unmappable = true;
+                continue;
+            };
+            table.columns.push(Column { name: column, declared, nullable: !c.not_null, type_name });
             positions.push(i);
         }
-        (table, positions, unmappable)
+        Ok((table, positions, unmappable))
     }
 
     /// [§4.10.8] Whether a column of `t` may be visible: of a distinct

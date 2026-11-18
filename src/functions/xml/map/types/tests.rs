@@ -61,8 +61,8 @@ fn xml_names_of_types_9_4() {
         (DataType::distinct("S", "MONEY", exact_type(9, 2, Spelled::Numeric)), "UDT.TURBOREL.S.MONEY"),
     ];
     for (t, name) in cases {
-        assert_eq!(type_name(&t, CATALOG).as_deref(), Some(name), "{t:?}");
-        assert!(mappable(&t), "{t:?}");
+        assert_eq!(type_name(&t, CATALOG).unwrap().as_deref(), Some(name), "{t:?}");
+        assert!(mappable(&t).unwrap(), "{t:?}");
     }
 }
 
@@ -77,10 +77,10 @@ fn unmappable_types_and_domains_9_4() {
     let sequences = DataType::array(DataType::Xml(XmlType::Sequence), 3);
     let decfloats = DataType::distinct("S", "A", DataType::array(decfloat.clone(), 3));
     for t in [DataType::Xml(XmlType::Sequence), decfloat, sequences, decfloats] {
-        assert!(!mappable(&t) && type_name(&t, CATALOG).is_none(), "{t:?}");
+        assert!(!mappable(&t).unwrap() && type_name(&t, CATALOG).unwrap().is_none(), "{t:?}");
     }
     let domain = Declared::of(&DataType::Boolean, Some(("S", "A.B:C")));
-    assert_eq!(declared_name(&domain, CATALOG).as_deref(), Some("Domain.TURBOREL.S.A_x002E_B_x003A_C"));
+    assert_eq!(declared_name(&domain, CATALOG).unwrap().as_deref(), Some("Domain.TURBOREL.S.A_x002E_B_x003A_C"));
     let of_xml = Declared::of(&DataType::Xml(XmlType::Document(Typing::Any)), Some(("S", "D")));
     assert_eq!(of_xml, Declared::Type(DataType::Xml(XmlType::Document(Typing::Any))), "a domain of XML maps as XML");
     assert_eq!(Declared::of(&DataType::Boolean, None).data_type(), &DataType::Boolean);
@@ -94,7 +94,7 @@ fn unmappable_types_and_domains_9_4() {
 /// built-in type restricted by nothing.
 #[test]
 fn simple_types_9_5() {
-    let named = |t: DataType, encoding| named_type(&Declared::Type(t), CATALOG, encoding, Nulls::Absent).unwrap();
+    let named = |t: DataType, encoding| named_type(&Declared::Type(t), CATALOG, encoding, Nulls::Absent).unwrap().unwrap();
     let cases = [
         (
             DataType::character(10),
@@ -134,7 +134,9 @@ fn simple_types_9_5() {
         r#"<xs:simpleType name="BLOB_9"><xs:restriction base="xs:hexBinary"><xs:maxLength value="9"/></xs:restriction></xs:simpleType>"#;
     assert_eq!(named(blob.clone(), BinaryEncoding::Hex), hex);
     assert_eq!(named(blob, BinaryEncoding::Base64), hex.replace("hexBinary", "base64Binary"));
-    assert!(named_type(&Declared::Type(DataType::DecFloat { precision: 34 }), CATALOG, BinaryEncoding::Hex, Nulls::Absent).is_none());
+    assert!(
+        named_type(&Declared::Type(DataType::DecFloat { precision: 34 }), CATALOG, BinaryEncoding::Hex, Nulls::Absent).unwrap().is_none()
+    );
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §9.5 GR8g to GR8l] a datetime's
@@ -187,7 +189,7 @@ fn collections_of_types_9_7() {
         Declared::Type(DataType::Xml(XmlType::Content(Typing::Untyped))),
         Declared::Type(DataType::Xml(XmlType::Document(Typing::Any))),
     ];
-    let (text, xdt) = definitions(&declared, CATALOG, (BinaryEncoding::Hex, Nulls::Absent));
+    let (text, xdt) = definitions(&declared, CATALOG, (BinaryEncoding::Hex, Nulls::Absent)).unwrap();
     let expected = [
         r#"<xs:simpleType name="Domain.TURBOREL.S.FLAG"><xs:restriction base="BOOLEAN"/></xs:simpleType>"#,
         r#"<xs:simpleType name="BOOLEAN"><xs:restriction base="xs:boolean"/></xs:simpleType>"#,
@@ -198,9 +200,9 @@ fn collections_of_types_9_7() {
     assert_eq!(text, expected.concat());
     assert!(!xdt && parses(&text));
     let (durations, of_xdt) =
-        definitions(&[Declared::Type(interval(Field::Day, Field::Day, 2, 0))], CATALOG, (BinaryEncoding::Hex, Nulls::Absent));
+        definitions(&[Declared::Type(interval(Field::Day, Field::Day, 2, 0))], CATALOG, (BinaryEncoding::Hex, Nulls::Absent)).unwrap();
     assert!(of_xdt && parses(&durations), "{durations}");
-    let unmapped = definitions(&[Declared::Type(DataType::Xml(XmlType::Sequence))], CATALOG, (BinaryEncoding::Hex, Nulls::Absent));
+    let unmapped = definitions(&[Declared::Type(DataType::Xml(XmlType::Sequence))], CATALOG, (BinaryEncoding::Hex, Nulls::Absent)).unwrap();
     assert_eq!(unmapped, (String::new(), false));
 }
 
@@ -218,13 +220,13 @@ fn row_of(fields: &[(&str, DataType)]) -> DataType {
 #[test]
 fn xml_names_of_composite_types_9_4() {
     let row = row_of(&[("a b", DataType::Boolean), ("N", DataType::array(DataType::Date, 2))]);
-    assert_eq!(type_name(&row, CATALOG).as_deref(), Some("Row.a_x0020_b.BOOLEAN.N.Array_2_x002E_DATE"));
+    assert_eq!(type_name(&row, CATALOG).unwrap().as_deref(), Some("Row.a_x0020_b.BOOLEAN.N.Array_2_x002E_DATE"));
     let multiset = DataType::multiset(DataType::array(DataType::Boolean, 4));
-    assert_eq!(type_name(&multiset, CATALOG).as_deref(), Some("Multiset.Array_4.BOOLEAN"));
+    assert_eq!(type_name(&multiset, CATALOG).unwrap().as_deref(), Some("Multiset.Array_4.BOOLEAN"));
     let distinct = DataType::distinct("S", "LIST", DataType::array(DataType::varying(3), 5));
-    assert_eq!(type_name(&distinct, CATALOG).as_deref(), Some("UDT.TURBOREL.S.LIST"));
+    assert_eq!(type_name(&distinct, CATALOG).unwrap().as_deref(), Some("UDT.TURBOREL.S.LIST"));
     let other = row_of(&[("a b", DataType::Boolean), ("N", DataType::array(DataType::Date, 3))]);
-    assert_ne!(type_name(&row, CATALOG), type_name(&other, CATALOG), "row types of other fields' types have other IDIs");
+    assert_ne!(type_name(&row, CATALOG).unwrap(), type_name(&other, CATALOG).unwrap(), "row types of other fields' types have other IDIs");
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §9.5 GR8n, GR8p, GR8q, GR8o,
@@ -237,21 +239,22 @@ fn xml_names_of_composite_types_9_4() {
 #[test]
 fn composite_types_9_5() {
     let row = row_of(&[("A", DataType::Boolean)]);
-    let nil = named_type(&Declared::Type(row.clone()), CATALOG, BinaryEncoding::Hex, Nulls::Nil).unwrap();
+    let nil = named_type(&Declared::Type(row.clone()), CATALOG, BinaryEncoding::Hex, Nulls::Nil).unwrap().unwrap();
     let field = r#"<xs:element name="A" type="BOOLEAN" nillable="true"/>"#;
     assert_eq!(nil, format!(r#"<xs:complexType name="Row.A.BOOLEAN"><xs:sequence>{field}</xs:sequence></xs:complexType>"#));
-    let absent = named_type(&Declared::Type(row), CATALOG, BinaryEncoding::Hex, Nulls::Absent).unwrap();
+    let absent = named_type(&Declared::Type(row), CATALOG, BinaryEncoding::Hex, Nulls::Absent).unwrap().unwrap();
     assert!(absent.contains(r#"type="BOOLEAN" minOccurs="0"/>"#), "{absent}");
     let array = DataType::array(DataType::Boolean, 3);
     let elements = r#"<xs:element name="element" minOccurs="0" maxOccurs="3" nillable="true" type="BOOLEAN"/>"#;
     assert_eq!(
-        named_type(&Declared::Type(array.clone()), CATALOG, BinaryEncoding::Hex, Nulls::Absent).unwrap(),
+        named_type(&Declared::Type(array.clone()), CATALOG, BinaryEncoding::Hex, Nulls::Absent).unwrap().unwrap(),
         format!(r#"<xs:complexType name="Array_3.BOOLEAN"><xs:sequence>{elements}</xs:sequence></xs:complexType>"#)
     );
-    let multiset = named_type(&Declared::Type(DataType::multiset(DataType::Boolean)), CATALOG, BinaryEncoding::Hex, Nulls::Absent).unwrap();
+    let multiset =
+        named_type(&Declared::Type(DataType::multiset(DataType::Boolean)), CATALOG, BinaryEncoding::Hex, Nulls::Absent).unwrap().unwrap();
     assert!(multiset.contains(r#"maxOccurs="unbounded""#), "{multiset}");
     let distinct = DataType::distinct("S", "TRIO", array);
-    let (text, _) = definitions(&[Declared::Type(distinct)], CATALOG, (BinaryEncoding::Hex, Nulls::Absent));
+    let (text, _) = definitions(&[Declared::Type(distinct)], CATALOG, (BinaryEncoding::Hex, Nulls::Absent)).unwrap();
     let expected = [
         r#"<xs:complexType name="UDT.TURBOREL.S.TRIO"><xs:complexContent><xs:extension base="Array_3.BOOLEAN"/></xs:complexContent></xs:complexType>"#,
         r#"<xs:complexType name="Array_3.BOOLEAN"><xs:sequence>"#,
@@ -259,4 +262,23 @@ fn composite_types_9_5() {
     assert!(text.starts_with(&expected.concat()), "{text}");
     assert!(text.ends_with(r#"<xs:simpleType name="BOOLEAN"><xs:restriction base="xs:boolean"/></xs:simpleType>"#), "{text}");
     assert!(parses(&text), "{text}");
+}
+
+/// Verifies: [DESIGN] R-CF-6 a type nested `MAX_TYPE_NESTING` deep is
+/// mapped, and one nested deeper, which SQL makes none of but a
+/// descriptor built otherwise may be, is SQLCODE -900 by each function
+/// that maps it, neither mapped nor left out.
+#[test]
+fn types_nested_past_the_limit() {
+    let nested = |depth: usize| (0..depth).fold(DataType::Boolean, |t, _| DataType::multiset(t));
+    assert!(mappable(&nested(MAX_TYPE_NESTING)).unwrap());
+    let deep = nested(MAX_TYPE_NESTING.saturating_add(1));
+    assert_eq!(type_name(&deep, CATALOG).unwrap_err().sqlcode(), -900_i32);
+    assert_eq!(mappable(&deep).unwrap_err().sqlcode(), -900_i32);
+    let domain = Declared::Domain { schema: "S".to_owned(), name: "D".to_owned(), data_type: deep.clone() };
+    assert_eq!(declared_name(&domain, CATALOG).unwrap_err().sqlcode(), -900_i32);
+    let row = row_of(&[("A", deep.clone())]);
+    assert_eq!(named_type(&Declared::Type(row), CATALOG, BinaryEncoding::Hex, Nulls::Absent).unwrap_err().sqlcode(), -900_i32);
+    let distinct = DataType::distinct("S", "DEEP", deep);
+    assert_eq!(definitions(&[Declared::Type(distinct)], CATALOG, (BinaryEncoding::Hex, Nulls::Absent)).unwrap_err().sqlcode(), -900_i32);
 }

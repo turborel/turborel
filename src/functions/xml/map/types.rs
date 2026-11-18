@@ -30,6 +30,7 @@ use std::fmt::Write;
 use super::super::super::BinaryEncoding;
 use super::Nulls;
 use super::composites::{array_name, complex, complex_type, multiset_name, parts_of, row_name};
+use crate::error::{Code, Result, SqlError};
 use crate::value::datetime::Field;
 use crate::value::interval::Qualifier;
 use crate::value::lob::LobKind;
@@ -107,36 +108,45 @@ impl Declared {
 /// unmappable data type, a structured type, a reference type or
 /// XML(SEQUENCE), nor based on one; \[EXTENSION\] nor DECFLOAT or a type
 /// of a plug-in, which §9.5 maps to no XML Schema type, nor based on one.
-#[must_use]
-pub fn mappable(t: &DataType) -> bool {
-    type_name(t, "").is_some()
+///
+/// # Errors
+///
+/// As `type_name`.
+pub fn mappable(t: &DataType) -> Result<bool> {
+    Ok(type_name(t, "")?.is_some())
 }
 
 /// [§9.4] The XML Name of `t`, of the catalog `catalog`, if it is
 /// mappable; a distinct type's \[GR20\] that of the multi-part name
 /// "UDT", its catalog, schema and name [§9.2], if its source type is
 /// mappable.
-#[must_use]
-pub fn type_name(t: &DataType, catalog: &str) -> Option<String> {
+///
+/// # Errors
+///
+/// SQLCODE -900 of a type nested deeper than `MAX_TYPE_NESTING`.
+pub fn type_name(t: &DataType, catalog: &str) -> Result<Option<String>> {
     named(t, catalog, 0)
 }
 
-/// `type_name` of `t`, inside `depth` types. \[DESIGN\] R-CF-6: no type
-/// nests deeper than `MAX_TYPE_NESTING` (RULES.md D68), so none is mapped
-/// past it.
-pub(super) fn named(t: &DataType, catalog: &str, depth: usize) -> Option<String> {
+/// `type_name` of `t`, inside `depth` types: \[DESIGN\] R-CF-6, past
+/// `MAX_TYPE_NESTING` deep, SQLCODE -900, as types made in SQL nest no
+/// deeper (RULES.md D68) and a descriptor built otherwise might.
+pub(super) fn named(t: &DataType, catalog: &str, depth: usize) -> Result<Option<String>> {
     if depth > MAX_TYPE_NESTING {
-        return None;
+        return Err(SqlError::new(
+            Code::Unsupported,
+            format!("[DESIGN] a type nested more than {MAX_TYPE_NESTING} deep is beyond turborel's limits for §9.4's mapping"),
+        ));
     }
-    match t {
+    Ok(match t {
         DataType::Distinct(d) => {
-            named(&d.source, catalog, depth.saturating_add(1)).map(|_| name_of_parts(&[UDT_PART, catalog, &d.schema, &d.name]))
+            named(&d.source, catalog, depth.saturating_add(1))?.map(|_| name_of_parts(&[UDT_PART, catalog, &d.schema, &d.name]))
         }
         DataType::Xml(XmlType::Sequence) => None,
         DataType::Xml(XmlType::Document(_) | XmlType::Content(_)) => Some(XML_NAME.to_owned()),
-        DataType::Row(r) => row_name(r, catalog, depth),
-        DataType::Array(a) => array_name(a, catalog, depth),
-        DataType::Multiset(m) => multiset_name(&m.element, catalog, depth),
+        DataType::Row(r) => row_name(r, catalog, depth)?,
+        DataType::Array(a) => array_name(a, catalog, depth)?,
+        DataType::Multiset(m) => multiset_name(&m.element, catalog, depth)?,
         DataType::Character { .. }
         | DataType::Varying { .. }
         | DataType::Exact { .. }
@@ -153,16 +163,21 @@ pub(super) fn named(t: &DataType, catalog: &str, depth: usize) -> Option<String>
         | DataType::Structured(_)
         | DataType::Reference(_)
         | DataType::Extension(_) => predefined_name(t),
-    }
+    })
 }
 
 /// [§9.4] The XML Name of what a column is declared of: a domain's
 /// \[GR18\] that of "Domain", its catalog, schema and name [§9.2].
-#[must_use]
-pub fn declared_name(d: &Declared, catalog: &str) -> Option<String> {
+///
+/// # Errors
+///
+/// As `type_name`.
+pub fn declared_name(d: &Declared, catalog: &str) -> Result<Option<String>> {
     match d {
         Declared::Type(t) => type_name(t, catalog),
-        Declared::Domain { schema, name, data_type } => mappable(data_type).then(|| name_of_parts(&[DOMAIN_PART, catalog, schema, name])),
+        Declared::Domain { schema, name, data_type } => {
+            Ok(mappable(data_type)?.then(|| name_of_parts(&[DOMAIN_PART, catalog, schema, name])))
+        }
     }
 }
 
@@ -269,20 +284,23 @@ fn interval_name(q: Qualifier) -> String {
 /// [§9.6] The XML Schema data type `d` maps to, named by its XML Name
 /// \[GR2\], binary strings encoded as `encoding` says \[GR4\], a row's
 /// null fields as `nulls` says \[GR3\]; none if `d` is not mappable.
-#[must_use]
-pub fn named_type(d: &Declared, catalog: &str, encoding: BinaryEncoding, nulls: Nulls) -> Option<String> {
-    let name = declared_name(d, catalog)?;
+///
+/// # Errors
+///
+/// As `type_name`.
+pub fn named_type(d: &Declared, catalog: &str, encoding: BinaryEncoding, nulls: Nulls) -> Result<Option<String>> {
+    let Some(name) = declared_name(d, catalog)? else { return Ok(None) };
     let t = match d {
         // [§9.5 GR8m] A domain restricts its data type, by its XML Name.
         Declared::Domain { data_type, .. } => return derived(&name, data_type, catalog),
         Declared::Type(t) => t,
     };
-    Some(match t {
+    Ok(match t {
         // [§9.5 GR8o] A distinct type restricts its source type.
-        DataType::Distinct(distinct) => derived(&name, &distinct.source, catalog)?,
+        DataType::Distinct(distinct) => return derived(&name, &distinct.source, catalog),
         // [§9.5 GR8r, §9.6 GR6b i] Mixed content, any element unvalidated.
-        DataType::Xml(_) => format!(r#"<xs:complexType name="{name}" mixed="true">{XML_CONTENT}</xs:complexType>"#),
-        DataType::Row(_) | DataType::Array(_) | DataType::Multiset(_) => complex_type(t, &name, catalog, nulls)?,
+        DataType::Xml(_) => Some(format!(r#"<xs:complexType name="{name}" mixed="true">{XML_CONTENT}</xs:complexType>"#)),
+        DataType::Row(_) | DataType::Array(_) | DataType::Multiset(_) => return complex_type(t, &name, catalog, nulls),
         DataType::Character { .. }
         | DataType::Varying { .. }
         | DataType::Exact { .. }
@@ -298,9 +316,7 @@ pub fn named_type(d: &Declared, catalog: &str, encoding: BinaryEncoding, nulls: 
         | DataType::Interval(_)
         | DataType::Structured(_)
         | DataType::Reference(_)
-        | DataType::Extension(_) => {
-            format!(r#"<xs:simpleType name="{name}">{}</xs:simpleType>"#, restriction(t, encoding)?)
-        }
+        | DataType::Extension(_) => restriction(t, encoding).map(|r| format!(r#"<xs:simpleType name="{name}">{r}</xs:simpleType>"#)),
     })
 }
 
@@ -311,17 +327,17 @@ pub fn named_type(d: &Declared, catalog: &str, encoding: BinaryEncoding, nulls: 
 /// (Restriction, Simple)], so it is read as a complex
 /// type that extends it by nothing; of an XML type, one of its content,
 /// mixed, as a mixed type's extension would need to be.
-fn derived(name: &str, base: &DataType, catalog: &str) -> Option<String> {
-    let of = type_name(base, catalog)?;
+fn derived(name: &str, base: &DataType, catalog: &str) -> Result<Option<String>> {
+    let Some(of) = type_name(base, catalog)? else { return Ok(None) };
     if matches!(base.represented(), DataType::Xml(_)) {
-        return Some(format!(r#"<xs:complexType name="{name}" mixed="true">{XML_CONTENT}</xs:complexType>"#));
+        return Ok(Some(format!(r#"<xs:complexType name="{name}" mixed="true">{XML_CONTENT}</xs:complexType>"#)));
     }
     if complex(base) {
-        return Some(format!(
+        return Ok(Some(format!(
             r#"<xs:complexType name="{name}"><xs:complexContent><xs:extension base="{of}"/></xs:complexContent></xs:complexType>"#
-        ));
+        )));
     }
-    Some(format!(r#"<xs:simpleType name="{name}"><xs:restriction base="{of}"/></xs:simpleType>"#))
+    Ok(Some(format!(r#"<xs:simpleType name="{name}"><xs:restriction base="{of}"/></xs:simpleType>"#)))
 }
 
 /// [§9.5 GR8r ii] The content of an XML type's complex type: a sequence
@@ -424,12 +440,15 @@ fn moment(base: &str, pattern: &str, precision: u32, zoned: bool) -> String {
 /// by §9.6 \[GR6c\], each written once, by its XML Name \[GR6d, GR6e\],
 /// in order. Whether a type is of `xdt`'s namespace, an interval type,
 /// which the schema document then declares and imports.
-#[must_use]
-pub fn definitions(declared: &[Declared], catalog: &str, (encoding, nulls): (BinaryEncoding, Nulls)) -> (String, bool) {
+///
+/// # Errors
+///
+/// As `type_name`.
+pub fn definitions(declared: &[Declared], catalog: &str, (encoding, nulls): (BinaryEncoding, Nulls)) -> Result<(String, bool)> {
     let mut written: Vec<String> = Vec::new();
     let (mut text, mut xdt) = (String::new(), false);
     for d in augmented(declared) {
-        let (Some(name), Some(definition)) = (declared_name(&d, catalog), named_type(&d, catalog, encoding, nulls)) else { continue };
+        let (Some(name), Some(definition)) = (declared_name(&d, catalog)?, named_type(&d, catalog, encoding, nulls)?) else { continue };
         if written.contains(&name) {
             continue;
         }
@@ -437,7 +456,7 @@ pub fn definitions(declared: &[Declared], catalog: &str, (encoding, nulls): (Bin
         text.push_str(&definition);
         written.push(name);
     }
-    (text, xdt)
+    Ok((text, xdt))
 }
 
 /// [§9.7 GR3] `declared`, each followed by the types it is made of: a
