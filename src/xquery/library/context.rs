@@ -7,12 +7,13 @@
 //! [XQueryFO §16.3] requires of a stable function, in the implicit time
 //! zone.
 
+use super::super::functions::Context;
+use super::Builtin;
 use super::args::{context_item, optional};
 use super::durations::day_time;
-use super::moments::moment_value;
-use super::{Builtin, Focus};
+use super::moments::{adjusted, moment_value};
 use crate::error::Result;
-use crate::value::datetime::{MICROS_PER_DAY, MICROS_PER_MINUTE};
+use crate::value::datetime::MICROS_PER_MINUTE;
 use crate::xml::{Atomic, AtomicType, Moment, Sequence, Shape};
 
 /// The functions of [XQueryFO §16].
@@ -23,8 +24,8 @@ pub(super) const FUNCTIONS: [Builtin; 8] = [
     Builtin::function("current-date", 0, 0, |f, _| now(f, Shape::Date, AtomicType::Date)),
     Builtin::function("current-time", 0, 0, |f, _| now(f, Shape::Time, AtomicType::Time)),
     Builtin::function("implicit-timezone", 0, 0, |f, _| Ok(implicit_timezone(f))),
-    Builtin::function("default-collation", 0, 0, |f, _| Ok(optional(Some(Atomic::new(AtomicType::String, f.collation.as_str()))))),
-    Builtin::function("static-base-uri", 0, 0, |f, _| Ok(optional(f.base_uri.as_deref().map(|u| Atomic::new(AtomicType::AnyUri, u))))),
+    Builtin::function("default-collation", 0, 0, |f, _| Ok(optional(Some(Atomic::new(AtomicType::String, f.collation().uri()))))),
+    Builtin::function("static-base-uri", 0, 0, |f, _| Ok(optional(f.base_uri().map(|u| Atomic::new(AtomicType::AnyUri, u))))),
 ];
 
 /// The integer `n`.
@@ -37,9 +38,9 @@ fn integer(n: usize) -> Sequence {
 /// # Errors
 ///
 /// err:FONC0001 if there is no context item.
-fn position(focus: &Focus, _: &[Sequence]) -> Result<Sequence> {
+fn position(focus: &Context<'_>, _: &[Sequence]) -> Result<Sequence> {
     context_item(focus)?;
-    Ok(integer(focus.position))
+    Ok(integer(focus.position()))
 }
 
 /// [XQueryFO §16.2] `fn:last() as xs:integer`: the context size.
@@ -47,20 +48,16 @@ fn position(focus: &Focus, _: &[Sequence]) -> Result<Sequence> {
 /// # Errors
 ///
 /// err:FONC0001 if there is no context item.
-fn last(focus: &Focus, _: &[Sequence]) -> Result<Sequence> {
+fn last(focus: &Context<'_>, _: &[Sequence]) -> Result<Sequence> {
     context_item(focus)?;
-    Ok(integer(focus.size))
+    Ok(integer(focus.size()))
 }
 
 /// [XQueryFO §16.3 to §16.5] `fn:current-dateTime`, `fn:current-date` and
 /// `fn:current-time`: the current date and time, or its date or time, in
 /// the implicit time zone, of `kind`.
-fn now(focus: &Focus, shape: Shape, kind: AtomicType) -> Result<Sequence> {
-    let shift = i64::from(focus.timezone_minutes).saturating_mul(MICROS_PER_MINUTE);
-    let local = focus.now.utc.saturating_add(shift);
-    let days = local.div_euclid(MICROS_PER_DAY);
-    let micros = local.rem_euclid(MICROS_PER_DAY);
-    let zone = i16::try_from(focus.timezone_minutes).ok();
+fn now(focus: &Context<'_>, shape: Shape, kind: AtomicType) -> Result<Sequence> {
+    let Moment { days, micros, zone, .. } = adjusted(focus.now(), Some(i32::from(focus.timezone())));
     let moment = match shape {
         Shape::Date => Moment { shape, days, micros: 0, zone },
         Shape::Time => Moment { shape, days: 0, micros, zone },
@@ -72,8 +69,8 @@ fn now(focus: &Focus, shape: Shape, kind: AtomicType) -> Result<Sequence> {
 }
 
 /// [XQueryFO §16.6] `fn:implicit-timezone() as xdt:dayTimeDuration`.
-fn implicit_timezone(focus: &Focus) -> Sequence {
-    optional(Some(day_time(i128::from(focus.timezone_minutes).saturating_mul(i128::from(MICROS_PER_MINUTE)))))
+fn implicit_timezone(focus: &Context<'_>) -> Sequence {
+    optional(Some(day_time(i128::from(i32::from(focus.timezone())).saturating_mul(i128::from(MICROS_PER_MINUTE)))))
 }
 
 #[cfg(test)]

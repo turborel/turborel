@@ -1,56 +1,43 @@
-//! Tests of the library's seam: finding a function by its name and arity.
+//! Tests of the library's tables: each function found by its name and
+//! arity among the built-in functions.
 
+use super::super::functions::{FN_NAMESPACE, Library};
 use super::*;
-use crate::xml::{XS_NAMESPACE, XS_PREFIX};
+use crate::xml::QName;
+
+/// The name `local` of the namespace `uri`.
+fn name(uri: &str, local: &str) -> QName {
+    QName { prefix: None, uri: Some(uri.into()), local: local.into() }
+}
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQuery §3.1.5]
 /// [XQueryFO §1.2, §1.4] a function is found by its expanded QName and the
 /// number of its arguments: one of an optional argument by either count,
-/// none of a count it does not take or of another namespace.
+/// fn:concat by two or more, none of a count it does not take or of
+/// another namespace; the constructor functions are no functions of the
+/// library, as a call of one is a cast.
 #[test]
 fn functions_are_found_by_name_and_arity() {
-    let round = lookup(FN_NAMESPACE, "round-half-to-even", 1).expect("one argument");
-    assert_eq!(round.name(), (FN_NAMESPACE, "round-half-to-even"));
-    assert_eq!(round.arity(), 1..=2);
-    assert!(lookup(FN_NAMESPACE, "round-half-to-even", 2).is_some());
-    assert!(lookup(FN_NAMESPACE, "round-half-to-even", 3).is_none());
-    assert!(lookup(XDT_NAMESPACE, "round-half-to-even", 1).is_none());
-    assert!(lookup(FN_NAMESPACE, "no-such-function", 0).is_none());
-    assert!(lookup(FN_NAMESPACE, "string", 0).is_some());
+    let library = Library::builtin();
+    let round = name(FN_NAMESPACE, "round-half-to-even");
+    assert!(library.find(&round, 1).is_some() && library.find(&round, 2).is_some());
+    assert!(library.find(&round, 3).is_none() && library.find(&round, 0).is_none());
+    assert!(library.find(&name("urn:other", "round-half-to-even"), 1).is_none());
+    assert!(library.find(&name(FN_NAMESPACE, "no-such-function"), 0).is_none());
+    assert!(library.find(&name(FN_NAMESPACE, "concat"), 9).is_some() && library.find(&name(FN_NAMESPACE, "concat"), 1).is_none());
+    assert!(library.find(&name(crate::xml::XS_NAMESPACE, "integer"), 1).is_none());
 }
 
-/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQueryFO §5.1] each
-/// built-in atomic type but `xs:NOTATION` has a constructor, in the
-/// namespace of its type's name; no name is two functions of one arity.
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2] [XQueryFO §1.4] no
+/// name and arity is two functions of the tables, so each is found alone.
 #[test]
-fn constructors_and_names_are_each_found_once() {
-    for kind in crate::xml::AtomicType::all() {
-        let name = kind.name();
-        let (prefix, local) = name.split_once(':').unwrap();
-        let namespace = if prefix == XS_PREFIX { XS_NAMESPACE } else { XDT_NAMESPACE };
-        let found = lookup(namespace, local, 1);
-        assert_eq!(found.is_some(), kind != crate::xml::AtomicType::Notation, "{name}");
-    }
-    let all: Vec<_> = all().collect();
+fn no_name_and_arity_is_two_functions() {
+    let all: Vec<&Builtin> = all().collect();
     for (i, f) in all.iter().enumerate() {
+        assert!(f.least <= f.most, "{}", f.local);
         for g in all.iter().skip(i.saturating_add(1)) {
-            let overlap = f.arity().start() <= g.arity().end() && g.arity().start() <= f.arity().end();
-            assert!(f.name() != g.name() || !overlap, "{:?} twice", f.name());
+            let overlap = f.least <= g.most && g.least <= f.most;
+            assert!(f.local != g.local || !overlap, "fn:{} twice", f.local);
         }
     }
-}
-
-/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR1] [XQuery Appendix C.2]
-/// a focus starts with no context item, the code point collation, no base
-/// URI and the clock's time zone as the implicit one; one at an item keeps
-/// the rest.
-#[test]
-fn a_focus_starts_empty() {
-    let now = Now { utc: 7, zone: 90 };
-    let focus = Focus::new(now);
-    assert!(focus.item.is_none());
-    assert_eq!((focus.timezone_minutes, focus.collation.as_str(), focus.base_uri.as_deref()), (90_i32, CODEPOINT_COLLATION, None));
-    let item = Item::Atomic(crate::xml::Atomic::new(crate::xml::AtomicType::String, "x"));
-    let at = focus.at(item, 2, 3);
-    assert_eq!((at.position, at.size, at.now), (2, 3, now));
 }

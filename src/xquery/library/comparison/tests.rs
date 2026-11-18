@@ -1,5 +1,6 @@
 //! Tests of the value comparison of atomic values.
 
+use super::super::testing::collator;
 use super::*;
 
 fn at(kind: AtomicType, text: &str) -> Atomic {
@@ -13,7 +14,7 @@ fn at(kind: AtomicType, text: &str) -> Atomic {
 /// zone; none of types `eq` is not defined for.
 #[test]
 fn equality_of_values() {
-    let c = Collator::Codepoint;
+    let c = Collator::codepoint();
     let eq = |a: &Atomic, b: &Atomic| value_equal(a, b, &c, 0).unwrap();
     assert_eq!(eq(&at(AtomicType::Integer, "1"), &at(AtomicType::Double, "1")), Some(true));
     assert_eq!(eq(&at(AtomicType::Double, "NaN"), &at(AtomicType::Double, "NaN")), Some(false));
@@ -28,7 +29,7 @@ fn equality_of_values() {
     assert_eq!(eq(&at(AtomicType::Base64Binary, "AQ=="), &at(AtomicType::Base64Binary, "AQ==")), Some(true));
     assert_eq!(eq(&at(AtomicType::HexBinary, "01"), &at(AtomicType::Base64Binary, "AQ==")), None);
     assert_eq!(eq(&Atomic::qname(Some("u"), "a:x"), &Atomic::qname(Some("u"), "x")), Some(true));
-    let insensitive = Collator::named("CASE_INSENSITIVE").unwrap();
+    let insensitive = collator("CASE_INSENSITIVE");
     assert_eq!(value_equal(&at(AtomicType::String, "A"), &at(AtomicType::String, "a"), &insensitive, 0).unwrap(), Some(true));
 }
 
@@ -37,7 +38,7 @@ fn equality_of_values() {
 /// than true; none of NaN, of types of no order and of different types.
 #[test]
 fn order_of_values() {
-    let c = Collator::Codepoint;
+    let c = Collator::codepoint();
     let order = |a: &Atomic, b: &Atomic| value_order(a, b, &c, 0).unwrap();
     assert_eq!(order(&at(AtomicType::Integer, "2"), &at(AtomicType::Decimal, "1.5")), Some(Ordering::Greater));
     assert_eq!(order(&at(AtomicType::Double, "NaN"), &at(AtomicType::Double, "1")), None);

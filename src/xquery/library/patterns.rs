@@ -10,9 +10,10 @@
 //! replacement that is none err:FORX0004. A pattern is compiled for each
 //! call, as the library keeps nothing between calls.
 
+use super::super::error::{ErrorCode, error};
+use super::super::functions::Context;
+use super::Builtin;
 use super::args::{arg, boolean, items, string, string_or_empty, string_value, within_items};
-use super::codes::{FORX0001, FORX0002, FORX0003, FORX0004, fail};
-use super::{Builtin, Focus};
 use crate::error::{Result, SqlError, SqlState};
 use crate::regex::Regex;
 use crate::xml::{Atomic, AtomicType, Item, Sequence};
@@ -31,17 +32,17 @@ const FLAGS: &str = "smix";
 fn as_xquery(error: SqlError) -> SqlError {
     let state = error.sqlstate();
     let code = if state == SqlState::INVALID_XQUERY_REGULAR_EXPRESSION {
-        FORX0002
+        ErrorCode::FORX0002
     } else if state == SqlState::INVALID_XQUERY_OPTION_FLAG {
-        FORX0001
+        ErrorCode::FORX0001
     } else if state == SqlState::ATTEMPT_TO_REPLACE_A_ZERO_LENGTH_STRING {
-        FORX0003
+        ErrorCode::FORX0003
     } else if state == SqlState::INVALID_XQUERY_REPLACEMENT_STRING {
-        FORX0004
+        ErrorCode::FORX0004
     } else {
         return error;
     };
-    fail(code, &error.described())
+    super::super::error::error(code, &error.described())
 }
 
 /// The pattern of `args`'s second argument under the flags of its argument
@@ -58,7 +59,7 @@ fn compiled(args: &[Sequence], flags: usize) -> Result<Regex> {
         None => String::new(),
     };
     if let Some(bad) = flags.chars().find(|c| !FLAGS.contains(*c)) {
-        return Err(fail(FORX0001, &format!("'{bad}' is none of the flags s, m, i and x [XQueryFO §7.6.1.1]")));
+        return Err(error(ErrorCode::FORX0001, &format!("'{bad}' is none of the flags s, m, i and x [XQueryFO §7.6.1.1]")));
     }
     Regex::xquery(&pattern, &flags).map_err(as_xquery)
 }
@@ -66,14 +67,14 @@ fn compiled(args: &[Sequence], flags: usize) -> Result<Regex> {
 /// The error of a pattern that matches the zero-length string [XQueryFO
 /// §7.6.3, §7.6.4].
 fn matches_nothing() -> SqlError {
-    fail(FORX0003, "the pattern matches the zero-length string [XQueryFO §7.6.3]")
+    error(ErrorCode::FORX0003, "the pattern matches the zero-length string [XQueryFO §7.6.3]")
 }
 
 /// [XQueryFO §7.6.2] `fn:matches($input as xs:string?, $pattern as
 /// xs:string, $flags as xs:string) as xs:boolean`: whether some substring
 /// of the input matches the pattern; the empty sequence the zero-length
 /// string.
-fn matches(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn matches(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let regex = compiled(args, 2)?;
     let input = string_or_empty(arg(args, 0))?;
     Ok(boolean(regex.is_match(&input).map_err(as_xquery)?))
@@ -88,7 +89,7 @@ fn matches(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
 ///
 /// As `compiled`; err:FORX0003 if the pattern matches the zero-length
 /// string; err:FORX0004 of a replacement that is none.
-fn replace(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn replace(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let regex = compiled(args, 3)?;
     let input: Vec<char> = string_or_empty(arg(args, 0))?.chars().collect();
     let replacement = string(arg(args, 2))?;
@@ -105,7 +106,7 @@ fn replace(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
 ///
 /// As `compiled`; err:FORX0003 if the pattern matches the zero-length
 /// string.
-fn tokenize(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn tokenize(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let regex = compiled(args, 2)?;
     if regex.is_match("").map_err(as_xquery)? {
         return Err(matches_nothing());

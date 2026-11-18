@@ -9,6 +9,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
+use super::error::{ErrorCode, error};
+use crate::error::Result;
 use crate::value::collation::{Collation, Pad};
 
 /// [XQueryFO §7.3.1] The URI of the Unicode codepoint collation.
@@ -71,6 +73,32 @@ impl Collator {
         by.sort_key(a, Pad::None, &mut x);
         by.sort_key(b, Pad::None, &mut y);
         x.cmp(&y)
+    }
+
+    /// Whether `a` and `b` are equal by it [XQueryFO §7.3.2].
+    #[must_use]
+    pub fn equal(&self, a: &str, b: &str) -> bool {
+        self.compare(a, b) == Ordering::Equal
+    }
+
+    /// The collation units of `text` [XQueryFO §7.5]: its characters, of
+    /// the codepoint collation and of a collation that compares strings
+    /// one character at a time each folded as it compares it.
+    ///
+    /// # Errors
+    ///
+    /// err:FOCH0004 if the collation does not compare one character at a
+    /// time, as `UNICODE` and its tailorings do not (RULES.md D60).
+    pub fn units(&self, text: &str) -> Result<Vec<char>> {
+        let Some(by) = &self.by else { return Ok(text.chars().collect()) };
+        text.chars()
+            .map(|ch| {
+                by.fold(ch).ok_or_else(|| {
+                    let why = format!("the collation {} does not split strings into collation units [XQueryFO §7.5]", self.uri);
+                    error(ErrorCode::FOCH0004, &why)
+                })
+            })
+            .collect()
     }
 }
 

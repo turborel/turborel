@@ -1,21 +1,143 @@
 //! Arithmetic and the sequence operators evaluated [XQuery §3.4, §3.3.1,
 //! §3.3.3]: each arithmetic operand atomized, one value or none, an
-//! untyped one cast to `xs:double`, then the operator mapping's function
-//! [XQuery Appendix B.2]; ranges of integers; and the union, intersection
-//! and difference of node sequences in document order.
-
-use std::cmp::Ordering;
+//! untyped one cast to `xs:double`, then the operator of \[XQueryFO\] the
+//! operator mapping names [XQuery Appendix B.2], the library's (`op`);
+//! ranges of integers by `op:to`; and the union, intersection and
+//! difference of node sequences by `op:union`, `op:intersect` and
+//! `op:except`.
 
 use super::super::error::{ErrorCode, error};
+use super::super::library::op;
 use super::super::plan::{Arith, Op};
-use super::sequence::{atomize, bounded, in_document_order, nodes};
+use super::sequence::atomize;
 use super::types::cast_atomic;
-use super::{Evaluator, Focus, Frame, Seq, numeric, temporal};
+use super::{Evaluator, Focus, Frame, Seq};
 use crate::error::Result;
-use crate::xml::{Atomic, AtomicType, Item, Node};
+use crate::xml::{Atomic, AtomicType, Item, Primitive, Sequence};
 
 /// What an arithmetic operand is: none, or one atomic value.
 type Operand = Option<Atomic>;
+
+/// An operator of two atomic values.
+type Binary = fn(&Atomic, &Atomic) -> Result<Atomic>;
+
+/// What an operand of arithmetic is, by the operator mapping [XQuery
+/// Appendix B.2].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// A number of any numeric type.
+    Number,
+    /// An `xs:date`.
+    Date,
+    /// An `xs:time`.
+    Time,
+    /// An `xs:dateTime`.
+    DateTime,
+    /// An `xdt:yearMonthDuration`.
+    YearMonth,
+    /// An `xdt:dayTimeDuration`.
+    DayTime,
+    /// Any other value, of no arithmetic.
+    Other,
+}
+
+/// The kind of `a`.
+fn kind(a: &Atomic) -> Kind {
+    let p = a.kind.primitive();
+    if p.numeric() {
+        return Kind::Number;
+    }
+    match p {
+        Primitive::Date => Kind::Date,
+        Primitive::Time => Kind::Time,
+        Primitive::DateTime => Kind::DateTime,
+        Primitive::YearMonthDuration => Kind::YearMonth,
+        Primitive::DayTimeDuration => Kind::DayTime,
+        Primitive::Untyped
+        | Primitive::String
+        | Primitive::Boolean
+        | Primitive::Decimal
+        | Primitive::Integer
+        | Primitive::Float
+        | Primitive::Double
+        | Primitive::Duration
+        | Primitive::GYearMonth
+        | Primitive::GYear
+        | Primitive::GMonthDay
+        | Primitive::GDay
+        | Primitive::GMonth
+        | Primitive::HexBinary
+        | Primitive::Base64Binary
+        | Primitive::AnyUri
+        | Primitive::QName
+        | Primitive::Notation => Kind::Other,
+    }
+}
+
+/// The operator of `op` on numbers [XQueryFO §6.2].
+fn numeric(op: Arith) -> Binary {
+    match op {
+        Arith::Add => op::numeric_add,
+        Arith::Subtract => op::numeric_subtract,
+        Arith::Multiply => op::numeric_multiply,
+        Arith::Divide => op::numeric_divide,
+        Arith::IntegerDivide => op::numeric_integer_divide,
+        Arith::Modulo => op::numeric_mod,
+    }
+}
+
+/// The operator `+` maps operands of `x` and `y` to [XQuery Appendix
+/// B.2], and whether it takes them the other way round.
+fn addition(x: Kind, y: Kind) -> Option<(Binary, bool)> {
+    let (left, right, swapped) = if matches!(x, Kind::YearMonth | Kind::DayTime) && !matches!(y, Kind::YearMonth | Kind::DayTime) {
+        (y, x, true)
+    } else {
+        (x, y, false)
+    };
+    let f: Binary = match (left, right) {
+        (Kind::Date, Kind::YearMonth) => op::add_year_month_duration_to_date,
+        (Kind::Date, Kind::DayTime) => op::add_day_time_duration_to_date,
+        (Kind::Time, Kind::DayTime) => op::add_day_time_duration_to_time,
+        (Kind::DateTime, Kind::YearMonth) => op::add_year_month_duration_to_date_time,
+        (Kind::DateTime, Kind::DayTime) => op::add_day_time_duration_to_date_time,
+        (Kind::YearMonth, Kind::YearMonth) => op::add_year_month_durations,
+        (Kind::DayTime, Kind::DayTime) => op::add_day_time_durations,
+        _ => return None,
+    };
+    Some((f, swapped))
+}
+
+/// The operator `-` maps operands of `x` and `y` to [XQuery Appendix
+/// B.2], those of dates and times given the implicit timezone.
+fn subtraction(x: Kind, y: Kind) -> Option<Binary> {
+    Some(match (x, y) {
+        (Kind::Date, Kind::YearMonth) => op::subtract_year_month_duration_from_date,
+        (Kind::Date, Kind::DayTime) => op::subtract_day_time_duration_from_date,
+        (Kind::Time, Kind::DayTime) => op::subtract_day_time_duration_from_time,
+        (Kind::DateTime, Kind::YearMonth) => op::subtract_year_month_duration_from_date_time,
+        (Kind::DateTime, Kind::DayTime) => op::subtract_day_time_duration_from_date_time,
+        (Kind::YearMonth, Kind::YearMonth) => op::subtract_year_month_durations,
+        (Kind::DayTime, Kind::DayTime) => op::subtract_day_time_durations,
+        _ => return None,
+    })
+}
+
+/// The operator `*` or `div` maps operands of `x` and `y` to [XQuery
+/// Appendix B.2], and whether it takes them the other way round.
+fn scaling(divide: bool, x: Kind, y: Kind) -> Option<(Binary, bool)> {
+    let found: (Binary, bool) = match (divide, x, y) {
+        (false, Kind::YearMonth, Kind::Number) => (op::multiply_year_month_duration, false),
+        (false, Kind::Number, Kind::YearMonth) => (op::multiply_year_month_duration, true),
+        (false, Kind::DayTime, Kind::Number) => (op::multiply_day_time_duration, false),
+        (false, Kind::Number, Kind::DayTime) => (op::multiply_day_time_duration, true),
+        (true, Kind::YearMonth, Kind::Number) => (op::divide_year_month_duration, false),
+        (true, Kind::DayTime, Kind::Number) => (op::divide_day_time_duration, false),
+        (true, Kind::YearMonth, Kind::YearMonth) => (op::divide_year_month_duration_by_year_month_duration, false),
+        (true, Kind::DayTime, Kind::DayTime) => (op::divide_day_time_duration_by_day_time_duration, false),
+        _ => return None,
+    };
+    Some(found)
+}
 
 impl Evaluator<'_> {
     /// An arithmetic chain [XQuery §3.4], left to right.
@@ -31,66 +153,74 @@ impl Evaluator<'_> {
         Ok(value.map(Item::Atomic).into_iter().collect())
     }
 
-    /// `a op b` [XQuery Appendix B.2]: numbers by op:numeric-add and the
-    /// rest, dates, times and durations by their functions.
+    /// `a op b` by the operator the operator mapping names [XQuery
+    /// Appendix B.2].
     ///
     /// # Errors
     ///
     /// err:XPTY0004 if the mapping has no such combination; the
-    /// function's own.
-    fn binary(&self, op: Arith, a: &Atomic, b: &Atomic) -> Result<Atomic> {
-        if let (Some(x), Some(y)) = (numeric::of(a)?, numeric::of(b)?) {
-            return Ok(numeric::atomic(numeric::arithmetic(op, x, y)?));
+    /// operator's own.
+    fn binary(&self, op: Arith, left: &Atomic, right: &Atomic) -> Result<Atomic> {
+        let (lk, rk) = (kind(left), kind(right));
+        if lk == Kind::Number && rk == Kind::Number {
+            return numeric(op)(left, right);
         }
-        temporal::arithmetic(op, a, b, self.context.timezone)?.ok_or_else(|| {
-            let why = format!("{} and {} have no arithmetic operator so [XQuery Appendix B.2]", a.kind.name(), b.kind.name());
-            error(ErrorCode::XPTY0004, &why)
-        })
+        let zone = i32::from(self.context.timezone);
+        let found = match op {
+            Arith::Add => addition(lk, rk),
+            Arith::Subtract => match (lk, rk) {
+                (Kind::Date, Kind::Date) => return op::subtract_dates(left, right, zone),
+                (Kind::Time, Kind::Time) => return op::subtract_times(left, right, zone),
+                (Kind::DateTime, Kind::DateTime) => return op::subtract_date_times(left, right, zone),
+                _ => subtraction(lk, rk).map(|function| (function, false)),
+            },
+            Arith::Multiply => scaling(false, lk, rk),
+            Arith::Divide => scaling(true, lk, rk),
+            Arith::IntegerDivide | Arith::Modulo => None,
+        };
+        let Some((function, swapped)) = found else {
+            let why = format!("{} and {} have no arithmetic operator so [XQuery Appendix B.2]", left.kind.name(), right.kind.name());
+            return Err(error(ErrorCode::XPTY0004, &why));
+        };
+        if swapped { function(right, left) } else { function(left, right) }
     }
 
-    /// A unary operator [XQuery §3.4]: of a number, `-` its negation and
-    /// `+` itself [XQueryFO §6.2.7, §6.2.8].
+    /// A unary operator [XQuery §3.4]: of a number, `-` op:numeric-unary-
+    /// minus and `+` op:numeric-unary-plus [XQueryFO §6.2.7, §6.2.8].
     pub(super) fn unary(&self, negate: bool, operand_op: &Op, frame: &mut Frame, focus: &Focus) -> Result<Seq> {
         let Some(a) = operand(&self.eval(operand_op, frame, focus)?)? else { return Ok(Vec::new()) };
-        let Some(n) = numeric::of(&a)? else {
-            return Err(error(
-                ErrorCode::XPTY0004,
-                &format!("a unary operator is of a number, not {} [XQuery Appendix B.2]", a.kind.name()),
-            ));
-        };
-        let result = if negate { numeric::negated(n)? } else { n };
-        Ok(vec![Item::Atomic(numeric::atomic(result))])
+        if kind(&a) != Kind::Number {
+            let why = format!("a unary operator is of a number, not {} [XQuery Appendix B.2]", a.kind.name());
+            return Err(error(ErrorCode::XPTY0004, &why));
+        }
+        let result = if negate { op::numeric_unary_minus(&a)? } else { op::numeric_unary_plus(&a)? };
+        Ok(vec![Item::Atomic(result)])
     }
 
     /// A range [XQuery §3.3.1]: each operand converted as an argument of
-    /// type `xs:integer?`; none if either is none or the first is the
-    /// greater; else every integer from the first to the second.
+    /// type `xs:integer?`; none if either is none; else op:to of them
+    /// [XQueryFO §15.5.1].
     pub(super) fn range(&self, operands: &[Op; 2], frame: &mut Frame, focus: &Focus) -> Result<Seq> {
         let [from, to] = operands;
-        let (Some(from), Some(to)) = (integer(&self.eval(from, frame, focus)?)?, integer(&self.eval(to, frame, focus)?)?) else {
-            return Ok(Vec::new());
-        };
-        if from > to {
-            return Ok(Vec::new());
-        }
-        let count = to.checked_sub(from).and_then(|d| d.checked_add(1)).and_then(|n| usize::try_from(n).ok()).unwrap_or(usize::MAX);
-        bounded(count)?;
-        Ok((from..=to).map(|i| Item::Atomic(Atomic::new(AtomicType::Integer, i.to_string()))).collect())
+        let from = range_operand(&self.eval(from, frame, focus)?)?;
+        let to = range_operand(&self.eval(to, frame, focus)?)?;
+        let (Some(from), Some(to)) = (from, to) else { return Ok(Vec::new()) };
+        Ok(op::to(&from, &to)?.into_items())
     }
 
-    /// `union` [XQuery §3.3.3]: every node of its operands, in document
-    /// order, each once.
+    /// `union` [XQuery §3.3.3]: op:union of its operands, left to right
+    /// [XQueryFO §15.3.2].
     pub(super) fn union(&self, operands: &[Op], frame: &mut Frame, focus: &Focus) -> Result<Seq> {
-        let mut all = Vec::new();
-        for op in operands {
-            all.extend(node_operand(self.eval(op, frame, focus)?)?);
-            bounded(all.len())?;
+        let mut value = Sequence::default();
+        for operand in operands {
+            let next = Sequence::new(self.eval(operand, frame, focus)?);
+            value = op::union(&value, &next)?;
         }
-        Ok(in_document_order(all))
+        Ok(value.into_items())
     }
 
-    /// `intersect` and `except` [XQuery §3.3.3], left to right: the nodes
-    /// of the first in the second, or not in it, in document order.
+    /// `intersect` and `except` [XQuery §3.3.3], left to right: op:intersect
+    /// and op:except [XQueryFO §15.3.3, §15.3.4].
     pub(super) fn intersect_except(
         &self,
         first: &Op,
@@ -98,28 +228,13 @@ impl Evaluator<'_> {
         frame: &mut Frame,
         focus: &Focus,
     ) -> Result<Seq> {
-        let mut value = sorted(node_operand(self.eval(first, frame, focus)?)?);
-        for (op, next) in rest {
-            let other = sorted(node_operand(self.eval(next, frame, focus)?)?);
-            let keep = *op == super::super::ast::SetOp::Intersect;
-            value.retain(|n| other.binary_search_by(|o| o.document_order(n)).is_ok() == keep);
+        let mut value = op::union(&Sequence::new(self.eval(first, frame, focus)?), &Sequence::default())?;
+        for (set, next) in rest {
+            let other = Sequence::new(self.eval(next, frame, focus)?);
+            value = if *set == super::super::ast::SetOp::Intersect { op::intersect(&value, &other)? } else { op::except(&value, &other)? };
         }
-        Ok(value.into_iter().map(Item::Node).collect())
+        Ok(value.into_items())
     }
-}
-
-/// `nodes` in document order, each once.
-fn sorted(mut nodes: Vec<Node>) -> Vec<Node> {
-    nodes.sort_by(Node::document_order);
-    nodes.dedup_by(|a, b| a.document_order(b) == Ordering::Equal);
-    nodes
-}
-
-/// The nodes of an operand of `union`, `intersect` or `except` [XQuery
-/// §3.3.3]: err:XPTY0004 if one item is no node.
-fn node_operand(items: Seq) -> Result<Vec<Node>> {
-    nodes(items)
-        .ok_or_else(|| error(ErrorCode::XPTY0004, "an operand of union, intersect or except holds an item that is no node [XQuery §3.3.3]"))
 }
 
 /// An arithmetic operand [XQuery §3.4]: atomized, none or one value
@@ -133,21 +248,12 @@ fn operand(items: &[Item]) -> Result<Operand> {
     if a.kind == AtomicType::UntypedAtomic { cast_atomic(&a, AtomicType::Double).map(Some) } else { Ok(Some(a)) }
 }
 
-/// An operand of a range, converted as an argument of type `xs:integer?`
-/// [XQuery §3.3.1, §3.1.5]: an untyped value cast to `xs:integer`, another
-/// an `xs:integer` \[err:XPTY0004\].
-fn integer(items: &[Item]) -> Result<Option<i128>> {
+/// An operand of a range [XQuery §3.3.1]: atomized, none or one value
+/// \[err:XPTY0004\], which op:to converts as an `xs:integer`.
+fn range_operand(items: &[Item]) -> Result<Operand> {
     let mut atomized = atomize(items);
     if atomized.len() > 1 {
         return Err(error(ErrorCode::XPTY0004, "an operand of a range is more than one atomic value [XQuery §3.3.1]"));
     }
-    let Some(a) = atomized.pop() else { return Ok(None) };
-    let a = if a.kind == AtomicType::UntypedAtomic { cast_atomic(&a, AtomicType::Integer)? } else { a };
-    if !a.kind.derives_from(AtomicType::Integer) {
-        return Err(error(ErrorCode::XPTY0004, &format!("an operand of a range is an xs:integer, not {} [XQuery §3.3.1]", a.kind.name())));
-    }
-    match numeric::of(&a)? {
-        Some(numeric::Num::Integer(i)) => Ok(Some(i)),
-        Some(numeric::Num::Decimal(..) | numeric::Num::Float(_) | numeric::Num::Double(_)) | None => Ok(None),
-    }
+    Ok(atomized.pop())
 }

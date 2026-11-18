@@ -1,9 +1,9 @@
 //! The operators of \[XQueryFO\], the `op:` functions that back up XQuery's
 //! operators [XQuery Appendix B.2], each a plain function named after the
 //! one it is: `op:numeric-add` is `numeric_add`. They are not functions a
-//! query calls by name [XQueryFO §1.2], so they are not in `lookup`; the
-//! evaluation of XQuery's operators calls them, its operands atomized as
-//! [XQuery §3.4, §3.5] says.
+//! query calls by name [XQueryFO §1.2], so they are no built-in functions:
+//! the evaluation of XQuery's operators calls them, its operands atomized
+//! as [XQuery §3.4, §3.5] says.
 
 pub use super::binary::{base64_binary_equal, hex_binary_equal, notation_equal};
 pub use super::booleans::{boolean_equal, boolean_greater_than, boolean_less_than};

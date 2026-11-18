@@ -1,6 +1,6 @@
 //! Tests of the context functions.
 
-use super::super::testing::{call, call_in, code, focus, text, typed};
+use super::super::testing::{Focus, call, call_in, code, collator, focus, text, typed};
 use super::*;
 use crate::xml::Item;
 
@@ -28,9 +28,9 @@ fn current_date_and_time() {
     assert_eq!(typed(call_in(&f, "current-date", &[])), (AtomicType::Date, "2004-05-12-05:00".to_owned()));
     assert_eq!(typed(call_in(&f, "current-time", &[])), (AtomicType::Time, "13:17:15.125-05:00".to_owned()));
     assert_eq!(typed(call_in(&f, "implicit-timezone", &[])), (AtomicType::DayTimeDuration, "-PT5H".to_owned()));
-    let utc = Focus { timezone_minutes: 0, ..focus() };
+    let utc = Focus { timezone: 0, ..focus() };
     assert_eq!(text(call_in(&utc, "current-dateTime", &[])), "2004-05-12T18:17:15.125Z");
-    let east = Focus { timezone_minutes: 600, ..focus() };
+    let east = Focus { timezone: 600, ..focus() };
     assert_eq!(text(call_in(&east, "current-date", &[])), "2004-05-13+10:00");
 }
 
@@ -39,9 +39,9 @@ fn current_date_and_time() {
 /// the static base URI, the empty sequence if there is none.
 #[test]
 fn collation_and_base_uri() {
-    assert_eq!(text(call("default-collation", &[])), super::super::CODEPOINT_COLLATION);
+    assert_eq!(text(call("default-collation", &[])), super::super::super::collation::CODEPOINT);
     assert!(call("static-base-uri", &[]).unwrap().items().is_empty());
-    let based = Focus { base_uri: Some("http://e.org/".to_owned()), collation: "UNICODE".to_owned(), ..focus() };
+    let based = Focus { base_uri: Some("http://e.org/".to_owned()), collation: collator("UNICODE"), ..focus() };
     assert_eq!(typed(call_in(&based, "static-base-uri", &[])), (AtomicType::AnyUri, "http://e.org/".to_owned()));
-    assert_eq!(text(call_in(&based, "default-collation", &[])), "UNICODE");
+    assert_eq!(text(call_in(&based, "default-collation", &[])), "urn:turborel:collation:UNICODE");
 }

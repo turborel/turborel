@@ -8,20 +8,24 @@ use super::super::super::testing::{code_of, run};
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2, GR3] [XQueryFO §6.2,
 /// §6.3] the arithmetic of each kind of number: decimals multiplied, a
-/// quotient of more digits than the scale held, of floats and doubles
-/// each operator, a unary minus of each; exact numbers compared by sign;
-/// idiv of doubles by zero err:FOAR0001, of NaN err:FOAR0002, mod of
-/// integers by zero err:FOAR0001, a quotient past 128 bits err:FOAR0002.
+/// quotient exact where it ends, of floats and doubles each operator, a
+/// unary minus of each; exact numbers compared by sign; idiv of doubles
+/// by zero err:FOAR0001, of NaN err:FOAR0002, mod of integers by zero
+/// err:FOAR0001, a quotient past 1,024 digits err:FOAR0002.
 #[test]
 fn numbers_of_each_kind() {
-    assert_eq!(run("1.5 * 2.5, 0.0000000000000000001 div 1, 0.0000000000000000001 div 0.5"), "3.75 0 0");
+    assert_eq!(
+        run("1.5 * 2.5, 0.0000000000000000001 div 1, 0.0000000000000000001 div 0.5"),
+        "3.75 0.0000000000000000001 0.0000000000000000002"
+    );
     assert_eq!(run("1e0 - 2e0, 2e0 * 3e0, 7e0 mod 2e0, 7e0 idiv 2e0"), "-1 6 1 3");
     assert_eq!(run("-xs:float(1.5), -1.5e0, -1.5"), "-1.5 -1.5 -1.5");
     assert_eq!(run("1 gt -1, -1 lt 1, -1 lt -2, -2 lt -1, 10 gt 9"), "true true false true true");
     assert_eq!(code_of("1 mod 0"), "err:FOAR0001");
     assert_eq!(code_of("1e0 idiv 0e0"), "err:FOAR0001");
     assert_eq!(code_of("xs:double('NaN') idiv 1e0"), "err:FOAR0002");
-    assert_eq!(code_of("99999999999999999999999999999999999999 div 0.1"), "err:FOAR0002");
+    let big = "xs:integer(string-join(for $i in 1 to 1024 return '9', ''))";
+    assert_eq!(code_of(&format!("{big} div 0.1")), "err:FOAR0002");
     assert_eq!(code_of("-'a'"), "err:XPTY0004");
     assert_eq!(run("-(), +()"), "");
 }

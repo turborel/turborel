@@ -48,11 +48,11 @@ fn before_and_after() {
 /// err:FOCH0004; an unknown one err:FOCH0002.
 #[test]
 fn matching_by_collation_units() {
-    let ci = s("CASE_INSENSITIVE");
+    let ci = s("urn:turborel:collation:CASE_INSENSITIVE");
     assert_eq!(truth("contains", &[s("Tattoo"), s("TTO"), ci.clone()]), "true");
     assert_eq!(text(call("substring-before", &[s("HelloWorld"), s("world"), ci.clone()])), "Hello");
     assert_eq!(text(call("substring-after", &[s("HelloWorld"), s("HELLO"), ci.clone()])), "World");
     assert_eq!(truth("ends-with", &[s("abC"), s("c"), ci]), "true");
-    assert_eq!(code(call("contains", &[s("a"), s("a"), s("UNICODE")])), "FOCH0004");
+    assert_eq!(code(call("contains", &[s("a"), s("a"), s("urn:turborel:collation:UNICODE")])), "FOCH0004");
     assert_eq!(code(call("starts-with", &[s("a"), s("a"), s("CollationA")])), "FOCH0002");
 }

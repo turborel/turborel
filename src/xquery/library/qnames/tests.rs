@@ -1,6 +1,6 @@
 //! Tests of the functions related to QNames.
 
-use super::super::testing::{atom, call, code, document, elements, empty, int, one, s, text, texts, typed};
+use super::super::testing::{atom, call, code, collator, document, elements, empty, int, one, s, text, texts, typed};
 use super::*;
 
 /// The one QName of `result`.
@@ -59,12 +59,12 @@ fn qname_and_its_parts() {
 /// type err:XPTY0004.
 #[test]
 fn qname_equality() {
-    let codepoint = Collator::Codepoint;
+    let codepoint = Collator::codepoint();
     let a = Atomic::qname(Some("urn:u"), "a:x");
     assert!(qname_equal(&a, &Atomic::qname(Some("urn:u"), "b:x"), &codepoint).unwrap());
     assert!(!qname_equal(&a, &Atomic::qname(Some("urn:v"), "a:x"), &codepoint).unwrap());
     assert!(!qname_equal(&a, &Atomic::qname(Some("urn:u"), "a:X"), &codepoint).unwrap());
-    let insensitive = Collator::named("CASE_INSENSITIVE").unwrap();
+    let insensitive = collator("CASE_INSENSITIVE");
     assert!(qname_equal(&a, &Atomic::qname(Some("urn:u"), "a:X"), &insensitive).unwrap());
     assert!(qname_equal(&a, &Atomic::new(AtomicType::String, "a:x"), &codepoint).is_err());
 }

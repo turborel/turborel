@@ -21,3 +21,20 @@ fn collations_by_uri() {
     assert!(Collator::named(&format!("{SQL_COLLATION}NO_SUCH"), &all).is_none());
     assert!(format!("{codepoint:?}").contains(CODEPOINT));
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQueryFO §7.3.2,
+/// §7.5] RULES.md D60: strings equal by a collation's sort keys of no
+/// padding; the collation units of a string its characters, folded by a
+/// collation of one character at a time; a collation of no units, as
+/// `UNICODE` is, err:FOCH0004.
+#[test]
+fn equality_and_collation_units() {
+    let all = collations();
+    let named = |name: &str| Collator::named(&format!("{SQL_COLLATION}{name}"), &all).unwrap();
+    assert!(named("CASE_INSENSITIVE").equal("Straße", "STRAßE"));
+    assert!(!named("UCS_BASIC").equal("a", "a "));
+    assert!(!Collator::codepoint().equal("a", "A"));
+    assert_eq!(Collator::codepoint().units("aB").unwrap(), vec!['a', 'B']);
+    assert_eq!(named("CASE_INSENSITIVE").units("aB").unwrap(), vec!['a', 'b']);
+    assert!(named("UNICODE").units("a").unwrap_err().to_string().contains("err:FOCH0004"));
+}

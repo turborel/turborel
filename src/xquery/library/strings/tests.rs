@@ -1,6 +1,6 @@
 //! Tests of the functions on strings.
 
-use super::super::testing::{atom, call, call_in, code, dbl, empty, focus, int, s, seq, text, texts, typed};
+use super::super::testing::{Focus, atom, call, call_in, code, collator, dbl, empty, focus, int, s, seq, text, texts, typed};
 use crate::xml::{Atomic, AtomicType, Item};
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQueryFO §7.2.1.1,
@@ -33,9 +33,9 @@ fn comparing_strings() {
     assert_eq!(text(call("compare", &[s("a"), s("b")])), "-1");
     assert_eq!(text(call("compare", &[s("b"), s("B")])), "1");
     assert_eq!(text(call("compare", &[s("abc"), s("abc ")])), "-1");
-    assert_eq!(text(call("compare", &[s("Bob"), s("bob"), s("CASE_INSENSITIVE")])), "0");
-    assert_eq!(text(call("compare", &[s("a"), s("B"), s("UNICODE")])), "-1");
-    let insensitive = super::super::Focus { collation: "CASE_INSENSITIVE".to_owned(), ..focus() };
+    assert_eq!(text(call("compare", &[s("Bob"), s("bob"), s("urn:turborel:collation:CASE_INSENSITIVE")])), "0");
+    assert_eq!(text(call("compare", &[s("a"), s("B"), s("urn:turborel:collation:UNICODE")])), "-1");
+    let insensitive = Focus { collation: collator("CASE_INSENSITIVE"), ..focus() };
     assert_eq!(text(call_in(&insensitive, "compare", &[s("X"), s("x")])), "0");
     assert!(call("compare", &[empty(), s("a")]).unwrap().items().is_empty());
     assert_eq!(code(call("compare", &[s("a"), s("b"), s("deutsch")])), "FOCH0002");

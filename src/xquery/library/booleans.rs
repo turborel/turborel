@@ -4,10 +4,11 @@
 
 use std::num::FpCategory;
 
+use super::super::error::{ErrorCode, error};
+use super::super::functions::Context;
+use super::Builtin;
 use super::args::{arg, as_type, boolean};
-use super::codes::{FORG0006, fail};
 use super::numeric::Number;
-use super::{Builtin, Focus};
 use crate::error::Result;
 use crate::xml::{Atomic, AtomicType, Item, Primitive, Sequence};
 
@@ -59,8 +60,8 @@ pub fn boolean_greater_than(a: &Atomic, b: &Atomic) -> Result<bool> {
 /// # Errors
 ///
 /// err:FORG0006 of any other sequence.
-pub fn effective_boolean_value(value: &Sequence) -> Result<bool> {
-    let a = match value.items() {
+pub fn effective_boolean_value(items: &[Item]) -> Result<bool> {
+    let a = match items {
         [] => return Ok(false),
         [Item::Node(_), ..] => return Ok(true),
         [Item::Atomic(a)] => a,
@@ -96,7 +97,7 @@ pub fn effective_boolean_value(value: &Sequence) -> Result<bool> {
 
 /// The error of a sequence of no effective boolean value, `what` it is.
 fn no_value(what: &str) -> crate::error::SqlError {
-    fail(FORG0006, &format!("{what} has no effective boolean value [XQueryFO §15.1.1]"))
+    error(ErrorCode::FORG0006, &format!("{what} has no effective boolean value [XQueryFO §15.1.1]"))
 }
 
 /// [XQueryFO §15.1.1] `fn:boolean($arg as item()*) as xs:boolean`.
@@ -104,8 +105,8 @@ fn no_value(what: &str) -> crate::error::SqlError {
 /// # Errors
 ///
 /// err:FORG0006 of a sequence of no effective boolean value.
-fn boolean_of(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
-    Ok(boolean(effective_boolean_value(arg(args, 0))?))
+fn boolean_of(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
+    Ok(boolean(effective_boolean_value(arg(args, 0).items())?))
 }
 
 /// [XQueryFO §9.3.1] `fn:not($arg as item()*) as xs:boolean`: the
@@ -114,8 +115,8 @@ fn boolean_of(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// # Errors
 ///
 /// As `boolean_of`.
-fn not(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
-    Ok(boolean(!effective_boolean_value(arg(args, 0))?))
+fn not(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
+    Ok(boolean(!effective_boolean_value(arg(args, 0).items())?))
 }
 
 #[cfg(test)]

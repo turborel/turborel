@@ -4,8 +4,9 @@
 
 use std::fmt::Write;
 
+use super::super::functions::Context;
+use super::Builtin;
 use super::args::{arg, string_or_empty, string_value};
-use super::{Builtin, Focus};
 use crate::error::Result;
 use crate::xml::Sequence;
 
@@ -50,21 +51,21 @@ fn kept(c: char, marks: &[&str]) -> bool {
 /// [XQueryFO §7.4.10] `fn:encode-for-uri($uri-part as xs:string?) as
 /// xs:string`: every character escaped but letters, digits and the marks
 /// `#-_.!~*'()`.
-fn encode_for_uri(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn encode_for_uri(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     string_value(escaped(&string_or_empty(arg(args, 0))?, |c| kept(c, &[UNRESERVED])))
 }
 
 /// [XQueryFO §7.4.11] `fn:iri-to-uri($uri-part as xs:string?) as
 /// xs:string`: every character escaped but letters, digits and the marks
 /// `#-_.!~*'()` and `;/?:@&=+$,[]%`.
-fn iri_to_uri(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn iri_to_uri(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     string_value(escaped(&string_or_empty(arg(args, 0))?, |c| kept(c, &[UNRESERVED, RESERVED])))
 }
 
 /// [XQueryFO §7.4.12] `fn:escape-html-uri($uri as xs:string?) as
 /// xs:string`: every character escaped but the printable ones of
 /// US-ASCII, 32 to 126.
-fn escape_html_uri(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn escape_html_uri(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     string_value(escaped(&string_or_empty(arg(args, 0))?, |c| PRINTABLE.contains(&c)))
 }
 

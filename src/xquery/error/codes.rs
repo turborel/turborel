@@ -119,6 +119,52 @@ impl ErrorCode {
     /// [XQueryFO Appendix C] The context item is not a node.
     pub const FOTY0011: ErrorCode = ErrorCode("FOTY0011");
 
+    /// [XQueryFO Appendix C] Invalid lexical value.
+    pub const FOCA0002: ErrorCode = ErrorCode("FOCA0002");
+    /// [XQueryFO Appendix C] Code point not valid.
+    pub const FOCH0001: ErrorCode = ErrorCode("FOCH0001");
+    /// [XQueryFO Appendix C] Unsupported normalization form.
+    pub const FOCH0003: ErrorCode = ErrorCode("FOCH0003");
+    /// [XQueryFO Appendix C] Collation does not support collation units.
+    pub const FOCH0004: ErrorCode = ErrorCode("FOCH0004");
+    /// [XQueryFO Appendix C] No context document.
+    pub const FODC0001: ErrorCode = ErrorCode("FODC0001");
+    /// [XQueryFO Appendix C] Error retrieving resource.
+    pub const FODC0002: ErrorCode = ErrorCode("FODC0002");
+    /// [XQueryFO Appendix C] Invalid argument to fn:collection().
+    pub const FODC0004: ErrorCode = ErrorCode("FODC0004");
+    /// [XQueryFO Appendix C] Invalid timezone value.
+    pub const FODT0003: ErrorCode = ErrorCode("FODT0003");
+    /// [XQueryFO Appendix C] Unidentified error.
+    pub const FOER0000: ErrorCode = ErrorCode("FOER0000");
+    /// [XQueryFO Appendix C] No namespace found for prefix.
+    pub const FONS0004: ErrorCode = ErrorCode("FONS0004");
+    /// [XQueryFO Appendix C] Base-uri not defined in the static context.
+    pub const FONS0005: ErrorCode = ErrorCode("FONS0005");
+    /// [XQueryFO Appendix C] fn:zero-or-one called with a sequence
+    /// containing more than one item.
+    pub const FORG0003: ErrorCode = ErrorCode("FORG0003");
+    /// [XQueryFO Appendix C] fn:one-or-more called with a sequence containing
+    /// no items.
+    pub const FORG0004: ErrorCode = ErrorCode("FORG0004");
+    /// [XQueryFO Appendix C] fn:exactly-one called with a sequence containing
+    /// zero or more than one item.
+    pub const FORG0005: ErrorCode = ErrorCode("FORG0005");
+    /// [XQueryFO Appendix C] Both arguments to fn:dateTime have a specified
+    /// timezone.
+    pub const FORG0008: ErrorCode = ErrorCode("FORG0008");
+    /// [XQueryFO Appendix C] Error in resolving a relative URI against a base
+    /// URI in fn:resolve-uri.
+    pub const FORG0009: ErrorCode = ErrorCode("FORG0009");
+    /// [XQueryFO Appendix C] Invalid regular expression flags.
+    pub const FORX0001: ErrorCode = ErrorCode("FORX0001");
+    /// [XQueryFO Appendix C] Invalid regular expression.
+    pub const FORX0002: ErrorCode = ErrorCode("FORX0002");
+    /// [XQueryFO Appendix C] Regular expression matches zero-length string.
+    pub const FORX0003: ErrorCode = ErrorCode("FORX0003");
+    /// [XQueryFO Appendix C] Invalid replacement string.
+    pub const FORX0004: ErrorCode = ErrorCode("FORX0004");
+
     /// The code `local`, the local part of an error's QName in the
     /// namespace of \[XQuery\]'s and \[XQueryFO\]'s errors [XQuery §2.3.2],
     /// for an error a function of a plug-in raises (`XQueryFunction`).

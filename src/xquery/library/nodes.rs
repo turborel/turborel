@@ -9,11 +9,12 @@
 
 use std::cmp::Ordering;
 
+use super::super::functions::Context;
+use super::Builtin;
 use super::accessors::name_of;
 use super::args::{arg, atomized, context_node, optional, optional_node, optional_string, or_context, or_context_node, string_value};
 use super::qnames::parts;
 use super::unicode::{Map, Table};
-use super::{Builtin, Focus};
 use crate::error::Result;
 use crate::xml::{Atomic, AtomicType, Item, Kind, Node, NodeId, Sequence, XML_NAMESPACE, cast};
 
@@ -34,7 +35,7 @@ const HYPHEN: char = '-';
 
 /// The node of `args`'s argument `n`, or the context node if it is not
 /// given; none of the empty sequence.
-fn target(focus: &Focus, args: &[Sequence], n: usize) -> Result<Option<Node>> {
+fn target(focus: &Context<'_>, args: &[Sequence], n: usize) -> Result<Option<Node>> {
     optional_node(&or_context_node(args, n, focus)?)
 }
 
@@ -46,7 +47,7 @@ fn target(focus: &Focus, args: &[Sequence], n: usize) -> Result<Option<Node>> {
 ///
 /// err:FONC0001 if no argument is given and there is no context item;
 /// err:FOTY0011 if it is no node.
-fn name(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn name(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let qname = target(focus, args, 0)?.as_ref().and_then(name_of);
     string_value(qname.map_or_else(String::new, |q| q.lexical.into_string()))
 }
@@ -57,7 +58,7 @@ fn name(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// # Errors
 ///
 /// As `name`.
-fn local_name(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn local_name(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let qname = target(focus, args, 0)?.as_ref().and_then(name_of);
     string_value(qname.map_or_else(String::new, |q| parts(&q).1.to_owned()))
 }
@@ -69,7 +70,7 @@ fn local_name(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// # Errors
 ///
 /// As `name`.
-fn namespace_uri(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn namespace_uri(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let node = target(focus, args, 0)?.filter(|n| matches!(n.kind(), Some(Kind::Element | Kind::Attribute)));
     let uri = node.as_ref().and_then(name_of).and_then(|q| q.namespace).unwrap_or_default();
     Ok(optional(Some(Atomic::new(AtomicType::AnyUri, uri))))
@@ -83,7 +84,7 @@ fn namespace_uri(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 ///
 /// err:FONC0001 if no argument is given and there is no context item;
 /// err:XPTY0004 of more than one value.
-fn number(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn number(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let value = or_context(args, 0, focus)?;
     let mut values = atomized(&value);
     if values.len() > 1 {
@@ -120,7 +121,7 @@ fn language_of(node: &Node) -> Option<String> {
 /// err:FONC0001 if no node is given and there is no context item;
 /// err:FOTY0011 if it is no node; err:XPTY0004 of a node argument that
 /// is none.
-fn lang(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn lang(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let node = match args.get(1) {
         Some(given) => super::args::node(given)?,
         None => context_node(focus)?,
@@ -141,7 +142,7 @@ fn lang(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 ///
 /// err:FONC0001 if no argument is given and there is no context item;
 /// err:FOTY0011 if it is no node.
-fn root(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn root(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     Ok(Sequence::new(target(focus, args, 0)?.map(|n| Item::Node(n.at(NodeId::ROOT))).into_iter().collect()))
 }
 

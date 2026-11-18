@@ -13,7 +13,7 @@ use super::super::error::{ErrorCode, error};
 use super::super::plan::{Clause, FlworOp, Op, OrderKey, QuantifiedOp, TypeswitchOp};
 use super::super::types::SeqType;
 use super::sequence::{atomize, bounded, extend};
-use super::{Evaluator, Focus, Frame, Seq, ebv, numeric};
+use super::{Evaluator, Focus, Frame, Seq, ebv};
 use crate::error::Result;
 use crate::xml::{Atomic, AtomicType, Item, Primitive};
 
@@ -207,5 +207,5 @@ fn matching(declared: Option<&SeqType>, value: &[Item]) -> Result<()> {
 
 /// The `xs:integer` `n`.
 fn integer(n: usize) -> Item {
-    Item::Atomic(numeric::atomic(numeric::Num::Integer(i128::try_from(n).unwrap_or(i128::MAX))))
+    Item::Atomic(Atomic::new(AtomicType::Integer, n.to_string()))
 }

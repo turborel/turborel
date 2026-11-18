@@ -4,16 +4,18 @@
 //! number promoted [XQuery Appendix B.1], a URI promoted to a string; and
 //! the values a function returns.
 
-use super::codes::{FONC0001, FOTY0011, XPTY0004, beyond, fail};
+use super::super::collation::Collator;
+use super::super::error::{ErrorCode, beyond, error};
+use super::super::functions::Context;
 use super::decimal::Decimal;
-use super::{Focus, MAX_ITEMS, MAX_STRING};
+use super::{MAX_ITEMS, MAX_STRING};
 use crate::error::{Result, SqlError};
 use crate::xml::{Atomic, AtomicType, Item, Node, Primitive, Sequence, cast, double as double_value};
 
 /// The type error of an argument that is not `expected`, `why`
 /// [XQuery §3.1.5].
 pub fn wrong_type(expected: &str, why: &str) -> SqlError {
-    fail(XPTY0004, &format!("an argument is not {expected}: {why} [XQuery §3.1.5]"))
+    error(ErrorCode::XPTY0004, &format!("an argument is not {expected}: {why} [XQuery §3.1.5]"))
 }
 
 /// Argument `n` of `args`, the empty sequence if it is not given.
@@ -25,8 +27,13 @@ pub fn arg(args: &[Sequence], n: usize) -> &Sequence {
 /// [XQueryFO §2.4] The atomic values of `value`: each atomic value itself,
 /// each node its typed value.
 pub fn atomized(value: &Sequence) -> Vec<Atomic> {
-    value
-        .items()
+    atomize(value.items())
+}
+
+/// [XQueryFO §2.4] [XQuery §2.4.2] `items` atomized: each atomic value
+/// itself, each node its typed value.
+pub fn atomize(items: &[Item]) -> Vec<Atomic> {
+    items
         .iter()
         .map(|item| match item {
             Item::Atomic(a) => a.clone(),
@@ -278,8 +285,23 @@ pub fn node(value: &Sequence) -> Result<Node> {
 /// # Errors
 ///
 /// err:FONC0001 if there is none.
-pub fn context_item(focus: &Focus) -> Result<&Item> {
-    focus.item.as_ref().ok_or_else(|| fail(FONC0001, "the context item is undefined"))
+pub fn context_item<'a>(focus: &'a Context<'_>) -> Result<&'a Item> {
+    focus.item().ok_or_else(|| error(ErrorCode::FONC0001, "the context item is undefined"))
+}
+
+/// The collation of `focus` the optional argument `n` of `args` names,
+/// else its default collation [XQueryFO §7.3.1].
+///
+/// # Errors
+///
+/// err:FOCH0002 if the argument names no collation of the statically
+/// known collations; err:XPTY0004 if it is no string.
+pub fn collator(focus: &Context<'_>, args: &[Sequence], n: usize) -> Result<Collator> {
+    let Some(given) = args.get(n) else { return Ok(focus.collation().clone()) };
+    let uri = string(given)?;
+    focus
+        .collation_named(&uri)
+        .ok_or_else(|| error(ErrorCode::FOCH0002, &format!("the collation '{uri}' is not supported [XQueryFO §7.3.1]")))
 }
 
 /// The context item of `focus`, a node.
@@ -287,10 +309,10 @@ pub fn context_item(focus: &Focus) -> Result<&Item> {
 /// # Errors
 ///
 /// err:FONC0001 if there is none; err:FOTY0011 if it is no node.
-pub fn context_node(focus: &Focus) -> Result<Node> {
+pub fn context_node(focus: &Context<'_>) -> Result<Node> {
     match context_item(focus)? {
         Item::Node(node) => Ok(node.clone()),
-        Item::Atomic(a) => Err(fail(FOTY0011, &format!("the context item is an {}, not a node", a.kind.name()))),
+        Item::Atomic(a) => Err(error(ErrorCode::FOTY0011, &format!("the context item is an {}, not a node", a.kind.name()))),
     }
 }
 
@@ -300,7 +322,7 @@ pub fn context_node(focus: &Focus) -> Result<Node> {
 /// # Errors
 ///
 /// err:FONC0001 if it is not given and there is no context item.
-pub fn or_context(args: &[Sequence], n: usize, focus: &Focus) -> Result<Sequence> {
+pub fn or_context(args: &[Sequence], n: usize, focus: &Context<'_>) -> Result<Sequence> {
     match args.get(n) {
         Some(given) => Ok(given.clone()),
         None => Ok(Sequence::new(vec![context_item(focus)?.clone()])),
@@ -314,7 +336,7 @@ pub fn or_context(args: &[Sequence], n: usize, focus: &Focus) -> Result<Sequence
 ///
 /// err:FONC0001 if it is not given and there is no context item;
 /// err:FOTY0011 if it is not given and the context item is no node.
-pub fn or_context_node(args: &[Sequence], n: usize, focus: &Focus) -> Result<Sequence> {
+pub fn or_context_node(args: &[Sequence], n: usize, focus: &Context<'_>) -> Result<Sequence> {
     match args.get(n) {
         Some(given) => Ok(given.clone()),
         None => Ok(Sequence::new(vec![Item::Node(context_node(focus)?)])),

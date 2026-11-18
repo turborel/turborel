@@ -3021,19 +3021,25 @@ the binder made of it.
 The functions and operators of XQuery 1.0 Functions and Operators, the
 Candidate Recommendation of 3 November 2005, are a library
 (`xquery::library`) over sequences and atomic values, one file for each
-of its sections. Each `fn:` function is a `LibraryFunction`, found by its
-expanded QName and the number of its arguments (`library::lookup`),
-called with a `Focus`: the context item, position and size, the
-statement's instant, the implicit time zone, the default collation's URI
-and the static base URI. A function applies the function conversion
-rules to its arguments itself, atomizing them, casting untyped values
-and promoting numbers and URIs, so it is called alike whether its caller
-converted them or not. Each `op:` operator is a plain function of
-`library::op`, named after it, that the evaluation of XQuery's operators
-calls. The evaluator's own seam for XQuery functions adapts
-`LibraryFunction`, so the library's functions are that seam's
-built-ins, one implementation each. Its errors are XQuery errors,
-SQLSTATE 10000, the code of the text's Appendix C in the message.
+of its sections. Each `fn:` function is a row of its section's table, its
+local name, the numbers of arguments it takes and its body, and the
+library's built-in functions (`xquery::Library::builtin`) are those rows,
+an `XQueryFunction` of each arity, so each function has one
+implementation, which a query and a test call alike. A body is called
+with the call's `xquery::Context`: the context item, position and size,
+the current dateTime and implicit timezone, the default collation and
+those known, the base URI, and the statement's cancellation. A function
+applies the function conversion rules of its own signature to its
+arguments, atomizing them, casting untyped values and promoting numbers
+and URIs, so its parameters are declared `item()*` and the evaluation
+converts nothing before it. A constructor function of an atomic type is
+a cast, as the analysis makes it. Each `op:` operator is a plain
+function of `library::op`, named after it: the evaluation of XQuery's
+arithmetic, comparisons, ranges, node comparisons and union, intersect
+and except calls them by the operator mapping, and the evaluation's
+atomization and effective boolean value are the library's. Its errors
+are XQuery errors (`xquery::ErrorCode`), SQLSTATE 10000, the code of the
+text's Appendix C in the message.
 
 An `xs:decimal` or `xs:integer` is reckoned by a decimal of digits of
 the library's own, bounded at `MAX_DIGITS`, 1,024, past which an
@@ -3043,9 +3049,12 @@ operand, and is truncated there otherwise. A float's arithmetic is
 rounded to single precision, an overflow an infinity. No function
 recurses on a tree: fn:deep-equal compares trees from a list of the
 pairs of nodes left. A string or sequence a function would make past
-`MAX_TEXT` or `MAX_NODES` is SQLCODE -900.
+`MAX_TEXT` or `MAX_NODES` is SQLCODE -900. fn:distinct-values, whose
+work grows as the square of its values, looks whether the statement was
+cancelled at each value (D44).
 
-A collation is named by the code point collation's URI or by the SQL
+A collation is one of the evaluation's (`xquery::Collator`), named by
+the code point collation's URI or by `urn:turborel:collation:` and the
 name of a collation of D60; strings compare by sort keys with no
 padding, and substring matching is by characters, of the code point
 collation and of the collations of one character at a time, others
@@ -3062,8 +3071,9 @@ implicit time zone; the current dateTime is the statement's instant
 reads none: the available documents and collections are empty and there
 is no default collection. The value comparison of two atomic values
 that fn:index-of, fn:distinct-values, fn:deep-equal, fn:max and fn:min
-compare by is `library::value_equal` and `value_order`, for an
-evaluator's value comparisons too.
+compare by is `library::value_equal` and `value_order`, and a value
+comparison's `library::value_comparison`, which raises err:XPTY0004 of
+types the operator mapping does not compare.
 
 XML values are not comparable, so they have no key, bucket or order, and
 the binder refuses them where an equality, grouping or ordering operation

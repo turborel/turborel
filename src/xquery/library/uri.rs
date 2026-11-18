@@ -8,9 +8,10 @@
 //! returned as it is. Every string is a lexical form of `xs:anyURI` here
 //! (`xml/atomic.rs`), so no argument is refused as no URI.
 
+use super::super::error::{ErrorCode, error};
+use super::super::functions::Context;
+use super::Builtin;
 use super::args::{arg, optional_string, single, string, typed};
-use super::codes::{FONS0005, FORG0009, fail};
-use super::{Builtin, Focus};
 use crate::error::Result;
 use crate::xml::{AtomicType, Sequence};
 
@@ -143,16 +144,20 @@ pub(super) fn is_absolute(text: &str) -> bool {
 ///
 /// err:FONS0005 if `$base` is not given and the static context has no base
 /// URI; err:FORG0009 if the base URI is not absolute.
-fn resolve_uri(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn resolve_uri(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let Some(relative) = optional_string(arg(args, 0))? else { return Ok(Sequence::empty()) };
     let base = match args.get(1) {
         Some(given) => string(given)?,
-        None => focus.base_uri.clone().ok_or_else(|| fail(FONS0005, "the static context has no base URI [XQueryFO §8.1]"))?,
+        None => focus
+            .base_uri()
+            .map(str::to_owned)
+            .ok_or_else(|| error(ErrorCode::FONS0005, "the static context has no base URI [XQueryFO §8.1]"))?,
     };
     let target = if is_absolute(&relative) {
         relative
     } else {
-        resolve(&relative, &base).ok_or_else(|| fail(FORG0009, &format!("the base URI '{base}' is not absolute [XQueryFO §8.1]")))?
+        resolve(&relative, &base)
+            .ok_or_else(|| error(ErrorCode::FORG0009, &format!("the base URI '{base}' is not absolute [XQueryFO §8.1]")))?
     };
     Ok(single(typed(AtomicType::AnyUri, target)?))
 }

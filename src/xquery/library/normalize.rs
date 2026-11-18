@@ -15,10 +15,11 @@
 //! tables count: 19 leading consonants from U+1100, 21 vowels from
 //! U+1161 and 27 trailing consonants from U+11A8.
 
+use super::super::error::{ErrorCode, error};
+use super::super::functions::Context;
+use super::Builtin;
 use super::args::{arg, string, string_or_empty, string_value};
-use super::codes::{FOCH0003, fail};
 use super::unicode::{Map, Table};
-use super::{Builtin, Focus};
 use crate::error::Result;
 use crate::xml::Sequence;
 
@@ -160,7 +161,7 @@ pub fn normalized(text: &str, form: Form) -> Result<String> {
 /// # Errors
 ///
 /// err:FOCH0003 of a form not supported.
-fn normalize_unicode(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn normalize_unicode(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let text = string_or_empty(arg(args, 0))?;
     let named = match args.get(1) {
         Some(given) => string(given)?.trim_matches(' ').to_ascii_uppercase(),
@@ -172,7 +173,7 @@ fn normalize_unicode(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
         "NFD" => Form::Nfd,
         "NFKC" => Form::Nfkc,
         "NFKD" => Form::Nfkd,
-        other => return Err(fail(FOCH0003, &format!("the normalization form '{other}' is not supported [XQueryFO §7.4.6]"))),
+        other => return Err(error(ErrorCode::FOCH0003, &format!("the normalization form '{other}' is not supported [XQueryFO §7.4.6]"))),
     };
     string_value(normalized(&text, form)?)
 }
@@ -186,13 +187,13 @@ fn cased(text: &str, map: Map) -> Result<Sequence> {
 /// [XQueryFO §7.4.7] `fn:upper-case($arg as xs:string?) as xs:string`:
 /// each character's upper case, which may be longer; the zero-length
 /// string of the empty sequence.
-fn upper_case(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn upper_case(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     cased(&string_or_empty(arg(args, 0))?, Map::Upper)
 }
 
 /// [XQueryFO §7.4.8] `fn:lower-case($arg as xs:string?) as xs:string`:
 /// each character's lower case.
-fn lower_case(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn lower_case(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     cased(&string_or_empty(arg(args, 0))?, Map::Lower)
 }
 

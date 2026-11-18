@@ -9,14 +9,15 @@
 //! [XQueryFO §4], is discarded: no statement's evaluation writes where
 //! another session or the server's log would read it.
 
+use super::super::error::{ErrorCode, error, named_error};
+use super::super::functions::Context;
 use super::args::{arg, optional_atomic, string, wrong_type};
-use super::codes::{FOER0000, fail};
-use super::{Builtin, ERR_NAMESPACE, Focus};
-use crate::error::{Code, Result, SqlError, SqlState};
+use super::{Builtin, ERR_NAMESPACE};
+use crate::error::{Result, SqlError};
 use crate::xml::{Atomic, Primitive, Sequence};
 
 /// The functions of [XQueryFO §3, §4].
-pub(super) const FUNCTIONS: [Builtin; 2] = [Builtin::function("error", 0, 3, error), Builtin::function("trace", 2, 2, trace)];
+pub(super) const FUNCTIONS: [Builtin; 2] = [Builtin::function("error", 0, 3, raise), Builtin::function("trace", 2, 2, trace)];
 
 /// The error the QName `name` names, described by `description`: of the
 /// namespace of XQuery's errors, as the library raises its own; else as
@@ -24,12 +25,8 @@ pub(super) const FUNCTIONS: [Builtin; 2] = [Builtin::function("error", 0, 3, err
 fn raised(name: &Atomic, description: &str) -> SqlError {
     let local = name.lexical.split_once(':').map_or(&*name.lexical, |(_, l)| l);
     match name.namespace.as_deref() {
-        Some(ERR_NAMESPACE) => fail(local, description),
-        uri => SqlError::new(
-            Code::Data,
-            format!("[ISO/IEC 9075-14:2006 draft §6.18 GR3] XQuery error {}#{local}: {description}", uri.unwrap_or_default()),
-        )
-        .with_state(SqlState::XQUERY_ERROR),
+        Some(ERR_NAMESPACE) => named_error(&format!("err:{local}"), description),
+        uri => named_error(&format!("{}#{local}", uri.unwrap_or_default()), description),
     }
 }
 
@@ -41,7 +38,7 @@ fn raised(name: &Atomic, description: &str) -> SqlError {
 ///
 /// Always: the error named; err:XPTY0004 of an argument of the wrong
 /// type.
-fn error(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn raise(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let description = match args.get(1) {
         Some(given) => string(given)?,
         None => String::new(),
@@ -50,7 +47,7 @@ fn error(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
         if args.len() == 1 {
             return Err(wrong_type("an xs:QName", "it is the empty sequence"));
         }
-        return Err(fail(FOER0000, if description.is_empty() { "fn:error was called [XQueryFO §3]" } else { &description }));
+        return Err(error(ErrorCode::FOER0000, if description.is_empty() { "fn:error was called [XQueryFO §3]" } else { &description }));
     };
     if name.kind.primitive() != Primitive::QName {
         return Err(wrong_type("an xs:QName", &format!("it is an {}", name.kind.name())));
@@ -64,7 +61,7 @@ fn error(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// # Errors
 ///
 /// err:XPTY0004 of a label that is not one string.
-fn trace(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn trace(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     string(arg(args, 1))?;
     Ok(arg(args, 0).clone())
 }

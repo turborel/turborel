@@ -587,7 +587,7 @@ OK
             1 | ink
             2 | NULL
 (2 rows)
-turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:FOAR0001: a decimal or integer is divided by zero [XQueryFO §6.2.4] [ISO/IEC 9075-14:2006 draft §6.18 GR3]
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:FOAR0001: a divisor is zero [XQueryFO §6.2.4] [ISO/IEC 9075-14:2006 draft §6.18 GR3]
 ```
 
 ### XMLEXISTS
@@ -658,17 +658,109 @@ evaluated.
 These are not supported: schema imports and library modules (error
 `err:XQST0009` or `err:XQST0016`), the validate expression's lax mode
 (SQLCODE -900; strict mode finds no element declared, `err:XQDY0084`),
-casts to `xs:QName`, and the documents of `fn:doc`, which finds none
-(`err:FODC0005`). The built-in functions are `fn:true`, `fn:false`,
-`fn:not`, `fn:boolean`, `fn:data`, `fn:string`, `fn:count`, `fn:empty`,
-`fn:exists`, `fn:position`, `fn:last`, `fn:concat`, `fn:root` and
-`fn:doc`, and a constructor function for each atomic type, such as
-`xs:date('2026-11-17')`.
+and casts to `xs:QName`.
+
+### Functions
+
+A query calls every function of XQuery 1.0 Functions and Operators, the
+W3C Candidate Recommendation of 3 November 2005, by its name in the
+namespace `fn`, the default, so `count(//item)` is `fn:count(//item)`.
+Each converts its arguments as its signature says: a node's typed value
+where a value is wanted, an untyped value cast to the type wanted, an
+integer promoted to a decimal or double, and the empty sequence where
+`?` allows it.
+
+| Kind | Functions |
+|---|---|
+| Accessors | `node-name`, `nilled`, `string`, `data`, `base-uri`, `document-uri` |
+| Errors and tracing | `error`, `trace` |
+| Constructing | `dateTime`, and `xs:TYPE($arg)` of each atomic type, which casts |
+| Numbers | `abs`, `ceiling`, `floor`, `round`, `round-half-to-even` |
+| Strings | `codepoints-to-string`, `string-to-codepoints`, `compare`, `codepoint-equal`, `concat`, `string-join`, `substring`, `string-length`, `normalize-space`, `normalize-unicode`, `upper-case`, `lower-case`, `translate`, `encode-for-uri`, `iri-to-uri`, `escape-html-uri` |
+| Substrings | `contains`, `starts-with`, `ends-with`, `substring-before`, `substring-after` |
+| Regular expressions | `matches`, `replace`, `tokenize` |
+| URIs | `resolve-uri` |
+| Booleans | `true`, `false`, `not`, `boolean` |
+| Durations | `years-from-duration`, `months-from-duration`, `days-from-duration`, `hours-from-duration`, `minutes-from-duration`, `seconds-from-duration` |
+| Dates and times | `year-from-dateTime`, `month-from-dateTime`, `day-from-dateTime`, `hours-from-dateTime`, `minutes-from-dateTime`, `seconds-from-dateTime`, `timezone-from-dateTime`, `year-from-date`, `month-from-date`, `day-from-date`, `timezone-from-date`, `hours-from-time`, `minutes-from-time`, `seconds-from-time`, `timezone-from-time`, `adjust-dateTime-to-timezone`, `adjust-date-to-timezone`, `adjust-time-to-timezone` |
+| QNames | `resolve-QName`, `QName`, `prefix-from-QName`, `local-name-from-QName`, `namespace-uri-from-QName`, `namespace-uri-for-prefix`, `in-scope-prefixes` |
+| Nodes | `name`, `local-name`, `namespace-uri`, `number`, `lang`, `root` |
+| Sequences | `index-of`, `empty`, `exists`, `distinct-values`, `insert-before`, `remove`, `reverse`, `subsequence`, `unordered`, `zero-or-one`, `one-or-more`, `exactly-one`, `deep-equal`, `count`, `avg`, `max`, `min`, `sum` |
+| Documents and IDs | `id`, `idref`, `doc`, `doc-available`, `collection` |
+| The context | `position`, `last`, `current-dateTime`, `current-date`, `current-time`, `implicit-timezone`, `default-collation`, `static-base-uri` |
+
+No document or collection is available to a query, so `fn:doc` of a URI
+fails with `err:FODC0005`, `fn:doc-available` is false, and
+`fn:collection` fails with `err:FODC0004`, or `err:FODC0002` of none. The
+current dateTime is the statement's, the same through it, in the
+session's time zone, which is the implicit time zone. `fn:error` fails
+with SQLSTATE 10000, its message the error's code and description;
+`fn:trace` gives its value and writes nothing.
+
+`xs:integer` and `xs:decimal` values have up to 1,024 digits, and an
+operation past them fails with `err:FOAR0002`. A quotient of decimals is
+exact when it ends within 18 digits after the point, or within the
+scale of an operand, and is cut there otherwise. Floats and doubles
+compute as IEEE 754 does. `fn:normalize-unicode` normalizes by Unicode
+13.0, to NFC, NFD, NFKC or NFKD; FULLY-NORMALIZED fails with
+`err:FOCH0003`. `fn:upper-case` and `fn:lower-case` map each character
+in full, as Unicode's tables do apart from language and context.
+`fn:matches`, `fn:replace` and `fn:tokenize` read XQuery 1.0's regular
+expressions, with the flags `s`, `m`, `i` and `x`.
+
+```sql
+SELECT XMLCAST(XMLQUERY('string-join(for $i in //item order by xs:decimal($i/@price) descending return upper-case($i), ", ")' PASSING BY REF DOC NULL ON EMPTY) AS VARCHAR(40)) FROM ORDERS2 WHERE ID = 1;
+SELECT ID, XMLCAST(XMLQUERY('sum(//item/@price) div count(//item)' PASSING BY REF DOC NULL ON EMPTY) AS DECIMAL(9,2)) FROM ORDERS2 ORDER BY ID;
+SELECT XMLCAST(XMLQUERY('replace("2026-11-17", "(\d+)-(\d+)-(\d+)", "$3.$2.$1")' NULL ON EMPTY) AS VARCHAR(20)), XMLCAST(XMLQUERY('tokenize("a, b,c", ",\s*")[last()]' NULL ON EMPTY) AS VARCHAR(5)) FROM ORDERS2 WHERE ID = 1;
+SELECT XMLCAST(XMLQUERY('year-from-date(xs:date("2026-11-17") + xdt:yearMonthDuration("P1Y2M"))' NULL ON EMPTY) AS INTEGER), XMLCAST(XMLQUERY('days-from-duration(xs:date("2026-12-25") - xs:date("2026-11-17"))' NULL ON EMPTY) AS INTEGER) FROM ORDERS2 WHERE ID = 1;
+SELECT XMLCAST(XMLQUERY('count(distinct-values(("b", "a", "B", "a")))' NULL ON EMPTY) AS INTEGER), XMLCAST(XMLQUERY('string-join(for $n in (round-half-to-even(2.5), round(2.5), abs(-3)) return string($n), " ")' NULL ON EMPTY) AS VARCHAR(20)) FROM ORDERS2 WHERE ID = 1;
+SELECT XMLQUERY('exactly-one(())' EMPTY ON EMPTY) FROM ORDERS2 WHERE ID = 1;
+```
+```
+
+------------------------------------------
+ INK, PEN
+(1 row)
+           ID |
+--------------+-------------
+            1 |       17.50
+            2 |        5.00
+(2 rows)
+                      |
+----------------------+-------
+ 17.11.2026           | c
+(1 row)
+              |
+--------------+--------------
+         2028 |           38
+(1 row)
+              |
+--------------+----------------------
+            3 | 2 3 3
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:FORG0005: fn:exactly-one is given 0 items [XQueryFO §15.2.3] [ISO/IEC 9075-14:2006 draft §6.18 GR3]
+```
 
 Strings compare by Unicode code points unless the query declares
-another collation. A collation of the database is the URI
-`urn:turborel:collation:` then its name, as
-`urn:turborel:collation:UNICODE`.
+another collation or a function is given one. A collation of the
+database is the URI `urn:turborel:collation:` then its name, as
+`urn:turborel:collation:UNICODE`; another fails with `err:FOCH0002`.
+`fn:contains`, `fn:starts-with`, `fn:ends-with`, `fn:substring-before`
+and `fn:substring-after` match by a collation that compares one
+character at a time, as `CASE_INSENSITIVE` does; `UNICODE` and its
+tailorings fail with `err:FOCH0004`.
+
+```sql
+SELECT XMLCAST(XMLQUERY('compare("pen", "PEN", "urn:turborel:collation:CASE_INSENSITIVE")' NULL ON EMPTY) AS INTEGER), XMLCAST(XMLQUERY('contains("Pen and Ink", "INK", "urn:turborel:collation:CASE_INSENSITIVE")' NULL ON EMPTY) AS BOOLEAN) FROM ORDERS2 WHERE ID = 1;
+SELECT XMLQUERY('declare default collation "urn:turborel:collation:UNICODE"; contains("a", "a")' NULL ON EMPTY) FROM ORDERS2 WHERE ID = 1;
+```
+```
+              |
+--------------+-------
+            0 | TRUE
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:FOCH0004: the collation urn:turborel:collation:UNICODE does not split strings into collation units [XQueryFO §7.5] [ISO/IEC 9075-14:2006 draft §6.18 GR3]
+```
 
 ## XML indexes
 

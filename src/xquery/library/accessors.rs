@@ -10,9 +10,10 @@
 //! resolved against the one above it, none if none has one; a document
 //! node's document URI is none.
 
+use super::super::functions::Context;
+use super::Builtin;
 use super::args::{arg, atomized, items, optional, optional_node, or_context, or_context_node, single, typed};
 use super::uri::{is_absolute, resolve};
-use super::{Builtin, Focus};
 use crate::error::Result;
 use crate::xml::{Atomic, AtomicType, Item, Kind, Node, Sequence, XML_NAMESPACE, cast};
 
@@ -43,14 +44,14 @@ pub(super) fn name_of(node: &Node) -> Option<Atomic> {
 }
 
 /// [XQueryFO §2.1] `fn:node-name($arg as node()?) as xs:QName?`.
-fn node_name(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn node_name(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     Ok(optional(optional_node(arg(args, 0))?.as_ref().and_then(name_of)))
 }
 
 /// [XQueryFO §2.2] `fn:nilled($arg as node()?) as xs:boolean?`: false of
 /// an element, as no element is validated, so none is nilled [XQueryDM
 /// §6.2.3]; the empty sequence of another node.
-fn nilled(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn nilled(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let element = optional_node(arg(args, 0))?.filter(|n| n.kind() == Some(Kind::Element));
     Ok(optional(element.map(|_| Atomic::new(AtomicType::Boolean, "false"))))
 }
@@ -72,7 +73,7 @@ pub(super) fn string_of(item: &Item) -> Result<String> {
 ///
 /// err:FONC0001 if no argument is given and there is no context item;
 /// err:XPTY0004 of more than one item.
-fn string(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn string(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let value = or_context(args, 0, focus)?;
     let text = match value.items() {
         [] => String::new(),
@@ -85,7 +86,7 @@ fn string(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// [XQueryFO §2.4] `fn:data($arg as item()*) as xdt:anyAtomicType*`: each
 /// atomic value itself, each node its typed value; every node of a tree
 /// no schema typed has one.
-fn data(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn data(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     items(atomized(arg(args, 0)).into_iter().map(Item::Atomic).collect())
 }
 
@@ -118,14 +119,14 @@ pub(super) fn base_of(node: &Node) -> Option<String> {
 ///
 /// err:FONC0001 if no argument is given and there is no context item;
 /// err:FOTY0011 if it is not a node.
-fn base_uri(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn base_uri(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let Some(node) = optional_node(&or_context_node(args, 0, focus)?)? else { return Ok(Sequence::empty()) };
     Ok(optional(base_of(&node).map(|uri| Atomic::new(AtomicType::AnyUri, uri))))
 }
 
 /// [XQueryFO §2.6] `fn:document-uri($arg as node()?) as xs:anyURI?`: the
 /// empty sequence, as no document node here has a document URI.
-fn document_uri(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn document_uri(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     optional_node(arg(args, 0))?;
     Ok(Sequence::empty())
 }

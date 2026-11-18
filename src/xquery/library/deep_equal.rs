@@ -7,11 +7,12 @@
 //! typed has mixed content [XQueryDM §6.2.3], so its element and text
 //! children are compared, its comments and processing instructions not.
 
+use super::super::collation::Collator;
+use super::super::functions::Context;
+use super::Builtin;
 use super::args::arg;
-use super::collation::Collator;
+use super::args::collator;
 use super::comparison::value_equal;
-use super::sequences::collator;
-use super::{Builtin, Focus};
 use crate::error::Result;
 use crate::xml::{Atomic, Item, Kind, Node, NodeId, Sequence, Tree};
 
@@ -132,9 +133,9 @@ pub fn sequences_deep_equal(a: &Sequence, b: &Sequence, collation: Collator, zon
 /// # Errors
 ///
 /// err:FOCH0002 of a collation not supported.
-fn deep_equal(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn deep_equal(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let collation = collator(focus, args, 2)?;
-    Ok(super::args::boolean(sequences_deep_equal(arg(args, 0), arg(args, 1), collation, focus.timezone_minutes)?))
+    Ok(super::args::boolean(sequences_deep_equal(arg(args, 0), arg(args, 1), collation, i32::from(focus.timezone()))?))
 }
 
 #[cfg(test)]

@@ -30,9 +30,16 @@ fn ordered(mut nodes: Vec<Node>) -> Result<Sequence> {
     items(nodes.into_iter().map(Item::Node).collect())
 }
 
-/// Whether `node` is among `others`.
+/// `nodes` in document order, each once, to be searched.
+fn sorted(mut nodes: Vec<Node>) -> Vec<Node> {
+    nodes.sort_by(Node::document_order);
+    nodes.dedup_by(|a, b| a.is(b));
+    nodes
+}
+
+/// Whether `node` is among `others`, in document order.
 fn among(node: &Node, others: &[Node]) -> bool {
-    others.iter().any(|o| o.is(node))
+    others.binary_search_by(|o| o.document_order(node)).is_ok()
 }
 
 /// [XQueryFO §15.3.2] `op:union`: every node of either.
@@ -52,7 +59,7 @@ pub fn union(a: &Sequence, b: &Sequence) -> Result<Sequence> {
 ///
 /// As `union`.
 pub fn intersect(a: &Sequence, b: &Sequence) -> Result<Sequence> {
-    let theirs = nodes(b)?;
+    let theirs = sorted(nodes(b)?);
     ordered(nodes(a)?.into_iter().filter(|n| among(n, &theirs)).collect())
 }
 
@@ -63,7 +70,7 @@ pub fn intersect(a: &Sequence, b: &Sequence) -> Result<Sequence> {
 ///
 /// As `union`.
 pub fn except(a: &Sequence, b: &Sequence) -> Result<Sequence> {
-    let theirs = nodes(b)?;
+    let theirs = sorted(nodes(b)?);
     ordered(nodes(a)?.into_iter().filter(|n| !among(n, &theirs)).collect())
 }
 

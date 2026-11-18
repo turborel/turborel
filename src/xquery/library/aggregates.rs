@@ -5,13 +5,14 @@
 
 use std::cmp::Ordering;
 
+use super::super::error::{ErrorCode, error};
+use super::super::functions::Context;
+use super::Builtin;
+use super::args::collator;
 use super::args::{arg, atomized, optional, optional_atomic};
-use super::codes::{FORG0006, fail};
 use super::comparison::value_order;
 use super::durations::{add_day_time_durations, add_year_month_durations, divide_day_time_duration, divide_year_month_duration};
 use super::numeric::{Number, numeric_add, numeric_divide};
-use super::sequences::collator;
-use super::{Builtin, Focus};
 use crate::error::{Result, SqlError};
 use crate::xml::{Atomic, AtomicType, Primitive, Sequence, cast};
 
@@ -26,7 +27,7 @@ pub(super) const FUNCTIONS: [Builtin; 4] = [
 /// The error of values of no single type the function takes [XQueryFO
 /// §15.4].
 fn mixed(why: &str) -> SqlError {
-    fail(FORG0006, &format!("{why} [XQueryFO §15.4]"))
+    error(ErrorCode::FORG0006, &format!("{why} [XQueryFO §15.4]"))
 }
 
 /// The converted sequence of `value`: its atomic values, each untyped one
@@ -98,7 +99,7 @@ fn total(values: &[Atomic], kind: Summed) -> Result<Atomic> {
 /// # Errors
 ///
 /// err:FORG0006 of values of no single type that sums.
-fn sum(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn sum(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let values = converted(arg(args, 0))?;
     if values.is_empty() {
         return match args.get(1) {
@@ -116,7 +117,7 @@ fn sum(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// # Errors
 ///
 /// As `sum`.
-fn avg(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn avg(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let values = converted(arg(args, 0))?;
     if values.is_empty() {
         return Ok(Sequence::empty());
@@ -161,7 +162,7 @@ fn promotion(values: &[Atomic]) -> Option<AtomicType> {
 ///
 /// err:FORG0006 of values of no single ordered type; err:FOCH0002 of a
 /// collation not supported.
-fn extreme(focus: &Focus, args: &[Sequence], wanted: Ordering) -> Result<Sequence> {
+fn extreme(focus: &Context<'_>, args: &[Sequence], wanted: Ordering) -> Result<Sequence> {
     let collation = collator(focus, args, 1)?;
     let values = converted(arg(args, 0))?;
     let Some(first) = values.first() else { return Ok(Sequence::empty()) };
@@ -173,7 +174,7 @@ fn extreme(focus: &Focus, args: &[Sequence], wanted: Ordering) -> Result<Sequenc
         (None, _) => {
             let mut best = first.clone();
             for v in &values {
-                let order = value_order(v, &best, &collation, focus.timezone_minutes)?;
+                let order = value_order(v, &best, &collation, i32::from(focus.timezone()))?;
                 match order {
                     Some(o) => {
                         if o == wanted {

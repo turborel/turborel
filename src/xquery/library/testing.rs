@@ -2,27 +2,89 @@
 //! instant, calls of a function by its name, values to call it with, and
 //! the results and errors read back.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-use super::{FN_NAMESPACE, Focus, lookup};
+use super::super::collation::{Collations, Collator, SQL_COLLATION};
+use super::super::functions::{Context, FN_NAMESPACE, Library, QueryContext};
+use super::super::testing::collations;
 use crate::error::{Code, Result, SqlError, SqlState};
-use crate::value::datetime::Now;
-use crate::xml::{Atomic, AtomicType, Item, Moment, Node, NodeId, Sequence, Shape, Syntax, Whitespace, parse};
+use crate::xml::{Atomic, AtomicType, Item, Moment, Node, NodeId, QName, Sequence, Shape, Syntax, Whitespace, parse};
+
+/// The dynamic context a test calls a function in, owned: what a
+/// `Context` borrows of it.
+#[derive(Clone)]
+pub struct Focus {
+    /// The context item, if one is defined.
+    pub item: Option<Item>,
+    /// The context position.
+    pub position: usize,
+    /// The context size.
+    pub size: usize,
+    /// The current dateTime.
+    pub now: Moment,
+    /// The implicit timezone, in minutes east of UTC.
+    pub timezone: i16,
+    /// The default collation.
+    pub collation: Collator,
+    /// The base URI of the static context.
+    pub base_uri: Option<String>,
+}
+
+impl Focus {
+    /// It with the context item `item`, at `position` of `size`.
+    pub fn at(&self, item: Item, position: usize, size: usize) -> Focus {
+        Focus { item: Some(item), position, size, ..self.clone() }
+    }
+}
+
+/// The collations of a database, made once.
+pub fn known() -> &'static Collations {
+    static KNOWN: OnceLock<Collations> = OnceLock::new();
+    KNOWN.get_or_init(collations)
+}
+
+/// The built-in functions, made once.
+fn library() -> &'static Library {
+    static BUILT: OnceLock<Library> = OnceLock::new();
+    BUILT.get_or_init(Library::builtin)
+}
+
+/// The database's collation `name`, by its URI.
+pub fn collator(name: &str) -> Collator {
+    Collator::named(&format!("{SQL_COLLATION}{name}"), known()).unwrap()
+}
 
 /// A focus with no context item at 2004-05-12T18:17:15.125Z, the instant
 /// [XQueryFO §16.3.1] shows, an implicit time zone of -05:00, as several
-/// of \[XQueryFO\]'s examples assume.
+/// of \[XQueryFO\]'s examples assume; the codepoint collation and no base
+/// URI.
 pub fn focus() -> Focus {
-    let instant = Moment::parse("2004-05-12T18:17:15.125Z", Shape::DateTime).unwrap().unwrap();
-    let utc = i64::try_from(instant.local().0).unwrap();
-    Focus { timezone_minutes: -300, ..Focus::new(Now { utc, zone: 0 }) }
+    let now = Moment::parse("2004-05-12T18:17:15.125Z", Shape::DateTime).unwrap().unwrap();
+    Focus { item: None, position: 0, size: 0, now, timezone: -300, collation: Collator::codepoint(), base_uri: None }
 }
 
 /// `fn:local` of `args` in `focus`.
 pub fn call_in(focus: &Focus, local: &str, args: &[Sequence]) -> Result<Sequence> {
-    let function = lookup(FN_NAMESPACE, local, args.len())
+    let name = QName { prefix: None, uri: Some(FN_NAMESPACE.into()), local: local.into() };
+    let function = library()
+        .find(&name, args.len())
         .ok_or_else(|| SqlError::new(Code::Data, format!("[DESIGN] fn:{local}#{} is not in the library", args.len())))?;
-    function.call(focus, args)
+    in_context(focus, |context| function.call(context, args.to_vec()))
+}
+
+/// The value of `f` of the dynamic context `focus` is, no statement ever
+/// cancelled.
+pub fn in_context<T>(focus: &Focus, f: impl FnOnce(&Context<'_>) -> T) -> T {
+    let never = || Ok(());
+    let query = QueryContext {
+        now: focus.now,
+        timezone: focus.timezone,
+        collation: &focus.collation,
+        collations: known(),
+        base_uri: focus.base_uri.as_deref(),
+        interrupted: &never,
+    };
+    f(&Context { item: focus.item.as_ref(), position: focus.position, size: focus.size, query: &query })
 }
 
 /// `fn:local` of `args` in `focus()`.

@@ -1,6 +1,6 @@
 //! Tests of resolving URIs.
 
-use super::super::testing::{call, call_in, code, empty, focus, int, s, typed};
+use super::super::testing::{Focus, call, call_in, code, empty, focus, int, s, typed};
 use super::*;
 
 /// The base of [RFC 3986 §5.4]'s examples.

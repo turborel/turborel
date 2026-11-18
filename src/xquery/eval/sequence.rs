@@ -1,14 +1,12 @@
 //! What the evaluation does to sequences [XQuery §2.4]: atomization
-//! [XQuery §2.4.2], the effective boolean value [XQuery §2.4.3], document
-//! order with duplicates removed [XQuery §2.4.1], and the bound on a
-//! sequence's length (RULES.md D18).
+//! [XQuery §2.4.2] and the effective boolean value [XQuery §2.4.3], the
+//! library's (`xquery::library`), document order with duplicates removed
+//! [XQuery §2.4.1], and the bound on a sequence's length (RULES.md D18).
 
-use std::num::FpCategory;
-
-use super::super::error::{ErrorCode, beyond, error};
+use super::super::error::beyond;
 use super::Seq;
 use crate::error::Result;
-use crate::xml::{Atomic, AtomicType, Item, Kind, MAX_NODES, Node, Primitive, double};
+use crate::xml::{Atomic, AtomicType, Item, MAX_NODES, Node};
 
 /// [Schema2 §3.2.2.2] The canonical forms of `xs:boolean`.
 pub(super) const TRUE: &str = "true";
@@ -44,65 +42,8 @@ pub(super) fn truth(b: bool) -> Atomic {
     Atomic::new(AtomicType::Boolean, if b { TRUE } else { FALSE })
 }
 
-/// The typed value of `node` [XQuery §2.5.2]: of a node no schema
-/// validated, its string value as `xdt:untypedAtomic`, but of a comment or
-/// processing instruction as `xs:string`.
-pub(super) fn typed_value(node: &Node) -> Atomic {
-    let kind = match node.kind() {
-        Some(Kind::Comment | Kind::ProcessingInstruction) => AtomicType::String,
-        Some(Kind::Document | Kind::Element | Kind::Attribute | Kind::Text) | None => AtomicType::UntypedAtomic,
-    };
-    Atomic::new(kind, node.tree().string_value(node.id()))
-}
-
-/// `items` atomized [XQuery §2.4.2]: each atomic value itself, each node
-/// its typed value.
-pub(in crate::xquery) fn atomize(items: &[Item]) -> Vec<Atomic> {
-    items
-        .iter()
-        .map(|item| match item {
-            Item::Atomic(a) => a.clone(),
-            Item::Node(node) => typed_value(node),
-        })
-        .collect()
-}
-
-/// The string value of `item` [XQuery §2.5.2]: a node's, or an atomic
-/// value's string [XQueryFO §2.3].
-pub(in crate::xquery) fn string_value(item: &Item) -> String {
-    match item {
-        Item::Atomic(a) => a.lexical.to_string(),
-        Item::Node(node) => node.tree().string_value(node.id()),
-    }
-}
-
-/// The effective boolean value of `items` [XQuery §2.4.3]: false of none;
-/// true of a node first; of one boolean, itself; of one string or untyped
-/// atomic value, whether it is not empty; of one number, whether it is
-/// neither NaN nor zero; else err:FORG0006.
-pub(in crate::xquery) fn ebv(items: &[Item]) -> Result<bool> {
-    let atomic = match items {
-        [] => return Ok(false),
-        [Item::Node(_), ..] => return Ok(true),
-        [Item::Atomic(a)] => a,
-        [Item::Atomic(_), _, ..] => {
-            return Err(error(
-                ErrorCode::FORG0006,
-                "the effective boolean value of more than one atomic value is undefined [XQuery §2.4.3]",
-            ));
-        }
-    };
-    let p = atomic.kind.primitive();
-    if p == Primitive::Boolean {
-        Ok(&*atomic.lexical == TRUE)
-    } else if p.textual() {
-        Ok(!atomic.lexical.is_empty())
-    } else if p.numeric() {
-        Ok(double(&atomic.lexical).is_some_and(|x| !matches!(x.classify(), FpCategory::Nan | FpCategory::Zero)))
-    } else {
-        Err(error(ErrorCode::FORG0006, &format!("a value of {} has no effective boolean value [XQuery §2.4.3]", atomic.kind.name())))
-    }
-}
+pub(in crate::xquery) use super::super::library::args::atomize;
+pub(in crate::xquery) use super::super::library::effective_boolean_value as ebv;
 
 /// The nodes of `items`, if each is a node.
 pub(super) fn nodes(items: Seq) -> Option<Vec<Node>> {

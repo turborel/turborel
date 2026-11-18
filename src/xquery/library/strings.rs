@@ -10,16 +10,16 @@
 
 use std::cmp::Ordering;
 
+use super::super::error::{ErrorCode, error};
+use super::super::functions::Context;
+use super::Builtin;
 use super::accessors::string_of;
 use super::args::{
-    arg, atomized, double, integer_value, items, optional, optional_atomic, optional_string, or_context, string, string_or_empty,
+    arg, atomized, collator, double, integer_value, items, optional, optional_atomic, optional_string, or_context, string, string_or_empty,
     string_value, strings, within_items, within_string,
 };
-use super::codes::{FOCH0001, fail};
-use super::collation::Collator;
 use super::decimal::Decimal;
 use super::rounding::round_real;
-use super::{Builtin, Focus};
 use crate::error::Result;
 use crate::xml::{AtomicType, Item, Sequence, Version, cast, is_char, is_space};
 
@@ -44,12 +44,12 @@ pub(super) const FUNCTIONS: [Builtin; 10] = [
 /// # Errors
 ///
 /// err:FOCH0001 of a code point that is no character of XML.
-fn codepoints_to_string(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn codepoints_to_string(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let mut out = String::new();
     for a in atomized(arg(args, 0)) {
         let n = super::args::integer_of(&a)?;
         let c = n.to_i128().and_then(|n| u32::try_from(n).ok()).and_then(char::from_u32).filter(|&c| is_char(Version::V11, c));
-        let c = c.ok_or_else(|| fail(FOCH0001, &format!("{} is no character of XML [XQueryFO §7.2.1]", n.text())))?;
+        let c = c.ok_or_else(|| error(ErrorCode::FOCH0001, &format!("{} is no character of XML [XQueryFO §7.2.1]", n.text())))?;
         within_string(out.len())?;
         out.push(c);
     }
@@ -59,16 +59,10 @@ fn codepoints_to_string(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// [XQueryFO §7.2.2] `fn:string-to-codepoints($arg as xs:string?) as
 /// xs:integer*`: the code points of the string; the empty sequence of the
 /// empty sequence or the zero-length string.
-fn string_to_codepoints(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn string_to_codepoints(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let text = string_or_empty(arg(args, 0))?;
     within_items(text.chars().count())?;
     items(text.chars().map(|c| Item::Atomic(integer_value(&Decimal::integer(i128::from(u32::from(c)))))).collect())
-}
-
-/// The collation of `focus` and the optional argument `n` of `args`.
-fn collator(focus: &Focus, args: &[Sequence], n: usize) -> Result<Collator> {
-    let given = args.get(n).map(string).transpose()?;
-    Collator::of(focus, given.as_deref())
 }
 
 /// [XQueryFO §7.3.2] `fn:compare($comparand1 as xs:string?, $comparand2
@@ -79,7 +73,7 @@ fn collator(focus: &Focus, args: &[Sequence], n: usize) -> Result<Collator> {
 /// # Errors
 ///
 /// err:FOCH0002 of a collation not supported.
-fn compare(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn compare(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let collation = collator(focus, args, 2)?;
     let (Some(a), Some(b)) = (optional_string(arg(args, 0))?, optional_string(arg(args, 1))?) else {
         return Ok(Sequence::empty());
@@ -95,7 +89,7 @@ fn compare(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// [XQueryFO §7.3.3] `fn:codepoint-equal($comparand1 as xs:string?,
 /// $comparand2 as xs:string?) as xs:boolean?`: whether they are equal by
 /// the code point collation; the empty sequence if either is.
-fn codepoint_equal(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn codepoint_equal(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let (Some(a), Some(b)) = (optional_string(arg(args, 0))?, optional_string(arg(args, 1))?) else {
         return Ok(Sequence::empty());
     };
@@ -105,7 +99,7 @@ fn codepoint_equal(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// [XQueryFO §7.4.1] `fn:concat($arg1 as xdt:anyAtomicType?, $arg2 as
 /// xdt:anyAtomicType?, ...) as xs:string`: each argument cast to a string,
 /// joined; the empty sequence the zero-length string.
-fn concat(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn concat(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let mut out = String::new();
     for value in args {
         if let Some(a) = optional_atomic(value)? {
@@ -118,7 +112,7 @@ fn concat(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
 
 /// [XQueryFO §7.4.2] `fn:string-join($arg1 as xs:string*, $arg2 as
 /// xs:string) as xs:string`: the strings joined by the separator.
-fn string_join(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn string_join(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let separator = string(arg(args, 1))?;
     let parts = strings(arg(args, 0))?;
     let length = parts.iter().map(String::len).fold(separator.len().saturating_mul(parts.len()), usize::saturating_add);
@@ -131,7 +125,7 @@ fn string_join(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// characters at positions `p`, from 1, such that `round(start) <= p <
 /// round(start) + round(length)`, by the comparisons of doubles, so NaN
 /// selects none; the length infinite if not given.
-fn substring(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn substring(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let text = string_or_empty(arg(args, 0))?;
     let start = round_real(double(arg(args, 1))?);
     let end = match args.get(2) {
@@ -151,7 +145,7 @@ fn substring(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
 
 /// The string of the argument `n` of `args`, or of the context item if it
 /// is not given, as `fn:string` makes it.
-fn string_or_context(focus: &Focus, args: &[Sequence], n: usize) -> Result<String> {
+fn string_or_context(focus: &Context<'_>, args: &[Sequence], n: usize) -> Result<String> {
     if args.get(n).is_some() {
         return string_or_empty(arg(args, n));
     }
@@ -166,7 +160,7 @@ fn string_or_context(focus: &Focus, args: &[Sequence], n: usize) -> Result<Strin
 /// # Errors
 ///
 /// err:FONC0001 if it is not given and there is no context item.
-fn string_length(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn string_length(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let text = string_or_context(focus, args, 0)?;
     let count = i128::try_from(text.chars().count()).unwrap_or(i128::MAX);
     Ok(optional(Some(integer_value(&Decimal::integer(count)))))
@@ -180,7 +174,7 @@ fn string_length(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// # Errors
 ///
 /// err:FONC0001 if it is not given and there is no context item.
-fn normalize_space(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn normalize_space(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let text = string_or_context(focus, args, 0)?;
     string_value(text.split(is_space).filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" "))
 }
@@ -189,7 +183,7 @@ fn normalize_space(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// xs:string, $transString as xs:string) as xs:string`: each character of
 /// `$mapString` replaced by the one at its first place in `$transString`,
 /// or left out if that is shorter.
-fn translate(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn translate(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let text = string_or_empty(arg(args, 0))?;
     let from: Vec<char> = string(arg(args, 1))?.chars().collect();
     let to: Vec<char> = string(arg(args, 2))?.chars().collect();

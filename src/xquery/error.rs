@@ -131,7 +131,16 @@ pub(super) fn xquery_error(code: ErrorCode, place: Place, why: &str) -> SqlError
 /// [ISO/IEC 9075-14:2006 draft §6.18 GR3], its message naming the code.
 #[must_use]
 pub fn error(code: ErrorCode, why: &str) -> SqlError {
-    SqlError::new(Code::Data, format!("[ISO/IEC 9075-14:2006 draft §6.18 GR3] XQuery error {code}: {why}"))
+    named_error(&code.to_string(), why)
+}
+
+/// The XQuery error whose QName is written `name`, `err:` and its code of
+/// the namespace of \[XQuery\]'s errors or the URI `NS#LP` of another
+/// [XQueryFO §3], as fn:error raises one a query names: SQL/XML's
+/// exception condition XQuery error [ISO/IEC 9075-14:2006 draft §6.18
+/// GR3].
+pub(super) fn named_error(name: &str, why: &str) -> SqlError {
+    SqlError::new(Code::Data, format!("[ISO/IEC 9075-14:2006 draft §6.18 GR3] XQuery error {name}: {why}"))
         .with_state(SqlState::XQUERY_ERROR)
 }
 

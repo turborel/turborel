@@ -46,7 +46,7 @@ fn arithmetic_of_numbers() {
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQueryFO §6.2] the
 /// errors of arithmetic: division of exact numbers by zero err:FOAR0001,
-/// an overflow past 128 bits err:FOAR0002, an operand of more than one
+/// an overflow past 1,024 digits err:FOAR0002, an operand of more than one
 /// value or of no arithmetic err:XPTY0004, an untyped operand no number
 /// err:FORG0001; each SQLSTATE 10000.
 #[test]
@@ -54,7 +54,9 @@ fn arithmetic_errors() {
     assert_eq!(code_of("1 div 0"), "err:FOAR0001");
     assert_eq!(code_of("1 idiv 0"), "err:FOAR0001");
     assert_eq!(code_of("1.5 mod 0"), "err:FOAR0001");
-    assert_eq!(code_of("99999999999999999999999999999999999999 * 10"), "err:FOAR0002");
+    let big = "xs:integer(string-join(for $i in 1 to 600 return '9', ''))";
+    assert_eq!(code_of(&format!("{big} * {big}")), "err:FOAR0002");
+    assert_eq!(run("99999999999999999999999999999999999999 * 10"), "999999999999999999999999999999999999990");
     assert_eq!(code_of("(1, 2) + 1"), "err:XPTY0004");
     assert_eq!(code_of("'a' + 1"), "err:XPTY0004");
     assert_eq!(code_of("<a>x</a> + 1"), "err:FORG0001");

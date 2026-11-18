@@ -11,11 +11,12 @@
 
 use std::cmp::Ordering;
 
+use super::super::error::{ErrorCode, error};
+use super::super::functions::Context;
+use super::Builtin;
 use super::args::{arg, as_type, optional, optional_of};
-use super::codes::{FOCA0005, FODT0002, fail};
 use super::decimal::{Decimal, Rounding};
 use super::numeric::Number;
-use super::{Builtin, Focus};
 use crate::error::{Result, SqlError};
 use crate::value::datetime::{MICROS_PER_DAY, MICROS_PER_SECOND};
 use crate::xml::{Atomic, AtomicType, Sequence, day_time_text, duration_value, year_month_text};
@@ -40,7 +41,7 @@ const SECOND_SCALE: usize = 6;
 
 /// The error of a duration too large to hold [XQueryFO §10.1.1].
 fn overflow() -> SqlError {
-    fail(FODT0002, "a duration is too large to hold [XQueryFO §10.1.1]")
+    error(ErrorCode::FODT0002, "a duration is too large to hold [XQueryFO §10.1.1]")
 }
 
 /// The months of `a`, as a parameter of `xdt:yearMonthDuration` takes it.
@@ -208,7 +209,7 @@ pub fn subtract_day_time_durations(a: &Atomic, b: &Atomic) -> Result<Atomic> {
 fn factor(b: &Atomic) -> Result<Option<Decimal>> {
     let x = Number::of(b)?.real();
     if x.is_nan() {
-        return Err(fail(FOCA0005, "a duration is multiplied or divided by NaN [XQueryFO §10.6.3]"));
+        return Err(error(ErrorCode::FOCA0005, "a duration is multiplied or divided by NaN [XQueryFO §10.6.3]"));
     }
     // Display writes the shortest decimal that reads back as the double.
     Ok(x.is_finite().then(|| Decimal::parse(&x.to_string())).flatten())
@@ -310,14 +311,14 @@ fn integer(n: i128) -> Sequence {
 /// [XQueryFO §10.5.1] `fn:years-from-duration($arg as
 /// xdt:yearMonthDuration?) as xs:integer?`: the years of its canonical
 /// form, of its sign.
-fn years_from_duration(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn years_from_duration(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     Ok(duration_arg(args, AtomicType::YearMonthDuration)?.map_or_else(Sequence::empty, |m| integer(m.checked_div(MONTHS).unwrap_or(0))))
 }
 
 /// [XQueryFO §10.5.2] `fn:months-from-duration($arg as
 /// xdt:yearMonthDuration?) as xs:integer?`: the months of its canonical
 /// form, of its sign.
-fn months_from_duration(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn months_from_duration(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     Ok(duration_arg(args, AtomicType::YearMonthDuration)?.map_or_else(Sequence::empty, |m| integer(m.checked_rem(MONTHS).unwrap_or(0))))
 }
 
@@ -329,28 +330,28 @@ fn component(micros: i128, unit: i128, whole: i128) -> Sequence {
 
 /// [XQueryFO §10.5.3] `fn:days-from-duration($arg as
 /// xdt:dayTimeDuration?) as xs:integer?`.
-fn days_from_duration(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn days_from_duration(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let day = i128::from(MICROS_PER_DAY);
     Ok(duration_arg(args, AtomicType::DayTimeDuration)?.map_or_else(Sequence::empty, |u| component(u, day, i128::MAX)))
 }
 
 /// [XQueryFO §10.5.4] `fn:hours-from-duration($arg as
 /// xdt:dayTimeDuration?) as xs:integer?`.
-fn hours_from_duration(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn hours_from_duration(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let day = i128::from(MICROS_PER_DAY);
     Ok(duration_arg(args, AtomicType::DayTimeDuration)?.map_or_else(Sequence::empty, |u| component(u, MICROS_PER_HOUR, day)))
 }
 
 /// [XQueryFO §10.5.5] `fn:minutes-from-duration($arg as
 /// xdt:dayTimeDuration?) as xs:integer?`.
-fn minutes_from_duration(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn minutes_from_duration(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     Ok(duration_arg(args, AtomicType::DayTimeDuration)?.map_or_else(Sequence::empty, |u| component(u, MICROS_PER_MINUTE, MICROS_PER_HOUR)))
 }
 
 /// [XQueryFO §10.5.6] `fn:seconds-from-duration($arg as
 /// xdt:dayTimeDuration?) as xs:decimal?`: the seconds of its canonical
 /// form, with their fraction, of its sign.
-fn seconds_from_duration(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn seconds_from_duration(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let Some(micros) = duration_arg(args, AtomicType::DayTimeDuration)? else { return Ok(Sequence::empty()) };
     let within = micros.checked_rem(MICROS_PER_MINUTE).unwrap_or(0);
     let seconds = Decimal::integer(within).divide(&Decimal::integer(i128::from(MICROS_PER_SECOND)), SECOND_SCALE);

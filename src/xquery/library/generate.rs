@@ -11,9 +11,10 @@
 //! or attribute's ID and IDREF properties are those its document type
 //! declaration gave it [XQueryDM §5.5, §5.6].
 
+use super::super::error::{ErrorCode, error};
+use super::super::functions::Context;
+use super::Builtin;
 use super::args::{arg, boolean, items, optional_node, optional_string, or_context_node, strings};
-use super::codes::{FODC0001, FODC0002, FODC0004, FODC0005, fail};
-use super::{Builtin, Focus};
 use crate::error::Result;
 use crate::xml::{Item, Kind, Node, NodeId, Sequence, Tree, Version, is_ncname, is_space};
 
@@ -34,11 +35,11 @@ pub(super) const FUNCTIONS: [Builtin; 5] = [
 /// err:FONC0001 or err:FOTY0011 if it is not given and the context item
 /// is none or no node; err:FODC0001 if the tree's root is no document
 /// node.
-fn target(focus: &Focus, args: &[Sequence]) -> Result<Node> {
+fn target(focus: &Context<'_>, args: &[Sequence]) -> Result<Node> {
     let node = optional_node(&or_context_node(args, 1, focus)?)?;
     node.map(|n| n.at(NodeId::ROOT))
         .filter(|root| root.kind() == Some(Kind::Document))
-        .ok_or_else(|| fail(FODC0001, "the node is in no document [XQueryFO §15.5.2]"))
+        .ok_or_else(|| error(ErrorCode::FODC0001, "the node is in no document [XQueryFO §15.5.2]"))
 }
 
 /// The tokens of `text`, white space its separator.
@@ -57,7 +58,7 @@ fn has_id(tree: &Tree, id: NodeId, value: &str) -> bool {
 /// element()*`: for each token of the strings that is an NCName, the
 /// first element of the document with it as its ID value; in document
 /// order, each once.
-fn id(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn id(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let root = target(focus, args)?;
     let wanted: Vec<String> = strings(arg(args, 0))?;
     let tree = root.tree();
@@ -75,7 +76,7 @@ fn id(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// node()*`: the elements and attributes of the document that are IDREFs
 /// with one of the strings that is an NCName among the tokens of their
 /// values; in document order, each once.
-fn idref(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn idref(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let root = target(focus, args)?;
     let wanted: Vec<String> = strings(arg(args, 0))?.into_iter().filter(|s| is_ncname(Version::V11, s)).collect();
     let tree = root.tree();
@@ -96,16 +97,16 @@ fn idref(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// # Errors
 ///
 /// err:FODC0005 of a URI, as no document is available.
-fn doc(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn doc(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     match optional_string(arg(args, 0))? {
         None => Ok(Sequence::empty()),
-        Some(uri) => Err(fail(FODC0005, &format!("no document is available at '{uri}' [XQueryFO §15.5.4]"))),
+        Some(uri) => Err(error(ErrorCode::FODC0005, &format!("no document is available at '{uri}' [XQueryFO §15.5.4]"))),
     }
 }
 
 /// [XQueryFO §15.5.5] `fn:doc-available($uri as xs:string?) as
 /// xs:boolean`: false, as `fn:doc` returns no document node.
-fn doc_available(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn doc_available(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     optional_string(arg(args, 0))?;
     Ok(boolean(false))
 }
@@ -116,10 +117,10 @@ fn doc_available(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
 ///
 /// err:FODC0002 if no URI is given, as there is no default collection;
 /// err:FODC0004 of a URI, as no collection is available.
-fn collection(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn collection(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     match optional_string(arg(args, 0))? {
-        None => Err(fail(FODC0002, "there is no default collection [XQueryFO §15.5.6]")),
-        Some(uri) => Err(fail(FODC0004, &format!("no collection is available at '{uri}' [XQueryFO §15.5.6]"))),
+        None => Err(error(ErrorCode::FODC0002, "there is no default collection [XQueryFO §15.5.6]")),
+        Some(uri) => Err(error(ErrorCode::FODC0004, &format!("no collection is available at '{uri}' [XQueryFO §15.5.6]"))),
     }
 }
 

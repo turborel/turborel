@@ -13,8 +13,8 @@
 use std::cmp::Ordering;
 use std::num::FpCategory;
 
+use super::super::error::{ErrorCode, error};
 use super::args::wrong_type;
-use super::codes::{FOAR0001, FOAR0002, fail};
 use super::decimal::Decimal;
 use crate::error::Result;
 use crate::value::round_to_single;
@@ -35,7 +35,7 @@ pub enum Number {
 
 /// The error of an integer or decimal past `MAX_DIGITS`.
 fn overflow() -> crate::error::SqlError {
-    fail(FOAR0002, &format!("a decimal has more than {} digits [XQueryFO §6.2]", super::decimal::MAX_DIGITS))
+    error(ErrorCode::FOAR0002, &format!("a decimal has more than {} digits [XQueryFO §6.2]", super::decimal::MAX_DIGITS))
 }
 
 /// `d` if it is within `MAX_DIGITS`.
@@ -203,7 +203,7 @@ fn exact_arithmetic(op: Arithmetic, x: &Decimal, y: &Decimal) -> Option<Decimal>
 
 /// The error of a division by zero [XQueryFO §6.2.4, §6.2.5, §6.2.6].
 fn by_zero() -> crate::error::SqlError {
-    fail(FOAR0001, "a divisor is zero [XQueryFO §6.2.4]")
+    error(ErrorCode::FOAR0001, "a divisor is zero [XQueryFO §6.2.4]")
 }
 
 /// `a` `op` `b`, promoted to one type [XQueryFO §6.2]: of two integers an
@@ -293,7 +293,7 @@ fn real_integer_divide(x: f64, y: f64, single_precision: bool) -> Result<Decimal
     }
     let quotient = if single_precision { round_to_single(x / y) } else { x / y };
     if x.is_nan() || y.is_nan() || !x.is_finite() || !quotient.is_finite() {
-        return Err(fail(FOAR0002, "an operand of idiv is NaN, or its dividend or quotient infinite [XQueryFO §6.2.5]"));
+        return Err(error(ErrorCode::FOAR0002, "an operand of idiv is NaN, or its dividend or quotient infinite [XQueryFO §6.2.5]"));
     }
     Decimal::parse(&format!("{}", quotient.trunc())).ok_or_else(overflow)
 }

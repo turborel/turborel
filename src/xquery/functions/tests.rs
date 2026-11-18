@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use super::{FN_NAMESPACE, Library, XQueryFunction};
+use super::{FN_NAMESPACE, Library, SeqType, XQueryFunction};
 use crate::error::Code;
 use crate::xml::QName;
 
@@ -14,12 +14,13 @@ use crate::xml::QName;
 #[test]
 fn every_builtin_keeps_the_contract() {
     let library = Library::builtin();
-    let all = super::core::all();
-    assert_eq!(all.len(), 16);
+    let all = super::builtin::all();
+    assert_eq!(all.len(), 150, "a function of each arity of each of XQueryFO's");
     for f in &all {
         assert_eq!(f.name().uri.as_deref(), Some(FN_NAMESPACE), "{:?}", f.name());
         let found = library.find(f.name(), f.parameters().len()).unwrap();
-        assert!(Arc::ptr_eq(&found, f) || found.parameters().len() == f.parameters().len(), "{:?}", f.name());
+        assert_eq!((found.name(), found.parameters().len(), found.variadic()), (f.name(), f.parameters().len(), f.variadic()));
+        assert_eq!(f.result(), &SeqType::ANY);
     }
     let concat = QName { prefix: None, uri: Some(FN_NAMESPACE.into()), local: "concat".into() };
     assert!(library.find(&concat, 5).is_some(), "fn:concat takes two arguments or more");
@@ -32,7 +33,7 @@ fn every_builtin_keeps_the_contract() {
 #[test]
 fn registration_refuses_clashes() {
     let mut library = Library::builtin();
-    let count = super::core::all().into_iter().find(|f| &*f.name().local == "count").unwrap();
+    let count = super::builtin::all().into_iter().find(|f| &*f.name().local == "count").unwrap();
     assert_eq!(library.add(Arc::clone(&count)).unwrap_err().code, Code::Api);
     assert_eq!(library.add(Arc::new(Unnamed(QName::local("f")))).unwrap_err().code, Code::Api);
     let named = QName { prefix: None, uri: Some("urn:x".into()), local: "f".into() };
@@ -50,11 +51,11 @@ impl XQueryFunction for Unnamed {
     fn name(&self) -> &QName {
         &self.0
     }
-    fn parameters(&self) -> &[super::SeqType] {
+    fn parameters(&self) -> &[SeqType] {
         &[]
     }
-    fn result(&self) -> &super::SeqType {
-        &super::SeqType::Empty
+    fn result(&self) -> &SeqType {
+        &SeqType::Empty
     }
     fn call(&self, _: &super::Context<'_>, _: Vec<crate::xml::Sequence>) -> crate::error::Result<crate::xml::Sequence> {
         Ok(crate::xml::Sequence::default())

@@ -5,11 +5,12 @@
 //! a reverse axis's positions counted from its last [XQuery §3.2.2].
 
 use super::super::error::{ErrorCode, error};
+use super::super::library::op;
 use super::super::plan::{Axis, Op, PathOp, PathStart, StepOp, StepTest};
 use super::sequence::{in_document_order, nodes};
-use super::{Evaluator, Focus, Frame, Seq, ebv, numeric};
+use super::{Evaluator, Focus, Frame, Seq, ebv};
 use crate::error::Result;
-use crate::xml::{Item, Kind, Node, NodeId, Tree};
+use crate::xml::{Atomic, AtomicType, Item, Kind, Node, NodeId, Tree};
 
 impl Evaluator<'_> {
     /// The value of a path [XQuery §3.2].
@@ -129,7 +130,7 @@ fn truth_of(value: &[Item], position: usize) -> Result<bool> {
     if let [Item::Atomic(a)] = value
         && super::super::types::numeric(a.kind)
     {
-        return Ok(numeric::is_position(a, position));
+        return op::numeric_equal(a, &Atomic::new(AtomicType::Integer, position.to_string()));
     }
     ebv(value)
 }

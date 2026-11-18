@@ -16,7 +16,10 @@ fn index_of_examples() {
     let words = seq(&[s("a"), s("sport"), s("and"), s("a"), s("pastime")]);
     assert_eq!(texts(&call("index-of", &[words, s("a")]).unwrap()), ["1", "4"]);
     assert_eq!(call("index-of", &[seq(&[s("1"), int(1)]), dbl("1")]).unwrap().items().len(), 1);
-    assert_eq!(texts(&call("index-of", &[seq(&[s("A"), s("a")]), s("a"), s("CASE_INSENSITIVE")]).unwrap()), ["1", "2"]);
+    assert_eq!(
+        texts(&call("index-of", &[seq(&[s("A"), s("a")]), s("a"), s("urn:turborel:collation:CASE_INSENSITIVE")]).unwrap()),
+        ["1", "2"]
+    );
     assert_eq!(code(call("index-of", &[int(1), empty()])), "XPTY0004");
 }
 
@@ -43,7 +46,7 @@ fn distinct_values_examples() {
     assert_eq!(texts(&call("distinct-values", &[untyped]).unwrap()), ["cherry", "bar"]);
     assert_eq!(texts(&call("distinct-values", &[seq(&[dbl("NaN"), dbl("NaN"), dbl("0"), dbl("-0")])]).unwrap()), ["NaN", "0"]);
     assert_eq!(texts(&call("distinct-values", &[seq(&[s("1"), int(1)])]).unwrap()), ["1", "1"]);
-    assert_eq!(texts(&call("distinct-values", &[seq(&[s("A"), s("a")]), s("CASE_INSENSITIVE")]).unwrap()), ["A"]);
+    assert_eq!(texts(&call("distinct-values", &[seq(&[s("A"), s("a")]), s("urn:turborel:collation:CASE_INSENSITIVE")]).unwrap()), ["A"]);
     assert!(call("distinct-values", &[empty()]).unwrap().items().is_empty());
 }
 

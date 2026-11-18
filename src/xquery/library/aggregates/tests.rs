@@ -41,7 +41,7 @@ fn max_and_min_examples() {
     assert_eq!(text(call("min", &[seq(&[int(3), int(4), int(5)])])), "3");
     assert_eq!(typed(call("min", &[seq(&[int(5), dbl("5.0e0")])])), (AtomicType::Double, "5".to_owned()));
     assert_eq!(text(call("min", &[seq(&[s("a"), s("b"), s("c")])])), "a");
-    assert_eq!(text(call("min", &[seq(&[s("b"), s("A")]), s("CASE_INSENSITIVE")])), "A");
+    assert_eq!(text(call("min", &[seq(&[s("b"), s("A")]), s("urn:turborel:collation:CASE_INSENSITIVE")])), "A");
     assert_eq!(text(call("min", &[seq(&[dec("1.5"), dbl("NaN"), int(0)])])), "NaN");
     let dates = seq(&[atom(AtomicType::Date, "2001-01-01"), atom(AtomicType::Date, "2000-12-31Z")]);
     assert_eq!(text(call_in(&focus(), "min", &[dates])), "2000-12-31Z");

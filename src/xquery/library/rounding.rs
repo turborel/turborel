@@ -5,10 +5,11 @@
 
 use std::num::FpCategory;
 
+use super::super::functions::Context;
+use super::Builtin;
 use super::args::{arg, integer, optional, optional_atomic};
 use super::decimal::{Decimal, Rounding};
 use super::numeric::Number;
-use super::{Builtin, Focus};
 use crate::error::Result;
 use crate::value::round_to_single;
 use crate::xml::Sequence;
@@ -51,20 +52,20 @@ fn apply(args: &[Sequence], exact: impl Fn(&Decimal) -> Decimal, real: impl Fn(f
 
 /// [XQueryFO §6.4.1] `fn:abs($arg as numeric?) as numeric?`: its absolute
 /// value, positive zero and infinity of a float or double.
-fn abs(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn abs(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     apply(args, Decimal::abs, f64::abs)
 }
 
 /// [XQueryFO §6.4.2] `fn:ceiling($arg as numeric?) as numeric?`: the least
 /// number with no fraction not less than it, negative zero of a float or
 /// double between -1 and zero.
-fn ceiling(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn ceiling(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     apply(args, |d| d.round(0, Rounding::Ceiling), f64::ceil)
 }
 
 /// [XQueryFO §6.4.3] `fn:floor($arg as numeric?) as numeric?`: the
 /// greatest number with no fraction not greater than it.
-fn floor(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn floor(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     apply(args, |d| d.round(0, Rounding::Floor), f64::floor)
 }
 
@@ -82,7 +83,7 @@ pub(super) fn round_real(x: f64) -> f64 {
 }
 
 /// [XQueryFO §6.4.4] `fn:round($arg as numeric?) as numeric?`.
-fn round(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn round(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     apply(args, |d| d.round(0, Rounding::HalfUp), round_real)
 }
 
@@ -106,7 +107,7 @@ fn round_real_half_even(x: f64, precision: i64, single: bool) -> f64 {
 /// as xs:integer) as numeric?`: the nearest multiple of ten to the minus
 /// `$precision`, of two the one whose last digit is even; `$precision` 0
 /// if not given.
-fn round_half_to_even(_: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn round_half_to_even(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let precision = match args.get(1) {
         Some(given) => {
             let p = integer(given)?;

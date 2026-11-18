@@ -12,10 +12,11 @@
 
 use std::cmp::Ordering;
 
+use super::super::error::{ErrorCode, error};
+use super::super::functions::Context;
+use super::Builtin;
 use super::args::{arg, as_type, optional, optional_of};
-use super::codes::{FODT0001, FODT0003, fail};
 use super::durations::{day_time, micros_of};
-use super::{Builtin, Focus};
 use crate::error::Result;
 use crate::value::datetime::{MICROS_PER_DAY, MICROS_PER_MINUTE, MICROS_PER_SECOND, civil_from_days};
 use crate::xml::{Atomic, AtomicType, LAST_YEAR, Moment, Sequence, Shape};
@@ -90,7 +91,7 @@ pub(super) fn instant(m: &Moment, zone: i32) -> i128 {
 pub(super) fn moment_value(m: Moment, kind: AtomicType) -> Result<Atomic> {
     let year = m.year();
     if m.shape != Shape::Time && (m.days < 0 || year > LAST_YEAR) {
-        return Err(fail(FODT0001, &format!("a date's year {year} is outside 0001 to {LAST_YEAR} [XQueryFO §10.1.1]")));
+        return Err(error(ErrorCode::FODT0001, &format!("a date's year {year} is outside 0001 to {LAST_YEAR} [XQueryFO §10.1.1]")));
     }
     Ok(Atomic::new(kind, m.text()))
 }
@@ -242,7 +243,7 @@ pub(super) fn zone_of(a: &Atomic) -> Result<i32> {
     let whole = micros.checked_rem(i128::from(MICROS_PER_MINUTE)) == Some(0);
     minutes
         .filter(|m| whole && m.abs() <= MAX_ZONE)
-        .ok_or_else(|| fail(FODT0003, &format!("{} is no time zone [XQueryFO §10.7.1]", a.lexical)))
+        .ok_or_else(|| error(ErrorCode::FODT0003, &format!("{} is no time zone [XQueryFO §10.7.1]", a.lexical)))
 }
 
 /// `m` adjusted to the time zone `zone`, or to none [XQueryFO §10.7.1]:
@@ -282,10 +283,10 @@ pub(super) fn shifted(m: Moment, micros: i128) -> Moment {
 ///
 /// err:FODT0003 of a zone that is none; err:FODT0001 of a date outside
 /// 0001 to 9999.
-fn adjust_to_timezone(focus: &Focus, args: &[Sequence], kind: AtomicType) -> Result<Sequence> {
+fn adjust_to_timezone(focus: &Context<'_>, args: &[Sequence], kind: AtomicType) -> Result<Sequence> {
     let zone = match args.get(1) {
         Some(given) => optional_of(given, AtomicType::DayTimeDuration)?.map(|z| zone_of(&z)).transpose()?,
-        None => Some(focus.timezone_minutes),
+        None => Some(i32::from(focus.timezone())),
     };
     let Some(a) = optional_of(arg(args, 0), kind)? else { return Ok(Sequence::empty()) };
     Ok(optional(Some(moment_value(adjusted(moment_of(&a, kind)?, zone), kind)?)))

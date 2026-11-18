@@ -4,9 +4,9 @@
 //! (`collation.rs`), one for each character, so the characters a match
 //! covers are the units it matches.
 
-use super::args::{arg, boolean, string, string_or_empty, string_value};
-use super::collation::Collator;
-use super::{Builtin, Focus};
+use super::super::functions::Context;
+use super::Builtin;
+use super::args::{arg, boolean, collator, string_or_empty, string_value};
 use crate::error::Result;
 use crate::xml::Sequence;
 
@@ -30,9 +30,8 @@ struct Operands {
 
 impl Operands {
     /// Those of `args` in `focus`.
-    fn of(focus: &Focus, args: &[Sequence]) -> Result<Operands> {
-        let given = args.get(2).map(string).transpose()?;
-        let collator = Collator::of(focus, given.as_deref())?;
+    fn of(focus: &Context<'_>, args: &[Sequence]) -> Result<Operands> {
+        let collator = collator(focus, args, 2)?;
         let text = string_or_empty(arg(args, 0))?;
         let sought = string_or_empty(arg(args, 1))?;
         Ok(Operands { units: collator.units(&text)?, sought: collator.units(&sought)?, text: text.chars().collect() })
@@ -61,7 +60,7 @@ impl Operands {
 ///
 /// err:FOCH0002 of a collation not supported; err:FOCH0004 of one with no
 /// collation units.
-fn contains(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn contains(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     Ok(boolean(Operands::of(focus, args)?.first().is_some()))
 }
 
@@ -71,7 +70,7 @@ fn contains(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// # Errors
 ///
 /// As `contains`.
-fn starts_with(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn starts_with(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let o = Operands::of(focus, args)?;
     Ok(boolean(o.units.starts_with(&o.sought)))
 }
@@ -82,7 +81,7 @@ fn starts_with(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// # Errors
 ///
 /// As `contains`.
-fn ends_with(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn ends_with(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let o = Operands::of(focus, args)?;
     Ok(boolean(o.units.ends_with(&o.sought)))
 }
@@ -95,7 +94,7 @@ fn ends_with(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// # Errors
 ///
 /// As `contains`.
-fn substring_before(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn substring_before(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let o = Operands::of(focus, args)?;
     string_value(o.first().map_or_else(String::new, |at| o.characters(0, at)))
 }
@@ -108,7 +107,7 @@ fn substring_before(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
 /// # Errors
 ///
 /// As `contains`.
-fn substring_after(focus: &Focus, args: &[Sequence]) -> Result<Sequence> {
+fn substring_after(focus: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let o = Operands::of(focus, args)?;
     let after = o.first().map(|at| at.saturating_add(o.sought.len()));
     string_value(after.map_or_else(String::new, |at| o.characters(at, o.text.len())))

@@ -9,12 +9,13 @@ use std::cmp::Ordering;
 use super::super::ast::{Comparator, GeneralComp, NodeComp, ValueComp};
 use super::super::collation::Collator;
 use super::super::error::{ErrorCode, error};
+use super::super::library::{op, value_comparison};
 use super::super::plan::CompareOp;
 use super::sequence::{atomize, boolean};
 use super::types::cast_atomic;
-use super::{Evaluator, Focus, Frame, Seq, numeric, temporal};
+use super::{Evaluator, Focus, Frame, Seq};
 use crate::error::Result;
-use crate::xml::{Atomic, AtomicType, Item, Primitive, duration_units, equal};
+use crate::xml::{Atomic, AtomicType, Item, Primitive};
 
 impl Evaluator<'_> {
     /// The value of a comparison [XQuery §3.5].
@@ -50,63 +51,13 @@ impl Evaluator<'_> {
 
     /// How `a` compares with `b` by the operator mapping [XQuery Appendix
     /// B.2], for equality alone if `equality`: none if they are unordered,
-    /// a NaN.
+    /// a NaN; the library's operators (`library::value_comparison`).
     ///
     /// # Errors
     ///
     /// err:XPTY0004 if their types have no comparison.
     pub(super) fn order(&self, a: &Atomic, b: &Atomic, collation: &Collator, equality: bool) -> Result<Option<Ordering>> {
-        let (pa, pb) = (a.kind.primitive(), b.kind.primitive());
-        if pa.numeric() && pb.numeric() {
-            return Ok(numeric::compare(a, b));
-        }
-        if textual(pa) && textual(pb) {
-            return Ok(Some(collation.compare(&a.lexical, &b.lexical)));
-        }
-        let found = if pa == pb {
-            self.alike(pa, a, b, equality)?
-        } else if equality && pa.schema() == Primitive::Duration && pb.schema() == Primitive::Duration {
-            // [XQueryFO §10.4.7] durations of the two kinds compare equal
-            // as durations, of the same months and seconds.
-            Some(equal_or_not(equal(a, b)))
-        } else {
-            None
-        };
-        found.map(Some).ok_or_else(|| {
-            let why = format!("{} and {} are not compared by this operator [XQuery Appendix B.2]", a.kind.name(), b.kind.name());
-            error(ErrorCode::XPTY0004, &why)
-        })
-    }
-
-    /// How `a` and `b`, of the one primitive type `p`, compare by the
-    /// operator mapping [XQuery Appendix B.2], for equality alone if
-    /// `equality`: none if it has no such operator.
-    fn alike(&self, p: Primitive, a: &Atomic, b: &Atomic, equality: bool) -> Result<Option<Ordering>> {
-        Ok(match p {
-            // [XQueryFO §9.2] false before true, as their names are.
-            Primitive::Boolean => Some(a.lexical.cmp(&b.lexical)),
-            Primitive::YearMonthDuration | Primitive::DayTimeDuration => {
-                let months = p == Primitive::YearMonthDuration;
-                Some(duration_units(&a.lexical, months)?.cmp(&duration_units(&b.lexical, months)?))
-            }
-            Primitive::Date | Primitive::Time | Primitive::DateTime => temporal::compare(a, b, self.context.timezone),
-            // [XQueryFO §10.4.17 to §10.4.21] Gregorian values compare equal
-            // or not by their starting instants.
-            Primitive::GYearMonth | Primitive::GYear | Primitive::GMonthDay | Primitive::GDay | Primitive::GMonth => {
-                equality.then(|| temporal::compare(a, b, self.context.timezone).map(|o| equal_or_not(o == Ordering::Equal))).flatten()
-            }
-            // [XQueryFO §10.4.7, §11.2.1, §12.1, §13.1.1] equal or not.
-            Primitive::Duration | Primitive::HexBinary | Primitive::Base64Binary | Primitive::QName | Primitive::Notation => {
-                equality.then(|| equal_or_not(equal(a, b)))
-            }
-            Primitive::Untyped
-            | Primitive::String
-            | Primitive::AnyUri
-            | Primitive::Decimal
-            | Primitive::Integer
-            | Primitive::Float
-            | Primitive::Double => None,
-        })
+        value_comparison(a, b, collation, i32::from(self.context.timezone), equality)
     }
 
     /// A general comparison of `left` and `right` [XQuery §3.5.2]: true if
@@ -140,11 +91,6 @@ impl Evaluator<'_> {
 /// `xs:anyURI` promoted to it.
 fn textual(p: Primitive) -> bool {
     p.textual() || p == Primitive::AnyUri
-}
-
-/// Equal, or else less, as an order of values only told equal or not.
-fn equal_or_not(same: bool) -> Ordering {
-    if same { Ordering::Equal } else { Ordering::Less }
 }
 
 /// The one atomic value `items` atomize to, none of none [XQuery §3.5.1].
@@ -199,8 +145,8 @@ fn node_compare(op: NodeComp, left: &[Item], right: &[Item]) -> Result<Seq> {
     };
     let (Some(a), Some(b)) = (one(left)?, one(right)?) else { return Ok(Vec::new()) };
     Ok(boolean(match op {
-        NodeComp::Is => a.is(&b),
-        NodeComp::Precedes => a.document_order(&b) == Ordering::Less,
-        NodeComp::Follows => a.document_order(&b) == Ordering::Greater,
+        NodeComp::Is => op::is_same_node(&a, &b),
+        NodeComp::Precedes => op::node_before(&a, &b),
+        NodeComp::Follows => op::node_after(&a, &b),
     }))
 }

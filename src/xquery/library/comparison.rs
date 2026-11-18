@@ -9,9 +9,10 @@
 
 use std::cmp::Ordering;
 
+use super::super::collation::Collator;
+use super::super::error::{ErrorCode, error};
 use super::binary::{base64_binary_equal, hex_binary_equal, notation_equal};
 use super::booleans::{boolean_equal, boolean_less_than};
-use super::collation::Collator;
 use super::durations::{duration_equal, duration_order};
 use super::moments::moment_order;
 use super::numeric::numeric_order;
@@ -133,6 +134,39 @@ pub fn value_order(a: &Atomic, b: &Atomic, collation: &Collator, zone: i32) -> R
         Class::Moment(kind) => ordered_moment(kind).then(|| moment_order(a, b, kind, zone)).transpose()?,
         Class::Duration | Class::Hex | Class::Base64 | Class::QName | Class::Notation => None,
     })
+}
+
+/// How `a` compares with `b` by a value comparison [XQuery §3.5.1]: by
+/// the operator the operator mapping names [XQuery Appendix B.2], for `eq`
+/// and `ne` alone if `equality`; unequal values of no order told apart as
+/// less; none if they are unordered, a NaN.
+///
+/// # Errors
+///
+/// err:XPTY0004 if the mapping has no operator of their types; as the
+/// operators compared by.
+pub fn value_comparison(a: &Atomic, b: &Atomic, collation: &Collator, zone: i32, equality: bool) -> Result<Option<Ordering>> {
+    let (x, y) = (class(a), class(b));
+    let found = if equality {
+        value_equal(a, b, collation, zone)?.map(|same| Some(if same { Ordering::Equal } else { Ordering::Less }))
+    } else if x == y && ordered(x) {
+        Some(value_order(a, b, collation, zone)?)
+    } else {
+        None
+    };
+    found.ok_or_else(|| {
+        let why = format!("{} and {} are not compared by this operator [XQuery Appendix B.2]", a.kind.name(), b.kind.name());
+        error(ErrorCode::XPTY0004, &why)
+    })
+}
+
+/// Whether values of the class `c` are ordered by `lt` and `gt`.
+fn ordered(c: Class) -> bool {
+    match c {
+        Class::Number | Class::Text | Class::Truth | Class::YearMonth | Class::DayTime => true,
+        Class::Moment(kind) => ordered_moment(kind),
+        Class::Duration | Class::Hex | Class::Base64 | Class::QName | Class::Notation => false,
+    }
 }
 
 /// Whether values of the date or time type `kind` are ordered: a date and

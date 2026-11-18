@@ -9,7 +9,7 @@
 use super::{Mutation, Package};
 
 /// Each mechanism broken alone, and the tests that fail.
-pub const XQUERY_EVAL: [Mutation; 27] = [
+pub const XQUERY_EVAL: [Mutation; 26] = [
     Mutation {
         name: "xquery-depth-bound",
         package: Package::Core,
@@ -45,7 +45,7 @@ pub const XQUERY_EVAL: [Mutation; 27] = [
         package: Package::Core,
         breaks: "a numeric predicate is taken as an effective boolean value",
         file: "src/xquery/eval/path.rs",
-        original: "return Ok(numeric::is_position(a, position));",
+        original: "return op::numeric_equal(a, &Atomic::new(AtomicType::Integer, position.to_string()));",
         replacement: "return ebv(value);",
         integration: &[],
         unit: &["xquery::eval::tests::paths::predicates"],
@@ -114,21 +114,11 @@ pub const XQUERY_EVAL: [Mutation; 27] = [
         name: "xquery-integer-mod",
         package: Package::Core,
         breaks: "mod of integers gives the quotient",
-        file: "src/xquery/eval/numeric.rs",
-        original: "x.checked_rem(y).unwrap_or(0)",
-        replacement: "x.checked_div(y).unwrap_or(0)",
+        file: "src/xquery/library/numeric.rs",
+        original: "Arithmetic::Modulus => x.remainder(y),",
+        replacement: "Arithmetic::Modulus => x.divide(y, 0),",
         integration: &[],
         unit: &["xquery::eval::tests::arithmetic_of_numbers"],
-    },
-    Mutation {
-        name: "xquery-month-pinned",
-        package: Package::Core,
-        breaks: "a month added to a date keeps a day past the month's last",
-        file: "src/xquery/eval/temporal.rs",
-        original: "let day = day.min(days_in(new_year, new_month));",
-        replacement: "let day = day.min(31);",
-        integration: &[],
-        unit: &["xquery::eval::tests::arithmetic_of_dates_and_durations"],
     },
     Mutation {
         name: "xquery-attribute-after-content",

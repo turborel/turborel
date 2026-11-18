@@ -3,8 +3,8 @@
 //! the values of the variables of its frame (`Frame`) and of the globals,
 //! and what the query shares (`Evaluator`). Sequences, atomization and the
 //! effective boolean value are in `eval/sequence.rs`; paths, axes and
-//! predicates in `eval/path.rs`; the operators in `eval/arith.rs`,
-//! `eval/compare.rs`, `eval/numeric.rs` and `eval/temporal.rs`; the
+//! predicates in `eval/path.rs`; the operators in `eval/arith.rs` and
+//! `eval/compare.rs`, which call the library's (`xquery::library::op`); the
 //! expressions that bind variables in `eval/flwor.rs`; sequence types,
 //! casts and function calls in `eval/types.rs` and `eval/call.rs`; and
 //! constructors in `eval/construct.rs`.
@@ -22,10 +22,8 @@ mod call;
 mod compare;
 mod construct;
 mod flwor;
-mod numeric;
 mod path;
 mod sequence;
-mod temporal;
 mod types;
 
 use std::cell::{Cell, RefCell};
@@ -37,7 +35,7 @@ use super::plan::{Op, Plan};
 use crate::error::Result;
 use crate::xml::{Item, Moment, Sequence};
 
-pub(super) use sequence::{atomize, ebv, string_value};
+pub(super) use sequence::ebv;
 
 /// \[DESIGN\] How deep the evaluation of a query nests at most: operations
 /// evaluated within others, and function calls within calls (RULES.md

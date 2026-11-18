@@ -1,6 +1,6 @@
 //! Tests of the function conversion rules.
 
-use super::super::testing::{atom, code, document, empty, focus, int, s, seq};
+use super::super::testing::{atom, code, document, empty, focus, in_context, int, s, seq};
 use super::*;
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQuery §3.1.5]
@@ -54,11 +54,11 @@ fn nodes_and_the_context_item() {
     assert_eq!(code(node(&seq(&[doc.clone(), doc.clone()])).map(|_| empty())), "XPTY0004");
     assert_eq!(code(node(&empty()).map(|_| empty())), "XPTY0004");
     let none = focus();
-    assert_eq!(code(or_context(&[], 0, &none)), "FONC0001");
+    assert_eq!(in_context(&none, |c| code(or_context(&[], 0, c))), "FONC0001");
     let atomic_focus = none.at(Item::Atomic(Atomic::new(AtomicType::String, "x")), 1, 1);
-    assert_eq!(or_context(&[], 0, &atomic_focus).unwrap().items().len(), 1);
-    assert_eq!(code(or_context_node(&[], 0, &atomic_focus)), "FOTY0011");
-    assert_eq!(or_context_node(&[int(1)], 0, &atomic_focus).unwrap().items().len(), 1);
+    assert_eq!(in_context(&atomic_focus, |c| or_context(&[], 0, c).unwrap().items().len()), 1);
+    assert_eq!(in_context(&atomic_focus, |c| code(or_context_node(&[], 0, c))), "FOTY0011");
+    assert_eq!(in_context(&atomic_focus, |c| or_context_node(&[int(1)], 0, c).unwrap().items().len()), 1);
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] (RULES.md D18, D86) a

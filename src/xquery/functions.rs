@@ -5,13 +5,12 @@
 //! declaration [XQuery §4.15] and a call by its expanded QName and arity
 //! reach.
 //!
-//! The built-in functions here are those the core of the language relies
-//! on (`functions/core.rs`): the boolean functions, fn:data, fn:string,
-//! fn:count, fn:empty and fn:exists, fn:position and fn:last, fn:concat,
-//! fn:root and fn:doc. The constructor functions of the atomic types are
-//! no functions of the library: a call of one is a cast [XQuery §3.12.5].
+//! The built-in functions are every function of XQuery 1.0 Functions and
+//! Operators, the library `xquery::library` (`functions/builtin.rs`).
+//! The constructor functions of the atomic types are no functions of the
+//! library: a call of one is a cast [XQuery §3.12.5].
 
-mod core;
+mod builtin;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -196,7 +195,7 @@ impl Library {
     #[must_use]
     pub fn builtin() -> Library {
         let mut library = Library { functions: HashMap::new() };
-        for f in core::all() {
+        for f in builtin::all() {
             library.functions.entry(key(&*f)).or_default().push(f);
         }
         library

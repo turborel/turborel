@@ -107,14 +107,11 @@ pub const XQUERY_FUNCTIONS: [Mutation; 20] = [
         name: "xquery-codepoint-order",
         package: Package::Core,
         breaks: "the code point collation orders strings backwards",
-        file: "src/xquery/library/collation.rs",
-        original: "Collator::Codepoint => first.cmp(second),",
-        replacement: "Collator::Codepoint => second.cmp(first),",
+        file: "src/xquery/collation.rs",
+        original: "let Some(by) = &self.by else { return a.cmp(b) };",
+        replacement: "let Some(by) = &self.by else { return b.cmp(a) };",
         integration: &[],
-        unit: &[
-            "xquery::library::collation::tests::strings_are_ordered_by_collation",
-            "xquery::library::strings::tests::comparing_strings",
-        ],
+        unit: &["xquery::collation::tests::collations_by_uri", "xquery::library::strings::tests::comparing_strings"],
     },
     Mutation {
         name: "xquery-composition-blocked",

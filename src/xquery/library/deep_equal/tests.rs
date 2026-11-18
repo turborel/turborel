@@ -32,7 +32,7 @@ fn atomic_values_and_lengths() {
     assert_eq!(text(call("deep-equal", &[int(1), seq(&[int(1), int(1)])])), "false");
     let today = atom(AtomicType::Date, "2000-01-01");
     assert_eq!(text(call("deep-equal", &[int(1), today])), "false");
-    assert_eq!(text(call("deep-equal", &[s("A"), s("a"), s("CASE_INSENSITIVE")])), "true");
+    assert_eq!(text(call("deep-equal", &[s("A"), s("a"), s("urn:turborel:collation:CASE_INSENSITIVE")])), "true");
     assert_eq!(code(call("deep-equal", &[s("A"), s("a"), s("nowhere")])), "FOCH0002");
 }
 
