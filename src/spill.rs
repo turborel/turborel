@@ -20,13 +20,16 @@
 //!
 //! Rows and keys are written in self-describing byte forms
 //! (`value/codec.rs`, and here): keys so that two keys are the same bytes
-//! exactly when the operator would find them equal.
+//! exactly when the operator would find them equal. A row's large objects
+//! and XML values kept apart are named by what keeps them, which its spill
+//! holds (`spill/named.rs`).
 
 mod keys;
 pub use lobs::TempLobStore;
 mod list;
 mod lobs;
 pub(crate) mod map;
+mod named;
 pub(crate) mod paged;
 mod sort;
 #[cfg(test)]
@@ -39,6 +42,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 pub use keys::{bucket_key, norm_key, norm_row, put_norm, put_norm_approx, put_norm_exact, put_norm_text};
 pub use list::{Decode, Encode, ListItem, ListSpace, Located, SpillList};
+pub use named::SpilledLobs;
 pub use paged::PagedSpill;
 pub use sort::sorted_records;
 

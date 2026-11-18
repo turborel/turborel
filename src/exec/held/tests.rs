@@ -100,11 +100,14 @@ fn a_run_not_read_back_is_reported() {
     assert!(read.iter().any(|r| r.as_ref().err().map(|e| e.code) == Some(Code::Io)));
     assert_eq!(read.last().map(|r| shown(r.as_ref().unwrap())), Some(shown(&row(24))));
     let types = TypeRegistry::default();
-    let record = row(1).record();
-    assert_eq!(RowId::read(&record, &types).err().map(|e| e.code), Some(Code::Corrupt));
-    assert_eq!(<(RowId, Row)>::read(&record, &types).err().map(|e| e.code), Some(Code::Corrupt));
-    assert_eq!(<(RowId, Row, Row)>::read(&7_u64.record(), &types).err().map(|e| e.code), Some(Code::Corrupt));
+    let record = row(1).record(&SpilledLobs::new());
+    assert_eq!(RowId::read(&record, &types, &SpilledLobs::new()).err().map(|e| e.code), Some(Code::Corrupt));
+    assert_eq!(<(RowId, Row)>::read(&record, &types, &SpilledLobs::new()).err().map(|e| e.code), Some(Code::Corrupt));
+    assert_eq!(
+        <(RowId, Row, Row)>::read(&7_u64.record(&SpilledLobs::new()), &types, &SpilledLobs::new()).err().map(|e| e.code),
+        Some(Code::Corrupt)
+    );
     let mut longer = record.clone();
     longer.push(0);
-    assert_eq!(Row::read(&longer, &types).err().map(|e| e.code), Some(Code::Corrupt), "bytes after its end");
+    assert_eq!(Row::read(&longer, &types, &SpilledLobs::new()).err().map(|e| e.code), Some(Code::Corrupt), "bytes after its end");
 }

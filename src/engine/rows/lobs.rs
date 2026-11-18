@@ -399,4 +399,8 @@ impl LobSource for Stored {
     fn kept(&self) -> Option<Kept> {
         Some(Kept { table: self.space.tag, id: self.id })
     }
+
+    fn sibling(&self, id: u64, totals: (u64, u64)) -> Option<Arc<dyn LobSource>> {
+        Some(Arc::new(Stored { space: Arc::clone(&self.space), id, totals, directory: OnceLock::new() }))
+    }
 }

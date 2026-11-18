@@ -79,13 +79,13 @@ impl Distinct {
     /// makes its spill area, half of it the bags'.
     fn partitioned(&mut self) -> Result<RowIter> {
         let bags = self.work.split();
-        let mut parts = Partitioner::of(&mut self.work)?;
+        let (mut parts, lobs) = (Partitioner::of(&mut self.work)?, self.work.lobs().clone());
         let input = std::mem::replace(&mut self.input, Box::new(std::iter::empty()));
         for (n, r) in (0_u64..).zip(input) {
             let row = r?;
             let k = key(&row);
             if !self.seen.contains(&k) {
-                parts.push(&k, &numbered(n, &row))?;
+                parts.push(&k, &numbered(n, &row, &lobs))?;
             }
         }
         self.seen = HashSet::new();
@@ -107,7 +107,7 @@ fn firsts(partition: Records, (depth, sources): (usize, &mut Vec<Records>), (wor
     let (again, mut parts, mut bag) = (depth < work.depth(), None, None);
     for record in partition {
         let record = record?;
-        let k = key(&unnumbered(&record, work.types())?.1);
+        let k = key(&unnumbered(&record, work.types(), work.lobs())?.1);
         if seen.contains(&k) {
             continue;
         }

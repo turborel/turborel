@@ -7,6 +7,7 @@ use super::{Accumulator, AggregateFunction};
 use crate::bytes::Reader;
 use crate::error::{Code, Result, SqlError};
 use crate::value::codec::{put_value, value};
+use crate::value::types::composite;
 use crate::value::{DataType, Value};
 
 /// [ISO/IEC 9075-2:2023 §10.9] ANY_VALUE's name, no key word of SQL-92.
@@ -27,13 +28,22 @@ impl AggregateFunction for AnyValue {
         arg.ok_or_else(|| SqlError::new(Code::SyntaxRule, format!("[ISO/IEC 9075-2:2023 §10.9 F] {ANY_VALUE} takes an argument")))
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
-        Box::new(First { first: None, written: !matches!(result, DataType::Extension(_)) })
+        Box::new(First { first: None, written: written(&result) })
     }
 }
 
+/// Whether a state of a value of `t` is written (`Accumulator::
+/// write_state`): not of a plug-in's type, whose values are read back only
+/// through the types registered; nor of one that may hold a large object
+/// or an XML value, which a table may keep apart and a state, as the log,
+/// would name by its id alone (RULES.md D38, D79). A grouping then writes
+/// its rows, which name such values by what keeps them (`spill/named.rs`).
+fn written(t: &DataType) -> bool {
+    !matches!(t, DataType::Extension(_)) && !composite::may_keep_apart(t)
+}
+
 /// The first value given, if one was; and whether its state is written
-/// (`Accumulator::write_state`): not of a plug-in's type, whose values are
-/// read back only through the types registered.
+/// (`written`).
 struct First {
     first: Option<Value>,
     written: bool,
@@ -105,7 +115,7 @@ impl AggregateFunction for GroupValue {
         field.ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] the value of a group-invariant column is of a row of it"))
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
-        Box::new(Kept(First { first: None, written: !matches!(result, DataType::Extension(_)) }))
+        Box::new(Kept(First { first: None, written: written(&result) }))
     }
 }
 
@@ -203,5 +213,23 @@ mod tests {
         assert_eq!(empty.finish().unwrap().norm(), int(6).norm());
         a.merge(&state).unwrap();
         assert!(a.finish().unwrap().is_null());
+    }
+
+    /// Verifies: [DESIGN] RULES.md D38, D79: of a type that may hold a
+    /// value a table keeps apart, an XML type or a row of one, neither
+    /// ANY_VALUE nor a group-invariant column writes a state, so a grouping
+    /// past its work area writes its rows, which name such values by what
+    /// keeps them; of an integer, both do.
+    #[test]
+    fn no_state_is_written_of_values_kept_apart() {
+        let xml = DataType::Xml(crate::value::xml::XmlType::Sequence);
+        let field = crate::value::types::Field { name: "X".to_owned(), data_type: xml.clone(), unnamed: false };
+        let int = DataType::Exact { precision: 9, scale: 0, spelled: crate::value::Spelled::Integer };
+        let mut none = Vec::new();
+        for t in [xml, DataType::row(vec![field])] {
+            assert!(!AnyValue.accumulator(t.clone()).write_state(&mut none), "{t:?}");
+            assert!(!GroupValue.accumulator(t.clone()).write_state(&mut none), "{t:?}");
+        }
+        assert!(AnyValue.accumulator(int.clone()).write_state(&mut none) && GroupValue.accumulator(int).write_state(&mut none));
     }
 }

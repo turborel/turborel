@@ -7,16 +7,17 @@
 //! scale and each row's units; of approximate numbers, each row's bits; of
 //! character strings, each row's length, then their bytes. A column of
 //! anything else, or of values of more than one kind, is written as each
-//! row's value, as the value codec writes it (`codec::put_value`), with no
-//! byte of nulls. Read back, a chunk is a batch of those vectors
-//! (`Column::Ints`, `Floats`, `Texts` and `Values`), its rows compared and
-//! made where they lie, as `vectors.rs` compares and makes them.
+//! row's value, as the value codec writes it, what it names after it
+//! (`SpilledLobs::put_value`), with no byte of nulls. Read back, a chunk
+//! is a batch of those vectors (`Column::Ints`, `Floats`, `Texts` and
+//! `Values`), its rows compared and made where they lie, as `vectors.rs`
+//! compares and makes them.
 
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
+use crate::spill::SpilledLobs;
 use crate::storage::{Batch, Cell, Column, Floats, Ints, Texts};
 use crate::value::Value;
-use crate::value::codec::{put_value, value};
 use crate::value::types::TypeRegistry;
 
 /// A column's kind: each row's value.
@@ -40,8 +41,8 @@ pub(super) struct Chunk {
 
 /// Writes to `out`, emptied first, the chunk of `rows`, each row of the
 /// width of the first's batch, beside its head of `heads`, its tag and
-/// prefix.
-pub(super) fn put_chunk(heads: &[(u8, u64)], rows: &[Pick<'_>], out: &mut Vec<u8>) {
+/// prefix, naming what `lobs` holds.
+pub(super) fn put_chunk(heads: &[(u8, u64)], rows: &[Pick<'_>], out: &mut Vec<u8>, lobs: &SpilledLobs) {
     out.clear();
     let width = rows.first().map_or(0, |(batch, _)| batch.columns.len());
     out.put_u32(count(rows.len()));
@@ -53,7 +54,7 @@ pub(super) fn put_chunk(heads: &[(u8, u64)], rows: &[Pick<'_>], out: &mut Vec<u8
         out.put_u64(bits);
     }
     for at in 0..width {
-        put_column(rows, at, out);
+        put_column(rows, at, out, lobs);
     }
 }
 
@@ -104,17 +105,17 @@ fn kind_of(rows: &[Pick<'_>], at: usize) -> (u8, u32) {
     kind.unwrap_or((VALUES, 0_u32))
 }
 
-/// Appends column `at` of `rows` to `out`, as the module's documentation
-/// says.
-fn put_column(rows: &[Pick<'_>], at: usize, out: &mut Vec<u8>) {
+/// Appends column `at` of `rows` to `out`, naming what `lobs` holds, as
+/// the module's documentation says.
+fn put_column(rows: &[Pick<'_>], at: usize, out: &mut Vec<u8>, lobs: &SpilledLobs) {
     let (kind, scale) = kind_of(rows, at);
     out.put_u8(kind);
     let cells = || rows.iter().map(move |&(batch, r)| batch.cell(at, r));
     if kind == VALUES {
         for cell in cells() {
             match cell {
-                Cell::Value(v) => put_value(out, v),
-                made @ (Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) | Cell::Null) => put_value(out, &made.to_value()),
+                Cell::Value(v) => lobs.put_value(out, v),
+                made @ (Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) | Cell::Null) => lobs.put_value(out, &made.to_value()),
             }
         }
         return;
@@ -166,18 +167,18 @@ fn text(cell: Cell<'_>) -> &str {
 }
 
 /// The chunk of `record`, its values of types beyond the standard found
-/// among `types`.
+/// among `types`, and what it names among `lobs`.
 ///
 /// # Errors
 ///
 /// SQLCODE -916 if it is not a chunk's record.
-pub(super) fn chunk(record: &[u8], types: &TypeRegistry) -> Result<Chunk> {
+pub(super) fn chunk(record: &[u8], types: &TypeRegistry, lobs: &SpilledLobs) -> Result<Chunk> {
     let mut reader = Reader::new(record, "sorted run").with_types(types);
     let rows = place(reader.u32()?);
     let width = place(reader.u32()?);
     let tags = reader.take(rows)?.to_vec();
     let prefixes = (0..rows).map(|_| reader.u64()).collect::<Result<Vec<u64>>>()?;
-    let columns = (0..width).map(|_| column(&mut reader, rows)).collect::<Result<Vec<Column>>>()?;
+    let columns = (0..width).map(|_| column(&mut reader, rows, lobs)).collect::<Result<Vec<Column>>>()?;
     reader.finish()?;
     Ok(Chunk { tags, prefixes, batch: Batch { columns, rows } })
 }
@@ -188,10 +189,10 @@ fn place(n: u32) -> usize {
 }
 
 /// A column of `rows` rows, read.
-fn column(reader: &mut Reader<'_>, rows: usize) -> Result<Column> {
+fn column(reader: &mut Reader<'_>, rows: usize, lobs: &SpilledLobs) -> Result<Column> {
     let kind = reader.u8()?;
     if kind == VALUES {
-        return Ok(Column::Values((0..rows).map(|_| value(reader)).collect::<Result<Vec<Value>>>()?));
+        return Ok(Column::Values((0..rows).map(|_| lobs.value(reader)).collect::<Result<Vec<Value>>>()?));
     }
     let nulls = if reader.u8()? == 0 { None } else { Some(reader.take(rows)?.iter().map(|&b| b != 0).collect()) };
     if kind == INTS {
@@ -231,8 +232,8 @@ mod tests {
         let rows: Vec<Pick<'_>> = (0..batch.rows).map(|r| (batch, r)).collect();
         let heads: Vec<(u8, u64)> = (0..batch.rows).map(|r| (u8::try_from(r).unwrap(), u64::try_from(r).unwrap() << 40_u32)).collect();
         let mut out = Vec::new();
-        put_chunk(&heads, &rows, &mut out);
-        let read = chunk(&out, &TypeRegistry::default()).unwrap();
+        put_chunk(&heads, &rows, &mut out, &SpilledLobs::new());
+        let read = chunk(&out, &TypeRegistry::default(), &SpilledLobs::new()).unwrap();
         let kinds = read
             .batch
             .columns
@@ -304,8 +305,8 @@ mod tests {
     fn records_not_chunks_are_refused() {
         let batch = Batch { columns: vec![Column::Texts(Texts::new("ab".to_owned(), vec![2_usize], None))], rows: 1 };
         let mut out = Vec::new();
-        put_chunk(&[(0_u8, 0_u64)], &[(&batch, 0_usize)], &mut out);
-        let refused = |record: &[u8]| chunk(record, &TypeRegistry::default()).err().map(|e| e.code);
+        put_chunk(&[(0_u8, 0_u64)], &[(&batch, 0_usize)], &mut out, &SpilledLobs::new());
+        let refused = |record: &[u8]| chunk(record, &TypeRegistry::default(), &SpilledLobs::new()).err().map(|e| e.code);
         assert!(refused(&out).is_none());
         assert_eq!(refused(&out[..out.len() - 1]), Some(Code::Corrupt), "short");
         let mut longer = out.clone();

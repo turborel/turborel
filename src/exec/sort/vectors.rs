@@ -145,7 +145,7 @@ impl Held {
             let rows: Vec<Pick<'_>> = places.iter().filter_map(|p| self.batches.get(p.batch).map(|b| (b, p.row))).collect();
             let heads: Vec<(u8, u64)> =
                 rows.iter().map(|&(b, r)| head(keys.first().and_then(|k| prefix_of_cell(b.cell(k.column, r), k.order())))).collect();
-            put_chunk(&heads, &rows, &mut out);
+            put_chunk(&heads, &rows, &mut out, work.lobs());
             run.push(&out)?;
         }
         Ok(run)

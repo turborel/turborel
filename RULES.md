@@ -1044,6 +1044,24 @@ statement's snapshot is held. That is the transaction at REPEATABLE READ
 and SERIALIZABLE, and the statement at READ COMMITTED, unless a locator
 of it holds the snapshot to the transaction's end.
 
+A row an operator or a statement holds past its work area (D38) names
+its large objects, and XML values kept apart, by what keeps them. The
+log's form names a table's object by its id alone, which only the table
+of the row holding it resolves, so a spilled record names a slice of a
+table's object by the table and the id, and a temporary object by itself
+(`spill/named.rs`). The spill holds one source of each table its records
+name, which makes a source of any other object of that table, and each
+temporary object they name. So a value read back is valid as the value
+held in memory was: a table's while the statement's snapshot is held, as
+no object a snapshot reads is freed, and a temporary one while the spill
+is. Copying each value to the spill area would write again every object
+a spilled row names, and holding it whole, as a value inside another is
+held, would refuse one past a chunk. A spill holds a source a table and
+one a temporary object of a chunk or more, never one a row. A set
+function's state is no row, so ANY_VALUE and a group-invariant column of
+a type that may hold such a value write no state, and their grouping
+writes its rows.
+
 A locator is a session's four-octet handle of a value [§4.37.5], valid
 until its transaction ends (`db/lobs.rs`). FREE LOCATOR ends one early
 and HOLD LOCATOR keeps one past commit, its value copied to the
@@ -2125,7 +2143,8 @@ spills to a temporary pager file whose buffer pool is its area. Areas come
 from the `Spill` extension point. A spill file's creation isn't made
 durable, because nothing reads it after a crash. Spill files live in `tmp/`
 of a database's directory, cleared at open, and pass through encodings
-while the database encrypts anything (D48).
+while the database encrypts anything (D48). A spilled row's large objects
+and XML values are named by what keeps them, not copied (D79).
 
 Spilling keeps the orders the planner relies on. A sort is a stable external
 merge (`exec/sort/`). A hash join is partitioned (Grace), and grouping,

@@ -1,11 +1,12 @@
 //! Mutations of XML within other types and other types within XML: large
-//! objects and XML values kept with their rows and recovered, and the
-//! mapping of collections and rows to XML (RULES.md R-TEST-9, D79, D86).
+//! objects and XML values kept with their rows and recovered, named by
+//! what keeps them in rows spilled, and the mapping of collections and
+//! rows to XML (RULES.md R-TEST-9, D38, D79, D86).
 
 use super::{Mutation, Package};
 
 /// Each mechanism broken alone, and the tests that fail.
-pub const XML_COMPOSITE: [Mutation; 17] = [
+pub const XML_COMPOSITE: [Mutation; 22] = [
     Mutation {
         name: "lob-after-definitions",
         package: Package::Core,
@@ -175,5 +176,58 @@ pub const XML_COMPOSITE: [Mutation; 17] = [
         replacement: "if matches!(source, DataType::Array(_) | DataType::Multiset(_)) {",
         integration: &["xml_cast::distinct_collections_to_content_6_6"],
         unit: &[],
+    },
+    Mutation {
+        name: "spilled-row-named",
+        package: Package::Core,
+        breaks: "a spilled row names a table's large objects by id alone",
+        file: "src/spill/named.rs",
+        original: "        if row.iter().any(|v| apart(v, 0)) {",
+        replacement: "        if row.is_empty() {",
+        integration: &[
+            "held_lobs::held_rows_past_the_work_area_keep_their_large_objects",
+            "held_lobs::operators_past_the_work_area_keep_their_large_objects",
+        ],
+        unit: &["spill::named::tests::values_kept_apart_are_read_back_by_what_keeps_them"],
+    },
+    Mutation {
+        name: "spilled-value-named",
+        package: Package::Core,
+        breaks: "a sort's or a grouping's spilled value names a table's large object by id alone",
+        file: "src/spill/named.rs",
+        original: "        if apart(v, 0) {",
+        replacement: "        if v.is_null() {",
+        integration: &["held_lobs::operators_past_the_work_area_keep_their_large_objects"],
+        unit: &["spill::named::tests::records_name_only_what_their_spill_holds"],
+    },
+    Mutation {
+        name: "spilled-table-maker",
+        package: Package::Core,
+        breaks: "a spill holds each of a table's objects, not one source of the table",
+        file: "src/spill/named.rs",
+        original: "let makes = s.source.sibling(kept.id, s.source.totals()).is_some();",
+        replacement: "let makes = s.source.kept().is_none();",
+        integration: &[],
+        unit: &["spill::named::tests::values_kept_apart_are_read_back_by_what_keeps_them"],
+    },
+    Mutation {
+        name: "spilled-absorb",
+        package: Package::Core,
+        breaks: "a spill joined to another holds none of its temporary objects",
+        file: "src/spill/named.rs",
+        original: "        held.others.extend(others);",
+        replacement: "        drop(others);",
+        integration: &[],
+        unit: &["spill::named::tests::records_name_only_what_their_spill_holds"],
+    },
+    Mutation {
+        name: "state-kept-apart",
+        package: Package::Core,
+        breaks: "ANY_VALUE of a type holding an XML value writes a state naming it by id",
+        file: "src/functions/any_value.rs",
+        original: "!matches!(t, DataType::Extension(_)) && !composite::may_keep_apart(t)",
+        replacement: "!matches!(t, DataType::Extension(_)) && !composite::xml_ordered(&DataType::Boolean)",
+        integration: &[],
+        unit: &["functions::any_value::tests::no_state_is_written_of_values_kept_apart"],
     },
 ];

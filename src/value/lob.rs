@@ -172,6 +172,14 @@ pub trait LobSource: Send + Sync + fmt::Debug {
     fn chunk(&self, k: usize) -> Result<Arc<[u8]>>;
     /// The table that keeps it, and its id there, if a table does.
     fn kept(&self) -> Option<Kept>;
+    /// \[DESIGN\] The object of id `id`, of `totals` octets and characters,
+    /// of the table that keeps it, read as it is: how a spilled row names
+    /// a table's object by its id, one source of the table held while the
+    /// spill is (`spill/named.rs`, RULES.md D79). None if no table keeps
+    /// it, or its engine makes none, the default; a spill then holds it.
+    fn sibling(&self, _id: u64, _totals: (u64, u64)) -> Option<Arc<dyn LobSource>> {
+        None
+    }
 }
 
 /// A slice of a source: its octets and characters from a chunk boundary

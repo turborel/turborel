@@ -83,6 +83,14 @@ pub(crate) fn lob_ordered(t: &DataType) -> bool {
     ordered_by(t, DataType::is_lob)
 }
 
+/// \[DESIGN\] Whether a value of `t` may hold a large object or an XML
+/// value, which a table may keep apart (RULES.md D79, D86): `t` is
+/// LOB-ordered or XML-ordered, or holds a structured type, whose
+/// attributes may.
+pub(crate) fn may_keep_apart(t: &DataType) -> bool {
+    ordered_by(t, |t| t.is_lob() || matches!(t, DataType::Xml(_) | DataType::Structured(_)))
+}
+
 /// [ISO/IEC 9075-2:2023 §4.1] Whether `t` is multiset-ordered: a
 /// multiset type, or a distinct type whose source is one, among the S its
 /// definition names, as `ordered_by` finds a distinct type's source.

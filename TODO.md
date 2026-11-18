@@ -81,13 +81,7 @@ Nothing is open.
 
 ## Storage and durability
 
-- A row a statement holds past its work area (`exec/held.rs`) is written
-  to its spill area in the log's form of values, so a large object or an
-  XML value a table keeps apart is written as that table's object id and
-  read back as a reference no table resolves: an UPDATE of such a row
-  fails (SQLCODE -916), and an INSERT of rows read from another table may
-  name that table's object. Held rows should keep such values beside
-  their records.
+Nothing is open.
 
 ---
 
