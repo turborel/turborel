@@ -133,3 +133,36 @@ fn construction_modes_of_validated_copies_3_7_1_3() {
     assert_eq!(value(&a, &format!("({copy}) instance of element(w, xdt:untyped)"), "<n>7</n>"), "false");
     assert_eq!(value(&a, &checks("declare construction strip; "), "<n>7</n>"), "false true false");
 }
+
+/// The schema document of target namespace urn:t, of global elements
+/// `sizes`, a list of `xs:integer`; `mark`, of empty content; and
+/// `maybe`, a nillable `xs:integer`.
+const TYPINGS: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:t" elementFormDefault="qualified"><xs:element name="sizes"><xs:simpleType><xs:list itemType="xs:integer"/></xs:simpleType></xs:element><xs:element name="mark"><xs:complexType/></xs:element><xs:element name="maybe" type="xs:integer" nillable="true"/></xs:schema>"#;
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR2, §6.20] [XQuery
+/// §2.4.2, §3.13] [XQueryDM §3.3.1.2, §5.15, §6.2.4] the typed value of a
+/// validated element, as fn:data gives it: of a list type, an atomic
+/// value of its item type for each item; of empty content, and of a
+/// nilled element, the empty sequence; by the validate expression and by
+/// XMLVALIDATE alike.
+#[test]
+fn typed_values_of_lists_and_empty_content_3_13() {
+    let db = registered();
+    let a = db.session("A");
+    a.run(&format!("CREATE XML SCHEMA T AS '{TYPINGS}'")).unwrap();
+    a.commit().unwrap();
+    let t = "declare namespace t = \"urn:t\"; ";
+    let sizes = r#"<sizes xmlns="urn:t"> 1  20 300 </sizes>"#;
+    assert_eq!(value(&a, &format!("{t}data((validate {{ . }})/t:sizes)"), sizes), "1 20 300");
+    assert_eq!(
+        value(&a, &format!("{t}sum(data((validate {{ . }})/t:sizes)), data((validate {{ . }})/t:sizes) instance of xs:integer+"), sizes),
+        "321 true"
+    );
+    assert_eq!(value(&a, &format!("{t}empty(data((validate {{ . }})/t:mark))"), r#"<mark xmlns="urn:t"/>"#), "true");
+    let nilled = r#"<maybe xmlns="urn:t" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:nil="true"/>"#;
+    assert_eq!(value(&a, &format!("{t}empty(data((validate {{ . }})/t:maybe)), nilled((validate {{ . }})/t:maybe)"), nilled), "true true");
+    let validated = format!(
+        "XMLSERIALIZE(CONTENT XMLQUERY('declare namespace t = \"urn:t\"; count(data(/t:sizes))' PASSING BY REF XMLVALIDATE(DOCUMENT XMLPARSE(DOCUMENT '{sizes}' PRESERVE WHITESPACE) ACCORDING TO XMLSCHEMA ID A.T) EMPTY ON EMPTY) AS VARCHAR(10))"
+    );
+    assert_eq!(one(&a, &validated), "3");
+}

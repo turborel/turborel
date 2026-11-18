@@ -93,6 +93,14 @@ fn pieces<'a>(content: &[&'a Sequence]) -> Vec<Piece<'a>> {
     out
 }
 
+/// A child of the element made: text, or a node of a tree to copy.
+enum Child<'a> {
+    /// Text.
+    Text(String),
+    /// A node to copy.
+    Copy(&'a Tree, NodeId),
+}
+
 /// A prefix of no binding in `bindings`, made from `like`, else
 /// `MADE_PREFIX`, and a number [XQuery §3.7.4].
 fn made_prefix(bindings: &[Binding], like: Option<&str>) -> Box<str> {
@@ -157,7 +165,8 @@ pub fn element(mut name: QName, mut attributes: Vec<Specified>, content: &[&Sequ
                 }
                 attributes.push(a);
             }
-            other @ (Piece::Text(_) | Piece::Copy(..)) => children.push(other),
+            Piece::Text(text) => children.push(Child::Text(text)),
+            Piece::Copy(tree, id) => children.push(Child::Copy(tree, id)),
         }
     }
     for (i, a) in attributes.iter().enumerate() {
@@ -175,14 +184,11 @@ pub fn element(mut name: QName, mut attributes: Vec<Specified>, content: &[&Sequ
     // [§10.13 GR4c viii] `element { $QNAME } { $SEQ }` in the static
     // context of §10.20, whose construction mode is preserve [XQuery
     // Appendix C.1], annotates the element `xs:anyType` [XQuery §3.7.3.1].
-    if let Some(element) = builder.current() {
-        builder.annotate(element, &Annotation::any_type(), (false, false, false))?;
-    }
+    builder.current().map_or(Ok(()), |element| builder.annotate(element, &Annotation::any_type(), (false, false, false)))?;
     for child in children {
         match child {
-            Piece::Text(text) => builder.text(&text)?,
-            Piece::Copy(tree, id) => builder.copy(tree, id)?,
-            Piece::Attribute(_) => {}
+            Child::Text(text) => builder.text(&text)?,
+            Child::Copy(tree, id) => builder.copy(tree, id)?,
         }
     }
     builder.end_element()?;

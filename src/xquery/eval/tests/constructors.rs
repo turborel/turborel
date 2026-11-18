@@ -118,7 +118,8 @@ fn validate() {
 /// instruction of no content empty; a name of a number err:XPTY0004; a
 /// copied attribute whose prefix the element binds to another namespace
 /// given a prefix made anew; a reference in an attribute's value and a
-/// namespace declaration's URI.
+/// namespace declaration's URI; a name of an `xs:QName` its own expanded
+/// QName, an attribute's in a namespace of no prefix given one made.
 #[test]
 fn computed_names_and_prefixes() {
     let p = "declare namespace p = \"urn:p\";";
@@ -131,6 +132,8 @@ fn computed_names_and_prefixes() {
     let taken = "<p:e xmlns:p=\"urn:2\" xmlns:p1=\"urn:3\">{<x xmlns:p=\"urn:1\" p:a=\"1\"/>/@*}</p:e>";
     assert_eq!(run(taken), "<p:e xmlns:p=\"urn:2\" xmlns:p1=\"urn:3\" xmlns:p2=\"urn:1\" p2:a=\"1\"/>");
     assert_eq!(run("<a/> instance of element(*), <a/> instance of element(*, xs:anyType)"), "true true");
+    let qnames = "<e>{attribute {QName('urn:y', 'a')} {'1'}}</e>, element {QName('urn:q', 'p:f')} {}";
+    assert_eq!(run(qnames), "<e xmlns:ns1=\"urn:y\" ns1:a=\"1\"/><p:f xmlns:p=\"urn:q\"/>");
     assert_eq!(run("<a b=\"x&amp;y\" xmlns:q=\"urn:&amp;\"/>/@b/string()"), "x&amp;y", "serialized");
 }
 

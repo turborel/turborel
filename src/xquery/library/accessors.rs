@@ -48,12 +48,14 @@ fn node_name(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     Ok(optional(optional_node(arg(args, 0))?.as_ref().and_then(name_of)))
 }
 
-/// [XQueryFO §2.2] `fn:nilled($arg as node()?) as xs:boolean?`: false of
-/// an element, as no element is validated, so none is nilled [XQueryDM
-/// §6.2.3]; the empty sequence of another node.
+/// [XQueryFO §2.2] `fn:nilled($arg as node()?) as xs:boolean?`: of an
+/// element, its nilled property, true of one a validation found nilled,
+/// false of every other [XQueryDM §5.9, §6.2.3]; the empty sequence of
+/// another node.
 fn nilled(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let element = optional_node(arg(args, 0))?.filter(|n| n.kind() == Some(Kind::Element));
-    Ok(optional(element.map(|_| Atomic::new(AtomicType::Boolean, "false"))))
+    let truth = |n: Node| if n.tree().nilled(n.id()) { "true" } else { "false" };
+    Ok(optional(element.map(|n| Atomic::new(AtomicType::Boolean, truth(n)))))
 }
 
 /// [XQueryFO §2.3] The string of `item`: a node's string value [XQueryDM

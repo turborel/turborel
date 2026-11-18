@@ -32,15 +32,10 @@ impl Evaluator<'_> {
     ) -> Result<Seq> {
         let mut name = match name {
             NameOp::Fixed(name) => name.clone(),
-            NameOp::Computed(op, names) => {
-                let mut computed = names::computed(&self.eval(op, frame, focus)?, names)?;
-                if computed.prefix.is_none() {
-                    // [XQuery §3.7.3.2] an unprefixed attribute name is in no
-                    // namespace.
-                    computed.uri = None;
-                }
-                computed
-            }
+            // [XQuery §3.7.3.2] an unprefixed string names an attribute in
+            // no namespace, as its static names have no default; an
+            // `xs:QName` is its own expanded QName.
+            NameOp::Computed(op, names) => names::computed(&self.eval(op, frame, focus)?, names)?,
         };
         if name.uri.as_deref() == Some(XMLNS_NAMESPACE) || (name.uri.is_none() && &*name.local == XMLNS) {
             return Err(error(ErrorCode::XQDY0044, "a computed attribute is named xmlns, or in its namespace [XQuery §3.7.3.2]"));

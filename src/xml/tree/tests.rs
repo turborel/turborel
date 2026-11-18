@@ -156,3 +156,34 @@ fn trees_rooted_in_parentless_nodes() {
 fn element_start(name: &str) -> ElementStart {
     element(name, &[])
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.3] [XQueryDM §3.3.1.2,
+/// §5.15, §6.2.4] the typed value of an annotated element: of a list type
+/// an atomic value of its item type for each item; of empty content, and
+/// of a nilled element, none; of mixed content its string value, untyped.
+#[test]
+fn typed_values_by_annotation() {
+    let mut plain = Builder::parentless();
+    plain.start_element(element_start("e")).unwrap();
+    plain.text(" 1 20 ").unwrap();
+    plain.end_element().unwrap();
+    let annotated = |annotation: &Annotation, nilled: bool| {
+        let mut b = Builder::parentless();
+        b.start_element(element_start("e")).unwrap();
+        b.text(" 1 20 ").unwrap();
+        b.annotate(NodeId::ROOT, annotation, (nilled, false, false)).unwrap();
+        b.end_element().unwrap();
+        b.finish().unwrap().typed_value(NodeId::ROOT).unwrap()
+    };
+    let named = |local: &str, typing| Annotation { name: QName::local(local), typing };
+    let list = annotated(&named("sizes", Typing::List(crate::xml::AtomicType::Integer)), false);
+    assert_eq!(
+        list.iter().map(|a| (a.kind, &*a.lexical)).collect::<Vec<_>>(),
+        [(crate::xml::AtomicType::Integer, "1"), (crate::xml::AtomicType::Integer, "20")]
+    );
+    assert_eq!(annotated(&named("mark", Typing::Empty), false), []);
+    assert_eq!(annotated(&named("sizes", Typing::List(crate::xml::AtomicType::Integer)), true), []);
+    let mixed = annotated(&Annotation::any_type(), false);
+    assert_eq!(mixed.iter().map(|a| (a.kind, &*a.lexical)).collect::<Vec<_>>(), [(crate::xml::AtomicType::UntypedAtomic, " 1 20 ")]);
+    assert!(plain.finish().unwrap().annotation(NodeId::ROOT).is_none());
+}

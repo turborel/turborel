@@ -11,7 +11,7 @@
 use super::{Mutation, Package};
 
 /// Each mechanism of the library broken alone, and the tests that fail.
-pub const XQUERY_FUNCTIONS: [Mutation; 29] = [
+pub const XQUERY_FUNCTIONS: [Mutation; 31] = [
     Mutation {
         name: "xquery-decimal-division-scale",
         package: Package::Core,
@@ -303,9 +303,29 @@ pub const XQUERY_FUNCTIONS: [Mutation; 29] = [
         package: Package::Core,
         breaks: "XMLELEMENT RETURNING SEQUENCE makes an element `xdt:untyped`",
         file: "src/xml/element.rs",
-        original: "if let Some(element) = builder.current() {",
-        replacement: "if let Some(element) = builder.current().filter(|_| false) {",
+        original: "builder.current().map_or(Ok(()), |element|",
+        replacement: "builder.current().filter(|_| false).map_or(Ok(()), |element|",
         integration: &["xml_query::construction_modes_annotate_elements_3_7_1_3"],
         unit: &[],
+    },
+    Mutation {
+        name: "xquery-nilled-false",
+        package: Package::Core,
+        breaks: "fn:nilled is false of an element a validation found nilled",
+        file: "src/xquery/library/accessors.rs",
+        original: "if n.tree().nilled(n.id()) { \"true\" } else { \"false\" }",
+        replacement: "\"false\"",
+        integration: &["xml_validate_expression::typed_values_of_lists_and_empty_content_3_13"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-qname-names-refused",
+        package: Package::Core,
+        breaks: "a computed element or attribute named by an xs:QName is refused",
+        file: "src/xquery/eval/construct/names.rs",
+        original: "if name.kind == AtomicType::QName {",
+        replacement: "if name.kind == AtomicType::Notation {",
+        integration: &["xml_elements::attributes_and_atomic_values_as_content_10_13"],
+        unit: &["xquery::eval::tests::constructors::computed_names_and_prefixes"],
     },
 ];

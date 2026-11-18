@@ -69,8 +69,9 @@ pub(super) fn bind(scope: &[Binding], declared: &mut Vec<Binding>, name: &mut QN
 }
 
 /// The expanded QName a name expression's value gives [XQuery §3.7.3.1,
-/// §3.7.3.2]: one atomic value \[err:XPTY0004\], a string or untyped value
-/// that is a lexical QName \[err:XQDY0074\], its prefix bound by `names`,
+/// §3.7.3.2]: one atomic value \[err:XPTY0004\]; an `xs:QName` itself; a
+/// string or untyped value that is a lexical QName \[err:XQDY0074\], its
+/// prefix bound by `names`,
 /// unprefixed in the default element/type namespace of an element,
 /// none of an attribute.
 pub(super) fn computed(value: &Seq, names: &StaticNames) -> Result<QName> {
@@ -78,6 +79,12 @@ pub(super) fn computed(value: &Seq, names: &StaticNames) -> Result<QName> {
     let [name] = atomized.as_slice() else {
         return Err(error(ErrorCode::XPTY0004, "a name expression is not one atomic value [XQuery §3.7.3.1]"));
     };
+    if name.kind == AtomicType::QName {
+        // [XQuery §3.7.3.1, §3.7.3.2] an xs:QName is the name, its prefix
+        // kept.
+        let (prefix, local) = name.lexical.split_once(':').map_or((None, &*name.lexical), |(p, l)| (Some(p), l));
+        return Ok(QName { prefix: prefix.map(Into::into), uri: name.namespace.clone(), local: local.into() });
+    }
     if !name.kind.derives_from(AtomicType::String) && name.kind != AtomicType::UntypedAtomic {
         let why = format!("a name expression is a string or untyped, not {} [XQuery §3.7.3.1]", name.kind.name());
         return Err(error(ErrorCode::XPTY0004, &why));

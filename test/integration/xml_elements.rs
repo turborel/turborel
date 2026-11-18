@@ -235,3 +235,41 @@ fn unmappable_collections_refused_6_14() {
         assert_eq!(code(&a, &format!("SELECT {refused} FROM E")), Code::SyntaxRule, "{refused}");
     }
 }
+
+/// XMLQUERY of `query`, its value as it is, by reference.
+fn sequence(query: &str) -> String {
+    format!("XMLQUERY('{}' RETURNING SEQUENCE BY REF EMPTY ON EMPTY)", query.replace('\'', "''"))
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.14 GR5, GR6, §10.13 GR4c iv
+/// to ix] [XQuery §3.7.1.3] XMLELEMENT's content of an XML value holding
+/// attribute nodes and atomic values: each attribute an attribute of the
+/// element, before any other node, after XMLATTRIBUTES' own; each run of
+/// atomic values one text node, their lexical forms a space apart; a text
+/// node its text; an attribute after another node err:XQTY0024, and two
+/// attributes of one name err:XQDY0025, each SQLSTATE 10000; an attribute
+/// in a namespace of no prefix given one made, the next free [XQuery
+/// §3.7.4].
+#[test]
+fn attributes_and_atomic_values_as_content_10_13() {
+    let db = employees();
+    let a = db.session("A");
+    let content = sequence(r#"(attribute b {"x"}, 1, 2.5, "c", <i/>, text {"t"}, 3)"#);
+    assert_eq!(
+        serialized(&a, &format!("XMLELEMENT(NAME \"e\", XMLATTRIBUTES(ID AS \"a\"), {content})"))[0],
+        "1,<e a=\"1\" b=\"x\">1 2.5 c<i/>t3</e>"
+    );
+    let attribute = sequence(r#"<x n="7"/>/@n"#);
+    assert_eq!(serialized(&a, &format!("XMLELEMENT(NAME \"e\", {attribute}, 'v')"))[0], "1,<e n=\"7\">v</e>");
+    for (content, code) in [(sequence(r#"(<i/>, attribute b {"x"})"#), "err:XQTY0024"), (sequence(r#"attribute a {"2"}"#), "err:XQDY0025")]
+    {
+        let sql = format!("SELECT XMLELEMENT(NAME \"e\", XMLATTRIBUTES(ID AS \"a\"), {content}) FROM E");
+        let e = fetched(&a, &sql).expect_err(&sql);
+        assert_eq!(e.sqlstate(), SqlState::XQUERY_ERROR, "{sql}");
+        assert!(e.to_string().contains(code), "{e}");
+    }
+    assert_eq!(state(&a, &format!("SELECT XMLELEMENT(NAME \"e\", 'v', {attribute}) FROM E")), SqlState::XQUERY_ERROR);
+    let unprefixed = sequence(r#"(attribute {QName("urn:y", "a")} {"1"}, attribute {QName("urn:z", "b")} {"2"})"#);
+    let made = "1,<e xmlns:ns1=\"urn:y\" xmlns:ns2=\"urn:z\" ns1:a=\"1\" ns2:b=\"2\"/>";
+    assert_eq!(serialized(&a, &format!("XMLELEMENT(NAME \"e\", {unprefixed})"))[0], made);
+}
