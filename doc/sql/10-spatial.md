@@ -189,8 +189,8 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): DISTINCT compares values of ST_GEOMETRY
 | `ST_MAKEENVELOPE(min_x, min_y, max_x, max_y [, srid])` | A rectangular polygon of finite bounds, each minimum less than its maximum, SRID 0 by default |
 | `ST_GEOMFROMTEXT(text [, srid])` | The geometry of a WKT text, a character string or CLOB, SRID 0 by default |
 | `ST_GEOMFROMWKB(binary [, srid])` | The geometry of a WKB string, a binary string or BLOB, of any type and coordinate dimension, SRID 0 by default |
-| `ST_ASTEXT(geometry)` | Its WKT, without its SRID |
-| `ST_ASBINARY(geometry)` | Its little-endian WKB, without its SRID |
+| `ST_ASTEXT(geometry)` | Its WKT, without its SRID, a CHARACTER LARGE OBJECT |
+| `ST_ASBINARY(geometry)` | Its little-endian WKB, without its SRID, a BINARY LARGE OBJECT |
 | `ST_SRID(geometry)` | Its SRID |
 | `ST_SETSRID(geometry, srid)` | The same coordinates with another SRID |
 | `ST_X(point)`, `ST_Y(point)` | Its X or Y, DOUBLE PRECISION; NULL of POINT EMPTY |
@@ -202,6 +202,9 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): DISTINCT compares values of ST_GEOMETRY
 | `ST_INTERSECTS(a, b)` | INTEGER 1 if `a` and `b` share a point, else 0 |
 | `ST_DISJOINT(a, b)` | INTEGER 1 if `a` and `b` share no point, else 0 |
 | `ST_DISTANCE(a, b)` | The least planar distance between them, DOUBLE PRECISION; NULL if either is empty |
+| `ST_NUMGEOMETRIES(collection)` | The count of its elements, INTEGER |
+| `ST_GEOMETRYN(collection, n)` | Its `n`th element, from 1; NULL and the warning 01F01 if there is none |
+| `ST_GEOMETRIES(collection)` | Its elements, an ARRAY of the collection's element type |
 
 The routines are scalar functions, called where SQL.FUNCTION_CALLS is
 ON, its default. Each gives NULL if an argument is NULL.
@@ -234,6 +237,43 @@ VALUES ST_ASTEXT(ST_MAKEENVELOPE(0, 0, 0, 5));
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 22000): invalid geometry: expected a POINT geometry
 turborel: SQLCODE -301 (SQLSTATE 22000): invalid geometry: a rectangle needs a minimum strictly below its maximum on both axes
+```
+
+## Methods
+
+Each routine of a value is also a method of its type, invoked as
+`value.ST_X()`, and a type has the methods of its supertypes. A method
+is found by the declared type of the value. ST_X of a column declared
+ST_GEOMETRY is refused until TREAT makes it an ST_POINT. A method that a
+subtype overrides runs as the value's most specific type chooses:
+ST_GEOMETRIES of an ST_MULTIPOINT returns an ST_POINT ARRAY, whose
+elements have ST_X. `(value AS type).method()` runs the method of a
+supertype instead, here ST_GEOMCOLLECTION's, whose ARRAY is of
+ST_GEOMETRY, so its elements have no ST_X. `value.SPECIFICTYPE` names
+the value's most specific type:
+
+```sql
+CREATE TABLE GROUPS (ID INTEGER, PTS ST_MULTIPOINT);
+INSERT INTO GROUPS VALUES (1, TREAT(ST_GEOMFROMTEXT('MULTIPOINT ((1 2), (3 4))') AS ST_MULTIPOINT));
+SELECT PTS.ST_NUMGEOMETRIES() AS N, PTS.ST_GEOMETRIES()[2].ST_X() AS X, PTS.SPECIFICTYPE AS T FROM GROUPS;
+SELECT (PTS AS ST_GEOMCOLLECTION).ST_GEOMETRIES()[1].ST_X() FROM GROUPS;
+SELECT (PTS AS ST_GEOMCOLLECTION).ST_GEOMETRIES()[1].ST_GEOMETRYTYPE() AS T FROM GROUPS;
+ROLLBACK;
+```
+
+```
+OK
+OK
+            N |                        X | T
+--------------+--------------------------+--------------------------------------------------------------
+            2 |                      3E0 | "TURBOREL"."INFORMATION_SCHEMA"."ST_MULTIPOINT"
+(1 row)
+turborel: SQLCODE -103 (SQLSTATE 2A000): ST_Geometry and its supertypes have no method ST_X of 0 arguments [ISO/IEC 9075-2:2023 §9.18 SR10b, §9.19 SR3] (at character 52)
+ T
+----------------------------------
+ ST_Point
+(1 row)
+OK
 ```
 
 ## Text and binary forms
@@ -454,9 +494,21 @@ on each is everyone's.
 The systems supplied are WGS 84 (4326), its geocentric form (4978),
 NAD83 (4269), ETRS89 (4258), WGS 84 / Pseudo-Mercator (3857) and the
 120 WGS 84 UTM zones (32601 to 32660 and 32701 to 32760), by the EPSG
-identifiers. A system is not yet defined or dropped by a statement, and
-a value's SRID is still not checked against them. The tables the views
-read are in ST_DEFINITION_SCHEMA, which no statement reads directly.
+identifiers. The tables the views read are in ST_DEFINITION_SCHEMA,
+which no statement reads directly.
+
+A system of its own is defined by `CALL ST_DEFINESRS(name, id,
+organization, organization_id, definition, description)` and dropped by
+`CALL ST_DROPSRS(name)` *(extension)*. A column is registered with a
+system by `CALL ST_REGISTERGEOMETRYCOLUMN(schema, table, column, name)`
+and unregistered by `CALL ST_UNREGISTERGEOMETRYCOLUMN(schema, table,
+column)` *(extension)*. Each is a change to the catalog, made in the
+transaction and undone by ROLLBACK. Each keeps the constraints of the
+tables: a name and an identifier unique, an organization and its
+identifier both given or both NULL, a column registered with a system
+that is there and of its SRID if its type names one, a system no column
+is registered with dropped. A column's owner registers it. A
+registration goes with its column or table.
 
 ```sql
 CREATE TABLE TRACKS (ID INTEGER, PATH ST_LINESTRING(4326), PLAN ST_GEOMETRY);
@@ -489,6 +541,29 @@ OK
 OK
 ```
 
+A system a column is registered with is not dropped:
+
+```sql
+CREATE TABLE PLOTS (ID INTEGER, AREA ST_POLYGON);
+CALL ST_DEFINESRS('FIELD GRID', 900001, 'ANN', 1, 'LOCAL_CS["field",LOCAL_DATUM["site",0],UNIT["metre",1]]', 'the field');
+CALL ST_REGISTERGEOMETRYCOLUMN('ANN', 'PLOTS', 'AREA', 'FIELD GRID');
+SELECT COLUMN_NAME, SRS_NAME, SRS_ID FROM ST_INFORMTN_SCHEMA.ST_GEOMETRY_COLUMNS WHERE TABLE_NAME = 'PLOTS';
+CALL ST_DROPSRS('FIELD GRID');
+ROLLBACK;
+```
+
+```
+OK
+OK
+OK
+ COLUMN_NAME                                                  | SRS_NAME                                                     |       SRS_ID
+--------------------------------------------------------------+--------------------------------------------------------------+--------------
+ AREA                                                         | FIELD GRID                                                   |       900001
+(1 row)
+turborel: SQLCODE -201 (SQLSTATE 23000): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §20] ST_GEOMETRY_COLUMNS: SRS_SUPPORTED: column AREA of ANN.PLOTS is registered with FIELD GRID
+OK
+```
+
 ## Errors
 
 | SQLSTATE | SQLCODE | When |
@@ -496,11 +571,12 @@ OK
 | 22000 | -301 | WKT or WKB is malformed, a coordinate is not finite, ST_MAKEENVELOPE's bounds are reversed or of no area, ST_X or ST_Y is given another kind than a point, or two values' SRIDs differ |
 | 22000 | -301 | A value's SRID is not its column's or CAST's |
 | 22003 | -301 | A distance is greater than DOUBLE PRECISION holds |
-| 2A000 | -103 | A type's parameter is not one integer from 0 to 2147483647, a function's arguments are not of its types, a value of a supertype is assigned without TREAT, NEW names a type that holds no value of its own, or geometry values are ordered, grouped or made distinct |
+| 2A000 | -103 | A type's parameter is not one integer from 0 to 2147483647, a function's arguments are not of its types, a value of a supertype is assigned without TREAT, NEW names a type that holds no value of its own, geometry values are ordered, grouped or made distinct, a key names a geometry column, or a method is not of the value's declared type |
 | 0D000 | -301 | TREAT is given a value of another type |
 | 2FF08 | -301 | CAST is given a value Table 4 does not convert, or a value is assigned to a type it is not of |
 | 2FF23 | -301 | WKB of a type is malformed |
-| 0A000 | -900 | Text or relationships of a value of a type beyond the seven, EWKB flags, more than the limits of [Appendix D](../appendix/d-limits.md), an `rtree` index of a column of plain GEOMETRY, or a key of a geometry column |
+| 0A000 | -900 | Text or relationships of a value of a type beyond the seven, EWKB flags, more than the limits of [Appendix D](../appendix/d-limits.md), or an `rtree` index of a column of plain GEOMETRY |
+| 23000 | -201 | ST_DEFINESRS, ST_DROPSRS or ST_REGISTERGEOMETRYCOLUMN would break a constraint of the Spatial Information Schema's tables |
 | TB916 | -916 | A stored value or index key is damaged, or of an unknown version |
 
 ## Standard

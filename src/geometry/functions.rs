@@ -9,12 +9,20 @@ use super::{Geometry, UNSPECIFIED_SRID, data_type, data_type_of, invalid, kind, 
 use crate::error::{Code, Result, SqlError};
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::params::ParameterType;
-use crate::value::lob::LobKind;
-use crate::value::{Binary, DOUBLE_PRECISION, DataType, Decimal, MAX_BINARY_LENGTH, MAX_CHARACTER_LENGTH, Spelled, Value};
+use crate::value::lob::{Lob, LobKind};
+use crate::value::{DOUBLE_PRECISION, DataType, Decimal, Spelled, Value};
 
-/// SQL interchange uses the existing string limits until large objects exist.
-const TEXT: DataType = DataType::varying(MAX_CHARACTER_LENGTH);
-const BINARY: DataType = DataType::VarBinary { length: MAX_BINARY_LENGTH };
+/// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.47] CHARACTER LARGE
+/// OBJECT(ST_MaxGeometryAsText), what ST_AsText returns and the
+/// well-known text constructors take.
+pub(crate) const TEXT: DataType =
+    DataType::Lob { kind: LobKind::Character, length: MAX_REPRESENTATION, units: crate::value::CharUnits::Characters };
+/// [§5.1.48] BINARY LARGE OBJECT(ST_MaxGeometryAsBinary), what
+/// ST_AsBinary returns and the well-known binary constructors take.
+pub(crate) const BINARY: DataType =
+    DataType::Lob { kind: LobKind::Binary, length: MAX_REPRESENTATION, units: crate::value::CharUnits::Characters };
+/// ST_MaxGeometryAsText and ST_MaxGeometryAsBinary: the codecs' limit.
+pub(crate) const MAX_REPRESENTATION: u64 = 16 * 1024 * 1024;
 const INTEGER: DataType = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
 const COORDINATE: DataType = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::DoublePrecision };
 const TYPE_NAME_LENGTH: u32 = 32;
@@ -343,7 +351,7 @@ impl GeometryFunction {
     /// of a CHARACTER LARGE OBJECT's well-known text or a BINARY LARGE
     /// OBJECT's well-known binary representation, read whole up to the
     /// representation's limit (RULES.md D85).
-    fn of_lob(self, lob: &crate::value::lob::Lob, srid: i32) -> Result<Value> {
+    fn of_lob(self, lob: &Lob, srid: i32) -> Result<Value> {
         let whole = || lob.bounded(MAX_LOB_INPUT)?.ok_or_else(|| unsupported("this representation size (RULES.md D85)"));
         match (self, lob.kind()) {
             (Self::FromText, LobKind::Character) => {
@@ -367,12 +375,7 @@ impl GeometryFunction {
         Ok(Some(match self {
             Self::TypeName => Value::Char(most.sql_name().to_owned()),
             Self::Srid => Value::Exact(Decimal::new(i128::from(srid), 0)),
-            Self::AsBinary => {
-                if u32::try_from(wkb.len()).unwrap_or(u32::MAX) > MAX_BINARY_LENGTH {
-                    return Err(unsupported("WKB exceeding the SQL binary-string limit"));
-                }
-                Value::Binary(Binary::new(wkb.to_vec()))
-            }
+            Self::AsBinary => Value::Lob(Lob::of_octets(wkb)),
             Self::SetSrid => {
                 let mut relabelled = bytes.to_vec();
                 if let Some(at) = relabelled.get_mut(1..5) {
@@ -411,7 +414,7 @@ impl GeometryFunction {
     fn observe(self, g: Geometry, rest: &[Value]) -> Result<Value> {
         match self {
             Self::AsText => text(&g),
-            Self::AsBinary => binary(&g),
+            Self::AsBinary => Ok(binary(&g)),
             Self::Srid => Ok(Value::Exact(Decimal::new(i128::from(g.srid()), 0))),
             Self::IsEmpty => Ok(Value::Exact(Decimal::new(i128::from(g.is_empty()), 0))),
             Self::X => Ok(g.coordinates()?.map_or(Value::Null, |[x, _]| Value::Approx(x))),
@@ -442,10 +445,14 @@ impl GeometryFunction {
     }
 }
 
-/// The functions of D85 and ST_OrderingEquals, built in.
+/// The functions of D85, ST_OrderingEquals and the observers of a
+/// collection's elements, built in: ST_Geometries as ST_GeomCollection
+/// declares it, which a function call of a collection takes.
 pub(crate) fn functions() -> Vec<Arc<dyn ScalarFunction>> {
     let mut out: Vec<Arc<dyn ScalarFunction>> = FUNCTIONS.iter().map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }).collect();
     out.push(Arc::new(super::ordering::OrderingEquals));
+    let collections = super::COLLECTION_FUNCTIONS.iter().take(3);
+    out.extend(collections.map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }));
     out
 }
 
@@ -482,20 +489,18 @@ fn rectangle(args: &[Value]) -> Result<Value> {
         .map(|g| g.to_value())
 }
 
+/// Its well-known text, a CHARACTER LARGE OBJECT [§5.1.47].
 fn text(g: &Geometry) -> Result<Value> {
     let text = g.to_wkt();
-    if u32::try_from(text.len()).unwrap_or(u32::MAX) > MAX_CHARACTER_LENGTH {
-        return Err(unsupported("WKT exceeding the SQL character-string limit"));
+    if u64::try_from(text.len()).unwrap_or(u64::MAX) > MAX_REPRESENTATION {
+        return Err(unsupported("well-known text longer than ST_MaxGeometryAsText"));
     }
-    Ok(Value::Char(text))
+    Ok(Value::Lob(Lob::of_text(&text)))
 }
 
-fn binary(g: &Geometry) -> Result<Value> {
-    let bytes = g.to_wkb();
-    if u32::try_from(bytes.len()).unwrap_or(u32::MAX) > MAX_BINARY_LENGTH {
-        return Err(unsupported("WKB exceeding the SQL binary-string limit"));
-    }
-    Ok(Value::Binary(Binary::new(bytes)))
+/// Its well-known binary representation, a BINARY LARGE OBJECT [§5.1.48].
+fn binary(g: &Geometry) -> Value {
+    Value::Lob(Lob::of_octets(&g.to_wkb()))
 }
 
 fn reference(args: &[Value]) -> Result<i32> {

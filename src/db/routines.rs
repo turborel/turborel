@@ -5,6 +5,8 @@
 //! expression is evaluated (`binder/invocation.rs`, `exec/invoked.rs`).
 
 mod body;
+mod builtin;
+pub(super) use builtin::rust_arguments;
 mod call;
 mod define;
 mod dependents;

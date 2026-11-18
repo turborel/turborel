@@ -10,6 +10,7 @@
 mod casts;
 mod combined;
 mod elements;
+mod family_methods;
 mod methods;
 mod mutated;
 mod orderings;
@@ -204,7 +205,8 @@ impl Binder<'_> {
     /// §5.1.2]: the call of the registered function of its name whose
     /// first argument is the value, `CONTAINS(doc, p)`. A registered type
     /// is no user-defined type, so it declares no methods of its own, and
-    /// has no supertype for AS to name.
+    /// has no supertype for AS to name; a geometry type has its method
+    /// table (`family_method`).
     ///
     /// # Errors
     ///
@@ -216,6 +218,9 @@ impl Binder<'_> {
         args: &[ValueExpression],
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
+        if let Some(bound) = self.family_method((subject, as_type), name, args, scope)? {
+            return Ok(bound);
+        }
         if as_type.is_some() {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.18, §9.18 SR10a] a value of a registered type has no supertype for {name}")));
         }

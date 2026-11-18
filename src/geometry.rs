@@ -3,14 +3,17 @@
 //! Ring structure is checked when decoded; polygon topology must be
 //! valid for spatial relationships. No coordinate transformation occurs.
 
+mod collections;
 mod distance;
 pub(crate) use distance::distance_domain;
 mod functions;
 mod kind;
+pub mod methods;
 pub mod model;
 mod ordering;
 mod planar;
 mod prepared;
+mod procedures;
 mod reference;
 mod relate;
 mod robust;
@@ -18,10 +21,12 @@ mod shape;
 mod wkb;
 mod wkt;
 
+pub use collections::{COLLECTION_FUNCTIONS, CollectionFunction, MAX_GEOMETRY_ARRAY_ELEMENTS, element_kind, elements};
 pub(crate) use functions::functions;
 pub use functions::{FUNCTIONS, GeometryFunction};
 pub use kind::{GEOMETRY, Geometries, GeometryType, NAME, TYPES, data_type, data_type_of, kind_of, kinds, most_specific, of_data_type};
 pub use ordering::{EQUALITY, ORDERING_EQUALS, OrderingEquals};
+pub use procedures::{CatalogProcedure, procedures};
 pub use reference::data_type_with_srid;
 pub(crate) use reference::fixed_srid;
 use shape::Shape;
