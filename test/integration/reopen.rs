@@ -224,8 +224,8 @@ fn dropped_tables_stay_dropped() {
     let kept = rows(&s, "SELECT COUNT(*) FROM T").map_err(|_| ());
     assert_eq!(kept, Err(()), "dropped for its transaction");
     // Kept to the end, its transaction open: a process that crashed writes
-    // nothing more, and its rollback would write to the log the next opener
-    // writes to.
+    // nothing more, and dropped before the next opener took the lock, its
+    // rollback would be written to the log.
     let crashed = (s, db);
     let (recovered, opened) = open(&dir);
     assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
@@ -242,6 +242,30 @@ fn dropped_tables_stay_dropped() {
     assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
     assert_eq!(rows(&db.session("APP"), "SELECT COUNT(*) FROM T").map_err(|_| ()), Err(()), "committed before the crash");
     drop(crashed);
+}
+
+/// Verifies: [TOOL] R-TEST-5, RULES.md D25: a database crashed by leaving
+/// it and opening its directory again (`after_crash`) touches its files no
+/// more, as a process that crashed does not: a checkpoint of it, which its
+/// background thread may take as well as its program, fails (SQLCODE
+/// -915), and the later opener's rows are as recovered. Regression test
+/// (R-TEST-7): the crashed database's threads went on writing, so the
+/// later opener now and then read a file of its half made (a side file of
+/// the tables' file, `dropped_tables_stay_dropped`) or written by both.
+#[test]
+fn a_crashed_database_touches_its_files_no_more() {
+    let scratch = Scratch::new("reopen-crashed-still");
+    let dir = scratch.path("db");
+    let (crashed, _) = open(&dir);
+    define_kept(&crashed);
+    fill_kept(&crashed);
+    let s = crashed.session("APP");
+    s.run("DELETE FROM T WHERE K < 10").unwrap();
+    let (db, opened) = open(&dir);
+    assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
+    assert_eq!(crashed.checkpoint().map_err(|e| e.code), Err(Code::Io), "it crashed");
+    drop((s, crashed));
+    assert_eq!(rows(&db.session("APP"), "SELECT COUNT(*) FROM T"), Ok(vec!["2900".into()]));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.11, §11.15], RULES.md D33,

@@ -23,12 +23,13 @@
     reason = "test code: a panic is a test failure, its fixtures literal, a database rebound once dropped (RULES.md R-TEST-4)"
 )]
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, Weak};
 
 use turborel::catalog::TableDesc;
 use turborel::db::{Database, Session};
-use turborel::disk::io::{DiskFile, FileLock, FileSystem, OpenMode, OsFileSystem};
+use turborel::disk::io::{DiskFile, Durability, FileLock, FileSystem, OpenMode, OsFileSystem};
 use turborel::error::{Code, Result, SqlError};
 use turborel::hash::HashFunction;
 use turborel::hash::crc::{CRC32_ISCSI, Crc};
@@ -138,37 +139,107 @@ pub fn os() -> Arc<dyn FileSystem> {
 
 /// The operating system's file system as a process sees it whose earlier
 /// openers of a database have all crashed: tests crash a database by
-/// leaving it, then open it again, and the system gives a crashed process's
+/// leaving it, then open it again. The system gives a crashed process's
 /// locks up (`FileSystem::lock`), so here no lock stands against another.
-pub struct AfterCrash;
+/// And a crashed process touches its files no more: once an opener takes a
+/// directory's lock through one `AfterCrash`, every call of the earlier
+/// opener's `AfterCrash`, and of the files it opened, fails (SQLCODE -915),
+/// its background threads' and its drops' too, so none writes what the
+/// later opener recovers from. A call under way as the lock is taken is
+/// waited for: the crash comes between two calls, as a process's comes
+/// between two writes.
+pub struct AfterCrash {
+    alive: Arc<Alive>,
+}
+
+/// Whether the opener of an `AfterCrash` crashed. Each call holds it read
+/// while it runs, so the crash, which writes it, waits for those under way.
+#[derive(Default)]
+struct Alive(RwLock<bool>);
+
+impl Alive {
+    /// `call`'s outcome, unless the opener crashed.
+    fn call<T>(&self, call: impl FnOnce() -> Result<T>) -> Result<T> {
+        let crashed = self.0.read().unwrap_or_else(PoisonError::into_inner);
+        if *crashed {
+            return Err(SqlError::new(Code::Io, "[DESIGN] the process that opened the file crashed: it touches no file"));
+        }
+        call()
+    }
+
+    /// The opener crashes, once every call under way has returned.
+    fn crash(&self) {
+        *self.0.write().unwrap_or_else(PoisonError::into_inner) = true;
+    }
+}
+
+/// The `AfterCrash` that last took the lock at each path: the one a later
+/// opener of the directory crashes.
+static HOLDERS: Mutex<BTreeMap<PathBuf, Weak<Alive>>> = Mutex::new(BTreeMap::new());
+
+/// A file opened through an `AfterCrash`, failing once its opener crashed.
+struct AfterCrashFile {
+    inner: Box<dyn DiskFile>,
+    alive: Arc<Alive>,
+}
+
+impl DiskFile for AfterCrashFile {
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> Result<usize> {
+        self.alive.call(|| self.inner.read_at(buf, offset))
+    }
+    fn write_all_at(&self, data: &[u8], offset: u64) -> Result<()> {
+        self.alive.call(|| self.inner.write_all_at(data, offset))
+    }
+    fn size(&self) -> Result<u64> {
+        self.alive.call(|| self.inner.size())
+    }
+    fn set_size(&self, size: u64) -> Result<()> {
+        self.alive.call(|| self.inner.set_size(size))
+    }
+    fn sync(&self, durability: Durability) -> Result<()> {
+        self.alive.call(|| self.inner.sync(durability))
+    }
+}
 
 impl FileSystem for AfterCrash {
     fn open(&self, path: &Path, mode: OpenMode) -> Result<Box<dyn DiskFile>> {
-        OsFileSystem.open(path, mode)
+        let inner = self.alive.call(|| OsFileSystem.open(path, mode))?;
+        Ok(Box::new(AfterCrashFile { inner, alive: Arc::clone(&self.alive) }))
     }
     fn remove(&self, path: &Path) -> Result<()> {
-        OsFileSystem.remove(path)
+        self.alive.call(|| OsFileSystem.remove(path))
     }
     fn exists(&self, path: &Path) -> Result<bool> {
-        OsFileSystem.exists(path)
+        self.alive.call(|| OsFileSystem.exists(path))
     }
     fn create_dir_all(&self, path: &Path) -> Result<()> {
-        OsFileSystem.create_dir_all(path)
+        self.alive.call(|| OsFileSystem.create_dir_all(path))
     }
     fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
-        OsFileSystem.read_dir(path)
+        self.alive.call(|| OsFileSystem.read_dir(path))
     }
     fn sync_dir(&self, path: &Path) -> Result<()> {
-        OsFileSystem.sync_dir(path)
+        self.alive.call(|| OsFileSystem.sync_dir(path))
     }
-    fn lock(&self, _path: &Path) -> Result<FileLock> {
+    /// No lock stands against this one; the earlier opener whose
+    /// `AfterCrash` took it last crashes.
+    fn lock(&self, path: &Path) -> Result<FileLock> {
+        let earlier = {
+            let mut holders = HOLDERS.lock().unwrap_or_else(PoisonError::into_inner);
+            holders.retain(|_, holder| holder.strong_count() > 0);
+            holders.insert(path.to_path_buf(), Arc::downgrade(&self.alive))
+        };
+        if let Some(earlier) = earlier.and_then(|e| e.upgrade()).filter(|e| !Arc::ptr_eq(e, &self.alive)) {
+            earlier.crash();
+        }
         Ok(FileLock::new(()))
     }
 }
 
-/// `AfterCrash`, for a test that crashes a database and opens it again.
+/// `AfterCrash`, for a test that crashes a database and opens it again: a
+/// new one, its opener crashing once another's opener takes its lock.
 pub fn after_crash() -> Arc<dyn FileSystem> {
-    Arc::new(AfterCrash)
+    Arc::new(AfterCrash { alive: Arc::default() })
 }
 
 /// A table in memory that leaves undo and isolation to the coordinator
