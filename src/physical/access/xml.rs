@@ -152,6 +152,10 @@ fn candidate(of: &[(Option<usize>, Reduced)], ix: &IndexDesc, found: &Arc<dyn In
         costed.push((lookup, entries));
     }
     let (lookups, guess) = if any { union_of(costed, all)? } else { intersection_of(costed, all) };
+    // The primary reads each row it holds of a value, a seek at least,
+    // which its count of the entries read does not see: it is guessed to
+    // give no fewer rows than its queries' own lookups count.
+    let guess = if ix.method == XML_PRIMARY_METHOD { guess.max(own_lookups(of, found, all)?) } else { guess };
     let [(at, one)] = of else {
         let queries = of.iter().map(|(_, r)| r.reduction.query.clone()).collect();
         let probe = Probe::Xml(Box::new(XmlProbe { queries, answered: false, lookups, any }));
@@ -162,6 +166,18 @@ fn candidate(of: &[(Option<usize>, Reduced)], ix: &IndexDesc, found: &Arc<dyn In
     // D34, D106: the filter keeps the conjunct, to check each row, but of
     // a query the index answers.
     Some(Candidate::one(probe, (at.iter().copied().collect(), 0, guess, true)))
+}
+
+/// The rows the queries' own lookups of `of` give, of the table's `all`,
+/// by the index `found`'s count: the most of them; none if it prices one
+/// of none.
+fn own_lookups(of: &[(Option<usize>, Reduced)], found: &Arc<dyn Index>, all: f64) -> Option<f64> {
+    let mut most = 0.0_f64;
+    for (_, r) in of {
+        let entries = Arc::clone(found).xml_cost(&r.reduction.query.lookup)?.entries;
+        most = most.max(entries.map_or(all, |e| cost_of(e).min(all)));
+    }
+    Some(most)
 }
 
 /// The lookups of a probe of the rows any of `costed` gives, and the rows

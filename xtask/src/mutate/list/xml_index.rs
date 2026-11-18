@@ -11,7 +11,7 @@
 use super::{Mutation, Package};
 
 /// Each XML index mechanism broken alone, and the tests that fail.
-pub const XML_INDEX: [Mutation; 29] = [
+pub const XML_INDEX: [Mutation; 30] = [
     Mutation {
         name: "xml-index-ordpath-odd",
         package: Package::Core,
@@ -326,5 +326,15 @@ pub const XML_INDEX: [Mutation; 29] = [
         replacement: "                Outcome::False => {}",
         integration: &[],
         unit: &["index::xml::primary::tests::the_primary_answers_as_each_value_does"],
+    },
+    Mutation {
+        name: "xml-primary-guess-own",
+        package: Package::Core,
+        breaks: "a primary's probe is guessed by its lookups' counts alone, though it seeks each row it holds",
+        file: "src/physical/access/xml.rs",
+        original: "    let guess = if ix.method == XML_PRIMARY_METHOD { guess.max(own_lookups(of, found, all)?) } else { guess };",
+        replacement: "    let guess = if ix.method == XML_PRIMARY_METHOD { guess } else { guess };",
+        integration: &["xml_index_shapes::explain_shows_each_shape_read"],
+        unit: &[],
     },
 ];

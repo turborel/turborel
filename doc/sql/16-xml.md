@@ -1045,7 +1045,7 @@ OK
      Scan ANN.PARCELS
  -- physical:
  Project PARCELS.ID
-   IndexScan ANN.PARCELS using PARCEL_NODES [xml_primary]: PARCELS.LABEL has /parcel[to = '398']/fragile, answered by the index  (est. rows=1, cost=60.5)
+   IndexScan ANN.PARCELS using PARCEL_NODES [xml_primary]: PARCELS.LABEL has /parcel[to = '398']/fragile, answered by the index  (est. rows=6, cost=103.5)
 (12 rows)
 ```
 
@@ -1077,7 +1077,7 @@ SELECT COUNT(*) FROM PARCELS WHERE XMLEXISTS('/parcel[to > 398][fragile]' PASSIN
      Scan ANN.PARCELS
  -- physical:
  Project PARCELS.ID
-   IndexScan ANN.PARCELS using PARCEL_NODES [xml_primary]: PARCELS.LABEL has /parcel[fragile]/to = '397', answered by the index  (est. rows=1, cost=60.5)
+   IndexScan ANN.PARCELS using PARCEL_NODES [xml_primary]: PARCELS.LABEL has /parcel[fragile]/to = '397', answered by the index  (est. rows=2, cost=69.1)
 (12 rows)
 
 ----------------------

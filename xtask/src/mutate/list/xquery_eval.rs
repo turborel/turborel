@@ -382,7 +382,7 @@ pub const XQUERY_EVAL: [Mutation; 37] = [
         file: "src/xquery/lookup/steps.rs",
         original: "        return None;\n    }\n    made.exact = false;\n    Some(())\n}\n\n/// `descendant-or-self`",
         replacement: "        return None;\n    }\n    Some(())\n}\n\n/// `descendant-or-self`",
-        integration: &["xml_index_shapes::other_axes_give_the_rows_of_a_full_read"],
+        integration: &[],
         unit: &["xquery::lookup::tests::steps_of_other_axes_reduce"],
     },
 ];

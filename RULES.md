@@ -4774,7 +4774,8 @@ guard, below which the index is read (D15). A probe is priced by the
 entries its index counts of each
 lookup (`Index::xml_cost`), its rows those of the cheapest of every
 lookup, each a share of the table's as if apart, or the entries of every
-lookup of any, and each row it gives but an answered one a check of
+lookup of any; of the primary, which seeks each row it holds, no fewer
+than its queries' own lookups count; and each row it gives but an answered one a check of
 its value, against a full read that checks every row's, a check a pass
 over a value of the column's average width (`XmlCost::of_check`); a
 method that prices none is not read. EXPLAIN shows `column has` the
