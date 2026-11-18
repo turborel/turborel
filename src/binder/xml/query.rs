@@ -11,6 +11,8 @@ use super::DOCUMENT_CONTENT;
 use crate::ast::{
     DefaultOption, OnEmpty, Passing, Returning, ValueExpression, ValueSpecification, XmlArguments, XmlQuery, XmlTable, XmlTableColumn,
 };
+use crate::catalog::QualifiedName;
+use crate::catalog::xml_schemas::may_use;
 use crate::error::Result;
 use crate::functions::{Evaluation, RegularColumn, ScalarRef, TableColumn, XmlCopy, XmlDocument, XmlExistsOf, XmlQueryOf, XmlTableOf};
 use crate::logical::Expr;
@@ -95,25 +97,53 @@ impl Binder<'_> {
     /// definitions.
     fn xquery(&self, text: &str, names: &[String]) -> Result<Arc<Query>> {
         let (namespaces, default_element) = self.namespaces_in_scope();
+        let in_scope = self.schemas_in_scope();
         let env = Environment {
             namespaces,
             default_element,
             variables: names.to_vec(),
             library: &self.db.xquery_functions,
             collations: &self.db.collations,
-            schemas: self.schemas_in_scope(),
+            schemas: in_scope.iter().map(|(_, s)| s.clone()).collect(),
         };
-        Query::compile(text, &env).map(Arc::new)
+        let query = Query::compile(text, &env)?;
+        if query.validates()
+            && let Some(noted) = self.invoked
+        {
+            for (name, _) in &in_scope {
+                noted.indicated(name);
+            }
+        }
+        Ok(Arc::new(query))
     }
 
     /// [§10.20 SR2e] The in-scope schema definitions, implementation-
     /// defined (RULES.md D86): of each target namespace, the registered XML
-    /// Schema the current user may use that XMLVALIDATE's data-driven
-    /// validation chooses, chosen as the statement is bound; none
+    /// Schema of the least name the current user may use, as XMLVALIDATE's
+    /// data-driven validation chooses, and each one's name; none
     /// permanently registered, as turborel holds no components of those.
-    fn schemas_in_scope(&self) -> Vec<InScopeSchema> {
-        let held = self.candidates().into_iter().filter_map(|c| c.schema.map(|schema| (c.namespace, c.name, schema)));
-        held.map(|(namespace, name, schema)| InScopeSchema { namespace, name, schema }).collect()
+    /// A definition whose query validates notes them as it is created, so
+    /// it depends on them (`Invoked::indicated`), and, bound again, has the
+    /// ones it noted, of each namespace the least name, never one
+    /// registered later [ISO/IEC 9075-14:2006 draft §4.2.6].
+    fn schemas_in_scope(&self) -> Vec<(QualifiedName, InScopeSchema)> {
+        let catalog = &*self.db.catalog;
+        let pinned = self.horizon.routines.is_some().then_some(self.horizon.xml_schemas.as_slice());
+        let mut usable: Vec<_> = catalog
+            .xml_schemas()
+            .into_iter()
+            .filter(|d| pinned.is_none_or(|p| p.contains(&d.name)) && may_use(catalog, &d.name, self.who()).is_ok())
+            .collect();
+        usable.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut out: Vec<(QualifiedName, InScopeSchema)> = Vec::new();
+        for d in usable {
+            if let Some(schema) = d.schema.clone()
+                && !out.iter().any(|(_, s)| s.namespace == d.target_namespace)
+            {
+                out.push((d.name.clone(), InScopeSchema { namespace: d.target_namespace.clone(), name: d.name.to_string(), schema }));
+            }
+        }
+        out
     }
 
     /// What evaluates `text` of the arguments `bound`, at the statement's

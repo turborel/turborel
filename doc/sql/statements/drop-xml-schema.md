@@ -24,8 +24,9 @@ does an SQL-invoked routine with a parameter or result of a [type of
 XMLSCHEMA](../xml.md#the-xmlschema-types) of one of them, and a view,
 a CHECK, a domain's constraint, an assertion, a trigger or a routine
 that names one of them by [XMLVALIDATE](../xml.md#xmlvalidate), [IS
-VALID](../xml.md#is-valid) or a type of XMLSCHEMA, and what invokes such
-a routine. With RESTRICT the drop is refused while anything depends on
+VALID](../xml.md#is-valid) or a type of XMLSCHEMA, or has one of them in
+scope of an XQuery [validate expression](../xml.md#the-validate-expression),
+and what invokes such a routine. With RESTRICT the drop is refused while anything depends on
 the one named. With CASCADE each that does is dropped too.
 
 A column, a domain or a user-defined type of a type of XMLSCHEMA of one

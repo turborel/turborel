@@ -117,7 +117,7 @@ impl Binder<'_> {
     /// [§6.20 GR6a iii 2 A II 2] Of each target namespace, the registered
     /// XML Schema the binder's cell may use of the least name, the
     /// permanently registered ones after the others. The in-scope schema
-    /// definitions of XQuery are these too (`binder/xml/query.rs`).
+    /// definitions of XQuery are chosen alike (`binder/xml/query.rs`).
     pub(super) fn candidates(&self) -> Vec<Candidate> {
         let catalog = &*self.db.catalog;
         let mut usable: Vec<_> = catalog.xml_schemas().into_iter().filter(|d| may_use(catalog, &d.name, self.who()).is_ok()).collect();

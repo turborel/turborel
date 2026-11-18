@@ -117,6 +117,13 @@ impl Query {
         analyze::compile(&module, env).map(Query)
     }
 
+    /// Whether it has a validate expression [XQuery §3.13], so it reads the
+    /// in-scope schema definitions [ISO/IEC 9075-14:2006 draft §10.20 SR2e].
+    #[must_use]
+    pub fn validates(&self) -> bool {
+        self.0.validates
+    }
+
     /// Its value, given `input` [XQuery §2.2.3.2].
     ///
     /// # Errors

@@ -113,6 +113,7 @@ impl Analysis<'_> {
 
     /// A validate expression [XQuery §3.13]: of its mode, strict of none.
     fn validate(&mut self, mode: Option<ValidationMode>, operand: &Expr) -> Result<Op> {
+        self.validates = true;
         let mode = match mode {
             Some(ValidationMode::Lax) => Mode::Lax,
             Some(ValidationMode::Strict) | None => Mode::Strict,

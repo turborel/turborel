@@ -99,6 +99,8 @@ struct Analysis<'e> {
     declared: Vec<(QName, usize)>,
     /// The globals declared so far, each name.
     globals: Vec<QName>,
+    /// Whether the query has a validate expression [XQuery §3.13].
+    validates: bool,
 }
 
 /// The plan of `module`, analysed in the static context `env` gives
@@ -122,7 +124,9 @@ pub fn compile(module: &Module, env: &Environment<'_>) -> Result<Plan> {
     let globals = analysis.passed();
     let (globals, functions) = analysis.declarations(&prolog.declarations, globals)?;
     let body = analysis.frame(&[], |a| a.expr(body))?.0;
-    Ok(Plan { body, globals, functions, settings: analysis.settings, collations: env.collations.clone(), schemas: env.schemas.clone() })
+    let validates = analysis.validates;
+    let schemas = if validates { env.schemas.clone() } else { Vec::new() };
+    Ok(Plan { body, globals, functions, settings: analysis.settings, collations: env.collations.clone(), schemas, validates })
 }
 
 impl<'e> Analysis<'e> {
@@ -145,6 +149,7 @@ impl<'e> Analysis<'e> {
             settings,
             declared: Vec::new(),
             globals: Vec::new(),
+            validates: false,
         }
     }
 

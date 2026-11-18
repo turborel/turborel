@@ -38,8 +38,11 @@ pub struct Plan {
     /// The statically known collations: the database's [XQuery §2.1.1].
     pub(super) collations: Collations,
     /// The in-scope schema definitions validate reads [ISO/IEC
-    /// 9075-14:2006 draft §10.20 SR2e].
+    /// 9075-14:2006 draft §10.20 SR2e]; none of a query that has no
+    /// validate expression.
     pub(super) schemas: Vec<InScopeSchema>,
+    /// Whether it has a validate expression [XQuery §3.13].
+    pub(super) validates: bool,
 }
 
 impl std::fmt::Debug for Plan {

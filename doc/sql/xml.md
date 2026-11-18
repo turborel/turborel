@@ -1459,7 +1459,9 @@ use, of each target namespace the one of the least name, chosen as the
 statement is prepared: the element validated, the node or a document
 node's element, is validated by the one of its namespace, with whatever
 that one imports. INFORMATION_SCHEMA.XS, XSI and SQLXML are none of
-them.
+them. A view, a constraint, a trigger or a routine whose query has a
+validate expression keeps the ones chosen when it was created, and
+depends on each of them, as on a registered XML Schema it names.
 
 strict, the default, needs a global declaration of the element. lax
 takes one if there is one, else gives the element the type `xs:anyType`,

@@ -121,3 +121,36 @@ fn a_view_keeps_the_schema_it_named_4_2_6() {
     db.close().unwrap();
     drop((db, a, crashed));
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.6, §10.20 SR2e] [XQuery
+/// §3.13] a view whose query has a validate expression keeps the
+/// registered XML Schemas in scope as it was created, and depends on
+/// them: one of a lesser name of the same target namespace registered
+/// after takes no place in it, though a statement's validate then finds
+/// it; DROP XML SCHEMA RESTRICT of one it kept is refused, SQLCODE -103,
+/// of the later one not, and CASCADE drops the view; a view whose query
+/// validates nothing depends on none.
+#[test]
+fn a_validating_view_keeps_its_schemas_in_scope_10_20() {
+    let db = registered();
+    let a = db.session("A");
+    let query = |q: &str| {
+        format!("XMLSERIALIZE(CONTENT XMLQUERY('{q}' PASSING BY REF {} RETURNING SEQUENCE EMPTY ON EMPTY) AS VARCHAR(60))", parsed(SOME))
+    };
+    a.run(&format!("CREATE VIEW V AS SELECT {} AS X FROM (VALUES (1)) AS T (N)", query("validate { . }"))).unwrap();
+    a.run(&format!("CREATE VIEW W AS SELECT {} AS X FROM (VALUES (1)) AS T (N)", query("."))).unwrap();
+    a.commit().unwrap();
+    assert_eq!(refused(&a, "SELECT X FROM V").1, "10000", "A.O in scope: its qty is no integer");
+    a.run(&format!("CREATE XML SCHEMA ANY_ORDER AS '{LOOSE}'")).unwrap();
+    a.commit().unwrap();
+    assert_eq!(one(&a, &query("validate { . }")), SOME, "a statement's in-scope schema is the least name now");
+    assert_eq!(refused(&a, "SELECT X FROM V").1, "10000", "the view keeps A.O");
+    assert_eq!(restrict(&a), Some(-103));
+    a.run("DROP XML SCHEMA ANY_ORDER RESTRICT").unwrap();
+    a.commit().unwrap();
+    let views = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_NAME IN ('V', 'W') ORDER BY TABLE_NAME";
+    assert_eq!(rows(&a, views).unwrap(), ["V", "W"]);
+    a.run("DROP XML SCHEMA O CASCADE").unwrap();
+    a.commit().unwrap();
+    assert_eq!(rows(&a, views).unwrap(), ["W"]);
+}

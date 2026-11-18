@@ -3214,7 +3214,12 @@ makes an implementation-defined collection of registered XML Schemas the
 current user may use [ISO/IEC 9075-14:2006 draft §10.20 SR2e]: of each
 target namespace the one XMLVALIDATE's data-driven case chooses, chosen
 as the statement is bound and held by the compiled query
-(`xquery::InScopeSchema`), none permanently registered. Each is read
+(`xquery::InScopeSchema`), none permanently registered. A definition
+whose query has a validate expression notes them as it is defined, as it
+notes a registered XML Schema it indicates, so its horizon keeps them and
+it depends on them; bound again, its in-scope schema definitions are
+those it kept, of each namespace the least name, never one registered
+later [§4.2.6]. Each is read
 alone, and the components of several make no one schema, so the effective
 schema of a validation [XQuery §3.13] is the one of the namespace of the
 element it validates, with what that one imports; of none, a schema of no
@@ -3262,7 +3267,8 @@ through others, and whatever names them. One function,
 Schema, of the schemas a caller names: the routines of a parameter or
 result of a type of XMLSCHEMA of one, the views, CHECKs, domain
 constraints, assertions, triggers and routines that indicated one as
-they were defined, and what invokes such a routine, which CASCADE drops;
+they were defined, or had it in scope of a validate expression, and what
+invokes such a routine, which CASCADE drops;
 and the tables, domains and user-defined types of a column or type of
 one, and a table of a generated column that names one or invokes such a
 routine, which refuse even CASCADE, as no drop changes a column's

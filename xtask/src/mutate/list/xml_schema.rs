@@ -11,7 +11,7 @@ use super::{Mutation, Package};
 
 /// Each mechanism of XML Schema structures broken alone, and the tests
 /// that fail.
-pub const XML_SCHEMA: [Mutation; 37] = [
+pub const XML_SCHEMA: [Mutation; 39] = [
     Mutation {
         name: "xml-schema-unique-particle-attribution",
         package: Package::Core,
@@ -387,5 +387,25 @@ pub const XML_SCHEMA: [Mutation; 37] = [
         replacement: "    qualified.iter().filter_map(|(_, k)| keyed(k)).all(|key| seen.insert(key) || true)",
         integration: &[],
         unit: &["xml::schema::assess::tests::more::identity_constraints_scale"],
+    },
+    Mutation {
+        name: "xquery-validate-schemas-noted",
+        package: Package::Core,
+        breaks: "a definition whose query validates depends on no schema in scope",
+        file: "src/binder/xml/query.rs",
+        original: "                noted.indicated(name);",
+        replacement: "                let _ = (noted, name);",
+        integration: &["xml_schema_dependents::a_validating_view_keeps_its_schemas_in_scope_10_20"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xquery-validate-schemas-pinned",
+        package: Package::Core,
+        breaks: "a definition bound again takes the schemas in scope now, not those it kept",
+        file: "src/binder/xml/query.rs",
+        original: "        let pinned = self.horizon.routines.is_some().then_some(self.horizon.xml_schemas.as_slice());",
+        replacement: "        let pinned: Option<&[QualifiedName]> = None;",
+        integration: &["xml_schema_dependents::a_validating_view_keeps_its_schemas_in_scope_10_20"],
+        unit: &[],
     },
 ];
