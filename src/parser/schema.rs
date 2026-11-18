@@ -295,14 +295,14 @@ impl Parser {
         let (elements, subquery, typed) = if self.accept_kw(kw::OF) {
             let (typed, elements) = self.typed_table_clause(kind.is_some())?;
             (elements, None, Some(typed))
-        } else if self.at_graph_table() {
+        } else if self.at_native_kind() {
             // [EXTENSION] (§4.2) an edge table of no column of its own.
             (Vec::new(), None, None)
         } else {
             let (elements, subquery) = self.table_contents()?;
             (elements, subquery, None)
         };
-        let graph = self.graph_table();
+        let graph = self.native_kind();
         // [ISO/IEC 9075-2:2023 §11.3] WITH <system versioning clause>.
         let versioning = self.at_versioning(kw::WITH).then(|| self.here());
         if versioning.is_some() {

@@ -26,14 +26,14 @@ pub(crate) const EDGE: &str = "EDGE";
 impl Parser {
     /// Whether `<graph table kind>` is next: AS, then NODE or EDGE, which
     /// no `<as subquery clause>` writes after AS.
-    pub(super) fn at_graph_table(&self) -> bool {
+    pub(super) fn at_native_kind(&self) -> bool {
         let word = |w: &str| *self.peek_at(1) == Tok::Identifier(w.to_owned());
         self.is_kw(kw::AS) && (word(NODE) || word(EDGE))
     }
 
     /// `<graph table kind>`, if next, and where it begins.
-    pub(super) fn graph_table(&mut self) -> Option<(NativeKind, usize)> {
-        if !self.at_graph_table() {
+    pub(super) fn native_kind(&mut self) -> Option<(NativeKind, usize)> {
+        if !self.at_native_kind() {
             return None;
         }
         let at = self.here();
