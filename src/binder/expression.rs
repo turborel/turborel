@@ -16,7 +16,7 @@ use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specifi
 use crate::ast::{Composite, Literal, SearchCondition, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
 use crate::functions::{
-    ANY_VALUE, ARRAY_AGG, AggregateRef, ArrayAggregate, CONCATENATION, CollatedExtreme, GREATEST, LEAST, LISTAGG, ScalarRef,
+    ANY_VALUE, ARRAY_AGG, AggregateRef, ArrayAggregate, CONCATENATION, CollatedExtreme, GREATEST, LEAST, LISTAGG, ScalarRef, paired,
     regex_function, trim_named, width_bucket,
 };
 use crate::lexer::kw;
@@ -267,7 +267,7 @@ impl Binder<'_> {
         // function, each call its own, keeping its last pattern compiled.
         // [ISO/IEC 9075-2:2023 §6.31] WIDTH_BUCKET, each call its own,
         // which learns its result type as it is bound [SR21].
-        let f = match regex_function(name).or_else(|| width_bucket(name)) {
+        let f = match regex_function(name).or_else(|| width_bucket(name)).or_else(|| paired(name)) {
             Some(f) => ScalarRef(f),
             None => self.db.functions.scalar(name).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] {name} is not registered")))?,
         };

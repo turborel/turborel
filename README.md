@@ -53,7 +53,8 @@ behind it, and each can be replaced or added to.
   Backups serve reads and elect a new primary within seconds, and a lost
   server catches up when it rejoins.
 - Analytic SQL, with window functions, grouping sets, recursive queries
-  with SEARCH and CYCLE, and row pattern recognition (MATCH_RECOGNIZE).
+  with SEARCH and CYCLE, row pattern recognition (MATCH_RECOGNIZE), and
+  the statistical set functions and math functions of T621.
 - Arrays, row types, distinct types, DECFLOAT, regular expressions,
   sequences and identity columns.
 - SQL/JSON's JSON_VALUE, JSON_QUERY and JSON_EXISTS, over JSON text, with

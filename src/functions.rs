@@ -56,10 +56,12 @@ pub use hypothetical::{Hypothesis, Hypothetical, RANK_FUNCTION_TYPES};
 mod ints;
 mod listagg;
 mod multisets;
+mod numeric;
 pub use multisets::{
     COLLECT, ELEMENT, ElementOfMultiset, FUSION, Gathering, INTERSECTION, IsASet, MEMBER, MemberOf, MultisetAggregate, MultisetCombination,
     MultisetOf, SUBMULTISET, SetOf, SubmultisetOf,
 };
+pub use numeric::{CEIL, CEILING, EXP, FLOOR, LN, Numeric, POWER, SQRT};
 mod octet_like;
 mod periods;
 pub use octet_like::OctetLike;
@@ -76,7 +78,9 @@ mod regex;
 mod registry;
 mod rows;
 pub use rows::{FieldOf, RowOf};
+mod statistics;
 mod strings;
+pub use statistics::{PAIRED, Statistic, paired};
 mod structured;
 pub use structured::{
     Constructed, Instanced, Keyed, Mutator, Observer, SPECIFICTYPE, SPECIFICTYPE_LENGTH, SpecificType, Treat, TreatReference, TypeTest,

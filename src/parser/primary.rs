@@ -258,6 +258,10 @@ impl Parser {
     /// aggregate of a name no key word of SQL-92 [§10.9], or an SQL/JSON
     /// function [§6.28, §6.34, §6.35, §10.11], if one is next.
     fn composite_pattern_or_aggregate(&mut self) -> Result<Option<ValueExpression>> {
+        // [ISO/IEC 9075-2:2023 §6.31, §10.9] Feature T621's functions.
+        if let Some(numeric) = self.numeric_or_statistical() {
+            return numeric.map(Some);
+        }
         if let Some(composite) = self.composite_primary()? {
             return Ok(Some(composite));
         }

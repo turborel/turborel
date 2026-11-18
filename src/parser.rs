@@ -50,6 +50,7 @@ mod merge;
 mod modules;
 mod multisets;
 mod names;
+mod numeric;
 mod pattern;
 mod periods;
 mod primary;

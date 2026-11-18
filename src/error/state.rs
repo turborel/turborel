@@ -185,6 +185,12 @@ impl SqlState {
     /// Data exception: invalid argument for NTH_VALUE function [ISO/IEC
     /// 9075-2:2023 §6.10 GR1d ii 2].
     pub const INVALID_ARGUMENT_FOR_NTH_VALUE: SqlState = SqlState(*b"22016");
+    /// Data exception: invalid argument for natural logarithm [ISO/IEC
+    /// 9075-2:2023 §6.31 GR12b].
+    pub const INVALID_ARGUMENT_FOR_NATURAL_LOGARITHM: SqlState = SqlState(*b"2201E");
+    /// Data exception: invalid argument for power function [ISO/IEC
+    /// 9075-2:2023 §6.31 GR14b, GR14e].
+    pub const INVALID_ARGUMENT_FOR_POWER_FUNCTION: SqlState = SqlState(*b"2201F");
     /// Data exception: invalid argument for width bucket function [ISO/IEC
     /// 9075-2:2023 §6.31 GR17b, GR17c].
     pub const INVALID_ARGUMENT_FOR_WIDTH_BUCKET: SqlState = SqlState(*b"2201G");
