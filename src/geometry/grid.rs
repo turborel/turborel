@@ -73,15 +73,24 @@ impl Grid {
         Some(Self { side, inverse, origin, unit, cols, rows })
     }
 
-    /// The cell holding `point`, as an index of a row-major array, if the
-    /// point is in the grid and its cell number is exact.
-    pub(in crate::geometry) fn cell(&self, [x, y]: Point) -> Option<usize> {
+    /// The row and column of the cell holding `point`, if the point is in
+    /// the grid and its cell number is exact.
+    pub(in crate::geometry) fn place(&self, [x, y]: Point) -> Option<(usize, usize)> {
         let col = integral(number(x, self.inverse)? - self.origin[0])?;
         let row = integral(number(y, self.inverse)? - self.origin[1])?;
-        if col >= self.cols || row >= self.rows {
-            return None;
-        }
-        row.checked_mul(self.cols)?.checked_add(col)
+        (col < self.cols && row < self.rows).then_some((row, col))
+    }
+
+    /// The exact x of a column's left side; the column after the last
+    /// gives the grid's right side.
+    pub(in crate::geometry) fn column_start(&self, col: usize) -> Option<f64> {
+        Some((self.origin[0] + small(col)? + SHIFT) * self.side)
+    }
+
+    /// The exact y of a row's lower side; the row after the last gives the
+    /// grid's upper side.
+    pub(in crate::geometry) fn row_start(&self, row: usize) -> Option<f64> {
+        Some((self.origin[1] + small(row)? + SHIFT) * self.side)
     }
 
     /// The rows an edge's closed y-extent touches: one more below if it
@@ -96,26 +105,28 @@ impl Grid {
     /// An edge within one row's height, or a vertical one, is covered over
     /// its exact x-extent; any other over each row band's computed extent,
     /// widened by its error bound.
-    pub(in crate::geometry) fn cover(
-        &self,
-        (a, b): (Point, Point),
-        mut visit: impl FnMut(usize, usize, usize) -> Option<()>,
-    ) -> Option<()> {
-        let ([ax, ay], [bx, by]) = (a, b);
-        let (dx, dy) = ((bx - ax).abs(), (by - ay).abs());
-        let exact = dy < self.side || dx <= 0.0_f64;
-        let error = if exact { 0.0_f64 } else { self.error(dx, dy) };
-        for row in self.rows_of((a, b))? {
-            let (low, high) = if exact { (ax.min(bx), ax.max(bx)) } else { self.span(a, b, row)? };
-            let (first, last) = self.touched(low - error, high + error, self.origin[0], self.cols)?;
+    pub(in crate::geometry) fn cover(&self, edge: (Point, Point), mut visit: impl FnMut(usize, usize, usize) -> Option<()>) -> Option<()> {
+        for row in self.rows_of(edge)? {
+            let (first, last) = self.columns(edge, row)?;
             visit(row, first, last)?;
         }
         Some(())
     }
 
+    /// The first and last column an edge may touch in one of the rows it
+    /// may touch, as `cover` gives them.
+    pub(in crate::geometry) fn columns(&self, (a, b): (Point, Point), row: usize) -> Option<(usize, usize)> {
+        let ([ax, ay], [bx, by]) = (a, b);
+        let (dx, dy) = ((bx - ax).abs(), (by - ay).abs());
+        let exact = dy < self.side || dx <= 0.0_f64;
+        let error = if exact { 0.0_f64 } else { self.error(dx, dy) };
+        let (low, high) = if exact { (ax.min(bx), ax.max(bx)) } else { self.span(a, b, row)? };
+        self.touched(low - error, high + error, self.origin[0], self.cols)
+    }
+
     /// The x-range, as computed, of an edge within a row's closed band.
     fn span(&self, [ax, ay]: Point, [bx, by]: Point, row: usize) -> Option<(f64, f64)> {
-        let bottom = (self.origin[1] + small(row)? + SHIFT) * self.side;
+        let bottom = self.row_start(row)?;
         let at = |y: f64| ax + ((y - ay) / (by - ay)).clamp(0.0_f64, 1.0_f64) * (bx - ax);
         let (p, q) = (at(bottom), at(bottom + self.side));
         Some((p.min(q), p.max(q)))

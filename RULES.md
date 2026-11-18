@@ -3104,14 +3104,29 @@ one. Cell bounds and row centres are exact, and a point's cell is found
 by an exact multiplication. A cell an edge may touch is a boundary cell:
 an edge within one row's height, or a vertical one, is marked over its
 exact extent, and any other over each row band's computed extent widened
-by a doubled bound on that computation's error. Every other cell holds no
-boundary point and is labelled interior or exterior from the exact
-half-open crossings of its row's centre line, each lying in a marked cell
-of its edge and so wholly left or right of the cell. Each ring's parity is
-kept, and shells, holes and parts combine as point location combines
-them, so a label never differs from location, valid topology or not. A
-point in a labelled cell is decided by one lookup; one in a boundary cell
-keeps the interval tree or the ring scan. Certificates decline when a cell
+by a doubled bound on that computation's error. The grid is swept a row
+at a time from the edges that may touch that row, so only one row's
+crossings are held. Every other cell holds no boundary point and is
+labelled interior or exterior from the exact half-open crossings of its
+row's centre line, each placed in its column by exact orientation, by
+its slope where it meets a column's side, and so wholly left or right of
+the cell. Each ring's parity is kept, and shells,
+holes and parts combine as point location combines them, so a label never
+differs from location, valid topology or not. A point in a labelled cell
+is decided by one lookup. A boundary cell only one ring's edges may touch
+keeps that ring's side where the cell's right side meets the centre line,
+unless another part holds it whole or a hole's shell leaves it outside.
+A point in it is located from the edges whose envelopes meet the closed
+cell, found in a hierarchy of the operand's edges split at the median of
+the axis on which their centres spread widest, reserved from the budget
+the first time a point needs it. The point's half-open ray is replaced by
+a run right to the cell's side and a rise along it to the centre line,
+which cross a ring as often as the ray does, modulo two: the rise lies
+just left of the side, nearer to it than the run and the centre line lie
+above their heights, so no vertex lies on the path, and an edge through
+one of its corners is placed by its slope. A cell several rings' edges
+may touch leaves its points to the interval tree or the ring scan.
+Certificates decline when a cell
 would be within 256 units in the last place of the largest coordinate, a
 scaled coordinate would reach 2^44, the side would fall below 1e-280, or
 the budget refuses their cells.

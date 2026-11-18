@@ -70,7 +70,7 @@ impl FiledEdges {
 }
 
 /// Every ring of a polygon or multipolygon.
-fn rings(shape: &Shape) -> Option<Vec<&[Point]>> {
+pub(super) fn rings(shape: &Shape) -> Option<Vec<&[Point]>> {
     match shape {
         Shape::Polygon(polygon) => Some(polygon.iter().map(Vec::as_slice).collect()),
         Shape::Multi(code, parts) => {

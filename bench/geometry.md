@@ -489,3 +489,41 @@ The 8-edge and 128-edge preparation cases ran 9.3% and 11.9% slower in
 the second after-run; this change does not touch preparation, and those
 two cases moved by similar amounts between unchanged runs earlier in the
 night.
+
+## Boundary cells decided by the edges near a point
+
+Cell certificates left a point in a boundary cell to the interval tree
+or the ring scan. Where a comb's teeth are narrower than a cell, nearly
+every cell over the teeth is a boundary cell, and every point there paid
+for a horizontal ray across all the teeth. A boundary cell only one
+ring's edges may touch now keeps that ring's side at its reference
+point, where its right side meets its row's centre line, and a point in
+it is located from the edges whose envelopes meet the cell, found in a
+hierarchy of the polygon's edges (RULES.md D85). The certificates are
+also built a row at a time: the 32,772-edge comb's build held about ten
+million centre-line crossings of 24 bytes at once, and now holds one
+row's.
+
+Measured on an Apple M4, Rust 1.99.0, against the parent commit. Each
+side ran twice and the second run is reported:
+
+```text
+cargo xtask bench geometry --save dense-before
+cargo xtask bench geometry --save dense --compare dense-before
+```
+
+| Prepared intersection | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| 260-edge comb | 2,283,787 | 14,644,109 | 6.4x |
+| 4,100-edge comb | 102,580 | 8,535,638 | 83x |
+| 32,772-edge comb | 12,636 | 5,364,211 | 425x |
+
+In a release test build the two large combs' certificates took 41 ms and
+218 ms to build, and decided every point of the 10,000-point grid that
+lies over them, in 72 ns and 118 ns a point. A virtual machine and other
+processes held about one and a half cores during the runs. The second
+after-run moved cases this change does not reach: the square's four- and
+eight-thread SQL scans by -38% and -20%, the unprepared 512-edge decode
+by -24%, and preparing a 32-edge polygon by -30%, each with a spread
+between 25% and 41%. In the first after-run every one of them was within
+8% of the baseline.

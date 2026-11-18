@@ -4,7 +4,9 @@
 //! at evaluation time, including mixed-SRID and malformed-value errors.
 //! A polygon's cell certificates (`cells.rs`) are built once, the first
 //! time the operand has located enough points to repay them, so an
-//! operand prepared for a few rows of a join never pays for them.
+//! operand prepared for a few rows of a join never pays for them; the
+//! hierarchy of its edges (`tree.rs`), the first time a point in a
+//! boundary cell needs the edges near it.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -13,6 +15,7 @@ mod cells;
 mod locator;
 mod rectangle;
 mod shapes;
+mod tree;
 
 use super::{Geometry, GeometryFunction, kind};
 use crate::error::Result;
@@ -23,6 +26,7 @@ use crate::value::{DataType, Value};
 use cells::Cells;
 use locator::Locator;
 use shapes::FiledEdges;
+use tree::EdgeTree;
 
 struct Prepared {
     function: GeometryFunction,
@@ -40,8 +44,11 @@ struct Prepared {
     filed: OnceLock<Option<Box<FiledEdges>>>,
     filed_after: usize,
     probed: AtomicUsize,
-    /// The budget certificates and filed edges would reserve from, kept
-    /// only for an operand that may build them.
+    /// The polygon's edges, and their hierarchy once a point needs it.
+    edges: usize,
+    tree: OnceLock<Option<Box<EdgeTree>>>,
+    /// The budget certificates, filed edges and the hierarchy would reserve
+    /// from, kept only for an operand that may build them.
     budget: Option<Arc<MemoryBudget>>,
     rectangle: bool,
     _held: Reservation,
@@ -81,7 +88,8 @@ impl Prepared {
         // its cells, labelled by the same parity.
         let valid = crate::spatial::planar::is_valid(&super::engine::of_shape(&geometry.shape)).unwrap_or(false);
         let locator = if valid { Locator::new(&geometry.shape, budget) } else { None };
-        let cells_after = cells::edges(&geometry.shape)
+        let edges = cells::edges(&geometry.shape).unwrap_or(0);
+        let cells_after = Some(edges)
             .filter(|&edges| valid && edges >= cells::MIN_EDGES)
             .and_then(|edges| edges.checked_mul(CELL_USES_PER_EDGE)?.checked_add(MIN_CELL_USES))
             .unwrap_or(usize::MAX);
@@ -101,6 +109,8 @@ impl Prepared {
             filed,
             filed_after,
             probed,
+            edges,
+            tree: OnceLock::new(),
             budget,
             rectangle,
             _held: held,
@@ -132,10 +142,10 @@ impl Prepared {
         if self.geometry.bounds.zip(other.bounds).is_some_and(|(a, b)| !a.intersects(b)) {
             return Ok(Some(false));
         }
-        // A labelled cell decides the point exactly; a boundary cell
-        // leaves it to the exact edge tests.
-        if let Some(decided) = self.cells().and_then(|cells| cells.decide(point)) {
-            return Ok(Some(decided));
+        // A cell decides the point exactly, by its label or the edges near
+        // the point; a cell several rings touch leaves it to the locator.
+        if let Some(location) = self.cells().and_then(|cells| cells.decide(point, || self.tree())) {
+            return Ok(Some(location != super::crossing::Location::Exterior));
         }
         let Some(locator) = &self.locator else { return Ok(None) };
         locator.locate(point).map(|location| Some(location != super::crossing::Location::Exterior))
@@ -159,15 +169,12 @@ impl Prepared {
     /// Where `point` lies in the prepared polygon, exactly: by its cell,
     /// its interval tree or its rings.
     fn location(&self, point: super::shape::Point) -> super::crossing::Location {
-        match self.cells().and_then(|cells| cells.decide(point)) {
-            Some(true) => super::crossing::Location::Interior,
-            Some(false) => super::crossing::Location::Exterior,
-            None => self
-                .locator
+        self.cells().and_then(|cells| cells.decide(point, || self.tree())).unwrap_or_else(|| {
+            self.locator
                 .as_ref()
                 .and_then(|locator| locator.locate(point).ok())
-                .unwrap_or_else(|| super::crossing::locate(point, &self.geometry.shape)),
-        }
+                .unwrap_or_else(|| super::crossing::locate(point, &self.geometry.shape))
+        })
     }
 }
 
@@ -183,6 +190,13 @@ impl Prepared {
         }
         let build = || Cells::new(&self.geometry.shape, self.geometry.bounds?, self.budget.as_ref()?);
         self.cells.get_or_init(build).as_deref()
+    }
+
+    /// The hierarchy of the polygon's edges, built the first time it is
+    /// asked for.
+    fn tree(&self) -> Option<&EdgeTree> {
+        let build = || EdgeTree::new(&self.geometry.shape, self.edges, self.budget.as_ref()?);
+        self.tree.get_or_init(build).as_deref()
     }
 
     /// The polygon's filed edges, once it has tested enough lines and
