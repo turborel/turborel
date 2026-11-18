@@ -375,7 +375,8 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// Complex type `id`, its properties read if not yet.
+    /// Complex type `id`, its properties read if not yet, its base's first
+    /// (`complete_base`).
     ///
     /// # Errors
     ///
@@ -391,7 +392,10 @@ impl<'a> Builder<'a> {
                 self.set_complex_state(id, State::Filling);
                 let anonymous = self.originals.contains(&place);
                 let deeper = Builder::deeper(depth)?;
-                let def = self.in_context(place, |b| b.read_complex(place, id, anonymous, deeper))?;
+                let def = self.in_context(place, |b| {
+                    b.complete_base(place, deeper)?;
+                    b.read_complex(place, id, anonymous, deeper)
+                })?;
                 if let Some(slot) = self.schema.complex_types.get_mut(id.0) {
                     *slot = def;
                 }

@@ -2022,7 +2022,7 @@ err:XQST0009 [§5.2.1], Static Typing, Module and Serialization are not.
 | An element of simple content | XQueryDM §6.2.4 | One text node, its schema normalized value, absent if empty, before its comments and processing instructions. |
 | Default values | Schema1 §3.4.5, §3.3.5 | An absent attribute takes its use's value constraint, else its declaration's. An empty element of mixed content takes its declaration's default as text too. An attribute added in a namespace takes a prefix bound to it in scope, if one is. |
 | Entities and notations | XQuery §3.13 | `xs:ENTITY` and `xs:NOTATION` values are not checked against unparsed entities and notations, as XQuery's validate does not check them; a NOTATION value is a QName whose prefix is in scope [Schema1 §3.15.3]. |
-| Limits of reading a schema | RULES.md D18, D86 | Declarations, groups and types nested 128 deep where reading recurses; 64 types of a derivation or declarations of a substitution group, or simple types read by way of one another; 256 documents. Past one, SQLCODE -900. |
+| Limits of reading a schema | RULES.md D18, D86 | Declarations, groups and types nested 64 deep where reading recurses; 64 types of a derivation or declarations of a substitution group, or simple types read by way of one another; 256 documents. Past one, SQLCODE -900. |
 | The other serialization parameters | §10.15 GR10 | No CDATA section, document type declaration, indentation, URI escaping, content type, Unicode normalization or character map. |
 | Notations and unparsed entities | §10.16 GR7a ii, iii | Not kept. |
 | Base URI | §10.16 GR7b | None. |

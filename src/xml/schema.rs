@@ -233,11 +233,13 @@ fn nested(depth: usize) -> Result<usize> {
 
 /// \[DESIGN\] How deeply the elements of a schema document nest at most
 /// where reading them recurses: local declarations within anonymous types
-/// within model groups (RULES.md R-CF-6). \[Schema1\] sets no limit; the
-/// value is no measurement, but a bound well past the nesting of the
-/// schemas applications write, each level of which takes a few frames of
-/// the reader's stack.
-pub const MAX_DEPTH: usize = 128;
+/// within model groups, groups within groups, the steps of a derivation
+/// and references to group definitions (RULES.md R-CF-6). \[Schema1\]
+/// sets no limit; the value is past the nesting of the schemas
+/// applications write, and the deepest schema of each shape is read, its
+/// content models compiled and checked, within half of a thread's default
+/// stack, as a test checks.
+pub const MAX_DEPTH: usize = 64;
 
 /// \[DESIGN\] How many type definitions, substitution group affiliations or
 /// attribute group references a chain of them follows at most (RULES.md

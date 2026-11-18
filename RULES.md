@@ -3111,8 +3111,11 @@ the kind of the atomic values validating it gave, as a union's member
 varies from node to node. These bounds keep reading finite, each SQLCODE
 -900 past it (D18):
 
-- `schema::MAX_DEPTH`, 128: how deeply declarations, groups and types
-  nest where reading recurses.
+- `schema::MAX_DEPTH`, 64: how deeply declarations, groups and types
+  nest where reading recurses, the deepest schema of each shape read
+  within half of a thread's default stack, as a test checks. A complex
+  type's base is read before it, so a derivation's steps nest no more
+  than reading a type does.
 - `schema::MAX_CHAIN`, 64: the types of a derivation, or the declarations
   of a substitution group, a walk up one follows; and the simple type
   definitions read within one another, each naming the next, read within

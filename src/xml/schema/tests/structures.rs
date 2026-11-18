@@ -9,6 +9,7 @@ use crate::error::{Result, SqlState};
 use crate::xml::{Syntax, Whitespace, parse};
 
 mod compose;
+mod depth;
 mod simple;
 
 /// The declaration of the prefix `xs`.

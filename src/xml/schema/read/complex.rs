@@ -101,6 +101,37 @@ impl Builder<'_> {
         Ok(def)
     }
 
+    /// The complex type definition `<complexType>` `place` derives from,
+    /// completed `depth` deep before `place` is read, so the steps of a
+    /// derivation nest the few frames of `complete` and this, not those of
+    /// reading each type (RULES.md R-CF-6). A base not named, or named as
+    /// no type is, is left to `read_complex` to refuse.
+    ///
+    /// # Errors
+    ///
+    /// As `complete`.
+    pub fn complete_base(&mut self, place: Place, depth: usize) -> Result<()> {
+        let Some(base) = self.base_named(place) else { return Ok(()) };
+        // A name that resolves to nothing is refused as `read_complex`
+        // reads it, with the rule its reading breaks.
+        if let Ok(TypeDef::Complex(b)) = self.type_named(&base) {
+            self.complete(b, depth)?;
+        }
+        Ok(())
+    }
+
+    /// The name the base attribute of the derivation of `<complexType>`
+    /// `place` gives, if it is written as a QName in scope.
+    fn base_named(&self, place: Place) -> Option<Expanded> {
+        let at = self.at(place).ok()?;
+        let (content, which) = at.children().ok()?.into_iter().find(|(_, l)| *l != "annotation")?;
+        if !matches!(which, "simpleContent" | "complexContent") {
+            return None;
+        }
+        let (derivation, _) = only_derivation(&content).ok()?;
+        self.qname(place.0, &derivation, "base").ok().flatten()
+    }
+
     /// The base type definition named by the base attribute of
     /// `<restriction>` or `<extension>` `at` of document `doc`, of complex
     /// type `def`: of a redefinition, its own name [Schema1 §4.2.2
