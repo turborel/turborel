@@ -163,6 +163,7 @@ fn bytes(value: &Value, default: usize) -> usize {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_) => default,
     }
 }

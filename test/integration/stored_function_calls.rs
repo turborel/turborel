@@ -169,3 +169,18 @@ fn older_stored_calls_are_taken_while_off() {
     assert_eq!(rows(&a, "SELECT Q FROM V2"), Ok(vec!["8".into()]));
     assert_eq!(exec(&a, "INSERT INTO D2 VALUES (0)"), Err(Code::Constraint));
 }
+
+/// Verifies: [EXTENSION] RULES.md D74, D92: a key part of an index calling
+/// a registered function is read as the statement wrote it, so with
+/// SQL.FUNCTION_CALLS OFF the call is a syntax error, and with it ON the
+/// call is bound and refused as it can raise.
+#[test]
+fn a_key_part_calling_a_registered_function_follows_the_setting() {
+    let db = registered();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (A INTEGER)").unwrap();
+    let a = db.session("A");
+    for (on, code) in [("OFF", Code::Syntax), ("ON", Code::SyntaxRule)] {
+        a.run(&format!("SET SQL.FUNCTION_CALLS = '{on}'")).unwrap();
+        assert_eq!(exec(&a, "CREATE INDEX K ON T ((BUMP(A)))"), Err(code), "{on}");
+    }
+}

@@ -126,6 +126,10 @@ verification approach DO-178C expects (§8).
 | D86 | An inverted index keeps terms, places and counts in one B-link tree |
 | D87 | SQL/MM Full-Text is built in, its methods calls of registered functions |
 | D88 | Savepoints reuse the undo marks, and cancel staged definitions |
+| D89 | The JSON type is an SQL/JSON item stored parsed, as a typed binary tree read in place |
+| D90 | JSON_TABLE is a collection derived table, its plan a cursor of one tree |
+| D91 | An inverted index of JSON documents' paths and values, every row found rechecked |
+| D92 | An index's key part may be an expression that cannot raise, matched by its canonical form |
 
 ### The project
 
@@ -1337,8 +1341,9 @@ Evaluation (`json/path/eval.rs`) follows §9.46's General Rules, an
 SQL/JSON sequence being a vector of items. An exception is an `SqlError`
 of the SQLSTATE its rule names, which a filter's predicate catches as
 Unknown [§4.48.5]. CEILING, FLOOR, ABS and MOD, for the item methods and
-`%`, are computed by §6.31's rules in `json/path/eval/numbers.rs`, as SQL
-has no numeric value function of those names yet.
+`%`, are computed by §6.31's rules in `json/path/eval/numbers.rs`, over
+the path's numbers, which keep exact results exact. SQL's FLOOR and
+CEILING (`functions/numeric.rs`) compute the same over SQL values.
 
 The General Rules of JSON_EXISTS, JSON_VALUE and JSON_QUERY [§8.23,
 §6.28, §6.35] are functions of the library too (`json/query.rs`), over
@@ -3058,6 +3063,210 @@ closes every cursor (IA168), makes invalid the locators given since
 at most 1,024 savepoints (IL208), each holding a savepoint of each
 engine that undoes its own changes.
 
+#### D89. The JSON type is an SQL/JSON item stored parsed, as a typed binary tree read in place
+
+A value of the JSON type (`Value::Json`, `value/json.rs`) is an SQL/JSON
+item in a binary form (`json/binary.rs`), shared by reference count, so
+a copy costs nothing. A document is a version octet, 1, then its root
+node. A node is a tag octet and its body, integers little-endian:
+
+```text
+0 null | 1 false | 2 true
+3 integer: i64
+4 decimal: units i64, scale u8
+5 wide decimal: units i128, scale u32
+6 decimal floating point: coefficient i128, exponent i32
+7 approximate: f64 bits
+8 string: octets u32, UTF-8
+9 datetime: moment u8 (date, time, timestamp), utc i64, zone minutes i16, zoned u8, precision u8
+10 array: count u32, size u32, an offset u32 of each element, the elements
+11 object: count u32, size u32, an offset u32 of each member in key order,
+   the members in written order, each key octets u32, key, value node
+```
+
+Offsets count from the first element or member. An object's directory
+is sorted by key octets, members of one key in written order, so a
+member is found by binary search and the first written of a key is the
+one a member accessor takes (UA075). The members themselves stay in
+written order (UA057, US039), which serialization keeps. An exact
+number is stored in the narrowest of its three encodings.
+
+Accessors read the octets in place without making an item (`Node`), and
+a lax path of members, wildcards and integer subscripts is evaluated on
+them (`binary::fast_path`), from the root to what it selects. Any other
+path is evaluated on the item made whole.
+
+A value read from a record, the log, the catalog or the wire is checked
+whole before use (`binary::validate`); damaged octets are SQLCODE -916,
+never a panic.
+
+Comparison is by a comparison key (`binary/key.rs`), prefix-free and
+ordered as octets: the JSON null, then numbers by exact value, strings
+by code point, false, true, datetimes (times, then dates and timestamps
+by UTC instant), arrays element by element, objects by their members
+sorted by key and value key (§8.2 GR10, IA224, IA228, IA229). Equal keys
+are exactly equivalent items (§4.48.3), so `Item::equivalent` uses them,
+and the key is the index key, the spill and grouping key, and the
+bucket. A key decodes to an equivalent item, not the same one, so no
+index-only scan gives a JSON column (`engine::key::restores`).
+
+A JSON value is stored whole in its record, at most
+`MAX_DOCUMENT_OCTETS` (256 MiB), with no 32 767 limit. The row store
+keeps a long value on overflow pages of its own, as it does a long
+string. It is not a large object (D79): random access by binary search
+needs the document in memory, and a locator would read it whole on each
+access anyway.
+
+On the wire a JSON value is its stored form, type tag 25, which a
+client shows as its JSON text; in the self-describing codec (log) it is
+tag 20; in the catalog's type tags, 29. The format version stays 1 while
+turborel is alpha.
+
+#### D90. JSON_TABLE is a collection derived table, its plan a cursor of one tree
+
+JSON_TABLE is planned as a collection derived table, the logical
+operator UNNEST's with a JSON table attached. Its context item, PASSING
+values and DEFAULT expressions are the operator's collections, so a
+lateral reference, a dynamic parameter, a subquery and a LEFT join's ON
+condition go through the paths UNNEST's take. The JSON table is the
+standard's transformation done once, at bind time, as one primitive per
+COLUMNS clause in pre-order and a plan tree of parents, siblings and
+primitives [§7.11 SR1k]. It runs as a cursor of that tree that makes a
+row at a time, null extended by OUTER and the UNION of siblings, never
+the derived tables the transformation writes.
+
+#### D91. An inverted index of JSON documents' paths and values, every row found rechecked
+
+The index method `json` (`index/json.rs`) finds rows by the JSON
+documents of one column, a character string's or the JSON type's, for
+JSON_EXISTS, JSON_VALUE compared equal and JSON_CONTAINS \[EXTENSION\].
+A document is parsed as the query operators parse it, WITHOUT UNIQUE
+KEYS. A value of the JSON type gives its item already parsed.
+
+A document posts terms (`index/json/terms.rs`). Each is 16 bytes, the
+hash of a path and the hash of a value, both MurmurHash3. A path is the
+chain of member names from the root, array steps dropped, so `$.a[3].b`
+and `$.a.b` are one path. Every node posts its path with no value, and
+every scalar posts its path with its canonical value. Numbers are
+canonical as the `f64` nearest their exact value, so 1, 1.0 and 1E0 post
+alike. Strings are canonical by code point with trailing spaces taken
+off, so both comparisons a call may make find them. true, false and null
+post as themselves. A scalar that is not a string also posts the string
+JSON_VALUE's implicit RETURNING makes of it, and a string reading true
+or false posts that truth value too, so a JSON_VALUE result compared
+equal finds it. Each term a document posts counts once.
+
+An index is one B-link tree (D31), its keys tagged by their first byte.
+`D` keys map a row and its document's hash to the versions holding it,
+and `H` keys find the rows of a hash. A posting is a `P` key of the term,
+the document's hash and its row, so a term's postings are in one order
+and merge. A term's count of documents is a `P` key after its postings.
+A document's postings are written as its first version is inserted and
+taken out at its last, under a stripe of row locks, so versions of a row
+with the same document (D29) cost a count. A null document posts
+nothing. The keys are projected by the document's hash (D85), its
+characters hashed with trailing spaces dropped, or a JSON value's
+comparison key, so a reader rechecks each visible row by its hash.
+
+A call is compiled to the terms a document it is true of must post
+(`index/json/need.rs`), an AND and OR of terms. A member chain needs each
+node on it. A filter `@.k == literal` or `== $var` needs that value at
+its path, and `&&` and `||` combine. A wildcard, a method, `!`, `like_regex`,
+a comparison other than equality, or a mode the walk cannot follow needs
+nothing more at that point, so strict mode, wildcards and methods ask a
+superset. JSON_VALUE compared equal also needs the value at its path,
+of RETURNING the implicit VARCHAR or BOOLEAN only, where no cast changes
+a value. JSON_CONTAINS needs each leaf of its candidate at its path. A
+search drives by the rarest part of an AND, by the counts, and tests the
+rest by one descent each, and merges an OR's parts in order.
+
+Every row found is checked by the whole WHERE condition (D34). The
+planner probes only for a call that reads the column whose other
+arguments are constants or parameters, of NULL ON ERROR (JSON_EXISTS's
+default FALSE ON ERROR included) and NULL ON EMPTY. Such a call raises
+of a document only when the index cannot read it. A document that is no
+JSON text, or past a limit of turborel's, posts the term UNREAD, which
+every probe finds, so the WHERE check raises of it where a scan would
+(D15). A call of ERROR ON ERROR is never a lookup.
+
+The options are JSON.PATHS_ONLY, ON or OFF, which posts paths alone, and
+JSON.MAX_DEPTH, 0 to 128, the most member names posted; a deeper path is
+found by its first names. Both are rebuilds (D41) and are kept in the
+locator, so an index opened reads as it was made. A bulk load sorts
+every entry's keys in a spill area (D38) and loads the tree in key
+order, writing each term's count as its postings pass. Recovery mends
+the index from the rows redone, as every method's (D25).
+
+#### D92. An index's key part may be an expression that cannot raise, matched by its canonical form
+
+A key part of CREATE INDEX may be `( <value expression> )` \[EXTENSION\],
+written among column names in any order. Only `btree` and `hash` take
+one. The expression is bound over its table's row as a generation
+expression is [ISO/IEC 9075-2:2023 §11.4 SR10] (`binder/key_expression.rs`,
+`Purpose::Key`). So it reads only the table's columns and has no
+subquery, set function, host or user value, or possibly
+non-deterministic function. The JSON operators are the exception: they
+are possibly non-deterministic [§9.16 SR1g, SR1h, SR1al] only through a
+datetime of the session's time zone and through errors, and both are
+excluded below.
+
+An expression is admitted only if it raises no exception condition of
+any row (`index/expression.rs`). D15 then holds for a lookup by it: a
+probe that skips rows skips no error a scan would raise. The analysis
+admits a column, a constant, a negation of a number, and a sum,
+difference or product of exact numerics whose result precision, by
+X3.135-1986 §5.9 SR4, fits 18 digits. It also admits a CASE whose
+conditions cannot raise and whose results are admitted. A call is
+admitted if it is deterministic, reads no session context and its
+function says so (`ScalarFunction::index_safe`, false by default). UPPER
+and LOWER of one non-LOB character string say so. JSON_VALUE, JSON_QUERY
+and JSON_EXISTS say so (`JsonCall::key_safe`) when all of these hold.
+The context item is JSON or a non-LOB character string. Every PASSING
+argument is a scalar of no time zone. The path calls no datetime(),
+time_tz() or timestamp_tz(). ON ERROR is not ERROR. A DEFAULT is a
+constant that casts to RETURNING, or a value of that type. RETURNING has
+no time zone, or for JSON_QUERY is JSON or the implicit type. Anything
+else, a quotient, a CAST, a domain, CURRENT_DATE, a sequence, a routine,
+is refused with SQLCODE -103, the message naming the part that can
+raise. An implementation limit, as SQLCODE -900 of JSON nested over 128
+deep, fails the write, so every stored row has its key.
+
+The catalog keeps each expression as written, with its place in the
+key. `IndexDesc::columns` holds `EXPRESSION_PART` (`usize::MAX`) there,
+so a path that reads key columns alone passes the index by. The text is
+bound again whenever the index enters a catalog (`State::with_derived`):
+at creation, as the database opens, and as ALTER TABLE remakes the
+table's indexes, so a moved column is read where it is now. The format
+stays at version 1: the catalog codec and the CREATE INDEX log record
+carry the expressions after their other fields.
+
+A write computes the key of each row (`IndexDesc::computed_key`). An
+UPDATE leaves an entry alone when no column the key reads changed, on an
+engine that keeps one version of a row. An engine that keeps versions
+gives each version its own entries, as for any index. A scan through such
+an index records a read of the whole table for serializable conflict
+checks, since its probe's condition is no condition on columns. A
+temporary table's instances build and keep entries the same way.
+Renaming a column an expression names is refused, as for a generation
+expression (D31). Dropping one drops the index. If binding again fails
+after another change, the ALTER fails.
+
+The planner (`physical/expression_index.rs`) gives each distinct
+expression of a table's indexes a planned column past the table's own,
+of its type. That column is NOT NULL only if the expression is never
+null: a NOT NULL column, a non-null constant, or a negation, sum,
+difference or product of such. A query's subexpression of the same
+canonical form is replaced by that column for choosing the path only.
+The canonical form is the bound tree written out, each function by its
+shown name, which for an SQL/JSON operator spells every clause. The
+filter a scan keeps, and the conjuncts an index scan answers, stay the
+query's own. So `=`, ranges, BETWEEN and IN of the expression probe it,
+and ORDER BY of it, through a projection, reads a btree index in order
+when the planned column is never null. EXPLAIN shows the probe as
+`(T.A + T.B) = 3`. INFORMATION_SCHEMA.INDEXES shows the key part as
+written, in parentheses. Expressions match by form only, so `B + A` is
+not `A + B`.
+
 ## 2. Project layout
 
 ```
@@ -3191,7 +3400,7 @@ under a target's directory is a module of that target.
 |---|---|---|
 | R-SAFE-1 | No `unsafe` code. | `unsafe_code = "forbid"` |
 | R-SAFE-2 | No `mem::forget`, `process::exit` or global mutable state. | `mem_forget`, `exit`; review |
-| R-SAFE-3 | `dyn Trait` **shall** appear only at the extension points listed atop `src/db.rs`, the traits they hand out, the storage foundation's traits (D30), and row streams. Each extension trait **shall** document its contract; every built-in implementation **shall** pass the same contract tests. | review; tests |
+| R-SAFE-3 | `dyn Trait` **shall** appear only at the extension points listed atop `src/db.rs`, the traits they hand out, the storage foundation's traits (D30), and row streams, and at a boundary that keeps a proof of `Send` or `Sync` within the compiler's default recursion limit, marked `[DESIGN]`. Each extension trait **shall** document its contract; every built-in implementation **shall** pass the same contract tests. | review; tests |
 | R-SAFE-4 | Each dependency **shall** have a §1 decision covering rationale, version, license and review; only cryptography and compression plug-ins, the server crate and the command-line client may have any (D3, D26, D42, D46, D48). | review |
 | R-SAFE-5 | No thread **shall** be started except through the thread manager (`src/threads.rs`, D55), and none unnamed. | xtask; review |
 

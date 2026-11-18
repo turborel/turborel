@@ -23,6 +23,7 @@ use super::operands::{input_type, name_type};
 use crate::ast::JsonFormat;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::json::{ArrayOptions, Input, JsonObjectAgg, Keys, MAX_ELEMENTS, ObjectOptions, OnNull, json_array_by_query};
+use crate::params::ParameterType;
 use crate::value::collation::CollationRef;
 use crate::value::types::composite::unordered;
 use crate::value::{DataType, SortOrder, Value};
@@ -58,6 +59,12 @@ impl AggregateFunction for JsonObjectAggregate {
         name_type(&name.data_type, JSON_OBJECTAGG)?;
         input_type(&value.data_type, self.format, "the value of JSON_OBJECTAGG")?;
         Ok(self.returning.clone())
+    }
+    /// \[EXTENSION\] [§20.7 GR5a] As JSON_OBJECT's (`JsonConstruct`): a
+    /// `?` as its name, or as its value FORMAT JSON, is CHARACTER VARYING;
+    /// as a value without FORMAT JSON, of none \[GR5b\].
+    fn parameter_type(&self, position: usize) -> Option<ParameterType> {
+        (position == 0 || self.format.is_some()).then_some(ParameterType::Varying)
     }
     fn accumulator(&self, _: DataType) -> Box<dyn Accumulator> {
         let options = ObjectOptions { on_null: self.on_null, keys: self.keys, returning: &self.returning };
@@ -138,6 +145,12 @@ impl AggregateFunction for JsonArrayAggregate {
             ));
         }
         Ok(self.returning.clone())
+    }
+    /// \[EXTENSION\] [§20.7 GR5a] As JSON_ARRAY's (`JsonConstruct`): a `?`
+    /// as its value FORMAT JSON is CHARACTER VARYING; without FORMAT JSON,
+    /// or as a sort key, of none \[GR5b\].
+    fn parameter_type(&self, position: usize) -> Option<ParameterType> {
+        (position == 0 && self.format.is_some()).then_some(ParameterType::Varying)
     }
     fn accumulator(&self, _: DataType) -> Box<dyn Accumulator> {
         Box::new(Elements {

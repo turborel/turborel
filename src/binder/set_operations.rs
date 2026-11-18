@@ -131,9 +131,12 @@ fn values(cx: Context<'_>, rows: &[ValuesRow], nesting: &Nesting<'_>) -> Result<
         // [EXTENSION] Into a column of a type beyond the standard, its
         // type, each value having been found assignable to it, a character
         // string too (RULES.md D53), which §9.3 would not bring together
-        // with it.
-        let data_type = if let Some(extension @ DataType::Extension(_)) = object {
-            extension
+        // with it. So too into a column of the JSON type, a character
+        // string's JSON text being assignable to it [ISO/IEC 9075-2:2023
+        // §9.2 SR2q] (RULES.md D89).
+        let kept = object.as_ref().filter(|t| matches!(t, DataType::Extension(_) | DataType::Json));
+        let data_type = if let Some(kept) = kept {
+            kept.clone()
         } else if let Some(distinct @ DataType::Distinct(_)) = object {
             // [ISO/IEC 9075-2:2023 §9.5 SR3l, §9.2 SR3] Into a column of a
             // distinct type, the type of its values alone, each then

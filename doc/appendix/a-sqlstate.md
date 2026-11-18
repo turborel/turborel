@@ -53,10 +53,10 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
 | 0W000 | Prohibited statement encountered during trigger execution: a savepoint statement in a procedure a trigger's action calls; told in the message of the 09000 it raises |
 | 21000 | Cardinality violation: a subquery of one row gave more, or ELEMENT a multiset of more than one element |
-| 22000 | Data exception |
-| 22001 | String data, right truncation: a string too long for its type |
+| 22000 | Data exception: a path's `%` of an approximate number or one with a fraction |
+| 22001 | String data, right truncation: a string too long for its type, JSON_QUERY's JSON text longer than its returned type whatever ON ERROR says among them |
 | 22002 | Null value, no indicator parameter |
-| 22003 | Numeric value out of range |
+| 22003 | Numeric value out of range, a number of JSON text of more than 34 significant digits among them, wherever JSON text is read, IS JSON too |
 | 22004 | Null value not allowed: a null name of a member of JSON_OBJECT or JSON_OBJECTAGG |
 | 22005 | Error in assignment |
 | 22007 | Invalid datetime format |
@@ -97,7 +97,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2202Z | Non-timestamp SQL/JSON item: a path's timestamp() of an item that is no string, or timestamp_tz() of one neither a string nor a number |
 | 22030 | Duplicate JSON object key value: JSON_OBJECT or JSON_OBJECTAGG WITH UNIQUE KEYS of two members of one name |
 | 22031 | Invalid argument for SQL/JSON datetime function: a path's datetime() of an item that is no character string, or of a string that is no date, time or timestamp, or that its template does not read |
-| 22032 | Invalid JSON text: a context item or PASSING argument of JSON_EXISTS, JSON_VALUE or JSON_QUERY, or a value FORMAT JSON of a constructor, that is no JSON text, or an item JSON_QUERY serializes that has none, as a datetime |
+| 22032 | Invalid JSON text: a context item or PASSING argument of JSON_EXISTS, JSON_VALUE or JSON_QUERY, or a value FORMAT JSON of a constructor, that is no JSON text, or an item JSON_QUERY serializes that has none, as a datetime, or a parent's item of no JSON text chained to JSON_TABLE's NESTED COLUMNS under ERROR ON ERROR |
 | 22033 | Invalid SQL/JSON subscript: an array subscript of a path that is not one number, or in strict mode outside the array |
 | 22034 | More than one SQL/JSON item: JSON_VALUE, or JSON_QUERY without a wrapper, of a path that gives two items or more |
 | 22035 | No SQL/JSON item: JSON_VALUE or JSON_QUERY of ERROR ON EMPTY, of a path that gives no item |

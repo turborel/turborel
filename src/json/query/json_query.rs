@@ -6,7 +6,7 @@
 
 use super::wrapper::{QueryBehavior, Wrapper, only, wrapped};
 use super::{CommonSyntax, Warned, caught, process};
-use crate::error::Result;
+use crate::error::{Result, SqlState};
 use crate::json::Item;
 use crate::json::serialize::{serialize_as, string_type};
 use crate::value::{DataType, Value, cast_warned};
@@ -73,8 +73,9 @@ fn single_array_or_object(seq: &[Item]) -> bool {
 /// `options.quotes` is OMIT \[GR5b i\], else serialized [§9.43] \[GR5c\];
 /// the null value if empty and `options.on_empty` is NULL \[GR5a\]. An
 /// exception condition, of `status`, the rules, a cast or the
-/// serialization, is replaced as `options.on_error` says \[GR6\]; an error
-/// not one is raised (`query::is_exception`).
+/// serialization's STATUS, is replaced as `options.on_error` says
+/// \[GR6\]; an error not one is raised (`query::is_exception`), and so is
+/// the serialization's 22001 [§9.43 GR2a iii].
 ///
 /// # Errors
 ///
@@ -84,16 +85,28 @@ fn single_array_or_object(seq: &[Item]) -> bool {
 /// exception condition: of `status`; SQLSTATE 22035 if the sequence is
 /// empty and `options.on_empty` is ERROR \[GR4c i 1\], 22034 if it has
 /// more than one item and is not wrapped \[GR4c iii\], 22032 if its item
-/// has no JSON text, 22001 if the text is longer than the type [§9.43
-/// GR2a ii, iii], or that of a cast \[GR5b i\]; if `options.on_error` is
-/// EMPTY ARRAY or EMPTY OBJECT, that of its serialization \[GR6a iii 2\].
+/// has no JSON text [§9.43 GR2a ii], or that of a cast \[GR5b i\]; if
+/// `options.on_error` is EMPTY ARRAY or EMPTY OBJECT, that of its
+/// serialization \[GR6a iii 2\]. Whatever `options.on_error` is, SQLSTATE
+/// 22001 if the JSON text is longer than the type, which §9.43 GR2a iii
+/// raises rather than returns as a STATUS.
 pub fn serialize_sequence(status: Result<Vec<Item>>, options: &QueryOptions<'_>) -> Result<Warned> {
+    // [§6.35 GR5a] Of RETURNING JSON, the sequence converted to an item
+    // [§9.44], a value of the JSON type, no text.
+    if let DataType::Json = options.returning {
+        let item = super::sequence_to_item(status, options.wrapper, options.on_empty, options.on_error)?;
+        let value = item.map(|item| crate::value::json::Json::of_item(&item)).transpose()?;
+        return Ok(unwarned(value.map_or(Value::Null, Value::Json)));
+    }
     string_type(options.returning)?;
-    let temp = status.and_then(|seq| {
+    let temp = match status.and_then(|seq| {
         let wrapit = options.wrapper.wraps(&seq, single_array_or_object);
-        let item = only(wrapped(seq, wrapit), options.on_empty, "§9.49 GR4")?;
-        item.map_or(Ok((Value::Null, None)), |item| serialized(&item, options))
-    });
+        only(wrapped(seq, wrapit), options.on_empty, "§9.49 GR4")
+    }) {
+        Ok(None) => Ok((Value::Null, None)),
+        Ok(Some(item)) => serialized(&item, options)?,
+        Err(error) => Err(error),
+    };
     caught(temp, |error| match options.on_error {
         QueryBehavior::Error => Err(error),
         QueryBehavior::Null => Ok((Value::Null, None)),
@@ -103,15 +116,33 @@ pub fn serialize_sequence(status: Result<Vec<Item>>, options: &QueryOptions<'_>)
 }
 
 /// [§9.49 GR5b, GR5c] JT: the item `item`, V, as a value of
-/// `options.returning`.
-fn serialized(item: &Item, options: &QueryOptions<'_>) -> Result<Warned> {
+/// `options.returning`, as TEMPST, the inner result: a cast's exception
+/// condition is one \[GR5b i\], and so is a serialization's STATUS
+/// [§9.43 GR2a ii]. A text longer than the type is not: §9.43 GR2a iii
+/// raises it, where GR2a ii lets ST be one, so it is no STATUS ON ERROR
+/// replaces, and is the outer error.
+///
+/// # Errors
+///
+/// SQLSTATE 22001 if the JSON text is longer than `options.returning`
+/// [§9.43 GR2a iii].
+fn serialized(item: &Item, options: &QueryOptions<'_>) -> Result<Result<Warned>> {
     if options.quotes == Quotes::Omit
         && let Item::Scalar(scalar) = item
         && let Value::Char(_) = scalar.value()
     {
-        return cast_warned(scalar.value().clone(), options.returning);
+        return Ok(cast_warned(scalar.value().clone(), options.returning));
     }
-    serialize_as(item, options.returning).map(unwarned)
+    match serialize_as(item, options.returning) {
+        Ok(value) => Ok(Ok(unwarned(value))),
+        Err(error) => {
+            if error.sqlstate() == SqlState::STRING_DATA_RIGHT_TRUNCATION {
+                Err(error)
+            } else {
+                Ok(Err(error))
+            }
+        }
+    }
 }
 
 /// A value no cast made, so with no warning.

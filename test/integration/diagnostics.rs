@@ -46,6 +46,7 @@ fn a_database_tells_its_sink_of_its_life() {
             registered(Extension::IndexMethod, "btree"),
             registered(Extension::IndexMethod, "hash"),
             registered(Extension::IndexMethod, "rtree"),
+            registered(Extension::IndexMethod, "json"),
             registered(Extension::IndexMethod, "fulltext"),
             info("Opened(Created)"),
             info("Thread { label: \"turborel-maintenance\", change: Started }"),

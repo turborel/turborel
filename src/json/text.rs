@@ -5,11 +5,17 @@
 //! [§9.42 GR3a iii 3 A IV] A JSON number is "the value of the `<signed
 //! numeric literal>` whose characters are identical" to it: exact without
 //! an exponent, approximate with one. \[DESIGN\] An exact one of more
-//! digits than an exact number holds is a decimal floating-point number,
-//! rounded to its precision, since RFC 8259 §6 lets an implementation set
-//! the precision of the numbers it accepts.
+//! significant digits than an exact number holds is a decimal
+//! floating-point number, which holds it exactly; its leading zeros, and
+//! the trailing zeros of its fraction, are not counted. RFC 8259 §6 lets
+//! an implementation set the range and precision of the numbers it
+//! accepts, and [§5.3 SR29] has the value of a literal held exactly, so a
+//! number no number of turborel's holds exactly is not rounded but is
+//! SQLSTATE 22003, numeric value out of range, as one past an approximate
+//! number's range is, too great or, not zero, too small.
 
 use std::collections::HashSet;
+use std::num::FpCategory;
 use std::ops::RangeInclusive;
 
 use super::{Item, MAX_NESTING, Member, Scalar, beyond};
@@ -68,8 +74,9 @@ struct Reader {
 /// SQLSTATE 22032 if `text` is no JSON text \[GR3a iii 1\], or a string of
 /// it escapes a surrogate that is not of a pair, no Unicode character;
 /// SQLSTATE 22037 if two members of an object have one key under
-/// `Keys::Unique` \[GR3a iii 2\]; SQLCODE -900 if arrays and objects nest
-/// deeper than `MAX_NESTING`, or a number is out of every number's range.
+/// `Keys::Unique` \[GR3a iii 2\]; SQLSTATE 22003 if a number is one no
+/// number of turborel's holds exactly (`exact`, `approximate`); SQLCODE
+/// -900 if arrays and objects nest deeper than `MAX_NESTING`.
 pub fn parse(text: &str, keys: Keys) -> Result<Item> {
     let mut reader = Reader { chars: text.chars().collect(), at: 0, keys };
     reader.ws();
@@ -90,25 +97,46 @@ fn non_unique(key: &str) -> SqlError {
 
 /// The exact number of the sign `negative` says, the digits `whole`
 /// before its decimal point and `fraction` after it, either of them empty
-/// if the other is not.
+/// if the other is not. Its leading zeros, and the trailing zeros of its
+/// fraction, are insignificant: of more digits than `MAX_EXACT_PRECISION`,
+/// it is exact without them if they are what made it too long, else the
+/// decimal floating-point number it is, which holds
+/// `MAX_DECFLOAT_PRECISION` significant digits exactly.
 ///
 /// # Errors
 ///
-/// SQLCODE -900 if it is out of the range of a decimal floating-point
-/// number.
+/// SQLSTATE 22003 if it has more significant digits than a decimal
+/// floating-point number holds, since no number of turborel's is the
+/// value of its `<signed numeric literal>` [§5.3 SR29], or is out of a
+/// decimal floating-point number's range.
 pub(super) fn exact(negative: bool, whole: &str, fraction: &str) -> Result<Item> {
     let digits = format!("{whole}{fraction}");
-    if u32::try_from(digits.len()).is_ok_and(|count| count <= MAX_EXACT_PRECISION) {
+    let significant = fraction.trim_end_matches('0');
+    let trimmed = format!("{whole}{significant}");
+    let trimmed = trimmed.trim_start_matches('0');
+    let (units, scale) = if fits(&digits, fraction) { (digits.as_str(), fraction.len()) } else { (trimmed, significant.len()) };
+    if fits(units, "") && u32::try_from(scale).is_ok_and(|scale| scale <= MAX_EXACT_PRECISION) {
         // At most MAX_EXACT_PRECISION digits always fit an i128 and a u32,
         // so neither fallback below is ever taken.
-        let units: i128 = digits.parse().unwrap_or(0);
-        let scale = u32::try_from(fraction.len()).unwrap_or(MAX_EXACT_PRECISION);
+        let units: i128 = if units.is_empty() { 0 } else { units.parse().unwrap_or(0) };
+        let scale = u32::try_from(scale).unwrap_or(MAX_EXACT_PRECISION);
         return Ok(Item::Scalar(Decimal::new(if negative { units.wrapping_neg() } else { units }, scale).into()));
+    }
+    let coefficient = trimmed.trim_end_matches('0');
+    if u32::try_from(coefficient.len()).is_ok_and(|count| count > MAX_DECFLOAT_PRECISION) {
+        return Err(out_of_range(&format!("the number has more than {MAX_DECFLOAT_PRECISION} significant digits")));
     }
     let exponent = i64::try_from(fraction.len()).unwrap_or(i64::MAX).saturating_neg();
     DecFloat::of_digits(negative, &digits, exponent, MAX_DECFLOAT_PRECISION)
         .map(|number| Item::Scalar(number.into()))
-        .ok_or_else(|| beyond("a number is out of the range of a decimal floating-point number"))
+        .ok_or_else(|| out_of_range("the number is out of the range of a decimal floating-point number"))
+}
+
+/// Whether `digits`, of which `fraction` are after the decimal point, are
+/// few enough for an exact number.
+fn fits(digits: &str, fraction: &str) -> bool {
+    u32::try_from(digits.len()).is_ok_and(|count| count <= MAX_EXACT_PRECISION)
+        && u32::try_from(fraction.len()).is_ok_and(|count| count <= MAX_EXACT_PRECISION)
 }
 
 /// The approximate number the number `text`, one with an exponent, is:
@@ -116,14 +144,22 @@ pub(super) fn exact(negative: bool, whole: &str, fraction: &str) -> Result<Item>
 ///
 /// # Errors
 ///
-/// SQLCODE -900 if it is out of the range of an approximate number.
+/// SQLSTATE 22003 if it is out of the range of an approximate number, too
+/// great in magnitude or, not zero, too small to be other than zero.
 pub(super) fn approximate(text: &str) -> Result<Item> {
-    text.parse::<f64>()
-        .ok()
-        .filter(|number| number.is_finite())
-        .and_then(|number| Scalar::new(Value::Approx(number)))
-        .map(Item::Scalar)
-        .ok_or_else(|| beyond("a number is out of the range of an approximate number"))
+    let number = text.parse::<f64>().ok().filter(|number| number.is_finite());
+    let Some(number) = number else { return Err(out_of_range("the number is too great for an approximate number")) };
+    let mantissa = text.split(['e', 'E']).next().unwrap_or_default();
+    if number.classify() == FpCategory::Zero && mantissa.chars().any(|c| matches!(c, '1'..='9')) {
+        return Err(out_of_range("the number is too small for an approximate number, but not zero"));
+    }
+    Scalar::new(Value::Approx(number)).map(Item::Scalar).ok_or_else(|| out_of_range("the number is not an approximate number"))
+}
+
+/// [§9.42 GR3a iii 3 A IV] The exception of a number no number of
+/// turborel's is the value of, `why`: numeric value out of range.
+fn out_of_range(why: &str) -> SqlError {
+    SqlError::new(Code::Data, format!("[ISO/IEC 9075-2:2023 §9.42 GR3a iii 3 A IV] {why}")).with_state(SqlState::NUMERIC_VALUE_OUT_OF_RANGE)
 }
 
 /// The character of "the UTF-16 surrogate pair" of the code units `high`,

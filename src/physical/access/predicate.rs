@@ -35,7 +35,7 @@ pub(super) fn candidates(conds: &[Cond], ix: &IndexDesc, values: Option<&[Value]
             let (column, argument, other) = operands(args)?;
             let column = ix.columns.iter().position(|&key_column| key_column == column)?;
             let (value, slot) = constant(other, values)?;
-            let predicate = Box::new(Predicate { function: function.clone(), column, argument });
+            let predicate = Box::new(Predicate { function: function.clone(), column, argument: Some(argument) });
             let probe = Probe::Predicate { predicate, value };
             let slots = slot.into_iter().map(|slot| ProbeSlot { place: Place::PredicateValue, slot }).collect();
             // D34: even an exact index leaves the full WHERE check in place.
@@ -85,6 +85,15 @@ pub(crate) fn rechecked_lookup(c: &Cond) -> bool {
     let Some((function, args)) = predicate_call(c) else { return false };
     let f = &function.0;
     f.rechecked_errors() && f.deterministic() && args.iter().all(|a| !a.can_raise())
+}
+
+/// The conjuncts of `conds` an index probe may answer. RULES.md D15: a
+/// probe reads only the rows its conjuncts select, so the other conjuncts
+/// would not be evaluated on the rest. When one of them can raise an error
+/// it must see every row, so no index is probed then. A rechecked lookup
+/// raises where the scan would (D87).
+pub(super) fn answerable(conds: &[Cond]) -> &[Cond] {
+    if conds.iter().any(|c| c.can_raise() && !rechecked_lookup(c)) { &[] } else { conds }
 }
 
 /// Returns the table column number, its position in the call and the other
@@ -186,6 +195,7 @@ mod tests {
             options: Vec::new(),
             collations: Vec::new(),
             nulls: false,
+            expressions: Vec::new(),
         };
         let mut column = ColumnDesc {
             name: "K".into(),
@@ -199,7 +209,7 @@ mod tests {
         let tested_column = ColumnDesc { not_null: true, ..column.clone() };
         let function = Registry::with_set_functions().scalar("UPPER").unwrap();
         let probe = |at| Probe::Predicate {
-            predicate: Box::new(Predicate { function: function.clone(), column: at, argument: 0 }),
+            predicate: Box::new(Predicate { function: function.clone(), column: at, argument: Some(0) }),
             value: Value::Null,
         };
         assert!(omits_rows(&ix, &[&tested_column, &column], Some(&probe(0))));

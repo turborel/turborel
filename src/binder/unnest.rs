@@ -15,6 +15,7 @@
 //! join's second operand reads nothing of its first [§7.10 SR4].
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use super::composite::integer;
 use super::from::{Bounds, From, FromItem, Join, Tree, leaf, renamed, tree_items};
@@ -23,6 +24,7 @@ use super::{Binder, Context, Scope, rule};
 use crate::ast::{JoinKind, UnnestTable};
 use crate::catalog::{ColumnDesc, QualifiedName, TableDesc};
 use crate::error::{Code, Result, SqlError};
+use crate::json::JsonTable;
 use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, Truth, Unnest, map_cond_columns, map_expr_columns};
 use crate::value::DataType;
 
@@ -38,6 +40,18 @@ pub(super) struct Unnested {
     ordinality: bool,
     /// The columns of the FROM row its collections reference.
     pub(super) reads: BTreeSet<usize>,
+    /// [ISO/IEC 9075-2:2023 §7.11] Of a `<JSON table>`, planned as a
+    /// collection derived table is (`binder/json/table.rs`): the table,
+    /// its operands being `collections`.
+    json: Option<Arc<JsonTable>>,
+}
+
+impl Unnested {
+    /// [ISO/IEC 9075-2:2023 §7.11] The JSON table `table`, of the operands
+    /// `operands`, which read the columns `reads` of the FROM row.
+    pub(super) fn json(table: JsonTable, operands: Vec<Expr>, reads: BTreeSet<usize>) -> Unnested {
+        Unnested { collections: operands, spread: Vec::new(), ordinality: false, reads, json: Some(Arc::new(table)) }
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §7.6 SR8c, SR8e] The collections of `table`, bound
@@ -73,6 +87,19 @@ fn collections_of(binder: &Binder<'_>, table: &UnnestTable) -> Result<(Vec<Expr>
 /// `from` [SR20a], each an array, or one multiset alone [SR8c, SR8e], its
 /// columns named by its derived column list, else as SR8m ii names them.
 pub(super) fn unnest_item(bounds: Bounds<'_>, table: &UnnestTable, offset: usize, from: &mut From) -> Result<FromItem> {
+    let binder = lateral_binder(bounds, from);
+    let (collections, types) = collections_of(&binder, table)?;
+    let reads = binder.used.into_inner();
+    from.used.extend(reads.iter().copied());
+    let spread = types.iter().map(|element| if let DataType::Row(row) = element { Some(row.fields.len()) } else { None }).collect();
+    let columns = columns_of(&types, table)?;
+    let u = Unnested { collections, spread, ordinality: table.ordinality, reads, json: None };
+    Ok(lateral_item(&table.correlation, table.at, columns, offset, u))
+}
+
+/// [ISO/IEC 9075-2:2023 §7.6 SR20a] A binder of what a lateral table
+/// reads: every table reference before it in `from`.
+pub(super) fn lateral_binder<'a>(bounds: Bounds<'a>, from: &From) -> Binder<'a> {
     let mut ids: Vec<usize> = (0..from.items.len()).collect();
     ids.sort_by_key(|&i| from.items.get(i).map_or(0, |it| it.offset));
     let items: Vec<FromItem> = ids.iter().filter_map(|&i| from.items.get(i)).cloned().collect();
@@ -82,13 +109,13 @@ pub(super) fn unnest_item(bounds: Bounds<'_>, table: &UnnestTable, offset: usize
     let names = items.iter().flat_map(FromItem::row_names).collect();
     // [ISO/IEC 9075-2:2023 §6.14 SR1] none of its rows draws a value.
     let cx = Context { draws: false, ..bounds.cx };
-    let binder = Binder::new(cx, bounds.outer, (items, names, visible), BTreeSet::new());
-    let (collections, types) = collections_of(&binder, table)?;
-    let reads = binder.used.into_inner();
-    from.used.extend(reads.iter().copied());
-    let spread = types.iter().map(|element| if let DataType::Row(row) = element { Some(row.fields.len()) } else { None }).collect();
-    let columns = columns_of(&types, table)?;
-    let name = QualifiedName { auth: String::new(), ident: table.correlation.clone() };
+    Binder::new(cx, bounds.outer, (items, names, visible), BTreeSet::new())
+}
+
+/// The FROM item of a lateral table `u`, its correlation name
+/// `correlation`, written at `at`, of `columns`, the first at `offset`.
+pub(super) fn lateral_item(correlation: &str, at: usize, columns: Vec<ColumnDesc>, offset: usize, u: Unnested) -> FromItem {
+    let name = QualifiedName { auth: String::new(), ident: correlation.to_owned() };
     let desc = TableDesc {
         periods: Vec::new(),
         typed: None,
@@ -100,18 +127,18 @@ pub(super) fn unnest_item(bounds: Bounds<'_>, table: &UnnestTable, offset: usize
         generation: 0,
         temporary: None,
     };
-    Ok(FromItem {
+    FromItem {
         table: name,
-        at: table.at,
-        correlation: Some(table.correlation.clone()),
+        at,
+        correlation: Some(correlation.to_owned()),
         desc,
         offset,
-        source: Source::Unnest(Box::new(Unnested { collections, spread, ordinality: table.ordinality, reads })),
+        source: Source::Unnest(Box::new(u)),
         nullable: false,
         common: Vec::new(),
         drawn: None,
         family: Vec::new(),
-    })
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §7.6 SR8m] The columns of `u`, of collections of
@@ -333,6 +360,6 @@ fn unnested(
     let end = it.offset.saturating_add(it.width());
     let names = binder.names.get(it.offset..end).ok_or_else(|| broken("the FROM row lost a column name"))?.to_vec();
     let collections = u.collections.iter().map(|e| map_expr_columns(e.clone(), &|c| c.saturating_sub(base))).collect();
-    let unnest = Unnest { collections, spread: u.spread.clone(), ordinality: u.ordinality, outer, names, input };
+    let unnest = Unnest { collections, spread: u.spread.clone(), ordinality: u.ordinality, outer, names, input, json: u.json.clone() };
     Ok(LogicalPlan::Unnest(Box::new(unnest)))
 }

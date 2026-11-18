@@ -37,6 +37,9 @@ const PS: char = '\u{2029}';
 const ZWNJ: char = '\u{200C}';
 /// <ZWJ>, an IdentifierPart.
 const ZWJ: char = '\u{200D}';
+/// [ECMAScript 5.1 §7.6, §7.8.4] The reverse solidus, `\`, which begins
+/// an escape.
+const ESCAPE: char = '\\';
 
 // [ECMAScript 5.1 §7.6, §7.2] The characters by their Unicode General
 // Categories, as `regex::general_category` names them.
@@ -222,6 +225,15 @@ pub(super) fn lex(text: &str) -> Result<Vec<Lexeme>> {
     }
 }
 
+/// A numeric literal's number, `parsed` as a JSON number is: one no number
+/// of turborel's holds exactly, which JSON text makes the exception
+/// condition 22003, is in a path expression's text a limit of turborel's,
+/// SQLCODE -900, as an SQL `<approximate numeric literal>` past its range
+/// is (RULES.md D18), refused as the statement is prepared.
+fn held(parsed: Result<Item>) -> Result<Item> {
+    parsed.map_err(|e| beyond(&e.msg))
+}
+
 /// [ECMAScript 5.1 §7.3] Whether `c` is a LineTerminator.
 fn is_line_terminator(c: char) -> bool {
     matches!(c, '\n' | '\r' | LS | PS)
@@ -351,7 +363,7 @@ impl Lexer {
         loop {
             let at = self.at;
             let Some(c) = self.peek() else { break };
-            let escaped = c == '\\';
+            let escaped = c == ESCAPE;
             let character = if escaped { self.identifier_escape()? } else { c };
             let class = class_of(character)?;
             if class == Class::Start || (class == Class::Part && !name.is_empty()) {
@@ -415,9 +427,9 @@ impl Lexer {
         let token = if matches!(self.peek(), Some('e' | 'E')) {
             self.exponent()?;
             let text: String = self.chars.get(start..self.at).map_or_else(String::new, |read| read.iter().collect());
-            Token::Number(approximate(&text)?, Numeral::Other)
+            Token::Number(held(approximate(&text))?, Numeral::Other)
         } else {
-            Token::Number(exact(false, &whole, &fraction)?, if point { Numeral::Other } else { Numeral::Integer })
+            Token::Number(held(exact(false, &whole, &fraction))?, if point { Numeral::Other } else { Numeral::Integer })
         };
         self.followed(token)
     }
@@ -429,7 +441,7 @@ impl Lexer {
         let after = self.at;
         let Some(c) = self.peek() else { return Ok(token) };
         let class = class_of(c)?;
-        if c.is_ascii_digit() || c == '\\' || class == Class::Start {
+        if c.is_ascii_digit() || c == ESCAPE || class == Class::Start {
             return Err(lexical(after, "a numeric literal is followed at once by a digit or an identifier"));
         }
         Ok(token)
@@ -445,12 +457,12 @@ impl Lexer {
     /// `0X` and its HexDigits. Its MV, "(the MV of HexIntegerLiteral times
     /// 16) plus the MV of HexDigit" digit by digit, is an exact number, as
     /// the `exact` of its decimal digits is: of more than 18 digits a
-    /// DECFLOAT, rounded to 34.
+    /// DECFLOAT, of at most 34 significant digits.
     ///
     /// # Errors
     ///
-    /// SQLCODE -900 if it is out of the range of a decimal floating-point
-    /// number.
+    /// SQLCODE -900 if it has more significant digits than 34, or is out
+    /// of the range of a decimal floating-point number.
     fn hex_integer(&mut self) -> Result<Item> {
         self.at = self.at.saturating_add(HEX_PREFIX_LENGTH);
         let mut decimal: Vec<u32> = vec![0];
@@ -462,7 +474,7 @@ impl Lexer {
             }
         }
         let digits: String = decimal.iter().rev().filter_map(|d| char::from_digit(*d, DECIMAL)).collect();
-        exact(false, &digits, "")
+        held(exact(false, &digits, ""))
     }
 
     /// DecimalDigits: the decimal digits next, taken, none perhaps.
@@ -504,7 +516,7 @@ impl Lexer {
             if is_line_terminator(c) {
                 return Err(lexical(at, "a line terminator is in a string literal, not escaped"));
             }
-            if c == '\\' {
+            if c == ESCAPE {
                 self.escape(start, &mut string)?;
             } else {
                 string.push(c);
@@ -570,7 +582,7 @@ impl Lexer {
             return char::from_u32(first).ok_or_else(|| lexical(at, "an escape of a low surrogate follows no high surrogate"));
         }
         let unpaired = || lexical(at, "no escape of a low surrogate follows an escape of a high surrogate");
-        if !self.accept('\\') {
+        if !self.accept(ESCAPE) {
             return Err(unpaired());
         }
         if !self.accept('u') {

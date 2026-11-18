@@ -18,6 +18,15 @@ use crate::json::{JsonType, Keys, OnNull};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::types::array::ARRAY_NAME;
 
+// [§8.22 F] How many tokens a `<JSON predicate>`'s prefix has, before
+// its IS or its JSON.
+/// FORMAT JSON.
+const FORMAT_JSON: usize = 2;
+/// FORMAT JSON ENCODING encoding.
+const FORMAT_JSON_ENCODING: usize = 4;
+/// IS NOT.
+const IS_NOT: usize = 2;
+
 // [ISO/IEC 9075-2:2023 §6.34, §8.22] The words of the constructors' and
 // IS JSON's Formats that are no key words of SQL-92.
 /// ABSENT, of ABSENT ON NULL.
@@ -93,7 +102,7 @@ impl Parser {
     /// [§8.22] `<JSON key uniqueness constraint>` ::= WITH UNIQUE \[KEYS\] |
     /// WITHOUT UNIQUE \[KEYS\], if one is next; WITH only before UNIQUE, so
     /// WITH CHECK OPTION after a predicate stays the view's.
-    fn uniqueness(&mut self) -> Result<Option<Keys>> {
+    pub(super) fn uniqueness(&mut self) -> Result<Option<Keys>> {
         let keys = if self.is_kw(kw::WITH) && self.next_is_kw(kw::UNIQUE) {
             self.advance();
             Keys::Unique
@@ -199,10 +208,10 @@ impl Parser {
         let word_at = |n: usize, word: &str| matches!(self.peek_at(n), Tok::Identifier(w) if w == word);
         let is_at = |n: usize| matches!(self.peek_at(n), Tok::KeyWord(kw::IS));
         if self.is_word(FORMAT) {
-            let after = if word_at(2, ENCODING) { 4 } else { 2 };
+            let after = if word_at(FORMAT_JSON, ENCODING) { FORMAT_JSON_ENCODING } else { FORMAT_JSON };
             return word_at(1, JSON) && is_at(after);
         }
-        let after = if self.next_is_kw(kw::NOT) { 2 } else { 1 };
+        let after = if self.next_is_kw(kw::NOT) { IS_NOT } else { 1 };
         is_at(0) && word_at(after, JSON)
     }
 

@@ -18,7 +18,7 @@ use crate::error::Result;
 use crate::functions::Registry;
 use crate::hash::HashFunction;
 use crate::hash::murmur::MurmurMap;
-use crate::index::{BTreeMethod, FullTextMethod, HashMethod, Index, IndexMethod, RTreeMethod};
+use crate::index::{BTreeMethod, FullTextMethod, HashMethod, Index, IndexMethod, JsonMethod, RTreeMethod};
 use crate::log::Log;
 use crate::optimizer::Optimizer;
 use crate::physical::CostModel;
@@ -231,7 +231,9 @@ impl State {
         let hash = HashMethod::sharing(Arc::clone(&st.pages));
         let spatial = RTreeMethod::sharing(Arc::clone(&st.pages));
         let words = FullTextMethod::sharing(Arc::clone(&st.pages)).with_rankings(st.rankings.closure());
-        let methods: Vec<Arc<dyn IndexMethod>> = vec![Arc::new(btree), Arc::new(hash), Arc::new(spatial), Arc::new(words)];
+        let documents = JsonMethod::sharing(Arc::clone(&st.pages));
+        let methods: Vec<Arc<dyn IndexMethod>> =
+            vec![Arc::new(btree), Arc::new(hash), Arc::new(spatial), Arc::new(words), Arc::new(documents)];
         for m in methods {
             st.methods.insert(m.name().to_string(), m);
         }
@@ -518,6 +520,7 @@ mod tests {
             options: Vec::new(),
             collations: Vec::new(),
             nulls: false,
+            expressions: Vec::new(),
         });
         let mut st = State::with_builtins(Box::new(catalog));
         assert_eq!(st.attach_catalog_objects().err().map(|e| e.code), Some(Code::Api));

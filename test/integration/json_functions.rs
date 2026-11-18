@@ -111,8 +111,9 @@ fn json_query_6_35() {
 /// GR5a, GR6; Feature T825] Each ON EMPTY and ON ERROR behavior of
 /// JSON_QUERY: ERROR ON EMPTY is 22035, EMPTY ARRAY and EMPTY OBJECT give
 /// `[]` and `{}`; ERROR ON ERROR raises 22034 of two items unwrapped, and
-/// 22001 of a text longer than the type, which NULL, EMPTY ARRAY and EMPTY
-/// OBJECT ON ERROR replace; ERROR ON EMPTY is replaced by ON ERROR too.
+/// 22001 of a text longer than the type, which §9.43 GR2a iii raises
+/// whatever ON ERROR says; NULL, EMPTY ARRAY and EMPTY OBJECT ON ERROR
+/// replace the others; ERROR ON EMPTY is replaced by ON ERROR too.
 #[test]
 fn json_query_behaviors_9_49() {
     let db = setup();
@@ -124,9 +125,10 @@ fn json_query_behaviors_9_49() {
     assert_eq!(fails("VALUES JSON_QUERY('[1,', 'lax $' ERROR ON ERROR)"), "22032");
     let q = "VALUES (JSON_QUERY('{}', 'lax $.a' EMPTY ARRAY ON EMPTY), JSON_QUERY('{}', 'lax $.a' EMPTY OBJECT ON EMPTY), \
              JSON_QUERY('[1,2]', 'lax $[*]' EMPTY ARRAY ON ERROR), JSON_QUERY('[1,2]', 'lax $[*]' EMPTY OBJECT ON ERROR), \
-             JSON_QUERY('[1,2]', 'lax $' RETURNING VARCHAR(3) NULL ON ERROR), JSON_QUERY('{}', 'lax $.a' ERROR ON EMPTY EMPTY ARRAY ON ERROR), \
+             JSON_QUERY('{}', 'lax $.a' ERROR ON EMPTY EMPTY ARRAY ON ERROR), \
              JSON_QUERY('{}', 'lax $.a' NULL ON EMPTY))";
-    assert_eq!(rows(&s, q), expected(&["[],{},[],{},NULL,[],NULL"]));
+    assert_eq!(rows(&s, q), expected(&["[],{},[],{},[],NULL"]));
+    assert_eq!(fails("VALUES JSON_QUERY('[1,2]', 'lax $' RETURNING VARCHAR(3) NULL ON ERROR)"), "22001", "raised, not a STATUS");
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §8.23 SR1, GR1, GR4] JSON_EXISTS

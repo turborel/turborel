@@ -183,12 +183,12 @@ pub(super) fn step_command(step: &Step) -> Command {
             crate::logical::CursorAction::Fetch(..) => commands::FETCH,
             crate::logical::CursorAction::Close => commands::CLOSE_CURSOR,
         },
-        Step::Statement(c) => command_of(&c.statement),
+        Step::Statement(c) => command_of(c.statement()),
         Step::Call(_) => commands::CALL,
     }
 }
 
 /// Whether `step` is GET DIAGNOSTICS, which leaves the area as it was.
 pub(super) fn diagnostics(step: &Step) -> bool {
-    matches!(step, Step::Statement(c) if matches!(c.statement, SqlStatement::GetDiagnostics(_)))
+    matches!(step, Step::Statement(c) if matches!(c.statement(), SqlStatement::GetDiagnostics(_)))
 }

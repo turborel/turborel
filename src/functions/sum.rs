@@ -78,6 +78,7 @@ impl Total {
                 | Value::Structured(_)
                 | Value::Reference(_)
                 | Value::Row(_)
+                | Value::Json(_)
                 | Value::Extension(_),
             ) => Total::Other(v.clone()),
             (Total::Exact(_) | Total::Approx(_) | Total::Interval(_) | Total::DecFloat(_) | Total::Other(_), _) => {

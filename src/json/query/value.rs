@@ -76,6 +76,7 @@ fn target(to: &DataType) -> Option<Target> {
         | DataType::Distinct(_)
         | DataType::Structured(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Extension(_) => None,
     }
 }
@@ -101,6 +102,7 @@ fn targets(value: &Value) -> &'static [Target] {
         | Value::Row(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Extension(_) => &[],
     }
 }
@@ -128,6 +130,49 @@ pub fn json_value(common: &CommonSyntax<'_>, returning: &DataType, on_empty: &Va
     };
     let Some(status) = process(common).transpose() else { return Ok((Value::Null, None)) };
     cast_to(status, on_empty, on_error, (returning, kind))
+}
+
+/// [§9.48 GR4c iii, GR5d] Which result JSON_VALUE takes: the value its
+/// rules give, or the DEFAULT of ON EMPTY or of ON ERROR, whose value is
+/// evaluated only then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Taken {
+    /// The value `json_value` gives, a behavior's NULL among them.
+    Value,
+    /// DEFAULT ON EMPTY: the sequence is empty \[GR4c iii\].
+    EmptyDefault,
+    /// DEFAULT ON ERROR: an exception condition was raised \[GR5d\].
+    ErrorDefault,
+}
+
+/// [§6.28 GR] Which result JSON_VALUE takes of `common`, `returning`,
+/// `on_empty` and `on_error`, as `json_value` takes them, without taking
+/// the DEFAULT of either: a `ValueBehavior::Default`'s value is not read.
+/// So the SQL layer evaluates a DEFAULT's `<value expression>` only when
+/// its behavior is taken, as §9.48 evaluates it \[GR4c iii, GR5d\].
+///
+/// # Errors
+///
+/// As `json_value`, of a behavior that is not DEFAULT.
+pub fn json_value_taken(
+    common: &CommonSyntax<'_>,
+    returning: &DataType,
+    on_empty: &ValueBehavior,
+    on_error: &ValueBehavior,
+) -> Result<Taken> {
+    let Some(kind) = target(returning) else { return json_value(common, returning, on_empty, on_error).map(|_| Taken::Value) };
+    let Some(status) = process(common).transpose() else { return Ok(Taken::Value) };
+    let temp = status.and_then(|seq| {
+        if seq.is_empty() && matches!(on_empty, ValueBehavior::Default(_)) {
+            return Ok(Taken::EmptyDefault);
+        }
+        cast_items(seq, on_empty, (returning, kind)).map(|_| Taken::Value)
+    });
+    caught(temp, |error| match on_error {
+        ValueBehavior::Error => Err(error),
+        ValueBehavior::Null => Ok(Taken::Value),
+        ValueBehavior::Default(_) => Ok(Taken::ErrorDefault),
+    })
 }
 
 /// [§9.48] The SQL value of type `to` the SQL/JSON sequence of `status`,

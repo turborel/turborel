@@ -155,7 +155,8 @@ pub(super) struct Found {
 pub(in crate::exec) fn asked(ix: &KeyShape, probe: Probe) -> Condition {
     // D34: storage cannot infer which rows a function selects. Record a
     // whole-table read, including nulls, so conflict checks miss no match.
-    if matches!(probe, Probe::Predicate { .. }) {
+    // RULES.md D92: nor which an expression's values select.
+    if matches!(probe, Probe::Predicate { .. }) || ix.has_expressions() {
         return Condition { columns: Vec::new(), probe: Probe::All };
     }
     let probe = if ix.is_collated() { Probe::All } else { probe };

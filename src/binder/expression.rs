@@ -521,7 +521,7 @@ impl Binder<'_> {
                 if v.any(&|e| matches!(e, ValueExpression::Subquery(_))) {
                     return Err(rule("[ISO/IEC 9075:1992 §6.5 SR4] the argument of a set function cannot contain a subquery"));
                 }
-                let (e, t) = self.value_expression(v, scope)?;
+                let (e, t) = self.aggregate_argument(&*func.0, v, scope)?;
                 (Some(e), Some(t))
             }
         };

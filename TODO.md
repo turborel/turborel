@@ -56,15 +56,7 @@ Nothing is open.
 
 ### JSON
 
-- SQL/JSON functions over character strings (T803, T811 to T830) [§4.48,
-  §6.28, §6.34, §6.35, §7.11, §8.22, §8.23, §10.11]. JSON_OBJECT,
-  JSON_ARRAY and their aggregates, JSON_VALUE, JSON_QUERY, JSON_EXISTS, IS
-  JSON and JSON_TABLE, with PASSING, ON EMPTY and ON ERROR.
-- The JSON type (T801, T802) [§4.8, §6.1, §6.37, §6.40, §6.41], stored
-  parsed so a query does not parse text again.
-- The simplified accessor (T860 to T864) [§6.36], as `doc.items[0].name`.
-  It needs the JSON type.
-- JSON in equality, grouping and ordering (T879 to T882) [§4.8.2].
+Nothing is open.
 
 ---
 

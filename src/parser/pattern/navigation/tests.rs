@@ -137,25 +137,30 @@ fn classifier_and_match_number_6_33() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §10.9] COUNT of a variable's
 /// `.*` is the `<row pattern count function>`, where the name is. COUNT(*)
-/// and COUNT of a column read as they did.
+/// and COUNT of a column read as they did, and SUM of `A.*` as of a JSON
+/// accessor [§6.36].
 ///
 /// MC/DC of `"." && "*" && ")"` after the name. The "." is shown by
 /// `COUNT(A.*)` against `COUNT(A)`, and the "*" by `COUNT(A.*)` against
 /// `COUNT(A.X)`. The ")" is shown by `COUNT(A.*)` against `COUNT(A.*, 1)`,
-/// which fails at the "*" (8) as a value expression, not at the "," (9)
-/// where the count function would want ")".
+/// which fails at the "." (7) as a value expression, a `.*` before a comma
+/// being no JSON accessor, not at the "," (9) where the count function
+/// would want ")".
 #[test]
 fn count_of_a_variables_rows_10_9() {
     let Ok(ValueExpression::SetFunction(bare)) = parsed("COUNT(A)") else { panic!("not a set function") };
     assert!(matches!(bare.arg, SetArg::All(_)));
-    assert_eq!(parsed("COUNT(A.*, 1)").err().and_then(|e| e.pos), Some(8));
+    assert_eq!(parsed("COUNT(A.*, 1)").err().and_then(|e| e.pos), Some(7));
     let Ok(ValueExpression::SetFunction(f)) = parsed("COUNT(A.*)") else { panic!("not a set function") };
     assert!(matches!(&f.arg, SetArg::Variable(v, 6) if v == "A") && f.semantics.is_none());
     let Ok(ValueExpression::SetFunction(star)) = parsed("COUNT(*)") else { panic!("not a set function") };
     assert!(matches!(star.arg, SetArg::CountStar));
     let Ok(ValueExpression::SetFunction(col)) = parsed("COUNT(A.X)") else { panic!("not a set function") };
     assert!(matches!(col.arg, SetArg::All(_)));
-    assert!(parsed("SUM(A.*)").is_err() && parsed("COUNT(A.*, 1)").is_err());
+    // SUM of A.* is no count function: of a JSON value, its wildcard
+    // member accessor [§6.36], which the binder refuses of another type.
+    let Ok(ValueExpression::SetFunction(sum)) = parsed("SUM(A.*)") else { panic!("not a set function") };
+    assert!(matches!(sum.arg, SetArg::All(_)) && parsed("COUNT(A.*, 1)").is_err());
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.9] RUNNING or FINAL before

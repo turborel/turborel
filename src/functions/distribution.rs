@@ -150,6 +150,7 @@ fn product(fraction: &Value, count: u64) -> Result<(u64, f64)> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_) => return Err(not_a_fraction(fraction)),
     };
     let (Ok(units), Some(unit)) = (u128::try_from(exact.units), pow10(exact.scale).and_then(|p| u128::try_from(p).ok())) else {

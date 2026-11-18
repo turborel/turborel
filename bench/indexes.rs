@@ -2,9 +2,11 @@
 //! database uses: "btree" (`index/blink.rs`) and "hash" (`index/hash.rs`),
 //! entries added under scattered integer keys, found again by equality as
 //! a query's probe and as a UNIQUE check, on one and on several threads,
-//! in a buffer pool that holds every index; and "fulltext"
-//! (`index/fulltext.rs`), documents added and searched (`fulltext.rs`). Run with `cargo xtask bench`,
-//! on the harness (RULES.md R-BENCH-1).
+//! in a buffer pool that holds every index; "fulltext"
+//! (`index/fulltext.rs`), documents added and searched (`fulltext.rs`);
+//! and "json" (`index/json.rs`), JSON_EXISTS answered by the index beside
+//! a scan (`json.rs`). Run with `cargo xtask bench`, on the harness
+//! (RULES.md R-BENCH-1).
 
 #![allow(
     clippy::unwrap_used,
@@ -20,6 +22,8 @@
 #[path = "indexes/fulltext.rs"]
 mod fulltext;
 mod harness;
+#[path = "indexes/json.rs"]
+mod json;
 
 use std::sync::Arc;
 
@@ -45,6 +49,7 @@ fn main() {
         }
     }
     fulltext::workloads(&bench);
+    json::workloads(&bench);
 }
 
 /// The workloads of `method` on `threads` threads.

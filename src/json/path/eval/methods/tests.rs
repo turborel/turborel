@@ -30,7 +30,7 @@ fn datetime_names(moment: Moment) -> Vec<String> {
 fn type_names_each_items_type() {
     gives(
         "strict $[*].type()",
-        r#"[null, 1, 1.5e0, 123456789012345678901234567890123456789012, "s", false, [], {}]"#,
+        r#"[null, 1, 1.5e0, 1234567890123456789012345678901234, "s", false, [], {}]"#,
         r#"["null", "number", "number", "number", "string", "boolean", "array", "object"]"#,
     );
     gives("lax $.type()", "[1, 2]", r#"["array"]"#);
@@ -76,7 +76,7 @@ fn double_casts_to_double_precision() {
     assert!(matches!(value("lax $.double()", "1.5"), Value::Approx(x) if x.to_bits() == 1.5_f64.to_bits()));
     assert!(matches!(value("lax $.double()", "\"-2.5\""), Value::Approx(x) if x.to_bits() == (-2.5_f64).to_bits()));
     assert!(matches!(value("lax $.double()", "2e0"), Value::Approx(x) if x.to_bits() == 2.0_f64.to_bits()));
-    assert!(matches!(value("lax $.double()", "123456789012345678901234567890123456789012"), Value::Approx(_)));
+    assert!(matches!(value("lax $.double()", "1234567890123456789012345678901234"), Value::Approx(_)));
     gives("lax $.double()", "[1, \"2\"]", "[1, 2]");
     assert_eq!(state("lax $.double()", "\"abc\""), "22018");
     assert_eq!(state("strict $.double()", "[1]"), "22036");

@@ -18,7 +18,7 @@ use crate::ast::{
 use crate::error::{Code, Result, SqlError};
 use crate::functions::{
     AggregateFunction, AggregateRef, Construction, IsJsonCall, JSON_ARRAY, JSON_ARRAYAGG, JSON_OBJECT, JSON_OBJECTAGG, JsonArrayAggregate,
-    JsonConstruct, JsonObjectAggregate, ScalarRef, input_type, json_text, name_type, output_type,
+    JsonConstruct, JsonObjectAggregate, OPERANDS_PER_MEMBER, ScalarRef, input_type, json_text, name_type, output_type,
 };
 use crate::json::{JsonType, Keys, OnNull};
 use crate::logical::{Cond, Expr};
@@ -65,12 +65,18 @@ impl Binder<'_> {
         returning: Option<&JsonOutput>,
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
-        let returning = output_type(returning, JSON_OBJECT)?;
-        let formats = members.iter().map(|m| m.value.format.is_some()).collect();
+        let output = output_type(returning, JSON_OBJECT)?;
+        let formats: Vec<bool> = members.iter().map(|m| m.value.format.is_some()).collect();
         let operands: Vec<ValueExpression> = members.iter().flat_map(|m| [m.name.clone(), m.value.value.clone()]).collect();
-        let f = ScalarRef(Arc::new(JsonConstruct::new(construction, formats, returning)));
+        let f = ScalarRef(Arc::new(JsonConstruct::new(construction, formats.clone(), output)));
         let (exprs, types) = self.arguments(&*f.0, &operands, scope)?;
-        for (member, pair) in members.iter().zip(types.chunks(2)) {
+        let values: Vec<&DataType> = types.iter().skip(1).step_by(OPERANDS_PER_MEMBER).collect();
+        let f = if implicit_json(returning, &values) {
+            ScalarRef(Arc::new(JsonConstruct::new(construction, formats, DataType::Json)))
+        } else {
+            f
+        };
+        for (member, pair) in members.iter().zip(types.chunks(OPERANDS_PER_MEMBER)) {
             let mut pair = pair.iter();
             pair.next().into_iter().try_for_each(|name| name_type(name, JSON_OBJECT))?;
             pair.next().into_iter().try_for_each(|value| input_type(value, member.value.format, "a value of JSON_OBJECT"))?;
@@ -87,11 +93,16 @@ impl Binder<'_> {
         returning: Option<&JsonOutput>,
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
-        let returning = output_type(returning, JSON_ARRAY)?;
-        let formats = elements.iter().map(|e| e.format.is_some()).collect();
+        let output = output_type(returning, JSON_ARRAY)?;
+        let formats: Vec<bool> = elements.iter().map(|e| e.format.is_some()).collect();
         let operands: Vec<ValueExpression> = elements.iter().map(|e| e.value.clone()).collect();
-        let f = ScalarRef(Arc::new(JsonConstruct::new(construction, formats, returning)));
+        let f = ScalarRef(Arc::new(JsonConstruct::new(construction, formats.clone(), output)));
         let (exprs, types) = self.arguments(&*f.0, &operands, scope)?;
+        let f = if implicit_json(returning, &types.iter().collect::<Vec<_>>()) {
+            ScalarRef(Arc::new(JsonConstruct::new(construction, formats, DataType::Json)))
+        } else {
+            f
+        };
         for (element, t) in elements.iter().zip(&types) {
             input_type(t, element.format, "an element of JSON_ARRAY")?;
         }
@@ -108,12 +119,13 @@ impl Binder<'_> {
         (format, on_null, returning): (Option<JsonFormat>, OnNull, Option<&JsonOutput>),
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
-        let returning = output_type(returning, JSON_ARRAY)?;
+        let output = output_type(returning, JSON_ARRAY)?;
         self.query_aggregate(query, scope, ("§6.34 SR7c", JSON_ARRAY), |element, orders, collations| {
             input_type(element, format, "the query of JSON_ARRAY")?;
-            let func = JsonArrayAggregate { on_null, returning: returning.clone(), format, orders, collations, by_query: true };
+            let made = if implicit_json(returning, &[element]) { DataType::Json } else { output.clone() };
+            let func = JsonArrayAggregate { on_null, returning: made.clone(), format, orders, collations, by_query: true };
             let label = format!("{JSON_ARRAY}({}{})", crate::logical::render_expr(&Expr::Column(0), &[]), func.label_suffix());
-            Ok((AggregateRef(Arc::new(func)), returning.clone(), label))
+            Ok((AggregateRef(Arc::new(func)), made, label))
         })
     }
 
@@ -143,7 +155,15 @@ impl Binder<'_> {
     /// name and value, so a null value is kept.
     fn object_aggregate(&self, sf: &SetFunctionSpecification, json: &JsonAggregate, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let SetArg::All(row) = &sf.arg else { return Err(not_read()) };
-        let returning = output_type(json.returning.as_ref(), JSON_OBJECTAGG)?;
+        // [§10.11 SR1a] Its value, the ROW's second field.
+        let value = if let ValueExpression::Composite(c, _) = &**row
+            && let Composite::Row(parts) = &**c
+        {
+            parts.last()
+        } else {
+            None
+        };
+        let returning = self.aggregate_returning(json, value, JSON_OBJECTAGG)?;
         // [SR4a, SR4b] NULL ON NULL and WITHOUT UNIQUE KEYS if not written.
         let func = JsonObjectAggregate {
             on_null: json.on_null.unwrap_or(OnNull::Null),
@@ -160,7 +180,7 @@ impl Binder<'_> {
     /// is.
     fn array_aggregate_json(&self, sf: &SetFunctionSpecification, json: &JsonAggregate, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let SetArg::All(value) = &sf.arg else { return Err(not_read()) };
-        let returning = output_type(json.returning.as_ref(), JSON_ARRAYAGG)?;
+        let returning = self.aggregate_returning(json, Some(value), JSON_ARRAYAGG)?;
         let mut parts = vec![(**value).clone()];
         let mut collations = Vec::new();
         for key in &sf.order_by {
@@ -175,6 +195,35 @@ impl Binder<'_> {
         let func = JsonArrayAggregate { on_null, returning, format: json.format, orders, collations, by_query: false };
         self.sorted(|| self.aggregate(AggregateRef(Arc::new(func)), (Some(&row), false), sf.filter.as_deref(), scope))
     }
+}
+
+impl Binder<'_> {
+    /// [§10.11 SR1] The type the `<JSON aggregate function>` `function`
+    /// of `json` returns, its value `arg`: of its `<JSON output
+    /// clause>`; without one, JSON if its value is of the JSON type
+    /// \[SR1a\], which `arg` bound by itself, as its rows bind it, shows
+    /// (Feature T801); else `IMPLICIT_RETURNING` \[SR1b\].
+    ///
+    /// # Errors
+    ///
+    /// As `output_type`.
+    fn aggregate_returning(&self, json: &JsonAggregate, arg: Option<&ValueExpression>, function: &str) -> Result<DataType> {
+        if json.returning.is_none() {
+            let rows = Scope::Rows("[ISO/IEC 9075:1992 §6.5 SR4] a set function argument cannot contain a set function");
+            let bound = arg.and_then(|v| self.value_expression(v, rows).ok());
+            if matches!(bound, Some((_, DataType::Json))) {
+                return Ok(DataType::Json);
+            }
+        }
+        output_type(json.returning.as_ref(), function)
+    }
+}
+
+/// [§6.34 SR2a, §10.11 SR1a] Whether RETURNING JSON is implicit: no
+/// `<JSON output clause>` is `written`, and an input is of a type of
+/// `types` that is JSON (Feature T801).
+fn implicit_json(written: Option<&JsonOutput>, types: &[&DataType]) -> bool {
+    written.is_none() && types.iter().any(|t| matches!(t, DataType::Json))
 }
 
 /// The error of a `<JSON aggregate function>` read without its argument.

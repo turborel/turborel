@@ -704,7 +704,7 @@ impl IndexMethod for CandidateMethod {
     }
     fn supports_predicate(&self, p: &Predicate, columns: &[DataType]) -> bool {
         let one_integer = columns.len() == 1 && columns.first().is_some_and(integer);
-        p.function.0.name() == FUNCTION && p.column == 0 && p.argument == 0 && one_integer
+        p.function.0.name() == FUNCTION && p.column == 0 && p.argument == Some(0) && one_integer
     }
     fn create(&self, columns: &[DataType]) -> Result<Box<dyn Index>> {
         Ok(Box::new(CandidateIndex(Arc::from(

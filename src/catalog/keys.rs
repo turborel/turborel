@@ -2,9 +2,13 @@
 //! collated column keys that column by its sort key, so a key is not the
 //! row's values: every path from a row or values to a key is here, so none
 //! can disagree with the index. So is whether the index holds a key with a
-//! null [ISO/IEC 9075-2:2023 §11.7].
+//! null [ISO/IEC 9075-2:2023 §11.7]. A key part that is an expression is
+//! its value of the row (`catalog/key_expressions.rs`, RULES.md
+//! D92).
 
-use super::{IndexDesc, TableDesc};
+use super::key_expressions::{part_values, reads_of};
+use super::{IndexDesc, KeyExpression, TableDesc};
+use crate::error::{Code, Result, SqlError};
 use crate::index::Key;
 use crate::storage::{Row, project};
 use crate::value::collation::{CollationRef, SORT_KEY};
@@ -17,6 +21,10 @@ pub struct KeyShape {
     pub columns: Vec<usize>,
     /// As `IndexDesc::collations`.
     collations: Vec<Option<CollationRef>>,
+    /// As `IndexDesc::expressions`.
+    expressions: Vec<KeyExpression>,
+    /// The columns the key reads of a row (`IndexDesc::reads`).
+    pub reads: Vec<usize>,
 }
 
 impl KeyShape {
@@ -25,9 +33,20 @@ impl KeyShape {
         !self.collations.is_empty()
     }
 
-    /// The key of `row`, if it has every key column.
+    /// Whether a key part is an expression.
+    pub fn has_expressions(&self) -> bool {
+        !self.expressions.is_empty()
+    }
+
+    /// The key of `row`, if it has every key column; none if an expression
+    /// raises, which no row a table holds makes it (RULES.md D92).
     pub fn key_of(&self, row: &Row) -> Option<Key> {
-        Some(keyed(project(row, &self.columns)?, &self.collations))
+        let values = if self.expressions.is_empty() {
+            project(row, &self.columns)?
+        } else {
+            part_values(&self.columns, &self.expressions, row).ok()??
+        };
+        Some(keyed(values, &self.collations))
     }
 }
 
@@ -43,7 +62,8 @@ fn keyed(values: Row, collations: &[Option<CollationRef>]) -> Key {
 impl IndexDesc {
     /// Its key's shape, for reads.
     pub fn key_shape(&self) -> KeyShape {
-        KeyShape { columns: self.columns.clone(), collations: self.collations.clone() }
+        let (columns, collations, expressions) = (self.columns.clone(), self.collations.clone(), self.expressions.clone());
+        KeyShape { reads: reads_of(&columns, &expressions), columns, collations, expressions }
     }
 
     /// Whether a key column is by a sort key.
@@ -51,10 +71,26 @@ impl IndexDesc {
         !self.collations.is_empty()
     }
 
-    /// The key of `row`, if it has every key column.
+    /// The key of `row`, if it has every key column; none if an expression
+    /// raises (`computed_key`).
     pub fn key_of(&self, row: &Row) -> Option<Key> {
-        let values = project(row, &self.columns)?;
-        Some(self.key_values(values))
+        if self.expressions.is_empty() {
+            return Some(self.key_values(project(row, &self.columns)?));
+        }
+        self.computed_key(row).ok()
+    }
+
+    /// The key of `row`, as a write makes its entry.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the row lacks a key column; as
+    /// `KeyExpression::value_of`, a limit of this implementation alone,
+    /// which then fails the write (RULES.md D92).
+    pub fn computed_key(&self, row: &Row) -> Result<Key> {
+        let values = part_values(&self.columns, &self.expressions, row)?;
+        let values = values.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] a row is shorter than index {}", self.name)))?;
+        Ok(self.key_values(values))
     }
 
     /// Whether it holds an entry of `key`: of no null, or of any if it
@@ -75,10 +111,19 @@ impl IndexDesc {
         keyed(values, &self.collations)
     }
 
-    /// The types of the key, of `table`: those of its columns, but of
-    /// BINARY VARYING where a column is by a sort key.
+    /// The types of the key, of `table`: those of its columns, or its
+    /// expressions' declared types, but of BINARY VARYING where a column is
+    /// by a sort key.
     pub fn key_types(&self, table: &TableDesc) -> Option<Vec<DataType>> {
-        let mut types = table.types(&self.columns)?;
+        let part_type = |(at, &c): (usize, &usize)| match self.expressions.iter().find(|e| e.part == at) {
+            Some(e) => e.bound.as_ref().map(|b| b.data_type().clone()),
+            None => table.columns.get(c).map(|c| c.data_type.clone()),
+        };
+        let mut types: Vec<DataType> = if self.expressions.is_empty() {
+            table.types(&self.columns)?
+        } else {
+            self.columns.iter().enumerate().map(part_type).collect::<Option<_>>()?
+        };
         for (t, c) in types.iter_mut().zip(&self.collations) {
             if c.is_some() {
                 *t = SORT_KEY;
@@ -109,6 +154,7 @@ mod tests {
             options: Vec::new(),
             collations: Vec::new(),
             nulls,
+            expressions: Vec::new(),
         };
         let one = Value::Bool(true);
         let (whole, nulled) = (vec![one.clone(), one.clone()], vec![one, Value::Null]);

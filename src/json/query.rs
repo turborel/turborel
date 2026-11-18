@@ -31,7 +31,7 @@ mod wrapper;
 
 pub use exists::{ExistsBehavior, json_exists};
 pub use json_query::{QueryOptions, Quotes, json_query, serialize_sequence};
-pub use value::{ValueBehavior, cast_sequence, json_value};
+pub use value::{Taken, ValueBehavior, cast_sequence, json_value, json_value_taken};
 pub use wrapper::{QueryBehavior, Wrapper, sequence_to_item};
 
 use super::{Item, Keys, Path, Scalar, parse};
@@ -113,8 +113,14 @@ pub struct Passing<'a> {
 pub fn process(common: &CommonSyntax<'_>) -> Result<Option<Vec<Item>>> {
     let names: Vec<&str> = common.passing.iter().map(|argument| argument.name).collect();
     common.path.check_variables(&names)?;
-    let Some(text) = json_text(common.context, CONTEXT_RULE)? else { return Ok(None) };
-    let context = parse(&text, Keys::Any)?;
+    // [§4.48.4] A value of the JSON type is read in place, its path
+    // evaluated on its stored form if it is of the shapes most are.
+    if let Value::Json(j) = common.context
+        && let Some(seq) = super::binary::fast_path(common.path, j.root()?)?
+    {
+        return Ok(Some(seq));
+    }
+    let Some(context) = json_input(common.context, CONTEXT_RULE, Keys::Any)? else { return Ok(None) };
     let mut variables = Vec::with_capacity(common.passing.len());
     for argument in common.passing {
         variables.push((argument.name.to_owned(), passed(argument)?));
@@ -158,6 +164,7 @@ impl Item {
             | Value::Row(_)
             | Value::Structured(_)
             | Value::Reference(_)
+            | Value::Json(_)
             | Value::Extension(_) => cast(value.clone(), &ARGUMENT_STRING)?,
         };
         Ok(Scalar::new(scalar).map_or(Item::Null, Item::Scalar))
@@ -184,13 +191,26 @@ const ARGUMENT_TEXT: &str = "an argument of an SQL/JSON query operator";
 ///
 /// As `process`, of the argument.
 fn passed(argument: &Passing<'_>) -> Result<Vec<Item>> {
-    if !argument.format_json {
+    if !argument.format_json && !matches!(argument.value, Value::Json(_)) {
         return Ok(vec![Item::of_value(argument.value)?]);
     }
-    match json_text(argument.value, ARGUMENT_RULE)? {
-        Some(text) => Ok(vec![parse(&text, Keys::Any)?]),
-        None => Ok(Vec::new()),
+    Ok(json_input(argument.value, ARGUMENT_RULE, Keys::Any)?.into_iter().collect())
+}
+
+/// [§10.12] The SQL/JSON item `value` is as JSON: \[SR5\] of the JSON
+/// type, its item, FORMAT JSON implicit; else its JSON text parsed, keys
+/// as `keys` says [§9.42]. None if it is the null value; `rule` is the
+/// Syntax Rule a value of another type breaks.
+///
+/// # Errors
+///
+/// As `json_text`; SQLSTATE 22032 or 22037 of the parse; SQLCODE -916 if
+/// a value of the JSON type is damaged.
+pub(super) fn json_input(value: &Value, rule: &str, keys: Keys) -> Result<Option<Item>> {
+    if let Value::Json(j) = value {
+        return j.item().map(Some);
     }
+    json_text(value, rule)?.map(|text| parse(&text, keys)).transpose()
 }
 
 /// [§10.12] The JSON text `value` is, a character string, FORMAT JSON;
@@ -221,6 +241,7 @@ pub(super) fn json_text(value: &Value, rule: &str) -> Result<Option<String>> {
         | Value::Row(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Extension(_) => Err(SqlError::new(Code::SyntaxRule, format!("{rule}, not {value}"))),
     }
 }
