@@ -126,7 +126,7 @@ impl DiskAnn {
         let mut alloc = lock_builtin(&self.inner.alloc);
         let next = alloc.free;
         let vector = vec![0.0_f32; self.inner.shape.dims];
-        self.put(id, &Node { flags: FREE, row: 0, count: 0, vector, neighbours: vec![next] })?;
+        self.put(id, &Node { flags: FREE, row: 0, count: 0, vector, norm: 0.0, neighbours: vec![next] })?;
         alloc.free = id;
         self.write_meta(*alloc)
     }

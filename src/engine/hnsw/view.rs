@@ -17,7 +17,7 @@
 use std::sync::{Arc, RwLock};
 
 use super::graph::{Graph, Store, slot};
-use super::measure::Codec;
+use super::measure::{Codec, Probe};
 use super::scratch::Visited;
 use crate::error::{Code, SqlError};
 use crate::sync::read;
@@ -50,8 +50,8 @@ pub fn contended() -> SqlError {
 }
 
 /// What a neighbour gives a hop's callback: its id, its row if it is
-/// live, and its vector, decoded.
-pub type Each<'a> = dyn FnMut(u32, Option<u64>, &[f32]) + 'a;
+/// live, and its vector, decoded, with its squared norm.
+pub type Each<'a> = dyn FnMut(u32, Option<u64>, Probe<'_>) + 'a;
 
 /// A graph as searches and insertions read it.
 pub trait Source {
@@ -140,7 +140,7 @@ impl Source for Owned<'_> {
         let g = self.graph;
         for &e in g.links(id, level) {
             if visited.first(e) {
-                each(e, live_row(g, e), g.vector(e, &mut self.buf));
+                each(e, live_row(g, e), (g.vector(e, &mut self.buf), g.norm(e)));
             }
         }
         Ok(())
@@ -177,6 +177,7 @@ impl Source for Owned<'_> {
 pub struct Hop {
     ids: Vec<u32>,
     rows: Vec<Option<u64>>,
+    norms: Vec<f32>,
     floats: Vec<f32>,
     codes: Vec<u8>,
     decoded: Vec<f32>,
@@ -251,9 +252,10 @@ impl<'a> Shared<'a> {
 
     /// Clears the copies.
     fn clear(&mut self) {
-        let Hop { ids, rows, floats, codes, .. } = &mut self.hop;
+        let Hop { ids, rows, norms, floats, codes, .. } = &mut self.hop;
         ids.clear();
         rows.clear();
+        norms.clear();
         floats.clear();
         codes.clear();
     }
@@ -284,13 +286,15 @@ impl Source for Shared<'_> {
                 if visited.first(e) {
                     self.hop.ids.push(e);
                     self.hop.rows.push(live_row(&g, e));
+                    self.hop.norms.push(g.norm(e));
                     self.copy(&g, e);
                 }
             }
         }
         for at in 0..self.hop.ids.len() {
             let (Some(e), Some(row)) = (self.hop.ids.get(at).copied(), self.hop.rows.get(at).copied()) else { break };
-            each(e, row, self.copied(at));
+            let norm = self.hop.norms.get(at).copied().unwrap_or(0.0);
+            each(e, row, (self.copied(at), norm));
         }
         Ok(())
     }

@@ -50,12 +50,12 @@ pub(super) fn applied(
         // [ISO/IEC 9075-2:2023 §15.19] each clause's BEFORE triggers as its
         // rows are decided, before they are written.
         if effects.triggered.is_some() {
-            before_clause(cx, (merge, clause), plan, effects)?;
+            before_clause(cx, (merge, clause, j), plan, effects)?;
         }
         match plan {
             Planned::Updates(rows) => {
                 let BoundWhen::Matched { condition, action: BoundAction::Update(set) } = clause else { return Err(unplanned()) };
-                updates(cx, (merge, &mut again), (condition.as_ref(), set), rows, effects)?;
+                updates(cx, (merge, &mut again), (condition.as_ref(), set, j), rows, effects)?;
             }
             Planned::Deletes(rows) => {
                 let BoundWhen::Matched { condition, .. } = clause else { return Err(unplanned()) };
@@ -72,18 +72,17 @@ pub(super) fn applied(
 /// left them.
 fn before_clause(
     cx: StatementContext<'_>,
-    (merge, clause): (&Merge<'_>, &BoundWhen),
+    (merge, clause, j): (&Merge<'_>, &BoundWhen, usize),
     plan: &mut Planned,
     effects: &mut Effects<'_>,
 ) -> Result<()> {
-    let bound = merge.bound;
     // Of each row of a table of T's family, its whole row [ISO/IEC
     // 9075-2:2023 §4.17.9].
     let target = |joined: &Row, id: RowId| merge.whole(cx, (joined, id), target_part(merge, joined)?);
     match plan {
         Planned::Updates(rows) => {
             let BoundWhen::Matched { action: BoundAction::Update(set), .. } = clause else { return Ok(()) };
-            let columns = set_columns_of(set, &bound.generated);
+            let columns = set_columns_of(set, generated_of(merge, j));
             for table in tables_of(merge) {
                 let mut changes = HeldRows::new(cx.st.list_space());
                 rows.visit(&mut |(id, joined, new)| {
@@ -121,6 +120,10 @@ fn before_clause(
     Ok(())
 }
 
+/// A clause's search condition, its SET list and its place in the
+/// statement.
+type Clause<'c> = (Option<&'c Cond>, &'c [(usize, Option<Expr>)], usize);
+
 /// [GR6a i 5] A WHEN MATCHED clause's updates, of search condition
 /// `condition` and SET values `set`. A row another
 /// transaction changed is written in the version it committed, if it still
@@ -128,13 +131,13 @@ fn before_clause(
 fn updates(
     StatementContext { st, tx }: StatementContext<'_>,
     (merge, again): (&Merge<'_>, &mut Rewritten),
-    (condition, set): (Option<&Cond>, &[(usize, Option<Expr>)]),
+    (condition, set, j): Clause<'_>,
     rows: &mut HeldRows<(RowId, Row, Row)>,
     effects: &mut Effects<'_>,
 ) -> Result<()> {
     let bound = merge.bound;
-    let columns = set_columns_of(set, &bound.generated);
-    let assigned = Assigned { desc: &bound.desc, set, generated: &bound.generated };
+    let columns = set_columns_of(set, generated_of(merge, j));
+    let assigned = Assigned { desc: &bound.desc, set, generated: generated_of(merge, j) };
     rows.visit(&mut |(id, joined, new)| {
         // [ISO/IEC 9075-2:2023 §4.17.9] the row of the table of T's family it is of.
         let table = merge.member(joined)?;
@@ -271,4 +274,10 @@ fn table_of<'m>(merge: &'m Merge<'_>, at: usize) -> Result<&'m super::super::wri
         .get(at)
         .and_then(Inserting::table)
         .ok_or_else(|| api("[DESIGN] a WHEN NOT MATCHED clause of a MERGE written has no table"))
+}
+
+/// The generated columns the `j`th clause of `merge` writes, as it updates
+/// rows (`BoundMerge::generated`).
+fn generated_of<'m>(merge: &'m Merge<'_>, j: usize) -> &'m [(usize, Expr)] {
+    merge.bound.generated.get(j).map_or(&[], Vec::as_slice)
 }

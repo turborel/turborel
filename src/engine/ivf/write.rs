@@ -17,6 +17,7 @@ use crate::engine::hnsw::random::vector_hash;
 use crate::engine::hnsw::{Metric, TRIES, grow};
 use crate::error::Result;
 use crate::sync::{lock, read, write};
+use crate::vector::kernels::squared_norm;
 
 /// Where an entry is: its list, page, slot, and count.
 #[derive(Debug, Clone, Copy)]
@@ -200,7 +201,7 @@ impl Ivf {
         }
         grow(&mut *lock(&inner.memory)?, LOCATE_BYTES)?;
         let mut entry = Vec::with_capacity(layout.width);
-        lists::entry(&mut entry, (row, 1, hash), &p.payload);
+        lists::entry(&mut entry, (row, 1, hash), (&p.payload, squared_norm(&p.stored)));
         let mut list: List = *state.lists.get(at).ok_or_else(|| super::corrupt("a list is missing"))?;
         let page = lists::append(pages.0, pages.1, (&layout, &mut list), &entry)?;
         list.live = list.live.saturating_add(1);

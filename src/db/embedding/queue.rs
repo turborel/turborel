@@ -7,18 +7,27 @@
 //! the model's, and a row of a generated column of ASYNC that is null
 //! though the columns it reads are not. A round of the queue, run by the
 //! job `turborel-embedding` after a commit that wrote and as the database
-//! opens, gives each its vector by one UPDATE a column, in a transaction
-//! of the owner of the table's schema: the chunk's EMBED and version tag,
-//! or the generated column's DEFAULT. Before it, the texts waiting are
-//! embedded ahead, the model asked for BATCH_SIZE of them at a time
-//! (R12.3), up to `MOST_PRIMED`, so the UPDATE asks for none of them.
+//! opens, reads only the tables commits wrote since the last round, or
+//! all as the database opens or a column the queue fills is defined. Its
+//! own commits mark none. It gives each column's rows their vectors in
+//! slices, each in a transaction of the owner of the table's schema: the
+//! least `MOST_PRIMED` distinct texts waiting past the last slice's, in
+//! the order of the text column, embedded ahead, the model asked for
+//! BATCH_SIZE of them at a time (R12.3); then one UPDATE of the rows
+//! waiting whose texts are no greater than the last of them, giving each
+//! the chunk's EMBED and version tag, or the generated column's DEFAULT,
+//! so the UPDATE asks for none of them. A round passes each text once,
+//! so a text the model gives no vector, as ON_ERROR = 'NULL' leaves it,
+//! waits for the next round rather than holding this one.
 //!
-//! A round failing, as the plug-in or the UPDATE does, leaves the rows
-//! waiting for the next round, and INFORMATION_SCHEMA.EMBEDDING_QUEUE
-//! shows its error. `Database::wait_for_embeddings`, and a statement
-//! whose text begins with the hint `/*+ VECTOR_WAIT_FRESH */`, run a round
-//! first, so what is read is fresh.
+//! A slice failing, as the plug-in or the UPDATE does, leaves its rows
+//! waiting and its table marked for the next round, and
+//! INFORMATION_SCHEMA.EMBEDDING_QUEUE shows its error.
+//! `Database::wait_for_embeddings`, and a statement whose text begins with
+//! the hint `/*+ VECTOR_WAIT_FRESH */`, run a round first, so what is read
+//! is fresh.
 
+use std::cell::Cell;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,11 +37,16 @@ use crate::ast::{Literal, ValueExpression, ValueSpecification};
 use crate::binder::qualify;
 use crate::catalog::{Generation, PipelineDesc, QualifiedName, owner_of};
 use crate::error::Result;
+use crate::params::Params;
 use crate::parser::Parser;
-use crate::value::Value;
+use crate::value::{DataType, Value};
 use crate::vector::chunk::quote;
 use crate::vector::embed::{BoundModel, EMBED_NAMES, MOST_PRIMED, QueueState, text_of};
 
+/// The parameter of the last text of the slice before.
+const PAST: &str = "QUEUE_PAST";
+/// The parameter of the last text of this slice.
+const LAST: &str = "QUEUE_LAST";
 /// The hint that asks for a round first.
 const WAIT_FRESH: &str = "VECTOR_WAIT_FRESH";
 /// The label of a database's job and thread of the queue.
@@ -50,6 +64,17 @@ struct Work {
     set: String,
 }
 
+thread_local! {
+    /// Whether this thread runs a round of the queue, whose commits mark
+    /// no table for the next.
+    static IN_ROUND: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether this thread runs a round of the queue.
+pub(in crate::db) fn in_round() -> bool {
+    IN_ROUND.with(Cell::get)
+}
+
 /// The job's work: a round of the queue.
 ///
 /// # Errors
@@ -58,68 +83,103 @@ struct Work {
 pub(in crate::db) fn embedded(db: &Database) -> Result<Option<Duration>> {
     let st = db.snapshot()?;
     let _turn = st.embedders.round()?;
+    let dirty = st.embedders.take_dirty()?;
+    IN_ROUND.with(|r| r.set(true));
     let mut first = None;
-    for work in st.queue_work() {
+    for work in st.queue_work().into_iter().filter(|w| dirty.holds(&w.table)) {
         let model = work.model.as_ref().map_or_else(String::new, |m| m.tag());
         let (schema, table, column) = (work.table.auth.clone(), work.table.ident.clone(), work.column.clone());
         let mut state = st.embedders.queue()?.into_iter().find(|s| (&s.schema, &s.table, &s.column) == (&schema, &table, &column));
         let state = state.get_or_insert_with(|| QueueState { schema, table, column, ..QueueState::default() });
         state.model = model;
-        match round(db, &st, &work, &mut state.pending) {
-            Ok(()) => {
-                state.embedded = state.embedded.saturating_add(state.pending);
-                state.error = None;
-            }
+        state.pending = 0;
+        match round(db, &st, &work, state) {
+            Ok(()) => state.error = None,
             Err(e) => {
                 state.failed = state.failed.saturating_add(1);
                 state.error = Some(e.msg.clone());
+                st.embedders.mark(std::slice::from_ref(&work.table));
                 first.get_or_insert(e);
             }
         }
         st.embedders.record(state.clone())?;
     }
+    IN_ROUND.with(|r| r.set(false));
     first.map_or(Ok(None), Err)
 }
 
 /// The round of `work` run on the database `db`, whose definitions are
-/// `st`, the rows waiting as it began counted in `pending`.
-fn round(db: &Database, st: &State, work: &Work, pending: &mut u64) -> Result<()> {
-    let session = db.session(owner_of(&*st.catalog, &work.table.auth));
-    let ran = filled(&session, work, pending);
-    if let Some(model) = &work.model {
-        model.unprime();
-    }
-    match ran {
-        Ok(()) => session.commit(),
-        Err(e) => {
-            session.rollback()?;
-            Err(e)
+/// `st`, slice by slice, each in a transaction of its own: the texts it
+/// found and the rows it embedded counted in `state`.
+fn round(db: &Database, st: &State, work: &Work, state: &mut QueueState) -> Result<()> {
+    let mut past = None;
+    loop {
+        let session = db.session(owner_of(&*st.catalog, &work.table.auth));
+        let ran = slice(&session, work, past.take(), &mut state.pending);
+        if let Some(model) = &work.model {
+            model.unprime();
+        }
+        let rows = u64::try_from(session.rows_affected()).unwrap_or(0);
+        let last = match ran {
+            Ok(done) => {
+                session.commit()?;
+                done
+            }
+            Err(e) => {
+                session.rollback()?;
+                return Err(e);
+            }
+        };
+        state.embedded = state.embedded.saturating_add(rows);
+        match last {
+            Some(last) => past = Some(last),
+            None => return Ok(()),
         }
     }
 }
 
-/// `round`'s statements, in the transaction of `session`.
-fn filled(session: &Session, work: &Work, pending: &mut u64) -> Result<()> {
+/// One slice of `round`, in the transaction of `session`, of the texts
+/// past `past`, if a slice was before, the distinct texts it found
+/// counted in `found`: the last of them if there may be more.
+fn slice(session: &Session, work: &Work, past: Option<Value>, found: &mut u64) -> Result<Option<Value>> {
     let table = written(&work.table);
-    let mut counted = session.open_cursor(&format!("SELECT COUNT(*) FROM {table} WHERE {}", work.waiting))?;
-    // COUNT(*) is exact, of scale 0.
-    let count = counted.fetch()?.and_then(|r| r.into_iter().next());
-    *pending = if let Some(Value::Exact(n)) = count { u64::try_from(n.units).unwrap_or(0) } else { 0 };
-    drop(counted);
-    if *pending == 0 {
-        return Ok(());
+    let (Some(model), Some(text)) = (&work.model, &work.text) else {
+        session.run(&format!("UPDATE {table} SET {} WHERE {}", work.set, work.waiting))?;
+        return Ok(None);
+    };
+    let mut params = Params::new();
+    let mut waiting = work.waiting.clone();
+    if let Some(v) = past.and_then(typed) {
+        waiting = format!("{waiting} AND {text} > {PAST}");
+        params = params.declare(PAST, v.0, v.1);
     }
-    if let (Some(model), Some(text)) = (&work.model, &work.text) {
-        let mut texts = Vec::new();
-        let sql = format!("SELECT DISTINCT {text} FROM {table} WHERE {} FETCH FIRST {MOST_PRIMED} ROWS ONLY", work.waiting);
-        let mut waiting = session.open_cursor(&sql)?;
-        while let Some(row) = waiting.fetch()? {
-            texts.extend(row.first().map(text_of).transpose()?.flatten());
-        }
-        drop(waiting);
-        model.prime(&texts)?;
+    let sql = format!("SELECT DISTINCT {text} FROM {table} WHERE {waiting} ORDER BY 1 FETCH FIRST {MOST_PRIMED} ROWS ONLY");
+    let mut cursor = session.open_cursor_with(&sql, &params)?;
+    let (mut values, mut texts) = (Vec::new(), Vec::new());
+    while let Some(row) = cursor.fetch()? {
+        texts.extend(row.first().map(text_of).transpose()?.flatten());
+        values.extend(row.into_iter().next());
     }
-    session.run(&format!("UPDATE {table} SET {} WHERE {}", work.set, work.waiting)).map(drop)
+    drop(cursor);
+    let Some(last) = values.pop() else { return Ok(None) };
+    *found = found.saturating_add(u64::try_from(texts.len()).unwrap_or(0));
+    model.prime(&texts)?;
+    // A text not a string, a large object's, is embedded in one slice.
+    let Some((data_type, last)) = typed(last) else {
+        session.execute(&format!("UPDATE {table} SET {} WHERE {waiting}", work.set), &mut params)?;
+        return Ok(None);
+    };
+    params = params.declare(LAST, data_type, last.clone());
+    session.execute(&format!("UPDATE {table} SET {} WHERE {waiting} AND {text} <= {LAST}", work.set), &mut params)?;
+    Ok((texts.len() >= MOST_PRIMED).then_some(last))
+}
+
+/// The text `v` with the type a parameter of it is declared of, if it is
+/// a character string.
+fn typed(v: Value) -> Option<(DataType, Value)> {
+    let Value::Char(s) = &v else { return None };
+    let length = u32::try_from(s.chars().count()).unwrap_or(u32::MAX).max(1);
+    Some((DataType::varying(length), v))
 }
 
 impl State {

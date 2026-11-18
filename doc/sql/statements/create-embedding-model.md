@@ -10,15 +10,17 @@ CREATE EMBEDDING MODEL: define an embedding model of a plug-in
 
 ```
 <embedding model definition> ::=
-    CREATE EMBEDDING MODEL <model name> [ FROM FILE <character string literal> ]
+    CREATE { EMBEDDING | EXTERNAL } MODEL <model name>
+    [ FROM { FILE <character string literal> | BLOB <value specification> } ]
     WITH ( <model option> [ , <model option> ]... )
 
 <model option> ::=
     <identifier> = { <character string literal> | [ <sign> ] <unsigned numeric literal> | <identifier> }
 ```
 
-EMBEDDING, MODEL and FILE are read as words, not key words, so a table
-or column may still be named by one.
+EMBEDDING, EXTERNAL, MODEL, FILE and BLOB are read as words, not key
+words, so a table or column may still be named by one. FROM BLOB's value
+is a binary string literal or a parameter.
 
 ## DESCRIPTION
 
@@ -30,6 +32,16 @@ bare name, call it, and EMBED_VERSION of it gives its version tag,
 
 TYPE names the plug-in. The database reads five options itself and
 gives the plug-in the others, and FROM FILE's path as the option FILE.
+FROM BLOB gives the plug-in the model's own file as octets instead,
+which the catalog keeps, so the plug-in is given them again as the
+database opens. A parameter's octets are written into the statement's
+text as a literal. A plug-in that reads no model's file refuses them.
+
+CREATE EXTERNAL MODEL is an alias for a model served elsewhere. It is a
+model of the plug-in REMOTE, unless TYPE names another, which the host
+registers. LOCATION is given the plug-in as ENDPOINT, and MODEL_TYPE,
+if written, is EMBEDDINGS and is not given. ALTER and DROP EXTERNAL
+MODEL alter and drop it as an embedding model.
 
 | Option | Value | Default |
 |---|---|---|
@@ -54,6 +66,9 @@ as a database opens again before its host registers it, is defined
 still, of the shape it was made of, and a call of it is refused until
 the plug-in is.
 
+A view whose query calls the model depends on it (see [DROP EMBEDDING
+MODEL](drop-embedding-model.md)).
+
 INFORMATION_SCHEMA.EMBEDDING_MODELS lists the models of the schemas the
 user owns and those it may call. CREATE EMBEDDING MODEL runs within the
 session's transaction: ROLLBACK undoes it.
@@ -67,7 +82,9 @@ session's transaction: ROLLBACK undoes it.
    accepts. VERSION, BATCH_SIZE and MAX_RETRIES are whole numbers, not
    strings, and BATCH_SIZE is at least 1.
 5. DIMENSIONS, FORMAT and LAYOUT, if written, are the plug-in's.
-6. The transaction is not READ ONLY.
+6. FROM BLOB is a binary string, of a plug-in that takes one.
+7. An external model's MODEL_TYPE is EMBEDDINGS.
+8. The transaction is not READ ONLY.
 
 ## PRIVILEGES
 
@@ -114,9 +131,24 @@ CREATE EMBEDDING MODEL SPARSE WITH (TYPE = 'HASH_SPARSE', LAYOUT = DENSE);
 turborel: SQLCODE -103 (SQLSTATE 2A000): VEC-0031 the model's vectors are VECTOR(1048576, FLOAT32, SPARSE), not of LAYOUT DENSE (at character 23)
 ```
 
+An external model needs the host's REMOTE plug-in, and the built-in
+plug-ins read no model's file:
+
+```sql
+CREATE EXTERNAL MODEL SERVED WITH (LOCATION = 'https://example.com/v1/embeddings',
+    API_FORMAT = 'OpenAI', MODEL_TYPE = EMBEDDINGS, MODEL = 'small');
+CREATE EMBEDDING MODEL LOADED FROM BLOB X'00FF' WITH (TYPE = 'HASH_DENSE');
+```
+
+```
+turborel: SQLCODE -103 (SQLSTATE 2A000): VEC-0030 no model plug-in REMOTE is registered (at character 22)
+turborel: SQLCODE -103 (SQLSTATE 2A000): the model plug-in HASH_DENSE reads no model's file, so takes no 2 octets FROM BLOB (at character 23)
+```
+
 ## STANDARD
 
-An extension: no part of SQL has embedding models.
+An extension: no part of SQL has embedding models. CREATE EXTERNAL
+MODEL's form is another product's, kept for compatibility.
 
 ## SEE ALSO
 

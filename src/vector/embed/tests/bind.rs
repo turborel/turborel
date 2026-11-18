@@ -21,6 +21,7 @@ fn desc(plugin: &str, options: Vec<ModelOption>) -> ModelDesc {
         name: QualifiedName { auth: "U".into(), ident: "M".into() },
         plugin: plugin.into(),
         file: None,
+        blob: None,
         options,
         version: None,
         dims: HASH_DENSE_DIMS,
@@ -37,7 +38,7 @@ fn desc(plugin: &str, options: Vec<ModelOption>) -> ModelDesc {
 #[test]
 fn the_database_reads_its_own_options() {
     let models = Embedders::built_in();
-    let (_, (version, batch, on_error)) = models.configure(HASH_DENSE, None, &[]).unwrap();
+    let (_, (version, batch, on_error)) = models.configure(HASH_DENSE, (None, None), &[]).unwrap();
     assert_eq!((version, batch, on_error), (1, DEFAULT_BATCH, OnError::Fail));
     let given = [
         option("VERSION", "4", false),
@@ -45,20 +46,20 @@ fn the_database_reads_its_own_options() {
         option("ON_ERROR", "retry", true),
         option("MAX_RETRIES", "5", false),
     ];
-    let (_, settings) = models.configure(HASH_DENSE, None, &given).unwrap();
+    let (_, settings) = models.configure(HASH_DENSE, (None, None), &given).unwrap();
     assert_eq!(settings, (4, 3, OnError::Retry(5)));
-    let (_, (_, _, null)) = models.configure(HASH_DENSE, None, &[option("ON_ERROR", "NULL", true)]).unwrap();
+    let (_, (_, _, null)) = models.configure(HASH_DENSE, (None, None), &[option("ON_ERROR", "NULL", true)]).unwrap();
     assert_eq!(null, OnError::Null);
     for refused in
         [option("VERSION", "4", true), option("BATCH_SIZE", "0", false), option("ON_ERROR", "SKIP", true), option("VERSION", "-1", false)]
     {
         assert_eq!(
-            models.configure(HASH_DENSE, None, std::slice::from_ref(&refused)).err().map(|e| e.code),
+            models.configure(HASH_DENSE, (None, None), std::slice::from_ref(&refused)).err().map(|e| e.code),
             Some(Code::SyntaxRule),
             "{refused:?}"
         );
     }
-    assert_eq!(models.configure("NONE", None, &[]).err().map(|e| e.code), Some(Code::SyntaxRule));
+    assert_eq!(models.configure("NONE", (None, None), &[]).err().map(|e| e.code), Some(Code::SyntaxRule));
     assert_eq!(number_option(&option("N", "12", false)).unwrap(), 12);
 }
 
@@ -81,11 +82,14 @@ fn shape_options_agree_with_the_plug_in_vec_0031() {
         assert_eq!(configure_shape(shape, std::slice::from_ref(&refused)).err().map(|e| e.code), Some(Code::SyntaxRule), "{refused:?}");
     }
     let models = Embedders::built_in();
-    let (made, _) = models.configure(HASH_DENSE, None, &[option("DIMENSIONS", "32", false), option("NGRAMS", "3", false)]).unwrap();
+    let (made, _) = models.configure(HASH_DENSE, (None, None), &[option("DIMENSIONS", "32", false), option("NGRAMS", "3", false)]).unwrap();
     assert_eq!(made.shape().dims, 32);
-    assert_eq!(models.configure(HASH_DENSE, Some("/m.onnx"), &[]).err().map(|e| e.code), Some(Code::SyntaxRule));
-    assert_eq!(models.configure(HASH_DENSE, None, &[option("NGRAMS", "0", false)]).err().map(|e| e.code), Some(Code::SyntaxRule));
-    assert_eq!(models.configure(HASH_SPARSE, None, &[option("FORMAT", "FLOAT64", false)]).err().map(|e| e.code), Some(Code::SyntaxRule));
+    assert_eq!(models.configure(HASH_DENSE, (Some("/m.onnx"), None), &[]).err().map(|e| e.code), Some(Code::SyntaxRule));
+    assert_eq!(models.configure(HASH_DENSE, (None, None), &[option("NGRAMS", "0", false)]).err().map(|e| e.code), Some(Code::SyntaxRule));
+    assert_eq!(
+        models.configure(HASH_SPARSE, (None, None), &[option("FORMAT", "FLOAT64", false)]).err().map(|e| e.code),
+        Some(Code::SyntaxRule)
+    );
 }
 
 /// Verifies: [EXTENSION] (vector design §12.1) A model is bound once for

@@ -23,8 +23,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use self::options::{Options, options_of};
 use super::vector::{
-    Ask, Column, Engine, Held, Place, VectorIndex, approximate_support, column_of, default_desc, disk_quantizer, distance, located, plain,
-    serves,
+    Ask, Column, Engine, Held, Place, VectorIndex, approximate_support, column_of, default_desc, disk_metric, disk_quantizer, located,
+    plain, serves,
 };
 use super::{Index, IndexMethod, NearestQuery, NearestSupport};
 use crate::catalog::{IndexDesc, TableDesc};
@@ -96,8 +96,7 @@ impl DiskAnnMethod {
         let m = self.place.metric((&o.metric, true, o.shared.normalized), column)?;
         let metric = m.metric;
         let quantizer = self.place.quantizer(&o.quantizer)?.map(|q| disk_quantizer(q, Arc::clone(&metric), code_bytes(o, column)));
-        let measure = distance(&metric, column);
-        let plugins = Plugins { metric: Arc::new(move |a: &[f32], b: &[f32]| measure(a, b)), quantizer };
+        let plugins = Plugins { metric: disk_metric(&metric, column), quantizer };
         Ok((plugins, m.names))
     }
 

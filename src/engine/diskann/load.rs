@@ -152,7 +152,7 @@ impl DiskAnn {
         }
         self.grow_to(id)?;
         let row = loaded.rows.last().copied().unwrap_or(0);
-        self.put(id, &Node { flags: LIVE, row, count: 1, vector: vector.to_vec(), neighbours: Vec::new() })
+        self.put(id, &Node { flags: LIVE, row, count: 1, vector: vector.to_vec(), norm: 0.0, neighbours: Vec::new() })
     }
 
     /// A seeded reservoir sample of at most `SAMPLE` vectors (Vitter's

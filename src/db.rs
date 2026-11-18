@@ -499,7 +499,7 @@ impl Session {
         let staged = self.take_staged();
         let ending = self.end_transaction();
         let id = ending.as_ref().map(|tx| tx.id);
-        let wrote = ending.as_ref().is_some_and(|tx| tx.wrote());
+        let (wrote, tables) = ending.as_ref().map_or((false, Vec::new()), |tx| (tx.wrote(), tx.written_tables()));
         if let Some(tx) = &ending {
             tx.set_sync_commit(st.settings.is_on(COMMIT_SYNC));
         }
@@ -519,7 +519,7 @@ impl Session {
         // may leave a checkpoint, a fold of kept totals, embeddings, or a sync of the log its commit did not wait for, due.
         self.db.maintain_if_due();
         if wrote {
-            self.db.written();
+            self.db.written(&tables);
         }
         ended
     }

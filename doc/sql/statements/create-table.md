@@ -134,9 +134,9 @@ A generated column is STORED, whether or not that is written. SYNC, the
 default, computes it as the row is written. ASYNC, of a column whose
 expression embeds a text (see [CREATE EMBEDDING
 MODEL](create-embedding-model.md)), leaves it null as the row is
-inserted, or updated in a column the expression reads, and the queue
-after commit fills it later. An UPDATE that sets it to DEFAULT computes
-it then.
+inserted, or updated in a column the expression reads, by INSERT,
+UPDATE or MERGE, and the queue after commit fills it later. An update
+that sets it to DEFAULT computes it then.
 
 **Constraints.** NOT NULL refuses the null value. UNIQUE refuses two
 rows of the same values in its columns, of rows none of whose values is

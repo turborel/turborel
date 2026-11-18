@@ -57,6 +57,18 @@ fn admitted(st: &State, (desc, name): (&TableDesc, &str), method: &str, expressi
 }
 
 impl Session {
+    /// SQLCODE -917 if this session is in a transaction, since an index
+    /// statement runs outside one.
+    fn outside_transaction(&self) -> Result<()> {
+        if self.inner.borrow().tx.is_some() {
+            return fail(
+                Code::TransactionState,
+                "[EXTENSION] an index statement runs outside a transaction: commit or roll back first".to_owned(),
+            );
+        }
+        Ok(())
+    }
+
     /// \[EXTENSION\] Runs the index statement `stmt` on `st`.
     ///
     /// # Errors
@@ -66,12 +78,7 @@ impl Session {
     /// or option not there, or a value not of its option's kind; those of
     /// `Database::create_index`, `drop_index`.
     pub(super) fn index_statement(&self, st: &Arc<State>, stmt: &IndexStatement) -> Result<Completion> {
-        if self.inner.borrow().tx.is_some() {
-            return fail(
-                Code::TransactionState,
-                "[EXTENSION] an index statement runs outside a transaction: commit or roll back first".to_owned(),
-            );
-        }
+        self.outside_transaction()?;
         match stmt {
             IndexStatement::Create { name: (name, name_at), table, columns, expressions, storage } => {
                 let qn = qualify(table, &self.default_schema());

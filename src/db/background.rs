@@ -209,11 +209,18 @@ impl Database {
         Ok(())
     }
 
-    /// What a commit that wrote leaves due: a checkpoint, a fold of kept
-    /// totals, the queue of embeddings after commit, a sync of the log.
-    pub(super) fn written(&self) {
+    /// What a commit that wrote the tables `tables` leaves due: a
+    /// checkpoint, a fold of kept totals, the queue of embeddings after
+    /// commit of those tables, a sync of the log.
+    pub(super) fn written(&self, tables: &[crate::catalog::QualifiedName]) {
         self.checkpoint_if_due();
         self.fold_if_due();
+        if let Ok(st) = self.snapshot()
+            && st.embedders.watching()
+            && !super::embedding::in_round()
+        {
+            st.embedders.mark(tables);
+        }
         self.request_embedding();
         self.sync_log_if_due();
     }

@@ -19,20 +19,24 @@ mod grants;
 mod pipeline;
 mod queue;
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
-pub(super) use queue::{EMBEDDING, embedded};
+pub(super) use queue::{EMBEDDING, embedded, in_round};
 
 use super::ddl::Dropped;
 use super::definitions::Defined;
+use super::revoke::Abandoned;
 use super::{Database, Session, State, rule};
-use crate::ast::{ModelDefinition, SchemaStatement, TableName, VectorObject, VectorStatement};
-use crate::binder::qualify;
+use crate::ast::{Literal, ModelDefinition, SchemaStatement, SqlStatement, TableName, ValueSpecification, VectorObject, VectorStatement};
+use crate::binder::{qualify, view_degree};
 use crate::catalog::{ModelDesc, ModelOption, QualifiedName};
 use crate::diagnostics::Extension;
 use crate::error::{At, Code, Result, SqlError};
 use crate::lexer::{Tok, delim, lex};
 use crate::log::record::DropTarget;
+use crate::params::Params;
+use crate::value::{Binary, Value};
 use crate::vector::chunk::quote;
 use crate::vector::embed::{DIMENSIONS, Embedder, FORMAT, LAYOUT, ModelShape, SHAPE, VERSION, number_option};
 use crate::vector::{Element, Layout};
@@ -76,6 +80,47 @@ pub(crate) fn written(qn: &QualifiedName) -> String {
 
 fn refused(detail: impl std::fmt::Display) -> SqlError {
     rule(format!("[EXTENSION] {detail}"))
+}
+
+/// FROM BLOB's octets of `d`, if written: a binary string literal, as
+/// `blob_given` leaves a parameter.
+///
+/// # Errors
+///
+/// SQLCODE -103 if it is a parameter given no value, or not a binary
+/// string.
+fn blob_of(d: &ModelDefinition) -> Result<Option<Vec<u8>>> {
+    match &d.blob {
+        None => Ok(None),
+        Some(ValueSpecification::Literal(Literal::Binary(b))) => Ok(Some(b.bytes().to_vec())),
+        Some(_) => Err(refused("FROM BLOB is a binary string literal, or a parameter given a binary string")),
+    }
+}
+
+/// `stmt`, CREATE EMBEDDING MODEL FROM BLOB of a parameter, with the
+/// parameter's value of `params` written in its stead, so the text logged
+/// holds the octets; else as it is.
+///
+/// # Errors
+///
+/// SQLCODE -103 if the parameter's value is not a binary string, or a
+/// large object's held whole.
+pub(super) fn blob_given(stmt: Arc<SqlStatement>, params: &Params) -> Result<Arc<SqlStatement>> {
+    let SqlStatement::Schema { statement: SchemaStatement::Vector(v), text } = &*stmt else { return Ok(stmt) };
+    let VectorStatement::Model(d) = &**v else { return Ok(stmt) };
+    let Some(ValueSpecification::Parameter(p)) = &d.blob else { return Ok(stmt) };
+    let value = params.value(&p.name);
+    let octets = if let Value::Binary(b) = value {
+        b.bytes().to_vec()
+    } else if let Value::Lob(lob) = value {
+        lob.inline().map(<[u8]>::to_vec).ok_or_else(|| refused("FROM BLOB's large object is not held whole"))?
+    } else {
+        return Err(refused(format!("FROM BLOB's parameter {} is given no binary string", p.name)));
+    };
+    let mut given = d.clone();
+    given.blob = Some(ValueSpecification::Literal(Literal::Binary(Binary::new(octets))));
+    let statement = SchemaStatement::Vector(Box::new(VectorStatement::Model(given)));
+    Ok(Arc::new(SqlStatement::Schema { statement, text: text.clone() }))
 }
 
 /// The plug-in `options` name by TYPE.
@@ -130,13 +175,18 @@ impl State {
         self.catalog.embeddings().model(qn).cloned().ok_or_else(|| refused(format!("there is no embedding model {qn}")))
     }
 
-    /// The shape of a model of plug-in `plugin`, FROM FILE's `file` and
-    /// `options`, configured; of a plug-in not registered, the shape
+    /// The shape of a model of plug-in `plugin`, FROM FILE's `file` or
+    /// FROM BLOB's octets and `options`, configured; of a plug-in not registered, the shape
     /// `options` write, else `kept`.
-    fn model_shape(&self, (plugin, file): (&str, Option<&str>), options: &[ModelOption], kept: Option<ModelShape>) -> Result<ModelShape> {
+    fn model_shape(
+        &self,
+        (plugin, from): (&str, (Option<&str>, Option<&[u8]>)),
+        options: &[ModelOption],
+        kept: Option<ModelShape>,
+    ) -> Result<ModelShape> {
         if self.embedders.named(plugin)?.is_some() {
             let given: Vec<ModelOption> = options.iter().filter(|o| o.name != TYPE).cloned().collect();
-            let shape = self.embedders.configure(plugin, file, &given)?.0.shape();
+            let shape = self.embedders.configure(plugin, from, &given)?.0.shape();
             if options.iter().any(|o| o.name == SHAPE) && written_shape(options)? != Some(shape) {
                 return Err(refused(format!("VEC-0031 the plug-in {plugin} no longer gives vectors of the shape its model was made of")));
             }
@@ -160,11 +210,13 @@ impl State {
             return Err(refused(format!("schema {} has an embedding model {} already", qn.auth, qn.ident)));
         }
         let plugin = plugin_of(&d.options)?;
-        let shape = self.model_shape((&plugin, d.file.as_deref()), &d.options, None)?;
+        let blob = blob_of(d)?;
+        let shape = self.model_shape((&plugin, (d.file.as_deref(), blob.as_deref())), &d.options, None)?;
         let options: Vec<ModelOption> = d.options.iter().filter(|o| o.name != TYPE && o.name != SHAPE).cloned().collect();
         let version = options.iter().find(|o| o.name == VERSION).map(number_option).transpose()?;
         let (dims, element, layout) = (shape.dims, shape.element, shape.layout);
-        let desc = ModelDesc { name: qn, plugin, file: d.file.clone(), options, version, dims, element, layout, execute: Vec::new() };
+        let file = d.file.clone();
+        let desc = ModelDesc { name: qn, plugin, file, blob, options, version, dims, element, layout, execute: Vec::new() };
         self.put_model(desc);
         Ok(Defined::default())
     }
@@ -187,7 +239,7 @@ impl State {
         }
         let kept = ModelShape { dims: desc.dims, element: desc.element, layout: desc.layout };
         desc.plugin = plugin_of(&merged)?;
-        if self.model_shape((&desc.plugin, desc.file.as_deref()), &merged, Some(kept))? != kept {
+        if self.model_shape((&desc.plugin, (desc.file.as_deref(), desc.blob.as_deref())), &merged, Some(kept))? != kept {
             return Err(refused(format!("VEC-0031 ALTER EMBEDDING MODEL keeps the shape of {}'s vectors", desc.name)));
         }
         merged.retain(|o| o.name != TYPE && o.name != SHAPE);
@@ -207,22 +259,25 @@ impl State {
         self.catalog = Arc::from(catalog);
     }
 
-    /// DROP EMBEDDING MODEL `qn`, with the pipelines that embed by it if
-    /// `cascade`. Its generated columns went first (`generations_dropped`).
+    /// DROP EMBEDDING MODEL `qn`, with the pipelines that embed by it and
+    /// the views that call it, and what reads those views, if `cascade`.
+    /// Its generated columns went first (`generations_dropped`).
     ///
     /// # Errors
     ///
     /// SQLCODE -103 if there is no such model, or, not `cascade`, a
-    /// pipeline or a generated column embeds by it.
+    /// pipeline, a generated column or a view embeds by it.
     pub(super) fn drop_model(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
         self.model_desc(qn)?;
         let pipelines: Vec<QualifiedName> =
             self.catalog.embeddings().pipelines.iter().filter(|p| p.model == *qn).map(|p| p.name.clone()).collect();
         let columns = self.generations_without(&DropTarget::Model(qn.clone()));
+        let views = self.views_embedding(qn);
         let used = pipelines
             .first()
             .map(|p| format!("pipeline {p}"))
-            .or_else(|| columns.first().map(|(t, c)| format!("generated column {t}.{c}")));
+            .or_else(|| columns.first().map(|(t, c)| format!("generated column {t}.{c}")))
+            .or_else(|| views.first().map(|v| format!("view {v}")));
         if let (Some(user), false) = (used, cascade) {
             return Err(refused(format!("{user} embeds by model {qn}, so it is dropped only with CASCADE")));
         }
@@ -230,12 +285,46 @@ impl State {
         for p in &pipelines {
             dropped.absorb(self.drop_pipeline(p)?);
         }
+        dropped.absorb(self.drop_views_embedding(&views)?);
+        self.remove_model(qn);
+        dropped.names.push(qn.clone());
+        Ok(dropped)
+    }
+
+    /// The model `qn` gone from the catalog.
+    fn remove_model(&mut self, qn: &QualifiedName) {
         let mut catalog = self.catalog.duplicate();
         let mut embeddings = catalog.embeddings().clone();
         embeddings.remove_model(qn);
         catalog.set_embeddings(embeddings);
         self.catalog = Arc::from(catalog);
-        dropped.names.push(qn.clone());
+    }
+
+    /// The views that call model `qn`: those that bind no more without it,
+    /// and so those that read them.
+    fn views_embedding(&self, qn: &QualifiedName) -> Vec<QualifiedName> {
+        let mut after = self.clone();
+        after.remove_model(qn);
+        self.catalog.views().into_iter().filter(|v| view_degree(&after, v).is_err()).map(|v| v.name.clone()).collect()
+    }
+
+    /// The views `views` dropped, with their privileges, and the triggers
+    /// and routines that read them, as DROP ROUTINE CASCADE drops those of
+    /// a routine.
+    ///
+    /// # Errors
+    ///
+    /// As each drop's.
+    fn drop_views_embedding(&mut self, views: &[QualifiedName]) -> Result<Dropped> {
+        if views.is_empty() {
+            return Ok(Dropped::default());
+        }
+        let abandoned = Abandoned { views: views.to_vec(), ..Abandoned::default() };
+        let (mut dropped, locks) = self.destroy(Arc::clone(&self.catalog), &abandoned)?;
+        let read: Vec<&QualifiedName> = views.iter().collect();
+        dropped.absorb(self.drop_triggering(&read, (true, false))?);
+        dropped.absorb(self.drop_routining(&read, (true, false))?);
+        dropped.names.extend(locks.into_iter().map(|(name, _)| name));
         Ok(dropped)
     }
 
@@ -280,10 +369,21 @@ impl Session {
         if d.options.iter().any(|o| o.name == SHAPE) {
             return Ok(None);
         }
-        let shape = st.model_shape((&plugin_of(&d.options)?, d.file.as_deref()), &d.options, None).or_at(d.name.at)?;
+        let blob = blob_of(d).or_at(d.name.at)?;
+        let shape = st.model_shape((&plugin_of(&d.options)?, (d.file.as_deref(), blob.as_deref())), &d.options, None).or_at(d.name.at)?;
         let mut options: Vec<String> = d.options.iter().map(option_text).collect();
         options.push(option_text(&shape_option(shape)));
-        let file = d.file.as_ref().map(|f| format!(" FROM FILE {}", quote(f))).unwrap_or_default();
+        let file = match (&d.file, &blob) {
+            (Some(f), _) => format!(" FROM FILE {}", quote(f)),
+            (None, Some(b)) => {
+                let hex = b.iter().fold(String::new(), |mut hex, o| {
+                    let _ = write!(hex, "{o:02X}");
+                    hex
+                });
+                format!(" FROM BLOB X'{hex}'")
+            }
+            (None, None) => String::new(),
+        };
         Ok(Some(format!("CREATE EMBEDDING MODEL {}{file} WITH ({})", written(&qualify(&d.name, schema)), options.join(", "))))
     }
 

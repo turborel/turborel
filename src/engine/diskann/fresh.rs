@@ -117,7 +117,7 @@ impl DiskAnn {
     fn build_node(&self, id: u32, vector: &[f32], row: u64, key: [u8; 16]) -> Result<bool> {
         let first = self.inner.medoid.compare_exchange(NO_NODE, id, Ordering::AcqRel, Ordering::Acquire).is_ok();
         let kept = if first { Vec::new() } else { self.candidates_for(id, vector)? };
-        let node = Node { flags: 0, row, count: 1, vector: vector.to_vec(), neighbours: kept.clone() };
+        let node = Node { flags: 0, row, count: 1, vector: vector.to_vec(), norm: 0.0, neighbours: kept.clone() };
         if let Err(error) = self.put(id, &node) {
             // The node was never written, so its slot goes back to the free
             // list. Should that fail too, it is leaked; the first error is

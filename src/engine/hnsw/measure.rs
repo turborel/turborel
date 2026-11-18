@@ -13,24 +13,59 @@ use std::sync::Arc;
 
 use crate::bytes::Reader;
 use crate::error::{Code, Result, SqlError};
+use crate::vector::kernels::squared_norm;
 
 /// A distance of two vectors of one length: finite, smaller nearer.
 pub type DistanceFn = dyn Fn(&[f32], &[f32]) -> f32 + Send + Sync;
+
+/// A vector and its squared norm (`kernels::squared_norm`).
+pub type Probe<'a> = (&'a [f32], f32);
+
+/// A distance of two vectors each given with its squared norm, the
+/// `DistanceFn`'s bit for bit.
+pub type NormedFn = dyn Fn(Probe<'_>, Probe<'_>) -> f32 + Send + Sync;
 
 /// \[DESIGN\] A named distance. Its contract is the metric registry's:
 /// deterministic, finite, no callback into the database and no lock held.
 /// A result that is not finite is taken as infinitely far, so a broken
 /// metric can misplace entries but never panic or loop.
+///
+/// \[DESIGN\] A metric measured by norms (COSINE) is given a `NormedFn`
+/// too. The engines keep each vector's squared norm with it and work out
+/// a query's once (`probe`), so a distance sums `a·b` alone.
 #[derive(Clone)]
 pub struct Metric {
     name: String,
     distance: Arc<DistanceFn>,
+    normed: Option<Arc<NormedFn>>,
 }
 
 impl Metric {
     /// The metric `name`, measuring by `distance`.
     pub fn new(name: &str, distance: Arc<DistanceFn>) -> Metric {
-        Metric { name: name.trim().to_ascii_uppercase(), distance }
+        Metric { name: name.trim().to_ascii_uppercase(), distance, normed: None }
+    }
+
+    /// The metric, measuring by `normed` where the norms are known.
+    #[must_use]
+    pub fn with_norms(self, normed: Option<Arc<NormedFn>>) -> Metric {
+        Metric { normed, ..self }
+    }
+
+    /// `q` with its squared norm, worked out once for a search.
+    pub fn probe<'a>(&self, q: &'a [f32]) -> Probe<'a> {
+        (q, squared_norm(q))
+    }
+
+    /// The distance of `a` and `b` given their squared norms, as
+    /// `distance` gives it.
+    #[inline]
+    pub fn between(&self, a: Probe<'_>, b: Probe<'_>) -> f32 {
+        let d = match &self.normed {
+            Some(normed) => normed(a, b),
+            None => (self.distance)(a.0, b.0),
+        };
+        if d.is_finite() { d } else { f32::INFINITY }
     }
 
     /// Its name, upper case.

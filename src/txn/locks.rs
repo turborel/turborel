@@ -95,6 +95,11 @@ impl Txn {
         self.check_definitions()
     }
 
+    /// The tables it wrote, in the order it first wrote each.
+    pub(crate) fn written_tables(&self) -> Vec<QualifiedName> {
+        self.state().map(|st| st.written.iter().map(|(t, ..)| t.clone()).collect()).unwrap_or_default()
+    }
+
     /// Records that it changed definitions (`db/ddl.rs`): it then commits
     /// through its commit record, as a transaction that wrote does.
     ///

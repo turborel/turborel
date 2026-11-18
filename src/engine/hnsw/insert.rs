@@ -113,9 +113,10 @@ fn extend<S: Source>(src: &mut S, metric: &Metric, base: &[f32], level: u8, s: &
         visited.first(c.id);
     }
     let count = chosen.len();
+    let base = metric.probe(base);
     for at in 0..count {
         let Some(c) = chosen.get(at).copied() else { break };
-        src.hop((c.id, level), visited, &mut |e, _, v| chosen.push(Scored { distance: metric.distance(base, v), id: e }))?;
+        src.hop((c.id, level), visited, &mut |e, _, v| chosen.push(Scored { distance: metric.between(base, v), id: e }))?;
     }
     chosen.sort_unstable();
     Ok(())
@@ -150,13 +151,14 @@ fn layers<S: Source>(
     s: &mut Scratch,
     (entries, plan): (&mut Vec<Scored>, &mut Vec<Planned>),
 ) -> Step<()> {
-    let Some(start) = descend(src, (metric, q), (entry, top, level), s)? else { return Ok(()) };
+    let probe = metric.probe(q);
+    let Some(start) = descend(src, (metric, probe), (entry, top, level), s)? else { return Ok(()) };
     entries.clear();
     entries.push(start);
     let mut at = level.min(top);
     loop {
         s.visited.begin(0);
-        search_layer(src, (metric, q), (entries, build.ef_construction, at), s, &mut |_, _| true)?;
+        search_layer(src, (metric, probe), (entries, build.ef_construction, at), s, &mut |_, _| true)?;
         s.chosen.clear();
         s.chosen.extend(s.results.drain());
         s.chosen.sort_unstable();

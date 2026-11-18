@@ -65,7 +65,7 @@ impl Session {
         let mut call = self.enter()?;
         call.timed = slow::Timed::of(call.state(), || sql, &self.auth());
         let keeping = prepared.map(|(_, plans)| self.keeping(call.state(), plans));
-        let parsed = Self::parsed(&call, sql, params, keeping.as_ref());
+        let parsed = Self::parsed(&call, sql, params, keeping.as_ref()).and_then(|s| super::embedding::blob_given(s, params));
         // [ISO/IEC 9075:1992 §4.19] GET DIAGNOSTICS reads the area as the
         // statement before left it, and leaves it so, refused too.
         if let Ok(SqlStatement::GetDiagnostics(get)) = parsed.as_deref() {

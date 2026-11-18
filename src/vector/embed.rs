@@ -30,6 +30,7 @@ use routines::{PURPOSES, data};
 
 use super::chunk::{Span, words_of};
 use super::{Element, Layout, Vector};
+use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
 use crate::sync::{lock, read, write};
 use crate::value::DataType;
@@ -159,6 +160,21 @@ pub trait Embedder: Send + Sync {
     fn configured(&self, options: &[crate::catalog::ModelOption]) -> Result<Option<Arc<dyn Embedder>>> {
         configure_shape(self.shape(), options).map(|_| None)
     }
+    /// The model this one is as a model of the catalog made FROM BLOB
+    /// configures it: of the octets `blob`, the model's own file, and
+    /// `options` as `configured` takes them. Default: refused, as a
+    /// plug-in that reads no file of a model takes no octets of one.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if it takes no octets, or refuses these or an option.
+    fn loaded(&self, blob: &[u8], options: &[crate::catalog::ModelOption]) -> Result<Option<Arc<dyn Embedder>>> {
+        let _ = options;
+        Err(SqlError::new(
+            Code::SyntaxRule,
+            format!("[EXTENSION] the model plug-in {} reads no model's file, so takes no {} octets FROM BLOB", self.name(), blob.len()),
+        ))
+    }
     /// The spans of the tokens of `text`. Default: its words.
     fn tokens(&self, text: &str) -> Vec<Span> {
         words_of(&text.chars().collect::<Vec<_>>())
@@ -190,6 +206,27 @@ pub struct Embedders {
     queue: Mutex<Vec<QueueState>>,
     /// Held by a round of the queue, so one runs at a time.
     rounds: Mutex<()>,
+    /// The tables written since the last round, its work waiting.
+    dirty: Mutex<Dirty>,
+}
+
+/// \[EXTENSION\] The tables whose columns the queue of embeddings after
+/// commit reads at its next round: those commits wrote since the last,
+/// or all.
+#[derive(Debug, Clone, Default)]
+pub struct Dirty {
+    /// Every table, as the database opens or a model or column the queue
+    /// fills is defined.
+    pub all: bool,
+    /// The tables written.
+    pub tables: Vec<QualifiedName>,
+}
+
+impl Dirty {
+    /// Whether the round reads `table`.
+    pub fn holds(&self, table: &QualifiedName) -> bool {
+        self.all || self.tables.contains(table)
+    }
 }
 
 /// \[EXTENSION\] What the queue of embeddings after commit did of one
@@ -204,7 +241,7 @@ pub struct QueueState {
     pub column: String,
     /// The model, as its version tag names it.
     pub model: String,
-    /// The rows waiting for a vector as the last round began.
+    /// The distinct texts the last round found waiting.
     pub pending: u64,
     /// The rows given one since the database opened.
     pub embedded: u64,
@@ -265,9 +302,31 @@ impl Embedders {
     }
 
     /// Notes that a column is embedded after commit, or of a model's
-    /// version, so each commit that writes asks for the queue.
+    /// version, so each commit that writes asks for the queue; the next
+    /// round reads every table.
     pub fn watch(&self) {
         self.watching.store(true, Ordering::Release);
+        if let Ok(mut dirty) = lock(&self.dirty) {
+            dirty.all = true;
+        }
+    }
+
+    /// `tables`, written by a commit, read at the next round.
+    pub fn mark(&self, tables: &[QualifiedName]) {
+        if let Ok(mut dirty) = lock(&self.dirty) {
+            for t in tables.iter().filter(|t| !dirty.tables.contains(t)).collect::<Vec<_>>() {
+                dirty.tables.push(t.clone());
+            }
+        }
+    }
+
+    /// The tables the round now beginning reads, none left for the next.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if it was poisoned.
+    pub fn take_dirty(&self) -> Result<Dirty> {
+        Ok(std::mem::take(&mut *lock(&self.dirty)?))
     }
 
     /// Whether a column has been embedded after commit, or of a model's

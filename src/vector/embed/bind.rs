@@ -124,6 +124,15 @@ fn own_options(options: &[ModelOption], batch: usize, on_error: OnError) -> Resu
     Ok((version, batch, on_error))
 }
 
+/// A fingerprint of a model's octets, so a binding is known again
+/// without keeping them twice.
+fn fingerprint(blob: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    blob.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// The stand-in of the plug-in `name`, not registered, of a model of
 /// `shape`.
 struct Unregistered {
@@ -153,13 +162,17 @@ impl Embedders {
     /// VEC-0030, SQLCODE -103, if no plug-in `plugin` is registered; -103
     /// for an option the database or the plug-in refuses; VEC-0031 if the
     /// model's vectors are not of the DIMENSIONS, FORMAT and LAYOUT given.
-    pub fn configure(&self, plugin: &str, file: Option<&str>, options: &[ModelOption]) -> Result<Configured> {
+    pub fn configure(&self, plugin: &str, (file, blob): (Option<&str>, Option<&[u8]>), options: &[ModelOption]) -> Result<Configured> {
         let found = self.named(plugin)?.ok_or_else(|| refused(format!("VEC-0030 no model plug-in {plugin} is registered")))?;
         let mut given: Vec<ModelOption> = options.iter().filter(|o| !DATABASE_OPTIONS.contains(&o.name.as_str())).cloned().collect();
         if let Some(path) = file {
             given.push(ModelOption { name: FILE.to_owned(), value: path.to_owned(), quoted: true });
         }
-        let embedder = found.configured(&given)?.unwrap_or(found);
+        let embedder = match blob {
+            Some(blob) => found.loaded(blob, &given)?,
+            None => found.configured(&given)?,
+        };
+        let embedder = embedder.unwrap_or(found);
         for o in &given {
             shape_option(o, embedder.shape())?;
         }
@@ -178,13 +191,14 @@ impl Embedders {
     /// poisoned.
     pub fn bind(&self, desc: &ModelDesc) -> Result<Arc<BoundModel>> {
         let registered = self.named(&desc.plugin)?.is_some();
-        let key = format!("{:?}|{:?}|{:?}|{:?}|{:?}|{registered}", desc.name, desc.plugin, desc.file, desc.options, desc.version);
+        let blob = desc.blob.as_ref().map(|b| (b.len(), fingerprint(b)));
+        let key = format!("{:?}|{:?}|{:?}|{blob:?}|{:?}|{:?}|{registered}", desc.name, desc.plugin, desc.file, desc.options, desc.version);
         if let Some((_, bound)) = lock(&self.bound)?.iter().find(|(k, _)| *k == key) {
             return Ok(Arc::clone(bound));
         }
         let made = ModelShape { dims: desc.dims, element: desc.element, layout: desc.layout };
         let (embedder, settings) = if registered {
-            self.configure(&desc.plugin, desc.file.as_deref(), &desc.options)?
+            self.configure(&desc.plugin, (desc.file.as_deref(), desc.blob.as_deref()), &desc.options)?
         } else {
             let stand_in: Arc<dyn Embedder> = Arc::new(Unregistered { name: desc.plugin.clone(), shape: made });
             let (version, batch, on_error) = own_options(&desc.options, DEFAULT_BATCH, OnError::Fail)?;

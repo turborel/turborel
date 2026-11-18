@@ -44,6 +44,8 @@ pub struct ModelDesc {
     pub plugin: String,
     /// FROM FILE's path, if written.
     pub file: Option<String>,
+    /// FROM BLOB's octets, if given: the model's own file.
+    pub blob: Option<Vec<u8>>,
     /// The options given to the plug-in, as written, by name.
     pub options: Vec<ModelOption>,
     /// Its VERSION, if given; else the plug-in's own (R12.5).
