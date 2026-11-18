@@ -171,12 +171,12 @@ pub const XML_SCHEMA: [Mutation; 31] = [
     Mutation {
         name: "xml-schema-logged-line-ends",
         package: Package::Core,
-        breaks: "a document of a line end is logged as a character string literal, which replay cannot read",
+        breaks: "a document is logged as a character string literal, which replay cannot read of one of a line end",
         file: "src/db/definitions/xml_schemas/document.rs",
-        original: "    if !text.contains(NEWLINE) {",
-        replacement: "    if true || !text.contains(NEWLINE) {",
+        original: "    let logged = Value::Binary(octets.clone()).to_literal();",
+        replacement: "    let logged = literal(&String::from_utf8_lossy(octets.bytes()));",
         integration: &["xml_schema::registered_schemas_survive_reopening"],
-        unit: &[],
+        unit: &["db::definitions::xml_schemas::tests::a_document_is_kept_octet_for_octet"],
     },
     Mutation {
         name: "xmlschema-type-element",

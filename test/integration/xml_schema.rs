@@ -219,7 +219,7 @@ fn drop_schema_drops_its_registered_schemas() {
 /// Verifies: [DESIGN] RULES.md D25, D86: registered XML Schemas survive
 /// reopening, from the log alone after a failure and after a checkpoint
 /// and a close, one that includes another, registered of a document of
-/// line ends and so logged as a binary string literal, still reading
+/// line ends, which no character string literal holds, still reading
 /// it: an import of its namespace finds its type from the one included,
 /// it is registered still, and DROP RESTRICT of the one it includes is
 /// still refused; one registered and not committed at the failure is not.

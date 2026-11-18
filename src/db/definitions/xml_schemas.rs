@@ -205,37 +205,17 @@ impl State {
 }
 
 /// The document of a CREATE XML SCHEMA as the session wrote it, and the
-/// log keeps it (`xml_schemas/document.rs`): a character string literal,
-/// or a binary string literal of its UTF-8 octets.
+/// log keeps it (`xml_schemas/document.rs`): a binary string literal of
+/// its text's UTF-8 octets, read back as that text, octet for octet.
 ///
 /// # Errors
 ///
 /// SQLCODE -910 if it is anything else, which no statement made here is.
 fn logged_document(document: &ValueExpression) -> Result<String> {
     let not_written = || SqlError::new(Code::Api, "[DESIGN] an XML Schema document is defined as a literal of its text".to_owned());
-    let ValueExpression::Value(ValueSpecification::Literal(literal)) = document else { return Err(not_written()) };
-    if let Literal::Character(text) = literal {
-        return Ok(text.clone());
-    }
-    let Literal::Binary(octets) = literal else { return Err(not_written()) };
+    let ValueExpression::Value(ValueSpecification::Literal(Literal::Binary(octets))) = document else { return Err(not_written()) };
     String::from_utf8(octets.bytes().to_vec()).map_err(|_| not_written())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::value::Binary;
-
-    /// Verifies: [DESIGN] RULES.md D86: a document logged is read back
-    /// from a character string literal, or a binary string literal of its
-    /// UTF-8 octets; anything else, which no statement made here writes,
-    /// is SQLCODE -910.
-    #[test]
-    fn a_logged_document_is_read_back() {
-        let of = |l: Literal| ValueExpression::Value(ValueSpecification::Literal(l));
-        assert_eq!(logged_document(&of(Literal::Character("<a/>".into()))).unwrap(), "<a/>");
-        assert_eq!(logged_document(&of(Literal::Binary(Binary::new("<a>\n</a>".into())))).unwrap(), "<a>\n</a>");
-        assert_eq!(logged_document(&of(Literal::Binary(Binary::new(vec![0xFF])))).unwrap_err().sqlcode(), -910_i32);
-        assert_eq!(logged_document(&of(Literal::Boolean(Some(true)))).unwrap_err().sqlcode(), -910_i32);
-    }
-}
+mod tests;

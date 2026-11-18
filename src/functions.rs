@@ -92,7 +92,7 @@ pub use xml::{According, Candidate, ValidBy, XmlValid, XmlValidate};
 pub use xml::{
     BinaryEncoding, IMPLICIT_BINARY_ENCODING, Mapping, Serialization, XMLAGG, XmlAggregate, XmlCastIn, XmlCastOut, XmlComment, XmlConcat,
     XmlCopy, XmlDocument, XmlElement, XmlForest, XmlIs, XmlParse, XmlPi, XmlSerialize, XmlText, xml_lexical, xml_mapped,
-    xml_schema_restriction, xml_schema_type,
+    xml_schema_restriction, xml_schema_type, xml_text,
 };
 pub use xml::{Evaluation, RegularColumn, TableColumn, XmlExistsOf, XmlFilter, XmlQueryOf, XmlRowsOf, XmlTableOf};
 

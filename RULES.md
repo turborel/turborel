@@ -3260,9 +3260,13 @@ place. DROP SCHEMA CASCADE drops the schema's registered XML Schemas
 as DROP XML SCHEMA CASCADE does.
 
 The statement is logged as its text with the document written in as a
-literal, so replay evaluates nothing again: a character string literal,
-or, as a `<newline>` is no character of one [X3.135-1986 §5.1 SR1], a
-binary string literal of its UTF-8 octets when the document holds one.
+literal, so replay evaluates nothing again: every document a binary
+string literal of its text's UTF-8 octets, one form that holds each, as
+a `<newline>` is no character of a character string literal [X3.135-1986
+§5.1 SR1]. Replay reads the octets back as UTF-8, the same text octet for
+octet, and does not parse them as a binary string document is parsed, by
+the encoding it declares: a character string document, a large object
+too, is kept as written, its declaration naming any encoding.
 The permanently registered XML Schemas of Table 1 [§4.2.6] are
 INFORMATION_SCHEMA.XS, XSI and SQLXML, constants
 (`catalog::xml_schemas::PERMANENT`), not catalog objects: none is

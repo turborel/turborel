@@ -8,11 +8,17 @@
 //! with nothing evaluated again. A character string is the document as
 //! written; a binary string is parsed as XMLPARSE DOCUMENT parses one
 //! [§10.16], and an XML value must be a document [§10.15 GR3], each then
-//! written as its serialization. The literal is a character string
-//! literal; but as a `<newline>` is no `<character>` of one [X3.135-1986
-//! §5.1 SR1], a document that holds one is written as a binary string
-//! literal of its UTF-8 octets, which the definition reads back as the
-//! same text (`definitions/xml_schemas.rs`).
+//! written as its serialization.
+//!
+//! \[DESIGN\] RULES.md D86: every document is written as a binary string
+//! literal of its text's UTF-8 octets, which the definition reads back as
+//! the same text, octet for octet (`definitions/xml_schemas.rs`). A
+//! character string literal cannot hold every document, as a `<newline>`
+//! is no `<character>` of one [X3.135-1986 §5.1 SR1]; one form for all is
+//! the simplest that holds each. The octets are the text's, not a binary
+//! string document's, so they are not parsed as one is, by the encoding
+//! the document declares: a character string keeps the declaration it was
+//! written with, which may name another encoding than UTF-8.
 
 use super::super::super::compiled::plan;
 use super::super::super::{Completion, Session, State, StatementContext};
@@ -20,7 +26,7 @@ use crate::ast::{Literal, SchemaStatement, TableName, ValueExpression, ValueSpec
 use crate::binder::{self, qualify};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::exec::execute;
-use crate::functions::{ScalarFunction, XmlParse};
+use crate::functions::{ScalarFunction, XmlParse, xml_text};
 use crate::logical::LogicalPlan;
 use crate::params::{ParameterType, Params};
 use crate::value::lob::{LobKind, MAX_LOB_LENGTH};
@@ -35,10 +41,6 @@ const UTF8: &str = "UTF-8";
 /// alone as the document takes: CHARACTER LARGE OBJECT of the greatest
 /// length, as a document is text of any length.
 const DOCUMENT_PARAMETER: DataType = DataType::Lob { kind: LobKind::Character, length: MAX_LOB_LENGTH, units: CharUnits::Characters };
-
-/// [X3.135-1986 §5.1 SR1] What ends a line, which no character string
-/// literal holds (`lexer.rs`).
-const NEWLINE: char = '\n';
 
 impl Session {
     /// Schema statement `statement`, written `text`, in `cx`, of
@@ -123,15 +125,16 @@ impl Session {
     }
 }
 
-/// The text of the schema document `value`: a character string as it is;
-/// a binary string parsed as a document and an XML document, serialized
-/// as XML 1.1, which writes every document either version reads, with
-/// its declaration.
+/// The text of the schema document `value`: a character string as it is,
+/// a large object too; a binary string parsed as a document and an XML
+/// document, serialized as XML 1.1, which writes every document either
+/// version reads, with its declaration.
 ///
 /// # Errors
 ///
 /// SQLSTATE 2200L if it is the null value, or an XML value that is no
-/// document; 2200M if a binary string is no document.
+/// document; 2200M if a binary string is no document; SQLCODE -900 if a
+/// character string is longer than XMLPARSE reads.
 fn document_text(value: &Value) -> Result<String> {
     let not_a_document = |what: &str| {
         let msg = format!("[EXTENSION] [ISO/IEC 9075-14:2006 draft §10.15 GR3] an XML Schema document is an XML document, not {what}");
@@ -140,10 +143,10 @@ fn document_text(value: &Value) -> Result<String> {
     if value.is_null() {
         return Err(not_a_document("the null value"));
     }
-    if let Value::Char(text) = value {
-        return Ok(text.clone());
+    if matches!(value, Value::Char(_)) || is_text(value) {
+        return xml_text(value)?.ok_or_else(|| not_a_document("the null value"));
     }
-    let parse = XmlParse { syntax: Syntax::Document, whitespace: Whitespace::Preserve, binary: !is_text(value) };
+    let parse = XmlParse { syntax: Syntax::Document, whitespace: Whitespace::Preserve, binary: true };
     let parsed = if let Value::Xml(_) = value { value.clone() } else { parse.call(std::slice::from_ref(value))? };
     let Value::Xml(x) = parsed else { return Err(not_a_document("a value of no XML type")) };
     let sequence = x.sequence()?;
@@ -153,21 +156,15 @@ fn document_text(value: &Value) -> Result<String> {
     serialize(&sequence, &Parameters { version: Version::V11, declaration: true, encoding: UTF8, undeclare: true })
 }
 
-/// Whether `v` is a character large object, which XMLPARSE reads as text.
+/// Whether `v` is a character large object, a character string.
 fn is_text(v: &Value) -> bool {
     let Value::Lob(l) = v else { return false };
     l.kind() == LobKind::Character
 }
 
 /// The document `text` as a literal, and as written in a statement: a
-/// character string literal, or, if it holds a `<newline>`, which no
-/// character string literal does [X3.135-1986 §5.1 SR1], a binary string
-/// literal of its UTF-8 octets.
+/// binary string literal of its UTF-8 octets, whatever it holds.
 fn written(text: String) -> (Literal, String) {
-    if !text.contains(NEWLINE) {
-        let logged = literal(&text);
-        return (Literal::Character(text), logged);
-    }
     let octets = Binary::new(text.into_bytes());
     let logged = Value::Binary(octets.clone()).to_literal();
     (Literal::Binary(octets), logged)

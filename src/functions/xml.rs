@@ -50,6 +50,21 @@ fn too_long() -> SqlError {
     )
 }
 
+/// The text of `v`, a character string, a large object too, as XMLPARSE
+/// reads it: at most `MAX_INPUT` octets; none of the null value or of a
+/// binary string.
+///
+/// # Errors
+///
+/// SQLCODE -900 if it is longer; as a large object is read; SQLCODE -910
+/// if `v` is no string.
+pub fn xml_text(v: &Value) -> Result<Option<String>> {
+    Ok(match input(v)? {
+        Some(Input::Text(text)) => Some(text),
+        Some(Input::Octets(_)) | None => None,
+    })
+}
+
 /// The octets of `v`, a binary string, or the text of `v`, a character
 /// string, each at most `MAX_INPUT` octets long; none of the null value.
 enum Input {
