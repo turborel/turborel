@@ -9,7 +9,7 @@
 //! Syntax that is valid SQL but not implemented reports `Code::Unsupported`
 //! rather than a misleading syntax error.
 
-pub use ddl::{RESEAL, REVERT_COLLATION};
+pub use ddl::{RESEAL, REVERT_COLLATION, method_of_type, option_of};
 pub use domains::VALUE_COLUMN;
 pub(crate) use dynamic::descriptor_type;
 pub(crate) use periods::period_constraint;
@@ -37,12 +37,14 @@ mod diagnostics;
 mod distribution;
 mod domains;
 mod dynamic;
+mod embedding;
 mod expression;
 mod filter;
 mod generated;
 mod grouping;
 mod hypothetical;
 mod interval;
+mod json;
 mod listagg;
 mod literal;
 mod locators;
@@ -50,6 +52,7 @@ mod merge;
 mod modules;
 mod multisets;
 mod names;
+mod numeric;
 mod pattern;
 mod periods;
 mod primary;
@@ -60,6 +63,7 @@ mod query;
 mod regex;
 mod roles;
 mod routines;
+mod savepoints;
 mod schema;
 mod search_cycle;
 mod sequences;
@@ -69,11 +73,14 @@ mod user_types;
 mod window;
 mod xml;
 pub(crate) use data_statements::{EXPLAIN, TRUNCATE, begins_word_statement};
+pub(crate) use savepoints::SAVEPOINT;
 pub(crate) use served::CANCEL;
 mod session;
+mod stored;
 mod target;
 mod triggers;
 mod users;
+mod vectors;
 
 /// \[DESIGN\] The deepest syntax tree the parser builds. Each nested `<search
 /// condition>`, `<boolean term>`, `<value expression>`, `<term>`, `<query expression>`
@@ -138,6 +145,10 @@ pub struct Parser {
     blocks: Vec<psm::Block>,
     /// [ISO/IEC 9075-4:2006 draft §12.8] In an SQL-server module, its own schema, which MODULE names.
     module: Option<String>,
+    /// \[EXTENSION\] The number of each `<dynamic parameter specification>`
+    /// by its place among them, of a text that copies some of a statement's
+    /// (`Parser::hybrid_expansion`); of none, each is numbered by its place.
+    numbers: Vec<usize>,
 }
 
 /// How a parser takes a `<catalog name>` written in a qualified name or a
@@ -220,6 +231,7 @@ impl Parser {
             routine: None,
             blocks: Vec::new(),
             module: None,
+            numbers: Vec::new(),
         })
     }
 
@@ -242,15 +254,6 @@ impl Parser {
     #[must_use]
     pub fn in_catalog(mut self, catalog: &str) -> Parser {
         self.catalogs = Catalogs::Of(catalog.trim_end().to_owned());
-        self
-    }
-
-    /// This parser, taking any `<catalog name>` written in a name: as the
-    /// text of a definition is read again, its names checked when it was
-    /// defined, against the catalog's name then.
-    #[must_use]
-    pub fn of_definition(mut self) -> Parser {
-        self.catalogs = Catalogs::Kept;
         self
     }
 
@@ -508,15 +511,6 @@ impl Parser {
     // [X3.135-1986 §7.3] <SQL statement>
     // =====================================================================
 
-    /// [X3.135-1986 §8.2, §8.9] COMMIT WORK or ROLLBACK WORK, next;
-    /// [ISO/IEC 9075:1992 §14.3, §14.4] WORK optional.
-    fn transaction_end(&mut self) -> SqlStatement {
-        let commit = self.is_kw(kw::COMMIT);
-        self.advance();
-        self.accept_kw(kw::WORK);
-        if commit { SqlStatement::Commit } else { SqlStatement::Rollback }
-    }
-
     /// `<SQL statement>`: one statement of a procedure.
     ///
     /// # Errors
@@ -543,7 +537,7 @@ impl Parser {
             Tok::KeyWord(kw::ALLOCATE | kw::DEALLOCATE) => self.allocation()?,
             Tok::KeyWord(kw::PREPARE | kw::DESCRIBE | kw::EXECUTE) => self.dynamic_statement()?,
 
-            Tok::KeyWord(kw::COMMIT | kw::ROLLBACK) => self.transaction_end(),
+            Tok::KeyWord(kw::COMMIT | kw::ROLLBACK) => self.transaction_end()?,
             Tok::KeyWord(kw::SET) => self.set_statement()?,
             Tok::KeyWord(kw::FETCH) => self.fetch_statement()?,
             Tok::KeyWord(kw::GET) => {
@@ -559,7 +553,7 @@ impl Parser {
             Tok::KeyWord(kw::UPDATE) => self.update_statement()?,
             Tok::KeyWord(kw::SELECT) => self.select_statement()?,
             Tok::KeyWord(kw::GRANT | kw::REVOKE) => self.schema_statement()?,
-            Tok::KeyWord(kw::DROP | kw::ALTER | kw::CREATE) => self.schema_manipulation()?,
+            Tok::KeyWord(kw::DROP | kw::ALTER | kw::CREATE) => self.manipulation()?,
             // [ISO/IEC 9075:1992 §20.1] a <temporary table declaration>
             // is a <direct SQL data statement>.
             Tok::KeyWord(kw::DECLARE) => return self.declare_statement(),

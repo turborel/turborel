@@ -52,15 +52,15 @@ fn tables_and_columns_are_described_21_2_7() {
     let db = catalog();
     let (owner, other) = (db.session("S"), db.session("R"));
     let tables = "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES \
-                  WHERE TABLE_SCHEMA <> 'INFORMATION_SCHEMA' ORDER BY TABLE_SCHEMA DESC, TABLE_NAME";
+                  WHERE TABLE_SCHEMA NOT IN ('INFORMATION_SCHEMA', 'FT_INFORMATION_SCHEMA') ORDER BY TABLE_SCHEMA DESC, TABLE_NAME";
     assert_eq!(seen(&owner, tables), ["S|ALL_P|VIEW", "S|BIG|VIEW", "S|C|BASE TABLE", "S|P|BASE TABLE"]);
     assert_eq!(seen(&other, tables), ["S|BIG|VIEW", "S|C|BASE TABLE", "S|P|BASE TABLE", "R|MINE|BASE TABLE"], "by its privileges");
     assert_eq!(seen(&db.session("NOBODY"), tables), ["S|P|BASE TABLE"], "PUBLIC's");
     let own = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'INFORMATION_SCHEMA'";
     assert_eq!(
         seen(&db.session("NOBODY"), own),
-        ["74"],
-        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 7 of structured types, the 9 of roles, the 6 of triggers, the 5 of modules, the 3 of registered XML Schemas, TABLE_OPTIONS, PERIODS, INDEXES, INDEX_OPTIONS, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS and ASSERTION_TOTALS"
+        ["80"],
+        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 7 of structured types, the 9 of roles, the 6 of triggers, the 5 of modules, the 3 of registered XML Schemas, TABLE_OPTIONS, PERIODS, INDEXES, INDEX_OPTIONS, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS, ASSERTION_TOTALS the 4 of embedding models and pipelines and the 2 of vectors"
     );
     assert_eq!(
         seen(&owner, "SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.SCHEMATA"),

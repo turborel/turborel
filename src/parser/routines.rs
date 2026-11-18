@@ -42,7 +42,7 @@ pub(super) const CALL: &str = "CALL";
 /// RETURN: no SQL-92 key word, so a word [ISO/IEC 9075-2:2023 §16.2].
 pub(super) const RETURN: &str = "RETURN";
 /// RETURNS, of a `<returns clause>` and of RETURNS NULL ON NULL INPUT.
-const RETURNS: &str = "RETURNS";
+pub(super) const RETURNS: &str = "RETURNS";
 /// OUT, a `<parameter mode>`.
 pub(super) const OUT: &str = "OUT";
 /// INOUT, a `<parameter mode>`.
@@ -158,7 +158,8 @@ impl Parser {
     /// Whether an `<SQL-invoked routine>` begins here: CREATE, then
     /// FUNCTION or PROCEDURE.
     pub(super) fn next_is_routine(&self) -> bool {
-        self.is_kw(kw::CREATE) && (self.next_is_kw(kw::PROCEDURE) || matches!(self.peek_at(1), Tok::Identifier(w) if w == FUNCTION))
+        let routine = self.next_is_kw(kw::PROCEDURE) || matches!(self.peek_at(1), Tok::Identifier(w) if w == FUNCTION);
+        (self.is_kw(kw::CREATE) && routine) || self.next_is_distance_function()
     }
 
     /// [ISO/IEC 9075-2:2023 §11.60] `<SQL-invoked routine>` of an SQL
@@ -176,6 +177,9 @@ impl Parser {
     /// `<SQL-invoked procedure>` or `<SQL-invoked function>`, from
     /// PROCEDURE or FUNCTION, its text from `start`.
     pub(super) fn invoked_routine(&mut self, start: usize) -> Result<RoutineDefinition> {
+        if self.is_word(super::vectors::VECTOR) {
+            return self.distance_function(start);
+        }
         let kind = if self.accept_kw(kw::PROCEDURE) {
             RoutineKind::Procedure
         } else {
@@ -213,16 +217,22 @@ impl Parser {
             deterministic: traits.deterministic,
             access: traits.access,
             null_call: traits.null_call,
+            new_savepoint_level: traits.new_savepoint_level,
             body,
             text: self.text_from(start),
             body_text,
+            distance: None,
         })
     }
 
     /// `<SQL parameter declaration list>` ::= ( \[`<SQL parameter
     /// declaration>` \[{, ...}...\]\] ), of a `kind`, no two names
     /// equivalent \[SR15\].
-    fn parameter_declaration_list(&mut self, kind: RoutineKind, sql_only: &mut Option<SqlError>) -> Result<Vec<ParameterDeclaration>> {
+    pub(super) fn parameter_declaration_list(
+        &mut self,
+        kind: RoutineKind,
+        sql_only: &mut Option<SqlError>,
+    ) -> Result<Vec<ParameterDeclaration>> {
         self.expect_delim(delim::LEFT_PAREN)?;
         let mut parameters: Vec<ParameterDeclaration> = Vec::new();
         if self.accept_delim(delim::RIGHT_PAREN) {

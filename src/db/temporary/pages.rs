@@ -28,6 +28,8 @@ pub(crate) struct Place {
     pub(crate) budget: Arc<MemoryBudget>,
     pub(crate) work: Arc<WorkAreas>,
     pub(crate) bytes: usize,
+    /// The rankings a full-text index of it may name (RULES.md D87).
+    pub(crate) rankings: crate::fulltext::rank::Rankings,
 }
 
 /// \[DESIGN\] An instance's pages: none until first needed, then a

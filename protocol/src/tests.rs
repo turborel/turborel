@@ -298,7 +298,7 @@ fn later_types_and_values_read_back_as_written() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.2, §4.2.3] [DESIGN] RULES.md
-/// D42, D86: XML types read back with their modifiers, of XMLSCHEMA with
+/// D42, D106: XML types read back with their modifiers, of XMLSCHEMA with
 /// the registered XML Schema, namespace and element they indicate [§6.1
 /// GR1], and XML values as their serialization, the text a value held in
 /// its tree is serialized to; `row_size` is the bytes each row takes.

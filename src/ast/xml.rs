@@ -3,7 +3,7 @@
 //! [§6.11], XMLCONCAT [§6.12], XMLDOCUMENT [§6.13], XMLELEMENT [§6.14],
 //! XMLFOREST [§6.15], XMLPARSE [§6.16], XMLPI [§6.17], XMLSERIALIZE [§6.8]
 //! and XMLTEXT [§6.19]; and \[EXTENSION\] XMLMAP, the mappings of a table, a
-//! schema or the catalog to XML [§9.11, §9.14, §9.17] (RULES.md D86); and \[EXTENSION\] the
+//! schema or the catalog to XML [§9.11, §9.14, §9.17] (RULES.md D106); and \[EXTENSION\] the
 //! definition of a registered XML Schema [§4.2.6].
 
 mod query;
@@ -153,7 +153,7 @@ pub struct ForestConstructor {
     pub returning: Option<Returning>,
 }
 
-/// \[EXTENSION\] `<XML map source>`: what XMLMAP maps (RULES.md D86).
+/// \[EXTENSION\] `<XML map source>`: what XMLMAP maps (RULES.md D106).
 #[derive(Debug, Clone)]
 pub enum MapSource {
     /// TABLE `<table name>`: the query of its rows, `SELECT * FROM` it
@@ -180,7 +180,7 @@ pub enum MapResults {
 
 /// \[EXTENSION\] `<XML map>` ::= XMLMAP ( `<XML map source>` \[`<XML map
 /// nulls>`\] \[`<XML map form>`\] \[`<XML map target namespace>`\]
-/// \[`<XML map results>`\] \[`<XML map encoding>`\] ) (RULES.md D86).
+/// \[`<XML map results>`\] \[`<XML map encoding>`\] ) (RULES.md D106).
 #[derive(Debug, Clone)]
 pub struct XmlMapping {
     /// What is mapped.

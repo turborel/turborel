@@ -36,8 +36,8 @@ pub(crate) const MERGE: &str = "MERGE";
 /// begins, not a query: TRUNCATE, then TABLE, or MERGE, then INTO, each
 /// reserved, which no table's name is followed by in a `<joined table>`;
 /// CALL, then a name, or RETURN [ISO/IEC 9075-2:2023 §16.1, §16.2], as a
-/// statement is read (`at_call`, `at_return`); SIGNAL, RESIGNAL, or a
-/// label.
+/// statement is read (`at_call`, `at_return`); SIGNAL, RESIGNAL, a
+/// label, or a savepoint's statement [§17.5, §17.6].
 pub(crate) fn begins_word_statement(first: Option<&Tok>, second: Option<&Tok>) -> bool {
     let merge = matches!((first, second), (Some(Tok::Identifier(w)), Some(Tok::KeyWord(kw::INTO | kw::WITH))) if w == MERGE);
     let call = matches!((first, second), (Some(Tok::Identifier(w)), Some(Tok::Identifier(_) | Tok::KeyWord(_))) if w == CALL);
@@ -54,6 +54,7 @@ pub(crate) fn begins_word_statement(first: Option<&Tok>, second: Option<&Tok>) -
         || signal
         || labelled
         || super::locators::begins_locator_statement(first, second)
+        || super::savepoints::begins_savepoint_statement(first, second)
 }
 
 impl Parser {
@@ -106,7 +107,8 @@ impl Parser {
 
     /// The statement a word, no key word, begins, if one does, read to its
     /// end: \[EXTENSION\] CANCEL CONNECTION (`parser/served.rs`),
-    /// TRUNCATE TABLE, or MERGE INTO (`parser/merge.rs`).
+    /// TRUNCATE TABLE, MERGE INTO (`parser/merge.rs`), or SAVEPOINT or
+    /// RELEASE SAVEPOINT (`parser/savepoints.rs`).
     pub(super) fn word_statement(&mut self) -> Result<Option<SqlStatement>> {
         let stmt = if self.at_cancel_connection() {
             self.served_statement()?
@@ -124,6 +126,8 @@ impl Parser {
             self.pipe_row()?
         } else if self.at_locator_statement() {
             self.locator_statement()?
+        } else if self.at_savepoint_statement() {
+            self.savepoint_statement()?
         } else {
             return Ok(None);
         };

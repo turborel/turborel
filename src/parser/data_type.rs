@@ -12,7 +12,8 @@ use crate::lexer::{Tok, delim, kw};
 use crate::value::Spelled;
 use crate::value::lob::{LobKind, MAX_LOB_LENGTH};
 use crate::value::types::{
-    BIGINT_NAME, BINARY_NAME, BLOB_NAME, BOOLEAN_NAME, CLOB_NAME, DECFLOAT_NAME, LARGE_NAME, NCLOB_NAME, OBJECT_NAME, VARBINARY_NAME,
+    BIGINT_NAME, BINARY_NAME, BLOB_NAME, BOOLEAN_NAME, CLOB_NAME, DECFLOAT_NAME, JSON_NAME, LARGE_NAME, NCLOB_NAME, OBJECT_NAME,
+    VARBINARY_NAME,
 };
 use crate::value::{
     BIGINT_PRECISION, CharUnits, DEFAULT_DECFLOAT_PRECISION, DEFAULT_EXACT_PRECISION, DOUBLE_PRECISION, DataType, INTEGER_PRECISION,
@@ -85,6 +86,11 @@ impl Parser {
         if self.at_boolean_type() {
             self.advance();
             return Ok(Some(DataType::Boolean));
+        }
+        // [ISO/IEC 9075-2:2023 §6.1] `<JSON type>` ::= JSON (Feature T801).
+        if self.at_json_type() {
+            self.advance();
+            return Ok(Some(DataType::Json));
         }
         // [SR30] BIGINT, exact of scale 0 and of a precision no smaller
         // than INTEGER's.
@@ -247,6 +253,14 @@ impl Parser {
     /// identifier, and a domain cannot be named BOOLEAN.
     pub(super) fn at_boolean_type(&self) -> bool {
         matches!(self.peek(), Tok::Identifier(name) if name == BOOLEAN_NAME)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §6.1] Whether `<JSON type>` ::= JSON is next,
+    /// read as an identifier as BOOLEAN is; not JSON ( ), `<JSON parse>`
+    /// [§6.40].
+    pub(super) fn at_json_type(&self) -> bool {
+        let named = matches!(self.peek(), Tok::Identifier(name) if name == JSON_NAME);
+        named && !matches!(self.peek_at(1), Tok::Delimiter(d) if *d == delim::LEFT_PAREN)
     }
 
     /// [ISO/IEC 9075-2:2023 §6.1] Whether the `<exact numeric type>`

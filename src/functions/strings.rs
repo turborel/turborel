@@ -118,6 +118,7 @@ pub(super) fn character(name: &str, t: &DataType) -> Result<u32> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => fail(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §6.7, §6.13] {name} takes a character string, not {t}")),
     }
@@ -153,6 +154,7 @@ fn binary_string(t: &DataType) -> Option<(u32, bool)> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => None,
     }
@@ -181,6 +183,7 @@ fn integer(name: &str, t: &DataType) -> Result<()> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => fail(
             Code::SyntaxRule,
@@ -207,6 +210,7 @@ pub(super) fn text(v: &Value) -> Result<Option<&str>> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_)
         | Value::Xml(_) => fail(Code::Api, "[DESIGN] a string function was given a value not a character string"),
     }
@@ -238,6 +242,7 @@ pub(super) fn whole(v: Option<&Value>) -> Result<Option<i128>> {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_)
             | Value::Xml(_),
         ) => not_integer(),
@@ -495,6 +500,12 @@ impl ScalarFunction for Fold {
             character(self.name(), s)?;
         }
         Ok(s.clone())
+    }
+    /// \[EXTENSION\] Of a character string not a large object, which it
+    /// folds in place, a letter at a time: no error (RULES.md D92).
+    fn index_safe(&self, args: &[crate::index::expression::KeyArgument<'_>]) -> bool {
+        let [one] = args else { return false };
+        one.data_type.is_some_and(|t| t.is_character() && !t.is_lob())
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         self.call_with(args, None)

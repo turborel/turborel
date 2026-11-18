@@ -1,6 +1,6 @@
 //! Mutations of XMLMAP, the mappings of tables, schemas and the catalog
 //! to XML and to XML Schema documents, and of SQL data types to XML
-//! Schema data types (RULES.md R-TEST-9, D86).
+//! Schema data types (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 

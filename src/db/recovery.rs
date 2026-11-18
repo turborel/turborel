@@ -38,12 +38,14 @@
 //! idempotent, so recovering again after a crash during recovery gives the
 //! same result.
 
+mod analysis;
 mod changes;
 mod stale;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use analysis::Analysis;
 pub(super) use changes::Touched;
 use changes::{RowChange, decode_change, encode_change};
 
@@ -72,17 +74,26 @@ pub(super) enum Definitions {
 }
 
 /// How reading the log replays definitions: which (`Definitions`), and
-/// those each transaction made, until its commit record makes them, or its
-/// abort record forgets them; and the large objects of a transaction that
-/// made definitions, kept until them, as the table of one may be among
-/// them (RULES.md D79).
+/// those each transaction made, each with its place in the log, until its
+/// commit record makes them, or its abort record forgets them; and the
+/// large objects of a transaction that made definitions, kept until them,
+/// as the table of one may be among them (RULES.md D79).
 struct Replaying {
     definitions: Definitions,
-    pending: HashMap<TxId, Vec<Change>>,
+    pending: HashMap<TxId, Vec<(Lsn, Change)>>,
     lobs: HashMap<TxId, Vec<(Lsn, Change)>>,
 }
 
 impl Replaying {
+    /// [ISO/IEC 9075-2:2023 §17.8 GR3d] Forgets the definitions `tx` made
+    /// from `from` on: a failed statement, or a rollback to a savepoint,
+    /// cancelled them.
+    fn cancel(&mut self, tx: TxId, from: Lsn) {
+        if let Some(made) = self.pending.get_mut(&tx) {
+            made.retain(|(at, _)| *at < from);
+        }
+    }
+
     /// Whether a definition made at `lsn` is replayed.
     fn replays(&self, lsn: Lsn) -> bool {
         match self.definitions {
@@ -143,80 +154,6 @@ fn take_back(index: &dyn Index, key: &Key, row: RowId) -> Result<()> {
 /// each need nothing.
 fn current(st: &State, change: &RowChange) -> bool {
     st.catalog.table(&change.table).is_some_and(|t| t.generation == change.generation)
-}
-
-/// What analysis found.
-#[derive(Default)]
-struct Analysis {
-    /// Each transaction committed, and where its commit record is.
-    committed: HashMap<TxId, Lsn>,
-    /// Each transaction rolled back, and where its abort record is.
-    rolled_back: HashMap<TxId, Lsn>,
-    /// For each transaction, the ranges of positions its undone statements
-    /// cancelled: from the statement's first change to its undo record.
-    cancelled: HashMap<TxId, Vec<(Lsn, Lsn)>>,
-    transactions: HashSet<TxId>,
-    /// The highest transaction id or timestamp read.
-    highest: u64,
-}
-
-impl Analysis {
-    fn note(&mut self, lsn: Lsn, record: &Record) {
-        self.highest = self.highest.max(record.tx);
-        match &record.change {
-            Change::Commit { at } => {
-                self.highest = self.highest.max(*at);
-                self.committed.insert(record.tx, lsn);
-                self.transactions.insert(record.tx);
-            }
-            Change::StatementUndone { from } => self.cancelled.entry(record.tx).or_default().push((*from, lsn)),
-            // A transaction counts once it changed a row or ended; one that
-            // only defined an index does neither.
-            Change::Abort => {
-                self.rolled_back.insert(record.tx, lsn);
-                self.transactions.insert(record.tx);
-            }
-            Change::Insert { .. } | Change::Update { .. } | Change::Delete { .. } | Change::LobPut { .. } => {
-                self.transactions.insert(record.tx);
-            }
-            Change::Schema { .. }
-            | Change::CreateIndex { .. }
-            | Change::DropIndex { .. }
-            | Change::AlterIndex { .. }
-            | Change::Drop { .. }
-            | Change::AlterTable { .. }
-            | Change::Defined { .. }
-            | Change::Setting { .. }
-            | Change::User { .. }
-            | Change::Owner { .. }
-            | Change::RoleCreator { .. }
-            | Change::Reconfiguration { .. }
-            | Change::Sequence { .. }
-            | Change::Checkpoint
-            | Change::Stale { .. }
-            | Change::LobStale { .. } => {}
-        }
-    }
-
-    /// Where the undone statement that cancelled `change` was undone, if
-    /// one did.
-    fn cancelled_at(&self, change: &RowChange) -> Option<Lsn> {
-        let ranges = self.cancelled.get(&change.tx)?;
-        ranges.iter().find(|&&(from, to)| from <= change.lsn && change.lsn < to).map(|&(_, to)| to)
-    }
-
-    /// Whether `change` stands: its transaction committed, and no undone
-    /// statement cancelled it.
-    fn stands(&self, change: &RowChange) -> bool {
-        self.committed.contains_key(&change.tx) && self.cancelled_at(change).is_none()
-    }
-
-    /// Where a change that does not stand was undone as the database ran:
-    /// its statement's undo record, or its transaction's abort record;
-    /// `None` if a crash interrupted it.
-    fn undone_at(&self, change: &RowChange) -> Option<Lsn> {
-        self.cancelled_at(change).or_else(|| self.rolled_back.get(&change.tx).copied())
-    }
 }
 
 impl Database {
@@ -336,7 +273,7 @@ impl Database {
                 None
             }
             definition @ (Change::Drop { .. } | Change::AlterTable { .. } | Change::Defined { .. }) => {
-                replaying.pending.entry(tx).or_default().push(definition);
+                replaying.pending.entry(tx).or_default().push((lsn, definition));
                 None
             }
             Change::Commit { .. } => {
@@ -352,7 +289,11 @@ impl Database {
                 self.kept_at((lsn, tx), kept, replaying)?;
                 None
             }
-            Change::StatementUndone { .. } | Change::Checkpoint => None,
+            Change::StatementUndone { from } => {
+                replaying.cancel(tx, from);
+                None
+            }
+            Change::Checkpoint => None,
         })
     }
 
@@ -361,7 +302,7 @@ impl Database {
     fn committed(&self, (lsn, tx): (Lsn, TxId), replaying: &mut Replaying, report: &mut RecoveryReport) -> Result<()> {
         let made = replaying.pending.remove(&tx).unwrap_or_default();
         if replaying.replays(lsn) {
-            for definition in &made {
+            for (_, definition) in &made {
                 self.replay_definition(definition)?;
                 report.definitions = report.definitions.saturating_add(1);
             }
@@ -383,7 +324,7 @@ impl Database {
         report: &mut RecoveryReport,
     ) -> Result<()> {
         if tx != NO_TRANSACTION && matches!(definition, Change::Schema { .. }) {
-            replaying.pending.entry(tx).or_default().push(definition);
+            replaying.pending.entry(tx).or_default().push((lsn, definition));
         } else if replaying.replays(lsn) {
             self.replay_definition(&definition)?;
             report.definitions = report.definitions.saturating_add(1);
@@ -397,7 +338,7 @@ impl Database {
         self.change(|st| {
             match change {
                 Change::Schema { sql, owner, engines, zone, epochs } => st.reschema((sql, owner, *zone), engines, None, epochs)?.discard(),
-                Change::CreateIndex { name, table, columns, method, options } => {
+                Change::CreateIndex { name, table, columns, method, options, expressions } => {
                     let spec = IndexSpec {
                         name: name.clone(),
                         table: table.clone(),
@@ -405,6 +346,7 @@ impl Database {
                         method: method.clone(),
                         options: options.clone(),
                         nulls: false,
+                        expressions: expressions.clone(),
                     };
                     st.create_index(&spec)?;
                 }
@@ -500,10 +442,12 @@ impl State {
         for ix in indexes {
             let method =
                 self.methods.get(&ix.method).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no index method {}", ix.method)))?;
-            let types = self.catalog.table(&ix.table).and_then(|t| ix.key_types(t));
-            let types =
-                types.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] index {} is on a column its table lacks", ix.name)))?;
-            let index = method.create(&types)?;
+            let found = self.catalog.table(&ix.table).and_then(|t| ix.key_types(t).map(|types| (t, types)));
+            let (table, types) =
+                found.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] index {} is on a column its table lacks", ix.name)))?;
+            // Made as CREATE INDEX made it, its options and its table's
+            // read again (RULES.md D41).
+            let index = method.create_on(&types, (table, &ix))?;
             self.load_index(&*index, &ix, Timestamp::MAX)?;
             self.indexes.insert(ix.name.clone(), Arc::from(index));
         }
@@ -579,7 +523,7 @@ impl State {
     /// readers may still see: keys the index does not hold left out
     /// (`IndexDesc::holds`).
     fn entries_for<'a>(&self, ix: &'a IndexDesc, as_of: Timestamp) -> Result<impl Iterator<Item = Result<(Key, RowId)>> + 'a> {
-        let versions = Arc::clone(self.storage_of(&ix.table)?).versions(self.tx.horizon(), as_of, &ix.columns);
+        let versions = Arc::clone(self.storage_of(&ix.table)?).versions(self.tx.horizon(), as_of, &ix.reads());
         Ok(versions.filter_map(move |read| {
             let keyed = read.and_then(|(id, row)| {
                 let key = ix

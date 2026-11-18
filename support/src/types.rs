@@ -102,6 +102,7 @@ impl SqlType for Ident {
             | Value::Multiset(_)
             | Value::Structured(_)
             | Value::Reference(_)
+            | Value::Json(_)
             | Value::Row(_) => Err(mismatch(&v)),
         }
     }

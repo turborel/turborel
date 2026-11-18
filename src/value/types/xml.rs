@@ -1,5 +1,5 @@
 //! [ISO/IEC 9075-14:2006 draft §4.2, §6.1] The XML types, whose values
-//! are `Value::Xml` (RULES.md D86).
+//! are `Value::Xml` (RULES.md D106).
 //!
 //! XML values are not comparable [§4.2.4]: no equality, grouping or
 //! ordering operation takes one [§10.8 to §10.11], so none compares,
@@ -138,7 +138,7 @@ impl SqlType for XmlKind {
     }
 
     /// \[EXTENSION\] Its serialization as CONTENT, as it is shown (RULES.md
-    /// D86); if it has none, a word saying so.
+    /// D106); if it has none, a word saying so.
     fn text(&self, v: &Value) -> String {
         let Value::Xml(x) = v else { return v.to_string() };
         x.text().unwrap_or_else(|_| "(an XML value with no serialization)".to_owned())

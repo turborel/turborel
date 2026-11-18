@@ -1,7 +1,7 @@
 //! The table XQuery's functions on strings read,
 //! `src/xquery/library/unicode13.bin`, made from Unicode 13.0's
 //! `UnicodeData.txt`, `CompositionExclusions.txt` and `SpecialCasing.txt`
-//! (RULES.md D3, D86): each character's canonical combining class, its
+//! (RULES.md D3, D106): each character's canonical combining class, its
 //! full canonical and full compatibility decompositions, its full upper
 //! and lower case, and the primary composites \[UAX #15 §1.3\].
 //!

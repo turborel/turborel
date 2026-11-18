@@ -158,6 +158,7 @@ pub(super) fn named(t: &DataType, catalog: &str, depth: usize) -> Result<Option<
         | DataType::Interval(_)
         | DataType::Structured(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Extension(_) => predefined_name(t),
     })
 }
@@ -204,6 +205,7 @@ fn predefined_name(t: &DataType) -> Option<String> {
         | DataType::Distinct(_)
         | DataType::Structured(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Xml(_)
         | DataType::Extension(_) => return None,
     })
@@ -312,6 +314,7 @@ pub fn named_type(d: &Declared, catalog: &str, encoding: BinaryEncoding, nulls: 
         | DataType::Interval(_)
         | DataType::Structured(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Extension(_) => restriction(t, encoding).map(|r| format!(r#"<xs:simpleType name="{name}">{r}</xs:simpleType>"#)),
     })
 }

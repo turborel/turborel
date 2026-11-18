@@ -147,6 +147,10 @@ pub(in crate::db) const CREATE_ROLE: Command = command("CREATE ROLE", 61);
 pub(in crate::db) const REVOKE_ROLE: Command = command("REVOKE ROLE", 129);
 /// `<rollback statement>`.
 pub(in crate::db) const ROLLBACK_WORK: Command = command("ROLLBACK WORK", 62);
+/// `<release savepoint statement>`.
+pub(in crate::db) const RELEASE_SAVEPOINT: Command = command("RELEASE SAVEPOINT", 57);
+/// `<savepoint statement>`.
+pub(in crate::db) const SAVEPOINT: Command = command("SAVEPOINT", 63);
 /// `<schema definition>`.
 pub(in crate::db) const CREATE_SCHEMA: Command = command("CREATE SCHEMA", 64);
 /// `<select statement: single row>`.
@@ -307,7 +311,17 @@ pub(in crate::db) const EXPLAIN: Command = command("EXPLAIN", -14);
 pub(in crate::db) const COPY_DESCRIPTOR: Command = command("COPY DESCRIPTOR", -15);
 /// [ISO/IEC 9075-2:2023 §20.28] PIPE ROW, which Table 39 has no row for.
 pub(in crate::db) const PIPE_ROW: Command = command("PIPE ROW", -16);
+/// \[EXTENSION\] CREATE EMBEDDING MODEL.
+pub(in crate::db) const CREATE_EMBEDDING_MODEL: Command = command("CREATE EMBEDDING MODEL", -17);
+/// \[EXTENSION\] ALTER EMBEDDING MODEL.
+pub(in crate::db) const ALTER_EMBEDDING_MODEL: Command = command("ALTER EMBEDDING MODEL", -18);
+/// \[EXTENSION\] DROP EMBEDDING MODEL.
+pub(in crate::db) const DROP_EMBEDDING_MODEL: Command = command("DROP EMBEDDING MODEL", -19);
+/// \[EXTENSION\] CREATE VECTOR PIPELINE.
+pub(in crate::db) const CREATE_VECTOR_PIPELINE: Command = command("CREATE VECTOR PIPELINE", -20);
+/// \[EXTENSION\] DROP VECTOR PIPELINE.
+pub(in crate::db) const DROP_VECTOR_PIPELINE: Command = command("DROP VECTOR PIPELINE", -21);
 /// \[EXTENSION\] CREATE XML SCHEMA [ISO/IEC 9075-14:2006 draft §4.2.6].
-pub(in crate::db) const CREATE_XML_SCHEMA: Command = command("CREATE XML SCHEMA", -17);
+pub(in crate::db) const CREATE_XML_SCHEMA: Command = command("CREATE XML SCHEMA", -22);
 /// \[EXTENSION\] DROP XML SCHEMA [ISO/IEC 9075-14:2006 draft §4.2.6].
-pub(in crate::db) const DROP_XML_SCHEMA: Command = command("DROP XML SCHEMA", -18);
+pub(in crate::db) const DROP_XML_SCHEMA: Command = command("DROP XML SCHEMA", -23);

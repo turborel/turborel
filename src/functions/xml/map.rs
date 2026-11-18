@@ -2,7 +2,7 @@
 //! §9.4 to §9.17]: SQL data types and domains, each to its XML Name and
 //! to the XML Schema data type an XML Schema document defines of it
 //! (`map/types.rs`); and \[EXTENSION\] XMLMAP's
-//! functions (RULES.md D86), a table, a schema or the catalog mapped to an
+//! functions (RULES.md D106), a table, a schema or the catalog mapped to an
 //! XML Schema document and to XML [§9.11, §9.14, §9.17]: each row written
 //! by a function of its values, the data of all the rows by a set
 //! function (`map/rows.rs`, `map/data.rs`), and the XML Schema document by
@@ -106,7 +106,7 @@ pub enum Source {
     Catalog(Vec<(String, Vec<Table>)>),
 }
 
-/// \[EXTENSION\] XMLMAP's function (RULES.md D86): of the data the set
+/// \[EXTENSION\] XMLMAP's function (RULES.md D106): of the data the set
 /// function of its tables' rows wrote, if DATA and a table is read, else
 /// of nothing, the mapping's XML Schema document, its data, or both.
 #[derive(Debug)]

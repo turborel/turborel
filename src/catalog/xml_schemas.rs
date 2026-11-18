@@ -4,7 +4,7 @@
 //! registered with, the registered XML Schemas whose documents it
 //! includes, redefines or imports, and the USAGE granted on it [§4.7.1].
 //!
-//! \[DESIGN\] RULES.md D86: the document is kept as its text, and the
+//! \[DESIGN\] RULES.md D106: the document is kept as its text, and the
 //! schema it is read into (`xml::schema::Schema`) is made again from it
 //! when the catalog is read, with the documents of those it uses, so the
 //! catalog stores nothing derived. Whether the schema, a namespace or a
@@ -65,6 +65,7 @@ pub fn xml_schemas_of(t: &DataType) -> Vec<QualifiedName> {
             | DataType::Interval(_)
             | DataType::Structured(_)
             | DataType::Reference(_)
+            | DataType::Json
             | DataType::Extension(_) => {}
         }
     }

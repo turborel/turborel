@@ -38,7 +38,8 @@ impl Parser {
             };
             // Numbered by the ones before it in the text, so one read again
             // as the parser backtracks keeps its number.
-            let index = self.toks.iter().take(self.pos).filter(|t| matches!(t.tok, Tok::Delimiter(delim::QUESTION))).count();
+            let place = self.toks.iter().take(self.pos).filter(|t| matches!(t.tok, Tok::Delimiter(delim::QUESTION))).count();
+            let index = self.numbers.get(place).copied().unwrap_or(place);
             let at = self.here();
             self.advance();
             self.dynamic = Some(read.max(index.saturating_add(1)));

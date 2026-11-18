@@ -3,6 +3,8 @@
 //! an OR, chosen by cost.
 
 mod columns;
+mod json;
+mod predicate;
 mod scans;
 mod spatial;
 mod xml;
@@ -10,6 +12,7 @@ mod xml;
 use std::sync::Arc;
 
 use super::estimate::{self, Known};
+use super::expression_index::Keyed;
 use super::kept::{Place, point_probe};
 use super::probe::{Alternatives, Compared, comparisons, probes_of_any, served_by};
 use super::shown::Shown;
@@ -22,7 +25,8 @@ use crate::logical::{Cond, SortKey, and_all, filled_cond, judged_by_sets, pushed
 use crate::storage::{TableStorage, cost_of};
 use crate::value::{CompOp, DataType, Value};
 
-mod predicate;
+use predicate::answerable;
+pub(crate) use predicate::predicate_call;
 use predicate::{omits_rows, supports};
 
 /// \[DESIGN\] What a row an index-only scan makes of its entry costs, in
@@ -166,7 +170,7 @@ impl PhysicalPlanner<'_> {
             return filtered(plan, conds, &with);
         };
         let rows = storage.row_count();
-        // RULES.md D86: an implied filter is no condition of the rows read:
+        // RULES.md D106: an implied filter is no condition of the rows read:
         // an index may find them by it, and no row is checked by it.
         let (implied, kept): (Vec<Cond>, Vec<Cond>) = conds.into_iter().partition(xml::implied);
         conds = kept;
@@ -190,13 +194,13 @@ impl PhysicalPlanner<'_> {
                 (plan, (cost_of(rows), best.est))
             }
             Some(mut probed) => {
-                let named = predicate::named(&probed.probes);
+                let (named, keyed) = (predicate::named(&probed.probes), Keyed::of_read(self.db, read));
                 let answered = probed.answered(&mut conds);
                 // A function lookup is priced as of every row; an XML lookup by
                 // its index's count.
                 let function = named && !matches!(probed.probes.first(), Some(Probe::Xml(_)));
                 let found = if function { cost_of(rows) } else { best.est };
-                (scans::index_scans(read, probed, answered, (best.est, best.cost, best.reverse)), (found, best.est))
+                (scans::index_scans(keyed.read(read), probed, answered, (best.est, best.cost, best.reverse)), (found, best.est))
             }
         };
         let (cost, stats) = (self.db.cost(), self.db.statistics(read.table));
@@ -210,33 +214,28 @@ impl PhysicalPlanner<'_> {
         let cost = &self.db.cost();
         let sort_penalty = |est: f64, ordered: bool| if !want.is_empty() && !ordered { cost.sort(est) } else { 0.0_f64 };
         let unread = Path { total: 0.0_f64, cost: 0.0_f64, est: 0.0_f64, ordered: false, reverse: false, index: None, order: Vec::new() };
-        let (Ok(storage), Some(desc)) = (self.db.storage_of(read.table), self.db.catalog.table(read.table)) else { return unread };
-        let stats = self.db.statistics(read.table);
+        let Some((storage, (desc, indexes, keyed))) = self.planned(read.table) else { return unread };
+        let (desc, scanned, conds) = (&*desc, conds, &*keyed.substituted(conds));
+        let (stats, all) = (self.db.statistics(read.table), cost_of(storage.row_count()));
         let known = Known { stats: stats.as_deref(), cost };
-        let all = cost_of(storage.row_count());
-        // RULES.md D15: a probe reads only the rows its conjuncts select, so the
-        // other conjuncts would not be evaluated on the rest. When one of them
-        // can raise an error it must see every row: probe no index then.
-        let answerable: &[Cond] = if conds.iter().any(Cond::can_raise) { &[] } else { conds };
-        let (compared, ors) = comparisons(answerable, known, self.values);
-        if let Some(path) = want.is_empty().then(|| self.point_path(read, (answerable, &compared), known.cost)).flatten() {
+        let probed = answerable(conds);
+        let (compared, ors) = comparisons(probed, known, self.values);
+        if let Some(path) = want.is_empty().then(|| self.point_path(read, (probed, &compared), known.cost)).flatten() {
             return path;
         }
-        let (seq_cost, scanned) = scan_priced(&**storage, read.needed, &self.priced(conds));
-        // RULES.md D86: what checking the XML queries of a row costs.
+        let (seq_cost, scanned) = scan_priced(&**storage, read.needed, &self.priced(scanned));
+        // RULES.md D106: what checking the XML queries of a row costs.
         let check = xml::check_cost(conds, known.stats, cost.index_descent);
         let scan = Path { total: seq_cost + scanned * check + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread };
         let mut best = self.scan_path(&**storage, want, scan);
-        let asked = Asked { conds, answerable, implied, compared: &compared, ors: &ors, all, known };
+        let asked = Asked { conds, answerable: probed, implied, compared: &compared, ors: &ors, all, known };
         // An index being built is not read until it is (`Database::create_index`).
-        for ix in self.db.catalog.indexes(read.table).into_iter().filter(|ix| !self.db.building.contains(&ix.name)) {
+        for ix in indexes.iter().map(|ix| &**ix).filter(|ix| !self.db.building.contains(&ix.name)) {
             // [DESIGN] An index the state lacks is not a path; neither is one on
             // a column the table lacks.
             let columns: Option<Vec<_>> = ix.columns.iter().map(|&c| desc.columns.get(c)).collect();
-            let (Some(kind), Ok(found), Some(columns)) = (self.db.methods.get(&ix.method), self.db.index_of(&ix.name), columns) else {
-                continue;
-            };
-            let Some(types) = ix.key_types(desc) else { continue };
+            let (kind, found, types) = (self.db.methods.get(&ix.method), self.db.index_of(&ix.name), ix.key_types(desc));
+            let (Some(kind), Ok(found), Some(columns), Some(types)) = (kind, found, columns, types) else { continue };
             for c in self.candidates_of(ix, (&**kind, found, &types), &asked) {
                 let supported = c.probes.iter().all(|p| supports(&**kind, p, (&types, !want.is_empty())));
                 // An index that omits null keys can miss a match when a
@@ -290,6 +289,8 @@ impl PhysicalPlanner<'_> {
         let mut candidates = columns::candidates((&ix.columns, types), (&served, alternatives), (all, asked.known), kind);
         candidates.extend(predicate::candidates(asked.answerable, ix, self.values, all));
         candidates.extend(spatial::candidates(asked.conds, ix, types, self.values, all));
+        // A json index's lookups raise what a scan would of the calls it rechecks (`access/json.rs`).
+        candidates.extend(json::candidates(asked.conds, ix, types, self.values, all));
         candidates.extend(xml::candidates((asked.conds, asked.implied), ix, found, all));
         candidates.push(Candidate::one(Probe::All, (Vec::new(), 0, all, false)));
         candidates

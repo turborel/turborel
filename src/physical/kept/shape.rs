@@ -98,7 +98,8 @@ fn same_nearest(one: &Plan, other: &Plan) -> bool {
     let source = a.table == b.table && a.index == b.index && a.columns == b.columns;
     let layout = a.located == b.located && a.width == b.width && a.first == b.first;
     let call = column == other_column && argument == other_argument && same_function(function, other_function);
-    source && layout && call && a.condition.is_some() == b.condition.is_some()
+    let approximate = a.approximate == b.approximate;
+    source && layout && call && approximate && a.descending == b.descending && a.condition.is_some() == b.condition.is_some()
 }
 
 /// Whether `one` and `other` are probes of one kind, holding as many
@@ -236,7 +237,7 @@ mod tests {
         let registry = crate::functions::Registry::with_set_functions();
         let function = registry.scalar("UPPER").unwrap();
         let make = |bound, column, argument, value| Probe::Predicate {
-            predicate: Box::new(crate::index::Predicate { function: bound, column, argument }),
+            predicate: Box::new(crate::index::Predicate { function: bound, column, argument: Some(argument) }),
             value,
         };
         let one = make(function.clone(), 0, 0, int(1));

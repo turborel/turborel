@@ -5,7 +5,7 @@
 //! element built with its bindings [XQuery §3.7.4]. The other nodes'
 //! constructors are in `construct/nodes.rs`.
 //!
-//! \[DESIGN\] RULES.md D86: a direct element nested in another is built in
+//! \[DESIGN\] RULES.md D106: a direct element nested in another is built in
 //! place, in the tree of the element it is in, so nothing is copied twice;
 //! each is one level deeper, within `MAX_DEPTH`. The trees one evaluation
 //! constructs hold `xml::MAX_STORED` octets together at most.

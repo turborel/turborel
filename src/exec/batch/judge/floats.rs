@@ -30,6 +30,7 @@ fn ordering(f: f64, constant: &Value) -> Option<Ordering> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_)
         | Value::Xml(_) => compare(&Value::Approx(f), constant),
     }

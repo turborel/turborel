@@ -10,8 +10,11 @@ of a [reference type](#reference-types), or *(extension)* of a type a plug-in
 registers, written by its name and, in parentheses, one or two unsigned
 integers it takes; so may a domain.
 
-The library includes an opt-in [GEOMETRY type](spatial.md) for XY points,
-lines, polygons and collections, registered by the embedding program.
+Two such types are built in, FULLTEXT and FT_PATTERN, of
+[Full-Text Search](08-fulltext.md). A third, GEOMETRY, of XY points,
+lines, polygons and collections ([Spatial Data](10-spatial.md)), is
+registered by the server, `turboreld`, and by a program embedding the
+library that uses it.
 
 ```
 <data type> ::=
@@ -47,7 +50,7 @@ lines, polygons and collections, registered by the embedding program.
 | INTERVAL q | a span of time, of the fields its qualifier names | INTERVAL '3' DAY |
 | ROW(f t, ...) | a value of each field f, of type t | |
 | t ARRAY[n] | up to n values of type t, in order | t ARRAY is t ARRAY[65535] |
-| XML(SEQUENCE) | an XML document, fragment or sequence | XML; XML(DOCUMENT), XML(CONTENT); see [XML Values](xml.md) |
+| XML(SEQUENCE) | an XML document, fragment or sequence | XML; XML(DOCUMENT), XML(CONTENT); see [XML Values](16-xml.md) |
 
 The longest string is 32,767 characters, the longest binary string 32,767
 octets, the longest large object 4G characters or octets, an exact number holds at most 18 digits and a DECFLOAT at most
@@ -632,7 +635,7 @@ and may be elements of arrays and multisets.
 ## XML
 
 XML, XML(DOCUMENT), XML(CONTENT) and XML(SEQUENCE) hold XML documents
-and fragments of them. [XML Values](xml.md) describes them, and XMLPARSE,
+and fragments of them. [XML Values](16-xml.md) describes them, and XMLPARSE,
 XMLDOCUMENT, XMLCAST, the publishing operators and XMLSERIALIZE, which
 make and write them.
 

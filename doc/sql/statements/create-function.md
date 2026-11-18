@@ -172,8 +172,9 @@ the name. A status it leaves other than `00000` raises that SQLSTATE.
    is written. The parameters are
    named, no two the same, and have no mode. No parameter or result is
    of a domain or a row type.
-5. The body is no schema, transaction, connection, session or dynamic
-   statement, and has no host or dynamic parameter. A body of CONTAINS
+5. The body is no schema, connection, session or dynamic statement, no
+   COMMIT and no ROLLBACK but ROLLBACK TO SAVEPOINT, and has no host or
+   dynamic parameter. A body of CONTAINS
    SQL reads no table, and one of READS SQL DATA changes none, counting
    every statement a program holds.
 6. The type of each RETURN value is one the result type may store.
@@ -181,7 +182,9 @@ the name. A status it leaves other than `00000` raises that SQLSTATE.
    paragraph above lets it be.
 8. LANGUAGE is SQL. Any other language, SQL SECURITY, a parameter's
    default, RETURNS TABLE of a function of no table or descriptor
-   parameter, NO SQL and NEW SAVEPOINT LEVEL are not supported.
+   parameter and NO SQL are not supported. A function has no savepoint
+   level indication, as it always runs at a savepoint level of its own (see
+   [SAVEPOINT](savepoint.md)).
 9. The transaction is not READ ONLY.
 10. Only a polymorphic table function has a table or descriptor
     parameter, and it has a body of component procedures. Its result
@@ -415,6 +418,6 @@ SQL-86 and SQL-92 have no SQL-invoked routines.
 
 [CREATE PROCEDURE](create-procedure.md), [RETURN](return.md),
 [DROP ROUTINE](drop-routine.md), [GRANT](grant.md),
-[CREATE TYPE](create-type.md), [Information Schema](../information-schema.md),
+[CREATE TYPE](create-type.md), [Information Schema](../07-information-schema.md),
 [BEGIN](begin.md), [PIPE ROW](pipe-row.md), [COPY DESCRIPTOR](copy-descriptor.md),
 [SELECT](select.md)

@@ -7,7 +7,7 @@ use super::{FN_NAMESPACE, Library, SeqType, XQueryFunction};
 use crate::error::Code;
 use crate::xml::QName;
 
-/// Verifies: [EXTENSION] [XQuery §3.1.5] [DESIGN] RULES.md R-SAFE-3, D86:
+/// Verifies: [EXTENSION] [XQuery §3.1.5] [DESIGN] RULES.md R-SAFE-3, D106:
 /// every built-in function keeps the contract of `XQueryFunction`: its
 /// name in the `fn` namespace, its name and arity alone in the library,
 /// found by them.
@@ -27,7 +27,7 @@ fn every_builtin_keeps_the_contract() {
     assert!(library.find(&concat, 1).is_none());
 }
 
-/// Verifies: [EXTENSION] [DESIGN] RULES.md D53, D86: a function of a name
+/// Verifies: [EXTENSION] [DESIGN] RULES.md D53, D106: a function of a name
 /// and an arity the library has is refused, built in or registered, and
 /// so is one in no namespace, each SQLCODE -910; none is replaced.
 #[test]

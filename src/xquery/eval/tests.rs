@@ -223,7 +223,7 @@ fn core_functions() {
     assert_eq!(code_of("fn:count(1, 2)"), "err:XPST0017");
 }
 
-/// Verifies: [DESIGN] RULES.md D44, D86: an evaluation looks whether its
+/// Verifies: [DESIGN] RULES.md D44, D106: an evaluation looks whether its
 /// statement was cancelled as each tuple of a FLWOR expression is made,
 /// and fails with the cancellation's error.
 #[test]

@@ -73,6 +73,9 @@ impl State {
             None => None,
         };
         let generated = def.generated.as_ref().map(|g| generated_of(table, (names, data_type.clone()), g)).transpose()?;
+        if let Some(Generated::Expression(Generation { asynchronous: true, .. })) = &generated {
+            self.embedders.watch();
+        }
         Ok(ColumnDesc { name: def.name.clone(), data_type, not_null: false, default, domain, collation, generated })
     }
 
@@ -240,8 +243,9 @@ fn generated_of(table: &QualifiedName, (names, t): (&str, DataType), g: &ColumnG
             }
             Ok(Generated::Identity(Identity { always: *always, sequence: generator(table.clone(), t, options, *at)? }))
         }
-        ColumnGeneration::Expression { text, .. } => {
-            Ok(Generated::Expression(Generation { text: text.clone(), names: names.to_owned(), horizon: Horizon::default() }))
+        ColumnGeneration::Expression { text, asynchronous, .. } => {
+            let (text, names, asynchronous) = (text.clone(), names.to_owned(), *asynchronous);
+            Ok(Generated::Expression(Generation { text, names, horizon: Horizon::default(), asynchronous }))
         }
         // [§11.4 SR6b] DATE or a timestamp type.
         ColumnGeneration::SystemTime { end, at } => {

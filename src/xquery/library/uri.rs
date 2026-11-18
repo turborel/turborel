@@ -2,7 +2,7 @@
 //! relative URI reference against a base URI by the algorithm of [RFC
 //! 3986 §5.2], one [XQueryFO §8.1] names.
 //!
-//! \[DESIGN\] RULES.md D86: a reference is split into its five components
+//! \[DESIGN\] RULES.md D106: a reference is split into its five components
 //! as [RFC 3986 Appendix B] splits a well-formed one, a scheme only if it
 //! is one [RFC 3986 §3.1]; resolution is strict, a reference with a scheme
 //! returned as it is. Every string is a lexical form of `xs:anyURI` here

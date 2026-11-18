@@ -216,6 +216,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(read_ahead());
     all.push(log_durability());
     all.extend(later());
+    all.extend(super::vector::vector());
     all
 }
 
@@ -230,9 +231,9 @@ fn switches() -> [Definition; 2] {
             "Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is written, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint, the database closing, or LOG.SYNC_AFTER_MS passing.",
         ),
         defined(
-            ("SQL.FUNCTION_CALLS", Kind::Choice(SWITCHES), text(OFF)),
+            ("SQL.FUNCTION_CALLS", Kind::Choice(SWITCHES), text(ON)),
             SESSION,
-            "Whether a statement may call a function by the syntax NAME(arguments), which the standards do not have: ON; or refuses it, as SQL does, OFF.",
+            "Whether a statement may call a function the program registered, of no schema, by NAME(arguments): ON; or takes calls of the schema's own functions alone, as SQL does, OFF.",
         ),
     ]
 }

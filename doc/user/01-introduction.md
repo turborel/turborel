@@ -38,4 +38,5 @@ on: schemas, tables, privileges. Then a chapter each of querying,
 changing data, transactions, constraints, dates and times, temporary
 tables, and errors. Each chapter shows SQL as typed to the client, and
 what it gives back; the [SQL Reference](../sql/README.md) gives each
-statement whole.
+statement whole. Text searched by its words, and shapes on a map, have
+guides of their own in [Specialized Data](../data/README.md).

@@ -15,9 +15,10 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use super::super::super::area::commands;
+use super::super::super::savepoints::{Level, none_named};
 use super::super::super::{Completion, Session, State, StatementContext};
 use super::{Hosted, diagnostics, step_command};
-use crate::ast::{FetchOrientation, SqlStatement};
+use crate::ast::{FetchOrientation, SavepointStatement, SqlStatement};
 use crate::error::{Result, SqlError};
 use crate::exec::{Host, rows};
 use crate::logical::{Contained, Cursor, Leaf, Step};
@@ -96,6 +97,27 @@ impl<'s, 'c> SessionHost<'s, 'c> {
     }
 }
 
+impl SessionHost<'_, '_> {
+    /// [ISO/IEC 9075-2:2023 §17.5, §17.6, §17.8] The savepoint's statement
+    /// `s` of an SQL control statement run directly: SAVEPOINT in a
+    /// transaction begun if none is active, which RELEASE and ROLLBACK TO
+    /// need; its state taken anew after, as ROLLBACK TO may cancel changes
+    /// of definitions.
+    fn savepoint(&mut self, s: &SavepointStatement) -> Result<Completion> {
+        let active = match &self.context {
+            Context::Own { tx, .. } => tx.borrow().is_some(),
+            Context::Within(_) => true,
+        };
+        if !active && !matches!(s, SavepointStatement::Establish(_)) {
+            return Err(none_named(s));
+        }
+        let session = self.session;
+        let done = self.with(|cx| session.savepoint_statement(cx, s, false));
+        self.refreshed()?;
+        done
+    }
+}
+
 /// Whether `stmt` changes a definition, so the statements after it see a
 /// new state.
 fn defines(stmt: &SqlStatement) -> bool {
@@ -125,16 +147,19 @@ impl Host for SessionHost<'_, '_> {
     }
 
     fn run(&mut self, c: &Contained, frame: &mut Params) -> Result<Completion> {
-        if matches!(c.statement, SqlStatement::Commit | SqlStatement::Rollback) {
-            return self.end_transaction(matches!(c.statement, SqlStatement::Commit));
+        if matches!(c.statement(), SqlStatement::Commit | SqlStatement::Rollback) {
+            return self.end_transaction(matches!(c.statement(), SqlStatement::Commit));
+        }
+        if let (SqlStatement::Savepoint(s), Context::Own { .. }) = (c.statement(), &self.context) {
+            return self.savepoint(s);
         }
         frame.set_routine(Arc::clone(&c.scope));
         let session = self.session;
         let ran = self.with(|cx| {
-            session.may_run(cx.st, &c.statement)?;
-            session.run_statement(cx, &c.statement, frame, None)
+            session.may_run(cx.st, c.statement())?;
+            session.run_statement(cx, c.statement(), frame, None)
         });
-        if defines(&c.statement) {
+        if defines(c.statement()) {
             self.refreshed()?;
         }
         ran
@@ -182,6 +207,14 @@ impl Host for SessionHost<'_, '_> {
                 }
             }
         }
+    }
+
+    fn open_level(&mut self, atomic: bool) {
+        self.session.open_level(if atomic { Level::Atomic } else { Level::Procedure });
+    }
+
+    fn close_level(&mut self) {
+        self.session.close_level();
     }
 
     fn begin(&mut self, step: &Step) {

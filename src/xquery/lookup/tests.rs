@@ -10,7 +10,7 @@ fn reduced(text: &str) -> Option<(String, bool)> {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §8.4 GR2] [XQuery
-/// §3.2, §3.2.4] RULES.md D86: paths of child, descendant and attribute
+/// §3.2, §3.2.4] RULES.md D106: paths of child, descendant and attribute
 /// steps over names and `*`, from the context item or `/`, `//` and
 /// `self::node()` among them, reduce to the lookup of their steps, which
 /// raises no error; a name in a namespace keeps it.
@@ -34,7 +34,7 @@ fn paths_reduce() {
 }
 
 /// Verifies: [EXTENSION] [XQuery §3.2.2, §3.5.1, §3.5.2] RULES.md D15,
-/// D86: a predicate of the last step, a relative path or its comparison
+/// D106: a predicate of the last step, a relative path or its comparison
 /// with a literal, continues the lookup: a general comparison with a
 /// string is its comparison, raising no error; with a number too, which
 /// may raise; a value comparison, or one with another literal, leaves
@@ -74,7 +74,7 @@ fn exactly(text: &str) -> Option<(String, bool, bool)> {
 }
 
 /// Verifies: [EXTENSION] [XQuery §3.2.2] [Pal et al. §3.1.2] RULES.md
-/// D15, D86: a predicate of a step before the last, of child steps after
+/// D15, D106: a predicate of a step before the last, of child steps after
 /// it, a relative path or its general comparison with a string, is the
 /// query's filter of that ancestor, and the reduction is exact if every
 /// comparison is kept and none raises; a predicate of an ancestor that may
@@ -103,7 +103,7 @@ fn ancestor_predicates_are_filters() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §8.4 GR2] RULES.md
-/// D86: a query of any other shape reduces to none: a comparison, whose
+/// D106: a query of any other shape reduces to none: a comparison, whose
 /// value is never empty; a step of another axis or a kind test; a
 /// predicate not of the last step, or two, or a positional one; a
 /// wildcard of part of a name; a prolog's variable or function; `/`

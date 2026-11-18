@@ -4,7 +4,7 @@
 //! [XQueryFO §7.6.1] (`Regex::xquery`): a newline is a line feed alone,
 //! the flags are `s`, `m`, `i` and `x` [XQueryFO §7.6.1.1].
 //!
-//! \[DESIGN\] RULES.md D86: the matcher's errors are raised as XQuery's:
+//! \[DESIGN\] RULES.md D106: the matcher's errors are raised as XQuery's:
 //! a pattern that is none err:FORX0002, flags that are none err:FORX0001,
 //! a pattern that matches the zero-length string err:FORX0003, a
 //! replacement that is none err:FORX0004. A pattern is compiled for each

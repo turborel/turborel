@@ -1,4 +1,4 @@
-//! \[DESIGN\] RULES.md D86: the stored form of an XML value, version 1,
+//! \[DESIGN\] RULES.md D106: the stored form of an XML value, version 1,
 //! in the fields of D30. It is read and written in one pass, in document
 //! order, as Pal et al. store XML: binary, streamable, its names
 //! tokenized.
@@ -33,7 +33,7 @@
 //!
 //! A node's type annotation, nilled, is-id and is-idrefs properties are
 //! kept [XQueryDM §3.3]. The annotations were added to version 1 in place,
-//! as no database of an earlier layout is read (RULES.md D86).
+//! as no database of an earlier layout is read (RULES.md D106).
 //!
 //! A node stored is copied, as storing a value copies it
 //! [ISO/IEC 9075-14:2006 draft §10.2 GR1b, §10.18]: its tree is its
@@ -51,7 +51,7 @@ use super::tree::{Annotation, Binding, Builder, ElementStart, Kind, NodeId, QNam
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 
-/// The version of the stored form (RULES.md D86).
+/// The version of the stored form (RULES.md D106).
 pub const FORMAT_VERSION: u8 = 1;
 
 // Item tags.

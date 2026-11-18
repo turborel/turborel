@@ -3,7 +3,7 @@
 //! products, quotients truncated to a number of digits, remainders, and
 //! the roundings of [XQueryFO §6.4].
 //!
-//! \[DESIGN\] RULES.md D86: a value is its sign, its digits, least
+//! \[DESIGN\] RULES.md D106: a value is its sign, its digits, least
 //! significant first, and how many of them follow the period, none zero
 //! at either end, so each value has one form. Its digits are bounded by
 //! `MAX_DIGITS`, an implementation-defined limit [XQueryFO §6.2]: an

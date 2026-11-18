@@ -182,7 +182,7 @@ pub(in crate::index::xml) fn kind(answer: &Result<bool>) -> std::result::Result<
     answer.as_ref().copied().map_err(SqlError::sqlcode)
 }
 
-/// Verifies: [EXTENSION] RULES.md D86 [XQuery §3.2, §3.2.2, §3.5.2]
+/// Verifies: [EXTENSION] RULES.md D106 [XQuery §3.2, §3.2.2, §3.5.2]
 /// [XQueryDM §6.2.3]: of 400 values made, documents and sequences of
 /// elements, each asked 40 lookups made, some filtered by a predicate of
 /// an ancestor, the answer read in one pass over the stored form is that
@@ -221,7 +221,7 @@ fn one_pass_answers_as_the_tree_does() {
     assert!(asked.iter().all(|&n| n > 30), "every answer is met often, with a filter and without: {asked:?}");
 }
 
-/// Verifies: [EXTENSION] RULES.md D86, D18: a path of no step, or of more
+/// Verifies: [EXTENSION] RULES.md D106, D18: a path of no step, or of more
 /// than `MAX_STEPS`, is refused; a value held as a large object is read
 /// whole and answered.
 #[test]
@@ -240,7 +240,7 @@ fn paths_are_bounded_and_values_read_whole() {
     assert!(!path(2).matches(&XmlValue::stored(crate::value::lob::Lob::of_octets(&stored))).unwrap());
 }
 
-/// Verifies: [EXTENSION] RULES.md D86 [XQuery §3.2.2, §3.5.2]: a node
+/// Verifies: [EXTENSION] RULES.md D106 [XQuery §3.2.2, §3.5.2]: a node
 /// selected waits for its anchor's filter: of `//a/b[../c/@x = 1]`, the
 /// first b's anchor raises as it ends, after a later b's anchor holds, and
 /// the first b, before it, answers.

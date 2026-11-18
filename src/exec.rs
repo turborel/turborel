@@ -25,6 +25,7 @@ mod group;
 mod held;
 mod invoked;
 mod join;
+mod json_table;
 mod limit;
 mod nearest;
 mod partition;
@@ -125,7 +126,14 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         // [ISO/IEC 9075-2:2023 §15.21 GR5a] the state change's rows, as given.
         Plan::Transition { .. } => transition::transition,
         // [ISO/IEC 9075-2:2023 §7.6 SR8] each row of its input with its collections' elements.
-        Plan::Unnest(..) => unnest::unnested,
+        // [ISO/IEC 9075-2:2023 §7.11] or a JSON table's rows of each.
+        Plan::Unnest(u) => {
+            if u.json.is_some() {
+                json_table::json_table
+            } else {
+                unnest::unnested
+            }
+        }
         // [ISO/IEC 9075-2:2023 §7.15] each row of its input with its window functions' values.
         Plan::Window { .. } => window::windowed,
         Plan::Recognize { .. } => pattern::recognized,

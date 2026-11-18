@@ -1,5 +1,5 @@
 //! XML values over a connection [ISO/IEC 9075-14:2006 draft §4.2.3]
-//! (RULES.md D86): sent as their serialization, read back as XML values,
+//! (RULES.md D106): sent as their serialization, read back as XML values,
 //! and sent to a prepared statement.
 
 use turborel::db::Database;
@@ -10,7 +10,7 @@ use turborel_client::connection::Outcome;
 use crate::common::{done, rows, start};
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.2, §10.15] [DESIGN] RULES.md
-/// D42, D86: a column of an XML type is described as its type, with its
+/// D42, D106: a column of an XML type is described as its type, with its
 /// modifiers; its values reach the client as their serialization, which
 /// the client holds as XML values; an XML value sent as a prepared
 /// statement's parameter is kept as sent; the null value is null.
@@ -37,7 +37,7 @@ fn xml_values_go_both_ways() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.3, §6.1 CR2, §6.2 CR1,
-/// §12.5 CR1] [DESIGN] RULES.md D45, D69, D86: an array and a row of XML
+/// §12.5 CR1] [DESIGN] RULES.md D45, D69, D106: an array and a row of XML
 /// values, and a value of a distinct type of XML, reach the client with
 /// each XML value its serialization; the distinct type is described as
 /// its source; an array of XML values sent as a prepared statement's

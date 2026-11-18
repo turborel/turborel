@@ -1,4 +1,4 @@
-//! \[EXTENSION\] RULES.md D86: a lookup's answer of a value, read as its
+//! \[EXTENSION\] RULES.md D106: a lookup's answer of a value, read as its
 //! events come (`check.rs`), with its filter's [XQuery §3.2.2].
 //!
 //! An element at which the steps above a filter's end is an anchor: each
@@ -144,7 +144,7 @@ impl<'l> Reading<'l> {
         if self.open.len() > MAX_NESTING {
             return Err(SqlError::new(
                 Code::Corrupt,
-                format!("[DESIGN] a stored XML value nests deeper than {MAX_NESTING} (RULES.md D86)"),
+                format!("[DESIGN] a stored XML value nests deeper than {MAX_NESTING} (RULES.md D106)"),
             ));
         }
         let depth = self.open.len();

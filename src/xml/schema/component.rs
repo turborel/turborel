@@ -5,7 +5,7 @@
 //! and the schema that holds them [Schema1 §3.15.1]. Each property is a
 //! field named as \[Schema1\] names it.
 //!
-//! \[DESIGN\] RULES.md D86: components refer to one another by their place
+//! \[DESIGN\] RULES.md D106: components refer to one another by their place
 //! in the schema's tables (`ElementId`, `ComplexId` and the others), so a
 //! schema is one value, shared by the sessions that validate by it. Simple
 //! type definitions read from its documents are `component/simple.rs`.

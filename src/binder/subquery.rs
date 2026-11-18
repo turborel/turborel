@@ -6,6 +6,8 @@
 //! `Expr::Outer`, and the subquery keeps the expression over the enclosing
 //! query's rows (or groups) that fills it (`logical/subquery.rs`).
 
+mod union;
+
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -15,16 +17,17 @@ use super::order_by::ordered_query;
 use super::query::Nesting;
 use super::set_functions::column_references;
 use super::set_operations::bind_query_expression;
-use super::{Binder, Context, NOT_AGGREGATED, OutColumn, Purpose, Scope, rule};
+use super::{Binder, Context, NOT_AGGREGATED, OutColumn, Scope, rule};
 use crate::ast::{
     self, ColumnSpecification, Composite, Literal, SearchCondition, SelectItem, SelectList, SetFunctionSpecification, TableName,
     ValueExpression, ValueSpecification,
 };
 use crate::error::{At, Result, SqlState};
 use crate::functions::{AggregateFunction, AggregateRef, ArrayAggregate, Gathering, MultisetAggregate, RowOf, ScalarRef};
-use crate::logical::{AggCall, Expr, LogicalPlan, SetOp, SortKey, Subquery, render_expr};
+use crate::logical::{AggCall, Expr, LogicalPlan, SortKey, Subquery, render_expr};
+use crate::value::collation::CollationRef;
 use crate::value::types::{Field, MAX_ARRAY_CARDINALITY};
-use crate::value::{DataType, Decimal};
+use crate::value::{DataType, Decimal, SortOrder};
 
 /// The query a subquery is bound in, as its subquery sees it: the binder,
 /// the scope the subquery's predicate is in, and the outer references the
@@ -330,6 +333,13 @@ impl Binder<'_> {
             (None, Some(TableName { auth: Some(a), ident, .. })) => (a, vec![ident.clone(), cs.column.clone()]),
             (Some(_), _) | (None, None) => return Ok(None),
         };
+        if let ([method], Some(basis)) = (rest.as_slice(), self.extension_basis(first, cs.at))
+            && !matches!(self.local(cs), Ok(Some(_)))
+        {
+            // A method of no argument of a column of a registered type (D87).
+            let subject = ValueExpression::Column(basis);
+            return self.extension_method((&subject, None), (method, cs.at), &[], scope).map(Some);
+        }
         let Some(basis) = self.lone_basis(first, cs.at) else { return Ok(None) };
         if matches!(self.local(cs), Ok(Some(_))) {
             let written = written(cs);
@@ -445,16 +455,35 @@ impl Binder<'_> {
     /// `<sort key>` its one column [§7.17, NOTE 207]; of no rows, an empty
     /// array.
     pub(super) fn array_query(&self, s: &ast::Subquery, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        self.query_aggregate(s, scope, ("§6.49 SR3a", "ARRAY"), |element, orders, collations| {
+            let func = ArrayAggregate { orders, collations, by_query: true };
+            let result = super::composite::bounded(DataType::array(element.clone(), MAX_ARRAY_CARDINALITY))?;
+            let label = format!("ARRAY({}{})", render_expr(&Expr::Column(0), &[]), func.label_suffix());
+            Ok((AggregateRef(Arc::new(func)), result, label))
+        })
+    }
+
+    /// The aggregate `made` makes, of the element type, the orders and the
+    /// collations of the sort keys of the query `s`, of the row of each
+    /// row's value and sort keys, over its rows sorted and limited first,
+    /// if its query has OFFSET or FETCH FIRST, so its values are aggregated
+    /// in its order [§6.49 NOTE 207, ISO/IEC 9075-2:2023 §6.34 GR4]; its
+    /// query of degree one, as the rule `cited` of `word` says.
+    pub(super) fn query_aggregate(
+        &self,
+        s: &ast::Subquery,
+        scope: Scope<'_>,
+        (cited, word): (&str, &str),
+        made: impl FnOnce(&DataType, Vec<SortOrder>, Vec<Option<CollationRef>>) -> Result<(AggregateRef, DataType, String)>,
+    ) -> Result<(Expr, DataType)> {
         let cx = self.context();
         let outer = Outer { binder: self, scope, captured: RefCell::new(Vec::new()) };
         let nesting = Nesting::Subquery { outer: &outer, result: None };
-        // Its rows sorted and limited first, if its query has OFFSET or
-        // FETCH FIRST, then its elements in that order [§6.49 NOTE 207].
         let ordered = ordered_query(cx, &s.query, (&[], &nesting), cx.draws).or_at(s.at)?.limited();
         let own = ordered.all.get(..ordered.visible).unwrap_or_default();
         self.note_subquery(s, own);
         let [column] = own else {
-            return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.49 SR3a] the query of ARRAY is of degree one, not {}", own.len())));
+            return Err(rule(format!("[ISO/IEC 9075-2:2023 {cited}] the query of {word} is of degree one, not {}", own.len())));
         };
         let element = column.data_type.clone();
         // Each row's value, then its value of each sort key.
@@ -467,10 +496,8 @@ impl Binder<'_> {
         }
         let arg = Expr::Call(ScalarRef(Arc::new(RowOf(DataType::row(fields)))), args);
         let orders = ordered.keys.iter().map(SortKey::order).collect();
-        let func = ArrayAggregate { orders, collations: ordered.collations, by_query: true };
-        let result = super::composite::bounded(DataType::array(element, MAX_ARRAY_CARDINALITY))?;
-        let label = format!("ARRAY({}{})", render_expr(&Expr::Column(0), &[]), func.label_suffix());
-        Ok(aggregated((AggregateRef(Arc::new(func)), arg, label), result, ordered.plan, outer))
+        let (func, result, label) = made(&element, orders, ordered.collations)?;
+        Ok(aggregated((func, arg, label), result, ordered.plan, outer))
     }
 
     /// [ISO/IEC 9075-2:2023 §6.52 SR1, SR4, GR3] `<multiset value
@@ -514,63 +541,6 @@ impl Binder<'_> {
         let func = AggregateRef(Arc::new(MultisetAggregate { kind: Gathering::Collect, by_query: true }));
         Ok(aggregated((func, arg, label), result, ordered.plan, outer))
     }
-}
-
-/// What a set function of the rows of a query is, made of the query's
-/// columns: the function, its argument, its label, and its result's type.
-pub(super) type RowsAggregate = (AggregateRef, Expr, String, DataType);
-
-/// Of the `n`th of a union's queries, of its columns, the expressions it
-/// is projected by, if it is kept.
-pub(super) type MakeBranch<'m> = dyn FnMut(usize, &[OutColumn]) -> Result<Option<Vec<Expr>>> + 'm;
-
-impl Binder<'_> {
-    /// \[EXTENSION\] The rows of `queries`, each bound for `purpose` as a
-    /// subquery of this query in `scope`, and kept, projected by the expressions `make`
-    /// gives of its columns, if it gives any; then the rows of all those
-    /// kept, one query's after another's, UNION ALL, aggregated by the set
-    /// function `aggregate` makes: a subquery of one row and one column,
-    /// its outer references made as they are bound (XMLMAP, RULES.md D86);
-    /// none if no query is kept.
-    pub(super) fn aggregated_union(
-        &self,
-        (queries, purpose): (&[ast::Subquery], Purpose),
-        scope: Scope<'_>,
-        make: &mut MakeBranch<'_>,
-        aggregate: &mut dyn FnMut() -> Result<RowsAggregate>,
-    ) -> Result<Option<Expr>> {
-        let outer = Outer { binder: self, scope, captured: RefCell::new(Vec::new()) };
-        let nesting = Nesting::Subquery { outer: &outer, result: None };
-        let mut kept = Vec::new();
-        for (i, query) in queries.iter().enumerate() {
-            let bound = bind_query_expression(Context { purpose, ..self.context() }, &query.query, &nesting).or_at(query.at)?;
-            if let Some(exprs) = make(i, &bound.columns)? {
-                kept.push(LogicalPlan::Project { exprs, input: Box::new(bound.plan) });
-            }
-        }
-        let Some(input) = appended(kept) else { return Ok(None) };
-        let (func, arg, label, result) = aggregate()?;
-        Ok(Some(aggregated((func, arg, label), result, input, outer).0))
-    }
-}
-
-/// `plans`, in order, UNION ALL, of their rows one plan's after
-/// another's: paired as a balanced tree, so the plan of many is not deep.
-fn appended(mut plans: Vec<LogicalPlan>) -> Option<LogicalPlan> {
-    while plans.len() > 1 {
-        let mut pairs = Vec::with_capacity(plans.len().div_ceil(2));
-        let mut each = plans.into_iter();
-        while let Some(left) = each.next() {
-            pairs.push(match each.next() {
-                Some(right) => {
-                    LogicalPlan::SetOp { op: SetOp::Union, all: true, compared: None, left: Box::new(left), right: Box::new(right) }
-                }
-                None => left,
-            });
-        }
-        plans = pairs;
-    }
-    plans.pop()
 }
 
 /// The subquery of one row and one column, the aggregate `func` of `arg`,

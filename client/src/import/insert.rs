@@ -340,6 +340,7 @@ impl<S: Read + Write> Run<'_, S> {
                     | Value::Multiset(_)
                     | Value::Structured(_)
                     | Value::Reference(_)
+                    | Value::Json(_)
                     | Value::Row(_)
                     | Value::Lob(_)
                     | Value::Extension(_)

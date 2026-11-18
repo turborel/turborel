@@ -47,7 +47,7 @@ impl PhysicalPlanner<'_> {
     /// GR5a]. Its input is planned knowing how many of its first rows
     /// are read, if it is known.
     pub(super) fn limited(&self, limit: &Limit, input: &LogicalPlan, want: &[SortKey]) -> Built {
-        let b = PhysicalPlanner { first: limit.read_rows(), ..*self }.build(input, want);
+        let b = PhysicalPlanner { first: limit.read_rows(), fetch: limit.fetch.as_ref(), ..*self }.build(input, want);
         Built { plan: Plan::Limit { limit: limit.clone(), input: Box::new(b.plan) }, ordered: b.ordered }
     }
 
@@ -84,7 +84,7 @@ impl PhysicalPlanner<'_> {
     }
 }
 
-/// \[EXTENSION\] RULES.md D86: of `u`, XMLTABLE of a row pattern of the
+/// \[EXTENSION\] RULES.md D106: of `u`, XMLTABLE of a row pattern of the
 /// context item alone, joined to the rows of a table it is of, not LEFT,
 /// the table read with its row pattern as an implied filter
 /// (`functions::XmlRowsOf`): a row it gives the empty sequence of gives no

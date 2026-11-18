@@ -2,7 +2,7 @@
 //! [Schema2 §3.3.3 to §3.3.11, §3.2.18, §3.2.19]: a language identifier,
 //! an Nmtoken, a Name, an NCName and a QName.
 //!
-//! \[DESIGN\] RULES.md D86: names are XML 1.1's [XML 1.1 §2.3], the
+//! \[DESIGN\] RULES.md D106: names are XML 1.1's [XML 1.1 §2.3], the
 //! names of XQuery's evaluations under the lexical rules of XML 1.1
 //! [ISO/IEC 9075-14:2006 draft §6.6 GR3d vi, GR4j], and those `\i` and
 //! `\c` match in a pattern (`regex/class.rs`). Each production is matched

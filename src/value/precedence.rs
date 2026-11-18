@@ -74,7 +74,7 @@ pub fn position(p: &DataType, t: &DataType) -> Option<u8> {
         }
         // [SR4] a user-defined type's own name, as no distinct type has a
         // proper supertype; [SR19] a row type is no parameter's type.
-        DataType::Distinct(_) | DataType::Row(_) | DataType::Extension(_) => (p == t).then_some(FIRST),
+        DataType::Distinct(_) | DataType::Row(_) | DataType::Json | DataType::Extension(_) => (p == t).then_some(FIRST),
         // [ISO/IEC 9075-14:2006 draft §10.4 SR1] XML, of every XML type.
         DataType::Xml(_) => matches!(t, DataType::Xml(_)).then_some(FIRST),
     }
@@ -166,6 +166,7 @@ fn of_string(p: &DataType, t: &DataType) -> Option<u8> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => None,
     };
@@ -214,6 +215,7 @@ fn of_number(p: &DataType, t: &DataType) -> Option<u8> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => None,
     }

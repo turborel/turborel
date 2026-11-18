@@ -11,7 +11,7 @@ use crate::disk::io::{DiskFile, FileLock, FileSystem, OpenMode};
 use crate::disk::memory::MemoryFileSystem;
 use crate::value::{Binary, Value};
 
-/// Verifies: [DESIGN] RULES.md D86: a document logged is read back from a
+/// Verifies: [DESIGN] RULES.md D106: a document logged is read back from a
 /// binary string literal of its UTF-8 octets, as the same text; anything
 /// else, which no statement made here writes, is SQLCODE -910.
 #[test]
@@ -94,7 +94,7 @@ fn outcomes(db: &Database) -> Vec<String> {
     ["th\u{e9} \u{4e2d} \u{1f600}", "the \u{4e2d} \u{1f600}"].map(valid).to_vec()
 }
 
-/// Verifies: [DESIGN] RULES.md D25, D86: a document of line ends of each
+/// Verifies: [DESIGN] RULES.md D25, D106: a document of line ends of each
 /// kind, tabs and characters past ASCII, registered and logged, is the
 /// same octet for octet once the database is opened again, from the log
 /// alone after a failure and from its checkpoint after a close; its

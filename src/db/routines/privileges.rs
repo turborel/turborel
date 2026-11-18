@@ -74,6 +74,7 @@ impl State {
             | PrivilegeObject::Collation
             | PrivilegeObject::Sequence
             | PrivilegeObject::Module
+            | PrivilegeObject::Model
             | PrivilegeObject::XmlSchema
             | PrivilegeObject::Type => return Ok(None),
         };

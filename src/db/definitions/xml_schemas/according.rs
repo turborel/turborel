@@ -4,7 +4,7 @@
 //! XML type of XMLSCHEMA [§6.1 SR4], XMLVALIDATE [§6.20 SR2] and IS VALID
 //! [§8.5 SR4] name one.
 //!
-//! \[DESIGN\] Implementation-defined choices, RULES.md D86:
+//! \[DESIGN\] Implementation-defined choices, RULES.md D106:
 //!
 //! - Registered XML Schemas are identified by their names [§4.2.6], not by
 //!   target namespace and schema location, so `<XML valid according to

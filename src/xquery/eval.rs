@@ -9,7 +9,7 @@
 //! casts and function calls in `eval/types.rs` and `eval/call.rs`;
 //! constructors in `eval/construct.rs`; and validate in `eval/validate.rs`.
 //!
-//! \[DESIGN\] RULES.md R-CF-6, D44, D86: the evaluation recurses as the
+//! \[DESIGN\] RULES.md R-CF-6, D44, D106: the evaluation recurses as the
 //! plan nests and as functions call functions, one level each operation
 //! evaluated within another and each call, to `MAX_DEPTH` in all, past
 //! which it is SQLCODE -900. Each item of a loop, a path step or a

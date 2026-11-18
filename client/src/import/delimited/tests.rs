@@ -32,6 +32,7 @@ fn got(v: Value) -> Got {
         | Value::Multiset(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Row(_)
         | Value::Lob(_)
         | Value::Extension(_)

@@ -2,7 +2,7 @@
 //! §3.7.1.3]: each node copied new, the relations among them kept, by the
 //! construction mode and the copy-namespaces mode (`Copying`).
 //!
-//! \[DESIGN\] RULES.md D86: the copy follows the source tree's links, so it
+//! \[DESIGN\] RULES.md D106: the copy follows the source tree's links, so it
 //! does not recurse.
 
 use super::super::{Binding, Kind, NodeId, QName, Tree, XML_PREFIX};

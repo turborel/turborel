@@ -324,6 +324,7 @@ fn negative(v: &Value) -> bool {
         | Value::Multiset(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Extension(_)
         | Value::Xml(_) => false,
     }

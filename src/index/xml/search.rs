@@ -1,4 +1,4 @@
-//! \[EXTENSION\] RULES.md D86: an XML index's lookups, read as they are
+//! \[EXTENSION\] RULES.md D106: an XML index's lookups, read as they are
 //! taken. The paths a lookup's pattern may match are found in the
 //! dictionary by the tokens its last steps fix, each matched step by step
 //! (`lookup.rs`); then, of `xml_path`, each matching path's entries in

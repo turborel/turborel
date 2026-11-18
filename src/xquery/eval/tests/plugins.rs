@@ -99,7 +99,7 @@ fn outcome(text: &str) -> std::result::Result<String, String> {
 const PROLOG: &str = "declare namespace t = \"urn:test\";";
 
 /// Verifies: [EXTENSION] [XQuery §2.1.2, §4.4, §4.5, §4.7, §4.8] [DESIGN]
-/// RULES.md D44, D86: a plug-in's function reads its dynamic context: the
+/// RULES.md D44, D106: a plug-in's function reads its dynamic context: the
 /// focus of its call, the implicit timezone and current dateTime of the
 /// evaluation, the default collation and base URI the prolog declares,
 /// the collations known; ordering and empty order settings are taken.
@@ -129,7 +129,7 @@ fn a_function_converts_its_arguments() {
     assert!(same("t:fail()").unwrap_err().contains("err:TEST0001"));
 }
 
-/// Verifies: [DESIGN] RULES.md R-SAFE-3, D86: a compiled query shows its
+/// Verifies: [DESIGN] RULES.md R-SAFE-3, D106: a compiled query shows its
 /// plan, its declared, external and library functions named; a plan that
 /// names a variable or function it does not have fails with SQLCODE -910,
 /// not a panic.

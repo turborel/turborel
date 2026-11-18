@@ -205,6 +205,7 @@ pub fn constant_pattern(pattern: &Value, escape: Option<&Value>) -> Option<Optio
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_)
             | Value::Xml(_),
         ) => {
@@ -227,6 +228,7 @@ pub fn constant_pattern(pattern: &Value, escape: Option<&Value>) -> Option<Optio
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_)
         | Value::Xml(_) => None,
     }

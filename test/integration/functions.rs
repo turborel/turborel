@@ -63,8 +63,9 @@ fn with_twice() -> Database {
     db
 }
 
-/// Verifies: [EXTENSION] RULES.md D36, D45: a function call is a syntax
-/// error unless SQL.FUNCTION_CALLS is ON: a session's own value, set in
+/// Verifies: [EXTENSION] RULES.md D36, D45: a call of a registered
+/// function is taken while SQL.FUNCTION_CALLS is ON, as it is by default,
+/// and is a syntax error while it is OFF: a session's own value, set in
 /// SQL, for it alone; the database's for every session that sets none; a
 /// prepared statement is parsed again once the value it was prepared
 /// under changes.
@@ -73,17 +74,19 @@ fn function_calls_are_a_setting() {
     let db = with_twice();
     let (s, other) = (db.session("APP"), db.session("APP"));
     let sql = "SELECT TWICE(ID) FROM T WHERE ID = 1";
-    // Off by default: <identifier>( is not SQL-86.
-    assert_eq!(code(&s, sql), Code::Syntax);
-    s.run("SET SQL.FUNCTION_CALLS = 'on'").unwrap();
+    // On by default.
     assert_eq!(rows(&s, sql), Ok(vec!["2".into()]));
-    assert_eq!(code(&other, sql), Code::Syntax, "the session's own");
-    let twice = s.prepare(sql).unwrap();
-    s.run("SET SQL.FUNCTION_CALLS = 'OFF'").unwrap();
-    assert_eq!(s.execute_prepared(&twice, &[]).map(|_| ()).map_err(|e| e.code), Err(Code::Dynamic), "parsed again");
-    db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
-    assert_eq!(rows(&other, sql), Ok(vec!["2".into()]), "the database's");
-    assert_eq!(code(&s, sql), Code::Syntax, "under the session's own");
+    s.run("SET SQL.FUNCTION_CALLS = 'off'").unwrap();
+    assert_eq!(code(&s, sql), Code::Syntax);
+    assert_eq!(rows(&other, sql), Ok(vec!["2".into()]), "the session's own");
+    let twice = other.prepare(sql).unwrap();
+    other.run("SET SQL.FUNCTION_CALLS = 'OFF'").unwrap();
+    assert_eq!(other.execute_prepared(&twice, &[]).map(|_| ()).map_err(|e| e.code), Err(Code::Dynamic), "parsed again");
+    db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("OFF".into())).unwrap();
+    let third = db.session("APP");
+    assert_eq!(code(&third, sql), Code::Syntax, "the database's");
+    s.run("SET SQL.FUNCTION_CALLS = 'ON'").unwrap();
+    assert_eq!(rows(&s, sql), Ok(vec!["2".into()]), "under the session's own");
 }
 
 /// Verifies: [EXTENSION] a `ScalarFunction` plug-in is called in value

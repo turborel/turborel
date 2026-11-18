@@ -85,6 +85,7 @@ pub(crate) fn as_lob(v: &Value, kind: LobKind) -> Option<Lob> {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_)
             | Value::Xml(_),
             _,

@@ -61,7 +61,7 @@ fn equivalent(st: &State, (sc, t): (&SetClause, &DataType), current: ValueExpres
         UpdateSource::Value(v) => v.clone(),
         UpdateSource::Null => cast(None, &last.data_type, sc.at),
         UpdateSource::Default => match &last.default {
-            Some(text) => cast(Some(Parser::new(text)?.of_definition().generation_expression()?), &last.data_type, sc.at),
+            Some(text) => cast(Some(Parser::for_stored(text)?.generation_expression()?), &last.data_type, sc.at),
             None => cast(None, &last.data_type, sc.at),
         },
     };

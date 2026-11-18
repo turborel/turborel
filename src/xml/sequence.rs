@@ -1,7 +1,7 @@
 //! XML values: XQuery sequences [ISO/IEC 9075-14:2006 draft §4.2.3], each
 //! item a node of a tree or an atomic value [XQueryDM §2.5].
 //!
-//! \[DESIGN\] RULES.md D86: a node is its tree, shared, and its place in
+//! \[DESIGN\] RULES.md D106: a node is its tree, shared, and its place in
 //! it, so the nodes of one tree in many values are the same nodes, and
 //! their identity holds [XQueryDM §2.3]; a copy makes a tree of its own
 //! (§10.18).
@@ -65,7 +65,7 @@ impl Node {
 
     /// Where `self` is in document order beside `other` [XQueryDM §2.4]:
     /// of one tree, by their places in it; of two, by where their trees
-    /// are held. \[DESIGN\] RULES.md D86: the order of trees is
+    /// are held. \[DESIGN\] RULES.md D106: the order of trees is
     /// implementation-dependent, but stable and all of a tree's nodes
     /// together [XQuery §2.4.1], as a tree is held at one address while a
     /// node of it is, and every node holds its tree.

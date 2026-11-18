@@ -55,6 +55,7 @@ fn length_of(t: &DataType) -> u32 {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => 0,
     }
@@ -172,6 +173,7 @@ impl SqlType for BinaryKind {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_)
             | Value::Xml(_) => uncastable(&v, t).map(|cast| (cast, None)),
         }

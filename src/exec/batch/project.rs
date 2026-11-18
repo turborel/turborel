@@ -10,7 +10,10 @@
 //! projection of anything else is made row by row (`exec.rs`). A projection
 //! read by a stream's reader, as DISTINCT, a grouping, a join or UNION ALL
 //! is, is a stream itself, its batches its expressions' vectors
-//! (`computed`).
+//! (`computed`). A call of a function that gives many rows' values at
+//! once (`ScalarFunction::batches`), as EMBED of a model does (vector
+//! design R12.3), is called once for the rows of a batch; if that fails,
+//! a row at a time, so its error comes at its row.
 
 use std::sync::Arc;
 
@@ -46,11 +49,12 @@ fn plain(e: &Expr) -> bool {
         | Expr::Const(_)
         | Expr::Neg(_)
         | Expr::Arith(..)
-        | Expr::Call(..)
         | Expr::Cast(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
         | Expr::Warned(..) => true,
+        // One that reads its statement is evaluated a row at a time (D87).
+        Expr::Call(function, _) => !function.0.uses_context(),
     };
     let mut all = own;
     e.for_each_child(&mut |child| all = all && plain(child));
@@ -106,6 +110,9 @@ struct Projected {
     next: usize,
     /// The row an expression is evaluated of.
     scratch: Row,
+    /// Of each place a call given many rows at once, its values of the
+    /// rows kept of the batch.
+    ahead: Vec<Option<Vec<Value>>>,
 }
 
 /// Whether `plan` is a projection read by batches: of a subtree that gives
@@ -137,6 +144,7 @@ pub(in crate::exec) fn projected(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIt
         kept: Vec::new(),
         next: 0,
         scratch: Vec::new(),
+        ahead: Vec::new(),
     })
 }
 
@@ -146,13 +154,22 @@ impl Projected {
         while self.next >= self.kept.len() {
             let Some((batch, rows)) = self.batches.next().transpose()? else { return Ok(None) };
             self.kept = rows.unwrap_or_else(|| (0..batch.rows).collect());
+            let ahead = |place: &Place| match place {
+                Place::Expr(e, inputs) => batched((e, inputs), (&batch, &self.kept), &self.runner).and_then(Result::ok),
+                Place::Column(_) | Place::Const(_) => None,
+            };
+            self.ahead = self.places.iter().map(ahead).collect();
             (self.batch, self.next) = (batch, 0);
         }
         let r = self.kept.get(self.next).copied().unwrap_or_default();
         self.next = self.next.saturating_add(1);
         let value = |at: &usize| self.batch.value(*at, r).unwrap_or(&Value::Null);
         let mut row = Vec::with_capacity(self.places.len());
-        for place in &self.places {
+        for (n, place) in self.places.iter().enumerate() {
+            if let Some(v) = self.ahead.get(n).and_then(Option::as_ref).and_then(|values| values.get(self.next.saturating_sub(1))) {
+                row.push(v.clone());
+                continue;
+            }
             row.push(match place {
                 Place::Column(at) => value(at).clone(),
                 Place::Const(v) => v.clone(),
@@ -236,12 +253,35 @@ fn expr_vector(
             Lane::Column(..) | Lane::Const(_) => (0..given.len()).map(|n| lane.at(n).clone()).collect(),
         }));
     }
+    if let Some(values) = batched((e, inputs), (batch, given), runner) {
+        return values.map(Column::Values);
+    }
     let mut scratch = Vec::new();
     let mut values = Vec::with_capacity(given.len());
     for &r in given {
         values.push(evaluated_of((e, inputs), (batch, r), (&mut scratch, runner))?);
     }
     Ok(Column::Values(values))
+}
+
+/// The values of `e` of the rows `given` of `batch`, if it is a call of a
+/// function that gives many rows' values at once: its arguments evaluated
+/// a row at a time, then the function called once.
+fn batched((e, inputs): (&Expr, &[usize]), (batch, given): (&Batch, &[usize]), runner: &Runner) -> Option<Result<Vec<Value>>> {
+    let Expr::Call(function, args) = e else { return None };
+    if !function.0.batches() {
+        return None;
+    }
+    let mut scratch = Vec::new();
+    let mut rows = Vec::with_capacity(given.len());
+    for &r in given {
+        let row: Result<Vec<Value>> = args.iter().map(|a| evaluated_of((a, inputs), (batch, r), (&mut scratch, runner))).collect();
+        match row {
+            Ok(row) => rows.push(row),
+            Err(error) => return Some(Err(error)),
+        }
+    }
+    Some(function.0.call_many(&rows))
 }
 
 /// The value of `e`, of a row of the values at `inputs` of row `r` of

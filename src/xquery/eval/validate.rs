@@ -3,7 +3,7 @@
 //! against its effective schema, of the in-scope schema definitions
 //! [ISO/IEC 9075-14:2006 draft §10.20 SR2e].
 //!
-//! \[DESIGN\] RULES.md D86: the in-scope schema definitions are registered
+//! \[DESIGN\] RULES.md D106: the in-scope schema definitions are registered
 //! XML Schemas, each read alone, one of each target namespace
 //! (`InScopeSchema`). The effective schema of a validation is the one of
 //! the namespace of the element validated, the operand or a document's

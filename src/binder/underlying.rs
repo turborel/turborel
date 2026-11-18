@@ -160,8 +160,8 @@ fn reference_leaves(cx: Context<'_>, r: &TableReference, leaves: &mut Vec<Qualif
         TableReference::Table(t) => add_new(leaves, named_leaves(cx, &t.table)),
         TableReference::Derived(d) => query_leaves(cx, &d.query.query, leaves),
         // Its collections are value expressions, their subqueries not its
-        // operands.
-        TableReference::Unnest(_) => {}
+        // operands; HYBRID_SEARCH's arguments name an index, not a table.
+        TableReference::Unnest(_) | TableReference::Json(_) | TableReference::Hybrid(_) => {}
         TableReference::Recognized(r) => reference_leaves(cx, &r.input, leaves),
         // [ISO/IEC 9075-2:2023 §10.4] Its table arguments are its operands;
         // its other arguments' subqueries are not.

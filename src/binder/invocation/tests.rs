@@ -61,6 +61,7 @@ fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc 
         text: format!("CREATE FUNCTION S.{name} ({}) RETURNS INTEGER DETERMINISTIC CONTAINS SQL RETURN {value}", declared.join(", ")),
         module: None,
         ptf: None,
+        distance: None,
         body: format!("RETURN {value}"),
         schema: "S".into(),
         reads: Vec::new(),
@@ -94,7 +95,7 @@ fn database(routines: Vec<SqlRoutineDesc>) -> State {
 
 /// The `<value expression>` `sql`.
 fn expr(sql: &str) -> ValueExpression {
-    Parser::new(sql).unwrap().of_definition().generation_expression().unwrap()
+    Parser::for_stored(sql).unwrap().generation_expression().unwrap()
 }
 
 /// The definition of `desc` whose body is `statement`.
@@ -108,9 +109,11 @@ fn defined(desc: &SqlRoutineDesc, statement: SqlStatement) -> RoutineDefinition 
         deterministic: desc.deterministic,
         access: desc.access,
         null_call: desc.null_call,
+        new_savepoint_level: false,
         body: crate::ast::RoutineBody::Sql(Box::new(statement)),
         text: desc.text.clone(),
         body_text: desc.body.clone(),
+        distance: None,
     }
 }
 

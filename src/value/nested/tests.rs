@@ -26,7 +26,7 @@ fn inlined_part(mut row: Vec<Value>) -> Value {
     parts(&row[0])[0].clone()
 }
 
-/// Verifies: [DESIGN] RULES.md D79, D86: a value made of values needs
+/// Verifies: [DESIGN] RULES.md D79, D106: a value made of values needs
 /// keeping exactly when it holds a large object or an XML value at some
 /// depth; a large object or an XML value does itself; nothing else does.
 #[test]
@@ -39,7 +39,7 @@ fn which_values_need_keeping() {
     assert!(!Value::Char("a".into()).needs_keeping());
 }
 
-/// Verifies: [DESIGN] RULES.md D86: each XML value inside an array, a
+/// Verifies: [DESIGN] RULES.md D106: each XML value inside an array, a
 /// multiset, a row or a structured value is made its stored form held
 /// inline, its serialization kept; other parts and top-level values are
 /// left as they are.

@@ -42,7 +42,7 @@ pub struct XmlParse {
     pub binary: bool,
 }
 
-/// The error of a string longer than a parse reads (RULES.md D18, D86).
+/// The error of a string longer than a parse reads (RULES.md D18, D106).
 fn too_long() -> SqlError {
     SqlError::new(
         Code::Unsupported,

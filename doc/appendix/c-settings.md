@@ -76,7 +76,7 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | SPILL.ENCODINGS | (empty) | ENCODINGS, BY COMMAS | at once |  |
 | SPILL.PARTITIONS | 64 | INTEGER FROM 2 TO 4096 | at once | *session* |
 | SPILL.PARTITION_DEPTH | 8 | INTEGER FROM 0 TO 64 | at once | *session* |
-| SQL.FUNCTION_CALLS | OFF | ONE OF ON, OFF | at once | *session* |
+| SQL.FUNCTION_CALLS | ON | ONE OF ON, OFF | at once | *session* |
 | STATEMENT.TIMEOUT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | STORAGE.CHECKSUM | CRC-32/ISCSI | A HASH FUNCTION | when the database is made |  |
 | STORAGE.CHECKSUM_KEY | (empty) | TEXT OF AT MOST 64 CHARACTERS | at once |  |
@@ -90,6 +90,11 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | TABLES.UNIQUE_INDEX_METHOD | btree | AN INDEX METHOD | at once |  |
 | TRANSACTION.ISOLATION | READ COMMITTED | ONE OF READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE | from the next transaction | *session* |
 | TRANSACTION.STRICT | ON | ONE OF ON, OFF | from the next transaction |  |
+| VECTOR.APPROX_DEFAULT | OFF | ONE OF ON, OFF | at once | *session* |
+| VECTOR.APPROX_FALLBACK | ON | ONE OF ON, OFF | at once | *session* |
+| VECTOR.BEAM_WIDTH | 0 | INTEGER FROM 0 TO 16 | at once | *session* |
+| VECTOR.BUILD_MEMORY_BYTES | 268435456 | INTEGER FROM 65536 TO 9223372036854775807 | at once |  |
+| VECTOR.SEARCH_LIST | 0 | INTEGER FROM 0 TO 10000 | at once | *session* |
 
 Each in a sentence:
 
@@ -138,7 +143,7 @@ Each in a sentence:
 - **SPILL.ENCODINGS**: The encodings, as compression, the pages of work areas' files pass through as each is written from now on, by commas, in order, before the encryption they pass through while the database encrypts anything; none if empty.
 - **SPILL.PARTITIONS**: The most partitions a spilled operator (a join, grouping, DISTINCT, EXCEPT or INTERSECT) writes at once; it writes fewer if its MEMORY.WORK_BYTES holds fewer runs.
 - **SPILL.PARTITION_DEPTH**: The most times a spilled operator partitions a partition again, before it holds the partition in a table, or, grouping and an outer join, makes it in passes.
-- **SQL.FUNCTION_CALLS**: Whether a statement may call a function by the syntax NAME(arguments), which the standards do not have: ON; or refuses it, as SQL does, OFF.
+- **SQL.FUNCTION_CALLS**: Whether a statement may call a function the program registered, of no schema, by NAME(arguments): ON; or takes calls of the schema's own functions alone, as SQL does, OFF.
 - **STATEMENT.TIMEOUT_MS**: The milliseconds a statement may run, each call and each fetch of a cursor alone, before it is cancelled (SQLCODE -920); 0 for no limit.
 - **STORAGE.CHECKSUM**: The hash function every file is checksummed with.
 - **STORAGE.CHECKSUM_KEY**: The name of the key, of the keyring, a keyed checksum (STORAGE.CHECKSUM, as HMAC-SHA-256) makes its digests with from now on; empty, the key the function was registered with. What was checksummed with a key before is verified with it while the keyring holds it.
@@ -152,6 +157,11 @@ Each in a sentence:
 - **TABLES.UNIQUE_INDEX_METHOD**: The index method behind the UNIQUE constraints of tables created from now on.
 - **TRANSACTION.ISOLATION**: The isolation level of a transaction SET TRANSACTION gives none: READ COMMITTED as PostgreSQL's default is, where ISO/IEC 9075 says SERIALIZABLE [ISO/IEC 9075:1992 §14.1 SR2], so SERIALIZABLE here conforms.
 - **TRANSACTION.STRICT**: ON refuses an engine that falls short of serializable, recoverable transactions [X3.135-1986 §4.16]; OFF allows it.
+- **VECTOR.APPROX_DEFAULT**: Whether a FETCH FIRST of neither APPROX nor EXACT may read an approximate index, as FETCH APPROX does: ON; or is exact, OFF.
+- **VECTOR.APPROX_FALLBACK**: Whether an approximate search that finds fewer rows than asked, once widened, or whose index declines, reads the whole table exactly: ON; or is refused, OFF.
+- **VECTOR.BEAM_WIDTH**: The nodes whose neighbours a DiskANN search reads together each hop, unless the query names its own; 0 for each index's own.
+- **VECTOR.BUILD_MEMORY_BYTES**: The bytes a vector index's build holds in memory; past them it builds parts and merges them.
+- **VECTOR.SEARCH_LIST**: The candidates an approximate search keeps, HNSW's ef and DiskANN's L, unless the query names its own; 0 for each index's own.
 
 ## The server's settings
 

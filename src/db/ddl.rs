@@ -63,6 +63,30 @@ impl Staged {
     pub(super) fn discard(&self) {
         self.made.iter().flatten().for_each(Made::discard);
     }
+
+    /// How many changes it holds.
+    pub(super) fn len(&self) -> usize {
+        self.changes.len()
+    }
+
+    /// [ISO/IEC 9075-2:2023 §17.8 GR3d] Its changes from the `kept`th on
+    /// cancelled, and the definitions made again on `published` with
+    /// those before: what the cancelled ones made, to be discarded.
+    ///
+    /// # Errors
+    ///
+    /// Making a change again fails, as `Session::definitions` does.
+    pub(super) fn cancel_from(&mut self, kept: usize, published: &Arc<State>) -> Result<Vec<Made>> {
+        self.changes.truncate(kept);
+        let cancelled = self.made.split_off(kept.min(self.made.len()));
+        let mut next = State::clone(published);
+        for (change, made) in self.changes.iter().zip(&self.made) {
+            next.apply_change(change, made.as_ref())?;
+        }
+        self.state = Arc::new(next);
+        self.base = published.generation;
+        Ok(cancelled.into_iter().flatten().collect())
+    }
 }
 
 /// A change of definitions a statement made: the definitions with it, the
@@ -110,7 +134,7 @@ impl State {
         match change {
             Change::Drop { object, cascade } => self.drop_object(object, *cascade),
             Change::AlterTable { table, action, schema, zone, epochs } => {
-                let action = Parser::new(action)?.of_definition().alter_table_action()?;
+                let action = Parser::for_stored(action)?.alter_table_action()?;
                 Ok(self.alter_table((table, schema, *zone), &action, (made, None, &mut Epochs::logged(epochs)))?.0)
             }
             Change::Defined { auth, role, schema, zone, sql, placed, epochs } => {

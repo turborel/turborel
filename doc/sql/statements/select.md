@@ -235,7 +235,7 @@ CYCLE](../06-queries.md#search-and-cycle)).
 WITH's XML options, XMLNAMESPACES and XMLBINARY, before its list or
 alone, are in scope of the whole query: its subqueries, derived tables,
 the queries of its list and the operands of its set operations. A WITH
-within it is more inner. See [XML Values](../xml.md#xml-options-of-a-scope).
+within it is more inner. See [XML Values](../16-xml.md#xml-options-of-a-scope).
 
 A window function computes a value of each row out of the rows of its
 partition, ordered, or of a frame of rows around it, as [Window
@@ -366,7 +366,7 @@ SELECT on each table and view the query names.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken, or one of WITH's XML options of [XML Values](../xml.md#xml-options-of-a-scope): a table or column not found or ambiguous, a sort key or a row count breaking rule 3, a column not grouped, operands of a set operation not alike; or FOR UPDATE is written |
+| 2A000 | -103 | A rule above is broken, or one of WITH's XML options of [XML Values](../16-xml.md#xml-options-of-a-scope): a table or column not found or ambiguous, a sort key or a row count breaking rule 3, a column not grouped, operands of a set operation not alike; or FOR UPDATE is written |
 | 2A000 | -104 | Its user lacks SELECT on a table or view |
 | 21000 | -811 | A scalar subquery gives more than one row |
 | TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |

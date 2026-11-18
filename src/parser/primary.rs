@@ -4,7 +4,8 @@
 //! functions [§6.6, §6.7], EXTRACT [§6.6], the datetime value functions
 //! [§6.8], VALUE of a domain constraint [§6.2], NEXT VALUE FOR [ISO/IEC
 //! 9075-2:2023 §6.14], WIDTH_BUCKET [§6.31], the ordered set functions
-//! [§10.9], the \[EXTENSION\] function call, and, by `pattern/navigation.rs`,
+//! [§10.9], the SQL/JSON functions [§6.28, §6.34, §6.35, §10.11] by
+//! `json.rs`, the \[EXTENSION\] function call, and, by `pattern/navigation.rs`,
 //! row pattern matching's expressions [§6.27, §6.31, §6.33].
 
 mod strings;
@@ -254,8 +255,13 @@ impl Parser {
     /// row expression [ISO/IEC 9075-2:2023 §6.47, §7.1], one of
     /// user-defined types [§6.19, §6.20, §6.23, §6.24], an expression of
     /// row pattern matching [§6.9, §6.10, §6.27, §6.31, §6.33], or an
-    /// aggregate of a name no key word of SQL-92 [§10.9], if one is next.
+    /// aggregate of a name no key word of SQL-92 [§10.9], or an SQL/JSON
+    /// function [§6.28, §6.34, §6.35, §10.11], if one is next.
     fn composite_pattern_or_aggregate(&mut self) -> Result<Option<ValueExpression>> {
+        // [ISO/IEC 9075-2:2023 §6.31, §10.9] Feature T621's functions.
+        if let Some(numeric) = self.numeric_or_statistical() {
+            return numeric.map(Some);
+        }
         if let Some(composite) = self.composite_primary()? {
             return Ok(Some(composite));
         }
@@ -266,6 +272,11 @@ impl Parser {
         // DEREF, T::M and the transform groups, no key words of SQL-92.
         if let Some(structured) = self.structured_primary()? {
             return Ok(Some(structured));
+        }
+        // [ISO/IEC 9075-2:2023 §6.28, §6.34, §6.35, §10.11] the SQL/JSON
+        // functions, no key words of SQL-92, before "(" the functions.
+        if let Some(json) = self.json_primary()? {
+            return Ok(Some(json));
         }
         if let Some(xml) = self.xml_primary()? {
             return Ok(Some(xml));
@@ -318,7 +329,17 @@ impl Parser {
             SetArg::All(Box::new(self.value_expression()?))
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(SetFunctionSpecification { name, arg, order_by: Vec::new(), listagg: None, filter: None, semantics: None, returning: None, at })
+        Ok(SetFunctionSpecification {
+            name,
+            arg,
+            order_by: Vec::new(),
+            listagg: None,
+            json: None,
+            filter: None,
+            semantics: None,
+            returning: None,
+            at,
+        })
     }
 
     /// [ISO/IEC 9075-2:2023 §6.9] `<grouping operation>` ::= GROUPING (
@@ -337,6 +358,7 @@ impl Parser {
             arg: SetArg::Grouping(columns),
             order_by: Vec::new(),
             listagg: None,
+            json: None,
             filter: None,
             semantics: None,
             returning: None,
@@ -509,6 +531,10 @@ impl Parser {
             args.push(self.common_value_expression()?);
             while self.accept_delim(delim::COMMA) {
                 args.push(self.common_value_expression()?);
+            }
+            // [EXTENSION] FROM_VECTOR's clauses (RULES.md D93).
+            if schema.is_none() && name == super::vectors::FROM_VECTOR {
+                self.vector_text_clauses(&mut name, &mut args)?;
             }
             self.expect_delim(delim::RIGHT_PAREN)?;
         }

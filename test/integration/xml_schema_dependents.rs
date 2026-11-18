@@ -38,7 +38,7 @@ fn restrict(s: &Session) -> Option<i32> {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.6] [EXTENSION] RULES.md
-/// D86: a view, a CHECK, a domain's constraint, an assertion, a trigger
+/// D106: a view, a CHECK, a domain's constraint, an assertion, a trigger
 /// and a routine that name registered XML Schema A.O through XMLVALIDATE,
 /// IS VALID or a type of XMLSCHEMA each keep DROP XML SCHEMA RESTRICT
 /// from dropping it, SQLCODE -103; CASCADE drops each, and the schema, so

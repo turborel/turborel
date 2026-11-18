@@ -54,6 +54,7 @@ impl Overlay {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_)
             | Value::Xml(_) => return fail(Code::Api, "[DESIGN] OVERLAY was given a replacement not a string"),
         })

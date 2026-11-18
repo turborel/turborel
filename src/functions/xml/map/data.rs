@@ -8,7 +8,7 @@
 //! The text is held as it grows, the whole mapping's, at most `MAX_INPUT`
 //! octets, the most XMLPARSE reads: past it, SQLCODE -900, as soon as a
 //! row takes it there, so no mapping of many tables holds more (RULES.md
-//! D18, D86).
+//! D18, D106).
 
 use std::fmt::Write;
 

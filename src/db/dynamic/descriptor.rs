@@ -276,7 +276,7 @@ impl Item {
                 self.set_number(DescriptorItem::UserDefinedTypeCode, code::STRUCTURED);
             }
             DataType::Reference(r) => self.describe_reference(&r, catalog),
-            DataType::Extension(_) | DataType::Xml(_) => self.extension = Some(t),
+            DataType::Json | DataType::Extension(_) | DataType::Xml(_) => self.extension = Some(t),
         }
     }
 
@@ -323,7 +323,7 @@ impl Item {
             code::INTERVAL => self.interval_text()?,
             code::EXTENSION => return self.extension.clone(),
             // [ISO/IEC 9075-14:2006 draft §17.1 GR1] XML: the type it was
-            // set from, if one was, else XML, XML(SEQUENCE) (RULES.md D86).
+            // set from, if one was, else XML, XML(SEQUENCE) (RULES.md D106).
             code::XML => {
                 return Some(
                     self.extension.clone().filter(|t| matches!(t, DataType::Xml(_))).unwrap_or(DataType::Xml(crate::value::xml::IMPLICIT)),
@@ -406,7 +406,7 @@ fn type_code(t: &DataType) -> i64 {
         DataType::Multiset(_) => code::MULTISET,
         DataType::Distinct(_) | DataType::Structured(_) => code::USER_DEFINED,
         DataType::Reference(_) => code::REF,
-        DataType::Extension(_) => code::EXTENSION,
+        DataType::Json | DataType::Extension(_) => code::EXTENSION,
         DataType::Xml(_) => code::XML,
     }
 }
@@ -440,6 +440,7 @@ fn datetime_shape(t: &DataType) -> (i64, i64, i64) {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => (1, DATE_POSITIONS, 0),
     }

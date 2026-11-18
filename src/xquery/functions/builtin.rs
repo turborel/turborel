@@ -3,7 +3,7 @@
 //! section's table, made an `XQueryFunction` of each number of arguments
 //! it takes, or one that takes any number past its least.
 //!
-//! \[DESIGN\] RULES.md D86: a built-in function declares each parameter
+//! \[DESIGN\] RULES.md D106: a built-in function declares each parameter
 //! and its result `item()*`, as it applies the function conversion rules
 //! of its own signature to its arguments itself [XQuery §3.1.5], so the
 //! evaluation converts nothing before it.

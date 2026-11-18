@@ -1,7 +1,7 @@
 //! Mutations of SQL/XML: the parser, the serializer, the stored form, the
 //! XML type's rules, its storage and its Information Schema columns,
 //! the document and content predicates, XMLDOCUMENT and XMLCAST, and
-//! the datatypes and simple types of XML Schema (RULES.md R-TEST-9, D86).
+//! the datatypes and simple types of XML Schema (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 

@@ -16,7 +16,7 @@ use super::{Host, called, conditions, leaves};
 use crate::ast::{FetchOrientation, HandlerType, SqlStatement};
 use crate::db::{Completion, assign_targets};
 use crate::error::{Code, Result, SqlError, SqlState};
-use crate::logical::{Block, Branches, Cursor, CursorAction, CursorStep, ForEach, Initial, Looped, Program, Repeating, Step};
+use crate::logical::{Block, Branches, Contained, Cursor, CursorAction, CursorStep, ForEach, Initial, Looped, Program, Repeating, Step};
 use crate::params::{Params, local_key};
 use crate::value::{DataType, Value, assign};
 
@@ -195,17 +195,26 @@ impl<'p, H: Host> Run<'p, '_, H> {
             Step::Signal(s) => Err(Stop::Raised(self.signal(s)?)),
             Step::Into(i) => next(self.atomic(|run| leaves::select_into(run.host, i, run.frame))),
             Step::Cursor(c) => next(self.atomic(|run| run.cursor(c))),
-            // [ISO/IEC 9075-2:2023 §4.41.5] CALL is not atomic: each statement
-            // of the procedure is undone alone.
-            Step::Statement(c) if matches!(c.statement, SqlStatement::Call(_)) => next(self.host.run(c, self.frame)),
-            // [ISO/IEC 9075-2:2023 §4.41.5] Nor are COMMIT and ROLLBACK, which
-            // end the transaction a mark would be of.
-            Step::Statement(c) if matches!(c.statement, SqlStatement::Commit | SqlStatement::Rollback) => {
-                next(self.atomic_context().and_then(|()| self.host.run(c, self.frame)))
-            }
-            Step::Statement(c) => next(self.atomic(|run| run.host.run(c, run.frame))),
+            Step::Statement(c) => next(self.contained(c)),
             Step::Call(c) => next(called::call(self.host, c, self.frame)),
         }
+    }
+
+    /// The statement `c` the host runs: as an atomic statement, unless it
+    /// is not one [ISO/IEC 9075-2:2023 §4.41.5].
+    fn contained(&mut self, c: &Contained) -> Result<Completion> {
+        // CALL is not atomic: each statement of the procedure is undone
+        // alone. Nor is a savepoint's statement, ROLLBACK TO going back
+        // past where a mark would be [§17.8 GR3d].
+        if matches!(c.statement(), SqlStatement::Call(_) | SqlStatement::Savepoint(_)) {
+            return self.host.run(c, self.frame);
+        }
+        // Nor are COMMIT and ROLLBACK, which end the transaction a mark
+        // would be of.
+        if matches!(c.statement(), SqlStatement::Commit | SqlStatement::Rollback) {
+            return self.atomic_context().and_then(|()| self.host.run(c, self.frame));
+        }
+        self.atomic(|run| run.host.run(c, run.frame))
     }
 
     /// [ISO/IEC 9075-2:2023 §17.7 GR2, §17.8 GR2] That no atomic execution
@@ -236,11 +245,25 @@ impl<'p, H: Host> Run<'p, '_, H> {
         }
     }
 
+    /// [§14.1] The compound statement `b`: ATOMIC, at a savepoint level of
+    /// its own, established as it begins and destroyed as it ends [GR1,
+    /// GR6].
+    fn block(&mut self, b: &'p Block) -> Ran {
+        if b.atomic {
+            self.host.open_level(true);
+        }
+        let ran = self.block_within(b);
+        if b.atomic {
+            self.host.close_level();
+        }
+        ran
+    }
+
     /// [§14.1] The compound statement `b`: its variables created, of their
     /// initial values [§14.4 GR1], its cursors declared, its statements
     /// run in scope of its handlers; its cursors destroyed after [GR4,
     /// GR5]. ATOMIC, it is undone if an exception ends it [GR1].
-    fn block(&mut self, b: &'p Block) -> Ran {
+    fn block_within(&mut self, b: &'p Block) -> Ran {
         let mark = if b.atomic { self.host.mark().map_err(Stop::Raised)? } else { None };
         if let Err(e) = self.enter(b) {
             let e = match mark {

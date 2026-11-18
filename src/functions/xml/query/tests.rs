@@ -41,7 +41,7 @@ fn shown(v: &Value) -> String {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR1, GR4, §8.4 GR2] [DESIGN]
-/// RULES.md D86: XMLQUERY and XMLEXISTS called outside a statement, by
+/// RULES.md D106: XMLQUERY and XMLEXISTS called outside a statement, by
 /// their names and of their types: a copy of the value BY VALUE; Unknown of
 /// a null context item; a context item of more than one item SQLSTATE
 /// 2200V; a value passed not XML SQLCODE -910.
@@ -59,7 +59,7 @@ fn query_and_exists_as_functions() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §7.1 SR4h, GR1] [DESIGN] RULES.md
-/// D86: XMLTABLE called outside a statement, by its name and of its type:
+/// D106: XMLTABLE called outside a statement, by its name and of its type:
 /// a row of each item, its ordinal; no row of a null context item.
 #[test]
 fn table_as_a_function() {
@@ -73,7 +73,7 @@ fn table_as_a_function() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §7.1 SR4h, §8.4 GR2]
-/// RULES.md D86: XMLTABLE's row pattern as a filter of the rows it is of
+/// RULES.md D106: XMLTABLE's row pattern as a filter of the rows it is of
 /// is XMLEXISTS of it: true of a value it gives an item of, unknown of the
 /// null value; of a query of a value of one node passed, its reduction an
 /// implied filter's.

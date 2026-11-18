@@ -2,7 +2,7 @@
 //! the parts of a QName, and the namespaces in scope of an element, which
 //! are `xml`'s and those it and its ancestors declare [XQueryDM §5.7].
 //!
-//! \[DESIGN\] RULES.md D86: a QName's lexical form is read by XML 1.1's
+//! \[DESIGN\] RULES.md D106: a QName's lexical form is read by XML 1.1's
 //! names, as XMLQUERY reads its query [ISO/IEC 9075-14:2006 draft §6.18
 //! GR2a].
 

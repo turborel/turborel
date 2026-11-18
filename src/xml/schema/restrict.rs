@@ -4,7 +4,7 @@
 //! restriction keeps: a fixed facet keeps its value, each facet narrows
 //! its base's, and the facets agree with one another [Schema2 §4.3].
 //!
-//! \[DESIGN\] RULES.md D86: a bound a step specifies replaces its base's
+//! \[DESIGN\] RULES.md D106: a bound a step specifies replaces its base's
 //! bound on that side, inclusive or exclusive, which the rules above make
 //! no wider; so "both minInclusive and minExclusive specified for the same
 //! datatype" [Schema2 §4.3.9.4] is read, as the rule for the upper bounds

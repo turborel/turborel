@@ -155,6 +155,11 @@ impl Session {
         self.inner.borrow().area.condition.as_ref().map(|c| c.state).filter(|state| state.class() == WARNING_CLASS)
     }
 
+    /// The rows the last statement changed, as ROW_COUNT tells.
+    pub(in crate::db) fn rows_affected(&self) -> usize {
+        self.inner.borrow().area.row_count
+    }
+
     /// [ISO/IEC 9075:1992 §18.1 GR1e] The statement changed `rows` rows:
     /// its completion, no data if none [X3.135-1986 §7.3 GR3a iv].
     pub(super) fn affected(&self, rows: usize) -> Completion {
@@ -431,6 +436,7 @@ fn condition_number(n: &ValueSpecification, valued: &Valued<'_>) -> Result<i128>
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_)
         | Value::Xml(_) => Err(not_exact()),
     }

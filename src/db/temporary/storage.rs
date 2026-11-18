@@ -17,8 +17,10 @@ use crate::db::api;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::{Code, Result, SqlError};
 use crate::index::{
-    self, BTreeMethod, HASH_METHOD, HashMethod, Index, IndexMethod, Key, KeyOrder, KeyProjection, Probe, RTREE_METHOD, RTreeMethod,
+    self, BTreeMethod, FULLTEXT_METHOD, FullTextMethod, HASH_METHOD, HashMethod, Index, IndexMethod, JSON_METHOD, JsonMethod, Key,
+    KeyOrder, KeyProjection, Probe, RTREE_METHOD, RTreeMethod,
 };
+use crate::index::{DISKANN_METHOD, DiskAnnMethod, HNSW_METHOD, HnswMethod, IVF_METHOD, IvfMethod};
 use crate::log::Lsn;
 use crate::spill::{Area, WorkAreas};
 use crate::stats::Statistics;
@@ -194,7 +196,7 @@ impl Rows_ {
         if !lock_builtin(&self.open).is_empty() {
             return Err(SqlError::new(Code::Conflict, "[DESIGN] the rows are open to a transaction".to_owned()));
         }
-        entries.add(rows.versions(Timestamp::MAX, Timestamp::MAX, &entries.index.columns))
+        entries.add(rows.versions(Timestamp::MAX, Timestamp::MAX, &entries.index.reads()))
     }
 
     /// Its entries of each index of `indexes`, by name, for transaction
@@ -247,16 +249,17 @@ impl Rows_ {
         if open.iter().any(|&t| t != tx) {
             return Ok(false);
         }
-        let columns = &entries.index.columns;
+        let columns = &entries.index.reads();
         let read = if open.contains(&tx) { rows.scan(tx, columns) } else { rows.versions(Timestamp::MAX, Timestamp::MAX, columns) };
         entries.add(read)?;
         Ok(true)
     }
 }
 
-/// Whether `a` and `b` index the same columns, by the same method.
+/// Whether `a` and `b` index the same columns and expressions, by the
+/// same method.
 fn same_index(a: &IndexDesc, b: &IndexDesc) -> bool {
-    a.columns == b.columns && a.method == b.method && a.unique == b.unique
+    a.same_parts(b) && a.method == b.method && a.unique == b.unique
 }
 
 /// The rows of an instance not made: none.
@@ -425,6 +428,20 @@ impl Entries {
             Arc::from(HashMethod::new(pool, file).create_on(&types, on)?)
         } else if self.index.method == RTREE_METHOD {
             Arc::from(RTreeMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == DISKANN_METHOD {
+            Arc::from(DiskAnnMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == HNSW_METHOD {
+            Arc::from(HnswMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == IVF_METHOD {
+            Arc::from(IvfMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == FULLTEXT_METHOD {
+            // Its documents' places sorted in the database's work areas
+            // (RULES.md D38, D86).
+            let method =
+                FullTextMethod::with_work(pool, file, Arc::clone(&pages.place.work)).with_rankings(Arc::clone(&pages.place.rankings));
+            Arc::from(method.create_on(&types, on)?)
+        } else if self.index.method == JSON_METHOD {
+            Arc::from(JsonMethod::new(pool, file).create_on(&types, on)?)
         } else {
             Arc::from(BTreeMethod::new(pool, file).create_on(&types, on)?)
         };
@@ -462,7 +479,26 @@ impl Index for Entries {
     ) -> Result<Option<index::NeighbourEntries>> {
         self.read()?.map_or(Ok(None), |entries| entries.nearest(query, budget))
     }
+    fn approximate(
+        self: Arc<Self>,
+        query: &index::NearestQuery,
+        budget: &Arc<crate::memory::MemoryBudget>,
+        filter: Option<&mut dyn index::RowFilter>,
+    ) -> Result<Option<index::NeighbourEntries>> {
+        self.read()?.map_or(Ok(None), |entries| entries.approximate(query, budget, filter))
+    }
     fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
+        if index::vector::is_vector_method(&self.index.method) {
+            return Some(index::vector::projection());
+        }
+        if self.index.method == FULLTEXT_METHOD {
+            // The projection of the index made of this descriptor (RULES.md
+            // D86); a descriptor it refuses makes no index either.
+            return FullTextMethod::projection(&self.index).ok();
+        }
+        if self.index.method == JSON_METHOD {
+            return Some(JsonMethod::projection());
+        }
         if self.index.method != RTREE_METHOD {
             return None;
         }

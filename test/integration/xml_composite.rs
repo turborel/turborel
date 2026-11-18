@@ -243,7 +243,7 @@ fn routines_of_xml_composites_x120() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.3] [DESIGN] RULES.md D79,
-/// D86: an array, a multiset, a row, a distinct type and a structured
+/// D106: an array, a multiset, a row, a distinct type and a structured
 /// type of XML values of many chunks, copied from another table's column,
 /// are whole after their source row is deleted and after a crash.
 #[test]
@@ -277,7 +277,7 @@ fn kept_through_a_crash() {
     assert_eq!(query(&s, &elements), [n]);
 }
 
-/// Verifies: [DESIGN] RULES.md D31, D69, D86: the column store keeps no
+/// Verifies: [DESIGN] RULES.md D31, D69, D106: the column store keeps no
 /// value of a distinct type of XML, as it keeps no XML value, nor an array
 /// of one.
 #[test]

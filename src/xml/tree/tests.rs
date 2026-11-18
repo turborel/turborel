@@ -86,7 +86,7 @@ fn names_compare_by_uri_and_local_name() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §10.16 GR9] [DESIGN] RULES.md
-/// D86: a builder refuses to nest past `MAX_NESTING`, to hold more than
+/// D106: a builder refuses to nest past `MAX_NESTING`, to hold more than
 /// `MAX_TEXT` octets, to close what it did not open, or to finish with an
 /// element open.
 #[test]
@@ -127,7 +127,7 @@ fn attribute_flags_and_absent_nodes() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §10.18] [XQueryDM §6.2.1,
-/// §6.3.1] [DESIGN] RULES.md D86: a tree's root may be a node with no
+/// §6.3.1] [DESIGN] RULES.md D106: a tree's root may be a node with no
 /// parent, an element or an attribute alone among others; it has one
 /// root, an attribute alone is its only node, and a tree has a node.
 #[test]

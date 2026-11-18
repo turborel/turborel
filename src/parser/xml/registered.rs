@@ -1,6 +1,6 @@
 //! \[EXTENSION\] The grammar of registered XML Schemas, which Part 14
 //! leaves to the implementation [ISO/IEC 9075-14:2006 draft §4.2.6,
-//! §4.7.1] (RULES.md D86): the `<XML Schema definition>` and the `<drop
+//! §4.7.1] (RULES.md D106): the `<XML Schema definition>` and the `<drop
 //! XML Schema statement>` (`parser/ddl.rs`).
 //!
 //! XML is no key word of SQL-92, so a table may be named XML; none is
@@ -92,7 +92,7 @@ mod tests {
     }
 
     /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §4.2.6, §5.2,
-    /// §11.6] RULES.md D86: CREATE XML SCHEMA reads a `<schema qualified
+    /// §11.6] RULES.md D106: CREATE XML SCHEMA reads a `<schema qualified
     /// name>`, LOCATION and its `<character string literal>` if written,
     /// and AS any `<value expression>`; DROP XML SCHEMA its name and a
     /// `<drop behavior>`, which it must have. A table named XML is still a

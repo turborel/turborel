@@ -1,7 +1,7 @@
 //! Mutations of XML within other types and other types within XML: large
 //! objects and XML values kept with their rows and recovered, named by
 //! what keeps them in rows spilled, and the mapping of collections and
-//! rows to XML (RULES.md R-TEST-9, D38, D79, D86).
+//! rows to XML (RULES.md R-TEST-9, D38, D79, D106).
 
 use super::{Mutation, Package};
 

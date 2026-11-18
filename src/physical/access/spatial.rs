@@ -34,7 +34,7 @@ pub(super) fn candidates(conds: &[Cond], ix: &IndexDesc, types: &[DataType], val
             if !valid {
                 return None;
             }
-            let predicate = Box::new(Predicate { function: function.clone(), column: 0, argument });
+            let predicate = Box::new(Predicate { function: function.clone(), column: 0, argument: Some(argument) });
             let probe = Probe::Predicate { predicate, value };
             let slots = slot.into_iter().map(|slot| ProbeSlot { place: Place::PredicateValue, slot }).collect();
             Some(Candidate { slots, ..Candidate::one(probe, (vec![at], 0, all, true)) })

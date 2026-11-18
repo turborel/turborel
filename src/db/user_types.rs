@@ -248,6 +248,7 @@ fn respelled(t: DataType) -> DataType {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_)) => other,
     }
@@ -275,7 +276,12 @@ pub(super) fn type_name_of(t: &DataType) -> Option<&'static str> {
         DataType::Array(_) => "ARRAY",
         DataType::Multiset(_) => crate::value::types::MULTISET_NAME,
         DataType::Xml(_) => crate::value::types::XML_NAME,
-        DataType::Row(_) | DataType::Distinct(_) | DataType::Structured(_) | DataType::Reference(_) | DataType::Extension(_) => {
+        DataType::Row(_)
+        | DataType::Distinct(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
+        | DataType::Json
+        | DataType::Extension(_) => {
             return None;
         }
     })

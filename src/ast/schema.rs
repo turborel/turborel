@@ -114,6 +114,9 @@ pub enum SchemaStatement {
     Transform(super::TransformDefinition),
     /// An `<alter transform statement>` [ISO/IEC 9075-2:2023 §11.68].
     AlterTransform(super::AlterTransform),
+    /// \[EXTENSION\] A statement of an embedding model or a vector
+    /// pipeline (`ast/embedding.rs`).
+    Vector(Box<super::VectorStatement>),
     /// \[EXTENSION\] An `<XML Schema definition>` [ISO/IEC 9075-14:2006
     /// draft §4.2.6].
     XmlSchema(Box<super::XmlSchemaDefinition>),
@@ -260,14 +263,25 @@ pub enum TypeName {
     /// statement is processed.
     XmlSchema(crate::xml::Syntax, Box<super::XmlValidAccording>),
     /// \[EXTENSION\] A type beyond the standard with parameters, as its
-    /// name and `(a [, b])` write it (RULES.md D53): no domain takes
+    /// name and `(a [, b ...])` write it (RULES.md D53): no domain takes
     /// parameters.
     Extension {
         /// The type's name.
         name: TableName,
         /// Its parameters, as written.
-        params: Vec<u32>,
+        params: Vec<TypeParam>,
     },
+}
+
+/// \[EXTENSION\] A parameter of a type beyond the standard, as written
+/// (RULES.md D53): an unsigned integer, or a word or `*` that the type's
+/// kind gives a number (`SqlType::param_word`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeParam {
+    /// An unsigned integer.
+    Number(u32),
+    /// An identifier or key word, upper case as read, or `*`.
+    Word(String),
 }
 
 /// [X3.135-1986 §6.5; ISO/IEC 9075:1992 §11.19] `<view definition>` ::=

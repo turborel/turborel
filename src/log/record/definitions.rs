@@ -3,7 +3,7 @@
 //! where a sequence generator's counter goes on (RULES.md D62), as
 //! `log/record.rs` lays them out.
 
-use super::{Change, put_table, table, zone};
+use super::{Change, options, put_options, put_strs, put_table, table, zone};
 use crate::bytes::{Put, Reader};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
@@ -26,8 +26,12 @@ const DROPPED_CAST: u8 = 12;
 const DROPPED_ORDERING: u8 = 13;
 /// The tag of a transform group's drop, or of all a type's.
 const DROPPED_TRANSFORM: u8 = 14;
+/// The tag of an embedding model's drop.
+const DROPPED_MODEL: u8 = 15;
+/// The tag of a vector pipeline's drop.
+const DROPPED_PIPELINE: u8 = 16;
 /// The tag of a registered XML Schema's drop.
-const DROPPED_XML_SCHEMA: u8 = 15;
+const DROPPED_XML_SCHEMA: u8 = 17;
 
 /// \[EXTENSION\] What a `Change::Drop` drops.
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +67,10 @@ pub enum DropTarget {
     /// A type's transform group, or all of them [ISO/IEC 9075-2:2023
     /// §11.71].
     Transform(QualifiedName, Option<String>),
+    /// \[EXTENSION\] An embedding model (the vector design's §12.1).
+    Model(QualifiedName),
+    /// \[EXTENSION\] A vector pipeline (§12.5).
+    Pipeline(QualifiedName),
     /// A registered XML Schema [ISO/IEC 9075-14:2006 draft §4.2.6].
     XmlSchema(QualifiedName),
 }
@@ -186,6 +194,8 @@ pub(super) fn put_dropped(out: &mut Vec<u8>, object: &DropTarget, cascade: bool)
         DropTarget::Routine(specific) => (DROPPED_ROUTINE, specific),
         DropTarget::Module(module) => (DROPPED_MODULE, module),
         DropTarget::Ordering(udt) => (DROPPED_ORDERING, udt),
+        DropTarget::Model(model) => (DROPPED_MODEL, model),
+        DropTarget::Pipeline(pipeline) => (DROPPED_PIPELINE, pipeline),
         DropTarget::XmlSchema(name) => (DROPPED_XML_SCHEMA, name),
         DropTarget::Cast(types) => {
             out.put_u8(DROPPED_CAST);
@@ -225,6 +235,8 @@ pub(super) fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         DROPPED_ROUTINE => Ok(DropTarget::Routine(table(r)?)),
         DROPPED_MODULE => Ok(DropTarget::Module(table(r)?)),
         DROPPED_ORDERING => Ok(DropTarget::Ordering(table(r)?)),
+        DROPPED_MODEL => Ok(DropTarget::Model(table(r)?)),
+        DROPPED_PIPELINE => Ok(DropTarget::Pipeline(table(r)?)),
         DROPPED_XML_SCHEMA => Ok(DropTarget::XmlSchema(table(r)?)),
         DROPPED_CAST => {
             let source = crate::value::types::tags::data_type(r)?;
@@ -237,4 +249,33 @@ pub(super) fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         }
         other => Err(SqlError::new(Code::Corrupt, format!("[DESIGN] a log record drops an unknown kind of object, {other}"))),
     }
+}
+
+/// A CREATE INDEX change's bytes: its name, table, columns, method,
+/// options, and its key parts that are expressions (RULES.md
+/// D92), each its place and text. Any other change, none.
+pub(super) fn put_create_index(out: &mut Vec<u8>, change: &Change) {
+    let Change::CreateIndex { name, table, columns, method, options, expressions } = change else { return };
+    out.put_str(name);
+    put_table(out, table);
+    put_strs(out, columns);
+    out.put_str(method);
+    put_options(out, options);
+    out.put_u32(u32::try_from(expressions.len()).unwrap_or(u32::MAX));
+    for (part, text) in expressions {
+        out.put_u32(u32::try_from(*part).unwrap_or(u32::MAX));
+        out.put_str(text);
+    }
+}
+
+/// What `put_create_index` wrote, as a change.
+pub(super) fn create_index(r: &mut Reader<'_>) -> Result<Change> {
+    let (name, table) = (r.str()?, table(r)?);
+    let columns = (0..r.u32()?).map(|_| r.str()).collect::<Result<_>>()?;
+    let (method, options) = (r.str()?, options(r)?);
+    let mut expressions = Vec::new();
+    for _ in 0..r.u32()? {
+        expressions.push((usize::try_from(r.u32()?).unwrap_or(usize::MAX), r.str()?));
+    }
+    Ok(Change::CreateIndex { name, table, columns, method, options, expressions })
 }

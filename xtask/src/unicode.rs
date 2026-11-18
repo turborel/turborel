@@ -2,7 +2,7 @@
 //! UNICODE reads, `src/value/collation/unicode13.bin`, the one regular
 //! expressions read (`unicode/regex.rs`), and the one XQuery's functions on
 //! strings read (`unicode/xquery.rs`), from the Unicode Character Database
-//! files in DIR (RULES.md D60, D61, D86). It reads local files and
+//! files in DIR (RULES.md D60, D61, D106). It reads local files and
 //! uses no network (R-TEST-5), and only std (R-TOOL-2).
 //!
 //! The layout is the one `src/value/collation/table.rs` reads: a magic, the

@@ -19,7 +19,10 @@
 //! [§11.60 SR23b], and its ROUTINE_DEFINITION is its `<SQL routine body>`
 //! as written, null when longer than CHARACTER_DATA holds. A routine of an
 //! SQL-server module names it, and is no schema-level routine [ISO/IEC
-//! 9075-4:2006 draft §19.5].
+//! 9075-4:2006 draft §19.5]. NEW_SAVEPOINT_LEVEL is YES of a function and
+//! of a procedure of NEW SAVEPOINT LEVEL, NO of another procedure, as
+//! Feature T272 is supported [ISO/IEC 9075-11:2006 draft §6.40
+//! Description 21].
 //!
 //! ROUTINES and PARAMETERS end with the columns ISO/IEC 9075-14:2006
 //! draft §21.2 and §21.3 append: the associated string type and XML option
@@ -166,7 +169,8 @@ fn routines_columns() -> Vec<ColumnDesc> {
         .data("SCHEMA_LEVEL_ROUTINE", true)
         .data("IS_USER_DEFINED_CAST", false)
         .data("IS_IMPLICITLY_INVOCABLE", false)
-        .data("SECURITY_TYPE", true);
+        .data("SECURITY_TYPE", true)
+        .data("NEW_SAVEPOINT_LEVEL", false);
     xml_columns(columns, "XML_RETURN_MECHANISM").done()
 }
 
@@ -191,7 +195,7 @@ fn implicit_routine(catalog: &Value, r: &Implicit<'_>) -> Row {
         vec![text(&r.kind), text(RESULT_DTD)],
     ];
     let traits = vec![text("SQL"), Value::Null, yes(r.deterministic), text("CONTAINS SQL"), yes(r.null_call), yes(true)];
-    let tail = [traits, cast_values(r.cast, true).to_vec(), vec![text("DEFINER")], xml_values(Some(&r.result))].concat();
+    let tail = [traits, cast_values(r.cast, true).to_vec(), vec![text("DEFINER"), yes(true)], xml_values(Some(&r.result))].concat();
     [head.concat(), data_type(catalog, &r.result, None), tail].concat()
 }
 
@@ -215,7 +219,19 @@ fn routine(seen: &Seen<'_>, catalog: &Value, r: &SqlRoutineDesc) -> Row {
     let level = yes(r.module.is_none());
     let traits = vec![text("SQL"), long(&r.body), yes(r.deterministic), text(access(r.access)), null_call, level];
     let cast = cast_values(cast_of(seen, &r.specific), r.returns.is_some() || r.function());
-    [head, described, traits, cast.to_vec(), vec![text("DEFINER")], xml_values(r.returns.as_ref())].concat()
+    [head, described, traits, cast.to_vec(), vec![text("DEFINER"), new_savepoint_level(r)], xml_values(r.returns.as_ref())].concat()
+}
+
+/// [ISO/IEC 9075-11:2006 draft §6.40 Description 21] Whether invoking `r`
+/// establishes a new savepoint level: YES of a function [ISO/IEC
+/// 9075-2:2023 §9.18 GR7], of a procedure whether its definition says NEW
+/// SAVEPOINT LEVEL, which its descriptor keeps in its text; null if that
+/// text no longer reads.
+fn new_savepoint_level(r: &SqlRoutineDesc) -> Value {
+    if r.returns.is_some() || r.function() {
+        return yes(true);
+    }
+    crate::binder::definition_of(r).map_or(Value::Null, |d| yes(d.new_savepoint_level))
 }
 
 // ---------------------------------------------------------------------------

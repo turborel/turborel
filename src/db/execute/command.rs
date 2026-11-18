@@ -5,7 +5,8 @@
 use super::super::area::commands::{self, Command};
 use super::super::dynamic;
 use crate::ast::{
-    ConnectionStatement, DropObject, IndexStatement, RoleStatement, SchemaStatement, ServedStatement, SqlStatement, UserStatement,
+    ConnectionStatement, DropObject, IndexStatement, RoleStatement, SavepointStatement, SchemaStatement, ServedStatement, SqlStatement,
+    UserStatement, VectorObject, VectorStatement,
 };
 use crate::lexer::{Tok, Token, kw, lex};
 
@@ -56,6 +57,11 @@ fn schema_command(s: &SchemaStatement) -> Command {
         SchemaStatement::Trigger(_) => commands::CREATE_TRIGGER,
         SchemaStatement::Method(_) | SchemaStatement::Routine(_) => commands::CREATE_ROUTINE,
         SchemaStatement::Module(_) => commands::CREATE_MODULE,
+        SchemaStatement::Vector(v) => match **v {
+            VectorStatement::Model(_) => commands::CREATE_EMBEDDING_MODEL,
+            VectorStatement::AlterModel(_) => commands::ALTER_EMBEDDING_MODEL,
+            VectorStatement::Pipeline(_) => commands::CREATE_VECTOR_PIPELINE,
+        },
         SchemaStatement::XmlSchema(_) => commands::CREATE_XML_SCHEMA,
     }
 }
@@ -78,6 +84,8 @@ fn drop_command(object: &DropObject) -> Command {
         DropObject::Cast(..) => commands::DROP_CAST,
         DropObject::Ordering(_) => commands::DROP_ORDERING,
         DropObject::Transform(..) => commands::DROP_TRANSFORM,
+        DropObject::Vector(VectorObject::Model, _) => commands::DROP_EMBEDDING_MODEL,
+        DropObject::Vector(VectorObject::Pipeline, _) => commands::DROP_VECTOR_PIPELINE,
         DropObject::XmlSchema(_) => commands::DROP_XML_SCHEMA,
     }
 }
@@ -105,7 +113,9 @@ pub(in crate::db) fn command_of(stmt: &SqlStatement) -> Command {
         SqlStatement::Insert(_) => commands::INSERT,
         SqlStatement::Merge(_) => commands::MERGE,
         SqlStatement::Open(_) => commands::OPEN,
-        SqlStatement::Rollback => commands::ROLLBACK_WORK,
+        SqlStatement::Rollback | SqlStatement::Savepoint(SavepointStatement::RollbackTo(_)) => commands::ROLLBACK_WORK,
+        SqlStatement::Savepoint(SavepointStatement::Establish(_)) => commands::SAVEPOINT,
+        SqlStatement::Savepoint(SavepointStatement::Release(_)) => commands::RELEASE_SAVEPOINT,
         SqlStatement::Select { .. } => commands::SELECT_ROW,
         SqlStatement::SetTransaction(_) => commands::SET_TRANSACTION,
         SqlStatement::SetSchema(_) => commands::SET_SCHEMA,
@@ -147,7 +157,7 @@ fn index_command(i: &IndexStatement) -> Command {
     match i {
         IndexStatement::Create { .. } => commands::CREATE_INDEX,
         IndexStatement::Drop { .. } => commands::DROP_INDEX,
-        IndexStatement::Alter { .. } => commands::ALTER_INDEX,
+        IndexStatement::Alter { .. } | IndexStatement::Maintain { .. } => commands::ALTER_INDEX,
     }
 }
 

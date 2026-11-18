@@ -23,7 +23,7 @@ CREATE PROCEDURE: define an SQL-invoked procedure
     | [ NOT ] DETERMINISTIC
     | CONTAINS SQL | READS SQL DATA | MODIFIES SQL DATA
     | DYNAMIC RESULT SETS 0
-    | OLD SAVEPOINT LEVEL
+    | NEW SAVEPOINT LEVEL | OLD SAVEPOINT LEVEL
 ```
 
 PROCEDURE is a key word. INOUT, SPECIFIC, DETERMINISTIC, CONTAINS,
@@ -71,6 +71,13 @@ each privilege the body needs is held grantable. A procedure has a
 specific name, given by SPECIFIC, else its name, an underscore and a
 number.
 
+A procedure of NEW SAVEPOINT LEVEL runs at a savepoint level of its own:
+its body names none of its caller's savepoints, and its own are
+destroyed as it returns, what it changed staying. One of OLD SAVEPOINT
+LEVEL, the default, runs at its caller's level, so its body may go back
+to a savepoint its caller established, and one it establishes outlives
+the CALL (see [SAVEPOINT](savepoint.md)).
+
 CREATE PROCEDURE runs within the session's transaction: ROLLBACK undoes
 it.
 
@@ -88,14 +95,14 @@ it.
 4. Each characteristic is written at most once, and the SQL-data access
    is written. The parameters are named, no two the same, and no
    parameter is of a domain or a row type. A procedure has no RETURNS
-   and no null-call clause.
-5. The body is no schema, transaction, connection, session or dynamic
-   statement, has no host or dynamic parameter, and is no RETURN, nor
-   holds one. A body of CONTAINS SQL reads no table, and one of READS
-   SQL DATA changes none, counting every statement a program holds.
+   and no null-call clause. NEW SAVEPOINT LEVEL needs MODIFIES SQL DATA.
+5. The body is no schema, connection, session or dynamic statement, no
+   COMMIT and no ROLLBACK but ROLLBACK TO SAVEPOINT, has no host or
+   dynamic parameter, and is no RETURN, nor holds one. A body of
+   CONTAINS SQL reads no table, and one of READS SQL DATA changes none,
+   counting every statement a program holds.
 6. LANGUAGE is SQL. Any other language, SQL SECURITY, a parameter's
-   default, DYNAMIC RESULT SETS above 0 and NEW SAVEPOINT LEVEL are not
-   supported.
+   default and DYNAMIC RESULT SETS above 0 are not supported.
 7. The transaction is not READ ONLY.
 
 ## PRIVILEGES
@@ -189,7 +196,7 @@ CREATE PROCEDURE ENDED () MODIFIES SQL DATA COMMIT;
 ```
 turborel: SQLCODE -103 (SQLSTATE 2A000): the body of ANN.SNEAKY possibly modifies SQL-data, and it is READS SQL DATA (IA075) [ISO/IEC 9075-2:2023 §11.60 SR23c]
 turborel: SQLCODE -103 (SQLSTATE 2A000): schema ANN has procedure PLACE of 2 parameters already, of specific name ANN.PLACE_11 [ISO/IEC 9075-2:2023 §11.60 SR20a] (at character 17)
-turborel: SQLCODE -103 (SQLSTATE 2A000): an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS, SQL control statement, SIGNAL, RESIGNAL, a statement of a PTF data area or a function's RETURN (IA078) [ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g; ISO/IEC 9075-4:2006 draft §11.60 SR23]
+turborel: SQLCODE -103 (SQLSTATE 2A000): an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS, SQL control statement, SIGNAL, RESIGNAL, savepoint's statement, a statement of a PTF data area or a function's RETURN (IA078) [ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g; ISO/IEC 9075-4:2006 draft §11.60 SR23]
 ```
 
 ## STANDARD
@@ -197,8 +204,11 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): an SQL routine body is an INSERT, UPDAT
 ISO/IEC 9075-2:2023 §11.60, §9.18, §4.35, Feature T321 (subfeatures 02
 and 04), T341, B128. An element target `P[i]` is the `<target array
 element specification>` of §6.4, Feature S097. A body of a control
-statement is ISO/IEC 9075-4:2006 draft §11.2, Feature P002. SQL-86 and
-SQL-92 have no SQL-invoked routines.
+statement is ISO/IEC 9075-4:2006 draft §11.2, Feature P002. NEW
+SAVEPOINT LEVEL is Feature T272 [§11.60 SR9j, SR9k, SR9l, GR3k], a
+procedure of it establishing a savepoint level as it is invoked and
+destroying it as it returns [§9.18 GR7, GR15]. SQL-86 and SQL-92 have no
+SQL-invoked routines.
 
 ## SEE ALSO
 

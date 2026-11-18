@@ -11,7 +11,9 @@ ALTER INDEX: change an index's options *(extension)*
 ```
 <alter index statement> ::=
     ALTER INDEX <index name>
-    SET ( <index option> [ { , <index option> }... ] )
+    { SET ( <index option> [ { , <index option> }... ] )
+    | REBUILD [ ONLINE ] [ PARAMETERS ( <parameter> [ { , <parameter> }... ] ) ]
+    | MERGE DELTA | LOAD | UNLOAD }
 
 <index option> ::= <option name> = { <option value> | DEFAULT }
 ```
@@ -25,8 +27,19 @@ and writing the table, and then puts it in the old one's place. It is
 made at once, apart from any transaction: no ROLLBACK undoes it.
 
 The options are those the index's method declares and those plug-ins
-declare for every index; the built-in methods, `btree`, `hash`, `rtree`,
-`xml_path`, `xml_value`, `xml_property` and `xml_primary`, declare none. INFORMATION_SCHEMA.INDEX_OPTIONS shows an index's options.
+declare for every index; of the built-in methods, `btree`, `hash`,
+`rtree`, `xml_path`, `xml_value`, `xml_property` and `xml_primary`
+declare none, and `fulltext` declares those of
+[Full-Text Search](../08-fulltext.md). INFORMATION_SCHEMA.INDEX_OPTIONS shows an index's options.
+
+Of a `fulltext` index, FULLTEXT.K1, FULLTEXT.B and FULLTEXT.RANKING
+change in place, as the index's entries do not depend on how its rows
+are ranked. FULLTEXT.RANKING names BM25 or a ranking the program
+registered, and Rank scores by it from the next statement on.
+FULLTEXT.LANGUAGE and FULLTEXT.STOP_WORDS build the index again.
+
+REBUILD, MERGE DELTA, LOAD and UNLOAD are of a vector index, and are
+described with [CREATE VECTOR INDEX](create-vector-index.md).
 
 ## RULES
 
@@ -65,4 +78,4 @@ An extension: neither SQL-86 nor SQL-92 has indexes.
 
 ## SEE ALSO
 
-[CREATE INDEX](create-index.md), [DROP INDEX](drop-index.md)
+[CREATE INDEX](create-index.md), [CREATE VECTOR INDEX](create-vector-index.md), [DROP INDEX](drop-index.md)

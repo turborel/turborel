@@ -68,6 +68,7 @@ pub(super) fn complex(t: &DataType) -> bool {
         | DataType::Distinct(_)
         | DataType::Structured(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Extension(_) => false,
     }
 }
@@ -117,6 +118,7 @@ pub(super) fn complex_type(t: &DataType, name: &str, catalog: &str, nulls: Nulls
         | DataType::Distinct(_)
         | DataType::Structured(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Xml(_)
         | DataType::Extension(_) => return Ok(None),
     }
@@ -154,6 +156,7 @@ pub(super) fn parts_of(t: &DataType) -> Vec<DataType> {
         | DataType::Interval(_)
         | DataType::Structured(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Xml(_)
         | DataType::Extension(_) => Vec::new(),
     }

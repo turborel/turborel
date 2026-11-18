@@ -3,7 +3,7 @@
 //! held as its starting instant, the date its fields and a template give
 //! the fields it has not [XQueryFO §10.4.17 to §10.4.21].
 //!
-//! \[DESIGN\] RULES.md D86: the template year of a recurring value is
+//! \[DESIGN\] RULES.md D106: the template year of a recurring value is
 //! 1972, a leap year, so --02-29 is a value, and its template month
 //! December, of 31 days, so ---31 is; XQueryFO's templates for equality
 //! name them.

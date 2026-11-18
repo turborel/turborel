@@ -1,4 +1,4 @@
-//! The table of a stored node's type annotations (RULES.md D86): each
+//! The table of a stored node's type annotations (RULES.md D106): each
 //! the number of its type's name and its typing, written once and
 //! referred to by number from the events of the nodes it annotates.
 

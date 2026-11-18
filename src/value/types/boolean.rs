@@ -105,6 +105,7 @@ pub(crate) fn as_text(b: bool, t: &DataType) -> Result<Value> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => return uncastable(&Value::Bool(b), t),
     };
@@ -159,6 +160,7 @@ impl SqlType for Boolean {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_)
             | Value::Xml(_) => unassignable(&v, t, rule),
         }
@@ -183,6 +185,7 @@ impl SqlType for Boolean {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_)
             | Value::Xml(_) => uncastable(&v, t),
         }

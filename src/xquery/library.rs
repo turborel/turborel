@@ -20,7 +20,7 @@
 //! operator is a plain function of `op`, named after it, that the
 //! evaluation of XQuery's operators calls [XQuery Appendix B.2].
 //!
-//! \[DESIGN\] RULES.md D86: no function recurses on a tree: each walks it
+//! \[DESIGN\] RULES.md D106: no function recurses on a tree: each walks it
 //! by its links. A string or sequence a function would make past
 //! `MAX_STRING` or `MAX_ITEMS` is SQLCODE -900 (D18), so no call holds
 //! more than an XML value may; a function whose work grows faster than
@@ -71,10 +71,10 @@ use crate::xml::{MAX_NODES, MAX_TEXT, Sequence};
 pub const ERR_NAMESPACE: &str = "http://www.w3.org/2005/xqt-errors";
 
 /// \[DESIGN\] The most octets of a string a function makes: a tree's text
-/// (RULES.md D86).
+/// (RULES.md D106).
 pub const MAX_STRING: usize = MAX_TEXT;
 /// \[DESIGN\] The most items of a sequence a function makes: a tree's
-/// nodes (RULES.md D86).
+/// nodes (RULES.md D106).
 pub const MAX_ITEMS: usize = MAX_NODES;
 
 /// The body of a built-in function: its value of its arguments in the

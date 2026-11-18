@@ -55,7 +55,7 @@ fn by_id(id: u64, source: &Object) -> Key {
     Key(vec![Value::Xml(XmlValue::stored(Lob::of_reference(LobKind::Binary, id, (octets, chars))))])
 }
 
-/// Verifies: [DESIGN] RULES.md D86, D79: a value held as a large object
+/// Verifies: [DESIGN] RULES.md D106, D79: a value held as a large object
 /// is found as one its row holds is; added again by its id alone, from
 /// the entries kept of it; and taken back with its object freed, by id or
 /// read through it, unread, leaving no entry.
@@ -79,7 +79,7 @@ fn an_object_is_taken_back_unread() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D86, R-ERR-5: an object named by its id
+/// Verifies: [DESIGN] RULES.md D106, R-ERR-5: an object named by its id
 /// alone that the index does not hold cannot be read, SQLCODE -910, and
 /// leaves nothing; one of a value refused leaves nothing either.
 #[test]
@@ -93,7 +93,7 @@ fn an_object_not_held_is_refused() {
     index.remove(&by_id(3, &source), 1).unwrap();
 }
 
-/// Verifies: [DESIGN] RULES.md D86: the rows of a value held as an object
+/// Verifies: [DESIGN] RULES.md D106: the rows of a value held as an object
 /// are those it was added of, by its id.
 #[test]
 fn the_rows_of_an_object_are_its_rows() {

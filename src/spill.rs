@@ -451,6 +451,7 @@ pub fn heap_bytes(v: &Value) -> usize {
             named.saturating_add(parts).saturating_add(key)
         }
         Value::Reference(r) => r.bytes().len(),
+        Value::Json(j) => j.bytes().len(),
         Value::Null
         | Value::Exact(_)
         | Value::Approx(_)

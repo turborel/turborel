@@ -1,4 +1,4 @@
-//! \[EXTENSION\] RULES.md D86: a lookup as EXPLAIN shows it, written as
+//! \[EXTENSION\] RULES.md D106: a lookup as EXPLAIN shows it, written as
 //! the path and comparisons it selects by: `/` before a child step, `//`
 //! before a descendant step, `@` before an attribute's name, `*` for any
 //! name, a name in a namespace as `Q{uri}local` [XPath 3.0 §A.1 EQName],

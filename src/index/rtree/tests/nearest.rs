@@ -5,7 +5,16 @@ use crate::functions::{ScalarFunction, ScalarRef};
 use crate::geometry::{Geometry, GeometryFunction, SpatialOperation, data_type, data_type_with_srid};
 
 fn query(value: Value) -> NearestQuery {
-    NearestQuery { function: ScalarRef(Arc::new(GeometryFunction::Distance)), column: 0, argument: 0, value }
+    NearestQuery {
+        function: ScalarRef(Arc::new(GeometryFunction::Distance)),
+        column: 0,
+        argument: 0,
+        value,
+        descending: false,
+        statistics: None,
+        metric: None,
+        approximate: None,
+    }
 }
 
 struct Unstable;
@@ -37,20 +46,20 @@ fn nearest_capability_requires_the_complete_distance_contract() {
     let method = RTreeMethod::in_memory();
     let types = [data_type_with_srid(0).unwrap()];
     let request = query(Value::Null);
-    assert!(method.supports_nearest(&request, &types));
-    assert!(method.supports_nearest(&NearestQuery { argument: 1, ..request.clone() }, &types));
+    assert_eq!(method.supports_nearest(&request, &types), NearestSupport::Exact);
+    assert_eq!(method.supports_nearest(&NearestQuery { argument: 1, ..request.clone() }, &types), NearestSupport::Exact);
     for changed in [
         NearestQuery { column: 1, ..request.clone() },
         NearestQuery { argument: 2, ..request.clone() },
         NearestQuery { function: ScalarRef(Arc::new(GeometryFunction::Intersects)), ..request.clone() },
         NearestQuery { function: ScalarRef(Arc::new(Unstable)), ..request.clone() },
     ] {
-        assert!(!method.supports_nearest(&changed, &types));
+        assert_eq!(method.supports_nearest(&changed, &types), NearestSupport::No);
     }
     for unsupported in [vec![], vec![data_type()], vec![approximate()], columns(2)] {
-        assert!(!method.supports_nearest(&request, &unsupported));
+        assert_eq!(method.supports_nearest(&request, &unsupported), NearestSupport::No);
     }
-    assert!(!crate::index::BTreeMethod::in_memory().supports_nearest(&request, &types));
+    assert_eq!(crate::index::BTreeMethod::in_memory().supports_nearest(&request, &types), NearestSupport::No);
 }
 
 /// Verifies: [DESIGN] D15, D85: malformed, NULL, empty, mixed-reference

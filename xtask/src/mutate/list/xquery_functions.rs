@@ -6,7 +6,7 @@
 //! in the implicit time zone and their arithmetic, fn:deep-equal, the
 //! functions on sequences and their bounds; the built-in functions and
 //! operators a query calls of it; casts to `xs:QName`; and the type
-//! annotation of constructed elements (RULES.md R-TEST-9, D86).
+//! annotation of constructed elements (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 

@@ -252,7 +252,7 @@ fn first_rejected(open: &str, close: &str) -> usize {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18] [DESIGN] RULES.md R-CF-6,
-/// D86: `MAX_NESTING` levels are the query body and each expression or
+/// D106: `MAX_NESTING` levels are the query body and each expression or
 /// direct element nested in it, so 63 parentheses or elements around an
 /// operand parse and 64 do not.
 #[test]
@@ -263,7 +263,7 @@ fn nesting_counts_each_level_once() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18] [DESIGN] RULES.md R-CF-6,
-/// D86: a query nested deeper than `MAX_NESTING`, of each shape, is
+/// D106: a query nested deeper than `MAX_NESTING`, of each shape, is
 /// refused with SQLCODE -900, never a stack overflow; the deepest one
 /// accepted parses, is written back, parsed again, compared and dropped
 /// on a thread of half the default stack, so the bound keeps the parser

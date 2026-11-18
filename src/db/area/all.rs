@@ -59,6 +59,7 @@ fn charform(value: &Value) -> String {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_)
         | Value::Xml(_)
         | Value::Null => value.to_string(),

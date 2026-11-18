@@ -27,6 +27,10 @@ impl<'a> Call<'a> {
             (Expr::Const(value), Expr::Call(function, args)) => (function, args, value, true),
             _ => return None,
         };
+        // One that reads its statement is evaluated a row at a time (D87).
+        if function.0.uses_context() {
+            return None;
+        }
         let mut call = Self { function, args: Vec::with_capacity(args.len()), columns: Vec::new(), comparison: (*op, constant), reversed };
         for (position, arg) in args.iter().enumerate() {
             match arg {

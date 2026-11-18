@@ -1,5 +1,5 @@
 //! Registered XML Schemas [ISO/IEC 9075-14:2006 draft §4.2.6; RULES.md
-//! D86]: CREATE and DROP XML SCHEMA, the documents a schema reads among
+//! D106]: CREATE and DROP XML SCHEMA, the documents a schema reads among
 //! those registered, what depends on one, the permanently registered ones,
 //! and their recovery.
 
@@ -67,7 +67,7 @@ fn two() -> Database {
     db
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §4.2.6] RULES.md D86:
+/// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §4.2.6] RULES.md D106:
 /// a registered XML Schema of a name registered already is refused,
 /// SQLCODE -103, and so is one in a schema not there (SQLSTATE 3F000), or
 /// one another user's (SQLCODE -104); the first is kept, and its
@@ -84,7 +84,7 @@ fn a_name_registered_is_refused_4_2_6() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §4.2.6, §10.15 GR3,
-/// §10.16] RULES.md D86: the document is a character string, a binary
+/// §10.16] RULES.md D106: the document is a character string, a binary
 /// string or an XML document, evaluated once, a subquery's or a dynamic
 /// parameter's too, a `?` alone a character large object; text no
 /// well-formed document is SQLSTATE 2200M, a document no schema 22000, the
@@ -124,7 +124,7 @@ fn the_document_is_a_string_or_an_xml_document_4_2_6() {
     }
 }
 
-/// Verifies: [EXTENSION] [Schema1 §4.2.1, §4.2.3] RULES.md D86: an
+/// Verifies: [EXTENSION] [Schema1 §4.2.1, §4.2.3] RULES.md D106: an
 /// `<include>` finds a registered XML Schema by its LOCATION, an
 /// `<import>` by its namespace, of those the owner of its schema may use
 /// alone, and nothing else: a reference to a component of one not found
@@ -150,7 +150,7 @@ fn includes_and_imports_resolve_among_registered_schemas() {
     register(&b, "IMPORTER", ("", &importing("urn:u", "urn:o")));
 }
 
-/// Verifies: [EXTENSION] RULES.md D86, [ISO/IEC 9075-2:2023 §11.44 SR4]
+/// Verifies: [EXTENSION] RULES.md D106, [ISO/IEC 9075-2:2023 §11.44 SR4]
 /// as of a collation: DROP XML SCHEMA RESTRICT is refused (SQLCODE -103)
 /// while a registered XML Schema uses it, directly or through another;
 /// CASCADE drops those with it; one used by none drops with RESTRICT; one
@@ -183,7 +183,7 @@ fn drop_restrict_is_refused_while_used_and_cascade_drops_users() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §4.2.6 Table 1]
-/// RULES.md D86: the XML Schemas of the namespaces of xs, xsi and sqlxml
+/// RULES.md D106: the XML Schemas of the namespaces of xs, xsi and sqlxml
 /// are registered always, as INFORMATION_SCHEMA.XS, XSI and SQLXML, and
 /// none is dropped (SQLCODE -103).
 #[test]
@@ -200,7 +200,7 @@ fn the_permanent_schemas_are_never_dropped_4_2_6() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.2 SR3, GR5] RULES.md
-/// D86: DROP SCHEMA RESTRICT is refused while the schema holds a registered
+/// D106: DROP SCHEMA RESTRICT is refused while the schema holds a registered
 /// XML Schema; CASCADE drops it, and those that use it.
 #[test]
 fn drop_schema_drops_its_registered_schemas() {
@@ -216,7 +216,7 @@ fn drop_schema_drops_its_registered_schemas() {
     register(&a, "S", ("s.xsd", &doc("urn:s", "")));
 }
 
-/// Verifies: [DESIGN] RULES.md D25, D86: registered XML Schemas survive
+/// Verifies: [DESIGN] RULES.md D25, D106: registered XML Schemas survive
 /// reopening, from the log alone after a failure and after a checkpoint
 /// and a close, one that includes another, registered of a document of
 /// line ends, which no character string literal holds, still reading

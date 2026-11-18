@@ -1,7 +1,7 @@
 //! The error function [XQueryFO §3], which raises an error a query names,
 //! and the trace function [XQueryFO §4].
 //!
-//! \[DESIGN\] RULES.md D86: an error a query raises is SQL/XML's XQuery
+//! \[DESIGN\] RULES.md D106: an error a query raises is SQL/XML's XQuery
 //! error [ISO/IEC 9075-14:2006 draft §6.18 GR3], its message the error's
 //! QName as the URI `NS#LP` [XQueryFO §3] and its description; an error
 //! object is not returned, as [XQueryFO §3] leaves to the implementation.

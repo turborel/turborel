@@ -4,7 +4,7 @@
 //! `fn:normalize-space` and `fn:translate`. A string's length and the
 //! positions in it are counted in characters, code points [XQueryFO §7.1].
 //!
-//! \[DESIGN\] RULES.md D86: a code point is a character of XML 1.1
+//! \[DESIGN\] RULES.md D106: a code point is a character of XML 1.1
 //! [XML 1.1 §2.2], by whose lexical rules XMLQUERY reads its query
 //! [ISO/IEC 9075-14:2006 draft §6.18 GR2a].
 

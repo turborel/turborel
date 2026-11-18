@@ -25,6 +25,15 @@ SQLSTATE 0A000.
 | A multiset's elements | 65,535; past it, SQLSTATE 2200Q |
 | An XML value | Elements nested 512 deep; 16 MiB of text and 1,048,576 nodes and namespace bindings in one tree; 16 MiB more of entities' text in one parse; 64 MiB of text XMLPARSE reads; a stored form of 64 MiB |
 | An XQuery query | Expressions nested 64 deep; operations and function calls nested 256 deep as it is evaluated; 1,048,576 items in one sequence; 64 MiB of nodes one evaluation constructs |
+| A number in JSON text or an SQL/JSON path | an exact one within DECFLOAT's range, an approximate one within DOUBLE PRECISION's |
+| The precision of an SQL/JSON item method | decimal() 18 digits; time(), time_tz(), timestamp() and timestamp_tz() 6, and a string datetime() reads, or its template's FF*n*, 6 digits of a second's fraction |
+| A FULLTEXT value or a full-text search pattern | 32,767 characters; past it, SQLSTATE 22001 |
+| A full-text language's name | 32 characters |
+| The array a full-text tokenizing method gives | 65,535 elements; past it, SQLSTATE 2202F |
+| The relations of the thesauri a statement reads | 65,535 |
+| A VECTOR's dimension count | 1 to 65,535; of a sparse vector 2,147,483,647; of BINARY 8 to 65,528, a multiple of 8 |
+| A vector's text in a character large object | 16,777,216 octets; past it, SQLSTATE 22003 |
+| The text EMBED and the chunking functions read of a character large object | 16,777,216 octets; past it, SQLSTATE 22000 |
 
 ## Nesting
 
@@ -34,6 +43,9 @@ FROM clause. A deeper one is refused rather than run out of stack.
 
 Triggers run within triggers at most 16 deep: a trigger whose action
 runs a 17th fails its statement with SQLSTATE 09000, SQLCODE -900.
+
+A full-text search pattern nests at most 100 deep, and a deeper one is
+SQLSTATE 2FF01.
 
 Array, multiset and row types nest at most 16 deep, an array of rows of
 arrays counting three. A deeper type is refused as it is read.
@@ -45,6 +57,18 @@ pattern with a back-reference goes back to try each way and stops past
 10,000,000 steps; one without any takes time linear in the string, with
 no limit. Each is SQLCODE -900.
 
+JSON text nests arrays and objects at most 128 deep, and an SQL/JSON
+path expression is at most 64 deep, of parentheses, filters, subscripts
+and signs, or of accessors and operators in a row. A deeper one is
+SQLCODE -900, which ON ERROR does not replace. JSON text, or a PASSING
+argument, in a large object is read at most 262,144 octets long, a chunk.
+
+A JSON object JSON_OBJECT or JSON_OBJECTAGG makes has at most 1,048,576
+members, and an array JSON_ARRAY or JSON_ARRAYAGG makes at most
+1,048,576 elements, those left out ABSENT ON NULL not counted; one more
+is SQLSTATE 2203E or 2203D. JSON_ARRAYAGG holds the rows of a group
+until it orders them, so it holds no more than that.
+
 ## Grouping
 
 A GROUP BY stands for at most 4,096 grouping sets: a CUBE of 12 columns
@@ -54,20 +78,18 @@ their number less 1, has at most the 18 digits of its type.
 
 ## Sizes
 
-The GEOMETRY readers accept at most 16 MiB of WKT or WKB,
-100,000 geometry components, rings and coordinates in total, and 16
-nested geometry levels including the root. SQL text/binary interchange
-still uses the 32,767-character/octet string limits above; the Rust
-geometry codecs support the larger inputs. A SQL geometry observer whose
-text or binary result exceeds its limit fails with SQLCODE -900.
-
 | What | Limit |
 |---|---|
 | An index's key | of the default 8 KiB page, 2,007 bytes in a B-link tree, 8,116 in a hash index; of a 4 KiB page, 983 in a B-link tree; of a 64 KiB page, 16,343 in a B-link tree, 65,460 in a hash index |
+| A word a full-text index keeps | its first 256 characters, and of those its first 255 bytes in UTF-8; a longer word is found by that prefix and checked against the row |
+| A document a full-text index reads | none: it is read a word at a time |
+| A GEOMETRY value | 16 MiB of WKT or WKB, 100,000 components, rings and coordinates in all, and 16 levels of nesting, the value's own included; more is refused with SQLCODE -900 |
+| A GEOMETRY value's WKT or WKB in SQL | 32,767 characters or octets, the limit of its string type; ST_ASTEXT or ST_ASBINARY of a longer one fails with SQLCODE -900, where the library's codecs take one up to the limit above ([Spatial Data](../sql/10-spatial.md)) |
 | A row | none: its long values are kept out of line |
 | A message to the server | SERVER.MAX_MESSAGE_BYTES, 16 MiB by default |
 | Connections at once | SERVER.MAX_CONNECTIONS, 100 by default |
 | Prepared statements of a connection | SERVER.MAX_STATEMENTS, 1,024 by default |
+| Savepoints of a transaction | 1,024; past it, SAVEPOINT fails with SQLSTATE 3B002, SQLCODE -917 |
 
 An index's key is compared whole in its page, so it is limited where a
 row is not; STORAGE.PAGE_BYTES, chosen as a database is made, raises the

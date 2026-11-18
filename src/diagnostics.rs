@@ -91,6 +91,14 @@ pub enum Extension {
     DataType,
     /// \[EXTENSION\] A `ServedConnections` (`Database::set_served_connections`).
     ServedConnections,
+    /// \[EXTENSION\] A ranking of full-text search (`Database::register_ranking`).
+    Ranking,
+    /// \[EXTENSION\] A metric of VECTOR (`Database::register_metric`).
+    Metric,
+    /// \[EXTENSION\] A quantizer of VECTOR (`Database::register_quantizer`).
+    Quantizer,
+    /// \[EXTENSION\] A model of embeddings (`Database::register_embedder`).
+    Embedder,
     /// \[EXTENSION\] An `XQueryFunction` (`Database::register_xquery_function`).
     XQueryFunction,
 }

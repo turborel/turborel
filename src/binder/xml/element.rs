@@ -60,7 +60,7 @@ pub(super) fn mapped_inside(t: &DataType, levels: usize) -> bool {
         DataType::Multiset(m) => mapped_inside(&m.element, inner),
         DataType::Row(r) => r.fields.iter().all(|f| mapped_inside(&f.data_type, inner)),
         DataType::Distinct(d) => mapped_inside(&d.source, inner),
-        DataType::Structured(_) | DataType::Reference(_) | DataType::Extension(_) => false,
+        DataType::Structured(_) | DataType::Reference(_) | DataType::Json | DataType::Extension(_) => false,
         DataType::Character { .. }
         | DataType::Varying { .. }
         | DataType::Exact { .. }

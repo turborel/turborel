@@ -51,13 +51,15 @@ pub(super) fn grouped_elements(element: &DataType, what: &str) -> Result<()> {
 /// equality operation, `what`: if it is a multiset, its elements grouped
 /// by no operation refused, as `grouped_elements` refuses them; if it is
 /// XML-ordered, refused, as no XML value is compared [ISO/IEC 9075-14:2006
-/// draft §10.8 SR1].
+/// draft §10.8 SR1]; and \[EXTENSION\] a vector refused
+/// (`orderless_operand`).
 ///
 /// # Errors
 ///
 /// SQLCODE -103 if they are, or it is.
 pub(super) fn equality_operand(t: &DataType, what: &str) -> Result<()> {
     super::composite::not_xml(t, what, "compares", "§10.8 SR1")?;
+    super::composite::orderless_operand(t, what)?;
     match t.multiset_type() {
         Some(m) => grouped_elements(&m.element, what),
         None => Ok(()),
@@ -84,6 +86,7 @@ fn uncertain(t: &DataType) -> bool {
         | DataType::Date
         | DataType::Interval(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => false,
     }

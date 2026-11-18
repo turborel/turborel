@@ -46,6 +46,7 @@ impl Parser {
             arg,
             order_by,
             listagg: None,
+            json: None,
             filter: None,
             semantics: None,
             returning: None,

@@ -1,6 +1,6 @@
 //! Mutations of SQL/XML's `<XML lexically scoped options>`: XMLNAMESPACES
 //! and XMLBINARY of a query, a statement, a definition and a compound
-//! statement (RULES.md R-TEST-9, D86).
+//! statement (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 

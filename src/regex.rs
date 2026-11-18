@@ -25,7 +25,7 @@
 //! `(?:` and no flag `q`.
 
 mod backtrack;
-mod class;
+pub(crate) mod class;
 mod class_expr;
 mod compile;
 mod flags;
@@ -40,6 +40,8 @@ use compile::{Program, compile};
 use flags::{Flag, Flags};
 use parse::{parse, parse_schema};
 use unicode::Table;
+
+pub(crate) use unicode::general_category;
 
 pub use lob_text::LobText;
 pub(crate) use replace::zero_length;

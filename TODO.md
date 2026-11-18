@@ -57,19 +57,7 @@ Nothing is open.
 
 ### JSON
 
-- SQL/JSON's path language (T831 to T838, T840) [§4.48.5, §9.45, §9.46],
-  strict and lax, with filters, item methods, starts with, like_regex and
-  hex integer literals. Every JSON function reads it, so it comes first.
-- SQL/JSON functions over character strings (T803, T811 to T830) [§4.48,
-  §6.28, §6.34, §6.35, §7.11, §8.22, §8.23, §10.11]. JSON_OBJECT,
-  JSON_ARRAY and their aggregates, JSON_VALUE, JSON_QUERY, JSON_EXISTS, IS
-  JSON and JSON_TABLE, with PASSING, ON EMPTY and ON ERROR.
-- The JSON type (T801, T802) [§4.8, §6.1, §6.37, §6.40, §6.41], stored
-  parsed so a query does not parse text again.
-- The simplified accessor (T860 to T864) [§6.36], as `doc.items[0].name`.
-  It needs the JSON type.
-- Item methods (T865 to T878) [§9.46], bigint() to timestamp_tz().
-- JSON in equality, grouping and ordering (T879 to T882) [§4.8.2].
+Nothing is open.
 
 ---
 
@@ -106,14 +94,9 @@ is kept consistent under concurrent change and recovery as the B-tree is.
   beyond probing one tree for each outer row. Add bulk packing
   and reclaim empty nodes without relocating entries under active scans;
   measure overlap and space after sustained updates as well as fresh loads.
-- An inverted index of terms to the rows and positions they appear at,
-  with its tokenizer, for full text search. Full text needs it.
-- HNSW, a hierarchical graph of vectors for approximate nearest neighbour
-  search. Vectors need it, and a structure kept on disk past what memory
-  holds may follow it.
 - Adjacency held for a graph's edges, so a path query follows an edge
   without a join's search. Graph queries need it.
-- XML indexes (RULES.md D86): `xml_path`, `xml_value`, `xml_property`
+- XML indexes (RULES.md D106): `xml_path`, `xml_value`, `xml_property`
   and `xml_primary` are built, answer lookups of paths and values, and
   the primary answers queries with filters of an ancestor; the planner
   reads them for XMLEXISTS, XMLQUERY NULL ON EMPTY IS NOT NULL and
@@ -161,10 +144,6 @@ features.
 
 ### Full text
 
-- SQL/MM Full-Text (ISO/IEC 13249-2). The FULLTEXT type and its methods,
-  CONTAINS and its search patterns of words, phrases, proximity,
-  stemming and thesaurus, and ranking by score, over the inverted index.
-
 ### Spatial
 
 - Geometry predicates over the registered XY GEOMETRY representation:
@@ -205,10 +184,4 @@ features.
 
 ### Vectors
 
-- A VECTOR type and its search [EXTENSION]. No ISO standard defines one,
-  so it follows what Oracle and Microsoft SQL Server ship, from their
-  documentation. It covers a VECTOR column of a dimension and an element
-  type, VECTOR_DISTANCE by cosine, Euclidean, dot product, Manhattan and
-  Hamming metrics, norms and normalizing, and CREATE VECTOR INDEX over
-  HNSW. An approximate top-k query, ORDER BY a distance then FETCH APPROX
-  FIRST, reads the index, and an exact one sorts as ORDER BY does today.
+Nothing is open.

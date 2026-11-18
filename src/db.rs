@@ -7,10 +7,9 @@
 //!     CLOSE, COMMIT WORK, DELETE (positioned or searched), FETCH, INSERT,
 //!     OPEN, ROLLBACK WORK, SELECT ... INTO, UPDATE (positioned or searched).
 //!
-//! \[DESIGN\] A `Session` plays the part of an application program bound to a
-//! `<module>`: it has the module's authorization identifier, its cursors, and
-//! its current transaction. How a program is bound to a module is left to
-//! the implementation [X3.135-1986 §3.4], and so is this API.
+//! \[DESIGN\] A `Session` plays an application program bound to a `<module>`,
+//! with its authorization identifier, cursors and current transaction. The
+//! binding is left to the implementation [X3.135-1986 §3.4], as is this API.
 //!
 //! What SQL-86 leaves to the implementation is reached through Rust:
 //!
@@ -28,24 +27,26 @@
 //! | `ServedConnections` | none: no connection served | END and CANCEL CONNECTION (RULES.md D42) |
 //! | `SqlType`           | SQL's standard types  | data types (RULES.md D53)        |
 //! | `Collation`         | UCS_BASIC, UNICODE and others | comparison of strings (RULES.md D60) |
-//! | `XQueryFunction`    | the core of fn:       | XQuery's function calls (RULES.md D86) |
+//! | `XQueryFunction`    | the core of fn:       | XQuery's function calls (RULES.md D106) |
 //! | `Log`               | file log, memory log  | commit and recovery (RULES.md D25) |
 //! | `LogStorage`, `CatalogStorage` | files in the directory | opening a database (RULES.md D25) |
 //! | `SystemTable`       | the Information Schema's | system tables (RULES.md D37)  |
 //! | `Clock`             | the system's          | datetime functions (RULES.md D54) |
 //! | `BackgroundJob`     | none                  | plug-ins' jobs (RULES.md D55)    |
 //! | `StateSource`       | `Database::export`    | state transfer (RULES.md D57)    |
+//! | `Ranking`           | BM25                  | full-text Rank (RULES.md D87)    |
+//! | `VectorMetric`, `Quantizer` | COSINE and others; PQ, SQ8, BQ | VECTOR_DISTANCE, vector indexes (RULES.md D93) |
 //!
-//! Plus the settings (`settings.rs`, RULES.md D36): each declared once in a registry, plug-ins'
-//! among them; the database's values, kept with its definitions, and each session's own (`db/settings.rs`).
+//! Plus the settings (`settings.rs`, RULES.md D36), declared once in a
+//! registry, plug-ins' too; the database's values and each session's own.
 //!
 //! \[DESIGN\] A `Database` is a cheap handle that sessions share, on any
 //! number of threads (RULES.md D27). Each statement runs against a snapshot
 //! of the definitions taken when it starts, holding no lock on them while it
 //! runs; the data is guarded by the storage engines and indexes, and its
 //! isolation by the engine, or by the transaction coordinator's table locks
-//! for an engine that leaves it to them (RULES.md D29). A `Session` is
-//! used by one thread at a time, but may move between threads between calls.
+//! for an engine that leaves it to them (RULES.md D29). A `Session` is used
+//! by one thread at a time, and may move between threads between calls.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -83,6 +84,8 @@ mod definitions;
 mod direct;
 mod domains;
 mod drop;
+mod embedding;
+pub(crate) use embedding::model_named;
 pub(crate) mod dynamic;
 mod execute;
 mod explain;
@@ -105,12 +108,14 @@ mod nested;
 mod position;
 mod prepared;
 pub(crate) mod ptf;
+mod rankings;
 mod recovery;
 mod rekey;
 mod revoke;
 mod roles;
 mod routines;
 mod running;
+mod savepoints;
 mod schema;
 mod scroll;
 mod sealing;
@@ -136,23 +141,22 @@ mod unnamed;
 mod usage;
 mod user_types;
 mod users;
+mod vectors;
 mod views;
 pub(crate) mod write;
 
-use compiled::{plan, plan_slotted};
-
-pub use lobs::LOB_READ_OCTETS;
-pub use prepared::Prepared;
-pub use served::ServedConnections;
-pub use state::State;
-pub use stream::{Cursor, Direct};
-pub use users::Credentials;
-
 use assignment::{candidate, check_option, set_columns};
 pub use catalog_file::{COMPACT_AFTER, CatalogFiles};
+use compiled::{plan, plan_slotted};
+pub use lobs::LOB_READ_OCTETS;
+pub use prepared::Prepared;
 pub use rekey::FormatsBehind;
 use scroll::{Kept, Updatable};
+pub use served::ServedConnections;
+pub use state::State;
 use stream::Stream;
+pub use stream::{Cursor, Direct};
+pub use users::Credentials;
 
 /// \[DESIGN\] The default of STORAGE.REKEY_BYTES_PER_SECOND: 8 MiB a second,
 /// a pace a disk bears beside the database's own work (RULES.md D48).
@@ -162,11 +166,8 @@ pub use completion::{Completion, SQLCODE_NO_DATA};
 pub use database::Database;
 pub use export::{ExportedFile, RECORDS_FILE, StateSource, decode_records};
 pub use files::{CHECKPOINT_AFTER, CHECKPOINT_BYTES, OpenOptions, Opened, POOL_BYTES};
-pub use formats::FileFormats;
-pub use image::IMAGE_FORMAT;
 use integrity::Deferral;
 pub use log_sync::SYNC_AFTER_MS;
-pub use recovery::RecoveryReport;
 pub use session::TransactionMode;
 pub use standby::Standby;
 pub use stores::{CatalogStorage, CatalogStore, FileLogs, LogStorage, OpenedLog, StorePlace};
@@ -176,6 +177,8 @@ pub(crate) use {
     routines::run_unhosted,
     triggers::trigger_texts,
 };
+pub use {formats::FileFormats, image::IMAGE_FORMAT};
+pub use {indexes::AccuracyReport, recovery::RecoveryReport};
 
 /// The state and transaction a statement runs in.
 #[derive(Clone, Copy)]
@@ -496,7 +499,7 @@ impl Session {
         let staged = self.take_staged();
         let ending = self.end_transaction();
         let id = ending.as_ref().map(|tx| tx.id);
-        let wrote = ending.as_ref().is_some_and(|tx| tx.wrote());
+        let (wrote, tables) = ending.as_ref().map_or((false, Vec::new()), |tx| (tx.wrote(), tx.written_tables()));
         if let Some(tx) = &ending {
             tx.set_sync_commit(st.settings.is_on(COMMIT_SYNC));
         }
@@ -513,12 +516,10 @@ impl Session {
         self.locators_ended(ended.is_ok() || committed.get());
         self.temporaries_ended(st, id);
         // The transaction has ended. The garbage collected as it did may leave maintenance due; one that wrote
-        // may leave a checkpoint, a fold of kept totals, or a sync of the log its commit did not wait for, due.
+        // may leave a checkpoint, a fold of kept totals, embeddings, or a sync of the log its commit did not wait for, due.
         self.db.maintain_if_due();
         if wrote {
-            self.db.checkpoint_if_due();
-            self.db.fold_if_due();
-            self.db.sync_log_if_due();
+            self.db.written(&tables);
         }
         ended
     }
@@ -594,7 +595,6 @@ impl Drop for Session {
     }
 }
 
-// Unit tests: a session refuses a call back into itself (RULES.md R-ERR-4,
-// R-TEST-2 robustness).
+// Unit tests: a session refuses a call back into itself (RULES.md R-ERR-4, R-TEST-2 robustness).
 #[cfg(test)]
 mod tests;

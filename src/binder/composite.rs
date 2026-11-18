@@ -4,12 +4,14 @@
 //! identifier chain whose basis is a column of a row type [§6.6]; and the
 //! rules of the operations arrays and rows take part in [§9.12, §9.14].
 
+mod fields;
+
 use std::sync::Arc;
 
 use super::case::{brought, set_type};
 use super::statements::assignable;
 use super::{Binder, Scope, rule};
-use crate::ast::{Collection, ColumnSpecification, Composite, SelectItem, SetClause, TableName, UpdateSource, ValueExpression};
+use crate::ast::{Collection, ColumnSpecification, Composite, SetClause, TableName, UpdateSource, ValueExpression};
 use crate::catalog::ColumnDesc;
 use crate::db::State;
 use crate::error::{At, Code, Result, SqlError};
@@ -55,6 +57,7 @@ pub(crate) fn not_xml(t: &DataType, what: &str, verb: &str, clause: &str) -> Res
 ///
 /// SQLCODE -103 if it is.
 pub(super) fn ordering_operand(db: &State, t: &DataType, what: &str) -> Result<()> {
+    orderless_operand(t, what)?;
     super::structured::udt_operand(db, t, super::structured::Need::Ordering, what)?;
     not_xml(t, what, "orders", "§10.11 SR1")?;
     if let Some(these) = unordered(t) {
@@ -72,10 +75,28 @@ pub(super) fn ordering_operand(db: &State, t: &DataType, what: &str) -> Result<(
 ///
 /// SQLCODE -103 if it is.
 pub(crate) fn grouping_operand(db: &State, t: &DataType, what: &str) -> Result<()> {
+    orderless_operand(t, what)?;
     super::structured::udt_operand(db, t, super::structured::Need::Grouping, what)?;
     not_xml(t, what, "groups", "§10.9 SR1")?;
     if let Some(these) = unordered(t) {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.12 SR3] {what} groups values of {t}, and {these} are grouped by no operation")));
+    }
+    Ok(())
+}
+
+/// \[EXTENSION\] An operand of an ordering, grouping or equality
+/// operation, or a key, `what`, of type `t`: of no kind whose values have
+/// no order, as VECTOR's have none and no `=` (design document §3.3
+/// R3.11, R3.12; RULES.md D93).
+///
+/// # Errors
+///
+/// SQLCODE -103 if it is.
+pub(crate) fn orderless_operand(t: &DataType, what: &str) -> Result<()> {
+    if crate::value::types::composite::orderless(t) {
+        return Err(rule(format!(
+            "[EXTENSION] {what} orders, groups, compares or keys values of {t}, which have no order and no equality; VECTOR_EQUALS compares vectors"
+        )));
     }
     Ok(())
 }
@@ -122,6 +143,12 @@ pub(super) fn castable(from: &DataType, to: &DataType) -> bool {
     if let (DataType::Row(a), DataType::Row(b)) = (from, to) {
         return a.fields.len() == b.fields.len() && a.fields.iter().zip(&b.fields).all(|(x, y)| part(&x.data_type, &y.data_type));
     }
+    // [§6.13 SR, Table 6] JSON to JSON alone; \[EXTENSION\] a character
+    // string to JSON and back (`types::json`).
+    let json = |t: &DataType| matches!(t, DataType::Json);
+    if json(from) || json(to) {
+        return (json(from) || from.is_character()) && (json(to) || to.is_character());
+    }
     !(is_composite(from) || is_composite(to))
 }
 
@@ -152,6 +179,7 @@ fn collection_element(t: &DataType) -> Option<&DataType> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => None,
     }
@@ -302,7 +330,23 @@ impl Binder<'_> {
     /// constructor>`: a row of its values, each field of its value's type,
     /// named as `anonymous` names it.
     pub(super) fn row_of(&self, values: &[ValueExpression], scope: Scope<'_>) -> Result<(Expr, DataType)> {
-        let mut bound = values.iter().map(|v| self.value_expression(v, scope)).collect::<Result<Vec<_>>>()?;
+        self.row_typed(values, &|_| None, scope)
+    }
+
+    /// `row_of` of `values`, a `<dynamic parameter specification>` among
+    /// them taking the type `typing` gives of its position, if it gives one
+    /// [ISO/IEC 9075:1992 §17.6 GR5].
+    pub(super) fn row_typed(
+        &self,
+        values: &[ValueExpression],
+        typing: &dyn Fn(usize) -> Option<ParameterType>,
+        scope: Scope<'_>,
+    ) -> Result<(Expr, DataType)> {
+        let field = |(i, v): (usize, &ValueExpression)| match typing(i) {
+            Some(taken) => self.typed(v, taken, scope),
+            None => self.value_expression(v, scope),
+        };
+        let mut bound = values.iter().enumerate().map(field).collect::<Result<Vec<_>>>()?;
         // The sort keys of an aggregate's rows, each by its ordering's key.
         if self.sorting.replace(false) {
             for (e, t) in bound.iter_mut().skip(1) {
@@ -320,6 +364,10 @@ impl Binder<'_> {
     /// taking INTEGER.
     fn element(&self, array: &ValueExpression, index: &ValueExpression, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let (a, t) = self.value_expression(array, scope)?;
+        // [§6.36] of the JSON type, an array accessor.
+        if let DataType::Json = &t {
+            return self.json_step((a, t), super::json::Step::Element(index), scope);
+        }
         let DataType::Array(of) = &t else {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.25 SR1] an element is referenced of an array, not of {t}")));
         };
@@ -422,60 +470,6 @@ impl Binder<'_> {
 }
 
 impl Binder<'_> {
-    /// [ISO/IEC 9075-2:2023 §7.16 SR11] `<all fields reference>` `value`.*
-    /// \[AS ( `names` )\]: VEP.F1 AS N1, ..., one item for each field of its
-    /// row type, as many names as fields \[SR11a\], each else named as its
-    /// field (UV087).
-    pub(super) fn all_fields(&self, value: &ValueExpression, names: Option<&[String]>, at: usize) -> Result<Vec<SelectItem>> {
-        let scope = Scope::Rows("[ISO/IEC 9075-2:2023 §7.16 SR11] the row an <all fields reference> spreads is found of each row");
-        let (_, t) = self.value_expression(value, scope).or_at(at)?;
-        let DataType::Row(r) = &t else {
-            return Err(rule(format!("[ISO/IEC 9075-2:2023 §7.16 SR11] .* spreads a row, not a value of {t}")).or_at(at));
-        };
-        if let Some(n) = names.filter(|n| n.len() != r.fields.len()) {
-            return Err(rule(format!(
-                "[ISO/IEC 9075-2:2023 §7.16 SR11a] {} names are given the {} fields of {t}",
-                n.len(),
-                r.fields.len()
-            ))
-            .or_at(at));
-        }
-        let item = |(i, f): (usize, &Field)| {
-            let field = Composite::Field(Box::new(value.clone()), f.name.clone());
-            let alias = names.and_then(|n| n.get(i)).cloned().unwrap_or_else(|| f.name.clone());
-            SelectItem { value: ValueExpression::Composite(Box::new(field), at), alias: Some(alias), at }
-        };
-        Ok(r.fields.iter().enumerate().map(item).collect())
-    }
-
-    /// [ISO/IEC 9075-2:2023 §7.16 SR10] `q`.* of two identifiers whose
-    /// basis is the second, a column of a row type of the table the first
-    /// names \[SR10f iv\]: its `<all fields reference>` \[SR10g ii 1\]; none
-    /// if it is not, `table` saying whether a table is the basis \[SR10f
-    /// vi\], as exactly one is \[SR10f vii\].
-    pub(super) fn row_asterisk(&self, q: &TableName, table: bool) -> Result<Option<Vec<SelectItem>>> {
-        let Some(first) = &q.auth else { return Ok(None) };
-        let column = ColumnSpecification {
-            qualifier: Some(TableName { auth: None, ident: first.clone(), at: q.at }),
-            column: q.ident.clone(),
-            catalog: None,
-            at: q.at,
-        };
-        if !matches!(self.local(&column), Ok(Some((_, DataType::Row(_), _)))) {
-            return Ok(None);
-        }
-        if table {
-            return Err(rule(format!(
-                "[ISO/IEC 9075-2:2023 §7.16 SR10f vii] {first}.{} is both a table and a column of a row type",
-                q.ident
-            ))
-            .or_at(q.at));
-        }
-        self.all_fields(&ValueExpression::Column(column), None, q.at).map(Some)
-    }
-}
-
-impl Binder<'_> {
     /// [ISO/IEC 9075-2:2023 §14.15 SR11a, §15.5 GR3b i] The new value of
     /// the column `col` of `sc`, whose `<update target>` is its element at
     /// `index`: its array with that element its `<update source>`, stored
@@ -528,9 +522,10 @@ impl Binder<'_> {
 /// [ISO/IEC 9075-2:2023 §6.16] The field `name` of `bound`, a value of a
 /// row type \[SR2\]: of its type \[SR5\], none if the row is null \[GR2a\].
 /// [ISO/IEC 9075-2:2023 §6.6 SR6, SR7] Whether a column or SQL parameter
-/// of type `t` is refinable: of a row type or a structured type.
+/// of type `t` is refinable: of a row type, a JSON type or a structured
+/// type.
 pub(super) fn refinable(t: &DataType) -> bool {
-    matches!(t, DataType::Row(_) | DataType::Structured(_))
+    matches!(t, DataType::Row(_) | DataType::Structured(_) | DataType::Json)
 }
 
 impl Binder<'_> {
@@ -546,6 +541,10 @@ impl Binder<'_> {
         if let DataType::Structured(t) = &bound.1 {
             let t = Arc::clone(t);
             return self.attribute_or_method(bound, (&t, name));
+        }
+        // [§6.36] of the JSON type, a member accessor.
+        if let DataType::Json = &bound.1 {
+            return self.json_step(bound, super::json::Step::Member(name), Scope::Select);
         }
         field_of(bound, name)
     }

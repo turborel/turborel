@@ -216,7 +216,7 @@ A connection whose user is dropped ends at its next request
 
 The database's owner sees the connections served, and the server's
 counts, in INFORMATION_SCHEMA.CONNECTIONS and INFORMATION_SCHEMA.SERVER
-([Information Schema](../sql/information-schema.md)). Of a server whose
+([Information Schema](../sql/07-information-schema.md)). Of a server whose
 one connection is the owner's own, over TCP without TLS, its statement
 the one running:
 

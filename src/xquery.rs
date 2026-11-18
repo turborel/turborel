@@ -15,7 +15,7 @@
 //! writes itself back as text (`xquery/display.rs`) that parses to the
 //! same tree.
 //!
-//! \[DESIGN\] RULES.md D86: the parser descends recursively, one level
+//! \[DESIGN\] RULES.md D106: the parser descends recursively, one level
 //! each expression and direct element constructor nested in another, and
 //! refuses a query nested deeper than `MAX_NESTING`. A chain of operators
 //! of one precedence is one node of the tree, so a long chain makes no
@@ -71,7 +71,7 @@ use crate::xml::Version;
 
 /// \[DESIGN\] How deep expressions, and direct element constructors, nest
 /// at most in a query, so the parser's recursion, and every walk of the
-/// tree it makes, is bounded (RULES.md R-CF-6, D86). \[XQuery\] sets no
+/// tree it makes, is bounded (RULES.md R-CF-6, D106). \[XQuery\] sets no
 /// limit, so a query nested deeper is SQLCODE -900 (D18). The value is
 /// no measurement: it is past the nesting of the queries an application
 /// writes, and the deepest query of each shape parses within half of a

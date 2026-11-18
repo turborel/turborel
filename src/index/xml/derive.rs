@@ -1,4 +1,4 @@
-//! \[DESIGN\] RULES.md D86: the nodes an XML index keys, derived from a
+//! \[DESIGN\] RULES.md D106: the nodes an XML index keys, derived from a
 //! value's stored form in one pass over its events (`xml::Events`), no
 //! tree built. Every element and attribute below each node item is keyed,
 //! the item being the context a path starts from: its path, the first
@@ -17,7 +17,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::xml::{Event, Events, MAX_NESTING, QName};
 
 /// \[DESIGN\] How many elements and attributes of one value an XML index
-/// keys at most (RULES.md D18, D86): a value with more is refused as it
+/// keys at most (RULES.md D18, D106): a value with more is refused as it
 /// is indexed, SQLCODE -900, so the work and the entries one row's value
 /// makes are bounded. The value is no measurement: it is a quarter of
 /// `xml::MAX_NODES`, a document of some megabytes.
@@ -155,7 +155,7 @@ impl Deriving<'_, '_, '_> {
         if self.open.len() > MAX_NESTING {
             return Err(SqlError::new(
                 Code::Corrupt,
-                format!("[DESIGN] a stored XML value nests deeper than {MAX_NESTING} (RULES.md D86)"),
+                format!("[DESIGN] a stored XML value nests deeper than {MAX_NESTING} (RULES.md D106)"),
             ));
         }
         self.child();
@@ -202,7 +202,7 @@ impl Deriving<'_, '_, '_> {
             return Err(SqlError::new(
                 Code::Unsupported,
                 format!(
-                    "[DESIGN] the XML value is beyond turborel's limits: an XML index keys at most {MAX_KEYED_NODES} of its elements and attributes (RULES.md D18, D86)"
+                    "[DESIGN] the XML value is beyond turborel's limits: an XML index keys at most {MAX_KEYED_NODES} of its elements and attributes (RULES.md D18, D106)"
                 ),
             ));
         }

@@ -28,9 +28,11 @@ pub(crate) mod composite;
 pub(crate) use composite::rows_hold;
 pub(crate) mod datetime;
 mod decfloat;
+mod descriptor;
 pub(crate) mod distinct;
 mod exact;
 pub(crate) mod interval;
+mod json;
 pub(crate) mod lob;
 pub(crate) mod multiset;
 pub(crate) mod reference;
@@ -51,9 +53,11 @@ pub use character::{CHARACTER, Character};
 pub use datetime::{Chronon, DATE, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED};
 pub(crate) use decfloat::arith as decfloat_arith;
 pub use decfloat::{DECFLOAT, DECFLOAT_NAME, DecFloatKind};
+pub use descriptor::{Descriptor, XmlSchemaNamed};
 pub use distinct::{DISTINCT, DistinctKind, DistinctType, USER_DEFINED_NAME};
 pub use exact::{BIGINT_NAME, EXACT, Exact};
 pub use interval::{INTERVAL_DAY_TIME, INTERVAL_YEAR_MONTH, IntervalKind};
+pub use json::{JSON, JSON_NAME, JsonKind};
 pub use lob::{BLOB, BLOB_NAME, CLOB, CLOB_NAME, LARGE_NAME, LobType, NCLOB_NAME, OBJECT_NAME};
 pub use multiset::{MAX_MULTISET_CARDINALITY, MULTISET, MULTISET_NAME, MultisetKind, MultisetType};
 pub use reference::{REF_NAME, REF_OCTETS, REFERENCE, RefType, ReferenceKind};
@@ -210,6 +214,31 @@ pub trait SqlType: Send + Sync + fmt::Debug {
         Err(SqlError::new(Code::SyntaxRule, format!("[DESIGN] the type {} takes no parameters", self.name())))
     }
 
+    /// \[EXTENSION\] The number a word, or `*`, written as parameter `at`
+    /// (from 0) of a type of it stands for, if it takes one there (RULES.md
+    /// D53): the word upper case, as read. Default: none, a kind taking
+    /// unsigned integers alone.
+    fn param_word(&self, _at: usize, _word: &str) -> Option<u32> {
+        None
+    }
+
+    /// \[EXTENSION\] The parameters a type of it keeps of those written,
+    /// each a number or as `param_word` gave it: at most `MAX_PARAMS`,
+    /// which `check_params` is then given. None if no type of it is
+    /// written so. Default: as written.
+    fn pack_params(&self, written: &[u32]) -> Option<Vec<u32>> {
+        Some(written.to_vec())
+    }
+
+    /// \[EXTENSION\] Whether its values are ordered and grouped: compared
+    /// by `<`, `=` and the rest, sorted, grouped, made distinct and keyed.
+    /// A kind that says not keeps `compare` for its own use alone, and the
+    /// binder refuses every ordering, grouping and key of a type of it.
+    /// Default: ordered.
+    fn ordered(&self) -> bool {
+        true
+    }
+
     /// Appends `t`'s parameters to `out`, which `params` reads back.
     fn put_params(&self, t: &DataType, out: &mut Vec<u8>);
 
@@ -326,76 +355,6 @@ pub struct ExtensionValue {
     pub bytes: Arc<[u8]>,
 }
 
-/// [ISO/IEC 9075:1992 §21.3.5] A data type as the Information Schema
-/// describes it: DATA_TYPE and the columns that apply to it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Descriptor {
-    /// DATA_TYPE: its name.
-    pub name: String,
-    /// CHARACTER_MAXIMUM_LENGTH, of a character string.
-    pub length: Option<u64>,
-    /// CHARACTER_OCTET_LENGTH, of a character string.
-    pub octets: Option<u64>,
-    /// Whether it has a collation, SQL_TEXT's: a character string.
-    pub collated: bool,
-    /// NUMERIC_PRECISION, of a number.
-    pub precision: Option<u32>,
-    /// NUMERIC_PRECISION_RADIX: 10 for decimal precision, 2 for binary.
-    pub radix: Option<u32>,
-    /// NUMERIC_SCALE, of an exact number.
-    pub scale: Option<u32>,
-    /// DATETIME_PRECISION, of a datetime or interval.
-    pub datetime_precision: Option<u32>,
-    /// MAXIMUM_CARDINALITY, of an array [ISO/IEC 9075-2:2023 §4.12.1].
-    pub cardinality: Option<u32>,
-    /// USER_DEFINED_TYPE_SCHEMA and USER_DEFINED_TYPE_NAME, of a
-    /// user-defined type [ISO/IEC 9075-2:2023 §4.9.2].
-    pub user_defined: Option<(String, String)>,
-    /// XML_PRIMARY_MODIFIER and XML_SECONDARY_MODIFIER, of an XML type
-    /// [ISO/IEC 9075-14:2006 draft §21.1 Description 1a].
-    pub xml: Option<(&'static str, Option<&'static str>)>,
-    /// Of an XML type of XMLSCHEMA, its registered XML Schema, indicated
-    /// XML namespace and global element declaration [ISO/IEC 9075-14:2006
-    /// draft §6.1 GR1d to GR1f, §21.1 Description 1a iii 1].
-    pub xml_schema: Option<XmlSchemaNamed>,
-}
-
-/// What an XML type of XMLSCHEMA names [ISO/IEC 9075-14:2006 draft §6.1
-/// GR1d to GR1f], as XML_SCHEMA_SCHEMA, XML_SCHEMA_NAME,
-/// XML_SCHEMA_NAMESPACE and XML_SCHEMA_ELEMENT show it [§21.1
-/// Description 1a iii 1].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct XmlSchemaNamed {
-    /// The schema of its registered XML Schema.
-    pub schema: String,
-    /// The name of its registered XML Schema, in that schema.
-    pub name: String,
-    /// The URI of its indicated XML namespace, if any.
-    pub namespace: Option<String>,
-    /// The NCName of its indicated global element declaration, if any.
-    pub element: Option<String>,
-}
-
-impl Descriptor {
-    /// A descriptor of `name`, every other column null.
-    pub fn of(name: &str) -> Descriptor {
-        Descriptor {
-            name: name.to_owned(),
-            length: None,
-            octets: None,
-            collated: false,
-            precision: None,
-            radix: None,
-            scale: None,
-            datetime_precision: None,
-            cardinality: None,
-            user_defined: None,
-            xml: None,
-            xml_schema: None,
-        }
-    }
-}
-
 impl DataType {
     /// Its kind: what it does.
     pub fn kind(&self) -> &'static dyn SqlType {
@@ -423,6 +382,7 @@ impl DataType {
             DataType::Distinct(_) => &DISTINCT,
             DataType::Structured(_) => &STRUCTURED,
             DataType::Reference(_) => &REFERENCE,
+            DataType::Json => &JSON,
             DataType::Extension(e) => *e.kind,
         }
     }
@@ -454,7 +414,8 @@ impl DataType {
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Structured(_)
-            | DataType::Reference(_) => self.kind().encode_record(v, self),
+            | DataType::Reference(_)
+            | DataType::Json => self.kind().encode_record(v, self),
             DataType::Exact { .. } => EXACT.encode_record(v, self),
             DataType::Approximate { .. } => APPROXIMATE.encode_record(v, self),
             DataType::DecFloat { .. } => DECFLOAT.encode_record(v, self),
@@ -481,7 +442,8 @@ impl DataType {
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Structured(_)
-            | DataType::Reference(_) => self.kind().decode_record(field, self),
+            | DataType::Reference(_)
+            | DataType::Json => self.kind().decode_record(field, self),
             DataType::Exact { .. } => EXACT.decode_record(field, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_record(field, self),
             DataType::DecFloat { .. } => DECFLOAT.decode_record(field, self),
@@ -512,7 +474,8 @@ impl DataType {
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Structured(_)
-            | DataType::Reference(_) => self.kind().encode_key(v, self, out),
+            | DataType::Reference(_)
+            | DataType::Json => self.kind().encode_key(v, self, out),
             DataType::Exact { .. } => EXACT.encode_key(v, self, out),
             DataType::Approximate { .. } => APPROXIMATE.encode_key(v, self, out),
             DataType::DecFloat { .. } => DECFLOAT.encode_key(v, self, out),
@@ -543,7 +506,8 @@ impl DataType {
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Structured(_)
-            | DataType::Reference(_) => self.kind().decode_key(rest, self),
+            | DataType::Reference(_)
+            | DataType::Json => self.kind().decode_key(rest, self),
             DataType::Exact { .. } => EXACT.decode_key(rest, self),
             DataType::Approximate { .. } => APPROXIMATE.decode_key(rest, self),
             DataType::DecFloat { .. } => DECFLOAT.decode_key(rest, self),
@@ -576,6 +540,7 @@ impl Value {
             Value::Row(_) => Some(&ROW),
             Value::Structured(_) => Some(&STRUCTURED),
             Value::Reference(_) => Some(&REFERENCE),
+            Value::Json(_) => Some(&JSON),
             Value::Extension(e) => Some(e.kind),
         }
     }

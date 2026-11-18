@@ -33,7 +33,7 @@ fn values_in_key_order_11_2() {
     assert_eq!(lexicals(&acc.finish().unwrap()), ["b", "c", "a"]);
 }
 
-/// Verifies: [ISO/IEC 9075-14:2006 draft §11.2 GR1] [DESIGN] RULES.md D86:
+/// Verifies: [ISO/IEC 9075-14:2006 draft §11.2 GR1] [DESIGN] RULES.md D106:
 /// values holding more than `MAX_STORED` octets together are a data
 /// exception, XML value overflow, 2200R.
 #[test]

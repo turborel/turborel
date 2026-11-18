@@ -203,7 +203,7 @@ fn a_dropped_tables_objects_go_with_the_last_reader() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.3] [DESIGN] RULES.md D79,
-/// D86: an XML value held as its sequence is kept as its stored form: a
+/// D106: an XML value held as its sequence is kept as its stored form: a
 /// long one as the table's objects, each chunk logged once, read back the
 /// same value; a short one in its record, making no object.
 #[test]

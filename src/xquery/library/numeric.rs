@@ -3,7 +3,7 @@
 //! two operands of different types promoted to one [XQueryFO §6.2]
 //! [XQuery Appendix B.1].
 //!
-//! \[DESIGN\] RULES.md D86: an integer or decimal is reckoned with by
+//! \[DESIGN\] RULES.md D106: an integer or decimal is reckoned with by
 //! `Decimal`, of any digits up to `MAX_DIGITS`, a result past them
 //! err:FOAR0002 [XQueryFO §6.2]; a float or double by IEEE 754 arithmetic,
 //! a float's result rounded to single precision, an overflow infinity, as

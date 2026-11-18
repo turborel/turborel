@@ -33,9 +33,13 @@ mod cursor;
 mod diagnostics;
 mod drop;
 mod dynamic;
+mod embedding;
 mod expression;
 mod generated;
+mod hybrid_search;
 mod joined;
+mod json;
+mod json_table;
 mod merge;
 mod modules;
 mod ordered;
@@ -72,12 +76,22 @@ pub use dynamic::{
     CopiedItem, CopyOptions, DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, GetDescriptor, HeaderItem,
     Scope, SetDescriptor, UsingClause,
 };
+pub use embedding::{ModelDefinition, PipelineDefinition, VectorObject, VectorStatement};
 pub use expression::{
     CaseExpression, ColumnSpecification, DatetimeFunction, ExtractField, Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue,
     ValueExpression, WhenOperand,
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
+pub use hybrid_search::{Fusion, HybridSearch, SearchArgument, SearchValue};
 pub use joined::{JoinKind, JoinSpecification, JoinedTable, Partitioning};
+pub use json::{
+    IsJson, JsonAggregate, JsonArgument, JsonClauses, JsonCommon, JsonConstructor, JsonExpression, JsonFormat, JsonInput, JsonMember,
+    JsonOperator, JsonOutput, JsonTyped, JsonValueBehavior,
+};
+pub use json_table::{
+    JsonTable, JsonTableColumn, JsonTableColumnKind, JsonTableFormatted, JsonTableNamed, JsonTableNested, JsonTablePath, JsonTablePlan,
+    JsonTablePlanClause,
+};
 pub use merge::{MatchedAction, MergeInsert, MergeStatement, MergeWhen};
 pub use modules::ModuleDefinition;
 pub use ordered::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};
@@ -112,7 +126,7 @@ pub use schema::{
     AlterDomain, AlterDomainAction, AssertionDefinition, Check, CheckLevels, CollationDefinition, Collection, ColumnConstraint,
     ColumnConstraintKind, ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, IMPLICIT_NULLS_DISTINCT, OptionValue,
     Schema, SchemaStatement, TableConstraint, TableConstraintKind, TableDefinition, TableElement, TableOptionValue, TableStorage,
-    Temporary, TemporaryKind, TypeName, ViewDefinition,
+    Temporary, TemporaryKind, TypeName, TypeParam, ViewDefinition,
 };
 pub use search_cycle::{CycleClause, SearchClause, SearchOrder};
 pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
@@ -124,7 +138,7 @@ pub use structured::{
     TransformGroupSetting, TransformKind, TypeList, TypedTable,
 };
 pub use target::{ElementPosition, ParameterSpecification, TargetKind};
-pub use transaction::{AccessMode, IsolationLevel, TransactionModes};
+pub use transaction::{AccessMode, IsolationLevel, SavepointStatement, TransactionModes};
 pub use triggers::{ActionTime, Referencing, TriggerDefinition, TriggerEvent, TriggerLevel};
 pub use user_types::{TypeDefinition, TypeOption};
 pub use users::UserStatement;
@@ -377,6 +391,9 @@ pub enum SqlStatement {
     Open(String),
     /// [X3.135-1986 §8.9; ISO/IEC 9075:1992 §14.4] `<rollback statement>` ::= ROLLBACK \[WORK\]
     Rollback,
+    /// [ISO/IEC 9075-2:2023 §17.5, §17.6, §17.8] SAVEPOINT, RELEASE
+    /// SAVEPOINT, or ROLLBACK TO SAVEPOINT.
+    Savepoint(SavepointStatement),
     /// [X3.135-1986 §8.10] `<select statement>` ::= SELECT \[ALL | DISTINCT\] `<select list>`
     ///     INTO `<select target list>` `<table expression>`
     Select {
@@ -490,8 +507,9 @@ pub enum SqlStatement {
 #[derive(Debug, Clone)]
 pub enum IndexStatement {
     /// `<create index statement>` ::= CREATE INDEX `<index name>` ON
-    /// `<table name>` ( `<column name list>` ) \[USING `<method name>`\]
-    /// \[WITH `<table options>`\]
+    /// `<table name>` ( `<key part>` \[{, `<key part>`}...\] ) \[USING
+    /// `<method name>`\] \[WITH `<table options>`\], where `<key part>` ::=
+    /// `<column name>` | ( `<value expression>` ) (RULES.md D92)
     Create {
         /// The `<index name>`, an `<identifier>`, and where it begins.
         name: (String, usize),
@@ -499,6 +517,9 @@ pub enum IndexStatement {
         table: TableName,
         /// The `<column name>`s, in order, and where each begins.
         columns: Vec<(String, usize)>,
+        /// The `<value expression>`s, each its place among the key parts,
+        /// its text as written and where it begins.
+        expressions: Vec<(usize, String, usize)>,
         /// The method, as an engine is named, and its options.
         storage: TableStorage,
     },
@@ -515,6 +536,29 @@ pub enum IndexStatement {
         /// The `<table option>`s, in order.
         options: Vec<TableOptionValue>,
     },
+    /// \[EXTENSION\] `ALTER INDEX <index name> <alter index maintenance>`
+    /// (the vector design document §10.6, `parser/ddl/vector_index.rs`).
+    Maintain {
+        /// The `<index name>`, and where it begins.
+        name: (String, usize),
+        /// What is done.
+        action: IndexMaintenance,
+    },
+}
+
+/// \[EXTENSION\] `<alter index maintenance>` (the vector design document
+/// §10.6).
+#[derive(Debug, Clone)]
+pub enum IndexMaintenance {
+    /// REBUILD \[ONLINE\] \[PARAMETERS (...)\]: built again, of these
+    /// parameters, each named as a parameter of CREATE VECTOR INDEX.
+    Rebuild(Vec<TableOptionValue>),
+    /// MERGE DELTA: its maintenance run now (`Index::maintain`).
+    MergeDelta,
+    /// LOAD: its structure taken into memory (`Index::reside`).
+    Load,
+    /// UNLOAD: its structure let go of memory.
+    Unload,
 }
 
 /// [X3.135-1986 §8.11, §8.12] `<set clause>` ::= `<object column>` = `<update source>`

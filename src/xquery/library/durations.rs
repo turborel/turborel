@@ -1,9 +1,9 @@
 //! Durations [XQueryFO §10.3 to §10.6]: the comparisons of durations, the
 //! components of the two totally ordered ones, and their arithmetic. An
 //! `xdt:yearMonthDuration` is a number of months, an `xdt:dayTimeDuration`
-//! a number of seconds, here microseconds [XQueryFO §10.3] (RULES.md D86).
+//! a number of seconds, here microseconds [XQueryFO §10.3] (RULES.md D106).
 //!
-//! \[DESIGN\] RULES.md D86: a duration multiplied or divided by a double
+//! \[DESIGN\] RULES.md D106: a duration multiplied or divided by a double
 //! is reckoned exactly, the double as the shortest decimal that reads back
 //! as it, then rounded to the month or microsecond, a half up [XQueryFO
 //! §10.6.3]; a result past 128 bits of months or microseconds overflows,

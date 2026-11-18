@@ -12,7 +12,7 @@
 //! dependent, here `item()*` of each expression, and every type error is
 //! raised as the query is evaluated [XQuery §2.2.3.2].
 //!
-//! \[DESIGN\] RULES.md R-CF-6, D86: the analysis recurses as the tree
+//! \[DESIGN\] RULES.md R-CF-6, D106: the analysis recurses as the tree
 //! nests, which the parser bounds by `xquery::MAX_NESTING`.
 
 mod construct;
@@ -71,7 +71,7 @@ pub struct Environment<'a> {
 /// [ISO/IEC 9075-14:2006 draft §10.20 SR2e] A registered XML Schema the
 /// current user may use, among the in-scope schema definitions.
 ///
-/// \[DESIGN\] Implementation-defined, RULES.md D86: of each target
+/// \[DESIGN\] Implementation-defined, RULES.md D106: of each target
 /// namespace, the one XMLVALIDATE's data-driven validation chooses, of the
 /// least name, the permanently registered one of a namespace no other has,
 /// chosen as the statement is bound. A validate expression takes, as its

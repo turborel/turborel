@@ -5,7 +5,7 @@
 //! its function, each name test and constructor's name an expanded QName
 //! (`plan/op.rs`), and the prolog's declarations.
 //!
-//! \[DESIGN\] RULES.md D86: a plan is made once, as the statement is bound,
+//! \[DESIGN\] RULES.md D106: a plan is made once, as the statement is bound,
 //! shared by every evaluation of it and read by none but them; nothing in
 //! it changes as a query is evaluated.
 

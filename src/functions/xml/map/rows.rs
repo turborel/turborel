@@ -6,7 +6,7 @@
 //! mapping's data as they come (`XmlMapRows`, `map/data.rs`). A row's text
 //! and the data are each at most `MAX_INPUT` octets, so a mapping of any
 //! number of rows and tables is read as its rows stream, and one longer is
-//! refused, SQLCODE -900, before memory is (RULES.md D18, D86).
+//! refused, SQLCODE -900, before memory is (RULES.md D18, D106).
 
 use std::fmt::Write;
 use std::sync::Arc;
@@ -85,7 +85,7 @@ pub fn rows_type() -> DataType {
 
 /// \[EXTENSION\] The function of a row of a table a mapping maps, of
 /// its XML visible columns' values: the row's text [§9.10 GR6c], written
-/// as `.0` says (RULES.md D86).
+/// as `.0` says (RULES.md D106).
 #[derive(Debug)]
 pub struct XmlMapRow(pub Arc<RowShape>);
 
@@ -118,7 +118,7 @@ impl ScalarFunction for XmlMapRow {
 
 /// \[EXTENSION\] The set function of the rows of a mapping's tables, each
 /// the ROW of its table's index and its text, which writes the mapping's
-/// data as `.0` says (RULES.md D86).
+/// data as `.0` says (RULES.md D106).
 #[derive(Debug)]
 pub struct XmlMapRows(pub Arc<DataShape>);
 

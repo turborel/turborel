@@ -27,7 +27,7 @@ fn on_stack<T: Send + 'static>(stack: usize, run: impl FnOnce() -> T + Send + 's
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18] \[DESIGN\] RULES.md R-CF-6,
-/// D86: a function recursing past `MAX_DEPTH` levels of operations and
+/// D106: a function recursing past `MAX_DEPTH` levels of operations and
 /// calls is refused with SQLCODE -900, never a stack overflow; the
 /// deepest evaluation of each shape accepted runs within half of a
 /// thread's default stack.
@@ -44,7 +44,7 @@ fn depth_is_bounded_within_the_stack() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.18] \[DESIGN\] RULES.md R-CF-6,
-/// D86: an evaluation making a sequence of more than `xml::MAX_NODES`
+/// D106: an evaluation making a sequence of more than `xml::MAX_NODES`
 /// items, a string longer than `xml::MAX_TEXT`, or nodes holding more than
 /// `xml::MAX_STORED` octets is refused with SQLCODE -900.
 #[test]

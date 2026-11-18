@@ -1,4 +1,4 @@
-//! \[EXTENSION\] RULES.md D86: what an XML index is asked, by the XQuery
+//! \[EXTENSION\] RULES.md D106: what an XML index is asked, by the XQuery
 //! evaluator or the planner: the rows whose value may hold a node of a
 //! simple path [XQuery §3.2], optionally of a value a general comparison
 //! with a literal selects [XQuery §3.5.2] (`Index::xml_rows`), and what
@@ -85,7 +85,7 @@ pub struct Comparison {
     pub literal: Literal,
 }
 
-/// \[EXTENSION\] RULES.md D86: a lookup of an XML index.
+/// \[EXTENSION\] RULES.md D106: a lookup of an XML index.
 #[derive(Debug, Clone)]
 pub struct XmlLookup {
     /// The nodes it selects.
@@ -97,7 +97,7 @@ pub struct XmlLookup {
     pub row: Option<RowId>,
 }
 
-/// \[EXTENSION\] RULES.md D86: a lookup and a filter of each node it
+/// \[EXTENSION\] RULES.md D106: a lookup and a filter of each node it
 /// selects: what an index answers of a row from its entries alone
 /// (`Index::xml_answers`), and a value's own check answers
 /// (`XmlQuery::matches`). Of an index that only finds rows, its lookup's
@@ -110,7 +110,7 @@ pub struct XmlQuery {
     pub filter: Option<XmlFilter>,
 }
 
-/// \[EXTENSION\] RULES.md D86 [XQuery §3.2.2]: a predicate of the node
+/// \[EXTENSION\] RULES.md D106 [XQuery §3.2.2]: a predicate of the node
 /// `above` steps above a node a lookup selects, its anchor, as
 /// `/BOOK[@ISBN = "1"]/SECTION` holds of a SECTION whose parent BOOK has
 /// an ISBN of "1" [Pal et al. §3.1.2]: it holds of the anchor if a node
@@ -128,7 +128,7 @@ pub struct XmlFilter {
     pub comparisons: Vec<Comparison>,
 }
 
-/// \[EXTENSION\] RULES.md D86: what an index knows of a row's value from
+/// \[EXTENSION\] RULES.md D106: what an index knows of a row's value from
 /// its entries alone (`Index::xml_answers`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XmlAnswer {
@@ -142,7 +142,7 @@ pub enum XmlAnswer {
 /// are read; a row not given does not hold.
 pub type XmlAnswers = Box<dyn Iterator<Item = Result<(RowId, XmlAnswer)>> + Send>;
 
-/// \[EXTENSION\] RULES.md D86, D35: what a lookup costs, as an index
+/// \[EXTENSION\] RULES.md D106, D35: what a lookup costs, as an index
 /// counts it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct XmlCost {
@@ -172,13 +172,13 @@ impl XmlLookup {
     /// # Errors
     ///
     /// SQLCODE -910 if it is no step above, or past the item, or a step
-    /// below the anchor is no child step (RULES.md D86).
+    /// below the anchor is no child step (RULES.md D106).
     pub(super) fn anchored(&self, filter: &XmlFilter) -> Result<usize> {
         let steps = &self.pattern.steps;
         let below = steps.len().checked_sub(filter.above).filter(|_| filter.above > 0);
         let anchor = below.filter(|&k| steps.get(k..).is_some_and(|s| s.iter().all(|s| s.axis == Axis::Child)));
         anchor.ok_or_else(|| {
-            SqlError::new(Code::Api, "[DESIGN] an XML lookup's filter is of an ancestor its last steps, child steps, reach (RULES.md D86)")
+            SqlError::new(Code::Api, "[DESIGN] an XML lookup's filter is of an ancestor its last steps, child steps, reach (RULES.md D106)")
         })
     }
 }
@@ -203,12 +203,12 @@ impl PathPattern {
     /// the dictionary's.
     pub(super) fn resolve(&self, dictionary: &Dictionary<'_>) -> Result<Option<Resolved>> {
         if self.steps.is_empty() {
-            return Err(SqlError::new(Code::Api, "[DESIGN] an XML index's lookup is given a path of no step (RULES.md D86)"));
+            return Err(SqlError::new(Code::Api, "[DESIGN] an XML index's lookup is given a path of no step (RULES.md D106)"));
         }
         if self.steps.len() > MAX_STEPS {
             return Err(SqlError::new(
                 Code::Unsupported,
-                format!("[DESIGN] an XML index's lookup takes at most {MAX_STEPS} steps (RULES.md D18, D86)"),
+                format!("[DESIGN] an XML index's lookup takes at most {MAX_STEPS} steps (RULES.md D18, D106)"),
             ));
         }
         let mut steps = Vec::with_capacity(self.steps.len());

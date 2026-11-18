@@ -363,10 +363,15 @@ call's arguments is invoked before a registered one of its name, and
 one of as many parameters as a call has arguments takes the call from
 a registered aggregate of its name, whatever their types. An
 index method that knows a predicate's function by its name should look
-at its parameter types too. A call,
-`NAME(arguments)`, is syntax the standards do not have *(extension)*:
-a session takes it only once its setting SQL.FUNCTION_CALLS is ON, and
-refuses it until then, as SQL does (SQLCODE -102).
+at its parameter types too. A call of a
+registered function, `NAME(arguments)`, names no function of a schema,
+so it is no routine invocation of the standard *(extension)*: a session
+takes it while its setting SQL.FUNCTION_CALLS is ON, as it is by
+default, and refuses it while it is OFF, as SQL does (SQLCODE -102).
+The setting is checked as a definition is made. A view, constraint,
+trigger, domain, generated column or routine that calls a registered
+function goes on calling it while a session using it has the setting
+OFF, and after the database is opened again.
 
 ```rust
 use turborel::db::Database;
@@ -399,10 +404,10 @@ fn main() -> Result<()> {
     let db = Database::new();
     db.register_scalar_function(Box::new(Twice))?;
     let ann = db.session("ANN");
-    assert_eq!(ann.run("VALUES TWICE(21)").unwrap_err().sqlcode(), -102);
-    ann.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned()))?;
     let mut rows = ann.open_cursor("VALUES TWICE(21)")?;
     assert_eq!(rows.fetch()?.map(|r| r[0].to_string()), Some("42".to_owned()));
+    ann.set_setting("SQL.FUNCTION_CALLS", &Value::Char("OFF".to_owned()))?;
+    assert_eq!(ann.run("VALUES TWICE(21)").unwrap_err().sqlcode(), -102);
     Ok(())
 }
 ```
@@ -453,7 +458,6 @@ fn main() -> Result<()> {
     let db = Database::new();
     db.register_scalar_function(Box::new(Width))?;
     let ann = db.session("ANN");
-    ann.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned()))?;
     let mut rows = ann.open_cursor("VALUES WIDTH('abc')")?;
     assert_eq!(rows.fetch()?.map(|r| r[0].to_string()), Some("5".to_owned()));
     assert_eq!(ann.open_cursor("VALUES WIDTH(1)").err().map(|e| e.sqlcode()), Some(-103));
@@ -479,6 +483,10 @@ files, so the definitions that name one find it:
 | `register_encoding` | an encoding of files or tables' rows, `Encoding`, named by STORAGE.ENCODINGS and a table's ENCODINGS |
 | `register_hash_function` | a hash function for checksums, `HashFunction`, named by STORAGE.CHECKSUM |
 | `register_system_table` | a table of the Information Schema's kind, `SystemTable` |
+| `register_ranking` | a ranking of full-text search, `Ranking`, named by a full-text index's FULLTEXT.RANKING ([Full-text rankings](#full-text-rankings-extension)) |
+| `register_metric` | a distance metric of vectors, `turborel::vector::metric::VectorMetric`, named by VECTOR_DISTANCE and a vector index *(extension)* ([Vectors](../sql/14-vectors.md#distances)); its name a regular identifier in upper case, or a schema's name and its own joined by a period, none built in or registered, or it fails with SQLCODE -910, as a call does of a result that breaks its declared properties |
+| `register_quantizer` | a quantizer of vectors, `turborel::vector::quantizer::Quantizer`, named by a vector index *(extension)*; named as a metric is, without the period |
+| `register_embedder` | an embedding model's plug-in, `turborel::vector::embed::Embedder`, shared as an `Arc`, named by a model's option TYPE and by EMBED and CHUNK_TEXT *(extension)* ([CREATE EMBEDDING MODEL](../sql/statements/create-embedding-model.md)); its name in upper case and not registered, or it fails with SQLCODE -301. Vectors waiting for it are then given |
 | `set_diagnostics` | where the database's events go, `Diagnostics` ([Diagnostics](../operator/08-diagnostics.md)); `tell` gives it one of the program's own, as a server's, those below DIAGNOSTICS.LEVEL dropped |
 
 A plug-in of any kind above, and a catalog's or a log's storage, the
@@ -497,9 +505,9 @@ off, as the built-in rules' do ([Settings](../appendix/c-settings.md)).
 
 The built-in engines are `rowstore`, the default, and `columnstore`
 ([Table Options](../appendix/g-table-options.md)); the built-in index
-methods are `btree`, `hash`, `rtree`, and `xml_path`, `xml_value`,
-`xml_property` and `xml_primary`, whose lookups `Index::xml_rows` gives,
-and the primary's answers `Index::xml_answers`. Each trait's contract, what the database
+methods are `btree`, `hash`, `rtree`, `fulltext`, and `xml_path`,
+`xml_value`, `xml_property` and `xml_primary`, whose lookups
+`Index::xml_rows` gives, and the primary's answers `Index::xml_answers`. Each trait's contract, what the database
 calls and what an implementation must keep, is in the crate's own
 documentation, of the module the trait is in.
 
@@ -569,7 +577,7 @@ The example defines its own integer function and index. An application
 must register both before using them; `NEXT_TO` is not a built-in
 function. A plug-in supplies the search for an arbitrary Boolean function.
 The built-in geometry lookup has the separate contract described under
-[Geometry values](#geometry-values).
+[Spatial data](#spatial-data-extension).
 
 The function and index opt in separately:
 
@@ -701,7 +709,7 @@ impl IndexMethod for CandidateMethod {
     }
     fn supports_predicate(&self, p: &Predicate, columns: &[DataType]) -> bool {
         let one_integer = columns.len() == 1 && columns.first().is_some_and(integer);
-        p.function.0.name() == FUNCTION && p.column == 0 && p.argument == 0 && one_integer
+        p.function.0.name() == FUNCTION && p.column == 0 && p.argument == Some(0) && one_integer
     }
     fn create(&self, columns: &[DataType]) -> Result<Box<dyn Index>> {
         Ok(Box::new(CandidateIndex(Arc::from(
@@ -751,7 +759,6 @@ fn main() -> Result<()> {
     db.register_index_method(Box::new(CandidateMethod))?;
     db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE ITEMS (N INTEGER)")?;
     let ann = db.session("ANN");
-    ann.run("SET SQL.FUNCTION_CALLS = 'ON'")?;
     for n in 0..ROWS {
         ann.run(&format!("INSERT INTO ITEMS VALUES ({n})"))?;
     }
@@ -786,17 +793,89 @@ predicate index: true
 recheck: true
 ```
 
-## Geometry values
+### Full-text rankings *(extension)*
+
+Rank scores a document by BM25, or by the ranking its column's
+full-text index names in FULLTEXT.RANKING ([Full-Text
+Search](../sql/08-fulltext.md#ranking)). A program adds a ranking with
+`register_ranking`, an implementation of
+`turborel::fulltext::rank::Ranking`. Its name is a regular identifier in
+upper case, not one built in or registered already, or registering it
+fails with SQLCODE -910. An index may name it from then on, and Rank of
+such an index fails with -910 in a database opened without it.
+
+A pattern's rank is the sum, over the terms its words match in the
+document, of the ranking's `weight` of each. The database gives it the
+collection's statistics as the statement first read them, as a
+`Corpus`, a `TermStats` of the term and an `InDocument` of the term in
+the document. The ranking keeps this contract.
+
+- `weight` and `bound` are deterministic, bit for bit, finite, never
+  negative, and never panic.
+- `weight(c, t, d) <= bound(c, t)` for every document. The index reads
+  the best rows of a top-k by these bounds, and fails a statement with
+  SQLCODE -910 where a weight passes its bound, so a top-k is never
+  wrong.
+- Neither calls back into the database or its sessions, nor holds a
+  lock past its return.
+
+This ranking counts each occurrence of a matched term once:
+
+```rust
+use turborel::db::Database;
+use turborel::fulltext::rank::{Corpus, InDocument, Ranking, TermStats};
+
+/// Counts each occurrence of a matched term once, whatever the collection.
+struct Occurrences;
+
+impl Ranking for Occurrences {
+    fn name(&self) -> &str {
+        "OCCURRENCES"
+    }
+
+    fn weight(&self, _corpus: &Corpus, _term: &TermStats, in_doc: &InDocument) -> f64 {
+        f64::from(in_doc.frequency)
+    }
+
+    fn bound(&self, _corpus: &Corpus, term: &TermStats) -> f64 {
+        f64::from(term.most)
+    }
+}
+
+fn main() -> Result<(), turborel::error::SqlError> {
+    let db = Database::new();
+    db.register_ranking(Box::new(Occurrences))?;
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE DOCS (ID INTEGER PRIMARY KEY, BODY VARCHAR(200))")?;
+    let ann = db.session("ANN");
+    ann.run("INSERT INTO DOCS VALUES (1, 'fox fox fox'), (2, 'a fox and a dog'), (3, 'a cat')")?;
+    ann.run("COMMIT")?;
+    ann.run("CREATE INDEX DOCS_BODY ON DOCS (BODY) USING FULLTEXT WITH (FULLTEXT.RANKING = OCCURRENCES)")?;
+    let mut rows = ann.open_cursor("SELECT ID, RANK(BODY, '\"fox\"') FROM DOCS ORDER BY ID")?;
+    while let Some(row) = rows.fetch()? {
+        println!("{} {}", row[0], row[1]);
+    }
+    Ok(())
+}
+```
+
+Output:
+
+```text
+1 3E0
+2 1E0
+3 0E0
+```
+
+## Spatial data *(extension)*
 
 Register GEOMETRY and its functions before opening a database containing
 spatial values. This example also shows a host application checking a
 courier route against a roadworks area, using the same local metre grid
-as the [SQL workflows](../data/spatial/00-sample-data.md):
+as the [Spatial Guide](../data/02-spatial.md):
 
 ```rust
 use turborel::db::Database;
 use turborel::geometry::{FUNCTIONS, Geometry, GeometryType};
-use turborel::value::Value;
 
 fn main() -> Result<(), turborel::error::SqlError> {
     let db = Database::new();
@@ -804,7 +883,6 @@ fn main() -> Result<(), turborel::error::SqlError> {
     for function in FUNCTIONS {
         db.register_scalar_function(Box::new(function))?;
     }
-    db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned()))?;
 
     let route = Geometry::from_wkt("LINESTRING (0 200, 1000 200)", 0)?;
     let roadworks = Geometry::rectangle([300.0, 100.0], [500.0, 300.0], 0)?;
@@ -825,7 +903,7 @@ Route: LINESTRING (0 200, 1e3 200)
 ```
 
 `stored_value` is the value to bind through the ordinary prepared-statement
-API. The spatial test checks the whole line: both route endpoints are
+API. The spatial test checks the whole line. Both route endpoints are
 outside the roadworks, but the path between them crosses it. It does not
 find a replacement route or calculate travel time.
 
@@ -855,8 +933,8 @@ The codecs accept at most 16 MiB of input, 100,000 components, rings and
 coordinates in total, and 16 geometry levels including the root. Counts
 and input lengths are checked before allocating from them. SQL functions
 retain the existing SQL string limits. Formats, errors and semantics are
-specified in the [SQL reference](../sql/spatial.md); the
-[Spatial Guide](../data/spatial/README.md) contains SQL workflows.
+specified in the [SQL reference](../sql/10-spatial.md); the
+[Spatial Guide](../data/02-spatial.md) contains SQL workflows.
 
 The version-1 payload contains the SRID and canonical little-endian WKB.
 Unknown versions and noncanonical stored encodings are refused. Existing

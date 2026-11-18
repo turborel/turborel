@@ -2,12 +2,15 @@
 //! §5.8, §5.25; ISO/IEC 9075:1992 §6.5, §7.9]: which columns an expression
 //! names outside its set functions, and whether it calls one.
 
-use super::{Binder, Grouping};
+use super::composite::{grouping_operand, ordering_operand};
+use super::{Binder, Grouping, rule};
 use crate::ast::{Composite, SetArg, ValueExpression};
 use crate::db::State;
+use crate::error::Result;
 use crate::logical::{AggCall, Expr};
 use crate::value::DataType;
 use crate::value::collation::CollationRef;
+use crate::value::types::composite::row_ordered;
 
 /// `call`, a set function of the groups `g`, its argument compared by
 /// `collation` if one: its column of them, and its result type. The same
@@ -68,6 +71,7 @@ pub(super) fn is_aggregate_call(v: &ValueExpression, (db, path): (&State, &str))
         | ValueExpression::Function { .. }
         | ValueExpression::Composite(..)
         | ValueExpression::Structured(..)
+        | ValueExpression::Json(..)
         | ValueExpression::Window(_)
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }
@@ -133,6 +137,7 @@ fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
         | ValueExpression::Function { .. }
         | ValueExpression::Composite(..)
         | ValueExpression::Structured(..)
+        | ValueExpression::Json(..)
         | ValueExpression::Window(_)
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }
@@ -140,4 +145,24 @@ fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
         | ValueExpression::NestedWindow(_)
         | ValueExpression::NextValue { .. } => None,
     }
+}
+
+/// [ISO/IEC 9075-2:2023 §10.9 SR7c, SR7d] The argument of set function
+/// `name`, of type `t`: an operand of a grouping operation under DISTINCT
+/// [§9.12]; of MAX or MIN, if `extreme`, of an ordering operation [§9.14],
+/// and not row-ordered \[SR7d ii\].
+pub(super) fn operand_rules(db: &State, t: &DataType, name: &str, (extreme, distinct): (bool, bool)) -> Result<()> {
+    if distinct {
+        grouping_operand(db, t, &format!("{name}(DISTINCT ...)"))?;
+    }
+    if !extreme {
+        return Ok(());
+    }
+    ordering_operand(db, t, name)?;
+    if row_ordered(t) {
+        return Err(rule(format!(
+            "[ISO/IEC 9075-2:2023 §10.9 SR7d ii] {name} of {t}: rows are not totally ordered, (1, NULL) and (NULL, 1) neither before the other"
+        )));
+    }
+    Ok(())
 }

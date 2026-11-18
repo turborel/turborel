@@ -370,9 +370,7 @@ impl Session {
             | SqlStatement::SetSchema(v)
             | SqlStatement::SetCatalog(v)
             | SqlStatement::SetSessionAuthorization(v)
-            | SqlStatement::SetRole(SetRole::Role(v)) => {
-                drop(self.value_in(st, v, params, Some(ParameterType::Varying))?);
-            }
+            | SqlStatement::SetRole(SetRole::Role(v)) => drop(self.value_in(st, v, params, Some(ParameterType::Varying))?),
             SqlStatement::SetTimeZone(Some(v)) => drop(self.bound(st, params, |cx| binder::bind_value(cx, v))?),
             // [EXTENSION] the document of CREATE XML SCHEMA.
             SqlStatement::Schema { statement: SchemaStatement::XmlSchema(x), .. } => self.document_only(st, &x.document, params)?,
@@ -396,6 +394,7 @@ impl Session {
             SqlStatement::Return(r) => return Err(super::routines::return_outside(r)),
             SqlStatement::Commit
             | SqlStatement::Rollback
+            | SqlStatement::Savepoint(_)
             | SqlStatement::SetConstraints { .. }
             | SqlStatement::SetTransaction(_)
             | SqlStatement::SetTimeZone(None)

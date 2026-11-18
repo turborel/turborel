@@ -97,7 +97,7 @@ fn data_written_9_16() {
     assert_eq!(acc.update(&Value::Null).unwrap_err().code, Code::Api, "a value no row");
 }
 
-/// Verifies: [DESIGN] RULES.md D18, D86 a mapping's text held whole, of
+/// Verifies: [DESIGN] RULES.md D18, D106 a mapping's text held whole, of
 /// all its tables, is bounded as it grows: past the limit, SQLCODE -900,
 /// as the row that takes it there comes, whichever table it is of; a
 /// row's text past `MAX_INPUT` octets too.
@@ -117,7 +117,7 @@ fn texts_past_the_limit() {
     assert_eq!(written(shape, &[long]).unwrap_err().code, Code::Unsupported);
 }
 
-/// Verifies: [EXTENSION] RULES.md D86 the type of a mapping's value: of
+/// Verifies: [EXTENSION] RULES.md D106 the type of a mapping's value: of
 /// METADATA, or DATA of an element, XML(DOCUMENT(UNTYPED)); of DATA of a
 /// table as a forest, XML(CONTENT(UNTYPED)), as of a schema's it is not;
 /// of both, XML(SEQUENCE).

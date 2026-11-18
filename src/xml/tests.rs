@@ -64,7 +64,7 @@ fn a_parse_makes_a_tree_of_the_data_model() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §10.16 GR6a i] [DESIGN] RULES.md
-/// D18, D86: elements nested deeper than `MAX_NESTING` are SQLCODE -900,
+/// D18, D106: elements nested deeper than `MAX_NESTING` are SQLCODE -900,
 /// and as deep as it are read.
 #[test]
 fn nesting_is_bounded() {
@@ -76,7 +76,7 @@ fn nesting_is_bounded() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §10.16 GR7c] [DESIGN] RULES.md
-/// D18, D86: entities that expand to more than `MAX_TEXT` characters are
+/// D18, D106: entities that expand to more than `MAX_TEXT` characters are
 /// SQLCODE -900, not read for ever.
 #[test]
 fn entity_expansion_is_bounded() {

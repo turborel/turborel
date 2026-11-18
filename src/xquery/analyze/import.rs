@@ -4,7 +4,7 @@
 //! which a sequence type's names are resolved [XQuery §2.5.4.3 to
 //! §2.5.4.6].
 //!
-//! \[DESIGN\] Implementation-defined, RULES.md D86: the schema of a target
+//! \[DESIGN\] Implementation-defined, RULES.md D106: the schema of a target
 //! namespace is the registered XML Schema of it the current user may use
 //! whose schema location is a location hint, else the one of the least
 //! name, a permanently registered one last; a schema imported brings the

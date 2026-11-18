@@ -54,7 +54,7 @@ fn derived(bytes: &[u8]) -> Vec<Seen> {
         .collect()
 }
 
-/// Verifies: [DESIGN] RULES.md D86 [Pal et al. §2.2, §3.1.1]: the nodes of
+/// Verifies: [DESIGN] RULES.md D106 [Pal et al. §2.2, §3.1.1]: the nodes of
 /// the paper's Figure 1, each element and attribute below the document,
 /// keyed by its reversed path, its string value [XQueryDM §6.2.3, §6.3.3]
 /// and its ORDPATH: the paper's labels of Figure 2 after the document
@@ -84,7 +84,7 @@ fn the_papers_document_is_keyed_as_its_figures_label_it() {
     assert_eq!(seen.len(), 9);
 }
 
-/// Verifies: [DESIGN] RULES.md D86: a string value keyed whole up to
+/// Verifies: [DESIGN] RULES.md D106: a string value keyed whole up to
 /// `VALUE_PREFIX_BYTES` octets, and cut past them, at that many octets
 /// whatever characters they split; an attribute's alike.
 #[test]
@@ -97,7 +97,7 @@ fn values_are_cut_past_their_prefix() {
     assert_eq!((seen[2].0.as_str(), seen[2].2), ("@y<x<r", false), "an attribute cut");
 }
 
-/// Verifies: [DESIGN] RULES.md D86: a node item that is an element is its
+/// Verifies: [DESIGN] RULES.md D106: a node item that is an element is its
 /// paths' context, not keyed itself; its attributes and the elements
 /// below it are, their paths beginning below it. An atomic item takes a
 /// place among the items, and a text item keys nothing.
@@ -112,7 +112,7 @@ fn an_element_item_is_the_context_of_its_paths() {
     assert_eq!(seen, expected);
 }
 
-/// Verifies: [DESIGN] RULES.md D86, D18: a value of more elements and
+/// Verifies: [DESIGN] RULES.md D106, D18: a value of more elements and
 /// attributes than `MAX_KEYED_NODES` is refused as it is keyed, SQLCODE
 /// -900; one of as many is keyed whole.
 #[test]
@@ -123,7 +123,7 @@ fn keyed_nodes_are_bounded() {
     assert_eq!(count(&elements(MAX_KEYED_NODES)).unwrap_err().sqlcode(), -900_i32);
 }
 
-/// Verifies: [DESIGN] RULES.md D86: a node whose name, or an ancestor's
+/// Verifies: [DESIGN] RULES.md D106: a node whose name, or an ancestor's
 /// name, has no token is not keyed, as no entry of it can be there.
 #[test]
 fn a_name_with_no_token_keys_nothing_below_it() {
@@ -137,7 +137,7 @@ fn a_name_with_no_token_keys_nothing_below_it() {
     assert_eq!(seen, ["1.1.3", "1.1"]);
 }
 
-/// Verifies: [DESIGN] RULES.md D86: bytes that are no stored form are
+/// Verifies: [DESIGN] RULES.md D106: bytes that are no stored form are
 /// refused, SQLCODE -916.
 #[test]
 fn bytes_of_no_stored_form_are_refused() {

@@ -82,6 +82,7 @@ impl<'v> Subject<'v> {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_)
             | Value::Xml(_) => Body::Chars(text(value)?.unwrap_or_default().chars().collect()),
         };

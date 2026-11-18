@@ -2,7 +2,7 @@
 //! comments, the extra-grammatical constraints, the comparisons that do
 //! not chain, the direct constructors' end tags, attributes and boundary
 //! whitespace, the prolog's setters, and the tree written back
-//! (RULES.md R-TEST-9, D86).
+//! (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 

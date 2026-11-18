@@ -2,7 +2,7 @@
 //! types of the in-scope schema types [XQuery §2.5.1], the sequence types
 //! a value is matched against [XQuery §2.5.3, §2.5.4], and the matching.
 //!
-//! \[DESIGN\] RULES.md D86: a node no schema validated has the type
+//! \[DESIGN\] RULES.md D106: a node no schema validated has the type
 //! annotation `xdt:untyped`, of an element, or `xdt:untypedAtomic`, of an
 //! attribute [XQuery §2.2.1]; one a validation typed has its type's, a
 //! built-in type's matched by the built-in hierarchy, a registered XML

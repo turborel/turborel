@@ -144,6 +144,7 @@ impl DataType {
             | DataType::Multiset(_)
             | DataType::Row(_)
             | DataType::Reference(_)
+            | DataType::Json
             | DataType::Extension(_)
             | DataType::Xml(_) => None,
         }

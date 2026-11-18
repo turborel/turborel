@@ -2,13 +2,15 @@
 //! D29, D38, D44, D85). A strict lower-bound cutoff retains distance ties;
 //! the existing sort decides their secondary order. An uncertified index
 //! or an unaffordable threshold heap falls back before producing rows.
+//! An approximate index's read is `nearest/approx.rs` (D94).
 
+mod approx;
 mod threshold;
 
 use std::sync::Arc;
 
 use super::entries::{Reading, fetch};
-use super::{RowIter, Runner, broken, eval, eval_cond, failed};
+use super::{RowIter, Runner, Subqueries, broken, eval, eval_cond, failed};
 use crate::catalog::{IndexDesc, KeyShape};
 use crate::db::State;
 use crate::error::Result;
@@ -34,8 +36,18 @@ fn open(read: NearestRead, db: &Arc<State>, tx: TxId) -> Result<RowIter> {
         stop.check()?;
     }
     let storage = Arc::clone(db.storage_of(&read.table)?);
-    let Some(query) = read.query() else { return Err(broken("a nearest read has no constant distance operand")) };
-    let Some(threshold) = Threshold::new(read.first, db) else { return Ok(scanned(read, storage, db, tx, false)) };
+    let Some(mut query) = read.query() else { return Err(broken("a nearest read has no constant distance operand")) };
+    // A score's bounds and its calls read one snapshot (D87).
+    if read.approximate.is_some() {
+        return approx::approximate(read, storage, db, (tx, query));
+    }
+    let runner = Runner::new(db, tx);
+    if read.descending {
+        query.statistics = runner.ranking_statistics(&read.index)?;
+    }
+    let Some(threshold) = Threshold::new(read.first, db).map(|t| t.negated(read.descending)) else {
+        return Ok(scanned(read, storage, db, tx, false));
+    };
     let index = Arc::clone(db.index_of(&read.index)?);
     let key = db.catalog.index(&read.index).map(IndexDesc::key_shape).ok_or_else(|| broken("a nearest index has no definition"))?;
     storage.read_by_condition(tx, &Condition { columns: Vec::new(), probe: Probe::All })?;
@@ -43,19 +55,7 @@ fn open(read: NearestRead, db: &Arc<State>, tx: TxId) -> Result<RowIter> {
     let Some(entries) = index.nearest(&query, &db.memory)? else { return Ok(scanned(read, storage, db, tx, false)) };
     let reading = Reading::of(&key, Some(&read.columns), projection);
     let entries = Box::new(checked(entries, db.tx.stop_of(tx)));
-    let rows = Search {
-        read,
-        storage,
-        key,
-        reading,
-        entries,
-        threshold,
-        runner: Runner::new(db, tx),
-        db: Arc::clone(db),
-        tx,
-        ended: false,
-        tail: None,
-    };
+    let rows = Search { read, storage, key, reading, entries, threshold, runner, db: Arc::clone(db), tx, ended: false, tail: None };
     Ok(Box::new(checked(rows, db.tx.stop_of(tx))))
 }
 
@@ -113,7 +113,8 @@ impl Search {
         match row.last() {
             Some(Value::Null) => Ok(None),
             Some(Value::Approx(distance)) => {
-                self.threshold.add(*distance)?;
+                // A score's bound is of its negation (`NearestQuery`).
+                self.threshold.add(if self.read.descending { -*distance } else { *distance })?;
                 Ok(Some(row))
             }
             Some(_) | None => Err(broken("a nearest distance is neither DOUBLE PRECISION nor NULL")),

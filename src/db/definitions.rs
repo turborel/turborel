@@ -37,6 +37,7 @@ use crate::catalog::{ConstraintKind, QualifiedName, TableDesc, merged, owner_of,
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::log::record::Change;
 use crate::parser::Parser;
+use crate::settings::FUNCTION_CALLS;
 use crate::txn::{LockMode, Txn};
 
 /// What a schema statement did to the definitions.
@@ -66,8 +67,13 @@ impl Session {
     /// `statement`, written `text`, in transaction `tx`: its change staged
     /// with the transaction's.
     pub(super) fn schema_statement(&self, st: &Arc<State>, tx: &Txn, statement: &SchemaStatement, text: &str) -> Result<Completion> {
+        // Its own texts read again as the session read it (RULES.md D74).
+        let _calls = Parser::refusing_calls(text, st.settings.is_on(FUNCTION_CALLS));
         let schema = self.default_schema();
         let object = self.object_of(st, statement, &schema)?;
+        // [EXTENSION] A model's text logged with the shape it is of.
+        let shaped = Self::shaped_model(st, statement, &schema)?;
+        let text = shaped.as_deref().unwrap_or(text);
         self.refuse_declared(st, statement, (&object, &schema))?;
         st.acquire_name(tx, &object, LockMode::Exclusive)?;
         // The generated columns a REVOKE with CASCADE loses dropped first
@@ -114,6 +120,9 @@ impl Session {
                 let mut filled = Ok(None);
                 if let SchemaStatement::Table(t) = statement {
                     filled = self.inserted_data(&next, tx, t);
+                }
+                if let SchemaStatement::Vector(v) = statement {
+                    filled = self.pipeline_filled(&next, tx, v).map(|()| None);
                 }
                 let filled = match filled {
                     Ok(filled) => filled,
@@ -169,6 +178,10 @@ impl Session {
             SchemaStatement::Trigger(t) => self.own_object(st, &t.name, (schema, "ISO/IEC 9075-2:2023 §11.49 AR1")),
             SchemaStatement::Routine(r) => self.own_object(st, &r.name, (schema, "ISO/IEC 9075-2:2023 §11.60 AR1")),
             SchemaStatement::Module(m) => self.own_object(st, &m.name, (schema, "ISO/IEC 9075-4:2006 draft §9.21 AR1")),
+            SchemaStatement::Vector(v) => {
+                Session::plugin_registered(st, statement, schema)?;
+                self.own_object(st, v.name(), (schema, "EXTENSION"))
+            }
             // [EXTENSION] as CREATE COLLATION [ISO/IEC 9075-2:2023 §11.43 SR1].
             SchemaStatement::XmlSchema(x) => self.own_object(st, &x.name, (schema, "EXTENSION")),
             SchemaStatement::AlterType(_)
@@ -273,6 +286,7 @@ impl State {
             SchemaStatement::Ordering(o) => self.create_ordering(schema, o),
             SchemaStatement::Transform(t) => self.create_transform(schema, t),
             SchemaStatement::AlterTransform(t) => self.alter_transform(schema, t),
+            SchemaStatement::Vector(v) => self.vector_statement(schema, v),
             SchemaStatement::XmlSchema(x) => self.create_xml_schema(schema, x),
         }
     }
@@ -290,7 +304,7 @@ impl State {
         sql: &str,
         (placed, made, epochs): (Option<&(String, u32)>, Option<&Made>, &[u64]),
     ) -> Result<Dropped> {
-        let SqlStatement::Schema { statement, .. } = Parser::new(sql)?.of_definition().sql_statement()? else {
+        let SqlStatement::Schema { statement, .. } = Parser::for_stored(sql)?.sql_statement()? else {
             return Err(api(format!("[DESIGN] {sql} is not a schema statement")));
         };
         Ok(self.define((cell, schema, zone), &statement, (placed, made, &mut Epochs::logged(epochs)))?.dropped)
@@ -401,6 +415,9 @@ impl State {
         if p.object == PrivilegeObject::Module {
             return self.grant_on_module(auth, schema, p).or_at(p.table.at);
         }
+        if p.object == PrivilegeObject::Model {
+            return self.grant_model_execute(auth, schema, p).or_at(p.table.at);
+        }
         if p.object == PrivilegeObject::XmlSchema {
             return self.grant_xml_schema_usage(auth, schema, p).or_at(p.table.at);
         }
@@ -422,8 +439,7 @@ impl State {
 /// The table the logged statement `sql` created, its names in schema
 /// `schema`, if it created one.
 pub(super) fn created(schema: &str, sql: &str) -> Option<QualifiedName> {
-    let Ok(SqlStatement::Schema { statement: SchemaStatement::Table(t), .. }) =
-        Parser::new(sql).and_then(|p| p.of_definition().sql_statement())
+    let Ok(SqlStatement::Schema { statement: SchemaStatement::Table(t), .. }) = Parser::for_stored(sql).and_then(|mut p| p.sql_statement())
     else {
         return None;
     };

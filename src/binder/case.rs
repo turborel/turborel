@@ -39,15 +39,16 @@ fn boolean_set_type(types: &[DataType], clause: &str) -> Result<DataType> {
 /// implementation-defined precision; else approximate, of
 /// `DOUBLE_PRECISION` [SR3d]; datetimes and intervals as `datetime_set_type`
 /// and `interval_set_type` give [SR3e, SR3f]; BOOLEAN, if all are
-/// [ISO/IEC 9075-2:2023 §9.5 SR3f]. `clause` is the rule to cite.
+/// [ISO/IEC 9075-2:2023 §9.5 SR3f]; JSON, if all are [§9.5 SR3k]. `clause`
+/// is the rule to cite.
 ///
 /// # Errors
 ///
 /// SQLCODE -103 if a character string is among numbers [SR2, SR3a], a
 /// binary string among other values, a datetime or interval among
 /// values not comparable with it [SR3e, SR3f], a truth value among other
-/// values, or a value of a type beyond the standard among values of
-/// another type.
+/// values, a JSON value among other values, or a value of a type beyond
+/// the standard among values of another type.
 pub(super) fn set_type(types: &[DataType], clause: &str) -> Result<DataType> {
     if let Some(t) = apart_set_type(types, clause) {
         return t;
@@ -99,6 +100,7 @@ fn numeric_set_type(types: &[DataType]) -> DataType {
             | DataType::Reference(_)
             | DataType::Row(_)
             | DataType::Distinct(_)
+            | DataType::Json
             | DataType::Extension(_)
             | DataType::Xml(_) => {}
         }
@@ -146,6 +148,7 @@ fn string_set_type(types: &[DataType]) -> Option<DataType> {
             | DataType::Reference(_)
             | DataType::Row(_)
             | DataType::Distinct(_)
+            | DataType::Json
             | DataType::Extension(_)
             | DataType::Xml(_) => continue,
         };
@@ -196,6 +199,15 @@ fn apart_set_type(types: &[DataType], clause: &str) -> Option<Result<DataType>> 
     }
     if types.contains(&DataType::Boolean) {
         return Some(boolean_set_type(types, clause));
+    }
+    // [ISO/IEC 9075-2:2023 §9.5 SR3k] JSON, if all are.
+    if types.contains(&DataType::Json) {
+        if let Some(other) = types.iter().find(|t| **t != DataType::Json) {
+            return Some(Err(rule(format!(
+                "[ISO/IEC 9075-2:2023 §9.5 SR3k] {clause}: JSON values and values of {other} are brought together"
+            ))));
+        }
+        return Some(Ok(DataType::Json));
     }
     if let Some(first) = types.iter().find(|t| t.is_datetime()) {
         return Some(datetime_set_type(&first.clone(), types, clause));

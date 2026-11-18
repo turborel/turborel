@@ -58,8 +58,8 @@ follows it, beginning a statement. DATABASE is that statement's
 only when a setting's name follows it; in `SET DATABASE = 1` it is
 the name of the setting SET sets.
 
-SQL:2023 reserves ANY_VALUE, BEGIN_FRAME, BEGIN_PARTITION, BIGINT, BINARY, BOOLEAN, BTRIM, CONDITION, CUBE, CUME_DIST, CURRENT_ROW, CYCLE, DECFLOAT,
-DENSE_RANK, END_FRAME, END_PARTITION, EVERY, FILTER, FIRST_VALUE, FRAME_ROW, GREATEST, GROUPING, GROUPS, LAG, LAST_VALUE, LEAD, LEAST, LIKE_REGEX,
+SQL:2023 reserves ABSENT, ANY_VALUE, BEGIN_FRAME, BEGIN_PARTITION, BIGINT, BINARY, BOOLEAN, BTRIM, CONDITION, CUBE, CUME_DIST, CURRENT_ROW, CYCLE, DECFLOAT,
+DENSE_RANK, END_FRAME, END_PARTITION, EVERY, FILTER, FIRST_VALUE, FRAME_ROW, GREATEST, GROUPING, GROUPS, JSON_ARRAY, JSON_ARRAYAGG, JSON_EXISTS, JSON_OBJECT, JSON_OBJECTAGG, JSON_QUERY, JSON_VALUE, LAG, LAST_VALUE, LEAD, LEAST, LIKE_REGEX,
 LISTAGG, LPAD, LTRIM, NTH_VALUE, NTILE, OCCURRENCES_REGEX, OVER, PARTITION, PERCENTILE_CONT, PERCENTILE_DISC, PERCENT_RANK, POSITION_REGEX,
 RANGE, RANK, ROLLUP, ROW_NUMBER, RPAD, RTRIM, START, SUBSTRING_REGEX, TRANSLATE_REGEX, VALUE_OF, VARBINARY, WIDTH_BUCKET, WINDOW
 and WITHIN, which SQL-92 does not, so
@@ -174,6 +174,14 @@ may be named MERGE. MATCHED, which SQL:2023 does not reserve, is read only
 after WHEN or WHEN NOT in a MERGE, and OVERRIDING in its insert as in an
 INSERT's.
 
+SAVEPOINT and RELEASE, which SQL:2023 reserves and SQL-92 does not,
+begin a savepoint statement only where a savepoint's name follows
+SAVEPOINT, or SAVEPOINT follows RELEASE, at the start of a statement, so
+a table or a column may be named either. SAVEPOINT is read after ROLLBACK
+TO too, and in NEW SAVEPOINT LEVEL and OLD SAVEPOINT LEVEL. CHAIN, which
+SQL:2023 does not reserve, is read only after AND in COMMIT and
+ROLLBACK.
+
 INCLUDING, EXCLUDING, DEFAULTS and DATA, which SQL:2023 does not reserve,
 are key words only in a LIKE clause of CREATE TABLE and in its WITH DATA
 and WITH NO DATA. GENERATED is read there too, after INCLUDING or
@@ -224,5 +232,42 @@ MODIFIES, CONTAINS, OUT and INOUT, which SQL-92 does not reserve, are
 read as words where a routine is defined, called, dropped, granted or
 revoked, so a table or column may still be named by one. PROCEDURE and
 IN are SQL-92 key words.
+
+JSON_EXISTS, JSON_VALUE and JSON_QUERY are the SQL/JSON query operators
+only before a parenthesis, so `SELECT JSON_VALUE FROM T` names a column.
+Within them PASSING, RETURNING, FORMAT, JSON, ENCODING, ERROR, EMPTY,
+ARRAY, OBJECT, WITHOUT, CONDITIONAL, UNCONDITIONAL, WRAPPER, KEEP, OMIT,
+QUOTES, SCALAR and STRING are read only where the operators take them,
+so `JSON_VALUE(J, 'lax $.a' DEFAULT ERROR ON EMPTY)` gives a column
+ERROR's value of no item. The words of an SQL/JSON path, within its
+literal, are the path language's, none reserved, and case-sensitive.
+
+JSON_OBJECT, JSON_ARRAY, JSON_OBJECTAGG and JSON_ARRAYAGG are functions
+only before a parenthesis too. Within them ABSENT, which SQL:2023
+reserves, and KEYS, ARRAY, OBJECT, FORMAT, JSON and RETURNING are read
+only where the constructors take them; RETURNING is the output clause's
+unless VALUE, a colon or a comma follows it, so a column RETURNING may
+be a member's name. In a predicate, IS [NOT] JSON and FORMAT JSON
+before IS are IS JSON, and VALUE, ARRAY, OBJECT and SCALAR after it its
+type, so `SELECT ID JSON FROM T` still names a column JSON.
+
+The words of vectors, none reserved, are identifiers too, key words only
+where they are read:
+
+| Words | Read only |
+|---|---|
+| VECTOR | where a data type is written, and after CREATE or DROP in the statements below |
+| VECTOR INDEX, HYBRID VECTOR INDEX | after CREATE |
+| VECTOR PIPELINE, VECTOR DISTANCE FUNCTION | after CREATE or DROP |
+| EMBEDDING MODEL | after CREATE, ALTER or DROP |
+| APPROX, APPROXIMATE, EXACT | after FETCH |
+| TARGET, ACCURACY, PARAMETERS, EFSEARCH, NEIGHBOR, PARTITION, PROBES, SEARCH_LIST, BEAM_WIDTH | after WITH, at the end of a fetch first clause |
+| HINT and the vector hints | after a fetch first clause |
+| FROM_VECTOR, VECTOR_SEARCH, HYBRID_SEARCH, CHUNK_TEXT, VECTOR_CHUNKS, AI_GENERATE_CHUNKS | before a parenthesis |
+
+The words within those statements and functions, as METRIC, QUANTIZER,
+FUSION or RETURNING, are read only there, so a column may be named any
+of them. A `/*+ ... */` comment that begins a statement holds hints, its
+words read only there ([Lexical Elements](../sql/01-lexical.md#comments)).
 
 The standard: ISO/IEC 9075:1992 §5.2; ISO/IEC 9075-2:2023 §5.2.

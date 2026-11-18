@@ -9,6 +9,7 @@
 //! registered.
 
 mod format;
+mod implicit;
 mod parse;
 mod template;
 
@@ -20,6 +21,7 @@ use crate::error::{Code, Result, SqlError, fail};
 use crate::value::datetime::{Clocked, Datetime, Moment, Now};
 use crate::value::types::datetime::{fitted, shown};
 use crate::value::{DataType, Value};
+pub(crate) use implicit::json_datetime_cast;
 use parse::{Pattern, Target};
 use template::Template;
 
@@ -49,6 +51,7 @@ fn target(t: &DataType) -> Option<Target> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => None,
     }
@@ -77,6 +80,7 @@ fn string(t: &DataType) -> Option<(u32, bool)> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => None,
     }
@@ -171,6 +175,7 @@ impl ScalarFunction for Formatted {
                 | Value::Structured(_)
                 | Value::Reference(_)
                 | Value::Row(_)
+                | Value::Json(_)
                 | Value::Extension(_)
                 | Value::Xml(_)),
             ) => fail(Code::Api, format!("[DESIGN] a formatted CAST of a datetime was given {v:?}")),

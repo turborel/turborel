@@ -21,9 +21,10 @@ impl State {
         self.catalog.indexes(table).into_iter().cloned().collect()
     }
 
-    /// The key of `row` in the index `ix`.
+    /// The key of `row` in the index `ix`: an error an expression of it
+    /// raises fails the write (RULES.md D92).
     fn index_key(ix: &IndexDesc, row: &Row) -> Result<Key> {
-        ix.key_of(row).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] a row is shorter than index {}", ix.name)))
+        ix.computed_key(row)
     }
 
     fn index_add(&self, tx: &Txn, ix: &IndexDesc, row: &Row, id: RowId) -> Result<()> {
@@ -65,7 +66,7 @@ impl State {
         self.prepare_write(tx, table)?;
         // A row of large objects is copied, so each names one the table
         // keeps for it, or is held in the row inside another value
-        // (RULES.md D79, D86); any other is written as given.
+        // (RULES.md D79, D106); any other is written as given.
         let kept = if row.iter().any(Value::needs_keeping) {
             let mut kept = row.clone();
             self.keep_lobs(tx, table, None, &mut kept)?;
@@ -244,6 +245,11 @@ impl State {
         // (`TableStorage::gc`); the new version gets entries of its own.
         let versions = caps.concurrency != Concurrency::Coordinator;
         for ix in self.table_indexes(table) {
+            // RULES.md D92: an entry of one row's one version keeps
+            // its key while the columns its expressions read are unchanged.
+            if !versions && ix.has_expressions() && ix.unchanged(old, row) {
+                continue;
+            }
             if !versions {
                 self.index_remove(tx, &ix, old, id)?;
             }

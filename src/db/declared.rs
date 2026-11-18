@@ -94,6 +94,7 @@ impl Session {
             | SchemaStatement::Trigger(_)
             | SchemaStatement::Routine(_)
             | SchemaStatement::Module(_)
+            | SchemaStatement::Vector(_)
             | SchemaStatement::XmlSchema(_)
             | SchemaStatement::Role(_) => Ok(()),
         }
@@ -164,6 +165,7 @@ fn indexes_of(desc: &TableDesc, method: &str) -> Vec<IndexDesc> {
             name: constraint_index_name(&desc.name, k),
             table: desc.name.clone(),
             nulls: desc.nulls_not_distinct(&columns),
+            expressions: Vec::new(),
             columns,
             method: method.to_owned(),
             unique: true,

@@ -45,7 +45,9 @@ use super::sequences::Epochs;
 use super::{State, api, rule};
 use crate::ast::{AlterAction, AlterColumnAction, DropBehavior, PeriodDefinition, PeriodName};
 use crate::binder::view_degree;
-use crate::catalog::{Actions, ConstraintKind, IndexDesc, PrivilegeDesc, QualifiedName, TableDesc, ViewDesc};
+use crate::catalog::{
+    Actions, ConstraintKind, EXPRESSION_PART, IndexDesc, KeyExpression, PrivilegeDesc, QualifiedName, TableDesc, ViewDesc,
+};
 use crate::error::{At, Result};
 use crate::index::Index;
 use crate::storage::{Row, TableStorage};
@@ -71,6 +73,13 @@ impl Made {
         }
         self.indexes.iter().for_each(|(_, ix)| ix.discard());
         self.tables.iter().for_each(|(_, made)| made.discard());
+    }
+
+    /// The storage made, of each table, its own and its tables'.
+    pub(super) fn storages(&self) -> Vec<Arc<dyn TableStorage>> {
+        let mut all: Vec<Arc<dyn TableStorage>> = self.storage.iter().cloned().collect();
+        all.extend(self.tables.iter().flat_map(|(_, made)| made.storages()));
+        all
     }
 
     /// What was made for table `name`, of a `<schema definition>`.
@@ -130,6 +139,16 @@ impl Reshape {
     /// The columns `at`, moved; none if one is removed.
     pub(super) fn columns(self, at: &[usize]) -> Option<Vec<usize>> {
         at.iter().map(|&c| self.moved(c)).collect()
+    }
+
+    /// \[EXTENSION\] The key columns of `ix`, moved, an expression's place
+    /// kept, to be bound again (RULES.md D92); none if a column
+    /// it reads, a key column or one an expression reads, is removed.
+    pub(super) fn parts(self, ix: &IndexDesc) -> Option<Vec<usize>> {
+        if !KeyExpression::kept(ix, |c| self.moved(c).is_none()) {
+            return None;
+        }
+        ix.columns.iter().map(|&c| if c == EXPRESSION_PART { Some(c) } else { self.moved(c) }).collect()
     }
 }
 
@@ -350,7 +369,7 @@ impl State {
         let mut gone = Vec::new();
         for ix in self.catalog.indexes(&next.name) {
             gone.push(ix.name.clone());
-            let Some(columns) = reshape.columns(&ix.columns) else { continue };
+            let Some(columns) = reshape.parts(ix) else { continue };
             if ix.unique && !next.unique().any(|u| u == columns) {
                 continue;
             }
@@ -369,6 +388,7 @@ impl State {
                 options: Vec::new(),
                 collations: Vec::new(),
                 nulls: false,
+                expressions: Vec::new(),
             };
             kept.push(self.with_derived(ix, next)?);
         }

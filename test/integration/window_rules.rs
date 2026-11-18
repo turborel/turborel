@@ -125,7 +125,7 @@ fn window_function_types_fit_their_windows_9_23() {
     }
     assert_eq!(sorted(&a, "SELECT COUNT(DISTINCT D) OVER () FROM S WHERE R = 's'"), ["2", "2"]);
     assert_eq!(sorted(&a, "SELECT COUNT(DISTINCT D) OVER (ORDER BY D ROWS 1 PRECEDING) FROM S WHERE R = 'n'"), ["1", "1", "2", "2"]);
-    assert_eq!(fetched(&a, "SELECT ABS(D) OVER () FROM S").map_err(|e| e.code), Err(Code::Syntax), "OVER after no set function");
+    assert_eq!(fetched(&a, "SELECT ABS(D) OVER () FROM S").map_err(|e| e.code), Err(Code::SyntaxRule), "OVER after no set function");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.16 SR1c, §11.9 CR2]

@@ -327,10 +327,7 @@ fn bound_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_
         if let Some((selected, uses)) = noted {
             selected.borrow_mut().push(uses.borrow().get(start..).unwrap_or_default().to_vec());
         }
-        // [X3.135-1986 §5.25 SR9] a named column only for a single <column specification>,
-        // or [ISO/IEC 9075:1992 §7.9 SR9a] one with an <as clause>;
-        // [X3.135-1986 §5.25 SR10] NOT NULL only if it is a named column of a NOT NULL column.
-        let (name, not_null, origin) = named_column(binder, v, scope)?;
+        let (name, not_null, origin) = named(binder, v, scope)?;
         exprs.push(e);
         let collation = if data_type.is_character() { binder.result_collation(v) } else { None };
         columns.push(OutColumn { name: item.alias.clone().or(name), collation, data_type, not_null, origin });
@@ -338,10 +335,12 @@ fn bound_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_
     Ok((exprs, columns))
 }
 
-/// [X3.135-1986 §5.25 SR9, SR10] The name of the result column of `v`, a
-/// select list item: a column's own, if it is one, then whether it is
-/// NOT NULL and where the column is.
-fn named_column(binder: &Binder<'_>, v: &ValueExpression, scope: Scope<'_>) -> Result<(Option<String>, bool, Option<usize>)> {
+/// The name, NOT NULL and column of the FROM row of the select list's
+/// value `v`, of `scope`.
+fn named(binder: &Binder<'_>, v: &ValueExpression, scope: Scope<'_>) -> Result<(Option<String>, bool, Option<usize>)> {
+    // [X3.135-1986 §5.25 SR9] a named column only for a single <column specification>,
+    // or [ISO/IEC 9075:1992 §7.9 SR9a] one with an <as clause>;
+    // [X3.135-1986 §5.25 SR10] NOT NULL only if it is a named column of a NOT NULL column.
     Ok(match v {
         // A column of this query; or an outer reference, in a subquery.
         // [ISO/IEC 9075-2:2023 §7.13 SR17 m iii 1 A II] null in a
@@ -370,6 +369,7 @@ fn named_column(binder: &Binder<'_>, v: &ValueExpression, scope: Scope<'_>) -> R
         | ValueExpression::Subquery(_)
         | ValueExpression::Composite(..)
         | ValueExpression::Structured(..)
+        | ValueExpression::Json(..)
         | ValueExpression::Window(_)
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }

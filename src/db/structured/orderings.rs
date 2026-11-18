@@ -189,6 +189,7 @@ impl State {
             | DataType::Timestamp { .. }
             | DataType::Interval(_)
             | DataType::Reference(_)
+            | DataType::Json
             | DataType::Extension(_)
             | DataType::Xml(_) => false,
         }

@@ -1,29 +1,27 @@
 //! Functions as plugins.
 //!
-//! SQL-86 has exactly five set functions [X3.135-1986 §5.8], and their names are key
-//! words: COUNT, SUM, AVG, MAX, MIN. They are implemented here as ordinary
-//! `AggregateFunction` plugins registered under those names, so an
-//! implementation can be swapped (say, a more accurate SUM) without touching
-//! the parser, planner or executor. So are SQL-92's string functions and
-//! concatenation (`functions/strings.rs`).
+//! SQL-86 has exactly five set functions [X3.135-1986 §5.8], and their names are key words:
+//! COUNT, SUM, AVG, MAX, MIN. They are implemented here as ordinary `AggregateFunction`
+//! plugins registered under those names, so an implementation can be swapped (say, a more
+//! accurate SUM) without touching the parser, planner or executor. So are SQL-92's string
+//! functions and concatenation (`functions/strings.rs`).
 //!
-//! \[EXTENSION\] SQL-86 has no syntax for calling any other function. As an opt-in,
-//! non-standard extension ([X3.135-1986 §3.4] allows "user options to process nonconforming
-//! SQL language"), a session whose SQL.FUNCTION_CALLS is ON accepts `<identifier>`(`<args>`) and resolves it
-//! to a registered `ScalarFunction` or `AggregateFunction`.
+//! \[EXTENSION\] A function registered belongs to no schema, so a call of it is no
+//! `<routine invocation>` [ISO/IEC 9075-2:2023 §10.4]. A session whose SQL.FUNCTION_CALLS is
+//! ON, as it is by default, resolves `<identifier>`(`<args>`) that names no function of the
+//! schema to a registered `ScalarFunction` or `AggregateFunction`; OFF, it takes the schema's
+//! own functions alone ([X3.135-1986 §3.4] allows "user options to process nonconforming SQL language").
 //!
 //! The engine, not the plugin, applies [X3.135-1986 §5.8 GR1, GR2]: nulls are removed from
 //! the argument, and duplicates too for DISTINCT, before `update` is called.
 
-use std::fmt;
 use std::sync::Arc;
 
 use crate::error::{Code, Result, fail};
-use crate::lexer::kw;
+use crate::json::Warned;
 use crate::params::ParameterType;
 use crate::storage::{Floats, Ints, Texts};
-use crate::value::Spelled;
-use crate::value::{DOUBLE_PRECISION, DataType, Decimal, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Value};
+use crate::value::{DataType, Value};
 
 mod any_value;
 pub use any_value::ANY_VALUE;
@@ -33,6 +31,10 @@ pub use arrays::{
     ARRAY_AGG, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY, CardinalityOf, ElementOf,
     TRIM_ARRAY, TrimArrayOf,
 };
+mod context;
+mod count;
+pub use context::{AppendedQuery, CallContext};
+use count::Count;
 mod distribution;
 pub use distribution::{FRACTION, InverseDistribution, PERCENTILE_CONT, PERCENTILE_DISC, Picked, picked, picked_value};
 mod extremes;
@@ -40,39 +42,56 @@ pub use extremes::CollatedExtreme;
 use extremes::Extreme;
 mod floats;
 mod formatted;
+pub(crate) use formatted::json_datetime_cast;
 pub use formatted::{FORMAT, formatted_cast};
 mod greatest;
+mod handles;
 pub use greatest::{GREATEST, GreatestOrLeast, LEAST};
+pub use handles::{AggregateRef, ScalarRef};
 mod hypothetical;
 pub use hypothetical::{Hypothesis, Hypothetical, RANK_FUNCTION_TYPES};
 mod ints;
 mod listagg;
 mod multisets;
+mod numeric;
 pub use multisets::{
     COLLECT, ELEMENT, ElementOfMultiset, FUSION, Gathering, INTERSECTION, IsASet, MEMBER, MemberOf, MultisetAggregate, MultisetCombination,
     MultisetOf, SUBMULTISET, SetOf, SubmultisetOf,
 };
+pub use numeric::{CEIL, CEILING, EXP, FLOOR, LN, Numeric, POWER, SQRT};
 mod octet_like;
 mod periods;
 pub use octet_like::OctetLike;
 pub use periods::PeriodTest;
 pub mod lobs;
 pub use listagg::{LISTAGG, Listagg, ListaggSpec, MAX_LISTAGG_LENGTH, Truncation};
+mod json;
+pub use json::{
+    Construction, IsJsonCall, JSON_ARRAY, JSON_ARRAYAGG, JSON_EXISTS, JSON_OBJECT, JSON_OBJECTAGG, JSON_QUERY, JSON_VALUE,
+    JsonArrayAggregate, JsonCall, JsonConstruct, JsonObjectAggregate, JsonOperation, ValueSlot,
+};
+pub use json::{JSON_CONTAINS, JsonContains, JsonOperator, JsonProbe, OnError};
+pub(crate) use json::{JsonCastFails, JsonValueTaken, OPERANDS_PER_MEMBER, TAKEN_EMPTY, TAKEN_VALUE};
+pub(crate) use json::{input_type, json_text, name_type, output_type};
 mod regex;
 mod registry;
 mod rows;
+mod statistics;
 pub use rows::{FieldOf, RowOf};
 mod strings;
+pub use statistics::{PAIRED, Statistic, paired};
 mod structured;
 pub use structured::{
     Constructed, Instanced, Keyed, Mutator, Observer, SPECIFICTYPE, SPECIFICTYPE_LENGTH, SpecificType, Treat, TreatReference, TypeTest,
 };
 mod sum;
+mod totals;
+pub use totals::AVG_EXTRA_SCALE;
+use totals::{Avg, Sum};
 mod trim;
 mod truths;
 mod width_bucket;
 mod xml;
-use sum::{AvgAcc, SumAcc};
 
 pub use regex::{
     AFTER, CHARACTERS, FLAG, LIKE_REGEX, LikeRegex, OCCURRENCE, OCCURRENCES_REGEX, OCTETS, POSITION_REGEX, REGEX_FUNCTIONS, START,
@@ -167,7 +186,8 @@ pub trait ScalarFunction: Send + Sync {
     }
     /// \[DESIGN\] Whether a call of it may run long, so the statement
     /// running it passes itself, to be cancelled as the call goes
-    /// (`call_in`, RULES.md D44): of an XQuery evaluation. Default: no.
+    /// (`call_in_statement`, RULES.md D44): of an XQuery evaluation.
+    /// Default: no.
     fn in_statement(&self) -> bool {
         false
     }
@@ -179,8 +199,26 @@ pub trait ScalarFunction: Send + Sync {
     /// # Errors
     ///
     /// As `call_with`, or the statement's cancellation.
-    fn call_in(&self, args: &[Value], statement: &dyn crate::exec::Subqueries) -> Result<Value> {
+    fn call_in_statement(&self, args: &[Value], statement: &dyn crate::exec::Subqueries) -> Result<Value> {
         self.call_with(args, statement.temp_lobs())
+    }
+
+    /// \[DESIGN\] As `call_with`, and the completion condition the call
+    /// raised, a warning [ISO/IEC 9075:1992 §3.3.4.1], if one: as a cast
+    /// within it raises one, which the statement completes with, as of
+    /// `Expr::Cast`. Default: `call_with`, raising none.
+    ///
+    /// # Errors
+    ///
+    /// As `call`.
+    fn call_warned(&self, args: &[Value], temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Warned> {
+        self.call_with(args, temp).map(|value| (value, None))
+    }
+    /// \[DESIGN\] Whether a call may raise a warning, so that it is made
+    /// by `call_warned` and not by the calls that borrow their arguments
+    /// (`exec/eval.rs`). Default: no.
+    fn warns(&self) -> bool {
+        false
     }
     /// \[EXTENSION\] Whether an index may find rows for this function in
     /// a WHERE filter, such as `f(column, ?)` (RULES.md D34).
@@ -194,7 +232,7 @@ pub trait ScalarFunction: Send + Sync {
     fn index_predicate(&self) -> bool {
         false
     }
-    /// \[EXTENSION\] RULES.md D86: what this function's value says of
+    /// \[EXTENSION\] RULES.md D106: what this function's value says of
     /// whether a query's value is empty, if it does, so an XML index may
     /// find the rows it keeps (`xml::XmlFilter`): XMLEXISTS, XMLQUERY NULL
     /// ON EMPTY, XMLTABLE's row pattern, or a function null exactly when
@@ -210,6 +248,93 @@ pub trait ScalarFunction: Send + Sync {
     fn raise_free(&self) -> bool {
         false
     }
+    /// \[EXTENSION\] Whether a call of `args` may be part of an index's key
+    /// (`index/expression.rs`, RULES.md D92): true promises that
+    /// it raises no exception condition for any values of their types,
+    /// those constant being these, and gives one value of equal ones,
+    /// whatever its session. False by default.
+    fn index_safe(&self, _args: &[crate::index::expression::KeyArgument<'_>]) -> bool {
+        false
+    }
+    /// \[EXTENSION\] The value a call of this function is compared equal
+    /// to where the call stands for a predicate, as SQL/MM Full-Text's
+    /// Contains, an INTEGER, is compared with 1 [ISO/IEC 13249-2:2002
+    /// §5.1.2] (RULES.md D87). An index that finds rows for the function
+    /// (`index_predicate`) finds them for `f(column, ?) = value` too, as
+    /// for a call of a BOOLEAN result that is true. None by default.
+    fn predicate_truth(&self) -> Option<Value> {
+        None
+    }
+    /// \[EXTENSION\] Whether an index may find rows for this function
+    /// though its calls can raise, as SQL/MM Full-Text's Contains raises
+    /// of a malformed pattern (RULES.md D87). True promises what
+    /// `index_predicate` does but for errors, and that a call raises only
+    /// of its arguments other than the column, alike for every row; that a
+    /// call of a null column is null, raising nothing; and that the index,
+    /// given arguments that raise, finds every row it holds of a value. The
+    /// WHERE check of the rows it finds then raises as a scan would, at the
+    /// first row of a value. Defaults to false.
+    fn rechecked_errors(&self) -> bool {
+        false
+    }
+    /// \[EXTENSION\] How many of a call's first arguments an index finding
+    /// rows for this function reads, the column and the value it is given;
+    /// the rest only the WHERE check reads, as Contains's thesaurus
+    /// relations, which the index answers as a superset (RULES.md D87).
+    /// None, all of them, by default.
+    fn probe_arguments(&self) -> Option<usize> {
+        None
+    }
+    /// \[EXTENSION\] Of a call of an SQL/JSON query operator, or of
+    /// JSON_CONTAINS, what an index reads of it: its operator, parsed path,
+    /// PASSING names and behaviours (`JsonProbe`), so the planner finds
+    /// rows of `JSON_EXISTS(doc, 'lax $.a')`, a call of one argument whose
+    /// path the function holds (RULES.md D34). None by default.
+    fn json_probe(&self) -> Option<JsonProbe<'_>> {
+        None
+    }
+    /// \[EXTENSION\] A query whose ARRAY the binder gives a call as its
+    /// last argument, read in the statement's snapshot as any subquery is,
+    /// and with the privileges of its user: of SQL/MM Full-Text's Contains
+    /// and Rank, the relations of the thesauri its pattern expands by
+    /// (RULES.md D87). `constants` are the call's arguments that are
+    /// constants, None of the others. None, nothing appended, by default;
+    /// and nothing is if a table the query reads is not there.
+    fn appended_query(&self, _constants: &[Option<&Value>]) -> Option<AppendedQuery> {
+        None
+    }
+    /// \[EXTENSION\] Whether the binder gives a call, before any appended
+    /// query (`appended_query`), the name of the index that ranks the column
+    /// its first argument reads, if it reads a base table's column one does:
+    /// as SQL/MM Full-Text's Rank scores by that index's statistics
+    /// (RULES.md D87). False by default.
+    fn ranked_by_index(&self) -> bool {
+        false
+    }
+    /// \[EXTENSION\] Whether a call is a score, greater the better, as
+    /// SQL/MM Full-Text's Rank, whose highest an index of its first
+    /// argument's column may give first (`Index::nearest`, RULES.md D87).
+    /// True promises that a call is the same for the same arguments within
+    /// a statement, its statistics fixed there (`CallContext`), and raises
+    /// only as `rechecked_errors` says. False by default.
+    fn ranks(&self) -> bool {
+        false
+    }
+    /// \[EXTENSION\] Whether a call reads what its statement holds beside
+    /// its arguments (`CallContext`), so it is evaluated a row at a time
+    /// by `call_in`, never by a batch. False by default.
+    fn uses_context(&self) -> bool {
+        false
+    }
+    /// A call of `args` in the statement `cx` gives (`uses_context`). By
+    /// default `call_with`.
+    ///
+    /// # Errors
+    ///
+    /// As `call_with`.
+    fn call_in(&self, args: &[Value], cx: &dyn CallContext) -> Result<Value> {
+        self.call_with(args, cx.temp_lobs())
+    }
     /// A spatial operation whose complete behavior this function implements,
     /// including result types, NULLs and SRID errors (D85). Deterministic,
     /// side-effect-free, and fixed for its lifetime. Unlike `index_predicate`,
@@ -218,10 +343,28 @@ pub trait ScalarFunction: Send + Sync {
     fn spatial_operation(&self) -> Option<crate::geometry::SpatialOperation> {
         None
     }
+    /// \[EXTENSION\] Of a vector distance (vector design document §6), the
+    /// metric a call of these constant arguments (none for each other one)
+    /// measures by, upper case, and the position of its first vector, the
+    /// second after it: a deterministic call, smaller the more similar its
+    /// vectors. None of a call ordered otherwise (INNER_PRODUCT), of one
+    /// whose metric is no constant, and by default (R13.1, D94).
+    fn vector_metric(&self, _constants: &[Option<&Value>]) -> Option<(String, usize)> {
+        None
+    }
     /// Same arguments always give the same result? If so, the optimizer may
     /// evaluate calls with constant arguments once, at planning time.
     fn deterministic(&self) -> bool {
         true
+    }
+    /// \[EXTENSION\] Whether an identifier `word`, written alone as
+    /// argument `position` (from 0), is a key word the function takes
+    /// there, given as a character string of it, not read as a column:
+    /// `first` says whether the first argument was one. So
+    /// `VECTOR_DISTANCE(a, b, COSINE)` names its metric (RULES.md D93).
+    /// Qualified, `s.w`, the word is written so. Default: none.
+    fn word_argument(&self, _position: usize, _word: &str, _first: bool) -> bool {
+        false
     }
     /// Prepares an equivalent implementation using known constant
     /// arguments; `None` marks an argument that varies. Called by constant
@@ -270,6 +413,18 @@ pub trait ScalarFunction: Send + Sync {
     fn parameter_type(&self, position: usize, args: &[Option<DataType>]) -> Option<ParameterType> {
         self.argument_type(position, args).map(ParameterType::Of)
     }
+    /// \[EXTENSION\] Whether `call_many` is cheaper than a call a row, as a model's (vector design R12.3).
+    fn batches(&self) -> bool {
+        false
+    }
+    /// The values of calls of each of `rows`, in order: by default `call` of each.
+    ///
+    /// # Errors
+    ///
+    /// As `call`'s.
+    fn call_many(&self, rows: &[Vec<Value>]) -> Result<Vec<Value>> {
+        rows.iter().map(|r| self.call(r)).collect()
+    }
 }
 
 /// \[EXTENSION\] A set function: one of COUNT, SUM, AVG, MAX, MIN
@@ -306,6 +461,15 @@ pub trait AggregateFunction: Send + Sync {
     /// directions of their sort keys, are computed apart. Default: nothing.
     fn label_suffix(&self) -> String {
         String::new()
+    }
+    /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.6 GR5] The type a `<dynamic
+    /// parameter specification>` takes as field `position`, from 0, of its
+    /// argument, if its argument is a ROW, as the binder makes the argument
+    /// of a JSON aggregate; as its argument itself, of `position` 0, if
+    /// not. None where it takes none, where it is refused \[GR4\]. By
+    /// default none.
+    fn parameter_type(&self, _position: usize) -> Option<ParameterType> {
+        None
     }
 }
 
@@ -399,193 +563,6 @@ pub trait Accumulator {
     ///
     /// The result cannot be computed or is out of range.
     fn finish(&self) -> Result<Value>;
-}
-
-/// A shared handle to a registered scalar function.
-#[derive(Clone)]
-pub struct ScalarRef(pub Arc<dyn ScalarFunction>);
-/// A shared handle to a registered aggregate function.
-#[derive(Clone)]
-pub struct AggregateRef(pub Arc<dyn AggregateFunction>);
-
-impl fmt::Debug for ScalarRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.name())
-    }
-}
-impl fmt::Debug for AggregateRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.name())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// The SQL-86 set functions [X3.135-1986 §5.8]
-// ---------------------------------------------------------------------------
-
-/// [X3.135-1986 §5.8 SR9c] implementor-defined: AVG of an exact numeric with scale S has
-/// scale S + `AVG_EXTRA_SCALE`, truncated toward zero.
-pub const AVG_EXTRA_SCALE: u32 = 2;
-
-fn not_character(name: &str, arg: Option<DataType>) -> Result<DataType> {
-    match arg.filter(|t| t.is_numeric() || matches!(t, DataType::Interval(_))) {
-        Some(t) => Ok(t),
-        None => fail(
-            Code::SyntaxRule,
-            format!("[X3.135-1986 §5.8 SR9a; ISO/IEC 9075:1992 §6.5 SR9a] the argument of {name} shall be a number or an interval"),
-        ),
-    }
-}
-
-/// COUNT(*) and COUNT(DISTINCT c). [X3.135-1986 §5.8 GR4a, GR4b] the cardinality.
-struct Count;
-
-impl AggregateFunction for Count {
-    fn name(&self) -> &'static str {
-        kw::COUNT
-    }
-    // [X3.135-1986 §5.8 SR7] exact numeric with implementor-defined precision and scale 0.
-    fn result_type(&self, _arg: Option<DataType>) -> Result<DataType> {
-        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric })
-    }
-    fn accumulator(&self, _result: DataType) -> Box<dyn Accumulator> {
-        Box::new(CountAcc(0))
-    }
-}
-
-struct CountAcc(i128);
-
-impl Accumulator for CountAcc {
-    fn update(&mut self, _v: &Value) -> Result<()> {
-        self.0 = self.0.saturating_add(1);
-        Ok(())
-    }
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
-        let counted = match rows {
-            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).filter(|v| !v.is_null()).count(),
-            None => values.iter().filter(|v| !v.is_null()).count(),
-        };
-        self.update_rows(counted)
-    }
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
-        self.update_rows(ints::count(ints, rows))
-    }
-    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
-        self.update_rows(floats::count(floats, rows))
-    }
-    /// Its texts counted, none made a value.
-    fn update_texts(&mut self, texts: &Texts, rows: Option<&[usize]>) -> Result<()> {
-        let counted = match rows {
-            Some(rows) => rows.iter().filter(|&&n| texts.get(n).is_some()).count(),
-            None => (0..texts.len()).filter(|&n| texts.get(n).is_some()).count(),
-        };
-        self.update_rows(counted)
-    }
-    fn update_rows(&mut self, rows: usize) -> Result<()> {
-        self.0 = self.0.saturating_add(i128::try_from(rows).unwrap_or(i128::MAX));
-        Ok(())
-    }
-    /// The count, its 16 bytes.
-    fn write_state(&self, out: &mut Vec<u8>) -> bool {
-        out.extend_from_slice(&self.0.to_le_bytes());
-        true
-    }
-    fn merge(&mut self, state: &[u8]) -> Result<()> {
-        let n = <[u8; 16]>::try_from(state).map(i128::from_le_bytes);
-        self.0 = self.0.saturating_add(n.or_else(|_| fail(Code::Corrupt, "[DESIGN] a state of COUNT is not 16 bytes"))?);
-        Ok(())
-    }
-    fn finish(&self) -> Result<Value> {
-        Ok(Value::Exact(Decimal::new(self.0, 0)))
-    }
-}
-
-/// SUM. [X3.135-1986 §5.8 SR9b] exact with scale S stays exact with scale S. [ISO/IEC 9075:1992 §6.5 GR2b iv]
-/// the sum, not each sum on the way to it, shall be within range (`sum.rs`). [X3.135-1986 §5.8 GR4c] null when S is
-/// empty.
-struct Sum;
-
-impl AggregateFunction for Sum {
-    fn name(&self) -> &'static str {
-        kw::SUM
-    }
-    fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
-        Ok(match not_character(kw::SUM, arg)? {
-            DataType::Exact { scale, .. } => DataType::Exact { precision: MAX_EXACT_PRECISION, scale, spelled: Spelled::Numeric },
-            // [ISO/IEC 9075:1992 §6.5 SR9e] of the interval's precision.
-            DataType::Interval(q) => DataType::Interval(q),
-            // [ISO/IEC 9075-2:2023 §10.9 SR7g v] DECFLOAT of 34 digits (IV170).
-            DataType::DecFloat { .. } => DataType::DecFloat { precision: MAX_DECFLOAT_PRECISION },
-            // [X3.135-1986 §5.8 SR9d]; `not_character` has refused the types not
-            // numbers or intervals.
-            DataType::Approximate { .. }
-            | DataType::Character { .. }
-            | DataType::Varying { .. }
-            | DataType::Binary { .. }
-            | DataType::VarBinary { .. }
-            | DataType::Lob { .. }
-            | DataType::Boolean
-            | DataType::Date
-            | DataType::Time { .. }
-            | DataType::Timestamp { .. }
-            | DataType::Array(_)
-            | DataType::Multiset(_)
-            | DataType::Structured(_)
-            | DataType::Reference(_)
-            | DataType::Row(_)
-            | DataType::Distinct(_)
-            | DataType::Extension(_)
-            | DataType::Xml(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
-        })
-    }
-    fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
-        Box::new(SumAcc::new(result))
-    }
-}
-
-/// AVG. [ISO/IEC 9075:1992 §6.5 GR2b ii] the average, which alone shall be within range (`sum.rs`): SQL-92 drops
-/// the range of the sum that [X3.135-1986 §5.8 GR4f] sets (RULES.md D32).
-struct Avg;
-
-impl AggregateFunction for Avg {
-    fn name(&self) -> &'static str {
-        kw::AVG
-    }
-    fn result_type(&self, arg: Option<DataType>) -> Result<DataType> {
-        Ok(match not_character(kw::AVG, arg)? {
-            DataType::Exact { scale, .. } => DataType::Exact {
-                precision: MAX_EXACT_PRECISION,
-                scale: scale.saturating_add(AVG_EXTRA_SCALE).min(MAX_EXACT_PRECISION),
-                spelled: Spelled::Numeric,
-            },
-            // [ISO/IEC 9075:1992 §6.5 SR9e] of the interval's precision.
-            DataType::Interval(q) => DataType::Interval(q),
-            // [ISO/IEC 9075-2:2023 §10.9 SR7g v] DECFLOAT of 34 digits (IV170).
-            DataType::DecFloat { .. } => DataType::DecFloat { precision: MAX_DECFLOAT_PRECISION },
-            // `not_character` has refused the types not numbers or intervals.
-            DataType::Approximate { .. }
-            | DataType::Character { .. }
-            | DataType::Varying { .. }
-            | DataType::Binary { .. }
-            | DataType::VarBinary { .. }
-            | DataType::Lob { .. }
-            | DataType::Boolean
-            | DataType::Date
-            | DataType::Time { .. }
-            | DataType::Timestamp { .. }
-            | DataType::Array(_)
-            | DataType::Multiset(_)
-            | DataType::Structured(_)
-            | DataType::Reference(_)
-            | DataType::Row(_)
-            | DataType::Distinct(_)
-            | DataType::Extension(_)
-            | DataType::Xml(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
-        })
-    }
-    fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
-        Box::new(AvgAcc::new(result))
-    }
 }
 
 // Unit tests: what the set functions refuse and how they total (RULES.md

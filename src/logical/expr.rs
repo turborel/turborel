@@ -85,6 +85,7 @@ impl Truth {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_)
             | Value::Xml(_) => Truth::Unknown,
         }
@@ -302,7 +303,7 @@ impl Expr {
     /// negation cannot overflow), and CASE only through its parts, as a
     /// truth value only through its condition. A function that opts in to
     /// index lookups promises never to raise for accepted arguments (D34),
-    /// as does one that is `raise_free` (D86), but computing those
+    /// as does one that is `raise_free` (D106), but computing those
     /// arguments can still raise.
     pub fn can_raise(&self) -> bool {
         match self {

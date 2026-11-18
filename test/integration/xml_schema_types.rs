@@ -176,7 +176,7 @@ fn xmlschema_types_brought_together_10_3() {
     assert_eq!(refused(&a, &untyped).0, -103);
 }
 
-/// Verifies: [DESIGN] RULES.md D86: a value of a type of XMLSCHEMA is one
+/// Verifies: [DESIGN] RULES.md D106: a value of a type of XMLSCHEMA is one
 /// a validation made, so one sent as text, a parameter's, is not taken
 /// for one, SQLSTATE 2201R.
 #[test]
@@ -190,7 +190,7 @@ fn a_parameter_of_an_xmlschema_type_is_validated_first() {
     assert_eq!(e.sqlstate().as_str(), "2201R");
 }
 
-/// Verifies: [DESIGN] RULES.md D25, D86: a column of a type of XMLSCHEMA
+/// Verifies: [DESIGN] RULES.md D25, D106: a column of a type of XMLSCHEMA
 /// and the type annotations of its values survive reopening, after a
 /// checkpoint and a close and from the log alone after a failure: its
 /// integer is still an `xs:integer`, and an untyped value still refused.
@@ -223,7 +223,7 @@ fn typed_values_survive_reopening() {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md D86: DROP XML SCHEMA is refused, even
+/// Verifies: [EXTENSION] RULES.md D106: DROP XML SCHEMA is refused, even
 /// with CASCADE, while a column, a domain or a distinct type is of a type
 /// of XMLSCHEMA of it, SQLCODE -103; RESTRICT is refused while a routine
 /// has a parameter of one, and CASCADE drops the routine.

@@ -4,7 +4,7 @@ use super::*;
 use crate::index::xml::keys::{ELEMENT, ordinal_of};
 use crate::index::xml::tests::tree;
 
-/// Verifies: [DESIGN] RULES.md D86 [Pal et al. §3.1.1]: a name is given a
+/// Verifies: [DESIGN] RULES.md D106 [Pal et al. §3.1.1]: a name is given a
 /// token once, by its namespace URI and local name, not its prefix; one
 /// not given none is none; tokens count from 1.
 #[test]
@@ -20,7 +20,7 @@ fn names_are_given_tokens_once() {
     assert_eq!(dictionary.name(&named(None, None), false).unwrap(), Some(1));
 }
 
-/// Verifies: [DESIGN] RULES.md D86: a path is given an id once, found
+/// Verifies: [DESIGN] RULES.md D106: a path is given an id once, found
 /// again, and by its id.
 #[test]
 fn paths_are_given_ids_once() {
@@ -37,7 +37,7 @@ fn paths_are_given_ids_once() {
     assert_eq!(tokens_of(&path(&[2, 300])).unwrap(), (ELEMENT, vec![2, 300]));
 }
 
-/// Verifies: [DESIGN] RULES.md D86, D18: a name whose key is longer than
+/// Verifies: [DESIGN] RULES.md D106, D18: a name whose key is longer than
 /// the tree's longest is refused, SQLCODE -900.
 #[test]
 fn a_name_too_long_is_refused() {

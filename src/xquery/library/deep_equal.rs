@@ -1,7 +1,7 @@
 //! `fn:deep-equal` [XQueryFO §15.3.1]: whether two sequences have items
 //! deep-equal in pairs.
 //!
-//! \[DESIGN\] RULES.md D86: two trees are compared by a list of the pairs
+//! \[DESIGN\] RULES.md D106: two trees are compared by a list of the pairs
 //! of nodes left to compare, each pair's children added to it, so no
 //! comparison recurses, however deep the trees. An element no schema
 //! typed has mixed content [XQueryDM §6.2.3], so its element and text

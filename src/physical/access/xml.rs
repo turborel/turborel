@@ -1,4 +1,4 @@
-//! \[EXTENSION\] RULES.md D86: XML index lookups for the conjuncts of a
+//! \[EXTENSION\] RULES.md D106: XML index lookups for the conjuncts of a
 //! table's filter that keep only rows whose query's value is not empty:
 //! XMLEXISTS, XMLQUERY NULL ON EMPTY IS NOT NULL, and XMLTABLE's row
 //! pattern, implied where XMLTABLE joins the rows it is of (`implied`),
@@ -119,7 +119,7 @@ pub(super) fn candidates((conds, implied): (&[Cond], &[Cond]), ix: &IndexDesc, f
         let guess = cost.entries.map_or(all, |entries| cost_of(entries).min(all));
         let answered = r.answerable && r.reduction.exact && ix.method == XML_PRIMARY_METHOD;
         let probe = Probe::Xml(Box::new(XmlProbe { query: r.reduction.query, answered }));
-        // D34, D86: the filter keeps the conjunct, to check each row, but
+        // D34, D106: the filter keeps the conjunct, to check each row, but
         // of a query the index answers.
         out.push(Candidate::one(probe, (at.into_iter().collect(), 0, guess, true)));
     }

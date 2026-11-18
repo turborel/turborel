@@ -2,7 +2,7 @@
 //! those that test their cardinality [XQueryFO §15.2], `fn:count`
 //! [XQueryFO §15.4.1], and `op:to` [XQueryFO §15.5.1].
 //!
-//! \[DESIGN\] RULES.md D86: `fn:distinct-values` keeps the first of each
+//! \[DESIGN\] RULES.md D106: `fn:distinct-values` keeps the first of each
 //! set of equal values, in the order they come, and `fn:unordered` gives
 //! its items in the order they came, each an order [XQueryFO §15.1.6,
 //! §15.1.11] leaves to the implementation.

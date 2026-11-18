@@ -3,7 +3,7 @@
 //! registered XML Schemas it may include, redefine or import, as its
 //! library [Schema1 §4.2], and the registered XML Schemas it read; and
 //! every registered XML Schema of a catalog decoded read again, each after
-//! those it uses (RULES.md D86).
+//! those it uses (RULES.md D106).
 
 use std::sync::Arc;
 
@@ -112,7 +112,7 @@ mod tests {
     }
 
     /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §4.2.6] RULES.md
-    /// D86 [Schema1 §4.2.3]: a registered XML Schema read with the others
+    /// D106 [Schema1 §4.2.3]: a registered XML Schema read with the others
     /// as its library records those whose documents it imported; its
     /// descriptor stores as its text and uses, not its schema; and a
     /// catalog decoded has each read again, after those it uses.
@@ -141,7 +141,7 @@ mod tests {
         assert!(e.element_names.keys().any(|n| &*n.local == "e"));
     }
 
-    /// Verifies: [DESIGN] RULES.md D86: a catalog whose registered XML
+    /// Verifies: [DESIGN] RULES.md D106: a catalog whose registered XML
     /// Schemas use one not registered, or one another, is damaged, SQLCODE
     /// -916, as is one whose document no longer reads.
     #[test]

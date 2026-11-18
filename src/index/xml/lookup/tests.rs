@@ -14,7 +14,7 @@ fn selects(steps: &[(Axis, char)], path: &str) -> bool {
     steps_match(&steps, &path.chars().collect::<Vec<_>>())
 }
 
-/// Verifies: [DESIGN] RULES.md D86 [XQuery §3.2, §3.2.4]: a child step
+/// Verifies: [DESIGN] RULES.md D106 [XQuery §3.2, §3.2.4]: a child step
 /// takes the name right below the step before's, or the item's; a
 /// descendant step any below; `*` any name; the last step ends at the
 /// path's node. MC/DC of `reached && named`: each pair differs in one.
@@ -33,7 +33,7 @@ fn steps_select_by_axis_and_name() {
     assert!(!selects(&[(CHILD, 'a')], ""), "no node");
 }
 
-/// Verifies: [DESIGN] RULES.md D86 [Pal et al. §3.2.1]: the dictionary's
+/// Verifies: [DESIGN] RULES.md D106 [Pal et al. §3.2.1]: the dictionary's
 /// prefix of a path is its kind and its last steps' tokens, reversed, up
 /// to a descendant step's or before a wildcard; whole only of named child
 /// steps.
@@ -60,7 +60,7 @@ fn within(ranges: &[ValueRange], text: &str) -> bool {
     keys.iter().any(|k| ranges.iter().any(|r| r.holds(k)))
 }
 
-/// Verifies: [DESIGN] RULES.md D86 [XQuery §3.5.2]: a string literal
+/// Verifies: [DESIGN] RULES.md D106 [XQuery §3.5.2]: a string literal
 /// selects the string keys its comparison may hold of, a tie at a cut
 /// kept; `!=` selects every value.
 #[test]
@@ -79,7 +79,7 @@ fn strings_select_their_range() {
     assert!(ranges(&[CompOp::Ne], &s("m")).is_none());
 }
 
-/// Verifies: [DESIGN] RULES.md D86, D15 [XQuery §3.5.2]: a number literal
+/// Verifies: [DESIGN] RULES.md D106, D15 [XQuery §3.5.2]: a number literal
 /// selects the numbers its comparison holds of, exactly, and every value
 /// that is no number, whose comparison would raise err:FORG0001; NaN
 /// selects those alone.

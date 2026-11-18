@@ -1,4 +1,4 @@
-//! \[EXTENSION\] RULES.md D86: a lookup's own answer of one value: whether
+//! \[EXTENSION\] RULES.md D106: a lookup's own answer of one value: whether
 //! a node its path selects has a value its comparisons hold of [XQuery
 //! §3.2, §3.5.2]. What a caller of a lookup checks each row it fetches by,
 //! as for a function lookup (RULES.md D34), and what the tests of an
@@ -60,12 +60,12 @@ impl<'l> Compiled<'l> {
     /// SQLCODE -910 of no step; -900 of more than `MAX_STEPS`.
     pub(super) fn of(steps: &'l [Step]) -> Result<Compiled<'l>> {
         if steps.is_empty() {
-            return Err(SqlError::new(Code::Api, "[DESIGN] an XML lookup is given a path of no step (RULES.md D86)"));
+            return Err(SqlError::new(Code::Api, "[DESIGN] an XML lookup is given a path of no step (RULES.md D106)"));
         }
         if steps.len() > MAX_STEPS {
             return Err(SqlError::new(
                 Code::Unsupported,
-                format!("[DESIGN] an XML lookup takes at most {MAX_STEPS} steps (RULES.md D18, D86)"),
+                format!("[DESIGN] an XML lookup takes at most {MAX_STEPS} steps (RULES.md D18, D106)"),
             ));
         }
         let last = bit(u32::try_from(steps.len()).unwrap_or(0));
@@ -154,7 +154,7 @@ fn octets_of(value: &XmlValue) -> Result<Vec<u8>> {
     }
     let most = u64::try_from(MAX_STORED).unwrap_or(u64::MAX);
     lob.bounded(most)?.ok_or_else(|| {
-        SqlError::new(Code::Corrupt, format!("[DESIGN] an XML value stored is longer than {MAX_STORED} octets (RULES.md D86)"))
+        SqlError::new(Code::Corrupt, format!("[DESIGN] an XML value stored is longer than {MAX_STORED} octets (RULES.md D106)"))
     })
 }
 

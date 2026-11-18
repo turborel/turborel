@@ -1,4 +1,4 @@
-//! XML indexes read by the planner (RULES.md D86): XMLEXISTS in WHERE and
+//! XML indexes read by the planner (RULES.md D106): XMLEXISTS in WHERE and
 //! ON, XMLQUERY NULL ON EMPTY IS NOT NULL and XMLTABLE's row pattern,
 //! each of a path reduced to a lookup, the rows it gives fetched and
 //! checked, so the results are those of a full read; a conjunct that can
@@ -103,7 +103,7 @@ fn keys(a: &Session, condition: &str) -> Vec<String> {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §8.4, §6.18] RULES.md
-/// D34, D86: of each XML index method, every condition gives the rows a
+/// D34, D106: of each XML index method, every condition gives the rows a
 /// full read gives: a lookup's rows are fetched and checked, so an index
 /// changes no result.
 #[test]
@@ -123,7 +123,7 @@ fn each_index_gives_the_rows_of_a_full_read() {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md D34, D86: EXPLAIN shows the XML index
+/// Verifies: [EXTENSION] RULES.md D34, D106: EXPLAIN shows the XML index
 /// read for a condition it finds the rows of, by its method, the path and
 /// comparison its lookup selects by of the column; a full read for a
 /// condition of no lookup, or of a column of XML(SEQUENCE).
@@ -169,7 +169,7 @@ fn alike_with_each_index(a: &Session, query: &str) -> (Vec<String>, String) {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §7.1 SR4h] RULES.md
-/// D86: XMLTABLE joined to the rows of T has its row pattern an implied
+/// D106: XMLTABLE joined to the rows of T has its row pattern an implied
 /// filter of them, which an index finds the rows of, each checked by
 /// XMLTABLE itself, not by a filter; a LEFT join, which keeps every row,
 /// has none; the results are a full read's, with a filter of the
@@ -196,7 +196,7 @@ fn xmltable_reads_the_rows_of_its_row_pattern() {
     assert_eq!(kept.len(), ROWS);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §7.5 GR1c] RULES.md D86:
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §7.5 GR1c] RULES.md D106:
 /// XMLEXISTS in a join's ON condition, of one operand's column, finds that
 /// operand's rows by an index, as in WHERE, of an inner join and of the
 /// inner operand of a LEFT join; the results are a full read's.
@@ -220,7 +220,7 @@ fn on_conditions_read_by_an_index() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §6.18 GR3] [XQuery
-/// §3.5.2] RULES.md D15, D86: a row whose value a numeric comparison
+/// §3.5.2] RULES.md D15, D106: a row whose value a numeric comparison
 /// cannot cast fails the query, err:FORG0001, with an index as without,
 /// as the lookup gives it; a conjunct that can raise an error keeps the
 /// full read, and raises it.
@@ -244,7 +244,7 @@ fn errors_are_raised_as_by_a_full_read() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §6.18 GR1a ii 2 B
-/// III] RULES.md D15, D86: a column of XML(SEQUENCE) is read whole, as a
+/// III] RULES.md D15, D106: a column of XML(SEQUENCE) is read whole, as a
 /// value of other than one node fails its query as its context item,
 /// SQLSTATE 2200V, which a lookup would not give; and its index is not
 /// read for a query of another column.
@@ -262,7 +262,7 @@ fn a_sequence_column_is_read_whole() {
     assert!(!plan(&a, other).contains("IndexScan"), "an index of another column: {}", plan(&a, other));
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6] RULES.md D86: a
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6] RULES.md D106: a
 /// prepared statement reads an index by its XMLEXISTS whatever values its
 /// parameters are given, its rows a full read's of each.
 #[test]
@@ -290,7 +290,7 @@ fn prepared_statements_read_by_an_index() {
     assert_eq!(fetched(&a, "SELECT K FROM T WHERE XMLEXISTS('(' PASSING BY REF X)").unwrap_err().code, Code::Data);
 }
 
-/// Verifies: [EXTENSION] [XQuery §3.2.2] RULES.md D34, D86: XML_PRIMARY
+/// Verifies: [EXTENSION] [XQuery §3.2.2] RULES.md D34, D106: XML_PRIMARY
 /// answers an exact query of a row from its entries alone, a filter of an
 /// ancestor among it, and the condition is then no filter's, EXPLAIN
 /// saying so; a query not exact, as a numeric comparison is, keeps the

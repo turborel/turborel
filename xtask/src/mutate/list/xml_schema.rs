@@ -5,7 +5,7 @@
 //! depends on them, the permanent ones and how their documents are
 //! logged; the XML types of XMLSCHEMA, XMLVALIDATE and IS VALID, and the
 //! typed values XQuery reads; and XQuery's validate expression (RULES.md
-//! R-TEST-9, D86).
+//! R-TEST-9, D106).
 
 use super::{Mutation, Package};
 
@@ -292,7 +292,7 @@ pub const XML_SCHEMA: [Mutation; 50] = [
         name: "xml-schema-definition-pinned",
         package: Package::Core,
         breaks: "a definition bound again takes the registered XML Schema a URI indicates now",
-        file: "src/catalog.rs",
+        file: "src/catalog/horizon.rs",
         original: "        if self.routines.is_some() { &self.xml_schemas } else { &[] }",
         replacement: "        &[]",
         integration: &["xml_schema_dependents::a_view_keeps_the_schema_it_named_4_2_6"],

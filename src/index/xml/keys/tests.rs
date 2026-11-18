@@ -3,7 +3,7 @@
 use super::*;
 use crate::index::xml::{Method, VALUE_PREFIX_BYTES};
 
-/// Verifies: [DESIGN] RULES.md D86: ordinals compare as bytes as the
+/// Verifies: [DESIGN] RULES.md D106: ordinals compare as bytes as the
 /// numbers they write, their end below every one, and read back.
 #[test]
 fn ordinals_order_as_numbers() {
@@ -16,7 +16,7 @@ fn ordinals_order_as_numbers() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D86 [XQueryFO §7.3.1]: string keys order as
+/// Verifies: [DESIGN] RULES.md D106 [XQueryFO §7.3.1]: string keys order as
 /// strings do by code points, a string before every longer one it begins,
 /// a whole string's key before a cut one's of the same first octets, an
 /// octet 00 escaped; each reads back as one value.
@@ -38,7 +38,7 @@ fn strings_order_by_code_points() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D86 [XQueryFO §6.3]: number keys order as
+/// Verifies: [DESIGN] RULES.md D106 [XQueryFO §6.3]: number keys order as
 /// numbers, -0 as 0, NaN unordered, below every number, and every number
 /// below every string.
 #[test]
@@ -51,7 +51,7 @@ fn numbers_order_as_numbers() {
     assert!(number_value(f64::NAN) < keys[0] && keys[8] < string_value(b"", VALUE_PREFIX_BYTES));
 }
 
-/// Verifies: [DESIGN] RULES.md D86 [XQuery §3.5.2] [XQueryFO §17.1.1]: a
+/// Verifies: [DESIGN] RULES.md D106 [XQuery §3.5.2] [XQueryFO §17.1.1]: a
 /// node's number is its value cast as an `xdt:untypedAtomic` to
 /// xs:double, white space collapsed, INF and -INF included; none of a
 /// value that does not cast, or is cut.
@@ -67,7 +67,7 @@ fn a_nodes_number_is_its_value_cast() {
     assert_eq!(values_of(b"x", true)[1], vec![UNORDERED]);
 }
 
-/// Verifies: [DESIGN] RULES.md D86 [Pal et al. §3.2.1-§3.2.3]: each
+/// Verifies: [DESIGN] RULES.md D106 [Pal et al. §3.2.1-§3.2.3]: each
 /// method's entry reads back as the path, value and row it was made of,
 /// in its own order of fields.
 #[test]
@@ -84,7 +84,7 @@ fn entries_read_back() {
     assert_eq!(parse_entry(Method::Path, &[NAMES]).unwrap_err().sqlcode(), -916_i32);
 }
 
-/// Verifies: [DESIGN] RULES.md D86: an ORDPATH is read to its end, and an
+/// Verifies: [DESIGN] RULES.md D106: an ORDPATH is read to its end, and an
 /// entry's count is one when its value is empty.
 #[test]
 fn ordpaths_and_counts_read_back() {

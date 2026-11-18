@@ -150,6 +150,7 @@ fn product(fraction: &Value, count: u64) -> Result<(u64, f64)> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_)
         | Value::Xml(_) => return Err(not_a_fraction(fraction)),
     };

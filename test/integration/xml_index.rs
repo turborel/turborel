@@ -1,4 +1,4 @@
-//! XML indexes (RULES.md D86): the methods XML_PATH, XML_VALUE,
+//! XML indexes (RULES.md D106): the methods XML_PATH, XML_VALUE,
 //! XML_PROPERTY and XML_PRIMARY of CREATE INDEX, kept with a table's writes, transactions
 //! and rollbacks, reopened and recovered; their lookups give a superset of
 //! the rows a path selects, the right ones once checked; and their bounds.
@@ -135,7 +135,7 @@ fn every_lookup_answers(db: &Database, names: &[&str]) {
     a.rollback().unwrap();
 }
 
-/// Verifies: [EXTENSION] RULES.md D86, D34 [Pal et al. §3.2]: CREATE INDEX
+/// Verifies: [EXTENSION] RULES.md D106, D34 [Pal et al. §3.2]: CREATE INDEX
 /// makes an index of each method, its name matched in any case, built of
 /// the rows there and kept up to date; INFORMATION_SCHEMA.INDEXES names
 /// its method; DROP INDEX drops it.
@@ -159,7 +159,7 @@ fn each_method_is_made_listed_and_dropped() {
     assert_eq!(db.index_entries("I0").unwrap(), 2, "a pair of each row and its value");
 }
 
-/// Verifies: [EXTENSION] RULES.md D86, D34: an XML method keys one column
+/// Verifies: [EXTENSION] RULES.md D106, D34: an XML method keys one column
 /// of an XML type: another column, or two, is refused, SQLCODE -103, as
 /// an index of another method on an XML column is.
 #[test]
@@ -174,7 +174,7 @@ fn an_xml_method_keys_one_xml_column() {
     assert_eq!(rows(&a, "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.INDEXES WHERE TABLE_NAME = 'T'").unwrap(), Vec::<String>::new());
 }
 
-/// Verifies: [EXTENSION] RULES.md D86, D29, D34 [ISO/IEC 9075:1992 §4.28]:
+/// Verifies: [EXTENSION] RULES.md D106, D29, D34 [ISO/IEC 9075:1992 §4.28]:
 /// each index is kept with inserts, updates and deletes, of values held
 /// in their rows and as large objects, each committed or rolled back, and
 /// with the versions taken back as they are collected: every lookup
@@ -211,7 +211,7 @@ fn indexes_are_kept_with_writes_and_rollbacks() {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md D86, D25: an index is reopened as it
+/// Verifies: [EXTENSION] RULES.md D106, D25: an index is reopened as it
 /// was after a clean close, and recovered with what the log holds after a
 /// crash, its dictionary with it: values held in rows and as objects.
 #[test]
@@ -252,7 +252,7 @@ fn indexes_are_reopened_and_recovered() {
     drop((db, before));
 }
 
-/// Verifies: [EXTENSION] RULES.md D86, D18, R-ERR-5: a value an index
+/// Verifies: [EXTENSION] RULES.md D106, D18, R-ERR-5: a value an index
 /// cannot key, of more elements and attributes than `MAX_KEYED_NODES`, is
 /// refused, SQLCODE -900, and its statement has no effect; a table with
 /// no XML index takes it.

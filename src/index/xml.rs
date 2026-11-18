@@ -1,4 +1,4 @@
-//! \[EXTENSION\] RULES.md D86: the built-in XML index methods, after Pal et
+//! \[EXTENSION\] RULES.md D106: the built-in XML index methods, after Pal et
 //! al.'s XML indexes: "xml_path", keyed by each node's path then value
 //! (PATH_VALUE, §3.2.1); "xml_value", by value then path (VALUE, §3.2.3);
 //! "xml_property", by row, then path and value (PROPERTY, §3.2.2); and
@@ -69,7 +69,7 @@ pub const XML_PRIMARY_METHOD: &str = "xml_primary";
 pub const METHODS: [Method; 4] = [Method::Path, Method::Value, Method::Property, Method::Primary];
 
 /// \[DESIGN\] How many octets of a node's string value an XML index keys
-/// (RULES.md D86): a value longer is keyed by its first, marked cut, so an
+/// (RULES.md D106): a value longer is keyed by its first, marked cut, so an
 /// entry is bounded; a lookup takes every value its first octets may
 /// begin, and its rows are checked. A number is keyed only of a value this
 /// short, which casts whole. The value is no measurement: the names,
@@ -77,7 +77,7 @@ pub const METHODS: [Method; 4] = [Method::Path, Method::Value, Method::Property,
 pub const VALUE_PREFIX_BYTES: usize = 64;
 
 /// \[DESIGN\] How many octets of a node's string value the primary keys
-/// (RULES.md D86): a value of no more is keyed whole, so a lookup answers
+/// (RULES.md D106): a value of no more is keyed whole, so a lookup answers
 /// of it from the index alone; one longer is keyed by its first, cut, and
 /// a row whose answer needs it is checked. The value is no measurement:
 /// it leaves an entry, its ORDPATH of a deep node too, within the longest
@@ -90,7 +90,7 @@ const STRIPES: usize = 16;
 /// Bytes of a locator: its tree's meta page.
 const LOCATOR: usize = 8;
 
-/// \[EXTENSION\] What an XML index is keyed by first (RULES.md D86).
+/// \[EXTENSION\] What an XML index is keyed by first (RULES.md D106).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
     /// "xml_path": path, value, row, ORDPATH.
@@ -131,7 +131,7 @@ pub(super) fn too_long(n: usize, most: usize) -> SqlError {
     SqlError::new(
         Code::Unsupported,
         format!(
-            "[DESIGN] the XML value is beyond turborel's limits: an XML index's key of it has {n} octets, past the {most} this database's page size holds (RULES.md D18, D86)"
+            "[DESIGN] the XML value is beyond turborel's limits: an XML index's key of it has {n} octets, past the {most} this database's page size holds (RULES.md D18, D106)"
         ),
     )
 }
@@ -139,7 +139,7 @@ pub(super) fn too_long(n: usize, most: usize) -> SqlError {
 /// The database's work areas, once the method is attached to it.
 type Work = Arc<Mutex<Option<Arc<WorkAreas>>>>;
 
-/// \[EXTENSION\] A built-in XML index method (RULES.md D86): B-link trees
+/// \[EXTENSION\] A built-in XML index method (RULES.md D106): B-link trees
 /// in one pager file of a buffer pool.
 pub struct XmlMethod {
     method: Method,
@@ -220,7 +220,7 @@ impl IndexMethod for XmlMethod {
         }
         Err(SqlError::new(
             Code::SyntaxRule,
-            format!("[EXTENSION] {what} of method {} keys one column, of an XML type (RULES.md D86)", self.name()),
+            format!("[EXTENSION] {what} of method {} keys one column, of an XML type (RULES.md D106)", self.name()),
         ))
     }
     fn create(&self, _columns: &[DataType]) -> Result<Box<dyn Index>> {
@@ -231,7 +231,7 @@ impl IndexMethod for XmlMethod {
     fn open(&self, _columns: &[DataType], locator: &[u8]) -> Result<Option<Box<dyn Index>>> {
         let meta = <[u8; LOCATOR]>::try_from(locator)
             .map(u64::from_le_bytes)
-            .map_err(|_| SqlError::new(Code::Corrupt, "[DESIGN] an XML index's locator is malformed (RULES.md D86)"))?;
+            .map_err(|_| SqlError::new(Code::Corrupt, "[DESIGN] an XML index's locator is malformed (RULES.md D106)"))?;
         let (pool, file) = self.files()?;
         Ok(Some(Box::new(self.made(BLinkTree::open(pool, file, PageId(meta))?))))
     }
@@ -272,7 +272,7 @@ impl Drop for XmlIndex {
 
 /// The value of a key of one column.
 fn value_of(key: &Key) -> Result<&Value> {
-    key.0.first().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] an XML index is given a key of no column (RULES.md D86)"))
+    key.0.first().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] an XML index is given a key of no column (RULES.md D106)"))
 }
 
 impl Index for XmlIndex {
@@ -304,7 +304,7 @@ impl Index for XmlIndex {
         if !matches!(probe, Probe::All) {
             return Box::new(std::iter::once(Err(SqlError::new(
                 Code::Unsupported,
-                "[EXTENSION] an XML index answers no comparison (RULES.md D86)",
+                "[EXTENSION] an XML index answers no comparison (RULES.md D106)",
             ))));
         }
         let held = Held(Arc::clone(&self));
@@ -348,7 +348,7 @@ impl Index for XmlIndex {
     }
 }
 
-/// \[EXTENSION\] RULES.md D86: the keys of an XML index's entries, as a
+/// \[EXTENSION\] RULES.md D106: the keys of an XML index's entries, as a
 /// search gives them: none of a row's value, as its keys are derived from
 /// it, so every key projects to the null value, and a row fetched is
 /// kept whatever version of its value it has, each checked by the query

@@ -25,23 +25,32 @@
 //! A table whose engine leaves concurrency to the coordinator keeps no
 //! versions: its index is built under the table's exclusive lock.
 
+mod accuracy;
+
 use std::sync::Arc;
+
+mod expressions;
+
+pub(super) use expressions::{key_positions, unbound_keys};
 
 use super::{Database, State, api, qualified_name};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::error::{Code, Result, SqlError, fail};
 use crate::index::xml::XmlLookup;
-use crate::index::{BTREE_METHOD, HASH_METHOD, Index, KeyOrder, Probe, RTREE_METHOD};
+use crate::index::{BTREE_METHOD, FULLTEXT_METHOD, HASH_METHOD, Index, JSON_METHOD, KeyOrder, Probe, RTREE_METHOD};
 use crate::log::record::Change;
 use crate::storage::{Row, TableOption, chosen, needs_rebuild};
 use crate::txn::{Concurrency, LockMode, NO_TRANSACTION, TableLock, Timestamp, Transactions, Txn};
-use crate::value::{DataType, Value};
+use crate::value::Value;
+pub use accuracy::AccuracyReport;
 
 /// \[EXTENSION\] An index to make: its name, its table, its columns by
 /// name, its method, the method's options it sets (RULES.md D41), and
 /// whether it holds keys with a null (`IndexDesc::nulls`): only one built
 /// again to take the place of a UNIQUE NULLS NOT DISTINCT constraint's,
-/// which holds every key the old one held once it does.
+/// which holds every key the old one held once it does. Of its key parts
+/// that are expressions, each its place and text (RULES.md D92);
+/// `columns` are the others'.
 #[derive(Debug, Clone)]
 pub(crate) struct IndexSpec {
     pub(crate) name: String,
@@ -50,13 +59,14 @@ pub(crate) struct IndexSpec {
     pub(crate) method: String,
     pub(crate) options: Vec<(String, Value)>,
     pub(crate) nulls: bool,
+    pub(crate) expressions: Vec<(usize, String)>,
 }
 
 impl IndexSpec {
     /// The definition the log keeps of it.
     pub(super) fn change(&self) -> Change {
-        let IndexSpec { name, table, columns, method, options, .. } = self.clone();
-        Change::CreateIndex { name, table, columns, method, options }
+        let IndexSpec { name, table, columns, method, options, expressions, .. } = self.clone();
+        Change::CreateIndex { name, table, columns, method, options, expressions }
     }
 }
 
@@ -90,22 +100,6 @@ impl State {
     pub(crate) fn index_options_of(&self, method: &str) -> Vec<TableOption> {
         let own = self.methods.get(method).map(|m| m.index_options()).unwrap_or_default();
         own.into_iter().chain(self.index_options.iter().map(|(_, o)| o.clone())).collect()
-    }
-
-    /// That index `name` of `method` may key values of `types`: as its
-    /// method says, an XML method one XML column (RULES.md D86); as SQL
-    /// keys values, each compared [ISO/IEC 9075-2:2023 §9.12 SR3], if no
-    /// method of that name is there, whose absence is refused after.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -103 or -900 if they may not be keyed.
-    pub(super) fn check_index_columns(&self, method: &str, types: &[DataType], name: &str) -> Result<()> {
-        let what = format!("index {name}");
-        match self.methods.get(method) {
-            Some(m) => m.check_columns(types, &what),
-            None => types.iter().try_for_each(|t| crate::binder::key_operand(t, &what)),
-        }
     }
 
     /// Index `name` built again, `built`, put in its place: under its name,
@@ -233,7 +227,7 @@ impl Database {
         entries.into_iter().try_fold(0_usize, |n, entry| entry.map(|_| n.saturating_add(1)))
     }
 
-    /// \[EXTENSION\] RULES.md D86: a diagnostic, as `index_entries` is: the
+    /// \[EXTENSION\] RULES.md D106: a diagnostic, as `index_entries` is: the
     /// rows index `name`, an XML index, gives for `lookup`, each once, as
     /// its table holds them now, of the transactions committed: candidates,
     /// which a caller checks again (`XmlLookup::matches`).
@@ -246,7 +240,7 @@ impl Database {
         let st = self.snapshot()?;
         let table = st.catalog.index(name).map(|ix| ix.table.clone()).ok_or_else(|| api(format!("[EXTENSION] no index {name}")))?;
         let found = Arc::clone(st.index_of(name)?).xml_rows(lookup);
-        let rows = found.ok_or_else(|| api(format!("[EXTENSION] the index {name} answers no XML lookup (RULES.md D86)")))?;
+        let rows = found.ok_or_else(|| api(format!("[EXTENSION] the index {name} answers no XML lookup (RULES.md D106)")))?;
         let storage = st.storage_of(&table)?;
         rows.filter_map(|row| row.and_then(|id| storage.get(NO_TRANSACTION, id)).transpose()).collect()
     }
@@ -267,7 +261,7 @@ impl Database {
     pub fn create_index(&self, name: &str, table: &str, columns: &[&str], method: &str) -> Result<()> {
         let columns = columns.iter().map(|c| (*c).to_owned()).collect();
         let (table, method) = (qualified_name(table)?, method.to_owned());
-        let spec = IndexSpec { name: name.to_owned(), table, columns, method, options: Vec::new(), nulls: false };
+        let spec = IndexSpec { name: name.to_owned(), table, columns, method, options: Vec::new(), nulls: false, expressions: Vec::new() };
         self.noted(self.make_index(&spec))
     }
 
@@ -287,11 +281,12 @@ impl Database {
         // session's instance makes its entries, in memory, of its own rows,
         // once no transaction has them open (`db/temporary/storage.rs`).
         if current.catalog.table(qn).is_some_and(|t| t.temporary.is_some()) {
-            if spec.method != BTREE_METHOD && spec.method != HASH_METHOD && spec.method != RTREE_METHOD {
+            let vector = crate::index::vector::is_vector_method(&spec.method);
+            if !vector && ![BTREE_METHOD, HASH_METHOD, RTREE_METHOD, FULLTEXT_METHOD, JSON_METHOD].contains(&spec.method.as_str()) {
                 return Err(SqlError::new(
                     Code::SyntaxRule,
                     format!(
-                        "[DESIGN] {qn} is temporary: its index is of method {BTREE_METHOD}, {HASH_METHOD} or {RTREE_METHOD}, kept in memory (RULES.md D49)"
+                        "[DESIGN] {qn} is temporary: its index is of method {BTREE_METHOD}, {HASH_METHOD}, {RTREE_METHOD}, {FULLTEXT_METHOD} or {JSON_METHOD}, kept in memory (RULES.md D49)"
                     ),
                 ));
             }
@@ -393,6 +388,17 @@ impl Database {
     /// SQLCODE -910 if there is no such index; -103 for an option not
     /// declared, or a value not of its kind; as `create_index`, building it.
     pub(super) fn alter_index(&self, name: &str, given: &[(String, Option<Value>)]) -> Result<()> {
+        self.altered_index(name, given, false)
+    }
+
+    /// \[EXTENSION\] As `alter_index`, the index built again whatever
+    /// changes, of `rebuilt` (ALTER INDEX REBUILD, the vector design
+    /// document §10.6).
+    ///
+    /// # Errors
+    ///
+    /// As `alter_index`.
+    pub(super) fn altered_index(&self, name: &str, given: &[(String, Option<Value>)], rebuilt: bool) -> Result<()> {
         let current = self.snapshot()?;
         let ix = current.catalog.index(name).cloned().ok_or_else(|| api(format!("[EXTENSION] no index {name}")))?;
         let declared = current.index_options_of(&ix.method);
@@ -401,15 +407,15 @@ impl Database {
             options = chosen(&ix.method, (&declared, &options), (option, value.as_ref()))?;
         }
         let change = Change::AlterIndex { name: name.to_owned(), options: options.clone() };
-        if needs_rebuild(&declared, &ix.options, &options) {
+        if rebuilt || needs_rebuild(&declared, &ix.options, &options) {
             let built = format!("{name} (rebuilt)");
             if current.catalog.index(&built).is_some() {
                 return fail(Code::Api, format!("[EXTENSION] index {name} is built again as {built}, the name of another index"));
             }
             let table = current.catalog.table(&ix.table).ok_or_else(|| api(format!("[EXTENSION] no table {}", ix.table)))?;
             let columns = ix.columns.iter().filter_map(|&c| table.columns.get(c)).map(|c| c.name.clone()).collect();
-            let spec =
-                IndexSpec { name: built.clone(), table: ix.table.clone(), columns, method: ix.method.clone(), options, nulls: ix.nulls };
+            let (method, expressions) = (ix.method.clone(), ix.texts());
+            let spec = IndexSpec { name: built.clone(), table: ix.table.clone(), columns, method, options, nulls: ix.nulls, expressions };
             return self.build_index(&spec, &|st, tx| {
                 st.swap_index((&built, name))?;
                 st.log_definition(Some(tx), change.clone())

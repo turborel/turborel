@@ -19,6 +19,7 @@ fn t(v: &Value) -> Option<bool> {
         | Value::Row(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Extension(_)
         | Value::Xml(_) => panic!("{v} is no truth value"),
     }

@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The `<XML Schema document>` of CREATE XML SCHEMA [ISO/IEC
-//! 9075-14:2006 draft §4.2.6] (RULES.md D86): a `<value expression>` of a
+//! 9075-14:2006 draft §4.2.6] (RULES.md D106): a `<value expression>` of a
 //! character string, a binary string or an XML type, evaluated once, as a
 //! row of no table is, so its subqueries run and its parameters are read.
 //!
@@ -10,7 +10,7 @@
 //! [§10.16], and an XML value must be a document [§10.15 GR3], each then
 //! written as its serialization.
 //!
-//! \[DESIGN\] RULES.md D86: every document is written as a binary string
+//! \[DESIGN\] RULES.md D106: every document is written as a binary string
 //! literal of its text's UTF-8 octets, which the definition reads back as
 //! the same text, octet for octet (`definitions/xml_schemas.rs`). A
 //! character string literal cannot hold every document, as a `<newline>`

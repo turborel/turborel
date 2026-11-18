@@ -219,8 +219,9 @@ fn routines_and_parameters_20_10() {
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §20.10, §20.11, §20.15] ROUTINES
 /// has an XML type's columns after DTD_IDENTIFIER, and the associated
-/// string type's, the XML option and the XML return mechanism last, each
-/// once; PARAMETERS has them all last, in the draft's order.
+/// string type's, the XML option and the XML return mechanism last, after
+/// ISO/IEC 9075-11's NEW_SAVEPOINT_LEVEL, each once; PARAMETERS has them
+/// all last, in the draft's order.
 #[test]
 fn routine_columns_in_their_places_20_11() {
     let db = described();
@@ -239,8 +240,8 @@ fn routine_columns_in_their_places_20_11() {
         "XML_CHAR_DTD_ID",
         "XML_OPTION",
     ];
-    let last = [owned(&["SECURITY_TYPE"]), owned(&string_type), owned(&["XML_RETURN_MECHANISM"])].concat();
-    assert_eq!(columns_of(&a, "ROUTINES", ("SECURITY_TYPE", 14)), last);
+    let last = [owned(&["SECURITY_TYPE", "NEW_SAVEPOINT_LEVEL"]), owned(&string_type), owned(&["XML_RETURN_MECHANISM"])].concat();
+    assert_eq!(columns_of(&a, "ROUTINES", ("SECURITY_TYPE", 15)), last);
     let parameters = [xml_columns_after("DTD_IDENTIFIER"), owned(&string_type), owned(&["XML_PASSING_MECHANISM"])].concat();
     assert_eq!(columns_of(&a, "PARAMETERS", ("DTD_IDENTIFIER", 21)), parameters);
     let named = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS \

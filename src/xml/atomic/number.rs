@@ -2,7 +2,7 @@
 //! lexical forms, the strings casting them to `xs:string` gives [XQueryFO
 //! §17.1.2], and casts among them [XQueryFO §17.1.3, §17.1.6].
 //!
-//! \[DESIGN\] RULES.md D86: an `xs:decimal` or `xs:integer` is kept as its
+//! \[DESIGN\] RULES.md D106: an `xs:decimal` or `xs:integer` is kept as its
 //! digits, so it has no limit; an `xs:float` as the `f64` its single
 //! precision value widens to.
 

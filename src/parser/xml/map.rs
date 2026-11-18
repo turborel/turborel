@@ -1,7 +1,7 @@
 //! \[EXTENSION\] The grammar of XMLMAP, which maps a table, a schema or
 //! the catalog to XML and to an XML Schema document [ISO/IEC 9075-14:2006
 //! draft §9.11, §9.14, §9.17], mappings Part 14 gives no syntax [§4.10.9
-//! NOTE 13, §4.10.10 NOTE 14, §4.10.11 NOTE 15] (RULES.md D86).
+//! NOTE 13, §4.10.10 NOTE 14, §4.10.11 NOTE 15] (RULES.md D106).
 
 use super::super::Parser;
 use super::publish::{ABSENT, NIL};
@@ -80,7 +80,7 @@ impl Parser {
         if self.accept_word(NIL) {
             return Ok(Some(Nulls::Nil));
         }
-        Err(self.syntax("expected ABSENT or NIL of XMLMAP (RULES.md D86)"))
+        Err(self.syntax("expected ABSENT or NIL of XMLMAP (RULES.md D106)"))
     }
 
     /// `<XML map form>` ::= AS { FOREST | ELEMENT }, if next: whether
@@ -95,7 +95,7 @@ impl Parser {
         if self.accept_word(ELEMENT) {
             return Ok(Some(false));
         }
-        Err(self.syntax("expected FOREST or ELEMENT of XMLMAP (RULES.md D86)"))
+        Err(self.syntax("expected FOREST or ELEMENT of XMLMAP (RULES.md D106)"))
     }
 
     /// `<XML map results>` ::= DATA | METADATA | DATA AND METADATA, if
@@ -125,7 +125,7 @@ impl Parser {
         if self.accept_word(HEX) {
             return Ok(Some(BinaryEncoding::Hex));
         }
-        Err(self.syntax("expected BASE64 or HEX of XMLMAP (RULES.md D86)"))
+        Err(self.syntax("expected BASE64 or HEX of XMLMAP (RULES.md D106)"))
     }
 }
 
@@ -175,7 +175,7 @@ fn source_at(tokens: &[Token]) -> Option<MappedSource> {
 mod tests {
     use super::*;
 
-    /// Verifies: [EXTENSION] RULES.md D86 what a text's XMLMAPs of a schema
+    /// Verifies: [EXTENSION] RULES.md D106 what a text's XMLMAPs of a schema
     /// or the catalog map, a name as the identifier it is, qualified by its
     /// catalog's or not; none of a table, of no XMLMAP, of no tokens.
     #[test]

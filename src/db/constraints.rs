@@ -192,7 +192,7 @@ impl<'a> Described<'a> {
     /// operation.
     fn grouped(&self, columns: &[usize], what: &str) -> Result<()> {
         let types = columns.iter().filter_map(|&i| self.columns.get(i)).map(|c| &c.data_type);
-        types.into_iter().try_for_each(|t| binder::key_operand(t, what))
+        types.into_iter().try_for_each(|t| binder::key_operand(t, what).and_then(|()| binder::orderless_operand(t, what)))
     }
 
     /// Adds the constraint `kind`, named `name` if written.
@@ -534,7 +534,7 @@ impl State {
         (text, names, horizon): (&str, &str, &Horizon),
         (uses, referencing, invoked): (Option<&Uses>, &Referencing, Option<&Invoked>),
     ) -> Result<Cond> {
-        let (options, condition) = Parser::new(text)?.of_definition().check_condition()?;
+        let (options, condition) = Parser::for_stored(text)?.check_condition()?;
         let from = TableReference::Table(NamedTable {
             table: TableName { auth: Some(table.auth.clone()), ident: table.ident.clone(), at: 0 },
             only: false,

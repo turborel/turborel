@@ -2,7 +2,7 @@
 //! `fn:idref`, `fn:doc`, `fn:doc-available` and `fn:collection`
 //! (`op:to` is with the functions of sequences).
 //!
-//! \[DESIGN\] RULES.md D86: no query reads an external resource, as the
+//! \[DESIGN\] RULES.md D106: no query reads an external resource, as the
 //! XML parser reads none: the available documents and the available
 //! collections of the dynamic context are empty, and there is no default
 //! collection, each an implementation-defined choice [XQueryFO §15.5.4,

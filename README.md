@@ -27,6 +27,8 @@ behind it, and each can be replaced or added to.
 - Transactions at READ COMMITTED by default, or up to SERIALIZABLE, that run
   on many threads at once and survive a crash with multi-version concurrency
   control, a write-ahead log, checkpoints and recovery.
+- Savepoints, with SAVEPOINT, RELEASE SAVEPOINT and ROLLBACK TO SAVEPOINT
+  at the savepoint levels of routines and ATOMIC blocks.
 - Row and columnar storage, chosen per table.
 - Large objects up to 4G, stored, logged, read and sent a chunk at a
   time, and reached by locators.
@@ -35,7 +37,7 @@ behind it, and each can be replaced or added to.
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match.
-- [SQL/XML](doc/sql/xml.md): an XML type kept in tables, in arrays,
+- [SQL/XML](doc/sql/16-xml.md): an XML type kept in tables, in arrays,
   multisets, rows and distinct and structured types too, its values parsed
   from XML 1.0 and 1.1 text and serialized back, XMLDOCUMENT, XMLCAST, IS
   DOCUMENT and IS CONTENT, and XML published from SQL values, arrays and
@@ -49,9 +51,14 @@ behind it, and each can be replaced or added to.
   Schemas registered by CREATE XML SCHEMA, values validated by them with
   XMLVALIDATE, IS VALID and XQuery's validate and kept in columns of
   their XMLSCHEMA types, USAGE on them and their Information Schema views.
-- [Geospatial SQL](doc/data/spatial/README.md), with XY geometries, WKT/WKB,
+- [Spatial data](doc/data/02-spatial.md), with XY geometries, WKT/WKB,
   intersection filters and joins, planar distances and R-tree
   nearest-neighbour queries.
+- [Full-text search](doc/data/01-fulltext.md) by a text's words,
+  whatever their case and accents, through an inverted index of
+  block-compressed postings.
+- [SQL/MM Full-Text](doc/sql/08-fulltext.md), its FULLTEXT type, CONTAINS
+  patterns and thesauri, ranked by BM25 or a ranking of your own.
 - Collations, from binary order through case-insensitive to the Unicode
   Collation Algorithm and CLDR's tailorings for 48 languages, so text sorts
   and compares as its readers expect.
@@ -62,9 +69,29 @@ behind it, and each can be replaced or added to.
   Backups serve reads and elect a new primary within seconds, and a lost
   server catches up when it rejoins.
 - Analytic SQL, with window functions, grouping sets, recursive queries
-  with SEARCH and CYCLE, and row pattern recognition (MATCH_RECOGNIZE).
+  with SEARCH and CYCLE, row pattern recognition (MATCH_RECOGNIZE), and
+  the statistical set functions and math functions of T621.
 - Arrays, row types, distinct types, DECFLOAT, regular expressions,
   sequences and identity columns.
+- SQL/JSON's JSON_VALUE, JSON_QUERY and JSON_EXISTS, with the SQL/JSON
+  path language, strict and lax, and its filters; IS JSON, JSON_OBJECT,
+  JSON_ARRAY, JSON_OBJECTAGG and JSON_ARRAYAGG.
+- A JSON type stored parsed, with `doc.items[0].name` accessors, and
+  JSON in comparisons, grouping and ordering.
+- JSON_TABLE, with nested columns, plans and PASSING.
+- A json index method answering JSON_EXISTS, JSON_VALUE and
+  JSON_CONTAINS by an inverted index of paths and values.
+- Indexes of expressions, such as `UPPER(name)`, `a + b` or a JSON_VALUE
+  that cannot raise, used for lookups and ORDER BY.
+- [Vectors](doc/data/04-vectors.md), a VECTOR type of dense or sparse
+  embeddings with distances, operators and nearest-neighbour search,
+  exact or approximate.
+- Vector indexes by DiskANN, HNSW, IVF and an inverted index of sparse
+  vectors, kept up to date as rows change.
+- [Hybrid search](doc/sql/15-hybrid-search.md), fusing BM25 and vector
+  top-k by RRF or weighted scores.
+- Embedding models, pipelines that chunk and embed text, and columns
+  embedded after commit.
 - Multisets, with MULTISET UNION, EXCEPT and INTERSECT, MEMBER,
   SUBMULTISET and IS A SET, and COLLECT, FUSION and INTERSECTION.
 - Structured types with attributes, methods and subtypes, typed tables

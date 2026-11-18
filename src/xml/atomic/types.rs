@@ -5,7 +5,7 @@
 //! the productions a string type's literals match), and the fundamental
 //! facets of its value space [Schema2 Appendix C.1].
 //!
-//! \[DESIGN\] RULES.md D86: the types are a table, one row each, so a type
+//! \[DESIGN\] RULES.md D106: the types are a table, one row each, so a type
 //! is never described in two places.
 
 use super::super::sequence::AtomicType;

@@ -11,7 +11,7 @@
 //! character reference [Serialization §5]; a name or a character the
 //! version cannot hold is an error [Serialization §5.1.1].
 //!
-//! \[DESIGN\] RULES.md D86: each tree is walked by its links, so nothing
+//! \[DESIGN\] RULES.md D106: each tree is walked by its links, so nothing
 //! recurses; the namespace declarations written are kept on a stack.
 
 use std::fmt::Write;

@@ -3,7 +3,7 @@
 //! calls (`binder/xml/cast.rs`), through the mapping of SQL types to XML
 //! Schema types [§9.5] and of SQL values to their lexical forms [§9.8].
 //!
-//! \[DESIGN\] RULES.md D86: \[§6.6 SR1b\] implementation-defined, in the
+//! \[DESIGN\] RULES.md D106: \[§6.6 SR1b\] implementation-defined, in the
 //! scope of no `<XML binary encoding>` [§11.3] the encoding is HEX
 //! (`IMPLICIT_BINARY_ENCODING`), so a binary string is an `xs:hexBinary`;
 //! in the scope of XMLBINARY USING BASE64 it is an `xs:base64Binary`
@@ -82,6 +82,7 @@ pub fn xml_schema_type(t: &DataType, encoding: BinaryEncoding) -> Option<AtomicT
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => return None,
     })
@@ -193,7 +194,7 @@ impl ScalarFunction for XmlCastOut {
 impl XmlCastOut {
     /// `av` cast as XT, the type of TIME(`digits`) or TIMESTAMP(`digits`),
     /// adjusted to UTC first as `adjust` says \[GR4j i to iii\].
-    /// \[DESIGN\] RULES.md D86: implementation-defined, as the patterns
+    /// \[DESIGN\] RULES.md D106: implementation-defined, as the patterns
     /// of §9.5 GR8h to GR8k ask for exactly `digits` digits of fraction,
     /// which no canonical form of a value has [XQueryFO §17.4], the
     /// pattern and the other facets are checked against the value written

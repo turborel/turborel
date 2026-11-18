@@ -4,6 +4,7 @@
 
 use super::ValueExpression;
 use super::query::{QueryExpression, QuerySpecification, SortSpecification};
+use crate::logical::{Hints, Search};
 
 /// [ISO/IEC 9075-2:2023 §7.17] `<query expression body>` \[`<order by
 /// clause>`\] \[`<result offset clause>`\] \[`<fetch first clause>`\], one
@@ -33,7 +34,9 @@ pub struct RowCount {
 }
 
 /// [ISO/IEC 9075-2:2023 §7.17] `<fetch first clause>` ::= FETCH {FIRST |
-/// NEXT} \[`<fetch first quantity>`\] {ROW | ROWS} {ONLY | WITH TIES}
+/// NEXT} \[`<fetch first quantity>`\] {ROW | ROWS} {ONLY | WITH TIES};
+/// \[EXTENSION\] with APPROX or EXACT after FETCH, a target accuracy and
+/// hints after it (`parser/query/ordered.rs`).
 #[derive(Debug, Clone)]
 pub struct FetchFirst {
     /// Its `<fetch first quantity>`, if written: 1 if not \[GR7b iii\].
@@ -42,6 +45,13 @@ pub struct FetchFirst {
     pub ties: bool,
     /// Where FETCH is written.
     pub at: usize,
+    /// \[EXTENSION\] APPROX, EXACT or neither, and its target accuracy.
+    pub search: Search,
+    /// \[EXTENSION\] Whether a target accuracy is written, and where, as
+    /// of none but APPROX it is refused.
+    pub accuracy_at: Option<usize>,
+    /// \[EXTENSION\] The vector search hints written (R13.4).
+    pub hints: Hints,
 }
 
 /// [ISO/IEC 9075-2:2023 §7.17] `<fetch first quantity>` ::= `<fetch first

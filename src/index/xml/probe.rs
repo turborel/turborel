@@ -1,4 +1,4 @@
-//! \[EXTENSION\] RULES.md D86: an XML index asked by the planner
+//! \[EXTENSION\] RULES.md D106: an XML index asked by the planner
 //! (`Probe::Xml`): of a query's lookup, the rows it gives, each fetched
 //! and checked by the condition it was made of; or, of an index that
 //! answers of a row from its entries alone (`Index::xml_answers`), the
@@ -8,7 +8,7 @@
 use super::lookup::XmlQuery;
 use crate::index::Probe;
 
-/// \[EXTENSION\] RULES.md D86: an XML index's query, as a probe asks it.
+/// \[EXTENSION\] RULES.md D106: an XML index's query, as a probe asks it.
 #[derive(Debug, Clone)]
 pub struct XmlProbe {
     /// The query: its lookup, and a filter of an ancestor, which an index
@@ -21,7 +21,7 @@ pub struct XmlProbe {
 
 impl Probe {
     /// Whether its rows cannot be told by their keys: a function lookup's
-    /// or an XML index's, read as of every row (RULES.md D34, D86).
+    /// or an XML index's, read as of every row (RULES.md D34, D106).
     #[must_use]
     pub fn opaque(&self) -> bool {
         matches!(self, Probe::Predicate { .. } | Probe::Xml(_))

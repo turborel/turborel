@@ -61,7 +61,7 @@ fn nodes_and_the_context_item() {
     assert_eq!(in_context(&atomic_focus, |c| or_context_node(&[int(1)], 0, c).unwrap().items().len()), 1);
 }
 
-/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] (RULES.md D18, D86) a
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 GR3] (RULES.md D18, D106) a
 /// string or sequence past the library's bounds is SQLCODE -900, one
 /// within them is made.
 #[test]

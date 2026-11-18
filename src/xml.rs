@@ -14,7 +14,7 @@
 //! XQuery's computed document constructor (`xml/construct.rs`) [§6.13].
 //! Atomic values are cast as XQuery casts them (`xml/atomic.rs`) [§6.6].
 //!
-//! \[DESIGN\] RULES.md D86: a tree is an arena of its nodes in document
+//! \[DESIGN\] RULES.md D106: a tree is an arena of its nodes in document
 //! order, element and attribute names tokenized into a table of the tree,
 //! text in one buffer. Every walk of a tree follows its links, so none
 //! recurses, and elements nest at most `MAX_NESTING` deep.
@@ -61,7 +61,7 @@ use crate::error::{Code, SqlError};
 
 /// \[DESIGN\] How deep elements nest at most in a tree, so a walk of one
 /// that keeps a stack of its ancestors keeps a bounded one (RULES.md
-/// R-CF-6, D86). [XML 1.0] sets no limit, so a text nested deeper is
+/// R-CF-6, D106). [XML 1.0] sets no limit, so a text nested deeper is
 /// SQLCODE -900 (D18). The value is no measurement: it is a bound past
 /// the nesting of the documents and messages an application stores.
 pub const MAX_NESTING: usize = 512;
@@ -71,25 +71,25 @@ pub const MAX_NESTING: usize = 512;
 /// instruction and attribute nodes, and how many characters entities'
 /// replacement texts add to a parse, so a value is bounded in memory and
 /// entities that expand to more are refused rather than read for ever
-/// (RULES.md D18, D86). It is the bound geometry's readers have,
+/// (RULES.md D18, D106). It is the bound geometry's readers have,
 /// `geometry::MAX_BYTES` (D85).
 pub const MAX_TEXT: usize = 16 * 1024 * 1024;
 
 /// \[DESIGN\] How many nodes and namespace bindings a tree has at most, so
 /// a text of little but markup, which `MAX_TEXT` does not bound, makes a
-/// tree of bounded size (RULES.md D18, D86). The value is no measurement:
+/// tree of bounded size (RULES.md D18, D106). The value is no measurement:
 /// it is the nodes of the largest documents an application stores, each
 /// element a few nodes.
 pub const MAX_NODES: usize = 1 << 20;
 
 /// \[DESIGN\] How many octets of text XMLPARSE reads at most, so a string
-/// of a large object is read whole within a bound (RULES.md D18, D86); a
+/// of a large object is read whole within a bound (RULES.md D18, D106); a
 /// text within it makes a tree within `MAX_TEXT` and `MAX_NODES`, or is
 /// refused by them.
 pub const MAX_INPUT: usize = 64 * 1024 * 1024;
 
 /// \[DESIGN\] How many octets a value's stored form has at most (RULES.md
-/// D86). A value whose form is longer is refused as it is stored, SQLCODE
+/// D106). A value whose form is longer is refused as it is stored, SQLCODE
 /// -900, so every value stored is read back whole, and stored bytes longer
 /// are corrupt. One tree within `MAX_TEXT` and `MAX_NODES` stores in less.
 pub const MAX_STORED: usize = 64 * 1024 * 1024;

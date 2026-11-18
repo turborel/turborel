@@ -291,7 +291,7 @@ fn simple_elements_have_no_attributes() {
     assert!(broken(r#"<xs:element name="n" abstract="true"/>"#, "<n/>").contains("cvc-elt.2"));
 }
 
-/// Verifies: [DESIGN] RULES.md D86 [XQueryDM §3.3] a validated tree's
+/// Verifies: [DESIGN] RULES.md D106 [XQueryDM §3.3] a validated tree's
 /// annotations, nilled, is-id and is-idrefs properties survive storing it
 /// and reading it back, and copying it into another tree.
 #[test]

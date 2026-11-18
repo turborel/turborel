@@ -20,6 +20,9 @@ pub struct SetFunctionSpecification {
     /// [ISO/IEC 9075-2:2023 §10.9] A `<listagg set function>`'s separator
     /// and overflow behavior; of every other function, none.
     pub listagg: Option<Box<Listagg>>,
+    /// [ISO/IEC 9075-2:2023 §10.11] A `<JSON aggregate function>`'s
+    /// clauses; of every other function, none.
+    pub json: Option<Box<super::JsonAggregate>>,
     /// [ISO/IEC 9075-2:2023 §10.9] The `<search condition>` of its `<filter
     /// clause>`, if written: only the rows it is true of are aggregated
     /// \[GR4\].

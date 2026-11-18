@@ -70,6 +70,7 @@ pub fn xml_lexical(v: &Value, encoding: BinaryEncoding, charmapping: bool) -> Re
         | Value::Row(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Xml(_)
         | Value::Extension(_) => Err(SqlError::new(Code::Api, format!("[DESIGN] the value {v} is of no type §9.8 maps to XML"))),
     }
@@ -212,6 +213,7 @@ fn items_of(v: &Value) -> Option<&[Value]> {
         | Value::Row(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Xml(_)
         | Value::Extension(_) => None,
     }

@@ -193,7 +193,7 @@ fn xml_values_cast_by_the_facets_6_6() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.6 GR4j, §9.5 GR8h to GR8k,
-/// §9.8 GR9f, GR9g] [DESIGN] RULES.md D86: implementation-defined, a time
+/// §9.8 GR9f, GR9g] [DESIGN] RULES.md D106: implementation-defined, a time
 /// or timestamp is checked against the pattern of TIME(p) or TIMESTAMP(p)
 /// written with p digits of fraction, zeros padding it, after its
 /// adjustment to UTC of a type without time zone, its time zone written

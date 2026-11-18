@@ -1,6 +1,6 @@
 //! Mutations of SQL/XML's publishing operators: XMLELEMENT, XMLFOREST,
 //! XMLAGG, XMLCONCAT, XMLCOMMENT, XMLPI and XMLTEXT, XMLNAMESPACES, and the
-//! mapping of SQL identifiers to XML Names (RULES.md R-TEST-9, D86).
+//! mapping of SQL identifiers to XML Names (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 

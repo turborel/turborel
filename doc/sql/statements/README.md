@@ -8,6 +8,7 @@ One reference page for each statement, in alphabetical order.
 - [ALLOCATE DESCRIPTOR](allocate-descriptor.md): allocate an SQL descriptor area
 - [ALTER DATABASE](alter-database.md): hand the database on to another owner, or change the replica group's members
 - [ALTER DOMAIN](alter-domain.md): change a domain's default or constraints
+- [ALTER EMBEDDING MODEL](alter-embedding-model.md): change an embedding model's options
 - [ALTER INDEX](alter-index.md): change an index's options
 - [ALTER SEQUENCE](alter-sequence.md): change a sequence generator
 - [ALTER TABLE](alter-table.md): change a base table
@@ -26,7 +27,9 @@ One reference page for each statement, in alphabetical order.
 - [CREATE CAST](create-cast.md): define a cast of a user-defined type by a function
 - [CREATE COLLATION](create-collation.md): define a collation
 - [CREATE DOMAIN](create-domain.md): define a domain
+- [CREATE EMBEDDING MODEL](create-embedding-model.md): define an embedding model of a plug-in
 - [CREATE FUNCTION](create-function.md): define an SQL-invoked function, or a polymorphic table function
+- [CREATE HYBRID VECTOR INDEX](create-hybrid-vector-index.md): define an index of a text and a vector column, for hybrid search
 - [CREATE INDEX](create-index.md): define an index
 - [CREATE METHOD](create-method.md): give a method of a user-defined type its body
 - [CREATE MODULE](create-module.md): define an SQL-server module
@@ -40,6 +43,9 @@ One reference page for each statement, in alphabetical order.
 - [CREATE TRIGGER](create-trigger.md): define a trigger
 - [CREATE TYPE](create-type.md): define a distinct or structured type
 - [CREATE USER](create-user.md): define a user
+- [CREATE VECTOR DISTANCE FUNCTION](create-vector-distance-function.md): define a metric of vectors in SQL
+- [CREATE VECTOR INDEX](create-vector-index.md): define an approximate nearest-neighbour index
+- [CREATE VECTOR PIPELINE](create-vector-pipeline.md): keep a table of embedded chunks in step with a table of texts
 - [CREATE VIEW](create-view.md): define a viewed table
 - [CREATE XML SCHEMA](create-xml-schema.md): register an XML Schema
 - [DECLARE CURSOR](declare-cursor.md): declare a cursor
@@ -54,6 +60,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP CAST](drop-cast.md): drop a user-defined cast
 - [DROP COLLATION](drop-collation.md): drop a collation
 - [DROP DOMAIN](drop-domain.md): drop a domain
+- [DROP EMBEDDING MODEL](drop-embedding-model.md): drop an embedding model
 - [DROP INDEX](drop-index.md): drop an index
 - [DROP MODULE](drop-module.md): drop an SQL-server module
 - [DROP ORDERING](drop-ordering.md): drop a user-defined type's ordering
@@ -66,6 +73,8 @@ One reference page for each statement, in alphabetical order.
 - [DROP TRIGGER](drop-trigger.md): drop a trigger
 - [DROP TYPE](drop-type.md): drop a distinct or structured type
 - [DROP USER](drop-user.md): drop a user
+- [DROP VECTOR DISTANCE FUNCTION](drop-vector-distance-function.md): drop a distance function
+- [DROP VECTOR PIPELINE](drop-vector-pipeline.md): stop keeping a table of embedded chunks
 - [DROP VIEW](drop-view.md): drop a view
 - [DROP XML SCHEMA](drop-xml-schema.md): drop a registered XML Schema
 - [END CONNECTION](end-connection.md): end a connection of the server
@@ -88,11 +97,13 @@ One reference page for each statement, in alphabetical order.
 - [OPEN](open.md): open a cursor
 - [PIPE ROW](pipe-row.md): give a row of a polymorphic table function's result *(in a component procedure)*
 - [PREPARE](prepare.md): prepare a statement, by name
+- [RELEASE SAVEPOINT](release-savepoint.md): destroy a savepoint, keeping the changes since
 - [REPEAT](repeat.md): run statements until a condition is true
 - [RESIGNAL](resignal.md): raise again the condition a handler handles *(in a handler)*
 - [RETURN](return.md): give the value of an SQL-invoked function
 - [REVOKE](revoke.md): revoke privileges, or roles
-- [ROLLBACK](rollback.md): end a transaction, undoing its changes
+- [ROLLBACK](rollback.md): end a transaction, undoing its changes, or undo them back to a savepoint
+- [SAVEPOINT](savepoint.md): mark a place in a transaction to roll back to
 - [SELECT](select.md): read rows
 - [SET](set-setting.md): change a session setting
 - [SET (assignment)](set-variable.md): assign a value to an SQL variable or parameter *(in a compound statement)*

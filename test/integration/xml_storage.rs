@@ -1,4 +1,4 @@
-//! XML values kept [ISO/IEC 9075-14:2006 draft §4.2.3] (RULES.md D86):
+//! XML values kept [ISO/IEC 9075-14:2006 draft §4.2.3] (RULES.md D106):
 //! in the row when short, else as a table's large objects, through a
 //! crash, a clean close, an update, a delete and a rollback; inside an
 //! array, a multiset, a row or a structured value, in that value's row;
@@ -29,7 +29,7 @@ fn insert(k: usize, document: &str) -> String {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.3, §10.2 GR1b] [DESIGN]
-/// RULES.md D79, D86: XML values are kept: one short, in its row; one
+/// RULES.md D79, D106: XML values are kept: one short, in its row; one
 /// longer than a row holds and one of several chunks, as the table's
 /// large objects; each read back whole after a crash and after a clean
 /// close; an update replaces one, a delete removes one, and a rollback
@@ -75,7 +75,7 @@ fn values_are_kept_in_rows_and_large_objects() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.3, §10.2 GR1b] [DESIGN]
-/// RULES.md D79, D86: an XML value of many chunks, copied from a table's
+/// RULES.md D79, D106: an XML value of many chunks, copied from a table's
 /// column into an array, a multiset, a row and a structured value, is
 /// held in its row, so each is whole after its source row is deleted, and
 /// after a crash; an update rolled back leaves it. A regression test: each
@@ -116,7 +116,7 @@ fn values_inside_other_values_are_kept_with_their_rows() {
     assert_eq!(rows(&a, &elements).unwrap(), [document]);
 }
 
-/// Verifies: [DESIGN] RULES.md D31, D86: the column store keeps no XML
+/// Verifies: [DESIGN] RULES.md D31, D106: the column store keeps no XML
 /// value, as it keeps no large object, nor one inside an array, a
 /// multiset or a row; nor a large object inside one.
 #[test]
@@ -132,7 +132,7 @@ fn the_column_store_keeps_no_xml() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §17.1 GR1, Table 12] [DESIGN]
-/// RULES.md D86: an item of XML type is described by the code 137; one
+/// RULES.md D106: an item of XML type is described by the code 137; one
 /// set to 137 describes XML, XML(SEQUENCE).
 #[test]
 fn descriptors_describe_xml_by_137() {

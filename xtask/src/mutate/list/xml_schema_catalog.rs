@@ -1,6 +1,6 @@
 //! Mutations of registered XML Schemas in the catalog: USAGE on them as
 //! an Access Rule checks it, granted and revoked, and the Information
-//! Schema's views of them (RULES.md R-TEST-9, D86).
+//! Schema's views of them (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 

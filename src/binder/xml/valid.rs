@@ -5,7 +5,7 @@
 //! holding the schemas it validates by, as the statement is bound.
 //!
 //! \[DESIGN\] Implementation-defined [§6.20 GR6a iii 2 A II 2, GR6b i 2,
-//! §8.5 GR7a iii 3 A II 2, GR7b i 2], RULES.md D86: a validation of no
+//! §8.5 GR7a iii 3 A II 2, GR7b i 2], RULES.md D106: a validation of no
 //! `<XML valid according to clause>` validates an element by the
 //! registered XML Schema of its namespace, the zero-length one of an
 //! element in none, that the current user may use, of the least name,

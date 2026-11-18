@@ -93,6 +93,7 @@ its submodules in `foo/`.
 | `value.rs` | data types, values, arithmetic, comparison |
 | `functions.rs` | scalar and aggregate functions |
 | `regex.rs` | XQuery regular expressions, the matcher LIKE_REGEX and the regex functions use (D61) |
+| `json.rs` | SQL/JSON items, JSON text, the SQL/JSON path language, and the rules of the query operators, IS JSON and the constructors (D84) |
 | `settings.rs` | the settings registry (D36) |
 | `memory.rs` | the memory budget (D38) |
 | `diagnostics.rs` | typed events to a pluggable sink (D40) |

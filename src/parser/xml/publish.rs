@@ -260,6 +260,16 @@ impl Parser {
         let returning = self.returning_clause()?;
         self.expect_delim(delim::RIGHT_PAREN)?;
         let arg = SetArg::All(Box::new(value));
-        Ok(SetFunctionSpecification { name: XMLAGG, arg, order_by, listagg: None, filter: None, semantics: None, returning, at })
+        Ok(SetFunctionSpecification {
+            name: XMLAGG,
+            arg,
+            order_by,
+            listagg: None,
+            json: None,
+            filter: None,
+            semantics: None,
+            returning,
+            at,
+        })
     }
 }

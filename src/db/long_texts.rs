@@ -90,6 +90,7 @@ pub(super) fn of_statement(s: &SchemaStatement) -> Option<SqlState> {
         | SchemaStatement::Ordering(_)
         | SchemaStatement::Transform(_)
         | SchemaStatement::AlterTransform(_)
+        | SchemaStatement::Vector(_)
         | SchemaStatement::XmlSchema(_)
         | SchemaStatement::Role(_) => None,
         // [ISO/IEC 9075-2:2023 §11.60 GR5]

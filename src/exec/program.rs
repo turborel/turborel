@@ -129,6 +129,16 @@ pub(crate) trait Host {
     /// `mark` released: what it marked stays.
     fn release(&mut self, mark: Self::Mark);
 
+    /// [ISO/IEC 9075-4:2006 draft §14.1 GR1; ISO/IEC 9075-2:2023 §9.18
+    /// GR7] A new savepoint level established: of an ATOMIC compound
+    /// statement if `atomic`, else of a procedure of NEW SAVEPOINT LEVEL
+    /// the program calls.
+    fn open_level(&mut self, atomic: bool);
+
+    /// [§14.1 GR6; §9.18 GR15] The current savepoint level destroyed, with
+    /// its savepoints.
+    fn close_level(&mut self);
+
     /// The first diagnostics area emptied, as the statement `step` begins.
     fn begin(&mut self, step: &Step);
 

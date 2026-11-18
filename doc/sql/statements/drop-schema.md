@@ -31,7 +31,7 @@ constraint named in the schema of a table or a domain of
 another schema is dropped too, as ALTER TABLE or ALTER DOMAIN DROP
 CONSTRAINT drops it; RESTRICT refuses the drop while there is one. So
 is a view, a routine or a trigger of another schema whose text maps the
-schema by `XMLMAP(SCHEMA ...)` ([XML values](../xml.md)), as DROP VIEW,
+schema by `XMLMAP(SCHEMA ...)` ([XML values](../16-xml.md)), as DROP VIEW,
 DROP ROUTINE and DROP TRIGGER drop it; RESTRICT refuses the drop while
 there is one. Its
 collations go last, as DROP COLLATION CASCADE drops them, so a column of

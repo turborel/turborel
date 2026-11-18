@@ -95,7 +95,7 @@ fn a_row_held_inline_names_nothing() {
     assert_eq!(format!("{lobs:?}"), "SpilledLobs { tables: 0, others: 0 }");
 }
 
-/// Verifies: [DESIGN] RULES.md D38, D79, D86: a table's objects, whole and
+/// Verifies: [DESIGN] RULES.md D38, D79, D106: a table's objects, whole and
 /// sliced, alone, in an XML value's stored form and inside an array, a
 /// row and a multiset, are read back with their octets after the values
 /// written are dropped, each a source the one source of their table held

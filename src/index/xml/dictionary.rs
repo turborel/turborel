@@ -1,4 +1,4 @@
-//! \[DESIGN\] RULES.md D86: an XML index's dictionary, kept in its own
+//! \[DESIGN\] RULES.md D106: an XML index's dictionary, kept in its own
 //! tree: each expanded name a token, each path an id, as Pal et al.
 //! tokenize tags and paths [§3.1.1]. Ids are given under the index's lock,
 //! from counters in the tree, and never taken back: a token or path id

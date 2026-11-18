@@ -4,7 +4,7 @@
 //! so, the canonical representation [Schema2 §2.3.1], and the units the
 //! length and digits facets count.
 //!
-//! \[DESIGN\] RULES.md D86: a value is held as its string (`Atomic`), so
+//! \[DESIGN\] RULES.md D106: a value is held as its string (`Atomic`), so
 //! each is read again here when compared; values of types derived from
 //! different primitive types are never equal and never ordered [Schema2
 //! §4.2.1].

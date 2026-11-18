@@ -1,4 +1,4 @@
-//! \[EXTENSION\] What maps a schema by XMLMAP (RULES.md D86): the views,
+//! \[EXTENSION\] What maps a schema by XMLMAP (RULES.md D106): the views,
 //! SQL-invoked routines and triggers whose text holds `XMLMAP ( SCHEMA s`,
 //! which depend on schema `s`, as a constraint a schema names does on it
 //! (`drop_named_in`): DROP SCHEMA RESTRICT is refused while one is, and

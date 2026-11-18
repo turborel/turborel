@@ -4,7 +4,7 @@
 //! copy-namespaces, circular variables, cancellation, arithmetic,
 //! dates, constructors, NULL ON EMPTY, passing BY VALUE and XMLTABLE's
 //! defaults; and the reduction of a query to an XML index's lookup and
-//! the planner's reading of one (RULES.md R-TEST-9, D15, D44, D86).
+//! the planner's reading of one (RULES.md R-TEST-9, D15, D44, D106).
 
 use super::{Mutation, Package};
 

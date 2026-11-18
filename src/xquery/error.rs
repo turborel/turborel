@@ -154,7 +154,7 @@ pub(super) fn named_error(name: &str, why: &str) -> SqlError {
 }
 
 /// The error of a query whose evaluation passes one of turborel's limits,
-/// `why` (RULES.md D18, D86): SQLCODE -900.
+/// `why` (RULES.md D18, D106): SQLCODE -900.
 pub(super) fn beyond(why: &str) -> SqlError {
     SqlError::new(Code::Unsupported, format!("[DESIGN] the XQuery evaluation is beyond turborel's limits: {why}"))
 }

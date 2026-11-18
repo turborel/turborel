@@ -36,10 +36,11 @@ impl Reading {
     }
 
     /// For the scan of index `ix` by a statement that reads only `needed`
-    /// and the index's columns, if it names them; else every column.
+    /// and the columns the index's key reads, if it names them; else every
+    /// column.
     pub(in crate::exec) fn of(ix: &KeyShape, needed: Option<&[usize]>, projection: Option<Arc<dyn KeyProjection>>) -> Reading {
         let columns = needed.map(|needed| {
-            let mut read: Vec<usize> = needed.iter().chain(&ix.columns).copied().collect();
+            let mut read: Vec<usize> = needed.iter().chain(&ix.reads).copied().collect();
             read.sort_unstable();
             read.dedup();
             read

@@ -43,17 +43,10 @@ fn every_kind() -> Vec<Record> {
             columns: vec!["K".into(), "L".into()],
             method: "btree".into(),
             options: vec![("FILL".into(), Value::Approx(0.5)), ("SHAPE".into(), Value::Char("TALL".into()))],
+            expressions: vec![(0, "UPPER(\"N\")".into()), (3, "A + B".into())],
         },
         Change::AlterIndex { name: "I".into(), options: vec![] },
         Change::DropIndex { name: "I".into() },
-        Change::Drop { object: DropTarget::Table(table()), cascade: true },
-        Change::Drop { object: DropTarget::View(table()), cascade: false },
-        Change::Drop { object: DropTarget::Schema("AUTH".into()), cascade: true },
-        Change::Drop { object: DropTarget::Domain(table()), cascade: false },
-        Change::Drop { object: DropTarget::Assertion(table()), cascade: true },
-        Change::Drop { object: DropTarget::Collation(table()), cascade: false },
-        Change::Drop { object: DropTarget::Sequence(table()), cascade: true },
-        Change::Drop { object: DropTarget::XmlSchema(table()), cascade: false },
         Change::AlterTable {
             table: table(),
             action: "ADD COLUMN \"K\" INTEGER NOT NULL".into(),
@@ -74,8 +67,22 @@ fn every_kind() -> Vec<Record> {
         Change::Sequence { name: table(), epoch: u64::MAX, resume: i128::MIN },
         Change::Sequence { name: table(), epoch: 1, resume: i128::MAX },
     ];
-    let all = changes.into_iter().chain(definitions());
+    let all = changes.into_iter().chain(drops()).chain(definitions());
     all.enumerate().map(|(n, change)| Record { tx: u64::try_from(n).unwrap().checked_add(1).unwrap(), change }).collect()
+}
+
+/// One record of a DROP of each kind of object, CASCADE and RESTRICT.
+fn drops() -> Vec<Change> {
+    vec![
+        Change::Drop { object: DropTarget::Table(table()), cascade: true },
+        Change::Drop { object: DropTarget::View(table()), cascade: false },
+        Change::Drop { object: DropTarget::Schema("AUTH".into()), cascade: true },
+        Change::Drop { object: DropTarget::Domain(table()), cascade: false },
+        Change::Drop { object: DropTarget::Assertion(table()), cascade: true },
+        Change::Drop { object: DropTarget::Collation(table()), cascade: false },
+        Change::Drop { object: DropTarget::Sequence(table()), cascade: true },
+        Change::Drop { object: DropTarget::XmlSchema(table()), cascade: false },
+    ]
 }
 
 /// One record of each schema definition: a `<schema>`, and statements of

@@ -326,10 +326,19 @@ impl Parser {
         // A triggered action's refuses them by its own rule [ISO/IEC
         // 9075-2:2023 §11.49 SR13].
         if (self.is_kw(kw::COMMIT) || self.is_kw(kw::ROLLBACK)) && self.trigger.is_none() {
-            if let Some(refused) = self.transaction_end_refused() {
-                return Err(refused);
+            let (at, refused) = (self.here(), self.transaction_end_refused());
+            let statement = self.transaction_end()?;
+            // [ISO/IEC 9075-2:2023 §9.18 GR8b iv 2; ISO/IEC 9075-4:2006
+            // draft §14.1 SR6] ROLLBACK TO SAVEPOINT may be in a routine's
+            // body and an ATOMIC compound statement, but in no FOR [§14.13
+            // SR9].
+            if let SqlStatement::Savepoint(_) = statement {
+                if self.blocks.iter().any(|b| b.held.is_some() || b.open()) {
+                    return Err(rule_at(at, "[ISO/IEC 9075-4:2006 draft §14.13 SR9] a FOR holds no ROLLBACK, TO SAVEPOINT or not"));
+                }
+                return Ok(statement);
             }
-            return Ok(self.transaction_end());
+            return refused.map_or(Ok(statement), Err);
         }
         let at = self.here();
         let cursor = self.is_kw(kw::OPEN) || self.is_kw(kw::FETCH) || self.is_kw(kw::CLOSE);

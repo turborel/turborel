@@ -4,7 +4,7 @@
 //! context item and variables; and XMLTABLE, the rows its row pattern
 //! gives, each column of its own query, as an array of rows.
 //!
-//! \[DESIGN\] RULES.md D44, D86: each is `in_statement`, so an evaluation
+//! \[DESIGN\] RULES.md D44, D106: each is `in_statement`, so an evaluation
 //! looks whether its statement was cancelled as it goes.
 
 use std::sync::Arc;
@@ -120,14 +120,14 @@ impl ScalarFunction for XmlQueryOf {
     }
 
     fn call(&self, args: &[Value]) -> Result<Value> {
-        self.call_in(args, &NoSubqueries)
+        self.call_in_statement(args, &NoSubqueries)
     }
 
     fn in_statement(&self) -> bool {
         true
     }
 
-    fn call_in(&self, args: &[Value], statement: &dyn Subqueries) -> Result<Value> {
+    fn call_in_statement(&self, args: &[Value], statement: &dyn Subqueries) -> Result<Value> {
         let Some(sequence) = self.evaluation.evaluate(args, statement)? else { return Ok(Value::Null) };
         if sequence.items().is_empty() && self.null_on_empty {
             return Ok(Value::Null);
@@ -140,7 +140,7 @@ impl ScalarFunction for XmlQueryOf {
     }
 }
 
-/// \[EXTENSION\] RULES.md D86: what a function's value says of whether a
+/// \[EXTENSION\] RULES.md D106: what a function's value says of whether a
 /// query's value is empty, its context item the function's first
 /// argument, the query reduced to an XML index's lookup
 /// (`ScalarFunction::xml_filter`).
@@ -195,14 +195,14 @@ impl ScalarFunction for XmlExistsOf {
     }
 
     fn call(&self, args: &[Value]) -> Result<Value> {
-        self.call_in(args, &NoSubqueries)
+        self.call_in_statement(args, &NoSubqueries)
     }
 
     fn in_statement(&self) -> bool {
         true
     }
 
-    fn call_in(&self, args: &[Value], statement: &dyn Subqueries) -> Result<Value> {
+    fn call_in_statement(&self, args: &[Value], statement: &dyn Subqueries) -> Result<Value> {
         exists(&self.0, args, statement)
     }
 
@@ -215,7 +215,7 @@ impl ScalarFunction for XmlExistsOf {
     }
 }
 
-/// \[EXTENSION\] RULES.md D86: XMLTABLE's row pattern as a filter of the
+/// \[EXTENSION\] RULES.md D106: XMLTABLE's row pattern as a filter of the
 /// rows it is of, which keeps those it gives a row of: XMLEXISTS of it.
 /// The planner adds it where an XML index may find them, and checks no
 /// row by it, as XMLTABLE gives no row of the others.
@@ -232,14 +232,14 @@ impl ScalarFunction for XmlRowsOf {
     }
 
     fn call(&self, args: &[Value]) -> Result<Value> {
-        self.call_in(args, &NoSubqueries)
+        self.call_in_statement(args, &NoSubqueries)
     }
 
     fn in_statement(&self) -> bool {
         true
     }
 
-    fn call_in(&self, args: &[Value], statement: &dyn Subqueries) -> Result<Value> {
+    fn call_in_statement(&self, args: &[Value], statement: &dyn Subqueries) -> Result<Value> {
         exists(&self.0, args, statement)
     }
 
@@ -297,14 +297,14 @@ impl ScalarFunction for XmlTableOf {
     }
 
     fn call(&self, args: &[Value]) -> Result<Value> {
-        self.call_in(args, &NoSubqueries)
+        self.call_in_statement(args, &NoSubqueries)
     }
 
     fn in_statement(&self) -> bool {
         true
     }
 
-    fn call_in(&self, args: &[Value], statement: &dyn Subqueries) -> Result<Value> {
+    fn call_in_statement(&self, args: &[Value], statement: &dyn Subqueries) -> Result<Value> {
         let passed_args = args.get(..self.arguments).unwrap_or_default();
         let Some(items) = self.rows.evaluate(passed_args, statement)? else { return Ok(Value::Array(Arc::from(Vec::new()))) };
         let mut rows = Vec::with_capacity(items.items().len());

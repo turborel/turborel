@@ -1,5 +1,5 @@
 //! Large objects and XML values in rows a statement holds past its work
-//! area (RULES.md D38, D79, D86): an UPDATE's changes and an INSERT's
+//! area (RULES.md D38, D79, D106): an UPDATE's changes and an INSERT's
 //! candidate rows, and the rows of sorts, joins, groupings and windows,
 //! spilled, each value read back as it was.
 
@@ -87,7 +87,7 @@ fn check(s: &Session, table: &str, offset: i64) {
     assert_eq!(seen, ROWS, "{table}");
 }
 
-/// Verifies: [DESIGN] RULES.md D38, D79, D86: an UPDATE whose changes pass
+/// Verifies: [DESIGN] RULES.md D38, D79, D106: an UPDATE whose changes pass
 /// a work area of 64 KiB writes back the CLOB, BLOB and XML values its
 /// rows held, as they were; an INSERT of rows read from another table,
 /// past the work area, copies each of that table's values whole, not its
@@ -123,7 +123,7 @@ fn made(row: &[Value], what: &str) -> i64 {
     k
 }
 
-/// Verifies: [DESIGN] RULES.md D38, D79, D86: the CLOB, BLOB and XML values
+/// Verifies: [DESIGN] RULES.md D38, D79, D106: the CLOB, BLOB and XML values
 /// kept apart of rows an operator spills past a work area of 64 KiB are
 /// read back as they were, each row once: a sort's runs, a hash join's
 /// right operand, an outer join's, a product's operand read again, a

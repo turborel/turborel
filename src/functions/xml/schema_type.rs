@@ -2,7 +2,7 @@
 //! 9075-14:2006 draft §9.5]: the type, restricted by facets, that XMLCAST
 //! casts an XML value as before it is an SQL value [§6.6 GR4e, GR4j].
 //!
-//! \[DESIGN\] RULES.md D86: the implementation-defined choices of §9.5
+//! \[DESIGN\] RULES.md D106: the implementation-defined choices of §9.5
 //! are those `functions/xml/cast.rs` states; a type's annotations
 //! [§9.5 GR8a vii and the like] are not made, nor written in XMLMAP's
 //! XML Schema documents. Two choices are new. \[GR8a ii\] The mapping of a character
@@ -112,6 +112,7 @@ pub fn xml_schema_facets(t: &DataType, encoding: BinaryEncoding) -> Option<(Atom
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Distinct(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => return None,
     })

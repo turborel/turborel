@@ -2,7 +2,7 @@
 //! value without a time zone taken to be in the implicit time zone; the
 //! components of their local values; and their adjustment to a time zone.
 //!
-//! \[DESIGN\] RULES.md D54, D86: a value is a `Moment`, its local value
+//! \[DESIGN\] RULES.md D54, D106: a value is a `Moment`, its local value
 //! days from 0001-01-01 and microseconds within the day, a time's days
 //! zero, the reference date [XQueryFO §10.4] being the same for both
 //! values compared. A Gregorian value is its starting instant, of the

@@ -2,7 +2,7 @@
 //! local name and namespace URI, `fn:number`, `fn:lang`, `fn:root`, and
 //! the operators of node identity and document order.
 //!
-//! \[DESIGN\] RULES.md D86: `fn:lang` compares by each character's full
+//! \[DESIGN\] RULES.md D106: `fn:lang` compares by each character's full
 //! lower case, of Unicode 13.0 (`unicode.rs`), as the caseless match of
 //! [XQueryFO §14.5] reads; a node's root is the first node of its tree,
 //! which every tree's root is.

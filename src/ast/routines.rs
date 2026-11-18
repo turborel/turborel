@@ -125,6 +125,9 @@ pub struct RoutineDefinition {
     /// RETURNS NULL ON NULL INPUT was written: a null-call function;
     /// CALLED ON NULL INPUT is the default \[SR9f ii\].
     pub null_call: bool,
+    /// [ISO/IEC 9075-2:2023 §11.60 SR9k, GR3k] Whether a procedure's NEW
+    /// SAVEPOINT LEVEL was written, OLD SAVEPOINT LEVEL being the default.
+    pub new_savepoint_level: bool,
     /// Its `<routine body>`: the `<SQL procedure statement>` of its `<SQL
     /// routine body>`, or a polymorphic table function's.
     pub body: RoutineBody,
@@ -135,6 +138,9 @@ pub struct RoutineDefinition {
     /// The `<SQL routine body>` as written, which the Information Schema
     /// shows.
     pub body_text: String,
+    /// \[EXTENSION\] Of a distance function of VECTOR, what it declares
+    /// more (CREATE VECTOR DISTANCE FUNCTION, RULES.md D93).
+    pub distance: Option<Box<crate::catalog::DistanceDesc>>,
 }
 
 /// [ISO/IEC 9075-2:2023 §10.4] `<SQL argument>` of a CALL: a value

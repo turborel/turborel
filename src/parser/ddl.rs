@@ -20,6 +20,11 @@
 //! anew as it is, its rows sealed again through the encodings it names
 //! now.
 
+mod hybrid_index;
+mod vector_index;
+
+pub use vector_index::{method_of_type, option_of};
+
 use super::Parser;
 use crate::ast::{
     AlterAction, AlterColumnAction, DropBehavior, DropObject, IndexStatement, OptionValue, SqlStatement, TableOptionValue, TableStorage,
@@ -69,6 +74,9 @@ impl Parser {
         if self.next_is_routine_designator() {
             return Ok(Some(DropObject::Routine(self.routine_designator()?)));
         }
+        if self.at_distance_function() {
+            return Ok(Some(DropObject::Routine(self.dropped_distance_function()?)));
+        }
         if self.accept_word(super::user_types::TYPE) {
             return Ok(Some(DropObject::Type(self.table_name()?)));
         }
@@ -110,7 +118,7 @@ impl Parser {
             if self.character_set_definition()? {
                 return Ok(SqlStatement::Commit);
             }
-            return self.create_index();
+            return self.create_any_index();
         }
         let alter = self.accept_kw(kw::ALTER);
         if !alter {
@@ -134,6 +142,9 @@ impl Parser {
             if !alter {
                 return Ok(SqlStatement::Index(IndexStatement::Drop { name }));
             }
+            if let Some(action) = self.index_maintenance()? {
+                return Ok(SqlStatement::Index(IndexStatement::Maintain { name, action }));
+            }
             self.expect_kw(kw::SET)?;
             return Ok(SqlStatement::Index(IndexStatement::Alter { name, options: self.table_options()? }));
         }
@@ -141,8 +152,11 @@ impl Parser {
     }
 
     /// \[EXTENSION\] `<create index statement>` ::= CREATE INDEX `<index
-    /// name>` ON `<table name>` ( `<column name>` \[{, `<column name>`}...\] )
-    /// \[USING `<method name>`\] \[WITH `<table options>`\], after CREATE.
+    /// name>` ON `<table name>` ( `<key part>` \[{, `<key part>`}...\] )
+    /// \[USING `<method name>`\] \[WITH `<table options>`\], after CREATE;
+    /// `<key part>` ::= `<column name>` | ( `<value expression>` ) (RULES.md
+    /// D92); CREATE VECTOR INDEX is `ddl/vector_index.rs`, CREATE HYBRID
+    /// VECTOR INDEX `ddl/hybrid_index.rs`.
     fn create_index(&mut self) -> Result<SqlStatement> {
         if !self.accept_word("INDEX") {
             return Err(self.syntax("expected INDEX: a <schema> is processed by Database::schema"));
@@ -152,10 +166,18 @@ impl Parser {
         self.expect_kw(kw::ON)?;
         let table = self.table_name()?;
         self.expect_delim(delim::LEFT_PAREN)?;
-        let mut columns = Vec::new();
+        let (mut columns, mut expressions) = (Vec::new(), Vec::new());
         loop {
             let at = self.here();
-            columns.push((self.identifier()?, at));
+            let part = columns.len().saturating_add(expressions.len());
+            if self.accept_delim(delim::LEFT_PAREN) {
+                let start = self.here();
+                self.value_expression()?;
+                expressions.push((part, self.text_from(start), at));
+                self.expect_delim(delim::RIGHT_PAREN)?;
+            } else {
+                columns.push((self.identifier()?, at));
+            }
             if !self.accept_delim(delim::COMMA) {
                 break;
             }
@@ -164,12 +186,15 @@ impl Parser {
         let mut storage = TableStorage::default();
         if self.accept_kw(kw::USING) {
             let at = self.here();
-            storage.engine = Some((self.identifier()?, at));
+            let given = self.identifier()?;
+            // [EXTENSION] SPARSE is the other name of the method `inverted`.
+            let method = if given.eq_ignore_ascii_case(vector_index::SPARSE) { vector_index::INVERTED.to_owned() } else { given };
+            storage.engine = Some((method, at));
         }
         if self.accept_kw(kw::WITH) {
             storage.options = self.table_options()?;
         }
-        Ok(SqlStatement::Index(IndexStatement::Create { name, table, columns, storage }))
+        Ok(SqlStatement::Index(IndexStatement::Create { name, table, columns, expressions, storage }))
     }
 
     /// [ISO/IEC 9075:1992 §11.2, §11.18, §11.20] `<drop schema statement>`

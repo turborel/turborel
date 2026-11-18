@@ -1,4 +1,4 @@
-//! The Unicode data the functions on strings read (RULES.md D3, D86):
+//! The Unicode data the functions on strings read (RULES.md D3, D106):
 //! `unicode13.bin`, which `cargo xtask unicode` makes from Unicode 13.0's
 //! `UnicodeData.txt`, `CompositionExclusions.txt` and `SpecialCasing.txt`,
 //! the version the collations and regular expressions read (D60, D61). Its

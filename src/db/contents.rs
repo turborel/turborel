@@ -175,7 +175,12 @@ impl State {
             }
             if let (Some(true), Some(g)) = (like.generated, c.generation()) {
                 let text = renamed(&g.text, table)?;
-                kept.generated = Some(Generated::Expression(Generation { text, names: g.names.clone(), horizon: Horizon::default() }));
+                kept.generated = Some(Generated::Expression(Generation {
+                    text,
+                    names: g.names.clone(),
+                    horizon: Horizon::default(),
+                    asynchronous: g.asynchronous,
+                }));
             }
             copied.push((TableElement::Column(defined(c, like.at)), kept));
         }
@@ -365,7 +370,7 @@ fn defined(c: &ColumnDesc, at: usize) -> ColumnDefinition {
 ///
 /// SQLCODE -910 if it no longer reads as it did.
 fn renamed(text: &str, table: &QualifiedName) -> Result<String> {
-    let (_, value) = Parser::new(text)?.of_definition().scoped_generation()?;
+    let (_, value) = Parser::for_stored(text)?.scoped_generation()?;
     let mut qualified = Vec::new();
     qualified_columns(&value, &mut qualified);
     qualified.sort_unstable();

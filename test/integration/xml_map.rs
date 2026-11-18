@@ -1,4 +1,4 @@
-//! \[EXTENSION\] XMLMAP (RULES.md D86): a table, a schema or the catalog
+//! \[EXTENSION\] XMLMAP (RULES.md D106): a table, a schema or the catalog
 //! mapped to XML and to an XML Schema document [ISO/IEC 9075-14:2006
 //! draft §9.4 to §9.17].
 
@@ -441,25 +441,27 @@ fn schemas_of_visible_tables_4_10_8() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §9.15, §9.16,
 /// §9.17] CATALOG: the catalog's element of each XML visible schema's,
-/// in order of name, the Information Schema among them; the schema
-/// document of the catalog's type, of all the schemas.
+/// in order of name, SQL/MM Full-Text's FT_INFORMATION_SCHEMA and the
+/// Information Schema among them; the schema document of the catalog's
+/// type, of all the schemas.
 #[test]
 fn the_catalog_9_17() {
     let db = mapped();
     let a = db.session("A");
     let data = text(&a, "XMLMAP(CATALOG)");
     let t = "<T><row><K>1</K><S>a&lt;b</S><B>0FB7</B><X><p/></X></row><row><K>2</K></row></T>";
-    assert!(data.starts_with(&format!("<TURBOREL {XSI}><A>{t}</A><INFORMATION_SCHEMA>")), "{data}");
+    assert!(data.starts_with(&format!("<TURBOREL {XSI}><A>{t}</A><FT_INFORMATION_SCHEMA>")), "{data}");
+    assert!(data.contains("</FT_INFORMATION_SCHEMA><INFORMATION_SCHEMA>"), "{data}");
     assert!(data.ends_with("</INFORMATION_SCHEMA></TURBOREL>"));
     let schema = text(&a, "XMLMAP(CATALOG METADATA)");
-    let catalog = r#"<xs:complexType name="CatalogType.TURBOREL"><xs:all><xs:element name="A" type="SchemaType.TURBOREL.A"/><xs:element name="INFORMATION_SCHEMA" type="SchemaType.TURBOREL.INFORMATION_SCHEMA"/></xs:all></xs:complexType><xs:element name="TURBOREL" type="CatalogType.TURBOREL"/></xs:schema>"#;
+    let catalog = r#"<xs:complexType name="CatalogType.TURBOREL"><xs:all><xs:element name="A" type="SchemaType.TURBOREL.A"/><xs:element name="FT_INFORMATION_SCHEMA" type="SchemaType.TURBOREL.FT_INFORMATION_SCHEMA"/><xs:element name="INFORMATION_SCHEMA" type="SchemaType.TURBOREL.INFORMATION_SCHEMA"/></xs:all></xs:complexType><xs:element name="TURBOREL" type="CatalogType.TURBOREL"/></xs:schema>"#;
     assert!(schema.ends_with(catalog), "{schema}");
     let information = text(&a, "XMLMAP(SCHEMA INFORMATION_SCHEMA)");
     assert!(information.starts_with(&format!("<INFORMATION_SCHEMA {XSI}><ADMINISTRABLE_ROLE_AUTHORIZATIONS/><APPLICABLE_ROLES/>")));
     validates(&a, "CATALOG", ("NULLS NIL AS FOREST TARGETNAMESPACE 'urn:c'", ""));
 }
 
-/// Verifies: [EXTENSION] RULES.md D86 the grammar of XMLMAP, and its
+/// Verifies: [EXTENSION] RULES.md D106 the grammar of XMLMAP, and its
 /// Syntax Rules: an option not of the grammar, or out of its order, is
 /// SQLCODE -101; a target namespace of `xml`'s or `xmlns`'s, a table that
 /// is a query name, or XMLMAP in a constraint SQLCODE -103 [ISO/IEC
@@ -492,7 +494,7 @@ fn refusals() {
     assert_eq!(text(&a, "XMLMAP(SCHEMA TURBOREL.A)"), text(&a, "XMLMAP(SCHEMA A)"));
 }
 
-/// Verifies: [EXTENSION] RULES.md D86 [ISO/IEC 9075:1992 §11.2 SR3] a
+/// Verifies: [EXTENSION] RULES.md D106 [ISO/IEC 9075:1992 §11.2 SR3] a
 /// view, a routine or a trigger whose text maps schema S by XMLMAP
 /// depends on S: DROP SCHEMA S RESTRICT is refused while one is, and
 /// CASCADE drops each; one that maps the catalog, or another schema, is
@@ -524,7 +526,7 @@ fn mappings_depend_on_their_schema() {
     assert_eq!(rows(&a, "SELECT TRIGGER_NAME FROM INFORMATION_SCHEMA.TRIGGERS").unwrap(), Vec::<String>::new());
 }
 
-/// Verifies: [EXTENSION] RULES.md D86 a mapping of a schema or the catalog
+/// Verifies: [EXTENSION] RULES.md D106 a mapping of a schema or the catalog
 /// leaves out a view whose query, or a view it reads, maps a schema or the
 /// catalog, whose mapping could hold itself; one that reaches such a
 /// mapping through a routine is refused, SQLCODE -103, where it would

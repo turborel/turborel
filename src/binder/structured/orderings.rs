@@ -70,6 +70,7 @@ fn ordering_of<'d>(db: &'d State, t: &DataType) -> Option<(QualifiedName, Option
         | DataType::Multiset(_)
         | DataType::Row(_)
         | DataType::Reference(_)
+        | DataType::Json
         | DataType::Extension(_)
         | DataType::Xml(_) => return None,
     };

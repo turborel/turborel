@@ -6,7 +6,7 @@
 //! [XQueryDM §6.2.3, §6.4.1]; the bindings in scope of an element are
 //! those of it and its ancestors.
 //!
-//! \[DESIGN\] RULES.md D86: a tree holds its nodes in document order, an
+//! \[DESIGN\] RULES.md D106: a tree holds its nodes in document order, an
 //! element's attributes right after it and before its children [XQueryDM
 //! §2.4], so a node's index is its place in document order. Each node
 //! links to its parent, its first child and its next sibling. Element and

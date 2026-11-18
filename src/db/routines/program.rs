@@ -46,10 +46,13 @@ use crate::value::Value;
 
 /// [ISO/IEC 9075-2:2023 §4.41.5; ISO/IEC 9075-4:2006 draft §4.10.4]
 /// Whether `stmt` is atomic: undone whole if it fails. CALL, RETURN, a
-/// compound statement not ATOMIC, and the assignment, CASE, FOR, IF, LOOP,
+/// savepoint's statement [ISO/IEC 9075-2:2023 §4.41.5], a compound
+/// statement not ATOMIC, and the assignment, CASE, FOR, IF, LOOP,
 /// REPEAT and WHILE statements are not.
 pub(in crate::db) fn atomic(stmt: &SqlStatement) -> bool {
-    let SqlStatement::Control(c) = stmt else { return !matches!(stmt, SqlStatement::Call(_) | SqlStatement::Return(_)) };
+    let SqlStatement::Control(c) = stmt else {
+        return !matches!(stmt, SqlStatement::Call(_) | SqlStatement::Return(_) | SqlStatement::Savepoint(_));
+    };
     match &**c {
         ControlStatement::Compound(c) => c.atomic,
         ControlStatement::Iterate(_) | ControlStatement::Leave(_) => true,
@@ -180,12 +183,12 @@ pub(super) fn step_command(step: &Step) -> Command {
             crate::logical::CursorAction::Fetch(..) => commands::FETCH,
             crate::logical::CursorAction::Close => commands::CLOSE_CURSOR,
         },
-        Step::Statement(c) => command_of(&c.statement),
+        Step::Statement(c) => command_of(c.statement()),
         Step::Call(_) => commands::CALL,
     }
 }
 
 /// Whether `step` is GET DIAGNOSTICS, which leaves the area as it was.
 pub(super) fn diagnostics(step: &Step) -> bool {
-    matches!(step, Step::Statement(c) if matches!(c.statement, SqlStatement::GetDiagnostics(_)))
+    matches!(step, Step::Statement(c) if matches!(c.statement(), SqlStatement::GetDiagnostics(_)))
 }

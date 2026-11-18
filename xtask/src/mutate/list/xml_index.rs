@@ -3,7 +3,7 @@
 //! axes and the dictionary's prefixes, the bounds, the entries of a value
 //! held as a large object taken back unread, the check's steps, order
 //! and filters, and the primary's parent join, descendants, versions and
-//! values cut (RULES.md R-TEST-9, D86).
+//! values cut (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 

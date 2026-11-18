@@ -9,7 +9,7 @@
 //! type's whiteSpace facet says [XQueryFO §17.1.1] [Schema2 §4.3.6], then
 //! checked against the facets that type fixes [XQueryFO §17.2].
 //!
-//! \[DESIGN\] RULES.md D86: implementation-defined limits [XQueryFO
+//! \[DESIGN\] RULES.md D106: implementation-defined limits [XQueryFO
 //! §10.1.1, §17.1.1]: a date's year is from 0001 to 9999, as SQL's are,
 //! a year past them failing with err:FODT0001; seconds, and the seconds of
 //! a duration, are kept to the microsecond, more digits of their fraction

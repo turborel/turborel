@@ -5,7 +5,7 @@
 //! Schema, or XML(SEQUENCE) [§4.2.2, §6.1]. An XML value is an XQuery
 //! sequence (`xml::Sequence`) [§4.2.3].
 //!
-//! \[DESIGN\] RULES.md D86: a value is held as its sequence, or as a binary
+//! \[DESIGN\] RULES.md D106: a value is held as its sequence, or as a binary
 //! large object of its stored form (`xml::encode`), as a table keeps it:
 //! in the row if it is short, else in the table's large objects, which
 //! D79 writes, logs and reads a chunk at a time. A value held stored is
@@ -24,7 +24,7 @@ use crate::xml::{self, MAX_STORED, Parameters, Sequence, Syntax, Version, Whites
 /// type: whether its values are untyped, of any type, or valid according
 /// to a registered XML Schema.
 ///
-/// \[DESIGN\] RULES.md D86: XMLSCHEMA holds what its type descriptor
+/// \[DESIGN\] RULES.md D106: XMLSCHEMA holds what its type descriptor
 /// includes [§4.2.2, §6.1 GR1d to GR1f] behind an `Arc`, so a type is
 /// cloned as cheaply as it was copied before it had one; a registered XML
 /// Schema is identified by its name [§4.2.6], so the type holds the name,
@@ -54,7 +54,7 @@ pub enum XmlType {
     Sequence,
 }
 
-/// \[DESIGN\] RULES.md D86 implementation-defined [§6.1 SR2, SR3b]: XML
+/// \[DESIGN\] RULES.md D106 implementation-defined [§6.1 SR2, SR3b]: XML
 /// alone is XML(SEQUENCE), and DOCUMENT or CONTENT alone is ANY, the
 /// widest, so every XML value is assignable to a site of XML [§4.2.4].
 pub const IMPLICIT: XmlType = XmlType::Sequence;
@@ -236,7 +236,7 @@ impl XmlValue {
             Form::Stored(lob) => {
                 let most = u64::try_from(MAX_STORED).unwrap_or(u64::MAX);
                 let bytes = lob.bounded(most)?.ok_or_else(|| {
-                    SqlError::new(Code::Corrupt, format!("[DESIGN] an XML value stored is longer than {MAX_STORED} octets (RULES.md D86)"))
+                    SqlError::new(Code::Corrupt, format!("[DESIGN] an XML value stored is longer than {MAX_STORED} octets (RULES.md D106)"))
                 })?;
                 xml::decode(&bytes).map(Arc::new)
             }
@@ -245,7 +245,7 @@ impl XmlValue {
     }
 
     /// \[EXTENSION\] Its serialization as CONTENT, as the protocol carries
-    /// it (RULES.md D86): in XML 1.0 with no XML declaration, or, if 1.0
+    /// it (RULES.md D106): in XML 1.0 with no XML declaration, or, if 1.0
     /// cannot hold it, in XML 1.1 after one, so a parse of the text as
     /// CONTENT reads it back [ISO/IEC 9075-14:2006 draft §10.15].
     ///
@@ -293,7 +293,7 @@ impl XmlValue {
     /// # Errors
     ///
     /// SQLCODE -900 if it is longer than `MAX_STORED` octets (RULES.md
-    /// D18, D86).
+    /// D18, D106).
     pub fn lob(&self) -> Result<Lob> {
         match &self.0 {
             Form::Stored(lob) => Ok(lob.clone()),
@@ -303,7 +303,7 @@ impl XmlValue {
                     return Err(SqlError::new(
                         Code::Unsupported,
                         format!(
-                            "[DESIGN] the XML value is beyond turborel's limits: its stored form is longer than {MAX_STORED} octets (RULES.md D86)"
+                            "[DESIGN] the XML value is beyond turborel's limits: its stored form is longer than {MAX_STORED} octets (RULES.md D106)"
                         ),
                     ));
                 }
@@ -355,7 +355,7 @@ impl XmlValue {
 impl super::DataType {
     /// \[DESIGN\] The kind of large object its values are stored as, if
     /// they are: a large object string's own (RULES.md D79), or binary for
-    /// an XML type, whose stored form a binary large object holds (D86); a
+    /// an XML type, whose stored form a binary large object holds (D106); a
     /// distinct type's values as its source's are, being its source's
     /// values (D69).
     #[must_use]
@@ -370,7 +370,7 @@ impl super::DataType {
 
 impl Value {
     /// \[DESIGN\] Whether a table stores it as a large object: a large
-    /// object string (RULES.md D79), or an XML value (D86).
+    /// object string (RULES.md D79), or an XML value (D106).
     #[must_use]
     pub fn is_lob_stored(&self) -> bool {
         matches!(self, Value::Lob(_) | Value::Xml(_))
@@ -378,7 +378,7 @@ impl Value {
 
     /// \[DESIGN\] The large object it is, or that holds its stored form: a
     /// large object string's, or an XML value's held stored (RULES.md D79,
-    /// D86).
+    /// D106).
     #[must_use]
     pub fn as_lob(&self) -> Option<&Lob> {
         if let Value::Lob(l) = self {

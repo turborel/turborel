@@ -274,7 +274,7 @@ fn compound_statement_options_15_1() {
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §12.1 SR1, SR2, §12.2 SR1, SR2,
 /// §12.4 SR1, SR2, §7.2 SR3] [ISO/IEC 9075-11:2006 draft §6.14
-/// Description 2a] [DESIGN] RULES.md D86: a generation expression's, a
+/// Description 2a] [DESIGN] RULES.md D106: a generation expression's, a
 /// CHECK's and an assertion's options, and a view's and a routine's, are
 /// kept with the text the catalog keeps, so they bind the same when it
 /// is read again, after the database is opened again too, as are a

@@ -40,7 +40,7 @@ impl StorageEngine for RowStore {
     fn create_table(&self, desc: &TableDesc) -> Result<Box<dyn TableStorage>> {
         let options = options::resolved(desc, lock_builtin(&self.tables).get(&desc.name).copied().unwrap_or(self.defaults));
         let types: Vec<DataType> = desc.columns.iter().map(|c| c.data_type.clone()).collect();
-        // [DESIGN] RULES.md D79, D86: a frozen row group holds no large
+        // [DESIGN] RULES.md D79, D106: a frozen row group holds no large
         // object, and no XML value, which one holds, nor any inside an
         // array, a multiset or a row.
         let held = |t: &DataType| composite::lob_ordered(t) || composite::xml_ordered(t);

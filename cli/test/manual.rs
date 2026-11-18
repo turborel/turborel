@@ -4,12 +4,17 @@
 //! which every example of a page tested shows.
 //! The client runs with `--null NULL`, as the manual says its examples do.
 
+mod embedding;
+mod hybrid;
+mod vector;
+
 use std::cell::RefCell;
 use std::io::{self, Write};
 use std::path::Path;
 use std::rc::Rc;
 
 use turborel::db::Database;
+use turborel::geometry::{FUNCTIONS, GeometryType};
 use turborel_cli::{Command, Dialer, Input, Io};
 use turborel_client::agent::Agent;
 
@@ -253,12 +258,12 @@ fn the_users_guide_runs_as_printed() {
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8: the SQL Reference Manual's
-/// examples of value expressions, predicates and query expressions, of
-/// the tables the first makes, and INSERT's with UPDATE's, and with
+/// examples of value expressions, predicates, query expressions and
+/// JSON_TABLE, of the tables the first makes, and INSERT's with UPDATE's, and with
 /// DELETE's, of the table the first makes, run as printed, as ANN.
 #[test]
 fn the_reference_manuals_examples_run_as_printed() {
-    let chapters = ["sql/04-expressions.md", "sql/05-predicates.md", "sql/06-queries.md"];
+    let chapters = ["sql/04-expressions.md", "sql/05-predicates.md", "sql/06-queries.md", "sql/13-json-table.md"];
     let deleted = ["sql/statements/insert.md", "sql/statements/delete.md"];
     for pages in [chapters.as_slice(), &["sql/statements/insert.md", "sql/statements/update.md"], &deleted] {
         let db = Database::new();
@@ -270,18 +275,32 @@ fn the_reference_manuals_examples_run_as_printed() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D84: the SQL Reference Manual's
+/// chapter of the SQL/JSON path language runs as printed, as ANN, and the
+/// guide to JSON data, which makes ANN's schema itself, does too.
+#[test]
+fn the_json_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("sql/11-json-path.md") > 0, "the chapter shows its examples' output");
+    let db = Database::new();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("data/03-json.md") > 0, "the guide shows its examples' output");
+}
+
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.8, §6.16] [DESIGN] RULES.md
-/// R-DOC-8, D86: the examples of XML values run as printed, as ANN.
+/// R-DOC-8, D106: the examples of XML values run as printed, as ANN.
 #[test]
 fn the_xml_examples_run_as_printed() {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
     let mut ann = Client::of(&db, "ANN");
-    assert!(ann.page("sql/xml.md") > 0, "it shows its examples' output");
+    assert!(ann.page("sql/16-xml.md") > 0, "it shows its examples' output");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §4.2.6] [DESIGN]
-/// RULES.md R-DOC-8, D86: the examples of CREATE XML SCHEMA and of DROP
+/// RULES.md R-DOC-8, D106: the examples of CREATE XML SCHEMA and of DROP
 /// XML SCHEMA run as printed, as ANN, each page in a database of its own.
 #[test]
 fn the_xml_schema_examples_run_as_printed() {
@@ -303,6 +322,26 @@ fn the_truncate_examples_run_as_printed() {
     assert!(ann.page("sql/statements/truncate-table.md") > 0, "it shows its examples' output");
 }
 
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D88. The examples of SAVEPOINT,
+/// RELEASE SAVEPOINT and ROLLBACK run as printed, in that order, as ANN,
+/// whose ACCOUNTS holds one row of BALANCE 100.00, then those of the
+/// User's Guide's section on savepoints.
+#[test]
+fn the_savepoint_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE ACCOUNTS (ID INTEGER, BALANCE DECIMAL(9,2))").unwrap();
+    let setup = db.session("ANN");
+    setup.run("INSERT INTO ACCOUNTS VALUES (1, 100.00)").unwrap();
+    setup.commit().unwrap();
+    drop(setup);
+    let mut ann = Client::of(&db, "ANN");
+    for page in ["sql/statements/savepoint.md", "sql/statements/release-savepoint.md", "sql/statements/rollback.md"] {
+        assert!(ann.page(page) > 0, "{page} shows its examples' output");
+    }
+    let scratch = Scratch::new("manual-savepoints");
+    assert!(ann.section("user/06-transactions.md", "## Savepoints", &scratch) > 0, "the section shows its examples");
+}
+
 /// Verifies: [DESIGN] RULES.md R-DOC-8: the examples of EXPLAIN run as
 /// printed, as ANN, the client showing its plan's lines as rows.
 #[test]
@@ -311,6 +350,20 @@ fn the_explain_examples_run_as_printed() {
     db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
     let mut ann = Client::of(&db, "ANN");
     assert!(ann.page("sql/statements/explain.md") > 0, "it shows its examples' output");
+}
+
+/// Verifies: [EXTENSION] RULES.md R-DOC-8, D92: the examples of
+/// CREATE INDEX of key parts that are expressions run as printed, as ANN:
+/// those of table PARCELS, made, read through its indexes and refused.
+#[test]
+fn the_expression_index_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    let page = "sql/statements/create-index.md";
+    let parcels: Vec<Example> =
+        examples(page).into_iter().filter(|e| matches!(e, Example::Sql { sql, .. } if sql.contains("PARCELS"))).collect();
+    assert_eq!(ann.run(page, &parcels, None), 2, "it shows its examples' output");
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D65, D66: the examples of CREATE
@@ -354,6 +407,17 @@ fn the_dynamic_sql_examples_run_as_printed() {
     ] {
         assert!(ann.page(page) > 0, "{page} shows its examples' output");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D89: the examples of the
+/// JSON type run as printed, through the client, as ANN, so a value of it
+/// crosses the wire both ways.
+#[test]
+fn the_json_type_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("sql/12-json-type.md") > 0, "it shows its examples' output");
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D69: the examples of CREATE TYPE,
@@ -467,5 +531,55 @@ fn the_psm_examples_run_as_printed() {
         db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
         let mut ann = Client::of(&db, "ANN");
         assert!(ann.page(page) > 0, "{page} shows its examples' output");
+    }
+}
+
+/// A database with GEOMETRY and its functions registered, as `turboreld`
+/// registers them before it opens its files.
+fn spatial_database() -> Database {
+    let db = Database::new();
+    db.register_type(Box::new(GeometryType)).unwrap();
+    for function in FUNCTIONS {
+        db.register_scalar_function(Box::new(function)).unwrap();
+    }
+    db
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D85: the SQL Reference Manual's
+/// chapter of spatial data, and the guide to it, each in a database of
+/// its own with GEOMETRY registered, run as printed, as ANN.
+#[test]
+fn the_spatial_examples_run_as_printed() {
+    for page in ["sql/10-spatial.md", "data/02-spatial.md"] {
+        let db = spatial_database();
+        assert!(Client::of(&db, "ANN").page(page) > 0, "{page} shows its examples' output");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D85: the examples of CREATE INDEX
+/// run as printed, as ANN, of its table STAFF and a view V of it, with
+/// GEOMETRY registered for its R-tree of locations.
+#[test]
+fn the_create_index_examples_run_as_printed() {
+    let db = spatial_database();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION ANN \
+         CREATE TABLE STAFF (ID INTEGER PRIMARY KEY, NAME VARCHAR(30), DEPT CHAR(3)) \
+         CREATE VIEW V AS SELECT ID FROM STAFF",
+    )
+    .unwrap();
+    assert!(Client::of(&db, "ANN").page("sql/statements/create-index.md") > 0, "it shows its examples' output");
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8: the SQL Reference Manual's
+/// chapters of full-text search and its patterns, and the guide to it,
+/// each in a database of its own, run as printed, as ANN, each file a
+/// page shows made imported.
+#[test]
+fn the_fulltext_examples_run_as_printed() {
+    let scratch = Scratch::new("manual-fulltext");
+    for page in ["sql/08-fulltext.md", "sql/09-fulltext-patterns.md", "data/01-fulltext.md"] {
+        let db = Database::new();
+        assert!(Client::of(&db, "ANN").run(page, &examples(page), Some(&scratch)) > 0, "{page} shows its examples' output");
     }
 }

@@ -3,7 +3,7 @@
 //! §1.3\], and `fn:upper-case` and `fn:lower-case`, by each character's
 //! full case mapping, of Unicode 13.0 (`unicode.rs`).
 //!
-//! \[DESIGN\] RULES.md D86: the normalization forms supported are NFC,
+//! \[DESIGN\] RULES.md D106: the normalization forms supported are NFC,
 //! NFD, NFKC and NFKD, and the zero-length string, which normalizes
 //! nothing [XQueryFO §7.4.6]; FULLY-NORMALIZED is not, err:FOCH0003, as a
 //! string beginning with a composing character has no fully normalized

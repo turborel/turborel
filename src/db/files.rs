@@ -69,13 +69,14 @@ use crate::disk::shadow::ShadowFileSystem;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::Result;
 use crate::files::FileManager;
-use crate::index::{BTreeMethod, HashMethod, RTreeMethod, XmlMethod, xml};
-use crate::log::{FileLog, FileLogOptions, Log, Lsn, Records};
+use crate::index::{BTreeMethod, FullTextMethod, HashMethod, JsonMethod, RTreeMethod, XmlMethod, xml};
+use crate::log::{FileLogOptions, Log, Lsn, Records};
 use crate::storage::TableStorage;
 use crate::txn::Persistence;
 use crate::value::Value;
 
 mod reopening;
+use reopening::undo_log;
 
 const DATA: &str = "data";
 /// The directory of the spill areas' files (`spill.rs`).
@@ -310,8 +311,10 @@ impl Database {
     /// of zones to settle (`rows/zones.rs`).
     pub(super) fn open_managed(&self, fs: &Arc<dyn FileSystem>, dir: &Path, options: &OpenOptions, mode: Mode) -> Result<Opened> {
         let opened = self.noted(self.open_from(fs, dir, options, mode))?;
-        self.snapshot()?.note_due_maintenance();
-        self.maintain_if_due();
+        if matches!(mode, Mode::Serve) {
+            self.hybrid_settled()?;
+        }
+        self.due_at_open()?;
         self.emit(&Event::Opened(opened));
         Ok(opened)
     }
@@ -506,10 +509,9 @@ impl Database {
     }
 
     /// Makes or opens the data file at `place`, as `how` says, in a buffer
-    /// pool, and registers the column and row stores and the B-link and
-    /// hash index methods on it:
-    /// tables and indexes in one shadowed file, so one commit holds both. A
-    /// file made replaces any there.
+    /// pool, and registers the column and row stores and the index methods
+    /// on it. Tables and indexes share one shadowed file, so one commit
+    /// holds both. A file made replaces any there.
     fn attach_pager(&self, place: &Place<'_>, how: Pagers) -> Result<()> {
         let (fs, path, hash) = (&*place.shadows, place.path(DATA), Arc::clone(&place.layout.formats.hash));
         let pager = match how {
@@ -537,7 +539,11 @@ impl Database {
         self.register_index_method(Box::new(HashMethod::new(Arc::clone(&pool), file)))?;
         let xml = xml::METHODS.map(|m| XmlMethod::new(m, Arc::clone(&pool), file));
         xml.into_iter().try_for_each(|m| self.register_index_method(Box::new(m)))?;
-        self.register_index_method(Box::new(RTreeMethod::new(pool, file)))
+        self.register_index_method(Box::new(RTreeMethod::new(Arc::clone(&pool), file)))?;
+        self.register_index_method(Box::new(JsonMethod::new(Arc::clone(&pool), file)))?;
+        self.register_vector_methods(&pool, file)?;
+        let rankings = self.snapshot()?.rankings.closure();
+        self.register_index_method(Box::new(FullTextMethod::new(pool, file).with_rankings(rankings)))
     }
 
     /// Makes the definitions of `image` again, reopening its tables and
@@ -579,22 +585,4 @@ impl Database {
         })?;
         Ok(report)
     }
-}
-
-/// The log of older row versions at `place`, begun anew: the segments a
-/// run before left removed, as no reader of it is left.
-///
-/// # Errors
-///
-/// SQLCODE -915 if they cannot be removed, or the log made.
-fn undo_log(place: &Place<'_>) -> Result<Arc<dyn Log>> {
-    let dir = place.path(UNDO);
-    if place.fs.exists(&dir)? {
-        for path in place.fs.read_dir(&dir)? {
-            place.fs.remove(&path)?;
-        }
-    }
-    let options = FileLogOptions { pipeline: place.layout.formats.pipeline.clone(), ..place.options.undo.clone() };
-    let log = FileLog::create(Arc::clone(place.fs), &dir, Arc::clone(&place.layout.formats.hash), options)?;
-    Ok(Arc::new(log.telling(Arc::clone(&place.events))))
 }

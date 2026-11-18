@@ -55,6 +55,8 @@ impl State {
             DropTarget::Cast(types) => self.drop_cast(&types.0, &types.1, cascade),
             DropTarget::Ordering(qn) => self.drop_ordering(qn, cascade),
             DropTarget::Transform(qn, group) => self.drop_transform(qn, group.as_deref(), cascade),
+            DropTarget::Model(qn) => self.drop_model(qn, cascade),
+            DropTarget::Pipeline(qn) => self.drop_pipeline(qn),
             DropTarget::XmlSchema(qn) => self.drop_xml_schema(qn, cascade),
         }
     }
@@ -76,7 +78,8 @@ impl State {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.18 {clause}] {qn} is {what}")));
         }
         // [ISO/IEC 9075-2:2023 §11.31 SR6, GR1] its subtables first.
-        let mut dropped = self.drop_subtables(qn, cascade)?;
+        let mut dropped = self.drop_pipelines_of(qn, cascade)?;
+        dropped.absorb(self.drop_subtables(qn, cascade)?);
         dropped.absorb(self.drop_dependents(qn, cascade, "§11.18 SR4")?);
         let mut catalog = self.catalog.duplicate();
         for ix in self.catalog.indexes(qn) {
@@ -188,10 +191,11 @@ impl State {
             (modules.iter().find(|m| m.auth == auth).or(tables.first()).or(views.first()).or(domains.first()).or(assertions.first()))
                 .or(collations.first().or(sequences.first()).or(types.first()))
                 .or(triggers.first().or(routines.first()).or(registered.first()));
-        if let (Some(first), false) = (held, cascade) {
+        if let (Some(first), false) = (held.cloned().or_else(|| self.schema_embeddings(auth).into_iter().next()), cascade) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.2 SR3] schema {auth} holds {first}, so it is dropped only with CASCADE")));
         }
-        let mut dropped = self.drop_named_in(auth, cascade)?;
+        let mut dropped = self.drop_schema_embeddings(auth)?;
+        dropped.absorb(self.drop_named_in(auth, cascade)?);
         dropped.absorb(self.drop_mappers(auth, cascade)?);
         dropped.absorb(self.drop_modules_naming(&modules)?);
         // A subtable goes with its supertable, maybe before its turn.
@@ -373,7 +377,9 @@ impl Session {
             | DropTarget::Cast(_)
             | DropTarget::Ordering(_)
             | DropTarget::XmlSchema(_)
-            | DropTarget::Transform(..) => Vec::new(),
+            | DropTarget::Transform(..)
+            | DropTarget::Model(_)
+            | DropTarget::Pipeline(_) => Vec::new(),
         };
         if !reverting.is_empty() {
             // Refused before a row is copied: a statement undone takes
@@ -436,6 +442,7 @@ impl Session {
             DropObject::Routine(designator) => self.routine_target(st, designator),
             DropObject::Module(name) => Ok(DropTarget::Module(self.owned(st, name, "ISO/IEC 9075-4:2006 draft §9.22 AR1")?)),
             DropObject::Cast(..) | DropObject::Ordering(_) | DropObject::Transform(..) => self.type_drop_target(st, object),
+            DropObject::Vector(kind, name) => Ok(super::embedding::drop_target(*kind, self.owned(st, name, "EXTENSION")?)),
             DropObject::XmlSchema(name) => self.xml_schema_target(st, name),
             DropObject::Schema { catalog, name, at } => {
                 let ours = st.settings.get(CATALOG_NAME).to_string();

@@ -10,7 +10,10 @@
 //! apart taken, an argument not stored in its declared type, and the
 //! refusal of a function of the schema winning over one registered, and a
 //! registered aggregate hidden by a function of the schema of another
-//! number of parameters; and the rule a refusal cites.
+//! number of parameters; and the rule a refusal cites. Of definitions
+//! calling registered functions: their text read again refusing the
+//! calls, a statement of a session refusing them taking them in its own,
+//! and the texts of definitions made before refused with it.
 
 use super::{Mutation, Package};
 
@@ -26,11 +29,13 @@ const FUNCTIONS: &str = "src/functions.rs";
 const CHOSEN: &str = "routines_overloading::an_argument_type_chooses_the_function_9_18";
 /// The test of a registered aggregate beside functions of its name.
 const AGGREGATE: &str = "functions_overloading::a_registered_aggregate_is_hidden_only_by_a_function_of_its_arity";
+/// The file of a definition's text read again.
+const STORED: &str = "src/parser/stored.rs";
 /// The test of a view's subject routine kept.
 const VIEW_KEPT: &str = "routines_fixed::a_view_keeps_its_subject_routine_4_35_2";
 
 /// The mutations of overloading.
-pub const OVERLOADING: [Mutation; 18] = [
+pub const OVERLOADING: [Mutation; 22] = [
     Mutation {
         name: "overloading-approximate-first",
         package: Package::Core,
@@ -216,6 +221,46 @@ pub const OVERLOADING: [Mutation; 18] = [
         original: "let passed = if is_aggregate_call(v, (self.db, self.schema)) {",
         replacement: "let passed = if is_aggregate_call(v, (self.db, self.schema)) && false {",
         integration: &[AGGREGATE],
+        unit: &[],
+    },
+    Mutation {
+        name: "overloading-stored-calls-refused",
+        package: Package::Core,
+        breaks: "the text of a definition calling a registered function is read again refusing the call",
+        file: STORED,
+        original: "let mut parser = Self::with_extensions(src, !refused(kept))?;",
+        replacement: "let mut parser = Self::with_extensions(src, { let _ = kept; false })?;",
+        integration: &["stored_function_calls::stored_calls_are_taken_when_used"],
+        unit: &[],
+    },
+    Mutation {
+        name: "overloading-key-part-calls-taken",
+        package: Package::Core,
+        breaks: "a key part of an index calls a registered function with SQL.FUNCTION_CALLS OFF",
+        file: "src/db/index_statements.rs",
+        original: "let _calls = Parser::refusing_calls(text, st.settings.is_on(FUNCTION_CALLS));",
+        replacement: "let _calls = Parser::refusing_calls(text, true);",
+        integration: &["stored_function_calls::a_key_part_calling_a_registered_function_follows_the_setting"],
+        unit: &[],
+    },
+    Mutation {
+        name: "overloading-stored-calls-never-refused",
+        package: Package::Core,
+        breaks: "a definition made by a session refusing calls of registered functions takes one, its text bound as made before",
+        file: STORED,
+        original: "let toks = if taken { None } else { tokens(statement) };",
+        replacement: "let toks = if taken || true { None } else { tokens(statement) };",
+        integration: &["stored_function_calls::stored_calls_are_refused_while_off"],
+        unit: &[],
+    },
+    Mutation {
+        name: "overloading-older-stored-calls-refused",
+        package: Package::Core,
+        breaks: "while a session refusing calls of registered functions makes a definition, those made before it reads refuse theirs",
+        file: STORED,
+        original: "!written.is_empty() && statement.windows(written.len()).any(|w| w == written.as_slice())",
+        replacement: "{ let _ = statement; !written.is_empty() }",
+        integration: &["stored_function_calls::older_stored_calls_are_taken_while_off"],
         unit: &[],
     },
 ];

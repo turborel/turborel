@@ -40,7 +40,7 @@ pub(crate) fn collation(r: &mut Reader<'_>) -> Result<CollationDesc> {
 /// [ISO/IEC 9075-14:2006 draft §4.2.6] `xml_schema` in bytes: its name,
 /// target namespace, schema location and document, the registered XML
 /// Schemas it uses, and its USAGE grants; not the schema read from it,
-/// which is read again (RULES.md D86).
+/// which is read again (RULES.md D106).
 pub(crate) fn put_xml_schema(out: &mut Vec<u8>, xml_schema: &XmlSchemaDesc) {
     put_name(out, &xml_schema.name);
     out.put_str(&xml_schema.target_namespace);

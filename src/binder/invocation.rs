@@ -213,7 +213,7 @@ impl Binder<'_> {
             let rules = match self.purpose {
                 Purpose::Query | Purpose::Mapped => "§7.17 SR25, §11.49 SR11",
                 Purpose::Constraint | Purpose::UnderConstraint => "§11.9 SR6, §11.47 SR8",
-                Purpose::Generation => "§11.4 SR10e, §4.35.2",
+                Purpose::Generation | Purpose::Key => "§11.4 SR10e, §4.35.2",
             };
             return Err(rule(format!(
                 "[ISO/IEC 9075-2:2023 {rules}] function {name} possibly modifies SQL-data, so it is not invoked here"
@@ -222,7 +222,7 @@ impl Binder<'_> {
         match self.purpose {
             Purpose::Query | Purpose::Mapped => Ok(()),
             Purpose::Constraint | Purpose::UnderConstraint => constraint_permits(desc),
-            Purpose::Generation => generation_permits(desc),
+            Purpose::Generation | Purpose::Key => generation_permits(desc),
         }
     }
 }

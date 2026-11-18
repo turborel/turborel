@@ -28,7 +28,7 @@ fn corrupt(bytes: &[u8]) -> String {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §10.2 GR1b, §10.18] [DESIGN]
-/// RULES.md D86: a value stored and read back is the same value: its
+/// RULES.md D106: a value stored and read back is the same value: its
 /// documents, elements, attributes with their ID flags, namespace
 /// bindings, text, comments and processing instructions, and its atomic
 /// values, in order.
@@ -57,7 +57,7 @@ fn a_value_reads_back_as_stored() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §10.18] [XQueryDM §6.2.1]
-/// [DESIGN] RULES.md D86: a node below the root of its tree is stored as
+/// [DESIGN] RULES.md D106: a node below the root of its tree is stored as
 /// a copy whose root has no parent, an element declaring every binding in
 /// its scope; a text, comment, processing instruction or attribute alone
 /// is stored as itself.
@@ -87,7 +87,7 @@ fn nodes_below_a_root_are_stored_as_copies() {
     assert_eq!(attribute.tree().parent(NodeId::ROOT), None);
 }
 
-/// Verifies: [DESIGN] RULES.md D30, D86: bytes that are no stored form of
+/// Verifies: [DESIGN] RULES.md D30, D106: bytes that are no stored form of
 /// version 1 are corruption, SQLCODE -916: another version, a field past
 /// the end, an unknown tag, a name or annotation not numbered, an unknown
 /// typing, events that make no tree, or bytes after the last item.
@@ -125,7 +125,7 @@ fn events_of(bytes: &[u8]) -> Result<Vec<Event<'_>>> {
     Ok(read)
 }
 
-/// Verifies: [DESIGN] RULES.md D86: the stored form is read as events in
+/// Verifies: [DESIGN] RULES.md D106: the stored form is read as events in
 /// document order, each item begun, an element's attributes with it, a
 /// node standing alone its own item; and bytes that are no stored form
 /// are refused as `decode` refuses them, SQLCODE -916.
@@ -157,7 +157,7 @@ fn the_stored_form_is_read_as_events() {
     assert_eq!(code(&[bytes.as_slice(), &[0]].concat()), -916_i32, "bytes after the last item");
 }
 
-/// Verifies: [DESIGN] RULES.md D30, D86: each atomic type is stored by
+/// Verifies: [DESIGN] RULES.md D30, D106: each atomic type is stored by
 /// its own tag, the first thirteen as before the others were added, so a
 /// value stored before is read as it was; every type is read back.
 #[test]

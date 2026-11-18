@@ -147,6 +147,13 @@ impl<'a> Binder<'a> {
         args: &[ValueExpression],
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
+        // [EXTENSION] (RULES.md D87) NEW of a registered type, as SQL/MM
+        // Full-Text's NEW FullText(...) [ISO/IEC 13249-2:2002 §5.1.9]: the
+        // call of the registered function of its name.
+        if udt.auth.is_none() && self.db.types.get(&udt.ident).is_some() && !self.db.functions.scalars(&udt.ident).is_empty() {
+            let call = ValueExpression::Call { schema: None, name: udt.ident.clone(), args: args.to_vec(), at: udt.at, extension: true };
+            return self.value_expression(&call, scope);
+        }
         let desc = self.named_structured(&TypeName::Domain(udt.clone()))?;
         let constructed = self.constructor_invocation(desc)?;
         let ident = &desc.name.ident;

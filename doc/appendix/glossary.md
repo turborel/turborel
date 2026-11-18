@@ -58,7 +58,7 @@ methods use B-link trees and hash tables for comparisons. A plug-in may
 also find rows for a function used in a WHERE filter.
 
 **Information Schema**: the schema INFORMATION_SCHEMA, of views that
-describe the database. [The Information Schema](../sql/information-schema.md).
+describe the database. [The Information Schema](../sql/07-information-schema.md).
 
 **isolation level**: how much a transaction sees of others running at
 once. [SET TRANSACTION](../sql/statements/set-transaction.md).

@@ -67,7 +67,7 @@ pub struct FunctionBody {
 ///
 /// It does not parse, or is no `<SQL-invoked routine>`.
 pub fn routine_definition(text: &str, module: Option<String>) -> Result<RoutineDefinition> {
-    let parser = Parser::new(text)?.of_definition().in_module(module);
+    let parser = Parser::for_stored(text)?.in_module(module);
     let SqlStatement::Schema { statement, .. } = { parser }.sql_statement()? else {
         return Err(SqlError::new(Code::Api, "[DESIGN] a routine's text is no <SQL-invoked routine>"));
     };
@@ -88,9 +88,11 @@ pub fn routine_definition(text: &str, module: Option<String>) -> Result<RoutineD
         deterministic: false,
         access: DataAccess::Contains,
         null_call: false,
+        new_savepoint_level: false,
         body: m.body,
         text: m.text,
         body_text: m.body_text,
+        distance: None,
     })
 }
 
@@ -241,7 +243,7 @@ fn within_body<T>(
         schema: &desc.schema,
         params: &params,
         // [EXTENSION] A routine a mapping of a schema or the catalog
-        // invokes maps none (RULES.md D86).
+        // invokes maps none (RULES.md D106).
         purpose: if cx.purpose == Purpose::Mapped { Purpose::Mapped } else { Purpose::Query },
         collation: None,
         horizon: &desc.horizon,
@@ -336,7 +338,7 @@ fn parameters_item(desc: &SqlRoutineDesc) -> FromItem {
 /// SQL-data, of the database of `cx`.
 fn access_of(cx: Context<'_>, (body, program): (Option<&Subquery>, Option<&Program>), invoked: &[QualifiedName]) -> DataAccess {
     let accesses: Vec<DataAccess> = invoked.iter().filter_map(|s| cx.db.catalog.routine(s)).map(|r| r.access).collect();
-    if accesses.contains(&DataAccess::Modifies) || program.is_some_and(|p| p.contained().iter().any(|c| modifies(&c.statement))) {
+    if accesses.contains(&DataAccess::Modifies) || program.is_some_and(|p| p.contained().iter().any(|c| modifies(c.statement()))) {
         return DataAccess::Modifies;
     }
     let leaves_read = program.is_some_and(|p| p.all_leaves().iter().any(|l| reads(&l.query.plan)));

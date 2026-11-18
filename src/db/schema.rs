@@ -78,19 +78,15 @@ impl State {
     /// write from this snapshot on keeps it up to date. Returns the
     /// structure, its columns' positions, and whether it was reopened.
     pub(super) fn define_index(&mut self, spec: &IndexSpec) -> Result<(Arc<dyn Index>, IndexDesc, bool)> {
-        let IndexSpec { name, table: qn, columns, method, options, nulls } = spec;
+        let IndexSpec { name, table: qn, columns, method, options, nulls, expressions } = spec;
         let desc = self.catalog.table(qn).cloned().ok_or_else(|| api(format!("[EXTENSION] no table {qn}")))?;
-        let cols = columns
-            .iter()
-            .map(|c| desc.column(c).ok_or_else(|| api(format!("[EXTENSION] {qn} has no column {c}"))))
-            .collect::<Result<Vec<_>>>()?;
-        // Its keys group its columns' values, or are its method's own (`State::check_index_columns`).
-        let types: Vec<_> = cols.iter().filter_map(|&c| desc.columns.get(c)).map(|c| c.data_type.clone()).collect();
-        self.check_index_columns(method, &types, name)?;
+        let cols = super::indexes::key_positions(&desc, columns, expressions)?;
         if self.catalog.index(name).is_some() {
             return fail(Code::Api, format!("[EXTENSION] an index named {name} already exists"));
         }
         let m = Arc::clone(self.methods.get(method).ok_or_else(|| api(format!("[EXTENSION] no index method {method}")))?);
+        // Its keys group its columns' values [ISO/IEC 9075-2:2023 §9.12 SR3].
+        super::vectors::keyed_by(&*m, cols.iter().filter_map(|&c| desc.columns.get(c)), name)?;
         let declared = self.index_options_of(method);
         let mut taken: Vec<(String, Value)> = Vec::new();
         for (option, value) in options {
@@ -112,6 +108,7 @@ impl State {
             options: taken,
             collations: Vec::new(),
             nulls: false,
+            expressions: super::indexes::unbound_keys(expressions),
         };
         // Not unique, so of nulls only if it takes the place of one that is.
         let ix = IndexDesc { nulls: *nulls, ..self.with_derived(ix, &desc)? };
@@ -166,7 +163,7 @@ impl State {
         (made, epochs): (Option<&Made>, &mut Epochs),
     ) -> Result<SchemaMade> {
         let ours = self.catalog_name();
-        let s = Parser::new(sql)?.in_catalog(&ours).schema()?;
+        let s = Parser::for_stored(sql)?.in_catalog(&ours).schema()?;
         if let Some(other) = s.catalog.as_ref().filter(|c| **c != ours) {
             let msg = format!("[ISO/IEC 9075:1992 §11.1 SR3] the one catalog is {ours}, not {other}");
             return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::INVALID_CATALOG_NAME));
@@ -222,7 +219,7 @@ impl State {
     /// The grants of `<schema>` `s`, by its owner `owner`: each table's
     /// privileges granted, and whether any was not; USAGE on a domain,
     /// collation, sequence generator, type or registered XML Schema, and
-    /// EXECUTE on a routine, is granted in its descriptor [§11.36].
+    /// EXECUTE on a routine or model, is granted in its descriptor [§11.36].
     fn schema_grants(&mut self, s: &Schema, owner: &str) -> Result<Vec<(Vec<PrivilegeDesc>, bool)>> {
         let mut granted = Vec::new();
         for p in &s.privileges {
@@ -236,6 +233,7 @@ impl State {
                 PrivilegeObject::Domain => self.grant_usage(owner, &s.name, p),
                 PrivilegeObject::Collation => self.grant_collation_usage(owner, p),
                 PrivilegeObject::Sequence => self.grant_sequence_usage(owner, &s.name, p),
+                PrivilegeObject::Model => self.grant_model_execute(owner, &s.name, p),
                 PrivilegeObject::XmlSchema => self.grant_xml_schema_usage(owner, &s.name, p),
                 // Granted once the schema's modules are made.
                 PrivilegeObject::Module => continue,
@@ -483,6 +481,7 @@ impl State {
                 options: Vec::new(),
                 collations: Vec::new(),
                 nulls: false,
+                expressions: Vec::new(),
             };
             let index = self.with_derived(index, d)?;
             let types =
@@ -511,90 +510,4 @@ pub(super) fn constraint_index_name(table: &QualifiedName, k: usize) -> String {
 // Unit tests: what `check_new_objects` and `apply_schema` refuse, and that a
 // refused `<schema>` changes nothing (RULES.md R-TEST-2 robustness).
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::catalog::Catalog;
-    use crate::catalog::{ColumnDesc, ConstraintDesc, ConstraintKind, MemoryCatalog};
-    use crate::engine::rows::ROW_STORE;
-    use crate::index::BTREE_METHOD;
-    use crate::value::DataType;
-    use crate::value::Spelled;
-
-    fn state() -> State {
-        State::with_builtins(Box::new(MemoryCatalog::default()))
-    }
-
-    fn table(engine: &str, unique: bool) -> TableDesc {
-        let column = ColumnDesc {
-            name: "K".into(),
-            data_type: DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric },
-            not_null: true,
-            default: None,
-            domain: None,
-            collation: None,
-            generated: None,
-        };
-        let name = QualifiedName { auth: "A".into(), ident: "T".into() };
-        let key = ConstraintDesc {
-            name: QualifiedName { auth: "A".into(), ident: "T_UNIQUE1".into() },
-            kind: ConstraintKind::Unique { columns: vec![0], primary: false, nulls_distinct: true, period: None },
-            attributes: crate::catalog::ConstraintAttributes::default(),
-            domain: None,
-        };
-        TableDesc {
-            periods: Vec::new(),
-            typed: None,
-            name,
-            columns: vec![column],
-            constraints: if unique { vec![key] } else { vec![] },
-            engine: engine.into(),
-            options: Vec::new(),
-            generation: 0,
-            temporary: None,
-        }
-    }
-
-    /// Verifies: [DESIGN] a `<schema>` needing an engine or constraint index
-    /// method that is not registered is refused with SQLCODE -910 before
-    /// anything changes [X3.135-1986 §3.3].
-    #[test]
-    fn unknown_engines_and_methods_are_refused_before_any_change() {
-        let mut st = state();
-        assert_eq!(st.check_new_objects(&[table("nope", false)]).err().map(|e| e.code), Some(Code::Api));
-        st.settings.set("TABLES.UNIQUE_INDEX_METHOD", Some(&Value::Char("nope".into()))).unwrap();
-        assert_eq!(st.check_new_objects(&[table(ROW_STORE, true)]).err().map(|e| e.code), Some(Code::Api));
-        assert_eq!(
-            st.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)", (None, 0), (None, &mut Epochs::fresh()))
-                .err()
-                .map(|e| e.code),
-            Some(Code::Api)
-        );
-        assert!(!st.catalog.schema_exists("A"), "the refused <schema> left no trace");
-    }
-
-    /// Verifies: [DESIGN] `apply_schema` reports an unknown engine or method
-    /// rather than panicking, if called without `check_new_objects`.
-    #[test]
-    fn apply_schema_reports_what_it_cannot_find() {
-        let mut st = state();
-        let catalog = Arc::clone(&st.catalog);
-        assert_eq!(st.apply_schema(&*catalog, &[table("nope", false)], vec![], None).err().map(|e| e.code), Some(Code::Api));
-        let mut no_method = state();
-        no_method.settings.set("TABLES.UNIQUE_INDEX_METHOD", Some(&Value::Char("nope".into()))).unwrap();
-        let other = Arc::clone(&no_method.catalog);
-        assert_eq!(no_method.apply_schema(&*other, &[table(ROW_STORE, true)], vec![], None).err().map(|e| e.code), Some(Code::Api));
-    }
-
-    /// Verifies: [DESIGN] `create_index` on a catalog table without storage
-    /// reports SQLCODE -910 instead of panicking.
-    #[test]
-    fn create_index_without_storage_is_reported() {
-        let mut catalog = MemoryCatalog::default();
-        catalog.create_schema("A", "A", vec![table(ROW_STORE, false)]);
-        let mut st = State::with_builtins(Box::new(catalog));
-        let name = QualifiedName { auth: "A".into(), ident: "T".into() };
-        let (columns, method) = (vec!["K".into()], BTREE_METHOD.into());
-        let spec = IndexSpec { name: "I".into(), table: name, columns, method, options: Vec::new(), nulls: false };
-        assert_eq!(st.create_index(&spec).err().map(|e| e.code), Some(Code::Api));
-    }
-}
+mod tests;

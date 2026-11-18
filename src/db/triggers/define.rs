@@ -10,9 +10,10 @@
 //! Its statements are those a triggered action may run: INSERT, a
 //! searched UPDATE or DELETE, MERGE, a `<select statement: single row>`
 //! and GET DIAGNOSTICS. A schema, transaction, connection, session or
-//! dynamic statement, or one of a cursor, is refused as the trigger is
-//! defined (IA046), so 0W000 is never raised as it runs [§15.21 GR6e iii];
-//! so too a BEFORE trigger's statement that changes data (IA047, GR6h).
+//! dynamic statement, a savepoint's, or one of a cursor, is refused as
+//! the trigger is defined (IA046); a savepoint's in a procedure it calls
+//! raises 0W000 as it runs [§15.21 GR6e iii] (`db/savepoints.rs`); so
+//! too a BEFORE trigger's statement that changes data (IA047, GR6h).
 
 use std::sync::Arc;
 
@@ -304,6 +305,10 @@ impl State {
             // names of its PTF data area: its operands are its own SQL
             // variables, parameters and literals, found as it was read.
             SqlStatement::Dynamic(_) if params.routine_scope().is_some_and(|s| !s.name.ident.is_empty()) => Ok(()),
+            // [ISO/IEC 9075-2:2023 §9.18 GR8b iv 2] (Feature T272) of a
+            // procedure's body, a savepoint's statement; none of a
+            // triggered action [§15.21 GR6e iii].
+            SqlStatement::Savepoint(_) => of_procedure(params).then_some(()).ok_or_else(refused),
             SqlStatement::Return(_)
             | SqlStatement::Close(_)
             | SqlStatement::SetCollation(_)
@@ -396,6 +401,12 @@ fn allowed(st: &State, stmt: &SqlStatement, (time, schema): (ActionTime, &str)) 
         return Err(rule(msg));
     }
     Ok(())
+}
+
+/// Whether `params` are of the body of an SQL-invoked routine, not of a
+/// triggered action, whose scope has no name.
+fn of_procedure(params: &Params) -> bool {
+    params.routine_scope().is_some_and(|s| !s.name.ident.is_empty())
 }
 
 /// [ISO/IEC 9075-2:2023 §11.49 SR13] A statement no triggered action may

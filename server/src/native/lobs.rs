@@ -40,6 +40,7 @@ fn holds_lob(v: &Value) -> bool {
         Value::Structured(s) => s.attributes.iter().any(holds_lob),
         Value::Null
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Char(_)
         | Value::Exact(_)
         | Value::Approx(_)
@@ -57,7 +58,7 @@ fn placed(session: &Session, v: Value, inline: usize, located: &mut bool) -> Res
     match v {
         Value::Lob(l) => placed_lob(session, l, inline, located).map(Value::Lob),
         // [ISO/IEC 9075-14:2006 draft §10.15] Serialized as the protocol
-        // carries it (RULES.md D86): one with none refused, 2200W.
+        // carries it (RULES.md D106): one with none refused, 2200W.
         Value::Xml(x) => x.text().map(|text| Value::Xml(XmlValue::serialized(&text))),
         Value::Array(items) => {
             Ok(Value::Array(items.iter().cloned().map(|i| placed(session, i, inline, located)).collect::<Result<Vec<_>>>()?.into()))
@@ -77,6 +78,7 @@ fn placed(session: &Session, v: Value, inline: usize, located: &mut bool) -> Res
         }
         Value::Null
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Char(_)
         | Value::Exact(_)
         | Value::Approx(_)

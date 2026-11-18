@@ -1,4 +1,4 @@
-//! \[DESIGN\] RULES.md D86: the stored form read as events, one at a time,
+//! \[DESIGN\] RULES.md D106: the stored form read as events, one at a time,
 //! in document order, building no tree: what an XML index derives its keys
 //! from in one pass (`index/xml.rs`). Its text is borrowed from the
 //! stored bytes, and only the names of the item read are held.

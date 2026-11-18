@@ -100,6 +100,7 @@ impl State {
             options: Vec::new(),
             collations: Vec::new(),
             nulls: false,
+            expressions: Vec::new(),
         }
     }
 

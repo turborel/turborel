@@ -4,7 +4,7 @@
 //! rules a restriction keeps (`schema/restrict.rs`), and the validation of
 //! a literal and the cast of a value to one (`schema/validate.rs`).
 //!
-//! \[DESIGN\] RULES.md D86: a type is a value, its base, item and member
+//! \[DESIGN\] RULES.md D106: a type is a value, its base, item and member
 //! types shared, and its facets merged with its base's as it is made, so
 //! validating a literal never walks its derivation. Lists and unions nest
 //! at most `MAX_TYPE_NESTING` deep, so validating walks a bounded depth.
@@ -17,7 +17,7 @@
 //! automata (`schema/automaton.rs`). A schema is what a registered XML
 //! Schema holds [ISO/IEC 9075-14:2006 draft §4.2.6].
 //!
-//! \[DESIGN\] RULES.md D86: a schema is an arena of its components, each
+//! \[DESIGN\] RULES.md D106: a schema is an arena of its components, each
 //! kind in a table of its own and referring to others by their place in
 //! it, so the cycles [Schema1 §3.1.1] allows (an element of a type whose
 //! content holds the element) are indexes, not references. Simple types

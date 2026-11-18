@@ -13,6 +13,7 @@
 
 use std::sync::Arc;
 
+use super::super::super::savepoints::Level;
 use super::super::super::{Session, StatementContext};
 use crate::catalog::{SequenceDesc, owner_of};
 use crate::db::State;
@@ -122,7 +123,9 @@ impl Session {
         values.resize(program.base.saturating_add(program.variables.len()), Value::Null);
         let mut frame = Params::of_routine(values, Arc::clone(&program.scope));
         let owner = owner_of(&*cx.st.catalog, &i.name.auth).to_owned();
-        let _pushed = self.push(&i.name, (owner, i.name.auth.clone()))?;
+        // [ISO/IEC 9075-2:2023 §9.18 GR7, §11.60 GR3k] a function at a
+        // savepoint level of its own.
+        let _pushed = self.push(&i.name, (owner, i.name.auth.clone()), Some(Level::Function))?;
         match self.run_hosted(cx, program, &mut frame)? {
             Ended::Returned(v) => Ok(Some(v)),
             Ended::Completed(_) => Ok(None),

@@ -1,4 +1,4 @@
-//! Index keys: tuples of values ordered by the [X3.135-1986 §5.11]
+//! Index keys: ordered tuples of values, by the [X3.135-1986 §5.11]
 //! comparison rules.
 
 use std::cmp::Ordering;

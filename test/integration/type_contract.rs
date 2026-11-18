@@ -298,7 +298,7 @@ fn a_distinct_type_of_an_array_compares_with_nothing() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.4] [DESIGN] RULES.md R-SAFE-3,
-/// D53, D86: each XML type keeps the `SqlType` contract but for keys and
+/// D53, D106: each XML type keeps the `SqlType` contract but for keys and
 /// anchors, which no XML value has: on documents, content and a value its
 /// serialization gives.
 #[test]

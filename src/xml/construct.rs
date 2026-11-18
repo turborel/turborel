@@ -2,7 +2,7 @@
 //! [XQuery §3.7.3.3], as XMLDOCUMENT evaluates it [ISO/IEC 9075-14:2006
 //! draft §6.13 GR8].
 //!
-//! \[DESIGN\] RULES.md D86: the content sequence is built as it is read,
+//! \[DESIGN\] RULES.md D106: the content sequence is built as it is read,
 //! into a tree of its own (`Builder`), each node copied by the tree's
 //! links, so nothing recurses.
 

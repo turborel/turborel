@@ -25,7 +25,7 @@ statement that changes a table it reads, or, if it is deferred, at
 commit.
 
 Its XML options, XMLNAMESPACES and XMLBINARY, are in scope of its
-condition, and kept with its text: see [XML Values](../xml.md#xml-options-of-a-scope).
+condition, and kept with its text: see [XML Values](../16-xml.md#xml-options-of-a-scope).
 
 CREATE ASSERTION runs within the session's transaction: ROLLBACK undoes
 it.

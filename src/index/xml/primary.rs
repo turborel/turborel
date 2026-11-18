@@ -1,4 +1,4 @@
-//! \[EXTENSION\] RULES.md D86: the primary XML index's answers, from its
+//! \[EXTENSION\] RULES.md D106: the primary XML index's answers, from its
 //! entries alone. It keeps each element and attribute of a row's value
 //! twice: as a row of the Infoset of Pal et al. [§3.1.1], keyed by base
 //! row and ORDPATH, with its kind, its path's id and its string value,

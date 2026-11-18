@@ -159,6 +159,14 @@ pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
     if composite(target) || composite(t) {
         return false;
     }
+    // [ISO/IEC 9075-2:2023 §4.8.2] a value of JSON to a site of JSON;
+    // \[EXTENSION\] a character string's JSON text too (`types::json`).
+    if let DataType::Json = target {
+        return matches!(t, DataType::Json) || t.is_character();
+    }
+    if let DataType::Json = t {
+        return false;
+    }
     // [ISO/IEC 9075-14:2006 draft §10.2 SR1b] An XML value to an XML site
     // alone, an UNTYPED one taking a value of an UNTYPED type alone.
     if let (DataType::Xml(x), DataType::Xml(y)) = (target, t) {
@@ -529,7 +537,7 @@ fn bind_write_of(
         Some(m) => db.catalog.table(m).cloned().ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] subtable {m} is not there")))?,
         None => target.base,
     };
-    let generated = super::generations(db, &base)?;
+    let generated = super::written_generations(db, &base, Some(set))?;
     let names = if member.is_some() { base.columns.iter().map(|c| c.name.clone()).collect() } else { names };
     let mut rows = LogicalPlan::Scan { table: base.name.clone(), names, needed: (0..base.columns.len()).collect(), located: false };
     if let Some(cond) = and_all(target.cond.into_iter().chain(cond).collect()) {

@@ -100,7 +100,7 @@ impl Binder<'_> {
     /// [§6.12] XMLCONCAT of `operands`, XML values: RETURNING SEQUENCE,
     /// of XML(SEQUENCE) \[SR2b\]; RETURNING CONTENT, XMLDOCUMENT of that,
     /// of the type the operands' make \[SR2a, SR4\]. \[DESIGN\] RULES.md
-    /// D86: the document node is made as XMLDOCUMENT of that type makes
+    /// D106: the document node is made as XMLDOCUMENT of that type makes
     /// one, not of XML(CONTENT(UNTYPED)) and cast after, so the types of
     /// nodes of XMLSCHEMA or ANY are kept, as SR4's cast to one of
     /// XMLSCHEMA needs [§6.5 SR4b].

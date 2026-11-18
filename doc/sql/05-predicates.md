@@ -163,6 +163,61 @@ FF, CR, NEL, LINE SEPARATOR, PARAGRAPH SEPARATOR and CRLF, which counts
 as one. [Limits](../appendix/d-limits.md) gives the size a pattern may
 have.
 
+## JSON_EXISTS
+
+`JSON_EXISTS(text, 'path' [PASSING ...] [behavior ON ERROR])` is true if
+the SQL/JSON path finds an item in the JSON text, false if it finds
+none, and unknown if the text is null. The path and PASSING are as
+[JSON_VALUE](04-expressions.md#sqljson) reads them. In place of a data
+exception, as text that is no JSON or a strict path's member that is
+not there, it is FALSE, the default, TRUE, UNKNOWN or the ERROR raised,
+as ON ERROR says.
+
+```sql
+SELECT ID FROM PURCHASES WHERE JSON_EXISTS(DOC, 'lax $.items[*] ? (@.qty > 1)') ORDER BY ID;
+SELECT ID, JSON_EXISTS(DOC, 'lax $.note'), JSON_EXISTS(DOC, 'strict $.note.x'),
+       JSON_EXISTS(DOC, 'strict $.note.x' UNKNOWN ON ERROR) FROM PURCHASES ORDER BY ID;
+```
+
+```
+           ID
+--------------
+            1
+(1 row)
+           ID |       |       |
+--------------+-------+-------+-------
+            1 | FALSE | FALSE | NULL
+            2 | TRUE  | FALSE | NULL
+(2 rows)
+```
+
+A member whose value is JSON's null is there, so `lax $.note` is true of
+the second row.
+
+## IS JSON
+
+`s [FORMAT JSON] IS [NOT] JSON [VALUE | ARRAY | OBJECT | SCALAR] [WITH
+UNIQUE [KEYS] | WITHOUT UNIQUE [KEYS]]` is true if the character string
+s is JSON text of the kind named, any kind, VALUE, if none is: an array,
+an object, or a scalar, which is neither. It is false of text of
+another kind or no JSON text, and WITH UNIQUE KEYS of an object with two
+members of one name. It is unknown if s is null. IS NOT JSON is its
+negation.
+
+```sql
+SELECT ID, DOC IS JSON OBJECT, DOC IS JSON ARRAY, 'nope' IS NOT JSON, '{"a":1,"a":2}' IS JSON WITH UNIQUE KEYS FROM PURCHASES ORDER BY ID;
+```
+
+```
+           ID |       |       |       |
+--------------+-------+-------+-------+-------
+            1 | TRUE  | FALSE | TRUE  | FALSE
+            2 | TRUE  | FALSE | TRUE  | FALSE
+(2 rows)
+```
+
+A CHECK constraint may hold it, as `CHECK (DOC IS JSON OBJECT)`.
+
 ## NULL
 
 `x IS NULL` is true if x is null; `IS NOT NULL` if it is not. It is
@@ -437,7 +492,7 @@ SELECT N FROM ORDERS WHERE DEREF(WHAT) IS OF (ONLY ITEM);
 
 ## DOCUMENT and CONTENT
 
-`x IS DOCUMENT` is true if the [XML value](xml.md) x is a document: one
+`x IS DOCUMENT` is true if the [XML value](16-xml.md) x is a document: one
 document node whose children are one element, with comments and
 processing instructions beside it. `x IS CONTENT` is true if x is one
 document node, of any children. Each is unknown if x is null, and takes

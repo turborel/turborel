@@ -8,22 +8,20 @@ use std::sync::Arc;
 
 use super::arguments::registered_subject;
 use super::arithmetic::distinct_operand;
-use super::composite::{grouping_operand, ordering_operand};
 use super::invocation::{Called, Passed};
-use super::set_functions::{column_references, is_aggregate_call};
+use super::set_functions::{column_references, is_aggregate_call, operand_rules};
 use super::subquery;
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
 use crate::ast::{Literal, SearchCondition, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
 use crate::functions::{
-    ANY_VALUE, ARRAY_AGG, AggregateRef, CONCATENATION, CollatedExtreme, GREATEST, LEAST, LISTAGG, ScalarRef, XMLAGG, regex_function,
-    trim_named, width_bucket,
+    ANY_VALUE, ARRAY_AGG, AggregateRef, CONCATENATION, CollatedExtreme, GREATEST, LEAST, LISTAGG, ScalarRef, XMLAGG, paired,
+    regex_function, trim_named, width_bucket,
 };
 use crate::lexer::kw;
 use crate::logical::{AggCall, Expr, Slot, render_expr};
 use crate::params::ParameterType;
 use crate::value::collation::CollationRef;
-use crate::value::types::composite::row_ordered;
 use crate::value::{DataType, Value};
 
 /// [ISO/IEC 9075:1992 §17.6 GR3] `e`, if it is a `<dynamic parameter
@@ -153,6 +151,7 @@ impl Binder<'_> {
             | ValueExpression::AtZone { .. }
             | ValueExpression::Composite(..)
             | ValueExpression::Structured(..)
+            | ValueExpression::Json(..)
             | ValueExpression::Navigation(_)
             | ValueExpression::Classifier { .. }
             | ValueExpression::MatchNumber { .. }
@@ -196,6 +195,7 @@ impl Binder<'_> {
             ValueExpression::AtZone { source, zone, at } => self.at_zone(source, zone.as_deref(), scope).or_at(*at),
             ValueExpression::Composite(c, at) => self.composite((c, *at), scope).or_at(*at),
             ValueExpression::Structured(s, at) => self.structured_expression((s, *at), scope).or_at(*at),
+            ValueExpression::Json(j, at) => self.json_expression(j, scope).or_at(*at),
             ValueExpression::Navigation(n) => self.navigation(n, scope).or_at(n.at),
             ValueExpression::Classifier { variable, at } => self.classifier(variable.as_deref(), scope).or_at(*at),
             ValueExpression::MatchNumber { at } => self.match_number(scope).or_at(*at),
@@ -212,23 +212,34 @@ impl Binder<'_> {
     }
 
     /// [ISO/IEC 9075-2:2023 §10.4] `v`, a call of `name` of `schema` with
-    /// `args`, written at `at`: a method invocation, an SQL-invoked
+    /// the arguments `written`, written at `at`: a method invocation, an SQL-invoked
     /// function's, or a function's of the database.
     fn routine_call(
         &self,
         v: &ValueExpression,
         (schema, name, extension): (Option<&str>, &str, bool),
-        args: &[ValueExpression],
+        written: &[ValueExpression],
         (at, scope): (usize, Scope<'_>),
     ) -> Result<(Expr, DataType)> {
-        // [ISO/IEC 9075-2:2023 §10.4, §9.18 SR10h iv 1] a function of
-        // the schema, an SQL-invoked function or a distinct type's
-        // (D69), then one registered (D53, D74); of a call grouping
-        // reads as a registered aggregate's, that aggregate.
-        // [ISO/IEC 9075-2:2023 §6.6 SR11, §6.18] of a column of a
-        // structured type, a method invocation of it.
+        // [ISO/IEC 9075-2:2023 §10.4, §9.18 SR10h iv 1] a function of the schema, an SQL-invoked function or a
+        // distinct type's (D69), then a model of the catalog's, then one registered (D53, D74); of a call grouping
+        // reads as a registered aggregate's, that aggregate. [§6.6 SR11, §6.18] of a column of a structured type,
+        // a method invocation of it.
         if let Some(subject) = schema.and_then(|c| self.lone_basis(c, at)) {
-            return self.method_call(&subject, (name, args), scope).or_at(at);
+            return self.method_call(&subject, (name, written), scope).or_at(at);
+        }
+        // [EXTENSION] key words as arguments, and a distance function of SQL (RULES.md D93).
+        let worded = match schema {
+            None => self.index_metric(name, written).map_or_else(|| self.worded(name, written), std::borrow::Cow::Owned),
+            Some(_) => std::borrow::Cow::Borrowed(written),
+        };
+        let args = &*worded;
+        if let Some(measured) = schema.map_or_else(|| self.distance_call(name, args, scope), |_| None) {
+            return measured.or_at(at);
+        }
+        // Of a column of a registered type, the method of it (RULES.md D87).
+        if let Some(subject) = schema.and_then(|c| self.extension_basis(c, at)) {
+            return self.extension_method((&ValueExpression::Column(subject), None), (name, at), args, scope).or_at(at);
         }
         let passed = if is_aggregate_call(v, (self.db, self.schema)) {
             Passed::default()
@@ -238,6 +249,9 @@ impl Binder<'_> {
                 Called::Pass(passed) => passed,
             }
         };
+        if let (None, Some(embedded)) = (schema, self.catalog_embed(name, args, scope).or_at(at)?) {
+            return Ok(embedded);
+        }
         let aggregate = self.db.functions.aggregate(name).is_some();
         let called = || self.call((schema, name, extension), args, passed, scope);
         self.drawing(self.drawing.get() && !aggregate, called).or_at(at)
@@ -263,7 +277,7 @@ impl Binder<'_> {
         // function, each call its own, keeping its last pattern compiled.
         // [ISO/IEC 9075-2:2023 §6.31] WIDTH_BUCKET, each call its own,
         // which learns its result type as it is bound [SR21].
-        let f = match regex_function(name).or_else(|| width_bucket(name)) {
+        let f = match regex_function(name).or_else(|| width_bucket(name)).or_else(|| paired(name)) {
             Some(f) => ScalarRef(f),
             None => self.db.functions.scalar(name).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] {name} is not registered")))?,
         };
@@ -329,6 +343,9 @@ impl Binder<'_> {
             SetArg::Variable(name, at) => return self.pattern_count(sf, name, scope).or_at(*at),
             SetArg::CountStar | SetArg::Distinct(_) | SetArg::All(_) => {}
         }
+        if let Some(json) = self.json_aggregate(sf, scope) {
+            return json;
+        }
         if sf.name == ARRAY_AGG {
             return self.array_aggregate(sf, scope);
         }
@@ -374,10 +391,9 @@ impl Binder<'_> {
         &self,
         (schema, name, extension): (Option<&str>, &str, bool),
         args: &[ValueExpression],
-        passed: Passed,
+        Passed { bound, refusal }: Passed,
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
-        let Passed { bound, refusal } = passed;
         let registered = self.db.functions.scalars(name);
         let refusal = match refusal {
             Some(refused) if schema.is_some() || registered.is_empty() || !extension => return Err(refused),
@@ -389,7 +405,7 @@ impl Binder<'_> {
         if !extension {
             return Err(SqlError::new(
                 Code::Syntax,
-                "[X3.135-1986 §5.9 F] function calls are not SQL-86 (they are an [EXTENSION], taken while SQL.FUNCTION_CALLS is ON); expected a <value expression>",
+                "[ISO/IEC 9075-2:2023 §10.4] no function of the schema is of this name, and a call of a function registered is an [EXTENSION] taken while SQL.FUNCTION_CALLS is ON",
             ));
         }
         if !registered.is_empty() {
@@ -404,7 +420,11 @@ impl Binder<'_> {
                     refusal.unwrap_or_else(|| rule(format!("[EXTENSION] no function {name} registered takes arguments of ({shown})")))
                 );
             };
-            let (exprs, types) = self.arguments_of(&*f.0, args, bound, scope)?;
+            let (mut exprs, mut types) = self.arguments_of(&*f.0, args, bound, scope)?;
+            for (e, t) in self.appended_arguments(&*f.0, (args, &exprs), scope)? {
+                exprs.push(e);
+                types.push(t);
+            }
             let t = f.0.return_type(&types)?;
             return Ok((Expr::Call(f, exprs), t));
         }
@@ -492,7 +512,7 @@ impl Binder<'_> {
                 if v.any(&|e| matches!(e, ValueExpression::Subquery(_))) {
                     return Err(rule("[ISO/IEC 9075:1992 §6.5 SR4] the argument of a set function cannot contain a subquery"));
                 }
-                let (e, t) = self.value_expression(v, scope)?;
+                let (e, t) = self.aggregate_argument(&*func.0, v, scope)?;
                 (Some(e), Some(t))
             }
         };
@@ -531,26 +551,6 @@ impl Binder<'_> {
         let label = self.filtered_label(label, filter.as_ref());
         Ok((AggCall { func, arg, distinct, filter, distribution: None, result, label }, named))
     }
-}
-
-/// [ISO/IEC 9075-2:2023 §10.9 SR7c, SR7d] The argument of set function
-/// `name`, of type `t`: an operand of a grouping operation under DISTINCT
-/// [§9.12]; of MAX or MIN, if `extreme`, of an ordering operation [§9.14],
-/// and not row-ordered \[SR7d ii\].
-fn operand_rules(db: &crate::db::State, t: &DataType, name: &str, (extreme, distinct): (bool, bool)) -> Result<()> {
-    if distinct {
-        grouping_operand(db, t, &format!("{name}(DISTINCT ...)"))?;
-    }
-    if !extreme {
-        return Ok(());
-    }
-    ordering_operand(db, t, name)?;
-    if row_ordered(t) {
-        return Err(rule(format!(
-            "[ISO/IEC 9075-2:2023 §10.9 SR7d ii] {name} of {t}: rows are not totally ordered, (1, NULL) and (NULL, 1) neither before the other"
-        )));
-    }
-    Ok(())
 }
 
 /// [ISO/IEC 9075-2:2023 §9.16 SR1, §11.9 CR2] A constraint's condition

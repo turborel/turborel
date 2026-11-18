@@ -82,6 +82,7 @@ fn entries_not_made_complete_refuse_every_use() {
         options: Vec::new(),
         collations: Vec::new(),
         nulls: false,
+        expressions: Vec::new(),
     };
     let key = Key(vec![crate::value::Value::Exact(crate::value::Decimal::new(1_i128, 0_u32))]);
     let refusing = Arc::new(Entries::refusing(&desc, &ix("btree")));
@@ -95,7 +96,8 @@ fn entries_not_made_complete_refuse_every_use() {
     let searched_refused = Arc::clone(&refusing).search(&Probe::All, KeyOrder::Ascending).next().unwrap();
     assert_eq!(searched_refused.map_err(|e| e.code).err(), Some(Code::Conflict));
     for method in ["hash", "btree"] {
-        let place = Place { budget: Arc::clone(&st.memory), work: Arc::clone(&st.work), bytes: 1_usize << 20_u32 };
+        let place =
+            Place { budget: Arc::clone(&st.memory), work: Arc::clone(&st.work), bytes: 1_usize << 20_u32, rankings: st.rankings.closure() };
         let entries = Arc::new(Entries::new(&desc, &ix(method), &Arc::new(pages::Pages::new(&place, "T"))));
         assert_eq!(entries.rows(&key).unwrap(), Vec::<RowId>::new(), "{method}: none made");
         assert_eq!(entries.remove(&key, 1).map_err(|e| e.code), Ok(()));

@@ -1,4 +1,4 @@
-//! \[DESIGN\] RULES.md D86: the values an XML index holds, each with its
+//! \[DESIGN\] RULES.md D106: the values an XML index holds, each with its
 //! row, and the entries made of them.
 //!
 //! An index is given a row's value whole as it adds its entries, but may
@@ -70,7 +70,7 @@ pub(super) enum Change {
 /// How `value`, an XML value, is held.
 fn held(value: &Value) -> Result<Held> {
     let Value::Xml(xml) = value else {
-        return Err(SqlError::new(Code::Api, "[DESIGN] an XML index is given a value that is not XML (RULES.md D86)"));
+        return Err(SqlError::new(Code::Api, "[DESIGN] an XML index is given a value that is not XML (RULES.md D106)"));
     };
     let lob = xml.lob()?;
     if let Some(octets) = lob.inline() {
@@ -92,7 +92,7 @@ fn held(value: &Value) -> Result<Held> {
 fn octets_of(lob: &Lob) -> Result<Vec<u8>> {
     let most = u64::try_from(MAX_STORED).unwrap_or(u64::MAX);
     lob.bounded(most)?.ok_or_else(|| {
-        SqlError::new(Code::Corrupt, format!("[DESIGN] an XML value stored is longer than {MAX_STORED} octets (RULES.md D86)"))
+        SqlError::new(Code::Corrupt, format!("[DESIGN] an XML value stored is longer than {MAX_STORED} octets (RULES.md D106)"))
     })
 }
 
@@ -175,7 +175,7 @@ impl XmlIndex {
                     let lob = lob.ok_or_else(|| {
                         SqlError::new(
                             Code::Api,
-                            format!("[DESIGN] an XML index is given large object {id} by id alone, which it does not hold (RULES.md D86)"),
+                            format!("[DESIGN] an XML index is given large object {id} by id alone, which it does not hold (RULES.md D106)"),
                         )
                     })?;
                     let octets = octets_of(&lob)?;

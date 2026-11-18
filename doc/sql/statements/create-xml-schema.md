@@ -26,8 +26,8 @@ CREATE XML SCHEMA: register an XML Schema
 CREATE XML SCHEMA registers an XML Schema, a schema of XML Schema Part 1
 read from one schema document, under a name in an SQL schema. A
 registered XML Schema is what SQL/XML's [types of
-XMLSCHEMA](../xml.md#the-xmlschema-types), [XMLVALIDATE](../xml.md#xmlvalidate)
-and [IS VALID](../xml.md#is-valid) validate XML values by.
+XMLSCHEMA](../16-xml.md#the-xmlschema-types), [XMLVALIDATE](../16-xml.md#xmlvalidate)
+and [IS VALID](../16-xml.md#is-valid) validate XML values by.
 
 The document is a character string, a binary string or an XML value,
 evaluated once. A character string is the document as written. A binary
@@ -93,7 +93,7 @@ imports is found if that owner owns its schema too, or holds USAGE on it
 | 2200L | -301 | The document is the null value, or an XML value that is no document |
 | 2200M | -301 | The document is no well-formed XML document |
 | 22000 | -301 | The document is no schema document, or not of a valid schema |
-| 0A000 | -900 | The schema is past a limit of [XML Values](../xml.md#limits) or of reading a schema |
+| 0A000 | -900 | The schema is past a limit of [XML Values](../16-xml.md#limits) or of reading a schema |
 
 ## EXAMPLES
 
@@ -132,5 +132,5 @@ name is §5.2's. See [CONFORMANCE.md](../../../CONFORMANCE.md#sqlxml).
 
 ## SEE ALSO
 
-[DROP XML SCHEMA](drop-xml-schema.md), [XML Values](../xml.md#registered-xml-schemas),
+[DROP XML SCHEMA](drop-xml-schema.md), [XML Values](../16-xml.md#registered-xml-schemas),
 [DROP SCHEMA](drop-schema.md)

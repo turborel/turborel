@@ -348,15 +348,51 @@ pub(crate) struct Called {
     pub(crate) targets: Vec<(usize, ParameterSpecification)>,
     /// The variables in scope where the CALL is, which its targets name.
     pub(crate) scope: Arc<RoutineScope>,
+    /// [ISO/IEC 9075-2:2023 §9.18 GR7, §11.60 GR3k] Whether the procedure
+    /// is of NEW SAVEPOINT LEVEL: run at a savepoint level of its own.
+    pub(crate) new_level: bool,
 }
 
 /// A statement the session runs, and the scope it sees.
 #[derive(Debug, Clone)]
 pub(crate) struct Contained {
-    /// The statement.
-    pub(crate) statement: SqlStatement,
+    /// The statement, kept behind the boundary `Syntax` draws.
+    syntax: Arc<dyn Syntax>,
     /// The variables and cursors in scope where it is.
     pub(crate) scope: Arc<RoutineScope>,
+}
+
+/// \[DESIGN\] The parsed form of a statement a program keeps to run, seen
+/// only through this trait. A program is part of every plan that invokes
+/// a routine or a polymorphic table function, and the compiler proves a
+/// type `Send` or `Sync` by walking each type its fields hold. Were the
+/// statement held as it is, each such proof would walk the whole syntax
+/// tree after the plan's own types, a chain longer than the compiler's
+/// default recursion limit, so that every program using the library
+/// would have to raise it. Behind a trait object the proof stops at the
+/// object's `Send + Sync`, and the plan's proof no longer grows with the
+/// syntax.
+trait Syntax: std::fmt::Debug + Send + Sync {
+    /// The statement.
+    fn statement(&self) -> &SqlStatement;
+}
+
+impl Syntax for SqlStatement {
+    fn statement(&self) -> &SqlStatement {
+        self
+    }
+}
+
+impl Contained {
+    /// `statement`, run by the session in the scope `scope`.
+    pub(crate) fn new(statement: SqlStatement, scope: Arc<RoutineScope>) -> Contained {
+        Contained { syntax: Arc::new(statement), scope }
+    }
+
+    /// The statement.
+    pub(crate) fn statement(&self) -> &SqlStatement {
+        self.syntax.statement()
+    }
 }
 
 impl Step {

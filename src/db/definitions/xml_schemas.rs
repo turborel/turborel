@@ -1,6 +1,6 @@
 //! \[EXTENSION\] Registered XML Schemas [ISO/IEC 9075-14:2006 draft
 //! §4.2.6], which Part 14 lets the implementation register as it chooses
-//! (RULES.md D86): CREATE XML SCHEMA, DROP XML SCHEMA and what depends on
+//! (RULES.md D106): CREATE XML SCHEMA, DROP XML SCHEMA and what depends on
 //! a registered XML Schema. How the document is evaluated and logged is in
 //! `xml_schemas/document.rs`. The permanently registered XML Schemas of
 //! Table 1 are constants (`catalog::xml_schemas::PERMANENT`): none is

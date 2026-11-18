@@ -95,7 +95,7 @@ fn lookups() -> Vec<(PathPattern, Vec<Comparison>, Vec<RowId>)> {
     ]
 }
 
-/// Verifies: [EXTENSION] RULES.md D86 [Pal et al. §3.2.1-§3.2.3] [XQuery
+/// Verifies: [EXTENSION] RULES.md D106 [Pal et al. §3.2.1-§3.2.3] [XQuery
 /// §3.2, §3.5.2]: each method gives the rows whose value has a node a
 /// path selects, with a value a comparison may hold of, each once: child
 /// and descendant steps, a name or any, an element or an attribute, a
@@ -111,7 +111,7 @@ fn each_method_finds_the_rows_of_a_path() {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md D86, D34, D15 [XQuery §3.5.2]: the rows
+/// Verifies: [EXTENSION] RULES.md D106, D34, D15 [XQuery §3.5.2]: the rows
 /// a lookup gives are a superset of those whose value it holds of, and of
 /// those whose comparison raises; checked again (`XmlLookup::matches`),
 /// they are exactly the rows it holds of.
@@ -142,7 +142,7 @@ fn xml_of(text: &str) -> XmlValue {
     XmlValue::stored(Lob::of_octets(&stored(text)))
 }
 
-/// Verifies: [EXTENSION] RULES.md D86 [Pal et al. §3.2.2]: of a row asked,
+/// Verifies: [EXTENSION] RULES.md D106 [Pal et al. §3.2.2]: of a row asked,
 /// a property index gives that row alone, if its value has the path; any
 /// method does.
 #[test]
@@ -160,7 +160,7 @@ fn held(index: &XmlIndex, from: u8) -> usize {
     index.tree.scan(std::ops::Bound::Included(&[from][..]), std::ops::Bound::Unbounded, Direction::Forward).count()
 }
 
-/// Verifies: [EXTENSION] RULES.md D86, D34: an entry is counted, a pair
+/// Verifies: [EXTENSION] RULES.md D106, D34: an entry is counted, a pair
 /// added twice taken back twice before it goes; every entry and marker
 /// taken back leaves none, the dictionary staying; a pair never added
 /// taken back changes nothing.
@@ -183,7 +183,7 @@ fn entries_are_counted_and_taken_back() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D86, D34: the rows holding a value are
+/// Verifies: [DESIGN] RULES.md D106, D34: the rows holding a value are
 /// those it was added of, each once, until taken back; every entry,
 /// `Probe::All`, is each pair held, of a null key; no comparison probes.
 #[test]
@@ -201,7 +201,7 @@ fn the_rows_of_a_value_and_every_entry() {
     assert_eq!(index.rows(&key(DOCUMENTS[0])).unwrap(), [1]);
 }
 
-/// Verifies: [EXTENSION] RULES.md D86 [XQueryDM §2.1]: a name is an
+/// Verifies: [EXTENSION] RULES.md D106 [XQueryDM §2.1]: a name is an
 /// expanded QName: a path finds a name in a namespace by its URI, and
 /// not without it.
 #[test]
@@ -215,7 +215,7 @@ fn names_are_expanded_qnames() {
     assert_eq!(asked(&index, &named(QName::local("a")), &[], None), Vec::<RowId>::new());
 }
 
-/// Verifies: [EXTENSION] RULES.md D86: a value longer than its prefix is
+/// Verifies: [EXTENSION] RULES.md D106: a value longer than its prefix is
 /// keyed by it, so another of the same first octets is a candidate too,
 /// which the check tells apart.
 #[test]
@@ -234,7 +234,7 @@ fn values_alike_to_their_cut_are_candidates() {
     assert!(!lookup.matches(&xml_of(&format!("<r>{two}</r>"))).unwrap());
 }
 
-/// Verifies: [DESIGN] RULES.md D86, D35: a lookup's cost counts its
+/// Verifies: [DESIGN] RULES.md D106, D35: a lookup's cost counts its
 /// entries and prices its seeks by its tree's height; of a name no value
 /// has, nothing.
 #[test]
@@ -248,7 +248,7 @@ fn a_lookup_is_costed() {
     assert_eq!((none.entries, none.pages), (Some(0), Some(0.0_f64)));
 }
 
-/// Verifies: [DESIGN] RULES.md D86, D18: a lookup of no step, or of more
+/// Verifies: [DESIGN] RULES.md D106, D18: a lookup of no step, or of more
 /// than `MAX_STEPS`, is refused.
 #[test]
 fn a_lookups_steps_are_bounded() {
@@ -263,7 +263,7 @@ fn a_lookups_steps_are_bounded() {
     assert_eq!(refused(MAX_STEPS + 1), Some(-900_i32));
 }
 
-/// Verifies: [EXTENSION] RULES.md D86, D34: a method takes one column of
+/// Verifies: [EXTENSION] RULES.md D106, D34: a method takes one column of
 /// an XML type alone, SQLCODE -103, and answers no comparison; an index
 /// reopened by its locator holds what it held.
 #[test]
@@ -283,7 +283,7 @@ fn a_method_takes_one_xml_column_and_reopens() {
     assert!(method.checkpoint().is_ok());
 }
 
-/// Verifies: [DESIGN] RULES.md D86, D18, R-ERR-5: a value an index cannot
+/// Verifies: [DESIGN] RULES.md D106, D18, R-ERR-5: a value an index cannot
 /// key, of a key past the tree's longest or of more nodes than it keys,
 /// is refused, SQLCODE -900, and leaves no entry or marker.
 #[test]

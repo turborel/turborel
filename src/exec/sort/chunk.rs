@@ -84,6 +84,7 @@ fn cell_kind(cell: Cell<'_>) -> Option<(u8, u32)> {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Row(_)
+            | Value::Json(_)
             | Value::Extension(_)
             | Value::Xml(_),
         ) => Some((VALUES, 0_u32)),

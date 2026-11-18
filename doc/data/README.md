@@ -1,19 +1,25 @@
 # Volume V: Specialized Data
 
-SQL guides for data whose meaning goes beyond a number or a string.
-Each guide explains the data model, shows complete queries and describes
-when indexes can help. Function signatures and error details live in the
-[SQL Reference](../sql/README.md). Rust setup and APIs live in the
-[Client Reference](../client/03-embedding.md).
+For SQL users whose data is more than numbers and strings: its model, the queries asked of it, and the indexes that serve them, a guide each.
 
 [The documentation set](../README.md)
 
-## Guides
+## Contents
 
-- [Spatial data](spatial/README.md): import delivery locations, search a
-  map window, assign service areas, check route intersections and find
-  nearby depots. A shared dataset makes the queries runnable.
+- [Full-Text Search](01-fulltext.md): search support tickets by their
+  words, whatever their case and accents, index them, search them by
+  pattern and show the best ranked first.
+- [Spatial Data](02-spatial.md): import delivery addresses, search a
+  map window, match orders to service areas, check routes against
+  roadworks and find the nearest depots.
+- [JSON Data](03-json.md): store orders as JSON documents, check
+  them, read their values, find orders by their items, turn the items
+  into rows and build JSON for a reply.
+- [Vectors](04-vectors.md): store recipes' embeddings, find the nearest
+  by distance, index them, compare the metrics, work with the vectors'
+  arithmetic and define a distance of one's own.
 
-Full-text search, vectors and JSON will have their own guides here when
-implemented. Their planned work is tracked in [TODO.md](../../TODO.md);
-this volume documents available features.
+Each guide runs on tables it makes at its start. The
+[SQL Reference Manual](../sql/README.md) gives each function's rules and
+errors, and [The Embedded Library](../client/03-embedding.md) the Rust
+interfaces.

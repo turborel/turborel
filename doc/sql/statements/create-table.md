@@ -53,7 +53,7 @@ CREATE TABLE: define a base table
     | MINVALUE <signed numeric literal> | NO MINVALUE
     | CYCLE | NO CYCLE
 
-<generation clause> ::= GENERATED ALWAYS AS ( [ WITH <XML lexically scoped options> ] <value expression> )
+<generation clause> ::= GENERATED ALWAYS AS ( [ WITH <XML lexically scoped options> ] <value expression> ) [ STORED ] [ SYNC | ASYNC ]
 
 <default option> ::=
       <literal>
@@ -125,7 +125,7 @@ given if none is written.
 
 A CHECK's and a generation expression's XML options, XMLNAMESPACES and
 XMLBINARY, are in scope of it, and kept with its text: see
-[XML Values](../xml.md#xml-options-of-a-scope). The Information Schema's CHECK_CLAUSE
+[XML Values](../16-xml.md#xml-options-of-a-scope). The Information Schema's CHECK_CLAUSE
 shows the search condition without them.
 
 A generated column holds the value of its expression, computed from the
@@ -134,6 +134,14 @@ the row. Its type is the one written, to which the expression's value is
 assigned, else the expression's own. A statement gives it no value of its
 own. An INSERT gives it only DEFAULT, and an UPDATE sets it only to
 DEFAULT. Constraints and indexes take its values as any column's.
+
+A generated column is STORED, whether or not that is written. SYNC, the
+default, computes it as the row is written. ASYNC, of a column whose
+expression embeds a text (see [CREATE EMBEDDING
+MODEL](create-embedding-model.md)), leaves it null as the row is
+inserted, or updated in a column the expression reads, by INSERT,
+UPDATE or MERGE, and the queue after commit fills it later. An update
+that sets it to DEFAULT computes it then.
 
 **Constraints.** NOT NULL refuses the null value. UNIQUE refuses two
 rows of the same values in its columns, of rows none of whose values is
@@ -203,7 +211,7 @@ gets the period constraint CHECK (start < end), named for the table and
 the period with `_PERIOD` after, as `ROOMS_STAY_PERIOD`, and numbered if
 its schema has that name. While the period is, its columns are not
 dropped, nor made nullable. [ALTER TABLE](alter-table.md) adds or drops
-one. The view PERIODS of the [Information Schema](../information-schema.md)
+one. The view PERIODS of the [Information Schema](../07-information-schema.md)
 shows each.
 
 **Temporary tables.** GLOBAL TEMPORARY or LOCAL TEMPORARY defines a

@@ -1,4 +1,4 @@
-//! \[EXTENSION\] RULES.md D86: the rows of an XML index's query that it
+//! \[EXTENSION\] RULES.md D106: the rows of an XML index's query that it
 //! answers of each row from its entries alone (`Index::xml_answers`): a
 //! row it holds of is kept as its visible version is fetched; one it may
 //! hold of is checked by the query's own test of that version's value
@@ -52,7 +52,7 @@ pub(super) fn answered_entries(
     let (Some(ix), Some(column), Some(answers)) = (shape, column, Arc::clone(found).xml_answers(&asked.query)) else {
         return Err(broken("an XML index of one column answers its query"));
     };
-    // D34, D86: storage cannot tell which rows the query selects.
+    // D34, D106: storage cannot tell which rows the query selects.
     storage.read_by_condition(tx, &Condition { columns: Vec::new(), probe: Probe::All })?;
     let mut reading = Reading::of(&ix, needed, found.key_projection());
     let query = asked.query.clone();

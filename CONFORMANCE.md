@@ -34,6 +34,7 @@ The claim follows SQL-86 §3.4.
 | Type | Full SQL conformance to Level 2, for SQL-DDL (`<schema>`, through `Database::schema`) and SQL-DML. |
 | Facilities | Direct processing of SQL statements through the Rust binding (`Session`, `Params`). §3.4 leaves the method and time of binding to the implementation. The module language and embedded SQL (COBOL, FORTRAN, Pascal, PL/I) are not claimed. |
 | Environment [§4.6, §4.7] | A database kept in a directory (`Database::open_files`) keeps its schemas and committed changes, and is recovered after a failure [§4.16]. A database made with `Database::new` is held in memory and ends with the process. |
+| SQL/MM Full-Text | The public types and routines of ISO/IEC 13249-2:2002 (CD, SC32 N0640) §12.1, built in, with the choices that part leaves to an implementation listed [below](#sqlmm-full-text) [§12.2]. |
 | Limits | SQL-86 sets one limit of its own, 18 characters in an `<identifier>` [§5.3 SR3], which SQL-92 raises to 128. A statement past one of this implementation's [limits](#limits) gets SQLCODE -900 ("valid, but not processed"). |
 
 Every outcome has an SQLSTATE beside its SQLCODE [ISO/IEC 9075:1992 §22.1].
@@ -1176,6 +1177,36 @@ depend on their order, so it is the error the result would raise
 (RULES.md D15). ANY_VALUE, LISTAGG, WITHIN and OVERFLOW, which SQL-92 does
 not reserve, are key words only where they are read.
 
+### Enhanced numeric functions
+
+Feature T621 (Enhanced numeric functions): the numeric value functions
+LN, EXP, POWER, SQRT, FLOOR and CEIL or CEILING of ISO/IEC 9075-2:2023
+§6.31, and the set functions STDDEV_POP, STDDEV_SAMP, VAR_POP, VAR_SAMP
+and the binary set functions of §10.9.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| LN, EXP | §6.31 SR16, SR17, GR12, GR13 | Of a number, DOUBLE PRECISION, or DECFLOAT(34) of a DECFLOAT. LN of 0 or below is SQLSTATE 2201E. EXP past the range of the result is 22003. Null of a null. |
+| POWER, SQRT | §6.31 SR18, SR19, GR14 | DOUBLE PRECISION, or DECFLOAT(34) if either operand is DECFLOAT. 0 to a negative power, and a negative base to a power not a whole number, are 2201F; 0 to the power 0 is 1, to a positive power 0; a negative base to a whole power is signed as the power is odd or even. SQRT(x) is POWER(x, 0.5), so SQRT of a negative number is 2201F. Past the range, 22003. |
+| FLOOR, CEIL, CEILING | §6.31 SR20, GR15, GR16 | Of an exact number, exact of scale 0, found exactly, of precision enough for its whole part and one digit more (IV151); of an approximate number or a DECFLOAT, of its type. |
+| The names | §6.31, §10.9 | LN, EXP, POWER, SQRT, FLOOR, CEIL, CEILING, STDDEV_POP, STDDEV_SAMP, VAR_POP, VAR_SAMP, COVAR_POP, COVAR_SAMP, CORR and the REGR_ names, which SQL-92 does not reserve, are the functions only before "(", so a column may still be named one. |
+| VAR_POP, VAR_SAMP, STDDEV_POP, STDDEV_SAMP | §10.9 SR2, SR7h, SR7i, SR7j, GR7d ix | Of a number; DISTINCT or ALL written is SQLCODE -103 [SR2]. DOUBLE PRECISION, or DECFLOAT(34) of a DECFLOAT. VAR_POP is (SXS − SX²/N)/N; VAR_SAMP divides by N − 1 and is null of one value; STDDEV_ is the square root. Null of no values. |
+| The binary set functions | §10.9 SR9, GR8 | COVAR_POP, COVAR_SAMP, CORR, REGR_SLOPE, REGR_INTERCEPT, REGR_COUNT, REGR_R2, REGR_AVGX, REGR_AVGY, REGR_SXX, REGR_SYY and REGR_SXY of Y and X, each a number, else -103. A pair with a null Y or X is left out, with SQLSTATE 01003. REGR_COUNT is NUMERIC(18), 0 of no pairs; the others are DOUBLE PRECISION, or DECFLOAT(34) if Y or X is, and null of no pairs. COVAR_SAMP is null of one pair. |
+| CORR, REGR_R2, REGR_SLOPE, REGR_INTERCEPT | §10.9 GR8c x to xiii | Null where X is all alike. CORR is null where Y is all alike, REGR_R2 1. CORR is SQRT(POWER(N·SXY − SX·SY, 2) / ...), as GR8c x 3 writes it, so it is never below 0: of Y falling as X rises it is 1. A result past the range is null. |
+| Their uses | §10.9 GR4, §6.10, §7.9 | Each takes FILTER, is computed for each group of GROUP BY, ROLLUP, CUBE and GROUPING SETS, and is a window function with OVER. |
+| Out of range | §10.9 GR3e | A sum on the way past the range of the result's type is 22003, judged once the sum is finished. |
+
+Of numbers not DECFLOAT the statistical set functions keep the count,
+the means and the sums of squared deviations and of their products by
+Welford's updates, so no digits are lost to the subtraction SXS − SX²/N.
+Their state is written, and two states merged by Chan's formulas, so a
+window frame is computed from a tree of states. SXX and SYY only grow,
+so whether one passes the range does not depend on the order of the
+rows (RULES.md D15). Of DECFLOAT operands they find SX, SXS and the rest
+in DECFLOAT arithmetic, as the General Rules write them, and write no
+state, as SUM of DECFLOAT writes none. A variance rounding leaves below 0
+is 0. CORR and REGR_R2 rounding puts past 1 are 1.
+
 ### Null ordering
 
 Feature T611 (Elementary OLAP operations), its `<null ordering>` of
@@ -1672,7 +1703,7 @@ CREATE TRIGGER defines a trigger [§11.49] and DROP TRIGGER drops one
 | Feature | Rules | What turborel does |
 |---|---|---|
 | Definition | §11.49 SR1 to SR9, SR15, AR1 | The name is new in its schema, and of the schema definition's in one. A BEFORE or AFTER trigger is on a persistent base table, an INSTEAD OF trigger on a view with no CHECK OPTION that no view WITH CHECK OPTION reads, one of each event, with no WHEN condition or column list. The column list's columns are the table's, once each. Each REFERENCING name once, none for the side the event has not, none the same, a transition variable only FOR EACH ROW. Each rule broken is SQLCODE -103, and a schema not owned -104. |
-| The action | SR10, SR12 to SR14, IA046, IA047; ISO/IEC 9075-4:2006 draft §9.19 | Bound as the trigger is defined, as the schema's owner, so its rules and privileges are checked then. INSERT, searched UPDATE and DELETE, MERGE, SELECT INTO, GET DIAGNOSTICS, CALL, or an SQL control statement, SIGNAL or RESIGNAL of [SQL/PSM](#sqlpsm), a compound statement ATOMIC, Part 2's BEGIN ATOMIC list one, else SQLCODE -103: a schema, transaction, connection, session, dynamic or cursor statement, or a parameter, is refused as the trigger is defined. A BEFORE trigger's action changes no SQL-data and has no transition tables, and references no generated column of its new transition variable, else SQLCODE -103. |
+| The action | SR10, SR12 to SR14, IA046, IA047; ISO/IEC 9075-4:2006 draft §9.19 | Bound as the trigger is defined, as the schema's owner, so its rules and privileges are checked then. INSERT, searched UPDATE and DELETE, MERGE, SELECT INTO, GET DIAGNOSTICS, CALL, or an SQL control statement, SIGNAL or RESIGNAL of [SQL/PSM](#sqlpsm), a compound statement ATOMIC, Part 2's BEGIN ATOMIC list one, else SQLCODE -103: a schema, transaction, savepoint, connection, session, dynamic or cursor statement, or a parameter, is refused as the trigger is defined. A BEFORE trigger's action changes no SQL-data and has no transition tables, and references no generated column of its new transition variable, else SQLCODE -103. |
 | Privileges | AR2, AR3, §12.3, §12.7 | The schema's owner holds TRIGGER on the table, and SELECT if a transition name is given, else SQLCODE -104. TRIGGER is granted, revoked and held in ALL PRIVILEGES as the other table privileges are, and TABLE_PRIVILEGES shows it. A view's owner holds TRIGGER on it, not grantable [§11.32 GR5]. REVOKE with RESTRICT is refused where it would abandon a trigger, its TRIGGER or SELECT or a privilege its action needs, and CASCADE drops it. |
 | Transition variables | §6.6 SR9, SR13, §6.4 SR7, §9.2 | OLD.C and NEW.C, where no table or correlation name of the statement is the qualifier, are the old and new row of the transition. A BEFORE row trigger's SELECT INTO and GET DIAGNOSTICS assign columns of NEW by store assignment, which the row then takes. |
 | Transition tables | §7.6 SR6, §4.46.2 | OLD TABLE and NEW TABLE name, where no query name does, the old and new rows of the state change, held up to the work area and spilled past it, read in subqueries too. |
@@ -1701,8 +1732,10 @@ The action is bound again only when the definitions change, and kept
 for each level of nesting it runs at. A trigger whose action executes
 it again recurses until its WHEN condition stops it or the limit of
 nesting is passed (see [Limits](#limits)). The statements IA046 and
-IA047 refuse are refused as Syntax Rules when the trigger is defined, so
-0W000 is never raised as an action runs [§15.21 GR6e iii, GR6h]. 11000
+IA047 refuse are refused as Syntax Rules when the trigger is defined. A
+savepoint statement of a procedure an action calls raises 0W000 as it
+runs [§15.21 GR6e iii], and the action fails with 09000; nothing else
+raises it [GR6h]. 11000
 and 0W001 are of system-time columns and data change delta tables,
 which turborel has none of. TRUNCATE TABLE executes no trigger [§14.10
 GR]. TRIGGER, BEFORE, AFTER, INSTEAD, REFERENCING, OLD, NEW,
@@ -1727,7 +1760,7 @@ RETURN [§16.2].
 | Definition | §11.60 SR1 to SR9, SR13 to SR16, SR19, AR1, CR2 | The schema exists (3F000) and its user owns it (-104). Each characteristic at most once, the SQL-data access written, NO SQL refused. A function's parameters have no mode, and a procedure has no null-call clause, a function no DYNAMIC RESULT SETS. Each parameter named, no two alike, none of a domain or a row type. The body has no host, dynamic or embedded parameter. Each rule broken is SQLCODE -103. |
 | Overloading | §11.60 SR20, SR22, §11.51 GR2b | A schema holds procedures of a name each of another number of parameters [SR20a], and functions of a name, its SQL-invoked functions and its distinct types' together, each told apart from the others [SR20b]. Of arguments of a function's own parameters' types, of the functions that take them, it must be the one subject routine, the values "arbitrarily selected" of SR20b ii taken to be of those types. Each exact numeric type is in NUMERIC's place of a precedence list and each approximate one in FLOAT's (RULES.md D74), so F(INTEGER) beside F(BIGINT) or F(DECIMAL(5, 2)) is refused, and beside F(DOUBLE PRECISION) is taken. CREATE TYPE checks its two functions so too. A regular function whose first parameter is of a user-defined type is told apart from each instance method of that type or a supertype of its name and schema, the others' types compatible [SR22]. Each refusal is SQLCODE -103. |
 | Specific names | SR9s, SR9t, SR9u, UV102 | SPECIFIC names the routine apart from its name, of its schema, new in it. Without it, the name is the routine's name, an underscore and its creation's sequence number, with a further `_n` if that is taken. |
-| The body | SR20, SR23, §16.2 SR1 to SR4, IA075, IA076, IA078 | Bound once as the routine is defined, as the owner of its schema, of that schema, so its rules and privileges are checked then and its names fixed [§4.35]. A function's body is a RETURN, of a type its result type stores, RETURN NULL a null of it. A procedure's is INSERT, searched UPDATE or DELETE, MERGE, SELECT INTO, GET DIAGNOSTICS or CALL, and no RETURN. Either may be an SQL control statement, SIGNAL or RESIGNAL, of [SQL/PSM](#sqlpsm), whose nested statements count for its SQL-data access. A schema, transaction, connection, session or dynamic statement is refused (IA078). A body of CONTAINS SQL that reads a table, or of READS SQL DATA that changes one, is refused (IA076, IA075). Each is SQLCODE -103. |
+| The body | SR20, SR23, §16.2 SR1 to SR4, IA075, IA076, IA078 | Bound once as the routine is defined, as the owner of its schema, of that schema, so its rules and privileges are checked then and its names fixed [§4.35]. A function's body is a RETURN, of a type its result type stores, RETURN NULL a null of it. A procedure's is INSERT, searched UPDATE or DELETE, MERGE, SELECT INTO, GET DIAGNOSTICS or CALL, and no RETURN. Either may be an SQL control statement, SIGNAL or RESIGNAL, of [SQL/PSM](#sqlpsm), whose nested statements count for its SQL-data access, or a savepoint statement [§9.18 GR8b iv 2]. A schema, connection, session or dynamic statement, COMMIT, or ROLLBACK but to a savepoint, is refused (IA078). A body of CONTAINS SQL that reads a table, or of READS SQL DATA that changes one, is refused (IA076, IA075). Each is SQLCODE -103. |
 | Determinism | IA077 | DETERMINISTIC is taken as written: a body is not checked for a source of non-determinism. |
 | Privileges | GR1, §12.3, §12.7 GR12o, GR12q | The owner holds EXECUTE from _SYSTEM, grantable if it holds grantable every SELECT, INSERT, UPDATE and DELETE on each table the body reads and EXECUTE on each routine it invokes. EXECUTE is granted and revoked as `<specific routine designator>` designates a routine, ALL PRIVILEGES on one being EXECUTE, and ROUTINE_PRIVILEGES shows it. A revoke that leaves the owner without a privilege the body needs, or EXECUTE on a routine it invokes, abandons the routine: RESTRICT refuses it (2B000), and CASCADE drops it and what invokes it. |
 | Invocation | §9.18 SR5, SR6, SR10, §9.6, §9.7, GR3 to GR10, ID047 | Of the functions of the name in the qualifying schema, else the statement's default schema, its SQL-invoked functions and its distinct types' alike, those the statement's authorization identifier holds EXECUTE on, of as many parameters as there are arguments [SR10a], each typed argument's precedence list holding its parameter's designator [SR10d]. Left to right, those whose parameter's designator comes first in the argument's list are kept [§9.6], and one must be left [SR10h iv 3]. None of the arity is SQLCODE -103 citing SR10a, none of the types -103 citing SR10d, two alike -103, and functions that take the arguments but none with EXECUTE -104. A `?` argument decides nothing and takes its parameter's type [§20.7] (B033). A routine is found before a registered function of the name, which is searched only if no function of the schema takes the arguments [SR10h iv 1] (RULES.md D74). Each argument is stored in its parameter, then a null-call function given a null returns null without its body, else the body's value is stored in the result type. Its errors are those of store assignment, 22001 and 22003, the parameter named in the condition [§23.1 GR4q]. A body that ends without executing a RETURN raises 2F005 [GR8b ix 1]. A function that possibly modifies SQL-data is run by the session, as a statement nested in the one invoking it, its changes undone with that statement (RULES.md D76). |
@@ -1740,7 +1773,7 @@ RETURN [§16.2].
 
 SQL SECURITY (Feature T324), a parameter's default and named arguments
 (T521, T522, T524, T525), a monomorphic table function's RETURNS TABLE (T326), DYNAMIC RESULT SETS
-above 0 (T471), NEW SAVEPOINT LEVEL (T272) and a language other than SQL
+above 0 (T471) and a language other than SQL
 are refused with SQLCODE -900. A routine's
 behaviour is always DEFINER's, as SR23b leaves it without T324.
 Routines do not recurse: a body binds before its routine exists, and a
@@ -1807,6 +1840,148 @@ an identifier, read as a word where a statement of roles reads it.
 CURRENT_ROLE stays an identifier too, read as the value function where it
 stands alone, so a column of that name is read qualified.
 
+### SQL/JSON
+
+The SQL/JSON query operators JSON_EXISTS [§8.23], JSON_VALUE [§6.28]
+and JSON_QUERY [§6.35] are implemented, over JSON text in character
+strings, with the SQL/JSON data model [§4.48.3], the parsing and
+serializing of JSON text [§9.42, §9.43] and the SQL/JSON path language
+[§9.45, §9.46] they read (`turborel::json`, RULES.md D84). The
+operators' General Rules are the library's (`json/query.rs`), with the
+rules they apply: the serializing of an item [§9.43], the array wrappers
+[§9.44], the processing of the common syntax [§9.47], and the casting
+and serializing of a sequence [§9.48, §9.49]; the binder makes each call
+of an operator a function that applies them to its operands' values. So
+are the `<JSON predicate>` IS JSON [§8.22], the constructor functions
+JSON_OBJECT and JSON_ARRAY [§6.34], and the `<JSON aggregate function>`s
+JSON_OBJECTAGG and JSON_ARRAYAGG [§10.11], set functions.
+
+Features T823 (SQL/JSON: PASSING clause), T828 (JSON_QUERY) and T829
+(JSON_QUERY: array wrapper options) are claimed, and so are the path
+language's T831 (strict mode), T832 (item method), T833 (multiple
+subscripts), T834 (wildcard member accessor), T835 (filter expressions),
+T836 (starts with predicate), T837 (regex_like predicate), T840 (hex
+integer literals) and T865 to T878 (the item methods bigint() to
+timestamp_tz(), with precisions and scales), which §9.46's Conformance
+Rules 8 to 21 ask of the methods alone. Features T811 (Basic SQL/JSON
+constructor functions), T812 (SQL/JSON: JSON_OBJECTAGG), T813 (SQL/JSON:
+JSON_ARRAYAGG with ORDER BY), T814 (Colon in JSON_OBJECT or
+JSON_OBJECTAGG), T822 (SQL/JSON: IS JSON WITH UNIQUE KEYS predicate) and
+T830 (Enforcing unique keys in SQL/JSON constructor functions) are
+claimed. Features T821 (Basic SQL/JSON query operators), T824
+(JSON_TABLE: specific PLAN clause), T825 (SQL/JSON: ON EMPTY and ON
+ERROR clauses), T826 (General value expression in ON ERROR or ON EMPTY
+clauses), T827 (JSON_TABLE: sibling NESTED COLUMNS clauses) and T838
+(JSON_TABLE: PLAN DEFAULT clause) are claimed, as JSON_TABLE [§7.11] is
+implemented whole (RULES.md D90). T803 (String-based JSON) is
+implemented for character strings, every input and output clause of the
+query operators, the constructors and IS JSON; JSON text in a binary
+string, FORMAT JSON ENCODING, is SQLCODE -900, so it is not claimed.
+
+Features T801 (JSON data type) and T802 (Enhanced JSON data type) are
+claimed (RULES.md D89). These cover JSON columns, JSON ( ) of either key
+uniqueness, JSON_SCALAR and JSON_SERIALIZE. A value of JSON is the input
+of every query operator, constructor, aggregate and IS JSON. JSON_QUERY,
+the constructors and the aggregates take RETURNING JSON, implicit of a
+JSON input. T851 (optional keywords for default syntax) is claimed, as
+FORMAT JSON after a JSON input, in RETURNING JSON and in JSON ( ) and
+JSON_SERIALIZE. T860, T862, T863 and T864 (the simplified accessor of a
+column, the wildcard member accessor, single-quoted member names and any
+value expression primary) are claimed. T861 (case-sensitive member
+accessor) is not. A member name after a column is an SQL identifier,
+upper case unless delimited, and a quoted string is read as written.
+T879 to T882 (JSON in equality, grouping, ordering and multiset element
+grouping) are claimed.
+
+The library holds the rules of the `<JSON predicate>` IS JSON [§8.22]
+and of the constructor functions JSON_OBJECT and JSON_ARRAY [§6.34] and
+JSON_OBJECTAGG and JSON_ARRAYAGG [§10.11] (`json/predicate.rs`,
+`json/construct.rs`), string-based (T803): their inputs are character
+strings, FORMAT JSON marking one as JSON text, and they return character
+strings. IS JSON is Unknown of the null value and False of text that is
+not JSON, or that has two members of one key under WITH UNIQUE KEYS. A
+constructor keeps a character string, a number and a truth value as its
+scalar and casts any other value, a datetime too, to a character string
+(ID100, IV179). A null name is 22004 and two members of one name under WITH
+UNIQUE KEYS 22030. An aggregate of no rows is the null value. An object
+has at most 1,048,576 members (IL051) and an array as many elements
+(IL052), past them 2203E and 2203D.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| JSON_EXISTS | §8.23 SR1, GR | A predicate, in a search condition or as a BOOLEAN value: True if the path gives an item, False if it gives none, Unknown if the context item is null. |
+| JSON_VALUE | §6.28 SR1 to SR5, GR; §9.48 | The one scalar the path gives, cast to the returned type. Null if the context item is null, and of the SQL/JSON null. An array or object is 2203F, two items 22034, an item of a type that does not cast to the returned type 2203G, and a cast's exception is its own, 22018 say. |
+| JSON_QUERY | §6.35 SR1 to SR9, GR; §9.49 | The one item the path gives, serialized as JSON text, FORMAT JSON, to the returned type. Two items unwrapped are 22034, and a text longer than the type 22001. |
+| JSON_TABLE | §7.11 SR1, GR1 | A table of the rows its row pattern gives, of regular, ordinality and formatted columns, NESTED [PATH] COLUMNS to any depth with siblings, path names, PLAN and PLAN DEFAULT, the table's ERROR or EMPTY ON ERROR, and PASSING. The row pattern and every NESTED path may name PASSING variables, and a column's own path may not, SQLCODE -103. A column of the JSON type without a formatted column's clause is a formatted column, so DEFAULT ON EMPTY or ON ERROR of it is -103. A DEFAULT of a regular column is evaluated only when it is the value. JSON_TABLE in a CHECK constraint is -103, as JSON_VALUE and JSON_QUERY are [§9.16 SR1u]. |
+| JSON values | §4.8, §6.1, §6.37, §6.40, §6.41, §6.36 | JSON is a type of columns, parameters and results, stored parsed in a binary form read in place. JSON ( ) parses text WITH or WITHOUT UNIQUE KEYS, 22032 of text that is no JSON text and 22037 of two members of one key under WITH. JSON_SCALAR makes a scalar of an SQL value, JSON_SERIALIZE writes text of a character string type. A value of JSON is compared, grouped, ordered and indexed by its comparison key. `doc.items[0].name` and `doc.*` are JSON_QUERY's lax paths [§6.36 SR3]. A document is at most 256 MiB, past it SQLCODE -900. |
+| Common syntax | §10.14 SR1 to SR5; §10.12 | The context item is a character string, FORMAT JSON implicit or written, else SQLCODE -103. Its text is parsed WITHOUT UNIQUE KEYS before the path is evaluated (IA050, IV185), so a text that is no JSON text is 22032 whether the path reads it or not. The path specification is a character string literal, parsed once as the statement is prepared: a path that is none is refused then, -101, -102 or -103. AS a table path name is -103 [SR2a]. |
+| PASSING | §10.14, §9.46 SR4, GR11b; §10.12 SR3, SR6, SR7 | An argument without FORMAT JSON is the item its value is: a character string, a number, a truth value or a datetime as it is, an interval cast to CHARACTER VARYING(32767) (IV165), a null value the SQL/JSON null. One with FORMAT JSON is a character string's JSON text, parsed first (IA054); of a null value it is the empty sequence. A binary string without FORMAT JSON, an array, a multiset or a row is -103; a user-defined type, a reference or a type beyond the standard is -900. A named variable no argument has is -103 as the statement is prepared, whatever the path does with it. Of two arguments of one name, the first is the variable's. |
+| Identifiers of PASSING | §9.46 SR4, GR11b; ISO/IEC 9075:1992 §5.2 SR10 | An argument's `<identifier>` is equivalent to a named variable's `<JSON path identifier>` if its value, as SQL defines it, is the variable's name: a regular identifier in upper case, a delimited identifier its body. The path language is case-sensitive, so `PASSING 1 AS x` is the variable `$X`, and `PASSING 1 AS "x"` is `$x`. |
+| starts with of a variable | §9.46 SR8 | The variable is an argument of a character string without FORMAT JSON, else -103. |
+| RETURNING | §6.28 SR1, SR2; §6.35 SR1b; §10.13 SR2 | JSON_VALUE returns a predefined character string, numeric, BOOLEAN or datetime type, else -103; JSON_QUERY a character string type, else -103. Without RETURNING each returns CHARACTER VARYING(32767) (ID074, ID101). A binary string type for JSON_QUERY, and FORMAT JSON ENCODING of a binary string anywhere, are valid SQL not implemented, -900; ENCODING of a character string is -103 [§10.12 SR8, §10.13 SR2a]. A cast that cuts a string completes with the warning 01004, as CAST does. |
+| Wrappers and quotes | §6.35 SR6 to SR9; §9.49 GR4, GR5 | WITHOUT ARRAY is the default. WITH ARRAY WRAPPER is UNCONDITIONAL. WITH CONDITIONAL ARRAY WRAPPER leaves a sequence of one array or object as it is and wraps any other, a lone scalar included, as §9.49 GR4a iv says. An empty sequence is never wrapped, so ON EMPTY applies. OMIT QUOTES casts a lone character string to the returned type, KEEP QUOTES, the default, serializes it in quotation marks. A quotes behavior WITH a wrapper is -103 [SR8]. |
+| ON EMPTY and ON ERROR | §6.28 SR4, SR5; §6.35 SR4, SR5; §8.23 SR1; §9.48 GR4, GR5; §9.49 GR4c, GR6; §9.43 GR2a iii | NULL ON EMPTY and NULL ON ERROR are implicit, and FALSE ON ERROR of JSON_EXISTS. ON ERROR replaces an exception condition, which is an error of SQLSTATE class 22, data exception, alone: a limit of turborel's, SQLCODE -900, and a Syntax Rule broken are raised whatever ON ERROR says. ERROR ON EMPTY makes an empty sequence 22035, an exception ON ERROR then replaces, so ERROR ON EMPTY with NULL ON ERROR, written or implicit, is null [§9.48 GR4c i, GR5c]. DEFAULT is any value expression, a column's or a `?` too, cast to the returned type, which CAST is to take, else -103; a cast of the DEFAULT ON EMPTY that fails is an exception ON ERROR replaces [GR4c iii], and of the DEFAULT ON ERROR one raised [GR5d i]. A DEFAULT's value expression is evaluated only for a row that takes it [GR4c iii, GR5d]: one that can raise an exception is bound as a CASE of which behavior the row takes, one that cannot is evaluated with the other operands, as no row could tell. NEXT VALUE FOR in a DEFAULT draws of every row, as §6.14 GR1a draws of each row whatever is taken, and is in no CASE [§6.14 SR2], so the operator's DEFAULTs are then all arguments. An exception the value expression raises as it is evaluated, before its cast, is raised. JSON_QUERY's text longer than its returned type is 22001 whatever ON ERROR says [§9.43 GR2a iii]. |
+| Dynamic parameters | §20.7 GR5a, GR5b | No rule types a `?` here. A `?` context item or argument FORMAT JSON is CHARACTER VARYING(32767) and a DEFAULT the returned type [EXTENSION]; an argument without FORMAT JSON is refused. |
+| Where written | §6.3, §8.1; §9.16 SR1g, SR1h, SR1al; §11.9 CR2 | JSON_VALUE, JSON_QUERY and the constructors wherever a value is; JSON_EXISTS and IS JSON wherever a predicate is: in queries and views. JSON_VALUE, JSON_QUERY and JSON_EXISTS are potential sources of non-determinism, so a CHECK constraint or a generation expression holding one is SQLCODE -103; the constructors, the aggregates and IS JSON may be there. |
+| Key words | §5.2 | JSON_EXISTS, JSON_VALUE and JSON_QUERY are no key words of SQL-92, so each stays an identifier, the operator only before a parenthesis. PASSING, RETURNING, FORMAT, JSON, ENCODING, ERROR, EMPTY, ARRAY, OBJECT, WITHOUT, CONDITIONAL, UNCONDITIONAL, WRAPPER, KEEP, OMIT, QUOTES, SCALAR and STRING are read only where the operators' Formats have them, so a column of any of those names stays one. |
+| IS JSON | §8.22 SR1 to SR4, GR | A predicate wherever one is written. True if the character string is JSON text of the kind named, VALUE, the default, ARRAY, OBJECT, or SCALAR, neither, and, WITH UNIQUE KEYS, of no object of two members of one key; False otherwise, of a text that is no JSON text too; Unknown of the null value. IS NOT JSON is its negation [SR4]. FORMAT JSON is implicit [SR1]. An input of no character string is SQLCODE -103, a binary string -900. A text beyond turborel's limits is -900, no answer. |
+| JSON_OBJECT | §6.34 SR5, SR6, GR2, GR5a | Members written `[KEY] name VALUE value` or `name : value` (T814). A name is a character string, else -103; a null one is 22004. A value of a string, number or truth value is kept, one of another type cast to CHARACTER VARYING(32767) (ID100, IV179), a datetime among them; FORMAT JSON parses it under the key uniqueness constraint. NULL ON NULL is the default; ABSENT ON NULL leaves a member bound to the SQL/JSON null out. WITH UNIQUE KEYS makes two members of one name 22030, those left out too. Of no members, `{}`. |
+| JSON_ARRAY | §6.34 SR7, GR3, GR4, GR5a | By enumeration, its elements in order; by query, of a query of degree 1, else -103 [SR7c], its column's values in the order of its ORDER BY, `[]` of no rows. A lone scalar subquery makes it by query [SR7d]. ABSENT ON NULL is the default. An element FORMAT JSON is parsed WITHOUT UNIQUE KEYS (IV156). |
+| JSON_OBJECTAGG, JSON_ARRAYAGG | §10.11 SR1 to SR5, GR | Set functions, with FILTER and OVER, of a group's rows, nulls kept; the null value of no rows. JSON_OBJECTAGG is NULL ON NULL and WITHOUT UNIQUE KEYS by default, and a null name is 22004. JSON_ARRAYAGG's ORDER BY (T813) orders the elements, its keys orderable, else -103 [§9.14 SR3]; without one, the order the rows are read (US044). ABSENT ON NULL is its default. A grouping past its work area spills them as it spills every set function. They are no potential source of non-determinism, so a constraint may hold them. |
+| Inputs and outputs of the constructors | §10.12 SR3, SR4a, SR6 to SR8; §10.13 SR2 | As the query operators': a value FORMAT JSON of no string is -103 [SR6], a binary string without FORMAT JSON -103 [SR7], an array, a multiset or a row -103 [SR3], ENCODING of a character string -103 [SR8]. A JSON-returning function, a constructor, an aggregate or JSON_QUERY, as an input is FORMAT JSON implicitly [SR4a], so constructors nest, as a PASSING argument too. RETURNING is a character string type, else -103, a binary string type -900; without it CHARACTER VARYING(32767) (ID098, ID134). A text longer than the type is 22001. |
+| Key words of the constructors | §5.2 | JSON_OBJECT, JSON_ARRAY, JSON_OBJECTAGG and JSON_ARRAYAGG are no key words of SQL-92, each the function only before a parenthesis. ABSENT, KEYS, SCALAR and the words the query operators share are read only where the Formats have them. RETURNING within a constructor is the output clause unless VALUE, a colon, a comma or ")" follows it, so a column RETURNING may be a name. IS [NOT] JSON, and FORMAT JSON [ENCODING ...] before IS, after a value are IS JSON, so `SELECT ID JSON FROM T` and `SELECT ID FORMAT FROM T` still name columns. |
+| SQL/JSON items | §4.48.3, §8.2 GR10 | The SQL/JSON null, a scalar that is a character string, a number, a truth value or a datetime, an array, or an object. Two are equivalent if their comparison keys are equal (RULES.md D89): scalars equal as SQL values, strings code point by code point, arrays element by element, objects by their members sorted by key and value. |
+| JSON text | §9.42 GR3a; RFC 8259 §2 to §7 | A string that is no JSON text is SQLSTATE 22032, and so is one whose string escapes a surrogate that is not of a pair. Members of one key are all kept (UA057), in the order written (US039); under WITH UNIQUE KEYS they are 22037. Arrays and objects nested more than 128 deep are SQLCODE -900. |
+| Numbers | §9.42 GR3a iii 3 A IV, §9.45 GR1a; §5.3 SR29 | A number without an exponent is exact, of its fraction's scale; one with an exponent is approximate. An exact one of more than 18 digits, or a fraction of more than 18, is exact still if its significant digits fit, leading zeros and a fraction's trailing zeros not being significant, else DECFLOAT of at most 34 significant digits. A number of more significant digits, or out of its kind's range, an approximate one too small to be other than zero among them, is 22003, IS JSON raising it too. |
+| Lexical elements | §9.45 SR1 to SR4, GR1; ECMAScript 5.1 §7 | Identifiers of Unicode 13.0's letters, with `\u` escapes; string literals in single or double quotation marks, with ECMAScript's escapes and line continuations; decimal numeric literals, and hex integer literals (T840), `0x` or `0X` and hexadecimal digits, each the exact number of its value, of more than 18 digits a DECFLOAT of at most 34. A literal past those limits is SQLCODE -900. The language is case-sensitive and reserves no word: `$.type` is a member, `$.type()` the method [NOTE 483]. A character that begins no token is SQLCODE -101. |
+| Format | §9.46 F, SR3, SR5 to SR7, SR10 | A path begins with `strict` or `lax`. Text that does not conform is SQLCODE -102; `@` outside a predicate and `last` outside a subscript are -103. A like_regex pattern and its flags are read when the path is parsed, 2201S and 2201T. The precision and scale of decimal() and the precisions of time(), time_tz(), timestamp() and timestamp_tz() are unsigned integers, a precision of 0 or a scale above the precision -103 [§6.1 SR23, SR25], a precision above 18, or above 6 for a time or timestamp, -900. A `<JSON datetime template>` is read as the path is parsed [SR10]: one that is no datetime template, or is neither dated nor timed, or zoned and not timed, is SQLCODE -103, and one of FF7 to FF9 SQLCODE -900. A path nested more than 64 deep, or of more than 63 accessors or operators in a row, is SQLCODE -900. No analysis for certain exceptions is made (IA223) [SR9]. |
+| Modes | §9.46 GR7, GR8; §4.48.5 | Lax mode wraps and unwraps one level, and takes what it still cannot access for nothing. Strict mode raises each structural error. |
+| Member accessors | §9.46 GR11g ii 1, 2 | In strict mode an item that is no object with the member is 2203A, and for `.*` one that is no object 2203C. Members of one key raise no exception (IA071): `.key` takes the first (UA075), and `.*` gives the bound values of all (UA058) in the order written (US040). |
+| Array accessors | §9.46 GR11g ii 3, 4 | An item that is no array is 22039. A subscript that is not one number is 22033; a fraction is truncated toward zero (IA073). In strict mode a subscript outside the array, or a range whose first is past its last, is 22033; in lax mode the elements there are are taken. `last` is the current array's last subscript. |
+| Item methods | §9.46 GR11g ii 6 | type() names an item's kind, a datetime's by its type. size() is an array's elements or 1, in strict mode 22039 of what is no array. double() casts a number or a character string to DOUBLE PRECISION, 22036 of another item and 22018 of a string that is no number. ceiling(), floor() and abs() are of numbers alone, else 22036; ceiling() and floor() never give negative zero. datetime() reads a character string as a date, a time with and without time zone and a timestamp with and without time zone in turn, with time zone where it writes a displacement, of the precision of its fraction; else, or of another item, 22031, and a fraction of more than 6 digits is -900. datetime() of a template reads the string by it, as CAST with FORMAT does [§9.51], to the datetime type the template implies. A datetime of no time zone is taken in the SQL-session's time zone displacement as the path was parsed, with a template and without alike. keyvalue() gives an object of `key`, `value` and `id` for each member of each object, in the order kept, members of one key all (IA072, UA058); an item that is no object is 2203C. |
+| keyvalue() id | §9.46 GR11g ii 6 C VIII 2 b | `id` uniquely identifies the object a member is of, as the rule asks (IA224): each item of the context item, then of the PASSING variables in order, is numbered in preorder from 0, and an object the path reaches there has its number however it is reached, so the members of one object share an id and two objects never do. An object the path makes, as of keyvalue() itself, is numbered past them, in the order it is reached. |
+| Casting item methods | §9.46 GR11g ii 6 C IX to XIX | bigint(), integer(), decimal() and number() take numbers and character strings, else 22036; boolean() truth values and strings, else 2202V; date() strings, else 2202W; string() strings, numbers and truth values, else 2202X; time() and timestamp() strings, else 2202Y and 2202Z; time_tz() and timestamp_tz(), as printed, numbers and strings, else 2202Y and 2202Z. Each casts by CAST, its exception the path's: decimal() to DECIMAL of the precision and scale written, of none 18 and 0; string() to CHARACTER VARYING(32767) (IL006); the time and timestamp methods to the precision written, of none 0 and 6. number()'s type (IV186) is a number's own, so a number is kept as it is, and of a string that of the `<signed numeric literal>` it is. A datetime without time zone is taken in the SQL-session's time zone displacement as the path was parsed. |
+| Arithmetic | §9.46 GR11h to GR11j, §6.31 SR12 | A sign is of numbers alone, else 2203B. An operand that is not one number is 22038. `%` is MOD, of whole exact or DECFLOAT numbers, a zero divisor 22012; a whole exact number of any scale, `4.0`, is taken. An approximate operand, or one with a fraction, breaks MOD's Syntax Rule, which the path checks only as it runs, so it is data exception 22000, an exception ON ERROR replaces. An exception of the arithmetic is the path's. |
+| Filters and predicates | §9.46 GR11g ii 5, GR12 | A filter keeps the items its predicate is True of. Predicates are True, False or Unknown, an exception within one making it Unknown, a strict mode's structural error too. Character strings compare by code point. The SQL/JSON null is comparable with any item. Where one pair is in error and another succeeds, in lax mode, the result is True (UA073). A like_regex match the matcher gives up on, past its steps, is an error of its item. |
+| Named variables | §9.46 SR4, GR11b | A variable's value is the item passed under its name, as the PASSING row above says. One that is not passed is SQLCODE -103, found before anything is evaluated, so no filter hides it. |
+
+Where the text of §6.28, §9.45, §9.46 and §9.48 cannot be followed as
+printed, it is read as Readings of ambiguous text says.
+
+### Savepoints
+
+Features T271 (Savepoints) and T272 (Enhanced savepoint management).
+SAVEPOINT [§17.5], RELEASE SAVEPOINT [§17.6] and ROLLBACK TO SAVEPOINT
+[§17.8] at the savepoint levels of §4.43.2 (RULES.md D88).
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| SAVEPOINT | §17.5 GR1 to GR4, §4.41.2.4, IL208 | A savepoint of the name at the current level is destroyed, then one is established here. Past 1,024 in the transaction, 3B002, the statement failing alone. With no transaction active, it initiates one. |
+| RELEASE SAVEPOINT | §17.6 GR2, GR3 | The savepoint of the name at the current level and every one established after it at that level are destroyed, the changes kept. A name of none, with no transaction active too, is 3B001. |
+| ROLLBACK TO SAVEPOINT | §17.8 SR1, SR2, GR3a to GR3j, IA167, IA168, IA211 | AND CHAIN with it is a syntax error (2A000), AND NO CHAIN its default. A name of no savepoint of the current level is 3B001, as is one established before the most recent atomic execution context began. Every change to SQL-data since is undone, in tables, temporary tables, every index and large objects, through the same undo a failed statement uses, and every change of definitions staged since is cancelled. Later savepoints are destroyed, it stays. Locators given since are invalid, those before stay valid. Every open cursor is closed. The transaction goes on, holding every lock it took. |
+| Savepoint levels | §4.43.2, §9.18 GR7, GR15, §11.60 SR9j to SR9l, GR3k, §15.21 GR6c, GR6j; ISO/IEC 9075-4:2006 draft §14.1 GR1, GR6 | A function, a procedure of NEW SAVEPOINT LEVEL, a triggered action and an ATOMIC compound statement each establish a level as they begin and destroy it with its savepoints as they end. A procedure of OLD SAVEPOINT LEVEL, written or implicit, runs at its caller's. A statement names only the savepoints of the current level. COMMIT and ROLLBACK destroy every savepoint [§17.7 GR7, §17.8 GR2c]. |
+| In routines and triggers | §9.18 GR8b iv 2, §15.21 GR6e iii, IA046; ISO/IEC 9075-4:2006 draft §14.13 SR9 | A routine's body may hold the savepoint statements, so 2F003 is never raised. A FOR holds no ROLLBACK TO SAVEPOINT (2A000). A trigger's action that is one is refused as the trigger is defined (2A000). One run while a triggered action executes, in a procedure it calls, raises 0W000, which fails the action with 09000. |
+| Atomic execution contexts | §4.41.5, §17.8 GR3c | A function, a triggered action and an ATOMIC compound statement are atomic execution contexts, a procedure's CALL is not. A savepoint statement of a program is not atomic itself, so ROLLBACK TO goes back past the start of the statement running. |
+| Recovery | §17.8 GR3d | Going back logs no record of its own. The changes since the savepoint are marked undone as a failed statement's are, so recovery and a standby replaying the log leave out the rows and the changes of definitions cancelled. |
+| ROUTINES | 11:2006 draft §5.49, §6.40 Description 21 | NEW_SAVEPOINT_LEVEL is YES of a function and of a procedure of NEW SAVEPOINT LEVEL, NO of another procedure. |
+
+SAVEPOINT and RELEASE are no key words of SQL-92, so each stays an
+identifier, read as a word where a savepoint statement reads it. A
+ROLLBACK TO SAVEPOINT in a routine's body that would cancel a change of
+definitions staged before the statement invoking the routine began is
+refused, SQLCODE -900, as that statement runs on those definitions. Run
+directly, it cancels them. The command codes are SAVEPOINT 63, RELEASE
+SAVEPOINT 57 and ROLLBACK WORK 62 [§23.1 Table 39].
+
+### Bracketed comments
+
+Feature T351 (Bracketed comments) is claimed [§5.2 SR11, SR12]. A
+`<bracketed comment>` is a separator, as a `<simple comment>` is, and
+one begun within it nests, so each needs its own `*/`. One not ended is
+SQLSTATE 2A000, SQLCODE -101. \[EXTENSION\] One that begins a statement
+and whose contents begin with `+` holds hints, of which
+VECTOR_WAIT_FRESH is read (RULES.md D105).
+
 ## SQL/PSM
 
 Persistent stored modules, ISO/IEC 9075-4, written from its 2006 draft
@@ -1824,7 +1999,7 @@ P001 (Stored modules) and P003 (Information Schema views).
 | Feature | Rules | What turborel does |
 |---|---|---|
 | Where a program stands | §4.10.7, §9.19, §11.2, §4.10.6 | An SQL control statement is a routine's body, a trigger's action, a statement of another one, or a statement run directly, alone a procedure of no parameters. A compound statement and the other control statements are not preparable, SQLCODE -103, but SIGNAL and RESIGNAL are. |
-| COMMIT and ROLLBACK | §14.1 SR6, §14.13 SR9, §4.10.4; 2023 §11.60 SR23f | In an ATOMIC compound statement or a FOR, SQLCODE -103 [SR6, SR9]. In a routine's body, SQLCODE -103 (IA078). In a control statement NOT ATOMIC run directly, a non-atomic execution context, they end the transaction, its cursors closed [2023 §17.7 GR3], and the statements after run in a new one, begun as the first needs one. In a handler's action while an ATOMIC compound statement runs, an atomic execution context, SQLSTATE 2D000 [2023 §17.7 GR2, §17.8 GR2]. A statement after one that changes a definition sees it. |
+| COMMIT and ROLLBACK | §14.1 SR6, §14.13 SR9, §4.10.4; 2023 §11.60 SR23f | In an ATOMIC compound statement or a FOR, SQLCODE -103 [SR6, SR9], but ROLLBACK TO SAVEPOINT in an ATOMIC one, which goes back to a savepoint established in it [2023 §17.8 GR3c]. In a routine's body, SQLCODE -103 (IA078), but ROLLBACK TO SAVEPOINT. In a control statement NOT ATOMIC run directly, a non-atomic execution context, they end the transaction, its cursors closed [2023 §17.7 GR3], and the statements after run in a new one, begun as the first needs one. In a handler's action while an ATOMIC compound statement runs, an atomic execution context, SQLSTATE 2D000 [2023 §17.7 GR2, §17.8 GR2]. A statement after one that changes a definition sees it. |
 | Compound statement | §14.1 SR1 to SR17, GR1 to GR5 | Its declarations in order, variables and conditions, then cursors, then handlers, its statements, and its labels, the ending one the beginning one's. No two variables, conditions, cursors or handlers' condition values alike in it. NOT ATOMIC is the default. ATOMIC, an exception no handler handles undoes it whole. UNDO handlers only in an ATOMIC one. Its variables are created, of their defaults, as it begins, its cursors destroyed as it ends. |
 | Atomic statements | ISO/IEC 9075-2:2023 §4.41.5 | Each statement of a program but CALL, RETURN, a compound statement NOT ATOMIC and the control statements is atomic: one that fails is undone alone, its program's earlier changes kept for a handler. |
 | Variables | §14.4, §6.2 SR3 to SR7, §6.3 | Of a data type or a domain, several to one declaration. The default is a `<default option>`, else the domain's, else null. A name is found in the innermost scope that has it: a query's own columns first, then each compound statement's variables inward to outward, then the routine's parameters. A compound statement's label, written or implicit, qualifies its variables (P005). |
@@ -1858,7 +2033,7 @@ reserves are never a correlation name written without AS.
 XML-related specifications, ISO/IEC 9075-14, written from its 2006 draft
 (`5CD2-14-XML-2006-01`), its clause numbers cited with that edition, and
 from the W3C texts the draft names, at the editions it names (RULES.md
-D86). Part 14 adds the XML type, whose values are XQuery sequences, and
+D106). Part 14 adds the XML type, whose values are XQuery sequences, and
 the operators that make them and write them.
 
 Features X010 (XML type), X016 (Persistent XML values), X020
@@ -1924,11 +2099,11 @@ XML Schemas; Static Typing, Module and Serialization are not.
 | Feature | Rules | What turborel does |
 |---|---|---|
 | The XML types | §4.2.2, §6.1 SR1 to SR4, GR1 | XML(DOCUMENT), XML(CONTENT), each UNTYPED, ANY or XMLSCHEMA, and XML(SEQUENCE). XML alone is XML(SEQUENCE), and DOCUMENT or CONTENT alone is ANY [SR2, SR3b]. A type of XMLSCHEMA's descriptor holds the indicated registered XML Schema, by its name [§4.2.6], and the indicated namespace and global element declaration's NCName, if any [SR4, GR1d to GR1f]; it is written with ID and the full name, kept in the catalog and described over a connection with them. |
-| What a definition names | §4.2.6 | The registered XML Schema an `<XML valid according to what>` of a view, a CHECK, a domain constraint, an assertion, a trigger or a routine indicates is the one it indicated as it was created, kept with the definition and taken whenever it is used, invoked or evaluated; the definition depends on it (RULES.md D86). So are the in-scope schema definitions of a validate expression of its query [§10.20 SR2e]. |
+| What a definition names | §4.2.6 | The registered XML Schema an `<XML valid according to what>` of a view, a CHECK, a domain constraint, an assertion, a trigger or a routine indicates is the one it indicated as it was created, kept with the definition and taken whenever it is used, invoked or evaluated; the definition depends on it (RULES.md D106). So are the in-scope schema definitions of a validate expression of its query [§10.20 SR2e]. |
 | `<XML valid according to clause>` | §11.6 SR1 to SR4, AR1, GR1 | ID a `<registered XML Schema name>` [SR1]; URI a target namespace, NO NAMESPACE the zero-length one, LOCATION a schema location too, of the registered XML Schemas the user may use, the one the choice below takes [SR2b ii]; of none, SQLCODE -103 [SR2c]. The element clause's namespace, else the target namespace [SR4a], and its ELEMENT, an `<identifier>`'s text, must be the registered XML Schema's, else SQLSTATE 2201M or 2201N as the clause is bound [SR4b, SR4d iii, GR1]. Its user, or of an SQL schema statement not under SQL SECURITY INVOKER its schema's owner, may use it [AR1] (`catalog::xml_schemas::may_use`), else SQLCODE -104. One permanently registered is SQLCODE -900, as turborel holds none of its components. |
 | XMLVALIDATE | §6.20, §10.22 | DOCUMENT, CONTENT or SEQUENCE of an XML value [§6.9 SR1], of the type SR3 gives: of a DOCUMENT or CONTENT type, of XMLSCHEMA of what the clause indicates, else ANY; of XML(SEQUENCE), XML(SEQUENCE). The null value of the null value [GR2]; DOCUMENT of no document SQLSTATE 2200M, CONTENT of no one document node 2200N, an atomic value, attribute or text node 2201J [GR3]; the empty sequence of the empty sequence [GR4]. Each element is validated by §10.22, XQuery's `validate strict` (`xml::schema::validate`): of DOCUMENT the document node, its identity constraints and IDs checked; else each element child of a document node, and each element, alone [GR6a iii 2 C, GR6b iii]. Its registered XML Schema is the clause's, else its namespace's the user may use, as the choice below takes, none 2201L [GR6a iii 2 A, GR6b i]; an element not of the element clause's QName 2201P, namespace 2201Q [B, ii]; one not valid 2201R [D, iv]; a document node's child no element, comment or processing instruction 2201K [GR6a iii 1]. Comments and processing instructions copied [§10.18] [GR6a iii 3, GR6c]. The nodes made are typed, as XQuery's data model types them [XQueryDM §3.3]. |
 | IS VALID | §8.5, §6.4 | Of one XML value [SR1], IS NOT its negation [SR3]; a `<when operand>` of a simple CASE. Unknown of the null value [GR2]; False of a value not of the shape DCS asks [GR3 to GR5b], True of an empty sequence of SEQUENCE [GR5a]; else True AND each item's truth: an element of no registered XML Schema found Unknown [GR7a iii 3 B I, GR7b ii 1], one of another QName or namespace than the element clause's, or not valid by §10.22, False [GR7a iii 1, 3 B II, GR7b ii 2], a comment or processing instruction True [GR7c]. Anywhere a predicate is, a CHECK too. |
-| XML values | §4.2.3 | An XQuery sequence of nodes and atomic values. A value held in a column is its stored form (RULES.md D86): in the row when short, else as the table's large objects, logged and recovered as large objects are. One inside an array, a multiset, a row or a structured value is held whole in that value's row, its stored form at most 64 MiB, else SQLCODE -900. |
+| XML values | §4.2.3 | An XQuery sequence of nodes and atomic values. A value held in a column is its stored form (RULES.md D106): in the row when short, else as the table's large objects, logged and recovered as large objects are. One inside an array, a multiset, a row or a structured value is held whole in that value's row, its stored form at most 64 MiB, else SQLCODE -900. |
 | Assignment | §4.2.4, §10.1 SR1, GR1, §10.2 SR1, GR1 | An XML value to an XML site alone, an UNTYPED one's of an UNTYPED type, one of XMLSCHEMA of a type of XMLSCHEMA of the same registered XML Schema, of the namespace and the element the site's includes, if any [§10.2 SR1b ii], else SQLCODE -103. A DOCUMENT site takes a document, else SQLSTATE 2200L; a CONTENT site one document node, else 2200U. A value stored is a copy. |
 | XML within other types | §6.1 CR2, CR3, §6.2 CR1, §12.5 CR1, §12.6 CR1, §12.7 CR1, §10.4 SR1, §10.5 SR1 | An array or multiset of an XML type or of a distinct type of one; a distinct type whose source is an XML type, its function to its source named XML [§10.5 SR1], of no ordering; an attribute of a structured type, and a field of a row type, of either; a parameter or result of an SQL routine of any of them. Each is stored, read, assigned and cast part by part, an XML part checked as §10.2 GR1a and §6.5 GR1a check one. Every XML type's type precedence list is XML [§10.4 SR1], so a routine of an XML parameter takes an argument of any XML type that is assigned to it. |
 | Not comparable | §4.2.4, §10.8 SR1 to §10.11 SR1 | No equality, grouping or ordering operation takes an XML value: comparisons, IN, quantified comparisons, MATCH, UNIQUE, DISTINCT, IS DISTINCT FROM, NULLIF, a simple CASE, GROUP BY, ORDER BY, set operations but UNION ALL, MIN and MAX, a NATURAL or USING join's common column, keys, and indexes but the XML methods' ([Indexes](#indexes)), SQLCODE -103. |
@@ -1948,7 +2123,7 @@ XML Schemas; Static Typing, Module and Serialization are not.
 | CAST | §6.5 SR1 to SR4, GR1 | Of an XML type to an XML type alone [SR3]. BY REF is implicit [SR2], to an UNTYPED type of an UNTYPED one [SR4a], to one of XMLSCHEMA of one assignable to it [SR4b]. To a DOCUMENT or CONTENT type, as assignment checks it [GR1a]. BY VALUE to a type of XMLSCHEMA is XMLVALIDATE of DOCUMENT or CONTENT according to it [GR1b i 1]; to ANY or SEQUENCE a copy [§10.18] [GR1b i 2]; to UNTYPED an unvalidated document node [§10.19] [GR1b i 3]. |
 | XMLPARSE | §6.16, §10.16 | Of a character string or a binary string, large objects too. DOCUMENT parses a textual XML 1.0 or XML 1.1 document, else 2200M; CONTENT a document or an external parsed entity, else 2200N [GR6a]. The internal DTD subset's entities are expanded and its attribute defaults applied [GR7c, GR7d]. STRIP WHITESPACE removes text of white space alone by `xml:space` [GR8]. Its type is XML(DOCUMENT(UNTYPED)) or XML(CONTENT(UNTYPED)) [SR1]. |
 | XMLSERIALIZE | §6.8, §10.15 | To a character or a binary string, by the XML output method of XSLT 2.0 and XQuery 1.0 Serialization, after its sequence normalization. CONTENT if neither is written. DOCUMENT of a document alone, else 2200L. VERSION '1.0' or '1.1'. A binary string in UTF8 or UTF16. INCLUDING and EXCLUDING XMLDECLARATION. The result is stored in its type as assignment stores it, too long 22001. A value with no serialization, an attribute alone among others, is 2200W. |
-| Over a connection | RULES.md D86 | A column of an XML type is described with its modifiers. A value is sent as its serialization as CONTENT, refused with 2200W if it has none, and a client parses it as CONTENT when it needs its nodes. A value sent as a parameter is kept as sent. |
+| Over a connection | RULES.md D106 | A column of an XML type is described with its modifiers. A value is sent as its serialization as CONTENT, refused with 2200W if it has none, and a client parses it as CONTENT when it needs its nodes. A value sent as a parameter is kept as sent. |
 | USAGE on registered XML Schemas | §4.7.1, §11.6 AR1 | Granted and revoked by GRANT and REVOKE USAGE ON XML SCHEMA, as on a sequence generator: USAGE or ALL PRIVILEGES alone, else SQLCODE -103; its schema's owner holds it with grant option; a grant needs it held grantably, else warning 01007, and none held is -104; REVOKE takes the grants named or their grant option, with the grants they abandon and, of each schema whose owner it leaves without USAGE, what names it as DROP XML SCHEMA finds it (registered XML Schemas using it; views, constraints, assertions, triggers and routines indicating it), dropped as DROP XML SCHEMA CASCADE drops them, RESTRICT refusing that with SQLSTATE 2B000; a column, domain or user-defined type of an XML type of it refuses even CASCADE, 2B000, as DROP XML SCHEMA refuses it. CREATE XML SCHEMA's library is the registered XML Schemas its schema's owner may use, by these grants [§11.6 AR1a]. `catalog::xml_schemas::may_use` is §11.6 AR1's check, for the statements that name one. |
 | Descriptor areas | §17.1 GR1, Table 12 | XML is code 137. An item of it matches any XML type. |
 | XMLQUERY | §6.18, §11.5 | A query of a `<character string literal>`, parsed by XML 1.1's lexical rules [GR2a] and analysed as the statement is bound in the static context §10.20 makes [SR5, SR6]. PASSING and its default mechanism, then each argument a `<value expression>`, the context item at most once [SR5b i], a variable AS an XML 1.1 NCName, none twice [SR5a i, ii]; an XML value BY REF its nodes, BY VALUE a copy [§10.18]; another value XMLCAST to XML(SEQUENCE), of no mechanism [SR5a iv, v, SR5b iii, iv]; else SQLCODE -103. A null context item makes the null value [GR1a ii 1], a null variable the empty sequence [GR1b i 1], a context item of more than one item SQLSTATE 2200V [GR1a ii 2 B III]. RETURNING CONTENT, of no returning mechanism [SR4a], is XMLDOCUMENT of the value RETURNING SEQUENCE BY VALUE [SR10a]; RETURNING SEQUENCE of its mechanism or the default passing mechanism, else SQLCODE -103 [SR4b, SR4c], of XML(SEQUENCE). NULL ON EMPTY gives the null value of the empty sequence [GR4a]; a returning mechanism BY VALUE a copy [GR4b]. Every XQuery error, static, type or dynamic, is SQLSTATE 10000, its message naming the error's QName [GR3]. |
@@ -1959,7 +2134,7 @@ XML Schemas; Static Typing, Module and Serialization are not.
 | XQuery: built-in functions | XQueryFO §2 to §16 | Every function of [XQueryFO], of each number of arguments its signatures take (`xquery/library.rs`, one file of each section): the accessors, fn:error and fn:trace, fn:dateTime, the functions on numbers, strings, URIs, booleans, durations, dates and times, QNames, nodes and sequences, and the context functions; each converts its arguments by its signature's function conversion rules [XQuery §3.1.5]. A constructor function of each atomic type is its cast [XQuery §3.12.5]. The operators' functions [XQueryFO §1.2] back up XQuery's arithmetic, comparisons, ranges, node comparisons, union, intersect and except [XQuery Appendix B.2]. \[EXTENSION\] A plug-in registers more (`Database::register_xquery_function`), called by name and arity or declared `external` [XQuery §4.15]. |
 | Mappings of tables, schemas and catalogs | §4.10.8 to §4.10.11, §9.4 to §9.17 | \[EXTENSION\] Through XMLMAP ([XMLMAP](#xmlmap)), as the draft gives them no syntax [§4.10.9 NOTE 13]. TABLE, SCHEMA and CATALOG map to the data [§9.10, §9.13, §9.16], the XML Schema document [§9.9, §9.12, §9.15, §9.7], or both [§9.11, §9.14, §9.17], with each of NULLS absent and nil, TABLEFOREST, TARGETNS and ENCODING. A column is visible with SELECT on its table and, of a distinct type, EXECUTE on its cast to its source type; XML visible if its type maps, so not of XML(SEQUENCE), a structured or reference type, nor based on one [§4.10.8], nor, \[EXTENSION\], of DECFLOAT or a plug-in's type, which §9.5 maps to no type, nor based on one. A row, an array or a multiset is mapped as §9.8 maps it [GR9i, GR9j], a null field nilled of NULLS nil, its type a complex type [§9.5 GR8n, GR8p, GR8q], defined with the types it is made of [§9.7 GR3b, GR3d]. A schema's and the catalog's mappings hold their XML visible tables and schemas alone, those there are as they run. A view, routine or trigger that maps a schema depends on it: DROP SCHEMA RESTRICT is refused while it is there, CASCADE drops it. A mapping of a schema or the catalog leaves out a view that maps a schema or the catalog, or reads one that does, as it could hold itself, and is refused (SQLCODE -103) where a routine would. A visible column that is not XML visible completes the statement with the warning column cannot be mapped, 01010 [§9.11 GR3, §9.14 GR3, §9.17 GR3]. A table's names, columns' and types' are mapped by §9.1 and §9.2, fully escaped; its values by §9.8. |
 | Information Schema | §20.3 to §20.11, §21.1 to §21.3 | ATTRIBUTES, COLUMNS, DOMAINS, ELEMENT_TYPES, FIELDS, METHOD_SPECIFICATIONS, METHOD_SPECIFICATION_PARAMETERS, PARAMETERS and ROUTINES show an XML type's XML_PRIMARY_MODIFIER, DOCUMENT, CONTENT or SEQUENCE, and XML_SECONDARY_MODIFIER, UNTYPED or ANY, null of SEQUENCE [§21.1 Description 1a]. The XML_SCHEMA_ columns show a type of XMLSCHEMA's registered XML Schema, its catalog, schema and name, and its XML namespace and element if it names them [§21.1 Description 1a iii], from the type's descriptor (`value::types::Descriptor::xml_schema`); all seven are null of another type. PARAMETERS shows XML_PASSING_MECHANISM and ROUTINES XML_RETURN_MECHANISM, BY REF of a parameter or result of an XML type, else null; the associated string type's columns and XML_OPTION are null, as an external routine alone has them [§12.7 SR1]. No view shows the RESULT_CAST_XML_ columns, as none shows a `<result cast>`'s; ROUTINES shows XML_CHAR_TYPE once, as ROUTINES_S does [§20.15]. NCNAME and URI are not defined as domains, as CHARACTER_DATA is not [§20.1, §20.2]. The views of registered XML Schemas [§20.12 to §20.14] wait for them. |
-| Registered XML Schemas | §4.2.6, §5.2, §11.6 AR1a | Registered by CREATE XML SCHEMA, of a `<registered XML Schema name>` in a schema its creator owns [§5.2], from one document, a character string, binary string or XML value; dropped by DROP XML SCHEMA, RESTRICT refused while a registered XML Schema includes, redefines or imports it, or a routine has a parameter or result of a type of XMLSCHEMA of it, or a view, constraint, assertion, trigger or routine names it, CASCADE dropping those, and refused even so while a column, a domain or a user-defined type is of such a type (RULES.md D86). Two of one name are refused, SQLCODE -103 [§4.2.6]. The owner of its schema may use it, and anyone a permanently registered one [§11.6 AR1a] (`catalog/xml_schemas/privileges.rs`); a permanently registered one is never registered again nor dropped. Its descriptor holds its target namespace, schema location, name, whether permanent, whether non-deterministic, and its namespaces with their global element declarations, the last three read from its schema [§4.2.6]. |
+| Registered XML Schemas | §4.2.6, §5.2, §11.6 AR1a | Registered by CREATE XML SCHEMA, of a `<registered XML Schema name>` in a schema its creator owns [§5.2], from one document, a character string, binary string or XML value; dropped by DROP XML SCHEMA, RESTRICT refused while a registered XML Schema includes, redefines or imports it, or a routine has a parameter or result of a type of XMLSCHEMA of it, or a view, constraint, assertion, trigger or routine names it, CASCADE dropping those, and refused even so while a column, a domain or a user-defined type is of such a type (RULES.md D106). Two of one name are refused, SQLCODE -103 [§4.2.6]. The owner of its schema may use it, and anyone a permanently registered one [§11.6 AR1a] (`catalog/xml_schemas/privileges.rs`); a permanently registered one is never registered again nor dropped. Its descriptor holds its target namespace, schema location, name, whether permanent, whether non-deterministic, and its namespaces with their global element declarations, the last three read from its schema [§4.2.6]. |
 | The views of registered XML Schemas | §20.12 to §20.14, §21.4 to §21.7, §4.2.6 | XML_SCHEMAS, XML_SCHEMA_NAMESPACES and XML_SCHEMA_ELEMENTS, the draft's definitions over Definition Schema tables of the same names, show the registered XML Schemas the user, PUBLIC or an enabled role holds USAGE on, the permanently registered ones among them; USAGE_PRIVILEGES shows USAGE on each, of OBJECT_TYPE XML SCHEMA [§21.4]. A schema's namespaces are its target namespace and each of its top-level components', those it imports among them; an element declaration is non-deterministic if its type, or that of an element in its content at any depth, has a wildcard of `##any` or `##other` processed strictly or laxly, a namespace if one of its element declarations is, a schema if one of its namespaces is [§4.2.6]. No short-name view is defined [§20.15]. |
 
 | Choice | Rules | turborel |
@@ -1987,7 +2162,7 @@ XML Schemas; Static Typing, Module and Serialization are not.
 | CAST of a distinct type of XML | §6.5 SR3, ISO/IEC 9075-2:2023 §11.51 GR2b, §6.13 SR12 | By the type's own casts to and from its source, as Part 2 makes them for every distinct type, though §6.5 SR3's table writes N between XML and a user-defined type: without them no value of the type could be made (X013). |
 | The XML Schema types of SQL's numbers and BOOLEAN | §9.5 GR8d iv, GR8e viii, GR8f | INTEGER, SMALLINT and BIGINT restrictions of `xs:integer`, an XML Schema document's by their greatest and least values; REAL and FLOAT of 24 bits or fewer `xs:float`, DOUBLE PRECISION and other FLOATs `xs:double`; BOOLEAN `xs:boolean`, each named by a restriction of no facet [§9.6 GR6b iv]. |
 | Annotations of XML Schema types | §4.10.5, §9.5 GR8 | None is written, so no type an XML Schema document defines uses the namespace of `sqlxml` (`functions/xml/map/types.rs`). |
-| XMLMAP's clauses not written | RULES.md D86 | NULLS ABSENT, as XMLFOREST leaves a null value out; AS ELEMENT, TABLEFOREST False; TARGETNAMESPACE '', no namespace [§9.10 GR1]; DATA; ENCODING of the XMLBINARY in scope, HEX outside every one, as of XMLCAST, XMLELEMENT and XMLFOREST [§11.3]. |
+| XMLMAP's clauses not written | RULES.md D106 | NULLS ABSENT, as XMLFOREST leaves a null value out; AS ELEMENT, TABLEFOREST False; TARGETNAMESPACE '', no namespace [§9.10 GR1]; DATA; ENCODING of the XMLBINARY in scope, HEX outside every one, as of XMLCAST, XMLELEMENT and XMLFOREST [§11.3]. |
 | The version and encoding of a mapping's documents | §9.11 GR7b, GR8, §9.14 GR8b, GR9, §9.17 GR8b, GR9 | XML 1.0, unless a name of the XML Schema document is of XML 1.1 alone [GR7a]; UTF-8, so XMLDECL is written of XML 1.1 alone, and its encoding never (`functions/xml/map.rs`). |
 | SLOC, the location of `sqlxml`'s XML Schema | §9.11 GR10c, §9.14 GR11c, §9.17 GR11c | None: no type uses `sqlxml`, so XSDIMP and XSDECL are the zero-length string (`functions/xml/map/documents.rs`). |
 | IDI, a row type's identifier | §9.4 GR19 (implementation-dependent) | The multi-part name [§9.2] of each field's name and its type's XML Name in turn, so `Row.X.INTEGER.Y.VARCHAR_5` (`functions/xml/map/composites.rs`). |
@@ -2004,7 +2179,7 @@ XML Schemas; Static Typing, Module and Serialization are not.
 | The names of `xs:Name`, `xs:NCName`, `xs:NMTOKEN` and their kin | Schema2 §3.3.4 to §3.3.11 | XML 1.1's, the names of XQuery's evaluations under XML 1.1's lexical rules [§6.6 GR3d vi, GR4j] and those `\i` and `\c` match in a pattern. |
 | `xs:gMonth` | Schema2 §3.2.14.1 | Written `--MM--`, as the edition SQL/XML names writes it. |
 | A restriction's bounds | Schema2 §4.3.7.2, §4.3.9.4 | A bound's value is of its base's value space, the base's bounds aside, so an exclusive bound may be restated; a bound a step specifies replaces its base's on that side; minInclusive and minExclusive, as maxInclusive and maxExclusive, are refused together in one step. |
-| How deep lists and unions nest | RULES.md D86 | At most 32 deep (`MAX_TYPE_NESTING`), deeper SQLCODE -900. |
+| How deep lists and unions nest | RULES.md D106 | At most 32 deep (`MAX_TYPE_NESTING`), deeper SQLCODE -900. |
 | A QName's value | Schema2 §3.2.18 | Its prefix and local name as written, and its namespace URI [XQueryDM §3.3.3], kept in the stored form; two are equal if their URIs and local names are. A literal cast makes a QName of no namespace, as an atomic value holds no namespace bindings [XQueryFO §17.1.1]. A length facet constrains no QName or NOTATION, as length is measured in no unit of theirs [Schema2 §4.3.1.3]. |
 | The canonical form of the types with none | XQueryFO §17.1.2 | The string XQuery writes: of `xs:date`, the Gregorian types and the durations their local value or canonical duration; of `xs:base64Binary` no spaces. The seconds of a date and time or a time end in no zero, as XQuery writes them. |
 | XMLDOCUMENT's type of CONTENT | §6.13 SR3a | XML(CONTENT(UNTYPED)), so what it makes is unvalidated [GR9a, §10.19], and an UNTYPED column takes what the publishing operators make; XMLCONCAT's document node is of its own declared type (`binder/xml/publish.rs`). |
@@ -2013,7 +2188,7 @@ XML Schemas; Static Typing, Module and Serialization are not.
 | The standalone declaration | §10.15 GR7 | None is written. |
 | An XML declaration not asked for | §10.15 GR8c ii | None, of a document of XML 1.0 in UTF8 or UTF16; one of a document of XML 1.1 [GR8c i]. |
 | Prefixes undeclared | §10.15 GR9b | Of XML 1.1, written so. |
-| How an XML Schema is registered | §4.2.6 | \[EXTENSION\] CREATE XML SCHEMA and DROP XML SCHEMA (RULES.md D86, `db/definitions/xml_schemas.rs`). A registered XML Schema is identified by its `<registered XML Schema name>` alone. Its target namespace is its document's targetNamespace, the zero-length string of none; its schema location is the LOCATION written, the zero-length string if none. Its `<include>`, `<redefine>` and `<import>` find the documents of registered XML Schemas the owner of its schema may use, as §11.6 AR1a asks of one an SQL-schema statement names; those it read are what it depends on. |
+| How an XML Schema is registered | §4.2.6 | \[EXTENSION\] CREATE XML SCHEMA and DROP XML SCHEMA (RULES.md D106, `db/definitions/xml_schemas.rs`). A registered XML Schema is identified by its `<registered XML Schema name>` alone. Its target namespace is its document's targetNamespace, the zero-length string of none; its schema location is the LOCATION written, the zero-length string if none. Its `<include>`, `<redefine>` and `<import>` find the documents of registered XML Schemas the owner of its schema may use, as §11.6 AR1a asks of one an SQL-schema statement names; those it read are what it depends on. |
 | Schema documents read | Schema1 §2.4, §4.2, §4.3.2, §5.1 | A schema is read from schema documents, each a `<schema>` that is its tree's element (`xml/schema/read.rs`). `<include>`, `<redefine>` and `<import>` find documents among those the schema is read with alone, by schema location, or for an import by namespace; none is fetched, so turborel is a processor in conformance to the XML Representation of Schemas, not a fully conforming one. A location naming no such document adds no components [§4.2.1]. The XML Schema namespace's components are its built-in ones, named without an `<import>`. |
 | Missing sub-components | Schema1 §5.3 | None: a reference that resolves to nothing is refused as the schema is read. |
 | The Schema for Schemas | Schema1 §5.1, Appendix A | Each element of a schema document is checked against the attributes of no namespace and the order of children its XML Representation Summary gives (`xml/schema/read/shape.rs`), not validated against the Schema for Schemas. |
@@ -2028,7 +2203,7 @@ XML Schemas; Static Typing, Module and Serialization are not.
 | An element of simple content | XQueryDM §6.2.4 | One text node, its schema normalized value, absent if empty, before its comments and processing instructions. |
 | Default values | Schema1 §3.4.5, §3.3.5 | An absent attribute takes its use's value constraint, else its declaration's. An empty element of mixed content takes its declaration's default as text too. An attribute added in a namespace takes a prefix bound to it in scope, if one is. |
 | Entities and notations | XQuery §3.13 | `xs:ENTITY` and `xs:NOTATION` values are not checked against unparsed entities and notations, as XQuery's validate does not check them; a NOTATION value is a QName whose prefix is in scope [Schema1 §3.15.3]. |
-| Limits of reading a schema | RULES.md D18, D86 | Declarations, groups and types nested 64 deep where reading recurses; 64 types of a derivation or declarations of a substitution group, or simple types read by way of one another; 256 documents. Past one, SQLCODE -900. |
+| Limits of reading a schema | RULES.md D18, D106 | Declarations, groups and types nested 64 deep where reading recurses; 64 types of a derivation or declarations of a substitution group, or simple types read by way of one another; 256 documents. Past one, SQLCODE -900. |
 | The other serialization parameters | §10.15 GR10 | No CDATA section, document type declaration, indentation, URI escaping, content type, Unicode normalization or character map. |
 | Notations and unparsed entities | §10.16 GR7a ii, iii | Not kept. |
 | Base URI | §10.16 GR7b | None. |
@@ -2047,7 +2222,7 @@ XML Schemas; Static Typing, Module and Serialization are not.
 | Copy-namespaces no-preserve | XQuery §3.7.1.3 | Each copied element declares the bindings its name and attributes' names use; one copied below another keeps too those its copied ancestors declare, as a tree holds bindings where they are declared. |
 | A prefix made for a constructed name | XQuery §3.7.4 | `ns1`, `ns2` and on, or the prefix taken followed by its next free number. |
 | XQuery's Unicode and XML versions | XQuery §2, §3.1.1, §3.7.1.1 | Names, characters, character references and attribute normalization of XML 1.1 and Namespaces in XML 1.1, as XMLQUERY reads by XML 1.1's lexical rules [§6.18 GR2a]. |
-| The functions and operators of XQuery | XQueryFO §1.1 | The built-in functions of every query, and the operators its evaluation calls (RULES.md D86). Unicode 13.0, the version of the collations and regular expressions. |
+| The functions and operators of XQuery | XQueryFO §1.1 | The built-in functions of every query, and the operators its evaluation calls (RULES.md D106). Unicode 13.0, the version of the collations and regular expressions. |
 | The precision of `xs:decimal` and `xs:integer` operations | XQueryFO §6.2 | Any digits to 1,024, past which an operation overflows, err:FOAR0002; no integer is of limited precision, so none wraps. A quotient of decimals is exact if it ends within 18 digits after the period, or the scale of either operand, and is truncated there otherwise. |
 | Overflow and underflow of floats and doubles | XQueryFO §6.2 | IEEE 754's: an infinity, or a zero or subnormal value. A float's operation is rounded to single precision. |
 | fn:error and fn:trace | XQueryFO §3, §4 | The error is SQLSTATE 10000, its message the QName as `NS#LP` and the description; an error object is not returned. The trace is discarded. |
@@ -2108,6 +2283,104 @@ the column where what follows it ends a value expression.
 
 ---
 
+## SQL/MM Full-Text
+
+ISO/IEC 13249-2:2002, cited by its committee draft (CD, SC32 N0640), is
+built in (RULES.md D87). Its types FULLTEXT and FT_PATTERN, the FullText
+methods and FullText_to_Character, Contains, Rank, the thesaurus tables
+of clause 8 and FT_INFORMATION_SCHEMA's views FT_FEATURES and FT_SCHEMATA
+are implemented, as is the whole pattern language of §5.3.1. The manual
+is [doc/sql/08-fulltext.md](doc/sql/08-fulltext.md).
+
+A method is written `doc.Contains(p)`, or as a call, `CONTAINS(doc, p)`,
+and `NEW FullText(t)` is `FULLTEXT(t)`. LANGUAGE is a reserved word, so
+its method is written `doc."LANGUAGE"`. Contains gives 1 or 0, so a
+query compares it, `CONTAINS(doc, p) = 1`, and a full-text index of the
+column answers that comparison.
+
+### Implementation-defined values
+
+| Value | turborel |
+|---|---|
+| FT_MaxTextLength [§5.1.1 DR2] | 32,767 characters. A value is held inline, as every extension type's is; past it, SQLSTATE 22001 |
+| FT_MaxPatternLength [§5.3.1 DR1] | 32,767 characters |
+| FT_MaxLanguageLength [§5.1.1 DR4] | 32 |
+| FT_DefaultLanguage [§5.1.1 DR5] | ENGLISH |
+| Languages [§5.1.9] | ENGLISH and NONE, in any case, trailing blanks ignored; another, an empty or a null one is SQLSTATE 2FF02 |
+| FT_MinRankValue, FT_MaxRankValue [§5.1.3] | 0 and the greatest DOUBLE PRECISION |
+| FT_RankDeterminism [§5.1.1 DR6] | NOT DETERMINISTIC. A rank moves with its index's statistics, which a statement reads once, so it is fixed within a statement |
+| Thesauri [§8.3 D1] | Those whose names FT_THESAURUS's tables hold, made by the user with clause 8's definitions; at most 65,535 relations a statement, the greatest array |
+| Comparison of FULLTEXT values | §5.1.1 defines none. Two compare by language, then by text in code point order, and are equal only of the same language and text |
+| Casts | A character string casts to FULLTEXT in ENGLISH and FULLTEXT to a character string as its text [§5.1.10]. A string is no FULLTEXT by assignment; it is an FT_PATTERN by assignment |
+| A null string [§5.1.9] | FULLTEXT(NULL) is null, not a value of null contents |
+| A document of no characters [§5.1.2 D3c ii] | Contains gives 0 and Rank 0, of every pattern, NOT patterns too. A document of characters but no words matches a NOT pattern [§6.4.2] |
+| Nulls | A null document gives null before its pattern is read, then a null pattern null |
+
+### Reading patterns
+
+| Choice | turborel |
+|---|---|
+| Words [§5.3.1 D3a, D3b] | Separated by white space; any character but an unescaped `"`, `""` being one `"` |
+| Language specification [§5.3.1 D3c] | A name just before the quote, in any case; else the document's language |
+| Normalization [§4.5, §6.4.5] | A word with no wild card is cut as a document is, so `"e-mail"` is the phrase e mail; a run between wild cards is normalized. Such a phrase inside a NEAR list is SQLSTATE 2FF01 |
+| Escapes | An escape before anything but itself, `%` or `_` is 2FF01, as is an escape not one character |
+| Optional words | A phrase part of unescaped `%` alone; a phrase of optional words alone is 2FF01 |
+| Stop words [§4.4.2, §6.6.2] | Never 2FF01. A pattern of stop words alone is 2FF03. A lone stop word matches nothing, and inside a phrase matches any stop word of the document |
+| A literal of another language [§6.4.2, §6.5.2] | LIKE over normalized text, its stop words and stems of its own language |
+| Phrases | May cross a sentence's end; in a context condition a match lies wholly in one unit |
+| IS ABOUT [§6.17.2] | Any word of the phrase that is not a stop word |
+| SOUNDS LIKE [§6.9.5] | American Soundex of the word's ASCII letters; a word of none matches itself only |
+| FUZZY FORM OF [§6.10.5] | Optimal string alignment distance at most 1, or 2 of a word of 8 or more characters |
+| Thesaurus terms | Deduplicated, read in the start term's language and matched literally; names compared trimmed of blanks; synonyms transitive [§6.13.5] |
+| Nesting | At most 100 levels, else 2FF01; a thesaurus expansion adds at most 64 |
+
+### Tokenizing [§5.1.4–§5.1.8]
+
+| Choice | turborel |
+|---|---|
+| Stop words | Left out of every result, as two of them need compare equal [§5.1.5 D4]; ordinals count them [D7–D9] |
+| TokenizePosition units [§5.1.5 D2] | CHARACTERS, WORDS, SENTENCE(S), PARAGRAPH(S), in any case; another gives null [D5b] |
+| Segmentize units [§5.1.6 D2] | SENTENCE and PARAGRAPH; another gives null, as the draft names no condition |
+| CHARACTERS places | POSITION the word's first character from 1, CORRVAL its length as written; 0 of other units |
+| Segments | From the previous segment's end to the white space after its last word, trimmed, in SELF's language; only sentences and paragraphs holding a word count |
+| Arrays | At most 65,535 elements, else SQLSTATE 2202F; a document of no words gives an empty array |
+
+### Readings of the draft
+
+| Text | Reading |
+|---|---|
+| Proximity, §4.2.5.1 against §6.8.2 | §6.8.2. A distance is the difference of positions in the unit; IN ORDER means the second at or after the first, so two words of one sentence are in order both ways under SENTENCES; WITHIN 0 WORDS is one word, which may match both lists; under CHARACTERS the distance is the characters between the words |
+| Bare lists beside NEAR | Accepted, as §4.2.5.1's example and §5.3.1 D5f write them, though the grammar asks for parentheses |
+| Units [§5.3.1 D3f] | Singular and plural after WITHIN and IN SAME. CHARACTERS and WORDS after IN SAME are 2FF01 |
+| FUZZY FORM OF | Of a `<word>`, as the grammar says, though D5j speaks of phrases |
+| FOR n LEVELS [§6.11.5] | n steps. The draft's query recurses while LEVEL < n from 0, which gives n+1. Without FOR, every level [NOTE 14] |
+| BROADER, NARROWER, SYNONYM, RELATED | Include the start term. PREFERRED and TOP include it only when nothing else is found |
+| TokenizeAndStem, TokenizePositionAndStem | Their own clauses' types, §5.1.7 and §5.1.8, over §5.1.1's FullText ARRAY |
+| FullText_Token, FT_TokenPosition [§7.1, §5.2.1] | CHARACTER VARYING(1024), and a ROW of TOKEN, POSITION and CORRVAL |
+
+### Ranking [EXTENSION]
+
+Rank's value is implementation-dependent [§5.1.3]. It is BM25
+(Robertson and Walker, SIGIR 1994), the sum over the terms the pattern's
+words match, outside NOT, of idf × tf(k1+1) / (tf + k1(1 − b + b·len/avg)),
+with idf = ln(1 + (N − df + 0.5)/(df + 0.5)). k1 and b are the index's
+FULLTEXT.K1 (1.2) and FULLTEXT.B (0.75). The statistics are those of the
+full-text index of the document's column, the first by name of several;
+of no index, every idf is 1.
+
+`Database::register_ranking` adds a ranking, named by an upper-case
+identifier, which an index names by FULLTEXT.RANKING (default BM25,
+changed in place). An unknown name is SQLCODE -103; a ranking giving a
+weight above its own bound is -910. `ORDER BY RANK(doc, p) DESC FETCH
+FIRST n ROWS ONLY`, with a CONTAINS lookup of the same column, reads the
+index best first and stops early. A character string or CLOB document
+[EXTENSION] is read in its index's FULLTEXT.LANGUAGE, else ENGLISH.
+
+### Not implemented
+
+FT_DEFINITION_SCHEMA's base tables [§10] are a model only; the
+information schema views are system tables of the same columns.
+
 ## Extensions
 
 These facilities go beyond the standards, and the code marks them
@@ -2133,7 +2406,7 @@ Plug-ins register these with `Database::register_type` (RULES.md D53).
 
 A value expression mapping a table, a schema or the catalog to XML and
 to an XML Schema document, as Part 14 defines the mappings but gives them
-no syntax [ISO/IEC 9075-14:2006 draft §4.10.9 NOTE 13] (RULES.md D86,
+no syntax [ISO/IEC 9075-14:2006 draft §4.10.9 NOTE 13] (RULES.md D106,
 `parser/xml/map.rs`, `binder/xml/map.rs`, `functions/xml/map.rs`). Its
 clauses are written in this order, each at most once.
 
@@ -2179,8 +2452,8 @@ Stored WKB also requires little-endian components, positive zero and
 the canonical empty-point NaN pair; these checks happen during decoding
 without changing the payload format or the accepted interchange forms.
 The server program registers the type and functions before opening files;
-embedding applications register them explicitly. Function calls retain
-the existing SQL.FUNCTION_CALLS opt-in.
+embedding applications register them explicitly. Sessions call them by
+name while SQL.FUNCTION_CALLS is ON, its default.
 
 The free functions ST_POINT, ST_X, ST_Y, ST_GEOMFROMTEXT, ST_GEOMFROMWKB,
 ST_ASTEXT, ST_ASBINARY, ST_SRID, ST_SETSRID, ST_ISEMPTY and ST_GEOMETRYTYPE
@@ -2280,8 +2553,8 @@ No Simple Features or SQL/MM Spatial conformance is claimed.
 
 ### Indexes
 
-These are RULES.md D34, of the methods `btree`, `hash` and `rtree`, or a
-plug-in's. The statements run outside a transaction. The `rtree` method
+These are RULES.md D34, of the methods `btree`, `hash`, `rtree`,
+`fulltext`, `json`, the vector methods [below](#vector-indexes), or a plug-in's. The statements run outside a transaction. The `rtree` method
 indexes two approximate-numeric point coordinates or four rectangle
 coordinates and answers independent SQL comparisons (`index/rtree.rs`,
 `physical/access/columns.rs`, D72). Inner joins can bind these comparisons
@@ -2318,7 +2591,7 @@ whole so the lookup cannot hide the error (D15). The built-in `btree` and
 function lookup.
 
 The methods `xml_path`, `xml_value`, `xml_property` and `xml_primary`
-index one XML column (RULES.md D86, `src/index/xml.rs`), after the
+index one XML column (RULES.md D106, `src/index/xml.rs`), after the
 PATH_VALUE, VALUE, PROPERTY and primary indexes of Pal et al. (VLDB
 2004): each element and attribute of a value by its path, its value as a
 string and as a number, and its ORDPATH, keyed in that method's order;
@@ -2349,6 +2622,326 @@ checks every row's value (`XmlCost::of_check`), and a table another
 conjunct of which may raise an error is read whole (RULES.md D15).
 EXPLAIN shows the query and whether the index answers it. A value whose
 nodes or keys pass their bounds is refused, SQLCODE -900.
+
+### Full-text search
+
+TEXT_MATCHES(document, words) is true of a document holding every word
+of `words` that is not a stop word, true of a search of stop words
+alone, and null of a null argument (`fulltext/matches.rs`). Both are
+character strings or large objects, read a piece at a time. It reads
+both in English and compares words normalized, not stemmed. ISO/IEC
+13249-2:2002 (CD, SC32 N0640) searches by its FULLTEXT type's CONTAINS
+method instead, [below](#sqlmm-full-text).
+
+The index method `fulltext` answers TEXT_MATCHES of one character string
+column (`index/fulltext.rs`, RULES.md D86). Its options are
+FULLTEXT.LANGUAGE, ENGLISH or NONE, and FULLTEXT.STOP_WORDS, DEFAULT,
+NONE or a list of words, each a rebuild; and FULLTEXT.K1 (0 to 1000,
+1.2) and FULLTEXT.B (0 to 1, 0.75), BM25's weights, changed in place. A
+column with a collation is refused (SQLCODE -900), as its key is its
+sort key and not its text. A word the index takes for a stop word has no
+entries, so a search of it reads the table. A document's places are
+sorted in a work area of 4 MiB before its postings are written, spilling
+beyond it (D38).
+
+13249-2 leaves the tokenizer to the implementation [§4.1, §4.4, §4.5].
+These are turborel's choices (`fulltext/text.rs`).
+
+| Choice | turborel |
+|---|---|
+| Word | A run of Unicode 13.0 letters, numbers and marks, two joined by one connector (Pc) or, between letters, one apostrophe (U+0027 or U+2019). Each Han, Hiragana or Katakana character is a word |
+| Sentence end | `.`, `!` or `?`, with closing brackets and quotes after it, then a blank, a line terminator or the end; U+3002, U+FF01, U+FF0E and U+FF1F alone |
+| Paragraph end | Two line terminators with only blanks between, or U+2029 |
+| Ordinals | Every word, stop words too, from 1; sentences and paragraphs from 1, counting those holding a word |
+| Offset and length | In characters, as written |
+| Normalization [§4.5] | Simple case folding, canonical decomposition, folding again, nonspacing marks (Mn) removed, U+2019 made U+0027 |
+| Stop words [§4.4.2] | English, Snowball's list of 174; NONE, none |
+| Stems [§4.2.3.4] | English, Porter2 (Snowball English, 2006); NONE, the word |
+| Languages [§5.1.9] | ENGLISH, NONE; another is SQLSTATE 2FF02 |
+| Word and term length | A word's first 256 characters; a term's first 255 bytes of UTF-8, cut at a character |
+
+### JSON documents
+
+CAST of a character string to JSON parses it as JSON ( ) does, and CAST
+of JSON to a character string serializes it as JSON_SERIALIZE does,
+where §4.8.1 and Table 6 cast JSON to JSON alone. A character string
+assigned to a JSON site is parsed WITHOUT UNIQUE KEYS, so JSON text is
+the input form of the type.
+
+JSON_CONTAINS(document, candidate) is True if the candidate is
+contained in the document (`functions/json/contains.rs`). A scalar is
+contained if it equals the document, strings by code point and numbers
+as SQL compares them. An object is contained if each member is in the
+member of the same key, and an array if each element is in some element
+of an array, or in the document itself if it is no array. It is null of
+a null argument, and 22032 of an argument that is no JSON text.
+
+The index method `json` answers JSON_EXISTS, JSON_VALUE compared equal
+and JSON_CONTAINS of one column of JSON documents, a character string's
+or the JSON type's (`index/json.rs`, RULES.md D91). A call is a lookup
+if its other arguments are constants or parameters and it reads NULL ON
+ERROR and NULL ON EMPTY, JSON_EXISTS's default FALSE ON ERROR among
+them. Every row found is checked by the WHERE condition. Its options are
+JSON.PATHS_ONLY, ON or OFF (OFF), and JSON.MAX_DEPTH, 0 to 128 (128),
+each a rebuild. A column with a collation is refused, SQLCODE -900, as
+its key is its sort key.
+
+### Indexes of expressions
+
+A key part of CREATE INDEX may be `( <value expression> )`, by `btree`
+or `hash` (RULES.md D92).
+
+| Use | Behaviour |
+|---|---|
+| Admitted | A column, a constant, a negation, a sum, difference or product of exact numbers fitting 18 digits, a CASE of such, UPPER, LOWER, and JSON_VALUE, JSON_QUERY and JSON_EXISTS that cannot raise and read no time zone. |
+| Refused | A quotient, a sum or product that can overflow, a CAST, a subquery, CURRENT_DATE and other possibly non-deterministic functions, JSON ERROR ON ERROR, a path with datetime(), time_tz() or timestamp_tz(), a method other than btree or hash, each SQLCODE -103. |
+| Planner | `=`, ranges, BETWEEN and IN of an expression of the same canonical form probe it; ORDER BY of a never-null one reads a btree index in order. |
+| Maintenance | INSERT, UPDATE of an input column, DELETE, rollback, recovery, ALTER TABLE and temporary tables. Renaming an input column is refused, and dropping one drops the index. |
+| Shown | INDEXES.COLUMN_NAMES gives the key part as written, in parentheses; EXPLAIN shows the probe. |
+
+### Vectors
+
+VECTOR is a built-in type beyond the standards (RULES.md D93), with its
+distances, operators, arithmetic, aggregates and quantization, and
+distance functions of SQL. No ISO standard defines it. It follows the
+vector design document, which reads Microsoft SQL Server 2025's and
+Oracle AI Database 26ai's vector features as one design and is cited
+here as "vector §x" ([below](#the-vector-design-document-clause-by-clause)).
+The SQL Reference Manual's [Vectors](doc/sql/14-vectors.md) and
+[Hybrid Search](doc/sql/15-hybrid-search.md) and the
+[Vector Guide](doc/data/04-vectors.md) describe them.
+
+| Facility | Behaviour |
+|---|---|
+| VECTOR [vector §3] | `VECTOR [(dims, format, layout)]`, each `*` or left out for open. FLOAT32, FLOAT16, FLOAT64, INT8 and BINARY, DENSE or SPARSE. No order and no `=` (D93) |
+| Text forms [vector §5] | TO_VECTOR, VECTOR(text), CAST of text, FROM_VECTOR RETURNING ... FORMAT, and a character string assigned to a VECTOR site |
+| Distances [vector §6.1 to §6.3] | VECTOR_DISTANCE in both argument orders, seven metrics, the shorthand functions and the operators `<-> <=> <#> <+> <~> <%>` |
+| Arithmetic and aggregates [vector §6.5] | `+ - * /`, SUM, AVG, VECTOR_MIN and VECTOR_MAX of each element |
+| Quantization [vector §7.1] | VECTOR_QUANTIZE and VECTOR_DEQUANTIZE; PQ, SQ8 and BQ quantizers of an index |
+| Distance functions [vector §8] | CREATE and DROP VECTOR DISTANCE FUNCTION of LANGUAGE SQL, with EXECUTE (D93) |
+| Plug-ins | `Database::register_metric` and `register_quantizer`, a metric named `NAME` or `SCHEMA.NAME` |
+| Catalog [vector §16] | INFORMATION_SCHEMA.VECTOR_COLUMNS and VECTOR_DISTANCE_FUNCTIONS |
+
+### Vector indexes
+
+The index methods `diskann`, `hnsw` and `ivf` index one dense VECTOR
+column of fixed dimensions and format, FLOAT64 excepted, and `inverted`
+one SPARSE column (RULES.md D95 to D99). A null is not indexed. Each
+serves FETCH APPROX of its own metric only, EUCLIDEAN and
+EUCLIDEAN_SQUARED serving each other, and an index of a NORMALIZED
+column serves COSINE, DOT, EUCLIDEAN and EUCLIDEAN_SQUARED alike.
+
+```
+CREATE VECTOR INDEX name ON table (column) [ORGANIZATION ...] [DISTANCE metric]
+    [WITH TARGET ACCURACY n] [PARAMETERS (...)] [QUANTIZATION ...] [RERANK {ON | OFF}]
+CREATE VECTOR INDEX name ON table (column) [USING method] WITH (option = value, ...)
+ALTER INDEX name {REBUILD [ONLINE] [PARAMETERS (...)] | MERGE DELTA | LOAD | UNLOAD}
+```
+
+Both forms desugar to CREATE INDEX ... USING with the method's options
+(`parser/ddl`, [CREATE VECTOR INDEX](doc/sql/statements/create-vector-index.md)).
+Each method's options, named `METHOD.OPTION`, are in INFORMATION_SCHEMA.INDEX_OPTIONS
+and on that page.
+
+| Method | Structure | Options group |
+|---|---|---|
+| `diskann` | A Vamana graph in pages, PQ codes and the first hops cached in memory (D96) | DISKANN. |
+| `hnsw` | A layered graph in memory, an image and a log in pages (D97) | HNSW. |
+| `ivf` | k-means centroids in memory, lists in pages written through (D98) | IVF. |
+| `inverted` | Postings of a sparse vector's dimensions, searched by block-max WAND (D99) | INVERTED. |
+| `hybrid` | A `fulltext` part and a vector part of two columns, or of a MODEL a `fulltext` index of the text with a table of chunks, their vector index and a pipeline (D100) | HYBRID. and each part's |
+
+`Session::index_accuracy_report(index, samples, k)` gives an index's
+recall against the exact answer (`db/indexes/accuracy.rs`), as
+INDEX_ACCURACY_REPORT asks [vector §10.6], since a statement would give
+no rows.
+
+### Approximate nearest-neighbour search
+
+FETCH {APPROX | APPROXIMATE | EXACT} {FIRST | NEXT} n {ROW | ROWS} ONLY
+[vector §9.1, §9.2] asks for an approximate or an exact search
+(RULES.md D94). APPROX takes WITH TARGET ACCURACY n (1 to 100, R9.4) or
+WITH TARGET ACCURACY PARAMETERS (EFSEARCH n, NEIGHBOR PARTITION PROBES
+n, SEARCH_LIST n, BEAM_WIDTH n). APPROX with WITH TIES or PERCENT is
+refused, SQLSTATE 2A000, SQLCODE -103, as is an accuracy without APPROX
+(`parser/query/ordered/approx.rs`, `binder/limit.rs`). Hints follow the
+fetch clause, `HINT (VECTOR_INDEX(t i), NO_VECTOR_INDEX(t),
+VECTOR_PREFILTER, VECTOR_INFILTER, VECTOR_POSTFILTER, VECTOR_WAIT_FRESH)`.
+
+```
+SELECT ... FROM VECTOR_SEARCH(TABLE = t [AS c], COLUMN = col, SIMILAR_TO = v,
+    METRIC = 'm', TOP_N = n) [AS s]
+```
+
+VECTOR_SEARCH [vector §9.3] is read as a derived table of the table's
+columns and DISTANCE, under the function's correlation name or the
+table's (`parser/query/vector_search.rs`).
+
+An approximate search returns only rows that satisfy the WHERE
+condition, measured again by the query's own distance, and raises what
+an exact search would (D15). Too few rows widen the search, at most 4
+times, then the table is read exactly, unless VECTOR.APPROX_FALLBACK is
+OFF, when the statement is refused with SQLSTATE 0A000, SQLCODE -900.
+EXPLAIN shows the metric, the filter strategy, the target accuracy, the
+search list, beam width, probes and rerank.
+
+### Hybrid search
+
+```
+CREATE HYBRID VECTOR INDEX name ON table (text_column, vector_column)
+    [PARAMETERS (VECTOR_IDX 'parameters', TEXT_IDX 'options')]
+CREATE HYBRID VECTOR INDEX name ON table (text_column)
+    PARAMETERS (MODEL m [, CHUNKER BY unit MAX n [OVERLAP k]] [, MODE {SYNC | ASYNC}]
+    [, VECTOR_IDX 'parameters'] [, TEXT_IDX 'options'])
+SELECT ... FROM HYBRID_SEARCH(INDEX = i, QUERY_TEXT = t [, QUERY_VECTOR = v], TOP_N = n
+    [, CANDIDATES = c] [, FUSION = 'RRF' | 'WEIGHTED'] [, VECTOR_WEIGHT = w]
+    [, TEXT_WEIGHT = w] [, RRF_K = k]) [AS h]
+```
+
+A hybrid index (RULES.md D100) is a `fulltext` index of the text column
+and a vector index of the vector column, HNSW unless VECTOR_IDX's TYPE
+or HYBRID.VECTOR_METHOD names IVF, DISKANN or INVERTED
+([CREATE HYBRID VECTOR INDEX](doc/sql/statements/create-hybrid-vector-index.md)).
+HYBRID_SEARCH reads each part's top CANDIDATES rows, TOP_N × 4 by
+default, and fuses them by RRF, of K 60 by default, or by WEIGHTED
+min-max normalized scores. Its columns are DOC_ID (the table's
+one-column primary key), SCORE, VECTOR_SCORE, TEXT_SCORE, VECTOR_RANK,
+TEXT_RANK and CHUNK_TEXT. EXPLAIN shows both parts' reads. The text
+part serves CONTAINS of the text column too. An index of a MODEL is a
+full-text index of its text, read by CONTAINS and RANK a document a
+row, with a table of the text's chunks, a vector index of their
+embeddings and a pipeline that keeps them. Its search gives each
+document once, at its best chunk, and of no QUERY_VECTOR embeds
+QUERY_TEXT by the model. ALTER INDEX of its MODEL, CHUNKER or MODE makes
+its chunks again, and a database that stopped while one was made or
+dropped drops it whole as it opens.
+
+### Embedding models and pipelines
+
+```
+CREATE EMBEDDING MODEL name [FROM FILE 'path'] WITH (option = value, ...)
+ALTER EMBEDDING MODEL name WITH (option = value, ...)
+DROP EMBEDDING MODEL name [CASCADE | RESTRICT]
+CREATE VECTOR PIPELINE name SOURCE table (columns) [CHUNK BY unit MAX n [OVERLAP m]
+    [SPLIT_ON 'regex'] [NORMALIZE WHITESPACE]] EMBED USING model
+    TARGET table (columns) [MODE {SYNC | ASYNC}]
+DROP VECTOR PIPELINE name [CASCADE | RESTRICT]
+GRANT EXECUTE ON EMBEDDING MODEL name TO ...
+```
+
+| Facility | Behaviour |
+|---|---|
+| Models [vector §12.1] | Schema objects of a registered `Embedder` plug-in, its TYPE (RULES.md D101). The database reads TYPE, VERSION, BATCH_SIZE, ON_ERROR, MAX_RETRIES, DIMENSIONS, FORMAT and LAYOUT, and gives the others to the plug-in. HASH_DENSE and HASH_SPARSE are built in |
+| Calls [vector §12.2] | EMBED(model, text [, 'query' \| 'document']), VECTOR_EMBEDDING and EMBED_VERSION, of a model of the catalog with EXECUTE checked, or of a plug-in by name |
+| Chunks [vector §12.3] | CHUNK_TEXT in FROM, `FROM CHUNK_TEXT(text [, chunking])`, with a correlation name and derived column list |
+| Generated columns [vector §12.4] | `GENERATED ALWAYS AS (EMBED(...)) [STORED] [SYNC \| ASYNC]`, ASYNC filled after commit (D103) |
+| Pipelines [vector §12.5] | Over existing tables, as four row triggers on the source, filled as made (D102) |
+| Freshness [vector R12.6] | `/*+ VECTOR_WAIT_FRESH */` before a statement, outside a transaction, and `Database::wait_for_embeddings` |
+| Views | INFORMATION_SCHEMA.EMBEDDING_MODELS, EMBEDDING_MODEL_PRIVILEGES, VECTOR_PIPELINES and EMBEDDING_QUEUE |
+
+### Vector settings
+
+These are RULES.md D36 settings (`settings/vector.rs`), listed in
+[Appendix C](doc/appendix/c-settings.md).
+
+| Setting | Scope | Default | Range |
+|---|---|---|---|
+| VECTOR.SEARCH_LIST | Session | 0, each index's own | 0 to 10,000 |
+| VECTOR.BEAM_WIDTH | Session | 0, each index's own | 0 to 16 |
+| VECTOR.BUILD_MEMORY_BYTES | Database | 256 MiB | At least 64 KiB |
+| VECTOR.APPROX_FALLBACK | Session | ON | ON, OFF |
+| VECTOR.APPROX_DEFAULT | Session | OFF | ON, OFF |
+
+### The vector design document, clause by clause
+
+Each clause of the vector design document (version 2.0) and turborel's
+state. Yes means implemented as written; any other entry is how
+turborel reads the clause. Networked and distributed search, §15.2, is
+out of scope. A clause not yet done has no row.
+
+| Clause | State |
+|---|---|
+| §1, §2, §20, §21 | Purpose, the vendors compared, the delivery plan and sources; no requirement of their own |
+| §3.1 R3.1 | `VECTOR` alone leaves dimensions, format and layout open, so a sparse value is taken too |
+| §3.1 R3.2, R3.3 | Yes; `float32` and `float16` in any case |
+| §3.1 R3.4 | Yes; a type out of bounds is 2A000, SQLCODE -103, a value 22003 |
+| §3.1 R3.5 to R3.8 | Yes; an index of an open column is -900, and so is a dense index of FLOAT64 (D95) |
+| §3.2, R3.9, R3.10 | Yes; NaN and infinities are 22003 |
+| §3.3 R3.11, R3.12 | Yes; each refused use is -103 (D93), a vector method's UNIQUE index -900 |
+| §4.1, §4.2, R4.1, R4.2 | Yes; a repeated or descending index is 22018 |
+| §4.3 R4.3 | A vector is a value as long as its image, kept in its row or out of line as any long value is |
+| §4.3 R4.4 | Yes, a version byte and the elements of a fixed dense column |
+| §4.3 R4.5 | The column store keeps a fixed vector as a fixed-width field, scanned by the same kernels |
+| §4.3 R4.6 | The image is what is logged, checkpointed and replicated, as any value (D57) |
+| §5.1 | Yes, the JSON object form of a sparse vector too |
+| §5.2 | TO_VECTOR, VECTOR(text ...), CAST of a character string, FROM_VECTOR RETURNING VARCHAR or CLOB FORMAT DENSE or SPARSE, CAST to a character string |
+| §5.2 R5.1 to R5.6 | Yes |
+| §5.3 R5.7 | Every client is sent a vector's type name, its text and its image together, with no negotiation |
+| §5.3 R5.8 | A column's type is sent as VECTOR with its parameters, the dimensions and the format and layout packed |
+| §5.3 R5.10 | `turborel --import` reads the text form of a CSV or TSV field |
+| §6.1 R6.1, R6.2, R6.4 to R6.6 | Yes; a distance function of SQL takes dense vectors only |
+| §6.1 R6.3 | The metric of an index of v1's column, else COSINE (D93) |
+| §6.2, R6.7, R6.8 | Yes, L2_SQUARED too |
+| §6.3, §6.4, §6.5, R6.9, R6.10 | Yes; `/` of two vectors is -103 |
+| §6.6 kernels | Portable lanes the compiler vectorizes for every CPU, with no `unsafe` (R-SAFE-1) |
+| §6.6 overflow, determinism | Yes; overflow is 22003, and every function is deterministic |
+| §7.1 | Yes; VECTOR_QUANTIZE to INT8 clamps to its range, and VECTOR_QUANTIZE_PARAMS gives an ARRAY of scale and zero point |
+| §7.2 | Yes; QUANTIZER NONE, SQ8, PQ or BQ and RERANK of `hnsw`, `ivf` and `diskann`; INVERTED.QUANTIZATION of `inverted` |
+| §7.2 R7.1 | HNSW and IVF give four times the rows asked, a constant; DiskANN its whole search list; the executor measures each again exactly |
+| §7.2 R7.2 | Yes; samples of at most 100,000 vectors, 65,536 of DiskANN, retrained by REBUILD |
+| §8 | CREATE and DROP VECTOR DISTANCE FUNCTION of LANGUAGE SQL; another language is -900 |
+| §8 R8.5 | Yes, -104 |
+| §8 R8.2 | `diskann` and `hnsw` refuse a metric not SYMMETRIC and NON_NEGATIVE, -900 (D95) |
+| §9.1 | Yes, by ORDER BY and FETCH FIRST, and FETCH EXACT |
+| §9.2, §9.3, §9.4 R9.1 | Yes (D94); VECTOR_SEARCH's columns are named by its correlation name, `s.ID` where §9.3 writes `t.id` |
+| §9.5 | A correlated subquery with FETCH APPROX reads the index for each outer row; GROUP BY with MIN(distance) is ordinary SQL over it |
+| R9.2 to R9.5 | Yes (D94) |
+| R9.6 | The nearest read is planned only under a limit over one table, so no k-limit is pushed below a join |
+| §10.1 | Yes, `hnsw`, `ivf`, `diskann`, `inverted` and `hybrid` |
+| §10.2 | Yes, desugared to CREATE INDEX ... USING with options. `DISTANCE schema.name` names a metric registered as `SCHEMA.NAME`. LOCAL and GLOBAL choose nothing, as no table is partitioned. ONLINE changes nothing, as every build leaves the table open to writers, and PARALLEL n changes nothing, as builds run on one thread |
+| §10.3 | Yes; MAXDOP and ONLINE change nothing |
+| §10.4 | Each method's defaults are in [Implementation-defined choices](#vectors-and-their-indexes). HNSW's M is 16, DiskANN's PQ codes half the dimensions, and a search list follows TARGET ACCURACY by a fixed formula, not one calibrated at build |
+| §10.5 R10.6 | Yes |
+| §10.5 R10.7 | An index's memory is reserved of the database's budget (D38); past it CREATE fails with SQLCODE -918 naming the bytes |
+| §10.5 R10.8 | ONLINE as above; writes go to the index itself, with no delta store (R14.2) |
+| §10.6 | REBUILD [ONLINE] [PARAMETERS], MERGE DELTA, which runs the index's maintenance now, and LOAD and UNLOAD, which change nothing of a method whose structure is always resident or always paged. INDEX_ACCURACY_REPORT is the Rust call `Session::index_accuracy_report` |
+| §10.6 R10.10 | Maintenance consolidates or retrains past 20% dead entries |
+| §11.1 | CREATE HYBRID VECTOR INDEX of a text and a vector column, VECTOR_IDX and TEXT_IDX, or of a text column, MODEL, CHUNKER and MODE SYNC or ASYNC: a full-text index on the text, the chunks, their embeddings and their vector index, kept by a pipeline, made in steps no crash leaves half done, dropped with the index, and made again by ALTER INDEX of MODEL, CHUNKER or MODE (D100); CONTAINS and RANK of the text read the index a document a row |
+| §11.2 | HYBRID_SEARCH, its vector list of QUERY_VECTOR, or of QUERY_TEXT embedded by the index's MODEL, and its text list of QUERY_TEXT; a dynamic parameter read twice is one; the plain SQL form is ordinary SQL, a radius in WHERE reading the index |
+| §11.3, R11.1, R11.2 | Yes; CHUNK_TEXT is the row's text column, or of an index of a MODEL the document's best chunk |
+| §12.1 | CREATE, ALTER and DROP EMBEDDING MODEL [FROM FILE] of a registered plug-in (D101); HASH_DENSE and HASH_SPARSE built in, others the host's |
+| §12.2 | EMBED(model, text [, 'query' \| 'document']) and VECTOR_EMBEDDING of EMBED's arguments, and EMBED_VERSION |
+| §12.2 R12.1, R12.3, R12.4 | Yes; an `Embedder` is called holding no row lock |
+| §12.2 R12.5 | A model's VERSION is tagged in a pipeline's version column, by EMBED_VERSION, and the queue embeds a row of another version again |
+| §12.3 | CHUNK_TEXT, VECTOR_CHUNKS and AI_GENERATE_CHUNKS in FROM, BY CHARS, WORDS, SENTENCES, PARAGRAPHS or TOKENS of a model, MAX, OVERLAP, SPLIT_ON of an XQuery regular expression and NORMALIZE WHITESPACE |
+| §12.4 R12.6 | Yes (D103) |
+| §12.5 | Yes, as four row triggers (D102) |
+| §13 R13.1, R13.2, R13.5 | Yes (D94); no shards |
+| §13 R13.3 | The approximate read is priced by the rows, the search list and the selectivity; the index's kind, the format and quantization are left out |
+| §13 R13.4 | Every hint, written `HINT (...)` after the fetch clause; VECTOR_WAIT_FRESH also as `/*+ VECTOR_WAIT_FRESH */` before the statement (D105) |
+| §14 R14.1, R14.3, R14.4, R14.6, R14.7 | Yes; candidates are read as the snapshot sees them and checked again |
+| §14 R14.2, R14.5 | Each index is changed as its table is, HNSW and IVF in place and DiskANN by FreshDiskANN's inserts, with tombstones and no delta store, so a search needs no merge and every read is fresh |
+| §14 R14.8 | A standby replays the log, and its indexes are kept by it as the primary's are (D57) |
+| §15.1 | No table is partitioned, so LOCAL and GLOBAL have nothing to choose |
+| §16 catalog | VECTOR_COLUMNS; INDEXES and INDEX_OPTIONS for vector indexes; EMBEDDING_MODELS, EMBEDDING_MODEL_PRIVILEGES, VECTOR_DISTANCE_FUNCTIONS, VECTOR_PIPELINES, EMBEDDING_QUEUE; MEMORY_RESERVATIONS for an index's memory |
+| §16 security | Vectors follow table and column privileges. EXECUTE on models and distance functions; making a model, index or distance function needs the schema's ownership. No view shows a model's options. An index of a table of its own encoding is refused, and database encryption covers index files |
+| §16 governance | The memory budget and VECTOR.BUILD_MEMORY_BYTES |
+| §17 | Yes, each restriction, -103 or -900 |
+| §18 | Each condition by SQLSTATE, as [below](#vector-errors) |
+| §19 | Each item that names a behaviour above has a test |
+
+#### Vector errors
+
+| Design code | SQLSTATE | SQLCODE |
+|---|---|---|
+| VEC-0001, VEC-0002 of a type, VEC-0009 | 2A000 | -103 |
+| VEC-0002 of a value, VEC-0006, VEC-0007, VEC-0012 | 22003 | -301 |
+| VEC-0003, VEC-0004, VEC-0008 and VEC-0013 of a call, VEC-0031 of a value | 22000 | -301 |
+| VEC-0005, VEC-0016 | 22018 | -301 |
+| VEC-0008 of an index, VEC-0010, VEC-0015, VEC-0020 of an index | 0A000 | -900 |
+| VEC-0013 of an index, VEC-0030, VEC-0031 of a model | 2A000 | -103 |
+| VEC-0011 | TB918 | -918 |
+| VEC-0032 | The plug-in's own, under ON_ERROR | |
 
 ### Users
 
@@ -2468,7 +3061,7 @@ Encodings and hash functions are in `src/db/formats.rs`, and file systems in
 ### Function call syntax
 
 Registered functions may be called by name in sessions whose setting
-SQL.FUNCTION_CALLS is ON. A name has one scalar function, or several that
+SQL.FUNCTION_CALLS is ON, as it is by default. A name has one scalar function, or several that
 each declare the types of their parameters and that no call could invoke two
 of alike, chosen by the arguments' types as an SQL-invoked function is
 (RULES.md D53, D74). Any other second registration of a name is refused. A
@@ -2476,7 +3069,10 @@ function of the default schema that takes the arguments is invoked before a
 registered one. A call of a registered aggregate's name is the
 aggregate's unless a function of the default schema of the name has as
 many parameters as the call has arguments, as that is told before the
-arguments are bound.
+arguments are bound. The setting is checked as a definition is made. A
+view, constraint, assertion, domain, trigger, generated column or SQL
+routine body that calls a registered function keeps the call, whatever
+the setting is when it is used, reopened or recovered (RULES.md D74).
 
 ---
 
@@ -2524,6 +3120,12 @@ topic. The Where column names the file that implements each.
 | 2023 §4.37.5, UV065, a locator's value | The next of the session's counter, from 1, never one in use | `db/lobs.rs` |
 | 2023 §5.2 SR4, IV074, the `<truncating whitespace>` | The space alone | `functions/lobs/ops.rs` |
 | 2023 §6.31 SR1, IV137, the type of OCCURRENCES_REGEX and POSITION_REGEX | NUMERIC(18) | `functions/regex.rs` |
+| 2023 §6.31 SR16b, SR17b, SR18b, IV146, IV148, IV150, the type of LN, EXP, POWER and SQRT | DOUBLE PRECISION | `functions/numeric.rs` |
+| 2023 §6.31 SR16a, SR17a, SR18a, IV145, IV147, IV149, of a DECFLOAT operand | DECFLOAT(34); LN, EXP and POWER to a non-whole power found in double precision through the decimal exponent, kept to 16 digits; SQRT and whole powers to 34 digits | `functions/numeric/decimal.rs` |
+| 2023 §6.31 SR20a, IV151, the type of FLOOR and CEILING of NUMERIC(p, s) | NUMERIC(p − s + 1, 0); of scale 0 the operand's type | `functions/numeric.rs` |
+| 2023 §10.9 SR7h ii, SR9c ii 2, IV173, IV176, the type of the statistical set functions | DOUBLE PRECISION | `functions/statistics.rs` |
+| 2023 §10.9 SR7h i, SR9c ii 1, IV172, IV175, of a DECFLOAT operand | DECFLOAT(34) | `functions/statistics.rs` |
+| 2023 §10.9 SR9c i, IV174, the type of REGR_COUNT | NUMERIC(18), COUNT's | `functions/statistics.rs` |
 | 2023 §11.72 SR6, ID157, the type of a sequence generator that names none | NUMERIC(18) | `db/sequences.rs` |
 | 2023 §9.36 SR7, §9.37 SR7, ID112, the maximum of NO MAXVALUE | The type's greatest value ascending, -1 descending | `db/sequences.rs` |
 | 2023 §9.36 SR8, §9.37 SR8, ID113, the minimum of NO MINVALUE | 1 ascending, the type's least value descending | `db/sequences.rs` |
@@ -2668,6 +3270,37 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | 2023 §9.25 GR10, GR11 (UV133) the names and declared type of the pass-through input surrogate columns | PTF_PASS_THROUGH_t, an underscore added until no column of the table has it; BIGINT, the row's place among its table's rows | `db/ptf/compile.rs`, `db/ptf/execute.rs` |
 | 2023 §9.25 (UA056) the partitioning of a table argument of row semantics | One partition of all its rows, its virtual processors one | `db/ptf/execute.rs` |
 
+### SQL/JSON
+
+| Rule | Choice | Where |
+|---|---|---|
+| 2023 §6.28 SR1, ID074, and §6.35 SR1b, ID101, the type JSON_VALUE and JSON_QUERY return without RETURNING | CHARACTER VARYING(32767) | `json/query.rs`, `binder/json.rs` |
+| 2023 §9.46 GR11b i 2 B, IV165, the character string type a PASSING argument of another type is cast to | CHARACTER VARYING(32767) | `json/query.rs` |
+| 2023 §9.46 GR4, GR5, IA050, IA054, IV185, whether and how the context item and the FORMAT JSON arguments are parsed before the path is evaluated | They are, WITHOUT UNIQUE KEYS, so a text that is no JSON text is 22032 whether the path reads it or not | `json/query.rs` |
+| 2023 §9.42 GR3a iii 3 A VIII 2, UA057, whether members of one key are removed as JSON text is parsed | None is. Every member is kept, so WITH UNIQUE KEYS can refuse them. | `json/text.rs` |
+| 2023 §9.42 GR3a iii 3 A VIII 1, US039, the order the members of a JSON object are enumerated in | The order written | `json/text.rs` |
+| 2023 §9.43 GR2a ii, UV097, the JSON text an SQL/JSON item is serialized as | No insignificant white space. Members in the order kept, those of one key all. Of a string, `"` and `\` escaped as `\"` and `\\`, and U+0000 to U+001F as `\b`, `\f`, `\n`, `\r` or `\t`, else `\u` and four lower case hexadecimal digits; no other character. A number as CAST writes it, a DECFLOAT without an exponent. | `json/serialize.rs` |
+| 2023 §9.46 SR9, IA223, whether a syntactic analysis of a path may find an exception its evaluation would raise | None is made. Each exception is raised as the path is evaluated. | `json/path/parse.rs` |
+| 2023 §9.46 GR11g ii 1 C, GR11g ii 2 B, IA071, whether a member or wildcard member accessor of an object of two members of one key raises 22037 | It does not | `json/path/eval/accessors.rs` |
+| 2023 §9.46 GR11g ii 1 D II 2 a, UA075, which member of one key a member accessor takes | The first kept, the first written | `json/path/eval/accessors.rs` |
+| 2023 §9.46 GR11g ii 2 C II 2 a iii, GR11g ii 6 C VIII 1 c iv, UA058, how many members of one key the wildcard member accessor and keyvalue() delete | None | `json/path/eval/accessors.rs`, `json/path/eval/methods/keyvalue.rs` |
+| 2023 §9.46 GR11g ii 2 C II 2 a ii, iv, GR11g ii 6 C VIII 1 c iii, US040, the order the members of an SQL/JSON object are enumerated in | The order kept | `json/path/eval/accessors.rs`, `json/path/eval/methods/keyvalue.rs` |
+| 2023 §9.46 GR11g ii 3 F II 1, IA073, whether a subscript is truncated or rounded to scale 0 | Truncated toward zero | `json/path/eval/accessors.rs` |
+| 2023 §9.46 GR11g ii 6 C VII 2 a, UA070, which exception datetime() raises of several items in error | The first item's | `json/path/eval/methods/datetime.rs` |
+| 2023 §9.46 GR11g ii 6 C VIII 1 b, IA072, whether keyvalue() of an object of two members of one key raises 22037 | It does not | `json/path/eval/methods/keyvalue.rs` |
+| 2023 §9.46 GR11g ii 6 C VIII 2 b, IA224, the value of `id` that uniquely identifies an object of keyvalue() | Each item of the context item, then of the PASSING variables in order, is numbered in preorder from 0, and an object the path reaches there has its number however it is reached. An object the path makes is numbered past them, in the order reached. | `json/path/eval/methods/keyvalue.rs` |
+| 2023 §8.2 GR10, IA224, IA228, IA229, the order of SQL/JSON values | The null, numbers by exact value, strings by code point, false, true, datetimes (times, then dates and timestamps by UTC instant), arrays element by element, objects by their members sorted by key | `json/binary/key.rs` |
+| 2023 §7.11 SR1c ii, IV158, the type of an ordinality column of JSON_TABLE | INTEGER | `binder/json/table.rs` |
+| 2023 §9.46 GR11g ii 6 C XIV 1 b, IV186, the numeric type NT of number() | A number's own, so a number is kept as it is. Of a character string, the type of the `<signed numeric literal>` it is. | `json/path/eval/methods/casts.rs` |
+| 2023 §9.46 GR11g ii 6 C XV 1 b, IL006, ML, the maximum length of string()'s CHARACTER VARYING | 32,767 characters | `json/path/eval/methods/casts.rs` |
+| 2023 §9.46 GR12c iii 2 E II, GR12d ii 2 F II, GR12e ii 3 D II, UA073, a comparison, like_regex or starts with of which one test is in error and one True | True. A test stops at its first success in lax mode, and at its first error in strict mode, where the rule before makes it Unknown. | `json/path/eval/predicate.rs` |
+| 2023 §6.34 SR2b, ID098, and §10.11 SR1b, ID134, the type a constructor returns without RETURNING | CHARACTER VARYING(32767), FORMAT JSON | `json/construct/object.rs`, `json/construct/array.rs`, `functions/json/operands.rs` |
+| 2023 §6.34 GR2d ii 1 F IV 2, GR3c ii 1 B IV 2, GR4b ii 1 B IV 2, ID100, and §10.11 GR4b ii 2 D IV 2, GR5f ii 2 D II, IV179, the character string type SDT a constructor's input of another type is cast to | CHARACTER VARYING(32767), of a datetime too | `json/construct.rs` |
+| 2023 §6.34 GR3c ii 1 B III, GR4b ii 1 B III, IV156, and §10.11 GR5f ii 2 C, IV178, the `<JSON key uniqueness constraint>` an array constructor's input FORMAT JSON is parsed under | WITHOUT UNIQUE KEYS, as the query operators' (IV185) | `json/construct/array.rs` |
+| 2023 §6.34 GR2a, IL049, the maximum length of a JSON name, and GR2b, GR3a, IL050, of a string input | That of its type, which no value of it exceeds | `json/construct.rs` |
+| 2023 §6.34 GR2d ii 3, §10.11 GR4b ii 4, IL051, and §6.34 GR3c ii 2, GR4b ii 2, §10.11 GR5g, IL052, the most members of a JSON object and elements of a JSON array | 1,048,576 each, one more 2203E or 2203D | `json/construct.rs` |
+| 2023 §10.11 GR5c, US044, the order of JSON_ARRAYAGG's elements without ORDER BY | The order its rows are read | `json/construct/aggregate.rs`, `functions/json/aggregate.rs` |
+
 ### Sessions, users and connections
 
 | Rule | Choice | Where |
@@ -2716,6 +3349,37 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | IV223, ISO/IEC 9075-2:2023 §11.51 SR7a the source type of a distinct type of an exact or an approximate type | NUMERIC of its precision and scale, or FLOAT of its precision | `db/user_types.rs` |
 | ID047, ISO/IEC 9075-2:2023 §9.18 SR10b the SQL-path | The schema of the statement's names, the session's default schema or a schema statement's own | `binder/routines.rs` |
 | ID048, ISO/IEC 9075-2:2023 §4.9.6 a session's transform group of a distinct type | The one its definition makes, named FNUDT, in every session | `db/dynamic/using.rs`, `protocol/src/fields.rs` |
+
+### Savepoints
+
+| Rule | Choice | Where |
+|---|---|---|
+| IL208, ISO/IEC 9075-2:2023 §17.5 GR3 the maximum number of savepoints per SQL-transaction | 1,024, `MAX_SAVEPOINTS`. The 1,025th is 3B002. | `db/savepoints.rs` |
+| IA167, ISO/IEC 9075-2:2023 §17.8 GR3i, GR3j whether a rollback to a savepoint deallocates a prepared statement | None is deallocated, whether prepared before the savepoint or after | `db/savepoints.rs` |
+| IA168, ISO/IEC 9075-2:2023 §17.8 GR3h the status of a cursor opened before the savepoint | Closed, as every open cursor is [GR3g] | `db/savepoints.rs` |
+| IA211, ISO/IEC 9075-2:2023 §4.43.2 how a rollback to a savepoint affects the diagnostics area, SQL descriptor areas and prepared statements | As any statement completing does. The diagnostics area tells of the ROLLBACK, the descriptor areas are unchanged, and no prepared statement is deallocated | `db/savepoints.rs` |
+
+### Vectors and their indexes
+
+The vector design document leaves these to the implementation or names
+defaults that turborel tunes (RULES.md D93 to D104).
+
+| Rule | Choice | Where |
+|---|---|---|
+| vector R6.3 the metric of VECTOR_DISTANCE written without one | The metric of an index of the first vector's column, else COSINE | `binder/vectors.rs` |
+| vector R5.6 a vector's text | Shortest round-trip numbers, `[a,b,c]` with no spaces | `vector/text.rs` |
+| vector R9.3 widening | The search asked again twice as wide, at most 4 times (`MOST_WIDENINGS`), then the table read exactly | `exec/nearest/approx.rs` |
+| vector R13.2 filter strategy thresholds | Pre-filter below 1% estimated selectivity, post-filter above 50%, in-filter between | `physical/nearest/approx.rs` |
+| vector R9.4, R10.2 TARGET ACCURACY | 90 by default. Accuracy a asks a list of k × 100 / (101 − a) and probes of lists × 100 / ((101 − a) × 80), capped | `index/vector/ask.rs`, `index/vector/options.rs` |
+| vector §10.4 HNSW | M 16, EF_CONSTRUCTION 200, EF_SEARCH 64, codes trained at 10,000 nodes | `index/hnsw/options.rs` |
+| vector §10.4 IVF | LISTS the square root of the rows, at least 16; PROBES an eighth of the lists; 256 vectors sampled per list | `index/ivf/options.rs` |
+| vector §10.4 DiskANN | MAX_DEGREE 64, BUILD_LIST 100, ALPHA 1.2, 2 passes, SEARCH_LIST 100, BEAM_WIDTH 4, the nodes within 3 hops of the medoid cached, at most 1% of them, past BUILD_MEMORY (256 MiB) a build of 40 clusters, each point in its nearest 2, consolidation at 20% dead, codes trained at 4,096 nodes, PQ codes of half the dimensions | `engine/diskann.rs`, `index/diskann.rs` |
+| vector §10.4 INVERTED | Blocks of 128 postings, weights FLOAT32 | `index/sparse/options.rs` |
+| vector R7.1 RERANK_FACTOR | 4 of HNSW and IVF; DiskANN's whole search list | `engine/hnsw/query.rs`, `index/ivf/options.rs`, `index/diskann.rs` |
+| vector R11.1, §11.3 hybrid candidates and K | TOP_N × 4, and RRF's K 60 | `binder/hybrid_search.rs`, `parser/query/hybrid_search.rs` |
+| vector R12.3 embedding batch | 64 texts by default, a model's BATCH_SIZE; 4,096 texts embedded ahead by the queue | `vector/embed.rs`, `vector/embed/model.rs` |
+| vector R12.6 when the queue runs | After each commit that wrote, and as the database opens, by the job `turborel-embedding` | `db/embedding/queue.rs` |
+| A metric's or a quantizer's name | A regular identifier in upper case, or two joined by a period | `db/vectors.rs` |
 
 ### Memory
 
@@ -2769,7 +3433,14 @@ SQLCODE -900 (RULES.md D18).
 | XMLMAP's text | 64 MiB of a mapping's data, of all its tables, held as a set function writes it, row by row, and of its XML Schema document | §9.10 to §9.17 set no limit, and a table holds rows without end. The data is held as text until it is parsed, bounded as it grows. | `functions/xml/map/rows.rs`, `functions/xml/map/data.rs` |
 | XML text and values | Elements and content models nest 512 deep; a tree holds 16 MiB of text and 1,048,576 nodes and namespace bindings; XMLPARSE reads 16 MiB more of entities' replacement texts and 64 MiB of input; a value's stored form is 64 MiB | XML 1.0 and Part 14 set no limit, and nested entities expand without end. A walk of a tree keeps a stack of its ancestors. | `xml.rs` |
 | XQuery queries | Expressions nest 64 deep; an evaluation nests 256 deep in operations and function calls; a sequence holds 1,048,576 items; one evaluation constructs nodes of 64 MiB | XQuery sets none. The parser and the evaluation recurse, so each is bounded within half of a thread's stack. | `xquery.rs`, `xquery/eval.rs` |
+| Savepoints | 1,024 of a transaction, past which SAVEPOINT fails with SQLSTATE 3B002, SQLCODE -917, as §17.5 GR3 names | IL208 leaves the number to the implementation. Each savepoint holds a savepoint of each engine that undoes its own changes, so the number is bounded. | `db/savepoints.rs` |
 | Nesting depth | 64 levels of the syntax tree, about 30 nested parentheses, 60 chained `AND`, `OR`, `+` or `UNION`, or 60 tables in a FROM clause | Without a limit, deep nesting overflowed the stack and aborted the process. 64 levels run in half of Rust's default 2 MiB thread stack. | `parser.rs` |
+| SQL/JSON item nesting | 128 levels of arrays and objects, of JSON text parsed and of an item compared or serialized | §9.42 sets no limit, and RFC 8259 §9 lets a parser limit the depth of nesting. Every walk of an item recurses, and the limit bounds it (RULES.md R-CF-6). | `json.rs`, `json/text.rs`, `json/item.rs`, `json/serialize.rs` |
+| SQL/JSON path nesting | 64 levels of a path's syntax tree, `$` one of them, so at most 63 accessors or operators in a row, and parentheses, filters, subscripts and signs nested at most 64 deep | §9.46 sets no limit. The parser and the evaluator recurse over the tree, which has no counter of its own, and the limit bounds both (RULES.md R-CF-6). | `json/path.rs`, `json/path/parse.rs` |
+| SQL/JSON numbers | An exact number within DECFLOAT's range, a HexIntegerLiteral's too, and an approximate one within a double's, of JSON text and of a path | RFC 8259 §6 and §9 let an implementation limit the range and precision of numbers. An exact number of more than 18 digits is a DECFLOAT, rounded to 34 (RULES.md D84), and no type holds one past DECFLOAT's range. | `json/text.rs`, `json/path/lex.rs` |
+| SQL/JSON item method precisions | 18 digits of decimal(); 6 digits of a second's fraction of time(), time_tz(), timestamp() and timestamp_tz(), of a string datetime() reads, and of a template's FFn | §9.46 sets none. The methods cast to DECIMAL and to the datetime types [GR11g ii 6 C XII, XVI to XIX], and datetime() makes a datetime [VII], which hold no more digits here (Exact precision above). | `json/path/parse/method.rs`, `json/path/eval/methods/datetime.rs` |
+| A large object read as SQL/JSON | 262,144 octets, a chunk, of a character large object read whole as JSON text, as a PASSING argument or as a constructor's input or name | The text is held in memory whole to be parsed, as a LIKE pattern of a large object is, and to the same bound. | `json/query.rs`, `json/construct.rs`, `json/predicate.rs`, `functions/lobs/like.rs` |
+| JSON object members and array elements | 1,048,576 of an object or an array constructed, one more SQLSTATE 2203E or 2203D | §6.34 GR2d ii 3, GR3c ii 2, GR4b ii 2 and §10.11 GR4b ii 4, GR5g leave the number to the implementation (IL051, IL052) and name these exceptions past it. The limit bounds what an aggregate holds. | `json/construct.rs` |
 
 An index entry is an encoded key plus an 8-byte row id, and has its own limit.
 These figures assume the default 4-byte CRC-32C checksum.
@@ -2830,3 +3501,39 @@ Where the standards are unclear, turborel reads them as follows.
 | A generation expression referencing a period dropped with CASCADE [2023 §11.28 SR3d vii, GR2f] | SR3d vii forbids the reference under RESTRICT, but GR2f names nothing to drop for it under CASCADE, and dropping the period would leave the column's expression unbound. The drop is refused under CASCADE too, until the column is dropped. |
 | TRANSACTION_ACTIVE [2023 §23.1 GR2j] | "Currently active" is read as GET DIAGNOSTICS runs, which begins no transaction, so it tells whether the statement before left one active. |
 | The routine a condition is raised in [2023 §23.1 GR4l, GR4q] | The only SQL-invoked routines are the functions a distinct type's definition makes, which take a value of their parameter's type and give it back as their result's [§11.51 GR2b]. A condition raised as one is invoked is read as one of the CAST it stands for, so no condition names a routine, and ROUTINE_CATALOG, ROUTINE_SCHEMA, ROUTINE_NAME, SPECIFIC_NAME, PARAMETER_MODE and PARAMETER_NAME are zero-length strings, PARAMETER_ORDINAL_POSITION 0. |
+| Subscripts tested before they are defined [2023 §9.46 GR11g ii 3 E III] | The rule tests TJSFROMi and TJSTOi, which F II 1 defines after it. RJSFROMi and RJSTOi, the results of E II, are meant. An exception of a subscript's own evaluation, of which the rule says nothing, is the path's, as a base's is [GR11g i]. |
+| The elements of a range in lax mode [2023 §9.46 GR11g ii 3 F II 2 b] | The rule takes the subscripts "between 0 (zero) and Nj, inclusive", and Nj is the subscript of no element. The elements there are are taken. |
+| size() of "any Vj" [2023 §9.46 GR11g ii 6 C II 1] | Vj is what the rule then defines. The item Ij is meant, so in strict mode an item that is no array is 22039. |
+| datetime() of a string without a time zone [2023 §9.46 GR11g ii 6 C VII 1 c ii to v] | c ii tries a string as a TIME WITH TIME ZONE before c iii tries it as a TIME WITHOUT TIME ZONE. A literal without a `<time zone interval>` is of a type without time zone [§5.3 SR34, SR35], so it determines no value of the type with one, and the type without is taken, a timestamp's likewise. |
+| OBJh of keyvalue() [2023 §9.46 GR11g ii 6 C VIII 1 c vi] | The rule defines OBJh, 1 ≤ h ≤ q, of Ki and BVi. The key and bound value of the h-th member left are meant. |
+| time_tz() and timestamp_tz() of a number [2023 §9.46 GR11g ii 6 C XVII 1 a, XIX 1 a] | Each takes "a number or character string", where time() and timestamp() take a character string alone. That is followed, and CAST of a number to a datetime is 22005. |
+| The value of a HexIntegerLiteral [2023 §9.45 GR1a] | GR1a gives a numeric literal the value of the `<signed numeric literal>` of its characters, which a HexIntegerLiteral is not. Its value is ECMAScript's [ECMAScript 5.1 §7.8.3], exact. |
+| starts with of a sequence [2023 §9.46 GR12e ii 2] | The rule asks whether B "is not a character string", B being an SQL/JSON sequence. It is to be one item, a character string, else the predicate is Unknown. |
+| `+` and `-` in lax mode [2023 §9.46 GR11j] | GR11j has no step that unwraps its operands in lax mode, as GR11i ii has for `*`, `/` and `%`, and none is made. So `lax $ + 1` of `[1]` is 22038, where `lax $ * 2` of `[4]` is 8. |
+| ST2 of JSON_VALUE [2023 §6.28 GR6] | GR6 raises ST2, and GR5 has named SR2 the status §9.48 returns. That status is meant. |
+| The cast of DEFAULT ON EMPTY [2023 §9.48 GR4c iii] | The rule writes `CAST (VE AS DT>)`. `CAST (VE AS DT)` is meant. |
+| When a DEFAULT is evaluated [2023 §9.48 GR4c iii, GR5d] | The rules evaluate `CAST (VE AS DT)` only when the behavior is taken, and a call evaluates its arguments first. A DEFAULT that can raise an exception is bound as a CASE of which behavior the row takes, and one that draws NEXT VALUE FOR keeps every DEFAULT an argument, as §6.14 GR1a draws of each row and SR2 puts it in no CASE. "This `<cast specification>`", whose exception ON ERROR replaces, is the cast's own, so an exception VE raises before the cast is raised. |
+| Serialization's 22001 [2023 §9.43 GR2a iii] | GR2a ii lets a failed parse be the status ON ERROR handles, and GR2a iii says its exception "is raised". It is raised directly, so neither NULL nor EMPTY ARRAY ON ERROR replaces it. |
+| `%` of a number with a fraction [2023 §6.31 SR12, §9.46 GR11i] | MOD's operands are exact of scale 0 or DECFLOAT, a Syntax Rule the path can check only as it runs. It is checked then, data exception 22000. A whole exact number of nonzero scale, `4.0`, is taken. |
+| Numbers past 34 digits [2023 §9.42 GR3a iii 3 A IV, §5.3 SR29] | A number of which no number of the implementation is the value is out of range, 22003, never rounded. In a path literal it is SQLCODE -900, as other limits of the path's parse are. IS JSON raises it too, the text being of RFC 8259's grammar [§8.22 GR3a]. |
+| The types of `number()`, `size()`, `string()` and `type()` in the simplified accessor [2023 §6.36 SR3a i 7, 8] | As printed `number()` and `size()` give CHARACTER VARYING and `string()` and `type()` BIGINT, which swaps `size()` and `string()` against §9.46 GR11g ii 6 C. `size()` is BIGINT, and `number()`, `string()` and `type()` CHARACTER VARYING(32767). |
+| PASSING variables of a NESTED path [2023 §7.11 SR1g v] | The rule names "the PASSING clause of the JSON table". The row pattern and every NESTED path may name its variables, and a column's own path, which has no PASSING clause [SR1e iii, SR1f vi], may not, SQLCODE -103. |
+| A JSON column of JSON_TABLE [2023 §7.11 SR1e ii] | A regular column is of no JSON type, so a column of the JSON type written without a formatted column's clause is formatted, and gives JSON_QUERY's value. |
+| EMPTY BEHAVIOR of §9.48 [2023 §9.48 Subclause Signature] | The signature says it is ERROR, EMPTY ARRAY or EMPTY OBJECT, which are JSON_QUERY's. Its General Rules read JSON_VALUE's ERROR, NULL and DEFAULT, and they are followed. |
+| A string input of IS JSON [2023 §8.22 CR2] | CR2 forbids a `<string value expression>` as the input without Feature T801, the JSON type, which a string is not. T803, String-based JSON, is meant, as of every string input. |
+| JVNi of JSON_OBJECT [2023 §6.34 GR2d ii 1 G] | The rule makes JVNi a member's key. VJNi, the value of its name, is meant. |
+| VBVi, CJOA and NJVE of the aggregates [2023 §10.11 GR4b ii 2 D II, GR4c, GR5g] | GR4b ii 2 D II lets VBVi be the value, where the other cases let JBVi be; GR4c lets JACF be CJOA, where GR4b made CJO; GR5g counts NJVE, which only §6.34 defines. JBVi, CJO and NTXA are meant. |
+| FORMAT after a query of JSON_ARRAY [2023 §6.34 F, §7.6] | In JSON_ARRAY of a query whose FROM clause ends in a table of no correlation name, FORMAT is read as that table's correlation name, as the grammar lets it be, FORMAT being no reserved word. AS before a name, or the query in parentheses, keeps it the `<JSON input clause>`. |
+
+### The vector design document
+
+| Text | Reading |
+|---|---|
+| The default metric [vector R6.3] | "The vector index on v1's column" is any index of the column whose method has a metric, the first in the catalog's order if there are several. |
+| `DISTANCE schema.udf_name` [vector §10.2, §8] | It names a metric a program registers as `SCHEMA.NAME`. A distance function of SQL serves VECTOR_DISTANCE alone, as an index's entries must not depend on a body a user may drop (RULES.md D93). |
+| The k-limit pushed below a join [vector R9.6] | The rule allows it only where the join cannot remove rows. A nearest read is planned only under a limit over one table, so it is never pushed, which the rule permits. |
+| The delta store [vector R14.2, R14.5] | Its purpose is DML at all times with fresh reads (G5, R14.1). Every built-in index is changed as its table is, with tombstones, which meets that with no store to merge, so MERGE DELTA runs the index's maintenance. |
+| LOAD and UNLOAD [vector §10.6] | They move an index's structure in or out of memory. HNSW's is always in memory and the others' always paged, so each is taken and changes nothing. |
+| The columns of VECTOR_SEARCH [vector §9.3] | The example qualifies the table's columns by the table's correlation name and the distance by the function's. The function is one derived table, so both are qualified by the function's name, or the table's if it has none. |
+| VECTOR with no arguments [vector R3.1] | R3.1 makes it DENSE, but its purpose is a flexible column. Its layout is left open as its dimensions and format are, so a sparse value is taken too. |
+| Quantizing out of range [vector §7.1, R5.3] | R5.3 makes a CAST out of range an error. VECTOR_QUANTIZE is no CAST: it maps by a scale chosen to fit, and an element past it is clamped to INT8's range. |

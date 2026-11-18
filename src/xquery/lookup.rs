@@ -1,4 +1,4 @@
-//! \[EXTENSION\] RULES.md D86: a query reduced to the query of an XML
+//! \[EXTENSION\] RULES.md D106: a query reduced to the query of an XML
 //! index (`index::xml::XmlQuery`) that selects every value of one node
 //! the query's value is not empty of [ISO/IEC 9075-14:2006 draft §8.4 GR2],
 //! so a planner may read only the rows the index gives, each checked by
@@ -20,7 +20,7 @@
 //!
 //! A general comparison with a string literal, by the codepoint
 //! collation, or with a number is the lookup's comparison, as an index
-//! keys a node's value as a string and as an `xs:double` (RULES.md D86);
+//! keys a node's value as a string and as an `xs:double` (RULES.md D106);
 //! any other comparison is left to the check of each row, the lookup the
 //! path alone. A predicate of an ancestor that may raise an error, a
 //! comparison with a number or a value comparison, reduces to none: it is
@@ -35,7 +35,7 @@ use crate::index::xml::{Axis as Along, Comparison, Literal, MAX_STEPS, PathPatte
 use crate::value::{CompOp, round_to_single};
 use crate::xml::{Atomic, Primitive, QName, double};
 
-/// \[EXTENSION\] RULES.md D86: a query reduced to an XML index's query.
+/// \[EXTENSION\] RULES.md D106: a query reduced to an XML index's query.
 #[derive(Debug, Clone)]
 pub struct Reduction {
     /// The index's query: of a value of one node, a row its lookup does

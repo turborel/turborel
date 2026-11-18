@@ -51,7 +51,7 @@ fn values_are_kept_and_serialized() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.1 SR1 to SR3, §4.2.2] [DESIGN]
-/// RULES.md D86: the XML types, as written and as described: XML alone is
+/// RULES.md D106: the XML types, as written and as described: XML alone is
 /// XML(SEQUENCE), and DOCUMENT or CONTENT alone is ANY; SEQUENCE takes no
 /// secondary modifier; XMLSCHEMA names a registered XML Schema, so one of
 /// none registered is SQLCODE -103 [§11.6 SR1, SR2b ii].
@@ -191,7 +191,7 @@ fn values_are_not_compared() {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §6.5 SR1 to SR4, GR1] [DESIGN]
-/// RULES.md D86: CAST takes an XML value to an XML type alone, and no other
+/// RULES.md D106: CAST takes an XML value to an XML type alone, and no other
 /// value to one; BY REF, implicit, to an UNTYPED type of an UNTYPED one;
 /// BY VALUE, a copy; to a DOCUMENT type, a document, else 2200L; NULL to
 /// any.

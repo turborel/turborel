@@ -39,7 +39,7 @@ SET ROLE begins no transaction. [SET SESSION
 AUTHORIZATION](set-session-authorization.md) removes the current role.
 INFORMATION_SCHEMA.ENABLED_ROLES lists the roles the session has
 enabled, and the other views of the [Information
-Schema](../information-schema.md) show what they hold.
+Schema](../07-information-schema.md) show what they hold.
 
 ## RULES
 

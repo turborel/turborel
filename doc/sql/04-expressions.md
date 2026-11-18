@@ -99,6 +99,10 @@ The numeric functions:
 | POSITION(a IN b) | where string a first begins in b, from 1; 0 if not in it, 1 if a is empty; of binary strings, in octets |
 | EXTRACT(f FROM d) | the field f of a datetime or interval |
 | WIDTH_BUCKET(x, b1, b2, n) | which of n buckets of equal width from b1 to b2 x falls in |
+| LN(x), EXP(x) | the natural logarithm of x, and e raised to the power x |
+| POWER(x, y), SQRT(x) | x raised to the power y, and the square root of x, POWER(x, 0.5) |
+| FLOOR(x) | the greatest whole number not above x |
+| CEILING(x), CEIL(x) | the least whole number not below x |
 
 WIDTH_BUCKET cuts the range from b1 to b2 into n buckets of equal width
 and gives the bucket x falls in, from 1. A value before b1 is in bucket
@@ -125,6 +129,39 @@ VALUES (WIDTH_BUCKET(1, 0, 0, 4));
  Grace                          |     8100.00 |   4 |    1
 (4 rows)
 turborel: SQLCODE -301 (SQLSTATE 2201G): the width bucket bounds are equal [ISO/IEC 9075-2:2023 §6.31 GR17c]
+```
+
+LN, EXP, POWER and SQRT are DOUBLE PRECISION, or DECFLOAT(34) if an
+operand is DECFLOAT. FLOOR and CEILING of an exact number are exact of
+scale 0, found exactly; of an approximate number or a DECFLOAT they are
+of its type. Each is null if an operand is. POWER of 0 to the power 0 is
+1, and of a negative number to a whole power is negative only of an odd
+power. Of a DECFLOAT, SQRT and a whole power are found to 34 digits, and
+LN, EXP and other powers to the 16 digits of double precision.
+
+LN of 0 or below is refused (SQLSTATE 2201E, SQLCODE -301). So is POWER
+of 0 to a negative power, or of a negative number to a power not whole,
+and so SQRT of a negative number (2201F, -301). A result past the range
+of its type is refused too (22003, -301).
+
+```sql
+VALUES (LN(1), EXP(1), POWER(2, 10), POWER(-2, 3), SQRT(2));
+VALUES (FLOOR(-2.5), CEILING(-2.5), FLOOR(2.5E0), CEIL(CAST(0.001 AS DECFLOAT)), SQRT(CAST(2 AS DECFLOAT)));
+VALUES (LN(0));
+VALUES (SQRT(-1));
+```
+
+```
+                          |                          |                          |                          |
+--------------------------+--------------------------+--------------------------+--------------------------+--------------------------
+                      0E0 |      2.718281828459045E0 |                  1.024E3 |                     -8E0 |     1.4142135623730951E0
+(1 row)
+      |      |                          |                                             |
+------+------+--------------------------+---------------------------------------------+---------------------------------------------
+   -3 |   -2 |                      2E0 |                                           1 |         1.414213562373095048801688724209698
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 2201E): the natural logarithm is of a number above 0 [ISO/IEC 9075-2:2023 §6.31 GR12b]
+turborel: SQLCODE -301 (SQLSTATE 2201F): a negative base is raised only to a whole number [ISO/IEC 9075-2:2023 §6.31 GR14e]
 ```
 
 ## String expressions
@@ -370,9 +407,20 @@ a query reads, or of each group of its GROUP BY.
 | ANY(x), SOME(x) | of a BOOLEAN x, TRUE if an x is TRUE, else FALSE |
 | ANY_VALUE(x) | one of the values of x, the first one read |
 | LISTAGG(x, 'sep') WITHIN GROUP (ORDER BY ...) | the strings x joined by the separator in the order ORDER BY gives, CHARACTER VARYING(32767) |
-| XMLAGG(x ORDER BY ...) | of XML values x, those not null one after another in the order ORDER BY gives, a document node of them by default ([XML Values](xml.md)); null of none |
+| XMLAGG(x ORDER BY ...) | of XML values x, those not null one after another in the order ORDER BY gives, a document node of them by default ([XML Values](16-xml.md)); null of none |
+| JSON_ARRAYAGG(x [ORDER BY ...]) | the JSON text of an array of every x, in the order ORDER BY gives; null of no rows |
+| JSON_OBJECTAGG(name VALUE x) | the JSON text of an object of each row's member, name a character string; null of no rows |
 | PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY x) | the value a fraction p of the way through the sorted x, between two of them if it falls between |
 | PERCENTILE_DISC(p) WITHIN GROUP (ORDER BY x) | the first of the sorted x whose share of the values up to it is at least p |
+| VAR_POP(x), VAR_SAMP(x) | the variance of x, of the population and of a sample |
+| STDDEV_POP(x), STDDEV_SAMP(x) | their square roots, the standard deviations |
+| COVAR_POP(y, x), COVAR_SAMP(y, x) | the covariance of the pairs of y and x, of the population and of a sample |
+| CORR(y, x) | the size of their coefficient of correlation, from 0 to 1 |
+| REGR_SLOPE(y, x), REGR_INTERCEPT(y, x) | the slope and intercept of the least-squares line of y on x |
+| REGR_R2(y, x) | that line's coefficient of determination |
+| REGR_COUNT(y, x) | the pairs in which neither y nor x is null |
+| REGR_AVGX(y, x), REGR_AVGY(y, x) | the means of x and of y |
+| REGR_SXX(y, x), REGR_SYY(y, x), REGR_SXY(y, x) | the sums of the squares of the deviations of x and of y from their means, and of their products |
 
 Each but COUNT(*) leaves out the nulls of x, and with DISTINCT counts
 each value of x once: `COUNT(DISTINCT DEPT)`. Of no rows, COUNT is 0
@@ -440,6 +488,48 @@ SELECT ID FROM STAFF WHERE SALARY > AVG(SALARY);
 ```
 turborel: SQLCODE -103 (SQLSTATE 2A000): when the select list has a set function, every column reference must be inside one, or of a column functionally dependent on none (found STAFF.NAME) [X3.135-1986 §5.25 SR7; ISO/IEC 9075-2:2023 §6.7 SR8] (at character 7)
 turborel: SQLCODE -103 (SQLSTATE 2A000): a <set function specification> is in a <where clause> only in a <having clause>'s <subquery>, of an outer reference [X3.135-1986 §5.21 SR3] (at character 36)
+```
+
+The statistical set functions are of numbers. Each is DOUBLE
+PRECISION, or DECFLOAT(34) if an argument is DECFLOAT, but REGR_COUNT,
+which is exact. VAR_POP, VAR_SAMP, STDDEV_POP and STDDEV_SAMP take no
+DISTINCT or ALL (SQLSTATE 2A000, SQLCODE -103). Those of two arguments,
+y and x, leave out each row in which either is null, with the warning
+01003. Of no rows REGR_COUNT is 0 and the others null; of one row
+VAR_SAMP, STDDEV_SAMP and COVAR_SAMP are null, the variance of a sample
+of one being unknown. Where every x is alike, CORR, REGR_R2, REGR_SLOPE
+and REGR_INTERCEPT are null, as the line would be upright; where every y
+is alike and the x are not, CORR is null and REGR_R2 1. CORR is the size
+of the coefficient, not its sign. The standard defines it as the square
+root of its square, so of y falling as x rises it is 1, not -1, and
+REGR_SLOPE gives the sign. A sum on the way past the range of the
+result's type is refused (22003, -301).
+
+```sql
+SELECT VAR_POP(SALARY), VAR_SAMP(SALARY), STDDEV_POP(SALARY), STDDEV_SAMP(SALARY) FROM STAFF;
+SELECT DEPT, REGR_COUNT(SALARY, ID), REGR_SLOPE(SALARY, ID), VAR_SAMP(SALARY)
+  FROM STAFF GROUP BY DEPT ORDER BY DEPT;
+SELECT REGR_SLOPE(Y, X), REGR_INTERCEPT(Y, X), REGR_R2(Y, X), CORR(Y, X), COVAR_SAMP(Y, X)
+  FROM (VALUES (2, 1), (4, 2), (5, 3), (9, 4)) AS P (Y, X);
+SELECT VAR_POP(DISTINCT SALARY) FROM STAFF;
+```
+
+```
+                          |                          |                          |
+--------------------------+--------------------------+--------------------------+--------------------------
+                   1.26E6 |                   1.89E6 |     1.1224972160321825E3 |      1.374772708486752E3
+(1 row, with a warning: SQLSTATE 01003)
+ DEPT |                      |                          |
+------+----------------------+--------------------------+--------------------------
+ ENG  |                    2 |                      9E2 |                   4.05E5
+ OPS  |                    1 |                     NULL |                     NULL
+ NULL |                    0 |                     NULL |                     NULL
+(3 rows, with a warning: SQLSTATE 01003)
+                          |                          |                          |                          |
+--------------------------+--------------------------+--------------------------+--------------------------+--------------------------
+                    2.2E0 |                    -5E-1 |     9.307692307692307E-1 |     9.647638212377321E-1 |     3.6666666666666665E0
+(1 row)
+turborel: SQLCODE -103 (SQLSTATE 2A000): VAR_POP takes no <set quantifier>: neither DISTINCT nor ALL [ISO/IEC 9075-2:2023 §10.9 SR2] (at character 15)
 ```
 
 The mean is found by a subquery: `WHERE SALARY > (SELECT AVG(SALARY)
@@ -640,6 +730,36 @@ SELECT LISTAGG(NAME, ', ' ON OVERFLOW TRUNCATE '...' WITH COUNT) WITHIN GROUP (O
 (1 row)
 ```
 
+JSON_ARRAYAGG and JSON_OBJECTAGG make JSON text of a group's rows, as
+[JSON_ARRAY and JSON_OBJECT](#json_object-and-json_array) do of their
+operands, and keep the nulls the other set functions leave out.
+JSON_ARRAYAGG takes ORDER BY within its parentheses, as ARRAY_AGG does,
+and without one its order is that of the rows read. Each takes FILTER
+and OVER, and the clauses of its constructor: `NULL ON NULL` or
+`ABSENT ON NULL`, ABSENT ON NULL by default of JSON_ARRAYAGG and NULL ON
+NULL of JSON_OBJECTAGG; of JSON_OBJECTAGG, `WITH UNIQUE KEYS`; FORMAT
+JSON after the value; and `RETURNING type`. A null name is SQLSTATE
+22004.
+
+```sql
+SELECT DEPT, JSON_ARRAYAGG(NAME ORDER BY SALARY DESC RETURNING VARCHAR(20)) AS BY_PAY,
+    JSON_OBJECTAGG(NAME VALUE SALARY RETURNING VARCHAR(40)) AS PAY FROM STAFF GROUP BY DEPT ORDER BY DEPT;
+SELECT JSON_ARRAYAGG(SALARY ORDER BY ID NULL ON NULL RETURNING VARCHAR(40)) FROM STAFF;
+```
+
+```
+ DEPT | BY_PAY               | PAY
+------+----------------------+------------------------------------------
+ ENG  | ["Grace","Ada"]      | {"Ada":7200.00,"Grace":8100.00}
+ OPS  | ["Edsger"]           | {"Edsger":5400.00}
+ NULL | ["Barbara"]          | {"Barbara":null}
+(3 rows)
+
+------------------------------------------
+ [7200.00,8100.00,5400.00,null]
+(1 row)
+```
+
 ## NEXT VALUE FOR
 
 NEXT VALUE FOR *generator* takes the next value of a sequence generator
@@ -825,13 +945,308 @@ OK
 (1 row)
 ```
 
+## SQL/JSON
+
+JSON_VALUE and JSON_QUERY take a value out of JSON text, a character
+string, by an SQL/JSON path expression;
+[JSON_EXISTS](05-predicates.md#json_exists) tests whether the path
+finds anything, and [JSON_TABLE](13-json-table.md) presents what it
+finds as a table. Each of the first three is written as
+
+```
+JSON_VALUE(text [FORMAT JSON], 'path' [PASSING value [FORMAT JSON] AS name, ...]
+           [RETURNING type] [behavior ON EMPTY] [behavior ON ERROR])
+JSON_QUERY(text [FORMAT JSON], 'path' [PASSING ...] [RETURNING type [FORMAT JSON]]
+           [WITHOUT [ARRAY] | WITH [CONDITIONAL | UNCONDITIONAL] [ARRAY] WRAPPER]
+           [KEEP | OMIT QUOTES [ON SCALAR STRING]] [behavior ON EMPTY] [behavior ON ERROR])
+```
+
+The path is a character string literal, read as the statement is
+prepared, so a path that is none is refused then.
+
+| Function | Value |
+|---|---|
+| JSON_VALUE | the one scalar the path finds, a string, number, truth value or datetime, cast to the RETURNING type: a character string, numeric, BOOLEAN or datetime type, CHARACTER VARYING(32767) if none is written |
+| JSON_QUERY | the one item the path finds, an array or object too, written as JSON text of the RETURNING type, a character string type, CHARACTER VARYING(32767) if none is written |
+
+Either is null if the text is. A behavior ON EMPTY says what the value
+is if the path finds nothing, and one ON ERROR what it is in place of a
+data exception, as text that is no JSON, two items found, or an array
+for JSON_VALUE. Each is NULL if not written. JSON_VALUE takes ERROR,
+NULL or DEFAULT and a value expression, cast to the RETURNING type;
+JSON_QUERY takes ERROR, NULL, EMPTY ARRAY or EMPTY OBJECT. ERROR ON
+EMPTY makes an empty result an error that ON ERROR then replaces, so
+ERROR ON EMPTY alone is null of no item. Only a data exception, an
+SQLSTATE of class 22, is replaced: an error of a limit, SQLCODE -900, is
+raised whatever ON ERROR says.
+
+```sql
+CREATE TABLE PURCHASES (ID INTEGER PRIMARY KEY, DOC VARCHAR(200));
+INSERT INTO PURCHASES VALUES (1, '{"buyer":"Ada","items":[{"sku":"A1","qty":2},{"sku":"B7","qty":1}]}'),
+                             (2, '{"buyer":"Grace","items":[],"note":null}');
+SELECT ID, JSON_VALUE(DOC, 'lax $.buyer' RETURNING VARCHAR(10)), JSON_VALUE(DOC, 'lax $.items.size()' RETURNING INTEGER),
+       JSON_VALUE(DOC, 'strict $.items[0].qty' RETURNING INTEGER DEFAULT 0 ON ERROR)
+  FROM PURCHASES ORDER BY ID;
+```
+
+```
+OK
+OK
+           ID |            |              |
+--------------+------------+--------------+--------------
+            1 | Ada        |            2 |            2
+            2 | Grace      |            0 |            0
+(2 rows)
+```
+
+JSON_QUERY without a wrapper finds one item, and WITH ARRAY WRAPPER
+puts all it finds in an array. WITH CONDITIONAL ARRAY WRAPPER does so
+unless the path finds one array or object, so a lone string or number is
+wrapped. OMIT QUOTES gives a string found alone as it is, where KEEP
+QUOTES, the default, writes it as JSON, in quotation marks. A wrapper
+WITH and a QUOTES clause are not written together.
+
+```sql
+SELECT ID, JSON_QUERY(DOC, 'lax $.items[*].sku' RETURNING VARCHAR(20) WITH ARRAY WRAPPER),
+       JSON_QUERY(DOC, 'lax $.items[0]' RETURNING VARCHAR(30) EMPTY OBJECT ON EMPTY),
+       JSON_QUERY(DOC, 'lax $.buyer' RETURNING VARCHAR(10) OMIT QUOTES)
+  FROM PURCHASES ORDER BY ID;
+```
+
+```
+           ID |                      |                                |
+--------------+----------------------+--------------------------------+------------
+            1 | ["A1","B7"]          | {"sku":"A1","qty":2}           | Ada
+            2 | NULL                 | {}                             | Grace
+(2 rows)
+```
+
+### Returned types and behaviors
+
+JSON_VALUE RETURNING a type casts the scalar found as CAST does. It casts a
+string to a time or timestamp, with a time zone or without, as its
+literal is written, a number to an exact or approximate type, cut
+to its scale, and a string to CHAR(n), padded, or to a CLOB. A cast that
+fails, as of a string that is no time, is a data exception ON ERROR
+replaces.
+
+The value expression of a DEFAULT is evaluated only for a row that
+takes it. A DEFAULT ON EMPTY is evaluated only if the path finds
+nothing, and a DEFAULT ON ERROR only in place of an exception. So a DEFAULT that could fail, as
+a division, does so only where it is used. NEXT VALUE FOR in a DEFAULT
+is the exception, as it draws once of each row wherever it is written,
+and the operator's DEFAULTs are then evaluated of every row. A DEFAULT ON EMPTY whose cast to the RETURNING type fails is
+an exception that ON ERROR replaces in turn; a DEFAULT ON ERROR whose
+cast fails raises it.
+
+The text JSON_QUERY writes is not cut to its RETURNING type. Text
+longer than the type is SQLSTATE 22001, SQLCODE -301, whatever ON ERROR
+says, since the standard raises it directly rather than as the
+operator's own exception.
+
+```sql
+VALUES (JSON_VALUE('"10:20:30+02:00"', 'lax $' RETURNING TIME WITH TIME ZONE), JSON_VALUE('1.25', 'lax $' RETURNING NUMERIC(4,1)),
+        JSON_VALUE('"ab"', 'lax $' RETURNING CHAR(4)) || '|');
+SELECT ID, JSON_VALUE(DOC, 'lax $.items[0].qty' RETURNING INTEGER DEFAULT 1 / 0 ON EMPTY) FROM PURCHASES WHERE ID = 1;
+VALUES JSON_VALUE('[]', 'lax $' RETURNING INTEGER DEFAULT 1 / 0 ON ERROR);
+VALUES JSON_QUERY('[1,2,3]', 'lax $' RETURNING VARCHAR(3) NULL ON ERROR);
+```
+
+```
+                |        |
+----------------+--------+-------
+ 10:20:30+02:00 |    1.2 | ab  |
+(1 row)
+           ID |
+--------------+--------------
+            1 |            2
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22012): a divisor shall not be 0 [X3.135-1986 §5.9 GR5]
+turborel: SQLCODE -301 (SQLSTATE 22001): the JSON text of 7 characters or octets is longer than CHARACTER VARYING(3) [ISO/IEC 9075-2:2023 §9.43 GR2a iii]
+```
+
+### The path language
+
+[The SQL/JSON Path Language](11-json-path.md) gives the language in
+full: its grammar, every method and the SQLSTATE of each error.
+In short, a path begins with its mode, `lax` or `strict`, then `$`, the
+text, and its accessors: `.name` or `."name"` a member of an object, `.*` every
+member's value, `[n]`, `[n to m]` and `[last]` elements of an array,
+counted from 0, `[*]` every element, and the item methods. `.type()`
+names an item's kind and `.size()` counts an array's elements;
+`.double()`, `.ceiling()`, `.floor()` and `.abs()` compute; `.bigint()`,
+`.integer()`, `.decimal(p, s)`, `.number()`, `.boolean()`, `.string()`,
+`.date()`, `.time(p)`, `.time_tz(p)`, `.timestamp(p)` and
+`.timestamp_tz(p)` cast an item as CAST does, the precisions optional;
+`.datetime()` reads a string as the date, time or timestamp it is, and
+`.datetime("template")` as the template reads it, as in
+[CAST](#cast)'s FORMAT: a TIMESTAMP if the template has fields of the
+date and the time, a DATE or a TIME if of one, WITH TIME ZONE if it has
+TZH, a string it does not read being SQLSTATE 22031; and
+`.keyvalue()` gives an object's members, each as an object of its
+`key`, its `value` and an `id`. A number may be written in hexadecimal,
+`0x1F`. A
+filter, `? (predicate)`, keeps the items its predicate is true of, `@`
+being the item tested: `==`, `!=`, `<>`, `<`, `<=`, `>` and `>=`
+compare, `exists (path)`, `starts with` and `like_regex` test, and
+`&&`, `||`, `!` and `(...) is unknown` combine. `+`, `-`, `*`, `/` and
+`%` compute with numbers. Unlike SQL, the language is case-sensitive:
+`$.Buyer` is not `$.buyer`, and `true`, `null` and the methods are lower
+case.
+
+The casting methods take what CAST takes, and an item of another kind
+is an exception ON ERROR replaces, as `.date()` of a string that is no
+date:
+
+```sql
+VALUES (JSON_VALUE('{"n":"12.345"}', 'lax $.n.decimal(4,2)' RETURNING DECIMAL(4,2)), JSON_VALUE('"2024-02-29"', 'lax $.date()' RETURNING DATE),
+        JSON_VALUE('{}', 'lax 0x1F' RETURNING INTEGER));
+VALUES JSON_VALUE('"x"', 'lax $.date()' ERROR ON ERROR);
+```
+
+```
+        |            |
+--------+------------+--------------
+  12.34 | 2024-02-29 |           31
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22018): 'x' is no DATE literal's string [ISO/IEC 9075:1992 §6.10 GR9a ii, GR10a ii, GR11a ii]
+```
+
+Lax mode takes an array for its elements where an object or a single
+item is wanted, and a single item for an array, and a member or element
+that is not there for nothing. Strict mode takes them as errors, which
+ON ERROR then replaces.
+
+```sql
+VALUES (JSON_VALUE('{"a":[1,2]}', 'lax $.a[*]' RETURNING INTEGER), JSON_VALUE('{"a":[1,2]}', 'lax $.a[last]' RETURNING INTEGER),
+        JSON_VALUE('{"a":[1,2]}', 'lax $.a.type()' RETURNING VARCHAR(10)), JSON_VALUE('[{"a":3}]', 'lax $.a' RETURNING INTEGER),
+        JSON_VALUE('[{"a":3}]', 'strict $.a' RETURNING INTEGER));
+VALUES JSON_VALUE('[1,2]', 'lax $[*]' RETURNING INTEGER ERROR ON ERROR);
+VALUES JSON_VALUE('{}', 'strict $.a' RETURNING INTEGER ERROR ON ERROR);
+VALUES JSON_VALUE('{}', 'lax $.a' RETURNING INTEGER ERROR ON EMPTY);
+```
+
+```
+              |              |            |              |
+--------------+--------------+------------+--------------+--------------
+         NULL |            2 | array      |            3 |         NULL
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22034): the SQL/JSON path expression gives more than one SQL/JSON item [ISO/IEC 9075-2:2023 §9.48 GR4a]
+turborel: SQLCODE -301 (SQLSTATE 2203A): an SQL/JSON item is not an object with a member of the key a [ISO/IEC 9075-2:2023 §9.46 GR11g ii 1 B II]
+
+--------------
+         NULL
+(1 row)
+```
+
+```sql
+VALUES (JSON_VALUE('"29.02.2024"', 'lax $.datetime("DD.MM.YYYY")' RETURNING DATE),
+        JSON_VALUE('"9:05 P.M."', 'lax $.datetime("HH12:MI A.M.").type()' RETURNING VARCHAR(30)));
+```
+
+```
+            |
+------------+--------------------------------
+ 2024-02-29 | time without time zone
+(1 row)
+```
+
+PASSING gives the path variables: `PASSING value AS name` is `$name` in
+the path, a string, number, truth value or datetime as it is, and with
+FORMAT JSON a string's JSON text, parsed. The name is the identifier's
+value, as SQL reads one: a regular identifier is upper case, so
+`PASSING 2 AS n` is `$N`, and a delimited one is as written, so
+`PASSING 'B' AS "p"` is `$p`. A variable the path names and PASSING
+does not is an error as the statement is prepared.
+
+```sql
+SELECT ID, JSON_VALUE(DOC, 'lax $.items[*] ? (@.qty >= $N).sku' PASSING 2 AS N RETURNING VARCHAR(5)),
+       JSON_VALUE(DOC, 'lax $.items[*] ? (@.sku starts with $p).qty' PASSING 'B' AS "p" RETURNING INTEGER)
+  FROM PURCHASES ORDER BY ID;
+VALUES JSON_VALUE('{}', 'lax $n' PASSING 2 AS n);
+```
+
+```
+           ID |       |
+--------------+-------+--------------
+            1 | A1    |            1
+            2 | NULL  |         NULL
+(2 rows)
+turborel: SQLCODE -103 (SQLSTATE 2A000): the named variable $n of the SQL/JSON path expression is passed no value [ISO/IEC 9075-2:2023 §9.46 SR4] (at character 24)
+```
+
+A cast that cuts a string to the RETURNING type completes with the
+warning 01004, as CAST does. A binary string's JSON text, FORMAT JSON
+ENCODING, is valid SQL turborel does not process: SQLCODE -900.
+[Appendix A](../appendix/a-sqlstate.md) lists the SQLSTATEs of
+SQL/JSON, 22032 to 2203G, and [Limits](../appendix/d-limits.md) how deep
+JSON text and a path may nest. The functions' names and the words of
+their clauses are not reserved, so a column may be named any of them.
+
+### JSON_OBJECT and JSON_ARRAY
+
+JSON_OBJECT and JSON_ARRAY make JSON text of their operands:
+
+```
+JSON_OBJECT([[KEY] name VALUE value [FORMAT JSON] | name : value [FORMAT JSON], ...
+            [NULL ON NULL | ABSENT ON NULL] [WITH UNIQUE [KEYS] | WITHOUT UNIQUE [KEYS]]]
+            [RETURNING type [FORMAT JSON]])
+JSON_ARRAY([value [FORMAT JSON], ... [NULL ON NULL | ABSENT ON NULL]] [RETURNING type [FORMAT JSON]])
+JSON_ARRAY(query [FORMAT JSON] [NULL ON NULL | ABSENT ON NULL] [RETURNING type [FORMAT JSON]])
+```
+
+A name is a character string, and a null one is SQLSTATE 22004. A value
+that is a string, a number or a truth value is kept, one of another
+type, as a date, written as a string, and a value FORMAT JSON is the
+JSON text it holds, parsed. A value that is itself a constructor or a
+JSON_QUERY is FORMAT JSON of itself, so constructors nest. NULL ON NULL
+keeps a null value as JSON's null, ABSENT ON NULL leaves it out;
+JSON_OBJECT keeps it by default, JSON_ARRAY leaves it out. WITH UNIQUE
+KEYS makes two members of one name SQLSTATE 22030. JSON_ARRAY of a query
+is an array of its one column's values, in the order its ORDER BY gives,
+`[]` of no rows; a lone subquery in parentheses is so too. Each is
+CHARACTER VARYING(32767) without RETURNING, and text longer than its
+type is SQLSTATE 22001.
+
+```sql
+SELECT JSON_OBJECT('id' VALUE ID, 'buyer' : JSON_VALUE(DOC, 'lax $.buyer'), 'note' VALUE JSON_QUERY(DOC, 'lax $.note')
+                   ABSENT ON NULL RETURNING VARCHAR(40))
+  FROM PURCHASES ORDER BY ID;
+VALUES (JSON_ARRAY(1, 'two', CAST(NULL AS INTEGER), JSON_ARRAY(3, 4) RETURNING VARCHAR(20)),
+        JSON_ARRAY(SELECT ID FROM PURCHASES ORDER BY ID DESC RETURNING VARCHAR(10)));
+VALUES JSON_OBJECT('a' VALUE 1, 'a' VALUE 2 WITH UNIQUE KEYS);
+```
+
+```
+
+------------------------------------------
+ {"id":1,"buyer":"Ada"}
+ {"id":2,"buyer":"Grace"}
+(2 rows)
+                      |
+----------------------+------------
+ [1,"two",[3,4]]      | [2,1]
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22030): two members of a JSON object WITH UNIQUE KEYS have the key "a" [ISO/IEC 9075-2:2023 §6.34 GR2d ii 2]
+```
+
+Grace's note is JSON's null, which JSON_QUERY gives as the text `null`
+and JSON_OBJECT, of it FORMAT JSON, leaves out ABSENT ON NULL. In
+JSON_ARRAY of a query whose FROM clause ends in a table of no
+correlation name, FORMAT is read as that table's correlation name:
+write `JSON_ARRAY(SELECT J FROM T AS T FORMAT JSON)`, or the query in
+parentheses. The standard counts JSON_VALUE, JSON_QUERY and JSON_EXISTS
+as possibly non-deterministic, so a CHECK constraint or a generated
+column holds none of them, SQLCODE -103; the constructors and [IS
+JSON](05-predicates.md#is-json) may be there.
+
 ## XML values
 
 XMLPARSE makes an XML value of a string, and XMLSERIALIZE writes one as a
 string. XMLDOCUMENT makes a document node of an XML value, XMLCAST
 casts SQL values to XML and back, and XMLELEMENT, XMLFOREST, XMLCONCAT,
 XMLCOMMENT, XMLPI and XMLTEXT make XML of SQL values, and XMLAGG of a
-group's. [XML Values](xml.md)
+group's. [XML Values](16-xml.md)
 gives their syntax.
 
 ```sql

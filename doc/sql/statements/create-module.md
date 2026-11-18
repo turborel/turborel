@@ -148,4 +148,4 @@ SQL-92 and ISO/IEC 9075-2 have no SQL-server modules.
 
 [DROP MODULE](drop-module.md), [CREATE PROCEDURE](create-procedure.md),
 [CREATE FUNCTION](create-function.md), [GRANT](grant.md),
-[Information Schema](../information-schema.md)
+[Information Schema](../07-information-schema.md)

@@ -14,13 +14,20 @@ mod distinct;
 mod distinct_predicate;
 mod distribution;
 mod explain;
+mod expression_index;
 mod fill;
 mod filter;
+mod fulltext;
 mod generated;
 mod geometry;
 mod grouping_sets;
 mod hash;
 mod hypothetical;
+mod json;
+mod json_index;
+mod json_path;
+mod json_table;
+mod json_type;
 mod kept;
 mod limits;
 mod listagg;
@@ -47,19 +54,26 @@ mod rename;
 mod roles;
 mod routines;
 mod rtree;
+mod savepoints;
 mod search_cycle;
 mod sequences;
 mod server;
 mod shadow;
 mod sql2023;
+mod sqlmm_fulltext;
 mod stats;
 mod structured;
 mod system_versioned;
+mod t621;
 mod tailorings;
 mod temporal;
 mod temporal_references;
 mod triggers;
 mod truncate;
+mod vector;
+mod vector_embed;
+mod vector_hybrid;
+mod vector_indexes;
 mod view_defaults;
 mod vr;
 mod waits;
@@ -96,24 +110,7 @@ pub use tailorings::TAILORINGS;
 
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {
-    let core: [&[Mutation]; 10] =
-        [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
-    core.into_iter()
-        .chain(areas::all())
-        .chain([hash::HASH.as_slice()])
-        .chain([projection::PROJECTION.as_slice(), &xquery::XQUERY])
-        .chain([xquery_functions::XQUERY_FUNCTIONS.as_slice()])
-        .chain([xml_publishing::XML_PUBLISHING.as_slice()])
-        .chain([xml_composite::XML_COMPOSITE.as_slice()])
-        .chain([xml_map::XML_MAP.as_slice()])
-        .chain([xml_index::XML_INDEX.as_slice()])
-        .chain([xquery_eval::XQUERY_EVAL.as_slice()])
-        .chain([xml_schema::XML_SCHEMA.as_slice(), &xml_schema_catalog::XML_SCHEMA_CATALOG])
-        .chain([xml_scoped::XML_SCOPED.as_slice()])
-        .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &xml::XML, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
-        .flatten()
-        .copied()
-        .collect()
+    areas::core().into_iter().chain(areas::all()).chain(areas::late()).flatten().copied().collect()
 }
 
 /// The core's mutations: transactions, durability, constraints, assertions. Rekeying's are in `rekey.rs`, the hash index's in `hash.rs`.

@@ -96,7 +96,7 @@ fn deepest(shape: Shape) -> usize {
     })
 }
 
-/// Verifies: [DESIGN] RULES.md R-CF-6, D18, D86: of each shape reading a
+/// Verifies: [DESIGN] RULES.md R-CF-6, D18, D106: of each shape reading a
 /// schema recurses through, local declarations in anonymous types (three
 /// levels of `MAX_DEPTH` each: the element, its type and its group),
 /// model groups, derivations, model group references (two each: the
@@ -125,7 +125,7 @@ fn reading_nests_within_half_a_stack() {
 /// schema in this process: the child process it started.
 const CHILD: &str = "TURBOREL_SCHEMA_DEPTH_CHILD";
 
-/// Verifies: [DESIGN] RULES.md R-CF-6, D86: a complex type's base is read
+/// Verifies: [DESIGN] RULES.md R-CF-6, D106: a complex type's base is read
 /// before the type, not within the frames of reading it, so the deepest
 /// chain of derivations accepted is read within half of a thread's
 /// default stack. The chain is read in a child process this test starts,
@@ -155,7 +155,7 @@ fn nested_document(n: usize) -> String {
     [open, "</e>".repeat(n)].concat()
 }
 
-/// Verifies: [DESIGN] RULES.md R-CF-6, D86: a document of elements nested
+/// Verifies: [DESIGN] RULES.md R-CF-6, D106: a document of elements nested
 /// `MAX_NESTING` deep, each declared by one recursive declaration of an
 /// ID and a unique constraint, is validated as a document node, its
 /// identity constraints and IDs checked, within half of a thread's default

@@ -1,4 +1,4 @@
-//! \[DESIGN\] RULES.md D79, D86: the large objects and XML values inside an
+//! \[DESIGN\] RULES.md D79, D106: the large objects and XML values inside an
 //! array, a multiset, a row or a value of a structured type, kept in the
 //! record of the row holding that value, and logged with it.
 //!
@@ -7,7 +7,7 @@
 //! id there would be another table's, or none once its row is gone. So,
 //! before a row is written, each such part is read whole into its value: an
 //! XML value's stored form, up to `xml::MAX_STORED` octets, as an XML value
-//! is read whole (D86); a large object up to a chunk, as what is held whole
+//! is read whole (D106); a large object up to a chunk, as what is held whole
 //! is (D79). A part past either is refused, SQLCODE -900, and the row is
 //! not written.
 
@@ -41,6 +41,7 @@ fn parts_of(v: &Value) -> Option<&[Value]> {
         | Value::Interval(_)
         | Value::Lob(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Xml(_)
         | Value::Extension(_) => None,
     }
@@ -63,7 +64,7 @@ fn beyond(what: &str, most: &str) -> SqlError {
     SqlError::new(
         Code::Unsupported,
         format!(
-            "[DESIGN] {what} inside an array, a multiset, a row or a structured value is beyond turborel's limits: its row holds one of at most {most} (RULES.md D79, D86)"
+            "[DESIGN] {what} inside an array, a multiset, a row or a structured value is beyond turborel's limits: its row holds one of at most {most} (RULES.md D79, D106)"
         ),
     )
 }
@@ -143,6 +144,7 @@ fn inlined(v: &Value, depth: usize) -> Result<Value> {
         | Value::Interval(_)
         | Value::Lob(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Xml(_)
         | Value::Extension(_) => v.clone(),
     })
@@ -151,7 +153,7 @@ fn inlined(v: &Value, depth: usize) -> Result<Value> {
 impl Value {
     /// \[DESIGN\] Whether a table's write of it does more than copy it: a
     /// large object or an XML value, which a table may keep apart (RULES.md
-    /// D79, D86), or a value made of values holding one, read into it
+    /// D79, D106), or a value made of values holding one, read into it
     /// (`hold_parts_inline`).
     #[must_use]
     pub fn needs_keeping(&self) -> bool {
@@ -161,7 +163,7 @@ impl Value {
 
 /// \[DESIGN\] Holds inline each large object and XML value inside a value
 /// of `row` made of values, so its row's record and log record hold them
-/// whole (RULES.md D79, D86).
+/// whole (RULES.md D79, D106).
 ///
 /// # Errors
 ///

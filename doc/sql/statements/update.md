@@ -69,7 +69,7 @@ Its row count is of the rows changed.
 
 WITH's XML options, XMLNAMESPACES and XMLBINARY, are in scope of the
 whole statement, its SET values, search condition and subqueries too, of the
-positioned form as well: see [XML Values](../xml.md#xml-options-of-a-scope).
+positioned form as well: see [XML Values](../16-xml.md#xml-options-of-a-scope).
 
 The positioned form, WHERE CURRENT OF a cursor, of a cursor named by
 an extended name too ([ALLOCATE CURSOR](allocate-cursor.md)), runs only
@@ -110,7 +110,7 @@ privilege beyond UPDATE.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist or is read-only; a column set is not of it, or is set twice; a value is not assignable to its column, or contains a set function; a rule of FOR PORTION OF is broken (rule 8); WITH's XML options break a rule of [XML Values](../xml.md#xml-options-of-a-scope) |
+| 2A000 | -103 | The table does not exist or is read-only; a column set is not of it, or is set twice; a value is not assignable to its column, or contains a set function; a rule of FOR PORTION OF is broken (rule 8); WITH's XML options break a rule of [XML Values](../16-xml.md#xml-options-of-a-scope) |
 | 2A000 | -104 | Its user lacks UPDATE on a column set, or SELECT on a table read |
 | 23000 | -201 | A row as changed breaks a constraint |
 | 44000 | -201 | A row changed through a view WITH CHECK OPTION is no longer a row of the view |

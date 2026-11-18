@@ -41,6 +41,7 @@ use super::{RowIter, broken, execute};
 use crate::catalog::SequenceDesc;
 use crate::db::State;
 use crate::error::{Result, Warnings};
+use crate::fulltext::rank::Statistics;
 use crate::logical::{Decorrelated, Invocation, LogicalPlan, Subquery};
 use crate::optimizer::RuleContext;
 use crate::physical::{JoinKey, PhysicalPlanner};
@@ -174,6 +175,17 @@ pub trait Subqueries {
         None
     }
 
+    /// The ranking statistics of index `index` (`CallContext`): a runner's
+    /// taken the first time they are asked for, then the same snapshot for
+    /// the rest of its statement; by default none.
+    ///
+    /// # Errors
+    ///
+    /// None by default.
+    fn ranking_statistics(&self, _index: &str) -> Result<Option<Arc<dyn Statistics>>> {
+        Ok(None)
+    }
+
     /// \[DESIGN\] Where the database the statement runs in keeps temporary
     /// large objects (RULES.md D79): its state's, if one runs.
     fn temp_lobs(&self) -> Option<&dyn crate::value::lob::TempLobs> {
@@ -224,6 +236,7 @@ fn exact_norm(v: &Value) -> NormKey {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Row(_)
+        | Value::Json(_)
         | Value::Extension(_)
         | Value::Xml(_) => v.norm(),
     }
@@ -274,13 +287,25 @@ pub struct Runner {
     stop: OnceCell<Option<Arc<Stop>>>,
     /// The patterns of its LIKEs not of constants, each split once.
     patterns: RefCell<LikePatterns>,
+    /// The ranking statistics of each index asked for, each taken once
+    /// (RULES.md D87).
+    ranked: RefCell<HashMap<String, Option<Arc<dyn Statistics>>>>,
 }
 
 impl Runner {
     /// A runner for transaction `tx` in `db`.
     pub fn new(db: &Arc<State>, tx: TxId) -> Runner {
         let (done, seen) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
-        Runner { db: Arc::clone(db), tx, done, kept: Cell::new(0), seen, stop: OnceCell::new(), patterns: RefCell::default() }
+        Runner {
+            db: Arc::clone(db),
+            tx,
+            done,
+            kept: Cell::new(0),
+            seen,
+            stop: OnceCell::new(),
+            patterns: RefCell::default(),
+            ranked: RefCell::default(),
+        }
     }
 
     /// The rows of `plan`, optimized and planned.
@@ -420,6 +445,19 @@ impl Subqueries for Runner {
 
     fn state(&self) -> Option<&Arc<State>> {
         Some(&self.db)
+    }
+
+    fn ranking_statistics(&self, index: &str) -> Result<Option<Arc<dyn Statistics>>> {
+        if let Some(taken) = self.ranked.borrow().get(index) {
+            return Ok(taken.clone());
+        }
+        // An index dropped since the statement was bound ranks nothing.
+        let taken = match self.db.index_of(index) {
+            Ok(ix) => Arc::clone(ix).ranking_statistics()?,
+            Err(_) => None,
+        };
+        self.ranked.borrow_mut().insert(index.to_owned(), taken.clone());
+        Ok(taken)
     }
 }
 

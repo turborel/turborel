@@ -21,7 +21,7 @@ fn alone(lookup: XmlLookup) -> XmlQuery {
     XmlQuery { lookup, filter: None }
 }
 
-/// Verifies: [EXTENSION] RULES.md D86 [Pal et al. §2.2, §3.1.1, §3.1.2]
+/// Verifies: [EXTENSION] RULES.md D106 [Pal et al. §2.2, §3.1.1, §3.1.2]
 /// [XQuery §3.2, §3.2.2, §3.5.2]: of 120 values made, each a row of a
 /// primary index, and of 300 lookups made, some filtered by a predicate of
 /// an ancestor, the index answers each row from its entries alone as the
@@ -59,7 +59,7 @@ fn the_primary_answers_as_each_value_does() {
     assert!(seen.iter().all(|&n| n > 100), "every answer is given often: {seen:?}");
 }
 
-/// Verifies: [EXTENSION] RULES.md D86 [Pal et al. §3.1.2]: the paper's
+/// Verifies: [EXTENSION] RULES.md D106 [Pal et al. §3.1.2]: the paper's
 /// `/BOOK[@ISBN = "1-55860-438-3"]/SECTION`, a parent join of a SECTION
 /// and its BOOK's ISBN, holds of the book of that ISBN alone; of a row
 /// asked, that row alone is answered.
@@ -91,7 +91,7 @@ fn a_parent_join_answers_the_papers_query() {
     assert_eq!(rows, [1], "of the row asked, its rows found");
 }
 
-/// Verifies: [EXTENSION] RULES.md D86, D29: a value longer than the
+/// Verifies: [EXTENSION] RULES.md D106, D29: a value longer than the
 /// primary keys whole, whose comparison its entries cannot answer, is
 /// checked; so is a row whose versions held are of two values, until one
 /// is taken back.
@@ -118,7 +118,7 @@ fn a_cut_value_and_versions_alike_are_checked() {
     assert!(lookup("one").matches_stored(&stored_one).unwrap());
 }
 
-/// Verifies: [EXTENSION] RULES.md D86: a secondary method answers no row
+/// Verifies: [EXTENSION] RULES.md D106: a secondary method answers no row
 /// from its entries alone; the primary's ancestor of a node is its
 /// ORDPATH less as many components [Pal et al. §2.2].
 #[test]

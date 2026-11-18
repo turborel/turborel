@@ -1,5 +1,5 @@
 //! \[DESIGN\] The large objects and XML values a spilled record names but
-//! does not hold (RULES.md D38, D79, D86). The log's form of a value names
+//! does not hold (RULES.md D38, D79, D106). The log's form of a value names
 //! a table's object by its id alone, which only the table of the row
 //! holding it resolves, and writes any other kept apart as no octets. A
 //! record of rows an operator or a statement holds past its work area
@@ -93,6 +93,7 @@ fn apart(v: &Value, depth: usize) -> bool {
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Extension(_) => false,
     }
 }
@@ -118,6 +119,7 @@ fn rebuilt(v: &Value, depth: usize, each: &mut dyn FnMut(&Value, usize) -> Resul
         | Value::Interval(_)
         | Value::Lob(_)
         | Value::Reference(_)
+        | Value::Json(_)
         | Value::Xml(_)
         | Value::Extension(_) => v.clone(),
     })

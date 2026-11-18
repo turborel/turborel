@@ -2,7 +2,7 @@
 //! [XQuery §3.7.3.1], as XMLELEMENT and XMLFOREST evaluate it [ISO/IEC
 //! 9075-14:2006 draft §10.13 GR4c viii].
 //!
-//! \[DESIGN\] RULES.md D86: the content is read once into pieces, its
+//! \[DESIGN\] RULES.md D106: the content is read once into pieces, its
 //! attributes, text and nodes to copy, and the element built from them
 //! with `Builder`, each node copied by the tree's links, so nothing
 //! recurses.

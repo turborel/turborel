@@ -5,6 +5,7 @@
 //!
 //! A panic is how a test reports failure, so test code may unwrap, index and
 //! panic (RULES.md R-ERR-1 applies to production code only).
+
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -102,8 +103,12 @@ mod durability;
 mod dynamic_cursors;
 mod dynamic_manual;
 mod dynamic_statements;
+mod embedding_models;
+mod embedding_queue;
+mod embedding_sources;
 mod encodings;
 mod engine_settings;
+mod expression_indexes;
 mod expressions;
 mod extension_types;
 mod failures;
@@ -115,6 +120,8 @@ mod file_manager;
 mod filter;
 mod following;
 mod formatted_casts;
+mod fulltext;
+mod fulltext_index;
 mod functions;
 mod functions_overloading;
 mod generated;
@@ -137,6 +144,12 @@ mod intervals;
 mod isolation;
 mod joined_tables;
 mod joins;
+mod json_conformance;
+mod json_constructors;
+mod json_functions;
+mod json_index;
+mod json_table;
+mod json_type;
 mod kept_plans;
 mod language;
 mod language_collations;
@@ -166,6 +179,7 @@ mod multisets;
 mod mvcc;
 mod named_schemas;
 mod null_ordering;
+mod numeric_functions;
 mod order_by;
 mod ordered_joins;
 mod pages;
@@ -230,6 +244,7 @@ mod row_waits;
 mod rows;
 mod rowstore;
 mod rule_settings;
+mod savepoints;
 mod schema_statements;
 mod schema_transactions;
 mod scroll_cursors;
@@ -248,9 +263,11 @@ mod spilled_sorts;
 mod spilling;
 mod standby;
 mod statements;
+mod statistical_set_functions;
 mod statistics;
 mod statistics_background;
 mod storage_defaults;
+mod stored_function_calls;
 mod stores;
 mod structured_alterations;
 mod structured_ddl;
@@ -299,7 +316,12 @@ mod unnest;
 mod user_casts;
 mod users;
 mod varying;
+mod vector_hybrid;
+mod vector_indexes;
 mod vector_operators;
+mod vector_pipelines;
+mod vector_search;
+mod vectors;
 mod views;
 mod warnings;
 mod width_bucket;

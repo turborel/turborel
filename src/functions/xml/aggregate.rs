@@ -86,7 +86,7 @@ struct Gathered {
 impl Accumulator for Gathered {
     /// [§11.2 GR2c] A row whose XML value is null is removed; [GR1] data
     /// exception, XML value overflow, once the values held pass
-    /// `MAX_STORED` octets, as no value longer is kept (RULES.md D86).
+    /// `MAX_STORED` octets, as no value longer is kept (RULES.md D106).
     fn update(&mut self, v: &Value) -> Result<()> {
         let Value::Row(row) = v else { return Err(no_argument()) };
         let Some(Value::Xml(x)) = row.first() else { return Ok(()) };

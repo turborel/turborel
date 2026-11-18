@@ -122,7 +122,7 @@ impl Binder<'_> {
 
     /// The registered XML Schemas a query may validate by and import
     /// [§10.20 SR2e] [XQuery §4.10], implementation-defined (RULES.md
-    /// D86): those the current user may use, in the order of their names,
+    /// D106): those the current user may use, in the order of their names,
     /// then the permanently registered ones, each with its name. A
     /// definition notes those its query validates by or imports as it is
     /// created, so it depends on them (`Invoked::indicated`), and, bound
@@ -295,7 +295,7 @@ impl Binder<'_> {
 }
 
 /// [§10.20 SR2e] The in-scope schema definitions, implementation-defined
-/// (RULES.md D86): of each target namespace, the first of `importable`, so
+/// (RULES.md D106): of each target namespace, the first of `importable`, so
 /// the registered XML Schema of the least name the current user may use,
 /// as XMLVALIDATE's data-driven validation chooses, or the permanently
 /// registered one of a namespace none of those has.

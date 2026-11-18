@@ -1,4 +1,4 @@
-//! \[DESIGN\] RULES.md D86: the byte forms of an XML index's keys, each
+//! \[DESIGN\] RULES.md D106: the byte forms of an XML index's keys, each
 //! comparing as bytes as what it stands for compares, so one B-link tree
 //! holds a dictionary, the markers of the values it holds, and its
 //! entries, each a space of keys beginning with its own byte.
@@ -80,7 +80,7 @@ const SIGN: u64 = 0x8000_0000_0000_0000;
 
 /// The error of a key that is no key of this format.
 pub(super) fn corrupt() -> SqlError {
-    SqlError::new(Code::Corrupt, "[DESIGN] an XML index's key is malformed (RULES.md D86)")
+    SqlError::new(Code::Corrupt, "[DESIGN] an XML index's key is malformed (RULES.md D106)")
 }
 
 /// Appends ordinal `n`.

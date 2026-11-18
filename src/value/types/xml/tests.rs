@@ -57,7 +57,7 @@ fn lone_attribute() -> Value {
 }
 
 /// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.2, §6.1] [DESIGN] RULES.md
-/// D86: each XML type is written with its modifiers, its parameters read
+/// D106: each XML type is written with its modifiers, its parameters read
 /// back as written, others corrupt; it is comparable with XML types
 /// alone, described as XML, of no width and no key.
 #[test]
@@ -142,7 +142,7 @@ fn xmlschema_types_written_and_described_6_1() {
     assert!(XML.descriptor(&DataType::Xml(XmlType::Sequence)).xml_schema.is_none());
 }
 
-/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.3] [DESIGN] RULES.md D86: a
+/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.3] [DESIGN] RULES.md D106: a
 /// site of a type of XMLSCHEMA takes a value each of whose elements a
 /// validation typed, or one a table holds stored, and the null value; a
 /// value untyped, as one sent as text, is SQLSTATE 2201R.
@@ -184,7 +184,7 @@ fn assignment_and_cast_10_2() {
     assert_eq!(XML.decode_key(&mut &[][..], &document).unwrap_err().sqlcode(), -910_i32);
 }
 
-/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.3] [DESIGN] RULES.md D86: a
+/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.3] [DESIGN] RULES.md D106: a
 /// value's bytes and record are its stored form as a binary large
 /// object's, read back as the same value; a record of another value is
 /// refused, and bytes that are none read as none.
@@ -209,7 +209,7 @@ fn stored_forms_read_back() {
     assert!(XmlValue::stored(Lob::of_octets(&[7])).sequence().is_err());
 }
 
-/// Verifies: [ISO/IEC 9075-14:2006 draft §10.15] [EXTENSION] RULES.md D86:
+/// Verifies: [ISO/IEC 9075-14:2006 draft §10.15] [EXTENSION] RULES.md D106:
 /// a value is shown, and is a literal, as its serialization as CONTENT,
 /// in XML 1.0, else XML 1.1 after a declaration; one with none says so,
 /// and its text is 2200W.
@@ -235,7 +235,7 @@ fn values_as_text_10_15() {
     assert_eq!(content("<a/>").to_string(), "<a/>");
 }
 
-/// Verifies: [DESIGN] RULES.md D18, D86: a value whose stored form is
+/// Verifies: [DESIGN] RULES.md D18, D106: a value whose stored form is
 /// longer than `MAX_STORED` octets is refused as it is stored, SQLCODE
 /// -900; its forms say what they hold, a table's large object or not.
 #[test]

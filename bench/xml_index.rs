@@ -1,6 +1,6 @@
 //! What a path predicate costs over XML values' stored form, of documents
 //! of several sizes, against the XML indexes, the primary's of Pal et al.
-//! (§3.1) among them (RULES.md D86).
+//! (§3.1) among them (RULES.md D106).
 //!
 //! For each size, a predicate `/order/item[. = "thing N"]` asked of every
 //! value of a table's worth of documents:

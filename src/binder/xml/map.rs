@@ -1,4 +1,4 @@
-//! \[EXTENSION\] XMLMAP bound (RULES.md D86): a table, a schema or the
+//! \[EXTENSION\] XMLMAP bound (RULES.md D106): a table, a schema or the
 //! catalog mapped to XML and to an XML Schema document [ISO/IEC
 //! 9075-14:2006 draft §9.11, §9.14, §9.17]. Each table it maps is read by
 //! a query, `SELECT * FROM` it, bound as a `<table reference>` naming it
@@ -86,7 +86,7 @@ fn source_of(kind: &MapSource, mut tables: Vec<Table>) -> Result<Source> {
 /// [§9.11 SR1, §9.14 SR1, §9.17 SR1] The parameters `m` gives, each
 /// written or implicit: TARGETNS the zero-length string if none is
 /// written, no namespace [§9.10 GR1]; ENCODING, if none is written,
-/// `scoped`, the `<XML binary encoding>` in scope [§11.3] (RULES.md D86);
+/// `scoped`, the `<XML binary encoding>` in scope [§11.3] (RULES.md D106);
 /// and the SQL-session's time zone displacement `zone` [§9.8 GR7].
 ///
 /// # Errors
@@ -137,7 +137,7 @@ impl Binder<'_> {
         let alone = matches!(m.source, MapSource::Table(_));
         if !alone && self.purpose == Purpose::Mapped {
             return Err(rule(
-                "[EXTENSION] RULES.md D86: a mapping of a schema or the catalog reads no table, view or routine that maps a schema or the catalog, as such a mapping could hold itself",
+                "[EXTENSION] RULES.md D106: a mapping of a schema or the catalog reads no table, view or routine that maps a schema or the catalog, as such a mapping could hold itself",
             ));
         }
         let choices = choices(m, self.binary_encoding(), self.now.zone())?;
@@ -263,7 +263,7 @@ impl Binder<'_> {
     /// \[EXTENSION\] Whether `name` is a view whose query, or that of a view
     /// it reads, maps a schema or the catalog, which a mapping of a schema
     /// or the catalog leaves out, as its mapping could hold itself
-    /// (RULES.md D86). Each view is read once, so the walk ends.
+    /// (RULES.md D106). Each view is read once, so the walk ends.
     fn view_maps(&self, name: &QualifiedName) -> bool {
         let catalog = &*self.db.catalog;
         let (mut next, mut seen) = (vec![name.clone()], Vec::new());

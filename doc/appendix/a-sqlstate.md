@@ -53,12 +53,14 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 0A001 | Feature not supported: multiple server transactions |
 | 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
 | 0N002 | SQL/XML mapping error: invalid XML character: XMLCAST, XMLELEMENT, XMLFOREST, XMLPI or XMLTEXT of a string holding a character no XML 1.1 character |
+| 0W000 | Prohibited statement encountered during trigger execution: a savepoint statement in a procedure a trigger's action calls; told in the message of the 09000 it raises |
 | 10000 | XQuery error: XMLDOCUMENT of a value holding an attribute standing alone; XMLCAST of text that is no value of the XML Schema type cast to, or of more than one atomic value; XMLELEMENT of an attribute after other content, or of two attributes of one name; any static, type or dynamic error of a query XMLQUERY, XMLEXISTS or XMLTABLE evaluates, its message naming the error's code, as err:XPST0008 |
 | 21000 | Cardinality violation: a subquery of one row gave more, or ELEMENT a multiset of more than one element |
-| 22000 | Data exception |
-| 22001 | String data, right truncation: a string too long for its type |
+| 22000 | Data exception: a path's `%` of an approximate number or one with a fraction; vectors of other dimension counts or formats |
+| 22001 | String data, right truncation: a string too long for its type, JSON_QUERY's JSON text longer than its returned type whatever ON ERROR says among them; FROM_VECTOR of a vector whose text is longer than a character string |
 | 22002 | Null value, no indicator parameter |
-| 22003 | Numeric value out of range |
+| 22003 | Numeric value out of range, a number of JSON text of more than 34 significant digits among them, wherever JSON text is read, IS JSON too; a vector element out of its format's range, NaN or infinite, or a vector distance that overflows |
+| 22004 | Null value not allowed: a null name of a member of JSON_OBJECT or JSON_OBJECTAGG |
 | 22005 | Error in assignment |
 | 22007 | Invalid datetime format |
 | 22008 | Datetime field overflow |
@@ -77,13 +79,15 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2200W | XQuery serialization error: an XML value with no serialization, as an attribute standing alone, serialized or sent to a client |
 | 22009 | Invalid time zone displacement value |
 | 22011 | Substring error |
-| 22012 | Division by zero |
+| 22012 | Division by zero, of a vector among them |
 | 22013 | Invalid preceding or following size in window function: a frame's offset negative or null |
 | 22014 | Invalid argument for NTILE function: a number of tiles below 1 |
 | 22015 | Interval field overflow |
 | 22016 | Invalid argument for NTH_VALUE function: a row below 1 |
-| 22018 | Invalid character value for cast |
+| 22018 | Invalid character value for cast, text that is no vector among them |
 | 22019 | Invalid escape character |
+| 2201E | Invalid argument for natural logarithm: LN of 0 or below |
+| 2201F | Invalid argument for power function: POWER of 0 to a negative power, or of a negative number to a power not whole; SQRT of a negative number |
 | 2201J | XQuery sequence cannot be validated: XMLVALIDATE SEQUENCE of an atomic value, an attribute or a text node |
 | 2201K | XQuery document node cannot be validated: XMLVALIDATE of a document node with a text child |
 | 2201L | No XML schema found: XMLVALIDATE of no ACCORDING TO of an element whose namespace has no registered XML Schema the user may use |
@@ -101,11 +105,33 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 22022 | Indicator overflow |
 | 22025 | Invalid escape sequence |
 | 22027 | Trim error |
-| 2202E | Array element error: an element referenced not of the array, or an array trimmed of more elements than it has |
+| 2202E | Array element error: an element referenced not of the array, or an array trimmed of more elements than it has; VECTOR_ELEMENT or VECTOR_SLICE outside the vector, or VECTOR_TO_ARRAY of more elements than an array holds |
 | 2202F | Array data, right truncation: an array, or a multiset cast to an array, of more elements than its target's maximum cardinality |
 | 2202J | Invalid argument for row pattern navigation function: a logical or physical offset of PREV, NEXT, FIRST or LAST below 0, or null |
 | 2202K | Skip to non-existent row: AFTER MATCH SKIP TO a variable no row of the match is mapped to |
 | 2202L | Skip to first row of match: AFTER MATCH SKIP TO a variable whose row it names is the match's first |
+| 2202V | Non-Boolean SQL/JSON item: a path's boolean() of an item neither a truth value nor a string |
+| 2202W | Non-date SQL/JSON item: a path's date() of an item that is no string |
+| 2202X | Non-string SQL/JSON item: a path's string() of an array, an object or the SQL/JSON null |
+| 2202Y | Non-time SQL/JSON item: a path's time() of an item that is no string, or time_tz() of one neither a string nor a number |
+| 2202Z | Non-timestamp SQL/JSON item: a path's timestamp() of an item that is no string, or timestamp_tz() of one neither a string nor a number |
+| 22030 | Duplicate JSON object key value: JSON_OBJECT or JSON_OBJECTAGG WITH UNIQUE KEYS of two members of one name |
+| 22031 | Invalid argument for SQL/JSON datetime function: a path's datetime() of an item that is no character string, or of a string that is no date, time or timestamp, or that its template does not read |
+| 22032 | Invalid JSON text: a context item or PASSING argument of JSON_EXISTS, JSON_VALUE or JSON_QUERY, or a value FORMAT JSON of a constructor, that is no JSON text, or an item JSON_QUERY serializes that has none, as a datetime, or a parent's item of no JSON text chained to JSON_TABLE's NESTED COLUMNS under ERROR ON ERROR |
+| 22033 | Invalid SQL/JSON subscript: an array subscript of a path that is not one number, or in strict mode outside the array |
+| 22034 | More than one SQL/JSON item: JSON_VALUE, or JSON_QUERY without a wrapper, of a path that gives two items or more |
+| 22035 | No SQL/JSON item: JSON_VALUE or JSON_QUERY of ERROR ON EMPTY, of a path that gives no item |
+| 22036 | Non-numeric SQL/JSON item: a path's double(), bigint(), integer(), decimal() or number() of an item neither a number nor a string, or ceiling(), floor() or abs() of one no number |
+| 22037 | Non-unique keys in a JSON object: JSON text WITH UNIQUE KEYS of an object of a key twice, as a value FORMAT JSON of JSON_OBJECT WITH UNIQUE KEYS |
+| 22038 | Singleton SQL/JSON item required: an operand of a path's arithmetic that is not one number |
+| 22039 | SQL/JSON array not found: an array accessor, or in strict mode size(), of an item that is no array |
+| 2203A | SQL/JSON member not found: in strict mode, a member accessor of an item that is no object with the member |
+| 2203B | SQL/JSON number not found: a path's sign of an item that is no number |
+| 2203C | SQL/JSON object not found: in strict mode, `.*` of an item that is no object |
+| 2203D | Too many JSON array elements: JSON_ARRAY or JSON_ARRAYAGG of more than 1,048,576 elements |
+| 2203E | Too many JSON object members: JSON_OBJECT or JSON_OBJECTAGG of more than 1,048,576 members |
+| 2203F | SQL/JSON scalar required: JSON_VALUE of an array or an object |
+| 2203G | SQL/JSON item cannot be cast to target type: JSON_VALUE of an item whose type does not cast to the returned type, as true to INTEGER |
 | 23000 | Integrity constraint violation |
 | 24000 | Invalid cursor state |
 | 25000 | Invalid transaction state |
@@ -117,12 +143,18 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2B000 | Dependent privilege descriptors still exist |
 | 2E000 | Invalid connection name |
 | 2F005 | SQL routine exception: function executed no return statement, of a function whose body is no RETURN |
+| 2FF01 | SQL/MM Full-Text exception: invalid search expression, a pattern not of the [pattern language](../sql/09-fulltext-patterns.md) |
+| 2FF02 | SQL/MM Full-Text exception: invalid language specification, a language null, empty or unknown |
+| 2FF03 | SQL/MM Full-Text exception: effectively empty search expression, every word of the pattern a stop word |
 | 2H000 | Invalid collation name |
 | 33000 | Invalid SQL descriptor name |
 | 34000 | Invalid cursor name: of a cursor allocated, or a positioned statement prepared |
 | 35000 | Invalid condition number |
 | 36002 | Cursor sensitivity exception: request failed, of TRUNCATE TABLE while a cursor of the transaction reads the table |
 | 37000 | Syntax error or access rule violation in a dynamic SQL statement |
+| 3B000 | Savepoint exception: the class of 3B001 and 3B002 |
+| 3B001 | Savepoint exception: invalid specification: RELEASE or ROLLBACK TO a savepoint not of the current savepoint level, or established before the atomic execution context running began |
+| 3B002 | Savepoint exception: too many: a transaction's 1,025th savepoint |
 | 3C000 | Ambiguous cursor name: a cursor declared and one allocated, of one name |
 | 3D000 | Invalid catalog name: an identifier chain of four or more that names no catalog, column or field |
 | 3F000 | Invalid schema name |
@@ -130,7 +162,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 40001 | Transaction rollback: serialization failure |
 | 40002 | Transaction rollback: integrity constraint violation, at commit |
 | 44000 | With check option violation |
-| TB910 | The Rust API was misused, or a defect |
+| TB910 | The Rust API was misused, or a defect, or a registered vector distance function that breaks its contract |
 | TB911 | Conflict with another transaction: the statement undone, the transaction going on |
 | TB912 | Refused by the transaction policy |
 | TB914 | A table damaged by a change that could not be undone |

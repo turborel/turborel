@@ -2,7 +2,7 @@
 //! `fn:data`, `fn:base-uri` and `fn:document-uri`, each a function of the
 //! data model's accessor of its name [XQueryDM §5].
 //!
-//! \[DESIGN\] RULES.md D86: a tree keeps no base URI and no document URI
+//! \[DESIGN\] RULES.md D106: a tree keeps no base URI and no document URI
 //! of its own, as XMLPARSE and the constructors give it none: a document
 //! read from a string has none [Infoset §1]. So a node's base URI is what
 //! the `xml:base` attributes of its element and that element's ancestors

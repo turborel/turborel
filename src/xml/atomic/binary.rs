@@ -1,7 +1,7 @@
 //! Binary values [Schema2 §3.2.15, §3.2.16]: `xs:hexBinary` and
 //! `xs:base64Binary`, octets in hex or in base64 [RFC 2045 §6.8].
 //!
-//! \[DESIGN\] RULES.md D86: [Schema2 §3.2.16] defines base64's literals as
+//! \[DESIGN\] RULES.md D106: [Schema2 §3.2.16] defines base64's literals as
 //! RFC 2045's encoding, whose lines a collapsed literal has as spaces. So
 //! a literal of `xs:base64Binary` is groups of four characters of the
 //! alphabet, spaces among them ignored, the last group padded with `=`;
