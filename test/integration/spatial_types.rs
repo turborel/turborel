@@ -117,8 +117,8 @@ fn values_of_every_dimension_through_wkb() {
         ["1,ST_Point,4326", "2,ST_CircularString,0"]
     );
     assert_eq!(rows(&a, "SELECT ST_X(G), ST_MAXY(G) FROM T WHERE ID = 1").unwrap(), ["1E0,2E0"]);
-    // Until a linearizer of arcs is given, an arc relates as no value.
-    assert_eq!(rows(&a, "SELECT ST_MINX(G) FROM T WHERE ID = 2").unwrap_err(), Code::Unsupported);
+    // An arc's envelope comes from its linear form.
+    assert_eq!(rows(&a, "SELECT ST_MINX(G), ST_MAXX(G) FROM T WHERE ID = 2").unwrap(), ["0E0,2E0"]);
     assert_eq!(
         rows(&a, "SELECT ST_ASBINARY(G) FROM T WHERE ID = 1").unwrap(),
         ["01E9030000000000000000F03F00000000000000400000000000000840"]
