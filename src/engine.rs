@@ -15,12 +15,16 @@
 //!   values in chunks of their own, under a table of the row store.
 
 pub mod columns;
+pub mod diskann;
 pub mod hash;
+pub mod hnsw;
+pub mod ivf;
 pub mod key;
 mod locks;
 pub mod record;
 pub mod rows;
 pub mod rtree;
+pub mod sparse;
 pub mod tree;
 
 use std::path::Path;

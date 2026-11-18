@@ -29,6 +29,9 @@ SQLSTATE 0A000.
 | A full-text language's name | 32 characters |
 | The array a full-text tokenizing method gives | 65,535 elements; past it, SQLSTATE 2202F |
 | The relations of the thesauri a statement reads | 65,535 |
+| A VECTOR's dimension count | 1 to 65,535; of a sparse vector 2,147,483,647; of BINARY 8 to 65,528, a multiple of 8 |
+| A vector's text in a character large object | 16,777,216 octets; past it, SQLSTATE 22003 |
+| The text EMBED and the chunking functions read of a character large object | 16,777,216 octets; past it, SQLSTATE 22000 |
 
 ## Nesting
 

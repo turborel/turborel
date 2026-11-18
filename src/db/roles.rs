@@ -372,6 +372,7 @@ impl State {
             || cat.sequences().into_iter().any(|s| usage(&s.usage))
             || cat.user_types().into_iter().any(|t| usage(&t.usage) || usage(&t.to_distinct.execute) || usage(&t.to_source.execute))
             || cat.routines().into_iter().any(|r| usage(&r.execute))
+            || cat.embeddings().models.iter().any(|m| usage(&m.execute))
     }
 
     /// `roles`, recorded.

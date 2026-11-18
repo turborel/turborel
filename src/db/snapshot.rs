@@ -29,6 +29,7 @@
 //!           u32, each a module, in the order of their timestamps of
 //!           creation), structured types (count u32, each a type),
 //!           user-defined casts, orderings and transforms (likewise),
+//!           embedding models and vector pipelines (`catalog/embedding.rs`)
 //!           the spatial reference systems defined and the geometry
 //!           columns registered (as `catalog/codec/spatial.rs` writes them)
 //! ```
@@ -44,7 +45,7 @@ use crate::catalog::codec::{
     put_privilege, put_roles, put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, roles, routine,
     sequence, table, trigger, user_type, view,
 };
-use crate::catalog::{CastDesc, OrderingDesc, StructuredDesc, TransformGroupDesc};
+use crate::catalog::{CastDesc, Embeddings, OrderingDesc, StructuredDesc, TransformGroupDesc, embeddings, put_embeddings};
 use crate::catalog::{
     Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, ModuleDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc,
     SqlRoutineDesc, TableDesc, TriggerDesc, UserTypeDesc, ViewDesc, module_of_schema,
@@ -97,6 +98,8 @@ pub(super) struct Snapshot {
     orderings: Vec<OrderingDesc>,
     /// The types' transform groups, by the types' names.
     transforms: Vec<(QualifiedName, Vec<TransformGroupDesc>)>,
+    /// \[EXTENSION\] The embedding models and vector pipelines.
+    embeddings: Embeddings,
     /// The spatial reference systems defined and the geometry columns
     /// registered.
     spatial: crate::catalog::SpatialCatalog,
@@ -157,6 +160,7 @@ impl Snapshot {
             casts: st.catalog.casts().into_iter().cloned().collect(),
             orderings: st.catalog.orderings().into_iter().cloned().collect(),
             transforms: st.catalog.all_transforms().into_iter().map(|(n, g)| (n.clone(), g.to_vec())).collect(),
+            embeddings: st.catalog.embeddings().clone(),
             spatial: st.catalog.spatial().clone(),
         })
     }
@@ -242,6 +246,7 @@ impl Snapshot {
         self.orderings.iter().for_each(|o| put_ordering(out, o));
         out.put_u32(count(self.transforms.len()));
         self.transforms.iter().for_each(|(n, g)| put_transforms(out, (n, g)));
+        put_embeddings(out, &self.embeddings);
         crate::catalog::codec::put_spatial(out, &self.spatial);
     }
 
@@ -279,6 +284,7 @@ impl Snapshot {
             casts: (0..r.u32()?).map(|_| cast(r)).collect::<Result<_>>()?,
             orderings: (0..r.u32()?).map(|_| ordering(r)).collect::<Result<_>>()?,
             transforms: (0..r.u32()?).map(|_| transforms(r)).collect::<Result<_>>()?,
+            embeddings: embeddings(r)?,
             spatial: crate::catalog::codec::spatial(r)?,
         })
     }
@@ -406,6 +412,7 @@ fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.triggers.iter().cloned().for_each(|t| catalog.put_trigger(t));
     snapshot.routines.iter().cloned().for_each(|r| catalog.put_routine(r));
     snapshot.modules.iter().cloned().for_each(|m| catalog.put_module(m));
+    catalog.set_embeddings(snapshot.embeddings.clone());
     catalog.set_spatial(snapshot.spatial.clone());
 }
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::error::SqlError;
 use crate::exec::NoSubqueries;
-use crate::logical::Fetch;
+use crate::logical::{Fetch, Search};
 use crate::spill::testing::{Held, areas};
 use crate::value::types::TypeRegistry;
 use crate::value::{DecFloat, Decimal};
@@ -19,7 +19,7 @@ fn rows(values: &[i128]) -> RowIter {
 
 /// A FETCH FIRST of `count`, a percentage if `percent`, of ONLY.
 fn fetch(count: Expr, percent: bool) -> Fetch {
-    Fetch { count, percent, ties: None }
+    Fetch { count, percent, ties: None, search: Search::default(), hints: Box::default() }
 }
 
 /// `fetch`, of WITH TIES by the one column ascending.

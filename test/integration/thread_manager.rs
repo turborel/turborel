@@ -118,6 +118,7 @@ fn threads_are_shown_to_the_owner() {
         Ok(vec![
             "turborel-assertion-totals,IDLE,NO,0,0,NULL".to_owned(),
             "turborel-checkpoint,IDLE,NO,0,0,NULL".to_owned(),
+            "turborel-embedding,IDLE,NO,0,0,NULL".to_owned(),
             "turborel-log-sync,IDLE,NO,0,0,NULL".to_owned(),
             format!("turborel-maintenance,{state},NO,{runs},0,NULL"),
             "turborel-read-ahead,IDLE,NO,0,0,NULL".to_owned(),

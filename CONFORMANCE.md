@@ -1973,6 +1973,15 @@ refused, SQLCODE -900, as that statement runs on those definitions. Run
 directly, it cancels them. The command codes are SAVEPOINT 63, RELEASE
 SAVEPOINT 57 and ROLLBACK WORK 62 [§23.1 Table 39].
 
+### Bracketed comments
+
+Feature T351 (Bracketed comments) is claimed [§5.2 SR11, SR12]. A
+`<bracketed comment>` is a separator, as a `<simple comment>` is, and
+one begun within it nests, so each needs its own `*/`. One not ended is
+SQLSTATE 2A000, SQLCODE -101. \[EXTENSION\] One that begins a statement
+and whose contents begin with `+` holds hints, of which
+VECTOR_WAIT_FRESH is read (RULES.md D105).
+
 ## SQL/PSM
 
 Persistent stored modules, ISO/IEC 9075-4, written from its 2006 draft
@@ -2256,7 +2265,7 @@ No Simple Features or SQL/MM Spatial conformance is claimed.
 ### Indexes
 
 These are RULES.md D34, of the methods `btree`, `hash`, `rtree`,
-`fulltext` and `json`, or a plug-in's. The statements run outside a transaction. The `rtree` method
+`fulltext`, `json`, the vector methods [below](#vector-indexes), or a plug-in's. The statements run outside a transaction. The `rtree` method
 indexes two approximate-numeric point coordinates or four rectangle
 coordinates and answers independent SQL comparisons (`index/rtree.rs`,
 `physical/access/columns.rs`, D72). Inner joins can bind these comparisons
@@ -2367,6 +2376,250 @@ or `hash` (RULES.md D92).
 | Planner | `=`, ranges, BETWEEN and IN of an expression of the same canonical form probe it; ORDER BY of a never-null one reads a btree index in order. |
 | Maintenance | INSERT, UPDATE of an input column, DELETE, rollback, recovery, ALTER TABLE and temporary tables. Renaming an input column is refused, and dropping one drops the index. |
 | Shown | INDEXES.COLUMN_NAMES gives the key part as written, in parentheses; EXPLAIN shows the probe. |
+
+### Vectors
+
+VECTOR is a built-in type beyond the standards (RULES.md D93), with its
+distances, operators, arithmetic, aggregates and quantization, and
+distance functions of SQL. No ISO standard defines it. It follows the
+vector design document, which reads Microsoft SQL Server 2025's and
+Oracle AI Database 26ai's vector features as one design and is cited
+here as "vector §x" ([below](#the-vector-design-document-clause-by-clause)).
+The SQL Reference Manual's [Vectors](doc/sql/14-vectors.md) and
+[Hybrid Search](doc/sql/15-hybrid-search.md) and the
+[Vector Guide](doc/data/04-vectors.md) describe them.
+
+| Facility | Behaviour |
+|---|---|
+| VECTOR [vector §3] | `VECTOR [(dims, format, layout)]`, each `*` or left out for open. FLOAT32, FLOAT16, FLOAT64, INT8 and BINARY, DENSE or SPARSE. No order and no `=` (D93) |
+| Text forms [vector §5] | TO_VECTOR, VECTOR(text), CAST of text, FROM_VECTOR RETURNING ... FORMAT, and a character string assigned to a VECTOR site |
+| Distances [vector §6.1 to §6.3] | VECTOR_DISTANCE in both argument orders, seven metrics, the shorthand functions and the operators `<-> <=> <#> <+> <~> <%>` |
+| Arithmetic and aggregates [vector §6.5] | `+ - * /`, SUM, AVG, VECTOR_MIN and VECTOR_MAX of each element |
+| Quantization [vector §7.1] | VECTOR_QUANTIZE and VECTOR_DEQUANTIZE; PQ, SQ8 and BQ quantizers of an index |
+| Distance functions [vector §8] | CREATE and DROP VECTOR DISTANCE FUNCTION of LANGUAGE SQL, with EXECUTE (D93) |
+| Plug-ins | `Database::register_metric` and `register_quantizer`, a metric named `NAME` or `SCHEMA.NAME` |
+| Catalog [vector §16] | INFORMATION_SCHEMA.VECTOR_COLUMNS and VECTOR_DISTANCE_FUNCTIONS |
+
+### Vector indexes
+
+The index methods `diskann`, `hnsw` and `ivf` index one dense VECTOR
+column of fixed dimensions and format, FLOAT64 excepted, and `inverted`
+one SPARSE column (RULES.md D95 to D99). A null is not indexed. Each
+serves FETCH APPROX of its own metric only, EUCLIDEAN and
+EUCLIDEAN_SQUARED serving each other, and an index of a NORMALIZED
+column serves COSINE, DOT, EUCLIDEAN and EUCLIDEAN_SQUARED alike.
+
+```
+CREATE VECTOR INDEX name ON table (column) [ORGANIZATION ...] [DISTANCE metric]
+    [WITH TARGET ACCURACY n] [PARAMETERS (...)] [QUANTIZATION ...] [RERANK {ON | OFF}]
+CREATE VECTOR INDEX name ON table (column) [USING method] WITH (option = value, ...)
+ALTER INDEX name {REBUILD [ONLINE] [PARAMETERS (...)] | MERGE DELTA | LOAD | UNLOAD}
+```
+
+Both forms desugar to CREATE INDEX ... USING with the method's options
+(`parser/ddl`, [CREATE VECTOR INDEX](doc/sql/statements/create-vector-index.md)).
+Each method's options, named `METHOD.OPTION`, are in INFORMATION_SCHEMA.INDEX_OPTIONS
+and on that page.
+
+| Method | Structure | Options group |
+|---|---|---|
+| `diskann` | A Vamana graph in pages, PQ codes and the first hops cached in memory (D96) | DISKANN. |
+| `hnsw` | A layered graph in memory, an image and a log in pages (D97) | HNSW. |
+| `ivf` | k-means centroids in memory, lists in pages written through (D98) | IVF. |
+| `inverted` | Postings of a sparse vector's dimensions, searched by block-max WAND (D99) | INVERTED. |
+| `hybrid` | A `fulltext` part and a vector part of two columns, or of a MODEL a `fulltext` index of the text with a table of chunks, their vector index and a pipeline (D100) | HYBRID. and each part's |
+
+`Session::index_accuracy_report(index, samples, k)` gives an index's
+recall against the exact answer (`db/indexes/accuracy.rs`), as
+INDEX_ACCURACY_REPORT asks [vector §10.6], since a statement would give
+no rows.
+
+### Approximate nearest-neighbour search
+
+FETCH {APPROX | APPROXIMATE | EXACT} {FIRST | NEXT} n {ROW | ROWS} ONLY
+[vector §9.1, §9.2] asks for an approximate or an exact search
+(RULES.md D94). APPROX takes WITH TARGET ACCURACY n (1 to 100, R9.4) or
+WITH TARGET ACCURACY PARAMETERS (EFSEARCH n, NEIGHBOR PARTITION PROBES
+n, SEARCH_LIST n, BEAM_WIDTH n). APPROX with WITH TIES or PERCENT is
+refused, SQLSTATE 2A000, SQLCODE -103, as is an accuracy without APPROX
+(`parser/query/ordered/approx.rs`, `binder/limit.rs`). Hints follow the
+fetch clause, `HINT (VECTOR_INDEX(t i), NO_VECTOR_INDEX(t),
+VECTOR_PREFILTER, VECTOR_INFILTER, VECTOR_POSTFILTER, VECTOR_WAIT_FRESH)`.
+
+```
+SELECT ... FROM VECTOR_SEARCH(TABLE = t [AS c], COLUMN = col, SIMILAR_TO = v,
+    METRIC = 'm', TOP_N = n) [AS s]
+```
+
+VECTOR_SEARCH [vector §9.3] is read as a derived table of the table's
+columns and DISTANCE, under the function's correlation name or the
+table's (`parser/query/vector_search.rs`).
+
+An approximate search returns only rows that satisfy the WHERE
+condition, measured again by the query's own distance, and raises what
+an exact search would (D15). Too few rows widen the search, at most 4
+times, then the table is read exactly, unless VECTOR.APPROX_FALLBACK is
+OFF, when the statement is refused with SQLSTATE 0A000, SQLCODE -900.
+EXPLAIN shows the metric, the filter strategy, the target accuracy, the
+search list, beam width, probes and rerank.
+
+### Hybrid search
+
+```
+CREATE HYBRID VECTOR INDEX name ON table (text_column, vector_column)
+    [PARAMETERS (VECTOR_IDX 'parameters', TEXT_IDX 'options')]
+CREATE HYBRID VECTOR INDEX name ON table (text_column)
+    PARAMETERS (MODEL m [, CHUNKER BY unit MAX n [OVERLAP k]] [, MODE {SYNC | ASYNC}]
+    [, VECTOR_IDX 'parameters'] [, TEXT_IDX 'options'])
+SELECT ... FROM HYBRID_SEARCH(INDEX = i, QUERY_TEXT = t [, QUERY_VECTOR = v], TOP_N = n
+    [, CANDIDATES = c] [, FUSION = 'RRF' | 'WEIGHTED'] [, VECTOR_WEIGHT = w]
+    [, TEXT_WEIGHT = w] [, RRF_K = k]) [AS h]
+```
+
+A hybrid index (RULES.md D100) is a `fulltext` index of the text column
+and a vector index of the vector column, HNSW unless VECTOR_IDX's TYPE
+or HYBRID.VECTOR_METHOD names IVF, DISKANN or INVERTED
+([CREATE HYBRID VECTOR INDEX](doc/sql/statements/create-hybrid-vector-index.md)).
+HYBRID_SEARCH reads each part's top CANDIDATES rows, TOP_N × 4 by
+default, and fuses them by RRF, of K 60 by default, or by WEIGHTED
+min-max normalized scores. Its columns are DOC_ID (the table's
+one-column primary key), SCORE, VECTOR_SCORE, TEXT_SCORE, VECTOR_RANK,
+TEXT_RANK and CHUNK_TEXT. EXPLAIN shows both parts' reads. The text
+part serves CONTAINS of the text column too. An index of a MODEL is a
+full-text index of its text, read by CONTAINS and RANK a document a
+row, with a table of the text's chunks, a vector index of their
+embeddings and a pipeline that keeps them. Its search gives each
+document once, at its best chunk, and of no QUERY_VECTOR embeds
+QUERY_TEXT by the model. ALTER INDEX of its MODEL, CHUNKER or MODE makes
+its chunks again, and a database that stopped while one was made or
+dropped drops it whole as it opens.
+
+### Embedding models and pipelines
+
+```
+CREATE EMBEDDING MODEL name [FROM FILE 'path'] WITH (option = value, ...)
+ALTER EMBEDDING MODEL name WITH (option = value, ...)
+DROP EMBEDDING MODEL name [CASCADE | RESTRICT]
+CREATE VECTOR PIPELINE name SOURCE table (columns) [CHUNK BY unit MAX n [OVERLAP m]
+    [SPLIT_ON 'regex'] [NORMALIZE WHITESPACE]] EMBED USING model
+    TARGET table (columns) [MODE {SYNC | ASYNC}]
+DROP VECTOR PIPELINE name [CASCADE | RESTRICT]
+GRANT EXECUTE ON EMBEDDING MODEL name TO ...
+```
+
+| Facility | Behaviour |
+|---|---|
+| Models [vector §12.1] | Schema objects of a registered `Embedder` plug-in, its TYPE (RULES.md D101). The database reads TYPE, VERSION, BATCH_SIZE, ON_ERROR, MAX_RETRIES, DIMENSIONS, FORMAT and LAYOUT, and gives the others to the plug-in. HASH_DENSE and HASH_SPARSE are built in |
+| Calls [vector §12.2] | EMBED(model, text [, 'query' \| 'document']), VECTOR_EMBEDDING and EMBED_VERSION, of a model of the catalog with EXECUTE checked, or of a plug-in by name |
+| Chunks [vector §12.3] | CHUNK_TEXT in FROM, `FROM CHUNK_TEXT(text [, chunking])`, with a correlation name and derived column list |
+| Generated columns [vector §12.4] | `GENERATED ALWAYS AS (EMBED(...)) [STORED] [SYNC \| ASYNC]`, ASYNC filled after commit (D103) |
+| Pipelines [vector §12.5] | Over existing tables, as four row triggers on the source, filled as made (D102) |
+| Freshness [vector R12.6] | `/*+ VECTOR_WAIT_FRESH */` before a statement, outside a transaction, and `Database::wait_for_embeddings` |
+| Views | INFORMATION_SCHEMA.EMBEDDING_MODELS, EMBEDDING_MODEL_PRIVILEGES, VECTOR_PIPELINES and EMBEDDING_QUEUE |
+
+### Vector settings
+
+These are RULES.md D36 settings (`settings/vector.rs`), listed in
+[Appendix C](doc/appendix/c-settings.md).
+
+| Setting | Scope | Default | Range |
+|---|---|---|---|
+| VECTOR.SEARCH_LIST | Session | 0, each index's own | 0 to 10,000 |
+| VECTOR.BEAM_WIDTH | Session | 0, each index's own | 0 to 16 |
+| VECTOR.BUILD_MEMORY_BYTES | Database | 256 MiB | At least 64 KiB |
+| VECTOR.APPROX_FALLBACK | Session | ON | ON, OFF |
+| VECTOR.APPROX_DEFAULT | Session | OFF | ON, OFF |
+
+### The vector design document, clause by clause
+
+Each clause of the vector design document (version 2.0) and turborel's
+state. Yes means implemented as written; any other entry is how
+turborel reads the clause. Networked and distributed search, §15.2, is
+out of scope. A clause not yet done has no row.
+
+| Clause | State |
+|---|---|
+| §1, §2, §20, §21 | Purpose, the vendors compared, the delivery plan and sources; no requirement of their own |
+| §3.1 R3.1 | `VECTOR` alone leaves dimensions, format and layout open, so a sparse value is taken too |
+| §3.1 R3.2, R3.3 | Yes; `float32` and `float16` in any case |
+| §3.1 R3.4 | Yes; a type out of bounds is 2A000, SQLCODE -103, a value 22003 |
+| §3.1 R3.5 to R3.8 | Yes; an index of an open column is -900, and so is a dense index of FLOAT64 (D95) |
+| §3.2, R3.9, R3.10 | Yes; NaN and infinities are 22003 |
+| §3.3 R3.11, R3.12 | Yes; each refused use is -103 (D93), a vector method's UNIQUE index -900 |
+| §4.1, §4.2, R4.1, R4.2 | Yes; a repeated or descending index is 22018 |
+| §4.3 R4.3 | A vector is a value as long as its image, kept in its row or out of line as any long value is |
+| §4.3 R4.4 | Yes, a version byte and the elements of a fixed dense column |
+| §4.3 R4.5 | The column store keeps a fixed vector as a fixed-width field, scanned by the same kernels |
+| §4.3 R4.6 | The image is what is logged, checkpointed and replicated, as any value (D57) |
+| §5.1 | Yes, the JSON object form of a sparse vector too |
+| §5.2 | TO_VECTOR, VECTOR(text ...), CAST of a character string, FROM_VECTOR RETURNING VARCHAR or CLOB FORMAT DENSE or SPARSE, CAST to a character string |
+| §5.2 R5.1 to R5.6 | Yes |
+| §5.3 R5.7 | Every client is sent a vector's type name, its text and its image together, with no negotiation |
+| §5.3 R5.8 | A column's type is sent as VECTOR with its parameters, the dimensions and the format and layout packed |
+| §5.3 R5.10 | `turborel --import` reads the text form of a CSV or TSV field |
+| §6.1 R6.1, R6.2, R6.4 to R6.6 | Yes; a distance function of SQL takes dense vectors only |
+| §6.1 R6.3 | The metric of an index of v1's column, else COSINE (D93) |
+| §6.2, R6.7, R6.8 | Yes, L2_SQUARED too |
+| §6.3, §6.4, §6.5, R6.9, R6.10 | Yes; `/` of two vectors is -103 |
+| §6.6 kernels | Portable lanes the compiler vectorizes for every CPU, with no `unsafe` (R-SAFE-1) |
+| §6.6 overflow, determinism | Yes; overflow is 22003, and every function is deterministic |
+| §7.1 | Yes; VECTOR_QUANTIZE to INT8 clamps to its range, and VECTOR_QUANTIZE_PARAMS gives an ARRAY of scale and zero point |
+| §7.2 | Yes; QUANTIZER NONE, SQ8, PQ or BQ and RERANK of `hnsw`, `ivf` and `diskann`; INVERTED.QUANTIZATION of `inverted` |
+| §7.2 R7.1 | HNSW and IVF give four times the rows asked, a constant; DiskANN its whole search list; the executor measures each again exactly |
+| §7.2 R7.2 | Yes; samples of at most 100,000 vectors, 65,536 of DiskANN, retrained by REBUILD |
+| §8 | CREATE and DROP VECTOR DISTANCE FUNCTION of LANGUAGE SQL; another language is -900 |
+| §8 R8.5 | Yes, -104 |
+| §8 R8.2 | `diskann` and `hnsw` refuse a metric not SYMMETRIC and NON_NEGATIVE, -900 (D95) |
+| §9.1 | Yes, by ORDER BY and FETCH FIRST, and FETCH EXACT |
+| §9.2, §9.3, §9.4 R9.1 | Yes (D94); VECTOR_SEARCH's columns are named by its correlation name, `s.ID` where §9.3 writes `t.id` |
+| §9.5 | A correlated subquery with FETCH APPROX reads the index for each outer row; GROUP BY with MIN(distance) is ordinary SQL over it |
+| R9.2 to R9.5 | Yes (D94) |
+| R9.6 | The nearest read is planned only under a limit over one table, so no k-limit is pushed below a join |
+| §10.1 | Yes, `hnsw`, `ivf`, `diskann`, `inverted` and `hybrid` |
+| §10.2 | Yes, desugared to CREATE INDEX ... USING with options. `DISTANCE schema.name` names a metric registered as `SCHEMA.NAME`. LOCAL and GLOBAL choose nothing, as no table is partitioned. ONLINE changes nothing, as every build leaves the table open to writers, and PARALLEL n changes nothing, as builds run on one thread |
+| §10.3 | Yes; MAXDOP and ONLINE change nothing |
+| §10.4 | Each method's defaults are in [Implementation-defined choices](#vectors-and-their-indexes). HNSW's M is 16, DiskANN's PQ codes half the dimensions, and a search list follows TARGET ACCURACY by a fixed formula, not one calibrated at build |
+| §10.5 R10.6 | Yes |
+| §10.5 R10.7 | An index's memory is reserved of the database's budget (D38); past it CREATE fails with SQLCODE -918 naming the bytes |
+| §10.5 R10.8 | ONLINE as above; writes go to the index itself, with no delta store (R14.2) |
+| §10.6 | REBUILD [ONLINE] [PARAMETERS], MERGE DELTA, which runs the index's maintenance now, and LOAD and UNLOAD, which change nothing of a method whose structure is always resident or always paged. INDEX_ACCURACY_REPORT is the Rust call `Session::index_accuracy_report` |
+| §10.6 R10.10 | Maintenance consolidates or retrains past 20% dead entries |
+| §11.1 | CREATE HYBRID VECTOR INDEX of a text and a vector column, VECTOR_IDX and TEXT_IDX, or of a text column, MODEL, CHUNKER and MODE SYNC or ASYNC: a full-text index on the text, the chunks, their embeddings and their vector index, kept by a pipeline, made in steps no crash leaves half done, dropped with the index, and made again by ALTER INDEX of MODEL, CHUNKER or MODE (D100); CONTAINS and RANK of the text read the index a document a row |
+| §11.2 | HYBRID_SEARCH, its vector list of QUERY_VECTOR, or of QUERY_TEXT embedded by the index's MODEL, and its text list of QUERY_TEXT; a dynamic parameter read twice is one; the plain SQL form is ordinary SQL, a radius in WHERE reading the index |
+| §11.3, R11.1, R11.2 | Yes; CHUNK_TEXT is the row's text column, or of an index of a MODEL the document's best chunk |
+| §12.1 | CREATE, ALTER and DROP EMBEDDING MODEL [FROM FILE] of a registered plug-in (D101); HASH_DENSE and HASH_SPARSE built in, others the host's |
+| §12.2 | EMBED(model, text [, 'query' \| 'document']) and VECTOR_EMBEDDING of EMBED's arguments, and EMBED_VERSION |
+| §12.2 R12.1, R12.3, R12.4 | Yes; an `Embedder` is called holding no row lock |
+| §12.2 R12.5 | A model's VERSION is tagged in a pipeline's version column, by EMBED_VERSION, and the queue embeds a row of another version again |
+| §12.3 | CHUNK_TEXT, VECTOR_CHUNKS and AI_GENERATE_CHUNKS in FROM, BY CHARS, WORDS, SENTENCES, PARAGRAPHS or TOKENS of a model, MAX, OVERLAP, SPLIT_ON of an XQuery regular expression and NORMALIZE WHITESPACE |
+| §12.4 R12.6 | Yes (D103) |
+| §12.5 | Yes, as four row triggers (D102) |
+| §13 R13.1, R13.2, R13.5 | Yes (D94); no shards |
+| §13 R13.3 | The approximate read is priced by the rows, the search list and the selectivity; the index's kind, the format and quantization are left out |
+| §13 R13.4 | Every hint, written `HINT (...)` after the fetch clause; VECTOR_WAIT_FRESH also as `/*+ VECTOR_WAIT_FRESH */` before the statement (D105) |
+| §14 R14.1, R14.3, R14.4, R14.6, R14.7 | Yes; candidates are read as the snapshot sees them and checked again |
+| §14 R14.2, R14.5 | Each index is changed as its table is, HNSW and IVF in place and DiskANN by FreshDiskANN's inserts, with tombstones and no delta store, so a search needs no merge and every read is fresh |
+| §14 R14.8 | A standby replays the log, and its indexes are kept by it as the primary's are (D57) |
+| §15.1 | No table is partitioned, so LOCAL and GLOBAL have nothing to choose |
+| §16 catalog | VECTOR_COLUMNS; INDEXES and INDEX_OPTIONS for vector indexes; EMBEDDING_MODELS, EMBEDDING_MODEL_PRIVILEGES, VECTOR_DISTANCE_FUNCTIONS, VECTOR_PIPELINES, EMBEDDING_QUEUE; MEMORY_RESERVATIONS for an index's memory |
+| §16 security | Vectors follow table and column privileges. EXECUTE on models and distance functions; making a model, index or distance function needs the schema's ownership. No view shows a model's options. An index of a table of its own encoding is refused, and database encryption covers index files |
+| §16 governance | The memory budget and VECTOR.BUILD_MEMORY_BYTES |
+| §17 | Yes, each restriction, -103 or -900 |
+| §18 | Each condition by SQLSTATE, as [below](#vector-errors) |
+| §19 | Each item that names a behaviour above has a test |
+
+#### Vector errors
+
+| Design code | SQLSTATE | SQLCODE |
+|---|---|---|
+| VEC-0001, VEC-0002 of a type, VEC-0009 | 2A000 | -103 |
+| VEC-0002 of a value, VEC-0006, VEC-0007, VEC-0012 | 22003 | -301 |
+| VEC-0003, VEC-0004, VEC-0008 and VEC-0013 of a call, VEC-0031 of a value | 22000 | -301 |
+| VEC-0005, VEC-0016 | 22018 | -301 |
+| VEC-0008 of an index, VEC-0010, VEC-0015, VEC-0020 of an index | 0A000 | -900 |
+| VEC-0013 of an index, VEC-0030, VEC-0031 of a model | 2A000 | -103 |
+| VEC-0011 | TB918 | -918 |
+| VEC-0032 | The plug-in's own, under ON_ERROR | |
 
 ### Users
 
@@ -2784,6 +3037,28 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | IA168, ISO/IEC 9075-2:2023 §17.8 GR3h the status of a cursor opened before the savepoint | Closed, as every open cursor is [GR3g] | `db/savepoints.rs` |
 | IA211, ISO/IEC 9075-2:2023 §4.43.2 how a rollback to a savepoint affects the diagnostics area, SQL descriptor areas and prepared statements | As any statement completing does. The diagnostics area tells of the ROLLBACK, the descriptor areas are unchanged, and no prepared statement is deallocated | `db/savepoints.rs` |
 
+### Vectors and their indexes
+
+The vector design document leaves these to the implementation or names
+defaults that turborel tunes (RULES.md D93 to D104).
+
+| Rule | Choice | Where |
+|---|---|---|
+| vector R6.3 the metric of VECTOR_DISTANCE written without one | The metric of an index of the first vector's column, else COSINE | `binder/vectors.rs` |
+| vector R5.6 a vector's text | Shortest round-trip numbers, `[a,b,c]` with no spaces | `vector/text.rs` |
+| vector R9.3 widening | The search asked again twice as wide, at most 4 times (`MOST_WIDENINGS`), then the table read exactly | `exec/nearest/approx.rs` |
+| vector R13.2 filter strategy thresholds | Pre-filter below 1% estimated selectivity, post-filter above 50%, in-filter between | `physical/nearest/approx.rs` |
+| vector R9.4, R10.2 TARGET ACCURACY | 90 by default. Accuracy a asks a list of k × 100 / (101 − a) and probes of lists × 100 / ((101 − a) × 80), capped | `index/vector/ask.rs`, `index/vector/options.rs` |
+| vector §10.4 HNSW | M 16, EF_CONSTRUCTION 200, EF_SEARCH 64, codes trained at 10,000 nodes | `index/hnsw/options.rs` |
+| vector §10.4 IVF | LISTS the square root of the rows, at least 16; PROBES an eighth of the lists; 256 vectors sampled per list | `index/ivf/options.rs` |
+| vector §10.4 DiskANN | MAX_DEGREE 64, BUILD_LIST 100, ALPHA 1.2, 2 passes, SEARCH_LIST 100, BEAM_WIDTH 4, the nodes within 3 hops of the medoid cached, at most 1% of them, past BUILD_MEMORY (256 MiB) a build of 40 clusters, each point in its nearest 2, consolidation at 20% dead, codes trained at 4,096 nodes, PQ codes of half the dimensions | `engine/diskann.rs`, `index/diskann.rs` |
+| vector §10.4 INVERTED | Blocks of 128 postings, weights FLOAT32 | `index/sparse/options.rs` |
+| vector R7.1 RERANK_FACTOR | 4 of HNSW and IVF; DiskANN's whole search list | `engine/hnsw/query.rs`, `index/ivf/options.rs`, `index/diskann.rs` |
+| vector R11.1, §11.3 hybrid candidates and K | TOP_N × 4, and RRF's K 60 | `binder/hybrid_search.rs`, `parser/query/hybrid_search.rs` |
+| vector R12.3 embedding batch | 64 texts by default, a model's BATCH_SIZE; 4,096 texts embedded ahead by the queue | `vector/embed.rs`, `vector/embed/model.rs` |
+| vector R12.6 when the queue runs | After each commit that wrote, and as the database opens, by the job `turborel-embedding` | `db/embedding/queue.rs` |
+| A metric's or a quantizer's name | A regular identifier in upper case, or two joined by a period | `db/vectors.rs` |
+
 ### Memory
 
 The standards leave memory to the implementation (RULES.md D38). This is in
@@ -2924,3 +3199,16 @@ Where the standards are unclear, turborel reads them as follows.
 | JVNi of JSON_OBJECT [2023 §6.34 GR2d ii 1 G] | The rule makes JVNi a member's key. VJNi, the value of its name, is meant. |
 | VBVi, CJOA and NJVE of the aggregates [2023 §10.11 GR4b ii 2 D II, GR4c, GR5g] | GR4b ii 2 D II lets VBVi be the value, where the other cases let JBVi be; GR4c lets JACF be CJOA, where GR4b made CJO; GR5g counts NJVE, which only §6.34 defines. JBVi, CJO and NTXA are meant. |
 | FORMAT after a query of JSON_ARRAY [2023 §6.34 F, §7.6] | In JSON_ARRAY of a query whose FROM clause ends in a table of no correlation name, FORMAT is read as that table's correlation name, as the grammar lets it be, FORMAT being no reserved word. AS before a name, or the query in parentheses, keeps it the `<JSON input clause>`. |
+
+### The vector design document
+
+| Text | Reading |
+|---|---|
+| The default metric [vector R6.3] | "The vector index on v1's column" is any index of the column whose method has a metric, the first in the catalog's order if there are several. |
+| `DISTANCE schema.udf_name` [vector §10.2, §8] | It names a metric a program registers as `SCHEMA.NAME`. A distance function of SQL serves VECTOR_DISTANCE alone, as an index's entries must not depend on a body a user may drop (RULES.md D93). |
+| The k-limit pushed below a join [vector R9.6] | The rule allows it only where the join cannot remove rows. A nearest read is planned only under a limit over one table, so it is never pushed, which the rule permits. |
+| The delta store [vector R14.2, R14.5] | Its purpose is DML at all times with fresh reads (G5, R14.1). Every built-in index is changed as its table is, with tombstones, which meets that with no store to merge, so MERGE DELTA runs the index's maintenance. |
+| LOAD and UNLOAD [vector §10.6] | They move an index's structure in or out of memory. HNSW's is always in memory and the others' always paged, so each is taken and changes nothing. |
+| The columns of VECTOR_SEARCH [vector §9.3] | The example qualifies the table's columns by the table's correlation name and the distance by the function's. The function is one derived table, so both are qualified by the function's name, or the table's if it has none. |
+| VECTOR with no arguments [vector R3.1] | R3.1 makes it DENSE, but its purpose is a flexible column. Its layout is left open as its dimensions and format are, so a sparse value is taken too. |
+| Quantizing out of range [vector §7.1, R5.3] | R5.3 makes a CAST out of range an error. VECTOR_QUANTIZE is no CAST: it maps by a scale chosen to fit, and an element past it is clamped to INT8's range. |

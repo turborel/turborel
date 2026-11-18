@@ -205,7 +205,7 @@ impl<'a> Described<'a> {
                     family.relative_ordering()
                 )));
             }
-            binder::key_operand(t, what)
+            binder::key_operand(t, what).and_then(|()| binder::orderless_operand(t, what))
         })
     }
 
