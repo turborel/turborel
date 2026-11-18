@@ -29,16 +29,12 @@ fn moment(a: &Atomic, shape: Shape) -> Result<Moment> {
 fn date_time(_: &Context<'_>, args: &[Sequence]) -> Result<Sequence> {
     let date = moment(&one_of(arg(args, 0), AtomicType::Date)?, Shape::Date)?;
     let time = moment(&one_of(arg(args, 1), AtomicType::Time)?, Shape::Time)?;
-    let zone = match (date.zone, time.zone) {
-        (Some(d), Some(t)) => {
-            if d != t {
-                return Err(error(ErrorCode::FORG0008, "the date and the time have different time zones [XQueryFO §5.2]"));
-            }
-            Some(d)
-        }
-        (d, t) => d.or(t),
-    };
-    let joined = Moment { shape: Shape::DateTime, days: date.days, micros: time.micros, zone };
+    if let (Some(d), Some(t)) = (date.zone, time.zone)
+        && d != t
+    {
+        return Err(error(ErrorCode::FORG0008, "the date and the time have different time zones [XQueryFO §5.2]"));
+    }
+    let joined = Moment { shape: Shape::DateTime, days: date.days, micros: time.micros, zone: date.zone.or(time.zone) };
     Ok(single(Atomic::new(AtomicType::DateTime, joined.text())))
 }
 
