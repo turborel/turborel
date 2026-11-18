@@ -99,7 +99,6 @@ pub fn all() -> Vec<Mutation> {
     core.into_iter()
         .chain(areas::all())
         .chain([projection::PROJECTION.as_slice(), &json::JSON, &fulltext::FULLTEXT, &sqlmm_fulltext::SQLMM_FULLTEXT, &t621::T621])
-        .chain([vector_hybrid::VECTOR_HYBRID.as_slice(), &vector_embed::VECTOR_EMBED])
         .chain([near::NEAR.as_slice(), &rtree::RTREE, &geometry::GEOMETRY, &FILL, &ZONES, &STATS, &WAITS, &VR, &SERVER])
         .flatten()
         .copied()

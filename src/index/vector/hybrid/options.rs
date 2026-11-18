@@ -14,6 +14,17 @@ use crate::value::Value;
 
 /// The option of the method of the vector part.
 pub const VECTOR_METHOD_OPTION: &str = "HYBRID.VECTOR_METHOD";
+/// \[EXTENSION\] The option of the model an index that embeds its text
+/// embeds its chunks by (§11.1, §12.1).
+pub const MODEL_OPTION: &str = "HYBRID.MODEL";
+/// The option of how such an index cuts its text into chunks (§12.3).
+pub const CHUNKER_OPTION: &str = "HYBRID.CHUNKER";
+/// The option of when such an index embeds a chunk (R12.6).
+pub const MODE_OPTION: &str = "HYBRID.MODE";
+/// The modes, SYNC the default.
+const MODES: [&str; 2] = ["SYNC", "ASYNC"];
+/// The most characters of a model's name or a chunking.
+const MOST_TEXT: usize = 1024;
 /// The methods the vector part may be of, as the option names them.
 const VECTOR_METHODS: [&str; 4] = ["HNSW", "IVF", "DISKANN", "INVERTED"];
 /// [R10.2] The vector part's method by default: HNSW.
@@ -23,12 +34,31 @@ const DEFAULT_VECTOR_METHOD: &str = "HNSW";
 const LOCATOR_VERSION: u8 = 1;
 
 /// The option the method declares of its own.
-pub(super) fn own() -> TableOption {
+fn own() -> TableOption {
     TableOption::new(
         (VECTOR_METHOD_OPTION, Kind::Choice(&VECTOR_METHODS), Value::Char(DEFAULT_VECTOR_METHOD.to_owned())),
         Rebuild::Yes,
         "The index method of the vector part: HNSW, IVF, DISKANN, or INVERTED for a SPARSE column.",
     )
+}
+
+/// The options the method declares: its vector part's method, and those
+/// of an index that embeds its text
+/// (`db/index_statements/hybrid_embedded.rs`).
+pub(super) fn declared() -> Vec<TableOption> {
+    let text = |name: &'static str, help: &'static str| {
+        TableOption::new((name, Kind::Text { max: MOST_TEXT }, Value::Char(String::new())), Rebuild::No, help)
+    };
+    vec![
+        own(),
+        text(MODEL_OPTION, "The embedding model that embeds the chunks of the text, if the index embeds it (§11.1)."),
+        text(CHUNKER_OPTION, "How the text is cut into chunks, as CHUNK_TEXT reads it, if the index embeds it (§12.3)."),
+        TableOption::new(
+            (MODE_OPTION, Kind::Choice(&MODES), Value::Char(MODES[0].to_owned())),
+            Rebuild::No,
+            "SYNC to embed a chunk as it is written, ASYNC after commit, if the index embeds its text (R12.6).",
+        ),
+    ]
 }
 
 /// The method of the vector part `desc` names.

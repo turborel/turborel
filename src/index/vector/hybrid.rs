@@ -15,16 +15,19 @@
 //! and fuses them; an ordinary query reads either part as it would an
 //! index of the part's method (`index.rs`).
 //!
-//! The vector design document's index embeds the text itself, by a
-//! MODEL and a CHUNKER (§11.1, §12). This one indexes a vector column the
-//! table holds, however it is filled.
+//! An index that embeds its text itself, by a MODEL and a CHUNKER (§11.1,
+//! §12), is one of these over a table of the text's chunks and their
+//! embeddings, which a vector pipeline keeps
+//! (`db/index_statements/hybrid_embedded.rs`). Its options HYBRID.MODEL,
+//! HYBRID.CHUNKER and HYBRID.MODE say how, and its parts read none of
+//! them.
 
 mod index;
 mod options;
 
 use std::sync::Arc;
 
-pub use options::VECTOR_METHOD_OPTION;
+pub use options::{CHUNKER_OPTION, MODE_OPTION, MODEL_OPTION, VECTOR_METHOD_OPTION};
 
 use self::index::{HybridIndex, TEXT, VECTOR};
 use crate::catalog::{IndexDesc, TableDesc};
@@ -32,7 +35,9 @@ use crate::disk::buffer::{BufferPool, FileId};
 use crate::engine::MemoryPages;
 use crate::error::{Code, Result, SqlError};
 use crate::fulltext::rank::Rankings;
-use crate::index::{DiskAnnMethod, FullTextMethod, HnswMethod, Index, IndexMethod, IvfMethod, NearestQuery, NearestSupport, SparseMethod};
+use crate::index::{
+    DiskAnnMethod, FullTextMethod, HnswMethod, Index, IndexMethod, IvfMethod, NearestQuery, NearestSupport, Predicate, SparseMethod,
+};
 use crate::memory::Host;
 use crate::storage::TableOption;
 use crate::value::{CompOp, DataType};
@@ -184,6 +189,12 @@ impl IndexMethod for HybridMethod {
             _ => NearestSupport::No,
         }
     }
+    /// CONTAINS or TEXT_MATCHES of its text column, as the full-text
+    /// method serves them of its one column.
+    fn supports_predicate(&self, predicate: &Predicate, columns: &[DataType]) -> bool {
+        let ([text, _], TEXT) = (columns, predicate.column) else { return false };
+        self.text.supports_predicate(predicate, std::slice::from_ref(text))
+    }
     /// The metric of its vector part.
     fn metric(&self, index: &IndexDesc) -> Option<String> {
         let (_, vector) = options::parts(index);
@@ -213,7 +224,7 @@ impl IndexMethod for HybridMethod {
     }
     /// Its own, then the full-text method's, then each vector method's.
     fn index_options(&self) -> Vec<TableOption> {
-        let mut all = vec![options::own()];
+        let mut all = options::declared();
         all.extend(self.text.index_options());
         self.vectors().into_iter().for_each(|m| all.extend(m.index_options()));
         all

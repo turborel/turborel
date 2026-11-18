@@ -1,14 +1,16 @@
 //! Mutations of hybrid search and of the inverted index's approximate
 //! search (RULES.md R-TEST-9, D-APPROX, D85): the sparse candidates'
 //! distances, radius and metric, the hybrid index's two parts, the
-//! planner's position of a column in its key, RANK's index, and
-//! HYBRID_SEARCH's fusion and dynamic parameters.
+//! planner's position of a column in its key, RANK's index, CONTAINS of
+//! the text part, a sparse radius in WHERE, HYBRID_SEARCH's fusion,
+//! dynamic parameters and best chunk, and an index embedding its text by
+//! a MODEL.
 
 use super::{Mutation, Package};
 
 /// Independent mechanisms whose removal must fail hybrid search's
 /// requirements.
-pub const VECTOR_HYBRID: [Mutation; 15] = [
+pub const VECTOR_HYBRID: [Mutation; 22] = [
     Mutation {
         name: "sparse-approx-negated",
         package: Package::Core,
@@ -157,6 +159,76 @@ pub const VECTOR_HYBRID: [Mutation; 15] = [
         original: "given.vector_first = given.text.is_none();",
         replacement: "given.vector_first = true;",
         integration: &["vector_hybrid::search::dynamic_parameters_keep_their_order"],
+        unit: &[],
+    },
+    Mutation {
+        name: "hybrid-predicate-unserved",
+        package: Package::Core,
+        breaks: "a hybrid index serves no CONTAINS of its text column, so the text part is never read for one",
+        file: "src/index/vector/hybrid.rs",
+        original: "self.text.supports_predicate(predicate, std::slice::from_ref(text))",
+        replacement: "false && self.text.supports_predicate(predicate, std::slice::from_ref(text))",
+        integration: &["vector_hybrid::search::contains_reads_the_text_part_11_2"],
+        unit: &["index::vector::hybrid::tests::a_predicate_of_the_text_column_reads_the_text_part"],
+    },
+    Mutation {
+        name: "sparse-radius-unrechecked",
+        package: Package::Core,
+        breaks: "a SPARSE column's distance is not taken as rechecked, so a radius in WHERE never reads the inverted index",
+        file: "src/physical/nearest/safe.rs",
+        original: "fixed_shape(t).or_else(|| sparse_shape(t))",
+        replacement: "fixed_shape(t)",
+        integration: &["vector_hybrid::sparse::a_radius_in_where_reads_the_inverted_index_9_4"],
+        unit: &[],
+    },
+    Mutation {
+        name: "hybrid-document-key-pipeline",
+        package: Package::Core,
+        breaks: "HYBRID_SEARCH of an index that embeds its text takes no pipeline's key as DOC_ID",
+        file: "src/binder/hybrid_search.rs",
+        original: "if let Some(column) = kept.and_then(|p| p.columns.first())",
+        replacement: "if let Some(column) = kept.and_then(|p| p.columns.get(9))",
+        integration: &["vector_hybrid::embedded::a_model_and_a_chunker_embed_the_text_11_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "hybrid-best-chunk",
+        package: Package::Core,
+        breaks: "the vector list keeps every chunk of a document, not its nearest alone",
+        file: "src/binder/hybrid_search.rs",
+        original: "ROW_NUMBER() OVER (PARTITION BY K ORDER BY D, C) AS B",
+        replacement: "ROW_NUMBER() OVER (PARTITION BY K, C ORDER BY D) AS B",
+        integration: &["vector_hybrid::embedded::a_model_and_a_chunker_embed_the_text_11_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "hybrid-model-unembedded",
+        package: Package::Core,
+        breaks: "an index of a MODEL is made as one of two columns, its table of chunks and pipeline never made",
+        file: "src/db/index_statements/hybrid_embedded.rs",
+        original: "method == HYBRID_METHOD && text_of(options, MODEL_OPTION).is_some()",
+        replacement: "method == HYBRID_METHOD && text_of(options, MODEL_OPTION).is_some() && false",
+        integration: &["vector_hybrid::embedded::a_model_and_a_chunker_embed_the_text_11_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "hybrid-model-drop-kept",
+        package: Package::Core,
+        breaks: "dropping an index of a MODEL leaves its table of chunks and its pipeline",
+        file: "src/db/index_statements/hybrid_embedded.rs",
+        original: "self.kept_dropped(&ix.name, &ix.table.auth)\n",
+        replacement: "Ok(())\n",
+        integration: &["vector_hybrid::embedded::a_model_and_a_chunker_embed_the_text_11_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "hybrid-chunker-unmodeled",
+        package: Package::Core,
+        breaks: "a CHUNKER or MODE of an index of no MODEL is taken and ignored",
+        file: "src/db/index_statements/hybrid_embedded.rs",
+        original: "[CHUNKER_OPTION, MODE_OPTION].iter().any(",
+        replacement: "[CHUNKER_OPTION, MODE_OPTION].iter().all(",
+        integration: &["vector_hybrid::ddl::what_a_hybrid_index_refuses_11_1"],
         unit: &[],
     },
 ];

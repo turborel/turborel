@@ -3,6 +3,8 @@
 //! (§10.3) as an approximate index, through SQL.
 
 mod ddl;
+mod embedded;
 mod fixture;
+mod radius;
 mod search;
 mod sparse;

@@ -223,3 +223,23 @@ fn what_hybrid_search_refuses_11_2() {
     assert_eq!(refused(&format!("INDEX = DOCS_H, {all}, TEXT_WEIGHT = 'heavy'")), Code::SyntaxRule);
     assert_eq!(refused(&format!("INDEX = DOCS_H, {all}, LIMIT = 3")), Code::Syntax);
 }
+
+/// Verifies: [EXTENSION] vector_standard §11.2, [ISO/IEC 13249-2:2002
+/// (CD, SC32 N0640) §5.1.2]: CONTAINS of the hybrid index's text column
+/// is answered by its text part, as of a full-text index, and so is the
+/// standard's plain form, a full-text predicate with a vector ORDER BY,
+/// its vector part ordering the rows; each gives the table scan's rows.
+#[test]
+fn contains_reads_the_text_part_11_2() {
+    let (_db, s) = documents(Some(INDEX));
+    let contains = "SELECT ID FROM DOCS WHERE CONTAINS(BODY, '\"refund\"') = 1 ORDER BY ID";
+    let shown = plan(&s, contains);
+    assert!(shown.contains("using DOCS_H [hybrid]"), "{shown}");
+    assert_eq!(read(&s, contains), ["1", "4"]);
+    let plain = format!(
+        "SELECT ID FROM DOCS WHERE CONTAINS(BODY, '\"damaged\"') > 0 \
+         ORDER BY VECTOR_DISTANCE(EMB, {VECTOR}, 'COSINE') FETCH APPROX FIRST 2 ROWS ONLY"
+    );
+    assert_eq!(read(&s, &plain), ["1", "3"]);
+    assert_eq!(read(&s, &plain), read(&s, &plain.replace("APPROX", "EXACT")));
+}

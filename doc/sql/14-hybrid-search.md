@@ -36,13 +36,16 @@ OK
 ```
 <create hybrid index statement> ::=
     CREATE HYBRID VECTOR INDEX <index name> ON <table name>
-        ( <text column name> , <vector column name> )
+        ( <text column name> [ , <vector column name> ] )
     [ PARAMETERS ( <hybrid parameter> [ { , <hybrid parameter> }... ] )
     | WITH ( <table option> [ { , <table option> }... ] ) ]
 
 <hybrid parameter> ::=
       VECTOR_IDX <character string literal>
     | TEXT_IDX <character string literal>
+    | MODEL <model name>
+    | CHUNKER <chunk specification>
+    | MODE { SYNC | ASYNC }
 ```
 
 The index is of the method `hybrid`. Its first column is a character
@@ -80,14 +83,80 @@ OK
 (4 rows)
 ```
 
-The index embeds nothing itself. The design document's index takes a
-MODEL and a CHUNKER to embed its text, and Turborel refuses both with
-SQLCODE -900. Fill the vector column as any other.
-
 Either part also serves an ordinary query, as an index of its method
 would. A FETCH APPROX of a distance of the vector column, of the index's
-metric, reads the vector part. A FETCH FIRST of RANK of the text
-column, highest first, reads the text part.
+metric, reads the vector part, and so does a range search, the distance
+bounded in WHERE. A FETCH FIRST of RANK of the text column, highest
+first, reads the text part, and so does CONTAINS of it:
+
+```sql
+SELECT ID FROM HELP WHERE CONTAINS(BODY, '"damaged"') = 1
+    ORDER BY VECTOR_DISTANCE(EMB, TO_VECTOR('[1,0,0,0]', 4, 'FLOAT32'), 'COSINE')
+    FETCH APPROX FIRST 2 ROWS ONLY;
+```
+
+```
+           ID
+--------------
+            1
+            3
+(2 rows)
+```
+
+## An index that embeds its text
+
+Of a MODEL, a hybrid index names its text column alone and embeds the
+text itself. Its table's primary key is one column. CHUNKER cuts each
+text into chunks, as [CHUNK_TEXT](statements/create-vector-pipeline.md)
+reads a chunking, `BY WORDS MAX 256 OVERLAP 32` if none is given. The
+model embeds each chunk. MODE SYNC, the default, embeds a chunk as it
+is written, and MODE ASYNC after commit, by the queue that fills
+pipelines.
+
+The index keeps its chunks in a table of its own, named after it with
+`_CHUNKS`, of the columns DOC_ID, CHUNK_ID, CHUNK_TEXT and EMBEDDING. A
+vector pipeline named after it with `_PIPELINE` keeps that table in
+step with the text. The index's parts are of CHUNK_TEXT and EMBEDDING.
+DROP INDEX drops the pipeline and the table with it. HYBRID_SEARCH of
+the index gives each document once, by its key, with its best chunk.
+
+```sql
+CREATE TABLE NOTES (ID INTEGER PRIMARY KEY, BODY VARCHAR(400));
+INSERT INTO NOTES VALUES
+    (1, 'Refunds take a week. Damaged items are replaced.'),
+    (2, 'The store opens at nine. It closes at six.');
+CREATE EMBEDDING MODEL WORDS WITH (TYPE = 'HASH_DENSE', DIMENSIONS = 16, NGRAMS = 1);
+COMMIT;
+CREATE HYBRID VECTOR INDEX NOTES_H ON NOTES (BODY)
+    PARAMETERS (MODEL WORDS, CHUNKER BY SENTENCES MAX 1 OVERLAP 0);
+SELECT DOC_ID, CHUNK_ID, CHUNK_TEXT FROM NOTES_H_CHUNKS ORDER BY DOC_ID, CHUNK_ID;
+SELECT DOC_ID, CHUNK_TEXT FROM HYBRID_SEARCH(INDEX = NOTES_H, QUERY_TEXT = 'damaged',
+    QUERY_VECTOR = EMBED('WORDS', 'damaged'), TOP_N = 2) AS H ORDER BY SCORE DESC, DOC_ID;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+       DOC_ID |     CHUNK_ID | CHUNK_TEXT
+--------------+--------------+--------------------------------------------------------------
+            1 |            1 | Refunds take a week.
+            1 |            2 | Damaged items are replaced.
+            2 |            1 | The store opens at nine.
+            2 |            2 | It closes at six.
+(4 rows)
+       DOC_ID | CHUNK_TEXT
+--------------+--------------------------------------------------------------
+            1 | Damaged items are replaced.
+            2 | It closes at six.
+(2 rows)
+```
+
+Document 1 is found by its words and its embedding, at the chunk that
+holds them. Document 2 is the vector list's next nearest, at its nearest
+chunk.
 
 ## HYBRID_SEARCH
 
@@ -115,7 +184,7 @@ written.
 
 | Argument | Is |
 |---|---|
-| INDEX | A hybrid index, of a table whose primary key is one column |
+| INDEX | A hybrid index, of a table whose primary key is one column, or one that embeds its text |
 | QUERY_TEXT | The words searched for, each ranked as `IS ABOUT` ranks it ([Full-Text Patterns](09-fulltext-patterns.md)) |
 | QUERY_VECTOR | The vector searched for, of the vector column's type |
 | TOP_N | The rows it gives |
@@ -132,13 +201,13 @@ the best, 2 for the next, and so on, ties taken in DOC_ID order.
 
 | Column | Is |
 |---|---|
-| DOC_ID | The row's primary key |
+| DOC_ID | The row's primary key, or of an index that embeds its text, the document's |
 | SCORE | Its fused score |
 | VECTOR_SCORE | 1 minus its distance, or null if it is not in the vector list |
 | TEXT_SCORE | Its RANK, or null if it is not in the text list |
 | VECTOR_RANK | Its rank in the vector list, or null |
 | TEXT_RANK | Its rank in the text list, or null |
-| CHUNK_TEXT | Its text |
+| CHUNK_TEXT | Its text, or its best chunk |
 
 It gives the TOP_N rows of the highest SCORE, ties in DOC_ID order. The
 text column is the chunk: a row is one chunk of a document.
@@ -228,6 +297,9 @@ table, and gives the error the distance gives. A filter of the query is
 asked of the candidates as the index finds them under VECTOR_INFILTER,
 and of those it gives under VECTOR_POSTFILTER
 ([FETCH APPROX](06-queries.md#fetch-approx-and-fetch-exact-extension)).
+A DOT distance bounded in WHERE, as `VECTOR_DISTANCE(SV, q, 'DOT') <=
+-1.5`, is a range search of the index: the rows whose dot product with
+the query is at least 1.5.
 
 ## Errors
 
@@ -247,4 +319,6 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): HYBRID_SEARCH names its QUERY_VECTOR (a
 | 2A000 | -103 | INDEX names no hybrid index, or its table's primary key is not one column |
 | 2A000 | -103 | A weight is not a number |
 | 2A000 | -102 | An argument is not one of those above, or FUSION is neither RRF nor WEIGHTED |
-| 0A000 | -900 | A hybrid index is given a MODEL or a CHUNKER |
+| 2A000 | -103 | A hybrid index of a MODEL names two columns, or its table's primary key is not one column, or its model is not there |
+| 22000 | -301 | CHUNKER is no chunking CHUNK_TEXT reads |
+| 0A000 | -900 | A hybrid index of no MODEL names one column |
