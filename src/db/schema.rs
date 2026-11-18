@@ -166,7 +166,7 @@ impl State {
         (made, epochs): (Option<&Made>, &mut Epochs),
     ) -> Result<SchemaMade> {
         let ours = self.catalog_name();
-        let s = Parser::new(sql)?.in_catalog(&ours).schema()?;
+        let s = Parser::for_stored(sql)?.in_catalog(&ours).schema()?;
         if let Some(other) = s.catalog.as_ref().filter(|c| **c != ours) {
             let msg = format!("[ISO/IEC 9075:1992 §11.1 SR3] the one catalog is {ours}, not {other}");
             return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::INVALID_CATALOG_NAME));

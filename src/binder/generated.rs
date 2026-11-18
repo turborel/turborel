@@ -50,7 +50,7 @@ pub fn noting_generation(
 
 /// `noting_generation`, its errors not yet said to be of the column.
 fn bound(db: &State, desc: &TableDesc, g: &Generation, invoked: Option<&Invoked>) -> Result<(Expr, DataType)> {
-    let value = Parser::new(&g.text)?.of_definition().generation_expression()?;
+    let value = Parser::for_stored(&g.text)?.generation_expression()?;
     let mut queried = false;
     value.for_each_subquery(&mut |_| queried = true);
     if queried {

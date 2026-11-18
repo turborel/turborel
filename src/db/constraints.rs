@@ -534,7 +534,7 @@ impl State {
         (text, names, horizon): (&str, &str, &Horizon),
         (uses, referencing, invoked): (Option<&Uses>, &Referencing, Option<&Invoked>),
     ) -> Result<Cond> {
-        let condition = Parser::new(text)?.of_definition().check_condition()?;
+        let condition = Parser::for_stored(text)?.check_condition()?;
         let from = TableReference::Table(NamedTable {
             table: TableName { auth: Some(table.auth.clone()), ident: table.ident.clone(), at: 0 },
             only: false,

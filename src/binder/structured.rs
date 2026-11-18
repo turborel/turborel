@@ -71,7 +71,7 @@ impl Binder<'_> {
     /// `a`, cast to its type: of no `<default option>`, the null value.
     pub(super) fn attribute_default(&self, a: &crate::catalog::AttributeDesc) -> Result<Expr> {
         let Some(text) = &a.default else { return Ok(Expr::Const(crate::value::Value::Null)) };
-        let written = Parser::new(text)?.of_definition().generation_expression()?;
+        let written = Parser::for_stored(text)?.generation_expression()?;
         let (e, _) = self.typed(&written, ParameterType::Of(a.data_type.clone()), Scope::Rows(IN_DEFAULT))?;
         Ok(Expr::Cast(Box::new(e), a.data_type.clone()))
     }

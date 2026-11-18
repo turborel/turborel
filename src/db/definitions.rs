@@ -34,6 +34,7 @@ use crate::catalog::{ConstraintKind, QualifiedName, TableDesc, merged, owner_of,
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::log::record::Change;
 use crate::parser::Parser;
+use crate::settings::FUNCTION_CALLS;
 use crate::txn::{LockMode, Txn};
 
 /// What a schema statement did to the definitions.
@@ -63,6 +64,8 @@ impl Session {
     /// `statement`, written `text`, in transaction `tx`: its change staged
     /// with the transaction's.
     pub(super) fn schema_statement(&self, st: &Arc<State>, tx: &Txn, statement: &SchemaStatement, text: &str) -> Result<Completion> {
+        // Its own texts read again as the session read it (RULES.md D74).
+        let _calls = Parser::refusing_calls(text, st.settings.is_on(FUNCTION_CALLS));
         let schema = self.default_schema();
         let object = self.object_of(st, statement, &schema)?;
         self.refuse_declared(st, statement, (&object, &schema))?;
@@ -284,7 +287,7 @@ impl State {
         sql: &str,
         (placed, made, epochs): (Option<&(String, u32)>, Option<&Made>, &[u64]),
     ) -> Result<Dropped> {
-        let SqlStatement::Schema { statement, .. } = Parser::new(sql)?.of_definition().sql_statement()? else {
+        let SqlStatement::Schema { statement, .. } = Parser::for_stored(sql)?.sql_statement()? else {
             return Err(api(format!("[DESIGN] {sql} is not a schema statement")));
         };
         Ok(self.define((cell, schema, zone), &statement, (placed, made, &mut Epochs::logged(epochs)))?.dropped)
@@ -413,8 +416,7 @@ impl State {
 /// The table the logged statement `sql` created, its names in schema
 /// `schema`, if it created one.
 pub(super) fn created(schema: &str, sql: &str) -> Option<QualifiedName> {
-    let Ok(SqlStatement::Schema { statement: SchemaStatement::Table(t), .. }) =
-        Parser::new(sql).and_then(|p| p.of_definition().sql_statement())
+    let Ok(SqlStatement::Schema { statement: SchemaStatement::Table(t), .. }) = Parser::for_stored(sql).and_then(|mut p| p.sql_statement())
     else {
         return None;
     };

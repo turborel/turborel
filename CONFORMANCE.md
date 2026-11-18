@@ -2438,7 +2438,10 @@ function of the default schema that takes the arguments is invoked before a
 registered one. A call of a registered aggregate's name is the
 aggregate's unless a function of the default schema of the name has as
 many parameters as the call has arguments, as that is told before the
-arguments are bound.
+arguments are bound. The setting is checked as a definition is made. A
+view, constraint, assertion, domain, trigger, generated column or SQL
+routine body that calls a registered function keeps the call, whatever
+the setting is when it is used, reopened or recovered (RULES.md D74).
 
 ---
 

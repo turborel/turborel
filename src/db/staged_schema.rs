@@ -14,6 +14,7 @@ use crate::catalog::QualifiedName;
 use crate::error::{Result, SqlState};
 use crate::log::record::Change;
 use crate::parser::Parser;
+use crate::settings::FUNCTION_CALLS;
 use crate::txn::{LockMode, Txn};
 
 impl Session {
@@ -34,6 +35,8 @@ impl Session {
     /// published once its name is held, with those `tx` staged before; its
     /// assertions checked [§11.34 GR2].
     fn stage_schema(&self, st: &Arc<State>, tx: &Txn, sql: &str, name: &str) -> Result<Completion> {
+        // Its own texts read again as the session read it (RULES.md D74).
+        let _calls = Parser::refusing_calls(sql, st.settings.is_on(FUNCTION_CALLS));
         st.acquire_name(tx, &QualifiedName::of_schema(name), LockMode::Exclusive)?;
         let fresh = self.definitions(self.db.snapshot()?)?;
         let mut next = State::clone(&fresh);
@@ -54,7 +57,7 @@ impl Session {
         let change = Change::Schema { sql: sql.to_owned(), owner, engines, zone, epochs: epochs.given() };
         self.stage(&fresh, tx, Changed { next, change, made: Some(made) })?;
         let done = if warned { Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED) } else { Completion::Success };
-        let schema = || Parser::new(sql).and_then(|p| p.of_definition().schema()).ok().as_ref().and_then(long_texts::of_schema);
+        let schema = || Parser::for_stored(sql).and_then(|mut p| p.schema()).ok().as_ref().and_then(long_texts::of_schema);
         Ok(long_texts::warned(done, sql, schema))
     }
 }
@@ -70,6 +73,8 @@ impl Database {
         // before the gate is entered, so a wait for it never holds the gate.
         let name = Parser::new(sql)?.in_catalog(&current.catalog_name()).schema()?.name;
         let holder = current.begin();
+        // Its own texts read again as the database's value reads it (RULES.md D74).
+        let _calls = Parser::refusing_calls(sql, current.settings.is_on(FUNCTION_CALLS));
         current.acquire_name(&holder, &QualifiedName::of_schema(&name), LockMode::Exclusive)?;
         // Published before a checkpoint can see its record or its tables.
         let _gate = current.tx.gate.enter();
@@ -86,7 +91,7 @@ impl Database {
             }
             logged?;
             let done = if warned { Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED) } else { Completion::Success };
-            let schema = || Parser::new(sql).and_then(|p| p.of_definition().schema()).ok().as_ref().and_then(long_texts::of_schema);
+            let schema = || Parser::for_stored(sql).and_then(|mut p| p.schema()).ok().as_ref().and_then(long_texts::of_schema);
             Ok(long_texts::warned(done, sql, schema))
         }))
     }
@@ -105,7 +110,7 @@ impl State {
         made: Option<&Made>,
         epochs: &[u64],
     ) -> Result<Dropped> {
-        let schema = Parser::new(sql)?.of_definition().schema()?.name;
+        let schema = Parser::for_stored(sql)?.schema()?.name;
         for (ident, engine) in engines {
             self.placement.insert(QualifiedName { auth: schema.clone(), ident: ident.clone() }, engine.clone());
         }
@@ -117,6 +122,6 @@ impl State {
 /// The tables of the `<schema definition>` `sql`, of which `engines` names
 /// each.
 pub(super) fn schema_tables(sql: &str, engines: &[(String, String)]) -> Vec<QualifiedName> {
-    let Ok(schema) = Parser::new(sql).and_then(|p| p.of_definition().schema()) else { return Vec::new() };
+    let Ok(schema) = Parser::for_stored(sql).and_then(|mut p| p.schema()) else { return Vec::new() };
     engines.iter().map(|(ident, _)| QualifiedName { auth: schema.name.clone(), ident: ident.clone() }).collect()
 }

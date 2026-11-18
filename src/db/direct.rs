@@ -82,7 +82,7 @@ impl Session {
                 "[ISO/IEC 9075:1992 §20.1 GR6b iv] a <schema definition> in a READ ONLY transaction".to_owned(),
             );
         }
-        let schema = Parser::new(sql)?.of_definition().schema()?;
+        let schema = Parser::for_stored(sql)?.schema()?;
         let (st, authorization) = (self.db.snapshot()?, self.authorization());
         let cell = authorization.of(st.catalog.roles()).cell;
         if let Some(other) = schema.auth.as_ref().filter(|a| !cell.includes(a)) {

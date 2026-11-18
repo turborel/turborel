@@ -435,7 +435,7 @@ impl Session {
         let statement = super::dynamic::declared_statement(&d.specification).map(|s| Name::plain(&s));
         // Known now only if the text parses without the opening procedure's
         // parameters; otherwise it is parsed, and any error reported, at OPEN.
-        let parsed = Parser::new(&d.specification).and_then(|p| p.of_definition().cursor_specification()).ok();
+        let parsed = Parser::for_stored(&d.specification).and_then(|mut p| p.cursor_specification()).ok();
         let updatable = parsed.map(|c| declared_updatable(&c, (d.insensitive, d.scroll))).transpose()?;
         let (insensitive, scroll) = (d.insensitive, d.scroll);
         inner

@@ -206,7 +206,7 @@ pub(super) fn transitions_of(st: &State, t: &TriggerDesc) -> Result<Transitions>
 ///
 /// It does not parse, or is no trigger definition.
 pub(super) fn parsed(text: &str) -> Result<TriggerDefinition> {
-    let SqlStatement::Schema { statement: SchemaStatement::Trigger(t), .. } = Parser::new(text)?.of_definition().sql_statement()? else {
+    let SqlStatement::Schema { statement: SchemaStatement::Trigger(t), .. } = Parser::for_stored(text)?.sql_statement()? else {
         return Err(SqlError::new(Code::Api, "[DESIGN] a trigger's text is no <trigger definition>"));
     };
     Ok(t)

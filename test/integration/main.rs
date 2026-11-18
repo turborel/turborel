@@ -257,6 +257,7 @@ mod statistical_set_functions;
 mod statistics;
 mod statistics_background;
 mod storage_defaults;
+mod stored_function_calls;
 mod stores;
 mod structured_alterations;
 mod structured_ddl;
