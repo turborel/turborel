@@ -220,7 +220,8 @@ fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
         | (Probe::Columns(_), Place::Key(_) | Place::Low | Place::High | Place::PredicateValue)
         | (Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. }, Place::Column(_) | Place::PredicateValue)
         | (Probe::Compare { .. } | Probe::Prefix { .. }, Place::Low | Place::High)
-        | (Probe::Predicate { .. }, Place::Column(_) | Place::Key(_) | Place::Low | Place::High) => None,
+        | (Probe::Predicate { .. }, Place::Column(_) | Place::Key(_) | Place::Low | Place::High)
+        | (Probe::Xml(_), Place::Column(_) | Place::Key(_) | Place::Low | Place::High | Place::PredicateValue) => None,
     };
     match at {
         Some(at) => {

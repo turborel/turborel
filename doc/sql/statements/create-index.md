@@ -88,9 +88,11 @@ one XML column: each element and attribute of its values, by its path,
 its value as a string and as a number, and its place in document order,
 each method in its own order ([XML indexes](../xml.md#xml-indexes));
 `xml_primary` keeps each node's value whole up to 512 octets, so it
-answers of a row from the index alone. No comparison of SQL
-reads it, as XML values are not comparable: it answers lookups of
-XQuery's paths. A value with more elements and attributes than it keys,
+answers of a row from the index alone. No comparison of SQL reads it, as
+XML values are not comparable: the planner reads it for the paths of
+XMLEXISTS, XMLQUERY and XMLTABLE ([Queries an XML index reads
+for](../xml.md#queries-an-xml-index-reads-for)). A value with more
+elements and attributes than it keys,
 or a name or path longer than the database's page size holds, is refused
 as it is written.
 

@@ -115,11 +115,16 @@ is kept consistent under concurrent change and recovery as the B-tree is.
   without a join's search. Graph queries need it.
 - XML indexes (RULES.md D86): `xml_path`, `xml_value`, `xml_property`
   and `xml_primary` are built, answer lookups of paths and values, and
-  the primary answers queries with filters of an ancestor. Left: the
-  planner's use of them for XQuery's predicates in XMLEXISTS, XMLQUERY and
-  XMLTABLE, weighing `xml_cost` against `XmlCost::of_check`, with EXPLAIN
-  naming the lookup; predicates of more than one step above, and paths of
-  other axes, which no lookup takes yet.
+  the primary answers queries with filters of an ancestor; the planner
+  reads them for XMLEXISTS, XMLQUERY NULL ON EMPTY IS NOT NULL and
+  XMLTABLE of a path. Left: the planner weighing `XmlCost::of_check`
+  and reading the primary's answers (`Index::xml_answers`) and filters
+  of an ancestor; a column of XML(SEQUENCE), whose rows of a value of
+  other than one node an index would mark so a lookup gives them;
+  predicates of more than one step above, several paths joined by `and`,
+  and paths of other axes, which no lookup takes yet; and an ON condition
+  whose query may raise an error read by an index, which waits for the
+  guard of D15 to be read below.
 
 ---
 
@@ -143,10 +148,8 @@ features.
   operators library, on the `XQueryFunction` seam; casts to `xs:QName`;
   the validate expression's lax mode and schema imports, with XML Schema;
   the type annotation `xs:anyType` of an element constructed in
-  construction mode preserve; and a query's paths answered by the XML
-  indexes of documents' paths and values, which are there
-  ([Index structures](#index-structures)), so a query reads only the rows
-  that hold the nodes it asks for.
+  construction mode preserve; and more of a query's shapes answered by
+  the XML indexes ([Index structures](#index-structures)).
 - XML Schema: registered XML schemas, XML(DOCUMENT(XMLSCHEMA)) and
   XML(CONTENT(XMLSCHEMA)), XMLVALIDATE and IS VALID, and their
   Information Schema (X141 to X161, X191, X192, X256, X257, X260 to X286).

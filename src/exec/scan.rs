@@ -153,9 +153,10 @@ pub(super) struct Found {
 /// the engine is told every row with a key: never narrower than the index,
 /// so it may refuse more commits, and never fewer (RULES.md D60).
 pub(in crate::exec) fn asked(ix: &KeyShape, probe: Probe) -> Condition {
-    // D34: storage cannot infer which rows a function selects. Record a
+    // D34, D86: storage cannot infer which rows a function or an XML
+    // lookup selects. Record a
     // whole-table read, including nulls, so conflict checks miss no match.
-    if matches!(probe, Probe::Predicate { .. }) {
+    if probe.opaque() {
         return Condition { columns: Vec::new(), probe: Probe::All };
     }
     let probe = if ix.is_collated() { Probe::All } else { probe };

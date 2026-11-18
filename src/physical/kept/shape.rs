@@ -106,6 +106,10 @@ fn same_nearest(one: &Plan, other: &Plan) -> bool {
 fn same_probe(one: &Probe, other: &Probe) -> bool {
     match one {
         Probe::All => matches!(other, Probe::All),
+        Probe::Xml(a) => {
+            let Probe::Xml(b) = other else { return false };
+            a.to_string() == b.to_string()
+        }
         Probe::Predicate { predicate: a, .. } => {
             let Probe::Predicate { predicate: b, .. } = other else { return false };
             same_function(&a.function, &b.function) && a.column == b.column && a.argument == b.argument

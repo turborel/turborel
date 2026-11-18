@@ -2181,8 +2181,17 @@ probes them, as XML values are not comparable; the Rust API asks them for
 the rows that may hold a node of a path of child and descendant steps
 with a value a general comparison selects (`Index::xml_rows`,
 `xml_cost`, `index::xml::XmlLookup`), which the caller checks
-(`XmlLookup::matches`, one pass over the stored form), and `Database::xml_candidates` reads those rows. A value whose
-nodes or keys pass their bounds is refused, SQLCODE -900.
+(`XmlLookup::matches`, one pass over the stored form), and
+`Database::xml_candidates` reads those rows. The planner reads them, by
+cost against a full read, for a WHERE or ON conjunct of XMLEXISTS, of
+XMLQUERY NULL ON EMPTY IS NOT NULL, and for XMLTABLE joined to its rows
+not by LEFT, of a query of the column alone, of XML(DOCUMENT) or
+XML(CONTENT), that is one path of child, descendant and attribute steps,
+its last of one predicate, a relative path or its comparison with a
+literal (`xquery/lookup.rs`, `physical/access/xml.rs`); each row given
+is fetched and checked, and a table another conjunct of which may raise
+an error is read whole (RULES.md D15). EXPLAIN shows the lookup. A value
+whose nodes or keys pass their bounds is refused, SQLCODE -900.
 
 ### Users
 

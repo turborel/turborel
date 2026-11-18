@@ -9,14 +9,14 @@
 
 use std::sync::Arc;
 
-use super::super::ScalarFunction;
+use super::super::{ScalarFunction, ScalarRef};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::exec::{NoSubqueries, Subqueries, eval};
 use crate::logical::Expr;
 use crate::value::xml::XmlValue;
 use crate::value::{DataType, Decimal, Value};
 use crate::xml::{Item, Moment, Sequence, decode, document, encode};
-use crate::xquery::{Input, Query};
+use crate::xquery::{Input, Query, Reduction};
 
 /// What evaluates a query, as XMLQUERY gives its arguments.
 #[derive(Debug, Clone)]
@@ -25,6 +25,10 @@ pub struct Evaluation {
     pub query: Arc<Query>,
     /// Whether the first argument is the context item.
     pub context: bool,
+    /// Whether the context item is a value of one node, of XML(DOCUMENT)
+    /// or XML(CONTENT) [§4.2.2]: what a query is reduced to an XML
+    /// index's lookup of (`XmlFilter`).
+    pub one_node: bool,
     /// The statement's current dateTime [XQuery Appendix C.2].
     pub now: Moment,
     /// Its implicit timezone, in minutes east of UTC.
@@ -130,6 +134,50 @@ impl ScalarFunction for XmlQueryOf {
         }
         passed(sequence, self.by_value)
     }
+
+    fn xml_filter(&self) -> Option<XmlFilter> {
+        reduction_of(&self.evaluation).filter(|_| self.null_on_empty).map(XmlFilter::NullOfEmpty)
+    }
+}
+
+/// \[EXTENSION\] RULES.md D86: what a function's value says of whether a
+/// query's value is empty, its context item the function's first
+/// argument, the query reduced to an XML index's lookup
+/// (`ScalarFunction::xml_filter`).
+#[derive(Debug, Clone)]
+pub enum XmlFilter {
+    /// False or null exactly when the query's value is empty, or its
+    /// context item null: XMLEXISTS [§8.4 GR2].
+    Exists(Reduction),
+    /// As `Exists`, a filter the planner adds where it is implied, which
+    /// no row is checked by: XMLTABLE's row pattern (`XmlRowsOf`).
+    Implied(Reduction),
+    /// Null exactly when the query's value is empty, or its context item
+    /// null: XMLQUERY NULL ON EMPTY [§6.18 GR4a].
+    NullOfEmpty(Reduction),
+    /// No row exactly when the query's value is empty, or its context item
+    /// null: XMLTABLE [§7.1 SR4h], and its row pattern as an implied filter
+    /// of the rows it is of.
+    NoRows(Reduction, ScalarRef),
+    /// Null exactly when its one argument is: XMLDOCUMENT.
+    KeepsNull,
+    /// A copy of its one argument, null of null: an XML value passed BY
+    /// VALUE [§10.18].
+    Copy,
+}
+
+/// The reduction of `evaluation`'s query, of a context item passed of
+/// one node.
+fn reduction_of(evaluation: &Evaluation) -> Option<Reduction> {
+    (evaluation.context && evaluation.one_node).then(|| evaluation.query.reduced()).flatten()
+}
+
+/// The value of XMLEXISTS of `evaluation` and `args` [§8.4 GR2].
+fn exists(evaluation: &Evaluation, args: &[Value], statement: &dyn Subqueries) -> Result<Value> {
+    Ok(match evaluation.evaluate(args, statement)? {
+        Some(sequence) => Value::Bool(!sequence.items().is_empty()),
+        None => Value::Null,
+    })
 }
 
 /// [§8.4] XMLEXISTS: Unknown if the context item passed is null, False if
@@ -155,10 +203,48 @@ impl ScalarFunction for XmlExistsOf {
     }
 
     fn call_in(&self, args: &[Value], statement: &dyn Subqueries) -> Result<Value> {
-        Ok(match self.0.evaluate(args, statement)? {
-            Some(sequence) => Value::Bool(!sequence.items().is_empty()),
-            None => Value::Null,
-        })
+        exists(&self.0, args, statement)
+    }
+
+    fn xml_filter(&self) -> Option<XmlFilter> {
+        reduction_of(&self.0).map(XmlFilter::Exists)
+    }
+
+    fn raise_free(&self) -> bool {
+        reduction_of(&self.0).is_some_and(|r| r.raise_free)
+    }
+}
+
+/// \[EXTENSION\] RULES.md D86: XMLTABLE's row pattern as a filter of the
+/// rows it is of, which keeps those it gives a row of: XMLEXISTS of it.
+/// The planner adds it where an XML index may find them, and checks no
+/// row by it, as XMLTABLE gives no row of the others.
+#[derive(Debug)]
+pub struct XmlRowsOf(pub Evaluation);
+
+impl ScalarFunction for XmlRowsOf {
+    fn name(&self) -> &'static str {
+        "XMLTABLE"
+    }
+
+    fn return_type(&self, _: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Boolean)
+    }
+
+    fn call(&self, args: &[Value]) -> Result<Value> {
+        self.call_in(args, &NoSubqueries)
+    }
+
+    fn in_statement(&self) -> bool {
+        true
+    }
+
+    fn call_in(&self, args: &[Value], statement: &dyn Subqueries) -> Result<Value> {
+        exists(&self.0, args, statement)
+    }
+
+    fn xml_filter(&self) -> Option<XmlFilter> {
+        reduction_of(&self.0).map(XmlFilter::Implied)
     }
 }
 
@@ -231,6 +317,12 @@ impl ScalarFunction for XmlTableOf {
             rows.push(Value::Row(Arc::from(row)));
         }
         Ok(Value::Array(Arc::from(rows)))
+    }
+
+    /// Of a row pattern of the context item alone.
+    fn xml_filter(&self) -> Option<XmlFilter> {
+        let reduction = reduction_of(&self.rows).filter(|_| self.arguments == 1)?;
+        Some(XmlFilter::NoRows(reduction, ScalarRef(Arc::new(XmlRowsOf(self.rows.clone())))))
     }
 }
 

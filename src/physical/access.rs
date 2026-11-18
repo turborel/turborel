@@ -4,6 +4,7 @@
 
 mod columns;
 mod spatial;
+mod xml;
 
 use super::estimate::{self, Known};
 use super::kept::{Place, point_probe};
@@ -141,7 +142,11 @@ impl PhysicalPlanner<'_> {
             return filtered(plan, conds, &with);
         };
         let rows = storage.row_count();
-        let best = self.best_path(read, &conds, want);
+        // RULES.md D86: an implied filter is no condition of the rows read:
+        // an index may find them by it, and no row is checked by it.
+        let (implied, kept): (Vec<Cond>, Vec<Cond>) = conds.into_iter().partition(xml::implied);
+        conds = kept;
+        let best = self.best_path(read, (&conds, &implied), want);
         // A scan's filter keeps its share of the table's rows, but no more
         // than the scan reads: the rows its zones or chunks may match.
         let (plan, (found, most)) = match best.index {
@@ -163,7 +168,10 @@ impl PhysicalPlanner<'_> {
             Some(mut probed) => {
                 let named = predicate::named(&probed.probes);
                 let answered = probed.answered(&mut conds);
-                let found = if named { cost_of(rows) } else { best.est };
+                // A function lookup is priced as of every row; an XML lookup by
+                // its index's count.
+                let function = named && !matches!(probed.probes.first(), Some(Probe::Xml(_)));
+                let found = if function { cost_of(rows) } else { best.est };
                 (index_scans(read, probed, answered, (best.est, best.cost, best.reverse)), (found, best.est))
             }
         };
@@ -174,7 +182,7 @@ impl PhysicalPlanner<'_> {
 
     /// The cheapest way to read the table: a sequential scan, index probes
     /// answering conjuncts of `conds`, or a full ordered index read.
-    fn best_path(&self, read: TableRead<'_>, conds: &[Cond], want: &[SortKey]) -> Path {
+    fn best_path(&self, read: TableRead<'_>, (conds, implied): (&[Cond], &[Cond]), want: &[SortKey]) -> Path {
         let cost = &self.db.cost();
         let sort_penalty = |est: f64, ordered: bool| if !want.is_empty() && !ordered { cost.sort(est) } else { 0.0_f64 };
         let unread = Path { total: 0.0_f64, cost: 0.0_f64, est: 0.0_f64, ordered: false, reverse: false, index: None, order: Vec::new() };
@@ -208,6 +216,7 @@ impl PhysicalPlanner<'_> {
             let mut candidates = columns::candidates((&ix.columns, &types), (&served, alternatives), (all, known), &**kind);
             candidates.extend(predicate::candidates(answerable, ix, self.values, all));
             candidates.extend(spatial::candidates(conds, ix, &types, self.values, all));
+            candidates.extend(xml::candidates((conds, implied), ix, found, all));
             // A full ordered read, only to provide order.
             candidates.push(Candidate::one(Probe::All, (Vec::new(), 0, all, false)));
             for c in candidates {
@@ -222,8 +231,7 @@ impl PhysicalPlanner<'_> {
                 // different SQL order, so neither can replace a sort.
                 let ordered_index = kind.ordered() && !ix.is_collated() && !predicate::untested_nulls(&columns, c.probes.first());
                 let order = if ordered_index && !want.is_empty() { index_order(&ix.columns, c.fixed, want) } else { None };
-                let all_keys = matches!(c.probes.first(), Some(Probe::All));
-                if !supported || omitted || all_keys && order.is_none() {
+                if !supported || omitted || matches!(c.probes.first(), Some(Probe::All)) && order.is_none() {
                     continue;
                 }
                 let distinct = || self.db.distinct_keys(read.table, &**found);
@@ -347,7 +355,7 @@ pub(super) fn whole_key(probe: &Probe, width: usize) -> bool {
     match probe {
         Probe::Compare { op, .. } => *op == CompOp::Eq && width == 1,
         Probe::Prefix { equal, then } => then.is_none() && equal.len() == width,
-        Probe::All | Probe::Columns(_) | Probe::Range { .. } | Probe::Predicate { .. } => false,
+        Probe::All | Probe::Columns(_) | Probe::Range { .. } | Probe::Predicate { .. } | Probe::Xml(_) => false,
     }
 }
 

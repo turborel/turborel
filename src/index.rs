@@ -137,9 +137,17 @@ pub enum Probe {
         /// The other argument, as the bound function receives it.
         value: Value,
     },
+    /// \[EXTENSION\] RULES.md D86: the rows of an XML lookup, each checked.
+    Xml(Box<xml::XmlLookup>),
 }
 
 impl Probe {
+    /// Whether it is a function or XML lookup (RULES.md D34, D86).
+    #[must_use]
+    pub fn opaque(&self) -> bool {
+        matches!(self, Probe::Predicate { .. } | Probe::Xml(_))
+    }
+
     /// Whether a key, its values in order, answers the probe by the
     /// [X3.135-1986 §5.11] comparison rules: never with a null where a
     /// value is compared (GR2). For `Probe::Predicate`, this always returns
@@ -150,7 +158,7 @@ impl Probe {
         let mut key = key.into_iter();
         let holds = |op: CompOp, k: Option<&Value>, v: &Value| k.and_then(|k| compare(k, v)).is_some_and(|o| op.holds(o));
         match self {
-            Probe::All | Probe::Predicate { .. } => true,
+            Probe::All | Probe::Predicate { .. } | Probe::Xml(_) => true,
             Probe::Columns(each) => columns_answer(key, each),
             Probe::Compare { op, value } => holds(*op, key.next(), value),
             Probe::Prefix { equal, then } => {

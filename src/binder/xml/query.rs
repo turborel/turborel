@@ -35,6 +35,9 @@ struct Bound {
     context: bool,
     /// The variables' names, in order.
     names: Vec<String>,
+    /// Whether the context item is a value of one node: of XML(DOCUMENT)
+    /// or XML(CONTENT) [§4.2.2].
+    one_node: bool,
 }
 
 impl Binder<'_> {
@@ -45,8 +48,11 @@ impl Binder<'_> {
     /// value alone [SR5a v, SR5b iv], an XML value passed BY VALUE a copy
     /// [GR1a ii 2 A I, GR1b i 2], another cast [GR1a ii 2 A II, GR1b i 3].
     fn xml_arguments(&self, arguments: Option<&XmlArguments>, scope: Scope<'_>) -> Result<Bound> {
-        let Some(arguments) = arguments else { return Ok(Bound { values: Vec::new(), context: false, names: Vec::new() }) };
+        let Some(arguments) = arguments else {
+            return Ok(Bound { values: Vec::new(), context: false, names: Vec::new(), one_node: false });
+        };
         let (mut context, mut variables, mut names) = (None, Vec::new(), Vec::<String>::new());
+        let mut one_node = false;
         for argument in &arguments.arguments {
             let (e, t) = self.value_expression(&argument.value, scope)?;
             let value = if matches!(t, DataType::Xml(_)) {
@@ -65,6 +71,7 @@ impl Binder<'_> {
                     if context.replace(value).is_some() {
                         return Err(rule("[ISO/IEC 9075-14:2006 draft §6.18 SR5b i] one context item is passed at most").or_at(argument.at));
                     }
+                    one_node = matches!(t, DataType::Xml(XmlType::Document(_) | XmlType::Content(_)));
                 }
                 Some(name) => {
                     if !is_ncname(Version::V11, name) || names.contains(name) {
@@ -79,7 +86,7 @@ impl Binder<'_> {
             }
         }
         let has_context = context.is_some();
-        Ok(Bound { values: context.into_iter().chain(variables).collect(), context: has_context, names })
+        Ok(Bound { values: context.into_iter().chain(variables).collect(), context: has_context, names, one_node })
     }
 
     /// The query `text` analysed in the static context §10.20 makes \[SR2\]:
@@ -109,7 +116,7 @@ impl Binder<'_> {
             micros: local.rem_euclid(MICROS_PER_DAY),
             zone: Some(now.zone),
         };
-        Ok(Evaluation { query, context: bound.context, now: moment, timezone: now.zone })
+        Ok(Evaluation { query, context: bound.context, one_node: bound.one_node, now: moment, timezone: now.zone })
     }
 
     /// [§6.18] XMLQUERY: RETURNING CONTENT, implicit too, of no returning

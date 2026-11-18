@@ -294,12 +294,15 @@ impl Expr {
     /// negation cannot overflow), and CASE only through its parts, as a
     /// truth value only through its condition. A function that opts in to
     /// index lookups promises never to raise for accepted arguments (D34),
-    /// but computing those arguments can still raise.
+    /// as does one that is `raise_free` (D86), but computing those
+    /// arguments can still raise.
     pub fn can_raise(&self) -> bool {
         match self {
             Expr::Arith(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) | Expr::Invoked(_) => true,
             // D34: the function's promise does not cover argument expressions.
-            Expr::Call(f, args) => !f.0.index_predicate() || !f.0.deterministic() || args.iter().any(Expr::can_raise),
+            Expr::Call(f, args) => {
+                (!f.0.raise_free() && (!f.0.index_predicate() || !f.0.deterministic())) || args.iter().any(Expr::can_raise)
+            }
             Expr::Truth(c) => c.can_raise(),
             Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::Case(..) | Expr::SortKey(..) => {
                 let mut raises = false;

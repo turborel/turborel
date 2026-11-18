@@ -27,6 +27,12 @@ pub(in crate::physical) fn render_probe(probe: &Probe, columns: &[usize], names:
             };
             vec![condition]
         }
+        // RULES.md D86: the path and comparisons the lookup selects by, of
+        // the column's values.
+        Probe::Xml(lookup) => {
+            let column = columns.first().and_then(|&c| names.get(c)).map_or("?", String::as_str);
+            return format!("{column} has {lookup}");
+        }
         Probe::Compare { op, value } => vec![compared(0, *op, value)],
         Probe::Prefix { equal, then } => {
             let next = then.as_ref().map(|(op, value)| compared(equal.len(), *op, value));

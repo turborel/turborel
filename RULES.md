@@ -3137,6 +3137,36 @@ value, and a lookup is a path, not a value. A value of more than
 `MAX_KEYED_NODES` (262,144) elements and attributes, or of a key longer
 than the tree's longest, is refused as it is indexed, SQLCODE -900 (D18).
 
+The planner reads an XML index (`physical/access/xml.rs`) for a
+conjunct of a table's filter that keeps a row only if a query's value of
+it is not empty (`ScalarFunction::xml_filter`): XMLEXISTS, XMLQUERY NULL
+ON EMPTY IS NOT NULL, and XMLTABLE's row pattern, which the planner adds
+as an implied filter of the rows XMLTABLE joins, not LEFT, and checks no
+row by (`XmlRowsOf`). The query is passed the column alone, or its copy,
+as its context item, of XML(DOCUMENT) or XML(CONTENT), so each value is
+one node; one of XML(SEQUENCE) may be several items or none, and the
+query raise an error of it [ISO/IEC 9075-14:2006 draft §6.18 GR1a ii 2]
+that a lookup would hide. The query is reduced to a lookup
+(`xquery/lookup.rs`) if it is one path of child, descendant and
+attribute steps over names or `*`, its last step of at most one
+predicate: a relative path, or its comparison, or `.`'s, with a literal.
+A general comparison with a number, or with a string by the codepoint
+collation, is the lookup's comparison; any other leaves the path alone,
+each row checked. The rows come as `Probe::Xml`, opaque as a function
+lookup's (`Probe::opaque`): storage records a read of the whole table,
+each entry's key projects to null (`DerivedKeys`), and the filter keeps
+the conjunct and checks each row fetched, so an index changes no result.
+The rows a lookup leaves out are those its query gives the empty
+sequence of with no error, a numeric comparison's lookup giving the
+values that cast to no number, so it is used only if every other
+conjunct of the table cannot raise one, or is such a query that raises
+none (D15). A path, alone or compared with a string, raises none
+(`ScalarFunction::raise_free`), so it is no raising conjunct to D15's
+guards, and an ON condition of it is pushed onto its operand as a
+comparison is. A lookup is priced by the entries its index counts
+(`Index::xml_cost`) against a full read; a method that prices none is
+not read. EXPLAIN shows `column has` the lookup's path and comparison.
+
 ## 2. Project layout
 
 ```

@@ -7,7 +7,8 @@
 //! R-CF-6).
 
 use super::{Built, PhysicalPlanner, Plan, of_left};
-use crate::logical::{Expr, Fixpoint, Limit, LogicalPlan, SetOp, SortKey, Unnest, render_expr};
+use crate::functions::XmlFilter;
+use crate::logical::{Cond, Expr, Fixpoint, Limit, LogicalPlan, SetOp, SortKey, Unnest, render_expr};
 use crate::system::SystemRead;
 
 impl PhysicalPlanner<'_> {
@@ -61,9 +62,13 @@ impl PhysicalPlanner<'_> {
         Built::unordered(Plan::WorkTable { member, rows: None })
     }
 
-    /// A collection derived table over its input, planned.
+    /// A collection derived table over its input, planned: of XMLTABLE
+    /// joined to the rows of a table, its input filtered by its row
+    /// pattern, implied (`implied_filter`).
     pub(super) fn unnest(&self, u: &Unnest<LogicalPlan>) -> Built {
-        Built::unordered(Plan::Unnest(Box::new(u.with_input(|input| self.plan(input)))))
+        let filtered = implied_filter(u);
+        let input = self.plan(filtered.as_deref().unwrap_or(&u.input));
+        Built::unordered(Plan::Unnest(Box::new(u.with_input(|_| input))))
     }
 
     /// The set operation `op` of the plans `left`, whose order is kept,
@@ -77,4 +82,23 @@ impl PhysicalPlanner<'_> {
         let append = Plan::Append { left: l, right: r };
         Built::unordered(if all { append } else { Plan::Distinct { input: Box::new(append) } })
     }
+}
+
+/// \[EXTENSION\] RULES.md D86: of `u`, XMLTABLE of a row pattern of the
+/// context item alone, joined to the rows of a table it is of, not LEFT,
+/// the table read with its row pattern as an implied filter
+/// (`functions::XmlRowsOf`): a row it gives the empty sequence of gives no
+/// row, so an XML index may find the others, each checked by XMLTABLE.
+fn implied_filter(u: &Unnest<LogicalPlan>) -> Option<Box<LogicalPlan>> {
+    let [Expr::Call(f, args)] = u.collections.as_slice() else { return None };
+    if u.outer.is_some() {
+        return None;
+    }
+    let XmlFilter::NoRows(_, rows) = f.0.xml_filter()? else { return None };
+    // A table's own filter stays above the collection derived table.
+    if !matches!(u.input, LogicalPlan::Scan { .. }) {
+        return None;
+    }
+    let cond = Cond::Value(Expr::Call(rows, vec![args.first()?.clone()]));
+    Some(Box::new(LogicalPlan::Filter { cond, input: Box::new(u.input.clone()) }))
 }

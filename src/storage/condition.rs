@@ -22,7 +22,7 @@ impl Condition {
     /// Whether `row` may be one the index chooses: every column of the key
     /// not null (`Index::insert`), and the key answering the probe
     /// (`Probe::answers`), so this is never narrower than what the index
-    /// returns. For a function lookup, every key is a possible candidate,
+    /// returns. For a function or an XML lookup, every key is a candidate,
     /// including nulls. Storage never calls the function because it may
     /// hold a lock here (D34, R-ERR-4).
     pub fn matches(&self, row: &Row) -> bool {
@@ -33,7 +33,7 @@ impl Condition {
     /// As `matches`, of a row whose values of the condition's columns, in
     /// their order, are `key`.
     pub fn matches_key(&self, key: &[&Value]) -> bool {
-        if matches!(self.probe, Probe::Predicate { .. }) {
+        if self.probe.opaque() {
             return true;
         }
         !key.iter().any(|v| v.is_null()) && self.probe.answers(key.iter().copied())
@@ -42,16 +42,17 @@ impl Condition {
     /// Whether a row whose every column's value is within `bounds`, its
     /// least and greatest not null, may match: never narrower than whether
     /// one does, as each column is taken alone. A column with no bounds has
-    /// no value not null, so no comparison matches. For a function lookup,
+    /// no value not null, so no comparison matches. For a function or an XML
+    /// lookup (`Probe::opaque`),
     /// returns true: these bounds cannot tell which rows the function selects.
     pub fn may_match(&self, bounds: &[Option<(Value, Value)>]) -> bool {
-        if matches!(self.probe, Probe::Predicate { .. }) {
+        if self.probe.opaque() {
             return true;
         }
         let ranges: Option<Vec<&(Value, Value)>> = self.columns.iter().map(|&c| bounds.get(c).and_then(Option::as_ref)).collect();
         let Some(ranges) = ranges else { return false };
         match &self.probe {
-            Probe::All | Probe::Predicate { .. } => true,
+            Probe::All | Probe::Predicate { .. } | Probe::Xml(_) => true,
             Probe::Columns(each) => each.iter().all(|c| ranges.get(c.column).is_some_and(|r| within(c.op, r, &c.value))),
             Probe::Compare { op, value } => ranges.first().is_some_and(|r| within(*op, r, value)),
             Probe::Prefix { equal, then } => {

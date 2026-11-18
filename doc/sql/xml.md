@@ -703,13 +703,11 @@ space of the others.
 
 Each indexes one XML column alone; another column, or more than one, is
 refused (SQLCODE -103). Like every index, it is built of the rows there,
-kept with each change, and changes no result. No SQL predicate reads it:
-XML values are not comparable, and XMLQUERY, XMLEXISTS and XMLTABLE
-evaluate their queries over each row's value without it. Its lookups are
-reached from Rust
-(`Database::xml_candidates`). A value with more than 262,144 elements and
-attributes, or one of a name or path too long for the database's page
-size, cannot be indexed, and its INSERT or UPDATE fails (SQLCODE -900).
+kept with each change, and changes no result. A value with more than
+262,144 elements and attributes, or one of a name or path too long for
+the database's page size, cannot be indexed, and its INSERT or UPDATE
+fails (SQLCODE -900). Its lookups are also reached from Rust
+(`Database::xml_candidates`).
 
 ```sql
 COMMIT;
@@ -733,6 +731,89 @@ OK
  ORDER_PATHS                                                  | xml_path                                                     | BODY
  ORDER_ROWS                                                   | xml_primary                                                  | BODY
 (2 rows)
+```
+
+### Queries an XML index reads for
+
+The planner reads an XML index for a condition on a table's rows that
+keeps a row only if a query's value of the row's column is not empty:
+
+- XMLEXISTS, in WHERE or in a join's ON;
+- XMLQUERY ... NULL ON EMPTY IS NOT NULL;
+- XMLTABLE joined to the rows it is of, not by a LEFT join: a row its
+  row pattern gives nothing of gives no row.
+
+The query's context item is the column, of XML(DOCUMENT) or
+XML(CONTENT), passed BY REF or BY VALUE, and nothing else is passed. Its
+body is one path from `.` or `/` of child, descendant (`//`) and
+attribute steps over names or `*`. Its last step may have one predicate:
+a relative path of such steps, or a comparison of one, or of `.`, with a
+literal. A comparison by `=`, `!=`, `<`, `<=`, `>` or `>=` with a string
+or a number narrows the rows the index gives; any other leaves the path
+alone. A query of another shape, a column of XML(SEQUENCE), whose value
+may be no one node, or a table too small to gain is read whole.
+
+The index gives the rows whose values may hold such a node. Each is
+fetched and the condition checked on it, so the result is a full read's.
+A row whose value a numeric comparison cannot cast is among those it
+gives, so its error is raised as by a full read. If another condition
+of the table may raise an error, the table is read whole, so the error
+is raised whatever rows the index would skip. In ON, a query that may
+raise an error, as a numeric comparison may, is read whole too. EXPLAIN
+shows the index read by its method, and the path and comparison it
+looks up.
+
+```sql
+CREATE TABLE PARCELS (ID INTEGER, LABEL XML(DOCUMENT));
+INSERT INTO PARCELS WITH RECURSIVE N (I) AS (SELECT CAST(1 AS INTEGER) FROM ORDERS WHERE ID = 1 UNION ALL SELECT I + 1 FROM N WHERE I < 400) SELECT I, XMLPARSE(DOCUMENT '<parcel><to>' || CAST(I AS VARCHAR(3)) || '</to>' || CASE WHEN I > 395 THEN '<fragile/>' ELSE '' END || '</parcel>' STRIP WHITESPACE) FROM N;
+COMMIT;
+CREATE INDEX PARCEL_PATHS ON PARCELS (LABEL) USING XML_PATH;
+SELECT ID FROM PARCELS WHERE XMLEXISTS('/parcel[to = "7"]' PASSING BY REF LABEL) ORDER BY ID;
+EXPLAIN SELECT ID FROM PARCELS WHERE XMLEXISTS('/parcel[to = "7"]' PASSING BY REF LABEL);
+EXPLAIN SELECT P.ID FROM PARCELS P, XMLTABLE('//fragile' PASSING BY REF P.LABEL COLUMNS F FOR ORDINALITY) AS X;
+```
+
+```
+OK
+OK
+OK
+OK
+           ID
+--------------
+            7
+(1 row)
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project PARCELS.ID
+   Filter XMLEXISTS(PARCELS.LABEL)
+     Scan ANN.PARCELS
+ -- rules: none
+ -- optimized:
+ Project PARCELS.ID
+   Filter XMLEXISTS(PARCELS.LABEL)
+     Scan ANN.PARCELS
+ -- physical:
+ Project PARCELS.ID
+   Filter XMLEXISTS(PARCELS.LABEL)  (est. rows=0)
+     IndexScan ANN.PARCELS using PARCEL_PATHS [xml_path]: PARCELS.LABEL has /parcel/to = '7'  (est. rows=1, cost=60.5)
+(13 rows)
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project P.ID
+   Unnest XMLTABLE(P.LABEL)
+     Scan ANN.PARCELS
+ -- rules: none
+ -- optimized:
+ Project P.ID
+   Unnest XMLTABLE(P.LABEL)
+     Scan ANN.PARCELS
+ -- physical:
+ Project P.ID
+   Unnest of 1 collections
+     IndexScan ANN.PARCELS using PARCEL_PATHS [xml_path]: P.LABEL has //fragile  (est. rows=10, cost=137.9)
+(13 rows)
 ```
 
 ## XML options of a scope

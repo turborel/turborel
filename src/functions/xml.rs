@@ -18,7 +18,7 @@ pub use cast::{IMPLICIT_BINARY_ENCODING, XmlCastIn, XmlCastOut, xml_schema_type}
 pub use element::{XmlElement, XmlForest};
 pub use mapping::{BinaryEncoding, Mapping, xml_lexical, xml_mapped};
 pub use publish::{XmlComment, XmlConcat, XmlPi, XmlText};
-pub use query::{Evaluation, RegularColumn, TableColumn, XmlExistsOf, XmlQueryOf, XmlTableOf};
+pub use query::{Evaluation, RegularColumn, TableColumn, XmlExistsOf, XmlFilter, XmlQueryOf, XmlRowsOf, XmlTableOf};
 pub use schema_type::xml_schema_restriction;
 
 use super::ScalarFunction;
@@ -163,6 +163,10 @@ impl ScalarFunction for XmlDocument {
         let Some(Value::Xml(x)) = args.first() else { return Ok(Value::Null) };
         Ok(Value::Xml(XmlValue::of(document(&*x.sequence()?)?)))
     }
+
+    fn xml_filter(&self) -> Option<XmlFilter> {
+        Some(XmlFilter::KeepsNull)
+    }
 }
 
 /// [§10.18] A copy of an XML value: each node of it a node of a tree of its
@@ -189,6 +193,10 @@ impl ScalarFunction for XmlCopy {
             }
             Some(_) | None => Ok(Value::Null),
         }
+    }
+
+    fn xml_filter(&self) -> Option<XmlFilter> {
+        Some(XmlFilter::Copy)
     }
 }
 

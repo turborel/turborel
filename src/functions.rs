@@ -90,7 +90,7 @@ pub use xml::{
     XmlCopy, XmlDocument, XmlElement, XmlForest, XmlIs, XmlParse, XmlPi, XmlSerialize, XmlText, xml_lexical, xml_mapped,
     xml_schema_restriction, xml_schema_type,
 };
-pub use xml::{Evaluation, RegularColumn, TableColumn, XmlExistsOf, XmlQueryOf, XmlTableOf};
+pub use xml::{Evaluation, RegularColumn, TableColumn, XmlExistsOf, XmlFilter, XmlQueryOf, XmlRowsOf, XmlTableOf};
 
 /// \[EXTENSION\] A function callable with the opt-in call syntax.
 ///
@@ -188,6 +188,22 @@ pub trait ScalarFunction: Send + Sync {
     /// an expression that can raise still requires full evaluation (D15).
     /// Defaults to false, so existing functions do not opt in.
     fn index_predicate(&self) -> bool {
+        false
+    }
+    /// \[EXTENSION\] RULES.md D86: what this function's value says of
+    /// whether a query's value is empty, if it does, so an XML index may
+    /// find the rows it keeps (`xml::XmlFilter`): XMLEXISTS, XMLQUERY NULL
+    /// ON EMPTY, XMLTABLE's row pattern, or a function null exactly when
+    /// its argument is. Default: none.
+    fn xml_filter(&self) -> Option<XmlFilter> {
+        None
+    }
+    /// \[DESIGN\] Whether no call of it raises an error, of any arguments
+    /// its type checks accept, but the statement's cancellation, so a
+    /// conjunct of it need not see every row (RULES.md D15): of XMLEXISTS
+    /// of a query that raises none (`xquery::Reduction::raise_free`).
+    /// Default: no.
+    fn raise_free(&self) -> bool {
         false
     }
     /// A spatial operation whose complete behavior this function implements,

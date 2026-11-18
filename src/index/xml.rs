@@ -29,6 +29,7 @@ mod keys;
 mod lookup;
 mod primary;
 mod search;
+mod shown;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -38,7 +39,7 @@ pub use lookup::{
     Axis, Comparison, Literal, MAX_STEPS, PathPattern, Step, Target, XmlAnswer, XmlAnswers, XmlCost, XmlFilter, XmlLookup, XmlQuery,
 };
 
-use super::{Entries, Index, IndexMethod, Key, KeyOrder, Probe, RowIds};
+use super::{Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, Probe, RowIds};
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::io::Durability;
@@ -291,9 +292,13 @@ impl Index for XmlIndex {
     }
 
     /// Of every entry, `Probe::All`, each (value, row) pair held, its key
-    /// null, as an index of keys derived holds no value to give; no other
-    /// probe, as no comparison probes it.
+    /// null, as an index of keys derived holds no value to give; of a
+    /// lookup, `Probe::Xml`, each row it gives, once, its key null; no
+    /// other probe, as no comparison probes it.
     fn search(self: Arc<Self>, probe: &Probe, _order: KeyOrder) -> Entries {
+        if let Probe::Xml(lookup) = probe {
+            return Box::new(self.lookup_rows(lookup).map(|row| Ok((Key(vec![Value::Null]), row?))));
+        }
         if !matches!(probe, Probe::All) {
             return Box::new(std::iter::once(Err(SqlError::new(
                 Code::Unsupported,
@@ -322,6 +327,10 @@ impl Index for XmlIndex {
         self.discarded.store(true, Ordering::Release);
     }
 
+    fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
+        Some(Arc::new(DerivedKeys))
+    }
+
     fn xml_rows(self: Arc<Self>, lookup: &XmlLookup) -> Option<RowIds> {
         Some(self.lookup_rows(lookup))
     }
@@ -334,6 +343,19 @@ impl Index for XmlIndex {
 
     fn xml_cost(self: Arc<Self>, lookup: &XmlLookup) -> Option<XmlCost> {
         Some(self.lookup_cost(lookup))
+    }
+}
+
+/// \[EXTENSION\] RULES.md D86: the keys of an XML index's entries, as a
+/// search gives them: none of a row's value, as its keys are derived from
+/// it, so every key projects to the null value, and a row fetched is
+/// kept whatever version of its value it has, each checked by the query
+/// that found it (`KeyProjection`, D34).
+pub struct DerivedKeys;
+
+impl KeyProjection for DerivedKeys {
+    fn project(&self, _key: &Key) -> Result<Key> {
+        Ok(Key(vec![Value::Null]))
     }
 }
 

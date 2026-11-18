@@ -40,6 +40,7 @@ mod eval;
 mod functions;
 mod keywords;
 mod lexer;
+mod lookup;
 mod parser;
 mod plan;
 #[cfg(test)]
@@ -61,6 +62,7 @@ pub use collation::{CODEPOINT, Collations, Collator, SQL_COLLATION};
 pub use error::{ErrorCode, error};
 pub use eval::{Input, MAX_DEPTH};
 pub use functions::{Context, FN_NAMESPACE, Library, XQueryFunction};
+pub use lookup::Reduction;
 pub use types::{AttributeKind, ElementKind, ItemKind, NodeKind, SchemaType, SeqType, XDT_NAMESPACE};
 
 use crate::error::Result;

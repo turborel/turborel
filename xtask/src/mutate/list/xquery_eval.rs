@@ -3,12 +3,13 @@
 //! predicates, general comparisons, order by, boundary whitespace,
 //! copy-namespaces, circular variables, cancellation, arithmetic,
 //! dates, constructors, NULL ON EMPTY, passing BY VALUE and XMLTABLE's
-//! defaults (RULES.md R-TEST-9, D44, D86).
+//! defaults; and the reduction of a query to an XML index's lookup and
+//! the planner's reading of one (RULES.md R-TEST-9, D15, D44, D86).
 
 use super::{Mutation, Package};
 
 /// Each mechanism broken alone, and the tests that fail.
-pub const XQUERY_EVAL: [Mutation; 16] = [
+pub const XQUERY_EVAL: [Mutation; 24] = [
     Mutation {
         name: "xquery-depth-bound",
         package: Package::Core,
@@ -167,6 +168,86 @@ pub const XQUERY_EVAL: [Mutation; 16] = [
         original: "return Ok(args.get(column.default).cloned().unwrap_or(Value::Null));",
         replacement: "return Ok(Value::Null);",
         integration: &["xml_table::rows_of_a_row_pattern_7_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-lookup-descendant",
+        package: Package::Core,
+        breaks: "a step after `//` is reduced to a child step",
+        file: "src/xquery/lookup.rs",
+        original: "let along = if descend || *axis == Axis::Descendant { Along::Descendant } else { Along::Child };",
+        replacement: "let along = if *axis == Axis::Descendant { Along::Descendant } else { Along::Child };",
+        integration: &["xml_index_plans::each_index_gives_the_rows_of_a_full_read"],
+        unit: &["xquery::lookup::tests::paths_reduce"],
+    },
+    Mutation {
+        name: "xml-lookup-flipped",
+        package: Package::Core,
+        breaks: "a literal compared with a path keeps its operator unswapped",
+        file: "src/xquery/lookup.rs",
+        original: "let op = if flipped { flip(comp_op(general)) } else { comp_op(general) };",
+        replacement: "let op = comp_op(general);",
+        integration: &["xml_index_plans::each_index_gives_the_rows_of_a_full_read"],
+        unit: &["xquery::lookup::tests::predicates_reduce"],
+    },
+    Mutation {
+        name: "xml-lookup-collation",
+        package: Package::Core,
+        breaks: "a string compared by a collation not the codepoint one narrows the lookup",
+        file: "src/xquery/lookup.rs",
+        original: "            if codepoint {",
+        replacement: "            if codepoint || !codepoint {",
+        integration: &[],
+        unit: &["xquery::lookup::tests::predicates_reduce"],
+    },
+    Mutation {
+        name: "xml-index-recheck",
+        package: Package::Core,
+        breaks: "the rows an XML lookup gives are taken unchecked, its conjunct out of the filter",
+        file: "src/physical/access/predicate.rs",
+        original: "    probes.first().is_some_and(Probe::opaque)",
+        replacement: "    matches!(probes.first(), Some(Probe::Predicate { .. }))",
+        integration: &["xml_index_plans::each_index_gives_the_rows_of_a_full_read"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-index-raising-conjunct",
+        package: Package::Core,
+        breaks: "an XML index is read beside a conjunct that can raise an error",
+        file: "src/physical/access/xml.rs",
+        original: "if !others.all(|(_, other)| raises_none(other)) {",
+        replacement: "if false && !others.all(|(_, other)| raises_none(other)) {",
+        integration: &["xml_index_plans::errors_are_raised_as_by_a_full_read"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-index-sequence-column",
+        package: Package::Core,
+        breaks: "a query of a column of XML(SEQUENCE) is reduced to a lookup",
+        file: "src/functions/xml/query.rs",
+        original: "(evaluation.context && evaluation.one_node)",
+        replacement: "(evaluation.context || evaluation.one_node)",
+        integration: &["xml_index_plans::a_sequence_column_is_read_whole"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-index-left-xmltable",
+        package: Package::Core,
+        breaks: "XMLTABLE of a LEFT join filters the rows it is of by its row pattern",
+        file: "src/physical/nodes.rs",
+        original: "    if u.outer.is_some() {",
+        replacement: "    if u.outer.is_some() && false {",
+        integration: &["xml_index_plans::xmltable_reads_the_rows_of_its_row_pattern"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-index-raise-free",
+        package: Package::Core,
+        breaks: "XMLEXISTS of a numeric comparison is taken to raise no error",
+        file: "src/functions/xml/query.rs",
+        original: "reduction_of(&self.0).is_some_and(|r| r.raise_free)",
+        replacement: "reduction_of(&self.0).is_some()",
+        integration: &["xml_index_plans::errors_are_raised_as_by_a_full_read"],
         unit: &[],
     },
 ];
