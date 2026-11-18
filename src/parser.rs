@@ -14,6 +14,7 @@ pub use domains::VALUE_COLUMN;
 pub(crate) use dynamic::descriptor_type;
 pub(crate) use periods::period_constraint;
 use std::collections::{HashMap, HashSet};
+pub use xml::{MappedSource, mapped_sources};
 
 use crate::ast::{
     ColumnName, InsertSource, InsertStatement, ParameterSpecification, QuerySpecification, SqlStatement, TableName, ValueExpression,

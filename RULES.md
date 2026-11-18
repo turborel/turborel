@@ -3242,7 +3242,18 @@ table reads it, so DROP TABLE RESTRICT is refused while it does. A
 schema's or the catalog's mapping holds its XML visible tables alone
 [§4.10.8], those whose SELECT the statement's authorization identifier
 holds with a column it can map, so it is never refused for a table it
-cannot read; its tables are not among those a view reads. A mapping
+cannot read. Its tables are not among those a view reads: it maps the
+tables there are as it runs. A view, routine or trigger whose text maps
+a schema depends on the schema, found by reading the text as the lexer
+does (`db/drop/mapped.rs`), as a constraint a schema names does on it:
+DROP SCHEMA RESTRICT is refused while it is there, and CASCADE drops it.
+A mapping of the catalog depends on nothing that can be dropped. A
+mapping of a schema or the catalog could hold itself, through a view or
+a routine that maps a schema or the catalog, so it leaves out a view
+whose query, or that of a view it reads, holds one, and its tables are
+bound for `Purpose::Mapped`, under which a mapping of a schema or the
+catalog met through a routine is refused (SQLCODE -103) rather than
+recursing without end. A mapping
 reads rows in an order not determined, so a constraint holds none. A
 function of each row's values writes its text, as §9.10 writes it, and
 the rows of all the tables, each its table's index and its text, are

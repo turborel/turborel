@@ -994,7 +994,16 @@ completes with the warning 01010 (column cannot be mapped).
 | DATA AND METADATA | XML(SEQUENCE): the schema document, then the data |
 
 A view whose query maps a table depends on the table, so DROP TABLE
-RESTRICT is refused while it does. A CHECK constraint may not hold
+RESTRICT is refused while it does. A view, a routine or a trigger whose
+text maps a schema depends on the schema: DROP SCHEMA RESTRICT is
+refused while it is there, and CASCADE drops it. A mapping of a schema
+or of the catalog reads the tables there are as it runs, so a table
+added later is mapped, and one dropped is not; a mapping of the catalog
+depends on nothing that can be dropped. As a view that maps a schema
+could be in the schema it maps, a mapping of a schema or the catalog
+leaves out a view whose query maps a schema or the catalog, or reads a
+view that does; one that meets such a mapping through a routine is
+refused (SQLCODE -103). A CHECK constraint may not hold
 XMLMAP (SQLCODE -103), as it reads rows in an order not determined. A
 target namespace of the namespace of `xml` or `xmlns` is refused
 (SQLCODE -103), and a schema that is not there is SQLSTATE 3F000.

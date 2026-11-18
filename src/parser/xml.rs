@@ -9,6 +9,7 @@
 //! where the grammar takes it, as BOOLEAN and CLOB are.
 
 mod map;
+pub use map::{MappedSource, mapped_sources};
 mod publish;
 mod query;
 mod scoped;

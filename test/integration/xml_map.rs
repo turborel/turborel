@@ -482,3 +482,61 @@ fn refusals() {
     assert_eq!(state(&a, "VALUES (XMLMAP(SCHEMA ELSEWHERE.A))"), SqlState::INVALID_CATALOG_NAME);
     assert_eq!(text(&a, "XMLMAP(SCHEMA TURBOREL.A)"), text(&a, "XMLMAP(SCHEMA A)"));
 }
+
+/// Verifies: [EXTENSION] RULES.md D86 [ISO/IEC 9075:1992 §11.2 SR3] a
+/// view, a routine or a trigger whose text maps schema S by XMLMAP
+/// depends on S: DROP SCHEMA S RESTRICT is refused while one is, and
+/// CASCADE drops each; one that maps the catalog, or another schema, is
+/// kept. A mapping of a schema reads the tables there are as it runs.
+#[test]
+fn mappings_depend_on_their_schema() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE L (X XML)").unwrap();
+    db.schema("CREATE SCHEMA S AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
+    let a = db.session("A");
+    a.run("CREATE VIEW V (X) AS VALUES (XMLMAP(SCHEMA S))").unwrap();
+    a.run("CREATE VIEW W (X) AS VALUES (XMLMAP(CATALOG METADATA)), (XMLMAP(SCHEMA A))").unwrap();
+    a.run("CREATE FUNCTION F () RETURNS XML NOT DETERMINISTIC READS SQL DATA RETURN XMLMAP(SCHEMA \"S\" METADATA)").unwrap();
+    a.run("CREATE TRIGGER G AFTER INSERT ON L FOR EACH STATEMENT INSERT INTO L VALUES (XMLMAP(SCHEMA TURBOREL.S))").unwrap();
+    a.commit().unwrap();
+    a.run("CREATE TABLE S.U (Q INTEGER)").unwrap();
+    let mapped = rows(&a, "SELECT XMLSERIALIZE(CONTENT X AS CLOB) FROM V").unwrap();
+    assert!(mapped[0].contains("<U/>"), "a table made after the view is mapped: {mapped:?}");
+    let refused = a.run("DROP SCHEMA S RESTRICT").unwrap_err();
+    assert_eq!(refused.code, Code::SyntaxRule, "{refused:?}");
+    a.run("DROP TABLE S.T CASCADE").unwrap();
+    a.run("DROP TABLE S.U CASCADE").unwrap();
+    assert_eq!(a.run("DROP SCHEMA S RESTRICT").unwrap_err().code, Code::SyntaxRule, "an empty schema still mapped");
+    a.run("DROP SCHEMA S CASCADE").unwrap();
+    a.commit().unwrap();
+    let left = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'A' ORDER BY TABLE_NAME";
+    assert_eq!(rows(&a, left).unwrap(), ["L", "W"]);
+    assert_eq!(rows(&a, "SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA = 'A'").unwrap(), Vec::<String>::new());
+    assert_eq!(rows(&a, "SELECT TRIGGER_NAME FROM INFORMATION_SCHEMA.TRIGGERS").unwrap(), Vec::<String>::new());
+}
+
+/// Verifies: [EXTENSION] RULES.md D86 a mapping of a schema or the catalog
+/// leaves out a view whose query, or a view it reads, maps a schema or the
+/// catalog, whose mapping could hold itself; one that reaches such a
+/// mapping through a routine is refused, SQLCODE -103, where it would
+/// recurse without end.
+#[test]
+fn mappings_never_hold_themselves() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE L (K INTEGER)").unwrap();
+    let a = db.session("A");
+    a.run("INSERT INTO L VALUES (1)").unwrap();
+    a.run("CREATE VIEW W (X) AS VALUES (XMLMAP(SCHEMA A))").unwrap();
+    a.run("CREATE VIEW Y AS SELECT * FROM W").unwrap();
+    a.run("CREATE VIEW C (X) AS VALUES (XMLMAP(CATALOG METADATA))").unwrap();
+    a.commit().unwrap();
+    let held = format!("<A {XSI}><L><row><K>1</K></row></L></A>");
+    assert_eq!(rows(&a, "SELECT XMLSERIALIZE(CONTENT X AS CLOB) FROM Y").unwrap(), std::slice::from_ref(&held));
+    assert_eq!(text(&a, "XMLMAP(SCHEMA A)"), held);
+    assert!(!text(&a, "XMLMAP(CATALOG METADATA)").contains(".A.C\""));
+    a.run("CREATE FUNCTION G () RETURNS XML NOT DETERMINISTIC READS SQL DATA RETURN XMLMAP(SCHEMA A)").unwrap();
+    a.run("CREATE VIEW Z (X) AS VALUES (G())").unwrap();
+    a.commit().unwrap();
+    assert_eq!(code(&a, "VALUES (XMLMAP(SCHEMA A))"), Code::SyntaxRule);
+    assert!(text(&a, "XMLMAP(TABLE L)").contains("<K>1</K>"), "a mapping of a table holds no other");
+}

@@ -12,6 +12,11 @@
 //! own (`QualifiedName::of_schema`), which a table or view defined in it
 //! takes shared, so none is defined in a schema as it is dropped. It is
 //! made on the definitions as they are once it holds them all.
+//!
+//! \[EXTENSION\] A schema goes with the views, routines and triggers that
+//! map it by XMLMAP (`drop/mapped.rs`).
+
+mod mapped;
 
 use std::sync::Arc;
 
@@ -169,6 +174,7 @@ impl State {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.2 SR3] schema {auth} holds {first}, so it is dropped only with CASCADE")));
         }
         let mut dropped = self.drop_named_in(auth, cascade)?;
+        dropped.absorb(self.drop_mappers(auth, cascade)?);
         dropped.absorb(self.drop_modules_naming(&modules)?);
         // A subtable goes with its supertable, maybe before its turn.
         for table in &tables {

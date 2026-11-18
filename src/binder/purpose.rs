@@ -20,6 +20,10 @@ pub enum Purpose {
     /// \[SR10d\], as a constraint's condition is not, and needing no
     /// privilege, as it reads no table but its own.
     Generation,
+    /// \[EXTENSION\] A table XMLMAP of a schema or the catalog reads, the
+    /// views it reads and the routines they invoke (RULES.md D86): which
+    /// map no schema nor the catalog, as such a mapping could hold itself.
+    Mapped,
 }
 
 impl Purpose {
@@ -30,6 +34,12 @@ impl Purpose {
 
     /// The purpose of a view the query reads.
     pub(super) fn of_view(self) -> Purpose {
-        if self.constrains() { Purpose::UnderConstraint } else { Purpose::Query }
+        if self.constrains() {
+            Purpose::UnderConstraint
+        } else if self == Purpose::Mapped {
+            Purpose::Mapped
+        } else {
+            Purpose::Query
+        }
     }
 }

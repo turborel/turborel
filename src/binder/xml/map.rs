@@ -20,7 +20,7 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use super::super::{Binder, Candidate, OutColumn, Scope, nondeterministic, qualify, rule};
+use super::super::{Binder, Candidate, OutColumn, Purpose, Scope, nondeterministic, qualify, rule};
 use crate::ast::{MapResults, MapSource, Subquery, TableName, XmlMapping, rows_of};
 use crate::catalog::{QualifiedName, Routine, applicable};
 use crate::error::{At, Code, Result, SqlError, SqlState};
@@ -29,6 +29,7 @@ use crate::functions::xml_map::{
 };
 use crate::functions::{AggregateRef, IMPLICIT_BINARY_ENCODING, RowOf, ScalarRef};
 use crate::logical::Expr;
+use crate::parser::mapped_sources;
 use crate::system::{DEFINITION_SCHEMA, INFORMATION_SCHEMA, information_views};
 use crate::value::{DataType, Decimal, Value};
 use crate::xml::{Version, XML_NAMESPACE, XMLNS_NAMESPACE, is_char};
@@ -130,6 +131,12 @@ impl Binder<'_> {
         if self.purpose.constrains() {
             return Err(nondeterministic("ISO/IEC 9075-14:2006 draft §9.10 GR6a", "XMLMAP"));
         }
+        let alone = matches!(m.source, MapSource::Table(_));
+        if !alone && self.purpose == Purpose::Mapped {
+            return Err(rule(
+                "[EXTENSION] RULES.md D86: a mapping of a schema or the catalog reads no table, view or routine that maps a schema or the catalog, as such a mapping could hold itself",
+            ));
+        }
         let choices = choices(m)?;
         let reads = match &m.source {
             MapSource::Table(query) => vec![self.table_read(query)?],
@@ -139,8 +146,9 @@ impl Binder<'_> {
         let catalog = self.db.catalog_name();
         let found = RefCell::new(Found::default());
         let queries: Vec<Subquery> = reads.iter().map(|r| rows_query(&r.name, r.at)).collect();
+        let purpose = if alone { self.purpose } else { Purpose::Mapped };
         let data = self.aggregated_union(
-            &queries,
+            (&queries, purpose),
             scope,
             &mut |i, columns| reads.get(i).map_or(Ok(None), |read| self.branch(read, columns, &choices, &mut found.borrow_mut())),
             &mut || {
@@ -207,7 +215,8 @@ impl Binder<'_> {
             let msg = format!("[EXTENSION] [ISO/IEC 9075:1992 §5.4 SR5] there is no schema {schema}");
             return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::INVALID_SCHEMA_NAME));
         }
-        Ok(self.tables_in(schema).into_iter().filter(|name| self.selects(name)).map(|name| Read { name, at: 0, alone: false }).collect())
+        let tables = self.tables_in(schema).into_iter().filter(|name| self.selects(name) && !self.view_maps(name));
+        Ok(tables.map(|name| Read { name, at: 0, alone: false }).collect())
     }
 
     /// [§9.17] CATALOG: the visible tables of each schema, the schemas in
@@ -220,7 +229,7 @@ impl Binder<'_> {
         schemas.sort_unstable();
         schemas.dedup();
         let tables = schemas.iter().filter(|s| *s != DEFINITION_SCHEMA).flat_map(|s| self.tables_in(s));
-        tables.filter(|name| self.selects(name)).map(|name| Read { name, at: 0, alone: false }).collect()
+        tables.filter(|name| self.selects(name) && !self.view_maps(name)).map(|name| Read { name, at: 0, alone: false }).collect()
     }
 
     /// The tables, views and system tables of `schema`, in order of name;
@@ -246,6 +255,24 @@ impl Binder<'_> {
         names.sort_unstable_by(|a, b| a.ident.cmp(&b.ident));
         names.dedup();
         names
+    }
+
+    /// \[EXTENSION\] Whether `name` is a view whose query, or that of a view
+    /// it reads, maps a schema or the catalog, which a mapping of a schema
+    /// or the catalog leaves out, as its mapping could hold itself
+    /// (RULES.md D86). Each view is read once, so the walk ends.
+    fn view_maps(&self, name: &QualifiedName) -> bool {
+        let catalog = &*self.db.catalog;
+        let (mut next, mut seen) = (vec![name.clone()], Vec::new());
+        while let Some(at) = next.pop() {
+            let Some(view) = catalog.view(&at).filter(|_| !seen.contains(&at)) else { continue };
+            if !mapped_sources(&view.query).is_empty() {
+                return true;
+            }
+            next.extend(view.reads.iter().cloned());
+            seen.push(at);
+        }
+        false
     }
 
     /// [§4.10.8] Whether the table `name` is a visible table: whether its

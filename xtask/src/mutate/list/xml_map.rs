@@ -5,7 +5,7 @@
 use super::{Mutation, Package};
 
 /// Each mapping mechanism broken alone, and the tests that fail.
-pub const XML_MAP: [Mutation; 18] = [
+pub const XML_MAP: [Mutation; 20] = [
     Mutation {
         name: "xml-map-nulls-nil",
         package: Package::Core,
@@ -45,6 +45,26 @@ pub const XML_MAP: [Mutation; 18] = [
         replacement: "if self.text.len().saturating_add(text.len()) > shape.limit.saturating_mul(4) {",
         integration: &[],
         unit: &["functions::xml::map::tests::texts_past_the_limit"],
+    },
+    Mutation {
+        name: "xml-map-schema-dependency",
+        package: Package::Core,
+        breaks: "DROP SCHEMA RESTRICT drops what maps the schema",
+        file: "src/db/drop/mapped.rs",
+        original: "if let (Some(first), false) = (first, cascade) {",
+        replacement: "if let (Some(first), false) = (first, true) {",
+        integration: &["xml_map::mappings_depend_on_their_schema"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-map-self-view",
+        package: Package::Core,
+        breaks: "a mapping of a schema or the catalog reads a view that maps one",
+        file: "src/binder/xml/map.rs",
+        original: "            if !mapped_sources(&view.query).is_empty() {",
+        replacement: "            if false {",
+        integration: &["xml_map::mappings_never_hold_themselves"],
+        unit: &[],
     },
     Mutation {
         name: "xml-map-not-nullable",

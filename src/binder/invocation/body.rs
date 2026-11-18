@@ -240,7 +240,9 @@ fn within_body<T>(
         user: Principal { cell: Who::sole(cx.db.catalog.roles(), owner), session: cx.user.session },
         schema: &desc.schema,
         params: &params,
-        purpose: Purpose::Query,
+        // [EXTENSION] A routine a mapping of a schema or the catalog
+        // invokes maps none (RULES.md D86).
+        purpose: if cx.purpose == Purpose::Mapped { Purpose::Mapped } else { Purpose::Query },
         collation: None,
         horizon: &desc.horizon,
         definitions: false,

@@ -29,7 +29,11 @@ MODULE CASCADE does. Either way, a module of another schema whose SCHEMA
 or PATH names it is dropped too ([CREATE MODULE](create-module.md)). A
 constraint named in the schema of a table or a domain of
 another schema is dropped too, as ALTER TABLE or ALTER DOMAIN DROP
-CONSTRAINT drops it; RESTRICT refuses the drop while there is one. Its
+CONSTRAINT drops it; RESTRICT refuses the drop while there is one. So
+is a view, a routine or a trigger of another schema whose text maps the
+schema by `XMLMAP(SCHEMA ...)` ([XML values](../xml.md)), as DROP VIEW,
+DROP ROUTINE and DROP TRIGGER drop it; RESTRICT refuses the drop while
+there is one. Its
 collations go last, as DROP COLLATION CASCADE drops them, so a column of
 one in another schema's table is made of the default collation, its rows
 copied, and that can fail if a constraint no longer holds.
@@ -45,8 +49,9 @@ as it does not undo a [CREATE SCHEMA](create-schema.md).
 
 1. The schema exists; a catalog named is the one catalog.
 2. Its user owns the schema.
-3. RESTRICT: the schema holds nothing, and names no constraint of a
-   table or domain of another schema.
+3. RESTRICT: the schema holds nothing, names no constraint of a table or
+   domain of another schema, and no view, routine or trigger of another
+   schema maps it by XMLMAP.
 4. The transaction is not READ ONLY.
 
 ## PRIVILEGES

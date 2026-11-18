@@ -10,7 +10,7 @@ use crate::ast::{MapResults, MapSource, ValueExpression, XmlMapping, XmlOperator
 use crate::error::Result;
 use crate::functions::BinaryEncoding;
 use crate::functions::xml_map::Nulls;
-use crate::lexer::{delim, kw};
+use crate::lexer::{Tok, Token, delim, kw, lex};
 
 /// `<XML map>`'s word.
 pub(super) const XMLMAP: &str = "XMLMAP";
@@ -126,5 +126,67 @@ impl Parser {
             return Ok(Some(BinaryEncoding::Hex));
         }
         Err(self.syntax("expected BASE64 or HEX of XMLMAP (RULES.md D86)"))
+    }
+}
+
+/// \[EXTENSION\] What an XMLMAP of a schema or the catalog maps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MappedSource {
+    /// A schema, its `<unqualified schema name>`, its catalog's name left
+    /// out.
+    Schema(String),
+    /// The catalog.
+    Catalog,
+}
+
+/// \[EXTENSION\] What each XMLMAP of a schema or the catalog in the SQL
+/// text `text` maps, as the lexer reads it. Nothing of a text that is no
+/// tokens, as no definition kept is one.
+#[must_use]
+pub fn mapped_sources(text: &str) -> Vec<MappedSource> {
+    let Ok(tokens) = lex(text) else { return Vec::new() };
+    (0..tokens.len()).filter_map(|at| tokens.get(at..).and_then(source_at)).collect()
+}
+
+/// What the XMLMAP of a schema or the catalog `tokens` begin with maps, if
+/// they begin with one: `XMLMAP ( SCHEMA` and a `<schema name>`, or
+/// `XMLMAP ( CATALOG`.
+fn source_at(tokens: &[Token]) -> Option<MappedSource> {
+    let mut each = tokens.iter().map(|t| &t.tok);
+    let (Some(Tok::Identifier(word)), Some(Tok::Delimiter(delim::LEFT_PAREN)), Some(Tok::KeyWord(what))) =
+        (each.next(), each.next(), each.next())
+    else {
+        return None;
+    };
+    if word != XMLMAP {
+        return None;
+    }
+    if *what == kw::CATALOG {
+        return Some(MappedSource::Catalog);
+    }
+    let (true, Some(Tok::Identifier(first))) = (*what == kw::SCHEMA, each.next()) else { return None };
+    if let (Some(Tok::Delimiter(delim::PERIOD)), Some(Tok::Identifier(second))) = (each.next(), each.next()) {
+        return Some(MappedSource::Schema(second.clone()));
+    }
+    Some(MappedSource::Schema(first.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies: [EXTENSION] RULES.md D86 what a text's XMLMAPs of a schema
+    /// or the catalog map, a name as the identifier it is, qualified by its
+    /// catalog's or not; none of a table, of no XMLMAP, of no tokens.
+    #[test]
+    fn sources_mapped_in_a_text() {
+        assert_eq!(
+            mapped_sources("SELECT xmlmap(SCHEMA a), XMLMAP ( CATALOG ) FROM T"),
+            [MappedSource::Schema("A".to_owned()), MappedSource::Catalog]
+        );
+        assert_eq!(mapped_sources("VALUES (XMLMAP(SCHEMA TURBOREL.\"s\" METADATA))"), [MappedSource::Schema("s".to_owned())]);
+        for text in ["VALUES (XMLMAP(TABLE A.T))", "VALUES (F(SCHEMA))", "VALUES (XMLMAP(SCHEMA))", "'"] {
+            assert!(mapped_sources(text).is_empty(), "{text}");
+        }
     }
 }

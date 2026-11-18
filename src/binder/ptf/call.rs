@@ -191,7 +191,7 @@ pub(super) fn bound(b: Bounds<'_>, inv: &PtfInvocation, depth: usize) -> Result<
     let cx = b.cx;
     let desc = subject(cx, inv).or_at(inv.at)?;
     match cx.purpose {
-        Purpose::Query => {}
+        Purpose::Query | Purpose::Mapped => {}
         Purpose::Constraint | Purpose::UnderConstraint => constraint_permits(&desc).or_at(inv.at)?,
         Purpose::Generation => generation_permits(&desc).or_at(inv.at)?,
     }

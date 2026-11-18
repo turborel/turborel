@@ -211,7 +211,7 @@ impl Binder<'_> {
         let name = &desc.name;
         if desc.access == DataAccess::Modifies && !(self.purpose == Purpose::Query && self.hosting.get()) {
             let rules = match self.purpose {
-                Purpose::Query => "§7.17 SR25, §11.49 SR11",
+                Purpose::Query | Purpose::Mapped => "§7.17 SR25, §11.49 SR11",
                 Purpose::Constraint | Purpose::UnderConstraint => "§11.9 SR6, §11.47 SR8",
                 Purpose::Generation => "§11.4 SR10e, §4.35.2",
             };
@@ -220,7 +220,7 @@ impl Binder<'_> {
             )));
         }
         match self.purpose {
-            Purpose::Query => Ok(()),
+            Purpose::Query | Purpose::Mapped => Ok(()),
             Purpose::Constraint | Purpose::UnderConstraint => constraint_permits(desc),
             Purpose::Generation => generation_permits(desc),
         }

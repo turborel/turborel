@@ -15,7 +15,7 @@ use super::order_by::ordered_query;
 use super::query::Nesting;
 use super::set_functions::column_references;
 use super::set_operations::bind_query_expression;
-use super::{Binder, Context, NOT_AGGREGATED, OutColumn, Scope, rule};
+use super::{Binder, Context, NOT_AGGREGATED, OutColumn, Purpose, Scope, rule};
 use crate::ast::{
     self, ColumnSpecification, Composite, Literal, SearchCondition, SelectItem, SelectList, SetFunctionSpecification, TableName,
     ValueExpression, ValueSpecification,
@@ -525,8 +525,8 @@ pub(super) type RowsAggregate = (AggregateRef, Expr, String, DataType);
 pub(super) type MakeBranch<'m> = dyn FnMut(usize, &[OutColumn]) -> Result<Option<Vec<Expr>>> + 'm;
 
 impl Binder<'_> {
-    /// \[EXTENSION\] The rows of `queries`, each bound as a subquery of
-    /// this query in `scope`, and kept, projected by the expressions `make`
+    /// \[EXTENSION\] The rows of `queries`, each bound for `purpose` as a
+    /// subquery of this query in `scope`, and kept, projected by the expressions `make`
     /// gives of its columns, if it gives any; then the rows of all those
     /// kept, one query's after another's, UNION ALL, aggregated by the set
     /// function `aggregate` makes: a subquery of one row and one column,
@@ -534,7 +534,7 @@ impl Binder<'_> {
     /// none if no query is kept.
     pub(super) fn aggregated_union(
         &self,
-        queries: &[ast::Subquery],
+        (queries, purpose): (&[ast::Subquery], Purpose),
         scope: Scope<'_>,
         make: &mut MakeBranch<'_>,
         aggregate: &mut dyn FnMut() -> Result<RowsAggregate>,
@@ -543,7 +543,7 @@ impl Binder<'_> {
         let nesting = Nesting::Subquery { outer: &outer, result: None };
         let mut kept = Vec::new();
         for (i, query) in queries.iter().enumerate() {
-            let bound = bind_query_expression(self.context(), &query.query, &nesting).or_at(query.at)?;
+            let bound = bind_query_expression(Context { purpose, ..self.context() }, &query.query, &nesting).or_at(query.at)?;
             if let Some(exprs) = make(i, &bound.columns)? {
                 kept.push(LogicalPlan::Project { exprs, input: Box::new(bound.plan) });
             }
