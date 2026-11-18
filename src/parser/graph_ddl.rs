@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The statements that define property graphs over tables
-//! (RULES.md D-GRAPH-CATALOG), Mode A of the property graph
+//! (RULES.md D106), Mode A of the property graph
 //! implementation standard (§4.1), written in the notation of SQL/PGQ:
 //!
 //! ```text
@@ -35,8 +35,9 @@
 
 use super::Parser;
 use crate::ast::{
-    AlterGraph, AlterGraphAction, DerivedProperty, DropBehavior, DropObject, ElementAction, ElementDefinition, EndpointDefinition,
-    GraphDefinition, GraphModeOption, LabelDefinition, PropertiesDefinition, SchemaStatement, SqlStatement,
+    AdjacencyIndex, AlterGraph, AlterGraphAction, DerivedProperty, DropBehavior, DropObject, ElementAction, ElementDefinition,
+    EndpointDefinition, GraphDefinition, GraphModeOption, IndexStatement, LabelDefinition, PropertiesDefinition, SchemaStatement,
+    SqlStatement,
 };
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
@@ -81,6 +82,18 @@ const INVOKER: &str = "INVOKER";
 const RIGHTS: &str = "RIGHTS";
 /// The `<non-reserved word>` COMPILE.
 const COMPILE: &str = "COMPILE";
+/// \[EXTENSION\] [GS §13.2] The `<non-reserved word>` ADJACENCY.
+pub(super) const ADJACENCY: &str = "ADJACENCY";
+/// The `<non-reserved word>` INDEX.
+const INDEX: &str = "INDEX";
+/// The `<non-reserved word>` DIRECTION.
+const DIRECTION: &str = "DIRECTION";
+/// The `<non-reserved word>` INCLUDE.
+const INCLUDE: &str = "INCLUDE";
+/// The `<reserved word>` BOTH, of an adjacency index's direction.
+const BOTH: &str = "BOTH";
+/// The directions an adjacency index may keep.
+const DIRECTIONS: [&str; 3] = ["FORWARD", "REVERSE", BOTH];
 
 impl Parser {
     /// Whether PROPERTY GRAPH is `n` tokens ahead.
@@ -392,5 +405,49 @@ impl Parser {
         }
         let name = self.table_name()?;
         Ok(Some(SqlStatement::Drop { object: DropObject::Graph(name, if_exists), behavior: self.optional_behavior()? }))
+    }
+
+    /// \[EXTENSION\] [GS §13.2] CREATE ADJACENCY INDEX \[`<index name>`\]
+    /// ON GRAPH `<graph name>` EDGE TABLE `<alias>` \[DIRECTION {FORWARD
+    /// | REVERSE | BOTH}\] \[INCLUDE ( `<column name>` \[, ...\] )\],
+    /// after CREATE ADJACENCY.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -102 if it does not conform to the Format.
+    pub(super) fn adjacency_index(&mut self) -> Result<SqlStatement> {
+        self.expect_word(INDEX)?;
+        let name = if self.is_kw(kw::ON) { None } else { Some(self.label_named()?) };
+        self.expect_kw(kw::ON)?;
+        self.expect_word(GRAPH)?;
+        let graph = self.table_name()?;
+        self.expect_word(EDGE)?;
+        self.expect_kw(kw::TABLE)?;
+        let edge = self.label_named()?;
+        let mut direction = None;
+        if self.accept_word(DIRECTION) {
+            let at = self.here();
+            let word = if self.accept_kw(kw::BOTH) { BOTH.to_owned() } else { self.identifier()? };
+            if !DIRECTIONS.contains(&word.as_str()) {
+                return Err(crate::error::SqlError::at(
+                    crate::error::Code::Syntax,
+                    at,
+                    "[EXTENSION] expected FORWARD, REVERSE or BOTH (GS §13.2)",
+                ));
+            }
+            direction = Some(word);
+        }
+        let mut include = Vec::new();
+        if self.accept_word(INCLUDE) {
+            self.expect_delim(delim::LEFT_PAREN)?;
+            loop {
+                include.push(self.label_named()?);
+                if !self.accept_delim(delim::COMMA) {
+                    break;
+                }
+            }
+            self.expect_delim(delim::RIGHT_PAREN)?;
+        }
+        Ok(SqlStatement::Index(IndexStatement::Adjacency(Box::new(AdjacencyIndex { name, graph, edge, direction, include }))))
     }
 }

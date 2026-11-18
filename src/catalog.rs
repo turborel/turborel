@@ -542,7 +542,7 @@ pub trait Catalog: Send + Sync {
     /// Its routines and tables are removed by the caller.
     fn remove_module(&mut self, name: &QualifiedName);
     /// \[EXTENSION\] Record the property graph `graph`, in place of any of
-    /// its name (RULES.md D-GRAPH-CATALOG).
+    /// its name (RULES.md D106).
     fn put_graph(&mut self, graph: GraphDesc);
     /// The property graph of this name, if any.
     fn graph(&self, name: &QualifiedName) -> Option<&GraphDesc>;

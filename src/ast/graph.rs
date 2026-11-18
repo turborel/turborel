@@ -16,7 +16,7 @@ mod table;
 
 pub use expression::{GRAPH_FUNCTIONS, GraphFunction, GraphFunctionName, GraphPredicate, PathEnd, SameKind, VariableKind};
 pub use orientation::{Directions, ORIENTATIONS, Orientation, OrientationForm};
-pub use table::{GraphColumn, GraphReference, GraphRows, GraphTable};
+pub use table::{GraphColumn, GraphLimits, GraphReference, GraphRows, GraphTable};
 
 use super::{SearchCondition, ValueExpression};
 

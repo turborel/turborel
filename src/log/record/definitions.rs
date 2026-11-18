@@ -67,7 +67,7 @@ pub enum DropTarget {
     /// A type's transform group, or all of them [ISO/IEC 9075-2:2023
     /// §11.71].
     Transform(QualifiedName, Option<String>),
-    /// \[EXTENSION\] A property graph (RULES.md D-GRAPH-CATALOG).
+    /// \[EXTENSION\] A property graph (RULES.md D106).
     Graph(QualifiedName),
     /// \[EXTENSION\] An embedding model (the vector design's §12.1).
     Model(QualifiedName),

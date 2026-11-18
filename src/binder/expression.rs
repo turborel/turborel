@@ -197,7 +197,7 @@ impl Binder<'_> {
             ValueExpression::Navigation(n) => self.navigation(n, scope).or_at(n.at),
             ValueExpression::Classifier { variable, at } => self.classifier(variable.as_deref(), scope).or_at(*at),
             ValueExpression::MatchNumber { at } => self.match_number(scope).or_at(*at),
-            ValueExpression::Graph(_, at) => Err(super::graph_seam::outside_graph_table().or_at(*at)),
+            ValueExpression::Graph(f, at) => self.graph_function(f).or_at(*at),
             ValueExpression::Column(_)
             | ValueExpression::Nested(_)
             | ValueExpression::CollationFor(_)
@@ -504,6 +504,9 @@ impl Binder<'_> {
         // made a column of the groups before any window function, holds no
         // nested window function.
         let (call, collation) = self.unnested(|| self.aggregate_call(func, argued, filter, rows))?;
+        if let Some(slot) = self.graph_registered(g, &call) {
+            return slot;
+        }
         Ok(self.registered_in(g, call, collation))
     }
 

@@ -219,7 +219,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(read_ahead());
     all.push(log_durability());
     all.extend(later());
-    all.extend(super::vector::vector().into_iter().chain([graph_threads()]));
+    all.extend(super::vector::vector().into_iter().chain([graph_threads()]).chain(super::graph::definitions()));
     all
 }
 
@@ -321,7 +321,7 @@ fn graph_threads() -> Definition {
     defined(
         ("EXECUTOR.GRAPH_THREADS", at_least(1), count(1)),
         SESSION,
-        "The threads a graph algorithm of GRAPH_ALGO runs on at once, the statement's own among them; its results are the same on any number.",
+        "The threads a graph algorithm of GRAPH_ALGO, or a GRAPH_TABLE's search from many starts, runs on at once, the statement's own among them; its results are the same on any number.",
     )
 }
 

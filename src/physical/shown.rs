@@ -108,10 +108,16 @@ impl Plan {
             Plan::Recursive { member, fixpoint } => writeln!(out, "{pad}Recursive member {member} ({})", fixpoint.word()),
             Plan::WorkTable { member, .. } => writeln!(out, "{pad}WorkTable of member {member}"),
             Plan::Transition { .. } => writeln!(out, "{pad}Transition table"),
-            Plan::Unnest(u) => match &u.json {
+            Plan::Unnest(u) => match (&u.graph, &u.json) {
+                // [GS §16 R16.9] a GRAPH_TABLE: its searches and automata.
+                (Some(g), _) => {
+                    let left = if u.outer.is_some() { "LeftOuter " } else { "" };
+                    let lines: Vec<String> = g.render().lines().map(|l| format!("{pad}{left}{l}")).collect();
+                    writeln!(out, "{}", lines.join("\n"))
+                }
                 // [ISO/IEC 9075-2:2023 §7.11] a JSON table.
-                Some(j) => writeln!(out, "{pad}{}{}", if u.outer.is_some() { "LeftOuter " } else { "" }, j.render()),
-                None => writeln!(
+                (None, Some(j)) => writeln!(out, "{pad}{}{}", if u.outer.is_some() { "LeftOuter " } else { "" }, j.render()),
+                (None, None) => writeln!(
                     out,
                     "{pad}{}Unnest of {} collections{}",
                     if u.outer.is_some() { "LeftOuter" } else { "" },

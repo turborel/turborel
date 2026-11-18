@@ -29,8 +29,8 @@ pub struct MergeStatement {
     pub property: Option<Box<IntoProperty>>,
 }
 
-/// \[EXTENSION\] `GRAPH_ALGO.<name> ( ... ) INTO PROPERTY <column> OF
-/// <table> [ ( <key column> ) ]` (RULES.md D-GRAPH-ALGO), a graph
+/// \[EXTENSION\] `GRAPH_ALGO.<name> ( ... ) INTO PROPERTY <column>`
+/// `OF <table> [ ( <key column> ) ]` (RULES.md D-GRAPH-ALGO), a graph
 /// algorithm's result written as a property of the vertices of a table
 /// [GS §18]: the MERGE that sets the column of each row whose key is a
 /// result row's vertex to its value, the column added first if the table

@@ -1,5 +1,5 @@
 //! \[DESIGN\] An adjacency index's maintenance (RULES.md D31, D35,
-//! D-GRAPH-ADJACENCY): the pass over its keys an opened index's count of
+//! D107): the pass over its keys an opened index's count of
 //! them waits for (`index/stats.rs`), and the compacted adjacency built
 //! again of the tree (`csr.rs`): when there is none, or the delta marks
 //! more vertices than `LEAST_MARKS` and an eighth of those it numbers. A

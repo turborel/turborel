@@ -12,6 +12,7 @@
 
 mod builtin;
 mod configurable;
+mod graph;
 mod kind;
 mod started;
 mod vector;
@@ -36,6 +37,10 @@ pub use builtin::{
 };
 use builtin::{builtin, whole};
 pub use configurable::Configurable;
+pub use graph::{
+    DEFAULT_MAX_SEARCH_STATES, GRAPH_DETERMINISTIC_PATHS, GRAPH_MAX_PATH_LENGTH, GRAPH_MAX_PATHS_PER_PARTITION, GRAPH_MAX_SEARCH_STATES,
+    GRAPH_ON_LIMIT, TRUNCATE,
+};
 pub use kind::{Kind, column_list, column_names};
 pub use started::Started;
 pub use vector::{

@@ -276,7 +276,7 @@ pub(super) fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, fr
         TableReference::Json(j) => super::json::json_table_item(b, j, start, from).or_at(j.at)?,
         TableReference::Recognized(r) => super::pattern::recognized(b, r, start).or_at(r.at)?,
         TableReference::Polymorphic(p) => return super::ptf::ptf_reference(b, p, start, from),
-        TableReference::Graph(g) => return Err(super::graph_seam::not_yet_bound().or_at(g.at)),
+        TableReference::Graph(g) => super::graph::graph_table_item(b, g, start, from).or_at(g.at)?,
         TableReference::Hybrid(h) => super::hybrid_search::hybrid_item(b, h, start)?,
     };
     from.items.push(item);
@@ -288,7 +288,7 @@ pub(super) fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, fr
 /// requires, its columns renamed by a derived column
 /// list [ISO/IEC 9075:1992 §6.3 SR6, SR7]. An error binding a view's query
 /// is placed at the view's name, not in the view's own text.
-fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
+pub(super) fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
     // [ISO/IEC 9075-2:2023 §7.17 SR3i] a query name in scope names no
     // table.
     if let Some(query) = with::query_item(b, t, offset)? {

@@ -183,7 +183,7 @@ pub(super) fn ranked(ctx: &Context<'_>, start: ElementId, selector: Selector, me
         ctx,
         selector,
         k,
-        states: States::default(),
+        states: States::of(ctx.nfa),
         entries: Vec::new(),
         parents: Vec::new(),
         queue: BinaryHeap::new(),

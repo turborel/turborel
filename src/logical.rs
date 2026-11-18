@@ -12,6 +12,7 @@ mod counterparts;
 mod dynamic;
 mod expr;
 mod fixpoint;
+mod graph;
 mod invoked;
 mod limit;
 mod pattern;
@@ -31,6 +32,11 @@ pub use expr::{
     map_expr_columns, or_all, split_and,
 };
 pub use fixpoint::Fixpoint;
+pub use graph::{
+    CostShape, EDGE_COLUMNS, EdgeShape, ElementIdentity, ElementRead, ElementSource, EndShape, GraphMatch, GraphOptions, GraphValue,
+    IDENTITY_LENGTH, IdentityJson, PathFunction, PathShape, PatternShape, Prefilter, RowsShape, TestShape, VERTEX_COLUMNS, VarShape,
+    identity_item, identity_text, identity_type,
+};
 pub use invoked::Invocation;
 pub use limit::{Fetch, Hints, Limit, Most, Search, SearchTarget, Strategy};
 pub use pattern::{Matching, Navigated, PatternAggregate, PatternValue, Recognize, RowsPerMatch, Skip, Slotted, Variable, WindowMatching};
@@ -331,13 +337,17 @@ pub struct Unnest<P> {
     /// operands being `collections` (`JsonTable::open`), its columns its
     /// own, and `spread` and `ordinality` none.
     pub json: Option<std::sync::Arc<crate::json::JsonTable>>,
+    /// \[EXTENSION\] Of a GRAPH_TABLE, which is planned as a lateral
+    /// derived table is: the bound table, its operands being
+    /// `collections`, its columns its COLUMNS (`logical/graph.rs`).
+    pub graph: Option<std::sync::Arc<GraphMatch>>,
 }
 
 impl<P> Unnest<P> {
     /// It apart from its input, and its input.
     pub fn split(self) -> (Unnest<()>, P) {
-        let Unnest { collections, spread, ordinality, outer, names, input, json } = self;
-        (Unnest { collections, spread, ordinality, outer, names, input: (), json }, input)
+        let Unnest { collections, spread, ordinality, outer, names, input, json, graph } = self;
+        (Unnest { collections, spread, ordinality, outer, names, input: (), json, graph }, input)
     }
 
     /// It over `f` of its input, the rest copied.
@@ -350,6 +360,7 @@ impl<P> Unnest<P> {
             names: self.names.clone(),
             input: f(&self.input),
             json: self.json.clone(),
+            graph: self.graph.clone(),
         }
     }
 
@@ -358,15 +369,16 @@ impl<P> Unnest<P> {
     pub fn width(&self) -> usize {
         let elements = self.spread.iter().map(|s| s.unwrap_or(1)).sum::<usize>();
         let json = self.json.as_ref().map_or(0, |j| j.width);
-        elements.saturating_add(usize::from(self.ordinality)).saturating_add(json)
+        let graph = self.graph.as_ref().map_or(0, |g| g.columns.len());
+        elements.saturating_add(usize::from(self.ordinality)).saturating_add(json).saturating_add(graph)
     }
 }
 
 impl Unnest<()> {
     /// The same collection derived table over `input`.
     pub fn over<Q>(self, input: Q) -> Unnest<Q> {
-        let Unnest { collections, spread, ordinality, outer, names, input: (), json } = self;
-        Unnest { collections, spread, ordinality, outer, names, input, json }
+        let Unnest { collections, spread, ordinality, outer, names, input: (), json, graph } = self;
+        Unnest { collections, spread, ordinality, outer, names, input, json, graph }
     }
 }
 
@@ -496,6 +508,12 @@ impl LogicalPlan {
         // A subquery's tables are read too, and an invoked function's.
         for s in self.subqueries_of(true) {
             s.plan.collect_tables(out);
+        }
+        // A GRAPH_TABLE's element tables, or the plans of those held.
+        if let LogicalPlan::Unnest(u) = self
+            && let Some(g) = &u.graph
+        {
+            g.tables.iter().for_each(|t| t.collect_tables(out));
         }
     }
 

@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The built-in adjacency index, "adjacency" (RULES.md D34,
-//! D-GRAPH-ADJACENCY): the edges of a graph's edge table by endpoint, its
+//! D107): the edges of a graph's edge table by endpoint, its
 //! key the source's columns, the destination's, and properties included
 //! for covering reads (`options.rs`). It is one B-link tree
 //! (`engine/tree.rs`) in a pager file of a buffer pool, as "btree" keeps

@@ -234,8 +234,8 @@ pub(super) fn grouped(
     };
     let Sets { values, bits, collections, names, appended, seeds, masked, sl2, .. } = sets;
     let spread = vec![None; collections.len()];
-    let made =
-        LogicalPlan::Unnest(Box::new(Unnest { collections, spread, ordinality: false, outer: None, names, input: plan, json: None }));
+    let unnest = Unnest { collections, spread, ordinality: false, outer: None, names, input: plan, json: None, graph: None };
+    let made = LogicalPlan::Unnest(Box::new(unnest));
     let rows = LogicalPlan::Project { exprs: appended, input: Box::new(made) };
     // [SR17 m iii 1 A II] a set function's argument, and its filter, read
     // each column grouped by as its set has it.

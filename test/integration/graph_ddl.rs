@@ -1,4 +1,4 @@
-//! Property graphs over tables (RULES.md D-GRAPH-CATALOG), Mode A of the
+//! Property graphs over tables (RULES.md D106), Mode A of the
 //! property graph implementation standard (§4.1): CREATE PROPERTY GRAPH
 //! with its keys, endpoints, labels and properties found or written, each
 //! rule of §4.1 and its conditions of §22, and the Information Schema's

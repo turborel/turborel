@@ -1,5 +1,5 @@
 //! \[DESIGN\] An adjacency index's compacted adjacency (RULES.md
-//! D-GRAPH-ADJACENCY): compressed sparse rows, built in memory from the
+//! D107): compressed sparse rows, built in memory from the
 //! tree's entries in their order, by maintenance (`maintain.rs`) or as the
 //! index is loaded (`load.rs`). Each vertex has a dense number, given as it
 //! is first met; each direction kept has, by number, the span of its

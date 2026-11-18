@@ -162,7 +162,7 @@ ISO/IEC 9075-16:2023 (SQL/PGQ) defines the property graph over tables.
 turborel follows its implementation standard's Mode A (§4.1, rules
 R4.1 to R4.7, conditions of §22), whose OR REPLACE, IF NOT EXISTS,
 OPTIONS, UNDIRECTED and WITH INVOKER RIGHTS are extensions (RULES.md
-D-GRAPH-CATALOG).
+D106).
 
 ## SEE ALSO
 

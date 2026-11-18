@@ -156,6 +156,9 @@ impl Parser {
     /// D92); CREATE VECTOR INDEX is `ddl/vector_index.rs`, CREATE HYBRID
     /// VECTOR INDEX `ddl/hybrid_index.rs`.
     fn create_index(&mut self) -> Result<SqlStatement> {
+        if self.accept_word(super::graph_ddl::ADJACENCY) {
+            return self.adjacency_index();
+        }
         if !self.accept_word("INDEX") {
             return Err(self.syntax("expected INDEX: a <schema> is processed by Database::schema"));
         }
