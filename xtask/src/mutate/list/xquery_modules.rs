@@ -1,13 +1,13 @@
 //! Mutations of XQuery's Module Feature: the modules a module import
 //! finds, each module's own static context, a module analysed once into a
-//! query, the depth imports nest to, and the static errors of library
-//! modules (RULES.md R-TEST-9, D106).
+//! query, the depth imports nest to, the static errors of library
+//! modules, and the catalog's (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of library modules and module imports broken alone, and
 /// the tests that fail.
-pub const XQUERY_MODULES: [Mutation; 7] = [
+pub const XQUERY_MODULES: [Mutation; 8] = [
     Mutation {
         name: "xquery-module-target-namespace",
         package: Package::Core,
@@ -77,5 +77,15 @@ pub const XQUERY_MODULES: [Mutation; 7] = [
         replacement: "        if false && depth > MAX_IMPORT_DEPTH {",
         integration: &[],
         unit: &["xquery::analyze::modules::tests::cycles_and_chains_of_imports"],
+    },
+    Mutation {
+        name: "xquery-module-catalog-dependencies",
+        package: Package::Core,
+        breaks: "a catalog read keeps a registered XQuery module that depends on one not registered",
+        file: "src/db/snapshot/xquery_modules.rs",
+        original: "        if let Some(gone) = missing.or(schema) {",
+        replacement: "        if let Some(gone) = missing.or(schema).filter(|_| false) {",
+        integration: &[],
+        unit: &["db::snapshot::xquery_modules::tests::a_damaged_catalog_is_refused"],
     },
 ];

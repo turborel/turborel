@@ -12,10 +12,14 @@
 //! XML Schema: name, target namespace (str), schema location (str),
 //!             document (str), the XML Schemas it uses (count u32, each
 //!             a name), usage
+//! XQuery module: name, target namespace (str), location (str), text
+//!             (str), the XQuery modules it imports (count u32, each a
+//!             name), the XML Schemas it imports or validates by
+//!             (likewise), usage
 //! usage:      as a domain's
 //! ```
 
-use super::super::{CollationDesc, RoutineDesc, SequenceDesc, UserTypeDesc, XmlSchemaDesc};
+use super::super::{CollationDesc, RoutineDesc, SequenceDesc, UserTypeDesc, XQueryModuleDesc, XmlSchemaDesc};
 use super::{data_type, flag, put_flag, put_name, put_type, put_usage, qualified, usage};
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -57,6 +61,33 @@ pub(crate) fn xml_schema(r: &mut Reader<'_>) -> Result<XmlSchemaDesc> {
     let (name, target_namespace, location, document) = (qualified(r)?, r.str()?, r.str()?, r.str()?);
     let uses = (0..r.u32()?).map(|_| qualified(r)).collect::<Result<_>>()?;
     Ok(XmlSchemaDesc { name, target_namespace, location, document, uses, usage: usage(r)?, schema: None })
+}
+
+/// \[EXTENSION\] `module`, a registered XQuery module, in bytes: its
+/// name, target namespace, location and text, the registered XQuery
+/// modules and XML Schemas it depends on, and its USAGE grants; not its
+/// parse, which is made again (RULES.md D106).
+pub(crate) fn put_xquery_module(out: &mut Vec<u8>, module: &XQueryModuleDesc) {
+    put_name(out, &module.name);
+    out.put_str(&module.target_namespace);
+    out.put_str(&module.location);
+    out.put_str(&module.text);
+    for names in [&module.modules, &module.xml_schemas] {
+        out.put_u32(u32::try_from(names.len()).unwrap_or(u32::MAX));
+        for n in names {
+            put_name(out, n);
+        }
+    }
+    put_usage(out, &module.usage);
+}
+
+/// The registered XQuery module `put_xquery_module` wrote, its text not yet
+/// parsed.
+pub(crate) fn xquery_module(r: &mut Reader<'_>) -> Result<XQueryModuleDesc> {
+    let (name, target_namespace, location, text) = (qualified(r)?, r.str()?, r.str()?, r.str()?);
+    let modules = (0..r.u32()?).map(|_| qualified(r)).collect::<Result<_>>()?;
+    let xml_schemas = (0..r.u32()?).map(|_| qualified(r)).collect::<Result<_>>()?;
+    Ok(XQueryModuleDesc { name, target_namespace, location, text, modules, xml_schemas, usage: usage(r)?, module: None })
 }
 
 /// [ISO/IEC 9075-2:2023 §4.29.1] `sequence` in bytes: its name, type,

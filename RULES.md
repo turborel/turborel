@@ -4352,6 +4352,17 @@ chain deeper is SQLCODE -900 (D18). A library module given as a query, or
 a main module registered as a library module, is err:XPST0003, as a
 query is a main module and a library module is no query [§4].
 
+A registered XQuery module is a catalog object (`catalog::XQueryModuleDesc`):
+its name, target namespace and location, the text of the library module
+registered, the registered XQuery modules and XML Schemas it imported as
+it was registered, and the USAGE granted on it. The catalog stores those
+alone; the module's parse is made again from its text as the catalog is
+read (`db/snapshot/xquery_modules.rs`), a text that no longer parses, or
+a module or schema it depends on that is not registered, a damaged
+catalog, SQLCODE -916. As the catalog is logged, checkpointed and
+replicated as opaque bytes (D57), registered XQuery modules need nothing
+of their own there.
+
 Part 14 leaves how an XML Schema is registered to the implementation
 [ISO/IEC 9075-14:2006 draft §4.2.6]. These statements were decided, an
 extension in the standard's notation:

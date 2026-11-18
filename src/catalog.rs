@@ -35,6 +35,7 @@ mod structured;
 mod triggers;
 mod user_types;
 pub mod xml_schemas;
+pub mod xquery_modules;
 
 use crate::value::collation::CollationRef;
 pub use collations::CollationDesc;
@@ -64,6 +65,7 @@ pub use structured::{
 pub use triggers::{ActionTime, TransitionNames, TriggerDesc, TriggerEvent, TriggerLevel};
 pub use user_types::{Routine, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, based_on, types_in};
 pub use xml_schemas::XmlSchemaDesc;
+pub use xquery_modules::XQueryModuleDesc;
 
 /// A `<table name>` with its `<authorization identifier>` made explicit.
 /// [X3.135-1986 §5.4 SR3] two table names are equal iff both parts are equal.
@@ -264,7 +266,8 @@ pub struct IndexDesc {
 ///   `remove_sequence`; and `put_user_type`, `user_type`, `user_types` and
 ///   `remove_user_type`.
 ///   So too `put_xml_schema`, `xml_schema`, `xml_schemas` and
-///   `remove_xml_schema`.
+///   `remove_xml_schema`; and `put_xquery_module`, `xquery_module`,
+///   `xquery_modules` and `remove_xquery_module`.
 ///   So too `put_assertion`, `assertion`, `assertions` and
 ///   `remove_assertion`; and `put_trigger`, `trigger`, `triggers` and
 ///   `remove_trigger`, `triggers` and `triggers_on` in the order of
@@ -419,6 +422,15 @@ pub trait Catalog: Send + Sync {
     fn xml_schemas(&self) -> Vec<&XmlSchemaDesc>;
     /// Forget the registered XML Schema of this name.
     fn remove_xml_schema(&mut self, name: &QualifiedName);
+    /// \[EXTENSION\] Record a registered XQuery module, in place of one of
+    /// its name.
+    fn put_xquery_module(&mut self, module: XQueryModuleDesc);
+    /// The registered XQuery module of this name, if any.
+    fn xquery_module(&self, name: &QualifiedName) -> Option<&XQueryModuleDesc>;
+    /// Every registered XQuery module, in a stable order.
+    fn xquery_modules(&self) -> Vec<&XQueryModuleDesc>;
+    /// Forget the registered XQuery module of this name.
+    fn remove_xquery_module(&mut self, name: &QualifiedName);
     /// Record the assertion `assertion`, a CHECK of no table, in place of
     /// any of its name [ISO/IEC 9075:1992 §11.34].
     fn put_assertion(&mut self, assertion: ConstraintDesc);

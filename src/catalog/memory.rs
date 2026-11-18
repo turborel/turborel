@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use super::{
     CastDesc, Catalog, CollationDesc, ConstraintDesc, DomainDesc, Embeddings, IndexDesc, ModuleDesc, OrderingDesc, PrivilegeDesc,
     QualifiedName, Roles, SequenceDesc, SqlRoutineDesc, StructuredDesc, TableDesc, TransformGroupDesc, TriggerDesc, UserTypeDesc, ViewDesc,
-    XmlSchemaDesc,
+    XQueryModuleDesc, XmlSchemaDesc,
 };
 use crate::hash::murmur::MurmurMap;
 use crate::value::DataType;
@@ -23,6 +23,8 @@ pub struct MemoryCatalog {
     collations: HashMap<QualifiedName, CollationDesc>,
     /// Each registered XML Schema, by its name.
     xml_schemas: HashMap<QualifiedName, XmlSchemaDesc>,
+    /// Each registered XQuery module, by its name.
+    xquery_modules: HashMap<QualifiedName, XQueryModuleDesc>,
     sequences: HashMap<QualifiedName, SequenceDesc>,
     user_types: HashMap<QualifiedName, UserTypeDesc>,
     /// Each structured type, by its name.
@@ -178,6 +180,20 @@ impl Catalog for MemoryCatalog {
     }
     fn remove_xml_schema(&mut self, name: &QualifiedName) {
         self.xml_schemas.remove(name);
+    }
+    fn put_xquery_module(&mut self, module: XQueryModuleDesc) {
+        self.xquery_modules.insert(module.name.clone(), module);
+    }
+    fn xquery_module(&self, name: &QualifiedName) -> Option<&XQueryModuleDesc> {
+        self.xquery_modules.get(name)
+    }
+    fn xquery_modules(&self) -> Vec<&XQueryModuleDesc> {
+        let mut all: Vec<&XQueryModuleDesc> = self.xquery_modules.values().collect();
+        all.sort_by_key(|m| m.name.to_string());
+        all
+    }
+    fn remove_xquery_module(&mut self, name: &QualifiedName) {
+        self.xquery_modules.remove(name);
     }
     fn put_sequence(&mut self, sequence: SequenceDesc) {
         self.sequences.insert(sequence.name.clone(), sequence);
