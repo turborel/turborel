@@ -174,7 +174,7 @@ impl<E: Engine> Place<E> {
     /// As `metric` and `quantizer`.
     pub(crate) fn codec_plugins(&self, o: &Named<'_>, column: Column, graph: bool) -> Result<(CodecPlugins, (String, String))> {
         let m = self.metric((o.metric, graph, o.shared.normalized), column)?;
-        let measure = hnsw::Metric::new(m.metric.name(), super::distance(&m.metric, column));
+        let measure = hnsw::Metric::new(m.metric.name(), super::distance(&m.metric, column)).with_norms(super::normed(&m.metric));
         let quantizer = self.quantizer(o.quantizer)?.map(|q| super::codec_quantizer(q, o.shared.code_bytes));
         Ok(((measure, quantizer), m.names))
     }

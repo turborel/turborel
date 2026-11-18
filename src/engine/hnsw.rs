@@ -46,7 +46,7 @@ pub use chain::{
 use graph::{Graph, Store};
 pub use keep::{SAMPLE_MOST, sample};
 pub use log::{MEMORY_STEP, grow};
-pub use measure::{Codec, DistanceFn, Metric, Quantizer, SQ8, Sq8};
+pub use measure::{Codec, DistanceFn, Metric, NormedFn, Probe, Quantizer, SQ8, Sq8};
 pub use query::{Exact, Filter, RERANK_FACTOR, Search, finish};
 pub use view::TRIES;
 

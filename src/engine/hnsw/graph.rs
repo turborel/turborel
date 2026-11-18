@@ -4,7 +4,9 @@
 //! M0 ids and a degree each, so a hop reads one contiguous run; the upper
 //! layers, held by few nodes, sit in blocks of M ids a layer, found by
 //! each node's first block. A node's vector is its full `f32`s, or a code
-//! once the index's quantizer is trained.
+//! once the index's quantizer is trained. Beside it is the squared norm
+//! of the vector a search reads, its code's decoded if it keeps a code,
+//! so a metric measured by norms sums only `q·v` a hop.
 //!
 //! A node is an entry, a (vector, row) pair, counted: inserted again it
 //! counts one more, removed one less, and at none it is a tombstone, still
@@ -14,6 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::measure::Codec;
+use crate::vector::kernels::squared_norm;
 
 /// No node: an empty graph's entry, a node with no upper layers.
 pub const NONE: u32 = u32::MAX;
@@ -49,6 +52,8 @@ pub struct Graph {
     pub m0: usize,
     /// The nodes' vectors.
     pub store: Store,
+    /// Each node's vector's squared norm, as `vector` reads the vector.
+    norms: Vec<f32>,
     /// Each node's row.
     pub rows: Vec<u64>,
     /// Each node's count of inserts not removed; 0 for a tombstone.
@@ -92,6 +97,7 @@ impl Graph {
             m,
             m0,
             store,
+            norms: Vec::new(),
             rows: Vec::new(),
             counts: Vec::new(),
             levels: Vec::new(),
@@ -154,6 +160,24 @@ impl Graph {
                 }
                 buf
             }
+        }
+    }
+
+    /// Node `id`'s vector's squared norm.
+    #[inline]
+    pub fn norm(&self, id: u32) -> f32 {
+        self.norms.get(slot(id)).copied().unwrap_or(0.0)
+    }
+
+    /// Stores its vectors as `store`, of as many nodes, as when its
+    /// vectors are coded, their norms worked out again.
+    pub fn recode(&mut self, store: Store) {
+        self.store = store;
+        self.norms.clear();
+        let mut buf = self.decode_buffer();
+        for id in 0..u32::try_from(self.len()).unwrap_or(NONE) {
+            let norm = squared_norm(self.vector(id, &mut buf));
+            self.norms.push(norm);
         }
     }
 
@@ -249,6 +273,7 @@ impl Graph {
                 codec.encode(vector, codes.get_mut(start..).unwrap_or_default());
             }
         }
+        self.add_norm(id);
         self.add(id, (row, hash, count), level);
         id
     }
@@ -259,8 +284,21 @@ impl Graph {
         if let Store::Coded { codes, .. } = &mut self.store {
             codes.extend_from_slice(code);
         }
+        self.add_norm(id);
         self.add(id, (row, hash, count), level);
         id
+    }
+
+    /// A buffer `vector` decodes a code into: none if it keeps no codes.
+    fn decode_buffer(&self) -> Vec<f32> {
+        if self.code_bytes().is_some() { vec![0.0_f32; self.dims] } else { Vec::new() }
+    }
+
+    /// Keeps the squared norm of node `id`'s vector, just stored.
+    fn add_norm(&mut self, id: u32) {
+        let mut buf = self.decode_buffer();
+        let norm = squared_norm(self.vector(id, &mut buf));
+        self.norms.push(norm);
     }
 
     fn add(&mut self, id: u32, (row, hash, count): (u64, u64, u32), level: u8) {

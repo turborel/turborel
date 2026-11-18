@@ -112,7 +112,7 @@ fn unfinished_nodes_are_invisible_and_freed() {
     let held = index.allocate().unwrap();
     let vector = vec![3.5_f32; 4];
     for id in [orphan, held] {
-        index.put(id, &Node { flags: 0, row: 99, count: 1, vector: vector.clone(), neighbours: vec![0] }).unwrap();
+        index.put(id, &Node { flags: 0, row: 99, count: 1, vector: vector.clone(), norm: 0.0, neighbours: vec![0] }).unwrap();
         index.link(0, id, &vector).unwrap();
     }
     assert!(index.search(&vector, &ten()).unwrap().0.iter().all(|c| c.row != 99));

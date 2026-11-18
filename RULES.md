@@ -3460,6 +3460,18 @@ vectors packed in the column's own format, and a failure or null is
 taken as farthest, so a broken metric misplaces entries but never fails
 a write.
 
+A metric measured by norms (COSINE) is measured by the norms the engines
+keep. Each engine stores the squared norm of every vector it holds, of
+the vector as a search reads it (a FLOAT16 record's or a code's decoded
+values), and a search works out its query's once. A distance then sums
+`q·v` alone (`adapt::normed`, DiskANN's `Metric::normed`, HNSW's and
+IVF's `Metric::between`). Each norm is summed as `kernels::squared_norm`
+sums it, the order the one-pass COSINE sums in, so the distances are bit
+for bit those of summing both norms at every call. Normalizing vectors
+as they are written would save the norms but not keep the distances or
+the vectors' identity, so the norms are kept instead. Any other metric
+ignores them.
+
 Keys are projected (D85). Every vector projects to one constant key, a
 null to itself, as the engines keep no original values to return. The
 executor rechecks each candidate's row, then measures the exact distance
@@ -3529,6 +3541,12 @@ database's default pool (`db::POOL_BYTES`), as its searches read a page
 at every hop. RERANK ON gives the executor the whole search list to
 order again, OFF the rows asked.
 
+A node record keeps its vector's squared norm in its header, between the
+version count and the vector, worked out from the stored vector as it
+is encoded (`node.rs`). A search measures each node it expands by that
+norm and its query's, worked out once in `walk_with`. Vamana's build
+and FreshDiskANN's prunes measure vectors held in arrays, by `distance`.
+
 #### D97. An HNSW index is held in budgeted memory, kept as an image and a log in pages
 
 The graph is held in memory reserved of the budget (R10.7, D38,
@@ -3549,6 +3567,13 @@ keeps changing is chosen again until it is written, never dropped, as
 it is the way searches reach the new node. Each try lost is another
 writer's change made, so the writers as a whole make progress.
 
+Beside each node's vector or code the graph keeps the squared norm of
+the vector a search reads, worked out as a node is added and again when
+maintenance codes the store (`Graph::recode`). The image keeps no norms,
+as a load adds its nodes one by one. A hop gives its callback each
+neighbour's vector with its norm, and a search or an insert's search
+measures by those and a norm of its query worked out once.
+
 #### D98. An IVF index writes its lists through, its centroids and directory held in budgeted memory
 
 Lists are pages written through as each change is made
@@ -3558,6 +3583,11 @@ directory records, then syncs. IVF.LISTS 0 is the square root of the
 rows, at least 16 (§10.4), and IVF.PROBES 0 scans one list in eight.
 IVF takes DOT, since it is no graph, and no metric property is checked
 for it.
+
+An entry keeps, after its row, count and hash, the squared norm of the
+vector a scan reads, its code's decoded if it is coded, so a scan
+measures each entry by it and the query's, worked out once a search.
+Retraining, which stores each entry again, works it out again.
 
 #### D99. The inverted index answers a sparse DOT approximately
 

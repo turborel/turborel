@@ -21,6 +21,7 @@ use crate::engine::hnsw::random::{Rng, vector_hash};
 use crate::engine::hnsw::{Codec, NO_PAGE, SAMPLE_MOST, grow, sample};
 use crate::error::{Code, Result, SqlError};
 use crate::sync::{lock, lock_builtin, read, write};
+use crate::vector::kernels::squared_norm;
 
 /// \[DESIGN\] Tombstones are dropped past one entry in five (R10.10's 20%).
 const DEAD_SHARE: u64 = 5;
@@ -257,7 +258,7 @@ impl Ivf {
             return Ok(());
         }
         let mut entry = Vec::with_capacity(state.shape.layout.width);
-        lists::entry(&mut entry, (row, count, hash), payload);
+        lists::entry(&mut entry, (row, count, hash), (payload, squared_norm(stored)));
         let mut list: List = *state.lists.get(at).ok_or_else(|| super::corrupt("a list is missing"))?;
         let page = lists::append(pages.0, pages.1, (&state.shape.layout, &mut list), &entry)?;
         list.live = list.live.saturating_add(1);

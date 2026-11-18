@@ -25,7 +25,8 @@ use crate::sync::{lock_builtin, read};
 use super::frontier::{Entry, Frontier, Visited};
 use super::meta::NO_NODE;
 use super::node::{Node, corrupt};
-use super::{CodeTable, DiskAnn, finite};
+use super::{CodeTable, DiskAnn, Probe, finite};
+use crate::vector::kernels::squared_norm;
 
 /// A percentage's whole.
 const PERCENT: usize = 100;
@@ -179,6 +180,7 @@ impl DiskAnn {
         visited.start(total, Some(&self.inner.budget))?;
         let codes = read(&self.inner.book)?.codes.clone();
         let guide: Guide<'_> = codes.as_deref().map(|c| (c.code_bytes(), c.table(query)));
+        let query = (query, squared_norm(query));
         let mut frontier = Frontier::new(list);
         let (mut batch, mut fresh, mut distances) = (Vec::new(), Vec::new(), Vec::new());
         visited.visit(start);
@@ -198,7 +200,7 @@ impl DiskAnn {
                     continue;
                 }
                 fresh.extend(node.neighbours.iter().copied().filter(|&n| visited.visit(n)));
-                let distance = finite(self.inner.plugins.metric.distance(query, &node.vector), "metric")?;
+                let distance = finite(self.inner.plugins.metric.normed(query, (&node.vector, node.norm)), "metric")?;
                 frontier.settle(id, distance);
                 expanded.push(Expanded { distance, id, node });
             }
@@ -209,7 +211,7 @@ impl DiskAnn {
     }
 
     /// The guiding distances of `ids` from `query`, into `out`.
-    fn guided(&self, guide: &Guide<'_>, query: &[f32], ids: &[u32], out: &mut Vec<f32>) -> Result<()> {
+    fn guided(&self, guide: &Guide<'_>, query: Probe<'_>, ids: &[u32], out: &mut Vec<f32>) -> Result<()> {
         out.clear();
         let Some((width, table)) = guide else {
             out.resize(ids.len(), 0.0_f32);
@@ -243,14 +245,17 @@ impl DiskAnn {
     }
 
     /// Full distances of `ids` at positions `at` into `out`, reading them.
-    fn full_distances(&self, query: &[f32], ids: &[u32], at: &[usize], out: &mut [f32]) -> Result<()> {
+    fn full_distances(&self, query: Probe<'_>, ids: &[u32], at: &[usize], out: &mut [f32]) -> Result<()> {
         let mut node = Node::default();
         for &position in at {
             let id = ids.get(position).copied().ok_or_else(|| corrupt("a guided node is missing"))?;
             self.cached_or_read(id, &mut node)?;
             if let Some(slot) = out.get_mut(position) {
-                *slot =
-                    if node.free() { f32::INFINITY } else { finite(self.inner.plugins.metric.distance(query, &node.vector), "metric")? };
+                *slot = if node.free() {
+                    f32::INFINITY
+                } else {
+                    finite(self.inner.plugins.metric.normed(query, (&node.vector, node.norm)), "metric")?
+                };
             }
         }
         Ok(())

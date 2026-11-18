@@ -180,7 +180,7 @@ impl Hnsw {
         for (vector, code) in floats.chunks_exact(inner.dims).zip(encoded.chunks_exact_mut(bytes.max(1))) {
             codec.encode(vector, code);
         }
-        graph.store = Store::Coded { codec, codes: encoded };
+        graph.recode(Store::Coded { codec, codes: encoded });
         Ok(())
     }
 

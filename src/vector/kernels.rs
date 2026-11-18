@@ -90,6 +90,15 @@ pub(crate) fn fold_f32(a: &[f32], b: &[f32], term: impl Fn(f32, f32) -> f32) -> 
     total(acc) + ra.iter().zip(rb).fold(0.0_f32, |s, (p, q)| s + term(*p, *q))
 }
 
+/// `v·v`, summed as `fold_f32` with `product` sums it: the squared norm a
+/// vector index keeps with each vector it holds, and works out once for a
+/// query, so a metric measured by norms (COSINE) does not sum them at
+/// every call, and gives bit for bit the distance it gave summing them.
+#[inline]
+pub(crate) fn squared_norm(v: &[f32]) -> f32 {
+    fold_f32(v, v, product)
+}
+
 /// `a·a`, `b·b` and `a·b` of `f32`s in one pass, each summed in the
 /// order `fold_f32` with `product` sums it, so each is bit for bit that
 /// call's. COSINE needs all three, and one pass reads each element once

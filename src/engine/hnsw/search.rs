@@ -12,7 +12,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use super::graph::NONE;
-use super::measure::Metric;
+use super::measure::{Metric, Probe};
 use super::scratch::{Scored, Scratch, Visited, keep};
 use super::view::{Source, Step};
 
@@ -23,12 +23,12 @@ pub type Accept<'a> = dyn FnMut(u32, Option<u64>) -> bool + 'a;
 /// step is strictly nearer, so the walk ends. A node measured before is
 /// not measured again: it was no nearer than the best then, and the best
 /// only nears.
-fn closest<S: Source>(src: &mut S, (metric, q): (&Metric, &[f32]), from: Scored, (level, visited): (u8, &mut Visited)) -> Step<Scored> {
+fn closest<S: Source>(src: &mut S, (metric, q): (&Metric, Probe<'_>), from: Scored, (level, visited): (u8, &mut Visited)) -> Step<Scored> {
     let mut best = from;
     loop {
         let at = best;
         src.hop((at.id, level), visited, &mut |e, _, v| {
-            let near = Scored { distance: metric.distance(q, v), id: e };
+            let near = Scored { distance: metric.between(q, v), id: e };
             if near < best {
                 best = near;
             }
@@ -47,7 +47,7 @@ fn closest<S: Source>(src: &mut S, (metric, q): (&Metric, &[f32]), from: Scored,
 /// The source's.
 pub fn descend<S: Source>(
     src: &mut S,
-    (metric, q): (&Metric, &[f32]),
+    (metric, q): (&Metric, Probe<'_>),
     (entry, top, level): (u32, u8, u8),
     s: &mut Scratch,
 ) -> Step<Option<Scored>> {
@@ -55,7 +55,7 @@ pub fn descend<S: Source>(
         return Ok(None);
     }
     src.node(entry, &mut s.a)?;
-    let mut best = Scored { distance: metric.distance(q, &s.a), id: entry };
+    let mut best = Scored { distance: metric.distance(q.0, &s.a), id: entry };
     s.visited.begin(0);
     s.visited.first(entry);
     let mut at = top;
@@ -75,7 +75,7 @@ pub fn descend<S: Source>(
 /// The source's.
 pub fn search_layer<S: Source>(
     src: &mut S,
-    (metric, q): (&Metric, &[f32]),
+    (metric, q): (&Metric, Probe<'_>),
     (entries, ef, level): (&[Scored], usize, u8),
     s: &mut Scratch,
     accept: &mut Accept<'_>,
@@ -96,7 +96,7 @@ pub fn search_layer<S: Source>(
             break;
         }
         src.hop((c.id, level), visited, &mut |e, row, v| {
-            let near = Scored { distance: metric.distance(q, v), id: e };
+            let near = Scored { distance: metric.between(q, v), id: e };
             if results.len() >= ef && results.peek().is_some_and(|far| near >= *far) {
                 return;
             }
@@ -117,7 +117,7 @@ pub fn search_layer<S: Source>(
 /// The source's.
 pub fn knn<S: Source>(
     src: &mut S,
-    (metric, q): (&Metric, &[f32]),
+    (metric, q): (&Metric, Probe<'_>),
     (k, ef): (usize, usize),
     s: &mut Scratch,
     accept: &mut Accept<'_>,
@@ -144,7 +144,7 @@ pub fn knn<S: Source>(
 /// The source's.
 pub fn range<S: Source>(
     src: &mut S,
-    (metric, q): (&Metric, &[f32]),
+    (metric, q): (&Metric, Probe<'_>),
     (radius, ef): (f32, usize),
     s: &mut Scratch,
     accept: &mut Accept<'_>,
@@ -166,7 +166,7 @@ pub fn range<S: Source>(
         if c.distance <= radius && accept(c.id, row) {
             chosen.push(c);
         }
-        src.hop((c.id, 0), visited, &mut |e, live, v| candidates.push(Reverse((Scored { distance: metric.distance(q, v), id: e }, live))))?;
+        src.hop((c.id, 0), visited, &mut |e, live, v| candidates.push(Reverse((Scored { distance: metric.between(q, v), id: e }, live))))?;
     }
     chosen.sort_unstable();
     Ok(())

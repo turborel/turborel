@@ -21,7 +21,7 @@ mod index;
 mod options;
 mod place;
 
-pub(crate) use adapt::{codec_quantizer, disk_quantizer, distance};
+pub(crate) use adapt::{codec_quantizer, disk_metric, disk_quantizer, distance, normed};
 pub(crate) use ask::Ask;
 pub(crate) use column::{Column, approximate_support, column_of, default_desc, entry_key, plain, projection};
 pub(crate) use index::{Engine, Held, VectorIndex, located};

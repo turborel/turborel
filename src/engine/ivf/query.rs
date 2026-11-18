@@ -17,7 +17,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use super::write::floats_of;
 use super::{Inner, Ivf, Shape, lists};
 use crate::disk::pager::PageId;
-use crate::engine::hnsw::{Filter, RERANK_FACTOR, Search, finish};
+use crate::engine::hnsw::{Filter, Probe, RERANK_FACTOR, Search, finish};
 use crate::error::Result;
 use crate::sync::lock_builtin;
 
@@ -101,7 +101,7 @@ impl Inner {
     fn scan(
         &self,
         state: &Shape,
-        (q, at): (&[f32], usize),
+        (q, at): (Probe<'_>, usize),
         b: &mut Buffers,
         (filter, sink): (&mut Option<Filter<'_>>, &mut dyn FnMut(Near)),
     ) -> Result<(u64, u64)> {
@@ -123,7 +123,7 @@ impl Inner {
                     Some(codec) => codec.decode(stored, vector),
                     None => floats_of(stored, vector),
                 }
-                sink(Near { distance: self.metric.distance(q, vector), row });
+                sink(Near { distance: self.metric.between(q, (vector, lists::norm(e))), row });
             }
         }
         Ok((held, taken))
@@ -158,11 +158,12 @@ impl Ivf {
         // has taken: past those lists, scanning goes on until it has taken
         // as many as an unfiltered search measures.
         let (mut quota, mut taken) = (0_u64, 0_u64);
+        let probe = inner.metric.probe(q);
         for (n, (_, at)) in order.iter().enumerate() {
             if n >= probes && heap.len() >= wanted && taken >= quota {
                 break;
             }
-            match inner.scan(&state, (q, *at), &mut b, (&mut filter, &mut |near| keep(&mut heap, near, wanted))) {
+            match inner.scan(&state, (probe, *at), &mut b, (&mut filter, &mut |near| keep(&mut heap, near, wanted))) {
                 Ok((held, took)) => {
                     quota = if n < probes { quota.saturating_add(held) } else { quota };
                     taken = taken.saturating_add(took);
@@ -200,11 +201,12 @@ impl Ivf {
         let order = std::mem::take(&mut b.order);
         let mut found = Vec::new();
         let mut scanned = Ok(());
+        let probe = inner.metric.probe(q);
         for (_, at) in order.iter().take(probes) {
             scanned = inner
                 .scan(
                     &state,
-                    (q, *at),
+                    (probe, *at),
                     &mut b,
                     (&mut filter, &mut |near| found.extend((near.distance <= radius).then_some((near.distance, near.row)))),
                 )
