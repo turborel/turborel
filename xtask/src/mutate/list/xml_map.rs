@@ -5,7 +5,7 @@
 use super::{Mutation, Package};
 
 /// Each mapping mechanism broken alone, and the tests that fail.
-pub const XML_MAP: [Mutation; 24] = [
+pub const XML_MAP: [Mutation; 25] = [
     Mutation {
         name: "xml-map-nulls-nil",
         package: Package::Core,
@@ -191,8 +191,8 @@ pub const XML_MAP: [Mutation; 24] = [
         package: Package::Core,
         breaks: "ENCODING BASE64 writes binary strings in hex",
         file: "src/binder/xml/map.rs",
-        original: "        encoding: m.encoding.unwrap_or(IMPLICIT_BINARY_ENCODING),",
-        replacement: "        encoding: IMPLICIT_BINARY_ENCODING,",
+        original: "        encoding: m.encoding.unwrap_or(scoped),",
+        replacement: "        encoding: scoped,",
         integration: &["xml_map::binary_encodings_9_5"],
         unit: &[],
     },
@@ -245,5 +245,15 @@ pub const XML_MAP: [Mutation; 24] = [
         replacement: "        if field == Field::Second {",
         integration: &["xml_cast::xml_values_cast_by_the_facets_6_6"],
         unit: &["functions::xml::schema_type::tests::intervals_9_5"],
+    },
+    Mutation {
+        name: "xml-map-encoding-scoped",
+        package: Package::Core,
+        breaks: "XMLMAP of no ENCODING writes binary strings in hex inside WITH XMLBINARY BASE64",
+        file: "src/binder/xml/map.rs",
+        original: "        let choices = choices(m, self.binary_encoding(), self.now.zone())?;",
+        replacement: "        let choices = choices(m, crate::functions::IMPLICIT_BINARY_ENCODING, self.now.zone())?;",
+        integration: &["xml_map::binary_encodings_9_5"],
+        unit: &[],
     },
 ];

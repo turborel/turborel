@@ -189,7 +189,8 @@ fn data_and_metadata_9_11() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §9.5 GR8b, §9.8
 /// GR9b] ENCODING BASE64 and HEX: a binary string's value and type in the
-/// encoding.
+/// encoding; of no ENCODING, in the XMLBINARY in scope [§11.3], which an
+/// ENCODING written overrides.
 #[test]
 fn binary_encodings_9_5() {
     let db = mapped();
@@ -201,6 +202,13 @@ fn binary_encodings_9_5() {
             .contains(r#"<xs:restriction base="xs:base64Binary"><xs:maxLength value="4"/>"#)
     );
     validates(&a, "TABLE T", ("", "ENCODING BASE64"));
+    let scoped = |map: &str| {
+        let sql = format!("WITH XMLBINARY USING BASE64 SELECT XMLSERIALIZE(CONTENT {map} AS CLOB) FROM T WHERE K = 1");
+        rows(&a, &sql).unwrap().concat()
+    };
+    assert!(scoped("XMLMAP(TABLE T)").contains("<B>D7c=</B>"));
+    assert!(scoped("XMLMAP(TABLE T METADATA)").contains(r#"<xs:restriction base="xs:base64Binary">"#));
+    assert!(scoped("XMLMAP(TABLE T ENCODING HEX)").contains("<B>0FB7</B>"));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §9.1 GR4, §9.2,

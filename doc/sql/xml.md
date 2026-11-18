@@ -887,9 +887,9 @@ XMLNAMESPACES names the elements and attributes of XMLELEMENT and
 XMLFOREST, and is among the namespaces of XMLQUERY's, XMLEXISTS's and
 XMLTABLE's queries.
 
-XMLBINARY says how XMLELEMENT, XMLFOREST and XMLCAST write a binary
-string, and how XMLCAST reads one: BASE64 in base64, HEX in hex. Where
-no XMLBINARY is in scope it is HEX. XMLPI always writes hex.
+XMLBINARY says how XMLELEMENT, XMLFOREST, XMLCAST and XMLMAP of no
+ENCODING write a binary string, and how XMLCAST reads one: BASE64 in
+base64, HEX in hex. Where no XMLBINARY is in scope it is HEX. XMLPI always writes hex.
 
 The options after WITH, before a query's WITH list or alone, are in
 scope of the whole query: its subqueries, derived tables, the queries
@@ -968,7 +968,8 @@ writes it empty, with the attribute `xsi:nil="true"`. AS FOREST maps a
 table to an element named after the table for each row, with no element
 around them; AS ELEMENT, the default, maps it as above. TARGETNAMESPACE
 puts the elements in a namespace; with none, or with `''`, they are in
-none. ENCODING writes binary strings in HEX, the default, or BASE64.
+none. ENCODING writes binary strings in HEX or BASE64; with none
+written, they are in the XMLBINARY in scope, HEX outside every one.
 
 METADATA gives the XML Schema document instead. It defines a type of
 each column's data type, distinct type or domain, named after it, a type
@@ -1014,6 +1015,7 @@ target namespace of the namespace of `xml` or `xmlns` is refused
 ```sql
 VALUES (XMLSERIALIZE(CONTENT XMLMAP(TABLE STAFF) AS VARCHAR(400)));
 VALUES (XMLSERIALIZE(CONTENT XMLMAP(TABLE STAFF NULLS NIL AS FOREST ENCODING BASE64) AS VARCHAR(400)));
+WITH XMLBINARY USING BASE64 SELECT XMLSERIALIZE(CONTENT XMLMAP(TABLE STAFF AS FOREST) AS VARCHAR(400)) FROM STAFF WHERE ID = 1;
 CREATE SCHEMA SHOP CREATE TABLE ITEMS (SKU CHAR(4) NOT NULL, PRICE NUMERIC(6,2));
 INSERT INTO SHOP.ITEMS VALUES ('A100', 9.99), ('B200', NULL);
 VALUES (XMLSERIALIZE(CONTENT XMLMAP(SCHEMA SHOP TARGETNAMESPACE 'urn:shop') AS VARCHAR(400)));
@@ -1029,6 +1031,10 @@ VALUES (XMLMAP(TABLE NOWHERE));
 
 --------------------------------------------------------------
  <STAFF xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><ID>1</ID><NAME>Ann</NAME><PAY>1200.50</PAY><PHOTO>D7c=</PHOTO></STAFF><STAFF xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><ID>2</ID><NAME>Bo &amp; Co</NAME><PAY xsi:nil="true"/><PHOTO xsi:nil="true"/></STAFF>
+(1 row)
+
+--------------------------------------------------------------
+ <STAFF><ID>1</ID><NAME>Ann</NAME><PAY>1200.50</PAY><PHOTO>D7c=</PHOTO></STAFF><STAFF><ID>2</ID><NAME>Bo &amp; Co</NAME></STAFF>
 (1 row)
 OK
 OK

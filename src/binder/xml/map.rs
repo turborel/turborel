@@ -27,7 +27,7 @@ use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::functions::xml_map::{
     Choices, Column, DataShape, Declared, Nulls, RowShape, Source, Table, XMLMAP, XmlMap, XmlMapRow, XmlMapRows, declared_name, rows_type,
 };
-use crate::functions::{AggregateRef, IMPLICIT_BINARY_ENCODING, RowOf, ScalarRef};
+use crate::functions::{AggregateRef, BinaryEncoding, RowOf, ScalarRef};
 use crate::logical::Expr;
 use crate::parser::mapped_sources;
 use crate::system::{DEFINITION_SCHEMA, INFORMATION_SCHEMA, information_views};
@@ -85,15 +85,16 @@ fn source_of(kind: &MapSource, mut tables: Vec<Table>) -> Result<Source> {
 
 /// [§9.11 SR1, §9.14 SR1, §9.17 SR1] The parameters `m` gives, each
 /// written or implicit: TARGETNS the zero-length string if none is
-/// written, no namespace [§9.10 GR1]; and the SQL-session's time zone
-/// displacement `zone` [§9.8 GR7].
+/// written, no namespace [§9.10 GR1]; ENCODING, if none is written,
+/// `scoped`, the `<XML binary encoding>` in scope [§11.3] (RULES.md D86);
+/// and the SQL-session's time zone displacement `zone` [§9.8 GR7].
 ///
 /// # Errors
 ///
 /// SQLCODE -103 if the target namespace is the namespace of `xml` or of
 /// `xmlns`, as no namespace XMLNAMESPACES declares is [§11.3 SR6], or
 /// holds a character no XML character [XML 1.1 §2.2].
-fn choices(m: &XmlMapping, zone: i16) -> Result<Choices> {
+fn choices(m: &XmlMapping, scoped: BinaryEncoding, zone: i16) -> Result<Choices> {
     let target = m.target.clone().unwrap_or_default();
     if let Some(bad) = target.chars().find(|&c| !is_char(Version::V11, c)) {
         return Err(rule(format!("[EXTENSION] [XML 1.1 §2.2] the target namespace holds U+{:04X}, no XML character", u32::from(bad))));
@@ -112,7 +113,7 @@ fn choices(m: &XmlMapping, zone: i16) -> Result<Choices> {
         target,
         data,
         metadata,
-        encoding: m.encoding.unwrap_or(IMPLICIT_BINARY_ENCODING),
+        encoding: m.encoding.unwrap_or(scoped),
         zone,
     })
 }
@@ -139,7 +140,7 @@ impl Binder<'_> {
                 "[EXTENSION] RULES.md D86: a mapping of a schema or the catalog reads no table, view or routine that maps a schema or the catalog, as such a mapping could hold itself",
             ));
         }
-        let choices = choices(m, self.now.zone())?;
+        let choices = choices(m, self.binary_encoding(), self.now.zone())?;
         let reads = match &m.source {
             MapSource::Table(query) => vec![self.table_read(query)?],
             MapSource::Schema(name, at) => self.schema_reads(name).or_at(*at)?,

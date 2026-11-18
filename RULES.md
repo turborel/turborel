@@ -3049,7 +3049,8 @@ which its parameters carry. A subquery searches its own first, then
 those of the query it is in. A definition keeps its options in the text
 the catalog keeps, so it binds the same when read again; a view or a
 routine sees none of what reads or invokes it. Outside every XMLBINARY
-binary strings are in hex.
+the encoding is HEX, for every operator that writes or reads a binary
+string: XMLELEMENT, XMLFOREST, XMLCAST, and XMLMAP of no ENCODING.
 
 XML indexes are built-in index methods (D34) of one XML column, after Pal
 et al.'s XML indexes: `xml_path` (PATH_VALUE, §3.2.1), `xml_value`
@@ -3229,7 +3230,8 @@ is the zero-length string, which the draft makes no namespace [§9.10
 GR1]. The draft leaves the others to the implementation: NULLS ABSENT,
 as XMLFOREST leaves a null value out; AS ELEMENT, so a table's mapping
 is a document, as a schema's and the catalog's always are; DATA; and
-ENCODING HEX, XMLCAST's binary encoding. XMLMAP, NULLS, ABSENT, NIL,
+the `<XML binary encoding>` in scope [§11.3], as of every other
+operator, so HEX outside every XMLBINARY. XMLMAP, NULLS, ABSENT, NIL,
 FOREST, ELEMENT, TARGETNAMESPACE, DATA, METADATA, ENCODING, BASE64 and
 HEX are no key words, each read as a word where XMLMAP takes it. The
 target namespace holds XML characters alone and is not the namespace of
