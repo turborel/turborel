@@ -54,6 +54,39 @@ fn prepared_polygon_scalars_match_ordinary_evaluation() {
     }
 }
 
+/// Verifies: [DESIGN] D15, D85: once a prepared polygon searches its edges
+/// for points' distances, every distance is the ordinary scan's to the
+/// bit, for points inside, on, near and far from a comb and a holed
+/// polygon, in either argument position.
+#[test]
+fn prepared_point_distances_match_the_scan_to_the_bit() {
+    let budget = MemoryBudget::new(usize::MAX);
+    let mut teeth = vec![[0.0_f64, 0.0_f64]];
+    for t in 0..40_u32 {
+        let x = f64::from(t) * 0.25_f64;
+        teeth.extend([[x, 1.0_f64], [x, 9.0_f64], [x + 0.125_f64, 9.0_f64], [x + 0.125_f64, 1.0_f64]]);
+    }
+    teeth.extend([[10.0_f64, 1.0_f64], [10.0_f64, 0.0_f64], [0.0_f64, 0.0_f64]]);
+    let comb = Geometry::of(Shape::Polygon(vec![teeth]), 0).unwrap().to_value();
+    let holed = Geometry::of(Shape::Polygon(vec![dense_ring(0.0, 10.0), dense_ring(2.0, 8.0)]), 0).unwrap().to_value();
+    for polygon in [comb, holed] {
+        for position in [0_usize, 1] {
+            let mut arguments = [None, None];
+            arguments[position] = Some(&polygon);
+            let prepared = GeometryFunction::Distance.specialize(&arguments, &budget).unwrap();
+            for i in 0..=40_u32 {
+                for j in 0..=40_u32 {
+                    let point = Geometry::point(f64::from(i) * 0.5_f64 - 5.0_f64, f64::from(j) * 0.37_f64 - 2.0_f64, 0).unwrap().to_value();
+                    let mut pair = [point.clone(), point];
+                    pair[position] = polygon.clone();
+                    same_result(prepared.0.call(&pair).unwrap(), GeometryFunction::Distance.call(&pair).unwrap());
+                }
+            }
+            assert!(budget.reservations().iter().any(|(what, _)| what.contains("edge hierarchy")), "the search ran");
+        }
+    }
+}
+
 fn same_result(actual: Value, expected: Value) {
     match (actual, expected) {
         (Value::Approx(actual), Value::Approx(expected)) => assert_eq!(actual.to_bits(), expected.to_bits()),

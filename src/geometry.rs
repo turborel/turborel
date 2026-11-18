@@ -275,16 +275,18 @@ impl Geometry {
     /// SQLCODE -301 for different SRIDs, even if empty, or SQLSTATE 22003
     /// if the resulting distance exceeds the finite binary64 range.
     pub fn distance(&self, other: &Self) -> Result<Option<f64>> {
-        self.distance_located(other, None)
+        self.distance_located(other, None, None)
     }
 
-    fn distance_located(&self, other: &Self, located: Option<bool>) -> Result<Option<f64>> {
+    /// Preparation may supply the intersection decision, and the separation
+    /// `distance::separated` would measure, to the bit.
+    fn distance_located(&self, other: &Self, located: Option<bool>, measured: Option<f64>) -> Result<Option<f64>> {
         self.same_reference(other)?;
         let (Some(left), Some(right)) = (self.bounds, other.bounds) else { return Ok(None) };
         if self.intersects_located(other, located)? == Some(true) {
             return Ok(Some(0.0_f64));
         }
-        let distance = distance::separated(&self.shape, &other.shape);
+        let distance = measured.unwrap_or_else(|| distance::separated(&self.shape, &other.shape));
         if !distance.is_finite() {
             return Err(SqlError::new(Code::Data, "[EXTENSION] geometry distance exceeds the finite binary64 range")
                 .with_state(SqlState::NUMERIC_VALUE_OUT_OF_RANGE));

@@ -3,12 +3,18 @@
 //! centres spread widest, not on alternate axes, so long parallel edges
 //! such as a comb's teeth still fall into narrow leaves. Point location
 //! asks it for the edges meeting one grid cell (`cells.rs`); every edge it
-//! returns is still tested exactly (D85).
+//! returns is still tested exactly (D85). Point distance searches it for
+//! the nearest edge, depth first and nearer child first, skipping only
+//! subtrees beyond the best measure so far, widened as the chains'
+//! search widens it (`distance.rs`), so the minimum is a scan's to the
+//! bit.
 
 use std::sync::Arc;
 
 use super::shapes::rings;
 use crate::geometry::crossing::segments;
+use crate::geometry::distance::{reach, unit_of};
+use crate::geometry::robust::distance::segment;
 use crate::geometry::shape::{Point, Shape};
 use crate::memory::{MemoryBudget, Reservation};
 
@@ -18,6 +24,10 @@ const LEAF: usize = 8;
 /// depth.
 const MAX_DEPTH: u32 = usize::BITS;
 const HALF: f64 = 0.5;
+/// Nodes a nearest search holds at once: below each level of the deepest
+/// tree, MAX_DEPTH of them, the sibling not yet visited, with room to
+/// spare.
+const STACK: usize = 130;
 
 /// A closed envelope: lower x, lower y, upper x, upper y.
 pub(super) type Window = [f64; 4];
@@ -35,6 +45,8 @@ struct Node {
 pub(super) struct EdgeTree {
     edges: Vec<(Point, Point)>,
     nodes: Vec<Node>,
+    /// The largest coordinate magnitude of any edge.
+    largest: f64,
     _held: Reservation,
 }
 
@@ -60,7 +72,42 @@ impl EdgeTree {
         }
         let used = edges.capacity().checked_mul(size_of::<(Point, Point)>())?;
         held.resize(used.checked_add(nodes.capacity().checked_mul(size_of::<Node>())?)?).ok()?;
-        Some(Box::new(Self { edges, nodes, _held: held }))
+        let largest = edges.iter().flat_map(|&(a, b)| a.into_iter().chain(b)).map(f64::abs).fold(0.0_f64, f64::max);
+        Some(Box::new(Self { edges, nodes, largest, _held: held }))
+    }
+
+    /// The least `segment(point, a, b)` over every edge, as a scan of them
+    /// all takes it; none where the search's arithmetic cannot stay finite
+    /// or the hierarchy is inconsistent. A subtree is skipped only when its
+    /// envelope misses the square within reach of the best measure so far,
+    /// so every edge whose measure could be least is measured.
+    pub(super) fn nearest(&self, point: Point) -> Option<f64> {
+        let [px, py] = point;
+        let unit = unit_of(self.largest.max(px.abs()).max(py.abs()))?;
+        let mut best = f64::INFINITY;
+        let mut stack = [0_usize; STACK];
+        let mut held = usize::from(!self.nodes.is_empty());
+        while let Some(top) = held.checked_sub(1) {
+            held = top;
+            let at = *stack.get(top)?;
+            let node = self.nodes.get(at)?;
+            if !meets(node.bounds, around(point, reach(best, unit))) {
+                continue;
+            }
+            if node.end > node.start {
+                let edges = self.edges.get(node.start..node.end)?;
+                best = edges.iter().fold(best, |best, &(a, b)| best.min(segment(point, a, b)));
+                continue;
+            }
+            let left = at.checked_add(1)?;
+            let right = self.nodes.get(left)?.after;
+            let nearer = gap(point, self.nodes.get(left)?.bounds) <= gap(point, self.nodes.get(right)?.bounds);
+            for next in if nearer { [right, left] } else { [left, right] } {
+                *stack.get_mut(held)? = next;
+                held = held.checked_add(1)?;
+            }
+        }
+        Some(best)
     }
 
     /// Calls `visit` with each edge whose envelope meets the closed
@@ -121,6 +168,19 @@ fn spread(edges: &[(Point, Point)], vertical: bool) -> f64 {
 /// extreme finite coordinates cannot overflow.
 fn centre(([ax, ay], [bx, by]): (Point, Point), vertical: bool) -> f64 {
     if vertical { ay * HALF + by * HALF } else { ax * HALF + bx * HALF }
+}
+
+/// The square of half-side `reach` about `point`, rounded outward.
+fn around([px, py]: Point, reach: f64) -> Window {
+    [(px - reach).next_down(), (py - reach).next_down(), (px + reach).next_up(), (py + reach).next_up()]
+}
+
+/// The squared distance from `point` to an envelope, as computed; it only
+/// orders the search.
+fn gap([px, py]: Point, [x0, y0, x1, y1]: Window) -> f64 {
+    let dx = (x0 - px).max(px - x1).max(0.0_f64);
+    let dy = (y0 - py).max(py - y1).max(0.0_f64);
+    dx * dx + dy * dy
 }
 
 pub(super) fn envelope([ax, ay]: Point, [bx, by]: Point) -> Window {

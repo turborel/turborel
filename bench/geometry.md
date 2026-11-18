@@ -527,3 +527,41 @@ eight-thread SQL scans by -38% and -20%, the unprepared 512-edge decode
 by -24%, and preparing a 32-edge polygon by -30%, each with a spread
 between 25% and 41%. In the first after-run every one of them was within
 8% of the baseline.
+
+## Prepared point distance by a nearest-edge search
+
+A prepared polygon's distance to a point took the least measure over
+every edge, as the unprepared call does. From the seventeenth point
+distance it measures, a prepared polygon of at least 32 edges now
+searches the hierarchy of its edges for the nearest one, depth first and
+nearer child first, and skips a subtree only when its envelope lies
+beyond the best measure so far, widened as the chains' search widens it
+(RULES.md D85). The distance is the scan's to the bit.
+
+Measured on an Apple M4, Rust 1.99.0, against the parent commit's
+second run above. This change ran twice and the second run is
+reported:
+
+```text
+cargo xtask bench geometry --save search --compare dense
+```
+
+| Prepared point distance | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| 32-edge polygon | 1,929,525 | 3,891,610 | 2.0x |
+| 64-edge polygon | 1,057,703 | 3,231,850 | 3.1x |
+| 128-edge polygon | 588,092 | 2,490,774 | 4.2x |
+| 512-edge polygon | 156,294 | 1,174,743 | 7.5x |
+| 260-edge comb | 360,118 | 1,770,079 | 4.9x |
+| 4,100-edge comb | 26,299 | 660,938 | 25x |
+| 32,772-edge comb | 2,378 | 12,621 | 5.3x |
+
+Each distance first locates the point. The 32,772-edge comb's operand
+builds its cell certificates only after 262,400 located points, more
+than the 98,304 calls the case makes, so its interval tree, 79 µs a
+point, still dominates; the 4,100-edge comb's first timed run, at 92,055
+pairs/s, came before its certificates. The square's unprepared distance
+moved by -32% with a spread of 55%; a probe of the same calls, run
+alternately three times on each side, measured 11.83 to 11.94 million
+pairs/s on both, as it did the 512-edge polygon's at about 157,000.
+Other moves, both ways, follow the noisy baseline run.

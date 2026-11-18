@@ -6,7 +6,8 @@
 //! time the operand has located enough points to repay them, so an
 //! operand prepared for a few rows of a join never pays for them; the
 //! hierarchy of its edges (`tree.rs`), the first time a point in a
-//! boundary cell needs the edges near it.
+//! boundary cell needs the edges near it, or once a few distances have
+//! repaid it; a point's distance then searches it for the nearest edge.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -47,6 +48,8 @@ struct Prepared {
     /// The polygon's edges, and their hierarchy once a point needs it.
     edges: usize,
     tree: OnceLock<Option<Box<EdgeTree>>>,
+    /// Point distances measured before the hierarchy is searched.
+    measured: AtomicUsize,
     /// The budget certificates, filed edges and the hierarchy would reserve
     /// from, kept only for an operand that may build them.
     budget: Option<Arc<MemoryBudget>>,
@@ -64,6 +67,10 @@ const MIN_CELL_USES: usize = 256;
 /// filed: filing costs about one unprepared test, which files the larger
 /// side's edges anyway.
 const FILED_AFTER_USES: usize = 1;
+/// \[DESIGN\] Point distances measured by a scan before the edges'
+/// hierarchy is searched instead: building it costs about as much as
+/// twelve to sixteen scans of 4,100 to 32,772 edges.
+const MEASURED_AFTER_USES: usize = 16;
 
 pub(super) fn specialize(function: GeometryFunction, args: &[Option<&Value>], budget: &Arc<MemoryBudget>) -> Option<ScalarRef> {
     let [left, right] = args else { return None };
@@ -111,6 +118,7 @@ impl Prepared {
             probed,
             edges,
             tree: OnceLock::new(),
+            measured: AtomicUsize::new(0),
             budget,
             rectangle,
             _held: held,
@@ -164,6 +172,20 @@ impl Prepared {
         let Some(filed) = self.filed() else { return Ok(None) };
         let locate = |point| self.location(point);
         Ok(filed.meets(&self.geometry.shape, &other.shape, &locate))
+    }
+
+    /// A point's separation from the polygon, for a distance whose point
+    /// the polygon does not hold, by a nearest-edge search once enough
+    /// distances have repaid the hierarchy: the scan's minimum, to the bit.
+    fn separation(&self, other: &Geometry, located: Option<bool>) -> Option<f64> {
+        let (GeometryFunction::Distance, super::Shape::Point(Some(point))) = (self.function, &other.shape) else { return None };
+        if located == Some(true) || self.cells_after == usize::MAX {
+            return None;
+        }
+        if self.tree.get().is_none() && self.measured.fetch_add(1, Ordering::Relaxed) < MEASURED_AFTER_USES {
+            return None;
+        }
+        self.tree()?.nearest(*point)
     }
 
     /// Where `point` lies in the prepared polygon, exactly: by its cell,
@@ -250,10 +272,11 @@ impl ScalarFunction for Prepared {
         let other = if self.position == 0 { right } else { left };
         let other = Geometry::from_value(other)?;
         let located = self.intersection(&other)?;
+        let measured = self.separation(&other, located);
         if self.position == 0 {
-            self.function.pair_located(&self.geometry, &other, located)
+            self.function.pair_located(&self.geometry, &other, located, measured)
         } else {
-            self.function.pair_located(&other, &self.geometry, located)
+            self.function.pair_located(&other, &self.geometry, located, measured)
         }
     }
 }

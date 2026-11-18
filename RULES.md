@@ -3138,8 +3138,13 @@ touch, and decides as the unprepared relationship does: edges that meet,
 or a first vertex of either shape, part by part, not outside the other,
 the prepared polygon's points placed by its cells, interval tree or
 rings. Collections keep the general path. Distance reuses the
-prepared intersection decision, then keeps its ordinary separation kernel
-and result bounds; segment-distance pruning is not implied.
+prepared intersection decision and keeps its result bounds. From the
+seventeenth point it measures, such an operand finds a point's
+separation by searching the hierarchy of its edges for the nearest,
+depth first and nearer child first: a subtree is skipped only when its
+envelope misses the square within the best measure so far, widened as
+the chains' search widens it, so every edge whose measure could be
+least is measured and the minimum is the scan's to the bit.
 Spatial probes with equal declared semantics and deterministic
 functions have one learned plan shape even when preparation changes the
 function object. Ordinary function probes still require object identity;

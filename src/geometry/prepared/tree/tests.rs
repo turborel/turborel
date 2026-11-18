@@ -2,6 +2,7 @@
 //! window, holds its room until dropped, and declines a refused one.
 
 use super::*;
+use crate::geometry::distance::separated;
 use crate::geometry::prepared::cells;
 use crate::geometry::shape::MULTIPOLYGON;
 use crate::geometry::tests::common::dense_ring;
@@ -105,4 +106,44 @@ fn hierarchies_hold_their_room_until_dropped() {
     assert_eq!(budget.reserved(), 0);
     assert!(EdgeTree::new(&shape, cells::edges(&shape).unwrap(), &MemoryBudget::new(64)).is_none());
     assert_eq!(budget.reserved(), 0);
+}
+
+/// The scan's minimum measure from `point` to every edge of `shape`.
+fn scanned(point: Point, shape: &Shape) -> f64 {
+    separated(&Shape::Point(Some(point)), shape)
+}
+
+/// Verifies: [DESIGN] D85: the nearest-edge search returns, to the bit,
+/// the minimum a scan of every edge takes, for points inside, on, near and
+/// far from combs, stars, holes and parts, at integer, fractional, tiny and
+/// huge scales.
+#[test]
+fn nearest_edges_measure_as_the_scan_does_to_the_bit() {
+    let budget = MemoryBudget::new(usize::MAX);
+    let holed = Shape::Polygon(vec![dense_ring(0.0_f64, 10.0_f64), dense_ring(2.0_f64, 8.0_f64)]);
+    let multi = Shape::Multi(MULTIPOLYGON, vec![holed.clone(), Shape::Polygon(vec![dense_ring(12.0_f64, 14.0_f64)])]);
+    let scaled = |shape: &Shape, by: f64| {
+        let rings: Vec<Vec<Point>> =
+            rings(shape).unwrap().into_iter().map(|ring| ring.iter().map(|&[x, y]| [x * by, y * by]).collect()).collect();
+        Shape::Polygon(rings)
+    };
+    for shape in
+        [comb(300), star(97), holed.clone(), multi, scaled(&star(31), 1.0e-9_f64), scaled(&holed, 1.0e12_f64), scaled(&comb(40), 0.37_f64)]
+    {
+        let tree = tree(&shape, &budget);
+        let bounds = shape.bounds().unwrap().unwrap();
+        let ([x0, y0], [x1, y1]) = (bounds.lower(), bounds.upper());
+        let (w, h) = (x1 - x0, y1 - y0);
+        let mut points: Vec<Point> = rings(&shape).unwrap().into_iter().flatten().copied().collect();
+        for i in 0..=30_u32 {
+            for j in 0..=30_u32 {
+                let (u, v) = (f64::from(i) / 10.0_f64 - 1.0_f64, f64::from(j) / 10.0_f64 - 1.0_f64);
+                points.push([x0 + w * u, y0 + h * v]);
+            }
+        }
+        points.extend([[x0 - w * 1.0e6_f64, y1 + h * 3.0e5_f64], [x1 + w * 0.01_f64, y0 - h * 0.02_f64]]);
+        for point in points {
+            assert_eq!(tree.nearest(point).unwrap().to_bits(), scanned(point, &shape).to_bits(), "{point:?}");
+        }
+    }
 }

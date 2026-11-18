@@ -59,6 +59,32 @@ fn lines(left: &[Point], right: &[Point]) -> f64 {
 /// its hierarchy.
 const SEARCH_PAIRS: usize = 4_096;
 
+/// IEEE 754 binary64 layout, for a unit in the last place.
+const FRACTION_BITS: u32 = 52;
+const EXPONENT_MASK: u64 = 0x7ff;
+/// The widening of a search beyond its best measure: far more than a
+/// measure's relative rounding, plus far more than the absolute rounding
+/// of coordinate differences, in units of the largest coordinate's last
+/// place.
+const SLACK: f64 = 9.536_743_164_062_5e-7;
+const UNITS: f64 = 64.0;
+
+/// How far beyond the best measure so far, `best`, a search must still
+/// look for a measure that could be least, for `unit` a unit in the last
+/// place of the largest coordinate. An edge whose envelope lies farther
+/// has a true distance beyond it, so its measure exceeds `best`.
+pub(super) fn reach(best: f64, unit: f64) -> f64 {
+    best + best * SLACK + unit * UNITS
+}
+
+/// A unit in the last place of `largest`, the largest coordinate
+/// magnitude, or none if it is not finite.
+pub(super) fn unit_of(largest: f64) -> Option<f64> {
+    let exponent = (largest.to_bits() >> FRACTION_BITS) & EXPONENT_MASK;
+    let bits = exponent.checked_sub(u64::from(FRACTION_BITS)).filter(|&e| e > 0).map_or(1_u64, |e| e << FRACTION_BITS);
+    largest.is_finite().then(|| f64::from_bits(bits))
+}
+
 fn between(a: Point, b: Point, c: Point, d: Point) -> f64 {
     segment(a, c, d).min(segment(b, c, d)).min(segment(c, a, b)).min(segment(d, a, b))
 }
