@@ -93,6 +93,7 @@ fn the_empty_type_is_a_static_error() {
     assert_eq!(outcome("$x/a/text()/d", None, &x), "err:XPST0005");
     assert_eq!(alone("()"), "ok");
     assert_eq!(alone("data(())"), "ok");
+    assert_eq!(alone("error() + 1"), "ok", "of none, as of fn:error, none, not the empty type");
     assert_eq!(alone("let $e := () return $e"), "err:XPST0005");
     assert_eq!(alone("<a/>/@b"), "ok", "an element of xs:anyType may have any attribute");
 }

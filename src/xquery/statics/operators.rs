@@ -242,6 +242,12 @@ pub fn binary(left: &Type, right: &Type, what: &str, typed: &dyn Fn(Atom, Atom) 
             "an operand of {what} is of {left} and {right}, not each of one atomic value or none [XQueryFS Appendix B.2]"
         )));
     };
+    // [XQueryFS §8.4] Of an operand of no value at all, `none`, as of
+    // fn:error, none; else of one of the empty type, the empty type.
+    let never = |s: &Split| s.atoms.is_empty() && !s.optional;
+    if never(&lefts) || never(&rights) {
+        return Ok(Type::None);
+    }
     if lefts.atoms.is_empty() || rights.atoms.is_empty() {
         return Ok(Type::Empty);
     }

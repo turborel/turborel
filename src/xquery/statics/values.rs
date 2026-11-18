@@ -34,8 +34,9 @@ pub fn data(t: &Type) -> Result<Type> {
             }
         }
     }
+    // Of no item type: of `none`, as of fn:error, none; else empty.
     if first {
-        return Ok(Type::Empty);
+        return Ok(if quantifier(t)?.zero() { Type::Empty } else { Type::None });
     }
     Ok(Type::of_prime(items, each.times(quantifier(t)?)))
 }
