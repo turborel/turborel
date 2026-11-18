@@ -177,7 +177,8 @@ fn constraints_are_described_21_2_13() {
 /// among them: an owner's of the grantor "_SYSTEM", every privilege on its
 /// base table, TRIGGER among them, and its columns, grantable; one granted
 /// on a column alone a column privilege; and USAGE_PRIVILEGES PUBLIC's
-/// USAGE on the character set and collation.
+/// USAGE on the character set and collation, and [ISO/IEC 9075-14:2006
+/// draft §4.2.6, §21.4] on the permanently registered XML Schemas.
 #[test]
 fn privileges_are_described_21_2_10() {
     let db = catalog();
@@ -210,7 +211,10 @@ fn privileges_are_described_21_2_10() {
             "_SYSTEM|PUBLIC|SQL_TEXT|COLLATION|USAGE|NO",
             "_SYSTEM|PUBLIC|CASE_INSENSITIVE|COLLATION|USAGE|NO",
             "_SYSTEM|PUBLIC|UCS_BASIC|COLLATION|USAGE|NO",
-            "_SYSTEM|PUBLIC|UNICODE|COLLATION|USAGE|NO"
+            "_SYSTEM|PUBLIC|UNICODE|COLLATION|USAGE|NO",
+            "_SYSTEM|PUBLIC|XS|XML SCHEMA|USAGE|NO",
+            "_SYSTEM|PUBLIC|XSI|XML SCHEMA|USAGE|NO",
+            "_SYSTEM|PUBLIC|SQLXML|XML SCHEMA|USAGE|NO"
         ]
     );
     let information = "SELECT GRANTOR, GRANTEE, IS_GRANTABLE FROM INFORMATION_SCHEMA.TABLE_PRIVILEGES WHERE TABLE_NAME = 'COLUMNS'";

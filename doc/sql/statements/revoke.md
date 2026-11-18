@@ -73,6 +73,16 @@ drops each lost column first, as ALTER TABLE DROP COLUMN with CASCADE
 drops it, then what is abandoned. A revoke that would drop every column
 of a table is refused before it drops any.
 
+USAGE taken on a registered XML Schema abandons the grants the grantee
+made by the grant option it loses, and what names it of a schema whose
+owner it leaves without USAGE: each registered XML Schema that includes,
+redefines or imports it, and each view, constraint, assertion, trigger
+and routine that validates by it or is of a type of XMLSCHEMA of it.
+RESTRICT refuses the revoke (SQLSTATE 2B000), and CASCADE drops them as
+DROP XML SCHEMA with CASCADE does. A column, domain or user-defined type
+of an XML type of XMLSCHEMA of it is dropped by nothing, so it refuses
+the revoke even with CASCADE (SQLSTATE 2B000).
+
 A privilege named that its user had not granted the grantee is not
 taken, and the statement completes with the warning SQLSTATE 01006.
 
@@ -112,7 +122,7 @@ revoker holds each WITH ADMIN OPTION.
 | 2A000 | -102 | No `<drop behavior>` is written, or the statement is not written as the synopsis shows |
 | 2A000 | -103 | A rule above is broken |
 | 2A000 | -104 | The revoker holds a role named not WITH ADMIN OPTION |
-| 2B000 | -103 | RESTRICT, and a privilege, view, constraint, assertion, trigger or routine would be abandoned, a column or domain of a schema left without USAGE is of the collation, a grant of USAGE on the sequence generator would be abandoned, or a column, view, constraint, generated column or grant would be lost or abandoned with a privilege on a distinct type or its function |
+| 2B000 | -103 | RESTRICT, and a privilege, view, constraint, assertion, trigger or routine would be abandoned, a column or domain of a schema left without USAGE is of the collation, a grant of USAGE on the sequence generator or the registered XML Schema, or a registered XML Schema using it, would be abandoned, or a column, view, constraint, generated column or grant would be lost or abandoned with a privilege on a distinct type or its function |
 | 23000 | -201 | A constraint no longer holds of the rows of a table reverted |
 | 25000 | -917 | The transaction is READ ONLY |
 | 01006 | 0 | Not an error: a privilege named was not granted, and is not taken |
@@ -217,7 +227,9 @@ turborel: SQLCODE -104 (SQLSTATE 0P000): no role SENIOR is granted to CAROL or t
 
 ISO/IEC 9075:1992 §11.37. Of a collation, ISO/IEC 9075-2:2023 §12.7,
 as SQL-92 has no rule for a column of one; of a sequence generator, which
-SQL-92 lacks, the same. SQL-86 has no REVOKE. ISO/IEC 9075-2:2023 §12.7
+SQL-92 lacks, the same; of a registered XML Schema, whose USAGE ISO/IEC
+9075-14 leaves to the implementation [§4.7.1], as of a sequence
+generator. SQL-86 has no REVOKE. ISO/IEC 9075-2:2023 §12.7
 GR12h loses a generated column only when its generation expression loses
 EXECUTE on a routine. Losing it over USAGE on a domain or collation is
 turborel's reading, as the expression would no longer bind. REVOKE of

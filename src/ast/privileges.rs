@@ -25,6 +25,9 @@ pub enum PrivilegeObject {
     Routine(RoutineType),
     /// [ISO/IEC 9075-4:2006 draft §10.2] MODULE `<module name>`.
     Module,
+    /// \[EXTENSION\] [ISO/IEC 9075-14:2006 draft §4.7.1] XML SCHEMA
+    /// `<registered XML Schema name>`.
+    XmlSchema,
 }
 
 /// [ISO/IEC 9075:1992 §11.37] `<revoke statement>` ::= REVOKE \[GRANT

@@ -175,14 +175,15 @@ impl Abandoned {
 impl State {
     /// REVOKE `r` by `auth`, its names in schema `schema`, of an object
     /// other than a table or view: a collation, a domain, a sequence
-    /// generator, a module, a type or a routine, each as its own revoke
-    /// takes it; none of a table or view.
+    /// generator, a module, a type, a routine or a registered XML Schema,
+    /// each as its own revoke takes it; none of a table or view.
     fn revoke_of_other(&mut self, (auth, schema): (&str, &str), r: &RevokeStatement) -> Option<Result<Defined>> {
         let revoked = match r.object {
             PrivilegeObject::Collation => self.revoke_collation_usage((auth, schema), r),
             PrivilegeObject::Domain => self.revoke_usage((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Sequence => self.revoke_sequence_usage((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Module => self.revoke_on_module((auth, schema), r).or_at(r.table.at),
+            PrivilegeObject::XmlSchema => self.revoke_xml_schema_usage((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_) => {
                 self.revoke_on_type((auth, schema), r).or_at(r.table.at)
             }

@@ -155,10 +155,10 @@ features.
 - XML Schema: the Information Schema of registered XML Schemas (X160,
   X161). Registered XML Schemas, CREATE and DROP XML SCHEMA, the XMLSCHEMA
   types, XMLVALIDATE and IS VALID are done (`src/xml/schema.rs`,
-  `db/definitions/xml_schemas.rs`, `binder/xml/valid.rs`). Left: GRANT
-  and REVOKE of USAGE on a registered XML Schema, which
-  `catalog::xml_schemas::may_use` is to check; and the
-  components of the permanently registered XML Schemas, so they validate
+  `db/definitions/xml_schemas.rs`, `binder/xml/valid.rs`), and USAGE on
+  one is granted and revoked by GRANT and REVOKE USAGE ON XML SCHEMA
+  (`db/usage/xml_schemas.rs`). Left: the components of the permanently
+  registered XML Schemas, so they validate
   (XS's the Schema for Schemas). Identity constraints compare every pair
   of key-sequences, and a `.//` selector walks each target's subtree
   again, so a document of many keys is validated in quadratic time or

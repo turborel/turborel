@@ -333,6 +333,7 @@ impl State {
             | PrivilegeObject::Collation
             | PrivilegeObject::Sequence
             | PrivilegeObject::Module
+            | PrivilegeObject::XmlSchema
             | PrivilegeObject::Type => (false, None),
         };
         let types = match parameters {

@@ -3165,7 +3165,13 @@ read from the document is not stored but read again as the catalog is,
 each after those it uses, with their documents alone as its library, so
 nothing derived can disagree with what was registered. As the catalog is
 logged, checkpointed and replicated as opaque bytes (D57), registered XML
-Schemas need nothing of their own there.
+Schemas need nothing of their own there. USAGE on one is granted and
+revoked by GRANT and REVOKE USAGE ON XML SCHEMA, as on a sequence
+generator, Part 14 leaving how to the implementation; the permanently
+registered XML Schemas, INFORMATION_SCHEMA.XS, XSI and SQLXML, are
+constants every user holds USAGE on. `catalog::xml_schemas::may_use` is
+the one check of USAGE every statement naming a registered XML Schema
+makes [ISO/IEC 9075-14:2006 draft §11.6 AR1].
 
 An XML type of XMLSCHEMA (`value::xml::Typing::Schema`) holds what its
 descriptor includes, `value::types::XmlSchemaNamed`: the registered XML

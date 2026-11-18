@@ -47,7 +47,7 @@ The views of SQL-92, each with the columns the standard gives it:
 | ASSERTIONS | assertion: whether deferrable |
 | TABLE_PRIVILEGES | privilege on a table |
 | COLUMN_PRIVILEGES | privilege on a column |
-| USAGE_PRIVILEGES | USAGE on a domain, a character set, a collation or a sequence generator, its OBJECT_TYPE SEQUENCE |
+| USAGE_PRIVILEGES | USAGE on a domain, a character set, a collation, a sequence generator, its OBJECT_TYPE SEQUENCE, or a registered XML Schema, its OBJECT_TYPE XML SCHEMA |
 | VIEW_TABLE_USAGE | table a view reads |
 | VIEW_COLUMN_USAGE | column a view reads |
 | CONSTRAINT_TABLE_USAGE | table a constraint refers to |

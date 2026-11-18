@@ -201,7 +201,8 @@ fn usage_privileges_columns() -> Vec<ColumnDesc> {
 /// (`State::owner_grantable`), and each granted; on each collation, its
 /// owner's [ISO/IEC 9075-2:2023 §11.43 GR2], and each granted; and on each
 /// sequence generator, its owner's, grantable [§11.72 GR2], and each
-/// granted.
+/// granted; and on each registered XML Schema
+/// (`definition/xml_schemas.rs`).
 ///
 /// # Errors
 ///
@@ -240,5 +241,6 @@ fn usage_privileges(seen: &Seen<'_>) -> Result<Vec<Row>> {
         rows.push(row(SYSTEM_GRANTOR, owner_of(&*seen.state.catalog, &d.name.auth), seen.state.owner_grantable(d)?));
         rows.extend(d.usage.iter().map(|u| row(&u.grantor, u.grantee.as_deref().unwrap_or(PUBLIC), u.grantable)));
     }
+    rows.extend(super::xml_schemas::usage(seen));
     Ok(rows)
 }

@@ -45,7 +45,7 @@ none. LOCATION is its schema location, the empty string if not written.
 
 Its `<xs:include>`, `<xs:redefine>` and `<xs:import>` find their documents
 among the registered XML Schemas the owner of its schema may use, those
-of its own schemas, and nowhere else: no file or URL is read. An include
+of its own schemas and those it holds USAGE on, and nowhere else: no file or URL is read. An include
 or redefine finds the one whose LOCATION is its schemaLocation; an import
 the one at its schemaLocation, which must be of the namespace it imports,
 else the first of that namespace, in order of name. One not found adds
@@ -79,7 +79,8 @@ it.
 ## PRIVILEGES
 
 Its schema's owner. A registered XML Schema it includes, redefines or
-imports is found if that owner owns its schema too.
+imports is found if that owner owns its schema too, or holds USAGE on it
+(see [GRANT](grant.md)).
 
 ## ERRORS
 

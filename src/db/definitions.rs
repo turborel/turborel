@@ -401,6 +401,9 @@ impl State {
         if p.object == PrivilegeObject::Module {
             return self.grant_on_module(auth, schema, p).or_at(p.table.at);
         }
+        if p.object == PrivilegeObject::XmlSchema {
+            return self.grant_xml_schema_usage(auth, schema, p).or_at(p.table.at);
+        }
         if matches!(p.object, PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_)) {
             return self.grant_on_type(auth, schema, p).or_at(p.table.at);
         }

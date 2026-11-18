@@ -1,5 +1,8 @@
 //! \[EXTENSION\] USAGE on a domain [ISO/IEC 9075:1992 §10.3, §11.36,
-//! §11.37]: granted, and revoked, with what its revoke abandons.
+//! §11.37]: granted, and revoked, with what its revoke abandons. USAGE on
+//! a registered XML Schema is `usage/xml_schemas.rs`'s.
+
+mod xml_schemas;
 
 use std::sync::Arc;
 

@@ -32,8 +32,9 @@
 //! makes in `definition/implicit.rs`; and, of ISO/IEC 9075-11, the base
 //! table of role authorizations in `definition/roles.rs`, those of
 //! triggers in `definition/triggers.rs`, of structured types in
-//! `definition/structured.rs` and of typed tables in `definition/typed.rs`
-//! (RULES.md R-SIZE-2).
+//! `definition/structured.rs` and of typed tables in `definition/typed.rs`;
+//! and, of ISO/IEC 9075-14, those of registered XML Schemas in
+//! `definition/xml_schemas.rs` (RULES.md R-SIZE-2).
 
 mod constraints;
 mod descriptors;
@@ -51,6 +52,7 @@ mod tests;
 mod triggers;
 mod typed;
 mod user_types;
+mod xml_schemas;
 
 use std::sync::{Arc, OnceLock};
 

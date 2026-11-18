@@ -74,6 +74,7 @@ impl State {
             | PrivilegeObject::Collation
             | PrivilegeObject::Sequence
             | PrivilegeObject::Module
+            | PrivilegeObject::XmlSchema
             | PrivilegeObject::Type => return Ok(None),
         };
         let qn = qualify(name, schema);
