@@ -89,8 +89,17 @@ impl Registry {
         let statistics = statistics::functions().into_iter().map(AggregateRef).collect::<Vec<_>>();
         let aggregates =
             standard.iter().chain(&truths).chain(&any_value).chain(&statistics).map(|f| (f.0.name().to_string(), f.clone())).collect();
-        let procedures = crate::geometry::procedures().into_iter().map(|p| (p.name().to_owned(), p)).collect();
-        Registry { scalars, aggregates, standard, tables: HashMap::new(), procedures }
+        let procedures = crate::geometry::procedures()
+            .into_iter()
+            .chain(crate::spatial::network::sql::procedures())
+            .map(|p| (p.name().to_owned(), p))
+            .collect();
+        let tables = crate::spatial::network::sql::tables()
+            .into_iter()
+            .chain(crate::spatial::paths::sql::tables())
+            .map(|f| (f.name().to_owned(), f))
+            .collect();
+        Registry { scalars, aggregates, standard, tables, procedures }
     }
 
     /// Adds a scalar function: of a name already a scalar function's, a

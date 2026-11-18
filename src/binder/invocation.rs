@@ -168,6 +168,7 @@ impl Binder<'_> {
             null_call: desc.null_call,
             deterministic: desc.deterministic,
             overrides: matches!(desc.method, Some((_, crate::ast::MethodKind::Instance))).then(Vec::new),
+            rust: None,
         })
     }
 

@@ -247,6 +247,11 @@ impl Binder<'_> {
                 Called::Pass(passed) => passed,
             }
         };
+        if schema.is_none()
+            && let Some(built_in) = self.builtin_function(name, args, scope).or_at(at)?
+        {
+            return Ok(built_in);
+        }
         if let (None, Some(embedded)) = (schema, self.catalog_embed(name, args, scope).or_at(at)?) {
             return Ok(embedded);
         }

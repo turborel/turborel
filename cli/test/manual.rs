@@ -527,6 +527,15 @@ fn the_spatial_examples_run_as_printed() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D-SPATIAL-NETWORK: the SQL
+/// Reference Manual's chapter of spatial networks and shortest paths runs
+/// as printed, as ANN.
+#[test]
+fn the_spatial_network_examples_run_as_printed() {
+    let db = spatial_database();
+    assert!(Client::of(&db, "ANN").page("sql/16-spatial-networks.md") > 0, "it shows its examples' output");
+}
+
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D85: the examples of CREATE INDEX
 /// run as printed, as ANN, of its table STAFF and a view V of it, with
 /// GEOMETRY registered for its R-tree of locations.

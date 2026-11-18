@@ -72,6 +72,17 @@ impl Session {
         Ok(super::super::Completion::Success)
     }
 
+    /// \[EXTENSION\] The value of `p`, a procedure written in Rust invoked
+    /// as a function, of the parameters' values `values`, run in the
+    /// session and transaction of `cx`; its changes are the statement's.
+    ///
+    /// # Errors
+    ///
+    /// The function's own.
+    pub(in crate::db) fn rust_function(&self, cx: StatementContext<'_>, p: &dyn Procedure, values: &[Value]) -> Result<Value> {
+        p.evaluate(values, &mut InSession { session: self, tx: cx.tx })
+    }
+
     /// The rows of `logical` in `cx`, the tables it reads locked.
     fn query_rows(cx: StatementContext<'_>, logical: LogicalPlan) -> Result<Vec<Vec<Value>>> {
         let (optimized, _, physical) = plan(cx.st, logical);
@@ -155,6 +166,9 @@ fn registrable(st: &State, (table, column, srs): (&QualifiedName, &str, Option<&
 /// SQLCODE -103 if it takes no such count of arguments; -900 of NULL or
 /// DEFAULT (Feature T522); an argument's.
 pub(in crate::db) fn rust_arguments(cx: Context<'_>, p: &dyn Procedure, call: &CallStatement) -> Result<(Vec<Expr>, Vec<DataType>)> {
+    if p.returns(call.arguments.len()).is_some() {
+        return Err(rule(format!("[ISO/IEC 9075-2:2023 §10.4 SR2] {} is a function, which no CALL invokes", p.name())));
+    }
     let types = p.parameters(call.arguments.len()).ok_or_else(|| {
         rule(format!("[ISO/IEC 9075-2:2023 §9.18 SR10] procedure {} takes no {} arguments", p.name(), call.arguments.len()))
     })?;
@@ -186,6 +200,14 @@ impl InSession<'_> {
 
 impl ProcedureContext for InSession<'_> {
     fn run(&mut self, sql: &str, args: &[Value]) -> Result<()> {
+        // [ISO/IEC 9075:1992 §20.1 GR6b ii, iii] a <schema definition>,
+        // made in the transaction as a session's own is.
+        let words: Vec<String> = sql.split_whitespace().take(2).map(str::to_ascii_uppercase).collect();
+        if words == ["CREATE", "SCHEMA"] {
+            let st = self.state()?;
+            let name = Parser::new(sql)?.in_catalog(&st.catalog_name()).schema()?.name;
+            return self.session.stage_schema(&st, self.tx, sql, &name).map(|_| ());
+        }
         let statement = Parser::for_prepare(sql, true)?.sql_statement()?;
         let st = self.state()?;
         let mut params = Params::executing(args.to_vec());
@@ -202,5 +224,13 @@ impl ProcedureContext for InSession<'_> {
 
     fn define_spatial(&mut self, change: SpatialChange) -> Result<()> {
         self.session.define_spatial(self.tx, change)
+    }
+
+    fn run_owned(&mut self, schema: &str, sql: &str, args: &[Value]) -> Result<()> {
+        let st = self.state()?;
+        let owner = owner_of(&*st.catalog, schema).to_owned();
+        let name = QualifiedName { auth: schema.to_owned(), ident: schema.to_owned() };
+        let _pushed = self.session.push(&name, (owner, schema.to_owned()), None)?;
+        self.run(sql, args)
     }
 }

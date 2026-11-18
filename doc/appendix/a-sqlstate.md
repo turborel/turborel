@@ -128,14 +128,36 @@ its own; class TB is turborel's own.
 | 2F005 | SQL routine exception: function executed no return statement, of a function whose body is no RETURN |
 | 2FF01 | SQL/MM Full-Text exception: invalid search expression, a pattern not of the [pattern language](../sql/09-fulltext-patterns.md) |
 | 2FF02 | SQL/MM Full-Text exception: invalid language specification, a language null, empty or unknown; of a spatial routine, SQL/MM Spatial exception: invalid argument |
-| 2FF03 | SQL/MM Full-Text exception: effectively empty search expression, every word of the pattern a stop word |
+| 2FF03 | SQL/MM Full-Text exception: effectively empty search expression, every word of the pattern a stop word; of a spatial routine, SQL/MM Spatial exception: null argument |
+| 2FF05 | SQL/MM Spatial exception: duplicate value: two rows of a shortest path's table of one identifier |
 | 2FF06 | SQL/MM Spatial exception: element is an empty set: a compound curve's or surface's part empty |
 | 2FF07 | SQL/MM Spatial exception: null exterior ring: a polygon's or a triangle's ring missing |
 | 2FF08 | SQL/MM Spatial exception: element is not a valid type: a value not of the type it is assigned or cast to, or a solid's shell of another type |
+| 2FF10 | SQL/MM Spatial exception: mixed spatial reference systems: a network's geometry of another SRID |
 | 2FF11 | SQL/MM Spatial exception: non-contiguous curves: a compound curve whose parts do not meet end to start |
 | 2FF18 | SQL/MM Spatial exception: point value not well formed: a coordinate not finite |
 | 2FF23 | SQL/MM Spatial exception: invalid well-known binary representation |
 | 2FF25 | SQL/MM Spatial exception: mixed coordinate dimensions: parts of one value with and without Z or M |
+| 2FF31 | SQL/MM Spatial exception: empty network: a network checked has no node and no link |
+| 2FF33 | SQL/MM Spatial exception: end node not geometry end: a link's curve not ending at its end node's point |
+| 2FF38 | SQL/MM Spatial exception: link has null geometry: a link split by a point has no curve |
+| 2FF41 | SQL/MM Spatial exception: non-connected links: links healed that share no node |
+| 2FF42 | SQL/MM Spatial exception: non-empty view: a network filled that has nodes or links |
+| 2FF45 | SQL/MM Spatial exception: non-existent link |
+| 2FF46 | SQL/MM Spatial exception: non-existent node |
+| 2FF47 | SQL/MM Spatial exception: non-existent schema: a topology or network read that is not there |
+| 2FF48 | SQL/MM Spatial exception: non-existent view: a topology or network without one of its views |
+| 2FF49 | SQL/MM Spatial exception: not a logical link: a link split logically has a curve |
+| 2FF50 | SQL/MM Spatial exception: not isolated node: a node moved or removed that a link ends at |
+| 2FF53 | SQL/MM Spatial exception: other links connected: the node two healed links share ends another link |
+| 2FF55 | SQL/MM Spatial exception: point not on link: a split's point not within the link |
+| 2FF56 | SQL/MM Spatial exception: schema already exists: of ST_INITTOPONET |
+| 2FF57 | SQL/MM Spatial exception: start node not geometry start: a link's curve not starting at its start node's point |
+| 2FF58 | SQL/MM Spatial exception: null node geometry: a link's curve changed whose node has no point |
+| 2FF62 | SQL/MM Spatial exception: invalid topology name |
+| 2FF63 | SQL/MM Spatial exception: topology privilege denied |
+| 2FF64 | SQL/MM Spatial exception: invalid network name: a name that is no name or names no network |
+| 2FF65 | SQL/MM Spatial exception: network privilege denied |
 | 2FF75 | SQL/MM Spatial exception: exterior ring not four points: a triangle's ring |
 | 2FF77 | SQL/MM Spatial exception: exactly three points: a circle not of three points |
 | 2FF84 | SQL/MM Spatial exception: missing measure values: a curve given by parameters with M but no measures, or measures without M |

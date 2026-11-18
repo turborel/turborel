@@ -8,8 +8,10 @@ use crate::error::{Code, Result, SqlError};
 pub mod curves;
 pub mod formats;
 pub(crate) mod masks;
+pub mod network;
 pub(crate) mod packed;
 pub(crate) mod partition;
+pub mod paths;
 pub mod planar;
 pub mod srs;
 

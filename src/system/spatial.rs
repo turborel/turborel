@@ -187,7 +187,7 @@ fn units(_seen: &Seen<'_>) -> Vec<Row> {
 // ---------------------------------------------------------------------------
 
 /// [Annex A.1] The meta-variables of what is not supported.
-const UNSUPPORTED: [&str; 25] = [
+const UNSUPPORTED: [&str; 24] = [
     "ST_MaxAngleAsGML",
     "ST_MaxAngleAsText",
     "ST_MaxAngleString",
@@ -202,7 +202,6 @@ const UNSUPPORTED: [&str; 25] = [
     "ST_MaxLRAsGML",
     "ST_MaxLRAsText",
     "ST_MaxLRMNameLength",
-    "ST_MaxNetworkName",
     "ST_MaxPositionExpArrayElements",
     "ST_MaxReferentArrayElements",
     "ST_MaxSRSAsText",
@@ -219,6 +218,7 @@ const UNSUPPORTED: [&str; 25] = [
 /// limit, none of what is not supported [§20.5 Description 2].
 pub fn sizing_values() -> Vec<(&'static str, Option<i64>, &'static str)> {
     let bytes = i64::try_from(crate::geometry::MAX_BYTES).unwrap_or(0);
+    let network = i64::try_from(crate::spatial::network::sql::MAX_NETWORK_NAME).unwrap_or(0);
     let mut all = vec![
         ("ST_MaxArrayElements", Some(0), "an array's cardinality is its declared type's"),
         ("ST_MaxDescriptionLength", Some(i64::from(DESCRIPTION_LENGTH)), "the characters of a description"),
@@ -232,6 +232,7 @@ pub fn sizing_values() -> Vec<(&'static str, Option<i64>, &'static str)> {
         ("ST_MaxGeometryAsText", Some(bytes), "the characters of a well-known text representation"),
         ("ST_MaxIntegerArrayElements", Some(0), "an array's cardinality is its declared type's"),
         ("ST_MaxKnotArrayElements", Some(0), "the knots of a NURBS curve, limited by the representation's octets"),
+        ("ST_MaxNetworkName", Some(network), "the characters of a network's name"),
         ("ST_MaxNURBSPointArrayElements", Some(0), "the control points of a NURBS curve, limited by the representation's octets"),
         ("ST_MaxOrganizationNameLength", Some(i64::from(ORGANIZATION_LENGTH)), "the characters of an organization's name"),
         ("ST_MaxSRSDefinitionLength", Some(i64::from(DEFINITION_LENGTH)), "the characters of a system's well-known text"),
