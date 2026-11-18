@@ -8,7 +8,11 @@
 //! rows of a value that is not one document node, of which the query of
 //! a caller may raise an error its entries do not show (`documents.rs`). A
 //! row is given once (`Index::xml_rows`), a set of those given spilling to
-//! a work area past `ONCE_BYTES` (RULES.md D38).
+//! a work area past `ONCE_BYTES` (RULES.md D38). A probe of several lookups
+//! (`XmlProbe`) gives the rows any of them gives, each once, or the rows
+//! each of them gives: those of the first kept in such a set, each marked
+//! by the last lookup it was found by, and the rows of the last given as
+//! they are read [Pal et al. §3.3].
 
 use std::collections::HashMap;
 use std::ops::Bound;
@@ -17,9 +21,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::keys::{Cursor, ENTRIES, OTHERS, ROW, after, ordinal_of, parse_entry};
 use super::lookup::{Resolved, ValueRange, XmlCost, XmlLookup, XmlQuery, value_ranges};
+use super::probe::XmlProbe;
 use super::{Held, Method, VALUE_PREFIX_BYTES, XmlIndex};
 use crate::engine::tree::{Direction, Scan, scan_of};
-use crate::error::Result;
+use crate::error::{Code, Result, SqlError};
 use crate::index::RowIds;
 use crate::spill::map::SpillMap;
 use crate::spill::{DEFAULT_SPILL_BATCH, DEFAULT_WORK_MEMORY, ListSpace};
@@ -121,6 +126,30 @@ pub(super) fn matched_paths(
     }))
 }
 
+/// Marks in `kept` each row each of `found`'s lookups gives, by how many
+/// of them gave it, in turn: a row given by the first `n` marked `n`; how
+/// many lookups there were.
+///
+/// # Errors
+///
+/// The lookups' and the set's; SQLCODE -900 of more than `u8::MAX`
+/// lookups.
+fn mark_every(kept: &mut SpillMap, found: &mut [Found]) -> Result<u8> {
+    let mut lookups = 0_u8;
+    for each in found.iter_mut() {
+        for row in each {
+            let bytes = row?.to_be_bytes();
+            if lookups == 0 || kept.get(&bytes)?.as_deref() == Some(&[lookups][..]) {
+                kept.insert(&bytes, &[lookups.saturating_add(1)])?;
+            }
+        }
+        lookups = lookups
+            .checked_add(1)
+            .ok_or_else(|| SqlError::new(Code::Unsupported, "[DESIGN] an XML probe reads at most 255 lookups (RULES.md D18, D106)"))?;
+    }
+    Ok(lookups)
+}
+
 impl XmlIndex {
     /// The rows of each entry `lookup` reads, and the seeks it made, as
     /// they are taken, then those of a value not one document node.
@@ -167,7 +196,7 @@ impl XmlIndex {
                 rows_of(scans, (self.method, None), self.checks(resolved, values))
             }
             (Method::Primary, _) => {
-                let query = XmlQuery { lookup: lookup.clone(), filter: None };
+                let query = XmlQuery::of(lookup.clone());
                 Box::new(self.primary_answers(&query).map(|answer| answer.map(|(row, _)| row)))
             }
         })
@@ -181,13 +210,56 @@ impl XmlIndex {
 
     /// The rows `lookup` may select, each once, as they are taken.
     pub(super) fn lookup_rows(self: Arc<Self>, lookup: &XmlLookup) -> RowIds {
-        let found = match self.found(lookup, &Arc::default()) {
+        match self.found(lookup, &Arc::default()) {
+            Ok(found) => self.once(found),
+            Err(e) => Box::new(std::iter::once(Err(e))),
+        }
+    }
+
+    /// The rows `probe` gives, each once, as they are taken: of every
+    /// lookup, or of any.
+    pub(super) fn probe_rows(self: Arc<Self>, probe: &XmlProbe) -> RowIds {
+        let found: Result<Vec<Found>> = probe.lookups.iter().map(|l| self.found(l, &Arc::default())).collect();
+        let mut found = match found {
             Ok(found) => found,
             Err(e) => return Box::new(std::iter::once(Err(e))),
         };
+        if probe.any || found.len() < 2 {
+            return self.once(Box::new(found.into_iter().flatten()));
+        }
+        let empty: Found = Box::new(std::iter::empty());
+        let last = found.pop().unwrap_or(empty);
+        let mut kept = SpillMap::new(self.space());
+        let mut marked = None;
+        Box::new(last.filter_map(move |row| {
+            let kept_row = row.and_then(|r| {
+                let rows = if let Some(rows) = marked {
+                    rows
+                } else {
+                    let rows = mark_every(&mut kept, &mut found)?;
+                    marked = Some(rows);
+                    rows
+                };
+                let bytes = r.to_be_bytes();
+                if kept.get(&bytes)?.as_deref() != Some(&[rows][..]) {
+                    return Ok(None);
+                }
+                kept.insert(&bytes, &[rows.saturating_add(1)])?;
+                Ok(Some(r))
+            });
+            kept_row.transpose()
+        }))
+    }
+
+    /// The space a set of rows is kept in, spilling to a work area.
+    fn space(&self) -> ListSpace {
         let areas = lock_builtin(&self.work).clone();
-        let space = ListSpace { limit: ONCE_BYTES, batch: DEFAULT_SPILL_BATCH, areas, types: crate::value::types::TypeRegistry::default() };
-        let mut given = SpillMap::new(space);
+        ListSpace { limit: ONCE_BYTES, batch: DEFAULT_SPILL_BATCH, areas, types: crate::value::types::TypeRegistry::default() }
+    }
+
+    /// The rows of `found`, each once.
+    fn once(&self, found: Found) -> RowIds {
+        let mut given = SpillMap::new(self.space());
         Box::new(found.filter_map(move |row| {
             let first = row.and_then(|r| {
                 let bytes: [u8; ROW] = r.to_be_bytes();

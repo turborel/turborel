@@ -3,13 +3,15 @@
 //! axes and the dictionary's prefixes, the bounds, the entries of a value
 //! held as a large object taken back unread, the check's steps, order
 //! and filters, the primary's parent join, descendants, versions and
-//! values cut, and the values of no one document node a column of
-//! XML(SEQUENCE) holds (RULES.md R-TEST-9, D106).
+//! values cut, the values of no one document node a column of
+//! XML(SEQUENCE) holds, and queries of several filters: their lookups, the
+//! anchors fixed, the rows each lookup of a probe gives or any gives, and
+//! the answer of a node of several anchors (RULES.md R-TEST-9, D106).
 
 use super::{Mutation, Package};
 
 /// Each XML index mechanism broken alone, and the tests that fail.
-pub const XML_INDEX: [Mutation; 22] = [
+pub const XML_INDEX: [Mutation; 29] = [
     Mutation {
         name: "xml-index-ordpath-odd",
         package: Package::Core,
@@ -198,8 +200,8 @@ pub const XML_INDEX: [Mutation; 22] = [
         package: Package::Core,
         breaks: "the check keeps no anchor of a filter, so a node it selects never holds",
         file: "src/index/xml/check/reading.rs",
-        original: "        if self.filter.as_ref().is_some_and(|f| ended & f.anchor != 0) {",
-        replacement: "        if false {",
+        original: "            if ended & compiling.step == 0 {",
+        replacement: "            if true {",
         integration: &[],
         unit: &["index::xml::check::tests::one_pass_answers_as_the_tree_does"],
     },
@@ -248,5 +250,81 @@ pub const XML_INDEX: [Mutation; 22] = [
             "xml_index_sequences::a_sequence_column_is_read_by_an_index",
         ],
         unit: &["functions::xml::query::tests::row_pattern_as_a_filter"],
+    },
+    Mutation {
+        name: "xml-probe-every",
+        package: Package::Core,
+        breaks: "a probe of several lookups gives the last lookup's rows, not those every lookup gives",
+        file: "src/index/xml/search.rs",
+        original: "                if kept.get(&bytes)?.as_deref() != Some(&[rows][..]) {",
+        replacement: "                if kept.get(&bytes)?.is_none() && false {",
+        integration: &[],
+        unit: &["index::xml::tests::probes::a_probe_gives_the_rows_of_each_lookup_or_of_any"],
+    },
+    Mutation {
+        name: "xml-probe-raising-any",
+        package: Package::Core,
+        breaks: "a probe of a query that may raise gives the rows every lookup gives, not those any raising one gives",
+        file: "src/physical/access/xml.rs",
+        original: "    let any = !raising.is_empty();",
+        replacement: "    let any = false;",
+        integration: &["xml_index_shapes::a_predicate_that_may_raise_is_read_by_its_lookup"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-query-lookups",
+        package: Package::Core,
+        breaks: "a filter's lookup leaves out the lookup's steps to its anchor",
+        file: "src/index/xml/lookup.rs",
+        original: "            let to = self.lookup.pattern.steps.get(..filter.at).unwrap_or(&self.lookup.pattern.steps);",
+        replacement: "            let to = self.lookup.pattern.steps.get(..0).unwrap_or(&self.lookup.pattern.steps);",
+        integration: &["xml_index_shapes::each_index_gives_the_rows_of_a_full_read"],
+        unit: &["xquery::lookup::tests::a_querys_lookups_are_its_own_and_its_filters"],
+    },
+    Mutation {
+        name: "xml-anchored-below",
+        package: Package::Core,
+        breaks: "a filter of a step child steps reach, descendant steps after it, is taken as of no fixed anchor",
+        file: "src/index/xml/lookup.rs",
+        original: "        if child(to) {",
+        replacement: "        if false {",
+        integration: &[],
+        unit: &[
+            "index::xml::check::tests::filters_are_of_fixed_anchors_and_bounded",
+            "xquery::lookup::tests::predicates_of_steps_are_filters",
+        ],
+    },
+    Mutation {
+        name: "xml-lookup-and",
+        package: Package::Core,
+        breaks: "a predicate of a conjunction reduces to none",
+        file: "src/xquery/lookup/conditions.rs",
+        original: "        return operands.iter().map(branches).collect::<Option<Vec<_>>>().map(|b| b.concat());",
+        replacement: "        return None;",
+        integration: &[],
+        unit: &["xquery::lookup::tests::predicates_of_steps_are_filters"],
+    },
+    Mutation {
+        name: "xml-check-anchor-closed-false",
+        package: Package::Core,
+        breaks: "a node waiting for an anchor that closes not holding of no error still waits",
+        file: "src/index/xml/check/reading.rs",
+        original: "            None => self.waiting.retain(|w| !w.pending.contains(&anchor.id)),",
+        replacement: "            None => {}",
+        integration: &[],
+        unit: &[
+            "index::xml::check::tests::a_node_waits_for_each_of_its_anchors",
+            "index::xml::check::tests::one_pass_answers_as_the_tree_does",
+        ],
+    },
+    Mutation {
+        name: "xml-primary-filter-false",
+        package: Package::Core,
+        breaks: "a node of a filter that does not hold of its anchor is taken as holding if another may",
+        file: "src/index/xml/primary.rs",
+        original: "                Outcome::False => return Ok(Outcome::False),",
+        replacement: "                Outcome::False => {}",
+        integration: &[],
+        unit: &["index::xml::primary::tests::the_primary_answers_as_each_value_does"],
     },
 ];

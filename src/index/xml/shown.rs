@@ -2,13 +2,13 @@
 //! the path and comparisons it selects by: `/` before a child step, `//`
 //! before a descendant step, `@` before an attribute's name, `*` for any
 //! name, a name in a namespace as `Q{uri}local` [XPath 3.0 §A.1 EQName],
-//! then each comparison with its literal; a query's filter of an ancestor
-//! as a predicate of the step it is of, its path relative to it, `.` the
-//! item [XQuery §3.2.2].
+//! then each comparison with its literal; a query's filters as predicates
+//! of the steps they are of, their paths relative to them, `.` the item
+//! [XQuery §3.2.2]; a probe's queries joined by `and`.
 
 use std::fmt::{self, Display, Write};
 
-use super::lookup::{Axis, Comparison, Literal, PathPattern, Step, Target, XmlLookup, XmlQuery};
+use super::lookup::{Axis, Comparison, Literal, PathPattern, Step, Target, XmlFilter, XmlLookup, XmlQuery};
 use super::probe::XmlProbe;
 use crate::value::CompOp;
 
@@ -21,48 +21,68 @@ impl Display for XmlLookup {
 
 impl Display for XmlQuery {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Some(filter) = &self.filter else { return self.lookup.fmt(f) };
-        let pattern = &self.lookup.pattern;
-        let anchor = pattern.steps.len().saturating_sub(filter.above);
-        let (above, below) = pattern.steps.split_at(anchor);
-        if above.is_empty() {
+        let of = |at: usize| self.filters.iter().filter(move |filter| filter.at == at);
+        if of(0).next().is_some() {
             f.write_char('.')?;
         }
-        steps(f, &PathPattern { steps: above.to_vec(), target: Target::Element }, false)?;
-        f.write_char('[')?;
-        steps(f, &filter.pattern, true)?;
-        compared(f, &filter.comparisons)?;
-        f.write_char(']')?;
-        steps(f, &PathPattern { steps: below.to_vec(), target: pattern.target }, false)?;
+        predicates(f, of(0))?;
+        let pattern = &self.lookup.pattern;
+        let last = pattern.steps.len().saturating_sub(1);
+        for (at, each) in pattern.steps.iter().enumerate() {
+            step(f, each, (at == last && pattern.target == Target::Attribute, false))?;
+            predicates(f, of(at.saturating_add(1)))?;
+        }
         compared(f, &self.lookup.comparisons)
     }
 }
 
 impl Display for XmlProbe {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.query.fmt(f)?;
+        for (n, query) in self.queries.iter().enumerate() {
+            if n > 0 {
+                f.write_str(" and ")?;
+            }
+            query.fmt(f)?;
+        }
         if self.answered { f.write_str(", answered by the index") } else { Ok(()) }
     }
+}
+
+/// Each of `filters` as a predicate, its path relative to its anchor.
+fn predicates<'f>(f: &mut fmt::Formatter<'_>, filters: impl Iterator<Item = &'f XmlFilter>) -> fmt::Result {
+    for filter in filters {
+        f.write_char('[')?;
+        steps(f, &filter.pattern, true)?;
+        compared(f, &filter.comparisons)?;
+        f.write_char(']')?;
+    }
+    Ok(())
 }
 
 /// The steps of `pattern`, a path `relative` to a node if so: its first
 /// step written without `/`, or `.//` of a descendant.
 fn steps(f: &mut fmt::Formatter<'_>, pattern: &PathPattern, relative: bool) -> fmt::Result {
     let last = pattern.steps.len().saturating_sub(1);
-    for (at, step) in pattern.steps.iter().enumerate() {
-        let before = match (step.axis, relative && at == 0) {
-            (Axis::Child, false) => "/",
-            (Axis::Child, true) => "",
-            (Axis::Descendant, false) => "//",
-            (Axis::Descendant, true) => ".//",
-        };
-        f.write_str(before)?;
-        if at == last && pattern.target == Target::Attribute {
-            f.write_char('@')?;
-        }
-        name(f, step)?;
+    for (at, each) in pattern.steps.iter().enumerate() {
+        step(f, each, (at == last && pattern.target == Target::Attribute, relative && at == 0))?;
     }
     Ok(())
+}
+
+/// `each`, of an attribute if `attribute`, the first of a relative path if
+/// `first`.
+fn step(f: &mut fmt::Formatter<'_>, each: &Step, (attribute, first): (bool, bool)) -> fmt::Result {
+    let before = match (each.axis, first) {
+        (Axis::Child, false) => "/",
+        (Axis::Child, true) => "",
+        (Axis::Descendant, false) => "//",
+        (Axis::Descendant, true) => ".//",
+    };
+    f.write_str(before)?;
+    if attribute {
+        f.write_char('@')?;
+    }
+    name(f, each)
 }
 
 /// The name a step tests, `*` of any.

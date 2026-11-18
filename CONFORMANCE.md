@@ -2611,7 +2611,7 @@ PATH_VALUE, VALUE, PROPERTY and primary indexes of Pal et al. (VLDB
 string and as a number, and its ORDPATH, keyed in that method's order;
 the primary's, the rows of the Infoset by row and ORDPATH, and by row,
 path and value. The primary answers a query of a row from its entries
-alone, a path, comparisons and a filter of an ancestor
+alone, a path, comparisons and filters of its steps
 (`Index::xml_answers`, `index::xml::XmlQuery`), checking a row only where
 a value is cut, a comparison raises or the row's versions differ. CREATE INDEX refuses them on
 another column, or on more than one (SQLCODE -103). No SQL comparison
@@ -2627,11 +2627,14 @@ not by LEFT, of a query of the column alone, of any XML type (of
 XML(SEQUENCE), the row of every value not one document node given by each
 lookup and checked, its query never answered by the index), that is one
 path of child, descendant and attribute steps,
-its last of one predicate, a relative path or its comparison with a
-literal, and one step before it, of child steps after it, of a predicate
-of an ancestor, a relative path or its comparison with a string
-(`xquery/lookup.rs`, `physical/access/xml.rs`). `xml_primary` answers
-such a query, exact, from its entries (`Index::xml_answers`), a row it
+each step of predicates, each a relative path or its comparison with a
+literal, or a conjunction of them [XQuery §3.6]; several such conjuncts
+of the column are read together (`xquery/lookup.rs`,
+`physical/access/xml.rs`). A probe gives the rows every lookup of the
+query gives, its path's and each predicate's [Pal et al. §3.3], or, of a
+predicate compared with a number or by a value comparison, the rows its
+lookup gives too. `xml_primary` answers such a query, exact, of every
+predicate's node fixed, from its entries (`Index::xml_answers`), a row it
 may hold of checked by the query's own test; of the others each row
 given is fetched and checked. Each is priced against a full read that
 checks every row's value (`XmlCost::of_check`), and a table another

@@ -25,6 +25,12 @@ use crate::xml::QName;
 /// value is no measurement, but past any path a query names.
 pub const MAX_STEPS: usize = 64;
 
+/// \[DESIGN\] How many filters a query has at most: more is SQLCODE -900
+/// (RULES.md D18). Each is read of each of its anchors, so the bound
+/// bounds a check's work; the value is no measurement, but past the
+/// predicates a query writes.
+pub const MAX_FILTERS: usize = 16;
+
 /// How a step reaches its nodes from the step before.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Axis {
@@ -97,35 +103,52 @@ pub struct XmlLookup {
     pub row: Option<RowId>,
 }
 
-/// \[EXTENSION\] RULES.md D106: a lookup and a filter of each node it
-/// selects: what an index answers of a row from its entries alone
+/// \[EXTENSION\] RULES.md D106: a lookup and filters of the nodes of its
+/// steps: what an index answers of a row from its entries alone
 /// (`Index::xml_answers`), and a value's own check answers
-/// (`XmlQuery::matches`). Of an index that only finds rows, its lookup's
-/// rows are a superset of its rows.
+/// (`XmlQuery::matches`). It holds of a value of which its lookup selects
+/// a node whose every filter holds of its anchor. Of an index that only
+/// finds rows, the rows every lookup of it gives (`XmlQuery::lookups`)
+/// are a superset of its rows.
 #[derive(Debug, Clone)]
 pub struct XmlQuery {
     /// The lookup.
     pub lookup: XmlLookup,
-    /// A predicate of an ancestor of each node it selects, if any.
-    pub filter: Option<XmlFilter>,
+    /// Predicates of the nodes of the lookup's steps, each of the node of
+    /// one, its anchor: none for the lookup alone.
+    pub filters: Vec<XmlFilter>,
 }
 
-/// \[EXTENSION\] RULES.md D106 [XQuery §3.2.2]: a predicate of the node
-/// `above` steps above a node a lookup selects, its anchor, as
-/// `/BOOK[@ISBN = "1"]/SECTION` holds of a SECTION whose parent BOOK has
-/// an ISBN of "1" [Pal et al. §3.1.2]: it holds of the anchor if a node
-/// its path selects from the anchor has a value its comparisons hold of;
-/// if none does and one raises, it raises.
+/// \[EXTENSION\] RULES.md D106 [XQuery §3.2.2]: a predicate of the node a
+/// step of a lookup selects, its anchor, as `/BOOK[@ISBN = "1"]/SECTION`
+/// holds of a SECTION whose parent BOOK has an ISBN of "1" [Pal et al.
+/// §3.1.2]: it holds of the anchor if a node its path selects from the
+/// anchor has a value its comparisons hold of; if none does and one
+/// raises, it raises. The anchor of each node selected is fixed
+/// (`Anchored`).
 #[derive(Debug, Clone)]
 pub struct XmlFilter {
-    /// How many steps above the node selected the anchor is: 1 its parent.
-    /// The lookup's last `above` steps are child steps, so the anchor is
-    /// the node of its step before them, or its item if they are all.
-    pub above: usize,
+    /// The step of the lookup whose node is the anchor: 0 the item, 1 the
+    /// node of its first step, its last the node selected.
+    pub at: usize,
     /// The nodes it selects, from the anchor.
     pub pattern: PathPattern,
     /// Comparisons each holding of one node it selects.
     pub comparisons: Vec<Comparison>,
+}
+
+/// \[EXTENSION\] RULES.md D106 [Pal et al. §2.2]: where a filter's anchor
+/// is of a node its lookup selects, one node of its ancestors or itself:
+/// a filter whose step is followed by child steps alone, or reached by
+/// child steps alone, has one, its ORDPATH a prefix of the node's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Anchored {
+    /// As many steps above the node: the lookup's steps after the
+    /// filter's are child steps.
+    Above(usize),
+    /// As many steps below the item: the lookup's steps to the filter's
+    /// are child steps.
+    Below(usize),
 }
 
 /// \[EXTENSION\] RULES.md D106: what an index knows of a row's value from
@@ -166,20 +189,78 @@ impl XmlCost {
 }
 
 impl XmlLookup {
-    /// `filter`'s anchor, steps above a node selected: the step selecting
-    /// it, from 0 for the item.
+    /// Where `filter`'s anchor is of a node it selects.
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if it is no step above, or past the item, or a step
-    /// below the anchor is no child step (RULES.md D106).
-    pub(super) fn anchored(&self, filter: &XmlFilter) -> Result<usize> {
+    /// SQLCODE -910 if the filter is of no step of it, or of one whose
+    /// node is not fixed of a node it selects: of a descendant step before
+    /// it and after it (RULES.md D106).
+    pub fn anchored(&self, filter: &XmlFilter) -> Result<Anchored> {
         let steps = &self.pattern.steps;
-        let below = steps.len().checked_sub(filter.above).filter(|_| filter.above > 0);
-        let anchor = below.filter(|&k| steps.get(k..).is_some_and(|s| s.iter().all(|s| s.axis == Axis::Child)));
-        anchor.ok_or_else(|| {
-            SqlError::new(Code::Api, "[DESIGN] an XML lookup's filter is of an ancestor its last steps, child steps, reach (RULES.md D106)")
-        })
+        let child = |some: &[Step]| some.iter().all(|s| s.axis == Axis::Child);
+        let (to, after) = steps
+            .split_at_checked(filter.at)
+            .ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] an XML query's filter is of a step past its lookup's (RULES.md D106)"))?;
+        if child(after) {
+            return Ok(Anchored::Above(after.len()));
+        }
+        if child(to) {
+            return Ok(Anchored::Below(to.len()));
+        }
+        Err(SqlError::new(
+            Code::Api,
+            "[DESIGN] an XML query's filter is of a step whose node is not fixed of a node it selects, a descendant step before and after it (RULES.md D106)",
+        ))
+    }
+}
+
+/// Where each of `filters`' anchor is of a node `lookup` selects.
+///
+/// # Errors
+///
+/// As `XmlLookup::anchored`; SQLCODE -900 of more than `MAX_FILTERS`
+/// filters.
+pub(super) fn anchors_of(lookup: &XmlLookup, filters: &[XmlFilter]) -> Result<Vec<Anchored>> {
+    if filters.len() > MAX_FILTERS {
+        return Err(SqlError::new(
+            Code::Unsupported,
+            format!("[DESIGN] an XML query takes at most {MAX_FILTERS} filters (RULES.md D18, D106)"),
+        ));
+    }
+    filters.iter().map(|f| lookup.anchored(f)).collect()
+}
+
+impl XmlQuery {
+    /// The lookup alone, of no filter.
+    #[must_use]
+    pub fn of(lookup: XmlLookup) -> XmlQuery {
+        XmlQuery { lookup, filters: Vec::new() }
+    }
+
+    /// Where each filter's anchor is of a node its lookup selects.
+    ///
+    /// # Errors
+    ///
+    /// As `XmlLookup::anchored`; SQLCODE -900 of more than `MAX_FILTERS`
+    /// filters.
+    pub fn anchors(&self) -> Result<Vec<Anchored>> {
+        anchors_of(&self.lookup, &self.filters)
+    }
+
+    /// Its lookup's rows hold every row it holds of, and so do each
+    /// filter's: the lookup's steps to the filter's anchor, then the
+    /// filter's, with its comparisons [Pal et al. §3.3]. Its lookup, then
+    /// each filter's, of the row its lookup asks of.
+    #[must_use]
+    pub fn lookups(&self) -> Vec<XmlLookup> {
+        let each = self.filters.iter().map(|filter| {
+            let to = self.lookup.pattern.steps.get(..filter.at).unwrap_or(&self.lookup.pattern.steps);
+            let steps = to.iter().chain(&filter.pattern.steps).cloned().collect();
+            let pattern = PathPattern { steps, target: filter.pattern.target };
+            XmlLookup { pattern, comparisons: filter.comparisons.clone(), row: self.lookup.row }
+        });
+        std::iter::once(self.lookup.clone()).chain(each).collect()
     }
 }
 

@@ -15,10 +15,11 @@
 //! open share one buffer, each its own part of it.
 //!
 //! The nodes are taken in document order, an element before its
-//! attributes: the first whose comparisons hold, or raise, answers. An
-//! element's comparisons are known as it ends, after the nodes below it,
-//! so an answer of a node is kept until no element selected before it is
-//! open.
+//! attributes: the first whose comparisons, and filters, hold, or raise,
+//! answers. An element's comparisons are known as it ends, after the
+//! nodes below it, so an answer of a node is kept until no element
+//! selected before it is open, nor node waiting for its filters'
+//! anchors (`reading.rs`).
 
 use super::lookup::{Axis, Comparison, Literal, MAX_STEPS, Step, XmlFilter, XmlLookup, XmlQuery};
 use crate::error::{Code, Result, SqlError};
@@ -109,7 +110,7 @@ impl XmlLookup {
     /// [XQuery §3.5.2]; SQLCODE -910 of a path of no step, -900 of one of
     /// more than `MAX_STEPS`; the errors of reading the value.
     pub fn matches(&self, value: &XmlValue) -> Result<bool> {
-        read(self, None, &octets_of(value)?)
+        read(self, &[], &octets_of(value)?)
     }
 
     /// `matches` of the value whose stored form is `octets`.
@@ -118,22 +119,24 @@ impl XmlLookup {
     ///
     /// As `matches`; SQLCODE -916 if the octets are no stored form.
     pub fn matches_stored(&self, octets: &[u8]) -> Result<bool> {
-        read(self, None, octets)
+        read(self, &[], octets)
     }
 }
 
 impl XmlQuery {
     /// Whether `value` has a node the lookup's path selects of which every
-    /// comparison holds and whose anchor the filter holds of, as
-    /// `XmlLookup::matches` answers: the filter holds of an anchor if a
-    /// node it selects holds, else raises if one raised.
+    /// comparison holds and each filter of its anchor, as
+    /// `XmlLookup::matches` answers: a filter holds of an anchor if a node
+    /// it selects holds, else raises if one raised; a node's answer is
+    /// false if a filter does not hold, else the error one raised [XQuery
+    /// §3.6].
     ///
     /// # Errors
     ///
-    /// As `XmlLookup::matches`; SQLCODE -910 of a filter not of an
-    /// ancestor the lookup's last steps, child steps, reach.
+    /// As `XmlLookup::matches`; SQLCODE -910 of a filter whose anchor is
+    /// not fixed (`XmlQuery::anchors`), -900 of more than `MAX_FILTERS`.
     pub fn matches(&self, value: &XmlValue) -> Result<bool> {
-        read(&self.lookup, self.filter.as_ref(), &octets_of(value)?)
+        read(&self.lookup, &self.filters, &octets_of(value)?)
     }
 
     /// `matches` of the value whose stored form is `octets`.
@@ -142,7 +145,7 @@ impl XmlQuery {
     ///
     /// As `matches`; SQLCODE -916 if the octets are no stored form.
     pub fn matches_stored(&self, octets: &[u8]) -> Result<bool> {
-        read(&self.lookup, self.filter.as_ref(), octets)
+        read(&self.lookup, &self.filters, octets)
     }
 }
 
@@ -158,10 +161,10 @@ fn octets_of(value: &XmlValue) -> Result<Vec<u8>> {
     })
 }
 
-/// The answer of `lookup`, filtered by `filter` if given, of the value
-/// whose stored form is `octets`.
-fn read(lookup: &XmlLookup, filter: Option<&XmlFilter>, octets: &[u8]) -> Result<bool> {
-    let mut reading = Reading::of(lookup, filter)?;
+/// The answer of `lookup`, filtered by `filters`, of the value whose
+/// stored form is `octets`.
+fn read(lookup: &XmlLookup, filters: &[XmlFilter], octets: &[u8]) -> Result<bool> {
+    let mut reading = Reading::of(lookup, filters)?;
     let mut events = Events::new(octets)?;
     while let Some(event) = events.next_event()? {
         if event == Event::Node {

@@ -18,7 +18,7 @@ fn answers(index: &Arc<XmlIndex>, query: &XmlQuery) -> HashMap<RowId, XmlAnswer>
 
 /// `lookup` alone.
 fn alone(lookup: XmlLookup) -> XmlQuery {
-    XmlQuery { lookup, filter: None }
+    XmlQuery::of(lookup)
 }
 
 /// Verifies: [EXTENSION] RULES.md D106 [Pal et al. §2.2, §3.1.1, §3.1.2]
@@ -71,14 +71,13 @@ fn a_parent_join_answers_the_papers_query() {
     index.insert(Key(vec![document(&book("0-00000-000-0"))]), 2).unwrap();
     index.insert(Key(vec![document("<BOOK><SECTION/></BOOK>")]), 3).unwrap();
     let isbn = path(&[(Axis::Child, "ISBN")], crate::index::xml::Target::Attribute);
-    let filter =
-        XmlFilter { above: 1, pattern: isbn, comparisons: vec![compared(CompOp::Eq, Literal::String("1-55860-438-3".to_owned()))] };
+    let filter = XmlFilter { at: 1, pattern: isbn, comparisons: vec![compared(CompOp::Eq, Literal::String("1-55860-438-3".to_owned()))] };
     let lookup = XmlLookup {
         pattern: path(&[(Axis::Child, "BOOK"), (Axis::Child, "SECTION")], crate::index::xml::Target::Element),
         comparisons: Vec::new(),
         row: None,
     };
-    let mut query = XmlQuery { lookup, filter: Some(filter) };
+    let mut query = XmlQuery { lookup, filters: vec![filter] };
     assert_eq!(answers(&index, &query), HashMap::from([(1, XmlAnswer::Holds)]));
     query.lookup.row = Some(2);
     assert_eq!(answers(&index, &query), HashMap::new());

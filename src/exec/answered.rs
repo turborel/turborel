@@ -49,13 +49,14 @@ pub(super) fn answered_entries(
     let found = db.index_of(index)?;
     let shape = db.catalog.index(index).map(IndexDesc::key_shape);
     let column = shape.as_ref().and_then(|s| s.columns.first().copied());
-    let (Some(ix), Some(column), Some(answers)) = (shape, column, Arc::clone(found).xml_answers(&asked.query)) else {
+    let [query] = asked.queries.as_slice() else { return Err(broken("an XML index answers one query")) };
+    let (Some(ix), Some(column), Some(answers)) = (shape, column, Arc::clone(found).xml_answers(query)) else {
         return Err(broken("an XML index of one column answers its query"));
     };
     // D34, D106: storage cannot tell which rows the query selects.
     storage.read_by_condition(tx, &Condition { columns: Vec::new(), probe: Probe::All })?;
     let mut reading = Reading::of(&ix, needed, found.key_projection());
-    let query = asked.query.clone();
+    let query = query.clone();
     let rows = checked(answers, db.tx.stop_of(tx)).filter_map(move |answer| {
         let kept = |(id, given)| -> Result<Option<(RowId, Row)>> {
             let Some((_, row)) = fetch(&*storage, &ix, &mut reading, (tx, id), &Key(vec![Value::Null]))? else { return Ok(None) };

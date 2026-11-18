@@ -37,9 +37,10 @@ use std::sync::{Arc, Mutex};
 
 pub use derive::MAX_KEYED_NODES;
 pub use lookup::{
-    Axis, Comparison, Literal, MAX_STEPS, PathPattern, Step, Target, XmlAnswer, XmlAnswers, XmlCost, XmlFilter, XmlLookup, XmlQuery,
+    Anchored, Axis, Comparison, Literal, MAX_FILTERS, MAX_STEPS, PathPattern, Step, Target, XmlAnswer, XmlAnswers, XmlCost, XmlFilter,
+    XmlLookup, XmlQuery,
 };
-pub use probe::XmlProbe;
+pub use probe::{MAX_LOOKUPS, XmlProbe};
 
 use super::{Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, Probe, RowIds};
 use crate::catalog::{IndexDesc, TableDesc};
@@ -294,12 +295,12 @@ impl Index for XmlIndex {
     }
 
     /// Of every entry, `Probe::All`, each (value, row) pair held, its key
-    /// null, as an index of keys derived holds no value to give; of a
-    /// lookup, `Probe::Xml`, each row it gives, once, its key null; no
+    /// null, as an index of keys derived holds no value to give; of
+    /// lookups, `Probe::Xml`, each row they give, once, its key null; no
     /// other probe, as no comparison probes it.
     fn search(self: Arc<Self>, probe: &Probe, _order: KeyOrder) -> Entries {
         if let Probe::Xml(asked) = probe {
-            return Box::new(self.lookup_rows(&asked.query.lookup).map(|row| Ok((Key(vec![Value::Null]), row?))));
+            return Box::new(self.probe_rows(asked).map(|row| Ok((Key(vec![Value::Null]), row?))));
         }
         if !matches!(probe, Probe::All) {
             return Box::new(std::iter::once(Err(SqlError::new(

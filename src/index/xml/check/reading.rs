@@ -1,62 +1,89 @@
-//! \[EXTENSION\] RULES.md D106: a lookup's answer of a value, read as its
-//! events come (`check.rs`), with its filter's [XQuery §3.2.2].
+//! \[EXTENSION\] RULES.md D106: a query's answer of a value, read as its
+//! events come (`check.rs`), with its filters' [XQuery §3.2.2].
 //!
-//! An element at which the steps above a filter's end is an anchor: each
-//! element open below it keeps, as bits, the filter's steps ending at it
-//! and matched at or above it, from that anchor, as the lookup's own from
-//! the item. A node a filter selects answers of its anchor, which holds
-//! once one holds, and raises, as it closes, if none held and one raised.
-//! A node selected whose comparisons hold, of an anchor not known to hold,
-//! waits for its anchor, as an element selected and open does; the first
-//! answer, by place, is kept until no node before it waits.
+//! An element at which the lookup's steps up to a filter's step end is an
+//! anchor of that filter: each element open below it keeps, as bits, the
+//! filter's steps ending at it and matched at or above it, from that
+//! anchor, as the lookup's own from the item. A node a filter selects
+//! answers of its anchor, which holds once one holds, and, as it closes,
+//! does not, raising if one raised.
+//!
+//! A node selected whose comparisons hold answers once each of its
+//! filters' anchors, fixed by its place (`Anchored`), is known: true once
+//! all hold; false once one closes not holding of no error; else, all
+//! known, the error one raised. Until then it waits, as an element
+//! selected and open does; the first answer, by place, is kept until no
+//! node before it waits. Nodes waiting for the same anchors, alike in
+//! whether one raised, answer alike, so only the first is kept.
 
 use super::{Compiled, Steps, bit, compared_by};
 use crate::error::{Code, Result, SqlError};
-use crate::index::xml::lookup::{Target, XmlFilter, XmlLookup};
+use crate::index::xml::lookup::{Anchored, Target, XmlFilter, XmlLookup, anchors_of};
 use crate::xml::{Event, MAX_NESTING, QName};
+
+/// A filter's steps from an anchor, of an element open: the anchor's
+/// number, and the steps ending at the element and matched at or above it.
+#[derive(Clone, Copy)]
+struct Filtering {
+    anchor: u64,
+    ended: Steps,
+    reached: Steps,
+}
 
 /// An element open: the steps ending at it and matched at or above it;
 /// if it is selected, its place in document order and where its text
-/// begins; for each anchor open at or above it, its depth and the
-/// filter's steps ending at it and matched at or above it from there; and
-/// the anchors' depths whose filter selects it.
+/// begins; of each filter, its steps from each anchor open at or above
+/// it; the anchors whose filter selects it; where its text begins, if it
+/// is selected by the lookup or a filter; and how many anchors it is.
 struct Open {
     ended: Steps,
     reached: Steps,
     selected: Option<(u64, usize)>,
-    filtering: Vec<(usize, Steps, Steps)>,
-    filtered: Vec<usize>,
-    /// Where its text begins, if it is selected by the lookup or a filter.
+    filtering: Vec<Vec<Filtering>>,
+    filtered: Vec<u64>,
     start: Option<usize>,
+    anchors: usize,
 }
 
-/// An anchor open: its depth; whether its filter holds, or the error one
-/// of its nodes raised; and the first place of a node waiting for it.
+/// An anchor open: its number, its filter, its depth; whether its filter
+/// holds, or the error one of its nodes raised.
 struct Anchor {
+    id: u64,
+    filter: usize,
     depth: usize,
     holds: bool,
     raised: Option<SqlError>,
-    waiting: Option<u64>,
 }
 
-/// A filter compiled: its steps, the steps of the lookup's before its
-/// anchor, and its anchor's distance above a node selected.
-struct Filtering<'l> {
+/// A node waiting for its anchors: its place, the anchors not yet known,
+/// and the error one known raised.
+struct Waiting {
+    at: u64,
+    pending: Vec<u64>,
+    raised: Option<SqlError>,
+}
+
+/// A filter compiled: it, its steps, the bit of the lookup's step its
+/// anchor is of, and where its anchor is of a node selected.
+struct Compiling<'l> {
     filter: &'l XmlFilter,
     path: Compiled<'l>,
-    anchor: Steps,
-    above: usize,
+    step: Steps,
+    anchored: Anchored,
 }
 
 /// The answer of a value, being read.
 pub(super) struct Reading<'l> {
     lookup: &'l XmlLookup,
     path: Compiled<'l>,
-    filter: Option<Filtering<'l>>,
-    /// The steps, and the filter's steps, each name of the item passes.
-    names: Vec<(Steps, Steps)>,
+    filters: Vec<Compiling<'l>>,
+    /// The steps each name of the item passes, and each filter's.
+    names: Vec<(Steps, Vec<Steps>)>,
     open: Vec<Open>,
     anchors: Vec<Anchor>,
+    /// The number the next anchor takes.
+    next_anchor: u64,
+    waiting: Vec<Waiting>,
     /// The places of the elements selected and open, outermost first.
     pending: Vec<u64>,
     /// The text since the outermost element selected, by the lookup or a
@@ -71,29 +98,31 @@ pub(super) struct Reading<'l> {
 }
 
 impl<'l> Reading<'l> {
-    /// The reading of `lookup`'s answer.
+    /// The reading of the answer of `lookup` and `filters`.
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 of a path of no step, or of a filter not of an
-    /// ancestor its last steps, child steps, reach; -900 of a path of
-    /// more than `MAX_STEPS`.
-    pub(super) fn of(lookup: &'l XmlLookup, filter: Option<&'l XmlFilter>) -> Result<Reading<'l>> {
-        let filter = match filter {
-            Some(filter) => {
-                let anchor = lookup.anchored(filter)?;
-                let path = Compiled::of(&filter.pattern.steps)?;
-                Some(Filtering { filter, path, anchor: bit(u32::try_from(anchor).unwrap_or(u32::MAX)), above: filter.above })
-            }
-            None => None,
-        };
+    /// SQLCODE -910 of a path of no step, or of a filter whose anchor is
+    /// not fixed (`XmlLookup::anchored`); -900 of a path of more than
+    /// `MAX_STEPS` steps, or of more filters than `MAX_FILTERS`.
+    pub(super) fn of(lookup: &'l XmlLookup, filters: &'l [XmlFilter]) -> Result<Reading<'l>> {
+        let filters = filters
+            .iter()
+            .zip(anchors_of(lookup, filters)?)
+            .map(|(filter, anchored)| {
+                let step = bit(u32::try_from(filter.at).unwrap_or(u32::MAX));
+                Ok(Compiling { filter, path: Compiled::of(&filter.pattern.steps)?, step, anchored })
+            })
+            .collect::<Result<_>>()?;
         Ok(Reading {
             lookup,
             path: Compiled::of(&lookup.pattern.steps)?,
-            filter,
+            filters,
             names: Vec::new(),
             open: Vec::new(),
             anchors: Vec::new(),
+            next_anchor: 0,
+            waiting: Vec::new(),
             pending: Vec::new(),
             text: String::new(),
             collecting: 0,
@@ -104,8 +133,9 @@ impl<'l> Reading<'l> {
 
     /// Takes `names`, the names of the item read.
     pub(super) fn named(&mut self, names: &[QName]) {
-        let filtered = self.filter.as_ref().map(|f| f.path.names(names)).unwrap_or_default();
-        self.names = self.path.names(names).into_iter().zip(filtered.into_iter().chain(std::iter::repeat(0))).collect();
+        let filtered: Vec<Vec<Steps>> = self.filters.iter().map(|f| f.path.names(names)).collect();
+        let each = |n: usize| filtered.iter().map(|f| f.get(n).copied().unwrap_or(0)).collect();
+        self.names = self.path.names(names).into_iter().enumerate().map(|(n, own)| (own, each(n))).collect();
     }
 
     /// Takes `event`.
@@ -133,9 +163,10 @@ impl<'l> Reading<'l> {
         Ok(())
     }
 
-    /// The steps, and the filter's, the name numbered `name` passes.
-    fn passes(&self, name: Option<u32>) -> (Steps, Steps) {
-        name.and_then(|n| usize::try_from(n).ok()).and_then(|n| self.names.get(n)).copied().unwrap_or((0, 0))
+    /// The steps, and each filter's, the name numbered `name` passes.
+    fn passes(&self, name: Option<u32>) -> (Steps, Vec<Steps>) {
+        let passed = name.and_then(|n| usize::try_from(n).ok()).and_then(|n| self.names.get(n));
+        passed.cloned().unwrap_or_else(|| (0, vec![0; self.filters.len()]))
     }
 
     /// Opens a document node, or an element named `name`: its item's root,
@@ -150,16 +181,13 @@ impl<'l> Reading<'l> {
         let depth = self.open.len();
         let (passed, filter_passed) = self.passes(name);
         let (ended, reached, mut filtering) = match self.open.last() {
-            None => (bit(0), bit(0), Vec::new()),
+            None => (bit(0), bit(0), vec![Vec::new(); self.filters.len()]),
             Some(parent) => {
                 let ended = self.path.child(passed, (parent.ended, parent.reached));
-                (ended, parent.reached | ended, self.filtering_below(parent, filter_passed))
+                (ended, parent.reached | ended, self.filtering_below(parent, &filter_passed))
             }
         };
-        if self.filter.as_ref().is_some_and(|f| ended & f.anchor != 0) {
-            self.anchors.push(Anchor { depth, holds: false, raised: None, waiting: None });
-            filtering.push((depth, bit(0), bit(0)));
-        }
+        let anchors = self.anchor(ended, depth, &mut filtering);
         // The item's root is no node below it, so takes no place.
         if depth > 0 {
             self.at = self.at.saturating_add(1);
@@ -174,25 +202,49 @@ impl<'l> Reading<'l> {
             self.collecting = self.collecting.saturating_add(1);
         }
         let selected = selected.zip(start);
-        self.open.push(Open { ended, reached, selected, filtering, filtered, start });
+        self.open.push(Open { ended, reached, selected, filtering, filtered, start, anchors });
         Ok(())
     }
 
-    /// The filter's steps of a child of name passing `passed`, of `parent`.
-    fn filtering_below(&self, parent: &Open, passed: Steps) -> Vec<(usize, Steps, Steps)> {
-        let Some(filter) = &self.filter else { return Vec::new() };
-        let each = |&(anchor, ended, reached): &(usize, Steps, Steps)| {
-            let below = filter.path.child(passed, (ended, reached));
-            (anchor, below, reached | below)
-        };
-        parent.filtering.iter().map(each).collect()
+    /// Opens an anchor of each filter whose step ends at an element `depth`
+    /// deep at which `ended` end, its steps from there among `filtering`;
+    /// how many.
+    fn anchor(&mut self, ended: Steps, depth: usize, filtering: &mut [Vec<Filtering>]) -> usize {
+        let mut made = 0_usize;
+        for ((filter, compiling), steps) in self.filters.iter().enumerate().zip(filtering.iter_mut()) {
+            if ended & compiling.step == 0 {
+                continue;
+            }
+            let id = self.next_anchor;
+            self.next_anchor = self.next_anchor.saturating_add(1);
+            self.anchors.push(Anchor { id, filter, depth, holds: false, raised: None });
+            steps.push(Filtering { anchor: id, ended: bit(0), reached: bit(0) });
+            made = made.saturating_add(1);
+        }
+        made
     }
 
-    /// The depths of the anchors whose filter selects a node of kind
-    /// `kind` at which `filtering` end.
-    fn filtered(&self, filtering: &[(usize, Steps, Steps)], kind: Target) -> Vec<usize> {
-        let Some(filter) = self.filter.as_ref().filter(|f| f.filter.pattern.target == kind) else { return Vec::new() };
-        filtering.iter().filter(|(_, ended, _)| filter.path.selects(*ended)).map(|&(anchor, _, _)| anchor).collect()
+    /// Each filter's steps of a child of `parent` whose name passes
+    /// `passed`, each filter's.
+    fn filtering_below(&self, parent: &Open, passed: &[Steps]) -> Vec<Vec<Filtering>> {
+        let below = |(compiling, each): (&Compiling<'_>, &Vec<Filtering>), name: Steps| -> Vec<Filtering> {
+            let step = |f: &Filtering| {
+                let ended = compiling.path.child(name, (f.ended, f.reached));
+                Filtering { anchor: f.anchor, ended, reached: f.reached | ended }
+            };
+            each.iter().map(step).collect()
+        };
+        self.filters.iter().zip(&parent.filtering).zip(passed.iter().copied()).map(|(of, p)| below(of, p)).collect()
+    }
+
+    /// The anchors whose filter selects a node of kind `kind` at which
+    /// `filtering` end.
+    fn filtered(&self, filtering: &[Vec<Filtering>], kind: Target) -> Vec<u64> {
+        let of = |(compiling, each): (&Compiling<'_>, &Vec<Filtering>)| {
+            let selects = compiling.filter.pattern.target == kind;
+            each.iter().filter(move |f| selects && compiling.path.selects(f.ended)).map(|f| f.anchor).collect::<Vec<_>>()
+        };
+        self.filters.iter().zip(filtering).flat_map(of).collect()
     }
 
     /// An attribute of the element open last, named `name`, of `value`.
@@ -202,7 +254,7 @@ impl<'l> Reading<'l> {
         let (passed, filter_passed) = self.passes(Some(name));
         let selected =
             self.lookup.pattern.target == Target::Attribute && self.path.selects(self.path.child(passed, (element.ended, element.reached)));
-        let filtering = self.filtering_below(element, filter_passed);
+        let filtering = self.filtering_below(element, &filter_passed);
         let parent = self.open.len().saturating_sub(1);
         for anchor in self.filtered(&filtering, Target::Attribute) {
             self.filter_answer(anchor, value);
@@ -213,7 +265,7 @@ impl<'l> Reading<'l> {
     }
 
     /// Closes the node open last, answering of it if it is selected, of
-    /// its anchors if a filter selects it, and closing it as an anchor.
+    /// its anchors if a filter selects it, and closing its anchors.
     pub(super) fn end(&mut self) {
         let Some(closed) = self.open.pop() else { return };
         let depth = self.open.len();
@@ -225,13 +277,9 @@ impl<'l> Reading<'l> {
             self.pending.pop();
             self.target_answer((at, depth), &text);
         }
-        if self.anchors.last().is_some_and(|a| a.depth == depth)
-            && let Some(anchor) = self.anchors.pop()
-        {
-            // A node waiting for an anchor that does not hold answers as
-            // its filter does: false, or the error it raised.
-            if let Some((waiting, raised)) = anchor.waiting.zip(anchor.raised) {
-                self.answer(waiting, Err(raised));
+        for _ in 0..closed.anchors {
+            if let Some(anchor) = self.anchors.pop() {
+                self.close(&anchor);
             }
         }
         if closed.start.is_some() {
@@ -243,41 +291,87 @@ impl<'l> Reading<'l> {
     }
 
     /// The answer of a node selected, at place `at` and `depth` deep, of
-    /// value `text`: of its comparisons, then of its anchor's filter.
+    /// value `text`: of its comparisons, then of its anchors' filters.
     fn target_answer(&mut self, (at, depth): (u64, usize), text: &str) {
         let compared = self.lookup.compared(text);
-        let Some(above) = self.filter.as_ref().map(|f| f.above) else { return self.answer(at, compared) };
-        if !matches!(compared, Ok(true)) {
+        if self.filters.is_empty() || !matches!(compared, Ok(true)) {
             return self.answer(at, compared);
         }
-        let anchor = depth.checked_sub(above).and_then(|d| self.anchors.iter_mut().find(|a| a.depth == d));
-        let Some(anchor) = anchor else { return };
-        if !anchor.holds {
-            anchor.waiting = Some(anchor.waiting.map_or(at, |w| w.min(at)));
-            return;
+        let mut pending = Vec::new();
+        for (filter, compiling) in self.filters.iter().enumerate() {
+            let below = match compiling.anchored {
+                Anchored::Above(n) => depth.checked_sub(n),
+                Anchored::Below(n) => Some(n),
+            };
+            // An anchor never opened, as of an attribute, holds of nothing.
+            let Some(anchor) = self.anchors.iter().find(|a| a.filter == filter && Some(a.depth) == below) else { return };
+            if !anchor.holds {
+                pending.push(anchor.id);
+            }
         }
-        self.answer(at, Ok(true));
+        if pending.is_empty() {
+            return self.answer(at, Ok(true));
+        }
+        pending.sort_unstable();
+        match self.waiting.iter_mut().find(|w| w.pending == pending && w.raised.is_none()) {
+            Some(alike) => alike.at = alike.at.min(at),
+            None => self.waiting.push(Waiting { at, pending, raised: None }),
+        }
     }
 
-    /// The answer of a node anchor `depth`'s filter selects, of value
-    /// `text`: the anchor holds once one holds, answering of the node
-    /// waiting for it; else keeps the first error raised.
-    fn filter_answer(&mut self, depth: usize, text: &str) {
-        let Some(compared) = self.filter.as_ref().map(|f| compared_by(&f.filter.comparisons, text)) else { return };
-        let Some(anchor) = self.anchors.iter_mut().find(|a| a.depth == depth) else { return };
-        let waiting = match compared {
-            Ok(false) => None,
+    /// The answer of a node anchor `id`'s filter selects, of value `text`:
+    /// the anchor holds once one holds, answering of the nodes waiting for
+    /// it; else keeps the first error raised.
+    fn filter_answer(&mut self, id: u64, text: &str) {
+        let Some(anchor) = self.anchors.iter_mut().find(|a| a.id == id) else { return };
+        let Some(compiling) = self.filters.get(anchor.filter) else { return };
+        match compared_by(&compiling.filter.comparisons, text) {
+            Ok(false) => {}
             Ok(true) => {
+                let first = !anchor.holds;
                 anchor.holds = true;
-                anchor.waiting.take()
+                if first {
+                    self.known(id, None);
+                }
             }
             Err(e) => {
                 anchor.raised.get_or_insert(e);
-                None
             }
-        };
-        if let Some(waiting) = waiting {
-            self.answer(waiting, Ok(true));
+        }
+    }
+
+    /// Anchor `anchor` closed: of the nodes waiting for it, none holds if
+    /// it does not hold and raised none; each else knows the error.
+    fn close(&mut self, anchor: &Anchor) {
+        if anchor.holds {
+            return;
+        }
+        match &anchor.raised {
+            None => self.waiting.retain(|w| !w.pending.contains(&anchor.id)),
+            Some(e) => self.known(anchor.id, Some(e)),
+        }
+    }
+
+    /// Anchor `id` known: holding, or of the error `raised`. Each node
+    /// waiting for it waits for it no longer, answering once it waits for
+    /// none: true, or the error one of its anchors raised.
+    fn known(&mut self, id: u64, raised: Option<&SqlError>) {
+        let mut answered = Vec::new();
+        for w in &mut self.waiting {
+            if !w.pending.contains(&id) {
+                continue;
+            }
+            w.pending.retain(|&p| p != id);
+            if let Some(e) = raised {
+                w.raised.get_or_insert_with(|| e.clone());
+            }
+            if w.pending.is_empty() {
+                answered.push((w.at, w.raised.take()));
+            }
+        }
+        self.waiting.retain(|w| !w.pending.is_empty());
+        for (at, error) in answered {
+            self.answer(at, error.map_or(Ok(true), Err));
         }
     }
 
@@ -296,10 +390,10 @@ impl<'l> Reading<'l> {
 
     /// The answer, once no node before the first that answers may still
     /// answer: an element selected and open, or a node waiting for its
-    /// anchor.
+    /// anchors.
     pub(super) fn answered(&mut self) -> Option<Result<bool>> {
         let (at, _) = self.first.as_ref()?;
-        let waiting = self.anchors.iter().filter_map(|a| a.waiting);
+        let waiting = self.waiting.iter().map(|w| w.at);
         if self.pending.first().copied().into_iter().chain(waiting).any(|w| w < *at) {
             return None;
         }

@@ -866,8 +866,8 @@ Stored in a Relational Database" (VLDB 2004):
 
 XML_PRIMARY keeps each node whole: its kind, its path and its value up to
 512 octets. It answers whether a row's value holds a path, a value at it
-and a predicate of an ancestor, such as `/order[@no = 17]/item`, without
-reading the value; a row whose answer needs a longer value is read and
+and predicates of its steps, such as `/order[@no = 17]/item[qty]`,
+without reading the value; a row whose answer needs a longer value is read and
 checked. It suits large values queried for a few of their nodes; of
 small values, reading the value costs less. It takes about twice the
 space of the others.
@@ -917,14 +917,17 @@ keeps a row only if a query's value of the row's column is not empty:
 The query's context item is the column, of any XML type, passed BY REF
 or BY VALUE, and nothing else is passed. Its
 body is one path from `.` or `/` of child, descendant (`//`) and
-attribute steps over names or `*`. Its last step may have one predicate:
-a relative path of such steps, or a comparison of one, or of `.`, with a
-literal. A comparison by `=`, `!=`, `<`, `<=`, `>` or `>=` with a string
-or a number narrows the rows the index gives; any other leaves the path
-alone. One step before the last, of child steps after it, may have a
-predicate too, of an ancestor of the nodes selected: a relative path, or
-its comparison with a string, as in `/order[@no = "17"]/item`. A query
-of another shape, or a table too small to gain, is read whole.
+attribute steps over names or `*`. Any step may have predicates, each a
+relative path of such steps, or a comparison of one, or of `.` of the
+last step, with a literal, or several of these joined by `and`, as in
+`/order[@no = "17"][customer]/item[qty = "2" and name]`. A comparison by
+`=`, `!=`, `<`, `<=`, `>` or `>=` with a string or a number narrows the
+rows the index gives; any other leaves its path alone. The index reads
+the path, and each predicate's path from the start, and gives the rows
+each of them gives; of a predicate compared with a number, which may
+fail of a node it cannot cast, the rows its own path gives too. Several
+such conditions of one column joined by AND are read alike. A query of
+another shape, or a table too small to gain, is read whole.
 
 The index gives the rows whose values may hold such a node. Each is
 fetched and the condition checked on it, so the result is a full read's.
@@ -944,7 +947,9 @@ the row of every such value, whatever the path; each is checked, and its
 error raised as by a full read.
 
 XML_PRIMARY answers of each row from the index alone a query of a path,
-its comparisons with strings and its predicate of an ancestor: a row it
+its comparisons with strings and its steps' predicates, where each
+predicate's node is fixed of a node the path selects, as it is but of a
+predicate between two `//` steps: a row it
 holds of is not checked, only one whose answer needs a value longer
 than it keeps whole. Of the other methods, of a query compared with a
 number or by a value comparison, and of a column of XML(SEQUENCE), each
@@ -1036,7 +1041,7 @@ OK
      Scan ANN.PARCELS
  -- physical:
  Project PARCELS.ID
-   IndexScan ANN.PARCELS using PARCEL_NODES [xml_primary]: PARCELS.LABEL has /parcel[to = '398']/fragile, answered by the index  (est. rows=6, cost=103.5)
+   IndexScan ANN.PARCELS using PARCEL_NODES [xml_primary]: PARCELS.LABEL has /parcel[to = '398']/fragile, answered by the index  (est. rows=1, cost=60.5)
 (12 rows)
 ```
 

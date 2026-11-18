@@ -8,6 +8,7 @@ use crate::value::xml::{Typing, XmlType};
 use crate::xml::{QName, Sequence, Syntax, Whitespace, encode, parse};
 
 mod objects;
+mod probes;
 mod sequences;
 
 /// An empty tree in a pool in memory of its own.

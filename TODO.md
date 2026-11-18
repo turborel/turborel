@@ -98,12 +98,10 @@ is kept consistent under concurrent change and recovery as the B-tree is.
   without a join's search. Graph queries need it.
 - XML indexes (RULES.md D106): `xml_path`, `xml_value`, `xml_property`
   and `xml_primary` are built, answer lookups of paths and values, and
-  the primary answers queries with filters of an ancestor; the planner
+  the primary answers queries with filters of their steps; the planner
   reads them for XMLEXISTS, XMLQUERY NULL ON EMPTY IS NOT NULL and
-  XMLTABLE of a path, the primary answering exact queries with filters of
-  an ancestor, of columns of every XML type. Left: predicates of more
-  than one step above, several paths joined by `and`,
-  and paths of other axes, which no lookup takes yet.
+  XMLTABLE of a path and the predicates of its steps, of columns of every
+  XML type. Left: paths of other axes, which no lookup takes yet.
 
 ---
 

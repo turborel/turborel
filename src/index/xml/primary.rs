@@ -8,14 +8,17 @@
 //!
 //! The nodes a query's path selects of a row are read by path and value:
 //! of each path of the dictionary its steps match, the row's entries of
-//! that path, of the values its first string comparison may hold of; then
+//! that path, of the values its comparisons may hold of if each is of a
+//! string, as a number's may fail to cast a value of no string range; then
 //! put in ORDPATH order, document order, an element before its attributes
-//! and they before its children [§2.2]. A filter's anchor is the node
-//! `above` steps above a node selected: its ORDPATH less as many
-//! components, as §3.1.2's Parent joins a node to its parent. The nodes
-//! below the anchor are its rows of the Infoset whose ORDPATH begins with
-//! its own, read as one range [§2.2]; the filter selects those whose
-//! names below the anchor its steps select. The first node, in document
+//! and they before its children [§2.2]. A filter's anchor is a node
+//! selected's ancestor or itself, as many steps above it, or below the
+//! item, as `Anchored` fixes: its ORDPATH less as many components, as
+//! §3.1.2's Parent joins a node to its parent. The nodes below the anchor
+//! are its rows of the Infoset whose ORDPATH begins with its own, read as
+//! one range [§2.2]; the filter selects those whose names below the anchor
+//! its steps select. A node holds if its every filter holds of its anchor,
+//! does not if one does not, and may else. The first node, in document
 //! order, that holds or may answers, as `XmlQuery::matches` answers.
 //!
 //! An entry is of a value's version, and a row whose versions held hold
@@ -33,7 +36,7 @@ use super::check::compared_by;
 use super::dictionary::tokens_of;
 use super::keys::{Cursor, ENTRIES, PATHED, STRING, VERSIONS, after, corrupt, ordinal_of, pathed_fields, primary_fields, text_of};
 use super::lookup::{
-    Comparison, Literal, Resolved, ValueRange, XmlAnswer, XmlAnswers, XmlCost, XmlFilter, XmlLookup, XmlQuery, value_ranges,
+    Anchored, Comparison, Literal, Resolved, ValueRange, XmlAnswer, XmlAnswers, XmlCost, XmlFilter, XmlLookup, XmlQuery, value_ranges,
 };
 use super::search::matched_paths;
 use super::{Held, PRIMARY_VALUE_BYTES, XmlIndex};
@@ -67,13 +70,16 @@ struct Shredded {
 }
 
 /// A query resolved: the paths its lookup selects, each with its names;
-/// the ranges of values its first string comparison may hold of; and its
-/// filter's steps above and path, none if a name it tests has no token.
+/// the ranges of values its comparisons, all of strings, may hold of; and each
+/// filter's anchor and path, none if a name it tests has no token.
 struct Plan {
     paths: Vec<(u64, Arc<Vec<u64>>)>,
     values: Option<Vec<ValueRange>>,
-    filter: Option<(usize, Option<Resolved>)>,
+    filters: Vec<(Anchored, Option<Resolved>)>,
 }
+
+/// What filter `n` answers of each anchor, by its ORDPATH, as known.
+type Known = HashMap<(usize, Vec<u8>), Outcome>;
 
 /// The names of path `path` from below its item down, by the dictionary.
 fn names_of(index: &XmlIndex, path: u64) -> Result<Arc<Vec<u64>>> {
@@ -175,22 +181,20 @@ impl XmlIndex {
     /// tests has no token, so no node has its path.
     fn plan(self: &Arc<Self>, query: &XmlQuery, read: &AtomicUsize) -> Result<Option<Plan>> {
         let dictionary = self.dictionary();
-        let filter = match &query.filter {
-            Some(filter) => {
-                query.lookup.anchored(filter)?;
-                Some((filter.above, filter.pattern.resolve(&dictionary)?))
-            }
-            None => None,
-        };
+        let anchors = query.anchors()?;
+        let filters = query.filters.iter().zip(anchors).map(|(f, a)| Ok((a, f.pattern.resolve(&dictionary)?))).collect::<Result<_>>()?;
         let Some(path) = query.lookup.pattern.resolve(&dictionary)? else { return Ok(None) };
         let mut paths = Vec::new();
         for id in matched_paths(self, Arc::new(path), read) {
             let id = id?;
             paths.push((id, names_of(self, id)?));
         }
-        let values =
-            value_ranges(&query.lookup.comparisons, PRIMARY_VALUE_BYTES).filter(|r| r.iter().all(|v| v.low.first() == Some(&STRING)));
-        Ok(Some(Plan { paths, values, filter }))
+        // A number compared may fail to cast a value no string range holds,
+        // so the values are read by a range only of strings alone.
+        let strings = query.lookup.comparisons.iter().all(|c| matches!(c.literal, Literal::String(_) | Literal::Untyped(_)));
+        let values = value_ranges(&query.lookup.comparisons, PRIMARY_VALUE_BYTES)
+            .filter(|r| strings && r.iter().all(|v| v.low.first() == Some(&STRING)));
+        Ok(Some(Plan { paths, values, filters }))
     }
 
     /// Whether `row` has entries of values of more than one identity.
@@ -206,7 +210,7 @@ impl XmlIndex {
     /// `MOST_COUNTED`, and a descent and the pages they fill.
     pub(super) fn primary_cost(self: &Arc<Self>, lookup: &XmlLookup) -> XmlCost {
         let read = Arc::new(AtomicUsize::new(0));
-        let query = XmlQuery { lookup: lookup.clone(), filter: None };
+        let query = XmlQuery::of(lookup.clone());
         let others = self.others(lookup.row, &AtomicUsize::new(0)).map(|row| row.map(|_| read.fetch_add(1, atomic::Ordering::Relaxed)));
         for answer in self.answering(&query, Arc::clone(&read)).map(|a| a.map(drop)).chain(others.map(|o| o.map(drop))) {
             if answer.is_err() || read.load(atomic::Ordering::Relaxed) > MOST_COUNTED {
@@ -237,19 +241,11 @@ impl Answering<'_> {
             self.selected(row, (*path, names), &mut nodes)?;
         }
         nodes.sort_by(|a, b| a.ordpath.cmp(&b.ordpath));
-        let mut anchors: HashMap<Vec<u8>, Outcome> = HashMap::new();
+        let mut known = Known::new();
         for node in &nodes {
             let mut outcome = compared(&self.query.lookup.comparisons, node);
-            if let (Outcome::True, Some((above, path)), Some(filter)) = (outcome, &self.plan.filter, &self.query.filter) {
-                let anchor = ancestor(&node.ordpath, *above)?;
-                outcome = if let Some(&known) = anchors.get(anchor) {
-                    known
-                } else {
-                    let depth = node.names.len().saturating_sub(*above);
-                    let known = path.as_ref().map_or(Ok(Outcome::False), |p| self.filtered(row, (filter, p), (anchor, depth)))?;
-                    anchors.insert(anchor.to_vec(), known);
-                    known
-                };
+            if outcome == Outcome::True {
+                outcome = self.anchored(row, node, &mut known)?;
             }
             match outcome {
                 Outcome::False => {}
@@ -260,8 +256,37 @@ impl Answering<'_> {
         Ok(None)
     }
 
+    /// What every filter answers of its anchor of `node`, of `row`, each
+    /// anchor's answer kept in `known`: false if one does not hold, else
+    /// maybe if one may, else true.
+    fn anchored(&self, row: RowId, node: &Shredded, known: &mut Known) -> Result<Outcome> {
+        let mut outcome = Outcome::True;
+        let depth = node.names.len();
+        for (n, ((anchored, path), filter)) in self.plan.filters.iter().zip(&self.query.filters).enumerate() {
+            let at = match *anchored {
+                Anchored::Above(above) => depth.checked_sub(above),
+                Anchored::Below(below) => Some(below).filter(|&b| b <= depth),
+            };
+            let Some(at) = at else { return Ok(Outcome::False) };
+            let anchor = ancestor(&node.ordpath, depth.saturating_sub(at))?;
+            let each = if let Some(&each) = known.get(&(n, anchor.to_vec())) {
+                each
+            } else {
+                let each = path.as_ref().map_or(Ok(Outcome::False), |p| self.filtered(row, (filter, p), (anchor, at)))?;
+                known.insert((n, anchor.to_vec()), each);
+                each
+            };
+            match each {
+                Outcome::False => return Ok(Outcome::False),
+                Outcome::Maybe => outcome = Outcome::Maybe,
+                Outcome::True => {}
+            }
+        }
+        Ok(outcome)
+    }
+
     /// Adds to `nodes` the nodes of `row` of path `path`, of `names`, of
-    /// the values the query's first string comparison may hold of.
+    /// the values the query's comparisons, all of strings, may hold of.
     fn selected(&self, row: RowId, (path, names): (u64, &Arc<Vec<u64>>), nodes: &mut Vec<Shredded>) -> Result<()> {
         let prefix = [&[PATHED][..], &row.to_be_bytes(), &ordinal_of(path)].concat();
         let ranges: Vec<(Vec<u8>, Bound<Vec<u8>>)> = match &self.plan.values {

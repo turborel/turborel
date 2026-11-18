@@ -103,12 +103,12 @@ fn lookups() -> Vec<XmlQuery> {
 /// `comparison` holds, as `/order[@no >= 17]/item` [XQuery §3.2.2].
 fn filtered(lookup: XmlLookup, comparison: Comparison) -> XmlQuery {
     let no = PathPattern { steps: vec![Step { axis: Axis::Child, name: Some(QName::local("no")) }], target: Target::Attribute };
-    XmlQuery { lookup, filter: Some(XmlFilter { above: 1, pattern: no, comparisons: vec![comparison] }) }
+    XmlQuery { lookup, filters: vec![XmlFilter { at: 1, pattern: no, comparisons: vec![comparison] }] }
 }
 
 /// `lookup` alone.
 fn alone(lookup: XmlLookup) -> XmlQuery {
-    XmlQuery { lookup, filter: None }
+    XmlQuery::of(lookup)
 }
 
 /// A document of `n` items, its stored form longer than a row holds.

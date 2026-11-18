@@ -4641,11 +4641,14 @@ value are found by a seek. It answers a query of a row from its entries
 alone (`Index::xml_answers`): it holds, it may and is checked, or it does
 not hold, the row not given. Its nodes of the path are found by path and
 value, then taken in ORDPATH order, which is document order. A query may
-filter a node by its ancestor `above` steps up, as
-`/BOOK[@ISBN = "1"]/SECTION` does (§3.1.2): the anchor's ORDPATH is the
-node's less as many components, the parent join of §3.1.2, and the nodes
-below it are its rows of the Infoset whose ORDPATH begins with its own,
-one range (§2.2). A row whose answer needs a value cut, a comparison that
+filter the node of any step of its path, its anchor, as
+`/BOOK[@ISBN = "1"]/SECTION` filters a SECTION's BOOK (§3.1.2), by as
+many filters as it has, a node holding if each holds of its anchor: an
+anchor fixed of the node, as many steps above it as child steps follow
+the filter's step, or below the item as child steps reach it, its
+ORDPATH the node's less as many components, the parent join of §3.1.2;
+the nodes below it are its rows of the Infoset whose ORDPATH begins with
+its own, one range (§2.2). A row whose answer needs a value cut, a comparison that
 raises, or whose versions held are of more than one value, as a row
 being changed is, is checked. It was built because reading a large
 value's nodes from the stored form, even in one pass, reads all of the
@@ -4677,8 +4680,14 @@ which they hold, each once, with what it costs. The paths of the
 dictionary are found by the tokens the last steps fix and matched step by
 step; each matching path's entries are read in the comparisons' range of
 keys; of the primary, its rows answered of the path. A query
-(`XmlQuery`) is a lookup and a filter: the rows of an index's lookup are a
-superset of its rows. The rows are a superset, as a value is cut and a reader sees one
+(`XmlQuery`) is a lookup and filters of the nodes of its steps, at most
+`MAX_FILTERS` (16): its rows are among those of its lookup, and of each
+filter's, the lookup's steps to the filter's then the filter's
+(`XmlQuery::lookups`), so a probe of several lookups (`XmlProbe`) gives
+the rows each gives, those of all but the last held in a set that spills
+(D38), each marked by how many gave it [Pal et al. §3.3]; or, of a query
+that may raise an error, the rows any of the lookups it may raise of
+gives. The rows are a superset, as a value is cut and a reader sees one
 version of its row, so its caller checks each row it fetches, as for a
 function lookup (D34): an index changes no result. The check
 (`XmlLookup::matches`) reads the value's stored form in one pass, no tree
@@ -4689,11 +4698,13 @@ an element selected is open; it holds a stack of open elements, at most
 `MAX_NESTING`. Its nodes are taken in document order, an element before
 its attributes, the first that holds or raises answering, as a tree's
 walk would answer, which a test of many values and lookups made checks.
-A filter's anchor is an element open at which the steps above the filter
-end; each element below it keeps the filter's steps as bits too, from the
-anchor; a node selected whose anchor's filter is not yet known waits for
-it, and the filter holds once a node it selects holds, else raises as
-its anchor ends if one raised.
+A filter's anchor is an element open at which the lookup's steps to the
+filter's end; each element below it keeps the filter's steps as bits
+too, from the anchor; the filter holds once a node it selects holds,
+else raises as its anchor ends if one raised. A node selected waits for
+its anchors not yet known, answering false once one ends not holding of
+no error, else, all known, the error one raised, as `and` may [XQuery
+§3.6]; nodes waiting for the same anchors are kept as the first.
 A number compared also
 selects the values keyed unordered, so no row whose comparison would raise
 err:FORG0001 is skipped (D15). D34's function lookup does not fit:
@@ -4715,21 +4726,29 @@ no document. Every lookup gives such a value's row, so it hides none, but
 the query of such a column is neither free of errors nor answered by an
 index (`functions/xml/query.rs`). The query is reduced to an index's query
 (`xquery/lookup.rs`) if it is one path of child, descendant and
-attribute steps over names or `*`, its last step of at most one
-predicate: a relative path, or its comparison, or `.`'s, with a literal.
-A general comparison with a number, or with a string by the codepoint
-collation, is the lookup's comparison; any other leaves the path alone,
-each row checked. One step before the last, of child steps after it, may
-have a predicate too, a relative path or its general comparison with a
-string: the query's filter of that ancestor (`XmlFilter`); one that may
-raise, as a numeric comparison of each ancestor may whether a node below
-it is selected or not, reduces the query to none. The rows come as
+attribute steps over names or `*`, each step of predicates whose
+conjuncts [XQuery §3.6] are each a relative path of such steps, or its
+comparison, or `.`'s, with a literal. A general comparison with a number,
+or with a string by the codepoint collation, is kept; any other is left
+to the check of each row. The last step's comparisons of `.` are the
+lookup's, or else one of its other conditions, of child steps if one is,
+continues the lookup, as `a[b op v]` is `a/b op v`; every other is a
+filter of its step's node (`XmlFilter`). A comparison with a number may
+fail to cast [err:FORG0001], and a value comparison may fail
+[err:XPTY0004], of each node it is of whether a node below is selected or
+not: the lookup of its own condition gives each row it may fail of, so a
+probe of a query that may raise reads those lookups and gives the rows
+any gives (`Reduction::raising`); one that raises none reads the
+cheapest of its lookups and each its index counts, and gives the rows
+each gives. Conjuncts of the column's queries joined by AND are one
+probe too, of all their lookups. The rows come as
 `Probe::Xml` (`XmlProbe`), opaque as a function lookup's
 (`Probe::opaque`): storage records a read of the whole table, each
 entry's key projects to null (`DerivedKeys`), and the filter keeps the
 conjunct and checks each row fetched, so an index changes no result. Of
 `xml_primary`, a query that is exactly XMLEXISTS's test, every
-comparison kept and none raising, is answered (`Index::xml_answers`):
+comparison kept and none raising, each filter's anchor fixed, is
+answered (`Index::xml_answers`):
 the conjunct is no filter's, a row the index holds of is kept as its
 visible version is fetched, and one it may hold of is checked by
 `XmlQuery::matches` (`exec/answered.rs`), of a SELECT's rows and of an
@@ -4742,12 +4761,15 @@ none (D15). A path, alone or compared with a string, raises none
 (`ScalarFunction::raise_free`), so it is no raising conjunct to D15's
 guards, and an ON condition of it is pushed onto its operand as a
 comparison is; one that may raise is moved onto its operand over a
-guard, below which the index is read (D15). A lookup is priced by the entries its index counts
-(`Index::xml_cost`), and each row it gives but an answered one a check of
+guard, below which the index is read (D15). A probe is priced by the
+entries its index counts of each
+lookup (`Index::xml_cost`), its rows those of the cheapest of every
+lookup, each a share of the table's as if apart, or the entries of every
+lookup of any, and each row it gives but an answered one a check of
 its value, against a full read that checks every row's, a check a pass
 over a value of the column's average width (`XmlCost::of_check`); a
 method that prices none is not read. EXPLAIN shows `column has` the
-query, its filter of an ancestor as a predicate of its step, and
+queries, joined by `and`, each filter as a predicate of its step, and
 whether the index answers it.
 
 The mappings of names \[EXTENSION\]. Part 14 maps SQL identifiers to XML

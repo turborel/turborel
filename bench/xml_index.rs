@@ -125,9 +125,9 @@ fn primary(bench: &Bench, items: usize, (values, indexed_values): (&[Vec<u8>], &
         assert_eq!(held, 1);
         values.len() as u64
     });
-    let alone = XmlQuery { lookup: lookup.clone(), filter: None };
+    let alone = XmlQuery::of(lookup.clone());
     for (case, asked) in [("", &alone), ("filtered, ", &filtered)] {
-        let one = XmlQuery { lookup: XmlLookup { row: Some(0), ..asked.lookup.clone() }, filter: asked.filter.clone() };
+        let one = XmlQuery { lookup: XmlLookup { row: Some(0), ..asked.lookup.clone() }, filters: asked.filters.clone() };
         bench.measure(Case::new(format!("answered, {case}one row, xml_primary, {items} items"), "lookups"), || {
             let answers: Vec<(u64, XmlAnswer)> = Arc::clone(&index).xml_answers(&one).unwrap().map(Result::unwrap).collect();
             assert_eq!(answers, [(0, XmlAnswer::Holds)]);
@@ -145,7 +145,7 @@ fn primary(bench: &Bench, items: usize, (values, indexed_values): (&[Vec<u8>], &
 fn filtered(lookup: &XmlLookup) -> XmlQuery {
     let no = PathPattern { steps: vec![Step { axis: Axis::Child, name: Some(QName::local("no")) }], target: Target::Attribute };
     let zero = Comparison { op: CompOp::Eq, literal: Literal::Number(0.0) };
-    XmlQuery { lookup: lookup.clone(), filter: Some(XmlFilter { above: 1, pattern: no, comparisons: vec![zero] }) }
+    XmlQuery { lookup: lookup.clone(), filters: vec![XmlFilter { at: 1, pattern: no, comparisons: vec![zero] }] }
 }
 
 /// An order of `items` items, the `n`th of a table: each document's
