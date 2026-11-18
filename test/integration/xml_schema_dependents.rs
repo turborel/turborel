@@ -154,3 +154,28 @@ fn a_validating_view_keeps_its_schemas_in_scope_10_20() {
     a.commit().unwrap();
     assert_eq!(rows(&a, views).unwrap(), ["W"]);
 }
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.6, §10.20 SR2e] [ISO/IEC
+/// 9075-2:2023 §12.7 GR12a, GR12q] a view whose validate expression had a
+/// registered XML Schema in scope through USAGE granted on it depends on
+/// that USAGE too: REVOKE RESTRICT is refused, SQLSTATE 2B000, and
+/// REVOKE CASCADE destroys the view.
+#[test]
+fn revoking_usage_abandons_a_validating_view_10_20() {
+    let db = registered();
+    let (a, b) = (db.session("A"), db.session("B"));
+    a.run("GRANT USAGE ON XML SCHEMA A.O TO B").unwrap();
+    a.commit().unwrap();
+    let query = format!(
+        "XMLSERIALIZE(CONTENT XMLQUERY('validate {{ . }}' PASSING BY REF {} RETURNING SEQUENCE EMPTY ON EMPTY) AS VARCHAR(60))",
+        parsed(r#"<order xmlns="urn:o"><qty>1</qty></order>"#)
+    );
+    b.run(&format!("CREATE VIEW V AS SELECT {query} AS X FROM (VALUES (1)) AS T (N)")).unwrap();
+    b.commit().unwrap();
+    let error = a.run("REVOKE USAGE ON XML SCHEMA A.O FROM B RESTRICT").expect_err("the view validates by A.O");
+    assert_eq!(error.sqlstate().as_str(), "2B000");
+    a.rollback().unwrap();
+    a.run("REVOKE USAGE ON XML SCHEMA A.O FROM B CASCADE").unwrap();
+    a.commit().unwrap();
+    assert_eq!(rows(&b, "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'B'").unwrap(), Vec::<String>::new());
+}
