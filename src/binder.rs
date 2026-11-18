@@ -58,6 +58,7 @@ mod expression;
 mod filter;
 mod from;
 mod generated;
+pub(crate) mod gql;
 mod graph;
 mod graph_properties;
 mod greatest;

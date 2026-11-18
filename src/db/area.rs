@@ -74,6 +74,10 @@ pub(super) struct Area {
     heard: Option<SqlState>,
     /// [§18.1 GR1b] Whether it raised a condition not stored.
     more: bool,
+    /// \[EXTENSION\] (§4.2) The identities a node or edge table drew for
+    /// the rows it inserted, in order, which GQL's INSERT reads (RULES.md
+    /// D-GQL).
+    drawn: Vec<Value>,
     /// [ISO/IEC 9075-2:2023 §23.2] The areas below it on the diagnostics
     /// area stack, pushed as handlers were activated, the second last: the
     /// one GET STACKED DIAGNOSTICS reads (`area/stack.rs`).
@@ -153,6 +157,29 @@ impl Session {
     /// if they could raise one (RULES.md D15).
     pub fn warning(&self) -> Option<SqlState> {
         self.inner.borrow().area.condition.as_ref().map(|c| c.state).filter(|state| state.class() == WARNING_CLASS)
+    }
+
+    /// \[EXTENSION\] (§4.2) The identities the INSERT drew, the column at
+    /// `at` of each of `rows`, kept in the area if it drew them.
+    ///
+    /// # Errors
+    ///
+    /// As reading `rows` again.
+    pub(super) fn note_drawn(&self, at: Option<usize>, rows: &mut crate::exec::HeldRows<crate::storage::Row>) -> Result<()> {
+        let Some(at) = at else { return Ok(()) };
+        let mut drawn = Vec::new();
+        rows.visit(&mut |row| {
+            drawn.extend(row.get(at).cloned());
+            Ok(())
+        })?;
+        self.inner.borrow_mut().area.drawn = drawn;
+        Ok(())
+    }
+
+    /// \[EXTENSION\] (§4.2) The identities a node or edge table drew for
+    /// the rows the last INSERT inserted, in order.
+    pub(in crate::db) fn drawn_identities(&self) -> Vec<Value> {
+        self.inner.borrow().area.drawn.clone()
     }
 
     /// The rows the last statement changed, as ROW_COUNT tells.

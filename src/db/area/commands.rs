@@ -329,3 +329,14 @@ pub(in crate::db) const CREATE_PROPERTY_GRAPH: Command = command("CREATE PROPERT
 pub(in crate::db) const ALTER_PROPERTY_GRAPH: Command = command("ALTER PROPERTY GRAPH", -23);
 /// \[EXTENSION\] DROP PROPERTY GRAPH.
 pub(in crate::db) const DROP_PROPERTY_GRAPH: Command = command("DROP PROPERTY GRAPH", -24);
+/// \[EXTENSION\] CREATE GRAPH TYPE (graph standard §4.3); GQL's codes
+/// begin at -30, those before kept for the other graph statements.
+pub(in crate::db) const CREATE_GRAPH_TYPE: Command = command("CREATE GRAPH TYPE", -30);
+/// \[EXTENSION\] DROP GRAPH TYPE.
+pub(in crate::db) const DROP_GRAPH_TYPE: Command = command("DROP GRAPH TYPE", -31);
+/// \[EXTENSION\] CREATE GRAPH, of a GQL graph (§4.3).
+pub(in crate::db) const CREATE_GRAPH: Command = command("CREATE GRAPH", -32);
+/// \[EXTENSION\] DROP GRAPH, of a GQL graph.
+pub(in crate::db) const DROP_GRAPH: Command = command("DROP GRAPH", -33);
+/// \[EXTENSION\] EXECUTE GQL (§9).
+pub(in crate::db) const EXECUTE_GQL: Command = command("EXECUTE GQL", -34);

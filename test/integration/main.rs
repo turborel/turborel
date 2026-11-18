@@ -130,6 +130,7 @@ mod generated_named;
 mod geometry;
 mod get_diagnostics;
 mod get_diagnostics_items;
+mod gql;
 mod graph_algo;
 mod graph_ddl;
 mod graph_native;

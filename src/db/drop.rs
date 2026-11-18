@@ -65,6 +65,8 @@ impl State {
             }
             DropTarget::Model(qn) => self.drop_model(qn, cascade),
             DropTarget::Pipeline(qn) => self.drop_pipeline(qn),
+            DropTarget::GraphType(qn) => self.drop_graph_type(qn, cascade),
+            DropTarget::GqlGraph(qn) => self.drop_gql_graph(qn, cascade),
         }
     }
 
@@ -235,7 +237,9 @@ impl State {
         if let (Some(graph), false) = (graphs.first(), cascade) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.2 SR3] schema {auth} holds {graph}, so it is dropped only with CASCADE")));
         }
-        let mut dropped = self.drop_graphs(&graphs)?;
+        // [EXTENSION] Its GQL graphs and graph types first, with their tables.
+        let mut dropped = self.drop_schema_gql(auth)?;
+        dropped.absorb(self.drop_graphs(&self.schema_graphs(auth))?);
         let named = |c: &&ConstraintDesc| c.name.auth == auth && c.domain.is_none();
         let of_tables: Vec<(QualifiedName, QualifiedName)> = (self.catalog.tables().into_iter())
             .filter(|t| t.name.auth != auth)
@@ -347,6 +351,16 @@ impl Session {
         {
             return Ok(Completion::Success);
         }
+        if let DropObject::GqlGraph(name, true) = object
+            && st.catalog.gql().gql_graph(&qualify(name, &self.default_schema())).is_none()
+        {
+            return Ok(Completion::Success);
+        }
+        if let DropObject::GraphType(name, true) = object
+            && st.catalog.gql().graph_type(&qualify(name, &self.default_schema())).is_none()
+        {
+            return Ok(Completion::Success);
+        }
         let target = self.drop_target(st, object)?;
         let cascade = behavior == DropBehavior::Cascade;
         // The generated columns that name what goes, with CASCADE, dropped
@@ -383,7 +397,9 @@ impl Session {
             | DropTarget::Transform(..)
             | DropTarget::Graph(_)
             | DropTarget::Model(_)
-            | DropTarget::Pipeline(_) => Vec::new(),
+            | DropTarget::Pipeline(_)
+            | DropTarget::GraphType(_)
+            | DropTarget::GqlGraph(_) => Vec::new(),
         };
         if !reverting.is_empty() {
             // Refused before a row is copied: a statement undone takes
@@ -446,8 +462,16 @@ impl Session {
             DropObject::Routine(designator) => self.routine_target(st, designator),
             DropObject::Module(name) => Ok(DropTarget::Module(self.owned(st, name, "ISO/IEC 9075-4:2006 draft §9.22 AR1")?)),
             DropObject::Cast(..) | DropObject::Ordering(_) | DropObject::Transform(..) => self.type_drop_target(st, object),
-            DropObject::Graph(name, _) => Ok(DropTarget::Graph(self.owned(st, name, "EXTENSION")?)),
+            DropObject::Graph(name, _) => {
+                let qn = self.owned(st, name, "EXTENSION")?;
+                if st.catalog.gql().gql_graph(&qn).is_some() {
+                    return Err(rule(format!("[EXTENSION] {qn} is a GQL graph, which DROP GRAPH drops with its tables")).or_at(name.at));
+                }
+                Ok(DropTarget::Graph(qn))
+            }
             DropObject::Vector(kind, name) => Ok(super::embedding::drop_target(*kind, self.owned(st, name, "EXTENSION")?)),
+            DropObject::GraphType(name, _) => Ok(DropTarget::GraphType(self.owned(st, name, "EXTENSION")?)),
+            DropObject::GqlGraph(name, _) => Ok(DropTarget::GqlGraph(self.owned(st, name, "EXTENSION")?)),
             DropObject::Schema { catalog, name, at } => {
                 let ours = st.settings.get(CATALOG_NAME).to_string();
                 if let Some(other) = catalog.as_ref().filter(|c| **c != ours.trim_end()) {

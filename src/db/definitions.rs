@@ -181,6 +181,8 @@ impl Session {
                 Session::plugin_registered(st, statement, schema)?;
                 self.own_object(st, v.name(), (schema, "EXTENSION"))
             }
+            SchemaStatement::GraphType(t) => self.own_object(st, &t.name, (schema, "EXTENSION")),
+            SchemaStatement::GqlGraph(g) => self.own_object(st, &g.name, (schema, "EXTENSION")),
             SchemaStatement::AlterType(_)
             | SchemaStatement::Method(_)
             | SchemaStatement::Cast(_)
@@ -291,6 +293,8 @@ impl State {
             SchemaStatement::Graph(g) => self.create_graph(schema, g),
             SchemaStatement::AlterGraph(a) => self.alter_graph(schema, a),
             SchemaStatement::Vector(v) => self.vector_statement(schema, v),
+            SchemaStatement::GraphType(t) => self.create_graph_type(schema, t),
+            SchemaStatement::GqlGraph(g) => self.record_gql_graph(schema, g),
         }
     }
 

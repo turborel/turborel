@@ -50,7 +50,7 @@ impl Session {
 
     /// The cursor of `sql`, with the parameters `params`, in the call
     /// `call`.
-    fn open_in(&self, call: &super::Call<'_>, sql: &str, params: &Params) -> Result<Cursor> {
+    pub(super) fn open_in(&self, call: &super::Call<'_>, sql: &str, params: &Params) -> Result<Cursor> {
         let timed = super::slow::Timed::of(call.state(), || sql.to_owned(), &self.auth());
         let spec = Self::parse_cursor(call.state(), sql, params)?;
         Self::unnamed_only(&spec)?;

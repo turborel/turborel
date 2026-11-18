@@ -203,7 +203,8 @@ pub(super) fn referenced<'f>(from: &'f [TableReference], name: &str) -> Option<&
             | TableReference::Json(_)
             | TableReference::Polymorphic(_)
             | TableReference::Graph(_)
-            | TableReference::Hybrid(_) => {}
+            | TableReference::Hybrid(_)
+            | TableReference::Gql(_) => {}
         }
     }
     None

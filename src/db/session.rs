@@ -154,6 +154,7 @@ impl Session {
             | SqlStatement::Served(_)
             | SqlStatement::GetDiagnostics(_)
             | SqlStatement::Execute(_)
+            | SqlStatement::ExecuteGql(_)
             | SqlStatement::Return(_)
             // [ISO/IEC 9075-2:2023 §9.18 GR6h] a procedure that possibly
             // modifies SQL-data is refused in a read-only transaction as

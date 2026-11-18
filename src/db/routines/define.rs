@@ -473,7 +473,9 @@ impl State {
             | SchemaStatement::AlterTransform(_)
             | SchemaStatement::Graph(_)
             | SchemaStatement::AlterGraph(_)
-            | SchemaStatement::Vector(_) => {
+            | SchemaStatement::Vector(_)
+            | SchemaStatement::GraphType(_)
+            | SchemaStatement::GqlGraph(_) => {
                 Err(rule("[DESIGN] a schema element defined for a type is a method, cast, ordering or transform"))
             }
         }

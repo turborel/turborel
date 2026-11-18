@@ -91,6 +91,8 @@ pub(super) fn of_statement(s: &SchemaStatement) -> Option<SqlState> {
         | SchemaStatement::Transform(_)
         | SchemaStatement::AlterTransform(_)
         | SchemaStatement::Graph(_)
+        | SchemaStatement::GraphType(_)
+        | SchemaStatement::GqlGraph(_)
         | SchemaStatement::AlterGraph(_)
         | SchemaStatement::Vector(_)
         | SchemaStatement::Role(_) => None,

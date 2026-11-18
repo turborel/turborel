@@ -30,7 +30,8 @@
 //!           creation), structured types (count u32, each a type),
 //!           user-defined casts, orderings and transforms (likewise),
 //!           property graphs (count u32, each a graph, by name),
-//!           embedding models and vector pipelines (`catalog/embedding.rs`)
+//!           embedding models and vector pipelines (`catalog/embedding.rs`),
+//!           graph types and GQL graphs (count u32 and each, by name)
 //! ```
 
 use std::sync::Arc;
@@ -39,14 +40,18 @@ use super::sequences::Settled;
 use super::{State, api};
 use crate::bytes::{Put, Reader};
 use crate::catalog::codec::{
-    cast, graph, ordering, put_cast, put_graph, put_ordering, put_structured_type, put_transforms, structured_type, transforms,
+    cast, gql_graph, graph, graph_type, ordering, put_cast, put_gql_graph, put_graph, put_graph_type, put_ordering, put_structured_type,
+    put_transforms, structured_type, transforms,
 };
 use crate::catalog::codec::{
     collation, constraint, domain, index, module, privilege, put_collation, put_constraint, put_domain, put_index, put_module, put_name,
     put_privilege, put_roles, put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, roles, routine,
     sequence, table, trigger, user_type, view,
 };
-use crate::catalog::{CastDesc, Embeddings, GraphDesc, OrderingDesc, StructuredDesc, TransformGroupDesc, embeddings, put_embeddings};
+use crate::catalog::{
+    CastDesc, Embeddings, GqlGraphDesc, GraphDesc, GraphTypeDesc, OrderingDesc, StructuredDesc, TransformGroupDesc, embeddings,
+    put_embeddings,
+};
 use crate::catalog::{
     Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, ModuleDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc,
     SqlRoutineDesc, TableDesc, TriggerDesc, UserTypeDesc, ViewDesc, module_of_schema,
@@ -103,6 +108,10 @@ pub(super) struct Snapshot {
     graphs: Vec<GraphDesc>,
     /// \[EXTENSION\] The embedding models and vector pipelines.
     embeddings: Embeddings,
+    /// The graph types, by name.
+    graph_types: Vec<GraphTypeDesc>,
+    /// The GQL graphs, by name.
+    gql_graphs: Vec<GqlGraphDesc>,
 }
 
 impl Snapshot {
@@ -162,6 +171,8 @@ impl Snapshot {
             transforms: st.catalog.all_transforms().into_iter().map(|(n, g)| (n.clone(), g.to_vec())).collect(),
             graphs: st.catalog.graphs().into_iter().cloned().collect(),
             embeddings: st.catalog.embeddings().clone(),
+            graph_types: st.catalog.gql().graph_types().into_iter().cloned().collect(),
+            gql_graphs: st.catalog.gql().gql_graphs().into_iter().cloned().collect(),
         })
     }
 
@@ -249,6 +260,10 @@ impl Snapshot {
         out.put_u32(count(self.graphs.len()));
         self.graphs.iter().for_each(|g| put_graph(out, g));
         put_embeddings(out, &self.embeddings);
+        out.put_u32(count(self.graph_types.len()));
+        self.graph_types.iter().for_each(|t| put_graph_type(out, t));
+        out.put_u32(count(self.gql_graphs.len()));
+        self.gql_graphs.iter().for_each(|g| put_gql_graph(out, g));
     }
 
     /// The snapshot `put` wrote.
@@ -287,6 +302,8 @@ impl Snapshot {
             transforms: (0..r.u32()?).map(|_| transforms(r)).collect::<Result<_>>()?,
             graphs: (0..r.u32()?).map(|_| graph(r)).collect::<Result<_>>()?,
             embeddings: embeddings(r)?,
+            graph_types: (0..r.u32()?).map(|_| graph_type(r)).collect::<Result<_>>()?,
+            gql_graphs: (0..r.u32()?).map(|_| gql_graph(r)).collect::<Result<_>>()?,
         })
     }
 }
@@ -415,6 +432,8 @@ fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.modules.iter().cloned().for_each(|m| catalog.put_module(m));
     snapshot.graphs.iter().cloned().for_each(|g| catalog.put_graph(g));
     catalog.set_embeddings(snapshot.embeddings.clone());
+    snapshot.graph_types.iter().cloned().for_each(|t| catalog.gql_mut().put_graph_type(t));
+    snapshot.gql_graphs.iter().cloned().for_each(|g| catalog.gql_mut().put_gql_graph(g));
 }
 
 /// [ISO/IEC 9075-4:2006 draft §12.8] Puts in `catalog` the declared tables

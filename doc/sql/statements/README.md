@@ -31,6 +31,8 @@ One reference page for each statement, in alphabetical order.
 - [CREATE DOMAIN](create-domain.md): define a domain
 - [CREATE EMBEDDING MODEL](create-embedding-model.md): define an embedding model of a plug-in
 - [CREATE FUNCTION](create-function.md): define an SQL-invoked function, or a polymorphic table function
+- [CREATE GRAPH](create-graph.md): create a GQL graph, typed by a graph type or open
+- [CREATE GRAPH TYPE](create-graph-type.md): define the node and edge types a typed GQL graph holds
 - [CREATE HYBRID VECTOR INDEX](create-hybrid-vector-index.md): define an index of a text and a vector column, for hybrid search
 - [CREATE INDEX](create-index.md): define an index
 - [CREATE METHOD](create-method.md): give a method of a user-defined type its body
@@ -63,6 +65,8 @@ One reference page for each statement, in alphabetical order.
 - [DROP COLLATION](drop-collation.md): drop a collation
 - [DROP DOMAIN](drop-domain.md): drop a domain
 - [DROP EMBEDDING MODEL](drop-embedding-model.md): drop an embedding model
+- [DROP GRAPH](drop-graph.md): drop a GQL graph and its tables
+- [DROP GRAPH TYPE](drop-graph-type.md): drop a graph type
 - [DROP INDEX](drop-index.md): drop an index
 - [DROP MODULE](drop-module.md): drop an SQL-server module
 - [DROP ORDERING](drop-ordering.md): drop a user-defined type's ordering
@@ -81,6 +85,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP VIEW](drop-view.md): drop a view
 - [END CONNECTION](end-connection.md): end a connection of the server
 - [EXECUTE](execute.md): run a statement prepared
+- [EXECUTE GQL](execute-gql.md): run a GQL request on a graph
 - [EXECUTE IMMEDIATE](execute-immediate.md): prepare a statement and run it at once
 - [EXPLAIN](explain.md): show how a query is planned
 - [FETCH](fetch.md): move a cursor and read its row

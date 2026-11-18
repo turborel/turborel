@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::{
-    CastDesc, Catalog, CollationDesc, ConstraintDesc, DomainDesc, Embeddings, GraphDesc, IndexDesc, ModuleDesc, OrderingDesc,
+    CastDesc, Catalog, CollationDesc, ConstraintDesc, DomainDesc, Embeddings, GqlCatalog, GraphDesc, IndexDesc, ModuleDesc, OrderingDesc,
     PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SqlRoutineDesc, StructuredDesc, TableDesc, TransformGroupDesc, TriggerDesc,
     UserTypeDesc, ViewDesc,
 };
@@ -39,6 +39,8 @@ pub struct MemoryCatalog {
     modules: HashMap<QualifiedName, ModuleDesc>,
     /// Each property graph, by its name.
     graphs: HashMap<QualifiedName, GraphDesc>,
+    /// The graph types and GQL graphs.
+    gql: GqlCatalog,
     /// The roles and role authorizations.
     roles: Roles,
     /// The embedding models and vector pipelines.
@@ -343,5 +345,11 @@ impl Catalog for MemoryCatalog {
     }
     fn remove_graph(&mut self, name: &QualifiedName) {
         self.graphs.remove(name);
+    }
+    fn gql(&self) -> &GqlCatalog {
+        &self.gql
+    }
+    fn gql_mut(&mut self) -> &mut GqlCatalog {
+        &mut self.gql
     }
 }

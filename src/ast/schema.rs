@@ -125,6 +125,10 @@ pub enum SchemaStatement {
     /// \[EXTENSION\] A statement of an embedding model or a vector
     /// pipeline (`ast/embedding.rs`).
     Vector(Box<super::VectorStatement>),
+    /// \[EXTENSION\] CREATE GRAPH TYPE (graph standard §4.3).
+    GraphType(Box<super::GraphTypeDefinition>),
+    /// \[EXTENSION\] CREATE GRAPH, of a GQL graph typed or open (§4.3).
+    GqlGraph(super::GqlGraphDefinition),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION

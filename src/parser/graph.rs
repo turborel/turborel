@@ -21,7 +21,7 @@ mod syntax;
 mod tests;
 
 pub use normalize::normalize;
-use syntax::check;
+pub(super) use syntax::check;
 pub use syntax::{Declared, Degree, Exposed, Exposure, exposure};
 
 use super::Parser;

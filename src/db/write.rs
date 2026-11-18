@@ -238,6 +238,7 @@ impl Session {
             rows.visit(&mut |row| check_option(&target.checks, [row], ("X3.135-1986 §8.7 GR2", &runner)))?;
         }
         st.end_statement(tx, effects)?;
+        self.note_drawn(target.generating.drawn_identity(), &mut rows)?;
         Ok(rows.len())
     }
 

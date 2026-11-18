@@ -44,6 +44,7 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | EXECUTOR.GRAPH_THREADS | 1 | INTEGER FROM 1 TO 9223372036854775807 | at once | *session* |
 | EXECUTOR.MAX_ITERATIONS | 1000000 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | FILES.MAX_OPEN | 1024 | INTEGER FROM 0 TO 4294967295 | at once |  |
+| GQL.GRAPH | (empty) | TEXT OF AT MOST 257 CHARACTERS | at once | *session* |
 | GRAPH.DETERMINISTIC_PATHS | OFF | ONE OF ON, OFF | at once | *session* |
 | GRAPH.MAX_PATHS_PER_PARTITION | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | GRAPH.MAX_PATH_LENGTH | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
@@ -77,6 +78,7 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | PLANNER.REORDER_GAIN | 9E-1 | NUMBER FROM 0E0 TO 9.99E-1 | at once |  |
 | PLANNER.SORT_COMPARE_COST | 1E-1 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |
 | SESSION.COMMIT_AT_END | ON | ONE OF ON, OFF | at once | *session* |
+| SESSION.LANGUAGE | SQL | ONE OF SQL, GQL | at once | *session* |
 | SESSION.TIME_ZONE | +00:00 | A TIME ZONE DISPLACEMENT FROM -12:59 TO +13:00 | at once | *session* |
 | SPILL.BATCH_BYTES | 16384 | INTEGER FROM 4096 TO 1048576 | at once | *session* |
 | SPILL.ENCODINGS | (empty) | ENCODINGS, BY COMMAS | at once |  |
@@ -117,6 +119,7 @@ Each in a sentence:
 - **EXECUTOR.GRAPH_THREADS**: The threads a graph algorithm of GRAPH_ALGO, or a GRAPH_TABLE's search from many starts, runs on at once, the statement's own among them; its results are the same on any number.
 - **EXECUTOR.MAX_ITERATIONS**: The most iterations a recursive query of WITH RECURSIVE takes, each evaluating its recursive elements once more, before it is refused (SQLCODE -918) as never reaching its fixpoint; 0 for no limit.
 - **FILES.MAX_OPEN**: The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed (one with writes not yet synced last, and synced first), and opened again as it is next used.
+- **GQL.GRAPH**: The property graph a GQL statement reads when it names none, as SESSION SET GRAPH sets it, named in the default schema if unqualified; empty for none.
 - **GRAPH.DETERMINISTIC_PATHS**: Whether a GRAPH_TABLE's selectors that keep some of equal paths, as ANY and ANY SHORTEST, keep the same ones each run, ON, ordered by the elements' identities; or any, OFF.
 - **GRAPH.MAX_PATHS_PER_PARTITION**: The most paths a GRAPH_TABLE's search finds between one start and one end; 0 for no limit. Reaching it does as GRAPH.ON_LIMIT says.
 - **GRAPH.MAX_PATH_LENGTH**: The most edges of a path a GRAPH_TABLE's search follows; 0 for no limit. Reaching it does as GRAPH.ON_LIMIT says.
@@ -150,6 +153,7 @@ Each in a sentence:
 - **PLANNER.REORDER_GAIN**: A join order is taken over the FROM clause's if its estimated cost is less than this fraction of that order's.
 - **PLANNER.SORT_COMPARE_COST**: The cost of one comparison of a sort, a row read in sequence costing 1.
 - **SESSION.COMMIT_AT_END**: Whether a transaction open when its session ends is committed, ON, or rolled back, OFF [X3.135-1986 §7.1 GR2].
+- **SESSION.LANGUAGE**: The language a session's direct statements are read in, SQL or GQL; in GQL each statement but SET is a GQL request.
 - **SESSION.TIME_ZONE**: The time zone displacement of an SQL-session, ±HH:MM from -12:59 to +13:00 [ISO/IEC 9075:1992 §4.5.1]: of CURRENT_TIME and CURRENT_TIMESTAMP, and implied by a time or timestamp without time zone.
 - **SPILL.BATCH_BYTES**: The bytes of rows a spilling operator gathers before it writes them to its work area; it reads or writes a run for every two batches its MEMORY.WORK_BYTES holds.
 - **SPILL.ENCODINGS**: The encodings, as compression, the pages of work areas' files pass through as each is written from now on, by commas, in order, before the encryption they pass through while the database encrypts anything; none if empty.

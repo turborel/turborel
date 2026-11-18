@@ -125,7 +125,7 @@ fn rule(at: usize, msg: &str) -> SqlError {
 ///
 /// SQLCODE -103 of the first broken, its GRF condition named if it has
 /// one.
-pub(super) fn check(table: &GraphTable) -> Result<()> {
+pub(in crate::parser) fn check(table: &GraphTable) -> Result<()> {
     let pattern = &table.pattern;
     prefixes(pattern)?;
     terminating(pattern)?;

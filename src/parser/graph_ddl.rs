@@ -350,7 +350,7 @@ impl Parser {
     }
 
     /// A `<drop behavior>` if written, else RESTRICT.
-    fn optional_behavior(&mut self) -> Result<DropBehavior> {
+    pub(super) fn optional_behavior(&mut self) -> Result<DropBehavior> {
         if self.is_kw(kw::CASCADE) || self.is_kw(kw::RESTRICT) { self.drop_behavior() } else { Ok(DropBehavior::Restrict) }
     }
 

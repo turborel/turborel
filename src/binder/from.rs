@@ -278,6 +278,7 @@ pub(super) fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, fr
         TableReference::Polymorphic(p) => return super::ptf::ptf_reference(b, p, start, from),
         TableReference::Graph(g) => super::graph::graph_table_item(b, g, start, from).or_at(g.at)?,
         TableReference::Hybrid(h) => super::hybrid_search::hybrid_item(b, h, start)?,
+        TableReference::Gql(g) => derived(b, &super::gql::derived_of(b.cx, g).or_at(g.at)?, start).or_at(g.at)?,
     };
     from.items.push(item);
     Ok(Tree::Item(from.items.len().saturating_sub(1)))

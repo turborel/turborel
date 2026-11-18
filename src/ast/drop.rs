@@ -42,6 +42,12 @@ pub enum DropObject {
     Graph(TableName, bool),
     /// \[EXTENSION\] An embedding model or a vector pipeline.
     Vector(super::VectorObject, TableName),
+    /// \[EXTENSION\] A graph type (graph standard §4.3), and whether IF
+    /// EXISTS was written.
+    GraphType(TableName, bool),
+    /// \[EXTENSION\] A GQL graph, typed or open (§4.3), and whether IF
+    /// EXISTS was written.
+    GqlGraph(TableName, bool),
     /// A schema: `<schema name>` ::= \[`<catalog name>` .\] `<unqualified
     /// schema name>` [§5.4].
     Schema {
@@ -70,7 +76,9 @@ impl DropObject {
             | DropObject::Ordering(name)
             | DropObject::Transform(name, _)
             | DropObject::Graph(name, _)
-            | DropObject::Vector(_, name) => name.at,
+            | DropObject::Vector(_, name)
+            | DropObject::GraphType(name, _)
+            | DropObject::GqlGraph(name, _) => name.at,
             DropObject::Cast(_, at) | DropObject::Schema { at, .. } => *at,
             DropObject::Routine(designator) => designator.name.at,
         }

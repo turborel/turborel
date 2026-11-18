@@ -7,7 +7,7 @@ use crate::txn::LockWait;
 use crate::value::Decimal;
 
 /// Each built-in key and its setting's name, in the order of the keys.
-const BUILTIN: [(Key, &str); 58] = [
+const BUILTIN: [(Key, &str); 60] = [
     (TABLES_ENGINE, "TABLES.ENGINE"),
     (TABLES_UNIQUE_INDEX_METHOD, "TABLES.UNIQUE_INDEX_METHOD"),
     (TRANSACTION_STRICT, "TRANSACTION.STRICT"),
@@ -66,6 +66,8 @@ const BUILTIN: [(Key, &str); 58] = [
     (GRAPH_MAX_SEARCH_STATES, "GRAPH.MAX_SEARCH_STATES"),
     (GRAPH_ON_LIMIT, "GRAPH.ON_LIMIT"),
     (GRAPH_DETERMINISTIC_PATHS, "GRAPH.DETERMINISTIC_PATHS"),
+    (SESSION_LANGUAGE, "SESSION.LANGUAGE"),
+    (GQL_GRAPH, "GQL.GRAPH"),
 ];
 
 /// Verifies: [DESIGN] RULES.md D36: each built-in key is its setting's
