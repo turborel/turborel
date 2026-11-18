@@ -172,8 +172,9 @@ impl LibraryFunction for Builtin {
     }
 }
 
-/// Every section's functions.
-const SECTIONS: [&[Builtin]; 11] = [
+/// Every section's functions, a line for each section's table, in the
+/// order of the sections of \[XQueryFO\].
+const SECTIONS: &[&[Builtin]] = &[
     &accessors::FUNCTIONS,
     &raise::FUNCTIONS,
     &constructors::FUNCTIONS,
@@ -190,7 +191,7 @@ const SECTIONS: [&[Builtin]; 11] = [
 /// Every function of the library: each section's, then the constructors
 /// [XQueryFO §5.1].
 pub fn all() -> impl Iterator<Item = &'static dyn LibraryFunction> {
-    let builtins = SECTIONS.into_iter().flatten().map(|f| -> &'static dyn LibraryFunction { f });
+    let builtins = SECTIONS.iter().copied().flatten().map(|f| -> &'static dyn LibraryFunction { f });
     builtins.chain(constructors::CONSTRUCTORS.iter().map(|c| -> &'static dyn LibraryFunction { c }))
 }
 
