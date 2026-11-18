@@ -1,23 +1,20 @@
 //! Functions as plugins.
 //!
-//! SQL-86 has exactly five set functions [X3.135-1986 §5.8], and their names are key
-//! words: COUNT, SUM, AVG, MAX, MIN. They are implemented here as ordinary
-//! `AggregateFunction` plugins registered under those names, so an
-//! implementation can be swapped (say, a more accurate SUM) without touching
-//! the parser, planner or executor. So are SQL-92's string functions and
-//! concatenation (`functions/strings.rs`).
+//! SQL-86 has exactly five set functions [X3.135-1986 §5.8], and their names are key words:
+//! COUNT, SUM, AVG, MAX, MIN. They are implemented here as ordinary `AggregateFunction`
+//! plugins registered under those names, so an implementation can be swapped (say, a more
+//! accurate SUM) without touching the parser, planner or executor. So are SQL-92's string
+//! functions and concatenation (`functions/strings.rs`).
 //!
-//! \[EXTENSION\] A function registered belongs to no schema, so a call of it
-//! is no `<routine invocation>` [ISO/IEC 9075-2:2023 §10.4]. A session whose
-//! SQL.FUNCTION_CALLS is ON, as it is by default, resolves `<identifier>`(`<args>`)
-//! that names no function of the schema to a registered `ScalarFunction` or
-//! `AggregateFunction`; OFF, it takes the schema's own functions alone
-//! ([X3.135-1986 §3.4] allows "user options to process nonconforming SQL language").
+//! \[EXTENSION\] A function registered belongs to no schema, so a call of it is no
+//! `<routine invocation>` [ISO/IEC 9075-2:2023 §10.4]. A session whose SQL.FUNCTION_CALLS is
+//! ON, as it is by default, resolves `<identifier>`(`<args>`) that names no function of the
+//! schema to a registered `ScalarFunction` or `AggregateFunction`; OFF, it takes the schema's
+//! own functions alone ([X3.135-1986 §3.4] allows "user options to process nonconforming SQL language").
 //!
 //! The engine, not the plugin, applies [X3.135-1986 §5.8 GR1, GR2]: nulls are removed from
 //! the argument, and duplicates too for DISTINCT, before `update` is called.
 
-use std::fmt;
 use std::sync::Arc;
 
 use crate::error::{Code, Result, fail};
@@ -48,7 +45,9 @@ mod formatted;
 pub(crate) use formatted::json_datetime_cast;
 pub use formatted::{FORMAT, formatted_cast};
 mod greatest;
+mod handles;
 pub use greatest::{GREATEST, GreatestOrLeast, LEAST};
+pub use handles::{AggregateRef, ScalarRef};
 mod hypothetical;
 pub use hypothetical::{Hypothesis, Hypothetical, RANK_FUNCTION_TYPES};
 mod ints;
@@ -299,10 +298,28 @@ pub trait ScalarFunction: Send + Sync {
     fn spatial_operation(&self) -> Option<crate::geometry::SpatialOperation> {
         None
     }
+    /// \[EXTENSION\] Of a vector distance (vector design document §6), the
+    /// metric a call of these constant arguments (none for each other one)
+    /// measures by, upper case, and the position of its first vector, the
+    /// second after it: a deterministic call, smaller the more similar its
+    /// vectors. None of a call ordered otherwise (INNER_PRODUCT), of one
+    /// whose metric is no constant, and by default (R13.1, D94).
+    fn vector_metric(&self, _constants: &[Option<&Value>]) -> Option<(String, usize)> {
+        None
+    }
     /// Same arguments always give the same result? If so, the optimizer may
     /// evaluate calls with constant arguments once, at planning time.
     fn deterministic(&self) -> bool {
         true
+    }
+    /// \[EXTENSION\] Whether an identifier `word`, written alone as
+    /// argument `position` (from 0), is a key word the function takes
+    /// there, given as a character string of it, not read as a column:
+    /// `first` says whether the first argument was one. So
+    /// `VECTOR_DISTANCE(a, b, COSINE)` names its metric (RULES.md D93).
+    /// Qualified, `s.w`, the word is written so. Default: none.
+    fn word_argument(&self, _position: usize, _word: &str, _first: bool) -> bool {
+        false
     }
     /// Prepares an equivalent implementation using known constant
     /// arguments; `None` marks an argument that varies. Called by constant
@@ -350,6 +367,18 @@ pub trait ScalarFunction: Send + Sync {
     /// default the type `argument_type` declares there, if it declares one.
     fn parameter_type(&self, position: usize, args: &[Option<DataType>]) -> Option<ParameterType> {
         self.argument_type(position, args).map(ParameterType::Of)
+    }
+    /// \[EXTENSION\] Whether `call_many` is cheaper than a call a row, as a model's (vector design R12.3).
+    fn batches(&self) -> bool {
+        false
+    }
+    /// The values of calls of each of `rows`, in order: by default `call` of each.
+    ///
+    /// # Errors
+    ///
+    /// As `call`'s.
+    fn call_many(&self, rows: &[Vec<Value>]) -> Result<Vec<Value>> {
+        rows.iter().map(|r| self.call(r)).collect()
     }
 }
 
@@ -489,24 +518,6 @@ pub trait Accumulator {
     ///
     /// The result cannot be computed or is out of range.
     fn finish(&self) -> Result<Value>;
-}
-
-/// A shared handle to a registered scalar function.
-#[derive(Clone)]
-pub struct ScalarRef(pub Arc<dyn ScalarFunction>);
-/// A shared handle to a registered aggregate function.
-#[derive(Clone)]
-pub struct AggregateRef(pub Arc<dyn AggregateFunction>);
-
-impl fmt::Debug for ScalarRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.name())
-    }
-}
-impl fmt::Debug for AggregateRef {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.name())
-    }
 }
 
 // Unit tests: what the set functions refuse and how they total (RULES.md

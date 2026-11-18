@@ -20,6 +20,7 @@ mod collations;
 mod columns;
 mod constraints;
 mod domains;
+mod embedding;
 mod key_expressions;
 mod keys;
 mod memory;
@@ -38,6 +39,8 @@ pub use collations::CollationDesc;
 pub use columns::{ColumnDefault, ColumnDesc, ColumnDomain, Generated, Generation, Identity};
 pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, MatchType, ReferentialAction};
 pub use domains::{DomainDesc, UsageDesc, usage_held};
+pub use embedding::{Embeddings, ModelDesc, ModelOption, PipelineDesc, TRIGGER_SUFFIXES};
+pub(crate) use embedding::{embeddings, put_embeddings};
 pub use key_expressions::{EXPRESSION_PART, KeyExpression};
 pub use keys::KeyShape;
 pub use memory::MemoryCatalog;
@@ -46,8 +49,8 @@ pub use periods::PeriodDesc;
 pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, TypedActions, applicable, merged};
 pub use roles::{Authorization, Principal, RoleAuthorization, Roles, Who};
 pub use routines::{
-    DataAccess, GenericParameter, GenericTable, PTF_NAME_LENGTH, ParameterMode, PtfDesc, RoutineKind, SqlParameter, SqlRoutineDesc,
-    TableSemantics, ptf_name_type, ptf_status_type,
+    DataAccess, DistanceDesc, GenericParameter, GenericTable, PTF_NAME_LENGTH, ParameterMode, PtfDesc, RoutineKind, SqlParameter,
+    SqlRoutineDesc, TableSemantics, ptf_name_type, ptf_status_type,
 };
 pub use sequences::SequenceDesc;
 pub use structured::{
@@ -535,6 +538,12 @@ pub trait Catalog: Send + Sync {
     /// a `<revoke role statement>` or a `<drop role statement>` left
     /// [§12.4 to §12.7].
     fn set_roles(&mut self, roles: Roles);
+    /// \[EXTENSION\] The embedding models and vector pipelines (the vector
+    /// design's §12.1, §12.5).
+    fn embeddings(&self) -> &Embeddings;
+    /// Make `embeddings` the embedding models and vector pipelines, in
+    /// place of those there were.
+    fn set_embeddings(&mut self, embeddings: Embeddings);
     /// An independent copy of this catalog.
     fn duplicate(&self) -> Box<dyn Catalog>;
 }

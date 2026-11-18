@@ -18,7 +18,11 @@ use crate::error::Result;
 use crate::functions::Registry;
 use crate::hash::HashFunction;
 use crate::hash::murmur::MurmurMap;
-use crate::index::{BTreeMethod, FullTextMethod, HashMethod, Index, IndexMethod, JsonMethod, RTreeMethod};
+use crate::index::vector::hybrid::HybridMethod;
+use crate::index::{
+    BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, JsonMethod, RTreeMethod,
+    SparseMethod,
+};
 use crate::log::Log;
 use crate::optimizer::Optimizer;
 use crate::physical::CostModel;
@@ -103,6 +107,12 @@ pub struct State {
     /// \[EXTENSION\] The rankings of full-text search (RULES.md D87),
     /// shared by every state.
     pub(crate) rankings: super::rankings::SharedRankings,
+    /// \[EXTENSION\] The metrics and quantizers of VECTOR (RULES.md D93),
+    /// shared by every state.
+    pub(crate) vectors: super::vectors::SharedVectors,
+    /// \[EXTENSION\] The model plug-ins registered and the models of the
+    /// catalog bound to them, shared by every state (`db/embedding.rs`).
+    pub(crate) embedders: Arc<crate::vector::embed::Embedders>,
     /// The collations there are, by name (RULES.md D60).
     pub(crate) collations: BTreeMap<String, Arc<dyn Collation>>,
     /// The clock the datetime value functions read (`clock.rs`).
@@ -180,6 +190,8 @@ impl State {
             functions: Registry::with_set_functions(),
             types: TypeRegistry::builtin(),
             rankings: super::rankings::SharedRankings::default(),
+            vectors: super::vectors::SharedVectors::default(),
+            embedders: Arc::new(crate::vector::embed::Embedders::built_in()),
             clock: Arc::new(crate::clock::SystemClock),
             optimizer: Optimizer::with_builtin_rules(),
             tx: Arc::new(Transactions::default()),
@@ -199,15 +211,19 @@ impl State {
             building: HashSet::new(),
         };
         st.attach_builtins(&memory);
-        // The built-in engines' and rules' settings, of short names none
-        // declared yet, cannot be refused; a rule without one would be on,
-        // an engine without one at its default.
-        let engines: Vec<Arc<dyn StorageEngine>> = st.engines.values().cloned().collect();
-        for engine in engines {
-            let _ = st.declare_plugin(engine.name(), engine.configurable());
-        }
-        let _ = st.switch_rules();
+        st.declare_builtins();
         st
+    }
+
+    /// The built-in engines' and rules' settings declared. Of short names
+    /// none declared yet, they cannot be refused; a rule without one would
+    /// be on, an engine without one at its default.
+    fn declare_builtins(&mut self) {
+        let engines: Vec<Arc<dyn StorageEngine>> = self.engines.values().cloned().collect();
+        for engine in engines {
+            let _ = self.declare_plugin(engine.name(), engine.configurable());
+        }
+        let _ = self.switch_rules();
     }
 
     /// The built-in engines and index methods, given the budget `memory`
@@ -215,6 +231,10 @@ impl State {
     /// sized by STORAGE.POOL_BYTES.
     fn attach_builtins(&mut self, memory: &Arc<MemoryBudget>) {
         let st = self;
+        // EMBED, CHUNK_TEXT and EMBED_VERSION of the models registered, of no name taken yet.
+        for f in crate::vector::embed::routines(&st.embedders) {
+            let _ = st.functions.add_scalar(Arc::from(f));
+        }
         st.pages.use_budget(Arc::clone(memory));
         st.pages.use_reader(Arc::clone(&st.ahead));
         let engine = RowStore::sharing(TableOptions::default(), Arc::clone(&st.pages));
@@ -231,12 +251,31 @@ impl State {
         let hash = HashMethod::sharing(Arc::clone(&st.pages));
         let spatial = RTreeMethod::sharing(Arc::clone(&st.pages));
         let words = FullTextMethod::sharing(Arc::clone(&st.pages)).with_rankings(st.rankings.closure());
+        let (metrics, quantizers) = (st.vectors.metrics(), st.vectors.quantizers());
+        let graph =
+            DiskAnnMethod::sharing(Arc::clone(&st.pages)).with_metrics(Arc::clone(&metrics)).with_quantizers(Arc::clone(&quantizers));
+        let layered =
+            HnswMethod::sharing(Arc::clone(&st.pages)).with_metrics(Arc::clone(&metrics)).with_quantizers(Arc::clone(&quantizers));
+        let lists = IvfMethod::sharing(Arc::clone(&st.pages)).with_metrics(Arc::clone(&metrics)).with_quantizers(Arc::clone(&quantizers));
+        let sparse = SparseMethod::sharing(Arc::clone(&st.pages));
+        let hybrid = HybridMethod::sharing(&st.pages).with_plugins(&(metrics, quantizers)).with_rankings(st.rankings.closure());
         let documents = JsonMethod::sharing(Arc::clone(&st.pages));
-        let methods: Vec<Arc<dyn IndexMethod>> =
-            vec![Arc::new(btree), Arc::new(hash), Arc::new(spatial), Arc::new(words), Arc::new(documents)];
+        let methods: Vec<Arc<dyn IndexMethod>> = vec![
+            Arc::new(btree),
+            Arc::new(hash),
+            Arc::new(spatial),
+            Arc::new(words),
+            Arc::new(documents),
+            Arc::new(graph),
+            Arc::new(layered),
+            Arc::new(lists),
+            Arc::new(sparse),
+            Arc::new(hybrid),
+        ];
         for m in methods {
             st.methods.insert(m.name().to_string(), m);
         }
+        st.vector_functions();
     }
 
     /// Gives each table and index already in the catalog its storage and index

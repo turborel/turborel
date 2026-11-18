@@ -62,6 +62,7 @@ fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc 
         text: format!("CREATE FUNCTION S.{name} ({}) RETURNS INTEGER DETERMINISTIC CONTAINS SQL RETURN {value}", declared.join(", ")),
         module: None,
         ptf: None,
+        distance: None,
         body: format!("RETURN {value}"),
         schema: "S".into(),
         reads: Vec::new(),
@@ -113,6 +114,7 @@ fn defined(desc: &SqlRoutineDesc, statement: SqlStatement) -> RoutineDefinition 
         body: crate::ast::RoutineBody::Sql(Box::new(statement)),
         text: desc.text.clone(),
         body_text: desc.body.clone(),
+        distance: None,
     }
 }
 

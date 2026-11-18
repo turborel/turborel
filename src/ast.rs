@@ -33,8 +33,10 @@ mod cursor;
 mod diagnostics;
 mod drop;
 mod dynamic;
+mod embedding;
 mod expression;
 mod generated;
+mod hybrid_search;
 mod joined;
 mod json;
 mod json_table;
@@ -73,11 +75,13 @@ pub use dynamic::{
     CopiedItem, CopyOptions, DescriptorItem, DynamicName, DynamicStatement, ExecuteStatement, ExtendedName, GetDescriptor, HeaderItem,
     Scope, SetDescriptor, UsingClause,
 };
+pub use embedding::{ModelDefinition, PipelineDefinition, VectorObject, VectorStatement};
 pub use expression::{
     CaseExpression, ColumnSpecification, DatetimeFunction, ExtractField, Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue,
     ValueExpression, WhenOperand,
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
+pub use hybrid_search::{Fusion, HybridSearch, SearchArgument, SearchValue};
 pub use joined::{JoinKind, JoinSpecification, JoinedTable, Partitioning};
 pub use json::{
     IsJson, JsonAggregate, JsonArgument, JsonClauses, JsonCommon, JsonConstructor, JsonExpression, JsonFormat, JsonInput, JsonMember,
@@ -121,7 +125,7 @@ pub use schema::{
     AlterDomain, AlterDomainAction, AssertionDefinition, Check, CheckLevels, CollationDefinition, Collection, ColumnConstraint,
     ColumnConstraintKind, ColumnDefinition, ConstraintAttributes, DefaultOption, DomainDefinition, IMPLICIT_NULLS_DISTINCT, OptionValue,
     Schema, SchemaStatement, TableConstraint, TableConstraintKind, TableDefinition, TableElement, TableOptionValue, TableStorage,
-    Temporary, TemporaryKind, TypeName, ViewDefinition,
+    Temporary, TemporaryKind, TypeName, TypeParam, ViewDefinition,
 };
 pub use search_cycle::{CycleClause, SearchClause, SearchOrder};
 pub use sequences::{AlterSequence, SequenceDefinition, SequenceOptions, SignedNumber};
@@ -514,6 +518,29 @@ pub enum IndexStatement {
         /// The `<table option>`s, in order.
         options: Vec<TableOptionValue>,
     },
+    /// \[EXTENSION\] `ALTER INDEX <index name> <alter index maintenance>`
+    /// (the vector design document §10.6, `parser/ddl/vector_index.rs`).
+    Maintain {
+        /// The `<index name>`, and where it begins.
+        name: (String, usize),
+        /// What is done.
+        action: IndexMaintenance,
+    },
+}
+
+/// \[EXTENSION\] `<alter index maintenance>` (the vector design document
+/// §10.6).
+#[derive(Debug, Clone)]
+pub enum IndexMaintenance {
+    /// REBUILD \[ONLINE\] \[PARAMETERS (...)\]: built again, of these
+    /// parameters, each named as a parameter of CREATE VECTOR INDEX.
+    Rebuild(Vec<TableOptionValue>),
+    /// MERGE DELTA: its maintenance run now (`Index::maintain`).
+    MergeDelta,
+    /// LOAD: its structure taken into memory (`Index::reside`).
+    Load,
+    /// UNLOAD: its structure let go of memory.
+    Unload,
 }
 
 /// [X3.135-1986 §8.11, §8.12] `<set clause>` ::= `<object column>` = `<update source>`

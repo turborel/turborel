@@ -10,7 +10,8 @@ mod geometry;
 mod probe;
 
 use super::{
-    Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, NearestQuery, NeighbourEntries, Predicate, Probe, RTREE_METHOD, RowIds,
+    Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, NearestQuery, NearestSupport, NeighbourEntries, Predicate, Probe,
+    RTREE_METHOD, RowIds,
 };
 use crate::bytes::{Put, Reader};
 use crate::catalog::{IndexDesc, TableDesc};
@@ -79,9 +80,10 @@ impl RTreeMethod {
 }
 
 impl IndexMethod for RTreeMethod {
-    fn supports_nearest(&self, query: &NearestQuery, columns: &[DataType]) -> bool {
-        let [column] = columns else { return false };
-        crate::geometry::fixed_srid(column).is_some() && geometry::supports_nearest(query)
+    fn supports_nearest(&self, query: &NearestQuery, columns: &[DataType]) -> NearestSupport {
+        let [column] = columns else { return NearestSupport::No };
+        let certified = crate::geometry::fixed_srid(column).is_some() && geometry::supports_nearest(query);
+        if certified { NearestSupport::Exact } else { NearestSupport::No }
     }
     fn name(&self) -> &'static str {
         RTREE_METHOD

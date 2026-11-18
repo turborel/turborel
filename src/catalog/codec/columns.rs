@@ -32,7 +32,7 @@ pub(super) fn put_column(out: &mut Vec<u8>, column: &ColumnDesc) {
 /// [ISO/IEC 9075-2:2023 §11.4 GR5f, GR5j] How a column's values are
 /// generated: 0 for a base column that is no identity column; 1, ALWAYS u8
 /// and its sequence generator, for an identity column; 2, the text and its
-/// names' schema, for a generated column; 3 and its sequence generator, for
+/// names' schema, for a generated column (6 for one ASYNC); 3 and its sequence generator, for
 /// a system-generated self-referencing column; 4, the count and names of
 /// its derivational attributes, for a derived one.
 fn put_generated(out: &mut Vec<u8>, generated: Option<&Generated>) {
@@ -43,8 +43,8 @@ fn put_generated(out: &mut Vec<u8>, generated: Option<&Generated>) {
             put_flag(out, *always);
             put_sequence(out, sequence);
         }
-        Some(Generated::Expression(Generation { text, names, horizon })) => {
-            out.put_u8(2);
+        Some(Generated::Expression(Generation { text, names, horizon, asynchronous })) => {
+            out.put_u8(if *asynchronous { 6 } else { 2 });
             out.put_str(text);
             out.put_str(names);
             put_horizon(out, horizon);
@@ -72,7 +72,8 @@ fn generated(r: &mut Reader<'_>) -> Result<Option<Generated>> {
     Ok(match r.u8()? {
         0 => None,
         1 => Some(Generated::Identity(Identity { always: flag(r)?, sequence: sequence(r)? })),
-        2 => Some(Generated::Expression(Generation { text: r.str()?, names: r.str()?, horizon: horizon(r)? })),
+        2 => Some(Generated::Expression(Generation { text: r.str()?, names: r.str()?, horizon: horizon(r)?, asynchronous: false })),
+        6 => Some(Generated::Expression(Generation { text: r.str()?, names: r.str()?, horizon: horizon(r)?, asynchronous: true })),
         3 => Some(Generated::SystemReference(sequence(r)?)),
         4 => {
             let n = r.u32()?;

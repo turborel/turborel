@@ -32,7 +32,7 @@ pub use expr::{
 };
 pub use fixpoint::Fixpoint;
 pub use invoked::Invocation;
-pub use limit::{Fetch, Limit, Most};
+pub use limit::{Fetch, Hints, Limit, Most, Search, SearchTarget, Strategy};
 pub use pattern::{Matching, Navigated, PatternAggregate, PatternValue, Recognize, RowsPerMatch, Skip, Slotted, Variable, WindowMatching};
 pub(crate) use program::{
     Assign, Block, Branches, Called, Contained, Cursor, CursorAction, CursorStep, Declared, ForEach, Handled, Handler, Initial, Into, Leaf,

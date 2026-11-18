@@ -210,6 +210,31 @@ pub trait SqlType: Send + Sync + fmt::Debug {
         Err(SqlError::new(Code::SyntaxRule, format!("[DESIGN] the type {} takes no parameters", self.name())))
     }
 
+    /// \[EXTENSION\] The number a word, or `*`, written as parameter `at`
+    /// (from 0) of a type of it stands for, if it takes one there (RULES.md
+    /// D53): the word upper case, as read. Default: none, a kind taking
+    /// unsigned integers alone.
+    fn param_word(&self, _at: usize, _word: &str) -> Option<u32> {
+        None
+    }
+
+    /// \[EXTENSION\] The parameters a type of it keeps of those written,
+    /// each a number or as `param_word` gave it: at most `MAX_PARAMS`,
+    /// which `check_params` is then given. None if no type of it is
+    /// written so. Default: as written.
+    fn pack_params(&self, written: &[u32]) -> Option<Vec<u32>> {
+        Some(written.to_vec())
+    }
+
+    /// \[EXTENSION\] Whether its values are ordered and grouped: compared
+    /// by `<`, `=` and the rest, sorted, grouped, made distinct and keyed.
+    /// A kind that says not keeps `compare` for its own use alone, and the
+    /// binder refuses every ordering, grouping and key of a type of it.
+    /// Default: ordered.
+    fn ordered(&self) -> bool {
+        true
+    }
+
     /// Appends `t`'s parameters to `out`, which `params` reads back.
     fn put_params(&self, t: &DataType, out: &mut Vec<u8>);
 

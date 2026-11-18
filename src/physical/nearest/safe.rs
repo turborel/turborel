@@ -7,6 +7,7 @@ use crate::geometry::{SpatialOperation, fixed_srid};
 use crate::logical::{Cond, Expr};
 use crate::physical::estimate::{self, Known};
 use crate::value::{CompOp, Value};
+use crate::vector::{Element, Layout, fixed_shape, is_built_in, shape_of};
 
 pub(super) fn projection(exprs: &[Expr], measure: usize, table: &TableDesc) -> bool {
     exprs.iter().enumerate().all(|(at, e)| at == measure || expression(e, table))
@@ -17,7 +18,7 @@ fn expression(expr: &Expr, table: &TableDesc) -> bool {
         return true;
     }
     let Expr::Call(function, args) = expr else { return false };
-    if rechecked(function, args) {
+    if rechecked(function, args) && vectors_rechecked(expr, table) {
         return true;
     }
     let [Expr::Column(column)] = args.as_slice() else { return false };
@@ -32,6 +33,33 @@ fn rechecked(function: &crate::functions::ScalarRef, args: &[Expr]) -> bool {
     let f = &function.0;
     let plain = args.iter().all(|a| matches!(a, Expr::Column(_) | Expr::Const(_)));
     f.rechecked_errors() && f.deterministic() && plain
+}
+
+/// \[EXTENSION\] Of a call measuring vectors, whether it raises alike for
+/// every row, as `rechecked_errors` promises: a vector distance of a
+/// built-in metric, which never fails of finite vectors of one shape, its
+/// metric a constant, and each vector column of a fixed shape, dense or
+/// sparse, and no FLOAT64, whose squares could overflow; then only a
+/// constant operand of another shape raises, and for every row (D94). A
+/// call of no
+/// vector column is not one.
+fn vectors_rechecked(call: &Expr, table: &TableDesc) -> bool {
+    let Expr::Call(_, args) = call else { return true };
+    let column_type = |e: &Expr| if let Expr::Column(c) = e { table.columns.get(*c).map(|c| &c.data_type) } else { None };
+    let vectors: Vec<&crate::value::DataType> = args.iter().filter_map(column_type).filter(|t| shape_of(t).is_some()).collect();
+    if vectors.is_empty() {
+        return true;
+    }
+    let fixed = vectors.iter().all(|t| fixed_shape(t).or_else(|| sparse_shape(t)).is_some_and(|(_, element)| element != Element::Float64));
+    fixed && super::vector_measure(call).is_some_and(|(metric, _)| is_built_in(&metric))
+}
+
+/// \[EXTENSION\] Of a SPARSE type of fixed dimensions and format, those:
+/// a built-in metric measures two such vectors as it does dense ones, of
+/// the entries either holds (§10.3, R6.4).
+fn sparse_shape(t: &crate::value::DataType) -> Option<(u32, Element)> {
+    let s = shape_of(t)?;
+    if s.layout? == Layout::Sparse { Some((s.dims?, s.element?)) } else { None }
 }
 
 pub(super) fn condition(cond: &Cond, table: &TableDesc) -> bool {

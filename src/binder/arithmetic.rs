@@ -62,7 +62,12 @@ impl Binder<'_> {
     /// operands, `?`s among them. Apart from `dyadic`, so none of its
     /// locals is in the frame a chain of operators recurs through
     /// (RULES.md R-CF-6).
-    fn arithmetic(&self, [(a, left_type), (b, right_type)]: [(Expr, DataType); 2], op: ArithOp, dynamic: bool) -> Result<(Expr, DataType)> {
+    fn arithmetic(&self, [left, right]: [(Expr, DataType); 2], op: ArithOp, dynamic: bool) -> Result<(Expr, DataType)> {
+        // [EXTENSION] of vectors, a function of VECTOR (RULES.md D93).
+        if let Some(vectors) = self.vector_arithmetic(&left, op, &right) {
+            return vectors;
+        }
+        let ((a, left_type), (b, right_type)) = (left, right);
         if left_type.is_character() || right_type.is_character() {
             return Err(rule("[X3.135-1986 §5.9 SR3] character string values cannot be used with arithmetic operators"));
         }

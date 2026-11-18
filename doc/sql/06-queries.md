@@ -1181,6 +1181,116 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): the offset row count is an exact number
 turborel: SQLCODE -103 (SQLSTATE 2A000): FETCH FIRST WITH TIES is of a query expression with an ORDER BY [ISO/IEC 9075-2:2023 §7.17 SR30] (at character 23)
 ```
 
+### FETCH APPROX and FETCH EXACT *(extension)*
+
+`FETCH APPROX FIRST n ROWS ONLY` asks for the n rows nearest by the
+distance ORDER BY sorts on, and lets an approximate index find them. It
+may miss a row an exact search would keep, but never returns one the
+WHERE clause does not, and raises any exception an exact search would.
+APPROXIMATE is the same word. `FETCH EXACT` always reads exactly, and
+so does a FETCH of neither, unless the setting VECTOR.APPROX_DEFAULT is
+ON.
+
+```
+<fetch first clause> ::=
+    FETCH [ APPROX | APPROXIMATE | EXACT ] { FIRST | NEXT }
+    [ <fetch first quantity> ] { ROW | ROWS } { ONLY | WITH TIES }
+    [ <target accuracy clause> ] [ <vector hints> ]
+
+<target accuracy clause> ::=
+      WITH TARGET ACCURACY <unsigned integer>
+    | WITH TARGET ACCURACY PARAMETERS
+      ( <search parameter> [ { , <search parameter> }... ] )
+
+<search parameter> ::=
+      EFSEARCH <unsigned integer>
+    | NEIGHBOR PARTITION PROBES <unsigned integer>
+    | SEARCH_LIST <unsigned integer>
+    | BEAM_WIDTH <unsigned integer>
+
+<vector hints> ::= HINT ( <vector hint> [ { , <vector hint> }... ] )
+
+<vector hint> ::=
+      VECTOR_INDEX ( <table name> <index name> )
+    | NO_VECTOR_INDEX ( <table name> )
+    | VECTOR_PREFILTER | VECTOR_INFILTER | VECTOR_POSTFILTER
+    | VECTOR_WAIT_FRESH
+```
+
+APPROX is a request, not a guarantee. An index is read only when ORDER
+BY is one distance of an indexed column against a constant, a parameter
+or an outer reference, and the index serves the distance's metric. The
+distance is VECTOR_DISTANCE, its metric named before or after its
+vectors, or a shorthand such as COSINE_DISTANCE or L2_DISTANCE. An index
+serves its own metric, and EUCLIDEAN and EUCLIDEAN_SQUARED serve each
+other. An index whose column is declared NORMALIZED serves any of
+COSINE, DOT, EUCLIDEAN and EUCLIDEAN_SQUARED, since on vectors of norm 1
+they order rows alike
+([CREATE VECTOR INDEX](statements/create-vector-index.md)). A `?` in a
+distance takes the type of the column it is measured against. With no
+such index the query runs exactly, as here:
+
+```sql
+SELECT NAME, SALARY FROM STAFF WHERE SALARY IS NOT NULL
+ORDER BY (SALARY - 7000) * (SALARY - 7000) FETCH APPROX FIRST 2 ROWS ONLY WITH TARGET ACCURACY 90;
+```
+
+```
+ NAME                           |      SALARY
+--------------------------------+-------------
+ Ada                            |     7200.00
+ Grace                          |     8100.00
+(2 rows)
+```
+
+A target accuracy is a percentage from 1 to 100, and overrides the
+index's own TARGET_ACCURACY. A query of neither aims at the index's,
+unless the index's own search list, EF_SEARCH or PROBES is set, which it
+then searches by. PARAMETERS sets the search instead: EFSEARCH and SEARCH_LIST
+the candidates a graph keeps, BEAM_WIDTH the nodes it reads at once, and
+NEIGHBOR PARTITION PROBES the partitions it reads. The settings
+VECTOR.SEARCH_LIST and VECTOR.BEAM_WIDTH hold when a query names none.
+
+Each row an index finds is read, checked against the whole WHERE
+clause, and its distance computed again exactly. Rows of equal distance
+come in the order they were inserted. When too few rows are left, the
+index is asked again more widely, up to four times, and then the table
+is read exactly, unless VECTOR.APPROX_FALLBACK is OFF, when the query
+fails with SQLSTATE 0A000 (SQLCODE -900). A condition that the distance
+is below a constant tells the index how far to search.
+
+How the WHERE clause is applied follows the share of rows it keeps.
+Under 1%, the rows are found first and their distances computed
+exactly. Up to half, the index skips rows that fail it as it searches.
+Above half, the index finds more rows than asked and the clause filters
+them. VECTOR_PREFILTER, VECTOR_INFILTER and VECTOR_POSTFILTER choose one
+of these, VECTOR_INDEX names the index of a table, and NO_VECTOR_INDEX
+keeps a table from its approximate indexes. VECTOR_WAIT_FRESH changes
+nothing, as each index is changed with its table. EXPLAIN shows which
+was chosen ([EXPLAIN](statements/explain.md)).
+
+The table function VECTOR_SEARCH writes such a query in a FROM clause.
+`VECTOR_SEARCH(TABLE = t AS a, COLUMN = c, SIMILAR_TO = q, METRIC =
+'cosine', TOP_N = n) AS s` is the table of the n rows of `t` nearest
+`q` by `VECTOR_DISTANCE(c, q, 'cosine')`, found with FETCH APPROX. Each
+row has the columns of `t` and DISTANCE, under the correlation name `s`,
+or `a` if none is written. METRIC may be left out, and the arguments
+may come in any order.
+
+APPROX is of a count of rows ONLY, so neither WITH TIES nor PERCENT, and
+a target accuracy is of APPROX alone. Either is SQLCODE -103 (SQLSTATE
+2A000).
+
+```sql
+SELECT NAME FROM STAFF ORDER BY SALARY FETCH APPROX FIRST 2 ROWS WITH TIES;
+SELECT NAME FROM STAFF ORDER BY SALARY FETCH FIRST 2 ROWS ONLY WITH TARGET ACCURACY 90;
+```
+
+```
+turborel: SQLCODE -103 (SQLSTATE 2A000): FETCH APPROX is of a count of rows ONLY: not WITH TIES, nor PERCENT (at character 39)
+turborel: SQLCODE -103 (SQLSTATE 2A000): a target accuracy is of FETCH APPROX (at character 63)
+```
+
 ## Table value constructors
 
 `VALUES (a, b), (c, d), ...` is a table of the rows written, its columns

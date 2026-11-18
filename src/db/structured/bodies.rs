@@ -75,6 +75,7 @@ impl State {
             created: self.next_created(),
             module: None,
             ptf: None,
+            distance: None,
         };
         let bound = self.bind_routine_body(&desc, &definition(&name, &spec, m))?;
         desc.horizon = Horizon::of(&*self.catalog, &bound.reads).invoking(bound.invokes);
@@ -251,5 +252,6 @@ fn definition(name: &QualifiedName, spec: &MethodSpecDesc, m: &MethodDefinition)
         body: m.body.clone(),
         text: m.text.clone(),
         body_text: m.body_text.clone(),
+        distance: None,
     }
 }

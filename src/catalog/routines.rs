@@ -148,6 +148,27 @@ pub struct SqlRoutineDesc {
     /// Of a polymorphic table function [§4.35.4], what its descriptor has
     /// more.
     pub ptf: Option<Box<PtfDesc>>,
+    /// \[EXTENSION\] Of a distance function of VECTOR, what it declares
+    /// more (design document §8, RULES.md D93).
+    pub distance: Option<Box<DistanceDesc>>,
+}
+
+/// \[EXTENSION\] What CREATE VECTOR DISTANCE FUNCTION declares of a
+/// function beyond its routine (design document §8, RULES.md D93): its
+/// PROPERTIES, its VALID FORMATS, and its body's expression over its two
+/// parameters, which a metric of it evaluates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DistanceDesc {
+    /// SYMMETRIC.
+    pub symmetric: bool,
+    /// NON_NEGATIVE.
+    pub non_negative: bool,
+    /// TRIANGLE_INEQUALITY.
+    pub triangle: bool,
+    /// The element formats' codes it measures; none for every format.
+    pub formats: Vec<u8>,
+    /// The `<value expression>` of its body, as written.
+    pub expression: String,
 }
 
 impl SqlRoutineDesc {

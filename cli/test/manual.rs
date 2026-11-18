@@ -4,6 +4,10 @@
 //! which every example of a page tested shows.
 //! The client runs with `--null NULL`, as the manual says its examples do.
 
+mod embedding;
+mod hybrid;
+mod vector;
+
 use std::cell::RefCell;
 use std::io::{self, Write};
 use std::path::Path;
