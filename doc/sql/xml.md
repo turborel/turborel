@@ -1201,8 +1201,8 @@ An XML Schema is registered by [CREATE XML
 SCHEMA](statements/create-xml-schema.md) from one schema document, under
 a name in an SQL schema, and dropped by [DROP XML
 SCHEMA](statements/drop-xml-schema.md). Its document may include,
-redefine or import the documents of other registered XML Schemas of its
-schema's owner, and nothing outside the database. The XML Schemas of the namespaces of XML Schema, of XML
+redefine or import the documents of other registered XML Schemas its
+schema's owner may use, and nothing outside the database. The XML Schemas of the namespaces of XML Schema, of XML
 Schema instances and of SQL/XML are registered always, as
 INFORMATION_SCHEMA.XS, XSI and SQLXML. [XMLVALIDATE](#xmlvalidate) and
 [IS VALID](#is-valid) validate values by one, and [the XMLSCHEMA
@@ -1219,6 +1219,50 @@ OK
 OK
 turborel: SQLCODE -103 (SQLSTATE 2A000): registered XML Schema ANN.PAGES depends on registered XML Schema ANN.NOTES, so it is dropped only with CASCADE (at character 16)
 ```
+
+Every user may use the XML Schemas registered always. The owner of a
+registered XML Schema's schema may use it, and grants USAGE on it to
+others:
+
+```
+GRANT USAGE ON XML SCHEMA <registered XML Schema name> TO <grantee> [ { , <grantee> }... ] [ WITH GRANT OPTION ]
+REVOKE [ GRANT OPTION FOR ] USAGE ON XML SCHEMA <registered XML Schema name> FROM <grantee> [ { , <grantee> }... ] { CASCADE | RESTRICT }
+```
+
+See [GRANT](statements/grant.md) and [REVOKE](statements/revoke.md).
+INFORMATION_SCHEMA.XML_SCHEMAS, XML_SCHEMA_NAMESPACES and
+XML_SCHEMA_ELEMENTS describe those a user may use
+([The Information Schema](information-schema.md)):
+
+```sql
+SELECT XML_SCHEMA_NAME, XML_SCHEMA_TARGET_NAMESPACE, XML_SCHEMA_IS_DETERMINISTIC FROM INFORMATION_SCHEMA.XML_SCHEMAS ORDER BY 1;
+SELECT XML_SCHEMA_ELEMENT, XML_SCHEMA_ELEMENT_IS_DETERMINISTIC FROM INFORMATION_SCHEMA.XML_SCHEMA_ELEMENTS WHERE XML_SCHEMA_NAME = 'SQLXML' ORDER BY 1;
+GRANT USAGE ON XML SCHEMA INFORMATION_SCHEMA.XS TO BOB;
+GRANT USAGE ON XML SCHEMA NOTES TO BOB;
+```
+
+```
+ XML_SCHEMA_NAME                                              | XML_SCHEMA_TARGET_NAMESPACE                                  | XML_SCHEMA_IS_DETERMINISTIC
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ NOTES                                                        | urn:notes                                                    | YES
+ PAGES                                                        | urn:pages                                                    | YES
+ SQLXML                                                       | http://standards.iso.org/iso/9075/2003/sqlxml                | YES
+ XS                                                           | http://www.w3.org/2001/XMLSchema                             | NO
+ XSI                                                          | http://www.w3.org/2001/XMLSchema-instance                    | YES
+(5 rows)
+ XML_SCHEMA_ELEMENT                                           | XML_SCHEMA_ELEMENT_IS_DETERMINISTIC
+--------------------------------------------------------------+--------------------------------------------------------------
+ sqlname                                                      | YES
+ sqltype                                                      | YES
+(2 rows)
+OK, with a warning: SQLSTATE 01007
+OK
+```
+
+XS is not deterministic, as each of its elements may hold an annotation
+whose content is any element at all. Every user holds USAGE on XS
+already, without grant option, so the first grant gives BOB nothing
+more; the second lets BOB's own registered XML Schemas import NOTES.
 
 ## The XMLSCHEMA types
 

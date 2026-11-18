@@ -114,6 +114,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     tables.extend(modules::tables());
     tables.extend(structured::tables());
     tables.extend(typed::tables());
+    tables.extend(xml_schemas::tables());
     tables
 }
 

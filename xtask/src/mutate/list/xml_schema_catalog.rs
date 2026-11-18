@@ -1,11 +1,12 @@
 //! Mutations of registered XML Schemas in the catalog: USAGE on them as
-//! an Access Rule checks it, granted and revoked (RULES.md R-TEST-9, D86).
+//! an Access Rule checks it, granted and revoked, and the Information
+//! Schema's views of them (RULES.md R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each mechanism of registered XML Schemas' USAGE broken alone, and the
 /// tests that fail.
-pub const XML_SCHEMA_CATALOG: [Mutation; 6] = [
+pub const XML_SCHEMA_CATALOG: [Mutation; 10] = [
     Mutation {
         name: "xml-schema-usage-checked",
         package: Package::Core,
@@ -64,6 +65,46 @@ pub const XML_SCHEMA_CATALOG: [Mutation; 6] = [
         original: "    let what = if let Some(t) = dependents.typed.first() {",
         replacement: "    let what = if let Some(t) = None::<&QualifiedName> {",
         integration: &["xml_schema_catalog::revoke_abandons_what_names_a_registered_xml_schema"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-schema-view-usage",
+        package: Package::Core,
+        breaks: "XML_SCHEMAS shows registered XML Schemas the user holds no USAGE on",
+        file: "src/system/information/xml_schemas.rs",
+        original: "FROM DEFINITION_SCHEMA.USAGE_PRIVILEGES AS UP\n          WHERE ( UP.GRANTEE IN ( 'PUBLIC', CURRENT_USER )",
+        replacement: "FROM DEFINITION_SCHEMA.USAGE_PRIVILEGES AS UP\n          WHERE ( 1 = 1",
+        integration: &["xml_schema_catalog::the_views_show_what_the_user_may_use_20_14"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-schema-element-determinism",
+        package: Package::Core,
+        breaks: "a global element declaration of a lax wildcard is shown deterministic",
+        file: "src/system/definition/xml_schemas.rs",
+        original: "name.local.to_string(), !s.non_deterministic(*e)));",
+        replacement: "name.local.to_string(), true));",
+        integration: &["xml_schema_catalog::the_views_describe_registered_xml_schemas_21_7"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-schema-permanent-usage",
+        package: Package::Core,
+        breaks: "no one holds USAGE on the permanently registered XML Schemas",
+        file: "src/system/definition/xml_schemas.rs",
+        original: "PERMANENT.iter().map(|p| row(&p.qualified(), (SYSTEM_GRANTOR, PUBLIC), false)).collect();",
+        replacement: "Vec::new();",
+        integration: &["xml_schema_catalog::the_permanent_xml_schemas_are_everyones"],
+        unit: &[],
+    },
+    Mutation {
+        name: "xml-schema-descriptor-filled",
+        package: Package::Core,
+        breaks: "a column of a type of XMLSCHEMA shows no registered XML Schema",
+        file: "src/system/definition/descriptors.rs",
+        original: "    [head, collation, tail, user_defined, scope, xml(catalog, d.xml, d.xml_schema.as_ref())].concat()",
+        replacement: "    [head, collation, tail, user_defined, scope, xml(catalog, d.xml, None)].concat()",
+        integration: &["xml_schema_catalog::a_type_of_xmlschema_shows_its_registered_xml_schema_20_4"],
         unit: &[],
     },
 ];

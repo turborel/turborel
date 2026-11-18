@@ -48,7 +48,7 @@ behind it, and each can be replaced or added to.
   Information Schema, XML indexes of its paths and values, and XML
   Schemas registered by CREATE XML SCHEMA, values validated by them with
   XMLVALIDATE, IS VALID and XQuery's validate and kept in columns of
-  their XMLSCHEMA types.
+  their XMLSCHEMA types, USAGE on them and their Information Schema views.
 - [Geospatial SQL](doc/data/spatial/README.md), with XY geometries, WKT/WKB,
   intersection filters and joins, planar distances and R-tree
   nearest-neighbour queries.

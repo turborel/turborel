@@ -279,8 +279,10 @@ ROUTINES and PARAMETERS, have seven more columns, as SQL/XML (ISO/IEC
 DOCUMENT, CONTENT or SEQUENCE, and XML_SECONDARY_MODIFIER is UNTYPED or
 ANY, null of SEQUENCE, so a column declared XML alone shows SEQUENCE.
 XML_SCHEMA_CATALOG, XML_SCHEMA_SCHEMA, XML_SCHEMA_NAME,
-XML_SCHEMA_NAMESPACE and XML_SCHEMA_ELEMENT name a registered XML Schema,
-and are null, as no type is of one. All seven are null of a type that is
+XML_SCHEMA_NAMESPACE and XML_SCHEMA_ELEMENT name the registered XML
+Schema of a type of XMLSCHEMA, and its namespace and element if the type
+names them, null of another XML type ([The XMLSCHEMA
+types](xml.md#the-xmlschema-types)). All seven are null of a type that is
 not XML. They follow the view's other columns, but in ROUTINES, where
 they follow DTD_IDENTIFIER.
 
@@ -294,6 +296,24 @@ routine, so they are null. XML_RETURN_MECHANISM in ROUTINES and
 XML_PASSING_MECHANISM in PARAMETERS are BY REF of a result or parameter
 of an XML type, which is passed by reference, and null of another.
 [XML Values](xml.md#the-type) has an example.
+
+Three views of SQL/XML describe the registered XML Schemas the user, PUBLIC
+or an enabled role holds USAGE on ([XML Values](xml.md#registered-xml-schemas)),
+the permanently registered INFORMATION_SCHEMA.XS, XSI and SQLXML among
+them, which every user does:
+
+| View | One row of each |
+|---|---|
+| XML_SCHEMAS | registered XML Schema: XML_SCHEMA_TARGET_NAMESPACE, the zero-length string of none, XML_SCHEMA_LOCATION, XML_SCHEMA_CATALOG, _SCHEMA and _NAME, XML_SCHEMA_IS_DETERMINISTIC and XML_SCHEMA_IS_PERMANENT |
+| XML_SCHEMA_NAMESPACES | namespace of one, its target namespace among them: the schema's target namespace, location and name, XML_SCHEMA_NAMESPACE and XML_SCHEMA_NAMESPACE_IS_DETERMINISTIC |
+| XML_SCHEMA_ELEMENTS | global element declaration of one: the schema's target namespace, location and name, XML_SCHEMA_NAMESPACE, XML_SCHEMA_ELEMENT, its local name, and XML_SCHEMA_ELEMENT_IS_DETERMINISTIC |
+
+An element declaration is not deterministic if it holds or refers to a
+wildcard of any namespace, or of other than one, processed strictly or
+laxly, as `<xs:any processContents="lax"/>`, at any depth; a namespace
+is not if one of its element declarations is not, and a schema is not if
+one of its namespaces is not. The short-name views of SQL/XML, such as
+XML_SCHEMAS_S, are not defined, as no short-name view is.
 
 TABLE_CONSTRAINTS has one more column *(extension)*, NULLS_DISTINCT, as
 ISO/IEC 9075-11 names it: YES of a UNIQUE constraint of NULLS DISTINCT,

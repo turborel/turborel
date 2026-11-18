@@ -21,7 +21,8 @@
 //! the collation of its character set, SQL_TEXT, as none is named for it.
 //!
 //! Every descriptor ends with the columns ISO/IEC 9075-14:2006 draft §21.1
-//! adds, an XML type's modifiers and XML Schema (`xml`). Its domains
+//! adds, an XML type's modifiers and XML Schema (`xml`), the latter as
+//! the type's kind gives them (`Descriptor::xml_schema`). Its domains
 //! NCNAME and URI [§20.1, §20.2] are not defined as domains, as
 //! CHARACTER_DATA is not (`system/information.rs`).
 
@@ -34,6 +35,7 @@ use crate::error::Result;
 use crate::storage::Row;
 use crate::system::{Rows, Seen, SystemTable};
 use crate::value::types::MAX_TYPE_NESTING;
+use crate::value::types::XmlSchemaNamed;
 use crate::value::{DataType, Value};
 
 /// The DTD_IDENTIFIER of a domain's descriptor.
@@ -290,14 +292,49 @@ pub(super) fn data_type(catalog: &Value, t: &DataType, named: Option<&QualifiedN
     let scope = if let DataType::Reference(r) = t { r.scope.as_ref() } else { None };
     let scope = scope.map(|s| ids(catalog, &QualifiedName { auth: s.schema.clone(), ident: s.name.clone() }));
     let scope = scope.map_or_else(|| vec![Value::Null, Value::Null, Value::Null], |s| s.to_vec());
-    [head, collation, tail, user_defined, scope, xml(d.xml)].concat()
+    [head, collation, tail, user_defined, scope, xml(catalog, d.xml, d.xml_schema.as_ref())].concat()
 }
 
 /// [ISO/IEC 9075-14:2006 draft §21.1 Description 1] Of an XML type, its
-/// primary and secondary modifiers, the secondary null of SEQUENCE; then
-/// its XML Schema's catalog, schema, name, namespace and element, null, as
-/// no type is of XMLSCHEMA \[1a iii 2\]. Of another type, each null \[1b\].
-fn xml(modifiers: Option<(&str, Option<&str>)>) -> Vec<Value> {
+/// primary and secondary modifiers, the secondary null of SEQUENCE; then,
+/// of one of XMLSCHEMA, its registered XML Schema's catalog, `catalog`,
+/// schema and name, and its XML namespace and element if it has them,
+/// else null \[1a iii 1\]; of another, each null \[1a iii 2\]. Of another
+/// type, each null \[1b\].
+fn xml(catalog: &Value, modifiers: Option<(&str, Option<&str>)>, schema: Option<&XmlSchemaNamed>) -> Vec<Value> {
     let (primary, secondary) = modifiers.map_or((Value::Null, Value::Null), |(p, s)| (text(p), s.map_or(Value::Null, text)));
-    [vec![primary, secondary], vec![Value::Null; XML_SCHEMA_COLUMNS]].concat()
+    let optional = |v: Option<&String>| v.map_or(Value::Null, |v| text(v));
+    let named = schema.map_or_else(
+        || vec![Value::Null; XML_SCHEMA_COLUMNS],
+        |x| vec![catalog.clone(), text(&x.schema), text(&x.name), optional(x.namespace.as_ref()), optional(x.element.as_ref())],
+    );
+    [vec![primary, secondary], named].concat()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies: [ISO/IEC 9075-14:2006 draft §21.1 Description 1a iii]:
+    /// an XML type of XMLSCHEMA shows its registered XML Schema's catalog,
+    /// schema and name, and its namespace and element, null if it names
+    /// neither; one of another secondary modifier, and a type not XML,
+    /// none.
+    #[test]
+    fn an_xml_types_registered_xml_schema_is_shown() {
+        let catalog = text("C");
+        let named = |namespace: Option<&str>, element: Option<&str>| XmlSchemaNamed {
+            schema: "A".to_owned(),
+            name: "S".to_owned(),
+            namespace: namespace.map(str::to_owned),
+            element: element.map(str::to_owned),
+        };
+        let shown = |v: Vec<Value>| v.iter().map(ToString::to_string).collect::<Vec<_>>().join("|");
+        let full = named(Some("urn:s"), Some("e"));
+        assert_eq!(shown(xml(&catalog, Some(("DOCUMENT", Some("XMLSCHEMA"))), Some(&full))), "DOCUMENT|XMLSCHEMA|C|A|S|urn:s|e");
+        let schema_alone = named(None, None);
+        assert_eq!(shown(xml(&catalog, Some(("CONTENT", Some("XMLSCHEMA"))), Some(&schema_alone))), "CONTENT|XMLSCHEMA|C|A|S|NULL|NULL");
+        assert_eq!(shown(xml(&catalog, Some(("CONTENT", Some("ANY"))), None)), "CONTENT|ANY|NULL|NULL|NULL|NULL|NULL");
+        assert_eq!(shown(xml(&catalog, None, None)), "NULL|NULL|NULL|NULL|NULL|NULL|NULL");
+    }
 }

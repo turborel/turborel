@@ -25,7 +25,7 @@ use super::{QualifiedName, Who};
 use crate::value::DataType;
 use crate::value::types::MAX_TYPE_NESTING;
 use crate::xml::schema::Schema;
-pub use permanent::{PERMANENT, Permanent, permanent};
+pub use permanent::{PERMANENT, Permanent, PermanentNamespace, permanent};
 pub use privileges::may_use;
 
 /// [ISO/IEC 9075-14:2006 draft §4.2.2, §6.1 GR1d] The registered XML

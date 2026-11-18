@@ -1,6 +1,7 @@
 //! Registered XML Schemas in the catalog [ISO/IEC 9075-14:2006 draft
 //! §4.2.6, §4.7.1]: USAGE on them granted and revoked, as turborel does
-//! it, and the Information Schema's rows of them [§21.4].
+//! it, and the Information Schema's views of them [§20.12 to §20.14,
+//! §21.4 to §21.7].
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
@@ -261,4 +262,141 @@ fn revoke_abandons_what_names_a_registered_xml_schema() {
     a.commit().unwrap();
     let views = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'B'";
     assert_eq!(sorted(&b, views), Vec::<String>::new(), "V destroyed with the USAGE it needed");
+}
+
+/// The registered XML Schemas XML_SCHEMAS shows `s`'s user, as
+/// `schema,name`.
+fn shown(s: &Session) -> Vec<String> {
+    let found = sorted(s, "SELECT XML_SCHEMA_SCHEMA, XML_SCHEMA_NAME FROM INFORMATION_SCHEMA.XML_SCHEMAS");
+    s.rollback().unwrap();
+    found
+}
+
+/// The permanently registered XML Schemas, as `shown` gives them.
+const PERMANENT: [&str; 3] = ["INFORMATION_SCHEMA,SQLXML", "INFORMATION_SCHEMA,XS", "INFORMATION_SCHEMA,XSI"];
+
+/// `PERMANENT` and `more`, sorted.
+fn with_permanent(more: &[&str]) -> Vec<String> {
+    let mut all: Vec<String> = PERMANENT.iter().chain(more).map(|s| (*s).to_owned()).collect();
+    all.sort();
+    all
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §20.12 to §20.14]: each view of
+/// registered XML Schemas shows those the user, PUBLIC or an enabled role
+/// holds USAGE on: the owner its own; another the permanently registered
+/// alone, then those granted it, and through a role it sets.
+#[test]
+fn the_views_show_what_the_user_may_use_20_14() {
+    let db = database();
+    db.create_user("A", b"x").unwrap();
+    let (a, b) = (db.session("A"), db.session("B"));
+    assert_eq!(shown(&a), with_permanent(&["A,LINES", "A,ORDERS"]), "the owner's");
+    assert_eq!(shown(&b), with_permanent(&[]));
+    a.run("CREATE ROLE READER").unwrap();
+    a.run("GRANT READER TO B").unwrap();
+    a.run("GRANT USAGE ON XML SCHEMA A.ORDERS TO B").unwrap();
+    a.run("GRANT USAGE ON XML SCHEMA A.LINES TO READER").unwrap();
+    a.commit().unwrap();
+    assert_eq!(shown(&b), with_permanent(&["A,ORDERS"]));
+    let elements = "SELECT XML_SCHEMA_NAME, XML_SCHEMA_ELEMENT FROM INFORMATION_SCHEMA.XML_SCHEMA_ELEMENTS WHERE XML_SCHEMA_SCHEMA = 'A'";
+    let namespaces = "SELECT XML_SCHEMA_NAME FROM INFORMATION_SCHEMA.XML_SCHEMA_NAMESPACES WHERE XML_SCHEMA_SCHEMA = 'A'";
+    assert_eq!(sorted(&b, elements), ["ORDERS,note", "ORDERS,order"]);
+    assert_eq!(sorted(&b, namespaces), ["ORDERS"]);
+    b.rollback().unwrap();
+    b.run("SET ROLE 'READER'").unwrap();
+    assert_eq!(shown(&b), with_permanent(&["A,LINES", "A,ORDERS"]));
+    assert_eq!(sorted(&b, elements), ["LINES,line", "ORDERS,note", "ORDERS,order"]);
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §20.12 to §20.14, §21.5 to §21.7,
+/// §4.2.6]: XML_SCHEMAS shows each registered XML Schema's target
+/// namespace, the zero-length string of none, its location, whether it is
+/// deterministic and whether permanent; XML_SCHEMA_NAMESPACES each of its
+/// namespaces; XML_SCHEMA_ELEMENTS each global element declaration, one
+/// holding a lax wildcard non-deterministic, with its schema's target
+/// namespace and location; each of the catalog's name.
+#[test]
+fn the_views_describe_registered_xml_schemas_21_7() {
+    let db = database();
+    let a = db.session("A");
+    let schemas = "SELECT XML_SCHEMA_NAME, XML_SCHEMA_TARGET_NAMESPACE, XML_SCHEMA_LOCATION, XML_SCHEMA_IS_DETERMINISTIC, \
+                   XML_SCHEMA_IS_PERMANENT FROM INFORMATION_SCHEMA.XML_SCHEMAS WHERE XML_SCHEMA_SCHEMA = 'A'";
+    assert_eq!(sorted(&a, schemas), ["LINES,,lines.xsd,YES,NO", "ORDERS,urn:orders,orders.xsd,NO,NO"]);
+    let namespaces = "SELECT XML_SCHEMA_NAME, XML_SCHEMA_TARGET_NAMESPACE, XML_SCHEMA_NAMESPACE, XML_SCHEMA_NAMESPACE_IS_DETERMINISTIC \
+                      FROM INFORMATION_SCHEMA.XML_SCHEMA_NAMESPACES WHERE XML_SCHEMA_SCHEMA = 'A'";
+    assert_eq!(sorted(&a, namespaces), ["LINES,,,YES", "ORDERS,urn:orders,urn:orders,NO"]);
+    let elements = "SELECT XML_SCHEMA_NAME, XML_SCHEMA_TARGET_NAMESPACE, XML_SCHEMA_LOCATION, XML_SCHEMA_NAMESPACE, XML_SCHEMA_ELEMENT, \
+                    XML_SCHEMA_ELEMENT_IS_DETERMINISTIC FROM INFORMATION_SCHEMA.XML_SCHEMA_ELEMENTS WHERE XML_SCHEMA_SCHEMA = 'A'";
+    assert_eq!(
+        sorted(&a, elements),
+        [
+            "LINES,,lines.xsd,,line,YES",
+            "ORDERS,urn:orders,orders.xsd,urn:orders,note,NO",
+            "ORDERS,urn:orders,orders.xsd,urn:orders,order,YES"
+        ]
+    );
+    let catalogs = "SELECT DISTINCT XML_SCHEMA_CATALOG FROM INFORMATION_SCHEMA.XML_SCHEMAS";
+    assert_eq!(sorted(&a, catalogs), ["TURBOREL"]);
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §4.2.6 Table 1, §20.12 to §20.14,
+/// §22.1] [DESIGN]: every user is shown the permanently registered XML
+/// Schemas: XS of XML Schema's namespace, its 41 global element
+/// declarations each non-deterministic, as each may hold an annotation of
+/// lax wildcards, with the XML namespace it imports; XSI of no element;
+/// SQLXML of `sqltype` and `sqlname`, deterministic; each permanent, its
+/// location its namespace and `.xsd`, USAGE PUBLIC's.
+#[test]
+fn the_permanent_xml_schemas_are_everyones() {
+    let db = database();
+    let c = db.session("C");
+    let schemas = "SELECT XML_SCHEMA_NAME, XML_SCHEMA_TARGET_NAMESPACE, XML_SCHEMA_LOCATION, XML_SCHEMA_IS_DETERMINISTIC, \
+                   XML_SCHEMA_IS_PERMANENT FROM INFORMATION_SCHEMA.XML_SCHEMAS";
+    assert_eq!(
+        sorted(&c, schemas),
+        [
+            "SQLXML,http://standards.iso.org/iso/9075/2003/sqlxml,http://standards.iso.org/iso/9075/2003/sqlxml.xsd,YES,YES",
+            "XS,http://www.w3.org/2001/XMLSchema,http://www.w3.org/2001/XMLSchema.xsd,NO,YES",
+            "XSI,http://www.w3.org/2001/XMLSchema-instance,http://www.w3.org/2001/XMLSchema-instance.xsd,YES,YES",
+        ]
+    );
+    let namespaces =
+        "SELECT XML_SCHEMA_NAME, XML_SCHEMA_NAMESPACE, XML_SCHEMA_NAMESPACE_IS_DETERMINISTIC FROM INFORMATION_SCHEMA.XML_SCHEMA_NAMESPACES";
+    assert_eq!(
+        sorted(&c, namespaces),
+        [
+            "SQLXML,http://standards.iso.org/iso/9075/2003/sqlxml,YES",
+            "XS,http://www.w3.org/2001/XMLSchema,NO",
+            "XS,http://www.w3.org/XML/1998/namespace,YES",
+            "XSI,http://www.w3.org/2001/XMLSchema-instance,YES",
+        ]
+    );
+    let elements = "SELECT XML_SCHEMA_NAME, XML_SCHEMA_ELEMENT_IS_DETERMINISTIC, COUNT(*) FROM INFORMATION_SCHEMA.XML_SCHEMA_ELEMENTS \
+                    GROUP BY XML_SCHEMA_NAME, XML_SCHEMA_ELEMENT_IS_DETERMINISTIC";
+    assert_eq!(sorted(&c, elements), ["SQLXML,YES,2", "XS,NO,41"]);
+    let sqlxml = "SELECT XML_SCHEMA_ELEMENT FROM INFORMATION_SCHEMA.XML_SCHEMA_ELEMENTS WHERE XML_SCHEMA_NAME = 'SQLXML'";
+    assert_eq!(sorted(&c, sqlxml), ["sqlname", "sqltype"]);
+}
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §20.4, §20.5, §21.1 Description
+/// 1a iii]: COLUMNS and DOMAINS show a type of XMLSCHEMA's registered XML
+/// Schema, its catalog, schema and name, and the namespace and element it
+/// names, null where it names none; another XML type's, null.
+#[test]
+fn a_type_of_xmlschema_shows_its_registered_xml_schema_20_4() {
+    let db = database();
+    let a = db.session("A");
+    a.run("CREATE TABLE T (E XML(DOCUMENT(XMLSCHEMA ID ORDERS ELEMENT \"order\")), S XML(CONTENT(XMLSCHEMA ID LINES)), U XML)").unwrap();
+    a.run("CREATE DOMAIN D AS XML(DOCUMENT(XMLSCHEMA URI 'urn:orders' NAMESPACE 'urn:orders'))").unwrap();
+    a.commit().unwrap();
+    let schema_columns = "XML_SECONDARY_MODIFIER, XML_SCHEMA_CATALOG, XML_SCHEMA_SCHEMA, XML_SCHEMA_NAME, XML_SCHEMA_NAMESPACE, \
+                          XML_SCHEMA_ELEMENT";
+    let columns = format!("SELECT COLUMN_NAME, {schema_columns} FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'T'");
+    assert_eq!(
+        sorted(&a, &columns),
+        ["E,XMLSCHEMA,TURBOREL,A,ORDERS,urn:orders,order", "S,XMLSCHEMA,TURBOREL,A,LINES,NULL,NULL", "U,NULL,NULL,NULL,NULL,NULL,NULL",]
+    );
+    let domains = format!("SELECT {schema_columns} FROM INFORMATION_SCHEMA.DOMAINS WHERE DOMAIN_NAME = 'D'");
+    assert_eq!(sorted(&a, &domains), ["XMLSCHEMA,TURBOREL,A,ORDERS,urn:orders,NULL"]);
 }

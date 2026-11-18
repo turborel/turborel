@@ -25,6 +25,7 @@ mod roles;
 mod structured;
 mod triggers;
 mod user_types;
+mod xml_schemas;
 
 use std::sync::OnceLock;
 
@@ -64,20 +65,14 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
     views().iter().find(|v| name.auth == INFORMATION_SCHEMA && v.name == name.ident)
 }
 
-/// The views of the Information Schema, in the standard's order, then this
-/// implementation's: those of ISO/IEC 9075:1992, those of arrays and
-/// row types (`information/composites.rs`), those of user-defined types
-/// and their routines (`information/user_types.rs`), of structured types
-/// and typed tables (`information/structured.rs`), those of roles
-/// (`information/roles.rs`), of triggers (`information/triggers.rs`) and
-/// of SQL-server modules (`information/modules.rs`), then the extensions
-/// (`information/extensions.rs`).
+/// The views of the Information Schema: those of ISO/IEC 9075:1992, then
+/// those of `information/`'s modules, arrays and row types, user-defined
+/// types, structured types, roles, triggers, SQL-server modules and
+/// registered XML Schemas, then the extensions (`extensions.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
-    ALL.get_or_init(|| {
-        [VIEWS, composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS, extensions::VIEWS]
-            .concat()
-    })
+    let parts = [composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS];
+    ALL.get_or_init(|| [&[VIEWS], parts.as_slice(), &[xml_schemas::VIEWS, extensions::VIEWS]].concat().concat())
 }
 
 /// The views of ISO/IEC 9075:1992 [§21.2.4-§21.2.26].
