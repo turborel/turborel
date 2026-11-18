@@ -3091,7 +3091,16 @@ dictionary are found by the tokens the last steps fix and matched step by
 step; each matching path's entries are read in the comparisons' range of
 keys. The rows are a superset, as a value is cut and a reader sees one
 version of its row, so its caller checks each row it fetches, as for a
-function lookup (D34): an index changes no result. A number compared also
+function lookup (D34): an index changes no result. The check
+(`XmlLookup::matches`) reads the value's stored form in one pass, no tree
+built: each element open keeps, as bits, which steps end at it and which
+were matched at or above it, made of its parent's and its name's, and an
+element's string value is its part of one buffer of the text read while
+an element selected is open; it holds a stack of open elements, at most
+`MAX_NESTING`. Its nodes are taken in document order, an element before
+its attributes, the first that holds or raises answering, as a tree's
+walk would answer, which a test of many values and lookups made checks.
+A number compared also
 selects the values keyed unordered, so no row whose comparison would raise
 err:FORG0001 is skipped (D15). D34's function lookup does not fit:
 XMLEXISTS and XMLQUERY are no registered function of a column and a

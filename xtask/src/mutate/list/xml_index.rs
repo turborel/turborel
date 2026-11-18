@@ -1,13 +1,13 @@
 //! Mutations of the XML indexes: the ORDPATH's odd components, a value's
 //! cut, the numbers' order and their unordered candidates, the steps'
-//! axes and the dictionary's prefixes, the bounds, and the entries of a
-//! value held as a large object taken back unread (RULES.md R-TEST-9,
-//! D86).
+//! axes and the dictionary's prefixes, the bounds, the entries of a value
+//! held as a large object taken back unread, and the check's steps and
+//! order (RULES.md R-TEST-9, D86).
 
 use super::{Mutation, Package};
 
 /// Each XML index mechanism broken alone, and the tests that fail.
-pub const XML_INDEX: [Mutation; 11] = [
+pub const XML_INDEX: [Mutation; 13] = [
     Mutation {
         name: "xml-index-ordpath-odd",
         package: Package::Core,
@@ -127,5 +127,25 @@ pub const XML_INDEX: [Mutation; 11] = [
         replacement: "        if false {",
         integration: &[],
         unit: &["index::xml::dictionary::tests::a_name_too_long_is_refused", "index::xml::tests::a_value_refused_leaves_nothing"],
+    },
+    Mutation {
+        name: "xml-check-document-order",
+        package: Package::Core,
+        breaks: "the check answers by a node before an element selected earlier, still open, is known",
+        file: "src/index/xml/check.rs",
+        original: "        if self.pending.first().is_some_and(|open| open < at) {",
+        replacement: "        if false {",
+        integration: &[],
+        unit: &["index::xml::check::tests::one_pass_answers_as_the_tree_does"],
+    },
+    Mutation {
+        name: "xml-check-descendant-steps",
+        package: Package::Core,
+        breaks: "the check's descendant step follows only the step before's node, as a child step does",
+        file: "src/index/xml/check.rs",
+        original: "        passed & ((after(ended) & self.child) | (after(reached) & self.descendant))",
+        replacement: "        passed & ((after(ended) & self.child) | (after(ended) & self.descendant))",
+        integration: &[],
+        unit: &["index::xml::check::tests::one_pass_answers_as_the_tree_does"],
     },
 ];

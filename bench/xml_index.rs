@@ -7,15 +7,17 @@
 //! value of a table's worth of documents:
 //!
 //! * decoded: each value's stored form decoded into a tree and the path
-//!   walked (`XmlLookup::matches`), as an evaluator reading values whole
-//!   does;
+//!   walked, as an evaluator reading values whole does;
 //! * streamed: one pass over each value's events (`xml::Events`), the
 //!   path matched as elements open, no tree built, the least a reader of
 //!   the stored form can do;
+//! * checked: each value answered by the lookup's own check
+//!   (`XmlLookup::matches`), one pass over its events;
 //! * rows found: the rows an `xml_path` and an `xml_value` index give for
 //!   it (`Index::xml_rows`), of an index of the first of those documents,
 //!   about 200,000 items';
-//! * looked up: those rows, each row's value then checked as decoded.
+//! * looked up: those rows, each row's value then checked
+//!   (`XmlLookup::matches`); and decoded: each decoded and walked instead.
 //!
 //! Index building is outside the timer. Run with `cargo xtask bench
 //! xml_index`, on the harness (RULES.md R-BENCH-1). When the XQuery
@@ -44,7 +46,7 @@ use turborel::index::{Index, IndexMethod, Key};
 use turborel::value::lob::Lob;
 use turborel::value::xml::{Typing, XmlType, XmlValue};
 use turborel::value::{CompOp, DataType, Value};
-use turborel::xml::{Event, Events, QName, Sequence, Syntax, Whitespace, encode, parse};
+use turborel::xml::{Event, Events, Item, NodeId, QName, Sequence, Syntax, Whitespace, decode, encode, parse};
 
 /// Items of each order: a small, a middling and a large document.
 const SIZES: [usize; 3] = [10, 1_000, 50_000];
@@ -66,6 +68,11 @@ fn main() {
         let lookup = predicate(items / 2);
         let bytes = document.len();
         bench.measure(Case::new(format!("decoded, {items} items"), "values").bytes(bytes), || {
+            let held = values.iter().filter(|v| decoded(v, &format!("thing {}", items / 2))).count();
+            assert_eq!(held, 1);
+            count as u64
+        });
+        bench.measure(Case::new(format!("checked, {items} items"), "values").bytes(bytes), || {
             let held = values.iter().filter(|v| lookup.matches(&xml(v)).unwrap()).count();
             assert_eq!(held, 1);
             count as u64
@@ -85,6 +92,13 @@ fn main() {
             bench.measure(Case::new(format!("looked up, {}, {items} items", method.name()), "lookups"), || {
                 let rows: Vec<u64> = Arc::clone(&index).xml_rows(&lookup).unwrap().map(Result::unwrap).collect();
                 let held = rows.iter().filter(|&&r| lookup.matches(&xml(&values[r as usize])).unwrap()).count();
+                assert_eq!(held, 1);
+                1
+            });
+            bench.measure(Case::new(format!("looked up and decoded, {}, {items} items", method.name()), "lookups"), || {
+                let rows: Vec<u64> = Arc::clone(&index).xml_rows(&lookup).unwrap().map(Result::unwrap).collect();
+                let wanted = format!("thing {}", items / 2);
+                let held = rows.iter().filter(|&&r| decoded(&values[r as usize], &wanted)).count();
                 assert_eq!(held, 1);
                 1
             });
@@ -151,6 +165,19 @@ fn streamed(bytes: &[u8], wanted: &str) -> bool {
         }
     }
     false
+}
+
+/// Whether the value stored as `bytes`, decoded into trees, has an
+/// `/order/item` of text `wanted`.
+fn decoded(bytes: &[u8], wanted: &str) -> bool {
+    decode(bytes).unwrap().items().iter().any(|item| {
+        let Item::Node(node) = item else { return false };
+        let tree = node.tree();
+        let named = |id: NodeId, local: &str| tree.name(id).is_some_and(|n| &*n.local == local);
+        tree.children(node.id())
+            .filter(|&o| named(o, "order"))
+            .any(|o| tree.children(o).any(|i| named(i, "item") && tree.string_value(i) == wanted))
+    })
 }
 
 /// An index of `method` holding `values`, each of the row its place.
