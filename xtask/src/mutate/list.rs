@@ -19,6 +19,7 @@ mod filter;
 mod generated;
 mod geometry;
 mod grouping_sets;
+mod hash;
 mod hypothetical;
 mod kept;
 mod limits;
@@ -94,6 +95,7 @@ pub fn all() -> Vec<Mutation> {
         [&MUTATIONS, &rekey::REKEY, &KEPT, &READERS, &READS, &COLLATIONS, &TAILORINGS, &sql2023::SQL2023, &regex::REGEX, &SHADOW];
     core.into_iter()
         .chain(areas::all())
+        .chain([hash::HASH.as_slice()])
         .chain([projection::PROJECTION.as_slice(), &xquery::XQUERY])
         .chain([xml_publishing::XML_PUBLISHING.as_slice()])
         .chain([xml_composite::XML_COMPOSITE.as_slice()])
@@ -103,28 +105,8 @@ pub fn all() -> Vec<Mutation> {
         .collect()
 }
 
-/// The core's mutations: transactions, durability, constraints, assertions, the hash index. Rekeying's are in `rekey.rs`.
-pub const MUTATIONS: [Mutation; 45] = [
-    Mutation {
-        name: "hash-key-stream-owner",
-        package: Package::Core,
-        breaks: "a discarded hash index frees pages while its key-row stream reads them",
-        file: "src/index/hash.rs",
-        original: "let _rows_owner = &self;",
-        replacement: "let _rows_owner = ();",
-        integration: &[],
-        unit: &["index::hash::tests::streams_retain_discarded_indexes_until_they_close"],
-    },
-    Mutation {
-        name: "hash-search-stream-owner",
-        package: Package::Core,
-        breaks: "a discarded hash index frees pages while a search still reads them",
-        file: "src/index/hash.rs",
-        original: "let _entries_owner = &self;",
-        replacement: "let _entries_owner = ();",
-        integration: &["indexes::indexes_are_dropped"],
-        unit: &["index::hash::tests::streams_retain_discarded_indexes_until_they_close"],
-    },
+/// The core's mutations: transactions, durability, constraints, assertions. Rekeying's are in `rekey.rs`, the hash index's in `hash.rs`.
+pub const MUTATIONS: [Mutation; 41] = [
     Mutation {
         name: "mvcc-snapshot",
         package: Package::Core,
@@ -573,28 +555,5 @@ pub const MUTATIONS: [Mutation; 45] = [
         replacement: "            Kind::Count(op, _) => Register::of(*op, false, Move::Still),",
         integration: &["assertion_totals::two_transactions_meet_only_moving_a_value_one_way_4_28"],
         unit: &[],
-    },
-    Mutation {
-        name: "hash-key-twice",
-        package: Package::Core,
-        breaks: "a hash index gives a row of a key inserted twice twice",
-        file: "src/index/hash.rs",
-        original: "            if given.contains(&v)? {",
-        replacement: "            if given.contains(&v)? && v.is_empty() {",
-        integration: &[],
-        unit: &["index::hash::tests::a_key_of_many_rows_is_read_a_page_at_a_time"],
-    },
-    Mutation {
-        name: "hash-tail-kept",
-        package: Package::Core,
-        breaks: "a hash table appends to a page a split or merge rewrote",
-        file: "src/engine/hash.rs",
-        original: "            self.set_tail(b, 0);",
-        replacement: "            drop(b);",
-        integration: &[],
-        unit: &[
-            "engine::hash::tests::it_holds_what_a_model_holds",
-            "engine::hash::tests::a_hot_keys_bucket_splits_and_merges_a_page_at_a_time",
-        ],
     },
 ];
