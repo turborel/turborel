@@ -310,7 +310,7 @@ impl Session {
     /// `tx` from the `kept`th on cancelled: the definitions it sees made
     /// again with those before, and what the cancelled ones made, which no
     /// other transaction ever saw, discarded.
-    fn cancel_definitions(&self, tx: &Txn, kept: usize) -> Result<()> {
+    pub(super) fn cancel_definitions(&self, tx: &Txn, kept: usize) -> Result<()> {
         let published = self.db.snapshot()?;
         let made = {
             let mut inner = self.inner.borrow_mut();

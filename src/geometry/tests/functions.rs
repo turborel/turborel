@@ -100,16 +100,20 @@ fn point_construction_and_relabeling_preserve_coordinates() {
     assert!(GeometryFunction::Point.call(&[Value::Approx(0.0), Value::Char("y".into())]).is_err());
 }
 
-/// Verifies: [DESIGN] D85: SQL observers refuse results beyond existing
-/// string limits while the Rust codecs can still round trip those shapes.
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.4, §5.1.5] D85:
+/// ST_AsText and ST_AsBinary return large objects, so a representation
+/// beyond a string type's limit is returned whole, and the Rust codecs
+/// round trip it.
 #[test]
 fn sql_observer_limits_do_not_truncate_geometries() {
     let text = format!("LINESTRING ({})", vec!["12345 67890"; 4000].join(", "));
     let geometry = Geometry::from_wkt(&text, 0).unwrap();
     assert_eq!(geometry.to_wkt(), text);
     let value = geometry.to_value();
-    for function in [GeometryFunction::AsText, GeometryFunction::AsBinary] {
-        assert_eq!(function.call(std::slice::from_ref(&value)).unwrap_err().code, Code::Unsupported);
-    }
+    let lengths: Vec<u64> = [GeometryFunction::AsText, GeometryFunction::AsBinary]
+        .into_iter()
+        .map(|f| if let Value::Lob(lob) = f.call(std::slice::from_ref(&value)).unwrap() { lob.octets() } else { 0 })
+        .collect();
+    assert_eq!(lengths, [text.len(), geometry.to_wkb().len()].map(|n| u64::try_from(n).unwrap()));
     assert_eq!(Geometry::from_wkb(&geometry.to_wkb(), 0).unwrap().to_wkt(), text);
 }

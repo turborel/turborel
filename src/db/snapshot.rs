@@ -30,6 +30,8 @@
 //!           creation), structured types (count u32, each a type),
 //!           user-defined casts, orderings and transforms (likewise),
 //!           embedding models and vector pipelines (`catalog/embedding.rs`)
+//!           the spatial reference systems defined and the geometry
+//!           columns registered (as `catalog/codec/spatial.rs` writes them)
 //! ```
 
 use std::sync::Arc;
@@ -98,6 +100,9 @@ pub(super) struct Snapshot {
     transforms: Vec<(QualifiedName, Vec<TransformGroupDesc>)>,
     /// \[EXTENSION\] The embedding models and vector pipelines.
     embeddings: Embeddings,
+    /// The spatial reference systems defined and the geometry columns
+    /// registered.
+    spatial: crate::catalog::SpatialCatalog,
 }
 
 impl Snapshot {
@@ -156,6 +161,7 @@ impl Snapshot {
             orderings: st.catalog.orderings().into_iter().cloned().collect(),
             transforms: st.catalog.all_transforms().into_iter().map(|(n, g)| (n.clone(), g.to_vec())).collect(),
             embeddings: st.catalog.embeddings().clone(),
+            spatial: st.catalog.spatial().clone(),
         })
     }
 
@@ -241,6 +247,7 @@ impl Snapshot {
         out.put_u32(count(self.transforms.len()));
         self.transforms.iter().for_each(|(n, g)| put_transforms(out, (n, g)));
         put_embeddings(out, &self.embeddings);
+        crate::catalog::codec::put_spatial(out, &self.spatial);
     }
 
     /// The snapshot `put` wrote.
@@ -278,6 +285,7 @@ impl Snapshot {
             orderings: (0..r.u32()?).map(|_| ordering(r)).collect::<Result<_>>()?,
             transforms: (0..r.u32()?).map(|_| transforms(r)).collect::<Result<_>>()?,
             embeddings: embeddings(r)?,
+            spatial: crate::catalog::codec::spatial(r)?,
         })
     }
 }
@@ -405,6 +413,7 @@ fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.routines.iter().cloned().for_each(|r| catalog.put_routine(r));
     snapshot.modules.iter().cloned().for_each(|m| catalog.put_module(m));
     catalog.set_embeddings(snapshot.embeddings.clone());
+    catalog.set_spatial(snapshot.spatial.clone());
 }
 
 /// [ISO/IEC 9075-4:2006 draft §12.8] Puts in `catalog` the declared tables

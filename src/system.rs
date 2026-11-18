@@ -63,7 +63,10 @@ use crate::value::{CharUnits, DataType, Decimal, INTEGER_PRECISION, Value, assig
 
 pub use information::{SystemView, view};
 pub use settings::DESCRIPTION_LENGTH;
-pub use spatial::{SRS_SEED, ST_DEFINITION_SCHEMA, ST_INFORMTN_SCHEMA, SpatialRefSys, UNITS, sizing_values};
+pub use spatial::{
+    DEFINITION_LENGTH, DESCRIPTION_LENGTH as SRS_DESCRIPTION_LENGTH, ORGANIZATION_LENGTH, SRS_NAME_LENGTH, SRS_SEED, ST_DEFINITION_SCHEMA,
+    ST_INFORMTN_SCHEMA, SpatialRefSys, UNITS, sizing_values,
+};
 
 /// [ISO/IEC 9075:1992 §21.2.1] The schema of the Information Schema, and
 /// its owner: CREATE SCHEMA INFORMATION_SCHEMA AUTHORIZATION

@@ -51,6 +51,7 @@ impl Database {
             | Change::User { .. }
             | Change::Owner { .. }
             | Change::RoleCreator { .. }
+            | Change::Spatial(_)
             | Change::Reconfiguration { .. } => Ok(()),
         }
     }

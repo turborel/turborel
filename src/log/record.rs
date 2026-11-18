@@ -75,7 +75,7 @@ use definitions::{
 
 use kinds::{
     ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, LOB_PUT, LOB_STALE,
-    OWNER, RECONFIGURATION, ROLE_CREATOR, SCHEMA, SEQUENCE, SETTING, STALE, STATEMENT_UNDONE, UPDATE, USER,
+    OWNER, RECONFIGURATION, ROLE_CREATOR, SCHEMA, SEQUENCE, SETTING, SPATIAL, STALE, STATEMENT_UNDONE, UPDATE, USER,
 };
 pub use kinds::{KINDS, REPLICATED};
 
@@ -331,6 +331,11 @@ pub enum Change {
         /// The members, `number=host:port`, by commas.
         members: String,
     },
+    /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §20.2, §20.3] A spatial
+    /// reference system defined or dropped, or a geometry column
+    /// registered or not, by a procedure in a transaction
+    /// (`geometry/procedures.rs`).
+    Spatial(crate::catalog::SpatialChange),
 }
 
 /// A log record: a change and the transaction that made it.
@@ -387,6 +392,7 @@ impl Record {
                 out.put_str(name);
                 out.put_u8(u8::from(*allowed));
             }
+            Change::Spatial(change) => crate::catalog::codec::put_spatial_change(&mut out, change),
         }
         out
     }
@@ -438,6 +444,7 @@ impl Record {
             OWNER => Change::Owner { name: r.str()? },
             ROLE_CREATOR => Change::RoleCreator { name: r.str()?, allowed: r.u8()? != 0 },
             RECONFIGURATION => Change::Reconfiguration { members: r.str()? },
+            SPATIAL => Change::Spatial(crate::catalog::codec::spatial_change(&mut r)?),
             other => return Err(r.corrupt(&format!("no kind of record has tag {other}"))),
         };
         r.finish()?;
