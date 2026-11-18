@@ -1,6 +1,6 @@
 # Trademark Policy
 
-Turborel source code is licensed under the BSD 2-Clause License (see LICENSE), which covers code only and grants no rights to the "Turborel" name, logos, or branding (owned by Turborel Inc.).
+Turborel source code is licensed under the BSD-2-Clause Plus Patent License (see LICENSE), which covers code only and grants no rights to the "Turborel" name, logos, or branding (owned by Turborel Inc.).
 
 ## What you may do without asking
 - Accurately state that your software uses or is built on Turborel (e.g., "Built on Turborel").
