@@ -108,3 +108,48 @@ impl Settings {
         }
     }
 }
+
+// Unit tests: settings declared, changed and retired by their owner
+// (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests {
+    use super::super::{Definition, Effect, Kind, Own, Settings};
+    use super::Owner;
+    use crate::value::{Decimal, Value};
+
+    /// A database's whole-number setting `name` of `max`.
+    fn integer(name: &str, max: i128) -> Definition {
+        let kind = Kind::Integer { min: 0, max };
+        Definition { name: name.into(), kind, default: Value::Exact(Decimal::new(1, 0)), per_session: false, node: false, effect: Effect::Statement, doc: String::new() }
+    }
+
+    /// Verifies: [EXTENSION] RULES.md D280: a plug-in's settings declared
+    /// again keep their places and the database's values still of their
+    /// kinds; those it no longer declares are retired, unnamed, unlisted,
+    /// in no image, their values gone; none is declared outside its name
+    /// or over another's; and one retired declared again takes a place of
+    /// its own at its default.
+    #[test]
+    fn owned_settings_are_redeclared_and_retired() {
+        let mut s = Settings::default();
+        let owner = Owner { plugin: "E".into(), host: false };
+        s.declare_owned(&owner, vec![integer("E.A", 10), integer("E.B", 10)]).unwrap();
+        let (a, b) = (s.key("e.a").unwrap(), s.key("E.B").unwrap());
+        s.set("E.A", Some(&Value::Exact(Decimal::new(7, 0)))).unwrap();
+        s.set("E.B", Some(&Value::Exact(Decimal::new(9, 0)))).unwrap();
+        s.declare_owned(&owner, vec![integer("E.A", 10), integer("E.B", 5)]).unwrap();
+        assert_eq!((s.key("E.A"), s.integer(a), s.integer(b)), (Some(a), 7, 1), "B's 9 is no longer of its kind");
+        s.declare_owned(&owner, vec![integer("E.A", 10)]).unwrap();
+        assert!(s.key("E.B").is_none() && s.owner("E.B").is_none());
+        assert!(!s.list(&Own::default()).iter().any(|l| l.definition.name == "E.B"));
+        s.retire_owned("e");
+        assert!(s.key("E.A").is_none() && !s.database_values().iter().any(|(n, _)| n.starts_with("E.")));
+        assert!(s.declare_owned(&owner, vec![integer("F.A", 10)]).is_err());
+        let other = Owner { plugin: "SESSION".into(), host: true };
+        assert!(s.declare_owned(&other, vec![integer("SESSION.TIME_ZONE", 1)]).is_err());
+        s.declare_owned(&owner, vec![integer("E.A", 10)]).unwrap();
+        assert_ne!(s.key("E.A"), Some(a));
+        assert_eq!(s.integer(s.key("E.A").unwrap()), 1);
+        assert!(!s.host_only("E.A") && s.host_only("plugins.host"));
+    }
+}

@@ -273,3 +273,40 @@ fn frames_are_served() {
     assert!(matches!(&all[1], Message::Result { call: 1, .. }), "{all:?}");
     assert!(matches!(&all[2], Message::Error { call: 2, state, .. } if state == "38T04"), "{all:?}");
 }
+
+/// An advisor keeping the pages its setting KEEP names from page 0, and
+/// answering the report's interval as its recency.
+struct Keeping;
+
+use host::{EvictionAdvisor, Policy, Report as Told, policies};
+
+impl EvictionAdvisor for Keeping {
+    fn advise(&mut self, cx: &mut Cx<'_>, report: &Told) -> Answer<Option<Policy>> {
+        let keep = cx.integer("E.KEEP").and_then(|k| u64::try_from(k).ok()).unwrap_or(0);
+        if keep == 0 || cx.text("E.MODE") != Some("ON") {
+            return Ok(None);
+        }
+        let base = Policy { recency: u32::try_from(report.interval).unwrap_or(0), ..policies::lru_2() };
+        Ok(Some(policies::weighing(base, 0, (0, keep.saturating_sub(1)), 0)))
+    }
+}
+
+/// Verifies: [EXTENSION] RULES.md D282, D283: a call reads the settings
+/// the last SETTINGS gave, by name in any case, whole numbers and words;
+/// an advisor is told the pool's report and answers a policy, written as
+/// protocol 1 carries it, or none to keep the last.
+#[test]
+fn an_advisor_reads_its_settings_and_answers_a_policy() {
+    use turborel::disk::buffer::{Range, Report};
+    use turborel::plugin::payload::eviction::{EVICTION_ADVISE, answer, put_report};
+    let mut h = Harness::new(Plugin::new("1.0.0").host_eviction("K", Keeping));
+    let mut payload = Vec::new();
+    put_report(&mut payload, &Report { interval: 9, frames: 4, ..Report::default() });
+    let asked = |h: &mut Harness| answer(&mut turborel::plugin::payload::reader(&h.call(37, EVICTION_ADVISE, "K", payload.clone()).unwrap())).unwrap();
+    assert_eq!(asked(&mut h), None);
+    h.settings(&[("e.keep", Value::Exact(Decimal::new(3, 0))), ("E.MODE", Value::Char("ON".into()))]);
+    let policy = asked(&mut h).unwrap();
+    assert_eq!((policy.history, policy.recency), (2, 9));
+    assert_eq!(policy.ranges, [Range { file: 0, first: 0, last: 2, weight: 0 }]);
+    assert!(h.call(37, 9, "K", Vec::new()).is_err());
+}

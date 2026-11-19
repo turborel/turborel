@@ -365,3 +365,7 @@ impl EvictionSlot {
         held.map_or_else(|| Box::new(super::Clock::new(frames)) as Box<dyn Eviction>, |make| make(frames))
     }
 }
+
+// Unit tests: the evictor's choices by its policy (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;
