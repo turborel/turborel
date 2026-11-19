@@ -228,6 +228,16 @@ verification approach DO-178C expects (§8).
 | D204 | TLS by mode, and channel binding disabled, preferred or required |
 | D205 | The SCRAM keys a password derives are cached by salt, iterations and a keyed tag of the password |
 | D206 | A pool hands out checked connections and takes them back reset, by the standard library alone |
+| D210 | The client's own commands begin with a backslash, and are read by the splitter |
+| D211 | The line editor is the client's own, over `stty`, with its history and completion |
+| D212 | Variables are substituted by the splitter, as text, literal or identifier, and steer conditionals |
+| D213 | Rows are written in seven styles, measured in terminal columns, through a pager on a screen |
+| D214 | The describe commands read the Information Schema alone |
+| D215 | A script's outcome is its exit status, and its statements may be steered from results |
+| D216 | `\import` goes by bulk copy, and `\export` streams a query's rows, in the protocol's frames if asked |
+| D217 | The prompt, the connection commands and `\password` are built on SQL, the verifier made by the client |
+| D218 | `turborel admin` maps each command onto statements the server runs |
+| D219 | The client adds `\G`, `\tee`, tab-separated output, safe updates, a delimiter and statement help |
 | D240 | A completion carries the server's time for its statement, and the waits it can measure for free |
 
 ### The project
@@ -2751,17 +2761,21 @@ SQL without writing a program. Input comes from `-c`, `-f` or standard
 input. Each statement runs alone as a `<direct SQL statement>` [ISO/IEC
 9075:1992 §20.1]. Rows stream as a table, which bounds memory. Failures go
 to standard error and the run continues, unless `--stop-on-error` is given
-or the connection is lost. Exit status is 1 if any statement failed.
+or the connection is lost. The exit status tells how the run ended (D215).
 
-`--timing` reports each attempted SQL statement's elapsed time in whole
-nanoseconds to standard error, after the statement. It uses the client's
+A session typed at a terminal, its output on a screen, reports each
+attempted SQL statement's elapsed time in whole nanoseconds to standard
+error, after the statement. Nothing else is timed, so a script, `-c`,
+`-f`, an included file and piped output never show a time, and no
+option or command turns it on or off. It uses the client's
 monotonic clock, from starting the statement through receiving its outcome
 and writing any result rows: server work, network transfer and streamed
 output are included; writing a failure's diagnostic is not. Reading input,
 the initial connection and login, and imports are outside it. Nanoseconds
 are the unit, not a promise of clock precision. A failure to write timing
-is ignored, as one to write a diagnostic is. Timing is off by default and
-changes no protocol message (D45).
+is ignored, as one to write a diagnostic is. Timing changes no protocol
+message (D45). The time the server reports for a statement follows the
+round trip once the client gives it (D215).
 
 The client library is the SQL-agent [ISO/IEC 9075:1992 §15]
 (`turborel_client::agent`). It runs CONNECT, SET CONNECTION and DISCONNECT
@@ -6510,6 +6524,174 @@ PLUGINS.REGISTRIES, a package pinned to one by PLUGINS.PINS, and none is
 configured by default. The command-line client fetches over HTTPS with
 rustls (`client/src/fetch.rs`); the server never fetches.
 
+#### D210. The client's own commands begin with a backslash, and are read by the splitter
+
+A line of the client may hold, besides SQL, a command the client does
+itself, such as describing objects, setting the layout or running
+files. A command begins with a backslash outside a literal, a delimited
+identifier or a comment, where no SQL text holds one [ISO/IEC
+9075:1992 §5.2]. So the splitter that ends statements tells commands
+apart in the same pass (`split.rs`, `Piece`). A command may end the
+statement begun on its line (`\g`). A command runs to the end of its
+line, and its arguments split at spaces, quoted ones whole
+(`command.rs`). The Client Reference describes the commands. Each maps
+onto SQL the server already runs or onto the client's own state, and
+none adds a protocol message.
+
+#### D211. The line editor is the client's own, over `stty`, with its history and completion
+
+Typed lines are edited by the client's own line editor, as no
+dependency is taken for one (`line.rs`). It decodes keys from the bytes
+a terminal sends, keeps a buffer with a cursor, searches a history
+backwards and completes by Tab. The `stty` program puts the terminal in
+raw mode. It is run through `std::process::Command` with the terminal
+as its input, and only where `std::io::IsTerminal` holds for standard
+input and output and `stty` saves their modes. A guard puts the modes
+back after each line, also when a panic unwinds, so a statement runs
+with the terminal as it was and Ctrl-C cancels it (D44). Elsewhere
+lines are read whole. No code is written for one platform, so a
+platform without `stty` reads lines whole. A statement typed over
+several lines is one history entry, kept in the file as one line with
+its line breaks escaped. An entry that begins with a space is not kept.
+Completion reads the names of tables, columns, schemas and users from
+the Information Schema the first time a context needs them, and again
+after a statement that may change them.
+
+#### D212. Variables are substituted by the splitter, as text, literal or identifier, and steer conditionals
+
+The client keeps variables (`vars.rs`). In code outside literals,
+delimited identifiers and comments, `:NAME` is the value as text,
+`:'NAME'` a character string literal and `:"NAME"` a delimited
+identifier. Quotes inside are doubled, so a value read into a statement
+cannot end its literal or identifier. `:{?NAME}` is whether the
+variable is set. The splitter substitutes them as it reads, so a value
+may hold a statement's end only where it is written as text. A variable
+not set, and the colons of `::`, are left as written. The client's own
+settings are variables too (AUTOCOMMIT, STOP_ON_ERROR,
+ECHO, QUIET, FETCH_COUNT, VERBOSITY,
+SAFE_UPDATES, the prompts and the history's). Each statement sets
+ROW_COUNT, ERROR, SQLSTATE and the last failure's message and SQLSTATE.
+`\if`, `\elif`, `\else` and `\endif` nest to 64 deep (R-CF-6). In a
+branch not taken only those commands are read. A value neither true nor
+false opens its block as false, and the client says so.
+
+#### D213. Rows are written in seven styles, measured in terminal columns, through a pager on a screen
+
+A query's rows are written as they come (D46) by one printer
+(`format.rs`). Its styles are aligned, wrapped, unaligned, CSV
+(RFC 4180), HTML, JSON (RFC 8259) and tab-separated. Each may be
+expanded to a line a column, on request or when a row is wider than the
+screen. A column's width comes from its type, so a streamed result
+needs no second pass. Rows held before they are written, as the
+describe commands' are, are as wide as their values. A value's width is
+its terminal columns. A combining mark, a format or a control character
+takes none, and a character of the wide East Asian blocks takes two, as
+the regex engine's Unicode classes tell. On a screen, output taller
+than the screen goes through `TURBOREL_PAGER`, `PAGER` or a `less`
+found in PATH. The pager starts only once the first screen is full, so
+a short result never starts one.
+
+#### D214. The describe commands read the Information Schema alone
+
+`\d` and its family are queries of the Information Schema [ISO/IEC
+9075-11:2006 draft §5] (`describe.rs`). So they show what any session
+of the user may see, need nothing of the server's own, and keep working
+as the catalog grows. A pattern is matched by LIKE, with `*` and `?` as
+its wild cards and `%` and `_` escaped. An undelimited part is taken in
+upper case, as SQL takes a name. `\d NAME` looks its tables up first,
+then describes each in sections, leaving out a section without rows.
+The system's schemas are left out unless `S` asks for them.
+
+#### D215. A script's outcome is its exit status, and its statements may be steered from results
+
+How a run ended is its exit status (`run.rs`, `Outcome`). It is 0 when
+every statement succeeded, 1 when one failed and the run went on or the
+run could not begin, 2 when the connection was lost, and 3 when
+STOP_ON_ERROR ended it at a statement that failed. So a caller tells a
+stopped script from a lost server. `--single-transaction` runs a script
+as one transaction, committed if all succeeded and rolled back if any
+failed. The client takes no savepoint around a statement, since a
+failed statement leaves no effect and its transaction goes on (R-ERR-5).
+`\i` and
+`\ir` include files, at most 16 deep (R-CF-6), `\ir` from the
+including file's directory. `\o` and `\g` send results to a file or a
+program. `\gset` stores one row as variables, and `\gexec` runs each
+value as a statement. `\watch` runs one again on an interval until
+Ctrl-C, reading the count of presses from the handler (D44). `\e` edits
+the statement begun in the editor the environment names. In a session
+typed at a screen, each statement's line shows the round trip the
+client measured, and then the time the server reports for it, split
+into planning, execution and waiting as far as the server splits it. The server
+reports it in the statement's completion (D240), its waits for locks as
+the waiting, and the time the request waited for a worker after it as
+queued (`Statements::server_time`). Of a server that reports none, the
+line shows the round trip alone.
+
+#### D216. `\import` goes by bulk copy, and `\export` streams a query's rows, in the protocol's frames if asked
+
+`\import` is `--import` (D59) from a line of the session.
+`\export` writes a table's or a query's rows to a file as the server
+streams them. It writes CSV, quoting values that would read back as a
+null, so `\import` reads back what `\export` wrote. It also writes
+tab-separated text, refusing a value that format cannot hold, and
+with `native` the protocol's own frames, which keep every value's type
+(D195, `Statements::export_native`). `\import` goes by the protocol's
+bulk copy where the server grants `copy`, a batch to a copy that
+commits it, and through a prepared INSERT with one transaction a batch
+where it does not, or where `skip` passes bad rows over
+(`turborel_client::import`). The rows of `\export` come by a query as
+the server streams them.
+
+#### D217. The prompt, the connection commands and `\password` are built on SQL, the verifier made by the client
+
+The prompt's escapes show the user, the catalog, the default schema,
+whether the user is the owner, and whether a transaction is active
+(`prompt.rs`). The catalog and the owner are read from the Information
+Schema only for a prompt that shows them, and again after a statement
+that may change them; the schema is tracked from SET SCHEMA. Of a
+server that grants `status`, the catalog, the owner, the user and the
+schema are what its session status last told (CATALOG, OWNER,
+AUTHORIZATION and SCHEMA, D190), and nothing is probed. Each notice the
+server sends with a statement (D187), and each warning among the
+conditions its completion carries but the one it completed with, which
+its result names, is told after it as failures are, its SQLSTATE and
+message, then its detail and hint. `\c` runs CONNECT and then DISCONNECT of the connection before
+through the SQL-agent (D46). `\password` makes the SCRAM-SHA-256
+verifier the server keeps (D43), PBKDF2 and HMAC written over the
+SHA-256 the client links (`password.rs`), and sends it by `ALTER USER
+... PASSWORD VERIFIER`; a server that does not take that form is sent
+the password only over TLS or a local socket, never plain TCP.
+
+#### D218. `turborel admin` maps each command onto statements the server runs
+
+`turborel admin COMMAND` (`admin.rs`) is a session like any other, and
+each command is one or two statements. It shows through the
+Information Schema's SERVER, CONNECTIONS and SETTINGS, and changes
+through END CONNECTION, CANCEL CONNECTION, SET DATABASE, CREATE SCHEMA,
+DROP SCHEMA and ALTER USER. So every command is authorized as its
+statement is, and none needs a protocol message of its own. There are
+eleven commands, `ping`, `status`, `processlist`, `kill`, `cancel`,
+`variables`, `password`, `create-schema`, `drop-schema`, `version` and
+`tls`. Dropping a schema asks first, unless `--yes`, and is refused
+without a terminal to ask at. `ping` sends the protocol's Ping (D189),
+which the server answers with no worker, and runs a statement that
+reads nothing only of a server that does not take it; `tls` names new files,
+and files changed in place are taken on SIGHUP.
+
+#### D219. The client adds `\G`, `\tee`, tab-separated output, safe updates, a delimiter and statement help
+
+A statement ended by `\G` has its rows expanded, for that statement
+only.
+`\tee` copies all that is written, failures too, to a file. `-B` writes
+tab-separated rows for other programs. SAFE_UPDATES refuses an UPDATE or
+DELETE without WHERE before it is sent, read from the statement's
+words outside literals and comments (`words.rs`), so a slip at the
+prompt changes no row. `\delimiter` ends statements with another text,
+so a routine's body may be typed with its semicolons. `\h` writes a
+statement's syntax from the pages of `doc/sql/statements`, compiled
+into the client, so it describes the release it came with; a test holds
+the list to the directory.
+
 #### D137. A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them
 
 A geometry column's statistics are gathered in the pass that gathers the
@@ -7194,7 +7376,10 @@ owner, and CONNECTIONS.APPLICATION the one named `application`.
 
 With `multi-statement`, a Query marked multi (tag 2) holds several
 statements, split as the client library splits a script
-(`turborel_protocol::split`). The server runs each as a Query of it
+(`turborel_protocol::split`). The command-line client keeps its own
+splitter, which also reads backslash commands, variables and
+`\delimiter` (D210, D212, D219), and a test holds the two to splitting
+SQL alike, whole or a character at a time. The server runs each as a Query of it
 would, each statement's replies its own, every completion but the last
 marked more (tag 5). The first that fails is the last run, and its Error
 ends the replies. Under autocommit each statement is its own transaction.

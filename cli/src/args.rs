@@ -9,6 +9,9 @@ use turborel_client::connection::Password;
 use turborel_client::import::{DEFAULT_BATCH, Dialect, Import};
 use turborel_client::timeouts::Timeouts;
 
+mod output;
+pub use output::{Environment, Settings};
+
 /// The host connected to, unless one is named.
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 /// The port connected to, unless one is named: the server's own default.
@@ -16,8 +19,8 @@ pub const DEFAULT_PORT: u16 = 7422;
 /// The environment variable a password may be given in.
 pub const PASSWORD_VARIABLE: &str = "TURBOREL_PASSWORD";
 
-/// The option that asks for each statement's elapsed time (RULES.md D46).
-const TIMING: &str = "--timing";
+/// The word that begins the administrative commands (RULES.md D218).
+const ADMIN: &str = "admin";
 
 /// Where the server is.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,9 +110,6 @@ pub struct Options {
     pub inputs: Vec<Input>,
     /// Whether the first statement that fails ends a run not typed.
     pub stop_on_error: bool,
-    /// Whether each SQL statement's elapsed time is written to standard
-    /// error, in nanoseconds, including transfer and result output.
-    pub timing: bool,
     /// What a null value is shown as, and what a field imported is
     /// written as to be null.
     pub null: String,
@@ -118,6 +118,9 @@ pub struct Options {
     pub timeouts: Timeouts,
     /// How files are imported, if any are.
     pub import: Option<Importing>,
+    /// How results are written, the variables set, and what the
+    /// environment names (RULES.md D212, D213).
+    pub settings: Settings,
 }
 
 /// What the command line asks for.
@@ -134,11 +137,25 @@ pub enum Command {
     Extension(Box<crate::extension::Invocation>),
     /// The usage text of `turborel extension`.
     ExtensionHelp,
+    /// \[DESIGN\] RULES.md D218: an administrative command, `turborel
+    /// admin ...`, and the session it runs in.
+    Admin(Box<crate::admin::Invocation>),
+    /// The usage text of `turborel admin`.
+    AdminHelp,
+}
+
+/// What the command line asks for in place of a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Asked {
+    Help,
+    Version,
 }
 
 /// What the command line named, before it is checked.
 #[derive(Debug, Default)]
 struct Named {
+    /// The help or the release, if asked for instead of a session.
+    asked: Option<Asked>,
     host: Option<String>,
     port: Option<u16>,
     socket: Option<PathBuf>,
@@ -154,12 +171,12 @@ struct Named {
     output: NamedOutput,
     timeouts: Timeouts,
     import: NamedImport,
+    settings: Settings,
 }
 
 /// What the command line named of how results are shown.
 #[derive(Debug, Default)]
 struct NamedOutput {
-    timing: bool,
     null: Option<String>,
 }
 
@@ -181,18 +198,45 @@ struct NamedImport {
 ///
 /// What is wrong with it, for the user.
 pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Command, String> {
-    if let Some((first, after)) = args.split_first()
-        && first == "extension"
-    {
+    let Some((first, after)) = args.split_first() else { return run(&[], env) };
+    if first == "extension" {
         return Ok(crate::extension::parse(after, env)?.map_or(Command::ExtensionHelp, |inv| Command::Extension(Box::new(inv))));
     }
+    if first == ADMIN {
+        let (named, words) = named(after, true)?;
+        if named.asked.is_some() || words.is_empty() {
+            return Ok(Command::AdminHelp);
+        }
+        let options = options(named, env)?;
+        return Ok(Command::Admin(Box::new(crate::admin::Invocation::new(options, &words)?)));
+    }
+    run(args, env)
+}
+
+/// The session the command line `args` asks for, or its help or release.
+fn run(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Command, String> {
+    let (named, _) = named(args, false)?;
+    match named.asked {
+        Some(Asked::Help) => return Ok(Command::Help),
+        Some(Asked::Version) => return Ok(Command::Version),
+        None => {}
+    }
+    options(named, env).map(|o| Command::Run(Box::new(o)))
+}
+
+/// What `args` name, and, if `words` are taken, the words after the
+/// first that is no option, as an administrative command's.
+fn named(args: &[String], words: bool) -> Result<(Named, Vec<String>), String> {
     let mut named = Named::default();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         let mut value = || rest.next().cloned().ok_or_else(|| format!("{arg} needs a value"));
+        if output::option(arg, &mut value, &mut named.settings)? {
+            continue;
+        }
         match arg.as_str() {
-            "--help" => return Ok(Command::Help),
-            "--version" => return Ok(Command::Version),
+            "--help" => named.asked = Some(Asked::Help),
+            "--version" => named.asked = Some(Asked::Version),
             "-h" | "--host" => named.host = Some(value()?),
             "-p" | "--port" => named.port = Some(port(&value()?)?),
             "--socket" => named.socket = Some(PathBuf::from(value()?)),
@@ -206,7 +250,6 @@ pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Co
             "-c" | "--command" => named.inputs.push(Input::Command(value()?)),
             "-f" | "--file" => named.inputs.push(Input::File(PathBuf::from(value()?))),
             "--stop-on-error" => named.stop_on_error = true,
-            TIMING => named.output.timing = true,
             "--null" => named.output.null = Some(value()?),
             "--connect-timeout" => named.timeouts.connect = seconds(&value()?)?,
             "--read-timeout" => named.timeouts.read = seconds(&value()?)?,
@@ -217,10 +260,16 @@ pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Co
             "--delimiter" => named.import.delimiter = Some(value()?),
             "--batch" => named.import.batch = Some(rows(&value()?)?),
             "--skip-bad-rows" => named.import.skip = true,
-            other => return Err(format!("{other} is not an option\n\n{}", crate::USAGE)),
+            other => {
+                if words && !other.starts_with('-') {
+                    let all = std::iter::once(arg).chain(rest).cloned().collect();
+                    return Ok((named, all));
+                }
+                return Err(format!("{other} is not an option\n\n{}", crate::USAGE));
+            }
         }
     }
-    options(named, env).map(|o| Command::Run(Box::new(o)))
+    Ok((named, Vec::new()))
 }
 
 /// The port `text` names.
@@ -297,7 +346,10 @@ fn options(named: Named, env: &dyn Fn(&str) -> Option<String>) -> Result<Options
     let server = server(named.socket, named.host, named.port, tls)?;
     let inputs = if named.inputs.is_empty() { vec![Input::Standard] } else { named.inputs };
     let (stop_on_error, timeouts) = (named.stop_on_error, named.timeouts);
-    Ok(Options { server, user, credentials, inputs, stop_on_error, timing: named.output.timing, null, timeouts, import })
+    let mut settings = named.settings;
+    settings.environment = Environment::of(env);
+    settings.layout.null.clone_from(&null);
+    Ok(Options { server, user, credentials, inputs, stop_on_error, null, timeouts, import, settings })
 }
 
 /// Where the server is: at the Unix socket or named pipe `socket`, if one

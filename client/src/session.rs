@@ -107,6 +107,12 @@ impl<S: Read + Write> Connection<S> {
         self.told.completed.as_ref().map_or(&[], |c| c.conditions.as_slice())
     }
 
+    /// The conditions of `conditions`, taken, so a program that tells
+    /// them after each statement tells each once.
+    pub fn take_conditions(&mut self) -> Vec<Failure> {
+        self.told.completed.as_mut().map(|c| std::mem::take(&mut c.conditions)).unwrap_or_default()
+    }
+
     /// \[DESIGN\] RULES.md D191: `attributes` carried by each Query and
     /// Execute from now on, read in SQL by QUERY_ATTRIBUTE(name);
     /// `traceparent` is the request's trace context, which the server's

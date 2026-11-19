@@ -7,6 +7,7 @@ mod backup;
 mod bigint;
 mod bounded;
 mod check_rebind;
+mod cli;
 mod client;
 mod collations;
 mod composite;
@@ -135,11 +136,8 @@ mod xquery_statics;
 mod zones;
 
 pub use self::{collations::COLLATIONS, fill::FILL, kept::KEPT, readers::READERS, server::SERVER, vr::VR, waits::WAITS, zones::ZONES};
+pub use self::{reads::READS, shadow::SHADOW, stats::STATS, tailorings::TAILORINGS};
 use super::{Mutation, Package};
-pub use reads::READS;
-pub use shadow::SHADOW;
-pub use stats::STATS;
-pub use tailorings::TAILORINGS;
 
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {

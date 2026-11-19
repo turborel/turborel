@@ -162,6 +162,8 @@ behind it, and each can be replaced or added to.
 - Domains, assertions, temporary tables, scrollable cursors and dynamic SQL.
 - Columns renamed in place, without copying their rows.
 - Import of CSV and tab-separated files through the client.
+- A command-line client with line editing, completion, describe commands,
+  variables, scripting and seven output formats ([guide](doc/client/05-turborel-commands.md)).
 - Library, embedded modes
 - A server over TCP, Unix sockets or Windows named pipes, with TLS,
   users and passwords, prepared statements and cancellation.

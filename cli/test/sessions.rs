@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use turborel::db::Database;
 use turborel::value::Value;
-use turborel_cli::{Credentials, Input, Io, MORE, PROMPT, Server, Tls};
+use turborel_cli::{Credentials, Dialer, Input, Io, MORE, PROMPT, Screen, Server, Terminal, Tls};
+use turborel_client::agent::Agent;
 use turborel_client::connection::Password;
 use turborel_server::certificate::Certificate;
 use turborel_server::password::Pbkdf2;
@@ -154,16 +155,23 @@ fn a_run_ends_when_it_cannot_go_on() {
     let given = options(&server, vec![command("SELECT K FROM T; SELECT K FROM T")]);
     let mut connection = turborel_cli::connect(&given, || Ok(String::new())).unwrap();
     let mut err = Vec::new();
-    let io = Io { input: &mut io::empty(), typed: false, out: &mut Closed, err: &mut err, interrupts: None };
+    let io = Io { input: &mut io::empty(), typed: false, out: &mut Closed, err: &mut err, interrupts: None, terminal: Terminal::default() };
     assert!(!turborel_cli::run(&mut connection, &given, io));
     assert_eq!(String::from_utf8(err).unwrap(), "turborel: cannot write: closed\n", "once");
     let mut typed = Vec::new();
-    let io = Io { input: &mut "SELECT K FROM T;".as_bytes(), typed: true, out: &mut Closed, err: &mut typed, interrupts: None };
+    let io = Io {
+        input: &mut "SELECT K FROM T;".as_bytes(),
+        typed: true,
+        out: &mut Closed,
+        err: &mut typed,
+        interrupts: None,
+        terminal: Terminal::default(),
+    };
     assert!(!turborel_cli::run(&mut connection, &options(&server, vec![Input::Standard]), io));
     assert_eq!(String::from_utf8(typed).unwrap(), "turborel: cannot write: closed\n", "not even prompted");
     server.stop();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let io = Io { input: &mut io::empty(), typed: false, out: &mut out, err: &mut err, interrupts: None };
+    let io = Io { input: &mut io::empty(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
     assert!(!turborel_cli::run(&mut connection, &given, io));
     let told = String::from_utf8(err).unwrap();
     assert_eq!(told.lines().count(), 1, "ended: {told}");
@@ -279,4 +287,33 @@ fn a_typed_session_begins_with_a_banner() {
         turborel::product(),
     );
     assert!(turborel_cli::banner(&given, &connection).starts_with(&expected));
+}
+
+/// Verifies: [DESIGN] RULES.md D187, D190, D215, D217, D240: typed at a
+/// screen, the prompt shows the catalog, the owner and the schema the
+/// server's session status told, with no statement; each statement's
+/// line shows the server's time beside the round trip, its waits split
+/// out; a warning a statement raised is told as a notice, with its
+/// SQLSTATE and message, but the one it completed with, which its result
+/// names.
+#[test]
+fn the_server_tells_the_prompt_its_times_and_its_notices() {
+    let (db, server) = served();
+    db.schema("CREATE SCHEMA AUTHORIZATION Y").unwrap();
+    let given = options(&server, vec![Input::Standard]);
+    let connection = turborel_cli::connect(&given, || Ok(String::new())).unwrap();
+    let mut agent = Agent::connected(Dialer::new(given.clone(), Box::new(|| Ok(String::new()))), connection);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let text = "\\set PROMPT '%n@%c%#%s: '\nSET SCHEMA 'Y';\n\
+                BEGIN SIGNAL SQLSTATE '01H01' SET MESSAGE_TEXT = 'careful'; SIGNAL SQLSTATE '01H02' SET MESSAGE_TEXT = 'later'; END;\n";
+    let terminal = Terminal { screen: Some(Screen { width: 200, height: 1000 }), ..Terminal::default() };
+    let io = Io { input: &mut text.as_bytes(), typed: true, out: &mut out, err: &mut err, interrupts: None, terminal };
+    assert!(turborel_cli::run(&mut agent, &given, io));
+    agent.terminate().unwrap();
+    let (out, err) = (String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap());
+    assert!(out.contains("X@TURBOREL>X: ") && out.contains("X@TURBOREL>Y: "), "{out}");
+    assert!(err.contains("turborel: notice (SQLSTATE 01H01): careful"), "{err}");
+    assert!(!err.contains("01H02") && out.contains("OK, with a warning: SQLSTATE 01H02"), "the last said by the result alone: {err}");
+    let timed = err.lines().filter(|l| l.starts_with("Time: ") && l.contains(" ns, server ") && l.contains(", queued ")).count();
+    assert_eq!(timed, 2, "{err}");
 }

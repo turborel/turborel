@@ -103,6 +103,12 @@ impl<C: Connector> Agent<C> {
             .ok_or_else(|| exception(SqlState::CONNECTION_DOES_NOT_EXIST, "[DESIGN] the current connection is gone"))
     }
 
+    /// The current connection, if there is one, to read what its server
+    /// last told it.
+    pub fn current_connection(&self) -> Option<&Connected> {
+        Some(&self.held.get(self.current?)?.connection)
+    }
+
     /// What cancels the current connection's statement, if any.
     pub fn canceller(&self) -> Option<Canceller> {
         self.held.get(self.current?)?.connection.canceller()
