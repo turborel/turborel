@@ -4,6 +4,7 @@
 
 mod added;
 mod geometry;
+mod truncated;
 mod uuid;
 
 use turborel::params::ParameterType;

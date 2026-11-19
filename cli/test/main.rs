@@ -41,4 +41,5 @@ mod plain;
 mod program;
 mod scripts;
 mod sessions;
+mod subcommands;
 mod typed;

@@ -87,41 +87,65 @@ impl LineEditor {
     /// Reads one line in raw mode.
     fn raw_line(&self, prompt: &str, complete: &mut dyn FnMut(&str) -> Completion) -> io::Result<Option<String>> {
         let width = screen().map_or(DEFAULT_WIDTH, |s| s.width);
-        let mut out = io::stdout().lock();
-        let mut editor = Editor::new(&self.history);
-        let mut decoder = Decoder::default();
-        out.write_all(editor.render(prompt, width).as_bytes())?;
-        out.flush()?;
-        let mut byte = [0_u8; 1];
-        loop {
-            if io::stdin().lock().read(&mut byte)? == 0 {
+        let typed = Typed { prompt, width, history: &self.history };
+        edit_line(&typed, &mut io::stdin().lock(), &mut io::stdout().lock(), complete)
+    }
+}
+
+/// What a line is typed after and into.
+struct Typed<'a> {
+    /// The prompt shown before it.
+    prompt: &'a str,
+    /// The screen's columns.
+    width: usize,
+    /// The history Up and Down and searches move through.
+    history: &'a History,
+}
+
+/// Edits one line as `typed` says, its keys read from `input` a byte at
+/// a time, as raw mode gives them, and drawn on `out`: the line
+/// submitted, or none at the end of input. Kept apart from the terminal
+/// so the keys of a line can be read from any input.
+fn edit_line(
+    typed: &Typed<'_>,
+    input: &mut dyn Read,
+    out: &mut dyn Write,
+    complete: &mut dyn FnMut(&str) -> Completion,
+) -> io::Result<Option<String>> {
+    let (prompt, width) = (typed.prompt, typed.width);
+    let mut editor = Editor::new(typed.history);
+    let mut decoder = Decoder::default();
+    out.write_all(editor.render(prompt, width).as_bytes())?;
+    out.flush()?;
+    let mut byte = [0_u8; 1];
+    loop {
+        if input.read(&mut byte)? == 0 {
+            return Ok(None);
+        }
+        let Some(key) = decoder.feed(byte[0]) else { continue };
+        let action = editor.key(key);
+        match action {
+            Action::Go => {}
+            Action::Submit(text) => {
+                out.write_all(editor.leave(width).as_bytes())?;
+                return Ok(Some(text));
+            }
+            Action::End => {
+                out.write_all(b"\r\n")?;
                 return Ok(None);
             }
-            let Some(key) = decoder.feed(byte[0]) else { continue };
-            let action = editor.key(key);
-            match action {
-                Action::Go => {}
-                Action::Submit(text) => {
-                    out.write_all(editor.leave(width).as_bytes())?;
-                    return Ok(Some(text));
-                }
-                Action::End => {
-                    out.write_all(b"\r\n")?;
-                    return Ok(None);
-                }
-                Action::Complete => {
-                    let completion = complete(&editor.buffer().before());
-                    if let Some(listed) = editor.complete(&completion) {
-                        write!(out, "{}{}\r\n", editor.leave(width), listed.join("  "))?;
-                    }
+            Action::Complete => {
+                let completion = complete(&editor.buffer().before());
+                if let Some(listed) = editor.complete(&completion) {
+                    write!(out, "{}{}\r\n", editor.leave(width), listed.join("  "))?;
                 }
             }
-            if key == Key::Redraw {
-                out.write_all(b"\x1b[H\x1b[2J")?;
-            }
-            out.write_all(editor.render(prompt, width).as_bytes())?;
-            out.flush()?;
         }
+        if key == Key::Redraw {
+            out.write_all(b"\x1b[H\x1b[2J")?;
+        }
+        out.write_all(editor.render(prompt, width).as_bytes())?;
+        out.flush()?;
     }
 }
 
@@ -149,3 +173,6 @@ impl Lines for LineEditor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
