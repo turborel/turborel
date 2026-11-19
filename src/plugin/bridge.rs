@@ -27,6 +27,7 @@ pub mod backup;
 pub mod collation;
 pub mod embedder;
 pub mod engine;
+pub mod hosted;
 pub mod index;
 mod kinds;
 pub mod metric;
