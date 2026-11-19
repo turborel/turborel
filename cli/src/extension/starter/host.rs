@@ -362,7 +362,7 @@ impl Job for Tidy {
     },
     Starter {
         word: "buffer-eviction",
-        code: 37,
+        code: 38,
         declaration: "HOST BUFFER EVICTION SCANS (EVERY = 1000);\nSETTING ONCE TYPE INTEGER MIN 0 MAX 1000 DEFAULT 4",
         uses: &["turborel_plugin::Cx", "turborel_plugin::host::EvictionAdvisor", "turborel_plugin::host::Policy", "turborel_plugin::host::Report", "turborel_plugin::host::policies"],
         source: SCANS,

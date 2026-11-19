@@ -1,4 +1,4 @@
-//! \[EXTENSION\] Kind 37, the buffer pool's eviction policy (RULES.md
+//! \[EXTENSION\] Kind 38, the buffer pool's eviction policy (RULES.md
 //! D283, D284): an advisor told the pool's report now and then, which
 //! answers the policy the pool's own evictor applies, or none to keep the
 //! last. It is never asked on a read: what it answers is a table of
@@ -15,7 +15,7 @@ use super::super::serve::Cx;
 use super::super::{Answer, PluginError};
 use super::HostObject;
 
-/// Kind 37, a buffer eviction policy.
+/// Kind 38, a buffer eviction policy.
 pub trait EvictionAdvisor {
     /// The policy the pool is to evict by, given its `report`; none to
     /// keep the last. `cx` gives the plug-in's settings (`Cx::setting`).

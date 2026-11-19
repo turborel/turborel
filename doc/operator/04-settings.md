@@ -198,3 +198,30 @@ within LOG.SYNC_AFTER_MS of it, a second by default, if nothing else has;
 ([Background work](03-databases.md#background-work)); a sync of it that
 fails stops the database taking changes, as any failed sync of the log
 does.
+
+## Settings of plug-ins
+
+An extension's manifest may declare settings of its own, and a host
+plug-in's too ([Plug-ins](../client/04-plugins.md#settings)). Each is
+named after its plug-in, as EXAMPLE.DEPTH, and from the time it is
+declared it is set and shown as a built-in setting is, with the same
+scopes, privileges, checks, keeping and reload. An extension's settings
+are declared by CREATE EXTENSION, changed by ALTER EXTENSION ... UPDATE
+and retired by DROP EXTENSION, and INFORMATION_SCHEMA.EXTENSION_OBJECTS
+lists them with their extension. A host plug-in's are NODE settings,
+given as PLUGINS.HOST is and listed in INFORMATION_SCHEMA.HOST_PLUGINS.
+A configuration file may name a plug-in's setting before the plug-in is
+loaded. A name in a group no built-in setting has is taken this way, and
+its value waits for the setting, refused when the setting is declared if
+it does not fit. A name in a built-in group must still be a setting of
+it, so a misspelt built-in setting is refused as the file is read.
+
+```toml
+[VAULT]
+KEEP_PAGES = 64
+```
+
+A plug-in's program reads the values its calls run with, a session's
+own over the database's, and the built-in settings its manifest says it
+reads, which it never writes. Sending them costs no call. A frame goes
+before a call only when the values changed for that process.

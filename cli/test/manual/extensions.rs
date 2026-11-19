@@ -26,6 +26,13 @@ XQUERY FUNCTION '{http://example.com/fn}twice' (INTEGER) RETURNS INTEGER;
 TYPE PAIR ORDERED; STORAGE ENGINE FILES BATCH 100;
 INDEX METHOD SORTED SUPPORTS (EQUALITY, RANGE) BATCH 50; INDEX METHOD NEAR SUPPORTS (NEAREST);";
 
+/// The settings the chapter on plug-ins shows, and the function that
+/// reads them.
+const SETTINGS: &str = "SETTING DEPTH TYPE INTEGER MIN 1 MAX 10 DEFAULT 3 SCOPE SESSION DESCRIPTION 'How deep a search goes.';
+SETTING MODE TYPE CHOICE CHOICES (FAST, SAFE) DEFAULT 'SAFE';
+READS SETTINGS ('SESSION.TIME_ZONE');
+FUNCTION SETTING_OF(VARCHAR(200)) RETURNS VARCHAR(200);";
+
 /// Installs the example at `version` under `root`, with `extra` items.
 fn install(root: &Path, version: &str, extra: &str) -> PathBuf {
     let dir = root.join("EXAMPLE").join(version);
@@ -54,7 +61,7 @@ fn the_extension_examples_run_as_printed() {
     for page in pages {
         let scratch = Scratch::new("manual-extensions");
         let root = scratch.path("plugins");
-        install(&root, "1.0.0", if page.contains("kinds") { KINDS } else { "" });
+        install(&root, "1.0.0", if page.contains("kinds") { KINDS } else { SETTINGS });
         if page.contains("alter") {
             let up = install(&root, "1.1.0", "UPGRADE FROM '<1.1.0' SCRIPT 'up.sql';");
             std::fs::write(up.join("up.sql"), "CALL NOTE('updated to 1.1.0')").unwrap();

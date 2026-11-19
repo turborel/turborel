@@ -86,6 +86,12 @@ folded to upper case as an identifier is.
     | INDEX METHOD <identifier> SUPPORTS ( EQUALITY | RANGE | NEAREST, ... ) [ BATCH <unsigned integer> ]
     | CREDENTIALS <identifier>
     | DIAGNOSTICS <identifier> [ BATCH <unsigned integer> ]
+    | SETTING <identifier> TYPE <setting type>
+          [ MIN <literal> ] [ MAX <literal> ] [ CHOICES ( <identifier>, ... ) ]
+          [ DEFAULT <literal> ] [ SCOPE SESSION | DATABASE | NODE ]
+          [ DESCRIPTION <character string literal> ]
+    | READS SETTINGS ( <character string literal>, ... )
+<setting type> ::= INTEGER | NUMBER | CHOICE | SWITCH | TEXT | IDENTIFIER
 ```
 
 NAME, VERSION, PROTOCOL and an EXECUTABLE are required. EXECUTABLE
@@ -104,7 +110,86 @@ MODIFIES SQL DATA may run statements in its caller's transaction; one
 that does not may only query. An XQuery function is named by one
 literal, its namespace's URI in braces before its local name, as
 `'{http://example.com/fn}twice'`. [Kinds of Plug-in](04-plugins-kinds.md)
-tells what each of the later kinds declares.
+tells what each of the later kinds declares. SETTING and READS SETTINGS
+are the program's settings, the next section's.
+
+## Settings
+
+A manifest may declare settings of its own. Each is named after the
+extension, `EXAMPLE.DEPTH` for the item `SETTING DEPTH` of EXAMPLE, so
+two extensions never share one. Its TYPE is one of the built-in
+settings' kinds. MIN and MAX bound an INTEGER or NUMBER, MAX alone the
+length of a TEXT, and CHOICES lists a CHOICE's words. DEFAULT is the
+value it starts with, the least value allowed if it is not written, and
+an IDENTIFIER must write one. SCOPE is DATABASE if it is not written.
+The manifest of the example this chapter installs declares two:
+
+```
+SETTING DEPTH TYPE INTEGER MIN 1 MAX 10 DEFAULT 3 SCOPE SESSION DESCRIPTION 'How deep a search goes.';
+SETTING MODE TYPE CHOICE CHOICES (FAST, SAFE) DEFAULT 'SAFE';
+READS SETTINGS ('SESSION.TIME_ZONE');
+FUNCTION SETTING_OF(VARCHAR(200)) RETURNS VARCHAR(200);
+```
+
+CREATE EXTENSION declares them, and from then on they are set and shown
+as built-in settings are, with the same scopes, privileges and checks
+([Settings](../operator/04-settings.md)). A SESSION setting is set by
+any session for itself, and a DATABASE one by the owner, with SET
+DATABASE, for every session.
+
+```sql
+SET EXAMPLE.DEPTH = 7;
+SELECT SETTING_NAME, SETTING_VALUE, VALUE_SOURCE FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME LIKE 'EXAMPLE.%';
+```
+
+```
+OK
+ SETTING_NAME                                                 | SETTING_VALUE                                                | VALUE_SOURCE
+--------------------------------------------------------------+--------------------------------------------------------------+--------------
+ EXAMPLE.DEPTH                                                | 7                                                            | SESSION
+ EXAMPLE.MODE                                                 | SAFE                                                         | DEFAULT
+(2 rows)
+```
+
+A value out of range, not of the setting's type or no choice of it is
+refused as a built-in setting's is.
+
+```sql
+SET EXAMPLE.DEPTH = 11;
+```
+
+```
+turborel: SQLCODE -301 (SQLSTATE 22000): EXAMPLE.DEPTH takes INTEGER FROM 1 TO 10, not 11
+```
+
+The program reads the values each call runs with. Those are its
+caller's session's values, the session's own over the database's, of
+the settings its manifest declares and of the built-in ones READS
+SETTINGS names, which it may read and never write. The example's
+SETTING_OF gives the value its call was told of the setting it names,
+and a setting it neither declares nor reads is NULL to it.
+
+```sql
+VALUES (SETTING_OF('EXAMPLE.DEPTH'), SETTING_OF('STATEMENT.TIMEOUT_MS'));
+```
+
+```
+                                                              |
+--------------------------------------------------------------+--------------------------------------------------------------
+ 7                                                            | NULL
+(1 row)
+```
+
+The values cost no call of their own. A SETTINGS frame goes before a
+CALL only when the values that call runs with differ from those last
+sent to the same process, so a program whose settings do not change is
+sent them once. A program that runs SQL may set its own settings, and a
+SET of any other is refused before it runs. ALTER EXTENSION ... UPDATE
+declares the new manifest's settings, keeping the value of each it
+keeps while that is still of its type, and DROP EXTENSION retires them
+all. INFORMATION_SCHEMA.EXTENSION_OBJECTS lists each, of type SETTING,
+and each built-in setting read, of type READS SETTING. A host plug-in's
+settings are the node's ([Host Plug-ins](04-plugins-host.md)).
 
 ## Protocol 1
 
@@ -124,13 +209,17 @@ then them.
 | 7 | SHUTDOWN | database | nothing |
 | 8 | SQL | plug-in | call u64, rows u8, text str, values |
 | 9 | SQL_DONE | database | call u64, rows (count u32, each values) |
+| 10 | SETTINGS | database | names (count u32, strs), values |
 
 The database begins with HELLO; the program answers WELCOME, naming the
 extension HELLO named and every kind its manifest declares. Then the
 database sends a CALL at a time and waits for its RESULT or ERROR. While
 a procedure's call runs, its program may send SQL, a query if rows is 1,
 and is answered SQL_DONE or ERROR. CANCEL asks the program to end a call
-early; SHUTDOWN, or the end of its input, to exit.
+early; SHUTDOWN, or the end of its input, to exit. A program whose
+WELCOME takes the capability `settings` is sent SETTINGS before a CALL
+whose values differ from the last it was sent, and keeps them for the
+calls after.
 
 A value is a tag and its body: 0 null; 1 truth value, a byte; 2 exact
 number, units i128 and scale u32; 3 approximate number, the bits of a
@@ -213,7 +302,10 @@ of the database's own, as a decimal overflow, converts into one with its
 SQLSTATE kept. Each call that may run long is given a `Cx`.
 `cx.check()` fails with SQLSTATE 57014 once the database has sent
 CANCEL for the call, `cx.query` and `cx.run` run SQL in the call's
-transaction, and `cx.limits()` gives the limits HELLO gave. An answer
+transaction, and `cx.limits()` gives the limits HELLO gave.
+`cx.setting(name)`, `cx.integer(name)` and `cx.text(name)` read the
+settings the call runs with, by name in any case, and `cx.settings()`
+gives them all. An answer
 longer than those limits is an ERROR of 38T04 and is not sent. A thread
 of the SDK reads the input while a call runs, so a CANCEL is heard.
 

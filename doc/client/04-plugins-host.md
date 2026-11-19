@@ -70,6 +70,30 @@ VAULT        1.0.0    CLOCK        SYSTEM       NO         MIT                  
 (1 row)
 ```
 
+## Settings of a host plug-in
+
+A host plug-in's manifest may declare settings as an extension's does
+([Plug-ins](04-plugins.md)), named after the plug-in. They are NODE
+settings, which no other scope is allowed for, declared as the plug-in
+starts. Like PLUGINS.HOST they are the host's to give, in the
+configuration file, with `--set` or by `Database::set_setting`, and SQL
+may not set them. A configuration file may name them before they are
+declared, and a value that fits none is refused as the plug-in starts.
+
+```
+NAME VAULT; VERSION '1.0.0'; PROTOCOL 1; EXECUTABLE 'vault';
+HOST BUFFER EVICTION KEEP (EVERY = 1000);
+SETTING KEEP_PAGES TYPE INTEGER MIN 0 DEFAULT 0;
+```
+
+```
+turboreld --dir /srv/db --set "PLUGINS.HOST=VAULT=/opt/vault" --set VAULT.KEEP_PAGES=64
+```
+
+The program reads them with each call, as an extension's program
+reads its own. INFORMATION_SCHEMA.HOST_PLUGINS lists each, of type
+SETTING.
+
 ## When a host plug-in fails
 
 A host object either answers or stops the node. A process that ends,
@@ -200,6 +224,44 @@ turborel-tick
 (1 row)
 ```
 
+## Buffer eviction
+
+```
+HOST BUFFER EVICTION <name> [ ( EVERY = <milliseconds>, SAMPLE = <frames> ) ]
+```
+
+The pool chooses a page to evict on every miss, so it never calls the
+program to choose. The program instead sets the policy the pool's own
+evictor follows, which the pool reads with no lock. The evictor keeps,
+for each frame, its page, the intervals of its last two uses and its
+count of uses, where an interval passes each time a page is placed. A
+policy weighs these into one score, and the evictor takes the highest
+of a sample of frames.
+
+| Field | Meaning |
+|---|---|
+| HISTORY | 1 counts a page's age from its last use, least recently used; 2 from the use before, LRU-2 |
+| RECENCY | the weight of age |
+| FREQUENCY | the weight taken off for each use, which keeps pages used often |
+| ONCE | added for a page used once, so a scan's pages go first |
+| SAMPLE | the frames each choice looks at, 32 if 0 |
+| ranges | up to 64 ranges of a file's pages, each a weight, 100 being neutral |
+
+A range of weight 0 keeps its pages, which are taken only when no other
+frame looked at may be evicted. The SDK's trait is `EvictionAdvisor`,
+added by `Plugin::host_eviction`, and `policies` builds the common ones
+(`lru`, `lru_2`, `scan_resistant`, `frequent`, and `weighing` for a
+range).
+
+The policy costs one call when the plug-in is started, before any pool
+is made, and one call each EVERY milliseconds after (1000 if it is not
+written), none on any read. That call carries the pool's report: the
+pages evicted since the last, at most 256, and SAMPLE frames (256 if it
+is not written), a window that moves on each time, with each frame's
+page, uses and last interval. The answer is a new policy, or none to
+keep the last. A process that dies stops the node, and until it stops
+the pool chooses by the last policy it was given.
+
 ## Connections
 
 ```
@@ -222,4 +284,5 @@ connections by id, one call each. The SDK's traits are `Accept` and
 The optimizer's rules rewrite the logical plan, whose types change
 with each release, so they stay code linked into the host. A wire
 protocol is a listener's to translate. Settings give the policies and
-the cost model. [RULES.md D255](../../RULES.md) argues each.
+the cost model, and the buffer pool's eviction is programmed, not
+called. [RULES.md D255](../../RULES.md) argues each.

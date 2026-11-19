@@ -281,6 +281,11 @@ verification approach DO-178C expects (§8).
 | D272 | A plug-in journal acknowledges what it names durable, and a plug-in transfer stages chunks it checks |
 | D273 | A plug-in consensus steps whole in one call, made again from its journal, VR still built in |
 | D274 | A plug-in archive is a target reached before any database opens, its errors the call's own |
+| D280 | A manifest declares settings under its extension's name, typed as built-in ones, created, changed and retired with it |
+| D281 | An extension's settings take its scopes; a host plug-in's are the node's, the host's alone to set |
+| D282 | A plug-in reads the settings a call runs with in a SETTINGS frame before it, and writes none but its own |
+| D283 | BUFFER EVICTION programs the pool's evictor, never called by the pool, and its death stops the node |
+| D284 | An eviction policy is weights of one score, read with no lock, with ranges weighed and pages kept |
 
 ### The project
 
@@ -6901,7 +6906,8 @@ SPILL (25), FILE SYSTEM (26), SERVED CONNECTIONS (27), LISTENER (28),
 PACKAGE CRYPTO (29), KEYRING (30) and BACKGROUND JOB (31), each argued
 in D246 to D254. REPLICA TRANSPORT (32), JOURNAL (33), STATE TRANSFER
 (34), CONSENSUS (35) and ARCHIVE (36) serve replication and the
-archive. A host object is called off every critical section. What a
+archive, and BUFFER EVICTION (38) the pool's choice of victims (D283).
+A host object is called off every critical section. What a
 commit or a page read needs now is a value the database keeps, which a
 call filled before. The cost of crossing a process is the operator's to
 choose, and no point is refused for it. The points that remain no kind
@@ -7044,8 +7050,9 @@ log) are served with their kind. The policies set by `set_job_policy`,
 `set_transaction_policy`, `set_session_end`, `set_lock_wait`, the cost
 model and the optimizer's parameters are values, which settings give.
 The rest are the database's internals, which nothing outside supplies
-(eviction, codecs, seals, statistics, the graph and vector indexes'
-parts, and the contexts a call is given).
+(codecs, seals, statistics, the graph and vector indexes' parts, and the
+contexts a call is given). Eviction was one, and is now BUFFER EVICTION
+(D283), served by programming the pool rather than by being called.
 
 #### D137. A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them
 
@@ -8301,6 +8308,95 @@ archive of the scheme before an extension's. A process that fails stops
 the node, as any host plug-in's does. A program's own ERROR fails only
 the call, as a built-in target out of reach fails the backup, the
 archive round or the restore asked, and leaves nothing a restore takes.
+
+#### D280. A manifest declares settings under its extension's name, typed as built-in ones, created, changed and retired with it
+
+A manifest's SETTING item (`parser/manifest/settings.rs`) declares a
+setting named `EXT.NAME`, where EXT is the extension's name, so no two
+extensions and no built-in group can collide. Its TYPE is one of the
+kinds built-in settings have (INTEGER, NUMBER, CHOICE, SWITCH, TEXT,
+IDENTIFIER), with MIN and MAX, CHOICES and DEFAULT checked as the
+manifest is read, and refused with SQLSTATE 38T06 if they do not fit.
+The setting is then a `Definition` of the registry like any other, so
+SET, SHOW, INFORMATION_SCHEMA.SETTINGS, `--set` and `--config` treat it
+as they treat a built-in one. CREATE EXTENSION declares the settings,
+ALTER EXTENSION ... UPDATE declares the new manifest's, and DROP
+EXTENSION retires them (`settings/extension.rs`). A setting declared
+again keeps its place and the database's value, if that is still of its
+kind. A setting retired loses its name and its value, and its place is
+never reused, since places are positions the running code holds. The
+database's values are kept with the definitions, so a database opened
+again finds them once its extensions are made again. A value set before
+its setting is declared, as a configuration file names it, waits until
+the setting is declared and is refused then if it fits none. Settings
+are rows of EXTENSION_OBJECTS, of type SETTING, beside the objects.
+
+#### D281. An extension's settings take its scopes; a host plug-in's are the node's, the host's alone to set
+
+An extension's setting is DATABASE scope unless its SCOPE says SESSION,
+and NODE is the scope of settings never logged. Its scope's rules are
+the built-in ones. A SESSION setting is set by SET, a DATABASE one by
+SET DATABASE, by the owner, and published to every session. A host
+plug-in's settings are NODE scope, refused as anything else, and like
+PLUGINS.HOST they are the host's alone, given by `--set`, `--config` or
+`Database::set_setting`, never by SQL. A host plug-in's settings are
+declared as it starts, before the database opens, so a configuration
+file may name them. They are rows of INFORMATION_SCHEMA.HOST_PLUGINS of
+type SETTING. No setting key is added to the built-in list by this.
+
+#### D282. A plug-in reads the settings a call runs with in a SETTINGS frame before it, and writes none but its own
+
+The program is told the values of the settings its manifest declares,
+and of the built-in ones its READS SETTINGS item names, which are read
+only. A welcome that takes the capability `settings` is sent a SETTINGS
+frame (type 10, the names and then the values) before a CALL whenever
+the values that call runs with differ from those last sent to that
+process (`plugin/settings.rs`). The values go on the same pipe as the
+call, so they cost no round trip and never race it. A call made for a
+statement runs with that statement's session's values (`Calling`, held
+on the thread for the statement), so two sessions sharing a process are
+each told their own. A call made with no statement, as a host plug-in's
+or a job's, runs with the database's values, which the database pushes
+to each pool as it publishes them. A program learns nothing it did not
+declare or read. A program writes its own settings through the SQL it
+runs, as a session would. A SET or SET DATABASE of another extension's
+setting or of a built-in one is refused with SQLCODE -104 before it
+runs, and a host plug-in's settings are refused to SQL in any case.
+
+#### D283. BUFFER EVICTION programs the pool's evictor, never called by the pool, and its death stops the node
+
+The pool chooses a victim on every miss, under its latch, so a call
+there would put a process crossing on every read. A HOST BUFFER EVICTION
+object (code 38) instead programs the pool's own evictor
+(`disk/buffer/policy.rs`). Registered, it is asked for its first policy
+before any pool is made, and the database's slot for evictors makes each
+pool's from then on. A background job sends it the pool's report every
+EVERY milliseconds, one call, and pushes the policy answered into a
+table every evictor reads with atomics alone. An answer of no policy
+keeps the last. The report is batched and sampled. It holds the pages
+evicted since the last report, at most 256, and a window of SAMPLE frames
+moving on each time, with each frame's page, uses and last interval, so
+its size is bounded whatever the pool's. A process that dies, or answers
+a policy that does not decode, stops the node (D249). The pool goes on
+choosing by the last policy pushed until the stop, and nothing it holds
+depends on the program.
+
+#### D284. An eviction policy is weights of one score, read with no lock, with ranges weighed and pages kept
+
+The evictor keeps, per frame, the page it holds, the intervals of its
+last two uses, its count of uses and its weight. An interval passes at
+each page placed in the pool, so age counts misses, not time. A policy
+scores a frame as (age × RECENCY + ONCE if used once − uses × FREQUENCY)
+× weight ÷ 100, and evicts the highest of a sample of frames (SAMPLE, 32
+if 0). HISTORY 1 counts age from the last use, which is least recently
+used. HISTORY 2 counts it from the use before, which is LRU-2, and ONCE
+gives scan resistance as 2Q's first queue does. FREQUENCY weighs uses as
+ARC's frequent list does. Up to 64 ranges give a file's pages a weight,
+100 being neutral. A weight of 0 keeps a page, taken only when no other
+frame in the sample is evictable, so a hint never wedges the pool. A
+policy pushed reweighs each frame once, and a page placed later takes
+its range's weight as it is placed. The score is computed per victim
+from atomics, so the hot path takes no lock and never calls the program.
 
 ## 2. Project layout
 

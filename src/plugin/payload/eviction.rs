@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! kind                 op          CALL payload                               RESULT payload
-//! 37 buffer eviction   1 advise    report                                     changed u8 | policy if changed
+//! 38 buffer eviction   1 advise    report                                     changed u8 | policy if changed
 //! report: interval u64 | frames u64 | evicted count u32 | (file u32 | page u64)...
 //!         | sampled count u32 | (file u32 | page u64 | uses u32 | age u64 | weight u32)...
 //! policy: history u8 | recency u32 | frequency u32 | once u32 | sample u32

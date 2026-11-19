@@ -91,7 +91,7 @@ impl HostKind {
             HostKind::StateTransfer => 34,
             HostKind::Consensus => 35,
             HostKind::Archive => 36,
-            HostKind::BufferEviction => 37,
+            HostKind::BufferEviction => 38,
         }
     }
 
