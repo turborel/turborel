@@ -63,6 +63,7 @@ pub(super) fn answer(plugin: &mut Plugin, cx: &mut Cx<'_>, (kind, op, object): (
         7 => authenticate(plugin, object, op, &mut r),
         8 => target(plugin, object, op, &mut r),
         9 => partition(plugin, object, op, &mut r),
+        20.. => super::host::answer(plugin, cx, (kind, op, object), payload),
         _ => later::answer(plugin, cx, (kind, op, object), &mut r),
     }
 }

@@ -21,6 +21,7 @@
 pub mod bridge;
 pub mod errors;
 pub mod host;
+pub mod hosted;
 pub mod limits;
 pub mod manifest;
 pub mod package;

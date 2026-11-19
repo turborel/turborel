@@ -13,6 +13,10 @@ use crate::vector::Element;
 
 use super::errors::invalid_manifest;
 
+pub mod host;
+
+pub use host::{HostDeclared, HostKind, HostOption};
+
 /// The words of a metric's PROPERTIES.
 pub const SYMMETRIC: &str = "SYMMETRIC";
 /// See `SYMMETRIC`.
@@ -266,6 +270,8 @@ pub enum Item {
     Upgrade(String, String),
     /// An object declared.
     Object(Box<Declared>),
+    /// A host plug-in's object (RULES.md D229).
+    Host(Box<HostDeclared>),
 }
 
 /// A manifest, checked.
@@ -281,6 +287,8 @@ pub struct Manifest {
     pub executables: Vec<(Option<String>, String)>,
     /// The objects, in order.
     pub objects: Vec<Declared>,
+    /// The objects of a host plug-in it declares (RULES.md D229).
+    pub hosted: Vec<HostDeclared>,
     /// REQUIRES: the packages it depends on, each with a version range.
     pub requires: Vec<(String, String)>,
     /// TURBOREL: the range of the database's versions, if written.
@@ -304,6 +312,7 @@ impl Manifest {
             version: String::new(),
             executables: Vec::new(),
             objects: Vec::new(),
+            hosted: Vec::new(),
             requires: Vec::new(),
             turborel: None,
             upgrades: Vec::new(),
@@ -320,6 +329,7 @@ impl Manifest {
                 }
                 Item::Executable(os, path) => m.executables.push((os, path)),
                 Item::Object(d) => m.objects.push(*d),
+                Item::Host(d) => m.hosted.push(*d),
                 Item::Requires(name, range) => m.requires.push((name, range)),
                 Item::Turborel(range) => {
                     if m.turborel.replace(range).is_some() {
@@ -352,6 +362,15 @@ impl Manifest {
             }
             check_object(d)?;
         }
+        let mut hosted = HashSet::new();
+        for d in &self.hosted {
+            if !hosted.insert((d.kind, d.name.clone())) {
+                return Err(invalid_manifest(&format!("HOST {} {} is declared twice", d.kind.word(), d.name)));
+            }
+        }
+        if !self.hosted.is_empty() && !self.objects.is_empty() {
+            return Err(invalid_manifest("a host plug-in declares host objects alone, and an extension none (RULES.md D229)"));
+        }
         Ok(())
     }
 
@@ -370,7 +389,7 @@ impl Manifest {
 
     /// The codes of the kinds it declares.
     pub fn kinds(&self) -> Vec<u8> {
-        let mut kinds: Vec<u8> = self.objects.iter().map(|d| d.kind.code()).collect();
+        let mut kinds: Vec<u8> = self.objects.iter().map(|d| d.kind.code()).chain(self.hosted.iter().map(|d| d.kind.code())).collect();
         kinds.sort_unstable();
         kinds.dedup();
         kinds

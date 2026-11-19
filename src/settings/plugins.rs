@@ -38,7 +38,7 @@ pub const PLUGINS_REGISTRIES: Key = Key(71);
 pub const PLUGINS_PINS: Key = Key(72);
 
 /// The settings SQL may not set, the node's, which the host gives.
-pub const HOST_ONLY: [&str; 3] = ["PLUGINS.DIRECTORIES", "PLUGINS.TRUSTED_KEYS", "PLUGINS.REQUIRE_SIGNED"];
+pub const HOST_ONLY: [&str; 4] = ["PLUGINS.DIRECTORIES", "PLUGINS.TRUSTED_KEYS", "PLUGINS.REQUIRE_SIGNED", "PLUGINS.HOST"];
 
 /// The largest whole number a count setting holds.
 const MOST: i128 = 9_223_372_036_854_775_807;

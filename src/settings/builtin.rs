@@ -240,7 +240,13 @@ pub(super) fn builtin() -> Vec<Definition> {
 fn last() -> impl Iterator<Item = Definition> {
     let graph = super::graph::definitions().into_iter().chain(super::graph::gql_session()).chain(super::graph::later());
     let (backup, plugins) = (super::backup::definitions(), super::plugins::definitions());
-    super::vector::vector().into_iter().chain([static_typing(), super::graph::threads()]).chain(graph).chain(plugins).chain(backup)
+    super::vector::vector()
+        .into_iter()
+        .chain([static_typing(), super::graph::threads()])
+        .chain(graph)
+        .chain(plugins)
+        .chain(backup)
+        .chain(super::hosted::definitions())
 }
 
 /// [XQuery §5.2.3] Whether the Static Typing Feature is in effect for the
