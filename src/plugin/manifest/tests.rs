@@ -151,3 +151,19 @@ fn wrong_settings_are_refused() {
         assert_eq!(of(bad).err().map(|e| e.code), Some(Code::Syntax), "{bad}");
     }
 }
+
+/// Verifies: [EXTENSION] RULES.md D275, D276: an optimizer rule is kind
+/// 37, its PHASE BOUND or REWRITTEN and its PASSES a count above 0, each
+/// unless written none; a phase of another name, or no passes, is
+/// refused.
+#[test]
+fn an_optimizer_rule_names_its_phase_and_passes() {
+    let m = of("OPTIMIZER RULE R PHASE BOUND PASSES 3; OPTIMIZER RULE S;").unwrap();
+    assert_eq!(m.kinds(), [37]);
+    let (r, s) = (&m.objects[0], &m.objects[1]);
+    assert_eq!((r.kind, r.phase.as_deref(), r.passes), (ObjectKind::Rule, Some(BOUND), Some(3)));
+    assert_eq!((s.phase.as_deref(), s.passes), (None, None));
+    assert_eq!(state_of(of("OPTIMIZER RULE R PHASE LATE;")), "38T06");
+    assert_eq!(state_of(of("OPTIMIZER RULE R PASSES 0;")), "38T06");
+    assert_eq!(of("OPTIMIZER RULE R(INTEGER);").err().map(|e| e.code), Some(Code::Syntax));
+}

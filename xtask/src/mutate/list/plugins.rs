@@ -10,6 +10,7 @@ use super::{Mutation, Package};
 pub(super) mod files;
 pub(super) mod hosted;
 pub(super) mod kinds;
+pub(super) mod planner;
 pub(super) mod replication;
 pub(super) mod sdk;
 pub(super) mod settings;

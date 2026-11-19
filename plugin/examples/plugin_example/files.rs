@@ -5,14 +5,15 @@
 //! memory as the records read so far, and only the records appended
 //! since, by this process or another of the extension's, are read again.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 use turborel::bytes::{Put, Reader};
 use turborel::plugin::values::{put_values, values};
 use turborel::storage::{Row, RowId};
-use turborel_plugin::{Answer, Engine, Opened, PluginError};
+use turborel::value::{Value, compare};
+use turborel_plugin::{Answer, ColumnAnswer, Engine, Opened, PluginError, TableAnswer};
 
 /// A record of changes: count, then each id and its row or none.
 const CHANGES: u8 = 1;
@@ -154,4 +155,28 @@ impl Engine for Files {
         self.tables.remove(locator);
         std::fs::remove_file(path(locator)).map_err(|e| io(&e))
     }
+    fn statistics(&mut self, locator: &[u8]) -> Answer<Option<TableAnswer>> {
+        let t = self.there(locator)?;
+        let width = t.rows.values().next().map_or(0, Vec::len);
+        let columns = (0..width).map(|c| column(t.rows.values().filter_map(|row| row.get(c)))).collect();
+        let rows = f64::from(u32::try_from(t.rows.len()).unwrap_or(u32::MAX));
+        Ok(Some(TableAnswer { rows, width: -1.0, refresh: REFRESH, columns }))
+    }
+}
+
+/// The rows written after which the database asks FILES its statistics
+/// again.
+const REFRESH: u64 = 100;
+
+/// What FILES knows of a column of `values`: its distinct values, its
+/// share of nulls, and its least and greatest.
+fn column<'a>(values: impl Iterator<Item = &'a Value>) -> ColumnAnswer {
+    let all: Vec<&Value> = values.collect();
+    let present: Vec<&Value> = all.iter().copied().filter(|v| !v.is_null()).collect();
+    let distinct: BTreeSet<String> = present.iter().map(ToString::to_string).collect();
+    let least = |a: &&Value, b: &&Value| compare(a, b).unwrap_or(std::cmp::Ordering::Equal);
+    let bounds = present.iter().copied().min_by(least).cloned().zip(present.iter().copied().max_by(least).cloned());
+    let share = |n: usize| f64::from(u32::try_from(n).unwrap_or(u32::MAX));
+    let nulls = if all.is_empty() { 0.0_f64 } else { (share(all.len()) - share(present.len())) / share(all.len()) };
+    ColumnAnswer { distinct: share(distinct.len()), nulls, bounds, histogram: Vec::new(), frequencies: None }
 }

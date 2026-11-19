@@ -18,6 +18,7 @@ use super::super::State;
 use super::refused;
 use crate::error::Result;
 use crate::fulltext::rank::Ranking;
+use crate::plugin::bridge::xquery::PluginXQuery;
 use crate::plugin::{Bridged, Declared, Installed, ObjectKind};
 use crate::system::SystemTable;
 use crate::value::collation::Collation;
@@ -51,7 +52,7 @@ impl State {
                     self.embedders.add_extension(m);
                 }
                 Bridged::Partition(_) => self.unshared(installed, d.kind, &d.name, self.strategies.named(&d.name).is_some())?,
-                Bridged::Authenticator(_) | Bridged::Target(_) | Bridged::Diagnostics(_) => {
+                Bridged::Authenticator(_) | Bridged::Target(_) | Bridged::Diagnostics(_) | Bridged::Rule(_) => {
                     self.unshared(installed, d.kind, &d.name, false)?;
                 }
                 Bridged::Ranking(_)
@@ -97,11 +98,7 @@ impl State {
                 let t: Arc<dyn SystemTable> = t;
                 self.system.insert(name, t);
             }
-            Bridged::XQuery(f) => {
-                let f = Arc::clone(f);
-                let f: Arc<dyn XQueryFunction> = f;
-                self.xquery_functions.add(f)?;
-            }
+            Bridged::XQuery(f) => self.xquery_functions.add(Arc::<PluginXQuery>::clone(f))?,
             Bridged::Credentials(_) => self.only_credentials(installed)?,
             Bridged::Type(t) => {
                 self.unshared(installed, d.kind, &d.name, false)?;
@@ -117,7 +114,8 @@ impl State {
             | Bridged::Partition(_)
             | Bridged::Authenticator(_)
             | Bridged::Target(_)
-            | Bridged::Diagnostics(_) => {}
+            | Bridged::Diagnostics(_)
+            | Bridged::Rule(_) => {}
         }
         Ok(())
     }
@@ -213,7 +211,8 @@ impl State {
                 | Bridged::Ranking(_)
                 | Bridged::Quantizer(_)
                 | Bridged::Credentials(_)
-                | Bridged::Diagnostics(_) => {}
+                | Bridged::Diagnostics(_)
+                | Bridged::Rule(_) => {}
             }
         }
     }

@@ -281,8 +281,9 @@ connections by id, one call each. The SDK's traits are `Accept` and
 
 ## What is no kind
 
-The optimizer's rules rewrite the logical plan, whose types change
-with each release, so they stay code linked into the host. A wire
-protocol is a listener's to translate. Settings give the policies and
-the cost model, and the buffer pool's eviction is programmed, not
-called. [RULES.md D255](../../RULES.md) argues each.
+The optimizer's rules are an extension's kind, over a plan form of
+their own ([Optimizer Rules and Statistics](04-plugins-planner.md)). A
+wire protocol is a listener's to translate. Settings give the policies
+and the cost model, and the buffer pool's eviction is programmed by a
+BUFFER EVICTION object, not called. [RULES.md D255](../../RULES.md)
+argues each.

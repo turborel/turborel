@@ -18,6 +18,7 @@
 //!   functions, credentials and diagnostics (RULES.md D222).
 //! * `types.rs`, `engine.rs`, `index.rs`: types, storage engines and
 //!   index methods (RULES.md D223 to D227).
+//! * `rule.rs`: optimizer rules, over the plan form (RULES.md D275).
 //!
 //! `kinds.rs` holds the object of each kind, bridged.
 
@@ -31,12 +32,14 @@ pub mod engine;
 pub mod hosted;
 pub mod index;
 mod kinds;
+mod known;
 pub mod metric;
 pub mod partition;
 pub mod procedure;
 pub mod process;
 pub mod quantizer;
 pub mod ranking;
+pub mod rule;
 pub mod scalar;
 pub mod system;
 pub mod table;
@@ -95,7 +98,9 @@ impl Installed {
     pub fn new(manifest: Manifest, directory: PathBuf, host: &Arc<Host>, resolve: Resolve<'_>) -> Result<Installed> {
         let executable = manifest.executable(std::env::consts::OS)?;
         let limits = (Arc::clone(&host.limits), Arc::clone(&host.memory));
-        let pool = Pool::new(&manifest.name, (directory.clone(), executable), manifest.kinds(), limits).with_check(host.check());
+        let pool = Pool::new(&manifest.name, (directory.clone(), executable), manifest.kinds(), limits)
+            .with_check(host.check())
+            .with_statistics(host.statistics());
         let pool = pool.with_feed(super::settings::Feed::of(&manifest, false));
         let pool = Arc::new(pool);
         let objects = manifest

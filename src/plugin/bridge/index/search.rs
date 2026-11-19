@@ -38,7 +38,8 @@ fn key_order(a: &[Value], b: &[Value]) -> Ordering {
     a.iter().zip(b).map(|(x, y)| compare(x, y).unwrap_or(Ordering::Equal)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
 }
 
-/// A search, a page at a time.
+/// A search, a page at a time, an entry counted more than once given
+/// once.
 struct Search {
     shared: Arc<Shared>,
     probe: Probe,
@@ -48,6 +49,8 @@ struct Search {
     page: VecDeque<(RowId, Vec<Value>)>,
     done: bool,
     last: Option<Vec<Value>>,
+    /// The row of the entry given last, as an entry counted twice is one row.
+    given: Option<RowId>,
 }
 
 impl Search {
@@ -82,8 +85,10 @@ impl Search {
                     return Err(violation("its SEARCH gave entries out of order"));
                 }
             }
+            let again = self.given == Some(id) && self.last.as_ref().is_some_and(|l| key_order(l, &key).is_eq());
             self.last = Some(key.clone());
-            if self.probe.answers(&key) {
+            if !again && self.probe.answers(&key) {
+                self.given = Some(id);
                 return Ok(Some((Key(key), id)));
             }
         }
@@ -146,6 +151,7 @@ impl Index for PluginIndex {
             page: VecDeque::new(),
             done: false,
             last: None,
+            given: None,
         };
         let mut search = Some(search);
         Box::new(std::iter::from_fn(move || {
@@ -159,6 +165,12 @@ impl Index for PluginIndex {
     }
     fn estimate(&self, _probe: &Probe) -> Option<usize> {
         None
+    }
+    fn distinct_keys(&self) -> Option<f64> {
+        self.0.known(|i| i.distinct)
+    }
+    fn probe_pages(&self, _probe: &Probe) -> Option<f64> {
+        self.0.known(|i| i.pages)
     }
     fn nearest(self: Arc<Self>, _query: &NearestQuery, _budget: &Arc<crate::memory::MemoryBudget>) -> Result<Option<NeighbourEntries>> {
         Ok(None)

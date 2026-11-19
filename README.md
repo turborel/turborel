@@ -135,6 +135,8 @@ behind it, and each can be replaced or added to.
 - [Plug-in settings](doc/client/04-plugins.md#settings) declared by
   manifests and set as built-in ones, and a buffer eviction policy a
   host plug-in programs.
+- [Optimizer rules and statistics as plug-ins](doc/client/04-plugins-planner.md):
+  rules that rewrite a stable plan form, and statistics both ways.
 - [Property graphs](doc/sql/20-property-graphs.md) over tables or
   queries' rows, queried by GRAPH_TABLE's path patterns through adjacency
   indexes, LINE_GRAPH among them.

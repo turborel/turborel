@@ -12,7 +12,7 @@ use super::routines::Hosted;
 use super::write::Written;
 use super::{
     Completion, CursorRows, DeclaredCursor, Kept, OpenCursor, Session, State, StatementContext, Stream, api, assign_targets, candidate,
-    check_option, check_targets, cursor_error, plan, rule, set_columns,
+    check_option, check_targets, cursor_error, plan_heard, rule, set_columns,
 };
 use crate::ast::{CursorSpecification, FetchOrientation, ParameterSpecification, QuerySpecification};
 use crate::binder::{self, OutColumn, bind_select};
@@ -367,7 +367,7 @@ impl Session {
         }
         let bound = self.bound(cx.st, params, |b| bind_select(b, query))?;
         check_targets(&bound.columns, targets, params, "§8.10 SR3", "§8.10 SR4")?;
-        let (optimized, _, physical) = plan(cx.st, bound.plan);
+        let (optimized, _, physical) = plan_heard(cx.st, bound.plan, Some(cx.tx.stop.warnings()));
         for t in optimized.tables() {
             cx.st.read_lock(cx.tx, &t)?;
         }

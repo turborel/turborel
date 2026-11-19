@@ -152,7 +152,7 @@ pub(crate) mod write;
 
 use assignment::{candidate, check_option, set_columns};
 pub use catalog_file::{COMPACT_AFTER, CatalogFiles};
-use compiled::{plan, plan_slotted};
+use compiled::{plan, plan_heard, plan_slotted};
 pub use lobs::LOB_READ_OCTETS;
 pub use prepared::Prepared;
 pub use rekey::FormatsBehind;

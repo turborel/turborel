@@ -34,7 +34,8 @@ use crate::index::{Index, IndexMethod, NearestQuery, NearestSupport};
 use crate::plugin::errors::broken;
 use crate::plugin::manifest::{EQUALITY, NEAREST, RANGE};
 use crate::plugin::payload::index::{Write, put_writes};
-use crate::plugin::payload::{INDEX_CHECKPOINT, INDEX_CREATE, INDEX_OPEN, INDEX_WRITE, put_strings};
+use crate::plugin::payload::statistics::{self, IndexAnswer};
+use crate::plugin::payload::{INDEX_CHECKPOINT, INDEX_CREATE, INDEX_OPEN, INDEX_STATISTICS, INDEX_WRITE, put_strings};
 use crate::sync::lock_builtin;
 use crate::value::{CompOp, DataType};
 
@@ -72,6 +73,8 @@ pub(super) struct Shared {
     pending: Mutex<Pending>,
     given: Condvar,
     damaged: AtomicBool,
+    /// What the program knows of its entries (RULES.md D278).
+    known: super::known::Known<IndexAnswer>,
 }
 
 impl PluginIndexMethod {
@@ -97,6 +100,7 @@ impl PluginIndexMethod {
             pending: Mutex::default(),
             given: Condvar::new(),
             damaged: AtomicBool::new(false),
+            known: super::known::Known::default(),
         });
         let mut all = lock_builtin(&self.indexes);
         all.retain(|i| i.strong_count() > 0);
@@ -170,6 +174,7 @@ impl Shared {
     /// `w` kept, and the writes waiting given if BATCH of them wait.
     fn write(&self, w: Write) -> Result<()> {
         self.whole()?;
+        self.known.written(1);
         let full = {
             let mut pending = lock_builtin(&self.pending);
             pending.writes.push(w);
@@ -202,6 +207,27 @@ impl Shared {
                 return Err(broken("index", &e.msg));
             }
         }
+    }
+
+    /// What the program knows of the index's entries, and after how many
+    /// written it is stale; none if it knows nothing (STATISTICS): the
+    /// writes waiting given first, as before any read.
+    ///
+    /// # Errors
+    ///
+    /// The calls'.
+    fn statistics(&self) -> Result<Option<(IndexAnswer, u64)>> {
+        self.give()?;
+        let mut payload = Vec::new();
+        crate::bytes::Put::put_bytes(&mut payload, &self.locator);
+        let got = answer(&self.link.plain(INDEX_STATISTICS, payload)?, statistics::index)?;
+        Ok(got.map(|i| (i, i.refresh)))
+    }
+
+    /// What `pick` takes of what the program knows of the index, if it
+    /// knows it.
+    fn known(&self, pick: impl FnOnce(&IndexAnswer) -> f64) -> Option<f64> {
+        self.known.get(|| self.statistics()).and_then(|i| statistics::known(pick(&i)))
     }
 
     /// One WRITE of `writes`.

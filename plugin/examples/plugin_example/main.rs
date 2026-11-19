@@ -15,7 +15,9 @@
 //! `host_store.rs`, `host_net.rs`, and LOOP and KEPT in
 //! `replication.rs`, SHIPPED in `shipped.rs`, KEEP in `settings.rs`) serve
 //! a host plug-in's manifest, which declares them alone. SETTING_OF and RUN
-//! (`settings.rs`) read and write settings.
+//! (`settings.rs`) read and write settings. The optimizer rules and the
+//! procedure that asks for statistics are in `rules.rs`; FILES and SORTED
+//! answer the planner's statistics.
 
 mod files;
 mod functions;
@@ -25,6 +27,7 @@ mod host_store;
 mod indexes;
 mod later;
 mod replication;
+mod rules;
 mod services;
 mod settings;
 mod sha256;
@@ -38,6 +41,8 @@ fn plugin() -> Plugin {
     let plugin = services::with(plugin);
     let plugin = settings::with(later::with(plugin));
     let plugin = shipped::with(replication::with(host_net::with(host_store::with(host_small::with(plugin)))));
+    let plugin = plugin.rule("CONTRADICTION", rules::Contradiction).rule("BROKEN", rules::Broken { fails: false });
+    let plugin = plugin.rule("ERRING", rules::Broken { fails: true }).procedure("SKEW", rules::Skew);
     plugin.engine("FILES", files::Files::default()).index_method("SORTED", indexes::Sorted).index_method("NEAR", indexes::Sorted)
 }
 

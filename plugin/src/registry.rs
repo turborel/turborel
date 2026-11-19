@@ -8,8 +8,12 @@ use super::kinds::{
     Scalar, SystemTable, TableFunction, Target, Type, XQueryFunction,
 };
 use super::objects::Held;
+use super::rule::Rule;
 use super::storage::{Engine, IndexMethod};
 use super::{Answer, PluginError};
+
+/// The code of an optimizer rule's kind, as WELCOME gives it.
+const RULE_CODE: u8 = 37;
 
 /// The objects of one kind, by name.
 pub(super) type Of<T> = HashMap<String, Box<T>>;
@@ -39,6 +43,7 @@ pub struct Plugin {
     pub(super) methods: Of<dyn IndexMethod>,
     pub(super) credentials: Of<dyn Credentials>,
     pub(super) diagnostics: Of<dyn Diagnostics>,
+    pub(super) rules: Of<dyn Rule>,
     /// What calls keep between them.
     pub(super) held: Held,
     /// The host objects, by kind's code and name (RULES.md D229).
@@ -141,6 +146,10 @@ impl Plugin {
         /// With the sink of events `name`.
         diagnostics, diagnostics, Diagnostics
     );
+    builder!(
+        /// With the optimizer rule `name` (RULES.md D275).
+        rule, rules, Rule
+    );
 
     /// The codes of the kinds it has an object of, as WELCOME gives them.
     pub(super) fn kinds(&self) -> Vec<u8> {
@@ -167,6 +176,7 @@ impl Plugin {
         ];
         let mut kinds: Vec<u8> = (1_u8..).zip(counts).filter(|(_, n)| *n > 0).map(|(k, _)| k).collect();
         kinds.extend(self.hosted.keys().map(|(k, _)| *k));
+        kinds.extend((!self.rules.is_empty()).then_some(RULE_CODE));
         kinds.sort_unstable();
         kinds.dedup();
         kinds

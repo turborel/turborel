@@ -56,6 +56,9 @@ impl Link for TestLink<'_> {
     fn sql(&mut self, _call: u64, rows: bool, text: &str, args: &[Value]) -> Answer<Vec<Vec<Value>>> {
         (self.sql)(text, args, rows)
     }
+    fn statistics(&mut self, _call: u64, _asked: &turborel::plugin::payload::statistics::Asked) -> Answer<Vec<u8>> {
+        Err(PluginError::external("no statistics in this test"))
+    }
 }
 
 impl Harness {
@@ -110,7 +113,9 @@ impl Harness {
             | Message::Shutdown
             | Message::Sql { .. }
             | Message::Settings(_)
-            | Message::SqlDone { .. } => Vec::new(),
+            | Message::SqlDone { .. }
+            | Message::Statistics { .. }
+            | Message::StatisticsDone { .. } => Vec::new(),
         }
     }
 
@@ -134,7 +139,9 @@ impl Harness {
             | Message::Shutdown
             | Message::Sql { .. }
             | Message::Settings(_)
-            | Message::SqlDone { .. } => Err(PluginError::external("no answer")),
+            | Message::SqlDone { .. }
+            | Message::Statistics { .. }
+            | Message::StatisticsDone { .. } => Err(PluginError::external("no answer")),
         }
     }
 

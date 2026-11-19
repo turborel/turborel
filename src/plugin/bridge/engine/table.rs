@@ -12,6 +12,7 @@ use crate::log::Lsn;
 use crate::plugin::errors::{broken, restarted};
 use crate::plugin::payload::ENGINE_GET;
 use crate::plugin::payload::engine::{maybes, put_ids};
+use crate::stats::Statistics;
 use crate::storage::{Row, RowId, Rows, TableStorage};
 use crate::sync::lock_builtin;
 use crate::txn::{Concurrency, Persistence, Timestamp, TxCapabilities, TxId, Undo};
@@ -157,6 +158,14 @@ impl TableStorage for PluginTable {
     }
     fn row_count(&self) -> usize {
         usize::try_from(*lock_builtin(&self.0.rows)).unwrap_or(usize::MAX)
+    }
+    fn statistics(&self) -> Option<Arc<dyn Statistics>> {
+        let known: Arc<dyn Statistics> = self.0.known.get(|| self.0.statistics())?;
+        Some(known)
+    }
+    fn analyze(&self) -> Result<()> {
+        self.0.known.refresh(|| self.0.statistics());
+        Ok(())
     }
     fn capabilities(&self) -> TxCapabilities {
         TxCapabilities { undo: Undo::Native, concurrency: Concurrency::Coordinator, persistence: Persistence::Logged }

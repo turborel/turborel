@@ -16,6 +16,7 @@ mod host;
 mod objects;
 mod session;
 mod settings;
+mod statistics;
 
 pub(super) use settings::calling;
 

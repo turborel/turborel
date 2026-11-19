@@ -19,6 +19,8 @@
 //! SETTINGS 10 names (count u32, str each) | values: the settings' values
 //!             the next CALL runs with, sent before it when they changed
 //!             since the last the process was sent (RULES.md D282)
+//! STATISTICS      11  call u64 | asked (`payload/statistics.rs`)
+//! STATISTICSDONE  12  call u64 | table or index statistics, as asked
 //! ```
 //!
 //! Every integer is little-endian, as `bytes.rs` writes every other
@@ -27,6 +29,7 @@
 use std::io::{ErrorKind, Read, Write};
 
 use super::errors::violation;
+use super::payload::statistics::{Asked, asked, put_asked};
 use super::payload::{put_strings, strings};
 use super::values::{put_values, values};
 use crate::bytes::{Put, Reader};
@@ -53,6 +56,10 @@ pub const SQL: u8 = 8;
 pub const SQL_DONE: u8 = 9;
 /// The type byte of SETTINGS.
 pub const SETTINGS: u8 = 10;
+/// The type byte of STATISTICS (RULES.md D279).
+pub const STATISTICS: u8 = 11;
+/// The type byte of STATISTICSDONE.
+pub const STATISTICS_DONE: u8 = 12;
 
 /// The bytes of a frame's length.
 const LENGTH_BYTES: usize = 4;
@@ -172,6 +179,21 @@ pub enum Message {
         /// Its rows, none of a statement run.
         rows: Vec<Vec<Value>>,
     },
+    /// STATISTICS a call asks of the database (RULES.md D279).
+    Statistics {
+        /// The call.
+        call: u64,
+        /// What it asks the statistics of.
+        asked: Asked,
+    },
+    /// STATISTICSDONE: the statistics asked for, a table's or an index's
+    /// as `payload/statistics.rs` writes them.
+    StatisticsDone {
+        /// The call.
+        call: u64,
+        /// The statistics written.
+        payload: Vec<u8>,
+    },
 }
 
 /// `rows`, counted, each its values.
@@ -207,6 +229,8 @@ impl Message {
             Message::Sql { .. } => SQL,
             Message::SqlDone { .. } => SQL_DONE,
             Message::Settings(_) => SETTINGS,
+            Message::Statistics { .. } => STATISTICS,
+            Message::StatisticsDone { .. } => STATISTICS_DONE,
         }
     }
 
@@ -248,7 +272,7 @@ impl Message {
                 out.put_str(&c.object);
                 out.extend_from_slice(&c.payload);
             }
-            Message::Result { call, payload } => {
+            Message::Result { call, payload } | Message::StatisticsDone { call, payload } => {
                 out.put_u64(*call);
                 out.extend_from_slice(payload);
             }
@@ -268,6 +292,10 @@ impl Message {
             Message::Settings(told) => {
                 put_strings(out, &told.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>());
                 put_values(out, &told.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>())?;
+            }
+            Message::Statistics { call, asked } => {
+                out.put_u64(*call);
+                put_asked(out, asked);
             }
         }
         Ok(())
@@ -325,6 +353,8 @@ impl Message {
                 }
                 Message::Settings(names.into_iter().zip(told).collect())
             }
+            STATISTICS => Message::Statistics { call: r.u64()?, asked: asked(r)? },
+            STATISTICS_DONE => Message::StatisticsDone { call: r.u64()?, payload: r.rest().to_vec() },
             other => return Err(violation(&format!("no message is of type {other}"))),
         };
         r.finish()?;

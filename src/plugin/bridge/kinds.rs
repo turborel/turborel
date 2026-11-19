@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use super::{Link, Resolve, auth, backup, collation, engine, index, partition, process, quantizer, ranking, system, types, xquery};
+use super::{Link, Resolve, auth, backup, collation, engine, index, partition, process, quantizer, ranking, rule, system, types, xquery};
 use super::{aggregate, embedder, metric, procedure, resolved, scalar, table};
 use crate::error::Result;
 use crate::functions::builtin::{Procedure, TableFunction};
@@ -55,6 +55,8 @@ pub enum Bridged {
     Engine(Arc<engine::PluginEngine>),
     /// An index method.
     IndexMethod(Arc<index::PluginIndexMethod>),
+    /// An optimizer rule.
+    Rule(Arc<rule::PluginRule>),
 }
 
 /// The object `d` declares, calling `pool`.
@@ -93,5 +95,6 @@ pub(super) fn bridge(d: &Declared, pool: &Arc<Pool>, resolve: Resolve<'_>) -> Re
         }
         ObjectKind::Engine => Bridged::Engine(Arc::new(engine::PluginEngine::new(link, d.batch))),
         ObjectKind::IndexMethod => Bridged::IndexMethod(Arc::new(index::PluginIndexMethod::new(link, d.supports.clone(), d.batch))),
+        ObjectKind::Rule => Bridged::Rule(Arc::new(rule::PluginRule::new(d, link))),
     })
 }

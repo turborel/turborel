@@ -30,6 +30,7 @@
 //!   | STORAGE ENGINE <identifier> [ BATCH <unsigned integer> ]
 //!   | INDEX METHOD <identifier> SUPPORTS ( <identifier> [ , ... ] ) [ BATCH <unsigned integer> ]
 //!   | CREDENTIALS <identifier> | DIAGNOSTICS <identifier> [ BATCH <unsigned integer> ]
+//!   | OPTIMIZER RULE <identifier> [ PHASE <identifier> ] [ PASSES <unsigned integer> ]
 //!   | HOST <host kind> <identifier> [ ( <identifier> = <unsigned integer> | <character string literal> [ , ... ] ) ]
 //!   | <setting declaration> | <reads settings>
 //! <parameters>     ::= ( [ <data type> [ , <data type> ]... ] )
@@ -63,7 +64,7 @@ const LICENSE_WORDS: [&str; 2] = ["LICENSE", "FILE"];
 const TABLE: &str = "TABLE";
 /// The words a declaration of each kind begins with, the second if it
 /// has two.
-const DECLARATIONS: [(&str, Option<&str>, ObjectKind); 19] = [
+const DECLARATIONS: [(&str, Option<&str>, ObjectKind); 20] = [
     ("FUNCTION", None, ObjectKind::Scalar),
     ("AGGREGATE", None, ObjectKind::Aggregate),
     ("TABLE", Some("FUNCTION"), ObjectKind::Table),
@@ -83,11 +84,14 @@ const DECLARATIONS: [(&str, Option<&str>, ObjectKind); 19] = [
     ("INDEX", Some("METHOD"), ObjectKind::IndexMethod),
     ("CREDENTIALS", None, ObjectKind::Credentials),
     ("DIAGNOSTICS", None, ObjectKind::Diagnostics),
+    ("OPTIMIZER", Some("RULE"), ObjectKind::Rule),
 ];
 /// The words of the clauses of a declaration.
 const CLAUSES: [&str; 8] = ["READS", "MODIFIES", "SQL", "DATA", "FORMATS", "PROPERTIES", "DIMENSIONS", "ELEMENT"];
 /// The words of the clauses of the kinds of RULES.md D220.
 const NEW_CLAUSES: [&str; 2] = ["ORDERED", "SUPPORTS"];
+/// The words of an optimizer rule's clauses (RULES.md D276).
+const RULE_CLAUSES: [&str; 2] = ["PHASE", "PASSES"];
 
 impl Parser {
     /// `word`, a key word or not, if it is next: whether it was.
@@ -256,7 +260,8 @@ impl Parser {
             | ObjectKind::Engine
             | ObjectKind::IndexMethod
             | ObjectKind::Credentials
-            | ObjectKind::Diagnostics => {}
+            | ObjectKind::Diagnostics
+            | ObjectKind::Rule => {}
         }
         self.kind_clauses(d)?;
         d.deterministic = self.determinism()?;
@@ -302,6 +307,7 @@ impl Parser {
                 self.expect_manifest_word(NEW_CLAUSES[1])?;
                 d.supports = self.manifest_words()?;
             }
+            ObjectKind::Rule => self.rule_clauses(d)?,
             ObjectKind::Authenticator
             | ObjectKind::Target
             | ObjectKind::Partition
@@ -312,6 +318,32 @@ impl Parser {
             | ObjectKind::Diagnostics => {}
         }
         Ok(())
+    }
+
+    /// An optimizer rule's PHASE and PASSES, each if written.
+    fn rule_clauses(&mut self, d: &mut Declared) -> Result<()> {
+        let [phase, passes] = RULE_CLAUSES;
+        if self.accept_manifest_word(phase) {
+            d.phase = Some(self.identifier()?);
+        }
+        if self.accept_manifest_word(passes) {
+            d.passes = Some(self.unsigned_integer()?);
+        }
+        Ok(())
+    }
+
+    /// \[DESIGN\] A `<data type>` written alone, as the plan form of an
+    /// optimizer rule writes a type (RULES.md D275).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -102 if it is not one, or more follows.
+    pub fn plan_data_type(&mut self) -> Result<crate::value::DataType> {
+        let t = self.data_type()?;
+        if *self.peek() != Tok::End {
+            return Err(self.syntax("expected the end of a <data type>"));
+        }
+        Ok(t)
     }
 
     /// `<parameters>`.

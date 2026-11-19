@@ -7,9 +7,9 @@ use super::{Session, State};
 use crate::ast::CursorSpecification;
 use crate::binder::{DescribedKey, OutColumn, described_key, family_in, member_plan};
 use crate::catalog::QualifiedName;
-use crate::error::Result;
+use crate::error::{Result, Warnings};
 use crate::logical::LogicalPlan;
-use crate::optimizer::RuleContext;
+use crate::optimizer::plugged;
 use crate::params::Params;
 use crate::physical::{PhysicalPlanner, Plan};
 use crate::value::Value;
@@ -29,26 +29,37 @@ pub(super) struct Compiled {
 
 /// Optimize a logical plan and choose its physical plan, to run.
 pub(super) fn plan(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
-    planned(st, logical, PhysicalPlanner::new(st))
+    planned(st, logical, PhysicalPlanner::new(st), None)
+}
+
+/// As `plan`, an extension's optimizer rule skipped raising its warning
+/// to `heard` (RULES.md D277).
+pub(super) fn plan_heard(st: &State, logical: LogicalPlan, heard: Option<&Warnings>) -> (LogicalPlan, Vec<&'static str>, Plan) {
+    planned(st, logical, PhysicalPlanner::new(st), heard)
 }
 
 /// As `plan`, of a prepared statement's plan with its slots: its paths
 /// chosen by `values`, one execution's, its probes holding the slots, so
 /// that another execution may fill them (`physical/kept.rs`).
 pub(super) fn plan_slotted(st: &State, logical: LogicalPlan, values: &[Value]) -> Plan {
-    planned(st, logical, PhysicalPlanner::slotted(st, values)).2
+    planned(st, logical, PhysicalPlanner::slotted(st, values), None).2
 }
 
 /// As `plan`, to show: each operator of the physical plan described, as
 /// EXPLAIN shows it (`physical/shown.rs`).
 fn described(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
-    planned(st, logical, PhysicalPlanner::describing(st))
+    planned(st, logical, PhysicalPlanner::describing(st), None)
 }
 
-/// `logical` optimized, the rules that fired, and the physical plan
-/// `planner` chooses for it.
-fn planned(st: &State, logical: LogicalPlan, planner: PhysicalPlanner<'_>) -> (LogicalPlan, Vec<&'static str>, Plan) {
-    let (optimized, trace) = st.optimizer.optimize(logical, &RuleContext { db: st });
+/// `logical` optimized, by the built-in rules and the extensions', the
+/// rules that fired, and the physical plan `planner` chooses for it.
+fn planned(
+    st: &State,
+    logical: LogicalPlan,
+    planner: PhysicalPlanner<'_>,
+    heard: Option<&Warnings>,
+) -> (LogicalPlan, Vec<&'static str>, Plan) {
+    let (optimized, trace) = plugged::optimize(st, logical, heard);
     let physical = planner.plan(&optimized);
     (optimized, trace, physical)
 }
