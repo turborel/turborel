@@ -6,4 +6,5 @@
 mod failover;
 mod pipelines;
 mod pools;
+mod replicas;
 mod tls_modes;

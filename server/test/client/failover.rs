@@ -61,6 +61,7 @@ fn a_server_of_the_wrong_role_is_left() {
     assert_eq!(rows(&kept.query("SELECT COUNT(*) FROM T").unwrap()), ["0"]);
     let left = settings(&format!("turborel://X@{}/?tls_mode=disable&target=read-only", server.address)).connect().unwrap_err();
     assert!(left.message.contains("the server is read-write, and read-only is asked"), "{}", left.message);
+    assert_eq!(left.sqlstate, "08001");
     let (_other, another) = served();
     let uri = format!("turborel://X@{},{}/?tls_mode=disable&target=read-only", server.address, another.address);
     let both = settings(&uri).connect().unwrap_err();

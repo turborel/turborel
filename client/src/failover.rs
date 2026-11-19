@@ -16,12 +16,10 @@ use turborel_protocol::Failure;
 use crate::agent::Connected;
 #[cfg(not(feature = "scram"))]
 use crate::connection::Password;
-use crate::connection::{Mechanism, Result, Trust, failed, in_the_clear};
+use crate::connection::{Mechanism, Result, Trust, in_the_clear};
 use crate::mechanism::Certificate;
 use crate::role::{Role, role};
-#[cfg(not(feature = "tls"))]
-use crate::settings::invalid;
-use crate::settings::{ChannelBinding, Host, LoadBalance, Settings, TargetRole, TlsMode};
+use crate::settings::{ChannelBinding, Host, LoadBalance, Settings, TargetRole, TlsMode, invalid};
 use crate::target::{Target, log_in};
 use crate::timeouts::{Timeouts, io_failed};
 
@@ -111,7 +109,7 @@ impl Settings {
         let tls = self.tls_config()?;
         let mut tried: Vec<(String, Failure)> = Vec::new();
         for host in &hosts {
-            for (at, target) in self.targets(host, tls.as_ref()) {
+            for (at, target) in Settings::targets(host, self.tls.server_name.as_ref(), tls.as_ref()) {
                 match target.and_then(|t| self.attempt(host, &t)) {
                     Ok(connection) => return Ok(connection),
                     Err(failure) => tried.push((at, failure)),
@@ -139,18 +137,23 @@ impl Settings {
     }
 
     /// The targets of `host`, each named: its local socket, or each
-    /// address its name resolves to, over TLS as `tls` says.
+    /// address its name resolves to, over TLS as `tls` says, the server's
+    /// certificate of the name `server_name`, else the host's.
     #[cfg(feature = "tls")]
-    fn targets(&self, host: &Host, tls: Option<&std::sync::Arc<rustls::ClientConfig>>) -> Vec<(String, Result<Target>)> {
+    fn targets(
+        host: &Host,
+        server_name: Option<&String>,
+        tls: Option<&std::sync::Arc<rustls::ClientConfig>>,
+    ) -> Vec<(String, Result<Target>)> {
         let Host::Tcp(name, port) = host else { return Settings::local(host) };
-        let server = self.tls.server_name.clone().unwrap_or_else(|| name.clone());
+        let server = server_name.unwrap_or(name).clone();
         let secured = |a: SocketAddr| tls.map_or(Target::Tcp(a), |config| Target::Tls(a, server.clone(), std::sync::Arc::clone(config)));
         addresses(name, *port).into_iter().map(|(at, a)| (at, a.map(secured))).collect()
     }
 
     /// The targets of `host`, each named, over plain TCP.
     #[cfg(not(feature = "tls"))]
-    fn targets(&self, host: &Host, _: Option<&()>) -> Vec<(String, Result<Target>)> {
+    fn targets(host: &Host, _: Option<&String>, _: Option<&()>) -> Vec<(String, Result<Target>)> {
         let Host::Tcp(name, port) = host else { return Settings::local(host) };
         addresses(name, *port).into_iter().map(|(at, a)| (at, a.map(Target::Tcp))).collect()
     }
@@ -209,7 +212,7 @@ impl Settings {
     }
 
     /// Refuses `connection`, ended, if its server is not of the role the
-    /// settings ask.
+    /// settings ask (SQLSTATE 08001).
     fn of_role(&self, connection: &mut Connected) -> Result<()> {
         let wanted = match self.target {
             TargetRole::Any => return Ok(()),
@@ -220,7 +223,7 @@ impl Settings {
         if found == wanted {
             return Ok(());
         }
-        Err(failed(&format!("[DESIGN] the server is {}, and {} is asked", found.describe(), wanted.describe())))
+        Err(invalid(&format!("[DESIGN] the server is {}, and {} is asked", found.describe(), wanted.describe())))
     }
 }
 
@@ -253,6 +256,7 @@ fn none_kept(mut tried: Vec<(String, Failure)>) -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connection::failed;
 
     /// Verifies: [DESIGN] RULES.md D201: hosts ordered at random are each
     /// host once, in an order the seed decides, the same for the same
