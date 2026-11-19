@@ -126,6 +126,8 @@ behind it, and each can be replaced or added to.
   own, installed from signed packages and registries.
 - [Every plug-in kind external](doc/client/04-plugins-kinds.md), types,
   collations, storage engines and index methods among them, with an SDK.
+- [Host plug-ins](doc/client/04-plugins-host.md) beneath the database,
+  its encodings, log, clock, files, keys and listeners among them.
 - [Property graphs](doc/sql/20-property-graphs.md) over tables or
   queries' rows, queried by GRAPH_TABLE's path patterns through adjacency
   indexes, LINE_GRAPH among them.

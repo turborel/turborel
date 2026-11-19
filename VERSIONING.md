@@ -114,6 +114,7 @@ version, and comes with a major release (see
 | Native protocol, a UUID's field (tag 27) among it | 1 | the client's Hello | `protocol/src/lib.rs`, `VERSION`; `protocol/src/fields.rs` |
 | Plug-in protocol | 1 | HELLO and WELCOME's first field | `plugin.rs`, `PROTOCOL` |
 | Plug-in payloads of kinds 10 to 19 (rankings to sinks of events) | 1, as the protocol | the protocol's version | `plugin/payload/` |
+| Plug-in payloads of host kinds 20 to 31 (encodings to background jobs) | 1, as the protocol | the protocol's version | `plugin/payload/hosted.rs` |
 | A plug-in type's stored value (key, binary and text forms) | 1, as the protocol | the protocol's version | `plugin/payload/types.rs` |
 | Plug-in manifest (`turborel-plugin.manifest`) | 1 | its PROTOCOL item | `plugin/manifest.rs` |
 | Extension package file | 1 | the byte after its magic `TBPKG\0` | `plugin/package/archive.rs`, `plugin/package.rs` `FORMAT` |

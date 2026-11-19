@@ -97,6 +97,8 @@ fn a_host_plugins_objects_are_the_hosts_own() {
     assert!(!served.end(7) && !served.cancel(8), "NOTED ends and cancels none");
     assert_eq!(std::fs::read_to_string(dir.join("served.log")).unwrap(), "end 7\ncancel 8\n");
     assert!(eventually(|| std::fs::read_to_string(dir.join("tick.log")).is_ok_and(|t| t.lines().count() >= 2)), "the job ran, again after");
+    assert!(db.jobs().iter().any(|j| j.label == "turborel-tick" && j.runs > 0), "shown among the database's jobs");
+    assert!(db.jobs().iter().any(|j| j.label == "turborel-host-clock"), "the clock's ticking");
     assert_eq!(db.host_stopped().unwrap(), None);
 }
 

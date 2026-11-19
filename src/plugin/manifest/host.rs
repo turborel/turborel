@@ -10,9 +10,9 @@ use super::super::errors::invalid_manifest;
 /// The kind of an object a host plug-in serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HostKind {
-    /// A page encoding (`Encoding`, D247).
+    /// A page encoding (`Encoding`, D246).
     Encoding,
-    /// A checksum (`HashFunction`, D247).
+    /// A checksum (`HashFunction`, D246).
     HashFunction,
     /// The clock (`Clock`, D247).
     Clock,
@@ -20,29 +20,29 @@ pub enum HostKind {
     LogStorage,
     /// A kind of catalog store (`CatalogStorage`, D248).
     CatalogStorage,
-    /// Where work areas spill (`Spill`, D248).
+    /// Where work areas spill (`Spill`, D250).
     Spill,
-    /// The files a database is opened from (`FileSystem`, D248).
+    /// The files a database is opened from (`FileSystem`, D251).
     FileSystem,
-    /// What ends and cancels a served connection (`ServedConnections`, D247).
+    /// What ends and cancels a served connection (`ServedConnections`, D254).
     ServedConnections,
-    /// Where a server takes connections, relayed frame by frame (D247).
+    /// Where a server takes connections, relayed frame by frame (D254).
     Listener,
-    /// The cryptography packages are checked by (`PackageCrypto`, D247).
+    /// The cryptography packages are checked by (`PackageCrypto`, D252).
     PackageCrypto,
-    /// The keys encryption takes by name (D247).
+    /// The keys encryption takes by name (D252).
     Keyring,
-    /// Work run unasked for a database (`BackgroundJob`, D247).
+    /// Work run unasked for a database (`BackgroundJob`, D253).
     BackgroundJob,
-    /// How replicas reach each other (D249).
+    /// How replicas reach each other (D229).
     ReplicaTransport,
-    /// The consensus journal's storage (D249).
+    /// The consensus journal's storage (D229).
     Journal,
-    /// How a replica's state is shipped (D249).
+    /// How a replica's state is shipped (D229).
     StateTransfer,
-    /// The replication protocol itself (D249).
+    /// The replication protocol itself (D229).
     Consensus,
-    /// Where the log is archived and backups kept, beyond a target (D248).
+    /// Where the log is archived and backups kept, beyond a target (D229).
     Archive,
 }
 

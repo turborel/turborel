@@ -25,7 +25,7 @@ kept with the database, which other nodes may share, but given as the
 node starts (`--set`, a configuration file, or before the program opens
 the database) and lasting while it runs. SET DATABASE changes it for the
 running database alone. INFORMATION_SCHEMA.SETTINGS shows such a value
-with VALUE_SOURCE NODE. The settings marked *node* here are the database's own of the kind: PLUGINS.DIRECTORIES, PLUGINS.TRUSTED_KEYS and PLUGINS.REQUIRE_SIGNED, which bound what the node runs, so only its operator sets them, never SQL.
+with VALUE_SOURCE NODE. The settings marked *node* here are the database's own of the kind: PLUGINS.DIRECTORIES, PLUGINS.TRUSTED_KEYS, PLUGINS.REQUIRE_SIGNED and PLUGINS.HOST, which bound what the node runs, so only its operator sets them, never SQL.
 
 ## The database's settings
 
@@ -88,6 +88,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | PLUGINS.CALL_TIMEOUT_MS | 30000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | PLUGINS.CANCEL_GRACE_MS | 1000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | PLUGINS.DIRECTORIES | (empty) | TEXT OF AT MOST 65536 CHARACTERS | at once | *node* |
+| PLUGINS.HOST | (empty) | TEXT OF AT MOST 65536 CHARACTERS | at the next start | *node* |
 | PLUGINS.MAX_CALL_BYTES | 67108864 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | PLUGINS.MAX_MESSAGE_BYTES | 16777216 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | PLUGINS.MEMORY_BYTES | 268435456 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
@@ -183,6 +184,7 @@ Each in a sentence:
 - **PLUGINS.CALL_TIMEOUT_MS**: The milliseconds a call of a plug-in may take before its process is stopped and the call fails with SQLSTATE 38T02; 0 for no limit.
 - **PLUGINS.CANCEL_GRACE_MS**: The milliseconds a plug-in has to answer a cancelled call before its process is stopped.
 - **PLUGINS.DIRECTORIES**: The directories an extension's plug-in may be in, separated by ';', each holding any directory below it; empty, as it is until the host sets it, for none. The host sets it as the database opens; SQL may not.
+- **PLUGINS.HOST**: The host plug-ins the node starts before the database opens, each name=directory, its program's SHA-256 digest pinned by @digest after the directory, separated by ';'; empty, as it is until the host sets it, for none. The host sets it; SQL may not.
 - **PLUGINS.MAX_CALL_BYTES**: The most bytes a plug-in sends in answer to one call, all its messages together; more stops its process, and the call fails with SQLSTATE 38T04.
 - **PLUGINS.MAX_MESSAGE_BYTES**: The most bytes of one message a plug-in sends; a longer one stops its process, and the call fails with SQLSTATE 38T04.
 - **PLUGINS.MEMORY_BYTES**: The memory a plug-in is told it may use, in its HELLO; a program that uses more is the operator's to stop, as the database makes no calls of the operating system to cap it.

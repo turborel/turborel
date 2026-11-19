@@ -451,6 +451,7 @@ database goes on.
 | 38T05 | It cannot be started: its directory is under none of PLUGINS.DIRECTORIES, or its program is missing |
 | 38T06 | Its manifest breaks a rule of format 1 |
 | 38T10 | A table or index of it could not be told a change made or undone; it is damaged until the database opens again |
+| 38T11 | A host plug-in failed, so the node stopped until it starts again ([Host Plug-ins](04-plugins-host.md)) |
 | 40001 | A process of it stopped while the transaction wrote a table of its engine; the transaction is rolled back, to run again |
 
 A statement cancelled cancels its plug-in's call. The database sends

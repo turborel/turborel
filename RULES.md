@@ -247,7 +247,7 @@ verification approach DO-178C expects (§8).
 | D226 | A plug-in index method answers the searches it declares, and every entry is rechecked |
 | D227 | A plug-in index is rebuilt when it is not known whole |
 | D228 | Stored data keeps its extension, and an extension's objects are used as built-in ones are |
-| D229 | The points a plug-in may not serve, each for its reason |
+| D229 | Every point beneath the database is a host plug-in's kind, declared by the node |
 | D230 | A stream TLS secures is read and written by its worker itself, through its session |
 | D231 | The replies of pipelined requests go out together, never held for a request not sent nor past a batch |
 | D232 | A worker waits on the socket itself for a slow client to take its replies, and a session's records go in one write |
@@ -256,6 +256,17 @@ verification approach DO-178C expects (§8).
 | D235 | A server stopping sends the replies in flight whole, and runs no request pipelined behind them |
 | D236 | The network benchmark is an example of the server's crate, on the shared harness |
 | D240 | A completion carries the server's time for its statement, and the waits it can measure for free |
+| D245 | The plug-in SDK is a crate of its own |
+| D246 | A host plug-in's encodings and checksums take every page through the program |
+| D247 | A host plug-in's clock pushes its time, and the database reads its own copy |
+| D248 | A host plug-in keeps the log and the catalog, and a commit is one call for its group |
+| D249 | A host plug-in's failure stops the node, and the next start recovers |
+| D250 | A host plug-in's spill keeps an area's tables and runs in the process the area keeps |
+| D251 | A host plug-in's file system holds the files a database is opened from |
+| D252 | A host plug-in's keyring gives keys, and its package cryptography is pinned by its digest |
+| D253 | A host plug-in's jobs run as the database's own |
+| D254 | A host plug-in serves connections, their bytes relayed, and ends them by id |
+| D255 | The points that are no kind, each for its reason |
 
 ### The project
 
@@ -6472,7 +6483,7 @@ strategy is a `PartitionStrategy` (D153), its bounds checked and its
 rows routed by calls (`bridge/partition.rs`). Rankings, quantizers,
 collations, system tables, XQuery functions, types, storage engines,
 index methods, credentials and sinks of events are the kinds of D220 to
-D227, and the points no plug-in may serve are D229's. Functions are
+D227, and the points beneath the database are host plug-ins' (D229). Functions are
 registered in the state's own registry, so a transaction rolled back
 leaves none. Metrics, models, rankings and quantizers are held weakly in
 the shared registries and strongly by the state that holds the
@@ -6730,8 +6741,8 @@ comparison, a page read or a commit's critical section. What must be
 answered there is answered by the database itself, from what one call
 gave it before (a codebook, a sort key, a type's byte-comparable key).
 A point whose every use is in such a place, or that the database needs
-before any extension can exist, is refused, each for its reason in
-D229. The protocol stays version 1. New kinds are new codes and new
+before any extension can exist, is a host plug-in's kind instead,
+declared by the node and started before the database opens (D229). The protocol stays version 1. New kinds are new codes and new
 payloads, which a program of version 1 that serves none of them never
 receives. The plug-in SDK (`turborel_plugin`) serves every
 kind, one trait each, batching, errors, cancellation and limits handled
@@ -6859,28 +6870,171 @@ objects are shown by EXTENSION_OBJECTS with their kind's word. A
 system table is read by any user, with the statement's user told the
 program.
 
-#### D229. The points a plug-in may not serve, each for its reason
+#### D229. Every point beneath the database is a host plug-in's kind, declared by the node
 
-Ten in-process points have no plug-in kind. An encoding (D48)
-transforms each page as the buffer pool reads and writes it, under its
-latch and on the commit path, and the catalog's files are encoded
-before any extension is read, so a call there would stall the pool on a
-hung process and a key would leave the database. A hash function (D30)
-checksums every page as it is read and written, its id in every file's
-format, needed before the catalog that holds extensions is opened. The
-clock (D54) is read for every timestamp and in the commit's critical
-section, where a pipe's latency or a restart would reorder time. A
-keyring holds the keys of encodings and keyed hashes, needed before the
-catalog and never to leave the process. The log (`Log`) and its storage
-(`LogStorage`) are written by every commit, so a commit would wait on a
-pipe and recovery, which reads the log first, would need an extension
-the log has not yet recreated. Catalog storage (`CatalogStorage`) holds
-the extensions themselves, so it cannot be one of them. Spill
-(`Spill`) is the memory budget's relief, called when memory is short,
-when starting or feeding a process would take more. A served connection
-is the server's, beneath any database and its extensions. And package
-cryptography (`PackageCrypto`, D173) checks the signature of the very
-package that would bring it, so a plug-in would vouch for itself.
+The points an extension cannot serve, because the database needs them
+before any extension exists or uses them inside a commit, a page read or
+a lock, are served by host plug-ins. A host plug-in is a program of
+protocol 1, as an extension's is, whose manifest declares host objects
+and nothing else (`HOST <kind> <name> [(<option> = <value>, ...)]`). An
+extension's manifest declares none, and CREATE EXTENSION refuses one
+that does. The node names its host plug-ins in PLUGINS.HOST, written
+`NAME=directory[@digest];...`, a setting the host gives and SQL may not
+set, read as the node starts. `Database::start_host_plugins` starts each
+before the database is opened from its files, and registers each object
+as the host would register its own, through the setter its point has
+(`db/hosted/register.rs`). The directory is the host's own choice, so
+PLUGINS.DIRECTORIES need not hold it. The kinds are ENCODING (20),
+HASH FUNCTION (21), CLOCK (22), LOG STORAGE (23), CATALOG STORAGE (24),
+SPILL (25), FILE SYSTEM (26), SERVED CONNECTIONS (27), LISTENER (28),
+PACKAGE CRYPTO (29), KEYRING (30) and BACKGROUND JOB (31), each argued
+in D246 to D254. REPLICA TRANSPORT (32), JOURNAL (33), STATE TRANSFER
+(34), CONSENSUS (35) and ARCHIVE (36) serve replication and the
+archive. A host object is called off every critical section. What a
+commit or a page read needs now is a value the database keeps, which a
+call filled before. The cost of crossing a process is the operator's to
+choose, and no point is refused for it. The points that remain no kind
+are argued in D255.
+
+#### D245. The plug-in SDK is a crate of its own
+
+The SDK a plug-in's program is written with is the crate
+`turborel-plugin` (`plugin/`), apart from the protocol's crate, so a
+program depends on the SDK and the core alone. Its example,
+`plugin/examples/plugin_example`, serves an object of every kind, the
+host kinds among them, and the tests run it as a real process. The
+frames and payloads stay in the core (`plugin/wire.rs`,
+`plugin/payload/`), where the database and the SDK both read them, so
+neither crate depends on the other's internals.
+
+#### D246. A host plug-in's encodings and checksums take every page through the program
+
+A HOST ENCODING is registered by the ID its declaration gives, which the
+files it wrote name, and by its name, which STORAGE.ENCODINGS names. Its
+OVERHEAD is the bytes it may add, and CONFIDENTIAL 1 marks it a cipher.
+A page or record written costs one ENCODE call, and one read costs one
+DECODE call, made as the buffer pool writes and reads with no latch
+held. A page the program cannot decode fails its read, as a damaged page
+does, and the node goes on. An ENCODE that fails stops the node (D249),
+since what was written is then unknown. A HOST HASH FUNCTION gives
+digests of its LENGTH, 1 to 64 bytes, one call each, and is named by
+STORAGE.CHECKSUM. A digest the program cannot give stops the node, and
+the zeros given in its place are checked against nothing kept.
+
+#### D247. A host plug-in's clock pushes its time, and the database reads its own copy
+
+The clock is read in a commit's critical section, so it is never a call
+there. A job of the database asks the program its time every EVERY
+milliseconds, 10 if not written, one call each, and keeps the largest
+answer in a value of its own. CURRENT_TIMESTAMP and every commit read
+that value, so time never goes back, whatever the program answers. A
+clock that stops answering stops the node, and no time goes on from it.
+
+#### D248. A host plug-in keeps the log and the catalog, and a commit is one call for its group
+
+A HOST LOG STORAGE keeps the logs of the database, one for its
+directory, positions being records' numbers from 1. An append is the
+database's own, kept in memory. A sync sends every record appended and
+not yet sent in one APPEND call, the program durable through them once
+it answers, so the commits that wait together are made durable together
+in one call. A sync that fails stops the node, and every later sync of
+that log fails too, so a record the program may have lost is never taken
+as durable. The commit whose sync failed is in doubt (08007) until the
+next opening recovers. Recovery opens the log as the program left it
+and reads it in pages of BATCH records, 256 if not written, one call a
+page. DURABLE 0 declares a log whose syncs survive no crash. A HOST
+CATALOG STORAGE records each image of the catalog in one call, durable
+once answered, and gives the last back as the database opens.
+
+#### D249. A host plug-in's failure stops the node, and the next start recovers
+
+Every call of a host object either answers or stops the node. A process
+that ends, breaks the protocol, sends too much or outlasts
+PLUGINS.CALL_TIMEOUT_MS stops it, and so does an ERROR, except where
+the kind takes one as an answer (a page that does not decode, a file
+not there). Stopping is a flag the database reads as each statement
+begins, so every later statement fails with SQLSTATE 38T11 and none
+writes a page or a record. Whoever asked `Database::on_host_stop` is
+told once, why. `turboreld` then stops serving and exits with the
+reason, and the database is recovered from its log at the next start,
+as after a crash. Going on would let a statement see a page the program
+half wrote, or commit past a log that lost a record.
+
+#### D250. A host plug-in's spill keeps an area's tables and runs in the process the area keeps
+
+A HOST SPILL is where a sort, a hash join or a grouping puts what
+MEMORY.WORK_BYTES does not hold. Each area keeps one process of the
+program for its life, so its tables and runs live in that program
+however it likes, and PLUGINS.PROCESSES bounds the areas at once. A
+run's records are pushed a batch of the area's bytes at a time, one call
+a batch, and read back 1024 a call. A table's inserts are sent a batch
+at a time too, sent before any read of it, and a read of a key is one
+call.
+
+#### D251. A host plug-in's file system holds the files a database is opened from
+
+A HOST FILE SYSTEM serves every file the database opens, creates,
+removes or locks, as the operating system's would, through the file
+manager (D56). `Database::file_system` gives it, if one was started,
+and `Database::open`, restore (D162) and `turboreld` open through it.
+Each operation names its file by path, so any process of the program
+answers it, and a page read or written is one call. A lock is held by
+the program until the database drops it. A write or a sync that fails
+stops the node, as a device that fails a write would leave the database
+unable to say what is durable.
+
+#### D252. A host plug-in's keyring gives keys, and its package cryptography is pinned by its digest
+
+A HOST KEYRING gives a 256-bit key by name, one call each, which the
+encryption of `turborel-aes` keeps for as long as it reads with it.
+`turboreld` reads keys from the first keyring started, else from
+`--keys`. A HOST PACKAGE CRYPTO digests and verifies packages, so it
+cannot be vouched for by a package. PLUGINS.HOST must pin its program's
+SHA-256 digest after its directory, and the host's own cryptography,
+kept as the plug-in starts, checks the program against it before each
+process. A program of another digest does not start. A verification the
+program does not answer is no verification.
+
+#### D253. A host plug-in's jobs run as the database's own
+
+A HOST BACKGROUND JOB is a job of the database labelled
+`turborel-<name>`, shown among its jobs, and run as JOBS.POLICY says.
+Each run is one call, whose answer says how many milliseconds after to
+run again, or to wait to be asked. A run that fails stops the node.
+
+#### D254. A host plug-in serves connections, their bytes relayed, and ends them by id
+
+A HOST LISTENER is where a server takes connections beside SERVER.HOST
+and SERVER.SOCKET. Each connection keeps a process of the program while
+it is open, so PLUGINS.PROCESSES bounds the connections it serves at
+once. ACCEPT waits in the program up to 50 milliseconds for a client and
+is asked again until one comes, so no call outlasts its timeout while no
+client does. The connection's bytes then pass in RELAY calls, each
+carrying what the server wrote and answered by what the client sent,
+one call an exchange while the client talks and one each 50
+milliseconds while it is quiet. No socket passes between processes, and
+TLS runs over the relayed bytes as over TCP. A program may speak any
+transport to its clients this way. A HOST SERVED CONNECTIONS ends and
+cancels connections by id, one call each.
+
+#### D255. The points that are no kind, each for its reason
+
+The optimizer's rules (`Rule`) rewrite the logical plan, whose types
+change with every release of the planner. Protocol 1 promises payloads
+that never change, so a plan carried in it would freeze the planner, and
+a program built against one build's plan would rewrite another's. A
+rule stays code linked into the host. A wire protocol (`Protocol`) is
+served by a HOST LISTENER, which may translate any protocol to the
+native one. The catalog (`with_catalog`) is the descriptors in memory,
+whose keeping is CATALOG STORAGE's, and a log given whole (`set_log`)
+is one LOG STORAGE makes. The traits of a kind's objects (an index, a
+table's storage, a spill area or run, a disk file, a catalog store, a
+log) are served with their kind. The policies set by `set_job_policy`,
+`set_transaction_policy`, `set_session_end`, `set_lock_wait`, the cost
+model and the optimizer's parameters are values, which settings give.
+The rest are the database's internals, which nothing outside supplies
+(eviction, codecs, seals, statistics, the graph and vector indexes'
+parts, and the contexts a call is given).
 
 #### D137. A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them
 
