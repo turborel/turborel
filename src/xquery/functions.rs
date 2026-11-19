@@ -226,6 +226,14 @@ impl Library {
         Ok(())
     }
 
+    /// \[EXTENSION\] `f` taken away, as an extension that brought it goes
+    /// (RULES.md D222).
+    pub fn remove(&mut self, f: &Arc<dyn XQueryFunction>) {
+        if let Some(all) = self.functions.get_mut(&key(&**f)) {
+            all.retain(|g| !Arc::ptr_eq(g, f));
+        }
+    }
+
     /// The function of the expanded QName `name` taking `arity` arguments,
     /// if the library has one.
     #[must_use]

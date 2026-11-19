@@ -147,7 +147,7 @@ impl BufferPool {
         let (mut tried, mut busy, mut waited) = (Tried::default(), Busy::default(), None);
         loop {
             match self.claim_empty(key)? {
-                Attempt::Taken(claim) => return Ok(Some(claim)),
+                Attempt::Taken(claim) => return Ok(Some(self.placed(claim, key))),
                 Attempt::Mapped => return Ok(None),
                 Attempt::NoneEmpty | Attempt::Held | Attempt::Latched => {}
             }
@@ -167,12 +167,19 @@ impl BufferPool {
                 continue;
             };
             match self.evict(key, index)? {
-                Attempt::Taken(claim) => return Ok(Some(claim)),
+                Attempt::Taken(claim) => return Ok(Some(self.placed(claim, key))),
                 Attempt::Mapped => return Ok(None),
                 Attempt::Held | Attempt::NoneEmpty => tried.note(index, self.frames.len(), false),
                 Attempt::Latched => tried.note(index, self.frames.len(), true),
             }
         }
+    }
+
+    /// `claim`, the eviction policy told the page its frame now holds,
+    /// no lock held (`Eviction::placed`).
+    fn placed(&self, claim: Claim, key: Key) -> Claim {
+        self.eviction.placed(claim.frame, key);
+        claim
     }
 
     /// The work the pool has done: reads that hit, missed, or evicted. A

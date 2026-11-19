@@ -124,7 +124,20 @@ behind it, and each can be replaced or added to.
   embedded after commit.
 - [External plug-ins](doc/client/04-plugins.md): functions, metrics,
   models and more from programs of other parties, run as processes of their
-  own, installed from signed packages and registries.
+  own, installed from signed package files, with a starter project and
+  `pack` for authors and licenses told.
+- [Every plug-in kind external](doc/client/04-plugins-kinds.md), types,
+  collations, storage engines and index methods among them, with an SDK.
+- [Host plug-ins](doc/client/04-plugins-host.md) beneath the database,
+  its encodings, log, clock, files, keys and listeners among them.
+- [Replication and archive plug-ins](doc/client/04-plugins-replication.md):
+  a replica's transport, journal, state transfer and consensus, and a
+  backup's archive, served by host plug-ins that fail stop.
+- [Plug-in settings](doc/client/04-plugins.md#settings) declared by
+  manifests and set as built-in ones, and a buffer eviction policy a
+  host plug-in programs.
+- [Optimizer rules and statistics as plug-ins](doc/client/04-plugins-planner.md):
+  rules that rewrite a stable plan form, and statistics both ways.
 - [Property graphs](doc/sql/20-property-graphs.md) over tables or
   queries' rows, queried by GRAPH_TABLE's path patterns through adjacency
   indexes, LINE_GRAPH among them.

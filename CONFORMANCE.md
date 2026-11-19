@@ -4201,6 +4201,7 @@ PARTITIONS and PARTITION_INDEXES are extensions
 | MEMORY_RESERVATIONS | What holds its memory |
 | GRAPH_ALGO_RUNS | The latest 1000 runs of graph algorithms |
 | EXTENSIONS, EXTENSION_OBJECTS, EXTENSION_PACKAGES | The extensions created, the objects their manifests declare, and the database's lock of their packages |
+| HOST_PLUGINS | The host plug-ins the node started, each object with its license, processes and calls, to the database's owner |
 | BACKUPS, ARCHIVED_SEGMENTS, RESTORE_POINTS | A database's backup history (RULES.md D166) |
 
 ### Plans
@@ -4225,24 +4226,34 @@ Encodings and hash functions are in `src/db/formats.rs`, and file systems in
 
 A plug-in may be a program of another party, run as processes of its own
 and spoken to in plug-in protocol 1 over their pipes (RULES.md D167 to
-D173, `src/plugin.rs`, [Plug-ins](doc/client/04-plugins.md)).
+D173 and D220 to D229, `src/plugin.rs`, [Plug-ins](doc/client/04-plugins.md),
+[Kinds of Plug-in](doc/client/04-plugins-kinds.md)).
 
 | Mechanism | Behaviour |
 |---|---|
-| CREATE EXTENSION | `CREATE EXTENSION n [VERSION r] [FROM 'f']` loads the newest version installed under PLUGINS.DIRECTORIES that meets r, or the package file or directory f, creating the extensions it REQUIRES first. Its objects are the database's: scalar functions, aggregates, table functions, procedures, vector metrics, embedding models, authentication mechanisms, backup targets and partitioning strategies. The statement is logged with the manifest read and the extension kept in the catalog, so it is recovered, replicated and made again as the database opens. |
+| CREATE EXTENSION | `CREATE EXTENSION n [VERSION r] [FROM 'f']` loads the newest version installed under PLUGINS.DIRECTORIES that meets r, or the package file or directory f, creating the extensions it REQUIRES first. Its objects are the database's: scalar functions, aggregates, table functions, procedures, vector metrics, embedding models, authentication mechanisms, backup targets, partitioning strategies, full-text rankings, vector quantizers, collations, system tables, XQuery functions, data types, storage engines, index methods, credentials and sinks of events. The statement is logged with the manifest read and the extension kept in the catalog, so it is recovered, replicated and made again as the database opens. |
 | ALTER EXTENSION | `ALTER EXTENSION n UPDATE [TO r] [FROM 'f']` replaces it by another version, running the scripts of SQL its manifest names for the version it had, once each extension requiring it accepts the new version. |
-| DROP EXTENSION | RESTRICT, the default, is refused while an extension requiring it, or a view, generated column, constraint or routine calling one of its objects remains; CASCADE drops them first. |
+| DROP EXTENSION | RESTRICT, the default, is refused while an extension requiring it, or a view, generated column, constraint or routine calling one of its objects remains; CASCADE drops them first. Both are refused while a table uses its storage engine, a column its type or collation, a collation is made from its collation, or an index uses its method or names its ranking or quantizer, as what is stored by them goes first. |
 | Transactions | The three statements run in the session's transaction, and ROLLBACK undoes them, the processes of what is undone stopped. |
 | Privileges | Only the database's owner, or any user of a database with none, creates, updates or drops one; any user calls its objects. PLUGINS.DIRECTORIES, PLUGINS.TRUSTED_KEYS and PLUGINS.REQUIRE_SIGNED are a node's settings the host gives, which SQL may not set. |
 | Processes | At most PLUGINS.PROCESSES of an extension run at once. One that ends, breaks the protocol, runs past PLUGINS.CALL_TIMEOUT_MS or sends more than PLUGINS.MAX_MESSAGE_BYTES or PLUGINS.MAX_CALL_BYTES is stopped and its call fails, and the next call starts another. A statement cancelled sends CANCEL (D44). |
 | Calls | A function's rows, a metric's candidates and a model's texts are sent BATCH at a time, so a vector index search over a plug-in's metric is one call for many candidates. A function is DETERMINISTIC only as its manifest says. |
-| Errors | A program's SQLSTATE is kept if of class 22, 23, 38, 39, 42 or 2F, and is 38000 else; the database's own conditions of a plug-in are 38T01 to 38T09 ([SQLSTATE values](doc/appendix/a-sqlstate.md)). |
+| Errors | A program's SQLSTATE is kept if of class 22, 23, 38, 39, 42 or 2F, and is 38000 else; the database's own conditions of a plug-in are 38T01 to 38T11 ([SQLSTATE values](doc/appendix/a-sqlstate.md)). |
 | Plans | EXPLAIN ends with the plug-in calls a plan makes. |
+| Rankings, quantizers, collations | A ranking's weights and bounds are asked a batch a call; a quantizer trains a codebook in one call, which the database then searches by alone; a collation gives sort keys a batch a call, compared as bytes, and is refused (SQLCODE -103) by LIKE, TRIM, XQuery and index keys made character by character. |
+| System tables, XQuery functions | A system table is read in INFORMATION_SCHEMA a page of rows a call, told the reader and whether it is the owner, at most 1,000,000 rows. An XQuery function is called by its expanded name, of atomic arguments and result. |
+| Types | A type is made of its text by CAST from a character string and of its binary form by CAST from a binary string, a batch a call; each value is a key, a binary form and a text form the program made, compared, ordered and indexed by the key with no call. It has no arithmetic and no other cast. |
+| Storage engines | A table USING an extension's engine keeps its rows in the program; the coordinator's table locks isolate its transactions, whose writes are applied at commit, BATCH rows a call, each call all or none, and read back a page or a row by id a call. A checkpoint's position is the program's, and recovery replays the log from it. A process stopped while a transaction writes fails that transaction at commit with 40001. |
+| Index methods | An index USING an extension's method serves the equality, range and nearest searches its manifest declares; writes are given a batch a call, each entry is rechecked against the row the reader sees, and an index not clean is rebuilt as the database opens. |
+| Credentials, sinks of events | Credentials make each verifier, of at most one extension. A sink is told each event, queued and sent a batch a call on a thread of its own, the events past a full queue counted. |
+| Host plug-ins | Encodings, checksums, the clock, log and catalog storage, spill, the file system, served connections, listeners, package cryptography, keyrings and background jobs are served by host plug-ins, which the node names in PLUGINS.HOST and starts before the database opens. Each call either answers or stops the node, every later statement failing with 38T11 until the next start recovers. A commit's sync is one call for the records waiting, the clock is a copy pushed every EVERY milliseconds, a page is one call each way, and a listener relays bytes a call an exchange. Package cryptography is pinned by its program's digest (RULES.md D229, D246 to D255). |
 | Packages | A package is one file. Each entry carries its SHA-256 digest, and an optional Ed25519 signature covers the manifest and the digests; it is checked as it is installed and as each of its processes starts. |
-| Versions | Versions are semantic and ranges npm-style. Resolution picks the newest compatible set, backtracking where needed, and refuses cycles and conflicts with 38T09. |
-| Registries | Registries are static directories over HTTPS with a signed, expiring index, tried in priority order, a package pinned to one if asked. None is configured by default. |
-| Lock and cache | A lock file reproduces a set exactly, and downloaded packages are cached by digest. |
-| Command line | `turborel extension` has search, info, install, upgrade, remove, autoremove, list, verify, outdated, why, clean, lock export and import, pack, publish and keygen ([Packages and Registries](doc/client/04-plugins-packages.md)). |
+| Versions | Versions are semantic and ranges npm-style. Resolution picks the newest compatible set among the package files given and the packages installed, backtracking where needed, and refuses cycles and conflicts with 38T09, a requirement nothing meets naming the package file to add. |
+| No registry | turborel has no registry and fetches nothing. A package is a file the operator distributes (RULES.md D260). |
+| Lock | A lock file holds each package's digest and license, and `install --lock` reproduces a set exactly from the files given, refusing a file whose digest differs (38T07). |
+| Licenses | A manifest's LICENSE is an SPDX license expression, checked against the grammar alone, and LICENSE FILE a file of the package its digests and signature cover. A license is told by install, `license`, `info`, `\dx+`, the lock and INFORMATION_SCHEMA.EXTENSION_PACKAGES, and never enforced. `turborel::plugin::package::package_license` reads one for a host's plug-in. |
+| Starter and pack | `turborel extension new` writes a project on the plug-in SDK serving an object of each kind asked for, tested on its harness; `pack` builds a package of the manifest, the program cargo built, the files the manifest names and those under `doc/` and `data/` ([Writing a Plug-in](doc/client/04-plugins-sdk.md)). |
+| Command line | `turborel extension` has install, remove, autoremove, list, info, license, verify, why, lock export, new, pack and keygen ([Packages](doc/client/04-plugins-packages.md)). |
 
 ### Function call syntax
 

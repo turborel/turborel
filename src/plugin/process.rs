@@ -71,6 +71,9 @@ pub(super) struct Process {
     tail: Arc<Mutex<Vec<u8>>>,
     /// What it answered HELLO with.
     pub(super) welcome: Welcome,
+    /// The SETTINGS frame it was last sent, empty before the first
+    /// (`settings.rs`).
+    pub(super) settings_sent: Vec<u8>,
 }
 
 impl Process {
@@ -97,7 +100,7 @@ impl Process {
         let tail = Arc::new(Mutex::new(Vec::new()));
         let started = start_readers(spawn, (stdout, stderr), (send, Arc::clone(&tail)), limits.max_message());
         let welcome = Welcome { protocol: 0, name: String::new(), version: String::new(), capabilities: Vec::new(), kinds: Vec::new() };
-        let mut process = Process { child, stdin, frames, tail, welcome };
+        let mut process = Process { child, stdin, frames, tail, welcome, settings_sent: Vec::new() };
         started?;
         process.greet(spawn, limits)?;
         Ok(process)
@@ -129,6 +132,23 @@ impl Process {
         welcomed(&welcome, spawn)?;
         self.welcome = welcome;
         Ok(())
+    }
+
+    /// Sends the SETTINGS of `feed` its next call runs with, if they
+    /// changed since it was last sent them and it takes them.
+    ///
+    /// # Errors
+    ///
+    /// SQLSTATE 38T01 if its input is closed; 38T03 if a value cannot be
+    /// written in protocol 1.
+    pub(super) fn tell_settings(&mut self, feed: &super::settings::Feed) -> Result<()> {
+        if !self.welcome.capabilities.iter().any(|c| c == super::wire::SETTINGS_CAPABILITY) {
+            return Ok(());
+        }
+        match feed.frame(&mut self.settings_sent)? {
+            Some(message) => self.send(&message),
+            None => Ok(()),
+        }
     }
 
     /// Sends `message`.

@@ -57,3 +57,13 @@ impl std::io::Write for Closed {
 pub fn command(sql: &str) -> Input {
     Input::Command(sql.to_owned())
 }
+
+/// The example plug-in's program, `plugin/examples/plugin_example`, as
+/// the workspace's tests built it.
+pub fn plugin_example() -> std::path::PathBuf {
+    let exe = std::env::current_exe().unwrap();
+    let debug = exe.parent().and_then(std::path::Path::parent).unwrap();
+    let built = debug.join("examples").join(format!("plugin_example{}", std::env::consts::EXE_SUFFIX));
+    assert!(built.exists(), "{} is not built: cargo test --workspace builds it", built.display());
+    built
+}

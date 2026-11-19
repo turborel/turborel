@@ -121,7 +121,11 @@ fn data(r: &mut Reader<'_>) -> Result<Vec<RangeDatum>> {
 }
 
 /// `restriction`, written.
-fn put_restriction(out: &mut Vec<u8>, restriction: Option<&Restriction>) -> Result<()> {
+///
+/// # Errors
+///
+/// As `put_value`.
+pub fn put_restriction(out: &mut Vec<u8>, restriction: Option<&Restriction>) -> Result<()> {
     match restriction {
         None => out.put_u8(0),
         Some(Restriction::Equal(values)) => {
@@ -137,6 +141,24 @@ fn put_restriction(out: &mut Vec<u8>, restriction: Option<&Restriction>) -> Resu
         Some(Restriction::Null) => out.put_u8(3),
     }
     Ok(())
+}
+
+/// A restriction, read: what `put_restriction` wrote.
+///
+/// # Errors
+///
+/// SQLSTATE 38T03 of a form no restriction's.
+pub fn restriction(r: &mut Reader<'_>) -> Result<Option<Restriction>> {
+    let end = |from: &mut Reader<'_>| -> Result<Option<(Value, bool)>> {
+        if from.u8()? == 0 { Ok(None) } else { Ok(Some((value(from)?, from.u8()? != 0))) }
+    };
+    Ok(match r.u8()? {
+        0 => None,
+        1 => Some(Restriction::Equal(crate::plugin::values::values(r)?)),
+        2 => Some(Restriction::Range { low: end(r)?, high: end(r)? }),
+        3 => Some(Restriction::Null),
+        other => return Err(violation(&format!("no restriction is of form {other}"))),
+    })
 }
 
 /// An end of a restriction's range, written.

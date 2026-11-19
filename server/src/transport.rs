@@ -10,6 +10,7 @@
 //! reads for it.
 
 mod handed;
+pub mod hosted;
 
 use std::future::Future;
 use std::io::{self, Read, Write};

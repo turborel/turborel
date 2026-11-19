@@ -1,5 +1,6 @@
 //! The servers the network benchmark measures, and connections to them:
-//! one in the clear, at TCP and a Unix socket; one with TLS required. Both
+//! one in the clear, at TCP and its local transport (a Unix socket, or
+//! a named pipe on Windows); one with TLS required. Both
 //! hold the same tables and the user ANN, proved by SCRAM-SHA-256.
 
 use std::net::{SocketAddr, TcpStream};
@@ -19,6 +20,8 @@ use turborel_server::scram::Scram as Scrammed;
 use turborel_server::settings::{self, MAX_CONNECTIONS, SCRAM_WITHOUT_TLS, SOCKET};
 use turborel_test_support::server::{Running, start_with};
 use turborel_test_support::tls::{Pki, pki, secured};
+
+use crate::local::Local;
 
 /// Rows of the large result.
 pub const BIG_ROWS: usize = 100_000;
@@ -64,7 +67,7 @@ pub struct Served {
 /// A connection over any of the transports.
 pub enum Any {
     Tcp(Connection<TcpStream>),
-    Unix(Connection<std::os::unix::net::UnixStream>),
+    Unix(Connection<Local>),
     Tls(Box<Connection<TlsStream>>),
 }
 

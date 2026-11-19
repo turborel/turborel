@@ -311,8 +311,9 @@ impl Session {
         let Some(definition) = settings.key(name).and_then(|k| settings.definition(k)) else {
             return fail(Code::SyntaxRule, format!("[DESIGN] there is no setting {name}"));
         };
-        // [DESIGN] RULES.md D173: what bounds extensions is the host's.
-        if crate::settings::HOST_ONLY.contains(&definition.name.as_str()) {
+        // [DESIGN] RULES.md D173, D281: what bounds extensions, and a host
+        // plug-in's settings, are the host's.
+        if settings.host_only(&definition.name) {
             return fail(Code::Privilege, format!("[DESIGN] {} is the node's, which the host sets; SQL may not", definition.name));
         }
         if !definition.per_session {
@@ -344,6 +345,9 @@ impl Session {
         let Some(definition) = settings.key(name).and_then(|k| settings.definition(k)) else {
             return fail(Code::SyntaxRule, format!("[DESIGN] there is no setting {name}"));
         };
+        if settings.host_only(&definition.name) {
+            return fail(Code::Privilege, format!("[DESIGN] {} is the node's, which the host sets; SQL may not", definition.name));
+        }
         if let Some(refused) =
             (definition.effect == crate::settings::Effect::Creation).then(|| st.creation_refused(&definition.name)).flatten()
         {

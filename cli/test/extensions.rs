@@ -1,29 +1,31 @@
 //! Tests of `turborel extension`, the package manager of extensions
-//! (design document §13): packages packed, signed, published into a
-//! registry directory, served over HTTP by the test's own process, and
-//! installed, upgraded, locked and removed in plug-in directories of
-//! their own.
+//! (design document §13, RULES.md D260 to D268): packages packed from
+//! projects, signed, given as files, and installed, resolved, locked and
+//! removed in plug-in directories of their own; there is no registry.
 
-mod served;
+mod starter;
 
 use std::path::{Path, PathBuf};
 
-use served::Served;
 use turborel::plugin::package::crypto::Signer;
 use turborel::plugin::package::hex;
-use turborel_cli::extension::{Invocation, parse, run};
+use turborel_cli::extension::{parse, run};
 use turborel_client::packages::SigningKey;
 
-/// A directory of one test, empty.
-fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("turborel-ext-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+use crate::common::Scratch;
+
+/// Runs `args` with paths taken from `cwd`: what it wrote, or why it
+/// failed.
+fn ext_in(cwd: &Path, args: &[&str]) -> Result<String, String> {
+    let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+    let mut inv = parse(&args, &|_| None).unwrap().unwrap();
+    inv.context.cwd = cwd.to_path_buf();
+    let mut out = Vec::new();
+    run(&inv, &mut out).map(|()| String::from_utf8(out).unwrap())
 }
 
-/// Writes the source of a plug-in of `name` and `version`, `extra`
-/// manifest items after.
+/// Writes the project of a plug-in of `name` and `version` under
+/// `root/src`, `extra` manifest items after, its program already built.
 fn source(root: &Path, name: &str, version: &str, extra: &str) -> PathBuf {
     let dir = root.join("src").join(format!("{name}-{version}"));
     std::fs::create_dir_all(dir.join("doc")).unwrap();
@@ -43,302 +45,221 @@ fn key(root: &Path, name: &str) -> (PathBuf, String) {
     (file, hex(&key.public_key()))
 }
 
-/// The invocation of `args`, plain HTTP allowed as only a test may.
-fn invocation(args: &[&str]) -> Invocation {
-    let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
-    let mut inv = parse(&args, &|_| None).unwrap().unwrap();
-    inv.context.allow_http = true;
-    inv
-}
-
-/// Runs `args`: what it wrote, or why it failed.
-fn ext(args: &[&str]) -> Result<String, String> {
-    let mut out = Vec::new();
-    run(&invocation(args), &mut out).map(|()| String::from_utf8(out).unwrap())
-}
-
-/// The `--set` options of a server whose plug-in directory is `dir`,
-/// trusting `keys`, of `registries`.
-fn server(dir: &Path, keys: &str, registries: &str) -> Vec<String> {
-    let mut args = vec!["--set".to_owned(), format!("PLUGINS.DIRECTORIES={}", dir.display())];
-    args.extend(["--set".to_owned(), format!("PLUGINS.TRUSTED_KEYS={keys}")]);
-    args.extend(["--set".to_owned(), format!("PLUGINS.REGISTRIES={registries}")]);
-    args
-}
-
-/// Runs `verb` with the `options` of a server.
-fn on(options: &[String], verb: &[&str]) -> Result<String, String> {
-    let mut args: Vec<&str> = verb.to_vec();
-    args.extend(options.iter().map(String::as_str));
-    ext(&args)
-}
-
-/// Publishes the source `dir` into `registry`, signed by `key`.
-fn publish(dir: &Path, registry: &Path, key: &Path) {
-    let (d, r, k) = (dir.display().to_string(), registry.display().to_string(), key.display().to_string());
-    ext(&["publish", &d, "--registry-dir", &r, "--key", &k]).unwrap();
-}
-
-/// Verifies: [EXTENSION] design document §13.1, §13.4: keygen writes a
-/// key; pack builds a package of a plug-in signed by it; installed from
-/// its file with PLUGINS.REQUIRE_SIGNED ON and the key trusted, it is
-/// unpacked into `<directory>/<name>/<version>/`, verifies, and is locked
-/// as installed by name; a file changed after fails verify (38T07); an
-/// unsigned package, or one signed by a key not trusted, is refused
-/// (38T08); a package file tampered with is refused (38T07).
-#[test]
-fn a_signed_package_is_packed_installed_and_verified() {
-    let root = scratch("pack");
-    let key_file = root.join("author.key");
-    let said = ext(&["keygen", "--output", &key_file.display().to_string()]).unwrap();
-    let public = std::fs::read_to_string(root.join("author.key.pub")).unwrap().trim().to_owned();
-    assert!(said.contains(&public), "{said}");
-    assert!(ext(&["keygen", "--output", &key_file.display().to_string()]).is_err(), "never written over");
-    let src = source(&root, "DEMO", "1.0.0", "");
-    let (signed, unsigned) = (root.join("demo.tbpkg"), root.join("unsigned.tbpkg"));
-    ext(&["pack", &src.display().to_string(), "--key", &key_file.display().to_string(), "--output", &signed.display().to_string()])
-        .unwrap();
-    ext(&["pack", &src.display().to_string(), "--output", &unsigned.display().to_string()]).unwrap();
-    let plugins = root.join("plugins");
-    std::fs::create_dir_all(&plugins).unwrap();
-    let mut options = server(&plugins, &public, "");
-    options.extend(["--set".to_owned(), "PLUGINS.REQUIRE_SIGNED=ON".to_owned()]);
-    let refused = on(&options, &["install", &unsigned.display().to_string()]).unwrap_err();
-    assert!(refused.contains("38T08") || refused.contains("not signed"), "{refused}");
-    let (_, other) = key(&root, "other");
-    let untrusting = server(&plugins, &other, "");
-    let mut strict = untrusting.clone();
-    strict.extend(["--set".to_owned(), "PLUGINS.REQUIRE_SIGNED=ON".to_owned()]);
-    assert!(on(&strict, &["install", &signed.display().to_string()]).unwrap_err().contains("not in PLUGINS.TRUSTED_KEYS"));
-    let mut tampered = std::fs::read(&signed).unwrap();
-    let at = tampered.windows(10).position(|w| w == b"program of").unwrap();
-    tampered[at] = b'P';
-    std::fs::write(root.join("tampered.tbpkg"), tampered).unwrap();
-    assert!(
-        on(&options, &["install", &root.join("tampered.tbpkg").display().to_string()]).unwrap_err().contains("not what its digest says")
-    );
-    on(&options, &["install", &signed.display().to_string()]).unwrap();
-    let dir = plugins.join("DEMO").join("1.0.0");
-    assert_eq!(std::fs::read_to_string(dir.join("run")).unwrap(), "program of DEMO 1.0.0");
-    assert!(on(&options, &["verify"]).unwrap().contains(&format!("ok DEMO 1.0.0 signed by {public}")));
-    assert!(on(&options, &["list"]).unwrap().contains("DEMO 1.0.0 explicit ^1.0.0"));
-    std::fs::write(dir.join("run"), "changed").unwrap();
-    assert!(on(&options, &["verify"]).unwrap_err().contains("is not what it was when installed"));
-    std::fs::remove_dir_all(&root).unwrap();
-}
-
-/// A registry of signed packages served over HTTP, and a server's
-/// plug-in directory and options trusting it.
+/// A server's plug-in directory, its options trusting `keys`, and a
+/// directory of package files given to it.
 struct Fixture {
-    root: PathBuf,
-    registry: PathBuf,
-    key: PathBuf,
-    public: String,
-    served: Served,
+    scratch: Scratch,
     plugins: PathBuf,
+    files: PathBuf,
     options: Vec<String>,
 }
 
 impl Fixture {
     fn new(name: &str) -> Fixture {
-        let root = scratch(name);
-        let registry = root.join("registry");
-        let (key, public) = key(&root, "registry");
-        std::fs::create_dir_all(&registry).unwrap();
-        let served = Served::new(&registry);
-        let plugins = root.join("plugins");
+        let scratch = Scratch::new(&format!("ext-{name}"));
+        let (plugins, files) = (scratch.path("plugins"), scratch.path("files"));
         std::fs::create_dir_all(&plugins).unwrap();
-        let options = server(&plugins, &public, &served.url);
-        Fixture { root, registry, key, public, served, plugins, options }
+        std::fs::create_dir_all(&files).unwrap();
+        let options = vec!["--set".to_owned(), format!("PLUGINS.DIRECTORIES={}", plugins.display())];
+        Fixture { scratch, plugins, files, options }
     }
 
-    fn publish(&self, name: &str, version: &str, extra: &str) {
-        publish(&source(&self.root, name, version, extra), &self.registry, &self.key);
+    /// Packs a package into the files' directory: its file.
+    fn pack(&self, name: &str, version: &str, extra: &str) -> String {
+        let src = source(&self.scratch.dir, name, version, extra);
+        let out = self.files.join(format!("{}-{version}.tbpkg", name.to_ascii_lowercase()));
+        ext_in(&self.scratch.dir, &["pack", &src.display().to_string(), "--out", &out.display().to_string()]).unwrap();
+        out.display().to_string()
     }
 
     fn on(&self, verb: &[&str]) -> Result<String, String> {
-        on(&self.options, verb)
+        let mut args: Vec<&str> = verb.to_vec();
+        args.extend(self.options.iter().map(String::as_str));
+        ext_in(&self.scratch.dir, &args)
     }
 }
 
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
-}
-
-/// Verifies: [EXTENSION] design document §13.3, §13.6: publish writes
-/// packages and a signed index into a registry directory; served over
-/// HTTP it is searched, told of by info with versions, requirements and
-/// signer, and installed from by name and range with what each package
-/// requires, the newest versions in range; outdated tells newer versions;
-/// upgrade honours the range and --latest goes beyond it; why tells which
-/// package pulled a dependency in; a version that no longer requires a
-/// dependency leaves it to autoremove.
+/// Verifies: [EXTENSION] design document §13.1, §13.4, RULES.md D264:
+/// keygen writes a key, never over a file; pack builds a package of a
+/// project signed by it; installed from its file with
+/// PLUGINS.REQUIRE_SIGNED ON and the key trusted, it is unpacked into
+/// `<directory>/<name>/<version>/`, verifies, and is locked as installed
+/// by name; a file changed after fails verify (38T07); an unsigned
+/// package, or one signed by a key not trusted, is refused (38T08); a
+/// package file tampered with is refused (38T07).
 #[test]
-fn a_registry_installs_upgrades_and_autoremoves() {
-    let f = Fixture::new("registry");
-    f.publish("BASE", "1.0.0", "");
-    f.publish("BASE", "1.2.0", "");
-    f.publish("DEMO", "1.0.0", "REQUIRES BASE '^1.0.0';");
-    f.publish("DEMO", "2.0.0", "");
-    let found = f.on(&["search", "dem"]).unwrap();
-    assert!(found.contains("DEMO 2.0.0") && !found.contains("BASE"), "{found}");
-    let info = f.on(&["info", "demo"]).unwrap();
-    assert!(info.contains("1.0.0 from") && info.contains("requires BASE ^1.0.0") && info.contains(&f.public), "{info}");
-    let said = f.on(&["install", "demo@^1.0.0"]).unwrap();
-    assert!(said.contains("installed BASE 1.2.0") && said.contains("installed DEMO 1.0.0"), "{said}");
-    assert!(f.plugins.join("BASE").join("1.2.0").join("run").exists());
+fn a_signed_package_is_packed_installed_and_verified() {
+    let f = Fixture::new("pack");
+    let root = &f.scratch.dir;
+    let said = ext_in(root, &["keygen", "--out", "author.key"]).unwrap();
+    let public = std::fs::read_to_string(root.join("author.key.pub")).unwrap().trim().to_owned();
+    assert!(said.contains(&public), "{said}");
+    assert!(ext_in(root, &["keygen", "--out", "author.key"]).is_err(), "never written over");
+    let src = source(root, "DEMO", "1.0.0", "").display().to_string();
+    let packed = ext_in(root, &["pack", &src, "--key", "author.key", "--out", "demo.tbpkg"]).unwrap();
+    assert!(packed.contains(&format!("signed by {public}")) && packed.contains("no license declared"), "{packed}");
+    assert!(packed.starts_with("warning: the manifest declares no LICENSE"), "{packed}");
+    ext_in(root, &["pack", &src, "--out", "unsigned.tbpkg"]).unwrap();
+    let mut strict = f.options.clone();
+    strict.extend([
+        "--set".to_owned(),
+        format!("PLUGINS.TRUSTED_KEYS={public}"),
+        "--set".to_owned(),
+        "PLUGINS.REQUIRE_SIGNED=ON".to_owned(),
+    ]);
+    let on = |verb: &[&str], options: &[String]| ext_in(root, &[verb, &options.iter().map(String::as_str).collect::<Vec<_>>()].concat());
+    assert!(on(&["install", "unsigned.tbpkg"], &strict).unwrap_err().contains("not signed"));
+    let (_, other) = key(root, "other");
+    let mut untrusting = f.options.clone();
+    untrusting.extend([
+        "--set".to_owned(),
+        format!("PLUGINS.TRUSTED_KEYS={other}"),
+        "--set".to_owned(),
+        "PLUGINS.REQUIRE_SIGNED=ON".to_owned(),
+    ]);
+    assert!(on(&["install", "demo.tbpkg"], &untrusting).unwrap_err().contains("not in PLUGINS.TRUSTED_KEYS"));
+    let mut tampered = std::fs::read(root.join("demo.tbpkg")).unwrap();
+    let at = tampered.windows(10).position(|w| w == b"program of").unwrap();
+    tampered[at] = b'P';
+    std::fs::write(root.join("tampered.tbpkg"), tampered).unwrap();
+    assert!(on(&["install", "tampered.tbpkg"], &strict).unwrap_err().contains("not what its digest says"));
+    let said = on(&["install", "demo.tbpkg"], &strict).unwrap();
+    assert_eq!(said, "installed DEMO 1.0.0 from demo.tbpkg, no license declared\n");
+    let dir = f.plugins.join("DEMO").join("1.0.0");
+    assert_eq!(std::fs::read_to_string(dir.join("run")).unwrap(), "program of DEMO 1.0.0");
+    assert!(on(&["verify"], &strict).unwrap().contains(&format!("ok DEMO 1.0.0 signed by {public}")));
+    assert!(on(&["list"], &strict).unwrap().contains("DEMO 1.0.0 explicit ^1.0.0"));
+    std::fs::write(dir.join("run"), "changed").unwrap();
+    assert!(on(&["verify"], &strict).unwrap_err().contains("is not what it was when installed"));
+}
+
+/// Verifies: [EXTENSION] design document §13.2, RULES.md D261: install
+/// resolves among the files given, a directory of them, and the packages
+/// installed. A file another given requires is a dependency, the newest
+/// version in range chosen, and a file nothing chosen needs passed over;
+/// why tells which package pulled a dependency in; a newer file of a
+/// package asked for by name moves it on, from what is installed, and
+/// leaves its old dependency to autoremove; remove refuses a package
+/// another requires, naming it.
+#[test]
+fn install_resolves_among_the_files_given_and_installed() {
+    let f = Fixture::new("resolve");
+    f.pack("BASE", "1.0.0", "");
+    f.pack("BASE", "1.2.0", "");
+    let demo = f.pack("DEMO", "1.0.0", "REQUIRES BASE '^1.0.0';");
+    let old = f.pack("OLD", "0.9.0", "REQUIRES BASE '<1.0.0';");
+    std::fs::remove_file(&old).unwrap();
+    let files = f.files.display().to_string();
+    let said = f.on(&["install", &files]).unwrap();
+    assert!(said.contains("installed BASE 1.2.0 from") && said.contains("installed DEMO 1.0.0 from"), "{said}");
+    assert!(said.contains("passed over BASE 1.0.0"), "{said}");
     let listed = f.on(&["list"]).unwrap();
     assert!(listed.contains("BASE 1.2.0 dependency") && listed.contains("DEMO 1.0.0 explicit ^1.0.0"), "{listed}");
     assert!(f.on(&["why", "base"]).unwrap().contains("BASE is required by DEMO 1.0.0 (^1.0.0)"));
-    assert!(f.on(&["outdated"]).unwrap().contains("DEMO 1.0.0 1.0.0 2.0.0"));
-    f.publish("DEMO", "1.1.0", "REQUIRES BASE '^1.0.0';");
-    assert!(f.on(&["upgrade"]).unwrap().contains("installed DEMO 1.1.0"));
-    assert!(f.on(&["upgrade", "demo", "--latest"]).unwrap().contains("installed DEMO 2.0.0"));
+    assert!(f.on(&["remove", "base"]).unwrap_err().contains("required by DEMO 1.0.0"));
+    std::fs::remove_file(&demo).unwrap();
+    let newer = f.pack("DEMO", "2.0.0", "");
+    let moved = f.on(&["install", &newer]).unwrap();
+    assert!(moved.contains("installed DEMO 2.0.0"), "{moved}");
     assert!(f.on(&["list"]).unwrap().contains("DEMO 2.0.0 explicit ^2.0.0"));
     let removed = f.on(&["autoremove"]).unwrap();
     assert!(removed.contains("removed BASE 1.2.0") && removed.contains("removed DEMO 1.0.0"), "{removed}");
-    assert!(!f.plugins.join("BASE").join("1.2.0").exists());
-    assert!(f.plugins.join("DEMO").join("2.0.0").exists());
+    assert!(f.plugins.join("DEMO").join("2.0.0").exists() && !f.plugins.join("BASE").join("1.2.0").exists());
+    assert!(f.on(&["remove", "demo"]).unwrap().contains("removed DEMO 2.0.0"));
 }
 
-/// Verifies: [EXTENSION] design document §13.6: remove refuses a package
-/// another installed requires, naming it, and removes one nothing does.
+/// Verifies: [EXTENSION] RULES.md D261: a requirement neither the files
+/// given nor the packages installed meet is refused with SQLSTATE 38T09,
+/// naming it and the package file to add; once that file is given too,
+/// or installed before, the package installs; files that require each
+/// other in a cycle are refused naming it; two files of one version with
+/// other contents, and a directory of no package file, are refused.
 #[test]
-fn remove_checks_dependants() {
-    let f = Fixture::new("remove");
-    f.publish("BASE", "1.0.0", "");
-    f.publish("DEMO", "1.0.0", "REQUIRES BASE '1.x';");
-    f.on(&["install", "demo"]).unwrap();
-    assert!(f.on(&["remove", "base"]).unwrap_err().contains("required by DEMO 1.0.0"));
-    assert!(f.on(&["remove", "demo"]).unwrap().contains("removed DEMO 1.0.0"));
-    assert!(f.on(&["remove", "base"]).unwrap().contains("removed BASE 1.0.0"));
+fn what_is_missing_is_refused_naming_the_file_to_add() {
+    let f = Fixture::new("missing");
+    let top = f.pack("TOP", "1.0.0", "REQUIRES UNITS '^2.0.0';");
+    let refused = f.on(&["install", &top]).unwrap_err();
+    assert!(refused.contains("38T09") && refused.contains("requires UNITS ^2.0.0"), "{refused}");
+    assert!(refused.contains("add a package file of UNITS"), "{refused}");
+    let units = f.pack("UNITS", "2.1.0", "");
+    assert!(f.on(&["install", &units]).unwrap().contains("installed UNITS 2.1.0"));
+    assert!(f.on(&["install", &top]).unwrap().contains("installed TOP 1.0.0"));
+    let cycle = Fixture::new("cycle");
+    let (a, b) = (cycle.pack("A", "1.0.0", "REQUIRES B '*';"), cycle.pack("B", "1.0.0", "REQUIRES A '*';"));
+    assert!(cycle.on(&["install", &a, &b]).unwrap_err().contains("cycle"));
+    let twin = cycle.scratch.path("twin.tbpkg");
+    let other = source(&cycle.scratch.path("other"), "A", "1.0.0", "FUNCTION EXTRA(INTEGER) RETURNS INTEGER;");
+    ext_in(&cycle.scratch.dir, &["pack", &other.display().to_string(), "--out", &twin.display().to_string()]).unwrap();
+    assert!(cycle.on(&["install", &a, &twin.display().to_string()]).unwrap_err().contains("with other contents"));
+    std::fs::create_dir_all(cycle.scratch.path("empty")).unwrap();
+    assert!(cycle.on(&["install", "empty"]).unwrap_err().contains("holds no .tbpkg file"));
+    assert!(cycle.on(&["install"]).unwrap_err().contains("name the package files"));
 }
 
-/// Verifies: [EXTENSION] design document §13.6: an index is refused once
-/// it expires, when it was changed after it was signed, and when signed
-/// by a key not trusted; a package whose file is not what the index's
-/// digest says is refused (38T07); plain HTTP is refused unless a test
-/// allows it.
+/// Verifies: [EXTENSION] design document §13.6, RULES.md D262, D267: the
+/// lock exported carries each package's digest and license; install
+/// --lock on another server installs exactly what it names from the
+/// files given and keeps it as that server's lock, and keeps what is
+/// installed already; a file of a locked version whose digest differs is
+/// refused (38T07), and a locked package neither installed nor given is
+/// refused naming it (38T09).
 #[test]
-fn a_registry_index_must_be_signed_fresh_and_true() {
-    let f = Fixture::new("index");
-    f.publish("DEMO", "1.0.0", "");
-    let (_, stranger) = key(&f.root, "stranger");
-    let untrusting = server(&f.plugins, &stranger, &f.served.url);
-    assert!(on(&untrusting, &["search", "demo"]).unwrap_err().contains("not in PLUGINS.TRUSTED_KEYS"));
-    let index = std::fs::read_to_string(f.registry.join("index")).unwrap();
-    std::fs::write(f.registry.join("index"), index.replace("DEMO 1.0.0", "DEMO 1.0.1")).unwrap();
-    assert!(f.on(&["search", "demo"]).unwrap_err().contains("does not verify"));
-    std::fs::write(f.registry.join("index"), &index).unwrap();
-    let file = f.registry.join("demo-1.0.0.tbpkg");
-    let good = std::fs::read(&file).unwrap();
-    std::fs::write(&file, b"other bytes").unwrap();
-    assert!(f.on(&["install", "demo"]).unwrap_err().contains("not what the registry's index says"));
-    std::fs::write(&file, good).unwrap();
-    let src = source(&f.root, "DEMO", "1.0.1", "");
-    let (d, r, k) = (src.display().to_string(), f.registry.display().to_string(), f.key.display().to_string());
-    ext(&["publish", &d, "--registry-dir", &r, "--key", &k, "--expires-days", "0"]).unwrap();
-    assert!(f.on(&["search", "demo"]).unwrap_err().contains("expired"));
-    let mut args = vec!["search"];
-    args.extend(f.options.iter().map(String::as_str));
-    let mut plain = invocation(&args);
-    plain.context.allow_http = false;
-    let mut out = Vec::new();
-    assert!(run(&plain, &mut out).unwrap_err().contains("plain HTTP"));
-}
-
-/// Verifies: [EXTENSION] design document §13.6: registries are tried in
-/// the order PLUGINS.REGISTRIES names them, and PLUGINS.PINS takes a
-/// package from the registry it names.
-#[test]
-fn registries_have_priority_and_pins() {
-    let f = Fixture::new("priority");
-    f.publish("DEMO", "1.0.0", "");
-    let second = f.root.join("second");
-    publish(&source(&f.root, "DEMO", "3.0.0", ""), &second, &f.key);
-    let other = Served::new(&second);
-    let both = server(&f.plugins, &f.public, &format!("{};{}", f.served.url, other.url));
-    assert!(on(&both, &["search", "demo"]).unwrap().contains("DEMO 1.0.0"));
-    let mut pinned = both.clone();
-    pinned.extend(["--set".to_owned(), format!("PLUGINS.PINS=DEMO={}", other.url)]);
-    assert!(on(&pinned, &["install", "demo"]).unwrap().contains("installed DEMO 3.0.0"));
-}
-
-/// Verifies: [EXTENSION] design document §13.6: the lock exported is
-/// installed exactly on another server by lock import, from the cache
-/// with the registry gone, and by install with no package from the lock;
-/// clean empties the cache, after which the registry is fetched again;
-/// a lock whose digest the registry no longer has is refused.
-#[test]
-fn the_lock_reproduces_a_set_exactly() {
+fn the_lock_reproduces_a_set_from_files() {
     let f = Fixture::new("lock");
-    f.publish("BASE", "1.0.0", "");
-    f.publish("DEMO", "1.0.0", "REQUIRES BASE '*';");
-    f.on(&["install", "demo"]).unwrap();
-    let lock = f.root.join("exported.lock");
-    f.on(&["lock", "export", &lock.display().to_string()]).unwrap();
-    let cache = f.plugins.join(".cache");
-    let other = f.root.join("other");
+    f.pack("BASE", "1.0.0", "LICENSE 'MIT';");
+    f.pack("DEMO", "1.0.0", "REQUIRES BASE '*'; LICENSE 'Apache-2.0 OR MIT';");
+    let files = f.files.display().to_string();
+    f.on(&["install", &files]).unwrap();
+    f.on(&["lock", "export", "exported.lock"]).unwrap();
+    let lock = std::fs::read_to_string(f.scratch.path("exported.lock")).unwrap();
+    assert!(lock.contains("BASE 1.0.0 ") && lock.contains(" dependency\nlicense MIT\n"), "{lock}");
+    assert!(lock.contains(" explicit ^1.0.0\nlicense Apache-2.0 OR MIT\n"), "{lock}");
+    let other = f.scratch.path("other");
     std::fs::create_dir_all(&other).unwrap();
-    let mut elsewhere = server(&other, &f.public, "https://unreachable.invalid/");
-    elsewhere.extend(["--cache".to_owned(), cache.display().to_string()]);
-    let said = on(&elsewhere, &["lock", "import", &lock.display().to_string()]).unwrap();
+    let elsewhere = ["--set".to_owned(), format!("PLUGINS.DIRECTORIES={}", other.display())];
+    let with = |verb: &[&str]| ext_in(&f.scratch.dir, &[verb, &elsewhere.iter().map(String::as_str).collect::<Vec<_>>()].concat());
+    let said = with(&["install", "--lock", "exported.lock", &files]).unwrap();
     assert!(said.contains("installed BASE 1.0.0") && said.contains("installed DEMO 1.0.0"), "{said}");
-    assert_eq!(std::fs::read_to_string(other.join("turborel-extensions.lock")).unwrap(), std::fs::read_to_string(&lock).unwrap());
-    assert!(on(&elsewhere, &["install"]).unwrap().contains("kept DEMO 1.0.0"));
-    f.on(&["clean"]).unwrap();
-    assert!(!cache.exists());
-    let third = f.root.join("third");
+    assert_eq!(std::fs::read_to_string(other.join("turborel-extensions.lock")).unwrap(), lock);
+    assert!(with(&["install", "--lock", "exported.lock"]).unwrap().contains("kept DEMO 1.0.0"));
+    let third = f.scratch.path("third");
     std::fs::create_dir_all(&third).unwrap();
-    std::fs::copy(&lock, third.join("turborel-extensions.lock")).unwrap();
-    let before = f.served.requests.load(std::sync::atomic::Ordering::SeqCst);
-    assert!(on(&server(&third, &f.public, &f.served.url), &["install"]).unwrap().contains("installed DEMO 1.0.0"));
-    assert!(f.served.requests.load(std::sync::atomic::Ordering::SeqCst) > before);
-    f.publish("DEMO", "1.0.0", "REQUIRES BASE '*'; FUNCTION EXTRA(INTEGER) RETURNS INTEGER;");
-    let fourth = f.root.join("fourth");
-    std::fs::create_dir_all(&fourth).unwrap();
-    std::fs::copy(&lock, fourth.join("turborel-extensions.lock")).unwrap();
-    let mut no_cache = server(&fourth, &f.public, &f.served.url);
-    no_cache.extend(["--cache".to_owned(), f.root.join("empty-cache").display().to_string()]);
-    assert!(on(&no_cache, &["install"]).unwrap_err().contains("another digest"));
-}
-
-/// Verifies: [EXTENSION] design document §13.2: a registry's packages that
-/// require each other in a cycle are refused naming it, and requirements
-/// no version meets are refused naming one (38T09).
-#[test]
-fn cycles_and_conflicts_are_refused() {
-    let f = Fixture::new("conflict");
-    f.publish("A", "1.0.0", "REQUIRES B '*';");
-    f.publish("B", "1.0.0", "REQUIRES A '*';");
-    assert!(f.on(&["install", "a"]).unwrap_err().contains("cycle"));
-    f.publish("C", "1.0.0", "REQUIRES D '^2.0.0';");
-    f.publish("D", "1.0.0", "");
-    let refused = f.on(&["install", "c"]).unwrap_err();
-    assert!(refused.contains("38T09") || refused.contains("requires D ^2.0.0"), "{refused}");
-    f.publish("E", "1.0.0", "REQUIRES D '^1.0.0';");
-    f.on(&["install", "e"]).unwrap();
-    f.publish("D", "2.0.0", "");
-    assert!(f.on(&["install", "c"]).unwrap_err().contains("38T09"));
+    let at_third = ["--set".to_owned(), format!("PLUGINS.DIRECTORIES={}", third.display())];
+    let third_on = |verb: &[&str]| ext_in(&f.scratch.dir, &[verb, &at_third.iter().map(String::as_str).collect::<Vec<_>>()].concat());
+    let missing = third_on(&["install", "--lock", "exported.lock"]).unwrap_err();
+    assert!(missing.contains("38T09") && missing.contains("add its package file"), "{missing}");
+    f.pack("BASE", "1.0.0", "LICENSE 'MIT'; FUNCTION EXTRA(INTEGER) RETURNS INTEGER;");
+    assert!(third_on(&["install", "--lock", "exported.lock", &files]).unwrap_err().contains("another digest than the lock's"));
 }
 
 /// Verifies: [EXTENSION] design document §13.5: the command line of
 /// `turborel extension` takes its verbs, options and settings, from
-/// --set before the environment, and refuses what it does not know.
+/// --set before the environment, and refuses what it does not know, the
+/// registry's settings and commands among them.
 #[test]
 fn the_extension_command_line() {
-    let env = |name: &str| (name == "TURBOREL_PLUGINS_REGISTRIES").then(|| "https://env/".to_owned());
+    let env = |name: &str| (name == "TURBOREL_PLUGINS_DIRECTORIES").then(|| "/env".to_owned());
     let args = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-    let inv = parse(&args(&["install", "x", "--set", "plugins.require_signed=on"]), &env).unwrap().unwrap();
-    assert_eq!(inv.context.registries.urls, ["https://env/"]);
-    assert!(inv.context.trust.require_signed && !inv.context.allow_http);
-    let set = parse(&args(&["list", "--set", "PLUGINS.REGISTRIES=https://set/"]), &env).unwrap().unwrap();
-    assert_eq!(set.context.registries.urls, ["https://set/"]);
+    let inv = parse(&args(&["install", "x.tbpkg", "--set", "plugins.require_signed=on"]), &env).unwrap().unwrap();
+    assert_eq!(inv.context.directories.paths(), [PathBuf::from("/env")]);
+    assert!(inv.context.trust.require_signed);
+    let set =
+        parse(&args(&["new", "hello", "--kind", "metric", "--kind", "scalar", "--dir", "d", "--set", "PLUGINS.DIRECTORIES=/set"]), &env)
+            .unwrap()
+            .unwrap();
+    assert_eq!((set.kinds.len(), set.dir.as_deref()), (2, Some(Path::new("d"))));
+    assert_eq!(set.context.directories.paths(), [PathBuf::from("/set")]);
     assert!(parse(&args(&[]), &env).unwrap().is_none() && parse(&args(&["--help"]), &env).unwrap().is_none());
-    for bad in [&["nope"][..], &["list", "--allow-http"], &["list", "--set", "SERVER.PORT=1"], &["lock", "drop"]] {
-        assert!(parse(&args(bad), &env).is_err(), "{bad:?}");
+    let bad: [&[&str]; 6] = [
+        &["nope"],
+        &["publish", "dir"],
+        &["search", "x"],
+        &["list", "--set", "PLUGINS.REGISTRIES=https://r/"],
+        &["list", "--registry-dir", "r"],
+        &["lock", "import"],
+    ];
+    for b in bad {
+        assert!(parse(&args(b), &env).is_err(), "{b:?}");
     }
     assert!(matches!(turborel_cli::parse(&args(&["extension", "list"]), &env).unwrap(), turborel_cli::Command::Extension(_)));
 }

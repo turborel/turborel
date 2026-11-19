@@ -30,8 +30,8 @@ pub struct GreatestOrLeast {
 impl GreatestOrLeast {
     /// What `v` is ordered by: its sort key under the collation, else
     /// itself.
-    fn key(&self, v: &Value) -> Value {
-        self.collation.as_ref().map_or_else(|| v.clone(), |c| c.sort_key(v))
+    fn key(&self, v: &Value) -> Result<Value> {
+        self.collation.as_ref().map_or_else(|| Ok(v.clone()), |c| c.sort_key(v))
     }
 }
 
@@ -63,7 +63,7 @@ impl ScalarFunction for GreatestOrLeast {
         let wanted = if self.greatest { Ordering::Greater } else { Ordering::Less };
         let mut best: Option<(&Value, Value)> = None;
         for v in args {
-            let key = self.key(v);
+            let key = self.key(v)?;
             best = match best {
                 None => Some((v, key)),
                 Some((was, was_key)) => match compare(&key, &was_key) {

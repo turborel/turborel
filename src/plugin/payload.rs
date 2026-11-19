@@ -28,11 +28,43 @@
 //!                   4 contains    bound | values                        u8
 //!                   5 route       bounds (count u32) | values           u8 0, or 1 and index u32
 //!                   6 admits      bound | restrictions (count u32)      u8
+//! 10 ranking        1 weights     `ranking.rs`
+//!                   2 bounds
+//! 11 quantizer      1 train       `quantizer.rs`
+//! 12 collation      1 keys        `collation.rs`
+//! 13 system table   1 rows        `system.rs`
+//! 14 XQuery         1 call        rows, one row                         values, one
+//! 15 type           1 input       `types.rs`
+//!                   2 receive
+//! 16 engine         1 create .. 7 drop   `engine.rs`
+//!                   8 statistics  `statistics.rs`
+//! 17 index method   1 create .. 8 drop   `index.rs`
+//!                   9 statistics  `statistics.rs`
+//! 18 credentials    1 verifier    `process.rs`
+//! 19 diagnostics    1 events      `process.rs`
+//! 37 optimizer rule 1 rewrite     plan form (`plan.rs`)             u8 0 (no change), or u8 1 | plan form
 //! ```
+//!
+//! The kinds from 10 (RULES.md D220) each have a module of their own,
+//! which says their payloads; no comparison, hash or search step of them
+//! is a call of its own, but a batch of them.
 //!
 //! An aggregate's state is the program's own bytes, kept by the host, so
 //! a program holds nothing between calls. An exchange, a target and an
 //! upload are the program's, so the host keeps one process for each.
+
+pub mod collation;
+pub mod engine;
+pub mod eviction;
+pub mod hosted;
+pub mod index;
+pub mod process;
+pub mod quantizer;
+pub mod ranking;
+pub mod replication;
+pub mod statistics;
+pub mod system;
+pub mod types;
 
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -94,6 +126,65 @@ pub const PARTITION_ROUTE: u8 = 5;
 /// Whether a bound may hold a row meeting restrictions.
 pub const PARTITION_ADMITS: u8 = 6;
 
+/// A ranking's weights of terms in their documents (`ranking.rs`).
+pub const RANKING_WEIGHTS: u8 = 1;
+/// A ranking's bounds of terms.
+pub const RANKING_BOUNDS: u8 = 2;
+/// A quantizer's training (`quantizer.rs`).
+pub const QUANTIZER_TRAIN: u8 = 1;
+/// A collation's sort keys of strings (`collation.rs`).
+pub const COLLATION_KEYS: u8 = 1;
+/// A system table's page of rows (`system.rs`).
+pub const SYSTEM_ROWS: u8 = 1;
+/// An XQuery function's call: rows, as a scalar function's.
+pub const XQUERY_CALL: u8 = 1;
+/// A type's values made of their text forms (`types.rs`).
+pub const TYPE_INPUT: u8 = 1;
+/// A type's values made of their binary forms.
+pub const TYPE_RECEIVE: u8 = 2;
+/// The verifier of a password (`process.rs`).
+pub const CREDENTIALS_VERIFIER: u8 = 1;
+/// Events told a sink.
+pub const DIAGNOSTICS_EVENTS: u8 = 1;
+
+/// A storage engine's new table (`engine.rs`).
+pub const ENGINE_CREATE: u8 = 1;
+/// A table opened again.
+pub const ENGINE_OPEN: u8 = 2;
+/// A page of a table's rows, in order of id.
+pub const ENGINE_SCAN: u8 = 3;
+/// Rows by id.
+pub const ENGINE_GET: u8 = 4;
+/// Changes made, all or none.
+pub const ENGINE_APPLY: u8 = 5;
+/// The changes applied made durable.
+pub const ENGINE_CHECKPOINT: u8 = 6;
+/// A table dropped.
+pub const ENGINE_DROP: u8 = 7;
+
+/// An index method's new index (`index.rs`).
+pub const INDEX_CREATE: u8 = 1;
+/// An index opened again.
+pub const INDEX_OPEN: u8 = 2;
+/// Entries inserted and removed, in order.
+pub const INDEX_WRITE: u8 = 3;
+/// A page of the entries a probe selects.
+pub const INDEX_SEARCH: u8 = 4;
+/// The rows of a key.
+pub const INDEX_ROWS: u8 = 5;
+/// The nearest entries.
+pub const INDEX_NEAREST: u8 = 6;
+/// The index made durable and clean.
+pub const INDEX_CHECKPOINT: u8 = 7;
+/// An index dropped.
+pub const INDEX_DROP: u8 = 8;
+/// What a table's engine knows of its rows (`statistics.rs`, RULES.md D278).
+pub const ENGINE_STATISTICS: u8 = 8;
+/// What an index's method knows of its entries (`statistics.rs`).
+pub const INDEX_STATISTICS: u8 = 9;
+/// An optimizer rule's rewrite of a plan form (RULES.md D275).
+pub const RULE_REWRITE: u8 = 1;
+
 /// Strings, counted.
 pub fn put_strings(out: &mut Vec<u8>, all: &[String]) {
     out.put_u32(u32::try_from(all.len()).unwrap_or(u32::MAX));
@@ -114,4 +205,57 @@ pub fn strings(r: &mut Reader<'_>) -> Result<Vec<String>> {
 /// A reader of a RESULT's payload `payload`.
 pub fn reader(payload: &[u8]) -> Reader<'_> {
     Reader::received(payload, "plug-in result")
+}
+
+/// A count, as a u32.
+pub fn count(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+/// A float, as its bits.
+pub fn put_f64(out: &mut Vec<u8>, x: f64) {
+    out.put_u64(x.to_bits());
+}
+
+/// What `put_f64` wrote.
+///
+/// # Errors
+///
+/// `Reader`'s, if it holds none.
+pub fn read_f64(r: &mut Reader<'_>) -> Result<f64> {
+    r.u64().map(f64::from_bits)
+}
+
+/// Floats, counted.
+pub fn put_f64s(out: &mut Vec<u8>, all: &[f64]) {
+    out.put_u32(count(all.len()));
+    for x in all {
+        put_f64(out, *x);
+    }
+}
+
+/// What `put_f64s` wrote.
+///
+/// # Errors
+///
+/// `Reader`'s.
+pub fn f64s(r: &mut Reader<'_>) -> Result<Vec<f64>> {
+    (0..r.u32()?).map(|_| read_f64(r)).collect()
+}
+
+/// Single floats, counted, each as its bits, a u32.
+pub fn put_f32s(out: &mut Vec<u8>, all: &[f32]) {
+    out.put_u32(count(all.len()));
+    for x in all {
+        out.put_u32(x.to_bits());
+    }
+}
+
+/// What `put_f32s` wrote.
+///
+/// # Errors
+///
+/// `Reader`'s.
+pub fn f32s(r: &mut Reader<'_>) -> Result<Vec<f32>> {
+    (0..r.u32()?).map(|_| r.u32().map(f32::from_bits)).collect()
 }

@@ -31,6 +31,7 @@ its own; class TB is turborel's own.
 | 01010 | Warning: column cannot be mapped: XMLMAP left out a column the user may read, whose type does not map to XML |
 | 01F01 | SQL/MM Spatial warning: invalid position: a method of a position given one outside the value, its result null |
 | 01T01 | Warning: the transaction active was rolled back by a Reset or a ChangeUser of the native protocol, told as a notice *(extension)* |
+| 01T02 | Warning: an optimizer rule of an extension was skipped, as it failed or gave a plan not valid; the statement was planned without it *(extension)* |
 | 01W61 | Warning: a GRAPH_TABLE's search ended at a limit ON LIMIT TRUNCATE, its rows those of the paths found (GRF-0061) |
 | 02000 | No data |
 | 07000 | Dynamic SQL error |
@@ -210,8 +211,10 @@ its own; class TB is turborel's own.
 | 38T05 | External routine exception: a plug-in cannot be started, its directory under none of PLUGINS.DIRECTORIES, its executable missing, or no cryptography given to check its package |
 | 38T06 | External routine exception: a manifest breaks a rule of format 1 |
 | 38T07 | External routine exception: a package's files are not those its digests name, or another of its version is installed |
-| 38T08 | External routine exception: a package or a registry's index is not signed by a trusted key, or the index has expired |
+| 38T08 | External routine exception: a package is not signed by a trusted key where a signature is required, or its signature does not verify |
 | 38T09 | External routine exception: the packages required cannot be resolved, a cycle or a conflict of ranges |
+| 38T10 | External routine exception: a plug-in's table or index could not be told a change made or undone, and is damaged until the database opens again |
+| 38T11 | External routine exception: a host plug-in failed, so the node stopped until it starts again and recovers |
 | 3B000 | Savepoint exception: the class of 3B001 and 3B002 |
 | 3B001 | Savepoint exception: invalid specification: RELEASE or ROLLBACK TO a savepoint not of the current savepoint level, or established before the atomic execution context running began |
 | 3B002 | Savepoint exception: too many: a transaction's 1,025th savepoint |

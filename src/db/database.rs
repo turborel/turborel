@@ -162,13 +162,15 @@ impl Database {
         Ok(Database::over(st))
     }
 
-    /// The current snapshot of the definitions, for one statement or cursor.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if a thread panicked while publishing a snapshot, or
-    /// the database is closed.
+    /// The current snapshot of the definitions, for one statement or
+    /// cursor: SQLCODE -910 if the database is closed or a thread panicked
+    /// publishing one, SQLSTATE 38T11 if a host plug-in stopped the node.
     pub(crate) fn snapshot(&self) -> Result<Arc<State>> {
+        super::hosted::running(self.snapshot_unstopped()?)
+    }
+
+    /// `snapshot`, whether or not a host plug-in stopped the node.
+    pub(crate) fn snapshot_unstopped(&self) -> Result<Arc<State>> {
         if self.0.closed.load(Ordering::Acquire) {
             return fail(Code::Api, "[DESIGN] the database is closed");
         }
@@ -298,14 +300,12 @@ impl Database {
     }
 
     /// \[DESIGN\] Gives `event` to its sink, as a program serving it tells
-    /// what it does itself (RULES.md D40, D42); dropped if below
-    /// DIAGNOSTICS.LEVEL. The sink runs with no lock held.
+    /// what it does itself (RULES.md D40, D42), as `emit` does.
     pub fn tell(&self, event: &Event) {
         self.emit(event);
     }
 
-    /// Where what ends a serving server's connections is kept
-    /// (`db/served.rs`).
+    /// Where what ends a serving server's connections is kept (`served.rs`).
     pub(super) fn served_slot(&self) -> &RwLock<Option<Arc<dyn ServedConnections>>> {
         &self.0.served
     }
@@ -313,9 +313,14 @@ impl Database {
     /// Gives `event` to its sink unless it is below DIAGNOSTICS.LEVEL,
     /// holding no lock while the sink runs.
     pub(crate) fn emit(&self, event: &Event) {
-        let least = read(&self.0.current).map_or(Level::Info, |st| Level::of(st.settings.word(settings::DIAGNOSTICS_LEVEL)));
+        let (least, theirs) = read(&self.0.current)
+            .map_or((Level::Info, Vec::new()), |st| (Level::of(st.settings.word(settings::DIAGNOSTICS_LEVEL)), st.extension_sinks()));
         if event.level() <= least {
             self.diagnostics().event(event);
+            // [EXTENSION] Each extension's sink only queues it (RULES.md D222).
+            for sink in theirs {
+                sink.event(event);
+            }
         }
     }
 

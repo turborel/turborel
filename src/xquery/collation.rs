@@ -54,7 +54,9 @@ impl Collator {
         if uri == CODEPOINT {
             return Some(Collator::codepoint());
         }
-        let by = collations.get(uri.strip_prefix(SQL_COLLATION)?)?;
+        // Not a plug-in's, whose keys XQuery cannot ask a batch at a time
+        // (RULES.md D221).
+        let by = collations.get(uri.strip_prefix(SQL_COLLATION)?).filter(|c| !c.batches())?;
         Some(Collator { uri: uri.into(), by: Some(Arc::clone(by)) })
     }
 

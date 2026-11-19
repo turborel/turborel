@@ -41,7 +41,7 @@ pub struct ExtensionDefinition {
 
 /// \[EXTENSION\] `<extension as read>` ::= MANIFEST `<character string
 /// literal>` DIRECTORY `<character string literal>` \[ SIGNER ... \] \[
-/// DIGEST ... \] \[ REGISTRY ... \] \[ AS DEPENDENCY \]: what CREATE or
+/// DIGEST ... \] \[ AS DEPENDENCY \]: what CREATE or
 /// ALTER EXTENSION read, written by the database into the text it logs,
 /// so recovery and a replica need nothing but the directory's program.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,8 +54,6 @@ pub struct ExtensionRead {
     pub signer: Option<String>,
     /// Its package's digest, if it came of one.
     pub digest: Option<String>,
-    /// The registry it came from, if one.
-    pub registry: Option<String>,
     /// Created only as another required it.
     pub dependency: bool,
 }

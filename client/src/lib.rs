@@ -32,17 +32,15 @@ pub mod told;
 pub use cancel::Canceller;
 /// The capabilities a client asks for and a server grants (RULES.md D185).
 pub use turborel_protocol::capability;
+/// The cryptography of extension packages (`turborel_protocol::packages`).
+#[cfg(feature = "tls")]
+pub use turborel_protocol::packages;
 /// The splitter of text into statements the server uses for a Query of
 /// several statements, for a program to split text alike.
 pub use turborel_protocol::split::Splitter;
 /// What a connection's results, failures, notices and server times are
 /// made of.
 pub use turborel_protocol::{Column, Completed, Diagnostics, Failure, Notice, Timing};
-#[cfg(feature = "tls")]
-pub mod fetch;
-/// The cryptography of extension packages (`turborel_protocol::packages`).
-#[cfg(feature = "tls")]
-pub use turborel_protocol::packages;
 #[cfg(feature = "scram")]
 pub mod scram;
 #[cfg(feature = "tls")]

@@ -182,6 +182,9 @@ impl Trim {
     /// a trim character or a set of them.
     fn characters(&self, source: &Value, ends: Ends, sc: &str) -> Result<Value> {
         self.single(sc)?;
+        if let Some(c) = &self.collation {
+            crate::value::collation::character_wise(c, "TRIM")?;
+        }
         let set = Set::new(sc, self.collation.as_ref());
         match source {
             Value::Lob(l) => Ok(Value::Lob(trimmed_lob(l, &|c| set.contains(c), ends)?)),

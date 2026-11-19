@@ -24,7 +24,7 @@ use crate::backup::timeline::{self, Ancestry};
 use crate::backup::{BackupTarget, IMAGE, LOG, backup_prefix};
 use crate::db::image::Image;
 use crate::db::{Database, OpenOptions, StorePlace, api};
-use crate::disk::io::{FileSystem, OsFileSystem};
+use crate::disk::io::FileSystem;
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::log::{FileLogOptions, Lsn};
 use crate::value::{Decimal, Value};
@@ -125,7 +125,10 @@ impl Database {
         if crate::backup::decide::restore_refused((self.files()?.is_some(), self.log_storage_set().is_some())) {
             return Err(api("[EXTENSION] RULES.md D162: a restore opens a database of nothing yet, with no log storage of its own"));
         }
-        let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
+        // A host plug-in's archive and file system are reached before any
+        // database opens.
+        self.start_host_plugins()?;
+        let fs = self.file_system()?;
         if fs.exists(&options.dir)? {
             return Err(api(format!(
                 "[EXTENSION] RULES.md D162: {} is there already, and a restore makes a directory anew",
@@ -134,17 +137,16 @@ impl Database {
         }
         let staged = staging(&options.dir);
         if fs.exists(&staged)? {
-            std::fs::remove_dir_all(&staged).map_err(|e| api(format!("[EXTENSION] {} could not be removed: {e}", staged.display())))?;
+            fs.remove_tree(&staged)?;
         }
         let restored = self.restore_staged(options, &fs, &staged);
         if restored.is_err() {
             // The failure is what is reported; what was staged goes.
             let _ = self.close();
-            let _ = std::fs::remove_dir_all(&staged);
+            let _ = fs.remove_tree(&staged);
         }
         let report = restored?;
-        std::fs::rename(&staged, &options.dir)
-            .map_err(|e| SqlError::new(Code::Io, format!("[EXTENSION] {} could not be renamed: {e}", staged.display())))?;
+        fs.rename(&staged, &options.dir)?;
         options.dir.parent().filter(|p| !p.as_os_str().is_empty()).map_or(Ok(()), |p| fs.sync_dir(p))?;
         Ok(report)
     }

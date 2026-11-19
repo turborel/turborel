@@ -1,19 +1,21 @@
-# Packages and Registries
+# Packages
 
 [Contents](README.md)
 
 An extension is distributed as a package, one file that holds its
 manifest, its executable for each platform, its documents and any data
 files. Each file in it carries its SHA-256 digest, and the package may be
-signed with Ed25519. A registry is a directory of packages and a signed
-index of them, served over HTTPS. `turborel extension` installs packages
-from files and registries into a server's plug-in directory, keeps a
-lock of exactly what it installed, and upgrades and removes them.
-`CREATE EXTENSION` then loads an installed package by its name.
+signed with Ed25519. turborel has no registry and fetches nothing. A
+package is a file, and its author hands it to operators by whatever means
+they share files. `turborel extension` installs package files into a
+server's plug-in directory, resolving what they require among the files
+given and the packages installed, keeps a lock of exactly what it
+installed, and removes packages. `CREATE EXTENSION` then loads an
+installed package by its name.
 
-This chapter is for two readers. An author packs and signs a plug-in and
-publishes it. An operator chooses the registries and keys a server
-trusts, and installs, upgrades and checks packages.
+This chapter is for two readers. An author packs, signs and licenses a
+plug-in ([Writing a Plug-in](04-plugins-sdk.md) starts one). An operator
+chooses the keys a server trusts, and installs and checks packages.
 
 ## Versions and ranges
 
@@ -46,7 +48,7 @@ comparator of that range names a prerelease of the same
 ### The manifest of a package
 
 A package's manifest is the plug-in's manifest
-([Plug-ins](04-plugins.md)) with three more items, each ended by a
+([Plug-ins](04-plugins.md)) with five more items, each ended by a
 semicolon.
 
 | Item | Says |
@@ -54,11 +56,15 @@ semicolon.
 | `REQUIRES name 'range'` | the package needs another package, of a version in the range |
 | `TURBOREL 'range'` | the releases of turborel it runs on |
 | `UPGRADE FROM 'range' SCRIPT 'path'` | the SQL script `ALTER EXTENSION ... UPDATE` runs when it upgrades from a version in the range |
+| `LICENSE 'expression'` | the license the package is offered under, an SPDX license expression |
+| `LICENSE FILE 'path'` | the file in the package that holds the license's text |
 
 A package's name is an SQL identifier, upper case unless quoted, and
-`turborel extension` takes it in any case.
+`turborel extension` takes it in any case. Each item but REQUIRES,
+EXECUTABLE FOR a platform and UPGRADE is written once at most.
 
 ```
+$ cat geo_tools/turborel-plugin.manifest
 NAME geo_tools;
 VERSION '1.4.0';
 PROTOCOL 1;
@@ -68,87 +74,71 @@ EXECUTABLE FOR 'macos' 'bin/geo-tools-macos';
 REQUIRES UNITS '^2.0.0';
 TURBOREL '>=0.0.0';
 UPGRADE FROM '>=1.0.0 <1.4.0' SCRIPT 'upgrade/1.4.sql';
+LICENSE 'MIT';
+LICENSE FILE 'LICENSE';
 FUNCTION AREA_KM2(DOUBLE PRECISION, DOUBLE PRECISION) RETURNS DOUBLE PRECISION DETERMINISTIC;
+$ cat geo_tools/LICENSE
+GEO_TOOLS is offered under the MIT license.
 ```
 
 The upgrade scripts that apply are run in the order of the lowest
 version each range names.
 
-### A signing key
+### Licenses
 
-`turborel extension keygen` writes a new Ed25519 signing key, and its
-public key beside it with `.pub` after the name. It never writes over a
-file. Keep the key file private, as the command writes it with the
-permissions a new file gets, and give operators the public key.
+LICENSE is checked against the grammar of SPDX license expressions. It
+is a license identifier, as `MIT` or `Apache-2.0`, or a reference of the
+author's own, `LicenseRef-` and letters, digits, `.` and `-`. A `+`
+after an identifier takes that version or later. Expressions are joined
+by `AND` and `OR`, an exception follows `WITH`, and parentheses group
+them, as `(MIT OR Apache-2.0) AND LicenseRef-Fonts`. A list of
+identifiers separated by commas is not an expression and is refused with
+SQLSTATE 38T06, as is an expression left unfinished. The identifiers
+themselves are not looked up, so a new one of SPDX's list is taken.
 
-```
-$ turborel extension keygen --output author.key
-wrote the key author.key and its public key 3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29
-```
+LICENSE FILE names a file of the project, which pack puts in the
+package. Its digest is among the package's, so the signature covers it
+as it covers the program. Both items are optional. A package that
+declares no license packs with a warning, and installs as any other. A
+license is told, never enforced. Install tells it, and `turborel
+extension license NAME`, `\dx+`, the lock and the column LICENSE of
+INFORMATION_SCHEMA.EXTENSION_PACKAGES show it. A plug-in of the host's
+own reads an installed package's license with the function
+`turborel::plugin::package::package_license`.
 
-### Packing
+### Signing and packing
 
-`turborel extension pack DIR` builds the package of the plug-in in DIR.
-It takes every file under DIR but those whose names begin with `.`. The
-manifest, the executables and upgrade scripts it names, and the files
-under `doc/` are told apart in the package. With `--key` the package is
-signed. The signature covers the manifest and every file's path and
-digest, so no file can be changed or added without breaking it.
-
-```
-$ turborel extension pack geo_tools --key author.key
-packed GEO_TOOLS 1.4.0 into geo_tools-1.4.0.tbpkg, signed by 3b6a27bc...9da29, sha256 0d5c...
-```
-
-### Publishing to a registry
-
-`turborel extension publish DIR --registry-dir REG --key KEY` packs and
-signs DIR, writes the package into the registry directory REG, adds it
-to REG's index, and signs the index again with the same key. The index
-is trusted for 30 days unless `--expires-days` says otherwise. Publish
-again before it expires, even with no new package, so clients never
-see an index that expired.
+`turborel extension keygen --out FILE` writes a new Ed25519 signing key,
+and its public key beside it with `.pub` after the name. It never writes
+over a file. Keep the key file private, as the command writes it with
+the permissions a new file gets, and give operators the public key.
 
 ```
-$ turborel extension publish geo_tools --registry-dir /srv/registry --key author.key
-published GEO_TOOLS 1.4.0 as geo_tools-1.4.0.tbpkg
-signed the index of /srv/registry, trusted until 2026-12-19T09:00:00Z
+turborel extension keygen --out author.key
 ```
 
-## Hosting a registry
-
-A registry is a static directory, so any web server that serves files
-over HTTPS hosts one. No registry is operated for turborel, so there is
-no default, and each organization runs its own or uses a third party's.
-The directory holds three kinds of file.
-
-| File | Holds |
-|---|---|
-| `index` | the packages, one `package` line each, with their requirements, and when the index expires |
-| `index.sig` | the public key that signed the index and its Ed25519 signature, in hexadecimal |
-| `*.tbpkg` | the package files |
-
-An index, format 1, reads as follows.
+`turborel extension pack DIR` builds the package of the plug-in project
+in DIR. It takes the manifest, the executables and upgrade scripts it
+names, the LICENSE FILE, and the files under `doc/` and `data/`, and
+nothing else. An executable is found at its path in DIR, or else under
+`target/release`, of DIR or of `CARGO_TARGET_DIR`, by its file's name,
+where `cargo build --release` puts it. A file the manifest names that is
+in neither place is refused. With `--key` the package is signed. The
+signature covers the manifest and every file's path and digest, so no
+file can be changed or added without breaking it. The package is
+written to `--out`, or into DIR as its name in lower case, `-`, its
+version and `.tbpkg`.
 
 ```
-turborel-registry 1
-expires 2026-12-19T09:00:00Z
-package GEO_TOOLS 1.4.0 geo_tools-1.4.0.tbpkg 0d5c...e1 3b6a...29
-requires UNITS ^2.0.0
-turborel >=0.0.0
-package UNITS 2.1.0 units-2.1.0.tbpkg 9f02...4a 3b6a...29
+$ turborel extension pack geo_tools --key author.key --out packages/geo_tools-1.4.0.tbpkg
+packed GEO_TOOLS 1.4.0 into packages/geo_tools-1.4.0.tbpkg, signed by ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c, license MIT (text in LICENSE)
+$ cat units/turborel-plugin.manifest
+NAME units; VERSION '2.1.0'; PROTOCOL 1; EXECUTABLE 'bin/units';
+FUNCTION KM(DOUBLE PRECISION) RETURNS DOUBLE PRECISION DETERMINISTIC;
+$ turborel extension pack units --out packages/units-2.1.0.tbpkg
+warning: the manifest declares no LICENSE; operators will be told the package has none
+packed UNITS 2.1.0 into packages/units-2.1.0.tbpkg, unsigned, no license declared
 ```
-
-A client trusts an index only after its signature verifies by a key it
-trusts, whether or not it requires signed packages, and only before it
-expires. A stale index, or an old one replayed, is refused. Only then
-does the client trust the digests the index lists, and a package fetched
-whose digest differs is refused. Each package still carries its own
-signature, which the server checks as it installs the package and every
-time its program starts.
-
-A mirror is a copy of the directory. A directory of the local machine
-also serves as a registry, named by its path or a `file://` URL.
 
 ## For operators
 
@@ -161,82 +151,93 @@ written `_`.
 | Setting | Meaning |
 |---|---|
 | `PLUGINS.DIRECTORIES` | the plug-in directories; packages are installed into the first, as `<name>/<version>/` |
-| `PLUGINS.REGISTRIES` | the registries' URLs, separated by `;`, the first tried first |
-| `PLUGINS.PINS` | `NAME=URL` entries separated by `;`, each taking a package from that registry alone |
 | `PLUGINS.TRUSTED_KEYS` | the Ed25519 public keys trusted, in hexadecimal, separated by `;`, or `@` and a file of them, one a line |
 | `PLUGINS.REQUIRE_SIGNED` | `ON` refuses a package no trusted key signed, and a plug-in directory no package installed |
 
-Downloaded packages are kept in a cache, `.cache` in the plug-in
-directory unless `--cache` names another, by their digest, so a package
-installed again is not fetched again. `--tls FILE` trusts the
-registries' certificates of a PEM file instead of the platform's
-authorities.
-
 ### Installing
 
+`install FILE...` takes package files, or directories whose `.tbpkg`
+files it takes. It resolves the whole set again. The packages of the
+files given that no other file given requires are asked for by name,
+with a caret range of their version, as are the packages asked for by
+name before. Every package they require is chosen among the files given
+and the packages installed, the newest versions that meet every
+requirement, older ones tried where a newer one leads to a conflict. One
+version of each package is installed in a set, and a file nothing chosen
+needs is passed over. A requirement no file given and no package
+installed meets is refused with SQLSTATE 38T09, naming it and the
+package file to add.
+
 ```
-$ turborel extension install geo_tools@^1.0.0 --set PLUGINS.DIRECTORIES=/var/lib/turborel/plugins \
-    --set PLUGINS.REGISTRIES=https://plugins.example.com/ --set PLUGINS.TRUSTED_KEYS=3b6a...29
-installed UNITS 2.1.0 from https://plugins.example.com/
-installed GEO_TOOLS 1.4.0 from https://plugins.example.com/
+$ turborel extension install packages/geo_tools-1.4.0.tbpkg --set PLUGINS.DIRECTORIES=plugins
+turborel extension: SQLCODE -301 (SQLSTATE 38T09): the packages cannot be resolved: GEO_TOOLS 1.4.0 requires UNITS ^2.0.0, and no version of it found meets that; add a package file of UNITS of a version in ^2.0.0
+$ turborel extension install packages/geo_tools-1.4.0.tbpkg packages/units-2.1.0.tbpkg --set PLUGINS.DIRECTORIES=plugins
+installed UNITS 2.1.0 from packages/units-2.1.0.tbpkg, no license declared
+installed GEO_TOOLS 1.4.0 from packages/geo_tools-1.4.0.tbpkg, license MIT (text in LICENSE)
 ```
 
-Install resolves the whole set again. It takes every package asked for
-by name, with its range, and every package they require, choosing the
-newest versions that meet every requirement and trying older ones where
-a newer one leads to a conflict. One version of each package is
-installed in a set. A dependency cycle, or requirements no versions
-meet, is refused with SQLSTATE 38T09, naming the requirement. A package
-file may be named instead of a name, and is installed with what it
-requires.
-
-A package installed is never changed after. Its files are checked
-against their digests as it is installed and each time its program
-starts, so a changed file is refused with SQLSTATE 38T07.
+A newer version moves on in the same way, its file given. A dependency
+cycle among the files is refused with 38T09 too. A package installed is
+never changed after. Its files are checked against their digests as it
+is installed and each time its program starts, so a changed file is
+refused with SQLSTATE 38T07.
 
 ### The lock
 
 The plug-in directory keeps a lock, `turborel-extensions.lock`, of the
-exact set installed, each package's name, version, the SHA-256 digest of
-its package file, its registry, and the range it was asked for by name.
+exact set installed. Each package has a line of its name, version, the
+SHA-256 digest of its package file, and the range it was asked for by
+name or `dependency`, and lines of its license after it, if it declares
+one.
 
 ```
 turborel-lock 1
-GEO_TOOLS 1.4.0 0d5c...e1 https://plugins.example.com/ explicit ^1.0.0
-UNITS 2.1.0 9f02...4a https://plugins.example.com/ dependency
+GEO_TOOLS 1.4.0 0d5c...e1 explicit ^1.4.0
+license MIT
+license file LICENSE
+UNITS 2.1.0 9f02...4a dependency
 ```
 
-`install` with no package installs exactly what the lock names, from
-the cache or the registry, each file's digest the one locked. `lock
-export FILE` writes the lock to a file, and `lock import FILE` installs
-exactly what it names on another server and keeps it as that server's
-lock, so two servers run the same packages to the byte. Each database
-records the version of each extension it created, as
+`lock export FILE` writes the lock to a file. `install --lock FILE`,
+with the package files, installs exactly what that lock names on another
+server and keeps it as that server's lock, so two servers run the same
+packages to the byte. A file of a version the lock names whose digest is
+another is refused with 38T07, and a package the lock names that is
+neither installed nor given is refused with 38T09.
+
+```
+$ turborel extension lock export servers.lock --set PLUGINS.DIRECTORIES=plugins
+wrote the lock to servers.lock
+$ turborel extension install --lock servers.lock packages/geo_tools-1.4.0.tbpkg packages/units-2.1.0.tbpkg --set PLUGINS.DIRECTORIES=replica
+installed GEO_TOOLS 1.4.0 from packages/geo_tools-1.4.0.tbpkg, license MIT (text in LICENSE)
+installed UNITS 2.1.0 from packages/units-2.1.0.tbpkg, no license declared
+```
+
+Each database records the version of each extension it created, as
 `INFORMATION_SCHEMA.EXTENSIONS` shows, and a version stays installed
 while a database runs it.
 
-### Keeping packages current
+### Looking after packages
 
 | Command | Does |
 |---|---|
-| `outdated` | lists each package with a newer version, the newest its range allows and the newest of all |
-| `upgrade [NAME]...` | upgrades to the newest versions the ranges allow |
-| `upgrade NAME --latest` | upgrades beyond the range, and keeps the new version's caret range |
+| `list` | lists the packages locked, and those installed and not locked |
+| `info NAME` | lists the versions of a package installed, what each requires, its signer and its license |
+| `license NAME` | writes the text of a package's license, or its expression if it holds no text |
 | `why NAME` | tells which packages required NAME, back to one asked for by name |
 | `remove NAME` | removes a package no installed package requires |
 | `autoremove` | removes packages installed only as dependencies that nothing requires now, and versions the lock no longer names |
 | `verify` | checks every installed file against its digest and the package's signature |
-| `clean` | empties the cache |
-| `search WORDS...` | lists the registries' packages whose names hold a word |
-| `info NAME` | lists a package's versions, what each requires, and its signer |
 
 ```
-$ turborel extension outdated --set ...
-name current wanted latest
-GEO_TOOLS 1.4.0 1.5.2 2.0.0
-$ turborel extension why units --set ...
+$ turborel extension list --set PLUGINS.DIRECTORIES=plugins
+GEO_TOOLS 1.4.0 explicit ^1.4.0
+UNITS 2.1.0 dependency
+$ turborel extension why units --set PLUGINS.DIRECTORIES=plugins
 UNITS is required by GEO_TOOLS 1.4.0 (^2.0.0)
   GEO_TOOLS 1.4.0 was installed by name
+$ turborel extension license geo_tools --set PLUGINS.DIRECTORIES=plugins
+GEO_TOOLS is offered under the MIT license.
 ```
 
 A database moves to a new version with `ALTER EXTENSION name UPDATE`,
@@ -248,6 +249,7 @@ that meets every requirement, and `VERSION` names a version or range.
 
 | SQLSTATE | Condition |
 |---|---|
-| 38T07 | a package or installed file is not what its digest says, or a lock's digest differs from the registry's |
-| 38T08 | a package is unsigned or signed by no trusted key where a signature is required, a signature does not verify, or a registry's index is unsigned, untrusted or expired |
-| 38T09 | no versions meet every requirement, or the requirements form a cycle |
+| 38T06 | a manifest is malformed, its LICENSE no SPDX expression among them, or a file it names is not in the project |
+| 38T07 | a package or installed file is not what its digest says, or a package file's digest differs from the lock's |
+| 38T08 | a package is unsigned or signed by no trusted key where a signature is required, or a signature does not verify |
+| 38T09 | no versions meet every requirement, a requirement names a package of which no file is given and none installed, or the requirements form a cycle |

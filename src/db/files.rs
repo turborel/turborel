@@ -64,7 +64,7 @@ use crate::diagnostics::{Diagnostics, Event};
 use crate::disk::block::BlockOptions;
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::encoding::Pipeline;
-use crate::disk::io::{Durability, FileLock, FileSystem, OsFileSystem};
+use crate::disk::io::{Durability, FileLock, FileSystem};
 use crate::disk::pager::Pager;
 use crate::disk::shadow::ShadowFileSystem;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
@@ -279,7 +279,7 @@ impl Database {
     /// As `open_files`.
     pub fn open(dir: &Path) -> Result<Database> {
         let db = Database::new();
-        let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
+        let fs = db.file_system()?;
         db.open_files(&fs, dir, &OpenOptions::default())?;
         Ok(db)
     }
@@ -529,8 +529,10 @@ impl Database {
             Pagers::Open => Pager::open(fs, &path, &place.layout.formats.hashes, &place.layout.formats.encodings)?.0,
         };
         let st = self.snapshot()?;
-        let pool =
-            Arc::new(BufferPool::in_budget(&st.memory, (place.layout.pool_bytes, pager.page_size()), "the buffer pool of the data file")?);
+        let sizes = (place.layout.pool_bytes, pager.page_size());
+        let made =
+            BufferPool::in_budget_evicting(&st.memory, sizes, "the buffer pool of the data file", &|n| st.extension_host.eviction.make(n));
+        let pool = Arc::new(made?);
         st.ahead.serve(&pool);
         let file = pool.add_pager(Arc::new(pager));
         let _ = place.data.set((Arc::clone(&pool), file));

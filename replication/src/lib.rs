@@ -41,6 +41,7 @@ mod consensus;
 pub mod driver;
 mod journal;
 mod log;
+pub mod plugin;
 mod storage;
 mod transfer;
 mod transport;

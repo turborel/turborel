@@ -13,7 +13,9 @@
 mod backup;
 mod builtin;
 mod configurable;
+mod extension;
 mod graph;
+mod hosted;
 mod kind;
 mod plugins;
 mod started;
@@ -44,14 +46,16 @@ pub use builtin::{
 };
 use builtin::{builtin, whole};
 pub use configurable::Configurable;
+pub use extension::Owner;
 pub use graph::{
     DEFAULT_MAX_SEARCH_STATES, GRAPH_DETERMINISTIC_PATHS, GRAPH_MAX_PATH_LENGTH, GRAPH_MAX_PATHS_PER_PARTITION, GRAPH_MAX_SEARCH_STATES,
     GRAPH_ON_LIMIT, GRAPH_PARALLEL_MIN_STATES, TRUNCATE,
 };
+pub use hosted::PLUGINS_HOST;
 pub use kind::{Kind, column_list, column_names};
 pub use plugins::{
     HOST_ONLY, PLUGINS_CALL_TIMEOUT_MS, PLUGINS_CANCEL_GRACE_MS, PLUGINS_DIRECTORIES, PLUGINS_MAX_CALL_BYTES, PLUGINS_MAX_MESSAGE_BYTES,
-    PLUGINS_MEMORY_BYTES, PLUGINS_PINS, PLUGINS_PROCESSES, PLUGINS_REGISTRIES, PLUGINS_REQUIRE_SIGNED, PLUGINS_TRUSTED_KEYS,
+    PLUGINS_MEMORY_BYTES, PLUGINS_PROCESSES, PLUGINS_REQUIRE_SIGNED, PLUGINS_TRUSTED_KEYS,
 };
 pub use started::Started;
 pub use vector::{
@@ -270,6 +274,8 @@ pub struct Settings {
     /// The values the settings read as what reads them starts were
     /// started with.
     started: Arc<Started>,
+    /// Whose each setting a plug-in's manifest declared is (`extension.rs`).
+    owners: extension::Owners,
 }
 
 impl Default for Settings {
@@ -277,7 +283,14 @@ impl Default for Settings {
         let definitions = builtin();
         let values = vec![None; definitions.len()];
         let places = definitions.iter().enumerate().map(|(at, d)| (d.name.clone(), at)).collect();
-        Settings { definitions: Arc::new(definitions), places: Arc::new(places), values, pending: Vec::new(), started: Arc::default() }
+        Settings {
+            definitions: Arc::new(definitions),
+            places: Arc::new(places),
+            values,
+            pending: Vec::new(),
+            started: Arc::default(),
+            owners: Arc::default(),
+        }
     }
 }
 
@@ -385,16 +398,16 @@ impl Settings {
     /// The database's values of the settings read as the database opens
     /// (`Effect::Start`), each with its setting's name.
     pub(crate) fn started(&self) -> Vec<(String, Value)> {
-        let set = self.definitions.iter().zip(&self.values).filter(|(d, _)| d.effect == Effect::Start);
-        set.filter_map(|(d, v)| Some((d.name.clone(), v.clone()?))).collect()
+        let set = self.definitions.iter().zip(&self.values).enumerate().filter(|(at, (d, _))| d.effect == Effect::Start && self.live(*at));
+        set.filter_map(|(_, (d, v))| Some((d.name.clone(), v.clone()?))).collect()
     }
 
     /// The database's values, each with its setting's name: those of the
     /// settings declared, then those set before theirs were. A node's are
     /// not the database's: an image never holds them (RULES.md D57).
     pub(crate) fn database_values(&self) -> Vec<(String, Value)> {
-        let kept = self.definitions.iter().zip(&self.values).filter(|(d, _)| !d.node);
-        let set = kept.filter_map(|(d, v)| Some((d.name.clone(), v.clone()?)));
+        let kept = self.definitions.iter().zip(&self.values).enumerate().filter(|(at, (d, _))| !d.node && self.live(*at));
+        let set = kept.filter_map(|(_, (d, v))| Some((d.name.clone(), v.clone()?)));
         set.chain(self.pending.iter().cloned()).collect()
     }
 
@@ -417,6 +430,7 @@ impl Settings {
     /// Every setting, with its value as a session with `own` values sees it.
     pub fn list(&self, own: &Own) -> Vec<Listed> {
         (0..self.definitions.len())
+            .filter(|k| self.live(*k))
             .filter_map(|k| {
                 let key = Key(k);
                 let (value, source) = self.effective(key, own);

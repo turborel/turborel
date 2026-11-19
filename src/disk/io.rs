@@ -147,6 +147,26 @@ pub trait FileSystem: Send + Sync {
         }
         Ok(())
     }
+    /// Renames `from` to `to`, a directory as a file, as a restore moves
+    /// what it staged into place (RULES.md D162, D251). Default: the
+    /// operating system's rename.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -915 if it cannot be renamed.
+    fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+        fs::rename(from, to).map_err(|e| failed("rename", from, &e))
+    }
+    /// Removes the directory `path` and all it holds, as a restore drops
+    /// what it staged (RULES.md D162, D251). Default: the operating
+    /// system's removal.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -915 if it cannot be removed.
+    fn remove_tree(&self, path: &Path) -> Result<()> {
+        fs::remove_dir_all(path).map_err(|e| failed("remove", path, &e))
+    }
     /// The paths of the entries of directory `path`, sorted.
     ///
     /// # Errors

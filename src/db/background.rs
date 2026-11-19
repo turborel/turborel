@@ -192,6 +192,9 @@ impl Database {
         if let Ok(st) = self.snapshot() {
             st.ahead.use_job(JobAsker::new(self.downgrade(), JobHandle(self.background().read_ahead)));
         }
+        // What answers the statistics plug-ins ask is served as the
+        // database opens, as read-ahead is (RULES.md D279).
+        self.serve_statistics();
     }
 
     /// Asks for the checkpoint job.

@@ -2,10 +2,11 @@
 //! §13.3): each package as `<directory>/<name>/<version>/`, and the lock
 //! of the first, `turborel-extensions.lock`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use turborel::plugin::MANIFEST_FILE;
 use turborel::plugin::manifest::Manifest;
+use turborel::plugin::package::License;
 use turborel::plugin::package::install::{Installed, installed_how};
 use turborel::plugin::package::lock::{LOCK_FILE, Lock};
 use turborel::plugin::package::semver::{Range, Version};
@@ -58,7 +59,7 @@ pub(super) fn write_lock(cx: &Context, lock: &Lock) -> Result<(), String> {
 /// version.
 pub(super) fn all(cx: &Context) -> Result<Vec<Present>, String> {
     let mut found = Vec::new();
-    for root in cx.directories.paths() {
+    for root in cx.dirs().paths() {
         let Ok(entries) = std::fs::read_dir(root) else { continue };
         for entry in entries.flatten() {
             let package = entry.file_name().to_string_lossy().into_owned();
@@ -78,11 +79,18 @@ pub(super) fn all(cx: &Context) -> Result<Vec<Present>, String> {
 }
 
 /// The package in `dir`, of `name` and `written` version, if it is one.
-fn present(name: &str, dir: &std::path::Path, written: &str) -> Result<Option<Present>, String> {
+fn present(name: &str, dir: &Path, written: &str) -> Result<Option<Present>, String> {
     let Ok(version) = Version::parse(written) else { return Ok(None) };
     let Ok(text) = std::fs::read_to_string(dir.join(MANIFEST_FILE)) else { return Ok(None) };
     let manifest = Manifest::parse(&text).map_err(|e| format!("{}: {e}", dir.display()))?;
     Ok(Some(Present { name: name.to_owned(), version, dir: dir.to_path_buf(), manifest, how: installed_how(dir) }))
+}
+
+/// What the package in `dir` declares of its license: none if its manifest
+/// cannot be read.
+pub(super) fn license_of(dir: &Path) -> License {
+    let text = std::fs::read_to_string(dir.join(MANIFEST_FILE)).unwrap_or_default();
+    Manifest::parse(&text).map(|m| License::of(&m)).unwrap_or_default()
 }
 
 /// The package `name` of `version` installed, if it is.

@@ -1,7 +1,7 @@
-//! The example plug-in, `examples/plugin_example.rs`, installed for the
-//! tests of extensions: its program, built with the tests, linked or
-//! copied into a directory of PLUGINS.DIRECTORIES beside the manifest a
-//! test writes.
+//! The example plug-in, `plugin/examples/plugin_example`, installed
+//! for the tests of extensions: its program, built with the tests, linked
+//! or copied into a directory of PLUGINS.DIRECTORIES beside the manifest
+//! a test writes.
 
 use std::path::{Path, PathBuf};
 
@@ -36,12 +36,17 @@ PARTITION STRATEGY MODULUS;
 ///
 /// # Panics
 ///
-/// If it was not built: `cargo test` builds the examples with the tests.
+/// If it was not built: `cargo test --workspace` builds the examples
+/// with the tests.
 pub fn program() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
     let debug = exe.parent().and_then(Path::parent).unwrap();
     let built = debug.join("examples").join(format!("plugin_example{}", std::env::consts::EXE_SUFFIX));
-    assert!(built.exists(), "{} is not built: cargo test builds it, or cargo build --example plugin_example", built.display());
+    assert!(
+        built.exists(),
+        "{} is not built: cargo test --workspace builds it, or cargo build -p turborel-plugin --example plugin_example",
+        built.display()
+    );
     built
 }
 

@@ -12,16 +12,42 @@
 //! * `auth.rs`: an authenticator, which the server wraps.
 //! * `backup.rs`, `partition.rs`: backup targets and partitioning
 //!   strategies.
+//! * `ranking.rs`, `quantizer.rs`, `collation.rs`: full-text rankings,
+//!   vector quantizers and collations (RULES.md D221).
+//! * `system.rs`, `xquery.rs`, `process.rs`: system tables, XQuery
+//!   functions, credentials and diagnostics (RULES.md D222).
+//! * `types.rs`, `engine.rs`, `index.rs`: types, storage engines and
+//!   index methods (RULES.md D223 to D227).
+//! * `rule.rs`: optimizer rules, over the plan form (RULES.md D275).
+//!
+//! `kinds.rs` holds the object of each kind, bridged.
 
 pub mod aggregate;
+pub mod archive;
 pub mod auth;
 pub mod backup;
+pub mod collation;
 pub mod embedder;
+pub mod engine;
+pub mod hosted;
+pub mod index;
+mod kinds;
+mod known;
 pub mod metric;
 pub mod partition;
 pub mod procedure;
+pub mod process;
+pub mod quantizer;
+pub mod ranking;
+pub mod rule;
 pub mod scalar;
+pub mod system;
 pub mod table;
+pub mod types;
+pub mod xquery;
+
+pub use kinds::Bridged;
+use kinds::bridge;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,11 +55,7 @@ use std::sync::Arc;
 use crate::ast::TypeName;
 use crate::bytes::Reader;
 use crate::error::Result;
-use crate::functions::builtin::{Procedure, TableFunction};
-use crate::functions::{AggregateFunction, ScalarFunction};
 use crate::value::DataType;
-use crate::vector::embed::Embedder;
-use crate::vector::metric::VectorMetric;
 
 use super::errors::{invalid_manifest, violation};
 use super::host::Host;
@@ -42,29 +64,6 @@ use super::pool::{CallContext, Pool, Request};
 
 /// What resolves a type a manifest names, as a column's is.
 pub type Resolve<'a> = &'a dyn Fn(&TypeName) -> Result<DataType>;
-
-/// One object of an extension, bridged.
-#[derive(Clone)]
-pub enum Bridged {
-    /// A scalar function.
-    Scalar(Arc<dyn ScalarFunction>),
-    /// An aggregate function.
-    Aggregate(Arc<dyn AggregateFunction>),
-    /// A table function.
-    Table(Arc<dyn TableFunction>),
-    /// A procedure.
-    Procedure(Arc<dyn Procedure>),
-    /// A vector metric.
-    Metric(Arc<dyn VectorMetric>),
-    /// An embedding model.
-    Embedding(Arc<dyn Embedder>),
-    /// An authentication mechanism.
-    Authenticator(Arc<auth::PluginAuthenticator>),
-    /// A backup target's scheme.
-    Target(Arc<backup::PluginTargets>),
-    /// A partitioning strategy.
-    Partition(Arc<partition::PluginStrategy>),
-}
 
 /// An extension installed: its manifest, directory, pool and objects.
 pub struct Installed {
@@ -99,7 +98,10 @@ impl Installed {
     pub fn new(manifest: Manifest, directory: PathBuf, host: &Arc<Host>, resolve: Resolve<'_>) -> Result<Installed> {
         let executable = manifest.executable(std::env::consts::OS)?;
         let limits = (Arc::clone(&host.limits), Arc::clone(&host.memory));
-        let pool = Pool::new(&manifest.name, (directory.clone(), executable), manifest.kinds(), limits).with_check(host.check());
+        let pool = Pool::new(&manifest.name, (directory.clone(), executable), manifest.kinds(), limits)
+            .with_check(host.check())
+            .with_statistics(host.statistics());
+        let pool = pool.with_feed(super::settings::Feed::of(&manifest, false));
         let pool = Arc::new(pool);
         let objects = manifest
             .objects
@@ -120,20 +122,20 @@ fn declared_wrongly(d: &Declared, e: &crate::error::SqlError) -> crate::error::S
     invalid_manifest(&format!("{} {}: {}", d.kind.word(), d.name, e.msg))
 }
 
-/// The object `d` declares, calling `pool`.
-fn bridge(d: &Declared, pool: &Arc<Pool>, resolve: Resolve<'_>) -> Result<Bridged> {
-    let link = Link { pool: Arc::clone(pool), kind: d.kind.code(), object: d.name.clone() };
-    Ok(match d.kind {
-        ObjectKind::Scalar => Bridged::Scalar(Arc::new(scalar::PluginScalar::new(d, link, resolve)?)),
-        ObjectKind::Aggregate => Bridged::Aggregate(Arc::new(aggregate::PluginAggregate::new(d, link, resolve)?)),
-        ObjectKind::Table => Bridged::Table(Arc::new(table::PluginTable::new(d, link, resolve)?)),
-        ObjectKind::Procedure => Bridged::Procedure(Arc::new(procedure::PluginProcedure::new(d, link, resolve)?)),
-        ObjectKind::Metric => Bridged::Metric(Arc::new(metric::PluginMetric::new(d, link)?)),
-        ObjectKind::Embedding => Bridged::Embedding(Arc::new(embedder::PluginEmbedder::new(d, link)?)),
-        ObjectKind::Authenticator => Bridged::Authenticator(Arc::new(auth::PluginAuthenticator::new(link))),
-        ObjectKind::Target => Bridged::Target(Arc::new(backup::PluginTargets::new(link))),
-        ObjectKind::Partition => Bridged::Partition(Arc::new(partition::PluginStrategy::new(link))),
-    })
+/// `name`, kept as long as the program runs, as the traits whose names
+/// are `&'static str` take them (a type, a system table); each name is
+/// kept once, however often an extension is made again.
+pub fn leaked(name: &str) -> &'static str {
+    use std::collections::BTreeSet;
+    use std::sync::{Mutex, OnceLock};
+    static KEPT: OnceLock<Mutex<BTreeSet<&'static str>>> = OnceLock::new();
+    let mut kept = crate::sync::lock_builtin(KEPT.get_or_init(Mutex::default));
+    if let Some(found) = kept.get(name) {
+        return found;
+    }
+    let made: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    kept.insert(made);
+    made
 }
 
 /// The types `names` resolve to.

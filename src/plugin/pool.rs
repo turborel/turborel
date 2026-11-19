@@ -26,6 +26,7 @@ use crate::value::Value;
 
 use super::errors::{raised, timed_out, too_long, unavailable, violation};
 use super::limits::Limits;
+use super::payload::statistics::Asked;
 use super::process::{Next, Process, Spawn};
 use super::wire::{Call, Message};
 
@@ -87,6 +88,14 @@ pub struct Pool {
     limits: Arc<Limits>,
     /// What checks its directory as each process starts.
     check: Option<super::host::Check>,
+    /// What answers the statistics its programs ask (RULES.md D279).
+    statistician: Option<super::host::Statistician>,
+    /// Whether the host named its directory itself, as PLUGINS.HOST does,
+    /// so PLUGINS.DIRECTORIES need not hold it (RULES.md D229).
+    named: bool,
+    /// The settings its program is told, if its manifest has any
+    /// (RULES.md D282).
+    feed: Option<Arc<super::settings::Feed>>,
     idle: Mutex<Idle>,
     freed: Condvar,
     next_call: AtomicU64,
@@ -125,6 +134,9 @@ impl Pool {
             executable,
             limits,
             check: None,
+            statistician: None,
+            named: false,
+            feed: None,
             idle: Mutex::new(Idle::default()),
             freed: Condvar::new(),
             next_call: AtomicU64::new(1),
@@ -141,6 +153,52 @@ impl Pool {
     pub fn with_check(mut self, check: super::host::Check) -> Pool {
         self.check = Some(check);
         self
+    }
+
+    /// It, `statistician` answering the statistics its programs ask
+    /// (RULES.md D279).
+    #[must_use]
+    pub fn with_statistics(mut self, statistician: super::host::Statistician) -> Pool {
+        self.statistician = Some(statistician);
+        self
+    }
+
+    /// The statistics `asked` of a program as a call runs: a call that
+    /// runs SQL, a procedure's or a table function's, by its user's
+    /// privileges, checked by a query of what they are of that reads no
+    /// row; another, of a kind that runs as the server, by the server's
+    /// (RULES.md D173).
+    fn statistics(&self, asked: &Asked, cx: &mut CallContext<'_>) -> Result<Vec<u8>> {
+        let answer = self.statistician.as_ref().ok_or_else(|| violation("statistics are asked of a host that gives none"))?;
+        let told = answer(asked)?;
+        if let Some(run) = cx.sql.as_mut() {
+            let quoted = |name: &str| format!("\"{}\"", name.replace('"', "\"\""));
+            let read = told.column.as_deref().map_or_else(|| "1".to_owned(), quoted);
+            let (schema, table) = &told.table;
+            run(true, &format!("SELECT {read} FROM {}.{} WHERE 1 = 0", quoted(schema), quoted(table)), &[])?;
+        }
+        Ok(told.payload)
+    }
+
+    /// It, its directory named by the host itself, as a host plug-in's
+    /// is, so PLUGINS.DIRECTORIES need not hold it (RULES.md D229).
+    #[must_use]
+    pub fn named_by_host(mut self) -> Pool {
+        self.named = true;
+        self
+    }
+
+    /// It, its program told the settings `feed` names before each call,
+    /// as they change (RULES.md D282).
+    #[must_use]
+    pub fn with_feed(mut self, feed: Option<Arc<super::settings::Feed>>) -> Pool {
+        self.feed = feed;
+        self
+    }
+
+    /// The settings its program is told, if any.
+    pub fn feed(&self) -> Option<&Arc<super::settings::Feed>> {
+        self.feed.as_ref()
     }
 
     /// The extension's name.
@@ -220,9 +278,10 @@ impl Pool {
     }
 
     /// How to start its program now: its directory allowed by
-    /// PLUGINS.DIRECTORIES as it is now (RULES.md D173).
+    /// PLUGINS.DIRECTORIES as it is now (RULES.md D173), unless the host
+    /// named it.
     fn spawned(&self) -> Result<Spawn> {
-        let directory = self.limits.directories().allowed(&self.spawn.directory)?;
+        let directory = if self.named { self.spawn.directory.clone() } else { self.limits.directories().allowed(&self.spawn.directory)? };
         if let Some(check) = &self.check {
             check(&directory)?;
         }
@@ -311,6 +370,10 @@ impl Lease {
             object: request.object.to_owned(),
             payload: request.payload.clone(),
         });
+        if let Some(feed) = self.pool.feed.clone() {
+            let told = self.process()?.tell_settings(&feed);
+            told.map_err(|e| self.stop(e))?;
+        }
         let sent = self.process()?.send(&message);
         sent.map_err(|e| self.stop(e))?;
         let limits = Arc::clone(&self.pool.limits);
@@ -366,12 +429,23 @@ impl Lease {
                 sent.map_err(|e| self.stop(e))?;
                 Ok(None)
             }
+            Message::Statistics { asked, .. } => {
+                let reply = match self.pool.statistics(&asked, cx) {
+                    Ok(payload) => Message::StatisticsDone { call, payload },
+                    Err(e) => Message::Error { call, state: sql_state(&e), message: e.msg },
+                };
+                let sent = self.process()?.send(&reply);
+                sent.map_err(|e| self.stop(e))?;
+                Ok(None)
+            }
             Message::Hello(_)
             | Message::Welcome(_)
             | Message::Call(_)
             | Message::Cancel { .. }
             | Message::Shutdown
-            | Message::SqlDone { .. } => Err(self.stop(violation("a message a program never sends"))),
+            | Message::Settings(_)
+            | Message::SqlDone { .. }
+            | Message::StatisticsDone { .. } => Err(self.stop(violation("a message a program never sends"))),
         }
     }
 
@@ -408,9 +482,11 @@ fn message_call(message: &Message) -> Option<u64> {
         | Message::Error { call, .. }
         | Message::Cancel { call }
         | Message::Sql { call, .. }
-        | Message::SqlDone { call, .. } => Some(*call),
+        | Message::SqlDone { call, .. }
+        | Message::Statistics { call, .. }
+        | Message::StatisticsDone { call, .. } => Some(*call),
         Message::Call(c) => Some(c.call),
-        Message::Hello(_) | Message::Welcome(_) | Message::Shutdown => None,
+        Message::Hello(_) | Message::Welcome(_) | Message::Shutdown | Message::Settings(_) => None,
     }
 }
 

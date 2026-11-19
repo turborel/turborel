@@ -10,6 +10,7 @@
 //!                    | REQUIRES <identifier> <character string literal>
 //!                    | TURBOREL <character string literal>
 //!                    | UPGRADE FROM <character string literal> SCRIPT <character string literal>
+//!                    | LICENSE [ FILE ] <character string literal>
 //!                    | <object declaration>
 //! <object declaration> ::=
 //!     FUNCTION <identifier> <parameters> RETURNS <data type> [ <determinism> ] [ BATCH <unsigned integer> ]
@@ -21,28 +22,76 @@
 //!   | AUTHENTICATOR <character string literal>
 //!   | TARGET <character string literal>
 //!   | PARTITION STRATEGY <identifier>
+//!   | RANKING <identifier> | QUANTIZER <identifier>
+//!   | COLLATION <identifier> VERSION <character string literal>
+//!   | SYSTEM TABLE <identifier> ( <column name> <data type> [ , ... ] )
+//!   | XQUERY FUNCTION <character string literal> <parameters> RETURNS <data type>
+//!   | TYPE <identifier> [ ORDERED ]
+//!   | STORAGE ENGINE <identifier> [ BATCH <unsigned integer> ]
+//!   | INDEX METHOD <identifier> SUPPORTS ( <identifier> [ , ... ] ) [ BATCH <unsigned integer> ]
+//!   | CREDENTIALS <identifier> | DIAGNOSTICS <identifier> [ BATCH <unsigned integer> ]
+//!   | OPTIMIZER RULE <identifier> [ PHASE <identifier> ] [ PASSES <unsigned integer> ]
+//!   | HOST <host kind> <identifier> [ ( <identifier> = <unsigned integer> | <character string literal> [ , ... ] ) ]
+//!   | <setting declaration> | <reads settings>
 //! <parameters>     ::= ( [ <data type> [ , <data type> ]... ] )
 //! <determinism>    ::= DETERMINISTIC | NOT DETERMINISTIC
 //! ```
 //!
 //! A data type is a `<data type>` or the name of a type beyond the
-//! standard, as a column's is (`TypeName`).
+//! standard, as a column's is (`TypeName`). An XQuery function is named by
+//! its expanded QName as one literal, its namespace's URI in braces before
+//! its local name, `'{uri}local'` \[DESIGN\], as its local name is
+//! case-sensitive and an `<identifier>` is not. A setting's declaration
+//! and READS SETTINGS are `manifest/settings.rs`'s.
+
+mod settings;
 
 use super::Parser;
 use crate::ast::TypeName;
 use crate::error::Result;
 use crate::lexer::{Tok, delim};
-use crate::plugin::manifest::{Declared, Item, ObjectKind};
+use crate::plugin::manifest::{Declared, HostDeclared, HostKind, HostOption, Item, ObjectKind};
 
 /// The words of the manifest, in the order of its grammar.
 const WORDS: [&str; 9] = ["NAME", "VERSION", "PROTOCOL", "EXECUTABLE", "FOR", "RETURNS", "BATCH", "DETERMINISTIC", "NOT"];
+/// The word a host plug-in's declaration begins with (RULES.md D229).
+const HOST: &str = "HOST";
 /// The words of a package's items.
 const PACKAGE_WORDS: [&str; 5] = ["REQUIRES", "TURBOREL", "UPGRADE", "FROM", "SCRIPT"];
-/// The words of the object declarations.
-const KINDS: [&str; 10] =
-    ["FUNCTION", "AGGREGATE", "TABLE", "PROCEDURE", "METRIC", "EMBEDDING", "AUTHENTICATOR", "TARGET", "PARTITION", "MODEL"];
+/// The words of a package's license, LICENSE and LICENSE FILE.
+const LICENSE_WORDS: [&str; 2] = ["LICENSE", "FILE"];
+/// The word of RETURNS TABLE.
+const TABLE: &str = "TABLE";
+/// The words a declaration of each kind begins with, the second if it
+/// has two.
+const DECLARATIONS: [(&str, Option<&str>, ObjectKind); 20] = [
+    ("FUNCTION", None, ObjectKind::Scalar),
+    ("AGGREGATE", None, ObjectKind::Aggregate),
+    ("TABLE", Some("FUNCTION"), ObjectKind::Table),
+    ("PROCEDURE", None, ObjectKind::Procedure),
+    ("METRIC", None, ObjectKind::Metric),
+    ("EMBEDDING", Some("MODEL"), ObjectKind::Embedding),
+    ("AUTHENTICATOR", None, ObjectKind::Authenticator),
+    ("TARGET", None, ObjectKind::Target),
+    ("PARTITION", Some("STRATEGY"), ObjectKind::Partition),
+    ("RANKING", None, ObjectKind::Ranking),
+    ("QUANTIZER", None, ObjectKind::Quantizer),
+    ("COLLATION", None, ObjectKind::Collation),
+    ("SYSTEM", Some("TABLE"), ObjectKind::SystemTable),
+    ("XQUERY", Some("FUNCTION"), ObjectKind::XQuery),
+    ("TYPE", None, ObjectKind::Type),
+    ("STORAGE", Some("ENGINE"), ObjectKind::Engine),
+    ("INDEX", Some("METHOD"), ObjectKind::IndexMethod),
+    ("CREDENTIALS", None, ObjectKind::Credentials),
+    ("DIAGNOSTICS", None, ObjectKind::Diagnostics),
+    ("OPTIMIZER", Some("RULE"), ObjectKind::Rule),
+];
 /// The words of the clauses of a declaration.
-const CLAUSES: [&str; 9] = ["READS", "MODIFIES", "SQL", "DATA", "FORMATS", "PROPERTIES", "DIMENSIONS", "ELEMENT", "STRATEGY"];
+const CLAUSES: [&str; 8] = ["READS", "MODIFIES", "SQL", "DATA", "FORMATS", "PROPERTIES", "DIMENSIONS", "ELEMENT"];
+/// The words of the clauses of the kinds of RULES.md D220.
+const NEW_CLAUSES: [&str; 2] = ["ORDERED", "SUPPORTS"];
+/// The words of an optimizer rule's clauses (RULES.md D276).
+const RULE_CLAUSES: [&str; 2] = ["PHASE", "PASSES"];
 
 impl Parser {
     /// `word`, a key word or not, if it is next: whether it was.
@@ -88,14 +137,20 @@ impl Parser {
             let os = if self.accept_manifest_word(platform) { Some(self.character_string_literal("<platform>")?) } else { None };
             return Ok(Item::Executable(os, self.character_string_literal("<executable>")?));
         }
+        if self.accept_manifest_word(HOST) {
+            return self.host_declaration().map(|d| Item::Host(Box::new(d)));
+        }
+        if let Some(item) = self.setting_item() {
+            return item;
+        }
         match self.package_item() {
             Some(item) => item,
             None => self.object_declaration().map(|d| Item::Object(Box::new(d))),
         }
     }
 
-    /// REQUIRES, TURBOREL or UPGRADE, the items of a package (design
-    /// document §13.2), if one is next.
+    /// REQUIRES, TURBOREL, LICENSE or UPGRADE, the items of a package
+    /// (design document §13.2, RULES.md D265), if one is next.
     fn package_item(&mut self) -> Option<Result<Item>> {
         let [requires, turborel, upgrade, from, script] = PACKAGE_WORDS;
         if self.accept_manifest_word(requires) {
@@ -103,6 +158,13 @@ impl Parser {
         }
         if self.accept_manifest_word(turborel) {
             return Some(self.character_string_literal("<version range>").map(Item::Turborel));
+        }
+        let [license, file] = LICENSE_WORDS;
+        if self.accept_manifest_word(license) {
+            if self.accept_manifest_word(file) {
+                return Some(self.character_string_literal("<license file>").map(Item::LicenseFile));
+            }
+            return Some(self.character_string_literal("<license expression>").map(Item::License));
         }
         if !self.accept_manifest_word(upgrade) {
             return None;
@@ -115,35 +177,50 @@ impl Parser {
         })())
     }
 
+    /// `<host declaration>`, after HOST (RULES.md D229).
+    fn host_declaration(&mut self) -> Result<HostDeclared> {
+        let at = self.here();
+        let kind = self.host_kind()?;
+        let name = self.identifier()?;
+        let mut options = Vec::new();
+        if self.accept_delim(delim::LEFT_PAREN) {
+            loop {
+                let option = self.identifier()?;
+                self.expect_delim(delim::EQUALS)?;
+                let value = if let Tok::CharacterString(_) = self.peek() {
+                    HostOption::Text(self.character_string_literal("<option value>")?)
+                } else {
+                    HostOption::Number(u64::from(self.unsigned_integer()?))
+                };
+                options.push((option, value));
+                if !self.accept_delim(delim::COMMA) {
+                    break;
+                }
+            }
+            self.expect_delim(delim::RIGHT_PAREN)?;
+        }
+        Ok(HostDeclared { kind, name, options, text: self.text_from(at) })
+    }
+
+    /// The words of a host declaration's kind.
+    fn host_kind(&mut self) -> Result<HostKind> {
+        for kind in HostKind::ALL {
+            let [first, rest @ ..] = kind.words() else { continue };
+            if self.accept_manifest_word(first) {
+                for word in rest {
+                    self.expect_manifest_word(word)?;
+                }
+                return Ok(kind);
+            }
+        }
+        Err(self.syntax("expected the kind of a host object"))
+    }
+
     /// `<object declaration>`.
     fn object_declaration(&mut self) -> Result<Declared> {
-        let [function, aggregate, table, procedure, metric, embedding, authenticator, target, partition, model] = KINDS;
         let at = self.here();
-        let kind = if self.accept_manifest_word(function) {
-            ObjectKind::Scalar
-        } else if self.accept_manifest_word(aggregate) {
-            ObjectKind::Aggregate
-        } else if self.accept_manifest_word(table) {
-            self.expect_manifest_word(function)?;
-            ObjectKind::Table
-        } else if self.accept_manifest_word(procedure) {
-            ObjectKind::Procedure
-        } else if self.accept_manifest_word(metric) {
-            ObjectKind::Metric
-        } else if self.accept_manifest_word(embedding) {
-            self.expect_manifest_word(model)?;
-            ObjectKind::Embedding
-        } else if self.accept_manifest_word(authenticator) {
-            ObjectKind::Authenticator
-        } else if self.accept_manifest_word(target) {
-            ObjectKind::Target
-        } else if self.accept_manifest_word(partition) {
-            self.expect_manifest_word(CLAUSES[8])?;
-            ObjectKind::Partition
-        } else {
-            return Err(self.syntax("expected a <manifest item>"));
-        };
-        let named = matches!(kind, ObjectKind::Authenticator | ObjectKind::Target);
+        let kind = self.object_kind()?;
+        let named = matches!(kind, ObjectKind::Authenticator | ObjectKind::Target | ObjectKind::XQuery);
         let name = if named { self.character_string_literal("<name>")? } else { self.identifier()? };
         let mut d = Declared::new(kind, name, at);
         self.declaration_body(&mut d)?;
@@ -151,20 +228,62 @@ impl Parser {
         Ok(d)
     }
 
+    /// The words a declaration begins with: its kind.
+    fn object_kind(&mut self) -> Result<ObjectKind> {
+        for (first, second, kind) in DECLARATIONS {
+            if self.accept_manifest_word(first) {
+                if let Some(second) = second {
+                    self.expect_manifest_word(second)?;
+                }
+                return Ok(kind);
+            }
+        }
+        Err(self.syntax("expected a <manifest item>"))
+    }
+
     /// What follows a declaration's name, as its kind takes.
     fn declaration_body(&mut self, d: &mut Declared) -> Result<()> {
         match d.kind {
-            ObjectKind::Scalar | ObjectKind::Aggregate | ObjectKind::Table | ObjectKind::Procedure => {
+            ObjectKind::Scalar | ObjectKind::Aggregate | ObjectKind::Table | ObjectKind::Procedure | ObjectKind::XQuery => {
                 d.parameters = self.manifest_parameters()?;
             }
-            ObjectKind::Metric | ObjectKind::Embedding | ObjectKind::Authenticator | ObjectKind::Target | ObjectKind::Partition => {}
+            ObjectKind::Metric
+            | ObjectKind::Embedding
+            | ObjectKind::Authenticator
+            | ObjectKind::Target
+            | ObjectKind::Partition
+            | ObjectKind::Ranking
+            | ObjectKind::Quantizer
+            | ObjectKind::Collation
+            | ObjectKind::SystemTable
+            | ObjectKind::Type
+            | ObjectKind::Engine
+            | ObjectKind::IndexMethod
+            | ObjectKind::Credentials
+            | ObjectKind::Diagnostics
+            | ObjectKind::Rule => {}
         }
+        self.kind_clauses(d)?;
+        d.deterministic = self.determinism()?;
+        if self.accept_manifest_word(WORDS[6]) {
+            d.batch = Some(self.unsigned_integer()?);
+        }
+        Ok(())
+    }
+
+    /// The clauses of `d`'s kind, after its parameters.
+    fn kind_clauses(&mut self, d: &mut Declared) -> Result<()> {
         match d.kind {
-            ObjectKind::Scalar | ObjectKind::Aggregate => {
+            ObjectKind::Scalar | ObjectKind::Aggregate | ObjectKind::XQuery => {
                 self.expect_manifest_word(WORDS[5])?;
                 d.returns = Some(self.type_name()?);
             }
-            ObjectKind::Table => self.returned_table(d)?,
+            ObjectKind::Table => {
+                self.expect_manifest_word(WORDS[5])?;
+                self.expect_manifest_word(TABLE)?;
+                self.manifest_columns(d)?;
+                d.reads = self.sql_data(CLAUSES[0])?;
+            }
             ObjectKind::Procedure => d.modifies = self.sql_data(CLAUSES[1])?,
             ObjectKind::Metric => self.metric_clauses(d)?,
             ObjectKind::Embedding => {
@@ -174,13 +293,57 @@ impl Parser {
                     d.element = Some(self.identifier()?);
                 }
             }
-            ObjectKind::Authenticator | ObjectKind::Target | ObjectKind::Partition => {}
-        }
-        d.deterministic = self.determinism()?;
-        if self.accept_manifest_word(WORDS[6]) {
-            d.batch = Some(self.unsigned_integer()?);
+            ObjectKind::Collation => {
+                self.expect_manifest_word(WORDS[1])?;
+                d.version = Some(self.character_string_literal("<version>")?);
+            }
+            ObjectKind::SystemTable => self.manifest_columns(d)?,
+            ObjectKind::Type => {
+                if self.accept_manifest_word(NEW_CLAUSES[0]) {
+                    d.properties.push(NEW_CLAUSES[0].to_owned());
+                }
+            }
+            ObjectKind::IndexMethod => {
+                self.expect_manifest_word(NEW_CLAUSES[1])?;
+                d.supports = self.manifest_words()?;
+            }
+            ObjectKind::Rule => self.rule_clauses(d)?,
+            ObjectKind::Authenticator
+            | ObjectKind::Target
+            | ObjectKind::Partition
+            | ObjectKind::Ranking
+            | ObjectKind::Quantizer
+            | ObjectKind::Engine
+            | ObjectKind::Credentials
+            | ObjectKind::Diagnostics => {}
         }
         Ok(())
+    }
+
+    /// An optimizer rule's PHASE and PASSES, each if written.
+    fn rule_clauses(&mut self, d: &mut Declared) -> Result<()> {
+        let [phase, passes] = RULE_CLAUSES;
+        if self.accept_manifest_word(phase) {
+            d.phase = Some(self.identifier()?);
+        }
+        if self.accept_manifest_word(passes) {
+            d.passes = Some(self.unsigned_integer()?);
+        }
+        Ok(())
+    }
+
+    /// \[DESIGN\] A `<data type>` written alone, as the plan form of an
+    /// optimizer rule writes a type (RULES.md D275).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -102 if it is not one, or more follows.
+    pub fn plan_data_type(&mut self) -> Result<crate::value::DataType> {
+        let t = self.data_type()?;
+        if *self.peek() != Tok::End {
+            return Err(self.syntax("expected the end of a <data type>"));
+        }
+        Ok(t)
     }
 
     /// `<parameters>`.
@@ -199,10 +362,8 @@ impl Parser {
         Ok(types)
     }
 
-    /// RETURNS TABLE ( columns ) \[ READS SQL DATA \].
-    fn returned_table(&mut self, d: &mut Declared) -> Result<()> {
-        self.expect_manifest_word(WORDS[5])?;
-        self.expect_manifest_word(KINDS[2])?;
+    /// ( `<column name>` `<data type>` \[ , ... \] ), a table's columns.
+    fn manifest_columns(&mut self, d: &mut Declared) -> Result<()> {
         self.expect_delim(delim::LEFT_PAREN)?;
         loop {
             let column = self.identifier()?;
@@ -211,9 +372,7 @@ impl Parser {
                 break;
             }
         }
-        self.expect_delim(delim::RIGHT_PAREN)?;
-        d.reads = self.sql_data(CLAUSES[0])?;
-        Ok(())
+        self.expect_delim(delim::RIGHT_PAREN)
     }
 
     /// `first` SQL DATA, if `first` is next: whether it was.

@@ -13,8 +13,9 @@ const STARTS: &[&str] = &["thread::spawn", "thread::Builder", "Builder::new_mult
 
 /// The places that may: the database's jobs' threads, a path search's
 /// scoped workers, the readers of plug-in processes' pipes, the graph
-/// algorithms' scoped workers, the server's runtime, and the command-line
-/// client's thread hearing Ctrl-C.
+/// algorithms' scoped workers, the server's runtime, the command-line
+/// client's thread hearing Ctrl-C, and the plug-in SDK's reader of a
+/// plug-in's standard input, in the plug-in's own process.
 const MAKERS: &[&str] = &[
     "src/threads/worker.rs",
     "src/threads/morsels.rs",
@@ -22,6 +23,7 @@ const MAKERS: &[&str] = &[
     "src/graph/algo/parallel.rs",
     "server/src/runtime.rs",
     "cli/src/interrupt.rs",
+    "plugin/src/input.rs",
 ];
 
 /// Checks that no production source but `MAKERS` starts a thread.

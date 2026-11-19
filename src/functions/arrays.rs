@@ -268,13 +268,13 @@ pub(crate) fn by_keys(a: &[Value], b: &[Value], orders: &[SortOrder]) -> Orderin
 
 /// `row`, a value and its sort keys, each key by its collation's sort
 /// key, if it has one, so `by_keys` orders it so.
-pub(crate) fn keyed(row: &Arc<[Value]>, collations: &[Option<CollationRef>]) -> Arc<[Value]> {
+pub(crate) fn keyed(row: &Arc<[Value]>, collations: &[Option<CollationRef>]) -> Result<Arc<[Value]>> {
     if collations.iter().all(Option::is_none) {
-        return Arc::clone(row);
+        return Ok(Arc::clone(row));
     }
     let keyed = row.iter().enumerate().map(|(i, part)| {
         let collation = i.checked_sub(1).and_then(|k| collations.get(k)).and_then(Option::as_ref);
-        collation.map_or_else(|| part.clone(), |c| c.sort_key(part))
+        collation.map_or_else(|| Ok(part.clone()), |c| c.sort_key(part))
     });
     keyed.collect()
 }
@@ -288,7 +288,7 @@ impl Accumulator for Gathered {
             let rule = if self.by_query { "§6.49 GR3b" } else { "§10.9 GR12e" };
             return crate::value::types::array::truncated(rule, self.rows.len().saturating_add(1), MAX_ARRAY_CARDINALITY);
         }
-        self.rows.push(keyed(row, &self.collations));
+        self.rows.push(keyed(row, &self.collations)?);
         Ok(())
     }
     /// [ISO/IEC 9075-2:2023 §10.9 GR12g] null of no rows; else the values,

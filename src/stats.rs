@@ -36,8 +36,8 @@ use std::hash::BuildHasher;
 
 pub use envelopes::{EnvelopeBuilder, EnvelopeStats};
 pub use frequencies::Frequencies;
-pub use parts::Sampling;
-use parts::{Histogram, HyperLogLog, Reservoir, count};
+pub use parts::{Histogram, Sampling};
+use parts::{HyperLogLog, Reservoir, count};
 
 use crate::geometry::Geometry;
 use crate::hash::murmur::MurmurBuildHasher;
@@ -79,6 +79,11 @@ pub trait Statistics: Send + Sync + Debug {
     }
     /// Of a geometry `column`, its envelopes' statistics (RULES.md D137).
     fn envelopes(&self, _column: usize) -> Option<&EnvelopeStats> {
+        None
+    }
+    /// The bounds of `column`'s equi-depth histogram, ascending, as a
+    /// plug-in is told them (RULES.md D279).
+    fn histogram(&self, _column: usize) -> Option<Vec<Value>> {
         None
     }
 }
@@ -170,6 +175,9 @@ impl Statistics for TableStats {
     }
     fn envelopes(&self, column: usize) -> Option<&EnvelopeStats> {
         self.columns.get(column)?.envelopes.as_deref()
+    }
+    fn histogram(&self, column: usize) -> Option<Vec<Value>> {
+        Some(self.columns.get(column)?.histogram.bounds().to_vec())
     }
 }
 

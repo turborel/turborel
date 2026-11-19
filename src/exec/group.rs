@@ -54,12 +54,12 @@ pub(super) struct Spec {
 /// The key of a group of `values`: by their sort keys where `spec` says, so
 /// values equal by a collation are of one group, which keeps the first's
 /// [ISO/IEC 9075:1992 §8.2 GR3d].
-fn group_key(spec: &Spec, values: &Row) -> Vec<u8> {
+fn group_key(spec: &Spec, values: &Row) -> Result<Vec<u8>> {
     if spec.collations.is_empty() {
-        return norm_row(values);
+        return Ok(norm_row(values));
     }
-    let keyed = |(v, c): (&Value, &Option<CollationRef>)| c.as_ref().map_or_else(|| v.clone(), |c| c.sort_key(v));
-    norm_row(&values.iter().zip(&spec.collations).map(keyed).collect::<Row>())
+    let keyed = |(v, c): (&Value, &Option<CollationRef>)| c.as_ref().map_or_else(|| Ok(v.clone()), |c| c.sort_key(v));
+    Ok(norm_row(&values.iter().zip(&spec.collations).map(keyed).collect::<Result<Row>>()?))
 }
 
 /// One group: its grouping values, the set functions fed so far, of its
@@ -227,7 +227,7 @@ impl Grouper {
         for r in rows {
             let (n, row) = match r? {
                 Seeded::Seed(n, values) => {
-                    let key = group_key(&self.spec, &values);
+                    let key = group_key(&self.spec, &values)?;
                     bytes = bytes.saturating_add(key.len()).saturating_add(row_bytes(&values));
                     if let Entry::Vacant(vacant) = found.entry(key) {
                         let kept = vacant.key().clone();
@@ -239,7 +239,7 @@ impl Grouper {
             };
             let values: Row = self.spec.groups.iter().map(|&c| column(&row, c).cloned()).collect::<Result<_>>()?;
             // One look-up of the key a row: its group found, or made.
-            let group = match found.entry(group_key(&self.spec, &values)) {
+            let group = match found.entry(group_key(&self.spec, &values)?) {
                 Entry::Occupied(occupied) => occupied.into_mut(),
                 Entry::Vacant(vacant) => {
                     if bytes > self.work.limit() {

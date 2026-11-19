@@ -37,6 +37,7 @@
 //! | `VectorMetric`, `Quantizer` | COSINE and others; PQ, SQ8, BQ | VECTOR_DISTANCE, vector indexes (RULES.md D93) |
 //! | `PartitionStrategy` | RANGE, LIST, HASH     | partitioned tables (RULES.md D154) |
 //! | `BackupTarget`, `TargetProvider` | a directory, memory | backups and the archive (RULES.md D166) |
+//! | `Eviction`          | CLOCK                 | the data file's buffer pool (`set_eviction`, RULES.md D283) |
 //!
 //! Plus the settings (`settings.rs`, RULES.md D36), plug-ins' too, per database and session.
 //!
@@ -95,6 +96,7 @@ mod formats;
 mod functions;
 mod generated;
 mod graphs;
+mod hosted;
 mod image;
 mod index_statements;
 mod indexes;
@@ -150,7 +152,7 @@ pub(crate) mod write;
 
 use assignment::{candidate, check_option, set_columns};
 pub use catalog_file::{COMPACT_AFTER, CatalogFiles};
-use compiled::{plan, plan_slotted};
+use compiled::{plan, plan_heard, plan_slotted};
 pub use lobs::LOB_READ_OCTETS;
 pub use prepared::Prepared;
 pub use rekey::FormatsBehind;
@@ -341,6 +343,8 @@ struct Call<'a> {
     _window: Window<'a>,
     /// The statement it runs, timed, to tell if it is slow (`db/slow.rs`).
     timed: Option<slow::Timed<&'a str>>,
+    /// The settings its calls of plug-ins are told, its session's (D282).
+    _settings: Option<crate::plugin::settings::Calling>,
 }
 
 impl Call<'_> {
@@ -427,7 +431,8 @@ impl Session {
                 let millis = |key| u64::try_from(snapshot.settings.integer(key)).unwrap_or(0);
                 self.stop.set_timeout(millis(STATEMENT_TIMEOUT_MS));
                 self.stop.set_lock_timeout(millis(LOCKS_TIMEOUT_MS));
-                Ok(Call { session: self, snapshot, _window: self.stop.window(), timed: None })
+                let settings = (!snapshot.extensions.is_empty()).then(|| extensions::calling(&snapshot));
+                Ok(Call { session: self, snapshot, _window: self.stop.window(), timed: None, _settings: settings })
             }
             Err(e) => {
                 self.busy.set(false);

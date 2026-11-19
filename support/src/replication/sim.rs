@@ -22,6 +22,7 @@ mod ground;
 mod network;
 mod parts;
 pub mod plans;
+mod plugged;
 mod rng;
 mod world;
 
@@ -36,10 +37,11 @@ use turborel::log::{Log, Lsn};
 use turborel_replication::{Driver, StateTransfer, WholeFiles};
 
 pub use checker::{Checker, Violation};
-pub use databases::{DatabaseReport, Replicas, simulate_databases};
+pub use databases::{DatabaseReport, Replicas, simulate_databases, simulate_databases_plugged};
 pub use epochs::Epochs;
 pub use ground::{Host, Runner};
 pub use network::{Link, Network, Weather};
+pub use plugged::{ALL_PARTS, Part, Plug, Plugging};
 pub use rng::{PER_MILLE, Rng};
 pub use world::{Moved, World};
 
@@ -129,6 +131,8 @@ pub struct Report {
     pub epochs: u64,
     /// Replicas removed from the group, and told so.
     pub removed: u64,
+    /// \[EXTENSION\] Plug-ins' stand-ins killed (`sim/plugged.rs`).
+    pub plugin_kills: u64,
 }
 
 /// A database modelled as the records it holds, in order: it follows by
@@ -304,7 +308,19 @@ impl Host for Models {
 ///
 /// The first violation found, naming the seed and the moment.
 pub fn simulate(seed: u64, plan: &Plan, make: &Make) -> std::result::Result<Report, Violation> {
-    let mut runner = Runner::new(seed, *plan, make, Models::default())?;
+    simulate_plugged(seed, plan, make, None)
+}
+
+/// Runs `plan` from `seed` as `simulate` does, the replicas' parts served
+/// by stand-in plug-ins as `plugging` says, which die at moments the seed
+/// chooses (RULES.md D270): each death fails its replica stop.
+///
+/// # Errors
+///
+/// The first violation found, naming the seed and the moment.
+pub fn simulate_plugged(seed: u64, plan: &Plan, make: &Make, plugging: Option<Plugging>) -> std::result::Result<Report, Violation> {
+    let plug = plugging.map(|p| Plug::new(p, seed));
+    let mut runner = Runner::plugged(seed, *plan, (make, Models::default()), plug.clone())?;
     let mut rng = Rng::new(seed);
     let (mut calm_from, mut before) = (None, 0);
     while !runner.world().over() {
@@ -324,7 +340,9 @@ pub fn simulate(seed: u64, plan: &Plan, make: &Make) -> std::result::Result<Repo
             reconfigure(&mut runner, &mut rng)?;
         }
     }
-    converged(&mut runner, (before, calm_from.unwrap_or(0)))
+    let mut report = converged(&mut runner, (before, calm_from.unwrap_or(0)))?;
+    report.plugin_kills = plug.map_or(0, |p| p.kills());
+    Ok(report)
 }
 
 /// The replica whose database serves as primary, and the view, if it

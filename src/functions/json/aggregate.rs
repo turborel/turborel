@@ -224,9 +224,9 @@ impl Accumulator for Elements {
         }
         let keyed = row.iter().enumerate().map(|(i, part)| {
             let collation = i.checked_sub(1).and_then(|k| self.collations.get(k)).and_then(Option::as_ref);
-            collation.map_or_else(|| part.clone(), |c| c.sort_key(part))
+            collation.map_or_else(|| Ok(part.clone()), |c| c.sort_key(part))
         });
-        self.rows.push(if self.collations.iter().any(Option::is_some) { keyed.collect() } else { Arc::clone(row) });
+        self.rows.push(if self.collations.iter().any(Option::is_some) { keyed.collect::<Result<_>>()? } else { Arc::clone(row) });
         Ok(())
     }
     /// [§10.11 GR5c, GR5f, GR6b; §6.34 GR4b] Of no rows the null value, or

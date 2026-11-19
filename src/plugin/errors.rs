@@ -25,6 +25,13 @@ pub const TOO_LONG: SqlState = SqlState::of_bytes(*b"38T04");
 pub const UNAVAILABLE: SqlState = SqlState::of_bytes(*b"38T05");
 /// \[DESIGN\] The manifest breaks a rule of its format.
 pub const INVALID_MANIFEST: SqlState = SqlState::of_bytes(*b"38T06");
+/// \[DESIGN\] A change a plug-in's table or index was given could not be
+/// told made or undone: the object is damaged until the database is
+/// opened again and recovers it (RULES.md D225, D227).
+pub const BROKEN: SqlState = SqlState::of_bytes(*b"38T10");
+/// A host plug-in failed, and its node stopped until it starts again
+/// (RULES.md D229).
+pub const HOST_FAILED: SqlState = SqlState::of_bytes(*b"38T11");
 
 /// The classes a program's error keeps: data exception, integrity
 /// constraint violation, external routine exception, external routine
@@ -65,6 +72,19 @@ pub fn unavailable(why: &str) -> SqlError {
     failed(UNAVAILABLE, &format!("the plug-in cannot be started: {why}"))
 }
 
+/// 38T07: a process of `extension` stopped while the transaction wrote
+/// its object `object`.
+pub fn restarted(extension: &str, object: &str) -> SqlError {
+    let why = format!("[EXTENSION] a process of extension {extension} stopped while the transaction wrote {object}, so it fails");
+    SqlError::new(Code::Conflict, why)
+}
+
+/// 38T10: the object `object` could not be told whole, `why`.
+pub fn broken(object: &str, why: &str) -> SqlError {
+    let why = format!("[EXTENSION] the plug-in's {object} is damaged until the database is opened again: {why}");
+    SqlError::new(Code::Damaged, why).with_state(BROKEN)
+}
+
 /// 38T06: the manifest breaks a rule, `why`.
 pub fn invalid_manifest(why: &str) -> SqlError {
     SqlError::new(Code::SyntaxRule, format!("[EXTENSION] the plug-in manifest is invalid: {why}")).with_state(INVALID_MANIFEST)
@@ -82,6 +102,11 @@ pub fn raised(object: &str, state: &str, message: &str) -> SqlError {
         _ => Code::Data,
     };
     SqlError::new(code, format!("[EXTENSION] {object} failed: {message}")).with_state(chosen)
+}
+
+/// 38T11: the host plug-in `plugin` failed, `why`, and the node stopped.
+pub fn host_failed(plugin: &str, why: &str) -> SqlError {
+    failed(HOST_FAILED, &format!("the host plug-in {plugin} failed, so the node stopped until it starts again: {why}"))
 }
 
 #[cfg(test)]

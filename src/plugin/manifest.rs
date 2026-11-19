@@ -13,15 +13,39 @@ use crate::vector::Element;
 
 use super::errors::invalid_manifest;
 
+pub mod host;
+pub mod settings;
+
+pub use host::{HostDeclared, HostKind, HostOption};
+pub use settings::{Scope, SettingDeclared, SettingType};
+
 /// The words of a metric's PROPERTIES.
 pub const SYMMETRIC: &str = "SYMMETRIC";
 /// See `SYMMETRIC`.
 pub const NON_NEGATIVE: &str = "NON_NEGATIVE";
 /// See `SYMMETRIC`.
 pub const TRIANGLE: &str = "TRIANGLE";
+/// The word of a type declared ordered.
+pub const ORDERED: &str = "ORDERED";
+
+/// The searches an index method SUPPORTS: keys equal to one given.
+pub const EQUALITY: &str = "EQUALITY";
+/// See `EQUALITY`: keys in a range, and in their order.
+pub const RANGE: &str = "RANGE";
+/// See `EQUALITY`: the keys nearest a vector, by the index's metric.
+pub const NEAREST: &str = "NEAREST";
 /// The set functions a plug-in's aggregate may not be named, as one of
 /// their name would replace the standard's [ISO/IEC 9075:1992 §6.5].
 const STANDARD_AGGREGATES: [&str; 5] = ["COUNT", "SUM", "AVG", "MAX", "MIN"];
+/// The code of an optimizer rule's kind (RULES.md D275), the first after
+/// the host kinds'.
+pub const RULE_CODE: u8 = 37;
+/// An optimizer rule's PHASE: on the plan as bound, before the built-in
+/// rules (RULES.md D276).
+pub const BOUND: &str = "BOUND";
+/// See `BOUND`: after the built-in rules, before joins are ordered; the
+/// default.
+pub const REWRITTEN: &str = "REWRITTEN";
 
 /// The kinds of object a plug-in provides, each with its code in protocol
 /// 1 (`payload.rs`).
@@ -45,11 +69,33 @@ pub enum ObjectKind {
     Target,
     /// A partitioning strategy.
     Partition,
+    /// A ranking of full-text search.
+    Ranking,
+    /// A vector quantizer.
+    Quantizer,
+    /// A collation.
+    Collation,
+    /// A system table.
+    SystemTable,
+    /// An XQuery function.
+    XQuery,
+    /// A data type beyond the standard.
+    Type,
+    /// A storage engine.
+    Engine,
+    /// An index method.
+    IndexMethod,
+    /// What makes users' verifiers.
+    Credentials,
+    /// A sink of the database's events.
+    Diagnostics,
+    /// A rewrite rule of the optimizer (RULES.md D275).
+    Rule,
 }
 
 impl ObjectKind {
     /// Every kind, in the order of their codes.
-    pub const ALL: [ObjectKind; 9] = [
+    pub const ALL: [ObjectKind; 20] = [
         ObjectKind::Scalar,
         ObjectKind::Aggregate,
         ObjectKind::Table,
@@ -59,6 +105,17 @@ impl ObjectKind {
         ObjectKind::Authenticator,
         ObjectKind::Target,
         ObjectKind::Partition,
+        ObjectKind::Ranking,
+        ObjectKind::Quantizer,
+        ObjectKind::Collation,
+        ObjectKind::SystemTable,
+        ObjectKind::XQuery,
+        ObjectKind::Type,
+        ObjectKind::Engine,
+        ObjectKind::IndexMethod,
+        ObjectKind::Credentials,
+        ObjectKind::Diagnostics,
+        ObjectKind::Rule,
     ];
 
     /// Its code in protocol 1.
@@ -73,6 +130,18 @@ impl ObjectKind {
             ObjectKind::Authenticator => 7,
             ObjectKind::Target => 8,
             ObjectKind::Partition => 9,
+            ObjectKind::Ranking => 10,
+            ObjectKind::Quantizer => 11,
+            ObjectKind::Collation => 12,
+            ObjectKind::SystemTable => 13,
+            ObjectKind::XQuery => 14,
+            ObjectKind::Type => 15,
+            ObjectKind::Engine => 16,
+            ObjectKind::IndexMethod => 17,
+            ObjectKind::Credentials => 18,
+            ObjectKind::Diagnostics => 19,
+            // After the host kinds' 20 to 36.
+            ObjectKind::Rule => RULE_CODE,
         }
     }
 
@@ -93,6 +162,17 @@ impl ObjectKind {
             ObjectKind::Authenticator => "AUTHENTICATOR",
             ObjectKind::Target => "TARGET",
             ObjectKind::Partition => "PARTITION STRATEGY",
+            ObjectKind::Ranking => "RANKING",
+            ObjectKind::Quantizer => "QUANTIZER",
+            ObjectKind::Collation => "COLLATION",
+            ObjectKind::SystemTable => "SYSTEM TABLE",
+            ObjectKind::XQuery => "XQUERY FUNCTION",
+            ObjectKind::Type => "TYPE",
+            ObjectKind::Engine => "STORAGE ENGINE",
+            ObjectKind::IndexMethod => "INDEX METHOD",
+            ObjectKind::Credentials => "CREDENTIALS",
+            ObjectKind::Diagnostics => "DIAGNOSTICS",
+            ObjectKind::Rule => "OPTIMIZER RULE",
         }
     }
 }
@@ -124,12 +204,20 @@ pub struct Declared {
     pub modifies: bool,
     /// A metric's FORMATS.
     pub formats: Vec<String>,
-    /// A metric's PROPERTIES.
+    /// A metric's PROPERTIES, or ORDERED of a type.
     pub properties: Vec<String>,
     /// A model's DIMENSIONS.
     pub dimensions: Option<u32>,
     /// A model's ELEMENT.
     pub element: Option<String>,
+    /// A collation's VERSION.
+    pub version: Option<String>,
+    /// An index method's SUPPORTS.
+    pub supports: Vec<String>,
+    /// An optimizer rule's PHASE, if written.
+    pub phase: Option<String>,
+    /// An optimizer rule's PASSES, if written.
+    pub passes: Option<u32>,
 }
 
 impl Declared {
@@ -151,6 +239,10 @@ impl Declared {
             properties: Vec::new(),
             dimensions: None,
             element: None,
+            version: None,
+            supports: Vec::new(),
+            phase: None,
+            passes: None,
         }
     }
 
@@ -174,6 +266,11 @@ impl Declared {
     pub fn has_property(&self, word: &str) -> bool {
         self.properties.iter().any(|p| p == word)
     }
+
+    /// Whether a type is declared ORDERED.
+    pub fn ordered(&self) -> bool {
+        self.has_property(ORDERED)
+    }
 }
 
 /// An item of a manifest, as written.
@@ -194,8 +291,19 @@ pub enum Item {
     /// UPGRADE FROM: a range of versions upgraded from, and the script of
     /// SQL that does it, relative to the directory.
     Upgrade(String, String),
+    /// LICENSE: the SPDX license expression of the package.
+    License(String),
+    /// LICENSE FILE: the file of the license's text, relative to the
+    /// directory.
+    LicenseFile(String),
     /// An object declared.
     Object(Box<Declared>),
+    /// A host plug-in's object (RULES.md D229).
+    Host(Box<HostDeclared>),
+    /// A setting it declares (RULES.md D280).
+    Setting(Box<SettingDeclared>),
+    /// READS SETTINGS: the built-in settings its program is told.
+    ReadsSettings(Vec<String>),
 }
 
 /// A manifest, checked.
@@ -211,12 +319,22 @@ pub struct Manifest {
     pub executables: Vec<(Option<String>, String)>,
     /// The objects, in order.
     pub objects: Vec<Declared>,
+    /// The objects of a host plug-in it declares (RULES.md D229).
+    pub hosted: Vec<HostDeclared>,
     /// REQUIRES: the packages it depends on, each with a version range.
     pub requires: Vec<(String, String)>,
     /// TURBOREL: the range of the database's versions, if written.
     pub turborel: Option<String>,
     /// UPGRADE FROM: each range of old versions and its script.
     pub upgrades: Vec<(String, String)>,
+    /// LICENSE: the SPDX license expression, if written.
+    pub license: Option<String>,
+    /// LICENSE FILE: the file of the license's text, if written.
+    pub license_file: Option<String>,
+    /// The settings it declares (RULES.md D280).
+    pub settings: Vec<SettingDeclared>,
+    /// READS SETTINGS: the built-in settings its program is told, upper case.
+    pub reads_settings: Vec<String>,
 }
 
 impl Manifest {
@@ -234,9 +352,14 @@ impl Manifest {
             version: String::new(),
             executables: Vec::new(),
             objects: Vec::new(),
+            hosted: Vec::new(),
             requires: Vec::new(),
             turborel: None,
             upgrades: Vec::new(),
+            license: None,
+            license_file: None,
+            settings: Vec::new(),
+            reads_settings: Vec::new(),
         };
         let mut protocol = None;
         for item in items {
@@ -250,6 +373,7 @@ impl Manifest {
                 }
                 Item::Executable(os, path) => m.executables.push((os, path)),
                 Item::Object(d) => m.objects.push(*d),
+                Item::Host(d) => m.hosted.push(*d),
                 Item::Requires(name, range) => m.requires.push((name, range)),
                 Item::Turborel(range) => {
                     if m.turborel.replace(range).is_some() {
@@ -257,6 +381,10 @@ impl Manifest {
                     }
                 }
                 Item::Upgrade(range, script) => m.upgrades.push((range, script)),
+                Item::License(expression) => written_once(&mut m.license, expression, "LICENSE")?,
+                Item::LicenseFile(path) => written_once(&mut m.license_file, path, "LICENSE FILE")?,
+                Item::Setting(d) => m.settings.push(*d),
+                Item::ReadsSettings(names) => m.reads_settings.extend(names.into_iter().map(|n| n.trim().to_ascii_uppercase())),
             }
         }
         if protocol != Some(super::PROTOCOL) {
@@ -275,6 +403,12 @@ impl Manifest {
         for (_, script) in &self.upgrades {
             inside(script, "SCRIPT")?;
         }
+        if let Some(expression) = &self.license {
+            crate::plugin::package::license::check_expression(expression)?;
+        }
+        if let Some(path) = &self.license_file {
+            inside(path, "LICENSE FILE")?;
+        }
         let mut seen = HashSet::new();
         for d in &self.objects {
             if !seen.insert((d.kind, d.name.clone())) {
@@ -282,7 +416,16 @@ impl Manifest {
             }
             check_object(d)?;
         }
-        Ok(())
+        let mut hosted = HashSet::new();
+        for d in &self.hosted {
+            if !hosted.insert((d.kind, d.name.clone())) {
+                return Err(invalid_manifest(&format!("HOST {} {} is declared twice", d.kind.word(), d.name)));
+            }
+        }
+        if !self.hosted.is_empty() && !self.objects.is_empty() {
+            return Err(invalid_manifest("a host plug-in declares host objects alone, and an extension none (RULES.md D229)"));
+        }
+        settings::check(&self.name, &self.settings, &self.reads_settings, !self.hosted.is_empty())
     }
 
     /// The executable of the platform `os`, relative to its directory: the
@@ -300,7 +443,7 @@ impl Manifest {
 
     /// The codes of the kinds it declares.
     pub fn kinds(&self) -> Vec<u8> {
-        let mut kinds: Vec<u8> = self.objects.iter().map(|d| d.kind.code()).collect();
+        let mut kinds: Vec<u8> = self.objects.iter().map(|d| d.kind.code()).chain(self.hosted.iter().map(|d| d.kind.code())).collect();
         kinds.sort_unstable();
         kinds.dedup();
         kinds
@@ -313,6 +456,14 @@ fn once(slot: &mut String, value: String, item: &str) -> Result<()> {
         return Err(invalid_manifest(&format!("{item} is written twice")));
     }
     *slot = value;
+    Ok(())
+}
+
+/// `value` written to the optional `slot`, written once.
+fn written_once(slot: &mut Option<String>, value: String, item: &str) -> Result<()> {
+    if slot.replace(value).is_some() {
+        return Err(invalid_manifest(&format!("{item} is written twice")));
+    }
     Ok(())
 }
 
@@ -379,13 +530,47 @@ fn check_object(d: &Declared) -> Result<()> {
                 None => Ok(()),
             }
         }
+        ObjectKind::IndexMethod => check_supports(d),
+        ObjectKind::Rule => check_rule(d),
         ObjectKind::Scalar
         | ObjectKind::Table
         | ObjectKind::Procedure
         | ObjectKind::Authenticator
         | ObjectKind::Target
-        | ObjectKind::Partition => Ok(()),
+        | ObjectKind::Partition
+        | ObjectKind::Ranking
+        | ObjectKind::Quantizer
+        | ObjectKind::Collation
+        | ObjectKind::SystemTable
+        | ObjectKind::XQuery
+        | ObjectKind::Type
+        | ObjectKind::Engine
+        | ObjectKind::Credentials
+        | ObjectKind::Diagnostics => Ok(()),
     }
+}
+
+/// That an optimizer rule's PHASE is one there is, and its PASSES not 0.
+fn check_rule(d: &Declared) -> Result<()> {
+    if let Some(p) = d.phase.as_deref().filter(|p| ![BOUND, REWRITTEN].contains(p)) {
+        return Err(invalid_manifest(&format!("OPTIMIZER RULE {} has no phase {p}", d.name)));
+    }
+    if d.passes == Some(0) {
+        return Err(invalid_manifest(&format!("OPTIMIZER RULE {} makes no pass", d.name)));
+    }
+    Ok(())
+}
+
+/// That an index method SUPPORTS at least one search, each one known.
+fn check_supports(d: &Declared) -> Result<()> {
+    let known = [EQUALITY, RANGE, NEAREST];
+    if let Some(s) = d.supports.iter().find(|s| !known.contains(&s.as_str())) {
+        return Err(invalid_manifest(&format!("INDEX METHOD {} supports no search {s}", d.name)));
+    }
+    if d.supports.is_empty() {
+        return Err(invalid_manifest(&format!("INDEX METHOD {} supports no search", d.name)));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

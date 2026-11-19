@@ -21,12 +21,15 @@
 pub mod bridge;
 pub mod errors;
 pub mod host;
+pub mod hosted;
 pub mod limits;
 pub mod manifest;
 pub mod package;
 pub mod payload;
+pub mod plan;
 pub mod pool;
 mod process;
+pub mod settings;
 pub mod values;
 pub mod wire;
 

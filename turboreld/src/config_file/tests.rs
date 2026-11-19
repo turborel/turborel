@@ -209,8 +209,9 @@ fn config(file: &str, set: &[(&str, i128)]) -> Config {
 
 /// Verifies: [DESIGN] RULES.md D36, D42: the settings given are the
 /// file's, each where it is, but those `--set` gives too, then `--set`'s,
-/// so the command line wins; a file's name of no setting declared, the
-/// database's or a server's, is refused with its path and line.
+/// so the command line wins; a file's name of no setting declared in a
+/// group of the database's or a server's is refused with its path and
+/// line, and one of another group is left to a plug-in (D281).
 #[test]
 fn the_command_line_wins_over_the_file() {
     let db = Database::new();
@@ -218,8 +219,10 @@ fn the_command_line_wins_over_the_file() {
     let kept = given(&db, &config("f.toml", &[(&format!(" {WORKERS} "), 3_i128)]), read(&text).unwrap()).unwrap();
     let shown: Vec<String> = kept.iter().map(|g| format!("{}={} {:?}", g.name, g.value, g.from)).collect();
     assert_eq!(shown, [format!("{PORT}=1 Some(\"f.toml:1:1\")"), format!(" {WORKERS} =3 None")]);
-    let unknown = given(&db, &config("f.toml", &[]), read(&format!("{HOST} = []\nNO.SUCH = 1")).unwrap()).unwrap_err();
-    assert_eq!(unknown, "f.toml:2:1: no setting is named NO.SUCH");
+    let unknown = given(&db, &config("f.toml", &[]), read(&format!("{HOST} = []\nSERVER.NO_SUCH = 1")).unwrap()).unwrap_err();
+    assert_eq!(unknown, "f.toml:2:1: no setting is named SERVER.NO_SUCH");
+    let plugin = given(&db, &config("f.toml", &[]), read("VAULT.KEEP_PAGES = 64").unwrap()).unwrap();
+    assert_eq!(plugin.len(), 1_usize, "a group no built-in setting has may be a plug-in's");
     let own = &db.settings().unwrap()[0].definition.name;
     let core = read(&format!("{own} = 1")).unwrap();
     assert_eq!(given(&db, &config("f.toml", &[]), core).unwrap().len(), 1_usize, "the database's own");

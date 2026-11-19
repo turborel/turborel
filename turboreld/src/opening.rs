@@ -5,11 +5,9 @@
 //! on a replica once it serves as primary.
 
 use std::path::Path;
-use std::sync::Arc;
 
 use tokio::runtime::Runtime;
 use turborel::db::{Database, OpenOptions};
-use turborel::disk::io::{FileSystem, OsFileSystem};
 use turborel_server::replication::{self, Replication};
 
 use crate::{Config, Store, config_file, users};
@@ -67,8 +65,9 @@ pub(crate) fn settled(
 /// Why it could not be opened, for the operator: a replicated database
 /// is managed through its primary, not by a command on its directory.
 pub(crate) fn opened(db: &Database, dir: &Path, runtime: Option<&Runtime>, new_group: bool) -> Result<Option<Replication>, String> {
-    let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
     let failed = |e: turborel::error::SqlError| format!("cannot open {}: {e}", dir.display());
+    // A host plug-in's file system, if PLUGINS.HOST started one (RULES.md D251).
+    let fs = db.file_system().map_err(failed)?;
     let Some(runtime) = runtime else {
         if replication::replicated(db) {
             return Err("the database is replicated: it is managed through its primary, by SQL, not by a command on its directory".into());

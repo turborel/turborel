@@ -238,6 +238,16 @@ verification approach DO-178C expects (§8).
 | D217 | The prompt, the connection commands and `\password` are built on SQL, the verifier made by the client |
 | D218 | `turborel admin` maps each command onto statements the server runs |
 | D219 | The client adds `\G`, `\tee`, tab-separated output, safe updates, a delimiter and statement help |
+| D220 | Every sound extension point is a kind of plug-in, and no call is made per comparison |
+| D221 | Rankings and quantizers are asked a batch, and collations are sort keys asked a batch |
+| D222 | System tables page their rows, XQuery functions are atomic, and credentials and sinks are process-wide |
+| D223 | A plug-in type is its program's text and binary forms, with a key the database orders by |
+| D224 | A plug-in storage engine keeps the rows, and the coordinator keeps the transactions |
+| D225 | A plug-in engine recovers from the log, and a process stopped fails the transaction writing it |
+| D226 | A plug-in index method answers the searches it declares, and every entry is rechecked |
+| D227 | A plug-in index is rebuilt when it is not known whole |
+| D228 | Stored data keeps its extension, and an extension's objects are used as built-in ones are |
+| D229 | Every point beneath the database is a host plug-in's kind, declared by the node |
 | D230 | A stream TLS secures is read and written by its worker itself, through its session |
 | D231 | The replies of pipelined requests go out together, never held for a request not sent nor past a batch |
 | D232 | A worker waits on the socket itself for a slow client to take its replies, and a session's records go in one write |
@@ -247,6 +257,41 @@ verification approach DO-178C expects (§8).
 | D236 | The network benchmark is an example of the server's crate, on the shared harness |
 | D240 | A completion carries the server's time for its statement, and the waits it can measure for free |
 | D241 | The server ships as a container image, built by CI from the Dockerfile |
+| D245 | The plug-in SDK is a crate of its own |
+| D246 | A host plug-in's encodings and checksums take every page through the program |
+| D247 | A host plug-in's clock pushes its time, and the database reads its own copy |
+| D248 | A host plug-in keeps the log and the catalog, and a commit is one call for its group |
+| D249 | A host plug-in's failure stops the node, and the next start recovers |
+| D250 | A host plug-in's spill keeps an area's tables and runs in the process the area keeps |
+| D251 | A host plug-in's file system holds the files a database is opened from |
+| D252 | A host plug-in's keyring gives keys, and its package cryptography is pinned by its digest |
+| D253 | A host plug-in's jobs run as the database's own |
+| D254 | A host plug-in serves connections, their bytes relayed, and ends them by id |
+| D255 | The points that are no kind, each for its reason |
+| D260 | turborel has no registry; packages are files, distributed by the operator |
+| D261 | Install resolves among the package files given and the packages installed |
+| D262 | The lock holds each package file's digest and license, and install reproduces it from files |
+| D263 | `turborel extension new` writes a starter project that builds as written, on the SDK |
+| D264 | Pack takes the manifest, what it names, and doc/ and data/, and finds the program cargo built |
+| D265 | A license is an SPDX expression, checked against the grammar alone |
+| D266 | A license's file is an entry of the package, covered by its digest and signature |
+| D267 | A license is told, never enforced |
+| D268 | A host's plug-in reads a package's license through `package_license` |
+| D270 | A replication or archive plug-in is a host plug-in, fail-stop, and its death stops the node |
+| D271 | A plug-in transport carries whole frames, taken as the driver turns |
+| D272 | A plug-in journal acknowledges what it names durable, and a plug-in transfer stages chunks it checks |
+| D273 | A plug-in consensus steps whole in one call, made again from its journal, VR still built in |
+| D274 | A plug-in archive is a target reached before any database opens, its errors the call's own |
+| D275 | An optimizer rule is a plug-in kind over a plan form of its own, format 1 |
+| D276 | A rule runs in the phase its manifest names, in a fixed order, for bounded passes |
+| D277 | A rule's plan is checked whole, and a rule that fails is skipped with a warning |
+| D278 | An engine's or index's statistics are asked once, kept, and asked again when stale |
+| D279 | A plug-in asks the database's statistics by its call's privileges |
+| D280 | A manifest declares settings under its extension's name, typed as built-in ones, created, changed and retired with it |
+| D281 | An extension's settings take its scopes; a host plug-in's are the node's, the host's alone to set |
+| D282 | A plug-in reads the settings a call runs with in a SETTINGS frame before it, and writes none but its own |
+| D283 | BUFFER EVICTION programs the pool's evictor, never called by the pool, and its death stops the node |
+| D284 | An eviction policy is weights of one score, read with no lock, with ranges weighed and pages kept |
 
 ### The project
 
@@ -6458,22 +6503,28 @@ requiring it remains, and CASCADE drops them first.
 #### D169. An extension's objects are bridged onto the interfaces of their kinds
 
 Each object a manifest declares implements the interface its kind
-already has (`plugin/bridge/`): a function `ScalarFunction`, batching
-BATCH rows a call and cancelled with its statement (D44); an aggregate
-`AggregateFunction`, its state the program's bytes, which the database
-keeps; a table function `TableFunction`, the queries it reads run by the
-statement; a procedure `Procedure`, its SQL run in the caller's
-transaction; a metric `VectorMetric`, whose many distances from one
-query are one call, so VECTOR_DISTANCE over a batch and a DiskANN search
-batch them; and a model `Embedder`. An authenticator is found by the
-server by its mechanism. A backup target's scheme is a `TargetProvider`
-(D166), which a location of that scheme opens when no registered provider
-has it. A partitioning strategy is written against the interface that
-feature takes (`bridge/pending.rs`). Functions are registered in the state's own
-registry, so a transaction rolled back leaves none. Metrics and models
-are held weakly in the shared registries and strongly by the state that
-holds the extension, so they go when it does. No two extensions, nor an
-extension and a built-in or registered object, share a name of a kind.
+already has (`plugin/bridge/`), one kind of nineteen, its code a byte of
+CALL (`plugin/manifest.rs`). A function is a `ScalarFunction`, batching
+BATCH rows a call and cancelled with its statement (D44). An aggregate
+is an `AggregateFunction`, its state the program's bytes, which the
+database keeps. A table function is a `TableFunction`, the queries it
+reads run by the statement, and a procedure a `Procedure`, its SQL run
+in the caller's transaction. A metric is a `VectorMetric`, whose many
+distances from one query are one call, so VECTOR_DISTANCE over a batch
+and a DiskANN search batch them, and a model is an `Embedder`. An
+authenticator is found by the server by its mechanism. A backup
+target's scheme is a `TargetProvider` (D166), which a location of that
+scheme opens when no registered provider has it. A partitioning
+strategy is a `PartitionStrategy` (D153), its bounds checked and its
+rows routed by calls (`bridge/partition.rs`). Rankings, quantizers,
+collations, system tables, XQuery functions, types, storage engines,
+index methods, credentials and sinks of events are the kinds of D220 to
+D227, and the points beneath the database are host plug-ins' (D229). Functions are
+registered in the state's own registry, so a transaction rolled back
+leaves none. Metrics, models, rankings and quantizers are held weakly in
+the shared registries and strongly by the state that holds the
+extension, so they go when it does. No two extensions, nor an extension
+and a built-in or registered object, share a name of a kind.
 
 #### D170. A plug-in's processes are pooled, bounded in time and bytes, and restarted after a failure
 
@@ -6502,9 +6553,10 @@ refuses a cycle, a conflict or a package missing with SQLSTATE 38T09
 (`plugin/package/resolve.rs`). CREATE EXTENSION creates the extensions
 required first, AS DEPENDENCY, keeping the versions the database has.
 The versions created are the database's lock, kept in its catalog and
-shown by INFORMATION_SCHEMA.EXTENSION_PACKAGES, which `turborel
-extension lock export` writes to a file and `install` reproduces
-exactly, each digest checked. ALTER EXTENSION ... UPDATE runs the
+shown by INFORMATION_SCHEMA.EXTENSION_PACKAGES. The plug-in directory
+keeps a lock of its own, which `turborel extension lock export` writes
+to a file and `install --lock` reproduces exactly from the package files
+given, each digest checked (D262). ALTER EXTENSION ... UPDATE runs the
 scripts of SQL the new manifest names for the version it had, in the
 transaction, after each extension requiring it is checked to accept the
 new version.
@@ -6536,13 +6588,9 @@ refused without it. A package installs into
 `<first PLUGINS.DIRECTORIES>/<NAME>/<version>/` with its digests and
 signature beside it, checked again each time its program starts; with
 PLUGINS.REQUIRE_SIGNED ON, an unsigned package, or one signed by a key
-not trusted, is refused with 38T08. A registry is static files, a signed
-index and its packages; a client trusts the index only when a key of
-PLUGINS.TRUSTED_KEYS signed it and it has not expired, and the digests
-it lists only then. Several registries are tried in the order of
-PLUGINS.REGISTRIES, a package pinned to one by PLUGINS.PINS, and none is
-configured by default. The command-line client fetches over HTTPS with
-rustls (`client/src/fetch.rs`); the server never fetches.
+not trusted, is refused with 38T08. turborel has no registry, and
+neither the server nor the command-line client fetches a package
+(D260).
 
 #### D210. The client's own commands begin with a backslash, and are read by the splitter
 
@@ -6711,6 +6759,315 @@ so a routine's body may be typed with its semicolons. `\h` writes a
 statement's syntax from the pages of `doc/sql/statements`, compiled
 into the client, so it describes the release it came with; a test holds
 the list to the directory.
+
+#### D220. Every sound extension point is a kind of plug-in, and no call is made per comparison
+
+An extension may serve, besides the kinds of D169, a ranking (kind 10),
+a quantizer (11), a collation (12), a system table (13), an XQuery
+function (14), a type (15), a storage engine (16), an index method
+(17), credentials (18) and a sink of events (19), each declared by its
+manifest and bridged onto the trait the in-process point already has
+(`plugin/bridge/`), with payloads of their own (`plugin/payload/`). The
+rule of them all is that a call crosses a pipe and costs a round trip,
+so the database asks a batch at a time and never asks inside a
+comparison, a page read or a commit's critical section. What must be
+answered there is answered by the database itself, from what one call
+gave it before (a codebook, a sort key, a type's byte-comparable key).
+A point whose every use is in such a place, or that the database needs
+before any extension can exist, is a host plug-in's kind instead,
+declared by the node and started before the database opens (D229). The protocol stays version 1. New kinds are new codes and new
+payloads, which a program of version 1 that serves none of them never
+receives. The plug-in SDK (`turborel_plugin`) serves every
+kind, one trait each, batching, errors, cancellation and limits handled
+for the author, with a harness that needs no database.
+
+#### D221. Rankings and quantizers are asked a batch, and collations are sort keys asked a batch
+
+A ranking's WEIGHTS gives the weight of many (term, document) pairs in
+one call, and BOUNDS each term's bound, so a top-k search asks once per
+block of candidates (`bridge/ranking.rs`, D87). A quantizer's one call,
+TRAIN, turns a sample into a product codebook the database keeps,
+encodes with, decodes and measures by itself, so a vector search makes
+no call (`bridge/quantizer.rs`, D95). A collation's KEYS gives the sort
+keys of many strings at once (`bridge/collation.rs`). The database
+compares the keys as bytes (D60), so a sort, a grouping or an index key
+asks once per batch of values and no comparison crosses the pipe. Its
+VERSION is the manifest's, checked as a built-in collation's is. LIKE,
+TRIM, an XQuery collation and a key made character by character need
+the collation's characters, which a sort key does not give, so a
+plug-in collation is refused there with SQLCODE -103
+(`value/collation.rs`).
+
+#### D222. System tables page their rows, XQuery functions are atomic, and credentials and sinks are process-wide
+
+A system table's ROWS is asked as a statement reads it, with the
+statement's user and whether it is the owner, and answers a page of
+BATCH rows and whether more follow; at most 1,000,000 rows are taken,
+and the columns the manifest declares check each value
+(`bridge/system.rs`). An XQuery function is named by its expanded name,
+takes and returns atomic values of the types SQL maps to xs:string,
+xs:integer, xs:decimal, xs:double and xs:boolean, and is one call a
+call (`bridge/xquery.rs`). Credentials make each verifier in place of
+the host's `Credentials`, and at most one extension brings them. A sink
+of events is told each event the database emits, queued (at most 4096,
+the rest counted as dropped) and sent BATCH at a time by a thread of
+its own, so emitting never waits on a pipe (`bridge/process.rs`).
+
+#### D223. A plug-in type is its program's text and binary forms, with a key the database orders by
+
+A type is made of text by INPUT and of its binary form by RECEIVE, each
+a batch, and each value the program makes is three byte strings it
+keeps, a byte-comparable key, the binary form and the text form
+(`bridge/types.rs`). The database does everything else alone. It
+compares, groups and hashes by the key, indexes by it, casts to
+character by the text form and to binary by the binary form, and stores
+the three in a row. So a comparison, a sort or an index probe makes no
+call. A type declared ORDERED may be ordered and range-indexed, one not
+only compared for equality. A plug-in type cannot have arithmetic, a
+cast to or from any type but character and binary, a type modifier,
+fields a query reaches into, or a collation. Its values are those its
+program made, so a program that changes its text form for the same
+value changes no stored value. A snapshot writes its extensions first,
+so the types they bring are known as its tables are read.
+
+#### D224. A plug-in storage engine keeps the rows, and the coordinator keeps the transactions
+
+A table USING an extension's engine (`bridge/engine.rs`) declares
+`Undo::Native`, `Concurrency::Coordinator` and `Persistence::Logged`.
+The coordinator's table locks isolate its transactions, a writer
+exclusive to its end, so the program never sees two at once. A
+transaction's writes stay in the database, in an overlay of the rows it
+wrote whose journal its savepoints return to. The program sees nothing
+until commit, when `validate` reads the rows to change (GET) and
+applies the overlay (APPLY), BATCH rows a call, each call all or none.
+A refusal or a failed call puts back every row read and fails the
+commit. Reads merge the program's rows, a page of BATCH rows a SCAN or
+a GET a row read by id, with the transaction's overlay, and the ids a
+scan gives must ascend. The cost of a row is its share of a call. A
+commit costs one GET of before-images and one APPLY per BATCH rows
+written, a scan one SCAN per BATCH rows, and a point read
+one round trip, a GET of its id.
+
+#### D225. A plug-in engine recovers from the log, and a process stopped fails the transaction writing it
+
+The program keeps the position it is durable through, given at a
+CHECKPOINT taken while no transaction writes the table, and OPEN gives
+it back. Recovery replays the log from there, each change one APPLY of
+a row, which must be idempotent. OPEN of a table the program lacks
+makes it anew from the log. A process of the extension that stopped
+after a failure while a transaction wrote the table fails that
+transaction at commit as a serialization failure (SQLSTATE 40001), to
+run again, so a program restarted with none of the transaction's state
+never commits half of it. A rollback after `validate`, as another
+participant refuses, applies the rows read before. If that fails too,
+the table is damaged (SQLSTATE 38T10), refuses every call, takes no
+checkpoint, and is recovered from the log when the database opens
+again.
+
+#### D226. A plug-in index method answers the searches it declares, and every entry is rechecked
+
+An index USING an extension's method (`bridge/index.rs`) SUPPORTS
+EQUALITY, RANGE (comparisons, prefixes, ranges and order) or NEAREST,
+as its manifest declares. Inserts and deletes, the coordinator's undo
+included, are kept in order and given the program BATCH at a time
+(WRITE), before any read and at a checkpoint. A search pages its
+entries by a cursor the program gives (SEARCH), in key order, which the
+database checks, and filters each by the probe. ROWS gives a key's
+rows. NEAREST gives the nearest entries by the query's metric, an
+approximate search the executor reranks. The index is a list of
+candidates, never the truth. Each row is read again as the reader's
+transaction sees it and kept only if it still has the key, so entries
+of a transaction not committed or rolled back are never answers.
+
+#### D227. A plug-in index is rebuilt when it is not known whole
+
+OPEN gives whether the program has the index and whether it is clean,
+as the program says after a CHECKPOINT with no write since. An index
+not found, or not clean as a crash leaves it, is rebuilt from its table
+as the database opens (`IndexMethod::open` giving none). A WRITE that
+fails damages the index (SQLSTATE 38T10), whose every call fails until
+the database opens again and rebuilds it, and a process restarted
+keeps the index, as its writes not yet given are the database's.
+
+#### D228. Stored data keeps its extension, and an extension's objects are used as built-in ones are
+
+DROP EXTENSION, RESTRICT and CASCADE alike, is refused while a table
+uses its engine, a column its type or its collation, a collation is
+made from its collation, or an index uses its method or names its
+ranking or quantizer in its options (`db/extensions/dependents.rs`).
+CASCADE drops what calls an extension (D168), never what stores by it,
+as the rows are the program's or its values' meaning is. Those go
+first, by DROP TABLE or DROP INDEX. Objects of these kinds are used
+with the privileges their built-in kinds need, and an extension's
+objects are shown by EXTENSION_OBJECTS with their kind's word. A
+system table is read by any user, with the statement's user told the
+program.
+
+#### D229. Every point beneath the database is a host plug-in's kind, declared by the node
+
+The points an extension cannot serve, because the database needs them
+before any extension exists or uses them inside a commit, a page read or
+a lock, are served by host plug-ins. A host plug-in is a program of
+protocol 1, as an extension's is, whose manifest declares host objects
+and nothing else (`HOST <kind> <name> [(<option> = <value>, ...)]`). An
+extension's manifest declares none, and CREATE EXTENSION refuses one
+that does. The node names its host plug-ins in PLUGINS.HOST, written
+`NAME=directory[@digest];...`, a setting the host gives and SQL may not
+set, read as the node starts. `Database::start_host_plugins` starts each
+before the database is opened from its files, and registers each object
+as the host would register its own, through the setter its point has
+(`db/hosted/register.rs`). The directory is the host's own choice, so
+PLUGINS.DIRECTORIES need not hold it. The kinds are ENCODING (20),
+HASH FUNCTION (21), CLOCK (22), LOG STORAGE (23), CATALOG STORAGE (24),
+SPILL (25), FILE SYSTEM (26), SERVED CONNECTIONS (27), LISTENER (28),
+PACKAGE CRYPTO (29), KEYRING (30) and BACKGROUND JOB (31), each argued
+in D246 to D254. REPLICA TRANSPORT (32), JOURNAL (33), STATE TRANSFER
+(34), CONSENSUS (35) and ARCHIVE (36) serve replication and the
+archive, and BUFFER EVICTION (38) the pool's choice of victims (D283).
+A host object is called off every critical section. What a
+commit or a page read needs now is a value the database keeps, which a
+call filled before. The cost of crossing a process is the operator's to
+choose, and no point is refused for it. The points that remain no kind
+are argued in D255.
+
+#### D245. The plug-in SDK is a crate of its own
+
+The SDK a plug-in's program is written with is the crate
+`turborel-plugin` (`plugin/`), apart from the protocol's crate, so a
+program depends on the SDK and the core alone. Its example,
+`plugin/examples/plugin_example`, serves an object of every kind, the
+host kinds among them, and the tests run it as a real process. The
+frames and payloads stay in the core (`plugin/wire.rs`,
+`plugin/payload/`), where the database and the SDK both read them, so
+neither crate depends on the other's internals.
+
+#### D246. A host plug-in's encodings and checksums take every page through the program
+
+A HOST ENCODING is registered by the ID its declaration gives, which the
+files it wrote name, and by its name, which STORAGE.ENCODINGS names. Its
+OVERHEAD is the bytes it may add, and CONFIDENTIAL 1 marks it a cipher.
+A page or record written costs one ENCODE call, and one read costs one
+DECODE call, made as the buffer pool writes and reads with no latch
+held. A page the program cannot decode fails its read, as a damaged page
+does, and the node goes on. An ENCODE that fails stops the node (D249),
+since what was written is then unknown. A HOST HASH FUNCTION gives
+digests of its LENGTH, 1 to 64 bytes, one call each, and is named by
+STORAGE.CHECKSUM. A digest the program cannot give stops the node, and
+the zeros given in its place are checked against nothing kept.
+
+#### D247. A host plug-in's clock pushes its time, and the database reads its own copy
+
+The clock is read in a commit's critical section, so it is never a call
+there. A job of the database asks the program its time every EVERY
+milliseconds, 10 if not written, one call each, and keeps the largest
+answer in a value of its own. CURRENT_TIMESTAMP and every commit read
+that value, so time never goes back, whatever the program answers. A
+clock that stops answering stops the node, and no time goes on from it.
+
+#### D248. A host plug-in keeps the log and the catalog, and a commit is one call for its group
+
+A HOST LOG STORAGE keeps the logs of the database, one for its
+directory, positions being records' numbers from 1. An append is the
+database's own, kept in memory. A sync sends every record appended and
+not yet sent in one APPEND call, the program durable through them once
+it answers, so the commits that wait together are made durable together
+in one call. A sync that fails stops the node, and every later sync of
+that log fails too, so a record the program may have lost is never taken
+as durable. The commit whose sync failed is in doubt (08007) until the
+next opening recovers. Recovery opens the log as the program left it
+and reads it in pages of BATCH records, 256 if not written, one call a
+page. DURABLE 0 declares a log whose syncs survive no crash. A HOST
+CATALOG STORAGE records each image of the catalog in one call, durable
+once answered, and gives the last back as the database opens.
+
+#### D249. A host plug-in's failure stops the node, and the next start recovers
+
+Every call of a host object either answers or stops the node. A process
+that ends, breaks the protocol, sends too much or outlasts
+PLUGINS.CALL_TIMEOUT_MS stops it, and so does an ERROR, except where
+the kind takes one as an answer (a page that does not decode, a file
+not there). Stopping is a flag the database reads as each statement
+begins, so every later statement fails with SQLSTATE 38T11 and none
+writes a page or a record. Whoever asked `Database::on_host_stop` is
+told once, why. `turboreld` then stops serving and exits with the
+reason, and the database is recovered from its log at the next start,
+as after a crash. Going on would let a statement see a page the program
+half wrote, or commit past a log that lost a record.
+
+#### D250. A host plug-in's spill keeps an area's tables and runs in the process the area keeps
+
+A HOST SPILL is where a sort, a hash join or a grouping puts what
+MEMORY.WORK_BYTES does not hold. Each area keeps one process of the
+program for its life, so its tables and runs live in that program
+however it likes, and PLUGINS.PROCESSES bounds the areas at once. A
+run's records are pushed a batch of the area's bytes at a time, one call
+a batch, and read back 1024 a call. A table's inserts are sent a batch
+at a time too, sent before any read of it, and a read of a key is one
+call.
+
+#### D251. A host plug-in's file system holds the files a database is opened from
+
+A HOST FILE SYSTEM serves every file the database opens, creates,
+removes or locks, as the operating system's would, through the file
+manager (D56). `Database::file_system` gives it, if one was started,
+and `Database::open`, restore (D162) and `turboreld` open through it.
+Each operation names its file by path, so any process of the program
+answers it, and a page read or written is one call. A lock is held by
+the program until the database drops it. A write or a sync that fails
+stops the node, as a device that fails a write would leave the database
+unable to say what is durable.
+
+#### D252. A host plug-in's keyring gives keys, and its package cryptography is pinned by its digest
+
+A HOST KEYRING gives a 256-bit key by name, one call each, which the
+encryption of `turborel-aes` keeps for as long as it reads with it.
+`turboreld` reads keys from the first keyring started, else from
+`--keys`. A HOST PACKAGE CRYPTO digests and verifies packages, so it
+cannot be vouched for by a package. PLUGINS.HOST must pin its program's
+SHA-256 digest after its directory, and the host's own cryptography,
+kept as the plug-in starts, checks the program against it before each
+process. A program of another digest does not start. A verification the
+program does not answer is no verification.
+
+#### D253. A host plug-in's jobs run as the database's own
+
+A HOST BACKGROUND JOB is a job of the database labelled
+`turborel-<name>`, shown among its jobs, and run as JOBS.POLICY says.
+Each run is one call, whose answer says how many milliseconds after to
+run again, or to wait to be asked. A run that fails stops the node.
+
+#### D254. A host plug-in serves connections, their bytes relayed, and ends them by id
+
+A HOST LISTENER is where a server takes connections beside SERVER.HOST
+and SERVER.SOCKET. Each connection keeps a process of the program while
+it is open, so PLUGINS.PROCESSES bounds the connections it serves at
+once. ACCEPT waits in the program up to 50 milliseconds for a client and
+is asked again until one comes, so no call outlasts its timeout while no
+client does. The connection's bytes then pass in RELAY calls, each
+carrying what the server wrote and answered by what the client sent,
+one call an exchange while the client talks and one each 50
+milliseconds while it is quiet. No socket passes between processes, and
+TLS runs over the relayed bytes as over TCP. A program may speak any
+transport to its clients this way. A HOST SERVED CONNECTIONS ends and
+cancels connections by id, one call each.
+
+#### D255. The points that are no kind, each for its reason
+
+The optimizer's rules are a kind of their own, kind 37 (D275), as the
+plan they rewrite crosses in a form of its own, apart from the planner's
+types, and statistics cross both ways (D278, D279). A wire protocol (`Protocol`) is
+served by a HOST LISTENER, which may translate any protocol to the
+native one. The catalog (`with_catalog`) is the descriptors in memory,
+whose keeping is CATALOG STORAGE's, and a log given whole (`set_log`)
+is one LOG STORAGE makes. The traits of a kind's objects (an index, a
+table's storage, a spill area or run, a disk file, a catalog store, a
+log) are served with their kind. The policies set by `set_job_policy`,
+`set_transaction_policy`, `set_session_end`, `set_lock_wait`, the cost
+model and the optimizer's parameters are values, which settings give.
+The rest are the database's internals, which nothing outside supplies
+(codecs, seals, the graph and vector indexes' parts, and the contexts a
+call is given). Eviction was one, and is now BUFFER EVICTION (D283),
+served by programming the pool rather than by being called.
 
 #### D137. A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them
 
@@ -7772,6 +8129,374 @@ network` runs it optimized, keeping and comparing its results as it does
 the others' (`xtask/src/bench.rs`, `SERVED`). It measures over loopback
 TCP, a Unix socket and TLS, against servers in its own process on
 runtimes of their own, over in-memory databases.
+
+#### D260. turborel has no registry; packages are files, distributed by the operator
+
+turborel runs no registry, reads no index of one and fetches nothing,
+neither in the server nor in the command-line client. A package is a
+file, `.tbpkg`, and its author hands it to operators by whatever means
+they share files, which turborel does not choose for them. So no
+setting names a registry or pins a package to one, no cache of fetched
+packages is kept, and the client needs no HTTPS for packages. What a
+registry gave is kept in the file itself. Each entry carries its digest
+and the package its optional signature, checked against
+PLUGINS.TRUSTED_KEYS as it is installed and as each process starts
+(D173). An operator who wants a shared store of packages keeps a
+directory of files, which `install` takes whole (D261).
+
+#### D261. Install resolves among the package files given and the packages installed
+
+`turborel extension install FILE...` takes package files, and
+directories whose `.tbpkg` files it takes in the order of their names
+(`cli/src/extension/files.rs`). Each is read and its entries' digests
+checked before anything is chosen. Two files of one name and version
+with other contents are refused. The packages asked for by name are the
+files no other file given requires, each with a caret range of its
+version, or all of them when each is required by another, so a cycle is
+found by resolution. Those asked for by name before are kept. Resolution
+(D171) chooses among the files given and the packages installed, a file
+first where both hold a version, the versions locked kept where they
+still fit. A requirement nothing meets is refused with 38T09, naming it
+and the package file to add, as the operator has no other place to find
+one. A file nothing chosen needs is passed over and told.
+
+#### D262. The lock holds each package file's digest and license, and install reproduces it from files
+
+The lock of the first plug-in directory, `turborel-extensions.lock`,
+format 1, has a line of each package, its name, version, the SHA-256
+digest of its package file, and its range if asked for by name, and a
+line of its license expression and one of its license's file after it
+if it declares them (`plugin/package/lock.rs`). A license line before
+any package is malformed. `lock export FILE` writes it with each
+license as the installed manifest declares it. `install --lock FILE`
+with the package files installs exactly what that lock names and keeps
+it as the lock. A package installed already is checked and kept, a file
+of a locked version whose digest differs is refused with 38T07, and a
+locked package neither installed nor given is refused with 38T09. The
+format stays 1, as an alpha's formats change without migration.
+
+#### D263. `turborel extension new` writes a starter project that builds as written, on the SDK
+
+`new NAME` writes a project into `--dir`, or NAME in lower case, and
+refuses a directory that exists, writing nothing into it
+(`cli/src/extension/starter.rs`). The project is a crate of its own,
+with an empty `[workspace]` so it builds when made inside another
+workspace, depending on `turborel` and `turborel-plugin` of this
+release by exact version, or with `--sdk DIR` on a source tree by path.
+Its program serves one object of each `--kind` asked, scalar if none,
+each written once, in the order of the kinds' codes, from templates of
+`starter/kinds.rs`, and tests on the SDK's `Harness` that WELCOME names
+each kind and, with the scalar, that TWICE doubles 21. Its manifest
+declares `LICENSE 'LicenseRef-Proprietary'` and `LICENSE FILE
+'LICENSE'`, a placeholder its author replaces, and EXECUTABLE the crate
+with the platform's suffix. The README tells how to build, test, pack
+and install it. Every template's project is built and tested once as
+the templates change, as a test may not run cargo.
+
+#### D264. Pack takes the manifest, what it names, and doc/ and data/, and finds the program cargo built
+
+`pack [DIR]` builds the package of a project, the manifest, its
+executables, its upgrade scripts, its LICENSE FILE, and the files under
+`doc/` and `data/`, and nothing else, so sources, build output and keys
+left in the project never ship (`plugin/package/project.rs`). An
+executable is taken at its path in DIR, or else by its file's name under
+`target/release` of DIR, or of CARGO_TARGET_DIR if set, where `cargo
+build --release` puts it. A file the manifest names that is in neither
+place is refused with 38T06, saying to build the program first. With
+`--key` the package is signed. It is written to `--out`, or into DIR as
+its name in lower case, its version and `.tbpkg`.
+
+#### D265. A license is an SPDX expression, checked against the grammar alone
+
+LICENSE is an SPDX license expression (SPDX 2.3 Annex D): identifiers,
+`+`, `LicenseRef-` and `DocumentRef-...:LicenseRef-` references, WITH
+an exception, AND over OR and parentheses, nested at most 32 deep
+(`plugin/package/license.rs`). A list of identifiers separated by
+commas, an operator in a wrong place, or a parenthesis left open is
+refused with 38T06 as the manifest is read. Identifiers are not looked
+up in SPDX's list, which changes after a release, so a new one is taken.
+LICENSE and LICENSE FILE are each optional and written once at most.
+
+#### D266. A license's file is an entry of the package, covered by its digest and signature
+
+LICENSE FILE names a path inside the package, as EXECUTABLE does. Pack
+puts the file in as a document entry and refuses a project that lacks
+it, so its digest is among the package's and the signature covers it as
+it covers the program, and a text changed after packing is refused as
+any file is (38T07).
+
+#### D267. A license is told, never enforced
+
+Pack warns of a manifest that declares no license. Install tells each
+package's license, or that it declares none, and installs it either way.
+No setting refuses a package by its license, as which licenses an
+operator accepts is their policy and not turborel's. The license is
+shown by `turborel extension license NAME`, which writes its file's
+text, by `info`, `\dx+`, the lock export, and the columns LICENSE and
+LICENSE_FILE of INFORMATION_SCHEMA.EXTENSION_PACKAGES.
+
+#### D268. A host's plug-in reads a package's license through `package_license`
+
+`turborel::plugin::package::package_license(dir)` reads the license of
+the package installed in `dir`, its expression, its file's path and
+that file's text, so a plug-in of the host's own, or a host's tool, tells
+licenses as the command line does without parsing the manifest itself.
+It reads the files as installed, which `verify` checks against their
+digests.
+
+#### D270. A replication or archive plug-in is a host plug-in, fail-stop, and its death stops the node
+
+A replica's transport, journal, state transfer and consensus, and a
+backup's archive, may each be served by a host plug-in (D229), of host
+kinds 32 to 36 (`plugin/payload/replication.rs`). PLUGINS.HOST declares
+it, and the node takes its objects with `Database::host_objects` as
+replication starts (`replication/src/plugin/node.rs`), one of each kind
+at most. Each object pins a process of its own for the replica's life,
+so PLUGINS.PROCESSES must be at least the objects a plug-in serves. Any
+failure of a call, an ERROR, a process ended, a call timed out, an answer
+too long or not of the protocol, fails the part stop. The bridge keeps
+the first failure and answers it to every later call, the driver halts,
+and `Driver::on_halt` stops the node (`Database::stop_node`), which
+recovers from its files and journal as it next opens. A replica that
+keeps going on a part that may have half acted could diverge, and one
+stopped cannot. The driver calls its parts under its core lock, as it
+calls the built-in ones. A host call makes no SQL, so it cannot re-enter
+the database, and the call's timeout bounds the time the lock is held.
+Each call costs one CALL and one RESULT.
+
+#### D271. A plug-in transport carries whole frames, taken as the driver turns
+
+A frame sent is one SEND, and a frame is a field of a message of protocol
+1, which the host reads whole or refuses. A program that ends
+mid-message gives no part of one, and the node stops (D270). The frames
+arrived are taken by one RECEIVE at the start of each turn of the driver,
+outside its core lock (`Driver::pump_with`). The members OPEN and
+RECONFIGURE answered are kept, so asking them makes no call. A frame the
+program loses is as a frame the network loses, which the protocol
+recovers.
+
+#### D272. A plug-in journal acknowledges what it names durable, and a plug-in transfer stages chunks it checks
+
+A journal's writes are one call each, and SYNC and FLUSH answer the
+positions made durable since, each once, in the order persisted,
+truncated since or not. The bridge keeps the positions persisted and not
+named. A position named out of that order, or never given, breaks the
+protocol, so no record is acknowledged that the program was not given.
+A program that ends mid-append acknowledges nothing more. A state
+transfer's program makes and reads the frames, and the host keeps the
+export and the staging. Serving, the export is told once and each
+request answered by SERVE, which asks for the pieces it needs, one a
+call, at most 64 an answer. Fetching, the files are copied out in chunks,
+each checked by `chunk_digest` before it is written to the database's
+`transfer/` and made durable. A program that ends mid-chunk stops the
+node, and the replica made again clears `transfer/` and fetches anew, so
+nothing half fetched is installed. A transfer costs a call a request
+served, one a piece, and one a chunk fetched. Staging goes through the
+node's file system, a host plug-in's if one serves it (D251). A real
+process's test kills the example plug-in's SHIPPED mid-chunk. A
+consensus has no example program, as it would need a whole protocol, so
+the simulator's stand-ins cover it through the real bridges.
+
+#### D273. A plug-in consensus steps whole in one call, made again from its journal, VR still built in
+
+A consensus can cross the process boundary because it is a deterministic
+machine: one STEP gives every output of an input in one RESULT, so the
+driver never acts on part of a step. OPEN gives it what the journal held
+and the recovery's nonce, as `Vr::restart` is given them. A step that
+fails answers no outputs, `Consensus::failed` tells the driver, and the
+driver halts before it acts on anything (D270). The consensus made again
+is opened from the journal, which holds all it made durable, so a
+program killed mid-view-change is recovered as a crash of the replica
+is. VR stays built in, and a node serves it unless a plug-in is declared.
+A step costs one call.
+
+#### D274. A plug-in archive is a target reached before any database opens, its errors the call's own
+
+An archive is a backup target's provider of the scheme its object's name
+is, with the calls of kind 8 (D166), an object of its own with stores and
+uploads of its own, apart from a kind 8 target of the same name. The SDK
+holds it as any host object, which need not be `Send` since `serve_on`
+keeps the plug-in on the thread that serves it. It is a host kind because a restore
+runs before any database opens, when no extension is installed, so
+`restore` starts the host plug-ins first and `open_target` asks a host
+archive of the scheme before an extension's. A process that fails stops
+the node, as any host plug-in's does. A program's own ERROR fails only
+the call, as a built-in target out of reach fails the backup, the
+archive round or the restore asked, and leaves nothing a restore takes.
+
+#### D275. An optimizer rule is a plug-in kind over a plan form of its own, format 1
+
+An optimizer rule is kind 37, OPTIMIZER RULE in a manifest, an extension
+kind created with its extension. Its one operation, REWRITE, sends the
+plan in the plan form (`plugin/plan.rs`) and takes back the form
+rewritten, or no change. The planner's own types change with its
+releases, so the form is apart from them, versioned as format 1 with
+protocol 1 (VERSIONING.md). Each relational operator has a code that
+never changes. Scan, filter, project, join of its kind, sort, distinct,
+set operation and VALUES are said whole. Aggregate, limit and the rest
+are kept, shown by a label with their inputs open, so a rule may move
+them and rewrite what is under them but not open them. Expressions are
+a tree of column references, literals as protocol 1 values, functions
+by name, operators by code and casts by type text. What the form cannot
+say is opaque, an id over the columns it reads, which a rule may move
+and name again but not open. Each node carries its output columns with
+their types and the planner's estimates of its rows and width, and a
+scan its table's column statistics, so a rule asks nothing more. The
+whole plan is sent each pass, as a rule may rewrite across nodes, and a
+plan is small beside the rows it reads.
+
+#### D276. A rule runs in the phase its manifest names, in a fixed order, for bounded passes
+
+A rule's PHASE is BOUND, before the built-in rules, or REWRITTEN, after
+them and before the physical planner orders joins, the default. The
+rules of a phase run in the order of their extensions' names, then of
+their manifests, so a plan is rewritten the same way each time. Each
+runs a pass at a time until it answers no change, at most its PASSES (1
+unless written) and OPTIMIZER.MAX_PASSES. Rules run where a statement
+is planned (`db/compiled.rs`), and not where a subquery is planned
+again as it runs, which they see opaque. A prepared statement's plan,
+kept, makes no call. Each pass is one call, a round trip of every
+statement planned, and crossing a process is the operator's choice,
+never a reason to refuse a kind.
+
+#### D277. A rule's plan is checked whole, and a rule that fails is skipped with a warning
+
+The plan of a form a rule gives back is made and checked at once
+(`plugin/plan/back.rs`, `exprs.rs`). Each node has the inputs its
+operator takes, each column reference is one of its input's columns,
+each table is one the catalog holds, each function one its name finds
+alone and taking its arguments, each comparison of comparable types and
+each condition BOOLEAN. Each kept node and opaque expression is one the
+form held, used once, a kept node's inputs keeping their types. The
+plan gives the columns and types it gave. Whether it returns the same
+rows the planner cannot check, so that is the rule's own contract. A
+rule is an optimization, so a rule whose call fails, runs past
+PLUGINS.CALL_TIMEOUT_MS or gives a plan not valid fails nothing. It is
+skipped for the statement, every pass it made undone, EXPLAIN names it
+skipped, and the statement completes with the warning SQLSTATE 01T02
+where a transaction hears its warnings.
+
+#### D278. An engine's or index's statistics are asked once, kept, and asked again when stale
+
+A plug-in engine answers operation 8, STATISTICS, of a table, and an
+index method operation 9 of an index (`plugin/payload/statistics.rs`).
+A table's answer holds its rows and width, and each column's distinct
+values, null share, bounds, equi-depth histogram and repetition
+percentiles, the core's `Statistics` whole. An index's holds its
+entries, distinct keys and the pages a probe reads. Each number may be
+not known. The bridge asks when the planner first asks, through
+`TableStorage::statistics` and the index's `distinct_keys` and
+`probe_pages`, and keeps the answer (`plugin/bridge/known.rs`). It asks
+again at the planner's next question once the rows or entries written
+reach the count the answer named, and when the table is analyzed. An
+index's waiting writes are given before it is asked, as before any
+read. A call that fails, or no answer, is kept as none, so the planner
+takes its defaults as it does today, and no failure of statistics fails
+a statement. No lock is held across the call (R-ERR-4).
+
+#### D279. A plug-in asks the database's statistics by its call's privileges
+
+While a call runs, its program may send STATISTICS of a table, a
+column or an index, and the database answers STATISTICSDONE or ERROR
+(`plugin/wire.rs`), in the same blocks D278 defines. The answer is what
+the newest state keeps, the statistics the planner reads, served by
+what the database registers with its host as it opens
+(`db/extensions/statistics.rs`). A call that runs SQL, a procedure's or
+a table function's, asks by its user's privileges, checked by a query
+of the table that reads no row in the call's transaction. A call of
+another kind runs with the server's rights, as every extension's
+process does (D173), so it may ask of any table. A rule needs to ask
+nothing, as D275's form holds its scans' statistics. Each question is
+one round trip.
+
+#### D280. A manifest declares settings under its extension's name, typed as built-in ones, created, changed and retired with it
+
+A manifest's SETTING item (`parser/manifest/settings.rs`) declares a
+setting named `EXT.NAME`, where EXT is the extension's name, so no two
+extensions and no built-in group can collide. Its TYPE is one of the
+kinds built-in settings have (INTEGER, NUMBER, CHOICE, SWITCH, TEXT,
+IDENTIFIER), with MIN and MAX, CHOICES and DEFAULT checked as the
+manifest is read, and refused with SQLSTATE 38T06 if they do not fit.
+The setting is then a `Definition` of the registry like any other, so
+SET, SHOW, INFORMATION_SCHEMA.SETTINGS, `--set` and `--config` treat it
+as they treat a built-in one. CREATE EXTENSION declares the settings,
+ALTER EXTENSION ... UPDATE declares the new manifest's, and DROP
+EXTENSION retires them (`settings/extension.rs`). A setting declared
+again keeps its place and the database's value, if that is still of its
+kind. A setting retired loses its name and its value, and its place is
+never reused, since places are positions the running code holds. The
+database's values are kept with the definitions, so a database opened
+again finds them once its extensions are made again. A value set before
+its setting is declared, as a configuration file names it, waits until
+the setting is declared and is refused then if it fits none. Settings
+are rows of EXTENSION_OBJECTS, of type SETTING, beside the objects.
+
+#### D281. An extension's settings take its scopes; a host plug-in's are the node's, the host's alone to set
+
+An extension's setting is DATABASE scope unless its SCOPE says SESSION,
+and NODE is the scope of settings never logged. Its scope's rules are
+the built-in ones. A SESSION setting is set by SET, a DATABASE one by
+SET DATABASE, by the owner, and published to every session. A host
+plug-in's settings are NODE scope, refused as anything else, and like
+PLUGINS.HOST they are the host's alone, given by `--set`, `--config` or
+`Database::set_setting`, never by SQL. A host plug-in's settings are
+declared as it starts, before the database opens, so a configuration
+file may name them. They are rows of INFORMATION_SCHEMA.HOST_PLUGINS of
+type SETTING. No setting key is added to the built-in list by this.
+
+#### D282. A plug-in reads the settings a call runs with in a SETTINGS frame before it, and writes none but its own
+
+The program is told the values of the settings its manifest declares,
+and of the built-in ones its READS SETTINGS item names, which are read
+only. A welcome that takes the capability `settings` is sent a SETTINGS
+frame (type 10, the names and then the values) before a CALL whenever
+the values that call runs with differ from those last sent to that
+process (`plugin/settings.rs`). The values go on the same pipe as the
+call, so they cost no round trip and never race it. A call made for a
+statement runs with that statement's session's values (`Calling`, held
+on the thread for the statement), so two sessions sharing a process are
+each told their own. A call made with no statement, as a host plug-in's
+or a job's, runs with the database's values, which the database pushes
+to each pool as it publishes them. A program learns nothing it did not
+declare or read. A program writes its own settings through the SQL it
+runs, as a session would. A SET or SET DATABASE of another extension's
+setting or of a built-in one is refused with SQLCODE -104 before it
+runs, and a host plug-in's settings are refused to SQL in any case.
+
+#### D283. BUFFER EVICTION programs the pool's evictor, never called by the pool, and its death stops the node
+
+The pool chooses a victim on every miss, under its latch, so a call
+there would put a process crossing on every read. A HOST BUFFER EVICTION
+object (code 38) instead programs the pool's own evictor
+(`disk/buffer/policy.rs`). Registered, it is asked for its first policy
+before any pool is made, and the database's slot for evictors makes each
+pool's from then on. A background job sends it the pool's report every
+EVERY milliseconds, one call, and pushes the policy answered into a
+table every evictor reads with atomics alone. An answer of no policy
+keeps the last. The report is batched and sampled. It holds the pages
+evicted since the last report, at most 256, and a window of SAMPLE frames
+moving on each time, with each frame's page, uses and last interval, so
+its size is bounded whatever the pool's. A process that dies, or answers
+a policy that does not decode, stops the node (D249). The pool goes on
+choosing by the last policy pushed until the stop, and nothing it holds
+depends on the program.
+
+#### D284. An eviction policy is weights of one score, read with no lock, with ranges weighed and pages kept
+
+The evictor keeps, per frame, the page it holds, the intervals of its
+last two uses, its count of uses and its weight. An interval passes at
+each page placed in the pool, so age counts misses, not time. A policy
+scores a frame as (age × RECENCY + ONCE if used once − uses × FREQUENCY)
+× weight ÷ 100, and evicts the highest of a sample of frames (SAMPLE, 32
+if 0). HISTORY 1 counts age from the last use, which is least recently
+used. HISTORY 2 counts it from the use before, which is LRU-2, and ONCE
+gives scan resistance as 2Q's first queue does. FREQUENCY weighs uses as
+ARC's frequent list does. Up to 64 ranges give a file's pages a weight,
+100 being neutral. A weight of 0 keeps a page, taken only when no other
+frame in the sample is evictable, so a hint never wedges the pool. A
+policy pushed reweighs each frame once, and a page placed later takes
+its range's weight as it is placed. The score is computed per victim
+from atomics, so the hot path takes no lock and never calls the program.
 
 ## 2. Project layout
 

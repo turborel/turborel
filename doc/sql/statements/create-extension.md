@@ -114,4 +114,4 @@ An extension: no part of SQL loads programs of other parties.
 
 [ALTER EXTENSION](alter-extension.md),
 [DROP EXTENSION](drop-extension.md),
-[Packages and Registries](../../client/04-plugins-packages.md)
+[Packages](../../client/04-plugins-packages.md)

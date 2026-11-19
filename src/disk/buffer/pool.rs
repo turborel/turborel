@@ -116,10 +116,25 @@ impl BufferPool {
     /// # Errors
     ///
     /// SQLCODE -918 if the budget cannot grant them; -910 if `page_size` is 0.
-    pub fn in_budget(budget: &Arc<MemoryBudget>, (bytes, page_size): (usize, usize), what: &str) -> Result<BufferPool> {
+    pub fn in_budget(budget: &Arc<MemoryBudget>, sizes: (usize, usize), what: &str) -> Result<BufferPool> {
+        BufferPool::in_budget_evicting(budget, sizes, what, &|frames| Box::new(Clock::new(frames)))
+    }
+
+    /// \[DESIGN\] As `in_budget`, evicting by what `eviction` makes for
+    /// its frames (RULES.md D283).
+    ///
+    /// # Errors
+    ///
+    /// As `in_budget`.
+    pub fn in_budget_evicting(
+        budget: &Arc<MemoryBudget>,
+        (bytes, page_size): (usize, usize),
+        what: &str,
+        eviction: &dyn Fn(usize) -> Box<dyn Eviction>,
+    ) -> Result<BufferPool> {
         let frames = bytes.checked_div(page_size).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] a page has at least one byte"))?.max(1);
         let reservation = budget.reserve(frames.saturating_mul(page_size), what)?;
-        let pool = BufferPool::new(frames, Box::new(Clock::new(frames)))?;
+        let pool = BufferPool::new(frames, eviction(frames))?;
         Ok(BufferPool { _reservation: Some(reservation), ..pool })
     }
 

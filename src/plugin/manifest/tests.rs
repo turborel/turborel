@@ -91,3 +91,79 @@ fn paths_stay_inside_the_directory() {
         assert!(inside(bad, "EXECUTABLE").is_err(), "{bad}");
     }
 }
+
+/// Verifies: [EXTENSION] RULES.md D280, D281: a manifest's settings read
+/// back, each a setting of the database's under its extension's name, of
+/// its type, range, default and scope, DATABASE if it writes none, NODE of
+/// a host plug-in's; and READS SETTINGS names built-in settings.
+#[test]
+fn a_manifests_settings_read_back() {
+    use crate::settings::Kind;
+    let m = of("SETTING DEPTH TYPE INTEGER MIN 1 MAX 10 DEFAULT 3 SCOPE SESSION DESCRIPTION 'How deep.';
+        SETTING MODE TYPE CHOICE CHOICES (fast, safe); SETTING RATIO TYPE NUMBER MAX 1.5; SETTING ON_OFF TYPE SWITCH;
+        SETTING LABEL TYPE TEXT MAX 8 DEFAULT 'a'; SETTING WHO TYPE IDENTIFIER DEFAULT 'X' SCOPE NODE;
+        READS SETTINGS ('session.time_zone', 'STATEMENT.TIMEOUT_MS');")
+    .unwrap();
+    assert_eq!(m.reads_settings, ["SESSION.TIME_ZONE", "STATEMENT.TIMEOUT_MS"]);
+    let defined: Vec<crate::settings::Definition> = m.settings.iter().map(|d| d.definition(&m.name, false).unwrap()).collect();
+    let depth = &defined[0];
+    assert_eq!(
+        (depth.name.as_str(), &depth.kind, depth.per_session, depth.node),
+        ("M.DEPTH", &Kind::Integer { min: 1, max: 10 }, true, false)
+    );
+    assert_eq!((depth.default.to_string(), depth.doc.as_str()), ("3".to_owned(), "How deep."));
+    assert_eq!((defined[1].kind.described(), defined[1].default.to_string()), ("ONE OF FAST, SAFE".to_owned(), "FAST".to_owned()));
+    assert_eq!((defined[1].per_session, defined[1].node), (false, false));
+    assert_eq!((defined[2].default.as_f64(), defined[3].default.to_string()), (Some(0.0_f64), "OFF".to_owned()));
+    assert_eq!((&defined[4].kind, defined[5].node), (&Kind::Text { max: 8 }, true));
+    assert!(m.settings[0].text.starts_with("SETTING DEPTH TYPE INTEGER"), "{}", m.settings[0].text);
+    let host = Manifest::parse("NAME h; PROTOCOL 1; EXECUTABLE 'h'; HOST CLOCK C; SETTING EVERY TYPE INTEGER;").unwrap();
+    assert!(host.settings[0].definition(&host.name, true).unwrap().node);
+}
+
+/// Verifies: [EXTENSION] RULES.md D280, D281: a setting whose clauses do
+/// not fit its type, whose default is not one of its values, declared
+/// twice, a host plug-in's not the node's, or a read setting no built-in
+/// one, is refused (SQLSTATE 38T06); a type or scope not of the grammar
+/// is a syntax error.
+#[test]
+fn wrong_settings_are_refused() {
+    for bad in [
+        "SETTING A TYPE INTEGER MIN 5 MAX 1;",
+        "SETTING A TYPE NUMBER MIN 2 MAX 1;",
+        "SETTING A TYPE INTEGER MIN 0.5;",
+        "SETTING A TYPE SWITCH MIN 1;",
+        "SETTING A TYPE TEXT MIN 1;",
+        "SETTING A TYPE CHOICE;",
+        "SETTING A TYPE INTEGER CHOICES (X);",
+        "SETTING A TYPE CHOICE CHOICES (X) DEFAULT 'Y';",
+        "SETTING A TYPE INTEGER MAX 3 DEFAULT 4;",
+        "SETTING A TYPE IDENTIFIER;",
+        "SETTING A TYPE TEXT; SETTING a TYPE TEXT;",
+        "READS SETTINGS ('NO.SUCH');",
+        "READS SETTINGS ('SESSION.TIME_ZONE', 'session.time_zone');",
+    ] {
+        assert_eq!(state_of(of(bad)), "38T06", "{bad}");
+    }
+    let host = Manifest::parse("NAME h; PROTOCOL 1; EXECUTABLE 'h'; HOST CLOCK C; SETTING E TYPE INTEGER SCOPE SESSION;");
+    assert_eq!(state_of(host), "38T06");
+    for bad in ["SETTING A TYPE COLOUR;", "SETTING A TYPE INTEGER SCOPE WORLD;", "SETTING A TYPE INTEGER DEFAULT TRUE;"] {
+        assert_eq!(of(bad).err().map(|e| e.code), Some(Code::Syntax), "{bad}");
+    }
+}
+
+/// Verifies: [EXTENSION] RULES.md D275, D276: an optimizer rule is kind
+/// 37, its PHASE BOUND or REWRITTEN and its PASSES a count above 0, each
+/// unless written none; a phase of another name, or no passes, is
+/// refused.
+#[test]
+fn an_optimizer_rule_names_its_phase_and_passes() {
+    let m = of("OPTIMIZER RULE R PHASE BOUND PASSES 3; OPTIMIZER RULE S;").unwrap();
+    assert_eq!(m.kinds(), [37]);
+    let (r, s) = (&m.objects[0], &m.objects[1]);
+    assert_eq!((r.kind, r.phase.as_deref(), r.passes), (ObjectKind::Rule, Some(BOUND), Some(3)));
+    assert_eq!((s.phase.as_deref(), s.passes), (None, None));
+    assert_eq!(state_of(of("OPTIMIZER RULE R PHASE LATE;")), "38T06");
+    assert_eq!(state_of(of("OPTIMIZER RULE R PASSES 0;")), "38T06");
+    assert_eq!(of("OPTIMIZER RULE R(INTEGER);").err().map(|e| e.code), Some(Code::Syntax));
+}

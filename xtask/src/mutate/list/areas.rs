@@ -136,14 +136,31 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xml::XML,
     ];
     // The transport's last, as `last` holds no more.
-    json.into_iter().chain(xml).chain(last()).chain([&super::transport::TRANSPORT[..]])
+    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain([&super::transport::TRANSPORT[..]])
+}
+
+/// External plug-ins' areas, in order: the plug-ins', the packages', the
+/// package files', the kinds', the SDK's, host plug-ins', the
+/// replication and archive host kinds', plug-in settings' and buffer
+/// eviction's, and the planner's.
+fn plugins() -> [&'static [Mutation]; 9] {
+    [
+        &super::plugins::PLUGINS,
+        &super::plugins::PACKAGES,
+        &super::plugins::files::FILES,
+        &super::plugins::kinds::PLUGIN_KINDS,
+        &super::plugins::sdk::SDK,
+        &super::plugins::hosted::HOSTED,
+        &super::plugins::replication::REPLICATION_PLUGINS,
+        &super::plugins::settings::SETTINGS_PLUGINS,
+        &super::plugins::planner::PLANNER,
+    ]
 }
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
-/// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, external plug-ins' and
-/// packages', partitioning's, UUID's, the command-line client's, replication's, the server's, the
-/// native protocol's and the client library's.
-fn last() -> [&'static [Mutation]; 48] {
+/// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, simple features', partitioning's, UUID's,
+/// the command-line client's, replication's, the server's, the native protocol's and the client library's.
+fn last() -> [&'static [Mutation]; 46] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -179,8 +196,6 @@ fn last() -> [&'static [Mutation]; 48] {
         &super::graph_table::statistics::GRAPH_STATISTICS,
         &super::graph_iterations::GRAPH_ITERATIONS,
         &super::check_rebind::CHECK_REBIND,
-        &super::plugins::PLUGINS,
-        &super::plugins::PACKAGES,
         &super::simple_features::SIMPLE_FEATURES,
         &super::partitioning::PARTITIONING,
         &uuid::UUID,

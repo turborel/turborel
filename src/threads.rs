@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub(crate) use morsels::morsels;
-pub(crate) use pipes::pipe_reader;
+pub(crate) use pipes::{pipe_reader, plugin_sender};
 pub(crate) use turn::{Hold, Turn, Turned};
 use worker::Worker;
 

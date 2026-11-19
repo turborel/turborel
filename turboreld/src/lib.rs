@@ -23,15 +23,14 @@
 //! are trusted on this machine.
 
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::Poll;
 
 use turborel::db::Database;
-use turborel::files::Noted;
 use turborel::settings::Effect;
 use turborel::value::{Decimal, Value};
-use turborel_aes::{AesGcm, ChaCha20Poly1305, HmacSha256, KEY_BYTES, KeyDirectory, Keyring, Sha256, Sha512};
+use turborel_aes::{AesGcm, ChaCha20Poly1305, HmacSha256, Sha256, Sha512};
 use turborel_lz4::Lz4;
 
 use tokio::runtime::Runtime;
@@ -344,7 +343,15 @@ pub fn run(
             mechanisms.push(Arc::new(Trust));
         }
         mechanisms.into_iter().try_for_each(|m| server.add_authenticator(m)).map_err(|e| e.to_string())?;
-        runtime.block_on(serve(server, ready, (stop, hurry), &retaken))
+        let halted = hosted::halted(&db);
+        let stop = async move {
+            tokio::select! {
+                () = stop => {}
+                () = halted => {}
+            }
+        };
+        runtime.block_on(serve(server, ready, (stop, hurry), &retaken))?;
+        hosted::why_halted(&db).map_or(Ok(()), Err)
     })
 }
 
@@ -376,7 +383,7 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
         hangups(runtime, sink.reopener(), Arc::clone(retaken))?;
     }
     db.set_diagnostics(Box::new(sink)).map_err(|e| e.to_string())?;
-    register(&db, config)?;
+    let host_keys = register(&db, config)?;
     // The server's settings declared before any is given: a replica's are
     // read before the database is opened (RULES.md D57).
     settings::declare(&db).map_err(|e| e.to_string())?;
@@ -397,6 +404,7 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
         ));
     }
     early.iter().try_for_each(set)?;
+    hosted::start(&db, config, &host_keys, false)?;
     if replication::replicated(&db) {
         presented.iter().try_for_each(set)?;
     }
@@ -420,12 +428,9 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
 /// LZ4; AES-256-GCM and ChaCha20-Poly1305 with the keys of `--keys`;
 /// SHA-256 and SHA-512; and HMAC-SHA-256 if `--checksum-key` names its key.
 /// The geometry types and their functions are built in.
-pub(crate) fn register(db: &Database, config: &Config) -> Result<(), String> {
+pub(crate) fn register(db: &Database, config: &Config) -> Result<hosted::HostKeys, String> {
     db.register_encoding(Box::new(Lz4)).map_err(refused("LZ4"))?;
-    let keyring: Arc<dyn Keyring> = match &config.keys {
-        Some(dir) => Arc::new(NotedKeys { keys: KeyDirectory::new(dir), noted: noted(db, dir, false)? }),
-        None => Arc::new(NoKeys),
-    };
+    let (keyring, host_keys) = hosted::keyring(db, config)?;
     db.register_encoding(Box::new(AesGcm::new(Arc::clone(&keyring)))).map_err(refused("AES-256-GCM"))?;
     db.register_encoding(Box::new(ChaCha20Poly1305::new(Arc::clone(&keyring)))).map_err(refused("ChaCha20-Poly1305"))?;
     db.register_hash_function(Box::new(Sha256)).map_err(refused("SHA-256"))?;
@@ -435,48 +440,12 @@ pub(crate) fn register(db: &Database, config: &Config) -> Result<(), String> {
         let keyed = HmacSha256::new(Arc::clone(&keyring), name).map_err(refused("HMAC-SHA-256"))?;
         db.register_hash_function(Box::new(keyed)).map_err(refused("HMAC-SHA-256"))?;
     }
-    Ok(())
+    Ok(host_keys)
 }
 
 /// What says a plug-in, `what`, could not be registered.
 fn refused(what: &'static str) -> impl Fn(turborel::error::SqlError) -> String {
     move |e| format!("cannot register {what}: {e}")
-}
-
-/// The file or directory at `path`, the server's, shown among `db`'s files
-/// (RULES.md D56), held open now if `open`.
-fn noted(db: &Database, path: &Path, open: bool) -> Result<Noted, String> {
-    db.note_file(path, open).map_err(|e| format!("cannot note {}: {e}", path.display()))
-}
-
-/// The keyring of `--keys`, its directory shown among the database's files,
-/// each key read counted.
-struct NotedKeys {
-    keys: KeyDirectory,
-    noted: Noted,
-}
-
-impl Keyring for NotedKeys {
-    fn name(&self) -> &'static str {
-        self.keys.name()
-    }
-    fn key(&self, name: &str) -> turborel::error::Result<Option<[u8; KEY_BYTES]>> {
-        self.noted.read();
-        self.keys.key(name)
-    }
-}
-
-/// The keyring of a server given no `--keys`: it has none, and says how
-/// to give them.
-struct NoKeys;
-
-impl Keyring for NoKeys {
-    fn name(&self) -> &'static str {
-        "none: give turboreld --keys DIR"
-    }
-    fn key(&self, _: &str) -> turborel::error::Result<Option<[u8; KEY_BYTES]>> {
-        Ok(None)
-    }
 }
 
 /// When a change of the setting `name` of `db` takes effect, if it is one.
@@ -584,12 +553,14 @@ pub async fn signalled() {
 
 mod backup;
 pub mod config_file;
+mod hosted;
 mod opening;
 mod rekey;
 mod reseal;
 mod users;
 
 pub use self::backup::{BackupCommand, instant, parse_backup, run_backup};
+use hosted::noted;
 use opening::{opened, settled};
 pub use rekey::run_rekey;
 pub use reseal::{parse_reseal, run_reseal};

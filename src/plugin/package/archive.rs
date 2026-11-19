@@ -20,9 +20,9 @@ use crate::error::Result;
 use crate::plugin::MANIFEST_FILE;
 use crate::plugin::manifest::{Manifest, inside};
 
+use super::FORMAT;
 use super::crypto::{Digest, PackageCrypto, PublicKey, Signature, Signer};
 use super::errors::{changed, malformed};
-use super::{DIGESTS_FILE, FORMAT, STATE_FILE};
 
 /// What a package file begins with.
 pub const MAGIC: &[u8; 6] = b"TBPKG\0";
@@ -245,84 +245,9 @@ pub fn signed_message(manifest: &[u8], entries: &[(&str, &Digest)]) -> Vec<u8> {
     message
 }
 
-/// The package of the plug-in in `directory`: every file under it, the
-/// manifest, the executables and scripts it names and those under `doc/`
-/// told apart; the files an install writes passed over.
-///
-/// # Errors
-///
-/// The manifest's errors; SQLSTATE 38T06 of an executable or script it
-/// names that is not there; the errors of reading the files.
-pub fn pack(directory: &Path, crypto: &dyn PackageCrypto) -> Result<Package> {
-    let manifest = Manifest::parse(&read_text(&directory.join(MANIFEST_FILE))?)?;
-    super::semver::Version::parse(&manifest.version)?;
-    let mut paths = Vec::new();
-    files_under(directory, "", &mut paths)?;
-    paths.retain(|p| p != DIGESTS_FILE && p != STATE_FILE);
-    paths.sort();
-    let executables: Vec<&str> = manifest.executables.iter().map(|(_, p)| p.trim_start_matches("./")).collect();
-    let scripts: Vec<&str> = manifest.upgrades.iter().map(|(_, s)| s.trim_start_matches("./")).collect();
-    for named in executables.iter().chain(&scripts) {
-        if !paths.iter().any(|p| p == named) {
-            return Err(crate::plugin::errors::invalid_manifest(&format!("{named}, which it names, is not in {}", directory.display())));
-        }
-    }
-    let mut entries = Vec::new();
-    for path in paths {
-        let kind = kind_of(&path, &executables, &scripts);
-        let content = std::fs::read(directory.join(&path)).map_err(|e| read_error(&directory.join(&path), &e))?;
-        entries.push(Entry { digest: crypto.sha256(&content), path, kind, content });
-    }
-    entries.sort_by_key(|e| e.kind != EntryKind::Manifest);
-    Ok(Package { entries, signature: None })
-}
-
-/// The kind of the entry `path`, of a manifest naming `executables` and
-/// `scripts`.
-fn kind_of(path: &str, executables: &[&str], scripts: &[&str]) -> EntryKind {
-    if path == MANIFEST_FILE {
-        EntryKind::Manifest
-    } else if executables.contains(&path) {
-        EntryKind::Executable
-    } else if scripts.contains(&path) {
-        EntryKind::Upgrade
-    } else if path.starts_with("doc/") {
-        EntryKind::Doc
-    } else {
-        EntryKind::Data
-    }
-}
-
-/// The text of `file`.
-fn read_text(file: &Path) -> Result<String> {
-    std::fs::read_to_string(file).map_err(|e| read_error(file, &e))
-}
-
 /// The error of `file` that cannot be read.
 pub fn read_error(file: &Path, e: &std::io::Error) -> crate::error::SqlError {
     crate::error::SqlError::new(crate::error::Code::Io, format!("[EXTENSION] {} cannot be read: {e}", file.display()))
-}
-
-/// Each file under `directory`, by its path from the package's root,
-/// `prefix` the path of `directory`; names beginning `.` passed over.
-fn files_under(directory: &Path, prefix: &str, paths: &mut Vec<String>) -> Result<()> {
-    let listed = std::fs::read_dir(directory).map_err(|e| read_error(directory, &e))?;
-    for entry in listed {
-        let entry = entry.map_err(|e| read_error(directory, &e))?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
-            continue;
-        }
-        let path = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
-        let kind = entry.file_type().map_err(|e| read_error(&entry.path(), &e))?;
-        if kind.is_dir() {
-            files_under(&entry.path(), &path, paths)?;
-        } else {
-            check_path(&path)?;
-            paths.push(path);
-        }
-    }
-    Ok(())
 }
 
 /// Where the entry `path` goes under `root`.

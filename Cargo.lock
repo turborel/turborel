@@ -763,6 +763,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "turborel-plugin"
+version = "0.0.0"
+dependencies = [
+ "turborel",
+]
+
+[[package]]
 name = "turborel-protocol"
 version = "0.0.0"
 dependencies = [

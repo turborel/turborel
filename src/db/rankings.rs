@@ -6,7 +6,7 @@
 //! state, so a full-text index method attached before a ranking is
 //! registered sees it at the next CREATE or ALTER INDEX.
 
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, PoisonError, RwLock, Weak};
 
 use super::Database;
 use crate::diagnostics::Extension;
@@ -14,21 +14,37 @@ use crate::error::{Code, Result, SqlError};
 use crate::fulltext::rank::{Ranking, Rankings, built_in, named};
 use crate::lexer::authorization_identifier;
 
-/// The rankings registered, beside the built-in.
+/// The rankings registered, beside the built-in; and \[EXTENSION\] those
+/// of extensions, held by the states that hold them (RULES.md D221).
 #[derive(Clone, Default)]
-pub(crate) struct SharedRankings(Arc<RwLock<Vec<Arc<dyn Ranking>>>>);
+pub(crate) struct SharedRankings(Arc<RwLock<Vec<Arc<dyn Ranking>>>>, Arc<RwLock<Vec<Weak<dyn Ranking>>>>);
 
 impl SharedRankings {
     /// Every ranking, the built-in first, as they are registered when it is
     /// called: what a full-text index method reads (`with_rankings`).
     pub(crate) fn closure(&self) -> Rankings {
-        let shared = Arc::clone(&self.0);
+        let (shared, extension) = (Arc::clone(&self.0), Arc::clone(&self.1));
         let builtin = built_in();
         Arc::new(move || {
             let mut all = builtin();
             all.extend(shared.read().unwrap_or_else(PoisonError::into_inner).iter().cloned());
+            all.extend(extension.read().unwrap_or_else(PoisonError::into_inner).iter().rev().filter_map(Weak::upgrade));
             all
         })
+    }
+
+    /// \[EXTENSION\] Adds `ranking`, an extension's, held weakly.
+    pub(crate) fn add_extension(&self, ranking: &Arc<dyn Ranking>) {
+        let mut all = self.1.write().unwrap_or_else(PoisonError::into_inner);
+        all.retain(|r| r.strong_count() > 0);
+        all.push(Arc::downgrade(ranking));
+    }
+
+    /// Whether a ranking of `name` is built in or registered, not of an
+    /// extension.
+    pub(crate) fn registered(&self, name: &str) -> bool {
+        let builtin = built_in()().into_iter().any(|r| r.name().eq_ignore_ascii_case(name));
+        builtin || self.0.read().unwrap_or_else(PoisonError::into_inner).iter().any(|r| r.name().eq_ignore_ascii_case(name))
     }
 
     /// The ranking named `name`, in any case.

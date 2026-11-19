@@ -194,7 +194,7 @@ pub(crate) fn given(db: &Database, config: &Config, entries: Vec<Entry>) -> Resu
     let mut given = Vec::new();
     for Entry { name, value, at } in entries {
         let from = format!("{}:{}:{}", path.display(), at.line, at.column);
-        if !known.iter().any(|k| k.eq_ignore_ascii_case(&name)) {
+        if !known.iter().any(|k| k.eq_ignore_ascii_case(&name)) && !of_a_plugin(&name, &known) {
             return Err(format!("{from}: no setting is named {name}"));
         }
         if !set.iter().any(|(n, _)| n.trim().eq_ignore_ascii_case(&name)) {
@@ -203,6 +203,15 @@ pub(crate) fn given(db: &Database, config: &Config, entries: Vec<Entry>) -> Resu
     }
     given.extend(set.iter().map(|(name, value)| Given { name: name.clone(), value: value.clone(), from: None }));
     Ok(given)
+}
+
+/// Whether `name` may be a setting a plug-in's manifest declares, which
+/// is declared only as its host plug-in starts or its extension is opened
+/// (RULES.md D281): under a group no setting declared now has. Setting it
+/// tells if it is none.
+fn of_a_plugin(name: &str, known: &[String]) -> bool {
+    let group = |n: &str| n.split_once('.').map(|(g, _)| g.trim().to_ascii_uppercase());
+    group(name).is_some_and(|g| !known.iter().any(|k| group(k).as_deref() == Some(g.as_str())))
 }
 
 /// The settings and headers a file has given so far, and the header now.

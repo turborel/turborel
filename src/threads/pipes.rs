@@ -29,3 +29,15 @@ pub(crate) fn pipe_reader(name: &str, read: impl FnOnce() + Send + 'static) -> R
         .map(drop)
         .map_err(|e| SqlError::new(Code::Io, format!("[DESIGN] the thread {label} could not be started: {e}")))
 }
+
+/// \[DESIGN\] Starts the thread `name`, after `PREFIX`, running `send`:
+/// a plug-in's sink of events, which hands them to its program a batch
+/// at a time so no event waits on a process (RULES.md D222). It ends when
+/// its sink is dropped, and is not joined, as a pipe reader is not.
+///
+/// # Errors
+///
+/// As `pipe_reader`.
+pub(crate) fn plugin_sender(name: &str, send: impl FnOnce() + Send + 'static) -> Result<()> {
+    pipe_reader(&format!("{name}-events"), send)
+}

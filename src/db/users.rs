@@ -338,9 +338,11 @@ impl Database {
         self.tell_plugin(credentials.configurable())
     }
 
-    /// What makes verifiers, if it was set.
+    /// What makes verifiers, if it was set: \[EXTENSION\] an extension's,
+    /// while one brings it, over the one set (RULES.md D222).
     pub(super) fn credentials(&self) -> Option<Arc<dyn Credentials>> {
-        self.credentials_slot().read().unwrap_or_else(PoisonError::into_inner).clone()
+        let theirs = self.snapshot().ok().and_then(|st| st.extension_credentials());
+        theirs.or_else(|| self.credentials_slot().read().unwrap_or_else(PoisonError::into_inner).clone())
     }
 }
 

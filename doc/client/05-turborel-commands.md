@@ -265,7 +265,7 @@ any session of the user may see.
 | `\dn` | schemas |
 | `\du` | users, and the roles granted |
 | `\dT`, `\dD` | user-defined types, domains |
-| `\dx` | the extension modules the server runs |
+| `\dx` | the extension modules the server runs, and with `+` their processes, calls and the license of each package |
 | `\dG` | property graphs |
 | `\dp` | privileges on tables |
 | `\l` | the catalog |
@@ -505,6 +505,7 @@ Schema, and what it changes goes through the operator's statements.
 | `ping` | whether the server answers, and how soon |
 | `status` | the server's state, with its workers, the statements waiting and its connections |
 | `processlist` | the connections the server holds |
+| `host-plugins` | the host plug-ins the node started, each object with its license, processes and calls, and why the node stopped |
 | `kill ID` | ends the connection ID, END CONNECTION |
 | `cancel ID` | cancels the statement the connection ID runs, CANCEL CONNECTION |
 | `variables PATTERN` | the settings whose names match PATTERN, or every one |

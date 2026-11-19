@@ -268,6 +268,9 @@ fn expr_vector(
 /// function that gives many rows' values at once: its arguments evaluated
 /// a row at a time, then the function called once.
 fn batched((e, inputs): (&Expr, &[usize]), (batch, given): (&Batch, &[usize]), runner: &Runner) -> Option<Result<Vec<Value>>> {
+    if let Expr::SortKey(x, collation) = e {
+        return keys_batched((x, inputs), (batch, given), (collation, runner));
+    }
     let Expr::Call(function, args) = e else { return None };
     if !function.0.batches() {
         return None;
@@ -282,6 +285,21 @@ fn batched((e, inputs): (&Expr, &[usize]), (batch, given): (&Batch, &[usize]), r
         }
     }
     Some(function.0.call_many_in(&rows, runner))
+}
+
+/// The sort keys of `x` of the rows `given` of `batch`, if `collation`
+/// makes many at once, as a plug-in's does in one call (RULES.md D221).
+fn keys_batched(
+    (x, inputs): (&Expr, &[usize]),
+    (batch, given): (&Batch, &[usize]),
+    (collation, runner): (&crate::value::collation::CollationRef, &Runner),
+) -> Option<Result<Vec<Value>>> {
+    if !collation.collation.batches() {
+        return None;
+    }
+    let mut scratch = Vec::new();
+    let values: Result<Vec<Value>> = given.iter().map(|&r| evaluated_of((x, inputs), (batch, r), (&mut scratch, runner))).collect();
+    Some(values.and_then(|v| collation.sort_keys(&v)))
 }
 
 /// The value of `e`, of a row of the values at `inputs` of row `r` of

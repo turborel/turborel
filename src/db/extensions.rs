@@ -11,9 +11,14 @@
 //! is made, finding the package, checking it and creating what it
 //! requires, is `session.rs`'s; the views of extensions are in `system/extensions.rs`.
 
+mod dependents;
 mod host;
 mod objects;
 mod session;
+mod settings;
+mod statistics;
+
+pub(super) use settings::calling;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -79,6 +84,7 @@ impl State {
         }
         let installed = Arc::new(self.installed(manifest, read)?);
         self.register_extension(&installed)?;
+        self.declare_manifest_settings(&installed.manifest, &installed.pool, false)?;
         self.put_extension(&installed, read, !read.dependency);
         Ok(Defined { locks, ..Defined::default() })
     }
@@ -111,6 +117,7 @@ impl State {
         let explicit = self.catalog.extensions().iter().find(|e| e.name == d.name).is_none_or(|e| e.explicit);
         let installed = Arc::new(self.installed(manifest, read)?);
         self.register_extension(&installed)?;
+        self.declare_manifest_settings(&installed.manifest, &installed.pool, false)?;
         self.put_extension(&installed, read, explicit);
         Ok(Defined::default())
     }
@@ -150,7 +157,6 @@ impl State {
             manifest: m.text.clone(),
             signer: read.signer.clone(),
             digest: read.digest.clone(),
-            registry: read.registry.clone(),
             explicit,
         };
         let mut all: Vec<ExtensionDesc> = self.catalog.extensions().iter().filter(|e| e.name != m.name).cloned().collect();
@@ -179,6 +185,7 @@ impl State {
     pub(super) fn drop_extension(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
         let name = &qn.ident;
         let installed = self.extensions.get(name).cloned().ok_or_else(|| refused(format!("there is no extension {name}")))?;
+        self.unneeded(&installed)?;
         let requiring = self.requiring(name);
         let mut dropped = Dropped::default();
         if let (Some(first), false) = (requiring.first(), cascade) {
@@ -216,6 +223,7 @@ impl State {
     /// `installed` gone: its objects, its descriptor and its place.
     fn forget_extension(&mut self, installed: &Installed) {
         self.unregister_extension(installed);
+        self.retire_manifest_settings(&installed.manifest.name);
         let name = &installed.manifest.name;
         let kept: Vec<ExtensionDesc> = self.catalog.extensions().iter().filter(|e| e.name != *name).cloned().collect();
         let mut catalog = self.catalog.duplicate();
@@ -241,11 +249,11 @@ impl State {
                 directory: d.directory.clone(),
                 signer: d.signer.clone(),
                 digest: d.digest.clone(),
-                registry: d.registry.clone(),
                 dependency: !d.explicit,
             };
             let installed = Arc::new(self.installed(Manifest::parse(&d.manifest)?, &read)?);
             self.register_extension(&installed)?;
+            self.declare_manifest_settings(&installed.manifest, &installed.pool, false)?;
             map.insert(d.name.clone(), installed);
             self.extensions = Arc::new(map.clone());
         }

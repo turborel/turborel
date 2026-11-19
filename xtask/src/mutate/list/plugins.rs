@@ -2,9 +2,18 @@
 //! a program's errors, the directories and the owner that bound what runs,
 //! batching, determinism, the limit on a message, EXPLAIN's plug-in calls
 //! and DROP RESTRICT, then the packages' versions, digests, signatures,
-//! registries, resolution and lock.
+//! resolution and lock. The plug-in kinds, the SDK, and the package files,
+//! starter and licenses of `turborel extension` have files of their own.
 
 use super::{Mutation, Package};
+
+pub(super) mod files;
+pub(super) mod hosted;
+pub(super) mod kinds;
+pub(super) mod planner;
+pub(super) mod replication;
+pub(super) mod sdk;
+pub(super) mod settings;
 
 /// The mutations of extensions and their processes.
 pub const PLUGINS: [Mutation; 8] = [
@@ -90,8 +99,8 @@ pub const PLUGINS: [Mutation; 8] = [
     },
 ];
 
-/// The mutations of packages and registries.
-pub const PACKAGES: [Mutation; 12] = [
+/// The mutations of packages, their resolution and lock.
+pub const PACKAGES: [Mutation; 9] = [
     Mutation {
         name: "semver-caret-ceiling",
         package: Package::Core,
@@ -153,26 +162,6 @@ pub const PACKAGES: [Mutation; 12] = [
         unit: &["plugin::package::tests::installing_checks_digests_and_signatures"],
     },
     Mutation {
-        name: "index-expiry-off-by-one",
-        package: Package::Core,
-        breaks: "a registry's index is trusted at the instant it expires",
-        file: "src/plugin/package/index.rs",
-        original: "if index.expires <= now {",
-        replacement: "if index.expires < now {",
-        integration: &[],
-        unit: &["plugin::package::tests::a_registry_index_is_signed_and_expires"],
-    },
-    Mutation {
-        name: "index-untrusted-key-accepted",
-        package: Package::Core,
-        breaks: "a registry's index signed by a key not trusted is read",
-        file: "src/plugin/package/index.rs",
-        original: "if !trust.trusts(&key) {",
-        replacement: "if false {",
-        integration: &[],
-        unit: &["plugin::package::tests::a_registry_index_is_signed_and_expires"],
-    },
-    Mutation {
         name: "resolve-no-backtracking",
         package: Package::Core,
         breaks: "resolution gives up at its first failed choice",
@@ -197,19 +186,9 @@ pub const PACKAGES: [Mutation; 12] = [
         package: Package::Core,
         breaks: "a lock forgets the range an explicit package was asked by",
         file: "src/plugin/package/lock.rs",
-        original: "|r| format!(\"explicit {r}\")",
-        replacement: "|_| \"explicit *\".to_owned()",
+        original: "|r| format!(\"{EXPLICIT} {r}\")",
+        replacement: "|_| format!(\"{EXPLICIT} *\")",
         integration: &[],
         unit: &["plugin::package::tests::a_lock_round_trips"],
-    },
-    Mutation {
-        name: "registry-pin-ignored",
-        package: Package::Core,
-        breaks: "a package pinned to one registry is taken from another",
-        file: "src/plugin/package/index.rs",
-        original: "if pin.is_some_and(|p| p != bare(url)) {",
-        replacement: "if pin.is_some_and(|p| p == \"\") {",
-        integration: &[],
-        unit: &["plugin::package::tests::registries_have_priorities_and_pins"],
     },
 ];

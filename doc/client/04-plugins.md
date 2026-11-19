@@ -5,17 +5,22 @@
 An external plug-in is a program of another party that the database
 runs as processes of its own and speaks to over their standard input and
 output, in plug-in protocol 1. Its manifest declares the objects it
-brings, and `CREATE EXTENSION` makes them the database's, among them
-functions, aggregates, table functions, procedures, vector metrics, embedding
-models, authentication mechanisms, backup targets and partitioning
-strategies. A plug-in may be written in any language. One that crashes,
+brings, and `CREATE EXTENSION` makes them the database's, of nineteen
+kinds: functions, aggregates, table functions, procedures, vector
+metrics, embedding models, authentication mechanisms, backup targets,
+partitioning strategies, full-text rankings, vector quantizers,
+collations, system tables, XQuery functions, data types, storage
+engines, index methods, credentials and sinks of events
+([Kinds of Plug-in](04-plugins-kinds.md)). A plug-in may be written in
+any language. One that crashes,
 hangs or misbehaves fails its call and nothing else, as it shares no
 memory with the database.
 
 A program that embeds the database may instead register plug-ins of
 Rust in its own process ([The Embedded Library](03-embedding.md)).
-[Packages and Registries](04-plugins-packages.md) tells how a plug-in is
-packed, signed, published and installed.
+[Writing a Plug-in](04-plugins-sdk.md) walks through a plug-in's project
+from start to call, and [Packages](04-plugins-packages.md) tells how a
+plug-in is packed, signed, licensed and installed.
 
 ## Loading an extension
 
@@ -58,6 +63,7 @@ folded to upper case as an identifier is.
     | REQUIRES <identifier> <character string literal>
     | TURBOREL <character string literal>
     | UPGRADE FROM <character string literal> SCRIPT <character string literal>
+    | LICENSE [ FILE ] <character string literal>
     | FUNCTION <identifier> ( <data type>, ... ) RETURNS <data type>
           [ [ NOT ] DETERMINISTIC ] [ BATCH <unsigned integer> ]
     | AGGREGATE <identifier> ( <data type> ) RETURNS <data type> [ BATCH <unsigned integer> ]
@@ -71,13 +77,28 @@ folded to upper case as an identifier is.
     | AUTHENTICATOR <character string literal>
     | TARGET <character string literal>
     | PARTITION STRATEGY <identifier>
+    | RANKING <identifier> | QUANTIZER <identifier>
+    | COLLATION <identifier> VERSION <character string literal>
+    | SYSTEM TABLE <identifier> ( <column name> <data type>, ... )
+    | XQUERY FUNCTION <character string literal> ( <data type>, ... ) RETURNS <data type>
+    | TYPE <identifier> [ ORDERED ]
+    | STORAGE ENGINE <identifier> [ BATCH <unsigned integer> ]
+    | INDEX METHOD <identifier> SUPPORTS ( EQUALITY | RANGE | NEAREST, ... ) [ BATCH <unsigned integer> ]
+    | CREDENTIALS <identifier>
+    | DIAGNOSTICS <identifier> [ BATCH <unsigned integer> ]
+    | SETTING <identifier> TYPE <setting type>
+          [ MIN <literal> ] [ MAX <literal> ] [ CHOICES ( <identifier>, ... ) ]
+          [ DEFAULT <literal> ] [ SCOPE SESSION | DATABASE | NODE ]
+          [ DESCRIPTION <character string literal> ]
+    | READS SETTINGS ( <character string literal>, ... )
+<setting type> ::= INTEGER | NUMBER | CHOICE | SWITCH | TEXT | IDENTIFIER
 ```
 
 NAME, VERSION, PROTOCOL and an EXECUTABLE are required. EXECUTABLE
 names the program, a path inside the directory; one written FOR a
 platform (`linux`, `macos`, `windows`) is taken there before one written
-for any. VERSION is a semantic version. REQUIRES, TURBOREL and UPGRADE
-are a package's ([Packages and Registries](04-plugins-packages.md)).
+for any. VERSION is a semantic version. REQUIRES, TURBOREL, UPGRADE and
+LICENSE are a package's ([Packages](04-plugins-packages.md)).
 
 BATCH is how many rows, candidates or texts one call carries: 1,024 for
 a function or aggregate, 4,096 for a metric and 64 for a model if it is
@@ -86,7 +107,89 @@ folded; one NOT DETERMINISTIC, the default, may not. A table function
 that READS SQL DATA names the queries it reads, which the statement runs
 with its user's privileges and sends it the rows of. A procedure that
 MODIFIES SQL DATA may run statements in its caller's transaction; one
-that does not may only query.
+that does not may only query. An XQuery function is named by one
+literal, its namespace's URI in braces before its local name, as
+`'{http://example.com/fn}twice'`. [Kinds of Plug-in](04-plugins-kinds.md)
+tells what each of the later kinds declares. SETTING and READS SETTINGS
+are the program's settings, the next section's.
+
+## Settings
+
+A manifest may declare settings of its own. Each is named after the
+extension, `EXAMPLE.DEPTH` for the item `SETTING DEPTH` of EXAMPLE, so
+two extensions never share one. Its TYPE is one of the built-in
+settings' kinds. MIN and MAX bound an INTEGER or NUMBER, MAX alone the
+length of a TEXT, and CHOICES lists a CHOICE's words. DEFAULT is the
+value it starts with, the least value allowed if it is not written, and
+an IDENTIFIER must write one. SCOPE is DATABASE if it is not written.
+The manifest of the example this chapter installs declares two:
+
+```
+SETTING DEPTH TYPE INTEGER MIN 1 MAX 10 DEFAULT 3 SCOPE SESSION DESCRIPTION 'How deep a search goes.';
+SETTING MODE TYPE CHOICE CHOICES (FAST, SAFE) DEFAULT 'SAFE';
+READS SETTINGS ('SESSION.TIME_ZONE');
+FUNCTION SETTING_OF(VARCHAR(200)) RETURNS VARCHAR(200);
+```
+
+CREATE EXTENSION declares them, and from then on they are set and shown
+as built-in settings are, with the same scopes, privileges and checks
+([Settings](../operator/04-settings.md)). A SESSION setting is set by
+any session for itself, and a DATABASE one by the owner, with SET
+DATABASE, for every session.
+
+```sql
+SET EXAMPLE.DEPTH = 7;
+SELECT SETTING_NAME, SETTING_VALUE, VALUE_SOURCE FROM INFORMATION_SCHEMA.SETTINGS WHERE SETTING_NAME LIKE 'EXAMPLE.%';
+```
+
+```
+OK
+ SETTING_NAME                                                 | SETTING_VALUE                                                | VALUE_SOURCE
+--------------------------------------------------------------+--------------------------------------------------------------+--------------
+ EXAMPLE.DEPTH                                                | 7                                                            | SESSION
+ EXAMPLE.MODE                                                 | SAFE                                                         | DEFAULT
+(2 rows)
+```
+
+A value out of range, not of the setting's type or no choice of it is
+refused as a built-in setting's is.
+
+```sql
+SET EXAMPLE.DEPTH = 11;
+```
+
+```
+turborel: SQLCODE -301 (SQLSTATE 22000): EXAMPLE.DEPTH takes INTEGER FROM 1 TO 10, not 11
+```
+
+The program reads the values each call runs with. Those are its
+caller's session's values, the session's own over the database's, of
+the settings its manifest declares and of the built-in ones READS
+SETTINGS names, which it may read and never write. The example's
+SETTING_OF gives the value its call was told of the setting it names,
+and a setting it neither declares nor reads is NULL to it.
+
+```sql
+VALUES (SETTING_OF('EXAMPLE.DEPTH'), SETTING_OF('STATEMENT.TIMEOUT_MS'));
+```
+
+```
+                                                              |
+--------------------------------------------------------------+--------------------------------------------------------------
+ 7                                                            | NULL
+(1 row)
+```
+
+The values cost no call of their own. A SETTINGS frame goes before a
+CALL only when the values that call runs with differ from those last
+sent to the same process, so a program whose settings do not change is
+sent them once. A program that runs SQL may set its own settings, and a
+SET of any other is refused before it runs. ALTER EXTENSION ... UPDATE
+declares the new manifest's settings, keeping the value of each it
+keeps while that is still of its type, and DROP EXTENSION retires them
+all. INFORMATION_SCHEMA.EXTENSION_OBJECTS lists each, of type SETTING,
+and each built-in setting read, of type READS SETTING. A host plug-in's
+settings are the node's ([Host Plug-ins](04-plugins-host.md)).
 
 ## Protocol 1
 
@@ -106,13 +209,19 @@ then them.
 | 7 | SHUTDOWN | database | nothing |
 | 8 | SQL | plug-in | call u64, rows u8, text str, values |
 | 9 | SQL_DONE | database | call u64, rows (count u32, each values) |
+| 10 | SETTINGS | database | names (count u32, strs), values |
+| 11 | STATISTICS | plug-in | call u64, what is asked ([Optimizer Rules and Statistics](04-plugins-planner.md)) |
+| 12 | STATISTICS_DONE | database | call u64, the statistics asked |
 
 The database begins with HELLO; the program answers WELCOME, naming the
 extension HELLO named and every kind its manifest declares. Then the
 database sends a CALL at a time and waits for its RESULT or ERROR. While
 a procedure's call runs, its program may send SQL, a query if rows is 1,
 and is answered SQL_DONE or ERROR. CANCEL asks the program to end a call
-early; SHUTDOWN, or the end of its input, to exit.
+early; SHUTDOWN, or the end of its input, to exit. A program whose
+WELCOME takes the capability `settings` is sent SETTINGS before a CALL
+whose values differ from the last it was sent, and keeps them for the
+calls after.
 
 A value is a tag and its body: 0 null; 1 truth value, a byte; 2 exact
 number, units i128 and scale u32; 3 approximate number, the bits of a
@@ -133,16 +242,210 @@ are counted, a count u32 before them.
 | 7 authenticator | 1 begin: user, peer, local u8, secure u8 → exchange u64; 2 step: exchange, bytes → outcome u8 (0 a challenge's bytes, 1 accepted, 2 refused and why) |
 | 8 backup target | 1 open: location → target u64; 2 begin: target, object → upload u64; 3 abandon, 4 write (bytes), 5 finish: target, upload; 6 read: target, object, offset u64, max u32 → bytes; 7 list: target, prefix → strs; 8 remove: target, object |
 | 9 partition strategy | 1 check key: types; 2 bound: types, bound → bound; 3 overlaps; 4 contains; 5 route; 6 admits |
+| 10 ranking | 1 weights; 2 bounds |
+| 11 quantizer | 1 train |
+| 12 collation | 1 keys |
+| 13 system table | 1 rows |
+| 14 XQuery function | 1 call |
+| 15 type | 1 input; 2 receive |
+| 16 storage engine | 1 create; 2 open; 3 scan; 4 get; 5 apply; 6 checkpoint; 7 drop; 8 statistics |
+| 17 index method | 1 create; 2 open; 3 write; 4 search; 5 rows; 6 nearest; 7 checkpoint; 8 drop; 9 statistics |
+| 18 credentials | 1 verifier |
+| 19 sink of events | 1 events |
+| 37 optimizer rule | 1 rewrite: plan form → u8 0, or u8 1 and the plan form rewritten |
 
 An aggregate's state is the program's own bytes, which the database
 keeps, so a program holds nothing between calls; it starts empty. An
 exchange, a target and an upload are the program's, so the database
-keeps one process for each until it ends.
+keeps one process for each until it ends. The payloads of kinds 10 to
+19 are in [Kinds of Plug-in](04-plugins-kinds.md), a section each, and
+statistics and kind 37 in [Optimizer Rules and
+Statistics](04-plugins-planner.md).
 
-## A plug-in in Rust
+## The plug-in SDK
 
-This program is a whole plug-in of one function, SHOUT, its argument in
-upper case. Its manifest:
+A program written in Rust serves its objects through the plug-in SDK,
+the module `plugin` of the crate `turborel-protocol`. It builds a
+`Plugin` of its objects, each an implementation of its kind's trait
+under the name its manifest declares, and hands it to `serve`, which
+reads its standard input and writes its standard output until the
+database shuts it down. The SDK answers HELLO, reads each CALL's batch
+and calls the trait once for each of its rows, values or texts, writes
+the RESULT, and turns an error into an ERROR. Its manifest and program:
+
+```
+NAME DOUBLING; VERSION '1.0.0'; PROTOCOL 1; EXECUTABLE 'doubling';
+FUNCTION TWICE(INTEGER) RETURNS INTEGER DETERMINISTIC BATCH 100;
+```
+
+```rust
+use turborel::value::{Decimal, Value};
+use turborel_plugin::{Answer, Cx, Plugin, Scalar, serve};
+
+struct Twice;
+
+impl Scalar for Twice {
+    fn call(&mut self, _cx: &mut Cx<'_>, args: &[Value]) -> Answer<Value> {
+        match args.first() {
+            Some(Value::Exact(d)) => Ok(Value::Exact(d.checked_mul(Decimal::new(2, 0))?)),
+            Some(_) | None => Ok(Value::Null),
+        }
+    }
+}
+
+fn main() {
+    if serve(Plugin::new("1.0.0").scalar("TWICE", Twice)).is_err() {
+        std::process::exit(1);
+    }
+}
+```
+
+An object's name is as the database writes it in a CALL, an identifier
+in upper case unless delimited, and an XQuery function's expanded name
+as written. A `PluginError` is a SQLSTATE and a message, and an error
+of the database's own, as a decimal overflow, converts into one with its
+SQLSTATE kept. Each call that may run long is given a `Cx`.
+`cx.check()` fails with SQLSTATE 57014 once the database has sent
+CANCEL for the call, `cx.query` and `cx.run` run SQL in the call's
+transaction, and `cx.limits()` gives the limits HELLO gave.
+`cx.setting(name)`, `cx.integer(name)` and `cx.text(name)` read the
+settings the call runs with, by name in any case, and `cx.settings()`
+gives them all. An answer
+longer than those limits is an ERROR of 38T04 and is not sent. A thread
+of the SDK reads the input while a call runs, so a CANCEL is heard.
+
+`Harness` runs a `Plugin` in a test's own process, each call made as the
+database makes it, its payload written and its answer read, so objects
+are tested with no database and no process:
+
+```rust
+use turborel_plugin::{Answer, Collation, Harness, Plugin};
+
+struct Lower;
+
+impl Collation for Lower {
+    fn sort_key(&mut self, text: &str, _pad: bool) -> Answer<Vec<u8>> {
+        Ok(text.to_lowercase().into_bytes())
+    }
+}
+
+let mut h = Harness::new(Plugin::new("1.0.0").collation("LOWER", Lower));
+assert_eq!(h.sort_keys("LOWER", &["B", "a"], false).unwrap(), [b"b".to_vec(), b"a".to_vec()]);
+```
+
+The example in the source, `plugin/examples/plugin_example`, is
+built on the SDK and serves an object of every kind, the tests' plug-in.
+Each kind's trait follows, with the `Plugin` method that adds it.
+
+### Functions, aggregates, table functions and procedures
+
+`Scalar::call(cx, args)` gives the value of one row's arguments
+(`Plugin::scalar`). `Aggregate` steps a state the database keeps, the
+program's own bytes, empty at first, merges two and finishes one
+(`step`, `merge`, `finish`; `Plugin::aggregate`). `TableFunction` gives
+its rows of its arguments and the rows of the queries `reads` named
+(`Plugin::table_function`). `Procedure::call` runs its statements by
+`cx.run` (`Plugin::procedure`).
+
+### Metrics and embedding models
+
+`Metric::distance(query, candidate)` gives one distance, or none where
+it has none; a CALL of many candidates is answered by a call each
+(`Plugin::metric`). `Embedder::embed(text)` gives a text's vector
+(`Plugin::embedder`).
+
+### Authenticators
+
+`Authenticator::begin(who)` starts an exchange with the user and peer
+`Who` names, and `Exchange::step(bytes)` answers each message of the
+client by a `Step`, a challenge's bytes, acceptance or refusal
+(`Plugin::authenticator`). The SDK keeps the exchange by its number.
+
+### Backup targets
+
+`Target::open(location)` opens a `TargetStore`, which begins an `Upload`
+of an object, written in pieces and finished, reads a range of one,
+lists them by prefix and removes one (`Plugin::target`). The SDK keeps
+each store and upload by its number.
+
+### Partitioning strategies
+
+`PartitionStrategy` checks a key's types and each bound, and says
+whether two bounds overlap and whether a bound contains a key; `route`
+and `admits` have defaults built of those (`Plugin::partition_strategy`).
+
+### Rankings
+
+`Ranking::weight(corpus, term, in_doc)` gives one (term, document)
+weight and `bound(corpus, term)` a term's greatest, from the statistics
+the database sends (`Plugin::ranking`). A batch of WEIGHTS is answered a
+call each.
+
+### Quantizers
+
+`Quantizer::train(training)` turns a sample into a `Trained` codebook,
+`k` centroids in each subspace of its widths, which the database then
+uses alone (`Plugin::quantizer`).
+
+### Collations
+
+`Collation::sort_key(text, pad)` gives a string's sort key, compared as
+bytes, `pad` asking that trailing spaces not count
+(`Plugin::collation`).
+
+### System tables
+
+`SystemTable::rows(user, owner)` gives every row for that reader. The
+SDK keeps them and gives the database a page at a time, asking the
+table again only for the next read (`Plugin::system_table`).
+
+### XQuery functions
+
+`XQueryFunction::call(args)` gives the value of atomic arguments
+(`Plugin::xquery_function`).
+
+### Types
+
+`Type::input(text)` and `receive(bytes)` make a value, a `Made` of its
+key, binary form and text form (`Plugin::data_type`).
+
+### Storage engines
+
+`Engine` creates a table and gives its locator, opens one by it (an
+`Opened`, whether it has it, the next id, its rows and the position it
+is durable through), scans a page after an id, gets rows by id, applies
+changes all or none giving what each row held, keeps a checkpoint's
+position, and drops a table (`Plugin::engine`).
+
+### Index methods
+
+`IndexMethod` creates an index, opens one (whether it has it and
+whether it is clean), makes a batch of `Write`s, searches a page of
+entries in key order by a `Search` and a cursor, gives a key's rows,
+gives the nearest entries of a `Near`, keeps a checkpoint, and drops an
+index (`Plugin::index_method`).
+
+### Optimizer rules and statistics
+
+`Rule::rewrite(cx, form)` gives a plan form rewritten, or none for no
+change (`Plugin::rule`). `Engine::statistics` and
+`IndexMethod::statistics` tell the planner what they know, and
+`Cx::table_statistics`, `Cx::column_statistics` and
+`Cx::index_statistics` ask the database ([Optimizer Rules and
+Statistics](04-plugins-planner.md)).
+
+### Credentials and sinks of events
+
+`Credentials::verifier(user, password)` makes a verifier
+(`Plugin::credentials`). `Diagnostics::events(events, dropped)` is told
+a batch of `Told` events, each a level, a kind and a text, and how many
+were dropped as the queue was full (`Plugin::diagnostics`).
+
+## A plug-in by hand
+
+A program in another language speaks the protocol itself. This one, in
+Rust with no SDK, is a whole plug-in of one function, SHOUT, its
+argument in upper case. Its manifest:
 
 ```
 NAME SHOUTING; VERSION '1.0.0'; PROTOCOL 1; EXECUTABLE 'shouting';
@@ -237,9 +540,8 @@ fn main() {
 }
 ```
 
-The example in the source, `examples/plugin_example.rs`, serves an
-object of every kind, and functions that fail as a program may, which
-the tests run.
+The example in the source, `plugin/examples/plugin_example`, serves
+the same through the SDK, with functions that fail as a program may.
 
 ## When a plug-in fails
 
@@ -256,6 +558,9 @@ database goes on.
 | 38T04 | It sent more than PLUGINS.MAX_MESSAGE_BYTES in a message, or PLUGINS.MAX_CALL_BYTES in a call |
 | 38T05 | It cannot be started: its directory is under none of PLUGINS.DIRECTORIES, or its program is missing |
 | 38T06 | Its manifest breaks a rule of format 1 |
+| 38T10 | A table or index of it could not be told a change made or undone; it is damaged until the database opens again |
+| 38T11 | A host plug-in failed, so the node stopped until it starts again ([Host Plug-ins](04-plugins-host.md)) |
+| 40001 | A process of it stopped while the transaction wrote a table of its engine; the transaction is rolled back, to run again |
 
 A statement cancelled cancels its plug-in's call. The database sends
 CANCEL and waits PLUGINS.CANCEL_GRACE_MS for an answer before it stops
@@ -308,4 +613,5 @@ may also be registered with another database, as one that restores a
 backup before any extension is created in it. A partitioning strategy
 is found by name by the program hosting the database
 (`Database::extension_strategy`), as the partitioning that takes it is
-built on the same interface.
+built on the same interface. The later kinds, and the points no plug-in
+may serve, are in [Kinds of Plug-in](04-plugins-kinds.md).

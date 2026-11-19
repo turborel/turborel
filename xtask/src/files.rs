@@ -9,6 +9,8 @@ use crate::error::{Error, Result};
 pub const LIBRARY_DIR: &str = "src";
 /// The wire protocol's sources (RULES.md D42).
 pub const PROTOCOL_DIR: &str = "protocol/src";
+/// The plug-in SDK's sources (RULES.md D167, D220).
+pub const PLUGIN_DIR: &str = "plugin/src";
 /// The client's sources (RULES.md D42).
 pub const CLIENT_DIR: &str = "client/src";
 /// The server's sources (RULES.md D42).
@@ -29,6 +31,8 @@ pub const SOURCE_DIRS: &[&str] = &[
     "test",
     "bench",
     PROTOCOL_DIR,
+    PLUGIN_DIR,
+    "plugin/examples",
     CLIENT_DIR,
     SERVER_DIR,
     "server/test",

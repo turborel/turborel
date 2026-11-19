@@ -6,10 +6,12 @@
 //!   and its processes running and started, calls made and processes
 //!   stopped after a failure since the database opened.
 //! * EXTENSION_OBJECTS: each object an extension declares, its kind,
-//!   name, determinism and batch, and its declaration as written.
+//!   name, determinism and batch, and its declaration as written; and
+//!   each setting it declares, of type SETTING, and each built-in one it
+//!   reads, of type READS SETTING (RULES.md D281).
 //! * EXTENSION_PACKAGES: the database's lock of packages, each extension
-//!   with its digest, its registry, whether CREATE EXTENSION named it, and
-//!   the ranges it requires of others.
+//!   with its digest, whether CREATE EXTENSION named it, the ranges it
+//!   requires of others, and its license (RULES.md D267).
 
 use std::sync::Arc;
 
@@ -22,6 +24,13 @@ use crate::value::Value;
 /// The longest directory, digest, declaration or list of requirements
 /// shown.
 const TEXT_LENGTH: u32 = 4000;
+
+/// The type of a row of EXTENSION_OBJECTS of a setting the extension
+/// declares (RULES.md D281).
+const SETTING: &str = "SETTING";
+/// The type of a row of EXTENSION_OBJECTS of a built-in setting the
+/// extension reads.
+const READS_SETTING: &str = "READS SETTING";
 
 /// EXTENSIONS.
 struct Extensions;
@@ -98,6 +107,12 @@ impl SystemTable for Objects {
                 let row = vec![text(&e.manifest.name), text(d.kind.word()), text(&d.name), yes(d.deterministic), batch, text(&d.text)];
                 rows.push(row);
             }
+            let m = &e.manifest;
+            let declared = m.settings.iter().map(|d| (SETTING, d.qualified(&m.name), d.text.clone()));
+            let read = m.reads_settings.iter().map(|n| (READS_SETTING, n.clone(), format!("READS SETTINGS ('{n}')")));
+            for (kind, name, declaration) in declared.chain(read) {
+                rows.push(vec![text(&m.name), text(kind), text(&name), yes(false), Value::Null, text(&declaration)]);
+            }
         }
         Ok(rows)
     }
@@ -114,8 +129,9 @@ impl SystemTable for Packages {
 
     fn columns(&self) -> Vec<ColumnDesc> {
         let mut all = vec![identifier("PACKAGE_NAME", true), identifier("PACKAGE_VERSION", true), identifier("DIGEST", false)];
-        all.extend([text_column(("REGISTRY", TEXT_LENGTH), false), identifier("IS_EXPLICIT", true)]);
-        all.extend([text_column(("REQUIRES", TEXT_LENGTH), true), text_column(("TURBOREL", TEXT_LENGTH), false)]);
+        all.extend([identifier("IS_EXPLICIT", true), text_column(("REQUIRES", TEXT_LENGTH), true)]);
+        all.extend([text_column(("TURBOREL", TEXT_LENGTH), false), text_column(("LICENSE", TEXT_LENGTH), false)]);
+        all.push(text_column(("LICENSE_FILE", TEXT_LENGTH), false));
         all
     }
 
@@ -125,8 +141,9 @@ impl SystemTable for Packages {
             let manifest = seen.state.extensions.get(&desc.name).map(|e| &e.manifest);
             let requires = manifest.map(|m| m.requires.iter().map(|(n, r)| format!("{n} {r}")).collect::<Vec<_>>().join(", "));
             let mut row = vec![text(&desc.name), text(&desc.version), optional(desc.digest.as_deref())];
-            row.extend([optional(desc.registry.as_deref()), yes(desc.explicit), text(&requires.unwrap_or_default())]);
-            row.push(optional(manifest.and_then(|m| m.turborel.as_deref())));
+            row.extend([yes(desc.explicit), text(&requires.unwrap_or_default())]);
+            row.extend([optional(manifest.and_then(|m| m.turborel.as_deref())), optional(manifest.and_then(|m| m.license.as_deref()))]);
+            row.push(optional(manifest.and_then(|m| m.license_file.as_deref())));
             rows.push(row);
         }
         Ok(rows)
