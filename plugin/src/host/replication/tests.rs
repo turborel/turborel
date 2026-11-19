@@ -302,8 +302,8 @@ fn an_archive_and_a_target_of_one_name_stay_apart() {
         read.put_u32(16);
         read
     };
-    let got = h.call(KIND_TARGET, payload::TARGET_READ, "SHELF", read_of(&target_store)).unwrap();
-    assert_eq!(payload::reader(&got).bytes().unwrap(), b"target");
-    let got = h.call(p::ARCHIVE, payload::TARGET_READ, "SHELF", read_of(&archive_store)).unwrap();
-    assert_eq!(payload::reader(&got).bytes().unwrap(), b"kept");
+    let of_target = h.call(KIND_TARGET, payload::TARGET_READ, "SHELF", read_of(&target_store)).unwrap();
+    assert_eq!(payload::reader(&of_target).bytes().unwrap(), b"target");
+    let of_archive = h.call(p::ARCHIVE, payload::TARGET_READ, "SHELF", read_of(&archive_store)).unwrap();
+    assert_eq!(payload::reader(&of_archive).bytes().unwrap(), b"kept");
 }

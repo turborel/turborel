@@ -22,7 +22,11 @@ use crate::plugin::payload::hosted::{ENCODING_ACCEPTS, ENCODING_DECODE, ENCODING
 fn id_of(d: &HostDeclared) -> Result<u32> {
     let id = u32::try_from(d.number("ID", 0)?).unwrap_or(0);
     if id == 0 {
-        return Err(invalid_manifest(&format!("HOST {} {} must give its ID, a number from 1 the files it writes name", d.kind.word(), d.name)));
+        return Err(invalid_manifest(&format!(
+            "HOST {} {} must give its ID, a number from 1 the files it writes name",
+            d.kind.word(),
+            d.name
+        )));
     }
     Ok(id)
 }
@@ -112,7 +116,10 @@ impl PluginHash {
     pub fn new(d: &HostDeclared, link: HostLink) -> Result<PluginHash> {
         let length = usize::try_from(d.number("LENGTH", 0)?).unwrap_or(0);
         if length == 0 || length > MAX_DIGEST_BYTES {
-            return Err(invalid_manifest(&format!("HOST HASH FUNCTION {} must give its LENGTH, from 1 to {MAX_DIGEST_BYTES} bytes", d.name)));
+            return Err(invalid_manifest(&format!(
+                "HOST HASH FUNCTION {} must give its LENGTH, from 1 to {MAX_DIGEST_BYTES} bytes",
+                d.name
+            )));
         }
         Ok(PluginHash { link, id: HashId(id_of(d)?), name: leaked(&d.name), length })
     }
