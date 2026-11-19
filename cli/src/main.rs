@@ -95,11 +95,9 @@ fn administer(invocation: &Invocation) -> Result<ExitCode, String> {
     let mut agent = Agent::connected(dialer, connection);
     let terminal = std::io::stdin().is_terminal();
     let (mut asking, mut typing) = (confirm, secret);
-    let mut console = Console {
-        out: &mut std::io::stdout().lock(),
-        confirm: terminal.then_some(&mut asking as &mut dyn FnMut(&str) -> std::io::Result<bool>),
-        secret: terminal.then_some(&mut typing as &mut dyn FnMut(&str) -> std::io::Result<String>),
-    };
+    let asked: Option<admin::Confirm<'_>> = if terminal { Some(&mut asking) } else { None };
+    let typed: Option<turborel_cli::Secret<'_>> = if terminal { Some(&mut typing) } else { None };
+    let mut console = Console { out: &mut std::io::stdout().lock(), confirm: asked, secret: typed };
     let done = admin::run(&mut agent, invocation, &mut console);
     let lost = agent.is_lost();
     // The command's outcome is what is told; the session ends either way.
@@ -129,14 +127,23 @@ fn session(options: &Options) -> Result<ExitCode, String> {
     // Each connection CONNECT makes asks for its own password.
     let dialer = Dialer::new(options.clone(), Box::new(|| rpassword::prompt_password("password: ")));
     let mut agent = Agent::connected(dialer, connection);
-    let mut editor = typed.then(|| turborel_cli::line::terminal::LineEditor::open(options.settings.environment.history.as_deref())).flatten();
+    let mut editor =
+        typed.then(|| turborel_cli::line::terminal::LineEditor::open(options.settings.environment.history.as_deref())).flatten();
     let mut typing = secret;
-    let terminal = turborel_cli::Terminal {
-        screen: turborel_cli::line::terminal::screen(),
-        editor: editor.as_mut().map(|e| e as &mut dyn Lines),
-        secret: stdin.is_terminal().then_some(&mut typing as &mut dyn FnMut(&str) -> std::io::Result<String>),
+    let lines: Option<&mut dyn Lines> = match editor.as_mut() {
+        Some(e) => Some(e),
+        None => None,
     };
-    let io = Io { input: &mut stdin.lock(), typed, out: &mut std::io::stdout().lock(), err: &mut std::io::stderr(), interrupts: Some(&interrupts), terminal };
+    let asked: Option<turborel_cli::Secret<'_>> = if stdin.is_terminal() { Some(&mut typing) } else { None };
+    let terminal = turborel_cli::Terminal { screen: turborel_cli::line::terminal::screen(), editor: lines, secret: asked };
+    let io = Io {
+        input: &mut stdin.lock(),
+        typed,
+        out: &mut std::io::stdout().lock(),
+        err: &mut std::io::stderr(),
+        interrupts: Some(&interrupts),
+        terminal,
+    };
     let outcome = turborel_cli::outcome(&mut agent, options, io);
     agent.terminate().map_err(|e| e.to_string())?;
     Ok(ExitCode::from(outcome.code()))

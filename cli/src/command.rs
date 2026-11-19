@@ -165,7 +165,7 @@ pub fn arguments(rest: &str, vars: &Variables) -> Result<Vec<String>, String> {
 fn piece(chars: &[char], at: usize, vars: &Variables) -> Result<(String, usize), String> {
     let after = at.saturating_add(1);
     match chars.get(at).copied() {
-        Some('\'') => quoted(chars, after, '\'').map(|(body, next)| (body, next)),
+        Some('\'') => quoted(chars, after, '\''),
         Some('"') => quoted(chars, after, '"').map(|(body, next)| (identifier(&body), next)),
         Some(':') => Ok(vars::reference(chars, at, vars).unwrap_or_else(|| (":".to_owned(), after))),
         Some(c) => Ok((c.to_string(), after)),

@@ -42,7 +42,8 @@ fn script(server: &Running, args: &[&str], text: &str) -> Script {
     let connection = turborel_cli::connect(&options, || Ok(String::new())).unwrap();
     let mut agent = Agent::connected(Dialer::new((*options).clone(), Box::new(|| Ok(String::new()))), connection);
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let io = Io { input: &mut text.as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
+    let io =
+        Io { input: &mut text.as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
     let outcome = turborel_cli::outcome(&mut agent, &options, io);
     agent.terminate().unwrap();
     Script { outcome, out: String::from_utf8(out).unwrap(), err: String::from_utf8(err).unwrap() }
@@ -63,7 +64,10 @@ fn variables_and_conditionals_steer_a_script() {
                 SELECT * FROM :\"table\";\n\
                 \\echo :ERROR :ROW_COUNT\n";
     let ran = script(&server, &["-v", "table=T", "-q"], text);
-    assert_eq!(ran.out, "            K\n--------------\n            2\n(1 row)\nnested\ntrue 2A000\n            K | S\n--------------+-------\n            1 | a\n            2 | b\n(2 rows)\nfalse 2\n");
+    assert_eq!(
+        ran.out,
+        "            K\n--------------\n            2\n(1 row)\nnested\ntrue 2A000\n            K | S\n--------------+-------\n            1 | a\n            2 | b\n(2 rows)\nfalse 2\n"
+    );
     assert!(ran.err.contains("SQLSTATE 2A000"), "{}", ran.err);
     assert_eq!(ran.outcome, Outcome::Failed);
 }
@@ -113,7 +117,11 @@ fn rows_are_written_in_every_format() {
     let expanded = "-[ ROW 1 ]\nK | 1\nS | a\n-[ ROW 2 ]\nK | 2\nS | b\n(2 rows)\n";
     assert_eq!(script(&server, &["-x"], sql).out, expanded);
     assert_eq!(script(&server, &[], "SELECT K, S FROM T ORDER BY K\\G\n").out, expanded);
-    let set = script(&server, &[], "\\format style unaligned\n\\format separator ;\n\\t\n\\format null -\nSELECT K, CAST(NULL AS INTEGER) FROM T WHERE K = 1;");
+    let set = script(
+        &server,
+        &[],
+        "\\format style unaligned\n\\format separator ;\n\\t\n\\format null -\nSELECT K, CAST(NULL AS INTEGER) FROM T WHERE K = 1;",
+    );
     assert_eq!(set.out, "Rows alone are on.\n1;-\n");
 }
 

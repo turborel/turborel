@@ -172,7 +172,6 @@ struct Shell<'a, S: Statements + ?Sized, C: FnMut() -> Duration> {
     now: C,
     vars: Variables,
     layout: Layout,
-    timing: bool,
     /// Where results go, if `\o` sent them elsewhere.
     redirect: Option<output::Redirect>,
     /// The file `\tee` copies output to.
@@ -208,7 +207,12 @@ pub fn outcome<'a, S: Statements + ?Sized>(connection: &'a mut S, options: &'a O
 }
 
 /// Runs with a supplied elapsed clock so timing tests need no real time.
-fn run_with_clock<'a, S: Statements + ?Sized>(connection: &'a mut S, options: &'a Options, io: Io<'a>, now: impl FnMut() -> Duration) -> Outcome {
+fn run_with_clock<'a, S: Statements + ?Sized>(
+    connection: &'a mut S,
+    options: &'a Options,
+    io: Io<'a>,
+    now: impl FnMut() -> Duration,
+) -> Outcome {
     let Io { input, typed, out, err, interrupts, terminal } = io;
     let mut shell = Shell {
         connection,
@@ -223,7 +227,6 @@ fn run_with_clock<'a, S: Statements + ?Sized>(connection: &'a mut S, options: &'
         now,
         vars: Variables::default(),
         layout: Layout { null: options.null.clone(), ..options.settings.layout.clone() },
-        timing: options.timing,
         redirect: None,
         tee: None,
         last: None,
@@ -255,6 +258,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
     fn begin(&mut self) {
         self.vars.set(vars::STOP_ON_ERROR, if self.options.stop_on_error { "on" } else { "off" });
         self.vars.set(vars::AUTOCOMMIT, "off");
+        self.vars.set(vars::TIMING, if self.options.timing { "on" } else { "off" });
         self.vars.set(vars::PROMPT, PROMPT);
         self.vars.set(vars::PROMPT_MORE, MORE);
         self.vars.set(vars::VERBOSITY, "default");

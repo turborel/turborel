@@ -48,6 +48,12 @@ fn commands_are_read_by_name() {
     assert_eq!(read("G"), Ok(Command::Go { target: Target::Default, expanded: true }));
     assert_eq!(read("watch 0.5 3"), Ok(Command::Watch { every: Duration::from_millis(500), count: Some(3) }));
     assert_eq!(read("watch"), Ok(Command::Watch { every: Duration::from_secs(2), count: None }));
+}
+
+/// Verifies: [DESIGN] RULES.md D210, D213: the commands of the layout and
+/// of the session are read with their arguments; wrong ones are refused.
+#[test]
+fn layout_and_session_commands_are_read() {
     assert_eq!(read("x auto"), Ok(Command::Expanded(Expansion::Auto)));
     assert_eq!(read("x"), Ok(Command::Expanded(Expansion::Toggle)));
     assert_eq!(read("x off"), Ok(Command::Expanded(Expansion::Set(false))));
@@ -55,8 +61,17 @@ fn commands_are_read_by_name() {
     assert_eq!(read("format border 2"), Ok(Command::Format(Some(("border".into(), Some("2".into()))))));
     assert_eq!(read("dt+ S*"), Ok(Command::Describe("dt+".into(), Some("S*".into()))));
     assert_eq!(read("c - BOB"), Ok(Command::Connect(None, Some("BOB".into()))));
-    assert_eq!(read("export (SELECT 'a b' FROM T) out.csv csv"), Ok(Command::Export(vec!["(SELECT 'a b' FROM T)".into(), "out.csv".into(), "csv".into()])));
+    assert_eq!(
+        read("export (SELECT 'a b' FROM T) out.csv csv"),
+        Ok(Command::Export(vec!["(SELECT 'a b' FROM T)".into(), "out.csv".into(), "csv".into()]))
+    );
     assert_eq!(read("h CREATE TABLE"), Ok(Command::Syntax(Some("CREATE TABLE".into()))));
+}
+
+/// Verifies: [DESIGN] RULES.md D210: a name no command has, or wrong
+/// arguments, is refused.
+#[test]
+fn wrong_commands_are_refused() {
     assert!(read("nope").is_err());
     assert!(read("q now").is_err());
     assert!(read("unset").is_err());

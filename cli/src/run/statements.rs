@@ -75,7 +75,12 @@ fn unbegun(failure: Failure) -> ImportError {
 /// Runs `sql` over `connection`, a query's rows fetched `rows` at a time
 /// through a cursor, given to `sink`; none if it cannot be prepared or
 /// is no query, so it is run otherwise.
-fn fetched<S: Read + Write>(connection: &mut Connection<S>, sql: &str, rows: u32, sink: &mut dyn Sink) -> Option<Result<Streamed, Failure>> {
+fn fetched<S: Read + Write>(
+    connection: &mut Connection<S>,
+    sql: &str,
+    rows: u32,
+    sink: &mut dyn Sink,
+) -> Option<Result<Streamed, Failure>> {
     let statement = connection.prepare(sql).ok()?;
     if statement.columns().is_empty() {
         // Nothing of it ran: preparing has no effect but its number.
@@ -84,9 +89,9 @@ fn fetched<S: Read + Write>(connection: &mut Connection<S>, sql: &str, rows: u32
     }
     sink.columns(statement.columns());
     let mut count = 0_u64;
-    let mut take = |batch: &[Row], sink: &mut dyn Sink| {
+    let mut take = |batch: &[Row], into: &mut dyn Sink| {
         count = count.saturating_add(u64::try_from(batch.len()).unwrap_or(u64::MAX));
-        sink.rows(batch);
+        into.rows(batch);
     };
     let read = (|| {
         let mut batch = connection.open_cursor(&statement, &[], rows)?;
@@ -171,7 +176,7 @@ impl<C: Connector> Statements for Agent<C> {
     }
 
     fn in_transaction(&mut self) -> bool {
-        self.current().is_ok_and(|c| c.in_transaction())
+        self.current().is_ok_and(Statements::in_transaction)
     }
 
     fn set_autocommit(&mut self, on: bool) {

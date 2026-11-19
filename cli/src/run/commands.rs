@@ -96,8 +96,9 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
 
     /// `\timing`: set, or toggled.
     fn timing(&mut self, on: Option<bool>) -> Next {
-        self.timing = on.unwrap_or(!self.timing);
-        self.say(if self.timing { "Timing is on." } else { "Timing is off." })
+        let timing = on.unwrap_or(!self.vars.on(crate::vars::TIMING));
+        self.vars.set(crate::vars::TIMING, if timing { "on" } else { "off" });
+        self.say(if timing { "Timing is on." } else { "Timing is off." })
     }
 
     /// `\a`: aligned output if unaligned, else unaligned.
@@ -140,10 +141,8 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
     /// `\x`: expanded output set.
     fn expanded(&mut self, how: Expansion) -> Next {
         self.layout.expanded = match (how, self.layout.expanded) {
-            (Expansion::Toggle, Expanded::Off) => Expanded::On,
-            (Expansion::Toggle, Expanded::On | Expanded::Auto) => Expanded::Off,
-            (Expansion::Set(true), _) => Expanded::On,
-            (Expansion::Set(false), _) => Expanded::Off,
+            (Expansion::Toggle, Expanded::Off) | (Expansion::Set(true), _) => Expanded::On,
+            (Expansion::Toggle, Expanded::On | Expanded::Auto) | (Expansion::Set(false), _) => Expanded::Off,
             (Expansion::Auto, _) => Expanded::Auto,
         };
         let shown = self.layout.get("expanded").unwrap_or_default();

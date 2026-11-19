@@ -43,6 +43,9 @@ pub const FETCH_COUNT: &str = "FETCH_COUNT";
 pub const VERBOSITY: &str = "VERBOSITY";
 /// UPDATE and DELETE without WHERE refused before they are sent, when on.
 pub const SAFE_UPDATES: &str = "SAFE_UPDATES";
+/// Whether each statement's time is told, as `\timing` and `--timing`
+/// set it.
+pub const TIMING: &str = "TIMING";
 /// The user the session is of, set as it begins.
 pub const USER: &str = "USER";
 /// The server's product and version, set as the session begins.

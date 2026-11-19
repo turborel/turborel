@@ -34,9 +34,55 @@ const COLUMN_WORDS: [&str; 10] = ["SELECT", "WHERE", "BY", "SET", "AND", "OR", "
 const USER_WORDS: [&str; 4] = ["USER", "ROLE", "AUTHORIZATION", "TO"];
 /// The backslash commands completed after `\`.
 pub const COMMAND_NAMES: [&str; 49] = [
-    "?", "a", "c", "conninfo", "d", "dD", "dG", "dT", "df", "di", "dn", "dp", "ds", "dt", "du", "dv", "dx", "delimiter", "e", "echo",
-    "elif", "else", "endif", "export", "format", "g", "gexec", "gset", "gx", "G", "h", "i", "if", "import", "ir", "l", "notee", "o", "p",
-    "password", "q", "r", "set", "t", "tee", "timing", "unset", "watch", "x",
+    "?",
+    "a",
+    "c",
+    "conninfo",
+    "d",
+    "dD",
+    "dG",
+    "dT",
+    "df",
+    "di",
+    "dn",
+    "dp",
+    "ds",
+    "dt",
+    "du",
+    "dv",
+    "dx",
+    "delimiter",
+    "e",
+    "echo",
+    "elif",
+    "else",
+    "endif",
+    "export",
+    "format",
+    "g",
+    "gexec",
+    "gset",
+    "gx",
+    "G",
+    "h",
+    "i",
+    "if",
+    "import",
+    "ir",
+    "l",
+    "notee",
+    "o",
+    "p",
+    "password",
+    "q",
+    "r",
+    "set",
+    "t",
+    "tee",
+    "timing",
+    "unset",
+    "watch",
+    "x",
 ];
 
 /// The names completion offers, as read.
@@ -145,7 +191,8 @@ pub fn candidates(context: Context, word: &str, names: Option<&Names>) -> Vec<St
         (Context::Column | Context::KeyWord, None) | (Context::KeyWord, Some(_)) => key_words.collect(),
         (Context::Table | Context::Schema | Context::User, None) => Vec::new(),
     };
-    let mut found: Vec<String> = pool.into_iter().filter(|c| c.starts_with(&upper)).map(|c| if lower { c.to_lowercase() } else { c }).collect();
+    let mut found: Vec<String> =
+        pool.into_iter().filter(|c| c.starts_with(&upper)).map(|c| if lower { c.to_lowercase() } else { c }).collect();
     found.sort();
     found.dedup();
     found
@@ -197,10 +244,15 @@ mod tests {
     /// none; columns come with key words.
     #[test]
     fn candidates_begin_the_word_in_its_case() {
-        let names = Names { tables: vec!["S.STAFF".into(), "STAFF".into()], columns: vec!["SALARY".into()], schemas: vec!["S".into()], users: vec!["ANN".into()] };
+        let names = Names {
+            tables: vec!["S.STAFF".into(), "STAFF".into()],
+            columns: vec!["SALARY".into()],
+            schemas: vec!["S".into()],
+            users: vec!["ANN".into()],
+        };
         assert_eq!(candidates(Context::Table, "st", Some(&names)), ["staff"]);
         assert_eq!(candidates(Context::Table, "S.", Some(&names)), ["S.STAFF"]);
-        assert!(candidates(Context::Table, "S", None).is_empty());
+        assert_eq!(candidates(Context::Table, "S", None), Vec::<String>::new());
         assert!(candidates(Context::Column, "SAL", Some(&names)).contains(&"SALARY".to_owned()));
         assert!(candidates(Context::KeyWord, "SELE", None).contains(&"SELECT".to_owned()));
         assert_eq!(candidates(Context::Command, "ti", None), ["timing"]);

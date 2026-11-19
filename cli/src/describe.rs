@@ -26,6 +26,14 @@ const ESCAPE: char = '\\';
 /// The commands, before their `+` and `S`.
 const COMMANDS: [&str; 14] = ["d", "dt", "dv", "di", "ds", "df", "dn", "du", "dT", "dD", "dx", "dG", "dp", "l"];
 
+/// What `+` and `S` ask a command to show: more columns, and the
+/// system's own schemas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Show {
+    more: bool,
+    system: bool,
+}
+
 /// A query whose rows are one section of what a command shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Section {
@@ -139,20 +147,21 @@ fn matching(pattern: Option<&str>, (schema, name): (&str, &str), system: bool) -
 /// It is not a describe command.
 pub fn plan(name: &str, pattern: Option<&str>) -> Result<Plan, String> {
     let (base, more, system) = modifiers(name);
+    let show = Show { more, system };
     let listing = |sql: String| Ok(Plan::Sections(vec![Section::listing(sql)]));
     match base {
-        "d" => Ok(relations(pattern, more, system)),
-        "dt" => listing(tables(pattern, "TABLE_TYPE = 'BASE TABLE'", more, system)),
-        "dv" => listing(tables(pattern, "TABLE_TYPE = 'VIEW'", more, system)),
-        "di" => listing(indexes(pattern, more, system)),
-        "ds" => listing(sequences(pattern, more, system)),
-        "df" => listing(routines(pattern, more, system)),
+        "d" => Ok(relations(pattern, show)),
+        "dt" => listing(tables(pattern, "TABLE_TYPE = 'BASE TABLE'", show)),
+        "dv" => listing(tables(pattern, "TABLE_TYPE = 'VIEW'", show)),
+        "di" => listing(indexes(pattern, show)),
+        "ds" => listing(sequences(pattern, show)),
+        "df" => listing(routines(pattern, show)),
         "dn" => listing(schemas(pattern, system)),
         "du" => Ok(users(pattern)),
         "dT" => listing(types(pattern, system)),
         "dD" => listing(domains(pattern, system)),
         "dx" => listing(extensions(pattern, more)),
-        "dG" => listing(graphs(pattern, more, system)),
+        "dG" => listing(graphs(pattern, show)),
         "dp" => listing(privileges(pattern, system)),
         "l" => listing("SELECT CATALOG_NAME AS \"Catalog\" FROM INFORMATION_SCHEMA.INFORMATION_SCHEMA_CATALOG_NAME".to_owned()),
         other => Err(format!("\\{other} is no describe command")),
@@ -161,17 +170,17 @@ pub fn plan(name: &str, pattern: Option<&str>) -> Result<Plan, String> {
 
 /// `\d`: every table, view and sequence; with a pattern, each table or
 /// view it matches described.
-fn relations(pattern: Option<&str>, more: bool, system: bool) -> Plan {
+fn relations(pattern: Option<&str>, show: Show) -> Plan {
     let Some(named) = pattern else {
-        let mut sections = vec![Section::listing(tables(None, "TABLE_TYPE IN ('BASE TABLE', 'VIEW')", more, system))];
-        sections.push(Section::titled("Sequences", sequences(None, more, system)));
+        let mut sections = vec![Section::listing(tables(None, "TABLE_TYPE IN ('BASE TABLE', 'VIEW')", show))];
+        sections.push(Section::titled("Sequences", sequences(None, show)));
         return Plan::Sections(sections);
     };
     let sql = format!(
         "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE {} ORDER BY TABLE_SCHEMA, TABLE_NAME",
         matching(Some(named), ("TABLE_SCHEMA", "TABLE_NAME"), true)
     );
-    Plan::Relation(Lookup { sql, pattern: named.to_owned(), more })
+    Plan::Relation(Lookup { sql, pattern: named.to_owned(), more: show.more })
 }
 
 /// The sections of each table or view `rows` found, their schema, name
@@ -210,7 +219,10 @@ fn described(schema: &str, name: &str, kind: &str, more: bool) -> Vec<Section> {
     let what = if kind == "VIEW" { "View" } else { "Table" };
     let mut sections = vec![Section { title: Some(format!("{what} {schema}.{name}")), sql: columns, skip_empty: false }];
     if kind == "VIEW" {
-        let definition = format!("SELECT VIEW_DEFINITION AS \"Definition\" FROM INFORMATION_SCHEMA.VIEWS WHERE {}", of(("TABLE_SCHEMA", "TABLE_NAME"), table));
+        let definition = format!(
+            "SELECT VIEW_DEFINITION AS \"Definition\" FROM INFORMATION_SCHEMA.VIEWS WHERE {}",
+            of(("TABLE_SCHEMA", "TABLE_NAME"), table)
+        );
         sections.push(Section::titled("Definition", definition));
     }
     sections.extend(table_sections(table));
@@ -266,42 +278,43 @@ fn table_sections(table: (&str, &str)) -> Vec<Section> {
 }
 
 /// The tables whose type `types`, a condition, allows.
-fn tables(pattern: Option<&str>, types: &str, more: bool, system: bool) -> String {
-    let extra = if more { ", IS_INSERTABLE_INTO AS \"Insertable\", COMMIT_ACTION AS \"On commit\"" } else { "" };
+fn tables(pattern: Option<&str>, types: &str, show: Show) -> String {
+    let extra = if show.more { ", IS_INSERTABLE_INTO AS \"Insertable\", COMMIT_ACTION AS \"On commit\"" } else { "" };
     format!(
         "SELECT TABLE_SCHEMA AS \"Schema\", TABLE_NAME AS \"Name\", TABLE_TYPE AS \"Type\"{extra} FROM INFORMATION_SCHEMA.TABLES \
          WHERE {types} AND {} ORDER BY TABLE_SCHEMA, TABLE_NAME",
-        matching(pattern, ("TABLE_SCHEMA", "TABLE_NAME"), system)
+        matching(pattern, ("TABLE_SCHEMA", "TABLE_NAME"), show.system)
     )
 }
 
 /// The indexes.
-fn indexes(pattern: Option<&str>, more: bool, system: bool) -> String {
-    let extra = if more { ", COLUMN_NAMES AS \"Columns\"" } else { "" };
+fn indexes(pattern: Option<&str>, show: Show) -> String {
+    let extra = if show.more { ", COLUMN_NAMES AS \"Columns\"" } else { "" };
     format!(
         "SELECT TABLE_SCHEMA AS \"Schema\", INDEX_NAME AS \"Name\", TABLE_NAME AS \"Table\", METHOD_NAME AS \"Method\", \
          IS_UNIQUE AS \"Unique\"{extra} FROM INFORMATION_SCHEMA.INDEXES WHERE {} ORDER BY TABLE_SCHEMA, INDEX_NAME",
-        matching(pattern, ("TABLE_SCHEMA", "INDEX_NAME"), system)
+        matching(pattern, ("TABLE_SCHEMA", "INDEX_NAME"), show.system)
     )
 }
 
 /// The sequences.
-fn sequences(pattern: Option<&str>, more: bool, system: bool) -> String {
-    let extra = if more { ", MINIMUM_VALUE AS \"Minimum\", MAXIMUM_VALUE AS \"Maximum\", CYCLE_OPTION AS \"Cycles\"" } else { "" };
+fn sequences(pattern: Option<&str>, show: Show) -> String {
+    let extra = if show.more { ", MINIMUM_VALUE AS \"Minimum\", MAXIMUM_VALUE AS \"Maximum\", CYCLE_OPTION AS \"Cycles\"" } else { "" };
     format!(
         "SELECT SEQUENCE_SCHEMA AS \"Schema\", SEQUENCE_NAME AS \"Name\", DATA_TYPE AS \"Type\", START_VALUE AS \"Start\", \
          INCREMENT AS \"Increment\"{extra} FROM INFORMATION_SCHEMA.SEQUENCES WHERE {} ORDER BY SEQUENCE_SCHEMA, SEQUENCE_NAME",
-        matching(pattern, ("SEQUENCE_SCHEMA", "SEQUENCE_NAME"), system)
+        matching(pattern, ("SEQUENCE_SCHEMA", "SEQUENCE_NAME"), show.system)
     )
 }
 
 /// The routines.
-fn routines(pattern: Option<&str>, more: bool, system: bool) -> String {
-    let extra = if more { ", ROUTINE_BODY AS \"Body\", EXTERNAL_LANGUAGE AS \"Language\", IS_DETERMINISTIC AS \"Deterministic\"" } else { "" };
+fn routines(pattern: Option<&str>, show: Show) -> String {
+    let extra =
+        if show.more { ", ROUTINE_BODY AS \"Body\", EXTERNAL_LANGUAGE AS \"Language\", IS_DETERMINISTIC AS \"Deterministic\"" } else { "" };
     format!(
         "SELECT ROUTINE_SCHEMA AS \"Schema\", ROUTINE_NAME AS \"Name\", ROUTINE_TYPE AS \"Type\", DATA_TYPE AS \"Returns\"{extra} \
          FROM INFORMATION_SCHEMA.ROUTINES WHERE {} ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME, SPECIFIC_NAME",
-        matching(pattern, ("ROUTINE_SCHEMA", "ROUTINE_NAME"), system)
+        matching(pattern, ("ROUTINE_SCHEMA", "ROUTINE_NAME"), show.system)
     )
 }
 
@@ -314,7 +327,9 @@ fn named(column: &str, pattern: Option<&str>) -> String {
 fn schemas(pattern: Option<&str>, system: bool) -> String {
     let hidden = if system { String::new() } else { format!(" AND SCHEMA_NAME NOT IN {SYSTEM_SCHEMAS}") };
     let condition = format!("{}{hidden}", named("SCHEMA_NAME", pattern));
-    format!("SELECT SCHEMA_NAME AS \"Name\", SCHEMA_OWNER AS \"Owner\" FROM INFORMATION_SCHEMA.SCHEMATA WHERE {condition} ORDER BY SCHEMA_NAME")
+    format!(
+        "SELECT SCHEMA_NAME AS \"Name\", SCHEMA_OWNER AS \"Owner\" FROM INFORMATION_SCHEMA.SCHEMATA WHERE {condition} ORDER BY SCHEMA_NAME"
+    )
 }
 
 /// The users, then the roles enabled and those the user may grant.
@@ -365,12 +380,12 @@ fn extensions(pattern: Option<&str>, more: bool) -> String {
 }
 
 /// The property graphs.
-fn graphs(pattern: Option<&str>, more: bool, system: bool) -> String {
-    let extra = if more { ", PROPERTY_GRAPH_DEFINITION AS \"Definition\"" } else { "" };
+fn graphs(pattern: Option<&str>, show: Show) -> String {
+    let extra = if show.more { ", PROPERTY_GRAPH_DEFINITION AS \"Definition\"" } else { "" };
     format!(
         "SELECT PROPERTY_GRAPH_SCHEMA AS \"Schema\", PROPERTY_GRAPH_NAME AS \"Name\", PROPERTY_GRAPH_MODE AS \"Mode\", IS_VALID AS \"Valid\"{extra} \
          FROM INFORMATION_SCHEMA.PROPERTY_GRAPHS WHERE {} ORDER BY PROPERTY_GRAPH_SCHEMA, PROPERTY_GRAPH_NAME",
-        matching(pattern, ("PROPERTY_GRAPH_SCHEMA", "PROPERTY_GRAPH_NAME"), system)
+        matching(pattern, ("PROPERTY_GRAPH_SCHEMA", "PROPERTY_GRAPH_NAME"), show.system)
     )
 }
 

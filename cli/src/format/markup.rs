@@ -28,7 +28,7 @@ pub(crate) fn json_string(text: &str) -> String {
             '\t' => out.push_str("\\t"),
             other => {
                 if other.is_control() {
-                    out.push_str(&format!("\\u{:04x}", u32::from(other)));
+                    out.extend(format!("\\u{:04x}", u32::from(other)).chars());
                 } else {
                     out.push(other);
                 }
@@ -58,7 +58,11 @@ fn json_value(v: &Value, text: &str) -> String {
         Value::Bool(b) => b.to_string(),
         Value::Json(_) => text.to_owned(),
         Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_) => {
-            if is_json_number(text) { text.to_owned() } else { json_string(text) }
+            if is_json_number(text) {
+                text.to_owned()
+            } else {
+                json_string(text)
+            }
         }
         Value::Char(_)
         | Value::Binary(_)

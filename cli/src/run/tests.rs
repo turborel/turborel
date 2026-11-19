@@ -24,7 +24,8 @@ fn shown(given: &Options, (standard, typed): (&str, bool), times: &[Duration]) -
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let io = Io { input: &mut standard.as_bytes(), typed, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
     let mut ticks = times.iter().copied();
-    let succeeded = run_with_clock(&mut connection, given, io, || ticks.next().expect("one start and end per statement")) == Outcome::Succeeded;
+    let succeeded =
+        run_with_clock(&mut connection, given, io, || ticks.next().expect("one start and end per statement")) == Outcome::Succeeded;
     assert_eq!(ticks.next(), None, "every attempted statement was timed");
     (succeeded, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
 }
@@ -179,7 +180,8 @@ fn unwritten_timing_is_ignored() {
         let given = options("COMMIT; COMMIT");
         let mut out = Vec::new();
         let mut err = Broken { on_flush };
-        let io = Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
+        let io =
+            Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
         let calls = Cell::new(0_u32);
         let clock = || {
             calls.set(calls.get() + 1);

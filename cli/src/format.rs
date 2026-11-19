@@ -223,11 +223,23 @@ impl<'a> Printer<'a> {
     /// layout says.
     pub fn new(out: &'a mut dyn Write, layout: &'a Layout, screen: Option<usize>, expanded: bool) -> Printer<'a> {
         let expanded = expanded || layout.expanded == Expanded::On;
-        Printer { out, layout, screen, expanded, names: Vec::new(), shapes: Vec::new(), rows: 0, widths: Widths::default(), failed: None, known: None }
+        Printer {
+            out,
+            layout,
+            screen,
+            expanded,
+            names: Vec::new(),
+            shapes: Vec::new(),
+            rows: 0,
+            widths: Widths::default(),
+            failed: None,
+            known: None,
+        }
     }
 
     /// The printer, its columns as wide as `rows`, all it is to write,
     /// need, or their names.
+    #[must_use]
     pub fn fitted(mut self, rows: &[Row]) -> Printer<'a> {
         let mut widest: Vec<usize> = Vec::new();
         for row in rows {

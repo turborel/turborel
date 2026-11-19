@@ -62,7 +62,7 @@ impl Paged {
             return stdin.write_all(bytes);
         }
         self.held.extend_from_slice(bytes);
-        self.seen = self.seen.saturating_add(bytes.iter().filter(|b| **b == b'\n').count());
+        self.seen = self.seen.saturating_add(bytes.split(|b| *b == b'\n').skip(1).count());
         if self.seen > self.lines {
             self.start(main)?;
         }

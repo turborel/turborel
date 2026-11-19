@@ -6,8 +6,8 @@
 
 use std::future::Future;
 use std::io;
-use std::sync::mpsc::Sender;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::Poll;
 

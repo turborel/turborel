@@ -81,7 +81,7 @@ pub fn pbkdf2(password: &[u8], salt: &[u8], iterations: u32) -> Digest {
 
 /// `bytes` in hex, two lower-case digits each.
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<String>>().concat()
 }
 
 /// A new salt: unique to this process and call.

@@ -20,7 +20,12 @@ fn statement(file: &str) -> String {
 fn synopsis(name: &str, text: &str) -> String {
     let mut lines = text.lines();
     let summary = lines.by_ref().skip_while(|l| *l != "## NAME").nth(2).unwrap_or(name).to_owned();
-    let body: Vec<&str> = lines.skip_while(|l| *l != "## SYNOPSIS").skip_while(|l| !l.starts_with("```")).skip(1).take_while(|l| !l.starts_with("```")).collect();
+    let body: Vec<&str> = lines
+        .skip_while(|l| *l != "## SYNOPSIS")
+        .skip_while(|l| !l.starts_with("```"))
+        .skip(1)
+        .take_while(|l| !l.starts_with("```"))
+        .collect();
     format!("{summary}\n\n{}\n\nSee doc/sql/statements/{}.md.", body.join("\n"), name.to_lowercase().replace(' ', "-"))
 }
 
@@ -58,8 +63,9 @@ mod tests {
     #[test]
     fn every_statement_page_is_compiled_in() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../doc/sql/statements");
-        let mut files: Vec<String> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-        files.retain(|f| f.ends_with(".md") && f != "README.md");
+        let mut files: Vec<String> =
+            std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        files.retain(|f| std::path::Path::new(f).extension().is_some_and(|e| e.eq_ignore_ascii_case("md")) && f != "README.md");
         files.sort();
         let compiled: Vec<&str> = PAGES.iter().map(|(f, _)| *f).collect();
         assert_eq!(compiled, files);

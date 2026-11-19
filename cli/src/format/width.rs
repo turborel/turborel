@@ -55,11 +55,19 @@ const FULLWIDTH: [(char, char); 2] = [('\u{FF01}', '\u{FF60}'), ('\u{FFE0}', '\u
 /// The columns of a character of the double blocks.
 const DOUBLE: usize = 2;
 
+/// The classes of characters of no column and of two, once made.
+enum Classes {
+    /// Made.
+    Made(Box<(Regex, Regex)>),
+    /// They could not be made: every character is one column.
+    Unmade,
+}
+
 /// What measures text, each character's columns kept once found.
 #[derive(Default)]
 pub struct Widths {
     /// The classes, made once a character beyond ASCII is met.
-    classes: Option<Option<(Regex, Regex)>>,
+    classes: Option<Classes>,
     found: HashMap<char, usize>,
 }
 
@@ -88,8 +96,9 @@ impl Widths {
         if FULLWIDTH.iter().any(|(first, last)| (*first..=*last).contains(&c)) {
             return DOUBLE;
         }
-        let classes = self.classes.get_or_insert_with(classes);
-        let Some((none, double)) = classes.as_ref() else { return 1 };
+        let made = self.classes.get_or_insert_with(|| classes().map_or(Classes::Unmade, |both| Classes::Made(Box::new(both))));
+        let Classes::Made(both) = made else { return 1 };
+        let (none, double) = &**both;
         let text = c.to_string();
         if none.is_match(&text).unwrap_or(false) {
             0
@@ -125,7 +134,7 @@ impl Widths {
 
 /// The classes of characters of no column and of two.
 fn classes() -> Option<(Regex, Regex)> {
-    let blocks: String = DOUBLE_BLOCKS.iter().map(|b| format!(r"\p{{Is{b}}}")).collect();
+    let blocks = DOUBLE_BLOCKS.iter().map(|b| format!(r"\p{{Is{b}}}")).collect::<Vec<String>>().concat();
     Some((Regex::new(NONE_WIDE, "").ok()?, Regex::new(&format!("[{blocks}]"), "").ok()?))
 }
 

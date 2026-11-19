@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use turborel::storage::Row;
 use turborel::value::Value;
+use turborel_client::connection::Sink as _;
 
 use super::statement::Kept;
 use super::{Next, Shell, Statements};
@@ -30,7 +31,11 @@ const SYNTAX_ERROR: i32 = -102;
 fn address(server: &Server) -> String {
     match server {
         Server::Tcp { host, port, .. } => {
-            if host.contains(':') { format!("[{host}]:{port}") } else { format!("{host}:{port}") }
+            if host.contains(':') {
+                format!("[{host}]:{port}")
+            } else {
+                format!("{host}:{port}")
+            }
         }
         #[cfg(any(unix, windows))]
         Server::Socket(path) => path.display().to_string(),
@@ -193,7 +198,6 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         };
         let mut out = super::output::Out { main, tee: self.tee.as_mut(), pager: None };
         let mut printer = Printer::new(&mut out, &self.layout, width, false).fitted(&kept.rows);
-        use turborel_client::connection::Sink as _;
         printer.columns(&kept.columns);
         printer.rows(&kept.rows);
         let count = u64::try_from(kept.rows.len()).unwrap_or(u64::MAX);
@@ -250,10 +254,7 @@ fn literal_body(rest: &str) -> Option<String> {
 pub(crate) fn set_password<S: Statements + ?Sized>(connection: &mut S, user: &str, password: &str, secure: bool) -> Result<(), String> {
     let made = password::verifier(password, &password::salt(), password::ITERATIONS);
     let by_verifier = format!("ALTER USER {} PASSWORD VERIFIER {}", identifier(user), literal(&made));
-    let failure = match connection.query_into(&by_verifier, &mut Kept::default()) {
-        Ok(_) => return Ok(()),
-        Err(failure) => failure,
-    };
+    let Err(failure) = connection.query_into(&by_verifier, &mut Kept::default()) else { return Ok(()) };
     if failure.sqlcode != SYNTAX_ERROR {
         return Err(failure.to_string());
     }

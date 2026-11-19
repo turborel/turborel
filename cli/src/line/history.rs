@@ -56,7 +56,7 @@ impl History {
     ///
     /// The file cannot be written.
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        let text: String = self.entries.iter().map(|e| format!("{}\n", escape(e))).collect();
+        let text = self.entries.iter().map(|e| format!("{}\n", escape(e))).collect::<Vec<String>>().concat();
         fs::write(path, text)
     }
 
@@ -97,7 +97,7 @@ mod tests {
         }
         assert_eq!(history.entries(), ["b", "c"]);
         history.add("d", 0);
-        assert!(history.entries().is_empty());
+        assert_eq!(history.entries(), Vec::<String>::new());
     }
 
     /// Verifies: [DESIGN] RULES.md D211: the file holds an entry a line,

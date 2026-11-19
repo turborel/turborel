@@ -66,7 +66,8 @@ fn told(failure: &Failure, verbosity: Verbosity, sql: &str) -> String {
         Verbosity::Verbose => {
             let Some(position) = failure.position.and_then(|p| usize::try_from(p).ok()) else { return failure.to_string() };
             let before: String = sql.chars().take(position.saturating_sub(1)).collect();
-            let (number, start) = before.match_indices('\n').fold((1_usize, 0_usize), |(n, _), (at, _)| (n.saturating_add(1), at.saturating_add(1)));
+            let (number, start) =
+                before.match_indices('\n').fold((1_usize, 0_usize), |(n, _), (at, _)| (n.saturating_add(1), at.saturating_add(1)));
             let line = sql.get(start..).unwrap_or_default().lines().next().unwrap_or_default();
             let column = before.get(start..).unwrap_or_default().chars().count();
             let lead = format!("line {number}: ");
@@ -94,7 +95,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         let single = self.options.settings.single_transaction;
         self.connection.set_autocommit(self.vars.on(vars::AUTOCOMMIT) && !single);
         let saved = self.vars.rollback_on_error(typed) && self.savepoint(sql);
-        let began = self.timing.then(|| (self.now)());
+        let began = self.vars.on(vars::TIMING).then(|| (self.now)());
         let ran = self.ran(sql, how);
         let elapsed = began.map(|at| (self.now)().saturating_sub(at));
         if let Some(interrupts) = self.interrupts {
@@ -164,8 +165,8 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
             Streamed::Done(completed) => {
                 drop(printer);
                 let said = match (completed.sqlcode, completed.is_warning()) {
-                    (0, false) => "OK".to_owned(),
-                    (0, true) => format!("OK, with a warning: SQLSTATE {}", completed.sqlstate),
+                    (0_i32, false) => "OK".to_owned(),
+                    (0_i32, true) => format!("OK, with a warning: SQLSTATE {}", completed.sqlstate),
                     (_, _) => "no data".to_owned(),
                 };
                 if !self.vars.on(vars::QUIET) {

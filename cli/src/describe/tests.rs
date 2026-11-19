@@ -41,7 +41,11 @@ fn relations_are_looked_up_then_described() {
     let Ok(Plan::Relation(lookup)) = plan("d", Some("staff")) else { panic!("a lookup") };
     assert!(lookup.sql.contains("TABLE_NAME LIKE 'STAFF'"));
     assert!(resolved(&lookup, &[]).is_err());
-    let row = vec![turborel::value::Value::Char("S".into()), turborel::value::Value::Char("STAFF".into()), turborel::value::Value::Char("VIEW".into())];
+    let row = vec![
+        turborel::value::Value::Char("S".into()),
+        turborel::value::Value::Char("STAFF".into()),
+        turborel::value::Value::Char("VIEW".into()),
+    ];
     let sections = resolved(&lookup, &[row]).unwrap();
     assert_eq!(sections[0].title.as_deref(), Some("View S.STAFF"));
     assert!(!sections[0].skip_empty);

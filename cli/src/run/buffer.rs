@@ -136,7 +136,11 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         let program = words.next().unwrap_or(DEFAULT_EDITOR);
         let edited = Program::new(program).args(words).arg(file).status();
         let text = edited.and_then(|status| {
-            if status.success() { std::fs::read_to_string(file) } else { Err(std::io::Error::other(format!("the editor ended with {status}"))) }
+            if status.success() {
+                std::fs::read_to_string(file)
+            } else {
+                Err(std::io::Error::other(format!("the editor ended with {status}")))
+            }
         });
         if path.is_none() {
             // A file of the client's own, its text read or not.

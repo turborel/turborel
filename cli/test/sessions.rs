@@ -158,7 +158,14 @@ fn a_run_ends_when_it_cannot_go_on() {
     assert!(!turborel_cli::run(&mut connection, &given, io));
     assert_eq!(String::from_utf8(err).unwrap(), "turborel: cannot write: closed\n", "once");
     let mut typed = Vec::new();
-    let io = Io { input: &mut "SELECT K FROM T;".as_bytes(), typed: true, out: &mut Closed, err: &mut typed, interrupts: None, terminal: Terminal::default() };
+    let io = Io {
+        input: &mut "SELECT K FROM T;".as_bytes(),
+        typed: true,
+        out: &mut Closed,
+        err: &mut typed,
+        interrupts: None,
+        terminal: Terminal::default(),
+    };
     assert!(!turborel_cli::run(&mut connection, &options(&server, vec![Input::Standard]), io));
     assert_eq!(String::from_utf8(typed).unwrap(), "turborel: cannot write: closed\n", "not even prompted");
     server.stop();

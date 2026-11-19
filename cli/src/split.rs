@@ -142,7 +142,7 @@ impl Splitter {
             let next = at.saturating_add(1);
             let code = self.state == State::Code;
             if code && c == COMMAND {
-                let rest: String = chars.get(next..).unwrap_or_default().iter().take_while(|c| **c != '\n').collect();
+                let rest: String = chars.get(next..).unwrap_or_default().iter().take_while(|ch| **ch != '\n').collect();
                 self.dash = false;
                 done.push(Piece::Command(rest));
                 break;

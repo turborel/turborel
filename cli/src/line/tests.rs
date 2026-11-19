@@ -11,23 +11,32 @@ fn keys(bytes: &[u8]) -> Vec<Key> {
 #[test]
 fn bytes_decode_to_keys() {
     assert_eq!(keys("aé€\r".as_bytes()), [Key::Char('a'), Key::Char('é'), Key::Char('€'), Key::Enter]);
-    assert_eq!(keys(&[0x01, 0x05, 0x12, 0x03, 0x04, 0x7f, b'\t', 0x15, 0x0b, 0x17, 0x0c, 0x07, 0x00]), [
-        Key::Home,
-        Key::End,
-        Key::Search,
-        Key::Interrupt,
-        Key::EndOfInput,
-        Key::Backspace,
-        Key::Tab,
-        Key::CutStart,
-        Key::CutEnd,
-        Key::CutWord,
-        Key::Redraw,
-        Key::Cancel,
-        Key::Other
-    ]);
-    assert_eq!(keys(b"\x1b[A\x1b[B\x1b[C\x1b[D\x1bOH\x1b[F\x1b[3~"), [Key::Up, Key::Down, Key::Right, Key::Left, Key::Home, Key::End, Key::Delete]);
-    assert_eq!(keys(b"\x1b[1;5C\x1b[1;3D\x1bb\x1bf\x1b[1~\x1b[4~\x1b[9z"), [Key::WordRight, Key::WordLeft, Key::WordLeft, Key::WordRight, Key::Home, Key::End, Key::Other]);
+    assert_eq!(
+        keys(&[0x01, 0x05, 0x12, 0x03, 0x04, 0x7f, b'\t', 0x15, 0x0b, 0x17, 0x0c, 0x07, 0x00]),
+        [
+            Key::Home,
+            Key::End,
+            Key::Search,
+            Key::Interrupt,
+            Key::EndOfInput,
+            Key::Backspace,
+            Key::Tab,
+            Key::CutStart,
+            Key::CutEnd,
+            Key::CutWord,
+            Key::Redraw,
+            Key::Cancel,
+            Key::Other
+        ]
+    );
+    assert_eq!(
+        keys(b"\x1b[A\x1b[B\x1b[C\x1b[D\x1bOH\x1b[F\x1b[3~"),
+        [Key::Up, Key::Down, Key::Right, Key::Left, Key::Home, Key::End, Key::Delete]
+    );
+    assert_eq!(
+        keys(b"\x1b[1;5C\x1b[1;3D\x1bb\x1bf\x1b[1~\x1b[4~\x1b[9z"),
+        [Key::WordRight, Key::WordLeft, Key::WordLeft, Key::WordRight, Key::Home, Key::End, Key::Other]
+    );
     assert_eq!(keys(&[0xff]), [Key::Other]);
     let mut decoder = Decoder::default();
     assert_eq!(decoder.feed(0x1b), None);

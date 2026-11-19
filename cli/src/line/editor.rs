@@ -47,7 +47,15 @@ pub struct Editor<'h> {
 impl<'h> Editor<'h> {
     /// An empty line, of `history`.
     pub fn new(history: &'h History) -> Editor<'h> {
-        Editor { buffer: Buffer::default(), history, at: history.entries().len(), typed: String::new(), search: None, widths: Widths::default(), row: 0 }
+        Editor {
+            buffer: Buffer::default(),
+            history,
+            at: history.entries().len(),
+            typed: String::new(),
+            search: None,
+            widths: Widths::default(),
+            row: 0,
+        }
     }
 
     /// Its buffer.
@@ -81,8 +89,22 @@ impl<'h> Editor<'h> {
                 self.search = Some(Search::default());
                 Action::Go
             }
-            other => {
-                self.edit(other);
+            Key::Char(_)
+            | Key::Backspace
+            | Key::Delete
+            | Key::Left
+            | Key::Right
+            | Key::Home
+            | Key::End
+            | Key::WordLeft
+            | Key::WordRight
+            | Key::CutStart
+            | Key::CutEnd
+            | Key::CutWord
+            | Key::Redraw
+            | Key::Cancel
+            | Key::Other => {
+                self.edit(key);
                 Action::Go
             }
         }
@@ -104,7 +126,16 @@ impl<'h> Editor<'h> {
             Key::CutStart => buffer.cut_start(),
             Key::CutEnd => buffer.cut_end(),
             Key::CutWord => buffer.cut_word(),
-            Key::Enter | Key::Up | Key::Down | Key::Tab | Key::Search | Key::Interrupt | Key::EndOfInput | Key::Redraw | Key::Cancel | Key::Other => {}
+            Key::Enter
+            | Key::Up
+            | Key::Down
+            | Key::Tab
+            | Key::Search
+            | Key::Interrupt
+            | Key::EndOfInput
+            | Key::Redraw
+            | Key::Cancel
+            | Key::Other => {}
         }
     }
 
@@ -212,14 +243,15 @@ impl<'h> Editor<'h> {
         }
         let before: String = cursor.map_or_else(|| text.clone(), |c| text.chars().take(c).collect());
         let at = self.widths.of(&lead).saturating_add(self.widths.of(&before));
-        let (end_row, row, column) = (total.checked_div(width).unwrap_or(0), at.checked_div(width).unwrap_or(0), at.checked_rem(width).unwrap_or(0));
+        let (end_row, row, column) =
+            (total.checked_div(width).unwrap_or(0), at.checked_div(width).unwrap_or(0), at.checked_rem(width).unwrap_or(0));
         let up = end_row.saturating_sub(row);
         if up > 0 {
-            out.push_str(&format!("\x1b[{up}A"));
+            out.extend(format!("\x1b[{up}A").chars());
         }
         out.push('\r');
         if column > 0 {
-            out.push_str(&format!("\x1b[{column}C"));
+            out.extend(format!("\x1b[{column}C").chars());
         }
         self.row = row;
         out

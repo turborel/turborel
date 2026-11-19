@@ -45,7 +45,11 @@ pub fn words(sql: &str) -> Vec<(usize, String)> {
             (In::Code, '\'') => In::Quote,
             (In::Code, '"') => In::Ident,
             (In::Code, '-') => {
-                if chars.peek().is_some_and(|(_, n)| *n == '-') { In::Comment } else { In::Code }
+                if chars.peek().is_some_and(|(_, n)| *n == '-') {
+                    In::Comment
+                } else {
+                    In::Code
+                }
             }
             (In::Quote, '\'') | (In::Ident, '"') | (In::Comment, '\n') => In::Code,
             (In::Code | In::Quote | In::Ident | In::Comment, _) => state,

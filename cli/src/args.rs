@@ -149,11 +149,18 @@ pub enum Command {
     AdminHelp,
 }
 
+/// What the command line asks for in place of a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Asked {
+    Help,
+    Version,
+}
+
 /// What the command line named, before it is checked.
 #[derive(Debug, Default)]
 struct Named {
-    help: bool,
-    version: bool,
+    /// The help or the release, if asked for instead of a session.
+    asked: Option<Asked>,
     host: Option<String>,
     port: Option<u16>,
     socket: Option<PathBuf>,
@@ -203,11 +210,11 @@ pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Co
     }
     if first == ADMIN {
         let (named, words) = named(after, true)?;
-        if named.help || words.is_empty() {
+        if named.asked.is_some() || words.is_empty() {
             return Ok(Command::AdminHelp);
         }
         let options = options(named, env)?;
-        return Ok(Command::Admin(Box::new(crate::admin::Invocation::new(options, words)?)));
+        return Ok(Command::Admin(Box::new(crate::admin::Invocation::new(options, &words)?)));
     }
     run(args, env)
 }
@@ -215,11 +222,10 @@ pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Co
 /// The session the command line `args` asks for, or its help or release.
 fn run(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Command, String> {
     let (named, _) = named(args, false)?;
-    if named.help {
-        return Ok(Command::Help);
-    }
-    if named.version {
-        return Ok(Command::Version);
+    match named.asked {
+        Some(Asked::Help) => return Ok(Command::Help),
+        Some(Asked::Version) => return Ok(Command::Version),
+        None => {}
     }
     options(named, env).map(|o| Command::Run(Box::new(o)))
 }
@@ -235,8 +241,8 @@ fn named(args: &[String], words: bool) -> Result<(Named, Vec<String>), String> {
             continue;
         }
         match arg.as_str() {
-            "--help" => named.help = true,
-            "--version" => named.version = true,
+            "--help" => named.asked = Some(Asked::Help),
+            "--version" => named.asked = Some(Asked::Version),
             "-h" | "--host" => named.host = Some(value()?),
             "-p" | "--port" => named.port = Some(port(&value()?)?),
             "--socket" => named.socket = Some(PathBuf::from(value()?)),

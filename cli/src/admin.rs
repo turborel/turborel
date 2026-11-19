@@ -21,7 +21,7 @@ use turborel_client::connection::Sink as _;
 
 use crate::args::Options;
 use crate::format::{Expanded, Layout, Printer};
-use crate::run::{Kept, Statements};
+use crate::run::{Kept, Secret, Statements};
 use crate::vars::{identifier, literal};
 
 /// The usage text of `turborel admin`.
@@ -108,7 +108,7 @@ impl Invocation {
     /// # Errors
     ///
     /// The words name no command, or not as it is written.
-    pub fn new(options: Options, words: Vec<String>) -> Result<Invocation, String> {
+    pub fn new(options: Options, words: &[String]) -> Result<Invocation, String> {
         let (flags, args): (Vec<&String>, Vec<&String>) = words.iter().skip(1).partition(|w| w.starts_with("--"));
         let flag = |name: &str| flags.iter().any(|f| *f == name);
         let first = args.first().copied();
@@ -140,14 +140,17 @@ impl Invocation {
     }
 }
 
+/// What asks a question, and tells whether it was answered `y`.
+pub type Confirm<'a> = &'a mut dyn FnMut(&str) -> io::Result<bool>;
+
 /// What a command reads and writes.
 pub struct Console<'a> {
     /// Where results go.
     pub out: &'a mut dyn Write,
     /// What asks a question, typed `y` or not; none without a terminal.
-    pub confirm: Option<&'a mut dyn FnMut(&str) -> io::Result<bool>>,
+    pub confirm: Option<Confirm<'a>>,
     /// What reads a password typed; none without a terminal.
-    pub secret: Option<&'a mut dyn FnMut(&str) -> io::Result<String>>,
+    pub secret: Option<Secret<'a>>,
 }
 
 /// The pattern `pattern` of a setting's name, as LIKE takes it.
@@ -165,15 +168,28 @@ pub fn run<S: Statements + ?Sized>(connection: &mut S, invocation: &Invocation, 
     match &invocation.command {
         Admin::Ping => ping(connection, console),
         Admin::Status => show(connection, "SELECT * FROM INFORMATION_SCHEMA.SERVER", true, console),
-        Admin::Processes => show(connection, "SELECT ID, USER_NAME, PEER, SECURE, STATE FROM INFORMATION_SCHEMA.CONNECTIONS ORDER BY ID", false, console),
+        Admin::Processes => {
+            show(connection, "SELECT ID, USER_NAME, PEER, SECURE, STATE FROM INFORMATION_SCHEMA.CONNECTIONS ORDER BY ID", false, console)
+        }
         Admin::Kill(id) => done(connection, &format!("END CONNECTION {id}"), &format!("Connection {id} is ended."), console),
-        Admin::Cancel(id) => done(connection, &format!("CANCEL CONNECTION {id}"), &format!("The statement of connection {id} is cancelled."), console),
+        Admin::Cancel(id) => {
+            done(connection, &format!("CANCEL CONNECTION {id}"), &format!("The statement of connection {id} is cancelled."), console)
+        }
         Admin::Variables(pattern) => {
-            let filter = pattern.as_deref().map_or_else(String::new, |p| format!(" WHERE SETTING_NAME LIKE {} ESCAPE '\\'", literal(&setting_pattern(p))));
-            show(connection, &format!("SELECT SETTING_NAME, SETTING_VALUE FROM INFORMATION_SCHEMA.SETTINGS{filter} ORDER BY SETTING_NAME"), false, console)
+            let filter = pattern
+                .as_deref()
+                .map_or_else(String::new, |p| format!(" WHERE SETTING_NAME LIKE {} ESCAPE '\\'", literal(&setting_pattern(p))));
+            show(
+                connection,
+                &format!("SELECT SETTING_NAME, SETTING_VALUE FROM INFORMATION_SCHEMA.SETTINGS{filter} ORDER BY SETTING_NAME"),
+                false,
+                console,
+            )
         }
         Admin::Password(user) => password(connection, user.as_deref(), invocation, console),
-        Admin::CreateSchema(name) => done(connection, &format!("CREATE SCHEMA {}", identifier(name)), &format!("Schema {name} is created."), console),
+        Admin::CreateSchema(name) => {
+            done(connection, &format!("CREATE SCHEMA {}", identifier(name)), &format!("Schema {name} is created."), console)
+        }
         Admin::DropSchema { name, cascade, yes } => drop_schema(connection, (name, *cascade, *yes), console),
         Admin::Version => {
             let (server, _) = connection.session().unwrap_or_default();
@@ -181,7 +197,12 @@ pub fn run<S: Statements + ?Sized>(connection: &mut S, invocation: &Invocation, 
         }
         Admin::Tls(certificate, key) => {
             done(connection, &format!("SET DATABASE SERVER.TLS_CERTIFICATE = {}", literal(certificate)), "", console)?;
-            done(connection, &format!("SET DATABASE SERVER.TLS_KEY = {}", literal(key)), "The files are taken for the connections after.", console)
+            done(
+                connection,
+                &format!("SET DATABASE SERVER.TLS_KEY = {}", literal(key)),
+                "The files are taken for the connections after.",
+                console,
+            )
         }
     }
 }
@@ -216,7 +237,11 @@ fn done<S: Statements + ?Sized>(connection: &mut S, sql: &str, said: &str, conso
 }
 
 /// `drop-schema`: asked first unless `yes`, then dropped.
-fn drop_schema<S: Statements + ?Sized>(connection: &mut S, (name, cascade, yes): (&str, bool, bool), console: &mut Console<'_>) -> Result<(), String> {
+fn drop_schema<S: Statements + ?Sized>(
+    connection: &mut S,
+    (name, cascade, yes): (&str, bool, bool),
+    console: &mut Console<'_>,
+) -> Result<(), String> {
     let how = if cascade { "CASCADE" } else { "RESTRICT" };
     if !yes {
         let Some(confirm) = console.confirm.as_deref_mut() else {
@@ -231,7 +256,12 @@ fn drop_schema<S: Statements + ?Sized>(connection: &mut S, (name, cascade, yes):
 }
 
 /// `password`: the new password typed twice, its verifier sent.
-fn password<S: Statements + ?Sized>(connection: &mut S, user: Option<&str>, invocation: &Invocation, console: &mut Console<'_>) -> Result<(), String> {
+fn password<S: Statements + ?Sized>(
+    connection: &mut S,
+    user: Option<&str>,
+    invocation: &Invocation,
+    console: &mut Console<'_>,
+) -> Result<(), String> {
     let who = user.map(str::to_owned).or_else(|| connection.session().map(|(_, u)| u)).unwrap_or_default();
     let secret = console.secret.as_deref_mut().ok_or("a password is typed at a terminal")?;
     let first = secret(&format!("new password for {who}: ")).map_err(|e| e.to_string())?;
@@ -249,14 +279,17 @@ mod tests {
     use super::*;
 
     fn invocation(words: &str) -> Result<Admin, String> {
-        let crate::args::Command::Run(options) = crate::args::parse(&["-U".to_owned(), "X".to_owned()], &|_| None).unwrap() else { panic!("a run") };
-        Invocation::new(*options, words.split(' ').map(str::to_owned).collect()).map(|i| i.command)
+        let crate::args::Command::Run(options) = crate::args::parse(&["-U".to_owned(), "X".to_owned()], &|_| None)? else {
+            return Err("a run".to_owned());
+        };
+        let words: Vec<String> = words.split(' ').map(str::to_owned).collect();
+        Invocation::new(*options, &words).map(|i| i.command)
     }
 
-    /// Verifies: [DESIGN] RULES.md D218: each command is read with its
-    /// arguments and flags; one missing, wrong or unknown is refused.
+    /// Verifies: [DESIGN] RULES.md D218: the commands that take an ID, a
+    /// name or files are read with them; one missing or wrong is refused.
     #[test]
-    fn commands_are_read() {
+    fn commands_with_arguments_are_read() {
         assert_eq!(invocation("ping"), Ok(Admin::Ping));
         assert_eq!(invocation("kill 7"), Ok(Admin::Kill(7)));
         assert_eq!(invocation("cancel 8"), Ok(Admin::Cancel(8)));
@@ -269,6 +302,12 @@ mod tests {
         assert!(invocation("drop-schema").is_err());
         assert_eq!(invocation("tls c.pem k.pem"), Ok(Admin::Tls("c.pem".into(), "k.pem".into())));
         assert!(invocation("tls c.pem").is_err());
+    }
+
+    /// Verifies: [DESIGN] RULES.md D218: the commands without arguments
+    /// are read; an unknown one is refused.
+    #[test]
+    fn commands_without_arguments_are_read() {
         assert!(invocation("frobnicate").is_err());
         assert_eq!(invocation("create-schema S"), Ok(Admin::CreateSchema("S".into())));
         assert_eq!(invocation("password"), Ok(Admin::Password(None)));

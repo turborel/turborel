@@ -143,8 +143,6 @@ fn escaped(after: &[u8]) -> Option<Key> {
         return None;
     }
     let key = match after {
-        [b'b'] => Key::WordLeft,
-        [b'f'] => Key::WordRight,
         [b'[' | b'O', b'A'] => Key::Up,
         [b'[' | b'O', b'B'] => Key::Down,
         [b'[' | b'O', b'C'] => Key::Right,
@@ -152,8 +150,8 @@ fn escaped(after: &[u8]) -> Option<Key> {
         [b'[' | b'O', b'H'] | [b'[', b'1' | b'7', b'~'] => Key::Home,
         [b'[' | b'O', b'F'] | [b'[', b'4' | b'8', b'~'] => Key::End,
         [b'[', b'3', b'~'] => Key::Delete,
-        [b'[', b'1', b';', b'3' | b'5', b'C'] => Key::WordRight,
-        [b'[', b'1', b';', b'3' | b'5', b'D'] => Key::WordLeft,
+        [b'f'] | [b'[', b'1', b';', b'3' | b'5', b'C'] => Key::WordRight,
+        [b'b'] | [b'[', b'1', b';', b'3' | b'5', b'D'] => Key::WordLeft,
         [ESC] => Key::Cancel,
         _ => Key::Other,
     };

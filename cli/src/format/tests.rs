@@ -14,8 +14,14 @@ fn column(name: Option<&str>, data_type: DataType) -> Column {
 fn written(layout: &Layout, screen: Option<usize>, expanded: bool) -> String {
     let mut out = Vec::new();
     let mut p = Printer::new(&mut out, layout, screen, expanded);
-    p.columns(&[column(Some("NAME"), DataType::character(6)), column(Some("N"), DataType::Exact { precision: 3, scale: 0, spelled: Spelled::Numeric })]);
-    p.rows(&[vec![Value::Char("a, \"b\"".into()), Value::Exact(Decimal::new(7, 0))], vec![Value::Null, Value::Exact(Decimal::new(-12, 0))]]);
+    p.columns(&[
+        column(Some("NAME"), DataType::character(6)),
+        column(Some("N"), DataType::Exact { precision: 3, scale: 0, spelled: Spelled::Numeric }),
+    ]);
+    p.rows(&[
+        vec![Value::Char("a, \"b\"".into()), Value::Exact(Decimal::new(7, 0))],
+        vec![Value::Null, Value::Exact(Decimal::new(-12, 0))],
+    ]);
     p.finish(2, None).unwrap();
     String::from_utf8(out).unwrap()
 }
@@ -182,7 +188,16 @@ fn json_arrays() {
 #[test]
 fn options_are_set_by_name() {
     let mut l = Layout::default();
-    for (option, value) in [("style", "csv"), ("expanded", "auto"), ("border", "2"), ("null", "-"), ("separator", ";"), ("tuples", "on"), ("footer", "off"), ("pager", "always")] {
+    for (option, value) in [
+        ("style", "csv"),
+        ("expanded", "auto"),
+        ("border", "2"),
+        ("null", "-"),
+        ("separator", ";"),
+        ("tuples", "on"),
+        ("footer", "off"),
+        ("pager", "always"),
+    ] {
         l.set(option, value).unwrap();
         assert_eq!(l.get(option).as_deref(), Some(value), "{option}");
     }
