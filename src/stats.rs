@@ -34,8 +34,8 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::BuildHasher;
 
-pub use frequencies::Frequencies;
 pub use envelopes::{EnvelopeBuilder, EnvelopeStats};
+pub use frequencies::Frequencies;
 pub use parts::Sampling;
 use parts::{Histogram, HyperLogLog, Reservoir, count};
 
@@ -167,7 +167,6 @@ impl Statistics for TableStats {
     fn bounds(&self, column: usize) -> Option<(Value, Value)> {
         let c = self.columns.get(column)?;
         Some((c.min.clone()?, c.max.clone()?))
-
     }
     fn envelopes(&self, column: usize) -> Option<&EnvelopeStats> {
         self.columns.get(column)?.envelopes.as_deref()

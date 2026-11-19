@@ -82,10 +82,7 @@ impl Plan {
                     .split_once(' ')
                     .filter(|(m, _)| *m == crate::index::ADJACENCY_METHOD)
                     .map_or(("IndexNestedLoop", &**method), |(m, expand)| (expand, m));
-                writeln!(
-                    out,
-                    "{pad}{kind}{operator} {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})"
-                )
+                writeln!(out, "{pad}{kind}{operator} {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})")
             }
         }
     }
