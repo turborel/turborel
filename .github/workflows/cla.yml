@@ -23,9 +23,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path-to-signatures: 'signatures/cla.json'
-          path-to-document: 'https://github.com'
-          branch: 'main'
+          path-to-document: 'https://github.com/turborel/turborel/blob/main/CLA.md'
+          branch: 'cla-signatures'
           allowlist: 'guycipher,dependabot[bot]'
-          remote-organization-name: 'turborel'
-          remote-repository-name: 'turborel'
-          lock-pullrequest-after-merge: false
+          lock-pullrequest-aftermerge: false
