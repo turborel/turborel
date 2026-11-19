@@ -16,4 +16,4 @@ pub mod thesaurus;
 pub mod types;
 pub mod value;
 
-pub use text::{Language, StopWords, Token, Tokens, is_stop, normalize, stem, tokenize, tokenize_with};
+pub use text::{Language, Languages, StopWords, Token, Tokens, is_single_letter, is_stop, normalize, normalize_in, stem, tokenize, tokenize_with};
