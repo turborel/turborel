@@ -8,7 +8,7 @@ use turborel::clock::FixedClock;
 use turborel::db::{Database, OpenOptions, Session};
 use turborel::error::Code;
 
-use crate::common::{Scratch, code, exec, os, rows, sorted};
+use crate::common::{Scratch, broke, code, exec, os, refused, rows, sorted};
 
 /// 2024-02-29 12:34:56.789012 UTC, in microseconds from 1970-01-01.
 const NOW: i64 = 1_709_210_096_789_012;
@@ -54,10 +54,10 @@ fn the_datetime_types_6_1() {
     a.commit().unwrap();
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.3 SR15-SR18, SR21, SR22,
-/// SR25; §6.1 GR6] a datetime literal is DATE, TIME or TIMESTAMP, then its
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.3 SR15-SR18, SR21, SR22;
+/// §6.1 GR6; ISO/IEC 9075-2:2023 §5.3 SR43] a datetime literal is DATE, TIME or TIMESTAMP, then its
 /// string, of four digits of year and two of each other field, valid in
-/// the calendar, its displacement from -12:59 to +13:00, of as many
+/// the calendar, its displacement from -12:59 to +14:00, of as many
 /// digits of fraction as written; one invalid is refused (SQLCODE -103);
 /// one whose instant leaves the years 0001 to 9999 is refused with
 /// SQLSTATE 22007.
@@ -75,7 +75,7 @@ fn datetime_literals_5_3() {
         ["23:59:59-12:59,9999-12-31 23:59:59.999999"]
     );
     for bad in
-        ["DATE '2023-02-29'", "DATE '24-01-01'", "TIME '24:00:00'", "TIME '12:00:60'", "TIME '12:00:00+13:01'", "TIMESTAMP '2024-01-01'"]
+        ["DATE '2023-02-29'", "DATE '24-01-01'", "TIME '24:00:00'", "TIME '12:00:60'", "TIME '12:00:00+14:01'", "TIMESTAMP '2024-01-01'"]
     {
         assert_eq!(code(&a, &format!("SELECT {bad} FROM T")), Code::SyntaxRule, "{bad}");
     }
@@ -149,7 +149,7 @@ fn datetimes_compare_8_2() {
 /// instant, of a type WITH TIME ZONE, in the session's displacement,
 /// SESSION.TIME_ZONE, of the precision written; a time or timestamp without time
 /// zone is kept in UTC, so it shows in the session's displacement [§6.1
-/// SR5]; SESSION.TIME_ZONE takes a displacement from -12:59 to +13:00.
+/// SR5]; SESSION.TIME_ZONE takes a displacement from -12:59 to +14:00.
 #[test]
 fn current_datetimes_6_8() {
     let db = datetimes();
@@ -165,7 +165,7 @@ fn current_datetimes_6_8() {
         ["2024-02-28,23:35:56.7-12:59,2023-12-31 21:01:00.000"]
     );
     assert_eq!(rows(&a, "SELECT COUNT(*) FROM T WHERE S = TIMESTAMP '2023-12-31 21:01:00'").unwrap(), ["1"], "a literal in it too");
-    assert_eq!(exec(&a, "SET SESSION.TIME_ZONE = '+13:01'").err(), Some(Code::Data));
+    assert_eq!(exec(&a, "SET SESSION.TIME_ZONE = '+14:01'").err(), Some(Code::Data));
     assert_eq!(code(&a, "SELECT CURRENT_TIME(7) FROM T"), Code::Unsupported);
     a.commit().unwrap();
 }
@@ -369,4 +369,47 @@ fn a_default_takes_the_defining_displacement_5_3() {
     let reopened = Database::new();
     reopened.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
     defaults_kept(&reopened);
+}
+
+/// The SQLCODE, the SQLSTATE and the rule of the error statement `sql`
+/// raises as it runs.
+fn run_refused(s: &Session, sql: &str) -> (i32, String, Option<String>) {
+    let e = s.run(sql).expect_err(sql);
+    (e.sqlcode(), e.sqlstate().as_str().to_owned(), e.rule)
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §4.7.2, §5.3 SR43, §6.1 GR8, §6.42 GR5b
+/// ii 2 A, §19.4 GR1b] the greatest time zone displacement (IL062) is
+/// +14:00, as the standard requires at least: a literal, a string CAST,
+/// a template's TZH, AT TIME ZONE, SET TIME ZONE and SESSION.TIME_ZONE
+/// take it, and a value of it is kept and read back as written; +14:01
+/// is refused by each, SQLSTATE 22009 where a displacement is computed.
+/// Fails without the fix, when the greatest was SQL-92's +13:00.
+#[test]
+fn displacement_reaches_plus_14_4_7_2() {
+    let db = datetimes();
+    let a = db.session("A");
+    a.run("INSERT INTO T (Z) VALUES (TIMESTAMP '2026-01-01 00:00:00+14:00')").unwrap();
+    assert_eq!(rows(&a, "SELECT Z, EXTRACT(TIMEZONE_HOUR FROM Z) FROM T").unwrap(), ["2026-01-01 00:00:00.000000+14:00,14"], "Kiribati");
+    let same = "Z = TIMESTAMP '2025-12-31 10:00:00+00:00' AND Z = CAST('2026-01-01 00:00:00+14:00' AS TIMESTAMP WITH TIME ZONE) \
+                AND Z = CAST('2026-01-01 00:00 +14:00' AS TIMESTAMP WITH TIME ZONE FORMAT 'YYYY-MM-DD HH24:MI TZH:TZM')";
+    assert_eq!(rows(&a, &format!("SELECT COUNT(*) FROM T WHERE {same}")).unwrap(), ["1"]);
+    assert_eq!(rows(&a, "SELECT TIME '23:59:59-12:59' AT TIME ZONE INTERVAL '14:00' HOUR TO MINUTE FROM T").unwrap(), ["02:58:59+14:00"]);
+    a.run("SET TIME ZONE INTERVAL '14:00' HOUR TO MINUTE").unwrap();
+    assert_eq!(
+        rows(&a, "SELECT CURRENT_TIMESTAMP(0), Z AT LOCAL FROM T").unwrap(),
+        ["2024-03-01 02:34:56+14:00,2026-01-01 00:00:00.000000+14:00"]
+    );
+    a.run("SET SESSION.TIME_ZONE = '+14:00'").unwrap();
+    for bad in ["TIME '12:00:00+14:01'", "TIMESTAMP '2026-01-01 00:00:00+14:01'"] {
+        assert_eq!(code(&a, &format!("SELECT {bad} FROM T")), Code::SyntaxRule, "{bad}");
+    }
+    let cast = "SELECT CAST('2026-01-01 00:00:00+14:01' AS TIMESTAMP WITH TIME ZONE) FROM T";
+    assert_eq!(refused(&a, cast).1, "22018", "as any string of no datetime");
+    let at = "SELECT TIME '12:00:00' AT TIME ZONE INTERVAL '14:01' HOUR TO MINUTE FROM T";
+    assert_eq!(refused(&a, at), broke(-301, "22009", "§6.42 GR5b ii 2 A"));
+    let set = "SET TIME ZONE INTERVAL '14:01' HOUR TO MINUTE";
+    assert_eq!(run_refused(&a, set), broke(-301, "22009", "§19.4 GR1b ii"));
+    assert_eq!(exec(&a, "SET SESSION.TIME_ZONE = '+14:01'").err(), Some(Code::Data));
+    a.commit().unwrap();
 }

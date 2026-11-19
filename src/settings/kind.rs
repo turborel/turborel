@@ -1,6 +1,7 @@
 //! What values a setting takes (`Kind`), and how they are told.
 
 use crate::value::Value;
+use crate::value::datetime::displacement_range;
 
 /// What values a setting takes. A value is given as a `Value`: a whole
 /// number as an exact number of scale 0 (or a scale whose digits are 0), a
@@ -35,8 +36,8 @@ pub enum Kind {
     /// An `<identifier>`'s body: at most `MAX_IDENTIFIER_LENGTH`
     /// characters, not empty, as given, its ends trimmed.
     Identifier,
-    /// A time zone displacement, ±HH:MM, from -12:59 to +13:00 [ISO/IEC
-    /// 9075:1992 §5.3 SR25].
+    /// A time zone displacement, ±HH:MM, from -12:59 to +14:00 [ISO/IEC
+    /// 9075-2:2023 §4.7.2] (`value/datetime.rs`).
     Displacement,
     /// Text of at most `max` characters, as given, its ends trimmed; it
     /// may be empty.
@@ -66,7 +67,7 @@ impl Kind {
             Kind::HashFunction => "A HASH FUNCTION".to_owned(),
             Kind::Encodings => "ENCODINGS, BY COMMAS".to_owned(),
             Kind::Identifier => "AN IDENTIFIER".to_owned(),
-            Kind::Displacement => "A TIME ZONE DISPLACEMENT FROM -12:59 TO +13:00".to_owned(),
+            Kind::Displacement => format!("A TIME ZONE DISPLACEMENT {}", displacement_range().to_uppercase()),
             Kind::Text { max } => format!("TEXT OF AT MOST {max} CHARACTERS"),
             Kind::Columns { most } => format!("AT MOST {most} OF THE TABLE'S COLUMNS, BY COMMAS"),
         }

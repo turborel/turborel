@@ -237,7 +237,7 @@ fn extract_of_intervals_6_6() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.14 SR4, SR5, GR2, GR4; §16.5]
 /// AT TIME ZONE an INTERVAL HOUR TO MINUTE gives the instant WITH TIME
-/// ZONE in that displacement (SQLSTATE 22009 out of -12:59 to +13:00), AT
+/// ZONE in that displacement (SQLSTATE 22009 out of -12:59 to +14:00), AT
 /// LOCAL in the session's; SET TIME ZONE sets the session's, LOCAL the
 /// database's again; a date has no time zone, nor another interval is one
 /// (SQLCODE -103).
@@ -260,7 +260,7 @@ fn time_zones_6_14() {
     );
     a.run("SET TIME ZONE LOCAL").unwrap();
     assert_eq!(one(&a, "CURRENT_TIME"), "12:34:56+00:00");
-    assert_eq!(code(&a, "SELECT TIME '12:00:00' AT TIME ZONE INTERVAL '14:00' HOUR TO MINUTE FROM T"), Code::Data, "22009");
+    assert_eq!(code(&a, "SELECT TIME '12:00:00' AT TIME ZONE INTERVAL '14:01' HOUR TO MINUTE FROM T"), Code::Data, "22009");
     assert_eq!(exec(&a, "SET TIME ZONE INTERVAL -'13:00' HOUR TO MINUTE").err(), Some(Code::Data), "22009");
     assert_eq!(exec(&a, "SET TIME ZONE INTERVAL '1' DAY").err(), Some(Code::SyntaxRule), "SR1");
     for bad in ["D AT LOCAL", "TIME '12:00:00' AT TIME ZONE INTERVAL '1' HOUR"] {

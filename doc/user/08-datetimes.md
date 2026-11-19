@@ -32,6 +32,23 @@ SELECT TITLE, STARTS AT TIME ZONE INTERVAL '-05:00' HOUR TO MINUTE FROM MEETINGS
 (1 row)
 ```
 
+A displacement is from -12:59 to +14:00, the easternmost time zone in
+use, as SQL:2023 requires; SQL-92 stopped at +13:00. One beyond is
+refused, SQLSTATE 22009:
+
+```sql
+SELECT TITLE, STARTS AT TIME ZONE INTERVAL '14:00' HOUR TO MINUTE FROM MEETINGS;
+SELECT TITLE, STARTS AT TIME ZONE INTERVAL '14:30' HOUR TO MINUTE FROM MEETINGS;
+```
+
+```
+ TITLE                |
+----------------------+----------------------------------
+ Review               | 2026-11-02 22:30:00.000000+14:00
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22009): a time zone displacement is not from -12:59 to +14:00 [ISO/IEC 9075-2:2023 §6.42 GR5b ii 2 A]
+```
+
 ## Intervals
 
 An interval is a span of time, of years and months, or of days, hours,

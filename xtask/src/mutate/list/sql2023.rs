@@ -6,13 +6,13 @@
 //! decimal floating point, its rounding, range, keys and comparison;
 //! varying strings of no written maximum length; a simple CASE's lists
 //! of WHEN operands, and predicates among them; GREATEST and LEAST;
-//! trims and pads; CAST with FORMAT; lengths in octets. Regular
-//! expressions' are in `regex.rs`.
+//! trims and pads; CAST with FORMAT; lengths in octets; the greatest time
+//! zone displacement. Regular expressions' are in `regex.rs`.
 
 use super::{Mutation, Package};
 
 /// The mutations of SQL:2023's additions, in the order they run.
-pub const SQL2023: [Mutation; 55] = [
+pub const SQL2023: [Mutation; 56] = [
     Mutation {
         name: "boolean-predicand-untyped",
         package: Package::Core,
@@ -562,5 +562,15 @@ pub const SQL2023: [Mutation; 55] = [
         replacement: "let units = if false { CharUnits::Octets }",
         integration: &["length_units::octet_lengths_brought_together_9_5"],
         unit: &[],
+    },
+    Mutation {
+        name: "displacement-max-sql92",
+        package: Package::Core,
+        breaks: "the greatest time zone displacement is SQL-92's +13:00, below the +14:00 SQL:2023 requires (IL062) [§4.7.2]",
+        file: "src/value/datetime.rs",
+        original: "pub const MAX_DISPLACEMENT: i16 = 14 * 60;",
+        replacement: "pub const MAX_DISPLACEMENT: i16 = 13 * 60;",
+        integration: &["datetimes::displacement_reaches_plus_14_4_7_2"],
+        unit: &["value::datetime::tests::literals_are_read_and_written"],
     },
 ];
