@@ -78,10 +78,9 @@ impl Journal for PluginJournal {
     fn truncate(&mut self, after: Lsn) -> Result<()> {
         let mut payload = Vec::new();
         payload.put_u64(after.0);
-        self.write(JOURNAL_TRUNCATE, payload)?;
-        // Records removed are never made durable, so never named.
-        self.waiting.retain(|&at| at <= after.0);
-        Ok(())
+        // Each record persisted is named once, removed or not, as the
+        // journal's contract answers each `Persist` with one `Persisted`.
+        self.write(JOURNAL_TRUNCATE, payload)
     }
 
     fn retain(&mut self, through: Lsn) -> Result<()> {

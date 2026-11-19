@@ -70,8 +70,8 @@ fn a_plugin_transport_fails_stop() {
 }
 
 /// Verifies: [EXTENSION] RULES.md D272: a plug-in's journal acknowledges
-/// the records SYNC names, in the order persisted; a record truncated
-/// away is never owed; one named that was not persisted, or out of order,
+/// the records SYNC names, in the order persisted, a record truncated
+/// away among them, as each persist is answered once; one named that was not persisted, or out of order,
 /// breaks the protocol (38T03) and nothing more is acknowledged; a death
 /// mid-persist acknowledges nothing.
 #[test]
@@ -82,7 +82,7 @@ fn a_plugin_journal_acknowledges_only_what_it_was_given() {
         Some(Vec::new()),
         Some(Vec::new()),
         Some(Vec::new()),
-        Some(written(|o| put_positions(o, &[1]))),
+        Some(written(|o| put_positions(o, &[1, 2]))),
         Some(written(|o| put_positions(o, &[3]))),
     ]);
     let (mut j, recovered) = PluginJournal::open(pipe).unwrap();
@@ -90,7 +90,7 @@ fn a_plugin_journal_acknowledges_only_what_it_was_given() {
     j.persist(Lsn(1), b"a").unwrap();
     j.persist(Lsn(2), b"b").unwrap();
     j.truncate(Lsn(1)).unwrap();
-    assert_eq!(j.sync().unwrap(), vec![Lsn(1)]);
+    assert_eq!(j.sync().unwrap(), vec![Lsn(1), Lsn(2)]);
     let refused = j.sync().unwrap_err();
     assert_eq!(refused.state.map(|s| s.to_string()), Some("38T03".to_owned()));
     assert!(j.flush().is_err());
