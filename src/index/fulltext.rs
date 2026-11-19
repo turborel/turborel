@@ -63,7 +63,7 @@ use crate::fulltext::text::StopWords;
 use crate::fulltext::value::FULLTEXT;
 use crate::hash::murmur::murmur3_x64_128;
 use crate::memory::{Host, MemoryBudget};
-use crate::spill::{Area, DEFAULT_SPILL_BATCH, DEFAULT_WORK_MEMORY, WorkAreas};
+use crate::spill::{Area, DEFAULT_SPILL_BATCH, WORK_FLOOR, WorkAreas};
 use crate::storage::{RowId, TableOption};
 use crate::sync::lock_builtin;
 use crate::value::{CompOp, DataType};
@@ -176,7 +176,7 @@ impl FullTextMethod {
 
     /// Where its indexes spill.
     fn spill(&self) -> Spill {
-        Spill { work: Arc::clone(&self.work), budget: self.memory.budget(), area: Area::new(DEFAULT_WORK_MEMORY, DEFAULT_SPILL_BATCH) }
+        Spill { work: Arc::clone(&self.work), budget: self.memory.budget(), area: Area::new(WORK_FLOOR, DEFAULT_SPILL_BATCH) }
     }
 
     /// A method keeping its indexes in memory, in a pool of its own made

@@ -51,15 +51,15 @@ pub(super) fn windowed(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize
     let Plan::Sort { keys, input, .. } = &window.input else { return Err(broken("a window run in parallel reads no sort")) };
     let columns = window.partition.clone();
     let key = move |row: &Row| columns.iter().map(|&c| row.get(c).cloned()).collect();
-    let Held::Kept((parts, _)) = split(input, (db, tx, degree), (key, false))? else { return Ok(Held::GaveWay) };
+    let Held::Kept((parts, _, limit)) = split(input, (db, tx, degree), (key, false))? else { return Ok(Held::GaveWay) };
     let (shape, detail, keys) = (Arc::new(window.with_input(|_| ())), detail.clone(), keys.clone());
     let sort_keys = keys.clone();
     let each = move |rows: TransitionRows| {
         let sorted = Plan::Sort { keys: sort_keys.clone(), detail: String::new(), input: Box::new(Plan::Transition { rows }), most: None };
         Plan::Window { window: Box::new(shape.with_input(|()| sorted)), detail: detail.clone() }
     };
-    let outs = per_part(parts, (db, tx, degree), each)?;
-    Ok(Held::Kept(Box::new(merge_by(outs, &keys).into_iter().map(Ok))))
+    let outs = per_part(parts, (db, tx, degree), (each, limit.most()))?;
+    Ok(Held::Kept(limit.keeping(Box::new(merge_by(outs, &keys).into_iter().map(Ok)))))
 }
 
 /// [ISO/IEC 9075:1992 §7.10 GR1b] The rows of EXCEPT or INTERSECT, `plan`,
@@ -73,8 +73,8 @@ pub(super) fn set_operation(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: 
     let Plan::SetOp { op, all, compared, left, right } = plan else { return Err(broken("not a set operation run in parallel")) };
     let n = *compared;
     let key = move |row: &Row| Some(row.get(..n.unwrap_or(row.len()).min(row.len()))?.to_vec());
-    let Held::Kept((rights, _)) = split(right, (db, tx, degree), (key, false))? else { return Ok(Held::GaveWay) };
-    let Held::Kept((parts, width)) = split(left, (db, tx, degree), (key, true))? else { return Ok(Held::GaveWay) };
+    let Held::Kept((rights, _, kept)) = split(right, (db, tx, degree), (key, false))? else { return Ok(Held::GaveWay) };
+    let Held::Kept((parts, width, limit)) = split(left, (db, tx, degree), (key, true))? else { return Ok(Held::GaveWay) };
     // No row of the first operand: none is kept.
     let Some(width) = width else { return Ok(Held::Kept(Box::new(std::iter::empty()))) };
     let (op, all, compared) = (*op, *all, Some(n.unwrap_or(width)));
@@ -84,13 +84,14 @@ pub(super) fn set_operation(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: 
         let right = Box::new(Plan::Transition { rows: TransitionRows::with(taken.unwrap_or_else(|| HeldRows::new(ListSpace::default()))) });
         Plan::SetOp { op, all, compared, left: Box::new(Plan::Transition { rows }), right }
     };
-    let outs = per_part_numbered(parts, (db, tx, degree), each)?;
+    let outs = per_part_numbered(parts, (db, tx, degree), (each, limit.most().saturating_add(kept.most())))?;
     let place = SortKey::new(width, crate::value::SortOrder::of(false, None));
     let rows = merge_by(outs, &[place]).into_iter().map(move |mut row| {
         row.truncate(width);
         Ok(row)
     });
-    Ok(Held::Kept(Box::new(rows)))
+    drop(kept);
+    Ok(Held::Kept(limit.keeping(Box::new(rows))))
 }
 
 /// A list of `share` bytes of `db`'s work areas.
@@ -107,7 +108,7 @@ fn split(
     input: &Plan,
     (db, tx, degree): (&Arc<State>, TxId, usize),
     (key, numbered): (impl Fn(&Row) -> Option<Row> + Send + Sync + 'static, bool),
-) -> Result<Held<(Parts, Option<usize>)>> {
+) -> Result<Held<(Parts, Option<usize>, Limit)>> {
     let limit = Limit::of(db);
     let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
     let (pipeline, db_for) = (Arc::new(pipeline), Arc::clone(db));
@@ -138,22 +139,26 @@ fn split(
             }
         }
     }
-    Ok(Held::Kept((held, width)))
+    Ok(Held::Kept((held, width, limit)))
 }
 
 /// Runs the plan `each` makes of each partition's rows on a thread of up
-/// to `degree`, in a share of the work area each: their rows, by partition.
-fn per_part(parts: Parts, (db, tx, degree): (&Arc<State>, TxId, usize), each: impl Fn(TransitionRows) -> Plan + Send + Sync + 'static) -> Result<Vec<Vec<Row>>> {
-    per_part_numbered(parts, (db, tx, degree), move |rows, _| each(rows))
+/// to `degree`, each in a share of `bytes`: their rows, by partition.
+fn per_part(
+    parts: Parts,
+    (db, tx, degree): (&Arc<State>, TxId, usize),
+    (each, bytes): (impl Fn(TransitionRows) -> Plan + Send + Sync + 'static, usize),
+) -> Result<Vec<Vec<Row>>> {
+    per_part_numbered(parts, (db, tx, degree), (move |rows, _| each(rows), bytes))
 }
 
 /// As `per_part`, `each` told the partition's number.
 fn per_part_numbered(
     parts: Parts,
     (db, tx, degree): (&Arc<State>, TxId, usize),
-    each: impl Fn(TransitionRows, usize) -> Plan + Send + Sync + 'static,
+    (each, bytes): (impl Fn(TransitionRows, usize) -> Plan + Send + Sync + 'static, usize),
 ) -> Result<Vec<Vec<Row>>> {
-    let shared = shared(db, degree);
+    let shared = shared(db, bytes.checked_div(degree.max(1)).unwrap_or_default().max(1));
     let parts: Arc<Vec<Mutex<Option<HeldRows<Row>>>>> = Arc::new(parts.into_iter().map(|p| Mutex::new(Some(p))).collect());
     let work = Box::new(move |p: usize| {
         let rows = parts.get(p).and_then(|r| r.lock().unwrap_or_else(PoisonError::into_inner).take()).ok_or_else(|| broken("a partition run twice"))?;
@@ -162,10 +167,10 @@ fn per_part_numbered(
     Morsels::start(db, tx, (PARTS, degree), work).collect()
 }
 
-/// A copy of `db` whose work areas are each a `degree`th of its own, for a
-/// part of a statement run beside as many others (RULES.md D38).
-fn shared(db: &Arc<State>, degree: usize) -> Arc<State> {
-    let work = Limit::of(db).most().checked_div(degree.max(1)).unwrap_or_default().max(1);
+/// A copy of `db` whose operators are each granted at most `work` bytes,
+/// for a part of a statement run beside others in its grant (RULES.md
+/// D298).
+fn shared(db: &Arc<State>, work: usize) -> Arc<State> {
     let mut copy = State::clone(db);
     copy.settings.set_key(MEMORY_WORK_BYTES, Value::Exact(Decimal::new(i128::try_from(work).unwrap_or(i128::MAX), 0)));
     Arc::new(copy)

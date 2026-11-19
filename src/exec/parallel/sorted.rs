@@ -69,10 +69,10 @@ pub(super) fn sorted(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) 
     }
     let ranges = merged(runs, keys, (db, tx, degree));
     let rows: RowIter = Box::new(Streamed::of(db, tx, ranges));
-    Ok(Held::Kept(match most {
+    Ok(Held::Kept(limit.keeping(match most {
         Some(n) => Box::new(rows.take(n)),
         None => rows,
-    }))
+    })))
 }
 
 /// `runs`, each sorted by `keys`, merged by ranges on up to `degree`

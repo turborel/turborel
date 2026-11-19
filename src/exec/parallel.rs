@@ -27,6 +27,7 @@
 //! split.
 
 mod grouped;
+mod indexed;
 mod partitioned;
 mod pipeline;
 mod probe;
@@ -43,6 +44,7 @@ use crate::db::State;
 use crate::error::Result;
 use crate::physical::{Parallel, Plan};
 use crate::settings::{MEMORY_WORK_BYTES, work_bytes};
+use crate::spill::Grant;
 use crate::storage::Row;
 use crate::txn::{Stop, TxId};
 
@@ -52,17 +54,19 @@ enum Held<T> {
     GaveWay,
 }
 
-/// \[DESIGN\] The bytes a part holds, charged to one work area of the
-/// statement's (RULES.md D38), shared by the threads charging it.
+/// \[DESIGN\] The bytes a part holds, charged to one work grant of the
+/// statement's (RULES.md D38, D298), shared by the threads charging it.
 struct Limit {
     most: usize,
     held: AtomicUsize,
+    grant: Arc<Grant>,
 }
 
 impl Limit {
-    /// A work area of `db`'s.
+    /// A work grant of `db`'s budget, of up to MEMORY.WORK_BYTES.
     fn of(db: &State) -> Limit {
-        Limit { most: work_bytes(db.settings.get(MEMORY_WORK_BYTES)), held: AtomicUsize::new(0) }
+        let grant = db.work.grant(work_bytes(db.settings.get(MEMORY_WORK_BYTES)));
+        Limit { most: grant.bytes(), held: AtomicUsize::new(0), grant }
     }
 
     /// Its bytes.
@@ -74,6 +78,14 @@ impl Limit {
     fn take(&self, bytes: usize) -> bool {
         let held = self.held.fetch_add(bytes, Ordering::AcqRel).saturating_add(bytes);
         held <= self.most
+    }
+
+    /// `rows`, its grant held until they are dropped.
+    fn keeping(&self, rows: RowIter) -> RowIter {
+        let grant = Arc::clone(&self.grant);
+        Box::new(rows.inspect(move |_| {
+            let _held = &grant;
+        }))
     }
 }
 

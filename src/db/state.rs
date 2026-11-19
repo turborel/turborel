@@ -29,7 +29,7 @@ use crate::optimizer::Optimizer;
 use crate::physical::CostModel;
 use crate::settings::{
     self, INDEX_DESCENT_COST, LOCKS_WAIT, MEMORY_WORK_BYTES, SORT_COMPARE_COST, SPILL_BATCH_BYTES, Settings, TABLES_ENGINE,
-    TABLES_UNIQUE_INDEX_METHOD, batch_bytes, work_bytes,
+    TABLES_UNIQUE_INDEX_METHOD, batch_bytes, held_bytes,
 };
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
@@ -319,7 +319,7 @@ impl State {
     /// many bytes held as MEMORY.WORK_BYTES says, in batches of SPILL.BATCH_BYTES's, in
     /// its work areas.
     pub(crate) fn list_space(&self) -> UndoSpace {
-        let (limit, batch) = (work_bytes(self.settings.get(MEMORY_WORK_BYTES)), batch_bytes(self.settings.get(SPILL_BATCH_BYTES)));
+        let (limit, batch) = (held_bytes(self.settings.get(MEMORY_WORK_BYTES)), batch_bytes(self.settings.get(SPILL_BATCH_BYTES)));
         UndoSpace { limit, batch, areas: Some(Arc::clone(&self.work)), types: self.types.clone() }
     }
 

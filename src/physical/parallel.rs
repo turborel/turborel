@@ -18,6 +18,7 @@
 
 use super::Plan;
 use crate::db::State;
+use crate::index::Probe;
 use crate::logical::{AggCall, Cond, Expr, SetOp};
 use crate::settings::{EXECUTOR_DEGREE, EXECUTOR_MORSEL_ROWS, EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_WORKERS};
 
@@ -159,6 +160,9 @@ pub(crate) fn stream(plan: &Plan) -> Option<usize> {
     if let Plan::SeqScan { order, located, rows, .. } = plan {
         return (order.is_empty() && !located).then_some(*rows);
     }
+    if let Plan::IndexScan { reverse: false, located: false, decided: None, probe, est, .. } = plan {
+        return (!matches!(probe, Probe::Xml(_) | Probe::Predicate { .. })).then(|| rows_of(*est));
+    }
     if let Plan::Filter { cond, input, .. } = plan {
         return calm_cond(cond).then(|| stream(input)).flatten();
     }
@@ -170,6 +174,12 @@ pub(crate) fn stream(plan: &Plan) -> Option<usize> {
     }
     let Plan::Append { left, right } = plan else { return None };
     Some(stream(left)?.saturating_add(stream(right)?))
+}
+
+/// The rows of an estimate `est`, as a count.
+pub(crate) fn rows_of(est: f64) -> usize {
+    // No float converts to an integer without a cast (R-NUM-2).
+    crate::spatial::curves::linearize::count(est, usize::MAX >> 1)
 }
 
 /// Whether a grouping of `aggs` merges states made apart: each

@@ -15,7 +15,8 @@ pub trait Split: Send + Sync {
     /// How many morsels it has.
     fn morsels(&self) -> usize;
 
-    /// The rows of morsel `n`, each with its id, in row id order; none of
+    /// The rows of morsel `n`, each with its id, in the order the scan
+    /// gives them, of a table by row id, of an index by key; none of
     /// a morsel past the last. A row the engine cannot read is an error
     /// item, as of `TableStorage::scan`.
     fn morsel(&self, n: usize) -> Rows;

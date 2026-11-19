@@ -168,6 +168,14 @@ pub fn work_bytes(value: &Value) -> usize {
     bytes(value, crate::spill::DEFAULT_WORK_MEMORY)
 }
 
+/// \[DESIGN\] (RULES.md D298) The bytes held in memory by what holds rows
+/// apart from a query's operators, as a cursor's read ahead or a change's
+/// chosen rows, of a value of MEMORY.WORK_BYTES: at most `WORK_FLOOR`, as
+/// they take no grant.
+pub fn held_bytes(value: &Value) -> usize {
+    work_bytes(value).min(crate::spill::WORK_FLOOR)
+}
+
 /// The bytes a value of SPILL.BATCH_BYTES says.
 pub fn batch_bytes(value: &Value) -> usize {
     bytes(value, crate::spill::DEFAULT_SPILL_BATCH)

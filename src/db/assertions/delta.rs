@@ -38,7 +38,7 @@ use crate::error::Result;
 use crate::exec::{Heard, eval, execute};
 use crate::logical::{Expr, LogicalPlan};
 use crate::memory::Reservation;
-use crate::settings::{MEMORY_WORK_BYTES, work_bytes};
+use crate::settings::{MEMORY_WORK_BYTES, held_bytes};
 use crate::spill::{norm_row, row_bytes};
 use crate::storage::{Row, RowId};
 use crate::txn::Txn;
@@ -69,7 +69,7 @@ pub(super) struct Held {
 impl Held {
     /// None yet, of as many as MEMORY.WORK_BYTES says.
     pub(super) fn new(st: &State) -> Held {
-        Held { limit: work_bytes(st.settings.get(MEMORY_WORK_BYTES)), bytes: 0, reserved: None, over: false }
+        Held { limit: held_bytes(st.settings.get(MEMORY_WORK_BYTES)), bytes: 0, reserved: None, over: false }
     }
 
     /// Whether `more` bytes are held too, within the limit and granted by

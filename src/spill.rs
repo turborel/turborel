@@ -24,6 +24,7 @@
 //! and XML values kept apart are named by what keeps them, which its spill
 //! holds (`spill/named.rs`).
 
+mod grant;
 mod keys;
 pub use lobs::TempLobStore;
 mod list;
@@ -40,6 +41,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
+pub use grant::Grant;
 pub use keys::{bucket_key, norm_key, norm_row, put_norm, put_norm_approx, put_norm_exact, put_norm_text};
 pub use list::{Decode, Encode, ListItem, ListSpace, Located, SpillList};
 pub use named::SpilledLobs;
@@ -57,9 +59,14 @@ use crate::value::Value;
 use crate::value::codec::{put_row, row};
 use crate::value::types::TypeRegistry;
 
-/// \[DESIGN\] The default MEMORY.WORK_BYTES: what an operator holds in memory
-/// before it spills, 4 MiB.
-pub const DEFAULT_WORK_MEMORY: usize = 4 << 20;
+/// \[DESIGN\] The default MEMORY.WORK_BYTES: the most an operator is
+/// granted to hold in memory before it spills, 256 MiB (`spill/grant.rs`).
+pub const DEFAULT_WORK_MEMORY: usize = 256 << 20;
+
+/// \[DESIGN\] What an operator holds before it spills where the budget
+/// grants it no more, and what else holds rows apart from operators holds
+/// at most (`settings::held_bytes`), 4 MiB.
+pub const WORK_FLOOR: usize = 4 << 20;
 
 /// \[DESIGN\] The default SPILL.BATCH_BYTES: the bytes of records a run gathers
 /// before it writes them, 16 KiB.

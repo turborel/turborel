@@ -38,7 +38,7 @@ pub use nearest::{ApproximateRead, NearestRead};
 mod order;
 mod parallel;
 pub use parallel::Parallel;
-pub(crate) use parallel::{parallel, workers_of};
+pub(crate) use parallel::{parallel, rows_of as parallel_rows, workers_of};
 mod probe;
 mod project;
 mod raising;

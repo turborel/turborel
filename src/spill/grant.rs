@@ -1,0 +1,86 @@
+//! \[DESIGN\] Work grants (RULES.md D298): the bytes an operator holds in
+//! memory before it spills, given it of the memory budget as it starts.
+//! MEMORY.WORK_BYTES is the most an operator is granted, not what each
+//! holds: one is granted half the budget left free, up to that ceiling,
+//! reserved until it ends, so each grant after it takes half of what is
+//! left and the grants of every statement running at once together never
+//! pass the budget (RULES.md D38), however many sessions run them. Where
+//! half the free budget is no more than `WORK_FLOOR`, an operator holds
+//! that floor unreserved, as every operator did before grants; a ceiling
+//! set below the floor is held as set, unreserved, so a session that asks
+//! for small work areas gets them. A grant changes when an operator
+//! spills, never what it gives.
+
+use std::sync::Arc;
+
+use super::{WORK_FLOOR, WorkAreas};
+use crate::memory::Reservation;
+
+/// \[DESIGN\] An operator's work grant: its bytes, and their reservation of
+/// the memory budget, if they are more than the floor.
+#[derive(Debug)]
+pub struct Grant {
+    bytes: usize,
+    _held: Option<Reservation>,
+}
+
+impl Grant {
+    /// Its bytes.
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+}
+
+impl WorkAreas {
+    /// A grant of up to `ceiling` bytes of the budget its areas are reserved
+    /// of: half of what is free, at most `ceiling`, at least the floor, or
+    /// `ceiling` itself below the floor.
+    pub fn grant(&self, ceiling: usize) -> Arc<Grant> {
+        Arc::new(grant_of(self.budget(), ceiling))
+    }
+}
+
+/// A grant of `budget` of up to `ceiling` bytes.
+fn grant_of(budget: &Arc<crate::memory::MemoryBudget>, ceiling: usize) -> Grant {
+    if ceiling <= WORK_FLOOR {
+        return Grant { bytes: ceiling, _held: None };
+    }
+    let free = budget.limit().saturating_sub(budget.reserved());
+    let wanted = ceiling.min(free / 2);
+    if wanted <= WORK_FLOOR {
+        return Grant { bytes: WORK_FLOOR, _held: None };
+    }
+    match budget.reserve(wanted, "a work grant") {
+        Ok(held) => Grant { bytes: wanted, _held: Some(held) },
+        // Taken by another between the look and the reservation.
+        Err(_) => Grant { bytes: WORK_FLOOR, _held: None },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grant_of;
+    use crate::memory::MemoryBudget;
+    use crate::spill::WORK_FLOOR;
+
+    /// Verifies: [DESIGN] RULES.md D298 each grant takes half the free
+    /// budget up to its ceiling, reserved while it is held; past the floor
+    /// none is reserved; a ceiling below the floor is held as set.
+    #[test]
+    fn grants_halve_the_free_budget() {
+        let budget = MemoryBudget::new(64 * WORK_FLOOR);
+        let first = grant_of(&budget, usize::MAX);
+        assert_eq!((first.bytes, budget.reserved()), (32 * WORK_FLOOR, 32 * WORK_FLOOR));
+        let second = grant_of(&budget, 8 * WORK_FLOOR);
+        assert_eq!(second.bytes, 8 * WORK_FLOOR, "its ceiling");
+        let third = grant_of(&budget, usize::MAX);
+        assert_eq!(third.bytes, 12 * WORK_FLOOR);
+        let small = grant_of(&budget, 1024);
+        assert_eq!((small.bytes, small._held.is_none()), (1024, true));
+        let rest: Vec<_> = (0..8).map(|_| grant_of(&budget, usize::MAX)).collect();
+        assert!(budget.reserved() <= budget.limit());
+        assert_eq!(rest.last().map(|g| (g.bytes, g._held.is_none())), Some((WORK_FLOOR, true)), "the floor, unreserved");
+        drop((first, second, third, rest));
+        assert_eq!(budget.reserved(), 0, "given back");
+    }
+}

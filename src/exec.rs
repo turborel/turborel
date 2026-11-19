@@ -12,7 +12,7 @@
 //! reads them a batch at a time where it can (`exec/batch.rs`,
 //! EXECUTOR.BATCHES). Operators that must
 //! hold rows (sorts, grouping, DISTINCT, joins and products, EXCEPT and
-//! INTERSECT, subqueries' rows) hold up to MEMORY.WORK_BYTES of them in memory
+//! INTERSECT, subqueries' rows) hold up to their work grants of them in memory
 //! and spill the rest (`exec/work.rs`, RULES.md D38); so do the rows a
 //! statement holds past them, a cursor's or a write's (`exec/held.rs`).
 

@@ -337,7 +337,17 @@ impl BLinkIndex {
         probe: &Probe,
         (decoded, direction): (bool, Direction),
     ) -> impl Iterator<Item = Result<(Option<Key>, RowId)>> + use<T> {
-        let range = self.range(probe);
+        self.entries_within(tree, (probe, self.range(probe)), (decoded, direction))
+    }
+
+    /// The entries of `range` of `tree`, each of `probe` if it is checked,
+    /// decoded if `decoded`, in `direction`.
+    fn entries_within<T: Deref<Target = BLinkTree>>(
+        &self,
+        tree: T,
+        (probe, range): (&Probe, Option<Range>),
+        (decoded, direction): (bool, Direction),
+    ) -> impl Iterator<Item = Result<(Option<Key>, RowId)>> + use<T> {
         let checked = range.as_ref().is_some_and(|r| r.checked);
         let scan = range.map(|r| scan_of(tree, r.lower.as_ref().map(Vec::as_slice), r.upper.as_ref().map(Vec::as_slice), direction));
         let (probe, types) = (probe.clone(), self.types.clone());
@@ -513,6 +523,35 @@ impl Index for BLinkIndex {
         };
         let found = self.entries(Held(Arc::clone(&self)), probe, (true, direction));
         Box::new(found.map(|found| found.and_then(|(key, row)| Ok((key.ok_or_else(corrupt)?, row)))))
+    }
+
+    /// Its range's parts, cut at its tree's keys, each read as `search`
+    /// reads, a leaf at a time.
+    fn ranges(self: Arc<Self>, probe: &Probe, most: usize) -> Option<Vec<Entries>> {
+        let parts = self.cut(self.range(probe)?, most).ok()?;
+        let each = parts.into_iter().map(|part| -> Entries {
+            let found = self.entries_within(Held(Arc::clone(&self)), (probe, Some(part)), (true, Direction::Forward));
+            Box::new(found.map(|found| found.and_then(|(key, row)| Ok((key.ok_or_else(corrupt)?, row)))))
+        });
+        Some(each.collect())
+    }
+}
+
+impl BLinkIndex {
+    /// \[DESIGN\] (RULES.md D297) `range` cut at keys of its tree's inner
+    /// nodes into up to about `most` parts, in order (`engine/tree/cuts.rs`).
+    fn cut(&self, range: Range, most: usize) -> Result<Vec<Range>> {
+        let cuts = self.tree.cuts(range.lower.as_ref().map(Vec::as_slice), range.upper.as_ref().map(Vec::as_slice), most)?;
+        let mut lower = range.lower;
+        let mut parts = Vec::with_capacity(cuts.len().saturating_add(1));
+        for cut in cuts {
+            // A key equal to a cut is of the part below it, as of the
+            // child left of it (`engine/tree/node.rs`).
+            let upper = Bound::Included(cut.clone());
+            parts.push(Range { lower: std::mem::replace(&mut lower, Bound::Excluded(cut)), upper, checked: range.checked });
+        }
+        parts.push(Range { lower, upper: range.upper, checked: range.checked });
+        Ok(parts)
     }
 }
 

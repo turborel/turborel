@@ -103,7 +103,7 @@ pub(super) fn grouped(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize)
         groups.push((0, finished(fresh(&grouping.spec.aggs), Vec::new())?));
     }
     groups.sort_unstable_by_key(|g| g.0);
-    Ok(Held::Kept(Box::new(groups.into_iter().map(|(_, row)| Ok(row)))))
+    Ok(Held::Kept(limit.keeping(Box::new(groups.into_iter().map(|(_, row)| Ok(row))))))
 }
 
 /// The pieces of `pipeline`'s rows under `grouping`, each morsel's made

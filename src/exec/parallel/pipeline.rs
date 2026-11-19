@@ -7,6 +7,9 @@
 //! operators apply them, so a morsel gives the rows, in the order, and
 //! raises the error, the plan's operators would of those of its table.
 //!
+//! An index scan's morsels are parts of its range of keys
+//! (`parallel/indexed.rs`).
+//!
 //! The morsels of the operands of a UNION ALL are numbered on, the left's
 //! first, so their rows come in the order the append gives them. A filter
 //! over a table tells its scan its simple conditions, as `exec/scan.rs`
@@ -14,6 +17,7 @@
 
 use std::sync::Arc;
 
+use super::indexed::{self, Scanned};
 use super::probe::{Table, built};
 use super::{Held, Limit};
 use crate::db::State;
@@ -104,16 +108,26 @@ fn branched(plan: &Plan, (db, tx, rows): (&Arc<State>, TxId, usize), limit: &Lim
         return Ok(branched(left, (db, tx, rows), limit, out)? && branched(right, (db, tx, rows), limit, out)?);
     }
     if let Plan::SeqScan { table, columns, .. } = plan {
-        return Ok(split(db.storage_of(table)?, (tx, columns, None, rows)).is_some_and(|split| {
+        // A table of no storage of its own, as a view of the catalog's, is
+        // read alone.
+        let Ok(storage) = db.storage_of(table) else { return Ok(false) };
+        return Ok(split(storage, (tx, columns, None, rows)).is_some_and(|split| {
             out.push(Branch { split, steps: Vec::new() });
             true
         }));
+    }
+    if let Plan::IndexScan { table, index, probe, columns, covering, est, .. } = plan {
+        let scanned = Scanned { table, index, probe, columns, covering: *covering };
+        let Some(split) = indexed::split(db, tx, &scanned, (crate::physical::parallel_rows(*est), rows))? else { return Ok(false) };
+        out.push(Branch { split, steps: Vec::new() });
+        return Ok(true);
     }
     if let Plan::Filter { cond, input, .. } = plan
         && let Plan::SeqScan { table, columns, .. } = &**input
     {
         let told = pushed_conjuncts(cond);
-        let Some(split) = split(db.storage_of(table)?, (tx, columns, told.as_ref(), rows)) else { return Ok(false) };
+        let Ok(storage) = db.storage_of(table) else { return Ok(false) };
+        let Some(split) = split(storage, (tx, columns, told.as_ref(), rows)) else { return Ok(false) };
         out.push(Branch { split, steps: vec![Step::Filter(cond.clone())] });
         return Ok(true);
     }
