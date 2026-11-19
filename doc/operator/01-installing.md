@@ -9,6 +9,23 @@ every change. What only one platform has is refused, saying so,
 elsewhere: Unix sockets are of Linux and macOS alone, named pipes of
 Windows.
 
+## The latest alpha
+
+Each change on main that passes every check is built for Linux
+(x86-64), macOS (Apple silicon) and Windows (x86-64), and published as
+the pre-release [nightly](https://github.com/turborel/turborel/releases/tag/nightly).
+Each build replaces the one before, so its files keep their addresses:
+
+| Platform | File |
+|---|---|
+| Linux, x86-64 | [turborel-nightly-x86_64-unknown-linux-gnu.tar.gz](https://github.com/turborel/turborel/releases/download/nightly/turborel-nightly-x86_64-unknown-linux-gnu.tar.gz) |
+| macOS, Apple silicon | [turborel-nightly-aarch64-apple-darwin.tar.gz](https://github.com/turborel/turborel/releases/download/nightly/turborel-nightly-aarch64-apple-darwin.tar.gz) |
+| Windows, x86-64 | [turborel-nightly-x86_64-pc-windows-msvc.zip](https://github.com/turborel/turborel/releases/download/nightly/turborel-nightly-x86_64-pc-windows-msvc.zip) |
+
+Each archive holds the two programs [What is installed](#what-is-installed)
+describes. As an alpha, a build may not open a database another made
+([VERSIONING.md](../../VERSIONING.md#alpha)).
+
 ## Building from source
 
 Turborel is built with Rust's cargo, of Rust 1.89 or later:
