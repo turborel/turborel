@@ -21,7 +21,17 @@
 //! `<SQL-server module definition>` [ISO/IEC 9075-4:2006 draft §9.21] is
 //! one statement with its routines. Words are matched in any case, never
 //! in a string, an identifier or a comment.
+//!
+//! RULES.md D210, D212, D219: a `\` in code begins a backslash command,
+//! which runs to the end of its line (`command.rs`); a `:` in code may
+//! begin a reference to a variable, its value read in its place and split
+//! as if typed; and `\delimiter` may name another text to end a statement
+//! with, which ends one wherever it stands in code, as in a routine's body.
 
+use crate::vars::{Variables, reference};
+
+/// What begins a backslash command, in code.
+const COMMAND: char = '\\';
 /// BEGIN, which opens a block, or a level in one.
 const BEGIN: &str = "BEGIN";
 /// The words that open a level in a block, but after END.
@@ -77,9 +87,22 @@ enum Lead {
     Other,
 }
 
+/// What text splits into.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Piece {
+    /// A statement, ended.
+    Statement(String),
+    /// A backslash command: the line after its `\`, without its newline.
+    Command(String),
+}
+
 /// What splits text, given in parts, into statements.
 #[derive(Debug, Default)]
 pub struct Splitter {
+    /// What ends a statement in place of `;`, if `\delimiter` named it.
+    delimiter: Option<String>,
+    /// How many characters end the text read in code, for a delimiter.
+    code_run: usize,
     text: String,
     state: State,
     /// Whether the last character, in code, was a minus sign.
@@ -103,15 +126,64 @@ pub struct Splitter {
 }
 
 impl Splitter {
-    /// The statements `chunk` ends, with what came before it.
+    /// The statements `chunk` ends, with what came before it, read as
+    /// SQL alone: no command, no variable.
     pub fn feed(&mut self, chunk: &str) -> Vec<String> {
+        chunk.chars().filter_map(|c| self.take(c)).collect()
+    }
+
+    /// The statements and commands `chunk`, a line, ends, with what came
+    /// before it, the variables of `vars` read into it if given.
+    pub fn pieces(&mut self, chunk: &str, vars: Option<&Variables>) -> Vec<Piece> {
+        let chars: Vec<char> = chunk.chars().collect();
         let mut done = Vec::new();
-        for c in chunk.chars() {
-            if let Some(statement) = self.take(c) {
-                done.push(statement);
+        let mut at = 0_usize;
+        while let Some(&c) = chars.get(at) {
+            let next = at.saturating_add(1);
+            let code = self.state == State::Code;
+            if code && c == COMMAND {
+                let rest: String = chars.get(next..).unwrap_or_default().iter().take_while(|c| **c != '\n').collect();
+                self.dash = false;
+                done.push(Piece::Command(rest));
+                break;
             }
+            let read = vars.filter(|_| code && c == ':').and_then(|v| reference(&chars, at, v));
+            let (text, after) = read.unwrap_or_else(|| (c.to_string(), next));
+            done.extend(text.chars().filter_map(|t| self.take(t)).map(Piece::Statement));
+            at = after;
         }
         done
+    }
+
+    /// What ends a statement from now on: `delimiter`, or `;` for none.
+    ///
+    /// # Errors
+    ///
+    /// It is empty, or holds a space, a quote, a minus sign or a `\`.
+    pub fn set_delimiter(&mut self, delimiter: Option<String>) -> Result<(), String> {
+        let bad = |c: char| c.is_whitespace() || ['\'', '"', '-', COMMAND].contains(&c);
+        if let Some(d) = &delimiter
+            && (d.is_empty() || d.chars().any(bad))
+        {
+            return Err(format!("{d:?} cannot end a statement: it holds no spaces, quotes, minus signs or backslashes"));
+        }
+        self.delimiter = delimiter.filter(|d| d != ";");
+        Ok(())
+    }
+
+    /// The statement begun, if one is, the text begun anew.
+    pub fn take_pending(&mut self) -> Option<String> {
+        self.finish()
+    }
+
+    /// The text of the statement begun, as read so far.
+    pub fn pending_text(&self) -> &str {
+        &self.text
+    }
+
+    /// The statement begun thrown away.
+    pub fn reset(&mut self) {
+        drop(self.finish());
     }
 
     /// The statement `c` ends, if it ends one.
@@ -123,7 +195,7 @@ impl Splitter {
         let in_comment = self.state == State::Comment;
         match (self.state, c) {
             (State::Code, ';') => {
-                if self.depth == 0 {
+                if self.depth == 0 && self.delimiter.is_none() {
                     return self.ended();
                 }
             }
@@ -148,7 +220,21 @@ impl Splitter {
         if in_comment && self.state == State::Code {
             self.comment_end = self.text.len();
         }
-        None
+        self.code_run = if self.state == State::Code && !in_comment { self.code_run.saturating_add(1) } else { 0 };
+        self.delimited()
+    }
+
+    /// The statement a delimiter `\delimiter` named ends, if the text read
+    /// in code ends with it: the delimiter cut.
+    fn delimited(&mut self) -> Option<String> {
+        let delimiter = self.delimiter.as_deref()?;
+        if self.code_run < delimiter.chars().count() || !self.text.ends_with(delimiter) {
+            return None;
+        }
+        let cut = self.text.len().saturating_sub(delimiter.len());
+        self.text.truncate(cut);
+        self.comment_end = self.comment_end.min(cut);
+        self.ended()
     }
 
     /// Reads `c`, of code, into the word being read, or ends that word.
@@ -203,7 +289,7 @@ impl Splitter {
     /// The statement read so far, if it is one; the text begun anew.
     fn ended(&mut self) -> Option<String> {
         self.word.clear();
-        (self.last, self.depth, self.lead) = (Last::Other, 0, Lead::Start);
+        (self.last, self.depth, self.lead, self.code_run) = (Last::Other, 0, Lead::Start, 0);
         let text = std::mem::take(&mut self.text);
         let significant = std::mem::take(&mut self.significant);
         let comment_end = std::mem::take(&mut self.comment_end);
@@ -229,132 +315,4 @@ impl Splitter {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn split(text: &str) -> Vec<String> {
-        let mut splitter = Splitter::default();
-        let mut all = splitter.feed(text);
-        all.extend(splitter.finish());
-        all
-    }
-
-    /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.2, §5.3]; [DESIGN] RULES.md D46: text
-    /// splits at each `;` that ends a statement, not one in a string, its
-    /// quote doubled, nor in a delimited identifier, nor in a comment; a
-    /// statement of separators alone is none; the last needs no `;`.
-    #[test]
-    fn statements_split_at_their_ends() {
-        assert_eq!(split("SELECT 1; SELECT 2"), ["SELECT 1", "SELECT 2"]);
-        assert_eq!(split("SELECT 'a;b''c;'; SELECT \"x;\"\"y\" FROM T;"), ["SELECT 'a;b''c;'", "SELECT \"x;\"\"y\" FROM T"]);
-        assert_eq!(split("SELECT 1 -- a; comment\n; ;;"), ["SELECT 1 -- a; comment\n"]);
-        assert_eq!(split("-- only a note;\n  ;\n"), Vec::<String>::new());
-        assert_eq!(split("SELECT 1 - 2;"), ["SELECT 1 - 2"]);
-        assert_eq!(split("SELECT 1 --- three\n"), ["SELECT 1 --- three\n"]);
-        assert_eq!(split("SELECT 1 -- open"), ["SELECT 1 -- open\n"], "the end of the text ends a comment");
-        assert_eq!(split("SELECT 1 \n  ;"), ["SELECT 1"], "no newline kept but a comment's");
-        assert_eq!(split("-- one\n-- two\n;"), Vec::<String>::new());
-    }
-
-    /// Verifies: [DESIGN] RULES.md D46: text given in parts splits as if
-    /// whole; a statement begun, or a string or a comment open, is pending.
-    #[test]
-    fn text_in_parts_splits_as_whole() {
-        let mut splitter = Splitter::default();
-        assert_eq!(splitter.feed("SELECT 'a"), Vec::<String>::new());
-        assert!(splitter.pending(), "in a string");
-        assert_eq!(splitter.feed(";b' FROM T -"), Vec::<String>::new());
-        assert_eq!(splitter.feed("- x;\n;"), ["SELECT 'a;b' FROM T -- x;\n"]);
-        assert!(!splitter.pending());
-        assert_eq!(splitter.feed("  "), Vec::<String>::new());
-        assert!(!splitter.pending(), "separators alone");
-        assert_eq!(splitter.finish(), None);
-    }
-
-    /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.49] a `;` in BEGIN
-    /// ATOMIC ... END ends no statement, a CASE ... END in the block
-    /// closing no block, words matched in any case; the `;` after the
-    /// block's END ends the statement; ATOMIC alone, or a word BEGIN only
-    /// begins, opens none.
-    #[test]
-    fn semicolons_in_begin_atomic_end_no_statement() {
-        let trigger = "CREATE TRIGGER TR AFTER INSERT ON T begin  atomic \
-                       INSERT INTO U VALUES (CASE WHEN 1 = 1 THEN 1 ELSE 2 END); DELETE FROM U; End";
-        assert_eq!(split(&format!("{trigger}; SELECT 1;")), [trigger, "SELECT 1"]);
-        assert_eq!(split("SELECT ATOMIC FROM T; SELECT 2"), ["SELECT ATOMIC FROM T", "SELECT 2"]);
-        assert_eq!(split("SELECT CASE WHEN A THEN 1 END FROM T; SELECT 2"), ["SELECT CASE WHEN A THEN 1 END FROM T", "SELECT 2"]);
-        assert_eq!(split("SELECT BEGIN_ATOMIC; SELECT 2"), ["SELECT BEGIN_ATOMIC", "SELECT 2"]);
-        assert_eq!(split("X BEGIN -- note\n ATOMIC A; B END; C"), ["X BEGIN -- note\n ATOMIC A; B END", "C"]);
-    }
-
-    /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.49]; [ISO/IEC
-    /// 9075:1992 §5.2, §5.3] BEGIN ATOMIC in a string, a delimited
-    /// identifier or a comment opens no block.
-    #[test]
-    fn begin_atomic_quoted_or_commented_opens_no_block() {
-        assert_eq!(split("SELECT 'BEGIN ATOMIC'; SELECT 2"), ["SELECT 'BEGIN ATOMIC'", "SELECT 2"]);
-        assert_eq!(split("SELECT \"BEGIN ATOMIC\"; SELECT 2"), ["SELECT \"BEGIN ATOMIC\"", "SELECT 2"]);
-        assert_eq!(split("SELECT 1 -- BEGIN ATOMIC\n; SELECT 2"), ["SELECT 1 -- BEGIN ATOMIC\n", "SELECT 2"]);
-    }
-
-    /// Verifies: [EXTENSION] [ISO/IEC 9075-4:2006 draft §14.1 to §14.13] a `;` in a
-    /// compound statement, plain or ATOMIC, ends no statement, nor one in
-    /// IF, CASE, LOOP, REPEAT, or WHILE or FOR, whose DO opens a level;
-    /// END IF and the like close one level, the word after END opening
-    /// none; out of a block IF, LOOP, REPEAT and DO open none. MC/DC of
-    /// `opens`: BEGIN out of a block opens, an opener in one opens, an
-    /// opener after END does not, an opener out of a block does not.
-    #[test]
-    fn semicolons_in_control_statements_end_no_statement() {
-        let body = "CREATE PROCEDURE P () BEGIN DECLARE I INTEGER DEFAULT 0; \
-                    L: LOOP SET I = I + 1; IF I > 3 THEN LEAVE L; END IF; END LOOP L; \
-                    WHILE I > 0 DO SET I = I - 1; END WHILE; REPEAT SET I = I + 1; UNTIL I > 2 END REPEAT; \
-                    FOR R AS SELECT K FROM T DO CASE WHEN R.K = 1 THEN SET I = 0; ELSE SET I = 1; END CASE; END FOR; \
-                    B: BEGIN ATOMIC SET I = 2; END B; END";
-        assert_eq!(split(&format!("{body}; SELECT 1;")), [body, "SELECT 1"]);
-        assert_eq!(split("begin insert into t values (1); end; select 2"), ["begin insert into t values (1); end", "select 2"]);
-        assert_eq!(
-            split("DROP TABLE IF; SELECT LOOP, REPEAT, DO FROM T; SELECT 2"),
-            ["DROP TABLE IF", "SELECT LOOP, REPEAT, DO FROM T", "SELECT 2"]
-        );
-    }
-
-    /// Verifies: [EXTENSION] [ISO/IEC 9075-4:2006 draft §9.21] a `;` in a
-    /// CREATE MODULE, after a routine of it or in a body, ends no
-    /// statement; END MODULE closes it, a module in a schema definition
-    /// too; MODULE alone, as in MODULE.T, opens nothing.
-    #[test]
-    fn semicolons_in_a_module_end_no_statement() {
-        let module = "create module M PROCEDURE P () BEGIN SET X = 1; END; \
-                      FUNCTION F () RETURNS INTEGER RETURN CASE WHEN 1 = 1 THEN 1 END; END MODULE";
-        assert_eq!(split(&format!("{module}; SELECT 2")), [module, "SELECT 2"]);
-        let schema = "CREATE SCHEMA S CREATE TABLE T (A INT) CREATE MODULE M PROCEDURE P () DELETE FROM T; END MODULE";
-        assert_eq!(split(&format!("{schema}; SELECT 2")), [schema, "SELECT 2"]);
-        assert_eq!(split("SELECT * FROM MODULE.T; SELECT 2"), ["SELECT * FROM MODULE.T", "SELECT 2"]);
-        assert_eq!(
-            split("SELECT CREATE_ FROM T; DROP MODULE M CASCADE; SELECT 2"),
-            ["SELECT CREATE_ FROM T", "DROP MODULE M CASCADE", "SELECT 2"]
-        );
-    }
-
-    /// Verifies: [EXTENSION] [ISO/IEC 9075-4:2006 draft §4.10.7, §14.6 to §14.13] a
-    /// control statement run alone, labelled or not, keeps its `;`s: IF,
-    /// CASE, LOOP, REPEAT, and WHILE and FOR by their DO. A query whose
-    /// first word is none of them, or whose label-like first word is not
-    /// one, splits as before.
-    #[test]
-    fn control_statements_run_alone_keep_their_semicolons() {
-        for alone in [
-            "IF X > 1 THEN SIGNAL SQLSTATE '75001'; ELSE SIGNAL SQLSTATE '75002'; END IF",
-            "case x when 1 then signal sqlstate '75001'; end case",
-            "L: LOOP LEAVE L; END LOOP L",
-            "REPEAT SIGNAL SQLSTATE '01001'; UNTIL TRUE END REPEAT",
-            "W: WHILE FALSE DO SIGNAL SQLSTATE '75001'; END WHILE W",
-            "FOR R AS SELECT K FROM T DO IF R.K = 1 THEN SIGNAL SQLSTATE '75001'; END IF; END FOR",
-        ] {
-            assert_eq!(split(&format!("{alone}; SELECT 1")), [alone, "SELECT 1"], "{alone}");
-        }
-        assert_eq!(split("SELECT IF FROM T; SELECT 2"), ["SELECT IF FROM T", "SELECT 2"]);
-        assert_eq!(split("X: SELECT 1; SELECT 2"), ["X: SELECT 1", "SELECT 2"]);
-    }
-}
+mod tests;

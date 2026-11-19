@@ -6,13 +6,27 @@
 //! (RULES.md D59). A library, `main.rs` its one caller, so
 //! tests reach all of it.
 
+pub mod admin;
 mod args;
+mod command;
+pub mod complete;
+mod conditional;
+pub mod describe;
 mod dial;
+mod export;
 pub mod extension;
+pub mod format;
+mod help;
 mod interrupt;
+pub mod line;
+mod pager;
+pub mod password;
+mod prompt;
 mod run;
 mod show;
 mod split;
+mod vars;
+mod words;
 
 use std::net::ToSocketAddrs;
 
@@ -28,11 +42,11 @@ use turborel_client::tls;
 /// A failure, as the server reports it.
 pub use turborel_client::Failure;
 
-pub use args::{Command, Credentials, DEFAULT_HOST, DEFAULT_PORT, Importing, Input, Options, PASSWORD_VARIABLE, Server, Tls, parse};
+pub use args::{Command, Credentials, DEFAULT_HOST, DEFAULT_PORT, Environment, Importing, Input, Options, PASSWORD_VARIABLE, Server, Settings, Tls, parse};
 pub use dial::Dialer;
 pub use interrupt::{Handlers, Interrupts};
-pub use run::{FileSource, Io, MORE, PROMPT, Statements, run};
-pub use show::{MAX_WIDTH, Table};
+pub use run::{Completion, FileSource, Io, Kept, Lines, MORE, Outcome, PROMPT, Screen, Secret, Statements, Terminal, outcome, run};
+pub use show::MAX_WIDTH;
 pub use split::Splitter;
 
 /// The usage text.
@@ -73,11 +87,31 @@ pub const USAGE: &str = "usage: turborel [options]
       --read-timeout SECONDS
                          wait at most SECONDS for each reply of the server
                          (default 0, no limit)
+  -v, --set NAME=VALUE   set a variable before the first statement
+  -1, --single-transaction
+                         run every statement in one transaction, committed if
+                         all succeed and rolled back if any fails
+  -e, --echo             write each statement before it runs
+  -q, --quiet            write no OK after a statement that is not a query
+      --safe-updates     refuse an UPDATE or DELETE without WHERE
+  -A, --unaligned        rows unaligned, their fields between the separator
+  -B, --tab-separated    rows tab-separated, without header or footer
+      --csv, --html, --json
+                         rows as CSV, an HTML table, or JSON objects
+      --style STYLE      aligned, unaligned, wrapped, csv, html, json or tabs
+      --border N         0, 1 or 2 lines about aligned rows (default 1)
+  -F, --separator TEXT   the separator of unaligned rows (default |)
+  -t, --tuples-only      the rows alone, without header or footer
+  -x, --expanded         each row as a column of NAME | VALUE lines
+      --auto-expanded    expanded only when a row is wider than the screen
       --help             print this
       --version          print the release
 
 turborel extension COMMAND manages the packages of extensions in a server's
-plug-in directory; turborel extension --help tells its commands.
+plug-in directory; turborel extension --help tells its commands. turborel
+admin COMMAND administers a server; turborel admin --help tells its commands.
+Typed at a terminal, \\? lists the backslash commands, and \\h a statement's
+syntax; lines are edited, kept in a history and completed with Tab.
 Without -c or -f, statements are read from standard input: typed at a terminal,
 each is run once a semicolon ends it, and the end of input (Ctrl-D; Ctrl-Z then
 Enter on Windows) quits. The last statement of a file needs no semicolon.
@@ -89,7 +123,9 @@ the server is asked to trust the user, as one with SERVER.TRUST_LOCAL ON does a
 client of its own machine.
 An import begins with no transaction active; a row that fails stops it, its
 batch rolled back, and says the record and line. Ctrl-C cancels the statement
-running. The program exits with 1 if any statement or row failed.";
+running. The program exits with 0 if every statement succeeded, 1 if any
+statement or row failed, 2 if the connection was lost, and 3 if
+STOP_ON_ERROR ended a script at a statement that failed.";
 
 /// How the end of typed input is given: Ctrl-D, or on Windows Ctrl-Z then
 /// Enter.

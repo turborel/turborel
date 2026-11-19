@@ -7,6 +7,7 @@
 use std::future::Future;
 use std::io;
 use std::sync::mpsc::Sender;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::Poll;
 
@@ -16,6 +17,9 @@ use turborel_client::{Canceller, Failure};
 #[derive(Debug, Clone, Default)]
 pub struct Interrupts {
     canceller: Arc<Mutex<Option<Canceller>>>,
+    /// How many times Ctrl-C was pressed once connected, so `\watch`
+    /// knows to stop (RULES.md D215).
+    presses: Arc<AtomicU64>,
 }
 
 /// What to do when Ctrl-C is pressed and no statement can be cancelled;
@@ -33,15 +37,21 @@ impl Interrupts {
         let interrupts = Interrupts::default();
         let (tell, told) = std::sync::mpsc::channel();
         let held = Arc::clone(&interrupts.canceller);
+        let presses = Arc::clone(&interrupts.presses);
         let spawned = std::thread::Builder::new().name("turborel-interrupts".to_owned()).spawn(move || {
             match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-                Ok(runtime) => runtime.block_on(answer(tokio::signal::ctrl_c, &held, handlers, tell)),
+                Ok(runtime) => runtime.block_on(answer(tokio::signal::ctrl_c, (&held, &presses), handlers, tell)),
                 Err(e) => drop(tell.send(Err(format!("cannot take Ctrl-C: {e}")))),
             }
         });
         spawned.map_err(|e| format!("cannot take Ctrl-C: {e}"))?;
         told.recv().map_err(|_| "cannot take Ctrl-C".to_owned())??;
         Ok(interrupts)
+    }
+
+    /// How many times Ctrl-C was pressed once there was a canceller.
+    pub fn presses(&self) -> u64 {
+        self.presses.load(Ordering::SeqCst)
     }
 
     /// Cancels by `canceller` from now on, or, for none, by nothing: the
@@ -56,7 +66,7 @@ impl Interrupts {
 /// so a signal sent after that is answered; or why it cannot be.
 pub(crate) async fn answer<F: Future<Output = io::Result<()>>>(
     mut signal: impl FnMut() -> F,
-    canceller: &Mutex<Option<Canceller>>,
+    (canceller, presses): (&Mutex<Option<Canceller>>, &AtomicU64),
     (early, failed): Handlers,
     ready: Sender<Result<(), String>>,
 ) {
@@ -83,6 +93,7 @@ pub(crate) async fn answer<F: Future<Output = io::Result<()>>>(
         let by = canceller.lock().unwrap_or_else(PoisonError::into_inner).clone();
         match by {
             Some(by) => {
+                presses.fetch_add(1, Ordering::SeqCst);
                 if let Err(e) = by.cancel() {
                     failed(&e);
                 }
@@ -94,7 +105,7 @@ pub(crate) async fn answer<F: Future<Output = io::Result<()>>>(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::AtomicUsize;
 
     use turborel::db::Database;
     use turborel_test_support::server::start;
@@ -123,7 +134,7 @@ mod tests {
             std::future::ready(got)
         };
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        runtime.block_on(answer(signal, canceller, (early, failed), tell));
+        runtime.block_on(answer(signal, (canceller, &AtomicU64::new(0)), (early, failed), tell));
         told.recv().unwrap().err()
     }
 
