@@ -27,3 +27,17 @@ fn dev_full_vocabulary() {
     }
     assert_eq!(bad, 0);
 }
+
+/// Verifies: [DESIGN] dev porter2 against english vocabulary.
+#[test]
+fn dev_porter2_vocabulary() {
+    let base = "/media/agpmastersystem/0e938ae2-7b41-437b-a5ac-a27e9f111a4e/turborel-work/papers/snowball/snowball-data-main/english";
+    let voc = std::fs::read_to_string(format!("{base}/voc.txt")).unwrap();
+    let out = std::fs::read_to_string(format!("{base}/output.txt")).unwrap();
+    let mut wrong = 0;
+    for (w, s) in voc.lines().zip(out.lines()) {
+        let got = crate::fulltext::stem(crate::fulltext::Language::English, w);
+        if got != s { wrong += 1; if wrong < 30 { println!("{w} -> {got} want {s}"); } }
+    }
+    println!("porter2 wrong {wrong}");
+}

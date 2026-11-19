@@ -7,16 +7,15 @@
 //!
 //! A mask's literal characters are normalized as a document's words are
 //! [§4.5]; `_` matches one character, `%` any, as LIKE [§6.4.4]. A FORM OF
-//! word matches a word whose stem in some language is its stem, as a
+//! word matches a word whose stem in its document's language is its stem, as a
 //! document's word is stemmed in the document's language [§6.5.2]. A
 //! pattern's word that the tokenizer reads as several words matches as
 //! each of them.
 
-use super::document::LANGUAGES;
 use crate::fulltext::pattern::fuzzy::{allowed, within};
 use crate::fulltext::pattern::soundex::soundex;
 use crate::fulltext::pattern::{Argument, Expansion, Literal, Mask, MaskChar, Part, Pattern};
-use crate::fulltext::{is_stop, normalize, stem, tokenize};
+use crate::fulltext::{Language, Languages, is_single_letter, is_stop, normalize_in, stem, tokenize};
 
 /// A character of a normalized mask.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,8 +35,8 @@ pub(crate) enum Matcher {
     Exact(String),
     /// Words the mask matches.
     Mask(Vec<Glob>),
-    /// Words whose stem in some language is the stem, the word's in its
-    /// own.
+    /// Words whose stem in their document's language is the stem, the
+    /// word's in its own.
     Stem(String),
     /// SOUNDS LIKE a word [§6.9.5]: words equal to it, or of its Soundex
     /// code if it has one, as Contains matches them.
@@ -60,12 +59,13 @@ pub(crate) enum Matcher {
 }
 
 impl Matcher {
-    /// Whether it matches the normalized word `word`.
-    pub(crate) fn matches(&self, word: &str) -> bool {
+    /// Whether it matches the normalized word `word` of a document in one
+    /// of `languages`.
+    pub(crate) fn matches(&self, word: &str, languages: Languages) -> bool {
         match self {
             Matcher::Exact(exact) => exact == word,
             Matcher::Mask(mask) => glob(mask, &word.chars().collect::<Vec<_>>(), false),
-            Matcher::Stem(stemmed) => LANGUAGES.iter().any(|language| stem(*language, word) == *stemmed),
+            Matcher::Stem(stemmed) => languages.iter().any(|language| stem(language, word) == *stemmed),
             Matcher::Sounds { word: sounded, code } => {
                 sounded == word || code.as_ref().is_some_and(|code| soundex(word).as_ref() == Some(code))
             }
@@ -117,9 +117,9 @@ fn wordlike(c: char) -> bool {
     c.is_alphanumeric() || c == '\'' || c == '\u{2019}'
 }
 
-/// The normalized mask of `mask`, none if a literal character of it is
-/// not one a word holds.
-fn normalized(mask: &Mask) -> Option<Vec<Glob>> {
+/// The mask of `mask` normalized in `language`, none if a literal
+/// character of it is not one a word holds.
+fn normalized(mask: &Mask, language: Language) -> Option<Vec<Glob>> {
     let mut out = Vec::new();
     let mut run = String::new();
     for c in &mask.0 {
@@ -134,26 +134,33 @@ fn normalized(mask: &Mask) -> Option<Vec<Glob>> {
             MaskChar::One => Glob::One,
             MaskChar::Any => Glob::Any,
         };
-        out.extend(normalize(&std::mem::take(&mut run)).chars().map(Glob::Char));
+        out.extend(normalize_in(language, &std::mem::take(&mut run)).chars().map(Glob::Char));
         out.push(glob);
     }
-    out.extend(normalize(&run).chars().map(Glob::Char));
+    out.extend(normalize_in(language, &run).chars().map(Glob::Char));
     Some(out)
 }
 
 /// The matchers of the word `mask` of `literal`, each of which a document
 /// must hold: one for a word the tokenizer reads as one, one for each of
-/// several; `Unknown` for a mask it cannot read.
+/// several; `Unknown` for a mask it cannot read. A single letter of a
+/// language read as bigrams matches each word holding it (RULES.md D323).
 pub(crate) fn word_matchers(literal: &Literal, mask: &Mask) -> Vec<Matcher> {
     let Some(text) = mask.text() else {
-        return vec![normalized(mask).map_or(Matcher::Unknown, Matcher::Mask)];
+        return vec![normalized(mask, literal.language).map_or(Matcher::Unknown, Matcher::Mask)];
     };
     let words: Vec<String> = tokenize(text.chars().map(Ok), literal.language).filter_map(|token| token.ok().map(|t| t.word)).collect();
     if words.is_empty() {
         return vec![Matcher::Unknown];
     }
     let each = |word: String| {
-        if literal.stemmed { Matcher::Stem(stem(literal.language, &word)) } else { Matcher::Exact(word) }
+        if is_single_letter(literal.language, &word) {
+            Matcher::Mask([Glob::Any].into_iter().chain(word.chars().map(Glob::Char)).chain([Glob::Any]).collect())
+        } else if literal.stemmed {
+            Matcher::Stem(stem(literal.language, &word))
+        } else {
+            Matcher::Exact(word)
+        }
     };
     words.into_iter().map(each).collect()
 }

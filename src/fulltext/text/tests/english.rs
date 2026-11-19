@@ -1,5 +1,5 @@
-//! Unit tests of the English stemmer, Porter2, against the stems its
-//! published definition gives.
+//! Unit tests of the English stemmer, Snowball's English algorithm, against
+//! the stems its published definition and vocabulary give.
 
 use crate::fulltext::text::{Language, stem};
 

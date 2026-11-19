@@ -1,12 +1,12 @@
 //! Unit tests of the tokenizer: words, sentences, paragraphs, places,
 //! normalization, stop words and streaming.
 
-mod porter2;
+mod english;
 
 use std::cell::Cell;
 
 use super::*;
-use crate::error::{Code, SqlError};
+use crate::error::{Code, SqlError, SqlState};
 
 /// The tokens of `text` in `language`.
 fn tokens_in(text: &str, language: Language) -> Vec<Token> {
@@ -212,15 +212,16 @@ fn normalize_folds_and_strips_marks() {
 /// the Snowball list, sorted for the search, matched normalized.
 #[test]
 fn english_stop_words() {
-    assert_eq!(stop::ENGLISH.len(), 174);
-    assert!(stop::ENGLISH.windows(2).all(|w| w[0] < w[1]));
+    let english = stop_list(Language::English);
+    assert_eq!(english.len(), 174);
+    assert!(english.windows(2).all(|w| w[0] < w[1]));
     for word in ["the", "a", "don't", "yourselves", "very"] {
         assert!(is_stop(Language::English, word), "{word}");
     }
     assert!(!is_stop(Language::English, "The"));
     assert!(!is_stop(Language::English, "database"));
-    assert!(stop::ENGLISH.iter().all(|w| normalize(w) == *w));
-    assert!(stop::ENGLISH.iter().all(|w| !is_stop(Language::None, w)));
+    assert!(english.iter().all(|w| normalize(w) == *w));
+    assert!(english.iter().all(|w| !is_stop(Language::None, w)));
 }
 
 /// Verifies: [ISO/IEC 13249-2:2002 §4.2.3.4] NONE stems a word to itself.
@@ -321,10 +322,10 @@ fn listed(words: &[&str]) -> StopWords {
 /// dropped, and a list of no word is no stop words.
 #[test]
 fn stop_words_parse_a_list() {
-    assert_eq!(StopWords::parse(" The ,RÉSUMÉ,, résumé\t,don\u{2019}t "), listed(&["the", "resume", "don't"]));
-    assert_eq!(StopWords::parse("a"), listed(&["a"]));
-    assert_eq!(StopWords::parse(""), StopWords::None);
-    assert_eq!(StopWords::parse(" , ,"), StopWords::None);
+    assert_eq!(StopWords::parse(" The ,RÉSUMÉ,, résumé\t,don\u{2019}t ", Language::English), listed(&["the", "resume", "don't"]));
+    assert_eq!(StopWords::parse("a", Language::English), listed(&["a"]));
+    assert_eq!(StopWords::parse("", Language::English), StopWords::None);
+    assert_eq!(StopWords::parse(" , ,", Language::English), StopWords::None);
 }
 
 /// Verifies: [ISO/IEC 13249-2:2002 §4.4.2] the language's list, none, or
@@ -334,7 +335,7 @@ fn stop_words_contain() {
     assert!(StopWords::Language.contains(Language::English, "the"));
     assert!(!StopWords::Language.contains(Language::None, "the"));
     assert!(!StopWords::None.contains(Language::English, "the"));
-    let words = StopWords::parse("foo, Bar");
+    let words = StopWords::parse("foo, Bar", Language::English);
     assert!(words.contains(Language::English, "bar"));
     assert!(words.contains(Language::None, "foo"));
     assert!(!words.contains(Language::English, "the"));
@@ -350,7 +351,7 @@ fn tokenize_with_marks_by_the_given_stop_words() {
     };
     assert_eq!(marks(&StopWords::Language), [(1, true), (2, false), (3, true), (4, false)]);
     assert_eq!(marks(&StopWords::None), [(1, false), (2, false), (3, false), (4, false)]);
-    assert_eq!(marks(&StopWords::parse("foo,cat")), [(1, false), (2, true), (3, false), (4, true)]);
+    assert_eq!(marks(&StopWords::parse("foo,cat", Language::English)), [(1, false), (2, true), (3, false), (4, true)]);
     let plain: Vec<bool> = tokens("The cat and Foo").iter().map(|t| t.stop).collect();
     assert_eq!(plain, [true, false, true, false]);
 }

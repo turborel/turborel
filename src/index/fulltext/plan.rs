@@ -27,7 +27,7 @@ use crate::engine::tree::Direction;
 use crate::error::Result;
 use crate::fulltext::pattern::{Argument, Context, Expansion, Literal, Part, Pattern, Proximity, Unit};
 use crate::fulltext::text::StopWords;
-use crate::fulltext::{Language, is_stop};
+use crate::fulltext::{Languages, is_stop};
 
 /// The documents that may hold a pattern.
 #[derive(Debug, Clone, PartialEq)]
@@ -301,17 +301,18 @@ impl FullTextIndex {
             Matcher::Exact(word) => Ok(vec![term_of(word, self.most_term).to_vec()]),
             Matcher::Mask(mask) => self.dictionary(matcher, &prefix_of(mask)),
             // A document's word is stemmed in its language: by the stem
-            // entries in the index's, the word itself in none.
-            Matcher::Stem(stemmed) => match self.reading.language {
-                Language::English => {
-                    let mut terms = self.stemmed(stemmed)?;
-                    terms.push(term_of(stemmed, self.most_term).to_vec());
-                    terms.sort_unstable();
-                    terms.dedup();
-                    Ok(terms)
+            // entries, stemmed in the index's, if every document is in it,
+            // else from the dictionary.
+            Matcher::Stem(stemmed) => {
+                if self.languages() != Languages::of(self.reading.language) {
+                    return self.dictionary(matcher, "");
                 }
-                Language::None => self.dictionary(matcher, ""),
-            },
+                let mut terms = self.stemmed(stemmed)?;
+                terms.push(term_of(stemmed, self.most_term).to_vec());
+                terms.sort_unstable();
+                terms.dedup();
+                Ok(terms)
+            }
             Matcher::Sounds { .. } | Matcher::Spelled { .. } => self.dictionary(matcher, ""),
             Matcher::Unknown => Ok(Vec::new()),
         }
@@ -322,12 +323,12 @@ impl FullTextIndex {
     /// [§4.4.2], or for a word itself, a stop word of any language.
     fn unposted(&self, matcher: &Matcher) -> bool {
         if let Matcher::Exact(word) = matcher
-            && self.reading.may_stop(word)
+            && self.reading.may_stop(word, self.languages())
         {
             return true;
         }
         match &self.reading.stop {
-            StopWords::Words(words) => words.iter().any(|word| matcher.matches(word)),
+            StopWords::Words(words) => words.iter().any(|word| matcher.matches(word, self.languages())),
             StopWords::Language | StopWords::None => false,
         }
     }
@@ -339,12 +340,13 @@ impl FullTextIndex {
         let lower = [&[STATISTIC][..], prefix].concat();
         let upper = [&[STATISTIC][..], prefix, &[u8::MAX][..]].concat();
         let mut out = Vec::new();
+        let languages = self.languages();
         for entry in self.tree.scan(Bound::Included(&lower), Bound::Excluded(&upper), Direction::Forward) {
             let (key, _) = entry?;
             let term = key.get(1..key.len().saturating_sub(1)).unwrap_or_default();
             let word = String::from_utf8_lossy(term);
             let cut = term.len().saturating_add(CUT_SLACK) > self.most_term;
-            if matcher.matches(&word) || (cut && matcher.matches_prefix(&word)) {
+            if matcher.matches(&word, languages) || (cut && matcher.matches_prefix(&word)) {
                 out.push(term.to_vec());
             }
         }

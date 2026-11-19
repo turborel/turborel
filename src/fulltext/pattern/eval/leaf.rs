@@ -25,7 +25,7 @@ use crate::fulltext::pattern::fuzzy::{allowed, within};
 use crate::fulltext::pattern::literal::is_stop_word;
 use crate::fulltext::pattern::soundex::soundex;
 use crate::fulltext::pattern::{Literal, MaskChar, Part};
-use crate::fulltext::{Language, Token, stem};
+use crate::fulltext::{Language, Token, is_single_letter, stem};
 
 /// Where a token is, in every unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,11 +191,15 @@ fn literal_char(c: MaskChar) -> Option<char> {
     }
 }
 
-/// The word `mask` of `literal` as its steps match it: its stem in the
-/// literal's language if the literal is stemmed and the word has no wild
-/// card, else as written.
+/// The word `mask` of `literal` as its steps match it: any word holding
+/// it if it is a single letter of a language read as bigrams (RULES.md
+/// D323); its stem in the literal's language if the literal is stemmed
+/// and the word has no wild card; else as written.
 fn stemmed(mask: &[MaskChar], literal: &Literal) -> Vec<MaskChar> {
     let text: Option<String> = mask.iter().map(|c| literal_char(*c)).collect();
+    if let Some(letter) = text.as_deref().filter(|text| is_single_letter(literal.language, text)) {
+        return [MaskChar::Any].into_iter().chain(letter.chars().map(MaskChar::Literal)).chain([MaskChar::Any]).collect();
+    }
     match text.filter(|_| literal.stemmed) {
         Some(text) => stem(literal.language, &text).chars().map(MaskChar::Literal).collect(),
         None => mask.to_vec(),

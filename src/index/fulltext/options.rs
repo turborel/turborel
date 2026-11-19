@@ -10,7 +10,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use super::document::{LANGUAGES, Reading};
+use super::document::Reading;
 use crate::bytes::{Put, Reader};
 use crate::catalog::IndexDesc;
 use crate::disk::pager::PageId;
@@ -87,15 +87,16 @@ fn number(declared: &[TableOption], set: &[(String, Value)], name: &str, default
 
 /// The stop words of the option's value `text`: the language's for
 /// `DEFAULT`, none for `NONE`, else the words it lists by commas, none if
-/// it lists none, either word's case not counting.
-pub(super) fn stop_words_of(text: &str) -> StopWords {
+/// it lists none, either word's case not counting; each word normalized
+/// as `language` normalizes its words.
+pub(super) fn stop_words_of(text: &str, language: Language) -> StopWords {
     let text = text.trim();
     if text.eq_ignore_ascii_case(DEFAULT_STOP_WORDS) {
         StopWords::Language
     } else if text.eq_ignore_ascii_case(NO_STOP_WORDS) {
         StopWords::None
     } else {
-        StopWords::parse(text)
+        StopWords::parse(text, language)
     }
 }
 
@@ -117,7 +118,7 @@ pub(super) fn options_of(desc: &IndexDesc) -> Result<Options> {
         Some(_) | None => Language::English,
     };
     let stop = match option_value(&declared, &desc.options, STOP_WORDS_OPTION) {
-        Some(Value::Char(text)) => stop_words_of(text),
+        Some(Value::Char(text)) => stop_words_of(text, language),
         Some(_) | None => StopWords::Language,
     };
     let ranking = match option_value(&declared, &desc.options, RANKING_OPTION) {
@@ -145,7 +146,7 @@ pub(super) fn ranking_named(rankings: &Rankings, name: &str) -> Result<Arc<dyn R
 /// language named where a statement runs [§5.1.9 GR].
 fn language_named(name: &str) -> Result<Language> {
     Language::named(name).map_err(|_| {
-        let known: Vec<&str> = LANGUAGES.iter().map(|language| language.name()).collect();
+        let known: Vec<&str> = Language::all().map(Language::name).collect();
         SqlError::new(Code::SyntaxRule, format!("[EXTENSION] FULLTEXT.LANGUAGE is one of {}, not {name}", known.join(", ")))
     })
 }

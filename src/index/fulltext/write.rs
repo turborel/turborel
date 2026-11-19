@@ -92,6 +92,7 @@ impl FullTextIndex {
         let value = single(key)?;
         let Some(hash) = hash_of(value, &self.reading)? else { return Ok(()) };
         let doc = Doc { row, hash };
+        self.note_language(value)?;
         let _row = self.row_lock(row)?;
         let entry = document_key(doc);
         if let Some(old) = self.tree.get(&entry)? {

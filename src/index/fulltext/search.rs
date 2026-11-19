@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use super::FullTextIndex;
 use super::cursor::{Cursor, Numbers, intersect};
-use super::document::{LANGUAGES, hash_in, hash_key, term_of};
+use super::document::{hash_in, hash_key, term_of};
 use super::keys::{
     COUNTS_KEY, Counts, DOCUMENT, Doc, DocumentValue, TermStatistics, Totals, document_key, document_of, hashed_range, hashed_row,
     number_doc, number_key, statistic_key, tag_range,
@@ -94,14 +94,14 @@ pub(super) fn search(index: &Arc<FullTextIndex>, probe: &Probe) -> Entries {
 /// does not parse or of stop words only, so the recheck of the first row
 /// gives the error, where a scan of the table would. A pattern's words
 /// are of its document's language where they name none, so its plan is
-/// the union of its plans in each language a document may be in.
+/// the union of its plans in each language its documents are in.
 fn pattern_plan(index: &FullTextIndex, value: &Value) -> Result<Option<Plan>> {
     if value.is_null() {
         return Ok(None);
     }
     let Some(text) = crate::fulltext::types::pattern_of(value) else { return Ok(Some(Plan::All)) };
     let mut patterns: Vec<Pattern> = Vec::new();
-    for language in LANGUAGES {
+    for language in index.languages().iter() {
         let Ok(pattern) = parse(text, language) else { return Ok(Some(Plan::All)) };
         if holds(&pattern, std::iter::empty(), language).is_err() {
             return Ok(Some(Plan::All));

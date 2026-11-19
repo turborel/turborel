@@ -25,7 +25,7 @@ use super::FullTextIndex;
 use super::document::term_of;
 use super::matcher::positive_matchers;
 use crate::error::{Code, Result, SqlError};
-use crate::fulltext::Language;
+use crate::fulltext::{Language, Languages};
 use crate::fulltext::pattern::Pattern;
 use crate::fulltext::rank::{Corpus, InDocument, Ranking, Statistics, TermStats};
 use crate::fulltext::text::{StopWords, tokenize_with};
@@ -60,7 +60,7 @@ fn counted(pattern: &Pattern, document: Document<'_>, language: Language, statis
         }
         length = length.saturating_add(1);
         for (matcher, count) in matchers.iter().zip(counts.iter_mut()) {
-            if matcher.matches(&token.word) {
+            if matcher.matches(&token.word, Languages::of(language)) {
                 let term = String::from_utf8_lossy(term_of(&token.word, most)).into_owned();
                 let tf = count.entry(term).or_default();
                 *tf = tf.saturating_add(1);
