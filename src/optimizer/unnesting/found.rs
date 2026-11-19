@@ -86,10 +86,27 @@ pub(super) enum Reference {
 pub(super) fn candidates(node: &Node<'_>) -> Vec<Found> {
     let mut out = Vec::new();
     match node {
-        Node::Filter(cond, _) => in_cond(cond, false, &mut out),
+        Node::Filter(cond, _) => {
+            in_cond(cond, false, &mut out);
+            semi_joins(cond, &mut out);
+        }
         Node::Project(exprs, _) => exprs.iter().for_each(|e| in_expr(e, false, &mut out)),
     }
     out
+}
+
+/// Adds to `out` each uncorrelated subquery of an IN or SOME comparison
+/// that is a conjunct of `cond`: made EXISTS of a subquery that compares
+/// the values with its rows, it is a semi join.
+fn semi_joins(cond: &Cond, out: &mut Vec<Found>) {
+    let mut conjuncts = Vec::new();
+    split_and(cond.clone(), &mut conjuncts);
+    for c in conjuncts {
+        let Cond::Quantified(_, _, Quantifier::Some, s) = c else { continue };
+        if s.outer.is_empty() && !out.iter().any(|f| f.sub.id() == s.id()) {
+            out.push(Found { sub: s, conditional: false });
+        }
+    }
 }
 
 /// Notes `s`, if correlated, as met at a place `conditional` or not.

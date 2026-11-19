@@ -24,7 +24,7 @@ use super::unnesting::{Assigned, expr_pure};
 use super::{Rule, RuleContext};
 use crate::error::Subject;
 use crate::functions::ScalarRef;
-use crate::logical::{Cond, Expr, Invocation, LogicalPlan, Program, Step, expr_columns};
+use crate::logical::{Cond, Expr, Invocation, LogicalPlan, Program, Step, filled};
 
 /// The rule's name, as EXPLAIN shows it and its setting names it.
 pub const INLINE_FUNCTIONS: &str = "inline_functions";
@@ -97,23 +97,15 @@ fn inlined(i: &Invocation) -> Option<Expr> {
     if !plain || !i.args.iter().all(expr_pure) {
         return None;
     }
-    let (value, outer) = body_value(i)?;
-    if outer.iter().any(Expr::can_raise) {
-        return None;
-    }
+    let value = body_value(i)?;
     let mut read = Vec::new();
-    slots_read(value, false, &mut read);
-    let mut params = Vec::new();
-    for slot in read {
-        expr_columns(outer.get(slot)?, &mut params);
-    }
-    if (0..i.params.len()).any(|p| !params.contains(&p)) {
+    columns_read(&value, false, &mut read);
+    if (0..i.params.len()).any(|p| !read.contains(&p)) {
         return None;
     }
     let stored: Vec<Expr> = i.args.iter().zip(&i.params).enumerate().map(|(n, (arg, (name, t)))| parameter(i, (n, name, t), arg)).collect();
-    let outer: Vec<Expr> = outer.iter().map(|o| columns_replaced(o.clone(), &stored)).collect();
     let assigned = Assigned { to: i.result.clone(), rule: RESULT_RULE, about: Subject::default() };
-    Some(Expr::Call(ScalarRef(Arc::new(assigned)), vec![slots_replaced(value.clone(), &outer)]))
+    Some(Expr::Call(ScalarRef(Arc::new(assigned)), vec![columns_replaced(value, &stored)]))
 }
 
 /// Argument `arg` of `i`, stored in its parameter `name` of type `t`,
@@ -124,18 +116,50 @@ fn parameter(i: &Invocation, (n, name, t): (usize, &String, &crate::value::DataT
     Expr::Call(ScalarRef(Arc::new(assigned)), vec![arg.clone()])
 }
 
-/// The one value `i`'s body returns, over its outer reference slots, and
-/// the expressions over the parameters that fill them.
-fn body_value(i: &Invocation) -> Option<(&Expr, &[Expr])> {
-    let body = match (&i.body, &i.program) {
-        (Some(body), None) => body,
-        (None, Some(program)) => &returned(program)?.query,
+/// The one value `i`'s body returns, each parameter the column of its
+/// number: of a `<return statement>`, its outer references the
+/// parameters' columns; of a program's, the frame's slots of them
+/// (`exec/program/leaves.rs`), read only where they can be replaced.
+fn body_value(i: &Invocation) -> Option<Expr> {
+    let (body, framed) = match (&i.body, &i.program) {
+        (Some(body), None) => (body, false),
+        (None, Some(program)) => (&returned(program)?.query, true),
         (None, None) | (Some(_), Some(_)) => return None,
     };
     let LogicalPlan::Values { rows, .. } = &body.plan else { return None };
     let [row] = rows.as_slice() else { return None };
     let [value] = row.as_slice() else { return None };
-    Some((value, &body.outer))
+    if body.outer.iter().any(Expr::can_raise) {
+        return None;
+    }
+    let mut outer = body.outer.clone();
+    let mut value = value.clone();
+    if framed {
+        let width = i.params.len();
+        outer = outer.into_iter().map(|o| framed_columns(o, width)).collect::<Option<Vec<Expr>>>()?;
+        value = framed_columns(value, width)?;
+    }
+    let value = slots_replaced(value, &outer);
+    // A frame's slot in a plan of the value's subqueries is not replaced.
+    let unframed = value.all_subqueries().iter().all(|s| filled(s.plan.clone(), &[]).is_ok());
+    unframed.then_some(value)
+}
+
+/// `e`, each slot of the frame, of a parameter of the `width`, the column
+/// of its number; none if it reads a variable's.
+fn framed_columns(e: Expr, width: usize) -> Option<Expr> {
+    let mut beyond = false;
+    let e = framed(e, width, &mut beyond);
+    (!beyond).then_some(e)
+}
+
+/// `framed_columns`, noting in `beyond` a slot past the parameters.
+fn framed(e: Expr, width: usize, beyond: &mut bool) -> Expr {
+    if let Expr::Dynamic(slot) = e {
+        *beyond = *beyond || slot.index >= width;
+        return Expr::Column(slot.index);
+    }
+    e.map_children(&mut |x| framed(x, width, beyond))
 }
 
 /// The leaf of `program`'s one RETURN, if it is that statement alone.
@@ -158,25 +182,25 @@ fn returned(program: &Program) -> Option<&crate::logical::Leaf> {
     Some(leaf)
 }
 
-/// Adds to `out` each outer reference slot `e` reads where it is
+/// Adds to `out` each column, a parameter's, `e` reads where it is
 /// evaluated whenever `e` is: not if `conditional`, nor in a CASE's
 /// result, ELSE or WHEN after the first [ISO/IEC 9075:1992 §6.9 GR2].
-fn slots_read(e: &Expr, conditional: bool, out: &mut Vec<usize>) {
+fn columns_read(e: &Expr, conditional: bool, out: &mut Vec<usize>) {
     match e {
-        Expr::Outer(slot, _) => {
+        Expr::Column(column) => {
             if !conditional {
-                out.push(*slot);
+                out.push(*column);
             }
         }
         Expr::Case(whens, otherwise) => {
             for (n, (c, result)) in whens.iter().enumerate() {
-                cond_slots_read(c, conditional || n > 0, out);
-                slots_read(result, true, out);
+                cond_columns_read(c, conditional || n > 0, out);
+                columns_read(result, true, out);
             }
-            slots_read(otherwise, true, out);
+            columns_read(otherwise, true, out);
         }
-        Expr::Truth(c) => cond_slots_read(c, conditional, out),
-        Expr::Column(_)
+        Expr::Truth(c) => cond_columns_read(c, conditional, out),
+        Expr::Outer(..)
         | Expr::Const(_)
         | Expr::Neg(_)
         | Expr::Arith(..)
@@ -188,18 +212,18 @@ fn slots_read(e: &Expr, conditional: bool, out: &mut Vec<usize>) {
         | Expr::Subquery(..)
         | Expr::Warned(..)
         | Expr::NextValue(_)
-        | Expr::Invoked(_) => e.for_each_child(&mut |child| slots_read(child, conditional, out)),
+        | Expr::Invoked(_) => e.for_each_child(&mut |child| columns_read(child, conditional, out)),
     }
 }
 
-/// `slots_read`, of a condition.
-fn cond_slots_read(c: &Cond, conditional: bool, out: &mut Vec<usize>) {
+/// `columns_read`, of a condition.
+fn cond_columns_read(c: &Cond, conditional: bool, out: &mut Vec<usize>) {
     match c {
         Cond::And(a, b) | Cond::Or(a, b) => {
-            cond_slots_read(a, conditional, out);
-            cond_slots_read(b, conditional, out);
+            cond_columns_read(a, conditional, out);
+            cond_columns_read(b, conditional, out);
         }
-        Cond::Not(a) | Cond::Is(a, ..) => cond_slots_read(a, conditional, out),
+        Cond::Not(a) | Cond::Is(a, ..) => cond_columns_read(a, conditional, out),
         Cond::Const(_)
         | Cond::Compare(..)
         | Cond::Distinct(..)
@@ -210,7 +234,7 @@ fn cond_slots_read(c: &Cond, conditional: bool, out: &mut Vec<usize>) {
         | Cond::Quantified(..)
         | Cond::Match { .. }
         | Cond::Value(_)
-        | Cond::In(..) => c.for_each_expr(&mut |e| slots_read(e, conditional, out)),
+        | Cond::In(..) => c.for_each_expr(&mut |e| columns_read(e, conditional, out)),
     }
 }
 

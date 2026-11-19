@@ -121,7 +121,9 @@ pub(super) struct Bound {
 fn unnested(node: &Node<'_>, found: &Found, functions: &Registry) -> Option<LogicalPlan> {
     let target = target(node, found)?;
     let pure = target.sub.outer.iter().all(expr_pure) && pure::plan_pure(&target.sub.plan);
-    if !pure || (found.conditional && found.sub.can_raise()) {
+    // A subquery that may go unevaluated is computed for every binding.
+    let raises = || found.sub.outer.iter().any(Expr::can_raise) || pure::plan_raises(&found.sub.plan, functions);
+    if !pure || (found.conditional && raises()) {
         return None;
     }
     let simple = match target.how {
