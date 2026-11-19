@@ -30,6 +30,21 @@ pub trait Adjacency: Send + Sync {
     ///
     /// The index's storage fails, or `vertex` is not a key of the vertex's columns.
     fn steps(&self, vertex: &Key, direction: Direction, out: &mut Vec<Step>) -> Result<()>;
+    /// Pushes onto `out`, for each of `vertices` in order, its steps as
+    /// `steps` gives them: a frontier's lists read at once, which an index
+    /// may read in one pass over what it holds.
+    ///
+    /// # Errors
+    ///
+    /// As `steps`.
+    fn steps_many(&self, vertices: &[Key], direction: Direction, out: &mut Vec<Vec<Step>>) -> Result<()> {
+        for vertex in vertices {
+            let mut steps = Vec::new();
+            self.steps(vertex, direction, &mut steps)?;
+            out.push(steps);
+        }
+        Ok(())
+    }
     /// The number of entries for `vertex` in `direction`, an estimate under concurrent writes.
     ///
     /// # Errors

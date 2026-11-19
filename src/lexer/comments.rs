@@ -7,11 +7,27 @@
 //! whose contents begin with a plus sign is hinted by the words of it
 //! (`hinted`), as `/*+ VECTOR_WAIT_FRESH */` asks for fresh embeddings
 //! (the vector design's R12.6).
+//!
+//! \[EXTENSION\] [GS §10.3] After MATCH, "--" is no `<simple comment>`
+//! where it is one of Cypher's relationships `)--(`, `)-->(`, `)<--(`
+//! and `)<-->(`, written with no space: just after ")" or ")<", and just
+//! before "(" or ">(". There a comment would be glued to both a closing
+//! and an opening parenthesis, which no SQL text writes.
 
 use super::{Scanner, error};
 use crate::error::{Code, Result};
 
 impl Scanner {
+    /// Whether the "--" next is part of a Cypher relationship, as this
+    /// module describes, not a comment.
+    pub(super) fn at_relationship(&self) -> bool {
+        let before = |k: usize| self.at.checked_sub(k).and_then(|i| self.c.get(i)).copied();
+        let after = |k: usize| self.peek(k.saturating_add(2));
+        let opened = before(1) == Some(')') || (before(1) == Some('<') && before(2) == Some(')'));
+        let closed = after(0) == Some('(') || (after(0) == Some('>') && after(1) == Some('('));
+        self.matched && opened && closed
+    }
+
     /// Skips a `<bracketed comment>`, if one is next, and says whether
     /// there was one.
     ///

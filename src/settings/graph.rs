@@ -1,8 +1,8 @@
 //! \[EXTENSION\] The settings of graph pattern matching [GS §20]: the
 //! limits of a GRAPH_TABLE's path search, what reaching one does, whether
-//! its paths are found in an order repeated run to run, and the workers a
-//! search may use. A GRAPH_TABLE's OPTIONS overrides each limit for
-//! itself (`exec/graph_table/limits.rs`).
+//! its paths are found in an order repeated run to run, and the work a
+//! search needs before it uses workers. A GRAPH_TABLE's OPTIONS overrides
+//! each limit for itself (`exec/graph_table/limits.rs`).
 
 use super::builtin::{text, whole};
 use super::{Definition, Effect, Key, Kind, OFF, SWITCHES};
@@ -17,6 +17,12 @@ pub const GRAPH_MAX_SEARCH_STATES: Key = Key(55);
 pub const GRAPH_ON_LIMIT: Key = Key(56);
 /// GRAPH.DETERMINISTIC_PATHS.
 pub const GRAPH_DETERMINISTIC_PATHS: Key = Key(57);
+/// GRAPH.PARALLEL_MIN_STATES.
+pub const GRAPH_PARALLEL_MIN_STATES: Key = Key(60);
+
+/// \[DESIGN\] The default of GRAPH.PARALLEL_MIN_STATES: below it, starting
+/// and joining workers costs more than the states they would share.
+pub const DEFAULT_PARALLEL_MIN_STATES: i128 = 16_384;
 
 /// \[DESIGN\] The default of GRAPH.MAX_SEARCH_STATES: enough for any
 /// search of a graph held in memory, and a bound on one that never ends.
@@ -68,4 +74,13 @@ pub(super) fn definitions() -> [Definition; 5] {
             "Whether a GRAPH_TABLE's selectors that keep some of equal paths, as ANY and ANY SHORTEST, keep the same ones each run, ON, ordered by the elements' identities; or any, OFF.",
         ),
     ]
+}
+
+/// The settings of graph pattern matching declared after GQL's, in the
+/// order of their keys.
+pub(super) fn later() -> [Definition; 1] {
+    [defined(
+        ("GRAPH.PARALLEL_MIN_STATES", COUNT, whole(DEFAULT_PARALLEL_MIN_STATES)),
+        "The least states, estimated from the graph's size, a GRAPH_TABLE's search makes for it to run on the workers EXECUTOR.GRAPH_THREADS allows; a smaller one runs on the statement's thread alone; 0 for any search. Its results are the same either way.",
+    )]
 }

@@ -19,7 +19,8 @@ use crate::error::{Code, Result, SqlError};
 use crate::graph::adjacency::{Adjacency, Direction, Step};
 use crate::index::{
     self, ADJACENCY_METHOD, AdjacencyMethod, BTreeMethod, FULLTEXT_METHOD, FullTextMethod, HASH_METHOD, HashMethod, Index, IndexMethod,
-    JSON_METHOD, JsonMethod, Key, KeyOrder, KeyProjection, Probe, RTREE_METHOD, RTreeMethod,
+    JSON_METHOD, JsonMethod, Key, KeyOrder, KeyProjection, LABELS_METHOD, LabelsMethod, Probe, REACHABILITY_METHOD, RTREE_METHOD,
+    RTreeMethod, ReachabilityMethod,
 };
 use crate::index::{DISKANN_METHOD, DiskAnnMethod, HNSW_METHOD, HnswMethod, IVF_METHOD, IvfMethod};
 use crate::log::Lsn;
@@ -447,6 +448,10 @@ impl Entries {
             // Of no budget, so read of its tree alone, its pages the
             // instance's (RULES.md D49).
             Arc::from(AdjacencyMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == LABELS_METHOD {
+            Arc::from(LabelsMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == REACHABILITY_METHOD {
+            Arc::from(ReachabilityMethod::new(pool, file).create_on(&types, on)?)
         } else {
             Arc::from(BTreeMethod::new(pool, file).create_on(&types, on)?)
         };
@@ -495,6 +500,14 @@ impl Adjacency for Entries {
 impl Index for Entries {
     fn adjacency(self: Arc<Self>) -> Option<Arc<dyn Adjacency>> {
         (self.index.method == ADJACENCY_METHOD).then_some(self)
+    }
+    /// Those of the entries made, if they are: none, the table is read.
+    fn members(self: Arc<Self>) -> Option<Arc<dyn crate::graph::indexes::Members>> {
+        self.made().and_then(Index::members)
+    }
+    /// Those of the entries made, if they are: none, no search is pruned.
+    fn reachability(self: Arc<Self>) -> Option<Arc<dyn crate::graph::indexes::Reachability>> {
+        self.made().and_then(Index::reachability)
     }
     fn nearest(
         self: Arc<Self>,

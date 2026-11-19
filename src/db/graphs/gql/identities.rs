@@ -2,12 +2,13 @@
 //! read and write them (graph standard §5 R5.1, RULES.md D110): the text
 //! ELEMENT_ID gives, `{"table":"ACCOUNT","key":[6]}`, its element table's
 //! alias and its key's values, so a binding table's identities are
-//! GRAPH_TABLE's. A row is found by its key, each value read from the
+//! GRAPH_TABLE's. A node or edge table's element is its pseudo-column's
+//! text alone. A row is found by its key, each value read from the
 //! identity in SQL as its column's type, so no value is spliced into the
 //! text.
 
 use crate::binder::gql::Graph;
-use crate::catalog::{ElementKind, ElementTableDesc, EndpointDesc, identifier, qualified_identifier};
+use crate::catalog::{EDGE_ID, ElementKind, ElementTableDesc, EndpointDesc, NODE_ID, identifier, qualified_identifier};
 use crate::db::Session;
 use crate::error::{Code, Result, SqlError};
 use crate::json::{Item, Keys};
@@ -89,7 +90,13 @@ impl Session {
         let mut at = Vec::new();
         for (i, k) in e.key.iter().enumerate() {
             let column = t.columns.iter().find(|c| c.name == *k).map(|c| c.data_type.to_string()).unwrap_or_default();
-            at.push(format!("{q}.{} = {}", identifier(k), key_value(param, i, &column)));
+            // A node or edge table's element is its pseudo-column's text (§5 R5.1).
+            let value = if *k == NODE_ID || *k == EDGE_ID {
+                format!("COALESCE({}, {param})", key_value(param, i, &column))
+            } else {
+                key_value(param, i, &column)
+            };
+            at.push(format!("{q}.{} = {value}", identifier(k)));
         }
         Ok(at.join(" AND "))
     }

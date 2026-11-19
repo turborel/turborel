@@ -20,7 +20,7 @@ const T: u32 = 2;
 /// Q↑E under `selector`.
 fn increasing(g: &Arc<InMemoryGraph>, selector: Selector) -> PathPattern {
     let ts = Arc::clone(g);
-    let test = Some(filter(&[Read { var: T, previous: true, first: false }], move |b| {
+    let test = Some(filter(&[Read { var: T, previous: true, first: false, later: false, path: None }], move |b| {
         let now = ts.int(b.element().unwrap(), "ts");
         Ok(b.previous(T).is_none_or(|p| now > ts.int(p, "ts")))
     }));

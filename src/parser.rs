@@ -1,18 +1,17 @@
 //! Recursive descent parser. One method per BNF production, named after it.
 //!
-//! The standard's left-recursive rules ("`<term>` ::= `<factor>` | `<term>` * `<factor>`")
-//! become loops, which gives the left-to-right evaluation order of [X3.135-1986 §5.9 GR7]
-//! and [X3.135-1986 §5.18 GR3]. The one real ambiguity in the grammar, that both
-//! `<predicate>` and (`<search condition>`) can start with "(", is resolved by
-//! trying `<predicate>` first and backtracking (\[DESIGN\] PEG-style ordered choice).
+//! The standard's left-recursive rules ("`<term>` ::= `<factor>` | `<term>` * `<factor>`") become loops, which gives
+//! the left-to-right evaluation order of [X3.135-1986 §5.9 GR7] and [X3.135-1986 §5.18 GR3]. The one real ambiguity in
+//! the grammar, that both `<predicate>` and (`<search condition>`) can start with "(", is resolved by trying
+//! `<predicate>` first and backtracking (\[DESIGN\] PEG-style ordered choice).
 //!
-//! Syntax that is valid SQL but not implemented reports `Code::Unsupported`
-//! rather than a misleading syntax error.
+//! Syntax that is valid SQL but not implemented reports `Code::Unsupported` rather than a misleading syntax error.
 
 pub use ddl::{RESEAL, REVERT_COLLATION, method_of_type, option_of};
 pub use domains::VALUE_COLUMN;
 pub(crate) use dynamic::descriptor_type;
-pub use graph::{Declared, Degree, Exposed, Exposure, exposure, normalize, parenthesized_exposure};
+pub use graph::{Declared, Degree, Exposed, Exposure, exposure, in_path_patterns, normalize, normalize_within, parenthesized_exposure};
+pub use graph::{LAST_NODE_PREFIX, MATCH_TABLE, checked_graph_table, element_key};
 pub(crate) use periods::period_constraint;
 use std::collections::{HashMap, HashSet};
 
@@ -148,13 +147,13 @@ pub struct Parser {
     blocks: Vec<psm::Block>,
     /// [ISO/IEC 9075-4:2006 draft §12.8] In an SQL-server module, its own schema, which MODULE names.
     module: Option<String>,
-    /// \[EXTENSION\] The GRAPH_TABLEs being read around the token at
-    /// hand, where a graph function's or predicate's name before "(" is
-    /// that function's, and elsewhere a routine's.
+    /// \[EXTENSION\] The GRAPH_TABLEs being read around the token at hand, where a graph
+    /// function's or predicate's name before "(" is that function's, and elsewhere a routine's.
     graph: usize,
-    /// \[EXTENSION\] The number of each `<dynamic parameter specification>`
-    /// by its place among them, of a text that copies some of a statement's
-    /// (`Parser::hybrid_expansion`); of none, each is numbered by its place.
+    /// \[EXTENSION\] [GS §10] The query specifications being read, the innermost last.
+    compat: Vec<graph::Frame>,
+    /// \[EXTENSION\] The number of each `<dynamic parameter specification>` by its place among them,
+    /// of a text that copies some of a statement's (`Parser::hybrid_expansion`); of none, its place.
     numbers: Vec<usize>,
 }
 
@@ -239,6 +238,7 @@ impl Parser {
             blocks: Vec::new(),
             module: None,
             graph: 0,
+            compat: Vec::new(),
             numbers: Vec::new(),
         })
     }

@@ -109,7 +109,7 @@ mod with;
 
 use from::FromItem;
 pub use generated::{bind_generation, generations, noting_generation, written_generations};
-pub use graph_properties::{PropertyBinding, element_columns, property_bound, property_expression, property_type};
+pub use graph_properties::{PropertyBinding, element_columns, property_bound, property_expression, property_type, query_columns};
 pub use invocation::{
     Candidate, FunctionBody, alike, bind_function_body, definition_of, functions_named, grantably_held, held, resolve_procedure,
     routine_definition, sql_statement,

@@ -66,6 +66,27 @@ pub(super) struct Test {
     pub(super) binds: Vec<(usize, bool)>,
     /// The restricted scopes' slots it is within, an edge's.
     pub(super) slots: Vec<usize>,
+    /// The path register its element goes to, and whether its variable
+    /// is a subpath's mark, whose sign goes there instead.
+    pub(super) path: Option<(usize, bool)>,
+    /// The deferred prefilter its own is, kept as it binds.
+    pub(super) defer: Option<usize>,
+    /// The deferred prefilters its variable's binding may complete.
+    pub(super) triggers: Vec<usize>,
+}
+
+/// \[GS §6.8\] An element pattern's prefilter reading a variable bound
+/// after it: each element the pattern binds is kept, with what it reads
+/// bound so far, in `register`, and tested as the variables it waits
+/// for are bound (RULES.md D108).
+#[derive(Clone, Debug)]
+pub(super) struct Pending {
+    pub(super) register: usize,
+    pub(super) filter: Compiled,
+    /// The element pattern's variable.
+    pub(super) own: Option<VarId>,
+    /// Of each read, whether it is of a variable bound later.
+    pub(super) later: Vec<bool>,
 }
 
 /// A prefilter with its reads resolved to registers.
@@ -73,6 +94,8 @@ pub(super) struct Test {
 pub(super) struct Compiled {
     pub(super) test: Predicate,
     pub(super) reads: Vec<super::program::Resolved>,
+    /// The path register, if the pattern keeps the path so far.
+    pub(super) path: Option<usize>,
 }
 
 impl fmt::Debug for Compiled {
@@ -108,6 +131,9 @@ pub(super) struct Scope {
     /// The FIRST registers set as it begins, each from its source, if
     /// not set yet.
     pub(super) first: Vec<(usize, usize)>,
+    /// The deferred prefilters whose elements kept are tested as it
+    /// begins, what they wait for not bound.
+    pub(super) flushes: Vec<usize>,
 }
 
 /// A compiled path pattern.
@@ -122,6 +148,8 @@ pub struct Nfa {
     pub(super) slots: usize,
     /// For each instruction, the instructions its forks reach first.
     pub(super) closure: Vec<Vec<usize>>,
+    /// Its deferred prefilters.
+    pub(super) pending: Vec<Pending>,
     /// The selector and restrictor at the pattern's head.
     pub(super) selector: Selector,
     pub(super) restrictor: Restrictor,
@@ -323,9 +351,10 @@ impl Nfa {
         let entry = emitter.emit(&node, leave)?;
         let start = emitter.push(Instr::Enter { scope: top, next: entry })?;
         let closure = closures(&emitter.instrs);
-        let (tests, scopes, slots, count) = registers.finish(&numbering.tests, &numbering.scopes);
+        let (tests, scopes, (slots, count), pending) = registers.finish(&numbering.tests, &numbering.scopes);
         let (selector, restrictor, counters) = (path.selector, path.restrictor, numbering.counters);
-        Ok(Nfa { instrs: emitter.instrs, tests, scopes, start, registers: count, counters, slots, closure, selector, restrictor })
+        let instrs = emitter.instrs;
+        Ok(Nfa { instrs, tests, scopes, start, registers: count, counters, slots, closure, pending, selector, restrictor })
     }
 
     /// Whether a restrictor applies anywhere in it, so a search must keep

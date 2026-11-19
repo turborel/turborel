@@ -13,9 +13,13 @@
 
 use std::collections::HashMap;
 
-use super::{Compiled, Scope, ScopeKind, Test};
+use super::{Compiled, Pending, Scope, ScopeKind, Test};
 use crate::error::Result;
-use crate::graph::program::{ElementTest, Filter, Read, Restrictor, Selector, VarId, termination};
+use crate::graph::program::{ElementTest, Filter, Read, Restrictor, Selector, VarId, WHOLE_PATH, termination};
+
+/// The tests and scopes compiled, the restricted scopes' slots and the
+/// registers, and the deferred prefilters.
+pub(super) type Finished = (Vec<Test>, Vec<Scope>, (usize, usize), Vec<Pending>);
 
 /// A numbered scope: its parent, kind, restrictor and prefilter.
 type Numbered = (Option<usize>, ScopeKind, Restrictor, Option<Filter>);
@@ -31,6 +35,13 @@ pub(super) struct Registers {
     count: usize,
     /// The parent of each scope.
     parents: Vec<Option<usize>>,
+    /// The path register, if a prefilter reads the path so far.
+    path: Option<usize>,
+    /// The subpath marks a prefilter's path function reads.
+    marks: Vec<VarId>,
+    /// Each deferred prefilter: its test, its register and the scope
+    /// holding it and every variable it waits for.
+    pending: Vec<(usize, usize, usize)>,
 }
 
 impl Registers {
@@ -42,13 +53,23 @@ impl Registers {
     /// SQLCODE -103 if either rule is broken.
     pub(super) fn allocate(numbering: &super::Numbering, selector: Selector) -> Result<Registers> {
         let parents = numbering.scopes.iter().map(|s| s.0).collect();
-        let mut chosen = Registers { current: HashMap::new(), previous: HashMap::new(), first: HashMap::new(), count: 0, parents };
+        let mut chosen = Registers {
+            current: HashMap::new(),
+            previous: HashMap::new(),
+            first: HashMap::new(),
+            count: 0,
+            parents,
+            path: None,
+            marks: Vec::new(),
+            pending: Vec::new(),
+        };
         chosen.unbounded(&numbering.scopes, selector)?;
         chosen.joins(&numbering.tests, &numbering.scopes);
         let sites = sites(&numbering.tests);
-        for (scope, test, _) in &numbering.tests {
+        for (k, (scope, test, _)) in numbering.tests.iter().enumerate() {
             if let Some(filter) = &test.filter {
                 chosen.reads(filter, (*scope, test.var), &sites, &numbering.scopes)?;
+                chosen.deferred((k, test.var), filter, *scope, (&sites, &numbering.scopes))?;
             }
         }
         for (scope, numbered) in numbering.scopes.iter().enumerate() {
@@ -128,7 +149,9 @@ impl Registers {
     ) -> Result<()> {
         for read in &filter.reads {
             let bound = sites.get(&read.var).map_or(&[][..], Vec::as_slice);
-            if read.previous || read.first {
+            if let Some(end) = read.path {
+                self.path_of(read.var, end, scopes)?;
+            } else if read.previous || read.first {
                 self.iteration_of(*read, scope, scopes);
             } else if own != Some(read.var) {
                 let holder = self.holder(scope, bound);
@@ -139,6 +162,47 @@ impl Registers {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// \[GS §6.9\] The path register, for a path function of a prefilter
+    /// reading the path so far, or the subpath between marks `start` and
+    /// `end`. The path is kept as a group of every element, so no
+    /// unbounded quantifier may lie outside every restrictor [GS §7.4
+    /// R7.4].
+    fn path_of(&mut self, start: VarId, end: VarId, scopes: &[Numbered]) -> Result<()> {
+        for (scope, numbered) in scopes.iter().enumerate() {
+            if numbered.1 == (ScopeKind::Quantifier { bounded: false }) && !self.restricted(scope, scopes) {
+                return Err(termination("R7.4", "GRF-0032", "a prefilter's path function reads a path unbounded where it reads it"));
+            }
+        }
+        if self.path.is_none() {
+            self.path = Some(self.register());
+        }
+        self.marks.extend([start, end].into_iter().filter(|&m| m != WHOLE_PATH));
+        Ok(())
+    }
+
+    /// \[GS §6.8\] A register keeping the elements of test `k`, of
+    /// variable `own`, whose prefilter reads a variable bound after it,
+    /// until those are bound. What it keeps crosses no unbounded
+    /// quantifier outside every restrictor [GS §7.4 R7.4].
+    fn deferred(
+        &mut self,
+        (k, own): (usize, Option<VarId>),
+        filter: &Filter,
+        scope: usize,
+        (sites, scopes): (&HashMap<VarId, Vec<usize>>, &[Numbered]),
+    ) -> Result<()> {
+        if !filter.reads.iter().any(|r| r.later) {
+            return Ok(());
+        }
+        let waits: Vec<usize> =
+            filter.reads.iter().filter(|r| r.later).flat_map(|r| sites.get(&r.var).cloned().unwrap_or_default()).collect();
+        let holder = self.holder(scope, &waits);
+        self.bounded(own.unwrap_or(WHOLE_PATH), holder, &[scope], scopes)?;
+        let register = self.register();
+        self.pending.push((k, register, holder));
         Ok(())
     }
 
@@ -208,12 +272,12 @@ impl Registers {
                 (read.var, current, previous.filter(|_| read.previous), first.map(|r| r.0).filter(|_| read.first))
             })
             .collect();
-        Compiled { test: filter.test.clone(), reads }
+        Compiled { test: filter.test.clone(), reads, path: self.path }
     }
 
     /// The tests and scopes compiled with their registers, the restricted
     /// scopes' slots, and the number of registers.
-    pub(super) fn finish(&self, tests: &[(usize, ElementTest, bool)], scopes: &[Numbered]) -> (Vec<Test>, Vec<Scope>, usize, usize) {
+    pub(super) fn finish(&self, tests: &[(usize, ElementTest, bool)], scopes: &[Numbered]) -> Finished {
         let sites = sites(tests);
         let mut slots = HashMap::new();
         for (scope, numbered) in scopes.iter().enumerate() {
@@ -222,9 +286,35 @@ impl Registers {
                 slots.insert(scope, next);
             }
         }
-        let compiled_tests = tests.iter().map(|(scope, test, edge)| self.test(*scope, test, *edge, (&sites, &slots))).collect();
-        let compiled_scopes = scopes.iter().enumerate().map(|(scope, numbered)| self.scope(scope, numbered, (&sites, &slots))).collect();
-        (compiled_tests, compiled_scopes, slots.len(), self.count)
+        let mut pending = Vec::new();
+        let mut waits = Vec::new();
+        for &(k, register, _) in &self.pending {
+            let Some((scope, test, _)) = tests.get(k) else { continue };
+            let Some(filter) = &test.filter else { continue };
+            waits.push(filter.reads.iter().filter(|r| r.later).map(|r| r.var).collect::<Vec<_>>());
+            let later = filter.reads.iter().map(|r| r.later).collect();
+            pending.push(Pending { register, filter: self.compiled(filter, *scope, &sites), own: test.var, later });
+        }
+        let compiled_tests = tests
+            .iter()
+            .enumerate()
+            .map(|(k, (scope, test, edge))| {
+                let mut t = self.test(*scope, test, *edge, (&sites, &slots));
+                t.defer = self.pending.iter().position(|p| p.0 == k);
+                t.triggers = waits.iter().enumerate().filter(|(_, w)| test.var.is_some_and(|v| w.contains(&v))).map(|(i, _)| i).collect();
+                t
+            })
+            .collect();
+        let compiled_scopes = scopes
+            .iter()
+            .enumerate()
+            .map(|(scope, numbered)| {
+                let mut s = self.scope(scope, numbered, (&sites, &slots));
+                s.flushes = self.pending.iter().enumerate().filter(|(_, p)| p.2 == scope).map(|(i, _)| i).collect();
+                s
+            })
+            .collect();
+        (compiled_tests, compiled_scopes, (slots.len(), self.count), pending)
     }
 
     /// A test compiled: the registers its binding goes to, and the
@@ -240,7 +330,8 @@ impl Registers {
         let binds = test.var.map_or_else(Vec::new, |var| chain.iter().filter_map(|&s| self.current.get(&(s, var)).copied()).collect());
         let restricted = if edge { chain.iter().filter_map(|s| slots.get(s).copied()).collect() } else { Vec::new() };
         let filter = test.filter.as_ref().map(|f| self.compiled(f, scope, sites));
-        Test { var: test.var, labels: test.labels.clone(), filter, binds, slots: restricted }
+        let path = self.path.map(|r| (r, test.var.is_some_and(|v| self.marks.contains(&v))));
+        Test { var: test.var, labels: test.labels.clone(), filter, binds, slots: restricted, path, defer: None, triggers: Vec::new() }
     }
 
     /// A scope compiled: what it clears and sets as it begins.
@@ -261,7 +352,7 @@ impl Registers {
         };
         first.sort_unstable();
         let filter = numbered.3.as_ref().map(|f| self.compiled(f, scope, sites));
-        Scope { restrictor: numbered.2, slot: slots.get(&scope).copied(), filter, clears, previous, first }
+        Scope { restrictor: numbered.2, slot: slots.get(&scope).copied(), filter, clears, previous, first, flushes: Vec::new() }
     }
 }
 

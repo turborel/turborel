@@ -21,6 +21,8 @@ use super::program::{Bound, Restrictor, VarId};
 use super::view::{ElementId, GraphView, Hop, LabelId, Orientation};
 use crate::error::Result;
 
+mod deferred;
+
 /// Where a restricted scope began, and whether a SIMPLE one has closed
 /// its cycle and may follow no more edges.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -152,6 +154,8 @@ pub(super) struct Runner<'a> {
     /// labels, when nothing else decides them: an automaton with no
     /// register, counter, restrictor or prefilter.
     memo: Option<HashMap<Closed, Closure>>,
+    /// The hops of a frontier's vertices, found at once (`prefetch`).
+    fetched: HashMap<(ElementId, Orientation), Vec<Hop>>,
 }
 
 /// What a closure of a plain automaton depends on: its seeds and the
@@ -171,7 +175,26 @@ impl<'a> Runner<'a> {
             }
         }
         let plain = nfa.plain() && nfa.tests.iter().all(|t| t.filter.is_none()) && nfa.scopes.iter().all(|s| s.filter.is_none());
-        Runner { nfa, view, restrictors, labels: Vec::new(), memo: plain.then(HashMap::new) }
+        Runner { nfa, view, restrictors, labels: Vec::new(), memo: plain.then(HashMap::new), fetched: HashMap::new() }
+    }
+
+    /// \[DESIGN\] Finds the hops of each of `asked` at once, a vectorized
+    /// Expand (`GraphView::expand`), for the successors taken next; those
+    /// found before are forgotten. A vertex's hops are those `hops` gives,
+    /// so what follows them does not change.
+    ///
+    /// # Errors
+    ///
+    /// Any error of the view.
+    pub(super) fn prefetch(&mut self, mut asked: Vec<(ElementId, Orientation)>) -> Result<()> {
+        self.fetched.clear();
+        asked.retain(|&(_, o)| o != Orientation::NONE);
+        asked.sort_unstable_by_key(|&(v, _)| v);
+        asked.dedup();
+        let mut lists = Vec::with_capacity(asked.len());
+        self.view.expand(&asked, &mut lists)?;
+        self.fetched.extend(asked.into_iter().zip(lists));
+        Ok(())
     }
 
     /// The thread the automaton starts with.
@@ -230,7 +253,7 @@ impl<'a> Runner<'a> {
     }
 
     /// The ways `threads` may follow edges.
-    fn orientation(&self, threads: &[Thread]) -> Orientation {
+    pub(super) fn orientation(&self, threads: &[Thread]) -> Orientation {
         threads.iter().fold(Orientation::NONE, |o, t| {
             if let Some(Instr::Edge { orientation, .. }) = self.nfa.instr(t.pc) { o.union(*orientation) } else { o }
         })
@@ -245,7 +268,7 @@ impl<'a> Runner<'a> {
                 return Ok(false);
             }
         }
-        match &test.filter {
+        match test.filter.as_ref().filter(|_| test.defer.is_none()) {
             Some(filter) => filtered(filter, Some((test.var, element)), thread),
             None => Ok(true),
         }
@@ -269,8 +292,10 @@ impl<'a> Runner<'a> {
         if orientation == Orientation::NONE {
             return Ok(());
         }
-        let mut hops = Vec::new();
-        self.view.hops(vertex, orientation, &mut hops)?;
+        let mut hops = self.fetched.get(&(vertex, orientation)).cloned().unwrap_or_default();
+        if !self.fetched.contains_key(&(vertex, orientation)) {
+            self.view.hops(vertex, orientation, &mut hops)?;
+        }
         hops.sort_unstable_by_key(|h| (h.edge, h.vertex, h.way));
         let mut at = 0;
         while let Some(&hop) = hops.get(at) {
@@ -285,7 +310,7 @@ impl<'a> Runner<'a> {
     }
 
     /// The steps of `threads` along one edge, followed in each of `ways`.
-    fn along(
+    pub(super) fn along(
         &mut self,
         ways: &[Hop],
         (position, walk): (usize, Option<&Walk>),
@@ -301,6 +326,7 @@ impl<'a> Runner<'a> {
                     continue;
                 }
                 let Some(moved) = self.moved(test, thread, (hop, *next), walk) else { continue };
+                let Some(moved) = self.triggered(test, moved)? else { continue };
                 match buckets.iter_mut().find(|b| b.0 == test.var) {
                     Some(bucket) => bucket.1.push(moved),
                     None => buckets.push((test.var, vec![moved])),
@@ -319,7 +345,7 @@ impl<'a> Runner<'a> {
     /// `thread` along `hop` to `next`, its edge bound, if its joins and
     /// its restricted scopes allow.
     fn moved(&self, test: &Test, thread: &Thread, (hop, next): (&Hop, usize), walk: Option<&Walk>) -> Option<Thread> {
-        let mut moved = bind(test, thread, hop.edge)?;
+        let mut moved = self.bound(test, thread, hop.edge)?;
         for &slot in &test.slots {
             let (mark, restrictor) = (*moved.marks.get(slot)?, *self.restrictors.get(slot)?);
             if mark.closed {
@@ -376,10 +402,8 @@ impl<'a> Runner<'a> {
                     continue;
                 }
                 match self.nfa.instr(pc) {
-                    Some(Instr::Edge { .. } | Instr::Accept) => match done.iter_mut().find(|d| d.0 == note) {
-                        Some(group) => group.1.push(at),
-                        None => done.push((note.clone(), vec![at])),
-                    },
+                    Some(Instr::Accept) => self.accepted(&mut done, &note, at)?,
+                    Some(Instr::Edge { .. }) => gather(&mut done, &note, at),
                     Some(instr) => stack.extend(self.step(&instr.clone(), (vertex, position), at, &note)?),
                     None => {}
                 }
@@ -391,6 +415,26 @@ impl<'a> Runner<'a> {
         }
         done.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         Ok(done)
+    }
+
+    /// `at` at Accept gathered into `done` of `note`, if its deferred
+    /// prefilters hold.
+    fn accepted(&self, done: &mut Vec<(Note, Vec<Thread>)>, note: &Note, mut at: Thread) -> Result<()> {
+        if self.settled(&mut at)? {
+            gather(done, note, at);
+        }
+        Ok(())
+    }
+
+    /// `thread` entering `scope`, then at `next`: none if a deferred
+    /// prefilter it flushes fails.
+    fn entered(&self, (scope, next): (usize, usize), position: usize, mut thread: Thread, note: Note) -> Result<Vec<(Thread, Note)>> {
+        if !self.flushed(scope, &mut thread)? {
+            return Ok(Vec::new());
+        }
+        self.enter(scope, position, &mut thread);
+        thread.pc = next;
+        Ok(vec![(thread, note)])
     }
 
     /// The threads one instruction other than an edge's or a fork's
@@ -409,7 +453,8 @@ impl<'a> Runner<'a> {
                 if !self.passes(test, vertex, &thread)? {
                     return Ok(Vec::new());
                 }
-                let Some(mut bound) = bind(test, &thread, vertex) else { return Ok(Vec::new()) };
+                let Some(bound) = self.bound(test, &thread, vertex) else { return Ok(Vec::new()) };
+                let Some(mut bound) = self.triggered(test, bound)? else { return Ok(Vec::new()) };
                 bound.pc = next;
                 note.vars.extend(test.var);
                 note.vars.sort_unstable();
@@ -420,11 +465,7 @@ impl<'a> Runner<'a> {
                 thread.pc = next;
                 Ok(vec![(thread, note)])
             }
-            Instr::Enter { scope, next } => {
-                self.enter(scope, position, &mut thread);
-                thread.pc = next;
-                Ok(vec![(thread, note)])
-            }
+            Instr::Enter { scope, next } => self.entered((scope, next), position, thread, note),
             Instr::Leave { scope, next } => {
                 let filter = self.nfa.scopes.get(scope).and_then(|s| s.filter.as_ref());
                 if !filter.map_or(Ok(true), |f| filtered(f, None, &thread))? {
@@ -525,5 +566,14 @@ fn bind(test: &Test, thread: &Thread, element: ElementId) -> Option<Thread> {
 /// Whether `filter` holds of `element`, if an element pattern's, given
 /// `thread`'s registers.
 fn filtered(filter: &Compiled, element: Option<(Option<VarId>, ElementId)>, thread: &Thread) -> Result<bool> {
-    (filter.test)(&Bound { element, registers: &thread.registers, reads: &filter.reads })
+    let path = filter.path.and_then(|r| thread.registers.get(r)).map_or(&[][..], |p| &**p);
+    (filter.test)(&Bound { element, registers: &thread.registers, reads: &filter.reads, path })
+}
+
+/// Adds `thread` to the group of `done` of `note`.
+fn gather(done: &mut Vec<(Note, Vec<Thread>)>, note: &Note, thread: Thread) {
+    match done.iter_mut().find(|d| &d.0 == note) {
+        Some(group) => group.1.push(thread),
+        None => done.push((note.clone(), vec![thread])),
+    }
 }

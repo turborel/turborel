@@ -49,13 +49,20 @@ fn the_graph_algorithm_examples_run_as_printed() {
     assert!(ann.page("sql/20-graph-algorithms.md") > 0, "the chapter shows its examples' output");
 }
 
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D107, D108: the SQL Reference
-/// Manual's chapter of property graphs and the example of CREATE
-/// ADJACENCY INDEX run as printed, each as ANN in a database of its own;
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D107, D108, D115, D116: the SQL
+/// Reference Manual's chapter of property graphs and the examples of
+/// CREATE ADJACENCY INDEX, CREATE LABEL INDEX and CREATE REACHABILITY
+/// INDEX run as printed, each as ANN in a database of its own;
 /// the guide to graphs, which makes ANN's schema itself, does too.
 #[test]
 fn the_graph_table_examples_run_as_printed() {
-    for page in ["sql/19-property-graphs.md", "sql/statements/create-adjacency-index.md"] {
+    let pages = [
+        "sql/19-property-graphs.md",
+        "sql/statements/create-adjacency-index.md",
+        "sql/statements/create-label-index.md",
+        "sql/statements/create-reachability-index.md",
+    ];
+    for page in pages {
         let db = Database::new();
         db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
         let mut ann = Client::of(&db, "ANN");
@@ -64,4 +71,34 @@ fn the_graph_table_examples_run_as_printed() {
     let db = Database::new();
     let mut ann = Client::of(&db, "ANN");
     assert!(ann.page("data/05-graphs.md") > 0, "the guide shows its examples' output");
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D117: the examples of
+/// GRAPH_STATISTICS of the Information Schema's chapter run as printed,
+/// as ANN, the statistics of its tables gathered after the first, as the
+/// chapter says the maintenance has.
+#[test]
+fn the_graph_statistics_examples_run_as_printed() {
+    let page = "sql/07-information-schema.md";
+    let text = super::text_of(page);
+    let section = text.split("## Graph statistics").nth(1).and_then(|s| s.split("The standard:").next()).unwrap();
+    let examples = super::examples_in(section);
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    let (first, rest) = examples.split_at(1);
+    ann.run(page, first, None);
+    db.analyze("ANN.CITY").unwrap();
+    db.analyze("ANN.ROAD").unwrap();
+    assert_eq!(ann.run(page, rest, None), 2, "{page} shows its examples' output");
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8: the chapter of the graph
+/// compatibility syntax runs as printed, as ANN.
+#[test]
+fn the_graph_compatibility_examples_run_as_printed() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.page("sql/21-graph-compatibility.md") > 0, "the chapter shows its examples' output");
 }

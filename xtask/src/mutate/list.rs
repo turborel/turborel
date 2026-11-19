@@ -22,6 +22,7 @@ mod generated;
 mod geometry;
 mod graph_adjacency;
 mod graph_catalog;
+mod graph_compat;
 mod graph_gql;
 mod graph_iterations;
 mod graph_native;

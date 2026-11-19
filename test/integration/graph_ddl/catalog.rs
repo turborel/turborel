@@ -35,6 +35,7 @@ fn graph_desc(ident: &str, table: &QualifiedName) -> GraphDesc {
         key: vec!["K".into()],
         labels: vec![label],
         endpoints: None,
+        query: None,
     };
     GraphDesc {
         name: in_a(ident),

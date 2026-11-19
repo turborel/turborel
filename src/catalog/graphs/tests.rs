@@ -26,7 +26,7 @@ fn element(alias: &str, table: &str, kind: ElementKind, labels: Vec<LabelDesc>) 
         destination: EndpointDesc { vertex: "P".into(), columns: vec!["TO_K".into()], references: vec!["K".into()] },
         undirected: false,
     });
-    ElementTableDesc { alias: alias.into(), table: a(table), kind, key: vec!["K".into()], labels, endpoints }
+    ElementTableDesc { alias: alias.into(), table: a(table), kind, key: vec!["K".into()], labels, endpoints, query: None }
 }
 
 /// Graph A.G: vertex tables P and Q of label THING, P's of label PERSON

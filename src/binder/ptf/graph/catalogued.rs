@@ -80,7 +80,7 @@ pub(super) fn bound(b: Bounds<'_>, algorithm: Algorithm, g: &GraphDesc, depth: u
     let mut vertices = Vec::new();
     for v in of(ElementKind::Vertex) {
         let keys: Vec<String> = v.key.iter().map(|k| quoted(k)).collect();
-        tables.push(argument(b, &format!("SELECT {} FROM {}", keys.join(", "), table(&v.table)), depth)?);
+        tables.push(argument(b, &format!("SELECT {} FROM {}", keys.join(", "), v.from_text()), depth)?);
         vertices.push(v.alias.clone());
     }
     let native = g.name.ident == SYS_GRAPH;
@@ -113,12 +113,12 @@ fn edge_select(algorithm: Algorithm, g: &GraphDesc, e: &ElementTableDesc, alike:
     let select = format!(
         "SELECT {} FROM {} AS {} JOIN {} AS {} ON {} JOIN {} AS {} ON {}",
         columns.join(", "),
-        table(&e.table),
+        e.from_text(),
         quoted(EDGE),
-        table(&source.table),
+        source.from_text(),
         quoted(SOURCE),
         joined(&points.source, SOURCE),
-        table(&destination.table),
+        destination.from_text(),
         quoted(DESTINATION),
         joined(&points.destination, DESTINATION),
     );
@@ -147,7 +147,11 @@ fn joined(p: &EndpointDesc, at: &str) -> String {
 fn alike(b: Bounds<'_>, edges: &[&ElementTableDesc]) -> Vec<ColumnDesc> {
     let columns = |e: &ElementTableDesc| -> Vec<ColumnDesc> {
         let catalog = &b.cx.db.catalog;
-        let all = catalog.table(&e.table).map(|t| t.columns.clone()).or_else(|| catalog.view(&e.table).map(|v| v.columns.clone()));
+        let all = match &e.query {
+            // [GS §11.3] Of a query's rows, its columns.
+            Some(q) => crate::binder::graph_properties::query_desc(b.cx, &e.table, q).ok().map(|(d, _)| d.columns),
+            None => catalog.table(&e.table).map(|t| t.columns.clone()).or_else(|| catalog.view(&e.table).map(|v| v.columns.clone())),
+        };
         let named = |c: &ColumnDesc| {
             e.endpoints.as_ref().is_some_and(|p| p.source.columns.contains(&c.name) || p.destination.columns.contains(&c.name))
         };
@@ -162,11 +166,6 @@ fn alike(b: Bounds<'_>, edges: &[&ElementTableDesc]) -> Vec<ColumnDesc> {
 /// `name` as a `<delimited identifier>`.
 fn quoted(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
-}
-
-/// Table `t`'s name, quoted.
-fn table(t: &QualifiedName) -> String {
-    format!("{}.{}", quoted(&t.auth), quoted(&t.ident))
 }
 
 /// The query `select` bound as a table argument, nested `depth` deep.

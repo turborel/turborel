@@ -335,7 +335,7 @@ impl Parser {
 
     /// Whether a `<path primary>` begins here: "(", "[", or what begins an
     /// edge pattern.
-    fn at_path_primary(&self) -> bool {
+    pub(super) fn at_path_primary(&self) -> bool {
         match self.peek() {
             Tok::Delimiter(d) => [
                 delim::LEFT_PAREN,
@@ -362,7 +362,7 @@ impl Parser {
     /// [P1 §4.4] `<path factor>` ::= `<path primary>` \[`<quantifier>`\]:
     /// of an edge pattern or a parenthesized path pattern, not a node
     /// pattern.
-    fn path_factor(&mut self) -> Result<PathFactor> {
+    pub(super) fn path_factor(&mut self) -> Result<PathFactor> {
         let primary = if self.is_delim(delim::LEFT_BRACKET) {
             PathPrimary::Parenthesized(Box::new(self.parenthesized_path(true)?))
         } else if self.is_delim(delim::LEFT_PAREN) && !self.at_node_filler() {

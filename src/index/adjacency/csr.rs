@@ -12,6 +12,7 @@
 //! pass either stops, and the index is read from its tree alone.
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -118,6 +119,53 @@ impl Csr {
         let other = lists.others.get(at).and_then(|&o| self.names.get(usize::try_from(o).ok()?)).ok_or_else(corrupt)?;
         let row = lists.rows.get(at).copied().ok_or_else(corrupt)?;
         Ok((other, row, lists.included(at)))
+    }
+
+    /// The number of the vertex of key bytes `vertex`, if it has one.
+    pub fn number(&self, vertex: &[u8]) -> Option<u32> {
+        self.ids.get(vertex).copied()
+    }
+
+    /// Pushes onto each list of `lists` the steps of its vertex in
+    /// `direction`, as `steps` would, the vertices `numbered` (each a
+    /// number and the place of its list) read in the order of their
+    /// numbers, one pass over the arrays; each other end's key decoded
+    /// once for all of them.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -916 if a key is not of the layout.
+    pub fn steps_numbered(
+        &self,
+        direction: Direction,
+        mut numbered: Vec<(u32, usize)>,
+        other_types: &[DataType],
+        lists: &mut [Vec<Step>],
+    ) -> Result<()> {
+        numbered.sort_unstable();
+        let edges = self.lists(direction);
+        let mut decoded: HashMap<u32, Key> = HashMap::new();
+        for (id, place) in numbered {
+            let Some(list) = lists.get_mut(place) else { continue };
+            let mut previous: Option<(u32, RowId)> = None;
+            for at in edges.span(id) {
+                let other = edges.others.get(at).copied().ok_or_else(corrupt)?;
+                let row = edges.rows.get(at).copied().ok_or_else(corrupt)?;
+                if previous == Some((other, row)) {
+                    continue;
+                }
+                previous = Some((other, row));
+                let vertex = match decoded.entry(other) {
+                    Entry::Occupied(known) => known.get().clone(),
+                    Entry::Vacant(new) => {
+                        let name = self.names.get(usize::try_from(other).unwrap_or(usize::MAX)).ok_or_else(corrupt)?;
+                        new.insert(Key(decode_all(name, other_types)?)).clone()
+                    }
+                };
+                list.push(Step { edge: row, vertex });
+            }
+        }
+        Ok(())
     }
 
     /// Pushes onto `out` the steps of the vertex of key bytes `vertex` in

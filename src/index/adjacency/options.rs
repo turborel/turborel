@@ -222,6 +222,21 @@ pub fn layout_of(types: &[DataType], desc: &IndexDesc) -> Result<Layout> {
     Layout::new(types, (source, include), kept)
 }
 
+/// \[GS §16 R16.1\] Of adjacency index `desc`, for the planner: the places
+/// of its key's source columns and destination columns, and whether it
+/// keeps reverse entries, by which an equality of the destination's is a
+/// vertex's list too.
+pub fn planned_ends(desc: &IndexDesc) -> (Range<usize>, Range<usize>, bool) {
+    let source = number(desc, SOURCE_COLUMNS_OPTION).unwrap_or(1);
+    let include = number(desc, INCLUDE_OPTION).unwrap_or(0);
+    let endpoints = desc.columns.len().saturating_sub(include);
+    let reverse = match option_value(&options(), &desc.options, DIRECTION_OPTION) {
+        Some(Value::Char(word)) => word != OUT,
+        Some(_) | None => true,
+    };
+    (0..source.min(endpoints), source.min(endpoints)..endpoints, reverse)
+}
+
 /// The most bytes `desc` lets its compacted adjacency hold.
 pub fn csr_bytes_of(desc: &IndexDesc) -> usize {
     number(desc, CSR_BYTES_OPTION).unwrap_or(DEFAULT_CSR_BYTES)

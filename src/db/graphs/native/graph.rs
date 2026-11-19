@@ -124,5 +124,6 @@ fn element(t: &TableDesc, (alias, ends): (Option<String>, Option<(&String, &Stri
         source: ends.map(|(f, _)| endpoint(FROM_ID, f)),
         destination: ends.map(|(_, to)| endpoint(TO_ID, to)),
         labels: vec![LabelDefinition { name: Some(t.name.ident.clone()), at: 0, properties: Some(properties) }],
+        query: None,
     }
 }

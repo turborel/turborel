@@ -19,10 +19,20 @@ use crate::ast::{
     PathExpression, PathPrimary, Predicate, SearchCondition, SegmentFilter, ValueExpression, VariableKind, WhenOperand,
 };
 use crate::error::Result;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Checks the references of `table`'s conditions and columns, `top` the
 /// variables its postfilter and columns see.
 pub(super) fn check_references(table: &GraphTable, top: &Exposure) -> Result<()> {
+    walked(table, top).map(|_| ())
+}
+
+/// The patterns of EXISTS IN PATH in `table`'s conditions and columns,
+/// in the order written, its references checked as `check_references`
+/// checks them.
+pub(super) fn walked(table: &GraphTable, top: &Exposure) -> Result<Vec<ParenthesizedPath>> {
+    let found = Found::default();
     let pattern = &table.pattern;
     for path in &pattern.paths {
         let mut seen = expression_exposure(&path.expression)?;
@@ -30,15 +40,15 @@ pub(super) fn check_references(table: &GraphTable, top: &Exposure) -> Result<()>
             bound(&mut seen);
         }
         let restricted = restricts(path.prefix.as_ref()) || restricts(pattern.keep.as_ref());
-        let mut walk = Walk { scopes: vec![top.clone(), seen], prefilter: true, restricted };
+        let mut walk = Walk { scopes: vec![top.clone(), seen], prefilter: true, restricted, found: Rc::clone(&found) };
         walk.expression(&path.expression)?;
     }
-    let post = Walk { scopes: vec![top.clone()], prefilter: false, restricted: false };
+    let post = Walk { scopes: vec![top.clone()], prefilter: false, restricted: false, found: Rc::clone(&found) };
     if let Some(c) = &pattern.where_clause {
         post.condition(c, false)?;
     }
     for segment in &pattern.segments {
-        segment_filter(segment, top)?;
+        segment_filter(segment, top, &found)?;
     }
     for column in &table.columns {
         match column {
@@ -46,13 +56,17 @@ pub(super) fn check_references(table: &GraphTable, top: &Exposure) -> Result<()>
             GraphColumn::All(v) => post.operand(v, VariableKind::Element, false)?,
         }
     }
-    Ok(())
+    drop(post);
+    Ok(found.take())
 }
+
+/// The patterns of EXISTS IN PATH a walk has met.
+type Found = Rc<RefCell<Vec<ParenthesizedPath>>>;
 
 /// \[EXTENSION\] The segment filter `s`: of a path variable, its two
 /// edge variables new names, its condition of them and of `top`.
-fn segment_filter(s: &SegmentFilter, top: &Exposure) -> Result<()> {
-    let post = Walk { scopes: vec![top.clone()], prefilter: false, restricted: false };
+fn segment_filter(s: &SegmentFilter, top: &Exposure, found: &Found) -> Result<()> {
+    let post = Walk { scopes: vec![top.clone()], prefilter: false, restricted: false, found: Rc::clone(found) };
     post.declared(&s.path, VariableKind::Path)?;
     for v in [&s.first, &s.second] {
         if top.contains_key(&v.name) {
@@ -63,7 +77,7 @@ fn segment_filter(s: &SegmentFilter, top: &Exposure) -> Result<()> {
         return Err(rule(s.second.at, "the two edges of FOR EACH SEGMENT have two names"));
     }
     let edges = join(declared(&s.first, Declared::Edge), declared(&s.second, Declared::Edge))?;
-    let inner = Walk { scopes: vec![top.clone(), edges], prefilter: false, restricted: false };
+    let inner = Walk { scopes: vec![top.clone(), edges], prefilter: false, restricted: false, found: Rc::clone(found) };
     inner.condition(&s.condition, false)
 }
 
@@ -77,6 +91,8 @@ struct Walk {
     /// Whether a restrictor other than WALK is around, which bounds every
     /// group variable.
     restricted: bool,
+    /// The patterns of EXISTS IN PATH met.
+    found: Found,
 }
 
 impl Walk {
@@ -250,7 +266,9 @@ impl Walk {
             self.degree(&v.name, e.degree, aggregated, v.at)?;
         }
         if let GraphPredicate::InPath { pattern, .. } = g {
-            let mut inner = Walk { scopes: self.scopes.clone(), prefilter: self.prefilter, restricted: self.restricted };
+            self.found.borrow_mut().push((**pattern).clone());
+            let found = Rc::clone(&self.found);
+            let mut inner = Walk { scopes: self.scopes.clone(), prefilter: self.prefilter, restricted: self.restricted, found };
             inner.parenthesized(pattern)?;
         }
         Ok(())

@@ -16,6 +16,7 @@ use std::collections::BTreeSet;
 use super::super::{Binder, Grouping, Scope, rule};
 use crate::ast::{ColumnSpecification, GraphFunction, GraphFunctionName, GraphPredicate, PathEnd, SetFunctionSpecification};
 use crate::error::{Code, Result, SqlError};
+use crate::graph::program::VarId;
 use crate::lexer::kw;
 use crate::logical::{AggCall, Cond, Expr, GraphValue, PathFunction, or_all};
 use crate::value::{CompOp, DataType, Value};
@@ -67,6 +68,8 @@ pub(in crate::binder) struct Graphing {
     pub(super) paths: Vec<Option<String>>,
     /// The subpath variables, once their path patterns are bound.
     pub(super) subpaths: RefCell<Vec<super::pattern::Subpath>>,
+    /// Where each pattern of EXISTS IN PATH is written, by its number.
+    pub(super) within: RefCell<Vec<usize>>,
     /// Whether a prefilter is being bound, where PREV and FIRST are.
     pub(super) filtering: Cell<bool>,
     /// The groups its expressions are bound in, whose set functions are
@@ -90,6 +93,7 @@ impl Graphing {
             vars,
             paths,
             subpaths: RefCell::new(Vec::new()),
+            within: RefCell::new(Vec::new()),
             filtering: Cell::new(false),
             measure: Grouping::empty(),
             slot_base,
@@ -97,6 +101,18 @@ impl Graphing {
             found: Cell::new(None),
             reads: RefCell::new(BTreeSet::new()),
         }
+    }
+
+    /// The path pattern of path or subpath variable `name`, and of a
+    /// subpath, the variables marking it.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 of no path or subpath variable.
+    pub(super) fn path_named(&self, name: &str) -> Result<(usize, Option<(VarId, VarId)>)> {
+        let subpath = self.subpaths.borrow().iter().find(|s| s.0 == name).map(|s| (s.1, Some((s.2, s.3))));
+        let path = self.paths.iter().position(|p| p.as_deref() == Some(name)).map(|p| (p, None));
+        path.or(subpath).ok_or_else(|| rule(format!("[GS §6.9] {name} is no path variable of the graph pattern")))
     }
 
     /// The variables read since the last call, taken.
@@ -147,12 +163,6 @@ impl Graphing {
 /// The number of element table `t` as its hidden column holds it.
 pub(super) fn table_number(t: usize) -> u32 {
     u32::try_from(t).unwrap_or(u32::MAX)
-}
-
-/// The refusal of a feature of the graph standard this release reads but
-/// does not bind.
-pub(super) fn unsupported(what: &str) -> SqlError {
-    SqlError::new(Code::Unsupported, format!("[EXTENSION] {what} is not supported"))
 }
 
 impl Binder<'_> {
@@ -233,9 +243,7 @@ impl Binder<'_> {
     pub(in crate::binder) fn graph_function(&self, f: &GraphFunction) -> Result<(Expr, DataType)> {
         let Some(g) = self.graphing.as_deref() else { return Err(super::seam::outside_graph_table()) };
         let name = &f.operand.name;
-        let subpath = g.subpaths.borrow().iter().find(|s| &s.0 == name).map(|s| (s.1, (s.2, s.3)));
-        let path = g.paths.iter().position(|p| p.as_deref() == Some(name.as_str())).map(|p| (p, None));
-        let path = path.or_else(|| subpath.map(|(p, span)| (p, Some(span))));
+        let path = g.path_named(name).ok();
         let function = match f.name {
             GraphFunctionName::PathLength => PathFunction::Length,
             GraphFunctionName::Vertices => PathFunction::Vertices,
@@ -250,9 +258,9 @@ impl Binder<'_> {
             }
             GraphFunctionName::Prev | GraphFunctionName::First => return super::functions::iteration(g, f),
         };
-        let (path, span) = path.ok_or_else(|| rule(format!("[GS §6.9] {name} is no path variable of the graph pattern")))?;
+        let (number, span) = g.path_named(name)?;
         let t = super::functions::path_type(function);
-        Ok((g.slot(GraphValue::Path { path, function, span }), t))
+        Ok((g.slot(GraphValue::Path { path: number, function, span }), t))
     }
 
     /// \[GS §5 R5.2 to R5.5\] A graph predicate `p` of a GRAPH_TABLE's
@@ -303,7 +311,13 @@ impl Binder<'_> {
                 let var = g.vars.get(e).ok_or_else(|| rule("[DESIGN] a variable is gone"))?;
                 negated(is_true(g.read(e, var.hidden(DIRECTED))), *not)
             }
-            GraphPredicate::InPath { .. } => return Err(unsupported("EXISTS IN PATH [GS §11.2]")),
+            GraphPredicate::InPath { path, pattern } => {
+                let k = g.within.borrow().iter().position(|&at| at == pattern.at);
+                let k = k.ok_or_else(|| rule("[DESIGN] a pattern of EXISTS IN PATH is lost"))?;
+                let (number, span) = g.path_named(&path.name)?;
+                let slot = g.slot(GraphValue::Path { path: number, function: PathFunction::Within(k), span });
+                is_true(slot)
+            }
         })
     }
 }

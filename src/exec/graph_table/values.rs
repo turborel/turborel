@@ -53,7 +53,20 @@ impl Shared {
                     let whole = chosen.get(*path).copied();
                     let part = span.and_then(|(start, end)| whole.and_then(|b| b.span(start, end)));
                     match (span, whole, &part) {
-                        (None, Some(b), _) | (Some(_), _, Some(b)) => self.path_value(b, *function)?,
+                        // EXISTS IN PATH's prefilters read the match's other bindings.
+                        (None, Some(b), _) | (Some(_), _, Some(b)) => match function {
+                            PathFunction::Within(_) => {
+                                self.with_fixed(chosen.iter().map(|c| Some((*c).clone())).collect()).path_value(b, *function)?
+                            }
+                            PathFunction::Length
+                            | PathFunction::Vertices
+                            | PathFunction::Edges
+                            | PathFunction::Elements
+                            | PathFunction::Acyclic
+                            | PathFunction::Trail
+                            | PathFunction::Simple
+                            | PathFunction::Json => self.path_value(b, *function)?,
+                        },
                         (None | Some(_), _, _) => Value::Null,
                     }
                 }
@@ -143,7 +156,7 @@ impl Shared {
     }
 
     /// \[GS §6.9\] Path function `f` of path `b`.
-    fn path_value(&self, b: &PathBinding, f: PathFunction) -> Result<Value> {
+    pub(super) fn path_value(&self, b: &PathBinding, f: PathFunction) -> Result<Value> {
         Ok(match f {
             PathFunction::Length => Value::Exact(Decimal::new(i128::try_from(b.length()).unwrap_or(i128::MAX), 0)),
             PathFunction::Vertices => self.identities(&b.vertices())?,
@@ -153,6 +166,7 @@ impl Shared {
             PathFunction::Trail => Value::Bool(b.is_trail()),
             PathFunction::Simple => Value::Bool(b.is_simple()),
             PathFunction::Json => Value::Json(Json::of_item(&self.path_item(b)?)?),
+            PathFunction::Within(k) => Value::Bool(self.within(k, b)?),
         })
     }
 

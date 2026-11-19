@@ -233,9 +233,10 @@ pub(super) fn builtin() -> Vec<Definition> {
 
 /// The settings of the features after the others, each at its key's
 /// place: the vector settings, the graph threads, GRAPH_TABLE's search
-/// limits and GQL's session.
+/// limits, GQL's session and the graph's later ones.
 fn last() -> impl Iterator<Item = Definition> {
-    super::vector::vector().into_iter().chain([graph_threads()]).chain(super::graph::definitions()).chain(gql_session())
+    let graph = super::graph::definitions().into_iter().chain(gql_session()).chain(super::graph::later());
+    super::vector::vector().into_iter().chain([graph_threads()]).chain(graph)
 }
 
 /// \[DESIGN\] What a session may turn on or off for itself: whether its

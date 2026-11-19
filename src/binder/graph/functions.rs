@@ -31,7 +31,7 @@ pub(super) fn path_type(f: PathFunction) -> DataType {
     match f {
         PathFunction::Length => super::super::composite::integer(),
         PathFunction::Vertices | PathFunction::Edges | PathFunction::Elements => DataType::array(identity_type(), ARRAY_MOST),
-        PathFunction::Acyclic | PathFunction::Trail | PathFunction::Simple => DataType::Boolean,
+        PathFunction::Acyclic | PathFunction::Trail | PathFunction::Simple | PathFunction::Within(_) => DataType::Boolean,
         PathFunction::Json => DataType::Json,
     }
 }

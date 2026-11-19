@@ -26,4 +26,5 @@ The language, element by element, and each statement on a reference page of its 
 - [Spatial Networks](18-spatial-networks.md)
 - [Property Graphs](19-property-graphs.md) *(extension)*
 - [Graph Algorithms](20-graph-algorithms.md) *(extension)*
+- [Graph Compatibility Syntax](21-graph-compatibility.md) *(extension)*
 - [Statements](statements/README.md)

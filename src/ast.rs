@@ -2,8 +2,7 @@
 //! `<SQL statement>`s and `<declare cursor>` [X3.135-1986 §7.3, §8], and of the
 //! common elements they are built from [X3.135-1986 §5]. Each type is named
 //! after the production it represents.
-//! Comments give the BNF exactly as implemented; alternatives in the
-//! standard that are not implemented are listed under "Not implemented".
+//! Comments give the BNF exactly as implemented, and alternatives not implemented under "Not implemented".
 
 use crate::catalog::QualifiedName;
 use crate::value::datetime::Written;
@@ -90,14 +89,15 @@ pub use gql::{
     GqlSort, GqlSpan, GqlTable, GqlTransaction, GraphTypeDefinition, GraphTyping, NodeTypeDefinition, PropertyTypeDefinition,
 };
 pub use graph::{
-    Cheapest, Directions, EdgePattern, ElementPattern, GRAPH_FUNCTIONS, GraphColumn, GraphFunction, GraphFunctionName, GraphLimits,
-    GraphPattern, GraphPredicate, GraphReference, GraphRows, GraphTable, GraphVariable, LabelExpression, MatchMode, ORIENTATIONS,
-    Orientation, OrientationForm, ParenthesizedPath, PathEnd, PathExpression, PathFactor, PathPattern, PathPrefix, PathPrimary, PathTerm,
-    PropertySpec, Quantifier, QuantifierSugar, Restrictor, SameKind, SegmentFilter, Selector, VariableKind,
+    Cheapest, Directions, EdgePattern, ElementPattern, GRAPH_FUNCTIONS, GraphColumn, GraphFunction, GraphFunctionName, GraphHints,
+    GraphLimits, GraphMeasure, GraphPattern, GraphPredicate, GraphReference, GraphRows, GraphTable, GraphVariable, LabelExpression,
+    MatchClause, MatchMode, ORIENTATIONS, Orientation, OrientationForm, ParenthesizedPath, PathAlgorithm, PathEnd, PathExpression,
+    PathFactor, PathPattern, PathPrefix, PathPrimary, PathTable, PathTerm, PropertySpec, Quantifier, QuantifierSugar, Restrictor, SameKind,
+    SegmentFilter, Selector, VariableKind,
 };
 pub use graph_ddl::{
     AdjacencyIndex, AlterGraph, AlterGraphAction, DerivedProperty, ElementAction, ElementDefinition, EndpointDefinition, GraphDefinition,
-    GraphModeOption, LabelDefinition, PropertiesDefinition,
+    GraphModeOption, LabelDefinition, LabelIndex, PropertiesDefinition, ReachabilityIndex,
 };
 pub use hybrid_search::{Fusion, HybridSearch, SearchArgument, SearchValue};
 pub use joined::{JoinKind, JoinSpecification, JoinedTable, Partitioning};
@@ -532,8 +532,11 @@ pub enum IndexStatement {
     },
     /// \[EXTENSION\] [GS §13.2] CREATE ADJACENCY INDEX ON GRAPH.
     Adjacency(Box<AdjacencyIndex>),
-    /// `<alter index statement>` ::= ALTER INDEX `<index name>` SET
-    /// `<table options>`
+    /// \[EXTENSION\] CREATE LABEL INDEX ON GRAPH (RULES.md D115).
+    Labels(Box<LabelIndex>),
+    /// \[EXTENSION\] CREATE REACHABILITY INDEX ON GRAPH (RULES.md D116).
+    Reachability(Box<ReachabilityIndex>),
+    /// `<alter index statement>` ::= ALTER INDEX `<index name>` SET `<table options>`
     Alter {
         /// The `<index name>`, and where it begins.
         name: (String, usize),

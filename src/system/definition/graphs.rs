@@ -83,14 +83,16 @@ fn elements_columns() -> Vec<ColumnDesc> {
         .ids("PROPERTY_GRAPH", true)
         .id("ELEMENT_TABLE_ALIAS", true)
         .data("ELEMENT_TABLE_KIND", true)
-        .ids("TABLE", true)
+        .ids("TABLE", false)
         .number("ORDINAL_POSITION", true)
         .data("IS_UNDIRECTED", true)
+        .data("ELEMENT_TABLE_QUERY", false)
         .done()
 }
 
 /// Each element table: VERTEX or EDGE, its table, its place among its
-/// graph's of its kind, and whether its edges are undirected.
+/// graph's of its kind, whether its edges are undirected, and of one of a
+/// query's rows, the query in place of a table [GS §11.3].
 fn elements(seen: &Seen<'_>) -> Vec<Row> {
     let catalog = catalog_name(seen);
     each_element(seen, &|g, e| {
@@ -100,7 +102,11 @@ fn elements(seen: &Seen<'_>) -> Vec<Row> {
         };
         let place = g.elements.iter().filter(|d| d.kind == e.kind).position(|d| d.alias == e.alias).unwrap_or_default();
         let undirected = e.endpoints.as_ref().is_some_and(|ends| ends.undirected);
-        vec![[vec![text(kind)], ids(&catalog, &e.table).to_vec(), vec![number(place.saturating_add(1)), yes(undirected)]].concat()]
+        let (table, query) = match &e.query {
+            Some(q) => (vec![Value::Null; 3], long(q)),
+            None => (ids(&catalog, &e.table).to_vec(), Value::Null),
+        };
+        vec![[vec![text(kind)], table, vec![number(place.saturating_add(1)), yes(undirected), query]].concat()]
     })
 }
 

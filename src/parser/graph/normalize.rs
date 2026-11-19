@@ -40,10 +40,24 @@ pub fn normalize(pattern: &GraphPattern) -> GraphPattern {
         path.expression = shaped(&path.expression);
         declared_in(&path.expression, &mut taken);
     }
-    let mut names = Names { taken, next: 0 };
+    let mut names = Names { taken, next: 0, prefix: ANONYMOUS.to_owned() };
     for path in &mut out.paths {
         names.expression(&mut path.expression);
     }
+    out
+}
+
+/// \[EXTENSION\] [GS §11.2] The pattern `p` of an EXISTS IN PATH in
+/// normal form, its anonymous variables named `$tag.n`, apart from the
+/// graph pattern's.
+#[must_use]
+pub fn normalize_within(p: &ParenthesizedPath, tag: usize) -> ParenthesizedPath {
+    let mut out = p.clone();
+    out.expression = shaped(&p.expression);
+    let mut taken = BTreeSet::new();
+    declared_in(&out.expression, &mut taken);
+    let mut names = Names { taken, next: 0, prefix: format!("{ANONYMOUS}{tag}.") };
+    names.expression(&mut out.expression);
     out
 }
 
@@ -155,6 +169,8 @@ struct Names {
     taken: BTreeSet<String>,
     /// The number of the last name given.
     next: u64,
+    /// What each name given begins with.
+    prefix: String,
 }
 
 impl Names {
@@ -185,7 +201,7 @@ impl Names {
     fn fresh(&mut self) -> String {
         loop {
             self.next = self.next.saturating_add(1);
-            let name = format!("{ANONYMOUS}{}", self.next);
+            let name = format!("{}{}", self.prefix, self.next);
             if self.taken.insert(name.clone()) {
                 return name;
             }

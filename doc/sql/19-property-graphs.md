@@ -45,7 +45,7 @@ search follows its edges without a join.
 ## Syntax
 
 ```
-GRAPH_TABLE ( <graph name>
+GRAPH_TABLE ( { <graph name> | LINE_GRAPH ( <graph name> , <label> ) }
     MATCH [ <match mode> ] <path pattern> [ , <path pattern> ]...
       [ WHERE <search condition> ]
     [ ONE ROW PER MATCH | ONE ROW PER VERTEX ( <variable> )
@@ -63,6 +63,8 @@ GRAPH_TABLE ( <graph name>
   | { ANY | ALL | <k> } CHEAPEST [ COST { <property> | ( <value expression> ) } ]
 
 <restrictor> ::= WALK | TRAIL | ACYCLIC | SIMPLE
+
+<path predicate> ::= [ NOT ] EXISTS IN PATH <path variable> ( <path expression> )
 
 <option> ::= MAX_PATH_LENGTH <n> | MAX_PATHS_PER_PARTITION <n>
   | MAX_SEARCH_STATES <n> | ON LIMIT { ERROR | TRUNCATE } | DETERMINISTIC_PATHS
@@ -275,6 +277,162 @@ SELECT * FROM GRAPH_TABLE (BANK
 (2 rows)
 ```
 
+## Conditions on the path
+
+An element's WHERE is tested as the search binds the element, before the
+selector chooses among the paths. It may read the path so far through
+the path functions, the element tested being its last. Here no vertex
+past the second transfer is taken:
+
+```sql
+SELECT * FROM GRAPH_TABLE (BANK
+    MATCH p = (a WHERE a.owner = 'Scott') [-[t:Transfer]->(m WHERE PATH_LENGTH(p) <= 2)]{1,3} (z)
+    COLUMNS (z.owner AS TO_OWNER, PATH_LENGTH(p) AS HOPS))
+  ORDER BY HOPS, TO_OWNER;
+```
+
+```
+ TO_OWNER             |         HOPS
+----------------------+--------------
+ Mike                 |            1
+ Aretha               |            2
+ Jay                  |            2
+(3 rows)
+```
+
+It may read a variable bound later in the pattern, within a quantifier
+too. The search then tests it where that variable is bound. Here each
+iteration's first transfer is smaller than its second:
+
+```sql
+SELECT * FROM GRAPH_TABLE (BANK
+    MATCH (a WHERE a.owner = 'Scott') [-[t:Transfer WHERE t.amount < u.amount]->()-[u:Transfer]->]{1,2} (z)
+    COLUMNS (z.owner AS TO_OWNER))
+  ORDER BY TO_OWNER;
+```
+
+```
+ TO_OWNER
+----------------------
+ Aretha
+(1 row)
+```
+
+It may read a variable of another path pattern. That path pattern is
+searched first, and this one once for each of its matches:
+
+```sql
+SELECT * FROM GRAPH_TABLE (BANK
+    MATCH (a WHERE a.owner = 'Mike')-[s:Transfer]->(b),
+          (c)-[t:Transfer WHERE t.amount > s.amount]->(d)
+    COLUMNS (b.owner AS FIRST_TO, t.id AS LARGER, t.amount AS AMOUNT))
+  ORDER BY FIRST_TO, LARGER;
+```
+
+```
+ FIRST_TO             | LARGER |       AMOUNT
+----------------------+--------+--------------
+ Jay                  | t1     |            8
+ Jay                  | t2     |           10
+ Jay                  | t3     |           10
+(3 rows)
+```
+
+Two path patterns that read each other's variables are SQLCODE -103.
+
+[NOT] EXISTS IN PATH p (pattern) matches a pattern along the path p
+binds, in its order. Its variables are its own, and its WHERE clauses
+may read the match's. Here no transfer of the path is larger than the
+one after it:
+
+```sql
+SELECT * FROM GRAPH_TABLE (BANK
+    MATCH p = (a WHERE a.owner = 'Scott')-[t:Transfer]->{1,4}(z)
+    WHERE NOT EXISTS IN PATH p (-[u]->()-[v]-> WHERE u.amount > v.amount)
+    COLUMNS (z.owner AS TO_OWNER, PATH_LENGTH(p) AS HOPS))
+  ORDER BY HOPS, TO_OWNER;
+```
+
+```
+ TO_OWNER             |         HOPS
+----------------------+--------------
+ Mike                 |            1
+ Aretha               |            2
+ Jay                  |            3
+(3 rows)
+```
+
+## Derived graphs
+
+LINE_GRAPH (g, label) is the graph whose vertices are g's edges of the
+label, with the label's properties. An edge FOLLOWS joins each to each
+that leaves the vertex it ends at. So a condition between consecutive
+edges becomes one between adjacent vertices:
+
+```sql
+SELECT * FROM GRAPH_TABLE (LINE_GRAPH(BANK, TRANSFER)
+    MATCH (x)-[f:FOLLOWS]->(y)
+    WHERE x.amount < y.amount
+    COLUMNS (x.id AS EARLIER, y.id AS LATER))
+  ORDER BY EARLIER, LATER;
+```
+
+```
+ EARLIER | LATER
+---------+-------
+ t1      | t2
+ t4      | t1
+(2 rows)
+```
+
+CREATE PROPERTY GRAPH ... AS makes a graph of queries' rows, each
+element table a query in parentheses. The queries are run as the graph
+is queried, so it shows the tables as they are then. A query's rows
+declare no key, so each KEY is written and the graph is of TRUSTED MODE:
+
+```sql
+CREATE PROPERTY GRAPH LARGE AS
+    VERTICES FROM (SELECT ID, OWNER FROM ACCOUNT) KEY (ID) LABEL HOLDER PROPERTIES (ID, OWNER)
+    EDGES FROM (SELECT ID, SRC, DST, AMOUNT FROM TRANSFER WHERE AMOUNT >= 8) KEY (ID)
+        SOURCE KEY (SRC) REFERENCES HOLDER (ID) DESTINATION KEY (DST) REFERENCES HOLDER (ID)
+        LABEL BIG PROPERTIES (AMOUNT);
+SELECT * FROM GRAPH_TABLE (LARGE
+    MATCH (a)-[e:BIG]->(b)
+    COLUMNS (a.owner AS FROM_OWNER, b.owner AS TO_OWNER, e.amount AS AMOUNT))
+  ORDER BY FROM_OWNER;
+```
+
+```
+OK
+ FROM_OWNER           | TO_OWNER             |       AMOUNT
+----------------------+----------------------+--------------
+ Aretha               | Jay                  |           10
+ Mike                 | Aretha               |           10
+ Scott                | Mike                 |            8
+(3 rows)
+```
+
+An element table without AS is named after its first label. The graph
+depends on the tables its queries read, and is altered, compiled and
+dropped as any graph is. INFORMATION_SCHEMA.PG_ELEMENT_TABLES shows each
+query in ELEMENT_TABLE_QUERY:
+
+```sql
+SELECT ELEMENT_TABLE_ALIAS, ELEMENT_TABLE_KIND, ELEMENT_TABLE_QUERY
+  FROM INFORMATION_SCHEMA.PG_ELEMENT_TABLES WHERE PROPERTY_GRAPH_NAME = 'LARGE'
+  ORDER BY ELEMENT_TABLE_ALIAS;
+DROP PROPERTY GRAPH LARGE;
+```
+
+```
+ ELEMENT_TABLE_ALIAS                                          | ELEMENT_TABLE_KIND                                           | ELEMENT_TABLE_QUERY
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ BIG                                                          | EDGE                                                         | SELECT ID, SRC, DST, AMOUNT FROM TRANSFER WHERE AMOUNT >= 8
+ HOLDER                                                       | VERTEX                                                       | SELECT ID, OWNER FROM ACCOUNT
+(2 rows)
+OK
+```
+
 ## Rows
 
 ONE ROW PER MATCH, the default, gives a row of each match. ONE ROW PER
@@ -346,6 +504,142 @@ SELECT COUNT(*) AS PATHS FROM GRAPH_TABLE (BANK
 ```
 turborel: SQLCODE -900 (SQLSTATE 54061): [GS §20] GRF-0061: the path search passed MAX_PATH_LENGTH, 1
 ```
+
+## Plans
+
+A pattern of no quantifier is a join of its element tables, which the
+planner orders by its estimates like any other join. Each edge is read
+through its adjacency index from the vertex bound before it, shown as
+Expand, or from its destination, shown as Expand (reverse), or between
+two bound vertices, shown as ExpandInto. An edge table of no adjacency
+index is read whole once in each join, so a pattern needing more than
+four such reads is searched instead:
+
+```sql
+SELECT * FROM GRAPH_TABLE (BANK
+    MATCH (a WHERE a.owner = 'Scott')-[t]->(b)
+    COLUMNS (b.owner AS TO_WHOM, t.amount AS AMOUNT));
+EXPLAIN SELECT * FROM GRAPH_TABLE (BANK
+    MATCH (a WHERE a.owner = 'Mike')<-[t]-(b)
+    COLUMNS (b.owner AS FROM_WHOM));
+```
+
+```
+ TO_WHOM              |       AMOUNT
+----------------------+--------------
+ Mike                 |            8
+(1 row)
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project OWNER
+   Project OWNER
+     Filter SRC = ID AND DST = ID AND OWNER = 'Mike'
+       Product
+         Product
+           Scan ANN.ACCOUNT
+           Scan ANN.TRANSFER
+         Scan ANN.ACCOUNT
+ -- rules: push_filter_into_product x2
+ -- optimized:
+ Project OWNER
+   Project OWNER
+     Filter SRC = ID
+       Product
+         Filter DST = ID
+           Product
+             Filter OWNER = 'Mike'
+               Scan ANN.ACCOUNT
+             Scan ANN.TRANSFER
+         Scan ANN.ACCOUNT
+ -- physical:
+ Project OWNER
+   IndexNestedLoop ANN.ACCOUNT using ANN.ACCOUNT.UNIQUE1 [btree]: SRC = ID  (est. rows each=1, cost=0.6)
+     Expand (reverse) ANN.TRANSFER using BANK_TRANSFER_ADJACENCY [adjacency]: ID = DST  (est. rows each=0, cost=0.5)
+       Filter OWNER = 'Mike'  (est. rows=0)
+         SeqScan ANN.ACCOUNT  (rows=4, cost=4.0)
+(27 rows)
+```
+
+A pattern whose edges close a cycle is matched by a worst-case optimal
+join: each next vertex is one of those every bound vertex tied to it
+reaches, the intersection of their neighbour lists. The hint NO_WCOJ
+joins it pairwise instead:
+
+```sql
+SELECT * FROM GRAPH_TABLE (BANK
+    MATCH (a)-[r]->(b)-[s]->(c)-[t]->(a) WHERE a.id < b.id AND a.id < c.id
+    COLUMNS (a.owner AS A, b.owner AS B, c.owner AS C));
+SELECT COUNT(*) AS TRIANGLES FROM GRAPH_TABLE (BANK
+    MATCH (a)-[r]->(b)-[s]->(c)-[t]->(a)
+    COLUMNS (a.id AS A) OPTIONS (NO_WCOJ));
+```
+
+```
+ A                    | B                    | C
+----------------------+----------------------+----------------------
+ Scott                | Mike                 | Jay
+(1 row)
+            TRIANGLES
+----------------------
+                    3
+(1 row)
+```
+
+A quantifier of at most three iterations is unrolled into a join for
+each count of them, and a path pattern written as an earlier one is
+searched once. GRAPH_START, GRAPH_DIRECTION, USE_ADJACENCY and
+PATH_ALGO direct a search, so a pattern written with one is searched:
+
+```sql
+SELECT * FROM GRAPH_TABLE (BANK
+    MATCH (a WHERE a.owner = 'Scott')-[]->{1,2}(b)
+    COLUMNS (b.owner AS REACHED));
+SELECT COUNT(*) AS PATHS FROM GRAPH_TABLE (BANK
+    MATCH (a WHERE a.owner = 'Scott')-[]->{1,2}(b)
+    COLUMNS (b.owner AS REACHED) OPTIONS (PATH_ALGO (DFS)));
+```
+
+```
+ REACHED
+----------------------
+ Mike
+ Aretha
+ Jay
+(3 rows)
+                PATHS
+----------------------
+                    3
+(1 row)
+```
+
+A search reads the edges of 1,024 states of its frontier at a time,
+each edge table's lists in one pass of its index. Of ANY SHORTEST or
+ANY from many starts, it searches from up to 64 starts at once (MS-BFS)
+when that many starts would together reach about every vertex, judged by
+the tables' sizes and the average degree of the edges the pattern's
+edge labels match between the labels of the node patterns beside them,
+once the graph's statistics count them, and from each start alone
+otherwise. It runs on the workers EXECUTOR.GRAPH_THREADS allows once its
+estimated states reach GRAPH.PARALLEL_MIN_STATES: in morsels of starts,
+or level by level from one start. PATH_ALGO picks the algorithm within
+the family the selector calls for, BFS or MSBFS of a shortest or ANY
+selector, DFS of every path, DIJKSTRA of CHEAPEST, and a hint that
+cannot answer the pattern is refused.
+
+A label index ([CREATE LABEL INDEX](statements/create-label-index.md))
+answers a pattern's label tests and finds its starts without reading
+rows. A reachability index
+([CREATE REACHABILITY INDEX](statements/create-reachability-index.md))
+drops the starts of a quantified pattern that reach none of its ends.
+
+A graph's statistics ([GRAPH_STATISTICS](07-information-schema.md#graph-statistics))
+come from its tables' and give each edge table's degree. A join plan
+estimates the rows of each Expand by that average degree. A quantified
+pattern with both ends filtered is searched from the end of fewer
+candidates times fan-out, and its paths are turned back, but only where
+the answer is the same either way. GRAPH_START or GRAPH_DIRECTION
+(e, REVERSE) names that end instead.
 
 ## EXPLAIN
 

@@ -17,6 +17,11 @@ use super::binding::PathBinding;
 use super::view::{ElementId, LabelId, Orientation};
 use crate::error::{Code, Result, SqlError};
 
+mod bound;
+
+pub use bound::{Bound, Read, WHOLE_PATH};
+pub(super) use bound::{Resolved, absent, is_absent, marked};
+
 /// The number of a variable of a path pattern, its index in `variables`.
 pub type VarId = u32;
 
@@ -80,58 +85,6 @@ impl fmt::Display for LabelExpr {
     }
 }
 
-/// What a prefilter is given: the element it tests, if it is an element
-/// pattern's, and the bindings of the variables it reads.
-pub struct Bound<'a> {
-    pub(super) element: Option<(Option<VarId>, ElementId)>,
-    pub(super) registers: &'a [Box<[ElementId]>],
-    /// For each variable read, its register, its PREV register and its
-    /// FIRST register.
-    pub(super) reads: &'a [Resolved],
-}
-
-/// A variable a prefilter reads, resolved: its register, its PREV
-/// register and its FIRST register, each if it reads it so.
-pub(super) type Resolved = (VarId, Option<usize>, Option<usize>, Option<usize>);
-
-impl Bound<'_> {
-    /// The element tested, for an element pattern's prefilter.
-    pub fn element(&self) -> Option<ElementId> {
-        self.element.map(|(_, e)| e)
-    }
-
-    /// The elements `var` is bound to so far, within the prefilter's
-    /// pattern: one for a singleton, a list for a group [P1 §4.4].
-    pub fn group(&self, var: VarId) -> &[ElementId] {
-        let register = self.reads.iter().find_map(|r| r.1.filter(|_| r.0 == var && r.3.is_none()));
-        register.and_then(|r| self.registers.get(r)).map_or(&[], |elements| &**elements)
-    }
-
-    /// The element singleton `var` is bound to, if it is bound yet: the
-    /// element tested, if it is the element pattern's own variable.
-    pub fn singleton(&self, var: VarId) -> Option<ElementId> {
-        let own = self.element.and_then(|(own, element)| (own == Some(var)).then_some(element));
-        own.or_else(|| self.group(var).last().copied())
-    }
-
-    /// \[GS §11.1\] `PREV(var)`: its binding in the previous iteration of
-    /// the quantifier the prefilter is within, none in the first.
-    pub fn previous(&self, var: VarId) -> Option<ElementId> {
-        let register = self.reads.iter().find_map(|r| r.2.filter(|_| r.0 == var))?;
-        self.registers.get(register).and_then(|elements| elements.last().copied())
-    }
-
-    /// \[GS §11.1\] `FIRST(var)`: its binding in the first iteration of
-    /// the quantifier the prefilter is within; in the first, its binding
-    /// in this one.
-    pub fn first(&self, var: VarId) -> Option<ElementId> {
-        let read = self.reads.iter().find(|r| r.0 == var && r.3.is_some())?;
-        let last = |register: Option<usize>| register.and_then(|r| self.registers.get(r)).and_then(|elements| elements.last().copied());
-        let own = self.element.and_then(|(own, element)| (own == Some(var)).then_some(element));
-        last(read.3).or_else(|| last(read.1)).or(own)
-    }
-}
-
 /// \[DESIGN\] A prefilter's test, bound by the binder: true keeps the
 /// element or the iteration. It may be called from several threads.
 pub type Predicate = Arc<dyn Fn(&Bound<'_>) -> Result<bool> + Send + Sync>;
@@ -141,17 +94,6 @@ pub type Postfilter = Arc<dyn Fn(&PathBinding) -> Result<bool> + Send + Sync>;
 
 /// \[DESIGN\] The cost of an edge, a COST expression [GS §7.2].
 pub type CostFn = Arc<dyn Fn(ElementId) -> Result<f64> + Send + Sync>;
-
-/// A variable a prefilter reads.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Read {
-    /// The variable.
-    pub var: VarId,
-    /// Whether it reads `PREV(var)` [GS §11.1] rather than its binding.
-    pub previous: bool,
-    /// Whether it reads `FIRST(var)` [GS §11.1] rather than its binding.
-    pub first: bool,
-}
 
 /// \[GS §6.8\] A prefilter: what it reads and its test.
 #[derive(Clone)]

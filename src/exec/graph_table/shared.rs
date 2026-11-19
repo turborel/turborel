@@ -9,9 +9,10 @@ use super::store::Store;
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::{Runner, eval, eval_cond};
-use crate::graph::program::{Bound, CostFn, Filter, Predicate};
+use crate::graph::binding::PathBinding;
+use crate::graph::program::{Bound, CostFn, Filter, Predicate, VarId};
 use crate::graph::view::{ElementId, GraphView};
-use crate::logical::{EDGE_COLUMNS, GraphMatch, GraphValue, Truth, identity_text};
+use crate::logical::{EDGE_COLUMNS, GraphMatch, GraphValue, Truth, element_text};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::Value;
@@ -29,9 +30,25 @@ pub(super) struct Shared {
     pub(super) store: Arc<Store>,
     /// The operands' values.
     pub(super) operands: Vec<Value>,
+    /// Of each path pattern another's prefilters read, its binding they
+    /// are searched with (`graph_table/correlated.rs`).
+    pub(super) fixed: Vec<Option<PathBinding>>,
 }
 
 impl Shared {
+    /// It with `fixed` the bindings of other path patterns read.
+    pub(super) fn with_fixed(&self, fixed: Vec<Option<PathBinding>>) -> Shared {
+        let (db, graph, store) = (Arc::clone(&self.db), Arc::clone(&self.graph), Arc::clone(&self.store));
+        Shared { db, tx: self.tx, graph, store, operands: self.operands.clone(), fixed }
+    }
+
+    /// The fixed binding of a path pattern element variable `var` is of,
+    /// and its number there.
+    fn fixed_of(&self, var: usize) -> Option<(&PathBinding, VarId)> {
+        let shape = self.graph.vars.get(var)?;
+        shape.bound.iter().find_map(|&(m, local)| self.fixed.get(m).and_then(Option::as_ref).map(|b| (b, local)))
+    }
+
     /// What runs the subqueries of an expression.
     pub(super) fn runner(&self) -> Runner {
         Runner::new(&self.db, self.tx)
@@ -54,7 +71,7 @@ impl Shared {
         let Some(source) = self.graph.tables.get(usize::try_from(element.table).unwrap_or(usize::MAX)) else { return Ok(Value::Null) };
         let Some(row) = self.store.row(element)? else { return Ok(Value::Null) };
         let key: Vec<Value> = source.key.iter().map(|&k| row.get(k).cloned().unwrap_or(Value::Null)).collect();
-        Ok(Value::Char(identity_text(&source.alias, &key)?))
+        Ok(Value::Char(element_text(&source.alias, source.native, &key)?))
     }
 
     /// Fills the columns of element variable `var` in `row` with those of
@@ -103,15 +120,29 @@ impl Shared {
                 self.fill(&mut row, var, element)?;
             }
         }
+        for &var in &p.across {
+            if let Some(element) = self.fixed_of(var).and_then(|(b, local)| b.singleton(local)) {
+                self.fill(&mut row, var, element)?;
+            }
+        }
         let runner = self.runner();
         for &(slot, id) in &p.slots {
             let value = match self.graph.slots.get(slot) {
-                Some(GraphValue::Aggregate { call, var }) => self.aggregate(call, (*var, bound.group(id)), &row, &runner)?,
+                Some(GraphValue::Aggregate { call, var }) => {
+                    let across = self.fixed_of(*var).filter(|_| id == VarId::MAX).map(|(b, local)| b.group(local));
+                    let elements = across.unwrap_or_else(|| bound.group(id).to_vec());
+                    self.aggregate(call, (*var, &elements), &row, &runner)?
+                }
                 Some(GraphValue::Iteration { var, first, property }) => {
                     let element = if *first { bound.first(id) } else { bound.previous(id) };
                     self.iteration(element, *var, *property)?
                 }
-                Some(GraphValue::Path { .. }) | None => Value::Null,
+                Some(GraphValue::Path { path, function, span }) => {
+                    let fixed = || self.fixed.get(*path).cloned().flatten();
+                    let whole = if *path == p.path { bound.partial(*span) } else { fixed().and_then(|b| part(b, *span)) };
+                    whole.map_or(Ok(Value::Null), |b| self.path_value(&b, *function))?
+                }
+                None => Value::Null,
             };
             if let Some(cell) = row.get_mut(self.graph.width.saturating_add(slot)) {
                 *cell = value;
@@ -149,6 +180,29 @@ impl Shared {
         }
         let v = eval(&cost.expr, &row, &self.runner())?;
         Ok(v.as_f64().unwrap_or(f64::NAN))
+    }
+}
+
+impl Shared {
+    /// \[GS §11.2\] Whether EXISTS IN PATH's pattern `k` matches path `b`
+    /// in path order, its prefilters reading the fixed bindings.
+    ///
+    /// # Errors
+    ///
+    /// Any error of the pattern or its prefilters.
+    pub(super) fn within(&self, k: usize, b: &PathBinding) -> Result<bool> {
+        let Some(shape) = self.graph.within.get(k) else { return Ok(false) };
+        let held = Arc::new(self.with_fixed(self.fixed.clone()));
+        let pattern = shape.instantiate(&mut |i| filter(&held, i));
+        crate::graph::within::within(&pattern, &*self.store, &b.elements)
+    }
+}
+
+/// Of `whole`, the subpath between the marks `span`, or all of it.
+fn part(whole: PathBinding, span: Option<(VarId, VarId)>) -> Option<PathBinding> {
+    match span {
+        Some((start, end)) => whole.span(start, end),
+        None => Some(whole),
     }
 }
 

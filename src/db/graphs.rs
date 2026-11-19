@@ -17,9 +17,11 @@ mod dependents;
 mod describe;
 mod elements;
 pub(in crate::db) mod gql;
+mod indexes;
 pub(in crate::db) mod native;
 mod privileges;
 mod property;
+mod statistics;
 
 use std::sync::Arc;
 

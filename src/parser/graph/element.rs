@@ -52,7 +52,7 @@ impl Parser {
     }
 
     /// \[EXTENSION\] { `<property name>` : `<value expression>` \[, ...\] }.
-    fn property_specification(&mut self) -> Result<Vec<PropertySpec>> {
+    pub(super) fn property_specification(&mut self) -> Result<Vec<PropertySpec>> {
         self.expect_delim(delim::LEFT_BRACE)?;
         let mut properties = Vec::new();
         loop {

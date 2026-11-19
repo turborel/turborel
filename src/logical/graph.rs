@@ -15,7 +15,10 @@
 //! `[P1 §n]` Deutsch et al., "Graph Pattern Matching in GQL and SQL/PGQ"
 //! (arXiv 2112.06217).
 
+mod common;
 mod identity;
+mod indexes;
+mod sizing;
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -26,12 +29,14 @@ use crate::graph::in_memory::InMemoryGraph;
 use crate::graph::limits::OnLimit;
 use crate::graph::program::{
     ElementTest, Filter, LabelExpr, MatchMode, PathPattern, Pattern, Predicate, Quantified, Read, Restrictor, Selector, VarId, VarKind,
-    Variable,
+    Variable, WHOLE_PATH,
 };
-use crate::graph::search::{PathSearch, SearchOptions};
+use crate::graph::search::PathSearch;
 use crate::graph::view::Orientation;
 
-pub use identity::{ElementIdentity, IDENTITY_LENGTH, IdentityJson, identity_item, identity_text, identity_type};
+pub use identity::{ElementIdentity, IDENTITY_LENGTH, IdentityJson, element_text, identity_item, identity_text, identity_type};
+pub use indexes::Pruning;
+pub use sizing::GraphSizing;
 
 /// The hidden columns of a vertex variable, after its properties: its
 /// element identity and the number of its element table.
@@ -75,6 +80,16 @@ pub struct GraphMatch {
     pub columns: Vec<Expr>,
     /// The resource limits written in it [GS §20].
     pub options: GraphOptions,
+    /// The optimizer hints written in it [GS §16 R16.8].
+    pub hints: crate::ast::GraphHints,
+    /// \[GS §16 R16.2\] Whether its rigid, cyclic paths are matched by a
+    /// worst-case optimal join rather than searched (`graph::wcoj`).
+    pub wcoj: bool,
+    /// \[GS §11.2\] The pattern of each EXISTS IN PATH, a path pattern
+    /// numbered after `paths`.
+    pub within: Vec<PathShape>,
+    /// Its tables' sizes and the workers' settings, for EXPLAIN.
+    pub sizing: GraphSizing,
 }
 
 /// \[EXTENSION\] How the rows of an element table are read.
@@ -123,6 +138,9 @@ pub struct ElementSource {
     pub ends: Option<EdgeShape>,
     /// Its key's columns.
     pub key: Vec<usize>,
+    /// Whether it is a node or edge table keyed by its pseudo-column, its
+    /// elements' identity that column's value.
+    pub native: bool,
     /// Its labels.
     pub labels: Vec<u32>,
     /// Each of its properties, its name and value over a row of it.
@@ -134,6 +152,12 @@ pub struct ElementSource {
     /// Of a stored edge table, the adjacency index of its ends' columns
     /// its edges are followed through, if one is (`exec/graph_table`).
     pub adjacency: Option<String>,
+    /// Of a stored table, the label index of its rows, if it has one
+    /// (RULES.md D115).
+    pub labels_index: Option<String>,
+    /// Of a stored edge table, the reachability index of its ends'
+    /// columns, if it has one (RULES.md D116).
+    pub reachability: Option<String>,
 }
 
 impl ElementSource {
@@ -231,7 +255,16 @@ pub struct Prefilter {
     /// of its variable: of a set function, over the elements the variable
     /// is bound to within the parenthesized path pattern [P1 §4.4]; of
     /// PREV or FIRST, of its binding in an iteration before [GS §11.1].
+    /// A slot of no variable of its path pattern has `VarId::MAX`.
     pub slots: Vec<(usize, VarId)>,
+    /// The path pattern it is of.
+    pub path: usize,
+    /// Of an element pattern's within a quantifier, the element variables
+    /// it reads that are bound after it, so tested as they are bound.
+    pub later: Vec<usize>,
+    /// The element variables it reads of other path patterns, bound as
+    /// those are searched first (RULES.md D108).
+    pub across: Vec<usize>,
 }
 
 /// \[EXTENSION\] The COST of a CHEAPEST selector [GS §7.2]: an expression
@@ -316,6 +349,8 @@ pub enum PathFunction {
     Trail,
     /// IS_SIMPLE.
     Simple,
+    /// \[GS §11.2\] EXISTS IN PATH of pattern `n` of `within`.
+    Within(usize),
     /// PATH_TO_JSON.
     Json,
 }
@@ -407,13 +442,55 @@ impl GraphMatch {
     /// The reads of prefilter `k`, as path search takes them.
     pub fn reads(&self, k: usize) -> Vec<Read> {
         let Some(p) = self.prefilters.get(k) else { return Vec::new() };
-        let mut reads: Vec<Read> = p.reads.iter().map(|&(_, var)| Read { var, previous: false, first: false }).collect();
+        let mut reads: Vec<Read> = p.reads.iter().map(|&(g, var)| Read { later: p.later.contains(&g), ..Read::of(var) }).collect();
         for &(slot, var) in &p.slots {
-            if let Some(GraphValue::Iteration { first, .. }) = self.slots.get(slot) {
-                reads.push(Read { var, previous: !first, first: *first });
+            match self.slots.get(slot) {
+                Some(GraphValue::Iteration { first, .. }) => {
+                    if var != VarId::MAX {
+                        reads.push(Read { previous: !first, first: *first, ..Read::of(var) });
+                    }
+                }
+                Some(GraphValue::Path { path, span, .. }) => {
+                    if *path == p.path {
+                        let (start, end) = span.unwrap_or((WHOLE_PATH, WHOLE_PATH));
+                        reads.push(Read { path: Some(end), ..Read::of(start) });
+                    }
+                }
+                Some(GraphValue::Aggregate { .. }) | None => {}
             }
         }
         reads
+    }
+
+    /// \[GS §6.8\] The path patterns whose bindings the prefilters of
+    /// path pattern `n` read, which are searched before it (RULES.md
+    /// D108).
+    pub fn depends(&self, n: usize) -> Vec<usize> {
+        let mut out = Vec::new();
+        for p in self.prefilters.iter().filter(|p| p.path == n) {
+            for &g in &p.across {
+                out.extend(self.vars.get(g).and_then(|v| v.bound.iter().map(|b| b.0).find(|&m| m != n)));
+            }
+            for &(slot, var) in &p.slots {
+                let of = match self.slots.get(slot) {
+                    Some(GraphValue::Path { path, .. }) => Some(*path),
+                    Some(GraphValue::Aggregate { var: g, .. } | GraphValue::Iteration { var: g, .. }) => {
+                        self.vars.get(*g).and_then(|v| v.bound.iter().map(|b| b.0).find(|&m| m != n)).filter(|_| var == VarId::MAX)
+                    }
+                    None => None,
+                };
+                out.extend(of.filter(|&m| m != n));
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// \[GS §16 R16.6\] Of each path pattern, the earlier one it is
+    /// written as, if one, whose bindings it takes (`graph/common.rs`).
+    pub fn earlier(&self) -> Vec<Option<usize>> {
+        common::earlier_paths(self)
     }
 
     /// \[GS §16 R16.9\] EXPLAIN of it: each path pattern's search and
@@ -421,13 +498,20 @@ impl GraphMatch {
     pub fn render(&self) -> String {
         let mut out = format!("Graph table of {} ({} element tables)", self.graph, self.tables.len());
         let empty = InMemoryGraph::new();
+        let earlier = self.earlier();
         for (n, path) in self.paths.iter().enumerate() {
+            if let Some(m) = earlier.get(n).copied().flatten() {
+                let _ = write!(out, "\n  path {}: as path {}, searched once", n.saturating_add(1), m.saturating_add(1));
+                continue;
+            }
             let pattern = path.instantiate(&mut |k| shown(self.reads(k)));
             let starts: Vec<&str> = path.starts.iter().filter_map(|&t| self.tables.get(t)).map(|t| t.alias.as_str()).collect();
             let _ = write!(out, "\n  path {}: from {}", n.saturating_add(1), starts.join(", "));
-            match PathSearch::new(&pattern, &empty, SearchOptions::default()) {
+            match PathSearch::new(&pattern, &empty, self.sizing.options(n, self.hints.path_algo)) {
                 Ok(search) => {
-                    let explained = search.explain(starts.len().max(2), None);
+                    let size = self.sizing.size(self.tables.iter().map(|t| t.ends.is_some()));
+                    let count = self.sizing.starts(&path.starts).filter(|_| size.is_some()).unwrap_or(starts.len().max(2));
+                    let explained = search.explain_for(count, None, size);
                     for line in explained.lines() {
                         let _ = write!(out, "\n    {line}");
                     }
@@ -441,7 +525,25 @@ impl GraphMatch {
             let how = t.adjacency.as_ref().map_or_else(|| "edges listed by a scan".to_owned(), |ix| format!("adjacency index {ix}"));
             let _ = write!(out, "\n  edge table {}: {how}", t.alias);
         }
+        if self.wcoj {
+            out.push_str("\n  worst-case optimal join of the paths' vertices, over their adjacency");
+        }
+        self.render_indexes(&mut out);
         let _ = write!(out, "\n  match mode {:?}, rows {:?}", self.mode, self.rows);
+        if !self.hints.is_empty() {
+            let _ = write!(out, "\n  hints {}", hints_text(&self.hints));
+        }
         out
     }
+}
+
+/// \[GS §16 R16.8\] `hints` as EXPLAIN shows them, as written.
+fn hints_text(hints: &crate::ast::GraphHints) -> String {
+    let mut shown: Vec<String> = Vec::new();
+    shown.extend(hints.start.iter().map(|(v, _)| format!("GRAPH_START({v})")));
+    shown.extend(hints.reverse.iter().map(|(v, _)| format!("GRAPH_DIRECTION({v}, REVERSE)")));
+    shown.extend(hints.no_wcoj.then(|| "NO_WCOJ".to_owned()));
+    shown.extend(hints.use_adjacency.iter().map(|(t, _)| format!("USE_ADJACENCY({t})")));
+    shown.extend(hints.path_algo.map(|a| format!("PATH_ALGO({})", a.word())));
+    shown.join(", ")
 }

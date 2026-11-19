@@ -11,6 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::expand::ahead;
 use super::states::{Context, States, index};
 use crate::error::Result;
 use crate::graph::binding::{Letter, PathBinding};
@@ -144,7 +145,8 @@ pub(super) fn groups(ctx: &Context<'_>, start: ElementId, k: u64, meter: &mut Me
     'levels: while !level.is_empty() && !dag.closed(length) {
         let mut frontier: Vec<(u32, u32)> = level.drain().collect();
         frontier.sort_unstable_by_key(|&(_, record)| record);
-        for (node, record) in frontier {
+        for (at, &(node, record)) in frontier.iter().enumerate() {
+            ahead(&mut runner, &dag.states, (&frontier, at), |&(n, _)| n)?;
             meter.check()?;
             let successors = dag.states.successors(&mut runner, node, length)?;
             if !successors.is_empty() && !meter.length(length.saturating_add(1))? {

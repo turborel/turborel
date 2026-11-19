@@ -8,6 +8,7 @@ use crate::engine::tree::Direction as Order;
 use crate::memory::MemoryBudget;
 use crate::value::{Decimal, Spelled, Value};
 
+mod batch;
 mod compacted;
 mod reads;
 

@@ -132,6 +132,7 @@ mod get_diagnostics;
 mod get_diagnostics_items;
 mod gql;
 mod graph_algo;
+mod graph_compat;
 mod graph_ddl;
 mod graph_native;
 mod graph_table;

@@ -106,6 +106,10 @@ pub struct ElementTableDesc {
     pub labels: Vec<LabelDesc>,
     /// Of an edge table, its endpoints.
     pub endpoints: Option<Endpoints>,
+    /// \[EXTENSION\] [GS §11.3] Of an element table of a query's rows, the
+    /// query as written; its `table` is then its alias in no schema, no
+    /// table's name.
+    pub query: Option<String>,
 }
 
 impl ElementTableDesc {
@@ -144,6 +148,12 @@ impl ElementTableDesc {
     /// Of an edge table, its destination.
     pub fn destination(&self) -> Option<&EndpointDesc> {
         self.endpoints.as_ref().map(|e| &e.destination)
+    }
+
+    /// What a FROM clause reads it from: its query in parentheses, or its
+    /// table's name.
+    pub fn from_text(&self) -> String {
+        self.query.as_ref().map_or_else(|| qualified_identifier(&self.table), |q| format!("({q})"))
     }
 
     /// Whether it names the column `column` of its table as a key, an

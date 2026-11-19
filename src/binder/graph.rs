@@ -11,12 +11,18 @@
 mod columns;
 mod elements;
 mod functions;
+mod hints;
+mod indexes;
+mod joins;
+mod line;
 mod pattern;
 mod remap;
 mod scope;
 mod seam;
 mod segments;
+mod sizing;
 mod variables;
+mod within;
 
 use std::collections::BTreeSet;
 use std::rc::Rc;
@@ -50,11 +56,15 @@ pub(super) fn grf(condition: &str, msg: impl Into<String>) -> SqlError {
 /// # Errors
 ///
 /// SQLCODE -103 (GRF-0001) if there is none, (GRF-0005) if it is INVALID;
-/// -104 if SELECT on it is not held; -900 of LINE_GRAPH.
+/// -104 if SELECT on it is not held; of LINE_GRAPH, (GRF-0012) if its
+/// graph has no edge of its label.
 fn graph_desc(cx: Context<'_>, reference: &GraphReference) -> Result<GraphDesc> {
     let name = match reference {
         GraphReference::Named(name) => name,
-        GraphReference::LineGraph { .. } => return Err(scope::unsupported("LINE_GRAPH [GS §12]")),
+        GraphReference::LineGraph { graph, label, at } => {
+            let base = graph_desc(cx, &GraphReference::Named(graph.clone()))?;
+            return line::line_graph(&base, label).map_err(|e| e.or_at(*at));
+        }
     };
     let qn = qualify(name, cx.schema);
     let desc = cx.db.catalog.graph(&qn).ok_or_else(|| grf("GRF-0001", format!("there is no property graph {qn}")).or_at(name.at))?;
@@ -97,7 +107,8 @@ pub(in crate::binder) fn graph_table_item(b: Bounds<'_>, g: &GraphTable, offset:
     let (tables, infos, labels) = elements::element_tables(b, &desc, g.system_time.as_deref())?;
     let mut extra = columns::row_variables(&g.rows);
     extra.extend(segments::segment_variables(&pattern));
-    let declared = variables::declared(&pattern, &extra)?;
+    let within = within::patterns(g, &pattern)?;
+    let declared = variables::declared(&within::combined(&pattern, &within), &extra)?;
     for d in &declared {
         d.labels.iter().flatten().try_for_each(|l| variables::labels_known(l, &labels))?;
     }
@@ -108,14 +119,14 @@ pub(in crate::binder) fn graph_table_item(b: Bounds<'_>, g: &GraphTable, offset:
     let names: Vec<String> = declared.iter().map(|d| d.name.clone()).collect();
     let built = Built { lateral: &lateral, items, graphing: Rc::clone(&graphing) };
     let bind = |f: &Filtered<'_>| built.filter(f, &exposed);
-    let (mut path_shapes, prefilters, subpaths) = pattern::paths(&pattern, (&names, &labels), &bind)?;
-    graphing.subpaths.replace(subpaths);
+    let mut prefilters = Vec::new();
+    let mut path_shapes = pattern::paths(&pattern, (&names, &labels), (&bind, &graphing.subpaths), (&mut prefilters, 0))?;
+    let inner = (&within::as_pattern(&within), path_shapes.len());
+    let within_shapes = pattern::paths(inner.0, (&names, &labels), (&bind, &graphing.subpaths), (&mut prefilters, inner.1))?;
+    graphing.within.replace(within.iter().map(|p| p.at).collect());
     let measure = built.binder(None);
     let scope = super::Scope::Groups(&graphing.measure, MEASURE);
-    let postfilter = match &pattern.where_clause {
-        Some(c) => Some(measure.search_condition(c, scope)?),
-        None => None,
-    };
+    let postfilter = pattern.where_clause.as_ref().map(|c| measure.search_condition(c, scope)).transpose()?;
     let segments = segments::segments(&measure, scope, (&pattern, &names, &graphing))?;
     let (columns, out) = columns::columns(&measure, g, scope)?;
     let costs = columns::costs(&measure, &pattern, &graphing)?;
@@ -126,11 +137,20 @@ pub(in crate::binder) fn graph_table_item(b: Bounds<'_>, g: &GraphTable, offset:
     let mut operands = Operands::new(offset, width.saturating_add(slots.len()));
     let assembled =
         Assembled { tables, labels, paths: path_shapes, prefilters, vars: shapes, slots, postfilter, segments, columns, costs, rows };
-    let graph = assembled.remapped(&mut operands, (&desc, &pattern, width), g)?;
+    let mut graph = assembled.remapped(&mut operands, (&desc, &pattern, width), g)?;
+    graph.within = within_shapes;
+    graph.sizing = sizing::of(b.cx, &graph);
+    segments::acyclic(&graph)?;
     let reads: BTreeSet<usize> = operands.reads.clone();
     from.used.extend(reads.iter().copied());
     let correlation = g.correlation.clone().unwrap_or_else(|| format!("$GRAPH_TABLE{offset}"));
-    Ok(lateral_item(&correlation, g.at, out, offset, Unnested::graph(graph, operands.exprs, reads)))
+    // [GS §16 R16.2] A rigid pattern reading no table before it is joined.
+    let joined = if reads.is_empty() { joins::planned(b.cx, &mut graph, &operands.exprs) } else { None };
+    let mut item = lateral_item(&correlation, g.at, out, offset, Unnested::graph(graph, operands.exprs, reads));
+    if let Some(plan) = joined {
+        item.source = super::views::Source::Derived(plan);
+    }
+    Ok(item)
 }
 
 /// The scope a GRAPH_TABLE's expressions are bound in.
@@ -231,6 +251,7 @@ impl Assembled {
         };
         let operand_count = operands.exprs.len();
         let options = columns::options(g);
+        let hints = hints::checked(&g.hints, &self.vars, &self.tables)?;
         Ok(GraphMatch {
             graph: desc.name.clone(),
             tables: self.tables,
@@ -247,6 +268,10 @@ impl Assembled {
             rows: self.rows,
             columns,
             options,
+            hints,
+            wcoj: false,
+            within: Vec::new(),
+            sizing: crate::logical::GraphSizing::default(),
         })
     }
 }

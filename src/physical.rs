@@ -18,7 +18,7 @@
 mod access;
 mod collated;
 mod cost;
-mod estimate;
+pub(crate) mod estimate;
 mod expression_index;
 mod indexed;
 mod join_probe;

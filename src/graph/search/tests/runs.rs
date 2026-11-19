@@ -60,7 +60,9 @@ fn parallel_searches_equal_sequential() {
             assert_eq!(elements(&one), elements(&four), "{restrictor} {selector} from {} starts", starts.len());
         }
     }
-    let plan = |starts, ends| PathSearch::new(&reach(Restrictor::Walk, Selector::AnyShortest), &g, workers(4)).unwrap().plan(starts, ends);
+    let plan = |starts, ends| {
+        PathSearch::new(&reach(Restrictor::Walk, Selector::AnyShortest), &g, workers(4)).unwrap().plan(starts, ends).unwrap()
+    };
     assert_eq!(plan(1, None).parallelism, Parallelism::LevelSynchronous(4));
     assert_eq!(plan(200, None).parallelism, Parallelism::Morsels(4));
     assert_eq!(plan(30, None).parallelism, Parallelism::Sequential, "one batch of MS-BFS");
@@ -75,7 +77,7 @@ fn multi_source_equals_one_search_per_start() {
     let path = reach(Restrictor::Walk, Selector::AnyShortest);
     let options = SearchOptions::default();
     let together = PathSearch::new(&path, &g, options.clone()).unwrap();
-    assert_eq!(together.plan(starts.len(), None).algorithm, Algorithm::MultiSourceBfs);
+    assert_eq!(together.plan(starts.len(), None).unwrap().algorithm, Algorithm::MultiSourceBfs);
     let batch: Vec<PathBinding> = together.run(&starts, None).unwrap().collect::<crate::error::Result<_>>().unwrap();
     let mut alone = Vec::new();
     for &s in &starts {
@@ -91,7 +93,7 @@ fn bidirectional_equals_breadth_first() {
     let g = sparse_graph(41, 400, 2, 10);
     let path = reach(Restrictor::Walk, Selector::AnyShortest);
     let searcher = PathSearch::new(&path, &g, SearchOptions::default()).unwrap();
-    assert_eq!(searcher.plan(1, Some(1)).algorithm, Algorithm::BidirectionalBfs);
+    assert_eq!(searcher.plan(1, Some(1)).unwrap().algorithm, Algorithm::BidirectionalBfs);
     let vertices = g.vertices();
     for &s in vertices.iter().step_by(40) {
         let every = search(&path, &g, &[s], None, SearchOptions::default()).unwrap();
@@ -248,11 +250,16 @@ fn explain_shows_algorithm_and_automaton() {
     let g = InMemoryGraph::new();
     let searcher = PathSearch::new(&reach(Restrictor::Walk, Selector::AnyShortest), &g, workers(4)).unwrap();
     let text = searcher.explain(1, None);
-    assert!(text.starts_with("PathSearch-BFS (level-synchronous, 4 workers)\nANY SHORTEST WALK start"), "{text}");
+    assert!(
+        text.starts_with(
+            "PathSearch-BFS (level-synchronous, 4 workers) by cost: 1 starts, est. reach 1 of 0 vertices\nANY SHORTEST WALK start"
+        ),
+        "{text}"
+    );
     assert!(text.contains("edge -> v2 :L1 -> ") && text.contains("\n0: accept\n"), "{text}");
     assert!(searcher.explain(1, Some(1)).starts_with("PathSearch-BiBFS"));
     let trail = PathSearch::new(&reach(Restrictor::Trail, Selector::All), &g, workers(4)).unwrap();
-    assert!(trail.explain(100, None).starts_with("PathSearch-DFS\n"));
+    assert!(trail.explain(100, None).starts_with("PathSearch-DFS by cost: 100 starts"));
 }
 
 /// Verifies: [EXTENSION] [GS §7.3] [GS §6.4]: for every restrictor and

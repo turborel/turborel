@@ -11,11 +11,11 @@
 
 use std::collections::BTreeSet;
 
-use super::super::from::{Bounds, from_item, leaf};
+use super::super::from::{Bounds, derived, from_item, leaf};
 use super::super::{Binder, Context, Scope};
 use super::grf;
-use crate::ast::{NamedTable, SystemTimeRead, TableName};
-use crate::catalog::{ElementKind, ElementTableDesc, EndpointDesc, GraphDesc, Principal, TableDesc, owner_of};
+use crate::ast::{DerivedTable, NamedTable, Subquery, SystemTimeRead, TableName};
+use crate::catalog::{EDGE_ID, ElementKind, ElementTableDesc, EndpointDesc, GraphDesc, NODE_ID, Principal, TableDesc, owner_of};
 use crate::error::Result;
 use crate::logical::{EdgeShape, ElementRead, ElementSource, EndShape, Expr};
 use crate::parser::Parser;
@@ -83,14 +83,7 @@ fn element_table(
     e: &ElementTableDesc,
     (as_of, labels): (Option<&SystemTimeRead>, &[String]),
 ) -> Result<(ElementSource, TableInfo)> {
-    let named = NamedTable {
-        table: TableName { auth: Some(e.table.auth.clone()), ident: e.table.ident.clone(), at: 0 },
-        only: false,
-        correlation: None,
-        columns: None,
-        system_time: as_of.cloned().map(Box::new),
-    };
-    let item = from_item(b, &named, 0)?;
+    let item = element_item(b, e, as_of)?;
     let columns = item.desc.clone();
     let stored = as_of.is_none() && b.cx.db.catalog.table(&e.table).is_some() && item.family.is_empty();
     let read = if stored { ElementRead::Stored } else { held(b.cx, &item)? };
@@ -116,10 +109,55 @@ fn element_table(
         (ElementRead::Stored, Some(ends)) => adjacency_index(b.cx, &e.table, ends),
         (ElementRead::Stored | ElementRead::Held(_), _) => None,
     };
-    let width = columns.columns.len();
-    let source =
-        ElementSource { alias: e.alias.clone(), table: e.table.clone(), ends, key, labels: ids, properties, read, width, adjacency };
+    let (labels_index, reachability) = super::indexes::graph_indexes(b.cx, &e.table, (&read, ends.as_ref()));
+    let native = e.key.len() == 1 && e.key.iter().all(|k| k == NODE_ID || k == EDGE_ID);
+    let source = ElementSource {
+        alias: e.alias.clone(),
+        table: e.table.clone(),
+        ends,
+        key,
+        native,
+        labels: ids,
+        properties,
+        read,
+        width: columns.columns.len(),
+        adjacency,
+        labels_index,
+        reachability,
+    };
     Ok((source, info))
+}
+
+/// The FROM item element table `e` is read as, FOR SYSTEM_TIME `as_of`.
+fn element_item(b: Bounds<'_>, e: &ElementTableDesc, as_of: Option<&SystemTimeRead>) -> Result<super::super::FromItem> {
+    if let Some(q) = &e.query {
+        return query_item(b, e, q, as_of);
+    }
+    let named = NamedTable {
+        table: TableName { auth: Some(e.table.auth.clone()), ident: e.table.ident.clone(), at: 0 },
+        only: false,
+        correlation: None,
+        columns: None,
+        system_time: as_of.cloned().map(Box::new),
+    };
+    from_item(b, &named, 0)
+}
+
+/// \[EXTENSION\] [GS §11.3] Element table `e` of the rows of query `q`, as
+/// a derived table of them.
+///
+/// # Errors
+///
+/// As the query's; SQLCODE -103 if the GRAPH_TABLE is read FOR
+/// SYSTEM_TIME, which the query says of the tables it reads.
+fn query_item(b: Bounds<'_>, e: &ElementTableDesc, q: &str, as_of: Option<&SystemTimeRead>) -> Result<super::super::FromItem> {
+    if as_of.is_some() {
+        let msg = format!("element table {} holds a query's rows; write FOR SYSTEM_TIME of the tables in its query (§11.3)", e.alias);
+        return Err(grf("GRF-0005", msg));
+    }
+    let query = Parser::for_stored(q)?.view_query()?;
+    let d = DerivedTable { query: Box::new(Subquery { query, at: 0 }), correlation: e.alias.clone(), columns: None };
+    derived(b, &d, 0)
 }
 
 /// The plan of the rows of element table `item`, read into the
@@ -159,7 +197,10 @@ fn end_shape(cx: Context<'_>, desc: &GraphDesc, end: &EndpointDesc, position: &d
         .ok_or_else(|| grf("GRF-0005", format!("there is no vertex table {}", end.vertex)))?;
     let vertex = desc.elements.get(table).ok_or_else(|| grf("GRF-0005", format!("there is no vertex table {}", end.vertex)))?;
     let cols = end.columns.iter().map(position).collect::<Result<Vec<_>>>()?;
-    let vertex_columns = super::super::graph_properties::element_columns(cx.db, cx.auth, &vertex.table)?;
+    let vertex_columns = match &vertex.query {
+        Some(q) => super::super::graph_properties::query_desc(cx, &vertex.table, q)?.0,
+        None => super::super::graph_properties::element_columns(cx.db, cx.auth, &vertex.table)?,
+    };
     let references = end
         .references
         .iter()

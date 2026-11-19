@@ -65,6 +65,10 @@ fn put_element(out: &mut Vec<u8>, e: &ElementTableDesc) {
         put_endpoint(out, &ends.destination);
         put_flag(out, ends.undirected);
     }
+    put_flag(out, e.query.is_some());
+    if let Some(q) = &e.query {
+        out.put_str(q);
+    }
 }
 
 /// What `put_element` wrote.
@@ -73,7 +77,8 @@ fn element(r: &mut Reader<'_>) -> Result<ElementTableDesc> {
     let kind = if r.u8()? == VERTEX { ElementKind::Vertex } else { ElementKind::Edge };
     let (key, labels) = (get_all(r, text)?, get_all(r, label)?);
     let endpoints = if flag(r)? { Some(Endpoints { source: endpoint(r)?, destination: endpoint(r)?, undirected: flag(r)? }) } else { None };
-    Ok(ElementTableDesc { alias, table, kind, key, labels, endpoints })
+    let query = if flag(r)? { Some(r.str()?) } else { None };
+    Ok(ElementTableDesc { alias, table, kind, key, labels, endpoints, query })
 }
 
 /// A label and its properties in bytes.

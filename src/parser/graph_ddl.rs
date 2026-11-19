@@ -33,11 +33,15 @@
 //! Each word but the reserved ones is a `<non-reserved word>`, so a table
 //! or label may still be named by it.
 
+mod indexes;
+
+pub(super) use indexes::REACHABILITY;
+
 use super::Parser;
 use crate::ast::{
     AdjacencyIndex, AlterGraph, AlterGraphAction, DerivedProperty, DropBehavior, DropObject, ElementAction, ElementDefinition,
     EndpointDefinition, GraphDefinition, GraphModeOption, IndexStatement, LabelDefinition, PropertiesDefinition, SchemaStatement,
-    SqlStatement,
+    SqlStatement, TableName,
 };
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
@@ -52,6 +56,10 @@ const VERTEX: &str = "VERTEX";
 const EDGE: &str = "EDGE";
 /// The `<non-reserved word>` TABLES.
 const TABLES: &str = "TABLES";
+/// \[EXTENSION\] [GS §11.3] The `<non-reserved word>` VERTICES.
+const VERTICES: &str = "VERTICES";
+/// \[EXTENSION\] [GS §11.3] The `<non-reserved word>` EDGES.
+const EDGES: &str = "EDGES";
 /// The `<non-reserved word>` LABEL.
 const LABEL: &str = "LABEL";
 /// The `<non-reserved word>` PROPERTIES.
@@ -148,6 +156,18 @@ impl Parser {
             return Err(self.syntax("expected OR REPLACE or IF NOT EXISTS, not both"));
         }
         let name = self.table_name()?;
+        let (vertices, edges) = if self.accept_kw(kw::AS) { self.derived_elements()? } else { self.element_tables()? };
+        let mode = self.graph_mode()?;
+        let invoker = self.accept_kw(kw::WITH);
+        if invoker {
+            self.expect_word(INVOKER)?;
+            self.expect_word(RIGHTS)?;
+        }
+        Ok(GraphDefinition { name, replace, if_not_exists, vertices, edges, mode, invoker })
+    }
+
+    /// VERTEX TABLES ( ... ) \[EDGE TABLES ( ... )\].
+    fn element_tables(&mut self) -> Result<(Vec<ElementDefinition>, Vec<ElementDefinition>)> {
         self.expect_word(VERTEX)?;
         self.expect_word(TABLES)?;
         let vertices = self.element_list(false)?;
@@ -157,13 +177,35 @@ impl Parser {
         } else {
             Vec::new()
         };
-        let mode = self.graph_mode()?;
-        let invoker = self.accept_kw(kw::WITH);
-        if invoker {
-            self.expect_word(INVOKER)?;
-            self.expect_word(RIGHTS)?;
+        Ok((vertices, edges))
+    }
+
+    /// \[EXTENSION\] [GS §11.3] After AS, VERTICES FROM ( `<query>` ) ...
+    /// \[, ...\] \[EDGES FROM ( `<query>` ) ... \[, ...\]\]: element tables of
+    /// queries' rows, each as an element table of VERTEX or EDGE TABLES is
+    /// written but for its query in place of a table's name.
+    fn derived_elements(&mut self) -> Result<(Vec<ElementDefinition>, Vec<ElementDefinition>)> {
+        let mut lists = (Vec::new(), Vec::new());
+        for (word, edges) in [(VERTICES, false), (EDGES, true)] {
+            if edges && !self.accept_word(word) {
+                break;
+            }
+            if !edges {
+                self.expect_word(word)?;
+            }
+            self.expect_kw(kw::FROM)?;
+            let list = if edges { &mut lists.1 } else { &mut lists.0 };
+            loop {
+                if !self.is_delim(delim::LEFT_PAREN) {
+                    return Err(self.syntax("expected ( and a query"));
+                }
+                list.push(self.element_definition(edges)?);
+                if !self.accept_delim(delim::COMMA) {
+                    break;
+                }
+            }
         }
-        Ok(GraphDefinition { name, replace, if_not_exists, vertices, edges, mode, invoker })
+        Ok(lists)
     }
 
     /// OPTIONS ( { ENFORCED | TRUSTED } MODE ), if written.
@@ -197,7 +239,9 @@ impl Parser {
 
     /// `<element table definition>`, of an edge if `edge`.
     fn element_definition(&mut self, edge: bool) -> Result<ElementDefinition> {
-        let table = self.table_name()?;
+        let at = self.here();
+        let query = self.element_query()?;
+        let mut table = if query.is_some() { TableName { auth: None, ident: String::new(), at } } else { self.table_name()? };
         let alias = if self.accept_kw(kw::AS) { Some(self.label_named()?) } else { None };
         let key = if self.accept_kw(kw::KEY) { Some(self.column_list()?) } else { None };
         let (mut undirected, mut source, mut destination) = (false, None, None);
@@ -209,7 +253,25 @@ impl Parser {
             destination = Some(self.endpoint()?);
         }
         let labels = self.labels_and_properties()?;
-        Ok(ElementDefinition { table, alias, key, undirected, source, destination, labels })
+        if query.is_some() {
+            // Of a query's rows, the alias written, else its first label.
+            let named = alias.as_ref().map(|(a, _)| a.clone()).or_else(|| labels.first().and_then(|l| l.name.clone()));
+            table.ident = named.ok_or_else(|| self.syntax("expected AS and an alias of the query's element table, or a LABEL"))?;
+        }
+        Ok(ElementDefinition { table, alias, key, undirected, source, destination, labels, query })
+    }
+
+    /// \[EXTENSION\] [GS §11.3] ( `<query expression>` ), of an element
+    /// table of its rows, if next: its text.
+    fn element_query(&mut self) -> Result<Option<String>> {
+        if !self.accept_delim(delim::LEFT_PAREN) {
+            return Ok(None);
+        }
+        let start = self.here();
+        self.query_expression()?;
+        let text = self.text_from(start);
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(Some(text))
     }
 
     /// `<endpoint>`, after SOURCE or DESTINATION.

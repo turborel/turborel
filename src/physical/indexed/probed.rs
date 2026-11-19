@@ -41,6 +41,7 @@ impl PhysicalPlanner<'_> {
             through: read.through.clone(),
             needed: read.needed.to_vec(),
             located: read.located,
+            positions: None,
         };
         Some(Choice { read: probing, probe, total: outer * cost, spatial: false })
     }

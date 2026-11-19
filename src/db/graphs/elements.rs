@@ -6,7 +6,7 @@
 
 use super::graph_rule;
 use crate::ast::{ElementDefinition, EndpointDefinition, LabelDefinition, PropertiesDefinition, TemporaryKind};
-use crate::binder::{PropertyBinding, element_columns, property_bound, property_type, qualify};
+use crate::binder::{PropertyBinding, element_columns, property_bound, property_type, qualify, query_columns};
 use crate::catalog::{
     ConstraintKind, ElementKind, ElementTableDesc, EndpointDesc, Endpoints, GraphMode, LabelDesc, PropertyDesc, QualifiedName, TableDesc,
     applicable, identifier, sole,
@@ -33,14 +33,22 @@ impl State {
     ///
     /// As `describe_graph` says.
     pub(super) fn element_described(&self, cx: Element<'_>, e: &ElementDefinition) -> Result<(ElementTableDesc, Vec<QualifiedName>)> {
-        let table = qualify(&e.table, cx.binding.names);
-        let desc = self.element_table(cx.binding.owner, &table).or_at(e.table.at)?;
+        let (table, desc, mut reads) = if let Some(q) = &e.query {
+            // [GS §11.3] Of a query's rows, the tables it reads.
+            let table = QualifiedName { auth: String::new(), ident: e.alias_name().to_owned() };
+            let (desc, reads) = query_columns(self, cx.binding, &table, q).or_at(e.table.at)?;
+            (table, desc, reads)
+        } else {
+            let table = qualify(&e.table, cx.binding.names);
+            let desc = self.element_table(cx.binding.owner, &table).or_at(e.table.at)?;
+            (table.clone(), desc, vec![table])
+        };
         let key = element_key(&desc, cx.mode, e.key.as_deref()).or_at(e.table.at)?;
         let endpoints = match cx.kind {
             ElementKind::Vertex => None,
             ElementKind::Edge => Some(self.endpoints(cx, &desc, e)?),
         };
-        let mut reads = vec![table.clone()];
+        let query = e.query.clone();
         let mut labels = Vec::new();
         let written =
             if e.labels.is_empty() { vec![LabelDefinition { name: None, at: e.table.at, properties: None }] } else { e.labels.clone() };
@@ -53,7 +61,7 @@ impl State {
             labels.push(LabelDesc { name, properties });
         }
         one_expression(e.alias_name(), &labels)?;
-        Ok((ElementTableDesc { alias: e.alias_name().to_owned(), table, kind: cx.kind, key, labels, endpoints }, reads))
+        Ok((ElementTableDesc { alias: e.alias_name().to_owned(), table, kind: cx.kind, key, labels, endpoints, query }, reads))
     }
 
     /// The table or view `table` as an element table of a graph `owner`
@@ -226,7 +234,11 @@ impl State {
             let msg = format!("{clause} {alias} is no vertex table of the graph");
             return Err(graph_rule(Some("GRF-0004"), msg)).or_at(at);
         };
-        let vertex_desc = element_columns(self, cx.binding.owner, &vertex.table).or_at(at)?;
+        let vertex_desc = match &vertex.query {
+            Some(q) => query_columns(self, cx.binding, &vertex.table, q).map(|(d, _)| d),
+            None => element_columns(self, cx.binding.owner, &vertex.table),
+        }
+        .or_at(at)?;
         let found = match &end.key {
             Some(columns) => (columns.clone(), end.references.clone().unwrap_or_else(|| vertex.key.clone())),
             None => inferred(desc, (vertex, &vertex_desc), clause).or_at(at)?,

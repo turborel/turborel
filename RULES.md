@@ -149,6 +149,13 @@ verification approach DO-178C expects (§8).
 | D109 | A node or edge table is a base table with hidden pseudo-columns, and its schema's SYS_GRAPH is described from them |
 | D110 | GQL is translated to SQL clause by clause, and its MATCH is a GRAPH_TABLE |
 | D111 | Graph algorithms run on a CSR of dense vertex numbers, in fixed morsels, the same result on any number of threads |
+| D112 | Each graph compatibility syntax compiles to the GPML pattern and binds through the one GRAPH_TABLE binder |
+| D113 | A rigid graph pattern is a join of its element tables, its edges Expand |
+| D114 | Cyclic patterns take a worst-case optimal join; small quantifiers unroll |
+| D115 | A label index numbers an element table's rows for label bitmaps |
+| D116 | A reachability index prunes a search's starts by landmark labels |
+| D117 | A graph's statistics are made of its tables', and choose where a search starts |
+| D118 | A search expands a frontier at once and chooses MS-BFS and workers by cost |
 | D119 | One frozen geometry model of every SQL/MM Spatial type, stored as canonical well-known binary |
 | D120 | The geometry types are a built-in type family, with subtyping, TREAT, IS OF, CAST and an ordering of EQUALS ONLY BY RELATIVE |
 | D121 | The SQL/MM Spatial Information Schema is standard views over system tables of seeded and defined rows |
@@ -3857,9 +3864,26 @@ timestamp's microseconds of UTC, which a history keeps (D82), since the
 logical timestamps of D29 are kept with no row. The bindings of the
 path patterns are joined on
 the variables they share and kept by the match mode (§7.3). Element
-WHERE clauses are prefilters, run as the search binds the element; a
+WHERE clauses are prefilters, run as the search binds the element. A
 prefilter that reads a later variable outside a quantifier is run on
-the walk's group. A set function of a group variable is a slot of the
+the walk's group. Inside a quantifier it is deferred. The thread keeps
+in a register the element and the values it read, and the filter is
+tested where the variables it waits for are bound, or with them null
+as the scope that declares them ends (`graph/run/deferred.rs`). A path
+function in a prefilter is of the path so far, which the thread keeps in
+a register of its own, a subpath's marks in it. A prefilter that reads
+another path pattern's variable has its path pattern searched after
+that one, once for each of its bindings, and a match joins only the
+bindings each was searched with (`exec/graph_table/correlated.rs`).
+EXISTS IN PATH p is a path pattern of its own, its variables and
+prefilters the GRAPH_TABLE's, and a path function of p. The automaton is
+run along p's elements from each of p's vertices (`graph/within.rs`).
+LINE_GRAPH (g, L) is a graph descriptor made as the GRAPH_TABLE is
+bound, each edge table of L a vertex table and each pair of them that
+meets at a vertex an edge table of a query's rows (`binder/graph/line.rs`).
+An element table of a query's rows, of LINE_GRAPH or CREATE PROPERTY
+GRAPH ... AS, keeps its query's text in the catalog. It is read as a
+derived table of the query, as a view is. A set function of a group variable is a slot of the
 match row, as is each path function. A subpath variable is two hidden
 variables of its path pattern, bound to the vertices where its
 parenthesized pattern begins and ends, so its path functions are of
@@ -3869,10 +3893,10 @@ group, PREV or FIRST register of the automaton (§11.1). FOR EACH
 SEGMENT is a postfilter of two edge variables of its own. The search is bounded by OPTIONS
 and else by the settings GRAPH.* (§20). Passing a bound fails with
 54061 (GRF-0061), or, ON LIMIT TRUNCATE, keeps the paths found and warns
-01W61. The rigid parts of a pattern are searched by the automaton, as
-its quantified parts are, so a match never depends on how the planner
-would join. EXPLAIN shows each path's automaton and algorithm and how
-each edge table is followed.
+01W61. A pattern the binder plans as a join (D113) or matches by the
+worst-case optimal join (D114) is not searched, and the search's limits
+do not bound it. EXPLAIN shows each path's automaton and algorithm and
+how each edge table is followed.
 
 #### D109. A node or edge table is a base table with hidden pseudo-columns, and its schema's SYS_GRAPH is described from them
 
@@ -3990,6 +4014,191 @@ statement's transaction. Of a property graph's result it is one MERGE
 per vertex table, each reading its own vertices' keys back from their
 identities, all of one run of the algorithm held for the statement.
 GRF-0034 is SQLSTATE 22W34, SQLCODE -301.
+
+#### D112. Each graph compatibility syntax compiles to the GPML pattern and binds through the one GRAPH_TABLE binder
+
+SQL Server's MATCH, PGQL's SELECT ... FROM MATCH and openCypher's MATCH
+... RETURN (GS §10) [EXTENSION] are front ends of the parser alone
+(`parser/graph/compat`, its `pgql` and `cypher`). Each compiles its query to
+the GPML AST of a GRAPH_TABLE and its relational query, so the one
+GRAPH_TABLE binder and operator bind and run it. No second binder or
+operator exists, and a compatibility query gets every rule of
+GRAPH_TABLE, its prefilters, selectors, limits and privileges, for free.
+
+A MATCH in WHERE names no graph. Its graph is found from the catalog in
+the binder, never by name in the parser. It is SYS_GRAPH of the FROM
+tables' schema when all of them are its element tables, else the one
+graph whose element tables they all are. None, or several and no
+SYS_GRAPH, is -103. Each MATCH that is a conjunct of WHERE becomes one
+GRAPH_TABLE appended to FROM, joined to the FROM tables on their keys.
+A MATCH under OR or NOT becomes the keys IN a GRAPH_TABLE.
+
+An element table keyed by `$NODE_ID` or `$EDGE_ID` alone has that key's
+text as its ELEMENT_ID, so `x.$NODE_ID` inside GRAPH_TABLE equals the
+row's `$node_id`. Hints in a `/*+ ... */` comment after `GRAPH_TABLE (`
+are read into the same hints as OPTIONS, which come first when both
+write one, and never change results.
+
+#### D113. A rigid graph pattern is a join of its element tables, its edges Expand
+
+A GRAPH_TABLE (GS §16 R16.2) whose path patterns are concatenations of
+element patterns, reading no table before it, is bound as a derived
+table: the join of one scan per element variable, filtered by the
+edges' ends, the prefilters, the restrictors, the match mode and the
+postfilter, and projected to its COLUMNS (`binder/graph/joins.rs`). The
+match row a search fills is rebuilt over the join's columns, so the
+bound expressions are read unchanged. A variable that may bind several
+tables, or an edge that may lie either way, gives one join of each
+choice, at most 64, and the GRAPH_TABLE is their UNION ALL. Each edge
+of a table of no adjacency index scans that table whole in each join,
+where a search reads it once, so past 4 such scans the pattern is
+searched. A self-loop
+an edge pattern may walk both ways counts once, as the search counts
+it. The planner orders the join (D35), so the start point and the
+direction come from its estimates. An index join probing an adjacency
+index is shown as Expand from the edge's source, Expand (reverse) from
+its destination, through the reverse entries an index kept both ways
+holds, and ExpandInto when both ends are bound
+(`physical/indexed/expand.rs`). An adjacency index holds no entry of a
+null end, so the join tests each end that may be null IS NOT NULL, as
+its equalities imply, and the planner probes the index of a table read
+under such tests. A pattern with a selector, a COST, a
+group's set function or a path function, ONE ROW PER VERTEX or STEP,
+OPTIONS limits or a search hint (GRAPH_START, GRAPH_DIRECTION,
+USE_ADJACENCY, PATH_ALGO), a view or a table read FOR SYSTEM_TIME, a
+subquery, or a restrictor over a variable written twice stays with the
+search. A join is not bounded by GRAPH.* or 54061.
+
+#### D114. Cyclic patterns take a worst-case optimal join; small quantifiers unroll
+
+A rigid pattern whose edge patterns close a cycle of its node patterns,
+over edge tables that each have an adjacency index, is matched by
+generic join unless the hint NO_WCOJ is written (`graph/wcoj.rs`). Its
+vertex variables are bound one at a time, each next the one tied to
+most bound ones, its candidates the intersection of their sorted
+neighbour lists. The edges are bound last, and each path's bindings are
+joined by the executor as searched ones are. A quantifier of at most
+three iterations, of a body that is rigid itself and within no other
+quantifier, is unrolled into a join per count of iterations, at most 16
+in all (`binder/graph/joins/rigid.rs`). Node patterns it makes adjacent
+are one vertex, an anonymous one taking the other's variable, and two
+named ones keep the search. Of comma-separated path patterns, one
+written as an earlier one is, anonymous elements aside, is searched
+once (`logical/graph/common.rs`), and an edge pattern written twice in
+a join is joined once. EXPLAIN shows the worst-case optimal join and
+each path searched once.
+
+#### D115. A label index numbers an element table's rows for label bitmaps
+
+A graph's labels belong to its element tables, never to a row, so the
+label index is of a table and the bitmaps are the graph's, made by the
+executor. The `labels` method (`index/labels.rs`) keeps an entry of each
+row version under the row's NOT NULL key in a pager file's B-link tree,
+and numbers the rows densely in memory, of the memory budget, made as
+the index is first read. A row keeps its number while one of its
+versions has an entry. Maintenance numbers them again once more than
+max(64, an eighth) of the numbers are of rows gone. CREATE LABEL INDEX
+ON GRAPH (`db/graphs/indexes.rs`) is the CREATE INDEX of the method on
+one element table's key, or on each base element table's. A
+GRAPH_TABLE (`exec/graph_table/labels.rs`) places each indexed table's
+numbers after those before it at a word's boundary and keeps, of each
+label, a bitmap of every table carrying it. A reached element's labels
+are its bits, and a path's starts are the rows whose bits its first
+node pattern's label expression holds of, each checked as seen by the
+reader without its columns read. The bitmaps hold a table all or none,
+so the tests give what the tables' labels give, and the rows are the
+same with the index or without.
+
+#### D116. A reachability index prunes a search's starts by landmark labels
+
+The `reachability` method (`index/reachability.rs`) keeps an edge
+table's edges, source key then destination key of the same types, in a
+pager file's B-link tree. In memory, of the memory budget, it keeps
+pruned landmark labels of the edges (Yano et al., CIKM 2013), ranked by
+degree, made as it is first read. An edge added is added to them
+exactly: if its source reaches its destination nothing changes, else the
+source becomes a hub of the vertices reaching it and of those it now
+reaches. An edge taken back, its last version collected or its insert
+undone, drops the labels until maintenance makes them again, and the
+index answers nothing meanwhile. An entry kept may be of a version a
+reader does not see, so the labels say more reach than is visible,
+never less. CREATE REACHABILITY INDEX ON GRAPH (`db/graphs/indexes.rs`)
+is the CREATE INDEX of the method with REACHABILITY.SOURCE_COLUMNS the
+source key's count. A path pattern is pruned (`logical/graph/indexes.rs`)
+when it has a quantifier, its edges are all of the indexed table,
+followed one way, between vertices of one vertex table that both ends
+reference by the same columns, and its last node pattern has a WHERE of
+its own element alone. Before the search, that WHERE is run on each
+vertex of the table, and a start of the table is kept if it is one of
+those kept or reaches one (`exec/graph_table/reach.rs`). A WHERE that
+fails keeps the vertex as an end. A start of another table is kept.
+Every match of a start dropped would end at a vertex it reaches, so the
+matches are those found without the index. EXPLAIN names the indexes
+read.
+
+#### D117. A graph's statistics are made of its tables', and choose where a search starts
+
+A property graph's statistics (GS §13.6, `stats/graph.rs`) are the rows of each
+element table, an edge table's out-degree and in-degree distributions,
+the statistics of each property that is a column alone, and the edges
+of each label transition. They take no pass of their own. They are
+made, as they are asked for, of the statistics of the graph's tables
+(D31), each column's of which now keeps how often its values repeat
+(`stats/frequencies.rs`). A degree distribution is its endpoint
+column's. Of an endpoint of several columns it is that of its column of
+the most distinct values, its maximum the least of its columns' maxima,
+each a bound above the whole key's. So they are gathered, kept and
+recovered as a table's are. Asking for them makes a table's due, and
+none waits for a pass (D35). `State::graph_statistics` and
+`State::edge_degree` answer the planner and the executor, and
+INFORMATION_SCHEMA.GRAPH_STATISTICS shows them.
+
+The planner takes a probe of an edge table's index by an endpoint's
+columns to find the average degree there. A GRAPH_TABLE search of a
+pattern found the same either way may start from its last vertex, its
+pattern reversed and each path reversed back
+(`exec/graph_table/start.rs`). The hints GRAPH_START and
+GRAPH_DIRECTION decide first. Else, with both ends filtered and the
+statistics known, the end of fewer candidates times the fan-out of its
+first step is taken. A pattern whose paths depend on the order of the
+search is never reversed, so no result depends on the statistics. Only
+a MAX_SEARCH_STATES limit may be reached one way and not the other. The
+label transitions estimate a search's step (D118).
+
+#### D118. A search expands a frontier at once and chooses MS-BFS and workers by cost
+
+A breadth-first search (BFS, MS-BFS, ALL SHORTEST, and each level on
+workers) asks the view for the hops of up to 1,024 states of a level at
+once (`GraphView::expand`, `graph/search/expand.rs`). The GRAPH_TABLE
+store reads their vertices' rows in id order, asks each edge table's
+adjacency index for all their lists together (`Adjacency::steps_many`),
+and reads each edge row they name once, in id order, then checks it as
+D107 says (`exec/graph_table/store/expand.rs`). The index reads the lists
+of its compacted adjacency in one pass in vertex-number order, decoding
+each other end once, and the others of its tree in key order
+(`index/adjacency/batch.rs`). A vertex's hops are those it has alone, and
+states are still taken in the level's order, so results do not change.
+
+The selector and restrictors name an algorithm's family
+(`graph/search/choice.rs`). Of ANY SHORTEST or ANY from many starts, MS-BFS
+runs when a batch of 64 starts times each one's estimated reach is at
+least the graph's vertices, so their searches overlap; else BFS from each
+start, whose states cost less. A start's reach is the average degree's
+powers summed up to MAX_PATH_LENGTH, at most every vertex, of the size the
+view reports (`GraphView::size`, the element tables' row counts). The
+degree is of the edges a step may follow: the edges of the label
+transitions (D117) of source, edge and destination labels its edge
+pattern and the node patterns written beside it match, each way the
+edge pattern walks, the most of any step, once the statistics count
+them (`binder/graph/sizing.rs`). An edge's label expression of `!` or
+`&` falls back to every edge, and a node's, or a side with no node
+pattern, matches any label. Workers
+are used when EXECUTOR.GRAPH_THREADS is above 1, the estimated states
+reach GRAPH.PARALLEL_MIN_STATES, and there is more than one piece of
+work. A PATH_ALGO hint (GS §16 R16.8) chooses within the family, and is
+refused with -103 (GRF-0070) where it cannot answer the pattern. EXPLAIN
+shows the choice and the estimate, from the row counts as the statement
+was bound; the executor chooses again from the counts as it runs.
 
 #### D119. One frozen geometry model of every SQL/MM Spatial type, stored as canonical well-known binary
 

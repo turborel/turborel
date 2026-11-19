@@ -19,6 +19,7 @@ mod hybrid_search;
 mod order_by;
 mod ordered;
 mod sets;
+mod special;
 mod vector_search;
 
 // [ISO/IEC 9075-2:2023 §5.2, §7.17] Words of a <with clause> that SQL-92
@@ -67,6 +68,13 @@ impl Parser {
     /// clause>`\] `<query expression body>` \[`<order by clause>`\]
     /// \[`<result offset clause>`\] \[`<fetch first clause>`\]
     pub(super) fn query_expression(&mut self) -> Result<QueryExpression> {
+        // [GS §10.3] PGQL and Cypher queries.
+        if let Some(from) = self.pgql_from() {
+            return self.pgql_query(from);
+        }
+        if self.at_cypher() {
+            return self.cypher_query();
+        }
         if self.is_kw(kw::WITH) {
             return self.nested(Self::with_clause);
         }
@@ -294,6 +302,11 @@ impl Parser {
 
     /// [X3.135-1986 §5.25] `<query specification>` ::= SELECT \[ALL | DISTINCT\] `<select list>` `<table expression>`
     pub(super) fn query_specification(&mut self) -> Result<QuerySpecification> {
+        self.framed_specification(Self::plain_specification)
+    }
+
+    /// A `<query specification>`, read as its Format is.
+    fn plain_specification(&mut self) -> Result<QuerySpecification> {
         self.expect_kw(kw::SELECT)?;
         let distinct = if self.accept_kw(kw::DISTINCT) {
             true
@@ -502,39 +515,19 @@ impl Parser {
             }
             return Ok(inner);
         }
-        if self.at_unnest() {
-            return self.collection_derived_table();
-        }
-        if self.at_chunk_table() {
-            return self.chunk_table();
-        }
-        if self.at_ptf_table() {
-            return self.ptf_table();
-        }
-        if self.at_vector_search() {
-            return self.vector_search();
-        }
-        if self.at_graph_algorithm() {
-            return self.graph_algorithm_table();
-        }
-        if self.at_json_table() {
-            return self.json_table();
-        }
-        if self.at_graph_table() {
-            return self.graph_table();
-        }
-        if self.at_hybrid_search() {
-            return self.hybrid_search();
-        }
-        if self.at_gql_table() {
-            return self.gql_table();
+        if let Some(special) = self.special_table()? {
+            return Ok(special);
         }
         // [ISO/IEC 9075-2:2023 §7.6] <only spec>.
         let (table, only) = self.target_table()?;
         // [ISO/IEC 9075-2:2023 §7.6] <query system time period
         // specification>, of a <table or query name>.
         let system_time = if only { None } else { self.system_time_read()? };
+        let path = self.for_path();
         let correlation = self.correlation()?;
+        if path {
+            self.path_table(&table, correlation.as_ref())?;
+        }
         let columns = if correlation.is_some() { self.derived_columns()? } else { None };
         self.recognized(TableReference::Table(NamedTable { table, only, correlation, columns, system_time }))
     }

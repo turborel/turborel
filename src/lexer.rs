@@ -14,6 +14,9 @@
 //! * A `<separator>` is spaces, newlines and comments. A tab is not a `<space>`.
 //! * A `<comment>` is "--" up to and including a `<newline>`, so it cannot be the
 //!   last thing in the input, or a `<bracketed comment>` (`lexer/comments.rs`).
+//!   \[EXTENSION\] After MATCH, "--" written between a ")" and a "(", as
+//!   Cypher's relationships `)--(`, `)-->(`, `)<--(` and `)<-->(` are,
+//!   is two minus signs (`lexer/comments.rs`).
 //! * A `<character string literal>` may be empty, and may go on after a
 //!   `<separator>` with a `<newline>` in another quoted part [ISO/IEC
 //!   9075:1992 §5.3 SR1, SR4, SR9].
@@ -216,7 +219,7 @@ fn error(code: Code, pos: usize, msg: impl Into<String>) -> SqlError {
 /// number of hexits, a token not followed by a separator or delimiter, or an
 /// `<identifier>` too long.
 pub fn lex(src: &str) -> Result<Vec<Token>> {
-    let mut s = Scanner { c: src.chars().collect(), at: 0 };
+    let mut s = Scanner { c: src.chars().collect(), at: 0, matched: false };
     let mut toks = Vec::new();
     while let Some(first) = s.peek(0) {
         let skipped = s.skip_separator()?;
@@ -226,6 +229,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>> {
         let start = s.at;
         let tok = s.token(first)?;
         s.check_followed(&tok, start)?;
+        s.matched |= tok == Tok::KeyWord(kw::MATCH);
         toks.push(Token { tok, start, end: s.at });
     }
     toks.push(Token { tok: Tok::End, start: s.at, end: s.at });
@@ -253,6 +257,8 @@ pub fn authorization_identifier(text: &str) -> Result<String> {
 struct Scanner {
     c: Vec<char>,
     at: usize,
+    /// MATCH was read, so `--` may be part of a relationship (`comments.rs`).
+    matched: bool,
 }
 
 impl Scanner {
@@ -309,7 +315,7 @@ impl Scanner {
             self.advance(n);
             return Ok(true);
         }
-        if self.peek(0) != Some('-') || self.peek(1) != Some('-') {
+        if self.peek(0) != Some('-') || self.peek(1) != Some('-') || self.at_relationship() {
             return self.bracketed_comment();
         }
         // <comment> ::= --[<character>...]<newline>

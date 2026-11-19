@@ -11,7 +11,8 @@
 
 mod shape;
 
-pub(crate) use shape::{EdgeShape, GraphShape, identity_type};
+pub(crate) use crate::logical::identity_type;
+pub(crate) use shape::{EdgeShape, GraphShape};
 
 use std::sync::Arc;
 use std::time::Instant;

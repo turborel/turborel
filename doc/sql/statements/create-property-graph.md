@@ -11,13 +11,20 @@ CREATE PROPERTY GRAPH: define a property graph over tables
 ```
 <create property graph statement> ::=
     CREATE [ OR REPLACE ] PROPERTY GRAPH [ IF NOT EXISTS ] <graph name>
-    VERTEX TABLES ( <element table definition> [ { , <element table definition> }... ] )
-    [ EDGE TABLES ( <element table definition> [ { , <element table definition> }... ] ) ]
+    { <element tables> | AS <derived elements> }
     [ OPTIONS ( { ENFORCED | TRUSTED } MODE ) ]
     [ WITH INVOKER RIGHTS ]
 
+<element tables> ::=
+    VERTEX TABLES ( <element table definition> [ { , <element table definition> }... ] )
+    [ EDGE TABLES ( <element table definition> [ { , <element table definition> }... ] ) ]
+
+<derived elements> ::=
+    VERTICES FROM <element table definition> [ { , <element table definition> }... ]
+    [ EDGES FROM <element table definition> [ { , <element table definition> }... ] ]
+
 <element table definition> ::=
-    <table name> [ AS <element table alias> ]
+    { <table name> | ( <query expression> ) } [ AS <element table alias> ]
     [ KEY ( <column name list> ) ]
     [ [ UNDIRECTED ] SOURCE <endpoint> DESTINATION <endpoint> ]
     [ <label and properties>... | <element table properties> ]
@@ -71,6 +78,14 @@ whose endpoint matches no vertex is then passed over by a query.
 The graph is its schema owner's. Defined with the owner's rights, a
 query of it needs SELECT on the graph alone; WITH INVOKER RIGHTS, it
 needs SELECT on each table it reads too.
+
+An element table may be a query in parentheses in place of a table,
+and AS VERTICES FROM ... EDGES FROM ... writes each such. Its rows are
+the query's, run as the graph is queried. It is named by its alias, its
+first label's name if none is written. Its rows declare no key, so its
+KEY is written, and a graph of one is of TRUSTED MODE, ENFORCED being
+SQLCODE -103. The graph depends on the tables its queries read, as on
+its element tables.
 
 OR REPLACE replaces a graph of the name, keeping the privileges granted
 on it. IF NOT EXISTS leaves a graph of the name as it is.

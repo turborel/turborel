@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use super::views::Source;
 use super::{Binder, Context, FromItem, Invoked, Purpose, Scope, case::set_type, qualify};
-use crate::ast::ValueExpression;
+use crate::ast::{QueryExpression, ValueExpression};
 use crate::catalog::{Horizon, Principal, QualifiedName, TableDesc};
 use crate::db::State;
 use crate::error::{Result, SqlError};
@@ -90,6 +90,45 @@ fn row_bound(db: &State, binding: PropertyBinding<'_>, desc: &TableDesc, text: &
     let binder = Binder::new(cx, None, (vec![item], names, visible), BTreeSet::new());
     let (_, t) = binder.value_expression(&value, Scope::Rows(ONE_ROW))?;
     Ok((t, reads))
+}
+
+/// \[EXTENSION\] [GS §11.3] The element table `name` of the rows of query
+/// `text`, as `binding` binds it: its columns, with no constraint; and the
+/// tables and views the query names.
+///
+/// # Errors
+///
+/// SQLCODE -102 if it does not parse; as its binding's.
+pub fn query_columns(
+    db: &State,
+    binding: PropertyBinding<'_>,
+    name: &QualifiedName,
+    text: &str,
+) -> Result<(TableDesc, Vec<QualifiedName>)> {
+    let params = Params::new();
+    let (desc, query) = query_desc(binding.context(db, &params), name, text)?;
+    let mut names = Vec::new();
+    query.table_names(&mut names);
+    let mut reads: Vec<QualifiedName> = Vec::new();
+    for t in names.into_iter().map(|t| qualify(t, binding.names)) {
+        if !reads.contains(&t) {
+            reads.push(t);
+        }
+    }
+    Ok((desc, reads))
+}
+
+/// The element table `name` of the rows of query `text`, bound in `cx`,
+/// and the query.
+///
+/// # Errors
+///
+/// SQLCODE -102 if it does not parse; as its binding's.
+pub(super) fn query_desc(cx: Context<'_>, name: &QualifiedName, text: &str) -> Result<(TableDesc, QueryExpression)> {
+    let query = Parser::for_stored(text)?.view_query()?;
+    let bound = super::set_operations::bind_query_expression(cx, &query, &super::query::Nesting::Query)?;
+    let desc = TableDesc { columns: super::views::described(&bound.columns), ..super::views::unconstrained(name) };
+    Ok((desc, query))
 }
 
 /// [ISO/IEC 9075:1992 §9.3] The type a property of `types`, one of each

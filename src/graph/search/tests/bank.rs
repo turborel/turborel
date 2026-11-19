@@ -239,7 +239,7 @@ fn t12_aggregate_of_unbounded_group_in_prefilter() {
     let bracketed = group(
         Restrictor::Walk,
         body.clone(),
-        Some(filter(&[Read { var: 2, previous: false, first: false }], move |b| Ok(never(b.group(2).len())))),
+        Some(filter(&[Read { var: 2, previous: false, first: false, later: false, path: None }], move |b| Ok(never(b.group(2).len())))),
     );
     let err = search(
         &PathPattern::new(variables(&["x", "y"], &["e"]), bracketed).select(Selector::AllShortest),
@@ -271,7 +271,7 @@ fn bounded_group_aggregates_in_prefilters() {
             node(Some(1), None, None),
         ])
     };
-    let two = || Some(filter(&[Read { var: 2, previous: false, first: false }], |b| Ok(b.group(2).len() == 2)));
+    let two = || Some(filter(&[Read { var: 2, previous: false, first: false, later: false, path: None }], |b| Ok(b.group(2).len() == 2)));
     let trail = group(Restrictor::Trail, body(None), two());
     let found = spelled(&PathPattern::new(variables(&["x", "y"], &["e"]), trail).select(Selector::AllShortest), &g, &names).unwrap();
     assert_eq!(found.len(), 11, "the two-transfer walks: {found:?}");

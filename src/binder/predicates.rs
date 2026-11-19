@@ -191,6 +191,7 @@ impl Binder<'_> {
             Predicate::Set { value, not } => self.set_predicate(value, *not, scope)?,
             Predicate::Type { value, types, not } => self.type_predicate(value, types, *not, scope)?,
             Predicate::Graph(p) => self.graph_predicate(p)?,
+            Predicate::GraphMatch(m) => return Err(super::query::graph_match_misplaced(m)),
             Predicate::Exists(s) => Cond::Exists(self.subquery(s, scope, Use::Exists)?.0),
             Predicate::Unique { subquery: s, nulls_distinct } => self.unique(s, *nulls_distinct, scope)?,
             Predicate::Match { value, unique, match_type, subquery } => {

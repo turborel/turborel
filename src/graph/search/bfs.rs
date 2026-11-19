@@ -5,6 +5,7 @@
 
 use std::collections::HashSet;
 
+use super::expand::{ahead, prefetch};
 use super::states::{Context, States, walk_to};
 use crate::error::Result;
 use crate::graph::binding::{Letter, PathBinding};
@@ -87,7 +88,8 @@ pub(super) fn any_shortest(ctx: &Context<'_>, start: ElementId, meter: &mut Mete
     let mut level = 0_usize;
     'levels: while !frontier.is_empty() && !ctx.all_found(&tree.ends) {
         let mut next = Vec::new();
-        for node in frontier {
+        for (at, &node) in frontier.iter().enumerate() {
+            ahead(&mut runner, &tree.states, (&frontier, at), |&n| n)?;
             meter.check()?;
             let successors = tree.states.successors(&mut runner, node, level)?;
             if !successors.is_empty() && !meter.length(level.saturating_add(1))? {
@@ -128,12 +130,9 @@ pub(super) fn any_shortest_levels(ctx: &Context<'_>, start: ElementId, width: us
         let states = &tree.states;
         let expanded = crate::threads::morsels(width, (frontier.len(), LEVEL_MORSEL), meter.stop(), |range| {
             let mut worker = Runner::new(ctx.nfa, ctx.view);
-            frontier
-                .get(range)
-                .unwrap_or_default()
-                .iter()
-                .map(|&node| states.successors(&mut worker, node, level))
-                .collect::<Result<Vec<_>>>()
+            let morsel = frontier.get(range).unwrap_or_default();
+            prefetch(&mut worker, states, morsel)?;
+            morsel.iter().map(|&node| states.successors(&mut worker, node, level)).collect::<Result<Vec<_>>>()
         })?;
         let mut next = Vec::new();
         for (node, successors) in frontier.iter().zip(expanded.into_iter().flatten()) {

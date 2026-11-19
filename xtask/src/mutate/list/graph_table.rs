@@ -8,6 +8,10 @@
 
 use super::{Mutation, Package};
 
+pub(super) mod indexes;
+pub(super) mod joins;
+pub(super) mod statistics;
+
 /// The mutations of GRAPH_TABLE, in the order they run.
 pub const GRAPH_TABLE: [Mutation; 10] = [
     Mutation {
@@ -94,9 +98,9 @@ pub const GRAPH_TABLE: [Mutation; 10] = [
         name: "graph-table-adjacency-unchecked",
         package: Package::Core,
         breaks: "an adjacency index's entry is followed without its row read again, so an edge whose source changed is still followed from the old one",
-        file: "src/exec/graph_table/store.rs",
-        original: "            if key_text(&values_of(&edge_row, &at.columns)) != key_text(&key) {",
-        replacement: "            if key_text(&values_of(&edge_row, &at.columns)) != key_text(&key) && false {",
+        file: "src/exec/graph_table/store/expand.rs",
+        original: "                if key_text(&values_of(edge_row, &side.at.columns)) != key_text(&key.0) {",
+        replacement: "                if key_text(&values_of(edge_row, &side.at.columns)) != key_text(&key.0) && false {",
         integration: &["graph_table::adjacency::indexed_matches_follow_changes_13_2"],
         unit: &[],
     },

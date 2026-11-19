@@ -164,7 +164,23 @@ pub fn exposure(pattern: &GraphPattern) -> Result<Exposure> {
 ///
 /// # Errors
 ///
+/// \[EXTENSION\] [GS §11.2] The patterns of EXISTS IN PATH in `table`'s
+/// conditions and columns, in the order written.
+///
+/// # Errors
+///
+/// As the references of `table` are checked.
+pub fn in_path_patterns(table: &GraphTable) -> Result<Vec<crate::ast::ParenthesizedPath>> {
+    let mut top = exposure(&table.pattern)?;
+    rows_variables(&table.rows, &mut top)?;
+    references::walked(table, &top)
+}
+
 /// As `exposure`.
+///
+/// # Errors
+///
+/// As `exposure`'s.
 pub fn parenthesized_exposure(p: &crate::ast::ParenthesizedPath) -> Result<Exposure> {
     let mut seen = expression_exposure(&p.expression)?;
     if restricts(p.prefix.as_ref()) {

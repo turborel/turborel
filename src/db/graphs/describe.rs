@@ -48,10 +48,7 @@ impl State {
             horizon: how.horizon.unwrap_or(&WHOLE),
             invoked: if how.horizon.is_none() { Some(&invoked) } else { None },
         };
-        let mode = match def.mode {
-            None | Some(GraphModeOption::Enforced) => GraphMode::Enforced,
-            Some(GraphModeOption::Trusted) => GraphMode::Trusted,
-        };
+        let mode = graph_mode(def)?;
         let mut elements: Vec<ElementTableDesc> = Vec::new();
         let mut reads: Vec<QualifiedName> = Vec::new();
         let written = def.vertices.iter().map(|e| (e, ElementKind::Vertex)).chain(def.edges.iter().map(|e| (e, ElementKind::Edge)));
@@ -85,6 +82,28 @@ impl State {
         let how = Describing { names: &desc.names, horizon: if fixed { Some(&desc.horizon) } else { None } };
         let again = self.describe_graph(&def, how).map_err(unplaced)?;
         Ok(GraphDesc { select: desc.select.clone(), valid: desc.valid, ..again })
+    }
+}
+
+/// The mode of the graph `def` defines: ENFORCED unless written; TRUSTED
+/// of one with an element table of a query's rows, whose rows declare no
+/// constraint [GS §11.3].
+///
+/// # Errors
+///
+/// SQLCODE -103 if such a graph is written ENFORCED.
+fn graph_mode(def: &GraphDefinition) -> Result<GraphMode> {
+    let queried = def.vertices.iter().chain(&def.edges).find(|e| e.query.is_some());
+    match (def.mode, queried) {
+        (Some(GraphModeOption::Enforced), Some(e)) => {
+            let msg = format!(
+                "element table {} holds a query's rows, which declare no key, so its graph is of TRUSTED MODE (§11.3)",
+                e.alias_name()
+            );
+            Err(graph_rule(None, msg)).or_at(e.table.at)
+        }
+        (None, Some(_)) | (Some(GraphModeOption::Trusted), _) => Ok(GraphMode::Trusted),
+        (None | Some(GraphModeOption::Enforced), None) => Ok(GraphMode::Enforced),
     }
 }
 

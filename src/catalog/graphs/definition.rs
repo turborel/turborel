@@ -33,8 +33,8 @@ impl GraphDesc {
 
 /// The definition of element table `e`.
 fn element_text(e: &ElementTableDesc) -> String {
-    let mut text = qualified_identifier(&e.table);
-    if e.alias != e.table.ident {
+    let mut text = e.from_text();
+    if e.query.is_some() || e.alias != e.table.ident {
         let _ = write!(text, " AS {}", identifier(&e.alias));
     }
     let _ = write!(text, " KEY ({})", names(&e.key));

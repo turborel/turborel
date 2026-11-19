@@ -164,7 +164,7 @@ pub(super) fn unconstrained(name: &QualifiedName) -> TableDesc {
 }
 
 /// The columns of a view whose query's result has `columns`.
-fn described(columns: &[OutColumn]) -> Vec<ColumnDesc> {
+pub(super) fn described(columns: &[OutColumn]) -> Vec<ColumnDesc> {
     let column = |c: &OutColumn| ColumnDesc {
         name: c.name.clone().unwrap_or_default(),
         data_type: c.data_type.clone(),

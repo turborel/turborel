@@ -10,7 +10,7 @@ use std::sync::Arc;
 use super::super::{Binder, Scope, rule};
 use super::grf;
 use super::remap::Operands;
-use super::scope::{Graphing, unsupported};
+use super::scope::Graphing;
 use super::variables::{Declared, candidates};
 use crate::ast::{ElementPattern, GraphColumn, GraphPattern, GraphRows, GraphTable, Selector, ValueExpression};
 use crate::catalog::ColumnDesc;
@@ -82,7 +82,11 @@ pub(super) fn slots_in_prefilter(g: &Graphing, made: usize, (local, exposed): (O
     for (k, slot) in slots.iter().enumerate().skip(made) {
         let var = match slot {
             GraphValue::Iteration { var, .. } | GraphValue::Aggregate { var, .. } => *var,
-            GraphValue::Path { .. } => return Err(unsupported("a path function in a prefilter")),
+            GraphValue::Path { .. } => {
+                // [GS §6.9] Of the path so far, which path search keeps.
+                made_here.push((k, usize::MAX));
+                continue;
+            }
         };
         let name = g.vars.get(var).map_or("", |v| v.name.as_str());
         let seen = local.and_then(|l| l.get(name)).or_else(|| exposed.get(name));
@@ -191,7 +195,7 @@ fn projection(t: usize, source: &ElementSource, names: &[String], edge: bool) ->
     let mut out: Vec<Expr> =
         names.iter().map(|n| source.properties.iter().find(|(p, _)| p == n).map_or(Expr::Const(Value::Null), |(_, e)| e.clone())).collect();
     let key = source.key.iter().map(|&k| Expr::Column(k)).collect();
-    out.push(Expr::Call(ScalarRef(Arc::new(ElementIdentity { alias: source.alias.clone() })), key));
+    out.push(Expr::Call(ScalarRef(Arc::new(ElementIdentity { alias: source.alias.clone(), native: source.native })), key));
     out.push(Expr::Const(Value::Exact(Decimal::new(i128::from(super::scope::table_number(t)), 0))));
     if edge {
         // Its ends' identities, which the search fills (`exec/graph_table`).

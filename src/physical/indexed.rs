@@ -25,9 +25,11 @@ use super::cost::HASH_ROW;
 use super::estimate::{self, Known};
 use super::join::Flip;
 use super::shown::Shown;
-use super::{JoinProbe, PhysicalPlanner, Plan};
+use super::{JoinComparison, JoinProbe, PhysicalPlanner, Plan};
 
 mod coordinates;
+mod expand;
+mod fan_out;
 mod probed;
 mod spatial;
 use crate::catalog::{ColumnDesc, IndexDesc, QualifiedName};
@@ -60,6 +62,9 @@ pub(super) struct Probing {
     needed: Vec<usize>,
     /// Whether each row found is followed by its id (`LogicalPlan::Scan`).
     located: bool,
+    /// Of a probe of other columns than the key's first, each used key's
+    /// place in the index's key (`indexed/expand.rs`).
+    positions: Option<Vec<usize>>,
 }
 
 /// Whether values of a left column are of the kind of an indexed column's
@@ -140,7 +145,12 @@ fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), s
         table: probing.table,
         index: probing.index,
         method: probing.method,
-        probe: JoinProbe::Prefix(keys.into_boxed_slice()),
+        probe: match probing.positions {
+            Some(at) => {
+                JoinProbe::Columns(keys.iter().zip(at).map(|(&outer, column)| JoinComparison { column, op: CompOp::Eq, outer }).collect())
+            }
+            None => JoinProbe::Prefix(keys.into_boxed_slice()),
+        },
         cond,
         width: probing.width,
         columns: probing.needed,
@@ -183,22 +193,23 @@ impl PhysicalPlanner<'_> {
             None => keys.to_vec(),
         };
         let (storage, desc) = (self.db.storage_of(table).ok()?, self.db.catalog.table(table)?);
-        let model = self.db.cost();
-        let stats = self.db.statistics(table);
+        let (model, stats) = (self.db.cost(), self.db.statistics(table));
         let known = Known { stats: stats.as_deref(), cost: &model };
-        let rows = cost_of(storage.row_count());
+        let (rows, columns) = (cost_of(storage.row_count()), expand::kept(&desc.columns, filter));
         let mut best: Option<Probing> = None;
         for ix in self.db.catalog.indexes(table).into_iter().filter(|ix| !self.db.building.contains(&ix.name)) {
             let (Some(kind), Ok(found)) = (self.db.methods.get(&ix.method), self.db.index_of(&ix.name)) else { continue };
-            let Some((used, types)) = probed_columns(ix, &desc.columns, (&keys, of_kind), &**kind) else { continue };
-            let whole = used.len() == ix.columns.len();
+            let Some(((used, at, types), reverse)) = expand::probed(ix, &columns, (&keys, of_kind), &**kind) else { continue };
+            let whole = !reverse && used.len() == ix.columns.len();
             let by_columns = || {
                 let distinct =
                     |c: usize| known.stats.and_then(|s| s.distinct(c)).map_or(1.0_f64 / model.equal_selectivity, |d| d.max(1.0_f64));
-                ix.columns.iter().take(used.len()).map(|&c| 1.0_f64 / distinct(c)).product::<f64>()
+                at.iter().filter_map(|&k| ix.columns.get(k)).map(|&c| 1.0_f64 / distinct(c)).product::<f64>()
             };
-            let each = found.distinct_keys().filter(|_| whole).map_or_else(|| rows * by_columns(), |d| rows / d.max(1.0_f64));
-            let sample: Option<Vec<Value>> = types.iter().take(used.len()).map(sample).collect();
+            let probed: Vec<usize> = at.iter().filter_map(|&k| ix.columns.get(k).copied()).collect(); // `indexed/fan_out.rs`
+            let fan_out = || self.edge_fan_out(table, &probed).unwrap_or_else(|| rows * by_columns());
+            let each = found.distinct_keys().filter(|_| whole).map_or_else(fan_out, |d| rows / d.max(1.0_f64));
+            let sample: Option<Vec<Value>> = types.iter().take(used.len()).map(sample).filter(|_| !reverse).collect();
             let pages = sample
                 .and_then(|values| found.probe_pages(&Probe::Prefix { equal: values, then: None }))
                 .unwrap_or_else(|| (rows + 1.0_f64).log2());
@@ -207,9 +218,9 @@ impl PhysicalPlanner<'_> {
             if best.as_ref().is_none_or(|b| cost < b.cost) {
                 // A row's id follows its columns.
                 let width = desc.columns.len().saturating_add(usize::from(located));
-                let (index, method) = (ix.name.clone(), ix.method.clone());
-                let through = through.clone();
-                let needed = needed.to_vec();
+                let (index, method, positions) =
+                    (ix.name.clone(), expand::method_shown(ix, used.len(), reverse), reverse.then(|| at.clone()));
+                let (through, needed) = (through.clone(), needed.to_vec());
                 best = Some(Probing {
                     table: table.clone(),
                     filter: filter.cloned(),
@@ -222,6 +233,7 @@ impl PhysicalPlanner<'_> {
                     through,
                     needed,
                     located,
+                    positions,
                 });
             }
         }

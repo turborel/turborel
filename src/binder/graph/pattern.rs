@@ -6,14 +6,15 @@
 //! which path search keeps for it [P1 §4.4]. One of an element outside
 //! every quantifier that reads a variable bound after it is the path's
 //! instead, tested as its match ends, which is the same test of the same
-//! bindings; within a quantifier it is refused, as its iteration would
-//! read a binding not yet made.
+//! bindings. Within a quantifier the search keeps each element it binds
+//! and tests it as the variables it waits for are bound. One reading a
+//! variable of another path pattern is tested with that pattern's
+//! binding, searched first (RULES.md D108).
 
 use std::collections::BTreeSet;
 
 use super::super::{Scope, rule};
 use super::grf;
-use super::scope::unsupported;
 use crate::ast::{
     ElementPattern, GraphPattern, GraphVariable, LabelExpression, Orientation as Written, ParenthesizedPath, PathExpression, PathFactor,
     PathPrimary, PathTerm, Restrictor as WrittenRestrictor, Selector as WrittenSelector,
@@ -64,11 +65,15 @@ struct Walk<'w> {
     depth: usize,
     /// The prefilters bound.
     prefilters: &'w mut Vec<Prefilter>,
-    /// Its subpath variables, each with the variables marking where its
-    /// subpath begins and ends.
-    subpaths: Vec<(String, VarId, VarId)>,
+    /// The subpath variables of the graph pattern, each declared as its
+    /// parenthesized path pattern is walked, so its prefilters read it.
+    subpaths: &'w std::cell::RefCell<Vec<Subpath>>,
     /// Prefilters of the path itself, lifted from its elements.
     lifted: Vec<usize>,
+    /// The path pattern's number.
+    path: usize,
+    /// The element variable of each slot its prefilters made, if any.
+    slot_vars: std::collections::HashMap<usize, usize>,
     bind: &'w BindFilter<'w>,
 }
 
@@ -76,8 +81,10 @@ struct Walk<'w> {
 /// marking where its subpath begins and ends there.
 pub(super) type Subpath = (String, usize, VarId, VarId);
 
-/// The path patterns of `pattern`, their prefilters and their subpath
-/// variables, of the element variables `names` and graph labels `labels`.
+/// The path patterns of `pattern`, numbered from `numbered`, their
+/// prefilters added to `prefilters`, of the element variables `names`
+/// and graph labels `labels`, its subpath variables declared in
+/// `subpaths`.
 ///
 /// # Errors
 ///
@@ -86,12 +93,12 @@ pub(super) type Subpath = (String, usize, VarId, VarId);
 pub(super) fn paths(
     pattern: &GraphPattern,
     (names, labels): (&[String], &[String]),
-    bind: &BindFilter<'_>,
-) -> Result<(Vec<PathShape>, Vec<Prefilter>, Vec<Subpath>)> {
-    let mut prefilters = Vec::new();
+    (bind, subpaths): (&BindFilter<'_>, &std::cell::RefCell<Vec<Subpath>>),
+    (prefilters, numbered): (&mut Vec<Prefilter>, usize),
+) -> Result<Vec<PathShape>> {
     let mut shapes = Vec::new();
-    let mut subpaths = Vec::new();
     for (n, path) in pattern.paths.iter().enumerate() {
+        let n = n.saturating_add(numbered);
         let prefix = path.prefix.as_ref().or(pattern.keep.as_ref());
         let mut walk = Walk {
             names,
@@ -100,27 +107,25 @@ pub(super) fn paths(
             order: Vec::new(),
             walked: 0,
             depth: 0,
-            prefilters: &mut prefilters,
-            subpaths: Vec::new(),
+            prefilters: &mut *prefilters,
+            subpaths,
             lifted: Vec::new(),
+            path: n,
+            slot_vars: std::collections::HashMap::new(),
             bind,
         };
+        let first = walk.prefilters.len();
         order(&path.expression, names, &mut walk.order);
         let mut shape = walk.expression(&path.expression)?;
+        walk.renumbered(first)?;
         for lifted in walk.lifted.clone() {
-            let reads = walk.prefilters.get(lifted).map(|p| p.reads.clone()).unwrap_or_default();
-            let renumbered = reads.into_iter().map(|(v, _)| Ok((v, walk.var_of(v)?))).collect::<Result<Vec<_>>>()?;
-            if let Some(p) = walk.prefilters.get_mut(lifted) {
-                p.reads = renumbered;
-            }
             shape = PatternShape::Group(Restrictor::Walk, Box::new(shape), Some(lifted));
         }
         let selector = prefix.and_then(|p| p.selector.as_ref()).map_or(Selector::All, selector);
         let restrictor = prefix.and_then(|p| p.restrictor).map_or(Restrictor::Walk, restrictor);
-        subpaths.extend(walk.subpaths.drain(..).map(|(name, start, end)| (name, n, start, end)));
         shapes.push(PathShape { variables: walk.vars, selector, restrictor, pattern: shape, cost: None, starts: Vec::new() });
     }
-    Ok((shapes, prefilters, subpaths))
+    Ok(shapes)
 }
 
 /// Each element pattern's variable in `e`, in the order written.
@@ -193,14 +198,15 @@ impl Walk<'_> {
             return Err(grf("GRF-0033", "a selector is placed inside a parenthesized path pattern").or_at(p.at));
         }
         let restrictor = p.prefix.as_ref().and_then(|x| x.restrictor).map_or(Restrictor::Walk, restrictor);
+        // Its marks first, so the prefilters within read its subpath so far.
+        let marks = p.variable.as_ref().map(|v| self.subpath(v)).transpose()?;
         let body = self.expression(&p.expression)?;
         let filter = match &p.where_clause {
             Some(c) => Some(self.path_filter(c, p)?),
             None => None,
         };
         let group = PatternShape::Group(restrictor, Box::new(body), filter);
-        let Some(v) = &p.variable else { return Ok(group) };
-        let (start, end) = self.subpath(v)?;
+        let Some((start, end)) = marks else { return Ok(group) };
         let mark = |var: VarId| PatternShape::Vertex(TestShape { var: Some(var), shape: SUBPATH_MARK, labels: None, filter: None });
         Ok(PatternShape::Concat(vec![mark(start), group, mark(end)]))
     }
@@ -216,12 +222,13 @@ impl Walk<'_> {
             );
             return Err(rule(msg).or_at(v.at));
         }
-        if let Some(&(_, start, end)) = self.subpaths.iter().find(|s| s.0 == v.name) {
-            return Ok((start, end));
+        let known = self.subpaths.borrow().iter().find(|s| s.0 == v.name && s.1 == self.path).map(|s| (s.2, s.3));
+        if let Some(marks) = known {
+            return Ok(marks);
         }
         let start = self.mark(format!("$<{}", v.name))?;
         let end = self.mark(format!("$>{}", v.name))?;
-        self.subpaths.push((v.name.clone(), start, end));
+        self.subpaths.borrow_mut().push((v.name.clone(), self.path, start, end));
         Ok((start, end))
     }
 
@@ -234,21 +241,46 @@ impl Walk<'_> {
     /// The prefilter of a parenthesized path pattern's WHERE `c`.
     fn path_filter(&mut self, c: &crate::ast::SearchCondition, p: &ParenthesizedPath) -> Result<usize> {
         let (cond, reads, slots) = (self.bind)(&Filtered::Path(c, p))?;
-        let reads = reads.into_iter().map(|v| Ok((v, self.var_of(v)?))).collect::<Result<Vec<_>>>()?;
-        let slots = slots.into_iter().map(|(k, v)| Ok((k, self.var_of(v)?))).collect::<Result<Vec<_>>>()?;
-        self.prefilters.push(Prefilter { cond, own: None, reads, slots });
+        let (across, reads): (Vec<usize>, Vec<usize>) = reads.into_iter().partition(|v| !self.order.contains(v));
+        let reads = reads.into_iter().map(|v| (v, VarId::MAX)).collect();
+        self.slot_vars.extend(slots.iter().copied());
+        let slots = slots.into_iter().map(|(k, _)| (k, VarId::MAX)).collect();
+        let path = self.path;
+        self.prefilters.push(Prefilter { cond, own: None, reads, slots, path, later: Vec::new(), across });
         Ok(self.prefilters.len().saturating_sub(1))
     }
 
-    /// The number in this path pattern of element variable `v`, which it
-    /// must declare.
-    fn var_of(&self, v: usize) -> Result<VarId> {
-        let found = self.vars.iter().position(|(_, _, s)| *s == v).or_else(|| self.order.contains(&v).then_some(usize::MAX));
-        let name = self.names.get(v).map_or("?", String::as_str);
-        match found {
-            Some(usize::MAX) | None => Err(unsupported(&format!("a prefilter reading {name}, of another path pattern or bound later"))),
-            Some(k) => VarId::try_from(k).map_err(|_| grf("GRF-0024", "too many variables")),
+    /// The prefilters made from `first` on, each variable they read of
+    /// this path pattern numbered, now that every one is declared: of
+    /// another path pattern's, a slot keeps `VarId::MAX`.
+    fn renumbered(&mut self, first: usize) -> Result<()> {
+        let mut made = std::mem::take(self.prefilters);
+        for p in made.iter_mut().skip(first) {
+            for read in &mut p.reads {
+                read.1 = self.var_of(read.0)?;
+            }
+            for slot in &mut p.slots {
+                slot.1 = self.slot_var(slot.0)?;
+            }
         }
+        *self.prefilters = made;
+        Ok(())
+    }
+
+    /// The number in this path pattern of the variable of slot `k`, if
+    /// one of its own.
+    fn slot_var(&self, k: usize) -> Result<VarId> {
+        let own = self.slot_vars.get(&k).copied().filter(|v| self.order.contains(v));
+        own.map_or(Ok(VarId::MAX), |v| self.var_of(v))
+    }
+
+    /// The number in this path pattern of element variable `v`, which it
+    /// declares.
+    fn var_of(&self, v: usize) -> Result<VarId> {
+        let found = self.vars.iter().position(|(_, _, s)| *s == v);
+        let name = self.names.get(v).map_or("?", String::as_str);
+        let k = found.ok_or_else(|| grf("GRF-0024", format!("{name} is not declared in its path pattern")))?;
+        VarId::try_from(k).map_err(|_| grf("GRF-0024", "too many variables"))
     }
 
     /// An element pattern `p` bound, an edge pattern's if `edge`.
@@ -279,18 +311,16 @@ impl Walk<'_> {
     /// `ordinal`th written: its own, or the path's.
     fn element_filter(&mut self, p: &ElementPattern, shape: usize, ordinal: usize) -> Result<Option<usize>> {
         let (cond, reads, slots) = (self.bind)(&Filtered::Element(p, shape))?;
-        let later = |v: &usize| self.order.iter().enumerate().any(|(k, s)| s == v && k >= ordinal);
-        let lifted = reads.iter().any(|v| *v != shape && later(v));
-        if lifted && self.depth > 0 {
-            return Err(unsupported("a prefilter within a quantifier reading a variable bound after it"));
-        }
+        let (across, reads): (Vec<usize>, Vec<usize>) = reads.into_iter().partition(|v| !self.order.contains(v));
+        let earlier = |v: &usize| self.order.iter().take(ordinal).any(|s| s == v);
+        let later: Vec<usize> = reads.iter().copied().filter(|v| *v != shape && !earlier(v)).collect();
+        let lifted = !later.is_empty() && self.depth == 0;
         let own = if lifted { None } else { Some(shape) };
-        let mut read = Vec::new();
-        for v in reads.into_iter().filter(|v| lifted || *v != shape) {
-            read.push((v, if lifted { VarId::MAX } else { self.var_of(v)? }));
-        }
-        let slots = slots.into_iter().map(|(k, v)| Ok((k, self.var_of(v)?))).collect::<Result<Vec<_>>>()?;
-        self.prefilters.push(Prefilter { cond, own, reads: read, slots });
+        let read = reads.into_iter().filter(|v| lifted || *v != shape).map(|v| (v, VarId::MAX)).collect();
+        self.slot_vars.extend(slots.iter().copied());
+        let slots = slots.into_iter().map(|(k, _)| (k, VarId::MAX)).collect();
+        let later = if lifted { Vec::new() } else { later };
+        self.prefilters.push(Prefilter { cond, own, reads: read, slots, path: self.path, later, across });
         let k = self.prefilters.len().saturating_sub(1);
         if lifted {
             self.lifted.push(k);

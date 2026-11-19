@@ -9,12 +9,17 @@ use turborel::db::{Database, Session};
 
 mod adjacency;
 mod conformance;
+mod derived;
 mod functions;
+mod graph_indexes;
 mod iterations;
 mod limits;
 mod native;
+mod prefilters;
 mod reads;
 mod refusals;
+mod search_choice;
+mod statistics;
 mod subpaths;
 
 /// The bank of the standard's fixture (§23.1): accounts a1 to a6, the
@@ -90,3 +95,4 @@ fn refused(s: &Session, query: &str) -> (i32, String) {
     let e = s.open_cursor(query).and_then(|mut c| c.fetch().map(|_| ())).map(|()| panic!("{query}: accepted")).unwrap_err();
     (e.sqlcode(), e.msg)
 }
+mod joins;
