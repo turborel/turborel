@@ -36,4 +36,5 @@ mod geometry;
 mod keys;
 mod program;
 mod replication;
+mod subcommands;
 mod users;
