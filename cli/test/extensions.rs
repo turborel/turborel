@@ -125,7 +125,7 @@ fn a_signed_package_is_packed_installed_and_verified() {
 
 /// Verifies: [EXTENSION] design document §13.2, RULES.md D261: install
 /// resolves among the files given, a directory of them, and the packages
-/// installed: a file another given requires is a dependency, the newest
+/// installed. A file another given requires is a dependency, the newest
 /// version in range chosen, and a file nothing chosen needs passed over;
 /// why tells which package pulled a dependency in; a newer file of a
 /// package asked for by name moves it on, from what is installed, and

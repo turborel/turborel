@@ -118,8 +118,7 @@ version, and comes with a major release (see
 | Plug-in manifest (`turborel-plugin.manifest`) | 1 | its PROTOCOL item | `plugin/manifest.rs` |
 | Extension package file | 1 | the byte after its magic `TBPKG\0` | `plugin/package/archive.rs`, `plugin/package.rs` `FORMAT` |
 | Installed package digests file (`turborel-package.digests`) | 1 | its first line | `plugin/package/install.rs` |
-| Registry index (`index`) | 1 | its first line | `plugin/package/index.rs` |
-| Extension lock file (`turborel-extensions.lock`) | 1 | its first line | `plugin/package/lock.rs` |
+| Extension lock file (`turborel-extensions.lock`), each package's license among it | 1 | its first line | `plugin/package/lock.rs` |
 | Backup manifest | 1 | the manifest's first byte | `backup/manifest.rs`, `MANIFEST_FORMAT` |
 | Archive layout and timeline history | 1 | the history's first byte | `backup/timeline.rs`, `ARCHIVE_FORMAT` |
 | Backup history entry | 1 | each entry's first byte | `backup/history.rs`, `HISTORY_FORMAT` |

@@ -30,7 +30,7 @@ pub use args::{EXTENSION_USAGE, Invocation, Verb, parse};
 /// What every command of `turborel extension` works with.
 #[derive(Debug, Clone)]
 pub struct Context {
-    /// PLUGINS.DIRECTORIES as written: packages are installed into the
+    /// PLUGINS.DIRECTORIES as written. Packages are installed into the
     /// first, and found in all.
     pub directories: Directories,
     /// PLUGINS.TRUSTED_KEYS and PLUGINS.REQUIRE_SIGNED.
@@ -102,8 +102,8 @@ fn at_most_one(words: &[String]) -> Result<Option<&str>, String> {
     }
 }
 
-/// A package's name as typed: names are SQL identifiers, upper case
-/// unless quoted in the manifest.
+/// A package's name as typed, in upper case, as names are SQL
+/// identifiers, upper case unless quoted in the manifest.
 pub fn package_name(typed: &str) -> String {
     typed.to_ascii_uppercase()
 }

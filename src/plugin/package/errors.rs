@@ -7,8 +7,8 @@ use crate::error::{Code, SqlError, SqlState};
 /// \[DESIGN\] A file of a package, or the package, is not what its digest
 /// says: it changed since it was packed or installed.
 pub const CHANGED: SqlState = SqlState::of_bytes(*b"38T07");
-/// \[DESIGN\] A package or index is unsigned, signed by no key trusted,
-/// its signature does not verify, or an index has expired.
+/// \[DESIGN\] A package is unsigned, signed by no key trusted, or
+/// its signature does not verify.
 pub const UNTRUSTED: SqlState = SqlState::of_bytes(*b"38T08");
 /// \[DESIGN\] No versions satisfy every requirement: a conflict, a cycle,
 /// or a package no version of which is found.
@@ -29,7 +29,7 @@ pub fn conflict(why: &str) -> SqlError {
     SqlError::new(Code::Data, format!("[EXTENSION] the packages cannot be resolved: {why}")).with_state(CONFLICT)
 }
 
-/// A package file or index of the wrong form, `why`: 38T07, as what was
+/// A package file or lock of the wrong form, `why`: 38T07, as what was
 /// written is not what is read.
 pub fn malformed(why: &str) -> SqlError {
     changed(&format!("it is malformed: {why}"))

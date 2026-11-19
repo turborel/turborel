@@ -101,8 +101,8 @@ fn settle(
     write_lock(cx, &next)
 }
 
-/// Installs the version `c` chosen, unless it is: its lock entry, asked
-/// for by name with `range` if it was.
+/// Installs the version `c` chosen, unless it is installed, and gives
+/// its lock entry, asked for by name with `range` if it was.
 fn take(cx: &Context, c: &Candidate, (lock, given): (&Lock, &[Given]), range: Option<Range>, out: &mut dyn Write) -> Result<Locked, String> {
     let how = if range.is_some() { Installed::Explicit } else { Installed::Dependency };
     let locked = lock.get(&c.name).filter(|l| l.version == c.version);

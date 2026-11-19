@@ -210,7 +210,7 @@ its own; class TB is turborel's own.
 | 38T05 | External routine exception: a plug-in cannot be started, its directory under none of PLUGINS.DIRECTORIES, its executable missing, or no cryptography given to check its package |
 | 38T06 | External routine exception: a manifest breaks a rule of format 1 |
 | 38T07 | External routine exception: a package's files are not those its digests name, or another of its version is installed |
-| 38T08 | External routine exception: a package or a registry's index is not signed by a trusted key, or the index has expired |
+| 38T08 | External routine exception: a package is not signed by a trusted key where a signature is required, or its signature does not verify |
 | 38T09 | External routine exception: the packages required cannot be resolved, a cycle or a conflict of ranges |
 | 38T10 | External routine exception: a plug-in's table or index could not be told a change made or undone, and is damaged until the database opens again |
 | 3B000 | Savepoint exception: the class of 3B001 and 3B002 |

@@ -3,7 +3,7 @@
 //! entry with its SHA-256 digest and the whole optionally signed with
 //! Ed25519; installed into a plug-in directory, checked on install and at
 //! every load, resolved by name and semantic version. There is no
-//! registry: a package is a file, which the operator distributes as they
+//! registry. A package is a file, which the operator distributes as they
 //! like (RULES.md D260).
 //!
 //! * `semver.rs`: versions and their ranges.
