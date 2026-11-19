@@ -1,5 +1,7 @@
 //! Each area's mutations, in the order they run, after the core's.
 
+mod budget;
+
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
@@ -93,9 +95,7 @@ fn second() -> [&'static [Mutation]; 31] {
     ]
 }
 
-/// The areas after the rest, in order: projection's, JSON's, expression indexes', full-text's,
-/// T621's, the graph syntax's, path search's and its choice's and GQL's, then the raising guards',
-/// XQuery's and XML's, the Information Schema's among them, then the last areas (`last`).
+/// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's and the server's.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     let json: [&'static [Mutation]; 15] = [
         &super::projection::PROJECTION,
@@ -139,7 +139,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, external plug-ins' and
 /// packages', partitioning's, replication's and the server's.
-fn last() -> [&'static [Mutation]; 37] {
+fn last() -> [&'static [Mutation]; 44] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -150,6 +150,13 @@ fn last() -> [&'static [Mutation]; 37] {
         &super::rtree_pack::RTREE_PACK,
         &super::rtree_joins::RTREE_JOINS,
         &super::geometry::GEOMETRY,
+        &super::geometry::orientation::ORIENTATION,
+        &super::geometry::cells::CELLS,
+        &super::geometry::buckets::BUCKETS,
+        &super::geometry::filed::FILED,
+        &super::geometry::reach::REACH,
+        &super::geometry::within::WITHIN,
+        &budget::BUDGET,
         &super::spatial_types::SPATIAL_TYPES,
         &super::spatial_curves::SPATIAL_CURVES,
         &super::spatial_routines::SPATIAL_ROUTINES,

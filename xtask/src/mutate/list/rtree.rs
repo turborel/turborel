@@ -4,7 +4,7 @@
 use super::{Mutation, Package};
 
 /// Independent mechanisms whose removal must fail spatial requirements.
-pub const RTREE: [Mutation; 12] = [
+pub const RTREE: [Mutation; 16] = [
     Mutation {
         name: "geometry-nearest-root-envelope",
         package: Package::Core,
@@ -127,5 +127,51 @@ pub const RTREE: [Mutation; 12] = [
             "geometry::index::joins::geometry_joins_track_empty_probe_phantoms",
         ],
         unit: &[],
+    },
+    Mutation {
+        name: "rtree-nearest-run-head",
+        package: Package::Core,
+        breaks: "a frontier run loses the rest of its items once its nearest is taken",
+        file: "src/engine/rtree/nearest/runs.rs",
+        original: "self.heads.push(Head { item, run: head.run });",
+        replacement: "let _lost = item;",
+        integration: &[],
+        unit: &[
+            "engine::rtree::nearest::runs::tests::runs_give_the_order_of_one_heap",
+            "engine::rtree::tests::nearest::nearest_points_match_exhaustive_sorting",
+        ],
+    },
+    Mutation {
+        name: "rtree-nearest-run-heap",
+        package: Package::Core,
+        breaks: "a frontier run stops sifting while a child is nearer than its parent",
+        file: "src/engine/rtree/nearest/runs.rs",
+        original: "if greater <= parent {",
+        replacement: "if greater >= parent {",
+        integration: &[],
+        unit: &[
+            "engine::rtree::nearest::runs::tests::runs_give_the_order_of_one_heap",
+            "engine::rtree::tests::nearest::nearest_points_match_exhaustive_sorting",
+        ],
+    },
+    Mutation {
+        name: "rtree-scan-leaf-buffer",
+        package: Package::Core,
+        breaks: "a scan reusing its leaf buffer drops the leaf it has just read",
+        file: "src/engine/rtree/scan.rs",
+        original: "std::mem::swap(&mut node.entries, entries);",
+        replacement: "entries.clear();",
+        integration: &[],
+        unit: &["engine::rtree::tests::windows_match_exhaustive_search_across_levels"],
+    },
+    Mutation {
+        name: "rtree-root-level-header",
+        package: Package::Core,
+        breaks: "a search starts from the root at a level its header does not record",
+        file: "src/engine/rtree.rs",
+        original: "let level = Node::level_of(&self.inner.pool.read(self.inner.file, meta.root.0)?)?;",
+        replacement: "let level = Node::level_of(&self.inner.pool.read(self.inner.file, meta.root.0)?)?.saturating_add(1);",
+        integration: &[],
+        unit: &["engine::rtree::tests::windows_match_exhaustive_search_across_levels"],
     },
 ];

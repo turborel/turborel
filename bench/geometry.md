@@ -332,3 +332,330 @@ projection oracle over 10,000 deterministic cases, and every finite
 binary64 exponent. Exact topological intersection tests remain separate
 from approximate distance measurements. This comparison does not measure
 SQL distance sorting, spatial indexes or PostGIS.
+
+## Exact signs from expansions before big integers
+
+The stage-A bound cannot prove a zero determinant, so every collinear
+triple went on to intervals and then to allocating big integers. On
+integer and other grid-aligned data such triples are common: points on a
+square's edges, shared vertices, axis-parallel edges. When a product's
+differences are exact, or one is an exact zero, orientation now decides
+the sign from a four-term floating-point expansion (RULES.md D85),
+falling back as before otherwise.
+
+Measured on an Apple M4, Rust 1.99.0. The baseline is the parent commit:
+
+```text
+cargo xtask bench geometry --save q8-before
+cargo xtask bench geometry --compare q8-before
+```
+
+| Case | Change |
+|---|---:|
+| Point/square intersection, decoded | +307.4% |
+| Point/4-edge polygon, prepared intersection | +24.5% |
+| Point/square distance | +10.9% |
+| Every other kernel and SQL scan | within noise |
+
+The complete joins of `geometry_shapes` moved +2.7% to +5.5%, all but
+one within noise; their integer points rarely land on region boundaries.
+
+This machine runs on-access malware scanning. The first run after a
+build scans the new binaries and slowed every case, including decoders
+this change does not touch, by 10-45%. Repeat a comparison after the
+first run, as here, and discard a run whose unchanged cases moved.
+
+## Exact cell certificates for prepared polygons
+
+A prepared polygon of at least 32 edges now builds a grid of exact cells
+once it has located eight points per edge plus 256 (RULES.md D85). A
+point in a cell no edge touches is decided by one lookup; others keep the
+interval tree or ring scan. Three combs join the suite: a base and 64,
+1,024 or 8,192 narrow teeth over the point grid, so a horizontal ray
+crosses many edges, the worst case for interval trees.
+
+Measured on an Apple M4, Rust 1.99.0. The baseline is the parent commit
+with the comb cases added. Each side ran twice and the second run is
+reported:
+
+```text
+cargo xtask bench geometry --save cells-before
+cargo xtask bench geometry --save cells --compare cells-before
+```
+
+| Prepared intersection | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| 32-edge polygon | 23,388,607 | 27,335,241 | +16.9% |
+| 64-edge polygon | 24,209,946 | 27,787,728 | +14.8% |
+| 128-edge polygon | 23,920,391 | 27,649,171 | +15.6% |
+| 512-edge polygon | 22,884,590 | 27,799,496 | +21.5% |
+| 260-edge comb | 1,526,806 | 2,348,096 | +53.8% |
+| 4,100-edge comb | 106,509 | 107,878 | within noise |
+| 32,772-edge comb | 13,168 | 12,681 | within noise |
+
+Above 32 edges the rate is now about 27.5 million pairs per second
+whatever the polygon's size: decoding each SQL point dominates. The two
+large combs gain nothing: their teeth are narrower than a cell can be at
+1,024 cells per axis, so every cell over the teeth touches an edge and
+falls back to the interval tree, whose horizontal rays cross nearly every
+tooth (9.3 µs and 79 µs per point). Edge lists per boundary cell would
+address that; they are not part of this change. Preparation rates stayed
+within noise: certificates are not built until an operand has located
+enough points. Unprepared decoders and kernels, whose code this change
+does not touch, ran 5-11% slower in the same runs than in the baseline
+runs half an hour earlier; that drift applies to both sides of the
+prepared comparison.
+
+## Edge intersection through grid buckets
+
+Whether two polygons, a line and a polygon, or two lines intersect
+tested every pair of edges. Lines and rings with at least 4,096 edge
+pairs now file one side's edges in an exact dyadic grid over the two
+envelopes' overlap and test each edge of the other only against the
+edges filed under the cells it may touch (RULES.md D85). Edges whose
+envelopes miss the overlap are neither filed nor probed. Three large
+pairs join the suite: 4,096-edge circles whose boundaries cross, one
+nested in the other, and interleaved 1,024-tooth combs whose envelopes
+overlap but whose edges never meet.
+
+Measured on an Apple M4, Rust 1.99.0, second runs of each side:
+
+```text
+cargo xtask bench geometry --save buckets-before
+cargo xtask bench geometry --save buckets --compare buckets-before
+```
+
+| Decoded intersection | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| 4,096-edge circles crossing | 368 | 11,589 | 31.5x |
+| 4,096-edge circles nested | 80 | 60,489 | 756x |
+| 1,024-tooth combs interleaved | 80 | 181 | 2.3x |
+
+Every other case stayed within noise. Nested circles gain most: no edge
+of the outer ring reaches the inner one's envelope, so the test is a
+scan of the edges and one point location. The combs gain least: their
+teeth are narrower than the cells, so each cell files edges of both.
+
+## Prepared polygons keep their edges filed
+
+A prepared polygon of at least 32 edges now files its edges in the grid
+over its envelope from the second line or polygon it tests, and each
+later operand probes only the filed edges near its own (RULES.md D85).
+Unprepared, every test filed the larger side again, or tested every
+pair of edges below 4,096 pairs. A new case tests 10,000 small squares,
+one per grid point, against a prepared polygon, as a join's inner
+candidates meet its prepared outer row.
+
+Measured on an Apple M4, Rust 1.99.0, second runs of each side:
+
+```text
+cargo xtask bench geometry --save filed-before
+cargo xtask bench geometry --save filed --compare filed-before
+```
+
+| Prepared intersection | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| Squares against a 4,096-edge circle | 452,643 | 10,446,592 | 23.1x |
+| Squares against a 4,100-edge comb | 160,982 | 4,572,038 | 28.4x |
+
+Preparation rates stayed within noise, apart from the square's at -6.2%
+with spreads of 3.2-4.2%; a square is never filed. The filed edges of a
+4,096-edge polygon hold its cells' offsets and each edge once per cell it
+may touch, reserved from the budget and released with the operand.
+
+## Distance by an expanding nearest-edge search
+
+The distance between two lines, or a line and a ring, or two rings, took
+the least measure over every pair of their edges. Chains with at least
+4,096 edge pairs now put one chain's edge envelopes in a packed
+hierarchy, and measure each edge of the other only against edges whose
+envelopes come within the best measure so far, widened by far more than
+a measure's rounding (RULES.md D85). Every pair whose measure could be
+least is still measured, so the distance is the same to the bit, which a
+test checks on 300 walks at scales from 1e-9 to 1e9.
+
+Measured on an Apple M4, Rust 1.99.0, second runs of each side:
+
+```text
+cargo xtask bench geometry --save near-before
+cargo xtask bench geometry --save near --compare near-before
+```
+
+| Decoded distance | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| 1,024-edge circles 10 units apart | 18 | 5,572 | 310x |
+
+The 8-edge and 128-edge preparation cases ran 9.3% and 11.9% slower in
+the second after-run; this change does not touch preparation, and those
+two cases moved by similar amounts between unchanged runs earlier in the
+night.
+
+## Boundary cells decided by the edges near a point
+
+Cell certificates left a point in a boundary cell to the interval tree
+or the ring scan. Where a comb's teeth are narrower than a cell, nearly
+every cell over the teeth is a boundary cell, and every point there paid
+for a horizontal ray across all the teeth. A boundary cell only one
+ring's edges may touch now keeps that ring's side at its reference
+point, where its right side meets its row's centre line, and a point in
+it is located from the edges whose envelopes meet the cell, found in a
+hierarchy of the polygon's edges (RULES.md D85). The certificates are
+also built a row at a time: the 32,772-edge comb's build held about ten
+million centre-line crossings of 24 bytes at once, and now holds one
+row's.
+
+Measured on an Apple M4, Rust 1.99.0, against the parent commit. Each
+side ran twice and the second run is reported:
+
+```text
+cargo xtask bench geometry --save dense-before
+cargo xtask bench geometry --save dense --compare dense-before
+```
+
+| Prepared intersection | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| 260-edge comb | 2,283,787 | 14,644,109 | 6.4x |
+| 4,100-edge comb | 102,580 | 8,535,638 | 83x |
+| 32,772-edge comb | 12,636 | 5,364,211 | 425x |
+
+In a release test build the two large combs' certificates took 41 ms and
+218 ms to build, and decided every point of the 10,000-point grid that
+lies over them, in 72 ns and 118 ns a point. A virtual machine and other
+processes held about one and a half cores during the runs. The second
+after-run moved cases this change does not reach: the square's four- and
+eight-thread SQL scans by -38% and -20%, the unprepared 512-edge decode
+by -24%, and preparing a 32-edge polygon by -30%, each with a spread
+between 25% and 41%. In the first after-run every one of them was within
+8% of the baseline.
+
+## Prepared point distance by a nearest-edge search
+
+A prepared polygon's distance to a point took the least measure over
+every edge, as the unprepared call does. From the seventeenth point
+distance it measures, a prepared polygon of at least 32 edges now
+searches the hierarchy of its edges for the nearest one, depth first and
+nearer child first, and skips a subtree only when its envelope lies
+beyond the best measure so far, widened as the chains' search widens it
+(RULES.md D85). The distance is the scan's to the bit.
+
+Measured on an Apple M4, Rust 1.99.0, against the parent commit's
+second run above. This change ran twice and the second run is
+reported:
+
+```text
+cargo xtask bench geometry --save search --compare dense
+```
+
+| Prepared point distance | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| 32-edge polygon | 1,929,525 | 3,891,610 | 2.0x |
+| 64-edge polygon | 1,057,703 | 3,231,850 | 3.1x |
+| 128-edge polygon | 588,092 | 2,490,774 | 4.2x |
+| 512-edge polygon | 156,294 | 1,174,743 | 7.5x |
+| 260-edge comb | 360,118 | 1,770,079 | 4.9x |
+| 4,100-edge comb | 26,299 | 660,938 | 25x |
+| 32,772-edge comb | 2,378 | 12,621 | 5.3x |
+
+Each distance first locates the point. The 32,772-edge comb's operand
+builds its cell certificates only after 262,400 located points, more
+than the 98,304 calls the case makes, so its interval tree, 79 µs a
+point, still dominates; the 4,100-edge comb's first timed run, at 92,055
+pairs/s, came before its certificates. The square's unprepared distance
+moved by -32% with a spread of 55%; a probe of the same calls, run
+alternately three times on each side, measured 11.83 to 11.94 million
+pairs/s on both, as it did the 512-edge polygon's at about 157,000.
+Other moves, both ways, follow the noisy baseline run.
+
+## Certificates built once ray work repays them
+
+Cell certificates were built after a polygon had located eight points
+per edge plus 256. A comb's rays cross every tooth, so the 32,772-edge
+comb needed 262,400 lookups of 79 µs each before its certificates
+decided points in about 0.1 µs; its prepared distance case, 98,304
+calls, never built them. The interval trees now count the edges they
+test for the first 64 points located, and the certificates are built
+once the estimated tests of all points located reach 2,048 per edge, or
+the points reach the old count (RULES.md D85). Later lookups do not
+count: the tally is a type that keeps nothing.
+
+Measured on an Apple M4, Rust 1.99.0, against the previous change's
+second run. This change ran twice and the second run is reported:
+
+```text
+cargo xtask bench geometry --save work --compare search
+```
+
+| Prepared point distance | Before, pairs/s | After, pairs/s | Change |
+|---|---:|---:|---:|
+| 4,100-edge comb | 660,938 | 666,616 | within noise |
+| 32,772-edge comb | 12,621 | 175,515 | 13.9x |
+
+The 4,100-edge comb's slowest timed run rose from 92,055 to 665,678
+pairs/s: its certificates now come before the first timed run. Squares
+against a prepared 4,096-edge circle moved by -7.9%, with an 8% spread,
+and by -2.4% in the first run. The first version of this change counted
+every lookup until the certificates were built, and lost about 8% on
+that case, whose cheap lookups never build them. A probe of that case
+and of points against a 128-edge polygon, run alternately three times
+on this version and its parent, measured 8.7 and 9.6 million pairs/s
+before and 9.6 and 9.5 million after for the squares after warm-up, and
+26.2 million against 26.4 million for the points.
+
+## Spatial conjuncts decided of index entries
+
+Counting the points inside a 4,096-edge circle, or within distance 1 of
+it, among a million points scanned every row: a scan priced with a fetch
+per entry lost to the sequential scan for a window holding a quarter of
+the rows, and every row found was judged by the filter's call. Two
+mechanisms (RULES.md D34, D85): a scan under a projection or grouping
+decides its spatial conjunct of each entry, a single-point entry by the
+call's function from the point, and makes a row of no column where every
+reader sees it; and a prepared polygon decides a point's distance within
+a constant from its cells' Chebyshev distances to the cells edges may
+touch, two passes over the grid, without locating or measuring the point.
+The R-tree is told when no row is read, and then sorts no candidates by
+row id; a measure and a radius apart by more than a decimal's conversion
+rounds compare as doubles, where SQL's comparison formats digits.
+
+Measured on an Apple M4, Rust 1.99.0, one core, a million points drawn
+uniformly over a 100 by 100 square, prepared statements executed four
+times and the median of the last three reported, each execution
+preparing the constant polygon again (D45): main as of PR #46 against
+this branch with all of its geometry commits, this one last:
+
+| Million points | Before, ms | After, ms |
+|---|---:|---:|
+| 4,096-edge circle, `ST_INTERSECTS(G, ?) = 1`, count | 198 | 31 |
+| 4,096-edge circle, `ST_DISTANCE(G, ?) <= 1`, count | 53,865 | 57 |
+| 4,096-edge circle, `SUM(ST_DISTANCE(G, ?))` of 10,000 rows | 2,248 | 13 |
+| 4,100-edge comb, `ST_DISTANCE(G, ?) <= 1`, count | 53,706 | 257 |
+| 32,772-edge comb, `ST_DISTANCE(G, ?) <= 1`, count | 568,398 | 732 |
+
+The combs' envelopes hold 90% of the points, so their counts keep the
+sequential scan, and their within-distance counts are decided by the
+cells' bounds over the batches: 332 and 76 ms for the 4,100-edge comb's
+intersection count and distance sum, 895 and 582 ms for the 32,772-edge
+comb's, against 13,670, 21,310, 85,413 and 291,230 before. Answers are
+equal on every query. The circle's loop of one query, sampled
+(`sample(1)`), spends a third of the within-distance query in the
+nearest-edge searches of the band of points the cells' bounds leave
+undecided, about 0.6 units wide at a cell side of 1/16; a Euclidean
+transform would halve that band.
+
+## Packed loads held in memory
+
+CREATE INDEX packs an R-tree from its entries from the root down
+(RULES.md D139), sorting them through the work area's spill, which is
+MEMORY.WORK_BYTES, 4 MiB by default: a million points' records, 64 bytes
+each, went to the spill in runs and were merged back twice per level.
+Entries the memory budget can hold are now gathered into a vector
+reserved of it and tiled in place, each slab and run a slice sorted on
+its own; the spill serves only what the budget refuses, and both tile the
+same tree.
+
+Measured as above, the million points loaded one INSERT at a time and
+then indexed:
+
+| Million points | Before | After |
+|---|---:|---:|
+| CREATE INDEX, rtree | 4.1 s | 0.6 s |

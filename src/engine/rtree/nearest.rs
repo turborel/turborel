@@ -3,23 +3,27 @@
 //! branch is expanded before an equally distant entry, so rows tied on
 //! distance can be returned by row id. The frontier reserves its memory
 //! before growing; a cancelled caller drops it without reading the rest.
+//!
+//! The frontier holds each expanded node's items as one run (`runs.rs`):
+//! a heap built in place in linear time, ordered with the other runs by
+//! its nearest item. Expanding a node costs one heap build and one push,
+//! not a logarithmic push for every entry, and the entries of a leaf that
+//! a search stops before are never sifted.
+
+mod runs;
 
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering as AtomicOrder;
 
+use super::node::Node;
 use super::{Pin, RTree, Visit, corrupt};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::memory::{MemoryBudget, Reservation};
 use crate::spatial::Bounds;
 use crate::storage::RowId;
-
-/// Avoid an allocation at each of the first few queued branches.
-const INITIAL_CAPACITY: usize = 64;
-/// Geometric growth bounds allocation work as the frontier expands.
-const GROWTH: usize = 2;
+use runs::Runs;
 
 /// Rectangle entries in increasing Euclidean distance, then row-id
 /// order. Distances are exact for point and rectangle entries; a geometry
@@ -30,7 +34,9 @@ pub struct Nearest {
     tree: RTree,
     query: Bounds,
     metric: Metric,
-    queue: BinaryHeap<Queued>,
+    queue: Runs<Queued>,
+    /// The node read last, its entries' allocation kept for the next.
+    scratch: Node,
     held: Reservation,
     failed: bool,
     visited: u64,
@@ -162,33 +168,27 @@ impl Nearest {
 
     fn from_root(tree: RTree, root: Visit, query: Bounds, budget: &Arc<MemoryBudget>, metric: Metric) -> Result<Nearest> {
         let held = budget.reserve(0, "the R-tree nearest-neighbour frontier")?;
+        let scratch = Node::empty(0, 0);
         let mut nearest = Nearest {
             _pin: tree.pin(),
             tree,
             query,
             metric,
-            queue: BinaryHeap::new(),
+            queue: Runs::new(),
+            scratch,
             held,
             failed: false,
             visited: 0,
             limit: 0,
             last: None,
         };
-        nearest.push(Queued { distance: metric.first(), item: Item::Page(root) })?;
+        let first = Queued { distance: metric.first(), item: Item::Page(root) };
+        nearest.queue.add(1, std::iter::once(first), &mut nearest.held)?;
         Ok(nearest)
     }
 
-    fn push(&mut self, entry: Queued) -> Result<()> {
-        if self.queue.len() == self.queue.capacity() {
-            let capacity = self.queue.capacity().checked_mul(GROWTH).ok_or_else(exhausted)?.max(INITIAL_CAPACITY);
-            let bytes = capacity.checked_mul(size_of::<Queued>()).ok_or_else(exhausted)?;
-            self.held.resize(bytes)?;
-            self.queue.try_reserve_exact(capacity.saturating_sub(self.queue.len())).map_err(|_| exhausted())?;
-        }
-        self.queue.push(entry);
-        Ok(())
-    }
-
+    /// Adds `visit`'s entries, and its right sibling if it split since its
+    /// parent was read, as one run.
     fn expand(&mut self, visit: Visit, distance: f64) -> Result<()> {
         self.visited = self.visited.saturating_add(1);
         if self.visited > self.limit {
@@ -197,26 +197,33 @@ impl Nearest {
                 return Err(corrupt("its nearest-neighbour traversal contains a cycle"));
             }
         }
-        let node = self.tree.read(visit.id)?;
+        self.tree.read_into(visit.id, &mut self.scratch)?;
+        let node = &self.scratch;
         if node.level != visit.level {
             return Err(corrupt("a nearest-neighbour child is at the wrong level"));
         }
-        if node.stamp != visit.stamp {
+        // A node split since its parent was read is followed to its sibling.
+        let split = node.stamp != visit.stamp;
+        let sibling = if split {
             let id = node.right.ok_or_else(|| corrupt("a nearest-neighbour split has no sibling"))?;
-            self.push(Queued { distance, item: Item::Page(Visit { id, ..visit }) })?;
             self.tree.inner.right_moves.fetch_add(1, AtomicOrder::Relaxed);
-        }
-        for entry in node.entries {
-            let priority = self.metric.distance(entry.bounds, self.query, node.level == 0);
-            let item = if node.level == 0 {
+            Some(Queued { distance, item: Item::Page(Visit { id, ..visit }) })
+        } else {
+            None
+        };
+        let (metric, query, leaf) = (self.metric, self.query, node.level == 0);
+        let level = node.level.saturating_sub(1);
+        let count = node.entries.len().saturating_add(usize::from(sibling.is_some()));
+        let entries = node.entries.iter().map(|entry| {
+            let priority = metric.distance(entry.bounds, query, leaf);
+            let item = if leaf {
                 Item::Entry(entry.bounds, entry.id)
             } else {
-                let child = Visit { id: PageId(entry.id), stamp: entry.value, level: node.level.saturating_sub(1) };
-                Item::Page(child)
+                Item::Page(Visit { id: PageId(entry.id), stamp: entry.value, level })
             };
-            self.push(Queued { distance: priority, item })?;
-        }
-        Ok(())
+            Queued { distance: priority, item }
+        });
+        self.queue.add(count, sibling.into_iter().chain(entries), &mut self.held)
     }
 }
 
@@ -256,7 +263,12 @@ impl Iterator for Nearest {
         if self.failed {
             return None;
         }
-        while let Some(queued) = self.queue.pop() {
+        loop {
+            let queued = match self.queue.pop() {
+                Ok(Some(queued)) => queued,
+                Ok(None) => return None,
+                Err(error) => return Some(Err(self.fail(error))),
+            };
             match queued.item {
                 Item::Entry(bounds, row) => {
                     let earlier =
@@ -268,14 +280,20 @@ impl Iterator for Nearest {
                 }
                 Item::Page(visit) => {
                     if let Err(error) = self.expand(visit, queued.distance) {
-                        self.failed = true;
-                        self.queue.clear();
-                        return Some(Err(error));
+                        return Some(Err(self.fail(error)));
                     }
                 }
             }
         }
-        None
+    }
+}
+
+impl Nearest {
+    /// Ends the search after `error`, dropping what it queued.
+    fn fail(&mut self, error: SqlError) -> SqlError {
+        self.failed = true;
+        self.queue.clear();
+        error
     }
 }
 

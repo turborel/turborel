@@ -17,12 +17,13 @@
 
 use std::sync::Arc;
 
-use crate::error::{Code, Result, fail};
+use crate::error::Result;
 use crate::json::Warned;
 use crate::params::ParameterType;
-use crate::storage::{Floats, Ints, Texts};
-use crate::value::{DataType, Value};
+use crate::value::{CompOp, DataType, Value};
 
+mod accumulator;
+pub use accumulator::Accumulator;
 mod any_value;
 pub use any_value::ANY_VALUE;
 pub(crate) use any_value::GroupValue;
@@ -362,6 +363,26 @@ pub trait ScalarFunction: Send + Sync {
     fn spatial_operation(&self) -> Option<crate::geometry::SpatialOperation> {
         None
     }
+    /// \[EXTENSION\] Whether "`f(args) op value`" holds, of a call of two
+    /// arguments, decided without the call's value where the function
+    /// decides it faster, as a prepared geometry operand decides a point's
+    /// distance within a constant by its cells (RULES.md D85): the truth
+    /// the comparison would have [X3.135-1986 §5.11 GR2, GR3], none of a
+    /// null value, or the error the call would raise. None, by default,
+    /// and the call is made and its value compared.
+    fn call_compared(&self, _args: &[&Value], _op: CompOp, _value: &Value) -> Option<Result<Option<bool>>> {
+        None
+    }
+    /// \[EXTENSION\] "`f(point, other) op value`", or with the point second,
+    /// of a point geometry of `srid` at `point` and the constant operand
+    /// `other` this function holds prepared (RULES.md D85): as
+    /// `call_compared` would decide the call of the point's value, decided
+    /// from the point's coordinates, as an index's entry holds them,
+    /// without making its value. None unless the function holds `other`
+    /// prepared; none by default.
+    fn point_compared(&self, _point: ([f64; 2], i32), _other: &Value, _op: CompOp, _value: &Value) -> Option<Result<Option<bool>>> {
+        None
+    }
     /// \[EXTENSION\] Of a vector distance (vector design document §6), the
     /// metric a call of these constant arguments (none for each other one)
     /// measures by, upper case, and the position of its first vector, the
@@ -498,98 +519,6 @@ pub trait AggregateFunction: Send + Sync {
     fn parameter_type(&self, _position: usize) -> Option<ParameterType> {
         None
     }
-}
-
-/// The running state of a set function over one group.
-pub trait Accumulator {
-    /// Called once per value of the argument set S (never null).
-    /// For COUNT(*), called once per row with a null placeholder.
-    ///
-    /// # Errors
-    ///
-    /// The value cannot be taken in. The built-in SUM and AVG raise here
-    /// only of a sum 128 bits cannot hold, a limit: a result out of range is
-    /// raised by `finish` [ISO/IEC 9075:1992 §6.5 GR2b iv], so whether it
-    /// is does not depend on the order of the values (RULES.md D15).
-    fn update(&mut self, v: &Value) -> Result<()>;
-    /// \[DESIGN\] Called with a vector of the argument's values (RULES.md
-    /// D31): of those at `rows`, or all, each not null, as `update` is.
-    /// Default: `update` of each.
-    ///
-    /// # Errors
-    ///
-    /// As `update`.
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
-        match rows {
-            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).filter(|v| !v.is_null()).try_for_each(|v| self.update(v)),
-            None => values.iter().filter(|v| !v.is_null()).try_for_each(|v| self.update(v)),
-        }
-    }
-    /// \[DESIGN\] Called with a vector of exact numbers as integers
-    /// (`Ints`, RULES.md D31): of those at `rows`, or all, nulls left out,
-    /// as `update_many` is. Default: `update_many` of their values.
-    ///
-    /// # Errors
-    ///
-    /// As `update`.
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
-        self.update_many(ints.values(), rows)
-    }
-    /// \[DESIGN\] Called with a vector of approximate numbers (`Floats`,
-    /// RULES.md D31), as `update_many` is. Default: `update_many` of their
-    /// values.
-    ///
-    /// # Errors
-    ///
-    /// As `update`.
-    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
-        self.update_many(floats.values(), rows)
-    }
-    /// \[DESIGN\] Called with a vector of character strings as their text
-    /// (`Texts`, RULES.md D31), as `update_many` is. Default: `update_many`
-    /// of their values.
-    ///
-    /// # Errors
-    ///
-    /// As `update`.
-    fn update_texts(&mut self, texts: &Texts, rows: Option<&[usize]>) -> Result<()> {
-        self.update_many(texts.values(), rows)
-    }
-    /// \[DESIGN\] For COUNT(*): called once for `rows` rows, as `update`
-    /// is once a row. Default: `update` of a null placeholder for each.
-    ///
-    /// # Errors
-    ///
-    /// As `update`.
-    fn update_rows(&mut self, rows: usize) -> Result<()> {
-        (0..rows).try_for_each(|_| self.update(&Value::Null))
-    }
-    /// \[DESIGN\] Appends its state so far to `out`, as bytes `merge` takes
-    /// in another accumulator of its function and result type (RULES.md
-    /// D38, D53): a grouping past its work area then writes groups partly
-    /// made, not their rows. Whether it has one: by default it has none,
-    /// writes nothing, and its rows are written, so it is given them all.
-    fn write_state(&self, _out: &mut Vec<u8>) -> bool {
-        false
-    }
-    /// \[DESIGN\] Takes in `state`, as `write_state` wrote it of an accumulator
-    /// of its function and result type given the values after those it
-    /// was given, and before any it is given next: as if it had been given
-    /// them. It judges no result: `finish` does.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -916 if `state` is not one it writes; by default, as it
-    /// writes none.
-    fn merge(&mut self, _state: &[u8]) -> Result<()> {
-        fail(Code::Corrupt, "[DESIGN] a set function's state that it never writes")
-    }
-    /// The result for the values seen so far, possibly none.
-    ///
-    /// # Errors
-    ///
-    /// The result cannot be computed or is out of range.
-    fn finish(&self) -> Result<Value>;
 }
 
 // Unit tests: what the set functions refuse and how they total (RULES.md
