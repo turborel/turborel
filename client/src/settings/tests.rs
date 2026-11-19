@@ -53,7 +53,7 @@ fn a_uri_gives_its_user_hosts_and_settings() {
 /// a word no setting takes, a port that is no number, and no user.
 #[test]
 fn a_malformed_uri_or_setting_is_refused() {
-    for uri in ["postgres://a@b", "turborel://a@b/db", "turborel://a@b/?colour=red", "turborel://a@b/?tls_mode", "turborel://a%4@b"] {
+    for uri in ["other://a@b", "turborel://a@b/db", "turborel://a@b/?colour=red", "turborel://a@b/?tls_mode", "turborel://a%4@b"] {
         assert_eq!(Options::from_uri(uri).unwrap_err().sqlstate, "08001", "{uri}");
     }
     for uri in ["turborel://a@b/?tls_mode=always", "turborel://a@b:port", "turborel://a@b/?connect_timeout=-1", "turborel://b"] {
