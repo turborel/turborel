@@ -41,6 +41,7 @@
 mod kind;
 mod porter2;
 mod segment;
+mod snowball;
 mod stop;
 #[cfg(test)]
 mod tests;
