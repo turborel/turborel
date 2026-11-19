@@ -62,7 +62,9 @@ fn line(scratch: &Scratch, (me, ports): (usize, &[u16]), pki: &turborel_test_sup
 fn served(line: &[String]) -> turboreld::Config {
     match turboreld::parse(line).unwrap() {
         Command::Serve(config) => config,
-        Command::Help | Command::Version | Command::User(..) | Command::Reseal(..) | Command::Rekey(..) => panic!("not a server"),
+        Command::Help | Command::Version | Command::User(..) | Command::Reseal(..) | Command::Rekey(..) | Command::Backup(..) => {
+            panic!("not a server")
+        }
     }
 }
 

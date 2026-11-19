@@ -503,6 +503,12 @@ impl SqlState {
     pub const RESOURCES: SqlState = SqlState(*b"TB918");
     /// \[DESIGN\] The statement was cancelled (SQLCODE -920).
     pub const CANCELLED: SqlState = SqlState(*b"TB920");
+    /// \[EXTENSION\] A backup or archived object failed its checksum or
+    /// format (SQLCODE -916, RULES.md D161).
+    pub const BACKUP_DAMAGED: SqlState = SqlState(*b"TBB01");
+    /// \[EXTENSION\] A restore's recovery target was not met in the
+    /// records it had (SQLCODE -910, RULES.md D164).
+    pub const RECOVERY_TARGET_NOT_REACHED: SqlState = SqlState(*b"TBB02");
 
     /// [ISO/IEC 9075-4:2006 draft §8.2 SR1, SR2] The SQLSTATE value of the
     /// `<sqlstate value>` `s`: five characters, each a digit or a simple

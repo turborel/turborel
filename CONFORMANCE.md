@@ -4060,6 +4060,33 @@ ALTER DATABASE REPLICATION MEMBERS 'members'
 
 The view is INFORMATION_SCHEMA.REPLICAS, a server's.
 
+### Backups and recovery to a point in time
+
+Neither standard has these (RULES.md D160 to D166). They run outside a
+transaction, by the database's owner.
+
+```
+BACKUP DATABASE TO 'target' [INCREMENTAL [FROM 'id']] [LABEL 'label']
+CREATE RESTORE POINT name
+RESCAN BACKUP TARGET 'target'
+```
+
+| What | Behaviour |
+|---|---|
+| Online backup (D160) | A checkpoint, then the files in 64 KiB chunks and the log's records written meanwhile, while readers and writers go on. The manifest is written last, so a backup cut short is none. Also `Database::backup`. |
+| Incremental backup (D160) | The chunks whose digest differs from the parent's manifest. A restore follows the chain back to a full backup. |
+| Objects (D161) | Each a block file of format version 1, checksummed and passed through the database's encodings and keys, so an encrypted database's backup is encrypted. BACKUP.COMPRESSION puts LZ4 first. |
+| Verification (D161) | `Database::verify_backup` and `turboreld --verify-backup` read a chain, its chunks, image and records, restoring nothing. A failure is SQLSTATE TBB01. |
+| Restore (D162) | `Database::restore` and `turboreld --restore`, offline, into a staging directory renamed once whole. |
+| Archive of the log (D163) | ARCHIVE.MODE, TARGET, SEGMENT_BYTES, TIMEOUT_MS and RETENTION_SECONDS. A checkpoint keeps every record not archived. |
+| Recovery to a point in time (D164) | To a time, a position, a restore point or the archive's end. A target not reached is SQLSTATE TBB02. |
+| Timelines (D165) | A restore through the archive begins a timeline past every one the archive holds, and never writes over another's segments. |
+| Targets (D166) | `BackupTarget` (and `ArchiveTarget`, the same trait) and `TargetProvider`, object-safe, of strings, integers and byte chunks. The `dir` and `memory` providers are built in. |
+| History (D166) | Durable, in the database's directory. INFORMATION_SCHEMA.BACKUPS, ARCHIVED_SEGMENTS and RESTORE_POINTS show it to the owner, and a non-owner sees no rows. RESCAN BACKUP TARGET rebuilds it from a target. |
+
+BACKUP, INCREMENTAL, LABEL, RESTORE, POINT, RESCAN and TARGET are no key
+words. A backup is cancelled as a statement is.
+
 ### Settings
 
 These are RULES.md D36. INFORMATION_SCHEMA.SETTINGS lists every setting.
@@ -4129,6 +4156,7 @@ PARTITIONS and PARTITION_INDEXES are extensions
 | MEMORY_RESERVATIONS | What holds its memory |
 | GRAPH_ALGO_RUNS | The latest 1000 runs of graph algorithms |
 | EXTENSIONS, EXTENSION_OBJECTS, EXTENSION_PACKAGES | The extensions created, the objects their manifests declare, and the database's lock of their packages |
+| BACKUPS, ARCHIVED_SEGMENTS, RESTORE_POINTS | A database's backup history (RULES.md D166) |
 
 ### Plans
 

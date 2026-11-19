@@ -11,7 +11,7 @@
 //! insert (1):  table | generation u32 | row id u64 | after-image row
 //! update (2):  table | generation u32 | row id u64 | before-image row | after-image row
 //! delete (3):  table | generation u32 | row id u64 | before-image row
-//! commit (4):  commit timestamp u64
+//! commit (4):  commit timestamp u64 | wall time i128
 //! abort (5):   (nothing)
 //! schema (6):  owner | the `<schema>` text | tables (count u32, each:
 //!              identifier, engine) | now | epochs
@@ -40,6 +40,7 @@
 //! large object (22): table | generation u32 | object id u64 | body bytes
 //! stale objects (23): checkpoint's position u64 | table | ids (count
 //!              u32, each u64)
+//! restore point (25): name | wall time i128
 //! table:   authorization identifier | identifier
 //! options: count u32, each: name | value
 //! zone:    time zone displacement in minutes, i128
@@ -69,15 +70,18 @@ pub const RECORD_VERSION: u8 = 1;
 
 mod definitions;
 mod kinds;
+mod lobs;
+pub mod marks;
 
 pub use definitions::DropTarget;
 use definitions::{
     create_index, defined, dropped, put_altered, put_create_index, put_defined, put_dropped, put_schema, put_sequence, schema, sequence,
 };
+use lobs::{lob_change, put_lob_change};
 
 use kinds::{
     ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, LOB_PUT, LOB_STALE,
-    OWNER, RECONFIGURATION, ROLE_CREATOR, SCHEMA, SEQUENCE, SETTING, SPATIAL, STALE, STATEMENT_UNDONE, UPDATE, USER,
+    OWNER, RECONFIGURATION, RESTORE_POINT, ROLE_CREATOR, SCHEMA, SEQUENCE, SETTING, SPATIAL, STALE, STATEMENT_UNDONE, UPDATE, USER,
 };
 pub use kinds::{KINDS, REPLICATED};
 
@@ -123,6 +127,17 @@ pub enum Change {
     Commit {
         /// Its commit timestamp (RULES.md D29).
         at: Timestamp,
+        /// \[EXTENSION\] When it committed by the database's clock, for
+        /// recovery to a time (RULES.md D164).
+        wall: i64,
+    },
+    /// \[EXTENSION\] A restore point, recovery's target by name (RULES.md
+    /// D164); replayed as nothing.
+    RestorePoint {
+        /// Its name.
+        name: String,
+        /// When it was made by the database's clock.
+        wall: i64,
     },
     /// The transaction was rolled back.
     Abort,
@@ -378,7 +393,8 @@ impl Record {
                 put_row_change(&mut out, (table, *generation, *row), &[before, after]);
             }
             Change::Delete { table, generation, row, before } => put_row_change(&mut out, (table, *generation, *row), &[before]),
-            Change::Commit { at } => out.put_u64(*at),
+            Change::Commit { at, wall } => marks::put_commit(&mut out, *at, *wall),
+            Change::RestorePoint { name, wall } => marks::put_point(&mut out, name, *wall),
             Change::Abort | Change::Checkpoint => {}
             Change::StatementUndone { from } => out.put_u64(from.0),
             Change::Stale { through, index, row, key } => {
@@ -443,7 +459,8 @@ impl Record {
                 Change::Update { table: table(&mut r)?, generation: r.u32()?, row: r.u64()?, before: row(&mut r)?, after: row(&mut r)? }
             }
             DELETE => Change::Delete { table: table(&mut r)?, generation: r.u32()?, row: r.u64()?, before: row(&mut r)? },
-            COMMIT => Change::Commit { at: r.u64()? },
+            COMMIT => marks::commit(&mut r)?,
+            RESTORE_POINT => marks::point(&mut r)?,
             ABORT => Change::Abort,
             CHECKPOINT => Change::Checkpoint,
             STATEMENT_UNDONE => Change::StatementUndone { from: Lsn(r.u64()?) },
@@ -472,34 +489,6 @@ impl Record {
         r.finish()?;
         Ok(Record { tx, change })
     }
-}
-
-/// Writes `change`, a large object's record: LobPut or LobStale.
-fn put_lob_change(out: &mut Vec<u8>, change: &Change) {
-    if let Change::LobPut { table, generation, id, body } = change {
-        put_table(out, table);
-        out.put_u32(*generation);
-        out.put_u64(*id);
-        out.put_bytes(body);
-    } else if let Change::LobStale { through, table, ids } = change {
-        out.put_u64(through.0);
-        put_table(out, table);
-        out.put_u32(u32::try_from(ids.len()).unwrap_or(u32::MAX));
-        for &id in ids {
-            out.put_u64(id);
-        }
-    }
-}
-
-/// A large object's record of `tag`, LOB_PUT or LOB_STALE, as
-/// `put_lob_change` wrote it.
-fn lob_change(r: &mut Reader<'_>, tag: u8) -> Result<Change> {
-    if tag == LOB_PUT {
-        return Ok(Change::LobPut { table: table(r)?, generation: r.u32()?, id: r.u64()?, body: r.bytes()?.to_vec() });
-    }
-    let (through, table) = (Lsn(r.u64()?), table(r)?);
-    let count = r.u32()?;
-    Ok(Change::LobStale { through, table, ids: (0..count).map(|_| r.u64()).collect::<Result<_>>()? })
 }
 
 /// A time zone displacement, in minutes, as `put_i128` wrote it.

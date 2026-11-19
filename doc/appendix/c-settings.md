@@ -31,6 +31,13 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 
 | Setting | Default | Values | Takes effect | |
 |---|---|---|---|---|
+| ARCHIVE.MODE | OFF | ONE OF ON, OFF | at once |  |
+| ARCHIVE.RETENTION_SECONDS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| ARCHIVE.SEGMENT_BYTES | 16777216 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
+| ARCHIVE.TARGET | (empty) | TEXT OF AT MOST 4096 CHARACTERS | at once |  |
+| ARCHIVE.TIMELINE | 1 | INTEGER FROM 1 TO 4294967295 | at once |  |
+| ARCHIVE.TIMEOUT_MS | 60000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| BACKUP.COMPRESSION | OFF | ONE OF ON, OFF | at once |  |
 | CATALOG.COMPACT_AFTER_IMAGES | 64 | INTEGER FROM 1 TO 1000000 | at once |  |
 | CATALOG.NAME | TURBOREL | AN IDENTIFIER | at once |  |
 | CHECKPOINT.AFTER_BYTES | 1073741824 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
@@ -119,6 +126,13 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 
 Each in a sentence:
 
+- **ARCHIVE.MODE**: Whether the log's records are archived to ARCHIVE.TARGET as they are made durable, for recovery to a point in time: ON; or not, OFF. While ON, a checkpoint keeps every record not yet archived.
+- **ARCHIVE.RETENTION_SECONDS**: The seconds an archived segment is kept, 0 for ever. An older one is removed once the newest backup no longer needs its records.
+- **ARCHIVE.SEGMENT_BYTES**: The bytes of records gathered before they are archived as one segment.
+- **ARCHIVE.TARGET**: Where the log is archived: a directory's path, or a location of a target provider's scheme, as scheme:rest; none if empty.
+- **ARCHIVE.TIMELINE**: The timeline the database's archived records are kept under: 1 for a database never restored, and a new one for each restore, set by the restore so it never writes over the archive of the database it was restored from.
+- **ARCHIVE.TIMEOUT_MS**: The most milliseconds a durable record waits to be archived, whatever ARCHIVE.SEGMENT_BYTES says; 0 archives every record as soon as the archiver runs.
+- **BACKUP.COMPRESSION**: Whether backups and archived segments pass through the LZ4 encoding, which must be registered, before the database's own encodings: ON; or not, OFF.
 - **CATALOG.COMPACT_AFTER_IMAGES**: The images the catalog file holds after which the next is written, alone, to the other file.
 - **CATALOG.NAME**: The name of the catalog the schemata are in, as the Information Schema gives it [ISO/IEC 9075:1992 §21.2.2].
 - **CHECKPOINT.AFTER_BYTES**: The bytes of the data file's side file, each page once however often it was written, after which the end of a transaction takes a checkpoint.
@@ -139,7 +153,7 @@ Each in a sentence:
 - **GRAPH.MAX_SEARCH_STATES**: The most states a GRAPH_TABLE's search makes, each a vertex reached at a place of its pattern; 0 for no limit. Reaching it does as GRAPH.ON_LIMIT says.
 - **GRAPH.ON_LIMIT**: What a GRAPH_TABLE's search does on reaching a limit: fails, SQLSTATE 54061, ERROR; or ends with the paths found, warning 01W61, TRUNCATE.
 - **GRAPH.PARALLEL_MIN_STATES**: The least states, estimated from the graph's size, a GRAPH_TABLE's search makes for it to run on the workers EXECUTOR.GRAPH_THREADS allows; a smaller one runs on the statement's thread alone; 0 for any search. Its results are the same either way.
-- **JOBS.POLICY**: How the database's background work, its checkpoints, maintenance, syncs of the log (LOG.SYNC_AFTER_MS), read-ahead (STORAGE.READ_AHEAD_PAGES) and the writing of its files again in new formats (STORAGE.REKEY_BYTES_PER_SECOND), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.
+- **JOBS.POLICY**: How the database's background work, its checkpoints, maintenance, syncs of the log (LOG.SYNC_AFTER_MS), read-ahead (STORAGE.READ_AHEAD_PAGES), the writing of its files again in new formats (STORAGE.REKEY_BYTES_PER_SECOND) and the archiving of its log (ARCHIVE.MODE), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.
 - **LOCKS.TIMEOUT_MS**: The milliseconds a statement waits for a lock or a row, under LOCKS.WAIT ON, before it is refused (SQLCODE -911); 0 for no limit.
 - **LOCKS.WAIT**: ON waits for a lock, or a row, another transaction holds until it ends; OFF refuses the statement at once. ON in a database a server serves.
 - **LOG.COMMIT_SYNC**: Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is written, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint, the database closing, or LOG.SYNC_AFTER_MS passing.

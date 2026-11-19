@@ -28,6 +28,7 @@ fn main() -> ExitCode {
         }
         Command::Reseal(config, table) => turboreld::run_reseal(&config, &table, &mut std::io::stdout()),
         Command::Rekey(config) => turboreld::run_rekey(&config, &mut std::io::stdout()),
+        Command::Backup(config, backup) => turboreld::run_backup(&config, &backup, &mut std::io::stdout()),
         Command::User(config, user) => {
             let takes_one = matches!(user, UserCommand::Add { .. } | UserCommand::Password { .. });
             let mut input = password_input(takes_one)?;

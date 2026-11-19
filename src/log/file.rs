@@ -67,7 +67,7 @@ mod segments;
 
 /// Bits of a position that hold the block id within its segment: segments
 /// of up to 1 TiB, and 2^24 of them.
-const OFFSET_BITS: u32 = 40;
+pub const OFFSET_BITS: u32 = 40;
 /// The block id bits of a position.
 const OFFSET_MASK: u64 = (1 << OFFSET_BITS) - 1;
 /// What segment files are named: the prefix, ten digits of the segment's
@@ -293,6 +293,23 @@ impl FileLog {
     /// SQLCODE -910 if the segment size is out of range or `dir` holds a
     /// segment already; SQLCODE -915 if the segment cannot be created.
     pub fn create(fs: Arc<dyn FileSystem>, dir: &Path, hash: Arc<dyn HashFunction>, options: FileLogOptions) -> Result<FileLog> {
+        FileLog::create_at(fs, dir, (hash, options), 0)
+    }
+
+    /// \[EXTENSION\] As `create`, its first segment numbered `first`, so
+    /// every position it gives is past those of segments before. A log
+    /// restored from a backup goes on from where the records it was
+    /// recovered with ended (RULES.md D164).
+    ///
+    /// # Errors
+    ///
+    /// As `create`'s.
+    pub fn create_at(
+        fs: Arc<dyn FileSystem>,
+        dir: &Path,
+        (hash, options): (Arc<dyn HashFunction>, FileLogOptions),
+        first: u64,
+    ) -> Result<FileLog> {
         check_segment_size(options.segment_size)?;
         match options.durability {
             Durability::None => fs.create_dir_all(dir)?,
@@ -301,9 +318,13 @@ impl FileLog {
         if fs.read_dir(dir)?.iter().any(|p| segment_number(p).is_some()) {
             return Err(SqlError::new(Code::Api, format!("[DESIGN] {} already holds a log", dir.display())));
         }
-        let first =
-            segment_file(&*fs, &dir.join(segment_name(0)), (Arc::clone(&hash), options.pipeline.clone()), (&options, options.durability))?;
-        FileLog::over(fs, dir, hash, options, vec![Segment::new(0, first)])
+        let blocks = segment_file(
+            &*fs,
+            &dir.join(segment_name(first)),
+            (Arc::clone(&hash), options.pipeline.clone()),
+            (&options, options.durability),
+        )?;
+        FileLog::over(fs, dir, hash, options, vec![Segment::new(first, blocks)])
     }
 
     /// Opens the log in directory `dir`, whose hash function must be among

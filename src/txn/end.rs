@@ -75,7 +75,7 @@ impl State {
         let validated =
             tx.check_definitions().and_then(|()| tx.check_undone()).and_then(|()| self.validate_participants(tx.id, &joined)).and_then(
                 |(participants, committing)| {
-                    let synced = tx.commit_record(committing.at)?;
+                    let synced = tx.commit_record(committing.at, self.clock.now())?;
                     Ok((participants, committing, synced))
                 },
             );

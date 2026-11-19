@@ -34,6 +34,7 @@
 //! them: the Definition Schema's rows of a view's columns are found by
 //! binding it.
 
+mod backups;
 mod definition;
 mod embedding;
 mod extensions;
@@ -170,6 +171,14 @@ pub(crate) fn builtin() -> SystemTables {
     tables.extend(extensions::tables());
     tables.extend(vectors::tables());
     tables.into_iter().map(|t| (name_of(&*t), t)).collect()
+}
+
+/// \[EXTENSION\] Adds to `tables` the views of the backups `backups` keeps
+/// (RULES.md D166): BACKUPS, ARCHIVED_SEGMENTS and RESTORE_POINTS.
+pub(crate) fn backup_tables(tables: &mut SystemTables, backups: &Arc<crate::db::backup::Backups>) {
+    for table in backups::tables(backups) {
+        tables.insert(name_of(&*table), table);
+    }
 }
 
 /// The description of system table `table`: no constraints, no engine.

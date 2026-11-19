@@ -228,6 +228,8 @@ its own; class TB is turborel's own.
 | TB916 | Stored data failed its checksum or format |
 | TB918 | The memory budget is spent, a buffer pool has no frame free, or a recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | TB920 | The statement was cancelled |
+| TBB01 | A backup or an archived segment failed its checksum or format, its object named *(extension)* |
+| TBB02 | A restore's recovery target is not among the records the backup and the archive hold *(extension)* |
 
 Statements are run directly, so an error of the rules of a statement's
 form, its names or its privileges is class 2A; while preparing one, class

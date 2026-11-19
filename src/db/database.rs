@@ -121,8 +121,11 @@ impl Database {
         Database::over(State::with_builtins(Box::new(MemoryCatalog::default())))
     }
 
-    fn over(state: State) -> Self {
-        let background = Background::over(Arc::clone(&state.jobs));
+    fn over(mut state: State) -> Self {
+        // Its backups' views read what its background work keeps (RULES.md D166).
+        let backups = Arc::default();
+        crate::system::backup_tables(&mut state.system, &backups);
+        let background = Background::over(Arc::clone(&state.jobs), backups);
         let db = Program::over(|program| Shared {
             current: RwLock::new(Arc::new(state)),
             changing: Mutex::new(None),

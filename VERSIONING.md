@@ -114,6 +114,9 @@ version, and comes with a major release (see
 | Installed package digests file (`turborel-package.digests`) | 1 | its first line | `plugin/package/install.rs` |
 | Registry index (`index`) | 1 | its first line | `plugin/package/index.rs` |
 | Extension lock file (`turborel-extensions.lock`) | 1 | its first line | `plugin/package/lock.rs` |
+| Backup manifest | 1 | the manifest's first byte | `backup/manifest.rs`, `MANIFEST_FORMAT` |
+| Archive layout and timeline history | 1 | the history's first byte | `backup/timeline.rs`, `ARCHIVE_FORMAT` |
+| Backup history entry | 1 | each entry's first byte | `backup/history.rs`, `HISTORY_FORMAT` |
 
 A server refuses a Hello of a protocol version it does not speak, saying
 which it does (SQLSTATE 08004).

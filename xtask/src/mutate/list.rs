@@ -3,6 +3,7 @@
 
 mod areas;
 mod array_targets;
+mod backup;
 mod bigint;
 mod bounded;
 mod check_rebind;
@@ -131,10 +132,9 @@ mod xquery_modules;
 mod xquery_statics;
 mod zones;
 
-pub use self::{collations::COLLATIONS, fill::FILL, vr::VR, waits::WAITS, zones::ZONES};
+pub use self::{collations::COLLATIONS, fill::FILL, readers::READERS, vr::VR, waits::WAITS, zones::ZONES};
 use super::{Mutation, Package};
 pub use kept::KEPT;
-pub use readers::READERS;
 pub use reads::READS;
 pub use server::SERVER;
 pub use shadow::SHADOW;

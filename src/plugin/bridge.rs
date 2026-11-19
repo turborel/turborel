@@ -11,7 +11,7 @@
 //!   and procedures; `metric.rs`, `embedder.rs`: vectors.
 //! * `auth.rs`: an authenticator, which the server wraps.
 //! * `backup.rs`, `partition.rs`: backup targets and partitioning
-//!   strategies, written against the traits `pending.rs` mirrors.
+//!   strategies.
 
 pub mod aggregate;
 pub mod auth;
@@ -19,7 +19,6 @@ pub mod backup;
 pub mod embedder;
 pub mod metric;
 pub mod partition;
-pub mod pending;
 pub mod procedure;
 pub mod scalar;
 pub mod table;

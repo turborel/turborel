@@ -191,6 +191,7 @@ fn scope(record: &Record) -> Scope {
         | Change::Reconfiguration { .. }
         | Change::Sequence { .. }
         | Change::Checkpoint
+        | Change::RestorePoint { .. }
         | Change::Stale { .. }
         | Change::LobStale { .. } => false,
     };

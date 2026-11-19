@@ -186,5 +186,8 @@ fn user_command(u: &UserStatement) -> Command {
         UserStatement::Alter { .. } | UserStatement::RoleCreator { .. } => commands::ALTER_USER,
         UserStatement::Drop { .. } => commands::DROP_USER,
         UserStatement::Owner { .. } | UserStatement::Members { .. } => commands::ALTER_DATABASE,
+        UserStatement::Backup { .. } => commands::BACKUP_DATABASE,
+        UserStatement::RestorePoint { .. } => commands::CREATE_RESTORE_POINT,
+        UserStatement::Rescan { .. } => commands::RESCAN_BACKUP_TARGET,
     }
 }

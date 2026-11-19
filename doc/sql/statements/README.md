@@ -18,6 +18,7 @@ One reference page for each statement, in alphabetical order.
 - [ALTER TYPE](alter-type.md): add or drop a structured type's attributes and methods
 - [ALTER USER](alter-user.md): change a user's password, or whether it may create roles
 - [ALTER XQUERY MODULE](alter-xquery-module.md): replace a registered XQuery module's text
+- [BACKUP DATABASE](backup-database.md): take a backup of the database while it serves *(extension)*
 - [BEGIN](begin.md): group statements with their own variables, conditions, cursors and handlers
 - [CALL](call.md): run an SQL-invoked procedure
 - [CANCEL CONNECTION](cancel-connection.md): cancel what a connection of the server runs
@@ -45,6 +46,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE PROCEDURE](create-procedure.md): define an SQL-invoked procedure
 - [CREATE PROPERTY GRAPH](create-property-graph.md): define a property graph over tables
 - [CREATE REACHABILITY INDEX](create-reachability-index.md): keep which vertices a property graph's edge table leads to
+- [CREATE RESTORE POINT](create-restore-point.md): name a point of the log a restore may stop at *(extension)*
 - [CREATE ROLE](create-role.md): define a role
 - [CREATE SCHEMA](create-schema.md): define a schema
 - [CREATE SEQUENCE](create-sequence.md): define a sequence generator
@@ -116,6 +118,7 @@ One reference page for each statement, in alphabetical order.
 - [PREPARE](prepare.md): prepare a statement, by name
 - [RELEASE SAVEPOINT](release-savepoint.md): destroy a savepoint, keeping the changes since
 - [REPEAT](repeat.md): run statements until a condition is true
+- [RESCAN BACKUP TARGET](rescan-backup-target.md): find again the backups and archived segments a target holds *(extension)*
 - [RESIGNAL](resignal.md): raise again the condition a handler handles *(in a handler)*
 - [RETURN](return.md): give the value of an SQL-invoked function
 - [REVOKE](revoke.md): revoke privileges, or roles

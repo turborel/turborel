@@ -161,6 +161,7 @@ impl State {
             | Change::Abort
             | Change::StatementUndone { .. }
             | Change::Checkpoint
+            | Change::RestorePoint { .. }
             | Change::Stale { .. }
             | Change::LobPut { .. }
             | Change::LobStale { .. }
@@ -199,6 +200,7 @@ impl State {
                 | Change::Abort
                 | Change::StatementUndone { .. }
                 | Change::Checkpoint
+                | Change::RestorePoint { .. }
                 | Change::Stale { .. }
                 | Change::LobPut { .. }
                 | Change::LobStale { .. }
