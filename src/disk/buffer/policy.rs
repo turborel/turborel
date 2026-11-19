@@ -17,9 +17,9 @@
 //! (HISTORY 2, LRU-2, a page used once being the oldest). ONCE puts pages
 //! a scan read once before those used again, as 2Q's first queue does, and
 //! FREQUENCY keeps pages used often, as ARC's second list does. A weight
-//! of 0 is a hint to keep the page: such a frame is chosen only when no
+//! of 0 is a hint to keep the page. Such a frame is chosen only when no
 //! other is. A frame chosen while a policy is replaced may be weighed by
-//! either, which costs a choice, never a page: the pool checks every
+//! either, which costs a choice, never a page. The pool checks every
 //! proposal itself.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -187,7 +187,7 @@ struct Slot {
     weight: AtomicU32,
 }
 
-/// \[DESIGN\] The evictor of a pool whose policy is pushed (`Table`): it
+/// \[DESIGN\] The evictor of a pool whose policy is pushed (`Table`). It
 /// asks nothing of anyone as it chooses, and reports itself when asked
 /// (`report`), off every read.
 #[derive(Debug)]

@@ -35,7 +35,7 @@ fn the_policy_changes_which_frame_is_evicted() {
     for f in 0..4 {
         clock.accessed(f);
     }
-    // Frame 0 used again after a miss: least recently used is now frame 1.
+    // Frame 0 used again after a miss, so least recently used is now frame 1.
     lru.placed(3, page(9));
     lru.accessed(3);
     lru.accessed(0);

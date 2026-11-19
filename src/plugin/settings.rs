@@ -7,7 +7,7 @@
 //! same pipe, so it is read before the CALL. A call costs no round trip
 //! more, and a frame only when a value changed for that process.
 //!
-//! The values a call runs with are its statement's: a session's call
+//! The values a call runs with are its statement's. A session's call
 //! enters the state it runs against (`Calling`), its own values over the
 //! database's, on its thread. A call made with no statement, as a host
 //! plug-in's or a job's, runs with the database's values, which the
@@ -70,7 +70,7 @@ impl Feed {
         }
         let mut defaults = Settings::default();
         for d in manifest.settings.iter().filter_map(|d| d.definition(&manifest.name, host).ok()) {
-            // Checked as the manifest was read: a refusal cannot be.
+            // Checked as the manifest was read, so a refusal cannot be.
             drop(defaults.declare(d));
         }
         let feed = Feed { names, told: RwLock::new(Vec::new()) };
@@ -116,7 +116,7 @@ impl Feed {
 }
 
 /// That the SQL `text` the program of the extension `extension` runs sets
-/// no setting but one its manifest declares: it never writes another
+/// no setting but one its manifest declares. It never writes another
 /// extension's, nor a built-in one (RULES.md D282). A text that does not
 /// parse is left to the statement's own error.
 ///

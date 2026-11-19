@@ -123,9 +123,10 @@ impl Database {
     }
 
     /// \[EXTENSION\] The pool of the data file made after this evicts by
-    /// what `make` makes for its frames, in place of CLOCK: set before
-    /// the database is opened from its files, as a host plug-in's BUFFER
-    /// EVICTION is (RULES.md D283). A pool made already keeps its own.
+    /// what `make` makes for its frames, in place of CLOCK. It is set
+    /// before the database is opened from its files, as a host plug-in's
+    /// BUFFER EVICTION is (RULES.md D283). A pool made already keeps its
+    /// own.
     ///
     /// # Errors
     ///

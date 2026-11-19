@@ -1,7 +1,7 @@
 //! \[EXTENSION\] Kind 38, the buffer pool's eviction policy (RULES.md
 //! D283, D284): an advisor told the pool's report now and then, which
 //! answers the policy the pool's own evictor applies, or none to keep the
-//! last. It is never asked on a read: what it answers is a table of
+//! last. It is never asked on a read. What it answers is a table of
 //! weights the pool reads itself.
 
 use turborel::bytes::Reader;
@@ -41,14 +41,14 @@ pub mod policies {
         Policy { history: 2, ..Policy::default() }
     }
 
-    /// Scan resistant, as 2Q's first queue is: a page read in one interval
+    /// Scan resistant, as 2Q's first queue is. A page read in one interval
     /// alone scores `once` more than one used again.
     pub fn scan_resistant(once: u32) -> Policy {
         Policy { once, ..Policy::default() }
     }
 
     /// Weighing frequency too, as ARC's second list keeps pages used
-    /// often: each interval a page was used in takes `frequency` off.
+    /// often. Each interval a page was used in takes `frequency` off.
     pub fn frequent(frequency: u32) -> Policy {
         Policy { frequency, ..Policy::default() }
     }

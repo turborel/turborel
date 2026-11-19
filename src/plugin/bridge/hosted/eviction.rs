@@ -2,7 +2,7 @@
 //!
 //! The pool chooses a victim on every miss, so the program is never asked
 //! there. It programs the pool's own evictor (`disk/buffer/policy.rs`)
-//! instead: a job of the database sends it the pool's report every EVERY
+//! instead. A job of the database sends it the pool's report every EVERY
 //! milliseconds (1000 if not written), one call, and pushes the policy it
 //! answers into the table every evictor reads with no lock. The first is
 //! asked as the plug-in is registered, before any pool is made. A program
