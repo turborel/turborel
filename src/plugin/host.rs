@@ -18,9 +18,26 @@ use super::errors::unavailable;
 use super::hosted::{HostPlugin, Stop};
 use super::limits::{Limits, Told};
 use super::package::{PackageCrypto, Trust, verify_installed};
+use super::payload::statistics::Asked;
 
 /// What checks a plug-in's directory as a process of it starts.
 pub type Check = Arc<dyn Fn(&Path) -> Result<Option<String>> + Send + Sync>;
+
+/// What answers the statistics a plug-in asks (RULES.md D279): the
+/// database's newest, with the table and column they are of, for the
+/// privileges of a call that runs SQL to be checked.
+pub type Statistician = Arc<dyn Fn(&Asked) -> Result<Answered> + Send + Sync>;
+
+/// The statistics a plug-in asked for, written, and what they are of.
+#[derive(Debug, Clone)]
+pub struct Answered {
+    /// The table's schema and name.
+    pub table: (String, String),
+    /// The column, if one was asked of.
+    pub column: Option<String>,
+    /// The statistics, as STATISTICSDONE carries them.
+    pub payload: Vec<u8>,
+}
 
 /// What a database gives its extensions.
 pub struct Host {
@@ -33,6 +50,7 @@ pub struct Host {
     /// The node's stop, which a host plug-in's failure trips (RULES.md D229).
     pub stop: Arc<Stop>,
     hosted: RwLock<Vec<Arc<HostPlugin>>>,
+    statistician: RwLock<Option<Statistician>>,
 }
 
 impl std::fmt::Debug for Host {
@@ -52,7 +70,23 @@ impl Host {
             trust: RwLock::new(Trust::default()),
             stop: Stop::new(),
             hosted: RwLock::new(Vec::new()),
+            statistician: RwLock::new(None),
         }
+    }
+
+    /// Registers what answers the statistics plug-ins ask, as the database
+    /// opens.
+    pub fn set_statistician(&self, statistician: Statistician) {
+        *self.statistician.write().unwrap_or_else(PoisonError::into_inner) = Some(statistician);
+    }
+
+    /// The statistics a plug-in asks, as a pool answers them.
+    pub fn statistics(self: &Arc<Self>) -> Statistician {
+        let host = Arc::clone(self);
+        Arc::new(move |asked: &Asked| {
+            let held = host.statistician.read().unwrap_or_else(PoisonError::into_inner).clone();
+            held.ok_or_else(|| unavailable("the database gives no statistics yet"))?(asked)
+        })
     }
 
     /// Keeps the host plug-in `plugin`, started (RULES.md D229).

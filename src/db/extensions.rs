@@ -15,6 +15,7 @@ mod dependents;
 mod host;
 mod objects;
 mod session;
+mod statistics;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

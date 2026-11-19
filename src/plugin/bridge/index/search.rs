@@ -160,6 +160,12 @@ impl Index for PluginIndex {
     fn estimate(&self, _probe: &Probe) -> Option<usize> {
         None
     }
+    fn distinct_keys(&self) -> Option<f64> {
+        self.0.known(|i| i.distinct)
+    }
+    fn probe_pages(&self, _probe: &Probe) -> Option<f64> {
+        self.0.known(|i| i.pages)
+    }
     fn nearest(self: Arc<Self>, _query: &NearestQuery, _budget: &Arc<crate::memory::MemoryBudget>) -> Result<Option<NeighbourEntries>> {
         Ok(None)
     }

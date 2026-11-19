@@ -52,6 +52,7 @@ mod input;
 mod kinds;
 mod objects;
 mod registry;
+mod rule;
 mod serve;
 mod storage;
 
@@ -65,6 +66,7 @@ pub use kinds::{
     Ranking, Scalar, Step, SystemTable, TableFunction, Target, TargetStore, Type, Upload, Who, XQueryFunction,
 };
 pub use registry::Plugin;
+pub use rule::Rule;
 pub use serve::{Cx, Limits, serve, serve_on};
 pub use storage::{Engine, Entries, IndexMethod, Search};
 pub use turborel::plugin::payload::engine::Opened;
@@ -73,6 +75,8 @@ pub use turborel::plugin::payload::process::Told;
 pub use turborel::plugin::payload::quantizer::{Trained, Training};
 pub use turborel::plugin::payload::replication::consensus::{Event as ReplicaEvent, Input as ReplicaInput, Output as ReplicaOutput};
 pub use turborel::plugin::payload::replication::{Held, Manifest, Member, Served};
+pub use turborel::plugin::payload::statistics::{ColumnAnswer, IndexAnswer, TableAnswer};
+pub use turborel::plugin::plan;
 pub use turborel::plugin::payload::types::Made;
 pub use turborel::plugin::values::{coordinates, dense_vector};
 

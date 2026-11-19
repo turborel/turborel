@@ -2,7 +2,7 @@
 //! D224, D226), each operation a method of the trait.
 
 use turborel::bytes::{Put, Reader};
-use turborel::plugin::payload::{self as p, engine, index};
+use turborel::plugin::payload::{self as p, engine, index, statistics};
 use turborel::plugin::values::values;
 
 use super::super::registry::{Plugin, find};
@@ -50,6 +50,10 @@ pub(super) fn engine(plugin: &mut Plugin, object: &str, op: u8, r: &mut Reader<'
             e.checkpoint(&at, read(r, super::u64_of)?)?;
         }
         p::ENGINE_DROP => e.drop_table(&locator(r)?)?,
+        p::ENGINE_STATISTICS => {
+            let known = e.statistics(&locator(r)?)?;
+            out = written(|o| statistics::put_table(o, known.as_ref()))?;
+        }
         _ => return Err(PluginError::external(&format!("an engine has no operation {op}"))),
     }
     Ok(out)
@@ -99,6 +103,7 @@ pub(super) fn index(plugin: &mut Plugin, cx: &mut Cx<'_>, object: &str, op: u8, 
         }
         p::INDEX_CHECKPOINT => m.checkpoint(&locator(r)?)?,
         p::INDEX_DROP => m.drop_index(&locator(r)?)?,
+        p::INDEX_STATISTICS => statistics::put_index(&mut out, m.statistics(&locator(r)?)?.as_ref()),
         _ => return Err(PluginError::external(&format!("an index method has no operation {op}"))),
     }
     Ok(out)

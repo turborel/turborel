@@ -37,7 +37,8 @@ use crate::error::Result;
 use crate::log::Lsn;
 use crate::plugin::errors::broken;
 use crate::plugin::payload::engine::{opened, put_changes};
-use crate::plugin::payload::{ENGINE_APPLY, ENGINE_CHECKPOINT, ENGINE_CREATE, ENGINE_OPEN, put_strings};
+use crate::plugin::payload::statistics::{self, TableAnswer};
+use crate::plugin::payload::{ENGINE_APPLY, ENGINE_CHECKPOINT, ENGINE_CREATE, ENGINE_OPEN, ENGINE_STATISTICS, put_strings};
 use crate::plugin::values::stored;
 use crate::storage::{Row, RowId, StorageEngine, TableStorage};
 use crate::sync::lock_builtin;
@@ -78,6 +79,8 @@ pub(super) struct Shared {
     /// The transactions writing it, each its overlay.
     open: Mutex<std::collections::HashMap<crate::txn::TxId, table::Overlay>>,
     damaged: AtomicBool,
+    /// What the program knows of its rows (RULES.md D278).
+    known: super::known::Known<TableAnswer>,
 }
 
 impl PluginEngine {
@@ -101,6 +104,7 @@ impl PluginEngine {
             captured: Mutex::new(None),
             open: Mutex::default(),
             damaged: AtomicBool::new(false),
+            known: super::known::Known::default(),
         });
         let mut tables = lock_builtin(&self.tables);
         tables.retain(|t| t.strong_count() > 0);
@@ -185,8 +189,27 @@ impl Shared {
         usize::try_from(self.batch).unwrap_or(usize::MAX).max(1)
     }
 
+    /// What the program knows of the table's rows, of as many columns as
+    /// it has, and after how many rows written it is stale; none if it
+    /// knows nothing (STATISTICS, RULES.md D278).
+    ///
+    /// # Errors
+    ///
+    /// The call's, or SQLSTATE 38T03 of an answer of other columns.
+    fn statistics(&self) -> Result<Option<(TableAnswer, u64)>> {
+        let mut payload = Vec::new();
+        crate::bytes::Put::put_bytes(&mut payload, &self.locator);
+        let Some(got) = answer(&self.link.plain(ENGINE_STATISTICS, payload)?, statistics::table)? else { return Ok(None) };
+        if got.columns.len() != self.columns.len() && !got.columns.is_empty() {
+            return Err(crate::plugin::errors::violation(&format!("statistics of {} columns, of {}", got.columns.len(), self.columns.len())));
+        }
+        let refresh = got.refresh;
+        Ok(Some((got, refresh)))
+    }
+
     /// Counts `before`, rows held, replaced by `changes`.
     fn count(&self, before: &[Option<Row>], changes: &[(RowId, Option<Row>)]) {
+        self.known.written(u64::try_from(changes.len()).unwrap_or(u64::MAX));
         let mut rows = lock_builtin(&self.rows);
         for (b, (_, c)) in before.iter().zip(changes) {
             *rows = match (b.is_some(), c.is_some()) {

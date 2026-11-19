@@ -1,6 +1,7 @@
 //! \[EXTENSION\] A CALL's payload read, its object's trait called for each
 //! row, value or string of its batch, and its RESULT's payload written
-//! (RULES.md D167): kinds 1 to 9 here, those from 10 in `later.rs`.
+//! (RULES.md D167): kinds 1 to 9 here, those from 10 in `later.rs`, an
+//! optimizer rule's in `rule.rs`.
 
 mod later;
 mod stores;
@@ -17,6 +18,9 @@ use super::objects::{Held, numbered};
 use super::registry::{Plugin, find};
 use super::serve::Cx;
 use super::{Answer, PluginError, coordinates, dense_vector};
+
+/// The code of kind 37, an optimizer rule (`rule.rs`).
+const RULE_KIND: u8 = 37;
 
 /// What a payload's reader fails with.
 fn malformed(e: &turborel::error::SqlError) -> PluginError {
@@ -63,6 +67,7 @@ pub(super) fn answer(plugin: &mut Plugin, cx: &mut Cx<'_>, (kind, op, object): (
         7 => authenticate(plugin, object, op, &mut r),
         8 => target(find(&mut plugin.targets, object)?.as_mut(), &mut plugin.held, op, &mut r),
         9 => partition(plugin, object, op, &mut r),
+        RULE_KIND => super::rule::rewrite(plugin, cx, (op, object), &mut r),
         20.. => super::host::answer(plugin, cx, (kind, op, object), payload),
         _ => later::answer(plugin, cx, (kind, op, object), &mut r),
     }

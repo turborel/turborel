@@ -26,6 +26,7 @@ pub mod limits;
 pub mod manifest;
 pub mod package;
 pub mod payload;
+pub mod plan;
 pub mod pool;
 mod process;
 pub mod values;

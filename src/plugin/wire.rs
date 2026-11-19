@@ -16,6 +16,8 @@
 //! SHUTDOWN 7  (nothing)
 //! SQL      8  call u64 | mode u8 (0 run, 1 rows) | text str | values
 //! SQLDONE  9  call u64 | rows
+//! STATISTICS      10  call u64 | asked (`payload/statistics.rs`)
+//! STATISTICSDONE  11  call u64 | table or index statistics, as asked
 //! ```
 //!
 //! Every integer is little-endian, as `bytes.rs` writes every other
@@ -24,6 +26,7 @@
 use std::io::{ErrorKind, Read, Write};
 
 use super::errors::violation;
+use super::payload::statistics::{Asked, asked, put_asked};
 use super::payload::{put_strings, strings};
 use super::values::{put_values, values};
 use crate::bytes::{Put, Reader};
@@ -48,6 +51,10 @@ pub const SHUTDOWN: u8 = 7;
 pub const SQL: u8 = 8;
 /// The type byte of SQLDONE.
 pub const SQL_DONE: u8 = 9;
+/// The type byte of STATISTICS (RULES.md D279).
+pub const STATISTICS: u8 = 10;
+/// The type byte of STATISTICSDONE.
+pub const STATISTICS_DONE: u8 = 11;
 
 /// The bytes of a frame's length.
 const LENGTH_BYTES: usize = 4;
@@ -161,6 +168,21 @@ pub enum Message {
         /// Its rows, none of a statement run.
         rows: Vec<Vec<Value>>,
     },
+    /// STATISTICS a call asks of the database (RULES.md D279).
+    Statistics {
+        /// The call.
+        call: u64,
+        /// What it asks the statistics of.
+        asked: Asked,
+    },
+    /// STATISTICSDONE: the statistics asked for, a table's or an index's
+    /// as `payload/statistics.rs` writes them.
+    StatisticsDone {
+        /// The call.
+        call: u64,
+        /// The statistics written.
+        payload: Vec<u8>,
+    },
 }
 
 /// `rows`, counted, each its values.
@@ -195,6 +217,8 @@ impl Message {
             Message::Shutdown => SHUTDOWN,
             Message::Sql { .. } => SQL,
             Message::SqlDone { .. } => SQL_DONE,
+            Message::Statistics { .. } => STATISTICS,
+            Message::StatisticsDone { .. } => STATISTICS_DONE,
         }
     }
 
@@ -236,7 +260,7 @@ impl Message {
                 out.put_str(&c.object);
                 out.extend_from_slice(&c.payload);
             }
-            Message::Result { call, payload } => {
+            Message::Result { call, payload } | Message::StatisticsDone { call, payload } => {
                 out.put_u64(*call);
                 out.extend_from_slice(payload);
             }
@@ -252,6 +276,10 @@ impl Message {
             Message::SqlDone { call, rows } => {
                 out.put_u64(*call);
                 put_rows(out, rows)?;
+            }
+            Message::Statistics { call, asked } => {
+                out.put_u64(*call);
+                put_asked(out, asked);
             }
         }
         Ok(())
@@ -302,6 +330,8 @@ impl Message {
             SHUTDOWN => Message::Shutdown,
             SQL => Message::Sql { call: r.u64()?, rows: r.u8()? != 0, text: r.str()?, args: values(r)? },
             SQL_DONE => Message::SqlDone { call: r.u64()?, rows: rows(r)? },
+            STATISTICS => Message::Statistics { call: r.u64()?, asked: asked(r)? },
+            STATISTICS_DONE => Message::StatisticsDone { call: r.u64()?, payload: r.rest().to_vec() },
             other => return Err(violation(&format!("no message is of type {other}"))),
         };
         r.finish()?;

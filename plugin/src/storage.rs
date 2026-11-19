@@ -5,7 +5,7 @@
 use turborel::storage::{Row, RowId};
 use turborel::value::Value;
 
-use super::{Answer, Near, Opened, Probed, Write};
+use super::{Answer, IndexAnswer, Near, Opened, Probed, TableAnswer, Write};
 
 /// Entries of an index, each a row's id and its key.
 pub type Entries = Vec<(RowId, Vec<Value>)>;
@@ -70,6 +70,18 @@ pub trait Engine {
     ///
     /// The engine's.
     fn drop_table(&mut self, locator: &[u8]) -> Answer<()>;
+    /// What it knows of the table's rows, for the planner, each column's
+    /// in order or none, and `refresh`, the rows written after which the
+    /// database asks again (RULES.md D278). Asked once, then as the answer
+    /// goes stale or the table is analyzed. Default: nothing, and the
+    /// planner takes its defaults.
+    ///
+    /// # Errors
+    ///
+    /// The engine's, taken as nothing known.
+    fn statistics(&mut self, _locator: &[u8]) -> Answer<Option<TableAnswer>> {
+        Ok(None)
+    }
 }
 
 /// Kind 17, an index method: indexes of counted entries kept outside the
@@ -127,4 +139,13 @@ pub trait IndexMethod {
     ///
     /// The method's.
     fn drop_index(&mut self, locator: &[u8]) -> Answer<()>;
+    /// What it knows of the index's entries, for the planner: as an
+    /// engine's `statistics`. Default: nothing.
+    ///
+    /// # Errors
+    ///
+    /// The method's, taken as nothing known.
+    fn statistics(&mut self, _locator: &[u8]) -> Answer<Option<IndexAnswer>> {
+        Ok(None)
+    }
 }

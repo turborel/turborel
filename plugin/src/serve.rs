@@ -8,10 +8,12 @@ use std::io::{Read, Write};
 use std::sync::mpsc::Receiver;
 
 use turborel::plugin::wire::{BATCH, CANCEL_CAPABILITY, Call, Hello, Message, SQL_CAPABILITY, Welcome, write_message};
+use turborel::plugin::payload::reader;
+use turborel::plugin::payload::statistics::{self, Asked};
 use turborel::value::Value;
 
 use super::registry::Plugin;
-use super::{Answer, PluginError, dispatch};
+use super::{Answer, IndexAnswer, PluginError, TableAnswer, dispatch};
 
 /// The limits HELLO gave (RULES.md D170).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -34,6 +36,12 @@ pub(super) trait Link {
     ///
     /// The database's.
     fn sql(&mut self, call: u64, rows: bool, text: &str, args: &[Value]) -> Answer<Vec<Vec<Value>>>;
+    /// The statistics `asked`, as STATISTICSDONE carries them.
+    ///
+    /// # Errors
+    ///
+    /// The database's.
+    fn statistics(&mut self, call: u64, asked: &Asked) -> Answer<Vec<u8>>;
 }
 
 /// What a call is given.
@@ -78,6 +86,42 @@ impl Cx<'_> {
         self.link.sql(self.call, false, text, args).map(drop)
     }
 
+    /// What the database keeps of the table `table`, written
+    /// "SCHEMA.TABLE", and each of its columns: none if it keeps nothing
+    /// (RULES.md D279). One round trip to the database; a procedure or
+    /// table function asks by its user's privileges, another by the
+    /// server's.
+    ///
+    /// # Errors
+    ///
+    /// The database's: of a table there is not, or a privilege lacking.
+    pub fn table_statistics(&mut self, table: &str) -> Answer<Option<TableAnswer>> {
+        let got = self.link.statistics(self.call, &Asked::Table(table.to_owned()))?;
+        Ok(statistics::table(&mut reader(&got))?)
+    }
+
+    /// What the database keeps of the column `column` of `table`, as
+    /// `table_statistics`, the answer's columns that one.
+    ///
+    /// # Errors
+    ///
+    /// As `table_statistics`.
+    pub fn column_statistics(&mut self, table: &str, column: &str) -> Answer<Option<TableAnswer>> {
+        let got = self.link.statistics(self.call, &Asked::Column(table.to_owned(), column.to_owned()))?;
+        Ok(statistics::table(&mut reader(&got))?)
+    }
+
+    /// What the database keeps of the index `index`, as
+    /// `table_statistics`, by the privileges of its table.
+    ///
+    /// # Errors
+    ///
+    /// As `table_statistics`.
+    pub fn index_statistics(&mut self, index: &str) -> Answer<Option<IndexAnswer>> {
+        let got = self.link.statistics(self.call, &Asked::Index(index.to_owned()))?;
+        Ok(statistics::index(&mut reader(&got))?)
+    }
+
     /// The limits HELLO gave.
     pub fn limits(&self) -> Limits {
         self.limits
@@ -118,10 +162,22 @@ impl<W: Write> Link for Pipes<W> {
     }
     fn sql(&mut self, call: u64, rows: bool, text: &str, args: &[Value]) -> Answer<Vec<Vec<Value>>> {
         let asked = Message::Sql { call, rows, text: text.to_owned(), args: args.to_vec() };
-        self.send(&asked).map_err(|e| PluginError::external(&e.to_string()))?;
+        let got = self.asked(&asked)?;
+        if let Message::SqlDone { rows: given, .. } = got { Ok(given) } else { Err(PluginError::external("the database answered SQL with statistics")) }
+    }
+    fn statistics(&mut self, call: u64, asked: &Asked) -> Answer<Vec<u8>> {
+        let got = self.asked(&Message::Statistics { call, asked: asked.clone() })?;
+        if let Message::StatisticsDone { payload, .. } = got { Ok(payload) } else { Err(PluginError::external("the database answered statistics with rows")) }
+    }
+}
+
+impl<W: Write> Pipes<W> {
+    /// `asked` sent, and its answer, SQLDONE or STATISTICSDONE, waited for.
+    fn asked(&mut self, asked: &Message) -> Answer<Message> {
+        self.send(asked).map_err(|e| PluginError::external(&e.to_string()))?;
         loop {
             match self.from.recv() {
-                Ok(Message::SqlDone { rows: given, .. }) => return Ok(given),
+                Ok(m @ (Message::SqlDone { .. } | Message::StatisticsDone { .. })) => return Ok(m),
                 Ok(Message::Error { state, message, .. }) => return Err(PluginError { state, message }),
                 Ok(Message::Cancel { call: other }) => self.cancelled.push(other),
                 Ok(other) => self.backlog.push_back(other),
@@ -167,7 +223,9 @@ pub fn serve_on(mut plugin: Plugin, input: impl Read + Send + 'static, output: i
             | Message::Error { .. }
             | Message::Cancel { .. }
             | Message::Sql { .. }
-            | Message::SqlDone { .. } => {}
+            | Message::SqlDone { .. }
+            | Message::Statistics { .. }
+            | Message::StatisticsDone { .. } => {}
         }
     }
     Ok(())
