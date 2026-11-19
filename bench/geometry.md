@@ -641,3 +641,21 @@ equal on every query. The circle's loop of one query, sampled
 nearest-edge searches of the band of points the cells' bounds leave
 undecided, about 0.6 units wide at a cell side of 1/16; a Euclidean
 transform would halve that band.
+
+## Packed loads held in memory
+
+CREATE INDEX packs an R-tree from its entries from the root down
+(RULES.md D139), sorting them through the work area's spill, which is
+MEMORY.WORK_BYTES, 4 MiB by default: a million points' records, 64 bytes
+each, went to the spill in runs and were merged back twice per level.
+Entries the memory budget can hold are now gathered into a vector
+reserved of it and tiled in place, each slab and run a slice sorted on
+its own; the spill serves only what the budget refuses, and both tile the
+same tree.
+
+Measured as above, the million points loaded one INSERT at a time and
+then indexed:
+
+| Million points | Before | After |
+|---|---:|---:|
+| CREATE INDEX, rtree | 4.1 s | 0.6 s |

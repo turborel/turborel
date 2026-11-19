@@ -6566,6 +6566,16 @@ the other choice. It needs the data's extent before the sort, or a curve
 over warped float bits, while STR needs only the count, which the first
 sort yields.
 
+A load whose entries the memory budget can hold is tiled in memory
+(`pack/held.rs`): the entries are gathered into a vector reserved of the
+budget, its room grown geometrically while the budget grants it, and
+each slab and run is a slice sorted in place, so no record is encoded,
+written to a work area or read back. Where the budget stops granting,
+the entries gathered go to the sorted spill ahead of the rest, within
+MEMORY.WORK_BYTES as above. Both tile the same tree. Measured on a
+million points (`bench/geometry.md`), the held load builds the index in
+0.6 s against 4.1 s through the spill.
+
 CREATE INDEX fills an index while writers keep it up to date (D27), so
 `Index::load_beside_writers` lets a method build beside them. The rtree
 packs into a side tree no one can reach, then holds out every writer by
