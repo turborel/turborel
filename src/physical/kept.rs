@@ -153,6 +153,7 @@ pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
         | Plan::Product { .. }
         | Plan::HashJoin { .. }
         | Plan::IndexJoin { .. }
+        | Plan::MergeJoin { .. }
         | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }

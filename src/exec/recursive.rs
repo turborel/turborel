@@ -214,6 +214,7 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
         Plan::MergeAppend { inputs, .. } => inputs.iter_mut().for_each(|input| give(input, work)),
         Plan::Product { left, right }
         | Plan::HashJoin { left, right, .. }
+        | Plan::MergeJoin { left, right, .. }
         | Plan::OuterJoin { left, right, .. }
         | Plan::SetOp { left, right, .. }
         | Plan::Append { left, right } => {

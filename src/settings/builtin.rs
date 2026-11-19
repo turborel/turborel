@@ -247,6 +247,7 @@ fn last() -> impl Iterator<Item = Definition> {
         .chain(plugins)
         .chain(backup)
         .chain(super::hosted::definitions())
+        .chain(super::joins::definitions())
 }
 
 /// [XQuery §5.2.3] Whether the Static Typing Feature is in effect for the

@@ -20,6 +20,7 @@ mod built;
 mod collated;
 mod cost;
 mod decided;
+mod enumerate;
 pub use decided::Decided;
 pub(crate) mod estimate;
 mod expression_index;
@@ -42,6 +43,7 @@ mod recognized;
 mod shown;
 pub(crate) mod spatial;
 
+pub use enumerate::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_LINEARIZED, ENUMERATIONS, GREEDY};
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
 pub use kept::{Place, ProbeSlot};
 pub(crate) use kept::{filled_plan, keepable, same_shape};
@@ -235,6 +237,28 @@ pub enum Plan {
         /// of matches none (RULES.md D15). Boxed, as few joins have them
         /// and every frame that holds a plan holds its largest variant.
         own: Own,
+        /// The degrees of `left` and `right`, the widths of the nulls.
+        widths: (usize, usize),
+        /// The condition, as text.
+        detail: String,
+    },
+    /// \[DESIGN\] (RULES.md D303) The rows of `left` and `right`, each in
+    /// ascending order of its `key` column, paired where the keys are equal
+    /// and `cond` is true of the pair: the rows of a product that its
+    /// equalities keep [X3.135-1986 §5.20 GR2b, §5.21 GR2], or, `outer`, of
+    /// a LEFT outer join [ISO/IEC 9075:1992 §7.5], each left row no pair
+    /// keeps with nulls; in the key's order (`exec/join/merge.rs`).
+    MergeJoin {
+        /// Whether the left rows that match none are kept, of a LEFT join.
+        outer: bool,
+        /// The first operand, in its key's order.
+        left: Box<Plan>,
+        /// The second operand, in its key's order.
+        right: Box<Plan>,
+        /// The column of each its rows are ordered and matched by.
+        key: JoinKey,
+        /// The rest of the condition, over the pair's columns.
+        cond: Option<Cond>,
         /// The degrees of `left` and `right`, the widths of the nulls.
         widths: (usize, usize),
         /// The condition, as text.
@@ -444,9 +468,14 @@ impl<'a> PhysicalPlanner<'a> {
     }
 
     /// Build `logical`, preferring output ordered by the keys `want`, if
-    /// any, where that pays, its products joined in the cheapest order
-    /// (`physical/order.rs`).
+    /// any, where that pays, its joins enumerated (`physical/enumerate.rs`)
+    /// or ordered greedily (`physical/order.rs`).
     fn build(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
+        match self.enumerated(logical, want) {
+            enumerate::Outcome::Planned(built) => return built,
+            enumerate::Outcome::Kept => return self.build_node(logical, want),
+            enumerate::Outcome::Greedy => {}
+        }
         match self.join_order(logical, want) {
             Some(reordered) => self.build_node(&reordered, want),
             None => self.build_node(logical, want),

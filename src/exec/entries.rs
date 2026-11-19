@@ -139,6 +139,7 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
         | Plan::HashJoin { .. }
         | Plan::OuterJoin { .. }
         | Plan::IndexJoin { .. }
+        | Plan::MergeJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
