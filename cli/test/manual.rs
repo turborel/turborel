@@ -19,7 +19,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use turborel::db::Database;
-use turborel_cli::{Command, Dialer, Input, Io};
+use turborel_cli::{Command, Dialer, Input, Io, Terminal};
 use turborel_client::agent::Agent;
 
 use crate::common::{Running, Scratch, command, options, start};
@@ -161,7 +161,7 @@ impl Client {
         NULL_SHOWN.clone_into(&mut given.null);
         let screen = Screen::default();
         let (mut out, mut err) = (screen.clone(), screen.clone());
-        let io = Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None };
+        let io = Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
         turborel_cli::run(&mut self.agent, &given, io);
         String::from_utf8(screen.0.take()).unwrap()
     }
@@ -222,7 +222,7 @@ impl Client {
         let mut agent = Agent::connected(Dialer::new((*given).clone(), Box::new(|| Ok(String::new()))), connection);
         let screen = Screen::default();
         let (mut out, mut err) = (screen.clone(), screen.clone());
-        let io = Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None };
+        let io = Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
         turborel_cli::run(&mut agent, &given, io);
         agent.terminate().unwrap();
         String::from_utf8(screen.0.take()).unwrap().replace(&format!("{}{}", scratch.dir.display(), std::path::MAIN_SEPARATOR), "")

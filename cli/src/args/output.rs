@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn output_options_set_the_layout_and_variables() {
         let mut settings = Settings::default();
-        let mut given = |text: &str| -> Result<String, String> { Ok(text.to_owned()) };
+        let given = |text: &str| -> Result<String, String> { Ok(text.to_owned()) };
         for (arg, v) in [("-A", ""), ("-t", ""), ("-F", ";"), ("--border", "2"), ("-v", "A=1=2"), ("--set", "B"), ("-x", "")] {
             assert!(option(arg, &mut || given(v), &mut settings).unwrap(), "{arg}");
         }

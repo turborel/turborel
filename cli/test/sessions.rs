@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use turborel::db::Database;
 use turborel::value::Value;
-use turborel_cli::{Credentials, Input, Io, MORE, PROMPT, Server, Tls};
+use turborel_cli::{Credentials, Input, Io, MORE, PROMPT, Server, Terminal, Tls};
 use turborel_client::connection::Password;
 use turborel_server::certificate::Certificate;
 use turborel_server::password::Pbkdf2;
@@ -154,16 +154,16 @@ fn a_run_ends_when_it_cannot_go_on() {
     let given = options(&server, vec![command("SELECT K FROM T; SELECT K FROM T")]);
     let mut connection = turborel_cli::connect(&given, || Ok(String::new())).unwrap();
     let mut err = Vec::new();
-    let io = Io { input: &mut io::empty(), typed: false, out: &mut Closed, err: &mut err, interrupts: None };
+    let io = Io { input: &mut io::empty(), typed: false, out: &mut Closed, err: &mut err, interrupts: None, terminal: Terminal::default() };
     assert!(!turborel_cli::run(&mut connection, &given, io));
     assert_eq!(String::from_utf8(err).unwrap(), "turborel: cannot write: closed\n", "once");
     let mut typed = Vec::new();
-    let io = Io { input: &mut "SELECT K FROM T;".as_bytes(), typed: true, out: &mut Closed, err: &mut typed, interrupts: None };
+    let io = Io { input: &mut "SELECT K FROM T;".as_bytes(), typed: true, out: &mut Closed, err: &mut typed, interrupts: None, terminal: Terminal::default() };
     assert!(!turborel_cli::run(&mut connection, &options(&server, vec![Input::Standard]), io));
     assert_eq!(String::from_utf8(typed).unwrap(), "turborel: cannot write: closed\n", "not even prompted");
     server.stop();
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let io = Io { input: &mut io::empty(), typed: false, out: &mut out, err: &mut err, interrupts: None };
+    let io = Io { input: &mut io::empty(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
     assert!(!turborel_cli::run(&mut connection, &given, io));
     let told = String::from_utf8(err).unwrap();
     assert_eq!(told.lines().count(), 1, "ended: {told}");

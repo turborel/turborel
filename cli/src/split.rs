@@ -147,7 +147,9 @@ impl Splitter {
                 done.push(Piece::Command(rest));
                 break;
             }
-            let read = vars.filter(|_| code && c == ':').and_then(|v| reference(&chars, at, v));
+            // A colon of `::`, a cast, begins no reference.
+            let cast = at.checked_sub(1).and_then(|p| chars.get(p)) == Some(&':') || chars.get(next) == Some(&':');
+            let read = vars.filter(|_| code && c == ':' && !cast).and_then(|v| reference(&chars, at, v));
             let (text, after) = read.unwrap_or_else(|| (c.to_string(), next));
             done.extend(text.chars().filter_map(|t| self.take(t)).map(Piece::Statement));
             at = after;

@@ -17,12 +17,12 @@ fn keys_edit_and_end_the_line() {
     typed(&mut editor, "selet");
     editor.key(Key::Left);
     editor.key(Key::Char('c'));
-    assert_eq!(editor.buffer().text(), "selcet");
+    assert_eq!(editor.buffer().text(), "select");
     editor.key(Key::Home);
     editor.key(Key::EndOfInput);
-    assert_eq!(editor.buffer().text(), "elcet");
+    assert_eq!(editor.buffer().text(), "elect");
     assert_eq!(editor.key(Key::Tab), Action::Complete);
-    assert_eq!(editor.key(Key::Enter), Action::Submit("elcet".into()));
+    assert_eq!(editor.key(Key::Enter), Action::Submit("elect".into()));
     assert_eq!(editor.key(Key::Interrupt), Action::Submit(String::new()));
     assert!(editor.buffer().is_empty());
 }
@@ -104,6 +104,7 @@ fn lines_are_drawn_with_the_cursor_in_place() {
     typed(&mut editor, "ab\ncd");
     editor.key(Key::Left);
     assert_eq!(editor.render("> ", 80), "\r\x1b[J> ab cd\r\x1b[6C");
+    assert_eq!(editor.render("> ", 4), "\r\x1b[J> ab cd\r\x1b[2C");
     assert_eq!(editor.render("> ", 4), "\x1b[1A\r\x1b[J> ab cd\r\x1b[2C");
     assert_eq!(editor.leave(4), "\r\n");
     let mut exact = Editor::new(&history);

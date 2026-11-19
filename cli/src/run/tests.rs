@@ -22,9 +22,9 @@ fn shown(given: &Options, (standard, typed): (&str, bool), times: &[Duration]) -
     let server = start(&Database::new(), &[]);
     let mut connection = server.connect("X");
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let io = Io { input: &mut standard.as_bytes(), typed, out: &mut out, err: &mut err, interrupts: None };
+    let io = Io { input: &mut standard.as_bytes(), typed, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
     let mut ticks = times.iter().copied();
-    let succeeded = run_with_clock(&mut connection, given, io, || ticks.next().expect("one start and end per statement"));
+    let succeeded = run_with_clock(&mut connection, given, io, || ticks.next().expect("one start and end per statement")) == Outcome::Succeeded;
     assert_eq!(ticks.next(), None, "every attempted statement was timed");
     (succeeded, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
 }
@@ -146,8 +146,8 @@ fn streamed_output_is_inside_the_measurement() {
     let now = Cell::new(Duration::ZERO);
     let mut out = Output { now: &now, bytes: Vec::new() };
     let mut err = Output { now: &now, bytes: Vec::new() };
-    let io = Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None };
-    assert!(run_with_clock(&mut connection, &given, io, || now.get()));
+    let io = Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
+    assert_eq!(run_with_clock(&mut connection, &given, io, || now.get()), Outcome::Succeeded);
     let shown = String::from_utf8(out.bytes).unwrap();
     assert!(shown.ends_with("(2 rows)\n"), "{shown}");
     assert_eq!(String::from_utf8(err.bytes).unwrap(), format!("Time: {} ns\n", shown.len()));
@@ -179,13 +179,13 @@ fn unwritten_timing_is_ignored() {
         let given = options("COMMIT; COMMIT");
         let mut out = Vec::new();
         let mut err = Broken { on_flush };
-        let io = Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None };
+        let io = Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
         let calls = Cell::new(0_u32);
         let clock = || {
             calls.set(calls.get() + 1);
             Duration::ZERO
         };
-        assert!(run_with_clock(&mut connection, &given, io, clock));
+        assert_eq!(run_with_clock(&mut connection, &given, io, clock), Outcome::Succeeded);
         assert_eq!(out, b"OK\nOK\n");
         assert_eq!(calls.get(), 4, "a start and an end per statement");
     }

@@ -92,14 +92,14 @@ fn a_failure_to_write_is_reported() {
 #[test]
 fn borders_rows_alone_and_footers() {
     let b0 = Layout { border: 0, ..layout(Style::Aligned) };
-    assert_eq!(written(&b0, None, false), "NAME     N\n------ ---\na, \"b\"   7\n?      -12\n(2 rows)\n");
+    assert_eq!(written(&b0, None, false), "NAME       N\n------ -----\na, \"b\"     7\n?        -12\n(2 rows)\n");
     let b2 = Layout { border: 2, ..layout(Style::Aligned) };
     assert_eq!(
         written(&b2, None, false),
-        "+--------+-----+\n| NAME   |   N |\n+--------+-----+\n| a, \"b\" |   7 |\n| ?      | -12 |\n+--------+-----+\n(2 rows)\n"
+        "+--------+-------+\n| NAME   |     N |\n+--------+-------+\n| a, \"b\" |     7 |\n| ?      |   -12 |\n+--------+-------+\n(2 rows)\n"
     );
     let alone = Layout { tuples_only: true, ..layout(Style::Aligned) };
-    assert_eq!(written(&alone, None, false), " a, \"b\" |   7\n ?      | -12\n");
+    assert_eq!(written(&alone, None, false), " a, \"b\" |     7\n ?      |   -12\n");
     let bare = Layout { footer: false, ..layout(Style::Aligned) };
     assert!(!written(&bare, None, false).contains("rows"));
 }
@@ -110,7 +110,7 @@ fn borders_rows_alone_and_footers() {
 #[test]
 fn rows_are_expanded() {
     let on = layout(Style::Aligned);
-    assert_eq!(written(&on, None, true), "-[ ROW 1 ]-\nNAME | a, \"b\"\nN    | 7\n-[ ROW 2 ]-\nNAME | ?\nN    | -12\n(2 rows)\n");
+    assert_eq!(written(&on, None, true), "-[ ROW 1 ]---\nNAME | a, \"b\"\nN    | 7\n-[ ROW 2 ]\nNAME | ?\nN    | -12\n(2 rows)\n");
     let auto = Layout { expanded: Expanded::Auto, ..layout(Style::Aligned) };
     assert!(written(&auto, Some(10), false).starts_with("-[ ROW 1 ]"));
     assert!(written(&auto, Some(80), false).starts_with(" NAME"));
@@ -122,7 +122,7 @@ fn rows_are_expanded() {
 #[test]
 fn wrapped_columns_fit_the_screen() {
     let wrapped = layout(Style::Wrapped);
-    assert_eq!(written(&wrapped, Some(11), false), " NAME | N\n------+-----\n a, \"b | 7\n \"     |\n ?    | -12\n(2 rows)\n");
+    assert_eq!(written(&wrapped, Some(11), false), " NAME |   N\n------+-----\n a, \" |   7\n b\"   |\n ?    | -12\n(2 rows)\n");
     assert_eq!(written(&wrapped, None, false), written(&layout(Style::Aligned), None, false), "no screen, aligned");
 }
 

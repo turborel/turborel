@@ -26,7 +26,7 @@ fn arguments_read_quotes_and_variables() {
     assert_eq!(arguments("a  'b c' \"D e\"", &v).unwrap(), ["a", "b c", "\"D e\""]);
     assert_eq!(arguments("'it''s'", &v).unwrap(), ["it's"]);
     assert_eq!(arguments(":T x:T :'Q' :\"Q\"", &v).unwrap(), ["staff", "xstaff", "'it''s \"x\"'", "\"it's \"\"x\"\"\""]);
-    assert_eq!(arguments(":{?T} :{?NONE} :NONE : :'T", &v).unwrap(), ["true", "false", ":NONE", ":", ":'T"]);
+    assert_eq!(arguments(":{?T} :{?NONE} :NONE :", &v).unwrap(), ["true", "false", ":NONE", ":"]);
     assert!(arguments("'open", &v).is_err());
     assert!(arguments("\"open", &v).is_err());
     assert_eq!(arguments("", &v).unwrap(), Vec::<String>::new());

@@ -222,7 +222,7 @@ fn run_with_clock<'a, S: Statements + ?Sized>(connection: &'a mut S, options: &'
         typing: false,
         now,
         vars: Variables::default(),
-        layout: options.settings.layout.clone(),
+        layout: Layout { null: options.null.clone(), ..options.settings.layout.clone() },
         timing: options.timing,
         redirect: None,
         tee: None,
@@ -377,8 +377,8 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
                 Err(e) => Err(self.tell(&format!("cannot read: {e}"), Next::Stop)),
             };
         }
-        if typed && write!(self.out, "{prompt}").and_then(|()| self.out.flush()).is_err() {
-            return Err(Next::Stop);
+        if typed && let Err(e) = write!(self.out, "{prompt}").and_then(|()| self.out.flush()) {
+            return Err(self.tell(&format!("cannot write: {e}"), Next::Stop));
         }
         let mut line = String::new();
         match text.read_line(&mut line) {

@@ -249,7 +249,8 @@ mod tests {
     use super::*;
 
     fn invocation(words: &str) -> Result<Admin, String> {
-        Invocation::new(Options::default(), words.split(' ').map(str::to_owned).collect()).map(|i| i.command)
+        let crate::args::Command::Run(options) = crate::args::parse(&["-U".to_owned(), "X".to_owned()], &|_| None).unwrap() else { panic!("a run") };
+        Invocation::new(*options, words.split(' ').map(str::to_owned).collect()).map(|i| i.command)
     }
 
     /// Verifies: [DESIGN] RULES.md D218: each command is read with its

@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use turborel::db::Database;
-use turborel_cli::{Importing, Input, Io};
+use turborel_cli::{Importing, Input, Io, Terminal};
 use turborel_client::import::{Dialect, Import};
 
 use crate::common::{Closed, Running, Scratch, command, options, ran, start};
@@ -101,7 +101,7 @@ fn an_import_needs_a_connection_and_its_output() {
     given.import = Some(into_t(false));
     let mut connection = turborel_cli::connect(&given, || Ok(String::new())).unwrap();
     let mut err = Vec::new();
-    let io = Io { input: &mut std::io::empty(), typed: false, out: &mut Closed, err: &mut err, interrupts: None };
+    let io = Io { input: &mut std::io::empty(), typed: false, out: &mut Closed, err: &mut err, interrupts: None, terminal: Terminal::default() };
     assert!(!turborel_cli::run(&mut connection, &given, io));
     assert_eq!(String::from_utf8(err).unwrap(), "turborel: cannot write: closed\n", "the run ends there");
     connection.terminate().unwrap();
