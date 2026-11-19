@@ -8,11 +8,11 @@
 
 use super::kinds::Starter;
 
-/// The refusal of every call of a starter's object `name` not yet
-/// written, as its methods' body.
+/// A method of signature `sig` of a starter's object `name`, refusing
+/// each call until it is written.
 macro_rules! refused {
-    ($name:literal) => {
-        concat!("Err(PluginError::external(\"", $name, " is not written yet\"))")
+    ($name:literal, $sig:literal) => {
+        concat!("    fn ", $sig, " {\n        Err(PluginError::external(\"", $name, " is not written yet\"))\n    }\n")
     };
 }
 
@@ -20,46 +20,47 @@ macro_rules! refused {
 const WIRE: &str = concat!(
     "/// WIRE: how replicas reach each other, every call refused until it is written.\nstruct Wire;\n\n",
     "impl ReplicaTransport for Wire {\n",
-    "    fn open(&mut self, _me: u32, _configuration: &[Member]) -> Answer<Vec<u32>> {\n        ", refused!("WIRE"), "\n    }\n",
-    "    fn send(&mut self, _to: u32, _frame: &[u8]) -> Answer<bool> {\n        ", refused!("WIRE"), "\n    }\n",
-    "    fn receive(&mut self) -> Answer<Vec<(u32, Vec<u8>)>> {\n        ", refused!("WIRE"), "\n    }\n",
-    "    fn reconfigure(&mut self, _configuration: &[Member]) -> Answer<Vec<u32>> {\n        ", refused!("WIRE"), "\n    }\n}\n"
+    refused!("WIRE", "open(&mut self, _me: u32, _configuration: &[Member]) -> Answer<Vec<u32>>"),
+    refused!("WIRE", "send(&mut self, _to: u32, _frame: &[u8]) -> Answer<bool>"),
+    refused!("WIRE", "receive(&mut self) -> Answer<Vec<(u32, Vec<u8>)>>"),
+    refused!("WIRE", "reconfigure(&mut self, _configuration: &[Member]) -> Answer<Vec<u32>>"),
+    "}\n"
 );
 
 /// BOOK: a journal refusing each call.
 const BOOK: &str = concat!(
     "/// BOOK: the consensus journal's storage, every call refused until it is written.\nstruct Book;\n\n",
     "impl Journal for Book {\n",
-    "    fn open(&mut self) -> Answer<Held> {\n        ", refused!("BOOK"), "\n    }\n",
-    "    fn persist(&mut self, _at: u64, _record: &[u8]) -> Answer<()> {\n        ", refused!("BOOK"), "\n    }\n",
-    "    fn truncate(&mut self, _after: u64) -> Answer<()> {\n        ", refused!("BOOK"), "\n    }\n",
-    "    fn retain(&mut self, _through: u64) -> Answer<()> {\n        ", refused!("BOOK"), "\n    }\n",
-    "    fn mark(&mut self, _at: u64, _epoch: u64, _members: &[Member]) -> Answer<()> {\n        ", refused!("BOOK"), "\n    }\n",
-    "    fn persist_state(&mut self, _state: &[u8]) -> Answer<()> {\n        ", refused!("BOOK"), "\n    }\n",
-    "    fn sync(&mut self) -> Answer<Vec<u64>> {\n        ", refused!("BOOK"), "\n    }\n",
-    "    fn flush(&mut self) -> Answer<Vec<u64>> {\n        ", refused!("BOOK"), "\n    }\n}\n"
+    refused!("BOOK", "open(&mut self) -> Answer<Held>"),
+    refused!("BOOK", "persist(&mut self, _at: u64, _record: &[u8]) -> Answer<()>"),
+    refused!("BOOK", "truncate(&mut self, _after: u64) -> Answer<()>"),
+    refused!("BOOK", "retain(&mut self, _through: u64) -> Answer<()>"),
+    refused!("BOOK", "mark(&mut self, _at: u64, _epoch: u64, _members: &[Member]) -> Answer<()>"),
+    refused!("BOOK", "persist_state(&mut self, _state: &[u8]) -> Answer<()>"),
+    refused!("BOOK", "sync(&mut self) -> Answer<Vec<u64>>"),
+    refused!("BOOK", "flush(&mut self) -> Answer<Vec<u64>>"),
+    "}\n"
 );
 
 /// SHIP: a state transfer refusing each call.
 const SHIP: &str = concat!(
     "/// SHIP: how a replica's state is shipped, every call refused until it is written.\nstruct Ship;\n\n",
     "impl StateTransfer for Ship {\n",
-    "    fn begin(&mut self, _from: u32) -> Answer<(u64, Option<Vec<u8>>)> {\n        ", refused!("SHIP"), "\n    }\n",
-    "    fn take(&mut self, _fetch: u64, _frame: &[u8]) -> Answer<(bool, Option<Vec<u8>>)> {\n        ", refused!("SHIP"), "\n    }\n",
-    "    fn fetched(&mut self, _fetch: u64) -> Answer<Manifest> {\n        ", refused!("SHIP"), "\n    }\n",
-    "    fn chunk(&mut self, _fetch: u64, _file: u32, _at: u64, _max: u32) -> Answer<Vec<u8>> {\n        ", refused!("SHIP"), "\n    }\n",
-    "    fn export(&mut self, _export: u64, _manifest: Manifest) -> Answer<()> {\n        ", refused!("SHIP"), "\n    }\n",
-    "    fn serve(&mut self, _to_export: (u32, u64), _request: &[u8], _given: Option<(u32, u64, Vec<u8>)>) -> Answer<Served> {\n        ",
-    refused!("SHIP"), "\n    }\n}\n"
+    refused!("SHIP", "begin(&mut self, _from: u32) -> Answer<(u64, Option<Vec<u8>>)>"),
+    refused!("SHIP", "take(&mut self, _fetch: u64, _frame: &[u8]) -> Answer<(bool, Option<Vec<u8>>)>"),
+    refused!("SHIP", "fetched(&mut self, _fetch: u64) -> Answer<Manifest>"),
+    refused!("SHIP", "chunk(&mut self, _fetch: u64, _file: u32, _at: u64, _max: u32) -> Answer<Vec<u8>>"),
+    refused!("SHIP", "export(&mut self, _export: u64, _manifest: Manifest) -> Answer<()>"),
+    refused!("SHIP", "serve(&mut self, _to_export: (u32, u64), _request: &[u8], _given: Option<(u32, u64, Vec<u8>)>) -> Answer<Served>"),
+    "}\n"
 );
 
 /// VOTE: a consensus refusing each step.
 const VOTE: &str = concat!(
     "/// VOTE: the replication protocol, every step refused until it is written.\nstruct Vote;\n\n",
     "impl Consensus for Vote {\n",
-    "    fn open(&mut self, _me: u32, _configuration: &[Member], _recovered: Option<Held>, _nonce: u64) -> Answer<()> {\n        ",
-    refused!("VOTE"), "\n    }\n",
-    "    fn step(&mut self, _input: ReplicaInput) -> Answer<Vec<ReplicaOutput>> {\n        ", refused!("VOTE"), "\n    }\n",
+    refused!("VOTE", "open(&mut self, _me: u32, _configuration: &[Member], _recovered: Option<Held>, _nonce: u64) -> Answer<()>"),
+    refused!("VOTE", "step(&mut self, _input: ReplicaInput) -> Answer<Vec<ReplicaOutput>>"),
     "    fn describe(&mut self) -> String {\n        \"VOTE, not written yet\".to_owned()\n    }\n}\n"
 );
 
@@ -67,7 +68,8 @@ const VOTE: &str = concat!(
 const VAULT: &str = concat!(
     "/// VAULT: where the log is archived and backups kept, refused until it is written.\nstruct Vault;\n\n",
     "impl Target for Vault {\n",
-    "    fn open(&mut self, _location: &str) -> Answer<Box<dyn TargetStore>> {\n        ", refused!("VAULT"), "\n    }\n}\n"
+    refused!("VAULT", "open(&mut self, _location: &str) -> Answer<Box<dyn TargetStore>>"),
+    "}\n"
 );
 
 /// Every host kind, in the order of their codes.
@@ -339,7 +341,14 @@ impl Job for Tidy {
         word: "consensus",
         code: 35,
         declaration: "HOST CONSENSUS VOTE",
-        uses: &["turborel_plugin::Consensus", "turborel_plugin::Held", "turborel_plugin::Member", "turborel_plugin::ReplicaInput", "turborel_plugin::ReplicaOutput", "turborel_plugin::PluginError"],
+        uses: &[
+            "turborel_plugin::Consensus",
+            "turborel_plugin::Held",
+            "turborel_plugin::Member",
+            "turborel_plugin::ReplicaInput",
+            "turborel_plugin::ReplicaOutput",
+            "turborel_plugin::PluginError",
+        ],
         source: VOTE,
         added: ".consensus(\"VOTE\", Vote)",
     },

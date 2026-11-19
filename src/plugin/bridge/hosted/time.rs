@@ -50,7 +50,8 @@ impl PluginClock {
     pub fn tick(&self) -> Result<()> {
         let got = self.link.call(CLOCK_NOW, Vec::new())?;
         let micros = answer(&got, micros)?;
-        let now = i64::try_from(micros).map_err(|_| crate::plugin::errors::violation("the clock gave a time past 64 bits of microseconds"))?;
+        let now =
+            i64::try_from(micros).map_err(|_| crate::plugin::errors::violation("the clock gave a time past 64 bits of microseconds"))?;
         self.now.fetch_max(now, Ordering::AcqRel);
         Ok(())
     }

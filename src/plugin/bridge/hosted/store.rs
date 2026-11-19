@@ -23,7 +23,8 @@ use crate::plugin::errors::violation;
 use crate::plugin::hosted::HostLink;
 use crate::plugin::manifest::HostDeclared;
 use crate::plugin::payload::hosted::{
-    CATALOG_CREATE, CATALOG_OPEN, CATALOG_RECORD, LOG_APPEND, LOG_CREATE, LOG_EXISTS, LOG_OPEN, LOG_READ, LOG_TRUNCATE, put_records, records,
+    CATALOG_CREATE, CATALOG_OPEN, CATALOG_RECORD, LOG_APPEND, LOG_CREATE, LOG_EXISTS, LOG_OPEN, LOG_READ, LOG_TRUNCATE, put_records,
+    records,
 };
 
 /// Records a page of a log's read holds, if BATCH is not written.
@@ -61,7 +62,14 @@ impl PluginLogStorage {
     fn log(&self, place: &StorePlace<'_>, end: u64) -> Arc<PluginLog> {
         let held = Held { next: end.max(1), sent: Vec::new(), durable: end.saturating_sub(1), sending: false, failed: None };
         let dir = place.dir.to_string_lossy().into_owned();
-        Arc::new(PluginLog { link: self.link.clone(), dir, page: self.page, durable: self.durable, held: Mutex::new(held), given: Condvar::new() })
+        Arc::new(PluginLog {
+            link: self.link.clone(),
+            dir,
+            page: self.page,
+            durable: self.durable,
+            held: Mutex::new(held),
+            given: Condvar::new(),
+        })
     }
 }
 
@@ -283,4 +291,3 @@ impl CatalogStore for PluginCatalogStore {
         self.last.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 }
-

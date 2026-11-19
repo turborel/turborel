@@ -175,7 +175,8 @@ impl HostPlugin {
         pinned(&directory)?;
         let limits = (Arc::clone(&host.limits), Arc::clone(&host.memory));
         let pool = Pool::new(&manifest.name, (directory.clone(), executable), manifest.kinds(), limits).with_check(pinned).named_by_host();
-        let plugin = Arc::new(HostPlugin { manifest, directory, pool: Arc::new(pool), stop: Arc::clone(stop), pinned: spec.digest.is_some() });
+        let plugin =
+            Arc::new(HostPlugin { manifest, directory, pool: Arc::new(pool), stop: Arc::clone(stop), pinned: spec.digest.is_some() });
         drop(plugin.pool.lease()?);
         Ok(plugin)
     }

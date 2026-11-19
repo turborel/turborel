@@ -67,6 +67,7 @@ SELECT SETTING_NAME, TAKES_EFFECT FROM INFORMATION_SCHEMA.SETTINGS
  LOG.SEGMENT_BYTES                                            | CREATION
  STORAGE.CHECKSUM                                             | CREATION
  STORAGE.PAGE_BYTES                                           | CREATION
+ PLUGINS.HOST                                                 | START
  REPLICATION.CA                                               | START
  REPLICATION.LISTEN                                           | START
  REPLICATION.MEMBERS                                          | START
@@ -84,7 +85,7 @@ SELECT SETTING_NAME, TAKES_EFFECT FROM INFORMATION_SCHEMA.SETTINGS
  LOCKS.WAIT                                                   | TRANSACTION
  TRANSACTION.ISOLATION                                        | TRANSACTION
  TRANSACTION.STRICT                                           | TRANSACTION
-(29 rows)
+(30 rows)
 ```
 
 A setting fixed when the database is made is refused after:

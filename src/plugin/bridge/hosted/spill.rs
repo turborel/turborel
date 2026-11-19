@@ -19,9 +19,9 @@ use crate::plugin::manifest::HostDeclared;
 use crate::plugin::payload::hosted::{
     SPILL_DROP, SPILL_GET, SPILL_INSERT, SPILL_PUSH, SPILL_READ, SPILL_REMOVE, SPILL_RUN, SPILL_TABLE, parts, put_parts,
 };
-use crate::sync::lock_builtin;
-use crate::spill::{Area, Records, Spill, SpillArea, SpillRun, SpillTable};
 use crate::spill::TempFiles;
+use crate::spill::{Area, Records, Spill, SpillArea, SpillRun, SpillTable};
+use crate::sync::lock_builtin;
 
 /// Records a page of a run's read holds.
 const PAGE: u32 = 1024;

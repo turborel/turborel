@@ -85,7 +85,8 @@ fn a_host_plugins_objects_are_the_hosts_own() {
     db.set_setting("STORAGE.CHECKSUM", &Value::Char("FNV".into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION U").unwrap();
     let s = db.session("U");
-    let year: i64 = rows(&s, "SELECT EXTRACT(YEAR FROM CURRENT_TIMESTAMP) FROM INFORMATION_SCHEMA.SCHEMATA FETCH FIRST 1 ROW ONLY").unwrap()[0]
+    let year: i64 = rows(&s, "SELECT EXTRACT(YEAR FROM CURRENT_TIMESTAMP) FROM INFORMATION_SCHEMA.SCHEMATA FETCH FIRST 1 ROW ONLY")
+        .unwrap()[0]
         .parse()
         .unwrap();
     assert!(year >= 2026, "the program's clock, pushed: {year}");
@@ -117,7 +118,11 @@ fn a_host_plugins_objects_are_the_hosts_own() {
 #[test]
 fn host_plugins_are_declared_by_the_host_alone() {
     let scratch = Scratch::new("host_declared");
-    let mixed = install(&scratch.path("mixed"), ("MIXED", "1.0.0"), &manifest("MIXED", "1.0.0", "", "HOST CLOCK SYSTEM; FUNCTION PID() RETURNS BIGINT;"));
+    let mixed = install(
+        &scratch.path("mixed"),
+        ("MIXED", "1.0.0"),
+        &manifest("MIXED", "1.0.0", "", "HOST CLOCK SYSTEM; FUNCTION PID() RETURNS BIGINT;"),
+    );
     let db = Database::new();
     db.set_setting("PLUGINS.HOST", &Value::Char(format!("MIXED={}", mixed.display()))).unwrap();
     let refused = db.start_host_plugins().unwrap_err();
