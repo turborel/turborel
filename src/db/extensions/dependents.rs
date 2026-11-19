@@ -51,7 +51,8 @@ fn column_needs(c: &ColumnDesc, d: &Declared, collations: &[String]) -> bool {
         | ObjectKind::Engine
         | ObjectKind::IndexMethod
         | ObjectKind::Credentials
-        | ObjectKind::Diagnostics => false,
+        | ObjectKind::Diagnostics
+        | ObjectKind::Rule => false,
     }
 }
 
@@ -76,7 +77,8 @@ fn index_needs(ix: &IndexDesc, d: &Declared) -> bool {
         | ObjectKind::Type
         | ObjectKind::Engine
         | ObjectKind::Credentials
-        | ObjectKind::Diagnostics => false,
+        | ObjectKind::Diagnostics
+        | ObjectKind::Rule => false,
     }
 }
 

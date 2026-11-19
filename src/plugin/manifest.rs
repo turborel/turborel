@@ -35,6 +35,15 @@ pub const NEAREST: &str = "NEAREST";
 /// The set functions a plug-in's aggregate may not be named, as one of
 /// their name would replace the standard's [ISO/IEC 9075:1992 §6.5].
 const STANDARD_AGGREGATES: [&str; 5] = ["COUNT", "SUM", "AVG", "MAX", "MIN"];
+/// The code of an optimizer rule's kind (RULES.md D275), the first after
+/// the host kinds'.
+pub const RULE_CODE: u8 = 37;
+/// An optimizer rule's PHASE: on the plan as bound, before the built-in
+/// rules (RULES.md D276).
+pub const BOUND: &str = "BOUND";
+/// See `BOUND`: after the built-in rules, before joins are ordered; the
+/// default.
+pub const REWRITTEN: &str = "REWRITTEN";
 
 /// The kinds of object a plug-in provides, each with its code in protocol
 /// 1 (`payload.rs`).
@@ -78,11 +87,13 @@ pub enum ObjectKind {
     Credentials,
     /// A sink of the database's events.
     Diagnostics,
+    /// A rewrite rule of the optimizer (RULES.md D275).
+    Rule,
 }
 
 impl ObjectKind {
     /// Every kind, in the order of their codes.
-    pub const ALL: [ObjectKind; 19] = [
+    pub const ALL: [ObjectKind; 20] = [
         ObjectKind::Scalar,
         ObjectKind::Aggregate,
         ObjectKind::Table,
@@ -102,6 +113,7 @@ impl ObjectKind {
         ObjectKind::IndexMethod,
         ObjectKind::Credentials,
         ObjectKind::Diagnostics,
+        ObjectKind::Rule,
     ];
 
     /// Its code in protocol 1.
@@ -126,6 +138,8 @@ impl ObjectKind {
             ObjectKind::IndexMethod => 17,
             ObjectKind::Credentials => 18,
             ObjectKind::Diagnostics => 19,
+            // After the host kinds' 20 to 36.
+            ObjectKind::Rule => RULE_CODE,
         }
     }
 
@@ -156,6 +170,7 @@ impl ObjectKind {
             ObjectKind::IndexMethod => "INDEX METHOD",
             ObjectKind::Credentials => "CREDENTIALS",
             ObjectKind::Diagnostics => "DIAGNOSTICS",
+            ObjectKind::Rule => "OPTIMIZER RULE",
         }
     }
 }
@@ -197,6 +212,10 @@ pub struct Declared {
     pub version: Option<String>,
     /// An index method's SUPPORTS.
     pub supports: Vec<String>,
+    /// An optimizer rule's PHASE, if written.
+    pub phase: Option<String>,
+    /// An optimizer rule's PASSES, if written.
+    pub passes: Option<u32>,
 }
 
 impl Declared {
@@ -220,6 +239,8 @@ impl Declared {
             element: None,
             version: None,
             supports: Vec::new(),
+            phase: None,
+            passes: None,
         }
     }
 
@@ -496,6 +517,7 @@ fn check_object(d: &Declared) -> Result<()> {
             }
         }
         ObjectKind::IndexMethod => check_supports(d),
+        ObjectKind::Rule => check_rule(d),
         ObjectKind::Scalar
         | ObjectKind::Table
         | ObjectKind::Procedure
@@ -512,6 +534,17 @@ fn check_object(d: &Declared) -> Result<()> {
         | ObjectKind::Credentials
         | ObjectKind::Diagnostics => Ok(()),
     }
+}
+
+/// That an optimizer rule's PHASE is one there is, and its PASSES not 0.
+fn check_rule(d: &Declared) -> Result<()> {
+    if let Some(p) = d.phase.as_deref().filter(|p| ![BOUND, REWRITTEN].contains(p)) {
+        return Err(invalid_manifest(&format!("OPTIMIZER RULE {} has no phase {p}", d.name)));
+    }
+    if d.passes == Some(0) {
+        return Err(invalid_manifest(&format!("OPTIMIZER RULE {} makes no pass", d.name)));
+    }
+    Ok(())
 }
 
 /// That an index method SUPPORTS at least one search, each one known.
