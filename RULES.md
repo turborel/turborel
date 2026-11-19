@@ -3679,6 +3679,18 @@ keeps changing is chosen again until it is written, never dropped, as
 it is the way searches reach the new node. Each try lost is another
 writer's change made, so the writers as a whole make progress.
 
+A back edge's reselection never removes a node's last incoming edge on
+layer 0, the layer that holds every node (`Graph::shelter`). The graph
+counts how many of layer 0's lists hold each node, derived from the
+lists as they change and counted again when an image is read, never
+stored. An edge from one of the node's own neighbours does not count,
+so a pair holding only each other is not cut off. A candidate the
+heuristic lets go of with no other edge stays, in place of the farthest
+candidate chosen that has one, and if none has, the new node links to
+it instead. Maintenance's repair keeps them the same way, and its
+compacted graph links each node no path from the entry reaches from one
+of its reached neighbours, or the entry (`Graph::reattach`).
+
 Beside each node's vector or code the graph keeps the squared norm of
 the vector a search reads, worked out as a node is added and again when
 maintenance codes the store (`Graph::recode`). The image keeps no norms,

@@ -5,6 +5,7 @@
 //! paths through the tombstone survive it; then the graph is made again
 //! of its live nodes alone, renumbered.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use super::graph::{Graph, NONE, Store, slot};
@@ -56,8 +57,12 @@ impl Graph {
         s.base = base;
         s.spare.clear();
         s.spare.extend(s.chosen.iter().map(|c| c.id));
-        let ids = take(&mut s.spare);
-        self.set_links_kept(p, level, &ids, s.known);
+        let mut ids = take(&mut s.spare);
+        // A live node let go of keeps its last incoming edge (D97); one
+        // with no place left is linked again by `reattach`.
+        let before = self.links(p, level).to_vec();
+        let (changed, _) = self.shelter((p, level, None), &before, true, &mut ids);
+        self.set_links_kept(p, level, &ids, if changed { None } else { s.known });
         s.spare = ids;
     }
 
@@ -99,7 +104,59 @@ impl Graph {
         }
         out.entry = renumbered.get(slot(self.entry)).copied().filter(|n| *n != NONE).or_else(|| out.highest()).unwrap_or(NONE);
         out.top = out.levels.get(slot(out.entry)).copied().unwrap_or(0);
+        out.reattach();
         out
+    }
+
+    /// \[DESIGN\] Links each node no path from the entry reaches on layer
+    /// 0 from one that is reached (RULES.md D97): one of its own
+    /// neighbours, else the entry, in place of the last of that list
+    /// another list also holds, if full. A tombstone's repair may leave
+    /// such a node, as its lists drop the tombstones' edges, and two nodes
+    /// let go of by others' lists may hold only each other. Round after
+    /// round, as a node linked again leads to others.
+    fn reattach(&mut self) {
+        let mut seen = Vec::new();
+        let mut queue = VecDeque::new();
+        for _ in 0..REATTACH_ROUNDS {
+            self.reached(&mut seen, &mut queue);
+            let mut moved = false;
+            for u in (0..u32::try_from(self.len()).unwrap_or(NONE)).filter(|u| !seen.get(slot(*u)).copied().unwrap_or(true)) {
+                moved |= self.adopt(u, &seen);
+            }
+            if !moved {
+                return;
+            }
+        }
+    }
+
+    /// Marks in `seen` each node a path from the entry reaches on layer 0.
+    fn reached(&self, seen: &mut Vec<bool>, queue: &mut VecDeque<u32>) {
+        seen.clear();
+        seen.resize(self.len(), false);
+        queue.clear();
+        queue.push_back(self.entry);
+        while let Some(id) = queue.pop_front() {
+            let Some(at) = seen.get_mut(slot(id)).filter(|s| !**s) else { continue };
+            *at = true;
+            queue.extend(self.links(id, 0).iter().copied());
+        }
+    }
+
+    /// Links node `u` from a node `seen` marks: whether one had a place.
+    fn adopt(&mut self, u: u32, seen: &[bool]) -> bool {
+        let parents: Vec<u32> = self.links(u, 0).iter().copied().chain(std::iter::once(self.entry)).collect();
+        for y in parents.into_iter().filter(|y| seen.get(slot(*y)).copied().unwrap_or(false)) {
+            let mut ids = self.links(y, 0).to_vec();
+            if ids.len() >= self.m0 {
+                let Some(at) = ids.iter().rposition(|v| self.incoming(*v) > 1) else { continue };
+                ids.remove(at);
+            }
+            ids.push(u);
+            self.set_links(y, 0, &ids);
+            return true;
+        }
+        false
     }
 
     /// A node of the highest layer, the first such.
@@ -108,3 +165,9 @@ impl Graph {
         u32::try_from(at).ok()
     }
 }
+
+/// \[DESIGN\] The most rounds `Graph::reattach` links nodes again in:
+/// a node cut off is linked in the round after the one that reaches a
+/// neighbour of it, and chains of more than a few are not met, so 16
+/// bounds the work; a node left over is linked at the next maintenance.
+const REATTACH_ROUNDS: usize = 16;

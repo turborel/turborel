@@ -210,15 +210,24 @@ impl Graph {
         id
     }
 
-    /// Makes node `e`'s list on `level` `s.chosen`'s ids, if it is still
-    /// `s.before`: whether it was.
-    pub fn apply(&mut self, (e, level): (u32, u8), s: &mut Scratch) -> bool {
+    /// Makes node `e`'s list on `level` `s.chosen`'s ids, chosen again
+    /// with `new` among the candidates, if it is still `s.before`:
+    /// whether it was. The choice is first sheltered (`Graph::shelter`,
+    /// RULES.md D97), so it lets go of no node's last incoming edge on
+    /// layer 0; a node it must let go of all the same `new` links to.
+    pub fn apply(&mut self, (e, level, new): (u32, u8, u32), s: &mut Scratch) -> bool {
         if self.links(e, level) != s.before.as_slice() {
             return false;
         }
         s.spare.clear();
         s.spare.extend(s.chosen.iter().map(|c| c.id));
-        self.set_links_kept(e, level, &s.spare, s.known);
+        let mut spare = take(&mut s.spare);
+        let (changed, homeless) = self.shelter((e, level, Some(new)), &s.before, false, &mut spare);
+        self.set_links_kept(e, level, &spare, if changed { None } else { s.known });
+        for x in homeless {
+            self.foster(new, x);
+        }
+        s.spare = spare;
         self.changes = self.changes.wrapping_add(1);
         true
     }

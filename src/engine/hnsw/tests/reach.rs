@@ -69,3 +69,38 @@ fn hnsw_keeps_every_node_reachable_under_contention() {
     hnsw.maintain().unwrap();
     assert_eq!(unreachable(&hnsw), 0);
 }
+
+/// Whether `hnsw`'s count of each node's incoming edges on layer 0 is
+/// the count its lists give.
+fn counted(hnsw: &Hnsw) -> bool {
+    let graph = read(&hnsw.inner.graph).unwrap();
+    let mut again = graph.clone();
+    again.recount();
+    (0..u32::try_from(graph.len()).unwrap()).all(|id| graph.incoming(id) == again.incoming(id))
+}
+
+/// Verifies: [DESIGN] a back edge's reselection never lets go of a
+/// node's last incoming edge (RULES.md D97): inserted one by one at M 2
+/// and 3, where a full list is chosen again at almost every insert, and
+/// then repaired, every live node stays reachable from the entry, and
+/// the incoming counts kept are those the lists give. A regression test,
+/// failing without the shelter, as a full list's reselection let go of
+/// nodes it alone linked to.
+#[test]
+fn hnsw_reselection_keeps_every_node_reachable() {
+    let dims = 8;
+    for (seed, m) in [(1_u64, 2_usize), (6, 2), (1, 3), (5, 3)] {
+        let flat = clustered(1_500, dims, 2, seed);
+        let budget = MemoryBudget::new(usize::MAX);
+        let (pool, file) = pages(&budget);
+        let hnsw = Hnsw::create(pool, file, &Config { m, ..config(dims) }, (euclidean(), None), &budget).unwrap();
+        for (i, v) in flat.chunks_exact(dims).enumerate() {
+            churn(&hnsw, v, i);
+        }
+        assert_eq!(unreachable(&hnsw), 0, "seed {seed}, M {m}");
+        assert!(counted(&hnsw));
+        hnsw.maintain().unwrap();
+        assert_eq!(unreachable(&hnsw), 0, "seed {seed}, M {m}, repaired");
+        assert!(counted(&hnsw));
+    }
+}

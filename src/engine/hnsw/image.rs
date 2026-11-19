@@ -113,6 +113,7 @@ pub fn read(r: &mut Reader<'_>, shape: &Shape<'_>, reserve: &mut dyn FnMut(usize
     if (graph.entry == NONE) != (n == 0) || (graph.entry != NONE && graph.entry >= n) || graph.top > MAX_LEVEL {
         return Err(corrupt("its entry or top layer is out of range"));
     }
+    graph.recount();
     Ok(graph)
 }
 

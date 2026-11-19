@@ -99,7 +99,7 @@ impl Inner {
             let chosen = reselect(&mut again, &self.metric, (e, at, id), &build, &mut s);
             s.owned = again.done();
             if chosen.is_ok() {
-                graph.apply((e, at), &mut s);
+                graph.apply((e, at, id), &mut s);
             }
         }
         (s.query, s.code, s.over) = (query, code, over);
@@ -147,7 +147,7 @@ impl Inner {
                 Err(Halt::Failed(error)) => return Err(error),
             }
             let mut graph = write(&self.graph)?;
-            if graph.epoch != epoch || graph.apply((e, level), s) {
+            if graph.epoch != epoch || graph.apply((e, level, new), s) {
                 return Ok(());
             }
         }
