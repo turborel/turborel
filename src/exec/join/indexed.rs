@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use super::super::entries::{Reading, fetch};
 use super::super::project::Columns;
-use super::super::scan::asked;
+use super::super::read::Asked;
 use super::super::{RowIter, Runner, Subqueries, broken, eval_cond, execute, failed};
 use crate::catalog::{IndexDesc, KeyShape};
 use crate::db::State;
@@ -25,14 +25,16 @@ use crate::index::{Entries, Index, Key, KeyOrder};
 use crate::logical::{Cond, Truth};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
-use crate::physical::{JoinProbe, Plan};
+use crate::physical::{JoinProbe, Plan, Preserved};
 use crate::storage::{self, Row, RowId, TableStorage};
 use crate::txn::{Stop, TxId, checked};
 use crate::value::Value;
 
 mod adaptive;
+mod preserved;
 mod refined;
 
+use preserved::Matched;
 use refined::Binding;
 
 /// The rows of the index nested-loop join `plan`. Never inlined into
@@ -49,12 +51,13 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
     let Plan::IndexJoin { outer, spatial, left, table, index, probe, cond, width, columns: needed, located, .. } = plan else {
         return failed(broken("an index join is not one"));
     };
+    let inner = matches!(outer, Preserved::Inner);
     let opened = db.storage_of(&table).map(Arc::clone).and_then(|storage| {
         let ix = db.catalog.index(&index).map(IndexDesc::key_shape).ok_or_else(|| broken(&format!("no index {index}")))?;
-        Ok((storage, Arc::clone(db.index_of(&index)?), ix))
+        Ok((storage, Arc::clone(db.index_of(&index)?), ix, Matched::of(outer, &needed, db)?))
     });
     match opened {
-        Ok((storage, found, ix)) => {
+        Ok((storage, found, ix, matched)) => {
             let joined = IndexJoin {
                 left: execute(*left, db, tx),
                 table: Probed {
@@ -70,14 +73,15 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
                 prepared: None,
                 probe,
                 cond,
-                nulls: outer.then(|| vec![Value::Null; width]),
+                nulls: (!inner).then(|| vec![Value::Null; width]),
+                matched,
                 runner: Runner::new(db, tx),
                 current: None,
                 candidates: 0,
                 output,
                 refinement: None,
             };
-            if spatial && !outer { adaptive::start(joined, needed, db) } else { Box::new(joined) }
+            if spatial && inner { adaptive::start(joined, needed, db) } else { Box::new(joined) }
         }
         Err(e) => failed(e),
     }
@@ -100,8 +104,9 @@ struct Probed {
 }
 
 impl Probed {
-    /// Binds the outer row and records the comparison read, or the whole
-    /// table for a spatial predicate. A NULL operand selects no entries.
+    /// Binds the outer row and records the comparison read, or for a
+    /// spatial predicate the region the index reads, or else the whole
+    /// table (`exec/read.rs`). A NULL operand selects no entries.
     fn entries(&mut self, binding: &JoinProbe, row: &Row) -> Result<Entries> {
         if let Some(stop) = &self.stop {
             stop.check()?;
@@ -109,7 +114,7 @@ impl Probed {
         let Some(probe) = binding.bind(row, self.ix.columns.len())? else {
             return Ok(Box::new(std::iter::empty()));
         };
-        self.storage.read_by_condition(self.tx, &asked(&self.ix, probe.clone()))?;
+        Asked::of(&*self.index, &self.ix, &probe).record(&*self.storage, self.tx)?;
         self.reading.next_probe();
         let entries = Arc::clone(&self.index).search(&probe, KeyOrder::Ascending);
         Ok(Box::new(checked(entries, self.stop.clone())))
@@ -142,8 +147,10 @@ struct IndexJoin {
     /// under the same optimizer switch and memory budget as constant calls.
     budget: Option<Arc<MemoryBudget>>,
     prepared: Option<Cond>,
-    /// Of a LEFT join, the nulls of a table row.
+    /// Of a LEFT or FULL join, the nulls of a table row.
     nulls: Option<Vec<Value>>,
+    /// Of a FULL join, the table rows paired, and then those that were not.
+    matched: Option<Matched>,
     runner: Runner,
     /// The left row being joined, the entries found for it, being read,
     /// and whether one was kept.
@@ -168,8 +175,11 @@ impl IndexJoin {
     /// without repeating any outer row whose results have been emitted.
     fn advance(&mut self) -> Result<Step> {
         loop {
+            if self.matched.as_ref().is_some_and(Matched::started) {
+                return self.unmatched();
+            }
             let Some((l, mut entries, found)) = self.current.take() else {
-                let Some(l) = self.left.next().transpose()? else { return Ok(Step::End) };
+                let Some(l) = self.left.next().transpose()? else { return self.unmatched() };
                 let entries = self.table.entries(&self.probe, &l)?;
                 self.prepare(&l)?;
                 self.current = Some((l, entries, false));
@@ -187,8 +197,13 @@ impl IndexJoin {
                 return Ok(Step::ProbeEnd);
             };
             self.candidates = self.candidates.saturating_add(1);
+            let id = entry.as_ref().ok().map(|(_, id)| *id);
             let kept = self.paired(&l, entry);
-            self.current = Some((l, entries, found || matches!(kept, Ok(Some(_)))));
+            let paired = matches!(kept, Ok(Some(_)));
+            self.current = Some((l, entries, found || paired));
+            if let (true, Some(matched), Some(id)) = (paired, self.matched.as_mut(), id) {
+                matched.add(id)?;
+            }
             if let Some(joined) = kept? {
                 return Ok(Step::Row(joined));
             }
@@ -209,6 +224,16 @@ impl IndexJoin {
             None => true,
         };
         kept.then(|| self.project(joined)).transpose()
+    }
+
+    /// Of a FULL join whose outer rows are all probed, the next table row
+    /// no probe paired; else the end.
+    fn unmatched(&mut self) -> Result<Step> {
+        let Some(matched) = self.matched.as_mut() else { return Ok(Step::End) };
+        match matched.next(&self.table, &self.runner)? {
+            Some(row) => self.project(row).map(Step::Row),
+            None => Ok(Step::End),
+        }
     }
 
     fn project(&self, row: Row) -> Result<Row> {
@@ -263,17 +288,17 @@ mod tests {
     fn join_of_e() -> Plan {
         let name = QualifiedName { auth: "A".into(), ident: "E".into() };
         Plan::IndexJoin {
-            outer: false,
+            outer: Preserved::Inner,
             spatial: false,
             left: Box::new(Plan::Values { rows: Vec::new(), detail: String::new() }),
             table: name,
             index: "I".into(),
-            method: String::new(),
+            method: "".into(),
             probe: JoinProbe::Prefix(Box::new([])),
             cond: None,
             width: 0,
             columns: Vec::new(),
-            detail: String::new(),
+            detail: "".into(),
             est: 0.0_f64,
             cost: 0.0_f64,
             located: false,

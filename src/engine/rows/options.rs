@@ -237,7 +237,7 @@ pub(super) fn declared(defaults: TableOptions) -> Vec<TableOption> {
                 whole(defaults.tracked_rows.unwrap_or(DEFAULT_TRACKED_ROWS)),
             ),
             Rebuild::No,
-            "The rows of a transaction's reads, or writes, of the table tracked one by one to check its commit; past them, every row is counted, which may refuse a commit that need not be.",
+            "The rows of a transaction's reads, or writes, of the table tracked one by one to check its commit, and its spatial windows; past them, every row is counted, or the windows one rectangle holding them all, which may refuse a commit that need not be.",
         ),
         TableOption::new(
             (HELD_BYTES, Kind::Integer { min: 4 << 10, max: 1_i128 << 40_i32 }, whole(defaults.held_bytes.unwrap_or(DEFAULT_HELD_BYTES))),

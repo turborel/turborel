@@ -233,7 +233,7 @@ fn switches() -> [Definition; 2] {
         defined(
             ("SQL.FUNCTION_CALLS", Kind::Choice(SWITCHES), text(ON)),
             SESSION,
-            "Whether a statement may call a function the program registered, of no schema, by NAME(arguments): ON; or takes calls of the schema's own functions alone, as SQL does, OFF.",
+            "Whether a statement may call a function the program registered, of no schema, by NAME(arguments): ON; or takes calls of the schema's own functions alone, as SQL does, OFF. A definition, as a CHECK, is checked as it is written, and keeps its calls whatever the setting is later.",
         ),
     ]
 }

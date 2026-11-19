@@ -1,6 +1,7 @@
 //! Unit tests of the types beside the geometry types: their stored
 //! forms, keys, representations, routine tables and sizes.
 
+use super::annotation;
 use super::types::TYPES;
 use super::values::{self, Knot, NurbsPoint, Placement, Vector, angle_value, direction_value, system_value};
 use super::vector_formats::{read_binary, read_text, write_binary, write_text};
@@ -29,7 +30,15 @@ fn samples() -> Vec<Value> {
         Placement { location: Some(point.encode()), directions: Some(vec![vector, Vector::EMPTY]) }.value(),
         NurbsPoint { point: Some(point.encode()), weight: Some(0.5_f64) }.value(),
         Knot { value: Some(1.0_f64), multiplicity: Some(2_i32) }.value(),
+        element(&point).value_of(),
+        annotation::array_value(&[element(&point), annotation::Element::default()]),
+        annotation::Text { envelope: Some(point.encode()), elements: Some(vec![element(&point)]) }.value_of(),
     ]
+}
+
+/// A text element at `point`, of no leader line.
+fn element(point: &crate::geometry::model::Geom) -> annotation::Element {
+    annotation::Element { value: Some("Lake".to_owned()), location: Some(point.encode()), leader: None, attributes: Some(String::new()) }
 }
 
 /// Verifies: [DESIGN] RULES.md D53, D123: a value of each

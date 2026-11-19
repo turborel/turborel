@@ -157,6 +157,10 @@ verification approach DO-178C expects (§8).
 | D130 | Shortest paths are table functions over a named table, every tied path listed within bounds |
 | D131 | Linear referencing types are built-in kinds, their routines one dispatcher per name over the §21 catalog |
 | D132 | Class 2FF is shared by the SQL/MM parts, each routine raising its own part's conditions |
+| D133 | A registered function's own word decides whether it is deterministic, and constraints call only deterministic ones |
+| D134 | A spatial read records the envelopes it read, merged into their hull past a bound |
+| D135 | Geometry windows serve relate, distance and outer joins, reading every entry where a scan would raise |
+| D136 | Simple feature access is views over the SQL/MM catalog and routines named without ST_ |
 
 ### The project
 
@@ -2119,7 +2123,8 @@ Storage cannot infer which rows an arbitrary function selects. It treats
 every key and range as a possible match without calling the function.
 The executor records a read of the whole table, including nulls, so
 conflict checks detect rows inserted or changed by another transaction.
-Methods protect their own state when sessions call them concurrently and
+An index that names the envelopes its search reads records them instead
+(D134). Methods protect their own state when sessions call them concurrently and
 never call back into a database or session. Scalar functions run without
 a storage lock held (D27, D42, R-ERR-4).
 
@@ -2740,7 +2745,7 @@ hide the runtime error. NULL and matching-SRID EMPTY queries return none.
 An empty stored geometry projects to an origin rectangle, adding candidates
 but no false negatives. NULL keys are omitted. Readers compare the visible
 version's projection with the entry before evaluating the full condition.
-Spatial reads currently record a whole-table serializable read (D34).
+A spatial read records the envelope it read, not the whole table (D134).
 Geometry window probes group at most 4096 envelope/row-id pairs before
 fetching rows. Blocks of at least 1024 pairs are sorted by row id to reuse
 nearby row-store pages; smaller results keep their traversal order. The
@@ -2772,9 +2777,10 @@ index for each outer row. Both columns must enforce the same SRID, all
 other conjuncts and the indexed table's filter must be non-raising, and
 the complete ON condition rechecks each visible pair. Planning considers
 both table orders and column projections. A NULL outer geometry makes no
-probe; an empty geometry finds no pair. Spatial probes retain the same
-whole-table serializable read as filters. This is not a simultaneous
-traversal of two indexes. Geometry outer joins do not yet use this path.
+probe; an empty geometry finds no pair. Each probe records its outer
+row's envelope as a serializable read region (D134). This is not a
+simultaneous traversal of two indexes. D135 extends this
+path to outer joins, relate patterns and distance limits.
 
 For an unordered spatial inner join, the executor can choose a single
 table scan instead of repeated probes (`exec/join/indexed/adaptive.rs`).
@@ -4305,6 +4311,189 @@ part the error comes from.
 routines ported from D85 keep their SQLSTATE 22000, so their behaviour
 is unchanged.
 
+#### D133. A registered function's own word decides whether it is deterministic, and constraints call only deterministic ones
+
+The standard keeps a CHECK, an assertion and a generation expression
+free of any potential source of non-determinism [ISO/IEC 9075-2:2023
+§11.9 SR5, CR2, §11.4 SR10d]. Item am of §9.16 SR1 names a routine
+invocation whose subject routine is possibly non-deterministic. A
+registered function is no SQL-invoked routine, so the standard says
+nothing of it. Its `ScalarFunction::deterministic` is taken as the
+routine's characteristic would be. A call of one that says false is
+refused in those places and in an index's key part (D92), SQLCODE -103,
+as a call of such an SQL-invoked function is. A query still calls it.
+
+Feature F672 is not claimed, so nothing lets a retrospective CHECK call
+one. Trusting the function's word costs no check per row, and a wrong
+word is the program's to fix, as with `uses_context` or
+`index_predicate`. A function that later says false makes a stored
+definition calling it fail as it is bound again. That is the same
+failure as a function no longer registered.
+
+The setting SQL.FUNCTION_CALLS is checked when a definition is written
+(D74). ALTER TABLE reads its own CHECKs and generation expressions as
+its session read them, as CREATE does. So a constraint it adds while the
+session's setting is OFF calls no registered function, and the
+constraints made before are bound again with their calls taken.
+
+#### D134. A spatial read records the envelopes it read, merged into their hull past a bound
+
+Under SERIALIZABLE, a read is checked at commit against what transactions
+committed meanwhile changed (D29). A probe of a geometry `rtree` index
+read the whole table there before, since storage cannot call a spatial
+function under its locks (D34). Now the index says which envelopes its
+search reads (`Index::read_region`), and the executor records them as a
+region of the key's column (`TableStorage::read_by_region`,
+`storage/region.rs`). A filter's window, and each probe of an inner join,
+is one envelope.
+
+A change conflicts with a region when the envelope of its old or new
+geometry meets one of the region's, edges included. So a move into the
+window or out of it conflicts, and a write elsewhere no longer does. The
+envelope matched is the one the index keys the value by. A NULL is in no
+region, as no index holds it and no relationship holds of it. An empty
+geometry is keyed at the origin, so it conflicts with a window holding
+the origin, which may refuse a commit it need not but never misses one. A
+probe whose value is NULL or an empty geometry finds no entry, and records
+no region. A probe the index answers by reading every entry, as of
+another SRID or ST_EQUALS of an empty value, records the whole table. So
+does a key computed by an expression, whose values no column holds. A
+value that cannot be read as a geometry matches every region.
+
+A plan that reads a window wider than its probe's, as a distance search or
+an outer join may, records that wider window. It gives the region to
+`read_by_region` itself, or its index names it for its probe. Engines
+whose isolation is the coordinator's ignore regions. The default
+`read_by_region` records a read of the whole table, so an engine that
+knows only conditions stays correct.
+
+Memory is bounded as D38 bounds reads. Past TRANSACTIONS.TRACKED_ROWS
+envelopes, a transaction's regions of a table merge into one rectangle of
+each column, the hull of its envelopes. A merged region holds every row
+the regions held, so it refuses more commits, never fewer, and there are
+then at most as many regions as columns. When a committed transaction's
+changes outgrow TRANSACTIONS.HELD_BYTES and are kept as each column's
+least and greatest value, every region may match them.
+
+Regions are kept in memory with the rest of a transaction's reads, so
+neither recovery nor replication sees them. A transaction open at a
+crash is undone and validates nothing.
+
+#### D135. Geometry windows serve relate, distance and outer joins, reading every entry where a scan would raise
+
+D85's envelope candidates serve three more forms, each through the same
+`Probe::Predicate` and the same recheck of the whole condition.
+
+`ST_RELATE(column, value, pattern) = 1` uses a window when the pattern is
+a constant that asks an interior or boundary of one value to meet one of
+the other's. That is a T, 0, 1 or 2 in a cell of the first two rows and
+columns [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.45]. Values whose
+envelopes are apart cannot match such a pattern. A pattern disjoint
+values may match is not windowed, and an invalid one reads every entry,
+so the call raises its error.
+
+`ST_DISTANCE(column, value [, unit]) <= limit`, or `<`, or with the
+limit first and `>=` or `>`, uses a window of the value's envelope
+widened by the limit. The limit is a constant, a parameter or, in a
+join, a column of the probing row. A unit is converted to the column's
+as the statement is planned, and one that does not convert keeps the
+index out of the plan. The probe's value is a ROW of the geometry, the
+limit and the unit's scale (`spatial/window.rs`). The radius is the
+limit over the scale with a relative slack, and an entry is kept unless
+its envelope's least distance to the value's exceeds it, so rounding
+never drops a match. A null or negative limit finds no entry, but only
+when the tree's root envelope and the value lie within the domain where
+every distance is finite, as the nearest search certifies
+(`engine/rtree/nearest.rs`). Otherwise every entry is read, so a
+distance that overflows raises 22003 as a scan's would.
+
+A value of another SRID, or of a table column with no fixed SRID, reads
+every entry, so the recheck raises the SRID error even for a value no
+envelope is near. A null geometry finds none, and an empty one finds
+none but under ST_Equals, as D85 says.
+
+LEFT, RIGHT and FULL outer joins on any of these probe the R-tree
+[ISO/IEC 9075:1992 §7.5 GR1 to GR5]. `Plan::IndexJoin` keeps a
+`Preserved` of inner, outer or both. A LEFT join probes the right
+operand's table. A RIGHT join is the LEFT join of its operands swapped,
+under a projection that restores the columns' order. A FULL join probes
+whichever way costs less, records the ids of the table rows its probes
+paired in a set charged to the memory budget (D38), and then reads the
+table for the rows no probe paired, which its own filter must keep.
+An outer row of a null or empty geometry, or that no candidate matches,
+keeps its row with nulls. Outer joins never take the adaptive scan or
+the no-raise proof of D15. Every other conjunct and the table's filter
+must be non-raising, so pruning drops only pairs the condition is not
+true of.
+
+ST_EQUALS and ST_POINT are also routines of linear referencing (D131).
+A call of null values alone cannot choose among those routines, so it is
+the geometry function's call and its value is null, as the index's
+omission of null rows assumes. EXPLAIN shows the outer joins as
+`LeftOuterIndexNestedLoop` and `FullOuterIndexNestedLoop`, and a
+distance window as `(ST_DISTANCE(column, value) * scale) <= limit`.
+
+#### D136. Simple feature access is views over the SQL/MM catalog and routines named without ST_
+
+The SQL option of Simple feature access [OGC 06-104r4] in its "SQL with
+Geometry Types" environment takes SQL/MM's types and routines [§7.2.1].
+So it adds no second geometry, only the names and tables its clients
+read. Its tables GEOMETRY_COLUMNS and SPATIAL_REF_SYS [§7.1] are views
+of a schema SF_INFORMTN_SCHEMA, as §7.1.1 lets them be, read as the
+Information Schema is (D121). SQL/MM's ST_INFORMTN_SCHEMA already names
+views GEOMETRY_COLUMNS and SPATIAL_REF_SYS of other columns, so the
+schemas stay apart, and a view is told from its namesake by its query.
+An unqualified name of either view that the default schema has no table
+of names it, with its own name as correlation name, as a client writes
+`FROM geometry_columns`. A table of the schema of that name comes first.
+
+GEOMETRY_COLUMNS reads a base table of ST_DEFINITION_SCHEMA made from the
+catalog as the statement reads it, joined to INFORMATION_SCHEMA.COLUMNS
+so a user sees the columns that view shows. A column's SRID is the one
+it is registered with, else its type's, else 0, the unspecified system
+of SQL/MM, which SPATIAL_REF_SYS has no row for. That is the one place
+the foreign key of §7.1.3.2 does not hold. COORD_DIMENSION is 3 in a
+geocentric system and 2 otherwise, as a column type does not say
+whether its values have z. GEOMETRY_TYPE is Table 4's code, or Part 1's
+Table 7 code it is a subset of, with 1000 of z in three dimensions. A
+type neither table codes, a circle or a solid, has none. STORAGE_TYPE
+and MAX_PPR are null, as no normalized storage exists.
+
+The routines are SQL/MM's under their names without ST_ [§7.2.2.2
+Note]. A call of such a name with a first argument of a geometry type is
+the method of its declared type, before any registered function of the
+name, so CONTAINS of geometries is spatial and of a FULLTEXT is
+full-text's. When the declared type has no such method, SQL/MM's
+function of the name is called, or else TREAT of the argument as the one
+subtype declaring it, as a GEOMETRY column holds collections. The
+constructors map to SQL/MM's, GeomCollFromText to ST_GeomCollFromTxt.
+GeometryType, AsText and AsBinary differ in meaning, so they are
+functions of their own. The first gives `MULTILINESTRING`, not
+`ST_MultiLineString`, and the other two write Part 1's forms. Those
+differ from SQL/MM's only for a triangle, polyhedral surface and TIN.
+The ST_ names keep SQL/MM's meaning. The readers take both forms, which
+never begin alike. A TIN read from Part 1 has no elements and no
+maximum side length, and Part 1 writes none.
+
+PolyhedSurface names ST_PolyhdrlSurface, and NumSurfaces, SURFACE,
+ST_NumGeometries, ST_GeometryN and ST_Geometries of one are its patches'
+[§7.2.14]. Each SQL type name of §7.2.2.2 names its ST_ type. A
+structured type a schema defines of one of these names comes first,
+in a column's type and in NEW.
+
+UNION and OVERLAPS are reserved words, and INTERSECTION a set function.
+Before a parenthesis at the start of an operand none of them can begin
+anything else, so `Union(a, b)` and `Overlaps(a, b)` are calls, and
+INTERSECTION of two arguments or more is one.
+
+The text types of §7.2.20, ANNOTATION_TEXT, ANNOTATION_TEXT_ELEMENT and
+ANNOTATION_TEXT_ELEMENT_ARRAY, are kinds of type beside SQL/MM's
+support types (`geometry/support/annotation.rs`). They share that
+code's routine tables, method binding and stored forms. They have no
+ordering and no well-known forms. ANNOTATION_TEXT_METADATA [§6.2.9.2]
+is a third view of SF_INFORMTN_SCHEMA, of each text column, its
+defaults NULL.
+
 ## 2. Project layout
 
 ```
@@ -4466,7 +4655,7 @@ R-TEST-6 was withdrawn with the golden-file tests (D6).
 
 | ID | Rule | Checked by |
 |---|---|---|
-| R-TRACE-1 | Every test **shall** have a `/// Verifies:` paragraph starting with a tag: `[X3.135-1986 §…]`, `[ISO/IEC 9075…]` of any part, `[ISO/IEC 13249…]` (SQL/MM) of any part, `[EXTENSION]`, `[DESIGN]` or `[TOOL] R-…`. | `cargo xtask verify` |
+| R-TRACE-1 | Every test **shall** have a `/// Verifies:` paragraph starting with a tag: `[X3.135-1986 §…]`, `[ISO/IEC 9075…]` of any part, `[ISO/IEC 13249…]` (SQL/MM) of any part, `[OGC 06-10…]` (Simple feature access) of either part, `[EXTENSION]`, `[DESIGN]` or `[TOOL] R-…`. | `cargo xtask verify` |
 | R-TRACE-2 | Code implementing a requirement **shall** cite it (R-DOC-4). `cargo xtask trace '§8.6'` lists a clause's tests. | review; `xtask trace` |
 | R-TRACE-3 | CONFORMANCE.md **shall** change with the change implementing or changing a clause. | review |
 

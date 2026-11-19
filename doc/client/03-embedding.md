@@ -371,7 +371,12 @@ default, and refuses it while it is OFF, as SQL does (SQLCODE -102).
 The setting is checked as a definition is made. A view, constraint,
 trigger, domain, generated column or routine that calls a registered
 function goes on calling it while a session using it has the setting
-OFF, and after the database is opened again.
+OFF, after the database is opened again or recovered, and on a replica.
+CREATE and ALTER check the setting of the session writing the new
+definition. A function whose `deterministic` returns false is refused
+in a CHECK, an assertion, a domain's constraint, a generated column and
+an index's key part (SQLCODE -103), as the standard refuses a routine
+that is possibly non-deterministic there.
 
 ```rust
 use turborel::db::Database;
@@ -1031,8 +1036,10 @@ entry until their last reference is removed. Equality lookups return
 candidates; constraints and foreign-key actions compare original values.
 The executor checks each visible row's projection and then the full SQL
 condition. Projected indexes cannot supply original values for covering
-reads or claim SQL key order. Spatial predicate reads currently record a
-whole-table serializable read. Geometry index locators use version 2 and
+reads or claim SQL key order. A spatial predicate read records the
+envelopes the index names (`Index::read_region`) as a serializable read
+region, given to `TableStorage::read_by_region`, whose default records the
+whole table (D134). Geometry index locators use version 2 and
 include the SRID; numeric locators remain version 1.
 
 An envelope is a candidate-search bound. `Geometry::intersects` checks

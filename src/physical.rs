@@ -22,7 +22,7 @@ mod estimate;
 mod expression_index;
 mod indexed;
 mod join_probe;
-pub use join_probe::{JoinComparison, JoinProbe};
+pub use join_probe::{Fields, JoinComparison, JoinProbe, Preserved, Supplied, Unmatched};
 mod join;
 pub use join::JoinKey;
 mod kept;
@@ -163,8 +163,8 @@ pub enum Plan {
     /// order of `left`, each row's matches in the index's (`exec/join/indexed.rs`),
     /// unless `spatial` permits an unordered scan alternative.
     IndexJoin {
-        /// A LEFT outer join.
-        outer: bool,
+        /// The rows matching none it keeps, of a LEFT or FULL outer join.
+        outer: Preserved,
         /// An unordered fixed-SRID inner join may buffer a bounded outer
         /// input and scan the table once when that costs less than probes.
         /// Otherwise it continues the ordinary index nested-loop path.
@@ -176,9 +176,9 @@ pub enum Plan {
         /// The table read.
         table: QualifiedName,
         /// The index probed.
-        index: String,
+        index: Box<str>,
         /// The index's method, for EXPLAIN.
-        method: String,
+        method: Box<str>,
         /// How each outer row supplies the index search bounds.
         probe: JoinProbe,
         /// The rest of the condition, over the pair's columns: the table's
@@ -191,7 +191,7 @@ pub enum Plan {
         /// is read of (`TableStorage::get_columns`).
         columns: Vec<usize>,
         /// The condition, as text.
-        detail: String,
+        detail: Box<str>,
         /// The rows each probe is estimated to find.
         est: f64,
         /// The planner's cost estimate of all its probes.

@@ -122,8 +122,31 @@ impl Parser {
                 Some(multiset) => Ok(multiset),
                 None => self.string_function(),
             },
-            Tok::KeyWord(_) => self.string_function(),
+            Tok::KeyWord(_) => self.key_word_call(),
         }
+    }
+
+    /// A primary that begins with any other key word: a string function,
+    /// or \[EXTENSION\] after UNION or OVERLAPS (, which begins no `<value
+    /// expression primary>` of SQL, the call of a function of that name,
+    /// as Simple feature access's Union and Overlaps [OGC 06-104r4 §7.2.8]
+    /// (RULES.md D136).
+    fn key_word_call(&mut self) -> Result<ValueExpression> {
+        let at = self.here();
+        let named = matches!(self.peek(), Tok::KeyWord(kw::UNION | kw::OVERLAPS));
+        let Tok::KeyWord(name) = self.peek() else { return self.string_function() };
+        let name = (*name).to_owned();
+        if !named || !matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
+            return self.string_function();
+        }
+        self.advance();
+        self.advance();
+        let mut args = vec![self.common_value_expression()?];
+        while self.accept_delim(delim::COMMA) {
+            args.push(self.common_value_expression()?);
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(ValueExpression::Call { schema: None, name, args, at, extension: self.extensions })
     }
 
     /// A `<primary>` read, then wrapped as one: a set function, a CASE, a

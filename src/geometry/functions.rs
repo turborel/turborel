@@ -504,6 +504,8 @@ pub(crate) fn functions() -> Vec<Arc<dyn ScalarFunction>> {
     out.extend(super::conversions::CONVERSIONS.iter().map(|f| -> Arc<dyn ScalarFunction> { Arc::new(*f) }));
     out.extend(super::routines::functions());
     out.extend(super::support::functions());
+    // [OGC 06-104r4 §7.2.8] Simple feature access's own (RULES.md D136).
+    out.extend(super::sfa::functions());
     out
 }
 
@@ -533,6 +535,18 @@ fn in_unit(measured: Value, subject: &Value, unit: &Value, systems: Option<&crat
     let (Value::Approx(distance), Value::Char(name)) = (&measured, unit) else { return Ok(measured) };
     let srid = Geometry::from_value(subject)?.srid();
     super::routines::length_in(*distance, (srid, systems), name).map(Value::Approx)
+}
+
+/// The named linear unit's length in the numbers of a value of SRID
+/// `srid`, by which ST_Distance's unit form scales a distance (`in_unit`):
+/// what a distance window divides its limit by (RULES.md D135).
+///
+/// # Errors
+///
+/// As the unit form raises: an unknown unit, or a system without a
+/// linear unit.
+pub(crate) fn unit_scale(srid: i32, systems: Option<&crate::catalog::SpatialCatalog>, unit: &str) -> Result<f64> {
+    super::routines::length_in(1.0_f64, (srid, systems), unit)
 }
 
 fn point(args: &[Value]) -> Result<Value> {

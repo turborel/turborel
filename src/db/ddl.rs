@@ -41,6 +41,7 @@ use crate::exec::NoSubqueries;
 use crate::index::Index;
 use crate::log::record::Change;
 use crate::parser::Parser;
+use crate::settings::FUNCTION_CALLS;
 use crate::storage::TableStorage;
 use crate::txn::{LockMode, Timestamp, Txn};
 use crate::value::Value;
@@ -260,6 +261,10 @@ impl Session {
         tx: &Txn,
         (table, action, text): (&TableName, &AlterAction, &str),
     ) -> Result<Completion> {
+        // Its own texts read again as the session read it, so a CHECK or
+        // a generation expression it adds takes calls of registered
+        // functions only as the session does (RULES.md D74).
+        let _calls = Parser::refusing_calls(text, st.settings.is_on(FUNCTION_CALLS));
         let schema = self.default_schema();
         let qn = qualify(table, &schema);
         // [AR1] only the owner of its schema alters a table.

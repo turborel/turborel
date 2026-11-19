@@ -292,6 +292,51 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): ST_Geometry and its supertypes have no 
 OK
 ```
 
+## Constraints
+
+The routines are deterministic, so a CHECK, an assertion, a domain's
+constraint or a generated column may call them. SQL.FUNCTION_CALLS is
+checked as the constraint is written, by CREATE or ALTER. A constraint
+written while the setting was ON keeps its calls when the setting is
+OFF, in later statements, after the database is opened again or
+recovered, and on a replica that replays it. A new constraint written
+while the setting is OFF is refused (SQLCODE -102):
+
+```sql
+CREATE TABLE SITES (ID INTEGER, P ST_POINT CHECK (ST_X(P) >= 0));
+COMMIT;
+SET SQL.FUNCTION_CALLS = 'OFF';
+INSERT INTO SITES VALUES (1, NEW ST_POINT(2, 3));
+INSERT INTO SITES VALUES (2, NEW ST_POINT(-1, 3));
+ALTER TABLE SITES ADD CONSTRAINT NORTH CHECK (ST_Y(P) >= 0);
+SET SQL.FUNCTION_CALLS = 'ON';
+ALTER TABLE SITES ADD CONSTRAINT NORTH CHECK (ST_Y(P) >= 0);
+SET SQL.FUNCTION_CALLS = 'OFF';
+INSERT INTO SITES VALUES (3, NEW ST_POINT(1, -3));
+SELECT ID FROM SITES;
+ROLLBACK;
+SET SQL.FUNCTION_CALLS = 'ON';
+```
+
+```
+OK
+OK
+OK
+OK
+turborel: SQLCODE -201 (SQLSTATE 23000): CHECK ANN.SITES_CHECK1 of ANN.SITES is false for a row [ISO/IEC 9075:1992 §11.6 GR3]
+turborel: SQLCODE -102 (SQLSTATE 2A000): CHECK ANN.NORTH: no function of the schema is of this name, and a call of a function registered is an [EXTENSION] taken while SQL.FUNCTION_CALLS is ON [ISO/IEC 9075-2:2023 §10.4] (at character 22)
+OK
+OK
+OK
+turborel: SQLCODE -201 (SQLSTATE 23000): CHECK ANN.NORTH of ANN.SITES is false for a row [ISO/IEC 9075:1992 §11.6 GR3]
+           ID
+--------------
+            1
+(1 row)
+OK
+OK
+```
+
 ## Cast methods
 
 Each instantiable type has a cast method of ST_GEOMETRY, also called
@@ -1256,17 +1301,28 @@ turborel: SQLCODE -900 (SQLSTATE 0A000): the rtree index method needs GEOMETRY(s
 ```
 
 The planner uses the index where it costs less than reading the table,
-which these few rows may not, in three forms.
+which these few rows may not, in these forms.
 
 - A filter `ST_INTERSECTS(column, value) = 1`, or with the column second,
   where the value is a constant or a parameter.
   ST_CONTAINS, ST_WITHIN, ST_TOUCHES, ST_CROSSES, ST_OVERLAPS and
   ST_EQUALS do the same, as each holds only of values that meet. An
   empty value equals every empty row, so ST_EQUALS of one reads them all.
-- An inner join on `ST_INTERSECTS(a.column, b.column) = 1`, or one of
-  the other relationships, where both
-  columns are of the same SRID. Each row of one side probes the other's
-  index, and for a broad join an adaptive scan may read it once instead.
+  So does `ST_RELATE(column, value, pattern) = 1` of a constant pattern
+  asking an interior or boundary of one to meet one of the other's, as
+  `'T*F**F***'` does.
+- A filter `ST_DISTANCE(column, value) <= limit`, or `<`, or the limit
+  first, where the limit is a constant or a parameter. With a unit, as
+  `ST_DISTANCE(column, value, 'KILOMETRE')`, the unit is converted to the
+  column's as the statement is planned. The index reads the envelopes
+  within the limit of the value's.
+- A join on one of these, inner or LEFT, RIGHT or FULL outer, where the
+  join's geometry columns are of one SRID, or the other column has none
+  fixed. Each row of one side probes the other's index, and for a broad
+  inner join an adaptive scan may read it once instead. A row whose
+  geometry is NULL or empty, or that no row matches, keeps its place
+  with nulls, and a FULL join then reads the table for the rows no probe
+  matched.
 - `ORDER BY ST_DISTANCE(column, value) ASC NULLS LAST` with FETCH FIRST,
   OFFSET too, where the value is a constant or a parameter, which reads
   the nearest rows first.
@@ -1275,6 +1331,9 @@ which these few rows may not, in three forms.
 SELECT NAME FROM PLACES WHERE ST_INTERSECTS(SHAPE, ST_MAKEENVELOPE(0, 0, 3, 3)) = 1 ORDER BY ID;
 SELECT NAME, ST_DISTANCE(SHAPE, ST_POINT(12, 5)) AS DISTANCE FROM PLACES
     ORDER BY ST_DISTANCE(SHAPE, ST_POINT(12, 5)) ASC NULLS LAST, ID FETCH FIRST 2 ROWS ONLY;
+SELECT NAME FROM PLACES WHERE ST_DISTANCE(SHAPE, ST_POINT(12, 5), 'KILOMETRE') < 0.003 ORDER BY ID;
+SELECT P.NAME, F.NAME AS IN_FIELD FROM PLACES P LEFT JOIN PLACES F
+    ON ST_INTERSECTS(P.SHAPE, F.SHAPE) = 1 AND F.ID = 3 ORDER BY P.ID;
 ```
 
 ```
@@ -1288,16 +1347,67 @@ SELECT NAME, ST_DISTANCE(SHAPE, ST_POINT(12, 5)) AS DISTANCE FROM PLACES
  Field                |                      2E0
  Gate                 |                      2E0
 (2 rows)
+ NAME
+----------------------
+ Field
+ Gate
+(2 rows)
+ NAME                 | IN_FIELD
+----------------------+----------------------
+ Well                 | Field
+ Road                 | NULL
+ Field                | Field
+ Pond                 | NULL
+ Gate                 | Field
+ Lost                 | NULL
+ Unmapped             | NULL
+(7 rows)
 ```
+
+The Pond lies in the Field's hole, and the Gate on its edge.
 
 An envelope finds candidates, and each is checked against the visible
 row's exact geometry and the whole condition, so the rows are those a
-scan gives, with the same errors. A query value of another SRID still
-raises its error. ST_DISJOINT, distance comparisons in WHERE, outer
-joins, and nearest queries descending, NULLS FIRST, WITH TIES or PERCENT
-read the table. A filter that may raise an error keeps the index from
-skipping rows. [CREATE INDEX](statements/create-index.md) gives the
+scan gives, with the same errors. A query value of another SRID makes
+the index read every row, so its error is still raised, even of a value
+no envelope is near, and so does a tree whose distances may overflow. A
+join or filter whose other conjunct may raise an error keeps the index
+from skipping rows. ST_DISJOINT, ST_RELATE of a
+pattern that disjoint values may match, distance comparisons `>` or
+`>=`, and nearest queries descending, NULLS FIRST, WITH TIES or PERCENT
+read the table. [CREATE INDEX](statements/create-index.md) gives the
 index's syntax, and its numeric forms of X and Y columns.
+
+Under SERIALIZABLE, a read through the index counts as reading the rows
+whose envelopes meet the window it searched, not the whole table, and
+each probe of a join reads its own window. A distance's window is its
+value's envelope widened by the limit, and a FULL join also reads the
+whole table for the rows no probe matched. Another transaction that
+commits first a row added, removed or moved whose envelope, before or
+after, meets that window refuses this one's commit, SQLSTATE 40001. A
+row elsewhere does not. A NULL is in no window, and an empty geometry is
+where the index keeps it, at the origin. A search of a NULL or empty
+value reads no row, and one the index answers by reading every entry,
+ST_EQUALS of an empty value or a value of another SRID, reads the whole
+table. Past TRANSACTIONS.TRACKED_ROWS windows in a table, a transaction's
+windows merge into one rectangle holding them all, which may refuse a
+commit that need not be, never let through one that must not be
+([Transactions](../user/06-transactions.md#conflicts)).
+
+```
+-- in one session, SERIALIZABLE, through PLACES_SHAPE:
+SELECT NAME FROM PLACES WHERE ST_INTERSECTS(SHAPE, ST_MAKEENVELOPE(0, 0, 3, 3)) = 1;
+INSERT INTO PLACES VALUES (8, 'Shed', ST_POINT(40, 40));
+-- in another, a point in that window:
+INSERT INTO PLACES VALUES (9, 'Stile', ST_POINT(1, 1));
+COMMIT;
+-- in the first:
+COMMIT;
+```
+
+```
+turborel: SQLCODE -911 (SQLSTATE 40001): the engine of ANN.PLACES refused to commit, so the transaction was rolled back: the transaction read rows another transaction changed meanwhile, or changed rows another read: it is not serializable; run it again [X3.135-1986 §8.2]
+```
 
 ## The Spatial Information Schema
 
@@ -1399,6 +1509,161 @@ turborel: SQLCODE -201 (SQLSTATE 23000): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
 OK
 ```
 
+## Simple feature access
+
+The SQL option of Simple feature access, OGC 06-104r4 (ISO 19125-2), is
+built in its "SQL with Geometry Types" environment, over the types and
+routines of SQL/MM Spatial, so a tool written for either finds what it
+reads. Its tables are views of the schema SF_INFORMTN_SCHEMA, and
+SELECT on each is everyone's.
+
+| View | Rows |
+|---|---|
+| GEOMETRY_COLUMNS | Each column of a geometry type the user may see, with its table as F_TABLE_* and G_TABLE_*, its type's code as GEOMETRY_TYPE (0 GEOMETRY, 1 POINT, 2 LINESTRING, 3 POLYGON and so on, 1000 more in three dimensions), COORD_DIMENSION 3 in a geocentric system and 2 otherwise, and its SRID. STORAGE_TYPE and MAX_PPR are NULL |
+| SPATIAL_REF_SYS | Each system supplied or defined, as SRID, AUTH_NAME, AUTH_SRID and SRTEXT |
+
+A column's SRID is the system it is registered with, else the one its
+type names, else 0, the unspecified system, which SPATIAL_REF_SYS has
+no row of. Written without a schema, `GEOMETRY_COLUMNS` and
+`SPATIAL_REF_SYS` name these views, unless the default schema has a
+table of that name. SQL/MM's own views of those names, with other
+columns, stay in ST_INFORMTN_SCHEMA.
+
+The type names POINT, CURVE, LINESTRING, SURFACE, POLYGON,
+POLYHEDSURFACE, GEOMCOLLECTION, MULTIPOINT, MULTICURVE,
+MULTILINESTRING, MULTISURFACE and MULTIPOLYGON name the ST_ types, as
+GEOMETRY names ST_GEOMETRY. A structured type a schema defines of one
+of these names is the type it names there. Every routine is called by
+its name without ST_ too: `Area(SHORE)` is `SHORE.ST_Area()`, and
+`PolyFromText` is `ST_PolyFromText`. A routine of a value whose declared
+type does not declare it, a collection held in a GEOMETRY column say,
+is the routine of the one subtype that does.
+
+```sql
+CREATE TABLE LAKES (FID INTEGER PRIMARY KEY, NAME VARCHAR(64), SHORE POLYGON);
+CALL ST_DEFINESRS('UTM_ZONE_14N', 101, 'POSC', 32214, 'PROJCS["UTM_ZONE_14N",GEOGCS["World Geodetic System 72",DATUM["WGS_72",SPHEROID["NWL_10D",6378135,298.26]],PRIMEM["Greenwich",0],UNIT["Meter",1.0]],PROJECTION["Transverse_Mercator"],PARAMETER["False_Easting",500000.0],PARAMETER["False_Northing",0.0],PARAMETER["Central_Meridian",-99.0],PARAMETER["Scale_Factor",0.9996],PARAMETER["Latitude_of_origin",0.0],UNIT["Meter",1.0]]', 'Blue Lake');
+CALL ST_REGISTERGEOMETRYCOLUMN('ANN', 'LAKES', 'SHORE', 'UTM_ZONE_14N');
+INSERT INTO LAKES VALUES (101, 'Blue Lake', PolyFromText('POLYGON ((52 18, 66 23, 73 9, 48 6, 52 18), (59 18, 67 18, 67 13, 59 13, 59 18))', 101));
+SELECT F_TABLE_NAME, F_GEOMETRY_COLUMN, GEOMETRY_TYPE, COORD_DIMENSION, SRID FROM GEOMETRY_COLUMNS WHERE F_TABLE_NAME IN ('LAKES', 'PLACES') ORDER BY F_TABLE_NAME;
+SELECT SRID, AUTH_NAME, AUTH_SRID FROM SPATIAL_REF_SYS WHERE SRID = 101;
+SELECT GeometryType(SHORE) AS KIND, Area(SHORE) AS WATER, NumInteriorRing(SHORE) AS ISLANDS, AsText(ExteriorRing(SHORE)) AS OUTLINE FROM LAKES;
+ROLLBACK;
+```
+
+```
+OK
+OK
+OK
+OK
+ F_TABLE_NAME                                                 | F_GEOMETRY_COLUMN                                            | GEOMETRY_TYPE | COORD_DIMENSION |         SRID
+--------------------------------------------------------------+--------------------------------------------------------------+---------------+-----------------+--------------
+ LAKES                                                        | SHORE                                                        |             3 |               2 |          101
+ PLACES                                                       | SHAPE                                                        |             0 |               2 |            0
+(2 rows)
+         SRID | AUTH_NAME                                                    |    AUTH_SRID
+--------------+--------------------------------------------------------------+--------------
+          101 | POSC                                                         |        32214
+(1 row)
+ KIND                             |                    WATER |      ISLANDS | OUTLINE
+----------------------------------+--------------------------+--------------+--------------------------------------------------------------
+ POLYGON                          |                  2.195E2 |            1 | LINESTRING (52 18, 66 23, 73 9, 48 6, 52 18)
+(1 row)
+OK
+```
+
+GeometryType, AsText and AsBinary mean what Simple feature access
+means by them, so they differ from SQL/MM's ST_GeometryType, ST_AsText
+and ST_AsBinary, which keep their meaning. GeometryType gives the type's
+name without ST_, POLYHEDSURFACE for a polyhedral surface. AsText and
+AsBinary write the forms of OGC 06-103r4, which differ from SQL/MM's
+only for a triangle, a polyhedral surface and a TIN. A triangle is the
+text of a polygon of one ring, and a surface's patches are listed
+without PATCHES. A TIN's elements and maximum side length have no such
+form and are left out. The readers take both forms.
+
+UNION and OVERLAPS are reserved words, and INTERSECTION is a set
+function of one argument, yet `Union(a, b)`, `Overlaps(a, b)` and
+`Intersection(a, b)` are the routines' calls. A PolyhedSurface is made
+by NEW from its text, its binary form or an array of surfaces, each
+with an SRID or not, and its NumSurfaces, SURFACE(n) and ST_Geometries
+are those of its patches.
+
+```sql
+SELECT AsText(G) AS PART_1, ST_AsText(G) AS SQLMM FROM (VALUES (GeomFromText('TRIANGLE ((0 0, 1 0, 0 1, 0 0))'))) AS T (G);
+SELECT GeometryType(G) AS SFA_NAME, ST_GeometryType(G) AS SQLMM_NAME FROM (VALUES (GeomFromText('MULTIPOINT ((1 1), (2 2))'))) AS T (G);
+SELECT AsText(Union(P, Q)) AS BOTH_POINTS, Overlaps(P, Q) AS OVERLAP FROM (VALUES (GeomFromText('POINT (1 1)'), GeomFromText('POINT (2 2)'))) AS T (P, Q);
+SELECT H.NumSurfaces() AS PATCHES, AsText(H.SURFACE(2)) AS PATCH_2 FROM (VALUES (NEW PolyhedSurface('POLYHEDRALSURFACE Z (((0 0 0, 0 1 0, 1 1 0, 0 0 0)), ((0 0 0, 0 1 0, 0 0 1, 0 0 0)))'))) AS T (H);
+```
+
+```
+ PART_1                                                       | SQLMM
+--------------------------------------------------------------+--------------------------------------------------------------
+ TRIANGLE ((0 0, 1 0, 0 1, 0 0))                              | TRIANGLE (0 0, 1 0, 0 1)
+(1 row)
+ SFA_NAME                         | SQLMM_NAME
+----------------------------------+----------------------------------
+ MULTIPOINT                       | ST_MultiPoint
+(1 row)
+ BOTH_POINTS                                                  |      OVERLAP
+--------------------------------------------------------------+--------------
+ MULTIPOINT ((1 1), (2 2))                                    |            0
+(1 row)
+      PATCHES | PATCH_2
+--------------+--------------------------------------------------------------
+            2 | POLYGON Z ((0 0 0, 0 1 0, 0 0 1, 0 0 0))
+(1 row)
+```
+
+### Annotation text
+
+Text placed on a map is a value of ANNOTATION_TEXT, the text types of
+Simple feature access. An ANNOTATION_TEXT_ELEMENT is a string, the
+point it is placed at, a leader line from it, and its text attributes,
+written as XML. Each is read by a method of its name, `Value()`,
+`Location()`, `LeaderLine()` and `TextAttributes()`, and changed by the
+same method of one argument. The constructor takes all four, and NEW
+ANNOTATION_TEXT_ELEMENT() makes one whose attributes are all NULL. An
+ANNOTATION_TEXT_ELEMENT_ARRAY holds elements. `ElementN(n)` reads one,
+and `ElementN(element, n)` replaces it or adds one after the last. An
+ANNOTATION_TEXT is made of an array. `ELEMENT_ARRAY()` gives the array
+back, `ENVELOPE()` gives the envelope of the elements' locations and
+leader lines, and `CONCAT(other)` appends another text's elements.
+
+Strings, attributes and arrays hold at most 4096 characters or
+elements. A text has no well-known text or binary form, and is shown as
+the constructors that make it. ANNOTATION_TEXT_METADATA, a view of
+SF_INFORMTN_SCHEMA, lists each column of type ANNOTATION_TEXT the user
+may see. Its default base scale, expression and attributes are NULL.
+
+```sql
+CREATE TABLE LABELS (ID INTEGER PRIMARY KEY, LABEL ANNOTATION_TEXT);
+INSERT INTO LABELS VALUES (1, ANNOTATION_TEXT(ANNOTATION_TEXT_ELEMENT_ARRAY(ARRAY[ANNOTATION_TEXT_ELEMENT('Pond', ST_POINT(5, 5), GeomFromText('LINESTRING (5 5, 7 8)'), '<font size="9"/>')])));
+SELECT AsText(LABEL.ENVELOPE()) AS BOX, LABEL.ELEMENT_ARRAY().ElementN(1).Value() AS WORDS FROM LABELS;
+UPDATE LABELS SET LABEL = LABEL.CONCAT(ANNOTATION_TEXT(ANNOTATION_TEXT_ELEMENT_ARRAY(ARRAY[(NEW ANNOTATION_TEXT_ELEMENT()).Value('Well').Location(ST_POINT(2, 2))]))) WHERE ID = 1;
+SELECT AsText(LABEL.ENVELOPE()) AS BOX, LABEL.ELEMENT_ARRAY().ElementN(2).Value() AS WORDS, LABEL.ELEMENT_ARRAY().ElementN(2).LeaderLine() AS LEADER FROM LABELS;
+SELECT F_TABLE_NAME, F_TEXT_COLUMN, A_TEXT_DEFAULT_MAP_BASE_SCALE FROM ANNOTATION_TEXT_METADATA;
+ROLLBACK;
+```
+
+```
+OK
+OK
+ BOX                                                          | WORDS
+--------------------------------------------------------------+--------------------------------------------------------------
+ POLYGON ((5 5, 7 5, 7 8, 5 8, 5 5))                          | Pond
+(1 row)
+OK
+ BOX                                                          | WORDS                                                        | LEADER
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ POLYGON ((2 2, 7 2, 7 8, 2 8, 2 2))                          | Well                                                         | NULL
+(1 row)
+ F_TABLE_NAME                                                 | F_TEXT_COLUMN                                                | A_TEXT_DEFAULT_MAP_BASE_SCALE
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ LABELS                                                       | LABEL                                                        | NULL
+(1 row)
+OK
+```
+
 ## Errors
 
 | SQLSTATE | SQLCODE | When |
@@ -1454,6 +1719,9 @@ named here are called as functions, or as methods, as
 turborel claims conformance to neither yet. The `rtree` index
 method is an extension. The choices made are listed in
 [CONFORMANCE.md](../../CONFORMANCE.md#geometry-representations).
+Simple feature access is that of OGC 06-104r4, the SQL option, in its
+"SQL with Geometry Types" environment, claimed with its readings in
+[CONFORMANCE.md](../../CONFORMANCE.md#simple-feature-access-sql-option).
 
 ## See also
 

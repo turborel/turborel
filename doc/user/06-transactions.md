@@ -126,6 +126,21 @@ DELETE, and a referential action, waits too, but is refused if the first
 committed. A commit that could not keep the transactions serializable is
 refused, SQLSTATE 40001, the transaction rolled back, to be run again.
 
+A SERIALIZABLE commit is checked against what the transaction read, and
+refused if a transaction that committed meanwhile changed it. A row read
+by its key counts as itself. A read through an index counts as every row
+its condition could find, those added or changed to match since
+included. A read through an `rtree` index of a spatial relationship counts
+as the rows whose geometries' envelopes meet the window it searched, a
+distance's widened by its limit, a
+row moved into it or out of it included
+([Spatial Data](../sql/10-spatial.md#the-rtree-index-method)). A scan of a
+whole table counts as every row. Past the table option
+TRANSACTIONS.TRACKED_ROWS ([Appendix G](../appendix/g-table-options.md)),
+a transaction's rows and conditions in a table count as the whole table,
+and its windows as one rectangle holding them all. Either may refuse a
+commit that need not be, and neither lets through one that must not be.
+
 ## Read-only transactions
 
 `SET TRANSACTION READ ONLY` makes the next transaction read only: a

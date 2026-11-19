@@ -71,11 +71,12 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 /// and typed tables (`information/structured.rs`), those of roles
 /// (`information/roles.rs`), of triggers (`information/triggers.rs`) and
 /// of SQL-server modules (`information/modules.rs`), then the extensions
-/// (`information/extensions.rs`), then SQL/MM Spatial's.
+/// (`information/extensions.rs`), then SQL/MM Spatial's, then Simple
+/// feature access's (`spatial/sfa.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
     ALL.get_or_init(|| {
-        let ours = [extensions::VIEWS, super::spatial::SPATIAL_VIEWS].concat();
+        let ours = [extensions::VIEWS, super::spatial::SPATIAL_VIEWS, super::spatial::SF_VIEWS].concat();
         [VIEWS, composites::VIEWS, user_types::VIEWS, structured::VIEWS, roles::VIEWS, triggers::VIEWS, modules::VIEWS, &ours].concat()
     })
 }

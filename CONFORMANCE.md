@@ -37,6 +37,7 @@ The claim follows SQL-86 §3.4.
 | Environment [§4.6, §4.7] | A database kept in a directory (`Database::open_files`) keeps its schemas and committed changes, and is recovered after a failure [§4.16]. A database made with `Database::new` is held in memory and ends with the process. |
 | SQL/MM Full-Text | The public types and routines of ISO/IEC 13249-2:2002 (CD, SC32 N0640) §12.1, built in, with the choices that part leaves to an implementation listed [below](#sqlmm-full-text) [§12.2]. |
 | SQL/MM Spatial | The types and routines of ISO/IEC 13249-3:2016 (DIS, SC32 N2593), with topology, networks, shortest paths and linear referencing, built in. What is not built yet, and the choices that part leaves to an implementation, are listed [below](#sqlmm-spatial). No claim of its §23 is made yet. |
+| Simple feature access | The SQL option of OGC 06-104r4 (ISO 19125-2), "SQL with Geometry Types", conformance class (gS, f, 3D, M, tS) of Annex A.4, listed [below](#simple-feature-access-sql-option). |
 | Limits | SQL-86 sets one limit of its own, 18 characters in an `<identifier>` [§5.3 SR3], which SQL-92 raises to 128. A statement past one of this implementation's [limits](#limits) gets SQLCODE -900 ("valid, but not processed"). |
 
 Every outcome has an SQLSTATE beside its SQLCODE [ISO/IEC 9075:1992 §22.1].
@@ -1779,7 +1780,7 @@ RETURN [§16.2].
 | Privileges | GR1, §12.3, §12.7 GR12o, GR12q | The owner holds EXECUTE from _SYSTEM, grantable if it holds grantable every SELECT, INSERT, UPDATE and DELETE on each table the body reads and EXECUTE on each routine it invokes. EXECUTE is granted and revoked as `<specific routine designator>` designates a routine, ALL PRIVILEGES on one being EXECUTE, and ROUTINE_PRIVILEGES shows it. A revoke that leaves the owner without a privilege the body needs, or EXECUTE on a routine it invokes, abandons the routine: RESTRICT refuses it (2B000), and CASCADE drops it and what invokes it. |
 | Invocation | §9.18 SR5, SR6, SR10, §9.6, §9.7, GR3 to GR10, ID047 | Of the functions of the name in the qualifying schema, else the statement's default schema, its SQL-invoked functions and its distinct types' alike, those the statement's authorization identifier holds EXECUTE on, of as many parameters as there are arguments [SR10a], each typed argument's precedence list holding its parameter's designator [SR10d]. Left to right, those whose parameter's designator comes first in the argument's list are kept [§9.6], and one must be left [SR10h iv 3]. None of the arity is SQLCODE -103 citing SR10a, none of the types -103 citing SR10d, two alike -103, and functions that take the arguments but none with EXECUTE -104. A `?` argument decides nothing and takes its parameter's type [§20.7] (B033). A routine is found before a registered function of the name, which is searched only if no function of the schema takes the arguments [SR10h iv 1] (RULES.md D74). Each argument is stored in its parameter, then a null-call function given a null returns null without its body, else the body's value is stored in the result type. Its errors are those of store assignment, 22001 and 22003, the parameter named in the condition [§23.1 GR4q]. A body that ends without executing a RETURN raises 2F005 [GR8b ix 1]. A function that possibly modifies SQL-data is run by the session, as a statement nested in the one invoking it, its changes undone with that statement (RULES.md D76). |
 | Parameters | §6.6 SR8, SR9, §6.8 | A parameter is named by its name, or by the routine's name and its name. A column of a table the body reads hides a parameter of its name. A function's body is a subquery of the row of its parameters, a VALUES of one value evaluated where it is, so a function that reads no table may be invoked where no subquery may run. |
-| Where a function may be | §7.17 SR25, §11.9 SR6, §11.47 SR8, §11.4 SR10d, SR10e, §9.16 SR1am, §6.12 SR1a, SR2a | A function that possibly modifies SQL-data is invoked only where no query expression, CHECK, assertion, WHEN or search condition holds the invocation: in a SET clause of UPDATE or MERGE, a row of VALUES of INSERT or MERGE, a CALL argument, and a value of a program. Not in a CASE abbreviation, nor a simple CASE's operand. One that is not deterministic, or possibly reads SQL-data, is invoked in no CHECK, assertion or generation expression. Each is SQLCODE -103. |
+| Where a function may be | §7.17 SR25, §11.9 SR6, §11.47 SR8, §11.4 SR10d, SR10e, §9.16 SR1am, §6.12 SR1a, SR2a | A function that possibly modifies SQL-data is invoked only where no query expression, CHECK, assertion, WHEN or search condition holds the invocation: in a SET clause of UPDATE or MERGE, a row of VALUES of INSERT or MERGE, a CALL argument, and a value of a program. Not in a CASE abbreviation, nor a simple CASE's operand. One that is not deterministic, or possibly reads SQL-data, is invoked in no CHECK, assertion or generation expression, nor is a registered function that says it is not deterministic (RULES.md D133). Each is SQLCODE -103. |
 | CALL | §16.1, §9.18 SR9, GR3 to GR14, §10.4 CR6, CR7 | The procedure of the name and arity, with EXECUTE, one at most by SR20a. An IN parameter's argument is a value expression it stores, a `?` of the parameter's type, an OUT or INOUT one's a target: a host parameter, a parameter of the procedure whose body the CALL is, or a column of a BEFORE row trigger's new transition variable, not an AFTER trigger's [SR9h iii 3]. NULL or DEFAULT of an IN parameter, and DEFAULT of an INOUT one, are of Features T522 and T523, SQLCODE -900. OUT parameters start null. The body runs as the schema's owner, of its schema, with a diagnostics area of its own, within the CALL statement and its instant (US037, US038). Each OUT and INOUT value is then assigned to its target [GR10b]. A BEFORE trigger's action calls no procedure that possibly modifies SQL-data [§11.49 SR14a], the procedure of the CALL's arity. |
 | Subject routines kept | §4.35.2, §11.62 GR1, §12.7 GR12o | A view, CHECK, domain constraint, assertion, trigger, generated column or routine body invokes the routines it invoked as it was defined. Each records their specific names, and bound again chooses among those alone, so a function created later, or EXECUTE granted later, never changes what it invokes (RULES.md D73). One of them dropped makes it bind no more, never invoke another function of the name. |
 | Dropping | §11.62, §10.6, §11.2 SR4l, GR10, §11.23 SR7c, §11.31 SR7e, §11.33 SR5d, §11.59 SR4g | DROP names the routine by its name, with its parameters' types or without, or by its specific name, of the routine type written, by the owner of its schema. A name alone of more than one routine of the type, or a list of types none or several are of, counting a distinct type's functions, is SQLCODE -103 [§10.6 SR3c]. RESTRICT refuses it if a view, constraint, assertion, generated column, trigger or routine invokes it. CASCADE drops each, and what invokes those. A table, view or column a body reads, a distinct type a routine is typed by or its body uses, and a schema holding a routine, are dropped only with CASCADE, which drops the routine. |
@@ -2196,7 +2197,7 @@ when declared, with SQLCODE -103.
 | Methods | §4.2, 9075-2 §9.18 | A method table per type, with overriding. The collection types override ST_Geometries. `v.m()` binds by the declared type and runs by the most specific type. `(v AS T).m()` runs T's. |
 | SPECIFICTYPE | 9075-2 §6.15 | `v.SPECIFICTYPE` names the most specific type in INFORMATION_SCHEMA, the built-in types' schema. The function form SPECIFICTYPE(v) is not built. |
 | Collections | §10.1.3 to §10.1.5 | ST_NumGeometries, ST_GeometryN (01F01 out of range) and ST_Geometries, accessor and mutator. |
-| Relationships | §4.2.2, §5.1.43 to §5.1.54 | ST_Relate, ST_Equals, ST_Disjoint, ST_Intersects, ST_Touches, ST_Crosses, ST_Within, ST_Contains and ST_Overlaps, exact on binary64 (`src/spatial/planar`, RULES.md D126). An `rtree` index plans each as it plans ST_Intersects. |
+| Relationships | §4.2.2, §5.1.43 to §5.1.54 | ST_Relate, ST_Equals, ST_Disjoint, ST_Intersects, ST_Touches, ST_Crosses, ST_Within, ST_Contains and ST_Overlaps, exact on binary64 (`src/spatial/planar`, RULES.md D126). An `rtree` index plans each but ST_Disjoint as it plans ST_Intersects, and ST_Relate when its pattern is a constant asking an interior or boundary of each to meet (RULES.md D135). |
 | Set operations | §5.1.31 to §5.1.40, Tables 6 to 11 | ST_Intersection, ST_Union, ST_Difference and ST_SymDifference over mixed dimensions, typed by Tables 8 to 11 (`routines/results.rs`). |
 | Buffer, hull and boundary | §5.1.17, §5.1.29, §5.1.30 | ST_Buffer with and without a unit, ST_ConvexHull and ST_Boundary. |
 | Validity and simplicity | §5.1.8, §5.1.10, §7.1.8 | ST_IsValid, ST_IsSimple and ST_IsRing. |
@@ -2830,6 +2831,117 @@ of ST_DEFINITION_SCHEMA (RULES.md D121).
 | ST_MaxVectorAsBinary | 29 |
 | ST_MaxVectorArrayElements | 65535, the geometry array limit |
 
+## Simple feature access, SQL option
+
+OGC 06-104r4, Simple feature access part 2, SQL option (ISO 19125-2), is
+built in its "SQL with Geometry Types" environment over SQL/MM Spatial
+(RULES.md D136). A bare `§` in this part is of that text, which the code
+cites as `[OGC 06-104r4 §N]`. Part 1, OGC 06-103r4, is cited for the
+text and binary forms. The manual is the section "Simple feature access"
+of [doc/sql/10-spatial.md](doc/sql/10-spatial.md).
+
+The claim is the conformance class (gS, f, 3D, M, tS) of Annex A.4,
+which is the geometry types environment, its features, values of z and
+of m, and annotation text of SQL types [Annex A.2.6.2]. Its tests T1 to T52 of Annex C.3.3 run in
+`test/integration/simple_features/blue_lake.rs`.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| SPATIAL_REF_SYS | §7.1.2 | A view of SF_INFORMTN_SCHEMA over the systems supplied and those ST_DEFINESRS defines, with §7.1.2.2's columns. SELECT is PUBLIC's. |
+| GEOMETRY_COLUMNS | §7.1.3 | A view of SF_INFORMTN_SCHEMA of every column of a geometry type a user may see, of a table or view, typed or registered, with §7.1.3.2's columns. |
+| Unqualified names | §7.1, Annex C.3.3.3 | `GEOMETRY_COLUMNS` and `SPATIAL_REF_SYS` name the views where the default schema has no table of the name. |
+| Geometry types | §7.2.2 | GEOMETRY, POINT, CURVE, LINESTRING, SURFACE, POLYGON, POLYHEDSURFACE, GEOMCOLLECTION, MULTIPOINT, MULTICURVE, MULTILINESTRING, MULTISURFACE and MULTIPOLYGON name SQL/MM's ST_ types. |
+| Feature tables | §7.2.3 | Tables of columns of those types. |
+| Routines | §7.2.4 to §7.2.19 | SQL/MM's routines, called by their names without ST_ too, functions and methods. |
+| GeometryType, AsText, AsBinary | §7.2.8, Annex C.3.3.3 | Functions of their own, giving the type's name without ST_ and Part 1's text and binary forms. |
+| PolyhedSurface | §7.2.14 | Its six constructors through NEW, and NumSurfaces, SURFACE and ST_Geometries, ST_NumGeometries and ST_GeometryN of its patches. |
+| Text | §7.2.20 | ANNOTATION_TEXT, ANNOTATION_TEXT_ELEMENT and ANNOTATION_TEXT_ELEMENT_ARRAY, each with its constructor and every method of the clause. |
+| Text metadata | §6.2.9.2 | ANNOTATION_TEXT_METADATA, a view of SF_INFORMTN_SCHEMA of every column of type ANNOTATION_TEXT a user may see, with Table 3's columns. |
+| Well-known text and binary | OGC 06-103r4 §7, §8 | Read in both standards' forms; Part 1's written by AsText and AsBinary. |
+
+### Readings of the standard
+
+- §7.1.1 lets the tables be views. Both live in SF_INFORMTN_SCHEMA, as
+  SQL/MM's ST_INFORMTN_SCHEMA already holds views of those names with
+  other columns. Procedures, ST_DEFINESRS and ST_REGISTERGEOMETRYCOLUMN,
+  change what they show, and they are read only.
+- An unqualified name of a view takes it as its correlation name, so
+  `GEOMETRY_COLUMNS.SRID` is its column.
+- A column's SRID is the one it is registered with, else its type's,
+  else 0, SQL/MM's unspecified system. SPATIAL_REF_SYS has no row of 0,
+  so §7.1.3.2's foreign key holds of every other SRID only.
+- STORAGE_TYPE and MAX_PPR are NULL, as nothing is stored normalized
+  [§7.1.3.3 d, h]. G_TABLE_* equal F_TABLE_* [§7.1.3.3 c].
+- COORD_DIMENSION is 3 for a column in a geocentric system and 2
+  otherwise, since a type does not say whether its values have z.
+  GEOMETRY_TYPE then adds Table 4's 1000 of z.
+- GEOMETRY_TYPE is Table 4's code, or the code of Part 1's Table 7 it
+  is a subset of. Codes 8 to 12, 16 and 17 are those of the curves,
+  surfaces and collections Table 4 leaves out. A type neither codes, a circle,
+  NURBS curve, compound surface or solid, has NULL.
+- SPATIAL_REF_SYS's SRTEXT is NOT NULL, as every system has a
+  definition. AUTH_NAME and AUTH_SRID are its organization's, NULL when
+  ST_DEFINESRS gave none.
+- A routine without ST_ of a first argument of a geometry type is the
+  method of its declared type, chosen before a registered function of
+  the name, so CONTAINS of two geometries is spatial. Of a supertype's
+  value it is SQL/MM's function of the name, or the method of the one
+  subtype declaring it, of the value treated as that type. A value of
+  another type raises the routine's exception.
+- GeometryType gives `MULTILINESTRING`, as T7 expects, and
+  POLYHEDSURFACE for a polyhedral surface. ST_GeometryType keeps
+  SQL/MM's `ST_MultiLineString`.
+- AsText and AsBinary write Part 1's forms. They differ from SQL/MM's
+  only for a triangle (a polygon of one ring), a polyhedral surface
+  (patches without PATCHES) and a TIN (triangles as polygons, nothing
+  after them). ST_AsText and ST_AsBinary keep SQL/MM's. A TIN's elements
+  and maximum side length have no Part 1 form and are left out.
+- The readers take both forms. A Part 1 TIN has no elements and no
+  maximum side length. Binary bytes are read as SQL/MM's first, then as
+  Part 1's.
+- The constructors are SQL/MM's without ST_. GeomCollFromText calls
+  ST_GeomCollFromTxt.
+- UNION and OVERLAPS are reserved words, and INTERSECTION is a set
+  function. Each before `(` at the start of an operand is a call, so
+  `Union(a, b)`, `Overlaps(a, b)` and `Intersection(a, b)` work.
+  INTERSECTION of one argument is still the set function.
+- POSITION, the column of Annex C.3.3.1's bridges and buildings, is a
+  key word and is delimited, `"POSITION"`.
+- T37 compares a value of SRID 101 with one of SRID 1, which SQL/MM's
+  ST_Equals refuses. The test uses SRID 101 for both.
+- A structured type a schema defines of a name of §7.2.2.2, POINT say,
+  is the type that name names in that schema.
+- The text types are built in as the geometry types are, with no
+  ordering, so no comparison, key or index takes them. A value is shown,
+  and CAST to a character string, as the constructors that make it. The
+  clause gives the text no well-known text or binary [Annex A.2.6 Note].
+- MaxArraySize, which the clause leaves open, is 4096. It bounds a
+  text string, text attributes and an array's elements. A longer string
+  raises 22001 and a longer array 2202E.
+- §4.9.3.3 of ISO/IEC 9075-2 names a constructor method as its type, so
+  the element's constructor is ANNOTATION_TEXT_ELEMENT. The clause's
+  AnnotationTextElement is a function of the same four arguments.
+- Each type has the constructor function of §4.9.3.3, its attributes
+  null. An element is then given a value without a leader line through
+  the methods of one argument. Every other routine returns NULL on NULL
+  input, as the clause declares, so a null argument gives the null
+  value.
+- The clause gives ANNOTATION_TEXT_ELEMENT_ARRAY no constructor. It has
+  one of an array of elements, none of them null (2FF09), and the
+  constructor function, whose array is empty. ElementN(n) past either
+  end is the null value. ElementN(element, n) replaces element n, or
+  adds it after the last for n one past it, and raises 2202E for any
+  other n.
+- A text's envelope, which the clause names without defining, is the
+  envelope ST_Envelope gives of its elements' locations and leader
+  lines, or NULL if they have none. Geometries of two SRIDs raise 2FF10.
+  CONCAT appends the other text's elements and so widens the envelope.
+- ANNOTATION_TEXT_METADATA's F_TEXT_COLUMN is named as §6.2.9.2's table
+  names it, where Table 3 writes F_TEXT_COLUMN_NAME. Its three defaults
+  are NULL, since §6.2.9.2 says nothing of how one is set. Each text
+  value then holds its own text and attributes. A text column is not a
+  geometry column, so GEOMETRY_COLUMNS does not list it.
+
 ## Extensions
 
 These facilities go beyond the standards, and the code marks them
@@ -2858,7 +2970,9 @@ GEOMETRY is a second name of ST_GEOMETRY, the root type of
 D120). This section lists what turborel adds beyond that
 standard. The types and functions are built in, so every database has
 them. Sessions call the functions by name while SQL.FUNCTION_CALLS is
-ON, its default.
+ON, its default. They are deterministic, so a CHECK, assertion, domain
+constraint or generated column may call them, and keeps its calls when
+the setting is OFF later (RULES.md D74, D133).
 
 The optional nonnegative SRID parameter of every geometry type, using
 D53's existing type syntax, enforces the reference on assignment, CAST
@@ -2897,8 +3011,20 @@ Inner joins between two columns constrained to the same SRID can probe
 one geometry index for each outer row (`physical/indexed/spatial.rs`).
 Both table orders and column projections are considered; the complete ON
 condition rechecks each visible pair. Other raising conjuncts and raising
-inner filters prevent this path. Geometry outer joins and simultaneous
-traversal of two spatial indexes are not implemented.
+inner filters prevent this path. LEFT, RIGHT and FULL outer joins probe
+it too, keeping the rows no probe matched with nulls
+(`physical/indexed/spatial/outer.rs`, `exec/join/indexed/preserved.rs`).
+ST_Relate of a constant pattern asking the values to meet, and
+ST_Distance compared `<` or `<=` with a limit, in any unit that converts,
+read a window, the distance's widened by the limit
+(`index/rtree/geometry/within.rs`, RULES.md D135). A value of another
+SRID, or a tree whose distances may overflow, reads every entry, so the
+error is raised as a scan raises it. Simultaneous traversal of two
+spatial indexes is not implemented.
+Under SERIALIZABLE, a filter's search and each join probe record the
+envelope window they read, not the whole table, and a change conflicts
+when its old or new envelope meets one (`exec/read.rs`,
+`storage/region.rs`, RULES.md D134).
 An unordered inner join whose remaining outer rows fit its memory
 budgets can choose a single visible table scan when index estimates price
 it below repeated probes (`exec/join/indexed/adaptive.rs`). A temporary
@@ -2961,7 +3087,8 @@ candidates are supplemented with qualifying NULL distances when needed.
 Uncertified requests and an unaffordable threshold heap scan before output.
 WITH TIES, PERCENT and other orders retain ordinary plans. Serializable
 reads, cancellation, prepared values and runtime errors are preserved.
-Simple feature access (ISO 19125-2) is not claimed.
+Simple feature access (ISO 19125-2) is claimed in its own part,
+[below](#simple-feature-access-sql-option).
 
 ### Indexes
 
@@ -3451,7 +3578,13 @@ many parameters as the call has arguments, as that is told before the
 arguments are bound. The setting is checked as a definition is made. A
 view, constraint, assertion, domain, trigger, generated column or SQL
 routine body that calls a registered function keeps the call, whatever
-the setting is when it is used, reopened or recovered (RULES.md D74).
+the setting is when it is used, reopened, recovered or replayed on a
+replica (RULES.md D74). CREATE and ALTER TABLE check the setting of the
+session writing a new CHECK or generation expression. A registered
+function whose `deterministic` is false is possibly non-deterministic,
+so a CHECK, assertion, domain constraint, generation expression or
+index key part calling it is SQLCODE -103 [ISO/IEC 9075-2:2023 §11.9
+SR5, CR2, §11.4 SR10d, §9.16 SR1am] (RULES.md D133).
 
 ---
 
@@ -3698,6 +3831,8 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §20.1 GR2a whether direct invocation terminated unexpectedly | A server's connection that ends without its client terminating it, lost, failed or cut by the server stopping. Its transaction is rolled back. | `server/src/native.rs` |
 | §14.1 SR2 default isolation level | READ COMMITTED, where the standard says SERIALIZABLE, following PostgreSQL. TRANSACTION.ISOLATION = SERIALIZABLE conforms. | `db/session.rs` |
 | §14.1 GR5 isolation level | SERIALIZABLE as itself. REPEATABLE READ as snapshot isolation. READ COMMITTED and READ UNCOMMITTED with a snapshot for each statement, kept while a cursor is open. Each as SERIALIZABLE on an engine that does not read below it. | `db/session.rs`, `txn.rs` |
+| §14.1 GR5, §4.28 what a SERIALIZABLE read through a spatial index reads | The rows whose geometries' envelopes, as the `rtree` index keys them, meet the window its search read, each join probe's own. A NULL is in no window and an empty geometry is at the origin. Past TRANSACTIONS.TRACKED_ROWS windows of a table, they merge into one rectangle of each column (RULES.md D134). | `storage/region.rs`, `exec/read.rs`, `engine/rows/mvcc/reads.rs` |
+| §14.1 GR5, §4.28 what a SERIALIZABLE distance read or outer join through a spatial index reads | A distance window's search reads its value's envelope widened by the limit, or the whole table where the tree cannot certify its distances finite. A FULL outer join's probes read their windows, and then the whole table, for the rows no probe matched (RULES.md D135). | `index/rtree/geometry/within.rs`, `exec/join/indexed/preserved.rs` |
 | §4.30 the initial default schema | The session's authorization identifier, for every statement the session binds | `db/session.rs` |
 | 2023 §14.10 GR4, IA234, the changes TRUNCATE TABLE disallows that are not significant | Any other transaction's write of the table until the truncating one ends, and any use of the table by a transaction or statement that began before it committed (SQLCODE -911) | `db/truncate.rs`, `txn/locks.rs` |
 | 2023 §14.12 GR4, IA234, the changes MERGE disallows that are not significant | As of UPDATE, DELETE and INSERT. The rows it changes, and under a coordinator's locks the tables it reads, are another transaction's to write only once it ends. | `db/merge.rs`, `txn/access.rs` |

@@ -162,6 +162,7 @@ pub fn all() -> impl Iterator<Item = &'static Op> {
         .chain(super::vectors::OPS)
         .chain(super::placement::OPS)
         .chain(super::arrays::OPS)
+        .chain(super::annotation::OPS)
 }
 
 /// A routine as a function the binder calls.

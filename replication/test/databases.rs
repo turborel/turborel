@@ -9,6 +9,8 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use turborel::error::Code;
+use turborel::value::Value;
 use turborel_test_support::database::rows;
 use turborel_test_support::replication::Make;
 use turborel_test_support::replication::sim::plans;
@@ -117,4 +119,44 @@ fn a_promoted_backup_serves() {
     let report = group.compare().unwrap();
     assert_eq!((report.compared, report.promoted), (2, 1));
     assert_eq!(rows(&group.database(0).unwrap().session("APP"), "SELECT K FROM T ORDER BY K").unwrap(), ["1", "2", "4"]);
+}
+
+/// Verifies: [EXTENSION] RULES.md D74, D57: a CHECK calling a geometry
+/// routine, made on the primary by a session whose SQL.FUNCTION_CALLS is
+/// ON while the database's is OFF, is replayed by each backup and bound
+/// again there as made; promoted by a view change, a backup checks it in
+/// sessions that take no such call themselves.
+#[test]
+fn a_promoted_backup_checks_a_geometry_check() {
+    let make: Make = Arc::new(make_vr);
+    let mut group = Replicas::new(1, &calm_plan(), &make).unwrap();
+    group.moments(50).unwrap();
+    let first = group.database(0).unwrap();
+    first.set_setting("SQL.FUNCTION_CALLS", &Value::Char("OFF".into())).unwrap();
+    first.schema("CREATE SCHEMA AUTHORIZATION APP").unwrap();
+    let s = first.session("APP");
+    s.run("SET SQL.FUNCTION_CALLS = 'ON'").unwrap();
+    s.run("CREATE TABLE G (K INTEGER, P ST_POINT CHECK (ST_X(P) >= 0))").unwrap();
+    s.commit().unwrap();
+    s.run("INSERT INTO G VALUES (1, NEW ST_POINT(1, 1))").unwrap();
+    s.commit().unwrap();
+    group.moments(50).unwrap();
+    let backup = group.database(1).unwrap().session("APP");
+    assert_eq!(rows(&backup, "SELECT K FROM G").unwrap(), ["1"]);
+    assert_eq!(rows(&backup, "SELECT ST_X(P) FROM G"), Err(Code::Syntax), "the database's setting followed");
+
+    group.crash(0).unwrap();
+    drop((backup, s, first));
+    group.moments(300).unwrap();
+    let primary = group.primary().unwrap();
+    assert_ne!(primary, 0, "a backup serves the next view");
+    let writer = group.database(primary).unwrap().session("APP");
+    let refused = writer.run("INSERT INTO G VALUES (2, NEW ST_POINT(-1, 1))").unwrap_err();
+    assert_eq!(refused.code, Code::Constraint, "{refused:?}");
+    writer.rollback().unwrap();
+    writer.run("INSERT INTO G VALUES (3, NEW ST_POINT(3, 1))").unwrap();
+    writer.commit().unwrap();
+    group.moments(300).unwrap();
+    assert_eq!(group.compare().unwrap().compared, 2);
+    assert_eq!(rows(&group.database(0).unwrap().session("APP"), "SELECT K FROM G ORDER BY K").unwrap(), ["1", "3"]);
 }

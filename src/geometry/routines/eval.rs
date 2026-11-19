@@ -44,13 +44,14 @@ pub(super) fn name(routine: Routine) -> &'static str {
 }
 
 /// What an index may find rows by: a relationship true only of operands
-/// that meet, or equality, true also of two empty sets.
+/// that meet, equality, true also of two empty sets, or a relationship
+/// whose pattern says which.
 pub(super) fn spatial_operation(routine: Routine) -> Option<SpatialOperation> {
     match routine {
         Routine::Touches | Routine::Crosses | Routine::Within | Routine::Contains | Routine::Overlaps => Some(SpatialOperation::Meets),
         Routine::Equals => Some(SpatialOperation::Equals),
-        Routine::Relate
-        | Routine::Intersection
+        Routine::Relate => Some(SpatialOperation::Relate),
+        Routine::Intersection
         | Routine::Union
         | Routine::Difference
         | Routine::SymDifference

@@ -193,14 +193,20 @@ impl<'a> Binder<'a> {
         // [EXTENSION] (RULES.md D87) NEW of a registered type, as SQL/MM
         // Full-Text's NEW FullText(...) [ISO/IEC 13249-2:2002 §5.1.9]: the
         // call of the registered function of its name.
-        if let Some(kind) = self.db.types.get(&udt.ident).filter(|_| udt.auth.is_none())
+        // A structured type of the name is the type it names; else the
+        // function of a registered type's own name, so NEW of another name
+        // of it, POLYHEDSURFACE say [OGC 06-104r4 §7.2.14.2], calls it.
+        let structured = self.db.catalog.structured_type(&super::super::qualify(udt, self.schema)).is_some();
+        let registered = self.db.types.get(&udt.ident).filter(|_| udt.auth.is_none() && !structured);
+        if let Some(kind) = registered
             && let Some(family) = kind.family()
             && !family.instantiable(kind)
         {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.20 SR2] NEW {}: the type is not instantiable", udt.ident)));
         }
-        if udt.auth.is_none() && self.db.types.get(&udt.ident).is_some() && !self.db.functions.scalars(&udt.ident).is_empty() {
-            let call = ValueExpression::Call { schema: None, name: udt.ident.clone(), args: args.to_vec(), at: udt.at, extension: true };
+        if let Some(kind) = registered.filter(|k| !self.db.functions.scalars(k.name()).is_empty()) {
+            let call =
+                ValueExpression::Call { schema: None, name: kind.name().to_owned(), args: args.to_vec(), at: udt.at, extension: true };
             return self.value_expression(&call, scope);
         }
         let desc = self.named_structured(&TypeName::Domain(udt.clone()))?;

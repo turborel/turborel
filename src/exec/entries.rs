@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use super::held::HeldRows;
-use super::scan::{Found, asked, probe_index};
+use super::scan::{Found, probe_index};
 use super::{Runner, broken, eval_cond};
 use crate::catalog::KeyShape;
 use crate::db::State;
@@ -117,8 +117,8 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
             Ok(Box::new(checked(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx))))
         }
         Plan::IndexScan { table, index, probe, reverse, .. } => {
-            let Found { storage, ix, entries, projection } = probe_index(db, &table, &index, &probe, reverse)?;
-            storage.read_by_condition(tx, &asked(&ix, probe))?;
+            let Found { storage, ix, entries, projection, read } = probe_index(db, &table, &index, &probe, reverse)?;
+            read.record(&*storage, tx)?;
             let mut reading = Reading::of(&ix, None, projection);
             let rows = checked(entries, db.tx.stop_of(tx))
                 .filter_map(move |entry| entry.and_then(|(key, id)| fetch(&*storage, &ix, &mut reading, (tx, id), &key)).transpose());

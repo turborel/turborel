@@ -2,6 +2,12 @@
 //! SC32 N2593) §5.1.67: the value types, surfaces with their patches and
 //! TIN elements, the solid and the collections. Curves are in
 //! [`super::curves`].
+//!
+//! \[EXTENSION\] A triangle, polyhedral surface or TIN is read in the form
+//! of Simple feature access too [OGC 06-103r4 §7.2.2, §7.2.3]: a
+//! triangle's `<polygon text>`, and patches of `<polygon text>` with no
+//! PATCHES. The two never begin alike, a list of rings or polygons
+//! opening with a second parenthesis (RULES.md D136).
 
 use super::cursor::{Cursor, mixed};
 use super::curves::{curve, curve_text};
@@ -10,6 +16,9 @@ use crate::error::Result;
 use crate::spatial::curves::tin::ElementKind;
 use crate::spatial::curves::types::{Coord, Dims};
 use crate::spatial::formats::tree::{Body, Collection, Element, Geometry, Kind, Ring, Rings, Surface, Tin, element_kind_of};
+
+/// [OGC 06-103r4 §6.1.12] The points of a triangle's closed ring.
+const TRIANGLE_RING: usize = 4;
 
 /// The value `text` represents.
 ///
@@ -74,7 +83,7 @@ fn surface(c: &mut Cursor, kind: Kind) -> Result<Surface> {
         Kind::CurvePolygon => Surface::CurvePolygon(c.list(curve_text)?),
         Kind::Polygon => Surface::Polygon(polygon(c)?),
         Kind::Triangle => Surface::Triangle(triangle(c)?),
-        Kind::Polyhedral => Surface::Polyhedral(patches(c, patch)?),
+        Kind::Polyhedral => Surface::Polyhedral(patches(c)?),
         Kind::Tin => Surface::Tin(tin(c)?),
         Kind::CompoundSurface => Surface::Compound(c.list(surface_text)?),
         Kind::Point
@@ -121,13 +130,17 @@ fn polygon(c: &mut Cursor) -> Result<Rings> {
     c.list(Cursor::points)
 }
 
-/// `<triangle text>`: three points, kept as a closed ring of four.
+/// `<triangle text>`: three points, kept as a closed ring of four; or
+/// Simple feature access's `<polygon text>` of that ring.
 fn triangle(c: &mut Cursor) -> Result<Ring> {
     let dims = c.dims;
-    let mut ring = c.list(|c| c.point(dims))?;
-    if ring.is_empty() {
-        return Ok(ring);
+    if !c.opens()? {
+        return Ok(Vec::new());
     }
+    if c.peek() == Some(&Token::Open) {
+        return simple_triangle(c);
+    }
+    let mut ring = c.items(|c| c.point(dims))?;
     if ring.len() != 3 {
         return Err(invalid("a triangle has three points"));
     }
@@ -135,6 +148,26 @@ fn triangle(c: &mut Cursor) -> Result<Ring> {
         ring.push(first);
     }
     Ok(ring)
+}
+
+/// [OGC 06-103r4 §7.2.2] A triangle's `<polygon text>` after its `(`:
+/// one ring of four points, whose closure the model checks.
+fn simple_triangle(c: &mut Cursor) -> Result<Ring> {
+    let mut rings = c.items(Cursor::points)?;
+    let ring = rings.pop().unwrap_or_default();
+    if rings.is_empty() && (ring.is_empty() || ring.len() == TRIANGLE_RING) {
+        Ok(ring)
+    } else {
+        Err(invalid("a triangle's polygon text is one ring of four points"))
+    }
+}
+
+/// [OGC 06-103r4 §7.2.2] A TIN's patch: a triangle's `<polygon text>`.
+fn simple_patch(c: &mut Cursor) -> Result<Ring> {
+    if !c.opens()? {
+        return Ok(Vec::new());
+    }
+    simple_triangle(c)
 }
 
 /// A `<polygon text representation>` patch: a POLYGON or a TRIANGLE.
@@ -149,31 +182,56 @@ fn patch(c: &mut Cursor) -> Result<Rings> {
     }
 }
 
-/// `<empty set>` or `( PATCHES ( item, ... ) ...`, leaving the outer
-/// parenthesis open for what follows the patches.
-fn patches_open<T>(c: &mut Cursor, item: impl FnMut(&mut Cursor) -> Result<T>) -> Result<Option<Vec<T>>> {
+/// Patches read: those of `( PATCHES ( item, ... )`, the outer
+/// parenthesis left open for what follows them, or Simple feature
+/// access's `( patch, ... )` [OGC 06-103r4 §7.2.2], closed.
+enum Patches<T> {
+    /// `<empty set>`.
+    Empty,
+    /// After PATCHES.
+    Open(Vec<T>),
+    /// Of Simple feature access.
+    Closed(Vec<T>),
+}
+
+/// `<empty set>`, `( PATCHES ( item, ... ) ...` or `( simple, ... )`.
+fn patches_open<T>(
+    c: &mut Cursor,
+    item: impl FnMut(&mut Cursor) -> Result<T>,
+    simple: impl FnMut(&mut Cursor) -> Result<T>,
+) -> Result<Patches<T>> {
     if !c.opens()? {
-        return Ok(None);
+        return Ok(Patches::Empty);
+    }
+    if c.peek() == Some(&Token::Open) || c.is_word("EMPTY") {
+        return Ok(Patches::Closed(c.items(simple)?));
     }
     c.word("PATCHES")?;
     c.expect(&Token::Open)?;
-    Ok(Some(c.items(item)?))
+    Ok(Patches::Open(c.items(item)?))
 }
 
-/// `<polyhedralsurface text>`.
-fn patches<T>(c: &mut Cursor, item: impl FnMut(&mut Cursor) -> Result<T>) -> Result<Vec<T>> {
-    let Some(found) = patches_open(c, item)? else {
-        return Ok(Vec::new());
-    };
-    c.expect(&Token::Close)?;
-    Ok(found)
+/// `<polyhedralsurface text>`, or Simple feature access's of `<polygon
+/// text>`s.
+fn patches(c: &mut Cursor) -> Result<Vec<Rings>> {
+    match patches_open(c, patch, polygon)? {
+        Patches::Empty => Ok(Vec::new()),
+        Patches::Closed(found) => Ok(found),
+        Patches::Open(found) => {
+            c.expect(&Token::Close)?;
+            Ok(found)
+        }
+    }
 }
 
 /// `<tin text>`: triangle patches, then optional elements and maximum
-/// side length.
+/// side length; or Simple feature access's of triangles' `<polygon
+/// text>`s, which has neither.
 fn tin(c: &mut Cursor) -> Result<Tin> {
-    let Some(triangles) = patches_open(c, triangle)? else {
-        return Ok(Tin { triangles: Vec::new(), elements: Vec::new(), max_side: None });
+    let triangles = match patches_open(c, triangle, simple_patch)? {
+        Patches::Empty => return Ok(Tin { triangles: Vec::new(), elements: Vec::new(), max_side: None }),
+        Patches::Closed(triangles) => return Ok(Tin { triangles, elements: Vec::new(), max_side: None }),
+        Patches::Open(triangles) => triangles,
     };
     let elements = if c.take_word("ELEMENTS") {
         c.expect(&Token::Open)?;

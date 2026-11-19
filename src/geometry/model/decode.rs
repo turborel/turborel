@@ -9,6 +9,10 @@
 //! writer writes is read, so one value has one form (RULES.md
 //! D119). Counts are checked against the bytes left and the
 //! shared part budget before anything is allocated.
+//!
+//! \[EXTENSION\] Bytes given that are no representation of this text are
+//! read as Simple feature access's [OGC 06-103r4 §8.2], whose triangle and
+//! TIN are laid out otherwise (`model/simple.rs`, RULES.md D136).
 
 use super::check::{failed, limited};
 use super::encode::{BIG_ENDIAN, EMPTY_ORDINATE, LITTLE_ENDIAN};
@@ -38,7 +42,10 @@ const NEGATIVE_ZERO: u64 = 0x8000_0000_0000_0000;
 /// its type; SQLCODE -900 past a representation limit.
 pub fn read_wkb(bytes: &[u8], srid: i32) -> Result<Geom> {
     limited(bytes.len(), MAX_BYTES)?;
-    let (dims, body) = read(bytes, false)?;
+    let (dims, body) = match read(bytes, Mode::Given) {
+        Ok(read) => read,
+        Err(e) => read(bytes, Mode::Simple).map_err(|_| e)?,
+    };
     Geom::new(srid, dims, body)
 }
 
@@ -59,11 +66,22 @@ pub fn read_wkb_typed(bytes: &[u8], srid: i32, kind: Kind) -> Result<Geom> {
 /// The dimensions and body of canonical bytes, as `model/encode.rs` writes
 /// them.
 pub(super) fn read_canonical(bytes: &[u8]) -> Result<(Dims, Body)> {
-    read(bytes, true)
+    read(bytes, Mode::Canonical)
 }
 
-fn read(bytes: &[u8], canonical: bool) -> Result<(Dims, Body)> {
-    let mut r = Reader { rest: bytes, parts: 0, canonical, dims: None };
+/// Whose bytes a read reads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// A stored value's, as `model/encode.rs` writes them.
+    Canonical,
+    /// Given, of this text [§5.1.68].
+    Given,
+    /// Given, of Simple feature access [OGC 06-103r4 §8.2].
+    Simple,
+}
+
+fn read(bytes: &[u8], mode: Mode) -> Result<(Dims, Body)> {
+    let mut r = Reader { rest: bytes, parts: 0, canonical: mode == Mode::Canonical, simple: mode == Mode::Simple, dims: None };
     let (_, body) = r.geometry(1)?;
     if !r.rest.is_empty() {
         return Err(wrong("bytes follow the well-known binary representation"));
@@ -90,6 +108,8 @@ pub(super) struct Reader<'a> {
     parts: usize,
     /// Whether the bytes are a stored value's.
     pub(super) canonical: bool,
+    /// Whether the bytes are of Simple feature access [OGC 06-103r4 §8.2].
+    pub(super) simple: bool,
     /// The value's dimensions, once its first header is read.
     pub(super) dims: Option<Dims>,
 }
@@ -217,9 +237,9 @@ impl Reader<'_> {
             Kind::CompoundCurve => Body::Curve(Curve::Compound(self.parts(little, deeper, curve_of)?)),
             Kind::CurvePolygon => Body::Surface(Surface::CurvePolygon(self.parts(little, deeper, curve_of)?)),
             Kind::Polygon => Body::Surface(Surface::Polygon(self.rings(little)?)),
-            Kind::Triangle => Body::Surface(Surface::Triangle(self.triangle(little)?)),
+            Kind::Triangle => Body::Surface(Surface::Triangle(self.triangle_of(little)?)),
             Kind::PolyhdrlSurface => Body::Surface(Surface::PolyhdrlSurface(self.parts(little, deeper, patch_of)?)),
-            Kind::Tin => Body::Surface(Surface::Tin(self.tin(little, deeper)?)),
+            Kind::Tin => Body::Surface(Surface::Tin(self.tin_of(little, deeper)?)),
             Kind::CompoundSurface => Body::Surface(Surface::Compound(self.parts(little, deeper, surface_of)?)),
             Kind::BRepSolid => Body::Solid(self.parts(little, deeper, surface_of)?),
             Kind::GeomCollection => Body::Collection(Collection::Geometry(self.parts(little, deeper, |_, b| Some(b))?)),
@@ -243,7 +263,7 @@ impl Reader<'_> {
         self.numbers(little, count.saturating_mul(stride))
     }
 
-    fn rings(&mut self, little: bool) -> Result<Vec<Coords>> {
+    pub(super) fn rings(&mut self, little: bool) -> Result<Vec<Coords>> {
         if self.omitted() {
             return Ok(Vec::new());
         }

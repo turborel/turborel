@@ -62,6 +62,11 @@ impl TypeRegistry {
         // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.2] GEOMETRY names
         // ST_GEOMETRY too, as ISO/IEC 19125-2 and D85 wrote it.
         all.insert(crate::geometry::NAME.to_owned(), crate::geometry::kind_of(crate::geometry::model::Kind::Geometry));
+        // [OGC 06-104r4 §7.2.2.2] And each of Simple feature access's
+        // names without ST_ the type it names (RULES.md D136).
+        for (name, kind) in crate::geometry::sfa::TYPE_NAMES {
+            all.insert(name.to_owned(), crate::geometry::kind_of(kind));
+        }
         TypeRegistry { kinds: Some(Arc::new(all)) }
     }
 

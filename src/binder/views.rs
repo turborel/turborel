@@ -100,6 +100,24 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// [OGC 06-104r4 §7.1, Annex C.3.3.3 T1] The view of Simple feature
+/// access an unqualified `table` names where nothing of the default
+/// schema `schema` is of its name, GEOMETRY_COLUMNS say, and that name as
+/// its correlation name, by which a column of it is qualified (RULES.md
+/// D136).
+pub(super) fn public_view(db: &State, table: &crate::ast::TableName, schema: &str) -> Option<(QualifiedName, Option<String>)> {
+    if table.auth.is_some() {
+        return None;
+    }
+    let public = system::sf_public(&table.ident)?;
+    let own = qualify(table, schema);
+    let system_defined = db.system.contains_key(&own) || system::view(&own).is_some();
+    if system_defined || db.catalog.table(&own).is_some() || db.catalog.view(&own).is_some() {
+        return None;
+    }
+    Some((public, Some(table.ident.clone())))
+}
+
 /// The table or view `name` [X3.135-1986 §5.4 SR5], system table, or view
 /// of the Information Schema, as `reader` reads it.
 pub(super) fn named(db: &State, name: &QualifiedName, reader: Reader<'_>) -> Result<Named> {
@@ -370,7 +388,9 @@ pub fn write_target(
     (read_only, user): (&str, Principal<'_>),
     noted: Option<&Cell<bool>>,
 ) -> Result<WriteTarget> {
-    if [INFORMATION_SCHEMA, DEFINITION_SCHEMA, system::ST_INFORMTN_SCHEMA, system::ST_DEFINITION_SCHEMA].contains(&name.auth.as_str()) {
+    let only_select =
+        [INFORMATION_SCHEMA, DEFINITION_SCHEMA, system::ST_INFORMTN_SCHEMA, system::ST_DEFINITION_SCHEMA, system::SF_INFORMTN_SCHEMA];
+    if only_select.contains(&name.auth.as_str()) {
         return Err(SqlError::new(
             Code::Privilege,
             format!("[ISO/IEC 9075:1992 §21.1] only SELECT is granted on {name}, so it cannot be updated"),
@@ -516,7 +536,7 @@ fn updates(cx: Context<'_>, spec: &QuerySpecification, reads: &[QualifiedName]) 
     let Some(r) = spec.table_expression.from.first().filter(|_| updatable_query(spec)).and_then(TableReference::named) else {
         return Ok(None);
     };
-    let name = qualify(&r.table, cx.schema);
+    let name = resolved(cx.db, &r.table, cx.schema);
     let Named { desc, source, .. } = named(cx.db, &name, Reader { purpose: Purpose::Query, ..Reader::of(&cx) })?;
     let leaf = match &source {
         Source::Table => &name,
@@ -545,9 +565,15 @@ fn updates(cx: Context<'_>, spec: &QuerySpecification, reads: &[QualifiedName]) 
 }
 
 /// Adds to `out` the tables the `<from clause>`s of `query` and of its
-/// subqueries name.
+/// subqueries name, a view of Simple feature access too (`public_view`).
 fn named_tables(cx: Context<'_>, query: &QueryExpression, out: &mut Vec<QualifiedName>) {
     let mut names = Vec::new();
     query.table_names(&mut names);
-    out.extend(names.into_iter().map(|t| qualify(t, cx.schema)));
+    out.extend(names.into_iter().map(|t| resolved(cx.db, t, cx.schema)));
+}
+
+/// The table or view `table` names, of the default schema `schema` if
+/// unqualified, or the view of Simple feature access (`public_view`).
+pub(super) fn resolved(db: &State, table: &crate::ast::TableName, schema: &str) -> QualifiedName {
+    public_view(db, table, schema).map_or_else(|| qualify(table, schema), |(name, _)| name)
 }

@@ -25,7 +25,7 @@ use super::cost::HASH_ROW;
 use super::estimate::{self, Known};
 use super::join::Flip;
 use super::shown::Shown;
-use super::{JoinProbe, PhysicalPlanner, Plan};
+use super::{JoinProbe, PhysicalPlanner, Plan, Preserved};
 
 mod coordinates;
 mod probed;
@@ -134,17 +134,17 @@ fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), s
     let probed = probing.used.iter().filter_map(|&k| join.keys.get(k)).map(equal);
     let detail = shown.text(|names| and_all(probed.chain(cond.clone()).collect()).map(|c| render_cond(&c, names)).unwrap_or_default());
     Plan::IndexJoin {
-        outer: join.outer,
+        outer: if join.outer { Preserved::Outer } else { Preserved::Inner },
         spatial: false,
         left: Box::new(left),
         table: probing.table,
-        index: probing.index,
-        method: probing.method,
+        index: probing.index.into(),
+        method: probing.method.into(),
         probe: JoinProbe::Prefix(keys.into_boxed_slice()),
         cond,
         width: probing.width,
         columns: probing.needed,
-        detail,
+        detail: detail.into(),
         est: probing.each,
         cost: rows * probing.cost,
         located: probing.located,

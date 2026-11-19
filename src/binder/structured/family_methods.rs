@@ -40,6 +40,8 @@ impl Binder<'_> {
         let fixed = as_type.map(|written| self.generalized_kind(written, declared)).transpose()?;
         let kind = fixed.unwrap_or(declared);
         let upper = name.to_ascii_uppercase();
+        // [OGC 06-104r4 §7.2.14] Of a polyhedral surface, its patches'.
+        let upper = crate::geometry::sfa::patch_method(kind, &upper).map_or(upper, str::to_owned);
         let Some(method) = subject_method(kind, &upper, args.len()) else {
             return Err(rule(format!(
                 "[ISO/IEC 9075-2:2023 §9.18 SR10b, §9.19 SR3] {} and its supertypes have no method {upper} of {} arguments",

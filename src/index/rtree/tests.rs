@@ -7,6 +7,7 @@ use crate::value::{Decimal, Spelled};
 
 mod geometry;
 mod nearest;
+mod within;
 
 fn approximate() -> DataType {
     DataType::Approximate { precision: 53, spelled: Spelled::DoublePrecision }
