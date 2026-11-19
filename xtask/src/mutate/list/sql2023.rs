@@ -287,7 +287,7 @@ pub const SQL2023: [Mutation; 56] = [
         name: "when-operand-overlaps-mixed",
         package: Package::Core,
         breaks: "a simple CASE's OVERLAPS operands mix with others, which SR2c forbids",
-        file: "src/parser/primary.rs",
+        file: "src/parser/primary/case.rs",
         original: "    if some && !all {",
         replacement: "    if false {",
         integration: &["expressions::predicates_as_when_operands_6_12"],
