@@ -178,6 +178,13 @@ verification approach DO-178C expects (§8).
 | D150 | A reachability index prunes a search's starts by landmark labels |
 | D151 | A graph's statistics are made of its tables', and choose where a search starts |
 | D152 | A search expands a frontier at once and chooses MS-BFS and workers by cost |
+| D160 | A backup is a checkpoint's files, copied in chunks while the database serves, and the log written meanwhile |
+| D161 | A backup's objects are block files in the database's formats, so a backup is as checked and as sealed as its files |
+| D162 | A restore is offline, into a staging directory renamed once the database is whole |
+| D163 | The archive is the log's logical records, in segments by timeline, and a checkpoint keeps what the archive lacks |
+| D164 | Recovery stops at a time, a position, a restore point or the end, and a target not reached is refused |
+| D165 | A restore through the archive begins a timeline, and never writes over another's segments |
+| D166 | Targets are object stores behind one object-safe trait, and the history of backups is durable and rebuilt from them |
 | D167 | An external plug-in is a process spoken to in protocol 1 over its pipes |
 | D168 | An extension is a database object made of its manifest, logged with it |
 | D169 | An extension's objects are bridged onto the interfaces of their kinds |
@@ -1879,6 +1886,16 @@ MEMORY.BUDGET_BYTES. On Unix, files are 0600 and directories 0700.
 While anything is encrypted (D48), events carry no statement text, so no
 value meant for an encrypted table reaches a log in the clear.
 INFORMATION_SCHEMA.FILES shows files to the database's owner.
+
+The manager fences a database's files (`files/fence.rs`). A file system
+may give the directory's lock to another opener while its holder still
+runs, as a crashed process's locks are given up. Its `FileLock` then
+carries a test of whether it is still held. Once the database has closed,
+or the test fails, every write, change of size, sync, creation and removal
+is refused (SQLCODE -915, or -910 once closed). A session of a fenced database rolls back as it
+ends, in memory only. Without the fence a stale session's commit was
+written at its log's old end, over records the next opener had written.
+The mutation `fence-ignores-a-taken-lock` checks it.
 
 #### D57. Replicated state is the log, the catalog and the durable files, as opaque bytes
 
@@ -6178,9 +6195,10 @@ statement; a procedure `Procedure`, its SQL run in the caller's
 transaction; a metric `VectorMetric`, whose many distances from one
 query are one call, so VECTOR_DISTANCE over a batch and a DiskANN search
 batch them; and a model `Embedder`. An authenticator is found by the
-server by its mechanism, and a backup target and a partitioning strategy
-are written against the interfaces those features take
-(`bridge/pending.rs`). Functions are registered in the state's own
+server by its mechanism. A backup target's scheme is a `TargetProvider`
+(D166), which a location of that scheme opens when no registered provider
+has it. A partitioning strategy is written against the interface that
+feature takes (`bridge/pending.rs`). Functions are registered in the state's own
 registry, so a transaction rolled back leaves none. Metrics and models
 are held weakly in the shared registries and strongly by the state that
 holds the extension, so they go when it does. No two extensions, nor an
@@ -6457,6 +6475,112 @@ but not freed when a checkpoint was taken are unreachable in it and stay
 allocated, as the B-link tree's do. `RTree::shape` reports nodes, bytes,
 fill and envelope overlap per level, which `bench/spatial_index.rs`
 prints after packed, inserted and aged loads.
+
+#### D160. A backup is a checkpoint's files, copied in chunks while the database serves, and the log written meanwhile
+
+A backup is taken online, by BACKUP DATABASE, `Database::backup` or a
+client of the server, all through one path (`db/backup/take.rs`). It
+checkpoints, then exports the checkpoint's files while holding the
+checkpoint turn shared, so no later checkpoint frees a page it copies,
+while readers and writers go on. Each file is read in chunks of 64 KiB,
+each with its MurmurHash3 digest in the manifest. The checkpoint's image
+follows, and then the log's records from the image's recovery start to
+the log's end as the copy finishes, made durable first. The backup holds
+every transaction those records commit, and recovery from it is
+recovery after a crash at its end.
+
+An incremental backup writes only the chunks whose digest differs from
+the same chunk of the backup it follows, its parent, the newest in the
+target unless FROM names one. Its manifest names every chunk, each in
+the backup that holds it, so a restore reads a chain back to a full
+backup, of at most 10,000 backups. A digest is no proof, so verifying a
+chain checks each chunk read against the manifest that holds it.
+
+The manifest is written last. A backup without one is none, so a backup
+that fails, is cancelled or is cut short by a crash leaves nothing a
+restore would take. One that fails or is cancelled removes what it
+wrote. Cancellation is checked before each chunk and record, and once
+more before the manifest. Backups may run at once, each its own export
+and id, `B` and the start time's microseconds and a counter.
+
+#### D161. A backup's objects are block files in the database's formats, so a backup is as checked and as sealed as its files
+
+Every object a backup or the archive writes is a block file of format
+version 1 written as a stream (`disk/block/stream.rs`), each block with
+its digest by the database's checksum and passed through its encodings
+and keys as STORAGE.ENCODINGS names them now. A backup of an encrypted
+database is encrypted, and reading one needs the keys. With
+BACKUP.COMPRESSION ON the encoding of id 1, LZ4, comes first, and a
+backup is refused if none is registered. Verification (`verify.rs`)
+reads a chain's chunks, image and records without restoring, and checks
+each block's digest, each chunk's against its manifest, and that the
+records run unbroken from the backup's start to its stop. A failure is
+SQLSTATE TBB01, naming the object.
+
+#### D162. A restore is offline, into a staging directory renamed once the database is whole
+
+`Database::restore` and `turboreld --restore` restore into a directory
+not there yet, from a database that has opened none. The chain's chunks
+are assembled into `<dir>.restoring`, the backup's image recorded as the
+catalog in the formats it was written in, and the database recovered
+from the backup's records and, given an archive, its segments. A
+Restored entry is added to the history, the database checkpointed and
+closed, the staging directory renamed to the directory and its parent
+synced. A restore cut short leaves no database at the directory, and the
+next restore into it removes the staging directory left first.
+
+#### D163. The archive is the log's logical records, in segments by timeline, and a checkpoint keeps what the archive lacks
+
+While ARCHIVE.MODE is ON, the job `turborel-archive` reads the records
+made durable since the last archived (`Log::read_from`) and writes them
+to ARCHIVE.TARGET, a segment an object, named by its timeline and its
+first and last positions, once ARCHIVE.SEGMENT_BYTES gather or
+ARCHIVE.TIMEOUT_MS pass. A checkpoint truncates the log no further than
+the archive's last record (`Floor`, `db/files.rs`), so a target out of
+reach holds the log back and loses nothing. Before anything is
+archived, nothing is let go. A segment older than
+ARCHIVE.RETENTION_SECONDS is removed once its last record is before the
+start of the newest completed backup in the archive's target.
+
+#### D164. Recovery stops at a time, a position, a restore point or the end, and a target not reached is refused
+
+A restore recovers through `SeededLogs`, the backup's records and then
+the archive's segments along the timeline's ancestry, cut at the
+target (`backup/seed.rs`). A time stops before the first commit after
+it, a position after the record at or before it, a restore point after
+its record, and the end after the last record there is. CREATE RESTORE
+POINT writes a record naming the point and syncs it, and recovery after
+a crash passes over it. A restore whose target the records never
+reach is refused with SQLSTATE TBB02, and nothing is left.
+
+#### D165. A restore through the archive begins a timeline, and never writes over another's segments
+
+A timeline is the history of one database's records. A restore through
+the archive takes the archive's highest timeline plus one, writes its
+history there, naming its parent and where it branched, and sets the
+restored database's ARCHIVE.TIMELINE. The restored database archives
+under its timeline, never over the old one, which the first database
+may go on writing. A later restore follows the newest timeline, or the
+one asked, through its ancestors' segments up to each branch point.
+
+#### D166. Targets are object stores behind one object-safe trait, and the history of backups is durable and rebuilt from them
+
+A target (`backup/target.rs`) is a flat store of named objects, written
+by an upload begun, its chunks written, and finished or abandoned, read
+by ranges, listed by prefix and removed. Its methods take and give
+strings, integers and byte chunks alone, so a plug-in in another
+process can serve it, and `BackupTarget` is an extension point (R-SAFE-3)
+whose `ArchiveTarget` is the same trait. A `TargetProvider` opens the
+targets of a scheme, and `dir` and `memory` are built in.
+
+The database keeps a history of its backups, archived segments, restore
+points and restores, a block file under `plugins/turborel-backup/`,
+each entry appended and synced. INFORMATION_SCHEMA.BACKUPS,
+ARCHIVED_SEGMENTS and RESTORE_POINTS fold it, a backup recorded running
+and no longer under way shown INTERRUPTED. The database's owner sees
+them, and a non-owner sees no rows. RESCAN BACKUP TARGET reads a
+target's manifests and segments and records what the history lacks,
+and marks GONE each completed backup the target no longer holds.
 
 ## 2. Project layout
 

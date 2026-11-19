@@ -30,6 +30,7 @@
               handle one variant, and flat lists of assertions (RULES.md R-TEST-4)"
 )]
 
+mod backup;
 mod config_file;
 mod geometry;
 mod keys;

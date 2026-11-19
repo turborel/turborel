@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use super::Database;
 use super::assertions::folded;
+use super::backup::{Backups, archived};
 use super::checkpoint::checkpointed;
 use super::embedding::{EMBEDDING, embedded};
 use super::log_sync::log_synced;
@@ -44,6 +45,9 @@ const ASSERTION_TOTALS: &str = "turborel-assertion-totals";
 /// The label of a database's job and thread writing its files again in
 /// the formats its settings name (RULES.md D48, `db/rekey.rs`).
 const REKEY: &str = "turborel-rekey";
+/// The label of a database's job and thread archiving its log (RULES.md
+/// D163, `db/backup/archive.rs`).
+const ARCHIVE: &str = "turborel-archive";
 /// \[DESIGN\] How long after a failure, or a round that did no work while
 /// some is still due, maintenance looks again unasked: a second, as a
 /// freeze may be waiting out COLUMNSTORE.FREEZE_DELAY.
@@ -60,14 +64,17 @@ pub(super) struct Background {
     folds: JobId,
     rekey: JobId,
     embedding: JobId,
+    archive: JobId,
     pub(super) maintenance_turn: Turn,
+    /// Its backups, archive and history (`db/backup.rs`).
+    pub(super) backups: Arc<Backups>,
 }
 
 impl Background {
     /// The background work of a database whose snapshots share `jobs`:
     /// its checkpoint, maintenance, log sync, read-ahead and folding jobs
     /// added.
-    pub(super) fn over(jobs: Arc<Jobs>) -> Background {
+    pub(super) fn over(jobs: Arc<Jobs>, backups: Arc<Backups>) -> Background {
         let checkpoint = jobs.add(CHECKPOINT, Work::Own(checkpointed), None);
         let maintenance = jobs.add(MAINTENANCE, Work::Own(maintained), Some(AGAIN));
         let log_sync = jobs.add(LOG_SYNC, Work::Own(log_synced), None);
@@ -75,7 +82,21 @@ impl Background {
         let folds = jobs.add(ASSERTION_TOTALS, Work::Own(folded), None);
         let rekey = jobs.add(REKEY, Work::Own(rekeyed), Some(AGAIN));
         let embedding = jobs.add(EMBEDDING, Work::Own(embedded), None);
-        Background { jobs, checkpoint, maintenance, log_sync, read_ahead, folds, rekey, embedding, maintenance_turn: Turn::default() }
+        let archive = jobs.add(ARCHIVE, Work::Own(archived), Some(AGAIN));
+        let turn = Turn::default();
+        Background {
+            jobs,
+            checkpoint,
+            maintenance,
+            log_sync,
+            read_ahead,
+            folds,
+            rekey,
+            embedding,
+            archive,
+            maintenance_turn: turn,
+            backups,
+        }
     }
 }
 
@@ -238,6 +259,11 @@ impl Database {
     /// name (`db/rekey.rs`).
     pub(super) fn request_rekey(&self) {
         self.background().jobs.request(self.background().rekey, self, self.job_policy());
+    }
+
+    /// Asks for the archive job, `after` from now.
+    pub(super) fn request_archive(&self, after: Duration) {
+        self.background().jobs.request_after(self.background().archive, self, self.job_policy(), after);
     }
 
     /// Asks for the log sync job, `after` from now.

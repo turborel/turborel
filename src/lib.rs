@@ -29,6 +29,7 @@
 //! The same form is used in error messages, so a user can look a rule up.
 
 pub mod ast;
+pub mod backup;
 pub mod binder;
 pub mod bytes;
 pub mod catalog;

@@ -29,7 +29,7 @@ impl Analysis {
     pub(super) fn note(&mut self, lsn: Lsn, record: &Record) {
         self.highest = self.highest.max(record.tx);
         match &record.change {
-            Change::Commit { at } => {
+            Change::Commit { at, .. } => {
                 self.highest = self.highest.max(*at);
                 self.committed.insert(record.tx, lsn);
                 self.transactions.insert(record.tx);
@@ -59,6 +59,7 @@ impl Analysis {
             | Change::Reconfiguration { .. }
             | Change::Sequence { .. }
             | Change::Checkpoint
+            | Change::RestorePoint { .. }
             | Change::Stale { .. }
             | Change::LobStale { .. } => {}
         }

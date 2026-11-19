@@ -97,8 +97,9 @@ fn metrics_and_models() {
 /// conversation with its program.
 #[test]
 fn authenticators_targets_and_strategies() {
+    use turborel::backup::TargetProvider;
     use turborel::plugin::bridge::auth::{AuthStep, Connecting};
-    use turborel::plugin::bridge::pending::{PartitionBound, PartitionStrategy, TargetProvider};
+    use turborel::plugin::bridge::pending::{PartitionBound, PartitionStrategy};
     use turborel::value::{DataType, Spelled};
     let (scratch, db) = plugged("plugins-points");
     db.session("U").run("CREATE EXTENSION example").unwrap();
@@ -183,4 +184,42 @@ fn requirements_and_updates() {
     s.run("ALTER EXTENSION needs UPDATE").unwrap();
     assert_eq!(rows(&s, "SELECT X FROM LOG ORDER BY X").unwrap(), ["two", "up; one"]);
     assert_eq!(rows(&s, "SELECT VERSION FROM INFORMATION_SCHEMA.EXTENSIONS WHERE EXTENSION_NAME = 'NEEDS'").unwrap(), ["1.1.0"]);
+}
+
+/// Verifies: [EXTENSION] RULES.md D166, D169: an extension's scheme of
+/// targets is a provider of the database's own, so BACKUP DATABASE writes
+/// to a location of it; registered with a fresh database, the same
+/// provider restores the backup, which opens with its rows.
+#[test]
+fn a_backup_and_restore_through_an_extensions_target() {
+    use turborel::backup::TargetProvider;
+    use turborel::backup::seed::RecoveryTarget;
+    use turborel::db::OpenOptions;
+    use turborel::db::backup::{BackupOptions, RestoreOptions};
+    let scratch = crate::common::Scratch::new("plugins-backup");
+    let root = scratch.path("plugins");
+    install(&root, ("EXAMPLE", "1.0.0"), &manifest("EXAMPLE", "1.0.0", "", fixture::OBJECTS));
+    let db = turborel::db::Database::new();
+    fixture::allow(&db, &root);
+    db.open_files(&crate::common::os(), &scratch.path("db"), &OpenOptions::default()).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION U CREATE TABLE T (K INTEGER)").unwrap();
+    let s = db.session("U");
+    s.run("CREATE EXTENSION example").unwrap();
+    s.run("INSERT INTO T VALUES (7)").unwrap();
+    s.commit().unwrap();
+    let location = format!("example:{}", scratch.path("store").display());
+    db.backup(&BackupOptions { location: location.clone(), ..BackupOptions::default() }).unwrap();
+    assert!(scratch.path("store").join("backups").is_dir(), "written through the plug-in");
+    let provider: std::sync::Arc<dyn TargetProvider> = db.extension_target("example").unwrap().unwrap();
+    let restorer = turborel::db::Database::new();
+    restorer.register_target_provider(provider).unwrap();
+    let dir = scratch.path("back");
+    let options =
+        RestoreOptions { dir: dir.clone(), location, backup: String::new(), archive: None, target: RecoveryTarget::End, timeline: None };
+    restorer.restore(&options).unwrap();
+    drop((s, db, restorer));
+    let back = turborel::db::Database::new();
+    fixture::allow(&back, &root);
+    back.open_files(&crate::common::os(), &dir, &OpenOptions::default()).unwrap();
+    assert_eq!(rows(&back.session("U"), "SELECT K FROM T").unwrap(), ["7"]);
 }

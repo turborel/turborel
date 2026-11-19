@@ -20,7 +20,11 @@ fn parsed(line: &str) -> Result<Command, String> {
 /// The configuration of `line`.
 fn config(line: &str) -> Config {
     match parsed(line).unwrap() {
-        Command::Serve(config) | Command::User(config, _) | Command::Reseal(config, _) | Command::Rekey(config) => config,
+        Command::Serve(config)
+        | Command::User(config, _)
+        | Command::Reseal(config, _)
+        | Command::Rekey(config)
+        | Command::Backup(config, _) => config,
         Command::Help | Command::Version => panic!("help"),
     }
 }

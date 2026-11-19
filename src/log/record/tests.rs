@@ -31,7 +31,8 @@ fn every_kind() -> Vec<Record> {
         Change::Insert { table: table(), generation: 0, row: 7, after: edge_row() },
         Change::Update { table: table(), generation: u32::MAX, row: u64::MAX, before: vec![], after: edge_row() },
         Change::Delete { table: table(), generation: 7, row: 0, before: edge_row() },
-        Change::Commit { at: 42 },
+        Change::Commit { at: 42, wall: 7 },
+        Change::RestorePoint { name: "BEFORE".into(), wall: -3 },
         Change::Abort,
         Change::Checkpoint,
         Change::StatementUndone { from: Lsn(u64::MAX) },
@@ -164,12 +165,15 @@ fn every_kind_of_record_reads_back_as_written() {
 }
 
 /// Verifies: [DESIGN] RULES.md D25, log records: the format is fixed: a
-/// commit record is version, kind, transaction and commit timestamp,
-/// little-endian.
+/// commit record is version, kind, transaction, commit timestamp and wall
+/// time (RULES.md D164), little-endian.
 #[test]
 fn the_format_is_fixed() {
-    let bytes = Record { tx: 0x0102, change: Change::Commit { at: 0x0A0B } }.encode();
-    assert_eq!(bytes, [&[RECORD_VERSION, COMMIT][..], &0x0102_u64.to_le_bytes(), &0x0A0B_u64.to_le_bytes()].concat());
+    let bytes = Record { tx: 0x0102, change: Change::Commit { at: 0x0A0B, wall: 0 } }.encode();
+    assert_eq!(
+        bytes,
+        [&[RECORD_VERSION, COMMIT][..], &0x0102_u64.to_le_bytes(), &0x0A0B_u64.to_le_bytes(), &0_i128.to_le_bytes()].concat()
+    );
 }
 
 /// Verifies: [DESIGN] RULES.md D25, log records: bytes that are not a

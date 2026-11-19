@@ -521,7 +521,8 @@ impl State {
         let image = self.record_image(files, image)?;
         let logged = self.storage.values().filter(|s| s.capabilities().persistence == Persistence::Logged);
         let needed = logged.map(|s| s.durable_through()).fold(image.start, Ord::min);
-        log.truncate_before(needed)
+        // Nor past what the archive still lacks (RULES.md D163).
+        log.truncate_before(files.archived.clamp(needed))
     }
 }
 

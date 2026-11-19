@@ -293,7 +293,7 @@ impl Database {
                 replaying.cancel(tx, from);
                 None
             }
-            Change::Checkpoint => None,
+            Change::Checkpoint | Change::RestorePoint { .. } => None,
         })
     }
 
@@ -374,6 +374,7 @@ impl Database {
                 | Change::Commit { .. }
                 | Change::Abort
                 | Change::Checkpoint
+                | Change::RestorePoint { .. }
                 | Change::Stale { .. }
                 | Change::LobPut { .. }
                 | Change::LobStale { .. }

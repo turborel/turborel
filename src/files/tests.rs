@@ -2,7 +2,7 @@
 //! files kept by closing the one used least recently, a file opened again
 //! as it is next used, a file waiting while every open one is in use, a
 //! file with writes not yet synced synced before it is closed and a failed
-//! sync kept for its next, and the counts shown.
+//! sync kept for its next, the counts shown, and the fence of its files.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -351,4 +351,65 @@ fn closing_syncs_files_with_writes_not_synced() {
     let Some(Event::Failed(failed)) = last else { panic!("{last:?}") };
     assert_eq!(failed.msg, "lost: /b");
     drop((a, b, c));
+}
+
+/// A file system in memory whose locks another opener takes as `taken`
+/// says.
+struct Taken(MemoryFileSystem, Arc<AtomicBool>);
+
+impl FileSystem for Taken {
+    fn open(&self, path: &Path, mode: OpenMode) -> Result<Box<dyn DiskFile>> {
+        self.0.open(path, mode)
+    }
+    fn remove(&self, path: &Path) -> Result<()> {
+        self.0.remove(path)
+    }
+    fn exists(&self, path: &Path) -> Result<bool> {
+        self.0.exists(path)
+    }
+    fn create_dir_all(&self, path: &Path) -> Result<()> {
+        self.0.create_dir_all(path)
+    }
+    fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
+        self.0.read_dir(path)
+    }
+    fn sync_dir(&self, path: &Path) -> Result<()> {
+        self.0.sync_dir(path)
+    }
+    fn lock(&self, _path: &Path) -> Result<FileLock> {
+        let taken = Arc::clone(&self.1);
+        Ok(FileLock::taken_over((), Arc::new(move || !taken.load(Ordering::Acquire))))
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D56: the fence lets a change through while
+/// the lock is held and the database open, and refuses every change after
+/// either fails. The pairs of `!lost && !shut`, each toggling one: lost
+/// (false, false) against (true, false), and shut (false, false) against
+/// (false, true). A lock no opener may take is never lost.
+#[test]
+fn the_fence_refuses_changes_once_the_lock_is_taken_or_closed() {
+    let taken = Arc::new(AtomicBool::new(false));
+    let registry = Arc::new(Registry::default());
+    let fs = FileManager::over(Arc::new(Taken(MemoryFileSystem::new(), Arc::clone(&taken))), Arc::clone(&registry));
+    let _lock = fs.lock(Path::new("/lock")).unwrap();
+    let file = fs.open(Path::new("/a"), OpenMode::CreateNew).unwrap();
+    file.write_all_at(b"ok", 0).unwrap();
+    assert!(!registry.is_fenced(), "(false, false): held and open");
+    taken.store(true, Ordering::Release);
+    assert_eq!(file.write_all_at(b"no", 0).unwrap_err().code, Code::Io, "(true, false): taken");
+    taken.store(false, Ordering::Release);
+    assert!(registry.is_fenced(), "never got back");
+    for change in [file.sync(Durability::Full), file.set_size(0), fs.remove(Path::new("/a"))] {
+        assert_eq!(change.unwrap_err().code, Code::Io);
+    }
+    assert!(fs.open(Path::new("/b"), OpenMode::CreateNew).is_err(), "nor one created");
+    let mut back = [0_u8; 2];
+    file.read_exact_at(&mut back, 0).unwrap();
+    assert_eq!(&back, b"ok", "read still");
+    let (closing, closed) = manager(0);
+    drop(closing.open(Path::new("/a"), OpenMode::CreateNew).unwrap());
+    closed.close_all();
+    assert_eq!(closing.remove(Path::new("/a")).unwrap_err().code, Code::Api, "(false, true): closed");
+    assert!(closing.exists(Path::new("/a")).unwrap(), "not removed");
 }

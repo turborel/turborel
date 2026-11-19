@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 
 pub use file::{
     DEFAULT_DURABILITY, DEFAULT_SEGMENT_SIZE, FileLog, FileLogOptions, LogCounts, LogRecovery, MAX_SEGMENT_SIZE, MIN_SEGMENT_SIZE,
+    OFFSET_BITS,
 };
 
 use crate::disk::encoding::Pipeline;

@@ -351,6 +351,13 @@ pub(in crate::db) const CREATE_XQUERY_MODULE: Command = command("CREATE XQUERY M
 pub(in crate::db) const DROP_XQUERY_MODULE: Command = command("DROP XQUERY MODULE", -25);
 /// \[EXTENSION\] ALTER XQUERY MODULE (RULES.md D106).
 pub(in crate::db) const ALTER_XQUERY_MODULE: Command = command("ALTER XQUERY MODULE", -26);
+/// \[EXTENSION\] BACKUP DATABASE (RULES.md D160): -35 to -37 for the
+/// statements of backups, past GQL's.
+pub(in crate::db) const BACKUP_DATABASE: Command = command("BACKUP DATABASE", -35);
+/// \[EXTENSION\] CREATE RESTORE POINT (RULES.md D164).
+pub(in crate::db) const CREATE_RESTORE_POINT: Command = command("CREATE RESTORE POINT", -36);
+/// \[EXTENSION\] RESCAN BACKUP TARGET (RULES.md D166).
+pub(in crate::db) const RESCAN_BACKUP_TARGET: Command = command("RESCAN BACKUP TARGET", -37);
 /// \[EXTENSION\] CREATE EXTENSION (RULES.md D168).
 pub(in crate::db) const CREATE_EXTENSION: Command = command("CREATE EXTENSION", -38);
 /// \[EXTENSION\] ALTER EXTENSION (RULES.md D168).

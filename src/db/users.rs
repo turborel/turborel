@@ -391,8 +391,9 @@ impl Session {
         Ok(())
     }
 
-    /// \[EXTENSION\] Runs the user statement `stmt`, or ALTER DATABASE: by
-    /// the database's owner only, outside a transaction.
+    /// \[EXTENSION\] Runs the user statement `stmt`, ALTER DATABASE, or a
+    /// statement of backups: by the database's owner only, outside a
+    /// transaction.
     ///
     /// # Errors
     ///
@@ -401,6 +402,9 @@ impl Session {
     /// verifier; those of `Database::create_user`, `set_verifier`,
     /// `drop_user`, `Session::set_owner`.
     pub(super) fn user_statement(&self, stmt: &UserStatement) -> Result<Completion> {
+        if let Some(done) = self.backup_statement(stmt)? {
+            return Ok(done);
+        }
         self.as_owner(if matches!(stmt, UserStatement::Owner { .. } | UserStatement::Members { .. }) {
             "ALTER DATABASE"
         } else {
@@ -419,6 +423,8 @@ impl Session {
             UserStatement::Drop { name: (name, at) } => self.db.drop_user(name).or_at(*at)?,
             UserStatement::Owner { name: (name, at) } => self.set_owner(name).or_at(*at)?,
             UserStatement::Members { members: (members, at) } => self.reconfigure(members).or_at(*at)?,
+            // Run by `backup_statement`.
+            UserStatement::Backup { .. } | UserStatement::RestorePoint { .. } | UserStatement::Rescan { .. } => {}
         }
         Ok(Completion::Success)
     }

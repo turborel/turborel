@@ -13,8 +13,8 @@ use crate::plugin::payload::{
 use crate::plugin::pool::{CallContext, Lease, Request};
 use crate::sync::lock_builtin;
 
-use super::pending::{BackupTarget, TargetProvider};
 use super::{Link, answer};
+use crate::backup::{BackupTarget, TargetProvider};
 
 /// A plug-in's scheme of backup targets.
 #[derive(Debug)]

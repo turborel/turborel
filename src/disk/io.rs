@@ -20,6 +20,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self as stdio, ErrorKind};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::error::{Code, Result, SqlError};
 
@@ -169,13 +170,30 @@ pub trait FileSystem: Send + Sync {
 }
 
 /// \[DESIGN\] A lock a file system gave (`FileSystem::lock`), given up when
-/// dropped.
-pub struct FileLock(#[expect(dead_code, reason = "held for its drop, which gives the lock up")] Box<dyn Send + Sync>);
+/// dropped. A file system that may give a lock to another opener while
+/// its holder still runs, as one gives a crashed process's locks up,
+/// gives with it the test of whether it is still held (`FileLock::holding`).
+pub struct FileLock(#[expect(dead_code, reason = "held for its drop, which gives the lock up")] Box<dyn Send + Sync>, Option<Holding>);
+
+/// \[DESIGN\] Whether a lock is still its holder's (`FileLock::holding`).
+pub type Holding = Arc<dyn Fn() -> bool + Send + Sync>;
 
 impl FileLock {
-    /// The lock that `held`, dropped, gives up.
+    /// The lock that `held`, dropped, gives up, and that no opener takes
+    /// while it is held.
     pub fn new(held: impl Send + Sync + 'static) -> FileLock {
-        FileLock(Box::new(held))
+        FileLock(Box::new(held), None)
+    }
+
+    /// The lock that `held`, dropped, gives up, and that another opener
+    /// may take meanwhile: `holding` says whether it is still held.
+    pub fn taken_over(held: impl Send + Sync + 'static, holding: Holding) -> FileLock {
+        FileLock(Box::new(held), Some(holding))
+    }
+
+    /// The test of whether it is still held, if another opener may take it.
+    pub fn holding(&self) -> Option<Holding> {
+        self.1.clone()
     }
 }
 

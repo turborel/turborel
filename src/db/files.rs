@@ -50,6 +50,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use super::backup::Floor;
 use super::checkpoint::Checkpointer;
 use super::formats::{FileFormats, FileLayout};
 use super::image::Image;
@@ -183,6 +184,8 @@ pub(super) struct DatabaseFiles {
     pub(super) held: Mutex<Option<Arc<FileLock>>>,
     /// Its directory, and the file system of its file manager it is in.
     pub(super) dir: (Arc<dyn FileSystem>, PathBuf),
+    /// The first record its checkpoints keep for the archive (RULES.md D163).
+    pub(super) archived: Floor,
 }
 
 /// \[DESIGN\] While a database is reopened: the locators of its tables and
@@ -255,8 +258,8 @@ impl<'a> Place<'a> {
     fn files(&self, catalog: Box<dyn CatalogStore>) -> DatabaseFiles {
         let held = Mutex::new(Some(Arc::clone(&self.held)));
         let dir = (Arc::clone(self.fs), self.dir.to_path_buf());
-        let (data, catalog) = (self.data.get().cloned(), Arc::from(catalog));
-        DatabaseFiles { catalog, data, shadows: Arc::clone(&self.shadows), checkpointer: Checkpointer::default(), held, dir }
+        let (data, catalog, shadows) = (self.data.get().cloned(), Arc::from(catalog), Arc::clone(&self.shadows));
+        DatabaseFiles { catalog, data, shadows, checkpointer: Checkpointer::default(), held, dir, archived: Floor::default() }
     }
 }
 

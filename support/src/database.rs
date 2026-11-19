@@ -140,7 +140,17 @@ pub fn os() -> Arc<dyn FileSystem> {
 /// openers of a database have all crashed: tests crash a database by
 /// leaving it, then open it again, and the system gives a crashed process's
 /// locks up (`FileSystem::lock`), so here no lock stands against another.
+/// A lock taken is taken from its holder, which may still run in the test:
+/// the lock file keeps the number of its takings, and each holds it while
+/// its own stands there (`FileLock::taken_over`).
 pub struct AfterCrash;
+
+/// The number of takings lock file `file` keeps, 0 if none.
+fn takings(file: &dyn DiskFile) -> Result<u64> {
+    let mut bytes = [0_u8; 8];
+    let read = file.read_at(&mut bytes, 0)?;
+    Ok(if read == bytes.len() { u64::from_le_bytes(bytes) } else { 0 })
+}
 
 impl FileSystem for AfterCrash {
     fn open(&self, path: &Path, mode: OpenMode) -> Result<Box<dyn DiskFile>> {
@@ -161,8 +171,12 @@ impl FileSystem for AfterCrash {
     fn sync_dir(&self, path: &Path) -> Result<()> {
         OsFileSystem.sync_dir(path)
     }
-    fn lock(&self, _path: &Path) -> Result<FileLock> {
-        Ok(FileLock::new(()))
+    fn lock(&self, path: &Path) -> Result<FileLock> {
+        let mode = if OsFileSystem.exists(path)? { OpenMode::ReadWrite } else { OpenMode::CreateNew };
+        let file: Arc<dyn DiskFile> = Arc::from(OsFileSystem.open(path, mode)?);
+        let taking = takings(&*file)?.wrapping_add(1);
+        file.write_all_at(&taking.to_le_bytes(), 0)?;
+        Ok(FileLock::taken_over((), Arc::new(move || takings(&*file).is_ok_and(|now| now == taking))))
     }
 }
 

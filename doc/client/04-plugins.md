@@ -301,7 +301,11 @@ vector index, whose search sends a call of many candidates at once. An
 embedding model is the TYPE of `CREATE EMBEDDING MODEL`. An
 authenticator's name is a mechanism clients of the server may ask for;
 the user it accepts is the user the client named. A backup target's
-scheme and a partitioning strategy are found by name by the program
-hosting the database (`Database::extension_target`,
-`Database::extension_strategy`), as the backups and partitioning that
-take them are built on the same interfaces.
+scheme names its targets in BACKUP DATABASE, ARCHIVE.TARGET and the
+other places a location is given, when no provider the program
+registered has that scheme. Its provider (`Database::extension_target`)
+may also be registered with another database, as one that restores a
+backup before any extension is created in it. A partitioning strategy
+is found by name by the program hosting the database
+(`Database::extension_strategy`), as the partitioning that takes it is
+built on the same interface.

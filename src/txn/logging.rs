@@ -256,13 +256,13 @@ impl Txn {
     /// record could not be written. Inside `Ok`, the outcome of the sync:
     /// SQLCODE -922 if it failed, the transaction then in doubt (RULES.md
     /// D25).
-    pub(super) fn commit_record(&self, at: Timestamp) -> Result<Result<()>> {
+    pub(super) fn commit_record(&self, at: Timestamp, wall: i64) -> Result<Result<()>> {
         let logged = self.state()?.logged;
         let Some(log) = self.log.as_ref().filter(|_| logged) else { return Ok(Ok(())) };
         let refused =
             |why: String| SqlError::new(Code::CommitFailed, format!("[X3.135-1986 §8.2] {why}, so the transaction was rolled back"));
         self.shared.taking_changes().map_err(|e| refused(e.described()))?;
-        let record = Record { tx: self.id, change: Change::Commit { at } }.encode();
+        let record = Record { tx: self.id, change: Change::Commit { at, wall } }.encode();
         let lsn = log.append(&record).map_err(|e| refused(format!("the commit record could not be written: {}", e.described())))?;
         if !self.sync_commit.load(Ordering::Relaxed) {
             self.shared.note_unsynced(log, lsn);

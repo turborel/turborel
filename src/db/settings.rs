@@ -213,6 +213,7 @@ impl Database {
             );
         }
         self.tell_extensions()?;
+        self.archive_settings_applied()?;
         self.configure_plugins()
     }
 

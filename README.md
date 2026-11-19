@@ -85,6 +85,9 @@ behind it, and each can be replaced or added to.
   once a majority of servers holds it, so three servers survive losing one.
   Backups serve reads and elect a new primary within seconds, and a lost
   server catches up when it rejoins.
+- [Backups](doc/operator/10-backups.md), full and incremental, taken
+  online by BACKUP DATABASE, verified and restored offline, and recovery
+  to a point in time through an archive of the log, to pluggable targets.
 - Analytic SQL, with window functions, grouping sets, recursive queries
   with SEARCH and CYCLE, row pattern recognition (MATCH_RECOGNIZE), and
   the statistical set functions and math functions of T621.

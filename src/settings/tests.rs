@@ -7,7 +7,7 @@ use crate::txn::LockWait;
 use crate::value::Decimal;
 
 /// Each built-in key and its setting's name, in the order of the keys.
-const BUILTIN: [(Key, &str); 73] = [
+const BUILTIN: [(Key, &str); 80] = [
     (TABLES_ENGINE, "TABLES.ENGINE"),
     (TABLES_UNIQUE_INDEX_METHOD, "TABLES.UNIQUE_INDEX_METHOD"),
     (TRANSACTION_STRICT, "TRANSACTION.STRICT"),
@@ -81,6 +81,13 @@ const BUILTIN: [(Key, &str); 73] = [
     (PLUGINS_REQUIRE_SIGNED, "PLUGINS.REQUIRE_SIGNED"),
     (PLUGINS_REGISTRIES, "PLUGINS.REGISTRIES"),
     (PLUGINS_PINS, "PLUGINS.PINS"),
+    (ARCHIVE_MODE, "ARCHIVE.MODE"),
+    (ARCHIVE_TARGET, "ARCHIVE.TARGET"),
+    (ARCHIVE_RETENTION_SECONDS, "ARCHIVE.RETENTION_SECONDS"),
+    (ARCHIVE_SEGMENT_BYTES, "ARCHIVE.SEGMENT_BYTES"),
+    (ARCHIVE_TIMEOUT_MS, "ARCHIVE.TIMEOUT_MS"),
+    (ARCHIVE_TIMELINE, "ARCHIVE.TIMELINE"),
+    (BACKUP_COMPRESSION, "BACKUP.COMPRESSION"),
 ];
 
 /// Verifies: [DESIGN] RULES.md D36: each built-in key is its setting's

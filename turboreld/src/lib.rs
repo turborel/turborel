@@ -52,6 +52,9 @@ pub const USAGE: &str = "usage: turboreld (--dir PATH | --memory) [options]
        turboreld --dir PATH [--config FILE] [--set NAME=VALUE]... user COMMAND
        turboreld --dir PATH [--keys DIR] reseal AUTH.TABLE
        turboreld --dir PATH [--keys DIR] rekey
+       turboreld --dir PATH [--keys DIR] --restore TARGET [--backup ID] [--archive TARGET]
+                 [--until-time 'YYYY-MM-DD HH:MM:SS' | --until-lsn N | --until-point NAME]
+       turboreld [--keys DIR] --verify-backup TARGET [--backup ID]
 
   --dir PATH             serve the database kept in PATH, created if there is none
   --memory               serve a database kept nowhere, lost when the server stops
@@ -85,6 +88,8 @@ The database's files written again, at once, in the formats STORAGE.ENCODINGS an
 STORAGE.CHECKSUM_KEY name now, on a database no server holds (a server does it in its
 own time, at STORAGE.REKEY_BYTES_PER_SECOND): then the keys named before may be retired:
   rekey
+
+A backup of TARGET, a directory or scheme:rest, restored into a new PATH, or only checked.
 
 The server's settings, beside the database's:
   SERVER.HOST            hosts or addresses, by commas, to take TCP connections at
@@ -185,6 +190,8 @@ pub enum Command {
     /// The database's files written again in the formats its settings
     /// name now (`rekey.rs`).
     Rekey(Config),
+    /// A backup restored or verified (`backup.rs`).
+    Backup(Config, BackupCommand),
 }
 
 /// A server's configuration, from the command line.
@@ -214,10 +221,8 @@ pub struct Config {
 ///
 /// What is wrong with it, for the operator.
 pub fn parse(args: &[String]) -> Result<Command, String> {
-    let (mut store, mut settings, mut user) = (None, Vec::new(), None);
-    let (mut log, mut keys, mut owner, mut checksum_key, mut reseal) = (None, None, None, None, None);
-    let mut rekey = false;
-    let mut file: Option<PathBuf> = None;
+    let (mut store, mut settings, mut action) = (None, Vec::new(), None);
+    let (mut log, mut keys, mut owner, mut checksum_key, mut file) = (None, None, None, None, None::<PathBuf>);
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         let mut value = || rest.next().ok_or_else(|| format!("{arg} needs a value"));
@@ -232,35 +237,47 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             "--keys" => keys = Some(PathBuf::from(value()?)),
             "--owner" => owner = Some(Owner { name: value()?.clone(), password: None }),
             "--checksum-key" => checksum_key = Some(value()?.clone()),
-            "user" => {
-                user = Some(parse_user(rest.as_slice())?);
+            "user" | "reseal" | "rekey" | "--restore" | "--verify-backup" => {
+                action = Some(parse_action(arg, rest.as_slice())?);
                 break;
-            }
-            "reseal" => {
-                reseal = Some(parse_reseal(rest.as_slice())?);
-                break;
-            }
-            "rekey" => {
-                if let Some(extra) = rest.next() {
-                    return Err(format!("rekey takes nothing, not {extra}"));
-                }
-                rekey = true;
             }
             other => return Err(format!("{other} is not an option\n\n{USAGE}")),
         }
     }
-    let store = store.ok_or_else(|| format!("name --dir or --memory\n\n{USAGE}"))?;
-    if owner.is_some() && (user.is_some() || reseal.is_some() || rekey) {
+    let store = match (store, &action) {
+        (None, Some(Action::Backup(BackupCommand::Verify { .. }))) => Store::Memory,
+        (store, _) => store.ok_or_else(|| format!("name --dir or --memory\n\n{USAGE}"))?,
+    };
+    if owner.is_some() && action.is_some() {
         return Err(
             "--owner makes the owner of a database served, kept nowhere or replicated: in a directory, user add NAME --owner".into()
         );
     }
     let config = Config { store, settings, file, log, keys, owner, checksum_key };
-    Ok(match (user, reseal, rekey) {
-        (Some(command), _, _) => Command::User(config, command),
-        (None, Some(table), _) => Command::Reseal(config, table),
-        (None, None, true) => Command::Rekey(config),
-        (None, None, false) => Command::Serve(config),
+    Ok(match action {
+        None => Command::Serve(config),
+        Some(Action::User(command)) => Command::User(config, command),
+        Some(Action::Reseal(table)) => Command::Reseal(config, table),
+        Some(Action::Rekey) => Command::Rekey(config),
+        Some(Action::Backup(command)) => Command::Backup(config, command),
+    })
+}
+
+/// A command on the database's directory, or on a backup, not a server.
+enum Action {
+    User(UserCommand),
+    Reseal(String),
+    Rekey,
+    Backup(BackupCommand),
+}
+
+/// The action the word `word`, `rest` after it, asks for.
+fn parse_action(word: &str, rest: &[String]) -> Result<Action, String> {
+    Ok(match word {
+        "user" => Action::User(parse_user(rest)?),
+        "reseal" => Action::Reseal(parse_reseal(rest)?),
+        "rekey" => rest.first().map_or(Ok(Action::Rekey), |extra| Err(format!("rekey takes nothing, not {extra}")))?,
+        _ => Action::Backup(parse_backup(word, rest)?),
     })
 }
 
@@ -402,7 +419,7 @@ fn within(config: &Config, hearing: Option<(&Runtime, &Retaken)>, work: impl FnO
 /// LZ4; AES-256-GCM and ChaCha20-Poly1305 with the keys of `--keys`;
 /// SHA-256 and SHA-512; and HMAC-SHA-256 if `--checksum-key` names its key.
 /// The geometry types and their functions are built in.
-fn register(db: &Database, config: &Config) -> Result<(), String> {
+pub(crate) fn register(db: &Database, config: &Config) -> Result<(), String> {
     db.register_encoding(Box::new(Lz4)).map_err(refused("LZ4"))?;
     let keyring: Arc<dyn Keyring> = match &config.keys {
         Some(dir) => Arc::new(NotedKeys { keys: KeyDirectory::new(dir), noted: noted(db, dir, false)? }),
@@ -564,12 +581,14 @@ pub async fn signalled() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
+mod backup;
 pub mod config_file;
 mod opening;
 mod rekey;
 mod reseal;
 mod users;
 
+pub use self::backup::{BackupCommand, instant, parse_backup, run_backup};
 use opening::{opened, settled};
 pub use rekey::run_rekey;
 pub use reseal::{parse_reseal, run_reseal};
