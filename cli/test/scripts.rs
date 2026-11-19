@@ -8,10 +8,12 @@ use turborel_client::agent::Agent;
 
 use crate::common::{Running, Scratch, start};
 
-/// A server of a database where X has table T, holding 1 and 2, and U,
-/// whose rows reference T's.
+/// A server of a database X owns, where X has table T, holding 1 and 2,
+/// and U, whose rows reference T's.
 fn served() -> (Database, Running) {
     let db = Database::new();
+    db.create_user("X", b"x").unwrap();
+    db.set_owner("X").unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION X \
          CREATE TABLE T (K INTEGER PRIMARY KEY, S CHARACTER VARYING(5) DEFAULT 'none' NOT NULL) \
@@ -204,4 +206,64 @@ fn the_session_is_shown_and_renewed() {
     assert!(lines[2].ends_with("by the connection TURBOREL_1."), "{}", info.out);
     assert_eq!(lines[3], "X");
     assert!(script(&server, &[], "\\h drop table\n").out.starts_with("DROP TABLE: "));
+}
+
+/// Runs `turborel admin` with `words` against `server`, a password
+/// typed `typed` and every question answered yes: what it wrote, or why it
+/// failed.
+fn admin(server: &Running, words: &str, typed: Option<&str>) -> Result<String, String> {
+    let port = server.address.port().to_string();
+    let mut line: Vec<String> = ["admin", "-U", "X", "-p", port.as_str()].iter().map(|a| (*a).to_owned()).collect();
+    line.extend(words.split(' ').map(str::to_owned));
+    let Ok(Command::Admin(invocation)) = turborel_cli::parse(&line, &|_| None) else { panic!("{line:?}") };
+    let connection = turborel_cli::connect(&invocation.options, || Ok(String::new())).unwrap();
+    let mut agent = Agent::connected(Dialer::new(invocation.options.clone(), Box::new(|| Ok(String::new()))), connection);
+    let mut out = Vec::new();
+    let mut yes = |_: &str| Ok(true);
+    let mut secret = |_: &str| Ok(typed.unwrap_or_default().to_owned());
+    let mut console = turborel_cli::admin::Console {
+        out: &mut out,
+        confirm: Some(&mut yes),
+        secret: typed.is_some().then_some(&mut secret as &mut dyn FnMut(&str) -> std::io::Result<String>),
+    };
+    let done = turborel_cli::admin::run(&mut agent, &invocation, &mut console);
+    agent.terminate().unwrap();
+    done.map(|()| String::from_utf8(out).unwrap())
+}
+
+/// Verifies: [DESIGN] RULES.md D218: `turborel admin` shows the server's
+/// state, its connections and settings, and its version; creates and
+/// drops a schema, asking first; ends and cancels connections by ID; a
+/// password is not sent over plain TCP when the server takes no verifier.
+#[test]
+fn admin_commands_run_as_statements() {
+    let (_db, server) = served();
+    assert!(admin(&server, "ping", None).unwrap().contains(" answers, in "));
+    let status = admin(&server, "status", None).unwrap();
+    assert!(status.starts_with("-[ ROW 1 ]"), "{status}");
+    let processes = admin(&server, "processlist", None).unwrap();
+    assert!(processes.contains(" X "), "{processes}");
+    let settings = admin(&server, "variables server.tls_*", None).unwrap();
+    assert!(settings.contains("SERVER.TLS_CERTIFICATE") && !settings.contains("SESSION."), "{settings}");
+    assert!(admin(&server, "version", None).unwrap().starts_with("turborel"));
+    assert_eq!(admin(&server, "create-schema S2", None).unwrap(), "Schema S2 is created.\n");
+    assert_eq!(admin(&server, "drop-schema S2", None).unwrap(), "Schema S2 is dropped.\n");
+    assert!(admin(&server, "kill 999999", None).is_err());
+    assert!(admin(&server, "cancel 999999", None).is_err());
+    let refused = admin(&server, "password", Some("new one")).unwrap_err();
+    assert!(refused.contains("only over TLS or a local socket"), "{refused}");
+    assert!(admin(&server, "password", None).unwrap_err().contains("typed at a terminal"));
+}
+
+/// Verifies: [DESIGN] RULES.md D214: the listings of routines, users,
+/// types, domains, extensions, property graphs, privileges, indexes,
+/// sequences and the catalog each run against the Information Schema.
+#[test]
+fn every_listing_runs() {
+    let (_db, server) = served();
+    for command in ["\\df", "\\du", "\\dT", "\\dD", "\\dx", "\\dG", "\\dp", "\\di+", "\\ds", "\\dv", "\\l", "\\d", "\\dtS T*"] {
+        let ran = script(&server, &[], &format!("{command}\n"));
+        assert_eq!((ran.outcome, ran.err.as_str()), (Outcome::Succeeded, ""), "{command}");
+    }
+    assert!(script(&server, &["-A", "-t"], "\\du X\n").out.starts_with("X|YES|"));
 }
