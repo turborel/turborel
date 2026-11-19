@@ -2,15 +2,20 @@
 //! R-TEST-9, D135): relate patterns read as meeting, distance windows
 //! unscaled, pruned without a certificate or kept past their circle, read
 //! regions not widened, outer joins that lose their nulls or a FULL join's
-//! matches or filter, and null calls of shared names taken by §15.
+//! matches or filter, null calls of shared names taken by §15, and a
+//! nearest read in a unit cut off by bounds left unconverted, farthest
+//! reads unplanned or by lower bounds, and WITH TIES uncounted or priced
+//! as ONLY.
 
 use super::{Mutation, Package};
 
 const DISTANCE: &str = "index::rtree::tests::within::distance_windows_find_within_their_limits";
+const FARTHEST: &str = "geometry::index::nearest_orders::farthest_first_reads_use_upper_bounds";
+const ORDERS: &str = "geometry::index::nearest_orders::nearest_reads_serve_ties_offsets_keys_and_filters";
 const OUTER: &str = "geometry::index::outer::geometry_outer_joins_keep_unmatched_rows_and_equal_products";
 
 /// The mutations of geometry windows, in the order they run.
-pub const RTREE_WINDOWS: [Mutation; 9] = [
+pub const RTREE_WINDOWS: [Mutation; 15] = [
     Mutation {
         name: "relate-pattern-always-meets",
         package: Package::Core,
@@ -99,6 +104,66 @@ pub const RTREE_WINDOWS: [Mutation; 9] = [
         original: "if self.fallback.is_some() && values.iter().all(|v| v.borrow().is_null()) {",
         replacement: "if self.fallback.is_some() && values.iter().all(|v| v.borrow().is_null()) && false {",
         integration: &["geometry::index::outer::null_calls_of_shared_names_are_null"],
+        unit: &[],
+    },
+    Mutation {
+        name: "nearest-bound-unscaled",
+        package: Package::Core,
+        breaks: "a nearest read in a unit compares the column's bounds with measures in the unit, losing rows tied with the last kept",
+        file: "src/exec/nearest.rs",
+        original: "if self.threshold.beyond(self.read.bound(bound))? {",
+        replacement: "if self.threshold.beyond(bound)? {",
+        integration: &["geometry::index::nearest_units::nearest_unit_forms_use_the_index_and_equal_scans"],
+        unit: &[],
+    },
+    Mutation {
+        name: "farthest-not-planned",
+        package: Package::Core,
+        breaks: "ORDER BY a geometry distance DESC reads and sorts the whole table",
+        file: "src/physical/nearest.rs",
+        original: "descends(measure) || farthest_first(measure)",
+        replacement: "descends(measure) || farthest_first(measure) && false",
+        integration: &[FARTHEST],
+        unit: &[],
+    },
+    Mutation {
+        name: "farthest-read-nearest",
+        package: Package::Core,
+        breaks: "a farthest-first query reads the tree nearest first",
+        file: "src/index/rtree/geometry.rs",
+        original: "if query.descending { tree.farthest_candidates",
+        replacement: "if query.descending && false { tree.farthest_candidates",
+        integration: &[FARTHEST],
+        unit: &[],
+    },
+    Mutation {
+        name: "farthest-by-lower-bounds",
+        package: Package::Core,
+        breaks: "a farthest-first traversal orders by lower bounds, below the distances it bounds",
+        file: "src/engine/rtree/nearest.rs",
+        original: "Self::UpperBound => -entry.distance_upper_bound(query),",
+        replacement: "Self::UpperBound => -entry.distance_lower_bound(query),",
+        integration: &[],
+        unit: &["engine::rtree::tests::nearest::farthest_candidates_come_in_decreasing_distance"],
+    },
+    Mutation {
+        name: "ties-not-counted",
+        package: Package::Core,
+        breaks: "FETCH FIRST WITH TIES gives no count to its input, so a nearest read is not planned",
+        file: "src/logical/limit.rs",
+        original: "let Some(Fetch { count: Expr::Const(Value::Exact(d)), percent: false, .. }) = &self.fetch else { return None };\n        if d.scale != 0 {\n            return None;\n        }\n        usize::try_from(d.units).ok()\n    }\n\n    /// The first",
+        replacement: "let Some(Fetch { count: Expr::Const(Value::Exact(d)), percent: false, ties: None, .. }) = &self.fetch else { return None };\n        if d.scale != 0 {\n            return None;\n        }\n        usize::try_from(d.units).ok()\n    }\n\n    /// The first",
+        integration: &[ORDERS],
+        unit: &[],
+    },
+    Mutation {
+        name: "ties-priced-as-only",
+        package: Package::Core,
+        breaks: "a path in order below WITH TIES is priced by its count, though its peers are read too",
+        file: "src/physical/access.rs",
+        original: "let asked = self.first.filter(|_| !want.is_empty() && !tied);",
+        replacement: "let asked = self.first.filter(|_| !want.is_empty() || tied);",
+        integration: &["fetch_first::fetch_first_prices_a_path_in_order_by_the_rows_it_reads"],
         unit: &[],
     },
 ];

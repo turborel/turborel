@@ -3019,8 +3019,10 @@ ST_Distance compared `<` or `<=` with a limit, in any unit that converts,
 read a window, the distance's widened by the limit
 (`index/rtree/geometry/within.rs`, RULES.md D135). A value of another
 SRID, or a tree whose distances may overflow, reads every entry, so the
-error is raised as a scan raises it. Simultaneous traversal of two
-spatial indexes is not implemented.
+error is raised as a scan raises it. The ON condition or filter must be
+one of these relationships or a distance limit, as no envelope test of
+its own is in SQL/MM, and a distance compared `>` or `>=` reads the
+table. Simultaneous traversal of two spatial indexes is not implemented.
 Under SERIALIZABLE, a filter's search and each join probe record the
 envelope window they read, not the whole table, and a change conflicts
 when its old or new envelope meets one (`exec/read.rs`,
@@ -3078,9 +3080,12 @@ ordinary function identity checks for other predicates.
 The index extension API can return geometry distance candidates in monotone
 envelope-bound order (`Index::nearest`, `src/index/nearest.rs`). Its finite
 range certificate includes every root split sibling and may decline a
-request before output. Ascending ST_DISTANCE with NULLS LAST and a known
-OFFSET plus FETCH FIRST ONLY count can select these candidates on a
-fixed-SRID geometry column (`physical/nearest.rs`, `exec/nearest.rs`).
+request before output. ST_DISTANCE with NULLS LAST and a known OFFSET
+plus FETCH FIRST count, ONLY or WITH TIES, can select these candidates on
+a fixed-SRID geometry column (`physical/nearest.rs`, `exec/nearest.rs`),
+of a distance in a unit too, each bound converted as the measure is.
+Ascending reads the nearest first, descending the farthest first by
+upper bounds (RULES.md D135). PERCENT and NULLS FIRST read the table.
 The full filter and visible geometry are evaluated before ranking; a
 strict cutoff keeps distance ties for the final SQL sort. Exhausted
 candidates are supplemented with qualifying NULL distances when needed.

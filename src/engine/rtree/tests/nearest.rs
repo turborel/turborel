@@ -227,3 +227,31 @@ fn candidate_range_proof_refuses_damaged_root_chains() {
         assert_eq!(error.code, Code::Corrupt, "{damage}");
     }
 }
+
+/// Verifies: [DESIGN] D135: the farthest-first traversal returns every
+/// point, the farthest first, each with a negated
+/// bound no greater than its negated distance, nondecreasing, under the
+/// finite-distance certificate; a query outside the domain declines.
+#[test]
+fn farthest_candidates_come_in_decreasing_distance() {
+    let tree = tree();
+    fill(&tree, 0..500);
+    let domain = Bounds::new([-1e9_f64; DIMENSIONS], [1e9_f64; DIMENSIONS]).unwrap();
+    let budget = MemoryBudget::new(usize::MAX);
+    for n in [0_u32, 77, 250, 499] {
+        let query = point(n);
+        let found: Vec<_> = tree.farthest_candidates(query, domain, &budget).unwrap().unwrap().map(Result::unwrap).collect();
+        assert_eq!(found.len(), 500);
+        let mut last = f64::NEG_INFINITY;
+        for (bound, bounds, _) in &found {
+            let distance = query.distance(*bounds);
+            assert!(*bound >= last && *bound <= -distance, "{bound} {distance}");
+            last = *bound;
+        }
+        let exact = (0..500).map(|i| query.distance(point(i))).fold(0.0_f64, f64::max);
+        assert_eq!(query.distance(found[0].1).to_bits(), exact.to_bits());
+    }
+    let outside = Bounds::point([2e9_f64, 0.0_f64]).unwrap();
+    assert!(tree.farthest_candidates(outside, domain, &budget).unwrap().is_none());
+    assert_eq!(budget.reserved(), 0);
+}

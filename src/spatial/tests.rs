@@ -158,3 +158,21 @@ fn distance_bounds_are_monotone_under_rectangle_enlargement() {
         }
     }
 }
+
+/// Verifies: [DESIGN] D135: the farthest-first bound is at least the
+/// distance of the rectangles' farthest corners, of points too, grows
+/// with either rectangle and is infinite past the finite range.
+#[test]
+fn distance_upper_bounds_cover_the_farthest_points() {
+    let origin = Bounds::point([0.0_f64, 0.0_f64]).unwrap();
+    let point = Bounds::point([3.0_f64, 4.0_f64]).unwrap();
+    let upper = origin.distance_upper_bound(point);
+    assert!((5.0_f64..5.000_001_f64).contains(&upper), "{upper}");
+    let square = Bounds::new([-1.0_f64, -1.0_f64], [1.0_f64, 1.0_f64]).unwrap();
+    let corner = square.distance_upper_bound(point);
+    assert!(corner >= 4.0_f64.hypot(5.0_f64) && corner > upper, "{corner}");
+    assert!(origin.distance_upper_bound(origin) > 0.0_f64);
+    let far = Bounds::point([f64::MAX, f64::MAX]).unwrap();
+    let opposite = Bounds::point([-f64::MAX, -f64::MAX]).unwrap();
+    assert!(far.distance_upper_bound(opposite).is_infinite());
+}

@@ -46,6 +46,9 @@ pub struct Nearest {
 enum Metric {
     Euclidean,
     LowerBound,
+    /// Farthest first: each priority is the negated upper bound of the
+    /// distance, so the least is popped first as with the others (D135).
+    UpperBound,
 }
 
 impl Metric {
@@ -59,6 +62,15 @@ impl Metric {
                 }
             }
             Self::LowerBound => entry.distance_lower_bound(query),
+            Self::UpperBound => -entry.distance_upper_bound(query),
+        }
+    }
+
+    /// The root's priority, before every other.
+    fn first(self) -> f64 {
+        match self {
+            Self::Euclidean | Self::LowerBound => 0.0_f64,
+            Self::UpperBound => f64::NEG_INFINITY,
         }
     }
 }
@@ -115,11 +127,27 @@ impl Nearest {
         Self::within(tree, root, (query, domain), budget)
     }
 
+    /// Entries in nonincreasing order of their distance's upper bound,
+    /// each yielded negated, if the domain certifies them as `candidates`.
+    pub(super) fn farthest(tree: RTree, query: Bounds, domain: Bounds, budget: &Arc<MemoryBudget>) -> Result<Option<Nearest>> {
+        let root = tree.root()?;
+        Self::certified(tree, root, (query, domain), (budget, Metric::UpperBound))
+    }
+
     pub(super) fn within(
         tree: RTree,
         root: Visit,
         (query, domain): (Bounds, Bounds),
         budget: &Arc<MemoryBudget>,
+    ) -> Result<Option<Nearest>> {
+        Self::certified(tree, root, (query, domain), (budget, Metric::LowerBound))
+    }
+
+    fn certified(
+        tree: RTree,
+        root: Visit,
+        (query, domain): (Bounds, Bounds),
+        (budget, metric): (&Arc<MemoryBudget>, Metric),
     ) -> Result<Option<Nearest>> {
         if !domain.contains(query) {
             return Ok(None);
@@ -128,13 +156,13 @@ impl Nearest {
         if envelope.is_some_and(|bounds| !domain.contains(bounds)) {
             return Ok(None);
         }
-        Self::from_root(tree, root, query, budget, Metric::LowerBound).map(Some)
+        Self::from_root(tree, root, query, budget, metric).map(Some)
     }
 
     fn from_root(tree: RTree, root: Visit, query: Bounds, budget: &Arc<MemoryBudget>, metric: Metric) -> Result<Nearest> {
         let held = budget.reserve(0, "the R-tree nearest-neighbour frontier")?;
         let mut nearest = Nearest { tree, query, metric, queue: BinaryHeap::new(), held, failed: false, visited: 0, limit: 0, last: None };
-        nearest.push(Queued { distance: 0.0_f64, item: Item::Page(root) })?;
+        nearest.push(Queued { distance: metric.first(), item: Item::Page(root) })?;
         Ok(nearest)
     }
 

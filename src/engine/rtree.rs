@@ -202,6 +202,13 @@ impl RTree {
         Nearest::candidates(self.clone(), query, domain, budget)
     }
 
+    /// Candidates farthest first, each with its distance's negated upper
+    /// bound, nondecreasing, under the certificate `nearest_candidates`
+    /// takes (RULES.md D135).
+    pub(crate) fn farthest_candidates(&self, query: Bounds, domain: Bounds, budget: &Arc<MemoryBudget>) -> Result<Option<Nearest>> {
+        Nearest::farthest(self.clone(), query, domain, budget)
+    }
+
     /// Whether `query` and every entry lie within `domain`, as the
     /// captured root's envelope and its unfinished split siblings show:
     /// the certificate `nearest_candidates` takes, for a distance window.

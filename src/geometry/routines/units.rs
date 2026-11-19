@@ -48,6 +48,17 @@ fn metres_per(name: &str) -> Result<f64> {
     units::require(name, Kind::Linear).map(|unit| unit.factor).map_err(|f| fault(&f))
 }
 
+/// Of a length of a value of SRID `srid` in the unit `name`, the metres
+/// per the system's unit and per that one, which `length_in` converts
+/// between, so a nearest read bounds its measure as it is computed (D135).
+///
+/// # Errors
+///
+/// As `length_in`'s: an unknown unit, or a system without a linear unit.
+pub(crate) fn length_factors(srid: i32, systems: Systems<'_>, name: &str) -> Result<(f64, f64)> {
+    Ok((metres_per_unit(srid, systems)?, metres_per(name)?))
+}
+
 /// A length `value` of a value of SRID `srid` in the unit `name`.
 pub(in super::super) fn length_in(value: f64, (srid, systems): (i32, Systems<'_>), name: &str) -> Result<f64> {
     Ok(units::convert(value, metres_per_unit(srid, systems)?, metres_per(name)?))

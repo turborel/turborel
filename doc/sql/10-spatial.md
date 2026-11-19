@@ -1324,14 +1324,25 @@ which these few rows may not, in these forms.
   with nulls, and a FULL join then reads the table for the rows no probe
   matched.
 - `ORDER BY ST_DISTANCE(column, value) ASC NULLS LAST` with FETCH FIRST,
-  OFFSET too, where the value is a constant or a parameter, which reads
-  the nearest rows first.
+  ONLY or WITH TIES, OFFSET too, more sort keys after it and a filter,
+  where the value is a constant or a parameter, which reads the nearest
+  rows first until enough pass the filter. `DESC NULLS LAST` reads the
+  farthest first. A unit, as `ST_DISTANCE(column, value, 'KILOMETRE')`,
+  does the same where it converts, unless it is so small that a distance
+  in it could overflow, as FOOT of a metre column. A subquery ordered by
+  the distance to its outer row's geometry reads the index for each
+  row. FETCH FIRST PERCENT, which needs the count of every row, and
+  NULLS FIRST read the table.
 
 ```sql
 SELECT NAME FROM PLACES WHERE ST_INTERSECTS(SHAPE, ST_MAKEENVELOPE(0, 0, 3, 3)) = 1 ORDER BY ID;
 SELECT NAME, ST_DISTANCE(SHAPE, ST_POINT(12, 5)) AS DISTANCE FROM PLACES
     ORDER BY ST_DISTANCE(SHAPE, ST_POINT(12, 5)) ASC NULLS LAST, ID FETCH FIRST 2 ROWS ONLY;
 SELECT NAME FROM PLACES WHERE ST_DISTANCE(SHAPE, ST_POINT(12, 5), 'KILOMETRE') < 0.003 ORDER BY ID;
+SELECT NAME FROM PLACES ORDER BY ST_DISTANCE(SHAPE, ST_POINT(12, 5), 'KILOMETRE') ASC NULLS LAST, ID DESC
+    FETCH FIRST 1 ROW ONLY;
+SELECT NAME FROM PLACES ORDER BY ST_DISTANCE(SHAPE, ST_POINT(12, 5)) DESC NULLS LAST, ID
+    FETCH FIRST 2 ROWS ONLY;
 SELECT P.NAME, F.NAME AS IN_FIELD FROM PLACES P LEFT JOIN PLACES F
     ON ST_INTERSECTS(P.SHAPE, F.SHAPE) = 1 AND F.ID = 3 ORDER BY P.ID;
 ```
@@ -1351,6 +1362,15 @@ SELECT P.NAME, F.NAME AS IN_FIELD FROM PLACES P LEFT JOIN PLACES F
 ----------------------
  Field
  Gate
+(2 rows)
+ NAME
+----------------------
+ Gate
+(1 row)
+ NAME
+----------------------
+ Well
+ Road
 (2 rows)
  NAME                 | IN_FIELD
 ----------------------+----------------------

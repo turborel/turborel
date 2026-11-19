@@ -78,8 +78,7 @@ The access methods the other standards stand on. Each one is built, made
 durable and tested on its own before the extension that reads it. Each
 is kept consistent under concurrent change and recovery as the B-tree is.
 
-- Extend nearest ordering beyond ascending ST_DISTANCE with FETCH FIRST ONLY;
-  consider distribution statistics beyond bounded R-tree sampling.
+- Consider distribution statistics beyond bounded R-tree sampling.
   Price geometry predicate evaluation and clustered row fetches when
   choosing between a scan and a spatial probe. Measure large-result row
   materialization and wire encoding separately from tree traversal.

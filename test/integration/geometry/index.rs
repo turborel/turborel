@@ -12,6 +12,8 @@ mod distance;
 mod estimates;
 mod joins;
 mod nearest;
+mod nearest_orders;
+mod nearest_units;
 mod outer;
 mod regions;
 mod widened;
