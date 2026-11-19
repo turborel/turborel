@@ -5,6 +5,8 @@ use crate::geometry::model::Surface;
 
 mod build;
 mod checks;
+mod creation;
+mod edits;
 mod faces;
 
 /// A point of SRID 0.

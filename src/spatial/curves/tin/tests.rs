@@ -109,3 +109,28 @@ fn element_names() {
     assert_eq!(ElementKind::from_name(" Soft Break "), Some(ElementKind::SoftBreak));
     assert_eq!(ElementKind::from_name("cliff"), None);
 }
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §8.6.3 D5, §17.1] A
+/// hole takes z from the surface; a vertex of it outside the surface
+/// takes the z of the surface's nearest vertex, here (4 3) of z 7 for
+/// (6 3) and (3 4) of z 7 for (3 6).
+#[test]
+fn a_hole_beyond_the_surface_takes_the_nearest_z() {
+    let hole = points(
+        ElementKind::Hole,
+        &[&[
+            (3.0_f64, 3.0_f64, 0.0_f64),
+            (6.0_f64, 3.0_f64, 0.0_f64),
+            (6.0_f64, 6.0_f64, 0.0_f64),
+            (3.0_f64, 6.0_f64, 0.0_f64),
+            (3.0_f64, 3.0_f64, 0.0_f64),
+        ]],
+        false,
+    );
+    let tin = triangulate(&[grid(), hole], None).unwrap();
+    let at = |x: f64, y: f64| tin.iter().flatten().filter(move |p| p.x.to_bits() == x.to_bits() && p.y.to_bits() == y.to_bits());
+    let outside: Vec<&Coord> = at(6.0_f64, 3.0_f64).chain(at(3.0_f64, 6.0_f64)).collect();
+    let Some(_) = outside.first() else { panic!("no vertex beyond the surface") };
+    assert!(outside.iter().all(|p| (p.z - 7.0_f64).abs() < 1e-12_f64), "{outside:?}");
+    assert!(at(3.0_f64, 3.0_f64).all(|p| (p.z - 6.0_f64).abs() < 1e-12_f64));
+}

@@ -281,3 +281,6 @@ impl Codec for BookCodec {
         self.0.write(out);
     }
 }
+
+#[cfg(test)]
+mod tests;

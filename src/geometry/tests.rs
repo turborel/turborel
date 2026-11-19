@@ -4,16 +4,20 @@ use super::*;
 use crate::bytes::Reader;
 
 mod canonical;
+mod casts;
 pub(in crate::geometry) mod common;
+mod curve_bounds;
 mod damage;
 mod distance;
 mod envelopes;
 mod functions;
+mod model_checks;
 mod prepared;
 mod pruning;
 mod reference;
 mod relate;
 mod representations;
+mod tin_element;
 
 /// Verifies: [EXTENSION] OGC 06-103r4 §§7.2.2, 8: all seven XY kinds
 /// round trip through WKT, both byte orders, stored values and empties.

@@ -68,7 +68,7 @@ fn listed(items: &[String]) -> String {
 fn lrm(l: &Lrm) -> String {
     let mut out = format!("{LRMID} {}, {LRMNAME} {}, {LRMTYPE} {}, {LRMUOM} {}", l.id, text(&l.name), text(&l.lrm_type), text(&l.units));
     if let Some(cs) = &l.constraints {
-        let items: Vec<String> = cs.iter().map(|c| text(c)).collect();
+        let items: Vec<String> = cs.iter().map(|c| c.as_deref().map_or_else(|| NULL.to_owned(), text)).collect();
         let _ = write!(out, ", {LRMCONSTRAINTS} {}", listed(&items));
     }
     if let Some(u) = &l.offset_units {

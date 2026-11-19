@@ -141,12 +141,6 @@ fn converted(g: &Geom, target: Kind) -> Result<Option<Body>> {
             Body::Point(_) | Body::Surface(_) | Body::Solid(_) | Body::Collection(_) => None,
         },
         Kind::Polygon => polygon(g)?.map(|rings| Body::Surface(Surface::Polygon(rings))),
-        Kind::CurvePolygon => {
-            let linear = matches!(source, Kind::Polygon | Kind::Triangle);
-            polygon(g)?
-                .filter(|_| linear)
-                .map(|rings| Body::Surface(Surface::CurvePolygon(rings.into_iter().map(Curve::LineString).collect())))
-        }
         Kind::Triangle => triangle(g)?.map(|ring| Body::Surface(Surface::Triangle(ring))),
         Kind::PolyhdrlSurface => polyhedral(g, planar)?,
         Kind::Tin => triangle(g)?
@@ -164,6 +158,7 @@ fn converted(g: &Geom, target: Kind) -> Result<Option<Body>> {
         | Kind::Clothoid
         | Kind::SpiralCurve
         | Kind::Surface
+        | Kind::CurvePolygon
         | Kind::Solid
         | Kind::BRepSolid => None,
     })
@@ -199,11 +194,8 @@ fn multi_surface(body: &Body) -> Option<Body> {
     }
 }
 
-/// A polyhedral surface of a TIN's triangles, or of one planar polygon.
+/// A polyhedral surface of one planar polygon; a TIN is one as it is.
 fn polyhedral(g: &Geom, planar: bool) -> Result<Option<Body>> {
-    if let Body::Surface(Surface::Tin(tin)) = &g.body {
-        return Ok(Some(Body::Surface(Surface::PolyhdrlSurface(tin.triangles.iter().map(|t| vec![t.clone()]).collect()))));
-    }
     Ok(polygon(g)?.filter(|_| planar).map(|rings| Body::Surface(Surface::PolyhdrlSurface(vec![rings]))))
 }
 

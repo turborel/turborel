@@ -218,3 +218,38 @@ fn definesrs_checks_its_definition() {
     let sizes = "SELECT VARIABLE_NAME, SUPPORTED_VALUE FROM ST_INFORMTN_SCHEMA.ST_SIZINGS WHERE VARIABLE_NAME IN ('ST_MaxVectorAsBinary', 'ST_MaxAngleString', 'ST_MaxDirectionString') ORDER BY 1";
     assert_eq!(one(&a, sizes), "ST_MaxAngleString,64;ST_MaxDirectionString,64;ST_MaxVectorAsBinary,29");
 }
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §16.1.2
+/// Descriptions 9, 21, §16.1.3, §16.1.11, §16.1.19] ST_Angle of
+/// degrees and minutes and of two directions; ST_Radians as a mutator;
+/// ST_SecondComponent; and ST_AsText.
+#[test]
+fn angle_constructors_and_components_16_1_2() {
+    let db = database();
+    let a = db.session("A");
+    assert_eq!(one(&a, "VALUES NEW ST_ANGLE(10, 30e0).ST_DEGREES() BETWEEN 10.4999 AND 10.5001"), "TRUE");
+    assert_eq!(one(&a, "VALUES NEW ST_ANGLE(ST_DIRECTION(1e0), ST_DIRECTION(2e0)).ST_RADIANS() BETWEEN 0.9999 AND 1.0001"), "TRUE");
+    assert_eq!(one(&a, "VALUES ST_ANGLE(1e0).ST_RADIANS(2e0).ST_RADIANS()"), "2E0");
+    assert_eq!(one(&a, "VALUES NEW ST_ANGLE(10, 30, 36e0).ST_SECONDCOMPONENT() BETWEEN 35.999 AND 36.001"), "TRUE");
+    assert_eq!(one(&a, "VALUES ST_ANGLE(1e0).ST_ASTEXT()"), "ANGLE RADIANS(1)");
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §16.2.8 to §16.2.17]
+/// a direction's bearing and its north and south azimuths in radians and
+/// in degrees, minutes and seconds, each of its quadrant or reference.
+#[test]
+fn direction_strings_in_radians_and_dms_16_2() {
+    let db = database();
+    let a = db.session("A");
+    let bearing = "NEW ST_DIRECTION('N', NEW ST_ANGLE('D', 30e0), 'E')";
+    let cases = [
+        ("ST_RADIANBEARING(2)", "N 0.52 E"),
+        ("ST_RADIANNAZIMUTH(2)", "N 0.52"),
+        ("ST_DMSNAZIMUTH(0)", "N 30 0 0"),
+        ("ST_RADIANSAZIMUTH(2)", "S 3.67"),
+        ("ST_DMSSAZIMUTH(0)", "S 210 0 0"),
+    ];
+    for (method, want) in cases {
+        assert_eq!(one(&a, &format!("VALUES {bearing}.{method}")), want, "{method}");
+    }
+}

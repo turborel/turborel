@@ -18,6 +18,10 @@ For SQL users whose data is more than numbers and strings: its model, the querie
 - [Vectors](04-vectors.md): store recipes' embeddings, find the nearest
   by distance, index them, compare the metrics, work with the vectors'
   arithmetic and define a distance of one's own.
+- [XML Data](05-xml.md): store suppliers' catalogs as XML documents,
+  validate them by an XML Schema, read their values, find catalogs by
+  their products, turn the products into rows, ask XQuery for more,
+  build orders as XML and index the documents by path and value.
 
 Each guide runs on tables it makes at its start. The
 [SQL Reference Manual](../sql/README.md) gives each function's rules and

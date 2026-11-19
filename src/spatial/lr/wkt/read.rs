@@ -287,7 +287,7 @@ impl Read<'_, '_> {
         let mut offsets = OffsetParts::default();
         if self.lx.eat_char(',') {
             if self.lx.eat(LRMCONSTRAINTS) {
-                parts.constraints = Some(self.list(|r| r.lx.text())?);
+                parts.constraints = Some(self.list(|r| r.lx.text_or_null())?);
                 if !self.lx.eat_char(',') {
                     return Ok(LrmText::Lrm(Lrm::new_with_offsets(parts, offsets, self.cat.units)?));
                 }

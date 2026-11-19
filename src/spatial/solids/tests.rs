@@ -7,6 +7,11 @@ use super::shape::{boundary, patches_simple, surface_is_closed};
 use crate::geometry::model::{Body, Geom, Surface};
 use crate::spatial::formats::wkt::{read_geom, write_geom};
 
+mod boundaries;
+mod kinds;
+mod mixed;
+mod tins;
+
 /// The faces of the box from `low` to `high`, facing out.
 fn box_faces(low: [f64; 3], high: [f64; 3]) -> String {
     let [x0, y0, z0] = low;

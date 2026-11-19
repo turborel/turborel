@@ -195,7 +195,7 @@ fn put_lrm(out: &mut Vec<u8>, l: &Lrm) {
     if let Some(cs) = &l.constraints {
         put_count(out, cs.len());
         for c in cs {
-            out.put_str(c);
+            put_opt_str(out, c.as_deref());
         }
     }
     put_opt_str(out, l.offset_units.as_deref());
@@ -208,7 +208,7 @@ fn get_lrm(r: &mut Reader<'_>) -> Result<Lrm> {
     let (id, name, lrm_type, units) = (get_i32(r)?, r.str()?, r.str()?, r.str()?);
     let constraints = if get_present(r)? {
         let n = get_count(r)?;
-        Some((0..n).map(|_| r.str()).collect::<Result<Vec<_>>>()?)
+        Some((0..n).map(|_| get_opt_str(r)).collect::<Result<Vec<_>>>()?)
     } else {
         None
     };

@@ -3,6 +3,7 @@
 //! locators, refusals, top-k through the method's index, and approximate
 //! searches (`tests/nearest.rs`).
 
+mod method;
 mod nearest;
 
 use std::sync::Arc;

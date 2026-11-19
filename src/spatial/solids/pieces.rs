@@ -158,11 +158,6 @@ impl Poly {
         Poly { support: Rc::new(self.support.flipped()), edges, vertices }
     }
 
-    /// Its vertices in order.
-    pub fn ring(&self) -> &[Hom] {
-        &self.vertices
-    }
-
     /// The part on the positive side of `plane` and the part on its
     /// negative side, given the sides of its vertices, which differ.
     fn cut(&self, plane: &Rc<Plane>, sides: &[Ordering]) -> (Option<Poly>, Option<Poly>) {

@@ -143,3 +143,57 @@ fn registered_columns_hold_their_systems_values() {
     a.commit().unwrap();
     assert_eq!(rows(&a, "SELECT ID, ST_SRID(G), ST_SRID(H) FROM T").unwrap(), ["2,900002,4326"]);
 }
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.6 Description
+/// 3c, 3d] ST_Transform moves every point of a value of each kind: the
+/// elements of collections, the curves of compounds and curve polygons,
+/// the patches of polyhedral surfaces and TINs, the shells of a solid and
+/// the control points of a NURBS curve; a curve not given by points alone
+/// (an elliptical curve, a clothoid, a spiral, a rational NURBS curve)
+/// fails to transform (2FF15); an SRID not a number is a syntax error.
+#[test]
+fn transforms_move_every_kind_of_value() {
+    let db = database();
+    db.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
+    let a = db.session("A");
+    let placed = "REFERENCELOCATION AFFINEPLACEMENT (LOCATION (0 0), REFERENCEDIRECTIONS (VECTOR (1 0), VECTOR (0 1)))";
+    let faces = "POLYGON Z ((0 0 0, 0 1 0, 1 0 0, 0 0 0)), POLYGON Z ((0 0 0, 1 0 0, 0 0 1, 0 0 0)), \
+                 POLYGON Z ((0 0 0, 0 0 1, 0 1 0, 0 0 0)), POLYGON Z ((1 0 0, 0 1 0, 0 0 1, 1 0 0))";
+    let kinds = [
+        "GEOMETRYCOLLECTION (POINT (1 0), LINESTRING (0 0, 1 0))",
+        "MULTIPOINT ((1 0), (0 0))",
+        "MULTILINESTRING ((0 0, 1 0))",
+        "MULTICURVE ((0 0, 1 0), CIRCULARSTRING (0 0, 0.5 0.5, 1 0))",
+        "MULTISURFACE (((0 0, 1 0, 1 1, 0 0)))",
+        "MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)))",
+        "COMPOUNDCURVE (CIRCULARSTRING (1 0, 0.5 0.5, 0 0), (0 0, 0.5 0))",
+        "CURVEPOLYGON (COMPOUNDCURVE (CIRCULARSTRING (0 0, 0.5 -0.5, 1 0), (1 0, 0 0)))",
+        "TRIANGLE ((0 0, 1 0, 1 1, 0 0))",
+        "POLYHEDRALSURFACE (((0 0, 1 0, 1 1, 0 0)))",
+        "TIN (((0 0, 1 0, 1 1, 0 0)))",
+        "COMPOUNDSURFACE (POLYGON ((0 0, 1 0, 1 1, 0 0)))",
+        "NURBSCURVE (DEGREE 1, CONTROLPOINTS (NURBSPOINT (WEIGHTEDPOINT (0 0), WEIGHT 1), NURBSPOINT (WEIGHTEDPOINT (1 0), WEIGHT 1)), \
+         KNOTS (KNOT (VALUE 0, MULTIPLICITY 2), KNOT (VALUE 1, MULTIPLICITY 2)))",
+    ];
+    for text in kinds {
+        let moved = format!("ST_TRANSFORM(ST_GEOMFROMTEXT('{text}', 4326), 3857)");
+        let x = number(&a, &format!("ST_MAXX({moved})"));
+        assert!((x / 111_319.490_793 - 1.0).abs() < 1e-3, "{text}: {x}");
+        assert_eq!(one(&a, &format!("ST_GEOMETRYTYPE({moved}) = ST_GEOMETRYTYPE(ST_GEOMFROMTEXT('{text}', 4326))")), "TRUE", "{text}");
+    }
+    let solid = format!("ST_GEOMFROMTEXT('BREPSOLID Z (POLYHEDRALSURFACE Z (PATCHES ({faces})))', 4326)");
+    let x = number(&a, &format!("ST_MAXX(ST_TRANSFORM({solid}, 3857))"));
+    assert!((x - 111_319.490_793).abs() < 1e-3, "{x}");
+    let refused = [
+        format!("ELLIPTICALCURVE ({placed}, UAXISLENGTH 2, VAXISLENGTH 1, STARTANGLE RADIANS (0), ENDANGLE RADIANS (1.5))"),
+        format!("CLOTHOID ({placed}, SCALEFACTOR 10, STARTDISTANCE 0, ENDDISTANCE 5)"),
+        format!("SPIRALCURVE ({placed}, LENGTH 10, STARTCURVATURE 0, ENDCURVATURE 0.1, SPIRALTYPE clothoid)"),
+        "NURBSCURVE (DEGREE 2, CONTROLPOINTS (NURBSPOINT (WEIGHTEDPOINT (0 0), WEIGHT 1), NURBSPOINT (WEIGHTEDPOINT (2 2), WEIGHT 2), \
+         NURBSPOINT (WEIGHTEDPOINT (2 0), WEIGHT 1)), KNOTS (KNOT (VALUE 0, MULTIPLICITY 3), KNOT (VALUE 1, MULTIPLICITY 3)))"
+            .to_owned(),
+    ];
+    for text in refused {
+        assert_eq!(state(&a, &format!("VALUES ST_TRANSFORM(ST_GEOMFROMTEXT('{text}', 4326), 3857)")), "2FF15", "{text}");
+    }
+    assert_eq!(state(&a, "VALUES ST_TRANSFORM(ST_POINT(1, 0, 4326), 'x')"), "2A000");
+}
