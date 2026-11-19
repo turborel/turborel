@@ -141,8 +141,11 @@ pub fn os() -> Arc<dyn FileSystem> {
 /// leaving it, then open it again, and the system gives a crashed process's
 /// locks up (`FileSystem::lock`), so here no lock stands against another.
 /// A lock taken is taken from its holder, which may still run in the test:
-/// the lock file keeps the number of its takings, and each holds it while
-/// its own stands there (`FileLock::taken_over`).
+/// a file beside the database's directory keeps the number of its takings,
+/// and each holds it while its own stands there (`FileLock::taken_over`).
+/// Not the lock file itself, which an earlier opener of the operating
+/// system's file system may still hold, and which a system that locks a
+/// file's bytes then refuses to let another handle read.
 pub struct AfterCrash;
 
 /// The number of takings lock file `file` keeps, 0 if none.
@@ -172,12 +175,21 @@ impl FileSystem for AfterCrash {
         OsFileSystem.sync_dir(path)
     }
     fn lock(&self, path: &Path) -> Result<FileLock> {
+        let path = &takings_beside(path);
         let mode = if OsFileSystem.exists(path)? { OpenMode::ReadWrite } else { OpenMode::CreateNew };
         let file: Arc<dyn DiskFile> = Arc::from(OsFileSystem.open(path, mode)?);
         let taking = takings(&*file)?.wrapping_add(1);
         file.write_all_at(&taking.to_le_bytes(), 0)?;
         Ok(FileLock::taken_over((), Arc::new(move || takings(&*file).is_ok_and(|now| now == taking))))
     }
+}
+
+/// The file of lock file `lock`'s takings: beside its database's directory,
+/// named after it, so it is no file of the database.
+fn takings_beside(lock: &Path) -> PathBuf {
+    let dir = lock.parent().unwrap_or(lock);
+    let name = dir.file_name().map_or_else(|| "database".into(), |n| n.to_string_lossy().into_owned());
+    dir.with_file_name(format!("{name}.takings"))
 }
 
 /// `AfterCrash`, for a test that crashes a database and opens it again.
