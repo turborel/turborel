@@ -1,6 +1,6 @@
 //! Fixtures shared by the client program's tests.
 
-use turborel_cli::{Credentials, Dialer, Input, Io, Options, Server};
+use turborel_cli::{Credentials, Dialer, Input, Io, Options, Server, Settings, Terminal};
 use turborel_client::agent::Agent;
 
 pub use turborel_test_support::Scratch;
@@ -15,10 +15,10 @@ pub fn options(server: &Running, inputs: Vec<Input>) -> Options {
         credentials: Credentials::Trust,
         inputs,
         stop_on_error: false,
-        timing: false,
         null: String::new(),
         timeouts: turborel_client::timeouts::Timeouts::default(),
         import: None,
+        settings: Settings::default(),
     }
 }
 
@@ -35,7 +35,7 @@ pub fn ran(options: &Options, standard: &str, typed: bool) -> Ran {
     let connection = turborel_cli::connect(options, || Ok(String::new())).unwrap();
     let mut agent = Agent::connected(Dialer::new(options.clone(), Box::new(|| Ok(String::new()))), connection);
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let io = Io { input: &mut standard.as_bytes(), typed, out: &mut out, err: &mut err, interrupts: None };
+    let io = Io { input: &mut standard.as_bytes(), typed, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
     let succeeded = turborel_cli::run(&mut agent, options, io);
     agent.terminate().unwrap();
     Ran { succeeded, out: String::from_utf8(out).unwrap(), err: String::from_utf8(err).unwrap() }

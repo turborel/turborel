@@ -29,7 +29,6 @@ as a table as they come, and each statement's outcome.
 | `-c`, `--command SQL` | run SQL's statements; more than once for more |
 | `-f`, `--file FILE` | run FILE's statements; more than once for more |
 | `--stop-on-error` | end the run at the first statement that fails |
-| `--timing` | report each statement's elapsed time to standard error ([Timing](#timing)); off by default |
 | `--null TEXT` | show a null value as TEXT, and import a field written TEXT as null; nothing by default |
 | `--import FILE` | insert FILE's rows into the table `--table` names; more than once for more, in turn with `-c` and `-f` ([Importing](#importing)) |
 | `--table NAME` | the table rows are imported into |
@@ -40,6 +39,20 @@ as a table as they come, and each statement's outcome.
 | `--skip-bad-rows` | tell a row that fails to import, and import the rest |
 | `--connect-timeout SECONDS` | wait at most SECONDS to connect, begin TLS and for each step of the login; 30 by default, 0 for no limit |
 | `--read-timeout SECONDS` | wait at most SECONDS for each reply of the server; 0, no limit, by default, as a statement may run long |
+| `-v`, `--set NAME=VALUE` | set a variable before the first statement ([Variables](05-turborel-commands.md#variables)) |
+| `-1`, `--single-transaction` | run every statement in one transaction, committed if all succeed, rolled back if any fails |
+| `-e`, `--echo` | write each statement before it runs |
+| `-q`, `--quiet` | write no `OK` after a statement that is not a query |
+| `--safe-updates` | refuse an UPDATE or DELETE without WHERE |
+| `-A`, `--unaligned` | write rows unaligned, their values between the separator ([Output formats](05-turborel-commands.md#output-formats)) |
+| `-B`, `--tab-separated` | write rows tab-separated, after a line of the columns' names, without a count |
+| `--csv`, `--html`, `--json` | write rows as CSV, an HTML table, or a JSON array |
+| `--style STYLE` | `aligned`, `wrapped`, `unaligned`, `csv`, `html`, `json` or `tabs` |
+| `--border N` | 0, 1 or 2 lines about aligned rows; 1 by default |
+| `-F`, `--separator TEXT` | what is between unaligned values; `\|` by default |
+| `-t`, `--tuples-only` | write the rows alone, without the columns' names or the count |
+| `-x`, `--expanded` | write each row as lines of a column's name and value |
+| `--auto-expanded` | expand only a row wider than the screen |
 | `--help` | print the usage |
 | `--version` | print the release |
 
@@ -118,6 +131,10 @@ A query that completes with a warning, as a set function that leaves
 out a null does, says so after its count of rows: `(1 row, with a
 warning: SQLSTATE 01003)`.
 
+Lines are typed with the client's own line editor, kept in a history
+and completed by Tab, and may hold backslash commands, done by the
+client itself ([Working in the turborel Command](05-turborel-commands.md)).
+
 A statement left without its semicolon at the end of the input runs as
 the input ends. Semicolons in strings, delimited identifiers and
 comments do not end a statement.
@@ -151,10 +168,14 @@ the transaction rolled back, and the program exits with 1.
 
 ## Timing
 
-`--timing` writes `Time: N ns` to standard error after each SQL statement,
-including one that fails or is cancelled. It applies to commands, files
-and standard input, including typed sessions. Each statement gets its own
-time; the results on standard output keep their usual format.
+A session typed at a terminal, its output on a screen, writes
+`Time: N ns` to standard error after each SQL statement, including one
+that fails or is cancelled. Each statement gets its own time, and the
+results on standard output keep their usual format. Nothing else is
+timed. Commands given with `-c`, files given with `-f` or included with
+`\i`, piped input and output sent to a file or a pipe never show a
+time, so a script's output is the same on every run. No option or
+command turns timing on or off.
 
 The client measures elapsed time with a monotonic clock, from starting the
 statement through receiving its outcome and writing any result rows. This
@@ -164,6 +185,12 @@ diagnostic is not included. It is not a measurement of server execution
 alone. Reading SQL input, the initial connection and login, and
 `--import` are outside the measurement. Nanoseconds are the unit shown;
 the clock's precision depends on the platform.
+
+When the server reports the time it spent on a statement, the line
+shows it after the round trip, as in `Time: 9000 ns, server 6000 ns
+(planning 1000 ns, execution 4000 ns, waiting 1000 ns)`. Only the parts
+the server reports are listed. A server that reports no time leaves
+the line as the round trip alone.
 
 ## Importing
 
@@ -336,9 +363,11 @@ UNITS 2.1.0 dependency https://plugins.example.com/
 
 ## Exit status
 
-0 if every statement and import succeeded; 1 if one failed, or an
-import skipped a row, or the client could not connect, or its command
-line is wrong; 130 if Ctrl-C ended it before it connected.
+The exit status is 0 if every statement and import succeeded. It is 1
+if one failed, an import skipped a row, the client could not connect,
+or its command line is wrong. It is 2 if the connection was lost, 3 if
+STOP_ON_ERROR ended a run at a statement that failed, and 130 if Ctrl-C
+ended it before it connected.
 
 ```
 $ turborel -p 1 -U ann -c "VALUES 1"

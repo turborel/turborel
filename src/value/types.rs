@@ -42,6 +42,7 @@ mod row;
 pub(crate) mod structured;
 pub(crate) mod tags;
 mod unregistered;
+pub mod uuid;
 mod varying;
 pub(crate) mod xml;
 

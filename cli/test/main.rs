@@ -37,4 +37,5 @@ mod extensions;
 mod imports;
 mod manual;
 mod program;
+mod scripts;
 mod sessions;

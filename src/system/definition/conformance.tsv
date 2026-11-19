@@ -372,7 +372,7 @@ FEATURE	T461	 	Symmetric BETWEEN predicate	 	NO
 FEATURE	T471	 	Result sets return value	 	NO		
 FEATURE	T472	 	DESCRIBE CURSOR	 	NO		
 FEATURE	T491	 	LATERAL derived table	 	NO		
-FEATURE	T495	 	Combined data change and retrieval	 	NO		
+FEATURE	T495	 	Combined data change and retrieval	 	YES		CONFORMANCE.md, Data change delta tables
 FEATURE	T501	 	Enhanced EXISTS predicate	 	NO		
 FEATURE	T502	 	Period predicates	 	YES		CONFORMANCE.md, Periods
 FEATURE	T511	 	Transaction counts	 	YES		CONFORMANCE.md, Diagnostics

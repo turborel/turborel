@@ -29,6 +29,12 @@ pub trait CallContext {
     /// folded, where a call reading a system defined must wait for its
     /// statement.
     fn spatial(&self) -> Option<&crate::catalog::SpatialCatalog>;
+    /// \[EXTENSION\] The clock of the statement's database, and the last
+    /// version 7 UUID it made (RULES.md D183); none where no database
+    /// runs the call.
+    fn uuid_clock(&self) -> Option<(Arc<dyn crate::clock::Clock>, Arc<crate::value::types::uuid::generate::Ordered>)> {
+        None
+    }
 }
 
 /// A query whose ARRAY a call is given as its last argument

@@ -53,6 +53,7 @@ impl State {
             extensions: Arc::default(),
             extension_host: Arc::new(crate::plugin::Host::new(Arc::clone(memory))),
             clock: Arc::new(crate::clock::SystemClock),
+            uuids: Arc::default(),
             optimizer: Optimizer::with_builtin_rules(),
             tx: Arc::new(Transactions::default()),
             memory: Arc::clone(memory),

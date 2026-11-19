@@ -286,6 +286,11 @@ impl Session {
                     && spec.updatability.is_none()
                     && matches!(tokens.first().map(|t| &t.tok), Some(Tok::KeyWord(kw::SELECT)));
                 let params = Params::preparing(parser.dynamic_parameters());
+                // [ISO/IEC 9075-2:2023 §7.6] a delta table's statement, its
+                // parameters' types found as it is bound (RULES.md D174).
+                for d in spec.query.deltas() {
+                    self.bind_only(st, &d.statement, &params)?;
+                }
                 let compiled = self.compile(st, &spec, &params)?;
                 key = compiled.key.unwrap_or(DescribedKey::Unknown);
                 (compiled.columns, params)
@@ -318,6 +323,11 @@ impl Session {
     fn insert_only(&self, st: &State, ins: &InsertStatement, params: &Params) -> Result<()> {
         let target = self.insert_target(st, ins, (None, &WHOLE))?;
         if let crate::ast::InsertSource::Query(query) = &ins.source {
+            // [ISO/IEC 9075-2:2023 §7.6] the statements of its delta tables
+            // (RULES.md D175).
+            for d in query.deltas() {
+                self.bind_only(st, &d.statement, params)?;
+            }
             self.bound_insert(st, &target, query, params)?;
         }
         Ok(())
@@ -368,6 +378,9 @@ impl Session {
     /// graph's name is bound as it runs: its MERGEs are made of the
     /// graph's vertex tables then.
     fn merge_only(&self, st: &State, merge: &crate::ast::MergeStatement, params: &Params) -> Result<()> {
+        if let crate::ast::TableReference::Delta(d) = &merge.source {
+            self.bind_only(st, &d.statement, params)?;
+        }
         if merge.property.as_ref().is_none_or(|p| p.graph.is_none()) {
             drop(self.merge_bound(st, merge, params, None)?);
         }

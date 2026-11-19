@@ -349,6 +349,10 @@ impl Session {
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
         let _compiling = self.compiling(cx.st, cx.tx.id);
+        // [ISO/IEC 9075-2:2023 §7.6 GR5] the statements of the delta tables
+        // an INSERT or a MERGE reads run first; a plan kept is not of
+        // their rows (RULES.md D175).
+        let keeping = if self.run_change_deltas(cx.st, cx.tx, stmt, params)? { None } else { keeping };
         // [ISO/IEC 9075-2:2023 §15.10, §15.13, §15.16] a view's INSTEAD OF
         // trigger in place of the change.
         if let Some(n) = self.instead_of(cx, stmt, params)? {
