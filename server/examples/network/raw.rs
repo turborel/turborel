@@ -11,6 +11,7 @@ use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use turborel_protocol::{HEADER, Request, VERSION};
 
+use crate::local::{self, Local};
 use crate::served::{Kind, Served};
 
 /// A reply's kind that ends a request's replies: Complete.
@@ -29,7 +30,7 @@ const PREPARED: u8 = b'P';
 /// A stream of any of the transports.
 pub enum Stream {
     Tcp(TcpStream),
-    Unix(std::os::unix::net::UnixStream),
+    Unix(Local),
     Tls(Box<StreamOwned<ClientConnection, TcpStream>>),
 }
 
@@ -96,7 +97,7 @@ impl Raw {
                 tcp.set_nodelay(true).unwrap();
                 if let Kind::Tls = kind { tls(tcp, &served.config) } else { Stream::Tcp(tcp) }
             }
-            Kind::Unix => Stream::Unix(std::os::unix::net::UnixStream::connect(&served.socket).unwrap()),
+            Kind::Unix => Stream::Unix(local::open(&served.socket).unwrap()),
         };
         let mut raw = Raw { stream: BufReader::with_capacity(64 * 1024, stream), out: Vec::new(), body: Vec::new(), bytes: 0, rows: 0 };
         let hello = Request::Hello {

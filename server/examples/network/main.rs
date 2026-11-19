@@ -1,5 +1,6 @@
 //! How fast the server's transport is (RULES.md D42, D45): over loopback
-//! TCP, a Unix socket and TLS, the round trip of a trivial query, many
+//! TCP, the local transport (a Unix socket, or a named pipe on
+//! Windows) and TLS, the round trip of a trivial query, many
 //! small queries with and without pipelining, a large result streamed,
 //! bulk inserts through prepared statements, the setup of a connection,
 //! plain and TLS, trusted and by SCRAM, and hundreds of connections at
@@ -33,6 +34,7 @@
 mod benches {
     pub mod harness;
 }
+mod local;
 mod raw;
 mod served;
 mod workloads;
