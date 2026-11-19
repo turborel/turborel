@@ -3,7 +3,7 @@
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 11] {
+pub fn core() -> [&'static [Mutation]; 12] {
     [
         &super::MUTATIONS,
         &super::hash::HASH,
@@ -16,6 +16,7 @@ pub fn core() -> [&'static [Mutation]; 11] {
         &super::sql2023::SQL2023,
         &super::regex::REGEX,
         &super::SHADOW,
+        &super::backup::BACKUP,
     ]
 }
 

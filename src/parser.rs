@@ -20,6 +20,7 @@ use crate::ast::{ColumnName, ParameterSpecification, QuerySpecification, SqlStat
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, Token, delim, kw, lex};
 
+mod backup;
 mod charsets;
 mod composite;
 mod connections;

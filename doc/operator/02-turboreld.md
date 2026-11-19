@@ -9,6 +9,9 @@ turboreld (--dir PATH | --memory) [options]
 turboreld --dir PATH [--config FILE] [--set NAME=VALUE]... user COMMAND
 turboreld --dir PATH [--keys DIR] reseal AUTH.TABLE
 turboreld --dir PATH [--keys DIR] rekey
+turboreld --dir PATH [--keys DIR] --restore TARGET [--backup ID] [--archive TARGET]
+          [--until-time 'YYYY-MM-DD HH:MM:SS' | --until-lsn N | --until-point NAME]
+turboreld [--keys DIR] --verify-backup TARGET [--backup ID]
 ```
 
 | Option | Meaning |
@@ -29,7 +32,11 @@ turboreld --dir PATH [--keys DIR] rekey
 through the encodings it names now, so a key it named before may be
 retired ([Encryption](07-encryption.md#retiring-a-key)); `rekey` writes
 the database's files again, at once, in the formats STORAGE.ENCODINGS
-and STORAGE.CHECKSUM_KEY name now ([The files' formats](07-encryption.md#the-files-formats)). The settings `--set` sets, and
+and STORAGE.CHECKSUM_KEY name now ([The files' formats](07-encryption.md#the-files-formats)).
+`--restore` restores a backup of TARGET into PATH, a directory not there
+yet, and `--verify-backup` checks one without restoring it, the newest
+or the one `--backup` names; `--archive` and an `--until` option recover
+it to a point in time ([Backups and Recovery](10-backups.md)). The settings `--set` sets, and
 those of a `--config` file ([Configuration files](#configuration-files)), are those of
 [Settings](../appendix/c-settings.md), each set before the database is
 opened if it is read as the database opens, after if not, and kept with

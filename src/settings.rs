@@ -10,6 +10,7 @@
 //! before the plug-in that declares it is kept until then. A session's end
 //! with it. A name is an upper case `<identifier>`, parts joined by periods.
 
+mod backup;
 mod builtin;
 mod configurable;
 mod graph;
@@ -27,6 +28,10 @@ use crate::error::{Code, Result, SqlError};
 use crate::txn::Policy;
 use crate::value::{Value, pow10};
 
+pub use backup::{
+    ARCHIVE_MODE, ARCHIVE_RETENTION_SECONDS, ARCHIVE_SEGMENT_BYTES, ARCHIVE_TARGET, ARCHIVE_TIMELINE, ARCHIVE_TIMEOUT_MS,
+    BACKUP_COMPRESSION,
+};
 pub use builtin::{
     CATALOG_COMPACT_AFTER_IMAGES, CATALOG_NAME, CHECKPOINT_AFTER_BYTES, CHECKPOINT_AFTER_CHANGES, CHECKPOINT_OVERDUE_FACTOR, CHECKSUM,
     CHECKSUM_KEY, COMMIT_SYNC, DECORRELATE_AFTER_RUNS, DIAGNOSTICS_LEVEL, ENCODINGS, EQUAL_SELECTIVITY, EXECUTOR_BATCHES, FILES_MAX_OPEN,

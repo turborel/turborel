@@ -139,7 +139,7 @@ pub fn records_go_through(kind: &dyn LogKind, dir: &Path) {
             change: Change::Update { table: table.clone(), generation: 0, row: 1, before: vec![number(1)], after: vec![number(2)] },
         },
         Record { tx: 5, change: Change::Delete { table, generation: 0, row: 1, before: vec![number(2)] } },
-        Record { tx: 5, change: Change::Commit { at: 9 } },
+        Record { tx: 5, change: Change::Commit { at: 9, wall: 0 } },
     ];
     let log = kind.create(dir);
     let mut commit = Lsn(0);
@@ -273,7 +273,7 @@ pub fn a_commit_is_its_record_made_durable(log: Arc<dyn Log>) {
     let all = records(&*log);
     assert!(all.iter().all(|(_, r)| r.tx == tx));
     let (commit_lsn, commit) = all.last().unwrap();
-    assert!(matches!(commit.change, Change::Commit { at } if at > 0), "with its commit timestamp");
+    assert!(matches!(commit.change, Change::Commit { at, .. } if at > 0), "with its commit timestamp");
     assert_eq!(*log.synced.lock().unwrap(), vec![*commit_lsn], "synced through its commit record");
     if let Change::Update { before, after, .. } = &all[1].1.change {
         assert_eq!((before[1].to_string(), after[1].to_string()), ("TEN   ".to_owned(), "X     ".to_owned()));

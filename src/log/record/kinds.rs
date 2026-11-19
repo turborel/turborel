@@ -32,13 +32,15 @@ pub(super) const LOB_PUT: u8 = 22;
 pub(super) const LOB_STALE: u8 = 23;
 /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §20] A spatial catalog change.
 pub(super) const SPATIAL: u8 = 24;
+/// \[EXTENSION\] A restore point (RULES.md D164).
+pub(super) const RESTORE_POINT: u8 = 25;
 
 /// \[DESIGN\] The tag of every kind of record, in tag order (RULES.md
 /// D57). A kind added gets its tag in `Change::kind`, whose match has no
 /// wildcard, so it does not compile until it has one; and a test fails
 /// until its tag is listed here, as `Record::decode` then reads a tag this
 /// does not list.
-pub const KINDS: [u8; 24] = [
+pub const KINDS: [u8; 25] = [
     INSERT,
     UPDATE,
     DELETE,
@@ -63,6 +65,7 @@ pub const KINDS: [u8; 24] = [
     LOB_PUT,
     LOB_STALE,
     SPATIAL,
+    RESTORE_POINT,
 ];
 
 /// \[DESIGN\] The kinds written only through a replicated log (RULES.md
@@ -100,6 +103,7 @@ impl Change {
             Change::Sequence { .. } => SEQUENCE,
             Change::RoleCreator { .. } => ROLE_CREATOR,
             Change::Spatial(_) => SPATIAL,
+            Change::RestorePoint { .. } => RESTORE_POINT,
         }
     }
 }

@@ -3,6 +3,7 @@
 
 mod areas;
 mod array_targets;
+mod backup;
 mod bigint;
 mod bounded;
 mod check_rebind;

@@ -1,75 +1,12 @@
-//! \[EXTENSION\] The plug-in points of work on other branches, mirrored
-//! here as their designs give them, so the adapters of `backup.rs` and
-//! `partition.rs` are written whole against them: backups' `BackupTarget`
-//! and `TargetProvider` (D160-D166), and partitioning's
-//! `PartitionStrategy` with its bounds and restrictions (D154). When those
-//! branches are merged, this file gives way to their own traits and the
-//! adapters implement those, unchanged but for their paths.
-
-use std::sync::Arc;
+//! \[EXTENSION\] The plug-in point of work on another branch, mirrored
+//! here as its design gives it, so the adapter of `partition.rs` is
+//! written whole against it: partitioning's `PartitionStrategy` with its
+//! bounds and restrictions (D154). When that branch is merged, this file
+//! gives way to its own trait and the adapter implements that, unchanged
+//! but for its paths.
 
 use crate::error::Result;
 use crate::value::{DataType, Value};
-
-/// Where backups and archived log go: a flat store of objects.
-pub trait BackupTarget: Send + Sync {
-    /// Its location, as named in SQL and settings.
-    fn location(&self) -> String;
-    /// Begins writing object `name`, giving an upload's handle.
-    ///
-    /// # Errors
-    ///
-    /// The target's.
-    fn begin(&self, name: &str) -> Result<u64>;
-    /// Appends `bytes` to upload `upload`.
-    ///
-    /// # Errors
-    ///
-    /// The target's.
-    fn write(&self, upload: u64, bytes: &[u8]) -> Result<()>;
-    /// Makes the upload its object, durably.
-    ///
-    /// # Errors
-    ///
-    /// The target's.
-    fn finish(&self, upload: u64) -> Result<()>;
-    /// Abandons an upload, leaving no object.
-    ///
-    /// # Errors
-    ///
-    /// The target's.
-    fn abandon(&self, upload: u64) -> Result<()>;
-    /// Up to `max` bytes of `name` from `offset`, empty at its end.
-    ///
-    /// # Errors
-    ///
-    /// The target's.
-    fn read(&self, name: &str, offset: u64, max: u32) -> Result<Vec<u8>>;
-    /// The names of the objects beginning with `prefix`, sorted.
-    ///
-    /// # Errors
-    ///
-    /// The target's.
-    fn list(&self, prefix: &str) -> Result<Vec<String>>;
-    /// Removes object `name`, if it exists.
-    ///
-    /// # Errors
-    ///
-    /// The target's.
-    fn remove(&self, name: &str) -> Result<()>;
-}
-
-/// Opens targets of one scheme from a location.
-pub trait TargetProvider: Send + Sync {
-    /// The scheme, before the colon of a location.
-    fn scheme(&self) -> &str;
-    /// The target at `location`.
-    ///
-    /// # Errors
-    ///
-    /// The provider's, of a location it cannot open.
-    fn open(&self, location: &str) -> Result<Arc<dyn BackupTarget>>;
-}
 
 /// A partition's bound.
 #[derive(Debug, Clone)]

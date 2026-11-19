@@ -55,6 +55,7 @@ pub(crate) fn begins_word_statement(first: Option<&Tok>, second: Option<&Tok>) -
         || labelled
         || super::locators::begins_locator_statement(first, second)
         || super::savepoints::begins_savepoint_statement(first, second)
+        || super::backup::begins_backup_statement(first, second)
 }
 
 impl Parser {
@@ -114,6 +115,8 @@ impl Parser {
         // [EXTENSION] EXECUTE GQL, and the statements of GQL graphs.
         let stmt = if let Some(gql) = self.gql_sql_statement()? {
             gql
+        } else if self.at_backup_statement() {
+            self.backup_statement()?
         } else if self.at_cancel_connection() {
             self.served_statement()?
         } else if self.at_truncate() {

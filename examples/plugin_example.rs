@@ -447,11 +447,13 @@ fn authenticate(p: &mut Plugin, op: u8, r: &mut Reader<'_>) -> Answer {
     .0)
 }
 
-/// `example`: each object a file of the directory the location names.
+/// `example`: each object a file of the directory the location names,
+/// after its `example:`, a `/` in its name one of a directory within.
 fn target(p: &mut Plugin, op: u8, r: &mut Reader<'_>) -> Answer {
     let io = |e: std::io::Error| ("58030".to_owned(), e.to_string());
     if op == 1 {
-        let dir = std::path::PathBuf::from(r.str()?);
+        let location = r.str()?;
+        let dir = std::path::PathBuf::from(location.strip_prefix("example:").unwrap_or(&location));
         std::fs::create_dir_all(&dir).map_err(io)?;
         let n = p.number();
         p.targets.insert(n, dir);
@@ -473,11 +475,27 @@ fn target(p: &mut Plugin, op: u8, r: &mut Reader<'_>) -> Answer {
         }
         5 => {
             let (object, bytes) = p.uploads.remove(&r.u64()?).ok_or(("38000".to_owned(), "no such upload".to_owned()))?;
-            std::fs::write(dir.join(object), bytes).map_err(io)?;
+            let path = dir.join(object);
+            std::fs::create_dir_all(path.parent().unwrap_or(&dir)).map_err(io)?;
+            std::fs::write(path, bytes).map_err(io)?;
             Ok(Vec::new())
         }
         _ => stored(op, &dir, r),
     }
+}
+
+/// The names of the files under `dir`, each after `within`, into `names`.
+fn walk(dir: &std::path::Path, within: &str, names: &mut Vec<String>) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = format!("{within}{}", entry.file_name().to_string_lossy());
+        if entry.file_type()?.is_dir() {
+            walk(&entry.path(), &format!("{name}/"), names)?;
+        } else {
+            names.push(name);
+        }
+    }
+    Ok(())
 }
 
 /// `example`'s reads, lists and removals.
@@ -492,8 +510,8 @@ fn stored(op: u8, dir: &std::path::Path, r: &mut Reader<'_>) -> Answer {
             Ok(Out::default().bytes(all.get(from..from.saturating_add(max).min(all.len())).unwrap_or_default()).0)
         }
         7 => {
-            let mut names: Vec<String> =
-                std::fs::read_dir(dir).map_err(io)?.filter_map(|e| e.ok()?.file_name().into_string().ok()).collect();
+            let mut names = Vec::new();
+            walk(dir, "", &mut names).map_err(io)?;
             names.retain(|n| n.starts_with(&name));
             names.sort();
             Ok(Out::default().strs(&names).0)

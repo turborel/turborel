@@ -288,9 +288,9 @@ fn recovery_undoes_and_redoes_what_the_pages_need() {
         },
     );
     record(10, Change::Insert { table: table.clone(), generation: 0, row: 6, after: row(60) });
-    record(10, Change::Commit { at: 1 });
+    record(10, Change::Commit { at: 1, wall: 0 });
     insert(1, 1, 1);
-    record(1, Change::Commit { at: 2 });
+    record(1, Change::Commit { at: 2, wall: 0 });
     insert(2, 2, 2);
     insert(3, 3, 3);
     insert(4, 4, 4);
@@ -299,17 +299,17 @@ fn recovery_undoes_and_redoes_what_the_pages_need() {
     record(7, Change::Update { table: table.clone(), generation: 0, row: 6, before: row(60), after: row(61) });
     record(7, Change::Abort);
     record(8, Change::Update { table: table.clone(), generation: 0, row: 6, before: row(60), after: row(62) });
-    record(8, Change::Commit { at: 3 });
+    record(8, Change::Commit { at: 3, wall: 0 });
     let cancelled = insert(11, 8, 8);
     let durable = Lsn(log.end().0);
     // After L.
-    record(2, Change::Commit { at: 4 });
+    record(2, Change::Commit { at: 4, wall: 0 });
     record(3, Change::Abort);
     insert(9, 7, 7);
-    record(9, Change::Commit { at: 5 });
+    record(9, Change::Commit { at: 5, wall: 0 });
     record(11, Change::StatementUndone { from: cancelled });
     insert(11, 9, 9);
-    record(11, Change::Commit { at: 6 });
+    record(11, Change::Commit { at: 6, wall: 0 });
     // The pages at L: what every change before it left.
     let pages = Arc::new(MemoryTable::new());
     for (id, k) in [(1, 1), (2, 2), (3, 3), (4, 4), (6, 62), (8, 8)] {

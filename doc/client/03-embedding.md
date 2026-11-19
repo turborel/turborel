@@ -1141,6 +1141,96 @@ These are rectangle storage operations. An exact geometry predicate needs
 to test the candidate geometry, and rectangle containment has different
 boundary semantics from a geometry's topological ST_Contains operation.
 
+## Backups *(extension)*
+
+A database kept in a directory takes a backup while it serves with
+`Database::backup`, as [BACKUP DATABASE](../sql/statements/backup-database.md)
+does, and `verify_backup` checks one without restoring it. A database
+not yet opened restores one into a directory not there yet with
+`restore`, and is closed once it is done. A program then opens the
+directory as any other
+([Backups and Recovery](../operator/10-backups.md)).
+
+A target is a `turborel::backup::BackupTarget`, a store of named
+objects, and `ArchiveTarget` is the same trait, which the archive of the
+log writes to. A `TargetProvider` opens the targets of one scheme from
+their locations, and `register_target_provider` adds one to a database
+before it takes a backup or restores one. The built-in providers are
+`dir`, also of a location with no scheme, and `memory`, each location a
+store of its own for the database's life.
+
+The trait's methods take and give strings, integers and chunks of bytes
+alone, so a provider may hand the work to another process or a remote
+service, and it is safe to call as a `dyn` object. An upload is begun
+(`begin`), given its bytes in chunks (`write`), and then made an object
+durably (`finish`) or dropped (`abandon`). An object is read by ranges
+(`read`), listed by the prefix of its name (`list`) and removed
+(`remove`). An object exists once `finish` returns and never before, is
+never replaced, and its name is of parts each of letters, digits, `.`,
+`_` and `-`, joined by `/`. Its methods may be called from several
+threads at once and never call back into the database. The contract in
+full is the trait's own documentation.
+
+A provider whose targets are one store in memory, shared by two
+databases, so that the second restores the first's backup:
+
+```rust
+use std::sync::Arc;
+
+use turborel::backup::{BackupTarget, MemoryTarget, TargetProvider};
+use turborel::db::backup::{BackupOptions, RestoreOptions};
+use turborel::db::{Database, OpenOptions};
+use turborel::backup::seed::RecoveryTarget;
+use turborel::disk::io::{FileSystem, OsFileSystem};
+
+/// Every location of the scheme `vault` is the one store it holds.
+struct Vault(Arc<MemoryTarget>);
+
+impl TargetProvider for Vault {
+    fn scheme(&self) -> &'static str {
+        "vault"
+    }
+    fn open(&self, _location: &str) -> turborel::error::Result<Arc<dyn BackupTarget>> {
+        Ok(Arc::clone(&self.0) as Arc<dyn BackupTarget>)
+    }
+}
+
+fn main() -> Result<(), turborel::error::SqlError> {
+    let scratch = std::env::temp_dir().join(format!("turborel-embedding-backup-{}", std::process::id()));
+    let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
+    let vault = Arc::new(Vault(Arc::new(MemoryTarget::new("vault:main"))));
+
+    let db = Database::new();
+    db.register_target_provider(Arc::clone(&vault) as Arc<dyn TargetProvider>)?;
+    db.open_files(&fs, &scratch.join("db"), &OpenOptions::default())?;
+    db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER PRIMARY KEY)")?;
+    let s = db.session("APP");
+    s.run("INSERT INTO T VALUES (1), (2)")?;
+    s.run("COMMIT")?;
+    let taken = db.backup(&BackupOptions { location: "vault:main".into(), ..BackupOptions::default() })?;
+    assert_eq!(db.verify_backup("vault:main", &taken.id)?.backups, 1);
+
+    let restorer = Database::new();
+    restorer.register_target_provider(vault)?;
+    let options = RestoreOptions {
+        dir: scratch.join("back"),
+        location: "vault:main".into(),
+        backup: String::new(),
+        archive: None,
+        target: RecoveryTarget::End,
+        timeline: None,
+    };
+    assert_eq!(restorer.restore(&options)?.backup, taken.id);
+    let back = Database::new();
+    back.open_files(&fs, &scratch.join("back"), &OpenOptions::default())?;
+    let app = back.session("APP");
+    let mut rows = app.open_cursor("SELECT COUNT(*) FROM T")?;
+    assert_eq!(rows.fetch()?.map(|r| r[0].to_string()).as_deref(), Some("2"));
+    std::fs::remove_dir_all(&scratch).ok();
+    Ok(())
+}
+```
+
 ## See also
 
 [The Client Library](02-library.md), to connect to a server instead;

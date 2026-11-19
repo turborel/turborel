@@ -49,4 +49,28 @@ pub enum UserStatement {
         /// The literal's value, and where it begins.
         members: (String, usize),
     },
+    /// \[EXTENSION\] `<backup statement>` ::= BACKUP DATABASE TO
+    /// `<character string literal>` \[INCREMENTAL \[FROM `<character string
+    /// literal>`\]\] \[LABEL `<character string literal>`\] (RULES.md D160).
+    Backup {
+        /// The target's location.
+        location: String,
+        /// INCREMENTAL: the id of the backup it follows, or empty for the
+        /// newest.
+        incremental: Option<String>,
+        /// The label, or empty.
+        label: String,
+    },
+    /// \[EXTENSION\] `<restore point statement>` ::= CREATE RESTORE POINT
+    /// `<identifier>` (RULES.md D164).
+    RestorePoint {
+        /// The point's name, and where it begins.
+        name: (String, usize),
+    },
+    /// \[EXTENSION\] `<rescan statement>` ::= RESCAN BACKUP TARGET
+    /// `<character string literal>` (RULES.md D166).
+    Rescan {
+        /// The target's location.
+        location: String,
+    },
 }

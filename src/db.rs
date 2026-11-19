@@ -35,6 +35,7 @@
 //! | `StateSource`       | `Database::export`    | state transfer (RULES.md D57)    |
 //! | `Ranking`           | BM25                  | full-text Rank (RULES.md D87)    |
 //! | `VectorMetric`, `Quantizer` | COSINE and others; PQ, SQ8, BQ | VECTOR_DISTANCE, vector indexes (RULES.md D93) |
+//! | `BackupTarget`, `TargetProvider` | a directory, memory | backups and the archive (RULES.md D166) |
 //!
 //! Plus the settings (`settings.rs`, RULES.md D36), plug-ins' too, per database and session.
 //!
@@ -63,6 +64,7 @@ mod area;
 mod assertions;
 mod assignment;
 mod background;
+pub mod backup;
 mod catalog_file;
 mod checkpoint;
 mod clock;
@@ -170,15 +172,14 @@ use integrity::Deferral;
 pub use log_sync::SYNC_AFTER_MS;
 pub use session::TransactionMode;
 pub use standby::Standby;
-pub use stores::{CatalogStorage, CatalogStore, FileLogs, LogStorage, OpenedLog, StorePlace};
+pub use stores::{CatalogStorage, CatalogStore, FileLogs, LOG_DIR, LogStorage, OpenedLog, StorePlace};
 pub(crate) use {
     assignment::{assign_targets, assignment_type, check_targets},
     database::WeakDatabase,
     routines::run_unhosted,
     triggers::trigger_texts,
 };
-pub use {formats::FileFormats, image::IMAGE_FORMAT};
-pub use {indexes::AccuracyReport, recovery::RecoveryReport};
+pub use {formats::FileFormats, image::IMAGE_FORMAT, indexes::AccuracyReport, recovery::RecoveryReport};
 
 /// The state and transaction a statement runs in.
 #[derive(Clone, Copy)]
@@ -191,8 +192,7 @@ fn api(msg: impl Into<String>) -> SqlError {
     SqlError::new(Code::Api, msg)
 }
 
-/// \[DESIGN\] The table that `table`, written "AUTH.TABLE", names. The Rust
-/// API takes table names in this one form.
+/// \[DESIGN\] The table that `table`, written "AUTH.TABLE", names. The Rust API takes table names in this one form.
 ///
 /// # Errors
 ///
@@ -582,15 +582,15 @@ impl Session {
 /// ROLLBACK is performed; which one is implementor-defined (`SessionEnd`).
 impl Drop for Session {
     fn drop(&mut self) {
-        // A session dropped by a plug-in while a call on it runs cannot end
-        // its transaction here.
+        // A session dropped by a plug-in while a call on it runs cannot end its transaction here.
         let Ok(call) = self.enter() else { return };
         let st = call.state();
         // Drop cannot return an error. A failed commit has rolled back, and a
         // failed undo has marked its tables damaged, so neither goes unnoticed.
-        let _ = match self.session_end(st) {
-            SessionEnd::Commit => self.commit_in(st),
-            SessionEnd::Rollback => self.rollback_in(st),
+        // Of a database closed, or whose files another opened since, it rolls back in memory (RULES.md D56).
+        let _ = match (self.session_end(st), st.files.is_fenced()) {
+            (SessionEnd::Commit, false) => self.commit_in(st),
+            (SessionEnd::Commit, true) | (SessionEnd::Rollback, _) => self.rollback_in(st),
         };
     }
 }

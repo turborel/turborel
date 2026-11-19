@@ -174,11 +174,8 @@ impl Database {
     /// pages lack, whichever is first, through the checkpoint's position,
     /// as `db/files.rs` reads them to recover.
     fn recovery_records(&self, image: &[u8]) -> Result<Vec<u8>> {
-        let snapshot = self.snapshot()?;
-        let image = Image::decode(image, &snapshot.types)?;
-        let log = snapshot.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
-        let logged = snapshot.storage.values().filter(|s| s.capabilities().persistence == Persistence::Logged);
-        let from = logged.map(|s| s.durable_through()).fold(image.start, Ord::min);
+        let (image, from) = self.recovery_from(image)?;
+        let log = self.snapshot()?.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
         let mut records = Vec::new();
         for read in log.read_from(from) {
             let (at, bytes) = read?;
@@ -188,6 +185,24 @@ impl Database {
             records.push((at, bytes));
         }
         Ok(encode_records(Lsn(from.0.saturating_sub(1)), &records))
+    }
+}
+
+impl Database {
+    /// The checkpoint `image` encodes, and the first record recovery from
+    /// it reads: of the oldest transaction open at it, or the oldest
+    /// change a logged table's pages lack, whichever is first. A backup
+    /// carries the records from there (RULES.md D160).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -916 if the image is malformed.
+    pub(super) fn recovery_from(&self, image: &[u8]) -> Result<(Image, Lsn)> {
+        let snapshot = self.snapshot()?;
+        let image = Image::decode(image, &snapshot.types)?;
+        let logged = snapshot.storage.values().filter(|s| s.capabilities().persistence == Persistence::Logged);
+        let from = logged.map(|s| s.durable_through()).fold(image.start, Ord::min);
+        Ok((image, from))
     }
 }
 
