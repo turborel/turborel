@@ -33,7 +33,8 @@ behind it, and each can be replaced or added to.
 - Large objects up to 4G, stored, logged, read and sent a chunk at a
   time, and reached by locators.
 - Indexes as plug-ins. B-link trees, linear hash tables and R-trees over
-  points and rectangles are built in. Any other method registers with its
+  points and rectangles are built in, R-trees packed when built and their
+  emptied nodes reclaimed. Any other method registers with its
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match.

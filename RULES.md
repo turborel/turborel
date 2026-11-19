@@ -161,6 +161,7 @@ verification approach DO-178C expects (§8).
 | D134 | A spatial read records the envelopes it read, merged into their hull past a bound |
 | D135 | Geometry windows serve relate, distance and outer joins, reading every entry where a scan would raise |
 | D136 | Simple feature access is views over the SQL/MM catalog and routines named without ST_ |
+| D139 | R-trees are packed by Sort-Tile-Recursive, and sparse leaves are copied out and freed by epochs |
 
 ### The project
 
@@ -2592,10 +2593,10 @@ Readers use the expected-child-stamp protocol of
 A split gives the new right sibling the old stamp and gives the old node
 a fresh stamp. A search follows siblings through the stamp it remembered
 from the parent. This finds entries moved by a split without also visiting
-a sibling already queued from the parent. Allocated page identifiers
-supply unique stamps; pages are not recycled within a live tree. These
-stamps are internal structure metadata, independent of SQL sequences and
-transaction commit numbers.
+a sibling already queued from the parent. A counter in the meta page
+supplies unique stamps, since freed pages are allocated again (D139).
+These stamps are internal structure metadata, independent of SQL
+sequences and transaction commit numbers.
 
 Writers enlarge ancestor bounds before inserting, and recheck split
 stamps under node locks. A full node splits before the new entry is added:
@@ -2608,9 +2609,10 @@ additional physical write-ahead log.
 
 Forced reinsertion and deletion condensation are excluded. They move
 entries between unrelated branches, which split stamps cannot track for
-a scan already partway through the tree. Empty nodes stay linked. This
-trades space and possible overlap after updates for a smaller concurrency
-protocol; benchmarks must include aged trees, not only fresh loads. The
+a scan already partway through the tree. Sparse leaves are instead
+copied into a new node and their pages freed by epochs (D139), so no
+entry moves under a scan. Benchmarks must include aged trees, not only
+fresh loads. The
 implementation is an R-link tree with R* heuristics, not the complete
 R*-tree insertion algorithm. Node and metadata formats are versioned
 independently and reject unknown versions.
@@ -4525,6 +4527,66 @@ code's routine tables, method binding and stored forms. They have no
 ordering and no well-known forms. ANNOTATION_TEXT_METADATA [§6.2.9.2]
 is a third view of SF_INFORMTN_SCHEMA, of each text column, its
 defaults NULL.
+
+#### D139. R-trees are packed by Sort-Tile-Recursive, and sparse leaves are copied out and freed by epochs
+
+An `rtree` index built whole is packed bottom-up by Sort-Tile-Recursive
+(Leutenegger, Lopez and Edgington, "STR: A Simple and Efficient
+Algorithm for R-Tree Packing", ICDE 1997).
+Entries are sorted by the centre of their X extent through the sorted
+spill (`spill::sorted_records`), cut into about the square root of the
+leaf count of vertical slabs, and each slab sorted again by Y and cut
+into leaves. Each level above is tiled the same way in memory, one entry
+for each node below, as the B-link tree's load holds its upper levels
+(D31). Nodes are filled to nine tenths, as loaded B-link nodes are, so
+early inserts do not split at once. Identical entries become one counted
+entry. Each of the two sorts gets half of the work area, so the load
+stays within MEMORY.WORK_BYTES. Hilbert order was the other choice. It
+needs the data's extent before the sort, or a curve over warped float
+bits, while STR needs only the count, which the first sort yields.
+
+CREATE INDEX fills an index while writers keep it up to date (D27), so
+`Index::load_beside_writers` lets a method build beside them. The rtree
+packs into a side tree no one can reach, then holds out every writer by
+taking all its row-lock stripes, inserts the entries the writers made
+into the side tree, and names the side tree's root in the meta page. The
+old nodes are retired. Recovery, coordinator tables and reopening call
+`Index::load`, which is the same load into an empty tree. A failed load
+frees the side tree and changes nothing. A crash before a checkpoint
+holds the pages is recovered by building again from the rows, as for
+the other bulk-loaded methods.
+
+A remove that leaves a leaf empty, or under the R*-tree's minimum fill
+of two fifths, reclaims it. An empty leaf is taken out of its parent. A
+sparse one is merged with the sibling whose envelope grows least, if
+both fit a loaded node. The merge copies the entries into a new page,
+marks both old leaves retired with their entries, stamps and right links
+untouched, and then rewrites the parent in one write. A scan that read
+the parent before sees the frozen old leaves; one that read it after
+sees the new node; nothing moves into a node a scan has read, so no
+entry is missed or repeated. Writers that reach a retired leaf start
+again from the root. Locks go leaves by page number, then the parent,
+bottom-up as other writers lock. Only leaves are reclaimed, and only
+when their parent keeps another child, so no branch empties and the
+tree's height never shrinks. Ancestor envelopes above the parent are
+not narrowed; they remain valid upper bounds.
+
+Retired pages are freed after the tree's epoch has moved twice, with the
+B-link tree's epochs (`engine/tree/reclaim.rs`, D31). Every operation,
+scan, nearest search, join and estimate is pinned in the epoch it began
+in, so no page it may still read is freed. Freed pages are allocated
+again, so a page number can repeat. Split stamps therefore come from a
+counter kept in the meta page and bumped under the meta lock, never from
+page numbers. A recycled number cannot give a node a stamp that a scan
+still remembers for it.
+
+Recovery needs nothing new. Pages are shadowed and the log is logical
+(D25), so a crash returns the tree to its checkpoint and recovery mends
+it through inserts and removes, which reclaim as they go. Pages retired
+but not freed when a checkpoint was taken are unreachable in it and stay
+allocated, as the B-link tree's do. `RTree::shape` reports nodes, bytes,
+fill and envelope overlap per level, which `bench/spatial_index.rs`
+prints after packed, inserted and aged loads.
 
 ## 2. Project layout
 

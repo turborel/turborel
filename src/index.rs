@@ -402,6 +402,23 @@ pub trait Index: Send + Sync {
         }
         Ok(())
     }
+    /// \[DESIGN\] Adds every entry of `entries`, in any order, as `load`
+    /// does, to the index, which writers may change meanwhile: a CREATE
+    /// INDEX build's, whose writes keep it up to date as it fills
+    /// (`db/indexes.rs`). Default: `insert`, one by one. A method may build
+    /// it whole beside the writers' entries and keep both (RULES.md D139).
+    ///
+    /// # Errors
+    ///
+    /// As `load`'s.
+    fn load_beside_writers(&self, entries: &mut dyn Iterator<Item = Result<(Key, RowId)>>, work: (&WorkAreas, Area)) -> Result<()> {
+        let _ = work;
+        for entry in entries {
+            let (key, row) = entry?;
+            self.insert(key, row)?;
+        }
+        Ok(())
+    }
     /// Takes back one entry of `row` under `key`, if there is one.
     ///
     /// # Errors

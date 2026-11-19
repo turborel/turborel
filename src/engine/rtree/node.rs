@@ -12,12 +12,15 @@ use super::corrupt;
 
 /// The independently versioned R-link page format.
 const FORMAT: u8 = 1;
-/// Format, level, pending flag, stamp, right link and entry count.
+/// Format, level, flags, stamp, right link and entry count.
 pub(super) const HEADER: usize = 23;
 /// Four coordinates followed by two u64 fields.
 pub(super) const ENTRY_BYTES: usize = 48;
 /// An absent sibling; the pager never allocates this page number.
 const NO_PAGE: u64 = u64::MAX;
+/// The flags byte: an unposted split, and a node taken out of the tree.
+const PENDING: u8 = 1;
+const RETIRED: u8 = 2;
 /// A corrupt tree cannot cause an unbounded descent or cursor stack.
 pub(super) const MAX_LEVEL: u8 = 63;
 
@@ -37,27 +40,31 @@ pub(super) struct Node {
     /// The right sibling has not yet been posted to the parent. Readers
     /// need only stamps; writers finish this split before adding entries.
     pub(super) pending: bool,
+    /// Taken out of the tree by reclamation (`reclaim.rs`). Its entries
+    /// are frozen for scans that still hold it, and writers start again.
+    pub(super) retired: bool,
     pub(super) entries: Vec<Entry>,
 }
 
 impl Node {
-    pub(super) fn empty(id: PageId, level: u8) -> Node {
-        Node { level, stamp: id.0, right: None, pending: false, entries: Vec::new() }
+    pub(super) fn empty(stamp: u64, level: u8) -> Node {
+        Node { level, stamp, right: None, pending: false, retired: false, entries: Vec::new() }
     }
 
     pub(super) fn parse(bytes: &[u8]) -> Result<Node> {
         let mut r = Reader::new(bytes, "R-link node");
         let format = r.u8()?;
         let level = r.u8()?;
-        let pending = r.u8()?;
-        if format != FORMAT || level > MAX_LEVEL || pending > 1 {
-            return Err(r.corrupt("its format, level or pending flag is invalid"));
+        let flags = r.u8()?;
+        if format != FORMAT || level > MAX_LEVEL || flags > PENDING | RETIRED {
+            return Err(r.corrupt("its format, level or flags are invalid"));
         }
+        let pending = flags & PENDING != 0;
         let stamp = r.u64()?;
         let right = r.u64()?;
         let count = usize::try_from(r.u32()?).map_err(|_| r.corrupt("its count does not fit"))?;
         let expected = count.checked_mul(ENTRY_BYTES).and_then(|n| n.checked_add(HEADER));
-        if expected != Some(bytes.len()) || pending == 1 && right == NO_PAGE {
+        if expected != Some(bytes.len()) || pending && right == NO_PAGE {
             return Err(r.corrupt("its length or split link is invalid"));
         }
         let mut entries = Vec::with_capacity(count);
@@ -73,7 +80,8 @@ impl Node {
             entries.push(Entry { bounds, id, value });
         }
         r.finish()?;
-        Ok(Node { level, stamp, right: (right != NO_PAGE).then_some(PageId(right)), pending: pending == 1, entries })
+        let right = (right != NO_PAGE).then_some(PageId(right));
+        Ok(Node { level, stamp, right, pending, retired: flags & RETIRED != 0, entries })
     }
 
     pub(super) fn bytes(&self) -> Result<Vec<u8>> {
@@ -81,7 +89,7 @@ impl Node {
         let mut bytes = Vec::with_capacity(HEADER.saturating_add(self.entries.len().saturating_mul(ENTRY_BYTES)));
         bytes.put_u8(FORMAT);
         bytes.put_u8(self.level);
-        bytes.put_u8(u8::from(self.pending));
+        bytes.put_u8(if self.pending { PENDING } else { 0 } | if self.retired { RETIRED } else { 0 });
         bytes.put_u64(self.stamp);
         bytes.put_u64(self.right.map_or(NO_PAGE, |p| p.0));
         bytes.put_u32(count);

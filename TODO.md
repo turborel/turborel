@@ -87,9 +87,7 @@ is kept consistent under concurrent change and recovery as the B-tree is.
   both sides, real polygon and line data, disk pressure and sustained
   updates in complete-query comparisons, including tail latency.
   Let SQL joins traverse two indexed trees directly,
-  beyond probing one tree for each outer row. Add bulk packing
-  and reclaim empty nodes without relocating entries under active scans;
-  measure overlap and space after sustained updates as well as fresh loads.
+  beyond probing one tree for each outer row.
 - Adjacency held for a graph's edges, so a path query follows an edge
   without a join's search. Graph queries need it.
 - An index of XML documents' paths and values, so XQuery and XPath read

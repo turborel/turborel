@@ -255,7 +255,7 @@ pub struct WorkAreas {
 impl WorkAreas {
     /// The built-in provider's areas, their files in memory, reserved of
     /// `memory` as are their pools (RULES.md D56).
-    pub(crate) fn new(memory: Arc<MemoryBudget>) -> WorkAreas {
+    pub fn new(memory: Arc<MemoryBudget>) -> WorkAreas {
         let files = MemoryFileSystem::within(Arc::clone(&memory), "a spill file");
         let temp = TempFiles::new(Arc::new(files), Path::new("/tmp"));
         WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))) }

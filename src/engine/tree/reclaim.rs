@@ -48,7 +48,7 @@ const STRIPES: usize = 64;
 struct Stripe([AtomicU64; 2]);
 
 /// The epochs of a tree, and the pages taken out of it, to free.
-pub(super) struct Epochs {
+pub(crate) struct Epochs {
     current: AtomicU64,
     under_way: Box<[Stripe]>,
     retired: Mutex<Vec<(u64, PageId)>>,
@@ -58,7 +58,7 @@ pub(super) struct Epochs {
 
 /// An operation counted in its epoch: its stripe and the epoch's parity.
 #[derive(Clone, Copy)]
-pub(super) struct Entered {
+pub(crate) struct Entered {
     stripe: usize,
     parity: usize,
 }
@@ -76,7 +76,7 @@ impl Drop for Guard<'_> {
 }
 
 impl Epochs {
-    pub(super) fn new() -> Epochs {
+    pub(crate) fn new() -> Epochs {
         Epochs {
             current: AtomicU64::new(0),
             under_way: (0..STRIPES).map(|_| Stripe::default()).collect(),
@@ -87,7 +87,7 @@ impl Epochs {
 
     /// Counts an operation beginning, in the epoch current: counted, and
     /// the epoch still current once it is, or counted again.
-    pub(super) fn enter(&self) -> Entered {
+    pub(crate) fn enter(&self) -> Entered {
         let stripe = thread_stripe(STRIPES);
         loop {
             let epoch = self.current.load(Ordering::SeqCst);
@@ -107,7 +107,7 @@ impl Epochs {
     }
 
     /// Counts the operation `entered` ended.
-    pub(super) fn leave(&self, entered: Entered) {
+    pub(crate) fn leave(&self, entered: Entered) {
         if let Some(count) = self.under_way.get(entered.stripe).and_then(|s| s.0.get(entered.parity)) {
             count.fetch_sub(1, Ordering::SeqCst);
         }
@@ -131,7 +131,7 @@ impl Epochs {
     }
 
     /// Notes `page` taken out, to free once no operation may hold it.
-    pub(super) fn retire(&self, page: PageId) {
+    pub(crate) fn retire(&self, page: PageId) {
         self.stamp.fetch_add(1, Ordering::SeqCst);
         let epoch = self.current.load(Ordering::SeqCst);
         lock_builtin(&self.retired).push((epoch, page));
@@ -139,7 +139,7 @@ impl Epochs {
 
     /// The pages taken out that no operation may hold now, the epoch moved
     /// on first if it can: taken from those to free.
-    pub(super) fn freeable(&self) -> Vec<PageId> {
+    pub(crate) fn freeable(&self) -> Vec<PageId> {
         self.advance();
         let now = self.current.load(Ordering::SeqCst);
         let mut retired = lock_builtin(&self.retired);
@@ -150,7 +150,7 @@ impl Epochs {
 
     /// Every page taken out and not yet freed: for a tree no one uses any
     /// more.
-    pub(super) fn all_retired(&self) -> Vec<PageId> {
+    pub(crate) fn all_retired(&self) -> Vec<PageId> {
         lock_builtin(&self.retired).drain(..).map(|(_, page)| page).collect()
     }
 }

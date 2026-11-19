@@ -3104,6 +3104,12 @@ coordinates and answers independent SQL comparisons (`index/rtree.rs`,
 `physical/access/columns.rs`, D72). Inner joins can bind these comparisons
 from each outer row (`physical/indexed/coordinates.rs`). Single-column
 geometry indexes use the projection contract described above (D85).
+An `rtree` built over existing rows, by CREATE INDEX, a rebuild or
+recovery, is packed by Sort-Tile-Recursive through the sorted spill, and
+leaves that deletes empty or leave under two fifths full are taken out
+or copied into a merged node, their pages freed by epochs, so scans
+neither miss nor repeat an entry (`engine/rtree/pack.rs`,
+`engine/rtree/reclaim.rs`, `Index::load_beside_writers`, RULES.md D139).
 
 ```
 CREATE INDEX name ON table (columns) [USING method] [WITH (...)]

@@ -1300,6 +1300,52 @@ OK
 turborel: SQLCODE -900 (SQLSTATE 0A000): the rtree index method needs GEOMETRY(srid) for a geometry key
 ```
 
+CREATE INDEX over rows already in the table builds the index whole. It
+sorts their envelopes by X, cuts them into slabs, sorts each slab by Y,
+and fills each node to nine tenths, from the leaves up
+(Sort-Tile-Recursive packing). The sorts spill to temporary files past
+MEMORY.WORK_BYTES, so a large build stays within it. Rows that other
+transactions write while the build runs go into the index as usual and
+are moved into the packed tree before it takes the index's place.
+Recovery rebuilds an index the same way. A delete or update that leaves
+a node of the index empty, or under two fifths full, takes it out or
+merges it with a neighbour. Its page is freed for reuse once no query
+that began before can still read it, so a query running meanwhile
+neither misses a row nor sees one twice:
+
+```sql
+CREATE TABLE GRID (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));
+INSERT INTO GRID
+    WITH RECURSIVE N (I, X, Y) AS (
+        VALUES (CAST(0 AS INTEGER), CAST(0 AS INTEGER), CAST(0 AS INTEGER))
+        UNION ALL SELECT I + 1, CASE WHEN Y = 99 THEN X + 1 ELSE X END, CASE WHEN Y = 99 THEN 0 ELSE Y + 1 END
+        FROM N WHERE I < 9999)
+    SELECT I, ST_POINT(X, Y) FROM N;
+COMMIT;
+CREATE INDEX GRID_SPOT ON GRID (SPOT) USING RTREE;
+SELECT COUNT(*) AS INSIDE FROM GRID WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(10, 10, 19, 19)) = 1;
+DELETE FROM GRID WHERE ID < 9000;
+COMMIT;
+SELECT COUNT(*) AS INSIDE FROM GRID WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(90, 10, 99, 19)) = 1;
+```
+
+```
+OK
+OK
+OK
+OK
+               INSIDE
+----------------------
+                  100
+(1 row)
+OK
+OK
+               INSIDE
+----------------------
+                  100
+(1 row)
+```
+
 The planner uses the index where it costs less than reading the table,
 which these few rows may not, in these forms.
 

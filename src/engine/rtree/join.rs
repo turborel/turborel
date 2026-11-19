@@ -7,7 +7,7 @@
 //! group; the right side's sibling is paired with the current left node.
 
 use super::node::{Entry, Node};
-use super::{RTree, Visit, corrupt};
+use super::{Pin, RTree, Visit, corrupt};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::memory::{MemoryBudget, Reservation};
@@ -31,6 +31,7 @@ pub struct Join {
     /// Two decoded pages are accounted for before either is read.
     pages_bytes: usize,
     failed: bool,
+    _pins: (Pin, Pin),
 }
 
 /// Initial pending pairs; later growth is geometric.
@@ -81,7 +82,8 @@ impl Join {
             left.inner.capacity.checked_add(right.inner.capacity).and_then(|n| n.checked_mul(size_of::<Entry>())).ok_or_else(exhausted)?;
         let held = budget.reserve(pages_bytes, "the R-tree intersection join")?;
         let first = Pair { left: left.root()?, right: right.root()?, left_hops: 0, right_hops: 0 };
-        let mut join = Join { left, right, stack: Vec::new(), leaves: None, held, pages_bytes, failed: false };
+        let mut join =
+            Join { _pins: (left.pin(), right.pin()), left, right, stack: Vec::new(), leaves: None, held, pages_bytes, failed: false };
         join.push(first)?;
         Ok(join)
     }

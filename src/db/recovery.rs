@@ -561,22 +561,22 @@ impl State {
 
     /// Adds to `index` an entry for each version of each row of `table`
     /// readers may still see, keyed as `ix` says; keys with a null are left
-    /// out (`Index::insert`). One by one, as writers may add to it too.
+    /// out (`Index::insert`). As writers may add to it too
+    /// (`Index::load_beside_writers`).
     pub(super) fn fill_index(&self, index: &dyn Index, ix: &IndexDesc, as_of: Timestamp) -> Result<()> {
-        for entry in self.entries_for(ix, as_of)? {
-            let (key, id) = entry?;
-            index.insert(key, id)?;
-        }
-        Ok(())
+        index.load_beside_writers(&mut self.entries_for(ix, as_of)?, (&self.work, self.load_area()))
     }
 
     /// As `fill_index`, into `index`, new, which nothing else reads or
-    /// writes meanwhile: loaded whole (`Index::load`), in a work area of
-    /// the database's MEMORY.WORK_BYTES.
+    /// writes meanwhile: loaded whole (`Index::load`).
     pub(super) fn load_index(&self, index: &dyn Index, ix: &IndexDesc, as_of: Timestamp) -> Result<()> {
+        index.load(&mut self.entries_for(ix, as_of)?, (&self.work, self.load_area()))
+    }
+
+    /// MEMORY.WORK_BYTES in batches of SPILL.BATCH_BYTES, for a load.
+    fn load_area(&self) -> Area {
         use crate::settings::{MEMORY_WORK_BYTES, SPILL_BATCH_BYTES, batch_bytes, work_bytes};
-        let area = Area::new(work_bytes(self.settings.get(MEMORY_WORK_BYTES)), batch_bytes(self.settings.get(SPILL_BATCH_BYTES)));
-        index.load(&mut self.entries_for(ix, as_of)?, (&self.work, area))
+        Area::new(work_bytes(self.settings.get(MEMORY_WORK_BYTES)), batch_bytes(self.settings.get(SPILL_BATCH_BYTES)))
     }
 
     /// The entries the index `ix` holds, of each version

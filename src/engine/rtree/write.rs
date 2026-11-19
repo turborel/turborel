@@ -7,33 +7,46 @@ use std::sync::atomic::Ordering;
 
 use super::node::{Entry, MAX_LEVEL, Node};
 use super::scan::Walk;
-use super::{RTree, Visit, corrupt, meta_bytes};
+use super::{Meta, RTree, Visit, corrupt, meta_bytes};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::spatial::{Bounds, partition};
 use crate::storage::RowId;
 
+/// A change to an entry's reference count.
+#[derive(Clone, Copy)]
+pub(super) enum Delta {
+    Add(u64),
+    Remove,
+}
+
 impl RTree {
-    pub(super) fn change_existing(&self, bounds: Bounds, row: RowId, increment: bool) -> Result<bool> {
+    /// Changes the count of `(bounds, row)` if it is in the tree, and says
+    /// in which leaf. A leaf
+    /// retired since it was found is not changed: the search starts again,
+    /// and finds the entry where reclamation put it.
+    pub(super) fn change_existing(&self, bounds: Bounds, row: RowId, delta: Delta) -> Result<Option<PageId>> {
         loop {
-            let Some(id) = self.find(bounds, row)? else { return Ok(false) };
+            let Some(id) = self.find(bounds, row)? else { return Ok(None) };
             let _held = self.inner.locks.lock(id)?;
             let mut node = self.read(id)?;
             let at = node.entries.iter().position(|e| e.id == row && e.bounds == bounds);
-            let Some(at) = at else { continue };
+            let (Some(at), false) = (at, node.retired) else { continue };
             let entry = node.entries.get_mut(at).ok_or_else(|| corrupt("an entry just found is missing"))?;
-            if increment {
-                entry.value = entry
-                    .value
-                    .checked_add(1)
-                    .ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] an R-tree entry has too many references"))?;
-            } else if entry.value > 1 {
-                entry.value = entry.value.saturating_sub(1);
-            } else {
+            match delta {
+                Delta::Add(count) => {
+                    entry.value = entry
+                        .value
+                        .checked_add(count)
+                        .ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] an R-tree entry has too many references"))?;
+                }
+                Delta::Remove => entry.value = entry.value.saturating_sub(1),
+            }
+            if entry.value == 0 {
                 node.entries.remove(at);
             }
             self.store(id, &node)?;
-            return Ok(true);
+            return Ok(Some(id));
         }
     }
 
@@ -47,12 +60,12 @@ impl RTree {
         Ok(None)
     }
 
-    pub(super) fn add(&self, bounds: Bounds, row: RowId) -> Result<()> {
+    pub(super) fn add(&self, bounds: Bounds, row: RowId, count: u64) -> Result<()> {
         loop {
             let Some((visit, path)) = self.descend(bounds)? else { continue };
             let held = self.inner.locks.lock(visit.id)?;
             let mut node = self.read(visit.id)?;
-            if node.stamp != visit.stamp || node.pending {
+            if node.stamp != visit.stamp || node.pending || node.retired {
                 continue;
             }
             if node.entries.len() >= self.inner.capacity {
@@ -60,7 +73,7 @@ impl RTree {
                 self.finish_split(visit.id, path)?;
                 continue;
             }
-            node.entries.push(Entry { bounds, id: row, value: 1 });
+            node.entries.push(Entry { bounds, id: row, value: count });
             self.store(visit.id, &node)?;
             return Ok(());
         }
@@ -77,7 +90,7 @@ impl RTree {
                 self.finish_split(visit.id, path)?;
                 return Ok(None);
             }
-            if node.stamp != visit.stamp {
+            if node.stamp != visit.stamp || node.retired {
                 return Ok(None);
             }
             if node.level != visit.level {
@@ -144,12 +157,14 @@ impl RTree {
             .map(|&at| node.entries.get(at).copied().ok_or_else(|| corrupt("a split entry is missing")))
             .collect::<Result<_>>()?;
         let (left, right) = entries.split_at_checked(split.at).ok_or_else(|| corrupt("a split position is past its entries"))?;
+        let stamp = self.fresh_stamp()?;
         let (new, mut page) = self.inner.pool.new_page(self.inner.file)?;
-        let right = Node { level: node.level, stamp: node.stamp, right: node.right, pending: false, entries: right.to_vec() };
+        let right =
+            Node { level: node.level, stamp: node.stamp, right: node.right, pending: false, retired: false, entries: right.to_vec() };
         *page = right.bytes()?;
         drop(page);
         node.entries = left.to_vec();
-        node.stamp = new.0;
+        node.stamp = stamp;
         node.right = Some(new);
         node.pending = true;
         if let Err(error) = self.store(id, &node) {
@@ -164,21 +179,22 @@ impl RTree {
 
     fn grow(&self, id: PageId, node: &mut Node) -> Result<()> {
         let _meta = self.inner.locks.lock(self.inner.meta)?;
-        if self.root()?.id != id {
+        let meta = self.meta_fields()?;
+        if meta.root != id {
             return Ok(());
         }
         let level = node.level.checked_add(1).filter(|&n| n <= MAX_LEVEL).ok_or_else(|| corrupt("its height limit is exceeded"))?;
         let right_id = node.right.ok_or_else(|| corrupt("a pending split has no sibling"))?;
         let right = self.read(right_id)?;
         let (new, mut page) = self.inner.pool.new_page(self.inner.file)?;
-        let mut root = Node::empty(new, level);
+        let mut root = Node::empty(meta.next, level);
         let empty = Bounds::point([0.0_f64; crate::spatial::DIMENSIONS])?;
         root.entries.push(Entry { bounds: node.bounds().unwrap_or(empty), id: id.0, value: node.stamp });
         root.entries.push(Entry { bounds: right.bounds().unwrap_or(empty), id: right_id.0, value: right.stamp });
         *page = root.bytes()?;
         drop(page);
         match self.inner.pool.write(self.inner.file, self.inner.meta) {
-            Ok(mut metadata) => *metadata = meta_bytes(new, root.stamp),
+            Ok(mut metadata) => *metadata = meta_bytes(Meta { root: new, stamp: root.stamp, next: meta.next.saturating_add(1) }),
             Err(error) => {
                 // No root link was published. Cleanup failure leaks a
                 // page only; preserve the original publication error.

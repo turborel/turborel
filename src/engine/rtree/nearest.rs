@@ -9,7 +9,7 @@ use std::collections::BinaryHeap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering as AtomicOrder;
 
-use super::{RTree, Visit, corrupt};
+use super::{Pin, RTree, Visit, corrupt};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::memory::{MemoryBudget, Reservation};
@@ -40,6 +40,7 @@ pub struct Nearest {
     /// before an entry already returned. Entries held throughout remain
     /// ordered by their admissible branch bounds.
     last: Option<(f64, RowId)>,
+    _pin: Pin,
 }
 
 #[derive(Clone, Copy)]
@@ -161,7 +162,18 @@ impl Nearest {
 
     fn from_root(tree: RTree, root: Visit, query: Bounds, budget: &Arc<MemoryBudget>, metric: Metric) -> Result<Nearest> {
         let held = budget.reserve(0, "the R-tree nearest-neighbour frontier")?;
-        let mut nearest = Nearest { tree, query, metric, queue: BinaryHeap::new(), held, failed: false, visited: 0, limit: 0, last: None };
+        let mut nearest = Nearest {
+            _pin: tree.pin(),
+            tree,
+            query,
+            metric,
+            queue: BinaryHeap::new(),
+            held,
+            failed: false,
+            visited: 0,
+            limit: 0,
+            last: None,
+        };
         nearest.push(Queued { distance: metric.first(), item: Item::Page(root) })?;
         Ok(nearest)
     }
