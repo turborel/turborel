@@ -287,6 +287,53 @@ turborel: SQLCODE -919 (SQLSTATE 08006): cannot receive: the server did not answ
 turborel: SQLCODE -920 (SQLSTATE TB920): the statement was cancelled
 ```
 
+## Extensions
+
+`turborel extension COMMAND` manages the packages of extensions in a
+server's plug-in directory, on the server's machine, and needs no
+connection. [Packages and Registries](04-plugins-packages.md) describes
+packages, registries and every command.
+
+```
+turborel extension search WORDS...
+turborel extension info NAME
+turborel extension install [NAME[@RANGE] | FILE.tbpkg]...
+turborel extension upgrade [NAME]... [--latest]
+turborel extension remove NAME
+turborel extension autoremove
+turborel extension list
+turborel extension verify
+turborel extension outdated
+turborel extension why NAME
+turborel extension clean
+turborel extension lock export FILE
+turborel extension lock import FILE
+turborel extension pack DIR [--key FILE] [--output FILE]
+turborel extension publish DIR --registry-dir DIR --key FILE [--expires-days DAYS]
+turborel extension keygen --output FILE
+```
+
+| Option | Meaning |
+|---|---|
+| `--set NAME=VALUE` | a setting of the server, PLUGINS.DIRECTORIES, PLUGINS.REGISTRIES, PLUGINS.PINS, PLUGINS.TRUSTED_KEYS or PLUGINS.REQUIRE_SIGNED |
+| `--cache DIR` | where packages fetched are kept; `.cache` in the plug-in directory by default |
+| `--tls FILE` | trust the registries' certificates of the PEM file FILE instead of the platform's authorities |
+| `--latest` | upgrade beyond the ranges asked for |
+| `--key FILE` | the signing key of `pack` and `publish` |
+| `--output FILE` | where `pack` and `keygen` write |
+| `--registry-dir DIR` | the registry directory `publish` writes into |
+| `--expires-days DAYS` | how long the index `publish` signs is trusted; 30 by default |
+
+The environment variable `TURBOREL_PLUGINS_DIRECTORIES` gives
+PLUGINS.DIRECTORIES, and so on for each setting. A command that fails
+writes why to standard error and exits with 1.
+
+```
+$ turborel extension list --set PLUGINS.DIRECTORIES=/var/lib/turborel/plugins
+GEO_TOOLS 1.4.0 explicit ^1.0.0 https://plugins.example.com/
+UNITS 2.1.0 dependency https://plugins.example.com/
+```
+
 ## Exit status
 
 0 if every statement and import succeeded; 1 if one failed, or an

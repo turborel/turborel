@@ -14,6 +14,7 @@ mod builtin;
 mod configurable;
 mod graph;
 mod kind;
+mod plugins;
 mod started;
 mod vector;
 mod words;
@@ -43,6 +44,10 @@ pub use graph::{
     GRAPH_ON_LIMIT, GRAPH_PARALLEL_MIN_STATES, TRUNCATE,
 };
 pub use kind::{Kind, column_list, column_names};
+pub use plugins::{
+    HOST_ONLY, PLUGINS_CALL_TIMEOUT_MS, PLUGINS_CANCEL_GRACE_MS, PLUGINS_DIRECTORIES, PLUGINS_MAX_CALL_BYTES, PLUGINS_MAX_MESSAGE_BYTES,
+    PLUGINS_MEMORY_BYTES, PLUGINS_PINS, PLUGINS_PROCESSES, PLUGINS_REGISTRIES, PLUGINS_REQUIRE_SIGNED, PLUGINS_TRUSTED_KEYS,
+};
 pub use started::Started;
 pub use vector::{
     BUILD_MEMORY_BYTES, VECTOR_APPROX_DEFAULT, VECTOR_APPROX_FALLBACK, VECTOR_BEAM_WIDTH, VECTOR_BUILD_MEMORY_BYTES, VECTOR_SEARCH_LIST,

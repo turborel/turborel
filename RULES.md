@@ -178,6 +178,13 @@ verification approach DO-178C expects (§8).
 | D150 | A reachability index prunes a search's starts by landmark labels |
 | D151 | A graph's statistics are made of its tables', and choose where a search starts |
 | D152 | A search expands a frontier at once and chooses MS-BFS and workers by cost |
+| D167 | An external plug-in is a process spoken to in protocol 1 over its pipes |
+| D168 | An extension is a database object made of its manifest, logged with it |
+| D169 | An extension's objects are bridged onto the interfaces of their kinds |
+| D170 | A plug-in's processes are pooled, bounded in time and bytes, and restarted after a failure |
+| D171 | Extensions are versioned packages, resolved together and locked per database |
+| D172 | What a plug-in does is shown, and its errors keep their class |
+| D173 | Only the operator chooses what runs, and packages are checked by digest and signature |
 
 ### The project
 
@@ -6123,6 +6130,130 @@ work. A PATH_ALGO hint (GS §16 R16.8) chooses within the family, and is
 refused with -103 (GRF-0070) where it cannot answer the pattern. EXPLAIN
 shows the choice and the estimate, from the row counts as the statement
 was bound; the executor chooses again from the counts as it runs.
+
+#### D167. An external plug-in is a process spoken to in protocol 1 over its pipes
+
+A plug-in of another party runs as processes of its own, started with
+`std::process`, never loaded into the database's address space, so a
+crash, a hang or a fault of memory fails its call and nothing else, and
+it may be written in any language (`src/plugin.rs`). The database writes
+to its standard input and reads its standard output in frames, a length
+of four bytes, a type and a body, of nine messages: HELLO, WELCOME, CALL,
+RESULT, ERROR, CANCEL, SHUTDOWN, SQL and SQL_DONE (`plugin/wire.rs`).
+Values cross as ten tags, a value of a type without one in its text form
+(`plugin/values.rs`), and each kind's operations have payloads of their
+own (`plugin/payload.rs`). Its standard error is kept, its last bytes
+told with a failure. The protocol is version 1 and so is every format of
+it. A program reads its pipes on threads `src/threads.rs` starts, as any
+other thread of the database is.
+
+#### D168. An extension is a database object made of its manifest, logged with it
+
+CREATE EXTENSION, ALTER EXTENSION ... UPDATE and DROP EXTENSION
+RESTRICT or CASCADE make, replace and drop an extension on the state of
+the session's transaction, as any definition is made
+(`db/extensions.rs`). Its manifest, format 1, is read by SQL's own
+tokens (`parser/manifest.rs`, `plugin/manifest.rs`). The session finds
+and checks the package first (`db/extensions/session.rs`) and logs the
+statement rewritten with what it read, the manifest as the hexadecimal
+of its UTF-8, its directory, signer and digest, so recovery and a
+replica make the extension of the log alone, and a statement that writes
+those clauses itself is refused. The catalog keeps each extension
+(`catalog/extensions.rs`), written in its image after the spatial
+catalog, and the database registers its objects again as it opens,
+starting no process until a call needs one. An extension's lock is a
+name of its own, outside every schema. What calls an extension's object
+depends on it, as on a routine, so DROP RESTRICT is refused while a
+view, generated column, constraint, routine or another extension
+requiring it remains, and CASCADE drops them first.
+
+#### D169. An extension's objects are bridged onto the interfaces of their kinds
+
+Each object a manifest declares implements the interface its kind
+already has (`plugin/bridge/`): a function `ScalarFunction`, batching
+BATCH rows a call and cancelled with its statement (D44); an aggregate
+`AggregateFunction`, its state the program's bytes, which the database
+keeps; a table function `TableFunction`, the queries it reads run by the
+statement; a procedure `Procedure`, its SQL run in the caller's
+transaction; a metric `VectorMetric`, whose many distances from one
+query are one call, so VECTOR_DISTANCE over a batch and a DiskANN search
+batch them; and a model `Embedder`. An authenticator is found by the
+server by its mechanism, and a backup target and a partitioning strategy
+are written against the interfaces those features take
+(`bridge/pending.rs`). Functions are registered in the state's own
+registry, so a transaction rolled back leaves none. Metrics and models
+are held weakly in the shared registries and strongly by the state that
+holds the extension, so they go when it does. No two extensions, nor an
+extension and a built-in or registered object, share a name of a kind.
+
+#### D170. A plug-in's processes are pooled, bounded in time and bytes, and restarted after a failure
+
+An extension's pool starts processes as calls need them, at most
+PLUGINS.PROCESSES at once, each greeted by HELLO before its first call
+(`plugin/pool.rs`, `plugin/process.rs`). A process that ends, breaks
+the protocol, runs past PLUGINS.CALL_TIMEOUT_MS or sends more than
+PLUGINS.MAX_MESSAGE_BYTES in a message or PLUGINS.MAX_CALL_BYTES in a
+call is stopped and its call fails, and the next call starts another. A
+statement cancelled sends CANCEL and gives the program
+PLUGINS.CANCEL_GRACE_MS to answer before its process is stopped. Each
+frame read is reserved of the memory budget while it is held, and HELLO
+tells the program PLUGINS.MEMORY_BYTES, as capping a process's memory
+would need calls of the operating system the database does not make.
+A program starts in its directory with an environment of PATH and the
+temporary directory alone. A pool dropped, as the last state holding its
+extension is, sends SHUTDOWN and stops its processes.
+
+#### D171. Extensions are versioned packages, resolved together and locked per database
+
+An extension's VERSION is a semantic version and REQUIRES names another
+and an npm-style range of its versions, a prerelease taken only when
+asked for (`plugin/package/semver.rs`). Resolution picks the newest
+versions that meet every range, backtracking where a choice fails, and
+refuses a cycle, a conflict or a package missing with SQLSTATE 38T09
+(`plugin/package/resolve.rs`). CREATE EXTENSION creates the extensions
+required first, AS DEPENDENCY, keeping the versions the database has.
+The versions created are the database's lock, kept in its catalog and
+shown by INFORMATION_SCHEMA.EXTENSION_PACKAGES, which `turborel
+extension lock export` writes to a file and `install` reproduces
+exactly, each digest checked. ALTER EXTENSION ... UPDATE runs the
+scripts of SQL the new manifest names for the version it had, in the
+transaction, after each extension requiring it is checked to accept the
+new version.
+
+#### D172. What a plug-in does is shown, and its errors keep their class
+
+INFORMATION_SCHEMA.EXTENSIONS shows each extension, its version, signer,
+and its processes and calls since the database opened;
+EXTENSION_OBJECTS each object declared; EXTENSION_PACKAGES the lock
+(`system/extensions.rs`). EXPLAIN ends with the plug-in calls a plan
+makes. A program's ERROR keeps its SQLSTATE if of a class a routine may
+raise, 22, 23, 38, 39, 42 or 2F, and is 38000 else; the database's own
+conditions of a plug-in are of subclass 38T (`plugin/errors.rs`).
+
+#### D173. Only the operator chooses what runs, and packages are checked by digest and signature
+
+A program of an extension runs with the server's rights, so only the
+database's owner, or any user of a database with none, creates, updates
+or drops one, and its directory must be under one of
+PLUGINS.DIRECTORIES as it is loaded and as each process starts.
+PLUGINS.DIRECTORIES, PLUGINS.TRUSTED_KEYS and PLUGINS.REQUIRE_SIGNED
+are a node's settings the host gives, which SQL may not set. A package
+is turborel's own archive, format 1: each entry carries its SHA-256
+digest, and an optional Ed25519 signature covers the manifest and every
+path and digest (`plugin/package/archive.rs`). The core makes no
+cryptography (D26), so the host gives it one (`PackageCrypto`, which
+`turborel_protocol::packages` implements on aws-lc-rs), and a package is
+refused without it. A package installs into
+`<first PLUGINS.DIRECTORIES>/<NAME>/<version>/` with its digests and
+signature beside it, checked again each time its program starts; with
+PLUGINS.REQUIRE_SIGNED ON, an unsigned package, or one signed by a key
+not trusted, is refused with 38T08. A registry is static files, a signed
+index and its packages; a client trusts the index only when a key of
+PLUGINS.TRUSTED_KEYS signed it and it has not expired, and the digests
+it lists only then. Several registries are tried in the order of
+PLUGINS.REGISTRIES, a package pinned to one by PLUGINS.PINS, and none is
+configured by default. The command-line client fetches over HTTPS with
+rustls (`client/src/fetch.rs`); the server never fetches.
 
 #### D137. A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them
 

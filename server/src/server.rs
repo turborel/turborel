@@ -169,10 +169,12 @@ impl Services {
         &self.0.db
     }
 
-    /// The authenticator of `mechanism`, if the server has one: its
+    /// The authenticator of `mechanism`, if the server has one, else an
+    /// extension of the database brings one (`extensions.rs`): its
     /// refusals told, for an audit of who tried to connect.
     pub fn authenticator(&self, mechanism: &str) -> Option<Arc<dyn Authenticator>> {
-        let inner = self.0.authenticators.iter().find(|a| a.mechanism() == mechanism).cloned()?;
+        let own = self.0.authenticators.iter().find(|a| a.mechanism() == mechanism).cloned();
+        let inner = own.or_else(|| crate::extensions::extended(&self.0.db, mechanism))?;
         Some(Arc::new(Told { inner, db: self.0.db.clone() }))
     }
 

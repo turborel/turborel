@@ -281,7 +281,7 @@ fn batched((e, inputs): (&Expr, &[usize]), (batch, given): (&Batch, &[usize]), r
             Err(error) => return Some(Err(error)),
         }
     }
-    Some(function.0.call_many(&rows))
+    Some(function.0.call_many_in(&rows, runner))
 }
 
 /// The value of `e`, of a row of the values at `inputs` of row `r` of

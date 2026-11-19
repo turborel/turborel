@@ -9,6 +9,7 @@ One reference page for each statement, in alphabetical order.
 - [ALTER DATABASE](alter-database.md): hand the database on to another owner, or change the replica group's members
 - [ALTER DOMAIN](alter-domain.md): change a domain's default or constraints
 - [ALTER EMBEDDING MODEL](alter-embedding-model.md): change an embedding model's options
+- [ALTER EXTENSION](alter-extension.md): update an extension to another version
 - [ALTER INDEX](alter-index.md): change an index's options
 - [ALTER PROPERTY GRAPH](alter-property-graph.md): add or drop a graph's element tables, labels and properties, or compile it
 - [ALTER SEQUENCE](alter-sequence.md): change a sequence generator
@@ -31,6 +32,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE COLLATION](create-collation.md): define a collation
 - [CREATE DOMAIN](create-domain.md): define a domain
 - [CREATE EMBEDDING MODEL](create-embedding-model.md): define an embedding model of a plug-in
+- [CREATE EXTENSION](create-extension.md): load an extension of an external plug-in
 - [CREATE FUNCTION](create-function.md): define an SQL-invoked function, or a polymorphic table function
 - [CREATE GRAPH](create-graph.md): create a GQL graph, typed by a graph type or open
 - [CREATE GRAPH TYPE](create-graph-type.md): define the node and edge types a typed GQL graph holds
@@ -70,6 +72,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP COLLATION](drop-collation.md): drop a collation
 - [DROP DOMAIN](drop-domain.md): drop a domain
 - [DROP EMBEDDING MODEL](drop-embedding-model.md): drop an embedding model
+- [DROP EXTENSION](drop-extension.md): drop an extension
 - [DROP GRAPH](drop-graph.md): drop a GQL graph and its tables
 - [DROP GRAPH TYPE](drop-graph-type.md): drop a graph type
 - [DROP INDEX](drop-index.md): drop an index

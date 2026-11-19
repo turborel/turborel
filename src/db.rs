@@ -7,9 +7,8 @@
 //!     CLOSE, COMMIT WORK, DELETE (positioned or searched), FETCH, INSERT,
 //!     OPEN, ROLLBACK WORK, SELECT ... INTO, UPDATE (positioned or searched).
 //!
-//! \[DESIGN\] A `Session` plays an application program bound to a `<module>`,
-//! with its authorization identifier, cursors and current transaction. The
-//! binding is left to the implementation [X3.135-1986 §3.4], as is this API.
+//! \[DESIGN\] A `Session` plays an application program bound to a `<module>`, with its authorization
+//! identifier, cursors and current transaction. The binding is left to the implementation [X3.135-1986 §3.4], as is this API.
 //!
 //! What SQL-86 leaves to the implementation is reached through Rust:
 //!
@@ -89,6 +88,7 @@ pub(crate) mod dynamic;
 mod execute;
 mod explain;
 mod export;
+mod extensions;
 mod files;
 mod formats;
 mod functions;

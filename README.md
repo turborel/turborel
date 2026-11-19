@@ -109,6 +109,9 @@ behind it, and each can be replaced or added to.
   top-k by RRF or weighted scores.
 - Embedding models, pipelines that chunk and embed text, and columns
   embedded after commit.
+- [External plug-ins](doc/client/04-plugins.md): functions, metrics,
+  models and more from programs of other parties, run as processes of their
+  own, installed from signed packages and registries.
 - [Property graphs](doc/sql/20-property-graphs.md) over tables or
   queries' rows, queried by GRAPH_TABLE's path patterns through adjacency
   indexes, LINE_GRAPH among them.

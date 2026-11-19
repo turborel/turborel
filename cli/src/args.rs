@@ -129,6 +129,11 @@ pub enum Command {
     Version,
     /// A session.
     Run(Box<Options>),
+    /// \[EXTENSION\] A command of the package manager (design document
+    /// §13.5): `turborel extension ...`.
+    Extension(Box<crate::extension::Invocation>),
+    /// The usage text of `turborel extension`.
+    ExtensionHelp,
 }
 
 /// What the command line named, before it is checked.
@@ -176,6 +181,11 @@ struct NamedImport {
 ///
 /// What is wrong with it, for the user.
 pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Command, String> {
+    if let Some((first, after)) = args.split_first()
+        && first == "extension"
+    {
+        return Ok(crate::extension::parse(after, env)?.map_or(Command::ExtensionHelp, |inv| Command::Extension(Box::new(inv))));
+    }
     let mut named = Named::default();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {

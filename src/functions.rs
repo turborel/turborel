@@ -444,6 +444,14 @@ pub trait ScalarFunction: Send + Sync {
     fn call_many(&self, rows: &[Vec<Value>]) -> Result<Vec<Value>> {
         rows.iter().map(|r| self.call(r)).collect()
     }
+    /// \[DESIGN\] As `call_many`, ending as the statement is, so a plug-in's call is cancelled (RULES.md D44, D170).
+    ///
+    /// # Errors
+    ///
+    /// As `call_many`'s, or the statement's cancellation.
+    fn call_many_in(&self, rows: &[Vec<Value>], _statement: &dyn crate::exec::Subqueries) -> Result<Vec<Value>> {
+        self.call_many(rows)
+    }
 }
 
 /// \[EXTENSION\] A set function: one of COUNT, SUM, AVG, MAX, MIN

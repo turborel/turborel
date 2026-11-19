@@ -311,6 +311,10 @@ impl Session {
         let Some(definition) = settings.key(name).and_then(|k| settings.definition(k)) else {
             return fail(Code::SyntaxRule, format!("[DESIGN] there is no setting {name}"));
         };
+        // [DESIGN] RULES.md D173: what bounds extensions is the host's.
+        if crate::settings::HOST_ONLY.contains(&definition.name.as_str()) {
+            return fail(Code::Privilege, format!("[DESIGN] {} is the node's, which the host sets; SQL may not", definition.name));
+        }
         if !definition.per_session {
             let msg = format!("[DESIGN] {} is the database's, which a session does not set for itself", definition.name);
             return fail(Code::SyntaxRule, msg);

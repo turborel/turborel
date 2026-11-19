@@ -194,6 +194,7 @@ impl Session {
                 Session::plugin_registered(st, statement, schema)?;
                 self.own_object(st, v.name(), (schema, "EXTENSION"))
             }
+            SchemaStatement::Extension(e) => Ok(super::extensions::extension_lock(&e.definition().name)),
             SchemaStatement::GraphType(t) => self.own_object(st, &t.name, (schema, "EXTENSION")),
             SchemaStatement::GqlGraph(g) => self.own_object(st, &g.name, (schema, "EXTENSION")),
             // [EXTENSION] as CREATE COLLATION [ISO/IEC 9075-2:2023 §11.43 SR1].
@@ -313,6 +314,7 @@ impl State {
             SchemaStatement::Graph(g) => self.create_graph(schema, g),
             SchemaStatement::AlterGraph(a) => self.alter_graph(schema, a),
             SchemaStatement::Vector(v) => self.vector_statement(schema, v),
+            SchemaStatement::Extension(e) => self.extension_statement(e),
             SchemaStatement::GraphType(t) => self.create_graph_type(schema, t),
             SchemaStatement::GqlGraph(g) => self.record_gql_graph(schema, g),
             SchemaStatement::XmlSchema(x) => self.create_xml_schema(schema, x),

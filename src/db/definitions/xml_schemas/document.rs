@@ -59,6 +59,9 @@ impl Session {
         if let SchemaStatement::XmlSchema(x) = statement {
             return self.xml_schema_statement(cx, x, params);
         }
+        if let SchemaStatement::Extension(e) = statement {
+            return self.extension_statement(cx, e);
+        }
         self.schema_statement(cx.st, cx.tx, statement, text)
     }
 

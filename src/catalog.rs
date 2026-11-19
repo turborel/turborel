@@ -21,6 +21,7 @@ mod columns;
 mod constraints;
 mod domains;
 mod embedding;
+mod extensions;
 mod graph_types;
 mod graphs;
 mod horizon;
@@ -48,6 +49,8 @@ pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, Fore
 pub use domains::{DomainDesc, UsageDesc, usage_held};
 pub use embedding::{Embeddings, ModelDesc, ModelOption, PipelineDesc, TRIGGER_SUFFIXES};
 pub(crate) use embedding::{embeddings, put_embeddings};
+pub use extensions::ExtensionDesc;
+pub(crate) use extensions::{extensions, put_extensions};
 pub use graph_types::{GqlCatalog, GqlGraphDesc, GraphTypeDesc};
 pub use graphs::{
     ElementKind, ElementTableDesc, EndpointDesc, Endpoints, GRAPH_INVALID, GraphDesc, GraphMode, LabelDesc, PropertyDesc, identifier,
@@ -532,6 +535,11 @@ pub trait Catalog: Send + Sync {
     /// Make `embeddings` the embedding models and vector pipelines, in
     /// place of those there were.
     fn set_embeddings(&mut self, embeddings: Embeddings);
+    /// \[EXTENSION\] The extensions created, in the order made (RULES.md
+    /// D171).
+    fn extensions(&self) -> &[ExtensionDesc];
+    /// Make `extensions` the extensions, in place of those there were.
+    fn set_extensions(&mut self, extensions: Vec<ExtensionDesc>);
     /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §20.2, §20.3] The reference systems defined and geometry columns registered.
     fn spatial(&self) -> &SpatialCatalog;
     /// Make `spatial` the systems defined and the columns registered.

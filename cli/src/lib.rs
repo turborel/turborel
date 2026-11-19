@@ -8,6 +8,7 @@
 
 mod args;
 mod dial;
+pub mod extension;
 mod interrupt;
 mod run;
 mod show;
@@ -75,6 +76,8 @@ pub const USAGE: &str = "usage: turborel [options]
       --help             print this
       --version          print the release
 
+turborel extension COMMAND manages the packages of extensions in a server's
+plug-in directory; turborel extension --help tells its commands.
 Without -c or -f, statements are read from standard input: typed at a terminal,
 each is run once a semicolon ends it, and the end of input (Ctrl-D; Ctrl-Z then
 Enter on Windows) quits. The last statement of a file needs no semicolon.

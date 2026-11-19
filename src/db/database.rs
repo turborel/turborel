@@ -155,6 +155,7 @@ impl Database {
     pub fn with_catalog(catalog: Box<dyn Catalog>) -> Result<Self> {
         let mut st = State::with_builtins(catalog);
         st.attach_catalog_objects()?;
+        st.attach_extensions()?;
         Ok(Database::over(st))
     }
 

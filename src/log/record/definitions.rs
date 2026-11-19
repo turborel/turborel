@@ -41,6 +41,8 @@ const DROPPED_GRAPH: u8 = 19;
 const DROPPED_GRAPH_TYPE: u8 = 20;
 /// The tag of a GQL graph's drop.
 const DROPPED_GQL_GRAPH: u8 = 21;
+/// The tag of an extension's drop (RULES.md D171).
+const DROPPED_EXTENSION: u8 = 22;
 
 /// \[EXTENSION\] What a `Change::Drop` drops.
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +92,9 @@ pub enum DropTarget {
     XmlSchema(QualifiedName),
     /// \[EXTENSION\] A registered XQuery module (RULES.md D106).
     XQueryModule(QualifiedName),
+    /// \[EXTENSION\] An extension (RULES.md D171), by the name its lock
+    /// takes (`db/extensions.rs`).
+    Extension(QualifiedName),
 }
 
 /// A schema's text, the engine of each table it created, its
@@ -234,6 +239,7 @@ pub(super) fn put_dropped(out: &mut Vec<u8>, object: &DropTarget, cascade: bool)
         DropTarget::GqlGraph(graph) => (DROPPED_GQL_GRAPH, graph),
         DropTarget::XmlSchema(name) => (DROPPED_XML_SCHEMA, name),
         DropTarget::XQueryModule(name) => (DROPPED_XQUERY_MODULE, name),
+        DropTarget::Extension(name) => (DROPPED_EXTENSION, name),
         DropTarget::Cast(types) => {
             out.put_u8(DROPPED_CAST);
             crate::value::types::tags::put_type(out, &types.0);
@@ -279,6 +285,7 @@ pub(super) fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         DROPPED_GQL_GRAPH => Ok(DropTarget::GqlGraph(table(r)?)),
         DROPPED_XML_SCHEMA => Ok(DropTarget::XmlSchema(table(r)?)),
         DROPPED_XQUERY_MODULE => Ok(DropTarget::XQueryModule(table(r)?)),
+        DROPPED_EXTENSION => Ok(DropTarget::Extension(table(r)?)),
         DROPPED_CAST => {
             let source = crate::value::types::tags::data_type(r)?;
             Ok(DropTarget::Cast(Box::new((source, crate::value::types::tags::data_type(r)?))))

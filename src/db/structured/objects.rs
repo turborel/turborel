@@ -51,7 +51,8 @@ pub(in crate::db) fn type_named(statement: &SchemaStatement) -> (Option<&TableNa
         | SchemaStatement::XmlSchema(_)
         | SchemaStatement::XQueryModule(_)
         | SchemaStatement::AlterXQueryModule(_)
-        | SchemaStatement::Vector(_) => (None, "§11.53 AR1"),
+        | SchemaStatement::Vector(_)
+        | SchemaStatement::Extension(_) => (None, "§11.53 AR1"),
     }
 }
 
@@ -139,7 +140,9 @@ impl Session {
             | DropObject::Vector(_, name)
             | DropObject::GraphType(name, _)
             | DropObject::GqlGraph(name, _) => Err(rule(format!("[DESIGN] {} is no cast, ordering or transform", name.ident))),
-            DropObject::Routine(_) | DropObject::Schema { .. } => Err(rule("[DESIGN] no cast, ordering or transform is named")),
+            DropObject::Routine(_) | DropObject::Extension(..) | DropObject::Schema { .. } => {
+                Err(rule("[DESIGN] no cast, ordering or transform is named"))
+            }
         }
     }
 }
@@ -204,6 +207,8 @@ impl State {
                 catalog.set_embeddings(embeddings);
             }
             // [§4.9.6] A transform applies at no expression's binding.
+            // [EXTENSION] Those that call an object of the extension.
+            DropTarget::Extension(qn) => return self.unbound_in(&self.without_extension(&qn.ident), &|_| true, &|_| true).columns,
             DropTarget::Transform(..)
             | DropTarget::Table(_)
             | DropTarget::View(_)

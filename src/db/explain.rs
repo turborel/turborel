@@ -69,7 +69,8 @@ impl Session {
     /// The text `explain` gives of `sql` in state `st`.
     fn planned(&self, st: &Arc<State>, sql: &str, params: &Params) -> Result<String> {
         let spec = Self::parse_cursor(st, sql, params)?;
-        Ok(shown(&self.compile(st, &spec, params)?))
+        let text = shown(&self.compile(st, &spec, params)?);
+        Ok(with_plugin_calls(st, text))
     }
 }
 
@@ -91,4 +92,25 @@ fn shown(c: &Compiled) -> String {
         c.optimized.explain(),
         c.physical.explain()
     )
+}
+
+/// \[EXTENSION\] `text`, a plan, with a last line naming the objects of
+/// extensions it calls, each as its extension's name dotted with its own
+/// (RULES.md D172): a function written as called, a metric or model as
+/// its name quoted.
+fn with_plugin_calls(st: &State, text: String) -> String {
+    let upper = text.to_uppercase();
+    let mut calls = Vec::new();
+    for e in st.extensions.values() {
+        for (d, _) in &e.objects {
+            let name = d.name.to_uppercase();
+            if upper.contains(&format!("{name}(")) || upper.contains(&format!("'{name}'")) {
+                calls.push(format!("{}.{}", e.manifest.name, d.name));
+            }
+        }
+    }
+    if calls.is_empty() {
+        return text;
+    }
+    format!("{text}-- plug-in calls: {}\n", calls.join(", "))
 }

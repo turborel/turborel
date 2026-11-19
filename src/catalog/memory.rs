@@ -52,6 +52,8 @@ pub struct MemoryCatalog {
     /// The spatial reference systems defined and the geometry columns
     /// registered.
     spatial: SpatialCatalog,
+    /// The extensions created.
+    extensions: Vec<super::ExtensionDesc>,
 }
 
 impl Catalog for MemoryCatalog {
@@ -69,6 +71,12 @@ impl Catalog for MemoryCatalog {
     }
     fn set_embeddings(&mut self, embeddings: Embeddings) {
         self.embeddings = embeddings;
+    }
+    fn extensions(&self) -> &[super::ExtensionDesc] {
+        &self.extensions
+    }
+    fn set_extensions(&mut self, extensions: Vec<super::ExtensionDesc>) {
+        self.extensions = extensions;
     }
     fn spatial(&self) -> &SpatialCatalog {
         &self.spatial

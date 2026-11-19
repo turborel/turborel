@@ -1,0 +1,229 @@
+//! \[EXTENSION\] The objects of an extension, each bridged onto the trait
+//! the database already has for its kind (RULES.md D169): a call of one is
+//! a CALL to the extension's pool, its values in protocol 1.
+//!
+//! An extension installed (`Installed`) holds its manifest, its pool and
+//! its objects. The database's state holds it, so a state dropped, as a
+//! transaction rolled back drops its own, drops the extension's pool and
+//! stops its processes.
+//!
+//! * `scalar.rs`, `aggregate.rs`, `table.rs`, `procedure.rs`: functions
+//!   and procedures; `metric.rs`, `embedder.rs`: vectors.
+//! * `auth.rs`: an authenticator, which the server wraps.
+//! * `backup.rs`, `partition.rs`: backup targets and partitioning
+//!   strategies, written against the traits `pending.rs` mirrors.
+
+pub mod aggregate;
+pub mod auth;
+pub mod backup;
+pub mod embedder;
+pub mod metric;
+pub mod partition;
+pub mod pending;
+pub mod procedure;
+pub mod scalar;
+pub mod table;
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use crate::ast::TypeName;
+use crate::bytes::Reader;
+use crate::error::Result;
+use crate::functions::builtin::{Procedure, TableFunction};
+use crate::functions::{AggregateFunction, ScalarFunction};
+use crate::value::DataType;
+use crate::vector::embed::Embedder;
+use crate::vector::metric::VectorMetric;
+
+use super::errors::{invalid_manifest, violation};
+use super::host::Host;
+use super::manifest::{Declared, Manifest, ObjectKind};
+use super::pool::{CallContext, Pool, Request};
+
+/// What resolves a type a manifest names, as a column's is.
+pub type Resolve<'a> = &'a dyn Fn(&TypeName) -> Result<DataType>;
+
+/// One object of an extension, bridged.
+#[derive(Clone)]
+pub enum Bridged {
+    /// A scalar function.
+    Scalar(Arc<dyn ScalarFunction>),
+    /// An aggregate function.
+    Aggregate(Arc<dyn AggregateFunction>),
+    /// A table function.
+    Table(Arc<dyn TableFunction>),
+    /// A procedure.
+    Procedure(Arc<dyn Procedure>),
+    /// A vector metric.
+    Metric(Arc<dyn VectorMetric>),
+    /// An embedding model.
+    Embedding(Arc<dyn Embedder>),
+    /// An authentication mechanism.
+    Authenticator(Arc<auth::PluginAuthenticator>),
+    /// A backup target's scheme.
+    Target(Arc<backup::PluginTargets>),
+    /// A partitioning strategy.
+    Partition(Arc<partition::PluginStrategy>),
+}
+
+/// An extension installed: its manifest, directory, pool and objects.
+pub struct Installed {
+    /// Its manifest.
+    pub manifest: Manifest,
+    /// Its directory, absolute.
+    pub directory: PathBuf,
+    /// Its processes.
+    pub pool: Arc<Pool>,
+    /// Its objects, in the manifest's order.
+    pub objects: Vec<(Declared, Bridged)>,
+    /// The key that signed its package, if one did.
+    pub signer: Option<String>,
+}
+
+impl std::fmt::Debug for Installed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Installed").field("name", &self.manifest.name).field("directory", &self.directory).finish_non_exhaustive()
+    }
+}
+
+impl Installed {
+    /// The extension `manifest` declares, in `directory`, its objects
+    /// bridged, their types resolved by `resolve`; no process is started
+    /// until a call needs one.
+    ///
+    /// # Errors
+    ///
+    /// SQLSTATE 38T06 if a declaration names a type `resolve` refuses, or
+    /// one no value of protocol 1 carries; 38T05 if no executable is for
+    /// this platform.
+    pub fn new(manifest: Manifest, directory: PathBuf, host: &Arc<Host>, resolve: Resolve<'_>) -> Result<Installed> {
+        let executable = manifest.executable(std::env::consts::OS)?;
+        let limits = (Arc::clone(&host.limits), Arc::clone(&host.memory));
+        let pool = Pool::new(&manifest.name, (directory.clone(), executable), manifest.kinds(), limits).with_check(host.check());
+        let pool = Arc::new(pool);
+        let objects = manifest
+            .objects
+            .iter()
+            .map(|d| Ok((d.clone(), bridge(d, &pool, resolve).map_err(|e| declared_wrongly(d, &e))?)))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Installed { manifest, directory, pool, objects, signer: None })
+    }
+
+    /// Its objects of `kind`.
+    pub fn of_kind(&self, kind: ObjectKind) -> impl Iterator<Item = &Bridged> {
+        self.objects.iter().filter(move |(d, _)| d.kind == kind).map(|(_, b)| b)
+    }
+}
+
+/// `e`, a declaration's fault, as 38T06 naming it.
+fn declared_wrongly(d: &Declared, e: &crate::error::SqlError) -> crate::error::SqlError {
+    invalid_manifest(&format!("{} {}: {}", d.kind.word(), d.name, e.msg))
+}
+
+/// The object `d` declares, calling `pool`.
+fn bridge(d: &Declared, pool: &Arc<Pool>, resolve: Resolve<'_>) -> Result<Bridged> {
+    let link = Link { pool: Arc::clone(pool), kind: d.kind.code(), object: d.name.clone() };
+    Ok(match d.kind {
+        ObjectKind::Scalar => Bridged::Scalar(Arc::new(scalar::PluginScalar::new(d, link, resolve)?)),
+        ObjectKind::Aggregate => Bridged::Aggregate(Arc::new(aggregate::PluginAggregate::new(d, link, resolve)?)),
+        ObjectKind::Table => Bridged::Table(Arc::new(table::PluginTable::new(d, link, resolve)?)),
+        ObjectKind::Procedure => Bridged::Procedure(Arc::new(procedure::PluginProcedure::new(d, link, resolve)?)),
+        ObjectKind::Metric => Bridged::Metric(Arc::new(metric::PluginMetric::new(d, link)?)),
+        ObjectKind::Embedding => Bridged::Embedding(Arc::new(embedder::PluginEmbedder::new(d, link)?)),
+        ObjectKind::Authenticator => Bridged::Authenticator(Arc::new(auth::PluginAuthenticator::new(link))),
+        ObjectKind::Target => Bridged::Target(Arc::new(backup::PluginTargets::new(link))),
+        ObjectKind::Partition => Bridged::Partition(Arc::new(partition::PluginStrategy::new(link))),
+    })
+}
+
+/// The types `names` resolve to.
+fn resolved(names: &[TypeName], resolve: Resolve<'_>) -> Result<Vec<DataType>> {
+    names.iter().map(|t| checked_type(resolve(t)?)).collect()
+}
+
+/// `t`, if protocol 1 carries its values: no structured type or reference.
+fn checked_type(t: DataType) -> Result<DataType> {
+    let carried = !matches!(t, DataType::Structured(_) | DataType::Reference(_));
+    if carried { Ok(t) } else { Err(invalid_manifest(&format!("no value of {t} is carried by protocol 1"))) }
+}
+
+/// The way to an object of an extension: its pool, kind and name.
+#[derive(Clone)]
+pub struct Link {
+    /// The pool.
+    pub pool: Arc<Pool>,
+    /// Its kind's code.
+    pub kind: u8,
+    /// Its name.
+    pub object: String,
+}
+
+impl std::fmt::Debug for Link {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.pool.extension(), self.object)
+    }
+}
+
+impl Link {
+    /// Calls operation `op` with `payload`, in `cx`: its RESULT's payload.
+    ///
+    /// # Errors
+    ///
+    /// The program's error, or the pool's (`Pool::call`).
+    pub fn call(&self, op: u8, payload: Vec<u8>, cx: &mut CallContext<'_>) -> Result<Vec<u8>> {
+        self.pool.call(&Request { kind: self.kind, op, object: &self.object, payload }, cx)
+    }
+
+    /// Calls operation `op` with `payload`, uncancellable, calling no SQL.
+    ///
+    /// # Errors
+    ///
+    /// As `call`.
+    pub fn plain(&self, op: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
+        self.call(op, payload, &mut CallContext { interrupt: None, sql: None })
+    }
+
+    /// What its extension's calls are named, in EXPLAIN.
+    pub fn named(&self) -> String {
+        format!("{}.{}", self.pool.extension(), self.object)
+    }
+}
+
+/// `read` of a RESULT's payload, which must be read whole.
+///
+/// # Errors
+///
+/// SQLSTATE 38T03 if it does not hold what `read` reads, or more.
+pub fn answer<T>(payload: &[u8], read: impl FnOnce(&mut Reader<'_>) -> Result<T>) -> Result<T> {
+    let mut r = super::payload::reader(payload);
+    let made = read(&mut r).and_then(|v| r.finish().map(|()| v));
+    made.map_err(|e| violation(&format!("its RESULT is malformed: {}", e.msg)))
+}
+
+/// That `got` values answered `wanted` asked.
+///
+/// # Errors
+///
+/// SQLSTATE 38T03 if the counts differ.
+pub fn counted<T>(got: Vec<T>, wanted: usize) -> Result<Vec<T>> {
+    if got.len() == wanted { Ok(got) } else { Err(violation(&format!("it answered {} values for {wanted}", got.len()))) }
+}
+
+/// A RESULT's number: an exchange, a target or an upload.
+///
+/// # Errors
+///
+/// `Reader`'s, if it holds none.
+pub fn number(r: &mut Reader<'_>) -> Result<u64> {
+    r.u64()
+}
+
+/// A RESULT's byte: a truth or an outcome.
+///
+/// # Errors
+///
+/// `Reader`'s, if it holds none.
+pub fn byte(r: &mut Reader<'_>) -> Result<u8> {
+    r.u8()
+}

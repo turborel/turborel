@@ -11,7 +11,7 @@
 //! and the vector index methods are made as the database is, and see a
 //! metric registered later at their next call.
 
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, PoisonError, RwLock, Weak};
 
 use super::{Database, State};
 use crate::catalog::{ColumnDesc, SqlRoutineDesc};
@@ -29,19 +29,39 @@ use crate::vector::quantizer::{Quantizer, Quantizers, built_in_quantizers, quant
 pub(crate) struct SharedVectors {
     metrics: Arc<RwLock<Vec<Arc<dyn VectorMetric>>>>,
     quantizers: Arc<RwLock<Vec<Arc<dyn Quantizer>>>>,
+    /// \[EXTENSION\] The metrics of extensions, held by the states that
+    /// hold their extensions, newest last (RULES.md D169).
+    extension: Arc<RwLock<Vec<Weak<dyn VectorMetric>>>>,
 }
 
 impl SharedVectors {
     /// Every metric, the built-in first, as they are registered when it is
     /// called: what VECTOR_DISTANCE and a vector index read.
     pub(crate) fn metrics(&self) -> Metrics {
-        let shared = Arc::clone(&self.metrics);
+        let (shared, extension) = (Arc::clone(&self.metrics), Arc::clone(&self.extension));
         let builtin = crate::vector::metric::built_in_metrics();
         Arc::new(move || {
             let mut all = builtin();
             all.extend(shared.read().unwrap_or_else(PoisonError::into_inner).iter().cloned());
+            // The newest first, so an extension made again at commit is found as made.
+            all.extend(extension.read().unwrap_or_else(PoisonError::into_inner).iter().rev().filter_map(Weak::upgrade));
             all
         })
+    }
+
+    /// \[EXTENSION\] Adds `metric`, an extension's, held weakly: found by
+    /// name while a state holds its extension (RULES.md D169).
+    pub(crate) fn add_extension_metric(&self, metric: &Arc<dyn VectorMetric>) {
+        let mut all = self.extension.write().unwrap_or_else(PoisonError::into_inner);
+        all.retain(|m| m.strong_count() > 0);
+        all.push(Arc::downgrade(metric));
+    }
+
+    /// Whether a metric of `name` is built in or registered, not of an
+    /// extension.
+    pub(crate) fn registered_metric(&self, name: &str) -> bool {
+        let builtin = crate::vector::metric::built_in_metrics()().into_iter().any(|m| m.name().eq_ignore_ascii_case(name));
+        builtin || self.metrics.read().unwrap_or_else(PoisonError::into_inner).iter().any(|m| m.name().eq_ignore_ascii_case(name))
     }
 
     /// Every quantizer, the built-in first, as they are registered when it

@@ -10,6 +10,7 @@
 pub mod auth;
 mod cancels;
 pub mod certificate;
+mod extensions;
 mod holding;
 pub mod keepalive;
 mod limit;
@@ -17,6 +18,10 @@ pub mod listening;
 pub mod log;
 pub mod logins;
 pub mod native;
+/// \[EXTENSION\] The cryptography of extension packages (RULES.md D173),
+/// which the program serving a database gives it
+/// (`Database::set_package_crypto`).
+pub use turborel_protocol::packages;
 pub mod password;
 pub mod replication;
 pub mod runtime;

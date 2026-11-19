@@ -351,3 +351,9 @@ pub(in crate::db) const CREATE_XQUERY_MODULE: Command = command("CREATE XQUERY M
 pub(in crate::db) const DROP_XQUERY_MODULE: Command = command("DROP XQUERY MODULE", -25);
 /// \[EXTENSION\] ALTER XQUERY MODULE (RULES.md D106).
 pub(in crate::db) const ALTER_XQUERY_MODULE: Command = command("ALTER XQUERY MODULE", -26);
+/// \[EXTENSION\] CREATE EXTENSION (RULES.md D168).
+pub(in crate::db) const CREATE_EXTENSION: Command = command("CREATE EXTENSION", -38);
+/// \[EXTENSION\] ALTER EXTENSION (RULES.md D168).
+pub(in crate::db) const ALTER_EXTENSION: Command = command("ALTER EXTENSION", -39);
+/// \[EXTENSION\] DROP EXTENSION (RULES.md D168).
+pub(in crate::db) const DROP_EXTENSION: Command = command("DROP EXTENSION", -40);

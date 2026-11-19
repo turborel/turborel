@@ -120,7 +120,7 @@ impl State {
             | DropTarget::Pipeline(_) => Vec::new(),
             // [ISO/IEC 9075-2:2023 §11.64 GR, §11.66 GR, §11.71 GR] Those
             // that no longer bind without it.
-            DropTarget::Cast(_) | DropTarget::Ordering(_) | DropTarget::Transform(..) | DropTarget::Model(_) => {
+            DropTarget::Cast(_) | DropTarget::Ordering(_) | DropTarget::Transform(..) | DropTarget::Model(_) | DropTarget::Extension(_) => {
                 self.generations_without(target)
             }
             // [ISO/IEC 9075-2:2023 §11.62 GR1] Those that invoke it, or a
