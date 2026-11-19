@@ -1,0 +1,136 @@
+# The server's image (Dockerfile), built once a change on main has passed
+# every check (verify.yml), as nightly.yml builds the archives, and
+# published to GitHub's registry as ghcr.io/turborel/turborel:nightly,
+# with a tag naming the commit beside it (doc/operator/01-installing.md).
+# Each platform is built on a runner of its own architecture, without
+# emulation, and the builds are joined into one multi-platform image. A
+# pull request that changes the Dockerfile builds it and publishes nothing.
+name: image
+
+on:
+  workflow_run:
+    workflows: [verify]
+    branches: [main]
+    types: [completed]
+  pull_request:
+    paths: [Dockerfile, .dockerignore, .github/workflows/image.yml]
+  workflow_dispatch:
+
+# Publishing runs one at a time and, once started, always finishes, so
+# frequent merges cannot cancel each one before it publishes. A newer push
+# to a pull request replaces its build still running.
+concurrency:
+  group: image-${{ github.event.pull_request.number || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions: {}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  build:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to the registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build (pull request)
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          push: false
+      # Pushed by digest alone: the tags are given once both platforms are
+      # in the registry, by publish below. The revision label is what
+      # publish reads to tell an older build from a newer.
+      - name: Build and push by digest
+        if: github.event_name != 'pull_request'
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.revision=${{ env.SHA }}
+            org.opencontainers.image.version=nightly
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+      - name: Keep the digest
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p digests
+          touch "digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: digest-${{ matrix.arch }}
+          path: digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: digests
+          pattern: digest-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Tag the platforms' builds as one image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Checks of older commits can finish after newer ones, so a build
+          # never replaces a nightly built from a later commit of main.
+          old=$(docker buildx imagetools inspect "$IMAGE:nightly" --format '{{json .Image}}' 2>/dev/null \
+            | jq -r '."linux/amd64".config.Labels["org.opencontainers.image.revision"] // empty' || true)
+          if [ -n "$old" ]; then
+            order=$(gh api "repos/$GH_REPO/compare/$old...$SHA" -q .status)
+            if [ "$order" = "behind" ] || [ "$order" = "identical" ]; then
+              echo "The nightly image already holds $old, which is not older than $SHA."
+              exit 0
+            fi
+          fi
+          set -- --tag "$IMAGE:nightly" --tag "$IMAGE:sha-$SHA"
+          for digest in digests/*; do
+            set -- "$@" "$IMAGE@sha256:$(basename "$digest")"
+          done
+          docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.revision=$SHA" "$@"
+          docker buildx imagetools inspect "$IMAGE:nightly"

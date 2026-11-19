@@ -6783,6 +6783,8 @@ clippy.toml             lint thresholds
 rustfmt.toml            formatting (D9)
 rust-toolchain.toml     pinned toolchain (D8)
 .cargo/config.toml      the `cargo xtask` alias
+Dockerfile              the server's image (D174)
+.dockerignore           what the image's build does not read
 README.md               what turborel is; how to build and test it
 RULES.md                this file
 CONFORMANCE.md          what is implemented of the standards, and the

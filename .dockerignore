@@ -1,0 +1,26 @@
+# Files the image build does not need. Keeping them out of the build
+# context means changing them does not trigger a rebuild.
+#
+# Do not exclude crates, tests or benchmarks: cargo refuses to build if a
+# file named in a Cargo.toml is missing.
+
+.git
+.github
+.githooks
+.claude
+.idea
+.DS_Store
+target
+artwork
+research
+txts
+Dockerfile
+.dockerignore
+
+# Top-level documents, except the README.
+*.md
+!README.md
+
+# The manual, except the one page that src/lib.rs includes in its docs.
+doc
+!doc/client/03-embedding.md
