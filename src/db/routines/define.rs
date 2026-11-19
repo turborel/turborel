@@ -23,7 +23,7 @@ use crate::ast::{
 };
 use crate::binder::{alike, definition_of, qualify};
 use crate::catalog::{
-    Horizon, ParameterMode, QualifiedName, RoutineKind, SYSTEM_GRANTOR, SqlParameter, SqlRoutineDesc, UsageDesc, owner_of, sole,
+    Horizon, ParameterMode, QualifiedName, RoutineKind, SYSTEM_GRANTOR, SqlParameter, SqlRoutineDesc, Stamps, UsageDesc, owner_of, sole,
 };
 use crate::error::{At, Code, Result, SqlError};
 use crate::log::record::DropTarget;
@@ -101,6 +101,8 @@ impl State {
             sequences: Vec::new(),
             execute: Vec::new(),
             created,
+            // [§11.60 GR5]
+            stamps: Stamps::at(self.stamp),
             module: module.map(str::to_owned),
             ptf: match &r.body {
                 RoutineBody::Polymorphic(def) => Some(Box::new(self.ptf_desc(def, (names, &owner))?)),

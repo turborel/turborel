@@ -52,9 +52,13 @@ fn unknown_engines_and_methods_are_refused_before_any_change() {
     st.settings.set("TABLES.UNIQUE_INDEX_METHOD", Some(&Value::Char("nope".into()))).unwrap();
     assert_eq!(st.check_new_objects(&[table(ROW_STORE, true)]).err().map(|e| e.code), Some(Code::Api));
     assert_eq!(
-        st.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)", (None, 0), (None, &mut Epochs::fresh()))
-            .err()
-            .map(|e| e.code),
+        st.schema(
+            "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)",
+            (None, Now::default()),
+            (None, &mut Epochs::fresh())
+        )
+        .err()
+        .map(|e| e.code),
         Some(Code::Api)
     );
     assert!(!st.catalog.schema_exists("A"), "the refused <schema> left no trace");

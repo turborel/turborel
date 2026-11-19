@@ -15,8 +15,10 @@
 //! the name it defines, or grants or revokes on, exclusive, and shared
 //! ones on the tables it reads and, defining, on its schema; it is made on
 //! the definitions as they are once it holds them, so one that waited sees
-//! what the other did. Its change is logged as its text, and made again
-//! from it at commit (`Change::Defined`).
+//! what the other did. Its change is logged as its text, with the
+//! CURRENT_TIMESTAMP it ran at, and made again from it at commit
+//! (`Change::Defined`), what it makes stamped with that instant, not the
+//! clock's then [ISO/IEC 9075-2:2023 §11.60 GR5].
 
 pub(super) mod xml_schemas;
 pub(super) mod xquery_modules;
@@ -41,6 +43,7 @@ use crate::log::record::Change;
 use crate::parser::Parser;
 use crate::settings::FUNCTION_CALLS;
 use crate::txn::{LockMode, Txn};
+use crate::value::datetime::Now;
 
 /// What a schema statement did to the definitions.
 #[derive(Default)]
@@ -105,15 +108,16 @@ impl Session {
     fn staged_statement(&self, tx: &Txn, statement: &SchemaStatement, (text, object): (&str, QualifiedName)) -> Result<Completion> {
         let schema = self.default_schema();
         // [ISO/IEC 9075:1992 §5.3 SR18] the displacement of a datetime it
-        // writes without one, logged with it.
-        let zone = self.now.get().zone;
+        // writes without one, and [ISO/IEC 9075-2:2023 §11.60 GR5] the
+        // timestamps of what it makes, logged with it.
+        let now = self.now.get();
         let mut held = vec![(object, LockMode::Exclusive)];
         loop {
             let fresh = self.definitions(self.db.snapshot()?)?;
             let mut next = State::clone(&fresh);
             let mut epochs = Epochs::fresh();
             let (auth, role) = (self.auth(), self.role.borrow().clone());
-            let defined = next.define(((&auth, role.as_deref()), &schema, zone), statement, (None, None, &mut epochs))?;
+            let defined = next.define(((&auth, role.as_deref()), &schema, now), statement, (None, None, &mut epochs))?;
             let wanted: Vec<(QualifiedName, LockMode)> = defined.locks.iter().filter(|l| !held.contains(l)).cloned().collect();
             if wanted.is_empty() {
                 let next = Arc::new(next);
@@ -143,7 +147,7 @@ impl Session {
                     self.deferral.borrow_mut().forget(a, next.list_space())?;
                 }
                 let (sql, placed, epochs) = (text.to_owned(), defined.placed, epochs.given());
-                let change = Change::Defined { auth: auth.clone(), role: role.clone(), schema, zone, sql, placed, epochs };
+                let change = Change::Defined { auth: auth.clone(), role: role.clone(), schema, now, sql, placed, epochs };
                 self.stage(&fresh, tx, Changed { next, change, made: defined.made })?;
                 // [§14.11 GR3] no row inserted is no data.
                 let completion = if filled == Some(0) { Completion::NoData } else { defined.completion };
@@ -247,16 +251,20 @@ impl Session {
 
 impl State {
     /// Makes `statement` of the cell `auth` and `role` [ISO/IEC 9075-2:2023
-    /// §4.42.1.2], its names in schema `schema`; a table
+    /// §4.42.1.2], its names in schema `schema`, run as CURRENT_TIMESTAMP
+    /// was `now`: its datetimes of `now`'s displacement, and what it makes
+    /// stamped with `now` [§11.60 GR5]; a table
     /// it creates given `placed`'s engine and generation and `made`'s
     /// storage, if given; a sequence generator it defines or restarts its
     /// epoch from `epochs`.
     pub(super) fn define(
         &mut self,
-        ((auth, role), schema, zone): ((&str, Option<&str>), &str, i16),
+        ((auth, role), schema, now): ((&str, Option<&str>), &str, Now),
         statement: &SchemaStatement,
         (placed, made, epochs): (Option<&(String, u32)>, Option<&Made>, &mut Epochs),
     ) -> Result<Defined> {
+        self.stamp = now;
+        let zone = now.zone;
         match statement {
             SchemaStatement::Table(t) => self.create_table((schema, zone), t, (placed, made, epochs)),
             SchemaStatement::View(v) => self.create_view(schema, v),
@@ -305,14 +313,14 @@ impl State {
     /// The statement's own; SQLCODE -910 if it is not a schema statement.
     pub(super) fn redefine(
         &mut self,
-        (cell, schema, zone): ((&str, Option<&str>), &str, i16),
+        (cell, schema, now): ((&str, Option<&str>), &str, Now),
         sql: &str,
         (placed, made, epochs): (Option<&(String, u32)>, Option<&Made>, &[u64]),
     ) -> Result<Dropped> {
         let SqlStatement::Schema { statement, .. } = Parser::for_stored(sql)?.sql_statement()? else {
             return Err(api(format!("[DESIGN] {sql} is not a schema statement")));
         };
-        Ok(self.define((cell, schema, zone), &statement, (placed, made, &mut Epochs::logged(epochs)))?.dropped)
+        Ok(self.define((cell, schema, now), &statement, (placed, made, &mut Epochs::logged(epochs)))?.dropped)
     }
 
     /// [ISO/IEC 9075:1992 §11.3] Creates base table `t` in schema `schema`,

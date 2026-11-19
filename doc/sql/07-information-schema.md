@@ -159,7 +159,7 @@ TRIGGER](statements/create-trigger.md)):
 
 | View | One row of each |
 |---|---|
-| TRIGGERS | trigger on a table the user, or an enabled role, holds a privilege other than SELECT on: EVENT_MANIPULATION INSERT, DELETE or UPDATE, its subject table in EVENT_OBJECT_CATALOG, _SCHEMA and _TABLE, ACTION_ORDER its place, from 1, among the triggers of that table, event, time and orientation in the order they run, ACTION_CONDITION and ACTION_STATEMENT its WHEN condition and its action as written, to the owner of its schema and null to others, ACTION_ORIENTATION ROW or STATEMENT, ACTION_TIMING BEFORE, AFTER or INSTEAD OF, its transition names in ACTION_REFERENCE_OLD_TABLE, _NEW_TABLE, _OLD_ROW and _NEW_ROW, and CREATED, null, as no timestamp is kept |
+| TRIGGERS | trigger on a table the user, or an enabled role, holds a privilege other than SELECT on: EVENT_MANIPULATION INSERT, DELETE or UPDATE, its subject table in EVENT_OBJECT_CATALOG, _SCHEMA and _TABLE, ACTION_ORDER its place, from 1, among the triggers of that table, event, time and orientation in the order they run, ACTION_CONDITION and ACTION_STATEMENT its WHEN condition and its action as written, to the owner of its schema and null to others, ACTION_ORIENTATION ROW or STATEMENT, ACTION_TIMING BEFORE, AFTER or INSTEAD OF, its transition names in ACTION_REFERENCE_OLD_TABLE, _NEW_TABLE, _OLD_ROW and _NEW_ROW, and CREATED, the CURRENT_TIMESTAMP of its CREATE TRIGGER, as ROUTINES's CREATED is below |
 | TRIGGERED_UPDATE_COLUMNS | column of the column list of an UPDATE OF trigger, of a column the user holds a privilege other than SELECT on |
 | TRIGGER_TABLE_USAGE | table or view a trigger's action reads, of a trigger of a schema the user, or an enabled role, owns |
 | TRIGGER_COLUMN_USAGE | column a trigger's definition references in a search condition, its WHEN condition's or a WHERE's, or in a searched UPDATE's or DELETE's search condition or an UPDATE's source, or names in an INSERT's column list or an UPDATE's SET, its transition variables' among them, of such a trigger; not a column a query's select list alone references |
@@ -207,7 +207,7 @@ MODULE](statements/create-module.md)):
 
 | View | One row of each |
 |---|---|
-| MODULES | module the user, an enabled role or PUBLIC holds EXECUTE on: DEFAULT_CHARACTER_SET_CATALOG, _SCHEMA and _NAME SQL_TEXT's, DEFAULT_SCHEMA_CATALOG and _NAME its SCHEMA, MODULE_DEFINITION its text to the owner of its schema and null to others, MODULE_AUTHORIZATION null, SQL_PATH its PATH as written, null if none, and MODULE_CREATED and MODULE_LAST_ALTERED, null, as no timestamp is kept |
+| MODULES | module the user, an enabled role or PUBLIC holds EXECUTE on: DEFAULT_CHARACTER_SET_CATALOG, _SCHEMA and _NAME SQL_TEXT's, DEFAULT_SCHEMA_CATALOG and _NAME its SCHEMA, MODULE_DEFINITION its text to the owner of its schema and null to others, MODULE_AUTHORIZATION null, SQL_PATH its PATH as written, null if none, and MODULE_CREATED and MODULE_LAST_ALTERED, the CURRENT_TIMESTAMP of its CREATE MODULE, the same, as no statement alters a module |
 | MODULE_PRIVILEGES | privilege on a module, its PRIVILEGE_TYPE EXECUTE, the owner's of _SYSTEM among them, granted or granted by the user or an enabled role |
 | ROLE_MODULE_GRANTS | such a privilege granted to or by an enabled role |
 | MODULE_TABLE_USAGE | table or view a module's routine names, of a schema the user, or an enabled role, owns |
@@ -320,9 +320,41 @@ makes, as an observer, and NO of another. The RESULT_CAST_ columns
 describe a result cast's type, which only an external routine has, so
 are null. PARAMETERS has FROM_SQL_SPECIFIC_ and TO_SQL_SPECIFIC_
 CATALOG, _SCHEMA and _NAME, null for the same reason, and
-METHOD_SPECIFICATIONS the RESULT_CAST_ columns, null. ROUTINES and
-METHOD_SPECIFICATIONS have no CREATED and LAST_ALTERED, as no
-timestamp is kept of a routine.
+METHOD_SPECIFICATIONS the RESULT_CAST_ columns, null.
+
+ROUTINES and METHOD_SPECIFICATIONS have CREATED and LAST_ALTERED, of
+the type TIMESTAMP(2) WITH TIME ZONE. CREATED is the value
+CURRENT_TIMESTAMP had in the statement that made the routine or method
+specification, in that session's time zone, to the hundredth of a
+second. LAST_ALTERED is the same, as no statement alters a routine: ALTER
+ROUTINE is of an external routine, and every routine here is an SQL
+routine. The observers, mutators and constructor of a structured type,
+and a distinct type's two functions, are of the CREATE TYPE, or of the
+ALTER TYPE that added their attribute; a method's body is of its CREATE
+METHOD, and its specification of the statement that specified it. They
+are kept with the definitions, so a database opened again, recovered
+after a crash, or followed by a standby shows the same. Run by ANN:
+
+```sql
+CREATE FUNCTION TWICE (X INTEGER) RETURNS INTEGER CONTAINS SQL RETURN X * 2;
+COMMIT;
+SELECT ROUTINE_NAME, CREATED <= CURRENT_TIMESTAMP AS MADE, LAST_ALTERED = CREATED AS UNALTERED FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_NAME = 'TWICE';
+SELECT COLUMN_NAME, DATA_TYPE, DATETIME_PRECISION FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ROUTINES' AND COLUMN_NAME IN ('CREATED', 'LAST_ALTERED') ORDER BY ORDINAL_POSITION;
+```
+
+```
+OK
+OK
+ ROUTINE_NAME                                                 | MADE  | UNALTERED
+--------------------------------------------------------------+-------+-----------
+ TWICE                                                        | TRUE  | TRUE
+(1 row)
+ COLUMN_NAME                                                  | DATA_TYPE                                                    | DATETIME_PRECISION
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------
+ CREATED                                                      | TIMESTAMP WITH TIME ZONE                                     |                  2
+ LAST_ALTERED                                                 | TIMESTAMP WITH TIME ZONE                                     |                  2
+(2 rows)
+```
 
 ROUTINES and PARAMETERS end with twelve more, after the seven in
 PARAMETERS. XML_CHAR_TYPE, XML_CHAR_MAX_LEN, XML_CHAR_OCT_LEN,
@@ -469,7 +501,7 @@ SELECT SIZING_ID, SUPPORTED_VALUE, COMMENTS FROM INFORMATION_SCHEMA.SQL_SIZING
  F501                                                         |                                                              | YES                                                          | CONFORMANCE.md, Transactions, sessions and the Information Schema
  F501                                                         | 01                                                           | YES                                                          | CONFORMANCE.md, Transactions, sessions and the Information Schema
  F501                                                         | 02                                                           | YES                                                          | CONFORMANCE.md, Transactions, sessions and the Information Schema
- T011                                                         |                                                              | NO                                                           | NULL
+ T011                                                         |                                                              | YES                                                          | CONFORMANCE.md, Transactions, sessions and the Information Schema
  T031                                                         |                                                              | YES                                                          | CONFORMANCE.md, Truth values
 (5 rows)
  PART                                                         | NAME                                                         | IS_SUPPORTED
@@ -552,9 +584,7 @@ MAX_CARDINALITY, XML_SCHEMA_NAMESPACE XML_SCHEMA_NSPACE, and so on.
 | SQL_IMPL_INFO | SQL_IMPLEMENTATION_INFO |
 | SQL_SIZING_PROFS | SQL_SIZING_PROFILES |
 
-A short name view has every column the standard gives it but CREATED
-and LAST_ALTERED of ROUTINES_S and METHOD_SPECS, which ROUTINES and
-METHOD_SPECIFICATIONS have not.
+A short name view has every column the standard gives it.
 
 The views that describe a type end with the seven columns of an XML
 type, named XML_PRIMARY_MOD, XML_SECONDARY_MOD, XML_SCHEMA_CATALOG,

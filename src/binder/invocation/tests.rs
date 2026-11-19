@@ -69,6 +69,7 @@ fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc 
         sequences: Vec::new(),
         execute: Vec::new(),
         created: 1,
+        stamps: crate::catalog::Stamps::default(),
     }
 }
 

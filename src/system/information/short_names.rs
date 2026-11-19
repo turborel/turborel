@@ -10,9 +10,7 @@
 //!
 //! The draft gives each a `<view column list>`; here each column is named
 //! by an `<as clause>` instead, which names it as the list would
-//! [ISO/IEC 9075:1992 §7.9 SR9a, §11.19 GR1]. ROUTINES_S and METHOD_SPECS
-//! leave out CREATED and LAST_ALTERED, the timestamps of Feature T011,
-//! which ROUTINES and METHOD_SPECIFICATIONS do not show. Each slip of the draft corrected is noted
+//! [ISO/IEC 9075:1992 §7.9 SR9a, §11.19 GR1]. Each slip of the draft corrected is noted
 //! at its view.
 
 mod composites;

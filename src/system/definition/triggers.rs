@@ -10,9 +10,11 @@
 //! generators it draws from [§11.74 SR3b]. The views of triggers read them
 //! (`system/information/triggers.rs`).
 //!
-//! CREATED, the timestamp of creation [§6.58 Description 13], is null: a
-//! trigger keeps an order of creation, no timestamp (`TriggerDesc::created`).
-//! ACTION_CONDITION and ACTION_STATEMENT are as written, or null if longer
+//! CREATED is the trigger's timestamp of creation [§6.58 Description 13],
+//! the value of CURRENT_TIMESTAMP as its definition ran
+//! (`TriggerDesc::created_at`), of the domain TIME_STAMP [§5.6]; its order
+//! of creation, which ACTION_ORDER follows, is kept apart
+//! (`TriggerDesc::created`). ACTION_CONDITION and ACTION_STATEMENT are as written, or null if longer
 //! than CHARACTER_DATA holds [§11.49 GR4], so ACTION_STATEMENT is not NOT
 //! NULL, as the draft has it. ACTION_TIMING is INSTEAD OF too, of a trigger
 //! on a view [§11.49 SR15].
@@ -25,6 +27,8 @@ use crate::db::trigger_texts;
 use crate::error::Result;
 use crate::storage::Row;
 use crate::system::{Rows, Seen, SystemTable, catalog_name, number, text};
+use crate::value::datetime::{Moment, Now};
+use crate::value::types::datetime::current;
 use crate::value::{DataType, Value};
 
 /// [ISO/IEC 9075-11:2006 draft §5.6] The precision of the domain
@@ -53,7 +57,7 @@ fn trigger_named() -> Columns {
 // ---------------------------------------------------------------------------
 
 fn triggers_columns() -> Vec<ColumnDesc> {
-    let mut columns = trigger_named()
+    trigger_named()
         .data("EVENT_MANIPULATION", true)
         .id("EVENT_OBJECT_CATALOG", true)
         .id("EVENT_OBJECT_SCHEMA", true)
@@ -67,9 +71,8 @@ fn triggers_columns() -> Vec<ColumnDesc> {
         .id("ACTION_REFERENCE_NEW_TABLE", false)
         .id("ACTION_REFERENCE_OLD_ROW", false)
         .id("ACTION_REFERENCE_NEW_ROW", false)
-        .done();
-    columns.push(time_stamp("CREATED"));
-    columns
+        .time_stamp("CREATED")
+        .done()
 }
 
 /// [ISO/IEC 9075-11:2006 draft §5.6] A column `name` of TIME_STAMP, which
@@ -84,6 +87,12 @@ pub(super) fn time_stamp(name: &str) -> ColumnDesc {
         collation: None,
         generated: None,
     }
+}
+
+/// [ISO/IEC 9075-11:2006 draft §5.6] The value of TIME_STAMP the timestamp
+/// `at` is: its instant, to TIME_STAMP's precision, at its displacement.
+pub(super) fn stamped(at: Now) -> Value {
+    current(Moment::Timestamp, TIME_STAMP_PRECISION, at)
 }
 
 /// Each trigger, in the order of creation.
@@ -103,7 +112,7 @@ fn triggers(seen: &Seen<'_>) -> Result<Vec<Row>> {
                 vec![number(action_order(&all, t)), condition.as_deref().map_or(Value::Null, long), long(&statement)],
                 vec![text(orientation(t.level)), text(timing(t.time))],
                 referenced.iter().map(|n| n.as_deref().map_or(Value::Null, text)).collect(),
-                vec![Value::Null],
+                vec![stamped(t.created_at)],
             ]
             .concat(),
         );

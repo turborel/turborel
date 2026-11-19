@@ -3,6 +3,7 @@
 use super::*;
 use crate::catalog::{Horizon, QualifiedName};
 use crate::error::Code;
+use crate::value::datetime::Now;
 
 /// A name in schema A.
 fn name(ident: &str) -> QualifiedName {
@@ -31,6 +32,7 @@ fn desc(time: ActionTime, level: TriggerLevel, event: TriggerEvent, names: Trans
         columns: vec![(name("T"), "K".into()), (name("U"), "V".into())],
         sequences: vec![name("Q")],
         created: 7,
+        created_at: Now { utc: -1, zone: -720 },
     }
 }
 

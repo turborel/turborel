@@ -2282,8 +2282,14 @@ columns ISO/IEC 9075-11:2006 draft Clause 5 gives it, and the views of
 usage are there too, their Definition Schema tables made from what each
 definition keeps for RESTRICT, or binding it again where it keeps
 nothing, as VIEW_COLUMN_USAGE binds a view; a column needing what the
-catalog does not keep, as a routine's timestamps, is not defined until
-the catalog keeps it. The short name views [§5.77] are the standard's
+catalog does not keep is not defined until the catalog keeps it. The
+descriptors of routines, method specifications and modules keep their
+creation and last-altered timestamps, and triggers their creation's
+(Feature T011): the CURRENT_TIMESTAMP of the statement that made them,
+which the definition's log record carries, so recovery and a standby's
+replay give them unchanged, reading no clock. A registered XQuery
+module (D106) keeps both too, ALTER XQUERY MODULE moving the
+last-altered one. The short name views [§5.77] are the standard's
 definitions too, each over its view, so they show what it shows. SELECT
 on them is PUBLIC's and nothing else is granted. SQL_FEATURES and
 SQL_PARTS read rows `cargo xtask features` writes from the standards'

@@ -64,6 +64,7 @@ mod shadow;
 mod short_names;
 mod sql2023;
 mod sqlmm_fulltext;
+mod stamps;
 mod stats;
 mod structured;
 mod system_versioned;

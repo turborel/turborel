@@ -63,7 +63,10 @@ fn features_are_supported_as_claimed_5_52() {
         )
     };
     assert_eq!(one("T031", " "), ["BOOLEAN data type, ,YES,CONFORMANCE.md, Truth values"]);
-    assert_eq!(one("T011", " "), ["Timestamp in Information Schema, ,NO,NULL"]);
+    assert_eq!(
+        one("T011", " "),
+        ["Timestamp in Information Schema, ,YES,CONFORMANCE.md, Transactions, sessions and the Information Schema"]
+    );
     assert_eq!(one("T321", "06"), ["Basic SQL-invoked routines,ROUTINES view,YES,CONFORMANCE.md, SQL-invoked routines"]);
     assert_eq!(one("E011", "01"), ["Numeric data types,INTEGER and SMALLINT data types (including all spellings),NO,NULL"]);
 }

@@ -145,7 +145,7 @@ FEATURE	F404	 	Range variable for common column names	 	NO
 FEATURE	F405	 	NATURAL JOIN	 	NO		
 FEATURE	F406	 	FULL OUTER JOIN	 	NO		
 FEATURE	F407	 	CROSS JOIN	 	NO		
-FEATURE	F411	 	Time zone specification	 	NO		
+FEATURE	F411	 	Time zone specification	 	YES		CONFORMANCE.md, Data types
 FEATURE	F421	 	National character	 	NO		
 FEATURE	F431	 	Read-only scrollable cursors	 	NO		
 FEATURE	F432	 	FETCH with explicit NEXT	 	NO		
@@ -167,7 +167,7 @@ FEATURE	F501	 	Features and conformance views	 	YES		CONFORMANCE.md, Transaction
 FEATURE	F502	 	Enhanced documentation tables	 	YES		CONFORMANCE.md, Transactions, sessions and the Information Schema
 FEATURE	F521	 	Assertions	 	NO		
 FEATURE	F531	 	Temporary tables	 	NO		
-FEATURE	F555	 	Enhanced seconds precision	 	NO		
+FEATURE	F555	 	Enhanced seconds precision	 	YES		CONFORMANCE.md, Data types
 FEATURE	F561	 	Full value expressions	 	NO		
 FEATURE	F571	 	Truth value tests	 	NO		
 FEATURE	F591	 	Derived tables	 	NO		
@@ -284,7 +284,7 @@ FEATURE	S401	 	Distinct types based on array types	 	YES		CONFORMANCE.md, Distin
 FEATURE	S402	 	Distinct types based on multiset types	 	YES		CONFORMANCE.md, Multisets
 FEATURE	S403	 	ARRAY_MAX_CARDINALITY	 	YES		CONFORMANCE.md, Arrays and row types
 FEATURE	S404	 	TRIM_ARRAY	 	YES		CONFORMANCE.md, Arrays and row types
-FEATURE	T011	 	Timestamp in Information Schema	 	NO		
+FEATURE	T011	 	Timestamp in Information Schema	 	YES		CONFORMANCE.md, Transactions, sessions and the Information Schema
 FEATURE	T021	 	BINARY and VARBINARY data types	 	YES		CONFORMANCE.md, Binary strings
 FEATURE	T022	 	Advanced support for BINARY and VARBINARY data types	 	YES		CONFORMANCE.md, Binary strings
 FEATURE	T023	 	Compound binary literals	 	YES		CONFORMANCE.md, Binary strings

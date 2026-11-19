@@ -7,8 +7,8 @@
 //! from DATA_TYPE_DESCRIPTOR, and each finds a descriptor's character set
 //! from its collation, as the views of user-defined types do
 //! (`information/user_types.rs`). Each correction to the draft's text is
-//! noted. METHOD_SPECIFICATIONS shows no CREATED or LAST_ALTERED, the
-//! timestamps of Feature T011, which is not supported.
+//! noted. METHOD_SPECIFICATIONS shows CREATED and LAST_ALTERED, the
+//! timestamps of Feature T011.
 //!
 //! The privileges on a type are read from DEFINITION_SCHEMA.UDT_PRIVILEGES,
 //! whose columns UDT_PRIVILEGES reads, in place of the draft's
@@ -118,7 +118,7 @@ pub(super) const VIEWS: &[SystemView] = &[
             M.PARAMETER_STYLE, M.IS_DETERMINISTIC, M.SQL_DATA_ACCESS,
             M.IS_NULL_CALL,
             M.TO_SQL_SPECIFIC_CATALOG, M.TO_SQL_SPECIFIC_SCHEMA,
-            M.TO_SQL_SPECIFIC_NAME, M.AS_LOCATOR,
+            M.TO_SQL_SPECIFIC_NAME, M.AS_LOCATOR, M.CREATED, M.LAST_ALTERED,
             DT.DATA_TYPE AS RESULT_CAST_FROM_DATA_TYPE, M.RESULT_CAST_AS_LOCATOR,
             DT.CHARACTER_MAXIMUM_LENGTH AS RESULT_CAST_CHAR_MAX_LENGTH,
             DT.CHARACTER_OCTET_LENGTH AS RESULT_CAST_CHAR_OCTET_LENGTH,

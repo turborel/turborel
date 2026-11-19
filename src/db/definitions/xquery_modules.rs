@@ -14,6 +14,8 @@
 //! depends on them, and imports them again whenever a query imports it.
 
 mod alter;
+#[cfg(test)]
+mod tests;
 
 use std::sync::Arc;
 
@@ -24,7 +26,7 @@ use super::Defined;
 use crate::ast::XQueryModuleDefinition;
 use crate::binder::qualify;
 use crate::binder::{Registered, in_scope, registered};
-use crate::catalog::{Horizon, QualifiedName, UsageDesc, XQueryModuleDesc, owner_of, sole};
+use crate::catalog::{Horizon, QualifiedName, Stamps, UsageDesc, XQueryModuleDesc, owner_of, sole};
 use crate::error::{Result, SqlState};
 use crate::txn::LockMode;
 use crate::xquery::{Analysed, Environment, library_module};
@@ -95,6 +97,9 @@ impl State {
             modules,
             xml_schemas,
             usage,
+            // [ISO/IEC 9075-2:2023 §11.60 GR5] as made now; ALTER keeps
+            // the creation timestamp it had.
+            stamps: Stamps::at(self.stamp),
             module: Some(analysed.module),
         };
         Ok((desc, locks))

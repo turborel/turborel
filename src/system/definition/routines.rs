@@ -34,10 +34,11 @@ use std::sync::Arc;
 use super::descriptors::{DESCRIBED, data_type, described, described_as};
 use super::implicit::{FUNCTION, Implicit, implicit, method_type};
 use super::privileges::PUBLIC;
+use super::triggers::stamped;
 use super::user_types::{RESULT_DTD, holders};
 use super::{Columns, catalog_name, defined, ids, long, number, text};
 use crate::ast::MethodKind;
-use crate::catalog::{ColumnDesc, DataAccess, GenericParameter, QualifiedName, SqlRoutineDesc, routine_path};
+use crate::catalog::{ColumnDesc, DataAccess, GenericParameter, QualifiedName, SqlRoutineDesc, Stamps, routine_path};
 use crate::storage::Row;
 use crate::system::{Rows, Seen, SystemTable, yes};
 use crate::value::{DataType, Value};
@@ -177,9 +178,10 @@ fn routines_columns() -> Vec<ColumnDesc> {
 /// Then [ISO/IEC 9075-11:2006 draft §6.40] what a routine's descriptor
 /// holds beside: of an external routine, its name, language and parameter
 /// style; its SQL-path; its maximum number of dynamic result sets; its
-/// result's to-sql routine and locator indication; whether it is
-/// dependent on a user-defined type; and its `<result cast>`'s data type
-/// descriptor and locator indication.
+/// result's to-sql routine and locator indication; its creation and
+/// last-altered timestamps; whether it is dependent on a user-defined
+/// type; and its `<result cast>`'s data type descriptor and locator
+/// indication.
 fn external_columns(columns: Columns) -> Columns {
     columns
         .data("EXTERNAL_NAME", false)
@@ -189,23 +191,27 @@ fn external_columns(columns: Columns) -> Columns {
         .number("MAX_DYNAMIC_RESULT_SETS", true)
         .ids("TO_SQL_SPECIFIC", false)
         .data("AS_LOCATOR", false)
+        .time_stamp("CREATED")
+        .time_stamp("LAST_ALTERED")
         .data("IS_UDT_DEPENDENT", true)
         .id("RESULT_CAST_FROM_DTD_IDENTIFIER", false)
         .data("RESULT_CAST_AS_LOCATOR", false)
 }
 
 /// The values of `external_columns` of a routine of SQL-path `path`, its
-/// AS_LOCATOR `locator`, dependent on a user-defined type if
-/// `dependent`. Each routine is an SQL routine, so its external name,
+/// AS_LOCATOR `locator`, of timestamps `stamps` [Description 24, 25],
+/// dependent on a user-defined type if `dependent`. Each routine is an
+/// SQL routine, so its external name,
 /// language and parameter style are null [Description 12b]. It has at most
 /// 0 dynamic result sets [Description 15b, ISO/IEC 9075-2:2023 §11.60 SR9c],
 /// passes its result not AS LOCATOR, and has no `<result cast>`, which an
 /// SQL routine has none of [§11.60 SR9m i], and no to-sql routine, which
 /// only an external routine's descriptor holds [§4.35.5] [Description 19,
 /// 20, 23a].
-fn external_values(path: &str, locator: Value, dependent: bool) -> Vec<Value> {
+fn external_values(path: &str, (locator, stamps): (Value, Stamps), dependent: bool) -> Vec<Value> {
     let head = vec![Value::Null, Value::Null, Value::Null, text(path), number(0)];
-    [head, vec![Value::Null; 3], vec![locator, yes(dependent), Value::Null, Value::Null]].concat()
+    let stamps = vec![stamped(stamps.created), stamped(stamps.last_altered)];
+    [head, vec![Value::Null; 3], vec![locator], stamps, vec![yes(dependent), Value::Null, Value::Null]].concat()
 }
 
 /// [ISO/IEC 9075-11:2006 draft §6.40 Description 20] AS_LOCATOR of a
@@ -248,7 +254,7 @@ fn implicit_routine(catalog: &Value, r: &Implicit<'_>) -> Row {
     let traits = vec![text("SQL"), Value::Null, yes(r.deterministic), text("CONTAINS SQL"), yes(r.null_call), yes(true)];
     // [ISO/IEC 9075-2:2023 §4.35.1] Made by the definition of the type
     // it is of, so dependent on that type.
-    let external = external_values(&sql_path(catalog, &[r.schema.to_owned()]), locator(true), true);
+    let external = external_values(&sql_path(catalog, &[r.schema.to_owned()]), (locator(true), r.stamps), true);
     let tail = [traits, cast_values(r.cast, true).to_vec(), vec![text("DEFINER"), yes(true)], external, xml_values(Some(&r.result))];
     [head.concat(), data_type(catalog, &r.result, None), tail.concat()].concat()
 }
@@ -276,7 +282,7 @@ fn routine(seen: &Seen<'_>, catalog: &Value, r: &SqlRoutineDesc) -> Row {
     let cast = cast_values(cast_of(seen, &r.specific), function);
     let path = routine_path(&*seen.state.catalog, r);
     let path = if path.is_empty() { vec![r.name.auth.clone()] } else { path };
-    let external = external_values(&sql_path(catalog, &path), locator(function), false);
+    let external = external_values(&sql_path(catalog, &path), (locator(function), r.stamps), false);
     let security = vec![text("DEFINER"), new_savepoint_level(r)];
     [head, described, traits, cast.to_vec(), security, external, xml_values(r.returns.as_ref())].concat()
 }

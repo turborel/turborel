@@ -17,8 +17,8 @@ use crate::ast::{
 };
 use crate::binder::{alike, qualify};
 use crate::catalog::{
-    Horizon, MethodHost, MethodSpecDesc, QualifiedName, SYSTEM_GRANTOR, SqlParameter, SqlRoutineDesc, UsageDesc, method_host, owner_of,
-    sole,
+    Horizon, MethodHost, MethodSpecDesc, QualifiedName, SYSTEM_GRANTOR, SqlParameter, SqlRoutineDesc, Stamps, UsageDesc, method_host,
+    owner_of, sole,
 };
 use crate::error::{At, Result};
 use crate::txn::LockMode;
@@ -73,6 +73,8 @@ impl State {
             sequences: Vec::new(),
             execute: Vec::new(),
             created: self.next_created(),
+            // [§11.60 GR5] its own, not its specification's [GR4].
+            stamps: Stamps::at(self.stamp),
             module: None,
             ptf: None,
             distance: None,

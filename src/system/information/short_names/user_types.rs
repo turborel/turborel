@@ -1,8 +1,8 @@
 //! [ISO/IEC 9075-11:2006 draft §5.77] The short name views of the views of
 //! user-defined types and routines: UDT_S, ROUTINES_S and PARAMETERS_S,
 //! the last two with the columns of an XML type ISO/IEC 9075-14:2006 draft
-//! §20.15 adds. ROUTINES_S leaves out CREATED and LAST_ALTERED, the
-//! timestamps of Feature T011, as ROUTINES does. ROUTINES_S has
+//! §20.15 adds. ROUTINES_S shows CREATED and LAST_ALTERED, the timestamps
+//! of Feature T011, as ROUTINES does. ROUTINES_S has
 //! XML_CHAR_TYPE once, among the columns of the associated string type at
 //! its end, where the draft's `<view column list>` has it, and reads it
 //! from the one XML_CHAR_TYPE ROUTINES has.
@@ -68,6 +68,7 @@ pub(super) const VIEWS: &[SystemView] = &[
            TO_SQL_SPECIFIC_CATALOG AS TO_SQL_SPEC_CAT,
            TO_SQL_SPECIFIC_SCHEMA AS TO_SQL_SPEC_SCHEMA,
            TO_SQL_SPECIFIC_NAME AS TO_SQL_SPEC_NAME, AS_LOCATOR,
+           CREATED, LAST_ALTERED,
            NEW_SAVEPOINT_LEVEL AS NEW_SAVEPOINT_LVL, IS_UDT_DEPENDENT,
            RESULT_CAST_FROM_DATA_TYPE AS RC_FROM_DATA_TYPE,
            RESULT_CAST_AS_LOCATOR AS RC_AS_LOCATOR,

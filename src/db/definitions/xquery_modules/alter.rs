@@ -24,7 +24,9 @@ impl State {
     /// \[EXTENSION\] ALTER XQUERY MODULE `m`, its name in schema `schema` if
     /// it names none: its text, and its location if written, replaced, and
     /// what it imports found again among what its schema's owner may use
-    /// and recorded, its USAGE grants kept.
+    /// and recorded, its USAGE grants and creation timestamp kept, its
+    /// last-altered timestamp this statement's [ISO/IEC 9075-2:2023 §11.61
+    /// GR4].
     ///
     /// # Errors
     ///
@@ -40,7 +42,8 @@ impl State {
             return Err(rule(format!("[EXTENSION] there is no registered XQuery module {qn}")).or_at(m.name.at));
         };
         let location = m.location.clone().unwrap_or(old.location);
-        let (desc, locks) = self.described(&qn, m, (location, old.usage))?;
+        let (mut desc, locks) = self.described(&qn, m, (location, old.usage))?;
+        desc.stamps.created = old.stamps.created;
         let mut after = self.clone();
         let mut catalog = after.catalog.duplicate();
         catalog.put_xquery_module(desc);

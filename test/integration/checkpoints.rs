@@ -16,6 +16,7 @@ use turborel::log::{Log, Lsn, MemoryLog};
 use turborel::params::Params;
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::txn::{NO_TRANSACTION, TxCapabilities, TxId};
+use turborel::value::datetime::Now;
 
 use crate::common::{MemoryTable, Scratch, after_crash, number, os, rows, small_pool, sorted};
 
@@ -277,7 +278,13 @@ fn recovery_undoes_and_redoes_what_the_pages_need() {
     let schema = "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)".to_string();
     record(
         NO_TRANSACTION,
-        Change::Schema { sql: schema, owner: "A".into(), engines: vec![("T".into(), "checkpointed".into())], zone: 0, epochs: vec![] },
+        Change::Schema {
+            sql: schema,
+            owner: "A".into(),
+            engines: vec![("T".into(), "checkpointed".into())],
+            now: Now::default(),
+            epochs: vec![],
+        },
     );
     record(10, Change::Insert { table: table.clone(), generation: 0, row: 6, after: row(60) });
     record(10, Change::Commit { at: 1 });

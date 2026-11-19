@@ -88,6 +88,8 @@ impl State {
             columns: Vec::new(),
             sequences: Vec::new(),
             created,
+            // [GR5j]
+            created_at: self.stamp,
         };
         let invoked = Invoked::default();
         let (reads, columns, sequences) = self.bind_action(&desc, t, (&owner, &invoked), None)?;

@@ -337,7 +337,7 @@ impl Database {
     pub(super) fn replay_definition(&self, change: &Change) -> Result<()> {
         self.change(|st| {
             match change {
-                Change::Schema { sql, owner, engines, zone, epochs } => st.reschema((sql, owner, *zone), engines, None, epochs)?.discard(),
+                Change::Schema { sql, owner, engines, now, epochs } => st.reschema((sql, owner, *now), engines, None, epochs)?.discard(),
                 Change::CreateIndex { name, table, columns, method, options, expressions } => {
                     let spec = IndexSpec {
                         name: name.clone(),

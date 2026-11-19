@@ -182,6 +182,13 @@ impl Columns {
         self
     }
 
+    /// Then a column `name` of TIME_STAMP [ISO/IEC 9075-11:2006 draft
+    /// §5.6].
+    pub(super) fn time_stamp(mut self, name: &str) -> Columns {
+        self.0.push(triggers::time_stamp(name));
+        self
+    }
+
     /// The columns.
     pub(super) fn done(self) -> Vec<ColumnDesc> {
         self.0

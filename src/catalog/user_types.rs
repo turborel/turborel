@@ -47,6 +47,9 @@ pub struct RoutineDesc {
     pub specific: String,
     /// EXECUTE on it [§12.3, §11.60 GR]: each grant, as USAGE's are kept.
     pub execute: Vec<UsageDesc>,
+    /// Its creation and last-altered timestamps [§4.35.5]: those of the
+    /// statement whose definition made it [§11.60 GR5].
+    pub stamps: super::Stamps,
 }
 
 /// Which of a distinct type's routines.

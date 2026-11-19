@@ -19,7 +19,7 @@ use super::{State, rule};
 use crate::ast::{OrderingForm, TypeDefinition, TypeName, TypeOption};
 use crate::binder::{alike, qualify};
 use crate::catalog::{
-    OrderingCategory, OrderingDesc, QualifiedName, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, owner_of, sole,
+    OrderingCategory, OrderingDesc, QualifiedName, RoutineDesc, Stamps, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, owner_of, sole,
     types_in,
 };
 use crate::error::{At, Code, Result, SqlError, SqlState};
@@ -99,7 +99,10 @@ impl State {
             Some(n) => n,
             None => type_name_of(&source).ok_or_else(|| rule(format!("[ISO/IEC 9075-2:2023 §9.9] {source} has no type name")))?.to_owned(),
         };
-        let routine = |name: String, suffix: &str| RoutineDesc { name, specific: format!("{}{suffix}", qn.ident), execute: Vec::new() };
+        // [ISO/IEC 9075-2:2023 §11.60 GR5] made as the type is defined.
+        let stamps = Stamps::at(self.stamp);
+        let routine =
+            |name: String, suffix: &str| RoutineDesc { name, specific: format!("{}{suffix}", qn.ident), execute: Vec::new(), stamps };
         let desc = UserTypeDesc {
             to_distinct: routine(to_distinct, TO_DISTINCT_SUFFIX),
             to_source: routine(to_source, TO_SOURCE_SUFFIX),

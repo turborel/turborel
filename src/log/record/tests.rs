@@ -2,6 +2,7 @@
 //! and what is not a record refused (RULES.md R-TEST-1, R-TEST-2).
 
 use super::*;
+use crate::value::datetime::Now;
 use crate::value::types::TypeRegistry;
 use crate::value::{Decimal, Value};
 
@@ -94,14 +95,14 @@ fn definitions() -> Vec<Change> {
             sql: "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)".into(),
             owner: "A".into(),
             engines: vec![("T".into(), "rowstore".into())],
-            zone: -330,
+            now: Now { utc: i64::MIN, zone: -330 },
             epochs: vec![1, u64::MAX],
         },
         Change::Defined {
             auth: "A".into(),
             role: Some("R\u{e9}".into()),
             schema: "B".into(),
-            zone: 780,
+            now: Now { utc: i64::MAX, zone: 780 },
             sql: "CREATE TABLE T (K INTEGER)".into(),
             placed: Some(("rowstore".into(), u32::MAX)),
             epochs: vec![7],
@@ -110,7 +111,7 @@ fn definitions() -> Vec<Change> {
             auth: String::new(),
             role: None,
             schema: String::new(),
-            zone: 0,
+            now: Now::default(),
             sql: "GRANT SELECT ON T TO B".into(),
             placed: None,
             epochs: vec![],
@@ -172,12 +173,14 @@ fn what_is_not_a_record_is_refused() {
     let tag = insert.len() - 1;
     insert[tag] = 77;
     assert_eq!(corrupt(&insert), Some(Code::Corrupt), "an unknown kind of value");
-    let schema =
-        Record { tx: 1, change: Change::Schema { sql: "ab".into(), owner: String::new(), engines: vec![], zone: 0, epochs: vec![] } }
-            .encode();
+    let schema = Record {
+        tx: 1,
+        change: Change::Schema { sql: "ab".into(), owner: String::new(), engines: vec![], now: Now::default(), epochs: vec![] },
+    }
+    .encode();
     let mut not_utf8 = schema.clone();
-    // "ab", then its engines' count, then its displacement.
-    let last = not_utf8.len() - 5 - 16;
+    // "ab", then its engines' count, then its displacement and instant.
+    let last = not_utf8.len() - 5 - 32;
     not_utf8[last] = 0xFF;
     assert_eq!(corrupt(&not_utf8), Some(Code::Corrupt));
     let mut far = schema.clone();
@@ -207,4 +210,15 @@ fn kinds_are_listed() {
     written.sort_unstable();
     written.dedup();
     assert_eq!(written, KINDS.to_vec(), "every kind is read back as written");
+}
+
+/// Verifies: [DESIGN] RULES.md D25, R-ERR-1: a definition's
+/// CURRENT_TIMESTAMP whose instant is out of range is SQLCODE -916, never
+/// misread.
+#[test]
+fn an_instant_out_of_range_is_corrupt() {
+    let mut written = Vec::new();
+    written.put_i128(0);
+    written.put_i128(i128::MAX);
+    assert_eq!(now(&mut Reader::new(&written, "record")).err().map(|e| e.code), Some(Code::Corrupt));
 }

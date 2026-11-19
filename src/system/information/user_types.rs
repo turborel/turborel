@@ -20,9 +20,9 @@
 //! descriptor's character set, which the descriptor's collation is of, and
 //! the columns ISO/IEC 9075-11 names for a user-defined type's name.
 //!
-//! ROUTINES shows every column ISO/IEC 9075-11:2006 draft §5.49 gives it
-//! but CREATED and LAST_ALTERED, the timestamps of Feature T011, which is
-//! not supported; PARAMETERS every column §5.35 gives it. ROUTINES joins
+//! ROUTINES shows every column ISO/IEC 9075-11:2006 draft §5.49 gives it,
+//! CREATED and LAST_ALTERED, the timestamps of Feature T011, among them;
+//! PARAMETERS every column §5.35 gives it. ROUTINES joins
 //! the descriptor of a `<result cast>` from DATA_TYPE_DESCRIPTOR by
 //! RESULT_CAST_FROM_DTD_IDENTIFIER, as the draft does, so its columns are
 //! null, as no SQL routine has one [ISO/IEC 9075-2:2023 §11.60 SR9m i].
@@ -115,7 +115,7 @@ pub(super) const VIEWS: &[SystemView] = &[
        R.SCHEMA_LEVEL_ROUTINE, R.MAX_DYNAMIC_RESULT_SETS, R.IS_USER_DEFINED_CAST,
        R.IS_IMPLICITLY_INVOCABLE, R.SECURITY_TYPE,
        R.TO_SQL_SPECIFIC_CATALOG, R.TO_SQL_SPECIFIC_SCHEMA, R.TO_SQL_SPECIFIC_NAME,
-       R.AS_LOCATOR, R.NEW_SAVEPOINT_LEVEL, R.IS_UDT_DEPENDENT,
+       R.AS_LOCATOR, R.CREATED, R.LAST_ALTERED, R.NEW_SAVEPOINT_LEVEL, R.IS_UDT_DEPENDENT,
        DT.DATA_TYPE AS RESULT_CAST_FROM_DATA_TYPE, R.RESULT_CAST_AS_LOCATOR,
        DT.CHARACTER_MAXIMUM_LENGTH AS RESULT_CAST_CHAR_MAX_LENGTH,
        DT.CHARACTER_OCTET_LENGTH AS RESULT_CAST_CHAR_OCTET_LENGTH,

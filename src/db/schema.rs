@@ -23,6 +23,7 @@ use crate::settings::CATALOG_NAME;
 use crate::storage::chosen;
 use crate::txn::Timestamp;
 use crate::value::Value;
+use crate::value::datetime::Now;
 
 mod actions;
 
@@ -155,13 +156,18 @@ impl State {
     /// session's authorization identifier [ISO/IEC 9075:1992 §11.1 SR2b].
     /// Returns its owner, and each table it created, with the engine it was
     /// placed in, for the log (RULES.md D25); and whether a privilege it
-    /// would grant was not [ISO/IEC 9075:1992 §11.36 GR14, GR15].
+    /// would grant was not [ISO/IEC 9075:1992 §11.36 GR14, GR15]. It runs
+    /// as CURRENT_TIMESTAMP was `now`: its datetimes of `now`'s
+    /// displacement, what it makes stamped with `now` [ISO/IEC 9075-2:2023
+    /// §11.60 GR5].
     pub(super) fn schema(
         &mut self,
         sql: &str,
-        (implicit, zone): (Option<&str>, i16),
+        (implicit, now): (Option<&str>, Now),
         (made, epochs): (Option<&Made>, &mut Epochs),
     ) -> Result<SchemaMade> {
+        self.stamp = now;
+        let zone = now.zone;
         let ours = self.catalog_name();
         let s = Parser::for_stored(sql)?.in_catalog(&ours).schema()?;
         if let Some(other) = s.catalog.as_ref().filter(|c| **c != ours) {

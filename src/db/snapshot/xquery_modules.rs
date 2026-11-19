@@ -57,6 +57,7 @@ mod tests {
             modules: modules.iter().map(|m| qualified(m)).collect(),
             xml_schemas: vec![QualifiedName { auth: "INFORMATION_SCHEMA".into(), ident: "XS".into() }],
             usage: Vec::new(),
+            stamps: crate::catalog::Stamps::default(),
             module: None,
         }
     }

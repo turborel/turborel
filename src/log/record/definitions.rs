@@ -3,10 +3,11 @@
 //! where a sequence generator's counter goes on (RULES.md D62), as
 //! `log/record.rs` lays them out.
 
-use super::{Change, options, put_options, put_strs, put_table, table, zone};
+use super::{Change, now, options, put_now, put_options, put_strs, put_table, table};
 use crate::bytes::{Put, Reader};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
+use crate::value::datetime::Now;
 
 /// The tags of the kinds of object a drop record names.
 const DROPPED_TABLE: u8 = 1;
@@ -80,8 +81,9 @@ pub enum DropTarget {
 }
 
 /// A schema's text, the engine of each table it created, its
-/// displacement, and the epochs of the sequence generators it defined.
-pub(super) fn put_schema(out: &mut Vec<u8>, (owner, sql, zone): (&str, &str, i16), engines: &[(String, String)], epochs: &[u64]) {
+/// CURRENT_TIMESTAMP, and the epochs of the sequence generators it
+/// defined.
+pub(super) fn put_schema(out: &mut Vec<u8>, (owner, sql, now): (&str, &str, Now), engines: &[(String, String)], epochs: &[u64]) {
     out.put_str(owner);
     out.put_str(sql);
     out.put_u32(u32::try_from(engines.len()).unwrap_or(u32::MAX));
@@ -89,7 +91,7 @@ pub(super) fn put_schema(out: &mut Vec<u8>, (owner, sql, zone): (&str, &str, i16
         out.put_str(table);
         out.put_str(engine);
     }
-    out.put_i128(i128::from(zone));
+    put_now(out, now);
     put_epochs(out, epochs);
 }
 
@@ -101,15 +103,15 @@ pub(super) fn schema(r: &mut Reader<'_>) -> Result<Change> {
     for _ in 0..count {
         engines.push((r.str()?, r.str()?));
     }
-    Ok(Change::Schema { sql, owner, engines, zone: zone(r)?, epochs: epochs(r)? })
+    Ok(Change::Schema { sql, owner, engines, now: now(r)?, epochs: epochs(r)? })
 }
 
 /// A schema statement's authorizer and its role (u8 1 and str, or u8 0 for
 /// none), default schema, text, created table's engine and generation,
-/// displacement, and the epochs it gave.
+/// CURRENT_TIMESTAMP, and the epochs it gave.
 pub(super) fn put_defined(
     out: &mut Vec<u8>,
-    ((auth, role), schema, sql, zone): ((&str, Option<&str>), &str, &str, i16),
+    ((auth, role), schema, sql, now): ((&str, Option<&str>), &str, &str, Now),
     placed: Option<&(String, u32)>,
     epochs: &[u64],
 ) {
@@ -125,7 +127,7 @@ pub(super) fn put_defined(
         out.put_str(engine);
         out.put_u32(*generation);
     }
-    out.put_i128(i128::from(zone));
+    put_now(out, now);
     put_epochs(out, epochs);
 }
 
@@ -145,7 +147,7 @@ pub(super) fn defined(r: &mut Reader<'_>) -> Result<Change> {
     let role = if r.u8()? == 0 { None } else { Some(r.str()?) };
     let (schema, sql) = (r.str()?, r.str()?);
     let placed = if r.u8()? == 0 { None } else { Some((r.str()?, r.u32()?)) };
-    Ok(Change::Defined { auth, role, schema, zone: zone(r)?, sql, placed, epochs: epochs(r)? })
+    Ok(Change::Defined { auth, role, schema, now: now(r)?, sql, placed, epochs: epochs(r)? })
 }
 
 /// The epochs of sequence generators' counters: a count u32, and each.

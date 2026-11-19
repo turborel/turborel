@@ -137,10 +137,10 @@ impl State {
                 let action = Parser::for_stored(action)?.alter_table_action()?;
                 Ok(self.alter_table((table, schema, *zone), &action, (made, None, &mut Epochs::logged(epochs)))?.0)
             }
-            Change::Defined { auth, role, schema, zone, sql, placed, epochs } => {
-                self.redefine(((auth, role.as_deref()), schema, *zone), sql, (placed.as_ref(), made, epochs))
+            Change::Defined { auth, role, schema, now, sql, placed, epochs } => {
+                self.redefine(((auth, role.as_deref()), schema, *now), sql, (placed.as_ref(), made, epochs))
             }
-            Change::Schema { sql, owner, engines, zone, epochs } => self.reschema((sql, owner, *zone), engines, made, epochs),
+            Change::Schema { sql, owner, engines, now, epochs } => self.reschema((sql, owner, *now), engines, made, epochs),
             Change::Insert { .. }
             | Change::Update { .. }
             | Change::Delete { .. }

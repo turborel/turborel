@@ -16,6 +16,7 @@ use crate::log::record::Change;
 use crate::parser::Parser;
 use crate::settings::FUNCTION_CALLS;
 use crate::txn::{LockMode, Txn};
+use crate::value::datetime::Now;
 
 impl Session {
     /// The session's own `<schema definition>` `sql`, of the schema `name`,
@@ -40,9 +41,9 @@ impl Session {
         st.acquire_name(tx, &QualifiedName::of_schema(name), LockMode::Exclusive)?;
         let fresh = self.definitions(self.db.snapshot()?)?;
         let mut next = State::clone(&fresh);
-        let zone = self.now.get().zone;
+        let now = self.now.get();
         let mut epochs = Epochs::fresh();
-        let (owner, engines, warned, asserted, made) = next.schema(sql, (Some(&self.auth()), zone), (None, &mut epochs))?;
+        let (owner, engines, warned, asserted, made) = next.schema(sql, (Some(&self.auth()), now), (None, &mut epochs))?;
         let next = Arc::new(next);
         let checked = |a: &QualifiedName| {
             next.check_assertion(tx, a)?;
@@ -54,7 +55,7 @@ impl Session {
             made.discard();
             return Err(e);
         }
-        let change = Change::Schema { sql: sql.to_owned(), owner, engines, zone, epochs: epochs.given() };
+        let change = Change::Schema { sql: sql.to_owned(), owner, engines, now, epochs: epochs.given() };
         self.stage(&fresh, tx, Changed { next, change, made: Some(made) })?;
         let done = if warned { Completion::Warning(SqlState::PRIVILEGE_NOT_GRANTED) } else { Completion::Success };
         let schema = || Parser::for_stored(sql).and_then(|mut p| p.schema()).ok().as_ref().and_then(long_texts::of_schema);
@@ -79,13 +80,16 @@ impl Database {
         // Published before a checkpoint can see its record or its tables.
         let _gate = current.tx.gate.enter();
         self.noted(self.change(|st| {
-            let zone = zone.unwrap_or_else(|| st.now(&crate::settings::NONE).zone);
+            // [ISO/IEC 9075-2:2023 §11.60 GR5] the clock's instant, the
+            // timestamps of what it makes.
+            let read = st.now(&crate::settings::NONE);
+            let now = Now { zone: zone.unwrap_or(read.zone), ..read };
             let mut epochs = Epochs::fresh();
-            let (owner, engines, warned, asserted, _) = st.schema(sql, (implicit, zone), (None, &mut epochs))?;
+            let (owner, engines, warned, asserted, _) = st.schema(sql, (implicit, now), (None, &mut epochs))?;
             let checked = st.check_new_assertions(&asserted)?;
             // Logged before it is published (RULES.md D25), and before the
             // totals its assertions keep, whose tables it makes.
-            let logged = st.log_definition(None, Change::Schema { sql: sql.into(), owner, engines, zone, epochs: epochs.given() });
+            let logged = st.log_definition(None, Change::Schema { sql: sql.into(), owner, engines, now, epochs: epochs.given() });
             if let Some((probe, tx)) = checked {
                 if logged.is_ok() { probe.commit(&tx)? } else { probe.rollback(&tx)? }
             }
@@ -98,14 +102,14 @@ impl Database {
 }
 
 impl State {
-    /// Makes the `<schema definition>` `sql` again, as `owner` made it, its
-    /// datetimes of `zone`: each table placed in the engine `engines`
+    /// Makes the `<schema definition>` `sql` again, as `owner` made it, run
+    /// as CURRENT_TIMESTAMP was `now`: each table placed in the engine `engines`
     /// gives it, and given what `made` holds for it, if given, so a
     /// transaction's rows written in it are kept; each sequence generator
     /// of the epoch `epochs` logged.
     pub(super) fn reschema(
         &mut self,
-        (sql, owner, zone): (&str, &str, i16),
+        (sql, owner, now): (&str, &str, Now),
         engines: &[(String, String)],
         made: Option<&Made>,
         epochs: &[u64],
@@ -114,7 +118,7 @@ impl State {
         for (ident, engine) in engines {
             self.placement.insert(QualifiedName { auth: schema.clone(), ident: ident.clone() }, engine.clone());
         }
-        self.schema(sql, (Some(owner), zone), (made, &mut Epochs::logged(epochs)))?;
+        self.schema(sql, (Some(owner), now), (made, &mut Epochs::logged(epochs)))?;
         Ok(Dropped::default())
     }
 }

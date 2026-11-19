@@ -22,7 +22,7 @@ fn s(ident: &str) -> QualifiedName {
 
 /// A routine of a type, its specific name `specific`.
 fn routine(name: &str, specific: &str) -> RoutineDesc {
-    RoutineDesc { name: name.to_owned(), specific: specific.to_owned(), execute: Vec::new() }
+    RoutineDesc { name: name.to_owned(), specific: specific.to_owned(), execute: Vec::new(), stamps: crate::catalog::Stamps::default() }
 }
 
 /// The attribute `name` of `t`, defined by `by`, of default `default`.
@@ -52,6 +52,7 @@ fn method(name: &str, specific: &str, parameters: Vec<SqlParameter>, returns: &D
         access: DataAccess::Contains,
         null_call: false,
         created: 1,
+        stamps: crate::catalog::Stamps::default(),
     }
 }
 

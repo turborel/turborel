@@ -2,8 +2,8 @@
 //! structured types and reference types: ATTRIBUTES_S, METHOD_SPECS and
 //! METHOD_SPEC_PARAMS, each with the columns of an XML type ISO/IEC
 //! 9075-14:2006 draft §20.15 appends; REFERENCED_TYPES_S; and
-//! TABLE_METHOD_PRIVS. METHOD_SPECS leaves out CREATED and LAST_ALTERED,
-//! the timestamps of Feature T011, as METHOD_SPECIFICATIONS does. The XML
+//! TABLE_METHOD_PRIVS. METHOD_SPECS shows CREATED and LAST_ALTERED, the
+//! timestamps of Feature T011, as METHOD_SPECIFICATIONS does. The XML
 //! draft names the methods' views METHOD_SPECS_S and METHOD_SPEC_PARAMS_S,
 //! read as the views of those names here.
 
@@ -63,6 +63,7 @@ pub(super) const VIEWS: &[SystemView] = &[
            SQL_DATA_ACCESS, IS_NULL_CALL, TO_SQL_SPECIFIC_CATALOG AS TO_SQL_SPEC_CAT,
            TO_SQL_SPECIFIC_SCHEMA AS TO_SQL_SPEC_SCHEMA,
            TO_SQL_SPECIFIC_NAME AS TO_SQL_SPEC_NAME, AS_LOCATOR,
+           CREATED, LAST_ALTERED,
            RESULT_CAST_FROM_DATA_TYPE AS RC_FROM_DATA_TYPE,
            RESULT_CAST_AS_LOCATOR AS RC_AS_LOCATOR,
            RESULT_CAST_CHAR_MAX_LENGTH AS RC_CHAR_MAX_LENGTH,

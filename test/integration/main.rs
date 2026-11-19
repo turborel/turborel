@@ -144,6 +144,7 @@ mod index_settings;
 mod indexes;
 mod information_columns;
 mod information_schema;
+mod information_timestamps;
 mod information_usage;
 mod intervals;
 mod isolation;

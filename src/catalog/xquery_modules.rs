@@ -4,8 +4,9 @@
 //! it chooses [XQuery §5.2.5]. A descriptor holds the module's name, target
 //! namespace and location, its text, the registered XQuery modules its
 //! module imports imported and the registered XML Schemas it imported or
-//! validates by as it was registered, which it depends on, and the USAGE
-//! granted on it.
+//! validates by as it was registered, which it depends on, the USAGE
+//! granted on it, and its creation and last-altered timestamps, as an
+//! SQL-server module's descriptor keeps them (Feature T011).
 //!
 //! \[DESIGN\] RULES.md D106: the text is kept, and its parse
 //! (`xquery::Module`) is made again from it when the catalog is read, so
@@ -40,6 +41,10 @@ pub struct XQueryModuleDesc {
     pub xml_schemas: Vec<QualifiedName>,
     /// USAGE on it: each grant.
     pub usage: Vec<UsageDesc>,
+    /// Its creation and last-altered timestamps: of CREATE XQUERY MODULE,
+    /// and of the last ALTER XQUERY MODULE, as a routine's are [ISO/IEC
+    /// 9075-2:2023 §11.60 GR5, §11.61 GR4].
+    pub stamps: super::Stamps,
     /// Its text, parsed; none until parsed, as of a descriptor the catalog
     /// has just decoded.
     pub module: Option<Arc<crate::xquery::Module>>,
@@ -56,6 +61,7 @@ impl std::fmt::Debug for XQueryModuleDesc {
             .field("modules", &self.modules)
             .field("xml_schemas", &self.xml_schemas)
             .field("usage", &self.usage)
+            .field("stamps", &self.stamps)
             .finish_non_exhaustive()
     }
 }
@@ -112,6 +118,7 @@ mod tests {
             modules: Vec::new(),
             xml_schemas: Vec::new(),
             usage,
+            stamps: crate::catalog::Stamps::default(),
             module: None,
         });
         catalog

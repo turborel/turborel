@@ -54,7 +54,7 @@ pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, TypedAct
 pub use roles::{Authorization, Principal, RoleAuthorization, Roles, Who};
 pub use routines::{
     DataAccess, DistanceDesc, GenericParameter, GenericTable, PTF_NAME_LENGTH, ParameterMode, PtfDesc, RoutineKind, SqlParameter,
-    SqlRoutineDesc, TableSemantics, ptf_name_type, ptf_status_type,
+    SqlRoutineDesc, Stamps, TableSemantics, ptf_name_type, ptf_status_type,
 };
 pub use sequences::SequenceDesc;
 pub use structured::{

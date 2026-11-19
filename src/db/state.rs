@@ -86,6 +86,12 @@ pub struct State {
     /// table defined again under its name takes a later one, and the log's
     /// changes of the one dropped are never taken for its (`db/recovery.rs`).
     pub(super) retired: HashMap<QualifiedName, u32>,
+    /// \[DESIGN\] The CURRENT_TIMESTAMP of the definition being made, as its
+    /// statement ran and its record logged it (`State::define`,
+    /// `State::schema`): the timestamps of each descriptor it makes
+    /// [ISO/IEC 9075-2:2023 §11.60 GR5], the same when the record is
+    /// replayed, as no clock is read again.
+    pub(super) stamp: crate::value::datetime::Now,
     /// The registry of settings and the database's values (`settings.rs`).
     pub(crate) settings: Settings,
     /// The users and the owner (`db/users.rs`).
@@ -184,6 +190,7 @@ impl State {
             encodings: Arc::default(),
             created: false,
             retired: HashMap::new(),
+            stamp: crate::value::datetime::Now::default(),
             settings: Settings::default(),
             users: Users::default(),
             system: crate::system::builtin(),
@@ -523,7 +530,7 @@ mod tests {
         let mut st = State::with_builtins(Box::new(MemoryCatalog::default()));
         st.schema(
             "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)",
-            (None, 0),
+            (None, crate::value::datetime::Now::default()),
             (None, &mut crate::db::sequences::Epochs::fresh()),
         )
         .unwrap();
