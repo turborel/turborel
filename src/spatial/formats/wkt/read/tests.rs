@@ -3,6 +3,8 @@ use crate::spatial::curves::types::Curve;
 use crate::spatial::formats::samples::{DIMS, values};
 use crate::spatial::formats::wkt::{read_geom, write, write_geom};
 
+mod truncated;
+
 fn state(text: &str) -> String {
     read(text).unwrap_err().sqlstate().as_str().to_owned()
 }

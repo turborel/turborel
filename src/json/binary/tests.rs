@@ -8,6 +8,8 @@ use crate::json::{Keys, Member, Scalar, parse, parse_path, serialize};
 use crate::value::datetime::Clocked;
 use crate::value::{DecFloat, Decimal, Value};
 
+mod keys;
+
 /// The stored form of the JSON text `text`.
 fn stored(text: &str) -> Vec<u8> {
     encode(&parse(text, Keys::Any).unwrap()).unwrap()
