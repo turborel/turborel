@@ -199,6 +199,22 @@ verification approach DO-178C expects (§8).
 | D171 | Extensions are versioned packages, resolved together and locked per database |
 | D172 | What a plug-in does is shown, and its errors keep their class |
 | D173 | Only the operator chooses what runs, and packages are checked by digest and signature |
+| D185 | The protocol grows by capabilities a client asks for and the server grants, its version staying 1 |
+| D186 | A failure carries structured diagnostics, filled where it is raised |
+| D187 | A statement's conditions are one list, told in its completion or as notices before it |
+| D188 | Describe, and several numbered cursors of one prepared statement |
+| D189 | Ping is answered without a worker, and Reset and ChangeUser renew the session |
+| D190 | The session's settings are pushed as it begins and as a statement changes them |
+| D191 | Query attributes are read in SQL, and connection attributes are shown |
+| D192 | A Query may hold several statements, run one by one until one fails |
+| D193 | zlib is written in the tree |
+| D194 | A commit's completion carries its log position, which a replica's session reads after |
+| D195 | Rows are copied in all or nothing, and a query's rows exported as CSV or native rows |
+| D196 | Frames past a threshold travel compressed, both ways |
+| D197 | A completion carries the rows its statement counted, as GET DIAGNOSTICS does |
+| D198 | An INSERT's completion carries the identity values it generated |
+| D199 | A cursor opened under autocommit ends its transaction as it ends |
+| D240 | A completion carries the server's time for its statement, and the waits it can measure for free |
 
 ### The project
 
@@ -6774,6 +6790,224 @@ and no longer under way shown INTERRUPTED. The database's owner sees
 them, and a non-owner sees no rows. RESCAN BACKUP TARGET reads a
 target's manifests and segments and records what the history lacks,
 and marks GONE each completed backup the target no longer holds.
+
+#### D185. The protocol grows by capabilities a client asks for and the server grants, its version staying 1
+
+Hello names the capabilities a client asks for, as strings, and Ready
+grants a subset of them as a set of bits (`turborel_protocol::capability`).
+A server grants what it serves of what was asked and nothing else, a name
+it does not know ignored, so a client and a server of different releases
+agree on what both know. Each behaviour version 1 gained after its first
+form has a capability, and a peer never sends what was not granted, so a
+client that asks for none speaks the first form byte for byte. A request
+of a capability not granted is a connection failure (SQLSTATE 08006),
+and the client library refuses it before sending.
+
+A message gains fields as its tail (`tail.rs`), each a tag of one octet
+and its field, in increasing order of tag, to the end of the body. A field
+is written only where it says something, so a message whose tail is empty
+is its first form. A tag a message does not take, or one out of order, is
+a connection failure. Tags are shared across messages and never reused.
+
+The client library asks for every capability but compression by
+default, as compression costs time where the network is fast
+(`Offer::default`).
+
+#### D186. A failure carries structured diagnostics, filled where it is raised
+
+With `diagnostics`, an Error carries its severity, detail, hint, context,
+and the schema, table, column, data type and constraint it is about, each
+a tail field (tags 7 to 15), each written only if known
+(`turborel_protocol::diagnostics`). The severity is FATAL for a failure
+that ends the connection, ERROR else, and WARNING for a condition that is
+not a failure. The names come from what the core's error is about
+(`SqlError::about`), so a raise site fills them once and every protocol
+reads them. A duplicate key names its constraint, table and schema, and
+its detail gives the key as SQL writes its values. A value refused by its
+column names the column's type. A routine's or trigger's failure names
+it as the context. Without the capability the server sends the first
+form, the diagnostics dropped as the frame is written (`native/wire.rs`),
+of an Error, a Notice and each condition a Complete carries alike.
+
+#### D187. A statement's conditions are one list, told in its completion or as notices before it
+
+A statement raises a condition for each SIGNAL of class 01 or 02 it ran,
+and for the completion condition of class 01 it completed with, named by
+its subclass (`native/notices.rs`). They are one list, in order. With
+`conditions`, the completion carries all of them, each with the fields of
+an Error (tag 17), SQLCODE 100 for class 02 and 0 else, and no Notice is
+sent. Else, with `notices`, each is a Notice before the completion. The
+server's own notices are always a Notice, as they belong to no
+statement, such as 01T01, the transaction Reset or ChangeUser rolled
+back. A client granted neither hears none. The client library hands each
+Notice to the handler set, or keeps the last 64 with none
+(`KEPT_NOTICES`), and exposes the last statement's conditions.
+
+#### D188. Describe, and several numbered cursors of one prepared statement
+
+With `describe`, Describe gives a prepared statement's parameters and
+columns again, or an open cursor's columns, so a client that lost them
+need not prepare again. With `cursors`, Execute, Fetch and Close carry a
+cursor number of the client's (tag 3), and a statement has as many
+cursors open at once as numbers, each read on its own [ISO/IEC 9075:1992
+§13.2]. Without it every cursor is number 0, as in the first form. A
+statement with a cursor open is not deallocated (SQLSTATE 24000).
+
+#### D189. Ping is answered without a worker, and Reset and ChangeUser renew the session
+
+With `ping`, Ping is answered by Pong from the connection's own task, no
+worker taken, so a pool checks a connection without competing with
+statements. With `reset`, Reset puts the session back as it was at
+login, its transaction rolled back, its prepared statements, cursors,
+temporary tables and settings gone, its user, cancel key and grants kept,
+the Status of every setting told again, and its reply a Complete. With
+`change-user`, ChangeUser authenticates the connection again, as another
+user or the same, through the exchange Hello begins, then renews the
+session as Reset does, with a new cancel key, its reply Ready. A
+transaction either rolled back is told by notice 01T01 before the reply.
+A ChangeUser refused ends the connection, as a refused Hello does.
+
+#### D190. The session's settings are pushed as it begins and as a statement changes them
+
+With `status`, the server sends a Status, a name and its value as text,
+for each of the session's settings before Ready, and again for each one a
+statement changed, before that statement's last reply
+(`native/status.rs`). Besides the per-session settings, AUTHORIZATION,
+SCHEMA, READ_ONLY and SERVER_VERSION are told. Only what changed since
+the client was told is sent, so a statement that changed nothing costs
+nothing, and the client reads a setting with no round trip
+(`Connection::setting`).
+
+#### D191. Query attributes are read in SQL, and connection attributes are shown
+
+With `query-attributes`, Query and Execute carry attributes, names and
+values (tag 1), at most 32, a name of 1 to 64 octets and a value of at
+most 1024. QUERY_ATTRIBUTE(name) reads one in SQL, null if not given, and
+`traceparent` is copied into the slow statement's log event
+(`shown/requests.rs`). The attributes are kept by the thread that runs the
+request, as a request runs on one thread from start to reply. A cursor's
+fetches run with the attributes of the Execute that opened it. Hello
+carries the connection's attributes, under the same bounds, read by every
+server of version 1 since they come before anything is granted, and
+INFORMATION_SCHEMA.CONNECTION_ATTRIBUTES shows them to the database's
+owner, and CONNECTIONS.APPLICATION the one named `application`.
+
+#### D192. A Query may hold several statements, run one by one until one fails
+
+With `multi-statement`, a Query marked multi (tag 2) holds several
+statements, split as the client library splits a script
+(`turborel_protocol::split`). The server runs each as a Query of it
+would, each statement's replies its own, every completion but the last
+marked more (tag 5). The first that fails is the last run, and its Error
+ends the replies. Under autocommit each statement is its own transaction.
+A Query of no statement completes.
+
+#### D193. zlib is written in the tree
+
+Compression is zlib (RFC 1950) over DEFLATE (RFC 1951), written in
+`turborel_protocol::zlib`, as no dependency may be added for it and the
+core makes no I/O. It deflates with hash chains and dynamic Huffman
+blocks, or stored blocks where smaller, and inflates every stream
+RFC 1950 allows but one with a preset dictionary. Inflation stops at a
+limit its caller gives, so a stream that would grow past it is refused
+rather than held.
+
+#### D194. A commit's completion carries its log position, which a replica's session reads after
+
+With `commit-position`, the completion of a statement that committed
+carries the log position of its commit record (tag 4), taken as the
+record is appended (`txn/logging.rs`). A session whose
+REPLICATION.READ_AFTER names a position waits, before each statement,
+until the database has applied the log to it, looking every 5 ms, for at
+most STATEMENT.TIMEOUT_MS, or 30 s if it is 0. Past that the statement
+fails with SQLSTATE TBR01 (SQLCODE -920), and nothing runs. A Query of a
+SET never waits, so a session can always change or clear the setting
+however far its replica lags. A database with no log has no positions.
+
+#### D195. Rows are copied in all or nothing, and a query's rows exported as CSV or native rows
+
+With `copy`, CopyIn names a table and its columns, CopyData sends rows
+with no reply, and CopyEnd ends the copy, or abandons it. Each value is
+assigned to its column as INSERT assigns it [ISO/IEC 9075:1992 §13.8 GR4b
+iii], so a string too long is refused rather than cut. Rows are inserted
+in batches of 64 by one prepared INSERT, a batch that fails retried row
+by row to find the row, its failure's detail "row N of the copy". A copy
+is all or nothing, under a savepoint within the transaction, or its own
+transaction if CopyIn says it ends it. A savepoint that cannot be taken
+fails the copy before it inserts anything, and a client that terminates
+the session during a copy has it undone before the session ends. CopyEnd's completion carries the
+rows inserted whatever was granted. The client library's import copies
+when granted and no column is a large object, and inserts else.
+`Connection::export` writes a query's rows as CSV (RFC 4180), a header
+then a record each, or as native rows, the protocol's encoding, read
+back by `read_native`.
+
+#### D196. Frames past a threshold travel compressed, both ways
+
+With `compression`, a frame of at least a threshold of octets is sent as
+a compressed frame, kind `z`, its body the original kind, its length,
+and the zlib stream of its body (`turborel_protocol::compress`). The
+server's threshold is SERVER.COMPRESSION_MIN_BYTES, 0 granting no
+compression, and the client's an option of 1024 by default. The Ready
+of a login is sent uncompressed, as compression starts once it is
+granted, and the replies of a ChangeUser, which comes once it was, may
+be compressed. A
+compressed frame is inflated to at most SERVER.MAX_MESSAGE_BYTES.
+
+#### D197. A completion carries the rows its statement counted, as GET DIAGNOSTICS does
+
+With `row-counts`, the completion of an INSERT, UPDATE, DELETE or MERGE
+carries the rows it changed (tag 6), read from the same diagnostics area
+GET DIAGNOSTICS ROW_COUNT reads [ISO/IEC 9075:1992 §18.1 GR1e], so the
+two always agree. A query's completion carries the rows it returned, a
+cursor's the rows of all its fetches, once the last is sent. Other
+statements carry none.
+
+#### D198. An INSERT's completion carries the identity values it generated
+
+With `generated-values`, the completion of an INSERT into a table with
+an identity column carries the values the INSERT generated for it, in the
+order of its rows, as SQL writes them (tag 16), whether its rows come of
+VALUES or of a query. They are noted as the statement's own rows are
+written, after its triggers ran, so values generated by a trigger's
+statements are never among them. A MERGE's completion carries none, as
+its inserted rows are mixed with updated and deleted ones and a list of
+values alone would not say which row each came of. An INSERT into a
+table without an identity column, or any other statement, carries none.
+
+#### D199. A cursor opened under autocommit ends its transaction as it ends
+
+With `fetch-ends`, an Execute that ends its transaction and leaves its
+cursor open ends the transaction as the cursor ends. The Fetch that sends
+its last row commits, a Fetch or an Execute whose rows fail rolls back,
+and a Close of the cursor before its end commits. A query's transaction
+read what was sent, and a data change statement's effect is complete when
+its Execute completes, as only a query has a cursor to leave open, so a
+commit at Close loses nothing and keeps what was done. Without the
+capability the transaction stays active once the cursor is open, as in
+the first form, and the client library opens a cursor under autocommit
+with ends only when granted.
+
+#### D240. A completion carries the server's time for its statement, and the waits it can measure for free
+
+With `row-counts`, which grants a completion's metadata, a completion
+carries the server's time for its statement in microseconds (tag 18),
+from when a worker began its request until its completion was ready, the
+transaction it ends committed by then (`native/requests/timed.rs`). A
+cursor's time is summed over its Execute and each Fetch and told by the
+Fetch that completes it, the time between requests not the server's. A
+copy's is summed over its requests and told by CopyEnd. The completion
+of a Close, a Deallocate, a request of a large object or a Reset carries
+none, as no statement ran. Two parts are
+told beside the whole. The time the request waited, read, for a worker is
+measured from when it was read to when a worker began it, before the
+whole and not in it. The time the statement waited for locks other
+transactions held is among the whole, added by a lock only once it was
+waited for (`txn/locks.rs`), so a statement that waits for none pays
+nothing. Planning is not told apart from execution, as a Query parses,
+binds and plans inside the one call that runs it, and a prepared
+statement's planning is its Prepare's, which has no completion. Without
+the capability no clock is read.
 
 ## 2. Project layout
 

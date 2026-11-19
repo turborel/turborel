@@ -30,6 +30,7 @@ its own; class TB is turborel's own.
 | 0100A | Warning: query expression too long for the Information Schema |
 | 01010 | Warning: column cannot be mapped: XMLMAP left out a column the user may read, whose type does not map to XML |
 | 01F01 | SQL/MM Spatial warning: invalid position: a method of a position given one outside the value, its result null |
+| 01T01 | Warning: the transaction active was rolled back by a Reset or a ChangeUser of the native protocol, told as a notice *(extension)* |
 | 01W61 | Warning: a GRAPH_TABLE's search ended at a limit ON LIMIT TRUNCATE, its rows those of the paths found (GRF-0061) |
 | 02000 | No data |
 | 07000 | Dynamic SQL error |
@@ -230,6 +231,7 @@ its own; class TB is turborel's own.
 | TB920 | The statement was cancelled |
 | TBB01 | A backup or an archived segment failed its checksum or format, its object named *(extension)* |
 | TBB02 | A restore's recovery target is not among the records the backup and the archive hold *(extension)* |
+| TBR01 | A session's REPLICATION.READ_AFTER names a log position the database did not apply within STATEMENT.TIMEOUT_MS *(extension)* |
 
 Statements are run directly, so an error of the rules of a statement's
 form, its names or its privileges is class 2A; while preparing one, class
