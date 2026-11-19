@@ -61,7 +61,8 @@ pub(super) fn answer(plugin: &mut Plugin, cx: &mut Cx<'_>, (kind, op, object): (
         5 => metric(plugin, object, &mut r),
         6 => embed(plugin, object, &mut r),
         7 => authenticate(plugin, object, op, &mut r),
-        8 => target(plugin, object, op, &mut r),
+        // \[EXTENSION\] An archive's calls are a target's (RULES.md D274).
+        8 | p::replication::ARCHIVE => target(plugin, object, op, &mut r),
         9 => partition(plugin, object, op, &mut r),
         20.. => super::host::answer(plugin, cx, (kind, op, object), payload),
         _ => later::answer(plugin, cx, (kind, op, object), &mut r),

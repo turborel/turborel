@@ -4,6 +4,8 @@
 //! gives a trait of its own and serves it so, its payloads read and
 //! written as the database's `plugin::payload` gives them.
 
+pub mod replication;
+
 use super::registry::Plugin;
 use super::serve::Cx;
 use super::{Answer, PluginError};
