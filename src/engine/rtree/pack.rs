@@ -1,12 +1,16 @@
-//! \[DESIGN\] An R-link tree packed bottom-up by Sort-Tile-Recursive, after
+//! \[DESIGN\] An R-link tree packed by Sort-Tile-Recursive, after
 //! Leutenegger, Lopez and Edgington, "STR: A Simple and Efficient
-//! Algorithm for R-Tree Packing", ICDE 1997 (RULES.md D139). The entries
-//! are sorted by the centre of their X extent in a work area
-//! (`spill::sorted_records`), cut into vertical slabs of about the square
-//! root of the leaf count, each slab sorted again by the centre of its Y
-//! extent, and its runs of `FILL` of a node written as leaves. Each level
-//! above is tiled the same way, in memory, from one entry for each node
-//! below, up to a single root. Identical entries become one counted entry.
+//! Algorithm for R-Tree Packing", ICDE 1997, applied from the root down
+//! as Lee and Lee's OMT loading is (CAiSE 2003) (RULES.md D139). The
+//! entries are sorted by the centre of their X extent in a work area
+//! (`spill::sorted_records`) and cut into vertical slabs of about the
+//! square root of the root's children; each slab is sorted by the centre
+//! of its Y extent and cut into runs of as many entries as one child
+//! spans; each run is tiled the same way for the level below, down to
+//! leaves of `FILL` of a node. Tiled bottom-up instead, each level's
+//! slabs would cut across the slabs below, so siblings' envelopes would
+//! overlap and later inserts would widen leaves into each other.
+//! Identical entries become one counted entry.
 //!
 //! The packed tree is made beside the tree, unreachable until done. Then,
 //! with every writer of the tree held out by its row locks, the entries
@@ -14,8 +18,8 @@
 //! the meta page names its root. The old nodes are retired, freed once no
 //! scan can still reach them. So a load works on a tree that writers keep
 //! changing, as CREATE INDEX's build does, and a failed load changes
-//! nothing. Each work area gets half of the one given, since a slab is
-//! sorted while the first sort's records are still being read.
+//! nothing. Each sort gets half the work area of the one whose records it
+//! is read from, as it runs while those are still being read.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -97,7 +101,7 @@ impl RTree {
         drop(encoded);
         let mut merged = coalesced(sorted);
         let mut packer = Packer { tree: self, next: first.saturating_add(1), fill: fill(self.inner.capacity), pages: Vec::new() };
-        let built = packer.leaves(&mut merged, count, work).and_then(|leaves| packer.upper(leaves));
+        let built = packer.height(count).and_then(|height| packer.tile(height, &mut merged, count, work)).map(|mut root| root.pop());
         match built.and_then(|root| self.publish(root, packer.next)) {
             Ok(()) => Ok(()),
             Err(error) => {
@@ -151,55 +155,63 @@ impl RTree {
 }
 
 impl Packer<'_> {
-    /// Leaves of slabs of entries in X order, each slab in Y order.
-    fn leaves(&mut self, entries: &mut dyn Iterator<Item = Result<Entry>>, count: usize, work: (&WorkAreas, Area)) -> Result<Vec<Entry>> {
-        let per_slab = self.per_slab(count);
+    /// The nodes at `level` holding `entries`, at most `count`, in X
+    /// order. They are cut into vertical slabs of about the square root of
+    /// the nodes, each sorted by Y and cut into runs of one node's span,
+    /// each run tiled the same way a level down. So a node's children tile its region,
+    /// at every level.
+    fn tile(
+        &mut self,
+        level: u8,
+        entries: &mut dyn Iterator<Item = Result<Entry>>,
+        count: usize,
+        work: (&WorkAreas, Area),
+    ) -> Result<Vec<Entry>> {
+        let span = self.span(level);
+        let nodes = count.div_ceil(span).max(1);
+        let root = nodes.isqrt();
+        let slabs = if root.saturating_mul(root) < nodes { root.saturating_add(1) } else { root };
+        let per_slab = span.saturating_mul(nodes.div_ceil(slabs.max(1)));
         let mut made = Vec::new();
         loop {
             let mut slab = (&mut *entries).take(per_slab).map(|entry| entry.map(|e| encode(&e, Y)));
-            let mut sorted = sorted_records(work.0, work.1, &mut slab)?.peekable();
+            let sorted = sorted_records(work.0, halved(work.1), &mut slab)?;
+            let mut sorted = sorted.map(|record| record.and_then(|r| decode(&r))).peekable();
             if sorted.peek().is_none() {
                 return Ok(made);
             }
-            let mut node = Vec::with_capacity(self.fill);
-            for record in sorted {
-                node.push(decode(&record?)?);
-                if node.len() >= self.fill {
-                    made.push(self.node(0, std::mem::take(&mut node))?);
-                }
-            }
-            if !node.is_empty() {
-                made.push(self.node(0, node)?);
+            while sorted.peek().is_some() {
+                made.push(self.group(level, &mut (&mut sorted).take(span), (work.0, halved(halved(work.1))))?);
             }
         }
     }
 
-    /// Entries in a slab: `fill` times the nodes of a slab, the slabs about
-    /// the square root of the nodes.
-    fn per_slab(&self, count: usize) -> usize {
-        let nodes = count.div_ceil(self.fill).max(1);
-        let root = nodes.isqrt();
-        let slabs = if root.saturating_mul(root) < nodes { root.saturating_add(1) } else { root };
-        self.fill.saturating_mul(nodes.div_ceil(slabs.max(1)))
+    /// One node at `level` of `group`, its entries tiled a level down.
+    fn group(&mut self, level: u8, group: &mut dyn Iterator<Item = Result<Entry>>, work: (&WorkAreas, Area)) -> Result<Entry> {
+        let Some(down) = level.checked_sub(1) else {
+            let entries = group.collect::<Result<Vec<_>>>()?;
+            return self.node(0, entries);
+        };
+        let mut count = 0_usize;
+        let mut encoded = group.map(|entry| {
+            count = count.saturating_add(1);
+            entry.map(|e| encode(&e, X))
+        });
+        let sorted = sorted_records(work.0, work.1, &mut encoded)?;
+        drop(encoded);
+        let mut sorted = sorted.map(|record| record.and_then(|r| decode(&r)));
+        let children = self.tile(down, &mut sorted, count, (work.0, halved(work.1)))?;
+        self.node(level, children)
     }
 
-    /// The levels above `below`, tiled in memory, up to one root.
-    fn upper(&mut self, mut below: Vec<Entry>) -> Result<Option<Entry>> {
-        let mut level = 0_u8;
-        while below.len() > 1 {
-            level = level.checked_add(1).filter(|&l| l <= MAX_LEVEL).ok_or_else(|| corrupt("a packed tree is too tall"))?;
-            let per_slab = self.per_slab(below.len());
-            below.sort_by(|a, b| centre(a.bounds, X).total_cmp(&centre(b.bounds, X)));
-            let mut up = Vec::new();
-            for slab in below.chunks_mut(per_slab) {
-                slab.sort_by(|a, b| centre(a.bounds, Y).total_cmp(&centre(b.bounds, Y)));
-                for group in slab.chunks(self.fill) {
-                    up.push(self.node(level, group.to_vec())?);
-                }
-            }
-            below = up;
-        }
-        Ok(below.pop())
+    /// The entries one node at `level` spans when packed.
+    fn span(&self, level: u8) -> usize {
+        self.fill.saturating_pow(u32::from(level).saturating_add(1))
+    }
+
+    /// The level of a packed root over `count` entries.
+    fn height(&self, count: usize) -> Result<u8> {
+        (0..=MAX_LEVEL).find(|&level| self.span(level) >= count).ok_or_else(|| corrupt("a packed tree is too tall"))
     }
 
     /// A new node of `entries` at `level`, and its parent's entry for it.
@@ -222,6 +234,11 @@ impl Packer<'_> {
             let _ = self.tree.inner.pool.free(self.tree.inner.file, id);
         }
     }
+}
+
+/// Half of `area`, for a sort that runs while another's records are read.
+fn halved(area: Area) -> Area {
+    Area::new(area.bytes.checked_div(2).unwrap_or_default(), area.batch)
 }
 
 /// Records of one entry, adjacent once sorted, as one counted entry.
