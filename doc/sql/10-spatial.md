@@ -1475,6 +1475,106 @@ COMMIT;
 turborel: SQLCODE -911 (SQLSTATE 40001): the engine of ANN.PLACES refused to commit, so the transaction was rolled back: the transaction read rows another transaction changed meanwhile, or changed rows another read: it is not serializable; run it again [X3.135-1986 §8.2]
 ```
 
+### How the index is priced
+
+Whether the planner reads the index or the table depends on three
+things the table's statistics keep of a geometry column, once the
+database's maintenance has gathered them
+([Background work](../operator/03-databases.md#background-work)). A
+grid of the column's envelopes tells how many rows a window meets, so a
+broad window is estimated without reading the index. A window the grid
+puts at no more than 1000 rows is counted by the index itself, exactly.
+The coordinates a value holds, on average, tell what decoding each row
+read costs, which a scan pays of every row and the index only of the
+rows it finds, so polygons of many vertices are read through the index
+over broader windows than points are. And how closely rows near each
+other in space lie near each other in the table tells what fetching the
+rows the index finds costs. Rows inserted in spatial order are fetched
+cheaply, and the same rows scattered cost a fetch each. Before the
+statistics are gathered, the index estimates the rows itself and
+nothing else is priced.
+
+EXPLAIN shows these after the filter's condition: the rows estimated
+and by what, the mean vertices, the clustering from 0 to 1, and the
+cost of the cheapest probe of the index against the scan's. Here the
+same 20,000 points are inserted in order and scattered, and the same
+window of three tenths of them is read through the index of the first
+and by a scan of the second:
+
+```sql
+CREATE TABLE LAID (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));
+CREATE TABLE STREWN (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));
+INSERT INTO LAID WITH RECURSIVE N (I) AS (VALUES (CAST(0 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 19999)
+    SELECT I, ST_POINT(I - FLOOR(I / 200) * 200, FLOOR(I / 200)) FROM N;
+INSERT INTO STREWN WITH RECURSIVE N (I) AS (VALUES (CAST(0 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 19999),
+    M (I, K) AS (SELECT I, I * 7919 - FLOOR(I * 7919 / 20000) * 20000 FROM N)
+    SELECT I, ST_POINT(K - FLOOR(K / 200) * 200, FLOOR(K / 200)) FROM M;
+COMMIT;
+CREATE INDEX LAID_SPOT ON LAID (SPOT) USING RTREE;
+CREATE INDEX STREWN_SPOT ON STREWN (SPOT) USING RTREE;
+SELECT COUNT(*) FROM LAID WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(0, 0, 59.5, 100)) = 1;
+SELECT COUNT(*) FROM STREWN WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(0, 0, 59.5, 100)) = 1;
+EXPLAIN SELECT ID FROM LAID WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(0, 0, 59.5, 100)) = 1;
+EXPLAIN SELECT ID FROM STREWN WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(0, 0, 59.5, 100)) = 1;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+
+----------------------
+                 6000
+(1 row)
+
+----------------------
+                 6000
+(1 row)
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project LAID.ID
+   Filter ST_INTERSECTS(LAID.SPOT, ASSIGN(ST_MAKEENVELOPE(ASSIGN(0), ASSIGN(0), ASSIGN(59.5), ASSIGN(100)))) = 1
+     Scan ANN.LAID
+ -- rules: constant_folding
+ -- optimized:
+ Project LAID.ID
+   Filter ST_INTERSECTS(LAID.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1
+     Scan ANN.LAID
+ -- physical:
+ Project LAID.ID
+   Filter ST_INTERSECTS(LAID.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1  [spatial: est. rows=6070 by statistics, vertices=1, clustering=0.98, probe cost=14421.0, scan cost=24600.0]  (est. rows=200)
+     IndexScan ANN.LAID using LAID_SPOT [rtree]: ST_INTERSECTS(LAID.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1  (est. rows=6070, cost=14421.0)
+(13 rows)
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project STREWN.ID
+   Filter ST_INTERSECTS(STREWN.SPOT, ASSIGN(ST_MAKEENVELOPE(ASSIGN(0), ASSIGN(0), ASSIGN(59.5), ASSIGN(100)))) = 1
+     Scan ANN.STREWN
+ -- rules: constant_folding
+ -- optimized:
+ Project STREWN.ID
+   Filter ST_INTERSECTS(STREWN.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1
+     Scan ANN.STREWN
+ -- physical:
+ Project STREWN.ID
+   Filter ST_INTERSECTS(STREWN.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1  [spatial: est. rows=6026 by statistics, vertices=1, clustering=0.00, probe cost=53291.7, scan cost=24600.0]  (est. rows=200)
+     SeqScan ANN.STREWN  (rows=20000, cost=24600.0)
+(13 rows)
+```
+
+The two tables hold the same points, and the window the same 6,000 of
+them, 6,070 and 6,026 as the grid estimates. The points of LAID were
+inserted row by row, so the rows the index finds lie together, and a
+probe costs less than the scan. Those of STREWN were inserted scattered,
+so each costs a fetch of its own, and the scan is cheaper. The statistics
+were gathered as the counts first planned with each table.
+
 ## The Spatial Information Schema
 
 The schema ST_INFORMTN_SCHEMA holds SQL/MM Spatial's views, and SELECT

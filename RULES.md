@@ -161,6 +161,7 @@ verification approach DO-178C expects (§8).
 | D134 | A spatial read records the envelopes it read, merged into their hull past a bound |
 | D135 | Geometry windows serve relate, distance and outer joins, reading every entry where a scan would raise |
 | D136 | Simple feature access is views over the SQL/MM catalog and routines named without ST_ |
+| D137 | A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them |
 | D139 | R-trees are packed by Sort-Tile-Recursive, and sparse leaves are copied out and freed by epochs |
 
 ### The project
@@ -2769,7 +2770,8 @@ Changed split stamps, pending splits, malformed paths, arithmetic overflow
 or an exhausted page budget decline the estimate. The estimate is at least
 the candidate count already observed; it is approximate planning input,
 never a bound used to skip or accept rows. Numeric coordinate probes retain
-their existing exact-count cutoff.
+their existing exact-count cutoff. Once the column's statistics are
+gathered, its envelope grid replaces this sample for broad windows (D137).
 Geometry index locators use version 2: version and width bytes, a u32 SRID
 and a u64 metadata page, all integers little-endian. Numeric locators keep
 version 1; tree page formats are unchanged.
@@ -4527,6 +4529,55 @@ code's routine tables, method binding and stored forms. They have no
 ordering and no well-known forms. ANNOTATION_TEXT_METADATA [§6.2.9.2]
 is a third view of SF_INFORMTN_SCHEMA, of each text column, its
 defaults NULL.
+
+#### D137. A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them
+
+A geometry column's statistics are gathered in the pass that gathers the
+table's others (D31, `stats/envelopes.rs`), and kept and refreshed as
+they are. They hold three things. The first is a grid of 16 × 16 cells
+over the envelope of every value seen. Each cell keeps the share of a
+sample of the envelopes whose centres fall in it, and their mean width
+and height. The sample keeps envelopes alone, at most STATISTICS.SAMPLE
+of them, chosen as Algorithm R chooses. A geometry is not sampled whole
+for the column's histogram, since it has no order to place it by and one
+of many vertices would take the sample's memory. The second is the mean
+count of coordinates a value holds. The third is clustering, one less
+the mean distance between the centres of rows read one after another
+over that between random pairs of the sample, held to 0 to 1. A table
+laid out in space measures near 1, and one in no spatial order near 0.
+A sampled pass reads runs of 128 row ids, so its steps are mostly
+between neighbours too.
+
+A window's rows are the grid's estimate (`physical/access/geometric.rs`).
+Each cell's centres are taken as spread evenly over it, and those within
+the window grown by half the cell's mean extent meet it. The share is
+scaled by the rows not null and not empty. A distance window is its
+value's envelope grown by the radius. A window the grid puts at no more
+than 1000 rows is counted by the index exactly, as cheaply. A broader one
+is not read from the tree at all, so planning a broad window reads no
+page. Without statistics, before the first pass or of an engine that
+keeps none, the index's own count and sample (D85) stay the estimate.
+
+Every path pays for the windowed spatial conjuncts it evaluates. A row
+costs 0.2 rows of a scan for each such call and 0.03 for each vertex of
+the column's mean value, decoded. A scan pays it of every row it reads
+and a probe of the rows it finds, so a column of many vertices turns a
+scan into a probe at a broader window than points do. The exact test of
+a row whose envelope meets the window costs the same on either path, so
+it is not priced, though it is the dearest part of a broad read. A conjunct of a column without statistics is not priced. A
+probe's fetches are cheaper by the clustering. That share of its rows
+costs two rows of a scan each, an entry at a time near the last, in place
+of a fetch. A covering read keeps its own price (D34). Outside the
+geometry window, nothing changes for other indexes.
+
+EXPLAIN shows the cheapest spatial probe priced after the residual
+filter's condition: its rows and whether the statistics or the index
+estimated them, the vertices, the clustering, its cost and the scan's.
+The estimates choose a plan only. None skips a row or certifies a
+result, and every candidate is checked as D85 says. The weights were
+measured by `bench/geometry_fetch.rs`, a row scanned in 229 ns, a point
+decoded in 40 ns and a vertex in 6.2 ns. The statistics are kept in memory as
+the others are, so no format changes.
 
 #### D139. R-trees are packed by Sort-Tile-Recursive, and sparse leaves are copied out and freed by epochs
 

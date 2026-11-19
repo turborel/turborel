@@ -1,5 +1,8 @@
 //! SQL geometry filters and concurrent updates, with complete result
 //! fetching and fresh databases for each mixed run (RULES.md R-BENCH-1).
+//! Realistic parcels and roads, large joins, disk pressure and sustained
+//! moves follow (`geometry_sql/realistic.rs`); `TURBOREL_GEOMETRY_REALISTIC`
+//! runs them alone.
 
 #![allow(
     clippy::unwrap_used,
@@ -12,6 +15,10 @@
 )]
 
 mod harness;
+#[path = "geometry_sql/realistic.rs"]
+mod realistic;
+#[path = "geometry_sql/shapes.rs"]
+mod shapes;
 
 use std::hint::black_box;
 use std::sync::{Barrier, Mutex};
@@ -31,6 +38,10 @@ const WRITE_EVERY: u64 = 5;
 
 fn main() {
     let bench = Bench::new("geometry_sql");
+    realistic::measure(&bench);
+    if std::env::var("TURBOREL_GEOMETRY_REALISTIC").is_ok() {
+        return;
+    }
     let db = database();
     validate_filters(&db, (THREADS[2] * QUERIES) as u64);
     for width in [10_u64, 500] {

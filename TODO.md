@@ -78,14 +78,8 @@ The access methods the other standards stand on. Each one is built, made
 durable and tested on its own before the extension that reads it. Each
 is kept consistent under concurrent change and recovery as the B-tree is.
 
-- Consider distribution statistics beyond bounded R-tree sampling.
-  Price geometry predicate evaluation and clustered row fetches when
-  choosing between a scan and a spatial probe. Measure large-result row
-  materialization and wire encoding separately from tree traversal.
-  Extend adaptive joins to builds larger than their memory budget through
-  partitioning and spill. Cover large inputs on
-  both sides, real polygon and line data, disk pressure and sustained
-  updates in complete-query comparisons, including tail latency.
+- Extend adaptive joins to builds larger than their memory budget through
+  partitioning and spill.
   Let SQL joins traverse two indexed trees directly,
   beyond probing one tree for each outer row.
 - Adjacency held for a graph's edges, so a path query follows an edge

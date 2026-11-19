@@ -3027,6 +3027,13 @@ Under SERIALIZABLE, a filter's search and each join probe record the
 envelope window they read, not the whole table, and a change conflicts
 when its old or new envelope meets one (`exec/read.rs`,
 `storage/region.rs`, RULES.md D134).
+Choosing between a scan and a spatial probe is planning only, outside
+the standards. A geometry column's statistics keep a grid of its
+envelopes, its mean vertices and its clustering. A broad window's rows
+are estimated from the grid, and every path is priced for the spatial
+calls it evaluates and a probe for how closely its rows lie, as EXPLAIN
+shows (`stats/envelopes.rs`, `physical/access/geometric.rs`, RULES.md
+D137). No result depends on the choice.
 An unordered inner join whose remaining outer rows fit its memory
 budgets can choose a single visible table scan when index estimates price
 it below repeated probes (`exec/join/indexed/adaptive.rs`). A temporary

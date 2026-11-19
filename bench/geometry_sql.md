@@ -138,3 +138,36 @@ These remain small closed-loop samples, not sustained-load latency claims.
 Four sessions outperform eight in the narrow and mixed cases. The complete
 comparison measures the combined changes; it does not isolate their
 individual contributions.
+
+## Realistic shapes, large joins, disk pressure and sustained moves
+
+`geometry_sql/realistic.rs` runs complete queries over shapes generated
+deterministically in the bench (`geometry_sql/shapes.rs`), never
+downloaded: 22,500 parcels, star-shaped polygons of 32 to 256 vertices
+(121 on average) on a jittered grid of a 10,000-unit square, and 3,600
+road pieces of 17 vertices wiggling along 60 lines each way. Both tables
+have an `rtree` and their statistics gathered. `TURBOREL_GEOMETRY_REALISTIC=1`
+runs these cases alone. Each case is a complete query, opened, fetched
+whole and committed, with p50 and p99 of every sample.
+
+One run in release on Linux x86-64, 2026-11-18:
+
+| Case | Sessions | Rate | p50 | p99 |
+|---|---:|---:|---:|---:|
+| Join of every parcel with every road it meets | 1 | 0.07 queries/s | 14.2 s | 18.8 s |
+| Parcel windows of side 400, in memory | 1 | 53 queries/s | 18.6 ms | 26.8 ms |
+| Roads within 150 of a parcel, in memory | 1 | 353 queries/s | 2.3 ms | 8.2 ms |
+| Parcel windows, on disk, 8 MiB pool | 1 | 54 queries/s | 17.7 ms | 30.1 ms |
+| Roads within 150, on disk, 8 MiB pool | 1 | 376 queries/s | 2.2 ms | 7.8 ms |
+| Parcel windows, one in five operations a move | 4 | 254 operations/s | reads 18.0 ms, writes 0.13 ms | reads 41.8 ms, writes 0.24 ms |
+
+The join runs as an adaptive spatial join, each road probing the parcels
+or one bounded scan, and nearly all its time is the exact tests of
+polygons against lines. The windows read about 45 parcels each through
+the index, and their time too is mostly exact tests of polygons of many
+vertices. The database on disk had a pool of 8 MiB for some 60 MiB of
+data, but the operating system's cache held its files, so it shows the
+pool's misses, not the disk's. The sustained case moves parcels of
+disjoint partitions while the others read, on a fresh database each run.
+Latencies are closed loop, five runs of each case pooled, with no
+independent arrival queue.

@@ -8,6 +8,7 @@ use turborel::geometry::Geometry;
 use turborel::params::Params;
 use turborel::value::Value;
 
+mod costs;
 mod distance;
 mod estimates;
 mod joins;

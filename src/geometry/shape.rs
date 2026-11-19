@@ -60,6 +60,21 @@ impl Shape {
         usize::try_from(self.code().saturating_sub(1)).ok().and_then(|i| NAMES.get(i)).copied().unwrap_or_default()
     }
 
+    /// The coordinates it holds, counted without recursion: each part's
+    /// waits on a stack, as the readers bound how many there are.
+    pub(super) fn vertices(&self) -> usize {
+        let (mut count, mut waiting) = (0_usize, vec![self]);
+        while let Some(shape) = waiting.pop() {
+            match shape {
+                Self::Point(p) => count = count.saturating_add(usize::from(p.is_some())),
+                Self::Line(points) => count = count.saturating_add(points.len()),
+                Self::Polygon(rings) => count = rings.iter().fold(count, |n, ring| n.saturating_add(ring.len())),
+                Self::Multi(_, parts) => waiting.extend(parts),
+            }
+        }
+        count
+    }
+
     pub(super) fn bounds(&self) -> Result<Option<Bounds>> {
         match self {
             Self::Point(p) => points(p.iter()),
