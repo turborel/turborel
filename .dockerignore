@@ -1,0 +1,22 @@
+# Crates, tests and benchmarks stay in: cargo refuses to build without a
+# file a Cargo.toml names.
+
+.git
+.github
+.githooks
+.claude
+.idea
+.DS_Store
+target
+artwork
+research
+txts
+Dockerfile
+.dockerignore
+
+*.md
+!README.md
+
+# src/lib.rs includes this page in its docs.
+doc
+!doc/client/03-embedding.md
