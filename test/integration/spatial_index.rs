@@ -8,6 +8,7 @@ use turborel::params::Params;
 use turborel::value::Value;
 
 mod joins;
+mod packing;
 
 fn populate(db: &Database) {
     db.schema("CREATE SCHEMA AUTHORIZATION S CREATE TABLE P (ID INTEGER NOT NULL PRIMARY KEY, X DOUBLE PRECISION, Y DOUBLE PRECISION)")

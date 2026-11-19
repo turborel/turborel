@@ -11,9 +11,11 @@ pub use approx::ApproximateRead;
 use super::{PhysicalPlanner, Plan, estimate};
 use crate::catalog::{QualifiedName, TableDesc};
 use crate::functions::ScalarRef;
+use crate::geometry::routines::length_factors;
 use crate::geometry::{SpatialOperation, fixed_srid};
 use crate::index::{NearestQuery, NearestSupport};
 use crate::logical::{Cond, Expr, LogicalPlan, SortKey, filled_expr, render_expr};
+use crate::spatial::srs::units::convert;
 use crate::storage::cost_of;
 use crate::value::Value;
 
@@ -40,11 +42,13 @@ pub struct NearestRead {
     pub width: usize,
     /// The full distance call, evaluated once per qualifying row.
     pub measure: Expr,
-    /// Whether it is a score, read greatest first (D87).
+    /// Whether it is read greatest first: a score (D87), or a geometry
+    /// distance farthest first (D135).
     pub descending: bool,
     /// The full WHERE condition, evaluated before ranking.
     pub condition: Option<Cond>,
-    /// OFFSET plus FETCH count, excluding WITH TIES and PERCENT.
+    /// OFFSET plus FETCH count, of ONLY or WITH TIES, whose peers the
+    /// strict cutoff keeps; never of PERCENT.
     pub first: usize,
     /// The measure and filter as text for EXPLAIN.
     pub detail: String,
@@ -53,6 +57,27 @@ pub struct NearestRead {
     /// \[EXTENSION\] Of an approximate index's read, what it asks of it;
     /// none of a certified one (D94).
     pub approximate: Option<ApproximateRead>,
+    /// Of a distance in a unit, the metres per the column's unit and per
+    /// that one, which a candidate's bound is converted by as its measure
+    /// is (RULES.md D135); none of a distance in the column's unit.
+    pub scale: Option<Scale>,
+}
+
+/// Metres per a column's unit and per a distance's unit (`length_factors`).
+pub type Scale = (f64, f64);
+
+/// Every distance between coordinates of the domain a nearest search
+/// certifies, `distance_domain`'s, is below this, so a unit that keeps it
+/// finite keeps every converted bound and measure finite.
+const CERTIFIED_DISTANCE: f64 = f64::MAX / 2.0_f64;
+
+/// The unit a distance call names, its third argument.
+fn unit_of(measure: &Expr) -> Option<&str> {
+    let Expr::Call(_, args) = measure else { return None };
+    match args.get(2) {
+        Some(Expr::Const(Value::Char(unit))) => Some(unit.as_str()),
+        Some(_) | None => None,
+    }
 }
 
 /// The column and its argument position in a declared distance call, or a
@@ -71,7 +96,11 @@ pub(crate) fn distance_call(expr: &Expr) -> Option<(usize, usize, &ScalarRef, &E
     let distance = f.deterministic() && f.spatial_operation() == Some(SpatialOperation::Distance);
     let (two, rest) = args.split_at(args.len().min(2));
     let constants = rest.iter().all(|e| matches!(e, Expr::Const(_)));
-    if !(distance || ranks) || !constants || (!rest.is_empty() && !ranks) {
+    // A distance's third argument is its unit, converted as it is planned
+    // (`scaled`); a score's are its index's name and options.
+    let unit = distance && matches!(rest, [Expr::Const(Value::Char(_))]);
+    let extra = rest.is_empty() || ranks || unit;
+    if !(distance || ranks) || !constants || !extra {
         return None;
     }
     operands(two, 0).map(|(column, argument, other)| (column, argument, function, other))
@@ -123,6 +152,13 @@ fn descends(measure: &Expr) -> bool {
     distance_call(measure).is_some_and(|(_, _, f, _)| f.0.ranks())
 }
 
+/// Whether a call `distance_call` finds is a geometry distance, which an
+/// R-tree reads farthest first too (D135); a vector distance's index
+/// answers its nearest alone.
+fn farthest_first(measure: &Expr) -> bool {
+    distance_call(measure).is_some_and(|(_, _, f, _)| f.0.spatial_operation() == Some(SpatialOperation::Distance))
+}
+
 /// Whether `condition` is never true of a row whose `column` is null: one
 /// of its conjuncts is a lookup of a call of it (`predicate_call`), which is
 /// null of a null column (D34, D87).
@@ -138,6 +174,13 @@ fn excludes_nulls(condition: Option<&Cond>, column: usize) -> bool {
 }
 
 impl NearestRead {
+    /// A candidate's distance bound, in the column's unit, as a bound of
+    /// its measure: converted as the measure is, a conversion that never
+    /// lowers a greater distance below a lesser one's.
+    pub(crate) fn bound(&self, native: f64) -> f64 {
+        self.scale.map_or(native, |(from, to)| convert(native, from, to))
+    }
+
     pub(crate) fn query(&self) -> Option<NearestQuery> {
         let (_, argument, function, Expr::Const(value)) = distance_call(&self.measure)? else { return None };
         Some(NearestQuery {
@@ -168,8 +211,11 @@ impl PhysicalPlanner<'_> {
         let LogicalPlan::Project { exprs, input: source } = input else { return None };
         let (exprs, source) = &flattened(exprs, source);
         let measure = exprs.get(key.column)?;
-        let descending = descends(measure);
-        if key.descending != descending {
+        // A score is read greatest first; a geometry distance either way,
+        // farthest first by the upper bounds of its distances (D135).
+        let descending = key.descending;
+        let allowed = if descending { descends(measure) || farthest_first(measure) } else { !descends(measure) };
+        if !allowed {
             return None;
         }
         let (scan, condition) =
@@ -179,7 +225,7 @@ impl PhysicalPlanner<'_> {
         if !safe::projection(exprs, key.column, desc) || condition.is_some_and(|c| !safe::condition(c, desc)) {
             return None;
         }
-        let (column, query) = self.nearest_query(measure, desc)?;
+        let (column, query, scale) = self.nearest_query((measure, descending), desc)?;
         // A null measure comes last, or the rows of none come at all.
         if key.nulls_first && !(descending && excludes_nulls(condition, column)) {
             return None;
@@ -205,6 +251,7 @@ impl PhysicalPlanner<'_> {
             detail,
             cost,
             approximate,
+            scale,
         };
         let projection = self.described(source, |names| exprs.iter().map(|e| render_expr(e, names)).collect::<Vec<_>>().join(", "));
         let mut exprs = exprs.clone();
@@ -263,12 +310,15 @@ impl PhysicalPlanner<'_> {
         Some((ix, Some(read), cost))
     }
 
-    fn nearest_query(&self, measure: &Expr, desc: &TableDesc) -> Option<(usize, NearestQuery)> {
+    fn nearest_query(&self, (measure, descending): (&Expr, bool), desc: &TableDesc) -> Option<(usize, NearestQuery, Option<Scale>)> {
         let (column, argument, function, other) = distance_call(measure)?;
-        let descending = function.0.ranks();
         let metric = vector_measure(measure).map(|(metric, _)| metric);
-        if !descending && metric.is_none() {
-            fixed_srid(&desc.columns.get(column)?.data_type)?;
+        let mut scale = None;
+        if !function.0.ranks() && metric.is_none() {
+            let srid = fixed_srid(&desc.columns.get(column)?.data_type)?;
+            if let Some(unit) = unit_of(measure) {
+                scale = Some(self.scaled(srid, unit)?);
+            }
         }
         let value = if let Expr::Const(value) = other {
             value.clone()
@@ -288,7 +338,15 @@ impl PhysicalPlanner<'_> {
             metric,
             approximate: None,
         };
-        Some((column, query))
+        Some((column, query, scale))
+    }
+
+    /// The factors of a distance of a value of SRID `srid` in `unit`, if
+    /// the unit converts and keeps every certified distance finite; else
+    /// the read is a scan's, which raises what the unit form raises.
+    fn scaled(&self, srid: i32, unit: &str) -> Option<Scale> {
+        let (from, to) = length_factors(srid, Some(self.db.catalog.spatial()), unit).ok()?;
+        convert(CERTIFIED_DISTANCE, from, to).is_finite().then_some((from, to))
     }
 
     fn nearest_cost(&self, (table, columns): (&QualifiedName, &[usize]), condition: Option<&Cond>, first: usize) -> Option<f64> {

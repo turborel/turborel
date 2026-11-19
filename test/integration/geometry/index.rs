@@ -8,10 +8,13 @@ use turborel::geometry::Geometry;
 use turborel::params::Params;
 use turborel::value::Value;
 
+mod costs;
 mod distance;
 mod estimates;
 mod joins;
 mod nearest;
+mod nearest_orders;
+mod nearest_units;
 mod outer;
 mod regions;
 mod widened;

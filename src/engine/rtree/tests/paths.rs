@@ -8,10 +8,10 @@ fn branch(capacity: usize) -> (RTree, Visit) {
     let mut tree = tree();
     Arc::get_mut(&mut tree.inner).unwrap().capacity = capacity;
     let root = tree.root().unwrap();
-    let mut above = Node::empty(root.id, 1);
+    let mut above = Node::empty(root.stamp, 1);
     for n in 0_u32..4 {
         let (id, mut page) = tree.inner.pool.new_page(tree.inner.file).unwrap();
-        let mut node = Node::empty(id, 0);
+        let mut node = Node::empty(tree.fresh_stamp().unwrap(), 0);
         for j in 0_u32..2 {
             let bounds = Bounds::point([f64::from(n.wrapping_mul(10).wrapping_add(j)), f64::from(j)]).unwrap();
             node.entries.push(Entry { bounds, id: u64::from(n.wrapping_mul(2).wrapping_add(j)), value: 1 });

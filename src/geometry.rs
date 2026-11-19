@@ -216,6 +216,19 @@ impl Geometry {
         self.bounds.is_none()
     }
 
+    /// The coordinates its components hold, ring closures counted: what
+    /// decoding it and testing it against another grow with (RULES.md
+    /// D137).
+    pub fn vertices(&self) -> usize {
+        self.shape.vertices()
+    }
+
+    /// Whether `value` is a value of one of the geometry types, so
+    /// `from_value` would read it rather than refuse its type.
+    pub(crate) fn is_geometry(value: &Value) -> bool {
+        kind::payload(value).is_some()
+    }
+
     /// The closed XY envelope, absent for an empty geometry.
     pub fn bounds(&self) -> Option<Bounds> {
         self.bounds

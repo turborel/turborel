@@ -56,7 +56,7 @@ pub const KEPT: [Mutation; 13] = [
         name: "learned-high-unslotted",
         package: Package::Core,
         breaks: "learned plans: a range's upper bound kept as the learning execution's value, not filled",
-        file: "src/physical/access.rs",
+        file: "src/physical/access/keys.rs",
         original: "        slots.extend(lo_c.slot_at(Place::Low).into_iter().chain(hi_c.slot_at(Place::High)));",
         replacement: "        slots.extend(lo_c.slot_at(Place::Low));",
         integration: &["kept_plans::a_learned_range_plan_gives_each_executions_rows"],

@@ -29,8 +29,7 @@ const GROWTH: usize = 2;
 const SLOT_BYTES: usize = 2 * size_of::<RowId>();
 
 pub(super) struct Matched {
-    rows: HashSet<RowId>,
-    held: Reservation,
+    rows: Ids,
     unmatched: Unmatched,
     /// The table's columns the query reads.
     columns: Vec<usize>,
@@ -42,8 +41,7 @@ impl Matched {
     /// Of a FULL join, the set its probes fill; none of another join.
     pub(super) fn of(outer: Preserved, columns: &[usize], db: &Arc<State>) -> Result<Option<Matched>> {
         let Preserved::Both(unmatched) = outer else { return Ok(None) };
-        let held = db.memory.reserve(0, "the rows a FULL outer join matched")?;
-        Ok(Some(Matched { rows: HashSet::new(), held, unmatched: *unmatched, columns: columns.to_vec(), rest: None }))
+        Ok(Some(Matched { rows: Ids::new(db)?, unmatched: *unmatched, columns: columns.to_vec(), rest: None }))
     }
 
     /// Whether the probes are done and the table is being read.
@@ -53,13 +51,7 @@ impl Matched {
 
     /// Records that a probe paired the row `id`.
     pub(super) fn add(&mut self, id: RowId) -> Result<()> {
-        if self.rows.len() == self.rows.capacity() {
-            let capacity = self.rows.capacity().checked_mul(GROWTH).ok_or_else(exhausted)?.max(INITIAL);
-            self.held.resize(capacity.checked_mul(SLOT_BYTES).ok_or_else(exhausted)?)?;
-            self.rows.try_reserve(capacity.saturating_sub(self.rows.len())).map_err(|_| exhausted())?;
-        }
-        self.rows.insert(id);
-        Ok(())
+        self.rows.add(id)
     }
 
     /// The next table row no probe paired, after the outer row's nulls,
@@ -71,7 +63,7 @@ impl Matched {
             Box::new(checked(read, table.stop.clone()))
         });
         while let Some((id, row)) = rows.next().transpose()? {
-            if self.rows.contains(&id) {
+            if self.rows.contains(id) {
                 continue;
             }
             let mut joined: Row = std::iter::repeat_n(Value::Null, width).chain(row).collect();
@@ -90,6 +82,33 @@ impl Matched {
     }
 }
 
+/// The ids of the rows a join paired, a set charged to the memory budget.
+pub(super) struct Ids {
+    rows: HashSet<RowId>,
+    held: Reservation,
+}
+
+impl Ids {
+    pub(super) fn new(db: &State) -> Result<Ids> {
+        Ok(Ids { rows: HashSet::new(), held: db.memory.reserve(0, "the rows an outer join matched")? })
+    }
+
+    /// Records that the row `id` was paired.
+    pub(super) fn add(&mut self, id: RowId) -> Result<()> {
+        if self.rows.len() == self.rows.capacity() {
+            let capacity = self.rows.capacity().checked_mul(GROWTH).ok_or_else(exhausted)?.max(INITIAL);
+            self.held.resize(capacity.checked_mul(SLOT_BYTES).ok_or_else(exhausted)?)?;
+            self.rows.try_reserve(capacity.saturating_sub(self.rows.len())).map_err(|_| exhausted())?;
+        }
+        self.rows.insert(id);
+        Ok(())
+    }
+
+    pub(super) fn contains(&self, id: RowId) -> bool {
+        self.rows.contains(&id)
+    }
+}
+
 fn exhausted() -> SqlError {
-    SqlError::new(Code::Resources, "[DESIGN] the rows a FULL outer join matched exceed the memory budget")
+    SqlError::new(Code::Resources, "[DESIGN] the rows an outer join matched exceed the memory budget")
 }

@@ -3,11 +3,13 @@
 //! stamp. Reading siblings stops at that remembered stamp, so a scan
 //! neither misses moved entries nor also visits a sibling already queued
 //! from the parent. A leaf is copied once under its buffer-pool latch.
+//! A walk is pinned in the tree's epoch while it lives, so a node retired
+//! by reclamation keeps its frozen entries for it (RULES.md D139).
 
 use std::sync::atomic::Ordering;
 
 use super::node::{Entry, Node};
-use super::{RTree, Visit, corrupt};
+use super::{Pin, RTree, Visit, corrupt};
 use crate::disk::pager::PageId;
 use crate::error::{Result, SqlError};
 use crate::spatial::Bounds;
@@ -61,12 +63,14 @@ pub(super) struct Walk {
     error: Option<SqlError>,
     visited: u64,
     limit: u64,
+    _pin: Pin,
 }
 
 impl Walk {
     pub(super) fn new(tree: RTree, bounds: Option<Bounds>) -> Walk {
+        let pin = tree.pin();
         let root = tree.root();
-        let mut walk = Walk { tree, bounds, stack: Vec::new(), error: None, visited: 0, limit: 0 };
+        let mut walk = Walk { tree, bounds, stack: Vec::new(), error: None, visited: 0, limit: 0, _pin: pin };
         match root {
             Ok(root) => walk.stack.push(root),
             Err(error) => walk.error = Some(error),

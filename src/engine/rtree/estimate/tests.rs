@@ -8,16 +8,18 @@ fn point(x: u32, y: u32) -> Bounds {
 }
 
 fn allocated(tree: &RTree, level: u8, entries: Vec<Entry>, bounds: Bounds) -> Entry {
+    let stamp = tree.fresh_stamp().unwrap();
     let (id, mut page) = tree.inner.pool.new_page(tree.inner.file).unwrap();
-    let mut node = Node::empty(id, level);
+    let mut node = Node::empty(stamp, level);
     node.entries = entries;
     *page = node.bytes().unwrap();
     Entry { bounds, id: id.0, value: node.stamp }
 }
 
 fn root(tree: &RTree, level: u8, entries: Vec<Entry>) {
-    let id = tree.root().unwrap().id;
-    let mut node = Node::empty(id, level);
+    let visit = tree.root().unwrap();
+    let id = visit.id;
+    let mut node = Node::empty(visit.stamp, level);
     node.entries = entries;
     tree.store(id, &node).unwrap();
 }

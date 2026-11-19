@@ -6,11 +6,12 @@
 //! constant that converts for the column's SRID, or no window is planned,
 //! so the scan raises its error (D135).
 
-use super::{Candidate, predicate};
+use super::{Candidate, geometric, predicate};
 use crate::catalog::{IndexDesc, SpatialCatalog};
 use crate::geometry::{Geometry, fixed_srid, unit_scale};
 use crate::index::{Predicate, Probe};
 use crate::logical::{Cond, Slot};
+use crate::physical::estimate::Known;
 use crate::physical::spatial::{Beside, recognized};
 use crate::physical::{Place, ProbeSlot};
 use crate::spatial::window;
@@ -23,6 +24,8 @@ pub(super) struct Against<'a> {
     pub(super) types: &'a [DataType],
     pub(super) values: Option<&'a [Value]>,
     pub(super) systems: &'a SpatialCatalog,
+    /// The table's statistics, for the rows a window meets (RULES.md D137).
+    pub(super) known: Known<'a>,
 }
 
 pub(super) fn candidates(conds: &[Cond], against: &Against<'_>, all: f64) -> Vec<Candidate> {
@@ -46,9 +49,10 @@ pub(super) fn candidates(conds: &[Cond], against: &Against<'_>, all: f64) -> Vec
                 return None;
             }
             let (value, slots) = probed((geometry, slot), &found.beside, (srid, against))?;
+            let stated = geometric::stated(&value, &found.beside, (column, srid), (against.known, all));
             let predicate = Box::new(Predicate { function: found.function.clone(), column: 0, argument: Some(argument) });
             let probe = Probe::Predicate { predicate, value };
-            Some(Candidate { slots, ..Candidate::one(probe, (vec![at], 0, all, true)) })
+            Some(Candidate { slots, stated, ..Candidate::one(probe, (vec![at], 0, all, true)) })
         })
         .collect()
 }

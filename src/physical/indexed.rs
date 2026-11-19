@@ -140,7 +140,7 @@ fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), s
     let detail = shown.text(|names| and_all(probed.chain(cond.clone()).collect()).map(|c| render_cond(&c, names)).unwrap_or_default());
     Plan::IndexJoin {
         outer: if join.outer { Preserved::Outer } else { Preserved::Inner },
-        spatial: false,
+        spatial: None,
         left: Box::new(left),
         table: probing.table,
         index: probing.index.into(),
@@ -153,7 +153,7 @@ fn table_join(probing: Probing, join: Equijoin<'_>, (left, rows): (Plan, f64), s
         },
         cond,
         width: probing.width,
-        columns: probing.needed,
+        columns: probing.needed.into_boxed_slice(),
         detail: detail.into(),
         est: probing.each,
         cost: rows * probing.cost,

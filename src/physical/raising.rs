@@ -35,7 +35,7 @@ impl Plan {
             // General Rule error on those stored values. Decode damage is
             // still a storage failure, as for an ordinary scan (D15, D85).
             Plan::IndexJoin { spatial, outer, left, cond, .. } => {
-                let proved = *spatial && matches!(outer, super::Preserved::Inner);
+                let proved = spatial.is_some() && matches!(outer, super::Preserved::Inner);
                 left.can_raise() || (!proved && cond.as_ref().is_some_and(Cond::can_raise))
             }
             Plan::Distinct { input } | Plan::Sort { input, .. } => input.can_raise(),

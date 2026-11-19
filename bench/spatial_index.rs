@@ -5,6 +5,8 @@
 //! TURBOREL_SPATIAL_DISTRIBUTION to one of uniform, cluster, diagonal,
 //! coincident or boxes. Coincident input is capped at 5000 entries to
 //! expose tie and duplicate-placement costs without a quadratic setup.
+//! The tree shapes packing, splits and reclamation leave are reported last
+//! (`spatial_index/shape.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -18,6 +20,8 @@
 )]
 
 mod harness;
+#[path = "spatial_index/shape.rs"]
+mod shape;
 
 use harness::{Bench, Case, sampled_threads};
 use std::hint::black_box;
@@ -43,6 +47,10 @@ fn main() {
     let bench = Bench::new("spatial_index");
     let rows = std::env::var("TURBOREL_SPATIAL_ROWS").ok().map_or(ROWS, |s| s.parse().unwrap());
     let selected = std::env::var("TURBOREL_SPATIAL_DISTRIBUTION").ok();
+    if std::env::var("TURBOREL_SPATIAL_SHAPE").is_ok_and(|s| s == "only") {
+        shape::report(&bench, rows);
+        return;
+    }
     for distribution in DISTRIBUTIONS {
         if selected.as_ref().is_some_and(|s| s != distribution) {
             continue;
@@ -52,6 +60,9 @@ fn main() {
     }
     if selected.is_none() || selected.as_deref() == Some("uniform") {
         small_pool(&bench, rows);
+    }
+    if selected.is_none() {
+        shape::report(&bench, rows);
     }
 }
 

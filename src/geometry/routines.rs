@@ -14,6 +14,7 @@ mod transform;
 mod units;
 
 pub use transform::Transform;
+pub(crate) use units::length_factors;
 pub(super) use units::{fault, length_in, length_of};
 
 use super::model::Kind;

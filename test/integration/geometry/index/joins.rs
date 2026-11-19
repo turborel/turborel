@@ -9,8 +9,10 @@ use turborel::params::Params;
 
 mod adaptive;
 mod clustered;
+mod paired;
 mod prepared;
 mod projected;
+mod spilled;
 
 fn windows(db: &Database, reference: &str) {
     let a = db.session("A");

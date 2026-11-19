@@ -1300,6 +1300,58 @@ OK
 turborel: SQLCODE -900 (SQLSTATE 0A000): the rtree index method needs GEOMETRY(srid) for a geometry key
 ```
 
+CREATE INDEX over rows already in the table builds the index whole. It
+sorts their envelopes by X, cuts them into slabs, sorts each slab by Y
+and cuts it into one run for each node under the root, then tiles each
+run the same way, down to leaves nine tenths full (Sort-Tile-Recursive
+packing, from the root down). So the nodes under any node tile its
+region and barely overlap. The sorts spill to temporary files past
+MEMORY.WORK_BYTES, so a large build stays within it. Rows that other
+transactions write while the build runs go into the index as usual and
+are moved into the packed tree before it takes the index's place.
+Recovery rebuilds an index the same way. A delete or update that leaves
+a node of the index empty, or under two fifths full, takes it out or
+merges it with a neighbour, and a node above left sparse by that goes
+the same way. The nodes above it shrink to what is left under them, so
+searches of an emptied region stop reading them, and when the top node
+keeps a single node under it, that one takes its place and the index
+grows shorter. A freed page is reused once no query that began before
+can still read it, so a query running meanwhile neither misses a row nor
+sees one twice:
+
+```sql
+CREATE TABLE GRID (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));
+INSERT INTO GRID
+    WITH RECURSIVE N (I, X, Y) AS (
+        VALUES (CAST(0 AS INTEGER), CAST(0 AS INTEGER), CAST(0 AS INTEGER))
+        UNION ALL SELECT I + 1, CASE WHEN Y = 99 THEN X + 1 ELSE X END, CASE WHEN Y = 99 THEN 0 ELSE Y + 1 END
+        FROM N WHERE I < 9999)
+    SELECT I, ST_POINT(X, Y) FROM N;
+COMMIT;
+CREATE INDEX GRID_SPOT ON GRID (SPOT) USING RTREE;
+SELECT COUNT(*) AS INSIDE FROM GRID WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(10, 10, 19, 19)) = 1;
+DELETE FROM GRID WHERE ID < 9000;
+COMMIT;
+SELECT COUNT(*) AS INSIDE FROM GRID WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(90, 10, 99, 19)) = 1;
+```
+
+```
+OK
+OK
+OK
+OK
+               INSIDE
+----------------------
+                  100
+(1 row)
+OK
+OK
+               INSIDE
+----------------------
+                  100
+(1 row)
+```
+
 The planner uses the index where it costs less than reading the table,
 which these few rows may not, in these forms.
 
@@ -1319,19 +1371,32 @@ which these few rows may not, in these forms.
 - A join on one of these, inner or LEFT, RIGHT or FULL outer, where the
   join's geometry columns are of one SRID, or the other column has none
   fixed. Each row of one side probes the other's index, and for a broad
-  inner join an adaptive scan may read it once instead. A row whose
+  inner join an adaptive scan may read it once instead. When both
+  columns have an index, the join may descend the two together, as
+  [Joins of two indexes](#joins-of-two-indexes) shows. A row whose
   geometry is NULL or empty, or that no row matches, keeps its place
   with nulls, and a FULL join then reads the table for the rows no probe
   matched.
 - `ORDER BY ST_DISTANCE(column, value) ASC NULLS LAST` with FETCH FIRST,
-  OFFSET too, where the value is a constant or a parameter, which reads
-  the nearest rows first.
+  ONLY or WITH TIES, OFFSET too, more sort keys after it and a filter,
+  where the value is a constant or a parameter, which reads the nearest
+  rows first until enough pass the filter. `DESC NULLS LAST` reads the
+  farthest first. A unit, as `ST_DISTANCE(column, value, 'KILOMETRE')`,
+  does the same where it converts, unless it is so small that a distance
+  in it could overflow, as FOOT of a metre column. A subquery ordered by
+  the distance to its outer row's geometry reads the index for each
+  row. FETCH FIRST PERCENT, which needs the count of every row, and
+  NULLS FIRST read the table.
 
 ```sql
 SELECT NAME FROM PLACES WHERE ST_INTERSECTS(SHAPE, ST_MAKEENVELOPE(0, 0, 3, 3)) = 1 ORDER BY ID;
 SELECT NAME, ST_DISTANCE(SHAPE, ST_POINT(12, 5)) AS DISTANCE FROM PLACES
     ORDER BY ST_DISTANCE(SHAPE, ST_POINT(12, 5)) ASC NULLS LAST, ID FETCH FIRST 2 ROWS ONLY;
 SELECT NAME FROM PLACES WHERE ST_DISTANCE(SHAPE, ST_POINT(12, 5), 'KILOMETRE') < 0.003 ORDER BY ID;
+SELECT NAME FROM PLACES ORDER BY ST_DISTANCE(SHAPE, ST_POINT(12, 5), 'KILOMETRE') ASC NULLS LAST, ID DESC
+    FETCH FIRST 1 ROW ONLY;
+SELECT NAME FROM PLACES ORDER BY ST_DISTANCE(SHAPE, ST_POINT(12, 5)) DESC NULLS LAST, ID
+    FETCH FIRST 2 ROWS ONLY;
 SELECT P.NAME, F.NAME AS IN_FIELD FROM PLACES P LEFT JOIN PLACES F
     ON ST_INTERSECTS(P.SHAPE, F.SHAPE) = 1 AND F.ID = 3 ORDER BY P.ID;
 ```
@@ -1351,6 +1416,15 @@ SELECT P.NAME, F.NAME AS IN_FIELD FROM PLACES P LEFT JOIN PLACES F
 ----------------------
  Field
  Gate
+(2 rows)
+ NAME
+----------------------
+ Gate
+(1 row)
+ NAME
+----------------------
+ Well
+ Road
 (2 rows)
  NAME                 | IN_FIELD
 ----------------------+----------------------
@@ -1408,6 +1482,235 @@ COMMIT;
 ```
 turborel: SQLCODE -911 (SQLSTATE 40001): the engine of ANN.PLACES refused to commit, so the transaction was rolled back: the transaction read rows another transaction changed meanwhile, or changed rows another read: it is not serializable; run it again [X3.135-1986 §8.2]
 ```
+
+### How the index is priced
+
+Whether the planner reads the index or the table depends on three
+things the table's statistics keep of a geometry column, once the
+database's maintenance has gathered them
+([Background work](../operator/03-databases.md#background-work)). A
+grid of the column's envelopes tells how many rows a window meets, so a
+broad window is estimated without reading the index. A window the grid
+puts at no more than 1000 rows is counted by the index itself, exactly.
+The coordinates a value holds, on average, tell what decoding each row
+read costs, which a scan pays of every row and the index only of the
+rows it finds, so polygons of many vertices are read through the index
+over broader windows than points are. And how closely rows near each
+other in space lie near each other in the table tells what fetching the
+rows the index finds costs. Rows inserted in spatial order are fetched
+cheaply, and the same rows scattered cost a fetch each. Before the
+statistics are gathered, the index estimates the rows itself and
+nothing else is priced.
+
+EXPLAIN shows these after the filter's condition: the rows estimated
+and by what, the mean vertices, the clustering from 0 to 1, and the
+cost of the cheapest probe of the index against the scan's. Here the
+same 20,000 points are inserted in order and scattered, and the same
+window of three tenths of them is read through the index of the first
+and by a scan of the second. The filter's own estimate is the same
+figure. The two counts are the first queries to plan with the tables,
+so the maintenance then gathers their statistics in the background. A
+program embedding the database gathers them at once, before it goes on,
+with `Database::analyze`:
+
+```sql
+CREATE TABLE LAID (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));
+CREATE TABLE STREWN (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));
+INSERT INTO LAID WITH RECURSIVE N (I) AS (VALUES (CAST(0 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 19999)
+    SELECT I, ST_POINT(I - FLOOR(I / 200) * 200, FLOOR(I / 200)) FROM N;
+INSERT INTO STREWN WITH RECURSIVE N (I) AS (VALUES (CAST(0 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 19999),
+    M (I, K) AS (SELECT I, I * 7919 - FLOOR(I * 7919 / 20000) * 20000 FROM N)
+    SELECT I, ST_POINT(K - FLOOR(K / 200) * 200, FLOOR(K / 200)) FROM M;
+COMMIT;
+CREATE INDEX LAID_SPOT ON LAID (SPOT) USING RTREE;
+CREATE INDEX STREWN_SPOT ON STREWN (SPOT) USING RTREE;
+SELECT COUNT(*) FROM LAID WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(0, 0, 59.5, 100)) = 1;
+SELECT COUNT(*) FROM STREWN WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(0, 0, 59.5, 100)) = 1;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+
+----------------------
+                 6000
+(1 row)
+
+----------------------
+                 6000
+(1 row)
+```
+
+Once the statistics are gathered, EXPLAIN of the same window shows
+them. The output below is that of a run, shown rather than run here,
+since when the background pass ends is not fixed:
+
+```text
+EXPLAIN SELECT ID FROM LAID WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(0, 0, 59.5, 100)) = 1;
+EXPLAIN SELECT ID FROM STREWN WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(0, 0, 59.5, 100)) = 1;
+
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project LAID.ID
+   Filter ST_INTERSECTS(LAID.SPOT, ASSIGN(ST_MAKEENVELOPE(ASSIGN(0), ASSIGN(0), ASSIGN(59.5), ASSIGN(100)))) = 1
+     Scan ANN.LAID
+ -- rules: constant_folding
+ -- optimized:
+ Project LAID.ID
+   Filter ST_INTERSECTS(LAID.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1
+     Scan ANN.LAID
+ -- physical:
+ Project LAID.ID
+   Filter ST_INTERSECTS(LAID.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1  [spatial: est. rows=6070 by statistics, vertices=1, clustering=0.98, probe cost=14421.0, scan cost=24600.0]  (est. rows=6070)
+     IndexScan ANN.LAID using LAID_SPOT [rtree]: ST_INTERSECTS(LAID.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1  (est. rows=6070, cost=14421.0)
+(13 rows)
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project STREWN.ID
+   Filter ST_INTERSECTS(STREWN.SPOT, ASSIGN(ST_MAKEENVELOPE(ASSIGN(0), ASSIGN(0), ASSIGN(59.5), ASSIGN(100)))) = 1
+     Scan ANN.STREWN
+ -- rules: constant_folding
+ -- optimized:
+ Project STREWN.ID
+   Filter ST_INTERSECTS(STREWN.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1
+     Scan ANN.STREWN
+ -- physical:
+ Project STREWN.ID
+   Filter ST_INTERSECTS(STREWN.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1  [spatial: est. rows=6026 by statistics, vertices=1, clustering=0.00, probe cost=53291.7, scan cost=24600.0]  (est. rows=6026)
+     SeqScan ANN.STREWN  (rows=20000, cost=24600.0)
+(13 rows)
+```
+
+The two tables hold the same points, and the window the same 6,000 of
+them, 6,070 and 6,026 as the grid estimates. The points of LAID were
+inserted row by row, so the rows the index finds lie together, and a
+probe costs less than the scan. Those of STREWN were inserted scattered,
+so each costs a fetch of its own, and the scan is cheaper. The statistics
+were gathered as the counts first planned with each table.
+
+### Joins of two indexes
+
+A join on ST_INTERSECTS, or one of the relationships that hold only of
+values that meet, whose two geometry columns have one SRID and each an
+`rtree` index, may descend both trees together instead of probing one
+for each row of the other. Pairs of tree nodes whose envelopes are apart
+are skipped whole, and each pair of entries whose envelopes meet is
+checked against the visible rows, the other side's filter and the whole
+condition. The planner takes it when no order is asked of the join, it
+costs less than the probes, and both tables' statistics are gathered and
+put each row of one side at no more than a quarter of a row of the
+other, which, as the estimate runs low, stands for about one. A broader
+join probes, as a pair costs the traversal more than a probe's descent
+saves. EXPLAIN
+calls it `SynchronizedSpatialJoin`, naming both tables and indexes, and
+the line below it is the scan the probes would read instead. LEFT, RIGHT
+and FULL joins are taken too, the rows no pair kept then read with nulls.
+
+```sql
+CREATE TABLE STOPS (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));
+CREATE TABLE BLOCKS (ID INTEGER PRIMARY KEY, AREA GEOMETRY(0));
+INSERT INTO STOPS WITH RECURSIVE N (I) AS (VALUES (CAST(0 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 39)
+    SELECT A.I * 40 + B.I, ST_POINT(B.I, A.I) FROM N A, N B WHERE A.I < 25;
+INSERT INTO BLOCKS WITH RECURSIVE N (I) AS (VALUES (CAST(0 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 19)
+    SELECT A.I * 20 + B.I, ST_MAKEENVELOPE(B.I * 2 + 0.75, A.I * 2 + 0.75, B.I * 2 + 1.25, A.I * 2 + 1.25) FROM N A, N B WHERE A.I < 10;
+COMMIT;
+CREATE INDEX STOPS_SPOT ON STOPS (SPOT) USING RTREE;
+CREATE INDEX BLOCKS_AREA ON BLOCKS (AREA) USING RTREE;
+SELECT COUNT(*) FROM STOPS;
+SELECT COUNT(*) FROM BLOCKS;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+
+----------------------
+                 1000
+(1 row)
+
+----------------------
+                  200
+(1 row)
+```
+
+Once both tables' statistics are gathered, EXPLAIN of the join shows the
+traversal. The output below is that of a run, shown rather than run
+here, since when the background pass ends is not fixed:
+
+```text
+EXPLAIN SELECT B.ID, S.ID FROM BLOCKS B JOIN STOPS S ON ST_INTERSECTS(S.SPOT, B.AREA) = 1;
+
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project B.ID, S.ID
+   Filter ST_INTERSECTS(S.SPOT, B.AREA) = 1
+     Product
+       Scan ANN.BLOCKS
+       Scan ANN.STOPS
+ -- rules: none
+ -- optimized:
+ Project B.ID, S.ID
+   Filter ST_INTERSECTS(S.SPOT, B.AREA) = 1
+     Product
+       Scan ANN.BLOCKS
+       Scan ANN.STOPS
+ -- physical:
+ Project B.ID, S.ID
+   SynchronizedSpatialJoin ANN.BLOCKS using BLOCKS_AREA with ANN.STOPS using STOPS_SPOT [rtree]: ST_INTERSECTS(S.SPOT, B.AREA) = 1  (est. rows each=22, cost=237017.4)
+     SeqScan ANN.STOPS  (rows=1000, cost=1000.0)
+(17 rows)
+```
+
+The join's rows are the same whichever way it is read:
+
+```sql
+SELECT COUNT(*) AS PAIRS, COUNT(S.ID) AS PAIRED FROM BLOCKS B LEFT JOIN STOPS S
+    ON ST_INTERSECTS(S.SPOT, B.AREA) = 1 AND S.ID < 400;
+DROP TABLE STOPS CASCADE;
+DROP TABLE BLOCKS CASCADE;
+COMMIT;
+```
+
+```
+                PAIRS |               PAIRED
+----------------------+----------------------
+                  200 |                  100
+(1 row, with a warning: SQLSTATE 01003)
+OK
+OK
+OK
+```
+
+The counts ask the database's maintenance for the tables' statistics,
+and the EXPLAIN is run once it has gathered them. Before, the join has
+no estimate of its pairs and probes, here the product, as probing every
+stop for each block would cost more. Each block holds one stop, and the
+hundred blocks of the stops past 400 keep a null, which COUNT(S.ID)
+eliminates.
+
+A broad inner join that buffers one side to scan the other's table
+holds those rows within MEMORY.WORK_BYTES. Past it, they are written to
+the spill area, and if the scan still costs less, both sides are split
+by a grid of envelopes and joined a cell at a time, a pair produced only
+in one cell. The rows are those of the join in memory, with the same
+errors, in no particular order.
+
+Under SERIALIZABLE, a join of two indexes counts as reading the whole of
+the side whose tree it pairs from and, of the other, the rows whose
+envelopes meet the hull of the first side's envelopes.
 
 ## The Spatial Information Schema
 

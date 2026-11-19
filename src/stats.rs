@@ -19,10 +19,12 @@
 //! values, so an engine feeds them a row at a time or a column at a time.
 //! `TableStats` is one way to answer from them: per column, the distinct
 //! values, the fraction that is NULL, the least and greatest values, and a
-//! histogram, and how often its values repeat (`frequencies`), which a
-//! property graph's statistics are made of (`graph`). `ColumnBuilder`
-//! gathers a column's; `StatsBuilder` gathers a table's from its rows.
+//! histogram, how often its values repeat (`frequencies`), which a
+//! property graph's statistics are made of (`graph`), and of a geometry
+//! column, its envelopes' (`envelopes`). `ColumnBuilder` gathers a
+//! column's; `StatsBuilder` gathers a table's from its rows.
 
+pub mod envelopes;
 pub mod frequencies;
 pub mod graph;
 pub mod parts;
@@ -33,9 +35,11 @@ use std::fmt::Debug;
 use std::hash::BuildHasher;
 
 pub use frequencies::Frequencies;
+pub use envelopes::{EnvelopeBuilder, EnvelopeStats};
 pub use parts::Sampling;
 use parts::{Histogram, HyperLogLog, Reservoir, count};
 
+use crate::geometry::Geometry;
 use crate::hash::murmur::MurmurBuildHasher;
 use crate::storage::Row;
 use crate::value::{CompOp, Value, compare};
@@ -73,6 +77,10 @@ pub trait Statistics: Send + Sync + Debug {
     fn bounds(&self, _column: usize) -> Option<(Value, Value)> {
         None
     }
+    /// Of a geometry `column`, its envelopes' statistics (RULES.md D137).
+    fn envelopes(&self, _column: usize) -> Option<&EnvelopeStats> {
+        None
+    }
 }
 
 /// What a column's values are like.
@@ -93,6 +101,8 @@ pub struct ColumnStats {
     pub unbounded: bool,
     /// How often its distinct non-null values repeat, if it has any.
     pub frequencies: Option<Frequencies>,
+    /// Of a column of geometries, their envelopes' statistics.
+    pub envelopes: Option<Box<EnvelopeStats>>,
 }
 
 impl ColumnStats {
@@ -157,6 +167,10 @@ impl Statistics for TableStats {
     fn bounds(&self, column: usize) -> Option<(Value, Value)> {
         let c = self.columns.get(column)?;
         Some((c.min.clone()?, c.max.clone()?))
+
+    }
+    fn envelopes(&self, column: usize) -> Option<&EnvelopeStats> {
+        self.columns.get(column)?.envelopes.as_deref()
     }
 }
 
@@ -173,6 +187,8 @@ pub struct ColumnBuilder {
     /// Of a sample of the rows, how often each value was seen, by the hash
     /// of its normalized form, for the distinct values to be scaled.
     seen: Option<HashMap<u64, u32>>,
+    /// Of a column of geometries, their envelopes, begun at the first.
+    envelopes: Option<EnvelopeBuilder>,
 }
 
 impl ColumnBuilder {
@@ -198,12 +214,28 @@ impl ColumnBuilder {
             let times = seen.entry(MurmurBuildHasher::default().hash_one(value.norm())).or_default();
             *times = times.saturating_add(1);
         }
-        self.sample.add(value);
+        if Geometry::is_geometry(value) {
+            self.add_geometry(value);
+        } else {
+            self.sample.add(value);
+        }
         if self.min.as_ref().is_none_or(|min| compare(value, min) == Some(Ordering::Less)) {
             self.min = Some(value.clone());
         }
         if self.max.as_ref().is_none_or(|max| compare(value, max) == Some(Ordering::Greater)) {
             self.max = Some(value.clone());
+        }
+    }
+
+    /// Adds the geometry `value` to its envelopes' statistics, not to the
+    /// sample: a geometry has no order a histogram could place it by, and
+    /// one of many vertices would take a sample's memory (RULES.md D137).
+    /// A value that cannot be read is left out, as a scan reading it would
+    /// raise its error.
+    fn add_geometry(&mut self, value: &Value) {
+        if let Ok(geometry) = Geometry::from_value(value) {
+            let most = self.sampling.values;
+            self.envelopes.get_or_insert_with(|| EnvelopeBuilder::keeping(most)).add(&geometry);
         }
     }
 
@@ -219,6 +251,7 @@ impl ColumnBuilder {
             histogram: Histogram::of_sorted(&sorted, self.sampling.buckets),
             unbounded: false,
             frequencies: Frequencies::of_sorted(&sorted, count(present)),
+            envelopes: self.envelopes.and_then(EnvelopeBuilder::finish).map(Box::new),
         }
     }
 

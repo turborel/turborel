@@ -20,6 +20,7 @@ const SHIFTS: [u32; 3] = [30, 27, 31];
 
 impl RTree {
     pub(crate) fn estimated_matches(&self, bounds: Bounds) -> Option<usize> {
+        let _pin = self.pin();
         let visit = self.root().ok()?;
         let mut sample = Sampling { tree: self, bounds, pages: PAGES };
         let root = sample.node(visit)?;

@@ -64,16 +64,28 @@ impl Limit {
         usize::try_from(d.units).ok()
     }
 
-    /// The most of its input's first rows it reads, if its counts are
-    /// constants: OFFSET's and FETCH FIRST's, of ONLY. Of no FETCH FIRST,
-    /// its input is read to its end.
+    /// The count of its FETCH FIRST, if a constant row count, of ONLY or
+    /// WITH TIES: WITH TIES keeps those rows and then their peers.
+    fn counted(&self) -> Option<usize> {
+        let Some(Fetch { count: Expr::Const(Value::Exact(d)), percent: false, .. }) = &self.fetch else { return None };
+        if d.scale != 0 {
+            return None;
+        }
+        usize::try_from(d.units).ok()
+    }
+
+    /// The first of its input's rows it reads, if its counts are
+    /// constants: OFFSET's and FETCH FIRST's, of ONLY or WITH TIES, whose
+    /// peers of the last are read after them (RULES.md D135). Of no FETCH
+    /// FIRST, or of PERCENT, whose count needs every row, its input is
+    /// read to its end.
     pub fn read_rows(&self) -> Option<usize> {
         let passed = match &self.offset {
             None => Some(0),
             Some(Expr::Const(Value::Exact(d))) => (d.scale == 0).then(|| usize::try_from(d.units).ok()).flatten(),
             Some(_) => None,
         };
-        passed?.checked_add(self.most()?)
+        passed?.checked_add(self.counted()?)
     }
 
     /// It as EXPLAIN shows it: "Limit", then "offset" and "fetch" with

@@ -40,7 +40,7 @@ fn reference_count_overflow_changes_nothing() {
     assert_eq!(ids(&tree, None), [0]);
 }
 
-/// Verifies: [DESIGN] A node's format, bounded level, pending flag, split
+/// Verifies: [DESIGN] A node's format, bounded level, flags, split
 /// link, length, finite coordinates and positive reference counts are
 /// independently checked (MC/DC), with SQLCODE -916 for each defect.
 #[test]
@@ -50,7 +50,7 @@ fn invalid_node_fields_are_refused() {
     let root = tree.root().unwrap();
     let bytes = tree.read(root.id).unwrap().bytes().unwrap();
     let mut cases = Vec::new();
-    for (offset, byte) in [(0, 99), (1, node::MAX_LEVEL + 1), (2, 2), (2, 1), (19, 2)] {
+    for (offset, byte) in [(0, 99), (1, node::MAX_LEVEL + 1), (2, 4), (2, 1), (19, 2)] {
         let mut damaged = bytes.clone();
         damaged[offset] = byte;
         cases.push(damaged);
