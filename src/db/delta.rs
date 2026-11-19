@@ -18,9 +18,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::{Session, State, StatementContext};
-use crate::ast::{CursorSpecification, DeltaResult, DeltaTable, MatchedAction, MergeWhen, SqlStatement};
-use crate::binder::qualify;
-use crate::catalog::QualifiedName;
+use crate::ast::{
+    CheckLevels, CursorSpecification, DeltaResult, DeltaTable, InsertSource, MatchedAction, MergeWhen, SqlStatement, TableReference,
+};
+use crate::binder::{qualify, write_target};
+use crate::catalog::{ColumnDesc, QualifiedName, proper_subtables};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::exec::{HeldRows, TransitionRows};
 use crate::params::Params;
@@ -35,8 +37,14 @@ pub(super) struct Collector(Arc<Gathered>);
 
 /// What a `Collector` gathers.
 struct Gathered {
-    /// The subject table.
+    /// The base table whose rows change, the subject table or the base
+    /// table of the subject view.
     table: QualifiedName,
+    /// The proper subtables of `table`, a typed table, whose rows the
+    /// statement changes by their superrows in it.
+    members: Vec<QualifiedName>,
+    /// The column of `table` each column of the subject table is.
+    map: Vec<usize>,
     result: DeltaResult,
     rows: Mutex<HeldRows<Row>>,
     /// Whether the statement's effects took it. Those of any statement
@@ -56,14 +64,17 @@ impl Collector {
         (self.0.result == DeltaResult::Final).then_some(&self.0.table)
     }
 
-    /// Records the row of `table` changed from `old` to `new`, if `table`
-    /// is the subject table and the delta table holds it.
+    /// Records the row of `table` changed from `old` to `new`, if the
+    /// delta table holds it, if `table` is the base table whose rows
+    /// change, or one of its proper subtables, the row then its superrow
+    /// [ISO/IEC 9075-2:2023 §14.9 GR4, §14.14 GR6]. Of a view, the row is
+    /// as the view shows it [§15.11, §15.13].
     ///
     /// # Errors
     ///
     /// The spill area's.
     pub(super) fn record(&self, table: &QualifiedName, old: Option<&Row>, new: Option<&Row>) -> Result<()> {
-        if *table != self.0.table {
+        if *table != self.0.table && !self.0.members.contains(table) {
             return Ok(());
         }
         let row = match self.0.result {
@@ -71,7 +82,9 @@ impl Collector {
             DeltaResult::New | DeltaResult::Final => new,
             DeltaResult::Changed => new.or(old),
         };
-        row.map_or(Ok(()), |r| lock_builtin(&self.0.rows).push(r.clone()))
+        let Some(row) = row else { return Ok(()) };
+        let shown: Row = self.0.map.iter().map(|&c| row.get(c).cloned().unwrap_or(crate::value::Value::Null)).collect();
+        lock_builtin(&self.0.rows).push(shown)
     }
 }
 
@@ -135,11 +148,39 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// SQLCODE -104 as `check_shape` refuses it; -900 of a view's; any of
+    /// SQLCODE -103 as `check_shape` or `delta_subject` refuses it; any of
     /// the statement's.
     pub(super) fn run_delta(&self, st: &Arc<State>, tx: &Txn, spec: &CursorSpecification, params: &Params) -> Result<bool> {
-        let Some(d) = spec.query.delta() else { return Ok(false) };
-        self.run_delta_table(st, tx, d, params).map(|()| true)
+        let deltas = spec.query.deltas();
+        for d in &deltas {
+            self.run_delta_table(st, tx, d, params)?;
+        }
+        Ok(!deltas.is_empty())
+    }
+
+    /// Runs the statements of the delta tables `stmt`, an INSERT or a
+    /// MERGE, reads, in the statement of `tx`, before it runs, true if it
+    /// reads one (RULES.md D189).
+    ///
+    /// # Errors
+    ///
+    /// As `run_delta`.
+    pub(super) fn run_change_deltas(&self, st: &Arc<State>, tx: &Txn, stmt: &SqlStatement, params: &Params) -> Result<bool> {
+        let mut deltas: Vec<&DeltaTable> = Vec::new();
+        if let SqlStatement::Insert(i) = stmt
+            && let InsertSource::Query(q) = &i.source
+        {
+            deltas = q.deltas();
+        }
+        if let SqlStatement::Merge(m) = stmt
+            && let TableReference::Delta(d) = &m.source
+        {
+            deltas.push(d);
+        }
+        for d in &deltas {
+            self.run_delta_table(st, tx, d, params)?;
+        }
+        Ok(!deltas.is_empty())
     }
 
     /// Runs the statement of the delta table `d` in the statement of `tx`,
@@ -152,22 +193,51 @@ impl Session {
         check_shape(d)?;
         let subject = d.subject().ok_or_else(|| refused("Format", "a <data change delta table> has a subject table"))?;
         let name = qualify(subject, &self.default_schema());
-        let columns = st.catalog.table(&name).map(|t| t.columns.clone()).ok_or_else(|| {
-            SqlError::new(
-                Code::Unsupported,
-                format!("[EXTENSION] a <data change delta table> of {name}, not a base table, is not supported (RULES.md D183)"),
-            )
-        })?;
+        let (base, map, columns) = self.delta_subject(st, &name, params)?;
         self.may_run(st, &d.statement)?;
+        let members =
+            if st.catalog.table(&base).is_some_and(|t| t.typed.is_some()) { proper_subtables(&*st.catalog, &base) } else { Vec::new() };
         let rows = Mutex::new(HeldRows::new(st.list_space()));
-        let collector = Collector(Arc::new(Gathered { table: name.clone(), result: d.result, rows, claimed: AtomicBool::new(false) }));
-        self.inner.borrow_mut().delta = Some(collector.clone());
+        let gathered = Gathered { table: base, members, map, result: d.result, rows, claimed: AtomicBool::new(false) };
+        let collector = Collector(Arc::new(gathered));
+        // A delta table of the statement of another's keeps the other's
+        // collector, given back once it ran.
+        let outer = self.inner.borrow_mut().delta.replace(collector.clone());
         let ran = self.run_statement(StatementContext { st, tx }, &d.statement, &mut params.clone(), None);
-        self.inner.borrow_mut().delta = None;
+        self.inner.borrow_mut().delta = outer;
         ran?;
         let held = std::mem::replace(&mut *lock_builtin(&collector.0.rows), HeldRows::new(st.list_space()));
         d.rows.give((TransitionRows::with(held), name, columns));
         Ok(())
+    }
+
+    /// The base table whose rows a delta table's statement of the subject
+    /// table `name` changes, the column of it each of the subject's is,
+    /// and the subject's columns. Of a base table it is itself, of a view the
+    /// base table under it [ISO/IEC 9075-2:2023 §7.6 SR11b].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 of a view without CASCADED CHECK OPTION [SR11b i]; as
+    /// `write_target` of a view not updatable, or of no table.
+    fn delta_subject(
+        &self,
+        st: &Arc<State>,
+        name: &QualifiedName,
+        params: &Params,
+    ) -> Result<(QualifiedName, Vec<usize>, Vec<ColumnDesc>)> {
+        if let Some(t) = st.catalog.table(name) {
+            return Ok((name.clone(), (0..t.columns.len()).collect(), t.columns.clone()));
+        }
+        // A view with CHECK OPTION has no INSTEAD OF trigger, nor does any
+        // view under it [§11.49 SR4c, SR4d], so none is trigger updatable
+        // [SR11b ii].
+        if st.catalog.view(name).is_some_and(|v| v.check_option != Some(CheckLevels::Cascaded)) {
+            return Err(refused("SR11b i", &format!("{name}, the subject view of a <data change delta table>, has CASCADED CHECK OPTION")));
+        }
+        let rule = "ISO/IEC 9075-2:2023 §7.6 SR11";
+        let target = self.bound(st, params, |b| write_target(b.db, name, (rule, b.user), None))?;
+        Ok((target.base.name.clone(), target.map, target.named.columns))
     }
 
     /// The collector of the statement whose effects are made now, if one

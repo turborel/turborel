@@ -87,8 +87,8 @@ impl State {
             analysed.modules.iter().filter_map(|n| found.modules.iter().find(|(_, l)| l.name == *n)).map(|(q, _)| q.clone()).collect();
         let xml_schemas: Vec<QualifiedName> =
             analysed.schemas.iter().filter_map(|n| found.importable.iter().find(|(_, s)| s.name == *n)).map(|(q, _)| q.clone()).collect();
-        let mut locks = vec![(QualifiedName::of_schema(&qn.auth), LockMode::Shared)];
-        locks.extend(modules.iter().chain(&xml_schemas).filter(|u| *u != qn).map(|u| (u.clone(), LockMode::Shared)));
+        let mut locks = vec![(QualifiedName::of_schema(&qn.auth), LockMode::AccessShare)];
+        locks.extend(modules.iter().chain(&xml_schemas).filter(|u| *u != qn).map(|u| (u.clone(), LockMode::AccessShare)));
         let desc = XQueryModuleDesc {
             name: qn.clone(),
             target_namespace: analysed.namespace,
@@ -238,7 +238,7 @@ impl State {
         for m in abandoned.xquery_modules.iter().filter(|m| self.catalog.xquery_module(m).is_some()) {
             catalog.remove_xquery_module(m);
             dropped.names.push(m.clone());
-            locks.push((m.clone(), LockMode::Exclusive));
+            locks.push((m.clone(), LockMode::AccessExclusive));
         }
         self.catalog = Arc::from(catalog);
     }

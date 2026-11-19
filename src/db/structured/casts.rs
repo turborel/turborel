@@ -67,7 +67,7 @@ impl State {
         if f.access != DataAccess::Contains {
             return refused("SR10e, SR10f] the cast function neither reads nor modifies SQL-data");
         }
-        let locks = vec![(f.specific.clone(), LockMode::Shared)];
+        let locks = vec![(f.specific.clone(), LockMode::AccessShare)];
         let mut catalog = self.catalog.duplicate();
         catalog.put_cast(CastDesc { source, target, function: f.specific, assignment: c.assignment });
         self.catalog = Arc::from(catalog);

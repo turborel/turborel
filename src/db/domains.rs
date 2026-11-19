@@ -214,7 +214,7 @@ impl State {
         let mut catalog = self.catalog.duplicate();
         catalog.put_domain(DomainDesc { name: qn, data_type, default, constraints, usage: Vec::new(), collation });
         self.catalog = Arc::from(catalog);
-        Ok(Defined { locks: reads.into_iter().map(|t| (t, LockMode::Shared)).collect(), ..Defined::default() })
+        Ok(Defined { locks: reads.into_iter().map(|t| (t, LockMode::AccessShare)).collect(), ..Defined::default() })
     }
 
     /// [ISO/IEC 9075:1992 §11.21 SR6, §11.9, §10.6] The descriptor of
@@ -353,7 +353,7 @@ impl State {
                 }
             }
         }
-        let locks = tables.iter().map(|t| (t.name.clone(), LockMode::Exclusive)).collect();
+        let locks = tables.iter().map(|t| (t.name.clone(), LockMode::AccessExclusive)).collect();
         let mut catalog = self.catalog.duplicate();
         for t in tables {
             catalog.replace_table(t);

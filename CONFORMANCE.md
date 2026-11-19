@@ -1011,9 +1011,9 @@ statement [§7.6].
 
 | Feature | Rules | What turborel does |
 |---|---|---|
-| Where it stands | §7.6 SR11 | As the one table reference of the FROM clause of a cursor's query, directly run, prepared or declared, or of a SELECT INTO, in a routine too (RULES.md D183). Elsewhere SQLCODE -900. |
+| Where it stands | §7.5 SR3, §7.17 SR2, SR3d iv, GR1a, §7.19 SR1, §11.32 SR7 | As the one table reference of the FROM clause of a query specification that is the body of a cursor's query, directly run, prepared or declared, of a SELECT INTO, in a routine too, of a WITH list element, one each, or of an INSERT's query; or as a MERGE's source. WITH list elements' statements run in the order written, then the query's own (RULES.md D183, D189). In a subquery, a derived table, beside another table reference, in a set operation's operand or in a view, SQLCODE -103, its statement not run. |
 | Its statement | SR11, SR11a | Not FOR PORTION OF, nor positioned. OLD of an INSERT, or of a MERGE that neither updates nor deletes, and NEW or FINAL of a DELETE, or of a MERGE that neither updates nor inserts, are SQLCODE -103. |
-| Its subject table | SR11b | A base table. A view's, of CASCADED CHECK OPTION or not, is SQLCODE -900. |
+| Its subject table | SR11b | A base table, or a view of CASCADED CHECK OPTION, its rows the base table's change made, in the view's columns; any other view is SQLCODE -103. Of a typed table, the rows of its subtables an UPDATE or DELETE reaches, by their superrows [§14.9 GR4, §14.14 GR6] (RULES.md D189). |
 | Its rows | GR5b | The old or new delta table of the operation, each row as the statement writes it, after its BEFORE triggers, its defaults, identity and generated columns given, before its referential actions and AFTER triggers. A MERGE's OLD has the rows it updated and deleted, its NEW those it inserted and updated. A derived column list renames the columns [SR12b ii]. |
 | FINAL | GR5a, §15.18 GR15, §15.21 GR6i | A referential action of the statement that changes the subject table is SQLSTATE 27001; an AFTER trigger's statement that does is 0W001, told by the trigger's 09000 [§15.21 GR6m]. |
 | Failure | | A statement that fails gives no rows, and the query fails with it. The query's rows are read as its cursor opens, so its own error undoes the statement too. |
@@ -4127,6 +4127,7 @@ names the column or its new name, or a view selects `*` of it, SQLCODE
 | FILES, FILE_FORMATS | A database's files and their formats |
 | JOBS | Its background jobs |
 | MEMORY_RESERVATIONS | What holds its memory |
+| LOCKS | The locks held and sought |
 | GRAPH_ALGO_RUNS | The latest 1000 runs of graph algorithms |
 
 ### Plans
@@ -4147,10 +4148,11 @@ ends at LOCKS.TIMEOUT_MS or a cancel.
 
 | Facility | What turborel does |
 |---|---|
-| FOR UPDATE, FOR SHARE | After a cursor's query, OF naming its table, NOWAIT or SKIP LOCKED after. Each row it gives is locked, exclusive or shared, to the transaction's end, before its row limit counts it. A writer of a locked row waits. At READ COMMITTED a row changed since the snapshot runs the query again at a new one; at REPEATABLE READ and SERIALIZABLE it is SQLCODE -911. One base table, or a view of one, through no join, grouping, DISTINCT, window or set operation, else SQLCODE -900 (RULES.md D185). |
+| FOR UPDATE, FOR SHARE | After a cursor's query, OF naming the tables whose rows lock, NOWAIT or SKIP LOCKED after. Each row it gives locks the row of each table named, or of every table without OF, exclusive or shared, to the transaction's end, before its row limit counts it. A writer of a locked row waits. At READ COMMITTED a row changed since the snapshot runs the query again at a new one; at REPEATABLE READ and SERIALIZABLE it is SQLCODE -911. Base tables, or views of one, joined or not, through no grouping, DISTINCT, window, set operation or derived table, else SQLCODE -900 (RULES.md D185). A table whose engine leaves isolation to the coordinator is locked whole, SHARE UPDATE EXCLUSIVE or SHARE. |
 | NOWAIT | A lock held against it is SQLSTATE TBL01, SQLCODE -911. |
-| SKIP LOCKED | Passes over a row locked against it, or changed since the snapshot. |
-| LOCK TABLE | `LOCK [TABLE] [ONLY] t [, ...] [IN mode MODE] [NOWAIT]`, of eight modes taken as the three of a table's lock, ACCESS EXCLUSIVE by default, to the transaction's end (RULES.md D186). Command code -42. |
+| SKIP LOCKED | Passes over a row locked against it, or changed since the snapshot; every row, while another transaction holds a table locked whole against it. |
+| LOCK TABLE | `LOCK [TABLE] [ONLY] t [, ...] [IN mode MODE] [NOWAIT]`, in any of eight table lock modes with their matrix of conflicts, ACCESS EXCLUSIVE by default, to the transaction's end. Writers of a table whose engine isolates transactions hold ROW EXCLUSIVE, so they share it (RULES.md D186). Command code -42. |
+| INFORMATION_SCHEMA.LOCKS | The table, row and advisory locks held and sought, each with its mode, session, transaction and whether it waits, to the database's owner (RULES.md D188). |
 | Advisory locks | ADVISORY_LOCK, TRY_ADVISORY_LOCK, ADVISORY_UNLOCK and ADVISORY_UNLOCK_ALL, and ADVISORY_XACT_LOCK and TRY_ADVISORY_XACT_LOCK, each but the last two kinds with a _SHARED form, of a BIGINT, two INTEGERs or a string. Each is also named with the prefix PG_ (RULES.md D187). |
 
 ### RETURNING

@@ -73,6 +73,7 @@ verification approach DO-178C expects (§8).
 | D58 | Dynamic SQL in SQL text, with a session as the module |
 | D183 | A delta table's statement runs before its query is bound, and gives its rows as a transition table |
 | D184 | RETURNING is a query of a CHANGED delta table |
+| D189 | Delta tables stand in WITH list elements, INSERT queries and MERGE sources, of views through their base table |
 | **Architecture** | |
 | D25 | One log, owned by the database |
 | D26 | Cryptography only from vetted crates, in plug-ins |
@@ -181,8 +182,9 @@ verification approach DO-178C expects (§8).
 | D151 | A graph's statistics are made of its tables', and choose where a search starts |
 | D152 | A search expands a frontier at once and chooses MS-BFS and workers by cost |
 | D185 | Row locks are kept per table in stripes, and taken by a filter between a query's sort and its limit |
-| D186 | LOCK TABLE takes a table lock in one of three strengths |
+| D186 | Table locks are held in any of eight modes, and the coordinator's own locks are three of them |
 | D187 | Advisory locks are kept by key in the transaction coordinator, held by a session or a transaction |
+| D188 | INFORMATION_SCHEMA.LOCKS lists the locks held and sought, to the database's owner |
 
 ### The project
 
@@ -1665,16 +1667,14 @@ session. A plug-in's type has TYPE code -1 [§17.1 Table 18].
 
 A `<data change delta table>` [ISO/IEC 9075-2:2023 §7.6] is read where a
 cursor's query, directly run, prepared or declared, or a SELECT INTO, in a
-routine too, has it as the one table reference of its FROM clause. The
-parser marks it so as it reads such a query (`DeltaRows::admit`). The
-session runs its statement in the cursor's statement first, then binds the
-query over the rows the statement recorded, read as a transition table is
-(`db/delta.rs`). Anywhere else, in a subquery, a join, a view or a WITH
-clause, it is refused, SQLCODE -900. Its statement would run once per
-evaluation there, and when that is would be hard to tell. A prepared
-query is bound at PREPARE over no rows, of the subject table's columns,
-its statement bound too so its parameters are typed. Each opening runs
-the statement again.
+routine too, has it as the one table reference of its FROM clause, and
+where D189 lets it stand. The parser marks it so as it reads such a query
+(`DeltaRows::admit`). The session runs its statement in the cursor's
+statement first, then binds the query over the rows the statement
+recorded, read as a transition table is (`db/delta.rs`). A prepared query
+is bound at PREPARE over no rows, of the subject table's columns, its
+statement bound too so its parameters are typed. Each opening runs the
+statement again.
 
 The statement's effects record each row of the subject table as they
 record it for triggers (`Effects::inserted`, `updated`, `deleted`). So a
@@ -1686,14 +1686,13 @@ cascade or an AFTER trigger records nothing. Of FINAL the subject table
 is then the one name of the restricted subject table name list. A
 referential action that changes it is refused with SQLSTATE 27001
 [§15.18 GR15], and an AFTER trigger's statement with 0W001 [§15.21 GR6i],
-which the trigger's 09000 tells, as 0W000 is told. A subtable's rows that
-an UPDATE or DELETE of a typed table reaches are not the subject table's,
-and are not recorded.
+which the trigger's 09000 tells, as 0W000 is told. The rows of a typed
+table's proper subtables that an UPDATE or DELETE of it reaches are
+recorded too, each by its superrow, the first columns of the subtable's
+row, which are the typed table's [§14.9 GR4, §14.14 GR6].
 
 The query's rows are all read as the cursor opens, so an error of the
-query undoes the statement with it. A delta table's subject is a base
-table. One of a view is refused, SQLCODE -900, since the base rows of a
-CASCADED CHECK OPTION view [SR11b] are not yet traced back to it.
+query undoes the statement with it.
 
 #### D184. RETURNING is a query of a CHANGED delta table
 
@@ -1707,6 +1706,32 @@ query. `kind_of` and `Session::direct` know it by a RETURNING outside
 parentheses after a statement's first word, which a JSON or XML
 function's RETURNING inside its parentheses never is. The protocol and
 client needed no change, and the protocol's version stays 1.
+
+#### D189. Delta tables stand in WITH list elements, INSERT queries and MERGE sources, of views through their base table
+
+A delta table stands where the standard lets it and nowhere else. It is
+the one table reference of a FROM clause [§7.5 SR3], of a query
+specification that is the body of its query expression [§7.17 SR2]. That
+query expression is a cursor's, a `<with list element>`'s [§7.17 SR3d
+iv], an INSERT's, or a SELECT INTO's, or the delta table is a MERGE's
+source. A subquery, scalar, row or table, holds none unless it is a with
+list element's [§7.19 SR1], so neither a predicate's subquery nor a
+derived table does. A view's query holds none [§11.32 SR7].
+`QueryExpression::deltas` finds them, each with list element's in the
+order written and then the query's own, and the session runs their
+statements in that order [§7.17 GR1a]. A delta table found nowhere it
+may stand is refused as it is bound, SQLCODE -103, its statement not run.
+A delta table of a statement inside another's keeps the other's
+collector aside while it runs, and gives it back after. An INSERT or
+MERGE reading one is bound again at each execution, keeping no plan.
+
+A delta table's subject is a base table or a view with CASCADED CHECK
+OPTION [§7.6 SR11b i]; one without is refused, SQLCODE -103. Such a view
+has no INSTEAD OF trigger, nor has any view under it [§11.49 SR4c, SR4d],
+so no view of it is trigger updatable [SR11b ii]. The base table the
+view's change writes is found as the change finds it (`write_target`),
+and each row recorded of it is put in the view's columns by the view's
+map of them. The CHECK OPTION keeps every new row in the view.
 
 ### Architecture
 
@@ -6401,9 +6426,25 @@ times. At REPEATABLE READ and SERIALIZABLE it is refused, SQLCODE -911,
 as a write of the row would be. SKIP LOCKED passes over such a row.
 NOWAIT refuses a lock held against it with SQLSTATE TBL01, SQLCODE -911.
 
-A table whose engine leaves isolation to the coordinator has no row
-locks. Its table lock is taken instead, Update for FOR UPDATE and Shared
-for FOR SHARE.
+A query of a join locks the rows of each base table it reads, or of
+those OF names by the names its FROM clause exposes. The binder walks the
+plan's scans, filters, projections, products and outer joins, left to
+right as the FROM clause names the tables, and makes each scan of a table
+locked give its row id. Each product or outer join is given a projection
+that puts the ids after both operands' columns, so no column above it
+moves. A row of an outer join with no row of a table locks nothing of it.
+A row of one table locked before another's is found held under SKIP
+LOCKED stays locked. A derived table, a view of several tables, grouping,
+DISTINCT, a window or a set operation is still refused, SQLCODE -900.
+
+A locking query takes ROW SHARE on each table whose rows it locks
+(D186). A table whose engine leaves isolation to the coordinator has no
+row locks, and its engine offers no row identity stable across
+transactions to key them by. Its table lock stands for its rows' instead,
+SHARE UPDATE EXCLUSIVE for FOR UPDATE and SHARE for FOR SHARE. While
+another transaction holds that table lock against the query, SKIP LOCKED
+passes over every row, each being made of one of its rows, and NOWAIT is
+refused at once with TBL01 (`State::try_acquire`).
 
 Waits for table, row and advisory locks share one waiter
 (`txn/waiting.rs`). It checks for a cancel, then for holders against it,
@@ -6411,18 +6452,33 @@ then NOWAIT, SKIP and LOCKS.WAIT, then a cycle in the graph of waits, then
 LOCKS.TIMEOUT_MS, and sleeps on the lock's signal between. So a deadlock
 across kinds is found at once, and every wait ends as a table lock's does.
 
-#### D186. LOCK TABLE takes a table lock in one of three strengths
+#### D186. Table locks are held in any of eight modes, and the coordinator's own locks are three of them
 
-LOCK TABLE is an extension. Its eight modes map to the table lock's three
-modes. ACCESS SHARE, ROW SHARE and SHARE take Shared. ROW EXCLUSIVE and
-SHARE UPDATE EXCLUSIVE take Update. SHARE ROW EXCLUSIVE, EXCLUSIVE and
-ACCESS EXCLUSIVE, the default, take Exclusive. So two ROW EXCLUSIVE holders
-stand against each other, which a finer lattice would let through. The
-lock is the one the transaction's statements take, so LOCK TABLE adds no
-mode to the lock manager. A Shared lock needs SELECT, a stronger one
-DELETE. A typed table's subtables are locked unless ONLY is written. The
-tables are locked in the order written, and those locked before a failure
-stay locked. Its command code is -42.
+A table's lock is held in any of eight modes, ACCESS SHARE, ROW SHARE,
+ROW EXCLUSIVE, SHARE UPDATE EXCLUSIVE, SHARE, SHARE ROW EXCLUSIVE,
+EXCLUSIVE and ACCESS EXCLUSIVE (`txn/modes.rs`). Each conflicts with a
+fixed set of the others, a symmetric matrix kept as a bit set per mode. A
+transaction holds a set of modes, as its statements took them, and a
+request waits only for another transaction holding a mode that conflicts
+with it. A held mode is never weakened before the transaction ends.
+
+The coordinator's own locks are three of the eight. A reader of a table
+whose engine leaves isolation to the coordinator holds ACCESS SHARE. A
+read that intends to write, a searched UPDATE or DELETE or an updatable
+cursor, holds SHARE UPDATE EXCLUSIVE, so two such reads take turns. A
+writer of such a table, and a change to any table's definition, holds
+ACCESS EXCLUSIVE. A writer of a table whose engine isolates transactions
+holds ROW EXCLUSIVE, which other writers share, so two writers never wait
+for each other through the table lock. A reader of such a table reads its
+snapshot and takes no table lock, so even ACCESS EXCLUSIVE does not hold
+it out. Taking a lock on every read of every table would cost each
+statement a mutex for a mode only LOCK TABLE could conflict with.
+
+LOCK TABLE is an extension. Its mode is the table lock mode of its name.
+ACCESS SHARE, ROW SHARE and SHARE need SELECT, a stronger mode DELETE. A
+typed table's subtables are locked unless ONLY is written. The tables are
+locked in the order written, and those locked before a failure stay
+locked. Its command code is -42.
 
 #### D187. Advisory locks are kept by key in the transaction coordinator, held by a session or a transaction
 
@@ -6438,6 +6494,21 @@ counts up, and is unlocked as many times. The functions are named
 neutrally, each with an alias of the prefix PG_ for programs written to
 that spelling, and run only in a session's statement, where they have its
 transaction (`CallContext::transaction`).
+
+#### D188. INFORMATION_SCHEMA.LOCKS lists the locks held and sought, to the database's owner
+
+INFORMATION_SCHEMA.LOCKS is an object associated with the Information
+Schema that this implementation adds [ISO/IEC 9075:1992 §21.1]
+(`system/locks.rs`). It has a row for each mode a transaction holds a
+table's lock in, for each row lock, for each advisory lock held, and for
+each lock a transaction waits for. Each row gives the lock's type, its
+table and row id or its advisory key, its mode, the session and
+transaction holding or seeking it, and whether it waits. A transaction
+that begins to wait records what it seeks in the coordinator beside the
+graph of waits, and takes it out as the wait ends (`waiting::Sought`).
+Each holder of a table or row lock keeps its session's number. As
+MEMORY_RESERVATIONS does, it shows its rows to the database's owner alone
+(D43), since they tell what other sessions do.
 
 ## 2. Project layout
 

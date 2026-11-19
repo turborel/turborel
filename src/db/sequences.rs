@@ -118,7 +118,7 @@ impl State {
         let mut desc = generator(qn.clone(), data_type, &d.options, d.name.at)?;
         desc.epoch = epochs.next(&self.sequences)?;
         self.put_sequence(desc);
-        Ok(Defined { locks: vec![(QualifiedName::of_schema(&qn.auth), LockMode::Shared)], ..Defined::default() })
+        Ok(Defined { locks: vec![(QualifiedName::of_schema(&qn.auth), LockMode::AccessShare)], ..Defined::default() })
     }
 
     /// [ISO/IEC 9075-2:2023 §11.72] CREATE SEQUENCE `d` of the `<schema

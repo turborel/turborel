@@ -63,7 +63,7 @@ impl State {
         }
         catalog.put_user_type(desc);
         self.catalog = Arc::from(catalog);
-        let locks = read.into_iter().chain([QualifiedName::of_schema(&qn.auth)]).map(|name| (name, LockMode::Shared)).collect();
+        let locks = read.into_iter().chain([QualifiedName::of_schema(&qn.auth)]).map(|name| (name, LockMode::AccessShare)).collect();
         Ok(Defined { locks, ..Defined::default() })
     }
 

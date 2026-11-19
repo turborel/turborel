@@ -83,7 +83,7 @@ impl Session {
         let shaped = Self::shaped_model(st, statement, &schema)?;
         let text = shaped.as_deref().unwrap_or(text);
         self.refuse_declared(st, statement, (&object, &schema))?;
-        st.acquire_name(tx, &object, LockMode::Exclusive)?;
+        st.acquire_name(tx, &object, LockMode::AccessExclusive)?;
         // The generated columns a REVOKE with CASCADE loses dropped first
         // (`db/generated/named.rs`).
         let mut lost = Vec::new();
@@ -114,7 +114,7 @@ impl Session {
         // writes without one, and [ISO/IEC 9075-2:2023 §11.60 GR5] the
         // timestamps of what it makes, logged with it.
         let now = self.now.get();
-        let mut held = vec![(object, LockMode::Exclusive)];
+        let mut held = vec![(object, LockMode::AccessExclusive)];
         loop {
             let fresh = self.definitions(self.db.snapshot()?)?;
             let mut next = State::clone(&fresh);
@@ -286,7 +286,7 @@ impl State {
                 let mut defined = self.grant(&a, schema, p)?;
                 self.module_grants_upgraded();
                 // So no role is created of a grantee's name meanwhile.
-                defined.locks.push((super::roles::roles_lock(), LockMode::Shared));
+                defined.locks.push((super::roles::roles_lock(), LockMode::AccessShare));
                 Ok(defined)
             }
             SchemaStatement::Revoke(r) => {
@@ -493,7 +493,7 @@ pub(super) fn created(schema: &str, sql: &str) -> Option<QualifiedName> {
 /// those of what it reads, `reads`, and of its schema, which is not
 /// dropped meanwhile (`db/drop.rs`).
 pub(super) fn in_schema(qn: &QualifiedName, reads: Vec<QualifiedName>) -> Vec<(QualifiedName, LockMode)> {
-    reads.into_iter().chain([QualifiedName::of_schema(&qn.auth)]).map(|name| (name, LockMode::Shared)).collect()
+    reads.into_iter().chain([QualifiedName::of_schema(&qn.auth)]).map(|name| (name, LockMode::AccessShare)).collect()
 }
 
 /// The tables other than `desc` its foreign keys reference and its CHECKs

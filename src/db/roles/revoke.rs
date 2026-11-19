@@ -183,11 +183,11 @@ impl State {
         for (qn, schemas) in &lost.collations {
             let within = |s: &str| schemas.iter().any(|x| x == s);
             for d in self.catalog.domains().into_iter().filter(|d| within(&d.name.auth) && d.collation.as_ref() == Some(qn)) {
-                locks.push((d.name.clone(), LockMode::Exclusive));
+                locks.push((d.name.clone(), LockMode::AccessExclusive));
                 catalog.put_domain(crate::catalog::DomainDesc { collation: None, ..d.clone() });
             }
             for view in self.views_collated(qn, &within) {
-                locks.push((view.name.clone(), LockMode::Exclusive));
+                locks.push((view.name.clone(), LockMode::AccessExclusive));
                 catalog.remove_view(&view.name);
                 catalog.add_views(vec![view]);
             }
@@ -197,7 +197,7 @@ impl State {
         // [GR12ag] DROP TYPE CASCADE of each type abandoned.
         for t in lost.types.iter().filter(|t| self.catalog.user_type(t).is_some()).cloned().collect::<Vec<_>>() {
             let taken = self.drop_user_type(&t, true)?;
-            locks.extend(taken.names.iter().cloned().map(|name| (name, LockMode::Exclusive)));
+            locks.extend(taken.names.iter().cloned().map(|name| (name, LockMode::AccessExclusive)));
             dropped.absorb(taken);
         }
         Ok(Defined { dropped, locks, ..Defined::default() })

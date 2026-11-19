@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::ThreadId;
 
-use super::waiting::{Waiter, Waits, not_available, runs_here, wait_for};
+use super::waiting::{LockRow, Sought, Waiter, Waits, not_available, runs_here, wait_for};
 use super::{TableLock, Timestamp, TxId, Txn};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
@@ -34,6 +34,8 @@ pub(crate) type Held = HashMap<RowId, Vec<RowHolder>>;
 /// One transaction holding a row's lock.
 pub(crate) struct RowHolder {
     tx: TxId,
+    /// Its session (`Stop::session`).
+    session: u64,
     /// FOR UPDATE, else FOR SHARE.
     exclusive: bool,
     running: Arc<Mutex<Option<ThreadId>>>,
@@ -113,13 +115,34 @@ impl RowLocks {
         }
     }
 
+    /// \[EXTENSION\] The locks held of the rows of `table`, whose row locks
+    /// they are (RULES.md D188).
+    pub(crate) fn held_locks(&self, table: &QualifiedName) -> Vec<LockRow> {
+        let mut rows = Vec::new();
+        if self.count.load(Ordering::SeqCst) == 0 {
+            return rows;
+        }
+        for stripe in &self.stripes {
+            let held = lock_builtin(&stripe.held);
+            for (id, holders) in held.iter() {
+                rows.extend(holders.iter().map(|h| LockRow {
+                    lock: Sought::Row(table.clone(), Some(*id), h.exclusive),
+                    session: h.session,
+                    tx: Some(h.tx),
+                    waiting: false,
+                }));
+            }
+        }
+        rows
+    }
+
     /// Row `id`'s stripe, held for `tx` to write the row once no other
     /// transaction holds a lock of it, the row named `what` in a refusal.
     ///
     /// # Errors
     ///
     /// As a table lock's wait (`waiting::wait_for`).
-    pub(crate) fn writing<'a>(&'a self, tx: &Txn, what: &dyn Display, id: RowId) -> Result<Writing<'a>> {
+    pub(crate) fn writing<'a>(&'a self, tx: &Txn, what: &RowOf<'_>, id: RowId) -> Result<Writing<'a>> {
         let stripe = self.stripe(id)?;
         let held = lock(&stripe.held)?;
         if held.get(&id).is_none_or(|holders| holders.iter().all(|h| h.tx == tx.id)) {
@@ -128,7 +151,8 @@ impl RowLocks {
         drop(held);
         let who = tx.waiter();
         let holding = |state: &Held, me: ThreadId| others(state, id, who.id, true, me);
-        let (outcome, guard) = wait_for((&who, Waits::Setting), what, (&stripe.held, &stripe.released), &holding)?;
+        let sought = Sought::Row(what.0.clone(), Some(id), true);
+        let (outcome, guard) = wait_for((&who, Waits::Setting), (what, &sought), (&stripe.held, &stripe.released), &holding)?;
         outcome?;
         Ok(guard)
     }
@@ -139,13 +163,14 @@ impl RowLocks {
     fn take(
         &self,
         (who, waits): (&Waiter, Waits),
-        (what, id): (&dyn Display, RowId),
+        (what, id): (&RowOf<'_>, RowId),
         exclusive: bool,
         newest: &dyn Fn() -> Result<Step>,
     ) -> Result<Step> {
         let stripe = self.stripe(id)?;
         let holding = |held: &Held, me: ThreadId| others(held, id, who.id, exclusive, me);
-        let (outcome, mut held) = wait_for((who, waits), what, (&stripe.held, &stripe.released), &holding)?;
+        let sought = Sought::Row(what.0.clone(), Some(id), exclusive);
+        let (outcome, mut held) = wait_for((who, waits), (what, &sought), (&stripe.held, &stripe.released), &holding)?;
         if !outcome? {
             return Ok(Step::Skipped);
         }
@@ -155,7 +180,7 @@ impl RowLocks {
         if let Some(mine) = holders.iter_mut().find(|h| h.tx == who.id) {
             mine.exclusive |= exclusive;
         } else {
-            holders.push(RowHolder { tx: who.id, exclusive, running: Arc::clone(&who.running) });
+            holders.push(RowHolder { tx: who.id, session: who.stop.session, exclusive, running: Arc::clone(&who.running) });
             self.count.fetch_add(1, Ordering::SeqCst);
         }
         Ok(Step::Got)
@@ -205,7 +230,7 @@ impl RowLocking {
     /// SQLCODE -911 if the lock is not granted, the row changed since the
     /// query's snapshot, or of NOWAIT (SQLSTATE TBL01); as a wait's.
     pub(crate) fn lock(&self, id: RowId) -> Result<Locked> {
-        let what = format!("a row of {}", self.table);
+        let what = RowOf(&self.table);
         let newest = || {
             let n = self.storage.newest(self.who.id, id)?;
             let changed = n.row.is_none() || n.stamp > self.snapshot;
@@ -225,14 +250,17 @@ impl RowLocking {
             match self.waits {
                 Waits::Skip => return Ok(Locked::Skipped),
                 Waits::NoWait => return Err(not_available(&what)),
-                Waits::Setting => self.lock.wait_for_writer(&self.who, &what, writer)?,
+                Waits::Setting => {
+                    let sought = Sought::Row(self.table.clone(), Some(id), self.exclusive);
+                    self.lock.wait_for_writer(&self.who, (&what, &sought), writer)?;
+                }
             }
         }
     }
 
     /// Of a row `what` changed since the snapshot: passed over of SKIP
     /// LOCKED, else the statement refused, to run again.
-    fn changed(&self, what: &str) -> Result<Locked> {
+    fn changed(&self, what: &RowOf<'_>) -> Result<Locked> {
         if self.waits == Waits::Skip {
             return Ok(Locked::Skipped);
         }

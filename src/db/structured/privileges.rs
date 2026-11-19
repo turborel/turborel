@@ -128,7 +128,7 @@ impl State {
         // [GR12ag] DROP TYPE CASCADE of each subtype abandoned.
         for t in revoked.types.iter().filter(|t| self.catalog.structured_type(t).is_some()).cloned().collect::<Vec<_>>() {
             let taken = self.drop_user_type(&t, true)?;
-            locks.extend(taken.names.iter().cloned().map(|name| (name, LockMode::Exclusive)));
+            locks.extend(taken.names.iter().cloned().map(|name| (name, LockMode::AccessExclusive)));
             dropped.absorb(taken);
         }
         let completion = if revoked.warned { Completion::Warning(SqlState::PRIVILEGE_NOT_REVOKED) } else { Completion::Success };

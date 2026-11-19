@@ -118,7 +118,7 @@ impl State {
         desc.attributes.iter().for_each(|a| types_in(&a.data_type, &mut read));
         read.retain(|r| r != qn);
         self.put_structured(desc);
-        let locks = read.into_iter().chain([QualifiedName::of_schema(&qn.auth)]).map(|name| (name, LockMode::Shared)).collect();
+        let locks = read.into_iter().chain([QualifiedName::of_schema(&qn.auth)]).map(|name| (name, LockMode::AccessShare)).collect();
         Ok(Defined { locks, ..Defined::default() })
     }
 

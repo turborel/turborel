@@ -83,7 +83,7 @@ impl State {
             system.grantable = grantable;
         }
         self.put_module(desc);
-        locks.push((QualifiedName::of_schema(&qn.auth), LockMode::Shared));
+        locks.push((QualifiedName::of_schema(&qn.auth), LockMode::AccessShare));
         Ok(Defined { made: Some(built), locks, ..Defined::default() })
     }
 

@@ -79,7 +79,7 @@ impl State {
         for view in broken {
             if self.catalog.view(&view).is_some() {
                 defined.dropped.absorb(self.drop_view(&view, true)?);
-                defined.locks.push((view, crate::txn::LockMode::Exclusive));
+                defined.locks.push((view, crate::txn::LockMode::AccessExclusive));
             }
         }
         Ok(())

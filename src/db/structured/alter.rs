@@ -32,7 +32,7 @@ impl State {
         if let Some(d) = self.catalog.user_type(&qn).cloned() {
             self.alter_distinct_type(d, &a.action)?;
             return Ok(Defined {
-                locks: vec![(qn.clone(), LockMode::Exclusive), (QualifiedName::of_schema(&qn.auth), LockMode::Shared)],
+                locks: vec![(qn.clone(), LockMode::AccessExclusive), (QualifiedName::of_schema(&qn.auth), LockMode::AccessShare)],
                 ..Defined::default()
             });
         }
@@ -64,7 +64,10 @@ impl State {
             }
             AlterTypeAction::DropMethod(m) => self.drop_method_spec(&desc, &subs, m).or_at(m.name.1)?,
         }
-        let locks = subs.into_iter().map(|s| (s.name, LockMode::Exclusive)).chain([(QualifiedName::of_schema(&qn.auth), LockMode::Shared)]);
+        let locks = subs
+            .into_iter()
+            .map(|s| (s.name, LockMode::AccessExclusive))
+            .chain([(QualifiedName::of_schema(&qn.auth), LockMode::AccessShare)]);
         Ok(Defined { locks: locks.collect(), ..Defined::default() })
     }
 

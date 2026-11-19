@@ -104,8 +104,8 @@ impl State {
         let location = x.location.clone().unwrap_or_default();
         let (read, uses) = read_registered(&document, &location, &library)?;
         let target_namespace = read.target_namespace().unwrap_or_default().to_owned();
-        let mut locks = vec![(QualifiedName::of_schema(&qn.auth), LockMode::Shared)];
-        locks.extend(uses.iter().map(|u| (u.clone(), LockMode::Shared)));
+        let mut locks = vec![(QualifiedName::of_schema(&qn.auth), LockMode::AccessShare)];
+        locks.extend(uses.iter().map(|u| (u.clone(), LockMode::AccessShare)));
         let desc = XmlSchemaDesc { name: qn, target_namespace, location, document, uses, usage: Vec::new(), schema: Some(read) };
         let mut catalog = self.catalog.duplicate();
         catalog.put_xml_schema(desc);

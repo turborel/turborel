@@ -42,7 +42,7 @@ impl Session {
         // [XQuery §5.2.3] typed statically as the session asks, logged with it.
         let typed = st.settings.is_on(XQUERY_STATIC_TYPING);
         let _typed = making_typed(typed);
-        st.acquire_name(tx, &QualifiedName::of_schema(name), LockMode::Exclusive)?;
+        st.acquire_name(tx, &QualifiedName::of_schema(name), LockMode::AccessExclusive)?;
         let fresh = self.definitions(self.db.snapshot()?)?;
         let mut next = State::clone(&fresh);
         let now = self.now.get();
@@ -82,7 +82,7 @@ impl Database {
         let _calls = Parser::refusing_calls(sql, current.settings.is_on(FUNCTION_CALLS));
         let typed = current.settings.is_on(XQUERY_STATIC_TYPING);
         let _typed = making_typed(typed);
-        current.acquire_name(&holder, &QualifiedName::of_schema(&name), LockMode::Exclusive)?;
+        current.acquire_name(&holder, &QualifiedName::of_schema(&name), LockMode::AccessExclusive)?;
         // Published before a checkpoint can see its record or its tables.
         let _gate = current.tx.gate.enter();
         self.noted(self.change(|st| {

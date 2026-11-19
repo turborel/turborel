@@ -20,28 +20,31 @@ fn given(b: &Bounds<'_>, d: &DeltaTable) -> Result<Given> {
     }
     let subject = d.subject().filter(|_| d.rows.admitted()).ok_or_else(|| {
         SqlError::new(
-            Code::Unsupported,
-            "[EXTENSION] a <data change delta table> stands only as the one <table reference> of the FROM clause of a query a cursor opens, directly, prepared or declared (RULES.md D183)",
+            Code::SyntaxRule,
+            "[ISO/IEC 9075-2:2023 §7.5 SR3, §7.17 SR2, §7.19 SR1, §11.32 SR7] a <data change delta table> stands only as the one \
+             <table reference> of the FROM clause of a query specification: a cursor's query, a <with list element>'s, a SELECT \
+             INTO's or an INSERT's; or as a MERGE's source; never in a subquery, a derived table or a view (RULES.md D189)",
         )
     })?;
     let name = qualify(subject, b.cx.schema);
-    let desc = b.cx.db.catalog.table(&name).ok_or_else(|| {
+    let catalog = &b.cx.db.catalog;
+    let columns = catalog.table(&name).map(|t| t.columns.clone()).or_else(|| catalog.view(&name).map(|v| v.columns.clone()));
+    let columns = columns.ok_or_else(|| {
         SqlError::new(
-            Code::Unsupported,
-            format!("[EXTENSION] a <data change delta table> of {name}, not a base table, is not supported (RULES.md D183)"),
+            Code::SyntaxRule,
+            format!("[ISO/IEC 9075-2:2023 §7.6 SR11] {name}, a <data change delta table>'s subject, is not a table"),
         )
     })?;
-    Ok((TransitionRows::new(b.cx.db.list_space()), name, desc.columns.clone()))
+    Ok((TransitionRows::new(b.cx.db.list_space()), name, columns))
 }
 
 /// The delta table `d`, its first column at `offset` of the FROM row.
 ///
 /// # Errors
 ///
-/// SQLCODE -900 if it stands where no delta table's statement runs, which
-/// is anywhere but as the one table reference of the FROM clause of a
-/// cursor's query or a SELECT INTO; -103 if its derived column list
-/// names other than one column of each of the subject table's.
+/// SQLCODE -103 if it stands where no delta table's statement runs
+/// (`QueryExpression::deltas`); -103 if its derived column list names
+/// other than one column of each of the subject table's.
 pub(super) fn delta_item(b: &Bounds<'_>, d: &DeltaTable, offset: usize) -> Result<FromItem> {
     let (rows, table, mut columns) = given(b, d)?;
     if let Some(names) = &d.columns {

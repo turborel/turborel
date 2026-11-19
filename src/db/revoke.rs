@@ -449,7 +449,7 @@ impl State {
             for gone in std::iter::once(v.clone()).chain(self.views_reading(v)) {
                 catalog.remove_view(&gone);
                 catalog.revoke_all(&gone);
-                locks.push((gone, LockMode::Exclusive));
+                locks.push((gone, LockMode::AccessExclusive));
             }
         }
         self.catalog = Arc::from(catalog);
@@ -459,7 +459,7 @@ impl State {
             let taken = self.drop_constraint((table, &table.auth), &name, DropBehavior::Cascade)?;
             dropped.storage.extend(taken.storage);
             dropped.indexes.extend(taken.indexes);
-            locks.push((table.clone(), LockMode::Exclusive));
+            locks.push((table.clone(), LockMode::AccessExclusive));
         }
         // [GR6] ALTER DOMAIN DROP CONSTRAINT, with its copies.
         for (domain, c) in &abandoned.domain_constraints {
@@ -473,13 +473,13 @@ impl State {
             // With the table of its kept totals, if any.
             let taken = self.drop_assertion(a)?;
             dropped.storage.extend(taken.storage);
-            locks.extend(taken.names.into_iter().map(|name| (name, LockMode::Exclusive)));
+            locks.extend(taken.names.into_iter().map(|name| (name, LockMode::AccessExclusive)));
         }
         // [ISO/IEC 9075-2:2023 §12.7 GR6] DROP TRIGGER.
         self.destroy_triggers(&abandoned.triggers, &mut dropped, &mut locks)?;
         // [ISO/IEC 9075-2:2023 §12.7 GR12o] DROP ROUTINE ... CASCADE.
         let taken = self.drop_routines(&abandoned.routines)?;
-        locks.extend(taken.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
+        locks.extend(taken.names.iter().map(|name| (name.clone(), LockMode::AccessExclusive)));
         dropped.absorb(taken);
         // [EXTENSION] The registered XQuery modules, once what imports them
         // is gone.
@@ -487,11 +487,11 @@ impl State {
         // [EXTENSION] DROP PROPERTY GRAPH ... CASCADE, and the grants on
         // the others that stand no more.
         let graphs = self.drop_graphs(&abandoned.graphs)?;
-        locks.extend(graphs.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
+        locks.extend(graphs.names.iter().map(|name| (name.clone(), LockMode::AccessExclusive)));
         dropped.absorb(graphs);
         for g in &abandoned.graph_grants {
             self.graph_grants_standing(g);
-            locks.push((g.clone(), LockMode::Exclusive));
+            locks.push((g.clone(), LockMode::AccessExclusive));
         }
         Ok((dropped, locks))
     }
@@ -518,7 +518,7 @@ impl State {
                 (Some(p), true) => self.drop_pipeline(&p)?,
                 (None, true) => self.drop_trigger(t)?,
             };
-            locks.extend(taken.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
+            locks.extend(taken.names.iter().map(|name| (name.clone(), LockMode::AccessExclusive)));
             dropped.absorb(taken);
         }
         Ok(())

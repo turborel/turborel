@@ -68,7 +68,7 @@ impl State {
                 }
             }
         };
-        let locks = category_function(&category).into_iter().map(|f| (f, LockMode::Shared)).collect();
+        let locks = category_function(&category).into_iter().map(|f| (f, LockMode::AccessShare)).collect();
         let mut catalog = self.catalog.duplicate();
         catalog.put_ordering(OrderingDesc { udt: qn, form: o.form, category });
         self.catalog = Arc::from(catalog);

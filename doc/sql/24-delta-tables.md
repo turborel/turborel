@@ -98,11 +98,8 @@ gives no rows. The query fails with it, and the statement is undone. The
 query's rows are all read as its cursor opens, so a query that fails
 undoes the statement too.
 
-A delta table is read by a query a cursor opens, directly, prepared or
-declared, and by a SELECT INTO, in a routine too. Each opening of the
-cursor runs the statement again, so a statement prepared changes rows at
-each execution. Elsewhere a delta table is refused, in a subquery, a
-join, a view or a WITH clause.
+Each opening of a cursor runs the statement again, so a statement
+prepared changes rows at each execution.
 
 ## RETURNING *(extension)*
 
@@ -147,13 +144,69 @@ COMMIT;
 OK
 ```
 
+## Where a delta table stands
+
+A delta table is the one table reference of the FROM clause of a query
+specification, which is one of these:
+
+- the query a cursor opens, directly, prepared or declared, or that a
+  SELECT INTO reads, in a routine too;
+- the query of an element of a WITH clause of such a query;
+- the query of an INSERT.
+
+A delta table is also a MERGE's source. Each element of a WITH clause has
+at most one. Their statements run in the order the elements are written,
+before the statement of the query's own delta table, if it has one, and
+before the INSERT or MERGE.
+
+Anywhere else a delta table is refused, and its statement does not run.
+It stands in no subquery, so in no predicate and no derived table, never
+beside another table reference, never in an operand of UNION, EXCEPT or
+INTERSECT, and never in a view's query.
+
+```sql
+CREATE TABLE SHIPPED (ID INTEGER, ITEM VARCHAR(20));
+WITH GONE AS (SELECT ID, ITEM FROM OLD TABLE (DELETE FROM ORDERS WHERE ITEM = 'ink'))
+SELECT ITEM FROM GONE;
+INSERT INTO SHIPPED SELECT ID, ITEM FROM OLD TABLE (DELETE FROM ORDERS WHERE ITEM = 'pad');
+SELECT ID, ITEM FROM SHIPPED;
+COMMIT;
+```
+
+```
+OK
+ ITEM
+----------------------
+ ink
+(1 row)
+OK
+           ID | ITEM
+--------------+----------------------
+            2 | pad
+(1 row)
+OK
+```
+
+## Of a view or a typed table
+
+The subject of a delta table may be a view WITH CASCADED CHECK OPTION,
+whose rows the statement changes through its base table. The delta table
+holds each row the change made in the base table, as the view shows it,
+in the view's columns. A view without CASCADED CHECK OPTION is refused,
+since a row it changes could leave it.
+
+An UPDATE or DELETE of a typed table, its name written without ONLY,
+changes the rows of its subtables too. Its delta table holds those rows,
+each by its columns of the typed table.
+
 ## Rules
 
 1. OLD is refused of an INSERT, and of a MERGE that neither updates nor
    deletes. NEW and FINAL are refused of a DELETE, and of a MERGE that
    neither updates nor inserts.
 2. The statement is not FOR PORTION OF, nor positioned.
-3. The subject table is a base table.
+3. The subject table is a base table, or a view WITH CASCADED CHECK
+   OPTION.
 4. The statement is one the transaction may run, so not in a READ ONLY
    transaction.
 
@@ -161,10 +214,9 @@ OK
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The result option names rows the statement makes none of; the statement is FOR PORTION OF |
-| 0A000 | -900 | The delta table is not the one table reference of a cursor's query or a SELECT INTO; its subject table is a view |
+| 2A000 | -103 | The result option names rows the statement makes none of; the statement is FOR PORTION OF; the delta table stands anywhere but where it may; its subject is a view without CASCADED CHECK OPTION |
 | 27001 | -911 | Under FINAL, a referential action of the statement changes the subject table |
-| 09000 | | Under FINAL, an AFTER trigger changes the subject table: the triggered action exception, of SQLSTATE 0W001 |
+| 09000 | | Under FINAL, an AFTER trigger changes the subject table, and the triggered action exception holds SQLSTATE 0W001 |
 
 Any error of the statement is the query's.
 
@@ -172,9 +224,9 @@ Any error of the statement is the query's.
 
 ISO/IEC 9075-2:2023 §7.6, the `<data change delta table>`, Feature T495,
 with §14.9, §14.12, §14.14, §15.11 and §15.14 for the old and new delta
-tables. That a delta table is read only where a cursor's query or a
-SELECT INTO has it as its one table reference is this implementation's
-own (RULES.md D183). RETURNING is an extension (RULES.md D184).
+tables. Where it stands follows §7.5 SR3, §7.17 SR2 and SR3d iv, §7.19
+SR1 and §11.32 SR7, and a view's follows §7.6 SR11b (RULES.md D183,
+D189). RETURNING is an extension (RULES.md D184).
 
 ## See also
 

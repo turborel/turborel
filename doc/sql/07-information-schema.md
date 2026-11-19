@@ -647,6 +647,7 @@ OK
 | SETTINGS | SETTING_NAME, SETTING_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, IS_SESSION_SETTABLE, TAKES_EFFECT, DESCRIPTION, STARTED_VALUE, IS_PENDING | setting, its value for the session; of one taken at the next start, the value it started with, or null, and whether the value set waits for a restart |
 | USERS | USER_NAME, IS_OWNER, CREATE_ROLE | user: to the owner every one, to another user itself; CREATE_ROLE YES if it may create a role |
 | MEMORY_RESERVATIONS | RESERVED_BY, BYTES | part of the memory budget reserved, as a buffer pool's |
+| LOCKS | LOCK_TYPE, TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ROW_ID, ADVISORY_KEY, LOCK_MODE, SESSION_ID, TRANSACTION_ID, IS_WAITING | lock held or sought: TABLE, ROW or ADVISORY, its table and row or its key, its mode, the session and transaction holding or seeking it, and YES if it waits for it ([Locks](23-locks.md#seeing-locks)) |
 | CONNECTIONS | ID, USER_NAME, PEER, SECURE, STATE | connection a server serves: its user once authenticated, or NULL; where it came from, an address or `local`; whether it is secure; LOGIN, IDLE or RUNNING a statement |
 | SERVER | WORKERS_BUSY, STATEMENTS_WAITING, CONNECTIONS, REFUSED, CLOSED_UNTOLD | one row: the workers running a statement, the statements waiting for one, the connections, and those refused past SERVER.MAX_CONNECTIONS, told why or closed at once |
 | REPLICAS | MEMBER, ADDRESS, IS_SELF, ROLE, EPOCH, VIEW_NUMBER, IS_CONNECTED, LAST_HEARD_MS | member of the database's replica group ([Replication](../operator/09-replication.md)), in the epoch this node is in, to the owner: its number and address; whether it is this node; PRIMARY, BACKUP or UNKNOWN in the view this node knows; the epoch, and that view, or NULL; whether this node's link to it is up; the milliseconds since a frame from it arrived, or NULL |
@@ -699,7 +700,7 @@ SELECT * FROM INFORMATION_SCHEMA.MEMORY_RESERVATIONS;
 ```
 
 The second, of a database kept in a directory: one in memory has no
-buffer pool. MEMORY_RESERVATIONS, FILES, JOBS, CONNECTIONS and SERVER show their
+buffer pool. MEMORY_RESERVATIONS, LOCKS, FILES, JOBS, CONNECTIONS and SERVER show their
 rows to the database's owner alone. CONNECTIONS and SERVER are a
 server's: a database a server serves, as `turboreld`'s, has them, and
 they show no connection, and counts of none, while it does not serve.

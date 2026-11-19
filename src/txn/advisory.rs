@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::ThreadId;
 
-use super::waiting::{Waiter, Waits, wait_for};
+use super::waiting::{LockRow, Sought, Waiter, Waits, wait_for};
 use super::{Stop, TxId};
 use crate::error::Result;
 use crate::sync::{Signal, lock_builtin};
@@ -87,7 +87,8 @@ impl Advisory {
                 .map(|h| (h.stop.tx.load(Ordering::SeqCst), false))
                 .collect()
         };
-        let (outcome, mut held) = wait_for((&asker.waiter, waits), key, (&self.held, &self.released), &against)?;
+        let sought = Sought::Advisory(key.clone(), asker.exclusive);
+        let (outcome, mut held) = wait_for((&asker.waiter, waits), (key, &sought), (&self.held, &self.released), &against)?;
         if !outcome? {
             return Ok(false);
         }
@@ -155,6 +156,21 @@ impl Advisory {
         if self.xacts.load(Ordering::SeqCst) > 0 {
             self.release(|h| h.xact != Some(tx));
         }
+    }
+
+    /// \[EXTENSION\] The advisory locks held (RULES.md D188).
+    pub(crate) fn held_locks(&self) -> Vec<LockRow> {
+        let held = lock_builtin(&self.held);
+        held.iter()
+            .flat_map(|(key, holders)| {
+                holders.iter().map(|h| LockRow {
+                    lock: Sought::Advisory(key.clone(), h.exclusive),
+                    session: h.session,
+                    tx: h.xact,
+                    waiting: false,
+                })
+            })
+            .collect()
     }
 
     /// Unlocks every hold of session `session`, as it ends.

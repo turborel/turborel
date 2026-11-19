@@ -328,7 +328,7 @@ impl Session {
         let (_, made, reshape) = next.alter_table((qn, &schema, zone), action, (None, Some(tx), &mut epochs))?;
         // A column added of a collation made holds its name shared, so no
         // REVOKE or DROP of it reverts the columns meanwhile.
-        if let Some(Err(e)) = added_collation(&next, qn, action).map(|c| st.acquire_name(tx, &c, LockMode::Shared)) {
+        if let Some(Err(e)) = added_collation(&next, qn, action).map(|c| st.acquire_name(tx, &c, LockMode::AccessShare)) {
             made.discard();
             return Err(e);
         }
@@ -377,7 +377,7 @@ impl Session {
                 ),
             );
         }
-        st.acquire_name(tx, table, LockMode::Exclusive)
+        st.acquire_name(tx, table, LockMode::AccessExclusive)
     }
 
     /// Makes `changed.next` the definitions of transaction `tx`, its change

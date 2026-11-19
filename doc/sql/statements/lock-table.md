@@ -26,23 +26,41 @@ LOCK TABLE: lock tables to the end of the transaction
 
 ## DESCRIPTION
 
-LOCK TABLE takes each table's lock for the transaction, which holds it
-until it commits or rolls back. No statement unlocks it sooner. The lock
-is the one the transaction's own statements take as they read and write
-the table, so it only makes sure of now what they would wait for later.
+LOCK TABLE takes each table's lock for the transaction, in the mode
+written, which it holds until it commits or rolls back. No statement
+unlocks it sooner. With no mode, the lock is ACCESS EXCLUSIVE. A
+transaction may hold a table's lock in several modes at once, and a
+request waits only for another transaction holding a mode that conflicts
+with it:
 
-The eight modes are taken as the three strengths of a table's lock:
+| Mode | Conflicts with |
+|---|---|
+| ACCESS SHARE | ACCESS EXCLUSIVE |
+| ROW SHARE | EXCLUSIVE, ACCESS EXCLUSIVE |
+| ROW EXCLUSIVE | SHARE, SHARE ROW EXCLUSIVE, EXCLUSIVE, ACCESS EXCLUSIVE |
+| SHARE UPDATE EXCLUSIVE | SHARE UPDATE EXCLUSIVE, SHARE, SHARE ROW EXCLUSIVE, EXCLUSIVE, ACCESS EXCLUSIVE |
+| SHARE | ROW EXCLUSIVE, SHARE UPDATE EXCLUSIVE, SHARE ROW EXCLUSIVE, EXCLUSIVE, ACCESS EXCLUSIVE |
+| SHARE ROW EXCLUSIVE | ROW EXCLUSIVE, SHARE UPDATE EXCLUSIVE, SHARE, SHARE ROW EXCLUSIVE, EXCLUSIVE, ACCESS EXCLUSIVE |
+| EXCLUSIVE | every mode but ACCESS SHARE |
+| ACCESS EXCLUSIVE | every mode |
 
-| Modes | Strength | Stands against |
-|---|---|---|
-| ACCESS SHARE, ROW SHARE, SHARE | Shared | Exclusive |
-| ROW EXCLUSIVE, SHARE UPDATE EXCLUSIVE | Update | Update and Exclusive |
-| SHARE ROW EXCLUSIVE, EXCLUSIVE, ACCESS EXCLUSIVE | Exclusive | Every other |
+Turborel's statements take these modes too, so LOCK TABLE makes sure now
+of what they would wait for later:
 
-A table locked shared is read by others and written by none. One locked
-for update is read by others and written only by its holder. One locked
-exclusive is held by its holder alone. With no mode, the lock is ACCESS
-EXCLUSIVE.
+| Statement | Mode it takes |
+|---|---|
+| A query of a table whose engine leaves isolation to Turborel | ACCESS SHARE |
+| A query with FOR UPDATE or FOR SHARE of a table with row locks | ROW SHARE |
+| INSERT, UPDATE, DELETE or MERGE of a table whose engine isolates transactions | ROW EXCLUSIVE |
+| A searched UPDATE or DELETE, or an updatable cursor, as it reads a table whose engine leaves isolation to Turborel; FOR UPDATE of such a table | SHARE UPDATE EXCLUSIVE |
+| FOR SHARE of a table whose engine leaves isolation to Turborel | SHARE |
+| A write of a table whose engine leaves isolation to Turborel; a change to a table's definition | ACCESS EXCLUSIVE |
+
+So two writers of a table with row locks never wait for each other
+through its lock, nor for LOCK TABLE in ROW EXCLUSIVE, and LOCK TABLE in
+SHARE holds every writer out. A query of a table whose engine isolates
+transactions reads its snapshot and takes no table lock, so no mode
+holds it out.
 
 A lock held by another transaction is waited for as any lock is. While
 LOCKS.WAIT is on, the statement waits until the lock is free,
@@ -110,8 +128,8 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): LOCK TABLE names ANN.MISSING, which is 
 
 ## STANDARD
 
-LOCK TABLE is an extension; no part of ISO/IEC 9075 defines it. How its
-modes are taken as a table's locks, and SQLSTATE TBL01, are this
+LOCK TABLE is an extension; no part of ISO/IEC 9075 defines it. Its
+modes, which of them conflict, and SQLSTATE TBL01 are this
 implementation's own (RULES.md D186).
 
 ## SEE ALSO

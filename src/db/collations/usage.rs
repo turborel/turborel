@@ -166,11 +166,11 @@ impl State {
         catalog.put_collation(after.desc);
         let mut locks: Vec<(QualifiedName, LockMode)> = Vec::new();
         for domain in domains {
-            locks.push((domain.name.clone(), LockMode::Exclusive));
+            locks.push((domain.name.clone(), LockMode::AccessExclusive));
             catalog.put_domain(DomainDesc { collation: None, ..domain });
         }
         for view in views {
-            locks.push((view.name.clone(), LockMode::Exclusive));
+            locks.push((view.name.clone(), LockMode::AccessExclusive));
             catalog.remove_view(&view.name);
             catalog.add_views(vec![view]);
         }

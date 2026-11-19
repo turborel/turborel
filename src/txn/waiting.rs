@@ -9,8 +9,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
 
-use super::{LockWait, Stop, Transactions, TxId, Txn};
+use super::{AdvisoryKey, LockMode, LockWait, Stop, Transactions, TxId, Txn};
+use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
+use crate::storage::RowId;
 use crate::sync::{Signal, lock, lock_builtin};
 
 /// \[DESIGN\] How long a lock wait sleeps before it looks again for a
@@ -56,6 +58,49 @@ impl Txn {
     }
 }
 
+/// \[EXTENSION\] The lock a waiting transaction seeks, as
+/// INFORMATION_SCHEMA.LOCKS shows it (RULES.md D188).
+#[derive(Debug, Clone)]
+pub(crate) enum Sought {
+    /// A table's, in a mode.
+    Table(QualifiedName, LockMode),
+    /// A row's, if its id is known, FOR UPDATE (or to write it) if true,
+    /// else FOR SHARE.
+    Row(QualifiedName, Option<RowId>, bool),
+    /// An advisory lock's, exclusive if true.
+    Advisory(AdvisoryKey, bool),
+}
+
+/// \[EXTENSION\] A transaction waiting for a lock: its session and what it
+/// seeks.
+#[derive(Debug, Clone)]
+pub(crate) struct Awaiting {
+    pub(crate) tx: TxId,
+    pub(crate) session: u64,
+    pub(crate) sought: Sought,
+}
+
+/// \[EXTENSION\] A lock held or sought, a row of INFORMATION_SCHEMA.LOCKS
+/// (RULES.md D188): what it is of, in what mode, by which session and
+/// transaction (none of an advisory lock its session holds), and whether
+/// it is sought, not held.
+#[derive(Debug, Clone)]
+pub(crate) struct LockRow {
+    pub(crate) lock: Sought,
+    pub(crate) session: u64,
+    pub(crate) tx: Option<TxId>,
+    pub(crate) waiting: bool,
+}
+
+impl Transactions {
+    /// \[EXTENSION\] The locks the transactions waiting now seek (RULES.md
+    /// D188).
+    pub(crate) fn awaiting(&self) -> Vec<LockRow> {
+        let sought = lock_builtin(&self.sought);
+        sought.values().map(|a| LockRow { lock: a.sought.clone(), session: a.session, tx: Some(a.tx), waiting: true }).collect()
+    }
+}
+
 /// The refusal of a lock request, giving `why`.
 pub(super) fn refused(why: &str) -> SqlError {
     SqlError::new(Code::Conflict, format!("[DESIGN] {why}, so {UNDONE}"))
@@ -78,7 +123,8 @@ pub(super) type Conflicts<'c, T> = &'c dyn Fn(&T, ThreadId) -> Vec<(TxId, bool)>
 
 /// The state in `guarded` once `conflicts` finds no holder against `who`,
 /// or the refusal of the wait, `what` named in it: Ok(false) if `waits` is
-/// `Skip` and a holder is there. Its lock held still, `who` no longer among
+/// `Skip` and a holder is there. While it waits, the lock it seeks is
+/// `sought`. Its lock held still, `who` no longer among
 /// those waiting.
 ///
 /// # Errors
@@ -86,7 +132,7 @@ pub(super) type Conflicts<'c, T> = &'c dyn Fn(&T, ThreadId) -> Vec<(TxId, bool)>
 /// SQLCODE -910 if a lock is poisoned.
 pub(super) fn wait_for<'l, T>(
     (who, waits): (&Waiter, Waits),
-    what: &dyn Display,
+    (what, sought): (&dyn Display, &Sought),
     (guarded, released): (&'l Mutex<T>, &Signal),
     conflicts: Conflicts<'_, T>,
 ) -> Result<(Result<bool>, MutexGuard<'l, T>)> {
@@ -118,6 +164,10 @@ pub(super) fn wait_for<'l, T>(
         }
         waits_for.insert(who.id, ids);
         drop(waits_for);
+        if !waited {
+            let awaiting = Awaiting { tx: who.id, session: who.stop.session, sought: sought.clone() };
+            lock(&who.shared.sought)?.insert(who.id, awaiting);
+        }
         waited = true;
         // Woken by a release, or now and then to look for a cancel or a
         // timeout.
@@ -125,6 +175,7 @@ pub(super) fn wait_for<'l, T>(
     };
     if waited {
         lock(&who.shared.waits_for)?.remove(&who.id);
+        lock(&who.shared.sought)?.remove(&who.id);
     }
     Ok((outcome, state))
 }

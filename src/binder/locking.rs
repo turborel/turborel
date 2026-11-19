@@ -1,36 +1,38 @@
 //! \[EXTENSION\] A query that locks the rows it reads, of a `<locking
-//! clause>` (RULES.md D185): of one base table, read without grouping,
-//! DISTINCT or windows, so each row it gives is one row of the table.
-//! Each row is read with its id after the query's columns, sorted, and
-//! the row limit applied after the lock, which the session places between
-//! them (`db/unnamed/locking.rs`).
+//! clause>` (RULES.md D185), of base tables, or views of one, joined or
+//! not, read without grouping, DISTINCT or windows, so each row it gives
+//! is made of one row of each table. OF names the tables whose rows it
+//! locks, by the names the FROM clause exposes; without OF, it locks the
+//! rows of each. Each row is read with the ids of its rows after the
+//! query's columns, sorted, and the row limit applied after the locks,
+//! which the session places between them (`db/unnamed/locking.rs`).
 
 use super::order_by::ordered_query;
 use super::query::Nesting;
 use super::{Bound, Context, OutColumn};
-use crate::ast::{CursorSpecification, QueryExpression, QuerySpecification, TableReference};
+use crate::ast::{CursorSpecification, JoinKind, QueryExpression, QuerySpecification, TableReference};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
-use crate::logical::{Expr, LogicalPlan};
+use crate::logical::{Expr, LogicalPlan, map_cond_columns};
 use crate::storage::ROW_ID;
 use crate::value::{DataType, MAX_EXACT_PRECISION, Spelled};
 
 /// \[EXTENSION\] A locking query bound: its rows, each its result's
-/// columns, then its sort's, then the row's id, and what it locks.
+/// columns, then its sort's, then the ids of the rows it is made of, and
+/// what it locks.
 pub struct Locking {
     /// The rows, and the result's columns alone.
     pub bound: Bound,
-    /// The table whose rows it locks.
-    pub table: QualifiedName,
-    /// Where each row's id is among its values.
-    pub id: usize,
+    /// Each table whose rows it locks, and where the id of its row is
+    /// among the values of each row.
+    pub tables: Vec<(QualifiedName, usize)>,
 }
 
 /// The refusal of a locking query of another shape.
 fn unlockable(why: &str) -> SqlError {
     SqlError::new(
         Code::Unsupported,
-        format!("[EXTENSION] FOR UPDATE and FOR SHARE lock the rows of a query of one base table; {why} (RULES.md D185)"),
+        format!("[EXTENSION] FOR UPDATE and FOR SHARE lock the rows of a query of base tables; {why} (RULES.md D185)"),
     )
 }
 
@@ -43,23 +45,29 @@ fn unlockable(why: &str) -> SqlError {
 /// table it does not read; as `bind_cursor`.
 pub fn bind_locking(cx: Context<'_>, c: &CursorSpecification, of: Option<&[(String, usize)]>) -> Result<Locking> {
     let spec = one_specification(&c.query).ok_or_else(|| unlockable("this one is a set operation, a VALUES or has a WITH clause"))?;
-    check_shape(spec, of)?;
+    let chosen = chosen_tables(spec, of)?;
     let mut ordered = ordered_query(cx, &c.query, (&[], &Nesting::Query), true)?;
-    let (table, _) =
-        locate(&mut ordered.plan).ok_or_else(|| unlockable("this one groups, aggregates, or reads a view or a typed table"))?;
+    let mut found = Found { chosen, next: 0, tables: Vec::new() };
+    let located = found.locate(&mut ordered.plan);
+    if located.is_none() || found.next != found.chosen.len() {
+        return Err(unlockable("this one groups, aggregates, or reads a view of several tables, a typed table or a derived table"));
+    }
     let visible = ordered.visible;
-    ordered.all.push(OutColumn {
-        name: None,
-        collation: None,
-        data_type: DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric },
-        not_null: true,
-        origin: None,
-    });
+    for _ in &found.tables {
+        ordered.all.push(OutColumn {
+            name: None,
+            collation: None,
+            data_type: DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric },
+            not_null: false,
+            origin: None,
+        });
+    }
     ordered.visible = ordered.all.len();
     let mut bound = ordered.sorted();
-    let id = bound.columns.len().saturating_sub(1);
+    let first = bound.columns.len().saturating_sub(found.tables.len());
     bound.columns.truncate(visible);
-    Ok(Locking { bound, table, id })
+    let tables = found.tables.into_iter().enumerate().map(|(i, table)| (table, first.saturating_add(i))).collect();
+    Ok(Locking { bound, tables })
 }
 
 /// The one `<query specification>` of `q`, ordered or limited or not.
@@ -71,43 +79,119 @@ fn one_specification(q: &QueryExpression) -> Option<&QuerySpecification> {
     }
 }
 
-/// That `spec` reads one table, named by `of` if it names any, without
-/// DISTINCT, grouping or windows.
-fn check_shape(spec: &QuerySpecification, of: Option<&[(String, usize)]>) -> Result<()> {
+/// For each table `spec` reads, in the order its FROM clause names them,
+/// whether its rows are locked, each named by `of`, or every one if `of`
+/// names none. `spec` is without DISTINCT, grouping or windows.
+///
+/// # Errors
+///
+/// SQLCODE -900 of another shape; SQLCODE -103 if OF names a table the
+/// query does not read.
+fn chosen_tables(spec: &QuerySpecification, of: Option<&[(String, usize)]>) -> Result<Vec<bool>> {
     let te = &spec.table_expression;
     if spec.distinct || te.group_by.is_some() || te.having.is_some() || !te.window.is_empty() {
         return Err(unlockable("this one has DISTINCT, GROUP BY, HAVING or a WINDOW clause"));
     }
-    let [TableReference::Table(named)] = te.from.as_slice() else {
-        return Err(unlockable("this one reads more than one, or a derived table"));
-    };
-    let name = named.correlation.as_deref().unwrap_or(&named.table.ident);
-    if let Some((other, at)) = of.unwrap_or_default().iter().find(|(n, _)| n != name) {
+    let mut names = Vec::new();
+    for item in &te.from {
+        exposed(item, &mut names)?;
+    }
+    let of = of.unwrap_or_default();
+    if let Some((other, at)) = of.iter().find(|(n, _)| !names.contains(n)) {
         return Err(SqlError::at(
             Code::SyntaxRule,
             *at,
-            format!("[EXTENSION] FOR UPDATE OF names {other}, which the query does not read as {name} (RULES.md D185)"),
+            format!("[EXTENSION] FOR UPDATE OF names {other}, which the query does not read (RULES.md D185)"),
         ));
     }
-    Ok(())
+    Ok(names.iter().map(|name| of.is_empty() || of.iter().any(|(n, _)| n == name)).collect())
 }
 
-/// The table `plan` scans, made to give each row's id after its columns,
-/// and where that id is among the values of `plan`'s rows: of a scan, its
-/// filters, and projections of them alone.
-fn locate(plan: &mut LogicalPlan) -> Option<(QualifiedName, usize)> {
-    if let LogicalPlan::Project { exprs, input } = plan {
-        let (table, at) = locate(input)?;
-        exprs.push(Expr::Column(at));
-        return Some((table, exprs.len().saturating_sub(1)));
+/// Adds the names `item` exposes, a table's or a join's operands', to
+/// `names`, in order.
+fn exposed(item: &TableReference, names: &mut Vec<String>) -> Result<()> {
+    if let TableReference::Table(named) = item {
+        names.push(named.correlation.clone().unwrap_or_else(|| named.table.ident.clone()));
+        return Ok(());
     }
-    if let LogicalPlan::Filter { input, .. } = plan {
-        return locate(input);
+    let TableReference::Joined(joined) = item else { return Err(unlockable("this one reads a derived table or a table function")) };
+    if joined.kind == JoinKind::Union {
+        return Err(unlockable("this one has a union join"));
     }
-    if let LogicalPlan::Scan { table, names, located: located @ false, .. } = plan {
-        *located = true;
-        names.push(ROW_ID.to_owned());
-        return Some((table.clone(), names.len().saturating_sub(1)));
+    exposed(&joined.left, names)?;
+    exposed(&joined.right, names)
+}
+
+/// How a locking query's plan is made to give the ids of its rows, for
+/// each table it reads, whether its rows are locked, the next to be met,
+/// and the tables met whose rows are.
+struct Found {
+    chosen: Vec<bool>,
+    next: usize,
+    tables: Vec<QualifiedName>,
+}
+
+impl Found {
+    /// Makes `plan` give, after its columns, the id of the row of each
+    /// table whose rows are locked that it reads, in the order met, left to
+    /// right, of scans, filters, projections, products and outer joins of
+    /// them alone. Its new width, or None of another node.
+    fn locate(&mut self, plan: &mut LogicalPlan) -> Option<usize> {
+        if let LogicalPlan::Scan { table, names, located, .. } = plan {
+            let chosen = *self.chosen.get(self.next)?;
+            self.next = self.next.saturating_add(1);
+            if chosen && !*located {
+                *located = true;
+                names.push(ROW_ID.to_owned());
+                self.tables.push(table.clone());
+            }
+            return Some(names.len());
+        }
+        if let LogicalPlan::Filter { input, .. } = plan {
+            return self.locate(input);
+        }
+        if let LogicalPlan::Project { exprs, input } = plan {
+            let before = self.tables.len();
+            let width = self.locate(input)?;
+            let ids = width.saturating_sub(self.tables.len().saturating_sub(before));
+            exprs.extend((ids..width).map(Expr::Column));
+            return Some(exprs.len());
+        }
+        self.joined(plan)
     }
-    None
+
+    /// As `locate`, of a product or an outer join, the ids its operands
+    /// give put after the columns of both.
+    fn joined(&mut self, plan: &mut LogicalPlan) -> Option<usize> {
+        let placeholder = LogicalPlan::Values { rows: Vec::new(), types: Vec::new() };
+        let (mut left, mut right, rebuild) = split(std::mem::replace(plan, placeholder))?;
+        let (left_width, right_width) = (left.width(), right.width());
+        let new_left = self.locate(&mut left)?;
+        let new_right = self.locate(&mut right)?;
+        let left_ids = new_left.saturating_sub(left_width);
+        let right_end = new_left.saturating_add(new_right);
+        let right_columns = new_left..new_left.saturating_add(right_width);
+        let shift = |c: usize| if c >= left_width { c.saturating_add(left_ids) } else { c };
+        let order = (0..left_width).chain(right_columns).chain(left_width..new_left).chain(new_left.saturating_add(right_width)..right_end);
+        let exprs: Vec<Expr> = order.map(Expr::Column).collect();
+        let width = exprs.len();
+        *plan = LogicalPlan::Project { exprs, input: Box::new(rebuild(left, right, &shift)) };
+        Some(width)
+    }
+}
+
+/// How a product or an outer join is made again of its operands, its
+/// condition's columns renumbered by the function given.
+type Rebuild = Box<dyn FnOnce(Box<LogicalPlan>, Box<LogicalPlan>, &dyn Fn(usize) -> usize) -> LogicalPlan>;
+
+/// The operands of `plan`, if a product or an outer join, and how to make
+/// it again of them.
+fn split(plan: LogicalPlan) -> Option<(Box<LogicalPlan>, Box<LogicalPlan>, Rebuild)> {
+    if let LogicalPlan::Product { left, right } = plan {
+        return Some((left, right, Box::new(|l, r, _| LogicalPlan::Product { left: l, right: r })));
+    }
+    let LogicalPlan::OuterJoin { kind, cond, left, right } = plan else { return None };
+    let rebuild: Rebuild =
+        Box::new(move |l, r, shift| LogicalPlan::OuterJoin { kind, cond: map_cond_columns(cond, &shift), left: l, right: r });
+    Some((left, right, rebuild))
 }

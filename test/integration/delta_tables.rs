@@ -82,7 +82,7 @@ fn delta_tables_refused_d183() {
     assert_eq!(code("SELECT * FROM FINAL TABLE (DELETE FROM T)"), Code::SyntaxRule);
     let inserting = "MERGE INTO T USING (VALUES (9)) AS S (K) ON T.K = S.K WHEN NOT MATCHED THEN INSERT (K) VALUES (S.K)";
     assert_eq!(code(&format!("SELECT * FROM OLD TABLE ({inserting})")), Code::SyntaxRule);
-    assert_eq!(code("SELECT * FROM T, OLD TABLE (DELETE FROM T) AS D"), Code::Unsupported);
+    assert_eq!(code("SELECT * FROM T, OLD TABLE (DELETE FROM T) AS D"), Code::SyntaxRule);
     assert_eq!(code("SELECT * FROM NEW TABLE (UPDATE T SET V = -1)"), Code::Constraint, "the check fails");
     assert_eq!(rows(&s, "SELECT V FROM T ORDER BY K").unwrap(), vec!["1", "2"], "nothing changed");
 }

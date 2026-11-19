@@ -224,7 +224,7 @@ fn create_index_waits_for_an_open_writer() {
     assert_eq!(rows(&db.session("APP"), "SELECT ID FROM T WHERE ID = 9"), Ok(vec!["9".into()]));
 }
 
-/// Verifies: [DESIGN] `LockMode::Update`: an updatable cursor holds its
+/// Verifies: [DESIGN] `LockMode::ShareUpdateExclusive`: an updatable cursor holds its
 /// table's update lock, which readers share and another read that intends to
 /// write does not; writing through the cursor waits for the readers to end.
 #[test]
@@ -248,7 +248,7 @@ fn reads_that_intend_to_write_take_turns() {
     assert_eq!(rows(&reader, "SELECT NAME FROM T WHERE ID = 1"), Ok(vec!["NEW   ".into()]));
 }
 
-/// Verifies: [DESIGN] `LockMode::Update` under `LockWait::Wait`: searched
+/// Verifies: [DESIGN] `LockMode::ShareUpdateExclusive` under `LockWait::Wait`: searched
 /// UPDATEs of the same rows, each reading the table before writing it, on
 /// threads at once, take turns rather than deadlock: every one completes.
 #[test]

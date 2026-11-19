@@ -45,10 +45,9 @@ impl Parser {
             Some(query) => query,
             None => self.query_expression()?,
         };
-        // [EXTENSION] whose statement a cursor's query runs (RULES.md D183).
-        if let Some(delta) = query.delta() {
-            delta.rows.admit();
-        }
+        // [EXTENSION] whose statements a cursor's query runs (RULES.md D183,
+        // D189).
+        query.admit_deltas();
         let (updatability, locking) = self.updatability_or_locking()?;
         self.end()?;
         Ok(CursorSpecification { query, updatability, locking })

@@ -153,7 +153,8 @@ impl State {
         embeddings.put_pipeline(desc);
         catalog.set_embeddings(embeddings);
         self.catalog = Arc::from(catalog);
-        let mut defined = Defined { locks: vec![(source, LockMode::Exclusive), (target, LockMode::Exclusive)], ..Defined::default() };
+        let mut defined =
+            Defined { locks: vec![(source, LockMode::AccessExclusive), (target, LockMode::AccessExclusive)], ..Defined::default() };
         for trigger in texts {
             let SqlStatement::Schema { statement: SchemaStatement::Trigger(t), .. } = Parser::for_stored(&trigger)?.sql_statement()? else {
                 return Err(refused(format!("{trigger} is not a trigger's definition")));

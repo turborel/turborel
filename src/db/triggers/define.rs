@@ -98,7 +98,7 @@ impl State {
         desc.horizon =
             Horizon::of(&*self.catalog, &seen).invoking(invoked.take()).indicating(invoked.take_indicated()).typing(invoked.take_typed());
         (desc.reads, desc.columns, desc.sequences) = (reads, columns, sequences);
-        let locks = desc.reads.iter().map(|r| (r.clone(), LockMode::Shared)).chain([(table, LockMode::Exclusive)]).collect();
+        let locks = desc.reads.iter().map(|r| (r.clone(), LockMode::AccessShare)).chain([(table, LockMode::AccessExclusive)]).collect();
         let mut catalog = self.catalog.duplicate();
         let instead = desc.instead().then(|| desc.clone());
         catalog.put_trigger(desc);

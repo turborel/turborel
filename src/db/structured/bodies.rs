@@ -84,7 +84,7 @@ impl State {
         (desc.reads, desc.sequences) = (bound.reads, bound.sequences);
         let owner = owner_of(&*self.catalog, &name.auth).to_owned();
         desc.execute = vec![UsageDesc { grantor: SYSTEM_GRANTOR.to_owned(), grantee: Some(owner), grantable: bound.grantable }];
-        let locks = desc.reads.iter().cloned().chain([udt]).map(|t| (t, LockMode::Shared)).collect();
+        let locks = desc.reads.iter().cloned().chain([udt]).map(|t| (t, LockMode::AccessShare)).collect();
         self.put_routine(desc);
         Ok(Defined { locks, ..Defined::default() })
     }

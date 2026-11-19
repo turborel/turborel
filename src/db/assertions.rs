@@ -94,7 +94,7 @@ impl State {
         catalog.put_assertion(desc);
         let built = self.make_kept(&mut *catalog, (&name, &plan), made)?;
         self.catalog = Arc::from(catalog);
-        let held = if built.is_some() { LockMode::Exclusive } else { LockMode::Shared };
+        let held = if built.is_some() { LockMode::AccessExclusive } else { LockMode::AccessShare };
         let locks = reads.into_iter().map(|t| (t, held)).collect();
         Ok(Defined { locks, asserted: Some(name), made: built, ..Defined::default() })
     }

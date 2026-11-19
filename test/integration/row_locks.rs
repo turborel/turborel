@@ -163,8 +163,9 @@ fn row_lock_waits_find_a_deadlock_d185() {
 }
 
 /// Verifies: [EXTENSION] RULES.md D185: OF names a table the query reads;
-/// a query of a join, or grouped, does not lock; a query of a view of one
-/// table locks that table's rows; a declared cursor takes no FOR SHARE.
+/// a query of a derived table, or grouped, does not lock; a query of a
+/// view of one table locks that table's rows; a declared cursor takes no
+/// FOR SHARE.
 #[test]
 fn locking_queries_of_other_shapes_are_refused_d185() {
     let db = queue(1);
@@ -172,7 +173,7 @@ fn locking_queries_of_other_shapes_are_refused_d185() {
     assert_eq!(opened(&s, "SELECT ID FROM Q AS J FOR UPDATE OF J").unwrap(), vec!["1"]);
     assert_eq!(opened(&s, "SELECT ID FROM Q FOR UPDATE OF X").unwrap_err().code, Code::SyntaxRule);
     assert_eq!(opened(&s, "SELECT COUNT(*) FROM Q FOR UPDATE").unwrap_err().code, Code::Unsupported);
-    assert_eq!(opened(&s, "SELECT 1 FROM Q, Q AS R FOR SHARE").unwrap_err().code, Code::Unsupported);
+    assert_eq!(opened(&s, "SELECT 1 FROM (SELECT ID FROM Q) AS R FOR SHARE").unwrap_err().code, Code::Unsupported);
     s.run("CREATE VIEW V AS SELECT ID FROM Q").unwrap();
     assert_eq!(opened(&s, "SELECT ID FROM V FOR UPDATE").unwrap(), vec!["1"], "a view of one table locks its rows");
     let other = db.session("A");
@@ -182,13 +183,13 @@ fn locking_queries_of_other_shapes_are_refused_d185() {
 }
 
 /// Verifies: [EXTENSION] RULES.md D186: LOCK TABLE takes the table's lock
-/// to the transaction's end: ACCESS SHARE alongside another's, EXCLUSIVE
-/// refused NOWAIT with SQLSTATE TBL01 while one is held.
+/// to the transaction's end: SHARE alongside another's ROW SHARE,
+/// EXCLUSIVE refused NOWAIT with SQLSTATE TBL01 while that is held.
 #[test]
 fn lock_table_modes_and_nowait_d186() {
     let db = queue(1);
     let (a, b) = (db.session("A"), db.session("A"));
-    assert_eq!(a.run("LOCK TABLE Q IN ACCESS SHARE MODE").unwrap(), Completion::Success);
+    assert_eq!(a.run("LOCK TABLE Q IN ROW SHARE MODE").unwrap(), Completion::Success);
     assert_eq!(b.run("LOCK Q IN SHARE MODE NOWAIT").unwrap(), Completion::Success);
     let refused = b.run("LOCK TABLE Q IN EXCLUSIVE MODE NOWAIT").unwrap_err();
     assert_eq!((refused.code, refused.sqlstate().as_str()), (Code::Conflict, "TBL01"));

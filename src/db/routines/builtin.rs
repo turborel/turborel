@@ -103,7 +103,11 @@ impl Session {
     /// not the system's [§20.2 COLUMN_EXISTS]; the lock's.
     pub(in crate::db) fn define_spatial(&self, tx: &crate::txn::Txn, change: SpatialChange) -> Result<()> {
         let before = self.definitions(self.db.snapshot()?)?;
-        before.acquire_name(tx, &QualifiedName { auth: SPATIAL_LOCK.to_owned(), ident: SPATIAL_LOCK.to_owned() }, LockMode::Exclusive)?;
+        before.acquire_name(
+            tx,
+            &QualifiedName { auth: SPATIAL_LOCK.to_owned(), ident: SPATIAL_LOCK.to_owned() },
+            LockMode::AccessExclusive,
+        )?;
         let fresh = self.definitions(self.db.snapshot()?)?;
         match &change {
             SpatialChange::Register(c) => registrable(&fresh, (&c.table, &c.column, c.srs.as_deref()), &self.auth())?,

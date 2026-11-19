@@ -93,6 +93,7 @@ mod lobs;
 mod locks;
 mod logging;
 mod marks;
+mod modes;
 mod owed;
 mod reading;
 mod row_locks;
@@ -111,6 +112,8 @@ pub use locks::Damage;
 pub(crate) use locks::TableLock;
 pub(crate) use logging::Held;
 pub(crate) use marks::Mark;
+pub use modes::LockMode;
+pub(crate) use modes::{MODES, Modes};
 pub use reading::{ReadMode, Reading};
 pub(crate) use row_locks::{Locked, RowLocking};
 pub use stop::Stop;
@@ -118,7 +121,7 @@ use stop::Stops;
 pub(crate) use stop::{Window, checked};
 use undo::UndoLog;
 use waiting::WaitsFor;
-pub(crate) use waiting::{Waiter, Waits};
+pub(crate) use waiting::{Awaiting, LockRow, Sought, Waiter, Waits};
 
 /// How a transaction begins: whether it waits for locks, how it reads, and
 /// what cancels its statements.
@@ -164,23 +167,6 @@ pub enum LockWait {
     /// that would deadlock is refused at once (SQLCODE -911). For sessions
     /// on threads of their own, as a server runs them.
     Wait,
-}
-
-/// The coordinator's table locks, weakest first: a held lock is only ever
-/// strengthened.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LockMode {
-    /// Held by readers, and by writers of a table whose engine isolates
-    /// transactions itself; any number of transactions may hold it together.
-    Shared,
-    /// \[DESIGN\] Held by a read that intends to write what it reads: by a
-    /// searched UPDATE or DELETE on its table, and by an updatable cursor.
-    /// One transaction may hold it, beside any number holding shared locks;
-    /// so two such reads of a table take turns instead of deadlocking when
-    /// each goes on to write.
-    Update,
-    /// Held by one writer, alone.
-    Exclusive,
 }
 
 /// A transaction's own bookkeeping, which only its session touches.
@@ -244,6 +230,8 @@ pub(crate) struct Transactions {
     active: AtomicUsize,
     /// For each waiting transaction, the transactions it waits for.
     waits_for: Mutex<WaitsFor>,
+    /// \[EXTENSION\] For each waiting transaction, the lock it seeks.
+    sought: Mutex<HashMap<TxId, Awaiting>>,
     /// Taken by every change a checkpoint writes (`db/checkpoint.rs`).
     pub(crate) gate: Gate,
     /// The first record of each open transaction that logged one: its
@@ -315,6 +303,7 @@ impl Default for Transactions {
             clock: Clock::new(FIRST_TRANSACTION),
             active: AtomicUsize::new(0),
             waits_for: Mutex::new(HashMap::new()),
+            sought: Mutex::new(HashMap::new()),
             gate: Gate::default(),
             firsts: Mutex::new(BTreeMap::new()),
             logged: AtomicU64::new(0),

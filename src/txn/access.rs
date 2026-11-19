@@ -47,13 +47,13 @@ impl State {
     /// Before reading a table: a shared lock, so that the execution is
     /// serializable [X3.135-1986 §4.16].
     pub(crate) fn read_lock(&self, tx: &Txn, table: &QualifiedName) -> Result<()> {
-        self.lock_to_read(tx, table, LockMode::Shared)
+        self.lock_to_read(tx, table, LockMode::AccessShare)
     }
 
     /// Before reading a table to write the rows read: an update lock
-    /// (`LockMode::Update`).
+    /// (`LockMode::ShareUpdateExclusive`).
     pub(crate) fn update_lock(&self, tx: &Txn, table: &QualifiedName) -> Result<()> {
-        self.lock_to_read(tx, table, LockMode::Update)
+        self.lock_to_read(tx, table, LockMode::ShareUpdateExclusive)
     }
 
     /// Before reading a table, a lock in `mode` if its engine leaves
@@ -110,9 +110,9 @@ impl State {
         tx.state()?.wrote = true;
         let storage = self.storage_of(table)?;
         // An engine that isolates transactions itself lets its writers share
-        // the table's lock with each other, but not with `create_index`, which
-        // must see no uncommitted change (`Database::create_index`).
-        let mode = if caps.concurrency == Concurrency::Coordinator { LockMode::Exclusive } else { LockMode::Shared };
+        // the table's lock with each other, but not with a change to its
+        // definition, nor LOCK TABLE in SHARE or stronger (RULES.md D186).
+        let mode = if caps.concurrency == Concurrency::Coordinator { LockMode::AccessExclusive } else { LockMode::RowExclusive };
         self.acquire(tx, table, mode)?;
         // Holding the lock, the statement may write only if its snapshot
         // knows every index the table has (RULES.md D27).

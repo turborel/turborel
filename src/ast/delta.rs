@@ -122,4 +122,30 @@ impl super::QueryExpression {
         let super::QueryExpression::Spec(spec) = query else { return None };
         if let [super::TableReference::Delta(d)] = spec.table_expression.from.as_slice() { Some(d) } else { None }
     }
+
+    /// [ISO/IEC 9075-2:2023 §7.17 SR2, SR3d iv, GR1a; §7.19 SR1] The delta
+    /// tables whose statements it runs, in the order they run: that of
+    /// each `<with list element>` of its WITH clause, in order, then its
+    /// own (RULES.md D189). Each is the one table reference of the FROM
+    /// clause of a query specification, ordered or not, as `delta` finds.
+    /// Anywhere else, in a subquery, in a derived table, beside another
+    /// table reference, or in an operand of a set operator, a delta table
+    /// is none of these, and is refused as it is bound.
+    pub fn deltas(&self) -> Vec<&DeltaTable> {
+        let mut query = self;
+        while let super::QueryExpression::Ordered(o) = query {
+            query = &o.body;
+        }
+        let super::QueryExpression::With(w) = query else { return self.delta().into_iter().collect() };
+        let mut found: Vec<&DeltaTable> = w.elements.iter().filter_map(|e| e.query.delta()).collect();
+        found.extend(w.body.deltas());
+        found
+    }
+
+    /// Marks each of `deltas` as standing where its statement is run.
+    pub fn admit_deltas(&self) {
+        for d in self.deltas() {
+            d.rows.admit();
+        }
+    }
 }

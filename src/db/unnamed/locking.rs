@@ -18,7 +18,7 @@ use crate::binder::{self, Locking, OutColumn, qualify};
 use crate::catalog::{Actions, QualifiedName};
 use crate::error::{At, Code, Result, SqlError};
 use crate::functions::{ScalarFunction, ScalarRef};
-use crate::logical::{Cond, Expr};
+use crate::logical::{Cond, Expr, Truth};
 use crate::params::Params;
 use crate::physical::Plan;
 use crate::storage::row_id_of;
@@ -72,7 +72,7 @@ impl Session {
                 Err(e) => e,
             };
             runs = runs.saturating_add(1);
-            let changed = locking.is_some_and(|l| l.changed.load(Ordering::SeqCst));
+            let changed = locking.iter().any(|l| l.changed.load(Ordering::SeqCst));
             if !changed || tx.one_snapshot() || self.cursors_open() || runs >= MOST_RESTARTS {
                 return Err(e);
             }
@@ -81,7 +81,7 @@ impl Session {
     }
 
     /// The columns, plan and tables read of the locking query `spec`, and
-    /// how it locks its rows, if by row.
+    /// how it locks the rows of each table whose rows it locks by row.
     fn locked_plan(
         &self,
         st: &Arc<State>,
@@ -89,32 +89,28 @@ impl Session {
         spec: &CursorSpecification,
         (lock, params): (&LockingClause, &Params),
     ) -> Result<LockedPlan> {
-        let Locking { bound, table, id } = self.bound(st, params, |cx| binder::bind_locking(cx, spec, lock.of.as_deref()))?;
+        let Locking { bound, tables } = self.bound(st, params, |cx| binder::bind_locking(cx, spec, lock.of.as_deref()))?;
         let visible = bound.columns.len();
         let (optimized, _, physical) = super::super::plan(st, bound.plan);
         let reads: Arc<[QualifiedName]> = optimized.tables().into();
-        let (physical, locking) = match st.capabilities(&table)?.concurrency {
-            // A table whose engine leaves concurrency to the coordinator is
-            // locked whole, its lock standing for its rows'.
-            Concurrency::Coordinator => {
-                let mode = if lock.exclusive { LockMode::Update } else { LockMode::Shared };
-                let waits = if lock.waits == LockWaits::NoWait { Waits::NoWait } else { Waits::Setting };
-                st.acquire_waiting(tx, &table, mode, waits)?;
-                (physical, None)
+        let mut lockings = Vec::new();
+        let mut ids = Vec::new();
+        let mut free = true;
+        for (table, id) in tables {
+            let by_row = matches!(st.capabilities(&table)?.concurrency, Concurrency::Engine { .. });
+            if !table_locked(st, tx, lock, (&table, by_row))? {
+                free = false;
+            } else if by_row {
+                lockings.push(row_locking(st, tx, lock, table)?);
+                ids.push(id);
             }
-            Concurrency::Engine { .. } => {
-                let lk = Arc::clone(st.lock_of(&table)?);
-                tx.hold_rows(&lk);
-                let storage = Arc::clone(st.storage_of(&table)?);
-                let (who, waits, exclusive, snapshot) = (tx.waiter(), waits_of(lock.waits), lock.exclusive, tx.snapshot());
-                let locking =
-                    Arc::new(RowLocking { who, waits, exclusive, table, lock: lk, storage, snapshot, changed: AtomicBool::new(false) });
-                (gated(physical, &locking, id), Some(locking))
-            }
-        };
+        }
+        // SKIP LOCKED of a table another transaction holds locked whole
+        // passes over every row, each being made of one of its rows.
+        let physical = if free { gated(physical, &lockings, ids) } else { nothing(physical) };
         let exprs = (0..visible).map(Expr::Column).collect();
         let physical = Plan::Project { exprs, detail: "the query's columns".to_owned(), input: Box::new(physical) };
-        Ok((bound.columns, physical, reads, locking))
+        Ok((bound.columns, physical, reads, lockings))
     }
 
     /// \[EXTENSION\] LOCK TABLE (RULES.md D186): each table locked in the
@@ -133,7 +129,7 @@ impl Session {
             let desc = st.catalog.table(&qn).ok_or_else(|| {
                 SqlError::at(Code::SyntaxRule, *at, format!("[EXTENSION] LOCK TABLE names {qn}, which is not a base table (RULES.md D186)"))
             })?;
-            let needed = if mode == LockMode::Shared {
+            let needed = if matches!(lock.mode, LockTableMode::AccessShare | LockTableMode::RowShare | LockTableMode::Share) {
                 Actions { select: true, ..Actions::default() }
             } else {
                 Actions { delete: true, ..Actions::default() }
@@ -153,17 +149,66 @@ impl Session {
 /// D186).
 fn table_mode(mode: LockTableMode) -> LockMode {
     match mode {
-        LockTableMode::AccessShare | LockTableMode::RowShare | LockTableMode::Share => LockMode::Shared,
-        LockTableMode::RowExclusive | LockTableMode::ShareUpdateExclusive => LockMode::Update,
-        LockTableMode::ShareRowExclusive | LockTableMode::Exclusive | LockTableMode::AccessExclusive => LockMode::Exclusive,
+        LockTableMode::AccessShare => LockMode::AccessShare,
+        LockTableMode::RowShare => LockMode::RowShare,
+        LockTableMode::RowExclusive => LockMode::RowExclusive,
+        LockTableMode::ShareUpdateExclusive => LockMode::ShareUpdateExclusive,
+        LockTableMode::Share => LockMode::Share,
+        LockTableMode::ShareRowExclusive => LockMode::ShareRowExclusive,
+        LockTableMode::Exclusive => LockMode::Exclusive,
+        LockTableMode::AccessExclusive => LockMode::AccessExclusive,
     }
 }
 
-/// `physical`, a locking query's plan, with the filter that locks each row,
-/// whose id is its value `id`, put between its sort and its row limit. The
-/// sort is then made of all its rows, not of the first the limit keeps.
-fn gated(physical: Plan, locking: &Arc<RowLocking>, id: usize) -> Plan {
-    let cond = Cond::Value(Expr::Call(ScalarRef(Arc::new(Gate(Arc::clone(locking)))), vec![Expr::Column(id)]));
+/// \[EXTENSION\] How a locking query locks the rows of `table`, whose
+/// engine keeps row locks (RULES.md D185).
+///
+/// # Errors
+///
+/// SQLCODE -204 if the table is gone.
+fn row_locking(st: &State, tx: &Txn, lock: &LockingClause, table: QualifiedName) -> Result<Arc<RowLocking>> {
+    let lk = Arc::clone(st.lock_of(&table)?);
+    tx.hold_rows(&lk);
+    let storage = Arc::clone(st.storage_of(&table)?);
+    let (who, waits, exclusive, snapshot) = (tx.waiter(), waits_of(lock.waits), lock.exclusive, tx.snapshot());
+    Ok(Arc::new(RowLocking { who, waits, exclusive, table, lock: lk, storage, snapshot, changed: AtomicBool::new(false) }))
+}
+
+/// \[EXTENSION\] Takes the table lock of `table` a locking query takes:
+/// ROW SHARE if its rows are locked by row; else, its engine leaving
+/// concurrency to the coordinator, its lock stands for its rows', SHARE
+/// UPDATE EXCLUSIVE of FOR UPDATE and SHARE of FOR SHARE. False if SKIP
+/// LOCKED is written and another transaction holds it against that, so
+/// every row is passed over (RULES.md D185, D186).
+///
+/// # Errors
+///
+/// As `try_acquire`.
+fn table_locked(st: &State, tx: &Txn, lock: &LockingClause, (table, by_row): (&QualifiedName, bool)) -> Result<bool> {
+    let mode = match (by_row, lock.exclusive) {
+        (true, _) => LockMode::RowShare,
+        (false, true) => LockMode::ShareUpdateExclusive,
+        (false, false) => LockMode::Share,
+    };
+    st.try_acquire(tx, table, mode, waits_of(lock.waits))
+}
+
+/// `physical`, a locking query's plan, made to give no row.
+fn nothing(physical: Plan) -> Plan {
+    Plan::Filter { cond: Cond::Const(Truth::False), detail: "each row passed over".to_owned(), est: None, input: Box::new(physical) }
+}
+
+/// `physical`, a locking query's plan, with the filter that locks the rows
+/// each row is made of, the id of the row of the table of each of
+/// `lockings` being its value at the same place of `ids`, put between its
+/// sort and its row limit. The sort is then made of all its rows, not of
+/// the first the limit keeps.
+fn gated(physical: Plan, lockings: &[Arc<RowLocking>], ids: Vec<usize>) -> Plan {
+    if lockings.is_empty() {
+        return physical;
+    }
+    let gate = Gate(lockings.to_vec());
+    let cond = Cond::Value(Expr::Call(ScalarRef(Arc::new(gate)), ids.into_iter().map(Expr::Column).collect()));
     let filter = |input: Plan| Plan::Filter { cond, detail: "each row locked".to_owned(), est: None, input: Box::new(input) };
     let Plan::Limit { limit, input } = physical else { return filter(physical) };
     let mut input = *input;
@@ -174,12 +219,14 @@ fn gated(physical: Plan, locking: &Arc<RowLocking>, id: usize) -> Plan {
 }
 
 /// A locking query's columns, its plan, the tables it reads, and its row
-/// locking, if its table's engine keeps row locks.
-type LockedPlan = (Vec<OutColumn>, Plan, Arc<[QualifiedName]>, Option<Arc<RowLocking>>);
+/// locking of each table whose engine keeps row locks.
+type LockedPlan = (Vec<OutColumn>, Plan, Arc<[QualifiedName]>, Vec<Arc<RowLocking>>);
 
-/// \[EXTENSION\] The filter of a locking query: true of a row it locked,
-/// false of one SKIP LOCKED passes over (RULES.md D185).
-struct Gate(Arc<RowLocking>);
+/// \[EXTENSION\] The filter of a locking query: true of a row whose rows
+/// it locked, each of the table of one of its lockings, false of one SKIP
+/// LOCKED passes over (RULES.md D185). A row of an outer join that has no
+/// row of a table has nothing of it to lock.
+struct Gate(Vec<Arc<RowLocking>>);
 
 impl ScalarFunction for Gate {
     fn name(&self) -> &'static str {
@@ -191,9 +238,13 @@ impl ScalarFunction for Gate {
     }
 
     fn call(&self, args: &[Value]) -> Result<Value> {
-        let id = args.first().map(row_id_of).transpose()?.flatten();
-        let Some(id) = id else { return Ok(Value::Bool(false)) };
-        Ok(Value::Bool(self.0.lock(id)? == Locked::Got))
+        for (locking, id) in self.0.iter().zip(args) {
+            let Some(id) = row_id_of(id)? else { continue };
+            if locking.lock(id)? == Locked::Skipped {
+                return Ok(Value::Bool(false));
+            }
+        }
+        Ok(Value::Bool(true))
     }
 
     fn deterministic(&self) -> bool {

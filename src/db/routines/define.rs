@@ -118,7 +118,7 @@ impl State {
         if module.is_none() {
             desc.execute = vec![UsageDesc { grantor: SYSTEM_GRANTOR.to_owned(), grantee: Some(owner), grantable: bound.grantable }];
         }
-        let locks = desc.reads.iter().map(|t| (t.clone(), LockMode::Shared)).collect();
+        let locks = desc.reads.iter().map(|t| (t.clone(), LockMode::AccessShare)).collect();
         self.put_routine(desc);
         Ok((Defined { locks, ..Defined::default() }, bound.grantable))
     }

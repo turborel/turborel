@@ -96,6 +96,8 @@ a query of the rows it changed, and a query reads them as a table written
 OLD TABLE, NEW TABLE or FINAL TABLE around the statement
 ([Data Change Delta Tables](../24-delta-tables.md)).
 
+Its source may be such a delta table, whose statement runs first.
+
 ## RULES
 
 1. The table exists and is not read-only: a base table, or a view that

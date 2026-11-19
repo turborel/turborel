@@ -17,8 +17,8 @@ use std::thread::ThreadId;
 
 use super::owed::OwedRemovals;
 use super::row_locks::RowLocks;
-use super::waiting::{Waiter, Waits, refused, runs_here, wait_for};
-use super::{LockMode, Timestamp, Transactions, TxId, Txn};
+use super::waiting::{LockRow, Sought, Waiter, Waits, refused, runs_here, wait_for};
+use super::{LockMode, MODES, Modes, Timestamp, Transactions, TxId, Txn};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
@@ -156,7 +156,10 @@ impl Txn {
 /// One transaction holding a table's lock.
 struct Holder {
     tx: TxId,
-    mode: LockMode,
+    /// The modes it holds the lock in.
+    modes: Modes,
+    /// Its session (`Stop::session`), as INFORMATION_SCHEMA.LOCKS shows it.
+    session: u64,
     /// The thread the holder's running call is on, if one is (`Txn::running`).
     running: Arc<Mutex<Option<ThreadId>>>,
 }
@@ -283,6 +286,26 @@ impl TableLock {
         self.released.notify_all();
         self.rows.release(tx);
     }
+
+    /// \[EXTENSION\] The locks held of `table`, whose lock it is, and of its
+    /// rows: a row for each mode each transaction holds (RULES.md D188).
+    pub(crate) fn held_locks(&self, table: &QualifiedName) -> Vec<LockRow> {
+        let holders = lock_builtin(&self.holders);
+        let mut rows: Vec<LockRow> = holders
+            .iter()
+            .flat_map(|h| {
+                MODES.into_iter().filter(|m| h.modes & m.bit() != 0).map(|m| LockRow {
+                    lock: Sought::Table(table.clone(), m),
+                    session: h.session,
+                    tx: Some(h.tx),
+                    waiting: false,
+                })
+            })
+            .collect();
+        drop(holders);
+        rows.extend(self.rows.held_locks(table));
+        rows
+    }
 }
 
 impl Txn {
@@ -296,20 +319,11 @@ impl Txn {
     }
 }
 
-impl LockMode {
-    /// Whether two transactions may hold the lock in `self` and `other`
-    /// together.
-    fn compatible(self, other: LockMode) -> bool {
-        matches!((self, other), (LockMode::Shared, LockMode::Shared | LockMode::Update) | (LockMode::Update, LockMode::Shared))
-    }
-}
-
 impl State {
     /// Takes a lock on `table` in `mode` for `tx`, waiting while another
-    /// transaction holds a conflicting one if the setting is `LockWait::Wait`.
-    /// Shared locks are compatible with each other and with an update lock;
-    /// an exclusive lock with none (`LockMode::compatible`). A held lock is
-    /// only ever strengthened.
+    /// transaction holds a conflicting one if the setting is `LockWait::Wait`
+    /// (`LockMode::conflicts_with`). A lock held in a mode is held in it to
+    /// the transaction's end.
     ///
     /// # Errors
     ///
@@ -332,6 +346,17 @@ impl State {
         acquire_lock((tx, waits), table, self.lock_of(table)?, mode)
     }
 
+    /// \[EXTENSION\] As `acquire_waiting`, false if `waits` is `Waits::Skip`
+    /// and another transaction holds the lock against `mode`: of SKIP
+    /// LOCKED of a table locked whole (RULES.md D185).
+    ///
+    /// # Errors
+    ///
+    /// As `acquire_waiting`'s.
+    pub(crate) fn try_acquire(&self, tx: &Txn, table: &QualifiedName, mode: LockMode, waits: Waits) -> Result<bool> {
+        take_lock((tx, waits), table, self.lock_of(table)?, mode)
+    }
+
     /// Takes a lock on the name `name` in `mode` for `tx`, as `acquire`
     /// does: its table's lock, if it is a table's; else the name's own
     /// (`Transactions::name_lock`), which a table defined under it takes.
@@ -347,20 +372,33 @@ impl State {
 
 /// Takes `lk`, the lock of `table`, in `mode` for `tx` (`State::acquire`).
 fn acquire_lock((tx, waits): (&Txn, Waits), table: &QualifiedName, lk: &Arc<TableLock>, mode: LockMode) -> Result<()> {
-    let (outcome, mut holders) = wait_on((&tx.waiter(), waits), table, lk, &|h| h.tx != tx.id && !mode.compatible(h.mode))?;
-    let newly = outcome.is_ok() && grant(&mut holders, tx, mode);
+    if take_lock((tx, waits), table, lk, mode)? {
+        return Ok(());
+    }
+    Err(refused(&format!("{table} is locked by another transaction")))
+}
+
+/// As `acquire_lock`, false if `waits` is `Waits::Skip` and the lock is
+/// held against `mode` (`State::try_acquire`).
+fn take_lock((tx, waits): (&Txn, Waits), table: &QualifiedName, lk: &Arc<TableLock>, mode: LockMode) -> Result<bool> {
+    let sought = Sought::Table(table.clone(), mode);
+    let (outcome, mut holders) = wait_on((&tx.waiter(), waits), (table, &sought), lk, &|h| h.tx != tx.id && mode.conflicts_with(h.modes))?;
+    let newly = matches!(outcome, Ok(true)) && grant(&mut holders, tx, mode);
     drop(holders);
-    outcome?;
+    if !outcome? {
+        return Ok(false);
+    }
     // Recorded even if a panic poisoned the transaction's lock, so that
     // ending the transaction always releases what it was granted.
     if newly {
         lock_builtin(&tx.state).held.push(Arc::clone(lk));
     }
-    Ok(())
+    Ok(true)
 }
 
 /// The holders of `lk` once none `conflicts` with `tx`, or the refusal of
-/// the wait, `what` named in it: a table, or a row of one. Its lock held
+/// the wait, `what` named in it: a table, or a row of one, the lock
+/// `sought`. Ok(false) of SKIP LOCKED with a holder there. Its lock held
 /// still, `tx` no longer among those waiting (`waiting::wait_for`).
 ///
 /// # Errors
@@ -368,17 +406,14 @@ fn acquire_lock((tx, waits): (&Txn, Waits), table: &QualifiedName, lk: &Arc<Tabl
 /// SQLCODE -910 if a lock is poisoned.
 fn wait_on<'l>(
     (who, waits): (&Waiter, Waits),
-    what: &dyn Display,
+    (what, sought): (&dyn Display, &Sought),
     lk: &'l TableLock,
     conflicts: &dyn Fn(&Holder) -> bool,
-) -> Result<(Result<()>, MutexGuard<'l, Vec<Holder>>)> {
+) -> Result<(Result<bool>, MutexGuard<'l, Vec<Holder>>)> {
     let holding = |holders: &Vec<Holder>, me: ThreadId| -> Vec<(TxId, bool)> {
         holders.iter().filter(|h| conflicts(h)).map(|h| (h.tx, runs_here(&h.running, me))).collect()
     };
-    let (outcome, holders) = wait_for((who, waits), what, (&lk.holders, &lk.released), &holding)?;
-    // A table's lock is never passed over: SKIP LOCKED is of rows alone.
-    let outcome = outcome.and_then(|free| free.then_some(()).ok_or_else(|| refused(&format!("{what} is locked by another transaction"))));
-    Ok((outcome, holders))
+    wait_for((who, waits), (what, sought), (&lk.holders, &lk.released), &holding)
 }
 
 impl State {
@@ -392,29 +427,31 @@ impl State {
     ///
     /// As `acquire`'s, the refusal naming a row of `table`.
     pub(crate) fn wait_for_writer(&self, tx: &Txn, table: &QualifiedName, writer: TxId) -> Result<()> {
-        self.lock_of(table)?.wait_for_writer(&tx.waiter(), &format_args!("a row of {table}"), writer)
+        let sought = Sought::Row(table.clone(), None, true);
+        self.lock_of(table)?.wait_for_writer(&tx.waiter(), (&format_args!("a row of {table}"), &sought), writer)
     }
 }
 
 impl TableLock {
-    /// As `State::wait_for_writer`, of `who`, the row named `what`.
+    /// As `State::wait_for_writer`, of `who`, the row named `what`, whose
+    /// lock it seeks as `sought`.
     ///
     /// # Errors
     ///
     /// As `State::wait_for_writer`.
-    pub(crate) fn wait_for_writer(&self, who: &Waiter, what: &dyn Display, writer: TxId) -> Result<()> {
-        let (outcome, holders) = wait_on((who, Waits::Setting), what, self, &|h| h.tx == writer)?;
+    pub(crate) fn wait_for_writer(&self, who: &Waiter, (what, sought): (&dyn Display, &Sought), writer: TxId) -> Result<()> {
+        let (outcome, holders) = wait_on((who, Waits::Setting), (what, sought), self, &|h| h.tx == writer)?;
         drop(holders);
-        outcome
+        outcome.map(|_| ())
     }
 }
 
 /// Records `tx` holding the lock in `mode`, and whether it did not hold it before.
 fn grant(holders: &mut Vec<Holder>, tx: &Txn, mode: LockMode) -> bool {
     if let Some(held) = holders.iter_mut().find(|h| h.tx == tx.id) {
-        held.mode = held.mode.max(mode);
+        held.modes |= mode.bit();
         return false;
     }
-    holders.push(Holder { tx: tx.id, mode, running: Arc::clone(&tx.running) });
+    holders.push(Holder { tx: tx.id, modes: mode.bit(), session: tx.stop.session, running: Arc::clone(&tx.running) });
     true
 }

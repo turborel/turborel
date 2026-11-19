@@ -22,8 +22,9 @@
 //!   (`MEMORY_RESERVATIONS`, D38, `system/memory.rs`), and the jobs of
 //!   background work (`JOBS`, D55, `system/jobs.rs`), the files it
 //!   holds (`FILES`, D56, `system/files.rs`), the formats they are in
-//!   (`FILE_FORMATS`, D48, `system/formats.rs`), and the totals its
-//!   assertions keep (`ASSERTION_TOTALS`, D51, `system/totals.rs`).
+//!   (`FILE_FORMATS`, D48, `system/formats.rs`), the totals its
+//!   assertions keep (`ASSERTION_TOTALS`, D51, `system/totals.rs`), and
+//!   the locks held and sought (`LOCKS`, D188, `system/locks.rs`).
 //!
 //! A system table is an extension point (`SystemTable`): a plug-in may add
 //! one (`Database::register_system_table`), an engine's statistics, say.
@@ -42,6 +43,7 @@ mod fulltext;
 mod graph_runs;
 mod information;
 mod jobs;
+mod locks;
 mod memory;
 mod settings;
 mod spatial;
@@ -156,6 +158,7 @@ pub(crate) fn builtin() -> SystemTables {
         Arc::new(users::Users),
         Arc::new(memory::MemoryReservations),
         Arc::new(jobs::Jobs),
+        Arc::new(locks::Locks),
         Arc::new(graph_runs::GraphAlgoRuns),
         Arc::new(files::Files),
         Arc::new(formats::FileFormats),

@@ -315,7 +315,7 @@ impl Database {
         // dropping or changing the table (`db/ddl.rs`); taken before the gate
         // is shut, so a wait for it never holds the gate.
         let holder = current.begin();
-        current.acquire(&holder, qn, LockMode::Shared)?;
+        current.acquire(&holder, qn, LockMode::AccessShare)?;
         // 1. Published shut; the build's snapshot taken there.
         let shut = current.tx.gate.shut();
         let tx = current.begin();
@@ -364,7 +364,7 @@ impl Database {
         let current = self.snapshot()?;
         let table = current.catalog.index(name).map(|ix| ix.table.clone()).ok_or_else(|| api(format!("[EXTENSION] no index {name}")))?;
         let tx = current.begin();
-        current.acquire(&tx, &table, LockMode::Exclusive)?;
+        current.acquire(&tx, &table, LockMode::AccessExclusive)?;
         let _gate = current.tx.gate.enter();
         self.change(|st| {
             st.drop_index(name)?;
@@ -382,7 +382,7 @@ impl Database {
         // afterwards releases it.
         let current = self.snapshot()?;
         let tx = current.begin();
-        current.acquire(&tx, &spec.table, LockMode::Exclusive)?;
+        current.acquire(&tx, &spec.table, LockMode::AccessExclusive)?;
         let _gate = current.tx.gate.enter();
         self.change(|st| {
             st.create_index(spec)?;
@@ -438,7 +438,7 @@ impl Database {
             });
         }
         let tx = current.begin();
-        current.acquire(&tx, &ix.table, LockMode::Exclusive)?;
+        current.acquire(&tx, &ix.table, LockMode::AccessExclusive)?;
         let _gate = current.tx.gate.enter();
         self.change(|st| {
             st.set_index_options(name, options.clone())?;

@@ -551,7 +551,7 @@ impl Database {
             }
             Some(Damage::Indexes) => {
                 let tx = current.begin();
-                current.acquire(&tx, &name, LockMode::Exclusive)?;
+                current.acquire(&tx, &name, LockMode::AccessExclusive)?;
                 let _gate = current.tx.gate.enter();
                 self.change(|st| st.rebuild_indexes_where(|ix| ix.table == name))?;
                 lock.repaired();
