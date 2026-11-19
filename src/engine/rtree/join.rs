@@ -181,6 +181,19 @@ impl Iterator for Join {
     }
 }
 
+impl RTree {
+    /// The hull of every entry, its unfinished splits' too, or none of an
+    /// empty tree: ancestors are enlarged before an entry is inserted, so
+    /// it holds each entry committed before the call (`nearest.rs`).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors or malformed links.
+    pub fn envelope(&self) -> Result<Option<Bounds>> {
+        super::nearest::root_envelope(self, self.root()?)
+    }
+}
+
 fn exhausted() -> SqlError {
     SqlError::new(Code::Resources, "[DESIGN] the R-tree intersection join cannot allocate more memory")
 }

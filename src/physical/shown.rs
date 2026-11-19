@@ -61,21 +61,25 @@ impl Plan {
 
     fn write_index_join(&self, out: &mut String, pad: &str) -> std::fmt::Result {
         let Plan::IndexJoin { spatial, outer, table, index, method, detail, est, cost, .. } = self else { return Ok(()) };
-        if *spatial {
-            writeln!(
+        let kind = match outer {
+            super::Preserved::Inner => "",
+            super::Preserved::Outer => "LeftOuter",
+            super::Preserved::Both(_) => "FullOuter",
+        };
+        match spatial.as_deref() {
+            Some(super::Spatial::Adaptive) => writeln!(
                 out,
-                "{pad}AdaptiveSpatialJoin {table} using {index} [{method}]: {detail}  (IndexNestedLoop or bounded boundary-mask scan)"
-            )
-        } else {
-            writeln!(
+                "{pad}AdaptiveSpatialJoin {table} using {index} [{method}]: {detail}  (IndexNestedLoop, bounded boundary-mask scan or envelope partitions)"
+            ),
+            Some(super::Spatial::Paired(paired)) => writeln!(
                 out,
-                "{pad}{}IndexNestedLoop {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})",
-                match outer {
-                    super::Preserved::Inner => "",
-                    super::Preserved::Outer => "LeftOuter",
-                    super::Preserved::Both(_) => "FullOuter",
-                }
-            )
+                "{pad}{kind}SynchronizedSpatialJoin {table} using {index} with {} using {} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})",
+                paired.table, paired.index
+            ),
+            None => writeln!(
+                out,
+                "{pad}{kind}IndexNestedLoop {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})"
+            ),
         }
     }
 

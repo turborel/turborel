@@ -78,10 +78,6 @@ The access methods the other standards stand on. Each one is built, made
 durable and tested on its own before the extension that reads it. Each
 is kept consistent under concurrent change and recovery as the B-tree is.
 
-- Extend adaptive joins to builds larger than their memory budget through
-  partitioning and spill.
-  Let SQL joins traverse two indexed trees directly,
-  beyond probing one tree for each outer row.
 - Adjacency held for a graph's edges, so a path query follows an edge
   without a join's search. Graph queries need it.
 - An index of XML documents' paths and values, so XQuery and XPath read

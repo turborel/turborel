@@ -43,7 +43,8 @@ behind it, and each can be replaced or added to.
   set operations, reference systems, angles, directions and vectors,
   CHECK constraints over geometries,
   and [R-tree spatial queries](doc/data/02-spatial.md), distance searches
-  and joins, outer joins too, priced by geometry statistics,
+  and joins, outer joins too, priced by geometry statistics, spilled past
+  memory or through two trees at once,
   serializable over the windows they read, and Simple feature access's
   SQL option with GEOMETRY_COLUMNS, SPATIAL_REF_SYS, unprefixed names and
   annotation text.

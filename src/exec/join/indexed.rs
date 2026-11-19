@@ -25,12 +25,13 @@ use crate::index::{Entries, Index, Key, KeyOrder};
 use crate::logical::{Cond, Truth};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
-use crate::physical::{JoinProbe, Plan, Preserved};
+use crate::physical::{JoinProbe, Plan, Preserved, Spatial};
 use crate::storage::{self, Row, RowId, TableStorage};
 use crate::txn::{Stop, TxId, checked};
 use crate::value::Value;
 
 mod adaptive;
+mod paired;
 mod preserved;
 mod refined;
 
@@ -59,7 +60,7 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
     match opened {
         Ok((storage, found, ix, matched)) => {
             let joined = IndexJoin {
-                left: execute(*left, db, tx),
+                left: Box::new(std::iter::empty()),
                 table: Probed {
                     storage,
                     reading: Reading::of(&ix, Some(&needed), found.key_projection()),
@@ -81,9 +82,31 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
                 output,
                 refinement: None,
             };
-            if spatial && inner { adaptive::start(joined, needed, db) } else { Box::new(joined) }
+            driven(joined, (spatial, *left), (inner, needed.into_vec()), db)
         }
         Err(e) => failed(e),
+    }
+}
+
+/// `joined` driven by the rows of `left`, or, of a spatial join, perhaps
+/// by a scan of its table (`indexed/adaptive.rs`) or a traversal of both
+/// tables' trees (`indexed/paired.rs`).
+fn driven(
+    mut joined: IndexJoin,
+    (spatial, left): (Option<Box<Spatial>>, Plan),
+    (inner, needed): (bool, Vec<usize>),
+    db: &Arc<State>,
+) -> RowIter {
+    match spatial.map(|spatial| *spatial) {
+        Some(Spatial::Paired(paired)) => paired::start(joined, (*paired, left), db),
+        Some(Spatial::Adaptive) => {
+            joined.left = execute(left, db, joined.table.tx);
+            if inner { adaptive::start(joined, needed, db) } else { Box::new(joined) }
+        }
+        None => {
+            joined.left = execute(left, db, joined.table.tx);
+            Box::new(joined)
+        }
     }
 }
 
@@ -289,7 +312,7 @@ mod tests {
         let name = QualifiedName { auth: "A".into(), ident: "E".into() };
         Plan::IndexJoin {
             outer: Preserved::Inner,
-            spatial: false,
+            spatial: None,
             left: Box::new(Plan::Values { rows: Vec::new(), detail: String::new() }),
             table: name,
             index: "I".into(),
@@ -297,7 +320,7 @@ mod tests {
             probe: JoinProbe::Prefix(Box::new([])),
             cond: None,
             width: 0,
-            columns: Vec::new(),
+            columns: Box::new([]),
             detail: "".into(),
             est: 0.0_f64,
             cost: 0.0_f64,

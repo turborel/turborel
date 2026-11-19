@@ -3022,7 +3022,13 @@ SRID, or a tree whose distances may overflow, reads every entry, so the
 error is raised as a scan raises it. The ON condition or filter must be
 one of these relationships or a distance limit, as no envelope test of
 its own is in SQL/MM, and a distance compared `>` or `>=` reads the
-table. Simultaneous traversal of two spatial indexes is not implemented.
+table. A join of two columns of one SRID,
+each with an R-tree, on ST_Intersects or a meeting relationship, may
+descend both trees together, pairing the entries whose envelopes meet,
+inner or outer, each pair rechecked against the visible rows, the outer
+operand's filter and the full condition
+(`physical/indexed/spatial/paired.rs`, `exec/join/indexed/paired.rs`,
+RULES.md D138).
 Under SERIALIZABLE, a filter's search and each join probe record the
 envelope window they read, not the whole table, and a change conflicts
 when its old or new envelope meets one (`exec/read.rs`,
@@ -3039,8 +3045,11 @@ budgets can choose a single visible table scan when index estimates price
 it below repeated probes (`exec/join/indexed/adaptive.rs`). A temporary
 spatial hierarchy prunes groups; four boundary masks per leaf select
 envelope candidates; exact geometry relationships and the remaining ON condition
-still decide every result. Memory or capacity refusal resumes the buffered
-input through probes. Snapshot visibility and serializable reads use the
+still decide every result. Memory refusal resumes the buffered input
+through probes. Input past MEMORY.WORK_BYTES is spilled, and when a scan
+still costs less, both inputs are partitioned by a grid of envelopes and
+joined a cell at a time, each pair produced only in the cell of its
+reference point (`exec/join/indexed/adaptive/spilled.rs`, RULES.md D138). Snapshot visibility and serializable reads use the
 same storage contracts as ordinary scans.
 Optional setup waits until completed probes have read at least a table's
 worth of candidates, avoiding repeated estimates for a selective join.
@@ -3851,6 +3860,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §14.1 GR5 isolation level | SERIALIZABLE as itself. REPEATABLE READ as snapshot isolation. READ COMMITTED and READ UNCOMMITTED with a snapshot for each statement, kept while a cursor is open. Each as SERIALIZABLE on an engine that does not read below it. | `db/session.rs`, `txn.rs` |
 | §14.1 GR5, §4.28 what a SERIALIZABLE read through a spatial index reads | The rows whose geometries' envelopes, as the `rtree` index keys them, meet the window its search read, each join probe's own. A NULL is in no window and an empty geometry is at the origin. Past TRANSACTIONS.TRACKED_ROWS windows of a table, they merge into one rectangle of each column (RULES.md D134). | `storage/region.rs`, `exec/read.rs`, `engine/rows/mvcc/reads.rs` |
 | §14.1 GR5, §4.28 what a SERIALIZABLE distance read or outer join through a spatial index reads | A distance window's search reads its value's envelope widened by the limit, or the whole table where the tree cannot certify its distances finite. A FULL outer join's probes read their windows, and then the whole table, for the rows no probe matched (RULES.md D135). | `index/rtree/geometry/within.rs`, `exec/join/indexed/preserved.rs` |
+| §14.1 GR5, §4.28 what a SERIALIZABLE join reads that descends two spatial indexes together | The whole outer table, and of the other the rows whose envelopes meet the hull of the outer index's envelopes, and of a FULL join then the whole of it (RULES.md D138). | `exec/join/indexed/paired.rs` |
 | §4.30 the initial default schema | The session's authorization identifier, for every statement the session binds | `db/session.rs` |
 | 2023 §14.10 GR4, IA234, the changes TRUNCATE TABLE disallows that are not significant | Any other transaction's write of the table until the truncating one ends, and any use of the table by a transaction or statement that began before it committed (SQLCODE -911) | `db/truncate.rs`, `txn/locks.rs` |
 | 2023 §14.12 GR4, IA234, the changes MERGE disallows that are not significant | As of UPDATE, DELETE and INSERT. The rows it changes, and under a coordinator's locks the tables it reads, are another transaction's to write only once it ends. | `db/merge.rs`, `txn/access.rs` |

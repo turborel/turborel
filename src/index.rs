@@ -38,7 +38,7 @@ pub use json::{JSON_METHOD, JsonMethod};
 pub use nearest::{Approximation, FilterHint, NearestQuery, NearestSupport, NeighbourEntries, RowFilter, same_metric};
 pub use probe::{ColumnComparison, Predicate, Probe};
 pub use projection::KeyProjection;
-pub use rtree::RTreeMethod;
+pub use rtree::{Envelopes, KeyPairs, RTreeMethod};
 pub use sparse::{BLOCK_SIZE_OPTION, QUANTIZATION_OPTION, SPARSE_METHOD, SparseIndex, SparseMethod, VECTOR_TYPE};
 
 use crate::catalog::{IndexDesc, TableDesc};
@@ -358,6 +358,13 @@ pub trait Index: Send + Sync {
     /// read counts as of the whole table. It is asked with no storage
     /// lock held, before the search.
     fn read_region(&self, _probe: &Probe) -> Option<Vec<crate::spatial::Bounds>> {
+        None
+    }
+    /// \[DESIGN\] Its keys as a tree of envelopes, which a join descends
+    /// together with another index's (RULES.md D138). Its pairs, as a
+    /// search's entries, may include entries of versions a reader does
+    /// not see. None by default, and the join probes it instead.
+    fn envelopes(&self) -> Option<Envelopes> {
         None
     }
     /// Adds an entry of `row` under `key`. Keys containing a null are

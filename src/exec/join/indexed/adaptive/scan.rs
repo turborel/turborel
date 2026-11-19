@@ -87,26 +87,37 @@ impl Scan {
     fn paired(&self, row: &Row, at: usize) -> Result<Option<Row>> {
         let outer = self.regions.get(at).ok_or_else(|| broken("a spatial candidate row is missing"))?;
         let function = self.functions.get(at).ok_or_else(|| broken("a spatial candidate function is missing"))?;
-        if !self.binding.intersects(outer, row, function, self.runner.temp_lobs())? {
-            return Ok(None);
-        }
-        if self.binding.rest.is_none()
-            && let Some(output) = &self.output
-        {
-            return output.pair(outer, row).map(Some);
-        }
-        let pair: Row = outer.iter().chain(row).cloned().collect();
-        let kept = match &self.binding.rest {
-            Some(cond) => eval_cond(cond, &pair, &self.runner)? == Truth::True,
-            None => true,
-        };
-        if !kept {
-            return Ok(None);
-        }
-        match &self.output {
-            Some(output) => output.take(pair).map(Some),
-            None => Ok(Some(pair)),
-        }
+        joined((&self.binding, &self.runner, self.output.as_ref()), (outer, row), function)
+    }
+}
+
+/// The pair of `outer` and `row`, as the join gives it, if the spatial
+/// conjunct, called as `function`, and the rest of the condition are
+/// true of it.
+pub(super) fn joined(
+    (binding, runner, output): (&Binding, &Runner, Option<&Columns>),
+    (outer, row): (&Row, &Row),
+    function: &ScalarRef,
+) -> Result<Option<Row>> {
+    if !binding.intersects(outer, row, function, runner.temp_lobs())? {
+        return Ok(None);
+    }
+    if binding.rest.is_none()
+        && let Some(output) = output
+    {
+        return output.pair(outer, row).map(Some);
+    }
+    let pair: Row = outer.iter().chain(row).cloned().collect();
+    let kept = match &binding.rest {
+        Some(cond) => eval_cond(cond, &pair, runner)? == Truth::True,
+        None => true,
+    };
+    if !kept {
+        return Ok(None);
+    }
+    match output {
+        Some(output) => output.take(pair).map(Some),
+        None => Ok(Some(pair)),
     }
 }
 

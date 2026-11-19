@@ -5,7 +5,7 @@ use super::{Probing, Read};
 use crate::catalog::IndexDesc;
 use crate::logical::{Cond, Expr, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr};
 use crate::physical::shown::Shown;
-use crate::physical::{JoinProbe, PhysicalPlanner, Plan, Preserved, Unmatched};
+use crate::physical::{JoinProbe, Paired, PhysicalPlanner, Plan, Preserved, Spatial, Unmatched};
 use crate::storage::cost_of;
 
 pub(super) struct Choice {
@@ -14,6 +14,8 @@ pub(super) struct Choice {
     pub(super) total: f64,
     pub(super) spatial: bool,
     pub(super) preserve: Preserve,
+    /// The outer table's R-tree, of a traversal of both trees (D138).
+    pub(super) paired: Option<Box<Paired>>,
 }
 
 /// Which unmatched rows a planned join keeps (`Preserved`): none, the
@@ -52,12 +54,17 @@ impl PhysicalPlanner<'_> {
             needed: read.needed.to_vec(),
             located: read.located,
         };
-        Some(Choice { read: probing, probe, total: outer * cost, spatial: false, preserve: Preserve::Inner })
+        Some(Choice { read: probing, probe, total: outer * cost, spatial: false, preserve: Preserve::Inner, paired: None })
     }
 }
 
 pub(super) fn planned(choice: Choice, outer: Plan, (cond, width): (Cond, usize), shown: Shown<'_>) -> Plan {
-    let Choice { mut read, probe, total, spatial, preserve } = choice;
+    let Choice { mut read, probe, total, spatial, preserve, paired } = choice;
+    let spatial = match (paired, spatial) {
+        (Some(paired), _) => Some(Box::new(Spatial::Paired(paired))),
+        (None, true) => Some(Box::new(Spatial::Adaptive)),
+        (None, false) => None,
+    };
     let through = read.through.take();
     let mapped = |c: usize| match &through {
         Some((columns, _)) => c.checked_sub(width).and_then(|i| columns.get(i)).map_or(c, |i| i.saturating_add(width)),
@@ -82,7 +89,7 @@ pub(super) fn planned(choice: Choice, outer: Plan, (cond, width): (Cond, usize),
         probe,
         cond: condition,
         width: read.width,
-        columns: read.needed,
+        columns: read.needed.into_boxed_slice(),
         detail: detail.into(),
         est: read.each,
         cost: total,

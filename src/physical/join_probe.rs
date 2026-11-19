@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
 use crate::index::{ColumnComparison, Predicate, Probe};
 use crate::logical::Cond;
@@ -46,6 +47,44 @@ pub struct Unmatched {
     pub filter: Option<Cond>,
     /// The outer operand's degree.
     pub width: usize,
+}
+
+/// How a spatial index join may read its tables beyond a probe for each
+/// outer row (D85, D138), boxed apart so a join of probes alone stays as
+/// small as one was. Either is admitted only for two columns of one SRID
+/// under a windowed relationship, so the join raises no error of its own.
+#[derive(Debug, Clone)]
+pub enum Spatial {
+    /// Of an unordered inner join, probes, or a scan of the table matched
+    /// with the outer rows held, in memory or in partitions of the spill
+    /// area (`exec/join/indexed/adaptive.rs`).
+    Adaptive,
+    /// A traversal of the outer table's R-tree and the probed table's
+    /// together, pairing the entries whose envelopes meet; probes if
+    /// either tree cannot be read so (`exec/join/indexed/paired.rs`).
+    Paired(Box<Paired>),
+}
+
+/// The outer table of a synchronized traversal: the table its operand
+/// reads, the R-tree on its geometry column, the operand's filter over
+/// the table's columns, the table's column each of the operand's is if
+/// it reads them through a projection, the columns the query reads, and
+/// whether each row is followed by its id (`LogicalPlan::Scan`).
+#[derive(Debug, Clone)]
+pub struct Paired {
+    /// The table.
+    pub table: QualifiedName,
+    /// Its R-tree.
+    pub index: Box<str>,
+    /// The operand's filter, which cannot raise.
+    pub filter: Option<Cond>,
+    /// Of an operand reading the table through a projection of its
+    /// columns, the table's column each of the operand's is.
+    pub through: Option<Vec<usize>>,
+    /// The table's columns the query reads.
+    pub columns: Vec<usize>,
+    /// Whether each row is followed by its id.
+    pub located: bool,
 }
 
 /// A comparison of an index key column with an outer row column.

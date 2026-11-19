@@ -21,6 +21,7 @@ use crate::storage::cost_of;
 use crate::value::Value;
 
 mod outer;
+mod paired;
 
 struct Binding {
     function: ScalarRef,
@@ -57,10 +58,12 @@ impl PhysicalPlanner<'_> {
         if swap {
             let mut choice = swapped?;
             choice.spatial &= want.is_empty();
+            choice.paired = choice.paired.filter(|_| want.is_empty());
             return Some(Built::unordered(self.swapped(choice, right, (reversed, flip, shown))));
         }
         let mut choice = normal?;
         choice.spatial &= want.is_empty();
+        choice.paired = choice.paired.filter(|_| want.is_empty());
         let wanted = of_left(want, left.width());
         let outer = self.build_node(left, wanted);
         let ordered = !wanted.is_empty() && outer.ordered;
@@ -84,8 +87,8 @@ impl PhysicalPlanner<'_> {
         let binding = crossed(cond, outer.width())?;
         let read = read_table(inner)?;
         let srid = fixed_srid(&self.column_type(inner, binding.inner)?)?;
-        let outer_srid = self.column_type(outer, binding.outer).as_ref().and_then(fixed_srid);
-        let proved = outer_srid == Some(srid) && binding.windowed && preserve == Preserve::Inner;
+        let same = self.column_type(outer, binding.outer).as_ref().and_then(fixed_srid) == Some(srid);
+        let proved = same && binding.windowed && preserve == Preserve::Inner;
         let supplied = self.supplied(&binding.beside, srid)?;
         let beside = (!supplied.is_empty()).then(|| Box::new(Fields(supplied)));
         let outer_rows = self.rows_of(outer)?;
@@ -98,15 +101,16 @@ impl PhysicalPlanner<'_> {
             // range estimate. It affects cost only, never the residual.
             let range = self.db.cost().range_selectivity;
             let mut choice = self.join_cost(&read, ix, probe, (outer_rows, range * range))?;
-            if choice.total >= outer_rows * rows {
-                continue;
-            }
             (choice.spatial, choice.preserve) = (proved, preserve);
             if best.as_ref().is_none_or(|b| choice.total < b.total) {
                 best = Some(choice);
             }
         }
-        best
+        let mut best = best?;
+        best.paired = self.paired(outer, &binding, &best, same);
+        // Probes dearer than the product are no plan, but a traversal,
+        // which compares each entry once, costs less than the product.
+        (best.paired.is_some() || best.total < outer_rows * rows).then_some(best)
     }
 
     /// The values a window reads beside the geometry: a unit's scale, of

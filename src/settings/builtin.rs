@@ -446,7 +446,7 @@ fn memory() -> [Definition; 3] {
         defined(
             ("MEMORY.WORK_BYTES", at_least(64_i128 << 10_i32), count(crate::spill::DEFAULT_WORK_MEMORY)),
             SESSION,
-            "The bytes a sort, hash join, grouping, DISTINCT, EXCEPT or INTERSECT holds in memory before it spills to a work area of as many, reserved of MEMORY.BUDGET_BYTES; so too a cursor's rows read ahead of its fetches or kept to scroll among; the rows an INSERT, UPDATE or DELETE chooses before changing any, what it did, kept for its constraints' checks (a deferred one's until made), and what its referential actions keep; and a session's temporary tables' pages, the rest in a spill file.",
+            "The bytes a sort, hash join, adaptive spatial join, grouping, DISTINCT, EXCEPT or INTERSECT holds in memory before it spills to a work area of as many, reserved of MEMORY.BUDGET_BYTES; so too a cursor's rows read ahead of its fetches or kept to scroll among; the rows an INSERT, UPDATE or DELETE chooses before changing any, what it did, kept for its constraints' checks (a deferred one's until made), and what its referential actions keep; and a session's temporary tables' pages, the rest in a spill file.",
         ),
         defined(
             ("SPILL.BATCH_BYTES", Kind::Integer { min: 4_i128 << 10_i32, max: 1_i128 << 20_i32 }, count(crate::spill::DEFAULT_SPILL_BATCH)),

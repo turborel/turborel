@@ -1365,7 +1365,9 @@ which these few rows may not, in these forms.
 - A join on one of these, inner or LEFT, RIGHT or FULL outer, where the
   join's geometry columns are of one SRID, or the other column has none
   fixed. Each row of one side probes the other's index, and for a broad
-  inner join an adaptive scan may read it once instead. A row whose
+  inner join an adaptive scan may read it once instead. When both
+  columns have an index, the join may descend the two together, as
+  [Joins of two indexes](#joins-of-two-indexes) shows. A row whose
   geometry is NULL or empty, or that no row matches, keeps its place
   with nulls, and a FULL join then reads the table for the rows no probe
   matched.
@@ -1574,6 +1576,89 @@ inserted row by row, so the rows the index finds lie together, and a
 probe costs less than the scan. Those of STREWN were inserted scattered,
 so each costs a fetch of its own, and the scan is cheaper. The statistics
 were gathered as the counts first planned with each table.
+
+### Joins of two indexes
+
+A join on ST_INTERSECTS, or one of the relationships that hold only of
+values that meet, whose two geometry columns have one SRID and each an
+`rtree` index, may descend both trees together instead of probing one
+for each row of the other. Pairs of tree nodes whose envelopes are apart
+are skipped whole, and each pair of entries whose envelopes meet is
+checked against the visible rows, the other side's filter and the whole
+condition. The planner takes it when no order is asked of the join and
+it costs less than the probes, as when both sides have many rows. EXPLAIN
+calls it `SynchronizedSpatialJoin`, naming both tables and indexes, and
+the line below it is the scan the probes would read instead. LEFT, RIGHT
+and FULL joins are taken too, the rows no pair kept then read with nulls.
+
+```sql
+CREATE TABLE STOPS (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));
+CREATE TABLE BLOCKS (ID INTEGER PRIMARY KEY, AREA GEOMETRY(0));
+INSERT INTO STOPS WITH RECURSIVE N (I) AS (VALUES (CAST(0 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 39)
+    SELECT A.I * 40 + B.I, ST_POINT(B.I, A.I) FROM N A, N B WHERE A.I < 25;
+INSERT INTO BLOCKS WITH RECURSIVE N (I) AS (VALUES (CAST(0 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 19)
+    SELECT A.I * 20 + B.I, ST_MAKEENVELOPE(B.I * 2, A.I * 2, B.I * 2 + 1, A.I * 2 + 1) FROM N A, N B WHERE A.I < 10;
+COMMIT;
+CREATE INDEX STOPS_SPOT ON STOPS (SPOT) USING RTREE;
+CREATE INDEX BLOCKS_AREA ON BLOCKS (AREA) USING RTREE;
+EXPLAIN SELECT B.ID, S.ID FROM BLOCKS B JOIN STOPS S ON ST_INTERSECTS(S.SPOT, B.AREA) = 1;
+SELECT COUNT(*) AS PAIRS, COUNT(S.ID) AS PAIRED FROM BLOCKS B LEFT JOIN STOPS S
+    ON ST_INTERSECTS(S.SPOT, B.AREA) = 1 AND S.ID < 400;
+DROP TABLE STOPS CASCADE;
+DROP TABLE BLOCKS CASCADE;
+COMMIT;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project B.ID, S.ID
+   Filter ST_INTERSECTS(S.SPOT, B.AREA) = 1
+     Product
+       Scan ANN.BLOCKS
+       Scan ANN.STOPS
+ -- rules: none
+ -- optimized:
+ Project B.ID, S.ID
+   Filter ST_INTERSECTS(S.SPOT, B.AREA) = 1
+     Product
+       Scan ANN.BLOCKS
+       Scan ANN.STOPS
+ -- physical:
+ Project B.ID, S.ID
+   SynchronizedSpatialJoin ANN.STOPS using STOPS_SPOT with ANN.BLOCKS using BLOCKS_AREA [rtree]: ST_INTERSECTS(S.SPOT, B.AREA) = 1  (est. rows each=111, cost=203071.8)
+     SeqScan ANN.BLOCKS  (rows=200, cost=200.0)
+(17 rows)
+                PAIRS |               PAIRED
+----------------------+----------------------
+                  500 |                  400
+(1 row, with a warning: SQLSTATE 01003)
+OK
+OK
+OK
+```
+
+Each block holds four stops, and of the stops below 400 a hundred blocks
+hold none, so they are kept with a null, which COUNT(S.ID) eliminates.
+
+A broad inner join that buffers one side to scan the other's table
+holds those rows within MEMORY.WORK_BYTES. Past it, they are written to
+the spill area, and if the scan still costs less, both sides are split
+by a grid of envelopes and joined a cell at a time, a pair produced only
+in one cell. The rows are those of the join in memory, with the same
+errors, in no particular order.
+
+Under SERIALIZABLE, a join of two indexes counts as reading the whole of
+the side whose tree it pairs from and, of the other, the rows whose
+envelopes meet the hull of the first side's envelopes.
 
 ## The Spatial Information Schema
 

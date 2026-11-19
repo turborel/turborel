@@ -7,7 +7,10 @@
 
 mod clustered;
 mod geometry;
+mod paired;
 mod probe;
+
+pub use paired::{Envelopes, KeyPairs};
 
 use super::{
     Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, NearestQuery, NearestSupport, NeighbourEntries, Predicate, Probe,
@@ -256,6 +259,10 @@ impl Index for RTreeIndex {
     /// A numeric index's probes are comparisons, recorded as conditions.
     fn read_region(&self, probe: &Probe) -> Option<Vec<Bounds>> {
         geometry::region(&self.tree, probe, self.srid?)
+    }
+    /// Of a geometry index, its tree, whose keys are envelopes.
+    fn envelopes(&self) -> Option<Envelopes> {
+        Some(Envelopes::new(self.tree.clone(), self.srid?))
     }
     fn insert(&self, key: Key, row: RowId) -> Result<()> {
         self.tree.insert(self.bounds(&key)?, row)

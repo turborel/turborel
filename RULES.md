@@ -162,6 +162,7 @@ verification approach DO-178C expects (§8).
 | D135 | Geometry windows serve relate, distance and outer joins, reading every entry where a scan would raise |
 | D136 | Simple feature access is views over the SQL/MM catalog and routines named without ST_ |
 | D137 | A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them |
+| D138 | Spatial joins partition and spill past their work area, and descend two R-trees together |
 | D139 | R-trees are packed by Sort-Tile-Recursive, and sparse leaves are copied out and freed by epochs |
 
 ### The project
@@ -2782,7 +2783,7 @@ other conjuncts and the indexed table's filter must be non-raising, and
 the complete ON condition rechecks each visible pair. Planning considers
 both table orders and column projections. A NULL outer geometry makes no
 probe; an empty geometry finds no pair. Each probe records its outer
-row's envelope as a serializable read region (D134). This is not a
+row's envelope as a serializable read region (D134). D138 adds a
 simultaneous traversal of two indexes. D135 extends this
 path to outer joins, relate patterns and distance limits.
 
@@ -2799,7 +2800,8 @@ triggering adaptation. Already-emitted outer rows are never replayed.
 It buffers the remaining input within the work-area and global memory
 budgets, reserving row slots, payloads and hierarchy storage before growth.
 Refused growth resumes probing with the buffered rows and the first
-row that did not fit, without rereading input. Missing estimates retain
+row that did not fit, without rereading input. Input past the work area
+is spilled and partitioned instead (D138). Missing estimates retain
 probes. Otherwise the estimated probe
 fetch work is compared with one scan plus four binary searches per
 possible leaf, priced with the existing comparison cost. This conservative
@@ -4578,6 +4580,61 @@ result, and every candidate is checked as D85 says. The weights were
 measured by `bench/geometry_fetch.rs`, a row scanned in 229 ns, a point
 decoded in 40 ns and a vertex in 6.2 ns. The statistics are kept in memory as
 the others are, so no format changes.
+
+#### D138. Spatial joins partition and spill past their work area, and descend two R-trees together
+
+An adaptive spatial join (D85) held its outer rows in memory, and fell
+back to probes when they outgrew MEMORY.WORK_BYTES. Now an outer input
+past the work area is written to a run of the spill area (D38), and the
+probes are priced from the rows held, scaled to the whole input. If one
+scan of the table costs less, both inputs are partitioned by a grid
+over the hull of the outer envelopes (`exec/join/indexed/adaptive/spilled.rs`).
+The grid has as many cells as twice the input's bytes over the work
+area, at most half the runs the area writes at once and at most
+SPILL.PARTITIONS, and as near square as that count allows. A shape goes
+to every cell its envelope's corners span, a point beyond the hull to an
+edge cell. A pair is produced only in the cell of its reference point,
+the greater lower corner of the two envelopes, which lies in both, so
+each pair is produced once. Each cell's outer rows are held a work
+area's worth at a time, at least one row, in the hierarchy the in-memory
+scan builds, and its table rows are read once for each such part. No
+cell is partitioned again, so a cell of skewed data costs passes, not
+memory. NULL and empty geometries, and table rows apart from the hull,
+go to no cell, as they meet nothing. A refused reservation of the first
+run keeps the probes. The exact relationship and the rest of the
+condition judge every candidate as in memory, so the rows and the
+errors are the scan's, and the order is none.
+
+A join on a relationship true only of meeting operands, ST_Intersects
+or one of the meeting relationships, whose two geometry columns have one
+SRID and each an `rtree` index, may instead descend both trees together
+(`Plan::IndexJoin` with `Spatial::Paired`). The engine's join of two
+R-link trees prunes each pair of nodes whose envelopes are apart, and
+gives every pair of entries whose envelopes meet once while both are held
+(`engine/rtree/join.rs`). The index hands its tree out through
+`Index::envelopes`, and a method without one is probed. Each pair's rows
+are fetched as the statement sees them, each version's key rechecked as
+a probe's is, and kept only if the outer operand's filter is true of the
+outer row and the whole condition of the pair. The outer operand reads
+its table whole, through a filter that cannot raise, or through a
+projection of its columns. The planner takes the traversal when every
+entry of both trees compared, and the outer row of each pair fetched,
+cost less than the probes' descents and the outer scan, and only when no
+order is asked of the join. An inner join needs nothing more. A LEFT
+join keeps the ids of the outer rows paired, charged to the memory
+budget, and then reads the outer table for the rows no pair kept. A
+RIGHT join is the LEFT join of its operands swapped, and a FULL join
+also reads the probed table for its unpaired rows, as D135's does.
+EXPLAIN shows `SynchronizedSpatialJoin table using index with table
+using index`, prefixed `LeftOuter` or `FullOuter`.
+
+Under SERIALIZABLE the traversal records the whole outer table and, of
+the probed table, a region of the outer tree's hull (D134). A row of the
+probed table that would pair with a visible outer row meets that hull,
+and one that would pair with a new outer row is caught by the whole
+outer read, so no conflict is missed. The hull covers every entry of the
+outer tree, those of versions the reader does not see too, so it may
+refuse a commit it need not.
 
 #### D139. R-trees are packed by Sort-Tile-Recursive, and sparse leaves are copied out and freed by epochs
 
