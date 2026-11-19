@@ -45,6 +45,11 @@ pub trait Mechanism {
     /// opening a TLS stream of its own calls it, of `tls::channel`, before
     /// `Connection::open`. None takes it by default.
     fn bind(&mut self, _channel: &TlsChannel) {}
+    /// The server refused the login it proved, so a mechanism that keeps
+    /// what it learnt of an exchange, as SCRAM's key cache does, forgets
+    /// it. Called by `Connection::open` as the server's Error arrives.
+    /// None keeps anything by default.
+    fn refused(&mut self) {}
 }
 
 /// \[DESIGN\] What a TLS connection's handshake gives a mechanism to bind

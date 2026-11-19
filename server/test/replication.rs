@@ -26,7 +26,7 @@ use crate::common::{Kept, Pki, Scratch, pki, secured};
 const PATIENCE: Duration = Duration::from_secs(30);
 
 /// Whether `done` comes true within `PATIENCE`.
-fn eventually(mut done: impl FnMut() -> bool) -> bool {
+pub(crate) fn eventually(mut done: impl FnMut() -> bool) -> bool {
     let began = Instant::now();
     while began.elapsed() < PATIENCE {
         if done() {
@@ -38,14 +38,14 @@ fn eventually(mut done: impl FnMut() -> bool) -> bool {
 }
 
 /// Ports the system has free now, one for each member.
-fn ports(count: usize) -> Vec<u16> {
+pub(crate) fn ports(count: usize) -> Vec<u16> {
     let held: Vec<TcpListener> = (0..count).map(|_| TcpListener::bind("127.0.0.1:0").unwrap()).collect();
     held.iter().map(|l| l.local_addr().unwrap().port()).collect()
 }
 
 /// A node of a group, started.
-struct Node {
-    db: Database,
+pub(crate) struct Node {
+    pub(crate) db: Database,
     replica: Replication,
     kept: Kept,
 }
@@ -54,7 +54,13 @@ struct Node {
 /// `scratch` under its own name, secured by `pki` (or in the clear if
 /// none), started on `runtime`; told the group is new, as `--owner`
 /// tells a node, if `new_group`.
-fn start(scratch: &Scratch, (me, ports): (u32, &[u16]), pki: Option<&Pki>, runtime: &tokio::runtime::Runtime, new_group: bool) -> Node {
+pub(crate) fn start(
+    scratch: &Scratch,
+    (me, ports): (u32, &[u16]),
+    pki: Option<&Pki>,
+    runtime: &tokio::runtime::Runtime,
+    new_group: bool,
+) -> Node {
     let db = Database::new();
     let kept = Kept::default();
     db.set_diagnostics(Box::new(kept.clone())).unwrap();
@@ -84,17 +90,17 @@ fn start(scratch: &Scratch, (me, ports): (u32, &[u16]), pki: Option<&Pki>, runti
 
 impl Node {
     /// Whether the node serves as primary now.
-    fn serves(&self) -> bool {
+    pub(crate) fn serves(&self) -> bool {
         self.replica.driver().serving().is_some()
     }
 
     /// The rows of `sql`, as the user Y.
-    fn rows(&self, sql: &str) -> Result<Vec<String>, Code> {
+    pub(crate) fn rows(&self, sql: &str) -> Result<Vec<String>, Code> {
         rows(&self.db.session("Y"), sql)
     }
 
     /// Stops the node and closes its database.
-    fn stop(self) {
+    pub(crate) fn stop(self) {
         self.replica.stop(&self.db).unwrap();
         self.db.close().unwrap();
     }
@@ -119,7 +125,7 @@ fn primary<'a>(nodes: &'a [Node], name: &str) -> &'a Node {
 /// Does `work` on the node of `nodes` serving as primary, again on the
 /// one serving if a view change deposed it meanwhile (SQLCODE -917),
 /// until it is done: the node it was done on.
-fn on_primary(nodes: &[Node], work: impl Fn(&Database) -> Result<(), Code>) -> &Node {
+pub(crate) fn on_primary(nodes: &[Node], work: impl Fn(&Database) -> Result<(), Code>) -> &Node {
     let mut done = None;
     assert!(
         eventually(|| {

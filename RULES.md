@@ -206,6 +206,13 @@ verification approach DO-178C expects (§8).
 | D182 | UUID_V4 draws on the standard library's random hash keys, so the core keeps no dependency |
 | D183 | UUID_V7 takes the database's clock, and never sorts before the last one its database made |
 | D184 | The native protocol carries a UUID under a tag of its own |
+| D200 | A pipeline writes its requests a window at a time, and skips after an error by savepoints |
+| D201 | Several servers are tried in order or at random, and a server of the wrong role is left |
+| D202 | Connection settings are layers, the program's over a service's over the environment's |
+| D203 | A service file names sections of settings, and a password file gives passwords by server and user |
+| D204 | TLS by mode, and channel binding disabled, preferred or required |
+| D205 | The SCRAM keys a password derives are cached by salt, iterations and a keyed tag of the password |
+| D206 | A pool hands out checked connections and takes them back reset, by the standard library alone |
 
 ### The project
 
@@ -7060,6 +7067,153 @@ octets (`protocol/src/fields.rs`). A client then reads a UUID as a UUID
 with no type registry, and sends one back as a parameter the same way.
 This is part of protocol version 1, which stays 1 while turborel is in
 alpha.
+
+#### D200. A pipeline writes its requests a window at a time, and skips after an error by savepoints
+
+The server answers each request alone and in turn (D45), so a client
+need not wait for one reply before it sends the next. A `Pipeline`
+borrowed from a connection queues queries and executions of prepared
+statements and reads one outcome for each, in order. It writes them a
+window of at most 64 KiB at a time (`PIPELINE_WINDOW`) and reads the
+window's replies before it writes the next. A window fits the socket
+buffers between client and server, so it is written whole even while
+the server writes replies and reads nothing. A client that wrote more
+before reading could wait on a server waiting on it.
+
+A failure is its request's own and the rest run, as the requests are
+independent. `OnError::Skip` stops a batch at its first failure and
+keeps what came before. A savepoint is set before each request but the
+first, the requests after a failure are rolled back to the savepoint
+set after it, and a window not yet written is never sent. Each is
+reported `Skipped`. The batch is one transaction, committed as it ends
+under autocommit if it began none. The protocol's coming message that
+skips a batch after an error replaces the savepoints, and `guarded` in
+`pipeline.rs` is the seam.
+
+#### D201. Several servers are tried in order or at random, and a server of the wrong role is left
+
+Settings may name several hosts, each with its port. They are tried in
+the order given, or in an order drawn at random for each connection
+under `load_balance=random`, seeded from the standard library's
+`RandomState` so no dependency is added. Each address a name resolves
+to is tried in turn, each step within the connect timeout. With no
+server kept, the failure (SQLSTATE 08001) names each address and why
+it was passed.
+
+`target=read-write` keeps a server that takes changes and
+`target=read-only` one that takes none. A replica following its group
+refuses every change (D57) and shows its role in
+INFORMATION_SCHEMA.REPLICAS to the owner alone, and a server alone has
+no such table. So the client reads `ROLE_QUERY` as a statement that is
+its own transaction. A missing table means a server alone, read-write.
+A row PRIMARY means read-write and any other row read-only. No row, as
+any session but the owner's sees on a replica, means a role it cannot
+see, which meets neither target. The protocol's coming session status
+tells every session whether its server is read-only, and `role.rs` is
+the seam.
+
+#### D202. Connection settings are layers, the program's over a service's over the environment's
+
+A program, a person or an operator may each say how to connect. The
+settings are one vocabulary of names (`settings::KEYS`), written alike in
+a connection URI's query, a service file and the program's `Options`.
+The layers are laid in a fixed order, the program's own (or its URI's)
+over the named service's section, over the environment's variables,
+over the defaults, each setting taken from the first layer that has it.
+The service and its file are named by the program or the environment,
+never by a service.
+
+The environment's variables are TURBOREL_HOST, TURBOREL_PORT,
+TURBOREL_USER, TURBOREL_PASSWORD, TURBOREL_TLS_MODE,
+TURBOREL_APPLICATION_NAME, TURBOREL_CONNECT_TIMEOUT, TURBOREL_SERVICE,
+TURBOREL_SERVICE_FILE and TURBOREL_PASSFILE. An empty one gives
+nothing. The environment is read through a function the caller may
+give (`Settings::resolve_in`), so tests set no process variable.
+
+A URI is `turborel://user:password@host:port,host:port/?key=value`,
+percent-encoded, an IPv6 address bracketed and a local socket an
+encoded path. A server serves one database, so the URI names none and
+has no path. A setting that cannot be read is SQLSTATE 08001. The
+application name is kept by the settings and sent once the protocol's
+coming connection attributes exist.
+
+#### D203. A service file names sections of settings, and a password file gives passwords by server and user
+
+A service file, `~/.turborel_service.conf` unless named, holds `[name]`
+sections of `key = value` lines, with `#` comments. A malformed line, a
+key that names no setting, or `service` set by a service is refused,
+naming the file and line.
+
+A password file, `~/.turborel_pass` unless named, holds lines
+`host:port:user:password`. A plain `*` field matches anything, `\`
+takes the next character as it is, and the first matching line wins. A
+password the settings give prevails over it. A password file should be
+readable by its owner alone, but the standard library has no portable
+way to read a file's owner or permissions, and the client has no
+OS-specific code. So it checks only that the file is a regular file,
+and its owner answers for the rest. This limit is stated in the manual.
+
+#### D204. TLS by mode, and channel binding disabled, preferred or required
+
+`tls_mode` is `disable`, `prefer` (the default), `require`, `verify-ca`
+or `verify-full`, for TCP alone, as a local socket is private.
+`prefer` and `require` encrypt and check that the server holds its
+certificate's key, not who signed it. They keep out an eavesdropper,
+not a server in the middle. `verify-ca` checks the certificate against
+the authorities trusted and not its name, and `verify-full` checks both
+(`tls/modes.rs`, custom rustls verifiers over its WebPKI verifier). A
+TLS stream begins with its handshake, so `prefer` reconnects in the
+clear when the server is reached but its handshake fails, never doubling
+the wait of a server that cannot be reached.
+
+`channel_binding` is `disable`, `prefer` or `require`. `disable` makes
+SCRAM unbound even over TLS, and `prefer` binds where the connection
+has a binding (D43). `require` refuses, before any connection, settings
+whose mechanism binds nothing or whose transport is not TLS, and SCRAM
+itself refuses to send its proof unbound (SQLSTATE 28000).
+
+#### D205. The SCRAM keys a password derives are cached by salt, iterations and a keyed tag of the password
+
+PBKDF2 is the slow step of a SCRAM login, by design. A server sends a
+user the same salt and iterations at each login, so a `KeyCache` keeps
+ClientKey and ServerKey after an exchange the server proved, and a
+reconnection that meets them again skips the derivation.
+
+An entry is found by the salt, the iterations and an HMAC of the
+password under a random secret of the cache's own. So a wrong password
+finds nothing, and the cache holds neither the password nor anything to
+guess it from offline. The keys depend on the password, salt and
+iterations alone, so the user and server are not part of the index.
+The cache is bounded at 64 entries, the oldest dropped first, and an
+entry is dropped when an exchange that used it fails, by the server's
+refusal (`Mechanism::refused`) or its wrong signature. It is shared by
+its clones across threads, and `Settings` keeps one for all the
+connections it makes. The protocol's client derives from the password
+alone, so the client proves from derived keys in its own `exchange.rs`,
+HMAC made of the protocol's SHA-256 (RFC 2104). The protocol's server
+side checks it in the client's tests.
+
+#### D206. A pool hands out checked connections and takes them back reset, by the standard library alone
+
+A `Pool` holds at most `max` connections a `Source` makes, such as
+`Settings` or a closure, shared by its clones under a `Mutex` and a
+`Condvar`. It starts no thread (D55), and each wait is the borrower's.
+`get` hands out an idle connection that answers, makes one while there
+is room, or waits for one to come back within `wait` (SQLSTATE 08001
+past it). A connection idle past `idle_timeout`, older than
+`max_lifetime`, or beyond `max_idle` is closed rather than kept.
+
+A `Pooled` gives its connection back as it is dropped, reset in one
+pipeline. Its transaction is rolled back, the statements it prepared
+are closed and destroyed, its user, role and schema are its login's,
+its zone is local, autocommit is off, and the program's own statements
+run. A connection lost, or whose reset fails, is closed, so no borrower
+sees another's session. A setting a borrower SET stays, as no statement
+of today sets every setting back. The check is ROLLBACK, which does
+nothing outside a transaction. Check and reset each wait at most
+`RESET_WITHIN`, so a server that hangs holds the borrower no longer
+than a step of connecting. The protocol's coming Ping and Reset
+messages replace both, and `pool/reset.rs` is the seam.
 
 ## 2. Project layout
 

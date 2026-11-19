@@ -35,6 +35,7 @@ mod common;
 mod agents;
 mod authentication;
 mod certificates;
+mod client;
 mod composite;
 mod connections;
 mod diagnostics;
