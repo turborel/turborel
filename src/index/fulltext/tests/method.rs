@@ -168,7 +168,7 @@ fn options_set_the_weights_and_language() {
     let (_, unknown) = described(vec![(LANGUAGE_OPTION.to_owned(), Value::Char("KLINGON".into()))]);
     let refused = method.create_on(&column, (&table, &unknown)).err().unwrap();
     assert_eq!(refused.code, Code::SyntaxRule, "a bad option's value, not a runtime language");
-    assert!(refused.msg.contains("ENGLISH, NONE"), "{}", refused.msg);
+    assert!(refused.msg.contains("NONE, ENGLISH, ARABIC"), "{}", refused.msg);
     let (_, wide) = described(vec![(B_OPTION.to_owned(), Value::Approx(2.0_f64))]);
     assert_eq!(method.create_on(&column, (&table, &wide)).err().unwrap().code, Code::SyntaxRule);
     let (_, mut nulls) = described(Vec::new());

@@ -2,6 +2,8 @@
 //! normalization, stop words and streaming.
 
 mod english;
+mod languages;
+mod vocabulary;
 
 use std::cell::Cell;
 

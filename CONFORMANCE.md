@@ -2395,7 +2395,7 @@ column answers that comparison.
 | FT_MaxPatternLength [§5.3.1 DR1] | 32,767 characters |
 | FT_MaxLanguageLength [§5.1.1 DR4] | 32 |
 | FT_DefaultLanguage [§5.1.1 DR5] | ENGLISH |
-| Languages [§5.1.9] | ENGLISH and NONE, in any case, trailing blanks ignored; another, an empty or a null one is SQLSTATE 2FF02 |
+| Languages [§5.1.9] | The 43 the tokenizer knows (below), named in English, in any case, trailing blanks ignored; another, an empty or a null one is SQLSTATE 2FF02 |
 | FT_MinRankValue, FT_MaxRankValue [§5.1.3] | 0 and the greatest DOUBLE PRECISION |
 | FT_RankDeterminism [§5.1.1 DR6] | NOT DETERMINISTIC. A rank moves with its index's statistics, which a statement reads once, so it is fixed within a statement |
 | Thesauri [§8.3 D1] | Those whose names FT_THESAURUS's tables hold, made by the user with clause 8's definitions; at most 65,535 relations a statement, the greatest array |
@@ -2415,12 +2415,13 @@ column answers that comparison.
 | Escapes | An escape before anything but itself, `%` or `_` is 2FF01, as is an escape not one character |
 | Optional words | A phrase part of unescaped `%` alone; a phrase of optional words alone is 2FF01 |
 | Stop words [§4.4.2, §6.6.2] | Never 2FF01. A pattern of stop words alone is 2FF03. A lone stop word matches nothing, and inside a phrase matches any stop word of the document |
-| A literal of another language [§6.4.2, §6.5.2] | LIKE over normalized text, its stop words and stems of its own language |
+| A literal of another language [§6.4.2, §6.5.2] | LIKE over normalized text, its stop words, normalization and stems of its own language |
+| A single letter of a bigram language | Matches each word of the document holding it (RULES.md D329) |
 | Phrases | May cross a sentence's end; in a context condition a match lies wholly in one unit |
 | IS ABOUT [§6.17.2] | Any word of the phrase that is not a stop word |
 | SOUNDS LIKE [§6.9.5] | American Soundex of the word's ASCII letters; a word of none matches itself only |
 | FUZZY FORM OF [§6.10.5] | Optimal string alignment distance at most 1, or 2 of a word of 8 or more characters |
-| Thesaurus terms | Deduplicated, read in the start term's language and matched literally; names compared trimmed of blanks; synonyms transitive [§6.13.5] |
+| Thesaurus terms | Deduplicated, read in the start term's language and matched literally; names compared trimmed of blanks; synonyms transitive [§6.13.5]. A start term of a bigram language is its pairs joined back (RULES.md D329) |
 | Nesting | At most 100 levels, else 2FF01; a thesaurus expansion adds at most 64 |
 
 ### Tokenizing [§5.1.4–§5.1.8]
@@ -3577,7 +3578,7 @@ method instead, [below](#sqlmm-full-text).
 
 The index method `fulltext` answers TEXT_MATCHES of one character string
 column (`index/fulltext.rs`, RULES.md D86). Its options are
-FULLTEXT.LANGUAGE, ENGLISH or NONE, and FULLTEXT.STOP_WORDS, DEFAULT,
+FULLTEXT.LANGUAGE, one of the 43 languages below, and FULLTEXT.STOP_WORDS, DEFAULT,
 NONE or a list of words, each a rebuild; and FULLTEXT.K1 (0 to 1000,
 1.2) and FULLTEXT.B (0 to 1, 0.75), BM25's weights, changed in place. A
 column with a collation is refused (SQLCODE -900), as its key is its
@@ -3591,15 +3592,18 @@ These are turborel's choices (`fulltext/text.rs`).
 
 | Choice | turborel |
 |---|---|
-| Word | A run of Unicode 13.0 letters, numbers and marks, two joined by one connector (Pc) or, between letters, one apostrophe (U+0027 or U+2019). Each Han, Hiragana or Katakana character is a word |
+| Word | A run of Unicode 13.0 letters, numbers and marks, two joined by one connector (Pc) or, between letters, one apostrophe (U+0027 or U+2019). Each Han, Hiragana or Katakana character is a word, but in a language read as bigrams |
+| Elisions | In FRENCH, ITALIAN, CATALAN and IRISH an elided article or pronoun before a word's first apostrophe is taken off it; in CATALAN a middle dot between letters joins them (RULES.md D322) |
+| Bigrams | In CHINESE, JAPANESE, KOREAN, THAI, LAO, KHMER and BURMESE a run of ideographs, kana, Hangul, or Thai, Lao, Myanmar or Khmer letters is read as its overlapping pairs, a letter with its marks; one letter alone is a word (RULES.md D323) |
 | Sentence end | `.`, `!` or `?`, with closing brackets and quotes after it, then a blank, a line terminator or the end; U+3002, U+FF01, U+FF0E and U+FF1F alone |
 | Paragraph end | Two line terminators with only blanks between, or U+2029 |
 | Ordinals | Every word, stop words too, from 1; sentences and paragraphs from 1, counting those holding a word |
 | Offset and length | In characters, as written |
-| Normalization [§4.5] | Simple case folding, canonical decomposition, folding again, nonspacing marks (Mn) removed, U+2019 made U+0027 |
-| Stop words [§4.4.2] | English, Snowball's list of 174; NONE, none |
-| Stems [§4.2.3.4] | English, Porter2 (Snowball English, 2006); NONE, the word |
-| Languages [§5.1.9] | ENGLISH, NONE; another is SQLSTATE 2FF02 |
+| Normalization [§4.5] | ENGLISH and NONE, simple case folding, canonical decomposition, folding again, nonspacing marks (Mn) removed. A stemmed language, simple case folding and NFC, accents kept; TURKISH folds `I` to `ı` and `İ` to `i` first. A bigram language, simple case folding and NFKC. U+2019 made U+0027 in all (RULES.md D325) |
+| Stop words [§4.4.2] | Snowball's list where Snowball has one, in DANISH, DUTCH, ENGLISH (174), FINNISH, FRENCH, GERMAN, HUNGARIAN, INDONESIAN, IRISH, ITALIAN, NORWEGIAN, PORTUGUESE, RUSSIAN, SESOTHO, SPANISH, SWEDISH and UKRAINIAN; none in the others |
+| Stems [§4.2.3.4] | Snowball 3.2.0's own program of the language, run by an interpreter of the Snowball language, in ARABIC, ARMENIAN, BASQUE, CATALAN, CZECH, DANISH, DUTCH, ENGLISH, ESPERANTO, ESTONIAN, FINNISH, FRENCH, GERMAN, GREEK, HINDI, HUNGARIAN, INDONESIAN, IRISH, ITALIAN, LITHUANIAN, NEPALI, NORWEGIAN, PERSIAN, POLISH, PORTUGUESE, ROMANIAN, RUSSIAN, SERBIAN, SESOTHO, SPANISH, SWEDISH, TAMIL, TURKISH, UKRAINIAN and YIDDISH; the word in NONE and the bigram languages (RULES.md D320) |
+| Languages [§5.1.9] | NONE, the 35 stemmed languages and the 7 bigram languages; another is SQLSTATE 2FF02. None is detected; a document's is its FullText value's or its index's (RULES.md D327) |
+| Documents of several languages | An index keeps the languages of its FullText values and reads a pattern in each (RULES.md D324) |
 | Word and term length | A word's first 256 characters; a term's first 255 bytes of UTF-8, cut at a character |
 
 ### JSON documents

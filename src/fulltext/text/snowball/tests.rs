@@ -1,43 +1,54 @@
-//! Unit tests of the Snowball interpreter.
+//! Unit tests of the Snowball interpreter (RULES.md D320): programs read,
+//! damaged ones refused at their line, and runs that would not end left
+//! with the word as it was. The stemmers against Snowball's vocabularies
+//! are in `text/tests/vocabulary.rs`.
 
 use super::*;
 
-const LANGS: [&str; 35] = ["arabic", "armenian", "basque", "catalan", "czech", "danish", "dutch", "english", "esperanto", "estonian", "finnish", "french", "german", "greek", "hindi", "hungarian", "indonesian", "irish", "italian", "lithuanian", "nepali", "norwegian", "persian", "polish", "portuguese", "romanian", "russian", "serbian", "sesotho", "spanish", "swedish", "tamil", "turkish", "ukrainian", "yiddish"];
-
-/// Verifies: [DESIGN] dev full vocabulary.
-#[test]
-fn dev_full_vocabulary() {
-    let base = "/media/agpmastersystem/0e938ae2-7b41-437b-a5ac-a27e9f111a4e/turborel-work/papers/snowball";
-    let only = std::env::var("SB_LANG").ok();
-    let mut bad = 0;
-    for lang in LANGS {
-        if only.as_deref().is_some_and(|o| o != lang) { continue; }
-        let src = std::fs::read_to_string(format!("{base}/snowball-main/algorithms/{lang}.sbl")).unwrap();
-        let stemmer = match Stemmer::compile(&src) { Ok(s) => s, Err(e) => { println!("{lang}: COMPILE {e}"); bad += 1; continue; } };
-        let voc = std::fs::read_to_string(format!("{base}/snowball-data-main/{lang}/voc.txt")).unwrap_or_default();
-        let out = std::fs::read_to_string(format!("{base}/snowball-data-main/{lang}/output.txt")).unwrap_or_default();
-        let (mut n, mut wrong) = (0, 0);
-        for (w, s) in voc.lines().zip(out.lines()) {
-            n += 1;
-            let got = stemmer.stem(w);
-            if got != s { wrong += 1; if wrong <= 5 { println!("{lang}: {w} -> {got} want {s}"); } }
-        }
-        println!("{lang}: {n} words, {wrong} wrong");
-        if wrong > 0 || n == 0 { bad += 1; }
-    }
-    assert_eq!(bad, 0);
+/// The stem of `word` by the program `source`.
+fn stemmed(source: &str, word: &str) -> String {
+    Stemmer::compile(source).unwrap().stem(word)
 }
 
-/// Verifies: [DESIGN] dev porter2 against english vocabulary.
+/// Verifies: [DESIGN] RULES.md D320: a program's routines, groupings,
+/// amongs and variables run as Snowball runs them, backward and forward,
+/// an among taking its longest string.
 #[test]
-fn dev_porter2_vocabulary() {
-    let base = "/media/agpmastersystem/0e938ae2-7b41-437b-a5ac-a27e9f111a4e/turborel-work/papers/snowball/snowball-data-main/english";
-    let voc = std::fs::read_to_string(format!("{base}/voc.txt")).unwrap();
-    let out = std::fs::read_to_string(format!("{base}/output.txt")).unwrap();
-    let mut wrong = 0;
-    for (w, s) in voc.lines().zip(out.lines()) {
-        let got = crate::fulltext::stem(crate::fulltext::Language::English, w);
-        if got != s { wrong += 1; if wrong < 30 { println!("{w} -> {got} want {s}"); } }
+fn programs_run_as_snowball_runs_them() {
+    let suffixes = "externals (stem)
+        define stem as backwards ( [substring] among ( 'ing' 'ings' (delete) 'ed' (<- 'e') ) )";
+    assert_eq!(stemmed(suffixes, "walkings"), "walk");
+    assert_eq!(stemmed(suffixes, "walked"), "walke");
+    assert_eq!(stemmed(suffixes, "walk"), "walk");
+    let counted = "externals (stem) integers (n) define stem as ( $n = 0 repeat ( gopast 'a' $n += 1 ) $n >= 2 insert 'x' )";
+    assert_eq!(stemmed(counted, "banana"), "bananax");
+    assert_eq!(stemmed(counted, "cat"), "cat");
+    let grouped = "externals (stem) groupings (v) define v 'aeiou' define stem as ( goto v [next] <- 'Y' )";
+    assert_eq!(stemmed(grouped, "strap"), "strYp");
+}
+
+/// Verifies: [DESIGN] RULES.md D320: a program that is not Snowball, or
+/// uses a name it never declares or defines, is refused as damaged
+/// (SQLCODE -916) at its line.
+#[test]
+fn damaged_programs_are_refused() {
+    for (source, line) in [
+        ("externals (stem)\ndefine stem as (", "line 2"),
+        ("externals (stem)\n\ndefine stem as ( call )", "line 3"),
+        ("routines (other) define other as true", "line 1"),
+        ("externals (stem) define stem as among ( 'a' 'a' )", "line 1"),
+    ] {
+        let e = Stemmer::compile(source).err().unwrap();
+        assert_eq!(e.code, Code::Corrupt, "{source}");
+        assert!(e.msg.contains(line), "{source}: {}", e.msg);
     }
-    println!("porter2 wrong {wrong}");
+    assert!(Stemmer::compile("externals (stem) define stem as ( 'unended )").is_err());
+}
+
+/// Verifies: [DESIGN] RULES.md D320: a run that recurses too deep or
+/// loops too long stops, the word left as it was.
+#[test]
+fn runaway_runs_leave_the_word() {
+    assert_eq!(stemmed("externals (stem) define stem as ( insert 'z' stem )", "word"), "word");
+    assert_eq!(stemmed("externals (stem) define stem as ( insert 'z' repeat true )", "word"), "word");
 }

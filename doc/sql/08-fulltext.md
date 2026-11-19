@@ -54,8 +54,9 @@ A value is made in one of three ways.
 - `CAST(text AS FULLTEXT)`, in the default language. A CLOB is read a
   character at a time up to the limit.
 
-The language is ENGLISH by default, or NONE. ENGLISH stems words by
-Porter2 and has Snowball's 174 stop words. NONE stems nothing and has no
+The language is ENGLISH by default, or another of the 43
+[languages](#languages). ENGLISH stems words by Snowball's English
+stemmer and has Snowball's 174 stop words. NONE stems nothing and has no
 stop words. A language name is read in any case, its trailing spaces
 not counting. A null, empty or unknown name raises SQLSTATE 2FF02
 before any value is made. A null text gives the null value.
@@ -543,7 +544,9 @@ The index *(extension)* is of one column, a FULLTEXT column or a character strin
 column with no collation. It holds each distinct text's words and their
 places in blocks, so it stays small and a search of a rare and a common
 word skips most of the common one's entries. A FULLTEXT document is read
-in its own language, a character string in FULLTEXT.LANGUAGE.
+in its own language, a character string in FULLTEXT.LANGUAGE. The index
+notes each language its FullText documents are in, and reads a pattern
+in each of them.
 
 The index finds the rows of `CONTAINS(column, pattern) = 1`, of
 `column.Contains(pattern) = 1` and of `TEXT_MATCHES(column, words)`,
@@ -559,7 +562,7 @@ are encrypted too, as the index keeps the table's words
 
 | Option | Default | Values | A change |
 |---|---|---|---|
-| FULLTEXT.LANGUAGE | ENGLISH | ENGLISH or NONE, the language a character string column is read in | builds the index again |
+| FULLTEXT.LANGUAGE | ENGLISH | One of the [languages](#languages), the one a character string column is read in | builds the index again |
 | FULLTEXT.STOP_WORDS | DEFAULT | DEFAULT for the language's list, NONE, or words written with commas | builds the index again |
 | FULLTEXT.K1 | 1.2 | 0 to 1000 | takes effect at once |
 | FULLTEXT.B | 0.75 | 0 to 1 | takes effect at once |
@@ -594,12 +597,14 @@ leaves each rule to the implementation, and these are Turborel's.
 
 | Unit | Rule |
 |---|---|
-| Word | A run of letters, numbers and marks. An underscore joins two runs, and an apostrophe between letters joins them, so `can't` is one word. Each Han, Hiragana or Katakana character is a word by itself |
+| Word | A run of letters, numbers and marks. An underscore joins two runs, and an apostrophe between letters joins them, so `can't` is one word. Each Han, Hiragana or Katakana character is a word by itself, but in the languages read as bigrams |
+| Elision | In French, Italian, Catalan and Irish an elided article or pronoun is taken off its word, so `l'école` is `école`. In Catalan a middle dot joins letters, so `col·lecció` is one word |
+| Bigrams | In Chinese, Japanese, Korean, Thai, Lao, Khmer and Burmese a run of their letters is read as its overlapping pairs, each a word, a letter with its marks. One letter alone is a word |
 | Sentence | Ends after `.`, `!` or `?` when a blank, a line end or the end of the text follows, so `3.14` ends none. The full-width terminators end one by themselves |
 | Paragraph | Ends at two line ends in a row, or at U+2029. It ends the sentence too |
-| Normalized word | Case folded, accents taken off, the right single quotation mark made an apostrophe, so `Résumé` is `resume` |
-| Stem | In English, the word's Porter2 stem, so `searching` and `searched` are `search`. In NONE, the word |
-| Stop word | In English, one of Snowball's 174, as `the` and `can't`. A stop word keeps its place, so distances stay right, but is never looked up |
+| Normalized word | In ENGLISH and NONE, case folded, accents taken off, the right single quotation mark made an apostrophe, so `Résumé` is `resume`. In a stemmed language, case folded with accents kept, so `Élève` is `élève`; Turkish folds `I` to `ı` and `İ` to `i`. In a bigram language, full-width and half-width forms made one |
+| Stem | The word's stem by the language's Snowball stemmer, so in English `searching` and `searched` are `search`. In NONE and the bigram languages, the word |
+| Stop word | One of the language's Snowball list, as English `the` and `can't`. A stop word keeps its place, so distances stay right, but is never looked up |
 
 A word is kept to its first 256 characters, and a term in the index to
 its first 255 bytes. A longer word is found by that prefix and checked

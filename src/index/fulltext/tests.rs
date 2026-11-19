@@ -7,6 +7,7 @@
 
 mod blocks;
 mod contains;
+mod languages;
 pub(super) mod method;
 mod ranking;
 mod search;
