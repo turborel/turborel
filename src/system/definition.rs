@@ -21,7 +21,8 @@
 //! The objects described are the base tables and views of the catalog,
 //! the system tables but the Definition Schema's own, and the views of the
 //! Information Schema; and the one character set, SQL_TEXT [§10.4 SR3],
-//! and its collation [§21.3.23, §21.3.24]. The data type descriptors are
+//! and the collations [§21.3.23, §21.3.24], whose tables are in
+//! `definition/characters.rs`. The data type descriptors are
 //! in `definition/descriptors.rs`, the constraint tables in
 //! `definition/constraints.rs`, the privilege tables and USERS in
 //! `definition/privileges.rs`, and \[EXTENSION\] the tables of table and
@@ -32,9 +33,17 @@
 //! makes in `definition/implicit.rs`; and, of ISO/IEC 9075-11, the base
 //! table of role authorizations in `definition/roles.rs`, those of
 //! triggers in `definition/triggers.rs`, of structured types in
-//! `definition/structured.rs` and of typed tables in `definition/typed.rs`
+//! `definition/structured.rs`, of typed tables in `definition/typed.rs`
+//! and of what routines, views, check constraints and generated columns
+//! depend on in `definition/usage.rs`; and, of ISO/IEC 9075-14, those of
+//! registered XML Schemas in
+//! `definition/xml_schemas.rs`; and, of ISO/IEC 9075-11, the tables of
+//! the parts, features, implementation information and sizing items
+//! supported in `definition/conformance.rs` and `definition/sizing.rs`
 //! (RULES.md R-SIZE-2).
 
+mod characters;
+mod conformance;
 mod constraints;
 mod descriptors;
 mod graph_statistics;
@@ -49,12 +58,15 @@ mod privileges;
 mod roles;
 mod routines;
 mod sequences;
+mod sizing;
 mod structured;
 #[cfg(test)]
 mod tests;
 mod triggers;
 mod typed;
+mod usage;
 mod user_types;
+mod xml_schemas;
 
 use std::sync::{Arc, OnceLock};
 
@@ -68,7 +80,6 @@ use crate::catalog::{CheckLevels, ColumnDefault, ColumnDesc, ConstraintDesc, Qua
 use crate::error::Result;
 use crate::storage::Row;
 use crate::value::Value;
-use crate::value::collation::{Pad, default_pad};
 use crate::value::datetime::Moment;
 
 /// [ISO/IEC 9075:1992 §21.2.28] ML, the length of CHARACTER_DATA: the
@@ -79,12 +90,6 @@ pub(super) const LONG: u32 = crate::value::MAX_CHARACTER_LENGTH;
 /// character set, and its collation [§21.3.24 Description 4]: SQL_TEXT,
 /// of INFORMATION_SCHEMA.
 const SQL_TEXT: &str = "SQL_TEXT";
-
-/// [ISO/IEC 9075:1992 §21.3.23 Description 5b, 5c] Its form-of-use and
-/// number of characters, implementation-defined: a character string is
-/// Unicode, every scalar value of which is a character.
-const FORM_OF_USE: &str = "UTF-8";
-const NUMBER_OF_CHARACTERS: usize = 1_112_064;
 
 /// The Definition Schema's tables.
 pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
@@ -98,11 +103,9 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
         defined("VIEW_TABLE_USAGE", view_table_columns, Rows::Infallible(view_tables)),
         defined("VIEW_COLUMN_USAGE", view_column_columns, Rows::Fallible(view_columns)),
         defined("ASSERTIONS", assertions_columns, Rows::Infallible(assertions)),
-        defined("CHARACTER_SETS", character_sets_columns, Rows::Infallible(character_sets)),
-        defined("COLLATIONS", collations_columns, Rows::Infallible(collations)),
-        defined("TRANSLATIONS", translations_columns, Rows::Infallible(none)),
         defined("SQL_LANGUAGES", languages_columns, Rows::Infallible(languages)),
     ];
+    tables.extend(characters::tables());
     tables.extend(descriptors::tables());
     tables.extend(constraints::tables());
     tables.extend(privileges::tables());
@@ -120,6 +123,9 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     tables.extend(graph_types::tables());
     tables.extend(structured::tables());
     tables.extend(typed::tables());
+    tables.extend(usage::tables());
+    tables.extend(xml_schemas::tables());
+    tables.extend(conformance::tables());
     tables
 }
 
@@ -128,8 +134,10 @@ pub(super) fn defined(name: &'static str, columns: fn() -> Vec<ColumnDesc>, rows
     Arc::new(Defined { schema: DEFINITION_SCHEMA, name, columns, rows })
 }
 
+pub(super) use characters::{sql_text, usage};
+
 /// The rows of a table of what there is none of.
-fn none(_: &Seen<'_>) -> Vec<Row> {
+pub(super) fn none(_: &Seen<'_>) -> Vec<Row> {
     Vec::new()
 }
 
@@ -179,6 +187,13 @@ impl Columns {
     /// Then a column `name` of CHARACTER_DATA.
     pub(super) fn data(mut self, name: &str, not_null: bool) -> Columns {
         self.0.push(text_column((name, LONG), not_null));
+        self
+    }
+
+    /// Then a column `name` of TIME_STAMP [ISO/IEC 9075-11:2006 draft
+    /// §5.6].
+    pub(super) fn time_stamp(mut self, name: &str) -> Columns {
+        self.0.push(triggers::time_stamp(name));
         self
     }
 
@@ -266,10 +281,11 @@ fn information_columns(seen: &Seen<'_>) -> Result<Vec<Vec<ColumnDesc>>> {
 }
 
 /// [ISO/IEC 9075:1992 §21.3.4] Every schema: the catalog's, in the order
-/// created, then the system tables' and ST_INFORMTN_SCHEMA, in order of name.
+/// created, then the system tables', ST_INFORMTN_SCHEMA and
+/// SF_INFORMTN_SCHEMA, in order of name.
 pub(super) fn schemas(seen: &Seen<'_>) -> Vec<String> {
     let mut all: Vec<String> = seen.state.catalog.schemas().into_iter().map(str::to_owned).collect();
-    let views = std::iter::once(super::ST_INFORMTN_SCHEMA.to_owned());
+    let views = [super::ST_INFORMTN_SCHEMA, super::SF_INFORMTN_SCHEMA].map(str::to_owned);
     let mut system: Vec<String> = seen.state.system.keys().map(|t| t.auth.clone()).chain(views).filter(|s| !all.contains(s)).collect();
     system.sort_unstable();
     system.dedup();
@@ -282,16 +298,19 @@ pub(super) fn schemas(seen: &Seen<'_>) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 fn schemata_columns() -> Vec<ColumnDesc> {
-    Columns::of().id("CATALOG_NAME", true).id("SCHEMA_NAME", true).id("SCHEMA_OWNER", true).ids("DEFAULT_CHARACTER_SET", false).done()
+    let columns = Columns::of().id("CATALOG_NAME", true).id("SCHEMA_NAME", true).id("SCHEMA_OWNER", true);
+    columns.ids("DEFAULT_CHARACTER_SET", false).data("SQL_PATH", false).done()
 }
 
 /// Each schema, with its owner [ISO/IEC 9075:1992 §11.1 GR2]
-/// (`owner_of`), its default character set SQL_TEXT.
+/// (`owner_of`), its default character set SQL_TEXT; and SQL_PATH null,
+/// as no `<schema definition>` here has a `<schema path specification>`
+/// [ISO/IEC 9075-11:2006 draft §6.41 Description 5b].
 fn schemata(seen: &Seen<'_>) -> Vec<Row> {
     let catalog = catalog_name(seen);
     let set = ids(&catalog, &information(SQL_TEXT));
     let owner = |s: &str| text(owner_of(&*seen.state.catalog, s));
-    schemas(seen).iter().map(|s| [vec![catalog.clone(), text(s), owner(s)], set.to_vec()].concat()).collect()
+    schemas(seen).iter().map(|s| [vec![catalog.clone(), text(s), owner(s)], set.to_vec(), vec![Value::Null]].concat()).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -351,7 +370,7 @@ fn default_text(default: Option<&ColumnDefault>) -> Value {
 }
 
 // ---------------------------------------------------------------------------
-// [§21.3.19] ASSERTIONS, [§21.3.25] TRANSLATIONS, [§21.3.26] SQL_LANGUAGES
+// [§21.3.19] ASSERTIONS, [§21.3.26] SQL_LANGUAGES
 // ---------------------------------------------------------------------------
 
 fn assertions_columns() -> Vec<ColumnDesc> {
@@ -364,10 +383,6 @@ fn assertions(seen: &Seen<'_>) -> Vec<Row> {
     let catalog = catalog_name(seen);
     let deferral = |a: &ConstraintDesc| vec![yes(a.attributes.deferrable), yes(a.attributes.initially_deferred)];
     seen.state.catalog.assertions().into_iter().map(|a| [ids(&catalog, &a.name).to_vec(), deferral(a)].concat()).collect()
-}
-
-fn translations_columns() -> Vec<ColumnDesc> {
-    Columns::of().ids("TRANSLATION", true).ids("SOURCE_CHARACTER_SET", true).ids("TARGET_CHARACTER_SET", true).done()
 }
 
 fn languages_columns() -> Vec<ColumnDesc> {
@@ -389,14 +404,35 @@ fn languages(_: &Seen<'_>) -> Vec<Row> {
 // ---------------------------------------------------------------------------
 
 fn tables_columns() -> Vec<ColumnDesc> {
-    typed::table_columns(Columns::of().ids("TABLE", true).data("TABLE_TYPE", true)).done()
+    let columns = typed::table_columns(Columns::of().ids("TABLE", true).data("TABLE_TYPE", true));
+    columns.data("IS_INSERTABLE_INTO", true).data("COMMIT_ACTION", false).done()
+}
+
+/// [ISO/IEC 9075-2:2023 §4.17.6, §7.16 SR25, SR28, SR29] Whether `o` is
+/// simply updatable, so insertable-into, as Feature T111 is not supported
+/// [ISO/IEC 9075-11:2006 draft §6.50 Description 7b], and so each of its
+/// columns is updatable: a base table of the catalog, or an updatable view
+/// of it. A system table, whose rows are made as it is read, and a view of
+/// the Information Schema are neither \[§21.1\].
+fn updatable(seen: &Seen<'_>, o: &Object) -> bool {
+    let catalog = &*seen.state.catalog;
+    if o.view { catalog.view(&o.name).is_some_and(|v| v.updates.is_some()) } else { catalog.table(&o.name).is_some() }
+}
+
+/// [ISO/IEC 9075-11:2006 draft §6.50 Description 4] The commit action of
+/// table `name`: DELETE or PRESERVE of a temporary table, as its ON COMMIT
+/// says, null of another.
+fn commit_action(seen: &Seen<'_>, name: &QualifiedName) -> Value {
+    let temporary = seen.state.catalog.table(name).and_then(|t| t.temporary);
+    temporary.map_or(Value::Null, |t| text(if t.delete_rows { "DELETE" } else { "PRESERVE" }))
 }
 
 /// Each table, a BASE TABLE, a VIEW, or a GLOBAL or LOCAL TEMPORARY table
 /// [§21.3.8], or \[EXTENSION\] SYSTEM VERSIONED, a system-versioned table
 /// [ISO/IEC 9075-2:2023 §4.17.2.3]: a system table is a base table, as
-/// INFORMATION_SCHEMA_CATALOG_NAME is \[§21.2.2\]; and, of a typed table
-/// or view, what makes it typed (`typed::table_values`).
+/// INFORMATION_SCHEMA_CATALOG_NAME is \[§21.2.2\]; of a typed table or
+/// view, what makes it typed (`typed::table_values`); whether it is
+/// insertable-into (`updatable`); and its commit action.
 fn described_tables(seen: &Seen<'_>) -> Result<Vec<Row>> {
     let catalog = catalog_name(seen);
     let kind = |o: &Object| match (o.view, seen.state.catalog.table(&o.name).and_then(|t| t.temporary).map(|t| t.kind)) {
@@ -410,7 +446,8 @@ fn described_tables(seen: &Seen<'_>) -> Result<Vec<Row>> {
     };
     let row = |o: Object| {
         let typed = typed::table_values(&catalog, typed::typed(seen, &o.name));
-        [ids(&catalog, &o.name).to_vec(), vec![text(kind(&o))], typed].concat()
+        let more = vec![yes(updatable(seen, &o)), commit_action(seen, &o.name)];
+        [ids(&catalog, &o.name).to_vec(), vec![text(kind(&o))], typed, more].concat()
     };
     Ok(objects(seen)?.into_iter().map(row).collect())
 }
@@ -455,7 +492,7 @@ fn columns_columns() -> Vec<ColumnDesc> {
         .data("IS_NULLABLE", false)
         .data("IS_SELF_REFERENCING", true);
     // [EXTENSION] (§4.2) whether it is a pseudo-column, which `*` skips.
-    sequences::generation_columns(columns).data("IS_HIDDEN", true).done()
+    sequences::generation_columns(columns).data("IS_UPDATABLE", true).data("IS_HIDDEN", true).done()
 }
 
 /// Each column of each table, at its position, from 1, with its domain;
@@ -463,18 +500,22 @@ fn columns_columns() -> Vec<ColumnDesc> {
 /// none if it has its domain's alone; nullable unless constrained NOT
 /// NULL; whether it is a typed table's self-referencing column
 /// (`typed::self_referencing`); its identity and generation
-/// (`sequences::generation_values`); whether it is hidden.
+/// (`sequences::generation_values`); whether it is updatable, as each
+/// column of its table is or none is (`updatable`) [ISO/IEC 9075-2:2023
+/// §4.17.6]; and whether it is hidden.
 fn columns(seen: &Seen<'_>) -> Result<Vec<Row>> {
     let catalog = catalog_name(seen);
     let mut rows = Vec::new();
     for o in objects(seen)? {
         let typed = typed::typed(seen, &o.name);
+        let updates = yes(updatable(seen, &o));
         for (at, c) in o.columns.iter().enumerate() {
             let null = || vec![Value::Null, Value::Null, Value::Null];
             let domain = c.domain.as_ref().map_or_else(null, |d| ids(&catalog, &d.name).to_vec());
             let own = vec![default_text(c.default.as_ref()), yes(!c.not_null), typed::self_referencing(typed, &c.name)];
             let generation = sequences::generation_values(c);
-            let row = [vec![text(&c.name), number(at.saturating_add(1))], domain, own, generation, vec![yes(c.hidden())]].concat();
+            let row = [vec![text(&c.name), number(at.saturating_add(1))], domain, own, generation, vec![updates.clone(), yes(c.hidden())]]
+                .concat();
             rows.push([ids(&catalog, &o.name).to_vec(), row].concat());
         }
     }
@@ -526,52 +567,4 @@ fn view_columns(seen: &Seen<'_>) -> Result<Vec<Row>> {
         }
     }
     Ok(rows)
-}
-
-// ---------------------------------------------------------------------------
-// [§21.3.23] CHARACTER_SETS, [§21.3.24] COLLATIONS
-// ---------------------------------------------------------------------------
-
-fn character_sets_columns() -> Vec<ColumnDesc> {
-    Columns::of()
-        .ids("CHARACTER_SET", true)
-        .id("FORM_OF_USE", false)
-        .number("NUMBER_OF_CHARACTERS", false)
-        .ids("DEFAULT_COLLATE", true)
-        .done()
-}
-
-/// [§21.3.23 Description 5] SQL_TEXT, its default collation SQL_TEXT.
-fn character_sets(seen: &Seen<'_>) -> Vec<Row> {
-    let (catalog, sql_text) = (catalog_name(seen), information(SQL_TEXT));
-    let row = [ids(&catalog, &sql_text).to_vec(), vec![text(FORM_OF_USE), number(NUMBER_OF_CHARACTERS)], ids(&catalog, &sql_text).to_vec()];
-    vec![row.concat()]
-}
-
-fn collations_columns() -> Vec<ColumnDesc> {
-    Columns::of().ids("COLLATION", true).ids("CHARACTER_SET", true).data("PAD_ATTRIBUTE", false).done()
-}
-
-/// [§21.3.24 Description 4] The built-in collations and those definitions
-/// made, each of SQL_TEXT, and its pad attribute.
-fn collations(seen: &Seen<'_>) -> Vec<Row> {
-    let (catalog, sql_text) = (catalog_name(seen), information(SQL_TEXT));
-    let row = |name: &QualifiedName, pad: Pad| {
-        let pad = if pad == Pad::Space { "PAD SPACE" } else { "NO PAD" };
-        [ids(&catalog, name).to_vec(), ids(&catalog, &sql_text).to_vec(), vec![text(pad)]].concat()
-    };
-    let built = seen.state.collations.keys().map(|name| row(&information(name), default_pad(name)));
-    built.chain(seen.state.catalog.collations().into_iter().map(|c| row(&c.name, c.pad))).collect()
-}
-
-/// [ISO/IEC 9075:1992 §10.4 SR2, §11.30 SR4] The usage privileges on the
-/// character set and collation: the character set's PUBLIC's WITH GRANT
-/// OPTION, the collation's PUBLIC's, both of the grantor "_SYSTEM".
-pub(super) fn usage() -> [(&'static str, bool); 2] {
-    [("CHARACTER SET", true), ("COLLATION", false)]
-}
-
-/// The name of the character set and collation.
-pub(super) fn sql_text() -> QualifiedName {
-    information(SQL_TEXT)
 }

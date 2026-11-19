@@ -321,14 +321,15 @@ pub(in crate::db) const DROP_EMBEDDING_MODEL: Command = command("DROP EMBEDDING 
 pub(in crate::db) const CREATE_VECTOR_PIPELINE: Command = command("CREATE VECTOR PIPELINE", -20);
 /// \[EXTENSION\] DROP VECTOR PIPELINE.
 pub(in crate::db) const DROP_VECTOR_PIPELINE: Command = command("DROP VECTOR PIPELINE", -21);
-/// \[EXTENSION\] CREATE PROPERTY GRAPH (RULES.md D140): -22 to
-/// -24 for property graphs, past the codes -17 to -21 of the vector
-/// statements; the graph query language's take -30 and on.
-pub(in crate::db) const CREATE_PROPERTY_GRAPH: Command = command("CREATE PROPERTY GRAPH", -22);
+/// \[EXTENSION\] CREATE PROPERTY GRAPH (RULES.md D140): -27 to
+/// -29 for property graphs, past the codes -17 to -21 of the vector
+/// statements and -22 to -26 of XML's; the graph query language's take
+/// -30 and on.
+pub(in crate::db) const CREATE_PROPERTY_GRAPH: Command = command("CREATE PROPERTY GRAPH", -27);
 /// \[EXTENSION\] ALTER PROPERTY GRAPH.
-pub(in crate::db) const ALTER_PROPERTY_GRAPH: Command = command("ALTER PROPERTY GRAPH", -23);
+pub(in crate::db) const ALTER_PROPERTY_GRAPH: Command = command("ALTER PROPERTY GRAPH", -28);
 /// \[EXTENSION\] DROP PROPERTY GRAPH.
-pub(in crate::db) const DROP_PROPERTY_GRAPH: Command = command("DROP PROPERTY GRAPH", -24);
+pub(in crate::db) const DROP_PROPERTY_GRAPH: Command = command("DROP PROPERTY GRAPH", -29);
 /// \[EXTENSION\] CREATE GRAPH TYPE (graph standard §4.3); GQL's codes
 /// begin at -30, those before kept for the other graph statements.
 pub(in crate::db) const CREATE_GRAPH_TYPE: Command = command("CREATE GRAPH TYPE", -30);
@@ -340,3 +341,13 @@ pub(in crate::db) const CREATE_GRAPH: Command = command("CREATE GRAPH", -32);
 pub(in crate::db) const DROP_GRAPH: Command = command("DROP GRAPH", -33);
 /// \[EXTENSION\] EXECUTE GQL (§9).
 pub(in crate::db) const EXECUTE_GQL: Command = command("EXECUTE GQL", -34);
+/// \[EXTENSION\] CREATE XML SCHEMA [ISO/IEC 9075-14:2006 draft §4.2.6].
+pub(in crate::db) const CREATE_XML_SCHEMA: Command = command("CREATE XML SCHEMA", -22);
+/// \[EXTENSION\] DROP XML SCHEMA [ISO/IEC 9075-14:2006 draft §4.2.6].
+pub(in crate::db) const DROP_XML_SCHEMA: Command = command("DROP XML SCHEMA", -23);
+/// \[EXTENSION\] CREATE XQUERY MODULE (RULES.md D106).
+pub(in crate::db) const CREATE_XQUERY_MODULE: Command = command("CREATE XQUERY MODULE", -24);
+/// \[EXTENSION\] DROP XQUERY MODULE (RULES.md D106).
+pub(in crate::db) const DROP_XQUERY_MODULE: Command = command("DROP XQUERY MODULE", -25);
+/// \[EXTENSION\] ALTER XQUERY MODULE (RULES.md D106).
+pub(in crate::db) const ALTER_XQUERY_MODULE: Command = command("ALTER XQUERY MODULE", -26);

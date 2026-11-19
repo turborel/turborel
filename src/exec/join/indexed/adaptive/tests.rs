@@ -37,6 +37,9 @@ impl Index for Counted {
     fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
         self.inner.key_projection()
     }
+    fn read_region(&self, probe: &Probe) -> Option<Vec<crate::spatial::Bounds>> {
+        self.inner.read_region(probe)
+    }
     fn estimate(&self, probe: &Probe) -> Option<usize> {
         self.estimates_made.fetch_add(1, Ordering::Relaxed);
         self.estimates.then(|| self.inner.estimate(probe)).flatten()
@@ -77,7 +80,7 @@ fn plan(regions: Vec<Row>, argument: usize) -> Plan {
         vec![Expr::Column(1), Expr::Column(width.saturating_add(1))]
     };
     Plan::IndexJoin {
-        outer: false,
+        outer: crate::physical::Preserved::Inner,
         spatial: true,
         left: Box::new(Plan::Values {
             rows: regions.into_iter().map(|row| row.into_iter().map(Expr::Const).collect()).collect(),
@@ -89,11 +92,12 @@ fn plan(regions: Vec<Row>, argument: usize) -> Plan {
         probe: JoinProbe::Predicate {
             predicate: Box::new(Predicate { function: function.clone(), column: 0, argument: Some(argument) }),
             outer: 1,
+            beside: None,
         },
         cond: Some(Cond::Compare(Expr::Call(function, args), CompOp::Eq, Expr::Const(number(1)))),
         width: 2,
         columns: vec![0, 1],
-        detail: String::new(),
+        detail: "".into(),
         est: 100.0,
         cost: 1000.0,
         located: false,

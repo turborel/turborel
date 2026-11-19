@@ -5,7 +5,7 @@ use super::{Probing, Read};
 use crate::catalog::IndexDesc;
 use crate::logical::{Cond, Expr, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr};
 use crate::physical::shown::Shown;
-use crate::physical::{JoinProbe, PhysicalPlanner, Plan};
+use crate::physical::{JoinProbe, PhysicalPlanner, Plan, Preserved, Unmatched};
 use crate::storage::cost_of;
 
 pub(super) struct Choice {
@@ -13,6 +13,16 @@ pub(super) struct Choice {
     pub(super) probe: JoinProbe,
     pub(super) total: f64,
     pub(super) spatial: bool,
+    pub(super) preserve: Preserve,
+}
+
+/// Which unmatched rows a planned join keeps (`Preserved`): none, the
+/// probing operand's, or both operands'.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Preserve {
+    Inner,
+    Outer,
+    Both,
 }
 
 impl PhysicalPlanner<'_> {
@@ -43,12 +53,12 @@ impl PhysicalPlanner<'_> {
             located: read.located,
             positions: None,
         };
-        Some(Choice { read: probing, probe, total: outer * cost, spatial: false })
+        Some(Choice { read: probing, probe, total: outer * cost, spatial: false, preserve: Preserve::Inner })
     }
 }
 
 pub(super) fn planned(choice: Choice, outer: Plan, (cond, width): (Cond, usize), shown: Shown<'_>) -> Plan {
-    let Choice { mut read, probe, total, spatial } = choice;
+    let Choice { mut read, probe, total, spatial, preserve } = choice;
     let through = read.through.take();
     let mapped = |c: usize| match &through {
         Some((columns, _)) => c.checked_sub(width).and_then(|i| columns.get(i)).map_or(c, |i| i.saturating_add(width)),
@@ -56,6 +66,7 @@ pub(super) fn planned(choice: Choice, outer: Plan, (cond, width): (Cond, usize),
     };
     let cond = map_cond_columns(cond, &mapped);
     let filter = read.filter.map(|c| map_cond_columns(c, &|i| i.saturating_add(width)));
+    let kept = preserved(preserve, filter.as_ref(), width);
     let condition = and_all(std::iter::once(cond).chain(filter).collect()).map(judged_by_sets);
     let joined_names = through
         .as_ref()
@@ -63,17 +74,17 @@ pub(super) fn planned(choice: Choice, outer: Plan, (cond, width): (Cond, usize),
     let table_shown = joined_names.as_ref().map_or(shown, |names| Shown::of(Some(names)));
     let detail = table_shown.text(|names| condition.as_ref().map(|c| render_cond(c, names)).unwrap_or_default());
     let joined = Plan::IndexJoin {
-        outer: false,
+        outer: kept,
         spatial,
         left: Box::new(outer),
         table: read.table,
-        index: read.index,
-        method: read.method,
+        index: read.index.into(),
+        method: read.method.into(),
         probe,
         cond: condition,
         width: read.width,
         columns: read.needed,
-        detail,
+        detail: detail.into(),
         est: read.each,
         cost: total,
         located: read.located,
@@ -85,5 +96,15 @@ pub(super) fn planned(choice: Choice, outer: Plan, (cond, width): (Cond, usize),
             Plan::Project { exprs, detail: projection, input: Box::new(joined) }
         }
         None => joined,
+    }
+}
+
+/// The rows matching none a join keeps, of the table's `filter` over the
+/// pair's columns, the probing operand `width` columns wide.
+fn preserved(preserve: Preserve, filter: Option<&Cond>, width: usize) -> Preserved {
+    match preserve {
+        Preserve::Inner => Preserved::Inner,
+        Preserve::Outer => Preserved::Outer,
+        Preserve::Both => Preserved::Both(Box::new(Unmatched { filter: filter.cloned().map(judged_by_sets), width })),
     }
 }

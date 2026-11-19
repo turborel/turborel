@@ -346,7 +346,11 @@ fn bound_select_list(binder: &Binder<'_>, select: &[SelectItem], scope: Scope<'_
 
 /// The name, NOT NULL and column of the FROM row of the select list's
 /// value `v`, of `scope`.
-fn named(binder: &Binder<'_>, v: &ValueExpression, scope: Scope<'_>) -> Result<(Option<String>, bool, Option<usize>)> {
+pub(in crate::binder) fn named(
+    binder: &Binder<'_>,
+    v: &ValueExpression,
+    scope: Scope<'_>,
+) -> Result<(Option<String>, bool, Option<usize>)> {
     // [X3.135-1986 §5.25 SR9] a named column only for a single <column specification>,
     // or [ISO/IEC 9075:1992 §7.9 SR9a] one with an <as clause>;
     // [X3.135-1986 §5.25 SR10] NOT NULL only if it is a named column of a NOT NULL column.
@@ -369,6 +373,7 @@ fn named(binder: &Binder<'_>, v: &ValueExpression, scope: Scope<'_>) -> Result<(
         | ValueExpression::Function { .. }
         | ValueExpression::Case(_)
         | ValueExpression::Cast { .. }
+        | ValueExpression::Xml(..)
         | ValueExpression::Datetime(_)
         | ValueExpression::Extract { .. }
         | ValueExpression::Difference { .. }

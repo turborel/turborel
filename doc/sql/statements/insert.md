@@ -10,7 +10,7 @@ INSERT: insert rows
 
 ```
 <insert statement> ::=
-    INSERT INTO <table name> <insert columns and source>
+    INSERT [ WITH <XML lexically scoped options> ] INTO <table name> <insert columns and source>
 
 <insert columns and source> ::=
       [ ( <column name> [ { , <column name> }... ] ) ] [ <override clause> ] <query expression>
@@ -91,7 +91,7 @@ columns. SELECT on each table the query reads.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist or is read-only; a column listed is not of it, or is listed twice; the query's columns are not as many as those inserted into, or a value is not assignable to its column |
+| 2A000 | -103 | The table does not exist or is read-only; a column listed is not of it, or is listed twice; the query's columns are not as many as those inserted into, or a value is not assignable to its column; WITH's XML options break a rule of [XML Values](../19-xml.md#xml-options-of-a-scope) |
 | 2A000 | -104 | Its user lacks a privilege it needs |
 | 23000 | -201 | A row breaks a constraint: NOT NULL, UNIQUE, PRIMARY KEY, a foreign key or a CHECK |
 | 44000 | -201 | A row inserted through a view WITH CHECK OPTION is not a row of the view |
@@ -198,7 +198,8 @@ ISO/IEC 9075:1992 §13.8, and X3.135-1986 §8.7, whose INSERT takes
 `<query expression>` of any kind, and NULL and DEFAULT in VALUES are
 SQL-92's [§13.8, §7.1]. The override clause, and the values identity
 columns and generated columns take, are ISO/IEC 9075-2:2023 §14.11 and
-§15.11.
+§15.11. WITH's XML options are ISO/IEC 9075-14:2006 draft §14.4,
+Features X082 and X132.
 
 ## SEE ALSO
 

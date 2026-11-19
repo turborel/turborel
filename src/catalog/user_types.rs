@@ -47,6 +47,9 @@ pub struct RoutineDesc {
     pub specific: String,
     /// EXECUTE on it [§12.3, §11.60 GR]: each grant, as USAGE's are kept.
     pub execute: Vec<UsageDesc>,
+    /// Its creation and last-altered timestamps [§4.35.5]: those of the
+    /// statement whose definition made it [§11.60 GR5].
+    pub stamps: super::Stamps,
 }
 
 /// Which of a distinct type's routines.
@@ -87,7 +90,8 @@ pub fn based_on(t: &DataType, name: &QualifiedName) -> bool {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Json
-        | DataType::Extension(_) => false,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => false,
     }
 }
 
@@ -122,7 +126,8 @@ pub fn types_in(t: &DataType, into: &mut Vec<QualifiedName>) {
         | DataType::Timestamp { .. }
         | DataType::Interval(_)
         | DataType::Json
-        | DataType::Extension(_) => {}
+        | DataType::Extension(_)
+        | DataType::Xml(_) => {}
     }
 }
 

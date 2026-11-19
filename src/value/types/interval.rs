@@ -179,7 +179,8 @@ impl SqlType for IntervalKind {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => uncastable(&v, t),
+            | Value::Extension(_)
+            | Value::Xml(_) => uncastable(&v, t),
         }
     }
 

@@ -30,8 +30,10 @@ use std::sync::Arc;
 
 use super::super::{State, rule, triggers::named};
 use crate::ast::{RoutineDefinition, SqlStatement};
-use crate::binder::{Context, DrawnFrom, Invoked, Uses, bind_function_body, definition_of, grantably_held, once_each, sql_statement};
-use crate::catalog::{DataAccess, QualifiedName, SqlRoutineDesc, TransitionNames, applicable, owner_of, routine_path, sole};
+use crate::binder::{
+    Context, Counting, DrawnFrom, Invoked, Uses, bind_function_body, definition_of, grantably_held, once_each, sql_statement,
+};
+use crate::catalog::{DataAccess, Indicated, QualifiedName, SqlRoutineDesc, TransitionNames, applicable, owner_of, routine_path, sole};
 use crate::error::{Code, Result, SqlError};
 use crate::params::{Params, RoutineScope};
 use crate::value::Value;
@@ -42,6 +44,12 @@ pub(in crate::db) struct BodyBound {
     pub(in crate::db) reads: Vec<QualifiedName>,
     /// The specific names of the routines it invokes.
     pub(in crate::db) invokes: Vec<QualifiedName>,
+    /// [ISO/IEC 9075-14:2006 draft §4.2.6] The registered XML Schemas it
+    /// indicates, and the registered XQuery modules it imports.
+    pub(in crate::db) indicates: Indicated,
+    /// Whether its XQuery expressions were typed statically as
+    /// XQUERY.STATIC_TYPING asked [XQuery §5.2.3].
+    pub(in crate::db) typed: bool,
     /// The sequence generators it draws from, each once.
     pub(in crate::db) sequences: Vec<QualifiedName>,
     /// Whether its owner's EXECUTE on the routine is grantable [GR1].
@@ -161,19 +169,35 @@ impl State {
     /// SQL-data than its SQL-data access indication allows; its own,
     /// bound, under the routine's owner.
     pub(in crate::db) fn bind_routine_body(&self, desc: &SqlRoutineDesc, definition: &RoutineDefinition) -> Result<BodyBound> {
+        self.bind_routine_body_counting(desc, definition, None)
+    }
+
+    /// `bind_routine_body`, its columns those `counting` counts, if not
+    /// each it references.
+    ///
+    /// # Errors
+    ///
+    /// As `bind_routine_body`.
+    fn bind_routine_body_counting(
+        &self,
+        desc: &SqlRoutineDesc,
+        definition: &RoutineDefinition,
+        counting: Option<Counting>,
+    ) -> Result<BodyBound> {
         if let Some(ptf) = &desc.ptf {
             return self.bind_ptf_body(desc, ptf);
         }
         let stmt = sql_statement(definition)?;
         allowed(desc, stmt)?;
         let owner = owner_of(&*self.catalog, &desc.name.auth).to_owned();
-        let (uses, invoked, drawn): (Uses, Invoked, DrawnFrom) = (Uses::default(), RefCell::new(Vec::new()), RefCell::new(Vec::new()));
+        let (uses, invoked, drawn): (Uses, Invoked, DrawnFrom) = (Uses::default(), Invoked::default(), RefCell::new(Vec::new()));
         let scope = RoutineScope::of(desc, routine_path(&*self.catalog, desc));
         let params = Params::of_routine(vec![Value::Null; desc.parameters.len()], Arc::new(scope));
         let cx = Context {
             schema: &desc.schema,
             horizon: &desc.horizon,
             uses: Some(&uses),
+            counting: counting.map(|c| (c, false)),
             invoked: Some(&invoked),
             drawn: Some(&drawn),
             ..Context::new(self, &owner, &params)
@@ -192,6 +216,8 @@ impl State {
             self.bind_triggered(cx, stmt, (&owner, &params))?;
         }
         let reads = named(std::slice::from_ref(stmt), None, (&desc.schema, &TransitionNames::default()));
+        let indicates = invoked.take_indicated();
+        let typed = invoked.take_typed();
         let invocations = invoked.into_inner();
         for r in invocations.iter().filter_map(|s| self.catalog.routine(s)) {
             access = if rank(r.access) > rank(access) { r.access } else { access };
@@ -205,7 +231,7 @@ impl State {
         sequences.sort();
         sequences.dedup();
         let columns = once_each(uses.into_inner());
-        Ok(BodyBound { reads, invokes: invocations, sequences, grantable, columns })
+        Ok(BodyBound { reads, invokes: invocations, indicates, typed, sequences, grantable, columns })
     }
 
     /// The columns of tables and views the body of the routine `r`
@@ -217,6 +243,19 @@ impl State {
     /// The body does not bind.
     pub(crate) fn routine_columns(&self, r: &SqlRoutineDesc) -> Result<Vec<(QualifiedName, String)>> {
         Ok(self.bind_routine_body(r, &definition_of(r)?)?.columns)
+    }
+
+    /// [ISO/IEC 9075-11:2006 draft §6.35 Description 1] The columns the
+    /// body of the routine `r` references in the search condition of a
+    /// searched UPDATE or DELETE or in an `<update source>`, and those an
+    /// `<insert column list>` or a `<set clause>` names, each once, as it
+    /// binds now.
+    ///
+    /// # Errors
+    ///
+    /// The body does not bind.
+    pub(crate) fn routine_usage_columns(&self, r: &SqlRoutineDesc) -> Result<Vec<(QualifiedName, String)>> {
+        Ok(self.bind_routine_body_counting(r, &definition_of(r)?, Some(Counting::Routine))?.columns)
     }
 
     /// [ISO/IEC 9075-2:2023 §11.60 GR1; ISO/IEC 9075-4:2006 draft §9.21

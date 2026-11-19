@@ -36,7 +36,7 @@ fn every_day_of_the_calendar() {
 /// SR25] a datetime literal's string is of four digits of year and two of
 /// each other field, the fraction's digits its precision, dates and times
 /// valid in the calendar, seconds to 59, a displacement from -12:59 to
-/// +13:00; it is shown as written.
+/// +14:00 [ISO/IEC 9075-2:2023 §5.3 SR43]; it is shown as written.
 #[test]
 fn literals_are_read_and_written() {
     for (moment, text) in [
@@ -49,6 +49,7 @@ fn literals_are_read_and_written() {
         (Moment::Time, "01:00:00.123456-12:59"),
         (Moment::Timestamp, "2024-03-01 00:00:00"),
         (Moment::Timestamp, "1999-12-31 23:59:59.999+13:00"),
+        (Moment::Timestamp, "2026-01-01 00:00:00+14:00"),
     ] {
         assert_eq!(of(moment, text).to_string(), text);
     }
@@ -63,7 +64,7 @@ fn literals_are_read_and_written() {
         (Moment::Time, "12:60:00"),
         (Moment::Time, "12:00:60"),
         (Moment::Time, "1:00:00"),
-        (Moment::Time, "12:00:00+13:01"),
+        (Moment::Time, "12:00:00+14:01"),
         (Moment::Time, "12:00:00-13:00"),
         (Moment::Time, "12:00:00+5:00"),
         (Moment::Time, "12:00:00 +05:00"),
@@ -77,6 +78,8 @@ fn literals_are_read_and_written() {
     let w = parse(Moment::Time, "00:00:01.1234567").unwrap();
     assert_eq!((w.local, w.precision), (1_123_456, 7), "digits past the microsecond dropped");
     assert_eq!(parse_displacement("-00:30"), Some(-30));
+    assert_eq!([parse_displacement("+14:00"), parse_displacement("+14:01")], [Some(MAX_DISPLACEMENT), None]);
+    assert_eq!(displacement_range(), "from -12:59 to +14:00");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.5.1, §8.2 GR5, §6.6 GR3a i]
@@ -102,7 +105,7 @@ fn instants_fields_and_ranges() {
     assert!(of(Moment::Timestamp, "9999-12-31 23:00:00").in_range());
     assert!(!of(Moment::Timestamp, "9999-12-31 23:00:00-01:00").in_range(), "10000 in UTC");
     assert!(!of(Moment::Timestamp, "0001-01-01 00:00:00+01:00").in_range(), "year 0 in UTC");
-    assert!(of(Moment::Time, "00:00:00+13:00").in_range());
+    assert!(of(Moment::Time, "00:00:00+14:00").in_range());
     assert_eq!(east.key_word(), "TIMESTAMP");
     assert_eq!(Datetime::displacement_text(-779), "-12:59");
 }

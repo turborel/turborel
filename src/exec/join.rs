@@ -30,7 +30,7 @@ use super::{RowIter, broken, column, execute, failed};
 use crate::db::State;
 use crate::error::Result;
 use crate::physical::{JoinKey, Plan};
-use crate::spill::{Records, SpillTable, bucket_key, record_row, row_bytes, row_record};
+use crate::spill::{Records, SpillTable, SpilledLobs, bucket_key, row_bytes};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::types::TypeRegistry;
@@ -72,6 +72,8 @@ pub(in crate::exec) struct Built {
     spilled: Option<Box<dyn SpillTable>>,
     /// The types beyond the standard its spilled rows may hold values of.
     types: TypeRegistry,
+    /// The sources of what its spilled rows name, held while it is.
+    lobs: SpilledLobs,
 }
 
 /// What a hash join's right operand does once it outgrows its work area:
@@ -105,7 +107,14 @@ impl Built {
         keys: Vec<JoinKey>,
         (work, full): (&mut Work, Full),
     ) -> Result<Right> {
-        let mut built = Built { keys, buckets: HashMap::new(), held: Vec::new(), spilled: None, types: work.types().clone() };
+        let mut built = Built {
+            keys,
+            buckets: HashMap::new(),
+            held: Vec::new(),
+            spilled: None,
+            types: work.types().clone(),
+            lobs: work.lobs().clone(),
+        };
         let mut bytes = 0_usize;
         for r in rows.by_ref() {
             let row = r?;
@@ -143,17 +152,18 @@ impl Built {
     /// spill area.
     fn spilled(mut self, rows: impl Iterator<Item = Result<Row>>, work: &mut Work) -> Result<Built> {
         let mut table = work.table()?;
+        let lobs = self.lobs.clone();
         let (buckets, mut held) = (std::mem::take(&mut self.buckets), std::mem::take(&mut self.held));
         for (bucket, at) in buckets {
             let key = bucket_key(&bucket);
             for one in held.get_mut(at).map(std::mem::take).unwrap_or_default() {
-                table.insert(&key, &row_record(&one))?;
+                table.insert(&key, &lobs.record(&one))?;
             }
         }
         for r in rows {
             let row = r?;
             if let Some(b) = key(&row, &self.keys, Operand::Right)? {
-                table.insert(&bucket_key(&b), &row_record(&row))?;
+                table.insert(&bucket_key(&b), &lobs.record(&row))?;
             }
         }
         self.spilled = Some(table);
@@ -181,7 +191,7 @@ impl Built {
                 *next = next.saturating_add(1);
                 Some(Ok(Cow::Borrowed(row)))
             }
-            Probe::Spilled(records) => Some(records.next()?.and_then(|r| record_row(&r, &self.types)).map(Cow::Owned)),
+            Probe::Spilled(records) => Some(records.next()?.and_then(|r| self.lobs.record_row(&r, &self.types)).map(Cow::Owned)),
         }
     }
 }

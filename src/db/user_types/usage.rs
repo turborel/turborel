@@ -335,6 +335,8 @@ impl State {
             | PrivilegeObject::Module
             | PrivilegeObject::Graph
             | PrivilegeObject::Model
+            | PrivilegeObject::XmlSchema
+            | PrivilegeObject::XQueryModule
             | PrivilegeObject::Type => (false, None),
         };
         let types = match parameters {

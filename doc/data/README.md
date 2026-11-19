@@ -18,7 +18,7 @@ For SQL users whose data is more than numbers and strings: its model, the querie
 - [Vectors](04-vectors.md): store recipes' embeddings, find the nearest
   by distance, index them, compare the metrics, work with the vectors'
   arithmetic and define a distance of one's own.
-- [Graphs](05-graphs.md): present a bank's accounts and transfers as a
+- [Graphs](06-graphs.md): present a bank's accounts and transfers as a
   graph, follow money along paths, find the shortest and cheapest, and
   index the transfers for the search.
 

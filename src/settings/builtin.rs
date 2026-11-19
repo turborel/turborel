@@ -108,15 +108,18 @@ pub const TRANSACTION_ISOLATION: Key = Key(45);
 /// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
 /// the executor's settings.
 pub const MAX_ITERATIONS: Key = Key(46);
+/// See [`TABLES_ENGINE`]: at its key's place, after the vector settings
+/// (`settings/vector.rs`).
+pub const XQUERY_STATIC_TYPING: Key = Key(52);
 /// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
 /// the executor's settings.
-pub const GRAPH_THREADS: Key = Key(52);
+pub const GRAPH_THREADS: Key = Key(53);
 /// \[EXTENSION\] See [`TABLES_ENGINE`]: the language a session's direct
 /// statements are read in, SQL or GQL (graph standard §9).
-pub const SESSION_LANGUAGE: Key = Key(58);
+pub const SESSION_LANGUAGE: Key = Key(59);
 /// \[EXTENSION\] See [`TABLES_ENGINE`]: the graph a GQL statement that
 /// names none reads, a GQL session's graph.
-pub const GQL_GRAPH: Key = Key(59);
+pub const GQL_GRAPH: Key = Key(60);
 /// The words of `SESSION.LANGUAGE`.
 pub const LANGUAGES: &[&str] = &["SQL", "GQL"];
 
@@ -152,12 +155,12 @@ pub(super) fn whole(n: i128) -> Value {
 }
 
 /// `n` as a whole number of a setting.
-fn count(n: impl TryInto<i128>) -> Value {
+pub(super) fn count(n: impl TryInto<i128>) -> Value {
     whole(n.try_into().unwrap_or(i128::MAX))
 }
 
 /// A whole number from `min` up.
-fn at_least(min: i128) -> Kind {
+pub(super) fn at_least(min: i128) -> Kind {
     Kind::Integer { min, max: i128::from(i64::MAX) }
 }
 
@@ -165,7 +168,7 @@ fn at_least(min: i128) -> Kind {
 const FRACTION: Kind = Kind::Number { min: 0.0, max: 1.0 };
 
 /// One built-in setting.
-fn defined((name, kind, default): (&str, Kind, Value), (per_session, effect): (bool, Effect), doc: &str) -> Definition {
+pub(super) fn defined((name, kind, default): (&str, Kind, Value), (per_session, effect): (bool, Effect), doc: &str) -> Definition {
     Definition { name: name.to_owned(), kind, default, per_session, node: false, effect, doc: doc.to_owned() }
 }
 
@@ -175,7 +178,7 @@ const DATABASE: (bool, Effect) = (false, Effect::Statement);
 
 /// A setting a session may set for itself, over the database's, taking
 /// effect for the statements that begin after it changes.
-const SESSION: (bool, Effect) = (true, Effect::Statement);
+pub(super) const SESSION: (bool, Effect) = (true, Effect::Statement);
 
 /// The built-in settings, in the order of their keys.
 pub(super) fn builtin() -> Vec<Definition> {
@@ -232,11 +235,23 @@ pub(super) fn builtin() -> Vec<Definition> {
 }
 
 /// The settings of the features after the others, each at its key's
-/// place: the vector settings, the graph threads, GRAPH_TABLE's search
+/// place: the vector settings, XQuery's static typing, the graph threads, GRAPH_TABLE's search
 /// limits, GQL's session and the graph's later ones.
 fn last() -> impl Iterator<Item = Definition> {
-    let graph = super::graph::definitions().into_iter().chain(gql_session()).chain(super::graph::later());
-    super::vector::vector().into_iter().chain([graph_threads()]).chain(graph)
+    let graph = super::graph::definitions().into_iter().chain(super::graph::gql_session()).chain(super::graph::later());
+    super::vector::vector().into_iter().chain([static_typing(), super::graph::threads()]).chain(graph)
+}
+
+/// [XQuery §5.2.3] Whether the Static Typing Feature is in effect for the
+/// XQuery expressions a statement prepares, at its key's place after the
+/// others; OFF by default, as it refuses queries whose evaluation would
+/// raise no error (RULES.md D106).
+fn static_typing() -> Definition {
+    defined(
+        ("XQUERY.STATIC_TYPING", Kind::Choice(SWITCHES), text(OFF)),
+        SESSION,
+        "Whether the XQuery expressions of XMLQUERY, XMLEXISTS and XMLTABLE are statically typed as a statement is prepared, each type error raised then, before any is evaluated: ON; or as a query declaring the option static-typing of urn:turborel:option asks, OFF. A definition is typed as it is made, as the value of the session making it or its query's option asks, and keeps that typing whenever it is bound again.",
+    )
 }
 
 /// \[DESIGN\] What a session may turn on or off for itself: whether its
@@ -252,7 +267,7 @@ fn switches() -> [Definition; 2] {
         defined(
             ("SQL.FUNCTION_CALLS", Kind::Choice(SWITCHES), text(ON)),
             SESSION,
-            "Whether a statement may call a function the program registered, of no schema, by NAME(arguments): ON; or takes calls of the schema's own functions alone, as SQL does, OFF.",
+            "Whether a statement may call a function the program registered, of no schema, by NAME(arguments): ON; or takes calls of the schema's own functions alone, as SQL does, OFF. A definition, as a CHECK, is checked as it is written, and keeps its calls whatever the setting is later.",
         ),
     ]
 }
@@ -329,36 +344,6 @@ fn later() -> [Definition; 5] {
     [system_cache(), checksum_key(), rekey_rate(), transaction_isolation(), max_iterations()]
 }
 
-/// \[EXTENSION\] The threads a graph algorithm runs on (RULES.md
-/// D145), at its key's place, after the others, though of the
-/// executor's settings: 1, the statement's own thread alone, so many
-/// sessions do not each take every core unasked.
-fn graph_threads() -> Definition {
-    defined(
-        ("EXECUTOR.GRAPH_THREADS", at_least(1), count(1)),
-        SESSION,
-        "The threads a graph algorithm of GRAPH_ALGO, or a GRAPH_TABLE's search from many starts, runs on at once, the statement's own among them; its results are the same on any number.",
-    )
-}
-
-/// \[EXTENSION\] A GQL session (graph standard §9, RULES.md D144): the
-/// language a session's direct statements are read in, and the graph a
-/// GQL statement that names none reads.
-fn gql_session() -> [Definition; 2] {
-    [
-        defined(
-            ("SESSION.LANGUAGE", Kind::Choice(LANGUAGES), text("SQL")),
-            SESSION,
-            "The language a session's direct statements are read in, SQL or GQL; in GQL each statement but SET is a GQL request.",
-        ),
-        defined(
-            ("GQL.GRAPH", Kind::Text { max: 257 }, text("")),
-            SESSION,
-            "The property graph a GQL statement reads when it names none, as SESSION SET GRAPH sets it, named in the default schema if unqualified; empty for none.",
-        ),
-    ]
-}
-
 /// [ISO/IEC 9075-2:2023 §7.17 GR2] The most iterations a recursive query
 /// takes, at its key's place, after the others, though of the executor's
 /// settings: the fixpoint is the standard's, and a query that never
@@ -426,7 +411,7 @@ fn limits() -> [Definition; 4] {
         defined(
             ("SESSION.TIME_ZONE", Kind::Displacement, text("+00:00")),
             SESSION,
-            "The time zone displacement of an SQL-session, ±HH:MM from -12:59 to +13:00 [ISO/IEC 9075:1992 §4.5.1]: of CURRENT_TIME and CURRENT_TIMESTAMP, and implied by a time or timestamp without time zone.",
+            "The time zone displacement of an SQL-session, ±HH:MM from -12:59 to +14:00 [ISO/IEC 9075-2:2023 §4.7.2]: of CURRENT_TIME and CURRENT_TIMESTAMP, and implied by a time or timestamp without time zone.",
         ),
     ]
 }

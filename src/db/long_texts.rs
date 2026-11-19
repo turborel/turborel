@@ -95,6 +95,9 @@ pub(super) fn of_statement(s: &SchemaStatement) -> Option<SqlState> {
         | SchemaStatement::GqlGraph(_)
         | SchemaStatement::AlterGraph(_)
         | SchemaStatement::Vector(_)
+        | SchemaStatement::XmlSchema(_)
+        | SchemaStatement::XQueryModule(_)
+        | SchemaStatement::AlterXQueryModule(_)
         | SchemaStatement::Role(_) => None,
         // [ISO/IEC 9075-2:2023 §11.60 GR5]
         SchemaStatement::Method(m) => long(&m.body_text).then_some(SqlState::STATEMENT_TOO_LONG),

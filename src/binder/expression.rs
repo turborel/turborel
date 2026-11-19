@@ -11,16 +11,16 @@ use super::arithmetic::distinct_operand;
 use super::invocation::{Called, Passed};
 use super::set_functions::{column_references, is_aggregate_call, operand_rules};
 use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, subquery, value_specification};
-use crate::ast::{Composite, Literal, SearchCondition, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
+use crate::ast::{Literal, SearchCondition, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
 use crate::functions::{
-    ANY_VALUE, ARRAY_AGG, AggregateRef, ArrayAggregate, CONCATENATION, CollatedExtreme, GREATEST, LEAST, LISTAGG, ScalarRef, paired,
+    ANY_VALUE, ARRAY_AGG, AggregateRef, CONCATENATION, CollatedExtreme, GREATEST, LEAST, LISTAGG, ScalarRef, XMLAGG, paired,
     regex_function, trim_named, width_bucket,
 };
 use crate::lexer::kw;
 use crate::logical::{AggCall, Expr, Slot, render_expr};
 use crate::params::ParameterType;
-use crate::value::{DataType, SortOrder, Value, collation::CollationRef};
+use crate::value::{DataType, Value, collation::CollationRef};
 
 /// [ISO/IEC 9075:1992 §17.6 GR3] `e`, if it is a `<dynamic parameter
 /// specification>`, alone or in any number of parentheses: its index, and
@@ -153,7 +153,8 @@ impl Binder<'_> {
             | ValueExpression::Navigation(_)
             | ValueExpression::Classifier { .. }
             | ValueExpression::MatchNumber { .. }
-            | ValueExpression::Graph(..) => self.decorated(v, scope),
+            | ValueExpression::Graph(..)
+            | ValueExpression::Xml(..) => self.decorated(v, scope),
         }
     }
 
@@ -177,8 +178,8 @@ impl Binder<'_> {
             ValueExpression::Window(w) => self.window_function(w, scope).or_at(w.at),
             ValueExpression::NestedWindow(n) => self.nested_window(n, scope).or_at(n.at),
             ValueExpression::Case(case) => self.drawing(false, || self.case(case, scope)),
-            ValueExpression::Cast { operand, target, format, at } => {
-                self.cast(operand.as_deref(), target, format.as_deref(), scope).or_at(*at)
+            ValueExpression::Cast { operand, target, format, passing, at } => {
+                self.cast(operand.as_deref(), target, (format.as_deref(), *passing), scope).or_at(*at)
             }
             // [ISO/IEC 9075-2:2023 §6.46 SR1] A truth value, of type BOOLEAN.
             ValueExpression::Boolean(c) => {
@@ -198,6 +199,7 @@ impl Binder<'_> {
             ValueExpression::Classifier { variable, at } => self.classifier(variable.as_deref(), scope).or_at(*at),
             ValueExpression::MatchNumber { at } => self.match_number(scope).or_at(*at),
             ValueExpression::Graph(f, at) => self.graph_function(f).or_at(*at),
+            ValueExpression::Xml(x, at) => self.xml_operator(x, scope).or_at(*at),
             ValueExpression::Column(_)
             | ValueExpression::Nested(_)
             | ValueExpression::CollationFor(_)
@@ -256,7 +258,7 @@ impl Binder<'_> {
             return Ok(embedded);
         }
         let aggregate = self.db.functions.aggregate(name).is_some();
-        let called = || self.call((schema, name, extension), args, passed, scope);
+        let called = || self.simple_feature((schema, name, extension), (args, at), passed, scope);
         self.drawing(self.drawing.get() && !aggregate, called).or_at(at)
     }
 
@@ -355,6 +357,9 @@ impl Binder<'_> {
         if sf.name == LISTAGG {
             return self.listagg(sf, scope);
         }
+        if sf.name == XMLAGG {
+            return self.xml_aggregate(sf, scope);
+        }
         if let Some(gathered) = self.multiset_aggregate(sf, scope) {
             return gathered;
         }
@@ -372,27 +377,6 @@ impl Binder<'_> {
             SetArg::Fraction(fraction) => self.inverse_distribution(sf, fraction, scope),
             SetArg::Variable(name, at) => self.pattern_count(sf, name, scope).or_at(*at),
         }
-    }
-
-    /// [ISO/IEC 9075-2:2023 §10.9] ARRAY_AGG ( V ORDER BY K1, ... ): the
-    /// aggregate of the row ( V, K1, ... ), so a null V is kept \[NOTE
-    /// 528\], ordered by its keys, each as its collation orders it [§9.15]
-    /// and an operand of an ordering operation [§9.14 SR2f].
-    fn array_aggregate(&self, sf: &SetFunctionSpecification, scope: Scope<'_>) -> Result<(Expr, DataType)> {
-        let (SetArg::All(value) | SetArg::Distinct(value)) = &sf.arg else {
-            return Err(SqlError::new(Code::Api, "[DESIGN] ARRAY_AGG is read with an argument"));
-        };
-        let mut parts = vec![(**value).clone()];
-        let mut collations = Vec::new();
-        for key in &sf.order_by {
-            // A key not a character string is its own sort key.
-            collations.push(self.collation_of(&[self.derived(&key.key)?])?);
-            parts.push(key.key.clone());
-        }
-        let row = ValueExpression::Composite(Box::new(Composite::Row(parts)), sf.at);
-        let orders = sf.order_by.iter().map(|k| SortOrder::of(k.descending, k.nulls_first)).collect();
-        let func = AggregateRef(Arc::new(ArrayAggregate { orders, collations, by_query: false }));
-        self.sorted(|| self.aggregate(func, (Some(&row), false), sf.filter.as_deref(), scope))
     }
 
     /// \[EXTENSION\] A call by name of a registered scalar or aggregate
@@ -441,6 +425,7 @@ impl Binder<'_> {
                     refusal.unwrap_or_else(|| rule(format!("[EXTENSION] no function {name} registered takes arguments of ({shown})")))
                 );
             };
+            self.registered_permitted(name, f.0.deterministic())?;
             let (mut exprs, mut types) = self.arguments_of(&*f.0, args, bound, scope)?;
             for (e, t) in self.appended_arguments(&*f.0, (args, &exprs, &types), scope)? {
                 exprs.push(e);

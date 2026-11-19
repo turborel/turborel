@@ -68,11 +68,16 @@ pub struct TriggerDesc {
     /// The sequence generators its triggered action draws from, which
     /// DROP SEQUENCE with RESTRICT may not drop [§11.74 SR3b], each once.
     pub sequences: Vec<QualifiedName>,
-    /// \[DESIGN\] Its timestamp of creation \[GR5j\], as an order: one more
-    /// than the greatest of the triggers there were as it was created, so
-    /// no two triggers of a catalog share one (IS003 none). Triggers
-    /// execute oldest first (Feature T218).
+    /// \[DESIGN\] Its order of creation, which orders triggers as their
+    /// timestamps of creation \[GR5j\] do: one more than the greatest of the
+    /// triggers there were as it was created, so no two triggers of a
+    /// catalog share one, and those of one timestamp, as of one statement,
+    /// execute in the order they were created (IS003). Triggers execute
+    /// oldest first (Feature T218).
     pub created: u64,
+    /// Its timestamp of creation \[GR5j\]: the value of CURRENT_TIMESTAMP
+    /// as its definition ran (Feature T011).
+    pub created_at: crate::value::datetime::Now,
 }
 
 impl TriggerDesc {

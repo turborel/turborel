@@ -1,10 +1,52 @@
 //! \[DESIGN\] A join's index probe bound to one outer row. Equality
 //! prefixes, independent comparisons and NULL-rejecting function probes
-//! cannot match when one of their compared outer values is NULL.
+//! cannot match when one of their compared outer values is NULL. A
+//! spatial window's probe reads values beside its geometry, a relate's
+//! pattern or a distance's limit and unit, as a ROW (`spatial::window`).
+
+use std::sync::Arc;
 
 use crate::error::{Code, Result, SqlError};
 use crate::index::{ColumnComparison, Predicate, Probe};
+use crate::logical::Cond;
 use crate::value::{CompOp, Value};
+
+/// A value a spatial window's probe reads after the outer geometry.
+#[derive(Debug, Clone)]
+pub enum Supplied {
+    /// A constant: a relate's pattern, a distance's limit or unit scale.
+    Constant(Value),
+    /// A column of the outer row, a distance's limit.
+    Outer(usize),
+}
+
+/// The values a spatial window's probe reads after the outer geometry,
+/// boxed apart so a probe of none stays as small as one was (D135).
+#[derive(Debug, Clone)]
+pub struct Fields(pub Box<[Supplied]>);
+
+/// The rows an index join keeps that match none (`Plan::IndexJoin`).
+#[derive(Debug, Clone)]
+pub enum Preserved {
+    /// None: an inner join.
+    Inner,
+    /// Each outer row no table row matches, with nulls: a LEFT outer join
+    /// [ISO/IEC 9075:1992 §7.5].
+    Outer,
+    /// Those, then each table row no outer row matched: a FULL outer join.
+    Both(Box<Unmatched>),
+}
+
+/// Of a FULL outer index join, which table rows the probes left are kept:
+/// those its own filter is true of, over the pair's columns, after nulls
+/// for the outer row's `width` columns.
+#[derive(Debug, Clone)]
+pub struct Unmatched {
+    /// The table's filter, over the pair's columns.
+    pub filter: Option<Cond>,
+    /// The outer operand's degree.
+    pub width: usize,
+}
 
 /// A comparison of an index key column with an outer row column.
 #[derive(Debug, Clone)]
@@ -32,6 +74,8 @@ pub enum JoinProbe {
         predicate: Box<Predicate>,
         /// Position within the outer row, from zero.
         outer: usize,
+        /// What a window reads beside the geometry, none of most calls.
+        beside: Option<Box<Fields>>,
     },
 }
 
@@ -63,9 +107,24 @@ impl JoinProbe {
                 let has_null = each.iter().any(|c| c.value.is_null());
                 Ok((!has_null).then_some(Probe::Columns(each)))
             }
-            JoinProbe::Predicate { predicate, outer } => {
-                let value = value(*outer)?;
-                Ok((!value.is_null()).then(|| Probe::Predicate { predicate: predicate.clone(), value }))
+            JoinProbe::Predicate { predicate, outer, beside } => {
+                let geometry = value(*outer)?;
+                if geometry.is_null() {
+                    return Ok(None);
+                }
+                // A null beside it is the index's to judge: a distance of a
+                // null limit may still raise, so every entry may be read.
+                let value = if let Some(beside) = beside {
+                    let read = |s: &Supplied| match s {
+                        Supplied::Constant(v) => Ok(v.clone()),
+                        Supplied::Outer(at) => value(*at),
+                    };
+                    let fields = std::iter::once(Ok(geometry)).chain(beside.0.iter().map(read)).collect::<Result<Vec<_>>>()?;
+                    Value::Row(Arc::from(fields))
+                } else {
+                    geometry
+                };
+                Ok(Some(Probe::Predicate { predicate: predicate.clone(), value }))
             }
         }
     }
@@ -118,9 +177,8 @@ mod tests {
         use crate::geometry::{Geometry, GeometryFunction};
         let point = Geometry::point(1.0, 2.0, 4326).unwrap().to_value();
         for argument in [0_usize, 1] {
-            let predicate =
-                Predicate { function: ScalarRef(std::sync::Arc::new(GeometryFunction::Intersects)), column: 0, argument: Some(argument) };
-            let binding = JoinProbe::Predicate { predicate: Box::new(predicate), outer: 1 };
+            let predicate = Predicate { function: ScalarRef(Arc::new(GeometryFunction::Intersects)), column: 0, argument: Some(argument) };
+            let binding = JoinProbe::Predicate { predicate: Box::new(predicate), outer: 1, beside: None };
             let probe = binding.bind(&[Value::Null, point.clone()], 1).unwrap().unwrap();
             let Probe::Predicate { predicate: bound, value } = probe else { panic!("lost spatial predicate") };
             assert_eq!(bound.argument, Some(argument));
@@ -129,5 +187,30 @@ mod tests {
             assert!(binding.bind(&[point.clone(), Value::Null], 1).unwrap().is_none());
             assert_eq!(binding.bind(std::slice::from_ref(&point), 1).unwrap_err().code, Code::Api);
         }
+    }
+
+    /// Verifies: [DESIGN] D135: a window's probe reads its constants and
+    /// outer columns after the geometry, as a ROW; a null geometry probes
+    /// nothing, a null beside it is left to the index, and a missing outer
+    /// column reports -910.
+    #[test]
+    fn spatial_windows_bind_what_they_read_beside_the_geometry() {
+        use crate::functions::ScalarRef;
+        use crate::geometry::{Geometry, GeometryFunction};
+        let point = Geometry::point(1.0, 2.0, 0).unwrap().to_value();
+        let predicate = Predicate { function: ScalarRef(Arc::new(GeometryFunction::Distance)), column: 0, argument: Some(1) };
+        let beside = Some(Box::new(Fields(Box::new([Supplied::Outer(2), Supplied::Constant(Value::Approx(1.0))]))));
+        let binding = JoinProbe::Predicate { predicate: Box::new(predicate), outer: 0, beside };
+        for limit in [n(3), Value::Null] {
+            let Some(Probe::Predicate { value: Value::Row(fields), .. }) = binding.bind(&[point.clone(), n(0), limit.clone()], 1).unwrap()
+            else {
+                panic!("no window")
+            };
+            assert_eq!(fields.len(), 3);
+            assert_eq!(fields[2].to_string(), "1E0");
+            assert_eq!(fields[1].is_null(), limit.is_null());
+        }
+        assert!(binding.bind(&[Value::Null, n(0), n(3)], 1).unwrap().is_none());
+        assert_eq!(binding.bind(&[point, n(0)], 1).unwrap_err().code, Code::Api);
     }
 }

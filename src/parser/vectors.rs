@@ -260,7 +260,8 @@ impl Parser {
                     | TypeName::Reference(..)
                     | TypeName::Collection(..)
                     | TypeName::Row(_)
-                    | TypeName::Extension { .. } => {
+                    | TypeName::Extension { .. }
+                    | TypeName::XmlSchema(..) => {
                         return Err(self.rule("[EXTENSION] FROM_VECTOR returns VARCHAR or CLOB"));
                     }
                 }

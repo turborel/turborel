@@ -9,13 +9,15 @@
 //! A module's character set is SQL_TEXT, the one there is. Its
 //! MODULE_AUTHORIZATION is null, as no `<module authorization clause>` is
 //! written of a server module [§19.4 Description 5]. CREATED and
-//! LAST_ALTERED are null: a module keeps an order of creation, no
-//! timestamp (`ModuleDesc::created`), and none is altered.
+//! LAST_ALTERED are its creation and last-altered timestamps [Description
+//! 7, 8] (`ModuleDesc::stamps`), of the domain TIME_STAMP [ISO/IEC
+//! 9075-11:2006 draft §5.6]; no statement alters a module, so they are
+//! the same.
 
 use std::sync::Arc;
 
 use super::privileges::PUBLIC;
-use super::triggers::time_stamp;
+use super::triggers::stamped;
 use super::{Columns, defined, ids, long, sql_text};
 use crate::catalog::{ColumnDesc, ModuleDesc, QualifiedName, module_of_schema};
 use crate::error::Result;
@@ -38,7 +40,7 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
 // ---------------------------------------------------------------------------
 
 fn modules_columns() -> Vec<ColumnDesc> {
-    let mut columns = Columns::of()
+    Columns::of()
         .ids("MODULE", true)
         .ids("DEFAULT_CHARACTER_SET", true)
         .id("DEFAULT_SCHEMA_CATALOG", true)
@@ -46,9 +48,9 @@ fn modules_columns() -> Vec<ColumnDesc> {
         .data("MODULE_DEFINITION", false)
         .id("MODULE_AUTHORIZATION", false)
         .data("SQL_PATH", false)
-        .done();
-    columns.extend([time_stamp("CREATED"), time_stamp("LAST_ALTERED")]);
-    columns
+        .time_stamp("CREATED")
+        .time_stamp("LAST_ALTERED")
+        .done()
 }
 
 /// Each module, in the order of creation: its text, and its path as
@@ -58,7 +60,8 @@ fn modules(seen: &Seen<'_>) -> Vec<Row> {
     let catalog = catalog_name(seen);
     let row = |m: &ModuleDesc| {
         let path = m.path_text.as_deref().map_or(Value::Null, long);
-        let tail = vec![catalog.clone(), text(&m.schema), long(&m.text), Value::Null, path, Value::Null, Value::Null];
+        let (created, altered) = (stamped(m.stamps.created), stamped(m.stamps.last_altered));
+        let tail = vec![catalog.clone(), text(&m.schema), long(&m.text), Value::Null, path, created, altered];
         [ids(&catalog, &m.name).to_vec(), ids(&catalog, &sql_text()).to_vec(), tail].concat()
     };
     seen.state.catalog.modules().into_iter().map(row).collect()

@@ -49,7 +49,8 @@ fn compare_lob(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_),
+            | Value::Extension(_)
+            | Value::Xml(_),
             _,
         ) => None,
     }
@@ -67,13 +68,14 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
         // [ISO/IEC 9075-2:2023 §8.2 GR10] SQL/JSON values with each other
         // alone [§4.8.2].
         (Value::Json(x), Value::Json(y)) => x.compare(y),
-        // A null makes the comparison unknown [X3.135-1986 §5.11 GR2]; a character
+        // A null makes the comparison unknown [X3.135-1986 §5.11 GR2]; no XML
+        // value is comparable [ISO/IEC 9075-14:2006 draft §4.2.4]; a character
         // string and a number are not comparable [X3.135-1986 §5.11 SR1], nor a
         // binary string with either: binary strings are with each other
         // [ISO/IEC 9075-2:2023 §4.4.1]; nor a datetime or an interval with
         // another kind.
-        (Value::Null | Value::Json(_), _)
-        | (_, Value::Null | Value::Json(_))
+        (Value::Null | Value::Xml(_) | Value::Json(_), _)
+        | (_, Value::Null | Value::Xml(_) | Value::Json(_))
         | (Value::Char(_), Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_))
         | (Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_), Value::Char(_))
         | (Value::Binary(_), Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_) | Value::Datetime(_))
@@ -219,7 +221,8 @@ fn holds_lob(v: &Value, depth: usize) -> Result<bool> {
         | Value::Interval(_)
         | Value::Reference(_)
         | Value::Json(_)
-        | Value::Extension(_) => Ok(false),
+        | Value::Extension(_)
+        | Value::Xml(_) => Ok(false),
     }
 }
 
@@ -329,7 +332,8 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_),
+            | Value::Extension(_)
+            | Value::Xml(_),
             _,
         )
         | (
@@ -347,7 +351,8 @@ pub(crate) fn compare_numbers(a: &Value, b: &Value) -> Option<Ordering> {
             | Value::Multiset(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_),
+            | Value::Extension(_)
+            | Value::Xml(_),
         ) => None,
     }
 }
@@ -393,7 +398,9 @@ pub fn bucket(v: &Value) -> Option<Bucket> {
     match v {
         // None for a large object too: none is grouped or hashed
         // [ISO/IEC 9075-2:2023 §9.12 SR3].
-        Value::Null | Value::Lob(_) => None,
+        // None for an XML value: none is grouped [ISO/IEC 9075-14:2006 draft
+        // §10.9 SR1].
+        Value::Null | Value::Lob(_) | Value::Xml(_) => None,
         Value::Char(s) => Some(Bucket::Char(s.trim_end_matches(' ').to_owned())),
         Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_) => number_bucket(v),
         Value::Binary(_) => BINARY_VARYING.bucket(v),
@@ -429,7 +436,8 @@ pub(crate) fn number_bucket(v: &Value) -> Option<Bucket> {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => {
+        | Value::Extension(_)
+        | Value::Xml(_) => {
             return None;
         }
     };

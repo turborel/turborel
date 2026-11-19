@@ -113,6 +113,7 @@ impl Portioned {
             operand: Some(Box::new(v.clone())),
             target: TypeName::Data(bcd.clone()),
             format: None,
+            passing: None,
             at,
         };
         // \[DESIGN\] A `?` point in time is of BCD.

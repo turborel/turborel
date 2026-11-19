@@ -105,11 +105,7 @@ impl LobSpace {
         if meta != 0 {
             let _ = tree.set(BLinkTree::open(Arc::clone(pool), file, PageId(meta))?);
         }
-        let columns = types
-            .iter()
-            .enumerate()
-            .filter_map(|(c, t)| if let DataType::Lob { kind, .. } = t { Some((c, *kind)) } else { None })
-            .collect();
+        let columns = types.iter().enumerate().filter_map(|(c, t)| t.lob_kind().map(|kind| (c, kind))).collect();
         Ok(LobSpace {
             pool: Arc::clone(pool),
             file,
@@ -245,7 +241,7 @@ impl LobSpace {
     /// reads, each when first asked for its chunks.
     pub(super) fn resolve(self: &Arc<Self>, row: &mut [crate::value::Value]) {
         for &(c, kind) in &self.columns {
-            if let Some(crate::value::Value::Lob(l)) = row.get_mut(c)
+            if let Some(l) = row.get_mut(c).and_then(crate::value::Value::as_lob_mut)
                 && let [Part::Reference(id)] = l.parts()
             {
                 *l = self.stored(kind, *id, (l.octets(), l.chars()));
@@ -257,7 +253,7 @@ impl LobSpace {
     /// a value this space reads.
     pub(super) fn resolve_column(self: &Arc<Self>, column: usize, value: &mut [crate::value::Value; 1]) {
         if let Some(&(_, kind)) = self.columns.iter().find(|(c, _)| *c == column)
-            && let [crate::value::Value::Lob(l)] = value
+            && let Some(l) = value[0].as_lob_mut()
             && let [Part::Reference(id)] = l.parts()
         {
             *l = self.stored(kind, *id, (l.octets(), l.chars()));
@@ -402,5 +398,9 @@ impl LobSource for Stored {
 
     fn kept(&self) -> Option<Kept> {
         Some(Kept { table: self.space.tag, id: self.id })
+    }
+
+    fn sibling(&self, id: u64, totals: (u64, u64)) -> Option<Arc<dyn LobSource>> {
+        Some(Arc::new(Stored { space: Arc::clone(&self.space), id, totals, directory: OnceLock::new() }))
     }
 }

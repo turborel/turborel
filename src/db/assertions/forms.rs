@@ -397,6 +397,7 @@ pub(super) fn never_null(x: &Expr, (table, steps): (&QualifiedName, &[Step]), ca
         | Expr::Cast(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
+        | Expr::Warned(..)
         | Expr::Subquery(..)
         | Expr::Truth(_)
         | Expr::NextValue(_)
@@ -473,6 +474,7 @@ fn strict(e: &Expr, at: usize) -> bool {
         | Expr::Cast(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
+        | Expr::Warned(..)
         | Expr::Subquery(..)
         | Expr::Truth(_)
         | Expr::NextValue(_)
@@ -507,6 +509,7 @@ pub(super) fn row_expr(e: &Expr) -> bool {
         | Expr::Cast(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
+        | Expr::Warned(..)
         | Expr::Subquery(..)
         | Expr::NextValue(_)
         | Expr::Invoked(_) => false,

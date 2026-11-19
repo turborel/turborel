@@ -23,7 +23,7 @@ behind it, and each can be replaced or added to.
 ## What it has
 
 - Standard SQL as one language, from SQL-86 through SQL:2023. See
-  [CONFORMANCE.md](CONFORMANCE.md).
+  [CONFORMANCE.md](CONFORMANCE.md), whose claimed features SQL_FEATURES shows.
 - Transactions at READ COMMITTED by default, or up to SERIALIZABLE, that run
   on many threads at once and survive a crash with multi-version concurrency
   control, a write-ahead log, checkpoints and recovery.
@@ -37,10 +37,32 @@ behind it, and each can be replaced or added to.
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match.
+- [SQL/XML](doc/sql/19-xml.md): an XML type kept in tables, in arrays,
+  multisets, rows and distinct and structured types too, its values parsed
+  from XML 1.0 and 1.1 text and serialized back, XMLDOCUMENT, XMLCAST, IS
+  DOCUMENT and IS CONTENT, and XML published from SQL values, arrays and
+  multisets too, by
+  XMLELEMENT, XMLFOREST, XMLAGG, XMLCONCAT, XMLCOMMENT, XMLPI and XMLTEXT
+  with namespaces and XMLBINARY of a query, a statement or a definition,
+  tables, schemas and the catalog mapped to XML and XML Schema by
+  XMLMAP, identifiers and XML Names mapped by XMLNAME_TO_IDENTIFIER and
+  IDENTIFIER_TO_XMLNAME, and queried in XQuery 1.0 by XMLQUERY, XMLEXISTS
+  and XMLTABLE, statically typed on request, importing library modules
+  registered by CREATE XQUERY MODULE, written in-house with no
+  dependency, its modifiers shown in the
+  Information Schema, XML indexes of its paths and values, and XML
+  Schemas registered by CREATE XML SCHEMA, values validated by them with
+  XMLVALIDATE, IS VALID and XQuery's validate and kept in columns of
+  their XMLSCHEMA types, USAGE on them and their Information Schema views.
 - [SQL/MM Spatial](doc/sql/10-spatial.md), its 27 geometry types in 2D
   and 3D with every constructor and mutator, exact relationships and
   set operations, reference systems, angles, directions and vectors,
-  and [R-tree spatial queries](doc/data/02-spatial.md) and joins.
+  CHECK constraints over geometries,
+  and [R-tree spatial queries](doc/data/02-spatial.md), distance searches
+  and joins, outer joins too,
+  serializable over the windows they read, and Simple feature access's
+  SQL option with GEOMETRY_COLUMNS, SPATIAL_REF_SYS, unprefixed names and
+  annotation text.
 - [Topologies](doc/sql/16-topology.md) of nodes, edges and faces, and
   [spatial networks](doc/sql/18-spatial-networks.md) with shortest paths.
 - [Linear referencing](doc/sql/17-linear-referencing.md), locating along

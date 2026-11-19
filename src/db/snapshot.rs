@@ -32,9 +32,14 @@
 //!           property graphs (count u32, each a graph, by name),
 //!           embedding models and vector pipelines (`catalog/embedding.rs`),
 //!           graph types and GQL graphs (count u32 and each, by name),
-//!           the spatial reference systems defined and the geometry
+//!           registered XML Schemas (count u32, each an XML Schema),
+//!           registered XQuery modules (count u32, each an XQuery module),
+//!           then the spatial reference systems defined and the geometry
 //!           columns registered (as `catalog/codec/spatial.rs` writes them)
 //! ```
+
+pub(super) mod xml_schemas;
+mod xquery_modules;
 
 use std::sync::Arc;
 
@@ -50,9 +55,10 @@ use crate::catalog::codec::{
     put_privilege, put_roles, put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, roles, routine,
     sequence, table, trigger, user_type, view,
 };
+use crate::catalog::codec::{put_xml_schema, put_xquery_module, xml_schema, xquery_module};
 use crate::catalog::{
-    CastDesc, Embeddings, GqlGraphDesc, GraphDesc, GraphTypeDesc, OrderingDesc, StructuredDesc, TransformGroupDesc, embeddings,
-    put_embeddings,
+    CastDesc, Embeddings, GqlGraphDesc, GraphDesc, GraphTypeDesc, OrderingDesc, StructuredDesc, TransformGroupDesc, XQueryModuleDesc,
+    XmlSchemaDesc, embeddings, put_embeddings,
 };
 use crate::catalog::{
     Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, ModuleDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc,
@@ -114,6 +120,10 @@ pub(super) struct Snapshot {
     graph_types: Vec<GraphTypeDesc>,
     /// The GQL graphs, by name.
     gql_graphs: Vec<GqlGraphDesc>,
+    /// The registered XML Schemas, by name.
+    xml_schemas: Vec<XmlSchemaDesc>,
+    /// The registered XQuery modules, by name.
+    xquery_modules: Vec<XQueryModuleDesc>,
     /// The spatial reference systems defined and the geometry columns
     /// registered.
     spatial: crate::catalog::SpatialCatalog,
@@ -140,18 +150,15 @@ impl Snapshot {
         let mut schemas: Vec<(String, String)> = st.catalog.schemas().into_iter().map(with_owner).collect();
         schemas.sort();
         let users = st.users.entries().map(|(n, v)| (n.clone(), v.clone())).collect();
-        let domains = st.catalog.domains().into_iter().cloned().collect();
-        let collations = st.catalog.collations().into_iter().cloned().collect();
-        let collation_versions = st.collation_versions();
         let assertions = st.catalog.assertions().into_iter().cloned().collect();
         let sequences: Vec<SequenceDesc> = st.catalog.sequences().into_iter().cloned().collect();
         let user_types = st.catalog.user_types().into_iter().cloned().collect();
         let (epochs, counters) = settled_counters(st)?;
         Ok(Snapshot {
             schemas,
-            domains,
-            collations,
-            collation_versions,
+            domains: st.catalog.domains().into_iter().cloned().collect(),
+            collations: st.catalog.collations().into_iter().cloned().collect(),
+            collation_versions: st.collation_versions(),
             assertions,
             tables,
             views,
@@ -177,6 +184,8 @@ impl Snapshot {
             embeddings: st.catalog.embeddings().clone(),
             graph_types: st.catalog.gql().graph_types().into_iter().cloned().collect(),
             gql_graphs: st.catalog.gql().gql_graphs().into_iter().cloned().collect(),
+            xml_schemas: st.catalog.xml_schemas().into_iter().cloned().collect(),
+            xquery_modules: st.catalog.xquery_modules().into_iter().cloned().collect(),
             spatial: st.catalog.spatial().clone(),
         })
     }
@@ -269,6 +278,10 @@ impl Snapshot {
         self.graph_types.iter().for_each(|t| put_graph_type(out, t));
         out.put_u32(count(self.gql_graphs.len()));
         self.gql_graphs.iter().for_each(|g| put_gql_graph(out, g));
+        out.put_u32(count(self.xml_schemas.len()));
+        self.xml_schemas.iter().for_each(|x| put_xml_schema(out, x));
+        out.put_u32(count(self.xquery_modules.len()));
+        self.xquery_modules.iter().for_each(|m| put_xquery_module(out, m));
         crate::catalog::codec::put_spatial(out, &self.spatial);
     }
 
@@ -310,6 +323,8 @@ impl Snapshot {
             embeddings: embeddings(r)?,
             graph_types: (0..r.u32()?).map(|_| graph_type(r)).collect::<Result<_>>()?,
             gql_graphs: (0..r.u32()?).map(|_| gql_graph(r)).collect::<Result<_>>()?,
+            xml_schemas: (0..r.u32()?).map(|_| xml_schema(r)).collect::<Result<_>>()?,
+            xquery_modules: (0..r.u32()?).map(|_| xquery_module(r)).collect::<Result<_>>()?,
             spatial: crate::catalog::codec::spatial(r)?,
         })
     }
@@ -350,6 +365,7 @@ impl State {
         }
         put_module_tables(&mut *catalog, snapshot);
         put_described(&mut *catalog, snapshot);
+        xml_schemas::read_all(&mut *catalog).and_then(|()| xquery_modules::parse_all(&mut *catalog))?;
         self.install_counters(snapshot)?;
         // Before the indexes, whose keys are by them.
         self.catalog = Arc::from(catalog.duplicate());
@@ -425,6 +441,8 @@ fn put_described(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.casts.iter().cloned().for_each(|c| catalog.put_cast(c));
     snapshot.orderings.iter().cloned().for_each(|o| catalog.put_ordering(o));
     snapshot.transforms.iter().for_each(|(n, g)| catalog.put_transforms(n, g.clone()));
+    snapshot.xml_schemas.iter().cloned().for_each(|x| catalog.put_xml_schema(x));
+    snapshot.xquery_modules.iter().cloned().for_each(|m| catalog.put_xquery_module(m));
 }
 
 /// The assertions, views, privileges, triggers, SQL-invoked routines,

@@ -6,12 +6,10 @@
 //! again from its definition text (`GraphDesc::definition`), so one set of
 //! rules holds of every graph however it came to be.
 
-use std::cell::RefCell;
-
 use super::elements::Element;
 use super::graph_rule;
 use crate::ast::{ElementDefinition, GraphDefinition, GraphModeOption};
-use crate::binder::{PropertyBinding, property_type, qualify};
+use crate::binder::{Invoked, PropertyBinding, property_type, qualify};
 use crate::catalog::{ElementKind, ElementTableDesc, GraphDesc, GraphMode, Horizon, QualifiedName, WHOLE, owner_of};
 use crate::db::State;
 use crate::error::{At, Result};
@@ -41,7 +39,7 @@ impl State {
     pub(in crate::db) fn describe_graph(&self, def: &GraphDefinition, how: Describing<'_>) -> Result<GraphDesc> {
         let name = qualify(&def.name, how.names);
         let owner = owner_of(&*self.catalog, &name.auth).to_owned();
-        let invoked = RefCell::new(Vec::new());
+        let invoked = Invoked::default();
         let binding = PropertyBinding {
             owner: &owner,
             names: how.names,
@@ -64,7 +62,9 @@ impl State {
             elements.push(desc);
         }
         shared_labels(&elements)?;
-        let horizon = how.horizon.cloned().unwrap_or_else(|| Horizon::default().invoking(invoked.take()));
+        let horizon = how.horizon.cloned().unwrap_or_else(|| {
+            Horizon::default().invoking(invoked.take()).indicating(invoked.take_indicated()).typing(invoked.take_typed())
+        });
         let names = how.names.to_owned();
         Ok(GraphDesc { name, elements, mode, invoker: def.invoker, names, reads, horizon, valid: true, select: Vec::new() })
     }

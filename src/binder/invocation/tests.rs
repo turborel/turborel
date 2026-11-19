@@ -2,7 +2,6 @@
 //! its subject routine, the refusals of what contains it, and its body,
 //! bound over the row of its parameters (RULES.md R-TEST-1).
 
-use std::cell::RefCell;
 use std::collections::BTreeSet;
 
 use super::body::{bind_body, chain_of};
@@ -70,6 +69,7 @@ fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc 
         sequences: Vec::new(),
         execute: Vec::new(),
         created: 1,
+        stamps: crate::catalog::Stamps::default(),
     }
 }
 
@@ -258,9 +258,9 @@ fn body_of_no_return_statement_is_none() {
 /// again (SQLCODE -103).
 #[test]
 fn chain_of_bodies_being_bound() {
-    let list: Invoked = RefCell::new(vec![qn("S", "F"), qn("", ""), qn("S", "G")]);
+    let list = Invoked::new(vec![qn("S", "F"), qn("", ""), qn("S", "G")]);
     assert_eq!(chain_of(Some(&list)), vec![qn("S", "F")]);
-    let own: Invoked = RefCell::new(vec![qn("S", "G")]);
+    let own = Invoked::new(vec![qn("S", "G")]);
     assert_eq!(chain_of(Some(&own)), Vec::new());
     assert_eq!(chain_of(None), Vec::new());
     let f = function("F", &[], "1");
@@ -351,7 +351,7 @@ fn unqualified_name_is_of_the_default_schema() {
     let st = database(vec![procedure("P"), function("F", &[], "1")]);
     let params = Params::new();
     let name = TableName { auth: None, ident: "P".into(), at: 0 };
-    let noted: Invoked = RefCell::new(Vec::new());
+    let noted = Invoked::default();
     let cx = Context { schema: "S", invoked: Some(&noted), ..Context::new(&st, "S", &params) };
     assert_eq!(resolve_procedure(cx, &name, 0).unwrap().specific, qn("S", "P"));
     assert_eq!(*noted.borrow(), vec![qn("S", "P")]);
@@ -427,7 +427,7 @@ fn invocation_is_bound() {
     let f = function("F", &[("P", "INTEGER")], "P + 1");
     let st = database(vec![SqlRoutineDesc { null_call: true, ..f }]);
     let params = Params::new();
-    let noted: Invoked = RefCell::new(Vec::new());
+    let noted = Invoked::default();
     let cx = Context { schema: "S", invoked: Some(&noted), ..Context::new(&st, "S", &params) };
     let binder = Binder::new(cx, None, (Vec::new(), Vec::new(), Vec::new()), BTreeSet::new());
     let (schema, name, args) = call("F(2)");
@@ -466,7 +466,7 @@ fn body_access_is_that_of_the_functions_it_invokes() {
     let caller = function("F", &[], "S.G() + S.H()");
     let reads = database(vec![reader, inner, caller.clone()]);
     let params = Params::new();
-    let noted: Invoked = RefCell::new(Vec::new());
+    let noted = Invoked::default();
     let cx = Context { invoked: Some(&noted), ..Context::new(&reads, "S", &params) };
     let b = bind_function_body(cx, &caller, &returning(&caller, Some("S.G() + S.H()"))).unwrap();
     assert_eq!(b.access, DataAccess::Reads);

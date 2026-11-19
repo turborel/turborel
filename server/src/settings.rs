@@ -520,7 +520,8 @@ pub fn count(db: &Database, name: &str) -> usize {
             | Value::Json(_)
             | Value::Row(_)
             | Value::Lob(_)
-            | Value::Extension(_),
+            | Value::Extension(_)
+            | Value::Xml(_),
         )
         | None => 0,
     }
@@ -555,7 +556,8 @@ pub fn text(db: &Database, name: &str) -> String {
             | Value::Json(_)
             | Value::Row(_)
             | Value::Lob(_)
-            | Value::Extension(_),
+            | Value::Extension(_)
+            | Value::Xml(_),
         )
         | None => String::new(),
     }

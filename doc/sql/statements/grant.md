@@ -50,6 +50,8 @@ GRANT: give privileges, or roles
     | MODULE <SQL-server module name>
     | SPECIFIC <routine type> <specific name>
     | <routine type> <routine name> [ ( [ <data type> [ { , <data type> }... ] ] ) ]
+    | XML SCHEMA <registered XML Schema name>
+    | XQUERY MODULE <XQuery module name>
 
 <routine type> ::= ROUTINE | FUNCTION | PROCEDURE
 
@@ -61,8 +63,8 @@ GRANT: give privileges, or roles
 GRANT gives each grantee privileges on a table, a view, a domain, a
 collation CREATE COLLATION made, a sequence generator, a user-defined
 type, a function a distinct type's definition made, a method, a function or procedure
-CREATE FUNCTION or CREATE PROCEDURE made, or a module CREATE MODULE
-made:
+CREATE FUNCTION or CREATE PROCEDURE made, a module CREATE MODULE
+made, a registered XML Schema, or a registered XQuery module:
 
 | Privilege | Lets its holder |
 |---|---|
@@ -74,7 +76,7 @@ made:
 | SELECT (methods) | invoke those methods of the typed table's type through a reference whose scope is the table, `r -> m()` |
 | UNDER | define a subtype of the type, or a subtable or subview of the typed table or view |
 | TRIGGER | define a trigger on the table, in a schema of its own (see [CREATE TRIGGER](create-trigger.md)) |
-| USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE; use the sequence generator: take its values by NEXT VALUE FOR; use the distinct type: name it as a column's type or a CAST's |
+| USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE; use the sequence generator: take its values by NEXT VALUE FOR; use the distinct type: name it as a column's type or a CAST's; use the registered XML Schema: name it in a type of XMLSCHEMA, XMLVALIDATE or IS VALID, validate by it without naming it, or import it in CREATE XML SCHEMA; use the registered XQuery module: import it in a query or in CREATE XQUERY MODULE |
 | EXECUTE | invoke the function, by name or by a CAST to or from its distinct type; run the procedure by CALL; invoke the method; invoke each routine of the module |
 
 SELECT WITH HIERARCHY OPTION on a typed table is SELECT on each of its
@@ -105,11 +107,14 @@ The privileges granted are those its user holds with grant option: the
 owner of the object's schema holds every privilege on a base table
 with grant option, EXECUTE on a routine or a module of it with grant
 option if the routine's body, or each of the module's, needs only
-privileges it holds with grant option, and those of a view as the
+privileges it holds with grant option, USAGE on a registered XML
+Schema of it with grant option, and those of a view as the
 tables below give them,
 with TRIGGER on its own views too, but without grant option. An INSTEAD
 OF trigger gives the owner of its schema the privilege of its event on
 its view, with grant option.
+Every user holds USAGE on the permanently registered XML Schemas,
+INFORMATION_SCHEMA.XS, XSI and SQLXML, without grant option.
 A privilege it does not hold with grant option is not granted, and the
 statement completes with the warning SQLSTATE 01007. WITH GRANT OPTION
 lets the grantees grant the privileges in turn.
@@ -137,9 +142,10 @@ MODULE_PRIVILEGES show the privileges.
 
 1. The object exists. A table named without a schema is of the
    session's default schema.
-2. Of a domain, a collation, a sequence generator or a type, USAGE alone
-   is granted, and of a routine or a module EXECUTE alone. Neither is
-   granted of a table. No privilege is granted of a module's routine.
+2. Of a domain, a collation, a sequence generator, a type, a
+   registered XML Schema or a registered XQuery module, USAGE alone is
+   granted, and of a routine or a
+   module EXECUTE alone. Neither is granted of a table. No privilege is granted of a module's routine.
 3. A routine's name designates exactly one routine of its routine type,
    counting the functions of distinct types. A name alone of overloads
    designates none, so one is named by its parameters' types or its
@@ -293,7 +299,11 @@ ISO/IEC 9075:1992 §11.36, and X3.135-1986 §6.6 (the `<privilege
 definition>` of a `<schema>`), whose privileges are on tables, with
 UPDATE alone of a column list. Outside a `<schema definition>`, GRANT is
 SQL-92's `<SQL schema statement>` [§20.1]. Of a collation or a sequence
-generator, ISO/IEC 9075-2:2023 §12.2 and §12.3. GRANT of roles is
+generator, ISO/IEC 9075-2:2023 §12.2 and §12.3. Of a registered XML
+Schema, ISO/IEC 9075-14 leaves how USAGE is granted to the
+implementation [§4.7.1], and XML SCHEMA is turborel's, granted as on a
+sequence generator; so is XQUERY MODULE, of the XQuery modules turborel
+registers. GRANT of roles is
 ISO/IEC 9075-2:2023 §12.5 (Feature T331), and GRANTED BY §12.8 (T332).
 
 ## SEE ALSO

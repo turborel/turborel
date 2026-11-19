@@ -52,15 +52,15 @@ fn tables_and_columns_are_described_21_2_7() {
     let db = catalog();
     let (owner, other) = (db.session("S"), db.session("R"));
     let tables = "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES \
-                  WHERE TABLE_SCHEMA NOT IN ('INFORMATION_SCHEMA', 'FT_INFORMATION_SCHEMA', 'ST_INFORMTN_SCHEMA') ORDER BY TABLE_SCHEMA DESC, TABLE_NAME";
+                  WHERE TABLE_SCHEMA NOT IN ('INFORMATION_SCHEMA', 'FT_INFORMATION_SCHEMA', 'ST_INFORMTN_SCHEMA', 'SF_INFORMTN_SCHEMA') ORDER BY TABLE_SCHEMA DESC, TABLE_NAME";
     assert_eq!(seen(&owner, tables), ["S|ALL_P|VIEW", "S|BIG|VIEW", "S|C|BASE TABLE", "S|P|BASE TABLE"]);
     assert_eq!(seen(&other, tables), ["S|BIG|VIEW", "S|C|BASE TABLE", "S|P|BASE TABLE", "R|MINE|BASE TABLE"], "by its privileges");
     assert_eq!(seen(&db.session("NOBODY"), tables), ["S|P|BASE TABLE"], "PUBLIC's");
     let own = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'INFORMATION_SCHEMA'";
     assert_eq!(
         seen(&db.session("NOBODY"), own),
-        ["91"],
-        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 7 of structured types, the 9 of roles, the 6 of triggers, the 5 of modules, the 8 of property graphs, GRAPH_STATISTICS among them, the 2 of node and edge tables, the 2 of graph types and GQL graphs, GRAPH_ALGO_RUNS, TABLE_OPTIONS, PERIODS, INDEXES, INDEX_OPTIONS, ADJACENCY_INDEXES, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS, ASSERTION_TOTALS, the 4 of embedding models and pipelines and the 2 of vectors"
+        ["157"],
+        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 7 of structured types, the 9 of roles, the 6 of triggers, the 5 of modules, the 10 of usage, the 6 of what is supported, the 3 of registered XML Schemas, the 47 short name views, the 8 of property graphs, GRAPH_STATISTICS among them, the 2 of node and edge tables, the 2 of graph types and GQL graphs, GRAPH_ALGO_RUNS, TABLE_OPTIONS, PERIODS, INDEXES, INDEX_OPTIONS, ADJACENCY_INDEXES, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS, ASSERTION_TOTALS, the 4 of embedding models and pipelines and the 2 of vectors"
     );
     assert_eq!(
         seen(&owner, "SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.SCHEMATA"),
@@ -100,7 +100,9 @@ fn tables_and_columns_are_described_21_2_7() {
             "7|USER_DEFINED_TYPE_CATALOG|CHARACTER VARYING|128",
             "8|USER_DEFINED_TYPE_SCHEMA|CHARACTER VARYING|128",
             "9|USER_DEFINED_TYPE_NAME|CHARACTER VARYING|128",
-            "10|IS_TYPED|CHARACTER VARYING|32767",
+            "10|IS_INSERTABLE_INTO|CHARACTER VARYING|32767",
+            "11|IS_TYPED|CHARACTER VARYING|32767",
+            "12|COMMIT_ACTION|CHARACTER VARYING|32767",
         ]
     );
 }
@@ -131,8 +133,9 @@ fn views_and_what_they_use_are_described_21_2_8() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.2.13-§21.2.16, §21.2.23,
 /// §21.2.24, §11.4 SR9a]: the constraints of a user's schema, each of its
 /// type and deferral, NOT NULL among them as the CHECK it is; a key's
-/// columns in order, a foreign key's at the positions of the columns they
-/// reference; a referential constraint's unique constraint, match type and
+/// columns in order, a foreign key's too, each at the position in the key
+/// it references of the column it references [ISO/IEC 9075-11:2006 draft
+/// §6.28 Description 3, 4]; a referential constraint's unique constraint, match type and
 /// rules; a CHECK's condition, and the tables and columns each constraint
 /// uses.
 #[test]
@@ -152,8 +155,9 @@ fn constraints_are_described_21_2_13() {
             "P_PRIMARY1|PRIMARY KEY|P|NO|NO",
         ]
     );
-    let keys = "SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE ORDER BY 1, 3";
-    assert_eq!(seen(&s, keys), ["C_P|A|1", "C_P|B|2", "C_PRIMARY1|I|1", "P_PRIMARY1|K|1", "P_PRIMARY1|J|2"]);
+    let keys = "SELECT CONSTRAINT_NAME, COLUMN_NAME, ORDINAL_POSITION, POSITION_IN_UNIQUE_CONSTRAINT \
+                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE ORDER BY 1, 3";
+    assert_eq!(seen(&s, keys), ["C_P|B|1|2", "C_P|A|2|1", "C_PRIMARY1|I|1|NULL", "P_PRIMARY1|K|1|NULL", "P_PRIMARY1|J|2|NULL"]);
     let referential = "SELECT CONSTRAINT_NAME, UNIQUE_CONSTRAINT_NAME, MATCH_OPTION, UPDATE_RULE, DELETE_RULE \
                        FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS";
     assert_eq!(seen(&s, referential), ["C_P|P_PRIMARY1|NONE|NO ACTION|CASCADE"]);
@@ -177,7 +181,8 @@ fn constraints_are_described_21_2_13() {
 /// among them: an owner's of the grantor "_SYSTEM", every privilege on its
 /// base table, TRIGGER among them, and its columns, grantable; one granted
 /// on a column alone a column privilege; and USAGE_PRIVILEGES PUBLIC's
-/// USAGE on the character set and collation.
+/// USAGE on the character set and collation, and [ISO/IEC 9075-14:2006
+/// draft §4.2.6, §21.4] on the permanently registered XML Schemas.
 #[test]
 fn privileges_are_described_21_2_10() {
     let db = catalog();
@@ -210,7 +215,10 @@ fn privileges_are_described_21_2_10() {
             "_SYSTEM|PUBLIC|SQL_TEXT|COLLATION|USAGE|NO",
             "_SYSTEM|PUBLIC|CASE_INSENSITIVE|COLLATION|USAGE|NO",
             "_SYSTEM|PUBLIC|UCS_BASIC|COLLATION|USAGE|NO",
-            "_SYSTEM|PUBLIC|UNICODE|COLLATION|USAGE|NO"
+            "_SYSTEM|PUBLIC|UNICODE|COLLATION|USAGE|NO",
+            "_SYSTEM|PUBLIC|XS|XML SCHEMA|USAGE|NO",
+            "_SYSTEM|PUBLIC|XSI|XML SCHEMA|USAGE|NO",
+            "_SYSTEM|PUBLIC|SQLXML|XML SCHEMA|USAGE|NO"
         ]
     );
     let information = "SELECT GRANTOR, GRANTEE, IS_GRANTABLE FROM INFORMATION_SCHEMA.TABLE_PRIVILEGES WHERE TABLE_NAME = 'COLUMNS'";

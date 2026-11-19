@@ -64,6 +64,9 @@ const STRUCTURED_TYPE: u8 = 27;
 const REFERENCE_TYPE: u8 = 28;
 /// [ISO/IEC 9075-2:2023 §4.8] JSON, of no parameters.
 const JSON_TYPE: u8 = 29;
+/// [ISO/IEC 9075-14:2006 draft §6.1] An XML type: its primary modifier,
+/// then its secondary one (RULES.md D106).
+const XML_TYPE: u8 = 30;
 
 /// Appends `data_type`'s bytes to `out`.
 pub(crate) fn put_type(out: &mut Vec<u8>, data_type: &DataType) {
@@ -88,6 +91,7 @@ pub(crate) fn put_type(out: &mut Vec<u8>, data_type: &DataType) {
         DataType::Structured(_) => out.put_u8(STRUCTURED_TYPE),
         DataType::Reference(_) => out.put_u8(REFERENCE_TYPE),
         DataType::Json => out.put_u8(JSON_TYPE),
+        DataType::Xml(_) => out.put_u8(XML_TYPE),
         DataType::Row(_) => out.put_u8(ROW_TYPE),
         DataType::Distinct(_) => out.put_u8(DISTINCT_TYPE),
         DataType::Extension(e) => {
@@ -135,7 +139,8 @@ fn spelled_as(t: DataType, spelled: Spelled) -> DataType {
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Json
-        | DataType::Extension(_) => t,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => t,
     }
 }
 
@@ -179,6 +184,7 @@ pub(crate) fn data_type(r: &mut Reader<'_>) -> Result<DataType> {
         STRUCTURED_TYPE => &STRUCTURED,
         REFERENCE_TYPE => &REFERENCE,
         JSON_TYPE => &JSON,
+        XML_TYPE => &super::XML,
         ROW_TYPE => &ROW,
         DISTINCT_TYPE => &DISTINCT,
         EXTENSION_TYPE => {

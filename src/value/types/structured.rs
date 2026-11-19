@@ -145,7 +145,8 @@ impl DataType {
             | DataType::Row(_)
             | DataType::Reference(_)
             | DataType::Json
-            | DataType::Extension(_) => None,
+            | DataType::Extension(_)
+            | DataType::Xml(_) => None,
         }
     }
 }

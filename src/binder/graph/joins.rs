@@ -365,6 +365,7 @@ fn substituted(e: Expr, f: &dyn Fn(usize) -> Expr) -> Expr {
         | Expr::SortKey(..)
         | Expr::Subquery(..)
         | Expr::Truth(_)
+        | Expr::Warned(..)
         | Expr::Invoked(_)) => other.map_children(&mut |child| substituted(child, f)),
     }
 }

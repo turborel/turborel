@@ -23,7 +23,7 @@ use super::sequences::Epochs;
 use super::{State, rule};
 use crate::ast::{ModuleDefinition, RoutineDefinition, Schema, TableDefinition, TableName};
 use crate::binder::{qualify, routine_definition};
-use crate::catalog::{ModuleDesc, QualifiedName, SYSTEM_GRANTOR, UsageDesc, module_schema, owner_of};
+use crate::catalog::{ModuleDesc, QualifiedName, SYSTEM_GRANTOR, Stamps, UsageDesc, module_schema, owner_of};
 use crate::error::{At, Code, Result, SqlError, SqlState};
 use crate::txn::LockMode;
 
@@ -66,6 +66,8 @@ impl State {
             text: m.text.clone(),
             execute: vec![UsageDesc { grantor: SYSTEM_GRANTOR.to_owned(), grantee: Some(owner), grantable: false }],
             created,
+            // [ISO/IEC 9075-4:2006 draft §19.4 Description 7, 8]
+            stamps: Stamps::at(self.stamp),
         };
         // There first, so its routines are read with its SQL-path.
         self.put_module(desc.clone());

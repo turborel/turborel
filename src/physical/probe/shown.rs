@@ -4,7 +4,8 @@ use crate::functions::JsonOperator;
 use crate::geometry::SpatialOperation;
 use crate::index::{Predicate, Probe};
 use crate::logical::{Cond, Expr, and_all, render_cond};
-use crate::value::{CompOp, Decimal, Value};
+use crate::spatial::window;
+use crate::value::{ArithOp, CompOp, Decimal, Value};
 
 /// Renders the lookup with table column names so EXPLAIN shows which
 /// condition the index serves. Function calls retain their argument order.
@@ -19,15 +20,13 @@ pub(in crate::physical) fn render_probe(probe: &Probe, columns: &[usize], names:
         Probe::Predicate { predicate, value } => {
             let column = Expr::Column(columns.get(predicate.column).copied().unwrap_or_default());
             let Some(argument) = predicate.argument else { return json_call(predicate, column, value, names) };
-            let value = Expr::Const(value.clone());
-            let args = if argument == 0 { vec![column, value] } else { vec![value, column] };
-            let call = Expr::Call(predicate.function.clone(), args);
-            let condition = if predicate.function.0.spatial_operation().is_some_and(SpatialOperation::windowed) {
-                Cond::Compare(call, CompOp::Eq, Expr::Const(Value::Exact(Decimal::new(1, 0))))
-            } else {
-                Cond::Value(call)
-            };
-            vec![condition]
+            vec![called(predicate, (column, argument), value)]
+        }
+        // RULES.md D106: the path and comparisons the lookup selects by, of
+        // the column's values.
+        Probe::Xml(lookup) => {
+            let column = columns.first().and_then(|&c| names.get(c)).map_or("?", String::as_str);
+            return format!("{column} has {lookup}");
         }
         Probe::Compare { op, value } => vec![compared(0, *op, value)],
         Probe::Prefix { equal, then } => {
@@ -40,6 +39,33 @@ pub(in crate::physical) fn render_probe(probe: &Probe, columns: &[usize], names:
         }
     };
     and_all(conds).map_or_else(|| "all keys, in order".to_string(), |c| render_cond(&c, names))
+}
+
+/// A lookup of a call of the column and a value, at the column's
+/// `argument` position: a spatial window as the comparison it serves, a
+/// relate's pattern and a distance's limit read from the probe's ROW, a
+/// unit's scale shown as the factor of the distance (D85, D135).
+fn called(predicate: &Predicate, (column, argument): (Expr, usize), value: &Value) -> Cond {
+    let operation = predicate.function.0.spatial_operation();
+    let read = matches!(operation, Some(SpatialOperation::Relate | SpatialOperation::Distance));
+    let fields = window::fields(value).filter(|_| read).unwrap_or(std::slice::from_ref(value));
+    let (geometry, rest) = fields.split_first().map_or((Value::Null, &[][..]), |(g, rest)| (g.clone(), rest));
+    let geometry = Expr::Const(geometry);
+    let mut args = if argument == 0 { vec![column, geometry] } else { vec![geometry, column] };
+    let one = Expr::Const(Value::Exact(Decimal::new(1, 0)));
+    if operation == Some(SpatialOperation::Relate) {
+        args.extend(rest.first().cloned().map(Expr::Const));
+    }
+    let call = Expr::Call(predicate.function.clone(), args);
+    if let (Some(SpatialOperation::Distance), [limit, scale]) = (operation, rest) {
+        let unscaled = scale.as_f64().is_some_and(|s| s.to_bits() == 1.0_f64.to_bits());
+        let measured = if unscaled { call } else { Expr::Arith(Box::new(call), ArithOp::Mul, Box::new(Expr::Const(scale.clone()))) };
+        return Cond::Compare(measured, CompOp::Le, Expr::Const(limit.clone()));
+    }
+    if operation.is_some_and(SpatialOperation::windowed) || operation == Some(SpatialOperation::Relate) {
+        return Cond::Compare(call, CompOp::Eq, one);
+    }
+    Cond::Value(call)
 }
 
 /// \[EXTENSION\] A json index's lookup of a call of an SQL/JSON operator
@@ -64,6 +90,7 @@ fn json_call(predicate: &Predicate, column: Expr, value: &Value, names: &[String
         | Value::Reference(_)
         | Value::Lob(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => vec![Expr::Const(value.clone())],
     };
     let operator = predicate.function.0.json_probe().map(|p| p.operator);

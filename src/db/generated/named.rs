@@ -104,15 +104,20 @@ impl State {
                 columns.dedup();
                 columns
             }
+            // No generation expression names a registered XML Schema; one
+            // that imports a registered XQuery module keeps it from being
+            // dropped (`definitions/xquery_modules.rs`).
             DropTarget::Table(_)
             | DropTarget::View(_)
             | DropTarget::Assertion(_)
             | DropTarget::Sequence(_)
             | DropTarget::Trigger(_)
             | DropTarget::Graph(_)
-            | DropTarget::Pipeline(_)
             | DropTarget::GraphType(_)
-            | DropTarget::GqlGraph(_) => Vec::new(),
+            | DropTarget::GqlGraph(_)
+            | DropTarget::XmlSchema(_)
+            | DropTarget::XQueryModule(_)
+            | DropTarget::Pipeline(_) => Vec::new(),
             // [ISO/IEC 9075-2:2023 §11.64 GR, §11.66 GR, §11.71 GR] Those
             // that no longer bind without it.
             DropTarget::Cast(_) | DropTarget::Ordering(_) | DropTarget::Transform(..) | DropTarget::Model(_) => {

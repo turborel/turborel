@@ -19,7 +19,7 @@
 use super::structured::ATTR;
 use super::user_types::{functions, signature, specific};
 use crate::ast::MethodKind;
-use crate::catalog::{QualifiedName, StructuredDesc, UsageDesc};
+use crate::catalog::{QualifiedName, Stamps, StructuredDesc, UsageDesc};
 use crate::system::Seen;
 use crate::value::DataType;
 
@@ -57,6 +57,10 @@ pub(super) struct Implicit<'a> {
     pub(super) schema: &'a str,
     /// EXECUTE on it: each grant.
     pub(super) execute: &'a [UsageDesc],
+    /// Its creation and last-altered timestamps: those of the statement
+    /// that defined the type, or of its attribute [ISO/IEC 9075-2:2023
+    /// §11.60 GR5].
+    pub(super) stamps: Stamps,
 }
 
 /// The ROUTINE_TYPE of a method of kind `kind` [ISO/IEC 9075-11:2006 draft
@@ -84,6 +88,7 @@ pub(super) fn implicit<'a>(seen: &'a Seen<'_>) -> Vec<Implicit<'a>> {
                 cast: Some(true),
                 schema: &t.name.auth,
                 execute: &t.routine(f.1).execute,
+                stamps: t.routine(f.1).stamps,
             });
         }
     }
@@ -109,6 +114,7 @@ fn structured<'a>(s: &'a StructuredDesc, all: &mut Vec<Implicit<'a>>) {
         cast: None,
         schema: &s.name.auth,
         execute: &r.execute,
+        stamps: r.stamps,
     };
     for a in s.attributes.iter().filter(|a| a.defined_by == s.name) {
         let observer = method(&a.observer, vec![(SELF, s.data_type(), false)], a.data_type.clone());

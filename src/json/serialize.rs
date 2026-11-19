@@ -132,6 +132,7 @@ fn character_length(target: &DataType) -> Result<(u64, CharUnits)> {
         | DataType::Structured(_)
         | DataType::Reference(_)
         | DataType::Json
+        | DataType::Xml(_)
         | DataType::Extension(_) => Err(SqlError::new(
             Code::SyntaxRule,
             format!("[ISO/IEC 9075-2:2023 §9.43 SR2a] JSON text is serialized as a character or binary string type, not {target}"),
@@ -207,6 +208,7 @@ fn write_scalar(value: &Value, out: &mut String) -> Result<()> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => return Err(no_text("a value of no SQL/JSON scalar's type")),
     }
     Ok(())

@@ -42,23 +42,24 @@ pub(super) fn joined(
 ) -> Result<()> {
     let mut right = right.peekable();
     let mut before: Option<Records> = None;
+    let lobs = work.lobs().clone();
     loop {
         let mut part = Part::of(&mut right, (spec, judged.is_some()), work)?;
         let last = right.peek().is_none();
         let mut out = work.run()?;
         let mut flags = if last { None } else { Some(work.run()?) };
         for record in probes.records()? {
-            let (n, l) = unnumbered(&record?, work.types())?;
+            let (n, l) = unnumbered(&record?, work.types(), work.lobs())?;
             let was = match before.as_mut().and_then(Iterator::next).transpose()? {
                 Some(flag) => flag.first() == Some(&MATCHED),
                 None => false,
             };
-            let found = part.probed(&l, spec, &mut |joined| out.push(&numbered(n, &joined)))? || was;
+            let found = part.probed(&l, spec, &mut |joined| out.push(&numbered(n, &joined, &lobs)))? || was;
             match &mut flags {
                 Some(flags) => flags.push(&[if found { MATCHED } else { UNMATCHED }])?,
                 None => {
                     if !found && spec.kind.keeps_left() {
-                        out.push(&numbered(n, &spec.left_alone(&l)))?;
+                        out.push(&numbered(n, &spec.left_alone(&l), &lobs))?;
                     }
                 }
             }
@@ -90,7 +91,7 @@ impl Part {
         let mut bytes = 0_usize;
         while bytes <= work.limit() {
             let Some(record) = right.next() else { break };
-            let (n, row) = unnumbered(&record?, work.types())?;
+            let (n, row) = unnumbered(&record?, work.types(), work.lobs())?;
             bytes = bytes.saturating_add(row_bytes(&row)).saturating_add(PLACE_BYTES);
             let b = key(&row, &spec.keys, Operand::Right)?.ok_or_else(lost)?;
             if !judged || spec.right_may_match(&row)? {
@@ -132,7 +133,7 @@ impl Part {
         let mut out = work.run()?;
         for ((n, row), matched) in self.rows.into_iter().zip(self.matched) {
             if !matched {
-                out.push(&numbered(n, &spec.right_alone(&row)))?;
+                out.push(&numbered(n, &spec.right_alone(&row), work.lobs()))?;
             }
         }
         out.into_records()

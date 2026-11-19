@@ -82,7 +82,8 @@ pub fn scale(interval: &Interval, op: ArithOp, factor: &Value) -> Result<Value> 
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => factor.clone(),
+        | Value::Extension(_)
+        | Value::Xml(_) => factor.clone(),
     };
     let Value::Exact(number) = exact else {
         return fail_with(Code::Data, SqlState::DATA_EXCEPTION, format!("[ISO/IEC 9075:1992 §6.15] {factor} is no number"));

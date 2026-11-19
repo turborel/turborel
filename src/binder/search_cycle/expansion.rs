@@ -264,7 +264,7 @@ impl Expansion<'_, '_> {
 fn integer_zero(at: usize) -> ValueExpression {
     let zero = ValueExpression::Value(ValueSpecification::Literal(Literal::Exact(Decimal::new(0, 0))));
     let integer = DataType::Exact { precision: INTEGER_PRECISION, scale: 0, spelled: Spelled::Integer };
-    ValueExpression::Cast { operand: Some(Box::new(zero)), target: TypeName::Data(integer), format: None, at }
+    ValueExpression::Cast { operand: Some(Box::new(zero)), target: TypeName::Data(integer), format: None, passing: None, at }
 }
 
 /// [ISO/IEC 9075:1992 §7.9 SR3] What `*` of a FROM clause `from` is: each

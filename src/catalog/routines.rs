@@ -4,6 +4,31 @@
 use super::{Horizon, QualifiedName, UsageDesc, Who};
 pub use crate::ast::{DataAccess, GenericTable, ParameterMode, RoutineKind, TableSemantics};
 use crate::value::DataType;
+use crate::value::datetime::Now;
+
+/// [ISO/IEC 9075-2:2023 §4.35.5, §4.9.7] The creation timestamp and the
+/// last-altered timestamp a routine descriptor, or a method
+/// specification descriptor, includes: each the value of CURRENT_TIMESTAMP
+/// as the statement that made or last altered it ran [§11.60 GR5], its
+/// instant and the SQL-session's time zone displacement then (Feature
+/// T011). An SQL-server module's descriptor keeps them too [ISO/IEC
+/// 9075-4:2006 draft §19.4 Description 7, 8].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Stamps {
+    /// The creation timestamp.
+    pub created: Now,
+    /// The last-altered timestamp: the creation timestamp until a
+    /// statement alters what it describes.
+    pub last_altered: Now,
+}
+
+impl Stamps {
+    /// Of a descriptor made at `now`, never altered: both timestamps
+    /// `now` [§11.60 GR5].
+    pub fn at(now: Now) -> Stamps {
+        Stamps { created: now, last_altered: now }
+    }
+}
 
 /// [ISO/IEC 9075-2:2023 §4.35.5] An SQL parameter of a routine: its name,
 /// its declared type, its ordinal position and its mode.
@@ -134,9 +159,12 @@ pub struct SqlRoutineDesc {
     /// The EXECUTE privileges on it [§12.3, §11.60 GR1], as a domain's
     /// USAGE are kept.
     pub execute: Vec<UsageDesc>,
-    /// \[DESIGN\] Its timestamp of creation \[GR3t\], as an order: one more
-    /// than the greatest of the routines there were as it was created.
+    /// \[DESIGN\] Its order of creation: one more than the greatest of the
+    /// routines there were as it was created, which no two share, as two
+    /// routines of one statement share their timestamps (`stamps`).
     pub created: u64,
+    /// Its creation and last-altered timestamps [§4.35.5, GR5].
+    pub stamps: Stamps,
     /// [ISO/IEC 9075-4:2006 draft §9.24 GR1] The name of the SQL-server
     /// module that includes it, in its schema, if one does: else it is a
     /// schema-level routine.

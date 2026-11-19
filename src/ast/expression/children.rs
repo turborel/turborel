@@ -50,6 +50,7 @@ impl ValueExpression {
                 sf.filter.iter().for_each(|c| c.for_each_value(f));
             }
             ValueExpression::Cast { operand, .. } => operand.iter().for_each(|x| f(x)),
+            ValueExpression::Xml(x, _) => x.for_each_child(f),
             ValueExpression::Function { args, .. } | ValueExpression::Call { args, .. } => args.iter().for_each(f),
             ValueExpression::Case(case) => case.for_each_child(f),
             ValueExpression::Boolean(c) => c.for_each_value(f),
@@ -91,6 +92,12 @@ impl ValueExpression {
             && let Some(c) = &sf.filter
         {
             c.for_each_own_subquery(f);
+        }
+        // [EXTENSION] XMLMAP of a table reads it as its query does.
+        if let ValueExpression::Xml(x, _) = self
+            && let Some(s) = x.subquery()
+        {
+            f(s);
         }
         self.for_each_child(&mut |child| child.for_each_subquery(f));
     }
@@ -220,6 +227,8 @@ impl Predicate {
             Predicate::InSubquery { value, .. }
             | Predicate::Set { value, .. }
             | Predicate::Type { value, .. }
+            | Predicate::Xml { value, .. }
+            | Predicate::XmlValid { value, .. }
             | Predicate::Null { value, .. }
             | Predicate::Quantified { value, .. }
             | Predicate::Match { value, .. } => {
@@ -259,6 +268,8 @@ impl Predicate {
             | Predicate::Type { .. }
             | Predicate::Graph(_)
             | Predicate::GraphMatch(_)
+            | Predicate::Xml { .. }
+            | Predicate::XmlValid { .. }
             | Predicate::Null { .. } => None,
         }
     }

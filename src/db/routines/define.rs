@@ -23,7 +23,7 @@ use crate::ast::{
 };
 use crate::binder::{alike, definition_of, qualify};
 use crate::catalog::{
-    Horizon, ParameterMode, QualifiedName, RoutineKind, SYSTEM_GRANTOR, SqlParameter, SqlRoutineDesc, UsageDesc, owner_of, sole,
+    Horizon, ParameterMode, QualifiedName, RoutineKind, SYSTEM_GRANTOR, SqlParameter, SqlRoutineDesc, Stamps, UsageDesc, owner_of, sole,
 };
 use crate::error::{At, Code, Result, SqlError};
 use crate::log::record::DropTarget;
@@ -101,6 +101,8 @@ impl State {
             sequences: Vec::new(),
             execute: Vec::new(),
             created,
+            // [§11.60 GR5]
+            stamps: Stamps::at(self.stamp),
             module: module.map(str::to_owned),
             ptf: match &r.body {
                 RoutineBody::Polymorphic(def) => Some(Box::new(self.ptf_desc(def, (names, &owner))?)),
@@ -108,7 +110,7 @@ impl State {
             },
         };
         let bound = self.bind_routine_body(&desc, r)?;
-        desc.horizon = Horizon::of(&*self.catalog, &bound.reads).invoking(bound.invokes);
+        desc.horizon = Horizon::of(&*self.catalog, &bound.reads).invoking(bound.invokes).indicating(bound.indicates).typing(bound.typed);
         (desc.reads, desc.sequences) = (bound.reads, bound.sequences);
         super::super::vectors::distance_defined(self, &desc).or_at(r.name.at)?;
         // [ISO/IEC 9075-4:2006 draft §9.21 GR2] of a module's, the
@@ -407,6 +409,8 @@ pub(in crate::db) fn of_schema_routine(s: &Schema, p: &PrivilegeDefinition) -> b
         | PrivilegeObject::Module
         | PrivilegeObject::Graph
         | PrivilegeObject::Model
+        | PrivilegeObject::XmlSchema
+        | PrivilegeObject::XQueryModule
         | PrivilegeObject::Type => false,
     };
     // [ISO/IEC 9075-2:2023 §11.1] of a method of the schema, once it has
@@ -473,9 +477,12 @@ impl State {
             | SchemaStatement::AlterTransform(_)
             | SchemaStatement::Graph(_)
             | SchemaStatement::AlterGraph(_)
-            | SchemaStatement::Vector(_)
             | SchemaStatement::GraphType(_)
-            | SchemaStatement::GqlGraph(_) => {
+            | SchemaStatement::GqlGraph(_)
+            | SchemaStatement::XmlSchema(_)
+            | SchemaStatement::XQueryModule(_)
+            | SchemaStatement::AlterXQueryModule(_)
+            | SchemaStatement::Vector(_) => {
                 Err(rule("[DESIGN] a schema element defined for a type is a method, cast, ordering or transform"))
             }
         }

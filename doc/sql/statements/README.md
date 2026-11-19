@@ -16,6 +16,7 @@ One reference page for each statement, in alphabetical order.
 - [ALTER TRANSFORM](alter-transform.md): add or drop the functions of a transform group
 - [ALTER TYPE](alter-type.md): add or drop a structured type's attributes and methods
 - [ALTER USER](alter-user.md): change a user's password, or whether it may create roles
+- [ALTER XQUERY MODULE](alter-xquery-module.md): replace a registered XQuery module's text
 - [BEGIN](begin.md): group statements with their own variables, conditions, cursors and handlers
 - [CALL](call.md): run an SQL-invoked procedure
 - [CANCEL CONNECTION](cancel-connection.md): cancel what a connection of the server runs
@@ -54,6 +55,8 @@ One reference page for each statement, in alphabetical order.
 - [CREATE VECTOR INDEX](create-vector-index.md): define an approximate nearest-neighbour index
 - [CREATE VECTOR PIPELINE](create-vector-pipeline.md): keep a table of embedded chunks in step with a table of texts
 - [CREATE VIEW](create-view.md): define a viewed table
+- [CREATE XML SCHEMA](create-xml-schema.md): register an XML Schema
+- [CREATE XQUERY MODULE](create-xquery-module.md): register an XQuery library module
 - [DECLARE CURSOR](declare-cursor.md): declare a cursor
 - [DECLARE HANDLER](declare-handler.md): say what runs when a condition is raised *(in a compound statement)*
 - [DEALLOCATE DESCRIPTOR](deallocate-descriptor.md): deallocate an SQL descriptor area
@@ -85,6 +88,8 @@ One reference page for each statement, in alphabetical order.
 - [DROP VECTOR DISTANCE FUNCTION](drop-vector-distance-function.md): drop a distance function
 - [DROP VECTOR PIPELINE](drop-vector-pipeline.md): stop keeping a table of embedded chunks
 - [DROP VIEW](drop-view.md): drop a view
+- [DROP XML SCHEMA](drop-xml-schema.md): drop a registered XML Schema
+- [DROP XQUERY MODULE](drop-xquery-module.md): drop a registered XQuery module
 - [END CONNECTION](end-connection.md): end a connection of the server
 - [EXECUTE](execute.md): run a statement prepared
 - [EXECUTE GQL](execute-gql.md): run a GQL request on a graph

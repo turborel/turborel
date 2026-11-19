@@ -115,7 +115,13 @@ pub fn check_assignment(col: &ColumnDesc, t: &DataType, r: AssignRule) -> Result
     if assignable(&col.data_type, t) {
         return Ok(());
     }
-    Err(rule(format!("[{}; ISO/IEC 9075:1992 §9.2 SR2] cannot assign a {t} value to column {} ({})", r.rule, col.name, col.data_type)))
+    // [ISO/IEC 9075-14:2006 draft §10.2 SR1b] of XML types, Part 14's rule.
+    let store = if let (DataType::Xml(_), DataType::Xml(_)) = (&col.data_type, t) {
+        "ISO/IEC 9075-14:2006 draft §10.2 SR1b"
+    } else {
+        "ISO/IEC 9075:1992 §9.2 SR2"
+    };
+    Err(rule(format!("[{}; {store}] cannot assign a {t} value to column {} ({})", r.rule, col.name, col.data_type)))
 }
 
 /// [ISO/IEC 9075:1992 §9.2 SR2] Can a value of type `t` be stored in a
@@ -133,7 +139,9 @@ pub fn check_assignment(col: &ColumnDesc, t: &DataType, r: AssignRule) -> Result
 /// degree, field by field. [§4.9.5, §4.13, §9.2
 /// SR3] A distinct type's value in a site of it, or of its source type
 /// alone; in a site of it, a value of it, or one its function from its
-/// source takes, implicitly invocable (`distinct_assignable`).
+/// source takes, implicitly invocable (`distinct_assignable`). [ISO/IEC
+/// 9075-14:2006 draft §10.2 SR1b] An XML value in an XML site alone, an
+/// UNTYPED one's of an UNTYPED type.
 pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
     if let Some(fits) = distinct_assignable(target, t) {
         return fits;
@@ -157,6 +165,14 @@ pub(crate) fn assignable(target: &DataType, t: &DataType) -> bool {
         return matches!(t, DataType::Json) || t.is_character();
     }
     if let DataType::Json = t {
+        return false;
+    }
+    // [ISO/IEC 9075-14:2006 draft §10.2 SR1b] An XML value to an XML site
+    // alone, an UNTYPED one taking a value of an UNTYPED type alone.
+    if let (DataType::Xml(x), DataType::Xml(y)) = (target, t) {
+        return x.takes(y);
+    }
+    if matches!(target, DataType::Xml(_)) || matches!(t, DataType::Xml(_)) {
         return false;
     }
     // [ISO/IEC 9075-2:2023 §9.2 SR2] a value of a type of a family built
@@ -523,10 +539,16 @@ fn bind_write_of(
     );
     // [§14.9 SR7a ii, iii; §14.14 SR7a iii, iv] the points in time judged first.
     let pieces = portioned.as_ref().map(|p| p.bind(&binder, rows_scope)).transpose()?;
-    let cond = where_clause.map(|c| binder.search_condition(c, rows_scope)).transpose()?;
+    // [ISO/IEC 9075-11:2006 draft §6.35 Description 1a, 1b] the columns of
+    // its search condition and its update sources counted, and its object
+    // columns [Description 1d].
+    let cond = binder.counted(|| where_clause.map(|c| binder.search_condition(c, rows_scope)).transpose())?;
+    for s in set {
+        binder.note_named(&name, &s.column);
+    }
 
     // [ISO/IEC 9075-2:2023 §6.14 SR1e] an <update source> draws values.
-    let bound_set = binder.drawing(true, || bind_set_clauses(&binder, kind, set))?;
+    let bound_set = binder.counted(|| binder.drawing(true, || bind_set_clauses(&binder, kind, set)))?;
     let base = match member {
         Some(m) => db.catalog.table(m).cloned().ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] subtable {m} is not there")))?,
         None => target.base,

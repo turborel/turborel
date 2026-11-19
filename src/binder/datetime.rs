@@ -102,7 +102,8 @@ pub(super) fn shown(e: Expr, from: DataType, now: Clocked<'_>) -> Expr {
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Json
-        | DataType::Extension(_) => e,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => e,
     }
 }
 
@@ -169,7 +170,8 @@ fn castable(from: &DataType, to: &DataType) -> bool {
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Json
-        | DataType::Extension(_) => None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => None,
     };
     match (moment(from), moment(to)) {
         (Some(Moment::Date), Some(Moment::Time)) | (Some(Moment::Time), Some(Moment::Date)) => false,
@@ -276,7 +278,8 @@ fn fields(t: &DataType) -> Option<(Moment, u32, bool)> {
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Json
-        | DataType::Extension(_) => None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => None,
     }
 }
 

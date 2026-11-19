@@ -3,6 +3,7 @@
 use super::*;
 use crate::catalog::{Horizon, QualifiedName};
 use crate::error::Code;
+use crate::value::datetime::Now;
 
 /// A name in schema A.
 fn name(ident: &str) -> QualifiedName {
@@ -22,10 +23,17 @@ fn desc(time: ActionTime, level: TriggerLevel, event: TriggerEvent, names: Trans
         text: "CREATE TRIGGER TR AFTER INSERT ON T FOR EACH ROW DELETE FROM U".into(),
         schema: "A".into(),
         reads: vec![name("T"), name("U")],
-        horizon: Horizon { widths: vec![(name("T"), 2), (name("U"), 3)], routines: Some(vec![name("F_1")]) },
+        horizon: Horizon {
+            widths: vec![(name("T"), 2), (name("U"), 3)],
+            routines: Some(vec![name("F_1")]),
+            xml_schemas: vec![name("X")],
+            xquery_modules: vec![name("M")],
+            static_typing: true,
+        },
         columns: vec![(name("T"), "K".into()), (name("U"), "V".into())],
         sequences: vec![name("Q")],
         created: 7,
+        created_at: Now { utc: -1, zone: -720 },
     }
 }
 

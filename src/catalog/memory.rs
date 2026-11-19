@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use super::{
     CastDesc, Catalog, CollationDesc, ConstraintDesc, DomainDesc, Embeddings, GqlCatalog, GraphDesc, IndexDesc, ModuleDesc, OrderingDesc,
     PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SpatialCatalog, SqlRoutineDesc, StructuredDesc, TableDesc, TransformGroupDesc,
-    TriggerDesc, UserTypeDesc, ViewDesc,
+    TriggerDesc, UserTypeDesc, ViewDesc, XQueryModuleDesc, XmlSchemaDesc,
 };
 use crate::hash::murmur::MurmurMap;
 use crate::value::DataType;
@@ -21,6 +21,10 @@ pub struct MemoryCatalog {
     privileges: Vec<PrivilegeDesc>,
     domains: HashMap<QualifiedName, DomainDesc>,
     collations: HashMap<QualifiedName, CollationDesc>,
+    /// Each registered XML Schema, by its name.
+    xml_schemas: HashMap<QualifiedName, XmlSchemaDesc>,
+    /// Each registered XQuery module, by its name.
+    xquery_modules: HashMap<QualifiedName, XQueryModuleDesc>,
     sequences: HashMap<QualifiedName, SequenceDesc>,
     user_types: HashMap<QualifiedName, UserTypeDesc>,
     /// Each structured type, by its name.
@@ -179,6 +183,34 @@ impl Catalog for MemoryCatalog {
     }
     fn remove_collation(&mut self, name: &QualifiedName) {
         self.collations.remove(name);
+    }
+    fn put_xml_schema(&mut self, xml_schema: XmlSchemaDesc) {
+        self.xml_schemas.insert(xml_schema.name.clone(), xml_schema);
+    }
+    fn xml_schema(&self, name: &QualifiedName) -> Option<&XmlSchemaDesc> {
+        self.xml_schemas.get(name)
+    }
+    fn xml_schemas(&self) -> Vec<&XmlSchemaDesc> {
+        let mut all: Vec<&XmlSchemaDesc> = self.xml_schemas.values().collect();
+        all.sort_by_key(|x| x.name.to_string());
+        all
+    }
+    fn remove_xml_schema(&mut self, name: &QualifiedName) {
+        self.xml_schemas.remove(name);
+    }
+    fn put_xquery_module(&mut self, module: XQueryModuleDesc) {
+        self.xquery_modules.insert(module.name.clone(), module);
+    }
+    fn xquery_module(&self, name: &QualifiedName) -> Option<&XQueryModuleDesc> {
+        self.xquery_modules.get(name)
+    }
+    fn xquery_modules(&self) -> Vec<&XQueryModuleDesc> {
+        let mut all: Vec<&XQueryModuleDesc> = self.xquery_modules.values().collect();
+        all.sort_by_key(|m| m.name.to_string());
+        all
+    }
+    fn remove_xquery_module(&mut self, name: &QualifiedName) {
+        self.xquery_modules.remove(name);
     }
     fn put_sequence(&mut self, sequence: SequenceDesc) {
         self.sequences.insert(sequence.name.clone(), sequence);

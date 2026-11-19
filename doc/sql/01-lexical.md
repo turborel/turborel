@@ -120,7 +120,7 @@ VALUES TIME '25:00:00';
 turborel: SQLCODE -102 (SQLSTATE 2A000): expected end of statement, found 'cd' (at character 12)
 turborel: SQLCODE -900 (SQLSTATE 0A000): <exact numeric literal> 123456789012345678901 has 21 digits; this implementation's maximum exact precision is 18 [X3.135-1986 §5.2 SR4] (at character 7)
 turborel: SQLCODE -900 (SQLSTATE 0A000): 1E400 is outside the range of this implementation's approximate numbers [X3.135-1986 §5.2 SR5] (at character 7)
-turborel: SQLCODE -103 (SQLSTATE 2A000): TIME '25:00:00' is no valid <datetime literal> [ISO/IEC 9075:1992 §5.3 SR21, SR22, SR25] (at character 8)
+turborel: SQLCODE -103 (SQLSTATE 2A000): TIME '25:00:00' is no valid <datetime literal> [ISO/IEC 9075:1992 §5.3 SR21, SR22; ISO/IEC 9075-2:2023 §5.3 SR43] (at character 7)
 ```
 
 The parts of `'ab' 'cd'` on one line are two strings, not one.

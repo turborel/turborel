@@ -6,8 +6,8 @@
 use super::Parser;
 use super::dynamic::WITHOUT;
 use crate::ast::{
-    Check, ColumnConstraint, ColumnConstraintKind, ConstraintAttributes, IMPLICIT_NULLS_DISTINCT, MatchType, References, ReferentialAction,
-    SqlStatement, TableConstraint, TableConstraintKind,
+    Check, ColumnConstraint, ColumnConstraintKind, ConstraintAttributes, IMPLICIT_NULLS_DISTINCT, LexicallyScopedOptions, MatchType,
+    References, ReferentialAction, SqlStatement, TableConstraint, TableConstraintKind,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -235,23 +235,43 @@ impl Parser {
     }
 
     /// [§11.9] The `<search condition>` of a CHECK, alone, as the catalog
-    /// keeps it.
+    /// keeps it: after WITH's `<XML lexically scoped options>`, if written
+    /// [ISO/IEC 9075-14:2006 draft §12.2, §12.4], whose scope it is.
     ///
     /// # Errors
     ///
     /// The text is not a `<search condition>`.
-    pub fn check_condition(&mut self) -> Result<crate::ast::SearchCondition> {
+    pub fn check_condition(&mut self) -> Result<(Option<LexicallyScopedOptions>, crate::ast::SearchCondition)> {
+        let options = self.with_scoped_options()?;
         let condition = self.search_condition()?;
         self.end()?;
-        Ok(condition)
+        Ok((options, condition))
+    }
+
+    /// [§11.9] The `<search condition>` of the CHECK `text` as the
+    /// catalog keeps it, without the XML options before it: what the
+    /// Information Schema shows [ISO/IEC 9075-11:2006 draft §6.14
+    /// Description 2a].
+    ///
+    /// # Errors
+    ///
+    /// The text is not a CHECK's.
+    pub fn check_clause(text: &str) -> Result<String> {
+        let mut p = Parser::new(text)?;
+        p.with_scoped_options()?;
+        let start = p.here();
+        Ok(text.chars().skip(start).collect())
     }
 
     /// [§11.9] `<check constraint definition>` ::= CHECK (`<search
-    /// condition>`)
+    /// condition>`); [ISO/IEC 9075-14:2006 draft §12.2, §12.4] CHECK ( \[
+    /// WITH `<XML lexically scoped options>` \] `<search condition>` ),
+    /// the text the catalog keeps holding the options.
     pub(super) fn check(&mut self) -> Result<Check> {
         self.expect_kw(kw::CHECK)?;
         self.expect_delim(delim::LEFT_PAREN)?;
         let start = self.here();
+        self.with_scoped_options()?;
         let condition = self.search_condition()?;
         let text = self.text_from(start);
         self.expect_delim(delim::RIGHT_PAREN)?;

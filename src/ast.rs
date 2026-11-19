@@ -39,6 +39,7 @@ mod gql;
 mod graph;
 mod graph_ddl;
 mod hybrid_search;
+mod insert;
 mod joined;
 mod json;
 mod json_table;
@@ -65,6 +66,7 @@ mod triggers;
 mod user_types;
 mod users;
 mod window;
+mod xml;
 
 pub use alter::AlterAction;
 pub use composite::{Composite, ValueOrder};
@@ -100,6 +102,7 @@ pub use graph_ddl::{
     GraphModeOption, LabelDefinition, LabelIndex, PropertiesDefinition, ReachabilityIndex,
 };
 pub use hybrid_search::{Fusion, HybridSearch, SearchArgument, SearchValue};
+pub use insert::{ColumnName, InsertSource, InsertStatement};
 pub use joined::{JoinKind, JoinSpecification, JoinedTable, Partitioning};
 pub use json::{
     IsJson, JsonAggregate, JsonArgument, JsonClauses, JsonCommon, JsonConstructor, JsonExpression, JsonFormat, JsonInput, JsonMember,
@@ -163,47 +166,11 @@ pub use window::{
     Exclusion, Frame, FrameBound, FrameUnits, NestedWindow, OffsetFunction, RankKind, RowMarker, ValueFunction, Which, WindowDefinition,
     WindowFunction, WindowKind, WindowOver, WindowSpecification,
 };
-
-// ---------------------------------------------------------------------------
-// [X3.135-1986 §8.7] <insert statement>
-// ---------------------------------------------------------------------------
-
-/// [X3.135-1986 §8.7; ISO/IEC 9075:1992 §13.8] `<insert statement>` ::=
-///     INSERT INTO `<table name>` {\[(`<insert column list>`)\] `<query
-///     expression>` | DEFAULT VALUES}
-#[derive(Debug, Clone)]
-pub struct InsertStatement {
-    /// The `<table name>`.
-    pub table: TableName,
-    /// The `<insert column list>`, if written.
-    pub columns: Option<Vec<ColumnName>>,
-    /// [ISO/IEC 9075-2:2023 §14.11] The `<override clause>`, if written.
-    pub overriding: Option<Overriding>,
-    /// The rows inserted.
-    pub source: InsertSource,
-}
-
-/// A `<column name>` of a column list, and where it is written.
-#[derive(Debug, Clone)]
-pub struct ColumnName {
-    /// The name.
-    pub name: String,
-    /// Where it begins in the statement: a character offset, for the
-    /// positions of errors (`SqlError::or_at`).
-    pub at: usize,
-}
-
-/// [X3.135-1986 §8.7] What an `<insert statement>` inserts.
-#[derive(Debug, Clone)]
-pub enum InsertSource {
-    /// [ISO/IEC 9075:1992 §13.8] A `<query expression>`: its rows. SQL-86's
-    /// VALUES (`<insert value list>`) is a `<table value constructor>` of
-    /// one row.
-    Query(Box<QueryExpression>),
-    /// [ISO/IEC 9075:1992 §13.8 SR2] DEFAULT VALUES: one row, each column's
-    /// default.
-    DefaultValues,
-}
+pub use xml::{
+    ContentOption, Dcs, ElementConstructor, ForestConstructor, LexicallyScopedOptions, MapResults, MapSource, Named, NamespaceItem,
+    OnEmpty, Passing, Returning, XQueryModuleDefinition, XmlArgument, XmlArguments, XmlMapping, XmlOperator, XmlQuery, XmlRegularColumn,
+    XmlSchemaDefinition, XmlTable, XmlTableColumn, XmlValidAccording, XmlValidWhat, rows_of,
+};
 
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §5.6] <value specification>, [X3.135-1986 §5.2] <literal>
@@ -317,6 +284,9 @@ pub enum SqlStatement {
         portion: Option<Box<Portion>>,
         /// The `<search condition>`, if written.
         where_clause: Option<SearchCondition>,
+        /// [ISO/IEC 9075-14:2006 draft §14.3] WITH's `<XML lexically scoped
+        /// options>`, if written.
+        xml: Option<Box<LexicallyScopedOptions>>,
     },
     /// [ISO/IEC 9075-2:2023 §14.12] `<merge statement>`.
     Merge(Box<MergeStatement>),
@@ -486,6 +456,9 @@ pub enum SqlStatement {
         set: Vec<SetClause>,
         /// The `<cursor name>`, and where it is written.
         cursor: (String, usize),
+        /// [ISO/IEC 9075-14:2006 draft §14.6] WITH's `<XML lexically scoped
+        /// options>`, if written.
+        xml: Option<Box<LexicallyScopedOptions>>,
     },
     /// [X3.135-1986 §8.12] `<update statement: searched>` ::= UPDATE `<table name>`
     ///     SET `<set clause: searched>` \[{,`<set clause: searched>`}...\] \[WHERE `<search condition>`\]
@@ -501,6 +474,9 @@ pub enum SqlStatement {
         set: Vec<SetClause>,
         /// The `<search condition>`, if written.
         where_clause: Option<SearchCondition>,
+        /// [ISO/IEC 9075-14:2006 draft §14.7] WITH's `<XML lexically scoped
+        /// options>`, if written.
+        xml: Option<Box<LexicallyScopedOptions>>,
     },
 }
 

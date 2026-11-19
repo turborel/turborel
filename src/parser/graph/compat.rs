@@ -188,6 +188,8 @@ fn conjunct_match(c: &mut SearchCondition) -> Option<&mut MatchClause> {
             | Predicate::Submultiset { .. }
             | Predicate::Set { .. }
             | Predicate::Graph(_)
+            | Predicate::Xml { .. }
+            | Predicate::XmlValid { .. }
             | Predicate::Type { .. } => None,
         },
         SearchCondition::Or(..) | SearchCondition::Not(_) | SearchCondition::Is(..) | SearchCondition::Predicand(..) => None,

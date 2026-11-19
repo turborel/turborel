@@ -20,6 +20,7 @@
 //!   ST_SIZINGS each meta-variable of Annex A.1 with an integer value.
 
 mod lr;
+mod sfa;
 mod systems;
 
 use super::{Defined, Rows, Seen, SystemTable, SystemView, catalog_name, identifier, text, text_column};
@@ -27,6 +28,7 @@ use crate::catalog::ColumnDesc;
 use crate::storage::Row;
 use crate::value::{DataType, Decimal, INTEGER_PRECISION, Spelled, Value};
 
+pub use sfa::{SF_INFORMTN_SCHEMA, VIEWS as SF_VIEWS, public as sf_public};
 pub use systems::{SRS_SEED, SpatialRefSys};
 
 /// [§19.1] The schema of the SQL/MM Spatial Information Schema.
@@ -55,7 +57,7 @@ pub(super) fn tables() -> Vec<std::sync::Arc<dyn SystemTable>> {
     let table = |name, columns, rows| -> std::sync::Arc<dyn SystemTable> {
         std::sync::Arc::new(Defined { schema: ST_DEFINITION_SCHEMA, name, columns, rows: Rows::Infallible(rows) })
     };
-    vec![
+    [
         table("ST_GEOMETRY_COLUMNS", geometry_columns_columns, geometry_columns),
         table("ST_SPATIAL_REFERENCE_SYSTEMS", systems_columns, systems),
         table("ST_UNITS_OF_MEASURE", units_columns, units),
@@ -64,6 +66,11 @@ pub(super) fn tables() -> Vec<std::sync::Arc<dyn SystemTable>> {
         table("ST_LR_COLUMNS", lr::lr_columns_columns, lr::lr_columns),
         table("ST_LRMS", lr::lrms_columns, lr::lrms),
     ]
+    .into_iter()
+    // [OGC 06-104r4 §6.2.9.2, §7.1.3] Simple feature access's
+    // GEOMETRY_COLUMNS and ANNOTATION_TEXT_METADATA.
+    .chain(sfa::tables())
+    .collect()
 }
 
 /// A column of INTEGER, NOT NULL if `not_null`.
@@ -273,10 +280,18 @@ fn sizings(_seen: &Seen<'_>) -> Vec<Row> {
 }
 
 /// The name of the Information Schema view `v`, in its schema:
+/// SF_INFORMTN_SCHEMA of one of Simple feature access's (`sfa::VIEWS`),
 /// ST_INFORMTN_SCHEMA of one of `SPATIAL_VIEWS`, else INFORMATION_SCHEMA.
+/// Both name a view GEOMETRY_COLUMNS, so a view is told by its query too.
 pub(crate) fn name_of(v: &SystemView) -> crate::catalog::QualifiedName {
-    let spatial = SPATIAL_VIEWS.iter().any(|s| s.name == v.name);
-    let auth = if spatial { ST_INFORMTN_SCHEMA } else { super::INFORMATION_SCHEMA };
+    let among = |list: &[SystemView]| list.iter().any(|s| s.name == v.name && s.query == v.query);
+    let auth = if among(sfa::VIEWS) {
+        SF_INFORMTN_SCHEMA
+    } else if among(SPATIAL_VIEWS) {
+        ST_INFORMTN_SCHEMA
+    } else {
+        super::INFORMATION_SCHEMA
+    };
     crate::catalog::QualifiedName { auth: auth.to_owned(), ident: v.name.to_owned() }
 }
 

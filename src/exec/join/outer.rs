@@ -32,7 +32,7 @@ use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::logical::{Cond, OuterJoin, Truth};
 use crate::physical::{JoinKey, Own, Plan};
-use crate::spill::{SpillRun, record_row, row_bytes, row_record};
+use crate::spill::{SpillRun, row_bytes};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::{Bucket, Value};
@@ -393,7 +393,7 @@ impl OuterRows {
                 Some(run) => run,
                 None => lefts.insert(self.work.run()?),
             };
-            run.push(&row_record(&l))?;
+            run.push(&self.work.lobs().record(&l))?;
         }
         self.bar()?;
         // Its own condition judged of it as the right has a row [§7.5 GR1c].
@@ -427,7 +427,7 @@ impl OuterRows {
             Matched::Lefts(None) => Ok(true),
             Matched::Lefts(Some(lefts)) => {
                 for record in lefts.records()? {
-                    let l = record_row(&record?, self.work.types())?;
+                    let l = self.work.lobs().record_row(&record?, self.work.types())?;
                     if self.spec.joined(&l, r)?.is_some() {
                         return Ok(false);
                     }

@@ -251,6 +251,11 @@ impl Index for RTreeIndex {
     fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
         self.projection.clone()
     }
+    /// Of a geometry window, the window: its search reads no other entry.
+    /// A numeric index's probes are comparisons, recorded as conditions.
+    fn read_region(&self, probe: &Probe) -> Option<Vec<Bounds>> {
+        geometry::region(&self.tree, probe, self.srid?)
+    }
     fn insert(&self, key: Key, row: RowId) -> Result<()> {
         self.tree.insert(self.bounds(&key)?, row)
     }

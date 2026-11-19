@@ -66,6 +66,9 @@ fn schema_command(s: &SchemaStatement) -> Command {
         },
         SchemaStatement::GraphType(_) => commands::CREATE_GRAPH_TYPE,
         SchemaStatement::GqlGraph(_) => commands::CREATE_GRAPH,
+        SchemaStatement::XmlSchema(_) => commands::CREATE_XML_SCHEMA,
+        SchemaStatement::XQueryModule(_) => commands::CREATE_XQUERY_MODULE,
+        SchemaStatement::AlterXQueryModule(_) => commands::ALTER_XQUERY_MODULE,
     }
 }
 
@@ -92,6 +95,8 @@ fn drop_command(object: &DropObject) -> Command {
         DropObject::Vector(VectorObject::Pipeline, _) => commands::DROP_VECTOR_PIPELINE,
         DropObject::GraphType(..) => commands::DROP_GRAPH_TYPE,
         DropObject::GqlGraph(..) => commands::DROP_GRAPH,
+        DropObject::XmlSchema(_) => commands::DROP_XML_SCHEMA,
+        DropObject::XQueryModule(_) => commands::DROP_XQUERY_MODULE,
     }
 }
 

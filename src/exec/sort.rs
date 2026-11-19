@@ -113,7 +113,7 @@ impl Sorter {
 /// The rows of sorted `runs`, merged by `keys`, in passes of as many as
 /// `work` reads at once, until one is left.
 fn merged(keys: &[SortKey], mut runs: Vec<Box<dyn SpillRun>>, work: &mut Work) -> Result<RowIter> {
-    let (order, width) = (Arc::new(Order::new(keys, work.types().clone())), work.width());
+    let (order, width) = (Arc::new(Order::new(keys, work.types().clone(), work.lobs().clone())), work.width());
     while runs.len() > width {
         let (mut merged, mut rest) = (Vec::new(), runs.into_iter());
         loop {

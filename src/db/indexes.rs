@@ -36,13 +36,14 @@ pub(super) use expressions::{key_positions, unbound_keys};
 use super::{Database, State, api, qualified_name};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::error::{Code, Result, SqlError, fail};
+use crate::index::xml::XmlLookup;
 use crate::index::{
     ADJACENCY_METHOD, BTREE_METHOD, FULLTEXT_METHOD, HASH_METHOD, Index, JSON_METHOD, KeyOrder, LABELS_METHOD, Probe, REACHABILITY_METHOD,
     RTREE_METHOD,
 };
 use crate::log::record::Change;
-use crate::storage::{TableOption, chosen, needs_rebuild};
-use crate::txn::{Concurrency, LockMode, TableLock, Timestamp, Transactions, Txn};
+use crate::storage::{Row, TableOption, chosen, needs_rebuild};
+use crate::txn::{Concurrency, LockMode, NO_TRANSACTION, TableLock, Timestamp, Transactions, Txn};
 use crate::value::Value;
 pub use accuracy::AccuracyReport;
 
@@ -248,6 +249,24 @@ impl Database {
     pub fn index_entries(&self, name: &str) -> Result<usize> {
         let entries = Arc::clone(self.snapshot()?.index_of(name)?).search(&Probe::All, KeyOrder::Ascending);
         entries.into_iter().try_fold(0_usize, |n, entry| entry.map(|_| n.saturating_add(1)))
+    }
+
+    /// \[EXTENSION\] RULES.md D106: a diagnostic, as `index_entries` is: the
+    /// rows index `name`, an XML index, gives for `lookup`, each once, as
+    /// its table holds them now, of the transactions committed: candidates,
+    /// which a caller checks again (`XmlLookup::matches`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if there is no such index, or it answers no XML
+    /// lookup; the index's and the table's errors.
+    pub fn xml_candidates(&self, name: &str, lookup: &XmlLookup) -> Result<Vec<Row>> {
+        let st = self.snapshot()?;
+        let table = st.catalog.index(name).map(|ix| ix.table.clone()).ok_or_else(|| api(format!("[EXTENSION] no index {name}")))?;
+        let found = Arc::clone(st.index_of(name)?).xml_rows(lookup);
+        let rows = found.ok_or_else(|| api(format!("[EXTENSION] the index {name} answers no XML lookup (RULES.md D106)")))?;
+        let storage = st.storage_of(&table)?;
+        rows.filter_map(|row| row.and_then(|id| storage.get(NO_TRANSACTION, id)).transpose()).collect()
     }
 
     /// \[EXTENSION\] Create a secondary index named `name` on `columns` of

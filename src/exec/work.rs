@@ -16,7 +16,7 @@ use std::sync::Arc;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::settings::{MEMORY_WORK_BYTES, SPILL_BATCH_BYTES, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, batch_bytes, work_bytes};
-use crate::spill::{Area, Batches, Records, SpillArea, SpillRun, SpillTable, WorkAreas};
+use crate::spill::{Area, Batches, Records, SpillArea, SpillRun, SpillTable, SpilledLobs, WorkAreas};
 use crate::txn::{Stop, TxId, checked};
 
 /// The bytes a key held in memory takes beyond its own: its map entry.
@@ -33,8 +33,12 @@ pub(super) struct Work {
     areas: Arc<WorkAreas>,
     area: Option<Box<dyn SpillArea>>,
     /// The types beyond the standard the rows it spills may hold values of,
-    /// read back by them (`spill::record_row`).
+    /// read back by them (`SpilledLobs::record_row`).
     types: TypeRegistry,
+    /// The sources of the large objects and XML values the rows it spills
+    /// name, held while it, or a part of it, is: shared with its parts, as
+    /// rows pass between them (`spill/named.rs`).
+    lobs: SpilledLobs,
     /// What cancels the statement it works for, looked at as its runs are
     /// read back; none if it is not known.
     stop: Option<Arc<Stop>>,
@@ -45,7 +49,8 @@ impl Work {
     pub(super) fn new(db: &State) -> Work {
         let (limit, batch) = (work_bytes(db.settings.get(MEMORY_WORK_BYTES)), batch_bytes(db.settings.get(SPILL_BATCH_BYTES)));
         let partitions = (db.settings.count(SPILL_PARTITIONS), db.settings.count(SPILL_PARTITION_DEPTH));
-        Work { limit, batch, partitions, areas: Arc::clone(&db.work), area: None, types: db.types.clone(), stop: None }
+        let (areas, types) = (Arc::clone(&db.work), db.types.clone());
+        Work { limit, batch, partitions, areas, area: None, types, lobs: SpilledLobs::new(), stop: None }
     }
 
     /// The work area of an operator of `db` run by `tx`'s statement: its
@@ -58,7 +63,8 @@ impl Work {
     /// part that holds rows apart from the rest.
     pub(super) fn another(&self) -> Work {
         let (limit, batch, partitions, stop) = (self.limit, self.batch, self.partitions, self.stop.clone());
-        Work { limit, batch, partitions, areas: Arc::clone(&self.areas), area: None, types: self.types.clone(), stop }
+        let (areas, types, lobs) = (Arc::clone(&self.areas), self.types.clone(), self.lobs.clone());
+        Work { limit, batch, partitions, areas, area: None, types, lobs, stop }
     }
 
     /// A work area of the same settings, of its own, of `limit` bytes: for
@@ -80,6 +86,12 @@ impl Work {
     /// The types beyond the standard the rows it spills may hold values of.
     pub(super) fn types(&self) -> &TypeRegistry {
         &self.types
+    }
+
+    /// What holds the sources of the large objects and XML values the rows
+    /// it spills name, to write and read them by.
+    pub(super) fn lobs(&self) -> &SpilledLobs {
+        &self.lobs
     }
 
     /// The bytes it may hold in memory.

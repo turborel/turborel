@@ -76,24 +76,24 @@ impl SharedVectors {
     }
 }
 
-/// That the columns `keyed` of index `name` of method `m` group values, as
-/// keys do [ISO/IEC 9075-2:2023 §9.12 SR3]; and \[EXTENSION\] are no
-/// vectors, if `m` keys by value, by `=` or an order: a vector has neither
-/// (design document §17, RULES.md D93). A method of its own search, a
-/// vector index's, keys them.
+/// That the columns `keyed` of index `name` of method `m` are of types it
+/// keys (`IndexMethod::check_columns`): by default values grouped, as
+/// keys are [ISO/IEC 9075-2:2023 §9.12 SR3], of an XML method one XML
+/// column (RULES.md D106); and \[EXTENSION\] are no vectors, if `m` keys by
+/// value, by `=` or an order: a vector has neither (design document §17,
+/// RULES.md D93). A method of its own search, a vector index's, keys them.
 ///
 /// # Errors
 ///
-/// SQLCODE -103 if one is not, or is a vector.
+/// SQLCODE -103 if one is not, or is a vector; -900 as the method says.
 pub(super) fn keyed_by<'a>(m: &dyn IndexMethod, keyed: impl Iterator<Item = &'a ColumnDesc>, name: &str) -> Result<()> {
     let what = format!("index {name}");
-    keyed.into_iter().try_for_each(|column| {
-        crate::binder::key_operand(&column.data_type, &what)?;
-        if !m.supports(CompOp::Eq) {
-            return Ok(());
-        }
-        crate::binder::orderless_operand(&column.data_type, &what)
-    })
+    let types: Vec<_> = keyed.map(|column| column.data_type.clone()).collect();
+    m.check_columns(&types, &what)?;
+    if !m.supports(CompOp::Eq) {
+        return Ok(());
+    }
+    types.iter().try_for_each(|t| crate::binder::orderless_operand(t, &what))
 }
 
 /// \[EXTENSION\] That the routine `desc`, if a distance function of SQL

@@ -21,9 +21,8 @@ use crate::bytes::{Put, Reader};
 use crate::catalog::QualifiedName;
 use crate::error::Result;
 use crate::exec::Holdable;
-use crate::spill::{ListItem, row_bytes};
+use crate::spill::{ListItem, SpilledLobs, row_bytes};
 use crate::storage::RowId;
-use crate::value::codec::{put_row, row};
 use crate::value::types::TypeRegistry;
 
 /// The kinds of effect, as a record holds them (above).
@@ -75,7 +74,7 @@ impl ListItem for Effect {
 }
 
 impl Holdable for Effect {
-    fn record(&self) -> Vec<u8> {
+    fn record(&self, lobs: &SpilledLobs) -> Vec<u8> {
         let mut out = Vec::new();
         match self {
             Effect::Inserted { table, id } => {
@@ -87,7 +86,7 @@ impl Holdable for Effect {
                 out.put_u8(UPDATED);
                 put_name(&mut out, table);
                 out.put_u64(*id);
-                put_row(&mut out, old);
+                lobs.put_row(&mut out, old);
                 put_usize(&mut out, columns.len());
                 for &c in columns {
                     put_usize(&mut out, c);
@@ -97,23 +96,23 @@ impl Holdable for Effect {
                 out.put_u8(DELETED);
                 put_name(&mut out, table);
                 out.put_u64(*id);
-                put_row(&mut out, old);
+                lobs.put_row(&mut out, old);
             }
         }
         out
     }
 
-    fn read(record: &[u8], types: &TypeRegistry) -> Result<Effect> {
+    fn read(record: &[u8], types: &TypeRegistry, lobs: &SpilledLobs) -> Result<Effect> {
         let mut r = Reader::new(record, "held effect").with_types(types);
         let (kind, table, id) = (r.u8()?, name(&mut r)?, r.u64()?);
         let effect = match kind {
             INSERTED => Effect::Inserted { table, id },
             UPDATED => {
-                let old = row(&mut r)?;
+                let old = lobs.row(&mut r)?;
                 let columns = (0..usize_of(&mut r)?).map(|_| usize_of(&mut r)).collect::<Result<_>>()?;
                 Effect::Updated { table, id, old, columns }
             }
-            DELETED => Effect::Deleted { table, id, old: row(&mut r)? },
+            DELETED => Effect::Deleted { table, id, old: lobs.row(&mut r)? },
             _ => return Err(r.corrupt("no such effect")),
         };
         r.finish()?;
@@ -138,7 +137,7 @@ impl ListItem for Check {
 }
 
 impl Holdable for Check {
-    fn record(&self) -> Vec<u8> {
+    fn record(&self, lobs: &SpilledLobs) -> Vec<u8> {
         let mut out = Vec::new();
         match self {
             Check::Row { table, constraint, id } | Check::Unique { table, constraint, id } => {
@@ -156,7 +155,7 @@ impl Holdable for Check {
                 out.put_u8(REFERENCED);
                 put_name(&mut out, child);
                 put_name(&mut out, constraint);
-                put_row(&mut out, old);
+                lobs.put_row(&mut out, old);
                 out.put_u8(u8::from(id.is_some()));
                 out.put_u64(id.unwrap_or_default());
             }
@@ -171,17 +170,17 @@ impl Holdable for Check {
                 out.put_u64(*id);
                 out.put_u8(u8::from(before.is_some()));
                 if let Some(before) = before {
-                    put_row(&mut out, before);
+                    lobs.put_row(&mut out, before);
                 }
             }
         }
         out
     }
 
-    fn read(record: &[u8], types: &TypeRegistry) -> Result<Check> {
+    fn read(record: &[u8], types: &TypeRegistry, lobs: &SpilledLobs) -> Result<Check> {
         let mut r = Reader::new(record, "held check").with_types(types);
         let kind = r.u8()?;
-        let check = if kind == ASSERTION { Check::Assertion { constraint: name(&mut r)? } } else { of_table(kind, &mut r)? };
+        let check = if kind == ASSERTION { Check::Assertion { constraint: name(&mut r)? } } else { of_table(kind, &mut r, lobs)? };
         r.finish()?;
         Ok(check)
     }
@@ -189,19 +188,19 @@ impl Holdable for Check {
 
 /// The check of kind `kind`, of a table's constraint, read by `r` after
 /// its kind.
-fn of_table(kind: u8, r: &mut Reader<'_>) -> Result<Check> {
+fn of_table(kind: u8, r: &mut Reader<'_>, lobs: &SpilledLobs) -> Result<Check> {
     let (table, constraint) = (name(r)?, name(r)?);
     Ok(match kind {
         ROW => Check::Row { table, constraint, id: r.u64()? },
         UNIQUE => Check::Unique { table, constraint, id: r.u64()? },
         ASSERTED_ROW => {
             let id = r.u64()?;
-            let before = if r.u8()? == 1 { Some(row(r)?) } else { None };
+            let before = if r.u8()? == 1 { Some(lobs.row(r)?) } else { None };
             Check::AssertedRow { table, constraint, id, before }
         }
         TABLE => Check::Table { table, constraint },
         REFERENCED => {
-            let old = row(r)?;
+            let old = lobs.row(r)?;
             let (some, id): (u8, RowId) = (r.u8()?, r.u64()?);
             Check::Referenced { child: table, constraint, old, id: (some == 1).then_some(id) }
         }

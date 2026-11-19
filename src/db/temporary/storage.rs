@@ -26,7 +26,7 @@ use crate::index::{DISKANN_METHOD, DiskAnnMethod, HNSW_METHOD, HnswMethod, IVF_M
 use crate::log::Lsn;
 use crate::spill::{Area, WorkAreas};
 use crate::stats::Statistics;
-use crate::storage::{Condition, Conjunction, Newest, Row, RowId, Rows, StorageEngine, TableStorage};
+use crate::storage::{Condition, Conjunction, Newest, Region, Row, RowId, Rows, StorageEngine, TableStorage};
 use crate::sync::lock_builtin;
 use crate::txn::{Concurrency, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 
@@ -303,6 +303,9 @@ impl TableStorage for Rows_ {
     fn read_by_condition(&self, tx: TxId, condition: &Condition) -> Result<()> {
         self.made().map_or(Ok(()), |rows| rows.read_by_condition(tx, condition))
     }
+    fn read_by_region(&self, tx: TxId, region: &Region) -> Result<()> {
+        self.made().map_or(Ok(()), |rows| rows.read_by_region(tx, region))
+    }
     fn newest(&self, tx: TxId, id: RowId) -> Result<Newest> {
         self.made().map_or(Ok(Newest::of(None)), |rows| rows.newest(tx, id))
     }
@@ -555,6 +558,9 @@ impl Index for Entries {
     }
     fn estimate(&self, probe: &Probe) -> Option<usize> {
         self.made().map_or(Some(0), |entries| entries.estimate(probe))
+    }
+    fn read_region(&self, probe: &Probe) -> Option<Vec<crate::spatial::Bounds>> {
+        self.made().and_then(|entries| entries.read_region(probe))
     }
     fn distinct_keys(&self) -> Option<f64> {
         self.made().and_then(|entries| entries.distinct_keys())

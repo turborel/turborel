@@ -25,6 +25,10 @@ pub enum Purpose {
     /// admitted only where it can raise nothing and reads no time zone
     /// (`JsonCall::key_safe`), so it is deterministic there.
     Key,
+    /// \[EXTENSION\] A table XMLMAP of a schema or the catalog reads, the
+    /// views it reads and the routines they invoke (RULES.md D106): which
+    /// map no schema nor the catalog, as such a mapping could hold itself.
+    Mapped,
 }
 
 impl Purpose {
@@ -35,6 +39,12 @@ impl Purpose {
 
     /// The purpose of a view the query reads.
     pub(super) fn of_view(self) -> Purpose {
-        if self.constrains() { Purpose::UnderConstraint } else { Purpose::Query }
+        if self.constrains() {
+            Purpose::UnderConstraint
+        } else if self == Purpose::Mapped {
+            Purpose::Mapped
+        } else {
+            Purpose::Query
+        }
     }
 }

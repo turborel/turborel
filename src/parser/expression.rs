@@ -5,6 +5,7 @@
 
 mod tails;
 
+use super::xml::{CONTENT, DOCUMENT, VALID};
 use super::{Parser, furthest};
 use crate::ast::{Predicate, RowValue, SearchCondition, Subquery, ValueExpression, WhenOperand};
 use crate::catalog::MatchType;
@@ -12,6 +13,7 @@ use crate::error::Result;
 use crate::functions::{FLAG, JSON_EXISTS, LIKE_REGEX, MEMBER, SUBMULTISET};
 use crate::lexer::{Tok, delim, kw};
 use crate::value::CompOp;
+use crate::xml::Syntax;
 
 /// [ISO/IEC 9075-2:2023 §8.18] The A of IS \[NOT\] A SET, no key word of
 /// SQL-92.
@@ -130,23 +132,29 @@ impl Parser {
         self.row_value()
     }
 
-    /// Whether IS \[NOT\] NULL, IS \[NOT\] DISTINCT, IS \[NOT\] OF ( or IS
-    /// \[NOT\] A SET is next, IS \[NOT\] TRUE, FALSE or UNKNOWN being a `<boolean test>` of
-    /// a predicand [ISO/IEC 9075-2:2023 §6.46].
+    /// Whether IS \[NOT\] NULL, IS \[NOT\] DISTINCT, IS \[NOT\] OF ( , IS
+    /// \[NOT\] A SET, or IS \[NOT\] DOCUMENT, CONTENT or VALID [ISO/IEC
+    /// 9075-14:2006 draft §8.2, §8.3, §8.5] is next, IS \[NOT\] TRUE, FALSE or
+    /// UNKNOWN being a `<boolean test>` of a predicand [ISO/IEC 9075-2:2023
+    /// §6.46].
     fn at_is_predicate(&self) -> bool {
+        let named = |n: usize, word: &str| if let Tok::Identifier(w) = self.peek_at(n) { w == word } else { false };
         let word_at = |n: usize| {
-            matches!(self.peek_at(n), Tok::KeyWord(kw::NULL | kw::DISTINCT))
-                || (matches!(self.peek_at(n), Tok::KeyWord(kw::OF))
-                    && matches!(self.peek_at(n.saturating_add(1)), Tok::Delimiter(delim::LEFT_PAREN)))
-                || (matches!(self.peek_at(n), Tok::Identifier(a) if a == A_WORD)
-                    && matches!(self.peek_at(n.saturating_add(1)), Tok::KeyWord(kw::SET)))
+            let after = n.saturating_add(1);
+            let of = matches!(self.peek_at(n), Tok::KeyWord(kw::OF)) && matches!(self.peek_at(after), Tok::Delimiter(delim::LEFT_PAREN));
+            let a_set = named(n, A_WORD) && matches!(self.peek_at(after), Tok::KeyWord(kw::SET));
+            let xml = named(n, DOCUMENT) || named(n, CONTENT) || named(n, VALID);
+            matches!(self.peek_at(n), Tok::KeyWord(kw::NULL | kw::DISTINCT)) || of || a_set || xml
         };
         self.is_kw(kw::IS) && (word_at(1) || (matches!(self.peek_at(1), Tok::KeyWord(kw::NOT)) && word_at(2)))
     }
 
     /// The predicate after its first row value, `value`, at IS: a `<null
-    /// predicate>`, a `<set predicate>` [ISO/IEC 9075-2:2023 §8.18], or a
-    /// `<distinct predicate>` [§8.15].
+    /// predicate>`, a `<set predicate>` [ISO/IEC 9075-2:2023 §8.18], a
+    /// `<type predicate>` [§8.19], an `<XML document predicate>`, `<XML
+    /// content predicate>` or `<XML valid predicate>` [ISO/IEC 9075-14:2006
+    /// draft §8.2, §8.3, §8.5], or a
+    /// `<distinct predicate>` [ISO/IEC 9075-2:2023 §8.15].
     fn is_predicate(&mut self, value: RowValue) -> Result<Predicate> {
         self.expect_kw(kw::IS)?;
         let not = self.accept_kw(kw::NOT);
@@ -164,6 +172,22 @@ impl Parser {
         if self.accept_word(A_WORD) {
             self.expect_kw(kw::SET)?;
             return Ok(Predicate::Set { value, not });
+        }
+        // [ISO/IEC 9075-14:2006 draft §8.2, §8.3] <XML content predicate
+        // part 2> ::= IS [NOT] CONTENT, and <XML document predicate part 2>
+        // ::= IS [NOT] DOCUMENT.
+        if self.accept_word(DOCUMENT) {
+            return Ok(Predicate::Xml { value, syntax: Syntax::Document, not });
+        }
+        if self.accept_word(CONTENT) {
+            return Ok(Predicate::Xml { value, syntax: Syntax::Content, not });
+        }
+        // [ISO/IEC 9075-14:2006 draft §8.5] <XML valid predicate part 2>
+        // ::= IS [NOT] VALID <document or content or sequence> [<XML valid
+        // according to clause>].
+        if self.accept_word(VALID) {
+            let (dcs, according) = self.xml_valid_rest()?;
+            return Ok(Predicate::XmlValid { value, dcs, according, not });
         }
         // [ISO/IEC 9075-2:2023 §8.15] <distinct predicate part 2> ::= IS
         // [NOT] DISTINCT FROM <row value predicand 4>

@@ -157,9 +157,12 @@ pub struct MethodSpecDesc {
     pub access: DataAccess,
     /// RETURNS NULL ON NULL INPUT.
     pub null_call: bool,
-    /// Its timestamp of creation, as an order, as a routine's
-    /// (`SqlRoutineDesc::created`).
+    /// Its order of creation, as a routine's (`SqlRoutineDesc::created`).
     pub created: u64,
+    /// Its creation and last-altered timestamps [§4.9.7]: those of the
+    /// statement that specified it [§11.51 GR1g xv, xvi, GR1h xiv, xv;
+    /// §11.56 GR1o, GR1p].
+    pub stamps: super::Stamps,
 }
 
 /// [ISO/IEC 9075-2:2023 §4.10] A user-defined cast's descriptor.

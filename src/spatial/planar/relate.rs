@@ -24,6 +24,9 @@ const POINT: char = '0';
 const CURVE: char = '1';
 const SURFACE: char = '2';
 const ANY: char = '*';
+/// The cells, in row-major order, of interior and interior, interior and
+/// boundary, boundary and interior, and boundary and boundary.
+const MEETING: [usize; 4] = [0, 1, 3, 4];
 
 /// The DE-9IM of two geometries [§4.2.2.1 Table 5], the dimension of
 /// the intersection of each of the first's interior, boundary and
@@ -123,6 +126,15 @@ impl Pattern {
             return Err(invalid());
         }
         Ok(Pattern { cells })
+    }
+
+    /// Whether it holds only of geometries that share a point: a cell of
+    /// an interior or boundary of each, the first two of its first two
+    /// rows, asks for a nonempty intersection [§5.1.45 Table 13]. Cells
+    /// of an exterior never do, so another pattern may hold of disjoint
+    /// geometries, and of none that is empty, whose matrix is null.
+    pub fn meets(&self) -> bool {
+        MEETING.iter().any(|&at| self.cells.get(at).is_some_and(|cell| matches!(*cell, TRUE | POINT | CURVE | SURFACE)))
     }
 }
 

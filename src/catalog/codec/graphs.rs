@@ -16,7 +16,7 @@
 //!             references (likewise)
 //! ```
 
-use super::super::{ElementKind, ElementTableDesc, EndpointDesc, Endpoints, GraphDesc, GraphMode, LabelDesc, PropertyDesc};
+use super::super::{Connection, ElementKind, ElementTableDesc, EndpointDesc, Endpoints, GraphDesc, GraphMode, LabelDesc, PropertyDesc};
 use super::{flag, get_all, horizon, put_all, put_flag, put_horizon, put_name, put_usage, qualified, usage};
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -113,4 +113,22 @@ fn endpoint(r: &mut Reader<'_>) -> Result<EndpointDesc> {
 /// A string.
 fn text(r: &mut Reader<'_>) -> Result<String> {
     r.str()
+}
+
+/// \[EXTENSION\] A CONNECTION constraint (RULES.md D143): its tag 4, ON
+/// DELETE CASCADE, then its clauses' node tables.
+pub(super) fn put_connection(out: &mut Vec<u8>, k: &Connection) {
+    out.put_u8(4);
+    put_flag(out, k.cascade);
+    put_all(out, k.clauses.iter(), |out, (from, to)| {
+        put_name(out, from);
+        put_name(out, to);
+    });
+}
+
+/// \[EXTENSION\] A CONNECTION constraint after its tag, as
+/// `put_connection` writes it.
+pub(super) fn connection(r: &mut Reader<'_>) -> Result<Connection> {
+    let cascade = flag(r)?;
+    Ok(Connection { cascade, clauses: get_all(r, |r| Ok((qualified(r)?, qualified(r)?)))? })
 }

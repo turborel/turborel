@@ -5,6 +5,7 @@ mod areas;
 mod array_targets;
 mod bigint;
 mod bounded;
+mod check_rebind;
 mod collations;
 mod composite;
 mod contents;
@@ -30,8 +31,10 @@ mod graph_search;
 mod graph_syntax;
 mod graph_table;
 mod grouping_sets;
+mod guarded;
 mod hash;
 mod hypothetical;
+mod information;
 mod json;
 mod json_index;
 mod json_path;
@@ -63,16 +66,20 @@ mod rename;
 mod roles;
 mod routines;
 mod rtree;
+mod rtree_windows;
 mod savepoints;
 mod search_cycle;
 mod sequences;
 mod server;
 mod shadow;
+mod short_names;
+mod simple_features;
 mod spatial_curves;
 mod spatial_lr;
 mod spatial_mutators;
 mod spatial_network;
 mod spatial_planar;
+mod spatial_regions;
 mod spatial_routines;
 mod spatial_solids;
 mod spatial_srs;
@@ -81,6 +88,7 @@ mod spatial_topology;
 mod spatial_types;
 mod sql2023;
 mod sqlmm_fulltext;
+mod stamps;
 mod stats;
 mod structured;
 mod system_versioned;
@@ -103,42 +111,40 @@ mod window_nested;
 mod window_values;
 mod windows;
 mod with;
+mod xml;
+mod xml_composite;
+mod xml_index;
+mod xml_map;
+mod xml_publishing;
+mod xml_schema;
+mod xml_schema_catalog;
+mod xml_scoped;
+mod xquery;
+mod xquery_eval;
+mod xquery_functions;
+mod xquery_modules;
+mod xquery_statics;
 mod zones;
 
+pub use self::{vr::VR, waits::WAITS, zones::ZONES};
 use super::{Mutation, Package};
+pub use collations::COLLATIONS;
+pub use fill::FILL;
+pub use kept::KEPT;
+pub use readers::READERS;
+pub use reads::READS;
 pub use server::SERVER;
 pub use shadow::SHADOW;
-pub use {collations::COLLATIONS, fill::FILL, kept::KEPT, readers::READERS, reads::READS};
-pub use {stats::STATS, tailorings::TAILORINGS};
-pub use {vr::VR, waits::WAITS, zones::ZONES};
+pub use stats::STATS;
+pub use tailorings::TAILORINGS;
 
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {
     areas::core().into_iter().chain(areas::all()).chain(areas::late()).flatten().copied().collect()
 }
 
-/// The core's mutations: transactions, durability, constraints, assertions, the hash index. Rekeying's are in `rekey.rs`.
-pub const MUTATIONS: [Mutation; 43] = [
-    Mutation {
-        name: "hash-key-stream-owner",
-        package: Package::Core,
-        breaks: "a discarded hash index frees pages while its key-row stream reads them",
-        file: "src/index/hash.rs",
-        original: "let _rows_owner = &self;",
-        replacement: "let _rows_owner = ();",
-        integration: &[],
-        unit: &["index::hash::tests::streams_retain_discarded_indexes_until_they_close"],
-    },
-    Mutation {
-        name: "hash-search-stream-owner",
-        package: Package::Core,
-        breaks: "a discarded hash index frees pages while a search still reads them",
-        file: "src/index/hash.rs",
-        original: "let _entries_owner = &self;",
-        replacement: "let _entries_owner = ();",
-        integration: &["indexes::indexes_are_dropped"],
-        unit: &["index::hash::tests::streams_retain_discarded_indexes_until_they_close"],
-    },
+/// The core's mutations: transactions, durability, constraints, assertions. Rekeying's are in `rekey.rs`, the hash index's in `hash.rs`.
+pub const MUTATIONS: [Mutation; 41] = [
     Mutation {
         name: "mvcc-snapshot",
         package: Package::Core,

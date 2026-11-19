@@ -10,7 +10,7 @@ CREATE ASSERTION: define an assertion
 
 ```
 <assertion definition> ::=
-    CREATE ASSERTION <constraint name> CHECK ( <search condition> )
+    CREATE ASSERTION <constraint name> CHECK ( [ WITH <XML lexically scoped options> ] <search condition> )
     [ <constraint attributes> ]
 ```
 
@@ -23,6 +23,9 @@ one table, which holds while its condition is not false. It is checked
 as it is made, and so made only if it holds; then at the end of each
 statement that changes a table it reads, or, if it is deferred, at
 commit.
+
+Its XML options, XMLNAMESPACES and XMLBINARY, are in scope of its
+condition, and kept with its text: see [XML Values](../19-xml.md#xml-options-of-a-scope).
 
 CREATE ASSERTION runs within the session's transaction: ROLLBACK undoes
 it.
@@ -79,7 +82,8 @@ turborel: SQLCODE -913 (SQLSTATE 40002): the transaction is rolled back: asserti
 
 ## STANDARD
 
-ISO/IEC 9075:1992 §11.34. After a statement that changes a table it
+ISO/IEC 9075:1992 §11.34; its XML options are ISO/IEC 9075-14:2006
+draft §12.4, Features X083 and X133. After a statement that changes a table it
 reads, an assertion whose every conjunct has one of these forms is
 checked from the rows the statement changed, the others whole.
 `NOT EXISTS (SELECT ... FROM T WHERE p)` is checked from the rows the

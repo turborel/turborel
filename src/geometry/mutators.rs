@@ -40,6 +40,7 @@ pub use either::{Either, WithoutSelf};
 use parameters::Attribute;
 use points::Axis;
 pub use properties::Property;
+pub(crate) use properties::envelope;
 
 /// ST_MaxUnitNameLength [§5.1.30 DR 1].
 const UNIT_NAME_LENGTH: u32 = 128;

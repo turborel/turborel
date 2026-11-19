@@ -6,6 +6,8 @@
 //! `Expr::Outer`, and the subquery keeps the expression over the enclosing
 //! query's rows (or groups) that fills it (`logical/subquery.rs`).
 
+mod union;
+
 use std::cell::RefCell;
 use std::sync::Arc;
 

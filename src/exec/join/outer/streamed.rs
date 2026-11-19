@@ -122,7 +122,7 @@ impl Streamed {
     fn step(&mut self) -> Result<()> {
         let Some(pair) = &mut self.current else { return Ok(()) };
         if let Some(record) = pair.left.next() {
-            let (_, l) = unnumbered(&record?, self.work.types())?;
+            let (_, l) = unnumbered(&record?, self.work.types(), self.work.lobs())?;
             let was = match pair.before.as_mut().and_then(Iterator::next).transpose()? {
                 Some(flag) => flag.first() == Some(&MATCHED),
                 None => false,
@@ -156,7 +156,7 @@ impl Streamed {
     fn last(&mut self) -> Result<()> {
         for records in self.last.take().unwrap_or_default() {
             for record in records {
-                self.ready.push_back(unnumbered(&record?, self.work.types())?.1);
+                self.ready.push_back(unnumbered(&record?, self.work.types(), self.work.lobs())?.1);
             }
         }
         Ok(())

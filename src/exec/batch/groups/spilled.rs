@@ -87,7 +87,7 @@ impl Overflow {
             let Some(&(part, ..)) = rows.first() else { continue };
             // The pieces queued of its partition before its rows.
             self.written(part, queued, work)?;
-            put_batch(batch, rows, &mut out);
+            put_batch(batch, rows, &mut out, work.lobs());
             self.push(part, &out, work)?;
         }
         pending.clear();
@@ -136,7 +136,8 @@ impl Overflow {
     /// The spill area's; SQLCODE -910 if a set function of it writes no
     /// state, as a grouping makes groups partly only if each does.
     pub(super) fn write_group(&mut self, (key, group): (&[u8], &Held), queued: &mut Queued, work: &mut Work) -> Result<()> {
-        if !self.queue(key, |out| put_group(group, out), (queued, work))? {
+        let lobs = work.lobs().clone();
+        if !self.queue(key, |out| put_group(group, out, &lobs), (queued, work))? {
             return Err(SqlError::new(Code::Api, "[DESIGN] a group partly made of a set function of no state"));
         }
         Ok(())
@@ -149,10 +150,11 @@ impl Overflow {
     ///
     /// The spill area's.
     pub(super) fn write_piece(&mut self, key: &[u8], made: &Piece, queued: &mut Queued, work: &mut Work) -> Result<()> {
+        let lobs = work.lobs().clone();
         self.queue(
             key,
             |out| {
-                put_piece(made, out);
+                put_piece(made, out, &lobs);
                 true
             },
             (queued, work),
@@ -201,9 +203,9 @@ fn regrouped(partition: Records, (depth, sources): (usize, &mut Vec<Records>), h
     while let Some(records) = next.take() {
         let to = if depth < work.depth() { Overflow::Partitions(None) } else { Overflow::Run(None) };
         let mut groups = Groups::new(work.limit(), to, going.partial);
-        let types = work.types().clone();
+        let (types, lobs) = (work.types().clone(), work.lobs().clone());
         for record in records {
-            match record_of(&record?, &types)? {
+            match record_of(&record?, &types, &lobs)? {
                 Record::Rows(batch, numbers) => groups.feed((&batch, None), Numbers::Given(&numbers), going, work)?,
                 Record::Pieces(pieces) => pieces.iter().try_for_each(|piece| groups.absorb(piece, going, work))?,
             }
@@ -228,7 +230,7 @@ fn regrouped(partition: Records, (depth, sources): (usize, &mut Vec<Records>), h
 fn written(held: Finished, work: &mut Work) -> Result<Records> {
     let mut run = work.run()?;
     for (n, row) in held {
-        run.push(&numbered(n, &row))?;
+        run.push(&numbered(n, &row, work.lobs()))?;
     }
     run.into_records()
 }

@@ -3,7 +3,7 @@
 //! taken back or freed as recovery from that checkpoint ends, and the
 //! objects of large objects, kept as the log has them.
 
-use super::Definitions;
+use super::{Definitions, Replaying};
 use crate::catalog::QualifiedName;
 use crate::db::Database;
 use crate::error::Result;
@@ -11,9 +11,21 @@ use crate::index::Key;
 use crate::log::Lsn;
 use crate::log::record::Change;
 use crate::storage::RowId;
-use crate::txn::Persistence;
+use crate::txn::{Persistence, TxId};
 
 impl Database {
+    /// Replays `kept`, logged at `lsn` by `tx`, now; but an object of a
+    /// large object of a transaction whose definitions wait for its commit
+    /// at that commit, after them, as its table may be one they make
+    /// (RULES.md D33, D79).
+    pub(super) fn kept_at(&self, (lsn, tx): (Lsn, TxId), kept: Change, replaying: &mut Replaying) -> Result<()> {
+        if matches!(kept, Change::LobPut { .. }) && replaying.pending.contains_key(&tx) {
+            replaying.lobs.entry(tx).or_default().push((lsn, kept));
+            return Ok(());
+        }
+        self.replay_kept(lsn, kept, &replaying.definitions)
+    }
+
     /// Replays `change`, logged at `lsn`: a stale index entry or large
     /// object, only of the checkpoint reopened from, as `definitions` says,
     /// since one before it, or one not recorded, saw garbage its tables

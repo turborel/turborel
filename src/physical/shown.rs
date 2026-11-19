@@ -71,11 +71,15 @@ impl Plan {
             let (operator, method) = method
                 .split_once(' ')
                 .filter(|(m, _)| *m == crate::index::ADJACENCY_METHOD)
-                .map_or(("IndexNestedLoop", method.as_str()), |(m, expand)| (expand, m));
+                .map_or(("IndexNestedLoop", &**method), |(m, expand)| (expand, m));
             writeln!(
                 out,
                 "{pad}{}{operator} {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})",
-                if *outer { "LeftOuter" } else { "" }
+                match outer {
+                    super::Preserved::Inner => "",
+                    super::Preserved::Outer => "LeftOuter",
+                    super::Preserved::Both(_) => "FullOuter",
+                }
             )
         }
     }

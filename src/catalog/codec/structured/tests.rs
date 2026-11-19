@@ -3,8 +3,9 @@
 //! written, and a byte of no kind is refused as corrupt.
 
 use super::*;
-use crate::catalog::{ParameterMode, SqlParameter, UsageDesc};
+use crate::catalog::{ParameterMode, SqlParameter, Stamps, UsageDesc};
 use crate::error::Code;
+use crate::value::datetime::Now;
 use crate::value::{DataType, Spelled};
 
 /// A name in schema A.
@@ -27,7 +28,7 @@ fn grants() -> Vec<UsageDesc> {
 
 /// A routine a definition makes, named `n`.
 fn routine(n: &str) -> RoutineDesc {
-    RoutineDesc { name: n.into(), specific: format!("{n}_1"), execute: grants() }
+    RoutineDesc { name: n.into(), specific: format!("{n}_1"), execute: grants(), stamps: Stamps::at(Now { utc: i64::MIN, zone: 840 }) }
 }
 
 /// A method specification of `kind` and `access`, overriding one if
@@ -45,6 +46,7 @@ fn method_spec(kind: MethodKind, access: DataAccess, overrides: bool) -> MethodS
         access,
         null_call: overrides,
         created: 9,
+        stamps: Stamps { created: Now { utc: 1, zone: 60 }, last_altered: Now { utc: i64::MAX, zone: -60 } },
     }
 }
 

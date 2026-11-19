@@ -22,7 +22,7 @@ pub(crate) mod estimate;
 mod expression_index;
 mod indexed;
 mod join_probe;
-pub use join_probe::{JoinComparison, JoinProbe};
+pub use join_probe::{Fields, JoinComparison, JoinProbe, Preserved, Supplied, Unmatched};
 mod join;
 pub use join::JoinKey;
 mod kept;
@@ -50,7 +50,7 @@ use crate::exec::{TransitionRows, WorkRows};
 use crate::index::Probe;
 use crate::logical::{
     AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, Most, OuterJoin, Polymorphic, Recognize, SetOp, SortKey, Unnest, Window,
-    column_name, judged_by_sets, render_cond, render_expr, render_keys, split_and,
+    column_name, judged_by_sets, render_cond, render_expr, render_keys,
 };
 use crate::storage::Row;
 use crate::system::SystemRead;
@@ -163,8 +163,8 @@ pub enum Plan {
     /// order of `left`, each row's matches in the index's (`exec/join/indexed.rs`),
     /// unless `spatial` permits an unordered scan alternative.
     IndexJoin {
-        /// A LEFT outer join.
-        outer: bool,
+        /// The rows matching none it keeps, of a LEFT or FULL outer join.
+        outer: Preserved,
         /// An unordered fixed-SRID inner join may buffer a bounded outer
         /// input and scan the table once when that costs less than probes.
         /// Otherwise it continues the ordinary index nested-loop path.
@@ -176,9 +176,9 @@ pub enum Plan {
         /// The table read.
         table: QualifiedName,
         /// The index probed.
-        index: String,
+        index: Box<str>,
         /// The index's method, for EXPLAIN.
-        method: String,
+        method: Box<str>,
         /// How each outer row supplies the index search bounds.
         probe: JoinProbe,
         /// The rest of the condition, over the pair's columns: the table's
@@ -191,7 +191,7 @@ pub enum Plan {
         /// is read of (`TableStorage::get_columns`).
         columns: Vec<usize>,
         /// The condition, as text.
-        detail: String,
+        detail: Box<str>,
         /// The rows each probe is estimated to find.
         est: f64,
         /// The planner's cost estimate of all its probes.
@@ -538,14 +538,13 @@ impl<'a> PhysicalPlanner<'a> {
         Self::combined(*op, (*all, *compared), l, r)
     }
 
-    /// A filter directly on a table becomes part of the access path; any
+    /// A filter directly on a table, or over a table's read and a guard
+    /// (`physical/access/guarded.rs`), becomes part of the access path; any
     /// other keeps the order of its input, its long IN lists judged by
     /// sets (`logical::judged_by_sets`).
     fn filter(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey]) -> Built {
-        if let LogicalPlan::Scan { table, names, needed, located } = input {
-            let mut conds = Vec::new();
-            split_and(cond.clone(), &mut conds);
-            return self.access(TableRead { table, shown: self.showing(names), needed, located: *located }, conds, want);
+        if let Some(read) = self.filtered_read(cond, input, want) {
+            return read;
         }
         if let Some(join) = self.hash_join(cond, input, want) {
             return join;

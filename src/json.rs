@@ -47,7 +47,8 @@ mod table;
 mod text;
 
 pub use construct::{
-    ArrayOptions, Input, JsonObjectAgg, MAX_ELEMENTS, NameAndValue, ObjectOptions, OnNull, json_array, json_array_by_query, json_object,
+    ArrayOptions, Input, JsonObjectAgg, MAX_ELEMENTS, MAX_MEMBERS, NameAndValue, ObjectOptions, OnNull, json_array, json_array_by_query,
+    json_object,
 };
 pub use item::{Item, Member, Scalar};
 pub use parse_fn::{JSON_PARSE, JsonParse};

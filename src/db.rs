@@ -27,6 +27,7 @@
 //! | `ServedConnections` | none: no connection served | END and CANCEL CONNECTION (RULES.md D42) |
 //! | `SqlType`           | SQL's standard types  | data types (RULES.md D53)        |
 //! | `Collation`         | UCS_BASIC, UNICODE and others | comparison of strings (RULES.md D60) |
+//! | `XQueryFunction`    | the core of fn:       | XQuery's function calls (RULES.md D106) |
 //! | `Log`               | file log, memory log  | commit and recovery (RULES.md D25) |
 //! | `LogStorage`, `CatalogStorage` | files in the directory | opening a database (RULES.md D25) |
 //! | `SystemTable`       | the Information Schema's | system tables (RULES.md D37)  |
@@ -114,7 +115,7 @@ mod revoke;
 mod roles;
 mod routines;
 mod running;
-mod savepoints;
+pub(crate) mod savepoints;
 mod schema;
 mod scroll;
 mod sealing;
@@ -144,19 +145,18 @@ mod vectors;
 mod views;
 pub(crate) mod write;
 
+use assignment::{candidate, check_option, set_columns};
+pub use catalog_file::{COMPACT_AFTER, CatalogFiles};
 use compiled::{plan, plan_slotted};
 pub use lobs::LOB_READ_OCTETS;
 pub use prepared::Prepared;
-pub use served::ServedConnections;
-pub use state::State;
-pub use stream::{Cursor, Direct};
-pub use users::Credentials;
-
-use assignment::{candidate, check_option, set_columns};
-pub use catalog_file::{COMPACT_AFTER, CatalogFiles};
 pub use rekey::FormatsBehind;
 use scroll::{Kept, Updatable};
+pub use served::ServedConnections;
+pub use state::State;
 use stream::Stream;
+pub use stream::{Cursor, Direct};
+pub use users::Credentials;
 
 /// \[DESIGN\] The default of STORAGE.REKEY_BYTES_PER_SECOND: 8 MiB a second,
 /// a pace a disk bears beside the database's own work (RULES.md D48).

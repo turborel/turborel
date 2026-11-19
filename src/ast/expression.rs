@@ -260,6 +260,30 @@ pub enum Predicate {
         /// IS NOT OF was written.
         not: bool,
     },
+    /// [ISO/IEC 9075-14:2006 draft §8.2, §8.3] `<XML content predicate>`
+    /// ::= `<row value predicand>` IS \[NOT\] CONTENT, and `<XML document
+    /// predicate>` ::= `<row value predicand>` IS \[NOT\] DOCUMENT.
+    Xml {
+        /// The XML value tested, XVE: a row of one value \[SR1\].
+        value: RowValue,
+        /// DOCUMENT or CONTENT.
+        syntax: crate::xml::Syntax,
+        /// IS NOT was written \[SR2\].
+        not: bool,
+    },
+    /// [ISO/IEC 9075-14:2006 draft §8.5] `<XML valid predicate>` ::= `<row
+    /// value predicand>` IS \[NOT\] VALID `<document or content or
+    /// sequence>` \[`<XML valid according to clause>`\].
+    XmlValid {
+        /// The XML value tested, XVE: a row of one value \[SR1\].
+        value: RowValue,
+        /// DOCUMENT, CONTENT or SEQUENCE, DCS \[SR2\].
+        dcs: super::Dcs,
+        /// The `<XML valid according to clause>`, if written.
+        according: Option<Box<super::XmlValidAccording>>,
+        /// IS NOT was written \[SR3\].
+        not: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -316,11 +340,18 @@ pub enum ValueExpression {
         target: TypeName,
         /// The `<cast template>`'s string, if written [Feature T839].
         format: Option<String>,
+        /// [ISO/IEC 9075-14:2006 draft §6.5] The `<XML passing
+        /// mechanism>`, if written.
+        passing: Option<super::Passing>,
         /// Where it begins in the statement.
         at: usize,
     },
     /// [ISO/IEC 9075:1992 §7.11] A `<scalar subquery>`.
     Subquery(Box<Subquery>),
+    /// [ISO/IEC 9075-14:2006 draft §6.6, §6.8, §6.13, §6.16] An SQL/XML
+    /// operator, XMLCAST, XMLDOCUMENT, XMLPARSE or XMLSERIALIZE, and where
+    /// it begins.
+    Xml(Box<super::XmlOperator>, usize),
     /// [ISO/IEC 9075:1992 §6.6, §6.7, §6.13] A string function, or
     /// concatenation, read with its own syntax: the function registered
     /// under `name`, called with its operands in order.

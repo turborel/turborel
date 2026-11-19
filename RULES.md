@@ -143,6 +143,7 @@ verification approach DO-178C expects (§8).
 | D103 | What waits for an embedding is found in the rows, filled after commit |
 | D104 | A scalar function may take a batch's rows at once |
 | D105 | Bracketed comments are separators, and a leading `/*+` one carries hints |
+| D106 | XML values are trees of the data model, read by a parser of our own |
 | D119 | One frozen geometry model of every SQL/MM Spatial type, stored as canonical well-known binary |
 | D120 | The geometry types are a built-in type family, with subtyping, TREAT, IS OF, CAST and an ordering of EQUALS ONLY BY RELATIVE |
 | D121 | The SQL/MM Spatial Information Schema is standard views over system tables of seeded and defined rows |
@@ -157,6 +158,10 @@ verification approach DO-178C expects (§8).
 | D130 | Shortest paths are table functions over a named table, every tied path listed within bounds |
 | D131 | Linear referencing types are built-in kinds, their routines one dispatcher per name over the §21 catalog |
 | D132 | Class 2FF is shared by the SQL/MM parts, each routine raising its own part's conditions |
+| D133 | A registered function's own word decides whether it is deterministic, and constraints call only deterministic ones |
+| D134 | A spatial read records the envelopes it read, merged into their hull past a bound |
+| D135 | Geometry windows serve relate, distance and outer joins, reading every entry where a scan would raise |
+| D136 | Simple feature access is views over the SQL/MM catalog and routines named without ST_ |
 | D140 | A property graph is a view-like schema object over tables, ENFORCED or TRUSTED |
 | D141 | A graph's edges are followed through an adjacency index, every entry rechecked |
 | D142 | GRAPH_TABLE is a lateral collection derived table searched by PathSearch |
@@ -339,7 +344,12 @@ implementation-dependent (Annex C item 5).
 The same holds for ON, which applies to every row of the operands' product
 [ISO/IEC 9075:1992 §7.5 GR1c]. Raising conjuncts over products and outer
 joins move onto their operand over a guard (`optimizer/raising.rs`,
-`optimizer/outer.rs`). SUM and AVG judge only their final result, never a
+`optimizer/outer.rs`). The planner reads an operand's table below its
+guard (`physical/access/guarded.rs`): its conjuncts choose an index of
+any method as the table's own filter's would, which leaves out only rows
+of which no conjunct is true or raises, and stay over the product of the
+index's rows and the guard, so each is evaluated on the rows the index
+gives while the guard has a row, and on none while it has none. SUM and AVG judge only their final result, never a
 running sum, so row order can't decide an overflow [ISO/IEC 9075:1992 §6.5
 GR2b iv] (`functions/sum.rs`).
 
@@ -428,6 +438,9 @@ A collation also gives a string's weights one level at a time
 or reordering spans the cut (`safe_cut`). Equality of character large
 objects under a collation compares them so, a chunk at a time, never
 making a sort key of a whole value (`value/collation/streaming.rs`, D79).
+A collation splits a string into collation units too (`units`), each
+weighed at each level as the whole string weighs it, for XQuery's
+substring matching (D106).
 
 UNICODE_<LOCALE> [EXTENSION] is UNICODE tailored by CLDR 38's rules, one for
 each collation type of each locale but those for search. UNICODE_SV puts `å`,
@@ -484,6 +497,17 @@ or a parameter is compiled again each time it changes, which is Feature F847.
 So the binder makes each call its own function, keeping its last pattern, and
 none is registered. TRANSLATE_REGEX replaces as fn:replace does, matching the
 pattern again within each match [§9.29 GR9a].
+
+XQuery 1.0's fn:matches, fn:replace and fn:tokenize read a pattern in the
+dialect of XQuery 1.0 Functions and Operators §7.6.1 (`Regex::xquery`):
+a newline is a line feed alone, `\s` is XML Schema's, and there is no
+`(?:` and no flag `q`.
+
+The pattern facet of XML Schema reads its patterns by the same parser
+(`Regex::schema`), in the dialect of XML Schema Part 2 Appendix F: a
+pattern matches a whole string, `^` and `$` are normal characters, `.` and
+`\s` are as XML Schema defines them, and there are no flags, reluctant
+quantifiers, groups that capture nothing or back-references.
 
 #### D62. A sequence generator's place is logged apart from transactions
 
@@ -1087,9 +1111,20 @@ a retry's leavings. DROP TABLE frees the space whole.
 Each object is logged as it is made, one `LobPut` record of at most a
 chunk, before the row change that names it. Recovery keeps every object
 it reads and at its end frees those that no row's newest version names,
-which covers transactions that never committed. A checkpoint logs the
+which covers transactions that never committed. The objects of a
+transaction whose definitions wait for its commit are made after them,
+as their table may be one it made (D33). A checkpoint logs the
 objects awaiting collection as `LobStale`, and recovery from it frees
-them. The column store refuses a large object column.
+them. The column store refuses a large object column, and a column of a
+type holding one. A column of a distinct type keeps its large objects as
+its source type's would (D69).
+
+A table keeps objects for its own columns alone, so an object inside an
+array, a multiset, a row or a structured value would name another
+table's, or none once its row was gone. Each one is held whole in its
+value before the row is written and logged (`value/nested.rs`), up to a
+chunk, as what must be held whole is, and refused past one. A record and
+its log record then hold it, so recovery and a standby need nothing more.
 
 A value a function makes, as UPPER, TRIM, OVERLAY and TRANSLATE_REGEX
 make one, is written a chunk at a time to the database's temporary
@@ -1098,6 +1133,24 @@ store, a scratch file whose pages a value frees as it is dropped
 statement's snapshot is held. That is the transaction at REPEATABLE READ
 and SERIALIZABLE, and the statement at READ COMMITTED, unless a locator
 of it holds the snapshot to the transaction's end.
+
+A row an operator or a statement holds past its work area (D38) names
+its large objects, and XML values kept apart, by what keeps them. The
+log's form names a table's object by its id alone, which only the table
+of the row holding it resolves, so a spilled record names a slice of a
+table's object by the table and the id, and a temporary object by itself
+(`spill/named.rs`). The spill holds one source of each table its records
+name, which makes a source of any other object of that table, and each
+temporary object they name. So a value read back is valid as the value
+held in memory was: a table's while the statement's snapshot is held, as
+no object a snapshot reads is freed, and a temporary one while the spill
+is. Copying each value to the spill area would write again every object
+a spilled row names, and holding it whole, as a value inside another is
+held, would refuse one past a chunk. A spill holds a source a table and
+one a temporary object of a chunk or more, never one a row. A set
+function's state is no row, so ANY_VALUE and a group-invariant column of
+a type that may hold such a value write no state, and their grouping
+writes its rows.
 
 A locator is a session's four-octet handle of a value [§4.37.5], valid
 until its transaction ends (`db/lobs.rs`). FREE LOCATOR ends one early
@@ -1557,6 +1610,14 @@ session's calls change under it. The five set functions alone can be replaced by
 aggregate of their name. Set functions may write and merge their state
 (`Accumulator::write_state`, `merge`), and a grouping uses that only if
 all of its functions can (D31, D38).
+
+A scalar function's call gives a value or an error, never a warning, so
+no call pays for asking for one. A completion condition a call raises
+each time it runs is one its binding knows of, and the binder binds the
+call as `Expr::Warned`, which raises the warning after each evaluation
+[ISO/IEC 9075:1992 §3.3.4.1]. The optimizer folds no such expression
+away, as it folds only what raises no warning. XMLMAP of a column it
+cannot map is one (D106).
 
 #### D54. Datetimes kept in UTC, shown in the session's zone, read from a clock
 
@@ -2063,6 +2124,9 @@ pool. `btree` is a B-link tree, ordered, for equality and ranges. `hash` is
 a linear hash table (Litwin, 1980), for equality only, and its readers lock
 nothing. `rtree` indexes two point coordinates or four rectangle coordinates
 (D72), or one fixed-SRID geometry through envelope projections (D85).
+`xml_path`, `xml_value`, `xml_property` and `xml_primary` index one XML
+column's paths and values for XQuery's lookups (D106); no comparison
+probes them.
 A method can support independent comparisons on several key columns
 without an equality prefix (`IndexMethod::supports_columns`).
 
@@ -2132,7 +2196,8 @@ Storage cannot infer which rows an arbitrary function selects. It treats
 every key and range as a possible match without calling the function.
 The executor records a read of the whole table, including nulls, so
 conflict checks detect rows inserted or changed by another transaction.
-Methods protect their own state when sessions call them concurrently and
+An index that names the envelopes its search reads records them instead
+(D134). Methods protect their own state when sessions call them concurrently and
 never call back into a database or session. Scalar functions run without
 a storage lock held (D27, D42, R-ERR-4).
 
@@ -2244,8 +2309,26 @@ System tables are plug-ins whose rows are made from the definitions as a
 statement runs. The Information Schema is the standard's own view
 definitions [ISO/IEC 9075:1992 §21.2] over Definition Schema tables only
 those views may read [§21.3]. That gives the standard's answers with no
-second description of the catalog to keep in step. SELECT on them is
-PUBLIC's and nothing else is granted.
+second description of the catalog to keep in step. Each view has the
+columns ISO/IEC 9075-11:2006 draft Clause 5 gives it, and the views of
+usage are there too, their Definition Schema tables made from what each
+definition keeps for RESTRICT, or binding it again where it keeps
+nothing, as VIEW_COLUMN_USAGE binds a view; a column needing what the
+catalog does not keep is not defined until the catalog keeps it. The
+descriptors of routines, method specifications and modules keep their
+creation and last-altered timestamps, and triggers their creation's
+(Feature T011): the CURRENT_TIMESTAMP of the statement that made them,
+which the definition's log record carries, so recovery and a standby's
+replay give them unchanged, reading no clock. A registered XQuery
+module (D106) keeps both too, ALTER XQUERY MODULE moving the
+last-altered one. The short name views [§5.77] are the standard's
+definitions too, each over its view, so they show what it shows. SELECT
+on them is PUBLIC's and nothing else is granted. SQL_FEATURES and
+SQL_PARTS read rows `cargo xtask features` writes from the standards'
+feature taxonomies and CONFORMANCE.md's table of the features claimed,
+which `verify` checks the rows against, so the views cannot drift from
+the claims; SQL_SIZING's values are read from the constants that keep
+each limit.
 
 #### D38. The memory budget, and spilling
 
@@ -2265,7 +2348,8 @@ spills to a temporary pager file whose buffer pool is its area. Areas come
 from the `Spill` extension point. A spill file's creation isn't made
 durable, because nothing reads it after a crash. Spill files live in `tmp/`
 of a database's directory, cleared at open, and pass through encodings
-while the database encrypts anything (D48).
+while the database encrypts anything (D48). A spilled row's large objects
+and XML values are named by what keeps them, not copied (D79).
 
 Spilling keeps the orders the planner relies on. A sort is a stable external
 merge (`exec/sort/`). A hash join is partitioned (Grace), and grouping,
@@ -2753,7 +2837,7 @@ hide the runtime error. NULL and matching-SRID EMPTY queries return none.
 An empty stored geometry projects to an origin rectangle, adding candidates
 but no false negatives. NULL keys are omitted. Readers compare the visible
 version's projection with the entry before evaluating the full condition.
-Spatial reads currently record a whole-table serializable read (D34).
+A spatial read records the envelope it read, not the whole table (D134).
 Geometry window probes group at most 4096 envelope/row-id pairs before
 fetching rows. Blocks of at least 1024 pairs are sorted by row id to reuse
 nearby row-store pages; smaller results keep their traversal order. The
@@ -2785,9 +2869,10 @@ index for each outer row. Both columns must enforce the same SRID, all
 other conjuncts and the indexed table's filter must be non-raising, and
 the complete ON condition rechecks each visible pair. Planning considers
 both table orders and column projections. A NULL outer geometry makes no
-probe; an empty geometry finds no pair. Spatial probes retain the same
-whole-table serializable read as filters. This is not a simultaneous
-traversal of two indexes. Geometry outer joins do not yet use this path.
+probe; an empty geometry finds no pair. Each probe records its outer
+row's envelope as a serializable read region (D134). This is not a
+simultaneous traversal of two indexes. D135 extends this
+path to outer joins, relate patterns and distance limits.
 
 For an unordered spatial inner join, the executor can choose a single
 table scan instead of repeated probes (`exec/join/indexed/adaptive.rs`).
@@ -3820,6 +3905,1115 @@ read by `lexer::hinted`. VECTOR_WAIT_FRESH is the one hint read there
 statement. The approximate search's hints are written after the fetch
 clause instead (D94), where the parser reads them as syntax.
 
+#### D106. XML values are trees of the data model, read by a parser of our own
+
+SQL/XML (ISO/IEC 9075-14) makes an XML value an XQuery sequence. Its
+nodes come from parsing text (§10.16) or from constructors. `xml::parse`
+reads XML 1.0 Third Edition and XML 1.1, as Namespaces in XML 1.0 and 1.1
+modify them. It is written here, as D3 requires.
+
+The parser does not validate. It reads the internal DTD subset, expands
+its entities and applies its attribute defaults. It reads no external
+subset and no external entity, so no parse opens a file or a URL. A
+reference that would need such an entity, or a declaration not read, is a
+data exception, since the data model has every entity expanded. Binary
+strings are decoded from UTF-8, UTF-16, UTF-16BE, UTF-16LE, ISO-8859-1 or
+US-ASCII; any other encoding is refused.
+
+A tree (`xml::Tree`) holds its nodes in document order, an element's
+attributes right after it. Each node links to its parent, first child and
+next sibling, so a node's index is its place in document order. Element
+and attribute names are kept once per tree and nodes refer to them by
+number, the tokenization Pal et al. describe. All text is in one buffer.
+Namespace declarations are kept on the element that makes them, as the
+data model allows.
+
+Nothing recurses. Entities are read on a stack of texts, elements on a
+stack of open elements, content models on a stack of groups. These bounds
+keep each finite, and a value past one is SQLCODE -900 (D18):
+
+- `MAX_NESTING`, 512: how deep elements, and content-model groups, nest.
+- `MAX_TEXT`, 16 MiB: a tree's text, and what entities' replacement texts
+  add to a parse, so nested entities cannot expand without end.
+- `MAX_NODES`, 1,048,576: a tree's nodes and namespace bindings, as a text
+  of little but markup makes many nodes of little text.
+- `MAX_INPUT`, 64 MiB: the text XMLPARSE reads, a large object's whole.
+- `MAX_STORED`, 64 MiB: a value's stored form, read whole when its nodes
+  are needed.
+
+An XML value is a sequence (`xml::Sequence`) of items, each a node or an
+atomic value. A node is its tree, shared, and its place in it, so the
+nodes one tree gives many values keep their identity; storing a value
+copies it. An atomic value is its type and the string casting it to
+`xs:string` gives, one string for each value, and of a qualified name
+its namespace URI, its prefix in the string, and of a value of a
+user-defined atomic type that type's name (below). Its type is a built-in
+atomic type of XML Schema Part 2, primitive or derived, or one of the
+three XQuery adds, `xdt:untypedAtomic` and the two durations; a table of
+the 44 holds each one's name, base type, the primitive type a cast
+treats it as, and the bounds or name production it fixes. A value is read
+from its string when compared: a decimal as its digits, of any number, a
+float or double, a duration as months and microseconds, a date or time as
+its local value and time zone. Equality and the orders are XML Schema's,
+the partial orders of durations and of dates and times giving no order
+where it is indeterminate. `xml::cast` casts among the types as XQuery
+does, checking the facets a derived type fixes, years kept to 0001-9999
+and seconds to the microsecond, as SQL's are, decimals of any digits. A
+type added to the stored form takes a tag after those it had, so a value
+stored before reads as it did. `xml::serialize` writes
+a value by the XML output method of XSLT 2.0 and XQuery 1.0 Serialization,
+after its sequence normalization. It writes no CDATA section, document
+type declaration or indentation, and writes as character references what a
+parse would otherwise change. XMLSERIALIZE is how a query's result is
+serialized, XQuery's Serialization Feature, so it serializes with the
+parameters' defaults [XQuery Appendix C.3]: it undeclares no prefix, of
+XML 1.1 too, though a value sent over a connection in XML 1.1 does, so a
+client reads back its tree.
+
+A simple type (`xml::SimpleType`) is a built-in type, a list, a union, or
+a restriction of one, holding its facets merged with its base's as it is
+made, so a validation never walks its derivation. Each pattern is
+compiled once, as `regex` reads XML Schema's (D61). Validating a literal
+normalizes its white space, matches each derivation step's patterns,
+reads its value, then checks each other facet; a literal or value not
+valid is err:FORG0001, as a cast reports it. Lists and unions nest at
+most `MAX_TYPE_NESTING`, 32, deep (D18). XMLCAST of an XML value to an
+SQL type casts as the restricted type §9.5 maps the SQL type to, made
+once as the statement is bound.
+
+A value's stored form (`xml::encode`, version 1) is binary and read in one
+pass, in document order, as Pal et al. store XML. Each node item has a
+table of its names, each once, and of its type annotations, each once,
+then its nodes as events: document, element (with its annotation, its
+nilled, is-id and is-idrefs properties, its bindings and attributes),
+end, text, comment and processing instruction; each atomic item its
+type's tag and its lexical form, of a QName or NOTATION its namespace
+URI, and of a user-defined atomic type that type's name. A typing's
+atomic types, of a typed value's items, name their user-defined types
+too, from the item's table of names. Its fields are D30's. The
+annotations, those of atomic values too, were added to version 1 in
+place, as formats stay at version 1 in alpha and no database of an
+earlier layout is read. A node below the root of
+its tree is stored as a copy, an element declaring every binding in its
+scope. The XML indexes read it, below.
+
+The XML type's values are `Value::Xml` (`value::XmlValue`), held in one
+of three forms: a sequence; a binary large object of the stored form, as a
+table keeps it; or its serialization, as the protocol carries it. Each is
+turned into another only when needed. A table keeps the stored form as it
+keeps a BLOB (D79): in the record when short, else as its own large
+objects, logged chunk by chunk, so recovery and replication need nothing
+of their own. A value is held whole when read, at most `MAX_STORED`, the
+one place XML departs from D79, as a value must be a tree to be read. A
+value inside an array, a multiset, a row or a structured value is held
+whole in its row's record, as D79 holds a large object there, at most
+`MAX_STORED` octets of stored form.
+
+XQuery 1.0, the text XMLQUERY evaluates, is parsed by `xquery::parse`,
+written here as D3 requires, by the lexical rules of XML 1.1 or 1.0
+(XMLQUERY reads by XML 1.1's, as turborel has Feature X211). Its lexer
+reads tokens as the parser asks for them, so each part of a query is
+read in the state the grammar puts it in: whitespace and nested comments
+separate the tokens of expressions, where a keyword is a name the parser
+recognizes by what follows it; a direct constructor's tags, attribute
+values and content are read character by character, and each enclosed
+expression as tokens again. The parser is recursive descent, one method
+a production, and makes a tree of the grammar's productions that writes
+itself back as text parsing to the same tree. A chain of operators of
+one precedence is one node, so a long chain makes no deep tree. The
+parser raises what the text alone shows, as SQLSTATE 10000, XQuery
+error, naming the XQuery error code: syntax errors (err:XPST0003), and
+the static errors of the prolog and of direct constructors' attributes
+that need no static context. Imports are analysed with the static
+context: a schema import (`xquery/analyze/import.rs`) and a module
+import (`xquery/analyze/modules.rs`).
+
+The parser recurses, so its depth is bounded (R-CF-6): each
+`ExprSingle`, each direct element constructor and each operator's right
+operand of a higher precedence counts one level, and a query deeper than
+`xquery::MAX_NESTING`, 64, is SQLCODE -900 (D18). Every walk of the tree
+it makes is bounded with it. The functions the recursion passes through
+hold only what it needs, so the deepest query of each shape parses, is
+written back and is dropped within half of a thread's default stack, as
+a test checks.
+
+A query is analysed once, as its statement is bound (`xquery::Query`),
+into a plan (`xquery/plan.rs`) that its evaluations share and none
+changes. The analysis makes the static context of XQuery's Appendix C.1
+and §10.20 of Part 14, the namespaces the binder holds in scope among it,
+and resolves every name of the tree: each QName to an expanded QName,
+each variable to a slot of its frame or a global, each function call to a
+function of the prolog, a constructor function's cast, or a function of
+the library. A cast or constructor function to `xs:QName`, of a string
+literal alone, is evaluated there, its prefix resolved by the statically
+known namespaces. A static error is raised there. XQuery's Static
+Typing Feature (`xquery::statics`) types the plan statically if
+XQUERY.STATIC_TYPING is ON for the statement, or the query's prolog declares the option `static-typing` "on" of
+`urn:turborel:option`, the namespace of turborel's options, so every type
+error is raised then, as the statement is prepared; otherwise a type
+error is raised as the query is evaluated. It is off by default, as the
+typing of XQuery 1.0 and XPath 2.0 Formal Semantics refuses queries that
+evaluate without error. A definition is typed as it is made, by the
+value of the session making it or its option: the state a definition is
+made in holds no session's settings, so the session's value is held by
+the thread making the statement's definitions while it does
+(`binder::making_typed`), as SQL.FUNCTION_CALLS's is (D74), and logged
+with the statement (`Change::Defined`, `Change::Schema`,
+`Change::AlterTable`), so a replay makes them alike. The definition
+keeps whether it was typed (`Horizon::static_typing`), as it keeps the
+registered XML Schemas it indicates, and is typed so whenever it is
+bound again: recovered, reopened, or bound after DDL, whatever the
+session reading it asks. A value passed whose expression is known not
+null, a column reference to a NOT NULL column or a literal, is of its
+formal type without `?` [ISO/IEC 9075-14:2006 draft §10.21 SR3c]. The typing
+follows the Formal Semantics' rules over \[XQueryFS\]'s types: a type is
+a tree of item types, sequences, choices, interleavings and
+occurrences; sequence types are normalized to them; subtyping is
+decided for the shapes the rules compare with, each by its own (a
+factored type by its item types and occurrence, a constructor's content
+by the order of its attributes too, a document test's interleaving part
+by part), any other shape refused, so a query is never admitted where
+it cannot be decided; a type of a schema expands to its content model's
+particles and attribute uses, with the types derived from it. The
+library modules a query imports are typed with it, as their functions
+and variables are the plan's: each body and initializing expression in
+its own module's static context (`Plan::context`), a library module's
+variable of no focus, and a call of an imported function by its
+declaration; a library module is not typed as it is registered, as
+the session importing it asks for the typing. A
+user-defined atomic type is an atomic type of its own (`Atom::Defined`):
+a node's typed value, a cast and a constructor function are of it, it is
+a subtype of the types its name's derivation reaches, as a value's
+annotation is matched, and operators take it as the built-in type it
+restricts. A value
+passed is of its formal type [ISO/IEC 9075-14:2006 draft §10.21]. The
+built-in functions' signatures are a table of \[XQueryFO\]'s, as the
+functions declare `item()*` to the evaluation. Three static typing
+extensions make types more precise: quantifiers count the least and
+most items; the root of documents is their type; and a wildcard's name
+is narrowed to the names its namespace constraint allows, an attribute
+wildcard's past the attribute uses beside it (`statics/names.rs`),
+where \[XQueryFS\] Appendix C.11 maps every wildcard to `*`. The
+typing recurses as the plan nests, counting each expression, SQLCODE
+-900 past
+`xquery::MAX_DEPTH`, and each walk of a type is bounded by
+`MAX_TYPE_DEPTH`, 256, and an axis's closure by `MAX_CLOSURE`, 4,096
+item types. The deepest query of each shape is analysed, and typed,
+within half of a thread's default stack, as a test checks in a child
+process: the analysis dispatches each expression to a function of its
+own, so a level of nesting takes one small frame. The library
+(`xquery::Library`) is the built-in functions and those plug-ins
+register (`Database::register_xquery_function`), each an
+`XQueryFunction` of its expanded QName, parameter types and result type,
+called with its arguments converted by the function conversion rules and
+its dynamic context (`xquery::Context`): the focus, the current dateTime
+and implicit timezone, the collations and the base URI. A prolog's
+`external` function is the library's of its name and arity. Collations
+are the codepoint collation and the database's (D60), each reached by its
+URI.
+
+The evaluation holds a sequence as a vector of `xml::Item`s, a node its
+tree, shared, and its place, so a node keeps its identity; a variable's
+value is held once and shared by every reference to it. The focus, the
+context item, position and size, is passed down to each operation, and
+the variables of a body are the slots of its frame; a prolog's variables
+are evaluated once, as first read. Document order within a tree is the
+order of its nodes; between trees it is by where each tree is held,
+stable while any node of it is held (`xml::Node::document_order`). A
+constructor builds its element in a tree of its own with `Builder`, a
+direct element nested in it built in place, each node of an enclosed
+expression copied by the construction and copy-namespaces modes. In
+construction mode preserve, the default, the element a constructor
+makes is annotated `xs:anyType` (`xml::Annotation::any_type`), as
+XMLELEMENT's is, which evaluates `element { $QNAME } { $SEQ }` in that
+default context; in strip it is `xdt:untyped`.
+
+The evaluation recurses as the plan nests and as functions call functions,
+so it counts each operation evaluated within another, each FLWOR clause
+and each call, and is SQLCODE -900 past `xquery::MAX_DEPTH`, 256: the
+deepest evaluation of each shape a test tries runs within half of a
+thread's default stack. A sequence holds `xml::MAX_NODES` items at most,
+a string `xml::MAX_TEXT` octets, and the trees one evaluation constructs
+`xml::MAX_STORED` octets together, each past it SQLCODE -900. Each item
+of a FLWOR expression, a path step, a predicate and a quantified
+expression, and each call, looks whether the statement was cancelled
+(D44), through `ScalarFunction::call_in_statement`, which a statement
+calls of a function that is `in_statement`.
+
+XMLQUERY and XMLEXISTS are each a call of a function holding the
+compiled query, their context item and variables its arguments, an SQL
+value cast to XML(SEQUENCE) by XMLCAST. XMLTABLE is a collection derived
+table, as UNNEST makes, of one collection: an array of rows, a row of each
+item of its row pattern's value, each column's value the XMLCAST of its
+own compiled pattern's value, which the function evaluates with the cast
+the binder made of it.
+
+The functions and operators of XQuery 1.0 Functions and Operators, the
+Candidate Recommendation of 3 November 2005, are a library
+(`xquery::library`) over sequences and atomic values, one file for each
+of its sections. Each `fn:` function is a row of its section's table, its
+local name, the numbers of arguments it takes and its body, and the
+library's built-in functions (`xquery::Library::builtin`) are those rows,
+an `XQueryFunction` of each arity, so each function has one
+implementation, which a query and a test call alike. A body is called
+with the call's `xquery::Context`: the context item, position and size,
+the current dateTime and implicit timezone, the default collation and
+those known, the base URI, and the statement's cancellation. A function
+applies the function conversion rules of its own signature to its
+arguments, atomizing them, casting untyped values and promoting numbers
+and URIs, so its parameters are declared `item()*` and the evaluation
+converts nothing before it. A constructor function of an atomic type is
+a cast, as the analysis makes it. Each `op:` operator is a plain
+function of `library::op`, named after it: the evaluation of XQuery's
+arithmetic, comparisons, ranges, node comparisons and union, intersect
+and except calls them by the operator mapping, and the evaluation's
+atomization and effective boolean value are the library's. Its errors
+are XQuery errors (`xquery::ErrorCode`), SQLSTATE 10000, the code of the
+text's Appendix C in the message.
+
+An `xs:decimal` or `xs:integer` is reckoned by a decimal of digits of
+the library's own, bounded at `MAX_DIGITS`, 1,024, past which an
+operation overflows, err:FOAR0002; a quotient of decimals is exact if
+it ends within 18 digits after the period, or the scale of either
+operand, and is truncated there otherwise. A float's arithmetic is
+rounded to single precision, an overflow an infinity. No function
+recurses on a tree: fn:deep-equal compares trees from a list of the
+pairs of nodes left. A string or sequence a function would make past
+`MAX_TEXT` or `MAX_NODES` is SQLCODE -900. fn:distinct-values, whose
+work grows as the square of its values, looks whether the statement was
+cancelled at each value (D44).
+
+A collation is one of the evaluation's (`xquery::Collator`), named by
+the code point collation's URI or by `urn:turborel:collation:` and the
+name of a collation of D60; strings compare by sort keys with no
+padding. Substring matching is by collation units
+(`Collation::units`): characters, of the code point collation and of
+the collations of one character at a time; of UNICODE and its
+tailorings each character their steps begin at whose normalized form
+begins with a starter, and what follows it up to the next, so a
+contraction, or a character and its marks, is one unit. A unit is
+weighed at every level as the whole string weighs it, each collation
+element's weights its unit's, so the units' weights, joined, are the
+string's and a match never depends on where the string is cut. A
+minimal match is a run of the text's units whose weights at each level,
+joined, are the sought string's, from a unit of some weight to another,
+found unit by unit, each level's weights so far a beginning of the
+sought's; a unit of no weight at any level is ignorable.
+
+Normalization and full case mapping read a table of Unicode 13.0, the
+version of the collations and regular expressions, which `cargo xtask
+unicode` makes (`xquery/library/unicode13.bin`); Hangul syllables are
+composed by arithmetic. The fully normalized form [XML 1.1 Appendix B]
+of a string, its one relevant construct, is its NFC, and a string whose
+NFC begins with a composing character has none (err:FOCH0003); the
+composing characters are read from the same table, the marks by their
+class and the others as second in a primary composite's pair.
+fn:matches, fn:replace and fn:tokenize use D61's matcher in XQuery
+1.0's dialect.
+
+A date or time of no time zone is compared and subtracted in the
+implicit time zone; the current dateTime is the statement's instant
+(D54) in it. No function reads an external resource, as the parser
+reads none: the available documents and collections are empty and there
+is no default collection. The value comparison of two atomic values
+that fn:index-of, fn:distinct-values, fn:deep-equal, fn:max and fn:min
+compare by is `library::value_equal` and `value_order`, and a value
+comparison's `library::value_comparison`, which raises err:XPTY0004 of
+types the operator mapping does not compare.
+
+XML Schema Part 1, Structures, is `xml::schema`, written here as D3
+requires. A schema is read from schema documents (`schema::read`) into an
+arena of its components, each kind in a table of its own, components
+referring to others by their place, so the cycles a schema has (an
+element of a type whose content holds the element) are indexes. A named
+component takes its place when first referred to and is filled in when its
+properties are needed, so a reference may come before what it names; a
+reference that names nothing is refused as the schema is read, so a
+schema read is complete and no validation meets a missing component. A
+document is checked against the structure the Schema for Schemas gives
+each element, kept as a table of the attributes each may have and the
+stages its children come in, not by validating it against the Schema for
+Schemas. `<include>`, `<redefine>` and `<import>` find documents only in
+the `Library` the schema is read with, by schema location, or for an
+import by namespace, so reading a schema opens no file and no URL. Each
+content model is compiled to a deterministic automaton (`Automaton`):
+Glushkov's construction, numeric occurrence ranges unfolded into copies
+nested so they add no more follow edges than a sequence, then the subset
+construction with transitions labelled by particle, which is how Unique
+Particle Attribution is checked, as [Schema1] Appendix H describes. An all
+group is its particles, each taken at most once. A simple type definition
+of a schema document is read whole when first named, as it names no type
+but simple ones, so one named while it is read is circular. It holds the
+`xml::SimpleType` it defines by restriction, list or union, which keeps
+the rules of its facets as it is made, so a string is validated against a
+defined type as against a built-in one; the reader checks each {final}. A
+node of a union type is annotated with the union, its typed value read as
+the kind of the atomic values validating it gave, as a union's member
+varies from node to node. These bounds keep reading finite, each SQLCODE
+-900 past it (D18):
+
+- `schema::MAX_DEPTH`, 64: how deeply declarations, groups and types
+  nest where reading recurses, the deepest schema of each shape read
+  within half of a thread's default stack, as a test checks. A complex
+  type's base is read before it, so a derivation's steps nest no more
+  than reading a type does.
+- `schema::MAX_CHAIN`, 64: the types of a derivation, or the declarations
+  of a substitution group, a walk up one follows; and the simple type
+  definitions read within one another, each naming the next, read within
+  half of a thread's default stack, as a test checks.
+- `schema::MAX_DOCUMENTS`, 256: the documents one schema is read from.
+- `schema::MAX_POSITIONS`, 4,096: the particles of a content model once
+  its occurrence ranges are unfolded.
+- `schema::MAX_STATES`, 16,384: the states of a content model's automaton.
+
+A node is validated (`schema::validate`) as XQuery's validate expression
+validates it, the way SQL/XML's XMLVALIDATE and IS VALID do: a new tree is
+built as the old one is walked in document order, elements on a stack of
+those open, each with its content model's state, so nothing recurses and
+the depth validated is the tree's. The first failure ends it, naming the
+validation rule broken, as any failure makes the validation root invalid.
+The new tree's elements and attributes carry their types' annotations
+(`xml::Annotation`), each kept once in a table of the tree, and the
+nilled, is-id and is-idrefs properties; a node's typed value is read from
+its string value as its annotation says, as the data model lets an
+implementation keeping string values do, so the tree holds no typed
+values beside its text. An element of simple content has one text node,
+its schema normalized value, before its comments and processing
+instructions; a default attribute or element value is added as text.
+Identity constraints and the ID/IDREF table are checked over the new tree
+once it is built, of a document node alone, as XQuery asks. A copy keeps
+the annotations, as construction mode preserve does. `schema::validate`
+returns a `Failure` naming the rule and XQuery's error code apart from
+turborel's own errors, so XMLVALIDATE raises SQLSTATE 2201R and XQuery's
+validate expression err:XQDY0027 from one result. XQuery atomizes a node
+to its typed value, and matches its annotation in a node test: a
+built-in type's by the built-in hierarchy, a registered XML Schema's by
+that schema's Type Derivation OK if a schema import brought it into the
+in-scope schema types, its name, an anonymous type's too, resolved in the
+schema imported (`xml::schema::annotated_type`), else as derived from
+`xs:anyType` alone. A copy made by construction mode preserve keeps
+the annotations; one made of an unvalidated document node (§10.19), as
+XMLDOCUMENT of XML(CONTENT(UNTYPED)) and CAST BY VALUE to an UNTYPED type
+make it, keeps none (`Copying::UNVALIDATED`).
+
+A registered XML Schema is a catalog object (`catalog::XmlSchemaDesc`):
+its name, target namespace, schema location, the text of the document it
+was registered with, the registered XML Schemas whose documents it read,
+and the USAGE granted on it. The catalog stores those alone; the schema
+read from the document is not stored but read again as the catalog is,
+each after those it uses, with their documents alone as its library, so
+nothing derived can disagree with what was registered. As the catalog is
+logged, checkpointed and replicated as opaque bytes (D57), registered XML
+Schemas need nothing of their own there. USAGE on one is granted and
+revoked by GRANT and REVOKE USAGE ON XML SCHEMA, as on a sequence
+generator, Part 14 leaving how to the implementation; the permanently
+registered XML Schemas, INFORMATION_SCHEMA.XS, XSI and SQLXML, are
+constants every user holds USAGE on. `catalog::xml_schemas::may_use` is
+the one check of USAGE every statement naming a registered XML Schema
+makes [ISO/IEC 9075-14:2006 draft §11.6 AR1]. The Information Schema's
+XML_SCHEMAS, XML_SCHEMA_NAMESPACES and XML_SCHEMA_ELEMENTS read
+Definition Schema tables made from the descriptors and the schemas read
+from their documents, as D37 makes every such table, and their short
+name views, XML_SCHEMAS_S, XML_SCH_NSPACES_S and XML_SCH_ELEMENTS_S,
+read them as D37's do; a type of XMLSCHEMA
+shows its registered XML Schema by its kind's descriptor
+(`Descriptor::xml_schema`).
+
+An XML type of XMLSCHEMA (`value::xml::Typing::Schema`) holds what its
+descriptor includes, `value::types::XmlSchemaNamed`: the registered XML
+Schema's name, as a registered XML Schema is identified by its name
+[§4.2.6], and the namespace and element its element clause indicates.
+It is held behind an `Arc`, so the type, once `Copy`, is cloned as
+cheaply; the name, not the schema, is held, so the type is written,
+stored in the catalog and described over a connection as itself, and
+reads back the same; a function that validates holds the schema read,
+taken from the catalog as its statement is bound. The type is resolved
+from what is written (`ast::TypeName::XmlSchema`) as a statement is
+processed (`State::indicated`): a URI indicates, of the registered XML
+Schemas of its target namespace, and of its location if written, that
+the user may use, the one of the least name, the permanently registered
+ones last; the namespace and element an element clause indicates must be
+the schema's, else 2201M or 2201N as the type is bound. A value of a
+type of XMLSCHEMA is one XMLVALIDATE, or CAST BY VALUE, made; one whose
+elements are not all typed is refused at such a site with 2201R, so a
+value sent as text is not taken for one, while a value a table holds is
+taken as it is, as it was checked as it was stored.
+
+XMLVALIDATE and IS VALID are each a function holding how an element finds
+its registered XML Schema: the one indicated, or, data-driven, of each
+namespace the one the user may use of the least name, chosen as the
+statement is bound. Each validates by `schema::validate` in strict mode
+the item §10.22 is given: of DOCUMENT the document node, so its identity
+constraints and IDs are checked; of CONTENT and SEQUENCE each element
+child of a document node alone, so they are not. The permanently
+registered XML Schemas validate by their components (below).
+
+XQuery's validate expression, strict or lax, validates by
+`schema::validate` against the in-scope schema definitions, which Part 14
+makes an implementation-defined collection of registered XML Schemas the
+current user may use [ISO/IEC 9075-14:2006 draft §10.20 SR2e]: of each
+target namespace the one XMLVALIDATE's data-driven case chooses, chosen
+as the statement is bound and held by the compiled query
+(`xquery::InScopeSchema`), the permanently registered one of a namespace
+no other has. A definition
+whose query has a validate expression notes them as it is defined, as it
+notes a registered XML Schema it indicates, so its horizon keeps them and
+it depends on them; bound again, its in-scope schema definitions are
+those it kept, of each namespace the least name, never one registered
+later [§4.2.6]. Each is read
+alone, and the components of several make no one schema, so the effective
+schema of a validation [XQuery §3.13] is the one of the namespace of the
+element it validates, with what that one imports; of none, a schema of no
+components, by which strict validation is err:XQDY0084 and lax validation
+assesses the element by `xs:anyType`.
+
+A prolog's schema import [XQuery §4.10] imports, of the registered XML
+Schemas the current user may use (and of a definition bound again, those
+it kept), the one of the target namespace whose schema location is a
+location hint, else the one of the least name, the permanently
+registered ones last (`xquery/analyze/import.rs`); it brings the
+components of every namespace the schema has. Their type definitions
+are in-scope schema types, a node test's type matched by the schema's
+own derivations (`xquery::types::Defined`), and their global element and
+attribute declarations those of schema element and attribute tests,
+the substitution group a schema element test's element heads matching
+too. err:XQST0035 is raised of a name two imported schemas define from
+different documents, compared as the schema documents' trees; so
+err:XQST0012, of imported schemas not valid together, is never raised, as
+each registered XML Schema is valid and what two share is the same. A
+simple type of the atomic variety of an imported schema is an atomic
+item type [XQuery §2.5.4.2]: of `instance of`, `treat as`, typeswitch
+and the sequence types of functions, whose conversion rules cast an
+untyped value to it; a cast's target [XQuery §3.12.3], a value cast
+to it checked against its facets by the `xml::SimpleType` it holds, a
+string read as a literal, its patterns matched first, another value
+cast as the built-in type and matched as its canonical form; and a
+constructor function's [XQuery §3.12.5]. A list or union type, or a
+complex one, is none (err:XPST0051). A definition notes what its
+queries import, as what they validate by, and depends on it.
+
+A value of a user-defined atomic type is a value of the built-in type
+it restricts, its value space a subset of that type's [Schema2
+§2.5.2.1], annotated with
+its own type's name (`xml::Atomic::annotation`), so comparison,
+arithmetic and the functions take it as a value of the built-in type,
+each giving a value of a built-in type, and a cast to that type drops
+the annotation [XQuery §3.12.3]. The `xml::SimpleType` of each simple
+type definition of a schema holds the definition's name, an anonymous
+one's made from its place as a node's annotation is, and annotates
+each atomic value it validates or casts with it; so a node's typed
+value is of its type [XQueryDM §3.3.1.2], a list's items of the item
+type, a union's of the member that validated each, as a node's typing
+(`xml::Typing`) records them. A value is matched against an atomic
+item type of an imported schema by its annotation, resolved in that
+schema as a node's is, and that schema's Type Derivation OK; a value of
+a built-in type derives from none of them; and against a built-in type
+by the built-in hierarchy of its built-in type.
+
+turborel supports the Module Feature [XQuery §5.2.5]. A library module is
+a registered XQuery module (`xquery::LibraryModule`), and a module import
+imports one module of its target namespace, the set of modules §4.11
+leaves to the implementation: of the main module, among the registered
+XQuery modules the current user may use; of a library module, among
+those it imported as it was registered (`LibraryModule::modules`), so a
+library module imports what it was analysed with, whoever imports it. Of
+these, the one whose location, or whose name, alone or qualified by its
+schema's, is a location hint, else the one of the least name; a library
+module importing its own target namespace imports another module of it.
+Each module is analysed in its own static context [§4.11]: the
+statement's namespaces and variables are the main module's alone, and a
+library module's schema imports and in-scope schema definitions are
+those it kept as it was registered (`LibraryModule::importable`,
+`schemas`). The functions and variables of every module of a query are
+one list each in its plan (`xquery/analyze/linked.rs`), so a call or a
+reference is a place in it whichever module declares what it names, and
+a module imported by several is analysed once; each declaration keeps its
+module, whose construction and copy-namespaces modes, default collation,
+base URI and in-scope schema definitions its evaluation reads
+(`plan::ModuleContext`). A module imports a library module's own
+functions and variables alone, as imports are not transitive. A
+namespace imported twice is err:XQST0047; one no module may be imported
+of err:XQST0059; a function or variable imported of the name, and of a
+function the arity, of one declared or imported err:XQST0034 or
+err:XQST0049; a library module's function or variable outside its target
+namespace err:XQST0048; an imported declaration of a schema type, a
+user-defined atomic type or an element's or attribute's type, of no
+schema the importing module imports, by that schema or a type of that
+name, err:XQST0036, checked once every module is analysed; and a
+circularity through any module's declarations err:XQST0054. A library
+module's functions and variables are given their places in the plan
+before its prolog is analysed (`Analysis::reserve`), so a module it
+imports that imports it back finds them: the cycles of imports of
+modules of one namespace §4.11 allows are analysed, each module once,
+their functions calling across the cycle as the evaluation's depth
+bounds (`MAX_DEPTH`). A cycle of modules not all of one namespace is
+err:XQST0073 (`Linked::cycle`). Imports nest at most `MAX_IMPORT_DEPTH`,
+16, modules deep, each analysed within the one importing it (R-CF-6); a
+chain deeper is SQLCODE -900 (D18). A library module given as a query, or
+a main module registered as a library module, is err:XPST0003, as a
+query is a main module and a library module is no query [§4].
+
+A registered XQuery module is a catalog object (`catalog::XQueryModuleDesc`):
+its name, target namespace and location, the text of the library module
+registered, the registered XQuery modules and XML Schemas it imported as
+it was registered, and the USAGE granted on it. The catalog stores those
+alone; the module's parse is made again from its text as the catalog is
+read (`db/snapshot/xquery_modules.rs`), a text that no longer parses, or
+a module or schema it depends on that is not registered, a damaged
+catalog, SQLCODE -916. As the catalog is logged, checkpointed and
+replicated as opaque bytes (D57), registered XQuery modules need nothing
+of their own there.
+
+XQuery leaves where a module import finds its modules to the
+implementation [§4.11, §5.2.5], and Part 14 gives no statement for it.
+These statements were decided, an extension in the standard's notation:
+
+```
+<XQuery module definition> ::=
+    CREATE XQUERY MODULE <XQuery module name>
+    [ LOCATION <XQuery module location> ]
+    AS <XQuery module text>
+
+<XQuery module name> ::= <schema qualified name>
+
+<XQuery module location> ::= <character string literal>
+
+<XQuery module text> ::= <character string literal>
+
+<alter XQuery module statement> ::=
+    ALTER XQUERY MODULE <XQuery module name>
+    [ LOCATION <XQuery module location> ]
+    AS <XQuery module text>
+
+<drop XQuery module statement> ::=
+    DROP XQUERY MODULE <XQuery module name> <drop behavior>
+```
+
+XQUERY is no key word: XQUERY MODULE is read as two words where these
+statements take them, so a table may still be named XQUERY. The text is
+a library module, analysed as it is registered
+(`xquery::library_module`) in a static context of its own, its schema
+imports and module imports importing among the registered XML Schemas
+and XQuery modules its schema's owner may use, as a registered XML
+Schema reads those of its owner (`db/definitions/xquery_modules.rs`);
+what it imported is kept in its descriptor, and it depends on that. Its
+target namespace is of nonzero length, as a module import names one
+[err:XQST0088], else SQLCODE -103; a duplicate name is SQLCODE -103.
+Only the owner of its schema registers or drops one. A literal holds no
+`<newline>` [X3.135-1986 §5.1 SR1], and XQuery reads any whitespace
+between tokens, so the statement is logged as its text, as every
+definition is, and replay registers it again from that text.
+DROP XQUERY MODULE is a drop record of tag 18, after DROPPED_XML_SCHEMA's
+17. RESTRICT is refused while a module imports it; CASCADE drops those,
+at any remove (`State::xquery_module_dependents`, the one place what
+depends on a module is found), as `Abandoned::xquery_modules`, which
+`State::destroy` drops after what imports them. A registered XML Schema
+dropped with CASCADE, or abandoned by a REVOKE, takes the modules that
+imported it the same way; DROP SCHEMA CASCADE drops the schema's
+modules.
+
+A module imports only modules registered, so ALTER XQUERY MODULE
+replaces a module's text, and its location if written, analysed again
+and its imports found again and recorded, its USAGE kept
+(`definitions/xquery_modules/alter.rs`): a module altered imports one
+registered after it, so modules of one namespace import one another,
+each recorded as depending on the next. A cycle of modules not all of
+one namespace is err:XQST0073 as the ALTER closing it is analysed, the
+module altered taking its new text wherever the cycle reaches it back.
+What depends on the module must still analyse and bind with the new
+text, as an ALTER of another object is refused that would break what
+depends on it: each module importing it, at any remove, analysed as a
+query importing it analyses it, and each view, constraint, assertion,
+generated column, trigger and routine keeping it or one of those bound
+again; else SQLCODE -103. So a function or variable they use is not
+taken away, and a target namespace changes only if nothing imports the
+module by it. The walk of what depends on a module ends on a cycle, each
+module found once: DROP RESTRICT of a module of a cycle is refused, as
+the next depends on it, CASCADE drops the cycle, and a REVOKE abandoning
+one abandons the modules of the cycle, as each imports the next. ALTER
+is logged as its text and replayed in order; a checkpoint image of
+modules that depend on one another loads, as each is parsed alone and
+only checked to name modules registered.
+
+USAGE on a registered XQuery module is granted and revoked by GRANT and
+REVOKE USAGE ON XQUERY MODULE, as on a registered XML Schema, the grants
+kept and revoked by the same functions (`db/usage/xml_schemas.rs`); its
+schema's owner holds it with grant option. `catalog::xquery_modules::
+may_use` is the one check of it, of the modules a query's main module
+may import and of those a module being registered may. A library module
+imports what it imported as it was registered, so its importer needs
+USAGE on it alone, as a routine's invoker needs EXECUTE on the routine
+alone. REVOKE abandons, of each schema whose owner it leaves without
+USAGE, the modules that imported it (`State::xquery_module_dependents`),
+dropped with CASCADE, RESTRICT refused with 2B000. USAGE_PRIVILEGES shows
+each grant, of OBJECT_TYPE XQUERY MODULE, an extension of §21.4's list.
+No view of registered XQuery modules is added: Part 14 defines none, and
+USAGE_PRIVILEGES already names each module a user may import.
+
+A definition whose queries import a registered XQuery module keeps it,
+as it keeps the registered XML Schemas it indicates: the binder notes
+each module a main module imports (`Invoked::imported`), the
+definition's horizon keeps them (`catalog::Horizon::xquery_modules`,
+in the catalog as the rest of the horizon is), and, bound again, its
+queries import among those alone (`Horizon::kept`), never one of a
+lesser name registered later. A module it imports keeps what that
+imports itself. `State::xquery_module_dependents` reads the horizons,
+through the walk a registered XML Schema's dependents take
+(`State::horizons_naming`): the views, constraints, assertions, triggers
+and routines whose queries import a module dropped, or one that imports
+it, are dropped by CASCADE and refuse RESTRICT, and a REVOKE abandons
+them; a generated column's table refuses even CASCADE, as a column of a
+type of XMLSCHEMA does.
+
+Part 14 leaves how an XML Schema is registered to the implementation
+[ISO/IEC 9075-14:2006 draft §4.2.6]. These statements were decided, an
+extension in the standard's notation:
+
+```
+<XML Schema definition> ::=
+    CREATE XML SCHEMA <registered XML Schema name>
+    [ LOCATION <XML valid schema location URI> ]
+    AS <XML Schema document>
+
+<XML Schema document> ::=
+    <value expression>
+
+<drop XML Schema statement> ::=
+    DROP XML SCHEMA <registered XML Schema name> <drop behavior>
+```
+
+`<registered XML Schema name>` is Part 14's `<schema qualified name>`
+[§5.2], and `<XML valid schema location URI>` its `<character string
+literal>` [§11.6]. A registered XML Schema is read from one document: a
+character string, a binary string or an XML value, evaluated once; a
+string is parsed as DOCUMENT, and its element is an `xs:schema`. Its
+target namespace is the document's targetNamespace, the empty string of
+none, as NO NAMESPACE indicates; LOCATION is the empty string if not
+written. Its `<include>`, `<redefine>` and `<import>` find documents
+among the registered XML Schemas alone, those the owner of its schema may
+use (`catalog::xml_schemas::may_use`), as Part 14 asks of a registered
+XML Schema an SQL schema statement names [§11.6 AR1a]: by LOCATION, or
+for an import by target namespace; nothing is fetched. Those it read are
+recorded and are what it depends on. A duplicate name is SQLCODE -103.
+Only the owner of its schema registers or drops one, as of a collation,
+and the owner may use it.
+
+DROP XML SCHEMA RESTRICT is refused while anything depends on the one
+named; CASCADE drops the registered XML Schemas that use it, directly or
+through others, and whatever names them. One function,
+`State::xml_schema_dependents`, finds what depends on a registered XML
+Schema, of the schemas a caller names: the routines of a parameter or
+result of a type of XMLSCHEMA of one, the views, CHECKs, domain
+constraints, assertions, triggers and routines that indicated one as
+they were defined, or had it in scope of a validate expression, and what
+invokes such a routine, which CASCADE drops;
+and the tables, domains and user-defined types of a column or type of
+one, and a table of a generated column that names one or invokes such a
+routine, which refuse even CASCADE, as no drop changes a column's
+values. A definition binds the registered XML Schemas its `<XML valid
+according to what>`s indicate as it is created [§4.2.6]: the binder
+notes each where it notes the routines invoked (`binder::Invoked`), the
+definition's horizon keeps them (`catalog::Horizon::xml_schemas`, in the
+catalog as the rest of the horizon is), which is how its dependents are
+found, with no binding again; and a URI of a definition bound again is
+made the ID of the one kept of its namespace (`binder/xml/pinned.rs`), so
+one of a lesser name, or one its owner may use later, never takes its
+place. DROP SCHEMA CASCADE drops the schema's registered XML Schemas
+as DROP XML SCHEMA CASCADE does.
+
+The statement is logged as its text with the document written in as a
+literal, so replay evaluates nothing again: every document a binary
+string literal of its text's UTF-8 octets, one form that holds each, as
+a `<newline>` is no character of a character string literal [X3.135-1986
+§5.1 SR1]. Replay reads the octets back as UTF-8, the same text octet for
+octet, and does not parse them as a binary string document is parsed, by
+the encoding it declares: a character string document, a large object
+too, is kept as written, its declaration naming any encoding.
+The permanently registered XML Schemas of Table 1 [§4.2.6] are
+INFORMATION_SCHEMA.XS, XSI and SQLXML, constants
+(`catalog::xml_schemas::PERMANENT`), not catalog objects: none is
+registered again or dropped, and anyone may use each. Their components
+are read once, when first needed, from schema documents kept in the tree
+(`xml/schema/permanent/`), as no text turborel is written from fetches
+anything: XS's from the Schema for Schemas as [Schema1 Appendix A]
+prints it, with the schema of the datatypes it includes as [Schema2
+Appendix A] prints it, both copied unchanged under their W3C notice
+(`xml/schema/permanent/LICENSE-W3C`), and a schema of the XML namespace it imports,
+which no text on hand prints, so turborel's own, of `xml:lang` and
+`xml:space` as XML 1.0 defines them; their definitions of the built-in
+type names are the built-in definitions they represent [Schema1 §3.4.7,
+§3.14.7]. Three of the Schema for Schemas' restrictions, `xs:all`,
+`xs:complexRestrictionType` and `xs:simpleRestrictionType`, have content
+models Particle Valid (Restriction) refuses by its letter [Schema1
+§3.9.6] (RecurseAsIfGroup and RecurseLax compare occurrence ranges they
+widen), so its restrictions' content models are trusted, as the text
+makes it normative; every registered XML Schema's are checked. XSI's
+are none of its own, as no attribute declaration of its namespace is
+allowed [Schema1 §3.2.6], its four in every schema by definition
+[§3.2.7]. SQLXML's are the XML Schema [ISO/IEC 9075-14:2006 draft
+§22.1] prints, which a registered XML Schema's document may import.
+
+XML values are not comparable, so they have no key, bucket or order, and
+the binder refuses them where an equality, grouping or ordering operation
+would take one, as one inside an array, a multiset, a row or a distinct
+type. A distinct type of an XML type has no ordering, and its casts to
+and from its source are its own, as every distinct type's are (D69),
+though Part 14's table of CAST writes none between XML and a
+user-defined type. Every XML type's type precedence list is XML alone.
+A part of an array, a multiset or a row is cast to an XML type as CAST
+of an XML value is, BY REF. Over a connection a value is its serialization as
+CONTENT, and a client parses it as CONTENT when it needs its nodes. A
+column is described with the type's modifiers. The column store keeps no
+XML value, as it keeps no large object, nor one inside another value.
+
+The constructors of XQuery that SQL/XML's operators evaluate are each a
+function of `xml` over sequences, not XQuery text: `document` for
+XMLDOCUMENT; `element` for XMLELEMENT and XMLFOREST, which reads its
+content once into attributes, text and nodes to copy and builds the
+element with `Builder`, its bindings those its names need, a prefix
+bound to another URI renumbered; `comment`, `processing_instruction` and
+`text`, each a tree of one node standing alone; and `concatenate`. A copy
+follows the source tree's links, so none recurses. XMLAGG gathers its
+rows as ARRAY_AGG does, sharing its key order, and makes the document
+node of RETURNING CONTENT itself, so it is one aggregate over a window
+too. An array or a multiset of content is mapped to text by its declared
+type (`functions/xml/mapping.rs`, `xml_mapped`), an element of each
+element, as §9.8 maps one, then parsed as other content is; its walk is
+bounded as types nest.
+
+The binder finds the `<XML lexically scoped options>` in scope, the
+innermost first: the XMLNAMESPACES of the XMLELEMENTs and XMLFORESTs a
+binder is binding; those of each `<with clause>`, kept with its query
+names, which the context of a subquery, a derived table or a `<with
+list element>` links to the clauses around it; then those of the
+statement or definition, and of the compound statements it is in,
+which its parameters carry. A subquery searches its own first, then
+those of the query it is in. A definition keeps its options in the text
+the catalog keeps, so it binds the same when read again; a view or a
+routine sees none of what reads or invokes it. Outside every XMLBINARY
+the encoding is HEX, for every operator that writes or reads a binary
+string: XMLELEMENT, XMLFOREST, XMLCAST, and XMLMAP of no ENCODING.
+
+XML indexes are built-in index methods (D34) of one XML column, after Pal
+et al.'s XML indexes: `xml_path` (PATH_VALUE, §3.2.1), `xml_value`
+(VALUE, §3.2.3), `xml_property` (PROPERTY, §3.2.2) and `xml_primary`
+(the primary index, §3.1), named in CREATE INDEX's USING as the others
+are, so a plug-in may add more. Each holds its own keys, a B-link tree in
+the data file beside the others, checkpointed, reopened and recovered as
+theirs are; none needs another. An index derives its keys from a
+value's stored form in one pass over its events, building no tree. It
+keys each element and attribute below each node item of the value, the
+item being the context its paths start from: its path, its value and its
+ORDPATH. A path is the node's kind and the tokens of its name and of each
+element's above it up to its item, the reversed path of §3.1.1. Each index
+keeps a dictionary in its tree, an expanded name to a token and a path to
+a path id, given under a lock from counters there and never taken back,
+so it is durable as the entries are; recovery makes again the entries of
+the rows the log touched (D25), with the index's own ids. A value is the
+node's typed value, its string value as `xdt:untypedAtomic` [XQueryDM
+§6.2.3, §6.3.3], keyed twice, as a general comparison casts it [XQuery
+§3.5.2]: as a string, by its first `VALUE_PREFIX_BYTES` (64) octets,
+marked whole or cut, ordered by code points; and as an `xs:double`
+[XQueryFO §17.1.1] if it is whole and casts, else as unordered. An ORDPATH
+(§2.2) labels the node by the odd components a load gives, from its item
+down, attributes before children; each component is its length in octets
+then its octets, so labels compare as bytes in document order and a
+node's begins with its ancestors'. Entries are counted, as a B-link
+tree's are (D34): `xml_path` keyed (path id, value, row, ORDPATH),
+`xml_value` (value, path id, row, ORDPATH), `xml_property` (row, path id,
+value, ORDPATH).
+
+`xml_primary` keeps the rows of the Infoset of §3.1.1: each element and
+attribute keyed (row, ORDPATH), then its kind, its path id and its string
+value, whole up to `PRIMARY_VALUE_BYTES` (512) octets, cut past them;
+and each again keyed (row, path id, value, ORDPATH), as the PROPERTY
+index keys the primary's rows (§3.2.2), so a row's nodes of a path and a
+value are found by a seek. It answers a query of a row from its entries
+alone (`Index::xml_answers`): it holds, it may and is checked, or it does
+not hold, the row not given. Its nodes of the path are found by path and
+value, then taken in ORDPATH order, which is document order. A query may
+filter the node of any step of its path, its anchor, as
+`/BOOK[@ISBN = "1"]/SECTION` filters a SECTION's BOOK (§3.1.2), by as
+many filters as it has, a node holding if each holds of its anchor: an
+anchor fixed of the node, as many steps above it as child steps follow
+the filter's step, or below the item as child steps reach it, its
+ORDPATH the node's less as many components, the parent join of §3.1.2;
+the nodes below it are its rows of the Infoset whose ORDPATH begins with
+its own, one range (§2.2). A query's relation holds of a node if an
+element of its paths stands in it, as "a byte comparison of two ORDPATH
+labels yields the relative order of the nodes" and a child's label
+extends its parent's (§2.2), so the row's rows of the Infoset in a range
+of keys are those of a range of places (`primary/related.rs`): an
+ancestor is sought at each prefix of the node's ORDPATH; a following
+element is read past the node's range, a following sibling past it
+before its parent's range ends, of as many components; a preceding one
+before the node, of no prefix of it, a preceding sibling after the
+parent's own row; each range read until one is met. The check reads the relation as the
+events come: an element above a node is open, one before it closed
+before it opened, and a node waits for one after it as for an anchor
+(`check/reading/relating.rs`). A row whose answer needs a value cut, a comparison that
+raises, or whose versions held are of more than one value, as a row
+being changed is, is checked. It was built because reading a large
+value's nodes from the stored form, even in one pass, reads all of the
+value, and a query of a few of its nodes then costs the whole value; the
+primary reads the nodes asked and their anchors' subtrees. Small values
+are cheaper checked, and the planner weighs `xml_cost` against
+`XmlCost::of_check` of the value's octets.
+
+An index is given a row's value whole, but may not be able to read it as
+it takes its entries back: garbage collection frees a version's large
+objects before its entries, and recovery and a spilled undo name an
+object by its id (D79). So each (value, row) pair held is marked by the
+value's identity: of a value its row holds, its octets' MurmurHash3, the
+octets there to derive its entries again; of one held as a large object,
+the object's id, never given twice, under which the index keeps the
+entries it made, by row, and takes them back, or adds them again, with no
+read of the value. A value that is not one document node, of several
+items, an atomic value, a node of another kind or none, as XML(SEQUENCE)
+holds, is marked too, by row and identity, and every lookup gives its
+row: a query of it as its context item may raise an error, or start from
+no document, where its entries alone would not show it [ISO/IEC
+9075-14:2006 draft §6.18 GR1a ii 2].
+
+A lookup (`Index::xml_rows`, `xml_cost`) is given a path of child and
+descendant steps over expanded names or any name, ending at an element or
+an attribute, and comparisons with string, `xdt:untypedAtomic` or number
+literals, and gives the rows whose value may hold a node of that path of
+which they hold, each once, with what it costs. The paths of the
+dictionary are found by the tokens the last steps fix and matched step by
+step; each matching path's entries are read in the comparisons' range of
+keys; of the primary, its rows answered of the path. A query
+(`XmlQuery`) is a lookup and filters of the nodes of its steps, at most
+`MAX_FILTERS` (16): its rows are among those of its lookup, and of each
+filter's, the lookup's steps to the filter's then the filter's
+(`XmlQuery::lookups`), so a probe of several lookups (`XmlProbe`) gives
+the rows each gives, those of all but the last held in a set that spills
+(D38), each marked by how many gave it [Pal et al. §3.3]; or, of a query
+that may raise an error, the rows any of the lookups it may raise of
+gives. The rows are a superset, as a value is cut and a reader sees one
+version of its row, so its caller checks each row it fetches, as for a
+function lookup (D34): an index changes no result. The check
+(`XmlLookup::matches`) reads the value's stored form in one pass, no tree
+built: each element open keeps, as bits, which steps end at it and which
+were matched at or above it, made of its parent's and its name's, and an
+element's string value is its part of one buffer of the text read while
+an element selected is open; it holds a stack of open elements, at most
+`MAX_NESTING`. Its nodes are taken in document order, an element before
+its attributes, the first that holds or raises answering, as a tree's
+walk would answer, which a test of many values and lookups made checks.
+A filter's anchor is an element open at which the lookup's steps to the
+filter's end; each element below it keeps the filter's steps as bits
+too, from the anchor; the filter holds once a node it selects holds,
+else raises as its anchor ends if one raised. A node selected waits for
+its anchors not yet known, answering false once one ends not holding of
+no error, else, all known, the error one raised, as `and` may [XQuery
+§3.6]; nodes waiting for the same anchors are kept as the first.
+A number compared also
+selects the values keyed unordered, so no row whose comparison would raise
+err:FORG0001 is skipped (D15). D34's function lookup does not fit:
+XMLEXISTS and XMLQUERY are no registered function of a column and a
+value, and a lookup is a path, not a value. A value of more than
+`MAX_KEYED_NODES` (262,144) elements and attributes, or of a key longer
+than the tree's longest, is refused as it is indexed, SQLCODE -900 (D18).
+
+The planner reads an XML index (`physical/access/xml.rs`) for a
+conjunct of a table's filter that keeps a row only if a query's value of
+it is not empty (`ScalarFunction::xml_filter`): XMLEXISTS, XMLQUERY NULL
+ON EMPTY IS NOT NULL, and XMLTABLE's row pattern, which the planner adds
+as an implied filter of the rows XMLTABLE joins, not LEFT, and checks no
+row by (`XmlRowsOf`). The query is passed the column alone, or its copy,
+as its context item. Of XML(DOCUMENT) or XML(CONTENT) each value is one
+document node; one of XML(SEQUENCE) may not be, and the query raise an
+error of it [ISO/IEC 9075-14:2006 draft §6.18 GR1a ii 2] or start from
+no document. Every lookup gives such a value's row, so it hides none, but
+the query of such a column is neither free of errors nor answered by an
+index (`functions/xml/query.rs`). The query is reduced to an index's query
+(`xquery/lookup.rs`) if it is one path of child, descendant and
+attribute steps over names or `*` (`lookup/steps.rs`): `self` of a name
+narrows the step before's; `parent` takes back a child or attribute step
+as a condition of the step before, as `a/b/..` is `a[b]`, after a
+descendant step, last, the path before; a last `ancestor` of a name a
+step before tests, the path, exactly; of another, and `following`,
+`preceding` and their siblings of a name or `*`, the query's relation of
+an element of that name to the node before (`XmlRelated`), its lookup the
+elements' path, exactly; a last kind test the path before, not exactly.
+Each step
+may have predicates whose
+conjuncts [XQuery §3.6] are each a relative path of such steps, or its
+comparison, or `.`'s, with a literal. A general comparison with a number,
+or with a string by the codepoint collation, is kept; any other is left
+to the check of each row. The last step's comparisons of `.` are the
+lookup's, or else one of its other conditions, of child steps if one is,
+continues the lookup, as `a[b op v]` is `a/b op v`; every other is a
+filter of its step's node (`XmlFilter`). A comparison with a number may
+fail to cast [err:FORG0001], and a value comparison may fail
+[err:XPTY0004], of each node it is of whether a node below is selected or
+not: the lookup of its own condition gives each row it may fail of, so a
+probe of a query that may raise reads those lookups and gives the rows
+any gives (`Reduction::raising`); one that raises none reads the
+cheapest of its lookups and each its index counts, and gives the rows
+each gives. Conjuncts of the column's queries joined by AND are one
+probe too, of all their lookups. The rows come as
+`Probe::Xml` (`XmlProbe`), opaque as a function lookup's
+(`Probe::opaque`): storage records a read of the whole table, each
+entry's key projects to null (`DerivedKeys`), and the filter keeps the
+conjunct and checks each row fetched, so an index changes no result. Of
+`xml_primary`, a query that is exactly XMLEXISTS's test, every
+comparison kept and none raising, each filter's anchor fixed, is
+answered (`Index::xml_answers`):
+the conjunct is no filter's, a row the index holds of is kept as its
+visible version is fetched, and one it may hold of is checked by
+`XmlQuery::matches` (`exec/answered.rs`), of a SELECT's rows and of an
+UPDATE's or DELETE's alike.
+The rows a lookup leaves out are those its query gives the empty
+sequence of with no error, a numeric comparison's lookup giving the
+values that cast to no number, so it is used only if every other
+conjunct of the table cannot raise one, or is such a query that raises
+none (D15). A path, alone or compared with a string, raises none
+(`ScalarFunction::raise_free`), so it is no raising conjunct to D15's
+guards, and an ON condition of it is pushed onto its operand as a
+comparison is; one that may raise is moved onto its operand over a
+guard, below which the index is read (D15). A probe is priced by the
+entries its index counts of each
+lookup (`Index::xml_cost`), its rows those of the cheapest of every
+lookup, each a share of the table's as if apart, or the entries of every
+lookup of any; of the primary, which seeks each row it holds, no fewer
+than its queries' own lookups count; and each row it gives but an answered one a check of
+its value, against a full read that checks every row's, a check a pass
+over a value of the column's average width (`XmlCost::of_check`); a
+method that prices none is not read. EXPLAIN shows `column has` the
+queries, joined by `and`, each filter as a predicate of its step, and
+whether the index answers it.
+
+The mappings of names \[EXTENSION\]. Part 14 maps SQL identifiers to XML
+Names [§9.1, §9.2] and back [§9.3], `xml::identifiers`, and gives an
+application no syntax to invoke them [§4.10.3 NOTE 10, §4.10.4 NOTE
+11], though Feature X400 is that an application may invoke §9.3. The
+library exports them (`xml::name_of`, `name_of_parts`, `identifier_of`,
+`delimited`), and SQL calls them by these functions, decided in the
+draft's notation:
+
+```
+<XML name to identifier> ::=
+    XMLNAME_TO_IDENTIFIER <left paren> <character value expression> <right paren>
+
+<identifier to XML name> ::=
+    IDENTIFIER_TO_XMLNAME <left paren> <character value expression>
+        [ <comma> { PARTIALLY | FULLY } ESCAPED ] <right paren>
+```
+
+XMLNAME_TO_IDENTIFIER gives the delimited identifier `"SQLI"` §9.3 GR5
+makes, each double quote of SQLI doubled [ISO/IEC 9075:1992 §5.2].
+IDENTIFIER_TO_XMLNAME applies §9.1 to the characters of one identifier,
+partially escaped unless FULLY ESCAPED is written, the draft fixing no
+default; §9.2 takes a sequence of identifiers, which a string is not, so
+no function takes it. Each is a function of the registry
+(`functions/xml/names.rs`) that the parser calls by its own syntax, as
+the string functions are called (`parser/xml/names.rs`); the words are
+no key words. Each gives CHARACTER VARYING as long as its argument's
+declared length allows its mapping to be, at most `MAX_CHARACTER_LENGTH`,
+and a longer result is SQLSTATE 22001. No error of the draft arises, as
+SQL_TEXT is Unicode [§9.3 GR4].
+
+XMLMAP \[EXTENSION\]. Part 14 maps a table, a schema or the catalog to
+XML and to an XML Schema document [§9.11, §9.14, §9.17], but gives the
+mappings no syntax [§4.10.9 NOTE 13, §4.10.10 NOTE 14, §4.10.11 NOTE
+15]. turborel gives them one, a value expression of an XML type, written
+here in the draft's notation:
+
+```
+<XML map> ::=
+    XMLMAP <left paren> <XML map source>
+        [ <XML map nulls> ] [ <XML map form> ]
+        [ <XML map target namespace> ] [ <XML map results> ]
+        [ <XML map encoding> ] <right paren>
+
+<XML map source> ::=
+      TABLE <table name>
+    | SCHEMA <schema name>
+    | CATALOG
+
+<XML map nulls> ::= NULLS { ABSENT | NIL }
+
+<XML map form> ::= AS { FOREST | ELEMENT }
+
+<XML map target namespace> ::= TARGETNAMESPACE <character string literal>
+
+<XML map results> ::= DATA | METADATA | DATA AND METADATA
+
+<XML map encoding> ::= ENCODING { BASE64 | HEX }
+```
+
+Each clause gives a parameter of the mapping [§9.11 SR1, §9.14 SR1,
+§9.17 SR1]. NULLS ABSENT and NIL are NULLS absent and nil. AS FOREST is
+TABLEFOREST True and AS ELEMENT False. TARGETNAMESPACE is TARGETNS. DATA
+is DATA True and METADATA False, METADATA the reverse, and DATA AND
+METADATA both True, so one at least is \[SR2\]. ENCODING BASE64 and HEX
+are ENCODING. A clause not written takes its default. TARGETNAMESPACE's
+is the zero-length string, which the draft makes no namespace [§9.10
+GR1]. The draft leaves the others to the implementation: NULLS ABSENT,
+as XMLFOREST leaves a null value out; AS ELEMENT, so a table's mapping
+is a document, as a schema's and the catalog's always are; DATA; and
+the `<XML binary encoding>` in scope [§11.3], as of every other
+operator, so HEX outside every XMLBINARY. XMLMAP, NULLS, ABSENT, NIL,
+FOREST, ELEMENT, TARGETNAMESPACE, DATA, METADATA, ENCODING, BASE64 and
+HEX are no key words, each read as a word where XMLMAP takes it. The
+target namespace holds XML characters alone and is not the namespace of
+`xml` or `xmlns`, which XMLNAMESPACES refuses too [§11.3 SR6].
+
+The binder reads each table a mapping maps by a subquery, `SELECT * FROM`
+the table, so it is read as a `<table reference>` reads it. TABLE needs
+SELECT on its table, else SQLCODE -104, and a view whose query maps a
+table reads it, so DROP TABLE RESTRICT is refused while it does. A
+schema's or the catalog's mapping holds its XML visible tables alone
+[§4.10.8], those whose SELECT the statement's authorization identifier
+holds with a column it can map, so it is never refused for a table it
+cannot read. Its tables are not among those a view reads: it maps the
+tables there are as it runs. A view, routine or trigger whose text maps
+a schema depends on the schema, found by reading the text as the lexer
+does (`db/drop/mapped.rs`), as a constraint a schema names does on it:
+DROP SCHEMA RESTRICT is refused while it is there, and CASCADE drops it.
+A mapping of the catalog depends on nothing that can be dropped. A
+mapping of a schema or the catalog could hold itself, through a view or
+a routine that maps a schema or the catalog, so it leaves out a view
+whose query, or that of a view it reads, holds one, and its tables are
+bound for `Purpose::Mapped`, under which a mapping of a schema or the
+catalog met through a routine is refused (SQLCODE -103) rather than
+recursing without end. A mapping
+reads rows in an order not determined, so a constraint holds none. A
+function of each row's values writes its text, as §9.10 writes it, and
+the rows of all the tables, each its table's index and its text, are
+read UNION ALL, one table's after another's, by a set function that
+writes the data as they come, each table's in its elements [GR12]. The
+data is held whole as it grows, at most `MAX_INPUT` octets of all the
+tables', so a mapping of any number of rows and tables is read as its
+rows stream; past it, as the row that takes it there comes, and past the
+limits of the value it makes, SQLCODE -900. A function of the data
+writes the XML Schema document [§9.11 GR10] and parses each, as the
+draft's XMLPARSE does, PRESERVE WHITESPACE.
+
+A column is left out, as an XML unmappable column, if its type is
+XML(SEQUENCE), a structured or reference type [§4.10.8], or, as §9.5
+maps no type of them, DECFLOAT or a plug-in's type, or is made of one.
+Rows, arrays and multisets are mapped as §9.8 maps them, each a complex
+type of the types it is made of.
+
+The value is what that parse gives, which XMLSERIALIZE writes as the
+draft's XSR and XDR [§9.11 GR10f, GR12d]. Of METADATA it is the XML
+Schema document, of XML(DOCUMENT(UNTYPED)). Of DATA it is the data, of
+XML(DOCUMENT(UNTYPED)), or of a table AS FOREST of
+XML(CONTENT(UNTYPED)), a document node of the rows' elements. Of DATA AND
+METADATA it is the two results the draft names [§9.11 GR13], a sequence
+of the schema document's document node then the data's, of
+XML(SEQUENCE). The documents are of UTF-8 [GR8], and of XML 1.1 only if
+a name in them is no name of XML 1.0 [GR7], so XMLDECL is written of XML
+1.1 alone. They hold no white space between elements. A visible column
+a mapping leaves out, as its type does not map, raises the warning
+01010 [§9.11 GR3]. The binder, which knows it, binds such a mapping as
+`Expr::Warned`, which raises its warning each time it is evaluated (D53),
+so a mapping of no argument is not folded away as the statement is
+planned.
+
 #### D119. One frozen geometry model of every SQL/MM Spatial type, stored as canonical well-known binary
 
 `geometry::model::Geom` holds a value of any of the 27 types of
@@ -4318,6 +5512,188 @@ part the error comes from.
 routines ported from D85 keep their SQLSTATE 22000, so their behaviour
 is unchanged.
 
+#### D133. A registered function's own word decides whether it is deterministic, and constraints call only deterministic ones
+
+The standard keeps a CHECK, an assertion and a generation expression
+free of any potential source of non-determinism [ISO/IEC 9075-2:2023
+§11.9 SR5, CR2, §11.4 SR10d]. Item am of §9.16 SR1 names a routine
+invocation whose subject routine is possibly non-deterministic. A
+registered function is no SQL-invoked routine, so the standard says
+nothing of it. Its `ScalarFunction::deterministic` is taken as the
+routine's characteristic would be. A call of one that says false is
+refused in those places and in an index's key part (D92), SQLCODE -103,
+as a call of such an SQL-invoked function is. A query still calls it.
+
+Feature F672 is not claimed, so nothing lets a retrospective CHECK call
+one. Trusting the function's word costs no check per row, and a wrong
+word is the program's to fix, as with `uses_context` or
+`index_predicate`. A function that later says false makes a stored
+definition calling it fail as it is bound again. That is the same
+failure as a function no longer registered.
+
+The setting SQL.FUNCTION_CALLS is checked when a definition is written
+(D74). ALTER TABLE reads its own CHECKs and generation expressions as
+its session read them, as CREATE does. So a constraint it adds while the
+session's setting is OFF calls no registered function, and the
+constraints made before are bound again with their calls taken.
+
+#### D134. A spatial read records the envelopes it read, merged into their hull past a bound
+
+Under SERIALIZABLE, a read is checked at commit against what transactions
+committed meanwhile changed (D29). A probe of a geometry `rtree` index
+read the whole table there before, since storage cannot call a spatial
+function under its locks (D34). Now the index says which envelopes its
+search reads (`Index::read_region`), and the executor records them as a
+region of the key's column (`TableStorage::read_by_region`,
+`storage/region.rs`). A filter's window, and each probe of an inner join,
+is one envelope.
+
+A change conflicts with a region when the envelope of its old or new
+geometry meets one of the region's, edges included. So a move into the
+window or out of it conflicts, and a write elsewhere no longer does. The
+envelope matched is the one the index keys the value by. A NULL is in no
+region, as no index holds it and no relationship holds of it. An empty
+geometry is keyed at the origin, so it conflicts with a window holding
+the origin, which may refuse a commit it need not but never misses one. A
+probe whose value is NULL or an empty geometry finds no entry, and records
+no region. A probe the index answers by reading every entry, as of
+another SRID or ST_EQUALS of an empty value, records the whole table. So
+does a key computed by an expression, whose values no column holds. A
+value that cannot be read as a geometry matches every region.
+
+A plan that reads a window wider than its probe's, as a distance search or
+an outer join may, records that wider window. It gives the region to
+`read_by_region` itself, or its index names it for its probe. Engines
+whose isolation is the coordinator's ignore regions. The default
+`read_by_region` records a read of the whole table, so an engine that
+knows only conditions stays correct.
+
+Memory is bounded as D38 bounds reads. Past TRANSACTIONS.TRACKED_ROWS
+envelopes, a transaction's regions of a table merge into one rectangle of
+each column, the hull of its envelopes. A merged region holds every row
+the regions held, so it refuses more commits, never fewer, and there are
+then at most as many regions as columns. When a committed transaction's
+changes outgrow TRANSACTIONS.HELD_BYTES and are kept as each column's
+least and greatest value, every region may match them.
+
+Regions are kept in memory with the rest of a transaction's reads, so
+neither recovery nor replication sees them. A transaction open at a
+crash is undone and validates nothing.
+
+#### D135. Geometry windows serve relate, distance and outer joins, reading every entry where a scan would raise
+
+D85's envelope candidates serve three more forms, each through the same
+`Probe::Predicate` and the same recheck of the whole condition.
+
+`ST_RELATE(column, value, pattern) = 1` uses a window when the pattern is
+a constant that asks an interior or boundary of one value to meet one of
+the other's. That is a T, 0, 1 or 2 in a cell of the first two rows and
+columns [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.45]. Values whose
+envelopes are apart cannot match such a pattern. A pattern disjoint
+values may match is not windowed, and an invalid one reads every entry,
+so the call raises its error.
+
+`ST_DISTANCE(column, value [, unit]) <= limit`, or `<`, or with the
+limit first and `>=` or `>`, uses a window of the value's envelope
+widened by the limit. The limit is a constant, a parameter or, in a
+join, a column of the probing row. A unit is converted to the column's
+as the statement is planned, and one that does not convert keeps the
+index out of the plan. The probe's value is a ROW of the geometry, the
+limit and the unit's scale (`spatial/window.rs`). The radius is the
+limit over the scale with a relative slack, and an entry is kept unless
+its envelope's least distance to the value's exceeds it, so rounding
+never drops a match. A null or negative limit finds no entry, but only
+when the tree's root envelope and the value lie within the domain where
+every distance is finite, as the nearest search certifies
+(`engine/rtree/nearest.rs`). Otherwise every entry is read, so a
+distance that overflows raises 22003 as a scan's would.
+
+A value of another SRID, or of a table column with no fixed SRID, reads
+every entry, so the recheck raises the SRID error even for a value no
+envelope is near. A null geometry finds none, and an empty one finds
+none but under ST_Equals, as D85 says.
+
+LEFT, RIGHT and FULL outer joins on any of these probe the R-tree
+[ISO/IEC 9075:1992 §7.5 GR1 to GR5]. `Plan::IndexJoin` keeps a
+`Preserved` of inner, outer or both. A LEFT join probes the right
+operand's table. A RIGHT join is the LEFT join of its operands swapped,
+under a projection that restores the columns' order. A FULL join probes
+whichever way costs less, records the ids of the table rows its probes
+paired in a set charged to the memory budget (D38), and then reads the
+table for the rows no probe paired, which its own filter must keep.
+An outer row of a null or empty geometry, or that no candidate matches,
+keeps its row with nulls. Outer joins never take the adaptive scan or
+the no-raise proof of D15. Every other conjunct and the table's filter
+must be non-raising, so pruning drops only pairs the condition is not
+true of.
+
+ST_EQUALS and ST_POINT are also routines of linear referencing (D131).
+A call of null values alone cannot choose among those routines, so it is
+the geometry function's call and its value is null, as the index's
+omission of null rows assumes. EXPLAIN shows the outer joins as
+`LeftOuterIndexNestedLoop` and `FullOuterIndexNestedLoop`, and a
+distance window as `(ST_DISTANCE(column, value) * scale) <= limit`.
+
+#### D136. Simple feature access is views over the SQL/MM catalog and routines named without ST_
+
+The SQL option of Simple feature access [OGC 06-104r4] in its "SQL with
+Geometry Types" environment takes SQL/MM's types and routines [§7.2.1].
+So it adds no second geometry, only the names and tables its clients
+read. Its tables GEOMETRY_COLUMNS and SPATIAL_REF_SYS [§7.1] are views
+of a schema SF_INFORMTN_SCHEMA, as §7.1.1 lets them be, read as the
+Information Schema is (D121). SQL/MM's ST_INFORMTN_SCHEMA already names
+views GEOMETRY_COLUMNS and SPATIAL_REF_SYS of other columns, so the
+schemas stay apart, and a view is told from its namesake by its query.
+An unqualified name of either view that the default schema has no table
+of names it, with its own name as correlation name, as a client writes
+`FROM geometry_columns`. A table of the schema of that name comes first.
+
+GEOMETRY_COLUMNS reads a base table of ST_DEFINITION_SCHEMA made from the
+catalog as the statement reads it, joined to INFORMATION_SCHEMA.COLUMNS
+so a user sees the columns that view shows. A column's SRID is the one
+it is registered with, else its type's, else 0, the unspecified system
+of SQL/MM, which SPATIAL_REF_SYS has no row for. That is the one place
+the foreign key of §7.1.3.2 does not hold. COORD_DIMENSION is 3 in a
+geocentric system and 2 otherwise, as a column type does not say
+whether its values have z. GEOMETRY_TYPE is Table 4's code, or Part 1's
+Table 7 code it is a subset of, with 1000 of z in three dimensions. A
+type neither table codes, a circle or a solid, has none. STORAGE_TYPE
+and MAX_PPR are null, as no normalized storage exists.
+
+The routines are SQL/MM's under their names without ST_ [§7.2.2.2
+Note]. A call of such a name with a first argument of a geometry type is
+the method of its declared type, before any registered function of the
+name, so CONTAINS of geometries is spatial and of a FULLTEXT is
+full-text's. When the declared type has no such method, SQL/MM's
+function of the name is called, or else TREAT of the argument as the one
+subtype declaring it, as a GEOMETRY column holds collections. The
+constructors map to SQL/MM's, GeomCollFromText to ST_GeomCollFromTxt.
+GeometryType, AsText and AsBinary differ in meaning, so they are
+functions of their own. The first gives `MULTILINESTRING`, not
+`ST_MultiLineString`, and the other two write Part 1's forms. Those
+differ from SQL/MM's only for a triangle, polyhedral surface and TIN.
+The ST_ names keep SQL/MM's meaning. The readers take both forms, which
+never begin alike. A TIN read from Part 1 has no elements and no
+maximum side length, and Part 1 writes none.
+
+PolyhedSurface names ST_PolyhdrlSurface, and NumSurfaces, SURFACE,
+ST_NumGeometries, ST_GeometryN and ST_Geometries of one are its patches'
+[§7.2.14]. Each SQL type name of §7.2.2.2 names its ST_ type. A
+structured type a schema defines of one of these names comes first,
+in a column's type and in NEW.
+
+UNION and OVERLAPS are reserved words, and INTERSECTION a set function.
+Before a parenthesis at the start of an operand none of them can begin
+anything else, so `Union(a, b)` and `Overlaps(a, b)` are calls, and
+INTERSECTION of two arguments or more is one.
+
+The text types of §7.2.20, ANNOTATION_TEXT, ANNOTATION_TEXT_ELEMENT and
+ANNOTATION_TEXT_ELEMENT_ARRAY, are kinds of type beside SQL/MM's
+support types (`geometry/support/annotation.rs`). They share that
+code's routine tables, method binding and stored forms. They have no
+ordering and no well-known forms. ANNOTATION_TEXT_METADATA [§6.2.9.2]
+is a third view of SF_INFORMTN_SCHEMA, of each text column, its
+defaults NULL.
 #### D140. A property graph is a view-like schema object over tables, ENFORCED or TRUSTED
 
 CREATE, ALTER and DROP PROPERTY GRAPH (`db/graphs.rs`) define a graph
@@ -4328,7 +5704,7 @@ that are declared PRIMARY KEY or UNIQUE constraints of NOT NULL columns
 and ends that are declared FOREIGN KEYs. A TRUSTED graph takes them as
 written, so a key may repeat and an end may match no vertex (R4.3).
 Element tables are read with the owner's privileges unless the graph
-is WITH INVOKER RIGHTS. The statements take command codes -22 to -24.
+is WITH INVOKER RIGHTS. The statements take command codes -27 to -29.
 
 #### D141. A graph's edges are followed through an adjacency index, every entry rechecked
 
@@ -4859,7 +6235,7 @@ R-TEST-6 was withdrawn with the golden-file tests (D6).
 
 | ID | Rule | Checked by |
 |---|---|---|
-| R-TRACE-1 | Every test **shall** have a `/// Verifies:` paragraph starting with a tag: `[X3.135-1986 §…]`, `[ISO/IEC 9075…]` of any part, `[ISO/IEC 13249…]` (SQL/MM) of any part, `[EXTENSION]`, `[DESIGN]` or `[TOOL] R-…`. | `cargo xtask verify` |
+| R-TRACE-1 | Every test **shall** have a `/// Verifies:` paragraph starting with a tag: `[X3.135-1986 §…]`, `[ISO/IEC 9075…]` of any part, `[ISO/IEC 13249…]` (SQL/MM) of any part, `[OGC 06-10…]` (Simple feature access) of either part, `[EXTENSION]`, `[DESIGN]` or `[TOOL] R-…`. | `cargo xtask verify` |
 | R-TRACE-2 | Code implementing a requirement **shall** cite it (R-DOC-4). `cargo xtask trace '§8.6'` lists a clause's tests. | review; `xtask trace` |
 | R-TRACE-3 | CONFORMANCE.md **shall** change with the change implementing or changing a clause. | review |
 
@@ -4905,7 +6281,7 @@ Rust's short-circuit `&&` and `||`.
 
 | ID | Rule | Checked by |
 |---|---|---|
-| R-PROC-1 | `cargo xtask verify` **shall** pass before every commit: format, lints, lint baselines, docs, file length, traceability and citations, every test. `--coverage` adds coverage. | pre-commit hook; CI |
+| R-PROC-1 | `cargo xtask verify` **shall** pass before every commit: format, lints, lint baselines, docs, file length, traceability and citations, no merge conflict marker in a source or document, threads, the claimed features SQL_FEATURES shows, every test. `--coverage` adds coverage. | pre-commit hook; CI |
 | R-PROC-2 | Every change **shall** be reviewed against the checklist below. | review |
 | R-PROC-3 | Commits **should** be small and single-purpose, in CONTRIBUTING.md's form (`area: summary`, then why), citing rules applied or changed. | review |
 | R-PROC-4 | A threshold change **shall** change RULES.md, `clippy.toml` and `xtask` together. | review |
@@ -4981,6 +6357,13 @@ was fixed that week, and lint baselines and over-long files were paid down.
   qualified Rust toolchain.
 - *The Rust Programming Language*, ch. 11; *The Cargo Book*; the Rust API
   Guidelines; the Rust Reference on integer overflow.
+- ISO/IEC 9075-14, *SQL/XML*, written from its 2006 draft, and the W3C
+  texts it names: XML 1.0 (third edition) and 1.1, Namespaces in XML 1.0
+  and 1.1, the XML Information Set, the XQuery 1.0 and XPath 2.0 data
+  model and Formal Semantics, and XSLT 2.0 and XQuery 1.0 Serialization.
+- S. Pal, I. Cseri, O. Seeliger, G. Schaller, L. Giakoumakis and V.
+  Zolotov, "Indexing XML Data Stored in a Relational Database", VLDB
+  2004: tokenized names, and the XML indexes (D106).
 - P. L. Lehman and S. B. Yao, "Efficient Locking for Concurrent Operations
   on B-Trees", ACM TODS 6(4), 1981: the B-link tree.
 - W. Litwin, "Linear Hashing: A New Tool for File and Table Addressing",

@@ -55,7 +55,8 @@ impl Overlay {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => return fail(Code::Api, "[DESIGN] OVERLAY was given a replacement not a string"),
+            | Value::Extension(_)
+            | Value::Xml(_) => return fail(Code::Api, "[DESIGN] OVERLAY was given a replacement not a string"),
         })
     }
 }

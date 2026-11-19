@@ -109,7 +109,7 @@ pub(crate) fn input_type(t: &DataType, format: Option<JsonFormat>, what: &str) -
         DataType::Binary { .. } | DataType::VarBinary { .. } | DataType::Lob { kind: LobKind::Binary, .. } => {
             Err(rule(format!("[ISO/IEC 9075-2:2023 §10.12 SR7] {what} of the binary string type {t} is FORMAT JSON")))
         }
-        DataType::Array(_) | DataType::Multiset(_) | DataType::Row(_) => {
+        DataType::Array(_) | DataType::Multiset(_) | DataType::Row(_) | DataType::Xml(_) => {
             Err(rule(format!("[ISO/IEC 9075-2:2023 §10.12 SR3] {what} is of a type CAST takes to a character string, not {t}")))
         }
         DataType::Distinct(_) | DataType::Structured(_) | DataType::Reference(_) | DataType::Extension(_) => Err(SqlError::new(

@@ -4,21 +4,21 @@
 //! search needs before it uses workers. A GRAPH_TABLE's OPTIONS overrides
 //! each limit for itself (`exec/graph_table/limits.rs`).
 
-use super::builtin::{text, whole};
+use super::builtin::{self, text, whole};
 use super::{Definition, Effect, Key, Kind, OFF, SWITCHES};
 
 /// GRAPH.MAX_PATH_LENGTH.
-pub const GRAPH_MAX_PATH_LENGTH: Key = Key(53);
+pub const GRAPH_MAX_PATH_LENGTH: Key = Key(54);
 /// GRAPH.MAX_PATHS_PER_PARTITION.
-pub const GRAPH_MAX_PATHS_PER_PARTITION: Key = Key(54);
+pub const GRAPH_MAX_PATHS_PER_PARTITION: Key = Key(55);
 /// GRAPH.MAX_SEARCH_STATES.
-pub const GRAPH_MAX_SEARCH_STATES: Key = Key(55);
+pub const GRAPH_MAX_SEARCH_STATES: Key = Key(56);
 /// GRAPH.ON_LIMIT.
-pub const GRAPH_ON_LIMIT: Key = Key(56);
+pub const GRAPH_ON_LIMIT: Key = Key(57);
 /// GRAPH.DETERMINISTIC_PATHS.
-pub const GRAPH_DETERMINISTIC_PATHS: Key = Key(57);
+pub const GRAPH_DETERMINISTIC_PATHS: Key = Key(58);
 /// GRAPH.PARALLEL_MIN_STATES.
-pub const GRAPH_PARALLEL_MIN_STATES: Key = Key(60);
+pub const GRAPH_PARALLEL_MIN_STATES: Key = Key(61);
 
 /// \[DESIGN\] The default of GRAPH.PARALLEL_MIN_STATES: below it, starting
 /// and joining workers costs more than the states they would share.
@@ -83,4 +83,34 @@ pub(super) fn later() -> [Definition; 1] {
         ("GRAPH.PARALLEL_MIN_STATES", COUNT, whole(DEFAULT_PARALLEL_MIN_STATES)),
         "The least states, estimated from the graph's size, a GRAPH_TABLE's search makes for it to run on the workers EXECUTOR.GRAPH_THREADS allows; a smaller one runs on the statement's thread alone; 0 for any search. Its results are the same either way.",
     )]
+}
+
+/// \[EXTENSION\] The threads a graph algorithm runs on (RULES.md
+/// D145), at its key's place, after the others, though of the
+/// executor's settings: 1, the statement's own thread alone, so many
+/// sessions do not each take every core unasked.
+pub(super) fn threads() -> Definition {
+    builtin::defined(
+        ("EXECUTOR.GRAPH_THREADS", builtin::at_least(1), builtin::count(1)),
+        builtin::SESSION,
+        "The threads a graph algorithm of GRAPH_ALGO, or a GRAPH_TABLE's search from many starts, runs on at once, the statement's own among them; its results are the same on any number.",
+    )
+}
+
+/// \[EXTENSION\] A GQL session (graph standard §9, RULES.md D144): the
+/// language a session's direct statements are read in, and the graph a
+/// GQL statement that names none reads.
+pub(super) fn gql_session() -> [Definition; 2] {
+    [
+        builtin::defined(
+            ("SESSION.LANGUAGE", Kind::Choice(super::LANGUAGES), text("SQL")),
+            builtin::SESSION,
+            "The language a session's direct statements are read in, SQL or GQL; in GQL each statement but SET is a GQL request.",
+        ),
+        builtin::defined(
+            ("GQL.GRAPH", Kind::Text { max: 257 }, text("")),
+            builtin::SESSION,
+            "The property graph a GQL statement reads when it names none, as SESSION SET GRAPH sets it, named in the default schema if unqualified; empty for none.",
+        ),
+    ]
 }

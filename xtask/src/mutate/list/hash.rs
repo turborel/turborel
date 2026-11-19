@@ -1,11 +1,31 @@
-//! The mutations of the hash index's keys and pages (RULES.md R-TEST-9):
-//! a key inserted twice read once, and a page a split or merge rewrote
-//! never appended to.
+//! Mutations of the hash index: its streams holding a discarded index,
+//! a row of a key inserted twice given once, and its table's pages split
+//! and merged (RULES.md R-TEST-9, D34).
 
 use super::{Mutation, Package};
 
-/// The hash index's key and page mutations.
-pub const HASH: [Mutation; 2] = [
+/// Each hash index mechanism broken alone, and the tests that fail.
+pub const HASH: [Mutation; 4] = [
+    Mutation {
+        name: "hash-key-stream-owner",
+        package: Package::Core,
+        breaks: "a discarded hash index frees pages while its key-row stream reads them",
+        file: "src/index/hash.rs",
+        original: "let _rows_owner = &self;",
+        replacement: "let _rows_owner = ();",
+        integration: &[],
+        unit: &["index::hash::tests::streams_retain_discarded_indexes_until_they_close"],
+    },
+    Mutation {
+        name: "hash-search-stream-owner",
+        package: Package::Core,
+        breaks: "a discarded hash index frees pages while a search still reads them",
+        file: "src/index/hash.rs",
+        original: "let _entries_owner = &self;",
+        replacement: "let _entries_owner = ();",
+        integration: &["indexes::indexes_are_dropped"],
+        unit: &["index::hash::tests::streams_retain_discarded_indexes_until_they_close"],
+    },
     Mutation {
         name: "hash-key-twice",
         package: Package::Core,

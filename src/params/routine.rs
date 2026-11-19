@@ -20,6 +20,7 @@
 use std::sync::Arc;
 
 use super::Params;
+use crate::ast::LexicallyScopedOptions;
 use crate::catalog::{Horizon, ParameterMode, QualifiedName, SqlRoutineDesc};
 use crate::error::{Code, Result, SqlError};
 use crate::value::{DataType, Value, assign};
@@ -50,6 +51,10 @@ pub(crate) struct RoutineScope {
     /// body invokes is of, if written without one; else none, and the name
     /// is of the routine's schema.
     pub(crate) path: Vec<String>,
+    /// [ISO/IEC 9075-14:2006 draft §15.1 SR1, SR2] The `<XML lexically
+    /// scoped options>` of the compound statements it is in, the innermost
+    /// last.
+    pub(crate) xml: Vec<LexicallyScopedOptions>,
 }
 
 /// [ISO/IEC 9075-4:2006 draft §14.4] An SQL variable in scope.
@@ -78,6 +83,7 @@ impl RoutineScope {
             variables: Vec::new(),
             cursors: Vec::new(),
             path: Vec::new(),
+            xml: Vec::new(),
         }
     }
 
@@ -91,6 +97,7 @@ impl RoutineScope {
             variables: Vec::new(),
             cursors: Vec::new(),
             path,
+            xml: Vec::new(),
         }
     }
 

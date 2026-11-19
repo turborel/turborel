@@ -192,6 +192,7 @@ fn character_default(s: &str, subject: &DataType) -> Option<Result<Value>> {
         | DataType::DecFloat { .. }
         | DataType::Binary { .. }
         | DataType::VarBinary { .. }
+        | DataType::Xml(_)
         | DataType::Lob { kind: LobKind::Binary, .. }
         | DataType::Boolean
         | DataType::Date

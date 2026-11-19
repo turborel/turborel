@@ -98,31 +98,55 @@ fn within_crlf<T: Text + ?Sized>(text: &T, at: usize) -> Result<bool> {
     Ok(before(text, at)? == Some('\r') && text.at(at)? == Some('\n'))
 }
 
+/// Where `^` and `$` match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Lines {
+    /// At the string's start and end alone.
+    Whole,
+    /// Multi-line, at each line's, a line ended by a newline sequence
+    /// [§9.28 GR9a i; UTS #18 RL1.6].
+    Each,
+    /// Multi-line, at each line's, a line ended by a line feed alone
+    /// [XQueryFO §7.6.1, §7.6.1.1].
+    EachLineFeed,
+}
+
 /// \[F&O 3.1 §5.6.1.1, §5.6.2; §9.28 GR9a i\] Whether `^` matches at `at`:
 /// the string's start; and multi-line, after a newline sequence but at the
-/// string's end.
-pub(super) fn line_start<T: Text + ?Sized>(text: &T, at: usize, multiline: bool) -> Result<bool> {
+/// string's end, or of `EachLineFeed` after a line feed [XQueryFO
+/// §7.6.1.1].
+pub(super) fn line_start<T: Text + ?Sized>(text: &T, at: usize, lines: Lines) -> Result<bool> {
     if at == 0 {
         return Ok(true);
     }
-    if !multiline || at >= text.len() || !newline(before(text, at)?) {
-        return Ok(false);
+    match lines {
+        Lines::Whole => Ok(false),
+        Lines::EachLineFeed => Ok(before(text, at)? == Some('\n')),
+        Lines::Each => {
+            if at >= text.len() || !newline(before(text, at)?) {
+                return Ok(false);
+            }
+            Ok(!within_crlf(text, at)?)
+        }
     }
-    Ok(!within_crlf(text, at)?)
 }
 
 /// \[F&O 3.1 §5.6.1.1, §5.6.2; §9.28 GR9a i\] Whether `$` matches at `at`:
 /// the string's end; and multi-line, before a newline sequence, the
-/// string's end only if no newline ends it.
-pub(super) fn line_end<T: Text + ?Sized>(text: &T, at: usize, multiline: bool) -> Result<bool> {
+/// string's end only if no newline ends it; or of `EachLineFeed` before a
+/// line feed, and at the string's end [XQueryFO §7.6.1.1].
+pub(super) fn line_end<T: Text + ?Sized>(text: &T, at: usize, lines: Lines) -> Result<bool> {
     let end = text.len();
-    if !multiline {
-        return Ok(at == end);
+    match lines {
+        Lines::Whole => Ok(at == end),
+        Lines::EachLineFeed => Ok(at == end || text.at(at)? == Some('\n')),
+        Lines::Each => {
+            if at == end {
+                return Ok(!newline(before(text, end)?));
+            }
+            Ok(newline(text.at(at)?) && !within_crlf(text, at)?)
+        }
     }
-    if at == end {
-        return Ok(!newline(before(text, end)?));
-    }
-    Ok(newline(text.at(at)?) && !within_crlf(text, at)?)
 }
 
 /// Whether `inst`, one that matches a character, matches the one at `at`.

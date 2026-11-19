@@ -6,12 +6,14 @@ use crate::parser::Parser;
 
 impl Parser {
     /// A table reference of a word of its own (UNNEST, a table function,
-    /// a search, JSON_TABLE, GRAPH_TABLE, GQL_TABLE), if one is next.
+    /// XMLTABLE, a search, JSON_TABLE, GRAPH_TABLE, GQL_TABLE), if one is next.
     pub(super) fn special_table(&mut self) -> Result<Option<TableReference>> {
         let table = if self.at_unnest() {
             self.collection_derived_table()?
         } else if self.at_chunk_table() {
             self.chunk_table()?
+        } else if self.at_xml_table() {
+            self.xml_table()?
         } else if self.at_ptf_table() {
             self.ptf_table()?
         } else if self.at_vector_search() {

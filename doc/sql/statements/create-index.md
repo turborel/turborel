@@ -27,11 +27,12 @@ method: `btree`, a B-link tree, the default; `hash`, a linear hash table;
 `rtree`, a spatial tree over coordinate columns or fixed-SRID geometries;
 `fulltext`, an inverted index of a text column's words; `json`, an
 inverted index of a column's JSON documents' paths and values;
-`adjacency`, the edges of an edge table kept by their endpoints, for
-following a graph; `labels`, an element table's rows numbered for a
-graph's label tests; `reachability`, which vertices an edge table's
-edges lead to, for pruning a graph's searches; or a method a plug-in
-registers. The planner uses an index when its cost
+`xml_path`, `xml_value`, `xml_property` or `xml_primary`, of an XML
+column's paths and values; `adjacency`, the edges of an edge table kept
+by their endpoints, for following a graph; `labels`, an element table's
+rows numbered for a graph's label tests; `reachability`, which vertices
+an edge table's edges lead to, for pruning a graph's searches; or a
+method a plug-in registers. The planner uses an index when its cost
 says the index is the cheaper way to find a query's rows: by the
 comparisons of its columns with constants in a WHERE clause, BETWEEN,
 IN lists of constants, ORs of these of one column, and LIKE patterns
@@ -78,15 +79,19 @@ the complete join condition.
 
 An `rtree` can also index one `GEOMETRY(srid)` column. It stores the
 geometry's envelope and can supply candidates for
-`ST_INTERSECTS(column, value) = 1`, where `value` is a constant or parameter.
+`ST_INTERSECTS(column, value) = 1`, where `value` is a constant or parameter,
+and for the other relationships true only of values that meet, ST_RELATE
+of a pattern asking them to meet among them.
 The executor fetches the visible geometry and checks the full condition;
 an envelope match alone never establishes intersection. The column must
 enforce one SRID. NULLs are omitted and empty values never intersect.
-Inner joins can also probe it when both geometry columns enforce the same
-SRID; the full ON condition checks every candidate pair. Ascending
+`ST_DISTANCE(column, value [, unit]) <= limit`, or `<`, reads the
+envelopes within the limit. Inner and outer joins, LEFT, RIGHT and FULL,
+can also probe it from the other operand's geometry; the full ON
+condition checks every candidate pair, and an outer join keeps the rows
+no probe matched, with nulls. Ascending
 ST_DISTANCE with FETCH FIRST can also use this index, refining each
-candidate's geometry before deciding which rows to return. Geometry outer
-joins and distance filters are not indexed. See
+candidate's geometry before deciding which rows to return. See
 [Spatial Data](../10-spatial.md#the-rtree-index-method) for its rules and the
 [Spatial Guide](../../data/02-spatial.md) for runnable examples.
 
@@ -114,6 +119,18 @@ values, and JSON.MAX_DEPTH, 0 to 128, the default, the most member
 names of a path it keeps; changing either makes it anew. See the
 [JSON guide](../../data/03-json.md#indexes) for runnable examples.
 
+An `xml_path`, `xml_value`, `xml_property` or `xml_primary` index keys
+one XML column: each element and attribute of its values, by its path,
+its value as a string and as a number, and its place in document order,
+each method in its own order ([XML indexes](../19-xml.md#xml-indexes));
+`xml_primary` keeps each node's value whole up to 512 octets, so it
+answers of a row from the index alone. No comparison of SQL reads it, as
+XML values are not comparable: the planner reads it for the paths of
+XMLEXISTS, XMLQUERY and XMLTABLE ([Queries an XML index reads
+for](../19-xml.md#queries-an-xml-index-reads-for)). A value with more
+elements and attributes than it keys,
+or a name or path longer than the database's page size holds, is refused
+as it is written.
 An `adjacency` index takes the columns of an edge table's source
 endpoint, then those of its destination, then any edge properties it
 covers. ADJACENCY.SOURCE_COLUMNS, 1 by default, says how many columns
@@ -223,7 +240,10 @@ run again after COMMIT or ROLLBACK.
    temporary table, it is `btree`, `hash`, `rtree`, `fulltext`, `json`,
    `adjacency`, `labels` or `reachability`.
    Of a key part that is an expression, it is `btree` or `hash`.
-6. Each option is declared, given once, of a value it accepts.
+6. The columns are of types the method keys: of `xml_path`, `xml_value`,
+   `xml_property` and `xml_primary`, one column of an XML type; of the others, types
+   whose values compare, so not of an XML type.
+7. Each option is declared, given once, of a value it accepts.
 
 ## PRIVILEGES
 
@@ -237,6 +257,7 @@ The table's schema is its user's.
 | 2A000 | -103 | A rule above is broken, as by an expression that can raise an error |
 | 2A000 | -104 | Its user does not own the table's schema |
 | 0A000 | -900 | `rtree` is asked to index an unsupported column count or type |
+| 0A000 | -900 | A value of the table is past what an XML index keys |
 | TB910 | -910 | An `rtree` coordinate is non-finite or a rectangle has reversed bounds |
 | 0A000 | -900 | `fulltext` is asked to index other than one FULLTEXT column or one character string column with no collation |
 | 0A000 | -900 | `json` is asked to index other than one character string column with no collation or one JSON column |
@@ -357,6 +378,31 @@ OK
 (1 row)
 ```
 
+The same index finds the depots near a point, and those near each stop,
+a stop near none kept with nulls:
+
+```sql
+SELECT NAME FROM PICKUP_DEPOTS WHERE ST_DISTANCE(LOCATION, ST_POINT(900, 300)) <= 150 ORDER BY ID;
+CREATE TABLE STOPS (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));
+INSERT INTO STOPS VALUES (1, ST_POINT(120, 700)), (2, ST_POINT(500, 500));
+SELECT S.ID, D.NAME FROM STOPS S LEFT JOIN PICKUP_DEPOTS D
+    ON ST_DISTANCE(S.SPOT, D.LOCATION) < 50 ORDER BY S.ID;
+```
+
+```
+ NAME
+--------------
+ Market depot
+(1 row)
+OK
+OK
+           ID | NAME
+--------------+--------------
+            1 | Canal depot
+            2 | NULL
+(2 rows)
+```
+
 The planner may still read so small a table whole, as it chooses by
 cost. The [Spatial Guide](../../data/02-spatial.md) has service-area
 joins and nearest-depot searches.
@@ -381,6 +427,30 @@ OK
             1
             2
 (2 rows)
+```
+
+An XML index of a catalogue's entries, and one refused of a column not
+of an XML type:
+
+```sql
+COMMIT;
+CREATE TABLE CATALOGUE (ID INTEGER, ENTRY XML(DOCUMENT));
+COMMIT;
+CREATE INDEX CATALOGUE_PATHS ON CATALOGUE (ENTRY) USING XML_PATH;
+CREATE INDEX CATALOGUE_IDS ON CATALOGUE (ID) USING XML_PATH;
+SELECT INDEX_NAME, METHOD_NAME FROM INFORMATION_SCHEMA.INDEXES WHERE TABLE_NAME = 'CATALOGUE';
+```
+
+```
+OK
+OK
+OK
+OK
+turborel: SQLCODE -103 (SQLSTATE 2A000): index CATALOGUE_IDS of method xml_path keys one column, of an XML type (RULES.md D106)
+ INDEX_NAME                                                   | METHOD_NAME
+--------------------------------------------------------------+--------------------------------------------------------------
+ CATALOGUE_PATHS                                              | xml_path
+(1 row)
 ```
 
 Indexes refused, V a view:
@@ -541,4 +611,5 @@ An extension: neither SQL-86 nor SQL-92 has indexes.
 [CREATE LABEL INDEX](create-label-index.md),
 [CREATE REACHABILITY INDEX](create-reachability-index.md),
 [Full-Text Search](../08-fulltext.md),
-[Spatial Data](../10-spatial.md)
+[Spatial Data](../10-spatial.md),
+[XML indexes](../19-xml.md#xml-indexes)

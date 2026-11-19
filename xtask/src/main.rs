@@ -13,10 +13,12 @@ mod cldr;
 mod command;
 mod coverage;
 mod error;
+mod features;
 mod file_length;
 mod files;
 mod json;
 mod lint_audit;
+mod markers;
 mod mutate;
 mod threads;
 mod trace;
@@ -43,6 +45,7 @@ const SIMULATE: &str = "simulate";
 const UNICODE: &str = "unicode";
 const UNICODE_CHECK: &str = "unicode-check";
 const CLDR: &str = "cldr";
+const FEATURES: &str = "features";
 const FROM: &str = "--from";
 /// The support crate's check of the collation UNICODE against Unicode's own
 /// test file, built optimized, run outside `verify` (RULES.md D60).
@@ -88,7 +91,8 @@ commands:
   {UNICODE} {FROM} DIR   the collation table, from Unicode's files in DIR (D60)
   {UNICODE_CHECK} {FROM} DIR
                        the collation UNICODE against Unicode's test file in DIR (D60)
-  {CLDR} {FROM} CLDR UCD  the collations UNICODE_<LOCALE>, from CLDR's files in CLDR and Unicode's in UCD (D60)"
+  {CLDR} {FROM} CLDR UCD  the collations UNICODE_<LOCALE>, from CLDR's files in CLDR and Unicode's in UCD (D60)
+  {FEATURES} [{FROM} DIR] SQL_FEATURES' rows, of CONFORMANCE.md's claims, the standards' texts in DIR (D37)"
     )
 }
 
@@ -121,6 +125,8 @@ fn run(args: &[String]) -> Result<()> {
         [MUTATE, rest @ ..] => mutate::run(&root, rest),
         [SIMULATE, rest @ ..] => simulate(&root, rest),
         [UNICODE, FROM, dir] => unicode::generate(&root, Path::new(dir)),
+        [FEATURES] => features::generate(&root, None),
+        [FEATURES, FROM, dir] => features::generate(&root, Some(Path::new(dir))),
         [CLDR, FROM, cldr, ucd] => cldr::generate(&root, Path::new(cldr), Path::new(ucd)),
         [UNICODE_CHECK, FROM, dir] => command::cargo(&root, &[UNICODE_CHECK_ARGS.as_slice(), &["--", dir]].concat(), NO_ENV),
         _ => Err(Error::new(usage())),
@@ -143,8 +149,12 @@ fn verify(root: &Path, with_coverage: bool) -> Result<()> {
     trace::check(root)?;
     step("citations (R-DOC-5)");
     citations::check(root)?;
+    step("merge markers (R-PROC-1)");
+    markers::check(root)?;
     step("threads (R-SAFE-5)");
     threads::check(root)?;
+    step("claimed features (R-TRACE-3)");
+    features::check(root)?;
     step("tests: unit and integration (R-TEST)");
     command::cargo(root, &TEST_ARGS, NO_ENV)?;
     step("doc tests (R-TEST-1)");

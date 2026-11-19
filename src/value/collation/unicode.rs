@@ -12,6 +12,7 @@
 use std::sync::Arc;
 
 use super::table::{Element, MOST_CONTRACTED, Table, VERSION};
+use super::units::{Unit, split, weighed};
 use super::{Collation, Pad, UNICODE};
 
 /// Bases of implicit primaries \[UTS #10 §10.1.3\].
@@ -67,14 +68,35 @@ impl Unicode {
     pub(super) fn normalized(&self, text: &str) -> Vec<char> {
         let mut out = Vec::with_capacity(text.len());
         for c in text.chars() {
-            let code = u32::from(c);
-            match code.checked_sub(S_BASE).filter(|s| *s < S_COUNT) {
-                Some(s) => hangul(s, &mut out),
-                None => self.0.decompose(c, &mut out),
-            }
+            self.decomposed(c, &mut out);
         }
         self.reordered(&mut out);
         out
+    }
+
+    /// `c`'s full canonical decomposition, added to `out`.
+    fn decomposed(&self, c: char, out: &mut Vec<char>) {
+        match u32::from(c).checked_sub(S_BASE).filter(|s| *s < S_COUNT) {
+            Some(s) => hangul(s, out),
+            None => self.0.decompose(c, out),
+        }
+    }
+
+    /// `text` in Normalization Form D, as `normalized` gives it, and for
+    /// each of its characters the place among `text`'s of the character it
+    /// is the first of, if it is a starter (`units::split`). Canonical
+    /// order moves marks alone, so each starter stays where it is.
+    pub(super) fn normalized_marked(&self, text: &str) -> (Vec<char>, Vec<Option<usize>>) {
+        let (mut out, mut begins) = (Vec::with_capacity(text.len()), Vec::with_capacity(text.len()));
+        for (place, c) in text.chars().enumerate() {
+            let first = out.len();
+            self.decomposed(c, &mut out);
+            let starter = out.get(first).is_some_and(|f| self.0.class(*f) == 0);
+            begins.push(starter.then_some(place));
+            begins.resize(out.len(), None);
+        }
+        self.reordered(&mut out);
+        (out, begins)
     }
 
     /// [The Unicode Standard §3.11] Each run of combining marks in
@@ -238,37 +260,37 @@ fn implicit(table: &Table, c: char, out: &mut Vec<Element>) {
     out.push(Element { weights: [weight(second), 0, 0], variable: false });
 }
 
-/// \[UTS #10 §4.4\] `elements`' four levels under Shifted.
-fn levels(elements: &[Element]) -> [Vec<u16>; 4] {
-    let mut levels: [Vec<u16>; 4] = Default::default();
-    let mut after_variable = false;
-    for e in elements {
+/// \[UTS #10 §4.4\] What each of `elements` adds to the four levels under
+/// Shifted, 0 at a level it adds nothing to.
+fn element_weights(elements: &[Element]) -> impl Iterator<Item = [u16; LEVELS]> + '_ {
+    elements.iter().scan(false, |after_variable, e| {
         let [l1, l2, l3] = e.weights;
         let shifted = e.variable;
-        let ignored = l1 == 0 && after_variable;
+        let ignored = l1 == 0 && *after_variable;
         let fourth = match (shifted, l1 == 0, l2 == 0 && l3 == 0) {
             (true, _, _) => l1,
             (false, _, true) => 0,
             (false, true, false) if ignored => 0,
             (false, _, false) => MAXIMUM,
         };
-        if !shifted && !ignored {
-            let [first, second, third, _] = &mut levels;
-            for (level, weight) in [(first, l1), (second, l2), (third, l3)] {
-                if weight != 0 {
-                    level.push(weight);
-                }
-            }
-        }
-        if fourth != 0
-            && let Some(level) = levels.get_mut(3)
-        {
-            level.push(fourth);
-        }
+        let [first, second, third] = if shifted || ignored { [0; 3] } else { [l1, l2, l3] };
         if shifted {
-            after_variable = true;
+            *after_variable = true;
         } else if l1 != 0 {
-            after_variable = false;
+            *after_variable = false;
+        }
+        Some([first, second, third, fourth])
+    })
+}
+
+/// \[UTS #10 §4.4\] `elements`' four levels under Shifted.
+fn levels(elements: &[Element]) -> [Vec<u16>; LEVELS] {
+    let mut levels: [Vec<u16>; LEVELS] = Default::default();
+    for weights in element_weights(elements) {
+        for (level, weight) in levels.iter_mut().zip(weights) {
+            if weight != 0 {
+                level.push(weight);
+            }
         }
     }
     levels
@@ -338,5 +360,14 @@ impl Collation for Unicode {
             elements.first().is_some_and(|e| e.weights[0] != 0)
         };
         text.char_indices().rev().find(|&(_, c)| self.cut_before(c).is_some_and(weighs_first)).map(|(at, _)| at)
+    }
+
+    /// Each character its steps begin at whose normalized form begins
+    /// with a starter, and what follows up to the next (`units.rs`).
+    fn units(&self, text: &str) -> Option<Vec<Unit>> {
+        let (chars, begins) = self.normalized_marked(text);
+        let (elements, starts) = split(chars, begins, |chars, at, out| self.step(chars, at, out));
+        let per: Vec<[u16; LEVELS]> = element_weights(&elements).collect();
+        Some(weighed(&starts, &per, LEVELS, |w, out| out.extend_from_slice(&w.to_be_bytes())))
     }
 }

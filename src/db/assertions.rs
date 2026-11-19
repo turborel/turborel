@@ -80,7 +80,8 @@ impl State {
         let reads = plan.tables();
         // The columns it sees of each: those of now, as a CHECK's; and
         // [ISO/IEC 9075-2:2023 §4.35.2] its subject routines from now on.
-        let seen = Horizon::of(&*self.catalog, &reads).invoking(invoked.take());
+        let seen =
+            Horizon::of(&*self.catalog, &reads).invoking(invoked.take()).indicating(invoked.take_indicated()).typing(invoked.take_typed());
         // [SR5] no temporary table.
         if let Some(t) = reads.iter().find(|t| self.catalog.table(t).is_some_and(|d| d.temporary.is_some())) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.34 SR5] assertion {name} reads {t}, a temporary table")));
@@ -150,9 +151,12 @@ impl State {
         let ConstraintKind::Check { text, names, horizon, .. } = &a.kind else {
             return Err(rule(format!("[DESIGN] assertion {} is no CHECK", a.name)));
         };
-        let sql = format!("SELECT 1 FROM (VALUES (1)) AS ASSERTED (ONE) WHERE NOT ({text})");
+        // [ISO/IEC 9075-14:2006 draft §12.4 SR1, SR2] its XML options in
+        // scope of its condition.
+        let (options, _) = Parser::for_stored(text)?.check_condition()?;
+        let sql = format!("SELECT 1 FROM (VALUES (1)) AS ASSERTED (ONE) WHERE NOT ({})", Parser::check_clause(text)?);
         let spec = Parser::for_stored_of(&sql, text)?.cursor_specification()?;
-        let params = Params::new();
+        let params = Params::new().with_xml_options(options.as_ref());
         let owner = owner_of(&*self.catalog, &a.name.auth);
         let referencing = Referencing::default();
         let cx = Context {

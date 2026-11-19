@@ -48,6 +48,7 @@ impl<'a> Call<'a> {
                 | Expr::Case(..)
                 | Expr::Cast(..)
                 | Expr::Domain(..)
+                | Expr::Warned(..)
                 | Expr::SortKey(..)
                 | Expr::Truth(_)
                 | Expr::NextValue(_)

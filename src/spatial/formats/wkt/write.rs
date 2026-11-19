@@ -3,6 +3,12 @@
 //! nested keyword repeats the outermost `<z m>` where the grammar allows
 //! one (rule ai), numbers take their shortest exact decimal form, a NaN
 //! number or point is `EMPTY`, and angles are in radians.
+//!
+//! [`write_simple`] writes the form of Simple feature access instead [OGC
+//! 06-103r4 §7.2], which differs only for a triangle, a polyhedral surface
+//! and a TIN: a triangle as the `<polygon text>` of its ring, the others'
+//! patches as `<polygon text>`s with no PATCHES, a TIN's elements and
+//! maximum side length left out, as that form has none (RULES.md D136).
 
 use crate::spatial::curves::types::{Clothoid, Coord, Curve, Dims, Elliptical, Measures, Nurbs, Placement, Spiral, Vector, without_m};
 use crate::spatial::formats::tree::{Body, Collection, Element, Geometry, Kind, Ring, Rings, Surface, Tin};
@@ -10,7 +16,15 @@ use std::fmt::Write as _;
 
 /// The text of `value`.
 pub fn write(value: &Geometry) -> String {
-    let mut w = Writer { out: String::new(), dims: value.dims };
+    let mut w = Writer { out: String::new(), dims: value.dims, simple: false };
+    w.body(&value.body);
+    w.out
+}
+
+/// The text of `value` in the form of Simple feature access [OGC
+/// 06-103r4 §7.2].
+pub fn write_simple(value: &Geometry) -> String {
+    let mut w = Writer { out: String::new(), dims: value.dims, simple: true };
     w.body(&value.body);
     w.out
 }
@@ -18,6 +32,8 @@ pub fn write(value: &Geometry) -> String {
 struct Writer {
     out: String,
     dims: Dims,
+    /// Whether the form is Simple feature access's.
+    simple: bool,
 }
 
 impl Writer {
@@ -248,8 +264,14 @@ impl Writer {
         self.list(rings, Writer::points);
     }
 
-    /// `<triangle text>`: the ring's first three points.
+    /// `<triangle text>`: the ring's first three points; of Simple feature
+    /// access, the `<polygon text>` of the ring.
     fn triangle(&mut self, ring: &Ring) {
+        if self.simple {
+            let rings = if ring.is_empty() { Vec::new() } else { vec![ring.clone()] };
+            self.polygon(&rings);
+            return;
+        }
         let corners = ring.get(..3).unwrap_or_default();
         let dims = self.dims;
         self.list(corners, |w, p| w.point(*p, dims));
@@ -272,13 +294,23 @@ impl Writer {
             Surface::CurvePolygon(rings) => self.list(rings, Writer::curve_text),
             Surface::Polygon(rings) => self.polygon(rings),
             Surface::Triangle(ring) => self.triangle(ring),
-            Surface::Polyhedral(patches) => self.patches(patches, |w, p| {
-                w.keyword(Kind::Polygon);
-                w.polygon(p);
-            }),
+            Surface::Polyhedral(patches) => self.polyhedral(patches),
             Surface::Tin(tin) => self.tin(tin),
             Surface::Compound(parts) => self.list(parts, Writer::surface_text),
         }
+    }
+
+    /// A polyhedral surface's patches: `(PATCHES (POLYGON ..., ...))`, or
+    /// of Simple feature access `(<polygon text>, ...)`.
+    fn polyhedral(&mut self, patches: &[Rings]) {
+        if self.simple {
+            self.list(patches, Writer::polygon);
+            return;
+        }
+        self.patches(patches, |w, p| {
+            w.keyword(Kind::Polygon);
+            w.polygon(p);
+        });
     }
 
     /// `EMPTY` or `(PATCHES (patch, ...))`.
@@ -293,6 +325,10 @@ impl Writer {
     }
 
     fn tin(&mut self, tin: &Tin) {
+        if self.simple {
+            self.list(&tin.triangles, Writer::triangle);
+            return;
+        }
         if tin.triangles.is_empty() {
             self.put("EMPTY");
             return;

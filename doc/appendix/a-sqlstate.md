@@ -28,6 +28,7 @@ its own; class TB is turborel's own.
 | 01007 | Warning: privilege not granted |
 | 01009 | Warning: search condition too long for the Information Schema |
 | 0100A | Warning: query expression too long for the Information Schema |
+| 01010 | Warning: column cannot be mapped: XMLMAP left out a column the user may read, whose type does not map to XML |
 | 01F01 | SQL/MM Spatial warning: invalid position: a method of a position given one outside the value, its result null |
 | 01W61 | Warning: a GRAPH_TABLE's search ended at a limit ON LIMIT TRUNCATE, its rows those of the paths found (GRF-0061) |
 | 02000 | No data |
@@ -56,7 +57,9 @@ its own; class TB is turborel's own.
 | 0A001 | Feature not supported: multiple server transactions |
 | 0D000 | Invalid target type specification: TREAT of a value whose most specific type is not the target's or below it |
 | 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
+| 0N002 | SQL/XML mapping error: invalid XML character: XMLCAST, XMLELEMENT, XMLFOREST, XMLPI or XMLTEXT of a string holding a character no XML 1.1 character |
 | 0W000 | Prohibited statement encountered during trigger execution: a savepoint statement in a procedure a trigger's action calls; told in the message of the 09000 it raises |
+| 10000 | XQuery error: XMLDOCUMENT of a value holding an attribute standing alone; XMLCAST of text that is no value of the XML Schema type cast to, or of more than one atomic value; XMLELEMENT of an attribute after other content, or of two attributes of one name; any static, type or dynamic error of a query XMLQUERY, XMLEXISTS or XMLTABLE evaluates, or static error of the library module CREATE XQUERY MODULE registers, its message naming the error's code, as err:XPST0008 |
 | 21000 | Cardinality violation: a subquery of one row gave more, or ELEMENT a multiset of more than one element |
 | 22000 | Data exception: a path's `%` of an approximate number or one with a fraction; vectors of other dimension counts or formats |
 | 22001 | String data, right truncation: a string too long for its type, JSON_QUERY's JSON text longer than its returned type whatever ON ERROR says among them; FROM_VECTOR of a vector whose text is longer than a character string |
@@ -69,7 +72,16 @@ its own; class TB is turborel's own.
 | 2200D | Invalid escape octet: an octet LIKE's escape octet not of one octet |
 | 2200E | Null value in array target: an element assigned of a null array |
 | 2200H | Sequence generator limit exceeded: NEXT VALUE FOR of a generator of NO CYCLE past its last value |
+| 2200L | Not an XML document: a value stored in, or cast to, an XML(DOCUMENT) type that is no document, or XMLSERIALIZE DOCUMENT of one; or the document of CREATE XML SCHEMA the null value or an XML value that is no document |
+| 2200M | Invalid XML document: XMLPARSE DOCUMENT of text that is no well-formed document, or CREATE XML SCHEMA of one; XMLVALIDATE DOCUMENT of a value that is no document |
+| 2200N | Invalid XML content: XMLPARSE CONTENT of text that is no well-formed content, or content XMLELEMENT or XMLFOREST maps to XML that is none; XMLVALIDATE CONTENT of a value that is not one document node |
 | 2200Q | Multiset value overflow: a multiset of more than 65,535 elements |
+| 2200R | XML value overflow: XMLAGG of values holding more than 64 MiB together |
+| 2200S | Invalid comment: XMLCOMMENT of text holding two hyphens together, ending with one, or holding a character no XML 1.1 character |
+| 2200T | Invalid processing instruction: XMLPI of text holding '?>' |
+| 2200U | Not an XQuery document node: a value stored in, or cast to, an XML(CONTENT) type that is not one document node |
+| 2200V | Invalid XQuery context item: XMLQUERY, XMLEXISTS or XMLTABLE passed a context item of more than one item |
+| 2200W | XQuery serialization error: an XML value with no serialization, as an attribute standing alone, serialized or sent to a client |
 | 22009 | Invalid time zone displacement value |
 | 22011 | Substring error |
 | 22012 | Division by zero, of a vector among them |
@@ -81,6 +93,14 @@ its own; class TB is turborel's own.
 | 22019 | Invalid escape character |
 | 2201E | Invalid argument for natural logarithm: LN of 0 or below |
 | 2201F | Invalid argument for power function: POWER of 0 to a negative power, or of a negative number to a power not whole; SQRT of a negative number |
+| 2201J | XQuery sequence cannot be validated: XMLVALIDATE SEQUENCE of an atomic value, an attribute or a text node |
+| 2201K | XQuery document node cannot be validated: XMLVALIDATE of a document node with a text child |
+| 2201L | No XML schema found: XMLVALIDATE of no ACCORDING TO of an element whose namespace has no registered XML Schema the user may use |
+| 2201M | Element namespace not declared: an element clause names a namespace its registered XML Schema has not |
+| 2201N | Global element not declared: an element clause names an element its registered XML Schema does not declare |
+| 2201P | No XML element with the specified QName: XMLVALIDATE of an element not of the name its element clause gives |
+| 2201Q | No XML element with the specified namespace: XMLVALIDATE of an element not of the namespace its element clause gives |
+| 2201R | Validation failure: XMLVALIDATE, or CAST BY VALUE to a type of XMLSCHEMA, of an element not valid; a value no validation made stored in, or cast to, a type of XMLSCHEMA |
 | 2201S | Invalid XQuery regular expression: a pattern no XQuery regular expression |
 | 2201T | Invalid XQuery option flag: a flag of a character none of s, m, i, x and q |
 | 2201U | Attempt to replace a zero-length string: TRANSLATE_REGEX of a match of no characters, or of a pattern that matches the empty string |

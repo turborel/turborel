@@ -27,6 +27,7 @@ use std::sync::{Arc, OnceLock};
 use super::reorder::Reorder;
 use super::rules::{LEVELS, QUATERNARY, Rules, damaged, parse};
 use super::table::{Element, Table, VERSION};
+use super::units::{Unit, split, weighed};
 use super::{Collation, Pad, Unicode};
 use crate::error::Result;
 use build::{WIDE_SHIFT, build};
@@ -264,28 +265,33 @@ impl Tailored {
 
     /// The elements of `chars`.
     fn elements(&self, mut chars: Vec<char>) -> Vec<Wide> {
-        let Made { built, starts, .. } = self.made();
         let mut out = Vec::with_capacity(chars.len());
-        let mut base = Vec::new();
         let mut at = 0;
-        while let Some(c) = chars.get(at) {
-            if starts.contains(c) {
-                if let Some((found, next)) = prefixed(&built.prefixed, built.longest, &chars, at) {
-                    out.extend_from_slice(found);
-                    at = next;
-                    continue;
-                }
-                if let Some((found, next)) = matched(&built.map, built.longest, &built.base.unicode, &mut chars, at) {
-                    out.extend(found);
-                    at = next;
-                    continue;
-                }
-            }
-            base.clear();
-            at = built.base.step(&mut chars, at, &mut base);
-            out.extend(base.iter().map(|e| built.base.widened(*e)));
+        while at < chars.len() {
+            at = self.step(&mut chars, at, &mut out);
         }
         out
+    }
+
+    /// The elements of the string the rules name, or of UNICODE's longest
+    /// match, at `at` of `chars`, added to `out`, and where the next
+    /// starts.
+    fn step(&self, chars: &mut Vec<char>, at: usize, out: &mut Vec<Wide>) -> usize {
+        let Made { built, starts, .. } = self.made();
+        if chars.get(at).is_some_and(|c| starts.contains(c)) {
+            if let Some((found, next)) = prefixed(&built.prefixed, built.longest, chars, at) {
+                out.extend_from_slice(found);
+                return next;
+            }
+            if let Some((found, next)) = matched(&built.map, built.longest, &built.base.unicode, chars, at) {
+                out.extend(found);
+                return next;
+            }
+        }
+        let mut base = Vec::new();
+        let next = built.base.step(chars, at, &mut base);
+        out.extend(base.iter().map(|e| built.base.widened(*e)));
+        next
     }
 }
 
@@ -351,40 +357,41 @@ fn matched<V: Clone>(
     found.map(|v| (v.clone(), after))
 }
 
-/// \[UTS #10 §4.4\] `elements`' four levels under Shifted, a third-level
-/// weight not of upper case flagged if `upper_first`.
-fn levels(elements: &[Wide], upper_first: bool) -> [Vec<u64>; QUATERNARY] {
-    let mut levels: [Vec<u64>; QUATERNARY] = Default::default();
-    let mut after_variable = false;
-    for e in elements {
+/// \[UTS #10 §4.4\] What each of `elements` adds to the four levels under
+/// Shifted, 0 at a level it adds nothing to, a third-level weight not of
+/// upper case flagged if `upper_first`.
+fn element_weights(elements: &[Wide], upper_first: bool) -> impl Iterator<Item = [u64; QUATERNARY]> + '_ {
+    elements.iter().scan(false, move |after_variable, e| {
         let [l1, l2, mut l3] = e.weights;
         if upper_first && l3 != 0 && !e.upper {
             l3 |= NOT_UPPER;
         }
-        let ignored = l1 == 0 && after_variable;
+        let ignored = l1 == 0 && *after_variable;
         let fourth = match (e.variable, l1 == 0, l2 == 0 && l3 == 0) {
             (true, _, _) => l1,
             (false, _, true) => 0,
             (false, true, false) if ignored => 0,
             (false, _, false) => MAXIMUM,
         };
-        if !e.variable && !ignored {
-            let [first, second, third, _] = &mut levels;
-            for (level, weight) in [(first, l1), (second, l2), (third, l3)] {
-                if weight != 0 {
-                    level.push(weight);
-                }
-            }
-        }
-        if fourth != 0
-            && let Some(level) = levels.get_mut(LEVELS)
-        {
-            level.push(fourth);
-        }
+        let [first, second, third] = if e.variable || ignored { [0; 3] } else { [l1, l2, l3] };
         if e.variable {
-            after_variable = true;
+            *after_variable = true;
         } else if l1 != 0 {
-            after_variable = false;
+            *after_variable = false;
+        }
+        Some([first, second, third, fourth])
+    })
+}
+
+/// \[UTS #10 §4.4\] `elements`' four levels under Shifted, a third-level
+/// weight not of upper case flagged if `upper_first`.
+fn levels(elements: &[Wide], upper_first: bool) -> [Vec<u64>; QUATERNARY] {
+    let mut levels: [Vec<u64>; QUATERNARY] = Default::default();
+    for weights in element_weights(elements, upper_first) {
+        for (level, weight) in levels.iter_mut().zip(weights) {
+            if weight != 0 {
+                level.push(weight);
+            }
         }
     }
     levels
@@ -478,6 +485,18 @@ impl Collation for Tailored {
     /// flagging each element alone.
     fn safe_cut(&self, text: &str) -> Option<usize> {
         text.char_indices().rev().find(|&(_, c)| self.cuts_before(c)).map(|(at, _)| at)
+    }
+
+    /// Each character its steps begin at whose normalized form begins
+    /// with a starter, and what follows up to the next (`units.rs`), each
+    /// level's weights forward, as `level_weights` gives them, up to
+    /// `[strength n]`.
+    fn units(&self, text: &str) -> Option<Vec<Unit>> {
+        let built = &self.made().built;
+        let (chars, begins) = built.base.unicode.normalized_marked(text);
+        let (elements, starts) = split(chars, begins, |chars, at, out| self.step(chars, at, out));
+        let per: Vec<[u64; QUATERNARY]> = element_weights(&elements, built.upper_first).collect();
+        Some(weighed(&starts, &per, built.strength, put))
     }
 }
 

@@ -78,7 +78,10 @@ pub(crate) use columns::{default, put_default};
 pub(crate) use graph_types::{gql_graph, graph_type, put_gql_graph, put_graph_type};
 pub(crate) use graphs::{graph, put_graph};
 pub(crate) use indexes::{index, put_index};
-pub(crate) use objects::{collation, put_collation, put_sequence, put_user_type, sequence, user_type};
+pub(crate) use objects::{
+    collation, put_collation, put_sequence, put_user_type, put_xml_schema, put_xquery_module, sequence, user_type, xml_schema,
+    xquery_module,
+};
 pub(crate) use roles::{put_roles, roles};
 pub(crate) use routines::{module, put_module, put_routine, routine};
 pub(crate) use spatial::{put_spatial, put_spatial_change, spatial, spatial_change};
@@ -137,8 +140,9 @@ fn flag(r: &mut Reader<'_>) -> Result<bool> {
     }
 }
 
-/// A horizon: the columns seen of each table, then whether the subject
-/// routines are fixed, and if so their specific names.
+/// A horizon: each table's columns seen, its subject routines if fixed,
+/// its XML Schemas, its XQuery modules, and whether its XQuery
+/// expressions are typed statically.
 pub(super) fn put_horizon(out: &mut Vec<u8>, horizon: &Horizon) {
     put_all(out, horizon.widths.iter(), |out, (table, degree)| {
         put_name(out, table);
@@ -148,13 +152,18 @@ pub(super) fn put_horizon(out: &mut Vec<u8>, horizon: &Horizon) {
     if let Some(routines) = &horizon.routines {
         put_all(out, routines.iter(), put_name);
     }
+    put_all(out, horizon.xml_schemas.iter(), put_name);
+    put_all(out, horizon.xquery_modules.iter(), put_name);
+    put_flag(out, horizon.static_typing);
 }
 
 /// What `put_horizon` wrote.
 pub(super) fn horizon(r: &mut Reader<'_>) -> Result<Horizon> {
     let widths = get_all(r, |r| Ok((qualified(r)?, position(r)?)))?;
     let routines = if flag(r)? { Some(get_all(r, qualified)?) } else { None };
-    Ok(Horizon { widths, routines })
+    let xml_schemas = get_all(r, qualified)?;
+    let xquery_modules = get_all(r, qualified)?;
+    Ok(Horizon { widths, routines, xml_schemas, xquery_modules, static_typing: flag(r)? })
 }
 
 /// The tag of `action`, and the action of a tag.
@@ -199,15 +208,7 @@ fn put_kind(out: &mut Vec<u8>, kind: &ConstraintKind) {
             put_all(out, reads.iter(), put_name);
             put_horizon(out, horizon);
         }
-        // [EXTENSION] 4, ON DELETE CASCADE, then its clauses' node tables.
-        ConstraintKind::Connection(k) => {
-            out.put_u8(4);
-            put_flag(out, k.cascade);
-            put_all(out, k.clauses.iter(), |out, (from, to)| {
-                put_name(out, from);
-                put_name(out, to);
-            });
-        }
+        ConstraintKind::Connection(k) => graphs::put_connection(out, k),
     }
 }
 
@@ -220,10 +221,7 @@ fn kind(r: &mut Reader<'_>) -> Result<ConstraintKind> {
         }
         2 => ConstraintKind::ForeignKey(foreign::foreign_key(r)?),
         3 => ConstraintKind::Check { text: r.str()?, names: r.str()?, reads: get_all(r, qualified)?, horizon: horizon(r)? },
-        4 => {
-            let cascade = flag(r)?;
-            ConstraintKind::Connection(super::Connection { cascade, clauses: get_all(r, |r| Ok((qualified(r)?, qualified(r)?)))? })
-        }
+        4 => ConstraintKind::Connection(graphs::connection(r)?),
         _ => return Err(r.corrupt("not a kind of constraint")),
     })
 }

@@ -64,6 +64,7 @@ impl Operands {
             | Expr::Subquery(..)
             | Expr::Truth(_)
             | Expr::NextValue(_)
+            | Expr::Warned(..)
             | Expr::Invoked(_)) => other.map_children(&mut |child| self.expr(child)),
         }
     }
@@ -94,6 +95,7 @@ fn same(a: &Expr, b: &Expr) -> bool {
             | Expr::Subquery(..)
             | Expr::Truth(_)
             | Expr::NextValue(_)
+            | Expr::Warned(..)
             | Expr::Invoked(_),
             _,
         ) => false,

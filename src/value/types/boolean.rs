@@ -106,7 +106,8 @@ pub(crate) fn as_text(b: bool, t: &DataType) -> Result<Value> {
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Json
-        | DataType::Extension(_) => return uncastable(&Value::Bool(b), t),
+        | DataType::Extension(_)
+        | DataType::Xml(_) => return uncastable(&Value::Bool(b), t),
     };
     let rule = if fixed { "GR11f iii" } else { "GR12f iii" };
     let Some(spaces) = usize::try_from(length).ok().and_then(|l| l.checked_sub(word.len())) else {
@@ -160,7 +161,8 @@ impl SqlType for Boolean {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => unassignable(&v, t, rule),
+            | Value::Extension(_)
+            | Value::Xml(_) => unassignable(&v, t, rule),
         }
     }
 
@@ -184,7 +186,8 @@ impl SqlType for Boolean {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => uncastable(&v, t),
+            | Value::Extension(_)
+            | Value::Xml(_) => uncastable(&v, t),
         }
     }
 

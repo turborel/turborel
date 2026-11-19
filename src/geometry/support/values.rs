@@ -23,7 +23,7 @@ use crate::value::Value;
 
 /// SQLCODE -301: `v` is not a value of `s`.
 pub(super) fn not_of(s: Support) -> SqlError {
-    SqlError::new(Code::Data, format!("[ISO/IEC 13249-3:2016 (DIS, SC32 N2593) {}] expected a value of {}", s.clause(), s.sql_name()))
+    SqlError::new(Code::Data, format!("[{} {}] expected a value of {}", s.standard(), s.clause(), s.sql_name()))
 }
 
 /// The bytes of `v`, a value of `s`.
@@ -32,7 +32,7 @@ pub(super) fn bytes_of(v: &Value, s: Support) -> Result<&[u8]> {
 }
 
 /// Writes an attribute that may be absent.
-fn put_some<T>(out: &mut Vec<u8>, v: Option<T>, put: impl FnOnce(&mut Vec<u8>, T)) {
+pub(super) fn put_some<T>(out: &mut Vec<u8>, v: Option<T>, put: impl FnOnce(&mut Vec<u8>, T)) {
     out.put_u8(u8::from(v.is_some()));
     if let Some(v) = v {
         put(out, v);
@@ -40,7 +40,7 @@ fn put_some<T>(out: &mut Vec<u8>, v: Option<T>, put: impl FnOnce(&mut Vec<u8>, T
 }
 
 /// Reads an attribute `put_some` wrote.
-fn some<'a, T>(r: &mut Reader<'a>, read: impl FnOnce(&mut Reader<'a>) -> Result<T>) -> Result<Option<T>> {
+pub(super) fn some<'a, T>(r: &mut Reader<'a>, read: impl FnOnce(&mut Reader<'a>) -> Result<T>) -> Result<Option<T>> {
     match r.u8()? {
         0 => Ok(None),
         1 => read(r).map(Some),
@@ -66,19 +66,19 @@ fn i32_of(r: &mut Reader<'_>) -> Result<i32> {
 }
 
 /// Writes a geometry value's payload.
-fn put_geometry(out: &mut Vec<u8>, g: &[u8]) {
+pub(super) fn put_geometry(out: &mut Vec<u8>, g: &[u8]) {
     out.put_bytes(g);
 }
 
 /// Reads a geometry payload `put_geometry` wrote, checked as stored.
-fn geometry_of(r: &mut Reader<'_>) -> Result<Vec<u8>> {
+pub(super) fn geometry_of(r: &mut Reader<'_>) -> Result<Vec<u8>> {
     let bytes = r.bytes()?;
     super::super::kind::check(bytes).map_err(|_| r.corrupt("an invalid geometry attribute"))?;
     Ok(bytes.to_vec())
 }
 
 /// The bytes of a value, read whole by `read`.
-fn read_all<T>(bytes: &[u8], s: Support, read: impl FnOnce(&mut Reader<'_>) -> Result<T>) -> Result<T> {
+pub(super) fn read_all<T>(bytes: &[u8], s: Support, read: impl FnOnce(&mut Reader<'_>) -> Result<T>) -> Result<T> {
     let mut r = Reader::new(bytes, s.sql_name());
     let v = read(&mut r)?;
     r.finish()?;
@@ -287,6 +287,7 @@ pub(super) fn check(s: Support, bytes: &[u8]) -> Result<()> {
         Support::AffinePlacement => Placement::of(&v).map(drop),
         Support::NurbsPoint => NurbsPoint::of(&v).map(drop),
         Support::Knot => Knot::of(&v).map(drop),
+        Support::TextElement | Support::TextElementArray | Support::AnnotationText => super::annotation::check(s, &v),
     }
 }
 
@@ -301,6 +302,13 @@ pub(crate) fn ordering_equals(a: &Value, b: &Value) -> Option<Result<bool>> {
     match s {
         Support::SpatialRefSys => Some(system_of(a).and_then(|x| system_of(b).map(|y| x.equals(&y)))),
         Support::Vector => Some(Vector::of(a).and_then(|x| Vector::of(b).map(|y| x.equals(&y)))),
-        Support::Angle | Support::Direction | Support::AffinePlacement | Support::NurbsPoint | Support::Knot => None,
+        Support::Angle
+        | Support::Direction
+        | Support::AffinePlacement
+        | Support::NurbsPoint
+        | Support::Knot
+        | Support::TextElement
+        | Support::TextElementArray
+        | Support::AnnotationText => None,
     }
 }

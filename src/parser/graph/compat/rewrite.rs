@@ -201,6 +201,7 @@ impl Parser {
             json: None,
             filter: None,
             semantics: None,
+            returning: None,
             at,
         };
         Ok(ValueExpression::SetFunction(f))

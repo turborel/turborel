@@ -120,6 +120,7 @@ pub(super) fn number_bits(value: &Value) -> Option<u64> {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => return None,
     };
     // Zero's sign compares equal, so it hashes alike.

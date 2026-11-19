@@ -123,6 +123,7 @@ pub(super) fn resolved(v: &Value, located: &mut dyn FnMut(u32) -> Result<Lob>) -
         | Value::Datetime(_)
         | Value::Interval(_)
         | Value::Json(_)
-        | Value::Extension(_) => Ok(v.clone()),
+        | Value::Extension(_)
+        | Value::Xml(_) => Ok(v.clone()),
     }
 }

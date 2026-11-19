@@ -178,7 +178,17 @@ impl Parser {
 fn set_function(name: &'static str, arg: ValueExpression, separator: Option<String>, at: usize) -> ValueExpression {
     let listagg = separator.map(|separator| Box::new(Listagg { separator, overflow: Overflow::Error }));
     let arg = SetArg::All(Box::new(arg));
-    let f = SetFunctionSpecification { name, arg, order_by: Vec::new(), listagg, json: None, filter: None, semantics: None, at };
+    let f = SetFunctionSpecification {
+        name,
+        arg,
+        order_by: Vec::new(),
+        listagg,
+        json: None,
+        filter: None,
+        semantics: None,
+        returning: None,
+        at,
+    };
     ValueExpression::SetFunction(f)
 }
 

@@ -22,6 +22,7 @@ pub(crate) mod table;
 pub(crate) use table::fnv;
 mod tailored;
 mod unicode;
+mod units;
 
 use std::fmt;
 use std::sync::Arc;
@@ -30,6 +31,7 @@ use super::{Binary, DataType, MAX_BINARY_LENGTH, Value};
 
 pub use streaming::lob_equal;
 pub use unicode::Unicode;
+pub use units::Unit;
 
 /// [ISO/IEC 9075-2:2023 §4.3.6] Ordering by Unicode scalar value.
 pub const UCS_BASIC: &str = "UCS_BASIC";
@@ -78,7 +80,9 @@ pub enum Pad {
 ///   `level_weights` of each are the same; and the weights at a level of a
 ///   string cut at the places `safe_cut` gives are the weights of its
 ///   pieces, joined, so a large object is compared a piece at a time
-///   (`streaming.rs`, RULES.md D79).
+///   (`streaming.rs`, RULES.md D79); and the weights of `units`, joined
+///   at each level, are the string's, which XQuery's substring matching
+///   relies on.
 pub trait Collation: Send + Sync {
     /// Its name.
     fn name(&self) -> &str;
@@ -113,6 +117,14 @@ pub trait Collation: Send + Sync {
     /// nowhere, as of one that does not say.
     fn safe_cut(&self, text: &str) -> Option<usize> {
         self.fold('a').map(|_| text.len())
+    }
+    /// The collation units of `text` [XQueryFO §7.5], in order, each its
+    /// weights at each of its `levels`, which, joined, are the
+    /// `level_weights` of `text`: of a collation whose strings compare one
+    /// character at a time, each character, its fold its weight; none if
+    /// it splits no string into units, as of one that does not say.
+    fn units(&self, text: &str) -> Option<Vec<Unit>> {
+        text.chars().enumerate().map(|(start, c)| Some(Unit { start, weights: vec![self.fold(c)?.to_string().into_bytes()] })).collect()
     }
 }
 

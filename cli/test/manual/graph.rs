@@ -70,7 +70,7 @@ fn the_graph_table_examples_run_as_printed() {
     }
     let db = Database::new();
     let mut ann = Client::of(&db, "ANN");
-    assert!(ann.page("data/05-graphs.md") > 0, "the guide shows its examples' output");
+    assert!(ann.page("data/06-graphs.md") > 0, "the guide shows its examples' output");
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D151: the examples of

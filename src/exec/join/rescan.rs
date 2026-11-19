@@ -13,7 +13,7 @@ use std::sync::Arc;
 use super::super::RowIter;
 use super::super::work::Work;
 use crate::error::Result;
-use crate::spill::{SpillRun, record_row, row_bytes, row_record};
+use crate::spill::{SpillRun, SpilledLobs, row_bytes};
 use crate::storage::Row;
 use crate::value::types::TypeRegistry;
 
@@ -28,9 +28,9 @@ pub(in crate::exec) type Pass = Box<dyn Iterator<Item = Result<Row>> + Send>;
 pub(in crate::exec) enum Rescanned {
     /// Its rows, in memory.
     Held(Arc<Vec<Row>>),
-    /// Its rows, in a run of the spill area, and the types beyond the
-    /// standard they may hold values of.
-    Spilled(Box<dyn SpillRun>, TypeRegistry),
+    /// Its rows, in a run of the spill area, the types beyond the
+    /// standard they may hold values of, and the sources of what they name.
+    Spilled(Box<dyn SpillRun>, TypeRegistry, SpilledLobs),
 }
 
 impl Rescanned {
@@ -67,9 +67,9 @@ impl Rescanned {
                 let rows = Arc::clone(rows);
                 Ok(Box::new((0..rows.len()).filter_map(move |n| rows.get(n).cloned().map(Ok))))
             }
-            Rescanned::Spilled(run, types) => {
-                let held = types.clone();
-                Ok(Box::new(run.records()?.map(move |r| r.and_then(|record| record_row(&record, &held)))))
+            Rescanned::Spilled(run, types, lobs) => {
+                let (held, named) = (types.clone(), lobs.clone());
+                Ok(Box::new(run.records()?.map(move |r| r.and_then(|record| named.record_row(&record, &held)))))
             }
         }
     }
@@ -82,7 +82,7 @@ struct Gathering {
     held: Vec<Row>,
     bytes: usize,
     count: usize,
-    run: Option<(Box<dyn SpillRun>, TypeRegistry)>,
+    run: Option<(Box<dyn SpillRun>, TypeRegistry, SpilledLobs)>,
 }
 
 impl Gathering {
@@ -94,17 +94,17 @@ impl Gathering {
     /// The spill area's.
     fn push(&mut self, row: Row, work: &mut Work) -> Result<()> {
         self.count = self.count.saturating_add(1);
-        if let Some((run, _)) = &mut self.run {
-            return run.push(&row_record(&row));
+        if let Some((run, _, lobs)) = &mut self.run {
+            return run.push(&lobs.record(&row));
         }
         self.bytes = self.bytes.saturating_add(row_bytes(&row)).saturating_add(FLAG_BYTES);
         self.held.push(row);
         if self.bytes > work.limit() {
             let mut spilled = work.run()?;
             for one in self.held.drain(..) {
-                spilled.push(&row_record(&one))?;
+                spilled.push(&work.lobs().record(&one))?;
             }
-            self.run = Some((spilled, work.types().clone()));
+            self.run = Some((spilled, work.types().clone(), work.lobs().clone()));
         }
         Ok(())
     }
@@ -112,7 +112,7 @@ impl Gathering {
     /// The rows gathered, and how many.
     fn done(self) -> (Rescanned, usize) {
         let rescanned = match self.run {
-            Some((run, types)) => Rescanned::Spilled(run, types),
+            Some((run, types, lobs)) => Rescanned::Spilled(run, types, lobs),
             None => Rescanned::Held(Arc::new(self.held)),
         };
         (rescanned, self.count)

@@ -326,7 +326,8 @@ pub fn padding(t: &DataType) -> Option<Option<usize>> {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Json
-        | DataType::Extension(_) => None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => None,
     }
 }
 

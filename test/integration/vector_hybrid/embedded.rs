@@ -107,7 +107,8 @@ fn an_async_index_and_what_a_model_index_refuses_r12_6() {
     s.commit().unwrap();
     let code = |sql: &str| crate::common::exec(&s, sql).expect_err(sql);
     assert_eq!(code("CREATE HYBRID VECTOR INDEX X ON DOCS (BODY) PARAMETERS (MODEL NOSUCH)"), Code::SyntaxRule);
-    assert_eq!(read(&s, "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME LIKE 'X%'"), Vec::<String>::new());
+    let left = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME LIKE 'X%' AND TABLE_SCHEMA <> 'INFORMATION_SCHEMA'";
+    assert_eq!(read(&s, left), Vec::<String>::new());
     s.commit().unwrap();
     s.run("CREATE TABLE Z_CHUNKS (N INTEGER)").unwrap();
     s.run("INSERT INTO Z_CHUNKS VALUES (7)").unwrap();

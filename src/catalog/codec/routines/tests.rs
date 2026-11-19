@@ -35,13 +35,20 @@ fn desc(kind: RoutineKind, access: DataAccess, returns: Option<DataType>) -> Sql
         schema: "A".into(),
         module: Some("SHOP".into()),
         reads: vec![name("T"), name("V")],
-        horizon: Horizon { widths: vec![(name("T"), 2)], routines: Some(vec![name("G_1")]) },
+        horizon: Horizon {
+            widths: vec![(name("T"), 2)],
+            routines: Some(vec![name("G_1")]),
+            xml_schemas: vec![name("X")],
+            xquery_modules: vec![name("M")],
+            static_typing: true,
+        },
         sequences: vec![name("Q"), name("R")],
         execute: vec![
             UsageDesc { grantor: "A".into(), grantee: None, grantable: false },
             UsageDesc { grantor: "A".into(), grantee: Some("B".into()), grantable: true },
         ],
         created: 7,
+        stamps: Stamps { created: Now { utc: 63_000_000, zone: 330 }, last_altered: Now { utc: 64_000_000, zone: -330 } },
         ptf: None,
     }
 }
@@ -173,4 +180,16 @@ fn unknown_tags_are_corrupt() {
         assert_eq!(refused(&bad), Some(Code::Corrupt), "{what}");
     }
     assert_eq!(refused(&written[..written.len() - 1]), Some(Code::Corrupt), "cut short");
+}
+
+/// Verifies: [DESIGN] RULES.md D25, R-ERR-1: a timestamp whose instant or
+/// time zone displacement is out of range is SQLCODE -916, never misread.
+#[test]
+fn a_timestamp_out_of_range_is_corrupt() {
+    for (utc, zone) in [(i128::MAX, 0), (0, i128::from(i16::MAX) + 1)] {
+        let mut written = Vec::new();
+        written.put_i128(utc);
+        written.put_i128(zone);
+        assert_eq!(instant(&mut Reader::new(&written, "timestamp")).err().map(|e| e.code), Some(Code::Corrupt), "{utc} {zone}");
+    }
 }

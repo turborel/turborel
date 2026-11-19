@@ -50,6 +50,7 @@ fn joined(expr: Expr, outer: &[Value], budget: &Arc<MemoryBudget>) -> Expr {
             | Expr::Case(..)
             | Expr::Cast(..)
             | Expr::Domain(..)
+            | Expr::Warned(..)
             | Expr::SortKey(..)
             | Expr::Truth(_)
             | Expr::NextValue(_)

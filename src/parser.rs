@@ -14,10 +14,9 @@ pub use graph::{Declared, Degree, Exposed, Exposure, exposure, in_path_patterns,
 pub use graph::{LAST_NODE_PREFIX, MATCH_TABLE, checked_graph_table, element_key};
 pub(crate) use periods::period_constraint;
 use std::collections::{HashMap, HashSet};
+pub use xml::{MappedSource, mapped_sources};
 
-use crate::ast::{
-    ColumnName, InsertSource, InsertStatement, ParameterSpecification, QuerySpecification, SqlStatement, TableName, ValueExpression,
-};
+use crate::ast::{ColumnName, ParameterSpecification, QuerySpecification, SqlStatement, TableName, ValueExpression};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, Token, delim, kw, lex};
 
@@ -46,6 +45,7 @@ pub(crate) mod graph_algo;
 mod graph_ddl;
 mod grouping;
 mod hypothetical;
+mod insert;
 mod interval;
 mod json;
 mod listagg;
@@ -75,6 +75,7 @@ mod served;
 mod structured;
 mod user_types;
 mod window;
+mod xml;
 pub(crate) use data_statements::{EXPLAIN, TRUNCATE, begins_word_statement};
 pub(crate) use {savepoints::SAVEPOINT, served::CANCEL};
 mod session;
@@ -441,31 +442,6 @@ impl Parser {
     // =====================================================================
     // [X3.135-1986 §8.7] <insert statement>
     // =====================================================================
-
-    /// INSERT INTO `<table name>` {\[(`<insert column list>`)\] \[`<override
-    /// clause>`\] `<query expression>` | DEFAULT VALUES} [ISO/IEC 9075:1992
-    /// §13.8; ISO/IEC 9075-2:2023 §14.11]
-    ///
-    /// # Errors
-    ///
-    /// The text is not an `<insert statement>`.
-    pub fn insert_statement(&mut self) -> Result<InsertStatement> {
-        self.expect_kw(kw::INSERT)?;
-        self.expect_kw(kw::INTO)?;
-        let table = self.table_name()?;
-        let columns = if self.is_delim(delim::LEFT_PAREN) { Some(self.insert_column_list()?) } else { None };
-        // [ISO/IEC 9075-2:2023 §14.11] [<override clause>]
-        let overriding = self.override_clause()?;
-        // [ISO/IEC 9075:1992 §13.8] DEFAULT VALUES, with no column list.
-        if columns.is_none() && overriding.is_none() && self.accept_kw(kw::DEFAULT) {
-            self.expect_kw(kw::VALUES)?;
-            self.end()?;
-            return Ok(InsertStatement { table, columns, overriding, source: InsertSource::DefaultValues });
-        }
-        let query = self.query_expression()?;
-        self.end()?;
-        Ok(InsertStatement { table, columns, overriding, source: InsertSource::Query(Box::new(query)) })
-    }
 
     /// (`<insert column list>`) ::= ( `<column name>` \[{, `<column
     /// name>`}...\] ), each column where it is written, of an INSERT

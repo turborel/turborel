@@ -37,7 +37,7 @@ pub(crate) mod ptf;
 mod statements;
 mod using;
 
-pub(crate) use areas::{Operands, get_from, set_into};
+pub(crate) use areas::{MAX_DESCRIPTORS, MAX_OCCURRENCES, Operands, get_from, set_into};
 pub(crate) use cursors::declared_statement;
 pub(crate) use descriptor::Descriptor;
 

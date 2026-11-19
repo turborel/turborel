@@ -490,6 +490,42 @@ SELECT N FROM ORDERS WHERE DEREF(WHAT) IS OF (ONLY ITEM);
 (1 row)
 ```
 
+## DOCUMENT and CONTENT
+
+`x IS DOCUMENT` is true if the [XML value](19-xml.md) x is a document: one
+document node whose children are one element, with comments and
+processing instructions beside it. `x IS CONTENT` is true if x is one
+document node, of any children. Each is unknown if x is null, and takes
+NOT. The operand is one XML value, else SQLCODE -103.
+
+```sql
+CREATE TABLE PAGES (ID INTEGER, BODY XML);
+INSERT INTO PAGES VALUES (1, XMLPARSE(CONTENT '<p>one</p>' PRESERVE WHITESPACE)), (2, XMLPARSE(CONTENT 'two <b/>' PRESERVE WHITESPACE)), (3, NULL);
+SELECT ID FROM PAGES WHERE BODY IS DOCUMENT;
+SELECT ID FROM PAGES WHERE BODY IS NOT DOCUMENT;
+SELECT ID FROM PAGES WHERE BODY IS CONTENT ORDER BY ID;
+SELECT ID FROM PAGES WHERE ID IS DOCUMENT;
+```
+
+```
+OK
+OK
+           ID
+--------------
+            1
+(1 row)
+           ID
+--------------
+            2
+(1 row)
+           ID
+--------------
+            1
+            2
+(2 rows)
+turborel: SQLCODE -103 (SQLSTATE 2A000): IS DOCUMENT tests an XML value, not a value of INTEGER [ISO/IEC 9075-14:2006 draft §8.3 SR1] (at character 27)
+```
+
 ## Search conditions
 
 Predicates are joined by AND, OR and NOT, NOT binding tightest, then

@@ -374,9 +374,12 @@ fn regular_type(written: &TypeName) -> Result<DataType> {
                 Err(rule(format!("{CITED}, not {t}")))
             }
         }
-        TypeName::Domain(_) | TypeName::Reference(..) | TypeName::Collection(..) | TypeName::Row(_) | TypeName::Extension { .. } => {
-            Err(rule(CITED))
-        }
+        TypeName::Domain(_)
+        | TypeName::Reference(..)
+        | TypeName::Collection(..)
+        | TypeName::Row(_)
+        | TypeName::Extension { .. }
+        | TypeName::XmlSchema(..) => Err(rule(CITED)),
     }
 }
 

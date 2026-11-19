@@ -304,6 +304,7 @@ fn alike(a: &Expr, b: &Expr) -> bool {
             | Expr::Call(..)
             | Expr::Cast(..)
             | Expr::Domain(..)
+            | Expr::Warned(..)
             | Expr::SortKey(..)
             | Expr::Dynamic(_)
             | Expr::Case(..)

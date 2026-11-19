@@ -15,7 +15,7 @@ use crate::value::CompOp;
 pub(in crate::binder) fn deterministic(e: &Expr) -> bool {
     match e {
         Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) => true,
-        Expr::Neg(a) | Expr::Cast(a, _) | Expr::Domain(a, _) | Expr::SortKey(a, _) => deterministic(a),
+        Expr::Neg(a) | Expr::Cast(a, _) | Expr::Domain(a, _) | Expr::SortKey(a, _) | Expr::Warned(a, _) => deterministic(a),
         Expr::Arith(a, _, b) => deterministic(a) && deterministic(b),
         Expr::Call(f, args) => f.0.deterministic() && args.iter().all(deterministic),
         Expr::Case(arms, other) => arms.iter().all(|(c, v)| deterministic_cond(c) && deterministic(v)) && deterministic(other),
@@ -74,6 +74,7 @@ fn bare_column(e: &Expr) -> Option<usize> {
         | Expr::Case(..)
         | Expr::Cast(..)
         | Expr::Domain(..)
+        | Expr::Warned(..)
         | Expr::Subquery(..)
         | Expr::Truth(_)
         | Expr::NextValue(_)
@@ -102,6 +103,7 @@ impl Known {
             | Expr::Case(..)
             | Expr::Cast(..)
             | Expr::Domain(..)
+            | Expr::Warned(..)
             | Expr::Subquery(..)
             | Expr::Truth(_)
             | Expr::NextValue(_)

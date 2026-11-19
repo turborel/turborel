@@ -8,6 +8,10 @@ use super::{
 use crate::value::collation::Pad;
 use crate::value::{DataType, Value};
 
+mod temporary;
+
+pub use temporary::{Temporary, TemporaryKind};
+
 /// [X3.135-1986 §6.1; ISO/IEC 9075:1992 §11.1] `<schema definition>` ::=
 /// CREATE SCHEMA `<schema name clause>` \[`<schema element>`...\]
 /// `<schema name clause>` ::= `<schema name>` | AUTHORIZATION `<schema
@@ -129,6 +133,14 @@ pub enum SchemaStatement {
     GraphType(Box<super::GraphTypeDefinition>),
     /// \[EXTENSION\] CREATE GRAPH, of a GQL graph typed or open (§4.3).
     GqlGraph(super::GqlGraphDefinition),
+    /// \[EXTENSION\] An `<XML Schema definition>` [ISO/IEC 9075-14:2006
+    /// draft §4.2.6].
+    XmlSchema(Box<super::XmlSchemaDefinition>),
+    /// \[EXTENSION\] An `<XQuery module definition>` (RULES.md D106).
+    XQueryModule(Box<super::XQueryModuleDefinition>),
+    /// \[EXTENSION\] An `<alter XQuery module statement>` (RULES.md D106):
+    /// its LOCATION, if written, and its text replace the module's.
+    AlterXQueryModule(Box<super::XQueryModuleDefinition>),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION
@@ -265,6 +277,12 @@ pub enum TypeName {
     /// [ISO/IEC 9075-2:2023 §6.1] `<row type>`, a field's type naming a
     /// type: each field's name and type.
     Row(Vec<(String, TypeName)>),
+    /// [ISO/IEC 9075-14:2006 draft §6.1] XML(DOCUMENT(XMLSCHEMA ...)) or
+    /// XML(CONTENT(XMLSCHEMA ...)): its primary modifier, and the
+    /// registered XML Schema its `<XML valid according to what>` and
+    /// `<XML valid element clause>` indicate \[SR4\] [§11.6], resolved as a
+    /// statement is processed.
+    XmlSchema(crate::xml::Syntax, Box<super::XmlValidAccording>),
     /// \[EXTENSION\] A type beyond the standard with parameters, as its
     /// name and `(a [, b ...])` write it (RULES.md D53): no domain takes
     /// parameters.
@@ -572,26 +590,4 @@ pub struct Check {
     pub condition: SearchCondition,
     /// The `<search condition>` as written, which the catalog keeps.
     pub text: String,
-}
-
-/// [ISO/IEC 9075:1992 §4.9] A temporary table's kind, and what a commit
-/// does to its rows [§11.3 SR4, §14.3 GR3].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Temporary {
-    /// Its kind.
-    pub kind: TemporaryKind,
-    /// ON COMMIT DELETE ROWS, rather than PRESERVE ROWS.
-    pub delete_rows: bool,
-}
-
-/// [ISO/IEC 9075:1992 §4.9] The kinds of temporary table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TemporaryKind {
-    /// GLOBAL TEMPORARY: a global temporary table.
-    Global,
-    /// LOCAL TEMPORARY: a created local temporary table.
-    CreatedLocal,
-    /// DECLARE LOCAL TEMPORARY TABLE: a declared local temporary table
-    /// [§13.11].
-    Declared,
 }

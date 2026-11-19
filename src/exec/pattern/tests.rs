@@ -132,7 +132,8 @@ fn shown(v: &Value) -> String {
         | Value::Reference(_)
         | Value::Json(_)
         | Value::Row(_)
-        | Value::Extension(_) => format!("{v:?}"),
+        | Value::Extension(_)
+        | Value::Xml(_) => format!("{v:?}"),
     }
 }
 

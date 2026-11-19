@@ -153,7 +153,8 @@ impl SqlType for MultisetKind {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => return uncastable(&v, t),
+            | Value::Extension(_)
+            | Value::Xml(_) => return uncastable(&v, t),
         };
         let Some(m) = multiset_type(t) else { return uncastable(&v, t) };
         let cast = given.iter().map(|e| cast(e.clone(), &m.element)).collect::<Result<Vec<_>>>()?;

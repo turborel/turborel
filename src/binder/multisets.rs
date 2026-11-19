@@ -38,6 +38,7 @@ fn call(f: impl crate::functions::ScalarFunction + 'static, args: Vec<Expr>) -> 
 ///
 /// SQLCODE -103 if it is.
 pub(super) fn grouped_elements(element: &DataType, what: &str) -> Result<()> {
+    super::composite::not_xml(element, what, "groups elements", "§10.10 SR1")?;
     if let Some(these) = unordered(element) {
         return Err(rule(format!(
             "[ISO/IEC 9075-2:2023 §9.13 SR3] {what} groups elements of {element}, and {these} are grouped by no operation"
@@ -48,13 +49,16 @@ pub(super) fn grouped_elements(element: &DataType, what: &str) -> Result<()> {
 
 /// [ISO/IEC 9075-2:2023 §9.13 SR1a, SR3] Of an operand of type `t` of an
 /// equality operation, `what`: if it is a multiset, its elements grouped
-/// by no operation refused, as `grouped_elements` refuses them; and
-/// \[EXTENSION\] a vector refused (`orderless_operand`).
+/// by no operation refused, as `grouped_elements` refuses them; if it is
+/// XML-ordered, refused, as no XML value is compared [ISO/IEC 9075-14:2006
+/// draft §10.8 SR1]; and \[EXTENSION\] a vector refused
+/// (`orderless_operand`).
 ///
 /// # Errors
 ///
-/// SQLCODE -103 if they are.
+/// SQLCODE -103 if they are, or it is.
 pub(super) fn equality_operand(t: &DataType, what: &str) -> Result<()> {
+    super::composite::not_xml(t, what, "compares", "§10.8 SR1")?;
     super::composite::orderless_operand(t, what)?;
     match t.multiset_type() {
         Some(m) => grouped_elements(&m.element, what),
@@ -83,7 +87,8 @@ fn uncertain(t: &DataType) -> bool {
         | DataType::Interval(_)
         | DataType::Reference(_)
         | DataType::Json
-        | DataType::Extension(_) => false,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => false,
     }
 }
 

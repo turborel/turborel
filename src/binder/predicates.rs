@@ -176,10 +176,7 @@ impl Binder<'_> {
             Predicate::InSubquery { value, subquery, not } => {
                 negated(self.quantified(value, (CompOp::Eq, Quantifier::Some), subquery, scope)?, *not)
             }
-            Predicate::Quantified { value, op, all, subquery } => {
-                let quantifier = if *all { Quantifier::All } else { Quantifier::Some };
-                self.quantified(value, (*op, quantifier), subquery, scope)?
-            }
+            Predicate::Quantified { value, op, all, subquery } => self.quantified(value, (*op, quantifier(*all)), subquery, scope)?,
             Predicate::Like { value, pattern, escape, not } => self.like([value, pattern], escape.as_deref(), *not, scope)?,
             Predicate::LikeRegex { value, pattern, flag, not } => self.like_regex([value, pattern], flag.as_deref(), *not, scope)?,
             // [ISO/IEC 9075-2:2023 §8.23] the BOOLEAN JSON_EXISTS gives.
@@ -192,6 +189,8 @@ impl Binder<'_> {
             Predicate::Type { value, types, not } => self.type_predicate(value, types, *not, scope)?,
             Predicate::Graph(p) => self.graph_predicate(p)?,
             Predicate::GraphMatch(m) => return Err(super::query::graph_match_misplaced(m)),
+            Predicate::Xml { value, syntax, not } => self.xml_predicate(value, *syntax, *not, scope)?,
+            Predicate::XmlValid { value, dcs, according: a, not } => self.xml_valid_predicate(value, (*dcs, a.as_deref()), *not, scope)?,
             Predicate::Exists(s) => Cond::Exists(self.subquery(s, scope, Use::Exists)?.0),
             Predicate::Unique { subquery: s, nulls_distinct } => self.unique(s, *nulls_distinct, scope)?,
             Predicate::Match { value, unique, match_type, subquery } => {
@@ -462,8 +461,13 @@ impl Binder<'_> {
     /// [X3.135-1986 §5.18] `<search condition>`
     ///
     /// \[DESIGN\] Each arm here is one call, so the frame a chain of AND
-    /// or OR recurs through holds no arm's locals (RULES.md R-CF-6).
+    /// or OR recurs through holds no arm's locals (RULES.md R-CF-6). Of a
+    /// trigger's definition, the columns it references are counted
+    /// [ISO/IEC 9075-11:2006 draft §6.54 Description 1a].
     pub(super) fn search_condition(&self, c: &SearchCondition, scope: Scope<'_>) -> Result<Cond> {
+        if self.counting == Some(super::Counting::Trigger) && !self.counted.get() {
+            return self.counted(|| self.search_condition(c, scope));
+        }
         match c {
             SearchCondition::Or(a, b) => self.connected(a, b, scope).map(|(x, y)| Cond::Or(x, y)),
             SearchCondition::And(a, b) => self.connected(a, b, scope).map(|(x, y)| Cond::And(x, y)),
@@ -506,4 +510,9 @@ impl Binder<'_> {
         let Expr::Truth(c) = e else { return Ok(Cond::Value(e)) };
         Ok(*c)
     }
+}
+
+/// The quantifier of ALL if `all`, else of SOME or ANY.
+fn quantifier(all: bool) -> Quantifier {
+    if all { Quantifier::All } else { Quantifier::Some }
 }

@@ -366,7 +366,7 @@ mod tests {
     /// the expression does not match, or whose fields are no datetime, is
     /// refused with SQLSTATE 22007: too many digits, a missing delimiter, a
     /// digit not 0 to 9, a 13th month, February 30, the 25th hour, the 367th
-    /// day, SSSSS of a day's seconds, and a displacement past 13:00.
+    /// day, SSSSS of a day's seconds, and a displacement past 14:00.
     #[test]
     fn strings_refused_9_51() {
         let refused = [
@@ -382,7 +382,7 @@ mod tests {
             ("HH24:MI:SS", "23:60:00", TIME),
             ("YYYY DDD", "2023 366", DATE),
             ("SSSSS", "86400", TIME),
-            ("YYYY TZH:TZM", "2024 +13:01", ZONED),
+            ("YYYY TZH:TZM", "2024 +14:01", ZONED),
             ("YYYY TZH:TZM", "2024 +01:60", ZONED),
             ("YYYY-MM-DD", " 2024-01-01", DATE),
         ];
@@ -390,7 +390,7 @@ mod tests {
             let e = parse(t, s, target).unwrap_err();
             assert_eq!(e.state, Some(SqlState::INVALID_DATETIME_FORMAT), "{t} of '{s}': {e:?}");
         }
-        assert!(parse("YYYY TZH:TZM", "2024 +13:00", ZONED).is_ok());
+        assert!(parse("YYYY TZH:TZM", "2024 +14:00", ZONED).is_ok());
         assert!(parse("YYYY TZH:TZM", "2024 -12:59", ZONED).is_ok());
     }
 }

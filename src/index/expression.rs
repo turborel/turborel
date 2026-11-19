@@ -198,6 +198,7 @@ fn never_raises<'e>(e: &'e Expr, desc: &TableDesc) -> std::result::Result<Typed,
         }
         Expr::Cast(..)
         | Expr::Domain(..)
+        | Expr::Warned(..)
         | Expr::Subquery(..)
         | Expr::NextValue(_)
         | Expr::Invoked(_)
@@ -226,6 +227,7 @@ fn constant_type(v: &Value) -> Typed {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => None,
     }
 }

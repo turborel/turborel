@@ -92,7 +92,8 @@ fn returned(item: &mut Item, v: &Value) {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => {
+        | Value::Extension(_)
+        | Value::Xml(_) => {
             return;
         }
     };

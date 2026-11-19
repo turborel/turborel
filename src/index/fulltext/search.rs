@@ -71,7 +71,7 @@ pub(super) fn search(index: &Arc<FullTextIndex>, probe: &Probe) -> Entries {
             }
             value
         }
-        Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } => {
+        Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Xml(_) => {
             return Box::new(std::iter::once(Err(refused())));
         }
     };
@@ -236,7 +236,7 @@ impl FullTextIndex {
                 }
                 value
             }
-            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } => return None,
+            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Xml(_) => return None,
         };
         let terms = self.terms_of(words).ok()?;
         let Some(terms) = terms else { return Some(0) };

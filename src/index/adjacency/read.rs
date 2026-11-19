@@ -70,7 +70,7 @@ fn equalities(probe: &Probe) -> Result<Option<Vec<Value>>> {
         Probe::Compare { op, value } => compared(*op, vec![value.clone()]),
         Probe::Prefix { equal, then: None } => Ok(Some(equal.clone())),
         Probe::Prefix { equal, then: Some((op, value)) } => compared(*op, [equal.as_slice(), std::slice::from_ref(value)].concat()),
-        Probe::Columns(_) | Probe::Range { .. } | Probe::Predicate { .. } => Err(refused()),
+        Probe::Columns(_) | Probe::Range { .. } | Probe::Predicate { .. } | Probe::Xml(_) => Err(refused()),
     }
 }
 

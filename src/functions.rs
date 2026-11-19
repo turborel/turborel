@@ -95,6 +95,7 @@ use totals::{Avg, Sum};
 mod trim;
 mod truths;
 mod width_bucket;
+mod xml;
 
 pub use regex::{
     AFTER, CHARACTERS, FLAG, LIKE_REGEX, LikeRegex, OCCURRENCE, OCCURRENCES_REGEX, OCTETS, POSITION_REGEX, REGEX_FUNCTIONS, START,
@@ -108,6 +109,17 @@ pub use trim::{BTRIM, LPAD, LTRIM, RPAD, RTRIM, TRIMS_AND_PADS, Trim, source_of,
 pub use truths::EVERY;
 use truths::Truths;
 pub use width_bucket::{WIDTH_BUCKET, width_bucket};
+/// [ISO/IEC 9075-14:2006 draft §9.4 to §9.7] SQL data types mapped to
+/// XML Schema data types (`functions/xml/map.rs`).
+pub use xml::map as xml_map;
+pub use xml::{According, Candidate, ValidBy, XmlValid, XmlValidate};
+pub use xml::{
+    BinaryEncoding, IMPLICIT_BINARY_ENCODING, Mapping, Serialization, XMLAGG, XmlAggregate, XmlCastIn, XmlCastOut, XmlComment, XmlConcat,
+    XmlCopy, XmlDocument, XmlElement, XmlForest, XmlIs, XmlParse, XmlPi, XmlSerialize, XmlText, xml_lexical, xml_mapped,
+    xml_schema_restriction, xml_schema_type, xml_text,
+};
+pub use xml::{Evaluation, RegularColumn, TableColumn, XmlExistsOf, XmlFilter, XmlQueryOf, XmlRowsOf, XmlTableOf};
+pub use xml::{IDENTIFIER_TO_XMLNAME, IDENTIFIER_TO_XMLNAME_FULLY, XMLNAME_TO_IDENTIFIER};
 
 /// \[EXTENSION\] A function callable with the opt-in call syntax.
 ///
@@ -178,6 +190,24 @@ pub trait ScalarFunction: Send + Sync {
             _ => self.call_with(&args.iter().map(|value| (*value).clone()).collect::<Vec<_>>(), temp),
         }
     }
+    /// \[DESIGN\] Whether a call of it may run long, so the statement
+    /// running it passes itself, to be cancelled as the call goes
+    /// (`call_in_statement`, RULES.md D44): of an XQuery evaluation.
+    /// Default: no.
+    fn in_statement(&self) -> bool {
+        false
+    }
+    /// \[DESIGN\] As `call_with`, given the statement that runs it, which
+    /// says whether it was cancelled (`Subqueries::interrupted`) and
+    /// evaluates expressions of the function's own: a statement calls this
+    /// of a function that is `in_statement`. Default: `call_with`.
+    ///
+    /// # Errors
+    ///
+    /// As `call_with`, or the statement's cancellation.
+    fn call_in_statement(&self, args: &[Value], statement: &dyn crate::exec::Subqueries) -> Result<Value> {
+        self.call_with(args, statement.temp_lobs())
+    }
 
     /// \[DESIGN\] As `call_with`, and the completion condition the call
     /// raised, a warning [ISO/IEC 9075:1992 §3.3.4.1], if one: as a cast
@@ -206,6 +236,22 @@ pub trait ScalarFunction: Send + Sync {
     /// an expression that can raise still requires full evaluation (D15).
     /// Defaults to false, so existing functions do not opt in.
     fn index_predicate(&self) -> bool {
+        false
+    }
+    /// \[EXTENSION\] RULES.md D106: what this function's value says of
+    /// whether a query's value is empty, if it does, so an XML index may
+    /// find the rows it keeps (`xml::XmlFilter`): XMLEXISTS, XMLQUERY NULL
+    /// ON EMPTY, XMLTABLE's row pattern, or a function null exactly when
+    /// its argument is. Default: none.
+    fn xml_filter(&self) -> Option<XmlFilter> {
+        None
+    }
+    /// \[DESIGN\] Whether no call of it raises an error, of any arguments
+    /// its type checks accept, but the statement's cancellation, so a
+    /// conjunct of it need not see every row (RULES.md D15): of XMLEXISTS
+    /// of a query that raises none (`xquery::Reduction::raise_free`).
+    /// Default: no.
+    fn raise_free(&self) -> bool {
         false
     }
     /// \[EXTENSION\] Whether a call of `args` may be part of an index's key

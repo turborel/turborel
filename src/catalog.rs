@@ -1,6 +1,6 @@
 //! The catalog: descriptions of schemas, tables, views, columns,
 //! constraints, domains, assertions, collations, sequence generators,
-//! user-defined types, indexes and privileges.
+//! user-defined types, indexes, privileges and registered XML Schemas.
 //!
 //! [X3.135-1986 §4.6] a `<schema>` is a "persistent object" created by implementor-defined
 //! mechanisms, so where descriptions live is up to us. The `Catalog` trait is
@@ -23,6 +23,7 @@ mod domains;
 mod embedding;
 mod graph_types;
 mod graphs;
+mod horizon;
 mod key_expressions;
 mod keys;
 mod memory;
@@ -37,6 +38,8 @@ mod spatial;
 mod structured;
 mod triggers;
 mod user_types;
+pub mod xml_schemas;
+pub mod xquery_modules;
 
 use crate::value::collation::CollationRef;
 pub use collations::CollationDesc;
@@ -50,6 +53,7 @@ pub use graphs::{
     ElementKind, ElementTableDesc, EndpointDesc, Endpoints, GRAPH_INVALID, GraphDesc, GraphMode, LabelDesc, PropertyDesc, identifier,
     qualified_identifier,
 };
+pub use horizon::{Horizon, Indicated, WHOLE};
 pub use key_expressions::{EXPRESSION_PART, KeyExpression};
 pub use keys::KeyShape;
 pub use memory::MemoryCatalog;
@@ -62,7 +66,7 @@ pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, TypedAct
 pub use roles::{Authorization, Principal, RoleAuthorization, Roles, Who};
 pub use routines::{
     DataAccess, DistanceDesc, GenericParameter, GenericTable, PTF_NAME_LENGTH, ParameterMode, PtfDesc, RoutineKind, SqlParameter,
-    SqlRoutineDesc, TableSemantics, ptf_name_type, ptf_status_type,
+    SqlRoutineDesc, Stamps, TableSemantics, ptf_name_type, ptf_status_type,
 };
 pub use sequences::SequenceDesc;
 pub use spatial::{GeometryColumnDesc, LrColumnDesc, LrmDesc, SpatialCatalog, SpatialChange, SpatialRefSysDesc};
@@ -73,6 +77,8 @@ pub use structured::{
 };
 pub use triggers::{ActionTime, TransitionNames, TriggerDesc, TriggerEvent, TriggerLevel};
 pub use user_types::{Routine, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, based_on, types_in};
+pub use xml_schemas::XmlSchemaDesc;
+pub use xquery_modules::XQueryModuleDesc;
 
 /// A `<table name>` with its `<authorization identifier>` made explicit.
 /// [X3.135-1986 §5.4 SR3] two table names are equal iff both parts are equal.
@@ -155,72 +161,6 @@ impl TableDesc {
     /// those of an index's key.
     pub fn types(&self, positions: &[usize]) -> Option<Vec<DataType>> {
         positions.iter().map(|&p| self.columns.get(p).map(|c| c.data_type.clone())).collect()
-    }
-}
-
-/// What a definition sees as it was defined, of a view's query, a CHECK's
-/// condition, a trigger's action, a routine's body or a generation
-/// expression, each bound again as it is used.
-///
-/// [ISO/IEC 9075:1992 §11.11 GR2, note] The columns it sees of each base
-/// table it reads: as many as the table had when it was defined. A column
-/// added to a table is its last [§11.11 GR4], so those are the first of
-/// them; the query's implicit column references (*, `<qualifier>`.*,
-/// TABLE, a NATURAL join's, CORRESPONDING's, an unqualified name's table)
-/// "are replaced by explicit `<column reference>`s when the clause is
-/// originally evaluated", and a column added changes none. A table it does
-/// not list it sees whole.
-///
-/// [ISO/IEC 9075-2:2023 §4.35.2] The subject routines of its routine
-/// invocations, fixed as it was defined: a routine defined later, or one
-/// its owner is granted EXECUTE on later, is none of them (RULES.md D73).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Horizon {
-    /// Each base table it reads and the columns it sees of it.
-    pub widths: Vec<(QualifiedName, usize)>,
-    /// The specific names of the routines it invokes, its subject routines;
-    /// none of a statement, whose invocations are of the routines there
-    /// are as it is bound.
-    pub routines: Option<Vec<QualifiedName>>,
-}
-
-/// No horizon at all: every table seen whole, every routine there is a
-/// candidate.
-pub static WHOLE: Horizon = Horizon { widths: Vec::new(), routines: None };
-
-impl Horizon {
-    /// The degree of each base table of `tables` in `catalog` now.
-    pub fn of(catalog: &dyn Catalog, tables: &[QualifiedName]) -> Horizon {
-        let widths = tables.iter().filter_map(|t| catalog.table(t).map(|d| (t.clone(), d.columns.len()))).collect();
-        Horizon { widths, routines: None }
-    }
-
-    /// It with `invoked`, the specific names of the routines its definition
-    /// invokes, as its subject routines, once each.
-    #[must_use]
-    pub fn invoking(mut self, mut invoked: Vec<QualifiedName>) -> Horizon {
-        invoked.sort();
-        invoked.dedup();
-        self.routines = Some(invoked);
-        self
-    }
-
-    /// The subject routines of its invocations; none of a statement's.
-    pub fn subjects(&self) -> Option<&[QualifiedName]> {
-        self.routines.as_deref()
-    }
-
-    /// How many columns of `table` are seen, if not all.
-    pub fn width(&self, table: &QualifiedName) -> Option<usize> {
-        self.widths.iter().find(|(t, _)| t == table).map(|(_, w)| *w)
-    }
-
-    /// It once the column at `at` of `table` is dropped [§11.15 GR4, GR6]: one
-    /// fewer seen, if the column was.
-    #[must_use]
-    pub fn without(&self, table: &QualifiedName, at: usize) -> Horizon {
-        let widths = self.widths.iter().map(|(t, w)| (t.clone(), if t == table && at < *w { w.saturating_sub(1) } else { *w })).collect();
-        Horizon { widths, routines: self.routines.clone() }
     }
 }
 
@@ -338,6 +278,9 @@ pub struct IndexDesc {
 ///   `remove_collation`; `put_sequence`, `sequence`, `sequences` and
 ///   `remove_sequence`; and `put_user_type`, `user_type`, `user_types` and
 ///   `remove_user_type`.
+///   So too `put_xml_schema`, `xml_schema`, `xml_schemas` and
+///   `remove_xml_schema`; and `put_xquery_module`, `xquery_module`,
+///   `xquery_modules` and `remove_xquery_module`.
 ///   So too `put_assertion`, `assertion`, `assertions` and
 ///   `remove_assertion`; and `put_trigger`, `trigger`, `triggers` and
 ///   `remove_trigger`, `triggers` and `triggers_on` in the order of
@@ -484,6 +427,24 @@ pub trait Catalog: Send + Sync {
     fn all_transforms(&self) -> Vec<(&QualifiedName, &[TransformGroupDesc])>;
     /// Forget the domain with this name: one dropped [§11.27 GR3].
     fn remove_domain(&mut self, name: &QualifiedName);
+    /// Record a registered XML Schema, in place of one of its name
+    /// [ISO/IEC 9075-14:2006 draft §4.2.6].
+    fn put_xml_schema(&mut self, xml_schema: XmlSchemaDesc);
+    /// The registered XML Schema of this name, if any.
+    fn xml_schema(&self, name: &QualifiedName) -> Option<&XmlSchemaDesc>;
+    /// Every registered XML Schema, in a stable order.
+    fn xml_schemas(&self) -> Vec<&XmlSchemaDesc>;
+    /// Forget the registered XML Schema of this name.
+    fn remove_xml_schema(&mut self, name: &QualifiedName);
+    /// \[EXTENSION\] Record a registered XQuery module, in place of one of
+    /// its name.
+    fn put_xquery_module(&mut self, module: XQueryModuleDesc);
+    /// The registered XQuery module of this name, if any.
+    fn xquery_module(&self, name: &QualifiedName) -> Option<&XQueryModuleDesc>;
+    /// Every registered XQuery module, in a stable order.
+    fn xquery_modules(&self) -> Vec<&XQueryModuleDesc>;
+    /// Forget the registered XQuery module of this name.
+    fn remove_xquery_module(&mut self, name: &QualifiedName);
     /// Record the assertion `assertion`, a CHECK of no table, in place of
     /// any of its name [ISO/IEC 9075:1992 §11.34].
     fn put_assertion(&mut self, assertion: ConstraintDesc);

@@ -26,7 +26,9 @@
 //!        15 (character large object) | 16 (binary large object): 0, then
 //!          its octets, their count u32 first, if its row holds it; or 1,
 //!          then the id its table keeps it by u64, its octets u64 and its
-//!          characters u64 (RULES.md D79)
+//!          characters u64 (RULES.md D79) |
+//!        21 (XML) its stored form, as a binary large object's (RULES.md
+//!          D106)
 //! row:   values u32, then each value
 //! ```
 
@@ -74,6 +76,9 @@ const STRUCTURED: u8 = 18;
 const REFERENCE: u8 = 19;
 /// [ISO/IEC 9075-2:2023 §4.8] A value of the JSON type: its stored form.
 const JSON: u8 = 20;
+/// [ISO/IEC 9075-14:2006 draft §4.2.3] An XML value: its stored form, as a
+/// binary large object's (`types::xml`).
+const XML: u8 = 21;
 
 /// Appends `value` to `out`: its tag, then its bytes, as its kind writes
 /// them.
@@ -110,6 +115,7 @@ pub(crate) fn put_value(out: &mut Vec<u8>, value: &Value) {
         Value::Structured(_) => STRUCTURED,
         Value::Reference(_) => REFERENCE,
         Value::Json(_) => JSON,
+        Value::Xml(_) => XML,
         Value::Extension(e) => {
             out.put_u8(EXTENSION);
             out.put_str(e.kind.name());
@@ -150,6 +156,7 @@ pub(crate) fn value(reader: &mut Reader<'_>) -> Result<Value> {
         JSON => &types::JSON,
         CLOB => &types::CLOB,
         BLOB => &types::BLOB,
+        XML => &types::XML,
         EXTENSION => {
             let name = reader.str()?;
             reader.kind(&name)?

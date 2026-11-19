@@ -25,7 +25,7 @@ use super::area::commands::{self, Command};
 use super::collations::Collating;
 use super::dynamic::Name;
 use super::{Completion, Cursor, Session, State};
-use crate::ast::{InsertStatement, SearchCondition, SetClause, SetRole, SqlStatement, TableName, ValueSpecification};
+use crate::ast::{InsertStatement, SchemaStatement, SearchCondition, SetClause, SetRole, SqlStatement, TableName, ValueSpecification};
 use crate::binder::{self, DescribedKey, OutColumn, SearchedTarget, WriteKind, bind_searched_write};
 use crate::catalog::{QualifiedName, WHOLE};
 use crate::error::{Code, Result, SqlError, SqlState};
@@ -296,7 +296,8 @@ impl Session {
             }
             Kind::Statement => {
                 let stmt = parser.sql_statement()?;
-                let params = Params::preparing(parser.dynamic_parameters());
+                // [ISO/IEC 9075-14:2006 draft §14.3 to §14.7] its XML options in scope.
+                let params = Params::preparing(parser.dynamic_parameters()).with_xml_options(stmt.xml_options());
                 self.bind_only(st, &stmt, &params)?;
                 (Vec::new(), params)
             }
@@ -378,11 +379,11 @@ impl Session {
     fn bind_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
         match stmt {
             SqlStatement::Insert(ins) => self.insert_only(st, ins, params)?,
-            SqlStatement::UpdateSearched { table, only, portion, set, where_clause } => {
+            SqlStatement::UpdateSearched { table, only, portion, set, where_clause, .. } => {
                 self.write_only(st, params, (WriteKind::UpdateSearched, (table, *only, portion.as_deref()), set, where_clause.as_ref()))?;
             }
             SqlStatement::Merge(merge) => self.merge_only(st, merge, params)?,
-            SqlStatement::DeleteSearched { table, only, portion, where_clause } => {
+            SqlStatement::DeleteSearched { table, only, portion, where_clause, .. } => {
                 self.write_only(st, params, (WriteKind::DeleteSearched, (table, *only, portion.as_deref()), &[], where_clause.as_ref()))?;
             }
             SqlStatement::UpdatePositioned { .. } | SqlStatement::DeletePositioned { .. } => self.positioned_only(st, stmt, params)?,
@@ -393,6 +394,8 @@ impl Session {
             | SqlStatement::SetSessionAuthorization(v)
             | SqlStatement::SetRole(SetRole::Role(v)) => drop(self.value_in(st, v, params, Some(ParameterType::Varying))?),
             SqlStatement::SetTimeZone(Some(v)) => drop(self.bound(st, params, |cx| binder::bind_value(cx, v))?),
+            // [EXTENSION] the document of CREATE XML SCHEMA.
+            SqlStatement::Schema { statement: SchemaStatement::XmlSchema(x), .. } => self.document_only(st, &x.document, params)?,
             // [ISO/IEC 9075-2:2023 §4.37.5] a locator, a four-octet integer.
             SqlStatement::Locator { references, .. } => self.locators_only(st, references, params)?,
             // Of a module's cursors and targets: FETCH and SELECT ... INTO

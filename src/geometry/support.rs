@@ -5,7 +5,10 @@
 //! ST_Vector, ST_AffinePlacement, ST_NURBSPoint and ST_Knot; their
 //! routines (`ops.rs` and a module of each); and the support routines of
 //! geometry arrays (`arrays.rs`). ST_TINElement, of §17.1 too, is
-//! `geometry/tin_element.rs`'s.
+//! `geometry/tin_element.rs`'s. Beside them are the text types of
+//! Simple feature access [OGC 06-104r4 §7.2.20], ANNOTATION_TEXT,
+//! ANNOTATION_TEXT_ELEMENT and ANNOTATION_TEXT_ELEMENT_ARRAY
+//! (`annotation.rs`, RULES.md D136).
 //!
 //! Each type is ordered as its clause declares. ST_SpatialRefSys and
 //! ST_Vector are EQUALS ONLY BY RELATIVE with ST_OrderingEquals
@@ -22,6 +25,7 @@
 //! methods (`methods`), bound by `binder/structured/support_methods.rs`.
 
 mod angles;
+mod annotation;
 mod arrays;
 mod directions;
 mod elements;
@@ -36,6 +40,7 @@ mod vectors;
 
 use std::sync::Arc;
 
+pub use annotation::MAX_ARRAY_SIZE as MAX_ANNOTATION_SIZE;
 pub use arrays::{ArrayProcedure, procedures};
 pub(crate) use arrays::{checked_geometries, same_dims};
 pub use ops::{Form, Op, Routine, Ty};
@@ -64,10 +69,16 @@ pub enum Support {
     NurbsPoint,
     /// [§17.5] ST_Knot.
     Knot,
+    /// [OGC 06-104r4 §7.2.20] ANNOTATION_TEXT_ELEMENT.
+    TextElement,
+    /// [OGC 06-104r4 §7.2.20] ANNOTATION_TEXT_ELEMENT_ARRAY.
+    TextElementArray,
+    /// [OGC 06-104r4 §7.2.20] ANNOTATION_TEXT.
+    AnnotationText,
 }
 
 /// The types, in the order of their clauses.
-pub const SUPPORTS: [Support; 7] = [
+pub const SUPPORTS: [Support; 10] = [
     Support::SpatialRefSys,
     Support::Angle,
     Support::Direction,
@@ -75,6 +86,9 @@ pub const SUPPORTS: [Support; 7] = [
     Support::AffinePlacement,
     Support::NurbsPoint,
     Support::Knot,
+    Support::TextElement,
+    Support::TextElementArray,
+    Support::AnnotationText,
 ];
 
 /// How a type's values are ordered [ISO/IEC 9075-2:2023 §4.13].
@@ -99,6 +113,9 @@ impl Support {
             Support::AffinePlacement => "ST_AFFINEPLACEMENT",
             Support::NurbsPoint => "ST_NURBSPOINT",
             Support::Knot => "ST_KNOT",
+            Support::TextElement => "ANNOTATION_TEXT_ELEMENT",
+            Support::TextElementArray => "ANNOTATION_TEXT_ELEMENT_ARRAY",
+            Support::AnnotationText => "ANNOTATION_TEXT",
         }
     }
 
@@ -112,6 +129,9 @@ impl Support {
             Support::AffinePlacement => "ST_AffinePlacement",
             Support::NurbsPoint => "ST_NURBSPoint",
             Support::Knot => "ST_Knot",
+            Support::TextElement => "Annotation_Text_Element",
+            Support::TextElementArray => "Annotation_Text_Element_Array",
+            Support::AnnotationText => "Annotation_Text",
         }
     }
 
@@ -125,6 +145,21 @@ impl Support {
             Support::AffinePlacement => "§17.3",
             Support::NurbsPoint => "§17.4",
             Support::Knot => "§17.5",
+            Support::TextElement | Support::TextElementArray | Support::AnnotationText => "§7.2.20",
+        }
+    }
+
+    /// The standard its clause is of.
+    pub const fn standard(self) -> &'static str {
+        match self {
+            Support::SpatialRefSys
+            | Support::Angle
+            | Support::Direction
+            | Support::Vector
+            | Support::AffinePlacement
+            | Support::NurbsPoint
+            | Support::Knot => "ISO/IEC 13249-3:2016 (DIS, SC32 N2593)",
+            Support::TextElement | Support::TextElementArray | Support::AnnotationText => "OGC 06-104r4",
         }
     }
 
@@ -133,7 +168,12 @@ impl Support {
         match self {
             Support::SpatialRefSys | Support::Vector => Ordering::EqualsOnly,
             Support::Angle | Support::Direction => Ordering::Full,
-            Support::AffinePlacement | Support::NurbsPoint | Support::Knot => Ordering::None,
+            Support::AffinePlacement
+            | Support::NurbsPoint
+            | Support::Knot
+            | Support::TextElement
+            | Support::TextElementArray
+            | Support::AnnotationText => Ordering::None,
         }
     }
 
@@ -145,7 +185,12 @@ impl Support {
             Support::Angle => "§16.1.19",
             Support::Direction => "§16.2.21",
             Support::Vector => "§17.2.20",
-            Support::AffinePlacement | Support::NurbsPoint | Support::Knot => self.clause(),
+            Support::AffinePlacement
+            | Support::NurbsPoint
+            | Support::Knot
+            | Support::TextElement
+            | Support::TextElementArray
+            | Support::AnnotationText => self.clause(),
         }
     }
 
@@ -159,6 +204,9 @@ impl Support {
             Support::AffinePlacement => 4,
             Support::NurbsPoint => 5,
             Support::Knot => 6,
+            Support::TextElement => 7,
+            Support::TextElementArray => 8,
+            Support::AnnotationText => 9,
         }
     }
 
@@ -169,11 +217,21 @@ impl Support {
 }
 
 /// The types as kinds of type.
-static REFS: [&dyn SqlType; 7] =
-    [&types::TYPES[0], &types::TYPES[1], &types::TYPES[2], &types::TYPES[3], &types::TYPES[4], &types::TYPES[5], &types::TYPES[6]];
+static REFS: [&dyn SqlType; 10] = [
+    &types::TYPES[0],
+    &types::TYPES[1],
+    &types::TYPES[2],
+    &types::TYPES[3],
+    &types::TYPES[4],
+    &types::TYPES[5],
+    &types::TYPES[6],
+    &types::TYPES[7],
+    &types::TYPES[8],
+    &types::TYPES[9],
+];
 
 /// The types as a type holds them.
-static KIND_OF: [TypeKind; 7] = [&REFS[0], &REFS[1], &REFS[2], &REFS[3], &REFS[4], &REFS[5], &REFS[6]];
+static KIND_OF: [TypeKind; 10] = [&REFS[0], &REFS[1], &REFS[2], &REFS[3], &REFS[4], &REFS[5], &REFS[6], &REFS[7], &REFS[8], &REFS[9]];
 
 /// The kinds of type, in the order of their clauses.
 pub fn kinds() -> &'static [TypeKind] {

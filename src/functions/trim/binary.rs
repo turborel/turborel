@@ -33,7 +33,8 @@ fn binary(v: &Value) -> bool {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => false,
+        | Value::Extension(_)
+        | Value::Xml(_) => false,
     }
 }
 
@@ -74,7 +75,8 @@ pub(super) fn trim_octet(source: &Value, so: Option<&Value>) -> Result<Option<u8
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_),
+            | Value::Extension(_)
+            | Value::Xml(_),
         ) => return fail(Code::Api, "[DESIGN] a binary trim was given a trim octet not a binary string"),
     };
     match octets.as_slice() {
@@ -129,6 +131,7 @@ pub(super) fn trimmed(source: &Value, octet: u8, ends: Ends) -> Result<Value> {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => Ok(Value::Null),
+        | Value::Extension(_)
+        | Value::Xml(_) => Ok(Value::Null),
     }
 }

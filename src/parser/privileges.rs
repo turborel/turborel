@@ -9,6 +9,7 @@ use super::Parser;
 use crate::ast::{Action, PrivilegeDefinition, PrivilegeObject, RevokeStatement, RoutineDesignator, TableName, TypeName};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
+use crate::value::types::XML_NAME;
 
 /// HIERARCHY, of WITH HIERARCHY OPTION and HIERARCHY OPTION FOR [ISO/IEC
 /// 9075-2:2023 §12.2, §12.7].
@@ -159,7 +160,10 @@ impl Parser {
     /// \[TABLE\] `<table name>` | DOMAIN `<domain name>` | COLLATION
     /// `<collation name>` | SEQUENCE `<sequence generator name>` | TYPE
     /// `<schema-resolved user-defined type name>` | `<specific routine
-    /// designator>` [ISO/IEC 9075-2:2023 §12.3], of those implemented. A
+    /// designator>` [ISO/IEC 9075-2:2023 §12.3] | \[EXTENSION\] XML SCHEMA
+    /// `<registered XML Schema name>` [ISO/IEC 9075-14:2006 draft §4.7.1,
+    /// §5.2] | \[EXTENSION\] XQUERY MODULE `<XQuery module name>`, of
+    /// those implemented. A
     /// character set or translation is read, its name left empty.
     fn object_name(&mut self) -> Result<ObjectName> {
         self.expect_kw(kw::ON)?;
@@ -168,7 +172,16 @@ impl Parser {
         if self.character_set_object()? {
             return Ok((TableName { auth: None, ident: String::new(), at }, PrivilegeObject::Domain, None, None));
         }
-        let object = if self.accept_kw(kw::DOMAIN) {
+        let object = if self.is_word(XML_NAME) && self.next_is_kw(kw::SCHEMA) {
+            // [EXTENSION] [ISO/IEC 9075-14:2006 draft §4.7.1] XML SCHEMA
+            // <registered XML Schema name>.
+            self.advance();
+            self.advance();
+            PrivilegeObject::XmlSchema
+        } else if self.accept_xquery_module() {
+            // [EXTENSION] XQUERY MODULE <XQuery module name>.
+            PrivilegeObject::XQueryModule
+        } else if self.accept_kw(kw::DOMAIN) {
             PrivilegeObject::Domain
         } else if self.accept_kw(kw::COLLATION) {
             PrivilegeObject::Collation

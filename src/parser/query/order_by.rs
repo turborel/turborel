@@ -33,6 +33,7 @@ impl Parser {
             | ValueExpression::Function { .. }
             | ValueExpression::Case(_)
             | ValueExpression::Cast { .. }
+            | ValueExpression::Xml(..)
             | ValueExpression::Datetime(_)
             | ValueExpression::Extract { .. }
             | ValueExpression::Difference { .. }
@@ -90,6 +91,7 @@ fn sort_column(key: ValueExpression, digits: bool) -> Result<SortColumn> {
         | ValueExpression::Function { .. }
         | ValueExpression::Case(_)
         | ValueExpression::Cast { .. }
+        | ValueExpression::Xml(..)
         | ValueExpression::Datetime(_)
         | ValueExpression::Extract { .. }
         | ValueExpression::Difference { .. }
@@ -126,6 +128,7 @@ fn written_position(key: &ValueExpression, digits: bool) -> Option<i128> {
         | ValueExpression::Function { .. }
         | ValueExpression::Case(_)
         | ValueExpression::Cast { .. }
+        | ValueExpression::Xml(..)
         | ValueExpression::Datetime(_)
         | ValueExpression::Extract { .. }
         | ValueExpression::Difference { .. }

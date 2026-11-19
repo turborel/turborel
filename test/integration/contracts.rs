@@ -20,6 +20,7 @@ use turborel::index::HashMethod;
 use turborel::log::{Log, MemoryLog};
 use turborel::storage::{Row, RowId, Rows, StorageEngine, TableStorage};
 use turborel::txn::NO_TRANSACTION;
+use turborel::value::datetime::Now;
 use turborel::value::{DataType, Value};
 
 use crate::common::{Scratch, crc32c, number};
@@ -211,6 +212,7 @@ fn trigger_desc(ident: &str, table: &QualifiedName, created: u64) -> TriggerDesc
         columns: Vec::new(),
         sequences: Vec::new(),
         created,
+        created_at: Now::default(),
     }
 }
 

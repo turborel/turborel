@@ -6,7 +6,9 @@
 
 mod embedding;
 mod hybrid;
+mod information;
 mod vector;
+mod xml;
 
 use std::cell::RefCell;
 use std::io::{self, Write};

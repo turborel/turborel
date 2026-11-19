@@ -202,6 +202,7 @@ fn slot_value(s: &ProbeSlot, values: &[Value]) -> Result<Value> {
         | Expr::Subquery(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
+        | Expr::Warned(..)
         | Expr::Truth(_)
         | Expr::NextValue(_)
         | Expr::Invoked(_) => return fail(Code::Api, "[DESIGN] a slot filled is a constant"),
@@ -244,6 +245,7 @@ fn place(probe: &mut Probe, s: &ProbeSlot, values: &[Value]) -> Result<()> {
         | (Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. }, Place::Column(_) | Place::PredicateValue)
         | (Probe::Compare { .. } | Probe::Prefix { .. }, Place::Low | Place::High)
         | (Probe::Predicate { .. }, Place::Column(_) | Place::Key(_) | Place::Low | Place::High)
+        | (Probe::Xml(_), Place::Column(_) | Place::Key(_) | Place::Low | Place::High | Place::PredicateValue | Place::PredicateField(_))
         | (
             Probe::All | Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Predicate { .. },
             Place::PredicateField(_),

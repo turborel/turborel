@@ -280,9 +280,11 @@ pub fn merged(descs: Vec<PrivilegeDesc>) -> Vec<PrivilegeDesc> {
 /// SELECT, grantable, "so that SELECT privilege can be further granted on
 /// views that reference" it, and no other privilege [ISO/IEC 9075:1992
 /// §21.1]; on one of SQL/MM Spatial's ST_INFORMTN_SCHEMA, the same
-/// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §19.1].
+/// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §19.1], and on one of Simple
+/// feature access's SF_INFORMTN_SCHEMA (RULES.md D136).
 pub fn applicable(catalog: &dyn Catalog, who: Who<'_>, name: &QualifiedName) -> (Actions, Actions) {
-    if name.auth == crate::system::INFORMATION_SCHEMA || name.auth == crate::system::ST_INFORMTN_SCHEMA {
+    let information = [crate::system::INFORMATION_SCHEMA, crate::system::ST_INFORMTN_SCHEMA, crate::system::SF_INFORMTN_SCHEMA];
+    if information.contains(&name.auth.as_str()) {
         let select = Actions { select: true, ..Actions::default() };
         return (select.clone(), select);
     }

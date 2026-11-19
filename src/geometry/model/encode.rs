@@ -29,7 +29,15 @@ const TRIANGLE_POINTS: usize = 3;
 
 /// [§5.1.68] The well-known binary representation of `g`.
 pub fn write_wkb(g: &Geom) -> Vec<u8> {
-    let mut w = Writer { out: Vec::new(), dims: g.dims };
+    let mut w = Writer { out: Vec::new(), dims: g.dims, simple: false };
+    w.body(&g.body);
+    w.out
+}
+
+/// AsBinary of Simple feature access: the representation of `g` in its
+/// form [OGC 06-103r4 §8.2] (`model/simple.rs`, RULES.md D136).
+pub fn write_simple_wkb(g: &Geom) -> Vec<u8> {
+    let mut w = Writer { out: Vec::new(), dims: g.dims, simple: true };
     w.body(&g.body);
     w.out
 }
@@ -37,6 +45,8 @@ pub fn write_wkb(g: &Geom) -> Vec<u8> {
 struct Writer {
     out: Vec<u8>,
     dims: Dims,
+    /// Whether the form is Simple feature access's.
+    simple: bool,
 }
 
 impl Writer {
@@ -224,6 +234,14 @@ impl Writer {
 
     fn triangle(&mut self, ring: &Coords) {
         self.header(Kind::Triangle);
+        if self.simple {
+            // [OGC 06-103r4 §8.2.8 WKBTriangle] Its rings, as a polygon's.
+            self.count(usize::from(!ring.is_empty()));
+            if !ring.is_empty() {
+                self.points(ring);
+            }
+            return;
+        }
         let stride = self.dims.stride();
         match ring.get(..TRIANGLE_POINTS.saturating_mul(stride)) {
             Some(points) => self.numbers(points),
@@ -263,6 +281,14 @@ impl Writer {
     fn tin(&mut self, tin: &Tin) {
         self.header(Kind::Tin);
         self.count(tin.triangles.len());
+        if self.simple {
+            // [OGC 06-103r4 §8.2.8 WKBTIN] Its triangles as polygons, and
+            // nothing after them.
+            for t in &tin.triangles {
+                self.polygon(std::slice::from_ref(t));
+            }
+            return;
+        }
         for t in &tin.triangles {
             self.triangle(t);
         }

@@ -1,0 +1,387 @@
+//! Binding the SQL/XML operators that evaluate XQuery [ISO/IEC
+//! 9075-14:2006 draft §6.18, §8.4, §7.1]: their arguments bound and
+//! passed [§6.18 SR5, GR1], their query analysed in the static context of
+//! §10.20 as the statement is bound, each a call of its function
+//! (`functions/xml/query.rs`).
+
+use std::sync::Arc;
+
+use super::super::{Binder, Scope, rule};
+use super::DOCUMENT_CONTENT;
+use super::registered::{Registered, in_scope, registered};
+use crate::ast::{
+    DefaultOption, Literal, OnEmpty, Passing, Returning, ValueExpression, ValueSpecification, XmlArguments, XmlQuery, XmlTable,
+    XmlTableColumn,
+};
+use crate::catalog::QualifiedName;
+use crate::catalog::xml_schemas::PERMANENT;
+use crate::error::Result;
+use crate::functions::{BinaryEncoding, xml_schema_type};
+use crate::functions::{Evaluation, RegularColumn, ScalarRef, TableColumn, XmlCopy, XmlDocument, XmlExistsOf, XmlQueryOf, XmlTableOf};
+use crate::logical::Expr;
+use crate::settings::XQUERY_STATIC_TYPING;
+use crate::value::datetime::{MICROS_PER_DAY, MICROS_PER_MINUTE};
+use crate::value::types::{Field, MAX_ARRAY_CARDINALITY};
+use crate::value::xml::Typing;
+use crate::value::xml::XmlType;
+use crate::value::{DataType, Value};
+use crate::xml::schema::permanent::components;
+use crate::xml::{AtomicType, Moment, Shape, Version, is_ncname};
+use crate::xquery::{Environment, Formal, FormalKind, Occurrence, Passed, Query, Typed};
+
+/// [§6.18 SR3] implementation-defined: the `<XML returning clause>` of an
+/// XMLQUERY that writes none, RETURNING CONTENT, as XMLDOCUMENT's.
+pub const IMPLICIT_QUERY_RETURNING: Returning = Returning::Content;
+
+/// The arguments of an XMLQUERY, XMLEXISTS or XMLTABLE, bound: the
+/// context item's value first, if passed, then each variable's; and the
+/// variables' names.
+struct Bound {
+    /// The values passed.
+    values: Vec<Expr>,
+    /// Whether the first is the context item.
+    context: bool,
+    /// The variables' names, in order.
+    names: Vec<String>,
+    /// Whether the context item is a value of one node: of XML(DOCUMENT)
+    /// or XML(CONTENT) [§4.2.2].
+    one_node: bool,
+    /// The formal types of the context item and the variables [§10.21].
+    passed: Passed,
+}
+
+impl Binder<'_> {
+    /// [§6.18 SR5] The `<XML query argument>`s of `arguments`, if written:
+    /// at most one context item [SR5b i]; each variable's name an XML 1.1
+    /// NCName, none twice [SR5a i, ii]; each value of a type XMLCAST casts
+    /// to XML(SEQUENCE) [SR5a iv, SR5b iii], a passing mechanism of an XML
+    /// value alone [SR5a v, SR5b iv], an XML value passed BY VALUE a copy
+    /// [GR1a ii 2 A I, GR1b i 2], another cast [GR1a ii 2 A II, GR1b i 3].
+    fn xml_arguments(&self, arguments: Option<&XmlArguments>, scope: Scope<'_>) -> Result<Bound> {
+        let Some(arguments) = arguments else {
+            return Ok(Bound { values: Vec::new(), context: false, names: Vec::new(), one_node: false, passed: Passed::default() });
+        };
+        let (mut context, mut variables, mut names) = (None, Vec::new(), Vec::<String>::new());
+        let mut one_node = false;
+        let mut passed = Passed::default();
+        for argument in &arguments.arguments {
+            let (e, t) = self.value_expression(&argument.value, scope)?;
+            let formal = self.formal(&t, self.known_not_null(&argument.value, scope)?);
+            let value = if matches!(t, DataType::Xml(_)) {
+                let passing = argument.passing.unwrap_or(arguments.default);
+                if passing == Passing::ByValue { Expr::Call(ScalarRef(Arc::new(XmlCopy)), vec![e]) } else { e }
+            } else if argument.passing.is_some() {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075-14:2006 draft §6.18 SR5a v] a value of {t} is passed with no <XML passing mechanism>"
+                ))
+                .or_at(argument.at));
+            } else {
+                self.cast_to_xml(e, &t, DataType::Xml(XmlType::Sequence)).map_err(|err| err.or_at(argument.at))?.0
+            };
+            match &argument.name {
+                None => {
+                    if context.replace(value).is_some() {
+                        return Err(rule("[ISO/IEC 9075-14:2006 draft §6.18 SR5b i] one context item is passed at most").or_at(argument.at));
+                    }
+                    one_node = matches!(t, DataType::Xml(XmlType::Document(_) | XmlType::Content(_)));
+                    passed.context = Some(formal);
+                }
+                Some(name) => {
+                    if !is_ncname(Version::V11, name) || names.contains(name) {
+                        let why = format!(
+                            "[ISO/IEC 9075-14:2006 draft §6.18 SR5a i, ii] the variable {name} is no XML 1.1 NCName, or is passed twice"
+                        );
+                        return Err(rule(why).or_at(argument.at));
+                    }
+                    names.push(name.clone());
+                    variables.push(value);
+                    passed.variables.push(formal);
+                }
+            }
+        }
+        let has_context = context.is_some();
+        Ok(Bound { values: context.into_iter().chain(variables).collect(), context: has_context, names, one_node, passed })
+    }
+
+    /// The query `text` analysed in the static context §10.20 makes \[SR2\]:
+    /// the namespaces declared in scope, the variables `names` passed, the
+    /// database's functions and collations, the in-scope schema
+    /// definitions, and the registered XML Schemas and XQuery modules its
+    /// imports may import (`registered`); statically typed [§6.18 SR6] if
+    /// XQUERY.STATIC_TYPING is ON for a statement prepared, of the formal
+    /// types `passed` [§10.21]. A definition read again is not typed again,
+    /// as it was typed as it was made, whatever the session reading it has
+    /// set.
+    fn xquery(&self, text: &str, names: &[String], passed: Passed) -> Result<Arc<Query>> {
+        let (namespaces, default_element) = self.namespaces_in_scope();
+        let found = self.registered();
+        let in_scope = in_scope(&found.importable);
+        let env = Environment {
+            namespaces,
+            default_element,
+            variables: names.to_vec(),
+            library: &self.db.xquery_functions,
+            collations: &self.db.collations,
+            schemas: in_scope.iter().map(|(_, s)| s.clone()).collect(),
+            importable: found.importable.iter().map(|(_, s)| s.clone()).collect(),
+            modules: found.modules.iter().map(|(_, m)| m.clone()).collect(),
+            linked: found.linked,
+            static_typing: self.static_typing(),
+            passed,
+        };
+        let query = Query::compile(text, &env)?;
+        if let Some(noted) = self.invoked.filter(|_| env.static_typing) {
+            noted.typed();
+        }
+        if let Some(noted) = self.invoked {
+            let validated = in_scope.iter().filter(|_| query.validates()).map(|(name, _)| name);
+            let imported = found.importable.iter().filter(|(_, s)| query.imports().contains(&s.name)).map(|(name, _)| name);
+            for name in validated.chain(imported) {
+                noted.indicated(name);
+            }
+            // [EXTENSION] RULES.md D106: the modules it imports itself; a
+            // module keeps those it imports.
+            for (name, _) in found.modules.iter().filter(|(_, m)| query.modules().contains(&m.name)) {
+                noted.imported(name);
+            }
+        }
+        Ok(Arc::new(query))
+    }
+
+    /// The registered XML Schemas a query may validate by and import, and
+    /// the registered XQuery modules it may import [§10.20 SR2e] [XQuery
+    /// §4.10, §4.11], implementation-defined (RULES.md D106): those the
+    /// current user may use (`binder/xml/registered.rs`). A definition
+    /// notes the schemas its query validates by or imports, and the
+    /// modules it imports, as it is created, so it depends on them
+    /// (`Invoked::indicated`, `Invoked::imported`), and, bound again, has
+    /// those it noted alone, never one registered later [ISO/IEC
+    /// 9075-14:2006 draft §4.2.6].
+    fn registered(&self) -> Registered {
+        registered(&*self.db.catalog, self.who(), self.horizon.kept())
+    }
+
+    /// What evaluates `text` of the arguments `bound`, at the statement's
+    /// instant and in its time zone [XQuery Appendix C.2].
+    fn evaluation(&self, text: &str, bound: &Bound) -> Result<Evaluation> {
+        let query = self.xquery(text, &bound.names, bound.passed.clone())?;
+        let now = self.now.instant();
+        let local = now.utc.saturating_add(i64::from(now.zone).saturating_mul(MICROS_PER_MINUTE));
+        let moment = Moment {
+            shape: Shape::DateTime,
+            days: local.div_euclid(MICROS_PER_DAY),
+            micros: local.rem_euclid(MICROS_PER_DAY),
+            zone: Some(now.zone),
+        };
+        Ok(Evaluation { query, context: bound.context, one_node: bound.one_node, now: moment, timezone: now.zone })
+    }
+
+    /// [§6.18] XMLQUERY: RETURNING CONTENT, implicit too, of no returning
+    /// mechanism \[SR4a\], XMLDOCUMENT of its value of RETURNING SEQUENCE BY
+    /// VALUE \[SR10a\]; RETURNING SEQUENCE of its mechanism, or its default
+    /// passing mechanism, which it then has [SR4b, SR4c], of XML(SEQUENCE)
+    /// \[SR10b\].
+    pub(super) fn xml_query(&self, q: &XmlQuery, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        let returning = q.returning.unwrap_or(IMPLICIT_QUERY_RETURNING);
+        let mechanism = match (returning, q.mechanism, &q.arguments) {
+            (Returning::Content, Some(_), _) => {
+                return Err(rule("[ISO/IEC 9075-14:2006 draft §6.18 SR4a] RETURNING CONTENT has no <XML query returning mechanism>"));
+            }
+            (Returning::Content, None, _) => Passing::ByValue,
+            (Returning::Sequence, Some(m), _) => m,
+            (Returning::Sequence, None, Some(arguments)) => arguments.default,
+            (Returning::Sequence, None, None) => {
+                return Err(rule(
+                    "[ISO/IEC 9075-14:2006 draft §6.18 SR4c] RETURNING SEQUENCE has an <XML query returning mechanism> or an <XML query argument list>",
+                ));
+            }
+        };
+        let bound = self.xml_arguments(q.arguments.as_ref(), scope)?;
+        let evaluation = self.evaluation(&q.text, &bound)?;
+        let f = XmlQueryOf { evaluation, by_value: mechanism == Passing::ByValue, null_on_empty: q.empty == Some(OnEmpty::Null) };
+        let call = Expr::Call(ScalarRef(Arc::new(f)), bound.values);
+        Ok(match returning {
+            Returning::Sequence => (call, DataType::Xml(XmlType::Sequence)),
+            Returning::Content => {
+                let t = DataType::Xml(DOCUMENT_CONTENT);
+                (Expr::Call(ScalarRef(Arc::new(XmlDocument(t.clone()))), vec![call]), t)
+            }
+        })
+    }
+
+    /// [§8.4] XMLEXISTS: whether the XMLQUERY of its expression and
+    /// arguments RETURNING SEQUENCE EMPTY ON EMPTY is not empty, Unknown of
+    /// the null value \[GR2\].
+    pub(super) fn xml_exists(&self, q: &XmlQuery, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        let bound = self.xml_arguments(q.arguments.as_ref(), scope)?;
+        let evaluation = self.evaluation(&q.text, &bound)?;
+        Ok((Expr::Call(ScalarRef(Arc::new(XmlExistsOf(evaluation))), bound.values), DataType::Boolean))
+    }
+
+    /// [§7.1] XMLTABLE, the collection of its table primary: its
+    /// namespaces in scope within it \[SR4a\]; the rows of its row pattern,
+    /// RETURNING SEQUENCE BY REF EMPTY ON EMPTY, of its arguments, BY REF of
+    /// none \[SR4c\]; an array of rows of its columns \[SR4h\].
+    pub(super) fn xml_table(&self, t: &XmlTable, scope: Scope<'_>) -> Result<(Expr, DataType)> {
+        self.in_namespaces(t.namespaces.as_deref(), || {
+            let bound = self.xml_arguments(t.arguments.as_ref(), scope)?;
+            let rows = self.evaluation(&t.pattern, &bound)?;
+            let arguments = bound.values.len();
+            let mut values = bound.values;
+            let (mut columns, mut fields) = (Vec::new(), Vec::new());
+            for column in &t.columns {
+                let (c, field) = self.xml_table_column(column, (t, &rows.query), &mut values)?;
+                if fields.iter().any(|f: &Field| f.name == field.name) {
+                    return Err(rule(format!("[ISO/IEC 9075-14:2006 draft §7.1 SR4h] the column {} is named twice", field.name)));
+                }
+                columns.push(c);
+                fields.push(field);
+            }
+            if columns.iter().filter(|c| matches!(c, TableColumn::Ordinality)).count() > 1 {
+                return Err(rule("[ISO/IEC 9075-14:2006 draft §7.1 SR4d] an <XML table> has one ordinality column at most"));
+            }
+            let array = DataType::array(DataType::row(fields), MAX_ARRAY_CARDINALITY);
+            let f = XmlTableOf { rows, arguments, columns, array: array.clone() };
+            Ok((Expr::Call(ScalarRef(Arc::new(f)), values), array))
+        })
+    }
+
+    /// A column of `t` [§7.1 SR4e], its default's value added to `values`:
+    /// FOR ORDINALITY an exact number of scale 0; else of its type, an
+    /// XML(SEQUENCE) one passed as written, or by the argument list's
+    /// mechanism, of which it then has one [SR4e ii 2 A], another XML type
+    /// its value made a document node and copied, another type cast by
+    /// XMLCAST, no mechanism of either [SR4e ii 2 B, 7]; its pattern its
+    /// PATH, or its name [SR4e ii 4]; its default NULL if none [SR4e ii 3].
+    fn xml_table_column(
+        &self,
+        column: &XmlTableColumn,
+        (t, rows): (&XmlTable, &Query),
+        values: &mut Vec<Expr>,
+    ) -> Result<(TableColumn, Field)> {
+        let c = match column {
+            XmlTableColumn::Ordinality(name) => {
+                let field = Field { name: name.clone(), data_type: super::super::composite::integer(), unnamed: false };
+                return Ok((TableColumn::Ordinality, field));
+            }
+            XmlTableColumn::Regular(c) => c,
+        };
+        let (target, _) = super::resolved_type(&self.context(), &c.data_type, self.who())?;
+        let input = (Expr::Column(0), DataType::Xml(DOCUMENT_CONTENT));
+        let (content, cast) = match (&target, c.passing) {
+            (DataType::Xml(XmlType::Sequence), passing) => {
+                let Some(mechanism) = passing.or(t.arguments.as_ref().map(|a| a.default)) else {
+                    return Err(rule("[ISO/IEC 9075-14:2006 draft §7.1 SR4e ii 2 A I] a column of XML(SEQUENCE) has a passing mechanism, as the XMLTABLE has no argument list").or_at(c.at));
+                };
+                (false, self.xml_cast((Expr::Column(0), target.clone()), target.clone(), mechanism)?.0)
+            }
+            (_, Some(_)) => {
+                return Err(rule(format!(
+                    "[ISO/IEC 9075-14:2006 draft §7.1 SR4e ii 2 B] a column of {target} has no <XML passing mechanism>"
+                ))
+                .or_at(c.at));
+            }
+            (DataType::Xml(_), None) => (true, self.xml_cast(input, target.clone(), Passing::ByValue)?.0),
+            (_, None) => (true, self.cast_from_xml(Expr::Column(0), target.clone()).map_err(|e| e.or_at(c.at))?.0),
+        };
+        let query = self.xquery(c.path.as_deref().unwrap_or(&c.name), &[], rows.row_item()).map_err(|e| e.or_at(c.at))?;
+        values.push(self.xml_table_default(c.default.as_ref(), &target)?);
+        let regular = RegularColumn { query, content, cast, default: values.len().saturating_sub(1) };
+        Ok((TableColumn::Regular(regular), Field { name: c.name.clone(), data_type: target, unnamed: false }))
+    }
+
+    /// The value of a column's `<default option>` [§7.1 SR4e ii 3], NULL
+    /// if none, cast to the column's type `target` as CASE gives it.
+    fn xml_table_default(&self, default: Option<&DefaultOption>, target: &DataType) -> Result<Expr> {
+        let value = match default {
+            None | Some(DefaultOption::Null) => return Ok(Expr::Const(Value::Null)),
+            Some(DefaultOption::Empty(_)) => {
+                return Err(rule(format!("[ISO/IEC 9075-14:2006 draft §7.1 SR4e ii 8] an empty collection is no default of {target}")));
+            }
+            Some(DefaultOption::Literal(l)) => ValueExpression::Value(ValueSpecification::Literal(l.clone())),
+            Some(DefaultOption::User(f)) => ValueExpression::Value(ValueSpecification::User(*f)),
+            Some(DefaultOption::Datetime(f)) => ValueExpression::Datetime(*f),
+        };
+        let bound = self.value_expression(&value, Scope::Rows("[ISO/IEC 9075-14:2006 draft §7.1] a default has no set function"))?;
+        Ok(self.cast_bound(bound, target.clone())?.0)
+    }
+}
+
+impl Binder<'_> {
+    /// [§10.21] The formal type notation of a value of type `t` passed a
+    /// query: of an XML type, its kind and its secondary modifier, of an
+    /// XML(SEQUENCE) one `*`; of an SQL predefined type, the XML Schema
+    /// primitive type §9.5 maps it to, of an exact numeric type of scale 0
+    /// `xs:integer` [SR5h]; each `?` [SR3d], of none if `not_null` [SR3c];
+    /// of a type §9.5 maps to none, as XMLCAST refuses it, XML(SEQUENCE)'s.
+    fn formal(&self, t: &DataType, not_null: bool) -> Formal {
+        let suffix = if not_null { Occurrence::One } else { Occurrence::Optional };
+        let optional = |kind| Formal { kind, occurrence: suffix };
+        if let DataType::Xml(x) = t {
+            return match x {
+                XmlType::Document(typing) => optional(FormalKind::Document(self.formal_typing(typing))),
+                XmlType::Content(typing) => optional(FormalKind::Content(self.formal_typing(typing))),
+                XmlType::Sequence => Formal { kind: FormalKind::Sequence, occurrence: Occurrence::Any },
+            };
+        }
+        let Some(mapped) = xml_schema_type(t, BinaryEncoding::Hex) else {
+            return Formal { kind: FormalKind::Sequence, occurrence: Occurrence::Any };
+        };
+        let integer = matches!(t.represented(), DataType::Exact { scale: 0, .. });
+        optional(FormalKind::Atomic(if integer { AtomicType::Integer } else { primitive(mapped) }))
+    }
+
+    /// [XQuery §5.2.3] Whether the XQuery expressions it binds are typed
+    /// statically (RULES.md D106): of a definition bound again, as it was
+    /// typed when it was made (`Horizon::static_typing`), of a triggered
+    /// action or a procedure's body its statements' horizon's; of the
+    /// definitions a statement makes, as XQUERY.STATIC_TYPING was for it
+    /// (`typing::making`); else as it is for the statement's session.
+    fn static_typing(&self) -> bool {
+        let horizon = if self.params.horizoned() { self.params.horizon() } else { self.horizon };
+        if horizon.subjects().is_some() {
+            return horizon.static_typing;
+        }
+        super::typing::making().unwrap_or_else(|| self.db.settings.is_on_for(XQUERY_STATIC_TYPING, self.own))
+    }
+
+    /// [§10.21 SR3c] Whether the value of `v` cannot be null: a column
+    /// reference that references a known not null column [X3.135-1986
+    /// §5.25 SR10]; or, by turborel's implementation-defined rule, a
+    /// literal but UNKNOWN.
+    fn known_not_null(&self, v: &ValueExpression, scope: Scope<'_>) -> Result<bool> {
+        if let ValueExpression::Value(ValueSpecification::Literal(l)) = v {
+            return Ok(!matches!(l, Literal::Boolean(None)));
+        }
+        Ok(super::super::query::named(self, v, scope)?.1)
+    }
+
+    /// [§10.21 SR4] The secondary modifier `typing`: of XMLSCHEMA, the
+    /// registered XML Schema's schema, its namespace and element; ANY of
+    /// one whose schema is not read.
+    fn formal_typing(&self, typing: &Typing) -> Typed {
+        match typing {
+            Typing::Untyped => Typed::Untyped,
+            Typing::Any => Typed::Any,
+            Typing::Schema(named) => {
+                let name = QualifiedName { auth: named.schema.clone(), ident: named.name.clone() };
+                let read = self.db.catalog.xml_schema(&name).and_then(|d| d.schema.clone());
+                let permanent = || PERMANENT.iter().find(|p| p.qualified() == name).and_then(|p| components(p.target_namespace));
+                match read.or_else(permanent) {
+                    Some(schema) => Typed::Schema(schema, named.namespace.clone(), named.element.clone()),
+                    None => Typed::Any,
+                }
+            }
+        }
+    }
+}
+
+/// [§10.21 SR5h] The XML Schema primitive type `a` is derived from:
+/// itself of a primitive type or of the two durations XQuery adds.
+fn primitive(a: AtomicType) -> AtomicType {
+    let mut at = a;
+    while let Some(base) = at.base() {
+        at = base;
+    }
+    at
+}

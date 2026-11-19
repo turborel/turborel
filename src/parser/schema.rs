@@ -207,7 +207,7 @@ impl Parser {
             SchemaStatement::AlterSequence(self.alter_sequence()?)
         } else if self.next_is_sequence() {
             SchemaStatement::Sequence(self.sequence_definition()?)
-        } else if let Some(defined) = self.defined_for_type()? {
+        } else if let Some(defined) = self.defined_elsewhere()? {
             defined
         } else {
             self.created_statement()?

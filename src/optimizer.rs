@@ -452,6 +452,7 @@ impl Rule for RemoveRedundantDistinct {
                 | Expr::Cast(..)
                 | Expr::SortKey(..)
                 | Expr::Domain(..)
+                | Expr::Warned(..)
                 | Expr::Subquery(..)
                 | Expr::Truth(_)
                 | Expr::NextValue(_)

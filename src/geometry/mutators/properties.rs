@@ -94,7 +94,7 @@ fn widened((low, high): (f64, f64)) -> (f64, f64) {
 }
 
 /// [§5.1.19] The bounding rectangle of `g` in x and y, null when empty.
-fn envelope(g: &Geom) -> Result<Value> {
+pub(crate) fn envelope(g: &Geom) -> Result<Value> {
     let (Some(x), Some(y)) = (extremes(g, Some(0))?, extremes(g, Some(Y))?) else { return Ok(Value::Null) };
     let ((x0, x1), (y0, y1)) = (widened(x), widened(y));
     let ring = vec![x0, y0, x1, y0, x1, y1, x0, y1, x0, y0];

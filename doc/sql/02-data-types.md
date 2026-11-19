@@ -22,7 +22,7 @@ collections, are of [Spatial Data](10-spatial.md).
     | <exact numeric type> | <approximate numeric type>
     | <decimal floating-point type>
     | <datetime type> | <interval type>
-    | <row type> | <array type> | <reference type>
+    | <row type> | <array type> | <reference type> | <XML type>
     | <path-resolved user-defined type name>
 ```
 
@@ -49,6 +49,7 @@ collections, are of [Spatial Data](10-spatial.md).
 | INTERVAL q | a span of time, of the fields its qualifier names | INTERVAL '3' DAY |
 | ROW(f t, ...) | a value of each field f, of type t | |
 | t ARRAY[n] | up to n values of type t, in order | t ARRAY is t ARRAY[65535] |
+| XML(SEQUENCE) | an XML document, fragment or sequence | XML; XML(DOCUMENT), XML(CONTENT); see [XML Values](19-xml.md) |
 
 The longest string is 32,767 characters, the longest binary string 32,767
 octets, the longest large object 4G characters or octets, an exact number holds at most 18 digits and a DECFLOAT at most
@@ -204,7 +205,10 @@ length either holds the longest, 4G.
 A large object is kept apart from its row, in chunks of 256 KiB, and is
 logged, read and sent to a client a chunk at a time, so none is ever
 held whole in memory. A value a function makes, as UPPER or LPAD make
-one, is written to a temporary file the same way.
+one, is written to a temporary file the same way. A large object inside
+an array, a multiset, a row or a structured value is kept whole in that
+value's row instead, and one longer than 256 KiB is refused there
+(SQLCODE -900). The column store keeps no large object.
 
 `||`, SUBSTRING, POSITION, OVERLAY, TRIM, UPPER, LOWER, the pads, LIKE
 and the regular expressions take large objects, and a CLOB and a
@@ -410,7 +414,7 @@ so its binary value, 1000000000000000019884624838656, is the factor.
 
 DATE holds a date of the years 1 to 9999; TIME(p) a time of day, its
 seconds of p fraction digits, at most 6; TIMESTAMP(p) a date and a time.
-WITH TIME ZONE adds a time zone displacement, from -12:59 to +13:00.
+WITH TIME ZONE adds a time zone displacement, from -12:59 to +14:00.
 Literals are written `DATE '2026-10-28'`, `TIME '13:45:30.125'`,
 `TIMESTAMP '2026-10-28 13:45:30'`, a displacement after the time if
 written, `+02:00`.
@@ -447,7 +451,7 @@ OK
 ----------------------------------+----------------------------
  2026-10-28 13:45:30.000000+02:00 | 2026-10-28 19:15:30.123456
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): DATE '2026-02-30' is no valid <datetime literal> [ISO/IEC 9075:1992 §5.3 SR21, SR22, SR25] (at character 27)
+turborel: SQLCODE -103 (SQLSTATE 2A000): DATE '2026-02-30' is no valid <datetime literal> [ISO/IEC 9075:1992 §5.3 SR21, SR22; ISO/IEC 9075-2:2023 §5.3 SR43] (at character 27)
 ```
 
 TIME(2) kept two of the three fraction digits written, the third
@@ -573,7 +577,7 @@ DECIMAL(10,2)` makes MONEY, whose values are those of DECIMAL(10,2) but
 compare only with other values of MONEY. A price and a weight of one
 source type cannot then be compared or added by mistake.
 
-The source type is a predefined type, an array type or a multiset type. A value of the
+The source type is a predefined type, XML among them, an array type or a multiset type. A value of the
 source, or of a type that is assigned to it, is assigned to a column of
 the distinct type, and a value of the distinct type is assigned only to a
 site of exactly its source type. CAST takes the same paths. No operator
@@ -626,6 +630,13 @@ method of it, and `DEREF(r)` gives the row as a value of `t`, each a
 null value if no row is identified. A reference without a scope is not
 dereferenced (SQLSTATE 2A000). References compare for equality alone,
 and may be elements of arrays and multisets.
+
+## XML
+
+XML, XML(DOCUMENT), XML(CONTENT) and XML(SEQUENCE) hold XML documents
+and fragments of them. [XML Values](19-xml.md) describes them, and XMLPARSE,
+XMLDOCUMENT, XMLCAST, the publishing operators and XMLSERIALIZE, which
+make and write them.
 
 ## Assignment and CAST
 
@@ -720,5 +731,6 @@ The standard: ISO/IEC 9075:1992 §4.2–§4.5 and §6.1 the types, §6.10
 CAST, §9.1 and §9.2 assignment, §10.1 the interval qualifier; ISO/IEC
 9075-2:2023 §4.4, §4.6 and §6.1 the binary string and Boolean types,
 §6.13 their CAST, §9.1 and §9.2 their assignment, §4.5 and §6.30 the
-decimal floating-point type and its arithmetic; X3.135-1986 §5.5,
+decimal floating-point type and its arithmetic, §4.7.2 the range of time
+zone displacements (IL061, IL062); X3.135-1986 §5.5,
 whose types are CHARACTER and the numbers.

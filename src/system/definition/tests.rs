@@ -64,6 +64,7 @@ fn users_and_check_tables_are_described() {
             "PUBLIC",
             "R",
             "S",
+            "SF_INFORMTN_SCHEMA",
             "ST_DEFINITION_SCHEMA",
             "ST_INFORMTN_SCHEMA",
             "_SYSTEM"
