@@ -98,7 +98,7 @@ impl Accumulator for Gathered {
             )
             .with_state(SqlState::XML_VALUE_OVERFLOW));
         }
-        self.rows.push(keyed(row, &self.collations));
+        self.rows.push(keyed(row, &self.collations)?);
         Ok(())
     }
 

@@ -209,6 +209,7 @@ its own; class TB is turborel's own.
 | 38T07 | External routine exception: a package's files are not those its digests name, or another of its version is installed |
 | 38T08 | External routine exception: a package or a registry's index is not signed by a trusted key, or the index has expired |
 | 38T09 | External routine exception: the packages required cannot be resolved, a cycle or a conflict of ranges |
+| 38T10 | External routine exception: a plug-in's table or index could not be told a change made or undone, and is damaged until the database opens again |
 | 3B000 | Savepoint exception: the class of 3B001 and 3B002 |
 | 3B001 | Savepoint exception: invalid specification: RELEASE or ROLLBACK TO a savepoint not of the current savepoint level, or established before the atomic execution context running began |
 | 3B002 | Savepoint exception: too many: a transaction's 1,025th savepoint |

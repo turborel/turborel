@@ -30,6 +30,7 @@ mod kind;
 pub mod metric;
 mod params;
 mod pq;
+pub(crate) use pq::{ProductQuantizer, product_codebook};
 pub mod quantizer;
 mod random;
 mod sq8;

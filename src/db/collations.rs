@@ -130,7 +130,7 @@ impl State {
         let mut out = Vec::with_capacity(values.len());
         for (&c, v) in columns.iter().zip(values) {
             let collation = desc.columns.get(c).map_or(Ok(None), |column| self.column_collation(column))?;
-            out.push(collation.map_or_else(|| v.clone(), |collation| collation.sort_key(v)));
+            out.push(collation.map_or_else(|| Ok(v.clone()), |collation| collation.sort_key(v))?);
         }
         Ok(out)
     }
@@ -153,6 +153,10 @@ impl State {
             .iter()
             .map(|&c| table.columns.get(c).map_or(Ok(None), |column| self.column_collation(column)))
             .collect::<Result<Vec<_>>>()?;
+        // [EXTENSION] No key is a plug-in's sort key: keys are made under
+        // the index's locks, where no call is made (RULES.md D221, R-ERR-4).
+        let what = format!("index {}", ix.name);
+        collations.iter().flatten().try_for_each(|c| crate::value::collation::character_wise(c, &what))?;
         let collations = if collations.iter().any(Option::is_some) { collations } else { Vec::new() };
         let nulls = ix.unique && table.nulls_not_distinct(&ix.columns);
         // A hybrid index's parts each hold their own column's value, so it

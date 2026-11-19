@@ -55,7 +55,11 @@ fn keyed(values: Row, collations: &[Option<CollationRef>]) -> Key {
     if collations.is_empty() {
         return Key(values);
     }
-    let key = |(v, c): (Value, &Option<CollationRef>)| c.as_ref().map_or_else(|| v.clone(), |c| c.sort_key(&v));
+    // No index keys by a plug-in's collation, whose call may fail and may
+    // not be made under the locks keys are made under (RULES.md D221,
+    // R-ERR-4): one is refused as the index is defined, so this fails not.
+    let key =
+        |(v, c): (Value, &Option<CollationRef>)| c.as_ref().map_or_else(|| v.clone(), |c| c.sort_key(&v).unwrap_or_else(|_| v.clone()));
     Key(values.into_iter().zip(collations).map(key).collect())
 }
 

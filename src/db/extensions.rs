@@ -11,6 +11,7 @@
 //! is made, finding the package, checking it and creating what it
 //! requires, is `session.rs`'s; the views of extensions are in `system/extensions.rs`.
 
+mod dependents;
 mod host;
 mod objects;
 mod session;
@@ -179,6 +180,7 @@ impl State {
     pub(super) fn drop_extension(&mut self, qn: &QualifiedName, cascade: bool) -> Result<Dropped> {
         let name = &qn.ident;
         let installed = self.extensions.get(name).cloned().ok_or_else(|| refused(format!("there is no extension {name}")))?;
+        self.unneeded(&installed)?;
         let requiring = self.requiring(name);
         let mut dropped = Dropped::default();
         if let (Some(first), false) = (requiring.first(), cascade) {

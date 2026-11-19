@@ -66,6 +66,34 @@ impl ProductCodebook {
     }
 }
 
+/// \[EXTENSION\] A codebook of `k` centroids in each of the subspaces
+/// `widths` wide, one after another, `centroids` of each subspace its `k`
+/// of its width: a plug-in quantizer's training (RULES.md D221), which the
+/// database then encodes, decodes and measures by, as of PQ's own.
+///
+/// # Errors
+///
+/// SQLCODE -301 if `k` is not 1 to 256, the widths do not add to `dims`,
+/// or a subspace's centroids are not `k` of its width.
+pub(crate) fn product_codebook(dims: u32, k: usize, widths: &[usize], centroids: Vec<Vec<f32>>) -> Result<Box<dyn Codebook>> {
+    let total = widths.iter().try_fold(0_usize, |sum, w| sum.checked_add(*w));
+    let fits = centroids.len() == widths.len() && centroids.iter().zip(widths).all(|(c, w)| Some(c.len()) == w.checked_mul(k));
+    let spanned = total == usize::try_from(dims).ok() && !widths.is_empty() && widths.iter().all(|w| *w > 0);
+    if !(1..=CENTROIDS).contains(&k) || !spanned || !fits {
+        return Err(training("a plug-in's codebook is not centroids of 1 to 256 in subspaces spanning the dimensions"));
+    }
+    let mut start = 0_usize;
+    let spans = widths
+        .iter()
+        .map(|w| {
+            let span = (start, *w);
+            start = start.saturating_add(*w);
+            span
+        })
+        .collect();
+    Ok(Box::new(ProductCodebook::new(dims, k, spans, centroids)))
+}
+
 /// `dims` split into `m` consecutive spans, the first ones a dimension
 /// wider where `m` does not divide `dims`.
 fn spans(dims: usize, m: usize) -> Vec<(usize, usize)> {

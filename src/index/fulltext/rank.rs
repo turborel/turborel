@@ -84,9 +84,20 @@ pub(super) fn broken(ranking: &dyn Ranking, what: &str) -> SqlError {
 ///
 /// SQLCODE -910 if it is past the bound, negative or not finite.
 pub(super) fn weighed(ranking: &dyn Ranking, corpus: &Corpus, term: TermStats, (frequency, length): (u32, u32)) -> Result<f64> {
+    let (term, in_doc) = asked(term, (frequency, length));
+    checked(ranking, corpus, &term, ranking.weight(corpus, &term, &in_doc))
+}
+
+/// The term `term` of a document, of `frequency` there in a document of
+/// `length` words, as `weighed` weighs it.
+fn asked(term: TermStats, (frequency, length): (u32, u32)) -> (TermStats, InDocument) {
     let term = TermStats { documents: term.documents.max(1), most: term.most.max(frequency) };
-    let weight = ranking.weight(corpus, &term, &InDocument { frequency, length: length.max(frequency) });
-    let bound = ranking.bound(corpus, &term);
+    (term, InDocument { frequency, length: length.max(frequency) })
+}
+
+/// `weight`, of `term`, if within its bound, finite and not negative.
+fn checked(ranking: &dyn Ranking, corpus: &Corpus, term: &TermStats, weight: f64) -> Result<f64> {
+    let bound = ranking.bound(corpus, term);
     if weight.is_finite() && weight >= 0.0_f64 && weight <= bound + BOUND_SLACK {
         Ok(weight)
     } else {
@@ -112,11 +123,21 @@ pub(crate) fn score(
 ) -> Result<f64> {
     let (counts, length) = counted(pattern, document, language, statistics)?;
     let corpus = statistics.corpus();
-    let mut total = 0.0_f64;
+    let mut all = Vec::new();
     for count in counts {
         for (term, frequency) in count {
-            total += weighed(ranking, &corpus, statistics.term(&term)?, (frequency, length))?;
+            all.push(asked(statistics.term(&term)?, (frequency, length)));
         }
+    }
+    // One question of the ranking for every term of the document, as a
+    // plug-in's is a round trip (RULES.md D221).
+    let weights = ranking.weights(&corpus, &all);
+    if weights.len() != all.len() {
+        return Err(broken(ranking, "a weight for each term was not given"));
+    }
+    let mut total = 0.0_f64;
+    for ((term, _), weight) in all.iter().zip(weights) {
+        total += checked(ranking, &corpus, term, weight)?;
     }
     Ok(total)
 }

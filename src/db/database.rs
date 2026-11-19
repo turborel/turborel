@@ -313,9 +313,14 @@ impl Database {
     /// Gives `event` to its sink unless it is below DIAGNOSTICS.LEVEL,
     /// holding no lock while the sink runs.
     pub(crate) fn emit(&self, event: &Event) {
-        let least = read(&self.0.current).map_or(Level::Info, |st| Level::of(st.settings.word(settings::DIAGNOSTICS_LEVEL)));
+        let (least, theirs) = read(&self.0.current)
+            .map_or((Level::Info, Vec::new()), |st| (Level::of(st.settings.word(settings::DIAGNOSTICS_LEVEL)), st.extension_sinks()));
         if event.level() <= least {
             self.diagnostics().event(event);
+            // [EXTENSION] Each extension's sink only queues it (RULES.md D222).
+            for sink in theirs {
+                sink.event(event);
+            }
         }
     }
 

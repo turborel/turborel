@@ -79,6 +79,21 @@ impl<'a> Reader<'a> {
         Reader { types: Some(types), ..self }
     }
 
+    /// \[EXTENSION\] A reader of what is left, finding kinds among `types`,
+    /// as a catalog reads its extensions' types before its tables (RULES.md
+    /// D223); `rejoin` then takes this one past what it read.
+    pub fn with_more_types<'b>(&self, types: &'b TypeRegistry) -> Reader<'b>
+    where
+        'a: 'b,
+    {
+        Reader { bytes: self.bytes, at: self.at, what: self.what, received: self.received, types: Some(types), depth: self.depth }
+    }
+
+    /// Takes it past what `other`, made by `with_more_types`, read.
+    pub fn rejoin(&mut self, other: &Reader<'_>) {
+        self.at = other.at;
+    }
+
     /// The kinds of type beyond the standard it finds values and types
     /// among, if any.
     pub fn types(&self) -> Option<&'a TypeRegistry> {

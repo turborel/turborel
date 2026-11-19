@@ -126,6 +126,46 @@ pub trait Collation: Send + Sync {
     fn units(&self, text: &str) -> Option<Vec<Unit>> {
         text.chars().enumerate().map(|(start, c)| Some(Unit { start, weights: vec![self.fold(c)?.to_string().into_bytes()] })).collect()
     }
+    /// \[DESIGN\] The sort keys of `texts` under `pad`, together: one
+    /// round trip of a plug-in's collation for a batch of strings (RULES.md
+    /// D221). Default: `sort_key` of each.
+    ///
+    /// # Errors
+    ///
+    /// A plug-in's collation's call fails.
+    fn sort_keys(&self, texts: &[&str], pad: Pad) -> crate::error::Result<Vec<Vec<u8>>> {
+        Ok(texts
+            .iter()
+            .map(|t| {
+                let mut key = Vec::with_capacity(t.len());
+                self.sort_key(t, pad, &mut key);
+                key
+            })
+            .collect())
+    }
+    /// \[DESIGN\] Whether `sort_keys` is worth calling with many strings
+    /// at once, as a plug-in's is. Default: no.
+    fn batches(&self) -> bool {
+        false
+    }
+}
+
+/// \[EXTENSION\] That `c` compares strings as LIKE, TRIM, XQuery and an
+/// index ask, a character or a key at a time, perhaps under a lock: not a
+/// plug-in's, whose keys are calls made a batch at a time (RULES.md D221).
+///
+/// # Errors
+///
+/// SQLCODE -103 if it is a plug-in's.
+pub fn character_wise(c: &CollationRef, what: &str) -> crate::error::Result<()> {
+    if !c.collation.batches() {
+        return Ok(());
+    }
+    let message = format!(
+        "[EXTENSION] {what} compares no strings by the plug-in collation {}, whose keys are calls made a batch at a time",
+        c.collation.name()
+    );
+    Err(crate::error::SqlError::new(crate::error::Code::SyntaxRule, message))
 }
 
 /// \[EXTENSION\] The most characters one element of a key is made of: the
@@ -156,11 +196,27 @@ impl CollationRef {
 
     /// `v`'s sort key, as a binary string; a null stays null, and anything
     /// but a character string stays as it is.
-    pub fn sort_key(&self, v: &Value) -> Value {
-        let Value::Char(text) = v else { return v.clone() };
-        let mut key = Vec::with_capacity(text.len());
-        self.collation.sort_key(text, self.pad, &mut key);
-        Value::Binary(Binary::new(key))
+    ///
+    /// # Errors
+    ///
+    /// A plug-in's collation's call fails (RULES.md D221).
+    pub fn sort_key(&self, v: &Value) -> crate::error::Result<Value> {
+        self.sort_keys(std::slice::from_ref(v)).map(|mut keys| keys.pop().unwrap_or(Value::Null))
+    }
+
+    /// The sort key of each of `values`, as `sort_key` gives it, the
+    /// character strings' asked of the collation together.
+    ///
+    /// # Errors
+    ///
+    /// As `sort_key`.
+    pub fn sort_keys(&self, values: &[Value]) -> crate::error::Result<Vec<Value>> {
+        let texts: Vec<&str> = values.iter().filter_map(|v| if let Value::Char(t) = v { Some(t.as_str()) } else { None }).collect();
+        let mut keys = self.collation.sort_keys(&texts, self.pad)?.into_iter();
+        Ok(values
+            .iter()
+            .map(|v| if let Value::Char(_) = v { Value::Binary(Binary::new(keys.next().unwrap_or_default())) } else { v.clone() })
+            .collect())
     }
 }
 

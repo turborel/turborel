@@ -246,3 +246,20 @@ pub fn stored(v: Value, t: &DataType) -> Result<Value> {
 
 #[cfg(test)]
 mod tests;
+
+/// \[EXTENSION\] The coordinates of `v`, a vector, dense: what a plug-in
+/// reads of a vector it is given (`turborel_protocol::plugin`).
+pub fn coordinates(v: &Value) -> Option<Vec<f64>> {
+    vector_of(v).map(|image| Vector::of(image).values())
+}
+
+/// \[EXTENSION\] The dense vector of `coordinates`, of DOUBLE elements: what
+/// a plug-in gives as a vector.
+///
+/// # Errors
+///
+/// SQLSTATE 38T03 if it is no vector: empty, or of a coordinate not
+/// finite.
+pub fn dense_vector(coordinates: Vec<f64>) -> Result<Value> {
+    vector_value(Vector::dense(Element::Float64, coordinates))
+}

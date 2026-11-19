@@ -126,7 +126,7 @@ impl Accumulator for CollatedAcc {
         if v.is_null() {
             return Ok(());
         }
-        let key = self.collation.sort_key(v);
+        let key = self.collation.sort_key(v)?;
         let wanted = if self.max { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less };
         if self.best.as_ref().is_none_or(|(best, _)| compare(&key, best) == Some(wanted)) {
             self.best = Some((key, v.clone()));

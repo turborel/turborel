@@ -235,15 +235,15 @@ impl Accumulator for Joined {
     fn update(&mut self, v: &Value) -> Result<()> {
         let Value::Row(row) = v else { return Err(not_bound()) };
         let text = &listed(row.first())?;
-        let keyed = row
-            .iter()
-            .skip(1)
-            .enumerate()
-            .map(|(k, part)| self.spec.collations.get(k).and_then(Option::as_ref).map_or_else(|| part.clone(), |c| c.sort_key(part)));
-        let place = Place { keys: keyed.collect(), read: self.read, orders: Arc::clone(&self.spec.orders) };
+        let keyed =
+            row.iter().skip(1).enumerate().map(|(k, part)| {
+                self.spec.collations.get(k).and_then(Option::as_ref).map_or_else(|| Ok(part.clone()), |c| c.sort_key(part))
+            });
+        let place = Place { keys: keyed.collect::<Result<_>>()?, read: self.read, orders: Arc::clone(&self.spec.orders) };
         self.read = self.read.saturating_add(1);
         if self.spec.distinct {
-            let id = self.spec.collation.as_ref().map_or_else(|| Value::Char(text.clone()), |c| c.sort_key(&Value::Char(text.clone())));
+            let id =
+                self.spec.collation.as_ref().map_or_else(|| Ok(Value::Char(text.clone())), |c| c.sort_key(&Value::Char(text.clone())))?;
             self.distinct(id.norm(), place, text.clone());
             return Ok(());
         }

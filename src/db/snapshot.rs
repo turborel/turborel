@@ -11,7 +11,9 @@
 //! RULES.md D62); its roles, and the users who may create them.
 //!
 //! ```text
-//! snapshot: schemas (count u32, each its name and its owner, str),
+//! snapshot: the extensions created (as `catalog/codec` writes them),
+//!           first, so the types they bring are known as the rest is read
+//!           (RULES.md D223), schemas (count u32, each its name and its owner, str),
 //!           domains (count u32, each a domain), collations (count u32,
 //!           each a collation), collation versions (count u32, each a name
 //!           and version), assertions (count u32, each a constraint),
@@ -205,6 +207,7 @@ impl Snapshot {
     /// It in bytes.
     pub(super) fn put(&self, out: &mut Vec<u8>) {
         let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        crate::catalog::put_extensions(out, &self.extensions);
         out.put_u32(count(self.schemas.len()));
         for (schema, owner) in &self.schemas {
             out.put_str(schema);
@@ -291,7 +294,6 @@ impl Snapshot {
         self.xquery_modules.iter().for_each(|m| put_xquery_module(out, m));
         crate::catalog::codec::put_spatial(out, &self.spatial);
         crate::catalog::codec::put_partitioning(out, &self.partitioning);
-        crate::catalog::put_extensions(out, &self.extensions);
     }
 
     /// The snapshot `put` wrote.
@@ -300,6 +302,21 @@ impl Snapshot {
     ///
     /// SQLCODE -916 if it is not one.
     pub(super) fn get(r: &mut Reader<'_>) -> Result<Snapshot> {
+        // [EXTENSION] Its extensions first, so the types they bring are
+        // known as its tables' columns are read (RULES.md D223).
+        let extensions = crate::catalog::extensions(r)?;
+        let mut types = r.types().cloned().unwrap_or_default();
+        for d in &extensions {
+            crate::plugin::bridge::types::declare(&d.manifest, &mut types)?;
+        }
+        let mut inner = r.with_more_types(&types);
+        let got = Snapshot::rest(&mut inner, extensions);
+        r.rejoin(&inner);
+        got
+    }
+
+    /// The rest of a snapshot, after its `extensions`.
+    fn rest(r: &mut Reader<'_>, extensions: Vec<crate::catalog::ExtensionDesc>) -> Result<Snapshot> {
         // Each read in the order `put` wrote it, as a struct expression's
         // fields are evaluated in the order written.
         Ok(Snapshot {
@@ -336,7 +353,7 @@ impl Snapshot {
             xquery_modules: (0..r.u32()?).map(|_| xquery_module(r)).collect::<Result<_>>()?,
             spatial: crate::catalog::codec::spatial(r)?,
             partitioning: crate::catalog::codec::partitioning(r)?,
-            extensions: crate::catalog::extensions(r)?,
+            extensions,
         })
     }
 }
@@ -359,6 +376,23 @@ fn settled_counters(st: &State) -> Result<(u64, Vec<Settled>)> {
 }
 
 impl State {
+    /// `snapshot`'s settings set, each but one given as the database
+    /// opened.
+    fn install_settings(&mut self, snapshot: &Snapshot) -> Result<()> {
+        for (name, v) in &snapshot.settings {
+            // One read as the database opened, given before it did, is kept
+            // over the one recorded (`settings::read_as_opened`).
+            let given = self.settings.key(name).and_then(|key| {
+                let d = self.settings.definition(key)?;
+                Some(settings::read_as_opened(d) && self.settings.effective(key, &settings::Own::default()).1 == settings::Source::Database)
+            });
+            if given != Some(true) {
+                self.settings.set(name, Some(v))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Makes the definitions of `snapshot`, into a state that has none:
     /// each table's storage and each index's structure reopened by its
     /// locator while the database is reopened, else made (`table_storage`,
@@ -380,6 +414,10 @@ impl State {
         self.install_counters(snapshot)?;
         // Before the indexes, whose keys are by them.
         self.catalog = Arc::from(catalog.duplicate());
+        // [EXTENSION] Its extensions' objects, before the tables their
+        // engines keep, the indexes their methods do and the collations
+        // checked (RULES.md D224); and which its views may call.
+        self.attach_extensions()?;
         put_dependent(&mut *catalog, snapshot);
         self.check_collation_versions(&*catalog, &snapshot.collation_versions)?;
         for desc in &snapshot.tables {
@@ -402,17 +440,7 @@ impl State {
             self.indexes.insert(ix.name.clone(), structure);
             catalog.add_index(ix);
         }
-        for (name, v) in &snapshot.settings {
-            // One read as the database opened, given before it did, is kept
-            // over the one recorded (`settings::read_as_opened`).
-            let given = self.settings.key(name).and_then(|key| {
-                let d = self.settings.definition(key)?;
-                Some(settings::read_as_opened(d) && self.settings.effective(key, &settings::Own::default()).1 == settings::Source::Database)
-            });
-            if given != Some(true) {
-                self.settings.set(name, Some(v))?;
-            }
-        }
+        self.install_settings(snapshot)?;
         for (name, verifier) in &snapshot.users {
             self.users.replay_user(name, Some(verifier.clone()));
         }
@@ -422,8 +450,7 @@ impl State {
         snapshot.creators.iter().for_each(|c| self.users.replay_creator(c, true));
         catalog.set_roles(snapshot.roles.clone());
         self.catalog = Arc::from(catalog);
-        // [EXTENSION] Its extensions' objects, which its views may call.
-        self.attach_extensions()
+        Ok(())
     }
     /// The counters of `snapshot`'s sequence generators, each set at its
     /// base, and the epochs past its last (RULES.md D62).
@@ -442,8 +469,9 @@ impl State {
 
 // Unit tests: a snapshot reads back as written (RULES.md R-TEST-1).
 
-/// The domains, collations, sequence generators and user-defined types of
-/// `snapshot`, put in `catalog`: none of them depends on a table.
+/// The domains, collations, sequence generators, user-defined types and
+/// extensions of `snapshot`, put in `catalog`: none of them depends on a
+/// table.
 fn put_described(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.domains.iter().cloned().for_each(|d| catalog.put_domain(d));
     snapshot.collations.iter().cloned().for_each(|c| catalog.put_collation(c));
@@ -455,6 +483,7 @@ fn put_described(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.transforms.iter().for_each(|(n, g)| catalog.put_transforms(n, g.clone()));
     snapshot.xml_schemas.iter().cloned().for_each(|x| catalog.put_xml_schema(x));
     snapshot.xquery_modules.iter().cloned().for_each(|m| catalog.put_xquery_module(m));
+    catalog.set_extensions(snapshot.extensions.clone());
 }
 
 /// The assertions, views, privileges, triggers, SQL-invoked routines,
@@ -473,7 +502,6 @@ fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.gql_graphs.iter().cloned().for_each(|g| catalog.gql_mut().put_gql_graph(g));
     catalog.set_spatial(snapshot.spatial.clone());
     *catalog.partitioning_mut() = snapshot.partitioning.clone();
-    catalog.set_extensions(snapshot.extensions.clone());
 }
 
 /// [ISO/IEC 9075-4:2006 draft §12.8] Puts in `catalog` the declared tables

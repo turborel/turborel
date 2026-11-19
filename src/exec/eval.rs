@@ -113,7 +113,7 @@ fn eval_rest(e: &Expr, row: &Row, subqueries: &dyn Subqueries) -> Result<Value> 
             Ok(v)
         }
         Expr::Domain(x, d) => checked(eval(x, row, subqueries)?, d, subqueries),
-        Expr::SortKey(x, c) => Ok(c.sort_key(&eval(x, row, subqueries)?)),
+        Expr::SortKey(x, c) => c.sort_key(&eval(x, row, subqueries)?),
         // [ISO/IEC 9075:1992 §3.3.4.1] its value, then the warning its
         // binding found it raises.
         Expr::Warned(x, state) => {

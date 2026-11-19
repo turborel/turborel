@@ -32,6 +32,8 @@ pub(crate) struct SharedVectors {
     /// \[EXTENSION\] The metrics of extensions, held by the states that
     /// hold their extensions, newest last (RULES.md D169).
     extension: Arc<RwLock<Vec<Weak<dyn VectorMetric>>>>,
+    /// \[EXTENSION\] The quantizers of extensions, so held (RULES.md D221).
+    extension_quantizers: Arc<RwLock<Vec<Weak<dyn Quantizer>>>>,
 }
 
 impl SharedVectors {
@@ -67,13 +69,29 @@ impl SharedVectors {
     /// Every quantizer, the built-in first, as they are registered when it
     /// is called.
     pub(crate) fn quantizers(&self) -> Quantizers {
-        let shared = Arc::clone(&self.quantizers);
+        let (shared, extension) = (Arc::clone(&self.quantizers), Arc::clone(&self.extension_quantizers));
         let builtin = built_in_quantizers();
         Arc::new(move || {
             let mut all = builtin();
             all.extend(shared.read().unwrap_or_else(PoisonError::into_inner).iter().cloned());
+            all.extend(extension.read().unwrap_or_else(PoisonError::into_inner).iter().rev().filter_map(Weak::upgrade));
             all
         })
+    }
+
+    /// \[EXTENSION\] Adds `quantizer`, an extension's, held weakly
+    /// (RULES.md D221).
+    pub(crate) fn add_extension_quantizer(&self, quantizer: &Arc<dyn Quantizer>) {
+        let mut all = self.extension_quantizers.write().unwrap_or_else(PoisonError::into_inner);
+        all.retain(|q| q.strong_count() > 0);
+        all.push(Arc::downgrade(quantizer));
+    }
+
+    /// Whether a quantizer of `name` is built in or registered, not of an
+    /// extension.
+    pub(crate) fn registered_quantizer(&self, name: &str) -> bool {
+        let builtin = built_in_quantizers()().into_iter().any(|q| q.name().eq_ignore_ascii_case(name));
+        builtin || self.quantizers.read().unwrap_or_else(PoisonError::into_inner).iter().any(|q| q.name().eq_ignore_ascii_case(name))
     }
 
     fn add_metric(&self, metric: Arc<dyn VectorMetric>) -> Result<()> {

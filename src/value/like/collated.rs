@@ -60,6 +60,7 @@ fn parts(specs: &[Spec], collation: &CollationRef) -> Vec<Part> {
 ///
 /// As `like::like`.
 pub fn collated(value: &str, pattern: &str, escape: Option<char>, collation: &CollationRef) -> Result<bool> {
+    super::super::collation::character_wise(collation, "LIKE")?;
     let parts = parts(&specifiers(pattern, escape)?, collation);
     let text: Vec<char> = value.chars().collect();
     // Where the parts matched so far can end.

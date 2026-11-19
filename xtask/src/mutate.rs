@@ -35,6 +35,9 @@ pub enum Package {
     Replication,
     /// The server, `turborel-server`.
     Server,
+    /// The plug-in SDK and the client protocol, `turborel-protocol`: its
+    /// unit tests alone.
+    Protocol,
 }
 
 impl Package {
@@ -44,6 +47,7 @@ impl Package {
             Package::Core => "turborel",
             Package::Replication => "turborel-replication",
             Package::Server => "turborel-server",
+            Package::Protocol => "turborel-protocol",
         }
     }
 
@@ -52,7 +56,7 @@ impl Package {
         match self {
             Package::Core => "integration",
             Package::Replication => "replication",
-            Package::Server => "server",
+            Package::Server | Package::Protocol => "server",
         }
     }
 }
@@ -166,7 +170,7 @@ fn apply(source: &str, m: &Mutation) -> Result<String> {
 /// is not there.
 fn unmutated_problems(root: &Path, chosen: &[&Mutation]) -> Result<Vec<String>> {
     let mut problems = Vec::new();
-    for package in [Package::Core, Package::Replication, Package::Server] {
+    for package in [Package::Core, Package::Replication, Package::Server, Package::Protocol] {
         for target in [Target::Integration, Target::Unit] {
             let mut names: Vec<&str> = chosen.iter().filter(|m| m.package == package).flat_map(|m| m.tests(target)).copied().collect();
             names.sort_unstable();

@@ -288,8 +288,10 @@ impl Expr {
     /// `e`'s sort key under `collation`: of a constant, the constant key, so
     /// a probe or IN list can use it.
     pub fn sort_key(e: Expr, collation: &CollationRef) -> Expr {
-        if let Expr::Const(v) = &e {
-            return Expr::Const(collation.sort_key(v));
+        // A constant's key made now; one a plug-in's collation fails to make
+        // is made again as the statement runs, and fails it there.
+        if let Some(key) = if let Expr::Const(v) = &e { collation.sort_key(v).ok() } else { None } {
+            return Expr::Const(key);
         }
         Expr::SortKey(Box::new(e), collation.clone())
     }

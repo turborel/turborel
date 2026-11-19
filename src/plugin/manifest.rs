@@ -19,6 +19,15 @@ pub const SYMMETRIC: &str = "SYMMETRIC";
 pub const NON_NEGATIVE: &str = "NON_NEGATIVE";
 /// See `SYMMETRIC`.
 pub const TRIANGLE: &str = "TRIANGLE";
+/// The word of a type declared ordered.
+pub const ORDERED: &str = "ORDERED";
+
+/// The searches an index method SUPPORTS: keys equal to one given.
+pub const EQUALITY: &str = "EQUALITY";
+/// See `EQUALITY`: keys in a range, and in their order.
+pub const RANGE: &str = "RANGE";
+/// See `EQUALITY`: the keys nearest a vector, by the index's metric.
+pub const NEAREST: &str = "NEAREST";
 /// The set functions a plug-in's aggregate may not be named, as one of
 /// their name would replace the standard's [ISO/IEC 9075:1992 §6.5].
 const STANDARD_AGGREGATES: [&str; 5] = ["COUNT", "SUM", "AVG", "MAX", "MIN"];
@@ -45,11 +54,31 @@ pub enum ObjectKind {
     Target,
     /// A partitioning strategy.
     Partition,
+    /// A ranking of full-text search.
+    Ranking,
+    /// A vector quantizer.
+    Quantizer,
+    /// A collation.
+    Collation,
+    /// A system table.
+    SystemTable,
+    /// An XQuery function.
+    XQuery,
+    /// A data type beyond the standard.
+    Type,
+    /// A storage engine.
+    Engine,
+    /// An index method.
+    IndexMethod,
+    /// What makes users' verifiers.
+    Credentials,
+    /// A sink of the database's events.
+    Diagnostics,
 }
 
 impl ObjectKind {
     /// Every kind, in the order of their codes.
-    pub const ALL: [ObjectKind; 9] = [
+    pub const ALL: [ObjectKind; 19] = [
         ObjectKind::Scalar,
         ObjectKind::Aggregate,
         ObjectKind::Table,
@@ -59,6 +88,16 @@ impl ObjectKind {
         ObjectKind::Authenticator,
         ObjectKind::Target,
         ObjectKind::Partition,
+        ObjectKind::Ranking,
+        ObjectKind::Quantizer,
+        ObjectKind::Collation,
+        ObjectKind::SystemTable,
+        ObjectKind::XQuery,
+        ObjectKind::Type,
+        ObjectKind::Engine,
+        ObjectKind::IndexMethod,
+        ObjectKind::Credentials,
+        ObjectKind::Diagnostics,
     ];
 
     /// Its code in protocol 1.
@@ -73,6 +112,16 @@ impl ObjectKind {
             ObjectKind::Authenticator => 7,
             ObjectKind::Target => 8,
             ObjectKind::Partition => 9,
+            ObjectKind::Ranking => 10,
+            ObjectKind::Quantizer => 11,
+            ObjectKind::Collation => 12,
+            ObjectKind::SystemTable => 13,
+            ObjectKind::XQuery => 14,
+            ObjectKind::Type => 15,
+            ObjectKind::Engine => 16,
+            ObjectKind::IndexMethod => 17,
+            ObjectKind::Credentials => 18,
+            ObjectKind::Diagnostics => 19,
         }
     }
 
@@ -93,6 +142,16 @@ impl ObjectKind {
             ObjectKind::Authenticator => "AUTHENTICATOR",
             ObjectKind::Target => "TARGET",
             ObjectKind::Partition => "PARTITION STRATEGY",
+            ObjectKind::Ranking => "RANKING",
+            ObjectKind::Quantizer => "QUANTIZER",
+            ObjectKind::Collation => "COLLATION",
+            ObjectKind::SystemTable => "SYSTEM TABLE",
+            ObjectKind::XQuery => "XQUERY FUNCTION",
+            ObjectKind::Type => "TYPE",
+            ObjectKind::Engine => "STORAGE ENGINE",
+            ObjectKind::IndexMethod => "INDEX METHOD",
+            ObjectKind::Credentials => "CREDENTIALS",
+            ObjectKind::Diagnostics => "DIAGNOSTICS",
         }
     }
 }
@@ -124,12 +183,16 @@ pub struct Declared {
     pub modifies: bool,
     /// A metric's FORMATS.
     pub formats: Vec<String>,
-    /// A metric's PROPERTIES.
+    /// A metric's PROPERTIES, or ORDERED of a type.
     pub properties: Vec<String>,
     /// A model's DIMENSIONS.
     pub dimensions: Option<u32>,
     /// A model's ELEMENT.
     pub element: Option<String>,
+    /// A collation's VERSION.
+    pub version: Option<String>,
+    /// An index method's SUPPORTS.
+    pub supports: Vec<String>,
 }
 
 impl Declared {
@@ -151,6 +214,8 @@ impl Declared {
             properties: Vec::new(),
             dimensions: None,
             element: None,
+            version: None,
+            supports: Vec::new(),
         }
     }
 
@@ -173,6 +238,11 @@ impl Declared {
     /// Whether a metric declares the property `word`.
     pub fn has_property(&self, word: &str) -> bool {
         self.properties.iter().any(|p| p == word)
+    }
+
+    /// Whether a type is declared ORDERED.
+    pub fn ordered(&self) -> bool {
+        self.has_property(ORDERED)
     }
 }
 
@@ -379,13 +449,35 @@ fn check_object(d: &Declared) -> Result<()> {
                 None => Ok(()),
             }
         }
+        ObjectKind::IndexMethod => check_supports(d),
         ObjectKind::Scalar
         | ObjectKind::Table
         | ObjectKind::Procedure
         | ObjectKind::Authenticator
         | ObjectKind::Target
-        | ObjectKind::Partition => Ok(()),
+        | ObjectKind::Partition
+        | ObjectKind::Ranking
+        | ObjectKind::Quantizer
+        | ObjectKind::Collation
+        | ObjectKind::SystemTable
+        | ObjectKind::XQuery
+        | ObjectKind::Type
+        | ObjectKind::Engine
+        | ObjectKind::Credentials
+        | ObjectKind::Diagnostics => Ok(()),
     }
+}
+
+/// That an index method SUPPORTS at least one search, each one known.
+fn check_supports(d: &Declared) -> Result<()> {
+    let known = [EQUALITY, RANGE, NEAREST];
+    if let Some(s) = d.supports.iter().find(|s| !known.contains(&s.as_str())) {
+        return Err(invalid_manifest(&format!("INDEX METHOD {} supports no search {s}", d.name)));
+    }
+    if d.supports.is_empty() {
+        return Err(invalid_manifest(&format!("INDEX METHOD {} supports no search", d.name)));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

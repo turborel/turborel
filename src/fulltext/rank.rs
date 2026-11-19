@@ -79,6 +79,12 @@ pub trait Ranking: Send + Sync {
     fn weight(&self, corpus: &Corpus, term: &TermStats, in_doc: &InDocument) -> f64;
     /// The most `weight` gives `term` in any document of `corpus`.
     fn bound(&self, corpus: &Corpus, term: &TermStats) -> f64;
+    /// \[DESIGN\] The `weight` of each term of `asked` in its document,
+    /// together: one round trip of a plug-in's ranking for a document's
+    /// terms (RULES.md D221). Default: `weight` of each.
+    fn weights(&self, corpus: &Corpus, asked: &[(TermStats, InDocument)]) -> Vec<f64> {
+        asked.iter().map(|(t, d)| self.weight(corpus, t, d)).collect()
+    }
 }
 
 /// \[EXTENSION\] A collection's statistics as Rank reads them in one

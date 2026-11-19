@@ -97,6 +97,7 @@ mod fields;
 mod lobs;
 #[cfg(feature = "scram")]
 pub mod packages;
+pub mod plugin;
 mod reply;
 mod request;
 #[cfg(feature = "scram")]

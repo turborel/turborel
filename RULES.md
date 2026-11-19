@@ -199,6 +199,16 @@ verification approach DO-178C expects (§8).
 | D171 | Extensions are versioned packages, resolved together and locked per database |
 | D172 | What a plug-in does is shown, and its errors keep their class |
 | D173 | Only the operator chooses what runs, and packages are checked by digest and signature |
+| D220 | Every sound extension point is a kind of plug-in, and no call is made per comparison |
+| D221 | Rankings and quantizers are asked a batch, and collations are sort keys asked a batch |
+| D222 | System tables page their rows, XQuery functions are atomic, and credentials and sinks are process-wide |
+| D223 | A plug-in type is its program's text and binary forms, with a key the database orders by |
+| D224 | A plug-in storage engine keeps the rows, and the coordinator keeps the transactions |
+| D225 | A plug-in engine recovers from the log, and a process stopped fails the transaction writing it |
+| D226 | A plug-in index method answers the searches it declares, and every entry is rechecked |
+| D227 | A plug-in index is rebuilt when it is not known whole |
+| D228 | Stored data keeps its extension, and an extension's objects are used as built-in ones are |
+| D229 | The points a plug-in may not serve, each for its reason |
 
 ### The project
 
@@ -6194,22 +6204,28 @@ requiring it remains, and CASCADE drops them first.
 #### D169. An extension's objects are bridged onto the interfaces of their kinds
 
 Each object a manifest declares implements the interface its kind
-already has (`plugin/bridge/`): a function `ScalarFunction`, batching
-BATCH rows a call and cancelled with its statement (D44); an aggregate
-`AggregateFunction`, its state the program's bytes, which the database
-keeps; a table function `TableFunction`, the queries it reads run by the
-statement; a procedure `Procedure`, its SQL run in the caller's
-transaction; a metric `VectorMetric`, whose many distances from one
-query are one call, so VECTOR_DISTANCE over a batch and a DiskANN search
-batch them; and a model `Embedder`. An authenticator is found by the
-server by its mechanism. A backup target's scheme is a `TargetProvider`
-(D166), which a location of that scheme opens when no registered provider
-has it. A partitioning strategy is written against the interface that
-feature takes (`bridge/pending.rs`). Functions are registered in the state's own
-registry, so a transaction rolled back leaves none. Metrics and models
-are held weakly in the shared registries and strongly by the state that
-holds the extension, so they go when it does. No two extensions, nor an
-extension and a built-in or registered object, share a name of a kind.
+already has (`plugin/bridge/`), one kind of nineteen, its code a byte of
+CALL (`plugin/manifest.rs`). A function is a `ScalarFunction`, batching
+BATCH rows a call and cancelled with its statement (D44). An aggregate
+is an `AggregateFunction`, its state the program's bytes, which the
+database keeps. A table function is a `TableFunction`, the queries it
+reads run by the statement, and a procedure a `Procedure`, its SQL run
+in the caller's transaction. A metric is a `VectorMetric`, whose many
+distances from one query are one call, so VECTOR_DISTANCE over a batch
+and a DiskANN search batch them, and a model is an `Embedder`. An
+authenticator is found by the server by its mechanism. A backup
+target's scheme is a `TargetProvider` (D166), which a location of that
+scheme opens when no registered provider has it. A partitioning
+strategy is a `PartitionStrategy` (D153), its bounds checked and its
+rows routed by calls (`bridge/partition.rs`). Rankings, quantizers,
+collations, system tables, XQuery functions, types, storage engines,
+index methods, credentials and sinks of events are the kinds of D220 to
+D227, and the points no plug-in may serve are D229's. Functions are
+registered in the state's own registry, so a transaction rolled back
+leaves none. Metrics, models, rankings and quantizers are held weakly in
+the shared registries and strongly by the state that holds the
+extension, so they go when it does. No two extensions, nor an extension
+and a built-in or registered object, share a name of a kind.
 
 #### D170. A plug-in's processes are pooled, bounded in time and bytes, and restarted after a failure
 
@@ -6279,6 +6295,173 @@ it lists only then. Several registries are tried in the order of
 PLUGINS.REGISTRIES, a package pinned to one by PLUGINS.PINS, and none is
 configured by default. The command-line client fetches over HTTPS with
 rustls (`client/src/fetch.rs`); the server never fetches.
+
+#### D220. Every sound extension point is a kind of plug-in, and no call is made per comparison
+
+An extension may serve, besides the kinds of D169, a ranking (kind 10),
+a quantizer (11), a collation (12), a system table (13), an XQuery
+function (14), a type (15), a storage engine (16), an index method
+(17), credentials (18) and a sink of events (19), each declared by its
+manifest and bridged onto the trait the in-process point already has
+(`plugin/bridge/`), with payloads of their own (`plugin/payload/`). The
+rule of them all is that a call crosses a pipe and costs a round trip,
+so the database asks a batch at a time and never asks inside a
+comparison, a page read or a commit's critical section. What must be
+answered there is answered by the database itself, from what one call
+gave it before (a codebook, a sort key, a type's byte-comparable key).
+A point whose every use is in such a place, or that the database needs
+before any extension can exist, is refused, each for its reason in
+D229. The protocol stays version 1. New kinds are new codes and new
+payloads, which a program of version 1 that serves none of them never
+receives. The plug-in SDK (`turborel_protocol::plugin`) serves every
+kind, one trait each, batching, errors, cancellation and limits handled
+for the author, with a harness that needs no database.
+
+#### D221. Rankings and quantizers are asked a batch, and collations are sort keys asked a batch
+
+A ranking's WEIGHTS gives the weight of many (term, document) pairs in
+one call, and BOUNDS each term's bound, so a top-k search asks once per
+block of candidates (`bridge/ranking.rs`, D87). A quantizer's one call,
+TRAIN, turns a sample into a product codebook the database keeps,
+encodes with, decodes and measures by itself, so a vector search makes
+no call (`bridge/quantizer.rs`, D95). A collation's KEYS gives the sort
+keys of many strings at once (`bridge/collation.rs`). The database
+compares the keys as bytes (D60), so a sort, a grouping or an index key
+asks once per batch of values and no comparison crosses the pipe. Its
+VERSION is the manifest's, checked as a built-in collation's is. LIKE,
+TRIM, an XQuery collation and a key made character by character need
+the collation's characters, which a sort key does not give, so a
+plug-in collation is refused there with SQLCODE -103
+(`value/collation.rs`).
+
+#### D222. System tables page their rows, XQuery functions are atomic, and credentials and sinks are process-wide
+
+A system table's ROWS is asked as a statement reads it, with the
+statement's user and whether it is the owner, and answers a page of
+BATCH rows and whether more follow; at most 1,000,000 rows are taken,
+and the columns the manifest declares check each value
+(`bridge/system.rs`). An XQuery function is named by its expanded name,
+takes and returns atomic values of the types SQL maps to xs:string,
+xs:integer, xs:decimal, xs:double and xs:boolean, and is one call a
+call (`bridge/xquery.rs`). Credentials make each verifier in place of
+the host's `Credentials`, and at most one extension brings them. A sink
+of events is told each event the database emits, queued (at most 4096,
+the rest counted as dropped) and sent BATCH at a time by a thread of
+its own, so emitting never waits on a pipe (`bridge/process.rs`).
+
+#### D223. A plug-in type is its program's text and binary forms, with a key the database orders by
+
+A type is made of text by INPUT and of its binary form by RECEIVE, each
+a batch, and each value the program makes is three byte strings it
+keeps, a byte-comparable key, the binary form and the text form
+(`bridge/types.rs`). The database does everything else alone. It
+compares, groups and hashes by the key, indexes by it, casts to
+character by the text form and to binary by the binary form, and stores
+the three in a row. So a comparison, a sort or an index probe makes no
+call. A type declared ORDERED may be ordered and range-indexed, one not
+only compared for equality. A plug-in type cannot have arithmetic, a
+cast to or from any type but character and binary, a type modifier,
+fields a query reaches into, or a collation. Its values are those its
+program made, so a program that changes its text form for the same
+value changes no stored value. A snapshot writes its extensions first,
+so the types they bring are known as its tables are read.
+
+#### D224. A plug-in storage engine keeps the rows, and the coordinator keeps the transactions
+
+A table USING an extension's engine (`bridge/engine.rs`) declares
+`Undo::Native`, `Concurrency::Coordinator` and `Persistence::Logged`.
+The coordinator's table locks isolate its transactions, a writer
+exclusive to its end, so the program never sees two at once. A
+transaction's writes stay in the database, in an overlay of the rows it
+wrote whose journal its savepoints return to. The program sees nothing
+until commit, when `validate` reads the rows to change (GET) and
+applies the overlay (APPLY), BATCH rows a call, each call all or none.
+A refusal or a failed call puts back every row read and fails the
+commit. Reads merge the program's rows, a page of BATCH rows a SCAN or
+a GET a row read by id, with the transaction's overlay, and the ids a
+scan gives must ascend. The cost of a row is its share of a call. With
+BATCH 100 and a program that makes each APPLY durable, measured on a
+debug build of 20,000 rows, a commit costs about 10 microseconds a row
+more than the default engine's, a scan about 2 microseconds, and a read
+by id one round trip, about 0.25 milliseconds.
+
+#### D225. A plug-in engine recovers from the log, and a process stopped fails the transaction writing it
+
+The program keeps the position it is durable through, given at a
+CHECKPOINT taken while no transaction writes the table, and OPEN gives
+it back. Recovery replays the log from there, each change one APPLY of
+a row, which must be idempotent. OPEN of a table the program lacks
+makes it anew from the log. A process of the extension that stopped
+after a failure while a transaction wrote the table fails that
+transaction at commit as a serialization failure (SQLSTATE 40001), to
+run again, so a program restarted with none of the transaction's state
+never commits half of it. A rollback after `validate`, as another
+participant refuses, applies the rows read before. If that fails too,
+the table is damaged (SQLSTATE 38T10), refuses every call, takes no
+checkpoint, and is recovered from the log when the database opens
+again.
+
+#### D226. A plug-in index method answers the searches it declares, and every entry is rechecked
+
+An index USING an extension's method (`bridge/index.rs`) SUPPORTS
+EQUALITY, RANGE (comparisons, prefixes, ranges and order) or NEAREST,
+as its manifest declares. Inserts and deletes, the coordinator's undo
+included, are kept in order and given the program BATCH at a time
+(WRITE), before any read and at a checkpoint. A search pages its
+entries by a cursor the program gives (SEARCH), in key order, which the
+database checks, and filters each by the probe. ROWS gives a key's
+rows. NEAREST gives the nearest entries by the query's metric, an
+approximate search the executor reranks. The index is a list of
+candidates, never the truth. Each row is read again as the reader's
+transaction sees it and kept only if it still has the key, so entries
+of a transaction not committed or rolled back are never answers.
+
+#### D227. A plug-in index is rebuilt when it is not known whole
+
+OPEN gives whether the program has the index and whether it is clean,
+as the program says after a CHECKPOINT with no write since. An index
+not found, or not clean as a crash leaves it, is rebuilt from its table
+as the database opens (`IndexMethod::open` giving none). A WRITE that
+fails damages the index (SQLSTATE 38T10), whose every call fails until
+the database opens again and rebuilds it, and a process restarted
+keeps the index, as its writes not yet given are the database's.
+
+#### D228. Stored data keeps its extension, and an extension's objects are used as built-in ones are
+
+DROP EXTENSION, RESTRICT and CASCADE alike, is refused while a table
+uses its engine, a column its type or its collation, a collation is
+made from its collation, or an index uses its method or names its
+ranking or quantizer in its options (`db/extensions/dependents.rs`).
+CASCADE drops what calls an extension (D168), never what stores by it,
+as the rows are the program's or its values' meaning is. Those go
+first, by DROP TABLE or DROP INDEX. Objects of these kinds are used
+with the privileges their built-in kinds need, and an extension's
+objects are shown by EXTENSION_OBJECTS with their kind's word. A
+system table is read by any user, with the statement's user told the
+program.
+
+#### D229. The points a plug-in may not serve, each for its reason
+
+Ten in-process points have no plug-in kind. An encoding (D48)
+transforms each page as the buffer pool reads and writes it, under its
+latch and on the commit path, and the catalog's files are encoded
+before any extension is read, so a call there would stall the pool on a
+hung process and a key would leave the database. A hash function (D30)
+checksums every page as it is read and written, its id in every file's
+format, needed before the catalog that holds extensions is opened. The
+clock (D54) is read for every timestamp and in the commit's critical
+section, where a pipe's latency or a restart would reorder time. A
+keyring holds the keys of encodings and keyed hashes, needed before the
+catalog and never to leave the process. The log (`Log`) and its storage
+(`LogStorage`) are written by every commit, so a commit would wait on a
+pipe and recovery, which reads the log first, would need an extension
+the log has not yet recreated. Catalog storage (`CatalogStorage`) holds
+the extensions themselves, so it cannot be one of them. Spill
+(`Spill`) is the memory budget's relief, called when memory is short,
+when starting or feeding a process would take more. A served connection
+is the server's, beneath any database and its extensions. And package
+cryptography (`PackageCrypto`, D173) checks the signature of the very
+package that would bring it, so a plug-in would vouch for itself.
 
 #### D137. A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them
 

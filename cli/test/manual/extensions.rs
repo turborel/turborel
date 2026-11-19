@@ -1,6 +1,6 @@
 //! The examples of extensions, run as printed: the example plug-in,
-//! `examples/plugin_example.rs`, built with the tests, installed under
-//! PLUGINS.DIRECTORIES of a database of its own for each page.
+//! `protocol/examples/plugin_example`, built with the tests, installed
+//! under PLUGINS.DIRECTORIES of a database of its own for each page.
 
 use std::path::{Path, PathBuf};
 
@@ -16,6 +16,13 @@ FUNCTION SHOUT(VARCHAR(200)) RETURNS VARCHAR(200) DETERMINISTIC;
 FUNCTION FAIL(VARCHAR(200)) RETURNS INTEGER;
 PROCEDURE NOTE(VARCHAR(200)) MODIFIES SQL DATA;
 METRIC TAXICAB FORMATS (FLOAT32, FLOAT64) PROPERTIES (SYMMETRIC, NON_NEGATIVE, TRIANGLE);";
+
+/// The objects of the later kinds the page of them shows.
+const KINDS: &str = "RANKING COUNTED; QUANTIZER FIRSTS; COLLATION FOLDED VERSION '1';
+SYSTEM TABLE EXAMPLE_FACTS (NAME VARCHAR(40), N INTEGER);
+XQUERY FUNCTION '{http://example.com/fn}twice' (INTEGER) RETURNS INTEGER;
+TYPE PAIR ORDERED; STORAGE ENGINE FILES BATCH 100;
+INDEX METHOD SORTED SUPPORTS (EQUALITY, RANGE) BATCH 50; INDEX METHOD NEAR SUPPORTS (NEAREST);";
 
 /// The example's program, as the workspace's tests built it.
 fn program() -> PathBuf {
@@ -46,6 +53,7 @@ fn install(root: &Path, version: &str, extra: &str) -> PathBuf {
 fn the_extension_examples_run_as_printed() {
     let pages = [
         "client/04-plugins.md",
+        "client/04-plugins-kinds.md",
         "sql/statements/create-extension.md",
         "sql/statements/alter-extension.md",
         "sql/statements/drop-extension.md",
@@ -53,7 +61,7 @@ fn the_extension_examples_run_as_printed() {
     for page in pages {
         let scratch = Scratch::new("manual-extensions");
         let root = scratch.path("plugins");
-        install(&root, "1.0.0", "");
+        install(&root, "1.0.0", if page.contains("kinds") { KINDS } else { "" });
         if page.contains("alter") {
             let up = install(&root, "1.1.0", "UPGRADE FROM '<1.1.0' SCRIPT 'up.sql';");
             std::fs::write(up.join("up.sql"), "CALL NOTE('updated to 1.1.0')").unwrap();

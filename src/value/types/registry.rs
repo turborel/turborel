@@ -83,4 +83,28 @@ impl TypeRegistry {
         Arc::make_mut(self.kinds.get_or_insert_with(Arc::default)).insert(kind.name().to_owned(), held);
         Ok(())
     }
+
+    /// \[EXTENSION\] Registers `kind`, an extension's type, as the process
+    /// keeps it (RULES.md D223); itself again is no clash.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if another kind of its name is registered.
+    pub(crate) fn add_kind(&mut self, kind: Kind) -> Result<()> {
+        let Some(held) = self.kind(kind.name()) else {
+            Arc::make_mut(self.kinds.get_or_insert_with(Arc::default)).insert(kind.name().to_owned(), kind);
+            return Ok(());
+        };
+        if std::ptr::eq(held, kind) {
+            return Ok(());
+        }
+        Err(SqlError::new(Code::Api, format!("[DESIGN] a type {} is registered already", kind.name())))
+    }
+
+    /// \[EXTENSION\] Takes `kind` away, if it is registered.
+    pub(crate) fn remove_kind(&mut self, kind: Kind) {
+        if self.kind(kind.name()).is_some_and(|held| std::ptr::eq(held, kind)) {
+            Arc::make_mut(self.kinds.get_or_insert_with(Arc::default)).remove(kind.name());
+        }
+    }
 }

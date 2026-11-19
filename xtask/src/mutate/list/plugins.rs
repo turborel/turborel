@@ -2,9 +2,13 @@
 //! a program's errors, the directories and the owner that bound what runs,
 //! batching, determinism, the limit on a message, EXPLAIN's plug-in calls
 //! and DROP RESTRICT, then the packages' versions, digests, signatures,
-//! registries, resolution and lock.
+//! registries, resolution and lock. The plug-in kinds and the SDK have
+//! files of their own.
 
 use super::{Mutation, Package};
+
+pub(super) mod kinds;
+pub(super) mod sdk;
 
 /// The mutations of extensions and their processes.
 pub const PLUGINS: [Mutation; 8] = [
