@@ -75,16 +75,14 @@ impl Grouping {
 ///
 /// As reading the stream, or a set function, fails.
 pub(super) fn grouped(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) -> Result<Held<RowIter>> {
-    let (grouping, input) = match plan {
-        Plan::Aggregate { groups, collations, aggs, seeds, input, .. } => {
-            let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: seeds.clone() };
-            (Grouping { spec, distinct: false }, input)
-        }
-        Plan::Distinct { input } => {
-            let spec = Spec { groups: Vec::new(), collations: Vec::new(), aggs: Vec::new(), seeds: Vec::new() };
-            (Grouping { spec, distinct: true }, input)
-        }
-        other => return Err(broken(&format!("not a grouping run in parallel: {other:?}"))),
+    let (grouping, input) = if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {
+        let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: seeds.clone() };
+        (Grouping { spec, distinct: false }, input)
+    } else if let Plan::Distinct { input } = plan {
+        let spec = Spec { groups: Vec::new(), collations: Vec::new(), aggs: Vec::new(), seeds: Vec::new() };
+        (Grouping { spec, distinct: true }, input)
+    } else {
+        return Err(broken("not a grouping run in parallel"));
     };
     let limit = Limit::of(db);
     let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
