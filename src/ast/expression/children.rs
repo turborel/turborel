@@ -18,7 +18,8 @@ impl ValueExpression {
             | ValueExpression::Datetime(_)
             | ValueExpression::NextValue { .. }
             | ValueExpression::Classifier { .. }
-            | ValueExpression::MatchNumber { .. } => {}
+            | ValueExpression::MatchNumber { .. }
+            | ValueExpression::Graph(..) => {}
             ValueExpression::Navigation(n) => {
                 f(&n.expr);
                 n.logical.iter().filter_map(|l| l.offset.as_deref()).for_each(&mut *f);
@@ -239,7 +240,7 @@ impl Predicate {
             }
             Predicate::JsonExists(j) => j.for_each_child(f),
             Predicate::IsJson(j) => f(&j.input.value),
-            Predicate::Exists(_) | Predicate::Unique { .. } => {}
+            Predicate::Exists(_) | Predicate::Unique { .. } | Predicate::Graph(_) | Predicate::GraphMatch(_) => {}
         }
     }
 
@@ -265,6 +266,8 @@ impl Predicate {
             | Predicate::Submultiset { .. }
             | Predicate::Set { .. }
             | Predicate::Type { .. }
+            | Predicate::Graph(_)
+            | Predicate::GraphMatch(_)
             | Predicate::Xml { .. }
             | Predicate::XmlValid { .. }
             | Predicate::Null { .. } => None,

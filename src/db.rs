@@ -37,8 +37,7 @@
 //! | `Ranking`           | BM25                  | full-text Rank (RULES.md D87)    |
 //! | `VectorMetric`, `Quantizer` | COSINE and others; PQ, SQ8, BQ | VECTOR_DISTANCE, vector indexes (RULES.md D93) |
 //!
-//! Plus the settings (`settings.rs`, RULES.md D36), declared once in a
-//! registry, plug-ins' too; the database's values and each session's own.
+//! Plus the settings (`settings.rs`, RULES.md D36), plug-ins' too, per database and session.
 //!
 //! \[DESIGN\] A `Database` is a cheap handle that sessions share, on any
 //! number of threads (RULES.md D27). Each statement runs against a snapshot
@@ -94,6 +93,7 @@ mod files;
 mod formats;
 mod functions;
 mod generated;
+mod graphs;
 mod image;
 mod index_statements;
 mod indexes;
@@ -484,7 +484,7 @@ impl Session {
     pub fn commit(&self) -> Result<()> {
         let call = self.enter()?;
         self.emptied((commands::COMMIT_WORK, commands::UNRECOGNIZED));
-        self.diagnosed(self.db.noted(self.commit_in(call.state())), |()| SqlState::SUCCESSFUL_COMPLETION)
+        self.diagnosed(self.db.noted(self.committing(call.state())), |()| SqlState::SUCCESSFUL_COMPLETION)
     }
 
     fn commit_in(&self, st: &Arc<State>) -> Result<()> {

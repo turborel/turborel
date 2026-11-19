@@ -111,6 +111,17 @@ pub const MAX_ITERATIONS: Key = Key(46);
 /// See [`TABLES_ENGINE`]: at its key's place, after the vector settings
 /// (`settings/vector.rs`).
 pub const XQUERY_STATIC_TYPING: Key = Key(52);
+/// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
+/// the executor's settings.
+pub const GRAPH_THREADS: Key = Key(53);
+/// \[EXTENSION\] See [`TABLES_ENGINE`]: the language a session's direct
+/// statements are read in, SQL or GQL (graph standard §9).
+pub const SESSION_LANGUAGE: Key = Key(59);
+/// \[EXTENSION\] See [`TABLES_ENGINE`]: the graph a GQL statement that
+/// names none reads, a GQL session's graph.
+pub const GQL_GRAPH: Key = Key(60);
+/// The words of `SESSION.LANGUAGE`.
+pub const LANGUAGES: &[&str] = &["SQL", "GQL"];
 
 /// The words of a two-way choice (RULES.md D36): of `EXECUTOR.BATCHES`,
 /// `LOCKS.WAIT`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS`, each optimizer
@@ -144,12 +155,12 @@ pub(super) fn whole(n: i128) -> Value {
 }
 
 /// `n` as a whole number of a setting.
-fn count(n: impl TryInto<i128>) -> Value {
+pub(super) fn count(n: impl TryInto<i128>) -> Value {
     whole(n.try_into().unwrap_or(i128::MAX))
 }
 
 /// A whole number from `min` up.
-fn at_least(min: i128) -> Kind {
+pub(super) fn at_least(min: i128) -> Kind {
     Kind::Integer { min, max: i128::from(i64::MAX) }
 }
 
@@ -157,7 +168,7 @@ fn at_least(min: i128) -> Kind {
 const FRACTION: Kind = Kind::Number { min: 0.0, max: 1.0 };
 
 /// One built-in setting.
-fn defined((name, kind, default): (&str, Kind, Value), (per_session, effect): (bool, Effect), doc: &str) -> Definition {
+pub(super) fn defined((name, kind, default): (&str, Kind, Value), (per_session, effect): (bool, Effect), doc: &str) -> Definition {
     Definition { name: name.to_owned(), kind, default, per_session, node: false, effect, doc: doc.to_owned() }
 }
 
@@ -167,7 +178,7 @@ const DATABASE: (bool, Effect) = (false, Effect::Statement);
 
 /// A setting a session may set for itself, over the database's, taking
 /// effect for the statements that begin after it changes.
-const SESSION: (bool, Effect) = (true, Effect::Statement);
+pub(super) const SESSION: (bool, Effect) = (true, Effect::Statement);
 
 /// The built-in settings, in the order of their keys.
 pub(super) fn builtin() -> Vec<Definition> {
@@ -219,8 +230,16 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(read_ahead());
     all.push(log_durability());
     all.extend(later());
-    all.extend(super::vector::vector().into_iter().chain([static_typing()]));
+    all.extend(last());
     all
+}
+
+/// The settings of the features after the others, each at its key's
+/// place: the vector settings, XQuery's static typing, the graph threads, GRAPH_TABLE's search
+/// limits, GQL's session and the graph's later ones.
+fn last() -> impl Iterator<Item = Definition> {
+    let graph = super::graph::definitions().into_iter().chain(super::graph::gql_session()).chain(super::graph::later());
+    super::vector::vector().into_iter().chain([static_typing(), super::graph::threads()]).chain(graph)
 }
 
 /// [XQuery §5.2.3] Whether the Static Typing Feature is in effect for the

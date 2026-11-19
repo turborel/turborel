@@ -21,8 +21,12 @@
 //! of WC; and set functions of a column of runs of one value, RC's
 //! S, filtered by it and not. Rates are of the tables' rows read, but the key's, of
 //! queries. JSON_VALUE of a member of the JSON type and of JSON text is
-//! measured too (`analytics/json.rs`). Run with `cargo xtask bench`, on
-//! the harness (RULES.md R-BENCH-1).
+//! measured too (`analytics/json.rs`), path search on a graph of a
+//! million edges (`analytics/graph.rs`), and GRAPH_TABLE queries on an
+//! LDBC SNB-style social network (`analytics/social.rs`). Run with `cargo
+//! xtask bench`, on the harness (RULES.md R-BENCH-1); with `ONLY_VAR` set
+//! to `social`, the social network's workloads alone, or to `graph`, path
+//! search's on a graph in memory alone.
 
 #![allow(
     clippy::unwrap_used,
@@ -35,12 +39,20 @@
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]
 
+#[path = "analytics/graph.rs"]
+mod graph;
 mod harness;
 #[path = "analytics/json.rs"]
 mod json;
+#[path = "analytics/social.rs"]
+mod social;
 
 use harness::{Bench, Case, scatter};
 use turborel::db::{Database, Session};
+
+/// The variable naming the workloads run alone: `social` for the social
+/// network's, `graph` for path search's on a graph in memory.
+const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
 const ROWS: u64 = 200_000;
@@ -53,12 +65,23 @@ const KEYS: u64 = 400_000;
 
 fn main() {
     let bench = Bench::new("analytics");
+    let only = std::env::var(ONLY_VAR).unwrap_or_default();
+    if only == "social" {
+        social::workloads(&bench);
+        return;
+    }
+    if only == "graph" {
+        graph::workloads(&bench);
+        return;
+    }
     let db = database();
     let s = db.session("B");
     measure(&bench, &s, ("F", "W", ""));
     measure(&bench, &s, ("FC", "WC", " (columnstore)"));
     of_runs(&bench, &s);
     json::workloads(&bench);
+    graph::workloads(&bench);
+    social::workloads(&bench);
 }
 
 /// Measures set functions of RC, a column store table whose S is sorted,

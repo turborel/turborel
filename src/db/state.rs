@@ -20,8 +20,8 @@ use crate::hash::HashFunction;
 use crate::hash::murmur::MurmurMap;
 use crate::index::vector::hybrid::HybridMethod;
 use crate::index::{
-    BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, JsonMethod, RTreeMethod,
-    SparseMethod, XmlMethod, xml,
+    AdjacencyMethod, BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, JsonMethod,
+    LabelsMethod, RTreeMethod, ReachabilityMethod, SparseMethod, XmlMethod, xml,
 };
 use crate::log::Log;
 use crate::optimizer::Optimizer;
@@ -150,6 +150,9 @@ pub struct State {
     /// Its background work's jobs, shared by every snapshot (`threads.rs`,
     /// RULES.md D55).
     pub(crate) jobs: Arc<crate::threads::Jobs>,
+    /// The latest runs of the graph algorithms, shared by every snapshot
+    /// (`system/graph_runs.rs`).
+    pub(crate) graph_runs: Arc<crate::system::GraphRuns>,
     /// What reads ahead for its pools on its read-ahead job, shared by
     /// every snapshot (`disk/buffer/ahead.rs`, RULES.md D30).
     pub(crate) ahead: Arc<crate::disk::buffer::AheadReader>,
@@ -213,6 +216,7 @@ impl State {
             work: Arc::clone(&work),
             temp_lobs: Arc::new(crate::spill::TempLobStore::new(work)),
             jobs: Arc::default(),
+            graph_runs: Arc::default(),
             ahead: crate::disk::buffer::AheadReader::new(),
             rekey: Arc::default(),
             files: Arc::default(),
@@ -222,7 +226,6 @@ impl State {
             building: HashSet::new(),
         };
         st.attach_builtins(&memory);
-        st.declare_builtins();
         st
     }
 
@@ -239,7 +242,7 @@ impl State {
 
     /// The built-in engines and index methods, given the budget `memory`
     /// as `attach` gives a plug-in it, sharing their pages in memory,
-    /// sized by STORAGE.POOL_BYTES.
+    /// sized by STORAGE.POOL_BYTES; then their settings declared.
     fn attach_builtins(&mut self, memory: &Arc<MemoryBudget>) {
         let st = self;
         // EMBED, CHUNK_TEXT and EMBED_VERSION of the models registered, of no name taken yet.
@@ -271,12 +274,17 @@ impl State {
         let sparse = SparseMethod::sharing(Arc::clone(&st.pages));
         let hybrid = HybridMethod::sharing(&st.pages).with_plugins(&(metrics, quantizers)).with_rankings(st.rankings.closure());
         let documents = JsonMethod::sharing(Arc::clone(&st.pages));
-        let mut methods: Vec<Arc<dyn IndexMethod>> = vec![
+        // Its compacted adjacencies held of the budget too (RULES.md D38).
+        let edges = AdjacencyMethod::sharing(Arc::clone(&st.pages)).with_budget(Arc::clone(memory));
+        let methods: Vec<Arc<dyn IndexMethod>> = vec![
             Arc::new(btree),
             Arc::new(hash),
             Arc::new(spatial),
             Arc::new(words),
             Arc::new(documents),
+            Arc::new(edges),
+            Arc::new(LabelsMethod::sharing(Arc::clone(&st.pages)).with_budget(Arc::clone(memory))),
+            Arc::new(ReachabilityMethod::sharing(Arc::clone(&st.pages)).with_budget(Arc::clone(memory))),
             Arc::new(graph),
             Arc::new(layered),
             Arc::new(lists),
@@ -284,13 +292,12 @@ impl State {
             Arc::new(hybrid),
         ];
         // The XML methods (RULES.md D106), attached as the others are.
-        for method in xml::METHODS {
-            methods.push(Arc::new(XmlMethod::sharing(method, Arc::clone(&st.pages))));
-        }
-        for m in methods {
+        let xml = xml::METHODS.into_iter().map(|m| -> Arc<dyn IndexMethod> { Arc::new(XmlMethod::sharing(m, Arc::clone(&st.pages))) });
+        for m in methods.into_iter().chain(xml) {
             st.methods.insert(m.name().to_string(), m);
         }
         st.vector_functions();
+        st.declare_builtins();
     }
 
     /// Gives each table and index already in the catalog its storage and index

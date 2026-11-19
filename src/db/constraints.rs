@@ -15,7 +15,8 @@ use crate::ast::{
 };
 use crate::binder::{self, Context, Invoked, Purpose, Referencing, Uses, bind_select, qualify};
 use crate::catalog::{
-    ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, Horizon, QualifiedName, TableDesc, applicable, owner_of, sole,
+    Connection, ConstraintAttributes, ConstraintDesc, ConstraintKind, ForeignKey, Horizon, QualifiedName, TableDesc, applicable, owner_of,
+    sole,
 };
 use crate::error::{At, Code, Result, SqlError, Subject};
 use crate::lexer::kw;
@@ -264,6 +265,12 @@ impl<'a> Described<'a> {
                 self.foreign_key(c.name.as_ref(), (columns, period.clone()), references, c.at)
             }
             TableConstraintKind::Check(check) => self.check(c.name.as_ref(), check),
+            // [EXTENSION] (§4.2) its node tables named as the table's are.
+            TableConstraintKind::Connection { clauses, cascade } => {
+                let of = |n: &TableName| qualify(n, &self.names);
+                let clauses = clauses.iter().map(|(from, to)| (of(from), of(to))).collect();
+                self.add(c.name.as_ref(), "CONNECTION", ConstraintKind::Connection(Connection { clauses, cascade: *cascade }))
+            }
         };
         added.or_at(c.at)
     }

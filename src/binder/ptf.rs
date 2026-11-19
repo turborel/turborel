@@ -10,6 +10,7 @@
 //! column it is.
 
 mod call;
+mod graph;
 mod tables;
 
 use std::sync::Arc;
@@ -20,6 +21,7 @@ use super::{qualify, rule};
 use crate::ast::{PtfInvocation, PtfTable, TableArgument, TableName};
 use crate::catalog::{ColumnDesc, QualifiedName, TableDesc};
 use crate::db::State;
+use crate::db::ptf::Invoked;
 use crate::error::{At, Code, Result, SqlError};
 use crate::exec::{Subqueries, SubqueryRows};
 use crate::logical::{Expr, LogicalPlan, Polymorphic, Subquery};
@@ -131,6 +133,9 @@ pub(super) fn bound_ptf(
     (inv, correlation, names): (&PtfInvocation, Option<&str>, Option<&[String]>),
     depth: usize,
 ) -> Result<BoundPtf> {
+    if graph::is_graph_algorithm(inv) {
+        return graph::bound_graph_algorithm(b, (inv, correlation, names), depth);
+    }
     if depth > MAX_NESTED_INVOCATIONS {
         let msg =
             format!("[DESIGN] a <PTF derived table> nests more than {MAX_NESTED_INVOCATIONS} invocations of polymorphic table functions");
@@ -143,6 +148,7 @@ pub(super) fn bound_ptf(
     let (node, order) = derived(&tables, &mut columns, &mut ranges);
     let node_names: Vec<String> = node.iter().map(|c| c.name.clone()).collect();
     let inputs = tables.into_iter().map(|t| t.plan).collect();
+    let call = Arc::new(Invoked::Routine(Box::new(call)));
     let mut plan = LogicalPlan::Polymorphic(Box::new(Polymorphic { call, arguments, inputs, names: node_names }));
     if order.iter().enumerate().any(|(k, &c)| k != c) || order.len() != node.len() {
         plan = LogicalPlan::Project { exprs: order.into_iter().map(Expr::Column).collect(), input: Box::new(plan) };

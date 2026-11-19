@@ -44,6 +44,10 @@ pub(in crate::db) fn type_named(statement: &SchemaStatement) -> (Option<&TableNa
         | SchemaStatement::Trigger(_)
         | SchemaStatement::Routine(_)
         | SchemaStatement::Module(_)
+        | SchemaStatement::Graph(_)
+        | SchemaStatement::AlterGraph(_)
+        | SchemaStatement::GraphType(_)
+        | SchemaStatement::GqlGraph(_)
         | SchemaStatement::XmlSchema(_)
         | SchemaStatement::XQueryModule(_)
         | SchemaStatement::AlterXQueryModule(_)
@@ -131,7 +135,10 @@ impl Session {
             | DropObject::Type(name)
             | DropObject::Trigger(name)
             | DropObject::Module(name)
-            | DropObject::Vector(_, name) => Err(rule(format!("[DESIGN] {} is no cast, ordering or transform", name.ident))),
+            | DropObject::Graph(name, _)
+            | DropObject::Vector(_, name)
+            | DropObject::GraphType(name, _)
+            | DropObject::GqlGraph(name, _) => Err(rule(format!("[DESIGN] {} is no cast, ordering or transform", name.ident))),
             DropObject::Routine(_) | DropObject::Schema { .. } => Err(rule("[DESIGN] no cast, ordering or transform is named")),
         }
     }
@@ -209,6 +216,9 @@ impl State {
             | DropTarget::Trigger(_)
             | DropTarget::Routine(_)
             | DropTarget::Module(_)
+            | DropTarget::Graph(_)
+            | DropTarget::GraphType(_)
+            | DropTarget::GqlGraph(_)
             | DropTarget::XmlSchema(_)
             | DropTarget::XQueryModule(_)
             | DropTarget::Pipeline(_) => return Vec::new(),

@@ -10,8 +10,7 @@ use super::arguments::registered_subject;
 use super::arithmetic::distinct_operand;
 use super::invocation::{Called, Passed};
 use super::set_functions::{column_references, is_aggregate_call, operand_rules};
-use super::subquery;
-use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, value_specification};
+use super::{Binder, NOT_AGGREGATED, Scope, nondeterministic, rule, subquery, value_specification};
 use crate::ast::{Literal, SearchCondition, SetArg, SetFunctionSpecification, Sign, ValueExpression, ValueSpecification};
 use crate::error::{At, Code, Result, SqlError};
 use crate::functions::{
@@ -21,8 +20,7 @@ use crate::functions::{
 use crate::lexer::kw;
 use crate::logical::{AggCall, Expr, Slot, render_expr};
 use crate::params::ParameterType;
-use crate::value::collation::CollationRef;
-use crate::value::{DataType, Value};
+use crate::value::{DataType, Value, collation::CollationRef};
 
 /// [ISO/IEC 9075:1992 §17.6 GR3] `e`, if it is a `<dynamic parameter
 /// specification>`, alone or in any number of parentheses: its index, and
@@ -155,6 +153,7 @@ impl Binder<'_> {
             | ValueExpression::Navigation(_)
             | ValueExpression::Classifier { .. }
             | ValueExpression::MatchNumber { .. }
+            | ValueExpression::Graph(..)
             | ValueExpression::Xml(..) => self.decorated(v, scope),
         }
     }
@@ -199,6 +198,7 @@ impl Binder<'_> {
             ValueExpression::Navigation(n) => self.navigation(n, scope).or_at(n.at),
             ValueExpression::Classifier { variable, at } => self.classifier(variable.as_deref(), scope).or_at(*at),
             ValueExpression::MatchNumber { at } => self.match_number(scope).or_at(*at),
+            ValueExpression::Graph(f, at) => self.graph_function(f).or_at(*at),
             ValueExpression::Xml(x, at) => self.xml_operator(x, scope).or_at(*at),
             ValueExpression::Column(_)
             | ValueExpression::Nested(_)
@@ -494,6 +494,9 @@ impl Binder<'_> {
         // made a column of the groups before any window function, holds no
         // nested window function.
         let (call, collation) = self.unnested(|| self.aggregate_call(func, argued, filter, rows))?;
+        if let Some(slot) = self.graph_registered(g, &call) {
+            return slot;
+        }
         Ok(self.registered_in(g, call, collation))
     }
 

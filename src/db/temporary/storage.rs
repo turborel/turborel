@@ -16,9 +16,11 @@ use crate::catalog::{IndexDesc, TableDesc};
 use crate::db::api;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::{Code, Result, SqlError};
+use crate::graph::adjacency::{Adjacency, Direction, Step};
 use crate::index::{
-    self, BTreeMethod, FULLTEXT_METHOD, FullTextMethod, HASH_METHOD, HashMethod, Index, IndexMethod, JSON_METHOD, JsonMethod, Key,
-    KeyOrder, KeyProjection, Probe, RTREE_METHOD, RTreeMethod,
+    self, ADJACENCY_METHOD, AdjacencyMethod, BTreeMethod, FULLTEXT_METHOD, FullTextMethod, HASH_METHOD, HashMethod, Index, IndexMethod,
+    JSON_METHOD, JsonMethod, Key, KeyOrder, KeyProjection, LABELS_METHOD, LabelsMethod, Probe, REACHABILITY_METHOD, RTREE_METHOD,
+    RTreeMethod, ReachabilityMethod,
 };
 use crate::index::{DISKANN_METHOD, DiskAnnMethod, HNSW_METHOD, HnswMethod, IVF_METHOD, IvfMethod};
 use crate::log::Lsn;
@@ -445,6 +447,14 @@ impl Entries {
             Arc::from(method.create_on(&types, on)?)
         } else if self.index.method == JSON_METHOD {
             Arc::from(JsonMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == ADJACENCY_METHOD {
+            // Of no budget, so read of its tree alone, its pages the
+            // instance's (RULES.md D49).
+            Arc::from(AdjacencyMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == LABELS_METHOD {
+            Arc::from(LabelsMethod::new(pool, file).create_on(&types, on)?)
+        } else if self.index.method == REACHABILITY_METHOD {
+            Arc::from(ReachabilityMethod::new(pool, file).create_on(&types, on)?)
         } else {
             Arc::from(BTreeMethod::new(pool, file).create_on(&types, on)?)
         };
@@ -474,7 +484,34 @@ impl Entries {
     }
 }
 
+/// \[EXTENSION\] The adjacency of the session's own rows: none until its
+/// entries are made, as there are no rows to follow.
+impl Adjacency for Entries {
+    fn steps(&self, vertex: &Key, direction: Direction, out: &mut Vec<Step>) -> Result<()> {
+        let made = self.read()?.and_then(Index::adjacency);
+        made.map_or(Ok(()), |a| a.steps(vertex, direction, out))
+    }
+    fn degree(&self, vertex: &Key, direction: Direction) -> Result<u64> {
+        let made = self.read()?.and_then(Index::adjacency);
+        made.map_or(Ok(0), |a| a.degree(vertex, direction))
+    }
+    fn edges(&self) -> u64 {
+        self.made().and_then(Index::adjacency).map_or(0, |a| a.edges())
+    }
+}
+
 impl Index for Entries {
+    fn adjacency(self: Arc<Self>) -> Option<Arc<dyn Adjacency>> {
+        (self.index.method == ADJACENCY_METHOD).then_some(self)
+    }
+    /// Those of the entries made, if they are: none, the table is read.
+    fn members(self: Arc<Self>) -> Option<Arc<dyn crate::graph::indexes::Members>> {
+        self.made().and_then(Index::members)
+    }
+    /// Those of the entries made, if they are: none, no search is pruned.
+    fn reachability(self: Arc<Self>) -> Option<Arc<dyn crate::graph::indexes::Reachability>> {
+        self.made().and_then(Index::reachability)
+    }
     fn nearest(
         self: Arc<Self>,
         query: &index::NearestQuery,

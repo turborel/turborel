@@ -1789,10 +1789,12 @@ RETURN [§16.2].
 | CALL | §16.1, §9.18 SR9, GR3 to GR14, §10.4 CR6, CR7 | The procedure of the name and arity, with EXECUTE, one at most by SR20a. An IN parameter's argument is a value expression it stores, a `?` of the parameter's type, an OUT or INOUT one's a target: a host parameter, a parameter of the procedure whose body the CALL is, or a column of a BEFORE row trigger's new transition variable, not an AFTER trigger's [SR9h iii 3]. NULL or DEFAULT of an IN parameter, and DEFAULT of an INOUT one, are of Features T522 and T523, SQLCODE -900. OUT parameters start null. The body runs as the schema's owner, of its schema, with a diagnostics area of its own, within the CALL statement and its instant (US037, US038). Each OUT and INOUT value is then assigned to its target [GR10b]. A BEFORE trigger's action calls no procedure that possibly modifies SQL-data [§11.49 SR14a], the procedure of the CALL's arity. |
 | Subject routines kept | §4.35.2, §11.62 GR1, §12.7 GR12o | A view, CHECK, domain constraint, assertion, trigger, generated column or routine body invokes the routines it invoked as it was defined. Each records their specific names, and bound again chooses among those alone, so a function created later, or EXECUTE granted later, never changes what it invokes (RULES.md D73). One of them dropped makes it bind no more, never invoke another function of the name. |
 | Dropping | §11.62, §10.6, §11.2 SR4l, GR10, §11.23 SR7c, §11.31 SR7e, §11.33 SR5d, §11.59 SR4g | DROP names the routine by its name, with its parameters' types or without, or by its specific name, of the routine type written, by the owner of its schema. A name alone of more than one routine of the type, or a list of types none or several are of, counting a distinct type's functions, is SQLCODE -103 [§10.6 SR3c]. RESTRICT refuses it if a view, constraint, assertion, generated column, trigger or routine invokes it. CASCADE drops each, and what invokes those. A table, view or column a body reads, a distinct type a routine is typed by or its body uses, and a schema holding a routine, are dropped only with CASCADE, which drops the routine. |
+| Named arguments | §10.4, §9.18 SR4, SR5d | `name => value` in a CALL (T521) and a polymorphic table function's invocation (T524), each put at its parameter's place. All named or none, no name twice (-103). |
 | Kept | §11.60 GR3, §4.35.5 | The descriptor is logged as its definition and kept in a checkpoint's snapshot, with its EXECUTE privileges. ROUTINES, PARAMETERS and ROUTINE_PRIVILEGES show it, ROUTINE_DEFINITION to the owner of its schema alone. |
 
-SQL SECURITY (Feature T324), a parameter's default and named arguments
-(T521, T522, T524, T525), a monomorphic table function's RETURNS TABLE (T326), DYNAMIC RESULT SETS
+SQL SECURITY (Feature T324), a parameter's default (T522, T525), a
+named argument of a function other than a polymorphic table function
+(T524), a monomorphic table function's RETURNS TABLE (T326), DYNAMIC RESULT SETS
 above 0 (T471) and a language other than SQL
 are refused with SQLCODE -900. A routine's
 behaviour is always DEFINER's, as SR23b leaves it without T324.
@@ -3838,6 +3840,181 @@ out of scope. A clause not yet done has no row.
 | VEC-0011 | TB918 | -918 |
 | VEC-0032 | The plug-in's own, under ON_ERROR | |
 
+### Property graphs
+
+```
+CREATE PROPERTY GRAPH g VERTEX TABLES (...) [EDGE TABLES (...)]
+    [OPTIONS ({ENFORCED | TRUSTED} MODE)] [WITH INVOKER RIGHTS]
+CREATE PROPERTY GRAPH g AS VERTICES FROM (query) [AS alias] KEY (...) ...
+    [, ...] [EDGES FROM (query) [AS alias] KEY (...) SOURCE ... DESTINATION ...]
+CREATE ADJACENCY INDEX [name] ON GRAPH g EDGE TABLE alias
+    [DIRECTION {FORWARD | REVERSE | BOTH}] [INCLUDE (column, ...)]
+CREATE LABEL INDEX [name] ON GRAPH g [{VERTEX | EDGE} TABLE alias]
+CREATE REACHABILITY INDEX [name] ON GRAPH g EDGE TABLE alias
+SELECT ... FROM GRAPH_TABLE ({g | LINE_GRAPH (g, label)} MATCH pattern [WHERE condition]
+    [ONE ROW PER {MATCH | VERTEX (v) | STEP (v1, e, v2)}]
+    COLUMNS (expression [AS name], ... | v.*)
+    [OPTIONS (MAX_PATH_LENGTH n, MAX_PATHS_PER_PARTITION n,
+    MAX_SEARCH_STATES n, ON LIMIT {ERROR | TRUNCATE}, DETERMINISTIC_PATHS,
+    GRAPH_START (v), GRAPH_DIRECTION (e, REVERSE), NO_WCOJ,
+    USE_ADJACENCY (alias), PATH_ALGO (BFS | BIBFS | DFS | DIJKSTRA | MSBFS))])
+    [FOR SYSTEM_TIME AS OF t] [[AS] name] [AS OF {TIMESTAMP t | SCN n}]
+```
+
+A property graph (RULES.md D140) is defined over tables and views, and
+the schema of node and edge tables has SYS_GRAPH, which the database
+keeps ([CREATE PROPERTY GRAPH](doc/sql/statements/create-property-graph.md)).
+GRAPH_TABLE (RULES.md D142) matches its pattern of the property graph
+standard's GPML [GS §6] and gives rows to the query around it, which it
+may read laterally ([Property graphs](doc/sql/20-property-graphs.md)).
+It takes the selectors ANY, ANY k, ANY SHORTEST, ALL SHORTEST,
+SHORTEST k [GROUPS] and ANY, ALL or k CHEAPEST [COST expression]; the
+restrictors WALK, TRAIL, ACYCLIC and SIMPLE; the match modes REPEATABLE
+ELEMENTS, DIFFERENT EDGES and DIFFERENT VERTICES; label expressions with
+`&`, `|`, `!` and `%`; quantifiers; unions and alternations; element
+and parenthesized WHERE clauses; and a postfilter. Its expressions take
+ELEMENT_ID, VERTEX_ID, EDGE_ID, LABELS, PROPERTY_EXISTS, SAME,
+ALL_DIFFERENT, IS [NOT] SOURCE OF, IS [NOT] DESTINATION OF, IS [NOT]
+DIRECTED, IS [NOT] LABELED, PATH_LENGTH, VERTICES, EDGES, IS_ACYCLIC,
+IS_TRAIL, IS_SIMPLE, PATH_TO_JSON and the set functions of a group
+variable's elements, COUNT(e.*) and the inverse distribution functions
+among them. A subpath variable `(q = ...)` names the part of the path
+its parenthesized pattern matches, of which the path functions are. A
+parenthesized WHERE takes set functions over the elements bound within
+it, each iteration's own, and PREV and FIRST of an element variable,
+its binding in the iteration before or the first [GS §11.1]. FOR EACH
+SEGMENT (e1, e2) IN p WHERE condition keeps the matches whose every two
+edges one after the other meet it. A prefilter may read the path so far
+through the path functions, a variable bound later in the pattern, and
+a variable of another path pattern [GS §6.8, §6.9]. [NOT] EXISTS IN
+PATH p (pattern) tests a pattern along the path p binds [GS §11.2].
+LINE_GRAPH (g, label) is the graph of g's edges of the label, joined by
+FOLLOWS where one leaves the vertex the other ends at, and an element
+table may hold a query's rows in place of a table's [GS §11.3].
+AS OF SCN n reads the element tables
+at SCN n, the microseconds of UTC from 0001-01-01 of a transaction
+timestamp, which TIMESTAMP_TO_SCN and SCN_TO_TIMESTAMP convert; an SCN
+no instant is 22008. EXPLAIN shows each path's
+automaton, the algorithm chosen and how each edge table is followed.
+A rigid pattern is planned as a join, its edges read by Expand,
+Expand (reverse) or ExpandInto (RULES.md D147), a cyclic one by a
+worst-case optimal join, and a small quantifier is unrolled (RULES.md
+D148). OPTIONS also take the hints GRAPH_START, GRAPH_DIRECTION,
+NO_WCOJ, USE_ADJACENCY and PATH_ALGO [GS §16 R16.8].
+An edge table is followed through its adjacency index (RULES.md D141)
+if it has one, and an ENFORCED graph's base edge tables are given one
+as it commits. A label index (RULES.md D149) gives a GRAPH_TABLE its
+label tests and starts as bitmaps, and a reachability index (RULES.md
+D150) drops the starts of a quantified search that reach no end, with
+the same rows. A search past a limit fails with SQLSTATE 54061, or ON
+LIMIT TRUNCATE ends with warning 01W61. A negative COST is 22W34.
+
+### Property graphs (Mode B)
+
+```
+CREATE TABLE t [(column, ...)] AS NODE
+CREATE TABLE e [(column, ..., CONSTRAINT c CONNECTION (A TO B [, ...])
+    [ON DELETE {CASCADE | NO ACTION}])] AS EDGE
+```
+
+The property graph standard's Mode B [GS §4.2] is native node and edge
+tables (RULES.md D143). It covers CREATE TABLE ... AS NODE and AS EDGE,
+their pseudo-columns, CONNECTION constraints, the implicit graph
+SYS_GRAPH, and DML on them [GS §12.2]
+([CREATE TABLE](doc/sql/statements/create-table.md)).
+
+| Rule | Behaviour |
+|---|---|
+| §4.2 AS NODE, AS EDGE | Make a node or edge table, with or without columns of its own. Not temporary, typed, from a query or system-versioned (-103). |
+| §4.2 Pseudo-columns | `$NODE_ID` of a node table; `$EDGE_ID`, `$FROM_ID`, `$TO_ID` of an edge table. Hidden from `*`, an INSERT of no column list and LIKE; named in any case; shown by COLUMNS with IS_HIDDEN YES. Never dropped or altered. |
+| R5.1 Identity | `{"type":"node","schema":"S","table":"T","id":N}`, `"edge"` of an edge, N from 0 per table, stable for the row's life. Given on INSERT, never written by a statement (-103). |
+| §4.2 CONNECTION | `CONSTRAINT c CONNECTION (A TO B [, ...]) [ON DELETE {CASCADE \| NO ACTION}]`, of an edge table, naming node tables of its schema (else GRF-0004). Added and dropped by ALTER TABLE. DROP TABLE of a node table it names needs CASCADE, which drops it. |
+| R12.2 Edge inserts | An endpoint is the identity of a node of a node table of the schema, else GRF-0053 when written. A CONNECTION constraint checks, on INSERT and UPDATE of an endpoint, that the pair of tables is one of its clauses and each node a row, else GRF-0053. Several constraints each hold. |
+| R12.1 Node delete | A node with edges in an edge table fails with GRF-0052, unless a CONNECTION constraint ON DELETE CASCADE of that table names the node's table. Then those edges are deleted in the same statement. TRUNCATE of a node table is refused while the schema has an edge table. |
+| §4.2 SYS_GRAPH | One per schema with a node table, described from its node and edge tables, TRUSTED, each table labelled by its name with its own columns as properties. Kept as tables change, shown in the property graph views, never defined, altered or dropped by a statement (-103). |
+| §4.2, §13 Adjacency | Each edge table has an `adjacency` index of ($FROM_ID, $TO_ID), `S.T.ADJACENCY`, and B-trees of its identities. |
+| §12.2 DML | INSERT, UPDATE, DELETE, MERGE and SELECT as on any table, endpoints written by value or by subquery. |
+| §16 Views | INFORMATION_SCHEMA.GRAPH_TABLES and CONNECTION_CONSTRAINTS. TABLE_CONSTRAINTS shows a CONNECTION constraint's type as CONNECTION. |
+| §22 Conditions | GRF-0052 and GRF-0053 are SQLCODE -201, SQLSTATE 23000, the code in the message. GRF-0004 is -103. |
+
+### Graph compatibility syntax
+
+```
+SELECT ... FROM t1, e, t2 WHERE MATCH (t1-(e)->t2) ...
+SELECT ... FROM MATCH (a)-[e]->(b) [ON g] [WHERE ...] ...    -- PGQL
+[USE g] MATCH (a)-[r]->(b) [WHERE ...] RETURN ...            -- openCypher
+```
+
+The compatibility syntax of the property graph standard [GS §10]
+[EXTENSION] compiles to GRAPH_TABLE (RULES.md D146,
+[Graph Compatibility Syntax](doc/sql/22-graph-compatibility.md)).
+
+| Item | Behaviour |
+|---|---|
+| GS §10.1 MATCH in WHERE, SHORTEST_PATH, FOR PATH, WITHIN GROUP (GRAPH PATH), LAST_NODE | Implemented. MATCH is a predicate of a WHERE clause alone, elsewhere -103. Its graph is SYS_GRAPH of the tables' schema when they are all its element tables, else the one graph of them all, else -103. |
+| GS §10.1 OR and NOT around MATCH, repeated edge aliases, quantifiers outside SHORTEST_PATH | Implemented. A MATCH not a conjunct of WHERE may have no FOR PATH tables or GRAPH PATH aggregates (-103). |
+| GS §10.2 VERTEX_ID, EDGE_ID, VERTEX_EQUAL, EDGE_EQUAL, JSON dot notation, hints | Implemented. Hints in `/*+ ... */` after `GRAPH_TABLE (` are those of OPTIONS, an unknown word passed over, a malformed known hint -102. |
+| GS §10.3 PGQL SELECT ... FROM MATCH, reachability, PATH macros | Implemented. No ON is SYS_GRAPH of the default schema. |
+| GS §10.3 openCypher MATCH and OPTIONAL MATCH ... RETURN, abbreviated relationships | Implemented, the `--` forms written with no space. |
+| R5.1 `$NODE_ID` and `$EDGE_ID` in GRAPH_TABLE | A variable's identity. An element table keyed by one alone has its text as ELEMENT_ID. |
+
+### GQL
+
+```
+EXECUTE GQL [ON [PROPERTY] GRAPH g] 'request'
+SELECT ... FROM GQL_TABLE(g, 'request') [AS] name [(column, ...)]
+SET SESSION.LANGUAGE = 'GQL'      -- direct statements read as GQL, on GQL.GRAPH
+CREATE GRAPH TYPE [IF NOT EXISTS] t [AS] {element type, ...}
+CREATE GRAPH [IF NOT EXISTS] g [{TYPED | ::} t | ANY [PROPERTY GRAPH]]
+DROP GRAPH [IF EXISTS] g [CASCADE | RESTRICT]
+DROP GRAPH TYPE [IF EXISTS] t [CASCADE | RESTRICT]
+```
+
+GQL (ISO/IEC 39075:2024) is read beside SQL over the same tables and
+transactions (RULES.md D144,
+[EXECUTE GQL](doc/sql/statements/execute-gql.md)). It reads and writes
+a property graph of Mode A, a schema's SYS_GRAPH of Mode B, and the
+typed and open graphs of Mode C. No word of GQL is reserved in SQL.
+A MATCH is a GRAPH_TABLE, so its privileges are GRAPH_TABLE's.
+
+| Facility | Behaviour |
+|---|---|
+| Requests [GS §9] | By EXECUTE GQL, GQL_TABLE and a session whose SESSION.LANGUAGE is GQL, on the graph GQL.GRAPH names. GQL_TABLE of a writing or session request is -900. |
+| Linear statements | MATCH, OPTIONAL MATCH, FILTER, WHERE, LET, FOR, ORDER BY, OFFSET or SKIP, LIMIT, RETURN, GROUP BY and NEXT. |
+| MATCH | Through GRAPH_TABLE, with CHEAPEST, every path function, restrictors that hold of the whole path, and aggregates of a group variable's properties. |
+| Set operators | UNION, EXCEPT, INTERSECT and OTHERWISE. |
+| CALL | Inline and named, an inline one that writes run once per row of the binding table. |
+| Writes [GS §12] | INSERT, SET, REMOVE, DELETE and DETACH DELETE on Modes A, B and C, under a savepoint. Of Mode A where R12.1 holds, else GRF-0051. SET and REMOVE of a label of Mode A are refused unless the label already is, or is not, the table's. |
+| Session and transactions | GQL's session and transaction statements. |
+| Mode C [GS §4.3] | CREATE and DROP GRAPH TYPE, CREATE and DROP GRAPH TYPED or ANY. A typed graph has a table per node and edge type, an open graph two, and a property graph over them. A typed graph refuses what its type lacks (GRF-0053). |
+| Views | INFORMATION_SCHEMA.GQL_GRAPHS and GRAPH_TYPES. |
+| Conditions | GRF-0012 (unknown label, property or graph type), GRF-0022 (a group variable read as one element, or a path function of no path variable) and GRF-0051 are -103. GRF-0052 and GRF-0053 are -201, SQLSTATE 23000. |
+
+### Graph algorithms
+
+```
+SELECT ... FROM GRAPH_ALGO.name({TABLE (edges) | TABLE (query) | graph}
+    [, argument, ...] [, parameter => value, ...]) [AS] name
+GRAPH_ALGO.name(...) INTO PROPERTY column [OF table [(key)]]
+```
+
+The functions of schema GRAPH_ALGO [GS §18] (RULES.md D145) run
+over a property graph or a table of edges, in parallel, the same rows
+on any number of threads
+([Graph Algorithms](doc/sql/21-graph-algorithms.md)).
+
+| Clause | Behaviour |
+|---|---|
+| Graph algorithm library [GS §18] | PAGERANK, WCC, SCC, BFS_LEVELS, SSSP, TRIANGLE_COUNT, LOCAL_CLUSTERING, BETWEENNESS, LOUVAIN, LABEL_PROPAGATION, K_CORE and JACCARD_SIMILARITY, each `GRAPH_ALGO.<name>(...)` a table reference giving (vertex key, value) rows, or JACCARD's (key, key, similarity). BFS_LEVELS' column is DEPTH, as LEVEL is a reserved word. |
+| The graph [GS §18] | A table argument of edges, its first two columns the endpoints' keys, and VERTICES adds vertices. Or the edges are a property graph's name, of CREATE PROPERTY GRAPH or SYS_GRAPH. Then its vertex tables' rows are the vertices, each its identity as ELEMENT_ID gives it (of SYS_GRAPH its `$NODE_ID`), and its edge tables' rows the edges, joined to the vertices their endpoints reference, undirected ones both ways. VERTICES with a graph is -103. |
+| Arguments | Positional, then named as `name => value`. |
+| Results [GS §18] | Joinable to any table of the keys. Components and communities are named by their least key. BFS_LEVELS and SSSP give the reached vertices alone. |
+| INTO PROPERTY [GS §18] | Of a property graph's name, `... INTO PROPERTY c [OF t]` writes c of each vertex table, or of vertex table t, the row of the vertex each result identity names, adding c if missing, one MERGE per table (UPDATE of c needed on each), of one run of the algorithm. Of a table of edges, `GRAPH_ALGO.<name>(...) INTO PROPERTY c OF t [(key)]` writes each value to column c of t's row of the key, the primary key of one column unless named, adding c (DOUBLE PRECISION, BIGINT or the key's type) if missing, in the statement's transaction. JACCARD_SIMILARITY is -103. |
+| R18.1, R18.2 | The edges are read in the statement's snapshot, with its privileges. |
+| R18.3 | Parallel on EXECUTOR.GRAPH_THREADS threads, the same rows on any number. Not distributed. |
+| GRAPH_ALGO_RUNS [GS §20] | INFORMATION_SCHEMA.GRAPH_ALGO_RUNS, the latest 1000 runs, each with its number, algorithm, arguments, user, start, time, vertices, edges, rows, threads, DONE/FAILED and message. |
+| GRF-0034 [GS §22] | A COST naming no column, null or not a number, negative where the algorithm takes none (all but SSSP), or SSSP's negative cycle the start reaches. SQLSTATE 22W34, SQLCODE -301. |
+
 ### Users
 
 Neither standard has these (RULES.md D43). They run outside a transaction, by
@@ -3934,6 +4111,7 @@ names the column or its new name, or a view selects `*` of it, SQLCODE
 | FILES, FILE_FORMATS | A database's files and their formats |
 | JOBS | Its background jobs |
 | MEMORY_RESERVATIONS | What holds its memory |
+| GRAPH_ALGO_RUNS | The latest 1000 runs of graph algorithms |
 
 ### Plans
 
@@ -4683,6 +4861,35 @@ defaults that turborel tunes (RULES.md D93 to D104).
 | vector R12.6 when the queue runs | After each commit that wrote, and as the database opens, by the job `turborel-embedding` | `db/embedding/queue.rs` |
 | A metric's or a quantizer's name | A regular identifier in upper case, or two joined by a period | `db/vectors.rs` |
 
+### Property graphs
+
+The property graph standard leaves these to the implementation (RULES.md
+D140 to D145, D147 to D152).
+
+| Rule | Choice | Where |
+|---|---|---|
+| GS §5 R5.1 an element's identity | ELEMENT_ID is the canonical JSON text `{"table":alias,"key":[...]}` of its element table's alias and key, VERTEX_ID and EDGE_ID its JSON value | `logical/graph/identity.rs` |
+| GS §7.3 the default match mode | REPEATABLE ELEMENTS | `binder/graph/pattern.rs` |
+| GS §20 limits | MAX_PATH_LENGTH and MAX_PATHS_PER_PARTITION none, MAX_SEARCH_STATES 10,000,000, ON LIMIT ERROR, of GRAPH.* | `settings/graph.rs` |
+| GS §17 parallel search | EXECUTOR.GRAPH_THREADS workers, 1 by default | `exec/graph_table/limits.rs` |
+| GS §17 when a search is parallel | on its workers only when there are more than one and its states, estimated from the graph's size, reach GRAPH.PARALLEL_MIN_STATES (16,384 by default); the starts in morsels, or one start's levels | `graph/search/choice.rs` |
+| GS §15 the algorithm of ANY SHORTEST from many starts | MS-BFS, 64 starts at once, when a batch's starts times each one's estimated reach cover the graph's vertices; else BFS from each start. A step's degree is of the label transitions its edge's labels and the labels of the node patterns beside it match, once counted, else of every edge | `graph/search/choice.rs` |
+| GS §16 R16.8 PATH_ALGO | chooses within the family the selector and restrictors call for: BFS and MSBFS of ANY SHORTEST and ANY, BFS of ALL SHORTEST and of a restricted shortest selector, BIBFS of one start and one end, DFS of every path, DIJKSTRA of the CHEAPEST selectors; else refused, -103 (GRF-0070) | `graph/search/choice.rs` |
+| GS §13.2 an adjacency index's name | `GRAPH_ALIAS_ADJACENCY` if none is written | `db/graphs/adjacency.rs` |
+| GS §13.2 DIRECTION | FORWARD keeps the OUT entries, REVERSE the IN ones, BOTH both, the default | `db/graphs/adjacency.rs` |
+| GS §5 R5.1 a native element's identity | `$NODE_ID` and `$EDGE_ID` are the canonical JSON text `{"type":"node","schema":"S","table":"T","id":N}`, `"edge"` of an edge, N from 0 per table, numbers skipped after reopening as an identity column's are | `db/graphs/native/rows.rs` |
+| GS §4.2 SYS_GRAPH's edge table aliases | The table's name when it joins one pair of node tables, else the name and the pair's, as `KNOWS PERSON TO CITY` | `db/graphs/native/graph.rs` |
+| GQL's session | SESSION.LANGUAGE SQL, and GQL.GRAPH empty, naming no graph | `settings/builtin.rs` |
+| GS §18 R18.3 parallel algorithms | EXECUTOR.GRAPH_THREADS threads, 1 by default, over morsels of 1024 vertices | `graph/algo/parallel.rs` |
+| GS §20 GRAPH_ALGO_RUNS | The latest 1000 runs, kept in memory | `system/graph_runs.rs` |
+| GS §16 R16.2 the joins of a rigid pattern | At most 64, of each choice of tables and ways, as a UNION ALL, and at most 4 whole scans of edge tables of no adjacency index | `binder/graph/joins.rs` |
+| GS §16 R16.2 the worst-case optimal join | Generic join of the vertex variables, over every edge table of the cycle's adjacency index | `graph/wcoj.rs` |
+| GS §16 R16.4 unrolling | Quantifiers of at most 3 iterations within no other, at most 16 rigid patterns | `binder/graph/joins/rigid.rs` |
+| A label index's name | `GRAPH_ALIAS_LABELS`, or `NAME_ALIAS` of each table if no table is written | `db/graphs/indexes.rs` |
+| A reachability index's name | `GRAPH_ALIAS_REACHABILITY` if none is written | `db/graphs/indexes.rs` |
+| GS §13.6 statistics | INFORMATION_SCHEMA.GRAPH_STATISTICS: each element table's rows, an edge table's out-degree and in-degree average, median, 90th and 99th percentiles and maximum, a column property's distinct values and share NULL, and each label transition's edges, made of the tables' statistics (RULES.md D151); of an endpoint of several columns, its column of most distinct values stands for it | `stats/graph.rs` |
+| GS §16 R16.8 where a search starts | GRAPH_START, GRAPH_DIRECTION (e, REVERSE), else the end of fewer candidates times fan-out once statistics are known, of a pattern of no selector, ALL SHORTEST or SHORTEST k GROUP, no COST, no limit cutting it and no DETERMINISTIC_PATHS; any other is searched from its first vertex | `exec/graph_table/start.rs` |
+
 ### Memory
 
 The standards leave memory to the implementation (RULES.md D38). This is in
@@ -4826,6 +5033,43 @@ Where the standards are unclear, turborel reads them as follows.
 | JVNi of JSON_OBJECT [2023 §6.34 GR2d ii 1 G] | The rule makes JVNi a member's key. VJNi, the value of its name, is meant. |
 | VBVi, CJOA and NJVE of the aggregates [2023 §10.11 GR4b ii 2 D II, GR4c, GR5g] | GR4b ii 2 D II lets VBVi be the value, where the other cases let JBVi be; GR4c lets JACF be CJOA, where GR4b made CJO; GR5g counts NJVE, which only §6.34 defines. JBVi, CJO and NTXA are meant. |
 | FORMAT after a query of JSON_ARRAY [2023 §6.34 F, §7.6] | In JSON_ARRAY of a query whose FROM clause ends in a table of no correlation name, FORMAT is read as that table's correlation name, as the grammar lets it be, FORMAT being no reserved word. AS before a name, or the query in parentheses, keeps it the `<JSON input clause>`. |
+
+### The property graph standard
+
+| Text | Reading |
+|---|---|
+| T7's expected path [GS §23.2] | The fixture's transfer t6 from a6 to a5 makes the shortest path from Scott's account to Jay's and back to a blocked account 5 edges long, t1 t2 t3 t4 t6. The 6 edges the test lists are not the shortest of that fixture, so the 5-edge path is returned. |
+| One variable of several labels [GS §6.2] | An element variable written twice with different label expressions may bind the tables of either, each occurrence then testing its own. T5 needs Zembla, a country only, bound by `(c:City) \| (c:Country)`. |
+| Anonymous variables of a union [GS §6.4] | An element written without a variable is bound by no variable, so the branches of a union that match one path give one binding (T9). |
+| A prefilter of a later variable [GS §6.8] | The standard names no point where it is tested, and [P1] tests a WHERE as the rigid pattern is matched, before the selector. So it is tested on the walk where the last variable it reads is bound. Inside a quantifier it waits in the thread for that binding. A variable left unbound at the end of the scope it is declared in is null, so a filter read before it in an iteration with no later binding sees null. |
+| A prefilter of another path pattern's variable [GS §6.8] | The path pattern it reads is searched first, and this one once for each of its bindings, the prefilter reading that binding. A match joins the bindings each was searched with. Two path patterns reading each other's variables is SQLCODE -103, as neither can be searched first. |
+| A path function in a prefilter [GS §6.9] | It is of the path so far, the element tested its last. A path kept across an unbounded quantifier outside every restrictor is GRF-0032, as the group of R7.4 is. |
+| EXISTS IN PATH [GS §11.2] | The pattern is matched along the path in its order, each edge as the path follows it, from each of its vertices. Its variables are its own, so one of the graph pattern's declared in it is SQLCODE -103. Its prefilters may read the match's other variables. It is a postfilter of the path. |
+| LINE_GRAPH [GS §11.3] | The text does not name the line graph's edge label. It is FOLLOWS, of no properties, from each edge of the label to each that leaves the vertex the first ends at. An undirected edge may be followed either way. The vertices keep the label's properties, the edge tables' keys their keys. No edge of the label is GRF-0012. |
+| Graphs of query results [GS §11.3] | Each element table of VERTICES FROM and EDGES FROM is of its query's rows, read as the graph is queried. A query's rows declare no key, so its KEY is written and the graph is TRUSTED, and ENFORCED is SQLCODE -103. The graph depends on the tables its queries read, as on its element tables, and INFORMATION_SCHEMA.PG_ELEMENT_TABLES shows the query in ELEMENT_TABLE_QUERY, the table's names null. A GRAPH_TABLE read FOR SYSTEM_TIME refuses such a table, whose query says when it reads. |
+| A set function in a group's filter [GS §5 R5.6, §7.4 R7.4] | It is over the elements its variable is bound to within the parenthesized pattern, so of a quantified one, within each iteration. A variable unbounded there is GRF-0032 (T12), one a restrictor inside bounds is not. |
+| A subpath variable [GS §6.4, §6.6] | It names the part of the path from where its parenthesized pattern begins to where it ends, of which the path functions are. Within a quantifier it would be a list of subpaths, of which no path function is, so it is SQLCODE -103. One of an alternative of a union is null of a match through another. A path or subpath variable declared twice is -103, as no join is on a path. |
+| A selector in a parenthesized path pattern [GS §7.2] | GRF-0033, SQLCODE -103. |
+| AS OF SCN [GS §8, §19] | No SCN is named elsewhere in the standard. A system-versioned table keeps the transaction timestamp of each change, and the logical timestamps commits are ordered by are kept with no row (RULES.md D29, D82). So the SCN of a change is its transaction timestamp's microseconds from 0001-01-01 00:00:00 UTC, AS OF SCN n is AS OF TIMESTAMP SCN_TO_TIMESTAMP(n), and TIMESTAMP_TO_SCN(CURRENT_TIMESTAMP) is the current SCN. An SCN below 0 or past 9999-12-31 is SQLSTATE 22008. |
+| PREV and FIRST [GS §11.1] | Each is of a prefilter, elsewhere SQLCODE -103. Outside a quantifier PREV and FIRST are null. In a quantifier's first iteration PREV is null and FIRST the binding of that iteration. Without a property each gives the element's identity, as ELEMENT_ID does. |
+| FOR EACH SEGMENT [GS §11.1] | It is a postfilter, tested with the WHERE after the pattern. Its two variables are edges of every edge table, and a path of fewer than two edges meets it. |
+| An undirected self-loop [GS §4.1] | It is followed once, its source and destination the same vertex. |
+| ONE ROW PER STEP of a path of no edge [GS §8 R8.3] | It gives one row, of its vertex, the edge and the next vertex null. |
+| FOR SYSTEM_TIME of a GRAPH_TABLE [GS §8] | It reads every element table as of that time. A table not system-versioned is refused as in FROM. |
+| A TRUSTED key that repeats [GS §4.1 R4.3] | Each row of the key is a vertex, and an end that names it binds each. An end that names no row is no edge. |
+| DETACH of a node delete [GS §12 R12.1] | R12.1 names DETACH, which is GQL's. SQL DML has none, so ON DELETE CASCADE of a CONNECTION constraint is the way a node's edges go with it. Without one, any edge forbids the delete. |
+| SYS_GRAPH over a schema's tables [GS §4.2] | "SYS_GRAPH over all node and edge tables in a schema" is read as one graph per schema, named SYS_GRAPH in that schema. |
+| Several CONNECTION constraints [GS §4.2] | An edge table of several CONNECTION constraints holds edges that each allows, so SYS_GRAPH joins it by the pairs all of them allow. |
+| An edge table of no CONNECTION constraint [GS §12 R12.2] | It joins any node tables of its schema. R12.2 checks CONNECTION constraints, so without one only the endpoint's form and node table are checked, not its row. |
+| A native identity's form [GS §5 R5.1] | §5.1's "JSON value" form is taken, with schema and table, so an identity stays one text however it is written. |
+| The class of GRF-0052 and GRF-0053 [GS §22] | They are constraint violations, so their SQLSTATE is of class 23. |
+| A GQL CALL of a binding table [GQL's call procedure statement] | The procedure runs for each record of the working table, a multiset whose duplicates are kept, and each record is joined with that run's result. A procedure that returns no table keeps the record as it is. Francis et al. §5.1 model CALL as a join, which agrees for queries, where a run per distinct binding gives the same rows. So an inline CALL that writes runs once per row, duplicates each their own. |
+| The automatic adjacency index [GS §13.2] | An index is built outside a transaction (RULES.md D34), so an ENFORCED graph's indexes are made as the transaction that created it commits, each in a transaction of its own. |
+| Rigid sub-patterns as joins [GS §16 R16.2] | A GRAPH_TABLE whose path patterns are rigid whole, and which reads no table before it, is one join. A rigid part of a pattern with a quantifier, a selector or a union is searched with the rest, so a match never depends on where the search would split. |
+| Limits of a joined pattern [GS §16 R16.2, §20] | The limits bound a search. A pattern planned as a join, or matched by the worst-case optimal join, is not searched, so GRAPH.* and 54061 do not apply to it. OPTIONS of a limit keep it searched. |
+| Hints [GS §16 R16.8] | GRAPH_START, GRAPH_DIRECTION, USE_ADJACENCY and PATH_ALGO direct a search, so a pattern written with one is searched. NO_WCOJ joins a cyclic pattern pairwise. A hint naming no variable of the pattern, a direction of a vertex, or an edge table with no adjacency index is GRF-0070. |
+| Quantifiers unrolled [GS §16 R16.4] | "When cheaper" is read as a bound of three iterations, past which the joins of every count outgrow the search. Zero iterations make the node patterns around the quantifier one vertex, which two named ones cannot be, so such a pattern is searched. |
+| Common sub-patterns [GS §16 R16.6] | A path pattern is common to another when it is written alike, anonymous elements aside. Common parts of different path patterns share their variables' operands in a join already. |
 
 ### The vector design document
 

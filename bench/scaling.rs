@@ -1,7 +1,9 @@
 //! How throughput scales with threads (RULES.md D29), on the
 //! row store (D31): each workload runs at several thread counts, on a
 //! database of its own for each run, and reports transactions per second
-//! and the speedup over one thread. Run with `cargo xtask bench`, on the
+//! and the speedup over one thread. The graph algorithms PAGERANK, WCC
+//! and TRIANGLE_COUNT are measured on one thread and on four too, on a
+//! graph of a million edges (`scaling/graph_algo.rs`). Run with `cargo xtask bench`, on the
 //! harness (RULES.md R-BENCH-1).
 
 #![allow(
@@ -15,6 +17,8 @@
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]
 
+#[path = "scaling/graph_algo.rs"]
+mod graph_algo;
 mod harness;
 
 use std::cell::Cell;
@@ -72,6 +76,7 @@ fn main() {
             );
         }
     }
+    graph_algo::workloads(&bench);
 }
 
 /// Runs `workload` on `threads` threads, each on a session of its own;

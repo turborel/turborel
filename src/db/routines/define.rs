@@ -407,6 +407,7 @@ pub(in crate::db) fn of_schema_routine(s: &Schema, p: &PrivilegeDefinition) -> b
         | PrivilegeObject::Collation
         | PrivilegeObject::Sequence
         | PrivilegeObject::Module
+        | PrivilegeObject::Graph
         | PrivilegeObject::Model
         | PrivilegeObject::XmlSchema
         | PrivilegeObject::XQueryModule
@@ -474,6 +475,10 @@ impl State {
             | SchemaStatement::Module(_)
             | SchemaStatement::AlterType(_)
             | SchemaStatement::AlterTransform(_)
+            | SchemaStatement::Graph(_)
+            | SchemaStatement::AlterGraph(_)
+            | SchemaStatement::GraphType(_)
+            | SchemaStatement::GqlGraph(_)
             | SchemaStatement::XmlSchema(_)
             | SchemaStatement::XQueryModule(_)
             | SchemaStatement::AlterXQueryModule(_)

@@ -112,6 +112,9 @@ impl State {
             | DropTarget::Assertion(_)
             | DropTarget::Sequence(_)
             | DropTarget::Trigger(_)
+            | DropTarget::Graph(_)
+            | DropTarget::GraphType(_)
+            | DropTarget::GqlGraph(_)
             | DropTarget::XmlSchema(_)
             | DropTarget::XQueryModule(_)
             | DropTarget::Pipeline(_) => Vec::new(),

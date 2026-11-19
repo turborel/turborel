@@ -22,7 +22,10 @@ mod composites;
 mod conformance;
 mod constraints;
 mod extensions;
+mod graph_types;
+mod graphs;
 mod modules;
+mod native;
 mod objects;
 mod roles;
 mod short_names;
@@ -75,7 +78,9 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 /// modules, arrays and row types, user-defined types, structured types,
 /// roles, triggers, SQL-server modules, usage (`usage.rs`), what this
 /// implementation supports (`conformance.rs`) and registered XML Schemas,
-/// then the short name views (`short_names.rs`), then the extensions
+/// then the short name views (`short_names.rs`), then those of property
+/// graphs (`graphs.rs`), node and edge tables (`native.rs`) and graph types
+/// (`graph_types.rs`), then the extensions
 /// (`extensions.rs`), then SQL/MM Spatial's, then Simple feature access's
 /// (`spatial/sfa.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
@@ -92,6 +97,7 @@ pub(crate) fn views() -> &'static [SystemView] {
     ];
     let short = short_names::PARTS.as_slice();
     let standard = [objects::VIEWS, constraints::VIEWS];
-    let ours = [extensions::VIEWS, super::spatial::SPATIAL_VIEWS, super::spatial::SF_VIEWS];
+    let ours =
+        [graphs::VIEWS, native::VIEWS, graph_types::VIEWS, extensions::VIEWS, super::spatial::SPATIAL_VIEWS, super::spatial::SF_VIEWS];
     ALL.get_or_init(|| [standard.as_slice(), parts.as_slice(), &[xml_schemas::VIEWS], short, ours.as_slice()].concat().concat())
 }

@@ -126,6 +126,11 @@ pub(in crate::db) struct Abandoned {
     /// by specific name, whose owner loses a privilege their bodies need,
     /// or whose bodies invoke a routine dropped.
     pub(in crate::db) routines: Vec<QualifiedName>,
+    /// \[EXTENSION\] Property graphs whose owner loses SELECT on what they
+    /// read, or whose properties invoke a routine dropped.
+    pub(in crate::db) graphs: Vec<QualifiedName>,
+    /// \[EXTENSION\] Property graphs a grant of SELECT on which is lost.
+    pub(in crate::db) graph_grants: Vec<QualifiedName>,
     /// \[EXTENSION\] Registered XQuery modules that imported one dropped,
     /// or whose owner loses USAGE on one they imported (RULES.md D106).
     pub(in crate::db) xquery_modules: Vec<QualifiedName>,
@@ -142,6 +147,8 @@ impl Abandoned {
             && self.columns.is_empty()
             && self.triggers.is_empty()
             && self.routines.is_empty()
+            && self.graphs.is_empty()
+            && self.graph_grants.is_empty()
             && self.xquery_modules.is_empty()
     }
 
@@ -163,6 +170,8 @@ impl Abandoned {
         add(&mut self.triggers, other.triggers);
         add(&mut self.routines, other.routines);
         add(&mut self.xquery_modules, other.xquery_modules);
+        add(&mut self.graphs, other.graphs);
+        add(&mut self.graph_grants, other.graph_grants);
         for (table, c) in other.constraints {
             if !self.constraints.iter().any(|(t, k)| *t == table && k.name == c.name) {
                 self.constraints.push((table, c));
@@ -197,6 +206,12 @@ impl Abandoned {
         if let Some(r) = self.routines.first() {
             return format!("routine {r}");
         }
+        if let Some(g) = self.graphs.first() {
+            return format!("property graph {g}");
+        }
+        if let Some(g) = self.graph_grants.first() {
+            return format!("a privilege granted on property graph {g}");
+        }
         if let Some(m) = self.xquery_modules.first() {
             return format!("registered XQuery module {m}");
         }
@@ -222,6 +237,7 @@ impl State {
             PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_) => {
                 self.revoke_on_type((auth, schema), r).or_at(r.table.at)
             }
+            PrivilegeObject::Graph => self.revoke_on_graph((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Table => return None,
         };
         Some(revoked)
@@ -328,6 +344,7 @@ impl State {
             }
         }
         self.abandoned_constraints(after, &mut abandoned);
+        self.graphs_abandoned(after, &mut abandoned);
         abandoned
     }
 
@@ -402,7 +419,8 @@ impl State {
                 bound.catalog = Arc::from(after.duplicate());
                 bound.check_condition(table, (text, names, horizon)).map_or_else(|e| e.code != Code::Privilege, |_| true)
             }
-            ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } => true,
+            // [EXTENSION] Its node tables are of its own schema, its owner's.
+            ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::Connection(_) => true,
         }
     }
 
@@ -458,7 +476,40 @@ impl State {
             locks.extend(taken.names.into_iter().map(|name| (name, LockMode::Exclusive)));
         }
         // [ISO/IEC 9075-2:2023 §12.7 GR6] DROP TRIGGER.
-        let triggers: Vec<QualifiedName> = abandoned.triggers.iter().filter(|t| self.catalog.trigger(t).is_some()).cloned().collect();
+        self.destroy_triggers(&abandoned.triggers, &mut dropped, &mut locks)?;
+        // [ISO/IEC 9075-2:2023 §12.7 GR12o] DROP ROUTINE ... CASCADE.
+        let taken = self.drop_routines(&abandoned.routines)?;
+        locks.extend(taken.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
+        dropped.absorb(taken);
+        // [EXTENSION] The registered XQuery modules, once what imports them
+        // is gone.
+        self.drop_abandoned_modules(abandoned, (&mut dropped, &mut locks));
+        // [EXTENSION] DROP PROPERTY GRAPH ... CASCADE, and the grants on
+        // the others that stand no more.
+        let graphs = self.drop_graphs(&abandoned.graphs)?;
+        locks.extend(graphs.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
+        dropped.absorb(graphs);
+        for g in &abandoned.graph_grants {
+            self.graph_grants_standing(g);
+            locks.push((g.clone(), LockMode::Exclusive));
+        }
+        Ok((dropped, locks))
+    }
+
+    /// [ISO/IEC 9075-2:2023 §12.7 GR6] DROP TRIGGER of each of `triggers`
+    /// still in the catalog, a pipeline's with its pipeline, into
+    /// `dropped` and `locks`.
+    ///
+    /// # Errors
+    ///
+    /// As each drop's.
+    fn destroy_triggers(
+        &mut self,
+        triggers: &[QualifiedName],
+        dropped: &mut Dropped,
+        locks: &mut Vec<(QualifiedName, LockMode)>,
+    ) -> Result<()> {
+        let triggers: Vec<QualifiedName> = triggers.iter().filter(|t| self.catalog.trigger(t).is_some()).cloned().collect();
         for t in &triggers {
             // A pipeline's goes with the pipeline, and so its others.
             let pipeline = self.catalog.embeddings().pipelines.iter().find(|p| p.triggers().contains(t)).map(|p| p.name.clone());
@@ -470,14 +521,7 @@ impl State {
             locks.extend(taken.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
             dropped.absorb(taken);
         }
-        // [ISO/IEC 9075-2:2023 §12.7 GR12o] DROP ROUTINE ... CASCADE.
-        let taken = self.drop_routines(&abandoned.routines)?;
-        locks.extend(taken.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
-        dropped.absorb(taken);
-        // [EXTENSION] The registered XQuery modules, once what imports them
-        // is gone.
-        self.drop_abandoned_modules(abandoned, (&mut dropped, &mut locks));
-        Ok((dropped, locks))
+        Ok(())
     }
 
     /// [ISO/IEC 9075-2:2023 §11.50 GR1] The privileges `revoked`, on view

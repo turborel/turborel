@@ -263,6 +263,10 @@ Of another column the six are null. IS_GENERATED is ALWAYS of a generated
 column and NEVER of another, and GENERATION_EXPRESSION is a generated
 column's expression as written. COLUMN_DEFAULT is null of both kinds.
 
+COLUMNS has IS_HIDDEN last *(extension)*, YES of a pseudo-column of a
+node or edge table, which `*` does not show, and NO of another
+([CREATE TABLE](statements/create-table.md)).
+
 COLUMNS and DOMAINS have two more *(extension)*, as ISO/IEC 9075-11
 names them. DATA_TYPE is ARRAY, MULTISET or ROW of a column or domain
 of such a type, MAXIMUM_CARDINALITY an array's maximum cardinality, and null of
@@ -639,6 +643,7 @@ OK
 | INDEXES | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME, IS_UNIQUE, COLUMN_NAMES | index, a UNIQUE or PRIMARY KEY constraint's among them |
 | SEQUENCES | SEQUENCE_CATALOG, SEQUENCE_SCHEMA, SEQUENCE_NAME, DATA_TYPE, NUMERIC_PRECISION, NUMERIC_PRECISION_RADIX, NUMERIC_SCALE, START_VALUE, MINIMUM_VALUE, MAXIMUM_VALUE, INCREMENT, CYCLE_OPTION | sequence generator the user holds USAGE on: its type, and its start, bounds and increment, each as text, and YES if it cycles ([CREATE SEQUENCE](statements/create-sequence.md)) |
 | INDEX_OPTIONS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME, OPTION_NAME, DECLARED_BY, OPTION_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, CHANGED_BY, DESCRIPTION | option of an index |
+| ADJACENCY_INDEXES | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, COLUMN_NAMES, SOURCE_COLUMNS, INCLUDED_COLUMNS, DIRECTION, CSR_BYTES | `adjacency` index: how many of its columns are the source, how many are included, which ways it keeps the edges, and the most bytes its compacted adjacency holds ([CREATE INDEX](statements/create-index.md)) |
 | SETTINGS | SETTING_NAME, SETTING_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, IS_SESSION_SETTABLE, TAKES_EFFECT, DESCRIPTION, STARTED_VALUE, IS_PENDING | setting, its value for the session; of one taken at the next start, the value it started with, or null, and whether the value set waits for a restart |
 | USERS | USER_NAME, IS_OWNER, CREATE_ROLE | user: to the owner every one, to another user itself; CREATE_ROLE YES if it may create a role |
 | MEMORY_RESERVATIONS | RESERVED_BY, BYTES | part of the memory budget reserved, as a buffer pool's |
@@ -647,8 +652,19 @@ OK
 | REPLICAS | MEMBER, ADDRESS, IS_SELF, ROLE, EPOCH, VIEW_NUMBER, IS_CONNECTED, LAST_HEARD_MS | member of the database's replica group ([Replication](../operator/09-replication.md)), in the epoch this node is in, to the owner: its number and address; whether it is this node; PRIMARY, BACKUP or UNKNOWN in the view this node knows; the epoch, and that view, or NULL; whether this node's link to it is up; the milliseconds since a frame from it arrived, or NULL |
 | FILES | PATH, KIND, CLASS, IS_OPEN, READS, WRITES, SYNCS | file of the database: DATA, SHADOW (a side file of the data file, or of a plug-in's shadowed file), CATALOG, LOG, UNDO, SPILL, TRANSFER (a state transfer being fetched by a replica), PLUGIN (a plug-in's own), SERVER (its server's own: the diagnostics log, the socket, the TLS and key files) or OTHER; its class of durability, DURABLE (DATA, CATALOG, LOG, PLUGIN), DURABLE AT COMMIT (SHADOW), UNSYNCED (UNDO), SCRATCH (SPILL, TRANSFER), or null for a file not the database's; whether it is open now; its reads, writes and syncs |
 | FILE_FORMATS | KIND, IS_SETTLED, BEHIND | kind of file of a database kept in a directory, DATA, LOG or CATALOG, to its owner: whether every one is in the formats STORAGE.ENCODINGS and STORAGE.CHECKSUM_KEY name; and what is still in others: the pages of the data file the job `turborel-rekey` has yet to look at, the log's segments, the catalog's file ([The files' formats](../operator/07-encryption.md#the-files-formats)) |
+| GRAPH_ALGO_RUNS | RUN_ID, ALGORITHM, ARGUMENTS, USER_NAME, STARTED, ELAPSED_MICROS, VERTICES, EDGES, ROWS_RETURNED, THREADS, STATUS, MESSAGE | run of a function of GRAPH_ALGO *(extension)*, of the latest 1000, with its number from 1, its algorithm, its value arguments as `NAME => value`, who ran it, when it started and the microseconds it took, its graph's vertices and edges, its result's rows, the threads it ran on, DONE or FAILED, and a failed run's message or NULL; each user's own, every run of the database's owner ([Graph Algorithms](21-graph-algorithms.md)) |
 | JOBS | LABEL, STATE, THREADED, RUNS, RESTARTS, LAST_ERROR | job of the database's background work, `turborel-checkpoint`, `turborel-maintenance`, `turborel-log-sync`, `turborel-read-ahead`, `turborel-assertion-totals`, `turborel-rekey`, `turborel-replica` or a plug-in's `turborel-<kind>`: IDLE, DUE or RUNNING; whether a thread of its own runs it; how often it ran, and failed by a fault; its last error, or NULL |
 | ASSERTION_TOTALS | CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME, FORM_NUMBER, KIND, VALUE_COUNT, NULL_COUNT, TOTAL, ROWS_KEPT | total an assertion of a schema of the user's keeps, as committed: its form's number, SUM, AVG, COUNT or NULLS (of a set function's argument that may be null); the values counted, or NULL of NULLS; their sum, as text, or NULL of COUNT and NULLS; the nulls; and the rows keeping them, which the job `turborel-assertion-totals` folds into one |
+| PROPERTY_GRAPHS | PROPERTY_GRAPH_CATALOG, PROPERTY_GRAPH_SCHEMA, PROPERTY_GRAPH_NAME, PROPERTY_GRAPH_MODE, IS_INVOKER_RIGHTS, IS_VALID, PROPERTY_GRAPH_DEFINITION | property graph the user, an enabled role or PUBLIC holds SELECT on: ENFORCED or TRUSTED, YES if WITH INVOKER RIGHTS, NO if INVALID until compiled, and its definition as a CREATE PROPERTY GRAPH statement to the owner of its schema, null to others ([CREATE PROPERTY GRAPH](statements/create-property-graph.md)) |
+| PG_ELEMENT_TABLES | PROPERTY_GRAPH_CATALOG, PROPERTY_GRAPH_SCHEMA, PROPERTY_GRAPH_NAME, ELEMENT_TABLE_ALIAS, ELEMENT_TABLE_KIND, TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION, IS_UNDIRECTED, ELEMENT_TABLE_QUERY | element table of such a graph: VERTEX or EDGE, its table, its place among the graph's of its kind, YES of an UNDIRECTED edge table, and of an element table of a query's rows its query, the table's columns null |
+| PG_LABELS | PROPERTY_GRAPH_CATALOG, PROPERTY_GRAPH_SCHEMA, PROPERTY_GRAPH_NAME, ELEMENT_TABLE_ALIAS, LABEL_NAME, ORDINAL_POSITION | label of such an element table, in order |
+| PG_PROPERTIES | PROPERTY_GRAPH_CATALOG, PROPERTY_GRAPH_SCHEMA, PROPERTY_GRAPH_NAME, ELEMENT_TABLE_ALIAS, LABEL_NAME, PROPERTY_NAME, ORDINAL_POSITION, PROPERTY_EXPRESSION, DATA_TYPE | property of such a label, in order: its expression as kept, and its declared type |
+| PG_KEY_COLUMNS | PROPERTY_GRAPH_CATALOG, PROPERTY_GRAPH_SCHEMA, PROPERTY_GRAPH_NAME, ELEMENT_TABLE_ALIAS, COLUMN_NAME, ORDINAL_POSITION | column of such an element table's key, in order |
+| PG_EDGE_ENDPOINTS | PROPERTY_GRAPH_CATALOG, PROPERTY_GRAPH_SCHEMA, PROPERTY_GRAPH_NAME, EDGE_TABLE_ALIAS, EDGE_END, VERTEX_TABLE_ALIAS, ORDINAL_POSITION, EDGE_COLUMN_NAME, VERTEX_COLUMN_NAME | column of such an edge table that joins it, at its SOURCE or DESTINATION end, to a vertex table, with the vertex table's column it matches |
+| PROPERTY_GRAPH_PRIVILEGES | GRANTOR, GRANTEE, PROPERTY_GRAPH_CATALOG, PROPERTY_GRAPH_SCHEMA, PROPERTY_GRAPH_NAME, PRIVILEGE_TYPE, IS_GRANTABLE | SELECT on a graph, the owner's of _SYSTEM among them, granted to or by the user, PUBLIC or an enabled role |
+| GRAPH_STATISTICS | PROPERTY_GRAPH_CATALOG, PROPERTY_GRAPH_SCHEMA, PROPERTY_GRAPH_NAME, STATISTIC_KIND, ELEMENT_TABLE_ALIAS, PROPERTY_NAME, SOURCE_LABEL, EDGE_LABEL, DESTINATION_LABEL, ROW_COUNT, DISTINCT_VALUES, NULL_FRACTION, OUT_DEGREE_AVERAGE, OUT_DEGREE_MEDIAN, OUT_DEGREE_P90, OUT_DEGREE_P99, OUT_DEGREE_MAXIMUM, IN_DEGREE_AVERAGE, IN_DEGREE_MEDIAN, IN_DEGREE_P90, IN_DEGREE_P99, IN_DEGREE_MAXIMUM | statistic of such a graph the planner reads *(extension)*: VERTEX or EDGE, of an element table, its rows and an edge table's degrees; PROPERTY, of a property; TRANSITION, of a source, edge and destination label, its edges; NULL while not known ([Graph statistics](#graph-statistics)) |
+| GRAPH_TABLES | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, GRAPH_TABLE_TYPE | node or edge table the user holds a privilege on: NODE or EDGE ([CREATE TABLE](statements/create-table.md)) |
+| CONNECTION_CONSTRAINTS | CONSTRAINT_CATALOG, CONSTRAINT_SCHEMA, CONSTRAINT_NAME, TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION, FROM_TABLE_CATALOG, FROM_TABLE_SCHEMA, FROM_TABLE_NAME, TO_TABLE_CATALOG, TO_TABLE_SCHEMA, TO_TABLE_NAME, DELETE_RULE | clause of a CONNECTION constraint of such an edge table, in order: the node tables its edges may join, and CASCADE or NO ACTION |
 | VECTOR_COLUMNS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, VECTOR_DIMENSIONS, VECTOR_FORMAT, VECTOR_LAYOUT | VECTOR column of a table the user holds a privilege on: the dimension count, format and layout its type fixes, NULL of one it leaves open *(extension)* ([Vectors](14-vectors.md)) |
 | VECTOR_DISTANCE_FUNCTIONS | FUNCTION_CATALOG, FUNCTION_SCHEMA, FUNCTION_NAME, SPECIFIC_NAME, LANGUAGE, IS_DETERMINISTIC, SYMMETRIC, NON_NEGATIVE, TRIANGLE_INEQUALITY, FORMATS, FUNCTION_OWNER, DEFINITION | distance function the user holds EXECUTE on: its language, SQL; YES of each property it declares; the formats it measures, separated by commas; its owner; and its body, or NULL if longer than 4,096 characters *(extension)* ([CREATE VECTOR DISTANCE FUNCTION](statements/create-vector-distance-function.md)) |
 | EMBEDDING_MODELS | MODEL_CATALOG, MODEL_SCHEMA, MODEL_NAME, MODEL_TYPE, DIMENSIONS, ELEMENT_FORMAT, LAYOUT, MODEL_VERSION, MODEL_FILE, IS_REGISTERED, MODEL_OWNER | embedding model the user owns or holds EXECUTE on: its plug-in; the dimension count, format and layout of its vectors; its version and file, or NULL; YES if its plug-in is registered; and its owner. Its options are not shown, as one may hold a secret *(extension)* ([CREATE EMBEDDING MODEL](statements/create-embedding-model.md)) |
@@ -689,6 +705,107 @@ server's: a database a server serves, as `turboreld`'s, has them, and
 they show no connection, and counts of none, while it does not serve.
 JOBS.POLICY says how the jobs JOBS lists are run
 ([Settings](../appendix/c-settings.md)).
+
+## Graph statistics
+
+GRAPH_STATISTICS *(extension)* shows what the planner knows of each
+property graph the user may query. They are made of the statistics of
+the graph's tables, as the database's maintenance gathers them, and
+are NULL until it has. A row of kind VERTEX or EDGE is of an element
+table: its rows and, of an edge table, its degrees. The out-degree of
+a vertex is its edges at their source, the in-degree those at their
+destination. The average, median, 90th and 99th percentiles and
+maximum count each vertex with an edge there once. A row of kind
+PROPERTY gives a property's distinct values and its share of NULL, of
+a property that is a column alone; of one that is an expression they
+are NULL. A row of kind TRANSITION gives the edges from a vertex of one
+label along an edge of another to a vertex of a third.
+
+```sql
+CREATE TABLE CITY (ID INTEGER PRIMARY KEY, NAME VARCHAR(20));
+CREATE TABLE ROAD (ID INTEGER PRIMARY KEY,
+    FROM_ID INTEGER NOT NULL REFERENCES CITY, TO_ID INTEGER NOT NULL REFERENCES CITY, KM INTEGER);
+INSERT INTO CITY VALUES (1, 'Ankh'), (2, 'Morpork'), (3, 'Quirm'), (4, 'Sto Lat');
+INSERT INTO ROAD VALUES (1, 1, 2, 5), (2, 1, 3, 40), (3, 1, 4, 30), (4, 2, 4, 28), (5, 3, 1, NULL);
+CREATE PROPERTY GRAPH ROADS
+    VERTEX TABLES (CITY LABEL CITY PROPERTIES (ID, NAME))
+    EDGE TABLES (ROAD
+        SOURCE KEY (FROM_ID) REFERENCES CITY (ID)
+        DESTINATION KEY (TO_ID) REFERENCES CITY (ID)
+        LABEL ROAD PROPERTIES (KM, KM * 1000 AS METRES));
+COMMIT;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+OK
+```
+
+Once the maintenance has gathered the statistics of CITY and ROAD:
+
+```sql
+SELECT STATISTIC_KIND, ELEMENT_TABLE_ALIAS, ROW_COUNT,
+       OUT_DEGREE_AVERAGE, OUT_DEGREE_MAXIMUM, IN_DEGREE_AVERAGE, IN_DEGREE_MAXIMUM
+  FROM INFORMATION_SCHEMA.GRAPH_STATISTICS
+  WHERE STATISTIC_KIND IN ('VERTEX', 'EDGE') ORDER BY ELEMENT_TABLE_ALIAS;
+SELECT ELEMENT_TABLE_ALIAS, PROPERTY_NAME, DISTINCT_VALUES, NULL_FRACTION
+  FROM INFORMATION_SCHEMA.GRAPH_STATISTICS
+  WHERE STATISTIC_KIND = 'PROPERTY' ORDER BY ELEMENT_TABLE_ALIAS, PROPERTY_NAME;
+SELECT SOURCE_LABEL, EDGE_LABEL, DESTINATION_LABEL, ROW_COUNT
+  FROM INFORMATION_SCHEMA.GRAPH_STATISTICS WHERE STATISTIC_KIND = 'TRANSITION';
+```
+
+```
+ STATISTIC_KIND                                               | ELEMENT_TABLE_ALIAS                                          |            ROW_COUNT |   OUT_DEGREE_AVERAGE |   OUT_DEGREE_MAXIMUM |    IN_DEGREE_AVERAGE |    IN_DEGREE_MAXIMUM
+--------------------------------------------------------------+--------------------------------------------------------------+----------------------+----------------------+----------------------+----------------------+----------------------
+ VERTEX                                                       | CITY                                                         |                 4.00 |                 NULL |                 NULL |                 NULL |                 NULL
+ EDGE                                                         | ROAD                                                         |                 5.00 |                 1.67 |                 3.00 |                 1.25 |                 2.00
+(2 rows)
+ ELEMENT_TABLE_ALIAS                                          | PROPERTY_NAME                                                |      DISTINCT_VALUES |        NULL_FRACTION
+--------------------------------------------------------------+--------------------------------------------------------------+----------------------+----------------------
+ CITY                                                         | ID                                                           |                 4.00 |                 0.00
+ CITY                                                         | NAME                                                         |                 4.00 |                 0.00
+ ROAD                                                         | KM                                                           |                 4.00 |                 0.20
+ ROAD                                                         | METRES                                                       |                 NULL |                 NULL
+(4 rows)
+ SOURCE_LABEL                                                 | EDGE_LABEL                                                   | DESTINATION_LABEL                                            |            ROW_COUNT
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+----------------------
+ CITY                                                         | ROAD                                                         | CITY                                                         |                 5.00
+(1 row)
+```
+
+The planner reads the same statistics. It estimates the rows a probe of an edge table by its endpoint columns
+finds as the average degree there, which EXPLAIN shows as `est. rows
+each`. A GRAPH_TABLE search whose two end vertices are both filtered
+starts from the end of fewer candidate vertices times the fan-out of
+its first step from them, its pattern reversed. A search finds the same
+paths from either end, so its rows are the same. The hints
+GRAPH_START and GRAPH_DIRECTION *(extension)* choose the end instead.
+A search whose paths depend on the order it finds them in always starts
+from its first vertex. Those are the ANY, ANY SHORTEST, SHORTEST k and
+CHEAPEST selectors, and searches under DETERMINISTIC_PATHS,
+MAX_PATHS_PER_PARTITION or ON LIMIT TRUNCATE.
+
+```sql
+SELECT A, B, KM FROM GRAPH_TABLE (ROADS
+    MATCH (a WHERE a.NAME <> 'Quirm')-[r]->{1,2}(b WHERE b.ID = 4)
+    COLUMNS (a.NAME AS A, b.NAME AS B, SUM(r.KM) AS KM)
+    OPTIONS (GRAPH_START(b)))
+  ORDER BY A, KM;
+```
+
+```
+ A                    | B                    |                   KM
+----------------------+----------------------+----------------------
+ Ankh                 | Sto Lat              |                   30
+ Ankh                 | Sto Lat              |                   33
+ Morpork              | Sto Lat              |                   28
+(3 rows)
+```
 
 The standard: ISO/IEC 9075:1992 §21.1, §21.2; the views of roles and of
 triggers, the short name views, and how each view reads the enabled

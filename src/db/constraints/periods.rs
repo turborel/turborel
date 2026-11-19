@@ -137,7 +137,7 @@ pub(in crate::db) fn keyed_periods(desc: &TableDesc) -> Result<()> {
         let (columns, cited) = match &c.kind {
             ConstraintKind::Unique { columns, .. } => (columns, "§11.7 SR6b"),
             ConstraintKind::ForeignKey(fk) => (&fk.columns, "§11.8 SR10"),
-            ConstraintKind::NotNull(_) | ConstraintKind::Check { .. } => continue,
+            ConstraintKind::NotNull(_) | ConstraintKind::Check { .. } | ConstraintKind::Connection(_) => continue,
         };
         if let Some(column) = columns.iter().filter_map(|&at| desc.columns.get(at)).find(|col| col.system_time().is_some()) {
             return Err(rule(format!(
@@ -198,7 +198,10 @@ pub(in crate::db) fn not_nullable(desc: &TableDesc, at: usize) -> bool {
         let of = match &c.kind {
             ConstraintKind::NotNull(column) => *column == at,
             ConstraintKind::Unique { columns, primary: true, .. } => columns.contains(&at),
-            ConstraintKind::Unique { primary: false, .. } | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => false,
+            ConstraintKind::Unique { primary: false, .. }
+            | ConstraintKind::ForeignKey(_)
+            | ConstraintKind::Check { .. }
+            | ConstraintKind::Connection(_) => false,
         };
         of && !c.attributes.deferrable
     })

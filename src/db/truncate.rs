@@ -73,6 +73,7 @@ impl State {
                 "[ISO/IEC 9075-2:2023 §14.10 SR2] {qn} is a declared local temporary table, of no schema: DELETE FROM {qn} deletes its rows"
             )));
         }
+        self.truncatable(desc)?;
         for t in self.catalog.tables() {
             if let Some((name, _)) = t.foreign_keys().find(|(_, fk)| fk.table == *qn) {
                 return Err(rule(format!(

@@ -182,7 +182,7 @@ pub(super) fn unconstrained(name: &QualifiedName) -> TableDesc {
 }
 
 /// The columns of a view whose query's result has `columns`.
-fn described(columns: &[OutColumn]) -> Vec<ColumnDesc> {
+pub(super) fn described(columns: &[OutColumn]) -> Vec<ColumnDesc> {
     let column = |c: &OutColumn| ColumnDesc {
         name: c.name.clone().unwrap_or_default(),
         data_type: c.data_type.clone(),
@@ -546,7 +546,8 @@ fn updates(cx: Context<'_>, spec: &QuerySpecification, reads: &[QualifiedName]) 
     if reads.contains(leaf) {
         return Ok(None);
     }
-    let all = || (0..desc.columns.len()).collect::<Vec<_>>();
+    // [EXTENSION] (§4.2) of which a node or edge table's pseudo-columns are none.
+    let all = || desc.columns.iter().enumerate().filter(|(_, c)| !c.hidden()).map(|(k, _)| k).collect::<Vec<_>>();
     let map = match &spec.select_list {
         SelectList::Star => Some(all()),
         SelectList::Values(vs) => vs

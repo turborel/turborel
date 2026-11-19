@@ -52,6 +52,10 @@ impl Binder<'_> {
         // [§10.9 GR1a to c] of row pattern matching, of the matches.
         let fractioned = self.non_aggregated(scope, Scope::Rows(CONTAINED));
         let call = self.unnested(|| self.distribution_call(sf, fraction, (Scope::Rows(CONTAINED), fractioned)))?;
+        // \[EXTENSION\] Of a GRAPH_TABLE, over a group variable's elements.
+        if let Some(slot) = self.graph_registered(g, &call) {
+            return slot;
+        }
         Ok(self.registered_in(g, call, None))
     }
 

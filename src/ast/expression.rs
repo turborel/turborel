@@ -244,6 +244,12 @@ pub enum Predicate {
         /// IS NOT A SET was written \[SR3\].
         not: bool,
     },
+    /// \[EXTENSION\] [P1 §4.7] A predicate of graph elements, which only
+    /// a GRAPH_TABLE's conditions and columns may have.
+    Graph(Box<super::GraphPredicate>),
+    /// \[EXTENSION\] [GS §10.1] MATCH ( `<graph search pattern>` ) over
+    /// the tables of the FROM clause, which only a WHERE clause may have.
+    GraphMatch(Box<super::MatchClause>),
     /// [ISO/IEC 9075-2:2023 §8.19] `<type predicate>` ::= `<row value
     /// predicand>` IS \[NOT\] OF ( `<type list>` )
     Type {
@@ -437,6 +443,9 @@ pub enum ValueExpression {
     Window(Box<WindowFunction>),
     /// [ISO/IEC 9075-2:2023 §6.11] A `<nested window function>`.
     NestedWindow(Box<NestedWindow>),
+    /// \[EXTENSION\] A function of a graph variable, which only a
+    /// GRAPH_TABLE's conditions and columns may have, and where it begins.
+    Graph(Box<super::GraphFunction>, usize),
 }
 
 /// [ISO/IEC 9075:1992 §6.9] `<case expression>` ::= `<case abbreviation>` |

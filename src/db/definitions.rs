@@ -188,10 +188,14 @@ impl Session {
             SchemaStatement::Trigger(t) => self.own_object(st, &t.name, (schema, "ISO/IEC 9075-2:2023 §11.49 AR1")),
             SchemaStatement::Routine(r) => self.own_object(st, &r.name, (schema, "ISO/IEC 9075-2:2023 §11.60 AR1")),
             SchemaStatement::Module(m) => self.own_object(st, &m.name, (schema, "ISO/IEC 9075-4:2006 draft §9.21 AR1")),
+            SchemaStatement::Graph(g) => self.own_object(st, &g.name, (schema, "EXTENSION")),
+            SchemaStatement::AlterGraph(a) => self.own_object(st, &a.name, (schema, "EXTENSION")),
             SchemaStatement::Vector(v) => {
                 Session::plugin_registered(st, statement, schema)?;
                 self.own_object(st, v.name(), (schema, "EXTENSION"))
             }
+            SchemaStatement::GraphType(t) => self.own_object(st, &t.name, (schema, "EXTENSION")),
+            SchemaStatement::GqlGraph(g) => self.own_object(st, &g.name, (schema, "EXTENSION")),
             // [EXTENSION] as CREATE COLLATION [ISO/IEC 9075-2:2023 §11.43 SR1].
             SchemaStatement::XmlSchema(x) => self.own_object(st, &x.name, (schema, "EXTENSION")),
             SchemaStatement::XQueryModule(m) | SchemaStatement::AlterXQueryModule(m) => self.own_object(st, &m.name, (schema, "EXTENSION")),
@@ -270,7 +274,12 @@ impl State {
         self.stamp = now;
         let zone = now.zone;
         match statement {
-            SchemaStatement::Table(t) => self.create_table((schema, zone), t, (placed, made, epochs)),
+            SchemaStatement::Table(t) => {
+                let defined = self.create_table((schema, zone), t, (placed, made, epochs))?;
+                // [EXTENSION] (§4.2) a node or edge table joins SYS_GRAPH.
+                self.refresh_sys_graphs()?;
+                Ok(defined)
+            }
             SchemaStatement::View(v) => self.create_view(schema, v),
             SchemaStatement::Grant(p) => {
                 let a = self.cell_grantor((auth, role), p.grantor).or_at(p.table.at)?;
@@ -301,7 +310,11 @@ impl State {
             SchemaStatement::Ordering(o) => self.create_ordering(schema, o),
             SchemaStatement::Transform(t) => self.create_transform(schema, t),
             SchemaStatement::AlterTransform(t) => self.alter_transform(schema, t),
+            SchemaStatement::Graph(g) => self.create_graph(schema, g),
+            SchemaStatement::AlterGraph(a) => self.alter_graph(schema, a),
             SchemaStatement::Vector(v) => self.vector_statement(schema, v),
+            SchemaStatement::GraphType(t) => self.create_graph_type(schema, t),
+            SchemaStatement::GqlGraph(g) => self.record_gql_graph(schema, g),
             SchemaStatement::XmlSchema(x) => self.create_xml_schema(schema, x),
             SchemaStatement::XQueryModule(m) => self.create_xquery_module(schema, m),
             SchemaStatement::AlterXQueryModule(m) => self.alter_xquery_module(schema, m),
@@ -413,6 +426,13 @@ impl State {
         if self.catalog.table(qn).is_some() || self.catalog.view(qn).is_some() {
             return Err(rule(format!("[ISO/IEC 9075:1992 {rule_cited}] schema {} has a table or view {} already", qn.auth, qn.ident)));
         }
+        if self.catalog.graph(qn).is_some() {
+            let msg = format!(
+                "[EXTENSION] schema {} has a property graph {} already, whose names are those of its tables and views",
+                qn.auth, qn.ident
+            );
+            return Err(rule(msg));
+        }
         Ok(())
     }
 
@@ -431,6 +451,9 @@ impl State {
         }
         if p.object == PrivilegeObject::Module {
             return self.grant_on_module(auth, schema, p).or_at(p.table.at);
+        }
+        if p.object == PrivilegeObject::Graph {
+            return self.grant_on_graph(auth, schema, p).or_at(p.table.at);
         }
         if p.object == PrivilegeObject::Model {
             return self.grant_model_execute(auth, schema, p).or_at(p.table.at);
@@ -469,7 +492,7 @@ pub(super) fn created(schema: &str, sql: &str) -> Option<QualifiedName> {
 /// The locks a table or view `qn` defined takes beside its own, shared:
 /// those of what it reads, `reads`, and of its schema, which is not
 /// dropped meanwhile (`db/drop.rs`).
-fn in_schema(qn: &QualifiedName, reads: Vec<QualifiedName>) -> Vec<(QualifiedName, LockMode)> {
+pub(super) fn in_schema(qn: &QualifiedName, reads: Vec<QualifiedName>) -> Vec<(QualifiedName, LockMode)> {
     reads.into_iter().chain([QualifiedName::of_schema(&qn.auth)]).map(|name| (name, LockMode::Shared)).collect()
 }
 
@@ -489,6 +512,7 @@ fn read_by(desc: &TableDesc) -> Vec<QualifiedName> {
         let names = match &c.kind {
             ConstraintKind::ForeignKey(fk) => vec![fk.table.clone()],
             ConstraintKind::Check { reads, .. } => reads.clone(),
+            ConstraintKind::Connection(k) => k.clauses.iter().flat_map(|(f, t)| [f.clone(), t.clone()]).collect(),
             ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } => Vec::new(),
         };
         for name in names {

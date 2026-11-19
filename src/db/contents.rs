@@ -137,6 +137,8 @@ impl State {
                 }
             }
         }
+        // [EXTENSION] (§4.2) a node or edge table's pseudo-columns last.
+        elements.extend(self.native_elements(definer.0, t)?);
         Ok(elements)
     }
 
@@ -158,7 +160,8 @@ impl State {
             )));
         }
         let mut copied = Vec::new();
-        for c in &lt.columns {
+        // [EXTENSION] (§4.2) a node or edge table's pseudo-columns are its own.
+        for c in lt.columns.iter().filter(|c| !c.hidden()) {
             let mut kept = Kept::default();
             if like.defaults == Some(true) {
                 kept.default.clone_from(&c.default);

@@ -57,11 +57,15 @@ fn schema_command(s: &SchemaStatement) -> Command {
         SchemaStatement::Trigger(_) => commands::CREATE_TRIGGER,
         SchemaStatement::Method(_) | SchemaStatement::Routine(_) => commands::CREATE_ROUTINE,
         SchemaStatement::Module(_) => commands::CREATE_MODULE,
+        SchemaStatement::Graph(_) => commands::CREATE_PROPERTY_GRAPH,
+        SchemaStatement::AlterGraph(_) => commands::ALTER_PROPERTY_GRAPH,
         SchemaStatement::Vector(v) => match **v {
             VectorStatement::Model(_) => commands::CREATE_EMBEDDING_MODEL,
             VectorStatement::AlterModel(_) => commands::ALTER_EMBEDDING_MODEL,
             VectorStatement::Pipeline(_) => commands::CREATE_VECTOR_PIPELINE,
         },
+        SchemaStatement::GraphType(_) => commands::CREATE_GRAPH_TYPE,
+        SchemaStatement::GqlGraph(_) => commands::CREATE_GRAPH,
         SchemaStatement::XmlSchema(_) => commands::CREATE_XML_SCHEMA,
         SchemaStatement::XQueryModule(_) => commands::CREATE_XQUERY_MODULE,
         SchemaStatement::AlterXQueryModule(_) => commands::ALTER_XQUERY_MODULE,
@@ -86,8 +90,11 @@ fn drop_command(object: &DropObject) -> Command {
         DropObject::Cast(..) => commands::DROP_CAST,
         DropObject::Ordering(_) => commands::DROP_ORDERING,
         DropObject::Transform(..) => commands::DROP_TRANSFORM,
+        DropObject::Graph(..) => commands::DROP_PROPERTY_GRAPH,
         DropObject::Vector(VectorObject::Model, _) => commands::DROP_EMBEDDING_MODEL,
         DropObject::Vector(VectorObject::Pipeline, _) => commands::DROP_VECTOR_PIPELINE,
+        DropObject::GraphType(..) => commands::DROP_GRAPH_TYPE,
+        DropObject::GqlGraph(..) => commands::DROP_GRAPH,
         DropObject::XmlSchema(_) => commands::DROP_XML_SCHEMA,
         DropObject::XQueryModule(_) => commands::DROP_XQUERY_MODULE,
     }
@@ -112,6 +119,7 @@ pub(in crate::db) fn command_of(stmt: &SqlStatement) -> Command {
         SqlStatement::GetDiagnostics(_) => commands::GET_DIAGNOSTICS,
         SqlStatement::Dynamic(d) => dynamic::command(d),
         SqlStatement::Execute(e) => dynamic::execute_command(e),
+        SqlStatement::ExecuteGql(_) => commands::EXECUTE_GQL,
         SqlStatement::DeclareTable(_) => commands::DECLARE_TABLE,
         SqlStatement::Insert(_) => commands::INSERT,
         SqlStatement::Merge(_) => commands::MERGE,
@@ -158,7 +166,9 @@ fn connection_command(c: &ConnectionStatement) -> Command {
 /// \[EXTENSION\] How COMMAND_FUNCTION names the index statement `i`.
 fn index_command(i: &IndexStatement) -> Command {
     match i {
-        IndexStatement::Create { .. } => commands::CREATE_INDEX,
+        IndexStatement::Create { .. } | IndexStatement::Adjacency(_) | IndexStatement::Labels(_) | IndexStatement::Reachability(_) => {
+            commands::CREATE_INDEX
+        }
         IndexStatement::Drop { .. } => commands::DROP_INDEX,
         IndexStatement::Alter { .. } | IndexStatement::Maintain { .. } => commands::ALTER_INDEX,
     }

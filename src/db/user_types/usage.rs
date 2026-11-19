@@ -333,6 +333,7 @@ impl State {
             | PrivilegeObject::Collation
             | PrivilegeObject::Sequence
             | PrivilegeObject::Module
+            | PrivilegeObject::Graph
             | PrivilegeObject::Model
             | PrivilegeObject::XmlSchema
             | PrivilegeObject::XQueryModule

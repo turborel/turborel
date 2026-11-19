@@ -1,12 +1,10 @@
 //! Binding: AST -> logical plan.
 //!
-//! The binder enforces the Syntax Rules that need the catalog: names exist
-//! [X3.135-1986 §5.4 SR5], column references are unambiguous [X3.135-1986 §5.7 SR3], types are
-//! comparable [X3.135-1986 §5.11 SR1], privileges are held [X3.135-1986 §5.25 SR1], grouped queries
-//! reference only grouping columns and columns functionally dependent on them outside set functions
-//! ([X3.135-1986 §5.25 SR7, §5.23 SR1; ISO/IEC 9075-2:2023 §6.7 SR8]),
-//! set operations' operands correspond [ISO/IEC 9075:1992 §7.10 SR9], and sort keys are valid
-//! [X3.135-1986 §8.3 SR6].
+//! The binder enforces the Syntax Rules that need the catalog: names exist [X3.135-1986 §5.4 SR5],
+//! column references are unambiguous [X3.135-1986 §5.7 SR3], types are comparable [X3.135-1986 §5.11 SR1],
+//! privileges are held [X3.135-1986 §5.25 SR1], grouped queries reference only grouping columns and columns
+//! functionally dependent on them outside set functions ([X3.135-1986 §5.25 SR7, §5.23 SR1; ISO/IEC 9075-2:2023
+//! §6.7 SR8]), set operations' operands correspond [ISO/IEC 9075:1992 §7.10 SR9], and sort keys are valid [X3.135-1986 §8.3 SR6].
 //!
 //! It then builds the plan exactly as the General Rules describe it, with no
 //! optimization: the FROM product, then WHERE, GROUP BY, HAVING, the select
@@ -61,6 +59,9 @@ mod expression;
 mod filter;
 mod from;
 mod generated;
+pub(crate) mod gql;
+mod graph;
+mod graph_properties;
 mod greatest;
 mod grouping_sets;
 mod hierarchy;
@@ -69,6 +70,7 @@ pub use hierarchy::{family_in, member_plan};
 mod hypothetical;
 mod invariant;
 mod limit;
+pub(crate) mod named;
 mod natural;
 mod noted;
 mod order_by;
@@ -110,15 +112,13 @@ mod window;
 mod with;
 mod xml;
 
-pub use counterparts::defaulted_columns;
-pub use cursor::bind_cursor;
 use from::FromItem;
 pub use generated::{bind_generation, generations, noting_generation, written_generations};
+pub use graph_properties::{PropertyBinding, element_columns, property_bound, property_expression, property_type, query_columns};
 pub use invocation::{
     Candidate, FunctionBody, alike, bind_function_body, definition_of, functions_named, grantably_held, held, resolve_procedure,
     routine_definition, sql_statement,
 };
-pub use key_expression::bind_key;
 pub use merge::{BoundAction, BoundMerge, BoundWhen, bind_merge};
 pub use parameters::{assigned_argument, bind_argument};
 pub(crate) use psm::{Frame, bind_program};
@@ -131,13 +131,12 @@ pub use statements::{
 };
 pub(crate) use structured::assignment_cast;
 use subquery::Outer;
-pub use triggers::bind_when;
-pub use underlying::underlying;
 pub use values::{value_specification, value_specification_as};
 pub use views::{BoundView, ViewCheck, WriteTarget, bind_view, table_columns, view_degree, write_target};
 pub(crate) use views::{once_each, system_view_columns, view_uses};
 pub(crate) use with::Queries;
 pub(crate) use xml::{Registered, checked_namespaces, in_scope, registered, registered_module};
+pub use {counterparts::defaulted_columns, cursor::bind_cursor, key_expression::bind_key, triggers::bind_when, underlying::underlying};
 
 /// A column of a cursor's result.
 #[derive(Debug, Clone)]
@@ -431,6 +430,8 @@ struct Binder<'a> {
     /// condition>`s of row pattern recognition, what their row pattern
     /// column references read (`binder/pattern.rs`).
     recognizing: Option<Box<pattern::Recognizing>>,
+    /// \[EXTENSION\] A GRAPH_TABLE's variables (`binder/graph/scope.rs`).
+    graphing: Option<std::rc::Rc<graph::Graphing>>,
     /// [ISO/IEC 9075-14:2006 draft §11.3] The `<XML lexically scoped
     /// options>` whose scope what it binds now is in (`binder/xml/scope.rs`).
     xml: xml::Scopes,
@@ -482,6 +483,7 @@ impl<'a> Binder<'a> {
             sort_names: RefCell::new(order_by::SortNames::default()),
             rows: RefCell::new(invariant::Rows::default()),
             recognizing: None,
+            graphing: None,
             xml: xml::Scopes::default(),
         }
     }

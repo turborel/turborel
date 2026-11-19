@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 
 use super::{
-    CastDesc, Catalog, CollationDesc, ConstraintDesc, DomainDesc, Embeddings, IndexDesc, ModuleDesc, OrderingDesc, PrivilegeDesc,
-    QualifiedName, Roles, SequenceDesc, SpatialCatalog, SqlRoutineDesc, StructuredDesc, TableDesc, TransformGroupDesc, TriggerDesc,
-    UserTypeDesc, ViewDesc, XQueryModuleDesc, XmlSchemaDesc,
+    CastDesc, Catalog, CollationDesc, ConstraintDesc, DomainDesc, Embeddings, GqlCatalog, GraphDesc, IndexDesc, ModuleDesc, OrderingDesc,
+    PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SpatialCatalog, SqlRoutineDesc, StructuredDesc, TableDesc, TransformGroupDesc,
+    TriggerDesc, UserTypeDesc, ViewDesc, XQueryModuleDesc, XmlSchemaDesc,
 };
 use crate::hash::murmur::MurmurMap;
 use crate::value::DataType;
@@ -41,6 +41,10 @@ pub struct MemoryCatalog {
     routines: HashMap<QualifiedName, SqlRoutineDesc>,
     /// Each SQL-server module, by its name.
     modules: HashMap<QualifiedName, ModuleDesc>,
+    /// Each property graph, by its name.
+    graphs: HashMap<QualifiedName, GraphDesc>,
+    /// The graph types and GQL graphs.
+    gql: GqlCatalog,
     /// The roles and role authorizations.
     roles: Roles,
     /// The embedding models and vector pipelines.
@@ -372,5 +376,25 @@ impl Catalog for MemoryCatalog {
     }
     fn remove_module(&mut self, name: &QualifiedName) {
         self.modules.remove(name);
+    }
+    fn put_graph(&mut self, graph: GraphDesc) {
+        self.graphs.insert(graph.name.clone(), graph);
+    }
+    fn graph(&self, name: &QualifiedName) -> Option<&GraphDesc> {
+        self.graphs.get(name)
+    }
+    fn graphs(&self) -> Vec<&GraphDesc> {
+        let mut graphs: Vec<&GraphDesc> = self.graphs.values().collect();
+        graphs.sort_by(|a, b| a.name.cmp(&b.name));
+        graphs
+    }
+    fn remove_graph(&mut self, name: &QualifiedName) {
+        self.graphs.remove(name);
+    }
+    fn gql(&self) -> &GqlCatalog {
+        &self.gql
+    }
+    fn gql_mut(&mut self) -> &mut GqlCatalog {
+        &mut self.gql
     }
 }

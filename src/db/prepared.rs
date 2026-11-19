@@ -207,6 +207,9 @@ fn kind_of(tokens: &[Token]) -> Kind {
     if begins_word_statement(first, second) {
         return Kind::Statement;
     }
+    if crate::parser::graph_algo::begins_property_statement(tokens.iter().map(|t| &t.tok)) {
+        return Kind::Statement;
+    }
     match (first, second) {
         // [ISO/IEC 9075:1992 §7.10] a query, a <joined table> of a table's
         // name too, MODULE's: no other statement begins so, but TRUNCATE
@@ -361,6 +364,16 @@ impl Session {
         Ok(())
     }
 
+    /// The MERGE `merge` bound as it would be run. INTO PROPERTY of a
+    /// graph's name is bound as it runs: its MERGEs are made of the
+    /// graph's vertex tables then.
+    fn merge_only(&self, st: &State, merge: &crate::ast::MergeStatement, params: &Params) -> Result<()> {
+        if merge.property.as_ref().is_none_or(|p| p.graph.is_none()) {
+            drop(self.merge_bound(st, merge, params, None)?);
+        }
+        Ok(())
+    }
+
     /// `stmt`, a `<preparable statement>` other than a query, bound as it
     /// would be run, without running it: so each `?` takes its type.
     fn bind_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
@@ -369,7 +382,7 @@ impl Session {
             SqlStatement::UpdateSearched { table, only, portion, set, where_clause, .. } => {
                 self.write_only(st, params, (WriteKind::UpdateSearched, (table, *only, portion.as_deref()), set, where_clause.as_ref()))?;
             }
-            SqlStatement::Merge(merge) => drop(self.merge_bound(st, merge, params, None)?),
+            SqlStatement::Merge(merge) => self.merge_only(st, merge, params)?,
             SqlStatement::DeleteSearched { table, only, portion, where_clause, .. } => {
                 self.write_only(st, params, (WriteKind::DeleteSearched, (table, *only, portion.as_deref()), &[], where_clause.as_ref()))?;
             }
@@ -397,6 +410,7 @@ impl Session {
             SqlStatement::Control(_) => return Err(not_preparable("an <SQL control statement>")),
             SqlStatement::Signal(_) => self.bind_program_only(st, stmt, params)?,
             SqlStatement::Dynamic(_) | SqlStatement::Execute(_) => return Err(not_preparable("an <SQL dynamic statement>")),
+            SqlStatement::ExecuteGql(_) => return Err(not_preparable("EXECUTE GQL")),
             SqlStatement::DeclareTable(_) => return Err(not_preparable("a <temporary table declaration>")),
             SqlStatement::Call(call) => self.call_only(st, call, params)?,
             // [ISO/IEC 9075-2:2023 §16.2 SR1] only in a function's body.

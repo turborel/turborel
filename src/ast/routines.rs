@@ -166,6 +166,9 @@ pub struct CallStatement {
     pub name: TableName,
     /// The `<SQL argument>`s, in order.
     pub arguments: Vec<SqlArgument>,
+    /// Of each argument, the `<SQL parameter name>` of its `<named
+    /// argument specification>`, if it is one (Feature T521).
+    pub names: Vec<Option<String>>,
 }
 
 /// [ISO/IEC 9075-2:2023 §16.2] `<return statement>` ::= RETURN `<return

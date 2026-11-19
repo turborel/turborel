@@ -171,7 +171,10 @@ impl State {
         (made, tx, epochs): (Option<&Made>, Option<&Txn>, &mut Epochs),
     ) -> Result<(Dropped, Made, Option<Reshape>)> {
         versioning::unversioned(self, qn, action)?;
-        match action {
+        if let Some(desc) = self.catalog.table(qn) {
+            Self::pseudo_unaltered(desc, action)?;
+        }
+        let altered = match action {
             AlterAction::AddColumn(_) | AlterAction::DropColumn { .. } => {
                 let (dropped, built, reshape) = self.alter_columns((qn, names, zone), action, (made, epochs))?;
                 Ok((dropped, built, Some(reshape)))
@@ -206,7 +209,12 @@ impl State {
             AlterAction::Storage(_) => self.alter_storage(qn, action, (made, tx)),
             AlterAction::RevertCollation(name) => self.revert_collation(qn, name, (action, made)),
             AlterAction::Truncate { restart } => self.truncate_rows(qn, *restart, (action, made, epochs)),
-        }
+        };
+        // [EXTENSION] The property graphs that read it (§4.1 R4.7).
+        let (mut dropped, built, reshape) = altered?;
+        dropped.absorb(self.graphs_altered(qn, action)?);
+        self.refresh_sys_graphs()?;
+        Ok((dropped, built, reshape))
     }
 
     /// [ISO/IEC 9075-2:2023 §11.44 GR2] The columns of `qn` of collation

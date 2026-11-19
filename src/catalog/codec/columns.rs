@@ -2,7 +2,7 @@
 //! them out: each column's name, type, nullability, default, domain,
 //! collation, and how its values are generated.
 
-use super::super::{ColumnDefault, ColumnDesc, ColumnDomain, Generated, Generation, Identity, QualifiedName};
+use super::super::{ColumnDefault, ColumnDesc, ColumnDomain, Generated, Generation, GraphColumn, Identity, QualifiedName};
 use super::{data_type, flag, horizon, put_flag, put_horizon, put_name, put_sequence, put_type, qualified, sequence};
 use crate::ast::UserFunction;
 use crate::bytes::{Put, Reader};
@@ -57,6 +57,23 @@ fn put_generated(out: &mut Vec<u8>, generated: Option<&Generated>) {
             out.put_u8(5);
             put_flag(out, *end);
         }
+        // [EXTENSION] 7, then 0 and its generator of $NODE_ID, 1 and its
+        // generator of $EDGE_ID, 2 of $FROM_ID or 3 of $TO_ID.
+        Some(Generated::Graph(g)) => {
+            out.put_u8(7);
+            match g {
+                GraphColumn::Node(sequence) => {
+                    out.put_u8(0);
+                    put_sequence(out, sequence);
+                }
+                GraphColumn::Edge(sequence) => {
+                    out.put_u8(1);
+                    put_sequence(out, sequence);
+                }
+                GraphColumn::From => out.put_u8(2),
+                GraphColumn::To => out.put_u8(3),
+            }
+        }
         Some(Generated::DerivedReference(names)) => {
             out.put_u8(4);
             out.put_u32(u32::try_from(names.len()).unwrap_or(u32::MAX));
@@ -80,6 +97,13 @@ fn generated(r: &mut Reader<'_>) -> Result<Option<Generated>> {
             Some(Generated::DerivedReference((0..n).map(|_| r.str()).collect::<Result<_>>()?))
         }
         5 => Some(Generated::SystemTime { end: flag(r)? }),
+        7 => Some(Generated::Graph(match r.u8()? {
+            0 => GraphColumn::Node(sequence(r)?),
+            1 => GraphColumn::Edge(sequence(r)?),
+            2 => GraphColumn::From,
+            3 => GraphColumn::To,
+            _ => return Err(r.corrupt("not a pseudo-column of a node or edge table")),
+        })),
         _ => return Err(r.corrupt("not how a column's values are generated")),
     })
 }

@@ -29,7 +29,9 @@
 //!           u32, each a module, in the order of their timestamps of
 //!           creation), structured types (count u32, each a type),
 //!           user-defined casts, orderings and transforms (likewise),
+//!           property graphs (count u32, each a graph, by name),
 //!           embedding models and vector pipelines (`catalog/embedding.rs`),
+//!           graph types and GQL graphs (count u32 and each, by name),
 //!           registered XML Schemas (count u32, each an XML Schema),
 //!           registered XQuery modules (count u32, each an XQuery module),
 //!           then the spatial reference systems defined and the geometry
@@ -44,7 +46,10 @@ use std::sync::Arc;
 use super::sequences::Settled;
 use super::{State, api};
 use crate::bytes::{Put, Reader};
-use crate::catalog::codec::{cast, ordering, put_cast, put_ordering, put_structured_type, put_transforms, structured_type, transforms};
+use crate::catalog::codec::{
+    cast, gql_graph, graph, graph_type, ordering, put_cast, put_gql_graph, put_graph, put_graph_type, put_ordering, put_structured_type,
+    put_transforms, structured_type, transforms,
+};
 use crate::catalog::codec::{
     collation, constraint, domain, index, module, privilege, put_collation, put_constraint, put_domain, put_index, put_module, put_name,
     put_privilege, put_roles, put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, roles, routine,
@@ -52,7 +57,8 @@ use crate::catalog::codec::{
 };
 use crate::catalog::codec::{put_xml_schema, put_xquery_module, xml_schema, xquery_module};
 use crate::catalog::{
-    CastDesc, Embeddings, OrderingDesc, StructuredDesc, TransformGroupDesc, XQueryModuleDesc, XmlSchemaDesc, embeddings, put_embeddings,
+    CastDesc, Embeddings, GqlGraphDesc, GraphDesc, GraphTypeDesc, OrderingDesc, StructuredDesc, TransformGroupDesc, XQueryModuleDesc,
+    XmlSchemaDesc, embeddings, put_embeddings,
 };
 use crate::catalog::{
     Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, ModuleDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc,
@@ -106,8 +112,14 @@ pub(super) struct Snapshot {
     orderings: Vec<OrderingDesc>,
     /// The types' transform groups, by the types' names.
     transforms: Vec<(QualifiedName, Vec<TransformGroupDesc>)>,
+    /// The property graphs, by name.
+    graphs: Vec<GraphDesc>,
     /// \[EXTENSION\] The embedding models and vector pipelines.
     embeddings: Embeddings,
+    /// The graph types, by name.
+    graph_types: Vec<GraphTypeDesc>,
+    /// The GQL graphs, by name.
+    gql_graphs: Vec<GqlGraphDesc>,
     /// The registered XML Schemas, by name.
     xml_schemas: Vec<XmlSchemaDesc>,
     /// The registered XQuery modules, by name.
@@ -138,19 +150,15 @@ impl Snapshot {
         let mut schemas: Vec<(String, String)> = st.catalog.schemas().into_iter().map(with_owner).collect();
         schemas.sort();
         let users = st.users.entries().map(|(n, v)| (n.clone(), v.clone())).collect();
-        let owner = st.users.owner().map(str::to_owned);
-        let domains = st.catalog.domains().into_iter().cloned().collect();
-        let collations = st.catalog.collations().into_iter().cloned().collect();
-        let collation_versions = st.collation_versions();
         let assertions = st.catalog.assertions().into_iter().cloned().collect();
         let sequences: Vec<SequenceDesc> = st.catalog.sequences().into_iter().cloned().collect();
         let user_types = st.catalog.user_types().into_iter().cloned().collect();
         let (epochs, counters) = settled_counters(st)?;
         Ok(Snapshot {
             schemas,
-            domains,
-            collations,
-            collation_versions,
+            domains: st.catalog.domains().into_iter().cloned().collect(),
+            collations: st.catalog.collations().into_iter().cloned().collect(),
+            collation_versions: st.collation_versions(),
             assertions,
             tables,
             views,
@@ -160,7 +168,7 @@ impl Snapshot {
             user_types,
             settings: st.settings.database_values(),
             users,
-            owner,
+            owner: st.users.owner().map(str::to_owned),
             epochs,
             counters,
             triggers: st.catalog.triggers().into_iter().cloned().collect(),
@@ -172,7 +180,10 @@ impl Snapshot {
             casts: st.catalog.casts().into_iter().cloned().collect(),
             orderings: st.catalog.orderings().into_iter().cloned().collect(),
             transforms: st.catalog.all_transforms().into_iter().map(|(n, g)| (n.clone(), g.to_vec())).collect(),
+            graphs: st.catalog.graphs().into_iter().cloned().collect(),
             embeddings: st.catalog.embeddings().clone(),
+            graph_types: st.catalog.gql().graph_types().into_iter().cloned().collect(),
+            gql_graphs: st.catalog.gql().gql_graphs().into_iter().cloned().collect(),
             xml_schemas: st.catalog.xml_schemas().into_iter().cloned().collect(),
             xquery_modules: st.catalog.xquery_modules().into_iter().cloned().collect(),
             spatial: st.catalog.spatial().clone(),
@@ -260,7 +271,13 @@ impl Snapshot {
         self.orderings.iter().for_each(|o| put_ordering(out, o));
         out.put_u32(count(self.transforms.len()));
         self.transforms.iter().for_each(|(n, g)| put_transforms(out, (n, g)));
+        out.put_u32(count(self.graphs.len()));
+        self.graphs.iter().for_each(|g| put_graph(out, g));
         put_embeddings(out, &self.embeddings);
+        out.put_u32(count(self.graph_types.len()));
+        self.graph_types.iter().for_each(|t| put_graph_type(out, t));
+        out.put_u32(count(self.gql_graphs.len()));
+        self.gql_graphs.iter().for_each(|g| put_gql_graph(out, g));
         out.put_u32(count(self.xml_schemas.len()));
         self.xml_schemas.iter().for_each(|x| put_xml_schema(out, x));
         out.put_u32(count(self.xquery_modules.len()));
@@ -302,7 +319,10 @@ impl Snapshot {
             casts: (0..r.u32()?).map(|_| cast(r)).collect::<Result<_>>()?,
             orderings: (0..r.u32()?).map(|_| ordering(r)).collect::<Result<_>>()?,
             transforms: (0..r.u32()?).map(|_| transforms(r)).collect::<Result<_>>()?,
+            graphs: (0..r.u32()?).map(|_| graph(r)).collect::<Result<_>>()?,
             embeddings: embeddings(r)?,
+            graph_types: (0..r.u32()?).map(|_| graph_type(r)).collect::<Result<_>>()?,
+            gql_graphs: (0..r.u32()?).map(|_| gql_graph(r)).collect::<Result<_>>()?,
             xml_schemas: (0..r.u32()?).map(|_| xml_schema(r)).collect::<Result<_>>()?,
             xquery_modules: (0..r.u32()?).map(|_| xquery_module(r)).collect::<Result<_>>()?,
             spatial: crate::catalog::codec::spatial(r)?,
@@ -425,9 +445,9 @@ fn put_described(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.xquery_modules.iter().cloned().for_each(|m| catalog.put_xquery_module(m));
 }
 
-/// The assertions, views, privileges, triggers and SQL-invoked routines
-/// of `snapshot`, put in `catalog`: each depends on a table, so they
-/// follow the tables.
+/// The assertions, views, privileges, triggers, SQL-invoked routines,
+/// modules and property graphs of `snapshot`, put in `catalog`: each
+/// depends on a table, so they follow the tables.
 fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.assertions.iter().cloned().for_each(|a| catalog.put_assertion(a));
     catalog.add_views(snapshot.views.clone());
@@ -435,7 +455,10 @@ fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.triggers.iter().cloned().for_each(|t| catalog.put_trigger(t));
     snapshot.routines.iter().cloned().for_each(|r| catalog.put_routine(r));
     snapshot.modules.iter().cloned().for_each(|m| catalog.put_module(m));
+    snapshot.graphs.iter().cloned().for_each(|g| catalog.put_graph(g));
     catalog.set_embeddings(snapshot.embeddings.clone());
+    snapshot.graph_types.iter().cloned().for_each(|t| catalog.gql_mut().put_graph_type(t));
+    snapshot.gql_graphs.iter().cloned().for_each(|g| catalog.gql_mut().put_gql_graph(g));
     catalog.set_spatial(snapshot.spatial.clone());
 }
 
@@ -455,7 +478,8 @@ mod tests {
 
     /// Verifies: [DESIGN] RULES.md D25, D43, D62, a snapshot of the
     /// definitions: of every kind of table, column, constraint, view, index,
-    /// sequence generator, privilege, SQL-invoked routine, setting, user and
+    /// sequence generator, privilege, SQL-invoked routine, property graph,
+    /// setting, user and
     /// owner there is, and of the counters, it reads back exactly as written.
     #[test]
     fn a_snapshot_reads_back_as_written() {
@@ -477,7 +501,11 @@ mod tests {
                  DETERMINISTIC READS SQL DATA RETURNS NULL ON NULL INPUT RETURN (SELECT MAX(K) FROM C WHERE V > X)
                CREATE PROCEDURE PUT (IN K INTEGER, OUT N INTEGER, INOUT M INTEGER) MODIFIES SQL DATA
                  INSERT INTO P (K) VALUES (K)
-               GRANT EXECUTE ON FUNCTION TOP TO B WITH GRANT OPTION",
+               GRANT EXECUTE ON FUNCTION TOP TO B WITH GRANT OPTION
+               CREATE PROPERTY GRAPH N VERTEX TABLES (P PROPERTIES (K, N AS WHO))
+                 EDGE TABLES (C KEY (K, V) UNDIRECTED SOURCE KEY (K) REFERENCES P DESTINATION P
+                   LABEL PAID PROPERTIES (V * 2 AS TWICE, TOP(V) AS T)) OPTIONS (TRUSTED MODE) WITH INVOKER RIGHTS
+               GRANT SELECT ON PROPERTY GRAPH N TO B WITH GRANT OPTION",
         )
         .unwrap();
         let a = db.session("A");
@@ -490,6 +518,10 @@ mod tests {
         db.set_owner("ANN").unwrap();
         let snapshot = Snapshot::of(&db.snapshot().unwrap()).unwrap();
         assert!(!snapshot.tables.is_empty() && snapshot.views.len() == 2 && snapshot.privileges.len() >= 2);
+        assert_eq!(
+            snapshot.graphs.iter().map(|g| (g.elements.len(), g.select.len(), g.horizon.routines.clone())).collect::<Vec<_>>(),
+            [(2, 1, Some(vec![QualifiedName { auth: "A".into(), ident: "TOP_ONE".into() }]))]
+        );
         assert_eq!(snapshot.routines.iter().map(|r| r.execute.len()).collect::<Vec<_>>(), [2, 1]);
         assert_eq!((snapshot.users.len(), snapshot.owner.as_deref()), (2, Some("ANN")));
         let q = QualifiedName { auth: "A".into(), ident: "Q".into() };

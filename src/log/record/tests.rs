@@ -83,6 +83,9 @@ fn drops() -> Vec<Change> {
 /// a transaction, with the epochs of sequence generators they gave.
 fn definitions() -> Vec<Change> {
     vec![
+        Change::Drop { object: DropTarget::Graph(table()), cascade: false },
+        Change::Drop { object: DropTarget::GraphType(table()), cascade: true },
+        Change::Drop { object: DropTarget::GqlGraph(table()), cascade: false },
         Change::AlterTable {
             table: table(),
             action: "ADD COLUMN \"K\" INTEGER NOT NULL".into(),

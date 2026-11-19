@@ -27,6 +27,59 @@ pub struct MergeStatement {
     /// [ISO/IEC 9075-14:2006 draft §14.5] WITH's `<XML lexically scoped
     /// options>`, if written.
     pub xml: Option<super::LexicallyScopedOptions>,
+    /// \[EXTENSION\] Of INTO PROPERTY, which it is written as, what it
+    /// writes.
+    pub property: Option<Box<IntoProperty>>,
+}
+
+/// \[EXTENSION\] `GRAPH_ALGO.<name> ( ... ) INTO PROPERTY <column>`
+/// `[ OF <table> [ ( <key column> ) ] ]` (RULES.md D145), a graph
+/// algorithm's result written as a property of the vertices [GS §18]: the
+/// MERGE that sets the column of each row whose key is a result row's
+/// vertex to its value, the column added first if the table has none of
+/// its name. Of a property graph named in place of the edges, the rows
+/// are its vertex tables', each of the vertices its identities name, of
+/// every vertex table unless OF names one (`db/graphs/property.rs`).
+#[derive(Debug, Clone)]
+pub struct IntoProperty {
+    /// The invocation, as written.
+    pub invocation: String,
+    /// The table, as written, if OF names one.
+    pub table: Option<String>,
+    /// The name the edges are written as, if they are a name: of a
+    /// property graph, whose vertex tables the property is written to.
+    pub graph: Option<TableName>,
+    /// The column written.
+    pub column: String,
+    /// The table's key column, if written, else its primary key's.
+    pub key: Option<String>,
+    /// The name of the result's value column.
+    pub value: String,
+    /// The type of the column added, as written; none of a vertex's key's.
+    pub value_type: Option<&'static str>,
+}
+
+impl IntoProperty {
+    /// The table written, or the graph's name if OF names none.
+    pub fn target(&self) -> String {
+        let graph = self.graph.as_ref().map(|g| g.auth.as_ref().map_or_else(|| g.ident.clone(), |a| format!("{a}.{}", g.ident)));
+        self.table.clone().or(graph).unwrap_or_default()
+    }
+
+    /// The text of the MERGE that writes the property, the table's key
+    /// column `key`.
+    pub fn merge(&self, key: &str) -> String {
+        let id = crate::catalog::identifier;
+        format!(
+            "MERGE INTO {} AS GRAPH_ALGO_TARGET USING {} AS GRAPH_ALGO_RESULT ON GRAPH_ALGO_TARGET.{} = GRAPH_ALGO_RESULT.VERTEX \
+             WHEN MATCHED THEN UPDATE SET {} = GRAPH_ALGO_RESULT.{}",
+            self.target(),
+            self.invocation,
+            id(key),
+            id(&self.column),
+            id(&self.value)
+        )
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §14.12] `<merge when clause>` ::= `<merge when

@@ -8,13 +8,12 @@
 //! `json.rs`, the \[EXTENSION\] function call, and, by `pattern/navigation.rs`,
 //! row pattern matching's expressions [§6.27, §6.31, §6.33].
 
+mod case;
 mod strings;
 
 use super::Parser;
 use super::grouping::GROUPING;
-use crate::ast::{
-    CaseExpression, Predicate, SearchCondition, SetArg, SetFunctionSpecification, ValueExpression, ValueSpecification, WhenOperand,
-};
+use crate::ast::{SetArg, SetFunctionSpecification, ValueExpression, ValueSpecification};
 use crate::error::Result;
 use crate::functions::{
     ANY_VALUE, EVERY, FORMAT, GREATEST, LEAST, LISTAGG, LPAD, OVERLAY, REGEX_FUNCTIONS, RPAD, TRIMS_AND_PADS, WIDTH_BUCKET,
@@ -72,6 +71,16 @@ impl Parser {
     /// nesting of expressions recurs through holds no arm's locals
     /// (RULES.md R-CF-6).
     pub(super) fn primary(&mut self) -> Result<ValueExpression> {
+        // [GS §10] GRAPH PATH aggregates, and the variables of a PGQL or
+        // Cypher query.
+        match self.compat_primary()? {
+            Some(compat) => Ok(compat),
+            None => self.sql_primary(),
+        }
+    }
+
+    /// A `<value expression primary>` of SQL alone, as `primary` reads it.
+    fn sql_primary(&mut self) -> Result<ValueExpression> {
         match self.peek() {
             Tok::Delimiter(delim::LEFT_PAREN) => self.parenthesized_primary(),
             Tok::Identifier(_) => self.identifier_primary(),
@@ -81,7 +90,7 @@ impl Parser {
             Tok::KeyWord(kw::VALUE) => self.value_reference(),
             // [ISO/IEC 9075-2:2023 §6.27] NEXT, FIRST and LAST before "(".
             Tok::KeyWord(kw::NEXT) => self.next_primary(),
-            Tok::KeyWord(kw::FIRST | kw::LAST) => self.first_or_last_primary(),
+            Tok::KeyWord(kw::FIRST | kw::LAST) => self.first_primary(),
             Tok::KeyWord(
                 kw::COUNT
                 | kw::AVG
@@ -281,6 +290,11 @@ impl Parser {
     /// aggregate of a name no key word of SQL-92 [§10.9], or an SQL/JSON
     /// function [§6.28, §6.34, §6.35, §10.11], if one is next.
     fn composite_pattern_or_aggregate(&mut self) -> Result<Option<ValueExpression>> {
+        // [EXTENSION] [P1 §4.7] a graph function, or a graph predicate as
+        // a value, inside a GRAPH_TABLE.
+        if let Some(graph) = self.graph_primary()? {
+            return Ok(Some(graph));
+        }
         // [ISO/IEC 9075-2:2023 §6.31, §10.9] Feature T621's functions.
         if let Some(numeric) = self.numeric_or_statistical() {
             return numeric.map(Some);
@@ -387,72 +401,6 @@ impl Parser {
             returning: None,
             at,
         })
-    }
-
-    /// [ISO/IEC 9075:1992 §6.9] `<case expression>`: NULLIF, COALESCE, or
-    /// CASE ... END, simple or searched.
-    fn case_expression(&mut self) -> Result<CaseExpression> {
-        if self.accept_kw(kw::NULLIF) {
-            self.expect_delim(delim::LEFT_PAREN)?;
-            let first = self.value_expression()?;
-            self.expect_delim(delim::COMMA)?;
-            let second = self.value_expression()?;
-            self.expect_delim(delim::RIGHT_PAREN)?;
-            return Ok(CaseExpression::NullIf(first, second));
-        }
-        if self.accept_kw(kw::COALESCE) {
-            // COALESCE (<value expression> { , <value expression> }...): two at least.
-            self.expect_delim(delim::LEFT_PAREN)?;
-            let mut values = vec![self.value_expression()?];
-            self.expect_delim(delim::COMMA)?;
-            values.push(self.value_expression()?);
-            while self.accept_delim(delim::COMMA) {
-                values.push(self.value_expression()?);
-            }
-            self.expect_delim(delim::RIGHT_PAREN)?;
-            return Ok(CaseExpression::Coalesce(values));
-        }
-        self.expect_kw(kw::CASE)?;
-        let case = if self.is_kw(kw::WHEN) {
-            let mut whens = Vec::new();
-            while self.accept_kw(kw::WHEN) {
-                let condition = self.search_condition()?;
-                self.expect_kw(kw::THEN)?;
-                whens.push((condition, self.result()?));
-            }
-            CaseExpression::Searched { whens, otherwise: self.else_clause()? }
-        } else {
-            let operand = self.case_operand()?;
-            let mut whens = Vec::new();
-            self.expect_kw(kw::WHEN)?;
-            loop {
-                // [ISO/IEC 9075-2:2023 §6.12] `<when operand list>`: one
-                // `<when operand>` or more, separated by commas.
-                let mut list = vec![self.when_operand(&operand)?];
-                while self.accept_delim(delim::COMMA) {
-                    list.push(self.when_operand(&operand)?);
-                }
-                self.expect_kw(kw::THEN)?;
-                whens.push((list, self.result()?));
-                if !self.accept_kw(kw::WHEN) {
-                    break;
-                }
-            }
-            overlapping_alike(&whens).map_err(|m| self.rule(m))?;
-            CaseExpression::Simple { operand, whens, otherwise: self.else_clause()? }
-        };
-        self.expect_kw(kw::END)?;
-        Ok(case)
-    }
-
-    /// `<result>` ::= `<result expression>` | NULL: none for NULL.
-    fn result(&mut self) -> Result<Option<ValueExpression>> {
-        if self.accept_kw(kw::NULL) { Ok(None) } else { self.value_expression().map(Some) }
-    }
-
-    /// \[`<else clause>`\] ::= ELSE `<result>`: none if NULL or not written.
-    fn else_clause(&mut self) -> Result<Option<ValueExpression>> {
-        if self.accept_kw(kw::ELSE) { self.result() } else { Ok(None) }
     }
 
     /// [ISO/IEC 9075-2:2023 §6.13] `<cast specification>` ::= CAST
@@ -572,23 +520,4 @@ const WIDTH_BUCKET_OPERANDS: usize = 4;
 /// A space, the trim character or padding none is written gives.
 fn space() -> ValueExpression {
     ValueExpression::Value(ValueSpecification::Literal(crate::ast::Literal::Character(" ".to_owned())))
-}
-
-/// [ISO/IEC 9075-2:2023 §6.12 SR2c] Of a simple CASE's `whens`, each
-/// `<when operand>` an `<overlaps predicate part 2>` or none is: an
-/// `<overlaps predicate part 1>` is compared by OVERLAPS alone, and a
-/// `<row value predicand>` never by it.
-fn overlapping_alike(whens: &[(Vec<WhenOperand>, Option<ValueExpression>)]) -> std::result::Result<(), &'static str> {
-    let overlaps = |w: &WhenOperand| match w {
-        WhenOperand::Condition(SearchCondition::Predicate(p, _)) => matches!(**p, Predicate::Overlaps(..)),
-        WhenOperand::Condition(_) | WhenOperand::Value(..) => false,
-    };
-    let (some, all) = whens.iter().flat_map(|(list, _)| list).fold((false, true), |(some, all), w| {
-        let o = overlaps(w);
-        (some || o, all && o)
-    });
-    if some && !all {
-        return Err("[ISO/IEC 9075-2:2023 §6.12 SR2c] a simple CASE's <when operand>s are each OVERLAPS or none is");
-    }
-    Ok(())
 }

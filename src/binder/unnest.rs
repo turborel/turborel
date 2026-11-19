@@ -25,7 +25,7 @@ use crate::ast::{JoinKind, UnnestTable};
 use crate::catalog::{ColumnDesc, QualifiedName, TableDesc};
 use crate::error::{Code, Result, SqlError};
 use crate::json::JsonTable;
-use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, Truth, Unnest, map_cond_columns, map_expr_columns};
+use crate::logical::{Cond, Expr, GraphMatch, LogicalPlan, OuterJoin, Truth, Unnest, map_cond_columns, map_expr_columns};
 use crate::value::DataType;
 
 /// A collection derived table, bound: its collections, over the columns
@@ -44,6 +44,10 @@ pub(super) struct Unnested {
     /// collection derived table is (`binder/json/table.rs`): the table,
     /// its operands being `collections`.
     json: Option<Arc<JsonTable>>,
+    /// \[EXTENSION\] Of a GRAPH_TABLE, planned as a lateral derived table
+    /// is (`binder/graph.rs`): the bound table, its operands being
+    /// `collections`.
+    graph: Option<Arc<GraphMatch>>,
 }
 
 impl Unnested {
@@ -51,13 +55,19 @@ impl Unnested {
     /// its invocation `call` the multiset of its rows, which reads the
     /// columns `reads` of the FROM row (`binder/builtin_table.rs`).
     pub(super) fn rows_of(call: Expr, width: usize, reads: BTreeSet<usize>) -> Unnested {
-        Unnested { collections: vec![call], spread: vec![Some(width)], ordinality: false, reads, json: None }
+        Unnested { collections: vec![call], spread: vec![Some(width)], ordinality: false, reads, json: None, graph: None }
     }
 
     /// [ISO/IEC 9075-2:2023 §7.11] The JSON table `table`, of the operands
     /// `operands`, which read the columns `reads` of the FROM row.
     pub(super) fn json(table: JsonTable, operands: Vec<Expr>, reads: BTreeSet<usize>) -> Unnested {
-        Unnested { collections: operands, spread: Vec::new(), ordinality: false, reads, json: Some(Arc::new(table)) }
+        Unnested { collections: operands, spread: Vec::new(), ordinality: false, reads, json: Some(Arc::new(table)), graph: None }
+    }
+
+    /// \[EXTENSION\] The GRAPH_TABLE `graph`, of the operands `operands`,
+    /// which read the columns `reads` of the FROM row.
+    pub(super) fn graph(graph: GraphMatch, operands: Vec<Expr>, reads: BTreeSet<usize>) -> Unnested {
+        Unnested { collections: operands, spread: Vec::new(), ordinality: false, reads, json: None, graph: Some(Arc::new(graph)) }
     }
 }
 
@@ -100,7 +110,7 @@ pub(super) fn unnest_item(bounds: Bounds<'_>, table: &UnnestTable, offset: usize
     from.used.extend(reads.iter().copied());
     let spread = types.iter().map(|element| if let DataType::Row(row) = element { Some(row.fields.len()) } else { None }).collect();
     let columns = columns_of(&types, table)?;
-    let u = Unnested { collections, spread, ordinality: table.ordinality, reads, json: None };
+    let u = Unnested { collections, spread, ordinality: table.ordinality, reads, json: None, graph: None };
     Ok(lateral_item(&table.correlation, table.at, columns, offset, u))
 }
 
@@ -367,6 +377,7 @@ fn unnested(
     let end = it.offset.saturating_add(it.width());
     let names = binder.names.get(it.offset..end).ok_or_else(|| broken("the FROM row lost a column name"))?.to_vec();
     let collections = u.collections.iter().map(|e| map_expr_columns(e.clone(), &|c| c.saturating_sub(base))).collect();
-    let unnest = Unnest { collections, spread: u.spread.clone(), ordinality: u.ordinality, outer, names, input, json: u.json.clone() };
+    let (json, graph) = (u.json.clone(), u.graph.clone());
+    let unnest = Unnest { collections, spread: u.spread.clone(), ordinality: u.ordinality, outer, names, input, json, graph };
     Ok(LogicalPlan::Unnest(Box::new(unnest)))
 }

@@ -230,7 +230,7 @@ impl Recognizing {
 
 impl Grouping {
     /// A grouping of no grouping columns and no set function yet.
-    fn empty() -> Grouping {
+    pub(super) fn empty() -> Grouping {
         Grouping {
             columns: Vec::new(),
             collations: Vec::new(),
@@ -379,6 +379,9 @@ impl Binder<'_> {
     /// variable `name`.
     pub(super) fn pattern_count(&self, sf: &SetFunctionSpecification, name: &str, scope: Scope<'_>) -> Result<(Expr, DataType)> {
         let Some(r) = self.recognizing.as_deref() else {
+            if let Some(count) = self.graph_count(sf, name, scope) {
+                return count;
+            }
             return Err(rule(
                 "[ISO/IEC 9075-2:2023 §10.9 SR6] a <row pattern count function> is contained in a <row pattern measures> or a <row pattern definition search condition>",
             ));

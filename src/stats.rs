@@ -19,11 +19,14 @@
 //! values, so an engine feeds them a row at a time or a column at a time.
 //! `TableStats` is one way to answer from them: per column, the distinct
 //! values, the fraction that is NULL, the least and greatest values, and a
-//! histogram, and of a geometry column, its envelopes' (`envelopes`).
-//! `ColumnBuilder` gathers a column's; `StatsBuilder` gathers a table's
-//! from its rows.
+//! histogram, how often its values repeat (`frequencies`), which a
+//! property graph's statistics are made of (`graph`), and of a geometry
+//! column, its envelopes' (`envelopes`). `ColumnBuilder` gathers a
+//! column's; `StatsBuilder` gathers a table's from its rows.
 
 pub mod envelopes;
+pub mod frequencies;
+pub mod graph;
 pub mod parts;
 
 use std::cmp::Ordering;
@@ -31,6 +34,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::BuildHasher;
 
+pub use frequencies::Frequencies;
 pub use envelopes::{EnvelopeBuilder, EnvelopeStats};
 pub use parts::Sampling;
 use parts::{Histogram, HyperLogLog, Reservoir, count};
@@ -65,6 +69,14 @@ pub trait Statistics: Send + Sync + Debug {
     fn selectivity(&self, _column: usize, _op: CompOp, _value: &Value) -> Option<f64> {
         None
     }
+    /// How often `column`'s distinct values repeat (`stats/frequencies.rs`).
+    fn frequencies(&self, _column: usize) -> Option<Frequencies> {
+        None
+    }
+    /// The least and greatest non-null values of `column`.
+    fn bounds(&self, _column: usize) -> Option<(Value, Value)> {
+        None
+    }
     /// Of a geometry `column`, its envelopes' statistics (RULES.md D137).
     fn envelopes(&self, _column: usize) -> Option<&EnvelopeStats> {
         None
@@ -87,6 +99,8 @@ pub struct ColumnStats {
     /// Whether values may lie past `min` and `max`, they being a sample's,
     /// so a value outside them is not estimated to match no row.
     pub unbounded: bool,
+    /// How often its distinct non-null values repeat, if it has any.
+    pub frequencies: Option<Frequencies>,
     /// Of a column of geometries, their envelopes' statistics.
     pub envelopes: Option<Box<EnvelopeStats>>,
 }
@@ -146,6 +160,14 @@ impl Statistics for TableStats {
     }
     fn selectivity(&self, column: usize, op: CompOp, value: &Value) -> Option<f64> {
         Some(self.columns.get(column)?.selectivity(op, value))
+    }
+    fn frequencies(&self, column: usize) -> Option<Frequencies> {
+        self.columns.get(column)?.frequencies
+    }
+    fn bounds(&self, column: usize) -> Option<(Value, Value)> {
+        let c = self.columns.get(column)?;
+        Some((c.min.clone()?, c.max.clone()?))
+
     }
     fn envelopes(&self, column: usize) -> Option<&EnvelopeStats> {
         self.columns.get(column)?.envelopes.as_deref()
@@ -220,13 +242,15 @@ impl ColumnBuilder {
     /// The statistics of the values added.
     pub fn finish(self) -> ColumnStats {
         let present = self.values.saturating_sub(self.nulls);
+        let sorted = self.sample.into_sorted();
         ColumnStats {
             distinct: self.sketch.estimate().min(count(present)),
             nulls: if self.values == 0 { 0.0 } else { count(self.nulls) / count(self.values) },
             min: self.min,
             max: self.max,
-            histogram: Histogram::of_sorted(&self.sample.into_sorted(), self.sampling.buckets),
+            histogram: Histogram::of_sorted(&sorted, self.sampling.buckets),
             unbounded: false,
+            frequencies: Frequencies::of_sorted(&sorted, count(present)),
             envelopes: self.envelopes.and_then(EnvelopeBuilder::finish).map(Box::new),
         }
     }
@@ -243,6 +267,9 @@ impl ColumnBuilder {
         stats.distinct =
             scaled_distinct((count(u64::try_from(seen.len()).unwrap_or(u64::MAX)), once), present, rows * (1.0_f64 - stats.nulls));
         stats.unbounded = true;
+        // Each value's rows of the sample, scaled to the table's.
+        let factor = rows * (1.0_f64 - stats.nulls) / present.max(1.0_f64);
+        stats.frequencies = stats.frequencies.map(|f| f.scaled(factor.max(1.0_f64)));
         stats
     }
 }

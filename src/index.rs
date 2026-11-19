@@ -5,25 +5,32 @@
 //! "btree", a B-link tree for equality and ranges; "hash", a linear hash
 //! table for equality; "rtree", an R-link tree for coordinate bounds;
 //! "fulltext", an inverted index of words (RULES.md D86); "json", an
-//! inverted index of JSON documents' paths and values; and "xml_path",
+//! inverted index of JSON documents' paths and values; "xml_path",
 //! "xml_value", "xml_property" and "xml_primary" (`index/xml.rs`), B-link
 //! trees of the paths and values of an XML column's nodes, for the lookups
-//! of XQuery's paths (RULES.md D106). An index's key may be of expressions
-//! of its table's columns (`index/expression.rs`).
+//! of XQuery's paths (RULES.md D106); "adjacency", the edges of a graph's
+//! edge table by endpoint; "labels", an element table's rows numbered for
+//! label tests; and "reachability", which vertices an edge table's edges
+//! lead to. An index's key may be of expressions of its table's columns
+//! (`index/expression.rs`).
 
+pub mod adjacency;
 mod blink;
 pub mod diskann;
 mod key;
 pub use key::Key;
+mod counted;
 pub mod expression;
 pub mod fulltext;
 mod hash;
 pub mod hnsw;
 pub mod ivf;
 pub mod json;
+pub mod labels;
 mod nearest;
 mod probe;
 mod projection;
+pub mod reachability;
 mod rtree;
 mod sparse;
 mod stats;
@@ -32,6 +39,7 @@ pub mod xml;
 
 use std::sync::Arc;
 
+pub use adjacency::{ADJACENCY_METHOD, AdjacencyMethod};
 pub use blink::BTreeMethod;
 pub use diskann::{DISKANN_METHOD, DiskAnnMethod};
 pub use fulltext::{FULLTEXT_METHOD, FullTextMethod};
@@ -39,9 +47,11 @@ pub use hash::HashMethod;
 pub use hnsw::{HNSW_METHOD, HnswMethod};
 pub use ivf::{IVF_METHOD, IvfMethod};
 pub use json::{JSON_METHOD, JsonMethod};
+pub use labels::{LABELS_METHOD, LabelsMethod};
 pub use nearest::{Approximation, FilterHint, NearestQuery, NearestSupport, NeighbourEntries, RowFilter, same_metric};
 pub use probe::{ColumnComparison, Predicate, Probe};
 pub use projection::KeyProjection;
+pub use reachability::{REACHABILITY_METHOD, ReachabilityMethod};
 pub use rtree::{Envelopes, KeyPairs, RTreeMethod};
 pub use sparse::{BLOCK_SIZE_OPTION, QUANTIZATION_OPTION, SPARSE_METHOD, SparseIndex, SparseMethod, VECTOR_TYPE};
 pub use xml::{XML_PATH_METHOD, XML_PRIMARY_METHOD, XML_PROPERTY_METHOD, XML_VALUE_METHOD, XmlMethod};
@@ -325,6 +335,23 @@ pub trait Index: Send + Sync {
     /// Storage errors, or SQLCODE -918 if its frontier cannot be reserved.
     fn nearest(self: Arc<Self>, _query: &NearestQuery, _budget: &Arc<crate::memory::MemoryBudget>) -> Result<Option<NeighbourEntries>> {
         Ok(None)
+    }
+    /// \[EXTENSION\] The adjacency it keeps of a graph's edges, read by
+    /// path search as `nearest` is by a distance search (RULES.md
+    /// D141); none by default. It may retain the index.
+    fn adjacency(self: Arc<Self>) -> Option<Arc<dyn crate::graph::adjacency::Adjacency>> {
+        None
+    }
+    /// \[EXTENSION\] The members of an element table it numbers, read by
+    /// a GRAPH_TABLE's label tests (RULES.md D149); none by default.
+    fn members(self: Arc<Self>) -> Option<Arc<dyn crate::graph::indexes::Members>> {
+        None
+    }
+    /// \[EXTENSION\] The reachability it keeps of an edge table's edges,
+    /// read by a GRAPH_TABLE's search to prune its starts (RULES.md
+    /// D150); none by default.
+    fn reachability(self: Arc<Self>) -> Option<Arc<dyn crate::graph::indexes::Reachability>> {
+        None
     }
     /// \[EXTENSION\] Candidates of an approximate search, its query's
     /// `approximate` given, under [`Approximation`]'s relaxed contract, or

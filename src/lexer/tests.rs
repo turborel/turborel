@@ -67,3 +67,44 @@ fn the_right_arrow_and_double_colon_5_2() {
     assert_eq!(toks(":V"), [d(delim::COLON), id("V")]);
     assert_eq!(toks("A -->B\n"), [id("A")]);
 }
+
+/// Verifies: [EXTENSION] [P1 §4.1] the percent sign, ampersand, tilde and
+/// exclamation mark of label expressions and edge patterns are delimiters
+/// of one character, each ending the identifier before it, and `->` stays
+/// one token beside them; `<->` is one token, the vector distance operator,
+/// which an edge pattern takes as `<` then `->`; `!=` is still no token.
+#[test]
+fn the_graph_pattern_delimiters_4_1() {
+    let d = Tok::Delimiter;
+    let id = |s: &str| Tok::Identifier(s.to_owned());
+    assert_eq!(
+        toks("A&!B|%"),
+        [id("A"), d(delim::AMPERSAND), d(delim::EXCLAMATION_MARK), id("B"), d(delim::VERTICAL_BAR), d(delim::PERCENT)]
+    );
+    assert_eq!(
+        toks("<~[E]~>"),
+        [d(delim::LESS), d(delim::TILDE), d(delim::LEFT_BRACKET), id("E"), d(delim::RIGHT_BRACKET), d(delim::TILDE), d(delim::GREATER)]
+    );
+    assert_eq!(toks("<->"), [d(delim::EUCLIDEAN_DISTANCE)]);
+    assert_eq!(toks("<-"), [d(delim::LESS), d(delim::MINUS)]);
+    let refused = lex("A != B").map(|_| panic!("!= lexed")).unwrap_err();
+    assert_eq!(refused.code, Code::Lexical);
+}
+
+/// Verifies: [EXTENSION] [GS §10.3] after MATCH, "--" glued between ")"
+/// or ")<" and "(" or ">(" is two minus signs, Cypher's relationships;
+/// anywhere else it begins a `<comment>`, MATCH or no MATCH.
+#[test]
+fn cypher_relationships_after_match_10_3() {
+    let d = Tok::Delimiter;
+    let m = Tok::KeyWord(kw::MATCH);
+    let (open, close) = (d(delim::LEFT_PAREN), d(delim::RIGHT_PAREN));
+    assert_eq!(toks("MATCH)--("), [m.clone(), close.clone(), d(delim::MINUS), d(delim::MINUS), open.clone()]);
+    assert_eq!(toks("MATCH)-->("), [m.clone(), close.clone(), d(delim::MINUS), d(delim::RIGHT_ARROW), open.clone()]);
+    assert_eq!(toks("MATCH)<--("), [m.clone(), close.clone(), d(delim::LESS), d(delim::MINUS), d(delim::MINUS), open.clone()]);
+    assert_eq!(toks("MATCH)<-->("), [m.clone(), close.clone(), d(delim::LESS), d(delim::MINUS), d(delim::RIGHT_ARROW), open]);
+    assert_eq!(toks(")--(\n"), std::slice::from_ref(&close), "no MATCH before it");
+    assert_eq!(toks("MATCH) --(\n"), [m.clone(), close.clone()]);
+    assert_eq!(toks("MATCH)-- (\n"), [m.clone(), close.clone()]);
+    assert_eq!(toks("MATCH]--(\n"), [m, d(delim::RIGHT_BRACKET)]);
+}

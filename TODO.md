@@ -78,8 +78,6 @@ The access methods the other standards stand on. Each one is built, made
 durable and tested on its own before the extension that reads it. Each
 is kept consistent under concurrent change and recovery as the B-tree is.
 
-- Adjacency held for a graph's edges, so a path query follows an edge
-  without a join's search. Graph queries need it.
 
 ---
 
@@ -101,17 +99,7 @@ Nothing is open.
 
 ### Graph
 
-- GQL (ISO/IEC 39075:2024). Property graphs of nodes and edges with labels
-  and properties, their graph types, MATCH of graph patterns with
-  quantified paths and path modes, and inserting, setting and removing
-  nodes and edges, as a language beside SQL over the same storage and
-  transactions.
-- SQL/PGQ (ISO/IEC 9075-16:2023). CREATE PROPERTY GRAPH over existing
-  tables, naming which are vertex tables and which edge tables and the
-  keys that join them, and GRAPH_TABLE in FROM, whose MATCH shares GQL's
-  graph patterns and gives its matches as rows to the rest of the query.
-  It shares GQL's pattern matcher and the edges' adjacency, so the two
-  are built together.
+Nothing is open.
 
 ### Vectors
 

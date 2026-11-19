@@ -2,7 +2,7 @@
 //! §9.18 SR12, GR4, §10.4, §20.16] (Features B200, B206): a value of a
 //! parameter of a `<data type>` given to the component procedures, of an
 //! expression known as the function is compiled or not, NULL and DEFAULT,
-//! a value not assignable refused, a named argument not supported, and the
+//! a value not assignable refused, named arguments, and the
 //! forms of a descriptor argument.
 
 use turborel::db::{Database, Session};
@@ -82,14 +82,19 @@ fn value_arguments_reach_the_component_procedures_9_18() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.18 SR10l iii, §10.4 CR4]
 /// an argument not assignable to its parameter's type is refused (SQLCODE
 /// -103), and so is one too many; a `<named argument specification>`
-/// needs Feature T524, not supported (SQLCODE -900).
+/// (Feature T524) gives its parameter the value, and one naming no
+/// parameter, a name twice, or a list naming some arguments and not all
+/// are refused (SQLCODE -103) [§9.18 SR4, SR5d].
 #[test]
 fn arguments_not_taken_are_refused_10_4() {
     let db = defined();
     let a = db.session("A");
     assert_eq!(refused(&a, "SELECT * FROM TABLE (SCALED (TABLE (T), DATE '2024-01-01')) AS P").0, Code::SyntaxRule);
     assert_eq!(refused(&a, "SELECT * FROM TABLE (SCALED (TABLE (T), 1, 2)) AS P").0, Code::SyntaxRule);
-    assert_eq!(refused(&a, "SELECT * FROM TABLE (SCALED (TABLE (T), F => 1)) AS P").0, Code::Unsupported);
+    assert_eq!(rows(&a, "SELECT P.R FROM TABLE (SCALED (F => 2, T => TABLE (T))) AS P ORDER BY 1"), ["2", "4", "6"]);
+    assert_eq!(refused(&a, "SELECT * FROM TABLE (SCALED (TABLE (T), G => 1)) AS P").0, Code::SyntaxRule);
+    assert_eq!(refused(&a, "SELECT * FROM TABLE (SCALED (TABLE (T), F => 1)) AS P").0, Code::SyntaxRule);
+    assert_eq!(refused(&a, "SELECT * FROM TABLE (SCALED (T => TABLE (T), T => 1)) AS P").0, Code::SyntaxRule);
     let e = a.open_cursor("SELECT * FROM TABLE (SCALED (TABLE (T), 1 X)) AS P").err().map(|e| e.code);
     assert!(matches!(e, Some(Code::Syntax | Code::SyntaxRule)), "{e:?}");
 }

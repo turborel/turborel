@@ -2,6 +2,8 @@
 //! HAVING and select list, bound and built into a plan in the order the
 //! General Rules give.
 
+mod graph_match;
+
 use std::cell::RefCell;
 
 use super::collation::{any_of, of_column};
@@ -17,6 +19,7 @@ use crate::db::State;
 use crate::error::{At, Result};
 use crate::logical::{Expr, LogicalPlan};
 use crate::value::collation::CollationRef;
+pub(super) use graph_match::misplaced as graph_match_misplaced;
 
 /// [X3.135-1986 §5.25] `<query specification>`, with the ORDER BY of its cursor if it is the
 /// whole `<query expression>`.
@@ -68,6 +71,10 @@ pub(super) fn bind_ordered(
     order_by: &[SortSpecification],
     nesting: &Nesting<'_>,
 ) -> Result<Ordered> {
+    // [GS §10.1] MATCH in the WHERE clause: the query of a GRAPH_TABLE.
+    if let Some(lowered) = graph_match::lowered(cx, spec)? {
+        return bind_ordered(cx, &lowered, order_by, nesting);
+    }
     let te = &spec.table_expression;
     let (outer, result) = match nesting {
         Nesting::Query | Nesting::Source { .. } => (None, None),
@@ -210,7 +217,8 @@ pub(super) fn distinct(plan: LogicalPlan, (db, session): (&State, Option<&Collat
 /// `<column specification>` for every column of R, in order; [ISO/IEC
 /// 9075:1992 §7.9 SR3b] those of the FROM clause's results, a NATURAL
 /// join's common columns once. [SR4] `<qualifier>`.* is one for every
-/// column of the table it designates.
+/// column of the table it designates. \[EXTENSION\] (§4.2) Neither is
+/// one for a pseudo-column of a node or edge table, which is hidden.
 fn select_items(binder: &Binder<'_>, list: &SelectList) -> Result<Vec<SelectItem>> {
     let item_column = |i: usize, k: usize| {
         let it = binder.items.get(i)?;
@@ -219,7 +227,8 @@ fn select_items(binder: &Binder<'_>, list: &SelectList) -> Result<Vec<SelectItem
             Some(c) => TableName { auth: None, ident: c.clone(), at },
             None => TableName { auth: Some(it.table.auth.clone()), ident: it.table.ident.clone(), at },
         };
-        let column = ColumnSpecification { qualifier: Some(qualifier), column: it.desc.columns.get(k)?.name.clone(), catalog: None, at };
+        let column = it.desc.columns.get(k).filter(|c| !c.hidden())?;
+        let column = ColumnSpecification { qualifier: Some(qualifier), column: column.name.clone(), catalog: None, at };
         Some(SelectItem { value: ValueExpression::Column(column), alias: None, at })
     };
     let SelectList::Values(sublists) = list else {
@@ -378,6 +387,7 @@ pub(in crate::binder) fn named(
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }
         | ValueExpression::MatchNumber { .. }
+        | ValueExpression::Graph(..)
         | ValueExpression::NestedWindow(_)
         | ValueExpression::NextValue { .. } => (None, false, None),
     })

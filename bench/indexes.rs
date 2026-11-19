@@ -5,9 +5,12 @@
 //! in a buffer pool that holds every index; "fulltext"
 //! (`index/fulltext.rs`), documents added and searched (`fulltext.rs`);
 //! "json" (`index/json.rs`), JSON_EXISTS answered by the index beside a
-//! scan (`json.rs`); and the vector methods, built and searched by a sweep
-//! of their knobs (`vector.rs`). TURBOREL_INDEXES names one of btree, hash,
-//! fulltext, json and vector to run it alone. Run with `cargo xtask bench`, on the harness
+//! scan (`json.rs`); the vector methods, built and searched by a sweep of
+//! their knobs (`vector.rs`); and "adjacency" (`index/adjacency.rs`), a
+//! million edges built and followed beside a btree on their source
+//! (`adjacency.rs`). TURBOREL_INDEXES names one of btree, hash, fulltext,
+//! json, vector and adjacency to run it alone. Run with `cargo xtask
+//! bench`, on the harness
 //! (RULES.md R-BENCH-1).
 
 #![allow(
@@ -22,6 +25,8 @@
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]
 
+#[path = "indexes/adjacency.rs"]
+mod adjacency;
 #[path = "indexes/fulltext.rs"]
 mod fulltext;
 mod harness;
@@ -63,6 +68,9 @@ fn main() {
     }
     if runs("json") {
         json::workloads(&bench);
+    }
+    if runs("adjacency") {
+        adjacency::workloads(&bench);
     }
 }
 

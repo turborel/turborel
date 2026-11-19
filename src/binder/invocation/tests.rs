@@ -242,7 +242,11 @@ fn return_value_not_assignable_is_refused() {
 fn body_of_no_return_statement_is_none() {
     let f = function("F", &[], "NULL");
     let st = database(vec![]);
-    let call = SqlStatement::Call(CallStatement { name: TableName { auth: None, ident: "P".into(), at: 0 }, arguments: Vec::new() });
+    let call = SqlStatement::Call(CallStatement {
+        name: TableName { auth: None, ident: "P".into(), at: 0 },
+        arguments: Vec::new(),
+        names: Vec::new(),
+    });
     let b = body_of(&st, &f, &defined(&f, call)).unwrap();
     assert!(b.body.is_none());
     assert_eq!(b.access, DataAccess::Contains);

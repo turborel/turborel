@@ -30,6 +30,7 @@ its own; class TB is turborel's own.
 | 0100A | Warning: query expression too long for the Information Schema |
 | 01010 | Warning: column cannot be mapped: XMLMAP left out a column the user may read, whose type does not map to XML |
 | 01F01 | SQL/MM Spatial warning: invalid position: a method of a position given one outside the value, its result null |
+| 01W61 | Warning: a GRAPH_TABLE's search ended at a limit ON LIMIT TRUNCATE, its rows those of the paths found (GRF-0061) |
 | 02000 | No data |
 | 07000 | Dynamic SQL error |
 | 07001 | Dynamic SQL error: the arguments do not match the dynamic parameters |
@@ -136,6 +137,7 @@ its own; class TB is turborel's own.
 | 2203E | Too many JSON object members: JSON_OBJECT or JSON_OBJECTAGG of more than 1,048,576 members |
 | 2203F | SQL/JSON scalar required: JSON_VALUE of an array or an object |
 | 2203G | SQL/JSON item cannot be cast to target type: JSON_VALUE of an item whose type does not cast to the returned type, as true to INTEGER |
+| 22W34 | Data exception: a CHEAPEST selector's COST of an edge that is negative or no number (GRF-0034) |
 | 23000 | Integrity constraint violation |
 | 24000 | Invalid cursor state |
 | 25000 | Invalid transaction state |
@@ -205,6 +207,7 @@ its own; class TB is turborel's own.
 | 40001 | Transaction rollback: serialization failure |
 | 40002 | Transaction rollback: integrity constraint violation, at commit |
 | 44000 | With check option violation |
+| 54061 | Program limit exceeded: a GRAPH_TABLE's search passed MAX_PATH_LENGTH, MAX_PATHS_PER_PARTITION or MAX_SEARCH_STATES (GRF-0061) |
 | TB910 | The Rust API was misused, or a defect, or a registered vector distance function that breaks its contract |
 | TB911 | Conflict with another transaction: the statement undone, the transaction going on |
 | TB912 | Refused by the transaction policy |
@@ -250,3 +253,25 @@ negative of an exception:
 
 The standard: ISO/IEC 9075:1992 §22.1, Table 23; X3.135-1986 §7.3, of
 SQLCODE.
+
+## Property graph conditions
+
+A statement of property graphs that breaks one of their rules fails
+with SQLCODE -103, SQLSTATE 2A000, as any statement whose Syntax Rule is
+broken. Its message names the condition by a code of its own, as in
+`[EXTENSION] GRF-0003 ...`, after the property graph implementation
+standard's §22.
+
+| Code | Condition |
+|---|---|
+| GRF-0001 | No property graph of the name |
+| GRF-0002 | An element table that is no table or view, or one a graph cannot use, as a declared temporary table |
+| GRF-0003 | A key or an endpoint not written and not found: write KEY, or SOURCE KEY and DESTINATION KEY |
+| GRF-0004 | An endpoint whose vertex table is not of the graph |
+| GRF-0005 | The graph is INVALID until [ALTER PROPERTY GRAPH](../sql/statements/alter-property-graph.md) ... COMPILE checks it again |
+| GRF-0011 | A label shared by element tables whose property names differ, or whose types of one property have no type in common |
+| GRF-0012 | An element table, label or property the graph has not |
+| GRF-0022 | A group variable of a quantified pattern read as one element, as a property of it |
+| GRF-0051 | A GQL write a graph over tables cannot take, as labels that name no one table or an element whose key is not given |
+| GRF-0052 | DELETE of a vertex that has edges, which DETACH DELETE deletes too |
+| GRF-0053 | A GQL write a typed graph's type refuses, as a label or property it has not |

@@ -56,7 +56,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order.
-fn second() -> [&'static [Mutation]; 28] {
+fn second() -> [&'static [Mutation]; 30] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -82,6 +82,8 @@ fn second() -> [&'static [Mutation]; 28] {
         &super::system_versioned::SYSTEM_VERSIONED,
         &super::rename::RENAME,
         &super::savepoints::SAVEPOINTS,
+        &super::graph_catalog::GRAPH_CATALOG,
+        &super::graph_native::GRAPH_NATIVE,
         &super::vector_indexes::VECTOR_INDEXES,
         &super::vector_embed::VECTOR_EMBED,
         &super::vector_hybrid::VECTOR_HYBRID,
@@ -89,11 +91,11 @@ fn second() -> [&'static [Mutation]; 28] {
     ]
 }
 
-/// The areas after the rest, in order: projection's, JSON's, expression indexes', full-text's
-/// and T621's, then the raising guards', XQuery's and XML's, the Information Schema's among them,
-/// then the last areas (`last`).
+/// The areas after the rest, in order: projection's, JSON's, expression indexes', full-text's,
+/// T621's, the graph syntax's, path search's and its choice's and GQL's, then the raising guards',
+/// XQuery's and XML's, the Information Schema's among them, then the last areas (`last`).
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
-    let json: [&'static [Mutation]; 10] = [
+    let json: [&'static [Mutation]; 15] = [
         &super::projection::PROJECTION,
         &super::json::JSON,
         &super::json_path::JSON_PATH,
@@ -104,6 +106,11 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::fulltext::FULLTEXT,
         &super::sqlmm_fulltext::SQLMM_FULLTEXT,
         &super::t621::T621,
+        &super::graph_syntax::GRAPH_SYNTAX,
+        &super::graph_search::GRAPH_SEARCH,
+        &super::graph_search::algorithms::GRAPH_ALGO,
+        &super::graph_gql::GRAPH_GQL,
+        &super::graph_search::choice::GRAPH_SEARCH_CHOICE,
     ];
     let xml: [&'static [Mutation]; 17] = [
         &super::guarded::GUARDED,
@@ -127,10 +134,11 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     json.into_iter().chain(xml).chain(last())
 }
 
-/// The last areas, in order: the spatial areas', the planar engine's, stored CHECKs' calls,
-/// replication's and the server's.
-fn last() -> [&'static [Mutation]; 27] {
+/// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
+/// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, replication's and the server's.
+fn last() -> [&'static [Mutation]; 34] {
     [
+        &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
         &super::rtree::RTREE,
         &super::spatial_regions::SPATIAL_REGIONS,
@@ -150,6 +158,12 @@ fn last() -> [&'static [Mutation]; 27] {
         &super::spatial_topology::SPATIAL_TOPOLOGY,
         &super::spatial_lr::SPATIAL_LR,
         &super::spatial_network::SPATIAL_NETWORK,
+        &super::graph_adjacency::GRAPH_ADJACENCY,
+        &super::graph_table::GRAPH_TABLE,
+        &super::graph_table::joins::GRAPH_JOINS,
+        &super::graph_table::indexes::GRAPH_INDEXES,
+        &super::graph_table::statistics::GRAPH_STATISTICS,
+        &super::graph_iterations::GRAPH_ITERATIONS,
         &super::check_rebind::CHECK_REBIND,
         &super::simple_features::SIMPLE_FEATURES,
         &super::FILL,

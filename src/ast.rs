@@ -2,8 +2,7 @@
 //! `<SQL statement>`s and `<declare cursor>` [X3.135-1986 §7.3, §8], and of the
 //! common elements they are built from [X3.135-1986 §5]. Each type is named
 //! after the production it represents.
-//! Comments give the BNF exactly as implemented; alternatives in the
-//! standard that are not implemented are listed under "Not implemented".
+//! Comments give the BNF exactly as implemented, and alternatives not implemented under "Not implemented".
 
 use crate::catalog::QualifiedName;
 use crate::value::datetime::Written;
@@ -36,7 +35,11 @@ mod dynamic;
 mod embedding;
 mod expression;
 mod generated;
+mod gql;
+mod graph;
+mod graph_ddl;
 mod hybrid_search;
+mod insert;
 mod joined;
 mod json;
 mod json_table;
@@ -82,7 +85,24 @@ pub use expression::{
     ValueExpression, WhenOperand,
 };
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
+pub use gql::{
+    EdgeTypeDefinition, ExecuteGql, GqlCall, GqlClause, GqlComposite, GqlCondition, GqlExpression, GqlGraphDefinition, GqlLinear, GqlPage,
+    GqlProcedure, GqlRemoveItem, GqlRequest, GqlReset, GqlResult, GqlReturn, GqlReturnItem, GqlSession, GqlSetItem, GqlSetOperator,
+    GqlSort, GqlSpan, GqlTable, GqlTransaction, GraphTypeDefinition, GraphTyping, NodeTypeDefinition, PropertyTypeDefinition,
+};
+pub use graph::{
+    Cheapest, Directions, EdgePattern, ElementPattern, GRAPH_FUNCTIONS, GraphColumn, GraphFunction, GraphFunctionName, GraphHints,
+    GraphLimits, GraphMeasure, GraphPattern, GraphPredicate, GraphReference, GraphRows, GraphTable, GraphVariable, LabelExpression,
+    MatchClause, MatchMode, ORIENTATIONS, Orientation, OrientationForm, ParenthesizedPath, PathAlgorithm, PathEnd, PathExpression,
+    PathFactor, PathPattern, PathPrefix, PathPrimary, PathTable, PathTerm, PropertySpec, Quantifier, QuantifierSugar, Restrictor, SameKind,
+    SegmentFilter, Selector, VariableKind,
+};
+pub use graph_ddl::{
+    AdjacencyIndex, AlterGraph, AlterGraphAction, DerivedProperty, ElementAction, ElementDefinition, EndpointDefinition, GraphDefinition,
+    GraphModeOption, LabelDefinition, LabelIndex, PropertiesDefinition, ReachabilityIndex,
+};
 pub use hybrid_search::{Fusion, HybridSearch, SearchArgument, SearchValue};
+pub use insert::{ColumnName, InsertSource, InsertStatement};
 pub use joined::{JoinKind, JoinSpecification, JoinedTable, Partitioning};
 pub use json::{
     IsJson, JsonAggregate, JsonArgument, JsonClauses, JsonCommon, JsonConstructor, JsonExpression, JsonFormat, JsonInput, JsonMember,
@@ -92,7 +112,7 @@ pub use json_table::{
     JsonTable, JsonTableColumn, JsonTableColumnKind, JsonTableFormatted, JsonTableNamed, JsonTableNested, JsonTablePath, JsonTablePlan,
     JsonTablePlanClause,
 };
-pub use merge::{MatchedAction, MergeInsert, MergeStatement, MergeWhen};
+pub use merge::{IntoProperty, MatchedAction, MergeInsert, MergeStatement, MergeWhen};
 pub use modules::ModuleDefinition;
 pub use ordered::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};
 pub use pattern::{
@@ -151,50 +171,6 @@ pub use xml::{
     OnEmpty, Passing, Returning, XQueryModuleDefinition, XmlArgument, XmlArguments, XmlMapping, XmlOperator, XmlQuery, XmlRegularColumn,
     XmlSchemaDefinition, XmlTable, XmlTableColumn, XmlValidAccording, XmlValidWhat, rows_of,
 };
-
-// ---------------------------------------------------------------------------
-// [X3.135-1986 §8.7] <insert statement>
-// ---------------------------------------------------------------------------
-
-/// [X3.135-1986 §8.7; ISO/IEC 9075:1992 §13.8] `<insert statement>` ::=
-///     INSERT INTO `<table name>` {\[(`<insert column list>`)\] `<query
-///     expression>` | DEFAULT VALUES}
-#[derive(Debug, Clone)]
-pub struct InsertStatement {
-    /// The `<table name>`.
-    pub table: TableName,
-    /// The `<insert column list>`, if written.
-    pub columns: Option<Vec<ColumnName>>,
-    /// [ISO/IEC 9075-2:2023 §14.11] The `<override clause>`, if written.
-    pub overriding: Option<Overriding>,
-    /// The rows inserted.
-    pub source: InsertSource,
-    /// [ISO/IEC 9075-14:2006 draft §14.4] WITH's `<XML lexically scoped
-    /// options>`, if written.
-    pub xml: Option<LexicallyScopedOptions>,
-}
-
-/// A `<column name>` of a column list, and where it is written.
-#[derive(Debug, Clone)]
-pub struct ColumnName {
-    /// The name.
-    pub name: String,
-    /// Where it begins in the statement: a character offset, for the
-    /// positions of errors (`SqlError::or_at`).
-    pub at: usize,
-}
-
-/// [X3.135-1986 §8.7] What an `<insert statement>` inserts.
-#[derive(Debug, Clone)]
-pub enum InsertSource {
-    /// [ISO/IEC 9075:1992 §13.8] A `<query expression>`: its rows. SQL-86's
-    /// VALUES (`<insert value list>`) is a `<table value constructor>` of
-    /// one row.
-    Query(Box<QueryExpression>),
-    /// [ISO/IEC 9075:1992 §13.8 SR2] DEFAULT VALUES: one row, each column's
-    /// default.
-    DefaultValues,
-}
 
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §5.6] <value specification>, [X3.135-1986 §5.2] <literal>
@@ -381,6 +357,8 @@ pub enum SqlStatement {
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.10, §17.11] EXECUTE or EXECUTE
     /// IMMEDIATE.
     Execute(Box<ExecuteStatement>),
+    /// \[EXTENSION\] EXECUTE GQL (graph standard §9).
+    ExecuteGql(ExecuteGql),
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §13.11, §20.1] `<temporary table
     /// declaration>`: a declared local temporary table, of kind
     /// `TemporaryKind::Declared`.
@@ -528,8 +506,13 @@ pub enum IndexStatement {
         /// The `<index name>`, and where it begins.
         name: (String, usize),
     },
-    /// `<alter index statement>` ::= ALTER INDEX `<index name>` SET
-    /// `<table options>`
+    /// \[EXTENSION\] [GS §13.2] CREATE ADJACENCY INDEX ON GRAPH.
+    Adjacency(Box<AdjacencyIndex>),
+    /// \[EXTENSION\] CREATE LABEL INDEX ON GRAPH (RULES.md D149).
+    Labels(Box<LabelIndex>),
+    /// \[EXTENSION\] CREATE REACHABILITY INDEX ON GRAPH (RULES.md D150).
+    Reachability(Box<ReachabilityIndex>),
+    /// `<alter index statement>` ::= ALTER INDEX `<index name>` SET `<table options>`
     Alter {
         /// The `<index name>`, and where it begins.
         name: (String, usize),

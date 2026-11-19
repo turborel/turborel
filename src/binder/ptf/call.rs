@@ -5,12 +5,12 @@
 //! the invocation compiled (`db/ptf/compile.rs`).
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use super::super::from::Bounds;
 use super::super::invocation::{
     bind_procedure_program, constraint_permits, definition_of, functions_named, generation_permits, note_specific,
 };
+use super::super::named::{all_or_none, arranged};
 use super::super::{Binder, Candidate, Context, Purpose, Scope, assignable, bind_value, rule};
 use super::Undescribed;
 use super::tables::{BoundTable, copartitioned, table_argument};
@@ -30,7 +30,7 @@ pub(super) struct Bound {
     /// The function invoked.
     pub(super) desc: SqlRoutineDesc,
     /// The call.
-    pub(super) call: Arc<Call>,
+    pub(super) call: Call,
     /// Its table arguments.
     pub(super) tables: Vec<BoundTable>,
     /// Of each parameter, its pre-compilation argument's value [SR12f].
@@ -42,11 +42,20 @@ fn broken(rule_of: &str, msg: &str) -> SqlError {
     rule(format!("[ISO/IEC 9075-2:2023 §9.18 {rule_of}] {msg}"))
 }
 
+/// [§9.18 SR5d, SR5h i] The arguments of `inv` in the order of the
+/// parameters of `desc`, if they fit them by name.
+fn ordered<'a>(desc: &SqlRoutineDesc, inv: &'a PtfInvocation) -> Option<Vec<&'a PtfArgument>> {
+    let parameters: Vec<&str> = desc.parameters.iter().map(|p| p.name.as_str()).collect();
+    arranged(&parameters, &inv.arguments, &inv.names)
+}
+
 /// [§9.18 SR10d ii, iii] Whether `arguments` are of the kinds the
 /// parameters of `desc` take: a table argument of each generic table
 /// parameter's, a descriptor argument or NULL of each descriptor
-/// parameter's, a value or NULL of each other's.
-fn fits(desc: &SqlRoutineDesc, arguments: &[PtfArgument]) -> bool {
+/// parameter's, a value or NULL of each other's; of named arguments,
+/// each at its parameter's place [SR5d].
+fn fits(desc: &SqlRoutineDesc, inv: &PtfInvocation) -> bool {
+    let Some(arguments) = ordered(desc, inv) else { return false };
     desc.parameters.len() == arguments.len()
         && desc.parameters.iter().zip(arguments).all(|(p, a)| match (p.generic, a) {
             (Some(GenericParameter::Table(_)), PtfArgument::Table(_))
@@ -64,6 +73,7 @@ fn fits(desc: &SqlRoutineDesc, arguments: &[PtfArgument]) -> bool {
 /// one alone, which the statement's authorization identifier holds
 /// EXECUTE on; of a definition bound again, one of its subject routines.
 fn subject(cx: Context<'_>, inv: &PtfInvocation) -> Result<SqlRoutineDesc> {
+    all_or_none(&inv.names)?;
     let path: Vec<String> = match &inv.schema {
         Some(s) => vec![s.clone()],
         None if !cx.params.routine_path().is_empty() => cx.params.routine_path().to_vec(),
@@ -80,7 +90,7 @@ fn subject(cx: Context<'_>, inv: &PtfInvocation) -> Result<SqlRoutineDesc> {
             .filter(|r| r.polymorphic() && fixed.is_none_or(|f| f.contains(&r.specific)))
             .collect();
         any = any || !ptfs.is_empty();
-        let fitting: Vec<&SqlRoutineDesc> = ptfs.into_iter().filter(|r| fits(r, &inv.arguments)).collect();
+        let fitting: Vec<&SqlRoutineDesc> = ptfs.into_iter().filter(|r| fits(r, inv)).collect();
         let held: Vec<&SqlRoutineDesc> =
             fitting.iter().copied().filter(|r| fixed.is_some() || Candidate::Sql(r).executable(cx.db, cx.who())).collect();
         match (held.as_slice(), fitting.is_empty()) {
@@ -199,7 +209,7 @@ pub(super) fn bound(b: Bounds<'_>, inv: &PtfInvocation, depth: usize) -> Result<
     let mut tables = Vec::new();
     let mut descriptors = Vec::with_capacity(desc.parameters.len());
     let (mut arguments, mut compiled) = (Vec::with_capacity(desc.parameters.len()), Vec::with_capacity(desc.parameters.len()));
-    for (p, a) in desc.parameters.iter().zip(&inv.arguments) {
+    for (p, a) in desc.parameters.iter().zip(ordered(&desc, inv).unwrap_or_default()) {
         let mut described = None;
         let (e, v) = match (p.generic, a) {
             (Some(GenericParameter::Table(g)), PtfArgument::Table(ta)) => {
@@ -229,7 +239,7 @@ pub(super) fn bound(b: Bounds<'_>, inv: &PtfInvocation, depth: usize) -> Result<
     }
     copartitioned(&mut tables, &inv.copartition, cx.schema).or_at(inv.at)?;
     let call = called(cx, &desc, (&tables, &descriptors, &compiled)).or_at(inv.at)?;
-    Ok(Bound { desc, call: Arc::new(call), tables, arguments })
+    Ok(Bound { desc, call, tables, arguments })
 }
 
 /// [ISO/IEC 9075-2:2023 §9.24] The invocation of `desc` compiled in `cx`,

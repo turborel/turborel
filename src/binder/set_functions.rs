@@ -76,6 +76,7 @@ pub(super) fn is_aggregate_call(v: &ValueExpression, (db, path): (&State, &str))
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }
         | ValueExpression::MatchNumber { .. }
+        | ValueExpression::Graph(..)
         | ValueExpression::NestedWindow(_)
         | ValueExpression::NextValue { .. } => false,
     }
@@ -142,6 +143,7 @@ fn aggregate_argument(v: &ValueExpression) -> Option<&ValueExpression> {
         | ValueExpression::Navigation(_)
         | ValueExpression::Classifier { .. }
         | ValueExpression::MatchNumber { .. }
+        | ValueExpression::Graph(..)
         | ValueExpression::NestedWindow(_)
         | ValueExpression::NextValue { .. } => None,
     }

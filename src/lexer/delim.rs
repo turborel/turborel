@@ -70,6 +70,18 @@ pub const CIRCUMFLEX: &str = "^";
 /// [ISO/IEC 9075-2:2023 §5.1] `<dollar sign>`: the end of a row pattern
 /// partition [§7.9].
 pub const DOLLAR_SIGN: &str = "$";
+/// [ISO/IEC 9075-2:2023 §5.1] `<percent>`: \[EXTENSION\] the label
+/// wildcard of a graph pattern's label expression.
+pub const PERCENT: &str = "%";
+/// [ISO/IEC 9075-2:2023 §5.1] `<ampersand>`: \[EXTENSION\] the conjunction
+/// of a graph pattern's label expression.
+pub const AMPERSAND: &str = "&";
+/// \[EXTENSION\] The tilde: of an edge pattern that matches undirected
+/// edges.
+pub const TILDE: &str = "~";
+/// \[EXTENSION\] The exclamation mark: the negation of a graph pattern's
+/// label expression.
+pub const EXCLAMATION_MARK: &str = "!";
 /// \[EXTENSION\] The distance operators of VECTOR (RULES.md D93), each
 /// a call of VECTOR_DISTANCE by its metric (`vector::functions::OPERATORS`):
 /// EUCLIDEAN.

@@ -103,7 +103,9 @@ fn columns_and_domains_20_4() {
     );
     let domains = format!("SELECT DOMAIN_NAME, DATA_TYPE, {XML_COLUMNS} FROM INFORMATION_SCHEMA.DOMAINS");
     assert_eq!(sorted(&a, &domains), ["DI,INTEGER,NULL,NULL,NULL,NULL,NULL,NULL,NULL", "DX,XML,DOCUMENT,ANY,NULL,NULL,NULL,NULL,NULL"]);
-    assert_eq!(columns_of(&a, "COLUMNS", ("DTD_IDENTIFIER", 9)), xml_columns_after("DTD_IDENTIFIER"));
+    let mut hidden = xml_columns_after("DTD_IDENTIFIER");
+    hidden.push("IS_HIDDEN".to_string());
+    assert_eq!(columns_of(&a, "COLUMNS", ("DTD_IDENTIFIER", 9)), hidden);
     assert_eq!(columns_of(&a, "DOMAINS", ("DTD_IDENTIFIER", 9)), xml_columns_after("DTD_IDENTIFIER"));
     let types = "SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS \
                  WHERE TABLE_SCHEMA = 'INFORMATION_SCHEMA' AND TABLE_NAME = 'DOMAINS' AND COLUMN_NAME LIKE 'XML%'";

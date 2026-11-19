@@ -21,7 +21,7 @@ pub(super) fn referenced_columns(
     // OVERLAPS, none but a temporal one's: its columns alone are no key.
     let keys = parent.constraints.iter().filter_map(|c| match &c.kind {
         ConstraintKind::Unique { columns, primary, period, .. } => Some((columns, *primary, period.as_deref())),
-        ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => None,
+        ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } | ConstraintKind::Connection(_) => None,
     });
     let Some(written) = written else {
         return match keys.into_iter().find(|k| k.1) {

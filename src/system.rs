@@ -39,6 +39,7 @@ mod embedding;
 mod files;
 mod formats;
 mod fulltext;
+mod graph_runs;
 mod information;
 mod jobs;
 mod memory;
@@ -47,6 +48,8 @@ mod spatial;
 mod totals;
 mod users;
 mod vectors;
+
+pub use graph_runs::{GraphRun, GraphRuns, Held, Status};
 
 use std::collections::HashMap;
 use std::fmt;
@@ -153,6 +156,7 @@ pub(crate) fn builtin() -> SystemTables {
         Arc::new(users::Users),
         Arc::new(memory::MemoryReservations),
         Arc::new(jobs::Jobs),
+        Arc::new(graph_runs::GraphAlgoRuns),
         Arc::new(files::Files),
         Arc::new(formats::FileFormats),
         Arc::new(totals::AssertionTotals),

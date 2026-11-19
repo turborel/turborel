@@ -7,7 +7,7 @@
 //! reading one [§11.34 GR2].
 
 use super::{Check, Effect, Effects};
-use crate::catalog::{ConstraintDesc, ConstraintKind, QualifiedName, TableDesc};
+use crate::catalog::{ConstraintDesc, ConstraintKind, FROM_ID, QualifiedName, TO_ID, TableDesc};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::HeldRows;
@@ -158,6 +158,12 @@ fn row_checks(
             ConstraintKind::NotNull(at) => assigned(std::slice::from_ref(at), columns),
             ConstraintKind::ForeignKey(fk) => assigned(&desc.map_or_else(|| fk.columns.clone(), |d| fk.referencing_key(d)), columns),
             ConstraintKind::Check { reads, .. } => reads.is_empty(),
+            // [EXTENSION] (§4.2) Of an edge given an endpoint.
+            ConstraintKind::Connection(_) => {
+                let ends: Vec<usize> =
+                    desc.map(|d| [FROM_ID, TO_ID].iter().filter_map(|n| d.pseudo_column(n)).collect()).unwrap_or_default();
+                assigned(&ends, columns)
+            }
             ConstraintKind::Unique { .. } => false,
         };
         if of_row {

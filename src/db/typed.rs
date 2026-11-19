@@ -343,7 +343,7 @@ fn derived_constraints(t: &TableDefinition, derivational: &[String]) -> Result<(
     let unique = t.elements.iter().find_map(|e| match e {
         TableElement::Constraint(c) => match &c.kind {
             TableConstraintKind::Unique { primary, columns, .. } => (columns.as_slice() == derivational).then_some(*primary),
-            TableConstraintKind::ForeignKey { .. } | TableConstraintKind::Check(_) => None,
+            TableConstraintKind::ForeignKey { .. } | TableConstraintKind::Check(_) | TableConstraintKind::Connection { .. } => None,
         },
         TableElement::Column(_)
         | TableElement::Like(_)

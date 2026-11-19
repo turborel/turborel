@@ -46,8 +46,12 @@ mod characters;
 mod conformance;
 mod constraints;
 mod descriptors;
+mod graph_statistics;
+mod graph_types;
+mod graphs;
 mod implicit;
 mod modules;
+mod native;
 mod options;
 mod periods;
 mod privileges;
@@ -113,6 +117,10 @@ pub(super) fn tables() -> Vec<Arc<dyn SystemTable>> {
     tables.extend(roles::tables());
     tables.extend(triggers::tables());
     tables.extend(modules::tables());
+    tables.extend(graphs::tables());
+    tables.extend(graph_statistics::tables());
+    tables.extend(native::tables());
+    tables.extend(graph_types::tables());
     tables.extend(structured::tables());
     tables.extend(typed::tables());
     tables.extend(usage::tables());
@@ -483,7 +491,8 @@ fn columns_columns() -> Vec<ColumnDesc> {
         .data("COLUMN_DEFAULT", false)
         .data("IS_NULLABLE", false)
         .data("IS_SELF_REFERENCING", true);
-    sequences::generation_columns(columns).data("IS_UPDATABLE", true).done()
+    // [EXTENSION] (§4.2) whether it is a pseudo-column, which `*` skips.
+    sequences::generation_columns(columns).data("IS_UPDATABLE", true).data("IS_HIDDEN", true).done()
 }
 
 /// Each column of each table, at its position, from 1, with its domain;
@@ -491,9 +500,9 @@ fn columns_columns() -> Vec<ColumnDesc> {
 /// none if it has its domain's alone; nullable unless constrained NOT
 /// NULL; whether it is a typed table's self-referencing column
 /// (`typed::self_referencing`); its identity and generation
-/// (`sequences::generation_values`); and whether it is updatable, as each
+/// (`sequences::generation_values`); whether it is updatable, as each
 /// column of its table is or none is (`updatable`) [ISO/IEC 9075-2:2023
-/// §4.17.6].
+/// §4.17.6]; and whether it is hidden.
 fn columns(seen: &Seen<'_>) -> Result<Vec<Row>> {
     let catalog = catalog_name(seen);
     let mut rows = Vec::new();
@@ -505,7 +514,8 @@ fn columns(seen: &Seen<'_>) -> Result<Vec<Row>> {
             let domain = c.domain.as_ref().map_or_else(null, |d| ids(&catalog, &d.name).to_vec());
             let own = vec![default_text(c.default.as_ref()), yes(!c.not_null), typed::self_referencing(typed, &c.name)];
             let generation = sequences::generation_values(c);
-            let row = [vec![text(&c.name), number(at.saturating_add(1))], domain, own, generation, vec![updates.clone()]].concat();
+            let row = [vec![text(&c.name), number(at.saturating_add(1))], domain, own, generation, vec![updates.clone(), yes(c.hidden())]]
+                .concat();
             rows.push([ids(&catalog, &o.name).to_vec(), row].concat());
         }
     }

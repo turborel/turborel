@@ -189,6 +189,11 @@ impl Parser {
             PrivilegeObject::Sequence
         } else if self.accept_word(super::user_types::TYPE) {
             PrivilegeObject::Type
+        } else if self.graph_at(0) {
+            // [EXTENSION] PROPERTY GRAPH <property graph name>.
+            self.advance();
+            self.advance();
+            PrivilegeObject::Graph
         } else if self.is_kw(kw::MODULE) && !matches!(self.peek_at(1), Tok::Delimiter(delim::PERIOD)) {
             // [ISO/IEC 9075-4:2006 draft §10.2] MODULE <module name>.
             self.advance();

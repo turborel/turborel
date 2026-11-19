@@ -166,7 +166,7 @@ impl<'w> Rules<'w> {
                 usize::from(named && self.names.contains(&t.table.ident.as_str()))
             }
             TableReference::Derived(d) => self.refs(&d.query.query, scope),
-            TableReference::Hybrid(_) => 0,
+            TableReference::Hybrid(_) | TableReference::Gql(_) => 0,
             TableReference::Unnest(u) => {
                 let mut n = 0_usize;
                 for v in &u.collections {
@@ -179,6 +179,11 @@ impl<'w> Rules<'w> {
                 for v in j.operands() {
                     v.for_each_subquery(&mut |s| n = n.saturating_add(self.refs(&s.query, scope)));
                 }
+                n
+            }
+            TableReference::Graph(g) => {
+                let mut n = 0_usize;
+                g.for_each_subquery(&mut |s| n = n.saturating_add(self.refs(&s.query, scope)));
                 n
             }
             TableReference::Recognized(r) => {
@@ -319,7 +324,7 @@ impl<'w> Rules<'w> {
     /// `place`.
     fn reference(&self, r: &'w TableReference, (place, scope): (Place, &mut Vec<&'w str>)) -> Checked {
         match r {
-            TableReference::Table(_) | TableReference::Hybrid(_) => Ok(()),
+            TableReference::Table(_) | TableReference::Hybrid(_) | TableReference::Gql(_) => Ok(()),
             TableReference::Derived(d) => {
                 let inner = if place == Place::Body { Place::Derived } else { Place::Elsewhere };
                 self.query(&d.query.query, (inner, scope))
@@ -338,6 +343,7 @@ impl<'w> Rules<'w> {
                 }
                 self.elsewhere(subqueries, scope)
             }
+            TableReference::Graph(g) => self.elsewhere(graph_subqueries(g), scope),
             TableReference::Recognized(r) => {
                 let mut subqueries = Vec::new();
                 r.clause.for_each_subquery(&mut |s| subqueries.push(s));
@@ -492,4 +498,11 @@ fn simply_all(q: &QueryExpression) -> bool {
         QueryExpression::Ordered(o) => simply_all(&o.body),
         QueryExpression::Spec(_) | QueryExpression::Values(_) => false,
     }
+}
+
+/// The subqueries of the GRAPH_TABLE `g`'s conditions and values.
+fn graph_subqueries(g: &crate::ast::GraphTable) -> Vec<&Subquery> {
+    let mut subqueries = Vec::new();
+    g.for_each_subquery(&mut |s| subqueries.push(s));
+    subqueries
 }

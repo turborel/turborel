@@ -310,7 +310,7 @@ fn duplicated(desc: &TableDesc, name: &QualifiedName, columns: &[usize]) -> Stri
         ConstraintKind::Unique { primary, period, .. } => {
             (c.name == *name).then_some((if *primary { "PRIMARY KEY" } else { "UNIQUE" }, &c.name, period))
         }
-        ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => None,
+        ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } | ConstraintKind::Connection(_) => None,
     });
     let Some((kind, constraint, Some(period))) = constraint else {
         let (kind, constraint) = constraint.map_or(("UNIQUE", String::new()), |(k, n, _)| (k, format!(" {n}")));

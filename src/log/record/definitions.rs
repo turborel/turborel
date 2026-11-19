@@ -35,6 +35,12 @@ const DROPPED_PIPELINE: u8 = 16;
 const DROPPED_XML_SCHEMA: u8 = 17;
 /// The tag of a registered XQuery module's drop.
 const DROPPED_XQUERY_MODULE: u8 = 18;
+/// The tag of a property graph's drop.
+const DROPPED_GRAPH: u8 = 19;
+/// The tag of a graph type's drop.
+const DROPPED_GRAPH_TYPE: u8 = 20;
+/// The tag of a GQL graph's drop.
+const DROPPED_GQL_GRAPH: u8 = 21;
 
 /// \[EXTENSION\] What a `Change::Drop` drops.
 #[derive(Debug, Clone, PartialEq)]
@@ -70,10 +76,16 @@ pub enum DropTarget {
     /// A type's transform group, or all of them [ISO/IEC 9075-2:2023
     /// §11.71].
     Transform(QualifiedName, Option<String>),
+    /// \[EXTENSION\] A property graph (RULES.md D140).
+    Graph(QualifiedName),
     /// \[EXTENSION\] An embedding model (the vector design's §12.1).
     Model(QualifiedName),
     /// \[EXTENSION\] A vector pipeline (§12.5).
     Pipeline(QualifiedName),
+    /// \[EXTENSION\] A graph type (RULES.md D144).
+    GraphType(QualifiedName),
+    /// \[EXTENSION\] A GQL graph, with its tables (RULES.md D144).
+    GqlGraph(QualifiedName),
     /// A registered XML Schema [ISO/IEC 9075-14:2006 draft §4.2.6].
     XmlSchema(QualifiedName),
     /// \[EXTENSION\] A registered XQuery module (RULES.md D106).
@@ -215,8 +227,11 @@ pub(super) fn put_dropped(out: &mut Vec<u8>, object: &DropTarget, cascade: bool)
         DropTarget::Routine(specific) => (DROPPED_ROUTINE, specific),
         DropTarget::Module(module) => (DROPPED_MODULE, module),
         DropTarget::Ordering(udt) => (DROPPED_ORDERING, udt),
+        DropTarget::Graph(graph) => (DROPPED_GRAPH, graph),
         DropTarget::Model(model) => (DROPPED_MODEL, model),
         DropTarget::Pipeline(pipeline) => (DROPPED_PIPELINE, pipeline),
+        DropTarget::GraphType(t) => (DROPPED_GRAPH_TYPE, t),
+        DropTarget::GqlGraph(graph) => (DROPPED_GQL_GRAPH, graph),
         DropTarget::XmlSchema(name) => (DROPPED_XML_SCHEMA, name),
         DropTarget::XQueryModule(name) => (DROPPED_XQUERY_MODULE, name),
         DropTarget::Cast(types) => {
@@ -257,8 +272,11 @@ pub(super) fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         DROPPED_ROUTINE => Ok(DropTarget::Routine(table(r)?)),
         DROPPED_MODULE => Ok(DropTarget::Module(table(r)?)),
         DROPPED_ORDERING => Ok(DropTarget::Ordering(table(r)?)),
+        DROPPED_GRAPH => Ok(DropTarget::Graph(table(r)?)),
         DROPPED_MODEL => Ok(DropTarget::Model(table(r)?)),
         DROPPED_PIPELINE => Ok(DropTarget::Pipeline(table(r)?)),
+        DROPPED_GRAPH_TYPE => Ok(DropTarget::GraphType(table(r)?)),
+        DROPPED_GQL_GRAPH => Ok(DropTarget::GqlGraph(table(r)?)),
         DROPPED_XML_SCHEMA => Ok(DropTarget::XmlSchema(table(r)?)),
         DROPPED_XQUERY_MODULE => Ok(DropTarget::XQueryModule(table(r)?)),
         DROPPED_CAST => {

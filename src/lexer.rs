@@ -14,6 +14,9 @@
 //! * A `<separator>` is spaces, newlines and comments. A tab is not a `<space>`.
 //! * A `<comment>` is "--" up to and including a `<newline>`, so it cannot be the
 //!   last thing in the input, or a `<bracketed comment>` (`lexer/comments.rs`).
+//!   \[EXTENSION\] After MATCH, "--" written between a ")" and a "(", as
+//!   Cypher's relationships `)--(`, `)-->(`, `)<--(` and `)<-->(` are,
+//!   is two minus signs (`lexer/comments.rs`).
 //! * A `<character string literal>` may be empty, and may go on after a
 //!   `<separator>` with a `<newline>` in another quoted part [ISO/IEC
 //!   9075:1992 §5.3 SR1, SR4, SR9].
@@ -79,6 +82,8 @@ key_words! {
 
 mod comments;
 pub mod delim;
+mod pseudo;
+mod strings;
 pub use comments::hinted;
 
 /// [ISO/IEC 9075-2:2023 §5.1] `<left bracket trigraph>` and `<right
@@ -123,6 +128,10 @@ const DELIMITERS: &[&str] = &[
     delim::RIGHT_BRACE,
     delim::CIRCUMFLEX,
     delim::DOLLAR_SIGN,
+    delim::PERCENT,
+    delim::AMPERSAND,
+    delim::TILDE,
+    delim::EXCLAMATION_MARK,
 ];
 
 /// The quote that delimits a `<character string literal>` [X3.135-1986 §5.2].
@@ -210,7 +219,7 @@ fn error(code: Code, pos: usize, msg: impl Into<String>) -> SqlError {
 /// number of hexits, a token not followed by a separator or delimiter, or an
 /// `<identifier>` too long.
 pub fn lex(src: &str) -> Result<Vec<Token>> {
-    let mut s = Scanner { c: src.chars().collect(), at: 0 };
+    let mut s = Scanner { c: src.chars().collect(), at: 0, matched: false };
     let mut toks = Vec::new();
     while let Some(first) = s.peek(0) {
         let skipped = s.skip_separator()?;
@@ -220,6 +229,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>> {
         let start = s.at;
         let tok = s.token(first)?;
         s.check_followed(&tok, start)?;
+        s.matched |= tok == Tok::KeyWord(kw::MATCH);
         toks.push(Token { tok, start, end: s.at });
     }
     toks.push(Token { tok: Tok::End, start: s.at, end: s.at });
@@ -247,6 +257,8 @@ pub fn authorization_identifier(text: &str) -> Result<String> {
 struct Scanner {
     c: Vec<char>,
     at: usize,
+    /// MATCH was read, so `--` may be part of a relationship (`comments.rs`).
+    matched: bool,
 }
 
 impl Scanner {
@@ -303,7 +315,7 @@ impl Scanner {
             self.advance(n);
             return Ok(true);
         }
-        if self.peek(0) != Some('-') || self.peek(1) != Some('-') {
+        if self.peek(0) != Some('-') || self.peek(1) != Some('-') || self.at_relationship() {
             return self.bracketed_comment();
         }
         // <comment> ::= --[<character>...]<newline>
@@ -332,6 +344,9 @@ impl Scanner {
         if first == '_' && self.next_is(1, |c| c.is_ascii_alphabetic()) {
             return Ok(self.introducer());
         }
+        if let Some(pseudo) = self.pseudo_column() {
+            return Ok(pseudo);
+        }
         if is_identifier_start(first) {
             self.regular_identifier()
         } else if is_digit(first) || (first == '.' && self.next_is(1, is_digit)) {
@@ -340,6 +355,10 @@ impl Scanner {
             self.character_string()
         } else if first == DOUBLE_QUOTE {
             self.delimited_identifier()
+        } else if first == '!' && self.peek(1) == Some('=') {
+            // [EXTENSION] "!" is a delimiter of label expressions, and
+            // "!=" still no token: not equals is written "<>".
+            Err(error(Code::Lexical, self.at, "[X3.135-1986 §5.3 F] \"!=\" is not a <token>; not equals is written \"<>\""))
         } else if let Some((d, length)) = self.delimiter() {
             self.advance(length);
             Ok(Tok::Delimiter(d))
@@ -489,79 +508,6 @@ impl Scanner {
             }
             self.advance(1);
         }
-    }
-
-    /// [ISO/IEC 9075:1992 §5.3] `<character string literal>` ::= '
-    /// \[`<character representation>`...\] ' \[{`<separator>`... '
-    /// \[`<character representation>`...\] '}...\], where `<quote
-    /// representation>` ::= ''. The parts are one literal [SR1] if each
-    /// separator has a `<newline>` [SR4]; it may be empty [SR9].
-    fn character_string(&mut self) -> Result<Tok> {
-        self.quoted_parts().map(Tok::CharacterString)
-    }
-
-    /// The characters of a literal's quoted parts, one after another if
-    /// each separator between them has a `<newline>` [ISO/IEC 9075:1992
-    /// §5.3 SR1-SR4].
-    fn quoted_parts(&mut self) -> Result<String> {
-        let mut value = String::new();
-        loop {
-            self.quoted_part(&mut value)?;
-            let after = self.at;
-            while self.skip_separator()? {}
-            let newline = self.c.get(after..self.at).unwrap_or_default().contains(&'\n');
-            if !(newline && self.peek(0) == Some(QUOTE)) {
-                self.at = after;
-                return Ok(value);
-            }
-        }
-    }
-
-    /// [ISO/IEC 9075-2:2023 §5.3] `<binary string literal>` ::= X ' pairs
-    /// of `<hexit>`s, spaces between them, ' and further quoted parts, each
-    /// `<hexit>` four bits \[SR20\]. X, in either case \[SR6\], is the next
-    /// character. Spaces are passed over \[SR4\], and the parts are one
-    /// literal as a character string literal's are \[SR5, SR7\].
-    fn binary_string(&mut self) -> Result<Tok> {
-        let start = self.at;
-        self.advance(1);
-        let hexits = self.quoted_parts()?;
-        Binary::of_hex(&hexits).map(Tok::BinaryString).ok_or_else(|| {
-            let msg = "[ISO/IEC 9075-2:2023 §5.3] a <binary string literal> holds pairs of <hexit>s and spaces, and nothing else";
-            error(Code::Lexical, start, msg)
-        })
-    }
-
-    /// One quoted part of a `<character string literal>`, its characters
-    /// added to `value`.
-    fn quoted_part(&mut self, value: &mut String) -> Result<()> {
-        let start = self.at;
-        self.advance(1);
-        loop {
-            let Some(ch) = self.peek(0) else {
-                return Err(error(Code::Lexical, start, "[X3.135-1986 §5.2 F] unterminated <character string literal>"));
-            };
-            // [X3.135-1986 §5.1 SR1] the end-of-line indicator is not a <character>.
-            if self.newline_len().is_some() {
-                return Err(error(
-                    Code::Lexical,
-                    self.at,
-                    "[X3.135-1986 §5.1 SR1] a <newline> cannot appear inside a <character string literal>",
-                ));
-            }
-            if ch == QUOTE {
-                if self.peek(1) != Some(QUOTE) {
-                    self.advance(1);
-                    break;
-                }
-                value.push(QUOTE);
-                self.advance(QUOTE_REPRESENTATION_LEN);
-                continue;
-            }
-            value.push(ch);
-            self.advance(1);
-        }
-        Ok(())
     }
 
     /// Whether `next`, the next character, ends a `<nondelimiter token>`: a

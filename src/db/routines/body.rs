@@ -110,6 +110,7 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         | SqlStatement::Schema { .. }
         | SqlStatement::Fetch { .. }
         | SqlStatement::Execute(_)
+            | SqlStatement::ExecuteGql(_)
         | SqlStatement::DeclareTable(_)
         | SqlStatement::Open(_)
         | SqlStatement::Rollback

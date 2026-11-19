@@ -76,10 +76,17 @@ impl Plan {
                 "{pad}{kind}SynchronizedSpatialJoin {table} using {index} with {} using {} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})",
                 paired.table, paired.index
             ),
-            None => writeln!(
-                out,
-                "{pad}{kind}IndexNestedLoop {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})"
-            ),
+            None => {
+                // [GS §16 R16.2] Of an adjacency index, which Expand it is (`indexed/expand.rs`).
+                let (operator, method) = method
+                    .split_once(' ')
+                    .filter(|(m, _)| *m == crate::index::ADJACENCY_METHOD)
+                    .map_or(("IndexNestedLoop", &**method), |(m, expand)| (expand, m));
+                writeln!(
+                    out,
+                    "{pad}{kind}{operator} {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})"
+                )
+            }
         }
     }
 
@@ -116,10 +123,16 @@ impl Plan {
             Plan::Recursive { member, fixpoint } => writeln!(out, "{pad}Recursive member {member} ({})", fixpoint.word()),
             Plan::WorkTable { member, .. } => writeln!(out, "{pad}WorkTable of member {member}"),
             Plan::Transition { .. } => writeln!(out, "{pad}Transition table"),
-            Plan::Unnest(u) => match &u.json {
+            Plan::Unnest(u) => match (&u.graph, &u.json) {
+                // [GS §16 R16.9] a GRAPH_TABLE: its searches and automata.
+                (Some(g), _) => {
+                    let left = if u.outer.is_some() { "LeftOuter " } else { "" };
+                    let lines: Vec<String> = g.render().lines().map(|l| format!("{pad}{left}{l}")).collect();
+                    writeln!(out, "{}", lines.join("\n"))
+                }
                 // [ISO/IEC 9075-2:2023 §7.11] a JSON table.
-                Some(j) => writeln!(out, "{pad}{}{}", if u.outer.is_some() { "LeftOuter " } else { "" }, j.render()),
-                None => writeln!(
+                (None, Some(j)) => writeln!(out, "{pad}{}{}", if u.outer.is_some() { "LeftOuter " } else { "" }, j.render()),
+                (None, None) => writeln!(
                     out,
                     "{pad}{}Unnest of {} collections{}",
                     if u.outer.is_some() { "LeftOuter" } else { "" },

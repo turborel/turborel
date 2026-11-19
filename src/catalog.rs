@@ -21,11 +21,14 @@ mod columns;
 mod constraints;
 mod domains;
 mod embedding;
+mod graph_types;
+mod graphs;
 mod horizon;
 mod key_expressions;
 mod keys;
 mod memory;
 mod modules;
+mod native;
 mod periods;
 mod privileges;
 mod roles;
@@ -45,11 +48,19 @@ pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, Fore
 pub use domains::{DomainDesc, UsageDesc, usage_held};
 pub use embedding::{Embeddings, ModelDesc, ModelOption, PipelineDesc, TRIGGER_SUFFIXES};
 pub(crate) use embedding::{embeddings, put_embeddings};
+pub use graph_types::{GqlCatalog, GqlGraphDesc, GraphTypeDesc};
+pub use graphs::{
+    ElementKind, ElementTableDesc, EndpointDesc, Endpoints, GRAPH_INVALID, GraphDesc, GraphMode, LabelDesc, PropertyDesc, identifier,
+    qualified_identifier,
+};
 pub use horizon::{Horizon, Indicated, WHOLE};
 pub use key_expressions::{EXPRESSION_PART, KeyExpression};
 pub use keys::KeyShape;
 pub use memory::MemoryCatalog;
 pub use modules::{ModuleDesc, module_of_schema, module_schema, routine_path};
+pub use native::{
+    Connection, EDGE_ID, ElementId, FROM_ID, GraphColumn, ID_LENGTH, NODE_ID, NativeKind, PSEUDO_COLUMNS, SYS_GRAPH, TO_ID, id_type,
+};
 pub use periods::PeriodDesc;
 pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, TypedActions, applicable, merged};
 pub use roles::{Authorization, Principal, RoleAuthorization, Roles, Who};
@@ -276,7 +287,8 @@ pub struct IndexDesc {
 ///   their timestamps of creation; and `put_routine`, `routine`,
 ///   `routines`, `routines_named` and `remove_routine`, by specific
 ///   name, `routines` and `routines_named` in the order of their
-///   timestamps of creation.
+///   timestamps of creation; and `put_graph`, `graph`, `graphs` and
+///   `remove_graph`, `graphs` in the order of their names; `gql`, those of Mode C.
 /// * `duplicate` returns an independent copy: changing either leaves the
 ///   other as it was. Each snapshot of the database's definitions holds its
 ///   own copy, and a change of definitions works on a fresh duplicate
@@ -494,6 +506,19 @@ pub trait Catalog: Send + Sync {
     /// Forget the SQL-server module of this name: one dropped [§9.22 GR2].
     /// Its routines and tables are removed by the caller.
     fn remove_module(&mut self, name: &QualifiedName);
+    /// \[EXTENSION\] Record the property graph `graph`, in place of any of
+    /// its name (RULES.md D140).
+    fn put_graph(&mut self, graph: GraphDesc);
+    /// The property graph of this name, if any.
+    fn graph(&self, name: &QualifiedName) -> Option<&GraphDesc>;
+    /// Every property graph, in the order of their names.
+    fn graphs(&self) -> Vec<&GraphDesc>;
+    /// Forget the property graph of this name: one dropped.
+    fn remove_graph(&mut self, name: &QualifiedName);
+    /// \[EXTENSION\] The graph types and GQL graphs (RULES.md D144).
+    fn gql(&self) -> &GqlCatalog;
+    /// The same, to change.
+    fn gql_mut(&mut self) -> &mut GqlCatalog;
     /// [ISO/IEC 9075-2:2023 §4.42.3] The roles and role authorizations.
     fn roles(&self) -> &Roles;
     /// Make `roles` the roles and role authorizations, in place of those
@@ -507,8 +532,7 @@ pub trait Catalog: Send + Sync {
     /// Make `embeddings` the embedding models and vector pipelines, in
     /// place of those there were.
     fn set_embeddings(&mut self, embeddings: Embeddings);
-    /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §20.2, §20.3] The spatial
-    /// reference systems defined and the geometry columns registered.
+    /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §20.2, §20.3] The reference systems defined and geometry columns registered.
     fn spatial(&self) -> &SpatialCatalog;
     /// Make `spatial` the systems defined and the columns registered.
     fn set_spatial(&mut self, spatial: SpatialCatalog);

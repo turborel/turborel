@@ -8,6 +8,10 @@ use super::{
 use crate::value::collation::Pad;
 use crate::value::{DataType, Value};
 
+mod temporary;
+
+pub use temporary::{Temporary, TemporaryKind};
+
 /// [X3.135-1986 §6.1; ISO/IEC 9075:1992 §11.1] `<schema definition>` ::=
 /// CREATE SCHEMA `<schema name clause>` \[`<schema element>`...\]
 /// `<schema name clause>` ::= `<schema name>` | AUTHORIZATION `<schema
@@ -55,6 +59,9 @@ pub struct Schema {
     /// The `<SQL-server module definition>`s, in order [ISO/IEC
     /// 9075-4:2006 draft §9.21].
     pub modules: Vec<ModuleDefinition>,
+    /// \[EXTENSION\] The `<create property graph statement>`s, in order
+    /// (RULES.md D140).
+    pub graphs: Vec<super::GraphDefinition>,
     /// [ISO/IEC 9075-2:2023 §11.1] The `<SQL-invoked routine>`s of a
     /// method, the `<user-defined cast definition>`s, `<user-defined
     /// ordering definition>`s and `<transform definition>`s, in order,
@@ -114,9 +121,18 @@ pub enum SchemaStatement {
     Transform(super::TransformDefinition),
     /// An `<alter transform statement>` [ISO/IEC 9075-2:2023 §11.68].
     AlterTransform(super::AlterTransform),
+    /// \[EXTENSION\] A `<create property graph statement>` (RULES.md
+    /// D140).
+    Graph(Box<super::GraphDefinition>),
+    /// \[EXTENSION\] An `<alter property graph statement>`.
+    AlterGraph(super::AlterGraph),
     /// \[EXTENSION\] A statement of an embedding model or a vector
     /// pipeline (`ast/embedding.rs`).
     Vector(Box<super::VectorStatement>),
+    /// \[EXTENSION\] CREATE GRAPH TYPE (graph standard §4.3).
+    GraphType(Box<super::GraphTypeDefinition>),
+    /// \[EXTENSION\] CREATE GRAPH, of a GQL graph typed or open (§4.3).
+    GqlGraph(super::GqlGraphDefinition),
     /// \[EXTENSION\] An `<XML Schema definition>` [ISO/IEC 9075-14:2006
     /// draft §4.2.6].
     XmlSchema(Box<super::XmlSchemaDefinition>),
@@ -350,6 +366,8 @@ pub struct TableDefinition {
     /// [ISO/IEC 9075-2:2023 §11.3] Where WITH SYSTEM VERSIONING begins, if
     /// written.
     pub versioning: Option<usize>,
+    /// \[EXTENSION\] (§4.2) AS NODE or AS EDGE, if written, and where.
+    pub graph: Option<(crate::catalog::NativeKind, usize)>,
 }
 
 /// \[EXTENSION\] `<table storage>` ::= \[USING `<engine name>`\] \[WITH
@@ -552,6 +570,16 @@ pub enum TableConstraintKind {
     },
     /// [§11.9] A `<check constraint definition>`.
     Check(Check),
+    /// \[EXTENSION\] (§4.2) `<connection constraint>` ::= CONNECTION (
+    /// `<connection clause>` \[{, `<connection clause>`}...\] ) \[ON DELETE
+    /// {CASCADE | NO ACTION}\], where `<connection clause>` ::= `<table
+    /// name>` TO `<table name>`.
+    Connection {
+        /// Each clause's source and destination node tables, in order.
+        clauses: Vec<(TableName, TableName)>,
+        /// ON DELETE CASCADE, rather than NO ACTION.
+        cascade: bool,
+    },
 }
 
 /// [ISO/IEC 9075:1992 §11.9] `<check constraint definition>` ::= CHECK
@@ -562,26 +590,4 @@ pub struct Check {
     pub condition: SearchCondition,
     /// The `<search condition>` as written, which the catalog keeps.
     pub text: String,
-}
-
-/// [ISO/IEC 9075:1992 §4.9] A temporary table's kind, and what a commit
-/// does to its rows [§11.3 SR4, §14.3 GR3].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Temporary {
-    /// Its kind.
-    pub kind: TemporaryKind,
-    /// ON COMMIT DELETE ROWS, rather than PRESERVE ROWS.
-    pub delete_rows: bool,
-}
-
-/// [ISO/IEC 9075:1992 §4.9] The kinds of temporary table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TemporaryKind {
-    /// GLOBAL TEMPORARY: a global temporary table.
-    Global,
-    /// LOCAL TEMPORARY: a created local temporary table.
-    CreatedLocal,
-    /// DECLARE LOCAL TEMPORARY TABLE: a declared local temporary table
-    /// [§13.11].
-    Declared,
 }

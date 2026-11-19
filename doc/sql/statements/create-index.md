@@ -28,7 +28,11 @@ method: `btree`, a B-link tree, the default; `hash`, a linear hash table;
 `fulltext`, an inverted index of a text column's words; `json`, an
 inverted index of a column's JSON documents' paths and values;
 `xml_path`, `xml_value`, `xml_property` or `xml_primary`, of an XML
-column's paths and values; or a method a plug-in registers. The planner uses an index when its cost
+column's paths and values; `adjacency`, the edges of an edge table kept
+by their endpoints, for following a graph; `labels`, an element table's
+rows numbered for a graph's label tests; `reachability`, which vertices
+an edge table's edges lead to, for pruning a graph's searches; or a
+method a plug-in registers. The planner uses an index when its cost
 says the index is the cheaper way to find a query's rows: by the
 comparisons of its columns with constants in a WHERE clause, BETWEEN,
 IN lists of constants, ORs of these of one column, and LIKE patterns
@@ -137,6 +141,55 @@ for](../19-xml.md#queries-an-xml-index-reads-for)). A value with more
 elements and attributes than it keys,
 or a name or path longer than the database's page size holds, is refused
 as it is written.
+An `adjacency` index takes the columns of an edge table's source
+endpoint, then those of its destination, then any edge properties it
+covers. ADJACENCY.SOURCE_COLUMNS, 1 by default, says how many columns
+are the source, and ADJACENCY.INCLUDE, 0 by default, how many of the
+last are properties included; the columns between are the destination.
+An included column must be NOT NULL. ADJACENCY.DIRECTION is BOTH, the
+default, OUT or IN: it keeps each edge under its source, under its
+destination, or both, so a graph is followed forward, backward, or
+either way at the cost of one lookup a step. A row with a null in its
+key has no entry. A column with a collation is refused. The planner
+reads it for an equality of the source columns, or of the source and
+destination, as a join's lookup too.
+
+Its entries are kept in a B-link tree, with each vertex's count of
+edges. Maintenance compacts them into compressed sparse rows in memory,
+held of the memory budget and of ADJACENCY.CSR_BYTES, 256 MiB by
+default; a lookup reads them, and the tree for a vertex written since,
+so it finds what the tree holds. An index whose compacted form would not
+fit is read from its tree alone. Changing ADJACENCY.CSR_BYTES takes
+effect in place; changing any other option makes the index anew.
+INFORMATION_SCHEMA.ADJACENCY_INDEXES shows each one's options.
+
+A `labels` index takes any NOT NULL columns of a table, its key in a
+property graph by custom: CREATE LABEL INDEX makes them
+([CREATE LABEL INDEX](create-label-index.md)). It numbers the table's
+rows densely, in memory, of the memory budget, and keeps its entries in
+a B-link tree. A GRAPH_TABLE over a graph of the table reads its
+members as bitmaps of the labels, for label tests and for the vertices
+a pattern starts at. The planner never reads it for a WHERE clause. A
+row's number is kept while one of its versions has an entry, and
+maintenance numbers the rows again once more than an eighth of the
+numbers are of rows gone. A nullable column is refused, as a row with
+a null in its key would have no entry.
+
+A `reachability` index takes the columns of an edge table's source
+endpoint, then as many of its destination, of the same types in order:
+REACHABILITY.SOURCE_COLUMNS, half of the columns by default, says how
+many are the source. CREATE REACHABILITY INDEX makes one
+([CREATE REACHABILITY INDEX](create-reachability-index.md)). It keeps
+its edges in a B-link tree and, in memory, of the memory budget,
+labels of each vertex by pruned landmark labelling, so whether one
+vertex reaches another is one merge of two lists. They are made as the
+index is first read, kept exact as edges are added, and dropped when an
+edge is taken back, as when a deleted row is collected, until
+maintenance makes them again; meanwhile, and if the budget refuses
+them, the index answers nothing, and searches are not pruned. A
+GRAPH_TABLE reads it to drop the starts of a search that reach no end.
+The planner never reads it for a WHERE clause. A column with a
+collation is refused, and so are ends of different types.
 
 The index is built from the rows there now, while other transactions go
 on reading and writing the table; it is then kept up to date with each
@@ -146,7 +199,7 @@ undoes it.
 An index's name is an identifier, not of a schema: no two indexes of the
 database have one name. The options WITH sets are those the method
 declares and those plug-ins declare for every index; of the built-in
-methods, only `fulltext` and `json` declare any. INFORMATION_SCHEMA.INDEXES lists the indexes, and
+methods, only `fulltext`, `json`, `adjacency` and `reachability` declare any. INFORMATION_SCHEMA.INDEXES lists the indexes, and
 INDEX_OPTIONS their options.
 
 A key part may be an expression in parentheses, of the table's columns
@@ -194,7 +247,8 @@ run again after COMMIT or ROLLBACK.
    columns alone, can raise no error and is deterministic.
 4. No index has the name.
 5. The method is registered; its name is matched in any case. On a
-   temporary table, it is `btree`, `hash`, `rtree`, `fulltext` or `json`.
+   temporary table, it is `btree`, `hash`, `rtree`, `fulltext`, `json`,
+   `adjacency`, `labels` or `reachability`.
    Of a key part that is an expression, it is `btree` or `hash`.
 6. The columns are of types the method keys: of `xml_path`, `xml_value`,
    `xml_property` and `xml_primary`, one column of an XML type; of the others, types
@@ -217,6 +271,10 @@ The table's schema is its user's.
 | TB910 | -910 | An `rtree` coordinate is non-finite or a rectangle has reversed bounds |
 | 0A000 | -900 | `fulltext` is asked to index other than one FULLTEXT column or one character string column with no collation |
 | 0A000 | -900 | `json` is asked to index other than one character string column with no collation or one JSON column |
+| 0A000 | -900 | `adjacency` is asked to index a column with a collation, or a nullable included column |
+| 0A000 | -900 | `adjacency` options leave no source or no destination column |
+| 0A000 | -900 | `labels` is asked to index a nullable column or an expression |
+| 0A000 | -900 | `reachability` is asked to index ends of different column counts or types, a column with a collation or an expression |
 
 ## EXAMPLES
 
@@ -537,6 +595,46 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): the key part (JSON_VALUE(LABEL, 'lax $.
 turborel: SQLCODE -103 (SQLSTATE 2A000): a rtree index has no key part that is an expression, only btree and hash do (RULES.md D92) (at character 35)
 ```
 
+An adjacency index of the transfers between accounts, each transfer's
+amount included, its options shown, and an account's transfers out
+found by it; an index of one column has no destination, and is refused:
+
+```sql
+CREATE TABLE TRANSFERS (
+    ID INTEGER PRIMARY KEY,
+    PAYER INTEGER NOT NULL,
+    PAYEE INTEGER NOT NULL,
+    AMOUNT INTEGER NOT NULL
+);
+INSERT INTO TRANSFERS VALUES (1, 10, 20, 500), (2, 10, 30, 75), (3, 20, 30, 120), (4, 30, 10, 60);
+COMMIT;
+CREATE INDEX TRANSFERS_ADJ ON TRANSFERS (PAYER, PAYEE, AMOUNT) USING ADJACENCY
+    WITH (ADJACENCY.INCLUDE = 1);
+CREATE INDEX TRANSFERS_X ON TRANSFERS (PAYER) USING ADJACENCY;
+SELECT INDEX_NAME, SOURCE_COLUMNS, INCLUDED_COLUMNS, DIRECTION
+    FROM INFORMATION_SCHEMA.ADJACENCY_INDEXES;
+SELECT PAYEE, AMOUNT FROM TRANSFERS WHERE PAYER = 10 ORDER BY PAYEE;
+COMMIT;
+```
+
+```
+OK
+OK
+OK
+OK
+turborel: SQLCODE -900 (SQLSTATE 0A000): the adjacency index method keys an edge by its source's columns, then its destination's, then those included: a key of 1 column(s), 1 of the source and 0 included, has no source or no destination
+ INDEX_NAME                                                   | SOURCE_COLUMNS                                               | INCLUDED_COLUMNS                                             | DIRECTION
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ TRANSFERS_ADJ                                                | 1                                                            | 1                                                            | BOTH
+(1 row)
+        PAYEE |       AMOUNT
+--------------+--------------
+           20 |          500
+           30 |           75
+(2 rows)
+OK
+```
+
 A session with a transaction open:
 
 ```sql
@@ -559,6 +657,8 @@ An extension: neither SQL-86 nor SQL-92 has indexes.
 
 [ALTER INDEX](alter-index.md), [DROP INDEX](drop-index.md),
 [CREATE TABLE](create-table.md),
+[CREATE LABEL INDEX](create-label-index.md),
+[CREATE REACHABILITY INDEX](create-reachability-index.md),
 [Full-Text Search](../08-fulltext.md),
 [Spatial Data](../10-spatial.md),
 [XML indexes](../19-xml.md#xml-indexes)

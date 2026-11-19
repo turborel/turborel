@@ -60,7 +60,7 @@ impl Parser {
 
     /// [§10.4] `<routine invocation>` ::= `<routine name>` ( \[`<SQL
     /// argument>` \[{, ...}...\] \[`<co-partition clause>`\]\] ).
-    fn ptf_invocation(&mut self) -> Result<PtfInvocation> {
+    pub(in crate::parser) fn ptf_invocation(&mut self) -> Result<PtfInvocation> {
         let at = self.here();
         let mut name = self.identifier()?;
         let mut schema = None;
@@ -68,10 +68,11 @@ impl Parser {
             schema = Some(std::mem::replace(&mut name, self.identifier()?));
         }
         self.expect_delim(delim::LEFT_PAREN)?;
-        let mut arguments = Vec::new();
+        let (mut arguments, mut names) = (Vec::new(), Vec::new());
         let mut copartition = Vec::new();
         if !self.accept_delim(delim::RIGHT_PAREN) {
             loop {
+                names.push(self.named_argument(&names)?);
                 arguments.push(self.ptf_argument()?);
                 if !self.accept_delim(delim::COMMA) {
                     break;
@@ -82,7 +83,7 @@ impl Parser {
             }
             self.expect_delim(delim::RIGHT_PAREN)?;
         }
-        Ok(PtfInvocation { schema, name, arguments, copartition, at, extension: self.extensions })
+        Ok(PtfInvocation { schema, name, arguments, names, copartition, at, extension: self.extensions })
     }
 
     /// Whether a `<table function invocation>` is next: a `<routine name>`
@@ -120,14 +121,6 @@ impl Parser {
     /// `<value expression>`; a named one needs Feature T524.
     fn ptf_argument(&mut self) -> Result<PtfArgument> {
         let at = self.here();
-        if matches!(self.peek(), Tok::Identifier(_))
-            && *self.peek_at(1) == Tok::Delimiter(delim::EQUALS)
-            && *self.peek_at(2) == Tok::Delimiter(delim::GREATER)
-        {
-            let msg = "[ISO/IEC 9075-2:2023 §10.4 CR4] a <named argument specification> needs Feature T524, “Named arguments in routine \
-                       invocations other than a CALL statement”, which turborel does not support";
-            return Err(SqlError::at(Code::Unsupported, at, msg));
-        }
         if self.is_kw(kw::DESCRIPTOR) || self.at_null_descriptor() {
             return self.descriptor_argument();
         }
@@ -157,13 +150,41 @@ impl Parser {
         let value = self.value_expression()?;
         if self.at_table_argument_tail() {
             if let ValueExpression::Call { schema, name, args, at: call_at, extension } = value {
+                let names = vec![None; args.len()];
                 let arguments = args.into_iter().map(PtfArgument::Value).collect();
-                let invocation = PtfInvocation { schema, name, arguments, copartition: Vec::new(), at: call_at, extension };
+                let invocation = PtfInvocation { schema, name, arguments, names, copartition: Vec::new(), at: call_at, extension };
                 return self.table_argument(TableArgumentProper::Invocation(Box::new(invocation)), at);
             }
             return Err(self.syntax("expected \",\" or \")\""));
         }
         Ok(PtfArgument::Value(value))
+    }
+
+    /// [§10.4] The `<SQL parameter name>` and `<named argument assignment
+    /// token>` of a `<named argument specification>` (Features T521,
+    /// T524), if one begins here: its name, the arguments before it named
+    /// `before`.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if an argument before it has an equivalent name
+    /// [§9.18 SR4].
+    pub(in crate::parser) fn named_argument(&mut self, before: &[Option<String>]) -> Result<Option<String>> {
+        let named = matches!(self.peek(), Tok::Identifier(_))
+            && *self.peek_at(1) == Tok::Delimiter(delim::EQUALS)
+            && *self.peek_at(2) == Tok::Delimiter(delim::GREATER);
+        if !named {
+            return Ok(None);
+        }
+        let at = self.here();
+        let name = self.identifier()?;
+        self.advance();
+        self.advance();
+        if before.iter().flatten().any(|n| *n == name) {
+            let msg = format!("[ISO/IEC 9075-2:2023 §9.18 SR4] two <named argument specification>s name parameter {name}");
+            return Err(SqlError::at(Code::SyntaxRule, at, msg));
+        }
+        Ok(Some(name))
     }
 
     /// Whether what follows a `<table argument proper>` is next: AS, a

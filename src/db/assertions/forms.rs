@@ -414,7 +414,7 @@ pub(super) fn declared(table: &QualifiedName, at: usize, catalog: &dyn Catalog) 
             let on = match &c.kind {
                 ConstraintKind::NotNull(column) => *column == at,
                 ConstraintKind::Unique { columns, primary, .. } => *primary && columns.contains(&at),
-                ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } => false,
+                ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } | ConstraintKind::Connection(_) => false,
             };
             on && !c.attributes.deferrable
         })

@@ -37,7 +37,10 @@ use super::{Database, State, api, qualified_name};
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::error::{Code, Result, SqlError, fail};
 use crate::index::xml::XmlLookup;
-use crate::index::{BTREE_METHOD, FULLTEXT_METHOD, HASH_METHOD, Index, JSON_METHOD, KeyOrder, Probe, RTREE_METHOD};
+use crate::index::{
+    ADJACENCY_METHOD, BTREE_METHOD, FULLTEXT_METHOD, HASH_METHOD, Index, JSON_METHOD, KeyOrder, LABELS_METHOD, Probe, REACHABILITY_METHOD,
+    RTREE_METHOD,
+};
 use crate::log::record::Change;
 use crate::storage::{Row, TableOption, chosen, needs_rebuild};
 use crate::txn::{Concurrency, LockMode, NO_TRANSACTION, TableLock, Timestamp, Transactions, Txn};
@@ -214,6 +217,27 @@ impl State {
     }
 }
 
+/// The methods of an index of a temporary table, beside the vector ones.
+const TEMPORARY_METHODS: [&str; 8] =
+    [BTREE_METHOD, HASH_METHOD, RTREE_METHOD, FULLTEXT_METHOD, JSON_METHOD, ADJACENCY_METHOD, LABELS_METHOD, REACHABILITY_METHOD];
+
+/// Whether an index of temporary table `qn` may be of `method`.
+///
+/// # Errors
+///
+/// It is of another method, 2A000.
+fn temporary_method(qn: &QualifiedName, method: &str) -> Result<()> {
+    if crate::index::vector::is_vector_method(method) || TEMPORARY_METHODS.contains(&method) {
+        return Ok(());
+    }
+    Err(SqlError::new(
+        Code::SyntaxRule,
+        format!(
+            "[DESIGN] {qn} is temporary: its index is of method {BTREE_METHOD}, {HASH_METHOD}, {RTREE_METHOD}, {FULLTEXT_METHOD}, {JSON_METHOD}, {ADJACENCY_METHOD}, {LABELS_METHOD} or {REACHABILITY_METHOD}, kept in memory (RULES.md D49)"
+        ),
+    ))
+}
+
 impl Database {
     /// \[DESIGN\] The entries index `name` holds, each (key, row) pair once:
     /// a diagnostic. An engine keeping versions has one per version a
@@ -281,15 +305,7 @@ impl Database {
         // session's instance makes its entries, in memory, of its own rows,
         // once no transaction has them open (`db/temporary/storage.rs`).
         if current.catalog.table(qn).is_some_and(|t| t.temporary.is_some()) {
-            let vector = crate::index::vector::is_vector_method(&spec.method);
-            if !vector && ![BTREE_METHOD, HASH_METHOD, RTREE_METHOD, FULLTEXT_METHOD, JSON_METHOD].contains(&spec.method.as_str()) {
-                return Err(SqlError::new(
-                    Code::SyntaxRule,
-                    format!(
-                        "[DESIGN] {qn} is temporary: its index is of method {BTREE_METHOD}, {HASH_METHOD}, {RTREE_METHOD}, {FULLTEXT_METHOD} or {JSON_METHOD}, kept in memory (RULES.md D49)"
-                    ),
-                ));
-            }
+            temporary_method(qn, &spec.method)?;
             return self.create_index_locked(spec, ready);
         }
         if current.capabilities(qn)?.concurrency == Concurrency::Coordinator {

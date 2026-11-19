@@ -29,6 +29,7 @@
               handle one variant, and flat lists of assertions (RULES.md R-TEST-4)"
 )]
 
+mod adjacency_index;
 mod collated_indexes;
 mod collation_usage;
 mod collations;
@@ -132,6 +133,12 @@ mod generated_named;
 mod geometry;
 mod get_diagnostics;
 mod get_diagnostics_items;
+mod gql;
+mod graph_algo;
+mod graph_compat;
+mod graph_ddl;
+mod graph_native;
+mod graph_table;
 mod grouping_sets;
 mod guarded_reads;
 mod held_lobs;

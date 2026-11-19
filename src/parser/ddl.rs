@@ -108,7 +108,7 @@ impl Parser {
     /// CREATE, DROP or ALTER INDEX, CREATE, ALTER or DROP USER, and ALTER
     /// DATABASE (`parser/users.rs`).
     pub(super) fn schema_manipulation(&mut self) -> Result<SqlStatement> {
-        if self.at_role_definition() {
+        if self.at_role_definition() || (self.next_is_graph() && !self.is_kw(kw::DROP)) {
             return self.schema_statement();
         }
         let other = self.next_is_module() || self.next_is_of_type() || self.at_xml_schema(1) || self.at_xquery_module(1);
@@ -139,6 +139,9 @@ impl Parser {
         if !alter && let Some(refused) = self.drop_character_set()? {
             return Ok(refused);
         }
+        if !alter && let Some(dropped) = self.drop_graph()? {
+            return Ok(dropped);
+        }
         if !alter && let Some(object) = self.dropped_object()? {
             return Ok(SqlStatement::Drop { object, behavior: self.drop_behavior()? });
         }
@@ -164,6 +167,15 @@ impl Parser {
     /// D92); CREATE VECTOR INDEX is `ddl/vector_index.rs`, CREATE HYBRID
     /// VECTOR INDEX `ddl/hybrid_index.rs`.
     fn create_index(&mut self) -> Result<SqlStatement> {
+        if self.accept_word(super::graph_ddl::ADJACENCY) {
+            return self.adjacency_index();
+        }
+        if self.accept_word(super::graph_ddl::REACHABILITY) {
+            return self.reachability_index();
+        }
+        if self.label_index_next() {
+            return self.label_index();
+        }
         if !self.accept_word("INDEX") {
             return Err(self.syntax("expected INDEX: a <schema> is processed by Database::schema"));
         }

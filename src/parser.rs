@@ -1,24 +1,22 @@
 //! Recursive descent parser. One method per BNF production, named after it.
 //!
-//! The standard's left-recursive rules ("`<term>` ::= `<factor>` | `<term>` * `<factor>`")
-//! become loops, which gives the left-to-right evaluation order of [X3.135-1986 §5.9 GR7]
-//! and [X3.135-1986 §5.18 GR3]. The one real ambiguity in the grammar, that both
-//! `<predicate>` and (`<search condition>`) can start with "(", is resolved by
-//! trying `<predicate>` first and backtracking (\[DESIGN\] PEG-style ordered choice).
+//! The standard's left-recursive rules ("`<term>` ::= `<factor>` | `<term>` * `<factor>`") become loops, which gives
+//! the left-to-right evaluation order of [X3.135-1986 §5.9 GR7] and [X3.135-1986 §5.18 GR3]. The one real ambiguity in
+//! the grammar, that both `<predicate>` and (`<search condition>`) can start with "(", is resolved by trying
+//! `<predicate>` first and backtracking (\[DESIGN\] PEG-style ordered choice).
 //!
-//! Syntax that is valid SQL but not implemented reports `Code::Unsupported`
-//! rather than a misleading syntax error.
+//! Syntax that is valid SQL but not implemented reports `Code::Unsupported` rather than a misleading syntax error.
 
 pub use ddl::{RESEAL, REVERT_COLLATION, method_of_type, option_of};
 pub use domains::VALUE_COLUMN;
 pub(crate) use dynamic::descriptor_type;
+pub use graph::{Declared, Degree, Exposed, Exposure, exposure, in_path_patterns, normalize, normalize_within, parenthesized_exposure};
+pub use graph::{LAST_NODE_PREFIX, MATCH_TABLE, checked_graph_table, element_key};
 pub(crate) use periods::period_constraint;
 use std::collections::{HashMap, HashSet};
 pub use xml::{MappedSource, mapped_sources};
 
-use crate::ast::{
-    ColumnName, InsertSource, InsertStatement, ParameterSpecification, QuerySpecification, SqlStatement, TableName, ValueExpression,
-};
+use crate::ast::{ColumnName, ParameterSpecification, QuerySpecification, SqlStatement, TableName, ValueExpression};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, Token, delim, kw, lex};
 
@@ -41,8 +39,13 @@ mod embedding;
 mod expression;
 mod filter;
 mod generated;
+mod gql;
+mod graph;
+pub(crate) mod graph_algo;
+mod graph_ddl;
 mod grouping;
 mod hypothetical;
+mod insert;
 mod interval;
 mod json;
 mod listagg;
@@ -52,6 +55,7 @@ mod merge;
 mod modules;
 mod multisets;
 mod names;
+mod native;
 mod numeric;
 mod pattern;
 mod periods;
@@ -73,8 +77,7 @@ mod user_types;
 mod window;
 mod xml;
 pub(crate) use data_statements::{EXPLAIN, TRUNCATE, begins_word_statement};
-pub(crate) use savepoints::SAVEPOINT;
-pub(crate) use served::CANCEL;
+pub(crate) use {savepoints::SAVEPOINT, served::CANCEL};
 mod session;
 mod stored;
 mod target;
@@ -145,9 +148,13 @@ pub struct Parser {
     blocks: Vec<psm::Block>,
     /// [ISO/IEC 9075-4:2006 draft §12.8] In an SQL-server module, its own schema, which MODULE names.
     module: Option<String>,
-    /// \[EXTENSION\] The number of each `<dynamic parameter specification>`
-    /// by its place among them, of a text that copies some of a statement's
-    /// (`Parser::hybrid_expansion`); of none, each is numbered by its place.
+    /// \[EXTENSION\] The GRAPH_TABLEs being read around the token at hand, where a graph
+    /// function's or predicate's name before "(" is that function's, and elsewhere a routine's.
+    graph: usize,
+    /// \[EXTENSION\] [GS §10] The query specifications being read, the innermost last.
+    compat: Vec<graph::Frame>,
+    /// \[EXTENSION\] The number of each `<dynamic parameter specification>` by its place among them,
+    /// of a text that copies some of a statement's (`Parser::hybrid_expansion`); of none, its place.
     numbers: Vec<usize>,
 }
 
@@ -231,6 +238,8 @@ impl Parser {
             routine: None,
             blocks: Vec::new(),
             module: None,
+            graph: 0,
+            compat: Vec::new(),
             numbers: Vec::new(),
         })
     }
@@ -433,33 +442,6 @@ impl Parser {
     // =====================================================================
     // [X3.135-1986 §8.7] <insert statement>
     // =====================================================================
-
-    /// INSERT \[WITH `<XML lexically scoped options>`\] INTO `<table name>`
-    /// {\[(`<insert column list>`)\] \[`<override clause>`\] `<query
-    /// expression>` | DEFAULT VALUES} [ISO/IEC 9075:1992 §13.8; ISO/IEC
-    /// 9075-2:2023 §14.11; ISO/IEC 9075-14:2006 draft §14.4]
-    ///
-    /// # Errors
-    ///
-    /// The text is not an `<insert statement>`.
-    pub fn insert_statement(&mut self) -> Result<InsertStatement> {
-        self.expect_kw(kw::INSERT)?;
-        let xml = self.with_scoped_options()?;
-        self.expect_kw(kw::INTO)?;
-        let table = self.table_name()?;
-        let columns = if self.is_delim(delim::LEFT_PAREN) { Some(self.insert_column_list()?) } else { None };
-        // [ISO/IEC 9075-2:2023 §14.11] [<override clause>]
-        let overriding = self.override_clause()?;
-        // [ISO/IEC 9075:1992 §13.8] DEFAULT VALUES, with no column list.
-        if columns.is_none() && overriding.is_none() && self.accept_kw(kw::DEFAULT) {
-            self.expect_kw(kw::VALUES)?;
-            self.end()?;
-            return Ok(InsertStatement { table, columns, overriding, source: InsertSource::DefaultValues, xml });
-        }
-        let query = self.query_expression()?;
-        self.end()?;
-        Ok(InsertStatement { table, columns, overriding, source: InsertSource::Query(Box::new(query)), xml })
-    }
 
     /// (`<insert column list>`) ::= ( `<column name>` \[{, `<column
     /// name>`}...\] ), each column where it is written, of an INSERT

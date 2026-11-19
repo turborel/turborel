@@ -32,9 +32,10 @@ impl Session {
         // name too, MODULE's: no other statement begins so, but
         // \[EXTENSION\] CANCEL CONNECTION, whose CONNECTION, reserved, no
         // table's name is followed by, and TRUNCATE TABLE and MERGE INTO
-        // [ISO/IEC 9075-2:2023 §14.10, §14.12] alike.
-        // \[EXTENSION\] EXPLAIN, no key word either, before a query.
-        if let (Some(Tok::Identifier(w)), Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE" | "WITH") | Tok::Delimiter("("))) =
+        // [ISO/IEC 9075-2:2023 §14.10, §14.12] and INTO PROPERTY alike.
+        // \[EXTENSION\] EXPLAIN, no key word either, before a query; and
+        // a Cypher query's MATCH [GS §10.3].
+        if let (Some(Tok::Identifier(w)), Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE" | "WITH" | "MATCH") | Tok::Delimiter("("))) =
             (first, second)
             && w == EXPLAIN
         {
@@ -44,11 +45,16 @@ impl Session {
             let rest = format!("{}{}", " ".repeat(at), sql.chars().skip(at).collect::<String>());
             return self.explain_rows(&rest).map(Direct::Rows);
         }
+        // [EXTENSION] EXECUTE GQL, and each statement of a GQL session.
+        if let Some(done) = self.gql_direct(sql, first)? {
+            return Ok(done);
+        }
         let named_cancel = if let Some(Tok::Identifier(w)) = first { w == CANCEL } else { false };
         let cancel = (named_cancel && matches!(second, Some(Tok::KeyWord("CONNECTION")))) || begins_word_statement(first, second);
-        let joined = (matches!(first, Some(Tok::Identifier(_) | Tok::Introducer(_))) && !cancel)
+        let property = crate::parser::graph_algo::begins_property_statement(tokens.iter().map(|t| &t.tok));
+        let joined = (matches!(first, Some(Tok::Identifier(_) | Tok::Introducer(_))) && !cancel && !property)
             || matches!((first, second), (Some(Tok::KeyWord("MODULE")), Some(Tok::Delimiter("."))));
-        if joined || matches!(first, Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE" | "WITH") | Tok::Delimiter("("))) {
+        if joined || matches!(first, Some(Tok::KeyWord("SELECT" | "VALUES" | "TABLE" | "WITH" | "MATCH") | Tok::Delimiter("("))) {
             return self.open_cursor(sql).map(Direct::Rows);
         }
         if matches!((first, second), (Some(Tok::KeyWord("CREATE")), Some(Tok::KeyWord("SCHEMA")))) {

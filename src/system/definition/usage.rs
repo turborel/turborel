@@ -159,7 +159,9 @@ fn check_routines(seen: &Seen<'_>) -> Vec<Row> {
 fn subjects(c: &ConstraintDesc) -> Vec<QualifiedName> {
     match &c.kind {
         ConstraintKind::Check { horizon, .. } => horizon.subjects().unwrap_or_default().to_vec(),
-        ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) => Vec::new(),
+        ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) | ConstraintKind::Connection(_) => {
+            Vec::new()
+        }
     }
 }
 

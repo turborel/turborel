@@ -105,6 +105,10 @@ impl Session {
                 let nulls = method == crate::index::vector::hybrid::HYBRID_METHOD && columns.len() == 2;
                 self.index_made(st, &IndexSpec { name: name.clone(), table: qn, columns, method, options, nulls, expressions })?;
             }
+            // [GS §13.2] the CREATE INDEX it is.
+            IndexStatement::Adjacency(_) => return self.index_statement(st, &self.adjacency_create(st, stmt)?),
+            // RULES.md D149, D150: the CREATE INDEX statements they are.
+            IndexStatement::Labels(_) | IndexStatement::Reachability(_) => self.graph_indexes_made(st, stmt)?,
             IndexStatement::Drop { name: (name, at) } => {
                 let ix = self.index_owned(st, name).or_at(*at)?;
                 if ix.unique {
