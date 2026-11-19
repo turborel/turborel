@@ -21,7 +21,7 @@
 //!   the type, so they are refused at the top.
 //! - \[EXTENSION\] What the BNF cannot write is written so: a `<text>`
 //!   holding a double quote doubles it; a null linear element type, offset
-//!   distance or attribute is the key word NULL; an empty ARRAY is `()`; a
+//!   distance, attribute or constraint is the key word NULL; an empty ARRAY is `()`; a
 //!   unit name that its `<letters>` would not end is a `<text>`.
 //! - A geometry inside the text, `<point text representation>`, `<curve
 //!   text representation>` or `<well-known text representation>`, is read

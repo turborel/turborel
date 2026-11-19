@@ -47,14 +47,14 @@ fn lrm(id: i32, lrm_type: &str) -> Lrm {
 }
 
 /// The LRM `id` of type `lrm_type`, in metres, its offsets in metres
-/// positive towards `lateral`.
+/// positive towards `lateral`, its constraints with a null between two.
 fn lrm_offsets(id: i32, lrm_type: &str, lateral: &str) -> Lrm {
     let parts = LrmParts {
         id: Some(id),
         name: Some(format!("lrm {id}")),
         lrm_type: Some(lrm_type.to_owned()),
         units: Some(METRE.to_owned()),
-        constraints: Some(vec!["one".to_owned()]),
+        constraints: Some(vec![Some("one".to_owned()), None, Some("two".to_owned())]),
     };
     let offsets = OffsetParts { units: Some(METRE.to_owned()), lateral: Some(lateral.to_owned()), vertical: None };
     Lrm::new_with_offsets(parts, offsets, &units()).unwrap()

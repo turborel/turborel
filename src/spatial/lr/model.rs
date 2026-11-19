@@ -26,8 +26,9 @@ pub struct Lrm {
     pub lrm_type: String,
     /// ST_PrivateUnits: the unit of measure [Description 5].
     pub units: String,
-    /// ST_PrivateConstraints: the constraints [Description 6].
-    pub constraints: Option<Vec<String>>,
+    /// ST_PrivateConstraints: the constraints [Description 6], each
+    /// element as given, the null value kept.
+    pub constraints: Option<Vec<Option<String>>>,
     /// ST_PrivateOffsetUnits: the offset unit, of an LRM allowing offsets
     /// [Description 7, 10].
     pub offset_units: Option<String>,

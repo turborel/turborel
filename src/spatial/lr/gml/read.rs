@@ -10,7 +10,7 @@
 use super::{
     CONSTRAINT, CONSTRAINTS, CURVE, DEFAULT_LRM, DEFAULT_MEASURE, DISTANCE_ALONG, DISTANCE_EXPRESSION, EDGE_ID, ELEMENT_ID, ELEMENT_TYPE,
     FEATURE_GEOMETRY, FEATURE_ID, FROM_FEATURE, FROM_NAME, LATERAL_DIRECTION, LATERAL_OFFSET, LINEAR_ELEMENT, LOCATION, LR_CURVE,
-    LR_DIRECTED_EDGE, LR_FEATURE, LR_MEASURE, LRM, LRM_ID, LRM_VALUE, MEASURE, NAME, OFFSET_DESCRIPTION, OFFSET_DISTANCE, OFFSET_UNIT,
+    LR_DIRECTED_EDGE, LR_FEATURE, LR_MEASURE, LRM, LRM_ID, LRM_VALUE, MEASURE, NAME, NIL, OFFSET_DESCRIPTION, OFFSET_DISTANCE, OFFSET_UNIT,
     POSITION, POSITION_EXPRESSION, REFERENT, REFERENTS, START_VALUE, START_VALUES, TOPOLOGY_NAME, TOPOLOGY_TYPE, TOWARDS_FEATURE,
     TOWARDS_NAME, TYPE, UNIT_OF_MEASURE, UOM, VECTOR, VECTOR_OFFSET, VERTICAL_DIRECTION, VERTICAL_OFFSET, X, Y, Z, invalid,
 };
@@ -142,7 +142,8 @@ impl Read<'_, '_> {
 
     /// [§15.1.1] An ST_LRM.
     fn lrm(&self, node: &Node) -> Result<Lrm> {
-        let constraints = node.child(CONSTRAINTS).map(|c| c.all(CONSTRAINT).map(|k| k.text.trim().to_owned()).collect());
+        let element = |k: &Node| (k.attr(NIL) != Some("true")).then(|| k.text.trim().to_owned());
+        let constraints = node.child(CONSTRAINTS).map(|c| c.all(CONSTRAINT).map(element).collect());
         let parts = LrmParts {
             id: Some(integer(node, LRM_ID)?),
             name: Some(text(node, NAME)?),
