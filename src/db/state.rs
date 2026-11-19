@@ -135,6 +135,8 @@ pub struct State {
     pub(crate) collations: BTreeMap<String, Arc<dyn Collation>>,
     /// The clock the datetime value functions read (`clock.rs`).
     pub(crate) clock: Arc<dyn crate::clock::Clock>,
+    /// \[EXTENSION\] The last version 7 UUID made, shared by every snapshot (RULES.md D183).
+    pub(crate) uuids: Arc<crate::value::types::uuid::generate::Ordered>,
     pub(crate) optimizer: Optimizer,
     /// The transaction counter and the graph of waits, shared by every snapshot.
     pub(crate) tx: Arc<Transactions>,

@@ -34,6 +34,7 @@ use keys::{index_order, probes};
 use predicate::answerable;
 pub(crate) use predicate::predicate_call;
 use predicate::{omits_rows, supports};
+use spatial::Decision;
 
 /// \[DESIGN\] What a row an index-only scan makes of its entry costs, in
 /// rows of a scan of its table: its zone's visibility looked at and the
@@ -81,6 +82,9 @@ struct Probed {
     used: Vec<usize>,
     loose: bool,
     covering: bool,
+    /// The conjunct the scan decides of each entry, if one
+    /// (`Plan::IndexScan`, `access/spatial.rs`).
+    decided: Option<Decision>,
 }
 
 /// One possible index access: its probes, the WHERE terms they serve,
@@ -134,10 +138,11 @@ impl Candidate {
 }
 
 impl Probed {
-    /// The index `ix` probed by `c`'s probes, `covering` if so.
-    fn of(ix: &IndexDesc, c: Candidate, covering: bool) -> Probed {
+    /// The index `ix` probed by `c`'s probes, `covering` if so, deciding
+    /// a conjunct of each entry if `decided`.
+    fn of(ix: &IndexDesc, c: Candidate, (covering, decided): (bool, Option<Decision>)) -> Probed {
         let (index, method, columns) = (ix.name.clone(), ix.method.clone(), ix.columns.clone());
-        Probed { index, method, columns, probes: c.probes, slots: c.slots, used: c.used, loose: c.loose, covering }
+        Probed { index, method, columns, probes: c.probes, slots: c.slots, used: c.used, loose: c.loose, covering, decided }
     }
 
     /// Builds a path with the candidate count, lookup cost and total cost
@@ -157,10 +162,16 @@ impl Probed {
     }
 
     /// Removes WHERE terms fully answered by comparison probes. A function
-    /// lookup keeps every term for the check on fetched visible rows (D34).
+    /// lookup keeps every term for the check on fetched visible rows (D34),
+    /// but the one the scan decides of each entry itself (D85), which it
+    /// takes.
     fn answered(&mut self, conds: &mut Vec<Cond>) -> Vec<Cond> {
         if predicate::named(&self.probes) {
             self.used.clear();
+            if let Some(decision) = &mut self.decided {
+                decision.cond = (decision.at < conds.len()).then(|| conds.remove(decision.at));
+            }
+            return Vec::new();
         }
         // Two comparisons can serve the same WHERE term. Remove its
         // position only once, from the end so earlier positions stay valid.
@@ -236,7 +247,8 @@ impl PhysicalPlanner<'_> {
             let columns: Option<Vec<_>> = ix.columns.iter().map(|&c| desc.columns.get(c)).collect();
             let (kind, found, types) = (self.db.methods.get(&ix.method), self.db.index_of(&ix.name), ix.key_types(desc));
             let (Some(kind), Ok(found), Some(columns), Some(types)) = (kind, found, columns, types) else { continue };
-            let on = On { ix, kind: &**kind, found: &**found, types: &types, columns: &columns, storage: &**storage, evaluation, check };
+            let on =
+                On { ix, kind: &**kind, found: &**found, types: &types, columns: &columns, storage: &**storage, conds, evaluation, check };
             for c in self.candidates_of(ix, (&**kind, found, &types), &asked) {
                 let Some((path, priced)) = self.candidate_path(read, &on, c, want) else { continue };
                 if priced.is_some_and(|p| spatial.is_none_or(|s| p.probe < s.probe)) {
@@ -288,9 +300,13 @@ impl PhysicalPlanner<'_> {
         let distinct = || self.db.distinct_keys(read.table, on.found);
         let (est, probed_cost) = priced((on.found, &distinct), &c, (all, on.types.len(), cost.index_descent), storage);
         // Of a covering index, the rows its table says every reader
-        // sees are made of their entries, not fetched (RULES.md D34).
+        // sees are made of their entries, not fetched (RULES.md D34); nor
+        // are the entries a scan decides reading no column of their rows,
+        // the decided conjunct's alone among those needed (D85).
+        let decided = read.above.and_then(|above| spatial::decision(&c, on.conds, above));
+        let entries = decided.as_ref().is_some_and(|d| d.unread && read.needed.iter().all(|&column| column == d.column));
         let whole = !predicate::named(&c.probes) && !ix.is_collated() && covers(kind, (&ix.columns, on.types), read.needed);
-        let visible = whole.then(|| storage.visible_share()).flatten();
+        let visible = (whole || entries).then(|| storage.visible_share()).flatten();
         let row = storage.scan_cost(read.needed) / all.max(1.0_f64);
         let saved = |share: f64| est * share * (storage.fetch_cost() - ENTRY_SCAN_ROWS * row).max(0.0_f64);
         let clustering = c.stated.map_or(0.0_f64, |s| s.clustering);
@@ -301,14 +317,14 @@ impl PhysicalPlanner<'_> {
             path_cost * order.map_or(1.0_f64, |_| self.read_share(want, est)) + checked + self.sort_penalty(want, est, order.is_some());
         let stated = geometric::Stated::rows(c.stated.as_ref()).is_some();
         let priced = c.stated.is_some().then_some(geometric::Priced { est, stated, clustering, probe: total });
-        Some((Probed::of(ix, c, visible.is_some()).path((est, path_cost, total), order), priced))
+        Some((Probed::of(ix, c, (visible.is_some() && whole, decided)).path((est, path_cost, total), order), priced))
     }
 }
 
 /// An index a candidate probes, and what pricing it needs: the index, its
-/// method and its key's types and columns, the table's storage, and what
-/// evaluating its spatial conjuncts and checking its XML queries cost a
-/// row read.
+/// method and its key's types and columns, the table's storage, the
+/// conjuncts the candidates are of, and what evaluating its spatial
+/// conjuncts and checking its XML queries cost a row read.
 struct On<'a> {
     ix: &'a IndexDesc,
     kind: &'a dyn IndexMethod,
@@ -316,6 +332,9 @@ struct On<'a> {
     types: &'a [DataType],
     columns: &'a [&'a ColumnDesc],
     storage: &'a dyn TableStorage,
+    /// The conjuncts, those a scan may decide of each entry among them
+    /// (`access/spatial.rs`).
+    conds: &'a [Cond],
     evaluation: geometric::Evaluation,
     /// What checking the XML queries of a row costs (D106).
     check: f64,
@@ -399,7 +418,7 @@ impl PhysicalPlanner<'_> {
             let total = pages + found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost() + storage.fetch_cost();
             let (index, method, columns) = (ix.name.clone(), ix.method.clone(), ix.columns.clone());
             let covering = covers(&**kind, (&ix.columns, &types), read.needed) && storage.visible_share().is_some();
-            let chosen = Probed { index, method, columns, probes: vec![probe], slots, used, loose: false, covering };
+            let chosen = Probed { index, method, columns, probes: vec![probe], slots, used, loose: false, covering, decided: None };
             Some(Path {
                 total,
                 cost: total,

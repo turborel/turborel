@@ -114,7 +114,11 @@ impl ProgramBinder<'_> {
         if let SqlStatement::Signal(signal) = s {
             return self.signal(signal);
         }
-        if let SqlStatement::Select { query, targets } = s {
+        // [ISO/IEC 9075-2:2023 §7.6] of a delta table, run by the session,
+        // which runs its statement first (RULES.md D174).
+        if let SqlStatement::Select { query, targets } = s
+            && !matches!(query.table_expression.from.as_slice(), [ast::TableReference::Delta(_)])
+        {
             return self.select_into(query, targets);
         }
         if let SqlStatement::Return(r) = s {

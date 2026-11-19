@@ -35,6 +35,11 @@ impl Parser {
         let correlation = self.merge_correlation()?;
         self.expect_kw(kw::USING)?;
         let source = self.table_reference()?;
+        // [ISO/IEC 9075-2:2023 §14.12] whose statement runs before the
+        // merge reads its source (RULES.md D175).
+        if let crate::ast::TableReference::Delta(d) = &source {
+            d.rows.admit();
+        }
         self.expect_kw(kw::ON)?;
         let on = self.search_condition()?;
         // <merge operation specification> ::= <merge when clause>...: one

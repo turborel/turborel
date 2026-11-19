@@ -2,6 +2,8 @@
 
 use super::extremes::Extreme;
 use super::*;
+use crate::error::Code;
+use crate::storage::{Floats, Ints};
 use crate::value::{DOUBLE_PRECISION, Decimal, MAX_EXACT_PRECISION, Spelled};
 
 /// Verifies: [X3.135-1986 §5.8 F] MAX and MIN take an argument; asked for

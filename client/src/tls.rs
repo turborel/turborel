@@ -2,8 +2,12 @@
 //! rustls, its cryptography from aws-lc-rs. The client trusts the
 //! certificates it is given, and the platform's certificate authorities
 //! only when asked, with the feature `system-roots` (`roots`); it checks
-//! the server's certificate against the name it connects to; the handshake is done before Hello, so a server it does not
-//! trust is a connection failure (SQLSTATE 08006) that says why.
+//! the server's certificate against the name it connects to, or as its
+//! `TlsMode` says (`modes`, RULES.md D204); the handshake is done before
+//! Hello, so a server it does not trust is a connection failure (SQLSTATE
+//! 08006) that says why.
+
+pub mod modes;
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;

@@ -68,6 +68,9 @@ fn group_key(spec: &Spec, values: &Row) -> Result<Vec<u8>> {
 struct Group {
     first: u64,
     values: Row,
+    /// Its key (`group_key`), as the pass found it by: what a DISTINCT
+    /// set function's values are told apart under.
+    key: Vec<u8>,
     states: Vec<Box<dyn Accumulator>>,
     picks: Vec<Option<Pick>>,
 }
@@ -160,12 +163,12 @@ impl Grouper {
 
     /// A new group of the grouping values `values`, its first row numbered
     /// `first`: `row`, or of a group of no rows none.
-    fn group(&self, first: u64, values: Row, row: Option<&Row>) -> Result<Group> {
+    fn group(&self, first: u64, (values, key): (Row, Vec<u8>), row: Option<&Row>) -> Result<Group> {
         let picks = match row {
             Some(row) => picks(&self.spec.aggs, row, &self.runner)?,
             None => picks(&self.spec.aggs, &seeded(&self.spec.aggs, &self.spec.groups, &values), &self.runner)?,
         };
-        Ok(Group { first, values, states: fresh(&self.spec), picks })
+        Ok(Group { first, values, key, states: fresh(&self.spec), picks })
     }
 
     /// The groups of `input`, from memory if they fit the work area, else
@@ -181,7 +184,7 @@ impl Grouper {
         let rows = (first..).zip(input).map(|(n, r)| r.map(|row| Seeded::Row(n, row)));
         let mut held = self.pass(Box::new(seeded.chain(rows)), &mut overflow)?;
         if self.spec.groups.is_empty() && held.is_empty() {
-            held.push((0, finished(self.group(0, Vec::new(), None)?, &self.spec.aggs, None)?));
+            held.push((0, finished(self.group(0, (Vec::new(), Vec::new()), None)?, &self.spec.aggs, None)?));
         }
         let Overflow::Partitions(Some(parts)) = overflow else { return Ok(Box::new(held.into_iter().map(|(_, row)| Ok(row)))) };
         let mut sources = vec![self.written(held)?];
@@ -227,26 +230,29 @@ impl Grouper {
                     let key = group_key(&self.spec, &values)?;
                     bytes = bytes.saturating_add(key.len()).saturating_add(row_bytes(&values));
                     if let Entry::Vacant(vacant) = found.entry(key) {
-                        vacant.insert(self.group(n, values, None)?);
+                        let kept = vacant.key().clone();
+                        vacant.insert(self.group(n, (values, kept), None)?);
                     }
                     continue;
                 }
                 Seeded::Row(n, row) => (n, row),
             };
             let values: Row = self.spec.groups.iter().map(|&c| column(&row, c).cloned()).collect::<Result<_>>()?;
-            let key = group_key(&self.spec, &values)?;
-            if !found.contains_key(&key) {
-                if bytes > self.work.limit() {
-                    overflow.push(&key, &numbered(n, &row, self.work.lobs()), &mut self.work)?;
-                    continue;
+            // One look-up of the key a row: its group found, or made.
+            let group = match found.entry(group_key(&self.spec, &values)?) {
+                Entry::Occupied(occupied) => occupied.into_mut(),
+                Entry::Vacant(vacant) => {
+                    if bytes > self.work.limit() {
+                        overflow.push(vacant.key(), &numbered(n, &row, self.work.lobs()), &mut self.work)?;
+                        continue;
+                    }
+                    bytes = bytes.saturating_add(vacant.key().len()).saturating_add(row_bytes(&values));
+                    bytes = bytes.saturating_add(self.spec.aggs.len().saturating_mul(STATE_BYTES));
+                    let kept = vacant.key().clone();
+                    vacant.insert(self.group(n, (values, kept), Some(&row))?)
                 }
-                bytes = bytes.saturating_add(key.len()).saturating_add(row_bytes(&values));
-                bytes = bytes.saturating_add(self.spec.aggs.len().saturating_mul(STATE_BYTES));
-                found.insert(key.clone(), self.group(n, values, Some(&row))?);
-            }
-            if let Some(group) = found.get_mut(&key) {
-                feed(&self.spec.aggs, (group, &key), &row, &mut fed)?;
-            }
+            };
+            feed(&self.spec.aggs, group, &row, &mut fed)?;
         }
         let mut found: Vec<Group> = found.into_values().collect();
         found.sort_by_key(|g| g.first);
@@ -272,9 +278,9 @@ fn fresh(spec: &Spec) -> Vec<Box<dyn Accumulator>> {
 /// Feeds each set function of `group`, of grouping key `key`, its
 /// argument of `row`, the values each DISTINCT one took kept in the bag of
 /// `fed`, those of each inverse distribution function sorted in its sort.
-fn feed(aggs: &[AggCall], (group, key): (&mut Group, &[u8]), row: &Row, fed: &mut Fed<'_>) -> Result<()> {
+fn feed(aggs: &[AggCall], group: &mut Group, row: &Row, fed: &mut Fed<'_>) -> Result<()> {
     let (runner, seen, sorting) = (fed.runner, &mut fed.seen, &mut fed.sorting);
-    let Group { first, states, picks, .. } = group;
+    let Group { first, key, states, picks, .. } = group;
     for (n, (a, acc)) in aggs.iter().zip(states.iter_mut()).enumerate() {
         // [ISO/IEC 9075-2:2023 §10.9 GR4] a row its filter is not true of
         // is not aggregated, its argument not computed.
@@ -300,7 +306,10 @@ fn feed(aggs: &[AggCall], (group, key): (&mut Group, &[u8]), row: &Row, fed: &mu
                 // The group's key, the function's place, and the value: one
                 // key for each value each function of each group took.
                 let taken = || {
-                    seen.add_new(&[key, &u32::try_from(n).unwrap_or(u32::MAX).to_le_bytes(), &norm_row(std::slice::from_ref(&v))].concat())
+                    seen.add_new(
+                        &[key.as_slice(), &u32::try_from(n).unwrap_or(u32::MAX).to_le_bytes(), &norm_row(std::slice::from_ref(&v))]
+                            .concat(),
+                    )
                 };
                 if joins_argument(a.distinct, &v, taken)? {
                     acc.update(&v)?;
@@ -323,7 +332,7 @@ pub(super) fn admitted(filter: Option<&Cond>, row: &Row, runner: &Runner) -> Res
 /// The row of a finished group: its grouping values, then each set
 /// function's result, of `aggs`, of an inverse distribution function of
 /// its values read from `sorted`.
-fn finished(Group { first, values: mut row, states, picks }: Group, aggs: &[AggCall], mut sorted: Option<&mut Sorted>) -> Result<Row> {
+fn finished(Group { first, values: mut row, states, picks, .. }: Group, aggs: &[AggCall], mut sorted: Option<&mut Sorted>) -> Result<Row> {
     for (n, (acc, call)) in states.into_iter().zip(aggs).enumerate() {
         match picks.get(n).and_then(Option::as_ref) {
             Some(pick) => row.push(picked_of(sorted.as_deref_mut(), (first, n), call, pick)?),

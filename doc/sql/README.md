@@ -29,4 +29,5 @@ The language, element by element, and each statement on a reference page of its 
 - [Graph Algorithms](21-graph-algorithms.md) *(extension)*
 - [Graph Compatibility Syntax](22-graph-compatibility.md) *(extension)*
 - [Partitioned Tables](23-partitioning.md) *(extension)*
+- [Data Change Delta Tables](24-delta-tables.md)
 - [Statements](statements/README.md)

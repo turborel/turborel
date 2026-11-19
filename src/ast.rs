@@ -29,6 +29,7 @@ mod composite;
 mod connection;
 mod contents;
 mod cursor;
+mod delta;
 mod diagnostics;
 mod drop;
 mod dynamic;
@@ -75,6 +76,7 @@ pub use composite::{Composite, ValueOrder};
 pub use connection::{ConnectionStatement, Disconnected, ServedStatement};
 pub use contents::{AsSubquery, LikeClause};
 pub use cursor::{DeclareCursor, FetchOrientation};
+pub use delta::{DeltaResult, DeltaRows, DeltaTable, Given};
 pub use diagnostics::{AllQualifier, ConditionItem, DiagnosticsInformation, GetDiagnostics, StatementItem};
 pub use drop::{DropBehavior, DropObject};
 pub use dynamic::{

@@ -25,14 +25,21 @@ use crate::storage::{TableStorage, cost_of};
 
 impl PhysicalPlanner<'_> {
     /// The read of the table `cond` filters, as `input` reads it: directly,
-    /// its access path; or, of a product of the table's read, filtered or
+    /// its access path, told the columns the node above the filter reads,
+    /// `above`, if known; or, of a product of the table's read, filtered or
     /// not, and a guard of no columns, an index's read below the guard, if
     /// its conjuncts choose one. None of another.
-    pub(in crate::physical) fn filtered_read(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey]) -> Option<Built> {
+    pub(in crate::physical) fn filtered_read(
+        &self,
+        cond: &Cond,
+        input: &LogicalPlan,
+        (want, above): (&[SortKey], Option<&[usize]>),
+    ) -> Option<Built> {
         let mut conds = Vec::new();
         split_and(cond.clone(), &mut conds);
         if let LogicalPlan::Scan { table, names, needed, located } = input {
-            return Some(self.access(TableRead { table, shown: self.showing(names), needed, located: *located }, conds, want));
+            let read = TableRead { table, shown: self.showing(names), needed, located: *located, above };
+            return Some(self.access(read, conds, want));
         }
         let LogicalPlan::Product { left, right: guard } = input else { return None };
         if guard.width() != 0 {
@@ -44,7 +51,8 @@ impl PhysicalPlanner<'_> {
             read = below;
         }
         let LogicalPlan::Scan { table, names, needed, located } = read else { return None };
-        self.guarded_access(TableRead { table, shown: self.showing(names), needed, located: *located }, conds, (want, guard))
+        let below = TableRead { table, shown: self.showing(names), needed, located: *located, above: None };
+        self.guarded_access(below, conds, (want, guard))
     }
 
     /// RULES.md D15: the table read by an index its conjuncts `conds`

@@ -412,12 +412,19 @@ impl SqlState {
     pub const NO_PARTITION: SqlState = SqlState(*b"23T01");
     /// Triggered data change violation.
     pub const TRIGGERED_DATA_CHANGE_VIOLATION: SqlState = SqlState(*b"27000");
+    /// Triggered data change violation: modify table modified by data
+    /// change delta table [ISO/IEC 9075-2:2023 §15.18 GR15].
+    pub const MODIFY_DELTA_TABLE: SqlState = SqlState(*b"27001");
     /// Triggered action exception [ISO/IEC 9075-2:2023 §15.21 GR5b i 1,
     /// GR6m].
     pub const TRIGGERED_ACTION_EXCEPTION: SqlState = SqlState(*b"09000");
     /// Prohibited statement encountered during trigger execution [ISO/IEC
     /// 9075-2:2023 §15.21 GR6e iii, GR6h].
     pub const PROHIBITED_STATEMENT_IN_TRIGGER: SqlState = SqlState(*b"0W000");
+    /// Prohibited statement encountered during trigger execution: modify
+    /// table modified by data change delta table [ISO/IEC 9075-2:2023
+    /// §15.21 GR6i].
+    pub const MODIFY_DELTA_TABLE_IN_TRIGGER: SqlState = SqlState(*b"0W001");
     /// SQL routine exception [ISO/IEC 9075-2:2023 §24.1, Table 41].
     pub const SQL_ROUTINE_EXCEPTION: SqlState = SqlState(*b"2F000");
     /// SQL routine exception: modifying SQL-data not permitted [ISO/IEC

@@ -103,11 +103,12 @@ version, and comes with a major release (see
 | XML stored value | 1 | the value's first byte | `xml/stored.rs` |
 | FULLTEXT value and FT_PATTERN | 1 | the value's first byte | `fulltext/value.rs`, `fulltext/types/ft_pattern.rs` |
 | GEOMETRY payload, type descriptor and TIN element | 1 | the value's first byte | `geometry/model/payload.rs`, `geometry/reference.rs`, `geometry/tin_element.rs` |
+| UUID value, record and index key, 16 octets (RULES.md D180) | 1 | not written; a column's type names UUID | `value/types/uuid.rs` |
 | Linear referencing values | 1 | the value's first byte | `spatial/lr/codec.rs` |
 | Encrypted page sealing | 1 | the sealed header | `aes/src/sealer.rs` |
 | Replication state in the journal | 1 | its first byte | `replication/src/vr/frame.rs`, `STATE_FORMAT` |
 | Replication connection | 1 | its hello, `TBREPL\0\x01` | `server/src/replication/net.rs` |
-| Native protocol | 1 | the client's Hello | `protocol/src/lib.rs`, `VERSION` |
+| Native protocol, a UUID's field (tag 27) among it | 1 | the client's Hello | `protocol/src/lib.rs`, `VERSION`; `protocol/src/fields.rs` |
 | Plug-in protocol | 1 | HELLO and WELCOME's first field | `plugin.rs`, `PROTOCOL` |
 | Plug-in payloads of kinds 10 to 19 (rankings to sinks of events) | 1, as the protocol | the protocol's version | `plugin/payload/` |
 | A plug-in type's stored value (key, binary and text forms) | 1, as the protocol | the protocol's version | `plugin/payload/types.rs` |

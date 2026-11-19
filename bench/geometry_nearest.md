@@ -131,3 +131,33 @@ Throughput spreads were 0.2–1.4%. The decoder helps the one- and
 four-session cases; the eight-session changes remain below the harness's
 noise floor. There is still less throughput at eight sessions than four.
 The candidate bounds, tie handling and SQL results are unchanged.
+
+## A frontier of runs
+
+Profiling ten-nearest queries showed the frontier's heap as the largest
+single cost: every entry of every visited node, about 170 per leaf, was
+pushed with a logarithmic sift. Each expanded node's items now form one
+run, a heap built in place in linear time; a heap of runs orders them by
+their nearest item (RULES.md D72). The order returned, ties included, is
+unchanged.
+
+Measured on an Apple M4 (4 performance and 6 efficiency cores), Rust
+1.99.0, idle machine, 1,024 queries per worker. The baseline is the
+parent commit with its memory-budget change:
+
+```text
+TURBOREL_NEAREST_QUERIES=1024 cargo xtask bench geometry_nearest --save q6-before
+TURBOREL_NEAREST_QUERIES=1024 cargo xtask bench geometry_nearest --save q6 --compare q6-before
+```
+
+| Dataset | Sessions | Before, queries/s | After, queries/s | Change |
+|---|---:|---:|---:|---:|
+| Points | 1 | 39,086 | 56,080 | +43.5% |
+| Points | 4 | 127,359 | 165,683 | +30.1% |
+| Points | 8 | 152,313 | 179,990 | +18.2% |
+| Rectangles | 1 | 41,077 | 53,526 | +30.3% |
+| Rectangles | 4 | 129,862 | 160,298 | +23.4% |
+| Rectangles | 8 | 152,587 | 174,751 | +14.5% |
+
+Spreads were 0.4-3.2%. Every query's ten IDs were checked against
+integer squared distances before timing, in both builds.

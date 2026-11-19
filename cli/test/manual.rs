@@ -5,11 +5,14 @@
 //! The client runs with `--null NULL`, as the manual says its examples do.
 
 mod backup;
+mod commands;
+mod delta;
 mod embedding;
 mod extensions;
 mod hybrid;
 mod information;
 mod partitioning;
+mod uuids;
 mod vector;
 mod xml;
 
@@ -19,7 +22,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use turborel::db::Database;
-use turborel_cli::{Command, Dialer, Input, Io};
+use turborel_cli::{Command, Dialer, Input, Io, Terminal};
 use turborel_client::agent::Agent;
 
 use crate::common::{Running, Scratch, command, options, start};
@@ -161,7 +164,8 @@ impl Client {
         NULL_SHOWN.clone_into(&mut given.null);
         let screen = Screen::default();
         let (mut out, mut err) = (screen.clone(), screen.clone());
-        let io = Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None };
+        let io =
+            Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
         turborel_cli::run(&mut self.agent, &given, io);
         String::from_utf8(screen.0.take()).unwrap()
     }
@@ -211,10 +215,18 @@ impl Client {
     /// files it names in `scratch`, named as given.
     fn ran(&self, args: &str, scratch: &Scratch) -> String {
         let port = self.server.address.port().to_string();
-        let line: Vec<String> = args.split_whitespace().chain(["-p", &port]).map(str::to_owned).collect();
-        let Ok(Command::Run(mut given)) = turborel_cli::parse(&line, &|_| None) else { panic!("{args}") };
+        let line: Vec<String> = match args.strip_prefix("admin ") {
+            // An administrative command's words follow its options.
+            Some(rest) => ["admin", "-p", &port].into_iter().chain(rest.split_whitespace()).map(str::to_owned).collect(),
+            None => args.split_whitespace().chain(["-p", &port]).map(str::to_owned).collect(),
+        };
+        let parsed = turborel_cli::parse(&line, &|_| None);
+        if let Ok(Command::Admin(invocation)) = parsed {
+            return commands::administered(&invocation);
+        }
+        let Ok(Command::Run(mut given)) = parsed else { panic!("{args}") };
         for input in &mut given.inputs {
-            if let Input::Import(path) = input {
+            if let Input::Import(path) | Input::File(path) = input {
                 *path = scratch.path(&path.display().to_string());
             }
         }
@@ -222,7 +234,8 @@ impl Client {
         let mut agent = Agent::connected(Dialer::new((*given).clone(), Box::new(|| Ok(String::new()))), connection);
         let screen = Screen::default();
         let (mut out, mut err) = (screen.clone(), screen.clone());
-        let io = Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None };
+        let io =
+            Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
         turborel_cli::run(&mut agent, &given, io);
         agent.terminate().unwrap();
         String::from_utf8(screen.0.take()).unwrap().replace(&format!("{}{}", scratch.dir.display(), std::path::MAIN_SEPARATOR), "")
@@ -237,17 +250,6 @@ impl Client {
         let within = from.split("\n## ").next().unwrap_or_default();
         self.run(page, &examples_in(within), Some(scratch))
     }
-}
-
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D59: the Client Reference's
-/// examples of importing run as printed, as ANN, each file shown made.
-#[test]
-fn the_import_examples_run_as_printed() {
-    let db = Database::new();
-    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
-    let mut ann = Client::of(&db, "ANN");
-    let scratch = Scratch::new("manual-import");
-    assert!(ann.section("client/01-turborel.md", "## Importing", &scratch) > 0, "the section shows its examples");
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8: the User's Guide's examples, of

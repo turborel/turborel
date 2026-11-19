@@ -19,8 +19,11 @@ mod access;
 mod built;
 mod collated;
 mod cost;
+mod decided;
+pub use decided::Decided;
 pub(crate) mod estimate;
 mod expression_index;
+mod grouping;
 mod indexed;
 mod join_probe;
 pub use join_probe::{Fields, JoinComparison, JoinProbe, Paired, Preserved, Spatial, Supplied, Unmatched};
@@ -53,7 +56,7 @@ use crate::exec::{TransitionRows, WorkRows};
 use crate::index::Probe;
 use crate::logical::{
     AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, Most, OuterJoin, Polymorphic, Recognize, SetOp, SortKey, Unnest, Window,
-    column_name, judged_by_sets, render_cond, render_expr, render_keys,
+    expr_columns, judged_by_sets, render_cond, render_expr, render_keys,
 };
 use crate::storage::Row;
 use crate::system::SystemRead;
@@ -125,6 +128,12 @@ pub enum Plan {
         /// Whether each row it reads is followed by the row's id
         /// (`LogicalPlan::Scan`).
         located: bool,
+        /// \[DESIGN\] (RULES.md D85) A conjunct the scan decides of each
+        /// entry, not its filter: of an entry that is one point, not the
+        /// origin an empty geometry projects to, by the call's function
+        /// from the point, its row read only if `columns` names one, and
+        /// if every reader sees it; of any other, by the call on its row.
+        decided: Option<Box<Decided>>,
     },
     /// The rows of `input` for which `cond` is true [X3.135-1986 §5.21 GR2].
     Filter {
@@ -403,6 +412,11 @@ struct TableRead<'a> {
     shown: Shown<'a>,
     needed: &'a [usize],
     located: bool,
+    /// The columns the node above a filter over the table reads of its
+    /// rows, if known: a projection's or a grouping's (`build_input`);
+    /// none of any other. A scan deciding a conjunct itself reads the
+    /// row of an entry it decides only for these (`Plan::IndexScan`).
+    above: Option<&'a [usize]>,
 }
 
 impl<'a> PhysicalPlanner<'a> {
@@ -450,9 +464,10 @@ impl<'a> PhysicalPlanner<'a> {
         }
         match logical {
             LogicalPlan::Scan { table, names, needed, located } => {
-                self.access(TableRead { table, shown: self.showing(names), needed, located: *located }, Vec::new(), want)
+                let read = TableRead { table, shown: self.showing(names), needed, located: *located, above: None };
+                self.access(read, Vec::new(), want)
             }
-            LogicalPlan::Filter { cond, input } => self.filter(cond, input, want),
+            LogicalPlan::Filter { cond, input } => self.filter(cond, input, want, None),
             LogicalPlan::Product { left, right } => self.product(left, right, want),
             LogicalPlan::OuterJoin { kind, cond, left, right } => self.outer_join((*kind, cond), left, right, want),
             LogicalPlan::Aggregate { .. } => self.aggregate(logical, want),
@@ -500,33 +515,6 @@ impl<'a> PhysicalPlanner<'a> {
         Built { plan: Plan::Window { window, detail }, ordered: !want.is_empty() && keys.starts_with(want) }
     }
 
-    /// The groups of `logical`, an aggregation, in the order of `want` if
-    /// their first rows' order can give it.
-    fn aggregate(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
-        let LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } = logical else { return self.build_node(logical, want) };
-        let detail = self.described(input, |names| {
-            let seeded = if seeds.is_empty() { String::new() } else { format!(" with {} groups of no rows", seeds.len()) };
-            format!(
-                "group by [{}] computing [{}]{seeded}",
-                groups.iter().map(|&g| column_name(names, g)).collect::<Vec<_>>().join(", "),
-                aggs.iter().map(|a| a.label.as_str()).collect::<Vec<_>>().join(", ")
-            )
-        });
-        // Groups come in the order of their first rows (`exec/group.rs`),
-        // so rows in order of grouping columns give groups in that order;
-        // groups made before any row come first, in no such order.
-        let ordered = collations.is_empty() && seeds.is_empty();
-        let inner: Vec<SortKey> = want
-            .iter()
-            .map(|k| groups.get(k.column).filter(|_| ordered).map(|&c| SortKey { column: c, ..*k }))
-            .collect::<Option<_>>()
-            .unwrap_or_default();
-        let b = self.build(input, &inner);
-        let (groups, collations, aggs, seeds) = (groups.clone(), collations.clone(), aggs.clone(), seeds.clone());
-        let plan = Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(b.plan) };
-        Built { plan, ordered: !inner.is_empty() && b.ordered }
-    }
-
     /// [X3.135-1986 §8.3 GR2b] UNION is UNION ALL followed by duplicate
     /// elimination; EXCEPT and INTERSECT keep the first operand's rows in
     /// its order [ISO/IEC 9075:1992 §7.10 GR1b].
@@ -540,11 +528,12 @@ impl<'a> PhysicalPlanner<'a> {
     }
 
     /// A filter directly on a table, or over a table's read and a guard
-    /// (`physical/access/guarded.rs`), becomes part of the access path; any
-    /// other keeps the order of its input, its long IN lists judged by
-    /// sets (`logical::judged_by_sets`).
-    fn filter(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey]) -> Built {
-        if let Some(read) = self.filtered_read(cond, input, want) {
+    /// (`physical/access/guarded.rs`), becomes part of the access path,
+    /// told the columns the node above reads, `above`, if known; any other
+    /// keeps the order of its input, its long IN lists judged by sets
+    /// (`logical::judged_by_sets`).
+    fn filter(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey], above: Option<&[usize]>) -> Built {
+        if let Some(read) = self.filtered_read(cond, input, (want, above)) {
             return read;
         }
         if let Some(join) = self.hash_join(cond, input, want) {
@@ -567,7 +556,11 @@ impl<'a> PhysicalPlanner<'a> {
             })
             .collect::<Option<_>>()
             .unwrap_or_default();
-        let b = self.build(input, &inner);
+        let mut reads = Vec::new();
+        for e in exprs {
+            expr_columns(e, &mut reads);
+        }
+        let b = self.build_input(input, &inner, &reads);
         let detail = self.described(input, |names| exprs.iter().map(|e| render_expr(e, names)).collect::<Vec<_>>().join(", "));
         let (exprs, source) = project::collapsed(exprs.to_vec(), b.plan);
         Built { plan: Plan::Project { exprs, detail, input: Box::new(source) }, ordered: !inner.is_empty() && b.ordered }

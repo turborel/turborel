@@ -15,6 +15,7 @@ use crate::value::{CompOp, Value, arith, cast_warned, compare, distinct, proxies
 
 #[cfg(test)]
 mod calls;
+mod compared;
 mod context;
 
 /// Where no subquery can be, as `NoSubqueries`, the warnings raised heard
@@ -259,7 +260,7 @@ pub fn eval_cond(c: &Cond, row: &Row, subqueries: &dyn Subqueries) -> Result<Tru
         // [ISO/IEC 9075:1992 §8.12 GR2, Table 15] IS is never unknown.
         Cond::Is(a, value, not) => truth((eval_cond(a, row, subqueries)? == *value) != *not),
         // [X3.135-1986 §5.11 GR2, GR3]
-        Cond::Compare(a, op, b) => compared_read(&eval(a, row, subqueries)?, *op, &eval(b, row, subqueries)?)?,
+        Cond::Compare(a, op, b) => compared::compared((a, *op, b), row, subqueries)?,
         // [ISO/IEC 9075-2:2023 §8.15 GR1] never unknown.
         Cond::Distinct(a, b) => truth(distinct(&eval(a, row, subqueries)?, &eval(b, row, subqueries)?)?),
         // [X3.135-1986 §5.15 GR2-GR4]: IS NULL is never unknown.
