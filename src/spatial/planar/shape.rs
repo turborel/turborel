@@ -42,18 +42,6 @@ pub enum Dimension {
     Surface,
 }
 
-impl Dimension {
-    /// The SMALLINT value ST_Dimension returns.
-    pub fn value(self) -> i8 {
-        match self {
-            Self::Empty => -1,
-            Self::Point => 0,
-            Self::Curve => 1,
-            Self::Surface => 2,
-        }
-    }
-}
-
 /// The parts of a geometry, flattened into its points, its line strings
 /// and its polygons. Every operation reads its operands through these.
 #[derive(Clone, Debug, Default)]

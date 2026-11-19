@@ -227,3 +227,17 @@ fn hnsw_layers_are_seeded_and_thin_out() {
     let upper = levels(42).iter().filter(|l| **l >= 1).count();
     assert!((450..=800).contains(&upper), "{upper} of 10000 reach layer 1");
 }
+
+/// Verifies: [DESIGN] a training sample of a graph past `SAMPLE_MOST`
+/// vectors is `SAMPLE_MOST` of them, each taken once and whole, the same
+/// for one seed; of fewer, every vector.
+#[test]
+fn a_training_sample_is_bounded_and_seeded() {
+    let flat: Vec<f32> =
+        (0..u32::try_from(SAMPLE_MOST).unwrap() + 10).flat_map(|i| [f32::from(u16::try_from(i % 60_000).unwrap()), 1.0]).collect();
+    let picked = sample(&flat, 2, 7);
+    assert_eq!(picked.len(), SAMPLE_MOST * 2);
+    assert!(picked.iter().skip(1).step_by(2).all(|y| *y > 0.5));
+    assert_eq!(picked, sample(&flat, 2, 7));
+    assert_eq!(sample(&flat[..20], 2, 7), &flat[..20]);
+}

@@ -67,7 +67,7 @@ pub static ROUTINES: &[Routine] = &[
     called("ST_UNITOFMEASURE", SELF_UNIT, LRM, |a| out(Lrm::with_unit_of_measure(this(a)?.as_ref(), a.text(1)?, a.catalog.units)?)),
     null_call("ST_CONSTRAINTS", SELF, P::TextArray, |a| {
         let l = this(a)?;
-        let items = l.as_ref().and_then(Lrm::constraints).map(|cs| cs.iter().map(|c| text(c)).collect::<Vec<_>>());
+        let items = l.as_ref().and_then(Lrm::constraints).map(|cs| cs.iter().map(|c| opt_text(c.as_deref())).collect::<Vec<_>>());
         Ok(or_null(items, |v| Value::Array(Arc::from(v))))
     }),
     called("ST_CONSTRAINTS", SELF_ARRAY, LRM, |a| out(Lrm::with_constraints(this(a)?.as_ref(), a.texts(1)?))),

@@ -6,6 +6,7 @@ use super::super::tests::structures::schema;
 use super::*;
 use crate::xml::{Kind, Node, NodeId, Syntax, Tree, Typing, Whitespace, parse};
 
+mod instance;
 mod more;
 mod simple;
 

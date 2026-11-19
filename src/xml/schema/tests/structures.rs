@@ -8,8 +8,10 @@ use super::super::*;
 use crate::error::{Result, SqlState};
 use crate::xml::{Syntax, Whitespace, parse};
 
+mod complex;
 mod compose;
 mod depth;
+mod restriction;
 mod simple;
 
 /// The declaration of the prefix `xs`.

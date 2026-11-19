@@ -253,3 +253,54 @@ impl SqlType for LrType {
         self.fits(v).ok().map(|()| (v.clone(), true))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::spatial::lr::LrMeasure;
+
+    /// A measure of `v` as a value.
+    fn measure(v: f64) -> Value {
+        to_value(&LrValue::LrMeasure(LrMeasure::new(v))).unwrap()
+    }
+
+    /// Verifies: [ISO/IEC 9075-2:2023 §9.2 SR2] a value is assigned and
+    /// cast to its own type and from its text; the null value to any; a
+    /// value of another linear referencing type, or of none, raises 2FF08
+    /// or SQLCODE -301.
+    #[test]
+    fn assigning_and_casting_check_the_type() {
+        let (lrm, m) = (&TYPES[0], &TYPES[6]);
+        let t = data_type_of(LrKind::LrMeasure);
+        assert!(m.assign(Value::Null, &t, "M").unwrap().is_null());
+        assert!(m.cast(Value::Null, &t).unwrap().is_null());
+        assert_eq!(payload(&m.assign(measure(1.0_f64), &t, "M").unwrap()), payload(&measure(1.0_f64)));
+        assert_eq!(payload(&m.assign(Value::Char("MEASURE 2".into()), &t, "M").unwrap()), payload(&measure(2.0_f64)));
+        let wrong = lrm.assign(measure(1.0_f64), &data_type_of(LrKind::Lrm), "L").unwrap_err();
+        assert_eq!(wrong.state, Some(SqlState::SPATIAL_ELEMENT_IS_NOT_A_VALID_TYPE));
+        assert_eq!(m.cast(Value::Approx(1.0_f64), &t).unwrap_err().code, Code::Data);
+        assert!(m.encode_record(&Value::Approx(1.0_f64), &t).is_err());
+    }
+
+    /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15] the types
+    /// declare no ordering: no key is of them (SQLCODE -900) and they have
+    /// no position; the bytes compare and bucket where the engine keeps
+    /// them; a literal is a cast of the text; a value anchors as itself.
+    #[test]
+    fn values_are_unordered_and_unkeyed() {
+        let m = &TYPES[6];
+        let t = data_type_of(LrKind::LrMeasure);
+        let (one, two) = (measure(1.0_f64), measure(2.0_f64));
+        assert!(!m.ordered());
+        assert_eq!(m.compare(&one, &one), Some(Ordering::Equal));
+        assert_eq!(m.compare(&one, &Value::Null), None);
+        assert!(m.bucket(&one).is_some() && m.bucket(&Value::Null).is_none());
+        assert_ne!(m.bucket(&one), m.bucket(&two));
+        assert_eq!(m.literal(&one), "CAST('MEASURE 1' AS ST_LRMEASURE)");
+        assert_eq!(m.position(&one), None);
+        assert_eq!(m.encode_key(&one, &t, &mut Vec::new()).unwrap_err().code, Code::Unsupported);
+        assert_eq!(m.decode_key(&mut &[0_u8][..], &t).unwrap_err().code, Code::Unsupported);
+        assert!(m.anchor(&one, &t).is_some_and(|(v, exact)| exact && payload(&v) == payload(&one)));
+        assert!(TYPES[0].anchor(&one, &t).is_none());
+    }
+}

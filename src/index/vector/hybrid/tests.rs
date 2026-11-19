@@ -267,3 +267,35 @@ fn a_text_alone_is_its_text_part() {
     let three = [DataType::varying(100), DataType::varying(100), DataType::varying(100)];
     assert!(method.create(&three).is_err());
 }
+
+/// Verifies: [EXTENSION] vector_standard §11.1, RULES.md D85: a load
+/// fills both parts as inserts do, each key once, and a load's failure is
+/// the statement's; the rows of a key are those of its text, or of its
+/// vector if its text is null, none of two nulls; the projected key holds
+/// every row; an insert alone never finds a duplicate, as no UNIQUE
+/// index of the method is made; a search by columns is refused as
+/// unsupported.
+#[test]
+fn a_load_and_the_rows_of_a_key_reach_both_parts() {
+    let method = in_memory();
+    let index: Arc<dyn Index> = Arc::from(method.create(&columns()).unwrap());
+    let work = crate::spill::WorkAreas::new(MemoryBudget::new(usize::MAX));
+    let entries = vec![(key(Some("quick brown fox"), Some(&EAST)), 1), (key(None, Some(&NORTH)), 2), (key(Some("lazy dog"), None), 3)];
+    index.load(&mut entries.into_iter().map(Ok), (&work, crate::spill::Area::new(4_096, 64))).unwrap();
+    assert_eq!(every_row(&index), [1, 2, 3]);
+    assert_eq!(index.rows(&key(Some("lazy dog"), Some(&ONES))).unwrap(), [3]);
+    assert_eq!(index.rows(&key(None, Some(&NORTH))).unwrap(), [2]);
+    assert_eq!(index.rows(&key(None, None)).unwrap().len(), 0);
+    let all: Vec<RowId> =
+        Arc::clone(&index).key_rows(&Key(vec![Value::Binary(crate::value::Binary::new(Vec::new()))])).map(Result::unwrap).collect();
+    assert_eq!(all.len(), 3);
+    assert!(!index.insert_alone(key(Some("lazy dog"), None), 4).unwrap());
+    assert_eq!(index.distinct_keys(), None, "the text part keeps no count of its keys");
+    let refused = Arc::clone(&index).search(&Probe::Columns(Vec::new()), KeyOrder::Ascending).next().unwrap().unwrap_err();
+    assert_eq!(refused.code, Code::Unsupported);
+    let failing = vec![Ok((Key(vec![Value::Null]), 9))];
+    let fresh: Arc<dyn Index> = Arc::from(method.create(&columns()).unwrap());
+    assert!(fresh.load(&mut failing.into_iter(), (&work, crate::spill::Area::new(4_096, 64))).is_err());
+    index.reside(true).unwrap();
+    index.discard();
+}

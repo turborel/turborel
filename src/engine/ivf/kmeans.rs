@@ -143,3 +143,6 @@ fn farthest<'a>(
     }
     sample.get(at.saturating_mul(dims)..at.saturating_add(1).saturating_mul(dims))
 }
+
+#[cfg(test)]
+mod tests;

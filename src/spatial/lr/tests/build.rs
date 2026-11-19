@@ -66,8 +66,8 @@ fn lrm_mutators() {
     assert_eq!(state(Lrm::with_unit_of_measure(Some(&l), None, &all)), SqlState::SPATIAL_NULL_ARGUMENT);
     assert_eq!(state(Lrm::with_unit_of_measure(Some(&l), Some("ell".to_owned()), &all)), SqlState::SPATIAL_UNSUPPORTED_UNIT_SPECIFIED);
     assert_eq!(Lrm::with_unit_of_measure(None, Some("ell".to_owned()), &all).unwrap(), None);
-    let c = Lrm::with_constraints(Some(&l), Some(vec!["a".to_owned()])).unwrap();
-    assert_eq!(c.constraints(), Some(&["a".to_owned()][..]));
+    let c = Lrm::with_constraints(Some(&l), Some(vec![Some("a".to_owned())])).unwrap();
+    assert_eq!(c.constraints(), Some(&[Some("a".to_owned())][..]));
     assert_eq!(Lrm::with_constraints(None, None), None);
 }
 

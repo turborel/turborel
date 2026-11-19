@@ -157,3 +157,64 @@ fn chunks_and_embeddings_in_sql() {
     s.run("INSERT INTO V VALUES (1, EMBED('HASH_DENSE', 'some words'))").unwrap();
     assert_eq!(rows(&s, "SELECT K FROM V WHERE E IS NOT NULL").unwrap(), ["1"]);
 }
+
+/// Verifies: [EXTENSION] (R12.5) EMBED_VERSION of a model named by a
+/// value takes a name and, if any, a text, each a character string,
+/// SQLCODE -103 otherwise; it gives the plug-in's name and version, null
+/// of a null, and refuses a name of no model, SQLCODE -301.
+#[test]
+fn embed_version_of_a_named_model() {
+    let models = Arc::new(Embedders::built_in());
+    let version = routine(&models, EMBED_VERSION);
+    let varchar = DataType::varying(20);
+    assert!(version.return_type(std::slice::from_ref(&varchar)).is_ok());
+    assert!(version.return_type(&[varchar.clone(), varchar.clone()]).is_ok());
+    assert_eq!(version.return_type(&[]).unwrap_err().code, Code::SyntaxRule);
+    assert_eq!(
+        version
+            .return_type(&[DataType::Approximate {
+                precision: crate::value::DOUBLE_PRECISION,
+                spelled: crate::value::Spelled::DoublePrecision
+            }])
+            .unwrap_err()
+            .code,
+        Code::SyntaxRule
+    );
+    let model = models.named(HASH_DENSE).unwrap().unwrap();
+    let expected = format!("{}:{}", model.name(), model.version());
+    assert_same(&version.call(&[text("hash_dense")]).unwrap(), &Value::Char(expected));
+    assert_same(&version.call(&[Value::Null]).unwrap(), &Value::Null);
+    assert_eq!(version.call(&[text("NO_SUCH_MODEL")]).unwrap_err().code, Code::Data);
+    assert!(!version.deterministic());
+}
+
+/// Verifies: [EXTENSION] (§12.3) CHUNK_TEXT takes a text and a
+/// specification, or a text, a unit, a numeric MAX and up to three more
+/// of OVERLAP, SPLIT_ON and NORMALIZE, SQLCODE -103 otherwise; prepared
+/// of a constant specification, it is of the same type and gives null of
+/// a null text.
+#[test]
+fn chunk_text_argument_forms() {
+    let models = Arc::new(Embedders::built_in());
+    let chunk = routine(&models, "CHUNK_TEXT");
+    let (varchar, number) = (
+        DataType::varying(20),
+        DataType::Approximate { precision: crate::value::DOUBLE_PRECISION, spelled: crate::value::Spelled::DoublePrecision },
+    );
+    assert!(chunk.return_type(&[varchar.clone(), varchar.clone(), number.clone()]).is_ok());
+    let full = [varchar.clone(), varchar.clone(), number.clone(), number.clone(), varchar.clone(), DataType::Boolean];
+    assert!(chunk.return_type(&full).is_ok());
+    for refused in [
+        vec![],
+        vec![varchar.clone(), varchar.clone(), varchar.clone()],
+        vec![number.clone(), varchar.clone(), number.clone()],
+        [full.to_vec(), vec![varchar.clone()]].concat(),
+    ] {
+        assert_eq!(chunk.return_type(&refused).unwrap_err().code, Code::SyntaxRule, "{refused:?}");
+    }
+    let spec = text("BY WORDS MAX 2");
+    let prepared = chunk.specialize(&[None, Some(&spec)], &MemoryBudget::new(1 << 20)).unwrap();
+    assert_eq!(prepared.0.name(), "CHUNK_TEXT");
+    assert!(prepared.0.return_type(&[varchar.clone(), varchar]).is_ok());
+    assert_same(&prepared.0.call(&[Value::Null]).unwrap(), &Value::Null);
+}

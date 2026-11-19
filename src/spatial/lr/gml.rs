@@ -28,7 +28,8 @@
 //!   `featureGeometry`, `offsetReferentDescription`; `position`,
 //!   `location`; `measure`; `Vector` of `x`, `y` and `z`.
 //! - An attribute that is the null value has no element. An empty ARRAY
-//!   is its element with no children.
+//!   is its element with no children. A null element of the constraints
+//!   is a `constraint` with the attribute `nil="true"`.
 //! - A measure is its number as text, its unit an attribute `uom`.
 //! - A geometry is the GML of §5.1.61 (`spatial::formats::gml`), which
 //!   carries no m coordinate, inside its attribute's element.
@@ -84,6 +85,8 @@ pub(crate) const UNIT_OF_MEASURE: &str = "unitOfMeasure";
 pub(crate) const CONSTRAINTS: &str = "constraints";
 /// One constraint.
 pub(crate) const CONSTRAINT: &str = "constraint";
+/// [§15.1.1 Description 6] The attribute marking a null constraint.
+pub(crate) const NIL: &str = "nil";
 /// [§15.1.1 Description 7] The offset unit of measure.
 pub(crate) const OFFSET_UNIT: &str = "offsetUnitOfMeasure";
 /// [§15.1.1 Description 8] The positive lateral offset direction.
