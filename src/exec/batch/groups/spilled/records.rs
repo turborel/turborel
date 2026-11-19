@@ -1,17 +1,18 @@
 //! \[DESIGN\] RULES.md D31, D38: the records a grouping by batch writes
 //! past its work area, and reads back. A record of rows: a tag, their
 //! count and numbers, then each column, of a vector of integers its
-//! units, scale and nulls, of any other its values (`codec::put_value`).
-//! A record of pieces, groups partly made: a tag, their count, then each
-//! piece: its first row's number, its grouping values, then each set
-//! function's state (`Accumulator::write_state`).
+//! units, scale and nulls, of any other its values, each with what it
+//! names (`SpilledLobs::put_value`). A record of pieces, groups partly
+//! made: a tag, their count, then each piece: its first row's number, its
+//! grouping values (`SpilledLobs::put_row`), then each set function's
+//! state (`Accumulator::write_state`).
 
 use super::super::table::Held;
 use crate::bytes::{Put, Reader};
 use crate::error::{Code, Result, SqlError};
+use crate::spill::SpilledLobs;
 use crate::storage::{Batch, Column, Ints, Row};
 use crate::value::Value;
-use crate::value::codec::{put_row, put_value, row, value};
 use crate::value::types::TypeRegistry;
 
 /// The tag of a record of rows, and of one of pieces.
@@ -42,11 +43,11 @@ pub(in crate::exec::batch::groups) struct Piece {
 /// # Errors
 ///
 /// SQLCODE -916 if it is not a record `put_batch` or `put_pieces` wrote.
-pub(super) fn record_of(record: &[u8], types: &TypeRegistry) -> Result<Record> {
+pub(super) fn record_of(record: &[u8], types: &TypeRegistry, lobs: &SpilledLobs) -> Result<Record> {
     let (&tag, rest) = record.split_first().ok_or_else(malformed)?;
     match tag {
-        ROWS_TAG => batch_of(rest, types).map(|(batch, numbers)| Record::Rows(batch, numbers)),
-        PIECE_TAG => pieces_of(rest, types).map(Record::Pieces),
+        ROWS_TAG => batch_of(rest, types, lobs).map(|(batch, numbers)| Record::Rows(batch, numbers)),
+        PIECE_TAG => pieces_of(rest, types, lobs).map(Record::Pieces),
         _ => Err(malformed()),
     }
 }
@@ -54,9 +55,9 @@ pub(super) fn record_of(record: &[u8], types: &TypeRegistry) -> Result<Record> {
 /// Appends to `out` `group`, partly made, as a piece: its first row's
 /// number, its grouping values, then each set function's state, each after
 /// its length; whether each has one.
-pub(super) fn put_group((first, values, states): &Held, out: &mut Vec<u8>) -> bool {
+pub(super) fn put_group((first, values, states): &Held, out: &mut Vec<u8>, lobs: &SpilledLobs) -> bool {
     out.put_u64(*first);
-    put_row(out, values);
+    lobs.put_row(out, values);
     out.put_u32(u32::try_from(states.len()).unwrap_or(u32::MAX));
     for state in states {
         let at = out.len();
@@ -76,9 +77,9 @@ pub(super) fn put_group((first, values, states): &Held, out: &mut Vec<u8>) -> bo
 const LENGTH_BYTES: usize = 4;
 
 /// Appends `piece`, read back, to `out`, as `put_group` wrote it.
-pub(super) fn put_piece(piece: &Piece, out: &mut Vec<u8>) {
+pub(super) fn put_piece(piece: &Piece, out: &mut Vec<u8>, lobs: &SpilledLobs) {
     out.put_u64(piece.first);
-    put_row(out, &piece.values);
+    lobs.put_row(out, &piece.values);
     out.put_u32(u32::try_from(piece.states.len()).unwrap_or(u32::MAX));
     for written in &piece.states {
         out.put_u32(u32::try_from(written.len()).unwrap_or(u32::MAX));
@@ -96,21 +97,21 @@ pub(super) fn put_pieces(count: u32, pieces: &[u8], out: &mut Vec<u8>) {
 }
 
 /// The pieces `record`, its tag read, holds, as `put_pieces` wrote them.
-fn pieces_of(record: &[u8], types: &TypeRegistry) -> Result<Vec<Piece>> {
+fn pieces_of(record: &[u8], types: &TypeRegistry, lobs: &SpilledLobs) -> Result<Vec<Piece>> {
     let mut reader = Reader::new(record, "spilled groups").with_types(types);
     let count = reader.u32()?;
     let mut pieces = Vec::new();
     for _ in 0..count {
-        pieces.push(piece_of(&mut reader)?);
+        pieces.push(piece_of(&mut reader, lobs)?);
     }
     reader.finish()?;
     Ok(pieces)
 }
 
 /// The next piece `reader` reads, as `put_piece` wrote it.
-fn piece_of(reader: &mut Reader<'_>) -> Result<Piece> {
+fn piece_of(reader: &mut Reader<'_>, lobs: &SpilledLobs) -> Result<Piece> {
     let first = reader.u64()?;
-    let values = row(reader)?;
+    let values = lobs.row(reader)?;
     let count = reader.u32()?;
     let mut states = Vec::new();
     for _ in 0..count {
@@ -127,7 +128,7 @@ const NUMBER_BYTES: usize = 8;
 /// Writes to `out`, emptied first, the rows `rows` of `batch`, each its
 /// partition, place and number, as a record: their count and numbers,
 /// then each column's tag and values.
-pub(super) fn put_batch(batch: &Batch, rows: &[(usize, usize, u64)], out: &mut Vec<u8>) {
+pub(super) fn put_batch(batch: &Batch, rows: &[(usize, usize, u64)], out: &mut Vec<u8>, lobs: &SpilledLobs) {
     out.clear();
     out.push(ROWS_TAG);
     out.put_u32(u32::try_from(rows.len()).unwrap_or(u32::MAX));
@@ -152,9 +153,9 @@ pub(super) fn put_batch(batch: &Batch, rows: &[(usize, usize, u64)], out: &mut V
         out.push(VALUES);
         for &(_, r, _) in rows {
             match column {
-                Column::Values(values) => put_value(out, values.get(r).unwrap_or(&Value::Null)),
+                Column::Values(values) => lobs.put_value(out, values.get(r).unwrap_or(&Value::Null)),
                 Column::Ints(_) | Column::Floats(_) | Column::Texts(_) | Column::Nulls(_) => {
-                    put_value(out, &batch.cell(at, r).to_value());
+                    lobs.put_value(out, &batch.cell(at, r).to_value());
                 }
             }
         }
@@ -168,7 +169,7 @@ pub(super) fn put_batch(batch: &Batch, rows: &[(usize, usize, u64)], out: &mut V
 /// # Errors
 ///
 /// SQLCODE -916 if it is not such a record.
-fn batch_of(record: &[u8], types: &TypeRegistry) -> Result<(Batch, Vec<u64>)> {
+fn batch_of(record: &[u8], types: &TypeRegistry, lobs: &SpilledLobs) -> Result<(Batch, Vec<u64>)> {
     let mut reader = Reader::new(record, "spilled batch").with_types(types);
     let rows = usize::try_from(reader.u32()?).map_err(|_| malformed())?;
     if rows > record.len().checked_div(NUMBER_BYTES).unwrap_or(0) {
@@ -181,19 +182,19 @@ fn batch_of(record: &[u8], types: &TypeRegistry) -> Result<(Batch, Vec<u64>)> {
     let count = reader.u32()?;
     let mut columns = Vec::new();
     for _ in 0..count {
-        columns.push(column_of(&mut reader, rows)?);
+        columns.push(column_of(&mut reader, rows, lobs)?);
     }
     reader.finish()?;
     Ok((Batch { columns, rows }, numbers))
 }
 
 /// The next column of `rows` rows `reader` reads, as `put_batch` wrote it.
-fn column_of(reader: &mut Reader<'_>, rows: usize) -> Result<Column> {
+fn column_of(reader: &mut Reader<'_>, rows: usize, lobs: &SpilledLobs) -> Result<Column> {
     match reader.u8()? {
         VALUES => {
             let mut values = Vec::with_capacity(rows);
             for _ in 0..rows {
-                values.push(value(reader)?);
+                values.push(lobs.value(reader)?);
             }
             Ok(Column::Values(values))
         }
@@ -233,7 +234,7 @@ mod tests {
 
     /// The rows and numbers of `record`, which must be of rows.
     fn rows_of(record: &[u8]) -> Result<(Batch, Vec<u64>)> {
-        match record_of(record, &TypeRegistry::default())? {
+        match record_of(record, &TypeRegistry::default(), &SpilledLobs::new())? {
             Record::Rows(batch, numbers) => Ok((batch, numbers)),
             Record::Pieces(_) => Err(malformed()),
         }
@@ -265,7 +266,7 @@ mod tests {
         let batch = batch();
         let rows = [(0_usize, 3_usize, 30_u64), (0_usize, 1_usize, 10_u64), (0_usize, 0_usize, 0_u64)];
         let mut out = Vec::new();
-        put_batch(&batch, &rows, &mut out);
+        put_batch(&batch, &rows, &mut out, &SpilledLobs::new());
         let (read, numbers) = rows_of(&out).unwrap();
         assert_eq!(numbers, [30_u64, 10_u64, 0_u64]);
         assert_eq!(read.rows, 3_usize);
@@ -276,7 +277,7 @@ mod tests {
             assert_eq!(format!("{made:?}"), format!("{was:?}"), "row {r}");
         }
         let one = Batch { columns: vec![Column::Ints(Ints::new(vec![1_i64], 0_u32, None))], rows: 1 };
-        put_batch(&one, &[(0_usize, 0_usize, 5_u64)], &mut out);
+        put_batch(&one, &[(0_usize, 0_usize, 5_u64)], &mut out, &SpilledLobs::new());
         assert!(matches!(&rows_of(&out).unwrap().0.columns[0], Column::Ints(ints) if ints.nulls.is_none()));
     }
 
@@ -287,9 +288,9 @@ mod tests {
     #[test]
     fn records_not_of_a_batch_are_refused() {
         let mut out = Vec::new();
-        put_batch(&batch(), &[(0_usize, 0_usize, 1_u64)], &mut out);
+        put_batch(&batch(), &[(0_usize, 0_usize, 1_u64)], &mut out, &SpilledLobs::new());
         let types = TypeRegistry::default();
-        let code = |record: &[u8]| record_of(record, &types).err().map(|e| e.code);
+        let code = |record: &[u8]| record_of(record, &types, &SpilledLobs::new()).err().map(|e| e.code);
         assert_eq!(code(&out[..out.len() - 1]), Some(Code::Corrupt), "cut short");
         assert_eq!(code(&[ROWS_TAG, 0xff_u8, 0xff_u8, 0xff_u8, 0x7f_u8]), Some(Code::Corrupt), "too many rows");
         assert_eq!(code(&[7_u8]), Some(Code::Corrupt), "no such record");
@@ -361,11 +362,11 @@ mod tests {
         acc.update_rows(3_usize).unwrap();
         let values = vec![Value::Char("k".to_owned()), Value::Null];
         let mut body = Vec::new();
-        assert!(put_group(&(41_u64, values.clone(), vec![acc]), &mut body));
-        assert!(put_group(&(7_u64, vec![Value::Null, Value::Null], vec![other]), &mut body));
+        assert!(put_group(&(41_u64, values.clone(), vec![acc]), &mut body, &SpilledLobs::new()));
+        assert!(put_group(&(7_u64, vec![Value::Null, Value::Null], vec![other]), &mut body, &SpilledLobs::new()));
         let mut out = Vec::new();
         put_pieces(2_u32, &body, &mut out);
-        let Record::Pieces(pieces) = record_of(&out, &TypeRegistry::default()).unwrap() else { panic!("pieces") };
+        let Record::Pieces(pieces) = record_of(&out, &TypeRegistry::default(), &SpilledLobs::new()).unwrap() else { panic!("pieces") };
         assert_eq!(pieces.iter().map(|p| p.first).collect::<Vec<_>>(), [41_u64, 7_u64], "in order");
         let read = &pieces[0];
         assert_eq!((read.first, format!("{:?}", read.values)), (41_u64, format!("{values:?}")));
@@ -374,11 +375,11 @@ mod tests {
         assert_eq!(merged.finish().unwrap().to_string(), "3");
         assert_eq!(merged.merge(&[1_u8]).err().map(|e| e.code), Some(Code::Corrupt), "not a count's state");
         let stateless: Box<dyn Accumulator> = Box::new(Stateless);
-        assert!(!put_group(&(0_u64, Vec::new(), vec![stateless]), &mut out));
+        assert!(!put_group(&(0_u64, Vec::new(), vec![stateless]), &mut out, &SpilledLobs::new()));
         let mut again = Vec::new();
-        put_piece(read, &mut again);
+        put_piece(read, &mut again, &SpilledLobs::new());
         put_pieces(1_u32, &again, &mut out);
-        let Record::Pieces(twice) = record_of(&out, &TypeRegistry::default()).unwrap() else { panic!("pieces") };
+        let Record::Pieces(twice) = record_of(&out, &TypeRegistry::default(), &SpilledLobs::new()).unwrap() else { panic!("pieces") };
         assert_eq!((twice[0].first, &twice[0].states), (41_u64, &read.states), "written again as read");
     }
 }

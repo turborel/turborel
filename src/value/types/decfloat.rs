@@ -69,7 +69,8 @@ fn decfloat_of(v: &Value, precision: u32) -> Option<DecFloat> {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => None,
+        | Value::Extension(_)
+        | Value::Xml(_) => None,
     }
 }
 
@@ -180,7 +181,8 @@ impl SqlType for DecFloatKind {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => uncastable(&v, t),
+            | Value::Extension(_)
+            | Value::Xml(_) => uncastable(&v, t),
         }
     }
 
@@ -270,7 +272,8 @@ impl SqlType for DecFloatKind {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => None,
+            | Value::Extension(_)
+            | Value::Xml(_) => None,
         }
     }
 }

@@ -73,7 +73,10 @@ use crate::value::types::tags::{data_type, put_type};
 use columns::{collation_name, column, put_collation_name, put_column};
 pub(crate) use columns::{default, put_default};
 pub(crate) use indexes::{index, put_index};
-pub(crate) use objects::{collation, put_collation, put_sequence, put_user_type, sequence, user_type};
+pub(crate) use objects::{
+    collation, put_collation, put_sequence, put_user_type, put_xml_schema, put_xquery_module, sequence, user_type, xml_schema,
+    xquery_module,
+};
 pub(crate) use roles::{put_roles, roles};
 pub(crate) use routines::{module, put_module, put_routine, routine};
 pub(crate) use spatial::{put_spatial, put_spatial_change, spatial, spatial_change};
@@ -132,8 +135,9 @@ fn flag(r: &mut Reader<'_>) -> Result<bool> {
     }
 }
 
-/// A horizon: the columns seen of each table, then whether the subject
-/// routines are fixed, and if so their specific names.
+/// A horizon: each table's columns seen, its subject routines if fixed,
+/// its XML Schemas, its XQuery modules, and whether its XQuery
+/// expressions are typed statically.
 pub(super) fn put_horizon(out: &mut Vec<u8>, horizon: &Horizon) {
     put_all(out, horizon.widths.iter(), |out, (table, degree)| {
         put_name(out, table);
@@ -143,13 +147,18 @@ pub(super) fn put_horizon(out: &mut Vec<u8>, horizon: &Horizon) {
     if let Some(routines) = &horizon.routines {
         put_all(out, routines.iter(), put_name);
     }
+    put_all(out, horizon.xml_schemas.iter(), put_name);
+    put_all(out, horizon.xquery_modules.iter(), put_name);
+    put_flag(out, horizon.static_typing);
 }
 
 /// What `put_horizon` wrote.
 pub(super) fn horizon(r: &mut Reader<'_>) -> Result<Horizon> {
     let widths = get_all(r, |r| Ok((qualified(r)?, position(r)?)))?;
     let routines = if flag(r)? { Some(get_all(r, qualified)?) } else { None };
-    Ok(Horizon { widths, routines })
+    let xml_schemas = get_all(r, qualified)?;
+    let xquery_modules = get_all(r, qualified)?;
+    Ok(Horizon { widths, routines, xml_schemas, xquery_modules, static_typing: flag(r)? })
 }
 
 /// The tag of `action`, and the action of a tag.

@@ -26,7 +26,7 @@ type ReadOf<'a> = (&'a QualifiedName, &'a [usize], bool);
 
 /// The row `row` of id `id`, followed by the id if `located`: the last
 /// column of a located read (`storage::located`).
-fn read_row(located: bool, (id, mut row): (RowId, Row)) -> Row {
+pub(super) fn read_row(located: bool, (id, mut row): (RowId, Row)) -> Row {
     if located {
         row.push(storage::located(id));
     }
@@ -119,6 +119,11 @@ pub(super) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     let Plan::IndexScan { table, index, probe, reverse, covering, columns: needed, located, .. } = plan else {
         return failed(broken("an index scan is not one"));
     };
+    if let Probe::Xml(asked) = &probe
+        && asked.answered
+    {
+        return super::answered::answered(db, tx, (&table, &index, asked), (&needed, located));
+    }
     let width = covering.then(|| db.catalog.table(&table).map(|t| t.columns.len())).flatten();
     match probe_index(db, &table, &index, &probe, reverse) {
         Ok(Found { storage, ix, entries, projection, read }) => match read.record(&*storage, tx) {
@@ -157,10 +162,11 @@ pub(super) struct Found {
 /// the engine is told every row with a key: never narrower than the index,
 /// so it may refuse more commits, and never fewer (RULES.md D60).
 pub(in crate::exec) fn asked(ix: &KeyShape, probe: Probe) -> Condition {
-    // D34: storage cannot infer which rows a function selects. Record a
+    // D34, D106: storage cannot infer which rows a function or an XML
+    // lookup selects. Record a
     // whole-table read, including nulls, so conflict checks miss no match.
     // RULES.md D92: nor which an expression's values select.
-    if matches!(probe, Probe::Predicate { .. }) || ix.has_expressions() {
+    if probe.opaque() || ix.has_expressions() {
         return Condition { columns: Vec::new(), probe: Probe::All };
     }
     let probe = if ix.is_collated() { Probe::All } else { probe };

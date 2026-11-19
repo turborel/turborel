@@ -28,7 +28,7 @@ use super::super::{RowIter, failed};
 use super::{Built, Full, Operand, Right, each_match, key};
 use crate::error::{Code, Result, SqlError};
 use crate::physical::JoinKey;
-use crate::spill::{Records, SpillRun, bucket_key, record_row, row_bytes, row_record};
+use crate::spill::{Records, SpillRun, SpilledLobs, bucket_key, row_bytes};
 use crate::storage::Row;
 use crate::value::Bucket;
 use crate::value::types::TypeRegistry;
@@ -47,6 +47,8 @@ pub(in crate::exec) struct Partitions {
     /// The right operand's partitions, each with the bytes its rows take
     /// in memory.
     right: Vec<(Box<dyn SpillRun>, usize)>,
+    /// The sources of what its rows name, held while it is.
+    lobs: SpilledLobs,
 }
 
 impl Partitions {
@@ -57,7 +59,7 @@ impl Partitions {
         for _ in 0..work.width().min(work.partitions()) {
             right.push((work.run()?, 0));
         }
-        Ok(Partitions { keys, hasher: RandomState::new(), right })
+        Ok(Partitions { keys, hasher: RandomState::new(), right, lobs: work.lobs().clone() })
     }
 
     /// The right operand's partitions, of the rows `built` holds and the
@@ -97,7 +99,7 @@ impl Partitions {
         let at = self.of_key(b);
         let (run, bytes) = self.right.get_mut(at).ok_or_else(lost)?;
         *bytes = bytes.saturating_add(row_bytes(row));
-        run.push(&row_record(row))
+        run.push(&self.lobs.record(row))
     }
 
     /// The left rows `rows`, each with its number, those with a key in
@@ -110,7 +112,7 @@ impl Partitions {
         for r in rows {
             let (n, row) = r?;
             if let Some(b) = key(&row, &self.keys, Operand::Left)? {
-                lefts.get_mut(self.of_key(&b)).ok_or_else(lost)?.push(&numbered(n, &row))?;
+                lefts.get_mut(self.of_key(&b)).ok_or_else(lost)?.push(&numbered(n, &row, &self.lobs))?;
             }
         }
         Ok(lefts)
@@ -132,13 +134,13 @@ pub(in crate::exec) fn joined(left: RowIter, parts: Partitions, mut work: Work) 
 /// joined, and their joined rows, numbered, merged.
 fn merged(left: RowIter, parts: Partitions, work: &mut Work) -> Result<Merge> {
     let mut pending = Pending::of(left, parts, work)?;
-    let types = work.types().clone();
+    let (types, lobs) = (work.types().clone(), work.lobs().clone());
     let mut sources = Vec::new();
     while let Some((built, probes)) = pending.next(work)? {
         let mut out = work.run()?;
         for record in probes {
-            let (n, l) = unnumbered(&record?, &types)?;
-            each_match(&built, &l, |row| out.push(&numbered(n, &row)))?;
+            let (n, l) = unnumbered(&record?, &types, &lobs)?;
+            each_match(&built, &l, |row| out.push(&numbered(n, &row, &lobs)))?;
         }
         sources.push(out.into_records()?);
     }
@@ -153,6 +155,7 @@ fn merged(left: RowIter, parts: Partitions, work: &mut Work) -> Result<Merge> {
 pub(in crate::exec) struct Pending {
     keys: Vec<JoinKey>,
     types: TypeRegistry,
+    lobs: SpilledLobs,
     pairs: Vec<Pair>,
 }
 
@@ -177,7 +180,8 @@ impl Pending {
     pub(in crate::exec) fn of(left: RowIter, parts: Partitions, work: &mut Work) -> Result<Pending> {
         let mut numbers = 0_u64..;
         let lefts = parts.lefts(left.map(|r| r.map(|row| (numbers.next().unwrap_or(u64::MAX), row))), work)?;
-        let mut pending = Pending { keys: parts.keys.clone(), types: work.types().clone(), pairs: Vec::new() };
+        let (types, lobs) = (work.types().clone(), work.lobs().clone());
+        let mut pending = Pending { keys: parts.keys.clone(), types, lobs, pairs: Vec::new() };
         pending.add(parts, lefts, 0);
         Ok(pending)
     }
@@ -197,15 +201,16 @@ impl Pending {
     /// The spill area's.
     pub(in crate::exec) fn next(&mut self, work: &mut Work) -> Result<Option<(Built, Records)>> {
         while let Some(Pair { right, bytes, left, depth }) = self.pairs.pop() {
-            let held = self.types.clone();
-            let rows = right.into_records()?.map(move |r| r.and_then(|record| record_row(&record, &held)));
+            let (held, named) = (self.types.clone(), self.lobs.clone());
+            let rows = right.into_records()?.map(move |r| r.and_then(|record| named.record_row(&record, &held)));
             if bytes > work.limit() && depth < work.depth() {
                 let mut sub = Partitions::new(self.keys.clone(), work)?;
                 sub.add_rights(rows)?;
                 // A partition that did not shrink is built in a table.
                 let shrank = sub.right.iter().all(|(_, b)| *b < bytes);
-                let probed = self.types.clone();
-                let sub_lefts = sub.lefts(left.into_records()?.map(move |r| r.and_then(|record| unnumbered(&record, &probed))), work)?;
+                let (probed, lobs) = (self.types.clone(), self.lobs.clone());
+                let sub_lefts =
+                    sub.lefts(left.into_records()?.map(move |r| r.and_then(|record| unnumbered(&record, &probed, &lobs))), work)?;
                 self.add(sub, sub_lefts, if shrank { depth.saturating_add(1) } else { usize::MAX });
                 continue;
             }

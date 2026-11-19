@@ -234,7 +234,8 @@ pub fn sampled(value: &Value) -> Value {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => value.clone(),
+        | Value::Extension(_)
+        | Value::Xml(_) => value.clone(),
     }
 }
 

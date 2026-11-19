@@ -60,3 +60,5 @@ pub(in crate::db::dynamic) const STRUCTURED: i64 = 2;
 /// \[DESIGN\] An implementation-defined data type, of a code less than 0:
 /// a plug-in's (RULES.md D53), each described by this one code.
 pub(in crate::db::dynamic) const EXTENSION: i64 = -1;
+/// [ISO/IEC 9075-14:2006 draft §17.1 GR1, Table 12] XML.
+pub(in crate::db::dynamic) const XML: i64 = 137;

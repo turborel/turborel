@@ -301,6 +301,9 @@ impl Parser {
         if let Some(json) = self.json_primary()? {
             return Ok(Some(json));
         }
+        if let Some(xml) = self.xml_primary()? {
+            return Ok(Some(xml));
+        }
         // [ISO/IEC 9075-2:2023 §10.9] EVERY and ANY_VALUE, no key words of
         // SQL-92, before "(" set functions, and LISTAGG the <listagg set
         // function>.
@@ -349,7 +352,17 @@ impl Parser {
             SetArg::All(Box::new(self.value_expression()?))
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(SetFunctionSpecification { name, arg, order_by: Vec::new(), listagg: None, json: None, filter: None, semantics: None, at })
+        Ok(SetFunctionSpecification {
+            name,
+            arg,
+            order_by: Vec::new(),
+            listagg: None,
+            json: None,
+            filter: None,
+            semantics: None,
+            returning: None,
+            at,
+        })
     }
 
     /// [ISO/IEC 9075-2:2023 §6.9] `<grouping operation>` ::= GROUPING (
@@ -371,6 +384,7 @@ impl Parser {
             json: None,
             filter: None,
             semantics: None,
+            returning: None,
             at,
         })
     }
@@ -445,7 +459,8 @@ impl Parser {
     /// (`<cast operand>` AS `<cast target>` \[FORMAT `<cast template>`\]),
     /// the operand a `<value expression>` or NULL, the target a `<data
     /// type>` or a `<domain name>`, the template a `<character string
-    /// literal>`.
+    /// literal>`; and [ISO/IEC 9075-14:2006 draft §6.5] \[`<XML passing
+    /// mechanism>`\] before its ")".
     fn cast_specification(&mut self) -> Result<ValueExpression> {
         let at = self.here();
         self.expect_kw(kw::CAST)?;
@@ -462,8 +477,9 @@ impl Parser {
         } else {
             None
         };
+        let passing = self.passing_mechanism()?;
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(ValueExpression::Cast { operand, target, format, at })
+        Ok(ValueExpression::Cast { operand, target, format, passing, at })
     }
 
     /// [ISO/IEC 9075-2:2023 §6.15] `<greatest or least function>` ::=

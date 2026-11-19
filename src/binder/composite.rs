@@ -4,12 +4,14 @@
 //! identifier chain whose basis is a column of a row type [§6.6]; and the
 //! rules of the operations arrays and rows take part in [§9.12, §9.14].
 
+mod fields;
+
 use std::sync::Arc;
 
 use super::case::{brought, set_type};
 use super::statements::assignable;
 use super::{Binder, Scope, rule};
-use crate::ast::{Collection, ColumnSpecification, Composite, SelectItem, SetClause, TableName, UpdateSource, ValueExpression};
+use crate::ast::{Collection, ColumnSpecification, Composite, SetClause, TableName, UpdateSource, ValueExpression};
 use crate::catalog::ColumnDesc;
 use crate::db::State;
 use crate::error::{At, Code, Result, SqlError};
@@ -19,7 +21,7 @@ use crate::functions::{
 };
 use crate::logical::Expr;
 use crate::params::ParameterType;
-use crate::value::types::composite::{nesting, unordered};
+use crate::value::types::composite::{nesting, unordered, xml_ordered};
 use crate::value::types::{Field, MAX_ARRAY_CARDINALITY, MAX_TYPE_NESTING};
 use crate::value::{DataType, Decimal, INTEGER_PRECISION, Spelled, Value};
 
@@ -34,6 +36,20 @@ fn call(f: impl crate::functions::ScalarFunction + 'static, args: Vec<Expr>) -> 
     Expr::Call(ScalarRef(Arc::new(f)), args)
 }
 
+/// [ISO/IEC 9075-14:2006 draft §10.8 SR1 to §10.11 SR1] The error of an
+/// operand, `what`, of type `t`, of an operation that `verb` its values,
+/// by the rule `clause`, if `t` is XML-ordered: no XML value is compared.
+///
+/// # Errors
+///
+/// SQLCODE -103 if it is.
+pub(crate) fn not_xml(t: &DataType, what: &str, verb: &str, clause: &str) -> Result<()> {
+    if xml_ordered(t) {
+        return Err(rule(format!("[ISO/IEC 9075-14:2006 draft {clause}] {what} {verb} values of {t}, and XML values are not comparable")));
+    }
+    Ok(())
+}
+
 /// [ISO/IEC 9075-2:2023 §9.14 SR3] An operand of an ordering operation,
 /// `what`, of type `t`, is neither LOB-ordered nor array-ordered.
 ///
@@ -43,6 +59,7 @@ fn call(f: impl crate::functions::ScalarFunction + 'static, args: Vec<Expr>) -> 
 pub(super) fn ordering_operand(db: &State, t: &DataType, what: &str) -> Result<()> {
     orderless_operand(t, what)?;
     super::structured::udt_operand(db, t, super::structured::Need::Ordering, what)?;
+    not_xml(t, what, "orders", "§10.11 SR1")?;
     if let Some(these) = unordered(t) {
         return Err(rule(format!(
             "[ISO/IEC 9075-2:2023 §9.14 SR3] {what} orders values of {t}, and {these} are compared for equality alone"
@@ -60,6 +77,7 @@ pub(super) fn ordering_operand(db: &State, t: &DataType, what: &str) -> Result<(
 pub(crate) fn grouping_operand(db: &State, t: &DataType, what: &str) -> Result<()> {
     orderless_operand(t, what)?;
     super::structured::udt_operand(db, t, super::structured::Need::Grouping, what)?;
+    not_xml(t, what, "groups", "§10.9 SR1")?;
     if let Some(these) = unordered(t) {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.12 SR3] {what} groups values of {t}, and {these} are grouped by no operation")));
     }
@@ -100,6 +118,7 @@ pub(crate) fn key_operand(t: &DataType, what: &str) -> Result<()> {
         );
         return Err(SqlError::new(Code::Unsupported, msg));
     }
+    not_xml(t, what, "keys", "§10.9 SR1")?;
     if let Some(these) = unordered(t) {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §9.12 SR3] {what} groups values of {t}, and {these} are grouped by no operation")));
     }
@@ -163,7 +182,8 @@ fn collection_element(t: &DataType) -> Option<&DataType> {
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Json
-        | DataType::Extension(_) => None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => None,
     }
 }
 
@@ -185,9 +205,15 @@ pub(super) fn bounded(t: DataType) -> Result<DataType> {
 }
 
 /// Whether a part of `from` casts to `to`, as the rules of predefined
-/// types say: a binary string with a binary string alone [§6.13 SR7].
+/// types say: a binary string with a binary string alone [§6.13 SR7]; an
+/// XML type with an XML type alone, BY REF as CAST of one is, so to an
+/// UNTYPED type of an UNTYPED one [ISO/IEC 9075-14:2006 draft §6.5 SR3,
+/// SR4a].
 fn element_castable(from: &DataType, to: &DataType) -> bool {
-    super::datetime::binary_castable(from, to)
+    if let (DataType::Xml(source), DataType::Xml(target)) = (from, to) {
+        return target.takes(source);
+    }
+    !matches!(from, DataType::Xml(_)) && !matches!(to, DataType::Xml(_)) && super::datetime::binary_castable(from, to)
 }
 
 /// [ISO/IEC 9075-2:2023 §9.5 SR3g, SR3h, SR3i] The result type of
@@ -442,60 +468,6 @@ impl Binder<'_> {
         }
         let bound = self.column_expr(&basis, scope)?;
         self.refined(bound, &cs.column).map(Some).or_at(cs.at)
-    }
-}
-
-impl Binder<'_> {
-    /// [ISO/IEC 9075-2:2023 §7.16 SR11] `<all fields reference>` `value`.*
-    /// \[AS ( `names` )\]: VEP.F1 AS N1, ..., one item for each field of its
-    /// row type, as many names as fields \[SR11a\], each else named as its
-    /// field (UV087).
-    pub(super) fn all_fields(&self, value: &ValueExpression, names: Option<&[String]>, at: usize) -> Result<Vec<SelectItem>> {
-        let scope = Scope::Rows("[ISO/IEC 9075-2:2023 §7.16 SR11] the row an <all fields reference> spreads is found of each row");
-        let (_, t) = self.value_expression(value, scope).or_at(at)?;
-        let DataType::Row(r) = &t else {
-            return Err(rule(format!("[ISO/IEC 9075-2:2023 §7.16 SR11] .* spreads a row, not a value of {t}")).or_at(at));
-        };
-        if let Some(n) = names.filter(|n| n.len() != r.fields.len()) {
-            return Err(rule(format!(
-                "[ISO/IEC 9075-2:2023 §7.16 SR11a] {} names are given the {} fields of {t}",
-                n.len(),
-                r.fields.len()
-            ))
-            .or_at(at));
-        }
-        let item = |(i, f): (usize, &Field)| {
-            let field = Composite::Field(Box::new(value.clone()), f.name.clone());
-            let alias = names.and_then(|n| n.get(i)).cloned().unwrap_or_else(|| f.name.clone());
-            SelectItem { value: ValueExpression::Composite(Box::new(field), at), alias: Some(alias), at }
-        };
-        Ok(r.fields.iter().enumerate().map(item).collect())
-    }
-
-    /// [ISO/IEC 9075-2:2023 §7.16 SR10] `q`.* of two identifiers whose
-    /// basis is the second, a column of a row type of the table the first
-    /// names \[SR10f iv\]: its `<all fields reference>` \[SR10g ii 1\]; none
-    /// if it is not, `table` saying whether a table is the basis \[SR10f
-    /// vi\], as exactly one is \[SR10f vii\].
-    pub(super) fn row_asterisk(&self, q: &TableName, table: bool) -> Result<Option<Vec<SelectItem>>> {
-        let Some(first) = &q.auth else { return Ok(None) };
-        let column = ColumnSpecification {
-            qualifier: Some(TableName { auth: None, ident: first.clone(), at: q.at }),
-            column: q.ident.clone(),
-            catalog: None,
-            at: q.at,
-        };
-        if !matches!(self.local(&column), Ok(Some((_, DataType::Row(_), _)))) {
-            return Ok(None);
-        }
-        if table {
-            return Err(rule(format!(
-                "[ISO/IEC 9075-2:2023 §7.16 SR10f vii] {first}.{} is both a table and a column of a row type",
-                q.ident
-            ))
-            .or_at(q.at));
-        }
-        self.all_fields(&ValueExpression::Column(column), None, q.at).map(Some)
     }
 }
 

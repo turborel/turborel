@@ -374,6 +374,7 @@ fn json_returning(value: &ValueExpression) -> bool {
         | ValueExpression::Composite(..)
         | ValueExpression::Call { .. }
         | ValueExpression::Structured(..)
+        | ValueExpression::Xml(..)
         | ValueExpression::Window(_)
         | ValueExpression::NestedWindow(_) => false,
     }

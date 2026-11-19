@@ -18,8 +18,8 @@ fn old() -> Vec<Value> {
 
 /// `item` as its record gives it back, and that record.
 fn again<T: Holdable>(item: &T) -> (T, Vec<u8>) {
-    let record = item.record();
-    (T::read(&record, &TypeRegistry::default()).unwrap(), record)
+    let record = item.record(&SpilledLobs::new());
+    (T::read(&record, &TypeRegistry::default(), &SpilledLobs::new()).unwrap(), record)
 }
 
 /// Verifies: [DESIGN] RULES.md D38, `Holdable for Effect`: each effect a
@@ -35,18 +35,18 @@ fn effects_are_read_back() {
     ];
     for effect in &effects {
         let (read, record) = again(effect);
-        assert_eq!(read.record(), record);
+        assert_eq!(read.record(&SpilledLobs::new()), record);
         assert!(effect.bytes() > record.len().saturating_sub(64), "{}", effect.bytes());
     }
     assert!(effects[1].bytes() > effects[0].bytes(), "the old row counted");
     let (Effect::Updated { table, id, old: was, columns }, _) = again(&effects[1]) else { panic!("not updated") };
     assert_eq!((table, id, was.len(), columns), (named("T"), 8_u64, 2_usize, vec![0_usize, 1_usize]));
-    let mut unknown = effects[0].record();
+    let mut unknown = effects[0].record(&SpilledLobs::new());
     unknown[0] = 9_u8;
-    assert_eq!(Effect::read(&unknown, &TypeRegistry::default()).err().map(|e| e.code), Some(Code::Corrupt));
-    let mut longer = effects[0].record();
+    assert_eq!(Effect::read(&unknown, &TypeRegistry::default(), &SpilledLobs::new()).err().map(|e| e.code), Some(Code::Corrupt));
+    let mut longer = effects[0].record(&SpilledLobs::new());
     longer.push(0_u8);
-    assert_eq!(Effect::read(&longer, &TypeRegistry::default()).err().map(|e| e.code), Some(Code::Corrupt));
+    assert_eq!(Effect::read(&longer, &TypeRegistry::default(), &SpilledLobs::new()).err().map(|e| e.code), Some(Code::Corrupt));
 }
 
 /// Verifies: [DESIGN] RULES.md D38, `Holdable for Check`: each check of a
@@ -66,7 +66,7 @@ fn checks_are_read_back() {
     ];
     for check in &checks {
         let (read, record) = again(check);
-        assert_eq!(read.record(), record);
+        assert_eq!(read.record(&SpilledLobs::new()), record);
         assert_eq!((read.constraint(), read.table()), (check.constraint(), check.table()));
         assert!(check.bytes() > 0);
     }
@@ -77,9 +77,9 @@ fn checks_are_read_back() {
     assert!(matches!(again(&checks[1]).0, Check::Unique { id: 2, .. }));
     assert!(matches!(again(&checks[0]).0, Check::Row { id: 1, .. }));
     asserted_rows_are_read_back(&checks[5..]);
-    let mut unknown = checks[2].record();
+    let mut unknown = checks[2].record(&SpilledLobs::new());
     unknown[0] = 9_u8;
-    assert_eq!(Check::read(&unknown, &TypeRegistry::default()).err().map(|e| e.code), Some(Code::Corrupt));
+    assert_eq!(Check::read(&unknown, &TypeRegistry::default(), &SpilledLobs::new()).err().map(|e| e.code), Some(Code::Corrupt));
 }
 
 /// Of an assertion's check, and of its rows', `checks`: each row's read

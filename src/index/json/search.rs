@@ -67,7 +67,7 @@ pub(super) fn search(index: &Arc<JsonIndex>, probe: &Probe) -> Entries {
                 }
             }
         }
-        Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } => {
+        Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Xml(_) => {
             return Box::new(std::iter::once(Err(refused())));
         }
     };

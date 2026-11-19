@@ -280,7 +280,12 @@ impl<E: Engine> Index for VectorIndex<E> {
     fn estimate(&self, probe: &Probe) -> Option<usize> {
         match probe {
             Probe::All => self.engine().live().and_then(|n| usize::try_from(n).ok()),
-            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Predicate { .. } => None,
+            Probe::Columns(_)
+            | Probe::Compare { .. }
+            | Probe::Prefix { .. }
+            | Probe::Range { .. }
+            | Probe::Predicate { .. }
+            | Probe::Xml(_) => None,
         }
     }
     fn distinct_keys(&self) -> Option<f64> {
@@ -302,7 +307,12 @@ impl<E: Engine> Index for VectorIndex<E> {
                     row.map(|row| (key.clone(), row))
                 }))
             }
-            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Predicate { .. } => {
+            Probe::Columns(_)
+            | Probe::Compare { .. }
+            | Probe::Prefix { .. }
+            | Probe::Range { .. }
+            | Probe::Predicate { .. }
+            | Probe::Xml(_) => {
                 Box::new(std::iter::once(Err(refused(E::METHOD, "answers every entry and approximate searches, no comparison (R3.11)"))))
             }
         }

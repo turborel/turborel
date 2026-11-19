@@ -80,8 +80,6 @@ is kept consistent under concurrent change and recovery as the B-tree is.
 
 - Adjacency held for a graph's edges, so a path query follows an edge
   without a join's search. Graph queries need it.
-- An index of XML documents' paths and values, so XQuery and XPath read
-  only the nodes they ask for. XML needs it.
 
 ---
 
@@ -93,11 +91,7 @@ CONFORMANCE.md one by one as they are done.
 
 ### XML
 
-- SQL/XML (ISO/IEC 9075-14:2023). The XML type, stored parsed, XMLPARSE,
-  XMLSERIALIZE, XMLELEMENT, XMLFOREST, XMLAGG and the other publishing
-  functions, XMLQUERY, XMLEXISTS, XMLTABLE and XMLCAST, with XQuery and
-  XPath and XML Schema validation. It needs large objects for documents
-  past a row.
+Nothing is open.
 
 ### Full text
 

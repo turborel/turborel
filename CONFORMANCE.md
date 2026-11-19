@@ -19,8 +19,8 @@ in `86 §5.5 SR3`. One marked `2023` is ISO/IEC 9075-2:2023, as in
 Contents: [The claim](#the-claim) ·
 [SQL-86, clause by clause](#sql-86-clause-by-clause) ·
 [SQL-92](#sql-92) · [Collations](#collations) · [SQL:2023](#sql2023) ·
-[SQL/PSM](#sqlpsm) · [SQL/MM Spatial](#sqlmm-spatial) ·
-[Extensions](#extensions) ·
+[SQL/PSM](#sqlpsm) · [SQL/XML](#sqlxml) · [SQL/MM Spatial](#sqlmm-spatial) ·
+[Extensions](#extensions) · [Features claimed](#features-claimed) ·
 [Implementation-defined choices](#implementation-defined-choices) ·
 [Limits](#limits) · [Readings of ambiguous text](#readings-of-ambiguous-text)
 
@@ -428,6 +428,11 @@ Cursors follow §13.1, §13.3.
 | Connections | §15 | CONNECT TO a server AS a name, USER a user, or TO DEFAULT. SET CONNECTION to a name or DEFAULT. DISCONNECT a name, DEFAULT, CURRENT or ALL. The client library is the SQL-agent (`turborel_client::agent`), and so the command-line client is. A server or a session refuses them (SQLCODE -900) (RULES.md D46). No transaction spans servers (SQLSTATE 0A001). |
 | COMMIT and ROLLBACK | §14.3, §14.4 | Without WORK too. |
 | The Information Schema | §21 | Its 23 views, with the standard's own definitions, over the Definition Schema (RULES.md D37). Each also shows what the enabled roles own or hold (see Roles). |
+| Columns of ISO/IEC 9075-11 | ISO/IEC 9075-11:2006 draft Clause 5, §6.11, §6.20, §6.21, §6.28, §6.30, §6.31, §6.40, §6.41, §6.50, §6.52 | Each view of ISO/IEC 9075:1992 and of ISO/IEC 9075-11 here has every column the draft gives it. A data type's descriptor has INTERVAL_TYPE, an interval type's fields as the draft's check constraint names them, and INTERVAL_PRECISION, its leading field precision [§6.21 Description 8, 9]. TABLES has IS_INSERTABLE_INTO, YES of a base table and of an updatable view, and VIEWS has it as INSERTABLE_INTO, as Feature T111 is not supported [§6.50 Description 7b]; COLUMNS has IS_UPDATABLE, YES of each column of such a table [ISO/IEC 9075-2:2023 §4.17.6]; the Information Schema's own tables and views are neither. COMMIT_ACTION is a temporary table's ON COMMIT [§6.50 Description 4]. SCHEMATA's SQL_PATH is null, as no `<schema definition>` here has a `<schema path specification>` [§6.41 Description 5b]. KEY_COLUMN_USAGE's ORDINAL_POSITION is a column's position in its constraint, a foreign key's too [§6.28 Description 3], where SQL-92 makes a foreign key's column's that of the column it references [ISO/IEC 9075:1992 §21.3.14 Description 3], which POSITION_IN_UNIQUE_CONSTRAINT shows now, null of a UNIQUE or PRIMARY KEY constraint's column [§6.28 Description 4]. CHARACTER_SETS's CHARACTER_REPERTOIRE is SQL_TEXT [ISO/IEC 9075-2:2023 §4.3.7 Table 1]. A routine's SQL_PATH is its module's PATH, or its own schema [ISO/IEC 9075-2:2023 §11.60 GR3v], each written `catalog.schema`, a comma between; MAX_DYNAMIC_RESULT_SETS is 0; AS_LOCATOR NO of a function, null of a procedure; IS_UDT_DEPENDENT YES of a routine a type's definition makes [ISO/IEC 9075-2:2023 §4.35.1]. The columns of an external routine, a transform's from-sql and to-sql routines, and a `<result cast>` are null, as every routine is an SQL routine, which has none [ISO/IEC 9075-2:2023 §4.35.5, §11.60 SR9m i]; the views join a `<result cast>`'s descriptor from DATA_TYPE_DESCRIPTOR, as the draft does, which none matches. |
+| Timestamps | ISO/IEC 9075-11:2006 draft §5.6, §6.30 Description 13, 14, §6.40 Description 24, 25, §6.58 Description 13, §7.3 Table 1; ISO/IEC 9075-2:2023 §4.9.7, §4.35.5, §4.46.1, §11.49 GR5j, §11.51 GR1g, GR1h, §11.56 GR1, §11.60 GR4, GR5 | Feature T011 (Timestamp in Information Schema), with Features F411 (Time zone specification) and F555 (Enhanced seconds precision), which it implies [§7.3 Table 1]. CREATED and LAST_ALTERED of ROUTINES, METHOD_SPECIFICATIONS, ROUTINES_S and METHOD_SPECS, and CREATED of TRIGGERS and TRIGGERS_S, are of TIMESTAMP(2) WITH TIME ZONE, the domain TIME_STAMP's type [§5.6]: the value of CURRENT_TIMESTAMP, its instant and the session's time zone displacement, as the statement that made what they describe ran, its fraction of a second cut to two digits. A routine a type's definition makes, its observers, mutators, constructor and distinct type's functions, is of the CREATE TYPE, or of the ALTER TYPE that added its attribute; a method's body is a routine descriptor of CREATE METHOD's timestamps [§11.60 GR4, GR5], and its specification keeps those of the statement that specified it. No statement here alters a routine, a method specification or a module, as ALTER ROUTINE is of an external routine alone [§11.61 SR5], so LAST_ALTERED is CREATED [§6.40 Description 25]. The timestamps are kept in the descriptors, and a definition's log record carries its statement's CURRENT_TIMESTAMP, so recovery and a standby's replay make them the same, reading no clock (RULES.md D37). *(Extension)* A registered XQuery module keeps both too, which no view shows, ALTER XQUERY MODULE moving the last-altered one [§11.61 GR4]. |
+| Views of usage | ISO/IEC 9075-11:2006 draft §5.13, §5.16, §5.17, §5.20, §5.24, §5.44, §5.46 to §5.48, §5.74, §6.13, §6.17, §6.18, §6.35, §6.37 to §6.39, §6.63 | Features F341 (Usage tables) and F231 (Privilege tables), each of their views defined. CHECK_CONSTRAINT_ROUTINE_USAGE, COLLATION_CHARACTER_SET_APPLICABILITY, COLUMN_COLUMN_USAGE, COLUMN_UDT_USAGE, DATA_TYPE_PRIVILEGES, ROUTINE_COLUMN_USAGE, ROUTINE_ROUTINE_USAGE, ROUTINE_SEQUENCE_USAGE, ROUTINE_TABLE_USAGE and VIEW_ROUTINE_USAGE, with the draft's definitions, over Definition Schema tables made from what the catalog keeps of each definition for RESTRICT: a routine's tables, subject routines and sequence generators, a view's and a check constraint's subject routines, fixed as each was defined. ROUTINE_COLUMN_USAGE shows the columns its Description 1 lists, as the routine's body binds now: those a searched UPDATE's or DELETE's search condition or an UPDATE's source references, and those an INSERT's column list or an UPDATE's SET names [§6.35 Description 1a to 1d]; not a column a query alone references, which MODULE_COLUMN_USAGE shows of a module's routine [ISO/IEC 9075-4:2006 draft §19.1 Description 2]. COLUMN_COLUMN_USAGE binds each generation expression now. Corrected: COLUMN_UDT_USAGE joins a column's descriptor by the column's name, as DATA_TYPE_DESCRIPTOR keys it here; DATA_TYPE_PRIVILEGES passes over a column of a domain, which has no DTD_IDENTIFIER of its own here, and reads a method specification parameter's object as its specific name [§6.29 Description 5]. |
+| Conformance views | ISO/IEC 9075-11:2006 draft §5.52 to §5.57, §6.43 to §6.46 | Features F501 (Features and conformance views) and F502 (Enhanced documentation tables): SQL_FEATURES, SQL_PARTS, SQL_PACKAGES, SQL_SIZING, SQL_IMPLEMENTATION_INFO and SQL_SIZING_PROFILES, with the draft's definitions. SQL_CONFORMANCE has a row of each part ISO/IEC 9075-2:2023 names, and of each feature and subfeature of the taxonomies of ISO/IEC 9075-2:2023 (Annexes D and H) and of the 2006 drafts of ISO/IEC 9075-4, 9075-11 (Annex E) and 9075-14, IS_SUPPORTED YES exactly where [Features claimed](#features-claimed) claims it, or claims the feature a subfeature is of [§6.43 Description 7], COMMENTS the section claiming it, IS_VERIFIED_BY null, as no conformance test has verified a claim [Description 6]; `cargo xtask features` writes its rows (`system/definition/conformance.tsv`) from those texts and that table, and `cargo xtask verify` fails if they differ. No part is claimed whole, and no text defines a package, so SQL_PACKAGES has no row. SQL_SIZING has a row of each implementation-defined limit ISO/IEC 9075-2:2023 Annex B lists, IL001 to IL208, SIZING_ID its number, SIZING_NAME Annex B's words, SUPPORTED_VALUE read from the constant the code keeps it in, 0 of a limit there is none of (IL039 to IL041, IL063's digits), null of IL066, of Ada (`system/definition/sizing.rs`). ISO/IEC 9075-11 and 9075-2 name no implementation information item, so SQL_IMPLEMENTATION_INFO has no row, and no profile is defined, so SQL_SIZING_PROFILES has none. The implementation information and sizing items ISO/IEC 9075-3 (SQL/CLI) adds [§6.44, §6.45] are not defined yet; they will be added, read from that part's text. |
+| Short name views | ISO/IEC 9075-11:2006 draft §5.77, §4.2 | The short name view of each view defined here, with the draft's definition, each column named by an `<as clause>` as its `<view column list>` names it [§7.9 SR9a, §11.19 GR1], so it shows the rows its view shows the user: CATALOG_NAME, SCHEMATA_S, DOMAINS_S, TABLES_S, COLUMNS_S, REF_CONSTRAINTS, KEY_COLUMN_USAGE_S, CHARACTER_SETS_S, COLLATIONS_S, SEQUENCES_S, TRANSLATIONS_S, CONSTR_TABLE_USAGE, CONSTR_COL_USAGE, COL_DOMAIN_USAGE, ELEMENT_TYPES_S, FIELDS_S, UDT_S, ROUTINES_S, PARAMETERS_S, ATTRIBUTES_S, METHOD_SPECS, METHOD_SPEC_PARAMS, REFERENCED_TYPES_S, TABLE_METHOD_PRIVS, ADMIN_ROLE_AUTHS, ROLE_ROUT_GRANTS, ROL_TAB_METH_GRNTS, TRIGGERS_S, TRIG_UPDATE_COLS, TRIG_TABLE_USAGE, TRIG_COLUMN_USAGE, TRIG_ROUT_USAGE_S, TRIG_SEQ_USAGE_S, COLLATION_APPLIC_S, COL_COL_USAGE, CONSTR_ROUT_USE_S, ROUT_ROUT_USAGE_S, ROUT_SEQ_USAGE_S, ROUTINE_COL_USAGE, ROUT_TABLE_USAGE, SQL_IMPL_INFO and SQL_SIZING_PROFS; those of [SQL/PSM](#sqlpsm) and [SQL/XML](#sqlxml) with them. None is a feature of its own: each is of its view's, as the draft's Conformance Rules give them [§5.77 CR1 to CR53], and every name is of 18 characters at most, as an SQL-implementation without Feature F391 (Long identifiers) needs [ISO/IEC 9075-2:2023 §5.2 CR1, CR2]. Each has every column of its view's the draft gives it. Corrected: ATTRIBUTES_S's select list, which names IS_NULLABLE where its `<view column list>` names ATTRIBUTE_NAME, read as the list; METHOD_SPECS's USER_DEFINED_TYPE_CATALOG, _SCHEMA and _NAME, read as the UDT_CATALOG, UDT_SCHEMA and UDT_NAME of METHOD_SPECIFICATIONS [§5.34]; ROUTINES_S's RESULT_CAST_CHAR_SET_NAME, read as ROUTINES's RESULT_CAST_CHARACTER_SET_NAME [§5.49]. |
 
 Isolation levels behave as follows (RULES.md D29). No level reads uncommitted
 changes, and constraints are checked serializably at every level.
@@ -607,7 +612,7 @@ in memory, in the log or on the wire. RULES.md D79 says how.
 | Locators | §4.37.5, §14.17, §14.18 | A session's four-octet integer (UV065) of a value sent to a client or made by one a piece at a time. Valid until its transaction ends, FREE LOCATOR ending it sooner and HOLD LOCATOR keeping it past a commit. A rollback ends every one. FREE and HOLD take dynamic parameters [SR1]. One not valid is 0F001. |
 | Descriptor areas | §20.1 Table 30 | TYPE 30 of BINARY LARGE OBJECT, 40 of CHARACTER LARGE OBJECT, LENGTH its length and OCTET_LENGTH its length in octets. The locator types 31 and 41 are not used, as no host language is. |
 | Information Schema | 92 §21 | DATA_TYPE 'CHARACTER LARGE OBJECT' or 'BINARY LARGE OBJECT'. |
-| Stored | RULES.md D79 | In chunks of 256 KiB, logged and checkpointed by chunk, collected with the versions that name them. The column store refuses a large object column. |
+| Stored | RULES.md D79 | In chunks of 256 KiB, logged and checkpointed by chunk, collected with the versions that name them; a distinct type's as its source's. One inside an array, a multiset, a row or a structured value is held whole in that value's row, at most a chunk, a longer one SQLCODE -900. The column store refuses a large object column, and one of a type holding a large object. |
 
 The non-holdable locators of T039 and T049 are the client protocol's
 (D45). An embedded program reaches the same registry through the
@@ -1725,7 +1730,7 @@ CREATE TRIGGER defines a trigger [§11.49] and DROP TRIGGER drops one
 | Activation | §4.46.2 | A state change of each table, event and set of updated columns. A trigger of UPDATE OF its columns sees the transitions whose SET clauses name one of them, of every state change, the referential actions' included. A state change arises of no rows too, so a statement trigger executes for a statement that changes none. |
 | BEFORE | §15.19, §15.21 GR4, §15.11 GR4, GR6a, §15.14 GR5, GR9, §15.8 GR2 | Once the rows are decided, before any is written: of an INSERT its rows given their values and identities, then computed again by their generated columns as the triggers left them; of an UPDATE its pairs of rows, the same; of a DELETE its rows. A statement trigger once for its state change, a row trigger for each transition. |
 | AFTER | §15.20, §9.17 GR17b | At the end of the statement, after its referential actions and once its immediate constraints hold, over every state change it made, each trigger's transition tables whole. |
-| Order | §4.46.1, §15.21 GR4, IS003, US048 | Triggers of one action time execute in the order created, their timestamps of creation never equal. A row trigger takes the transitions in the order the statement changed the rows. |
+| Order | §4.46.1, §15.21 GR4, IS003, US048 | Triggers of one action time execute in the order created, and those of one timestamp of creation, as those one statement creates, in the order they were created. A row trigger takes the transitions in the order the statement changed the rows. |
 | Execution | §15.21 GR6, §9.17 GR5 | Each statement of the action runs as one of its own, with its referential actions, its immediate checks and its own triggers, as the schema's owner alone, CURRENT_USER that owner, or CURRENT_ROLE if it is a role, SESSION_USER the session's, under the triggering statement's instant, in a diagnostics area of its own. The WHEN condition is evaluated for each run, and its exception is 09000. |
 | Failure | §15.21 GR6m, §23.1 GR4g, IA079 | SQLSTATE 09000, SQLCODE the cause's, the message naming the trigger and the cause's SQLSTATE and message. Nothing the statement did is kept. TRIGGER_SCHEMA and TRIGGER_NAME name the trigger, SCHEMA_NAME and TABLE_NAME its table, and MORE is Y, the cause's condition left out. |
 | Referential actions | §15.17, §15.18 | The rows a referential action deletes or updates execute their table's BEFORE triggers before each change and its AFTER triggers with the statement's. |
@@ -1739,7 +1744,7 @@ CREATE TRIGGER defines a trigger [§11.49] and DROP TRIGGER drops one
 | Actions changing trigger views | §15.10, §15.13, §15.16, §15.21 GR6 | A triggered action may insert into, update or delete from a view that is not updatable but has an INSTEAD OF trigger of the event. It is bound against that view's rows when the trigger is defined, and the action's own transition variables and tables stay in scope within it. |
 | Dropping | §11.2 SR4j, GR9, §11.23 SR7e, GR1, §11.26 SR13f, GR5, §11.31 SR7g, GR4b, §11.33 SR5c, GR3b | A trigger goes with its subject table or view. A table or view its action names, a column of its column list or of its action, and a constraint its action binds by, are dropped only with CASCADE, which drops the trigger, else SQLCODE -103. A schema holding a trigger is dropped only with CASCADE. |
 | What it sees | §11.21 Note 561 | The action sees the columns its tables and its subject table had when it was defined: a column added later is not among those of its `*`, its INSERT without a column list or its transition rows. |
-| Trigger descriptors described | 11:2006 draft §6.53 to §6.58 | The Definition Schema has a row of each trigger in TRIGGERS, of each column of a trigger column list in TRIGGERED_UPDATE_COLUMNS, and of each table, column, subject routine and sequence generator its action names in TRIGGER_TABLE_USAGE, TRIGGER_COLUMN_USAGE, TRIGGER_ROUTINE_USAGE and TRIGGER_SEQUENCE_USAGE. ACTION_ORDER counts from 1 among the triggers of one table, event, time and orientation in the order of creation. ACTION_TIMING is INSTEAD OF of a trigger on a view, which the draft precedes. ACTION_CONDITION and ACTION_STATEMENT are as written, null if longer than CHARACTER_DATA holds, so ACTION_STATEMENT may be null, where the draft has it NOT NULL. CREATED is null, as a trigger keeps an order of creation and no timestamp. |
+| Trigger descriptors described | 11:2006 draft §6.53 to §6.58 | The Definition Schema has a row of each trigger in TRIGGERS, of each column of a trigger column list in TRIGGERED_UPDATE_COLUMNS, and of each table, subject routine and sequence generator its action names in TRIGGER_TABLE_USAGE, TRIGGER_ROUTINE_USAGE and TRIGGER_SEQUENCE_USAGE. TRIGGER_COLUMN_USAGE has a row of each column its Description 1 lists, found by binding the definition again: those any search condition of it references, its WHEN condition's among them, those an UPDATE's source references, and those an INSERT's column list or an UPDATE's SET names [§6.54 Description 1a to 1e]. The triggered action column set DROP COLUMN RESTRICT reads holds these and each other column the action references, a query's select list's among them [ISO/IEC 9075-2:2023 §11.49 GR5i]. ACTION_ORDER counts from 1 among the triggers of one table, event, time and orientation in the order of creation. ACTION_TIMING is INSTEAD OF of a trigger on a view, which the draft precedes. ACTION_CONDITION and ACTION_STATEMENT are as written, null if longer than CHARACTER_DATA holds, so ACTION_STATEMENT may be null, where the draft has it NOT NULL. CREATED is its timestamp of creation, the CURRENT_TIMESTAMP of its CREATE TRIGGER [§6.58 Description 13] (Feature T011, see [Timestamps](#transactions-sessions-and-the-information-schema)); its order of creation, which ACTION_ORDER follows, is kept apart. |
 | TRIGGERS, TRIGGERED_UPDATE_COLUMNS | 11:2006 draft §5.69, §5.64 | As the draft defines them: each trigger on a table, and each column of a column list, the user or an enabled role holds a privilege other than SELECT on, the condition and statement shown only where an enabled identifier owns the trigger's schema. |
 | Trigger usage views | 11:2006 draft §5.65 to §5.68 | TRIGGER_TABLE_USAGE, TRIGGER_COLUMN_USAGE, TRIGGER_ROUTINE_USAGE and TRIGGER_SEQUENCE_USAGE, as the draft defines them, of the triggers of schemas an enabled identifier owns. |
 
@@ -2049,13 +2054,285 @@ statement), which implies none, is claimed.
 | EXECUTE on a module | §8.1 SR1, §10.1 to §10.3, §9.21 GR2 | What invokes a module's routine needs EXECUTE on the module, read so where §8.1 SR1 names the routine's privilege, as §10.3 GR5 abandons what invokes one at its revoke. Of a module, EXECUTE alone is granted or revoked [§10.2 SR1], else SQLCODE -103. The owner of its schema holds it of `_SYSTEM`, grantable once it holds grantably each privilege the routines need [§10.1 GR1]. A revoke abandons the views, constraints, generated columns, triggers and routines whose owners it leaves without it, RESTRICT refusing it with SQLSTATE 2B000. |
 | DROP MODULE | §9.22 SR1 to SR3, GR1, GR2 | Of a module of a schema its user owns. RESTRICT refused while anything outside the module invokes a routine of it, SQLCODE -103. CASCADE drops those too. |
 | What else drops a module | §9.2 GR1 to GR3, §9.25, §10.3 GR7 | A drop or revoke that takes one of its routines takes the whole module, its other routines with it. DROP SCHEMA with CASCADE drops the schema's modules, RESTRICT refused naming the first, and with either those of other schemas whose SCHEMA or PATH names it. |
-| Views of modules | §18.1 to §18.4, §18.6, §18.7, §19.1 to §19.4; ISO/IEC 9075-11:2006 draft §5.47, §6.40 | MODULES, MODULE_PRIVILEGES, MODULE_TABLE_USAGE, MODULE_COLUMN_USAGE and ROLE_MODULE_GRANTS, with the draft's definitions, over the Definition Schema's MODULES, MODULE_PRIVILEGES, MODULE_TABLE_USAGE and MODULE_COLUMN_USAGE. ROUTINES gains MODULE_CATALOG, MODULE_SCHEMA and MODULE_NAME, and shows a module's routine to who holds EXECUTE on the module [§18.7], PARAMETERS following, as it reads ROUTINES. MODULE_AUTHORIZATION is null, as a server module has no `<module authorization clause>` [§19.4 Description 5]. CREATED and LAST_ALTERED are null, as no timestamp is kept. MODULES shows them as MODULE_CREATED and MODULE_LAST_ALTERED, the names its Conformance Rules give them. The usage views show a table or column as its routines' bodies bind now, not the module's own declared tables. |
+| Views of modules | §18.1 to §18.4, §18.6, §18.7, §19.1 to §19.4; ISO/IEC 9075-11:2006 draft §5.47, §6.40 | MODULES, MODULE_PRIVILEGES, MODULE_TABLE_USAGE, MODULE_COLUMN_USAGE and ROLE_MODULE_GRANTS, with the draft's definitions, over the Definition Schema's MODULES, MODULE_PRIVILEGES, MODULE_TABLE_USAGE and MODULE_COLUMN_USAGE. ROUTINES gains MODULE_CATALOG, MODULE_SCHEMA and MODULE_NAME, and shows a module's routine to who holds EXECUTE on the module [§18.7], PARAMETERS following, as it reads ROUTINES. MODULE_AUTHORIZATION is null, as a server module has no `<module authorization clause>` [§19.4 Description 5]. CREATED and LAST_ALTERED are the CURRENT_TIMESTAMP of its CREATE MODULE, the same, as no statement alters a module [§19.4 Description 7, 8] (Feature T011). MODULES shows them as MODULE_CREATED and MODULE_LAST_ALTERED, the names its Conformance Rules give them. The usage views show a table or column as its routines' bodies bind now, not the module's own declared tables. |
+| Short name views of modules | §18.8 | MODULE_COL_USAGE and MODULES_S, the draft's definitions over MODULE_COLUMN_USAGE and MODULES, each column named by an `<as clause>` as the draft's `<view column list>` names it. Corrected: MODULE_COL_USAGE, which has no `<from clause>` in the draft, reads MODULE_COLUMN_USAGE, whose columns it names; MODULES_S's DEFAULT_SCHEMA reads MODULES's DEFAULT_SCHEMA_NAME [§18.4]. |
 
 The words of Part 4 that are no key words of SQL-92, IF, ELSEIF, LOOP,
 WHILE, REPEAT, UNTIL, LEAVE, ITERATE, DO, HANDLER, EXIT, UNDO, SIGNAL,
 RESIGNAL, SQLEXCEPTION, SQLWARNING, CONDITION and STACKED, stay
 identifiers, read as words where a program reads them. Those Part 4
 reserves are never a correlation name written without AS.
+
+
+## SQL/XML
+
+XML-related specifications, ISO/IEC 9075-14, written from its 2006 draft
+(`5CD2-14-XML-2006-01`), its clause numbers cited with that edition, and
+from the W3C texts the draft names, at the editions it names (RULES.md
+D106). Part 14 adds the XML type, whose values are XQuery sequences, and
+the operators that make them and write them.
+
+Features X010 (XML type), X016 (Persistent XML values), X020
+(XMLConcat), X025 (XMLCast), X030 (XMLDocument), X031 (XMLElement), X032
+(XMLForest), X034 (XMLAgg), X035 (XMLAgg: ORDER BY option), X036
+(XMLComment), X037 (XMLPI), X038 (XMLText), X040 to X049 (Basic table
+mapping, with nulls absent and as nil, a table as a forest and as an
+element, a target namespace, data and metadata, and base64 and hex
+encodings of binary strings), X050 to X059 (Advanced table mapping, of
+schemas and the catalog, with the same), X060 and X061 (XMLParse:
+character string input and
+CONTENT, DOCUMENT option), X065 and X066 (XMLParse: BLOB input and
+CONTENT, DOCUMENT option), X070 to X072 (XMLSerialize: character string
+serialization), X073 to X075 (XMLSerialize: BLOB serialization), X076
+(XMLSerialize: VERSION), X077 (XMLSerialize: explicit ENCODING option),
+X078 (XMLSerialize: explicit XML declaration), X080 (Namespaces in XML
+publishing), X081 to X084 (Query-level XML namespace declarations, XML
+namespace declarations in DML, in DDL and in compound statements), X085
+(Predefined namespace prefixes), X090 and X091 (XML
+document and content predicates), X170 and X171 (XML null handling
+options, NIL ON NO CONTENT option), X181 and X182 (XML(DOCUMENT(UNTYPED)) and
+XML(DOCUMENT(ANY)) types), X131 to X135 (Query-level XMLBINARY clause,
+XMLBINARY clause in DML, in DDL, in compound statements and in
+subqueries), X190 (XML(SEQUENCE) type), X211 (XML 1.1
+support), X231 and X232 (XML(CONTENT(UNTYPED)) and XML(CONTENT(ANY))
+types), X160 and X161 (Basic and Advanced Information Schema for
+registered XML Schemas), their short name views XML_SCHEMAS_S,
+XML_SCH_NSPACES_S and XML_SCH_ELEMENTS_S among them [§20.15 CR1 to
+CR4], X241 and X242 (RETURNING CONTENT and RETURNING SEQUENCE in XML
+publishing), X251 to X255 (Persistent XML values of each XML type), X011
+(Arrays of XML type), X012 (Multisets of XML type), X013 (Distinct types
+of XML type), X014 (Attributes of XML type), X015 (Fields of XML type) and
+X120 (XML parameters in SQL routines), X086 (XML namespace declarations in
+XMLTable), X096 (XMLExists), X200 to X206 (XMLQuery, its RETURNING CONTENT
+and SEQUENCE, a context item, variables, EMPTY ON EMPTY and NULL ON
+EMPTY), X221 and X222 (XML passing mechanism BY VALUE and BY REF) and X300
+to X305 (XMLTable, its derived column list, ordinality column, column
+defaults, context item and variables), X191 and X192
+(XML(DOCUMENT(XMLSCHEMA)) and XML(CONTENT(XMLSCHEMA)) types), with X260,
+X261, X263 and X264 (their ELEMENT clause, NAMESPACE without ELEMENT, NO
+NAMESPACE with ELEMENT and schema location), X256 and X257 (Persistent
+XML values of them), X271 to X274 (XMLValidate: data-driven case,
+ACCORDING TO clause, ELEMENT clause, schema location), X281 to X284 and
+X286 (XMLValidate with DOCUMENT, CONTENT and SEQUENCE options, NAMESPACE
+without ELEMENT, NO NAMESPACE with ELEMENT), and X141 to X145, X151 to
+X153, X155 and X157 (IS VALID: data-driven case, ACCORDING TO clause,
+ELEMENT clause, schema location, outside check constraints, with
+DOCUMENT, CONTENT and SEQUENCE options, NAMESPACE without ELEMENT, NO
+NAMESPACE with ELEMENT), and X400 (Name and identifier mapping), by
+which an application invokes the mapping of XML Names to identifiers
+[§9.3], are claimed. X121 (XML parameters in
+external routines) is not, as turborel has no external routine. Every
+expression of XQuery 1.0 is evaluated. Every function of XQuery 1.0
+Functions and Operators is built in, with the optional parts the rows
+below say. Its Minimal Conformance [XQuery
+§5.1] is claimed: all of XQuery but its optional features, the
+implementation-defined items each defined below, the data model, and
+every function of XQuery 1.0 Functions and Operators. Of
+its optional features [XQuery §5.2] [§6.18 SR6 NOTE 28] the Full Axis
+Feature, the Schema Import Feature [§5.2.1], the Schema Validation
+Feature [§5.2.2], the Static Typing Feature [§5.2.3], in effect as
+XQUERY.STATIC_TYPING or a query's option asks, the Module Feature
+[§5.2.5] and the Serialization Feature [§5.2.6] are supported,
+importing and validating by registered XML Schemas, importing
+registered XQuery modules, and serializing a query's result by
+XMLSERIALIZE with the parameters of [XQuery Appendix C.3].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| The XML types | §4.2.2, §6.1 SR1 to SR4, GR1 | XML(DOCUMENT), XML(CONTENT), each UNTYPED, ANY or XMLSCHEMA, and XML(SEQUENCE). XML alone is XML(SEQUENCE), and DOCUMENT or CONTENT alone is ANY [SR2, SR3b]. A type of XMLSCHEMA's descriptor holds the indicated registered XML Schema, by its name [§4.2.6], and the indicated namespace and global element declaration's NCName, if any [SR4, GR1d to GR1f]; it is written with ID and the full name, kept in the catalog and described over a connection with them. |
+| What a definition names | §4.2.6 | The registered XML Schema an `<XML valid according to what>` of a view, a CHECK, a domain constraint, an assertion, a trigger or a routine indicates is the one it indicated as it was created, kept with the definition and taken whenever it is used, invoked or evaluated; the definition depends on it (RULES.md D106). So are the in-scope schema definitions of a validate expression of its query [§10.20 SR2e], and \[EXTENSION\] the registered XQuery modules its queries import [XQuery §4.11]: DROP XQUERY MODULE RESTRICT is refused while one does, CASCADE drops it, a generated column refusing even CASCADE. |
+| `<XML valid according to clause>` | §11.6 SR1 to SR4, AR1, GR1 | ID a `<registered XML Schema name>` [SR1]; URI a target namespace, NO NAMESPACE the zero-length one, LOCATION a schema location too, of the registered XML Schemas the user may use, the one the choice below takes [SR2b ii]; of none, SQLCODE -103 [SR2c]. The element clause's namespace, else the target namespace [SR4a], and its ELEMENT, an `<identifier>`'s text, must be the registered XML Schema's, else SQLSTATE 2201M or 2201N as the clause is bound [SR4b, SR4d iii, GR1]. Its user, or of an SQL schema statement not under SQL SECURITY INVOKER its schema's owner, may use it [AR1] (`catalog::xml_schemas::may_use`), else SQLCODE -104. One permanently registered is SQLCODE -900, as turborel holds none of its components. |
+| XMLVALIDATE | §6.20, §10.22 | DOCUMENT, CONTENT or SEQUENCE of an XML value [§6.9 SR1], of the type SR3 gives: of a DOCUMENT or CONTENT type, of XMLSCHEMA of what the clause indicates, else ANY; of XML(SEQUENCE), XML(SEQUENCE). The null value of the null value [GR2]; DOCUMENT of no document SQLSTATE 2200M, CONTENT of no one document node 2200N, an atomic value, attribute or text node 2201J [GR3]; the empty sequence of the empty sequence [GR4]. Each element is validated by §10.22, XQuery's `validate strict` (`xml::schema::validate`): of DOCUMENT the document node, its identity constraints and IDs checked; else each element child of a document node, and each element, alone [GR6a iii 2 C, GR6b iii]. Its registered XML Schema is the clause's, else its namespace's the user may use, as the choice below takes, none 2201L [GR6a iii 2 A, GR6b i]; an element not of the element clause's QName 2201P, namespace 2201Q [B, ii]; one not valid 2201R [D, iv]; a document node's child no element, comment or processing instruction 2201K [GR6a iii 1]. Comments and processing instructions copied [§10.18] [GR6a iii 3, GR6c]. The nodes made are typed, as XQuery's data model types them [XQueryDM §3.3]. |
+| IS VALID | §8.5, §6.4 | Of one XML value [SR1], IS NOT its negation [SR3]; a `<when operand>` of a simple CASE. Unknown of the null value [GR2]; False of a value not of the shape DCS asks [GR3 to GR5b], True of an empty sequence of SEQUENCE [GR5a]; else True AND each item's truth: an element of no registered XML Schema found Unknown [GR7a iii 3 B I, GR7b ii 1], one of another QName or namespace than the element clause's, or not valid by §10.22, False [GR7a iii 1, 3 B II, GR7b ii 2], a comment or processing instruction True [GR7c]. Anywhere a predicate is, a CHECK too. |
+| XML values | §4.2.3 | An XQuery sequence of nodes and atomic values. A value held in a column is its stored form (RULES.md D106): in the row when short, else as the table's large objects, logged and recovered as large objects are. One inside an array, a multiset, a row or a structured value is held whole in that value's row, its stored form at most 64 MiB, else SQLCODE -900. |
+| Assignment | §4.2.4, §10.1 SR1, GR1, §10.2 SR1, GR1 | An XML value to an XML site alone, an UNTYPED one's of an UNTYPED type, one of XMLSCHEMA of a type of XMLSCHEMA of the same registered XML Schema, of the namespace and the element the site's includes, if any [§10.2 SR1b ii], else SQLCODE -103. A DOCUMENT site takes a document, else SQLSTATE 2200L; a CONTENT site one document node, else 2200U. A value stored is a copy. |
+| XML within other types | §6.1 CR2, CR3, §6.2 CR1, §12.5 CR1, §12.6 CR1, §12.7 CR1, §10.4 SR1, §10.5 SR1 | An array or multiset of an XML type or of a distinct type of one; a distinct type whose source is an XML type, its function to its source named XML [§10.5 SR1], of no ordering; an attribute of a structured type, and a field of a row type, of either; a parameter or result of an SQL routine of any of them. Each is stored, read, assigned and cast part by part, an XML part checked as §10.2 GR1a and §6.5 GR1a check one. Every XML type's type precedence list is XML [§10.4 SR1], so a routine of an XML parameter takes an argument of any XML type that is assigned to it. |
+| Not comparable | §4.2.4, §10.8 SR1 to §10.11 SR1 | No equality, grouping or ordering operation takes an XML value: comparisons, IN, quantified comparisons, MATCH, UNIQUE, DISTINCT, IS DISTINCT FROM, NULLIF, a simple CASE, GROUP BY, ORDER BY, set operations but UNION ALL, MIN and MAX, a NATURAL or USING join's common column, keys, and indexes but the XML methods' ([Indexes](#indexes)), SQLCODE -103. |
+| Types brought together | §10.3 SR1 | XML types with XML types alone, of the type SR1b gives: SEQUENCE if one is, the one type, DOCUMENT(UNTYPED) if all are, CONTENT(UNTYPED) if all are UNTYPED; of XMLSCHEMA if all are, of one registered XML Schema, of the namespace and the element all include, DOCUMENT if all are [III to VIII]; else CONTENT(ANY) [IX]. |
+| IS DOCUMENT, IS CONTENT | §8.2, §8.3, §6.4 | Of one XML value, else SQLCODE -103 [SR1]. IS DOCUMENT is True of one document node whose children are one element and comments and processing instructions, IS CONTENT of one document node; Unknown of the null value; else False [GR2]. IS NOT is the negation [SR2]. Either is a `<when operand>` of a simple CASE. |
+| XMLCAST | §6.6, §9.5 GR8, §9.8 | Of or to an XML type [SR4], neither of nor to a collection, row, structured or reference type [SR5, SR10b i]; a passing mechanism of XML types alone [SR9]; NULL and `?` CAST to an XML type [SR10a, SR11]; to a domain, its data type [SR3a]. Of XML to XML, CAST [SR10b ii]. Of an SQL value to XML(CONTENT), XMLPARSE of its lexical form by §9.8, `&`, `<`, `>` and carriage returns mapped, a character no XML 1.1 character SQLSTATE 0N002 [GR3a to GR3c]; to XML(SEQUENCE), that cast as the built-in XML Schema type §9.5 maps its type to, one atomic value, of a binary string `xs:hexBinary` or, in the scope of XMLBINARY USING BASE64, `xs:base64Binary` [GR3d, §9.5 GR8b ii]; to XML(DOCUMENT), SQLCODE -103 [SR7]. Of an XML value to an SQL type: document nodes replaced by their children, atomized, none the null value, more than one SQLSTATE 10000 [GR4b to GR4d]; a date or time adjusted to UTC for a type without time zone [GR4j i to iii]; cast as the type §9.5 maps the SQL type to, restricted by its facets: a CHARACTER's length, a CHARACTER VARYING's, a CLOB's and a binary string's maxLength, a binary string `xs:hexBinary` or, in the scope of XMLBINARY USING BASE64, `xs:base64Binary` [§9.5 GR8b ii], a NUMERIC's or DECIMAL's totalDigits and fractionDigits, an INTEGER's, SMALLINT's or BIGINT's bounds, a datetime's or interval's pattern [§9.5 GR8a to GR8l]; a value not of its lexical forms, or one a facet refuses, 10000 [GR4e, GR4j]; INF, -INF and NaN 22003 [GR4k v]; a year past 0001 to 9999 in UTC 22007 [GR4k vi to viii]; then CAST to the SQL type [GR4l]. A time or timestamp is checked against TIME(p)'s or TIMESTAMP(p)'s pattern as the choice below says, so each value of the SQL type is taken and one of more than p digits of fraction is not. The types mapped are the character and binary strings, large objects too, the exact and approximate numbers, BOOLEAN, the datetimes and the intervals; DECFLOAT, which §9.5 does not map, SQLCODE -103. |
+| XMLDOCUMENT | §6.13, §11.4 | Of an XML value [§6.9 SR1]: XQuery's `document { $EXPR }`, a new document node of copies of the value's nodes, a document node's children in its place, adjacent atomic values one text node a space apart, an attribute SQLSTATE 10000, XQuery error [GR8]. Construction mode preserve keeps the ID and IDREFS properties [GR5]; an element copied from below another declares the bindings in its scope. The null value of the null value [GR2]. RETURNING CONTENT or SEQUENCE [SR3]; of XML(CONTENT(UNTYPED)), the document node unvalidated, its elements `xdt:untyped`, its attributes `xdt:untypedAtomic` [GR9a, §10.19]. |
+| XMLELEMENT | §6.14, §10.13 | An element of the name, a QName whose prefix XMLNAMESPACES or the predefined prefixes bind [SR5, SR6]; its attributes those of XMLATTRIBUTES whose values are not null, each named by AS or its column's name mapped to an XML Name fully escaped [§9.1] [SR3d], none `xmlns` nor of its prefix, none twice [SR3f, SR4], of a type §9.5 maps, not XML [SR3c], its value mapped by §9.8 [GR3]; its content each value not null, an XML value's nodes copied, another's §9.8 text parsed as CONTENT [§10.13 GR4c i]; XQuery's `element { $QNAME } { $SEQ }` [GR4c viii]: atomic values a text node a space apart, an attribute after other content or two attributes of one name SQLSTATE 10000 [XQuery §3.7.1.3], each name's namespace declared, a prefix bound to another URI changed [XQuery §3.7.4]. NULL ON NULL, EMPTY ON NULL, implicit, ABSENT ON NULL, NIL ON NULL and NIL ON NO CONTENT [SR8, §10.13 GR4]; no attribute `xsi:nil` with content [SR9]. Content of a collection type, or a distinct type, not based on an XML unmappable type, XML(SEQUENCE), a structured or a reference type [§4.10.8], nor on a type §9.5 maps to nothing, else SQLCODE -103; a row type, none of SR7's types, SQLCODE -103 [SR7]. |
+| Collections and rows mapped | §9.8 GR1a, GR9i to GR9k | An array or a multiset an element `element` of each element, of a null one `<element xsi:nil="true"/>` [GR9j], a multiset's in the order it holds them; a row an element of each field not null, named by its name mapped to an XML Name fully escaped [GR9i, §9.1], NULLS absent as every caller gives it [§6.6 GR3a, §10.13 GR4c i 1 B]; an XML value its serialization as CONTENT [GR9k]; a distinct type's value its source's [GR1a]; a datetime without time zone in the session's displacement [GR7]. Values nested deeper than types nest, SQLCODE -900. XMLELEMENT's and XMLFOREST's content, and XMLCAST's operand of a distinct type whose source is a collection type, to XML(CONTENT) [§6.6 SR10b i, GR3c]; to XML(SEQUENCE), SQLCODE -900, as GR3d casts to an atomic type and §9.5 maps no collection to one. XMLCAST of a collection or a row type itself is refused [SR5, SR10b i]. |
+| XMLFOREST | §6.15 | An element of each value, named as XMLELEMENT's attributes are [SR2c], §10.13's of no attribute, NULL ON NULL implicit [SR3], the elements concatenated [§10.14] [GR5 to GR7]. |
+| XMLNAMESPACES | §11.3, §10.12 | In XMLELEMENT and XMLFOREST, in scope within it, a subquery of it too [§6.14 SR1, §6.15 SR1]; among a scope's options (below). At most one default [SR2]; each prefix an XML 1.1 NCName, once, not `xml` nor `xmlns`, of a URI not empty [SR3 to SR5, SR7]; no URI the namespace of `xml` or `xmlns` [SR6]. A prefix is the innermost declaration's, else `xml`, `sqlxml`, `xs` or `xsi`'s, else SQLCODE -103; a name of no prefix is in the innermost default namespace, NO DEFAULT none [§10.12 SR2]. |
+| XML lexically scoped options | §11.3, §7.2, §12.1, §12.2, §12.4, §14.3 to §14.7, §15.1 | XMLNAMESPACES and XMLBINARY \[USING\] BASE64 or HEX, at most one of each [§11.3 SR1]. Of a `<with clause>`, alone or before its `<with list>`, a comma between them and none else [§7.2 SR1, SR4], in scope of its `<query expression>`: its subqueries, derived tables, `<with list element>`s and set operations' operands, a subquery's own XMLBINARY too [SR2, SR3, CR3]. Of DELETE searched, INSERT, MERGE and UPDATE positioned and searched after WITH, in scope of the statement [§14.3 to §14.7 SR1, SR2]; prepared too; not of a positioned DELETE nor of a dynamic cursor's UPDATE, whose productions §14 does not modify. Of a generation expression, a CHECK, of a domain too, and an assertion, in scope of it, kept with its text, so read again the same, after the database is opened again too [§12.1, §12.2, §12.4 SR1, SR2]; CHECK_CLAUSE shows the `<search condition>` alone [ISO/IEC 9075-11:2006 draft §6.14 Description 2a]. Of DECLARE in a compound statement, in scope of all it holds, a trigger's action and a routine's body too [§15.1 SR1, SR2]. XMLNAMESPACES is of XMLELEMENT's and XMLFOREST's names and of an XQuery's statically known namespaces and default element namespace [§10.12, §10.20 SR2d]. The innermost declaration of a prefix, the default namespace or the encoding is taken: an XMLELEMENT's or XMLFOREST's, then each `<with clause>`'s from the inside out, then the statement's or the definition's, then each compound statement's [§10.12 SR2a ii 2 A, §6.6 SR1a]. A view's query and a routine's body see none of what reads or invokes it. XMLBINARY is of XMLCAST, XMLELEMENT, XMLFOREST and XMLTEXT [§6.6 SR1, §6.14 GR1, §6.15 GR1, §6.19 GR3]; XMLPI writes hex [§6.17 GR3]. |
+| XMLCONCAT | §6.12, §10.14 | Of two XML values or more: every item of each not null, in order; the null value if each is [GR1 to GR4]. RETURNING CONTENT is of XML(CONTENT(UNTYPED)) of DOCUMENT(UNTYPED) and CONTENT(UNTYPED) values, of XML(CONTENT(XMLSCHEMA)) of what values of XMLSCHEMA of one registered XML Schema have in common, else XML(CONTENT(ANY)) [SR2a]; its document node is made of that type, so the nodes' types are kept as SR4's cast to XMLSCHEMA needs. |
+| XMLCOMMENT, XMLPI, XMLTEXT | §6.11, §6.17, §6.19 | Of a character string: a comment, holding no two hyphens together nor a hyphen last, else 2200S [§6.11 GR3]; a processing instruction of a target, an XML 1.1 NCName not `xml` in any case [§6.17 SR2, SR3], its text holding no `?>`, else 2200T [GR4], its leading white space removed [XQuery §3.7.3.5]; a text node, empty of a zero-length string [XQuery §3.7.3.4]. A character no XML 1.1 character is 2200S of XMLCOMMENT, else 0N002 [§9.8 GR9a ii]. The null value of the null value. |
+| XMLAGG | §11.2 | A set function of an XML value [§6.9 SR1], ordered by a `<sort specification list>` whose keys an ordering operation takes, else SQLCODE -103: the values of the group not null, concatenated [§10.14] in the keys' order, stably; the null value of none [GR2]. RETURNING CONTENT is of XML(CONTENT(UNTYPED)) of an UNTYPED value, else XML(CONTENT(ANY)) [SR2a], made by `document { $EXPR }` within the aggregate, so it is one aggregate over a window too [SR5]. Values holding more than 64 MiB together, SQLSTATE 2200R [GR1]. |
+| RETURNING in publishing | §6.11 SR3, §6.12 SR4, §6.14 SR16, §6.15 SR8, §6.17 SR7, §6.19 SR3, §11.2 SR2, SR5 | RETURNING CONTENT is XMLDOCUMENT of the value made RETURNING CONTENT, of XML(CONTENT(UNTYPED)); RETURNING SEQUENCE the value made, of XML(SEQUENCE). |
+| CAST | §6.5 SR1 to SR4, GR1 | Of an XML type to an XML type alone [SR3]. BY REF is implicit [SR2], to an UNTYPED type of an UNTYPED one [SR4a], to one of XMLSCHEMA of one assignable to it [SR4b]. To a DOCUMENT or CONTENT type, as assignment checks it [GR1a]. BY VALUE to a type of XMLSCHEMA is XMLVALIDATE of DOCUMENT or CONTENT according to it [GR1b i 1]; to ANY or SEQUENCE a copy [§10.18] [GR1b i 2]; to UNTYPED an unvalidated document node [§10.19] [GR1b i 3]. |
+| XMLPARSE | §6.16, §10.16 | Of a character string or a binary string, large objects too. DOCUMENT parses a textual XML 1.0 or XML 1.1 document, else 2200M; CONTENT a document or an external parsed entity, else 2200N [GR6a]. The internal DTD subset's entities are expanded and its attribute defaults applied [GR7c, GR7d]. STRIP WHITESPACE removes text of white space alone by `xml:space` [GR8]. Its type is XML(DOCUMENT(UNTYPED)) or XML(CONTENT(UNTYPED)) [SR1]. |
+| XMLSERIALIZE | §6.8, §10.15 | To a character or a binary string, by the XML output method of XSLT 2.0 and XQuery 1.0 Serialization, after its sequence normalization. CONTENT if neither is written. DOCUMENT of a document alone, else 2200L. VERSION '1.0' or '1.1'. A binary string in UTF8 or UTF16. INCLUDING and EXCLUDING XMLDECLARATION. The result is stored in its type as assignment stores it, too long 22001. A value with no serialization, an attribute alone among others, is 2200W. |
+| Over a connection | RULES.md D106 | A column of an XML type is described with its modifiers. A value is sent as its serialization as CONTENT, refused with 2200W if it has none, and a client parses it as CONTENT when it needs its nodes. A value sent as a parameter is kept as sent. |
+| USAGE on registered XML Schemas | §4.7.1, §11.6 AR1 | Granted and revoked by GRANT and REVOKE USAGE ON XML SCHEMA, as on a sequence generator: USAGE or ALL PRIVILEGES alone, else SQLCODE -103; its schema's owner holds it with grant option; a grant needs it held grantably, else warning 01007, and none held is -104; REVOKE takes the grants named or their grant option, with the grants they abandon and, of each schema whose owner it leaves without USAGE, what names it as DROP XML SCHEMA finds it (registered XML Schemas using it; views, constraints, assertions, triggers and routines indicating it), dropped as DROP XML SCHEMA CASCADE drops them, RESTRICT refusing that with SQLSTATE 2B000; a column, domain or user-defined type of an XML type of it refuses even CASCADE, 2B000, as DROP XML SCHEMA refuses it. CREATE XML SCHEMA's library is the registered XML Schemas its schema's owner may use, by these grants [§11.6 AR1a]. `catalog::xml_schemas::may_use` is §11.6 AR1's check, for the statements that name one. |
+| Descriptor areas | §17.1 GR1, Table 12 | XML is code 137. An item of it matches any XML type. |
+| XMLQUERY | §6.18, §11.5 | A query of a `<character string literal>`, parsed by XML 1.1's lexical rules [GR2a] and analysed as the statement is bound in the static context §10.20 makes [SR5, SR6]. PASSING and its default mechanism, then each argument a `<value expression>`, the context item at most once [SR5b i], a variable AS an XML 1.1 NCName, none twice [SR5a i, ii]; an XML value BY REF its nodes, BY VALUE a copy [§10.18]; another value XMLCAST to XML(SEQUENCE), of no mechanism [SR5a iv, v, SR5b iii, iv]; else SQLCODE -103. A null context item makes the null value [GR1a ii 1], a null variable the empty sequence [GR1b i 1], a context item of more than one item SQLSTATE 2200V [GR1a ii 2 B III]. RETURNING CONTENT, of no returning mechanism [SR4a], is XMLDOCUMENT of the value RETURNING SEQUENCE BY VALUE [SR10a]; RETURNING SEQUENCE of its mechanism or the default passing mechanism, else SQLCODE -103 [SR4b, SR4c], of XML(SEQUENCE). NULL ON EMPTY gives the null value of the empty sequence [GR4a]; a returning mechanism BY VALUE a copy [GR4b]. Every XQuery error, static, type or dynamic, is SQLSTATE 10000, its message naming the error's QName [GR3]. |
+| XMLEXISTS | §8.4 | A boolean value of the arguments XMLQUERY takes: True if the query's value is not empty, False if it is, Unknown of a null context item [GR2]; read where a `<boolean predicand>` is, so a search condition and a select list both take it. Of no argument list, its value is only tested, so no returning mechanism is needed [SR3, §6.18 SR4c]. |
+| XMLTABLE | §7.1 | A `<table primary>` with its correlation name, a derived column list optional, its arguments those of XMLQUERY, BY REF of none [SR4c ii]; lateral, as XMLITERATE of its row pattern's value RETURNING SEQUENCE BY REF EMPTY ON EMPTY [SR4h]: a row for each item, none of the null value or the empty sequence [GR1]. Its XMLNAMESPACES are in scope of its patterns [SR4a]. One FOR ORDINALITY column at most, of the item's place from 1, exact numeric of scale 0 [SR4d]. Each regular column's pattern is its PATH, else its name [SR4e ii 4], evaluated with the item as context item: of an empty value its default, else null [SR4e ii 3, 8]; of XML(SEQUENCE) the value, by the column's mechanism, else the argument list's, else SQLCODE -103 [SR4e ii 2 A]; of another type the value made a document node, which an attribute of the value fails with SQLSTATE 10000 [§6.18 SR10a, §6.13 GR8], then XMLCAST to the type, BY VALUE of an XML type [SR4e ii 7]; a mechanism of such a column SQLCODE -103 [SR4e ii 2 B]. Two columns of one name SQLCODE -103. |
+| XQuery: static context | XQuery §2.1.1, Appendix C.1, §4; §10.20 SR2 | The predeclared namespaces `xml`, `xs`, `xsi`, `fn`, `xdt`, `local`, and `sqlxml` [SR2b], those the `<XML namespace declaration>`s in scope declare overriding them and their default the default element namespace [SR2d], then the prolog's. Every QName resolved: an unbound prefix err:XPST0081, of a name test err:XPST0008 [XQuery §3.2.1.2]; a variable not in scope err:XPST0008; a function of no signature of its name and arity err:XPST0017; an atomic type not in scope err:XPST0051, a cast to none err:XPST0080. A prolog's setters, namespace and default namespace declarations, variables (a variable declared twice err:XQST0049, depending on itself through functions err:XQST0054), functions (in no namespace err:XQST0060, a reserved one err:XQST0045, twice err:XQST0034, recursive), options (`static-typing` of `urn:turborel:option`, others ignored, their names resolved). A pragma is recognized of none, so an extension expression of no expression in braces is err:XQST0079. A module import imports a library module of its target namespace, its functions and variables, each module of a query analysed in a static context of its own [XQuery §4.11]: a namespace imported twice err:XQST0047, one of no module err:XQST0059, an imported function or variable declared again err:XQST0034 or err:XQST0049, a library module's declaration outside its target namespace err:XQST0048, one of a schema type the importing module does not import err:XQST0036; a library module given as a query err:XPST0003. The in-scope schema definitions are registered XML Schemas the current user may use [SR2e], which validate expressions validate by, and those a schema import imports [XQuery §4.10], whose type definitions, element declarations and attribute declarations name sequence types [XQuery §2.5.4.3 to §2.5.4.6]; a definition's, those in scope or imported as it was created [§4.2.6]. |
+| XQuery: static typing | XQuery §5.2.3, §2.2.3.1, §2.3.1; XQueryFS §3.5.4, §4, §5.14, §5.15, §7, §8, Appendix B.2; §6.18 SR6, §10.21 | In effect for a query if XQUERY.STATIC_TYPING is ON for the statement preparing it, or its prolog declares the option `static-typing` "on" of `urn:turborel:option` [XQuery §4.16] (`xquery/statics.rs`). Each expression is given the static type of XQuery 1.0 and XPath 2.0 Formal Semantics, the Candidate Recommendation of 3 November 2005, by its normalization's typing rules: literals, variables, paths by the axes and node tests over the types the in-scope schema definitions expand to [XQueryFS §8.1.9, §8.2], arithmetic and comparisons after atomization and `fs:convert-operand` by the operator mapping, logic and conditions by the effective boolean value, FLWOR, quantified, typeswitch, instance of, treat, cast and castable, constructors, validate, and function calls by their signatures and [XQueryFS §7.2]'s rules, a declared function's body against its result type. An operand of a type not fit for it is err:XPTY0004, or the type error XQuery names (err:XPTY0018, XPTY0019, XPTY0020, XQTY0024, XQTY0030); an expression of the empty type but `()` and `fn:data(())` err:XPST0005; the context item where none is passed, or in a function body, err:XPST0001; each raised as the statement is prepared, SQLSTATE 10000 [SR6, GR3]. A value passed is of its formal type [§10.21]. The library modules a query imports are typed with it, each function body and variable in its own module's static context, a library module's variable of no focus, and a call of an imported function by its declaration [XQuery §4.11]; a library module is not typed as it is registered. A definition is typed as it is made, as XQUERY.STATIC_TYPING of the session making it or its option asks, and keeps that typing whenever it is bound again. |
+| XQuery: evaluation | XQuery §2.4, §3, Appendix B | Paths on all twelve axes, each step's nodes in document order with duplicates removed, a reverse axis's positions from the context node; numeric and boolean predicates; sequences, ranges, union, intersect and except; arithmetic and comparisons by Appendix B.2's operator mapping, its operands atomized, a node to its typed value, of an element or attribute a validation typed the value its type annotation reads [XQueryDM §3.3.1.2], and promoted [B.1]: numbers, strings by collation, booleans, dates, times and the two durations ordered, Gregorian values, `xs:duration`, binaries and QNames equal or not; general comparisons converting untyped values [§3.5.2]; node comparisons; logic by effective boolean value; FLWOR with positional variables, where and order by (stable, empty least or greatest, by collation); quantified, conditional and typeswitch expressions; instance of, treat, cast, castable and the constructor functions by [XQueryFO §17]; validate, strict and lax, by the in-scope schema definitions [§10.20 SR2e], err:XQTY0030, err:XQDY0061, err:XQDY0084 and err:XQDY0027 [§3.13]; direct and computed constructors, boundary whitespace stripped by default [§3.7.1.4], each node copied by the construction and copy-namespaces modes, each name's namespace declared, a prefix taken renamed [§3.7.4]; ordered and unordered expressions; prolog variables evaluated once, as first read; functions with their arguments and results converted by the function conversion rules [§3.1.5]. |
+| XQuery: built-in functions | XQueryFO §2 to §16 | Every function of [XQueryFO], of each number of arguments its signatures take (`xquery/library.rs`, one file of each section): the accessors, fn:error and fn:trace, fn:dateTime, the functions on numbers, strings, URIs, booleans, durations, dates and times, QNames, nodes and sequences, and the context functions; each converts its arguments by its signature's function conversion rules [XQuery §3.1.5]. A constructor function of each atomic type is its cast [XQuery §3.12.5]. The operators' functions [XQueryFO §1.2] back up XQuery's arithmetic, comparisons, ranges, node comparisons, union, intersect and except [XQuery Appendix B.2]. \[EXTENSION\] A plug-in registers more (`Database::register_xquery_function`), called by name and arity or declared `external` [XQuery §4.15]. |
+| Mappings of tables, schemas and catalogs | §4.10.8 to §4.10.11, §9.4 to §9.17 | \[EXTENSION\] Through XMLMAP ([XMLMAP](#xmlmap)), as the draft gives them no syntax [§4.10.9 NOTE 13]. TABLE, SCHEMA and CATALOG map to the data [§9.10, §9.13, §9.16], the XML Schema document [§9.9, §9.12, §9.15, §9.7], or both [§9.11, §9.14, §9.17], with each of NULLS absent and nil, TABLEFOREST, TARGETNS and ENCODING. A column is visible with SELECT on its table and, of a distinct type, EXECUTE on its cast to its source type; XML visible if its type maps, so not of XML(SEQUENCE), a structured or reference type, nor based on one [§4.10.8], nor, \[EXTENSION\], of DECFLOAT or a plug-in's type, which §9.5 maps to no type, nor based on one. A row, an array or a multiset is mapped as §9.8 maps it [GR9i, GR9j], a null field nilled of NULLS nil, its type a complex type [§9.5 GR8n, GR8p, GR8q], defined with the types it is made of [§9.7 GR3b, GR3d]. A schema's and the catalog's mappings hold their XML visible tables and schemas alone, those there are as they run. A view, routine or trigger that maps a schema depends on it: DROP SCHEMA RESTRICT is refused while it is there, CASCADE drops it. A mapping of a schema or the catalog leaves out a view that maps a schema or the catalog, or reads one that does, as it could hold itself, and is refused (SQLCODE -103) where a routine would. A visible column that is not XML visible completes the statement with the warning column cannot be mapped, 01010 [§9.11 GR3, §9.14 GR3, §9.17 GR3]. A table's names, columns' and types' are mapped by §9.1 and §9.2, fully escaped; its values by §9.8. |
+| Information Schema | §20.3 to §20.11, §21.1 to §21.3 | ATTRIBUTES, COLUMNS, DOMAINS, ELEMENT_TYPES, FIELDS, METHOD_SPECIFICATIONS, METHOD_SPECIFICATION_PARAMETERS, PARAMETERS and ROUTINES show an XML type's XML_PRIMARY_MODIFIER, DOCUMENT, CONTENT or SEQUENCE, and XML_SECONDARY_MODIFIER, UNTYPED or ANY, null of SEQUENCE [§21.1 Description 1a]. The XML_SCHEMA_ columns show a type of XMLSCHEMA's registered XML Schema, its catalog, schema and name, and its XML namespace and element if it names them [§21.1 Description 1a iii], from the type's descriptor (`value::types::Descriptor::xml_schema`); all seven are null of another type. PARAMETERS shows XML_PASSING_MECHANISM and ROUTINES XML_RETURN_MECHANISM, BY REF of a parameter or result of an XML type, else null; the associated string type's columns and XML_OPTION are null, as an external routine alone has them [§12.7 SR1]. ROUTINES and METHOD_SPECIFICATIONS show the RESULT_CAST_XML_ columns of a `<result cast>`'s type, null, as no SQL routine has one; ROUTINES shows XML_CHAR_TYPE once, among the associated string type's columns, as ROUTINES_S does, which reads it there [§20.15]. NCNAME and URI are not defined as domains, as CHARACTER_DATA is not [§20.1, §20.2]. The views of registered XML Schemas [§20.12 to §20.14] are the next row's. |
+| Registered XML Schemas | §4.2.6, §5.2, §11.6 AR1a | Registered by CREATE XML SCHEMA, of a `<registered XML Schema name>` in a schema its creator owns [§5.2], from one document, a character string, binary string or XML value; dropped by DROP XML SCHEMA, RESTRICT refused while a registered XML Schema includes, redefines or imports it, or a routine has a parameter or result of a type of XMLSCHEMA of it, or a view, constraint, assertion, trigger or routine names it, CASCADE dropping those, and refused even so while a column, a domain or a user-defined type is of such a type (RULES.md D106). Two of one name are refused, SQLCODE -103 [§4.2.6]. The owner of its schema may use it, and anyone a permanently registered one [§11.6 AR1a] (`catalog/xml_schemas/privileges.rs`); a permanently registered one is never registered again nor dropped. Its descriptor holds its target namespace, schema location, name, whether permanent, whether non-deterministic, and its namespaces with their global element declarations, the last three read from its schema [§4.2.6]. |
+| The views of registered XML Schemas | §20.12 to §20.14, §21.4 to §21.7, §4.2.6 | XML_SCHEMAS, XML_SCHEMA_NAMESPACES and XML_SCHEMA_ELEMENTS, the draft's definitions over Definition Schema tables of the same names, show the registered XML Schemas the user, PUBLIC or an enabled role holds USAGE on, the permanently registered ones among them; USAGE_PRIVILEGES shows USAGE on each, of OBJECT_TYPE XML SCHEMA [§21.4]. A schema's namespaces are its target namespace and each of its top-level components', those it imports among them; an element declaration is non-deterministic if its type, or that of an element in its content at any depth, has a wildcard of `##any` or `##other` processed strictly or laxly, a namespace if one of its element declarations is, a schema if one of its namespaces is [§4.2.6]. |
+| Short name views | §20.15 | XML_SCH_ELEMENTS_S, XML_SCH_NSPACES_S and XML_SCHEMAS_S, the draft's definitions over XML_SCHEMA_ELEMENTS, XML_SCHEMA_NAMESPACES and XML_SCHEMAS, each column named by an `<as clause>` as the draft's `<view column list>` names it [ISO/IEC 9075:1992 §7.9 SR9a, §11.19 GR1]. ATTRIBUTES_S, COLUMNS_S, DOMAINS_S, ELEMENT_TYPES_S, FIELDS_S, METHOD_SPECS, METHOD_SPEC_PARAMS and PARAMETERS_S end with the seven columns of an XML type, and ROUTINES_S has them after DTD_IDENTIFIER, the names the draft gives them there; PARAMETERS_S and ROUTINES_S end with the associated string type's columns and XML_PASSING_MECH or XML_RETURN_MECH. The draft's COLUMN_S, DOMAIN_S, METHOD_SPECS_S and METHOD_SPEC_PARAMS_S are read as COLUMNS_S, DOMAINS_S, METHOD_SPECS and METHOD_SPEC_PARAMS, the views ISO/IEC 9075-11 defines. ROUTINES_S and METHOD_SPECS have the RC_XML_ columns too. |
+| Registered XQuery modules | XQuery §4.2, §4.11, §5.2.5 | \[EXTENSION\] Registered by CREATE XQUERY MODULE, of a `<schema qualified name>` in a schema its creator owns, from one library module, a `<character string literal>`, of a target namespace of nonzero length, else SQLCODE -103; one not a library module err:XPST0003, any static error of it or of what it imports SQLSTATE 10000. Analysed as it is registered in a static context of its own, its schema imports and module imports importing among the registered XML Schemas and XQuery modules its schema's owner may use; those imported kept, depended on and imported again whenever it is imported. A duplicate name SQLCODE -103. ALTER XQUERY MODULE replaces its text and location, analysed and its imports recorded again, refused, SQLCODE -103, if a module importing it or a definition keeping it would no longer analyse or bind. DROP XQUERY MODULE RESTRICT is refused while a module imports it, CASCADE drops those, a cycle whole; DROP XML SCHEMA CASCADE drops the modules importing it, DROP SCHEMA CASCADE the schema's. Logged as its statement's text, its drop as a drop record, checkpointed with the catalog, replayed by recovery and a standby. |
+| USAGE on registered XQuery modules | XQuery §5.2.5 | \[EXTENSION\] Granted and revoked by GRANT and REVOKE USAGE ON XQUERY MODULE as on a registered XML Schema: USAGE or ALL PRIVILEGES alone, else SQLCODE -103; its schema's owner holds it with grant option; a grant needs it held grantably, else warning 01007, and none held is -104; REVOKE takes the grants named or their grant option, with the grants they abandon and, of each schema whose owner it leaves without USAGE, the registered XQuery modules that imported it, dropped as DROP XQUERY MODULE CASCADE drops them, RESTRICT refusing that with SQLSTATE 2B000; a grant not made warns 01006. A query imports, and a module registered imports, among the modules its user, or its schema's owner, holds USAGE on (`catalog::xquery_modules::may_use`). USAGE_PRIVILEGES shows each, of OBJECT_TYPE XQUERY MODULE. |
+
+| Choice | Rules | turborel |
+|---|---|---|
+| XML alone; DOCUMENT and CONTENT alone | §6.1 SR2, SR3b | XML(SEQUENCE); ANY. |
+| The type of XMLPARSE | §6.16 SR1 | UNTYPED, as every node a parse makes is. |
+| CAST's passing mechanism | §6.5 SR2 | BY REF. |
+| A routine's passing mechanism | §12.7 SR8b i, iii | BY REF, of each parameter and result of an XML type, as none is written. |
+| A namespace of none | §21.5, §21.6, §11.6 SR2a i | The zero-length string, as NO NAMESPACE names it, in XML_SCHEMA_TARGET_NAMESPACE and XML_SCHEMA_NAMESPACE, which are of primary keys. |
+| The lengths of NCNAME and URI | §20.1 Description 2, §20.2 Description 2 | CHARACTER_DATA's, 32767 characters: XML_SCHEMA_ELEMENT and XML_SCHEMA_NAMESPACE are CHARACTER VARYING(32767). |
+| XMLCAST's passing mechanism | §6.6 SR10b ii 1 | BY REF. |
+| The binary encoding | §6.6 SR1b, §6.14 GR1b, §6.15 GR1b, §6.19 GR3b | HEX, of XMLCAST, XMLELEMENT, XMLFOREST, XMLTEXT and XMLMAP of no ENCODING in the scope of no XMLBINARY: a binary string is an `xs:hexBinary`, in upper case. |
+| The publishing operators' returning clause | §6.11 SR1, §6.12 SR1, §6.14 SR10, §6.15 SR4, §6.17 SR4, §6.19 SR1, §11.2 SR1 | RETURNING CONTENT, as XMLDOCUMENT's, so what they make is stored in a DOCUMENT or CONTENT column; XMLAGG's, implementation-dependent, too. |
+| XMLAGG of no ORDER BY | §11.2 GR2d | The order in which the rows are read. |
+| The registered XML Schema of a URI | §11.6 SR2b | turborel identifies registered XML Schemas by name [§4.2.6], so SR2b ii: of those of the target namespace, and of the schema location if written, that the user may use, the one of the least name, schema then identifier; the permanently registered ones last. (`db/definitions/xml_schemas/according.rs`) |
+| Whether the namespace and element must be there | §11.6 SR4b, SR4d iii | They must: one not there is SQLSTATE 2201M or 2201N as the clause or type is bound, as GR1 would raise. |
+| The registered XML Schema of an element, data-driven | §6.20 GR6a iii 2 A II 2, GR6b i 2, §8.5 GR7a iii 3 A II 2, GR7b i 2 | Of the registered XML Schemas of the element's namespace that the user may use, the one of the least name, the permanently registered ones last, chosen as the statement is bound (`binder/xml/valid.rs`). |
+| A prefix XQuery makes | XQuery §3.7.4 | `ns1`, `ns2` and on, of an attribute in a namespace with no prefix; a prefix bound to another URI on the element gets its next free number, as `p1`. |
+| The namespace of `sqlxml` | §4.9 Table 2, §10.12 SR2a ii 2 B I | `http://standards.iso.org/iso/9075/2003/sqlxml`, as Table 2 writes it; §10.12 and §10.20 write it without the slash after `iso`. |
+| SQL_TEXT's mapping to Unicode | §9.1 GR3, §9.3 GR4, §10.12 SR3 | The identity: SQL_TEXT is Unicode. |
+| How an application invokes the mappings of names | §4.10.3 NOTE 10, §4.10.4 NOTE 11, §9.1, §9.3; Feature X400 | \[EXTENSION\] In SQL, `XMLNAME_TO_IDENTIFIER ( <character value expression> )`, the delimited identifier an XML Name maps to [§9.3 GR5], in double quotes, each double quote doubled; and `IDENTIFIER_TO_XMLNAME ( <character value expression> [ , { PARTIALLY \| FULLY } ESCAPED ] )`, the XML Name an identifier's characters map to [§9.1], PARTIALLY ESCAPED by default. §9.2's multi-part names are not taken, as a string is no sequence of identifiers. Each gives CHARACTER VARYING of the longest mapping its argument's declared length allows, at most 32,767 (twice it and 2, nine times it), a longer result SQLSTATE 22001, null of null. No error of the draft arises: §9.3 GR4's unmappable XML Name needs a character SQL_TEXT lacks (`functions/xml/names.rs`, `parser/xml/names.rs`). In Rust, `turborel::xml::{name_of, name_of_parts, identifier_of, delimited}` (`xml/identifiers.rs`). |
+| A null element mapped | §9.8 GR9j iii 2 A, §4.9 Table 2 | `<element xsi:nil="true"/>` declares the prefix `xsi`, so the text, parsed as CONTENT [§10.13 GR4c i 1 B, §6.6 GR3b], is namespace-well-formed. |
+| How USAGE on a registered XML Schema is granted | §4.7.1; Annex B 2a | GRANT and REVOKE USAGE ON XML SCHEMA `<registered XML Schema name>`, as ISO/IEC 9075-2:2023 §12.2, §12.3 and §12.7 grant and revoke USAGE on a sequence generator (`db/usage/xml_schemas.rs`). On a permanently registered one every user holds it, not grantably, so a GRANT grants nothing (01007) and a REVOKE revokes nothing (01006). |
+| The permanently registered XML Schemas | §4.2.6 Table 1; Annex B 1b | Named INFORMATION_SCHEMA.XS, XSI and SQLXML, after Table 1's prefixes; each one's schema location URI its target namespace URI followed by `.xsd`. XS has the 41 global element declarations of the Schema for Schemas and its datatypes [Schema1 Appendix A, Schema2 Appendix A], each non-deterministic, and the namespaces of XML Schema and of `xml`, which it imports; XSI no element declaration; SQLXML `sqltype` and `sqlname` [§22.1], deterministic. They are constants, not catalog objects, and every user holds USAGE on them (`catalog/xml_schemas/permanent.rs`). Their components are read from documents kept in the tree (`xml/schema/permanent/`): XS's from the Schema for Schemas [Schema1 Appendix A] with the schema of the datatypes [Schema2 Appendix A] and turborel's schema of the XML namespace's `xml:lang` and `xml:space` [XML 1.0 §2.10, §2.12], which no text on hand prints; XSI's none of its own [Schema1 §3.2.6, §3.2.7]; SQLXML's from §22.1, which a registered XML Schema's document may import. The Schema for Schemas' restrictions are trusted, not checked by Particle Valid (Restriction), which three of them break by its letter [Schema1 §3.9.6]. |
+| The modules a module import imports | XQuery §4.11, §5.2.5 | One registered XQuery module of its target namespace (`xquery/analyze/modules.rs`): of a main module's, among those the user may use, of a library module's, among those it imported as it was registered; of these, the one whose location, or name alone or after its schema's, is a location hint, else the one of the least name. A library module importing its own target namespace imports another of it. Modules of one namespace import one another, ALTER XQUERY MODULE making a module import one registered after it; a cycle of modules not all of one namespace is err:XQST0073. |
+| NIL ON NO CONTENT | §10.13 GR4c ii 2 | Read of the content as mapped: an element whose content holds no element, text node or atomic value is nilled. |
+| CAST of a distinct type of XML | §6.5 SR3, ISO/IEC 9075-2:2023 §11.51 GR2b, §6.13 SR12 | By the type's own casts to and from its source, as Part 2 makes them for every distinct type, though §6.5 SR3's table writes N between XML and a user-defined type: without them no value of the type could be made (X013). |
+| The XML Schema types of SQL's numbers and BOOLEAN | §9.5 GR8d iv, GR8e viii, GR8f | INTEGER, SMALLINT and BIGINT restrictions of `xs:integer`, an XML Schema document's by their greatest and least values; REAL and FLOAT of 24 bits or fewer `xs:float`, DOUBLE PRECISION and other FLOATs `xs:double`; BOOLEAN `xs:boolean`, each named by a restriction of no facet [§9.6 GR6b iv]. |
+| Annotations of XML Schema types | §4.10.5, §9.5 GR8 | None is written, so no type an XML Schema document defines uses the namespace of `sqlxml` (`functions/xml/map/types.rs`). |
+| XMLMAP's clauses not written | RULES.md D106 | NULLS ABSENT, as XMLFOREST leaves a null value out; AS ELEMENT, TABLEFOREST False; TARGETNAMESPACE '', no namespace [§9.10 GR1]; DATA; ENCODING of the XMLBINARY in scope, HEX outside every one, as of XMLCAST, XMLELEMENT and XMLFOREST [§11.3]. |
+| The version and encoding of a mapping's documents | §9.11 GR7b, GR8, §9.14 GR8b, GR9, §9.17 GR8b, GR9 | XML 1.0, unless a name of the XML Schema document is of XML 1.1 alone [GR7a]; UTF-8, so XMLDECL is written of XML 1.1 alone, and its encoding never (`functions/xml/map.rs`). |
+| SLOC, the location of `sqlxml`'s XML Schema | §9.11 GR10c, §9.14 GR11c, §9.17 GR11c | None: no type uses `sqlxml`, so XSDIMP and XSDECL are the zero-length string (`functions/xml/map/documents.rs`). |
+| IDI, a row type's identifier | §9.4 GR19 (implementation-dependent) | The multi-part name [§9.2] of each field's name and its type's XML Name in turn, so `Row.X.INTEGER.Y.VARCHAR_5` (`functions/xml/map/composites.rs`). |
+| Annotations of tables, schemas and the catalog | §9.9 GR5f i 7, GR9, §9.12 GR8, §9.15 GR7 | None (`functions/xml/map/documents.rs`). |
+| The orderings of rows, tables and schemas | §9.10 GR6a, §9.12 GR5a, §9.13 GR5a, §9.16 GR5a | Rows as the table is read; a schema's tables, and the catalog's schemas, in order of name (`binder/xml/map.rs`). |
+| A character set's mapping to Unicode in XML Schema types | §9.4 GR2c, §9.5 GR8a ii | The identity. Of a length in characters it is homomorphic, N characters of N; of a length in octets not, as N octets hold at most N characters, so a CHARACTER of one is restricted by `xs:maxLength`, and named VARCHAR_N_N. |
+| Limits of XQuery's atomic values | XQueryFO §10.1.1, §17.1.1 | A date's year from 0001 to 9999, else err:FODT0001; seconds, of times and of `xdt:dayTimeDuration`, to the microsecond, more digits dropped; a duration within 128 bits of months or microseconds, else err:FODT0002; `xs:decimal` and `xs:integer` of any digits, an SQL exact number of them its fraction cut to 38 digits. A float or double cast to a decimal is the shortest decimal that reads back as it; a double cast to a float its mantissa truncated to 24 bits, as [XQueryFO §17.1.3.1] says, below a float's least normal value its subnormal, the bits truncated further. A zero time zone is written Z. |
+| The types §9.5 maps SQL's types to | §9.5 GR8 | Without annotations [GR8a vii and the like]. CSM, the mapping of a character set to Unicode, is the identity [GR8a ii], so CHARACTER(n) is `xs:string` of the length n, and of a length in OCTETS of the maxLength n. |
+| The pattern of TIME(p) and TIMESTAMP(p) | §9.5 GR8h to GR8k, §6.6 GR4j | The patterns ask for exactly p digits of fraction, which no canonical form of a value has, as its seconds end in no zero [XQueryFO §17.4]; so a value, adjusted to UTC first of a type without time zone [GR4j i to iii], is checked against XT written as §9.8 GR9f and GR9g write an SQL value of the type: its fraction padded with zeros to p digits, its time zone ±hh:mm. A value, or text, of more than p digits of fraction is refused, SQLSTATE 10000; zeros ending the text's fraction are not counted, as they are no digits of its value, so `12:00:00.5000` is a TIME(3). |
+| The time zone of §9.5's patterns | §9.5 GR8i ii, GR8k iii | TZ, printed `(+\|-)\p{Nd}{2}:\p{Nd}{2}`, is no regular expression, `+` being a metacharacter [Schema2 Appendix F]; it is read as `(\+\|-)`, the sign it names. |
+| XMLDOCUMENT's returning clause | §6.13 SR1 | RETURNING CONTENT. |
+| How far a URI is checked | XQueryFO §17.1.1 | Not at all: every string is a lexical form of `xs:anyURI`. |
+| The literals of `xs:base64Binary` | Schema2 §3.2.16 | Groups of four characters of RFC 2045's alphabet, spaces among them ignored, the last group alone padded with `=`; another character is refused, not ignored. Its string has no spaces. |
+| The names of `xs:Name`, `xs:NCName`, `xs:NMTOKEN` and their kin | Schema2 §3.3.4 to §3.3.11 | XML 1.1's, the names of XQuery's evaluations under XML 1.1's lexical rules [§6.6 GR3d vi, GR4j] and those `\i` and `\c` match in a pattern. |
+| `xs:gMonth` | Schema2 §3.2.14.1 | Written `--MM--`, as the edition SQL/XML names writes it. |
+| A restriction's bounds | Schema2 §4.3.7.2, §4.3.9.4 | A bound's value is of its base's value space, the base's bounds aside, so an exclusive bound may be restated; a bound a step specifies replaces its base's on that side; minInclusive and minExclusive, as maxInclusive and maxExclusive, are refused together in one step. |
+| How deep lists and unions nest | RULES.md D106 | At most 32 deep (`MAX_TYPE_NESTING`), deeper SQLCODE -900. |
+| A QName's value | Schema2 §3.2.18 | Its prefix and local name as written, and its namespace URI [XQueryDM §3.3.3], kept in the stored form; two are equal if their URIs and local names are. A literal cast makes a QName of no namespace, as an atomic value holds no namespace bindings [XQueryFO §17.1.1]. A length facet constrains no QName or NOTATION, as length is measured in no unit of theirs [Schema2 §4.3.1.3]. |
+| The canonical form of the types with none | XQueryFO §17.1.2 | The string XQuery writes: of `xs:date`, the Gregorian types and the durations their local value or canonical duration; of `xs:base64Binary` no spaces. The seconds of a date and time or a time end in no zero, as XQuery writes them. |
+| XMLDOCUMENT's type of CONTENT | §6.13 SR3a | XML(CONTENT(UNTYPED)), so what it makes is unvalidated [GR9a, §10.19], and an UNTYPED column takes what the publishing operators make; XMLCONCAT's document node is of its own declared type (`binder/xml/publish.rs`). |
+| XMLSERIALIZE's version and encoding | §6.8 SR2d, SR4d, SR4e | '1.0'. The encodings are UTF8, the default, and UTF16. |
+| A byte order mark | §10.15 GR4a ii | Before UTF16 alone. |
+| The standalone declaration | §10.15 GR7 | None is written. |
+| An XML declaration not asked for | §10.15 GR8c ii | None, of a document of XML 1.0 in UTF8 or UTF16; one of a document of XML 1.1 [GR8c i]. |
+| Prefixes undeclared | §10.15 GR9b | None, of XML 1.1 too: undeclare-prefixes is no, its default for XQuery's Serialization Feature [XQuery §5.2.6, Appendix C.3], which SQL/XML gives no way to set (`functions/xml.rs`). A value sent over a connection in XML 1.1 undeclares them, so a client reads back its tree (RULES.md D106). |
+| How an XML Schema is registered | §4.2.6 | \[EXTENSION\] CREATE XML SCHEMA and DROP XML SCHEMA (RULES.md D106, `db/definitions/xml_schemas.rs`). A registered XML Schema is identified by its `<registered XML Schema name>` alone. Its target namespace is its document's targetNamespace, the zero-length string of none; its schema location is the LOCATION written, the zero-length string if none. Its `<include>`, `<redefine>` and `<import>` find the documents of registered XML Schemas the owner of its schema may use, as §11.6 AR1a asks of one an SQL-schema statement names; those it read are what it depends on. |
+| Schema documents read | Schema1 §2.4, §4.2, §4.3.2, §5.1 | A schema is read from schema documents, each a `<schema>` that is its tree's element (`xml/schema/read.rs`). `<include>`, `<redefine>` and `<import>` find documents among those the schema is read with alone, by schema location, or for an import by namespace; none is fetched, so turborel is a processor in conformance to the XML Representation of Schemas, not a fully conforming one. A location naming no such document adds no components [§4.2.1]. The XML Schema namespace's components are its built-in ones, named without an `<import>`. |
+| Missing sub-components | Schema1 §5.3 | None: a reference that resolves to nothing is refused as the schema is read. |
+| The Schema for Schemas | Schema1 §5.1, Appendix A | Each element of a schema document is checked against the attributes of no namespace and the order of children its XML Representation Summary gives (`xml/schema/read/shape.rs`), not validated against the Schema for Schemas. |
+| Simple type definitions | Schema1 §3.14, Schema2 §4.1.2 | The built-in datatypes of XML Schema Part 2, the lists `xs:NMTOKENS`, `xs:IDREFS` and `xs:ENTITIES` among them, and each `<simpleType>` of the schema documents, by restriction with facets, by list or by union, read whole when first named (`xml/schema/read/simple.rs`); a restriction of simple content with facets or a `<simpleType>` makes its own. A simple type's {final} is read by [Schema1 §3.14.2], so `#all` of final or finalDefault is extension, restriction, list and union. finalDefault lists extension, restriction, list and union: [Schema1 Appendix A] lets it list the first two alone, but [Schema2 §4.1.2] reads list and union from it into a simple type's {final}, so turborel takes all four, a complex type's and an element declaration's {final} keeping extension and restriction of them [Schema1 §3.4.2, §3.3.2]. blockDefault gives an element declaration's {disallowed substitutions} substitution, extension and restriction, and a complex type's {prohibited substitutions} extension and restriction [Schema1 §3.3.2, §3.4.2]. `xs:NOTATION` named as a type is refused, and a type restricting it must give an enumeration, as Part 2 asks [Schema2 §3.2.19]. |
+| Typed values of unions | XQueryDM §3.3.1.2 | A node of a union type, or of a list of one, is annotated with the union, its typed value read as the kind of the atomic values validating it gave: one of an atomic type, more of a list of that type. A list whose items are of several kinds is annotated with each item's kind in order, the member type that validated it, so its typed value is each item of its own type [XQueryDM §3.3.1.3]. |
+| Typed values of qualified names | XQueryDM §3.3.1.3, §3.3.3 | A node of `xs:QName` or `xs:NOTATION`, of a type derived from one, or of a list of them, has a typed value whose namespace URI is the one its prefix, or the default namespace of none, is bound to among the namespaces in scope of its element [Schema2 §3.2.18 NOTE]; a parentless attribute's has none. |
+| Unique Particle Attribution | Schema1 §3.8.6, Appendix H | Checked on the automaton of each content model (`xml/schema/automaton.rs`), its transitions labelled by particle: one particle reached by two paths, as a group referred to twice, is one particle. Occurrence ranges unfold to at most 4,096 particles and the automaton to 16,384 states, SQLCODE -900 past either. |
+| Type Derivation OK from the ur-type | Schema1 §3.4.6, §3.14.6 | Every type is validly derived from `xs:anyType` [§2.2.1.1]. Clause 1.5 of Derivation Valid (Extension) is not checked. |
+| The validation of an element node | XQuery §3.13, §10.22 | Its identity constraints and ID/IDREF table are not checked, as XQuery's validate does not check them of an element node; of a document node they are. |
+| What is not assessed | XQuery §3.13, XQueryDM §3.3.1.1 | An element skipped by a wildcard, or laxly assessed with no declaration, is annotated `xs:anyType`; an attribute not assessed is untyped, `xdt:untypedAtomic`. The first failure ends validation. |
+| Anonymous types' names | XQueryDM §3.3 | `#anonymous-` and a number of a complex type, `#anonymous-simple-` and a number of a simple one, in the type's target namespace: no NCName, so no named type has it. |
+| An element of simple content | XQueryDM §6.2.4 | One text node, its schema normalized value, absent if empty, before its comments and processing instructions. |
+| Default values | Schema1 §3.4.5, §3.3.5 | An absent attribute takes its use's value constraint, else its declaration's. An empty element of mixed content takes its declaration's default as text too. An attribute added in a namespace takes a prefix bound to it in scope, if one is. |
+| Entities and notations | XQuery §3.13 | `xs:ENTITY` and `xs:NOTATION` values are not checked against unparsed entities and notations, as XQuery's validate does not check them; a NOTATION value is a QName whose prefix is in scope [Schema1 §3.15.3]. |
+| Limits of reading a schema | RULES.md D18, D106 | Declarations, groups and types nested 64 deep where reading recurses; 64 types of a derivation or declarations of a substitution group, or simple types read by way of one another; 256 documents. Past one, SQLCODE -900. |
+| The other serialization parameters | §10.15 GR10 | No CDATA section, document type declaration, indentation, URI escaping, content type, Unicode normalization or character map. |
+| The defaults of the serialization parameters | XQuery §5.2.6, Appendix C.3 | byte-order-mark yes of a binary string in UTF16, else no; encoding UTF-8, or the UTF16 a binary string names; media-type `application/xml`, which changes nothing written, as no result is annotated with one [Serialization §3]; normalization-form none; omit-xml-declaration as §10.15 GR8 and the choice above give it; standalone omit; version 1.0. The rest are C.3's: no CDATA section element, no doctype-public or doctype-system, no indentation, the method `xml`, no prefix undeclared, no character map. XMLSERIALIZE is the means by which a result is serialized, its errors SQLSTATE 2200W, the code of [Serialization Appendix B] in the message (`xml/serialize.rs`). |
+| Notations and unparsed entities | §10.16 GR7a ii, iii | Not kept. |
+| Base URI | §10.16 GR7b | None. |
+| External DTD | §10.16 GR7e | Not read, nor any external entity, so no parse opens a file or a URL. A reference that needs one, or a declaration not read, is the exception GR6 raises, as the data model has every entity expanded. |
+| The encoding of a binary string parsed | XML §4.3.3 | UTF-8, UTF-16 with its byte order mark, UTF-16BE and UTF-16LE that declare themselves, ISO-8859-1 and US-ASCII; another is refused. |
+| XMLQUERY's returning clause | §6.18 SR3 | RETURNING CONTENT, as XMLDOCUMENT's (`binder/xml/query.rs`). |
+| The subset of XQuery | §6.18 SR6, NOTE 28 | All its grammar; its static rules, the Static Typing Feature's when in effect (`xquery/statics.rs`); the built-in functions above; schema imports and validation; serialization by XMLSERIALIZE; library modules, registered XQuery modules imported (`xquery/analyze.rs`). |
+| When static typing is in effect | §6.18 SR6, NOTE 29; XQuery §5.2.3, §4.16 | Off by default, as it refuses queries that would evaluate without error. XQUERY.STATIC_TYPING ON, of a session or the database, puts it in effect for the statements prepared. A definition (a view, a CHECK, an assertion, a trigger, a routine, a generation expression, a domain constraint) is typed as it is made by the value of the session making it, logged with its statement so it is made again alike after a crash; it keeps whether it was typed, as it keeps the registered XML Schemas it indicates [§4.2.6], and is typed so whenever it is bound again, whatever the session reading it asks. The option `static-typing` of `urn:turborel:option`, the namespace of turborel's options, puts it in effect for its query, of the value `on`; `off` takes nothing out of effect, as an option suppresses no static error [XQuery §4.16]; another value, or another option of that namespace, is SQLCODE -103. An option of another namespace is ignored. |
+| The formal types of what is passed | §10.21 SR3c, SR5h, SR6 | A variable passed of an XML(DOCUMENT) or XML(CONTENT) type or an SQL type is one if its value expression is known not null, else optional; the context item is one [SR3a]. Known not null [SR3c] is a column reference to a known not null column [X3.135-1986 §5.25 SR10], and, by turborel's implementation-defined rule, a literal but UNKNOWN. An SQL type is typed by the primitive type of the XML Schema type §9.5 maps it to, binary strings hexBinary; a type §9.5 maps to none as XML(SEQUENCE). An XMLTABLE column's pattern's context item is of the type of an item of the row pattern's value, if that was typed, else one of XML(SEQUENCE). |
+| Static typing extensions | XQuery §5.2.3.1; XQueryFS §6.1.1 | Three, each giving a type that is a subtype of the one [XQueryFS] gives: a quantifier counts the least and most items of a type, so the empty type adds none to a sequence [§8.4]; the root of a focus of documents is of the focus's type, a document being its own root, where `fn:root` gives `document` [§4.2, §7.2]; and a schema wildcard's name admits the names its namespace constraint allows alone, an attribute wildcard's not those of the attribute uses beside it, where [Appendix C.11] gives `*` (below). |
+| Readings of [XQueryFS] | XQueryFS §3.5.4, §4.7, §7.1.1, §7.2.10, §8.6.1, Appendix B.2 | Where the Candidate Recommendation's rules leave a type out or disagree with XQuery: `element()`, `node()` and `document-node()` admit nilled elements, as XQuery's matching does [XQuery §2.5.4.3]; `fs:convert-operand` returns an atomic operand neither untyped nor numeric unchanged, as its dynamic semantics says; the operator mapping is [XQuery Appendix B.2]'s, with its type promotion [B.1], where Appendix B.2 of [XQueryFS] leaves rows out; a direct element's content is converted by `fs:item-sequence-to-node-sequence` as a computed element's is; fn:sum's zero is promoted, as its other values are, and fn:sum of one argument, of no value, gives `xs:integer` too; validate makes of a document a document of the element validated, and of an element of no declaration in scope `xs:anyType`'s. Subtyping is decided for the shapes the rules compare with; any other shape is not a subtype, so a query is refused, never admitted, where it cannot be decided. [XQueryFS Appendix C.11] does not map a wildcard's namespace constraint, and its types name a wildcard `*` alone; as an extension a wildcard's name admits the names of the namespaces its {namespace constraint} allows alone, none for not but neither that namespace nor none [Schema1 §3.10.4], and an attribute wildcard's not the names of the attribute uses beside it nor `xsi`'s four, which are typed by those [Schema1 §3.4.4 Element Locally Valid (Complex Type) 3]; a name test of it keeps the names both match. Its element type is `xs:anyType`'s, its attribute type `xs:anySimpleType`'s, of each {process contents}. |
+| Schema imports | XQuery §4.10, Appendix C.1 | The schema of a target namespace is the registered XML Schema of it the current user may use whose schema location is a location hint, else the one of the least name, the permanently registered ones last; it brings the components of every namespace it has (`xquery/analyze/import.rs`). err:XQST0058 of a namespace imported twice, err:XQST0059 of one no such schema has, err:XQST0035 of a name two imported schemas define from different schema documents. err:XQST0012 is never raised: each registered XML Schema is valid, and what two imported share comes from the same documents, else err:XQST0035. A simple type of the atomic variety of an imported schema is an atomic item type [XQuery §2.5.4.2], a cast's target [§3.12.3] and a constructor function [§3.12.5]; a list, union or complex type is none, err:XPST0051, and no cast's, err:XPST0080. |
+| User-defined atomic types | XQueryDM §2.6.1, §3.3.1.2; XQuery §2.5.4.2, §3.1.5, §3.12.3, §3.12.5; XQueryFO §17.2 to §17.5 | A value of a user-defined atomic type is a value of the built-in type it restricts, annotated with its type's name, an anonymous type's made from its place in its schema (`xml::Atomic::annotation`). A node's typed value is of its type: an atomic type's, a list's item type's, a union's member's that validated each item; kept when stored (`xml/stored/atomic.rs`). It matches an atomic item type of an imported schema by that schema's Type Derivation OK of the type of its name there, none if the schema has none of the name, and a built-in type by the hierarchy of its built-in type. A cast to one checks its facets: a string or untyped value validated as a literal, its whitespace normalized and patterns matched first; another value cast as the built-in type, its patterns matched against its canonical form; refused, err:FORG0001. A cast to one derived from `xs:QName` or `xs:NOTATION` is of a string literal alone (err:XPST0083), evaluated as the query is analysed. A cast from one to its built-in type keeps the value, of that type alone. The function conversion rules cast an untyped value to a parameter's user-defined type. Arithmetic, comparisons and functions take the value as one of its built-in type and give built-in types (`xquery/types.rs`, `xquery/eval/types.rs`). Statically typed, it is an atomic type of its own: a node's typed value of it, a cast to it and its constructor function are of it; it is a subtype of a user-defined type its name's type derives from in that type's schema, and of the built-in types above the one it restricts; a built-in type is a subtype of none of it; operators take it as its built-in type (`xquery/statics.rs`). |
+| XMLTABLE's determinism | §7.1 SR1 | Every XMLTABLE is deterministic, as a query reads no clock but the statement's and no source but its arguments. |
+| XQuery's static context | XQuery Appendix C.1 | Default element/type namespace none, unless an XMLNAMESPACES in scope declares one; default function namespace `fn`; boundary-space strip; construction preserve; ordering ordered, and unordered gives the same order; default order for empty sequences least (`xquery::EMPTY_ORDER`); copy-namespaces preserve, inherit; base URI none; the default collation the Unicode codepoint collation; the statically known collations it and each of the database's, as `urn:turborel:collation:` and its name (`xquery/collation.rs`); in-scope schema types the built-in types of `xs` and `xdt`; the in-scope schema definitions [ISO/IEC 9075-14:2006 draft §10.20 SR2e], of each target namespace the registered XML Schema the current user may use of the least name, as XMLVALIDATE's data-driven case chooses, chosen as the statement is bound, none permanently registered; a validate expression's effective schema the one of the namespace of the element it validates, a schema of no components if none, and no name of a query resolves to their components (`xquery/eval/validate.rs`, `binder/xml/query.rs`); no statically known documents or collections. |
+| XQuery's dynamic context | XQuery Appendix C.2 | The current dateTime the statement's instant in the session's time zone, the implicit timezone the session's displacement; no available documents, so fn:doc fails with err:FODC0005 of any URI; no collection. |
+| XQuery's limits | XQuery Appendix D | Expressions nested 64 deep; operations and function calls nested 256 deep as a query is evaluated, expressions 256 deep as it is statically typed; a static type nested 256 deep, an axis's closure of 4,096 item types; a sequence of 1,048,576 items; the nodes one evaluation constructs 64 MiB; past them SQLCODE -900 (`xquery/eval.rs`, `xquery/statics.rs`). |
+| Order of nodes of two trees | XQuery §2.4.1 | By where each tree is held in memory, stable while a query runs, every node of a tree together (`xml/sequence.rs`). |
+| XQuery's warnings | XQuery §2.3.1, Appendix D | None is raised. |
+| Type annotations | XQuery §2.2.1, §3.7.1.3, §3.7.3.1, §4.6 | A validated node has the annotation its validation gives; a parsed one `xdt:untyped` of an element and `xdt:untypedAtomic` of an attribute. An element a query constructs is annotated `xs:anyType` in construction mode preserve, the default, and `xdt:untyped` in strip; preserve keeps a copied node's annotation, strip makes every copied element `xdt:untyped` and attribute `xdt:untypedAtomic`; an attribute a query constructs is `xdt:untypedAtomic`. XMLELEMENT and XMLFOREST RETURNING SEQUENCE make an element of `xs:anyType`, as `element { $QNAME } { $SEQ }` does in the default context of §10.20 [§10.13 GR4c viii]; a value of XML(CONTENT(UNTYPED)), as RETURNING CONTENT makes, has every element `xdt:untyped` [§10.19]. |
+| Copy-namespaces no-preserve | XQuery §3.7.1.3 | Each copied element declares the bindings its name and attributes' names use; one copied below another keeps too those its copied ancestors declare, as a tree holds bindings where they are declared. |
+| A prefix made for a constructed name | XQuery §3.7.4 | `ns1`, `ns2` and on, or the prefix taken followed by its next free number. |
+| XQuery's Unicode and XML versions | XQuery §2, §3.1.1, §3.7.1.1 | Names, characters, character references and attribute normalization of XML 1.1 and Namespaces in XML 1.1, as XMLQUERY reads by XML 1.1's lexical rules [§6.18 GR2a]. |
+| The functions and operators of XQuery | XQueryFO §1.1 | The built-in functions of every query, and the operators its evaluation calls (RULES.md D106). Unicode 13.0, the version of the collations and regular expressions. |
+| The precision of `xs:decimal` and `xs:integer` operations | XQueryFO §6.2 | Any digits to 1,024, past which an operation overflows, err:FOAR0002; no integer is of limited precision, so none wraps. A quotient of decimals is exact if it ends within 18 digits after the period, or the scale of either operand, and is truncated there otherwise. |
+| Overflow and underflow of floats and doubles | XQueryFO §6.2 | IEEE 754's: an infinity, or a zero or subnormal value. A float's operation is rounded to single precision. |
+| fn:error and fn:trace | XQueryFO §3, §4 | The error is SQLSTATE 10000, its message the QName as `NS#LP` and the description; an error object is not returned. The trace is discarded. |
+| A node's base URI and document URI | XQueryFO §2.5, §2.6 | What the `xml:base` attributes of its element and that element's ancestors make, each resolved against the one above it, else none, as no tree keeps a base URI of its own; no document node has a document URI. |
+| fn:resolve-uri | XQueryFO §8.1 | RFC 3986 §5.2, strict; a base of no scheme is err:FORG0009. |
+| Collations of XQuery's functions | XQueryFO §7.3.1 | The code point collation and each collation of the database, named `urn:turborel:collation:` and its name, as `urn:turborel:collation:CASE_INSENSITIVE`; another is err:FOCH0002. Strings compare by sort keys with no padding. |
+| Collation units | XQueryFO §7.5 | Characters, of the code point collation and of the collations that compare one character at a time, by their folds. Of `UNICODE` and its tailorings, each character their steps begin at whose normalized form begins with a starter, and what follows it up to the next: a character and its marks, a contraction, a Hangul syllable; each weighed at every level the collation compares as it is weighed in the whole string (`value/collation/units.rs`). A unit is ignorable if it has no weight at any level. A minimal match is a run of units whose weights at each level, joined, are those of the string sought, beginning and ending at a unit that is not ignorable (`xquery/library/substrings.rs`). err:FOCH0004 is raised only of a collation that does not say how it splits a string, which no built-in one is. |
+| Normalization forms | XQueryFO §7.4.6; XML 1.1 Appendix B | NFC, NFD, NFKC, NFKD and FULLY-NORMALIZED, and the zero-length string for none. A fully normalized string is its NFC, as a string holds no character escape or include, and it is its one relevant construct; one whose NFC begins with a composing character, of a canonical combining class not zero or second in the canonical decomposition mapping of a primary composite, has no fully normalized form, err:FOCH0003 (`xquery/library/normalize.rs`). |
+| Case mappings | XQueryFO §7.4.7, §7.4.8 | Each character's full mapping, SpecialCasing's unconditional one or UnicodeData's simple one; none that a context or language governs. |
+| Regular expressions of fn:matches, fn:replace and fn:tokenize | XQueryFO §7.6.1 | XQuery 1.0's: a newline a line feed alone, `\s` XML Schema's, no `(?:` and no flag `q`, by the matcher of LIKE_REGEX (RULES.md D61) and its limits. |
+| Durations times or divided by a number | XQueryFO §10.6.3, §10.6.8 | Exact, the double as the shortest decimal that reads back as it, rounded to the month or microsecond, a half up. |
+| The current dateTime and the implicit time zone | XQueryFO §16.3, §16.6 | The instant the statement read its clock at (RULES.md D54), in the implicit time zone the evaluator gives. |
+| fn:doc, fn:doc-available and fn:collection | XQueryFO §15.5.4 to §15.5.6 | No document or collection is available and there is no default collection, as no query reads an external resource: fn:doc of a URI is err:FODC0005, fn:doc-available false, fn:collection err:FODC0002 or err:FODC0004. |
+| The order of fn:distinct-values and fn:unordered | XQueryFO §15.1.6, §15.1.11 | The first of each set of equal values, in the order they came; fn:unordered's items in the order they came. |
+| fn:id and fn:idref | XQueryFO §15.5.2, §15.5.3 | An element's or attribute's ID and IDREF properties are those its document type declaration gave it. |
+
+\[EXTENSION\] Part 14's 2006 draft gives no XML Name of a BINARY, a
+BINARY VARYING or an interval type [§9.4], though §9.5 maps each [GR8b,
+GR8l]. They are named as §9.4 names BLOB [GR3]: `BINARY_n`,
+`VARBINARY_n`, and `INTERVAL_` with the fields, the leading precision
+and, of SECOND, the fractional seconds precision, as
+`INTERVAL_DAY_TO_SECOND_2_6`. An interval type's pattern [§9.5 GR8l],
+XMLCAST's and XMLMAP's alike, is read so it describes what §9.8 GR9h
+writes: of no fractional seconds, the seconds have no fraction, and
+INTERVAL SECOND's are of its leading precision's digits. The `name`
+§9.5 GR8r writes on `xs:any` is left out, as `xs:any` takes none
+[Schema1 §3.10.2].
+
+The mappings of tables, schemas and catalogs are read so the XML Schema
+document each makes is one, and describes the data. XD's root [§9.11
+GR12c, §9.14 GR13c, §9.17 GR13c] is the element XDROWS, XDSCHEMA or
+XDCATALOG already is, declaring `xsi`'s namespace, not another of its
+name around it, which no element the schema document declares holds; and
+\[§9.11 GR12c ii\] of a target namespace its default namespace, as §9.10
+GR7b writes it, not `xmlns:xs`. XSLA \[§9.11 GR11a\] is the zero-length
+string, as XSR is no resource a URI identifies. A schema document of a
+target namespace declares it its default namespace too, so the names of
+the types it defines resolve where it writes them unprefixed [Schema1
+§3.15.3]; of an interval type it declares and imports the namespace of
+`xdt`, as of `sqlxml` it would [§9.11 GR10c, GR10d]. A schema's and the
+catalog's schema documents define each table's row type and table type
+[§9.9 GR10], and the catalog's each schema's type [§9.12], which their
+types name [§9.12 GR5f, §9.15 GR5e]; not the elements §9.9 GR10b
+declares, of which two schemas' tables of one name would be two. A
+domain or a distinct type of a row, array or multiset type is a complex
+type that extends it by nothing, as a simple type restricting a complex
+one [§9.5 GR8m vi, GR8o vi] is none [Schema1 §3.14.6]; of an XML type, a
+complex type of its mixed content. The data of a table AS FOREST is content of no root [§9.11 GR12c iii]; of
+XML 1.1, it starts with a text declaration, which names its encoding
+[XML 1.1 §4.3.1], so the parse reads its names. An XML value in the data
+is its serialization as CONTENT [§9.8 GR9k], so an element of no
+namespace in it is read in the target namespace.
+
+The words of Part 14, XML and the operators' names among its reserved
+words, are no key words of SQL-92, so each stays an identifier, read as a
+word where SQL/XML reads it. A column named DOCUMENT or CONTENT is read as
+the column where what follows it ends a value expression.
 
 ---
 
@@ -2963,6 +3240,41 @@ Plug-ins register these with `Database::register_type` (RULES.md D53).
 | Durability | Logged, checkpointed and recovered. A database whose files hold one is not opened without it. |
 | Clients | Sent as its type's name, its text and its bytes, and shown as its text by a client without the plug-in. |
 
+### XMLMAP
+
+A value expression mapping a table, a schema or the catalog to XML and
+to an XML Schema document, as Part 14 defines the mappings but gives them
+no syntax [ISO/IEC 9075-14:2006 draft §4.10.9 NOTE 13] (RULES.md D106,
+`parser/xml/map.rs`, `binder/xml/map.rs`, `functions/xml/map.rs`). Its
+clauses are written in this order, each at most once.
+
+```
+XMLMAP ( { TABLE <table name> | SCHEMA <schema name> | CATALOG }
+         [ NULLS { ABSENT | NIL } ]
+         [ AS { FOREST | ELEMENT } ]
+         [ TARGETNAMESPACE <character string literal> ]
+         [ DATA | METADATA | DATA AND METADATA ]
+         [ ENCODING { BASE64 | HEX } ] )
+```
+
+| Clause | Parameter | Default |
+|---|---|---|
+| NULLS ABSENT, NIL | NULLS absent, nil [§9.11 SR1] | ABSENT |
+| AS FOREST, ELEMENT | TABLEFOREST True, False | ELEMENT |
+| TARGETNAMESPACE | TARGETNS | '', no namespace |
+| DATA, METADATA, DATA AND METADATA | DATA True, METADATA True, both | DATA |
+| ENCODING BASE64, HEX | ENCODING | HEX |
+
+Its value is the XML value the draft's XMLPARSE makes of XS and XD,
+which XMLSERIALIZE writes as XSR and XDR: of METADATA the XML Schema
+document, of XML(DOCUMENT(UNTYPED)); of DATA the data, of
+XML(DOCUMENT(UNTYPED)), or of a table AS FOREST XML(CONTENT(UNTYPED));
+of both, the schema document's document node then the data's, of
+XML(SEQUENCE). A target namespace of `xml`'s or `xmlns`'s, or holding a
+character no XML character, a table that is a query a `<with clause>`
+names, and XMLMAP in a constraint are SQLCODE -103; a schema that is not
+there SQLSTATE 3F000.
+
 ### Geometry representations
 
 GEOMETRY is a second name of ST_GEOMETRY, the root type of
@@ -3156,6 +3468,51 @@ expression or another part of the filter can raise, the table is read
 whole so the lookup cannot hide the error (D15). The built-in `btree` and
 `hash` methods retain their comparison lookups; a plug-in supplies the
 function lookup.
+
+The methods `xml_path`, `xml_value`, `xml_property` and `xml_primary`
+index one XML column (RULES.md D106, `src/index/xml.rs`), after the
+PATH_VALUE, VALUE, PROPERTY and primary indexes of Pal et al. (VLDB
+2004): each element and attribute of a value by its path, its value as a
+string and as a number, and its ORDPATH, keyed in that method's order;
+the primary's, the rows of the Infoset by row and ORDPATH, and by row,
+path and value. The primary answers a query of a row from its entries
+alone, a path, comparisons and filters of its steps
+(`Index::xml_answers`, `index::xml::XmlQuery`), checking a row only where
+a value is cut, a comparison raises or the row's versions differ. CREATE INDEX refuses them on
+another column, or on more than one (SQLCODE -103). No SQL comparison
+probes them, as XML values are not comparable; the Rust API asks them for
+the rows that may hold a node of a path of child and descendant steps
+with a value a general comparison selects (`Index::xml_rows`,
+`xml_cost`, `index::xml::XmlLookup`), which the caller checks
+(`XmlLookup::matches`, one pass over the stored form), and
+`Database::xml_candidates` reads those rows. The planner reads them, by
+cost against a full read, for a WHERE or ON conjunct of XMLEXISTS, of
+XMLQUERY NULL ON EMPTY IS NOT NULL, and for XMLTABLE joined to its rows
+not by LEFT, of a query of the column alone, of any XML type (of
+XML(SEQUENCE), the row of every value not one document node given by each
+lookup and checked, its query never answered by the index), that is one
+path of child, descendant and attribute steps, `self` and `parent`
+steps among them, and a last step of the ancestor, following or preceding
+axes, a relation of an element to the node before, which `xml_primary`
+answers by the nodes' ORDPATHs [Pal et al. §2.2], or of a kind test, read
+by the lookup of the path before, not exactly; each step of predicates, each a relative path or its comparison with a
+literal, or a conjunction of them [XQuery §3.6]; several such conjuncts
+of the column are read together (`xquery/lookup.rs`,
+`physical/access/xml.rs`). A probe gives the rows every lookup of the
+query gives, its path's and each predicate's [Pal et al. §3.3], or, of a
+predicate compared with a number or by a value comparison, the rows its
+lookup gives too. `xml_primary` answers such a query, exact, of every
+predicate's node fixed, from its entries (`Index::xml_answers`), a row it
+may hold of checked by the query's own test; of the others each row
+given is fetched and checked. Each is priced against a full read that
+checks every row's value (`XmlCost::of_check`), and a table another
+conjunct of which may raise an error is read whole (RULES.md D15). A
+conjunct of ON, or of WHERE over a product, that may raise an error, of
+one table's columns, is read by an index of that table below the guard
+it is moved over, as any index method's conjuncts are
+(`physical/access/guarded.rs`).
+EXPLAIN shows the query and whether the index answers it. A value whose
+nodes or keys pass their bounds is refused, SQLCODE -900.
 
 ### Full-text search
 
@@ -3616,6 +3973,403 @@ SR5, CR2, §11.4 SR10d, §9.16 SR1am] (RULES.md D133).
 
 ---
 
+## Features claimed
+
+Each feature and subfeature claimed, as the feature taxonomies of
+ISO/IEC 9075-2:2023 (Annexes D and H) and of the 2006 drafts of
+ISO/IEC 9075-4, 9075-11 and 9075-14 name it, with the section saying how
+it is done. A feature claimed claims each of its subfeatures
+[ISO/IEC 9075-11:2006 draft §6.43 Description 7]. Every other feature
+and subfeature of those taxonomies is not claimed, nor is any part of
+ISO/IEC 9075 whole, and none of those texts defines a package.
+
+INFORMATION_SCHEMA.SQL_FEATURES shows this table, and SQL_PARTS the
+parts: `cargo xtask features` writes their rows from it, and
+`cargo xtask verify` fails if they differ (RULES.md D37).
+
+| Feature | Name | Claimed in |
+|---|---|---|
+| T191 | Referential action RESTRICT | [Schemas and constraints](#schemas-and-constraints) |
+| F231 | Privilege tables | [Transactions, sessions and the Information Schema](#transactions-sessions-and-the-information-schema) |
+| F341 | Usage tables | [Transactions, sessions and the Information Schema](#transactions-sessions-and-the-information-schema) |
+| F501 | Features and conformance views | [Transactions, sessions and the Information Schema](#transactions-sessions-and-the-information-schema) |
+| F502 | Enhanced documentation tables | [Transactions, sessions and the Information Schema](#transactions-sessions-and-the-information-schema) |
+| T011 | Timestamp in Information Schema | [Transactions, sessions and the Information Schema](#transactions-sessions-and-the-information-schema) |
+| F411 | Time zone specification | [Data types](#data-types) |
+| F555 | Enhanced seconds precision | [Data types](#data-types) |
+| F690 | Collation support | [Collations](#collations) |
+| F692 | Extended collation support | [Collations](#collations) |
+| F693 | SQL-session and client module collations | [Collations](#collations) |
+| T285 | Enhanced derived column names | [SQL:2023](#sql2023) |
+| T031 | BOOLEAN data type | [Truth values](#truth-values) |
+| T662 | Underscores in numeric literals | [Numeric literals](#numeric-literals) |
+| T021 | BINARY and VARBINARY data types | [Binary strings](#binary-strings) |
+| T022 | Advanced support for BINARY and VARBINARY data types | [Binary strings](#binary-strings) |
+| T023 | Compound binary literals | [Binary strings](#binary-strings) |
+| T024 | Spaces in binary literals | [Binary strings](#binary-strings) |
+| T039 | CLOB locator: non-holdable | [Large objects](#large-objects) |
+| T040 | Concatenation of CLOBs | [Large objects](#large-objects) |
+| T041 | Basic LOB data type support | [Large objects](#large-objects) |
+| T042 | Extended LOB data type support | [Large objects](#large-objects) |
+| T045 | BLOB data type | [Large objects](#large-objects) |
+| T046 | CLOB data type | [Large objects](#large-objects) |
+| T047 | POSITION, OCTET_LENGTH, TRIM, and SUBSTRING for BLOBs | [Large objects](#large-objects) |
+| T048 | Concatenation of BLOBs | [Large objects](#large-objects) |
+| T049 | BLOB locator: non-holdable | [Large objects](#large-objects) |
+| T050 | POSITION, CHAR_LENGTH, OCTET_LENGTH, LOWER, TRIM, UPPER, and SUBSTRING for CLOBs | [Large objects](#large-objects) |
+| T312 | OVERLAY function | [Large objects](#large-objects) |
+| T561 | Holdable locators | [Large objects](#large-objects) |
+| F262 | Extended CASE expression | [Simple CASE](#simple-case) |
+| F263 | Comma-separated predicates in simple CASE expression | [Simple CASE](#simple-case) |
+| T151 | DISTINCT predicate | [DISTINCT predicate](#distinct-predicate) |
+| T152 | DISTINCT predicate with negation | [DISTINCT predicate](#distinct-predicate) |
+| T054 | GREATEST and LEAST | [GREATEST and LEAST](#greatest-and-least) |
+| T055 | String padding functions | [Trims and pads](#trims-and-pads) |
+| T056 | Multi-character TRIM function | [Trims and pads](#trims-and-pads) |
+| T081 | Optional string types maximum length | [Optional maximum lengths](#optional-maximum-lengths) |
+| T071 | BIGINT data type | [BIGINT](#bigint) |
+| T076 | DECFLOAT data type | [Decimal floating point](#decimal-floating-point) |
+| F841 | LIKE_REGEX predicate | [Regular expressions](#regular-expressions) |
+| F842 | OCCURRENCES_REGEX function | [Regular expressions](#regular-expressions) |
+| F843 | POSITION_REGEX function | [Regular expressions](#regular-expressions) |
+| F844 | SUBSTRING_REGEX | [Regular expressions](#regular-expressions) |
+| F845 | TRANSLATE_REGEX | [Regular expressions](#regular-expressions) |
+| F846 | Octet support in regular expression operators | [Regular expressions](#regular-expressions) |
+| F847 | Non-constant regular expression | [Regular expressions](#regular-expressions) |
+| T062 | Character length units | [Character length units](#character-length-units) |
+| T839 | Formatted cast of datetimes to/from character strings | [Formatted CAST](#formatted-cast) |
+| T176 | Sequence generator support | [Sequence generators](#sequence-generators) |
+| T177 | Sequence generator support: simple restart option | [Sequence generators](#sequence-generators) |
+| T174 | Identity columns | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
+| T175 | Generated columns | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
+| T178 | Identity columns: simple restart option | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
+| F384 | Drop identity property clause | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
+| F385 | Drop column generation expression clause | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
+| F386 | Set identity column generation clause | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
+| F200 | TRUNCATE TABLE statement | [TRUNCATE TABLE](#truncate-table) |
+| F202 | TRUNCATE TABLE: identity column restart option | [TRUNCATE TABLE](#truncate-table) |
+| F312 | MERGE statement | [MERGE](#merge) |
+| F313 | Enhanced MERGE statement | [MERGE](#merge) |
+| F314 | MERGE statement with DELETE branch | [MERGE](#merge) |
+| F122 | Enhanced diagnostics management | [Diagnostics](#diagnostics) |
+| F123 | All diagnostics | [Diagnostics](#diagnostics) |
+| T511 | Transaction counts | [Diagnostics](#diagnostics) |
+| T171 | LIKE clause in table definition | [LIKE and AS in CREATE TABLE](#like-and-as-in-create-table) |
+| T172 | AS subquery clause in table definition | [LIKE and AS in CREATE TABLE](#like-and-as-in-create-table) |
+| T173 | Extended LIKE clause in table definition | [LIKE and AS in CREATE TABLE](#like-and-as-in-create-table) |
+| F292 | UNIQUE null treatment | [UNIQUE null treatment](#unique-null-treatment) |
+| T121 | WITH (excluding RECURSIVE) in query expression | [WITH and WITH RECURSIVE](#with-and-with-recursive) |
+| T122 | WITH (excluding RECURSIVE) in subquery | [WITH and WITH RECURSIVE](#with-and-with-recursive) |
+| T131 | Recursive query | [WITH and WITH RECURSIVE](#with-and-with-recursive) |
+| T132 | Recursive query in subquery | [WITH and WITH RECURSIVE](#with-and-with-recursive) |
+| T133 | Enhanced cycle mark values | [WITH and WITH RECURSIVE](#with-and-with-recursive) |
+| F403 | Partitioned join tables | [Partitioned joins](#partitioned-joins) |
+| T431 | Extended grouping capabilities | [Grouping sets](#grouping-sets) |
+| T432 | Nested and concatenated GROUPING SETS | [Grouping sets](#grouping-sets) |
+| T433 | Multi-argument GROUPING function | [Grouping sets](#grouping-sets) |
+| T434 | GROUP BY DISTINCT | [Grouping sets](#grouping-sets) |
+| T625 | LISTAGG | [LISTAGG and ANY_VALUE](#listagg-and-any_value) |
+| T626 | ANY_VALUE | [LISTAGG and ANY_VALUE](#listagg-and-any_value) |
+| T621 | Enhanced numeric functions | [Enhanced numeric functions](#enhanced-numeric-functions) |
+| T301 | Functional dependencies | [Functional dependencies](#functional-dependencies) |
+| E121-02 | ORDER BY columns need not be in select list | [Sort keys](#sort-keys) |
+| E121-03 | Value expressions in ORDER BY clause | [Sort keys](#sort-keys) |
+| F868 | ORDER BY in grouped table | [Sort keys](#sort-keys) |
+| F850 | Top-level ORDER BY in query expression | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F851 | ORDER BY in subqueries | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F852 | Top-level ORDER BY in views | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F855 | Nested ORDER BY in query expression | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F856 | Nested FETCH FIRST in query expression | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F857 | Top-level FETCH FIRST in query expression | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F858 | FETCH FIRST in subqueries | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F859 | Top-level FETCH FIRST in views | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F860 | Dynamic FETCH FIRST row count | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F861 | Top-level OFFSET in query expression | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F862 | OFFSET in subqueries | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F863 | Nested OFFSET in query expression | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F864 | Top-level OFFSET in views | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F865 | Dynamic offset row count in OFFSET | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F866 | FETCH FIRST clause: PERCENT option | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| F867 | FETCH FIRST clause: WITH TIES option | [ORDER BY, OFFSET and FETCH FIRST](#order-by-offset-and-fetch-first) |
+| T611 | Elementary OLAP operations | [Window functions](#window-functions) |
+| T612 | Advanced OLAP operations | [Window functions](#window-functions) |
+| T614 | NTILE function | [Window functions](#window-functions) |
+| T615 | LEAD and LAG functions | [Window functions](#window-functions) |
+| T616 | Null treatment option for LEAD and LAG functions | [Window functions](#window-functions) |
+| T617 | FIRST_VALUE and LAST_VALUE functions | [Window functions](#window-functions) |
+| T618 | NTH_VALUE function | [Window functions](#window-functions) |
+| T619 | Nested window functions | [Window functions](#window-functions) |
+| T620 | WINDOW clause: GROUPS option | [Window functions](#window-functions) |
+| T627 | Window framed COUNT DISTINCT | [Window functions](#window-functions) |
+| R010 | Row pattern recognition: FROM clause | [Row pattern recognition](#row-pattern-recognition) |
+| R020 | Row pattern recognition: WINDOW clause | [Row pattern recognition](#row-pattern-recognition) |
+| R030 | Row pattern recognition: full aggregate support | [Row pattern recognition](#row-pattern-recognition) |
+| S090 | Minimal array support | [Arrays and row types](#arrays-and-row-types) |
+| S091 | Basic array support | [Arrays and row types](#arrays-and-row-types) |
+| S093 | Arrays of distinct types | [Arrays and row types](#arrays-and-row-types) |
+| S095 | Array constructors by query | [Arrays and row types](#arrays-and-row-types) |
+| S096 | Optional array bounds | [Arrays and row types](#arrays-and-row-types) |
+| S097 | Array element assignment | [Arrays and row types](#arrays-and-row-types) |
+| S098 | ARRAY_AGG | [Arrays and row types](#arrays-and-row-types) |
+| S099 | Array expressions | [Arrays and row types](#arrays-and-row-types) |
+| S301 | Enhanced UNNEST | [Arrays and row types](#arrays-and-row-types) |
+| S403 | ARRAY_MAX_CARDINALITY | [Arrays and row types](#arrays-and-row-types) |
+| S404 | TRIM_ARRAY | [Arrays and row types](#arrays-and-row-types) |
+| T051 | Row types | [Arrays and row types](#arrays-and-row-types) |
+| T053 | Explicit aliases for all-fields reference | [Arrays and row types](#arrays-and-row-types) |
+| S202 | SQL-invoked routines on multisets | [Multisets](#multisets) |
+| S271 | Basic multiset support | [Multisets](#multisets) |
+| S272 | Multisets of user-defined types | [Multisets](#multisets) |
+| S275 | Advanced multiset support | [Multisets](#multisets) |
+| S281 | Nested collection types | [Multisets](#multisets) |
+| S402 | Distinct types based on multiset types | [Multisets](#multisets) |
+| S011 | Distinct data types | [Distinct types](#distinct-types) |
+| S028 | Permutable UDT options list | [Distinct types](#distinct-types) |
+| S401 | Distinct types based on array types | [Distinct types](#distinct-types) |
+| S023 | Basic structured types | [Structured types](#structured-types) |
+| S024 | Enhanced structured types | [Structured types](#structured-types) |
+| S025 | Final structured types | [Structured types](#structured-types) |
+| S026 | Self-referencing structured types | [Structured types](#structured-types) |
+| S027 | Create method by specific method name | [Structured types](#structured-types) |
+| S151 | Type predicate | [Structured types](#structured-types) |
+| S161 | Subtype treatment | [Structured types](#structured-types) |
+| S211 | User-defined cast functions | [Structured types](#structured-types) |
+| S241 | Transform functions | [Structured types](#structured-types) |
+| S261 | Specific type method | [Structured types](#structured-types) |
+| S051 | Create table of type | [Typed tables](#typed-tables) |
+| S081 | Subtables | [Typed tables](#typed-tables) |
+| S111 | ONLY in query expressions | [Typed tables](#typed-tables) |
+| S041 | Basic reference types | [Reference types](#reference-types) |
+| S043 | Enhanced reference types | [Reference types](#reference-types) |
+| S094 | Arrays of reference types | [Reference types](#reference-types) |
+| S162 | Subtype treatment for references | [Reference types](#reference-types) |
+| S274 | Multisets of reference types | [Reference types](#reference-types) |
+| T180 | System-versioned tables | [Periods](#periods) |
+| T181 | Application-time period tables | [Periods](#periods) |
+| T502 | Period predicates | [Periods](#periods) |
+| T200 | Trigger DDL | [Triggers](#triggers) |
+| T211 | Basic trigger capability | [Triggers](#triggers) |
+| T212 | Enhanced trigger capability | [Triggers](#triggers) |
+| T213 | INSTEAD OF triggers | [Triggers](#triggers) |
+| T214 | BEFORE triggers | [Triggers](#triggers) |
+| T215 | AFTER triggers | [Triggers](#triggers) |
+| T216 | Ability to require true search condition before trigger is invoked | [Triggers](#triggers) |
+| T217 | TRIGGER privilege | [Triggers](#triggers) |
+| T218 | Multiple triggers for the same event executed in the order created | [Triggers](#triggers) |
+| T321 | Basic SQL-invoked routines | [SQL-invoked routines](#sql-invoked-routines) |
+| T341 | Overloading of SQL-invoked functions and SQL-invoked procedures | [SQL-invoked routines](#sql-invoked-routines) |
+| B033 | Untyped SQL-invoked function arguments | [SQL-invoked routines](#sql-invoked-routines) |
+| B128 | Routine language SQL | [SQL-invoked routines](#sql-invoked-routines) |
+| S203 | Array parameters | [SQL-invoked routines](#sql-invoked-routines) |
+| S204 | Array as result type of functions | [SQL-invoked routines](#sql-invoked-routines) |
+| B200 | Polymorphic table functions | [Polymorphic table functions](#polymorphic-table-functions) |
+| B201 | More than one PTF generic table parameter | [Polymorphic table functions](#polymorphic-table-functions) |
+| B202 | PTF copartitioning | [Polymorphic table functions](#polymorphic-table-functions) |
+| B203 | More than one copartition specification | [Polymorphic table functions](#polymorphic-table-functions) |
+| B204 | PRUNE WHEN EMPTY | [Polymorphic table functions](#polymorphic-table-functions) |
+| B205 | Pass-through columns | [Polymorphic table functions](#polymorphic-table-functions) |
+| B206 | PTF descriptor parameters | [Polymorphic table functions](#polymorphic-table-functions) |
+| B207 | Cross products of partitionings | [Polymorphic table functions](#polymorphic-table-functions) |
+| B208 | PTF component procedure interface | [Polymorphic table functions](#polymorphic-table-functions) |
+| B209 | PTF extended names | [Polymorphic table functions](#polymorphic-table-functions) |
+| T331 | Basic roles | [Roles](#roles) |
+| T332 | Extended roles | [Roles](#roles) |
+| T801 | JSON data type | [SQL/JSON](#sqljson) |
+| T802 | Enhanced JSON data type | [SQL/JSON](#sqljson) |
+| T811 | Basic SQL/JSON constructor functions | [SQL/JSON](#sqljson) |
+| T812 | SQL/JSON: JSON_OBJECTAGG | [SQL/JSON](#sqljson) |
+| T813 | SQL/JSON: JSON_ARRAYAGG with ORDER BY | [SQL/JSON](#sqljson) |
+| T814 | Colon in JSON_OBJECT or JSON_OBJECTAGG | [SQL/JSON](#sqljson) |
+| T821 | Basic SQL/JSON query operators | [SQL/JSON](#sqljson) |
+| T822 | SQL/JSON: IS JSON WITH UNIQUE KEYS predicate | [SQL/JSON](#sqljson) |
+| T823 | SQL/JSON: PASSING clause | [SQL/JSON](#sqljson) |
+| T824 | JSON_TABLE: specific PLAN clause | [SQL/JSON](#sqljson) |
+| T825 | SQL/JSON: ON EMPTY and ON ERROR clauses | [SQL/JSON](#sqljson) |
+| T826 | General value expression in ON ERROR or ON EMPTY clauses | [SQL/JSON](#sqljson) |
+| T827 | JSON_TABLE: sibling NESTED COLUMNS clauses | [SQL/JSON](#sqljson) |
+| T828 | JSON_QUERY | [SQL/JSON](#sqljson) |
+| T829 | JSON_QUERY: array wrapper options | [SQL/JSON](#sqljson) |
+| T830 | Enforcing unique keys in SQL/JSON constructor functions | [SQL/JSON](#sqljson) |
+| T831 | SQL/JSON path language: strict mode | [SQL/JSON](#sqljson) |
+| T832 | SQL/JSON path language: item method | [SQL/JSON](#sqljson) |
+| T833 | SQL/JSON path language: multiple subscripts | [SQL/JSON](#sqljson) |
+| T834 | SQL/JSON path language: wildcard member accessor | [SQL/JSON](#sqljson) |
+| T835 | SQL/JSON path language: filter expressions | [SQL/JSON](#sqljson) |
+| T836 | SQL/JSON path language: starts with predicate | [SQL/JSON](#sqljson) |
+| T837 | SQL/JSON path language: regex_like predicate | [SQL/JSON](#sqljson) |
+| T838 | JSON_TABLE: PLAN DEFAULT clause | [SQL/JSON](#sqljson) |
+| T840 | Hex integer literals in SQL/JSON path language | [SQL/JSON](#sqljson) |
+| T851 | SQL/JSON: optional keywords for default syntax | [SQL/JSON](#sqljson) |
+| T860 | SQL/JSON simplified accessor: column reference only | [SQL/JSON](#sqljson) |
+| T862 | SQL/JSON simplified accessor: wildcard member accessor | [SQL/JSON](#sqljson) |
+| T863 | SQL/JSON simplified accessor: single-quoted string literal as member accessor | [SQL/JSON](#sqljson) |
+| T864 | SQL/JSON simplified accessor | [SQL/JSON](#sqljson) |
+| T865 | SQL/JSON item method: bigint() | [SQL/JSON](#sqljson) |
+| T866 | SQL/JSON item method: boolean() | [SQL/JSON](#sqljson) |
+| T867 | SQL/JSON item method: date() | [SQL/JSON](#sqljson) |
+| T868 | SQL/JSON item method: decimal() | [SQL/JSON](#sqljson) |
+| T869 | SQL/JSON item method: decimal() with precision and scale | [SQL/JSON](#sqljson) |
+| T870 | SQL/JSON item method: integer() | [SQL/JSON](#sqljson) |
+| T871 | SQL/JSON item method: number() | [SQL/JSON](#sqljson) |
+| T872 | SQL/JSON item method: string() | [SQL/JSON](#sqljson) |
+| T873 | SQL/JSON item method: time() | [SQL/JSON](#sqljson) |
+| T874 | SQL/JSON item method: time_tz() | [SQL/JSON](#sqljson) |
+| T875 | SQL/JSON item method: time precision | [SQL/JSON](#sqljson) |
+| T876 | SQL/JSON item method: timestamp() | [SQL/JSON](#sqljson) |
+| T877 | SQL/JSON item method: timestamp_tz() | [SQL/JSON](#sqljson) |
+| T878 | SQL/JSON item method: timestamp precision | [SQL/JSON](#sqljson) |
+| T879 | JSON in equality operations | [SQL/JSON](#sqljson) |
+| T880 | JSON in grouping operations | [SQL/JSON](#sqljson) |
+| T881 | JSON in ordering operations | [SQL/JSON](#sqljson) |
+| T882 | JSON in multiset element grouping operations | [SQL/JSON](#sqljson) |
+| T271 | Savepoints | [Savepoints](#savepoints) |
+| T272 | Enhanced savepoint management | [Savepoints](#savepoints) |
+| T351 | Bracketed comments | [Bracketed comments](#bracketed-comments) |
+| P002-01 | <compound statement> | [SQL/PSM](#sqlpsm) |
+| P002-02 | <handler declaration> | [SQL/PSM](#sqlpsm) |
+| P002-03 | <condition declaration> | [SQL/PSM](#sqlpsm) |
+| P002-04 | <SQL variable declaration> | [SQL/PSM](#sqlpsm) |
+| P002-05 | <assignment statement> | [SQL/PSM](#sqlpsm) |
+| P002-06 | <case statement> | [SQL/PSM](#sqlpsm) |
+| P002-07 | <if statement> | [SQL/PSM](#sqlpsm) |
+| P002-08 | <iterate statement> | [SQL/PSM](#sqlpsm) |
+| P002-09 | <leave statement> | [SQL/PSM](#sqlpsm) |
+| P002-10 | <loop statement> | [SQL/PSM](#sqlpsm) |
+| P002-11 | <repeat statement> | [SQL/PSM](#sqlpsm) |
+| P002-12 | <while statement> | [SQL/PSM](#sqlpsm) |
+| P002-13 | <for statement> | [SQL/PSM](#sqlpsm) |
+| P002-14 | <signal statement> | [SQL/PSM](#sqlpsm) |
+| P002-15 | <resignal statement> | [SQL/PSM](#sqlpsm) |
+| P008 | Comma-separated predicates in a CASE statement | [SQL/PSM](#sqlpsm) |
+| X010 | XML type | [SQL/XML](#sqlxml) |
+| X011 | Arrays of XML type | [SQL/XML](#sqlxml) |
+| X012 | Multisets of XML type | [SQL/XML](#sqlxml) |
+| X013 | Distinct types of XML type | [SQL/XML](#sqlxml) |
+| X014 | Attributes of XML type | [SQL/XML](#sqlxml) |
+| X015 | Fields of XML type | [SQL/XML](#sqlxml) |
+| X016 | Persistent XML values | [SQL/XML](#sqlxml) |
+| X020 | XMLConcat | [SQL/XML](#sqlxml) |
+| X025 | XMLCast | [SQL/XML](#sqlxml) |
+| X030 | XMLDocument | [SQL/XML](#sqlxml) |
+| X031 | XMLElement | [SQL/XML](#sqlxml) |
+| X032 | XMLForest | [SQL/XML](#sqlxml) |
+| X034 | XMLAgg | [SQL/XML](#sqlxml) |
+| X035 | XMLAgg: ORDER BY option | [SQL/XML](#sqlxml) |
+| X036 | XMLComment | [SQL/XML](#sqlxml) |
+| X037 | XMLPI | [SQL/XML](#sqlxml) |
+| X038 | XMLText | [SQL/XML](#sqlxml) |
+| X040 | Basic table mapping | [SQL/XML](#sqlxml) |
+| X041 | Basic table mapping: null absent | [SQL/XML](#sqlxml) |
+| X042 | Basic table mapping: null as nil | [SQL/XML](#sqlxml) |
+| X043 | Basic table mapping: table as forest | [SQL/XML](#sqlxml) |
+| X044 | Basic table mapping: table as element | [SQL/XML](#sqlxml) |
+| X045 | Basic table mapping: with target namespace | [SQL/XML](#sqlxml) |
+| X046 | Basic table mapping: data mapping | [SQL/XML](#sqlxml) |
+| X047 | Basic table mapping: metadata mapping | [SQL/XML](#sqlxml) |
+| X048 | Basic table mapping: base64 encoding of binary strings | [SQL/XML](#sqlxml) |
+| X049 | Basic table mapping: hex encoding of binary strings | [SQL/XML](#sqlxml) |
+| X050 | Advanced table mapping | [SQL/XML](#sqlxml) |
+| X051 | Advanced table mapping: null absent | [SQL/XML](#sqlxml) |
+| X052 | Advanced table mapping: null as nil | [SQL/XML](#sqlxml) |
+| X053 | Advanced table mapping: table as forest | [SQL/XML](#sqlxml) |
+| X054 | Advanced table mapping: table as element | [SQL/XML](#sqlxml) |
+| X055 | Advanced table mapping: with target namespace | [SQL/XML](#sqlxml) |
+| X056 | Advanced table mapping: data mapping | [SQL/XML](#sqlxml) |
+| X057 | Advanced table mapping: metadata mapping | [SQL/XML](#sqlxml) |
+| X058 | Advanced table mapping: base64 encoding of binary strings | [SQL/XML](#sqlxml) |
+| X059 | Advanced table mapping: hex encoding of binary strings | [SQL/XML](#sqlxml) |
+| X060 | XMLParse: Character string input and CONTENT option | [SQL/XML](#sqlxml) |
+| X061 | XMLParse: Character string input and DOCUMENT option | [SQL/XML](#sqlxml) |
+| X065 | XMLParse: BLOB input and CONTENT option | [SQL/XML](#sqlxml) |
+| X066 | XMLParse: BLOB input and DOCUMENT option | [SQL/XML](#sqlxml) |
+| X070 | XMLSerialize: Character string serialization and CONTENT option | [SQL/XML](#sqlxml) |
+| X071 | XMLSerialize: Character string serialization and DOCUMENT option | [SQL/XML](#sqlxml) |
+| X072 | XMLSerialize: Character string serialization | [SQL/XML](#sqlxml) |
+| X073 | XMLSerialize: BLOB serialization and CONTENT option | [SQL/XML](#sqlxml) |
+| X074 | XMLSerialize: BLOB serialization and DOCUMENT option | [SQL/XML](#sqlxml) |
+| X075 | XMLSerialize: BLOB serialization | [SQL/XML](#sqlxml) |
+| X076 | XMLSerialize: VERSION | [SQL/XML](#sqlxml) |
+| X077 | XMLSerialize: explicit ENCODING option | [SQL/XML](#sqlxml) |
+| X078 | XMLSerialize: explicit XML declaration | [SQL/XML](#sqlxml) |
+| X080 | Namespaces in XML publishing | [SQL/XML](#sqlxml) |
+| X081 | Query-level XML namespace declarations | [SQL/XML](#sqlxml) |
+| X082 | XML namespace declarations in DML | [SQL/XML](#sqlxml) |
+| X083 | XML namespace declarations in DDL | [SQL/XML](#sqlxml) |
+| X084 | XML namespace declarations in compound statements | [SQL/XML](#sqlxml) |
+| X085 | Predefined namespace prefixes | [SQL/XML](#sqlxml) |
+| X086 | XML namespace declarations in XMLTable | [SQL/XML](#sqlxml) |
+| X090 | XML document predicate | [SQL/XML](#sqlxml) |
+| X091 | XML content predicate | [SQL/XML](#sqlxml) |
+| X096 | XMLExists | [SQL/XML](#sqlxml) |
+| X120 | XML parameters in SQL routines | [SQL/XML](#sqlxml) |
+| X131 | Query-level XMLBINARY clause | [SQL/XML](#sqlxml) |
+| X132 | XMLBINARY clause in DML | [SQL/XML](#sqlxml) |
+| X133 | XMLBINARY clause in DDL | [SQL/XML](#sqlxml) |
+| X134 | XMLBINARY clause in compound statements | [SQL/XML](#sqlxml) |
+| X135 | XMLBINARY clause in subqueries | [SQL/XML](#sqlxml) |
+| X141 | IS VALID predicate: data-driven case | [SQL/XML](#sqlxml) |
+| X142 | IS VALID predicate: ACCORDING TO clause | [SQL/XML](#sqlxml) |
+| X143 | IS VALID predicate: ELEMENT clause | [SQL/XML](#sqlxml) |
+| X144 | IS VALID predicate: schema location | [SQL/XML](#sqlxml) |
+| X145 | IS VALID predicate outside check constraints | [SQL/XML](#sqlxml) |
+| X151 | IS VALID predicate with DOCUMENT option | [SQL/XML](#sqlxml) |
+| X152 | IS VALID predicate with CONTENT option | [SQL/XML](#sqlxml) |
+| X153 | IS VALID predicate with SEQUENCE option | [SQL/XML](#sqlxml) |
+| X155 | IS VALID predicate: NAMESPACE without ELEMENT clause | [SQL/XML](#sqlxml) |
+| X157 | IS VALID predicate: NO NAMESPACE with ELEMENT clause | [SQL/XML](#sqlxml) |
+| X160 | Basic Information Schema for registered XML Schemas | [SQL/XML](#sqlxml) |
+| X161 | Advanced Information Schema for registered XML Schemas | [SQL/XML](#sqlxml) |
+| X170 | XML null handling options | [SQL/XML](#sqlxml) |
+| X171 | NIL ON NO CONTENT option | [SQL/XML](#sqlxml) |
+| X181 | XML(DOCUMENT(UNTYPED)) type | [SQL/XML](#sqlxml) |
+| X182 | XML(DOCUMENT(ANY)) type | [SQL/XML](#sqlxml) |
+| X190 | XML(SEQUENCE) type | [SQL/XML](#sqlxml) |
+| X191 | XML(DOCUMENT(XMLSCHEMA)) type | [SQL/XML](#sqlxml) |
+| X192 | XML(CONTENT(XMLSCHEMA)) type | [SQL/XML](#sqlxml) |
+| X200 | XMLQuery | [SQL/XML](#sqlxml) |
+| X201 | XMLQuery: RETURNING CONTENT | [SQL/XML](#sqlxml) |
+| X202 | XMLQuery: RETURNING SEQUENCE | [SQL/XML](#sqlxml) |
+| X203 | XMLQuery: passing a context item | [SQL/XML](#sqlxml) |
+| X204 | XMLQuery: initializing an XQuery variable | [SQL/XML](#sqlxml) |
+| X205 | XMLQuery: EMPTY ON EMPTY option | [SQL/XML](#sqlxml) |
+| X206 | XMLQuery: NULL ON EMPTY option | [SQL/XML](#sqlxml) |
+| X211 | XML 1.1 support | [SQL/XML](#sqlxml) |
+| X221 | XML passing mechanism BY VALUE | [SQL/XML](#sqlxml) |
+| X222 | XML passing mechanism BY REF | [SQL/XML](#sqlxml) |
+| X231 | XML(CONTENT(UNTYPED)) type | [SQL/XML](#sqlxml) |
+| X232 | XML(CONTENT(ANY)) type | [SQL/XML](#sqlxml) |
+| X241 | RETURNING CONTENT in XML publishing | [SQL/XML](#sqlxml) |
+| X242 | RETURNING SEQUENCE in XML publishing | [SQL/XML](#sqlxml) |
+| X251 | Persistent XML values of XML(DOCUMENT(UNTYPED)) type | [SQL/XML](#sqlxml) |
+| X252 | Persistent XML values of XML(DOCUMENT(ANY)) type | [SQL/XML](#sqlxml) |
+| X253 | Persistent XML values of XML(CONTENT(UNTYPED)) type | [SQL/XML](#sqlxml) |
+| X254 | Persistent XML values of XML(CONTENT(ANY)) type | [SQL/XML](#sqlxml) |
+| X255 | Persistent XML values of XML(SEQUENCE) type | [SQL/XML](#sqlxml) |
+| X256 | Persistent XML values of XML(DOCUMENT(XMLSCHEMA)) type | [SQL/XML](#sqlxml) |
+| X257 | Persistent XML values of XML(CONTENT(XMLSCHEMA)) type | [SQL/XML](#sqlxml) |
+| X260 | XML type: ELEMENT clause | [SQL/XML](#sqlxml) |
+| X261 | XML type: NAMESPACE without ELEMENT clause | [SQL/XML](#sqlxml) |
+| X263 | XML type: NO NAMESPACE with ELEMENT clause | [SQL/XML](#sqlxml) |
+| X264 | XML type: schema location | [SQL/XML](#sqlxml) |
+| X271 | XMLValidate: data-driven case | [SQL/XML](#sqlxml) |
+| X272 | XMLValidate: ACCORDING TO clause | [SQL/XML](#sqlxml) |
+| X273 | XMLValidate: ELEMENT clause | [SQL/XML](#sqlxml) |
+| X274 | XMLValidate: schema location | [SQL/XML](#sqlxml) |
+| X281 | XMLValidate: with DOCUMENT option | [SQL/XML](#sqlxml) |
+| X282 | XMLValidate with CONTENT option | [SQL/XML](#sqlxml) |
+| X283 | XMLValidate with SEQUENCE option | [SQL/XML](#sqlxml) |
+| X284 | XMLValidate NAMESPACE without ELEMENT clause | [SQL/XML](#sqlxml) |
+| X286 | XMLValidate: NO NAMESPACE with ELEMENT clause | [SQL/XML](#sqlxml) |
+| X300 | XMLTable | [SQL/XML](#sqlxml) |
+| X301 | XMLTable: derived column list option | [SQL/XML](#sqlxml) |
+| X302 | XMLTable: ordinality column option | [SQL/XML](#sqlxml) |
+| X303 | XMLTable: column default option | [SQL/XML](#sqlxml) |
+| X304 | XMLTable: passing a context item | [SQL/XML](#sqlxml) |
+| X305 | XMLTable: initializing an XQuery variable | [SQL/XML](#sqlxml) |
+| X400 | Name and identifier mapping | [SQL/XML](#sqlxml) |
+
+---
+
 ## Implementation-defined choices
 
 These are the choices the standards leave to an implementation, grouped by
@@ -3888,7 +4642,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | IA226, ISO/IEC 9075-2:2023 §4.26.16 known functional dependencies of a UNION | None but the axiomatic | `binder/dependencies.rs` |
 | IA046, ISO/IEC 9075-2:2023 §11.49 SR13 whether a triggered action may contain a schema, transaction, connection, dynamic or session statement, and whether that is a Syntax Rule | It may not, nor a cursor statement or a parameter, refused as a Syntax Rule as the trigger is defined (SQLCODE -103) | `db/triggers/define.rs`, `parser/triggers.rs` |
 | IA047, ISO/IEC 9075-2:2023 §11.49 SR14a whether a BEFORE trigger's action may contain a statement that possibly modifies SQL-data | It may not: INSERT, UPDATE, DELETE and MERGE are refused as the trigger is defined (SQLCODE -103) | `db/triggers/define.rs`, `parser/triggers.rs` |
-| IS003, ISO/IEC 9075-2:2023 §4.46.1 the order of triggers of one timestamp of creation | None share one: each is one more than the greatest of the catalog's as it is defined | `db/triggers/define.rs` |
+| IS003, ISO/IEC 9075-2:2023 §4.46.1 the order of triggers of one timestamp of creation | The order they were created in: each keeps an order of creation besides, one more than the greatest of the catalog's as it is defined | `db/triggers/define.rs` |
 | US048, ISO/IEC 9075-2:2023 §15.21 GR4a the order a row trigger takes its transitions in | The order the statement changed the rows | `db/triggers/changes.rs`, `db/triggers/fire.rs` |
 | IV223, ISO/IEC 9075-2:2023 §11.51 SR7a the source type of a distinct type of an exact or an approximate type | NUMERIC of its precision and scale, or FLOAT of its precision | `db/user_types.rs` |
 | ID047, ISO/IEC 9075-2:2023 §9.18 SR10b the SQL-path | The schema of the statement's names, the session's default schema or a schema statement's own | `binder/routines.rs` |
@@ -3974,6 +4728,9 @@ SQLCODE -900 (RULES.md D18).
 | Regular expression steps | 10,000,000, of a search with back-references | A back-reference matches no automaton, so its search goes back and can take time exponential in the string. One without any takes time linear in it, with no limit. | `regex/backtrack.rs` |
 | Grouping sets | 4,096 of a GROUP BY, and GROUPING of 59 columns | 2023 §7.13 SR14 and SR16 set no maximum, and a CUBE of n sets stands for 2 to the n. GROUPING's value is of 18 digits [§6.9 SR10b], which 2 to the 59 fits and 2 to the 60 does not. | `binder/grouping_sets.rs`, `binder/grouping_sets/expansion.rs` |
 | Trigger and procedure nesting | 16 levels of triggered actions and procedures executed within each other, past which the statement fails with SQLCODE -900, of a trigger's action SQLSTATE 09000 | §15.21 and §9.18 set no limit, and a trigger whose action executes it again would recurse until the stack overflowed. 16 levels run in half of Rust's default 2 MiB thread stack. | `db/nested.rs` |
+| XMLMAP's text | 64 MiB of a mapping's data, of all its tables, held as a set function writes it, row by row, and of its XML Schema document | §9.10 to §9.17 set no limit, and a table holds rows without end. The data is held as text until it is parsed, bounded as it grows. | `functions/xml/map/rows.rs`, `functions/xml/map/data.rs` |
+| XML text and values | Elements and content models nest 512 deep; a tree holds 16 MiB of text and 1,048,576 nodes and namespace bindings; XMLPARSE reads 16 MiB more of entities' replacement texts and 64 MiB of input; a value's stored form is 64 MiB | XML 1.0 and Part 14 set no limit, and nested entities expand without end. A walk of a tree keeps a stack of its ancestors. | `xml.rs` |
+| XQuery queries | Expressions nest 64 deep; an evaluation nests 256 deep in operations and function calls; a static typing 256 deep in expressions, its types 256 deep, an axis's closure of 4,096 item types; a sequence holds 1,048,576 items; one evaluation constructs nodes of 64 MiB | XQuery sets none. The parser, the analysis, the static typing and the evaluation recurse, so each is bounded within half of a thread's stack. | `xquery.rs`, `xquery/eval.rs`, `xquery/statics.rs` |
 | Savepoints | 1,024 of a transaction, past which SAVEPOINT fails with SQLSTATE 3B002, SQLCODE -917, as §17.5 GR3 names | IL208 leaves the number to the implementation. Each savepoint holds a savepoint of each engine that undoes its own changes, so the number is bounded. | `db/savepoints.rs` |
 | Nesting depth | 64 levels of the syntax tree, about 30 nested parentheses, 60 chained `AND`, `OR`, `+` or `UNION`, or 60 tables in a FROM clause | Without a limit, deep nesting overflowed the stack and aborted the process. 64 levels run in half of Rust's default 2 MiB thread stack. | `parser.rs` |
 | SQL/JSON item nesting | 128 levels of arrays and objects, of JSON text parsed and of an item compared or serialized | §9.42 sets no limit, and RFC 8259 §9 lets a parser limit the depth of nesting. Every walk of an item recurses, and the limit bounds it (RULES.md R-CF-6). | `json.rs`, `json/text.rs`, `json/item.rs`, `json/serialize.rs` |

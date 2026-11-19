@@ -69,7 +69,7 @@ use crate::disk::shadow::ShadowFileSystem;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
 use crate::error::Result;
 use crate::files::FileManager;
-use crate::index::{BTreeMethod, FullTextMethod, HashMethod, JsonMethod, RTreeMethod};
+use crate::index::{BTreeMethod, FullTextMethod, HashMethod, JsonMethod, RTreeMethod, XmlMethod, xml};
 use crate::log::{FileLogOptions, Log, Lsn, Records};
 use crate::storage::TableStorage;
 use crate::txn::Persistence;
@@ -537,6 +537,8 @@ impl Database {
         self.register_engine(Box::new(RowStore::new(files, TableOptions::default())))?;
         self.register_index_method(Box::new(BTreeMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(HashMethod::new(Arc::clone(&pool), file)))?;
+        let xml = xml::METHODS.map(|m| XmlMethod::new(m, Arc::clone(&pool), file));
+        xml.into_iter().try_for_each(|m| self.register_index_method(Box::new(m)))?;
         self.register_index_method(Box::new(RTreeMethod::new(Arc::clone(&pool), file)))?;
         self.register_index_method(Box::new(JsonMethod::new(Arc::clone(&pool), file)))?;
         self.register_vector_methods(&pool, file)?;

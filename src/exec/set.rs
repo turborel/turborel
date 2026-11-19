@@ -232,7 +232,7 @@ fn partitioned(first: Operand, (parts, how): (Partitioner, Kept), (mut work, giv
         let mut lefts = parts.alike(&mut work)?;
         for (n, r) in (0_u64..).zip(first.rows()) {
             let (k, row) = r?;
-            lefts.push(&k, &numbered(n, &row))?;
+            lefts.push(&k, &numbered(n, &row, work.lobs()))?;
         }
         let mut sources = Vec::new();
         for runs in parts.into_runs().into_iter().zip(lefts.into_runs()) {
@@ -255,9 +255,9 @@ fn pair((right, left): Pair, (how, depth): (Kept, usize), sources: &mut Vec<Reco
         Counted::Held(mut counts) => {
             let (mut given, mut out) = (Bag::new(given.another()), work.run()?);
             for record in left.into_records()? {
-                let (n, row) = unnumbered(&record?, work.types())?;
+                let (n, row) = unnumbered(&record?, work.types(), work.lobs())?;
                 if let Some(row) = kept(how, (&mut counts, &mut given), Ok(row)).transpose()? {
-                    out.push(&numbered(n, &row))?;
+                    out.push(&numbered(n, &row, work.lobs()))?;
                 }
             }
             sources.push(out.into_records()?);
@@ -266,7 +266,7 @@ fn pair((right, left): Pair, (how, depth): (Kept, usize), sources: &mut Vec<Reco
             let mut lefts = parts.alike(work)?;
             for record in left.into_records()? {
                 let record = record?;
-                lefts.push(&key(&unnumbered(&record, work.types())?.1, how.compared), &record)?;
+                lefts.push(&key(&unnumbered(&record, work.types(), work.lobs())?.1, how.compared), &record)?;
             }
             for runs in parts.into_runs().into_iter().zip(lefts.into_runs()) {
                 pair(runs, (how, depth.saturating_add(1)), &mut *sources, (&mut *work, given))?;

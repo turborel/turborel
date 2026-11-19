@@ -72,7 +72,8 @@ impl AggregateFunction for Sum {
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Json
-            | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
+            | DataType::Extension(_)
+            | DataType::Xml(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
         })
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
@@ -123,7 +124,8 @@ impl AggregateFunction for Avg {
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Json
-            | DataType::Extension(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
+            | DataType::Extension(_)
+            | DataType::Xml(_) => DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float },
         })
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {

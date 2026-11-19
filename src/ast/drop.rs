@@ -39,6 +39,11 @@ pub enum DropObject {
     Transform(TableName, Option<String>),
     /// \[EXTENSION\] An embedding model or a vector pipeline.
     Vector(super::VectorObject, TableName),
+    /// \[EXTENSION\] A registered XML Schema [ISO/IEC 9075-14:2006 draft
+    /// §4.2.6].
+    XmlSchema(TableName),
+    /// \[EXTENSION\] A registered XQuery module (RULES.md D106).
+    XQueryModule(TableName),
     /// A schema: `<schema name>` ::= \[`<catalog name>` .\] `<unqualified
     /// schema name>` [§5.4].
     Schema {
@@ -65,6 +70,8 @@ impl DropObject {
             | DropObject::Trigger(name)
             | DropObject::Module(name)
             | DropObject::Ordering(name)
+            | DropObject::XmlSchema(name)
+            | DropObject::XQueryModule(name)
             | DropObject::Transform(name, _)
             | DropObject::Vector(_, name) => name.at,
             DropObject::Cast(_, at) | DropObject::Schema { at, .. } => *at,

@@ -21,7 +21,7 @@ use crate::hash::murmur::MurmurMap;
 use crate::index::vector::hybrid::HybridMethod;
 use crate::index::{
     BTreeMethod, DiskAnnMethod, FullTextMethod, HashMethod, HnswMethod, Index, IndexMethod, IvfMethod, JsonMethod, RTreeMethod,
-    SparseMethod,
+    SparseMethod, XmlMethod, xml,
 };
 use crate::log::Log;
 use crate::optimizer::Optimizer;
@@ -86,6 +86,12 @@ pub struct State {
     /// table defined again under its name takes a later one, and the log's
     /// changes of the one dropped are never taken for its (`db/recovery.rs`).
     pub(super) retired: HashMap<QualifiedName, u32>,
+    /// \[DESIGN\] The CURRENT_TIMESTAMP of the definition being made, as its
+    /// statement ran and its record logged it (`State::define`,
+    /// `State::schema`): the timestamps of each descriptor it makes
+    /// [ISO/IEC 9075-2:2023 §11.60 GR5], the same when the record is
+    /// replayed, as no clock is read again.
+    pub(super) stamp: crate::value::datetime::Now,
     /// The registry of settings and the database's values (`settings.rs`).
     pub(crate) settings: Settings,
     /// The users and the owner (`db/users.rs`).
@@ -102,6 +108,9 @@ pub struct State {
     /// until built (`Database::create_index`).
     pub(crate) building: HashSet<String>,
     pub(crate) functions: Registry,
+    /// \[EXTENSION\] The functions a query of XQuery calls by name: the
+    /// built-in ones and those registered (`xquery::Library`).
+    pub(crate) xquery_functions: crate::xquery::Library,
     /// The data types beyond the standard registered (RULES.md D53).
     pub(crate) types: TypeRegistry,
     /// \[EXTENSION\] The rankings of full-text search (RULES.md D87),
@@ -181,6 +190,7 @@ impl State {
             encodings: Arc::default(),
             created: false,
             retired: HashMap::new(),
+            stamp: crate::value::datetime::Now::default(),
             settings: Settings::default(),
             users: Users::default(),
             system: crate::system::builtin(),
@@ -188,6 +198,7 @@ impl State {
             locks: MurmurMap::default(),
             indexes: HashMap::new(),
             functions: Registry::with_set_functions(),
+            xquery_functions: crate::xquery::Library::builtin(),
             types: TypeRegistry::builtin(),
             rankings: super::rankings::SharedRankings::default(),
             vectors: super::vectors::SharedVectors::default(),
@@ -260,7 +271,7 @@ impl State {
         let sparse = SparseMethod::sharing(Arc::clone(&st.pages));
         let hybrid = HybridMethod::sharing(&st.pages).with_plugins(&(metrics, quantizers)).with_rankings(st.rankings.closure());
         let documents = JsonMethod::sharing(Arc::clone(&st.pages));
-        let methods: Vec<Arc<dyn IndexMethod>> = vec![
+        let mut methods: Vec<Arc<dyn IndexMethod>> = vec![
             Arc::new(btree),
             Arc::new(hash),
             Arc::new(spatial),
@@ -272,6 +283,10 @@ impl State {
             Arc::new(sparse),
             Arc::new(hybrid),
         ];
+        // The XML methods (RULES.md D106), attached as the others are.
+        for method in xml::METHODS {
+            methods.push(Arc::new(XmlMethod::sharing(method, Arc::clone(&st.pages))));
+        }
         for m in methods {
             st.methods.insert(m.name().to_string(), m);
         }
@@ -515,7 +530,7 @@ mod tests {
         let mut st = State::with_builtins(Box::new(MemoryCatalog::default()));
         st.schema(
             "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)",
-            (None, 0),
+            (None, crate::value::datetime::Now::default()),
             (None, &mut crate::db::sequences::Epochs::fresh()),
         )
         .unwrap();

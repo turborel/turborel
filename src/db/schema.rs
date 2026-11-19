@@ -23,6 +23,7 @@ use crate::settings::CATALOG_NAME;
 use crate::storage::chosen;
 use crate::txn::Timestamp;
 use crate::value::Value;
+use crate::value::datetime::Now;
 
 mod actions;
 
@@ -155,13 +156,18 @@ impl State {
     /// session's authorization identifier [ISO/IEC 9075:1992 §11.1 SR2b].
     /// Returns its owner, and each table it created, with the engine it was
     /// placed in, for the log (RULES.md D25); and whether a privilege it
-    /// would grant was not [ISO/IEC 9075:1992 §11.36 GR14, GR15].
+    /// would grant was not [ISO/IEC 9075:1992 §11.36 GR14, GR15]. It runs
+    /// as CURRENT_TIMESTAMP was `now`: its datetimes of `now`'s
+    /// displacement, what it makes stamped with `now` [ISO/IEC 9075-2:2023
+    /// §11.60 GR5].
     pub(super) fn schema(
         &mut self,
         sql: &str,
-        (implicit, zone): (Option<&str>, i16),
+        (implicit, now): (Option<&str>, Now),
         (made, epochs): (Option<&Made>, &mut Epochs),
     ) -> Result<SchemaMade> {
+        self.stamp = now;
+        let zone = now.zone;
         let ours = self.catalog_name();
         let s = Parser::for_stored(sql)?.in_catalog(&ours).schema()?;
         if let Some(other) = s.catalog.as_ref().filter(|c| **c != ours) {
@@ -218,8 +224,8 @@ impl State {
 
     /// The grants of `<schema>` `s`, by its owner `owner`: each table's
     /// privileges granted, and whether any was not; USAGE on a domain,
-    /// collation, sequence generator or type, and EXECUTE on a routine or model, is
-    /// granted in its descriptor [§11.36].
+    /// collation, sequence generator, type or registered XML Schema, and
+    /// EXECUTE on a routine or model, is granted in its descriptor [§11.36].
     fn schema_grants(&mut self, s: &Schema, owner: &str) -> Result<Vec<(Vec<PrivilegeDesc>, bool)>> {
         let mut granted = Vec::new();
         for p in &s.privileges {
@@ -234,6 +240,8 @@ impl State {
                 PrivilegeObject::Collation => self.grant_collation_usage(owner, p),
                 PrivilegeObject::Sequence => self.grant_sequence_usage(owner, &s.name, p),
                 PrivilegeObject::Model => self.grant_model_execute(owner, &s.name, p),
+                PrivilegeObject::XmlSchema => self.grant_xml_schema_usage(owner, &s.name, p),
+                PrivilegeObject::XQueryModule => self.grant_xquery_module_usage(owner, &s.name, p),
                 // Granted once the schema's modules are made.
                 PrivilegeObject::Module => continue,
                 // Granted once the schema's routines are made.

@@ -50,6 +50,7 @@ impl Scalar {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Json(_)
+            | Value::Xml(_)
             | Value::Extension(_) => None,
         }
     }

@@ -152,7 +152,8 @@ fn asked(condition: &Conjunct) -> Option<(usize, &[Value])> {
                 | Probe::Compare { .. }
                 | Probe::Prefix { .. }
                 | Probe::Range { .. }
-                | Probe::Predicate { .. } => None,
+                | Probe::Predicate { .. }
+                | Probe::Xml(_) => None,
             }
         }
         Conjunct::In { column, values } => Some((*column, values.as_slice())),

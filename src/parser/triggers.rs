@@ -447,7 +447,10 @@ impl Parser {
                 "[ISO/IEC 9075-4:2006 draft §9.19 SR1] a trigger's compound statement is ATOMIC",
             ));
         }
-        let plain = c.label.is_none() && c.declarations.is_empty() && c.cursors.is_empty() && c.handlers.is_empty();
+        // [ISO/IEC 9075-14:2006 draft §15.1] DECLARE's XML options are a
+        // declaration too, whose scope is the compound statement.
+        let declares = c.options.is_some() || !c.declarations.is_empty();
+        let plain = c.label.is_none() && !declares && c.cursors.is_empty() && c.handlers.is_empty();
         if plain && !c.statements.is_empty() {
             return Ok(c.statements);
         }

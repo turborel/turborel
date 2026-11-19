@@ -198,7 +198,8 @@ impl Grouper {
         while let Some(records) = next.take() {
             let mut overflow = if depth < self.work.depth() { Overflow::Partitions(None) } else { Overflow::Run(None) };
             let types = self.work.types().clone();
-            let records = records.map(move |r| r.and_then(|record| unnumbered(&record, &types)).map(|(n, row)| Seeded::Row(n, row)));
+            let lobs = self.work.lobs().clone();
+            let records = records.map(move |r| r.and_then(|record| unnumbered(&record, &types, &lobs)).map(|(n, row)| Seeded::Row(n, row)));
             let held = self.pass(Box::new(records), &mut overflow)?;
             sources.push(self.written(held)?);
             match overflow {
@@ -236,7 +237,7 @@ impl Grouper {
             let key = group_key(&self.spec, &values);
             if !found.contains_key(&key) {
                 if bytes > self.work.limit() {
-                    overflow.push(&key, &numbered(n, &row), &mut self.work)?;
+                    overflow.push(&key, &numbered(n, &row, self.work.lobs()), &mut self.work)?;
                     continue;
                 }
                 bytes = bytes.saturating_add(key.len()).saturating_add(row_bytes(&values));
@@ -257,7 +258,7 @@ impl Grouper {
     fn written(&mut self, held: Finished) -> Result<Records> {
         let mut run = self.work.run()?;
         for (n, row) in held {
-            run.push(&numbered(n, &row))?;
+            run.push(&numbered(n, &row, self.work.lobs()))?;
         }
         run.into_records()
     }

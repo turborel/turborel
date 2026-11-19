@@ -52,7 +52,8 @@ pub fn spelling(t: &DataType) -> Spelled {
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Json
-        | DataType::Extension(_) => Spelled::Numeric,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => Spelled::Numeric,
     }
 }
 

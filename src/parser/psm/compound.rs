@@ -30,8 +30,9 @@ pub(super) const ASENSITIVE: &str = "ASENSITIVE";
 
 impl Parser {
     /// [ISO/IEC 9075-4:2006 draft §14.1] `<compound statement>` ::=
-    /// \[`<beginning label>` `<colon>`\] BEGIN \[\[NOT\] ATOMIC\] \[`<local
-    /// declaration list>`\] \[`<local cursor declaration list>`\]
+    /// \[`<beginning label>` `<colon>`\] BEGIN \[\[NOT\] ATOMIC\] \[DECLARE
+    /// `<XML lexically scoped options>` ;\] [ISO/IEC 9075-14:2006 draft
+    /// §15.1] \[`<local declaration list>`\] \[`<local cursor declaration list>`\]
     /// \[`<local handler declaration list>`\] \[`<SQL statement list>`\]
     /// END \[`<ending label>`\], its label `label`.
     pub(super) fn compound_statement(&mut self, label: Option<Label>) -> Result<CompoundStatement> {
@@ -52,6 +53,7 @@ impl Parser {
     /// What follows BEGIN \[\[NOT\] ATOMIC\] of a compound statement at
     /// `at` labelled `label`.
     fn compound_body(&mut self, label: Option<Label>, atomic: bool, at: usize) -> Result<CompoundStatement> {
+        let options = self.declared_scoped_options()?;
         let mut declarations = Vec::new();
         while self.at_local_declaration() {
             declarations.push(self.local_declaration()?);
@@ -73,7 +75,7 @@ impl Parser {
         let statements = if self.is_kw(kw::END) { Vec::new() } else { self.statement_list(&[kw::END])? };
         self.expect_kw(kw::END)?;
         let ending = self.ending_label(label.as_ref())?;
-        Ok(CompoundStatement { label, atomic, declarations, cursors, handlers, statements, ending, at })
+        Ok(CompoundStatement { label, atomic, options, declarations, cursors, handlers, statements, ending, at })
     }
 
     /// Whether DECLARE begins a `<handler declaration>` here.

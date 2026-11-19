@@ -154,6 +154,12 @@ impl Table {
         CATEGORIES.get(usize::try_from(category).ok()?).copied()
     }
 
+    /// Whether `c` is an assigned character of Unicode 13.0: of a General
+    /// Category but Cn, "Other, not assigned" [Unicode 13.0 §4.5].
+    pub(crate) fn assigned(&self, c: char) -> bool {
+        self.category(c).is_some_and(|category| category != "Cn")
+    }
+
     /// The characters of the block whose normalized name is `name`
     /// [XSD 1.1 Part 2 §G.4.2.3], case and hyphens counting; none if no
     /// block has it.

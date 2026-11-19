@@ -11,9 +11,14 @@ use crate::physical::{Place, ProbeSlot};
 use crate::value::{CompOp, DataType, Value, compare};
 use std::cmp::Ordering;
 
-/// Whether this is a function lookup, requiring the full WHERE check.
+/// Whether this is a function lookup, or an XML lookup, requiring the full
+/// WHERE check (RULES.md D34, D106).
 pub(super) fn named(probes: &[Probe]) -> bool {
-    matches!(probes.first(), Some(Probe::Predicate { .. }))
+    match probes.first() {
+        Some(Probe::Xml(asked)) => !asked.answered,
+        Some(probe) => probe.opaque(),
+        None => false,
+    }
 }
 
 /// Finds function calls with one indexed column and a constant or parameter.
@@ -125,6 +130,7 @@ pub(super) fn constant(expr: &Expr, values: Option<&[Value]>) -> Option<(Value, 
         | Expr::Subquery(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
+        | Expr::Warned(..)
         | Expr::Truth(_)
         | Expr::NextValue(_)
         | Expr::Invoked(_) => None,
@@ -142,12 +148,19 @@ pub(super) fn supports(method: &dyn IndexMethod, probe: &Probe, (types, ordering
         Probe::Prefix { equal, then } => method.supports_prefix(types.len(), equal.len(), then.as_ref().map(|(op, _)| *op)),
         Probe::Range { equal, .. } => method.supports_range(types.len(), equal.len()),
         Probe::Predicate { predicate, .. } => method.supports_predicate(predicate, types),
+        // An index that prices no XML lookup is asked none (`physical/access/xml.rs`).
+        Probe::Xml(_) => true,
     }
 }
 
 /// Whether omitting null keys could hide a matching row. A function call
 /// rejects nulls in its argument column, but may leave other key columns null.
 pub(super) fn omits_rows(ix: &IndexDesc, columns: &[&ColumnDesc], probe: Option<&Probe>) -> bool {
+    // RULES.md D106: a query of a null context item is not true, nor
+    // otherwise than null, so its rows are none an XML lookup must give.
+    if matches!(probe, Some(Probe::Xml(_))) {
+        return false;
+    }
     if matches!(probe, Some(Probe::Predicate { .. })) {
         return !ix.nulls && untested_nulls(columns, probe);
     }
@@ -165,7 +178,7 @@ pub(super) fn untested_nulls(columns: &[&ColumnDesc], probe: Option<&Probe>) -> 
 /// How many initial key columns a comparison probe excludes nulls from.
 fn tested(probe: &Probe) -> usize {
     match probe {
-        Probe::All | Probe::Predicate { .. } => 0,
+        Probe::All | Probe::Predicate { .. } | Probe::Xml(_) => 0,
         Probe::Columns(each) => (0..each.len()).take_while(|&at| each.iter().any(|c| c.column == at)).count(),
         Probe::Compare { .. } => 1,
         Probe::Prefix { equal, then } => equal.len().saturating_add(usize::from(then.is_some())),

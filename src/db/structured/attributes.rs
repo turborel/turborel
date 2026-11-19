@@ -6,7 +6,7 @@ use super::super::defaults::default_of;
 use super::super::{State, rule};
 use crate::ast::{AttributeDefinition, TypeName};
 use crate::binder::qualify;
-use crate::catalog::{AttributeDesc, MUTATOR_SUFFIX, OBSERVER_SUFFIX, QualifiedName, RoutineDesc, based_on, owner_of, sole};
+use crate::catalog::{AttributeDesc, MUTATOR_SUFFIX, OBSERVER_SUFFIX, QualifiedName, RoutineDesc, Stamps, based_on, owner_of, sole};
 use crate::error::{At, Result};
 use crate::value::DataType;
 use crate::value::types::{MAX_TYPE_NESTING, StructuredType, UdtName};
@@ -68,7 +68,8 @@ impl State {
                     format!("[ISO/IEC 9075-2:2023 §11.51 SR9b vii] schema {} has a routine of specific name {specific} already", qn.auth);
                 return Err(rule(msg));
             }
-            Ok(RoutineDesc { name: def.name.clone(), specific, execute: Vec::new() })
+            // [§11.60 GR5] made as the attribute is defined.
+            Ok(RoutineDesc { name: def.name.clone(), specific, execute: Vec::new(), stamps: Stamps::at(self.stamp) })
         };
         let (observer, mutator) = (routine(OBSERVER_SUFFIX)?, routine(MUTATOR_SUFFIX)?);
         let _ = supertypes;
@@ -164,7 +165,8 @@ fn structured_in(t: &DataType, into: &mut Vec<StructuredType>, depth: usize) {
         | DataType::Interval(_)
         | DataType::Reference(_)
         | DataType::Json
-        | DataType::Extension(_) => {}
+        | DataType::Extension(_)
+        | DataType::Xml(_) => {}
     }
 }
 
@@ -183,6 +185,6 @@ fn names_type(t: &TypeName, (qn, supertypes): Owning<'_>, depth: usize) -> bool 
         }
         TypeName::Collection(element, _) => names_type(element, (qn, supertypes), deeper),
         TypeName::Row(fields) => fields.iter().any(|(_, f)| names_type(f, (qn, supertypes), deeper)),
-        TypeName::Data(_) | TypeName::Reference(..) | TypeName::Extension { .. } => false,
+        TypeName::Data(_) | TypeName::Reference(..) | TypeName::Extension { .. } | TypeName::XmlSchema(..) => false,
     }
 }

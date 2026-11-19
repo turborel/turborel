@@ -1,0 +1,51 @@
+W3C NOTICES
+
+The schema documents XMLSchema.xsd and datatypes.xsd beside this file
+are copied from the W3C Recommendations that print them, as they print
+them, with no change of turborel's:
+
+XMLSchema.xsd, the Schema for Schemas: XML Schema Part 1: Structures,
+W3C Recommendation 2 May 2001, Appendix A, "Schema for Schemas
+(normative)", http://www.w3.org/TR/2001/REC-xmlschema-1-20010502/
+
+  Copyright ©2001 W3C® (MIT, INRIA, Keio), All Rights Reserved. W3C liability, trademark, document use and software licensing rules apply.
+
+datatypes.xsd, the schema for datatype definitions: XML Schema Part 2:
+Datatypes, W3C Recommendation 02 May 2001, Appendix A, "Schema for
+Datatype Definitions (normative)",
+http://www.w3.org/TR/2001/REC-xmlschema-2-20010502/
+
+  Copyright ©2001 W3C® (MIT, INRIA, Keio), All Rights Reserved. W3C liability, trademark, document use and software licensing rules apply.
+
+They are used under the W3C Software and Document Notice and License,
+whose text follows as https://www.w3.org/copyright/software-license-2023/
+gave it on 18 November 2026.
+
+The other documents beside this file, xml.xsd and sqlxml.xsd, hold no
+text of W3C's.
+
+Software and Document license - 2023 version
+
+Status: This document is in effect since 1 January 2023.
+
+This work is being provided by the copyright holders under the following license.
+
+License
+
+By obtaining and/or copying this work, you (the licensee) agree that you have read, understood, and will comply with the following terms and conditions.
+
+Permission to copy, modify, and distribute this work, with or without modification, for any purpose and without fee or royalty is hereby granted, provided that you include the following on ALL copies of the work or portions thereof, including modifications:
+
+- The full text of this NOTICE in a location viewable to users of the redistributed or derivative work.
+
+- Any pre-existing intellectual property disclaimers, notices, or terms and conditions. If none exist, the W3C software and document short notice should be included.
+
+- Notice of any changes or modifications, through a copyright statement on the new code or document such as "This software or document includes material copied from or derived from [title and URI of the W3C document]. Copyright © [$year-of-document] World Wide Web Consortium. https://www.w3.org/copyright/software-license-2023/"
+
+Disclaimers
+
+THIS WORK IS PROVIDED "AS IS," AND COPYRIGHT HOLDERS MAKE NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO, WARRANTIES OF MERCHANTABILITY OR FITNESS FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF THE SOFTWARE OR DOCUMENT WILL NOT INFRINGE ANY THIRD PARTY PATENTS, COPYRIGHTS, TRADEMARKS OR OTHER RIGHTS.
+
+COPYRIGHT HOLDERS WILL NOT BE LIABLE FOR ANY DIRECT, INDIRECT, SPECIAL OR CONSEQUENTIAL DAMAGES ARISING OUT OF ANY USE OF THE SOFTWARE OR DOCUMENT.
+
+The name and trademarks of copyright holders may NOT be used in advertising or publicity pertaining to the work without specific, written prior permission. Title to copyright in this work will at all times remain with copyright holders.

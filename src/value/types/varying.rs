@@ -191,7 +191,8 @@ impl SqlType for Varying {
             Value::DecFloat(d) => within(d.to_string(), t).map(unwarned),
             Value::Char(s) => Ok(cut_to(&s)),
             // [ISO/IEC 9075-2:2023 §6.13 SR8] Neither a binary string, an
-            // array nor a row.
+            // array nor a row; [ISO/IEC 9075-14:2006 draft §6.5 SR3] nor an
+            // XML value, whose text XMLSERIALIZE makes.
             Value::Binary(_)
             | Value::Lob(_)
             | Value::Array(_)
@@ -199,7 +200,8 @@ impl SqlType for Varying {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Json(_)
-            | Value::Row(_) => uncastable(&v, t).map(unwarned),
+            | Value::Row(_)
+            | Value::Xml(_) => uncastable(&v, t).map(unwarned),
             Value::Bool(b) => super::boolean_text(b, t).map(unwarned),
             // [GR6e] its literal's string, as it shows.
             Value::Datetime(d) => super::datetime::as_string(&d, length, false).map(unwarned),

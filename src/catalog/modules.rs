@@ -33,9 +33,11 @@ pub struct ModuleDesc {
     /// The EXECUTE privileges on it [§10.2], its owner's by `_SYSTEM`
     /// \[GR2\].
     pub execute: Vec<UsageDesc>,
-    /// \[DESIGN\] Its timestamp of creation, as an order: one more than the
-    /// greatest of the modules there were as it was created.
+    /// \[DESIGN\] Its order of creation: one more than the greatest of the
+    /// modules there were as it was created.
     pub created: u64,
+    /// Its creation and last-altered timestamps [§19.4 Description 7, 8].
+    pub stamps: super::Stamps,
 }
 
 impl ModuleDesc {

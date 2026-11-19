@@ -138,7 +138,8 @@ fn of_field_type(f: DescriptorItem, t: &DataType, target: bool) -> bool {
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Json
-        | DataType::Extension(_) => false,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => false,
     }
 }
 

@@ -321,3 +321,13 @@ pub(in crate::db) const DROP_EMBEDDING_MODEL: Command = command("DROP EMBEDDING 
 pub(in crate::db) const CREATE_VECTOR_PIPELINE: Command = command("CREATE VECTOR PIPELINE", -20);
 /// \[EXTENSION\] DROP VECTOR PIPELINE.
 pub(in crate::db) const DROP_VECTOR_PIPELINE: Command = command("DROP VECTOR PIPELINE", -21);
+/// \[EXTENSION\] CREATE XML SCHEMA [ISO/IEC 9075-14:2006 draft §4.2.6].
+pub(in crate::db) const CREATE_XML_SCHEMA: Command = command("CREATE XML SCHEMA", -22);
+/// \[EXTENSION\] DROP XML SCHEMA [ISO/IEC 9075-14:2006 draft §4.2.6].
+pub(in crate::db) const DROP_XML_SCHEMA: Command = command("DROP XML SCHEMA", -23);
+/// \[EXTENSION\] CREATE XQUERY MODULE (RULES.md D106).
+pub(in crate::db) const CREATE_XQUERY_MODULE: Command = command("CREATE XQUERY MODULE", -24);
+/// \[EXTENSION\] DROP XQUERY MODULE (RULES.md D106).
+pub(in crate::db) const DROP_XQUERY_MODULE: Command = command("DROP XQUERY MODULE", -25);
+/// \[EXTENSION\] ALTER XQUERY MODULE (RULES.md D106).
+pub(in crate::db) const ALTER_XQUERY_MODULE: Command = command("ALTER XQUERY MODULE", -26);

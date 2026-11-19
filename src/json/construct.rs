@@ -127,6 +127,7 @@ fn input_item(input: &Input<'_>, keys: Keys) -> Result<Item> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => cast(input.value.clone(), &SDT)?,
     };
     Ok(Scalar::new(kept).map_or(Item::Null, Item::Scalar))
@@ -168,6 +169,7 @@ fn key(name: &Value) -> Result<String> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => Err(not_a_name(name)),
     }
 }

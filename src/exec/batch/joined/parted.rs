@@ -85,7 +85,7 @@ impl Parted {
             self.current = None;
             return Ok(());
         };
-        let (_, l) = unnumbered(&record?, &self.types)?;
+        let (_, l) = unnumbered(&record?, &self.types, self.work.lobs())?;
         let (out, ready, columns) = (&mut self.out, &mut self.ready, &self.columns);
         each_pair(built, &l, |r| {
             put(out, (&l, r), columns);

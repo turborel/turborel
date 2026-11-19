@@ -50,6 +50,9 @@ impl SqlState {
     /// Warning: null value eliminated in set function [ISO/IEC 9075:1992
     /// §6.5 GR1b].
     pub const NULL_VALUE_ELIMINATED: SqlState = SqlState(*b"01003");
+    /// Warning: column cannot be mapped [ISO/IEC 9075-14:2006 draft §9.11
+    /// GR3, §9.14 GR3, §9.17 GR3, §23.1].
+    pub const COLUMN_CANNOT_BE_MAPPED: SqlState = SqlState(*b"01010");
     /// Dependent privilege descriptors still exist [ISO/IEC 9075:1992
     /// §11.37 GR2b].
     pub const DEPENDENT_PRIVILEGES: SqlState = SqlState(*b"2B000");
@@ -306,6 +309,65 @@ impl SqlState {
     /// Data exception: too many JSON object members [ISO/IEC 9075-2:2023
     /// §6.34 GR2d ii 3, §10.11 GR4b ii 4].
     pub const TOO_MANY_JSON_OBJECT_MEMBERS: SqlState = SqlState(*b"2203E");
+    /// Data exception: not an XML document [ISO/IEC 9075-14:2006 draft
+    /// §10.2 GR1a i, §10.15 GR3, §23.1].
+    pub const NOT_AN_XML_DOCUMENT: SqlState = SqlState(*b"2200L");
+    /// Data exception: not an XQuery document node [ISO/IEC 9075-14:2006
+    /// draft §10.2 GR1a ii, §23.1].
+    pub const NOT_AN_XQUERY_DOCUMENT_NODE: SqlState = SqlState(*b"2200U");
+    /// Data exception: invalid XML document [ISO/IEC 9075-14:2006 draft
+    /// §10.16 GR6a i, §23.1].
+    pub const INVALID_XML_DOCUMENT: SqlState = SqlState(*b"2200M");
+    /// Data exception: invalid XML content [ISO/IEC 9075-14:2006 draft
+    /// §10.16 GR6a ii, §23.1].
+    pub const INVALID_XML_CONTENT: SqlState = SqlState(*b"2200N");
+    /// Data exception: XQuery serialization error [ISO/IEC 9075-14:2006
+    /// draft §10.15 GR11, §23.1].
+    pub const XQUERY_SERIALIZATION_ERROR: SqlState = SqlState(*b"2200W");
+    /// Data exception: invalid XQuery context item [ISO/IEC 9075-14:2006
+    /// draft §6.18 GR1a ii 2 B III, §23.1].
+    pub const INVALID_XQUERY_CONTEXT_ITEM: SqlState = SqlState(*b"2200V");
+    /// Data exception: invalid comment [ISO/IEC 9075-14:2006 draft §6.11
+    /// GR3, §23.1].
+    pub const INVALID_COMMENT: SqlState = SqlState(*b"2200S");
+    /// Data exception: invalid processing instruction [ISO/IEC
+    /// 9075-14:2006 draft §6.17 GR4, §23.1].
+    pub const INVALID_PROCESSING_INSTRUCTION: SqlState = SqlState(*b"2200T");
+    /// Data exception: XML value overflow [ISO/IEC 9075-14:2006 draft §11.2
+    /// GR1, §23.1].
+    pub const XML_VALUE_OVERFLOW: SqlState = SqlState(*b"2200R");
+    /// Data exception: validation failure [ISO/IEC 9075-14:2006 draft
+    /// §6.20 GR6a iii 2 D, GR6b iv, §23.1].
+    pub const VALIDATION_FAILURE: SqlState = SqlState(*b"2201R");
+    /// Data exception: XQuery sequence cannot be validated [ISO/IEC
+    /// 9075-14:2006 draft §6.20 GR3c, §23.1].
+    pub const XQUERY_SEQUENCE_CANNOT_BE_VALIDATED: SqlState = SqlState(*b"2201J");
+    /// Data exception: XQuery document node cannot be validated [ISO/IEC
+    /// 9075-14:2006 draft §6.20 GR6a iii 1, §23.1].
+    pub const XQUERY_DOCUMENT_NODE_CANNOT_BE_VALIDATED: SqlState = SqlState(*b"2201K");
+    /// Data exception: no XML schema found [ISO/IEC 9075-14:2006 draft
+    /// §6.20 GR6a iii 2 A II 2, GR6b i 2, §23.1].
+    pub const NO_XML_SCHEMA_FOUND: SqlState = SqlState(*b"2201L");
+    /// Data exception: no XML element with the specified QName [ISO/IEC
+    /// 9075-14:2006 draft §6.20 GR6a iii 2 B I, GR6b ii 1, §23.1].
+    pub const NO_XML_ELEMENT_WITH_THE_SPECIFIED_QNAME: SqlState = SqlState(*b"2201P");
+    /// Data exception: no XML element with the specified namespace
+    /// [ISO/IEC 9075-14:2006 draft §6.20 GR6a iii 2 B II, GR6b ii 2,
+    /// §23.1].
+    pub const NO_XML_ELEMENT_WITH_THE_SPECIFIED_NAMESPACE: SqlState = SqlState(*b"2201Q");
+    /// Data exception: element namespace not declared [ISO/IEC
+    /// 9075-14:2006 draft §11.6 GR1a, §23.1].
+    pub const ELEMENT_NAMESPACE_NOT_DECLARED: SqlState = SqlState(*b"2201M");
+    /// Data exception: global element not declared [ISO/IEC 9075-14:2006
+    /// draft §11.6 GR1b, §23.1].
+    pub const GLOBAL_ELEMENT_NOT_DECLARED: SqlState = SqlState(*b"2201N");
+    /// XQuery error: a static error, type error or dynamic error XQuery
+    /// raises [ISO/IEC 9075-14:2006 draft §3.1.3.56, §6.6 GR3d vi, GR4j,
+    /// §6.13 GR8, §6.18 GR3, §23.1].
+    pub const XQUERY_ERROR: SqlState = SqlState(*b"10000");
+    /// SQL/XML mapping error: invalid XML character [ISO/IEC 9075-14:2006
+    /// draft §9.8 GR9a ii, §23.1].
+    pub const INVALID_XML_CHARACTER: SqlState = SqlState(*b"0N002");
     /// Data exception: sequence generator limit exceeded [ISO/IEC
     /// 9075-2:2023 §9.35 GR3a].
     pub const SEQUENCE_GENERATOR_LIMIT_EXCEEDED: SqlState = SqlState(*b"2200H");

@@ -57,7 +57,7 @@ fn copy_of(dc: &ConstraintDesc, table: &QualifiedName, column: &str) -> Constrai
         // [ISO/IEC 9075-2:2023 §4.35.2] of the domain constraint's subject
         // routines.
         ConstraintKind::Check { text, names, horizon, .. } => {
-            let horizon = Horizon { widths: Vec::new(), routines: horizon.routines.clone() };
+            let horizon = horizon.of_widths(Vec::new());
             ConstraintKind::Check { text: on_column(text, column), names: names.clone(), reads: Vec::new(), horizon }
         }
         other @ (ConstraintKind::NotNull(_) | ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_)) => other.clone(),
@@ -255,8 +255,7 @@ impl State {
             );
         }
         let (reads, horizon) = if bound {
-            let (reads, invoked) = self.bound_on_value(domain, data_type, (&check.text, names, &Horizon::default())).or_at(c.at)?;
-            (reads, Horizon::default().invoking(invoked))
+            self.bound_on_value(domain, data_type, (&check.text, names, &Horizon::default())).or_at(c.at)?
         } else {
             (Vec::new(), Horizon::default())
         };
@@ -280,10 +279,10 @@ impl State {
         for d in &mut domains {
             for c in &mut d.constraints {
                 let ConstraintKind::Check { text, names, reads, horizon } = &mut c.kind else { continue };
-                let (read, invoked) = self.bound_on_value(&d.name, d.data_type.clone(), (text, names, horizon))?;
+                let (read, seen) = self.bound_on_value(&d.name, d.data_type.clone(), (text, names, horizon))?;
                 *reads = read;
                 if horizon.routines.is_none() {
-                    *horizon = std::mem::take(horizon).invoking(invoked);
+                    *horizon = seen;
                 }
             }
         }

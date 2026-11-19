@@ -33,7 +33,7 @@ use super::integrity::Effects;
 use super::sequences::Epochs;
 use super::{Database, Session, State, api};
 use crate::ast::{AlterAction, DropBehavior, TableName};
-use crate::binder::qualify;
+use crate::binder::{making_typed, qualify};
 use crate::catalog::{QualifiedName, Temporary, TemporaryKind};
 use crate::db::Completion;
 use crate::error::{At, Code, Result, SqlError, fail};
@@ -41,7 +41,7 @@ use crate::exec::NoSubqueries;
 use crate::index::Index;
 use crate::log::record::Change;
 use crate::parser::Parser;
-use crate::settings::FUNCTION_CALLS;
+use crate::settings::{FUNCTION_CALLS, XQUERY_STATIC_TYPING};
 use crate::storage::TableStorage;
 use crate::txn::{LockMode, Timestamp, Txn};
 use crate::value::Value;
@@ -134,14 +134,19 @@ impl State {
     pub(super) fn apply_change(&mut self, change: &Change, made: Option<&Made>) -> Result<Dropped> {
         match change {
             Change::Drop { object, cascade } => self.drop_object(object, *cascade),
-            Change::AlterTable { table, action, schema, zone, epochs } => {
+            Change::AlterTable { table, action, schema, zone, epochs, typed } => {
+                let _typed = making_typed(*typed);
                 let action = Parser::for_stored(action)?.alter_table_action()?;
                 Ok(self.alter_table((table, schema, *zone), &action, (made, None, &mut Epochs::logged(epochs)))?.0)
             }
-            Change::Defined { auth, role, schema, zone, sql, placed, epochs } => {
-                self.redefine(((auth, role.as_deref()), schema, *zone), sql, (placed.as_ref(), made, epochs))
+            Change::Defined { auth, role, schema, now, sql, placed, epochs, typed } => {
+                let _typed = making_typed(*typed);
+                self.redefine(((auth, role.as_deref()), schema, *now), sql, (placed.as_ref(), made, epochs))
             }
-            Change::Schema { sql, owner, engines, zone, epochs } => self.reschema((sql, owner, *zone), engines, made, epochs),
+            Change::Schema { sql, owner, engines, now, epochs, typed } => {
+                let _typed = making_typed(*typed);
+                self.reschema((sql, owner, *now), engines, made, epochs)
+            }
             Change::Spatial(c) => {
                 let next = self.catalog.spatial().applied(c)?;
                 let mut catalog = self.catalog.duplicate();
@@ -316,6 +321,9 @@ impl Session {
         }
         let mut next = State::clone(st);
         let zone = self.now.get().zone;
+        // [XQuery §5.2.3] typed statically as the session asks, logged with it.
+        let typed = st.settings.is_on(XQUERY_STATIC_TYPING);
+        let _typed = making_typed(typed);
         let mut epochs = Epochs::fresh();
         let (_, made, reshape) = next.alter_table((qn, &schema, zone), action, (None, Some(tx), &mut epochs))?;
         // A column added of a collation made holds its name shared, so no
@@ -352,7 +360,7 @@ impl Session {
             made.discard();
             return Err(e);
         }
-        let change = Change::AlterTable { table: qn.clone(), action: text.to_owned(), schema, zone, epochs: epochs.given() };
+        let change = Change::AlterTable { table: qn.clone(), action: text.to_owned(), schema, zone, epochs: epochs.given(), typed };
         self.stage(st, tx, Changed { next, change, made: Some(made) })?;
         Ok(super::long_texts::warned(Completion::Success, text, || super::long_texts::of_alter(action)))
     }

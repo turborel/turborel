@@ -17,7 +17,8 @@ SELECT: read rows
     [ <order by clause> ] [ <result offset clause> ] [ <fetch first clause> ]
 
 <with clause> ::=
-    WITH [ RECURSIVE ] <with list element> [ { , <with list element> }... ]
+      WITH [ RECURSIVE ] <with list element> [ { , <with list element> }... ]
+    | WITH <XML lexically scoped options> [ , [ RECURSIVE ] <with list element> [ { , <with list element> }... ] ]
 
 <with list element> ::=
     <query name> [ ( <column name> [ { , <column name> }... ] ) ] AS ( <query expression> )
@@ -231,6 +232,11 @@ and CYCLE a column marking each row that closes a cycle and a column of
 the path to it, ending the path there ([SEARCH and
 CYCLE](../06-queries.md#search-and-cycle)).
 
+WITH's XML options, XMLNAMESPACES and XMLBINARY, before its list or
+alone, are in scope of the whole query: its subqueries, derived tables,
+the queries of its list and the operands of its set operations. A WITH
+within it is more inner. See [XML Values](../19-xml.md#xml-options-of-a-scope).
+
 A window function computes a value of each row out of the rows of its
 partition, ordered, or of a frame of rows around it, as [Window
 functions](../06-queries.md#window-functions) shows. Windows are
@@ -360,7 +366,7 @@ SELECT on each table and view the query names.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken: a table or column not found or ambiguous, a sort key or a row count breaking rule 3, a column not grouped, operands of a set operation not alike; or FOR UPDATE is written |
+| 2A000 | -103 | A rule above is broken, or one of WITH's XML options of [XML Values](../19-xml.md#xml-options-of-a-scope): a table or column not found or ambiguous, a sort key or a row count breaking rule 3, a column not grouped, operands of a set operation not alike; or FOR UPDATE is written |
 | 2A000 | -104 | Its user lacks SELECT on a table or view |
 | 21000 | -811 | A scalar subquery gives more than one row |
 | TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
@@ -500,7 +506,8 @@ rows>`, and its query expression [§7.10], query specification [§7.9] and
 table expression [§7.3]; X3.135-1986 §5.25 and §8.3. WITH and WITH
 RECURSIVE are the `<with clause>` of ISO/IEC 9075-2:2023 §7.17, Features
 T121, T122, T131 and T132, and SEARCH and CYCLE its `<search or cycle
-clause>` [§7.18], with Feature T133. The fields of a row, `R.*`, are its `<all
+clause>` [§7.18], with Feature T133. WITH's XML options are ISO/IEC
+9075-14:2006 draft §7.2, Features X081, X131 and X135. The fields of a row, `R.*`, are its `<all
 fields reference>` [§7.16], and UNNEST its `<collection derived table>`
 [§7.6]. TABLE ( a polymorphic table function's invocation ) is the `<PTF
 derived table>` of §7.6, Features B200 to B209. PARTITION BY on an operand of a join is its `<partitioned join

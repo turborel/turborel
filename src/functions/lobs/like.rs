@@ -86,6 +86,7 @@ fn character(v: &Value) -> Result<Character<'_>> {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => not_character(),
+        | Value::Extension(_)
+        | Value::Xml(_) => not_character(),
     }
 }

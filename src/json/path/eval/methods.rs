@@ -126,6 +126,7 @@ fn scalar_type(value: &Value) -> &'static str {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => NUMBER,
     }
 }
@@ -170,6 +171,7 @@ fn double(item: &Item) -> Result<Item> {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => Err(exception(SqlState::NON_NUMERIC_SQL_JSON_ITEM, NOT_NUMERIC)),
     }
 }

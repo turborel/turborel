@@ -74,23 +74,29 @@ impl Parser {
         self.ordered(body)
     }
 
-    /// [ISO/IEC 9075-2:2023 §7.17] `<with clause>` ::= WITH \[RECURSIVE\]
-    /// `<with list>`, and the `<query expression body>` after it, with the
-    /// clauses that may follow it, in the scope of its query names.
-    /// RECURSIVE, which SQL-92 does not reserve, is that key word unless
-    /// AS or a `<with column list>` follows it, naming a query RECURSIVE.
+    /// [ISO/IEC 9075-14:2006 draft §7.2] `<with clause>` ::= WITH \[`<XML
+    /// lexically scoped options>`\] \[,\] \[\[RECURSIVE\] `<with list>`\]
+    /// (`parser/xml/scoped.rs`), and the `<query expression body>` after
+    /// it, with the clauses that may follow it, in the scope of its query
+    /// names. RECURSIVE, which SQL-92 does not reserve, is that key word
+    /// unless AS or a `<with column list>` follows it, naming a query
+    /// RECURSIVE.
     fn with_clause(&mut self) -> Result<QueryExpression> {
         let at = self.here();
         self.expect_kw(kw::WITH)?;
+        let (options, listed) = self.with_clause_options()?;
         let named = matches!(self.peek_at(1), Tok::KeyWord(kw::AS) | Tok::Delimiter(delim::LEFT_PAREN));
-        let recursive = !named && self.accept_word(RECURSIVE);
-        let mut elements = vec![self.with_list_element()?];
-        while self.accept_delim(delim::COMMA) {
+        let recursive = listed && !named && self.accept_word(RECURSIVE);
+        let mut elements = Vec::new();
+        if listed {
             elements.push(self.with_list_element()?);
+            while self.accept_delim(delim::COMMA) {
+                elements.push(self.with_list_element()?);
+            }
         }
         let body = self.query_expression_body()?;
         let body = self.ordered(body)?;
-        Ok(QueryExpression::With(Box::new(WithQuery { recursive, elements, body, at })))
+        Ok(QueryExpression::With(Box::new(WithQuery { options, recursive, elements, body, at })))
     }
 
     /// [ISO/IEC 9075-2:2023 §7.17] `<with list element>` ::= `<query
@@ -507,6 +513,9 @@ impl Parser {
         }
         if self.at_chunk_table() {
             return self.chunk_table();
+        }
+        if self.at_xml_table() {
+            return self.xml_table();
         }
         if self.at_ptf_table() {
             return self.ptf_table();

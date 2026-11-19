@@ -22,8 +22,10 @@ mod fulltext;
 mod generated;
 mod geometry;
 mod grouping_sets;
+mod guarded;
 mod hash;
 mod hypothetical;
+mod information;
 mod json;
 mod json_index;
 mod json_path;
@@ -64,6 +66,7 @@ mod search_cycle;
 mod sequences;
 mod server;
 mod shadow;
+mod short_names;
 mod simple_features;
 mod spatial_curves;
 mod spatial_lr;
@@ -79,6 +82,7 @@ mod spatial_topology;
 mod spatial_types;
 mod sql2023;
 mod sqlmm_fulltext;
+mod stamps;
 mod stats;
 mod structured;
 mod system_versioned;
@@ -101,8 +105,22 @@ mod window_nested;
 mod window_values;
 mod windows;
 mod with;
+mod xml;
+mod xml_composite;
+mod xml_index;
+mod xml_map;
+mod xml_publishing;
+mod xml_schema;
+mod xml_schema_catalog;
+mod xml_scoped;
+mod xquery;
+mod xquery_eval;
+mod xquery_functions;
+mod xquery_modules;
+mod xquery_statics;
 mod zones;
 
+pub use self::{vr::VR, waits::WAITS, zones::ZONES};
 use super::{Mutation, Package};
 pub use collations::COLLATIONS;
 pub use fill::FILL;
@@ -113,36 +131,14 @@ pub use server::SERVER;
 pub use shadow::SHADOW;
 pub use stats::STATS;
 pub use tailorings::TAILORINGS;
-pub use zones::ZONES;
-pub use {vr::VR, waits::WAITS};
 
 /// Every mutation, in the order they run: the core's, then each area's, replication's and the server's last.
 pub fn all() -> Vec<Mutation> {
     areas::core().into_iter().chain(areas::all()).chain(areas::late()).flatten().copied().collect()
 }
 
-/// The core's mutations: transactions, durability, constraints, assertions, the hash index. Rekeying's are in `rekey.rs`.
-pub const MUTATIONS: [Mutation; 43] = [
-    Mutation {
-        name: "hash-key-stream-owner",
-        package: Package::Core,
-        breaks: "a discarded hash index frees pages while its key-row stream reads them",
-        file: "src/index/hash.rs",
-        original: "let _rows_owner = &self;",
-        replacement: "let _rows_owner = ();",
-        integration: &[],
-        unit: &["index::hash::tests::streams_retain_discarded_indexes_until_they_close"],
-    },
-    Mutation {
-        name: "hash-search-stream-owner",
-        package: Package::Core,
-        breaks: "a discarded hash index frees pages while a search still reads them",
-        file: "src/index/hash.rs",
-        original: "let _entries_owner = &self;",
-        replacement: "let _entries_owner = ();",
-        integration: &["indexes::indexes_are_dropped"],
-        unit: &["index::hash::tests::streams_retain_discarded_indexes_until_they_close"],
-    },
+/// The core's mutations: transactions, durability, constraints, assertions. Rekeying's are in `rekey.rs`, the hash index's in `hash.rs`.
+pub const MUTATIONS: [Mutation; 41] = [
     Mutation {
         name: "mvcc-snapshot",
         package: Package::Core,

@@ -86,7 +86,8 @@ pub(crate) fn as_lob(v: &Value, kind: LobKind) -> Option<Lob> {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_),
+            | Value::Extension(_)
+            | Value::Xml(_),
             _,
         ) => None,
     }

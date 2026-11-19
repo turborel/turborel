@@ -225,7 +225,8 @@ impl fmt::Display for SqlError {
 /// The tags that mark, in the source, what no standard governs.
 const TAGS: [&str; 2] = ["[DESIGN]", "[EXTENSION]"];
 /// The standards a citation may name.
-const STANDARDS: [&str; 4] = ["X3.135-1986", "ISO/IEC 9075:1992", "ISO/IEC 9075-2:2023", "ISO/IEC 9075-4:2006 draft"];
+const STANDARDS: [&str; 5] =
+    ["X3.135-1986", "ISO/IEC 9075:1992", "ISO/IEC 9075-2:2023", "ISO/IEC 9075-4:2006 draft", "ISO/IEC 9075-14:2006 draft"];
 
 /// The rule a message as the source writes it cites first, and its text:
 /// its leading tags dropped, and a leading citation of a standard taken

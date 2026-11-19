@@ -22,6 +22,12 @@ pub(in crate::physical) fn render_probe(probe: &Probe, columns: &[usize], names:
             let Some(argument) = predicate.argument else { return json_call(predicate, column, value, names) };
             vec![called(predicate, (column, argument), value)]
         }
+        // RULES.md D106: the path and comparisons the lookup selects by, of
+        // the column's values.
+        Probe::Xml(lookup) => {
+            let column = columns.first().and_then(|&c| names.get(c)).map_or("?", String::as_str);
+            return format!("{column} has {lookup}");
+        }
         Probe::Compare { op, value } => vec![compared(0, *op, value)],
         Probe::Prefix { equal, then } => {
             let next = then.as_ref().map(|(op, value)| compared(equal.len(), *op, value));
@@ -84,6 +90,7 @@ fn json_call(predicate: &Predicate, column: Expr, value: &Value, names: &[String
         | Value::Reference(_)
         | Value::Lob(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => vec![Expr::Const(value.clone())],
     };
     let operator = predicate.function.0.json_probe().map(|p| p.operator);

@@ -184,6 +184,7 @@ fn items_of(value: &Value) -> Result<Item> {
         | Value::Row(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Xml(_)
         | Value::Extension(_) => Err(not_text()),
     }
 }

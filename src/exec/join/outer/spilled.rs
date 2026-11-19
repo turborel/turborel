@@ -74,12 +74,12 @@ fn partitioned(left: RowIter, (held, rest): (Vec<Row>, RowIter), spec: &Spec, wo
 pub(super) fn alone_rights(records: Records, (spec, judged): (&Spec, Option<&Cond>), work: &mut Work) -> Result<Records> {
     let mut out = work.run()?;
     for record in records {
-        let (n, row) = unnumbered(&record?, work.types())?;
+        let (n, row) = unnumbered(&record?, work.types(), work.lobs())?;
         if judged.is_some() {
             spec.right_may_match(&row)?;
         }
         if spec.kind.keeps_right() {
-            out.push(&numbered(n, &spec.right_alone(&row)))?;
+            out.push(&numbered(n, &spec.right_alone(&row), work.lobs()))?;
         }
     }
     out.into_records()
@@ -148,11 +148,11 @@ impl Parts {
                 Some(b) => {
                     let (run, bytes) = runs.get_mut(self.of(&b)).ok_or_else(lost)?;
                     *bytes = bytes.saturating_add(row_bytes(&row)).saturating_add(PLACE_BYTES);
-                    run.push(&numbered(n, &row))?;
+                    run.push(&numbered(n, &row, work.lobs()))?;
                 }
                 None => {
                     if spec.kind.keeps_right() || spec.own.1.is_some() {
-                        lonely.push(&numbered(n, &row))?;
+                        lonely.push(&numbered(n, &row, work.lobs()))?;
                     }
                 }
             }
@@ -174,10 +174,10 @@ impl Parts {
             any = true;
             let keyed = if spec.left_may_match(&row)? { key(&row, &spec.keys, Operand::Left)? } else { None };
             match keyed {
-                Some(b) => runs.get_mut(self.of(&b)).ok_or_else(lost)?.0.push(&numbered(n, &row))?,
+                Some(b) => runs.get_mut(self.of(&b)).ok_or_else(lost)?.0.push(&numbered(n, &row, work.lobs()))?,
                 None => {
                     if spec.kind.keeps_left() {
-                        lonely.push(&numbered(n, &spec.left_alone(&row)))?;
+                        lonely.push(&numbered(n, &spec.left_alone(&row), work.lobs()))?;
                     }
                 }
             }
@@ -192,7 +192,7 @@ impl Parts {
         let mut runs = self.runs(work)?;
         for record in records {
             let record = record?;
-            let (_, row) = unnumbered(&record, work.types())?;
+            let (_, row) = unnumbered(&record, work.types(), work.lobs())?;
             let b = key(&row, &spec.keys, if right { Operand::Right } else { Operand::Left })?.ok_or_else(lost)?;
             let (run, bytes) = runs.get_mut(self.of(&b)).ok_or_else(lost)?;
             *bytes = bytes.saturating_add(row_bytes(&row)).saturating_add(PLACE_BYTES);

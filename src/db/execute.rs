@@ -246,7 +246,7 @@ impl Session {
         stmt: &SqlStatement,
         by: (&Params, Option<&Keeping<'_>>),
     ) -> Result<Completion> {
-        if let SqlStatement::UpdatePositioned { table, only, set, cursor } = stmt {
+        if let SqlStatement::UpdatePositioned { table, only, set, cursor, .. } = stmt {
             return self.positioned(cx, ((table, *only), set), (WriteKind::UpdatePositioned, cursor, Self::update_positioned), by);
         }
         if let SqlStatement::DeletePositioned { table, only, cursor } = stmt {
@@ -332,7 +332,12 @@ impl Session {
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
         let _compiling = self.compiling(cx.st, cx.tx.id);
-        self.run_compiling(cx, stmt, params, keeping)
+        // [ISO/IEC 9075-14:2006 draft §14.3 to §14.7 SR1, SR2] its XML
+        // options in scope as it is bound, and none of another's.
+        let around = params.replace_xml_options(stmt.xml_options().cloned());
+        let ran = self.run_compiling(cx, stmt, params, keeping);
+        params.replace_xml_options(around);
+        ran
     }
 
     /// OPEN, FETCH or CLOSE `stmt` of an embedded cursor, as
@@ -366,11 +371,11 @@ impl Session {
         match stmt {
             SqlStatement::Insert(ins) => self.insert_statement(cx, ins, params, keeping).map(|n| self.affected(n)),
             SqlStatement::Merge(merge) => self.merge_completed(cx, merge, params, keeping),
-            SqlStatement::UpdateSearched { table, only, portion, set, where_clause } => {
+            SqlStatement::UpdateSearched { table, only, portion, set, where_clause, .. } => {
                 let target = (table, *only, portion.as_deref());
                 self.searched(cx, (WriteKind::UpdateSearched, target, set, where_clause.as_ref()), update_rows, (&*params, keeping))
             }
-            SqlStatement::DeleteSearched { table, only, portion, where_clause } => {
+            SqlStatement::DeleteSearched { table, only, portion, where_clause, .. } => {
                 let target = (table, *only, portion.as_deref());
                 self.searched(cx, (WriteKind::DeleteSearched, target, &[], where_clause.as_ref()), delete_rows, (&*params, keeping))
             }
@@ -383,7 +388,7 @@ impl Session {
             SqlStatement::Select { query, targets } => self.select_into(cx, query, targets, params),
             SqlStatement::Drop { object, behavior } => self.drop_object(cx.st, cx.tx, object, *behavior),
             SqlStatement::AlterTable { table, action, text } => self.alter_table(cx.st, cx.tx, (table, action, text)),
-            SqlStatement::Schema { statement, text } => self.schema_statement(cx.st, cx.tx, statement, text),
+            SqlStatement::Schema { statement, text } => self.schema_statement_in(cx, (statement, text), params),
             SqlStatement::Call(call) => self.call_statement(cx, call, params),
             SqlStatement::Control(_) | SqlStatement::Signal(_) => self.control_statement(cx, stmt, params),
             SqlStatement::Return(r) => super::routines::return_statement(r),
@@ -529,6 +534,9 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::Routine(_)
         | SchemaStatement::Module(_)
         | SchemaStatement::Vector(_)
+        | SchemaStatement::XmlSchema(_)
+        | SchemaStatement::XQueryModule(_)
+        | SchemaStatement::AlterXQueryModule(_)
         | SchemaStatement::Role(_) => None,
     }
 }

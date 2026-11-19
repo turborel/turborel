@@ -256,7 +256,7 @@ impl HashIndex {
     fn lookup(&self, probe: &Probe) -> Lookup {
         let values: &[Value] = match probe {
             Probe::All | Probe::Columns(_) => return Lookup::Every,
-            Probe::Predicate { .. } => return Lookup::Nothing,
+            Probe::Predicate { .. } | Probe::Xml(_) => return Lookup::Nothing,
             Probe::Compare { value, .. } => std::slice::from_ref(value),
             Probe::Prefix { equal, .. } | Probe::Range { equal, .. } => equal,
         };

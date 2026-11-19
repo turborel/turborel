@@ -36,6 +36,7 @@ fn expr_subqueries<'e>(e: &'e Expr, out: &mut Vec<&'e Subquery>, bodies: bool) {
         | Expr::Dynamic(_)
         | Expr::Cast(..)
         | Expr::SortKey(..)
+        | Expr::Warned(..)
         | Expr::NextValue(_) => {}
     }
     e.for_each_child(&mut |child| expr_subqueries(child, out, bodies));

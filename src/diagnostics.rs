@@ -99,6 +99,8 @@ pub enum Extension {
     Quantizer,
     /// \[EXTENSION\] A model of embeddings (`Database::register_embedder`).
     Embedder,
+    /// \[EXTENSION\] An `XQueryFunction` (`Database::register_xquery_function`).
+    XQueryFunction,
 }
 
 /// \[DESIGN\] An event of the database's.

@@ -2,6 +2,7 @@
 //! and what is not a record refused (RULES.md R-TEST-1, R-TEST-2).
 
 use super::*;
+use crate::value::datetime::Now;
 use crate::value::types::TypeRegistry;
 use crate::value::{Decimal, Value};
 
@@ -47,21 +48,6 @@ fn every_kind() -> Vec<Record> {
         },
         Change::AlterIndex { name: "I".into(), options: vec![] },
         Change::DropIndex { name: "I".into() },
-        Change::Drop { object: DropTarget::Table(table()), cascade: true },
-        Change::Drop { object: DropTarget::View(table()), cascade: false },
-        Change::Drop { object: DropTarget::Schema("AUTH".into()), cascade: true },
-        Change::Drop { object: DropTarget::Domain(table()), cascade: false },
-        Change::Drop { object: DropTarget::Assertion(table()), cascade: true },
-        Change::Drop { object: DropTarget::Collation(table()), cascade: false },
-        Change::Drop { object: DropTarget::Sequence(table()), cascade: true },
-        Change::AlterTable {
-            table: table(),
-            action: "ADD COLUMN \"K\" INTEGER NOT NULL".into(),
-            schema: "S".into(),
-            zone: -779,
-            epochs: vec![],
-        },
-        Change::AlterTable { table: table(), action: "ALTER \"K\" RESTART".into(), schema: "S".into(), zone: 0, epochs: vec![3, u64::MAX] },
         Change::Setting { name: "LOCKS.WAIT".into(), value: Some(Value::Char("ON".into())) },
         Change::Setting { name: "OPTIMIZER.MAX_PASSES".into(), value: None },
         Change::User { name: "ANN".into(), verifier: Some(vec![0, 255, 7]) },
@@ -74,39 +60,80 @@ fn every_kind() -> Vec<Record> {
         Change::Sequence { name: table(), epoch: u64::MAX, resume: i128::MIN },
         Change::Sequence { name: table(), epoch: 1, resume: i128::MAX },
     ];
-    let all = changes.into_iter().chain(definitions());
+    let all = changes.into_iter().chain(drops()).chain(definitions()).chain(spatial());
     all.enumerate().map(|(n, change)| Record { tx: u64::try_from(n).unwrap().checked_add(1).unwrap(), change }).collect()
+}
+
+/// One record of a DROP of each kind of object, CASCADE and RESTRICT.
+fn drops() -> Vec<Change> {
+    vec![
+        Change::Drop { object: DropTarget::Table(table()), cascade: true },
+        Change::Drop { object: DropTarget::View(table()), cascade: false },
+        Change::Drop { object: DropTarget::Schema("AUTH".into()), cascade: true },
+        Change::Drop { object: DropTarget::Domain(table()), cascade: false },
+        Change::Drop { object: DropTarget::Assertion(table()), cascade: true },
+        Change::Drop { object: DropTarget::Collation(table()), cascade: false },
+        Change::Drop { object: DropTarget::Sequence(table()), cascade: true },
+        Change::Drop { object: DropTarget::XmlSchema(table()), cascade: false },
+        Change::Drop { object: DropTarget::XQueryModule(table()), cascade: true },
+    ]
 }
 
 /// One record of each schema definition: a `<schema>`, and statements of
 /// a transaction, with the epochs of sequence generators they gave.
 fn definitions() -> Vec<Change> {
     vec![
+        Change::AlterTable {
+            table: table(),
+            action: "ADD COLUMN \"K\" INTEGER NOT NULL".into(),
+            schema: "S".into(),
+            zone: -779,
+            epochs: vec![],
+            typed: true,
+        },
+        Change::AlterTable {
+            table: table(),
+            action: "ALTER \"K\" RESTART".into(),
+            schema: "S".into(),
+            zone: 0,
+            epochs: vec![3, u64::MAX],
+            typed: false,
+        },
         Change::Schema {
             sql: "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)".into(),
             owner: "A".into(),
             engines: vec![("T".into(), "rowstore".into())],
-            zone: -330,
+            now: Now { utc: i64::MIN, zone: -330 },
             epochs: vec![1, u64::MAX],
+            typed: true,
         },
         Change::Defined {
             auth: "A".into(),
             role: Some("R\u{e9}".into()),
             schema: "B".into(),
-            zone: 780,
+            now: Now { utc: i64::MAX, zone: 780 },
             sql: "CREATE TABLE T (K INTEGER)".into(),
             placed: Some(("rowstore".into(), u32::MAX)),
             epochs: vec![7],
+            typed: true,
         },
         Change::Defined {
             auth: String::new(),
             role: None,
             schema: String::new(),
-            zone: 0,
+            now: Now::default(),
             sql: "GRANT SELECT ON T TO B".into(),
             placed: None,
             epochs: vec![],
+            typed: false,
         },
+    ]
+}
+
+/// One record of each change to the spatial catalog: a reference system
+/// defined, and a geometry column no longer registered.
+fn spatial() -> Vec<Change> {
+    vec![
         Change::Spatial(crate::catalog::SpatialChange::Define(crate::catalog::SpatialRefSysDesc {
             name: "ßystem".into(),
             id: i32::MIN,
@@ -172,17 +199,27 @@ fn what_is_not_a_record_is_refused() {
     let tag = insert.len() - 1;
     insert[tag] = 77;
     assert_eq!(corrupt(&insert), Some(Code::Corrupt), "an unknown kind of value");
-    let schema =
-        Record { tx: 1, change: Change::Schema { sql: "ab".into(), owner: String::new(), engines: vec![], zone: 0, epochs: vec![] } }
-            .encode();
+    let schema = Record {
+        tx: 1,
+        change: Change::Schema {
+            sql: "ab".into(),
+            owner: String::new(),
+            engines: vec![],
+            now: Now::default(),
+            epochs: vec![],
+            typed: false,
+        },
+    }
+    .encode();
     let mut not_utf8 = schema.clone();
-    // "ab", then its engines' count, then its displacement.
-    let last = not_utf8.len() - 5 - 16;
+    // "ab", then its engines' count, its displacement and instant, and
+    // whether typed.
+    let last = not_utf8.len() - 5 - 32 - 1;
     not_utf8[last] = 0xFF;
     assert_eq!(corrupt(&not_utf8), Some(Code::Corrupt));
     let mut far = schema.clone();
-    let zone = far.len() - 16;
-    far[zone..].copy_from_slice(&i128::MAX.to_le_bytes());
+    let zone = far.len() - 16 - 1;
+    far[zone..zone + 16].copy_from_slice(&i128::MAX.to_le_bytes());
     assert_eq!(corrupt(&far), Some(Code::Corrupt), "a displacement out of range");
     let mut huge = Record { tx: 1, change: Change::Delete { table: table(), generation: 0, row: 1, before: vec![] } }.encode();
     let count = huge.len() - 4;
@@ -207,4 +244,15 @@ fn kinds_are_listed() {
     written.sort_unstable();
     written.dedup();
     assert_eq!(written, KINDS.to_vec(), "every kind is read back as written");
+}
+
+/// Verifies: [DESIGN] RULES.md D25, R-ERR-1: a definition's
+/// CURRENT_TIMESTAMP whose instant is out of range is SQLCODE -916, never
+/// misread.
+#[test]
+fn an_instant_out_of_range_is_corrupt() {
+    let mut written = Vec::new();
+    written.put_i128(0);
+    written.put_i128(i128::MAX);
+    assert_eq!(now(&mut Reader::new(&written, "record")).err().map(|e| e.code), Some(Code::Corrupt));
 }

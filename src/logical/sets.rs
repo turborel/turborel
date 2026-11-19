@@ -70,7 +70,8 @@ impl InSet {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => None,
+            | Value::Extension(_)
+            | Value::Xml(_) => None,
         };
         let texts =
             long.then(|| values.iter().map(strings).collect::<Option<Vec<_>>>()).flatten().map(|t| t.into_iter().flatten().collect());

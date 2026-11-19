@@ -11,6 +11,7 @@ BEGIN: group statements with their own variables, conditions, cursors and handle
 ```
 <compound statement> ::=
     [ <beginning label> : ] BEGIN [ [ NOT ] ATOMIC ]
+    [ DECLARE <XML lexically scoped options> ; ]
     [ <local declaration> ; ]...
     [ <local cursor declaration> ; ]...
     [ <handler declaration> ; ]...
@@ -53,6 +54,11 @@ starts as its default, or null without one. A variable of a domain with
 no DEFAULT of its own starts as the domain's default. The default is a
 `<default option>`, as a column's is, not an expression over the
 parameters or other variables.
+
+DECLARE's XML options, XMLNAMESPACES and XMLBINARY, first of all, are
+in scope of all it holds, a compound statement within it too, whose
+own are more inner, and a statement's own WITH more inner still: see
+[XML Values](../19-xml.md#xml-options-of-a-scope).
 
 A variable is named in any value, condition or query within, and
 assigned by [SET](set-variable.md), SELECT INTO, FETCH INTO and GET
@@ -237,7 +243,8 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): an ATOMIC compound statement or a FOR h
 
 ISO/IEC 9075-4:2006 draft §14.1, with §14.3 for conditions, §14.4 for
 variables and §12.1 for local cursors, Feature P002. `L.V` is Feature
-P005. Atomicity is that of §4.10.4, and a compound statement is not
+P005. DECLARE's XML options are ISO/IEC 9075-14:2006 draft §15.1,
+Features X084 and X134. Atomicity is that of §4.10.4, and a compound statement is not
 preparable by §4.10.6. COMMIT and ROLLBACK are those of ISO/IEC
 9075-2:2023 §17.7 and §17.8, invalid in an atomic execution context by
 their GR2. SQL-86 and SQL-92 have no such statement.

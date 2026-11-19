@@ -370,7 +370,7 @@ fn defined(c: &ColumnDesc, at: usize) -> ColumnDefinition {
 ///
 /// SQLCODE -910 if it no longer reads as it did.
 fn renamed(text: &str, table: &QualifiedName) -> Result<String> {
-    let value = Parser::for_stored(text)?.generation_expression()?;
+    let (_, value) = Parser::for_stored(text)?.scoped_generation()?;
     let mut qualified = Vec::new();
     qualified_columns(&value, &mut qualified);
     qualified.sort_unstable();
@@ -446,7 +446,8 @@ impl Session {
         let Some(s) = t.subquery.as_ref().filter(|s| s.with_data) else { return Ok(None) };
         let qn = qualify(&t.name, &self.default_schema());
         let table = TableName { auth: Some(qn.auth), ident: qn.ident, at: t.name.at };
-        let insert = InsertStatement { table, columns: None, overriding: None, source: InsertSource::Query(Box::new(s.query.clone())) };
+        let source = InsertSource::Query(Box::new(s.query.clone()));
+        let insert = InsertStatement { table, columns: None, overriding: None, source, xml: None };
         // Each temporary table the session's own instance, the one created
         // among them (`Session::with_temporaries`).
         let st = self.with_temporaries(Arc::clone(next));

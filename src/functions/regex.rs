@@ -210,7 +210,8 @@ impl ScalarFunction for LikeRegex {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => self.cache.compiled(&pattern, &flag)?.is_match(text(value)?.unwrap_or_default())?,
+            | Value::Extension(_)
+            | Value::Xml(_) => self.cache.compiled(&pattern, &flag)?.is_match(text(value)?.unwrap_or_default())?,
         };
         Ok(Value::Bool(matched))
     }

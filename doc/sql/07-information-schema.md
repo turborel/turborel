@@ -4,7 +4,7 @@
 
 The schema INFORMATION_SCHEMA describes the database in tables: its
 schemas, tables, columns, constraints, privileges, roles and triggers,
-and, of turborel's
+what of the standard it supports, and, of turborel's
 own, its indexes, settings and users. Every user may read it, and may
 grant SELECT on views of it. It is read like any table, in the
 session's transaction, as of its snapshot; it is never written.
@@ -29,7 +29,8 @@ TURBOREL, unless the setting CATALOG.NAME names it otherwise.
 
 ## The views
 
-The views of SQL-92, each with the columns the standard gives it:
+The views of SQL-92, each with the columns SQL-92 gives it and those
+ISO/IEC 9075-11 adds, described below:
 
 | View | One row of each |
 |---|---|
@@ -47,7 +48,7 @@ The views of SQL-92, each with the columns the standard gives it:
 | ASSERTIONS | assertion: whether deferrable |
 | TABLE_PRIVILEGES | privilege on a table |
 | COLUMN_PRIVILEGES | privilege on a column |
-| USAGE_PRIVILEGES | USAGE on a domain, a character set, a collation or a sequence generator, its OBJECT_TYPE SEQUENCE |
+| USAGE_PRIVILEGES | USAGE on a domain, a character set, a collation, a sequence generator, its OBJECT_TYPE SEQUENCE, a registered XML Schema, its OBJECT_TYPE XML SCHEMA, or a registered XQuery module, its OBJECT_TYPE XQUERY MODULE |
 | VIEW_TABLE_USAGE | table a view reads |
 | VIEW_COLUMN_USAGE | column a view reads |
 | CONSTRAINT_TABLE_USAGE | table a constraint refers to |
@@ -158,10 +159,10 @@ TRIGGER](statements/create-trigger.md)):
 
 | View | One row of each |
 |---|---|
-| TRIGGERS | trigger on a table the user, or an enabled role, holds a privilege other than SELECT on: EVENT_MANIPULATION INSERT, DELETE or UPDATE, its subject table in EVENT_OBJECT_CATALOG, _SCHEMA and _TABLE, ACTION_ORDER its place, from 1, among the triggers of that table, event, time and orientation in the order they run, ACTION_CONDITION and ACTION_STATEMENT its WHEN condition and its action as written, to the owner of its schema and null to others, ACTION_ORIENTATION ROW or STATEMENT, ACTION_TIMING BEFORE, AFTER or INSTEAD OF, its transition names in ACTION_REFERENCE_OLD_TABLE, _NEW_TABLE, _OLD_ROW and _NEW_ROW, and CREATED, null, as no timestamp is kept |
+| TRIGGERS | trigger on a table the user, or an enabled role, holds a privilege other than SELECT on: EVENT_MANIPULATION INSERT, DELETE or UPDATE, its subject table in EVENT_OBJECT_CATALOG, _SCHEMA and _TABLE, ACTION_ORDER its place, from 1, among the triggers of that table, event, time and orientation in the order they run, ACTION_CONDITION and ACTION_STATEMENT its WHEN condition and its action as written, to the owner of its schema and null to others, ACTION_ORIENTATION ROW or STATEMENT, ACTION_TIMING BEFORE, AFTER or INSTEAD OF, its transition names in ACTION_REFERENCE_OLD_TABLE, _NEW_TABLE, _OLD_ROW and _NEW_ROW, and CREATED, the CURRENT_TIMESTAMP of its CREATE TRIGGER, as ROUTINES's CREATED is below |
 | TRIGGERED_UPDATE_COLUMNS | column of the column list of an UPDATE OF trigger, of a column the user holds a privilege other than SELECT on |
 | TRIGGER_TABLE_USAGE | table or view a trigger's action reads, of a trigger of a schema the user, or an enabled role, owns |
-| TRIGGER_COLUMN_USAGE | column a trigger's action names, its transition variables' among them, of such a trigger |
+| TRIGGER_COLUMN_USAGE | column a trigger's definition references in a search condition, its WHEN condition's or a WHERE's, or in a searched UPDATE's or DELETE's search condition or an UPDATE's source, or names in an INSERT's column list or an UPDATE's SET, its transition variables' among them, of such a trigger; not a column a query's select list alone references |
 | TRIGGER_ROUTINE_USAGE | function or procedure a trigger's action invokes, by its specific name, of such a trigger |
 | TRIGGER_SEQUENCE_USAGE | sequence generator a trigger's action draws from, of such a trigger |
 
@@ -206,7 +207,7 @@ MODULE](statements/create-module.md)):
 
 | View | One row of each |
 |---|---|
-| MODULES | module the user, an enabled role or PUBLIC holds EXECUTE on: DEFAULT_CHARACTER_SET_CATALOG, _SCHEMA and _NAME SQL_TEXT's, DEFAULT_SCHEMA_CATALOG and _NAME its SCHEMA, MODULE_DEFINITION its text to the owner of its schema and null to others, MODULE_AUTHORIZATION null, SQL_PATH its PATH as written, null if none, and MODULE_CREATED and MODULE_LAST_ALTERED, null, as no timestamp is kept |
+| MODULES | module the user, an enabled role or PUBLIC holds EXECUTE on: DEFAULT_CHARACTER_SET_CATALOG, _SCHEMA and _NAME SQL_TEXT's, DEFAULT_SCHEMA_CATALOG and _NAME its SCHEMA, MODULE_DEFINITION its text to the owner of its schema and null to others, MODULE_AUTHORIZATION null, SQL_PATH its PATH as written, null if none, and MODULE_CREATED and MODULE_LAST_ALTERED, the CURRENT_TIMESTAMP of its CREATE MODULE, the same, as no statement alters a module |
 | MODULE_PRIVILEGES | privilege on a module, its PRIVILEGE_TYPE EXECUTE, the owner's of _SYSTEM among them, granted or granted by the user or an enabled role |
 | ROLE_MODULE_GRANTS | such a privilege granted to or by an enabled role |
 | MODULE_TABLE_USAGE | table or view a module's routine names, of a schema the user, or an enabled role, owns |
@@ -272,6 +273,122 @@ field's place in its row, or 1 of an array's element, so the first field
 of column 2 is `2.1` and the element of that field's array `2.1.1`.
 ELEMENT_TYPES and FIELDS join to COLUMNS and DOMAINS by it.
 
+The views that describe a type, COLUMNS, DOMAINS, ELEMENT_TYPES, FIELDS,
+ATTRIBUTES, METHOD_SPECIFICATIONS, METHOD_SPECIFICATION_PARAMETERS,
+ROUTINES and PARAMETERS, have seven more columns, as SQL/XML (ISO/IEC
+9075-14) names them. Of an [XML type](19-xml.md), XML_PRIMARY_MODIFIER is
+DOCUMENT, CONTENT or SEQUENCE, and XML_SECONDARY_MODIFIER is UNTYPED or
+ANY, null of SEQUENCE, so a column declared XML alone shows SEQUENCE.
+XML_SCHEMA_CATALOG, XML_SCHEMA_SCHEMA, XML_SCHEMA_NAME,
+XML_SCHEMA_NAMESPACE and XML_SCHEMA_ELEMENT name the registered XML
+Schema of a type of XMLSCHEMA, and its namespace and element if the type
+names them, null of another XML type ([The XMLSCHEMA
+types](19-xml.md#the-xmlschema-types)). All seven are null of a type that is
+not XML. They follow the view's other columns, but in ROUTINES, where
+they follow DTD_IDENTIFIER.
+
+The views that describe a type have INTERVAL_TYPE and INTERVAL_PRECISION
+after DATETIME_PRECISION, as ISO/IEC 9075-11 names them. Of an interval
+type, DATA_TYPE is INTERVAL, INTERVAL_TYPE its fields, as `YEAR TO
+MONTH` or `SECOND`, INTERVAL_PRECISION its leading field's precision, and
+DATETIME_PRECISION its seconds' fractional digits; of another type both
+are null.
+
+TABLES has IS_INSERTABLE_INTO, YES of a base table and of an updatable
+view, and NO of another view and of the Information Schema's own tables
+and views, and COMMIT_ACTION, DELETE or PRESERVE of a temporary table as
+its ON COMMIT says, and null of another. VIEWS has INSERTABLE_INTO, as
+TABLES has it, and COLUMNS has IS_UPDATABLE, YES of each column of a
+base table or an updatable view, NO of another. SCHEMATA has SQL_PATH,
+null, as no schema is defined with a PATH. KEY_COLUMN_USAGE has
+POSITION_IN_UNIQUE_CONSTRAINT: of a foreign key's column, the position,
+in the key it references, of the column it references, its
+ORDINAL_POSITION being its own position in the foreign key; null of a
+UNIQUE or PRIMARY KEY constraint's. CHARACTER_SETS has CHARACTER_REPERTOIRE, SQL_TEXT, and
+TRANSLATIONS has TRANSLATION_SOURCE_CATALOG, _SCHEMA and _NAME, of no
+row.
+
+ROUTINES has more columns ISO/IEC 9075-11 gives it. EXTERNAL_NAME,
+EXTERNAL_LANGUAGE and PARAMETER_STYLE are an external routine's, so
+null, as every routine is an SQL routine. SQL_PATH is the schemas a
+routine's names are found in: its module's PATH, or its own schema,
+each as `TURBOREL.ANN`. MAX_DYNAMIC_RESULT_SETS is 0. TO_SQL_SPECIFIC_
+CATALOG, _SCHEMA and _NAME are null, as only an external routine has a
+to-sql function. AS_LOCATOR is NO of a function and null of a
+procedure. IS_UDT_DEPENDENT is YES of a routine a type's definition
+makes, as an observer, and NO of another. The RESULT_CAST_ columns
+describe a result cast's type, which only an external routine has, so
+are null. PARAMETERS has FROM_SQL_SPECIFIC_ and TO_SQL_SPECIFIC_
+CATALOG, _SCHEMA and _NAME, null for the same reason, and
+METHOD_SPECIFICATIONS the RESULT_CAST_ columns, null.
+
+ROUTINES and METHOD_SPECIFICATIONS have CREATED and LAST_ALTERED, of
+the type TIMESTAMP(2) WITH TIME ZONE. CREATED is the value
+CURRENT_TIMESTAMP had in the statement that made the routine or method
+specification, in that session's time zone, to the hundredth of a
+second. LAST_ALTERED is the same, as no statement alters a routine: ALTER
+ROUTINE is of an external routine, and every routine here is an SQL
+routine. The observers, mutators and constructor of a structured type,
+and a distinct type's two functions, are of the CREATE TYPE, or of the
+ALTER TYPE that added their attribute; a method's body is of its CREATE
+METHOD, and its specification of the statement that specified it. They
+are kept with the definitions, so a database opened again, recovered
+after a crash, or followed by a standby shows the same. Run by ANN:
+
+```sql
+CREATE FUNCTION TWICE (X INTEGER) RETURNS INTEGER CONTAINS SQL RETURN X * 2;
+COMMIT;
+SELECT ROUTINE_NAME, CREATED <= CURRENT_TIMESTAMP AS MADE, LAST_ALTERED = CREATED AS UNALTERED FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_NAME = 'TWICE';
+SELECT COLUMN_NAME, DATA_TYPE, DATETIME_PRECISION FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ROUTINES' AND COLUMN_NAME IN ('CREATED', 'LAST_ALTERED') ORDER BY ORDINAL_POSITION;
+```
+
+```
+OK
+OK
+ ROUTINE_NAME                                                 | MADE  | UNALTERED
+--------------------------------------------------------------+-------+-----------
+ TWICE                                                        | TRUE  | TRUE
+(1 row)
+ COLUMN_NAME                                                  | DATA_TYPE                                                    | DATETIME_PRECISION
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------
+ CREATED                                                      | TIMESTAMP WITH TIME ZONE                                     |                  2
+ LAST_ALTERED                                                 | TIMESTAMP WITH TIME ZONE                                     |                  2
+(2 rows)
+```
+
+ROUTINES and PARAMETERS end with twelve more, after the seven in
+PARAMETERS. XML_CHAR_TYPE, XML_CHAR_MAX_LEN, XML_CHAR_OCT_LEN,
+XML_CHAR_SET_CAT, XML_CHAR_SET_SCH, XML_CHAR_SET_NAME, XML_CHAR_COLL_CAT,
+XML_CHAR_COLL_SCH, XML_CHAR_COLL_NAME and XML_CHAR_DTD_ID describe the
+character string an external routine passes an XML value as, and
+XML_OPTION says whether as DOCUMENT or CONTENT. Every routine is an SQL
+routine, so they are null. XML_RETURN_MECHANISM in ROUTINES and
+XML_PASSING_MECHANISM in PARAMETERS are BY REF of a result or parameter
+of an XML type, which is passed by reference, and null of another.
+ROUTINES and METHOD_SPECIFICATIONS have the seven XML columns of a result
+cast's type too, named RESULT_CAST_XML_PRIMARY_MODIFIER and so on, before
+those twelve in ROUTINES, and last in METHOD_SPECIFICATIONS; null, as
+there is none. [XML Values](19-xml.md#the-type) has an example.
+
+Three views of SQL/XML describe the registered XML Schemas the user, PUBLIC
+or an enabled role holds USAGE on ([XML Values](19-xml.md#registered-xml-schemas)),
+the permanently registered INFORMATION_SCHEMA.XS, XSI and SQLXML among
+them, which every user does:
+
+| View | One row of each |
+|---|---|
+| XML_SCHEMAS | registered XML Schema: XML_SCHEMA_TARGET_NAMESPACE, the zero-length string of none, XML_SCHEMA_LOCATION, XML_SCHEMA_CATALOG, _SCHEMA and _NAME, XML_SCHEMA_IS_DETERMINISTIC and XML_SCHEMA_IS_PERMANENT |
+| XML_SCHEMA_NAMESPACES | namespace of one, its target namespace among them: the schema's target namespace, location and name, XML_SCHEMA_NAMESPACE and XML_SCHEMA_NAMESPACE_IS_DETERMINISTIC |
+| XML_SCHEMA_ELEMENTS | global element declaration of one: the schema's target namespace, location and name, XML_SCHEMA_NAMESPACE, XML_SCHEMA_ELEMENT, its local name, and XML_SCHEMA_ELEMENT_IS_DETERMINISTIC |
+
+An element declaration is not deterministic if it holds or refers to a
+wildcard of any namespace, or of other than one, processed strictly or
+laxly, as `<xs:any processContents="lax"/>`, at any depth; a namespace
+is not if one of its element declarations is not, and a schema is not if
+one of its namespaces is not. XML_SCHEMAS_S, XML_SCH_NSPACES_S and
+XML_SCH_ELEMENTS_S show them too, under short names ([The short name
+views](#the-short-name-views)).
+
 TABLE_CONSTRAINTS has one more column *(extension)*, NULLS_DISTINCT, as
 ISO/IEC 9075-11 names it: YES of a UNIQUE constraint of NULLS DISTINCT,
 written or not, NO of one of NULLS NOT DISTINCT, and null of a PRIMARY
@@ -287,6 +404,231 @@ declared with, INTEGER, SMALLINT, BIGINT, DECIMAL or NUMERIC, of its precision
 and scale, radix 10, or REAL, DOUBLE PRECISION or FLOAT, of the binary
 precision it holds values of, 24 or 53, radix 2; a national character
 string as CHARACTER, its octet length four octets a character.
+
+## What depends on what
+
+Ten views of ISO/IEC 9075-11 show what definitions depend on. Each
+shows a row to the owner of one schema it names, or to an enabled role
+that owns it, as the standard chooses: of a table or column a routine
+names, the table's schema; of a routine a routine invokes, the invoked
+routine's; of a sequence generator drawn from, the routine's; of what a
+view invokes, the view's; of what a check constraint invokes, the
+routine's; of a generated column, its table's; of a column of a
+user-defined type, the type's; of a collation, its own.
+
+| View | One row of each |
+|---|---|
+| ROUTINE_TABLE_USAGE | table or view a routine's body names: the routine's SPECIFIC_ and ROUTINE_ names, and the table's |
+| ROUTINE_COLUMN_USAGE | column such a table's a routine's body references in a searched UPDATE's or DELETE's search condition or in an UPDATE's source, or names in an INSERT's column list or an UPDATE's SET, as the body binds now; not a column a query alone references |
+| ROUTINE_ROUTINE_USAGE | routine a routine's body invokes: the routine's specific name in SPECIFIC_, the one invoked in ROUTINE_ |
+| ROUTINE_SEQUENCE_USAGE | sequence generator a routine's body draws from |
+| VIEW_ROUTINE_USAGE | routine a view's query invokes, by its specific name |
+| CHECK_CONSTRAINT_ROUTINE_USAGE | routine an assertion's, a domain constraint's or a table check constraint's condition invokes |
+| COLUMN_COLUMN_USAGE | column a generated column depends on: COLUMN_NAME the column, DEPENDENT_COLUMN the generated one |
+| COLUMN_UDT_USAGE | column of a user-defined type, with the type |
+| COLLATION_CHARACTER_SET_APPLICABILITY | collation the user's schemas hold, and SQL_TEXT, the character set it is of |
+| DATA_TYPE_PRIVILEGES | data type descriptor the other views show the user: its object's name, OBJECT_TYPE TABLE, DOMAIN, ROUTINE or USER-DEFINED TYPE, and DTD_IDENTIFIER |
+
+What a routine, view or constraint invokes is fixed as it is defined, as
+the routine each invocation stands for is.
+
+Run by ANN, the owner of these:
+
+```sql
+CREATE TABLE STOCK (ID INTEGER, QTY INTEGER, DOUBLED INTEGER GENERATED ALWAYS AS (QTY * 2));
+CREATE FUNCTION TWICE (X INTEGER) RETURNS INTEGER DETERMINISTIC CONTAINS SQL RETURN X * 2;
+CREATE FUNCTION TOTAL () RETURNS INTEGER READS SQL DATA RETURN (SELECT SUM(TWICE(QTY)) FROM STOCK);
+CREATE VIEW BIG AS SELECT ID FROM STOCK WHERE TWICE(QTY) > 10;
+CREATE PROCEDURE RESTOCK () MODIFIES SQL DATA UPDATE STOCK SET QTY = QTY + 1 WHERE ID > 0;
+COMMIT;
+SELECT ROUTINE_NAME, TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.ROUTINE_COLUMN_USAGE ORDER BY 3;
+SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEW_ROUTINE_USAGE;
+SELECT COLUMN_NAME, DEPENDENT_COLUMN FROM INFORMATION_SCHEMA.COLUMN_COLUMN_USAGE;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+OK
+ ROUTINE_NAME                                                 | TABLE_NAME                                                   | COLUMN_NAME
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ RESTOCK                                                      | STOCK                                                        | ID
+ RESTOCK                                                      | STOCK                                                        | QTY
+(2 rows)
+ TABLE_NAME
+--------------------------------------------------------------
+ BIG
+(1 row)
+ COLUMN_NAME                                                  | DEPENDENT_COLUMN
+--------------------------------------------------------------+--------------------------------------------------------------
+ QTY                                                          | DOUBLED
+(1 row)
+```
+
+## What turborel supports
+
+Six views of ISO/IEC 9075-11 say what of the standard turborel supports,
+and the limits it keeps:
+
+| View | One row of each |
+|---|---|
+| SQL_FEATURES | feature and subfeature of ISO/IEC 9075-2 (Foundation), 9075-4 (SQL/PSM), 9075-11 and 9075-14 (SQL/XML): FEATURE_ID and FEATURE_NAME, a subfeature's SUB_FEATURE_ID and SUB_FEATURE_NAME, a single space of a feature; IS_SUPPORTED YES of what [CONFORMANCE.md](../../CONFORMANCE.md#features-claimed) claims, and of each subfeature of a feature it claims, else NO; IS_VERIFIED_BY null; COMMENTS the section of CONFORMANCE.md that says how it is done |
+| SQL_PARTS | part of ISO/IEC 9075: PART its number, NAME, IS_SUPPORTED NO, as none is claimed whole |
+| SQL_PACKAGES | package of features: none, as the standard's parts define none |
+| SQL_SIZING | limit ISO/IEC 9075-2 leaves to the implementation: SIZING_ID its number there, IL001 to IL208, SIZING_NAME its words, SUPPORTED_VALUE the limit, 0 if there is none, null of what turborel has no use for, and COMMENTS what the value is of |
+| SQL_IMPLEMENTATION_INFO | item of information on the implementation: none, as ISO/IEC 9075-2 and 9075-11 name none; those of the Call-Level Interface, ISO/IEC 9075-3, are not defined |
+| SQL_SIZING_PROFILES | limit a profile of the standard requires: none, as no profile is defined |
+
+Each feature is named as its part names it. The rows of SQL_FEATURES
+are made from CONFORMANCE.md's table of the features claimed, so the two
+always agree. Run by any user:
+
+```sql
+SELECT FEATURE_ID, SUB_FEATURE_ID, IS_SUPPORTED, COMMENTS FROM INFORMATION_SCHEMA.SQL_FEATURES
+    WHERE FEATURE_ID IN ('T011', 'T031', 'F501') ORDER BY FEATURE_ID, SUB_FEATURE_ID;
+SELECT PART, NAME, IS_SUPPORTED FROM INFORMATION_SCHEMA.SQL_PARTS
+    WHERE PART IN ('2', '11', '14') ORDER BY CAST(PART AS INTEGER);
+SELECT SIZING_ID, SUPPORTED_VALUE, COMMENTS FROM INFORMATION_SCHEMA.SQL_SIZING
+    WHERE SIZING_ID IN (1, 2, 9, 39, 66, 208) ORDER BY SIZING_ID;
+```
+
+```
+ FEATURE_ID                                                   | SUB_FEATURE_ID                                               | IS_SUPPORTED                                                 | COMMENTS
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ F501                                                         |                                                              | YES                                                          | CONFORMANCE.md, Transactions, sessions and the Information Schema
+ F501                                                         | 01                                                           | YES                                                          | CONFORMANCE.md, Transactions, sessions and the Information Schema
+ F501                                                         | 02                                                           | YES                                                          | CONFORMANCE.md, Transactions, sessions and the Information Schema
+ T011                                                         |                                                              | YES                                                          | CONFORMANCE.md, Transactions, sessions and the Information Schema
+ T031                                                         |                                                              | YES                                                          | CONFORMANCE.md, Truth values
+(5 rows)
+ PART                                                         | NAME                                                         | IS_SUPPORTED
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ 2                                                            | Foundation (SQL/Foundation)                                  | NO
+ 11                                                           | Information and Definition Schemas (SQL/Schemata)            | NO
+ 14                                                           | XML-Related Specifications (SQL/XML)                         | NO
+(3 rows)
+    SIZING_ID |      SUPPORTED_VALUE | COMMENTS
+--------------+----------------------+--------------------------------------------------------------
+            1 |                32767 | IL001, in characters
+            2 |           4294967296 | IL002, in characters
+            9 |                   18 | IL009, in decimal digits
+           39 |                    0 | IL039: none of an item parsed; an object or array constructed holds IL051's and IL052's
+           66 |                 NULL | IL066: no externally-invoked procedure
+          208 |                 1024 | IL208
+(6 rows)
+```
+
+## The short name views
+
+ISO/IEC 9075-11 defines most views again under a short name, and their
+columns too, and ISO/IEC 9075-4 and SQL/XML (ISO/IEC 9075-14) define
+those of theirs, for SQL written for a system whose names are 18
+characters at most, as one without Feature F391 (Long identifiers) has.
+Each short
+name view shows the rows its view shows the same user, column for
+column, in the order the standard gives them. A column whose name is
+longer is renamed: CHARACTER_MAXIMUM_LENGTH is CHAR_MAX_LENGTH,
+NUMERIC_PRECISION_RADIX NUMERIC_PREC_RADIX, MAXIMUM_CARDINALITY
+MAX_CARDINALITY, XML_SCHEMA_NAMESPACE XML_SCHEMA_NSPACE, and so on.
+
+| Short name view | Shows what this view shows |
+|---|---|
+| CATALOG_NAME | INFORMATION_SCHEMA_CATALOG_NAME |
+| SCHEMATA_S | SCHEMATA |
+| DOMAINS_S | DOMAINS |
+| TABLES_S | TABLES |
+| COLUMNS_S | COLUMNS |
+| REF_CONSTRAINTS | REFERENTIAL_CONSTRAINTS |
+| KEY_COLUMN_USAGE_S | KEY_COLUMN_USAGE |
+| CHARACTER_SETS_S | CHARACTER_SETS |
+| COLLATIONS_S | COLLATIONS |
+| SEQUENCES_S | SEQUENCES |
+| TRANSLATIONS_S | TRANSLATIONS |
+| CONSTR_TABLE_USAGE | CONSTRAINT_TABLE_USAGE |
+| CONSTR_COL_USAGE | CONSTRAINT_COLUMN_USAGE |
+| COL_DOMAIN_USAGE | COLUMN_DOMAIN_USAGE |
+| ELEMENT_TYPES_S | ELEMENT_TYPES |
+| FIELDS_S | FIELDS |
+| UDT_S | USER_DEFINED_TYPES |
+| ROUTINES_S | ROUTINES |
+| PARAMETERS_S | PARAMETERS |
+| ATTRIBUTES_S | ATTRIBUTES |
+| METHOD_SPECS | METHOD_SPECIFICATIONS |
+| METHOD_SPEC_PARAMS | METHOD_SPECIFICATION_PARAMETERS |
+| REFERENCED_TYPES_S | REFERENCED_TYPES |
+| TABLE_METHOD_PRIVS | TABLE_METHOD_PRIVILEGES |
+| ADMIN_ROLE_AUTHS | ADMINISTRABLE_ROLE_AUTHORIZATIONS |
+| ROLE_ROUT_GRANTS | ROLE_ROUTINE_GRANTS |
+| ROL_TAB_METH_GRNTS | ROLE_TABLE_METHOD_GRANTS |
+| TRIGGERS_S | TRIGGERS |
+| TRIG_UPDATE_COLS | TRIGGERED_UPDATE_COLUMNS |
+| TRIG_TABLE_USAGE | TRIGGER_TABLE_USAGE |
+| TRIG_COLUMN_USAGE | TRIGGER_COLUMN_USAGE |
+| TRIG_ROUT_USAGE_S | TRIGGER_ROUTINE_USAGE |
+| TRIG_SEQ_USAGE_S | TRIGGER_SEQUENCE_USAGE |
+| MODULE_COL_USAGE | MODULE_COLUMN_USAGE |
+| MODULES_S | MODULES |
+| COLLATION_APPLIC_S | COLLATION_CHARACTER_SET_APPLICABILITY |
+| COL_COL_USAGE | COLUMN_COLUMN_USAGE |
+| CONSTR_ROUT_USE_S | CHECK_CONSTRAINT_ROUTINE_USAGE |
+| ROUT_ROUT_USAGE_S | ROUTINE_ROUTINE_USAGE |
+| ROUT_SEQ_USAGE_S | ROUTINE_SEQUENCE_USAGE |
+| ROUTINE_COL_USAGE | ROUTINE_COLUMN_USAGE |
+| ROUT_TABLE_USAGE | ROUTINE_TABLE_USAGE |
+| XML_SCHEMAS_S | XML_SCHEMAS |
+| XML_SCH_NSPACES_S | XML_SCHEMA_NAMESPACES |
+| XML_SCH_ELEMENTS_S | XML_SCHEMA_ELEMENTS |
+| SQL_IMPL_INFO | SQL_IMPLEMENTATION_INFO |
+| SQL_SIZING_PROFS | SQL_SIZING_PROFILES |
+
+A short name view has every column the standard gives it.
+
+The views that describe a type end with the seven columns of an XML
+type, named XML_PRIMARY_MOD, XML_SECONDARY_MOD, XML_SCHEMA_CATALOG,
+XML_SCHEMA_SCHEMA, XML_SCHEMA_NAME, XML_SCHEMA_NSPACE and
+XML_SCHEMA_ELEMENT; ROUTINES_S has them after DTD_IDENTIFIER, named
+XML_PRIMARY_MOD, XML_SECOND_MOD, XML_SCHEMA_CAT, XML_SCH_SCH,
+XML_SCH_NAME, XML_SCH_NSPACE and XML_SCH_ELEMENT, as SQL/XML names them.
+ROUTINES_S and METHOD_SPECS have those of a result cast's type, named
+RC_XML_PRIMARY_MOD, RC_XML_SECOND_MOD, RC_XML_SCHEMA_CAT, RC_XML_SCH_SCH,
+RC_XML_SCH_NAME, RC_XML_SCH_NSPACE and RC_XML_SCH_ELEMENT.
+ROUTINES_S and PARAMETERS_S end with the columns of the associated
+string type, then XML_RETURN_MECH and XML_PASSING_MECH. MODULES_S calls
+DEFAULT_SCHEMA_NAME DEFAULT_SCHEMA, and the timestamps CREATED and
+ALTERED.
+
+Run by ANN, the owner of these:
+
+```sql
+CREATE TABLE PARTS (ID INTEGER PRIMARY KEY, NAME CHARACTER VARYING(40), RADIUS DECIMAL(6,2));
+COMMIT;
+SELECT COLUMN_NAME, DATA_TYPE, CHAR_MAX_LENGTH, NUMERIC_PRECISION, NUMERIC_PREC_RADIX FROM INFORMATION_SCHEMA.COLUMNS_S
+    WHERE TABLE_NAME = 'PARTS' ORDER BY ORDINAL_POSITION;
+SELECT TABLE_NAME, TABLE_TYPE, SELF_REF_COL_NAME FROM INFORMATION_SCHEMA.TABLES_S WHERE TABLE_NAME = 'PARTS';
+SELECT CATALOG_NAME FROM INFORMATION_SCHEMA.CATALOG_NAME;
+```
+
+```
+OK
+OK
+ COLUMN_NAME                                                  | DATA_TYPE                                                    |      CHAR_MAX_LENGTH | NUMERIC_PRECISION | NUMERIC_PREC_RADIX
+--------------------------------------------------------------+--------------------------------------------------------------+----------------------+-------------------+--------------------
+ ID                                                           | INTEGER                                                      |                 NULL |                10 |                 10
+ NAME                                                         | CHARACTER VARYING                                            |                   40 |              NULL |               NULL
+ RADIUS                                                       | DECIMAL                                                      |                 NULL |                 6 |                 10
+(3 rows)
+ TABLE_NAME                                                   | TABLE_TYPE                                                   | SELF_REF_COL_NAME
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ PARTS                                                        | BASE TABLE                                                   | NULL
+(1 row)
+ CATALOG_NAME
+--------------------------------------------------------------
+ TURBOREL
+(1 row)
+```
 
 ## This implementation's own views
 
@@ -349,5 +691,7 @@ JOBS.POLICY says how the jobs JOBS lists are run
 ([Settings](../appendix/c-settings.md)).
 
 The standard: ISO/IEC 9075:1992 §21.1, §21.2; the views of roles and of
-triggers, and how each view reads the enabled roles, the 2006 draft of
-ISO/IEC 9075-11, Clauses 5 and 6.
+triggers, the short name views, and how each view reads the enabled
+roles, the 2006 draft of ISO/IEC 9075-11, Clauses 5 and 6; the short
+name views of modules and of SQL/XML, the 2006 drafts of ISO/IEC 9075-4,
+§18.8, and of ISO/IEC 9075-14, §20.15.

@@ -228,6 +228,36 @@ fn a_safe_cut_keeps_each_levels_weights() {
     }
 }
 
+/// Verifies: [EXTENSION] [XQueryFO §7.5] RULES.md D60, D106: the collation
+/// units of a string begin at its first character and go forward, a
+/// character each at most, none of the empty string, each weighed at
+/// every level, and their weights joined at each level are the string's,
+/// marks, contractions, prefixes and Shifted's state reaching across
+/// them: over the corpus and pairs of it, for UNICODE, its tailorings and
+/// the collations of one character at a time.
+#[test]
+fn units_join_to_a_strings_weights() {
+    let all = strings();
+    for name in NAMES.into_iter().chain(["UCS_BASIC", "CASE_INSENSITIVE"]) {
+        let c = &*named(name, Pad::None).collation;
+        for s in &all {
+            let units = c.units(s).unwrap();
+            let starts: Vec<usize> = units.iter().map(|u| u.start).collect();
+            let length = s.chars().count();
+            assert!(starts.first().is_none_or(|&f| f == 0) && starts.windows(2).all(|w| w[0] < w[1]), "{name} {s:?} {starts:?}");
+            assert!(starts.last().is_none_or(|&l| l < length) && units.is_empty() == s.is_empty(), "{name} {s:?} {starts:?}");
+            let mut joined = vec![Vec::new(); c.levels()];
+            for unit in &units {
+                assert_eq!(unit.weights.len(), c.levels(), "{name} {s:?}");
+                for (to, from) in joined.iter_mut().zip(&unit.weights) {
+                    to.extend_from_slice(from);
+                }
+            }
+            assert_eq!(joined, weights(c, s), "{name} {s:?}");
+        }
+    }
+}
+
 /// Verifies: [EXTENSION] RULES.md D60, D79: a string cut again and again,
 /// at random lengths each cut at the last safe place, as `lob_equal` reads
 /// it, has the weights of the whole at every level.

@@ -251,5 +251,15 @@ fn aggregate(
     json: JsonAggregate,
     at: usize,
 ) -> SetFunctionSpecification {
-    SetFunctionSpecification { name, arg, order_by, listagg: None, json: Some(Box::new(json)), filter: None, semantics: None, at }
+    SetFunctionSpecification {
+        name,
+        arg,
+        order_by,
+        listagg: None,
+        json: Some(Box::new(json)),
+        filter: None,
+        semantics: None,
+        returning: None,
+        at,
+    }
 }

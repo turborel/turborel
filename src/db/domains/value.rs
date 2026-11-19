@@ -20,16 +20,18 @@ impl State {
     /// schema `names`, of the subject routines `horizon` holds, reads,
     /// bound over a column VALUE of `data_type` of a table of the domain's
     /// schema, that is no other: as each copy of it will be bound; and the
-    /// routines it invokes.
+    /// horizon of the routines it invokes and the registered XML Schemas it
+    /// indicates [ISO/IEC 9075-14:2006 draft §4.2.6].
     pub(in crate::db) fn bound_on_value(
         &self,
         domain: &QualifiedName,
         data_type: DataType,
         (text, names, horizon): (&str, &str, &Horizon),
-    ) -> Result<(Vec<QualifiedName>, Vec<QualifiedName>)> {
+    ) -> Result<(Vec<QualifiedName>, Horizon)> {
         let invoked = Invoked::default();
         let (cond, probe) = self.on_value(domain, data_type, (text, names, horizon), Some(&invoked))?;
-        Ok((cond.tables().into_iter().filter(|t| *t != probe).collect(), invoked.take()))
+        let seen = Horizon::default().invoking(invoked.take()).indicating(invoked.take_indicated()).typing(invoked.take_typed());
+        Ok((cond.tables().into_iter().filter(|t| *t != probe).collect(), seen))
     }
 
     /// [ISO/IEC 9075:1992 §6.10 GR13] The constraints of `domain`, each
@@ -61,7 +63,7 @@ impl State {
         invoked: Option<&Invoked>,
     ) -> Result<(Cond, QualifiedName)> {
         let (staged, probe) = self.with_value(domain, data_type);
-        let seen = Horizon { widths: vec![(probe.clone(), 1)], routines: horizon.routines.clone() };
+        let seen = horizon.of_widths(vec![(probe.clone(), 1)]);
         let on_probe = Referencing::of_value(&probe);
         let cond = staged.bind_check(&probe, (&on_column(text, VALUE_COLUMN), names, &seen), (None, &on_probe, invoked))?;
         Ok((cond, probe))
@@ -80,7 +82,7 @@ impl State {
         (text, names, horizon): (&str, &str, &Horizon),
     ) -> Result<Vec<(QualifiedName, String)>> {
         let (staged, probe) = self.with_value(&domain.name, domain.data_type.clone());
-        let seen = Horizon { widths: vec![(probe.clone(), 1)], routines: horizon.routines.clone() };
+        let seen = horizon.of_widths(vec![(probe.clone(), 1)]);
         staged.value_uses(&probe, (&on_column(text, VALUE_COLUMN), names, &seen))
     }
 

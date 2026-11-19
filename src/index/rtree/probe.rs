@@ -59,7 +59,7 @@ fn comparisons(probe: &Probe) -> Vec<ColumnComparison> {
     let column = |column, op, value: &Value| ColumnComparison { column, op, value: value.clone() };
     let prefix = |equal: &[Value]| equal.iter().enumerate().map(|(at, v)| column(at, CompOp::Eq, v)).collect::<Vec<_>>();
     match probe {
-        Probe::All | Probe::Predicate { .. } => Vec::new(),
+        Probe::All | Probe::Predicate { .. } | Probe::Xml(_) => Vec::new(),
         Probe::Compare { op, value } => vec![column(0, *op, value)],
         Probe::Columns(each) => each.clone(),
         Probe::Prefix { equal, then } => {

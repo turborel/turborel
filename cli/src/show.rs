@@ -101,9 +101,10 @@ fn measured(t: &DataType, depth: usize) -> (usize, bool) {
         // a large object as its text or hexits, as wide as a column grows.
         // A multiset, of no maximum cardinality [ISO/IEC 9075-2:2023
         // §6.52], as wide as a column may be; a structured value, whose
-        // attributes the catalog holds, a reference and a JSON value's
-        // text, as wide too.
+        // attributes the catalog holds, a reference, a JSON value's text
+        // and an XML value's serialization, as wide too.
         DataType::Extension(_)
+        | DataType::Xml(_)
         | DataType::Lob { .. }
         | DataType::Multiset(_)
         | DataType::Structured(_)
@@ -188,7 +189,8 @@ impl Sink for Table<'_> {
                     | Value::Json(_)
                     | Value::Row(_)
                     | Value::Lob(_)
-                    | Value::Extension(_) => v.to_string(),
+                    | Value::Extension(_)
+                    | Value::Xml(_) => v.to_string(),
                 })
                 .collect();
             let line = self.line(cells.iter().map(String::as_str));

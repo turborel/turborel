@@ -53,4 +53,5 @@ opened only by a release that knows their versions.
 | A GEOMETRY extension type descriptor | 1 |
 | A GEOMETRY extension value's payload | 1 |
 | A hash index | 1 |
+| An XML index's keys and dictionary (`xml_path`, `xml_value`, `xml_property`, `xml_primary`) | 1 |
 | The native protocol | 1 |

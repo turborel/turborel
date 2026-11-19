@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::expression::dynamic_of;
 use super::subquery::Use;
 use super::{Binder, Scope, rule};
-use crate::ast::{CaseExpression, Predicate, RowValue, SearchCondition, Subquery, TypeName, ValueExpression, WhenOperand};
+use crate::ast::{CaseExpression, Passing, Predicate, RowValue, SearchCondition, Subquery, TypeName, ValueExpression, WhenOperand};
 use crate::error::Result;
 use crate::functions::{ScalarRef, formatted_cast};
 use crate::logical::{Cond, DomainChecks, Expr};
@@ -101,7 +101,8 @@ fn numeric_set_type(types: &[DataType]) -> DataType {
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Json
-            | DataType::Extension(_) => {}
+            | DataType::Extension(_)
+            | DataType::Xml(_) => {}
         }
     }
     let digits = whole.saturating_add(scale).min(MAX_EXACT_PRECISION);
@@ -148,7 +149,8 @@ fn string_set_type(types: &[DataType]) -> Option<DataType> {
             | DataType::Row(_)
             | DataType::Distinct(_)
             | DataType::Json
-            | DataType::Extension(_) => continue,
+            | DataType::Extension(_)
+            | DataType::Xml(_) => continue,
         };
         (length, rank) = (length.max(n), rank.max(r));
         octets = octets && units.is_none_or(|u| u == CharUnits::Octets);
@@ -184,6 +186,11 @@ fn apart_set_type(types: &[DataType], clause: &str) -> Option<Result<DataType>> 
     }
     if let Some(t) = super::composite::composite_set_type(types, clause) {
         return Some(t);
+    }
+    // [ISO/IEC 9075-14:2006 draft §10.3 SR1] XML values come together with
+    // XML values alone.
+    if types.iter().any(|t| matches!(t, DataType::Xml(_))) {
+        return Some(super::xml::xml_set_type(types, clause));
     }
     // \[EXTENSION\] Values of a type beyond the standard come together
     // only with values of the same type (RULES.md D53).
@@ -471,14 +478,15 @@ impl Binder<'_> {
         &self,
         operand: Option<&ValueExpression>,
         named: &TypeName,
-        format: Option<&str>,
+        (format, passing): (Option<&str>, Option<Passing>),
         scope: Scope<'_>,
     ) -> Result<(Expr, DataType)> {
         // [§6.10 SR1, AR1] a domain's data type, if USAGE on it is held.
-        let (target, domain) = self.db.resolve_type(named, (self.schema, self.who()))?;
-        let (e, t) = match format {
-            Some(template) => self.formatted(operand, target, template, scope)?,
-            None => self.cast_to(operand, target, scope)?,
+        let (target, domain) = super::xml::resolved_type(&self.context(), named, self.who())?;
+        let (e, t) = match (format, passing) {
+            (Some(template), _) => self.formatted(operand, target, template, scope)?,
+            (None, Some(passing)) => self.xml_cast_passing(operand, target, passing, scope)?,
+            (None, None) => self.cast_to(operand, target, scope)?,
         };
         let Some(d) = domain.filter(|d| !d.constraints.is_empty()) else { return Ok((e, t)) };
         // [GR13] its constraints checked of the value.
@@ -502,6 +510,14 @@ impl Binder<'_> {
         // user-defined or a reference type, by a user-defined cast or to a
         // supertype.
         let user_defined = |x: &DataType| matches!(x, DataType::Structured(_) | DataType::Distinct(_) | DataType::Reference(_));
+        // [ISO/IEC 9075-14:2006 draft §6.5 SR2] implementation-defined: BY
+        // REF is implicit, of an XML type to one. Of a distinct type of an
+        // XML type to its source or back, the type's own cast [ISO/IEC
+        // 9075-2:2023 §11.51 GR2b, §6.13 SR12] (Feature X013).
+        let xml = |x: &DataType| matches!(x, DataType::Xml(_));
+        if (xml(&t) || xml(&target)) && !user_defined(&t) && !user_defined(&target) {
+            return self.xml_cast((e, t), target, Passing::ByRef);
+        }
         let e = if t != target && (user_defined(&t) || user_defined(&target)) {
             match self.user_cast((e, t.clone()), &target)? {
                 Ok(cast) => return Ok(cast),

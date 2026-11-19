@@ -22,7 +22,7 @@ fn method(subject: ValueExpression, name: &str, args: Vec<ValueExpression>, at: 
 
 /// CAST (`v` AS `t`), or of NULL if `v` is none.
 fn cast(v: Option<ValueExpression>, t: &DataType, at: usize) -> ValueExpression {
-    ValueExpression::Cast { operand: v.map(Box::new), target: TypeName::Data(t.clone()), format: None, at }
+    ValueExpression::Cast { operand: v.map(Box::new), target: TypeName::Data(t.clone()), format: None, passing: None, at }
 }
 
 /// Of the structured type `t` in `st`, its attribute `name`.

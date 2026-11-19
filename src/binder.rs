@@ -16,10 +16,10 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 
-use crate::ast::{ColumnSpecification, TableName, ValueExpression};
-use crate::catalog::{Actions, ColumnDesc, Horizon, Principal, QualifiedName, Who};
+use crate::ast::{TableName, ValueExpression};
+use crate::catalog::{Horizon, Principal, QualifiedName, Who};
 use crate::db::State;
-use crate::error::{At, Code, Result, SqlError, Subject};
+use crate::error::{Code, Result, SqlError, Subject};
 use crate::logical::{AggCall, Expr, LogicalPlan};
 use crate::params::Params;
 use crate::settings::Own;
@@ -39,6 +39,7 @@ mod context;
 mod counterparts;
 pub(crate) use composite::{key_operand, orderless_operand};
 pub(crate) use vectors::sql_metric;
+pub(crate) use xml::{making_typed, making_typed_now};
 mod cursor;
 mod datetime;
 mod dependencies;
@@ -71,6 +72,7 @@ mod limit;
 mod natural;
 mod noted;
 mod order_by;
+mod ordered;
 mod parameters;
 mod partitioned;
 mod pattern;
@@ -85,6 +87,7 @@ mod recursive;
 mod referenceable;
 mod referencing;
 mod required;
+mod resolve;
 mod routines;
 mod search_cycle;
 mod sequences;
@@ -105,6 +108,7 @@ mod vectors;
 mod views;
 mod window;
 mod with;
+mod xml;
 
 pub use counterparts::defaulted_columns;
 pub use cursor::bind_cursor;
@@ -133,6 +137,7 @@ pub use values::{value_specification, value_specification_as};
 pub use views::{BoundView, ViewCheck, WriteTarget, bind_view, table_columns, view_degree, write_target};
 pub(crate) use views::{once_each, system_view_columns, view_uses};
 pub(crate) use with::Queries;
+pub(crate) use xml::{Registered, checked_namespaces, in_scope, registered, registered_module};
 
 /// A column of a cursor's result.
 #[derive(Debug, Clone)]
@@ -204,6 +209,9 @@ pub struct Context<'a> {
     /// Where to note the columns of named tables and views it references
     /// [ISO/IEC 9075:1992 §21.3.12, §21.3.18], if anywhere.
     pub uses: Option<&'a Uses>,
+    /// Which of the columns it references `uses` notes, if not each one,
+    /// and whether what it binds now is where that counts a column.
+    pub counting: Option<(Counting, bool)>,
     /// Where to note, with `uses`, the columns each item of its select list
     /// references, if anywhere: of the query, not of its subqueries.
     pub selected: Option<&'a Selected>,
@@ -239,7 +247,7 @@ pub struct Context<'a> {
     pub compile: Option<&'a Compile>,
 }
 
-pub use noted::{DrawnFrom, Invoked, Selected, Uses};
+pub use noted::{Counting, DrawnFrom, Invoked, Selected, Uses};
 pub use ptf::Compile;
 pub use purpose::Purpose;
 pub use referencing::Referencing;
@@ -368,6 +376,11 @@ struct Binder<'a> {
     definitions: bool,
     /// Where it notes the columns it references (`Context::uses`).
     uses: Option<&'a Uses>,
+    /// Which of them it notes (`Context::counting`).
+    counting: Option<Counting>,
+    /// Whether what it binds now is where `counting` counts a column
+    /// (`Context::counting`).
+    counted: Cell<bool>,
     /// Where it notes those of each item of its select list
     /// (`Context::selected`).
     selected: Option<&'a Selected>,
@@ -418,6 +431,9 @@ struct Binder<'a> {
     /// condition>`s of row pattern recognition, what their row pattern
     /// column references read (`binder/pattern.rs`).
     recognizing: Option<Box<pattern::Recognizing>>,
+    /// [ISO/IEC 9075-14:2006 draft §11.3] The `<XML lexically scoped
+    /// options>` whose scope what it binds now is in (`binder/xml/scope.rs`).
+    xml: xml::Scopes,
 }
 
 /// The FROM row a binder sees: its items, the display names of its
@@ -448,6 +464,8 @@ impl<'a> Binder<'a> {
             user: cx.user,
             definitions: cx.definitions,
             uses: cx.uses,
+            counting: cx.counting.map(|(c, _)| c),
+            counted: Cell::new(cx.counting.is_some_and(|(_, here)| here)),
             selected: cx.selected,
             referencing: cx.referencing,
             aggregated,
@@ -464,6 +482,7 @@ impl<'a> Binder<'a> {
             sort_names: RefCell::new(order_by::SortNames::default()),
             rows: RefCell::new(invariant::Rows::default()),
             recognizing: None,
+            xml: xml::Scopes::default(),
         }
     }
 
@@ -485,6 +504,7 @@ impl<'a> Binder<'a> {
             own,
             definitions,
             uses: self.uses,
+            counting: self.counting.map(|c| (c, self.counted.get())),
             selected: None,
             referencing,
             now,
@@ -502,98 +522,5 @@ impl<'a> Binder<'a> {
     /// The cell whose privileges it binds with (`Context::who`).
     fn who(&self) -> Who<'a> {
         Who { auth: self.auth, role: self.role, roles: self.db.catalog.roles() }
-    }
-}
-
-impl Binder<'_> {
-    /// [X3.135-1986 §5.7] `<column specification>`: its position in the FROM row and data type.
-    fn resolve(&self, cs: &ColumnSpecification) -> Result<(usize, DataType)> {
-        self.resolve_column(cs).map(|c| (c.0, c.1)).or_at(cs.at)
-    }
-
-    /// [X3.135-1986 §5.7 SR3] Also reports whether the column is constrained
-    /// NOT NULL, which a named result column inherits [X3.135-1986 §5.25 SR10].
-    fn resolve_column(&self, cs: &ColumnSpecification) -> Result<(usize, DataType, bool)> {
-        let (item, i, col) = match &cs.qualifier {
-            Some(q) => self.qualified(q, &cs.column)?,
-            None => self.unqualified(&cs.column)?,
-        };
-        Ok((self.note(item, i)?, col.data_type.clone(), col.not_null && !item.nullable))
-    }
-
-    /// Whether `c` is a column the FROM clause's results have.
-    fn visible_has(&self, c: &str) -> bool {
-        self.visible.iter().any(|&(i, k)| self.items.get(i).and_then(|it| it.desc.columns.get(k)).is_some_and(|col| col.name == c))
-    }
-
-    /// The position in the FROM row of column `i` of `item`, which the
-    /// query uses: in a constraint, of a named table or view, one it holds
-    /// REFERENCES on [ISO/IEC 9075:1992 §11.9 AR1a], a derived table's
-    /// columns being of no `<table name>`, and its query's checked as they
-    /// are bound. Noted among its uses, if it is of a named table or view,
-    /// under the name it has there.
-    fn note(&self, item: &FromItem, i: usize) -> Result<usize> {
-        if self.purpose == Purpose::Constraint {
-            if !item.table.auth.is_empty() {
-                let needed = Actions { references: std::iter::once(i).collect(), ..Actions::default() };
-                require(self.db, self.who(), &item.desc, &needed, "ISO/IEC 9075:1992 §11.9 AR1a")?;
-            }
-            if let Some(r) = self.referencing {
-                r.column_named(&item.table);
-            }
-        }
-        if let Some(uses) = self.uses.filter(|_| !item.table.auth.is_empty()) {
-            let column = views::column_name(self.db, &item.table, i).or_else(|| item.desc.columns.get(i).map(|c| c.name.clone()));
-            uses.borrow_mut().extend(column.map(|c| (item.table.clone(), c)));
-        }
-        // [ISO/IEC 9075-2:2023 §7.17 SR23b] a column of a query a <with
-        // clause> names is drawn from what its query's column is.
-        if let (Some(uses), Some(drawn)) = (self.uses, &item.drawn) {
-            uses.borrow_mut().extend(drawn.columns.get(i).cloned().unwrap_or_default());
-        }
-        if let (Some(uses), views::Source::Common) = (self.uses, &item.source) {
-            underlying::note_common(self, item, i, uses);
-        }
-        let pos = item.offset.saturating_add(item.position(i));
-        self.used.borrow_mut().insert(pos);
-        Ok(pos)
-    }
-
-    /// [X3.135-1986 §5.7 SR3a] column `c` of the table that `<qualifier>` `q` designates.
-    fn qualified(&self, q: &TableName, c: &str) -> Result<(&FromItem, usize, &ColumnDesc)> {
-        let name = q.auth.as_ref().map_or_else(|| q.ident.clone(), |a| format!("{a}.{}", q.ident));
-        let it = self
-            .items
-            .iter()
-            .find(|it| it.designated_by(q, self.schema))
-            .ok_or_else(|| rule(format!("[X3.135-1986 §5.7 SR3a] no table or correlation name {name} is in scope")))?;
-        let (i, col) =
-            it.desc.column_desc(c).ok_or_else(|| no_column(&it.table, format!("[X3.135-1986 §5.7 SR3a] {name} has no column {c}"), c))?;
-        if it.common.contains(&i) {
-            return Err(rule(format!(
-                "[ISO/IEC 9075:1992 §6.4 SR2b] {c} is a common column of a joined table {name} is in, so it is not qualified"
-            )));
-        }
-        Ok((it, i, col))
-    }
-
-    /// [X3.135-1986 §5.7 SR3b] column `c` of the one table in scope that
-    /// has it: of the columns the FROM clause's results have, which for a
-    /// NATURAL or USING join are its common columns, not its operands'
-    /// [ISO/IEC 9075:1992 §7.5 SR6f].
-    fn unqualified(&self, c: &str) -> Result<(&FromItem, usize, &ColumnDesc)> {
-        let possible: Vec<_> = self
-            .visible
-            .iter()
-            .filter_map(|&(i, k)| {
-                let it = self.items.get(i)?;
-                it.desc.columns.get(k).filter(|col| col.name == c).map(|col| (it, k, col))
-            })
-            .collect();
-        match possible.as_slice() {
-            [only] => Ok(*only),
-            [] => Err(rule(format!("[X3.135-1986 §5.7 SR3b] no table in the FROM clause has a column {c}"))),
-            [_, _, ..] => Err(rule(format!("[X3.135-1986 §5.7 SR3b] column {c} is ambiguous; qualify it"))),
-        }
     }
 }

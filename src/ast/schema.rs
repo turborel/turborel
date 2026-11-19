@@ -117,6 +117,14 @@ pub enum SchemaStatement {
     /// \[EXTENSION\] A statement of an embedding model or a vector
     /// pipeline (`ast/embedding.rs`).
     Vector(Box<super::VectorStatement>),
+    /// \[EXTENSION\] An `<XML Schema definition>` [ISO/IEC 9075-14:2006
+    /// draft §4.2.6].
+    XmlSchema(Box<super::XmlSchemaDefinition>),
+    /// \[EXTENSION\] An `<XQuery module definition>` (RULES.md D106).
+    XQueryModule(Box<super::XQueryModuleDefinition>),
+    /// \[EXTENSION\] An `<alter XQuery module statement>` (RULES.md D106):
+    /// its LOCATION, if written, and its text replace the module's.
+    AlterXQueryModule(Box<super::XQueryModuleDefinition>),
 }
 
 /// [ISO/IEC 9075-2:2023 §11.43] `<collation definition>` ::= CREATE COLLATION
@@ -253,6 +261,12 @@ pub enum TypeName {
     /// [ISO/IEC 9075-2:2023 §6.1] `<row type>`, a field's type naming a
     /// type: each field's name and type.
     Row(Vec<(String, TypeName)>),
+    /// [ISO/IEC 9075-14:2006 draft §6.1] XML(DOCUMENT(XMLSCHEMA ...)) or
+    /// XML(CONTENT(XMLSCHEMA ...)): its primary modifier, and the
+    /// registered XML Schema its `<XML valid according to what>` and
+    /// `<XML valid element clause>` indicate \[SR4\] [§11.6], resolved as a
+    /// statement is processed.
+    XmlSchema(crate::xml::Syntax, Box<super::XmlValidAccording>),
     /// \[EXTENSION\] A type beyond the standard with parameters, as its
     /// name and `(a [, b ...])` write it (RULES.md D53): no domain takes
     /// parameters.

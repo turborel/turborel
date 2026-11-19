@@ -45,7 +45,14 @@ fn plain(e: &Expr) -> bool {
         Expr::Subquery(..) | Expr::Invoked(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::NextValue(_) => false,
         Expr::Case(whens, _) => whens.iter().all(|(c, _)| c.subqueries().is_empty()),
         Expr::Truth(c) => c.subqueries().is_empty(),
-        Expr::Column(_) | Expr::Const(_) | Expr::Neg(_) | Expr::Arith(..) | Expr::Cast(..) | Expr::SortKey(..) | Expr::Domain(..) => true,
+        Expr::Column(_)
+        | Expr::Const(_)
+        | Expr::Neg(_)
+        | Expr::Arith(..)
+        | Expr::Cast(..)
+        | Expr::SortKey(..)
+        | Expr::Domain(..)
+        | Expr::Warned(..) => true,
         // One that reads its statement is evaluated a row at a time (D87).
         Expr::Call(function, args) => !function.0.uses_context(args.len()),
     };
@@ -73,6 +80,7 @@ pub(super) fn place_of(e: &Expr, columns: &[usize]) -> Option<Place> {
         | Expr::Cast(..)
         | Expr::SortKey(..)
         | Expr::Domain(..)
+        | Expr::Warned(..)
         | Expr::Subquery(..)
         | Expr::Truth(_)
         | Expr::NextValue(_)

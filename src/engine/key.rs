@@ -67,7 +67,8 @@ pub fn restores(t: &DataType) -> bool {
         | DataType::Reference(_)
         | DataType::Row(_)
         | DataType::Json
-        | DataType::Extension(_) => false,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => false,
     }
 }
 

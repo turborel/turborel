@@ -32,7 +32,7 @@ pub use builtin::{
     MEMORY_BUDGET_BYTES, MEMORY_WORK_BYTES, NULL_FRACTION, OFF, ON, OPTIMIZER_MAX_PASSES, PAGE_BYTES, POOL_BYTES, RANGE_SELECTIVITY,
     READ_AHEAD_PAGES, REKEY_BYTES_PER_SECOND, REORDER_GAIN, SESSION_COMMIT_AT_END, SESSION_TIME_ZONE, SLOW_STATEMENT_MS, SORT_COMPARE_COST,
     SPILL_BATCH_BYTES, SPILL_ENCODINGS, SPILL_PARTITION_DEPTH, SPILL_PARTITIONS, STATEMENT_TIMEOUT_MS, SWITCHES, SYSTEM_CACHE_BYTES,
-    TABLES_ENGINE, TABLES_UNIQUE_INDEX_METHOD, TRANSACTION_ISOLATION, TRANSACTION_STRICT,
+    TABLES_ENGINE, TABLES_UNIQUE_INDEX_METHOD, TRANSACTION_ISOLATION, TRANSACTION_STRICT, XQUERY_STATIC_TYPING,
 };
 use builtin::{builtin, whole};
 pub use configurable::Configurable;
@@ -168,7 +168,8 @@ fn bytes(value: &Value, default: usize) -> usize {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => default,
+        | Value::Extension(_)
+        | Value::Xml(_) => default,
     }
 }
 
@@ -462,6 +463,12 @@ impl Settings {
     /// Whether `key`, a setting of `SWITCHES`, is ON.
     pub fn is_on(&self, key: Key) -> bool {
         self.word(key) == ON
+    }
+
+    /// Whether `key`, a setting of `SWITCHES`, is ON for a session of
+    /// `own` values (`effective`).
+    pub fn is_on_for(&self, key: Key, own: &Own) -> bool {
+        word_of(self.effective(key, own).0) == ON
     }
 
     /// [X3.135-1986 §4.16] The transaction policy.

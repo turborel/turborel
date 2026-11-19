@@ -1,0 +1,129 @@
+<?xml version="1.0"?>
+ <xs:schema
+       xmlns:xs="http://www.w3.org/2001/XMLSchema"
+       targetNamespace="http://standards.iso.org/iso/9075/2003/sqlxml"
+       xmlns:sqlxml="http://standards.iso.org/iso/9075/2003/sqlxml">
+   <xs:annotation>
+     <xs:documentation>
+       This document contains definitions of types and
+       annotations as specified in ISO/IEC 9075-14.
+     </xs:documentation>
+   </xs:annotation>
+   <xs:simpleType name="kindKeyword">
+     <xs:restriction base="xs:string">
+       <xs:enumeration value="PREDEFINED"/>
+       <xs:enumeration value="DOMAIN"/>
+       <xs:enumeration value="ROW"/>
+       <xs:enumeration value="DISTINCT"/>
+       <xs:enumeration value="ARRAY"/>
+       <xs:enumeration value="MULTISET"/>
+     </xs:restriction>
+   </xs:simpleType>
+   <xs:simpleType name="typeKeyword">
+     <xs:restriction base="xs:string">
+       <xs:enumeration value="CHAR"/>
+       <xs:enumeration value="VARCHAR"/>
+       <xs:enumeration value="CLOB"/>
+       <xs:enumeration value="BLOB"/>
+       <xs:enumeration value="NUMERIC"/>
+       <xs:enumeration value="DECIMAL"/>
+       <xs:enumeration value="INTEGER"/>
+       <xs:enumeration value="SMALLINT"/>
+       <xs:enumeration value="BIGINT"/>
+       <xs:enumeration value="FLOAT"/>
+       <xs:enumeration value="REAL"/>
+       <xs:enumeration value="DOUBLE PRECISION"/>
+       <xs:enumeration value="BOOLEAN"/>
+       <xs:enumeration value="DATE"/>
+       <xs:enumeration value="TIME"/>
+       <xs:enumeration value="TIME WITH TIME ZONE"/>
+       <xs:enumeration value="TIMESTAMP"/>
+       <xs:enumeration value="TIMESTAMP WITH TIME ZONE"/>
+       <xs:enumeration value="INTERVAL YEAR"/>
+       <xs:enumeration value="INTERVAL YEAR TO MONTH"/>
+       <xs:enumeration value="INTERVAL MONTH"/>
+       <xs:enumeration value="INTERVAL DAY"/>
+       <xs:enumeration value="INTERVAL DAY TO HOUR"/>
+       <xs:enumeration value="INTERVAL DAY TO MINUTE"/>
+       <xs:enumeration value="INTERVAL DAY TO SECOND"/>
+       <xs:enumeration value="INTERVAL HOUR"/>
+       <xs:enumeration value="INTERVAL HOUR TO MINUTE"/>
+       <xs:enumeration value="INTERVAL HOUR TO SECOND"/>
+       <xs:enumeration value="INTERVAL MINUTE"/>
+       <xs:enumeration value="INTERVAL MINUTE TO SECOND"/>
+       <xs:enumeration value="INTERVAL SECOND"/>
+       <xs:enumeration value="XML"/>
+     </xs:restriction>
+   </xs:simpleType>
+   <xs:complexType name="fieldType">
+     <xs:attribute name="name" type="xs:string"/>
+     <xs:attribute name="mappedType" type="xs:string"/>
+   </xs:complexType>
+   <xs:element name="sqltype">
+     <xs:complexType>
+       <xs:sequence>
+         <xs:element name="field" type="sqlxml:fieldType"
+                         minOccurs="0" maxOccurs="unbounded"/>
+       </xs:sequence>
+       <xs:attribute name="kind"
+                         type="sqlxml:kindKeyword"/>
+       <xs:attribute name="name"
+                         type="sqlxml:typeKeyword" use="optional"/>
+       <xs:attribute name="length" type="xs:integer"
+                         use="optional"/>
+       <xs:attribute name="maxLength" type="xs:integer"
+                         use="optional"/>
+       <xs:attribute name="characterSetName" type="xs:string"
+                         use="optional"/>
+       <xs:attribute name="collation" type="xs:string"
+                         use="optional"/>
+       <xs:attribute name="precision" type="xs:integer"
+                         use="optional"/>
+       <xs:attribute name="scale" type="xs:integer"
+                         use="optional"/>
+       <xs:attribute name="maxExponent" type="xs:integer"
+                         use="optional"/>
+       <xs:attribute name="minExponent" type="xs:integer"
+                         use="optional"/>
+       <xs:attribute name="userPrecision" type="xs:integer"
+                         use="optional"/>
+       <xs:attribute name="leadingPrecision" type="xs:integer"
+                         use="optional"/>
+       <xs:attribute name="maxElements" type="xs:integer"
+                         use="optional"/>
+      <xs:attribute name="catalogName" type="xs:string"
+                        use="optional"/>
+      <xs:attribute name="schemaName" type="xs:string"
+                        use="optional"/>
+      <xs:attribute name="domainName" type="xs:string"
+                        use="optional"/>
+      <xs:attribute name="typeName" type="xs:string"
+                        use="optional"/>
+      <xs:attribute name="mappedType" type="xs:string"
+                        use="optional"/>
+      <xs:attribute name="mappedElementType" type="xs:string"
+                        use="optional"/>
+      <xs:attribute name="final" type="xs:boolean"
+                        use="optional"/>
+    </xs:complexType>
+  </xs:element>
+  <xs:simpleType name="objectType">
+     <xs:restriction base="xs:string">
+        <xs:enumeration value="CATALOG" />
+        <xs:enumeration value="SCHEMA" />
+        <xs:enumeration value="BASE TABLE" />
+        <xs:enumeration value="VIEWED TABLE" />
+        <xs:enumeration value="CHARACTER SET" />
+        <xs:enumeration value="COLLATION" />
+     </xs:restriction>
+  </xs:simpleType>
+  <xs:element name="sqlname">
+     <xs:complexType>
+        <xs:attribute name="type" type="sqlxml:objectType"
+                          use="required" />
+        <xs:attribute name="catalogName" type="xs:string" />
+        <xs:attribute name="schemaName" type="xs:string" />
+        <xs:attribute name="localName" type="xs:string" />
+     </xs:complexType>
+  </xs:element>
+</xs:schema>
