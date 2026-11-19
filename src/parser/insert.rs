@@ -29,6 +29,9 @@ impl Parser {
             return Ok(InsertStatement { table, columns, overriding, source: InsertSource::DefaultValues, xml });
         }
         let query = self.query_expression()?;
+        // [ISO/IEC 9075-2:2023 §15.11] whose statements run before the
+        // insert's own query is read (RULES.md D175).
+        query.admit_deltas();
         self.end()?;
         Ok(InsertStatement { table, columns, overriding, source: InsertSource::Query(Box::new(query)), xml })
     }

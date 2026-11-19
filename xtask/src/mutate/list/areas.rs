@@ -1,6 +1,8 @@
 //! Each area's mutations, in the order they run, after the core's.
 
 mod budget;
+// UUID's mutations, here as `list.rs` holds no more modules.
+mod uuid;
 
 use super::Mutation;
 
@@ -59,7 +61,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order.
-fn second() -> [&'static [Mutation]; 30] {
+fn second() -> [&'static [Mutation]; 31] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -91,6 +93,7 @@ fn second() -> [&'static [Mutation]; 30] {
         &super::vector_embed::VECTOR_EMBED,
         &super::vector_hybrid::VECTOR_HYBRID,
         &super::vector::VECTOR,
+        &super::delta_tables::DELTA_TABLES,
     ]
 }
 
@@ -137,8 +140,8 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, external plug-ins' and
-/// packages', partitioning's, the command-line client's, replication's and the server's.
-fn last() -> [&'static [Mutation]; 45] {
+/// packages', partitioning's, UUID's, the command-line client's, replication's, the server's and the client library's.
+fn last() -> [&'static [Mutation]; 47] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -178,6 +181,7 @@ fn last() -> [&'static [Mutation]; 45] {
         &super::plugins::PACKAGES,
         &super::simple_features::SIMPLE_FEATURES,
         &super::partitioning::PARTITIONING,
+        &uuid::UUID,
         &super::cli::CLI,
         &super::FILL,
         &super::ZONES,
@@ -185,5 +189,6 @@ fn last() -> [&'static [Mutation]; 45] {
         &super::WAITS,
         &super::VR,
         &super::SERVER,
+        &super::client::CLIENT,
     ]
 }

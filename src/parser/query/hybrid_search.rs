@@ -240,7 +240,8 @@ impl Parser {
             | TableReference::Json(_)
             | TableReference::Graph(_)
             | TableReference::Hybrid(_)
-            | TableReference::Gql(_) => Err(parser.syntax("expected HYBRID_SEARCH's query")),
+            | TableReference::Gql(_)
+            | TableReference::Delta(_) => Err(parser.syntax("expected HYBRID_SEARCH's query")),
         }
     }
 }

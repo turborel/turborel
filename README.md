@@ -31,6 +31,8 @@ behind it, and each can be replaced or added to.
   control, a write-ahead log, checkpoints and recovery.
 - Savepoints, with SAVEPOINT, RELEASE SAVEPOINT and ROLLBACK TO SAVEPOINT
   at the savepoint levels of routines and ATOMIC blocks.
+- [Data change delta tables](doc/sql/24-delta-tables.md), OLD, NEW and
+  FINAL TABLE of INSERT, UPDATE, DELETE and MERGE.
 - Row and columnar storage, chosen per table.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
   or a strategy a plug-in registers, many levels deep, attached and
@@ -98,6 +100,8 @@ behind it, and each can be replaced or added to.
   the statistical set functions and math functions of T621.
 - Arrays, row types, distinct types, DECFLOAT, regular expressions,
   sequences and identity columns.
+- [UUIDs](doc/sql/02-data-types.md#uuids), with UUID_V4() and time-ordered
+  UUID_V7().
 - SQL/JSON's JSON_VALUE, JSON_QUERY and JSON_EXISTS, with the SQL/JSON
   path language, strict and lax, and its filters; IS JSON, JSON_OBJECT,
   JSON_ARRAY, JSON_OBJECTAGG and JSON_ARRAYAGG.
@@ -163,6 +167,9 @@ behind it, and each can be replaced or added to.
 - Library, embedded modes
 - A server over TCP, Unix sockets or Windows named pipes, with TLS,
   users and passwords, prepared statements and cancellation.
+- A [client library](doc/client/02-library-connections.md) that pipelines
+  requests, pools connections, fails over across servers, and takes its
+  settings from a URI, the environment, a service file or a password file.
 - Bounded memory with one budget over every cache, with sorts, joins and
   grouping that spill to disk.
 

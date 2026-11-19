@@ -199,6 +199,7 @@ fn star(from: &[TableReference]) -> Result<Vec<SelectSublist>> {
             | TableReference::Json(_)
             | TableReference::Graph(_)
             | TableReference::Gql(_)
+            | TableReference::Delta(_)
             | TableReference::Hybrid(_) => {
                 return Err(SqlError::new(
                     Code::Unsupported,

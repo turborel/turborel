@@ -79,6 +79,7 @@ mod declared;
 mod defaults;
 mod deferral;
 mod definitions;
+mod delta;
 mod direct;
 mod domains;
 mod drop;
@@ -255,6 +256,10 @@ struct SessionState {
     area: area::Area,
     /// Its prepared statements and SQL descriptor areas (`db/dynamic.rs`).
     dynamic: dynamic::DynamicState,
+    /// [ISO/IEC 9075-2:2023 §7.6] Where the data change statement running
+    /// records the rows of its delta table, if a query reads it
+    /// (`db/delta.rs`).
+    delta: Option<delta::Collector>,
 }
 
 /// \[DESIGN\] An application program bound to a `<module>`: an authorization
@@ -347,16 +352,6 @@ impl Call<'_> {
     /// (`txn/locks.rs`).
     fn runs(&self, tx: &Arc<Txn>) {
         self.session.runs(tx);
-    }
-}
-
-impl Drop for Call<'_> {
-    fn drop(&mut self) {
-        self.session.ran();
-        self.session.busy.set(false);
-        if let Some(timed) = self.timed.take() {
-            timed.done(&self.session.db);
-        }
     }
 }
 

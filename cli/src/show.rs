@@ -4,7 +4,7 @@
 //! than its column is shown whole, past it (`format.rs`).
 
 use turborel::value::DataType;
-use turborel::value::types::MAX_TYPE_NESTING;
+use turborel::value::types::{ExtensionType, MAX_TYPE_NESTING, uuid};
 
 /// The widest a column is made for its type: wider values go past it.
 pub const MAX_WIDTH: usize = 60;
@@ -94,14 +94,14 @@ fn measured(t: &DataType, depth: usize) -> (usize, bool) {
         DataType::Row(r) => (r.fields.iter().map(|f| part(&f.data_type)).fold(ROW_EXTRA, usize::saturating_add), false),
         // A distinct type as its source, as its values are.
         DataType::Distinct(d) => measured(&d.source, depth),
-        // A type beyond the standard, shown as its text, as wide as it is;
-        // a large object as its text or hexits, as wide as a column grows.
+        // A type beyond the standard, shown as its text, as wide as it is
+        // (`extension_width`); a large object as its text or hexits, as wide as a column grows.
         // A multiset, of no maximum cardinality [ISO/IEC 9075-2:2023
         // §6.52], as wide as a column may be; a structured value, whose
         // attributes the catalog holds, a reference, a JSON value's text
         // and an XML value's serialization, as wide too.
-        DataType::Extension(_)
-        | DataType::Xml(_)
+        DataType::Extension(e) => (extension_width(e), false),
+        DataType::Xml(_)
         | DataType::Lob { .. }
         | DataType::Multiset(_)
         | DataType::Structured(_)
@@ -109,6 +109,13 @@ fn measured(t: &DataType, depth: usize) -> (usize, bool) {
         | DataType::Json => (MAX_WIDTH, false),
     };
     (width.min(MAX_WIDTH), right)
+}
+
+/// \[EXTENSION\] The width of a type beyond the standard's values: a
+/// UUID's text, of one length (RULES.md D181), else as wide as a column
+/// grows.
+fn extension_width(e: &ExtensionType) -> usize {
+    if e.kind.name() == uuid::UUID_NAME { uuid::UUID_TEXT_LENGTH } else { MAX_WIDTH }
 }
 
 #[cfg(test)]
@@ -136,5 +143,19 @@ mod tests {
             6,
         );
         assert_eq!(width(DataType::Interval(day_second)), 19, "its positions and its sign");
+    }
+
+    /// Verifies: [EXTENSION] RULES.md D46, D181: a UUID column is as wide
+    /// as a UUID's text, 36 characters, and shows it left aligned; another
+    /// type beyond the standard as wide as a column grows.
+    #[test]
+    fn uuid_columns_are_as_wide_as_their_text() {
+        let shaped = shape(2, &uuid::UuidType::data_type());
+        assert_eq!((shaped.width, shaped.right), (36, false));
+        let other = DataType::Extension(ExtensionType {
+            kind: &turborel::value::types::UNREGISTERED_KIND,
+            params: turborel::value::types::TypeParams::default(),
+        });
+        assert_eq!(shape(1, &other).width, MAX_WIDTH);
     }
 }

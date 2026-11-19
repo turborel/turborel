@@ -71,6 +71,8 @@ verification approach DO-178C expects (§8).
 | D53 | One contract for data types, with the standard types built in |
 | D54 | Datetimes kept in UTC, shown in the session's zone, read from a clock |
 | D58 | Dynamic SQL in SQL text, with a session as the module |
+| D174 | A delta table's statement runs before its query is bound, and gives its rows as a transition table |
+| D175 | Delta tables stand in WITH list elements, INSERT queries and MERGE sources, of views through their base table |
 | **Architecture** | |
 | D25 | One log, owned by the database |
 | D26 | Cryptography only from vetted crates, in plug-ins |
@@ -199,6 +201,18 @@ verification approach DO-178C expects (§8).
 | D171 | Extensions are versioned packages, resolved together and locked per database |
 | D172 | What a plug-in does is shown, and its errors keep their class |
 | D173 | Only the operator chooses what runs, and packages are checked by digest and signature |
+| D180 | UUID is a built-in type of 16 octets, ordered, hashed and indexed by its octets |
+| D181 | A UUID's text is read in its common forms and written hyphenated in lower case |
+| D182 | UUID_V4 draws on the standard library's random hash keys, so the core keeps no dependency |
+| D183 | UUID_V7 takes the database's clock, and never sorts before the last one its database made |
+| D184 | The native protocol carries a UUID under a tag of its own |
+| D200 | A pipeline writes its requests a window at a time, and skips after an error by savepoints |
+| D201 | Several servers are tried in order or at random, and a server of the wrong role is left |
+| D202 | Connection settings are layers, the program's over a service's over the environment's |
+| D203 | A service file names sections of settings, and a password file gives passwords by server and user |
+| D204 | TLS by mode, and channel binding disabled, preferred or required |
+| D205 | The SCRAM keys a password derives are cached by salt, iterations and a keyed tag of the password |
+| D206 | A pool hands out checked connections and takes them back reset, by the standard library alone |
 | D210 | The client's own commands begin with a backslash, and are read by the splitter |
 | D211 | The line editor is the client's own, over `stty`, with its history and completion |
 | D212 | Variables are substituted by the splitter, as text, literal or identifier, and steer conditionals |
@@ -1686,6 +1700,67 @@ because drivers' SQL often has comments.
 The implementation-defined limits are 100 occurrences for a descriptor
 area without WITH MAX, at most 1,000 [§17.2 SR2, GR3], and 64 areas a
 session. A plug-in's type has TYPE code -1 [§17.1 Table 18].
+
+#### D174. A delta table's statement runs before its query is bound, and gives its rows as a transition table
+
+A `<data change delta table>` [ISO/IEC 9075-2:2023 §7.6] is read where a
+cursor's query, directly run, prepared or declared, or a SELECT INTO, in a
+routine too, has it as the one table reference of its FROM clause, and
+where D175 lets it stand. The parser marks it so as it reads such a query
+(`DeltaRows::admit`). The session runs its statement in the cursor's
+statement first, then binds the query over the rows the statement
+recorded, read as a transition table is (`db/delta.rs`). A prepared query
+is bound at PREPARE over no rows, of the subject table's columns, its
+statement bound too so its parameters are typed. Each opening runs the
+statement again.
+
+The statement's effects record each row of the subject table as they
+record it for triggers (`Effects::inserted`, `updated`, `deleted`). So a
+row is recorded as it is written, after BEFORE triggers, with its
+defaults, identity and generated columns, and OLD, NEW and FINAL read the
+old or new row [GR5b]. The collector is claimed by the statement's own
+effects. Their end, before referential actions run, takes it away, so a
+cascade or an AFTER trigger records nothing. Of FINAL the subject table
+is then the one name of the restricted subject table name list. A
+referential action that changes it is refused with SQLSTATE 27001
+[§15.18 GR15], and an AFTER trigger's statement with 0W001 [§15.21 GR6i],
+which the trigger's 09000 tells, as 0W000 is told. The rows of a typed
+table's proper subtables that an UPDATE or DELETE of it reaches are
+recorded too, each by its superrow, the first columns of the subtable's
+row, which are the typed table's [§14.9 GR4, §14.14 GR6]. The rows a
+statement of a partitioned table writes to its partitions are recorded
+alike (D153), and a row an UPDATE moves to another partition is one row
+updated, not a row deleted and one inserted (`Effects::moved`).
+
+The query's rows are all read as the cursor opens, so an error of the
+query undoes the statement with it. The protocol and the client needed
+no change, and the protocol's version stays 1.
+
+#### D175. Delta tables stand in WITH list elements, INSERT queries and MERGE sources, of views through their base table
+
+A delta table stands where the standard lets it and nowhere else. It is
+the one table reference of a FROM clause [§7.5 SR3], of a query
+specification that is the body of its query expression [§7.17 SR2]. That
+query expression is a cursor's, a `<with list element>`'s [§7.17 SR3d
+iv], an INSERT's, or a SELECT INTO's, or the delta table is a MERGE's
+source. A subquery, scalar, row or table, holds none unless it is a with
+list element's [§7.19 SR1], so neither a predicate's subquery nor a
+derived table does. A view's query holds none [§11.32 SR7].
+`QueryExpression::deltas` finds them, each with list element's in the
+order written and then the query's own, and the session runs their
+statements in that order [§7.17 GR1a]. A delta table found nowhere it
+may stand is refused as it is bound, SQLCODE -103, its statement not run.
+A delta table of a statement inside another's keeps the other's
+collector aside while it runs, and gives it back after. An INSERT or
+MERGE reading one is bound again at each execution, keeping no plan.
+
+A delta table's subject is a base table or a view with CASCADED CHECK
+OPTION [§7.6 SR11b i]. One without is refused, SQLCODE -103. Such a view
+has no INSTEAD OF trigger, nor has any view under it [§11.49 SR4c, SR4d],
+so no view of it is trigger updatable [SR11b ii]. The base table the
+view's change writes is found as the change finds it (`write_target`),
+and each row recorded of it is put in the view's columns by the view's
+map of them. The CHECK OPTION keeps every new row in the view.
 
 ### Architecture
 
@@ -7094,6 +7169,222 @@ and no longer under way shown INTERRUPTED. The database's owner sees
 them, and a non-owner sees no rows. RESCAN BACKUP TARGET reads a
 target's manifests and segments and records what the history lacks,
 and marks GONE each completed backup the target no longer holds.
+
+#### D180. UUID is a built-in type of 16 octets, ordered, hashed and indexed by its octets
+
+UUID [RFC 9562] is a type beyond the standard (D53), built in as VECTOR
+is (D93), so no plug-in is needed and a database holding one opens
+anywhere. The type registry holds its kind (`value/types/uuid.rs`), and
+the engine knows nothing else of it. A value is an extension value whose
+bytes are its 16 octets in the order RFC 9562 §4 writes them. Its order
+is those octets', unsigned, from the first, which is also its text's
+order, so a version 7 UUID sorts by its time. Its record and its index
+key are the 16 octets, fixed in width, so a key of it never begins
+another and both the btree and the hash method index it. The
+Information Schema gives its DATA_TYPE as UUID, with no length or
+precision. Its format is version 1 and is written nowhere, since a
+column's type names UUID.
+
+#### D181. A UUID's text is read in its common forms and written hyphenated in lower case
+
+CAST of a character string to UUID, and a string stored in a UUID column
+(`SqlType::assigns_text`), reads 32 hexadecimal digits in either case,
+its spaces trimmed, braced or not, with a hyphen allowed after any group
+of four digits but the last. So the hyphenated form, the braced form and
+the bare 32 digits all read. Its text is always the hyphenated form in
+lower case, 36 characters, which the command-line client sizes a column
+by. Text that is no UUID's is 22018. A binary string of 16 octets casts
+to UUID, one of another length is 22018, and a UUID casts to a binary
+string as its octets. Another type does not cast to it (22005).
+`UUID '...'` is a literal, CAST of its string, written so by a view's
+text. A UUID is comparable only with a UUID, so comparing one with text
+needs CAST.
+
+#### D182. UUID_V4 draws on the standard library's random hash keys, so the core keeps no dependency
+
+The core holds no dependency (D3), no unsafe code and no code of one
+operating system, so it reads no system generator itself. The standard
+library's `RandomState` does, once a thread, for its SipHash keys, and
+steps them by one for each state made. UUID_V4 makes a fresh state for
+each 64 bits it needs and hashes the word's index with it
+(`uuid/generate.rs`). The bits are unpredictable to one who does not know
+the keys, and two calls never share a key, but they are not a
+cryptographic generator's, so a UUID is an identifier and never a
+secret. No plug-in point was added for a source, since none is needed
+for that use. The version and variant are set as RFC 9562 §5.4 says.
+
+#### D183. UUID_V7 takes the database's clock, and never sorts before the last one its database made
+
+UUID_V7 lays out RFC 9562 §5.7's fields. Its first 48 bits are the
+milliseconds since 1970 of the clock the database reads (D54,
+`Database::set_clock`), and its 74 other bits random, as D182 draws them.
+The database keeps the last one it made, shared by every snapshot of its
+state. One that would not exceed it is that one plus one, its random
+bits then a counter, which is §6.2's method 2, so the UUIDs a database
+makes, and so a session's, sort in the order made, whatever the clock
+does. A call with no database, as a constant would be folded, reads the
+system clock and keeps no order. Neither function is deterministic,
+so neither is folded, and each row gets its own value. They take no
+argument, and their names say the version rather than borrowing another
+system's.
+
+#### D184. The native protocol carries a UUID under a tag of its own
+
+A type beyond the standard goes over the native protocol by its name,
+its text and its bytes, and a client without its kind holds it
+unregistered (D53). UUID has tag 27 instead, as a type with no
+parameters and as a value its kind's bytes, the count then the 16
+octets (`protocol/src/fields.rs`). A client then reads a UUID as a UUID
+with no type registry, and sends one back as a parameter the same way.
+This is part of protocol version 1, which stays 1 while turborel is in
+alpha.
+
+#### D200. A pipeline writes its requests a window at a time, and skips after an error by savepoints
+
+The server answers each request alone and in turn (D45), so a client
+need not wait for one reply before it sends the next. A `Pipeline`
+borrowed from a connection queues queries and executions of prepared
+statements and reads one outcome for each, in order. It writes them a
+window of at most 64 KiB at a time (`PIPELINE_WINDOW`) and reads the
+window's replies before it writes the next. A window fits the socket
+buffers between client and server, so it is written whole even while
+the server writes replies and reads nothing. A client that wrote more
+before reading could wait on a server waiting on it.
+
+A failure is its request's own and the rest run, as the requests are
+independent. `OnError::Skip` stops a batch at its first failure and
+keeps what came before. A savepoint is set before each request but the
+first, the requests after a failure are rolled back to the savepoint
+set after it, and a window not yet written is never sent. Each is
+reported `Skipped`. The batch is one transaction, committed as it ends
+under autocommit if it began none. The protocol's coming message that
+skips a batch after an error replaces the savepoints, and `guarded` in
+`pipeline.rs` is the seam.
+
+#### D201. Several servers are tried in order or at random, and a server of the wrong role is left
+
+Settings may name several hosts, each with its port. They are tried in
+the order given, or in an order drawn at random for each connection
+under `load_balance=random`, seeded from the standard library's
+`RandomState` so no dependency is added. Each address a name resolves
+to is tried in turn, each step within the connect timeout. With no
+server kept, the failure (SQLSTATE 08001) names each address and why
+it was passed.
+
+`target=read-write` keeps a server that takes changes and
+`target=read-only` one that takes none. A replica following its group
+refuses every change (D57) and shows its role in
+INFORMATION_SCHEMA.REPLICAS to the owner alone, and a server alone has
+no such table. So the client reads `ROLE_QUERY` as a statement that is
+its own transaction. A missing table means a server alone, read-write.
+A row PRIMARY means read-write and any other row read-only. No row, as
+any session but the owner's sees on a replica, means a role it cannot
+see, which meets neither target. The protocol's coming session status
+tells every session whether its server is read-only, and `role.rs` is
+the seam.
+
+#### D202. Connection settings are layers, the program's over a service's over the environment's
+
+A program, a person or an operator may each say how to connect. The
+settings are one vocabulary of names (`settings::KEYS`), written alike in
+a connection URI's query, a service file and the program's `Options`.
+The layers are laid in a fixed order, the program's own (or its URI's)
+over the named service's section, over the environment's variables,
+over the defaults, each setting taken from the first layer that has it.
+The service and its file are named by the program or the environment,
+never by a service.
+
+The environment's variables are TURBOREL_HOST, TURBOREL_PORT,
+TURBOREL_USER, TURBOREL_PASSWORD, TURBOREL_TLS_MODE,
+TURBOREL_APPLICATION_NAME, TURBOREL_CONNECT_TIMEOUT, TURBOREL_SERVICE,
+TURBOREL_SERVICE_FILE and TURBOREL_PASSFILE. An empty one gives
+nothing. The environment is read through a function the caller may
+give (`Settings::resolve_in`), so tests set no process variable.
+
+A URI is `turborel://user:password@host:port,host:port/?key=value`,
+percent-encoded, an IPv6 address bracketed and a local socket an
+encoded path. A server serves one database, so the URI names none and
+has no path. A setting that cannot be read is SQLSTATE 08001. The
+application name is kept by the settings and sent once the protocol's
+coming connection attributes exist.
+
+#### D203. A service file names sections of settings, and a password file gives passwords by server and user
+
+A service file, `~/.turborel_service.conf` unless named, holds `[name]`
+sections of `key = value` lines, with `#` comments. A malformed line, a
+key that names no setting, or `service` set by a service is refused,
+naming the file and line.
+
+A password file, `~/.turborel_pass` unless named, holds lines
+`host:port:user:password`. A plain `*` field matches anything, `\`
+takes the next character as it is, and the first matching line wins. A
+password the settings give prevails over it. A password file should be
+readable by its owner alone, but the standard library has no portable
+way to read a file's owner or permissions, and the client has no
+OS-specific code. So it checks only that the file is a regular file,
+and its owner answers for the rest. This limit is stated in the manual.
+
+#### D204. TLS by mode, and channel binding disabled, preferred or required
+
+`tls_mode` is `disable`, `prefer` (the default), `require`, `verify-ca`
+or `verify-full`, for TCP alone, as a local socket is private.
+`prefer` and `require` encrypt and check that the server holds its
+certificate's key, not who signed it. They keep out an eavesdropper,
+not a server in the middle. `verify-ca` checks the certificate against
+the authorities trusted and not its name, and `verify-full` checks both
+(`tls/modes.rs`, custom rustls verifiers over its WebPKI verifier). A
+TLS stream begins with its handshake, so `prefer` reconnects in the
+clear when the server is reached but its handshake fails, never doubling
+the wait of a server that cannot be reached.
+
+`channel_binding` is `disable`, `prefer` or `require`. `disable` makes
+SCRAM unbound even over TLS, and `prefer` binds where the connection
+has a binding (D43). `require` refuses, before any connection, settings
+whose mechanism binds nothing or whose transport is not TLS, and SCRAM
+itself refuses to send its proof unbound (SQLSTATE 28000).
+
+#### D205. The SCRAM keys a password derives are cached by salt, iterations and a keyed tag of the password
+
+PBKDF2 is the slow step of a SCRAM login, by design. A server sends a
+user the same salt and iterations at each login, so a `KeyCache` keeps
+ClientKey and ServerKey after an exchange the server proved, and a
+reconnection that meets them again skips the derivation.
+
+An entry is found by the salt, the iterations and an HMAC of the
+password under a random secret of the cache's own. So a wrong password
+finds nothing, and the cache holds neither the password nor anything to
+guess it from offline. The keys depend on the password, salt and
+iterations alone, so the user and server are not part of the index.
+The cache is bounded at 64 entries, the oldest dropped first, and an
+entry is dropped when an exchange that used it fails, by the server's
+refusal (`Mechanism::refused`) or its wrong signature. It is shared by
+its clones across threads, and `Settings` keeps one for all the
+connections it makes. The protocol's client derives from the password
+alone, so the client proves from derived keys in its own `exchange.rs`,
+HMAC made of the protocol's SHA-256 (RFC 2104). The protocol's server
+side checks it in the client's tests.
+
+#### D206. A pool hands out checked connections and takes them back reset, by the standard library alone
+
+A `Pool` holds at most `max` connections a `Source` makes, such as
+`Settings` or a closure, shared by its clones under a `Mutex` and a
+`Condvar`. It starts no thread (D55), and each wait is the borrower's.
+`get` hands out an idle connection that answers, makes one while there
+is room, or waits for one to come back within `wait` (SQLSTATE 08001
+past it). A connection idle past `idle_timeout`, older than
+`max_lifetime`, or beyond `max_idle` is closed rather than kept.
+
+A `Pooled` gives its connection back as it is dropped, reset in one
+pipeline. Its transaction is rolled back, the statements it prepared
+are closed and destroyed, its user, role and schema are its login's,
+its zone is local, autocommit is off, and the program's own statements
+run. A connection lost, or whose reset fails, is closed, so no borrower
+sees another's session. A setting a borrower SET stays, as no statement
+of today sets every setting back. The check is ROLLBACK, which does
+nothing outside a transaction. Check and reset each wait at most
+`RESET_WITHIN`, so a server that hangs holds the borrower no longer
+than a step of connecting. The protocol's coming Ping and Reset
+messages replace both, and `pool/reset.rs` is the seam.
 
 ## 2. Project layout
 

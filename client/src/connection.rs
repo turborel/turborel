@@ -115,6 +115,18 @@ pub struct Connection<S: Read + Write> {
     pub(crate) autocommit: bool,
 }
 
+impl<S: Read + Write> std::fmt::Debug for Connection<S> {
+    /// Where it reached, as whom, and whether it is lost: never its
+    /// cancel key.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Connection")
+            .field("target", &self.reach)
+            .field("authorization", &self.authorization)
+            .field("lost", &self.lost.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 /// Connects to the server at `address` as `user`, authenticated by
 /// `mechanism`, waiting as `Timeouts::default` says: to connect and log
 /// in, `CONNECT_WITHIN` each step; then without limit.
@@ -179,8 +191,31 @@ impl<S: Read + Write> Connection<S> {
     /// The server's refusal: SQLSTATE 28000 for credentials refused, 08004
     /// for a connection refused; a connection failure.
     pub fn open(stream: S, user: &str, mechanism: &mut dyn Mechanism) -> Result<Connection<S>> {
-        let mut connection = Connection {
-            stream: BufReader::new(stream),
+        let mut connection = Connection::unopened(BufReader::new(stream));
+        let hello = Request::Hello {
+            version: VERSION,
+            user: user.to_owned(),
+            mechanism: mechanism.name().to_owned(),
+            initial: mechanism.initial(),
+            capabilities: Vec::new(),
+        };
+        connection.send(&hello)?;
+        connection.logged_in(mechanism)
+    }
+
+    /// A connection over `stream` that takes nothing, lost as it is made:
+    /// what stands in a `Pooled` for the connection it gives back
+    /// (`pool.rs`).
+    pub(crate) fn stand_in(stream: S) -> Connection<S> {
+        let mut connection = Connection::unopened(BufReader::with_capacity(0, stream));
+        connection.lost = Some(failed("[DESIGN] the connection went back to its pool"));
+        connection
+    }
+
+    /// A connection over `stream`, not yet logged in.
+    fn unopened(stream: BufReader<S>) -> Connection<S> {
+        Connection {
+            stream,
             authorization: String::new(),
             server: String::new(),
             max_body: MAX_BODY,
@@ -193,31 +228,31 @@ impl<S: Read + Write> Connection<S> {
             active: false,
             warning: None,
             autocommit: false,
-        };
-        let hello = Request::Hello {
-            version: VERSION,
-            user: user.to_owned(),
-            mechanism: mechanism.name().to_owned(),
-            initial: mechanism.initial(),
-            capabilities: Vec::new(),
-        };
-        connection.send(&hello)?;
+        }
+    }
+
+    /// It, logged in by `mechanism` once Hello is sent: each challenge
+    /// answered until Ready.
+    fn logged_in(mut self, mechanism: &mut dyn Mechanism) -> Result<Connection<S>> {
         loop {
-            match connection.receive()? {
+            match self.receive()? {
                 Reply::Challenge(challenge) => {
                     let answer = mechanism.answer(&challenge)?;
-                    connection.send(&Request::Answer(answer))?;
+                    self.send(&Request::Answer(answer))?;
                 }
                 Reply::Ready { authorization, key, capabilities: _, server } => {
                     mechanism.ready()?;
-                    connection.authorization = authorization;
-                    connection.server = server;
-                    connection.key = Some(key);
-                    return Ok(connection);
+                    self.authorization = authorization;
+                    self.server = server;
+                    self.key = Some(key);
+                    return Ok(self);
                 }
-                Reply::Error(failure) => return Err(failure),
+                Reply::Error(failure) => {
+                    mechanism.refused();
+                    return Err(failure);
+                }
                 Reply::Prepared { .. } | Reply::Description(_) | Reply::Rows(_) | Reply::Suspended | Reply::Complete(_) | Reply::Lob(_) => {
-                    return Err(connection.lose("[DESIGN] the server sent no Ready"));
+                    return Err(self.lose("[DESIGN] the server sent no Ready"));
                 }
             }
         }
@@ -254,6 +289,12 @@ impl<S: Read + Write> Connection<S> {
         bounded(self.stream.get_ref(), within)?;
         self.timeouts.read = within;
         Ok(())
+    }
+
+    /// How long each read or write of the server waits, as the connection
+    /// was made or `set_read_timeout` last said; none, no limit.
+    pub fn read_timeout(&self) -> Option<Duration> {
+        self.timeouts.read
     }
 
     /// Takes replies of at most `bytes` bytes from now on: `MAX_BODY`, the
@@ -312,6 +353,13 @@ impl<S: Read + Write> Connection<S> {
         self
     }
 
+    /// Where the connection reached its server, and how: none for a
+    /// connection made over a stream given to `open`. A `Target::Tls` is
+    /// a connection TLS secures.
+    pub fn target(&self) -> Option<&Target> {
+        self.reach.as_ref()
+    }
+
     /// What cancels the statement this connection runs, from another
     /// thread: none for a connection made over a stream given to `open`,
     /// whose server it cannot reach again.
@@ -328,6 +376,16 @@ impl<S: Read + Write> Connection<S> {
     /// The statement's, as the server reports it; a connection failure.
     pub fn query(&mut self, sql: &str) -> Result<Outcome> {
         self.send(&Request::Query { sql: sql.to_owned(), ends: self.autocommit })?;
+        self.query_reply()
+    }
+
+    /// The reply to a Query sent: a query's rows, or another statement's
+    /// completion.
+    ///
+    /// # Errors
+    ///
+    /// As `query`'s.
+    pub(crate) fn query_reply(&mut self) -> Result<Outcome> {
         let columns = match self.receive()? {
             Reply::Complete(completed) => return Ok(Outcome::Done(completed)),
             Reply::Description(columns) => columns,
@@ -450,13 +508,24 @@ impl<S: Read + Write> Connection<S> {
     }
 
     pub(crate) fn send(&mut self, request: &Request) -> Result<()> {
+        let mut bytes = Vec::new();
+        request.encode(&mut bytes);
+        self.write_encoded(&bytes)
+    }
+
+    /// Writes `bytes`, requests already encoded, at once: one request, or
+    /// a pipeline's batch (`pipeline.rs`).
+    ///
+    /// # Errors
+    ///
+    /// The failure that lost the connection, before or as they are
+    /// written.
+    pub(crate) fn write_encoded(&mut self, bytes: &[u8]) -> Result<()> {
         if let Some(lost) = &self.lost {
             return Err(lost.clone());
         }
-        let mut bytes = Vec::new();
-        request.encode(&mut bytes);
         let stream = self.stream.get_mut();
-        let sent = stream.write_all(&bytes).and_then(|()| stream.flush());
+        let sent = stream.write_all(bytes).and_then(|()| stream.flush());
         sent.map_err(|e| self.lost_by(io_failed("send", &e)))
     }
 

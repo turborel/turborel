@@ -8,7 +8,7 @@ use turborel::params::ParameterType;
 use turborel::storage::Row;
 use turborel::value::datetime::Moment;
 use turborel::value::lob::{Lob, LobKind};
-use turborel::value::types::{ExtensionType, Field, TypeParams};
+use turborel::value::types::{ExtensionType, Field, TypeParams, uuid};
 use turborel::value::xml::XmlValue;
 use turborel::value::{DataType, SqlType, Value, types};
 
@@ -79,6 +79,10 @@ const JSON: u8 = 25;
 /// string, which a client parses as CONTENT when it needs its nodes
 /// (RULES.md D106).
 const XML: u8 = 26;
+/// \[EXTENSION\] UUID, as a type, with no parameters; a UUID, its 16
+/// octets as its kind writes them, so a client reads it as a UUID with no
+/// type registry (RULES.md D184).
+const UUID: u8 = 27;
 
 pub(crate) fn put_count(b: &mut Vec<u8>, n: usize) {
     b.put_u32(u32::try_from(n).unwrap_or(u32::MAX));
@@ -182,6 +186,9 @@ fn put_row_type(b: &mut Vec<u8>, row: &types::RowType) {
 /// A type beyond the standard: its tag, its kind's name, then its
 /// parameters' count and each parameter.
 fn put_extension_type(b: &mut Vec<u8>, e: &ExtensionType) {
+    if e.kind.name() == uuid::UUID_NAME {
+        return b.put_u8(UUID);
+    }
     b.put_u8(EXTENSION);
     b.put_str(e.kind.name());
     put_count(b, e.params.values().len());
@@ -218,6 +225,7 @@ fn kind_of(tag: u8) -> Option<&'static dyn SqlType> {
         REFERENCE => Some(&types::REFERENCE),
         JSON => Some(&types::JSON),
         XML => Some(&types::XML),
+        UUID => Some(&uuid::UUID_TYPE),
         _ => None,
     }
 }
@@ -349,8 +357,13 @@ fn put_value(b: &mut Vec<u8>, v: &Value) {
 
 /// A value of a type beyond the standard, `v` of the extension value
 /// `e`: its tag, its kind's name, the value as text and its kind's bytes;
-/// one received unregistered goes back as it came.
+/// one received unregistered goes back as it came. A UUID goes under its
+/// own tag.
 fn put_extension_value(b: &mut Vec<u8>, (v, e): (&Value, &types::ExtensionValue)) {
+    if e.kind.name() == uuid::UUID_NAME {
+        b.put_u8(UUID);
+        return e.kind.put_value(v, b);
+    }
     b.put_u8(EXTENSION);
     let (name, text, bytes) = types::parts(v).filter(|_| e.kind.name() == types::UNREGISTERED.name()).unwrap_or_else(|| {
         let mut bytes = Vec::new();

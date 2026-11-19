@@ -165,7 +165,8 @@ fn reference_leaves(cx: Context<'_>, r: &TableReference, leaves: &mut Vec<Qualif
         | TableReference::Json(_)
         | TableReference::Graph(_)
         | TableReference::Hybrid(_)
-        | TableReference::Gql(_) => {}
+        | TableReference::Gql(_)
+        | TableReference::Delta(_) => {}
         TableReference::Recognized(r) => reference_leaves(cx, &r.input, leaves),
         // [ISO/IEC 9075-2:2023 §10.4] Its table arguments are its operands;
         // its other arguments' subqueries are not.
