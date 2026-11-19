@@ -35,23 +35,10 @@ terminal.
 
 ## Format and protocol versions
 
-The files a database is kept in, and the protocol, have version numbers
-of their own, changed only when they change. A database's files are
-opened only by a release that knows their versions.
-
-| Format | Version |
-|---|---|
-| The log's segments | 1 |
-| The data file of tables and indexes | 1 |
-| The catalog | 1 |
-| A log record | 1 |
-| A row store table | 1 |
-| A B-link tree | 1 |
-| An R-link spatial tree's nodes and metadata | 1 |
-| An `rtree` numeric-coordinate index locator | 1 |
-| An `rtree` geometry index locator, including its SRID | 2 |
-| A GEOMETRY extension type descriptor | 1 |
-| A GEOMETRY extension value's payload | 1 |
-| A hash index | 1 |
-| An XML index's keys and dictionary (`xml_path`, `xml_value`, `xml_property`, `xml_primary`) | 1 |
-| The native protocol | 1 |
+The files a database is kept in, the values and index structures stored
+in them, and the protocols have version numbers of their own. A version a
+release does not know is refused. While Turborel is in alpha every one is
+1, and a format may change without its version changing, so a database
+made by one build may not open with another
+([VERSIONING.md](../../VERSIONING.md#format-and-protocol-versions) lists
+each, with where it is written).

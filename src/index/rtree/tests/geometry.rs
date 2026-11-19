@@ -113,7 +113,8 @@ fn geometry_capabilities_do_not_claim_original_key_order_or_equality() {
 
 /// Verifies: [DESIGN] D85: geometry locators bind their SRID, preserve
 /// projected version counts across reopen, and refuse wrong versions,
-/// references, truncations and trailing bytes. Numeric v1 stays readable.
+/// references, truncations and trailing bytes. Numeric locators, of the
+/// same version, stay readable.
 #[test]
 fn geometry_locators_bind_reference_and_preserve_counts() {
     let method = RTreeMethod::in_memory();
@@ -123,7 +124,7 @@ fn geometry_locators_bind_reference_and_preserve_counts() {
     index.insert(key.clone(), 7).unwrap();
     index.insert(key.clone(), 7).unwrap();
     let locator = index.locator();
-    assert_eq!(locator[0], GEOMETRY_LOCATOR_VERSION);
+    assert_eq!(locator[0], LOCATOR_VERSION);
     method.checkpoint().unwrap();
     drop(index);
     let opened: Arc<dyn Index> = Arc::from(method.open(&types, &locator).unwrap().unwrap());
@@ -135,7 +136,7 @@ fn geometry_locators_bind_reference_and_preserve_counts() {
     }
     assert_eq!(method.open(&[data_type_with_srid(0).unwrap()], &locator).err().unwrap().code, Code::Corrupt);
     let mut wrong = locator.clone();
-    wrong[0] = LOCATOR_VERSION;
+    wrong[0] = LOCATOR_VERSION + 1;
     assert_eq!(method.open(&types, &wrong).err().unwrap().code, Code::Corrupt);
     let mut trailing = locator;
     trailing.push(0);

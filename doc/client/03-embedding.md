@@ -1072,8 +1072,8 @@ condition. Projected indexes cannot supply original values for covering
 reads or claim SQL key order. A spatial predicate read records the
 envelopes the index names (`Index::read_region`) as a serializable read
 region, given to `TableStorage::read_by_region`, whose default records the
-whole table (D134). Geometry index locators use version 2 and
-include the SRID; numeric locators remain version 1.
+whole table (D134). Geometry index locators include the SRID, and
+numeric locators do not. Both are version 1.
 
 An envelope is a candidate-search bound. `Geometry::intersects` checks
 actual shapes, including polygon holes and boundaries, using exact
