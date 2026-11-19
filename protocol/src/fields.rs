@@ -494,6 +494,9 @@ pub(crate) fn put_failure(b: &mut Vec<u8>, f: &Failure) {
         b.put_u64(position);
     }
     put_flag(b, f.active);
+    if let Some(diagnostics) = &f.diagnostics {
+        diagnostics.put(b);
+    }
 }
 
 pub(crate) fn failure(r: &mut Reader<'_>) -> Result<Failure> {
@@ -502,5 +505,7 @@ pub(crate) fn failure(r: &mut Reader<'_>) -> Result<Failure> {
     let message = r.str()?;
     let rule = if flag(r)? { Some(r.str()?) } else { None };
     let position = if flag(r)? { Some(r.u64()?) } else { None };
-    Ok(Failure { sqlcode, sqlstate, message, rule, position, active: flag(r)? })
+    let active = flag(r)?;
+    let diagnostics = crate::diagnostics::read_diagnostics(r)?.map(Box::new);
+    Ok(Failure { sqlcode, sqlstate, message, rule, position, active, diagnostics })
 }
