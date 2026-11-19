@@ -132,6 +132,9 @@ behind it, and each can be replaced or added to.
 - [Replication and archive plug-ins](doc/client/04-plugins-replication.md):
   a replica's transport, journal, state transfer and consensus, and a
   backup's archive, served by host plug-ins that fail stop.
+- [Plug-in settings](doc/client/04-plugins.md#settings) declared by
+  manifests and set as built-in ones, and a buffer eviction policy a
+  host plug-in programs.
 - [Property graphs](doc/sql/20-property-graphs.md) over tables or
   queries' rows, queried by GRAPH_TABLE's path patterns through adjacency
   indexes, LINE_GRAPH among them.

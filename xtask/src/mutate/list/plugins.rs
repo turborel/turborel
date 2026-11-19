@@ -12,6 +12,7 @@ pub(super) mod hosted;
 pub(super) mod kinds;
 pub(super) mod replication;
 pub(super) mod sdk;
+pub(super) mod settings;
 
 /// The mutations of extensions and their processes.
 pub const PLUGINS: [Mutation; 8] = [

@@ -84,8 +84,10 @@ fn a_host_policy_changes_which_pages_are_evicted() {
     assert!(eventually(|| pages(&plugin, "resident.log").contains(&victim)), "page {victim} kept");
     assert!(eventually(|| !pages(&plugin, "evicted.log").is_empty()), "other pages evicted");
     assert!(!pages(&plugin, "evicted.log").contains(&victim), "page {victim} never evicted");
+    db.create_user("U", b"x").unwrap();
+    db.set_owner("U").unwrap();
     let s = db.session("U");
-    assert_eq!(exec(&s, "SET DATABASE HOSTED.KEEP_PAGES = 2"), Err(turborel::error::Code::Privilege));
+    assert_eq!(exec(&s, "SET DATABASE HOSTED.KEEP_PAGES = 2"), Err(turborel::error::Code::Privilege), "not even the owner's");
     db.close().unwrap();
 }
 
