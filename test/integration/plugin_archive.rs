@@ -57,12 +57,12 @@ fn a_host_archive_serves_a_backup_and_its_restore() {
     };
     // The program cannot make a directory under a file: its ERROR.
     std::fs::write(scratch.path("plain"), b"a file").unwrap();
-    let (missing, restorer) = restore(format!("vault:{}", scratch.path("plain").join("under").display()), &scratch.path("nothing"));
-    assert_eq!(missing.unwrap_err().state.map(|s| s.to_string()), Some("38000".to_owned()));
+    let (refused, restorer) = restore(format!("vault:{}", scratch.path("plain").join("under").display()), &scratch.path("nothing"));
+    assert_eq!(refused.unwrap_err().state.map(|s| s.to_string()), Some("38000".to_owned()));
     assert!(restorer.host_stopped().unwrap().is_none(), "the archive's ERROR is the call's alone");
     let dir = scratch.path("back");
-    let (restored, restorer) = restore(location, &dir);
-    restored.unwrap();
+    let (done, restorer) = restore(location, &dir);
+    done.unwrap();
     drop(restorer);
     let back = Database::new();
     back.open_files(&crate::common::os(), &dir, &OpenOptions::default()).unwrap();

@@ -77,7 +77,7 @@ fn a_journal_killed_mid_append_acknowledges_only_what_was_durable() {
     let dir = installed(&scratch);
     let (db, plugs) = node(&scratch, &dir);
     let (mut journal, recovered) = (plugs.journal.unwrap())().unwrap();
-    assert!(recovered.records.is_empty());
+    assert_eq!(recovered.records.len(), 0);
     journal.persist(Lsn(1), b"kept").unwrap();
     assert_eq!(journal.sync().unwrap(), [Lsn(1)]);
     journal.persist(Lsn(2), b"unsynced").unwrap();
@@ -85,7 +85,7 @@ fn a_journal_killed_mid_append_acknowledges_only_what_was_durable() {
     assert!(journal.sync().is_err(), "nothing is acknowledged once the process died");
     assert!(db.host_stopped().unwrap().is_some());
     drop((journal, db));
-    let (_again, plugs) = node(&scratch, &dir);
-    let (_journal, recovered) = (plugs.journal.unwrap())().unwrap();
-    assert_eq!(recovered.records, [b"kept".to_vec()]);
+    let (_again, reopened) = node(&scratch, &dir);
+    let (_journal, held) = (reopened.journal.unwrap())().unwrap();
+    assert_eq!(held.records, [b"kept".to_vec()]);
 }
