@@ -75,6 +75,8 @@ impl State {
             | PrivilegeObject::Sequence
             | PrivilegeObject::Module
             | PrivilegeObject::Model
+            | PrivilegeObject::XmlSchema
+            | PrivilegeObject::XQueryModule
             | PrivilegeObject::Type => return Ok(None),
         };
         let qn = qualify(name, schema);

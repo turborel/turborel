@@ -34,6 +34,7 @@ impl State {
         self.engines.values().for_each(|e| tell(e.configurable(), settings));
         self.methods.values().for_each(|m| tell(m.configurable(), settings));
         self.functions.configurables().for_each(|f| tell(Some(f), settings));
+        self.xquery_functions.configurables().for_each(|f| tell(Some(f), settings));
         self.system.values().for_each(|t| tell(t.configurable(), settings));
         self.hashes.iter().for_each(|h| tell(h.configurable(), settings));
         self.encodings.all().unwrap_or_default().iter().for_each(|e| tell(e.configurable(), settings));

@@ -29,10 +29,15 @@
 //!           u32, each a module, in the order of their timestamps of
 //!           creation), structured types (count u32, each a type),
 //!           user-defined casts, orderings and transforms (likewise),
-//!           embedding models and vector pipelines (`catalog/embedding.rs`)
-//!           the spatial reference systems defined and the geometry
+//!           embedding models and vector pipelines (`catalog/embedding.rs`),
+//!           registered XML Schemas (count u32, each an XML Schema),
+//!           registered XQuery modules (count u32, each an XQuery module),
+//!           then the spatial reference systems defined and the geometry
 //!           columns registered (as `catalog/codec/spatial.rs` writes them)
 //! ```
+
+pub(super) mod xml_schemas;
+mod xquery_modules;
 
 use std::sync::Arc;
 
@@ -45,7 +50,10 @@ use crate::catalog::codec::{
     put_privilege, put_roles, put_routine, put_sequence, put_table, put_trigger, put_user_type, put_view, qualified, roles, routine,
     sequence, table, trigger, user_type, view,
 };
-use crate::catalog::{CastDesc, Embeddings, OrderingDesc, StructuredDesc, TransformGroupDesc, embeddings, put_embeddings};
+use crate::catalog::codec::{put_xml_schema, put_xquery_module, xml_schema, xquery_module};
+use crate::catalog::{
+    CastDesc, Embeddings, OrderingDesc, StructuredDesc, TransformGroupDesc, XQueryModuleDesc, XmlSchemaDesc, embeddings, put_embeddings,
+};
 use crate::catalog::{
     Catalog, CollationDesc, ConstraintDesc, DomainDesc, IndexDesc, ModuleDesc, PrivilegeDesc, QualifiedName, Roles, SequenceDesc,
     SqlRoutineDesc, TableDesc, TriggerDesc, UserTypeDesc, ViewDesc, module_of_schema,
@@ -100,6 +108,10 @@ pub(super) struct Snapshot {
     transforms: Vec<(QualifiedName, Vec<TransformGroupDesc>)>,
     /// \[EXTENSION\] The embedding models and vector pipelines.
     embeddings: Embeddings,
+    /// The registered XML Schemas, by name.
+    xml_schemas: Vec<XmlSchemaDesc>,
+    /// The registered XQuery modules, by name.
+    xquery_modules: Vec<XQueryModuleDesc>,
     /// The spatial reference systems defined and the geometry columns
     /// registered.
     spatial: crate::catalog::SpatialCatalog,
@@ -161,6 +173,8 @@ impl Snapshot {
             orderings: st.catalog.orderings().into_iter().cloned().collect(),
             transforms: st.catalog.all_transforms().into_iter().map(|(n, g)| (n.clone(), g.to_vec())).collect(),
             embeddings: st.catalog.embeddings().clone(),
+            xml_schemas: st.catalog.xml_schemas().into_iter().cloned().collect(),
+            xquery_modules: st.catalog.xquery_modules().into_iter().cloned().collect(),
             spatial: st.catalog.spatial().clone(),
         })
     }
@@ -247,6 +261,10 @@ impl Snapshot {
         out.put_u32(count(self.transforms.len()));
         self.transforms.iter().for_each(|(n, g)| put_transforms(out, (n, g)));
         put_embeddings(out, &self.embeddings);
+        out.put_u32(count(self.xml_schemas.len()));
+        self.xml_schemas.iter().for_each(|x| put_xml_schema(out, x));
+        out.put_u32(count(self.xquery_modules.len()));
+        self.xquery_modules.iter().for_each(|m| put_xquery_module(out, m));
         crate::catalog::codec::put_spatial(out, &self.spatial);
     }
 
@@ -285,6 +303,8 @@ impl Snapshot {
             orderings: (0..r.u32()?).map(|_| ordering(r)).collect::<Result<_>>()?,
             transforms: (0..r.u32()?).map(|_| transforms(r)).collect::<Result<_>>()?,
             embeddings: embeddings(r)?,
+            xml_schemas: (0..r.u32()?).map(|_| xml_schema(r)).collect::<Result<_>>()?,
+            xquery_modules: (0..r.u32()?).map(|_| xquery_module(r)).collect::<Result<_>>()?,
             spatial: crate::catalog::codec::spatial(r)?,
         })
     }
@@ -325,6 +345,7 @@ impl State {
         }
         put_module_tables(&mut *catalog, snapshot);
         put_described(&mut *catalog, snapshot);
+        xml_schemas::read_all(&mut *catalog).and_then(|()| xquery_modules::parse_all(&mut *catalog))?;
         self.install_counters(snapshot)?;
         // Before the indexes, whose keys are by them.
         self.catalog = Arc::from(catalog.duplicate());
@@ -400,6 +421,8 @@ fn put_described(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.casts.iter().cloned().for_each(|c| catalog.put_cast(c));
     snapshot.orderings.iter().cloned().for_each(|o| catalog.put_ordering(o));
     snapshot.transforms.iter().for_each(|(n, g)| catalog.put_transforms(n, g.clone()));
+    snapshot.xml_schemas.iter().cloned().for_each(|x| catalog.put_xml_schema(x));
+    snapshot.xquery_modules.iter().cloned().for_each(|m| catalog.put_xquery_module(m));
 }
 
 /// The assertions, views, privileges, triggers and SQL-invoked routines

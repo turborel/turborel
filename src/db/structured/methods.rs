@@ -8,7 +8,9 @@ use super::super::{State, rule};
 use super::{Signature, all_compatible, is_subtype, signatures, user_defined};
 use crate::ast::{MethodKind, MethodSpecification, ParameterMode, ParameterType, TypeName};
 use crate::binder::qualify;
-use crate::catalog::{MethodHost, MethodSpecDesc, QualifiedName, SqlParameter, StructuredDesc, method_host, owner_of, sole, udt_qualified};
+use crate::catalog::{
+    MethodHost, MethodSpecDesc, QualifiedName, SqlParameter, Stamps, StructuredDesc, method_host, owner_of, sole, udt_qualified,
+};
 use crate::error::{At, Result};
 use crate::value::DataType;
 
@@ -77,6 +79,8 @@ impl State {
             access: ms.characteristics.access,
             null_call: ms.characteristics.null_call,
             created,
+            // [§11.51 GR1g xv, xvi, GR1h xiv, xv; §11.56 GR1o, GR1p]
+            stamps: Stamps::at(self.stamp),
         };
         if ms.overriding {
             overriding(family, ms, &mut desc).or_at(ms.at)?;

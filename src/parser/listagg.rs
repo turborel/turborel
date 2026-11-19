@@ -45,7 +45,17 @@ impl Parser {
         let order_by = self.within_group_specification(LISTAGG)?;
         let arg = if distinct { SetArg::Distinct(value) } else { SetArg::All(value) };
         let listagg = Some(Box::new(Listagg { separator, overflow }));
-        Ok(SetFunctionSpecification { name: LISTAGG, arg, order_by, listagg, json: None, filter: None, semantics: None, at })
+        Ok(SetFunctionSpecification {
+            name: LISTAGG,
+            arg,
+            order_by,
+            listagg,
+            json: None,
+            filter: None,
+            semantics: None,
+            returning: None,
+            at,
+        })
     }
 
     /// [ISO/IEC 9075-2:2023 §10.9] `<within group specification>` ::=

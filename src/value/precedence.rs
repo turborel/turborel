@@ -77,6 +77,8 @@ pub fn position(p: &DataType, t: &DataType) -> Option<u8> {
         // proper supertype; [SR19] a row type is no parameter's type.
         DataType::Distinct(_) | DataType::Row(_) | DataType::Json => (p == t).then_some(FIRST),
         DataType::Extension(_) => extension(p, t),
+        // [ISO/IEC 9075-14:2006 draft §10.4 SR1] XML, of every XML type.
+        DataType::Xml(_) => matches!(t, DataType::Xml(_)).then_some(FIRST),
     }
 }
 
@@ -186,7 +188,8 @@ fn of_string(p: &DataType, t: &DataType) -> Option<u8> {
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Json
-        | DataType::Extension(_) => None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => None,
     };
     let (own, of) = (rank(t)?, rank(p)?);
     [FIRST, SECOND, THIRD].get(usize::from(of.checked_sub(own)?)).copied()
@@ -234,7 +237,8 @@ fn of_number(p: &DataType, t: &DataType) -> Option<u8> {
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Json
-        | DataType::Extension(_) => None,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => None,
     }
 }
 

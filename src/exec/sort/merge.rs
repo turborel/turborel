@@ -23,7 +23,7 @@ use super::prefix::{Kind, Prefix, alike};
 use super::vectors::{compare_cells, row_of};
 use crate::error::{Code, Result, SqlError};
 use crate::logical::SortKey;
-use crate::spill::{Batch, Batches, SpillRun};
+use crate::spill::{Batch, Batches, SpillRun, SpilledLobs};
 use crate::storage::Row;
 use crate::value::types::TypeRegistry;
 
@@ -31,17 +31,20 @@ use crate::value::types::TypeRegistry;
 /// kind's code (`Kind::code`), 0 if it has none.
 const WHOLE: u8 = 0x80;
 
-/// What a merge orders rows by: the keys, and the types beyond the
-/// standard its rows' values may be of, to decode them.
+/// What a merge orders rows by: the keys, the types beyond the
+/// standard its rows' values may be of, to decode them, and the sources
+/// of what they name.
 pub(super) struct Order {
     keys: Vec<SortKey>,
     types: TypeRegistry,
+    lobs: SpilledLobs,
 }
 
 impl Order {
-    /// An order by `keys`, of rows of values of `types`.
-    pub(super) fn new(keys: &[SortKey], types: TypeRegistry) -> Order {
-        Order { keys: keys.to_vec(), types }
+    /// An order by `keys`, of rows of values of `types`, naming what
+    /// `lobs` holds.
+    pub(super) fn new(keys: &[SortKey], types: TypeRegistry, lobs: SpilledLobs) -> Order {
+        Order { keys: keys.to_vec(), types, lobs }
     }
 }
 
@@ -112,7 +115,7 @@ impl Merge {
                 (from.records, from.record) = (records?, 0);
             }
             let record = from.records.get(from.record).ok_or_else(short)?;
-            (from.chunk, from.next) = (Arc::new(chunk(record, &self.order.types)?), 0);
+            (from.chunk, from.next) = (Arc::new(chunk(record, &self.order.types, &self.order.lobs)?), 0);
             from.record = from.record.saturating_add(1);
         }
         let at = from.next;
@@ -136,22 +139,22 @@ impl Merge {
             self.refill(head.source)?;
             pending.push(head);
             if pending.len() >= self.each.max(1) {
-                written(&mut pending, run, &mut out)?;
+                written(&mut pending, run, (&mut out, &self.order.lobs))?;
             }
         }
-        written(&mut pending, run, &mut out)
+        written(&mut pending, run, (&mut out, &self.order.lobs))
     }
 }
 
-/// Writes `pending`, if any, to `run` as a chunk, made in `out`; then
-/// none are pending.
-fn written(pending: &mut Vec<Head>, run: &mut dyn SpillRun, out: &mut Vec<u8>) -> Result<()> {
+/// Writes `pending`, if any, to `run` as a chunk, made in `out`, naming
+/// what `lobs` holds; then none are pending.
+fn written(pending: &mut Vec<Head>, run: &mut dyn SpillRun, (out, lobs): (&mut Vec<u8>, &SpilledLobs)) -> Result<()> {
     if pending.is_empty() {
         return Ok(());
     }
     let heads: Vec<(u8, u64)> = pending.iter().map(|h| (h.tag, h.prefix)).collect();
     let rows: Vec<Pick<'_>> = pending.iter().map(|h| (&h.chunk.batch, h.at)).collect();
-    put_chunk(&heads, &rows, out);
+    put_chunk(&heads, &rows, out, lobs);
     run.push(out)?;
     pending.clear();
     Ok(())
@@ -250,7 +253,7 @@ mod tests {
             let picks: Vec<Pick<'_>> = (0..chunk.len()).map(|r| (&batch, r)).collect();
             let heads: Vec<(u8, u64)> =
                 chunk.iter().map(|row| head(keys.first().and_then(|k| prefix_of(&row[k.column], k.order())))).collect();
-            put_chunk(&heads, &picks, &mut out);
+            put_chunk(&heads, &picks, &mut out, &SpilledLobs::new());
             run.push(&out).unwrap();
         }
     }
@@ -273,7 +276,7 @@ mod tests {
     /// `rows` sorted by `keys` in runs of `each`, merged in one pass, and in
     /// passes of two runs at a time; and as comparing them whole, stably.
     fn merged(keys: &[SortKey], rows: &[Row], each: usize) -> (Vec<Row>, Vec<Row>, Vec<Row>) {
-        let order = Arc::new(Order::new(keys, TypeRegistry::default()));
+        let order = Arc::new(Order::new(keys, TypeRegistry::default(), SpilledLobs::new()));
         let once = merge(&order, runs(keys, rows, each)).unwrap().collect::<Result<Vec<Row>>>().unwrap();
         let mut passes = runs(keys, rows, each);
         while passes.len() > 2 {
@@ -344,13 +347,13 @@ mod tests {
     #[test]
     fn records_unknown_or_broken() {
         let keys = [SortKey::ascending(0)];
-        let order = Arc::new(Order::new(&keys, TypeRegistry::default()));
+        let order = Arc::new(Order::new(&keys, TypeRegistry::default(), SpilledLobs::new()));
         let (area, mut out) = (area(), Vec::new());
         let mut unknown = Vec::new();
         for n in [3_i128, 1_i128] {
             let mut run = area.run().unwrap();
             let batch = vectors(&[vec![Value::Exact(Decimal::new(n, 0_u32))]]);
-            put_chunk(&[(WHOLE | 0x7f_u8, 0_u64)], &[(&batch, 0_usize)], &mut out);
+            put_chunk(&[(WHOLE | 0x7f_u8, 0_u64)], &[(&batch, 0_usize)], &mut out, &SpilledLobs::new());
             run.push(&out).unwrap();
             unknown.push(run);
         }
@@ -363,7 +366,7 @@ mod tests {
         short.push(&[1_u8, 2_u8]).unwrap();
         assert_eq!(merge(&order, vec![short]).err().map(|e| e.code), Some(Code::Corrupt));
         let batch = vectors(&[vec![Value::Char("a string longer than a prefix".into())]]);
-        put_chunk(&[(0_u8, 0_u64)], &[(&batch, 0_usize)], &mut out);
+        put_chunk(&[(0_u8, 0_u64)], &[(&batch, 0_usize)], &mut out, &SpilledLobs::new());
         out.truncate(out.len() - 3);
         let mut cut = area.run().unwrap();
         cut.push(&out).unwrap();

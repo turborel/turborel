@@ -85,6 +85,7 @@ fn of_text(v: &Value) -> Result<Option<Json>> {
         | Value::Row(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Xml(_)
         | Value::Extension(_) => Ok(None),
     }
 }

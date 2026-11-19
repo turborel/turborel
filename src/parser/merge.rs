@@ -18,14 +18,18 @@ use crate::lexer::{Tok, delim, kw};
 const MATCHED: &str = "MATCHED";
 
 impl Parser {
-    /// [ISO/IEC 9075-2:2023 §14.12] `<merge statement>` ::= MERGE INTO
+    /// [ISO/IEC 9075-2:2023 §14.12] `<merge statement>` ::= MERGE
+    /// \[WITH `<XML lexically scoped options>`\] [ISO/IEC 9075-14:2006
+    /// draft §14.5] INTO
     /// `<target table>`, a `<table name>` or ONLY ( `<table name>` ), \[\[AS\] `<merge correlation name>`\] USING `<table
     /// reference>` ON `<search condition>` `<merge operation
     /// specification>`, from MERGE, which begins here, to the end of its
     /// last `<merge when clause>`.
     pub(super) fn merge_statement(&mut self) -> Result<SqlStatement> {
-        // MERGE, an identifier the caller has seen begin the statement.
+        // MERGE, an identifier the caller has seen begin the statement;
+        // [ISO/IEC 9075-14:2006 draft §14.5] then WITH's options, if written.
         self.advance();
+        let xml = self.with_scoped_options()?;
         self.expect_kw(kw::INTO)?;
         let (target, only) = self.target_table()?;
         let correlation = self.merge_correlation()?;
@@ -39,7 +43,7 @@ impl Parser {
         while self.is_kw(kw::WHEN) {
             clauses.push(self.merge_when_clause()?);
         }
-        Ok(SqlStatement::Merge(Box::new(MergeStatement { target, only, correlation, source, on, clauses })))
+        Ok(SqlStatement::Merge(Box::new(MergeStatement { target, only, correlation, source, on, clauses, xml })))
     }
 
     /// \[\[AS\] `<merge correlation name>`\], if written, and where it

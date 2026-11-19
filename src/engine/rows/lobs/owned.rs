@@ -25,6 +25,7 @@ use crate::storage::{LobLog, Row, RowId};
 use crate::txn::{NO_TRANSACTION, TxId};
 use crate::value::Value;
 use crate::value::lob::{CHUNK_OCTETS, Chunk, Lob, LobKind, count_chars};
+use crate::value::xml::XmlValue;
 
 impl RowTable {
     /// The directories of the large objects the record `record`, of row
@@ -37,7 +38,7 @@ impl RowTable {
         let mut fetch = |reference| self.get_value(id, reference);
         let mut named = Vec::new();
         for &(c, _) in self.lobs.columns() {
-            if let Value::Lob(l) = self.format.column_with(&plain, c, &mut fetch)?
+            if let Some(l) = self.format.column_with(&plain, c, &mut fetch)?.as_lob()
                 && let [crate::value::lob::Part::Reference(object)] = l.parts()
             {
                 named.push(*object);
@@ -86,15 +87,23 @@ impl RowTable {
             None => Vec::new(),
         };
         for &(c, kind) in self.lobs.columns() {
-            let Some(Value::Lob(l)) = row.get(c) else { continue };
+            if let Some(Value::Xml(x)) = row.get(c)
+                && x.stored_lob().is_none()
+            {
+                let stored = Value::Xml(XmlValue::stored(x.lob()?));
+                if let Some(slot) = row.get_mut(c) {
+                    *slot = stored;
+                }
+            }
+            let Some(l) = row.get(c).and_then(Value::as_lob) else { continue };
             let shared =
                 self.lobs.kept_here(l).map(|id| named.contains(&id) || (tx != NO_TRANSACTION && self.made_by(tx, &[id]).unwrap_or(false)));
             if shared == Some(true) || (l.inline().is_some() && l.octets() <= IN_RECORD_OCTETS) {
                 continue;
             }
             let kept = if l.octets() <= IN_RECORD_OCTETS { held(l, kind)? } else { self.write_lob(tx, l, &mut *log)? };
-            if let Some(slot) = row.get_mut(c) {
-                *slot = Value::Lob(kept);
+            if let Some(slot) = row.get_mut(c).and_then(Value::as_lob_mut) {
+                *slot = kept;
             }
         }
         Ok(())

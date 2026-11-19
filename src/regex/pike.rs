@@ -131,8 +131,8 @@ impl<T: Text + ?Sized> Search<'_, T> {
                     }
                     self.stack.push(Job::Visit(after));
                 }
-                Inst::LineStart(multiline) => self.assert(line_start(self.text, at, *multiline)?, after),
-                Inst::LineEnd(multiline) => self.assert(line_end(self.text, at, *multiline)?, after),
+                Inst::LineStart(lines) => self.assert(line_start(self.text, at, *lines)?, after),
+                Inst::LineEnd(lines) => self.assert(line_end(self.text, at, *lines)?, after),
                 // An iteration that matches nothing reaches an instruction
                 // already seen at this position, so needs no check here.
                 Inst::LoopEnter(_) | Inst::LoopCheck(_) => self.stack.push(Job::Visit(after)),

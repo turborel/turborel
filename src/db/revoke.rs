@@ -126,6 +126,9 @@ pub(in crate::db) struct Abandoned {
     /// by specific name, whose owner loses a privilege their bodies need,
     /// or whose bodies invoke a routine dropped.
     pub(in crate::db) routines: Vec<QualifiedName>,
+    /// \[EXTENSION\] Registered XQuery modules that imported one dropped,
+    /// or whose owner loses USAGE on one they imported (RULES.md D106).
+    pub(in crate::db) xquery_modules: Vec<QualifiedName>,
 }
 
 impl Abandoned {
@@ -139,6 +142,32 @@ impl Abandoned {
             && self.columns.is_empty()
             && self.triggers.is_empty()
             && self.routines.is_empty()
+            && self.xquery_modules.is_empty()
+    }
+
+    /// `other` added, each not there already.
+    pub(in crate::db) fn absorb(&mut self, other: Abandoned) {
+        fn add<T: PartialEq>(into: &mut Vec<T>, more: Vec<T>) {
+            for item in more {
+                if !into.contains(&item) {
+                    into.push(item);
+                }
+            }
+        }
+        add(&mut self.grants, other.grants);
+        add(&mut self.views, other.views);
+        add(&mut self.owners, other.owners);
+        add(&mut self.domain_constraints, other.domain_constraints);
+        add(&mut self.assertions, other.assertions);
+        add(&mut self.columns, other.columns);
+        add(&mut self.triggers, other.triggers);
+        add(&mut self.routines, other.routines);
+        add(&mut self.xquery_modules, other.xquery_modules);
+        for (table, c) in other.constraints {
+            if !self.constraints.iter().any(|(t, k)| *t == table && k.name == c.name) {
+                self.constraints.push((table, c));
+            }
+        }
     }
 
     /// The first of them, named for a refusal.
@@ -168,6 +197,9 @@ impl Abandoned {
         if let Some(r) = self.routines.first() {
             return format!("routine {r}");
         }
+        if let Some(m) = self.xquery_modules.first() {
+            return format!("registered XQuery module {m}");
+        }
         self.columns.first().map(|(t, c)| format!("generated column {t}.{c}")).unwrap_or_default()
     }
 }
@@ -175,8 +207,9 @@ impl Abandoned {
 impl State {
     /// REVOKE `r` by `auth`, its names in schema `schema`, of an object
     /// other than a table or view: a collation, a domain, a sequence
-    /// generator, a module, a type or a routine, each as its own revoke
-    /// takes it; none of a table or view.
+    /// generator, a module, a type, a routine, a registered XML Schema or
+    /// a registered XQuery module,
+    /// each as its own revoke takes it; none of a table or view.
     fn revoke_of_other(&mut self, (auth, schema): (&str, &str), r: &RevokeStatement) -> Option<Result<Defined>> {
         let revoked = match r.object {
             PrivilegeObject::Collation => self.revoke_collation_usage((auth, schema), r),
@@ -184,6 +217,8 @@ impl State {
             PrivilegeObject::Sequence => self.revoke_sequence_usage((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Module => self.revoke_on_module((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Model => self.revoke_model_execute((auth, schema), r).or_at(r.table.at),
+            PrivilegeObject::XmlSchema => self.revoke_xml_schema_usage((auth, schema), r).or_at(r.table.at),
+            PrivilegeObject::XQueryModule => self.revoke_xquery_module_usage((auth, schema), r).or_at(r.table.at),
             PrivilegeObject::Type | PrivilegeObject::SpecificRoutine(_) | PrivilegeObject::Routine(_) => {
                 self.revoke_on_type((auth, schema), r).or_at(r.table.at)
             }
@@ -372,7 +407,8 @@ impl State {
     }
 
     /// Makes `after` the catalog, the views, constraints and assertions
-    /// `abandoned` dropped with CASCADE [ISO/IEC 9075:1992 §11.37 GR3-GR6]: what that
+    /// `abandoned` dropped with CASCADE [ISO/IEC 9075:1992 §11.37 GR3-GR6],
+    /// and its triggers, routines and registered XQuery modules: what that
     /// took away, and the locks it needs.
     ///
     /// # Errors
@@ -438,6 +474,9 @@ impl State {
         let taken = self.drop_routines(&abandoned.routines)?;
         locks.extend(taken.names.iter().map(|name| (name.clone(), LockMode::Exclusive)));
         dropped.absorb(taken);
+        // [EXTENSION] The registered XQuery modules, once what imports them
+        // is gone.
+        self.drop_abandoned_modules(abandoned, (&mut dropped, &mut locks));
         Ok((dropped, locks))
     }
 

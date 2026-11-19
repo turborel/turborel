@@ -8,7 +8,7 @@ use super::super::tables;
 use crate::ast::{MethodKind, OrderingForm, RefGeneration};
 use crate::catalog::{
     AttributeDesc, CastDesc, Catalog, DataAccess, MethodSpecDesc, OrderingCategory, OrderingDesc, ParameterMode, QualifiedName,
-    RefRepresentation, RoutineDesc, SqlParameter, StructuredDesc, TransformGroupDesc, TypedDesc, UsageDesc,
+    RefRepresentation, RoutineDesc, SqlParameter, SqlRoutineDesc, StructuredDesc, TransformGroupDesc, TypedDesc, UsageDesc,
 };
 use crate::db::{Database, State};
 use crate::system::SystemRead;
@@ -22,7 +22,7 @@ fn s(ident: &str) -> QualifiedName {
 
 /// A routine of a type, its specific name `specific`.
 fn routine(name: &str, specific: &str) -> RoutineDesc {
-    RoutineDesc { name: name.to_owned(), specific: specific.to_owned(), execute: Vec::new() }
+    RoutineDesc { name: name.to_owned(), specific: specific.to_owned(), execute: Vec::new(), stamps: crate::catalog::Stamps::default() }
 }
 
 /// The attribute `name` of `t`, defined by `by`, of default `default`.
@@ -52,6 +52,7 @@ fn method(name: &str, specific: &str, parameters: Vec<SqlParameter>, returns: &D
         access: DataAccess::Contains,
         null_call: false,
         created: 1,
+        stamps: crate::catalog::Stamps::default(),
     }
 }
 
@@ -122,11 +123,7 @@ fn state() -> State {
     point.attributes = vec![attribute("POINT", "X", &integer, None)];
     let point_type = point.data_type();
     let maker = c.routines_named(&s("MAKE_POINT"))[0].clone();
-    let mut body = maker.clone();
-    (body.name, body.specific, body.created) = (s("RENAMED"), s("RENAMED_1"), maker.created.saturating_add(1));
-    body.parameters = vec![parameter("SELF", &person_type), parameter("N", &name)];
-    (body.returns, body.method) = (Some(person_type), Some((s("PERSON"), MethodKind::Instance)));
-    c.put_routine(body);
+    c.put_routine(renamed_body(&maker, person_type, &name));
     c.put_cast(CastDesc { source: integer, target: point_type, function: maker.specific.clone(), assignment: true });
     c.put_ordering(OrderingDesc { udt: s("PERSON"), form: OrderingForm::Equals, category: OrderingCategory::State(None) });
     c.put_ordering(OrderingDesc { udt: s("POINT"), form: OrderingForm::Full, category: OrderingCategory::Map(s("POINT_X_OBSERVER")) });
@@ -138,6 +135,20 @@ fn state() -> State {
     make_typed(&mut *c, boss);
     st.catalog = Arc::from(c);
     st
+}
+
+/// The body of PERSON's method RENAMED, of type `person`, of a parameter
+/// N of type `name`: a routine like `maker`, made after it, of a method's
+/// own text, so its body binds as the Definition Schema's tables of usage
+/// bind it.
+fn renamed_body(maker: &SqlRoutineDesc, person: DataType, name: &DataType) -> SqlRoutineDesc {
+    let mut body = maker.clone();
+    (body.name, body.specific, body.created) = (s("RENAMED"), s("RENAMED_1"), maker.created.saturating_add(1));
+    body.text = "CREATE INSTANCE METHOD RENAMED (N CHARACTER VARYING(20)) RETURNS PERSON FOR PERSON RETURN SELF".to_owned();
+    "RETURN SELF".clone_into(&mut body.body);
+    body.parameters = vec![parameter("SELF", &person), parameter("N", name)];
+    (body.returns, body.method) = (Some(person), Some((s("PERSON"), MethodKind::Instance)));
+    body
 }
 
 /// Makes PEOPLE typed of PERSON, its BOSS of `boss`, and STAFF typed of

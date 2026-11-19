@@ -90,7 +90,8 @@ fn second() -> [&'static [Mutation]; 28] {
 }
 
 /// The areas after the rest, in order: projection's, JSON's, expression indexes', full-text's
-/// and T621's, then the spatial areas', the planar engine's, stored CHECKs' calls, replication's and the server's.
+/// and T621's, then the raising guards', XQuery's and XML's, the Information Schema's among them,
+/// then the last areas (`last`).
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     let json: [&'static [Mutation]; 10] = [
         &super::projection::PROJECTION,
@@ -104,7 +105,32 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::sqlmm_fulltext::SQLMM_FULLTEXT,
         &super::t621::T621,
     ];
-    let last: [&'static [Mutation]; 24] = [
+    let xml: [&'static [Mutation]; 17] = [
+        &super::guarded::GUARDED,
+        &super::xquery::XQUERY,
+        &super::xquery_functions::XQUERY_FUNCTIONS,
+        &super::xquery_statics::XQUERY_STATICS,
+        &super::xml_publishing::XML_PUBLISHING,
+        &super::xml_composite::XML_COMPOSITE,
+        &super::xml_map::XML_MAP,
+        &super::xml_index::XML_INDEX,
+        &super::xquery_eval::XQUERY_EVAL,
+        &super::xml_schema::XML_SCHEMA,
+        &super::xml_schema_catalog::XML_SCHEMA_CATALOG,
+        &super::short_names::SHORT_NAMES,
+        &super::information::INFORMATION,
+        &super::stamps::STAMPS,
+        &super::xml_scoped::XML_SCOPED,
+        &super::xquery_modules::XQUERY_MODULES,
+        &super::xml::XML,
+    ];
+    json.into_iter().chain(xml).chain(last())
+}
+
+/// The last areas, in order: the spatial areas', the planar engine's, stored CHECKs' calls,
+/// replication's and the server's.
+fn last() -> [&'static [Mutation]; 24] {
+    [
         &super::near::NEAR,
         &super::rtree::RTREE,
         &super::spatial_regions::SPATIAL_REGIONS,
@@ -129,6 +155,5 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::WAITS,
         &super::VR,
         &super::SERVER,
-    ];
-    json.into_iter().chain(last)
+    ]
 }

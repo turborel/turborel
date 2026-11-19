@@ -81,7 +81,8 @@ fn table_constraints(seen: &Seen<'_>) -> Vec<Row> {
 // ---------------------------------------------------------------------------
 
 fn key_columns_columns() -> Vec<ColumnDesc> {
-    Columns::of().ids("CONSTRAINT", true).ids("TABLE", true).id("COLUMN_NAME", true).number("ORDINAL_POSITION", true).done()
+    let columns = Columns::of().ids("CONSTRAINT", true).ids("TABLE", true).id("COLUMN_NAME", true);
+    columns.number("ORDINAL_POSITION", true).number("POSITION_IN_UNIQUE_CONSTRAINT", false).done()
 }
 
 /// The UNIQUE or PRIMARY KEY constraint of the table `fk` references whose
@@ -100,26 +101,28 @@ fn referenced<'c>(catalog: &'c dyn Catalog, fk: &ForeignKey) -> Option<(&'c Cons
     })
 }
 
-/// Each column of each UNIQUE, PRIMARY KEY and referential constraint, at
-/// its position in it, from 1; a referencing column at the position in the
-/// referenced unique constraint of the column it references \[Description
-/// 3\].
+/// [ISO/IEC 9075-11:2006 draft §6.28 Description 3, 4] Each column of each
+/// UNIQUE, PRIMARY KEY and referential constraint, at its position in it,
+/// from 1; of a referencing column, POSITION_IN_UNIQUE_CONSTRAINT the
+/// position in the referenced unique constraint of the column it
+/// references, null of a UNIQUE or PRIMARY KEY constraint's.
 fn key_columns(seen: &Seen<'_>) -> Vec<Row> {
     let catalog = catalog_name(seen);
     let mut rows = Vec::new();
     for (t, c) in constraints(seen) {
-        let positioned: Vec<(usize, usize)> = match &c.kind {
-            ConstraintKind::Unique { columns, .. } => columns.iter().enumerate().map(|(k, &at)| (at, k)).collect(),
+        let positioned: Vec<(usize, Option<usize>)> = match &c.kind {
+            ConstraintKind::Unique { columns, .. } => columns.iter().map(|&at| (at, None)).collect(),
             ConstraintKind::ForeignKey(fk) => {
                 let key = referenced(&*seen.state.catalog, fk).map_or(&[][..], |(_, columns)| columns);
                 let place = |j: usize, r: &usize| key.iter().position(|k| k == r).unwrap_or(j);
-                fk.columns.iter().zip(&fk.referenced).enumerate().map(|(j, (&at, r))| (at, place(j, r))).collect()
+                fk.columns.iter().zip(&fk.referenced).enumerate().map(|(j, (&at, r))| (at, Some(place(j, r)))).collect()
             }
             ConstraintKind::NotNull(_) | ConstraintKind::Check { .. } => Vec::new(),
         };
-        for (at, k) in positioned {
+        for (j, (at, unique)) in positioned.into_iter().enumerate() {
             let named = [ids(&catalog, &c.name), ids(&catalog, &t.name)].concat();
-            rows.push([named, vec![column(t, at), number(k.saturating_add(1))]].concat());
+            let unique = unique.map_or(Value::Null, |k| number(k.saturating_add(1)));
+            rows.push([named, vec![column(t, at), number(j.saturating_add(1)), unique]].concat());
         }
     }
     rows
@@ -184,7 +187,7 @@ fn checks(seen: &Seen<'_>) -> Vec<Row> {
     for (t, c) in constraints(seen) {
         let clause = match &c.kind {
             ConstraintKind::NotNull(at) => long(&format!("{} IS NOT NULL", t.columns.get(*at).map_or("", |col| col.name.as_str()))),
-            ConstraintKind::Check { text: condition, .. } => long(condition),
+            ConstraintKind::Check { text: condition, .. } => check_clause(condition),
             ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) => continue,
         };
         rows.push([ids(&catalog, &c.name).to_vec(), vec![clause]].concat());
@@ -193,7 +196,7 @@ fn checks(seen: &Seen<'_>) -> Vec<Row> {
     let domains = seen.state.catalog.domains().into_iter().flat_map(|d| d.constraints.iter());
     for c in domains.chain(seen.state.catalog.assertions()) {
         if let ConstraintKind::Check { text: condition, .. } = &c.kind {
-            rows.push([ids(&catalog, &c.name).to_vec(), vec![long(condition)]].concat());
+            rows.push([ids(&catalog, &c.name).to_vec(), vec![check_clause(condition)]].concat());
         }
     }
     rows
@@ -263,4 +266,11 @@ fn check_columns(seen: &Seen<'_>) -> Result<Vec<Row>> {
         }
     }
     Ok(rows)
+}
+
+/// [ISO/IEC 9075-11:2006 draft §6.14 Description 2] The CHECK_CLAUSE of
+/// the condition the catalog keeps as `text`: its `<search condition>`, without the XML options
+/// before it [ISO/IEC 9075-14:2006 draft §12.2, §12.4].
+fn check_clause(text: &str) -> Value {
+    long(&crate::parser::Parser::check_clause(text).unwrap_or_else(|_| text.to_owned()))
 }

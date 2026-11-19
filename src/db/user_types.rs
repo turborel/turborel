@@ -19,7 +19,7 @@ use super::{State, rule};
 use crate::ast::{OrderingForm, TypeDefinition, TypeName, TypeOption};
 use crate::binder::{alike, qualify};
 use crate::catalog::{
-    OrderingCategory, OrderingDesc, QualifiedName, RoutineDesc, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, owner_of, sole,
+    OrderingCategory, OrderingDesc, QualifiedName, RoutineDesc, Stamps, TO_DISTINCT_SUFFIX, TO_SOURCE_SUFFIX, UserTypeDesc, owner_of, sole,
     types_in,
 };
 use crate::error::{At, Code, Result, SqlError, SqlState};
@@ -99,7 +99,10 @@ impl State {
             Some(n) => n,
             None => type_name_of(&source).ok_or_else(|| rule(format!("[ISO/IEC 9075-2:2023 §9.9] {source} has no type name")))?.to_owned(),
         };
-        let routine = |name: String, suffix: &str| RoutineDesc { name, specific: format!("{}{suffix}", qn.ident), execute: Vec::new() };
+        // [ISO/IEC 9075-2:2023 §11.60 GR5] made as the type is defined.
+        let stamps = Stamps::at(self.stamp);
+        let routine =
+            |name: String, suffix: &str| RoutineDesc { name, specific: format!("{}{suffix}", qn.ident), execute: Vec::new(), stamps };
         let desc = UserTypeDesc {
             to_distinct: routine(to_distinct, TO_DISTINCT_SUFFIX),
             to_source: routine(to_source, TO_SOURCE_SUFFIX),
@@ -129,7 +132,7 @@ impl State {
             TypeName::Data(DataType::Extension(t)) => refused(t.kind.name(), 0),
             TypeName::Data(t) => Ok(t.clone()),
             TypeName::Domain(name) | TypeName::Extension { name, .. } | TypeName::Reference(name, _) => refused(&name.ident, name.at),
-            TypeName::Collection(..) => self.data_type_of(of, (schema, sole(&*self.catalog, owner))),
+            TypeName::Collection(..) | TypeName::XmlSchema(..) => self.data_type_of(of, (schema, sole(&*self.catalog, owner))),
         }
     }
 
@@ -182,9 +185,10 @@ impl State {
 /// [ISO/IEC 9075-2:2023 §11.51 GR2c] The ordering of distinct type
 /// `desc`: FULL by map of its function to its source type, of a source
 /// no collection type nor large object one; EQUALS ONLY of a large object
-/// one (Feature T042); none of a collection type.
+/// one (Feature T042); none of a collection type, nor of an XML type, as
+/// XML values are not comparable [ISO/IEC 9075-14:2006 draft §4.2.4].
 fn distinct_ordering(desc: &UserTypeDesc) -> Option<OrderingDesc> {
-    if matches!(desc.source, DataType::Array(_) | DataType::Multiset(_)) {
+    if matches!(desc.source, DataType::Array(_) | DataType::Multiset(_) | DataType::Xml(_)) {
         return None;
     }
     let form = if desc.source.is_lob() { OrderingForm::Equals } else { OrderingForm::Full };
@@ -248,12 +252,14 @@ fn respelled(t: DataType) -> DataType {
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Json
-        | DataType::Extension(_)) => other,
+        | DataType::Extension(_)
+        | DataType::Xml(_)) => other,
     }
 }
 
 /// [ISO/IEC 9075-2:2023 §9.9 SR2] The IDENTIFIER of SDT `t`, as IV223
-/// spells a number's type; none of a type no source is.
+/// spells a number's type, XML of an XML type [ISO/IEC 9075-14:2006 draft
+/// §10.5 SR1]; none of a type no source is.
 pub(super) fn type_name_of(t: &DataType) -> Option<&'static str> {
     Some(match t {
         DataType::Character { .. } => "CHAR",
@@ -272,6 +278,7 @@ pub(super) fn type_name_of(t: &DataType) -> Option<&'static str> {
         DataType::Boolean => "BOOLEAN",
         DataType::Array(_) => "ARRAY",
         DataType::Multiset(_) => crate::value::types::MULTISET_NAME,
+        DataType::Xml(_) => crate::value::types::XML_NAME,
         DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Structured(_)

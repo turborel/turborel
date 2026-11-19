@@ -1,0 +1,167 @@
+//! The functions of XMLELEMENT [ISO/IEC 9075-14:2006 draft §6.14] and
+//! XMLFOREST [§6.15], as the binder calls them (`binder/xml/element.rs`),
+//! each RETURNING SEQUENCE: an element constructed as §10.13 says.
+
+use std::sync::Arc;
+
+use super::super::{Mapping, ScalarFunction, xml_lexical, xml_mapped};
+use crate::ast::ContentOption;
+use crate::error::Result;
+use crate::value::xml::{XmlType, XmlValue};
+use crate::value::{DataType, Value};
+use crate::xml::{Item, Kind, QName, Sequence, Specified, Syntax, Whitespace, XSI_NAMESPACE, XSI_PREFIX, concatenate, element, parse};
+
+/// [§10.13 GR4c iii 1 B] The local name and value of `xsi:nil`.
+const NIL: (&str, &str) = ("nil", "true");
+
+/// [§10.13 GR4c ii 2] Whether `contents` hold an element or a text node,
+/// or an atomic value, which is made one [XQuery §3.7.1.3]; a document
+/// node's children counting as its own.
+fn has_content(contents: &[Arc<Sequence>]) -> bool {
+    let is_content = |k: Option<Kind>| matches!(k, Some(Kind::Element | Kind::Text));
+    contents.iter().flat_map(|s| s.items()).any(|item| match item {
+        Item::Atomic(_) => true,
+        Item::Node(node) => {
+            let tree = node.tree();
+            is_content(node.kind()) || (node.kind() == Some(Kind::Document) && tree.children(node.id()).any(|c| is_content(tree.kind(c))))
+        }
+    })
+}
+
+/// A value of content, and the declared type it is mapped by if that is
+/// a collection type, or a distinct type of one [§9.8 GR1a, GR9j].
+type Content<'v> = (&'v Value, Option<&'v DataType>);
+
+/// [§10.13 GR4c i] Value `v`, not null, as the element's content: an XML
+/// value as it is \[1 A\]; another mapped to XML [§9.8] as `m` says, a
+/// collection by its declared type `t`, `&`, `<`, `>` and a carriage
+/// return as references, and parsed as CONTENT, whitespace preserved
+/// \[1 B\].
+fn content_of((v, t): Content<'_>, m: Mapping) -> Result<Arc<Sequence>> {
+    if let Value::Xml(x) = v {
+        return x.sequence();
+    }
+    let text = match t {
+        Some(t) => xml_mapped(v, t, m)?,
+        None => xml_lexical(v, m.encoding, m.charmapping)?,
+    };
+    Ok(Arc::new(Sequence::document(parse(&text, Syntax::Content, Whitespace::Preserve)?)))
+}
+
+/// [§10.13] The element of `name` and `attributes` and the content
+/// `values`, by `option`, mapped as `m` says: none, the null value, if
+/// every value is null and the option NULL ON NULL; the empty sequence of
+/// ABSENT ON NULL \[GR4a, GR4b\]; else the element, its content the
+/// values not null, `xsi:nil="true"` after its attributes if every value
+/// is null and the option NIL ON NULL, or none is an element or text and
+/// the option NIL ON NO CONTENT \[GR4c\].
+fn construct(
+    name: &QName,
+    mut attributes: Vec<Specified>,
+    values: &[Content<'_>],
+    option: Option<ContentOption>,
+    m: Mapping,
+) -> Result<Option<Sequence>> {
+    let all_null = !values.is_empty() && values.iter().all(|(v, _)| v.is_null());
+    match (all_null, option) {
+        (true, Some(ContentOption::NullOnNull)) => return Ok(None),
+        (true, Some(ContentOption::AbsentOnNull)) => return Ok(Some(Sequence::default())),
+        (true | false, _) => {}
+    }
+    let contents = values.iter().filter(|(v, _)| !v.is_null()).map(|c| content_of(*c, m)).collect::<Result<Vec<_>>>()?;
+    let nilled = match option {
+        Some(ContentOption::NilOnNull) => all_null,
+        Some(ContentOption::NilOnNoContent) => !has_content(&contents),
+        Some(ContentOption::NullOnNull | ContentOption::EmptyOnNull | ContentOption::AbsentOnNull) | None => false,
+    };
+    if nilled {
+        let (local, value) = NIL;
+        let nil = QName { prefix: Some(XSI_PREFIX.into()), uri: Some(XSI_NAMESPACE.into()), local: local.into() };
+        attributes.push(Specified { name: nil, value: value.into(), is_id: false, is_idrefs: false });
+    }
+    let refs: Vec<&Sequence> = contents.iter().map(|s| &**s).collect();
+    element(name.clone(), attributes, &refs).map(Some)
+}
+
+/// [§6.14] XMLELEMENT, RETURNING SEQUENCE: of its attributes' values,
+/// then its content's.
+#[derive(Debug)]
+pub struct XmlElement {
+    /// The element's name, its namespace URI found [SR5, SR6].
+    pub name: QName,
+    /// The attributes' names, in order \[SR3\].
+    pub attributes: Vec<QName>,
+    /// The `<XML content option>`, of content alone \[SR8\].
+    pub option: Option<ContentOption>,
+    /// The declared type of each value of content that is a collection,
+    /// or a distinct type of one, mapped by it [§9.8 GR9j]; none of
+    /// another \[SR7\].
+    pub content: Vec<Option<DataType>>,
+    /// How binary strings are written [GR1, GR2], and the SQL-session's
+    /// displacement, a datetime inside a collection written in it [§9.8
+    /// GR7]; characters mapped [§10.13 GR4c i 1 B].
+    pub mapping: Mapping,
+}
+
+impl ScalarFunction for XmlElement {
+    fn name(&self) -> &'static str {
+        "XMLELEMENT"
+    }
+
+    fn return_type(&self, _: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Xml(XmlType::Sequence))
+    }
+
+    /// [§6.14 GR3 to GR6] Each attribute whose value is not null, that
+    /// value mapped to XML [§9.8], characters as they are; the element
+    /// §10.13 makes of them and the content.
+    fn call(&self, args: &[Value]) -> Result<Value> {
+        let (given, content) = args.split_at(self.attributes.len().min(args.len()));
+        let mut attributes = Vec::with_capacity(given.len());
+        for (name, v) in self.attributes.iter().zip(given) {
+            if !v.is_null() {
+                let value = xml_lexical(v, self.mapping.encoding, false)?;
+                attributes.push(Specified { name: name.clone(), value, is_id: false, is_idrefs: false });
+            }
+        }
+        let types = self.content.iter().map(Option::as_ref).chain(std::iter::repeat(None));
+        let values: Vec<Content<'_>> = content.iter().zip(types).collect();
+        Ok(construct(&self.name, attributes, &values, self.option, self.mapping)?.map_or(Value::Null, |s| Value::Xml(XmlValue::of(s))))
+    }
+}
+
+/// [§6.15] XMLFOREST, RETURNING SEQUENCE: of its elements' values.
+#[derive(Debug)]
+pub struct XmlForest {
+    /// The elements' names, their namespace URIs found \[SR2\].
+    pub names: Vec<QName>,
+    /// The `<XML content option>` \[SR3\].
+    pub option: ContentOption,
+    /// The declared type of each value that is a collection, or a
+    /// distinct type of one, mapped by it [§9.8 GR9j]; none of another
+    /// \[SR2b\].
+    pub types: Vec<Option<DataType>>,
+    /// How values are mapped, as XMLELEMENT's [GR1, GR2].
+    pub mapping: Mapping,
+}
+
+impl ScalarFunction for XmlForest {
+    fn name(&self) -> &'static str {
+        "XMLFOREST"
+    }
+
+    fn return_type(&self, _: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Xml(XmlType::Sequence))
+    }
+
+    /// [§6.15 GR3 to GR7] An element of each value, §10.13's of no
+    /// attribute, each concatenated with the last [§10.14].
+    fn call(&self, args: &[Value]) -> Result<Value> {
+        let mut made = Vec::with_capacity(args.len());
+        let types = self.types.iter().map(Option::as_ref).chain(std::iter::repeat(None));
+        for ((name, v), t) in self.names.iter().zip(args).zip(types) {
+            made.push(construct(name, Vec::new(), &[(v, t)], Some(self.option), self.mapping)?);
+        }
+        Ok(concatenate(made.iter().map(Option::as_ref)).map_or(Value::Null, |s| Value::Xml(XmlValue::of(s))))
+    }
+}

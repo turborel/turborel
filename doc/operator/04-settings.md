@@ -152,9 +152,14 @@ A change of the database's value is told to the diagnostics,
 A session may turn some things on or off for itself, over the
 database's value, with [SET](../sql/statements/set-setting.md):
 whether its commits wait for the log, LOG.COMMIT_SYNC; whether it takes
-calls of registered functions, SQL.FUNCTION_CALLS; and each of the
-optimizer's rules, OPTIMIZER and the rule's name, as to see a plan made
-without it. A rule a program adds to the optimizer has its setting too.
+calls of registered functions, SQL.FUNCTION_CALLS; whether the XQuery
+expressions of the statements it prepares are statically typed,
+XQUERY.STATIC_TYPING ([Static typing](../sql/19-xml.md#static-typing));
+and each of the optimizer's rules, OPTIMIZER and the rule's name, as to
+see a plan made without it. A rule a program adds to the optimizer has
+its setting too. A definition, such as a view, is typed as it is made by
+the XQUERY.STATIC_TYPING of the session making it, and read as it was
+made by every session.
 
 ```sql
 SET LOG.COMMIT_SYNC = 'OFF';

@@ -200,7 +200,8 @@ impl Trim {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => Ok(text(source)?.map_or(Value::Null, |s| Value::Char(trimmed(s, &set, ends).to_owned()))),
+            | Value::Extension(_)
+            | Value::Xml(_) => Ok(text(source)?.map_or(Value::Null, |s| Value::Char(trimmed(s, &set, ends).to_owned()))),
         }
     }
 }

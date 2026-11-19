@@ -95,6 +95,7 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | VECTOR.BEAM_WIDTH | 0 | INTEGER FROM 0 TO 16 | at once | *session* |
 | VECTOR.BUILD_MEMORY_BYTES | 268435456 | INTEGER FROM 65536 TO 9223372036854775807 | at once |  |
 | VECTOR.SEARCH_LIST | 0 | INTEGER FROM 0 TO 10000 | at once | *session* |
+| XQUERY.STATIC_TYPING | OFF | ONE OF ON, OFF | at once | *session* |
 
 Each in a sentence:
 
@@ -162,6 +163,7 @@ Each in a sentence:
 - **VECTOR.BEAM_WIDTH**: The nodes whose neighbours a DiskANN search reads together each hop, unless the query names its own; 0 for each index's own.
 - **VECTOR.BUILD_MEMORY_BYTES**: The bytes a vector index's build holds in memory; past them it builds parts and merges them.
 - **VECTOR.SEARCH_LIST**: The candidates an approximate search keeps, HNSW's ef and DiskANN's L, unless the query names its own; 0 for each index's own.
+- **XQUERY.STATIC_TYPING**: Whether the XQuery expressions of XMLQUERY, XMLEXISTS and XMLTABLE are statically typed as a statement is prepared, each type error raised then, before any is evaluated: ON; or as a query declaring the option static-typing of urn:turborel:option asks, OFF. A definition is typed as it is made, as the value of the session making it or its query's option asks, and keeps that typing whenever it is bound again.
 
 ## The server's settings
 

@@ -114,7 +114,9 @@ impl Gathering {
                 }
                 Gathered::Values(values) => {
                     let mut value = [if at < format.columns() { format.column_with(record, at, fetch)? } else { Value::Null }];
-                    if let (Some(lobs), [Value::Lob(_)]) = (lobs, &value) {
+                    if let (Some(lobs), [v]) = (lobs, &value)
+                        && v.as_lob().is_some()
+                    {
                         lobs.resolve_column(at, &mut value);
                     }
                     let [value] = value;

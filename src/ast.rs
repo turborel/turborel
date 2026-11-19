@@ -63,6 +63,7 @@ mod triggers;
 mod user_types;
 mod users;
 mod window;
+mod xml;
 
 pub use alter::AlterAction;
 pub use composite::{Composite, ValueOrder};
@@ -145,6 +146,11 @@ pub use window::{
     Exclusion, Frame, FrameBound, FrameUnits, NestedWindow, OffsetFunction, RankKind, RowMarker, ValueFunction, Which, WindowDefinition,
     WindowFunction, WindowKind, WindowOver, WindowSpecification,
 };
+pub use xml::{
+    ContentOption, Dcs, ElementConstructor, ForestConstructor, LexicallyScopedOptions, MapResults, MapSource, Named, NamespaceItem,
+    OnEmpty, Passing, Returning, XQueryModuleDefinition, XmlArgument, XmlArguments, XmlMapping, XmlOperator, XmlQuery, XmlRegularColumn,
+    XmlSchemaDefinition, XmlTable, XmlTableColumn, XmlValidAccording, XmlValidWhat, rows_of,
+};
 
 // ---------------------------------------------------------------------------
 // [X3.135-1986 §8.7] <insert statement>
@@ -163,6 +169,9 @@ pub struct InsertStatement {
     pub overriding: Option<Overriding>,
     /// The rows inserted.
     pub source: InsertSource,
+    /// [ISO/IEC 9075-14:2006 draft §14.4] WITH's `<XML lexically scoped
+    /// options>`, if written.
+    pub xml: Option<LexicallyScopedOptions>,
 }
 
 /// A `<column name>` of a column list, and where it is written.
@@ -299,6 +308,9 @@ pub enum SqlStatement {
         portion: Option<Box<Portion>>,
         /// The `<search condition>`, if written.
         where_clause: Option<SearchCondition>,
+        /// [ISO/IEC 9075-14:2006 draft §14.3] WITH's `<XML lexically scoped
+        /// options>`, if written.
+        xml: Option<Box<LexicallyScopedOptions>>,
     },
     /// [ISO/IEC 9075-2:2023 §14.12] `<merge statement>`.
     Merge(Box<MergeStatement>),
@@ -466,6 +478,9 @@ pub enum SqlStatement {
         set: Vec<SetClause>,
         /// The `<cursor name>`, and where it is written.
         cursor: (String, usize),
+        /// [ISO/IEC 9075-14:2006 draft §14.6] WITH's `<XML lexically scoped
+        /// options>`, if written.
+        xml: Option<Box<LexicallyScopedOptions>>,
     },
     /// [X3.135-1986 §8.12] `<update statement: searched>` ::= UPDATE `<table name>`
     ///     SET `<set clause: searched>` \[{,`<set clause: searched>`}...\] \[WHERE `<search condition>`\]
@@ -481,6 +496,9 @@ pub enum SqlStatement {
         set: Vec<SetClause>,
         /// The `<search condition>`, if written.
         where_clause: Option<SearchCondition>,
+        /// [ISO/IEC 9075-14:2006 draft §14.7] WITH's `<XML lexically scoped
+        /// options>`, if written.
+        xml: Option<Box<LexicallyScopedOptions>>,
     },
 }
 

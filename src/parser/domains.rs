@@ -121,9 +121,12 @@ impl Parser {
         let base = self.named_or_row()?;
         let t = self.collection_suffix()?.into_iter().fold(base, |t, kind| match t {
             TypeName::Data(element) => TypeName::Data(kind.of(element)),
-            TypeName::Domain(_) | TypeName::Extension { .. } | TypeName::Collection(..) | TypeName::Row(_) | TypeName::Reference(..) => {
-                TypeName::Collection(Box::new(t), kind)
-            }
+            TypeName::Domain(_)
+            | TypeName::Extension { .. }
+            | TypeName::Collection(..)
+            | TypeName::Row(_)
+            | TypeName::Reference(..)
+            | TypeName::XmlSchema(..) => TypeName::Collection(Box::new(t), kind),
         });
         within_nesting(type_nesting(&t), at)?;
         Ok(t)
@@ -143,13 +146,19 @@ impl Parser {
                 | TypeName::Extension { .. }
                 | TypeName::Collection(..)
                 | TypeName::Row(_)
-                | TypeName::Reference(..) => None,
+                | TypeName::Reference(..)
+                | TypeName::XmlSchema(..) => None,
             };
             return Ok(TypeName::Data(DataType::row(fields.into_iter().filter_map(data).collect())));
         }
         // [ISO/IEC 9075-2:2023 §6.1] a <reference type>.
         if self.at_reference_type() {
             return self.reference_type();
+        }
+        // [ISO/IEC 9075-14:2006 draft §6.1] an <XML type>, which names a
+        // registered XML Schema if of XMLSCHEMA.
+        if self.at_xml_type() {
+            return self.xml_type_name();
         }
         if !matches!(self.peek(), Tok::Identifier(_))
             || self.at_boolean_type()
@@ -211,7 +220,7 @@ impl Parser {
 fn type_nesting(t: &TypeName) -> usize {
     match t {
         TypeName::Data(d) => nesting(d),
-        TypeName::Domain(_) | TypeName::Extension { .. } | TypeName::Reference(..) => 0,
+        TypeName::Domain(_) | TypeName::Extension { .. } | TypeName::Reference(..) | TypeName::XmlSchema(..) => 0,
         TypeName::Collection(element, _) => type_nesting(element).saturating_add(1),
         TypeName::Row(fields) => fields.iter().map(|(_, f)| type_nesting(f)).max().unwrap_or(0).saturating_add(1),
     }

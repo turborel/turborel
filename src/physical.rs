@@ -50,7 +50,7 @@ use crate::exec::{TransitionRows, WorkRows};
 use crate::index::Probe;
 use crate::logical::{
     AggCall, Cond, Expr, Fixpoint, Limit, LogicalPlan, Most, OuterJoin, Polymorphic, Recognize, SetOp, SortKey, Unnest, Window,
-    column_name, judged_by_sets, render_cond, render_expr, render_keys, split_and,
+    column_name, judged_by_sets, render_cond, render_expr, render_keys,
 };
 use crate::storage::Row;
 use crate::system::SystemRead;
@@ -538,14 +538,13 @@ impl<'a> PhysicalPlanner<'a> {
         Self::combined(*op, (*all, *compared), l, r)
     }
 
-    /// A filter directly on a table becomes part of the access path; any
+    /// A filter directly on a table, or over a table's read and a guard
+    /// (`physical/access/guarded.rs`), becomes part of the access path; any
     /// other keeps the order of its input, its long IN lists judged by
     /// sets (`logical::judged_by_sets`).
     fn filter(&self, cond: &Cond, input: &LogicalPlan, want: &[SortKey]) -> Built {
-        if let LogicalPlan::Scan { table, names, needed, located } = input {
-            let mut conds = Vec::new();
-            split_and(cond.clone(), &mut conds);
-            return self.access(TableRead { table, shown: self.showing(names), needed, located: *located }, conds, want);
+        if let Some(read) = self.filtered_read(cond, input, want) {
+            return read;
         }
         if let Some(join) = self.hash_join(cond, input, want) {
             return join;

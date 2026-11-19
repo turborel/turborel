@@ -266,7 +266,12 @@ impl Index for SparseIndex {
     fn estimate(&self, probe: &Probe) -> Option<usize> {
         match probe {
             Probe::All => self.tree.documents().and_then(|n| usize::try_from(n).ok()),
-            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Predicate { .. } => None,
+            Probe::Columns(_)
+            | Probe::Compare { .. }
+            | Probe::Prefix { .. }
+            | Probe::Range { .. }
+            | Probe::Predicate { .. }
+            | Probe::Xml(_) => None,
         }
     }
     fn distinct_keys(&self) -> Option<f64> {
@@ -288,9 +293,12 @@ impl Index for SparseIndex {
                     entry.map(|(_, row)| (key.clone(), row))
                 }))
             }
-            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Predicate { .. } => {
-                Box::new(std::iter::once(Err(unsupported("answers every entry and top-k searches, no comparison"))))
-            }
+            Probe::Columns(_)
+            | Probe::Compare { .. }
+            | Probe::Prefix { .. }
+            | Probe::Range { .. }
+            | Probe::Predicate { .. }
+            | Probe::Xml(_) => Box::new(std::iter::once(Err(unsupported("answers every entry and top-k searches, no comparison")))),
         }
     }
     fn locator(&self) -> Vec<u8> {

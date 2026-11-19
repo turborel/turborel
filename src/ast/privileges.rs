@@ -28,6 +28,11 @@ pub enum PrivilegeObject {
     /// \[EXTENSION\] EMBEDDING MODEL `<model name>` (the vector design's
     /// §16).
     Model,
+    /// \[EXTENSION\] [ISO/IEC 9075-14:2006 draft §4.7.1] XML SCHEMA
+    /// `<registered XML Schema name>`.
+    XmlSchema,
+    /// \[EXTENSION\] RULES.md D106 XQUERY MODULE `<XQuery module name>`.
+    XQueryModule,
 }
 
 /// [ISO/IEC 9075:1992 §11.37] `<revoke statement>` ::= REVOKE \[GRANT

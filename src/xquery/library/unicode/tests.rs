@@ -1,0 +1,57 @@
+//! Tests of the Unicode table of the functions on strings.
+
+use super::*;
+
+/// Verifies: [DESIGN] RULES.md D3 the table is the one generated, by its
+/// digest, and its sections are what its header says.
+#[test]
+fn the_table_is_the_one_generated() {
+    assert_eq!(digest(), DIGEST, "regenerate with cargo xtask unicode and update DIGEST");
+    assert!(Table::read().is_ok());
+}
+
+/// Verifies: [DESIGN] \[UAX #15 §1.3\] [XQueryFO §7.4.7, §7.4.8] the table
+/// gives classes, full decompositions of either kind, full case mappings
+/// and primary composites, of Unicode 13.0; nothing of a character that
+/// maps to itself.
+#[test]
+fn the_table_reads_back() {
+    let table = Table::read().unwrap();
+    assert_eq!((table.class('\u{301}'), table.class('\u{316}'), table.class('a')), (230, 220, 0));
+    assert_eq!(table.mapped('\u{1E0A}', Map::Canonical), Some(vec!['D', '\u{307}']));
+    assert_eq!(table.mapped('\u{1E9B}', Map::Canonical), Some(vec!['\u{17F}', '\u{307}']));
+    assert_eq!(table.mapped('\u{1E9B}', Map::Compatible), Some(vec!['s', '\u{307}']));
+    assert_eq!(table.mapped('\u{FB01}', Map::Canonical), None);
+    assert_eq!(table.mapped('a', Map::Canonical), None);
+    assert_eq!(table.mapped('ß', Map::Upper), Some(vec!['S', 'S']));
+    assert_eq!(table.mapped('A', Map::Lower), Some(vec!['a']));
+    assert_eq!(table.mapped('1', Map::Upper), None);
+    assert_eq!(table.composite('A', '\u{30A}'), Some('\u{C5}'));
+    assert_eq!(table.composite('\u{915}', '\u{93C}'), None);
+    assert_eq!(table.composite('a', 'b'), None);
+}
+
+/// Verifies: [DESIGN] \[UAX #15 §1.3\] [XML 1.1 Appendix B] the characters
+/// second in a primary composite's pair are found, a mark and one of class
+/// zero among them; a starter that is never second is not.
+#[test]
+fn second_characters_of_composites() {
+    let table = Table::read().unwrap();
+    assert!(table.composes_second('\u{30A}'));
+    assert!(table.composes_second('\u{CD5}'));
+    assert!(!table.composes_second('A'));
+    assert!(!table.composes_second('z'));
+}
+
+/// Verifies: [DESIGN] RULES.md D30 a table that is not what its header
+/// says is corruption, SQLCODE -916: another magic number, a header cut
+/// short, or more or fewer bytes than its sections count.
+#[test]
+fn a_damaged_table_is_refused() {
+    let corrupt = |bytes: &[u8]| sections(bytes).unwrap_err().sqlcode();
+    assert_eq!(corrupt(b"TBXQF999"), -916_i32);
+    assert_eq!(corrupt(MAGIC.as_slice()), -916_i32);
+    assert_eq!(corrupt(&[BYTES, &[0]].concat()), -916_i32);
+    assert_eq!(corrupt(BYTES.split_last().map(|(_, rest)| rest).unwrap()), -916_i32);
+    assert!(sections(BYTES).is_ok());
+}

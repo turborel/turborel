@@ -2,6 +2,7 @@
 //! answers it, by the [X3.135-1986 §5.11] comparison rules, as storage
 //! checks entries under its locks.
 
+use super::xml;
 use crate::functions::ScalarRef;
 use crate::value::{CompOp, Value, compare};
 
@@ -87,6 +88,8 @@ pub enum Probe {
         /// The other argument, as the bound function receives it.
         value: Value,
     },
+    /// \[EXTENSION\] RULES.md D106: an XML index's query (`xml::XmlProbe`).
+    Xml(Box<xml::XmlProbe>),
 }
 
 impl Probe {
@@ -100,7 +103,7 @@ impl Probe {
         let mut key = key.into_iter();
         let holds = |op: CompOp, k: Option<&Value>, v: &Value| k.and_then(|k| compare(k, v)).is_some_and(|o| op.holds(o));
         match self {
-            Probe::All | Probe::Predicate { .. } => true,
+            Probe::All | Probe::Predicate { .. } | Probe::Xml(_) => true,
             Probe::Columns(each) => columns_answer(key, each),
             Probe::Compare { op, value } => holds(*op, key.next(), value),
             Probe::Prefix { equal, then } => {

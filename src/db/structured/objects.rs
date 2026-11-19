@@ -44,6 +44,9 @@ pub(in crate::db) fn type_named(statement: &SchemaStatement) -> (Option<&TableNa
         | SchemaStatement::Trigger(_)
         | SchemaStatement::Routine(_)
         | SchemaStatement::Module(_)
+        | SchemaStatement::XmlSchema(_)
+        | SchemaStatement::XQueryModule(_)
+        | SchemaStatement::AlterXQueryModule(_)
         | SchemaStatement::Vector(_) => (None, "§11.53 AR1"),
     }
 }
@@ -118,6 +121,8 @@ impl Session {
                 Ok(DropTarget::Transform(self.owning(st, &qualify(name, &schema), (name, "§11.71 AR1"))?, group.clone()))
             }
             DropObject::Table(name)
+            | DropObject::XmlSchema(name)
+            | DropObject::XQueryModule(name)
             | DropObject::View(name)
             | DropObject::Domain(name)
             | DropObject::Assertion(name)
@@ -137,7 +142,7 @@ impl Session {
 fn type_written(t: &TypeName) -> Option<&TableName> {
     match t {
         TypeName::Domain(name) | TypeName::Reference(name, _) => Some(name),
-        TypeName::Data(_) | TypeName::Collection(..) | TypeName::Row(_) | TypeName::Extension { .. } => None,
+        TypeName::Data(_) | TypeName::Collection(..) | TypeName::Row(_) | TypeName::Extension { .. } | TypeName::XmlSchema(..) => None,
     }
 }
 
@@ -204,6 +209,8 @@ impl State {
             | DropTarget::Trigger(_)
             | DropTarget::Routine(_)
             | DropTarget::Module(_)
+            | DropTarget::XmlSchema(_)
+            | DropTarget::XQueryModule(_)
             | DropTarget::Pipeline(_) => return Vec::new(),
         }
         let mut after = self.clone();

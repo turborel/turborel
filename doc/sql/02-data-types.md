@@ -22,7 +22,7 @@ collections, are of [Spatial Data](10-spatial.md).
     | <exact numeric type> | <approximate numeric type>
     | <decimal floating-point type>
     | <datetime type> | <interval type>
-    | <row type> | <array type> | <reference type>
+    | <row type> | <array type> | <reference type> | <XML type>
     | <path-resolved user-defined type name>
 ```
 
@@ -49,6 +49,7 @@ collections, are of [Spatial Data](10-spatial.md).
 | INTERVAL q | a span of time, of the fields its qualifier names | INTERVAL '3' DAY |
 | ROW(f t, ...) | a value of each field f, of type t | |
 | t ARRAY[n] | up to n values of type t, in order | t ARRAY is t ARRAY[65535] |
+| XML(SEQUENCE) | an XML document, fragment or sequence | XML; XML(DOCUMENT), XML(CONTENT); see [XML Values](19-xml.md) |
 
 The longest string is 32,767 characters, the longest binary string 32,767
 octets, the longest large object 4G characters or octets, an exact number holds at most 18 digits and a DECFLOAT at most
@@ -204,7 +205,10 @@ length either holds the longest, 4G.
 A large object is kept apart from its row, in chunks of 256 KiB, and is
 logged, read and sent to a client a chunk at a time, so none is ever
 held whole in memory. A value a function makes, as UPPER or LPAD make
-one, is written to a temporary file the same way.
+one, is written to a temporary file the same way. A large object inside
+an array, a multiset, a row or a structured value is kept whole in that
+value's row instead, and one longer than 256 KiB is refused there
+(SQLCODE -900). The column store keeps no large object.
 
 `||`, SUBSTRING, POSITION, OVERLAY, TRIM, UPPER, LOWER, the pads, LIKE
 and the regular expressions take large objects, and a CLOB and a
@@ -573,7 +577,7 @@ DECIMAL(10,2)` makes MONEY, whose values are those of DECIMAL(10,2) but
 compare only with other values of MONEY. A price and a weight of one
 source type cannot then be compared or added by mistake.
 
-The source type is a predefined type, an array type or a multiset type. A value of the
+The source type is a predefined type, XML among them, an array type or a multiset type. A value of the
 source, or of a type that is assigned to it, is assigned to a column of
 the distinct type, and a value of the distinct type is assigned only to a
 site of exactly its source type. CAST takes the same paths. No operator
@@ -626,6 +630,13 @@ method of it, and `DEREF(r)` gives the row as a value of `t`, each a
 null value if no row is identified. A reference without a scope is not
 dereferenced (SQLSTATE 2A000). References compare for equality alone,
 and may be elements of arrays and multisets.
+
+## XML
+
+XML, XML(DOCUMENT), XML(CONTENT) and XML(SEQUENCE) hold XML documents
+and fragments of them. [XML Values](19-xml.md) describes them, and XMLPARSE,
+XMLDOCUMENT, XMLCAST, the publishing operators and XMLSERIALIZE, which
+make and write them.
 
 ## Assignment and CAST
 

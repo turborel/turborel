@@ -9,7 +9,8 @@
 //!             row, new row, old table and new table names (each 0, or 1
 //!             and str), text (str), schema (str), reads (count u32,
 //!             names), horizon, columns (count u32, each a name and str),
-//!             sequences (count u32, names), created u64
+//!             sequences (count u32, names), created u64, its timestamp
+//!             of creation as a routine's instant
 //! ```
 
 use super::super::{ActionTime, TransitionNames, TriggerDesc, TriggerEvent, TriggerLevel};
@@ -81,6 +82,7 @@ pub(crate) fn put_trigger(out: &mut Vec<u8>, trigger: &TriggerDesc) {
     });
     put_all(out, trigger.sequences.iter(), put_name);
     out.put_u64(trigger.created);
+    super::routines::put_instant(out, trigger.created_at);
 }
 
 /// The trigger descriptor `put_trigger` wrote.
@@ -111,7 +113,8 @@ pub(crate) fn trigger(r: &mut Reader<'_>) -> Result<TriggerDesc> {
     let names = TransitionNames { old_row, new_row, old_table, new_table };
     let (text, schema, reads, horizon) = (r.str()?, r.str()?, get_all(r, qualified)?, horizon(r)?);
     let (columns, sequences) = (get_all(r, |r| Ok((qualified(r)?, r.str()?)))?, get_all(r, qualified)?);
-    Ok(TriggerDesc { name, table, time, level, event, names, text, schema, reads, horizon, columns, sequences, created: r.u64()? })
+    let (created, created_at) = (r.u64()?, super::routines::instant(r)?);
+    Ok(TriggerDesc { name, table, time, level, event, names, text, schema, reads, horizon, columns, sequences, created, created_at })
 }
 
 /// A name that may be absent: 0, or 1 and the name.

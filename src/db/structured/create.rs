@@ -13,8 +13,8 @@ use super::methods::Family;
 use crate::ast::{RefRepresentation as Written, TypeDefinition, TypeOption};
 use crate::binder::{alike, qualify};
 use crate::catalog::{
-    CONSTRUCTOR_SUFFIX, MAX_HIERARCHY_DEPTH, MethodHost, QualifiedName, RefRepresentation, RoutineDesc, StructuredDesc, owner_of, sole,
-    types_in,
+    CONSTRUCTOR_SUFFIX, MAX_HIERARCHY_DEPTH, MethodHost, QualifiedName, RefRepresentation, RoutineDesc, Stamps, StructuredDesc, owner_of,
+    sole, types_in,
 };
 use crate::error::{At, Code, Result, SqlError};
 use crate::txn::LockMode;
@@ -273,7 +273,8 @@ impl State {
             );
             return Err(rule(msg));
         }
-        Ok(RoutineDesc { name: qn.ident.clone(), specific, execute: Vec::new() })
+        // [§11.60 GR5] made as the type is defined.
+        Ok(RoutineDesc { name: qn.ident.clone(), specific, execute: Vec::new(), stamps: Stamps::at(self.stamp) })
     }
 }
 

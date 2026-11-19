@@ -492,7 +492,8 @@ impl State {
             // [ISO/IEC 9075-2:2023 §4.35.2] the routines it invokes, its
             // subject routines from now on.
             if horizon.routines.is_none() {
-                *horizon = std::mem::take(horizon).invoking(invoked.take());
+                *horizon =
+                    std::mem::take(horizon).invoking(invoked.take()).indicating(invoked.take_indicated()).typing(invoked.take_typed());
             }
         }
         Ok(())
@@ -548,7 +549,7 @@ impl State {
         (text, names, horizon): (&str, &str, &Horizon),
         (uses, referencing, invoked): (Option<&Uses>, &Referencing, Option<&Invoked>),
     ) -> Result<Cond> {
-        let condition = Parser::for_stored(text)?.check_condition()?;
+        let (options, condition) = Parser::for_stored(text)?.check_condition()?;
         let from = TableReference::Table(NamedTable {
             table: TableName { auth: Some(table.auth.clone()), ident: table.ident.clone(), at: 0 },
             only: false,
@@ -562,7 +563,8 @@ impl State {
         let one = ValueExpression::Value(ValueSpecification::Literal(Literal::Exact(Decimal::new(1_i128, 0_u32))));
         let select_list = SelectList::Values(vec![SelectSublist::Derived(SelectItem { value: one, alias: None, at: 0 })]);
         let spec = QuerySpecification { distinct: false, select_list, table_expression };
-        let params = Params::new();
+        // [ISO/IEC 9075-14:2006 draft §12.2 SR1, SR2] its XML options in scope.
+        let params = Params::new().with_xml_options(options.as_ref());
         // As its schema's owner.
         let owner = owner_of(&*self.catalog, &table.auth);
         let cx = Context {

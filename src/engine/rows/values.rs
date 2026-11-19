@@ -40,7 +40,7 @@ impl RowTable {
     /// names one, are written (`rows/lobs/owned.rs`).
     fn check_lobs(&self, row: &Row) -> Result<()> {
         for &(c, _) in self.lobs.columns() {
-            if let Some(Value::Lob(l)) = row.get(c)
+            if let Some(l) = row.get(c).and_then(Value::as_lob)
                 && l.inline().is_none()
                 && !matches!(l.parts(), [Part::Reference(_)])
                 && self.lobs.kept_here(l).is_none()

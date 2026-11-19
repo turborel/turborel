@@ -93,7 +93,8 @@ fn collection(v: Value) -> Result<Option<Arc<[Value]>>> {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => Err(broken("a collection value expression is not an array or a multiset")),
+        | Value::Extension(_)
+        | Value::Xml(_) => Err(broken("a collection value expression is not an array or a multiset")),
     }
 }
 

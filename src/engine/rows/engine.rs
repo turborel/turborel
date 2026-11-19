@@ -15,6 +15,7 @@ use crate::settings::Configurable;
 use crate::storage::{StorageEngine, TableStorage};
 use crate::sync::{lock_builtin, write};
 use crate::value::DataType;
+use crate::value::types::composite;
 
 impl StorageEngine for RowStore {
     fn name(&self) -> &'static str {
@@ -39,9 +40,15 @@ impl StorageEngine for RowStore {
     fn create_table(&self, desc: &TableDesc) -> Result<Box<dyn TableStorage>> {
         let options = options::resolved(desc, lock_builtin(&self.tables).get(&desc.name).copied().unwrap_or(self.defaults));
         let types: Vec<DataType> = desc.columns.iter().map(|c| c.data_type.clone()).collect();
-        // [DESIGN] RULES.md D79: a frozen row group holds no large object.
-        if self.name == COLUMN_STORE && types.iter().any(|t| matches!(t, DataType::Lob { .. })) {
-            return Err(SqlError::new(Code::Unsupported, format!("[DESIGN] the column store keeps no large object, as {} has", desc.name)));
+        // [DESIGN] RULES.md D79, D106: a frozen row group holds no large
+        // object, and no XML value, which one holds, nor any inside an
+        // array, a multiset or a row.
+        let held = |t: &DataType| composite::lob_ordered(t) || composite::xml_ordered(t);
+        if self.name == COLUMN_STORE && types.iter().any(held) {
+            return Err(SqlError::new(
+                Code::Unsupported,
+                format!("[DESIGN] the column store keeps no large object or XML value, as {} has", desc.name),
+            ));
         }
         Ok(Box::new(RowTable::create(&self.files()?, &types, options)?.sealed(self.sealing(desc))))
     }

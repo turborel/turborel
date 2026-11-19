@@ -28,6 +28,7 @@ pub(crate) mod composite;
 pub(crate) use composite::rows_hold;
 pub(crate) mod datetime;
 mod decfloat;
+mod descriptor;
 pub(crate) mod distinct;
 mod exact;
 pub mod family;
@@ -42,6 +43,7 @@ pub(crate) mod structured;
 pub(crate) mod tags;
 mod unregistered;
 mod varying;
+pub(crate) mod xml;
 
 pub use approximate::{APPROXIMATE, Approximate};
 pub use array::{ARRAY, ARRAY_NAME, ArrayKind, ArrayType, MAX_ARRAY_CARDINALITY};
@@ -52,6 +54,7 @@ pub use character::{CHARACTER, Character};
 pub use datetime::{Chronon, DATE, TIME, TIME_ZONED, TIMESTAMP, TIMESTAMP_ZONED};
 pub(crate) use decfloat::arith as decfloat_arith;
 pub use decfloat::{DECFLOAT, DECFLOAT_NAME, DecFloatKind};
+pub use descriptor::{Descriptor, XmlSchemaNamed};
 pub use distinct::{DISTINCT, DistinctKind, DistinctType, USER_DEFINED_NAME};
 pub use exact::{BIGINT_NAME, EXACT, Exact};
 pub use interval::{INTERVAL_DAY_TIME, INTERVAL_YEAR_MONTH, IntervalKind};
@@ -64,6 +67,7 @@ pub use row::{Field, ROW, ROW_NAME, RowKind, RowType};
 pub use structured::{STRUCTURED, Structured, StructuredKind, StructuredType, UdtName};
 pub use unregistered::{UNREGISTERED, UNREGISTERED_KIND, Unregistered, parts, unregistered};
 pub use varying::{VARYING, Varying};
+pub use xml::{XML, XML_NAME, XmlKind};
 
 /// \[DESIGN\] How deep arrays and rows may be nested within a type, as
 /// it is written and as its bytes or a value's are read (RULES.md R-CF-6).
@@ -364,57 +368,13 @@ pub struct ExtensionValue {
     pub bytes: Arc<[u8]>,
 }
 
-/// [ISO/IEC 9075:1992 §21.3.5] A data type as the Information Schema
-/// describes it: DATA_TYPE and the columns that apply to it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Descriptor {
-    /// DATA_TYPE: its name.
-    pub name: String,
-    /// CHARACTER_MAXIMUM_LENGTH, of a character string.
-    pub length: Option<u64>,
-    /// CHARACTER_OCTET_LENGTH, of a character string.
-    pub octets: Option<u64>,
-    /// Whether it has a collation, SQL_TEXT's: a character string.
-    pub collated: bool,
-    /// NUMERIC_PRECISION, of a number.
-    pub precision: Option<u32>,
-    /// NUMERIC_PRECISION_RADIX: 10 for decimal precision, 2 for binary.
-    pub radix: Option<u32>,
-    /// NUMERIC_SCALE, of an exact number.
-    pub scale: Option<u32>,
-    /// DATETIME_PRECISION, of a datetime or interval.
-    pub datetime_precision: Option<u32>,
-    /// MAXIMUM_CARDINALITY, of an array [ISO/IEC 9075-2:2023 §4.12.1].
-    pub cardinality: Option<u32>,
-    /// USER_DEFINED_TYPE_SCHEMA and USER_DEFINED_TYPE_NAME, of a
-    /// user-defined type [ISO/IEC 9075-2:2023 §4.9.2].
-    pub user_defined: Option<(String, String)>,
-}
-
-impl Descriptor {
-    /// A descriptor of `name`, every other column null.
-    pub fn of(name: &str) -> Descriptor {
-        Descriptor {
-            name: name.to_owned(),
-            length: None,
-            octets: None,
-            collated: false,
-            precision: None,
-            radix: None,
-            scale: None,
-            datetime_precision: None,
-            cardinality: None,
-            user_defined: None,
-        }
-    }
-}
-
 impl DataType {
     /// Its kind: what it does.
     pub fn kind(&self) -> &'static dyn SqlType {
         match self {
             DataType::Character { .. } => &CHARACTER,
             DataType::Varying { .. } => &VARYING,
+            DataType::Xml(_) => &XML,
             DataType::Binary { .. } => &BINARY,
             DataType::VarBinary { .. } => &BINARY_VARYING,
             DataType::Lob { kind: crate::value::lob::LobKind::Character, .. } => &CLOB,
@@ -453,6 +413,7 @@ impl DataType {
         match self {
             DataType::Character { .. } => CHARACTER.encode_record(v, self),
             DataType::Varying { .. } => VARYING.encode_record(v, self),
+            DataType::Xml(_) => XML.encode_record(v, self),
             DataType::Binary { .. } => BINARY.encode_record(v, self),
             DataType::VarBinary { .. } => BINARY_VARYING.encode_record(v, self),
             DataType::Boolean
@@ -480,6 +441,7 @@ impl DataType {
         match self {
             DataType::Character { .. } => CHARACTER.decode_record(field, self),
             DataType::Varying { .. } => VARYING.decode_record(field, self),
+            DataType::Xml(_) => XML.decode_record(field, self),
             DataType::Binary { .. } => BINARY.decode_record(field, self),
             DataType::VarBinary { .. } => BINARY_VARYING.decode_record(field, self),
             DataType::Boolean
@@ -511,6 +473,7 @@ impl DataType {
         match self {
             DataType::Character { .. } => CHARACTER.encode_key(v, self, out),
             DataType::Varying { .. } => VARYING.encode_key(v, self, out),
+            DataType::Xml(_) => XML.encode_key(v, self, out),
             DataType::Binary { .. } => BINARY.encode_key(v, self, out),
             DataType::VarBinary { .. } => BINARY_VARYING.encode_key(v, self, out),
             DataType::Boolean
@@ -542,6 +505,7 @@ impl DataType {
         match self {
             DataType::Character { .. } => CHARACTER.decode_key(rest, self),
             DataType::Varying { .. } => VARYING.decode_key(rest, self),
+            DataType::Xml(_) => XML.decode_key(rest, self),
             DataType::Binary { .. } => BINARY.decode_key(rest, self),
             DataType::VarBinary { .. } => BINARY_VARYING.decode_key(rest, self),
             DataType::Boolean
@@ -572,6 +536,7 @@ impl Value {
         match self {
             Value::Null => None,
             Value::Char(_) => Some(&CHARACTER),
+            Value::Xml(_) => Some(&XML),
             Value::Exact(_) => Some(&EXACT),
             Value::Approx(_) => Some(&APPROXIMATE),
             Value::DecFloat(_) => Some(&DECFLOAT),

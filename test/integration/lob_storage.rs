@@ -1,13 +1,16 @@
 //! Large objects kept by a database in a directory (RULES.md D25, D79):
 //! a value of many chunks logged a chunk at a time and recovered after a
-//! crash, before and after a checkpoint; a transaction open at the crash
-//! leaves nothing; a value written back unchanged shares its chunks; and a
+//! crash, before and after a checkpoint, and in a table its transaction
+//! made; a transaction open at the crash leaves nothing; a value written
+//! back unchanged shares its chunks; one inside an array or a row is
+//! held in its row, and a distinct type's kept as its source's; and a
 //! value much larger than the buffer pool is written and read through it;
 //! and a snapshot reads the value it saw, though it was replaced.
 
 use std::path::Path;
 
 use turborel::db::{Database, OpenOptions, Opened, Session};
+use turborel::error::Code;
 use turborel::value::lob::Lob;
 use turborel::value::{Decimal, Value};
 
@@ -83,6 +86,85 @@ fn large_objects_are_recovered_after_a_crash() {
         drop((s, db));
     }
     drop((a, open_tx, crashed));
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D33, D79: a value of many chunks in a
+/// table that its own transaction made, the definition replayed at its
+/// commit, is back after a crash, whole, as is one written after it; a
+/// transaction that made a table and a value in it and was rolled back
+/// leaves neither. A regression test: the objects were replayed before the
+/// table was made, so were lost, and the database failed to open.
+#[test]
+fn objects_of_a_table_made_in_their_transaction_are_recovered() {
+    let scratch = Scratch::new("lob-made");
+    let dir = scratch.path("db");
+    let (crashed, _) = open(&dir);
+    crashed.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
+    let a = crashed.session("A");
+    let (made, later) = (text(600_000, 'm'), text(300_000, 'l'));
+    a.run("CREATE TABLE T (K INTEGER, C CLOB)").unwrap();
+    insert(&a, 1, &made);
+    a.commit().unwrap();
+    insert(&a, 2, &later);
+    a.commit().unwrap();
+    a.run("CREATE TABLE U (K INTEGER, C CLOB)").unwrap();
+    let p = a.prepare("INSERT INTO U VALUES (1, ?)").unwrap();
+    a.execute_prepared(&p, &[Value::Lob(Lob::of_text(&made))]).unwrap();
+    a.rollback().unwrap();
+    drop((a, crashed));
+    let (db, opened) = open(&dir);
+    assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
+    let s = db.session("A");
+    assert_eq!(rows(&s, "SELECT K, CHAR_LENGTH(C) FROM T ORDER BY K").unwrap(), ["1,600000", "2,300000"]);
+    assert_eq!((read(&s, 1), read(&s, 2)), (made, later));
+    assert!(rows(&s, "SELECT K FROM U").is_err(), "U was rolled back");
+}
+
+/// Verifies: [DESIGN] RULES.md D69, D79: a large object of a distinct
+/// type's column is kept as its source's, in the table's objects; one
+/// inside an array or a row, copied from another table's column, is held
+/// in its row whole, so it is whole after its source row is deleted and
+/// after a crash; one longer than a chunk inside a value is refused,
+/// SQLCODE -900, the boundary a chunk. A regression test: the array and
+/// the row named the other table's object, read as no octets, and the
+/// distinct type's value was the other table's object's id.
+#[test]
+fn large_objects_inside_values_are_kept_with_their_rows() {
+    let scratch = Scratch::new("lob-nested");
+    let dir = scratch.path("db");
+    let (crashed, _) = open(&dir);
+    crashed
+        .schema(
+            "CREATE SCHEMA AUTHORIZATION A CREATE TYPE DC AS CLOB FINAL CREATE TABLE T (K INTEGER, C CLOB) \
+             CREATE TABLE U (K INTEGER, D DC, A CLOB ARRAY[2], R ROW(C CLOB, N INTEGER))",
+        )
+        .unwrap();
+    let a = crashed.session("A");
+    // 257,144 octets, within a chunk, and 1,800,001 octets, of many.
+    let (within, long) = (text(200_000, 'w'), text(700_000, 'l'));
+    insert(&a, 1, &within);
+    insert(&a, 2, &long);
+    a.commit().unwrap();
+    a.run("INSERT INTO U SELECT K, CAST(C AS DC), ARRAY[C, CAST(NULL AS CLOB)], ROW(C, K) FROM T WHERE K = 1").unwrap();
+    a.run("UPDATE U SET D = (SELECT CAST(C AS DC) FROM T WHERE K = 2)").unwrap();
+    let error = a.run("INSERT INTO U (K, A) SELECT K, ARRAY[C] FROM T WHERE K = 2").unwrap_err();
+    assert_eq!(error.code, Code::Unsupported, "{error}");
+    a.run("DELETE FROM T").unwrap();
+    a.commit().unwrap();
+    drop((a, crashed));
+    let (db, opened) = open(&dir);
+    assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
+    let s = db.session("A");
+    let lengths = "SELECT K, CHAR_LENGTH(CAST(D AS CLOB)), CHAR_LENGTH(A[1]), A[2] IS NULL, CHAR_LENGTH(U.R.C) FROM U";
+    assert_eq!(rows(&s, lengths).unwrap(), ["1,700000,200000,TRUE,200000"]);
+    let whole = |sql: &str| {
+        let row = s.open_cursor(sql).unwrap().fetch().unwrap().unwrap();
+        let Value::Lob(c) = &row[0] else { panic!("{row:?}") };
+        String::from_utf8(c.reader().read(0, c.octets()).unwrap()).unwrap()
+    };
+    assert_eq!(whole("SELECT A[1] FROM U"), within);
+    assert_eq!(whole("SELECT U.R.C FROM U"), within);
+    assert_eq!(whole("SELECT CAST(D AS CLOB) FROM U"), long);
 }
 
 /// Verifies: [DESIGN] RULES.md D79: a value of 24 MiB, 96 chunks, is

@@ -307,6 +307,7 @@ impl Binder<'_> {
             | ValueExpression::Value(_)
             | ValueExpression::Call { .. }
             | ValueExpression::Cast { .. }
+            | ValueExpression::Xml(..)
             | ValueExpression::Datetime(_)
             | ValueExpression::Extract { .. }
             | ValueExpression::Difference { .. }

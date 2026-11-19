@@ -92,8 +92,17 @@ impl Parser {
             SetArg::All(Box::new(first))
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
-        let set =
-            SetFunctionSpecification { name, arg, order_by: Vec::new(), listagg: None, json: None, filter: None, semantics: None, at };
+        let set = SetFunctionSpecification {
+            name,
+            arg,
+            order_by: Vec::new(),
+            listagg: None,
+            json: None,
+            filter: None,
+            semantics: None,
+            returning: None,
+            at,
+        };
         Ok(ValueExpression::SetFunction(set))
     }
 

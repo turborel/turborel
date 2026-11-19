@@ -108,6 +108,9 @@ pub const TRANSACTION_ISOLATION: Key = Key(45);
 /// See [`TABLES_ENGINE`]: at its key's place, after the others, though of
 /// the executor's settings.
 pub const MAX_ITERATIONS: Key = Key(46);
+/// See [`TABLES_ENGINE`]: at its key's place, after the vector settings
+/// (`settings/vector.rs`).
+pub const XQUERY_STATIC_TYPING: Key = Key(52);
 
 /// The words of a two-way choice (RULES.md D36): of `EXECUTOR.BATCHES`,
 /// `LOCKS.WAIT`, `LOG.COMMIT_SYNC`, `SQL.FUNCTION_CALLS`, each optimizer
@@ -216,8 +219,20 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(read_ahead());
     all.push(log_durability());
     all.extend(later());
-    all.extend(super::vector::vector());
+    all.extend(super::vector::vector().into_iter().chain([static_typing()]));
     all
+}
+
+/// [XQuery §5.2.3] Whether the Static Typing Feature is in effect for the
+/// XQuery expressions a statement prepares, at its key's place after the
+/// others; OFF by default, as it refuses queries whose evaluation would
+/// raise no error (RULES.md D106).
+fn static_typing() -> Definition {
+    defined(
+        ("XQUERY.STATIC_TYPING", Kind::Choice(SWITCHES), text(OFF)),
+        SESSION,
+        "Whether the XQuery expressions of XMLQUERY, XMLEXISTS and XMLTABLE are statically typed as a statement is prepared, each type error raised then, before any is evaluated: ON; or as a query declaring the option static-typing of urn:turborel:option asks, OFF. A definition is typed as it is made, as the value of the session making it or its query's option asks, and keeps that typing whenever it is bound again.",
+    )
 }
 
 /// \[DESIGN\] What a session may turn on or off for itself: whether its

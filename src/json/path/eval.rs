@@ -382,6 +382,7 @@ fn number(item: &Item) -> Option<Number> {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => None,
     }
 }

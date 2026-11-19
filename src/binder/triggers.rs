@@ -65,7 +65,7 @@ impl Binder<'_> {
         };
         // [ISO/IEC 9075-2:2023 §11.49 GR5i] a column of the triggered
         // action column set.
-        if let Some(uses) = self.uses {
+        if let Some(uses) = self.noted_uses() {
             uses.borrow_mut().push((transitions.subject.clone(), cs.column.clone()));
         }
         let (value, t) = self.params.dynamic_typed(index, Some(ParameterType::Of(t)))?;

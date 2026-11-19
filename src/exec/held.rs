@@ -7,27 +7,30 @@
 //! constraints (`db/integrity/held.rs`). Held up to MEMORY.WORK_BYTES, as an
 //! operator's are, then written to runs of a spill area: a list that spills
 //! (`spill/list.rs`), read back in order, a run's pages given back as it is
-//! read, or by place, a segment at a time.
+//! read, or by place, a segment at a time. A large object or an XML value
+//! a spilled row holds kept apart is named by what keeps it, which the list
+//! holds while it is (`spill/named.rs`, D79).
 
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
-use crate::spill::{ListItem, ListSpace, Located, SpillList, record_room, row_bytes, row_record};
+use crate::spill::{ListItem, ListSpace, Located, SpillList, SpilledLobs, record_room, row_bytes};
 use crate::storage::{Row, RowId};
 use crate::value::Value;
-use crate::value::codec::{put_row, row};
 use crate::value::types::TypeRegistry;
 
-/// What a list of `HeldRows` holds: an item and its record.
+/// What a list of `HeldRows` holds: an item and its record, its large
+/// objects and XML values kept apart named by what keeps them, which the
+/// list holds.
 pub trait Holdable: ListItem + Clone + Send + Sized + 'static {
-    /// It, as a record.
-    fn record(&self) -> Vec<u8>;
+    /// It, as a record, what it names held by `lobs`.
+    fn record(&self, lobs: &SpilledLobs) -> Vec<u8>;
     /// The item of `record`, its values of types beyond the standard found
-    /// among `types`.
+    /// among `types`, and what it names among `lobs`.
     ///
     /// # Errors
     ///
     /// SQLCODE -916 if `record` is not one.
-    fn read(record: &[u8], types: &TypeRegistry) -> Result<Self>;
+    fn read(record: &[u8], types: &TypeRegistry, lobs: &SpilledLobs) -> Result<Self>;
 }
 
 impl ListItem for Vec<Value> {
@@ -37,14 +40,11 @@ impl ListItem for Vec<Value> {
 }
 
 impl Holdable for Row {
-    fn record(&self) -> Vec<u8> {
-        row_record(self)
+    fn record(&self, lobs: &SpilledLobs) -> Vec<u8> {
+        lobs.record(self)
     }
-    fn read(record: &[u8], types: &TypeRegistry) -> Result<Row> {
-        let mut r = Reader::new(record, "held row").with_types(types);
-        let found = row(&mut r)?;
-        r.finish()?;
-        Ok(found)
+    fn read(record: &[u8], types: &TypeRegistry, lobs: &SpilledLobs) -> Result<Row> {
+        lobs.record_row(record, types)
     }
 }
 
@@ -55,16 +55,16 @@ impl ListItem for (RowId, Row) {
 }
 
 impl Holdable for (RowId, Row) {
-    fn record(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(record_room(size_of::<RowId>(), self.1.len()));
+    fn record(&self, lobs: &SpilledLobs) -> Vec<u8> {
+        let mut out = Vec::with_capacity(record_room(size_of::<RowId>().saturating_add(1), self.1.len()));
         out.put_u64(self.0);
-        put_row(&mut out, &self.1);
+        lobs.put_row(&mut out, &self.1);
         out
     }
-    fn read(record: &[u8], types: &TypeRegistry) -> Result<(RowId, Row)> {
+    fn read(record: &[u8], types: &TypeRegistry, lobs: &SpilledLobs) -> Result<(RowId, Row)> {
         let mut r = Reader::new(record, "held row").with_types(types);
         let id = r.u64()?;
-        let found = row(&mut r)?;
+        let found = lobs.row(&mut r)?;
         r.finish()?;
         Ok((id, found))
     }
@@ -78,17 +78,17 @@ impl ListItem for (RowId, Row, Row) {
 
 /// A row's id, its values, and its new values: an UPDATE's change.
 impl Holdable for (RowId, Row, Row) {
-    fn record(&self) -> Vec<u8> {
+    fn record(&self, lobs: &SpilledLobs) -> Vec<u8> {
         let mut out = Vec::new();
         out.put_u64(self.0);
-        put_row(&mut out, &self.1);
-        put_row(&mut out, &self.2);
+        lobs.put_row(&mut out, &self.1);
+        lobs.put_row(&mut out, &self.2);
         out
     }
-    fn read(record: &[u8], types: &TypeRegistry) -> Result<(RowId, Row, Row)> {
+    fn read(record: &[u8], types: &TypeRegistry, lobs: &SpilledLobs) -> Result<(RowId, Row, Row)> {
         let mut r = Reader::new(record, "held change").with_types(types);
         let id = r.u64()?;
-        let (old, new) = (row(&mut r)?, row(&mut r)?);
+        let (old, new) = (lobs.row(&mut r)?, lobs.row(&mut r)?);
         r.finish()?;
         Ok((id, old, new))
     }
@@ -101,10 +101,10 @@ impl ListItem for RowId {
 }
 
 impl Holdable for RowId {
-    fn record(&self) -> Vec<u8> {
+    fn record(&self, _lobs: &SpilledLobs) -> Vec<u8> {
         self.to_le_bytes().to_vec()
     }
-    fn read(record: &[u8], _types: &TypeRegistry) -> Result<RowId> {
+    fn read(record: &[u8], _types: &TypeRegistry, _lobs: &SpilledLobs) -> Result<RowId> {
         let mut r = Reader::new(record, "held row id");
         let id = r.u64()?;
         r.finish()?;
@@ -113,10 +113,12 @@ impl Holdable for RowId {
 }
 
 /// \[DESIGN\] Rows held, in the order added: up to a work area's bytes in
-/// memory, the rest in runs of a spill area.
+/// memory, the rest in runs of a spill area, with the sources of what they
+/// name.
 pub struct HeldRows<T: Holdable> {
     list: SpillList<T>,
     types: TypeRegistry,
+    lobs: SpilledLobs,
     /// The items of the spilled segment read last by place, and which it
     /// is: a segment written is never changed.
     window: Option<(usize, Vec<T>)>,
@@ -126,7 +128,13 @@ impl<T: Holdable> HeldRows<T> {
     /// None yet, held in `space`.
     pub fn new(space: ListSpace) -> HeldRows<T> {
         let types = space.types.clone();
-        HeldRows { list: SpillList::new(space), types, window: None }
+        HeldRows { list: SpillList::new(space), types, lobs: SpilledLobs::new(), window: None }
+    }
+
+    /// The reader of its records.
+    fn decode(&self) -> impl Fn(&[u8]) -> Result<T> + Sync + use<T> {
+        let (types, lobs) = (self.types.clone(), self.lobs.clone());
+        move |record: &[u8]| T::read(record, &types, &lobs)
     }
 
     /// Adds `item` at the end.
@@ -135,7 +143,8 @@ impl<T: Holdable> HeldRows<T> {
     ///
     /// The spill area's, SQLCODE -918 if it cannot be reserved.
     pub fn push(&mut self, item: T) -> Result<()> {
-        self.list.push(item, &mut |t: &T| t.record())
+        let lobs = &self.lobs;
+        self.list.push(item, &mut |t: &T| t.record(lobs))
     }
 
     /// How many it holds.
@@ -167,8 +176,8 @@ impl<T: Holdable> HeldRows<T> {
             Some(Located::Spilled { segment, at }) => (segment, at),
         };
         if self.window.as_ref().is_none_or(|(read, _)| *read != segment) {
-            let types = self.types.clone();
-            let items = self.list.segment(segment, &move |record: &[u8]| T::read(record, &types))?;
+            let decode = self.decode();
+            let items = self.list.segment(segment, &decode)?;
             self.window = Some((segment, items));
         }
         Ok(self.window.as_ref().and_then(|(_, items)| items.get(at)).cloned())
@@ -187,13 +196,14 @@ impl<T: Holdable> HeldRows<T> {
     ///
     /// The spill area's, reading the segment.
     pub fn segment(&mut self, segment: usize) -> Result<Vec<T>> {
-        let types = self.types.clone();
-        self.list.segment(segment, &move |record: &[u8]| T::read(record, &types))
+        let decode = self.decode();
+        self.list.segment(segment, &decode)
     }
 
     /// Appends the items of `other` after its own, as they are: held, or in
-    /// their runs.
+    /// their runs, the sources they name held with its own.
     pub fn append(&mut self, other: HeldRows<T>) {
+        self.lobs.absorb(&other.lobs);
         self.list.append(other.list);
     }
 
@@ -204,8 +214,8 @@ impl<T: Holdable> HeldRows<T> {
     ///
     /// The spill area's, or `each`'s.
     pub fn visit(&mut self, each: &mut dyn FnMut(&T) -> Result<()>) -> Result<()> {
-        let types = self.types.clone();
-        self.list.visit(&move |record: &[u8]| T::read(record, &types), each)
+        let decode = self.decode();
+        self.list.visit(&decode, each)
     }
 }
 
@@ -214,7 +224,7 @@ impl<T: Holdable> IntoIterator for HeldRows<T> {
     type IntoIter = HeldIter<T>;
 
     fn into_iter(self) -> HeldIter<T> {
-        HeldIter { list: self.list, types: self.types, read: Vec::new().into_iter() }
+        HeldIter { list: self.list, types: self.types, lobs: self.lobs, read: Vec::new().into_iter() }
     }
 }
 
@@ -223,6 +233,8 @@ impl<T: Holdable> IntoIterator for HeldRows<T> {
 pub struct HeldIter<T: Holdable> {
     list: SpillList<T>,
     types: TypeRegistry,
+    /// The sources what it holds names, held while it is.
+    lobs: SpilledLobs,
     /// The rest of the segment being read.
     read: std::vec::IntoIter<T>,
 }
@@ -235,8 +247,8 @@ impl<T: Holdable> Iterator for HeldIter<T> {
             if let Some(item) = self.read.next() {
                 return Some(Ok(item));
             }
-            let types = self.types.clone();
-            match self.list.take_oldest(&move |record: &[u8]| T::read(record, &types))? {
+            let (types, lobs) = (self.types.clone(), self.lobs.clone());
+            match self.list.take_oldest(&move |record: &[u8]| T::read(record, &types, &lobs))? {
                 Ok(items) => self.read = items.into_iter(),
                 Err(e) => return Some(Err(e)),
             }

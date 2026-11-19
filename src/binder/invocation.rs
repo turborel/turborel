@@ -212,7 +212,7 @@ impl Binder<'_> {
         let name = &desc.name;
         if desc.access == DataAccess::Modifies && !(self.purpose == Purpose::Query && self.hosting.get()) {
             let rules = match self.purpose {
-                Purpose::Query => "§7.17 SR25, §11.49 SR11",
+                Purpose::Query | Purpose::Mapped => "§7.17 SR25, §11.49 SR11",
                 Purpose::Constraint | Purpose::UnderConstraint => "§11.9 SR6, §11.47 SR8",
                 Purpose::Generation | Purpose::Key => "§11.4 SR10e, §4.35.2",
             };
@@ -221,7 +221,7 @@ impl Binder<'_> {
             )));
         }
         match self.purpose {
-            Purpose::Query => Ok(()),
+            Purpose::Query | Purpose::Mapped => Ok(()),
             Purpose::Constraint | Purpose::UnderConstraint => constraint_permits(desc),
             Purpose::Generation | Purpose::Key => generation_permits(desc),
         }
@@ -246,7 +246,7 @@ impl Binder<'_> {
         }
         let what = format!("a call of function {name}, registered, which is not deterministic");
         match self.purpose {
-            Purpose::Query => Ok(()),
+            Purpose::Query | Purpose::Mapped => Ok(()),
             Purpose::Constraint | Purpose::UnderConstraint => Err(nondeterministic_source("am", &what)),
             Purpose::Generation | Purpose::Key => {
                 Err(rule(format!("[ISO/IEC 9075-2:2023 §11.4 SR10d, §9.16 SR1am] a generation expression shall not contain {what}")))

@@ -113,7 +113,14 @@ fn compile_time(e: &Expr) -> bool {
         Expr::Column(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Subquery(..) | Expr::NextValue(_) | Expr::Invoked(_) => false,
         Expr::Truth(c) => compile_time_cond(c),
         Expr::Case(whens, _) => whens.iter().all(|(c, _)| compile_time_cond(c)),
-        Expr::Const(_) | Expr::Neg(_) | Expr::Arith(..) | Expr::Call(..) | Expr::Cast(..) | Expr::Domain(..) | Expr::SortKey(..) => true,
+        Expr::Const(_)
+        | Expr::Neg(_)
+        | Expr::Arith(..)
+        | Expr::Call(..)
+        | Expr::Cast(..)
+        | Expr::Domain(..)
+        | Expr::SortKey(..)
+        | Expr::Warned(..) => true,
     };
     let mut children = true;
     e.for_each_child(&mut |x| children = children && compile_time(x));
@@ -184,7 +191,7 @@ pub(super) fn bound(b: Bounds<'_>, inv: &PtfInvocation, depth: usize) -> Result<
     let cx = b.cx;
     let desc = subject(cx, inv).or_at(inv.at)?;
     match cx.purpose {
-        Purpose::Query => {}
+        Purpose::Query | Purpose::Mapped => {}
         Purpose::Constraint | Purpose::UnderConstraint => constraint_permits(&desc).or_at(inv.at)?,
         Purpose::Generation | Purpose::Key => generation_permits(&desc).or_at(inv.at)?,
     }

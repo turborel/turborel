@@ -216,9 +216,12 @@ fn value_type(written: Option<&TypeName>) -> Result<DataType> {
                 Err(rule(format!("{VALUE_RULE}, not {t}")))
             }
         }
-        TypeName::Domain(_) | TypeName::Reference(..) | TypeName::Collection(..) | TypeName::Row(_) | TypeName::Extension { .. } => {
-            Err(rule(VALUE_RULE))
-        }
+        TypeName::Domain(_)
+        | TypeName::Reference(..)
+        | TypeName::Collection(..)
+        | TypeName::Row(_)
+        | TypeName::Extension { .. }
+        | TypeName::XmlSchema(..) => Err(rule(VALUE_RULE)),
     }
 }
 

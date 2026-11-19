@@ -4,9 +4,12 @@
 //! for an estimate and picks the cheapest supported path. Built in are
 //! "btree", a B-link tree for equality and ranges; "hash", a linear hash
 //! table for equality; "rtree", an R-link tree for coordinate bounds;
-//! "fulltext", an inverted index of words (RULES.md D86); and "json", an
-//! inverted index of JSON documents' paths and values. An index's key may
-//! be of expressions of its table's columns (`index/expression.rs`).
+//! "fulltext", an inverted index of words (RULES.md D86); "json", an
+//! inverted index of JSON documents' paths and values; and "xml_path",
+//! "xml_value", "xml_property" and "xml_primary" (`index/xml.rs`), B-link
+//! trees of the paths and values of an XML column's nodes, for the lookups
+//! of XQuery's paths (RULES.md D106). An index's key may be of expressions
+//! of its table's columns (`index/expression.rs`).
 
 mod blink;
 pub mod diskann;
@@ -25,6 +28,7 @@ mod rtree;
 mod sparse;
 mod stats;
 pub(crate) mod vector;
+pub mod xml;
 
 use std::sync::Arc;
 
@@ -40,6 +44,7 @@ pub use probe::{ColumnComparison, Predicate, Probe};
 pub use projection::KeyProjection;
 pub use rtree::RTreeMethod;
 pub use sparse::{BLOCK_SIZE_OPTION, QUANTIZATION_OPTION, SPARSE_METHOD, SparseIndex, SparseMethod, VECTOR_TYPE};
+pub use xml::{XML_PATH_METHOD, XML_PRIMARY_METHOD, XML_PROPERTY_METHOD, XML_VALUE_METHOD, XmlMethod};
 
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::error::Result;
@@ -231,6 +236,17 @@ pub trait IndexMethod: Send + Sync {
     /// closed cleanly.
     fn checkpoint(&self) -> Result<()> {
         Ok(())
+    }
+    /// \[EXTENSION\] That its indexes may key `columns`, of an index `what`
+    /// names. Default: as SQL keys values, each column's values compared
+    /// [ISO/IEC 9075-2:2023 §9.12 SR3]; an XML method's, one XML column
+    /// (RULES.md D106).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 or -900 if they may not be keyed.
+    fn check_columns(&self, columns: &[DataType], what: &str) -> Result<()> {
+        columns.iter().try_for_each(|t| crate::binder::key_operand(t, what))
     }
 }
 
@@ -489,6 +505,28 @@ pub trait Index: Send + Sync {
     /// changed: `on` holds them now (RULES.md D41), as for
     /// `TableStorage::reconfigure`. Default: nothing.
     fn reconfigure(&self, _on: (&TableDesc, &IndexDesc)) {}
+    /// \[EXTENSION\] (RULES.md D106) The rows whose XML value may hold a
+    /// node `lookup` selects, each once, as they are taken: a superset,
+    /// each row's visible value checked again by the caller
+    /// (`XmlLookup::matches`), as a function lookup's (D34). It holds the
+    /// index, as `search` does. Default: none, for an index of no XML
+    /// lookup.
+    fn xml_rows(self: Arc<Self>, _lookup: &xml::XmlLookup) -> Option<RowIds> {
+        None
+    }
+    /// \[EXTENSION\] (RULES.md D106) Of an index that holds a row's nodes,
+    /// the rows `query` holds of, or may, from its entries alone, each
+    /// once: one that may is checked (`XmlQuery::matches`), one not given
+    /// does not hold. It holds the index. Default: none, for an index whose
+    /// rows are each checked.
+    fn xml_answers(self: Arc<Self>, _query: &xml::XmlQuery) -> Option<xml::XmlAnswers> {
+        None
+    }
+    /// \[EXTENSION\] (RULES.md D106, D35) What `xml_rows` of `lookup` costs,
+    /// if it answers XML lookups: only a statistic. Default: none.
+    fn xml_cost(self: Arc<Self>, _lookup: &xml::XmlLookup) -> Option<xml::XmlCost> {
+        None
+    }
 }
 
 /// Every entry `probe` selects in `index`, in ascending key order if its

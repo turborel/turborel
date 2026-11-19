@@ -214,6 +214,7 @@ fn has_text(item: &Item) -> bool {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Json(_)
+            | Value::Xml(_)
             | Value::Extension(_) => true,
         },
         Item::Array(elements) => elements.iter().all(has_text),

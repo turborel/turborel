@@ -104,6 +104,7 @@ impl Params {
             transitions: self.transitions.clone(),
             routine: self.routine.clone(),
             execution: self.execution,
+            xml: self.xml.clone(),
             ..Params::default()
         }
     }

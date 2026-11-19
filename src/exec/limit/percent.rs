@@ -59,7 +59,8 @@ fn ceiling(q: &Value, rows: usize) -> Result<Option<usize>> {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => Err(broken("a percentage of the rows is not a number")),
+        | Value::Extension(_)
+        | Value::Xml(_) => Err(broken("a percentage of the rows is not a number")),
     }
 }
 

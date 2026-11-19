@@ -2,7 +2,9 @@
 //! DROP VIEW [§11.20], DROP DOMAIN [§11.27] (`db/domains.rs`), DROP
 //! ASSERTION [§11.35] (`db/assertions.rs`), and DROP COLLATION, DROP
 //! SEQUENCE and DROP TYPE [ISO/IEC 9075-2:2023 §11.44, §11.74, §11.59]
-//! (`db/user_types.rs`), in a transaction (RULES.md D33):
+//! (`db/user_types.rs`), and DROP XML SCHEMA (`definitions/xml_schemas.rs`)
+//! and DROP XQUERY MODULE (`definitions/xquery_modules.rs`), in a
+//! transaction (RULES.md D33):
 //! each staged as one change (`Change::Drop`), made again on the definitions
 //! published when it commits, and by recovery.
 //!
@@ -12,6 +14,11 @@
 //! own (`QualifiedName::of_schema`), which a table or view defined in it
 //! takes shared, so none is defined in a schema as it is dropped. It is
 //! made on the definitions as they are once it holds them all.
+//!
+//! \[EXTENSION\] A schema goes with the views, routines and triggers that
+//! map it by XMLMAP (`drop/mapped.rs`).
+
+mod mapped;
 
 use std::sync::Arc;
 
@@ -51,6 +58,8 @@ impl State {
             DropTarget::Transform(qn, group) => self.drop_transform(qn, group.as_deref(), cascade),
             DropTarget::Model(qn) => self.drop_model(qn, cascade),
             DropTarget::Pipeline(qn) => self.drop_pipeline(qn),
+            DropTarget::XmlSchema(qn) => self.drop_xml_schema(qn, cascade),
+            DropTarget::XQueryModule(qn) => self.drop_xquery_module(qn, cascade),
         }
     }
 
@@ -134,18 +143,37 @@ impl State {
         Ok(dropped)
     }
 
+    /// The registered XQuery modules and XML Schemas, collations and
+    /// sequence generators of schema `auth`, which nothing of it left
+    /// depends on, dropped.
+    ///
+    /// # Errors
+    ///
+    /// As each kind's drop.
+    fn drop_schema_described(&mut self, auth: &str) -> Result<Dropped> {
+        let mut dropped = self.drop_schema_xquery_modules(auth)?;
+        dropped.absorb(self.drop_schema_xml_schemas(auth)?);
+        dropped.absorb(self.drop_schema_collations(auth)?);
+        dropped.absorb(self.drop_schema_sequences(auth)?);
+        Ok(dropped)
+    }
+
     /// [ISO/IEC 9075:1992 §11.2] Drops schema `auth`: each of its tables,
     /// then each of its views left, as DROP TABLE and DROP VIEW with
     /// CASCADE do [GR1, GR2], then its domains, as DROP DOMAIN with CASCADE
     /// does [GR3], then its assertions [GR4], then its triggers [ISO/IEC
-    /// 9075-2:2023 §11.2 GR9], then the schema [GR8].
+    /// 9075-2:2023 §11.2 GR9], its routines, \[EXTENSION\] its registered
+    /// XQuery modules and XML Schemas, as DROP XQUERY MODULE and DROP XML
+    /// SCHEMA with CASCADE do, and the rest of what it holds, then the
+    /// schema [GR8].
     ///
     /// # Errors
     ///
     /// SQLCODE -103 if there is no such schema [SR2] (SQLSTATE 3F000), or,
     /// not `cascade`, it holds a table, view, domain, assertion, collation,
     /// sequence generator, user-defined type [SR3], trigger or SQL-invoked
-    /// routine [ISO/IEC 9075-2:2023 §11.2 SR4j, SR4l].
+    /// routine [ISO/IEC 9075-2:2023 §11.2 SR4j, SR4l], or \[EXTENSION\] a
+    /// registered XML Schema or XQuery module.
     fn drop_schema(&mut self, auth: &str, cascade: bool) -> Result<Dropped> {
         if !self.catalog.schema_exists(auth) {
             let msg = format!("[ISO/IEC 9075:1992 §11.2 SR2] there is no schema {auth}");
@@ -161,18 +189,19 @@ impl State {
         let collations = self.schema_collations(auth);
         let sequences = self.schema_sequences(auth);
         let types = self.schema_user_types(auth);
-        let triggers = self.schema_triggers_of(auth);
-        let routines = self.schema_routines_of(auth);
-        let modules = self.modules_of_schema(auth);
+        let (triggers, routines) = (self.schema_triggers_of(auth), self.schema_routines_of(auth));
+        let (modules, registered) = (self.modules_of_schema(auth), self.schema_registered(auth));
         // [ISO/IEC 9075-4:2006 draft §9.2 SR1] a module of it named first.
         let held =
             (modules.iter().find(|m| m.auth == auth).or(tables.first()).or(views.first()).or(domains.first()).or(assertions.first()))
-                .or(collations.first().or(sequences.first()).or(types.first()).or(triggers.first()).or(routines.first()));
+                .or(collations.first().or(sequences.first()).or(types.first()))
+                .or(triggers.first().or(routines.first()).or(registered.first()));
         if let (Some(first), false) = (held.cloned().or_else(|| self.schema_embeddings(auth).into_iter().next()), cascade) {
             return Err(rule(format!("[ISO/IEC 9075:1992 §11.2 SR3] schema {auth} holds {first}, so it is dropped only with CASCADE")));
         }
         let mut dropped = self.drop_schema_embeddings(auth)?;
         dropped.absorb(self.drop_named_in(auth, cascade)?);
+        dropped.absorb(self.drop_mappers(auth, cascade)?);
         dropped.absorb(self.drop_modules_naming(&modules)?);
         // A subtable goes with its supertable, maybe before its turn.
         for table in &tables {
@@ -196,8 +225,7 @@ impl State {
         dropped.absorb(self.drop_triggers(&triggers)?);
         // [ISO/IEC 9075-2:2023 §11.2 GR10] its routines left.
         dropped.absorb(self.drop_routines(&routines)?);
-        dropped.absorb(self.drop_schema_collations(auth)?);
-        dropped.absorb(self.drop_schema_sequences(auth)?);
+        dropped.absorb(self.drop_schema_described(auth)?);
         // Its types, once the tables of them are gone.
         dropped.absorb(self.drop_schema_user_types(auth)?);
         let mut catalog = self.catalog.duplicate();
@@ -353,6 +381,8 @@ impl Session {
             | DropTarget::Module(_)
             | DropTarget::Cast(_)
             | DropTarget::Ordering(_)
+            | DropTarget::XmlSchema(_)
+            | DropTarget::XQueryModule(_)
             | DropTarget::Transform(..)
             | DropTarget::Model(_)
             | DropTarget::Pipeline(_) => Vec::new(),
@@ -419,6 +449,9 @@ impl Session {
             DropObject::Module(name) => Ok(DropTarget::Module(self.owned(st, name, "ISO/IEC 9075-4:2006 draft §9.22 AR1")?)),
             DropObject::Cast(..) | DropObject::Ordering(_) | DropObject::Transform(..) => self.type_drop_target(st, object),
             DropObject::Vector(kind, name) => Ok(super::embedding::drop_target(*kind, self.owned(st, name, "EXTENSION")?)),
+            DropObject::XmlSchema(name) => self.xml_schema_target(st, name),
+            // [EXTENSION] as of a collation [ISO/IEC 9075-2:2023 §11.44 AR1].
+            DropObject::XQueryModule(name) => Ok(DropTarget::XQueryModule(self.owned(st, name, "EXTENSION")?)),
             DropObject::Schema { catalog, name, at } => {
                 let ours = st.settings.get(CATALOG_NAME).to_string();
                 if let Some(other) = catalog.as_ref().filter(|c| **c != ours.trim_end()) {
@@ -437,6 +470,23 @@ impl Session {
                 Ok(DropTarget::Schema(name.clone()))
             }
         }
+    }
+
+    /// \[EXTENSION\] The registered XML Schema `name` names, qualified by
+    /// the default schema, if this session's authorization identifier owns
+    /// its schema, as of a collation [ISO/IEC 9075-2:2023 §11.44 AR1].
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -103 if it is permanently registered [ISO/IEC 9075-14:2006
+    /// draft §4.2.6]; -104 if the session does not own its schema.
+    fn xml_schema_target(&self, st: &State, name: &TableName) -> Result<DropTarget> {
+        let qn = qualify(name, &self.default_schema());
+        if crate::catalog::xml_schemas::permanent(&qn).is_some() {
+            let msg = format!("[EXTENSION] [ISO/IEC 9075-14:2006 draft §4.2.6] {qn} is permanently registered: it is never dropped");
+            return Err(rule(msg).or_at(name.at));
+        }
+        Ok(DropTarget::XmlSchema(self.owned(st, name, "EXTENSION")?))
     }
 
     /// `name`, qualified by the default schema, if this session's

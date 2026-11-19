@@ -274,7 +274,7 @@ impl BLinkIndex {
     fn range(&self, probe: &Probe) -> Option<Range> {
         match probe {
             Probe::All => Some(Range::all(false)),
-            Probe::Predicate { .. } => None,
+            Probe::Predicate { .. } | Probe::Xml(_) => None,
             Probe::Columns(_) => Some(Range::all(true)),
             Probe::Compare { op, value } => self.prefix_range(&[], Some((*op, value))),
             Probe::Prefix { equal, then } => self.prefix_range(equal, then.as_ref().map(|(op, v)| (*op, v))),

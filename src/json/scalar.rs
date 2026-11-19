@@ -72,6 +72,7 @@ impl ScalarFunction for JsonScalar {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Json(_)
+            | Value::Xml(_)
             | Value::Extension(_) => value.clone(),
         };
         let scalar = Scalar::new(value.clone()).ok_or_else(|| unscalar(&value))?;

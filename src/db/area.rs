@@ -437,6 +437,7 @@ fn condition_number(n: &ValueSpecification, valued: &Valued<'_>) -> Result<i128>
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => Err(not_exact()),
+        | Value::Extension(_)
+        | Value::Xml(_) => Err(not_exact()),
     }
 }

@@ -3,6 +3,9 @@
 //! trigger descriptors; and [ISO/IEC 9075-2:2023 §11.74 SR3, GR1] DROP
 //! SEQUENCE of a sequence generator a trigger or a routine draws from.
 
+use std::sync::Arc;
+
+use turborel::clock::FixedClock;
 use turborel::db::{Database, Session};
 use turborel::error::Code;
 
@@ -12,8 +15,10 @@ use crate::common::{exec, rows};
 /// TR1, a row trigger drawing from Q; TR2, an UPDATE OF V trigger whose
 /// condition invokes F; TR3, a statement trigger; TR4, a row trigger after
 /// TR1; and P, a procedure drawing from Q. B holds SELECT on T, C INSERT.
+/// Its clock stands at 2024-02-29 12:34:56.789012 UTC.
 fn triggered() -> Database {
     let db = Database::new();
+    db.set_clock(Arc::new(FixedClock::at(1_709_210_096_789_012))).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE T (K INTEGER, V INTEGER)
@@ -47,7 +52,9 @@ fn shown(s: &Session, sql: &str) -> Vec<String> {
 /// triggers of its table, event, time and orientation, in the order of
 /// creation, its condition and statement as written to the owner of its
 /// schema and null to others, its orientation, its time, its transition
-/// names, and a null timestamp; one holding SELECT alone sees none.
+/// names, and its timestamp of creation, the CURRENT_TIMESTAMP its
+/// definition ran at, of TIME_STAMP's two digits of the second's fraction
+/// [§6.58 Description 13, §5.6]; one holding SELECT alone sees none.
 /// TRIGGERED_UPDATE_COLUMNS has each column of a trigger column list.
 #[test]
 fn triggers_are_described_5_69() {
@@ -58,10 +65,10 @@ fn triggers_are_described_5_69() {
     assert_eq!(
         shown(&db.session("A"), described),
         [
-            "TR1,INSERT,T,1,NULL,INSERT INTO U VALUES (NEXT VALUE FOR Q),ROW,AFTER,NULL,NULL,NULL",
-            "TR2,UPDATE,T,1,O.V > F(0),DELETE FROM U WHERE N = O.K,ROW,AFTER,O,NULL,NULL",
-            "TR3,INSERT,T,1,NULL,DELETE FROM U,STATEMENT,AFTER,NULL,NULL,NULL",
-            "TR4,INSERT,T,2,NULL,DELETE FROM U,ROW,AFTER,NULL,NULL,NULL",
+            "TR1,INSERT,T,1,NULL,INSERT INTO U VALUES (NEXT VALUE FOR Q),ROW,AFTER,NULL,NULL,2024-02-29 12:34:56.78+00:00",
+            "TR2,UPDATE,T,1,O.V > F(0),DELETE FROM U WHERE N = O.K,ROW,AFTER,O,NULL,2024-02-29 12:34:56.78+00:00",
+            "TR3,INSERT,T,1,NULL,DELETE FROM U,STATEMENT,AFTER,NULL,NULL,2024-02-29 12:34:56.78+00:00",
+            "TR4,INSERT,T,2,NULL,DELETE FROM U,ROW,AFTER,NULL,NULL,2024-02-29 12:34:56.78+00:00",
         ]
     );
     let to_c = "SELECT TRIGGER_NAME, ACTION_CONDITION, ACTION_STATEMENT FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_NAME = 'TR2'";

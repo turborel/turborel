@@ -10,7 +10,7 @@
 //!             body (str), schema (str), reads (count u32, names),
 //!             horizon, invokes (count u32, names), sequences (count u32,
 //!             names), execute (as a domain's usage), created u64,
-//!             module (0 none, or 1 and its name (str)), PTF (0 none, or
+//!             stamps, module (0 none, or 1 and its name (str)), PTF (0 none, or
 //!             1 and a ptf), method, distance (0 none, or 1 and a distance)
 //! distance:   symmetric u8, non-negative u8, triangle u8, formats (count
 //!             u32, each a code u8), expression (str)
@@ -26,16 +26,21 @@
 //! module:     name, default schema (str), path (count u32, each a schema
 //!             (str)), path as written (0 none, or 1 and str), temporary
 //!             tables (count u32, names), text (str), execute (as a
-//!             domain's usage), created u64
+//!             domain's usage), created u64, stamps
+//! stamps:     the creation timestamp, then the last-altered timestamp,
+//!             each an instant
+//! instant:    microseconds from 0001-01-01 00:00 UTC i128, time zone
+//!             displacement in minutes i128
 //! ```
 
 use super::super::{
     DataAccess, DistanceDesc, GenericParameter, GenericTable, ModuleDesc, ParameterMode, PtfDesc, QualifiedName, RoutineKind, SqlParameter,
-    SqlRoutineDesc, TableSemantics,
+    SqlRoutineDesc, Stamps, TableSemantics,
 };
 use super::{flag, get_all, horizon, put_all, put_flag, put_horizon, put_name, put_usage, qualified, usage};
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
+use crate::value::datetime::Now;
 use crate::value::types::tags::{data_type, put_type};
 
 #[cfg(test)]
@@ -113,6 +118,7 @@ pub(crate) fn put_routine(out: &mut Vec<u8>, routine: &SqlRoutineDesc) {
     put_all(out, routine.sequences.iter(), put_name);
     put_usage(out, &routine.execute);
     out.put_u64(routine.created);
+    put_stamps(out, &routine.stamps);
     put_flag(out, routine.module.is_some());
     if let Some(module) = &routine.module {
         out.put_str(module);
@@ -207,7 +213,7 @@ pub(crate) fn routine(r: &mut Reader<'_>) -> Result<SqlRoutineDesc> {
     let null_call = flag(r)?;
     let (text, body, schema) = (r.str()?, r.str()?, r.str()?);
     let (reads, horizon, sequences) = (get_all(r, qualified)?, horizon(r)?, get_all(r, qualified)?);
-    let (execute, created) = (usage(r)?, r.u64()?);
+    let (execute, created, stamps) = (usage(r)?, r.u64()?, stamps(r)?);
     let module = if flag(r)? { Some(r.str()?) } else { None };
     let ptf = if flag(r)? { Some(Box::new(ptf(r)?)) } else { None };
     let method = super::structured::method_of(r)?;
@@ -229,6 +235,7 @@ pub(crate) fn routine(r: &mut Reader<'_>) -> Result<SqlRoutineDesc> {
         sequences,
         execute,
         created,
+        stamps,
         module,
         method,
         ptf,
@@ -250,6 +257,7 @@ pub(crate) fn put_module(out: &mut Vec<u8>, module: &ModuleDesc) {
     out.put_str(&module.text);
     put_usage(out, &module.execute);
     out.put_u64(module.created);
+    put_stamps(out, &module.stamps);
 }
 
 /// The module descriptor `put_module` wrote.
@@ -262,7 +270,32 @@ pub(crate) fn module(r: &mut Reader<'_>) -> Result<ModuleDesc> {
     let path = get_all(r, schema_name)?;
     let path_text = if flag(r)? { Some(r.str()?) } else { None };
     let (temporaries, text, execute, created) = (get_all(r, qualified)?, r.str()?, usage(r)?, r.u64()?);
-    Ok(ModuleDesc { name, schema, path, path_text, temporaries, text, execute, created })
+    Ok(ModuleDesc { name, schema, path, path_text, temporaries, text, execute, created, stamps: stamps(r)? })
+}
+
+/// [ISO/IEC 9075-2:2023 §4.35.5] A descriptor's creation and last-altered
+/// timestamps.
+pub(super) fn put_stamps(out: &mut Vec<u8>, stamps: &Stamps) {
+    put_instant(out, stamps.created);
+    put_instant(out, stamps.last_altered);
+}
+
+/// The timestamps `put_stamps` wrote.
+pub(super) fn stamps(r: &mut Reader<'_>) -> Result<Stamps> {
+    Ok(Stamps { created: instant(r)?, last_altered: instant(r)? })
+}
+
+/// A timestamp: its instant and its time zone displacement.
+pub(super) fn put_instant(out: &mut Vec<u8>, now: Now) {
+    out.put_i128(i128::from(now.utc));
+    out.put_i128(i128::from(now.zone));
+}
+
+/// The timestamp `put_instant` wrote.
+pub(super) fn instant(r: &mut Reader<'_>) -> Result<Now> {
+    let utc = i64::try_from(r.i128()?).map_err(|_| r.corrupt("an instant is out of range"))?;
+    let zone = i16::try_from(r.i128()?).map_err(|_| r.corrupt("a time zone displacement is out of range"))?;
+    Ok(Now { utc, zone })
 }
 
 /// An SQL parameter: its name, declared type and mode.

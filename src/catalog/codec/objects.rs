@@ -8,11 +8,19 @@
 //!             increment i128, cycle u8, epoch u64, origin i128, usage
 //! user type:  name, source type, the routine to it, the routine to its
 //!             source, usage
-//! routine:    name (str), specific name (str), EXECUTE grants as usage
+//! routine:    name (str), specific name (str), EXECUTE grants as usage,
+//!             stamps (as a routine descriptor's)
+//! XML Schema: name, target namespace (str), schema location (str),
+//!             document (str), the XML Schemas it uses (count u32, each
+//!             a name), usage
+//! XQuery module: name, target namespace (str), location (str), text
+//!             (str), the XQuery modules it imports (count u32, each a
+//!             name), the XML Schemas it imports or validates by
+//!             (likewise), usage, stamps (as a routine descriptor's)
 //! usage:      as a domain's
 //! ```
 
-use super::super::{CollationDesc, RoutineDesc, SequenceDesc, UserTypeDesc};
+use super::super::{CollationDesc, SequenceDesc, UserTypeDesc, XQueryModuleDesc, XmlSchemaDesc};
 use super::{data_type, flag, put_flag, put_name, put_type, put_usage, qualified, usage};
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -32,6 +40,57 @@ pub(crate) fn collation(r: &mut Reader<'_>) -> Result<CollationDesc> {
     let (name, base) = (qualified(r)?, r.str()?);
     let pad = if flag(r)? { Pad::None } else { Pad::Space };
     Ok(CollationDesc { name, base, pad, usage: usage(r)? })
+}
+
+/// [ISO/IEC 9075-14:2006 draft §4.2.6] `xml_schema` in bytes: its name,
+/// target namespace, schema location and document, the registered XML
+/// Schemas it uses, and its USAGE grants; not the schema read from it,
+/// which is read again (RULES.md D106).
+pub(crate) fn put_xml_schema(out: &mut Vec<u8>, xml_schema: &XmlSchemaDesc) {
+    put_name(out, &xml_schema.name);
+    out.put_str(&xml_schema.target_namespace);
+    out.put_str(&xml_schema.location);
+    out.put_str(&xml_schema.document);
+    out.put_u32(u32::try_from(xml_schema.uses.len()).unwrap_or(u32::MAX));
+    xml_schema.uses.iter().for_each(|u| put_name(out, u));
+    put_usage(out, &xml_schema.usage);
+}
+
+/// The registered XML Schema `put_xml_schema` wrote, its schema not yet
+/// read.
+pub(crate) fn xml_schema(r: &mut Reader<'_>) -> Result<XmlSchemaDesc> {
+    let (name, target_namespace, location, document) = (qualified(r)?, r.str()?, r.str()?, r.str()?);
+    let uses = (0..r.u32()?).map(|_| qualified(r)).collect::<Result<_>>()?;
+    Ok(XmlSchemaDesc { name, target_namespace, location, document, uses, usage: usage(r)?, schema: None })
+}
+
+/// \[EXTENSION\] `module`, a registered XQuery module, in bytes: its
+/// name, target namespace, location and text, the registered XQuery
+/// modules and XML Schemas it depends on, its USAGE grants and its
+/// timestamps; not its parse, which is made again (RULES.md D106).
+pub(crate) fn put_xquery_module(out: &mut Vec<u8>, module: &XQueryModuleDesc) {
+    put_name(out, &module.name);
+    out.put_str(&module.target_namespace);
+    out.put_str(&module.location);
+    out.put_str(&module.text);
+    for names in [&module.modules, &module.xml_schemas] {
+        out.put_u32(u32::try_from(names.len()).unwrap_or(u32::MAX));
+        for n in names {
+            put_name(out, n);
+        }
+    }
+    put_usage(out, &module.usage);
+    super::routines::put_stamps(out, &module.stamps);
+}
+
+/// The registered XQuery module `put_xquery_module` wrote, its text not yet
+/// parsed.
+pub(crate) fn xquery_module(r: &mut Reader<'_>) -> Result<XQueryModuleDesc> {
+    let (name, target_namespace, location, text) = (qualified(r)?, r.str()?, r.str()?, r.str()?);
+    let modules = (0..r.u32()?).map(|_| qualified(r)).collect::<Result<_>>()?;
+    let xml_schemas = (0..r.u32()?).map(|_| qualified(r)).collect::<Result<_>>()?;
+    let (usage, stamps) = (usage(r)?, super::routines::stamps(r)?);
+    Ok(XQueryModuleDesc { name, target_namespace, location, text, modules, xml_schemas, usage, stamps, module: None })
 }
 
 /// [ISO/IEC 9075-2:2023 §4.29.1] `sequence` in bytes: its name, type,
@@ -64,9 +123,7 @@ pub(crate) fn put_user_type(out: &mut Vec<u8>, user_type: &UserTypeDesc) {
     put_name(out, &user_type.name);
     put_type(out, &user_type.source);
     for routine in [&user_type.to_distinct, &user_type.to_source] {
-        out.put_str(&routine.name);
-        out.put_str(&routine.specific);
-        put_usage(out, &routine.execute);
+        super::structured::put_routine_desc(out, routine);
     }
     put_usage(out, &user_type.usage);
     super::put_all(out, user_type.methods.iter(), super::structured::put_method);
@@ -75,10 +132,7 @@ pub(crate) fn put_user_type(out: &mut Vec<u8>, user_type: &UserTypeDesc) {
 /// The user-defined type `put_user_type` wrote.
 pub(crate) fn user_type(r: &mut Reader<'_>) -> Result<UserTypeDesc> {
     let (name, source) = (qualified(r)?, data_type(r)?);
-    let routine = |from: &mut Reader<'_>| -> Result<RoutineDesc> {
-        Ok(RoutineDesc { name: from.str()?, specific: from.str()?, execute: usage(from)? })
-    };
-    let (to_distinct, to_source) = (routine(r)?, routine(r)?);
+    let (to_distinct, to_source) = (super::structured::routine_desc(r)?, super::structured::routine_desc(r)?);
     let usage = usage(r)?;
     Ok(UserTypeDesc { name, source, to_distinct, to_source, usage, methods: super::get_all(r, super::structured::method)? })
 }

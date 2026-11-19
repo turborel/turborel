@@ -237,7 +237,8 @@ fn exact_norm(v: &Value) -> NormKey {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => v.norm(),
+        | Value::Extension(_)
+        | Value::Xml(_) => v.norm(),
     }
 }
 

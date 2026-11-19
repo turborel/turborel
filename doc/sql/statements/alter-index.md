@@ -27,8 +27,9 @@ and writing the table, and then puts it in the old one's place. It is
 made at once, apart from any transaction: no ROLLBACK undoes it.
 
 The options are those the index's method declares and those plug-ins
-declare for every index; of the built-in methods, `btree`, `hash` and
-`rtree` declare none, and `fulltext` declares those of
+declare for every index; of the built-in methods, `btree`, `hash`,
+`rtree`, `xml_path`, `xml_value`, `xml_property` and `xml_primary`
+declare none, and `fulltext` declares those of
 [Full-Text Search](../08-fulltext.md). INFORMATION_SCHEMA.INDEX_OPTIONS shows an index's options.
 
 Of a `fulltext` index, FULLTEXT.K1, FULLTEXT.B and FULLTEXT.RANKING

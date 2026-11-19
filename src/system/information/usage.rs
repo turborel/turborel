@@ -1,0 +1,261 @@
+//! [ISO/IEC 9075-11:2006 draft §5.13, §5.16, §5.17, §5.20, §5.24, §5.44,
+//! §5.46 to §5.48, §5.74] The views of the Information Schema of what SQL
+//! routines, views, check constraints, generated columns and columns of a
+//! user-defined type depend on, of the collations' applicability, and of
+//! the data type descriptors a user may see: each the draft's text, over
+//! the Definition Schema's tables (`definition/usage.rs`,
+//! `definition/characters.rs`), each correction noted at its view.
+
+use super::SystemView;
+
+/// The views, in the draft's order.
+pub(super) const VIEWS: &[SystemView] = &[
+    // [§5.13] CHECK_CONSTRAINT_ROUTINE_USAGE, as the draft writes it.
+    SystemView {
+        name: "CHECK_CONSTRAINT_ROUTINE_USAGE",
+        query: r"SELECT CCRU.CONSTRAINT_CATALOG, CCRU.CONSTRAINT_SCHEMA, CCRU.CONSTRAINT_NAME,
+            CCRU.SPECIFIC_CATALOG, CCRU.SPECIFIC_SCHEMA, CCRU.SPECIFIC_NAME
+    FROM DEFINITION_SCHEMA.CHECK_CONSTRAINT_ROUTINE_USAGE AS CCRU
+      JOIN
+          DEFINITION_SCHEMA.SCHEMATA AS S
+        ON ( ( CCRU.SPECIFIC_CATALOG, CCRU.SPECIFIC_SCHEMA )
+            = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
+    WHERE ( S.SCHEMA_OWNER = CURRENT_USER
+           OR
+              S.SCHEMA_OWNER IN
+              ( SELECT ER.ROLE_NAME
+                FROM ENABLED_ROLES AS ER ) )
+      AND
+           CCRU.SPECIFIC_CATALOG
+        = ( SELECT ISCN.CATALOG_NAME
+              FROM INFORMATION_SCHEMA_CATALOG_NAME AS ISCN )",
+    },
+    // [§5.16] COLLATION_CHARACTER_SET_APPLICABILITY, as the draft writes
+    // it.
+    SystemView {
+        name: "COLLATION_CHARACTER_SET_APPLICABILITY",
+        query: r"SELECT CCSA.COLLATION_CATALOG, CCSA.COLLATION_SCHEMA, CCSA.COLLATION_NAME,
+           CCSA.CHARACTER_SET_CATALOG, CCSA.CHARACTER_SET_SCHEMA, CCSA.CHARACTER_SET_NAME
+    FROM DEFINITION_SCHEMA.COLLATION_CHARACTER_SET_APPLICABILITY AS CCSA
+      JOIN
+         DEFINITION_SCHEMA.SCHEMATA AS S
+        ON ( ( CCSA.COLLATION_CATALOG, CCSA.COLLATION_SCHEMA )
+           = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
+    WHERE ( S.SCHEMA_OWNER = CURRENT_USER
+          OR
+             S.SCHEMA_OWNER IN
+             ( SELECT ER.ROLE_NAME
+               FROM ENABLED_ROLES AS ER ) )
+      AND CCSA.COLLATION_CATALOG
+        = ( SELECT ISCN.CATALOG_NAME
+             FROM INFORMATION_SCHEMA_CATALOG_NAME AS ISCN )",
+    },
+    // [§5.17] COLUMN_COLUMN_USAGE, as the draft writes it.
+    SystemView {
+        name: "COLUMN_COLUMN_USAGE",
+        query: r"SELECT CCU.TABLE_CATALOG, CCU.TABLE_SCHEMA, CCU.TABLE_NAME,
+             CCU.COLUMN_NAME, CCU.DEPENDENT_COLUMN
+    FROM DEFINITION_SCHEMA.COLUMN_COLUMN_USAGE AS CCU
+    JOIN
+          DEFINITION_SCHEMA.SCHEMATA AS S
+      ON ( CCU.TABLE_CATALOG, CCU.TABLE_SCHEMA )
+       = ( S.CATALOG_NAME, S.SCHEMA_NAME )
+    WHERE ( S.SCHEMA_OWNER = CURRENT_USER
+          OR
+              S.SCHEMA_OWNER IN
+              ( SELECT ER.ROLE_NAME
+                FROM ENABLED_ROLES AS ER ) )
+      AND
+           CCU.TABLE_CATALOG
+         = ( SELECT ISCN.CATALOG_NAME
+              FROM INFORMATION_SCHEMA_CATALOG_NAME AS ISCN )",
+    },
+    // [§5.20] COLUMN_UDT_USAGE; corrected: a column's data type descriptor
+    // joined by the column's name, as DATA_TYPE_DESCRIPTOR keys a column's
+    // here, and as COLUMNS joins it, where the draft joins it by an object
+    // type and DTD_IDENTIFIER.
+    SystemView {
+        name: "COLUMN_UDT_USAGE",
+        query: r"SELECT DTD.USER_DEFINED_TYPE_CATALOG AS UDT_CATALOG,
+           DTD.USER_DEFINED_TYPE_SCHEMA AS UDT_SCHEMA,
+           DTD.USER_DEFINED_TYPE_NAME AS UDT_NAME,
+           C.TABLE_CATALOG, C.TABLE_SCHEMA, C.TABLE_NAME, C.COLUMN_NAME
+    FROM ( DEFINITION_SCHEMA.COLUMNS AS C
+         JOIN
+           ( DEFINITION_SCHEMA.DATA_TYPE_DESCRIPTOR AS DTD
+           JOIN
+              DEFINITION_SCHEMA.SCHEMATA AS S
+           ON ( DTD.USER_DEFINED_TYPE_CATALOG, DTD.USER_DEFINED_TYPE_SCHEMA )
+             = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
+         ON ( ( C.TABLE_CATALOG, C.TABLE_SCHEMA, C.TABLE_NAME, C.COLUMN_NAME )
+             = ( DTD.TABLE_OR_DOMAIN_CATALOG, DTD.TABLE_OR_DOMAIN_SCHEMA,
+                 DTD.TABLE_OR_DOMAIN_NAME, DTD.COLUMN_NAME ) ) )
+    WHERE ( S.SCHEMA_OWNER = CURRENT_USER
+          OR
+             S.SCHEMA_OWNER IN
+             ( SELECT ER.ROLE_NAME
+               FROM ENABLED_ROLES AS ER ) )
+      AND
+          DTD.DATA_TYPE = 'USER-DEFINED'",
+    },
+    // [§5.24] DATA_TYPE_PRIVILEGES; its `<view column list>` written as
+    // the derived column list of its UNION. Corrected: a column of a
+    // domain, whose type is its domain's, has no DTD_IDENTIFIER of its own
+    // here (`information/objects.rs`), so it is passed over, as the draft
+    // passes over a procedure's; and a method specification parameter's
+    // descriptor is of the method's specific name [§6.29 Description 5],
+    // where the draft writes the parameter's type's name.
+    SystemView {
+        name: "DATA_TYPE_PRIVILEGES",
+        query: r"SELECT OBJECT_CATALOG, OBJECT_SCHEMA, OBJECT_NAME, OBJECT_TYPE, DTD_IDENTIFIER
+    FROM (
+      SELECT UDT_CATALOG, UDT_SCHEMA, UDT_NAME,
+             'USER-DEFINED TYPE', DTD_IDENTIFIER
+      FROM ATTRIBUTES
+    UNION
+      SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME,
+             'TABLE', DTD_IDENTIFIER
+        FROM COLUMNS
+      WHERE DTD_IDENTIFIER IS NOT NULL
+    UNION
+      SELECT DOMAIN_CATALOG, DOMAIN_SCHEMA, DOMAIN_NAME,
+             'DOMAIN', DTD_IDENTIFIER
+      FROM DOMAINS
+    UNION
+      SELECT UDT_CATALOG, UDT_SCHEMA, UDT_NAME,
+             'USER-DEFINED TYPE', DTD_IDENTIFIER
+      FROM METHOD_SPECIFICATIONS
+    UNION
+      SELECT SPECIFIC_CATALOG, SPECIFIC_SCHEMA, SPECIFIC_NAME,
+             'USER-DEFINED TYPE', DTD_IDENTIFIER
+      FROM METHOD_SPECIFICATION_PARAMETERS
+    UNION
+      SELECT SPECIFIC_CATALOG, SPECIFIC_SCHEMA, SPECIFIC_NAME,
+             'ROUTINE', DTD_IDENTIFIER
+      FROM PARAMETERS
+    UNION
+      SELECT SPECIFIC_CATALOG, SPECIFIC_SCHEMA, SPECIFIC_NAME,
+             'ROUTINE', DTD_IDENTIFIER
+      FROM ROUTINES
+      WHERE DTD_IDENTIFIER IS NOT NULL
+    UNION
+      SELECT USER_DEFINED_TYPE_CATALOG, USER_DEFINED_TYPE_SCHEMA,
+             USER_DEFINED_TYPE_NAME, 'USER-DEFINED TYPE', SOURCE_DTD_IDENTIFIER
+      FROM USER_DEFINED_TYPES
+      WHERE SOURCE_DTD_IDENTIFIER IS NOT NULL
+    UNION
+      SELECT USER_DEFINED_TYPE_CATALOG, USER_DEFINED_TYPE_SCHEMA,
+             USER_DEFINED_TYPE_NAME, 'USER-DEFINED TYPE', REF_DTD_IDENTIFIER
+      FROM USER_DEFINED_TYPES
+      WHERE REF_DTD_IDENTIFIER IS NOT NULL
+    ) AS DTP ( OBJECT_CATALOG, OBJECT_SCHEMA, OBJECT_NAME, OBJECT_TYPE, DTD_IDENTIFIER )",
+    },
+    // [§5.44] ROUTINE_COLUMN_USAGE, as the draft writes it.
+    SystemView {
+        name: "ROUTINE_COLUMN_USAGE",
+        query: r"SELECT SPECIFIC_CATALOG, SPECIFIC_SCHEMA, SPECIFIC_NAME, R.ROUTINE_CATALOG,
+            R.ROUTINE_SCHEMA, R.ROUTINE_NAME, RCU.TABLE_CATALOG, RCU.TABLE_SCHEMA,
+            RCU.TABLE_NAME, RCU.COLUMN_NAME
+    FROM ( DEFINITION_SCHEMA.ROUTINE_COLUMN_USAGE AS RCU
+         JOIN
+            DEFINITION_SCHEMA.ROUTINES AS R
+            USING ( SPECIFIC_CATALOG, SPECIFIC_SCHEMA, SPECIFIC_NAME ) )
+      JOIN
+          DEFINITION_SCHEMA.SCHEMATA AS S
+        ON ( ( RCU.TABLE_CATALOG, RCU.TABLE_SCHEMA )
+            = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
+    WHERE ( S.SCHEMA_OWNER = CURRENT_USER
+           OR
+              S.SCHEMA_OWNER IN
+              ( SELECT ER.ROLE_NAME
+                FROM ENABLED_ROLES AS ER ) )
+      AND
+           R.ROUTINE_CATALOG
+        = ( SELECT ISCN.CATALOG_NAME
+              FROM INFORMATION_SCHEMA_CATALOG_NAME AS ISCN )",
+    },
+    // [§5.46] ROUTINE_ROUTINE_USAGE, as the draft writes it.
+    SystemView {
+        name: "ROUTINE_ROUTINE_USAGE",
+        query: r"SELECT RRU.SPECIFIC_CATALOG, RRU.SPECIFIC_SCHEMA, RRU.SPECIFIC_NAME,
+            RRU.ROUTINE_CATALOG, RRU.ROUTINE_SCHEMA, RRU.ROUTINE_NAME
+    FROM DEFINITION_SCHEMA.ROUTINE_ROUTINE_USAGE AS RRU
+      JOIN
+          DEFINITION_SCHEMA.SCHEMATA AS S
+        ON ( ( RRU.ROUTINE_CATALOG, RRU.ROUTINE_SCHEMA )
+            = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
+    WHERE ( S.SCHEMA_OWNER = CURRENT_USER
+           OR
+              S.SCHEMA_OWNER IN
+              ( SELECT ER.ROLE_NAME
+                FROM ENABLED_ROLES AS ER ) )
+      AND
+           RRU.SPECIFIC_CATALOG
+        = ( SELECT ISCN.CATALOG_NAME
+              FROM INFORMATION_SCHEMA_CATALOG_NAME AS ISCN )",
+    },
+    // [§5.47] ROUTINE_SEQUENCE_USAGE, as the draft writes it.
+    SystemView {
+        name: "ROUTINE_SEQUENCE_USAGE",
+        query: r"SELECT RSU.SPECIFIC_CATALOG, RSU.SPECIFIC_SCHEMA, RSU.SPECIFIC_NAME,
+            RSU.SEQUENCE_CATALOG, RSU.SEQUENCE_SCHEMA, RSU.SEQUENCE_NAME
+    FROM DEFINITION_SCHEMA.ROUTINE_SEQUENCE_USAGE AS RSU
+      JOIN
+          DEFINITION_SCHEMA.SCHEMATA AS S
+        ON ( ( RSU.SPECIFIC_CATALOG, RSU.SPECIFIC_SCHEMA )
+            = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
+    WHERE ( S.SCHEMA_OWNER = CURRENT_USER
+         OR
+             S.SCHEMA_OWNER IN
+             ( SELECT ER.ROLE_NAME
+               FROM ENABLED_ROLES AS ER ) )
+      AND
+           RSU.SEQUENCE_CATALOG
+        = ( SELECT ISCN.CATALOG_NAME
+             FROM INFORMATION_SCHEMA_CATALOG_NAME AS ISCN )",
+    },
+    // [§5.48] ROUTINE_TABLE_USAGE, as the draft writes it.
+    SystemView {
+        name: "ROUTINE_TABLE_USAGE",
+        query: r"SELECT SPECIFIC_CATALOG, SPECIFIC_SCHEMA, SPECIFIC_NAME,
+            R.ROUTINE_CATALOG, R.ROUTINE_SCHEMA, R.ROUTINE_NAME,
+            RTU.TABLE_CATALOG, RTU.TABLE_SCHEMA, RTU.TABLE_NAME
+    FROM ( DEFINITION_SCHEMA.ROUTINE_TABLE_USAGE AS RTU
+         JOIN
+            DEFINITION_SCHEMA.ROUTINES AS R
+            USING ( SPECIFIC_CATALOG, SPECIFIC_SCHEMA, SPECIFIC_NAME ) )
+      JOIN
+          DEFINITION_SCHEMA.SCHEMATA AS S
+        ON ( ( RTU.TABLE_CATALOG, RTU.TABLE_SCHEMA )
+            = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
+    WHERE ( S.SCHEMA_OWNER = CURRENT_USER
+           OR
+              S.SCHEMA_OWNER IN
+              ( SELECT ER.ROLE_NAME
+                FROM ENABLED_ROLES AS ER ) )
+      AND
+           SPECIFIC_CATALOG
+        = ( SELECT ISCN.CATALOG_NAME
+              FROM INFORMATION_SCHEMA_CATALOG_NAME AS ISCN )",
+    },
+    // [§5.74] VIEW_ROUTINE_USAGE, as the draft writes it.
+    SystemView {
+        name: "VIEW_ROUTINE_USAGE",
+        query: r"SELECT VRU.TABLE_CATALOG, VRU.TABLE_SCHEMA, VRU.TABLE_NAME,
+            VRU.SPECIFIC_CATALOG, VRU.SPECIFIC_SCHEMA, VRU.SPECIFIC_NAME
+    FROM DEFINITION_SCHEMA.VIEW_ROUTINE_USAGE AS VRU
+      JOIN
+          DEFINITION_SCHEMA.SCHEMATA AS S
+        ON ( ( VRU.TABLE_CATALOG, VRU.TABLE_SCHEMA )
+            = ( S.CATALOG_NAME, S.SCHEMA_NAME ) )
+    WHERE ( S.SCHEMA_OWNER = CURRENT_USER
+           OR
+              S.SCHEMA_OWNER IN
+              ( SELECT ER.ROLE_NAME
+                FROM ENABLED_ROLES AS ER ) )
+      AND
+           VRU.SPECIFIC_CATALOG
+        = ( SELECT ISCN.CATALOG_NAME
+              FROM INFORMATION_SCHEMA_CATALOG_NAME AS ISCN )",
+    },
+];

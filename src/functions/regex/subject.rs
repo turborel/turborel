@@ -83,7 +83,8 @@ impl<'v> Subject<'v> {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => Body::Chars(text(value)?.unwrap_or_default().chars().collect()),
+            | Value::Extension(_)
+            | Value::Xml(_) => Body::Chars(text(value)?.unwrap_or_default().chars().collect()),
         };
         Ok(Some(Subject { body, value, octets }))
     }

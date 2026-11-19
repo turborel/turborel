@@ -181,6 +181,10 @@ impl ProgramBinder<'_> {
     /// `block`'s work, what it brings into scope taken out after.
     fn block_within(&mut self, c: &CompoundStatement, label_name: Option<&str>) -> Result<Step> {
         let mut scope = (*self.scope).clone();
+        // [ISO/IEC 9075-14:2006 draft §15.1 SR1, SR2] its XML options in
+        // scope of what it holds, its declarations' defaults too.
+        scope.xml.extend(c.options.iter().cloned());
+        self.scope = Arc::new(scope.clone());
         let mut variables = Vec::new();
         for declaration in &c.declarations {
             match declaration {
@@ -210,7 +214,7 @@ impl ProgramBinder<'_> {
         label: Option<&str>,
         (out, scope): (&mut Vec<Declared>, &mut RoutineScope),
     ) -> Result<()> {
-        let (data_type, domain) = self.cx.db.resolve_type(&v.data_type, (self.cx.schema, self.cx.user.cell))?;
+        let (data_type, domain) = super::xml::resolved_type(&self.cx, &v.data_type, self.cx.user.cell)?;
         let at = v.names.first().map_or(0, |n| n.at);
         let initial = match (v.default.as_ref(), domain.and_then(|d| d.default.clone())) {
             (None, Some(d)) => self.domain_initial(&d, &data_type, at)?,

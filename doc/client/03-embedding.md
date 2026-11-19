@@ -552,6 +552,37 @@ fn main() -> Result<()> {
 }
 ```
 
+## XML names
+
+`turborel::xml` maps SQL identifiers to XML Names and back, as SQL/XML
+defines it and as XMLELEMENT, XMLFOREST and XMLMAP map names. A
+program invokes the mappings directly, as an SQL statement does with
+XMLNAME_TO_IDENTIFIER and IDENTIFIER_TO_XMLNAME
+([SQL/XML](../sql/19-xml.md#mapping-names)):
+
+- `name_of(identifier, Escape::Partial)` or `Escape::Full`: the XML Name
+  of an identifier's characters. A character no XML 1.1 name holds is
+  written `_xHHHH_`, or `_xHHHHHH_` beyond the Basic Multilingual Plane.
+  Fully escaped, a colon and a leading `xml` are escaped too.
+- `name_of_parts(&[...])`: the XML Name of a name of several parts, each
+  fully escaped and its periods escaped, joined by periods.
+- `identifier_of(name)`: the characters of the identifier an XML Name
+  stands for, each escape of an assigned character read as it.
+- `delimited(identifier)`: the delimited identifier of those characters,
+  in double quotes, each double quote doubled.
+
+```rust
+use turborel::xml::{Escape, delimited, identifier_of, name_of, name_of_parts};
+
+fn main() {
+    assert_eq!(name_of("my column", Escape::Partial), "my_x0020_column");
+    assert_eq!(name_of("a:b", Escape::Full), "a_x003A_b");
+    assert_eq!(name_of_parts(&["S", "T.1"]), "S.T_x002E_1");
+    assert_eq!(identifier_of("my_x0020_column"), "my column");
+    assert_eq!(delimited(&identifier_of("say_x0020__x0022_hi_x0022_")), "\"say \"\"hi\"\"\"");
+}
+```
+
 ## Engines and other plug-ins
 
 Each extension point is a trait, whose implementation the program
@@ -590,7 +621,9 @@ off, as the built-in rules' do ([Settings](../appendix/c-settings.md)).
 
 The built-in engines are `rowstore`, the default, and `columnstore`
 ([Table Options](../appendix/g-table-options.md)); the built-in index
-methods are `btree`, `hash`, `rtree` and `fulltext`. Each trait's contract, what the database
+methods are `btree`, `hash`, `rtree`, `fulltext`, and `xml_path`,
+`xml_value`, `xml_property` and `xml_primary`, whose lookups
+`Index::xml_rows` gives, and the primary's answers `Index::xml_answers`. Each trait's contract, what the database
 calls and what an implementation must keep, is in the crate's own
 documentation, of the module the trait is in.
 

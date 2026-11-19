@@ -69,7 +69,8 @@ fn ordered_by(t: &DataType, member: fn(&DataType) -> bool) -> bool {
             | DataType::Structured(_)
             | DataType::Reference(_)
             | DataType::Json
-            | DataType::Extension(_) => false,
+            | DataType::Extension(_)
+            | DataType::Xml(_) => false,
         }
 }
 
@@ -83,6 +84,14 @@ pub(crate) fn lob_ordered(t: &DataType) -> bool {
     ordered_by(t, DataType::is_lob)
 }
 
+/// \[DESIGN\] Whether a value of `t` may hold a large object or an XML
+/// value, which a table may keep apart (RULES.md D79, D106): `t` is
+/// LOB-ordered or XML-ordered, or holds a structured type, whose
+/// attributes may.
+pub(crate) fn may_keep_apart(t: &DataType) -> bool {
+    ordered_by(t, |t| t.is_lob() || matches!(t, DataType::Xml(_) | DataType::Structured(_)))
+}
+
 /// [ISO/IEC 9075-2:2023 §4.1] Whether `t` is multiset-ordered: a
 /// multiset type, or a distinct type whose source is one, among the S its
 /// definition names, as `ordered_by` finds a distinct type's source.
@@ -90,12 +99,21 @@ pub(crate) fn multiset_ordered(t: &DataType) -> bool {
     ordered_by(t, |t| matches!(t, DataType::Multiset(_)))
 }
 
+/// [ISO/IEC 9075-14:2006 draft §4.1.4] Whether `t` is XML-ordered: an XML
+/// type, or one an XML type is part of, as `ordered_by` finds it.
+pub(crate) fn xml_ordered(t: &DataType) -> bool {
+    ordered_by(t, |t| matches!(t, DataType::Xml(_)))
+}
+
 /// [ISO/IEC 9075-2:2023 §9.12 SR3, §9.13 SR3, §9.14 SR3] What in `t` no
-/// ordering or grouping operation takes, named in the plural: large
-/// objects, of a LOB-ordered type, arrays, of an array-ordered one, or
-/// multisets, of a multiset-ordered one; none of another.
+/// ordering or grouping operation takes, named in the plural: XML values,
+/// of an XML-ordered type [ISO/IEC 9075-14:2006 draft §10.9 to §10.11],
+/// large objects, of a LOB-ordered type, arrays, of an array-ordered one,
+/// or multisets, of a multiset-ordered one; none of another.
 pub(crate) fn unordered(t: &DataType) -> Option<&'static str> {
-    if lob_ordered(t) {
+    if xml_ordered(t) {
+        Some("XML values")
+    } else if lob_ordered(t) {
         Some("large objects")
     } else if array_ordered(t) {
         Some("arrays")
@@ -152,7 +170,8 @@ pub(crate) fn nesting(t: &DataType) -> usize {
         | DataType::Structured(_)
         | DataType::Reference(_)
         | DataType::Json
-        | DataType::Extension(_) => 0,
+        | DataType::Extension(_)
+        | DataType::Xml(_) => 0,
     }
 }
 

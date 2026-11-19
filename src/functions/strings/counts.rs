@@ -42,7 +42,8 @@ fn octets_of(v: &Value) -> Result<Option<Octets<'_>>> {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_) => fail(Code::Api, "[DESIGN] POSITION was given a value not a string"),
+        | Value::Extension(_)
+        | Value::Xml(_) => fail(Code::Api, "[DESIGN] POSITION was given a value not a string"),
     }
 }
 
@@ -79,7 +80,8 @@ impl Position {
                 | Value::Reference(_)
                 | Value::Row(_)
                 | Value::Json(_)
-                | Value::Extension(_),
+                | Value::Extension(_)
+                | Value::Xml(_),
                 _,
             ) => return Ok(Value::Null),
         };
@@ -209,7 +211,8 @@ impl ScalarFunction for Length {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => {
+            | Value::Extension(_)
+            | Value::Xml(_) => {
                 return text(s).map(|_| Value::Null);
             }
         };

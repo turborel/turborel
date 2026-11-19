@@ -100,6 +100,7 @@ fn write_scalar(value: &Value, out: &mut Vec<u8>) -> Result<()> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => return Err(corrupt("an SQL/JSON scalar is of no scalar's type")),
     }
     Ok(())

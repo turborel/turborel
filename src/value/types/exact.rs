@@ -152,7 +152,8 @@ impl SqlType for Exact {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => unassignable(&v, t, rule),
+            | Value::Extension(_)
+            | Value::Xml(_) => unassignable(&v, t, rule),
         }
     }
 
@@ -180,7 +181,8 @@ impl SqlType for Exact {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => uncastable(&v, t),
+            | Value::Extension(_)
+            | Value::Xml(_) => uncastable(&v, t),
         }
     }
 

@@ -20,12 +20,14 @@ pub mod json;
 mod like;
 pub mod lob;
 pub mod multisets;
+pub(crate) mod nested;
 mod operators;
 mod order;
 pub mod precedence;
 mod spelled;
 pub mod types;
 mod units;
+pub mod xml;
 pub use units::CharUnits;
 
 pub use binary::{BYTE_BITS, Binary};
@@ -196,6 +198,9 @@ pub enum DataType {
     Reference(Arc<types::RefType>),
     /// [ISO/IEC 9075-2:2023 §4.8, §6.1] JSON, the JSON type.
     Json,
+    /// [ISO/IEC 9075-14:2006 draft §6.1] XML(...), an XML type (RULES.md
+    /// D106).
+    Xml(xml::XmlType),
     /// A type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionType),
 }
@@ -309,6 +314,9 @@ pub enum Value {
     /// [ISO/IEC 9075-2:2023 §4.8] A value of the JSON type, an SQL/JSON
     /// item in its stored form.
     Json(json::Json),
+    /// [ISO/IEC 9075-14:2006 draft §4.2.3] An XML value: an XQuery
+    /// sequence (RULES.md D106).
+    Xml(xml::XmlValue),
     /// A value of a type beyond the standard, a plug-in's (RULES.md D53).
     Extension(types::ExtensionValue),
 }
@@ -338,7 +346,8 @@ impl Value {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => None,
+            | Value::Extension(_)
+            | Value::Xml(_) => None,
         }
     }
 
@@ -362,7 +371,8 @@ impl Value {
             | Value::Reference(_)
             | Value::Row(_)
             | Value::Json(_)
-            | Value::Extension(_) => self.clone(),
+            | Value::Extension(_)
+            | Value::Xml(_) => self.clone(),
         }
     }
 
@@ -404,6 +414,9 @@ impl Value {
             // Equal values of a kind beyond the standard have the same bytes
             // (`SqlType`'s contract).
             Value::Extension(e) => NormKey::Extension(Box::new((e.kind.name().to_owned(), e.bytes.to_vec()))),
+            // No XML value is grouped [ISO/IEC 9075-14:2006 draft §10.9 SR1]:
+            // its stored form, for a key it is never given.
+            Value::Xml(x) => NormKey::Extension(Box::new((types::XML_NAME.to_owned(), x.octets()))),
         }
     }
 }
@@ -413,6 +426,7 @@ impl fmt::Display for Value {
         match self {
             Value::Null => write!(f, "NULL"),
             Value::Char(s) => write!(f, "{s}"),
+            Value::Xml(_) => f.write_str(&types::XML.text(self)),
             Value::Exact(d) => write!(f, "{d}"),
             // Written as an <approximate numeric literal>: <mantissa>E<exponent>.
             Value::Approx(x) => write!(f, "{x:E}"),

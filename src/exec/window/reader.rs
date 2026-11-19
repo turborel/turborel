@@ -9,9 +9,8 @@ use crate::bytes::{Put, Reader as Bytes};
 use crate::error::Result;
 use crate::exec::broken;
 use crate::exec::{HeldRows, Holdable};
-use crate::spill::{ListItem, Located, record_room, row_bytes};
+use crate::spill::{ListItem, Located, SpilledLobs, record_room, row_bytes};
 use crate::storage::Row;
-use crate::value::codec::{put_row, row};
 use crate::value::types::TypeRegistry;
 
 /// One row of a partition, as its frames are found: the number of its
@@ -32,16 +31,16 @@ impl ListItem for Placed {
 }
 
 impl Holdable for Placed {
-    fn record(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(record_room(size_of::<u64>(), self.values.len()));
+    fn record(&self, lobs: &SpilledLobs) -> Vec<u8> {
+        let mut out = Vec::with_capacity(record_room(size_of::<u64>().saturating_add(1), self.values.len()));
         out.put_u64(self.group);
-        put_row(&mut out, &self.values);
+        lobs.put_row(&mut out, &self.values);
         out
     }
-    fn read(record: &[u8], types: &TypeRegistry) -> Result<Placed> {
+    fn read(record: &[u8], types: &TypeRegistry, lobs: &SpilledLobs) -> Result<Placed> {
         let mut r = Bytes::new(record, "window row").with_types(types);
         let group = r.u64()?;
-        let values = row(&mut r)?;
+        let values = lobs.row(&mut r)?;
         r.finish()?;
         Ok(Placed { group, values })
     }

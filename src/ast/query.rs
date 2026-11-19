@@ -128,10 +128,15 @@ pub enum QueryExpression {
 /// `<with list>`, and the query it is written before.
 #[derive(Debug, Clone)]
 pub struct WithQuery {
+    /// [ISO/IEC 9075-14:2006 draft §7.2] The `<XML lexically scoped
+    /// options>`, if written: their scope is the `<query expression>`
+    /// \[SR2, SR3\].
+    pub options: Option<super::LexicallyScopedOptions>,
     /// RECURSIVE was written: the `<with list>` is potentially recursive
     /// \[SR3e\].
     pub recursive: bool,
-    /// The `<with list element>`s, in order.
+    /// The `<with list element>`s, in order: none of a clause of options
+    /// alone.
     pub elements: Vec<WithElement>,
     /// The `<query expression body>`.
     pub body: QueryExpression,

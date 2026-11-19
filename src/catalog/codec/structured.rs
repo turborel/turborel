@@ -10,10 +10,12 @@
 //!                  specification), reference (u8 0 system, 1 user and a
 //!                  type, 2 derived and its attributes), casts (flag, two
 //!                  str), constructor (flag, routine), USAGE and UNDER grants
-//! routine:         name, specific name (str), EXECUTE grants
+//! routine:         name, specific name (str), EXECUTE grants, stamps (as
+//!                  a routine descriptor's)
 //! method spec:     name, specific, kind (u8), overrides (flag, name),
 //!                  parameters, result type, SELF AS RESULT, deterministic
-//!                  (flags), access (u8), null call (flag), created (u64)
+//!                  (flags), access (u8), null call (flag), created (u64),
+//!                  stamps
 //! typed:           u8 0, or 1 and its type, self-referencing column (str),
 //!                  generation (u8), supertable (flag, name)
 //! method of:       u8 0, or 1 and its type and kind (u8)
@@ -61,15 +63,16 @@ fn some_name(r: &mut Reader<'_>) -> Result<Option<QualifiedName>> {
 
 /// A routine a type's definition makes: its name, specific name and
 /// EXECUTE grants.
-fn put_routine_desc(out: &mut Vec<u8>, r: &RoutineDesc) {
+pub(super) fn put_routine_desc(out: &mut Vec<u8>, r: &RoutineDesc) {
     out.put_str(&r.name);
     out.put_str(&r.specific);
     put_usage(out, &r.execute);
+    super::routines::put_stamps(out, &r.stamps);
 }
 
 /// The routine `put_routine_desc` wrote.
-fn routine_desc(r: &mut Reader<'_>) -> Result<RoutineDesc> {
-    Ok(RoutineDesc { name: r.str()?, specific: r.str()?, execute: usage(r)? })
+pub(super) fn routine_desc(r: &mut Reader<'_>) -> Result<RoutineDesc> {
+    Ok(RoutineDesc { name: r.str()?, specific: r.str()?, execute: usage(r)?, stamps: super::routines::stamps(r)? })
 }
 
 /// A method's kind.
@@ -214,6 +217,7 @@ pub(super) fn put_method(out: &mut Vec<u8>, m: &MethodSpecDesc) {
     put_access(out, m.access);
     put_flag(out, m.null_call);
     out.put_u64(m.created);
+    super::routines::put_stamps(out, &m.stamps);
 }
 
 /// The method specification `put_method` wrote.
@@ -221,8 +225,21 @@ pub(super) fn method(r: &mut Reader<'_>) -> Result<MethodSpecDesc> {
     let (name, specific, kind, overrides) = (r.str()?, qualified(r)?, kind(r)?, some_name(r)?);
     let (parameters, returns) = (get_all(r, parameter)?, data_type(r)?);
     let (self_as_result, deterministic, access, null_call) = (flag(r)?, flag(r)?, access(r)?, flag(r)?);
-    let created = r.u64()?;
-    Ok(MethodSpecDesc { name, specific, kind, overrides, parameters, returns, self_as_result, deterministic, access, null_call, created })
+    let (created, stamps) = (r.u64()?, super::routines::stamps(r)?);
+    Ok(MethodSpecDesc {
+        name,
+        specific,
+        kind,
+        overrides,
+        parameters,
+        returns,
+        self_as_result,
+        deterministic,
+        access,
+        null_call,
+        created,
+        stamps,
+    })
 }
 
 /// What makes a table or view typed, if it is.

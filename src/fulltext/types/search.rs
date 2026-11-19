@@ -85,6 +85,7 @@ fn is_empty(v: &Value) -> bool {
         | Value::Multiset(_)
         | Value::Structured(_)
         | Value::Reference(_)
+        | Value::Xml(_)
         | Value::Row(_) => false,
     }
 }

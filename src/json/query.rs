@@ -165,6 +165,7 @@ impl Item {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Json(_)
+            | Value::Xml(_)
             | Value::Extension(_) => cast(value.clone(), &ARGUMENT_STRING)?,
         };
         Ok(Scalar::new(scalar).map_or(Item::Null, Item::Scalar))
@@ -242,6 +243,7 @@ pub(super) fn json_text(value: &Value, rule: &str) -> Result<Option<String>> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => Err(SqlError::new(Code::SyntaxRule, format!("{rule}, not {value}"))),
     }
 }

@@ -3,14 +3,19 @@
 //! an OR, chosen by cost.
 
 mod columns;
+mod guarded;
 mod json;
 mod predicate;
+mod scans;
 mod spatial;
+mod xml;
+
+use std::sync::Arc;
 
 use super::estimate::{self, Known};
 use super::expression_index::Keyed;
 use super::kept::{Place, point_probe};
-use super::probe::{Alternatives, Compared, comparisons, probes_of_any, render_probe, served_by};
+use super::probe::{Alternatives, Compared, comparisons, probes_of_any, served_by};
 use super::shown::Shown;
 use super::{Built, CostModel, PhysicalPlanner, Plan, ProbeSlot, TableRead};
 use crate::catalog::IndexDesc;
@@ -81,6 +86,27 @@ struct Candidate {
     slots: Vec<ProbeSlot>,
 }
 
+/// What a table's paths are asked for: its conjuncts, those a probe of
+/// comparisons may answer, their comparisons and ORs, the filters an
+/// index may find the rows of, implied (`access/xml.rs`), and its rows as
+/// the planner knows them.
+struct Asked<'a> {
+    /// The conjuncts.
+    conds: &'a [Cond],
+    /// Those a probe of comparisons may answer (D15).
+    answerable: &'a [Cond],
+    /// The filters implied.
+    implied: &'a [Cond],
+    /// The comparisons of `answerable`.
+    compared: &'a [Compared],
+    /// Their ORs.
+    ors: &'a [Alternatives],
+    /// The table's rows.
+    all: f64,
+    /// What is known of them.
+    known: Known<'a>,
+}
+
 impl Candidate {
     /// One probe, of no `?`.
     fn one(probe: Probe, (used, fixed, guess, loose): (Vec<usize>, usize, f64, bool)) -> Candidate {
@@ -125,7 +151,7 @@ impl Probed {
 impl PhysicalPlanner<'_> {
     /// Choose how to read one table: a sequential scan or an index path.
     /// If an order is wanted, unordered paths are charged for a later sort.
-    pub(super) fn access(&self, read: TableRead<'_>, mut conds: Vec<Cond>, want: &[SortKey]) -> Built {
+    pub(super) fn access(&self, read: TableRead<'_>, conds: Vec<Cond>, want: &[SortKey]) -> Built {
         let Ok(storage) = self.db.storage_of(read.table) else {
             // [DESIGN] A bound table has storage. If not, it is scanned anyway,
             // and the executor reports the missing storage (SQLCODE -910).
@@ -144,41 +170,12 @@ impl PhysicalPlanner<'_> {
                 Filtered { shown: read.shown, known: Known { stats: None, cost: &cost }, ordered: false, read: 0.0_f64, most: 0.0_f64 };
             return filtered(plan, conds, &with);
         };
-        let rows = storage.row_count();
-        let best = self.best_path(read, &conds, want);
-        // A scan's filter keeps its share of the table's rows, but no more
-        // than the scan reads: the rows its zones or chunks may match.
-        let (plan, (found, most)) = match best.index {
-            None => {
-                let order = best.order;
-                let (columns, backward) = (read.needed.to_vec(), best.reverse);
-                let plan = Plan::SeqScan {
-                    table: read.table.clone(),
-                    columns,
-                    rows,
-                    cost: best.cost,
-                    order,
-                    backward,
-                    most: None,
-                    located: read.located,
-                };
-                (plan, (cost_of(rows), best.est))
-            }
-            Some(mut probed) => {
-                let (named, keyed) = (predicate::named(&probed.probes), Keyed::of_read(self.db, read));
-                let answered = probed.answered(&mut conds);
-                let found = if named { cost_of(rows) } else { best.est };
-                (index_scans(keyed.read(read), probed, answered, (best.est, best.cost, best.reverse)), (found, best.est))
-            }
-        };
-        let (cost, stats) = (self.db.cost(), self.db.statistics(read.table));
-        let known = Known { stats: stats.as_deref(), cost: &cost };
-        filtered(plan, conds, &Filtered { shown: read.shown, known, ordered: best.ordered, read: found, most })
+        self.read_by(read, conds, (want, None), &**storage).0
     }
 
     /// The cheapest way to read the table: a sequential scan, index probes
     /// answering conjuncts of `conds`, or a full ordered index read.
-    fn best_path(&self, read: TableRead<'_>, conds: &[Cond], want: &[SortKey]) -> Path {
+    fn best_path(&self, read: TableRead<'_>, (conds, implied): (&[Cond], &[Cond]), want: &[SortKey]) -> Path {
         let cost = &self.db.cost();
         let sort_penalty = |est: f64, ordered: bool| if !want.is_empty() && !ordered { cost.sort(est) } else { 0.0_f64 };
         let unread = Path { total: 0.0_f64, cost: 0.0_f64, est: 0.0_f64, ordered: false, reverse: false, index: None, order: Vec::new() };
@@ -192,8 +189,11 @@ impl PhysicalPlanner<'_> {
             return path;
         }
         let (seq_cost, scanned) = scan_priced(&**storage, read.needed, &self.priced(scanned));
-        let scan = Path { total: seq_cost + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread };
+        // RULES.md D106: what checking the XML queries of a row costs.
+        let check = xml::check_cost(conds, known.stats, cost.index_descent);
+        let scan = Path { total: seq_cost + scanned * check + sort_penalty(scanned, false), cost: seq_cost, est: scanned, ..unread };
         let mut best = self.scan_path(&**storage, want, scan);
+        let asked = Asked { conds, answerable: probed, implied, compared: &compared, ors: &ors, all, known };
         // An index being built is not read until it is (`Database::create_index`).
         for ix in indexes.iter().map(|ix| &**ix).filter(|ix| !self.db.building.contains(&ix.name)) {
             // [DESIGN] An index the state lacks is not a path; neither is one on
@@ -201,17 +201,7 @@ impl PhysicalPlanner<'_> {
             let columns: Option<Vec<_>> = ix.columns.iter().map(|&c| desc.columns.get(c)).collect();
             let (kind, found, types) = (self.db.methods.get(&ix.method), self.db.index_of(&ix.name), ix.key_types(desc));
             let (Some(kind), Ok(found), Some(columns), Some(types)) = (kind, found, columns, types) else { continue };
-            let served = served_by(&compared, ix);
-            let alternatives: &[Alternatives] = if ix.is_collated() { &[] } else { &ors };
-            let mut candidates = columns::candidates((&ix.columns, &types), (&served, alternatives), (all, known), &**kind);
-            candidates.extend(predicate::candidates(probed, ix, self.values, all));
-            let against = spatial::Against { ix, types: &types, values: self.values, systems: self.db.catalog.spatial() };
-            candidates.extend(spatial::candidates(conds, &against, all));
-            // A json index's lookups raise what a scan would of the calls it rechecks (`access/json.rs`).
-            candidates.extend(json::candidates(conds, ix, &types, self.values, all));
-            // A full ordered read, only to provide order.
-            candidates.push(Candidate::one(Probe::All, (Vec::new(), 0, all, false)));
-            for c in candidates {
+            for c in self.candidates_of(ix, (&**kind, found, &types), &asked) {
                 let supported = c.probes.iter().all(|p| supports(&**kind, p, (&types, !want.is_empty())));
                 // An index that omits null keys can miss a match when a
                 // key column outside the filter is nullable (D34).
@@ -235,7 +225,9 @@ impl PhysicalPlanner<'_> {
                 let entry_cost = ENTRY_SCAN_ROWS * storage.scan_cost(read.needed) / all.max(1.0_f64);
                 let saved = |share: f64| est * share * (storage.fetch_cost() - entry_cost).max(0.0_f64);
                 let path_cost = probed_cost - visible.map_or(0.0_f64, saved);
-                let total = path_cost * order.map_or(1.0_f64, |_| self.read_share(want, est)) + sort_penalty(est, order.is_some());
+                let checked = if xml::answered(&c.probes) { 0.0_f64 } else { est * check };
+                let total =
+                    path_cost * order.map_or(1.0_f64, |_| self.read_share(want, est)) + checked + sort_penalty(est, order.is_some());
                 if total < best.total {
                     best = Probed::of(ix, c, visible.is_some()).path((est, path_cost, total), order);
                 }
@@ -246,6 +238,30 @@ impl PhysicalPlanner<'_> {
 }
 
 impl PhysicalPlanner<'_> {
+    /// The probes `ix`, of method `kind`, found as `found`, of key `types`,
+    /// may answer what is `asked`: of comparisons, of function calls, of
+    /// spatial relations, of XML queries, and a full ordered read, only to
+    /// provide order.
+    fn candidates_of(
+        &self,
+        ix: &IndexDesc,
+        (kind, found, types): (&dyn IndexMethod, &Arc<dyn Index>, &[DataType]),
+        asked: &Asked<'_>,
+    ) -> Vec<Candidate> {
+        let all = asked.all;
+        let served = served_by(asked.compared, ix);
+        let alternatives: &[Alternatives] = if ix.is_collated() { &[] } else { asked.ors };
+        let mut candidates = columns::candidates((&ix.columns, types), (&served, alternatives), (all, asked.known), kind);
+        candidates.extend(predicate::candidates(asked.answerable, ix, self.values, all));
+        let against = spatial::Against { ix, types, values: self.values, systems: self.db.catalog.spatial() };
+        candidates.extend(spatial::candidates(asked.conds, &against, all));
+        // A json index's lookups raise what a scan would of the calls it rechecks (`access/json.rs`).
+        candidates.extend(json::candidates(asked.conds, ix, types, self.values, all));
+        candidates.extend(xml::candidates((asked.conds, asked.implied), ix, found, all));
+        candidates.push(Candidate::one(Probe::All, (Vec::new(), 0, all, false)));
+        candidates
+    }
+
     /// \[DESIGN\] The share of a path's `est` rows read, if it gives the
     /// order `want` asks: below a FETCH FIRST only as many as it reads
     /// (`PhysicalPlanner::first`), so the path costs that share of its
@@ -347,64 +363,8 @@ pub(super) fn whole_key(probe: &Probe, width: usize) -> bool {
     match probe {
         Probe::Compare { op, .. } => *op == CompOp::Eq && width == 1,
         Probe::Prefix { equal, then } => then.is_none() && equal.len() == width,
-        Probe::All | Probe::Columns(_) | Probe::Range { .. } | Probe::Predicate { .. } => false,
+        Probe::All | Probe::Columns(_) | Probe::Range { .. } | Probe::Predicate { .. } | Probe::Xml(_) => false,
     }
-}
-
-/// The index scans of `probed` on the table `read`, answering the
-/// conjuncts `answered`, of the rows `est` and the `cost` the planner gave
-/// them all, read `reverse` if so: one for each of its probes, the rows of
-/// each after those of the one before (an OR's ranges, none overlapping,
-/// so each row is found once, and in key order, so the rows are in the
-/// index's order, or, read backward, the last range's first). Each shows
-/// the conjuncts it answers, or its probe, if it answers some only in
-/// part, or one of several.
-fn index_scans(read: TableRead<'_>, probed: Probed, answered: Vec<Cond>, (est, cost, reverse): (f64, f64, bool)) -> Plan {
-    let share = cost_of(probed.probes.len());
-    let whole =
-        and_all(answered).filter(|_| !probed.loose && probed.probes.len() == 1).map(|c| read.shown.text(|names| render_cond(&c, names)));
-    let Probed { index, method, columns, mut probes, mut slots, covering, .. } = probed;
-    if reverse {
-        probes.reverse();
-    }
-    let mut level: Vec<Plan> = probes
-        .into_iter()
-        .map(|probe| {
-            let detail = whole.clone().unwrap_or_else(|| read.shown.text(|names| render_probe(&probe, &columns, names)));
-            let (index, method, table) = (index.clone(), method.clone(), read.table.clone());
-            let needed = read.needed.to_vec();
-            // The `?`s are of a probe alone, the one of a point path.
-            let slots = std::mem::take(&mut slots);
-            Plan::IndexScan {
-                table,
-                index,
-                method,
-                probe,
-                slots,
-                reverse,
-                columns: needed,
-                detail,
-                est: est / share,
-                cost: cost / share,
-                covering,
-                located: read.located,
-            }
-        })
-        .collect();
-    // Appended in pairs, a level at a time, so they are about log2(n) deep
-    // (RULES.md R-CF-6).
-    while level.len() > 1 {
-        let mut pairs = level.into_iter();
-        let mut next = Vec::new();
-        while let Some(left) = pairs.next() {
-            next.push(match pairs.next() {
-                Some(right) => Plan::Append { left: Box::new(left), right: Box::new(right) },
-                None => left,
-            });
-        }
-        level = next;
-    }
-    level.pop().unwrap_or(Plan::Values { rows: Vec::new(), detail: String::new() })
 }
 
 /// `scan`, a scan of `storage`, read in the order of the columns it keeps

@@ -276,7 +276,7 @@ impl Item {
                 self.set_number(DescriptorItem::UserDefinedTypeCode, code::STRUCTURED);
             }
             DataType::Reference(r) => self.describe_reference(&r, catalog),
-            DataType::Json | DataType::Extension(_) => self.extension = Some(t),
+            DataType::Json | DataType::Extension(_) | DataType::Xml(_) => self.extension = Some(t),
         }
     }
 
@@ -322,6 +322,13 @@ impl Item {
             }
             code::INTERVAL => self.interval_text()?,
             code::EXTENSION => return self.extension.clone(),
+            // [ISO/IEC 9075-14:2006 draft §17.1 GR1] XML: the type it was
+            // set from, if one was, else XML, XML(SEQUENCE) (RULES.md D106).
+            code::XML => {
+                return Some(
+                    self.extension.clone().filter(|t| matches!(t, DataType::Xml(_))).unwrap_or(DataType::Xml(crate::value::xml::IMPLICIT)),
+                );
+            }
             _ => return None,
         };
         descriptor_type(&text)
@@ -400,6 +407,7 @@ fn type_code(t: &DataType) -> i64 {
         DataType::Distinct(_) | DataType::Structured(_) => code::USER_DEFINED,
         DataType::Reference(_) => code::REF,
         DataType::Json | DataType::Extension(_) => code::EXTENSION,
+        DataType::Xml(_) => code::XML,
     }
 }
 
@@ -433,7 +441,8 @@ fn datetime_shape(t: &DataType) -> (i64, i64, i64) {
         | DataType::Row(_)
         | DataType::Distinct(_)
         | DataType::Json
-        | DataType::Extension(_) => (1, DATE_POSITIONS, 0),
+        | DataType::Extension(_)
+        | DataType::Xml(_) => (1, DATE_POSITIONS, 0),
     }
 }
 
@@ -488,6 +497,9 @@ fn matches_at(described: &DataType, t: &DataType, target: bool, depth: usize) ->
         (DataType::VarBinary { length }, DataType::VarBinary { length: its_length }) => {
             its_length == length || (target && its_length > length)
         }
+        // [ISO/IEC 9075-14:2006 draft §17.1 GR1] XML is one code, 137, of
+        // no modifiers: an item of it matches any XML type.
+        (DataType::Xml(_), DataType::Xml(_)) => true,
         (_, _) => described == t,
     }
 }

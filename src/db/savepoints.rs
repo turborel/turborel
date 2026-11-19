@@ -32,7 +32,7 @@ use crate::txn::{TxId, Txn};
 
 /// [ISO/IEC 9075-2:2023 §17.5 GR3] The maximum number of savepoints per
 /// SQL-transaction, implementation-defined (IL208).
-pub(in crate::db) const MAX_SAVEPOINTS: usize = 1024;
+pub(crate) const MAX_SAVEPOINTS: usize = 1024;
 
 /// What establishes a savepoint level beyond the session's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -14,7 +14,7 @@
 //! commit (4):  commit timestamp u64
 //! abort (5):   (nothing)
 //! schema (6):  owner | the `<schema>` text | tables (count u32, each:
-//!              identifier, engine) | zone | epochs
+//!              identifier, engine) | now | epochs
 //! create index (7): name | table | columns (count u32, names) | method |
 //!              options
 //! undone (8):  position u64 of the statement's first change
@@ -33,7 +33,7 @@
 //! defined (18): authorization identifier | role u8, 1 for one, then its
 //!              name | default schema | the
 //!              statement's text | placed u8, 1 for a table created, then
-//!              its engine and its storage's generation u32 | zone | epochs
+//!              its engine and its storage's generation u32 | now | epochs
 //! reconfiguration (19): members
 //! sequence (20): sequence generator, as a table | epoch u64 | resume i128
 //! role creator (21): authorization identifier | allowed u8
@@ -43,6 +43,7 @@
 //! table:   authorization identifier | identifier
 //! options: count u32, each: name | value
 //! zone:    time zone displacement in minutes, i128
+//! now:     zone | instant, microseconds from 0001-01-01 00:00 UTC, i128
 //! epochs:  count u32, each u64 (RULES.md D62)
 //! ```
 //!
@@ -60,6 +61,7 @@ use crate::storage::{Row, RowId};
 use crate::txn::{Timestamp, TxId};
 use crate::value::Value;
 use crate::value::codec::{put_row, put_value, row, value};
+use crate::value::datetime::Now;
 use crate::value::types::TypeRegistry;
 
 /// The version of the format this code writes and reads.
@@ -189,13 +191,19 @@ pub enum Change {
         /// Each table it created, and the engine it was placed in: what
         /// replaying the text alone would not know (RULES.md D25).
         engines: Vec<(String, String)>,
-        /// The time zone displacement, in minutes, of a datetime it writes
-        /// without one [ISO/IEC 9075:1992 §5.3 SR18]: the session's, or of
-        /// the operator's, the database's.
-        zone: i16,
+        /// The value of CURRENT_TIMESTAMP as it ran: its instant, the
+        /// timestamps of the descriptors it made [ISO/IEC 9075-2:2023
+        /// §11.60 GR5], and the time zone displacement of a datetime it
+        /// writes without one [ISO/IEC 9075:1992 §5.3 SR18], the
+        /// session's, or of the operator's, the database's.
+        now: Now,
         /// \[DESIGN\] The epochs of the counters of the sequence generators
         /// it defined, in order (RULES.md D62).
         epochs: Vec<u64>,
+        /// [XQuery §5.2.3] Whether the XQuery expressions it defines were
+        /// typed statically, as XQUERY.STATIC_TYPING was for it: what
+        /// replaying the text alone would not know (RULES.md D106).
+        typed: bool,
     },
     /// \[EXTENSION\] An index created.
     CreateIndex {
@@ -243,6 +251,10 @@ pub enum Change {
         /// \[DESIGN\] The epochs of the counters of the identity column
         /// it added or restarted, in order (RULES.md D62, D63).
         epochs: Vec<u64>,
+        /// [XQuery §5.2.3] Whether the XQuery expressions it defines were
+        /// typed statically, as XQUERY.STATIC_TYPING was for it: what
+        /// replaying the text alone would not know (RULES.md D106).
+        typed: bool,
     },
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §11.2, §11.18, §11.20, §11.27,
     /// §11.35] A table, view, schema, domain or assertion dropped by its
@@ -268,9 +280,11 @@ pub enum Change {
         role: Option<String>,
         /// The session's default schema as it ran.
         schema: String,
-        /// The session's time zone displacement as it ran, in minutes
-        /// [ISO/IEC 9075:1992 §5.3 SR18].
-        zone: i16,
+        /// The value of CURRENT_TIMESTAMP as it ran: its instant, the
+        /// timestamps of the descriptors it made [ISO/IEC 9075-2:2023
+        /// §11.60 GR5], and the session's time zone displacement [ISO/IEC
+        /// 9075:1992 §5.3 SR18].
+        now: Now,
         /// Its text.
         sql: String,
         /// Of a table it created, the engine it was placed in and the
@@ -280,6 +294,10 @@ pub enum Change {
         /// \[DESIGN\] The epochs of the counters of the sequence generators
         /// it defined or restarted, in order (RULES.md D62).
         epochs: Vec<u64>,
+        /// [XQuery §5.2.3] Whether the XQuery expressions it defines were
+        /// typed statically, as XQUERY.STATIC_TYPING was for it: what
+        /// replaying the text alone would not know (RULES.md D106).
+        typed: bool,
     },
     /// \[DESIGN\] RULES.md D62: where the counter of a sequence generator
     /// goes on after a crash, logged before the values it reserves are
@@ -370,9 +388,11 @@ impl Record {
                 put_row(&mut out, key);
             }
             Change::LobPut { .. } | Change::LobStale { .. } => put_lob_change(&mut out, &self.change),
-            Change::Schema { sql, owner, engines, zone, epochs } => put_schema(&mut out, (owner, sql, *zone), engines, epochs),
-            Change::Defined { auth, role, schema, zone, sql, placed, epochs } => {
-                put_defined(&mut out, ((auth, role.as_deref()), schema, sql, *zone), placed.as_ref(), epochs);
+            Change::Schema { sql, owner, engines, now, epochs, typed } => {
+                put_schema(&mut out, (owner, sql, *now), (engines, epochs), *typed);
+            }
+            Change::Defined { auth, role, schema, now, sql, placed, epochs, typed } => {
+                put_defined(&mut out, ((auth, role.as_deref()), schema, sql, *now), placed.as_ref(), epochs, *typed);
             }
             Change::Sequence { name, epoch, resume } => put_sequence(&mut out, name, *epoch, *resume),
             Change::CreateIndex { .. } => put_create_index(&mut out, &self.change),
@@ -382,7 +402,9 @@ impl Record {
             }
             Change::DropIndex { name } | Change::Owner { name } | Change::Reconfiguration { members: name } => out.put_str(name),
             Change::Drop { object, cascade } => put_dropped(&mut out, object, *cascade),
-            Change::AlterTable { table, action, schema, zone, epochs } => put_altered(&mut out, (table, action, schema, *zone), epochs),
+            Change::AlterTable { table, action, schema, zone, epochs, typed } => {
+                put_altered(&mut out, (table, action, schema, *zone), epochs, *typed);
+            }
             Change::Setting { name, value } => {
                 out.put_str(name);
                 put_value(&mut out, value.as_ref().unwrap_or(&Value::Null));
@@ -436,7 +458,7 @@ impl Record {
             DROP => Change::Drop { object: dropped(&mut r)?, cascade: r.u8()? != 0 },
             ALTER_TABLE => {
                 let (table, action, schema, zone) = (table(&mut r)?, r.str()?, r.str()?, zone(&mut r)?);
-                Change::AlterTable { table, action, schema, zone, epochs: definitions::epochs(&mut r)? }
+                Change::AlterTable { table, action, schema, zone, epochs: definitions::epochs(&mut r)?, typed: r.u8()? != 0 }
             }
             // No setting takes the null value: it stands for the default.
             SETTING => Change::Setting { name: r.str()?, value: Some(value(&mut r)?).filter(|v| !v.is_null()) },
@@ -484,6 +506,19 @@ fn lob_change(r: &mut Reader<'_>, tag: u8) -> Result<Change> {
 pub(super) fn zone(r: &mut Reader<'_>) -> Result<i16> {
     let minutes = r.i128()?;
     i16::try_from(minutes).map_err(|_| r.corrupt("a time zone displacement is out of range"))
+}
+
+/// A statement's CURRENT_TIMESTAMP: its displacement, then its instant.
+pub(super) fn put_now(out: &mut Vec<u8>, now: Now) {
+    out.put_i128(i128::from(now.zone));
+    out.put_i128(i128::from(now.utc));
+}
+
+/// What `put_now` wrote.
+pub(super) fn now(r: &mut Reader<'_>) -> Result<Now> {
+    let zone = zone(r)?;
+    let utc = i64::try_from(r.i128()?).map_err(|_| r.corrupt("an instant is out of range"))?;
+    Ok(Now { utc, zone })
 }
 
 /// A user's name, and its verifier if it is kept.

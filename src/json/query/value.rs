@@ -77,6 +77,7 @@ fn target(to: &DataType) -> Option<Target> {
         | DataType::Structured(_)
         | DataType::Reference(_)
         | DataType::Json
+        | DataType::Xml(_)
         | DataType::Extension(_) => None,
     }
 }
@@ -103,6 +104,7 @@ fn targets(value: &Value) -> &'static [Target] {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => &[],
     }
 }

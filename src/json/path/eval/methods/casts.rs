@@ -264,6 +264,7 @@ fn kind(value: &Value) -> Kind {
         | Value::Reference(_)
         | Value::Row(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => Kind::Number,
     }
 }

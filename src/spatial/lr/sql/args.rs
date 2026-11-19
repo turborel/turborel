@@ -220,7 +220,8 @@ impl Args<'_> {
             | Value::Structured(_)
             | Value::Reference(_)
             | Value::Json(_)
-            | Value::Extension(_) => None,
+            | Value::Extension(_)
+            | Value::Xml(_) => None,
         };
         let n = units.ok_or_else(|| not_of(at, "an INTEGER"))?;
         i32::try_from(n).map(Some).map_err(|_| {

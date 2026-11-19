@@ -7,6 +7,7 @@
 use super::class::{CharSet, fixed_escape, not_newline};
 use super::flags::{Flag, Flags};
 use super::parse::{MAX_NESTING, Node, Parsed, Quantity};
+use super::text::Lines;
 use crate::error::Result;
 
 /// [DESIGN] The most instructions a program has, so matching takes time at
@@ -28,10 +29,10 @@ pub(super) enum Inst {
     /// [§9.28 GR9a i; UTS #18 RL1.6] Under the flag `s`, any character
     /// but a CR before an LF, which the CRLF beside it matches.
     AnyButCrlf,
-    /// `^` [F&O 3.1 §5.6.1.1], of each line if multi-line.
-    LineStart(bool),
-    /// `$`, of each line if multi-line.
-    LineEnd(bool),
+    /// `^` [F&O 3.1 §5.6.1.1], of the lines given.
+    LineStart(Lines),
+    /// `$`, of the lines given.
+    LineEnd(Lines),
     /// Go on at both, the first preferred.
     Split(usize, usize),
     /// Go on there.
@@ -67,8 +68,13 @@ pub(super) struct Program {
 ///
 /// SQLCODE -900 past `MAX_INSTRUCTIONS`.
 pub(super) fn compile(parsed: &Parsed, flags: Flags) -> Result<Program> {
-    let (dot_all, multiline) = (flags.has(Flag::DotAll), flags.has(Flag::MultiLine));
-    let mut c = Compiler { insts: Vec::new(), loops: 0, dot_all, multiline };
+    let dot_all = flags.has(Flag::DotAll);
+    let lines = match (flags.has(Flag::MultiLine), parsed.line_feeds) {
+        (false, _) => Lines::Whole,
+        (true, false) => Lines::Each,
+        (true, true) => Lines::EachLineFeed,
+    };
+    let mut c = Compiler { insts: Vec::new(), loops: 0, dot_all, lines, line_feeds: parsed.line_feeds };
     c.emit(Inst::Save(0))?;
     c.node(&parsed.node, 0)?;
     c.emit(Inst::Save(1))?;
@@ -81,7 +87,10 @@ struct Compiler {
     insts: Vec<Inst>,
     loops: usize,
     dot_all: bool,
-    multiline: bool,
+    lines: Lines,
+    /// Whether the pattern is XQuery 1.0's, whose newline is a line feed
+    /// alone [XQueryFO §7.6.1].
+    line_feeds: bool,
 }
 
 impl Compiler {
@@ -117,10 +126,10 @@ impl Compiler {
             Node::Dot => self.dot()?,
             Node::Space => self.crlf_or(Inst::Set(fixed_escape('s').unwrap_or_default()))?,
             Node::Start => {
-                self.emit(Inst::LineStart(self.multiline))?;
+                self.emit(Inst::LineStart(self.lines))?;
             }
             Node::End => {
-                self.emit(Inst::LineEnd(self.multiline))?;
+                self.emit(Inst::LineEnd(self.lines))?;
             }
             Node::Group(inner, number) => self.group(inner, *number, deeper)?,
             Node::Concat(pieces) => {
@@ -138,8 +147,13 @@ impl Compiler {
     }
 
     /// [§9.28 GR9a i] The wildcard: under the flag `s` any character,
-    /// CRLF one; else any but a newline's.
+    /// CRLF one; else any but a newline's. [XQueryFO §7.6.1.1] Of XQuery
+    /// 1.0, any character under `s`, else any but a line feed.
     fn dot(&mut self) -> Result<()> {
+        if self.line_feeds {
+            let line_feed = CharSet::single('\n');
+            return self.set(&if self.dot_all { line_feed.union(&line_feed.complement()) } else { line_feed.complement() });
+        }
         if self.dot_all { self.crlf_or(Inst::AnyButCrlf) } else { self.set(&not_newline()) }
     }
 

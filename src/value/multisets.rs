@@ -141,7 +141,8 @@ fn holds_null(v: &Value) -> bool {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Json(_)
-        | Value::Extension(_) => false,
+        | Value::Extension(_)
+        | Value::Xml(_) => false,
     }
 }
 

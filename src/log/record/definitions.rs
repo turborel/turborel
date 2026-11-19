@@ -3,10 +3,11 @@
 //! where a sequence generator's counter goes on (RULES.md D62), as
 //! `log/record.rs` lays them out.
 
-use super::{Change, options, put_options, put_strs, put_table, table, zone};
+use super::{Change, now, options, put_now, put_options, put_strs, put_table, table};
 use crate::bytes::{Put, Reader};
 use crate::catalog::QualifiedName;
 use crate::error::{Code, Result, SqlError};
+use crate::value::datetime::Now;
 
 /// The tags of the kinds of object a drop record names.
 const DROPPED_TABLE: u8 = 1;
@@ -30,6 +31,10 @@ const DROPPED_TRANSFORM: u8 = 14;
 const DROPPED_MODEL: u8 = 15;
 /// The tag of a vector pipeline's drop.
 const DROPPED_PIPELINE: u8 = 16;
+/// The tag of a registered XML Schema's drop.
+const DROPPED_XML_SCHEMA: u8 = 17;
+/// The tag of a registered XQuery module's drop.
+const DROPPED_XQUERY_MODULE: u8 = 18;
 
 /// \[EXTENSION\] What a `Change::Drop` drops.
 #[derive(Debug, Clone, PartialEq)]
@@ -69,11 +74,21 @@ pub enum DropTarget {
     Model(QualifiedName),
     /// \[EXTENSION\] A vector pipeline (§12.5).
     Pipeline(QualifiedName),
+    /// A registered XML Schema [ISO/IEC 9075-14:2006 draft §4.2.6].
+    XmlSchema(QualifiedName),
+    /// \[EXTENSION\] A registered XQuery module (RULES.md D106).
+    XQueryModule(QualifiedName),
 }
 
 /// A schema's text, the engine of each table it created, its
-/// displacement, and the epochs of the sequence generators it defined.
-pub(super) fn put_schema(out: &mut Vec<u8>, (owner, sql, zone): (&str, &str, i16), engines: &[(String, String)], epochs: &[u64]) {
+/// CURRENT_TIMESTAMP, the epochs of the sequence generators it defined,
+/// and whether it was typed statically (u8 1, or 0).
+pub(super) fn put_schema(
+    out: &mut Vec<u8>,
+    (owner, sql, now): (&str, &str, Now),
+    (engines, epochs): (&[(String, String)], &[u64]),
+    typed: bool,
+) {
     out.put_str(owner);
     out.put_str(sql);
     out.put_u32(u32::try_from(engines.len()).unwrap_or(u32::MAX));
@@ -81,8 +96,9 @@ pub(super) fn put_schema(out: &mut Vec<u8>, (owner, sql, zone): (&str, &str, i16
         out.put_str(table);
         out.put_str(engine);
     }
-    out.put_i128(i128::from(zone));
+    put_now(out, now);
     put_epochs(out, epochs);
+    out.put_u8(u8::from(typed));
 }
 
 /// What `put_schema` wrote, as a change.
@@ -93,17 +109,19 @@ pub(super) fn schema(r: &mut Reader<'_>) -> Result<Change> {
     for _ in 0..count {
         engines.push((r.str()?, r.str()?));
     }
-    Ok(Change::Schema { sql, owner, engines, zone: zone(r)?, epochs: epochs(r)? })
+    Ok(Change::Schema { sql, owner, engines, now: now(r)?, epochs: epochs(r)?, typed: r.u8()? != 0 })
 }
 
 /// A schema statement's authorizer and its role (u8 1 and str, or u8 0 for
 /// none), default schema, text, created table's engine and generation,
-/// displacement, and the epochs it gave.
+/// CURRENT_TIMESTAMP, the epochs it gave, and whether it was typed
+/// statically.
 pub(super) fn put_defined(
     out: &mut Vec<u8>,
-    ((auth, role), schema, sql, zone): ((&str, Option<&str>), &str, &str, i16),
+    ((auth, role), schema, sql, now): ((&str, Option<&str>), &str, &str, Now),
     placed: Option<&(String, u32)>,
     epochs: &[u64],
+    typed: bool,
 ) {
     out.put_str(auth);
     out.put_u8(u8::from(role.is_some()));
@@ -117,18 +135,25 @@ pub(super) fn put_defined(
         out.put_str(engine);
         out.put_u32(*generation);
     }
-    out.put_i128(i128::from(zone));
+    put_now(out, now);
     put_epochs(out, epochs);
+    out.put_u8(u8::from(typed));
 }
 
 /// An ALTER TABLE's table, action as written, default schema,
-/// displacement, and the epochs it gave.
-pub(super) fn put_altered(out: &mut Vec<u8>, (table, action, schema, zone): (&QualifiedName, &str, &str, i16), epochs: &[u64]) {
+/// displacement, the epochs it gave, and whether it was typed statically.
+pub(super) fn put_altered(
+    out: &mut Vec<u8>,
+    (table, action, schema, zone): (&QualifiedName, &str, &str, i16),
+    epochs: &[u64],
+    typed: bool,
+) {
     put_table(out, table);
     out.put_str(action);
     out.put_str(schema);
     out.put_i128(i128::from(zone));
     put_epochs(out, epochs);
+    out.put_u8(u8::from(typed));
 }
 
 /// What `put_defined` wrote, as a change.
@@ -137,7 +162,7 @@ pub(super) fn defined(r: &mut Reader<'_>) -> Result<Change> {
     let role = if r.u8()? == 0 { None } else { Some(r.str()?) };
     let (schema, sql) = (r.str()?, r.str()?);
     let placed = if r.u8()? == 0 { None } else { Some((r.str()?, r.u32()?)) };
-    Ok(Change::Defined { auth, role, schema, zone: zone(r)?, sql, placed, epochs: epochs(r)? })
+    Ok(Change::Defined { auth, role, schema, now: now(r)?, sql, placed, epochs: epochs(r)?, typed: r.u8()? != 0 })
 }
 
 /// The epochs of sequence generators' counters: a count u32, and each.
@@ -192,6 +217,8 @@ pub(super) fn put_dropped(out: &mut Vec<u8>, object: &DropTarget, cascade: bool)
         DropTarget::Ordering(udt) => (DROPPED_ORDERING, udt),
         DropTarget::Model(model) => (DROPPED_MODEL, model),
         DropTarget::Pipeline(pipeline) => (DROPPED_PIPELINE, pipeline),
+        DropTarget::XmlSchema(name) => (DROPPED_XML_SCHEMA, name),
+        DropTarget::XQueryModule(name) => (DROPPED_XQUERY_MODULE, name),
         DropTarget::Cast(types) => {
             out.put_u8(DROPPED_CAST);
             crate::value::types::tags::put_type(out, &types.0);
@@ -232,6 +259,8 @@ pub(super) fn dropped(r: &mut Reader<'_>) -> Result<DropTarget> {
         DROPPED_ORDERING => Ok(DropTarget::Ordering(table(r)?)),
         DROPPED_MODEL => Ok(DropTarget::Model(table(r)?)),
         DROPPED_PIPELINE => Ok(DropTarget::Pipeline(table(r)?)),
+        DROPPED_XML_SCHEMA => Ok(DropTarget::XmlSchema(table(r)?)),
+        DROPPED_XQUERY_MODULE => Ok(DropTarget::XQueryModule(table(r)?)),
         DROPPED_CAST => {
             let source = crate::value::types::tags::data_type(r)?;
             Ok(DropTarget::Cast(Box::new((source, crate::value::types::tags::data_type(r)?))))

@@ -64,6 +64,7 @@ fn text_of(value: &Value) -> Result<Option<String>> {
         | Value::Structured(_)
         | Value::Reference(_)
         | Value::Json(_)
+        | Value::Xml(_)
         | Value::Extension(_) => Err(not_text(value)),
     }
 }

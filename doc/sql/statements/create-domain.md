@@ -17,7 +17,7 @@ CREATE DOMAIN: define a domain
     [ <collate clause> ]
 
 <domain constraint> ::=
-    [ CONSTRAINT <constraint name> ] CHECK ( <search condition> ) [ <constraint attributes> ]
+    [ CONSTRAINT <constraint name> ] CHECK ( [ WITH <XML lexically scoped options> ] <search condition> ) [ <constraint attributes> ]
 ```
 
 The `<default option>` and `<constraint attributes>` are those of
@@ -39,6 +39,9 @@ column of it.
 
 CAST to a domain gives a value of its data type, which each of its
 constraints is checked of: one false of it refuses the CAST.
+
+A constraint's XML options, XMLNAMESPACES and XMLBINARY, are in scope of
+its condition, and kept with it on each column: see [XML Values](../19-xml.md#xml-options-of-a-scope).
 
 CREATE DOMAIN runs within the session's transaction: ROLLBACK undoes it.
 
@@ -108,7 +111,9 @@ CAST of -3.
 
 ## STANDARD
 
-ISO/IEC 9075:1992 §11.21, and §6.10 GR13 for CAST to one. SQL-86 has no
+ISO/IEC 9075:1992 §11.21, and §6.10 GR13 for CAST to one. A
+constraint's XML options are ISO/IEC 9075-14:2006 draft §12.2, Features
+X083 and X133. SQL-86 has no
 domains.
 
 ## SEE ALSO

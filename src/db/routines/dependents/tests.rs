@@ -46,6 +46,7 @@ fn routine(
         sequences: Vec::new(),
         execute: Vec::new(),
         created: 1,
+        stamps: crate::catalog::Stamps::default(),
     }
 }
 

@@ -14,6 +14,7 @@ pub use domains::VALUE_COLUMN;
 pub(crate) use dynamic::descriptor_type;
 pub(crate) use periods::period_constraint;
 use std::collections::{HashMap, HashSet};
+pub use xml::{MappedSource, mapped_sources};
 
 use crate::ast::{
     ColumnName, InsertSource, InsertStatement, ParameterSpecification, QuerySpecification, SqlStatement, TableName, ValueExpression,
@@ -70,6 +71,7 @@ mod served;
 mod structured;
 mod user_types;
 mod window;
+mod xml;
 pub(crate) use data_statements::{EXPLAIN, TRUNCATE, begins_word_statement};
 pub(crate) use savepoints::SAVEPOINT;
 pub(crate) use served::CANCEL;
@@ -432,15 +434,17 @@ impl Parser {
     // [X3.135-1986 §8.7] <insert statement>
     // =====================================================================
 
-    /// INSERT INTO `<table name>` {\[(`<insert column list>`)\] \[`<override
-    /// clause>`\] `<query expression>` | DEFAULT VALUES} [ISO/IEC 9075:1992
-    /// §13.8; ISO/IEC 9075-2:2023 §14.11]
+    /// INSERT \[WITH `<XML lexically scoped options>`\] INTO `<table name>`
+    /// {\[(`<insert column list>`)\] \[`<override clause>`\] `<query
+    /// expression>` | DEFAULT VALUES} [ISO/IEC 9075:1992 §13.8; ISO/IEC
+    /// 9075-2:2023 §14.11; ISO/IEC 9075-14:2006 draft §14.4]
     ///
     /// # Errors
     ///
     /// The text is not an `<insert statement>`.
     pub fn insert_statement(&mut self) -> Result<InsertStatement> {
         self.expect_kw(kw::INSERT)?;
+        let xml = self.with_scoped_options()?;
         self.expect_kw(kw::INTO)?;
         let table = self.table_name()?;
         let columns = if self.is_delim(delim::LEFT_PAREN) { Some(self.insert_column_list()?) } else { None };
@@ -450,11 +454,11 @@ impl Parser {
         if columns.is_none() && overriding.is_none() && self.accept_kw(kw::DEFAULT) {
             self.expect_kw(kw::VALUES)?;
             self.end()?;
-            return Ok(InsertStatement { table, columns, overriding, source: InsertSource::DefaultValues });
+            return Ok(InsertStatement { table, columns, overriding, source: InsertSource::DefaultValues, xml });
         }
         let query = self.query_expression()?;
         self.end()?;
-        Ok(InsertStatement { table, columns, overriding, source: InsertSource::Query(Box::new(query)) })
+        Ok(InsertStatement { table, columns, overriding, source: InsertSource::Query(Box::new(query)), xml })
     }
 
     /// (`<insert column list>`) ::= ( `<column name>` \[{, `<column

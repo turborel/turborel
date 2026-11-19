@@ -19,7 +19,12 @@
 //!
 //! A method specification is of LANGUAGE SQL, so its PARAMETER_STYLE, its
 //! IS_DETERMINISTIC and its to-sql and from-sql routines are null [§6.30
-//! Description 10a], and no type of it is passed AS LOCATOR.
+//! Description 10a], and no type of it is passed AS LOCATOR. CREATED and
+//! LAST_ALTERED are its creation and last-altered timestamps [§6.30
+//! Description 13, 14]: of an observer or mutator, those of its routine,
+//! made with its attribute. CREATE METHOD makes a method's body a routine
+//! descriptor with timestamps of its own [ISO/IEC 9075-2:2023 §11.60 GR4,
+//! GR5], which ROUTINES shows, and alters no method specification.
 
 #[cfg(test)]
 mod tests;
@@ -27,10 +32,11 @@ mod tests;
 use std::sync::Arc;
 
 use super::descriptors::{data_type, described};
+use super::triggers::stamped;
 use super::user_types::REF_DTD;
 use super::{Columns, catalog_name, defined, ids, number, text};
 use crate::ast::MethodKind;
-use crate::catalog::{ColumnDesc, DataAccess, MethodHost, QualifiedName, RefRepresentation};
+use crate::catalog::{ColumnDesc, DataAccess, MethodHost, QualifiedName, RefRepresentation, RoutineDesc, Stamps};
 use crate::storage::Row;
 use crate::system::{Rows, Seen, SystemTable, yes};
 use crate::value::{DataType, Value};
@@ -74,6 +80,9 @@ pub(super) struct Spec<'a> {
     pub(super) access: DataAccess,
     /// RETURNS NULL ON NULL INPUT.
     pub(super) null_call: bool,
+    /// Its creation and last-altered timestamps [ISO/IEC 9075-2:2023
+    /// §4.9.7]: of an observer or mutator, those of its routine.
+    pub(super) stamps: Stamps,
 }
 
 /// [§11.51 SR10g] The method specifications of `s`: the observer and the
@@ -84,18 +93,19 @@ pub(super) fn specs(host: MethodHost<'_>) -> Vec<Spec<'_>> {
     let mut all = Vec::new();
     let own = host.structured().into_iter().flat_map(|s| s.attributes.iter().filter(|a| a.defined_by == s.name));
     for a in own {
-        let implicit = |specific: &str, parameters, returns, null_call| Spec {
+        let implicit = |r: &RoutineDesc, parameters, returns, null_call| Spec {
             name: &a.name,
-            specific: named(specific),
+            specific: named(&r.specific),
             kind: MethodKind::Instance,
             overriding: false,
             parameters,
             returns,
             access: DataAccess::Contains,
             null_call,
+            stamps: r.stamps,
         };
-        all.push(implicit(&a.observer.specific, Vec::new(), a.data_type.clone(), true));
-        all.push(implicit(&a.mutator.specific, vec![(Some(ATTR), a.data_type.clone())], host.data_type(), false));
+        all.push(implicit(&a.observer, Vec::new(), a.data_type.clone(), true));
+        all.push(implicit(&a.mutator, vec![(Some(ATTR), a.data_type.clone())], host.data_type(), false));
     }
     let implicit: Vec<QualifiedName> = all.iter().map(|o: &Spec<'_>| o.specific.clone()).collect();
     for m in host.methods().iter().filter(|m| !implicit.contains(&m.specific)) {
@@ -109,6 +119,7 @@ pub(super) fn specs(host: MethodHost<'_>) -> Vec<Spec<'_>> {
             returns: m.returns.clone(),
             access: m.access,
             null_call: m.null_call,
+            stamps: m.stamps,
         });
     }
     all
@@ -212,7 +223,11 @@ fn methods_columns() -> Vec<ColumnDesc> {
         .data("SQL_DATA_ACCESS", true)
         .data("IS_NULL_CALL", true)
         .ids("TO_SQL_SPECIFIC", false)
-        .data("AS_LOCATOR", true);
+        .data("AS_LOCATOR", true)
+        .time_stamp("CREATED")
+        .time_stamp("LAST_ALTERED")
+        .id("RESULT_CAST_FROM_DTD_IDENTIFIER", false)
+        .data("RESULT_CAST_AS_LOCATOR", false);
     described(columns).done()
 }
 
@@ -251,7 +266,13 @@ fn methods(seen: &Seen<'_>) -> Vec<Row> {
             let head = [ids(&catalog, &m.specific).to_vec(), ids(&catalog, s.name()).to_vec(), vec![text(m.name)]].concat();
             let kind = vec![yes(m.kind == MethodKind::Static), yes(m.overriding), yes(m.kind == MethodKind::Constructor)];
             let language = vec![text("SQL"), Value::Null, text(&method_dtd(at)), Value::Null];
-            let access = vec![text(super::routines::access(m.access)), yes(m.null_call), Value::Null, Value::Null, Value::Null, yes(false)];
+            // [§6.30 Description 15a] No `<result cast>`, which an SQL
+            // method has none of [ISO/IEC 9075-2:2023 §11.51 SR9b xiv 6 A I].
+            let cast = [Value::Null, Value::Null];
+            let access = [vec![text(super::routines::access(m.access)), yes(m.null_call)], vec![Value::Null; 3], vec![yes(false)]];
+            // [§6.30 Description 13, 14]
+            let stamps = vec![stamped(m.stamps.created), stamped(m.stamps.last_altered)];
+            let access = [access.concat(), stamps, cast.to_vec()].concat();
             rows.push([head, kind, language, access, data_type(&catalog, &m.returns, None)].concat());
         }
     }

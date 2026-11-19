@@ -214,7 +214,7 @@ impl Index for HybridIndex {
         match probe {
             Probe::All => self.text.estimate(probe).max(self.vector.estimate(probe)),
             Probe::Predicate { .. } => self.text.estimate(probe),
-            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } => None,
+            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Xml(_) => None,
         }
     }
     fn distinct_keys(&self) -> Option<f64> {
@@ -241,7 +241,7 @@ impl Index for HybridIndex {
                 }
                 return Box::new(Arc::clone(&self.text).search(probe, order).map(|entry| entry.map(|(_, row)| (projected(), row))));
             }
-            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } => Err(refused()),
+            Probe::Columns(_) | Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } | Probe::Xml(_) => Err(refused()),
         };
         match rows {
             Ok(rows) => Box::new(rows.into_iter().map(|row| Ok((projected(), row)))),
