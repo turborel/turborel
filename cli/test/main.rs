@@ -31,11 +31,14 @@
 )]
 
 mod args;
+mod commands;
 mod common;
 mod connections;
 mod extensions;
 mod imports;
 mod manual;
+mod plain;
 mod program;
 mod scripts;
 mod sessions;
+mod typed;

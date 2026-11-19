@@ -3,10 +3,10 @@
 //! (RULES.md D210 to D219).
 
 use turborel::db::Database;
-use turborel_cli::{Command, Dialer, Io, Outcome, Terminal};
+use turborel_cli::{Command, Dialer, Outcome};
 use turborel_client::agent::Agent;
 
-use crate::common::{Running, Scratch, start};
+use crate::common::{Running, Scratch, script, start};
 
 /// A server of a database X owns, where X has table T, holding 1 and 2,
 /// and U, whose rows reference T's.
@@ -23,30 +23,6 @@ fn served() -> (Database, Running) {
     let server = start(&db, &[]);
     assert_eq!(script(&server, &["-q"], "INSERT INTO T VALUES (1, 'a'), (2, 'b');").outcome, Outcome::Succeeded);
     (db, server)
-}
-
-/// What a script run printed and told, and how it ended.
-struct Script {
-    outcome: Outcome,
-    out: String,
-    err: String,
-}
-
-/// Runs `text` as standard input, not typed, with the command line
-/// `args` besides the connection's, over an SQL-agent as the program does.
-fn script(server: &Running, args: &[&str], text: &str) -> Script {
-    let port = server.address.port().to_string();
-    let mut line: Vec<String> = ["-U", "X", "-p", port.as_str()].iter().map(|a| (*a).to_owned()).collect();
-    line.extend(args.iter().map(|a| (*a).to_owned()));
-    let Ok(Command::Run(options)) = turborel_cli::parse(&line, &|_| None) else { panic!("{line:?}") };
-    let connection = turborel_cli::connect(&options, || Ok(String::new())).unwrap();
-    let mut agent = Agent::connected(Dialer::new((*options).clone(), Box::new(|| Ok(String::new()))), connection);
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    let io =
-        Io { input: &mut text.as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
-    let outcome = turborel_cli::outcome(&mut agent, &options, io);
-    agent.terminate().unwrap();
-    Script { outcome, out: String::from_utf8(out).unwrap(), err: String::from_utf8(err).unwrap() }
 }
 
 /// Verifies: [DESIGN] RULES.md D212: variables set by `\set` and `-v` are
