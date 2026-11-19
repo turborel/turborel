@@ -4047,7 +4047,13 @@ factored type by its item types and occurrence, a constructor's content
 by the order of its attributes too, a document test's interleaving part
 by part), any other shape refused, so a query is never admitted where
 it cannot be decided; a type of a schema expands to its content model's
-particles and attribute uses, with the types derived from it. A
+particles and attribute uses, with the types derived from it. The
+library modules a query imports are typed with it, as their functions
+and variables are the plan's: each body and initializing expression in
+its own module's static context (`Plan::context`), a library module's
+variable of no focus, and a call of an imported function by its
+declaration; a library module is not typed as it is registered, as
+the session importing it asks for the typing. A
 user-defined atomic type is an atomic type of its own (`Atom::Defined`):
 a node's typed value, a cast and a constructor function are of it, it is
 a subtype of the types its name's derivation reaches, as a value's

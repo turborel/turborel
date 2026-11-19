@@ -9,7 +9,7 @@
 use super::{Mutation, Package};
 
 /// Each static typing mechanism broken alone, and the tests that fail.
-pub const XQUERY_STATICS: [Mutation; 22] = [
+pub const XQUERY_STATICS: [Mutation; 23] = [
     Mutation {
         name: "statics-operand-cardinality",
         package: Package::Core,
@@ -228,6 +228,16 @@ pub const XQUERY_STATICS: [Mutation; 22] = [
         original: "        let to = target.defined.as_ref().map_or(Atom::Of(target.to), |d| Atom::Defined(Arc::clone(d)));",
         replacement: "        let to = Atom::Of(target.to);",
         integration: &["xml_static_typing::user_defined_atomic_types_are_typed"],
+        unit: &[],
+    },
+    Mutation {
+        name: "statics-module-context",
+        package: Package::Core,
+        breaks: "an imported function's body is typed in the main module's static context",
+        file: "src/xquery/statics/constructors.rs",
+        original: "        let of = if self.plan.context(self.module).settings.preserve { SchemaType::AnyType } else { SchemaType::Untyped };",
+        replacement: "        let of = if self.plan.context(0).settings.preserve { SchemaType::AnyType } else { SchemaType::Untyped };",
+        integration: &["xml_static_typing::imported_functions_are_typed_by_their_declarations"],
         unit: &[],
     },
 ];

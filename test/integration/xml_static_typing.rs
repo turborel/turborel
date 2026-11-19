@@ -265,6 +265,42 @@ fn user_defined_atomic_types_are_typed() {
     }
 }
 
+/// A library module of namespace `urn:m`, of construction strip: a
+/// function of declared types, one of none, and one constructing an
+/// element.
+const DOUBLING: &str = "module namespace m = \"urn:m\"; declare construction strip; declare function m:twice($x as xs:integer) as xs:integer { $x * 2 }; declare function m:any($x) { $x }; declare function m:e() as element(a, xdt:untyped) { <a>1</a> };";
+
+/// Verifies: [ISO/IEC 9075-14:2006 draft §6.18 SR6] [XQuery §4.11, §5.2.3,
+/// §5.2.5] [XQueryFS §4.1.5, §5.15] a function a query imports from a
+/// registered XQuery module is typed by its declaration: its arguments
+/// promoted to its parameters' types, its call of its result type, one of
+/// no declared types `item()*`; and its body against its result type, in
+/// its own module's static context, as the query importing it is typed.
+/// Its module's construction strip makes its elements untyped, where the
+/// query's preserve would not.
+#[test]
+fn imported_functions_are_typed_by_their_declarations() {
+    let db = database();
+    let a = db.session("A");
+    a.run(&format!("CREATE XQUERY MODULE M AS '{}'", DOUBLING.replace('\'', "''"))).unwrap();
+    let bad = "module namespace b = \"urn:b\"; declare function b:f() as xs:string { 1 };";
+    a.run(&format!("CREATE XQUERY MODULE B AS '{bad}'")).unwrap();
+    a.commit().unwrap();
+    a.run("SET XQUERY.STATIC_TYPING = 'ON'").unwrap();
+    let query = |prolog: &str, text: &str| format!("VALUES (XMLQUERY('{prolog}{text}' RETURNING SEQUENCE BY REF EMPTY ON EMPTY))");
+    let m = "import module namespace m = \"urn:m\"; ";
+    assert_eq!(fetched(&a, &query(m, "m:twice(1) + 1")).unwrap(), 1);
+    assert_eq!(fetched(&a, &query(m, "data(m:e()) + 1")).unwrap(), 1, "of its module's construction");
+    assert!(is_xquery(&failure(&a, &query(m, "data(<a>1</a>) + 1")), "XPTY0004"), "of the query's");
+    for text in ["m:twice(\"a\")", "upper-case(m:twice(1))", "m:any(1) + 1"] {
+        assert!(is_xquery(&failure(&a, &query(m, text)), "XPTY0004"), "{text}");
+    }
+    let b = "import module namespace b = \"urn:b\"; ";
+    assert!(is_xquery(&failure(&a, &query(b, "1")), "XPTY0004"), "of its body's type");
+    a.run("SET XQUERY.STATIC_TYPING = 'OFF'").unwrap();
+    assert_eq!(fetched(&a, &query(b, "1")).unwrap(), 1, "typed only as the importing query is");
+}
+
 /// A schema document of target namespace `urn:r`: an element `doc` of a
 /// list, a union, mixed elements, an empty element and a wildcard of other
 /// namespaces, and of a required integer attribute, an optional string
