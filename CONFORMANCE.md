@@ -3038,8 +3038,9 @@ the standards. A geometry column's statistics keep a grid of its
 envelopes, its mean vertices and its clustering. A broad window's rows
 are estimated from the grid, and every path is priced for the spatial
 calls it evaluates and a probe for how closely its rows lie, as EXPLAIN
-shows (`stats/envelopes.rs`, `physical/access/geometric.rs`, RULES.md
-D137). No result depends on the choice.
+shows. The filter over the access estimates the same rows
+(`stats/envelopes.rs`, `physical/access/geometric.rs`,
+`physical/access/filter.rs`, RULES.md D137). No result depends on the choice.
 An unordered inner join whose remaining outer rows fit its memory
 budgets can choose a single visible table scan when index estimates price
 it below repeated probes (`exec/join/indexed/adaptive.rs`). A temporary

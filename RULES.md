@@ -4575,6 +4575,12 @@ geometry window, nothing changes for other indexes.
 EXPLAIN shows the cheapest spatial probe priced after the residual
 filter's condition: its rows and whether the statistics or the index
 estimated them, the vertices, the clustering, its cost and the scan's.
+The filter's own estimate takes the same rows for its windowed spatial
+conjuncts, read by the probe or by a scan, and each other conjunct's
+selectivity as before (`physical/access/filter.rs`), so the plan states
+one figure. Without a spatial probe priced, the conjunct keeps the
+default guess. A spatial conjunct of a join is checked above it, not by
+the table's access, so a join's order does not see this estimate.
 The estimates choose a plan only. None skips a row or certifies a
 result, and every candidate is checked as D85 says. The weights were
 measured by `bench/geometry_fetch.rs`, a row scanned in 229 ns, a point

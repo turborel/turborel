@@ -1,16 +1,18 @@
 //! The mutations of spatial probes priced by geometry statistics
 //! (RULES.md R-TEST-9, D137): envelopes never gathered, a grid ignoring
 //! extents, clustering measured backwards, the statistics' rows ignored,
-//! evaluation left unpriced for probes or scans, and clustering ignored.
+//! evaluation left unpriced for probes or scans, clustering ignored, and
+//! a filter's estimate guessed.
 
 use super::{Mutation, Package};
 
 const BROAD: &str = "geometry::index::costs::broad_windows_are_estimated_from_the_envelope_grid";
 const CLUSTERED: &str = "geometry::index::costs::clustered_rows_keep_a_broad_probe_and_scattered_rows_scan";
 const VERTICES: &str = "geometry::index::costs::many_vertices_turn_a_scan_into_a_probe";
+const FILTER: &str = "geometry::index::costs::the_filter_keeps_the_spatial_estimate";
 
 /// The mutations of spatial pricing by statistics, in the order they run.
-pub const RTREE_COSTS: [Mutation; 7] = [
+pub const RTREE_COSTS: [Mutation; 8] = [
     Mutation {
         name: "envelopes-not-gathered",
         package: Package::Core,
@@ -79,6 +81,16 @@ pub const RTREE_COSTS: [Mutation; 7] = [
         original: "let clustered = geometric::clustered_saving(est, clustering, (storage.fetch_cost(), row));",
         replacement: "let clustered = geometric::clustered_saving(est, 0.0_f64, (storage.fetch_cost(), row));",
         integration: &[CLUSTERED],
+        unit: &[],
+    },
+    Mutation {
+        name: "filter-estimate-guessed",
+        package: Package::Core,
+        breaks: "the filter guesses its spatial conjunct's selectivity, so EXPLAIN shows two estimates of the same rows",
+        file: "src/physical/access/geometric.rs",
+        original: "windowed.unwrap_or(1.0_f64).clamp(0.0, 1.0)",
+        replacement: "selectivity(spatial[0], known)",
+        integration: &[FILTER],
         unit: &[],
     },
 ];

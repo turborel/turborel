@@ -3,26 +3,27 @@
 //! an OR, chosen by cost.
 
 mod columns;
+mod filter;
 mod geometric;
 mod json;
 mod keys;
 mod predicate;
 mod spatial;
 
-use super::estimate::{self, Known};
+use super::estimate::Known;
 use super::expression_index::Keyed;
 use super::kept::point_probe;
 use super::probe::{Alternatives, Compared, comparisons, render_probe, served_by};
-use super::shown::Shown;
 use super::{Built, CostModel, PhysicalPlanner, Plan, ProbeSlot, TableRead};
 use crate::catalog::{ColumnDesc, IndexDesc};
 use crate::engine::key::restores;
 use crate::error::Result;
 use crate::index::{Index, IndexMethod, Probe};
-use crate::logical::{Cond, SortKey, and_all, filled_cond, judged_by_sets, pushed_conjuncts, render_cond};
+use crate::logical::{Cond, SortKey, and_all, filled_cond, pushed_conjuncts, render_cond};
 use crate::storage::{TableStorage, cost_of};
 use crate::value::{CompOp, DataType, Value};
 
+use filter::{Filtered, filtered};
 use keys::{index_order, probes};
 use predicate::answerable;
 pub(crate) use predicate::predicate_call;
@@ -55,6 +56,9 @@ struct Path {
     /// What EXPLAIN shows of the spatial probe priced, if any (RULES.md
     /// D137).
     note: String,
+    /// The share of the rows read its windowed spatial conjuncts keep, by
+    /// the spatial probe priced, if any (RULES.md D137).
+    windowed: Option<f64>,
 }
 
 /// An index probed: its name, its method's, its columns, its probes, one
@@ -121,6 +125,7 @@ impl Probed {
             index: Some(self),
             order: Vec::new(),
             note: String::new(),
+            windowed: None,
         }
     }
 
@@ -152,26 +157,7 @@ impl PhysicalPlanner<'_> {
         let Ok(storage) = self.db.storage_of(read.table) else {
             // [DESIGN] A bound table has storage. If not, it is scanned anyway,
             // and the executor reports the missing storage (SQLCODE -910).
-            let plan = Plan::SeqScan {
-                table: read.table.clone(),
-                columns: read.needed.to_vec(),
-                rows: 0,
-                cost: 0.0_f64,
-                order: Vec::new(),
-                backward: false,
-                most: None,
-                located: read.located,
-            };
-            let cost = self.db.cost();
-            let with = Filtered {
-                shown: read.shown,
-                known: Known { stats: None, cost: &cost },
-                ordered: false,
-                read: 0.0_f64,
-                most: 0.0_f64,
-                note: "",
-            };
-            return filtered(plan, conds, &with);
+            return filter::unstored(read, conds, &self.db.cost());
         };
         let rows = storage.row_count();
         let best = self.best_path(read, &conds, want);
@@ -202,7 +188,11 @@ impl PhysicalPlanner<'_> {
         };
         let (cost, stats) = (self.db.cost(), self.db.statistics(read.table));
         let known = Known { stats: stats.as_deref(), cost: &cost };
-        filtered(plan, conds, &Filtered { shown: read.shown, known, ordered: best.ordered, read: found, most, note: &best.note })
+        filtered(
+            plan,
+            conds,
+            &Filtered { shown: read.shown, known, ordered: best.ordered, read: found, most, note: &best.note, windowed: best.windowed },
+        )
     }
 
     /// The cheapest way to read the table: a sequential scan, index probes
@@ -220,6 +210,7 @@ impl PhysicalPlanner<'_> {
             index: None,
             order: Vec::new(),
             note: String::new(),
+            windowed: None,
         };
         let Some((storage, (desc, indexes, keyed))) = self.planned(read.table) else { return unread };
         let (desc, scanned, conds) = (&*desc, conds, &*keyed.substituted(conds));
@@ -258,6 +249,7 @@ impl PhysicalPlanner<'_> {
                 }
             }
         }
+        best.windowed = spatial.map(|p| p.est / all.max(1.0_f64));
         let shown = read.shown.names().is_some();
         best.note = spatial.filter(|_| shown).map(|p| p.text(seq_cost, evaluation)).unwrap_or_default();
         best
@@ -408,6 +400,7 @@ impl PhysicalPlanner<'_> {
                 index: Some(chosen),
                 order: Vec::new(),
                 note: String::new(),
+                windowed: None,
             })
         })
     }
@@ -543,44 +536,4 @@ fn in_order(storage: &dyn TableStorage, want: &[SortKey], scan: Path) -> Path {
 fn scan_priced(storage: &dyn TableStorage, needed: &[usize], conds: &[Cond]) -> (f64, f64) {
     let share = and_all(conds.to_vec()).as_ref().and_then(pushed_conjuncts).map_or(1.0_f64, |c| storage.scan_share(&c));
     (storage.scan_cost(needed) * share, cost_of(storage.row_count()) * share)
-}
-
-/// What a filter over a table access is planned with.
-struct Filtered<'a> {
-    /// How the filter is described (`physical/shown.rs`).
-    shown: Shown<'a>,
-    /// The table's statistics, if its engine gives any, and the guesses.
-    known: Known<'a>,
-    /// Whether the access yields rows in the order asked for.
-    ordered: bool,
-    /// The row count used to estimate the fraction a filter keeps: the
-    /// whole table for a scan or function lookup, else comparison matches.
-    read: f64,
-    /// The most rows the filter may keep: those the access reads, a scan
-    /// only those of the zones or chunks its conditions may match
-    /// (`TableStorage::scan_share`).
-    most: f64,
-    /// What EXPLAIN shows of a spatial probe priced against the scan
-    /// (RULES.md D137), if any, after the condition.
-    note: &'a str,
-}
-
-/// A table access `plan` under a filter for the conjuncts `conds` it does not
-/// answer itself, estimated to keep the fraction of the rows that the
-/// table's statistics give, no more than the access reads: a scan that
-/// skips the rows its conditions cannot match keeps the same rows of the
-/// fewer it reads, not a fraction of them again. Its long IN lists are
-/// judged by sets (`logical::judged_by_sets`).
-fn filtered(plan: Plan, conds: Vec<Cond>, with: &Filtered<'_>) -> Built {
-    let plan = match and_all(conds) {
-        Some(c) => {
-            let est = Some((with.read * estimate::selectivity(&c, with.known)).min(with.most));
-            let c = judged_by_sets(c);
-            let shown = with.shown.text(|names| render_cond(&c, names));
-            let detail = if with.note.is_empty() { shown } else { format!("{shown}  {}", with.note) };
-            Plan::Filter { detail, cond: c, est, input: Box::new(plan) }
-        }
-        None => plan,
-    };
-    Built { plan, ordered: with.ordered }
 }

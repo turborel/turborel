@@ -1501,7 +1501,11 @@ and by what, the mean vertices, the clustering from 0 to 1, and the
 cost of the cheapest probe of the index against the scan's. Here the
 same 20,000 points are inserted in order and scattered, and the same
 window of three tenths of them is read through the index of the first
-and by a scan of the second:
+and by a scan of the second. The filter's own estimate is the same
+figure. The two counts are the first queries to plan with the tables,
+so the maintenance then gathers their statistics, and the EXPLAINs show
+them once it has. A program embedding the database gathers them at
+once, before it goes on, with `Database::analyze`:
 
 ```sql
 CREATE TABLE LAID (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));
@@ -1549,7 +1553,7 @@ OK
      Scan ANN.LAID
  -- physical:
  Project LAID.ID
-   Filter ST_INTERSECTS(LAID.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1  [spatial: est. rows=6070 by statistics, vertices=1, clustering=0.98, probe cost=14421.0, scan cost=24600.0]  (est. rows=200)
+   Filter ST_INTERSECTS(LAID.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1  [spatial: est. rows=6070 by statistics, vertices=1, clustering=0.98, probe cost=14421.0, scan cost=24600.0]  (est. rows=6070)
      IndexScan ANN.LAID using LAID_SPOT [rtree]: ST_INTERSECTS(LAID.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1  (est. rows=6070, cost=14421.0)
 (13 rows)
  PLAN
@@ -1565,7 +1569,7 @@ OK
      Scan ANN.STREWN
  -- physical:
  Project STREWN.ID
-   Filter ST_INTERSECTS(STREWN.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1  [spatial: est. rows=6026 by statistics, vertices=1, clustering=0.00, probe cost=53291.7, scan cost=24600.0]  (est. rows=200)
+   Filter ST_INTERSECTS(STREWN.SPOT, ST_GEOMFROMTEXT('POLYGON ((0 0, 0 100, 59.5 100, 59.5 0, 0 0))', 0)) = 1  [spatial: est. rows=6026 by statistics, vertices=1, clustering=0.00, probe cost=53291.7, scan cost=24600.0]  (est. rows=6026)
      SeqScan ANN.STREWN  (rows=20000, cost=24600.0)
 (13 rows)
 ```

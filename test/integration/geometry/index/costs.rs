@@ -87,6 +87,38 @@ fn clustered_rows_keep_a_broad_probe_and_scattered_rows_scan() {
     assert_eq!(found[0], found[1]);
 }
 
+/// The rows the Filter line of `plan` over `table` is estimated to keep.
+fn filter_est(plan: &str, table: &str) -> f64 {
+    let physical = plan.split("-- physical:").nth(1).unwrap_or(plan);
+    let line = physical
+        .lines()
+        .find(|l| l.contains("Filter ") && l.contains(&format!("{table}.G")))
+        .unwrap_or_else(|| panic!("no filter in {plan}"));
+    let est = line.rsplit("(est. rows=").next().unwrap();
+    est.trim_end_matches(')').parse().unwrap_or_else(|_| panic!("{line}"))
+}
+
+/// Verifies: [DESIGN] D137: the filter over a table access estimates its
+/// windowed spatial conjunct to keep the rows the spatial probe priced is
+/// estimated to find, read by the probe or by a scan, so EXPLAIN agrees
+/// with itself.
+#[test]
+fn the_filter_keeps_the_spatial_estimate() {
+    let db = schema();
+    for (name, scattered) in [("LAID", false), ("STREWN", true)] {
+        let points: Vec<_> =
+            order(20_000, scattered).into_iter().map(|id| (id, format!("ST_POINT({}, {})", id % 200, id.div_euclid(200)))).collect();
+        loaded(&db, name, &points);
+    }
+    let a = db.session("A");
+    let window = "ST_INTERSECTS(G, ST_MAKEENVELOPE(0, 0, 59.5, 100)) = 1";
+    for table in ["LAID", "STREWN"] {
+        let plan = a.physical_plan(&format!("SELECT ID FROM {table} WHERE {window}"), &Params::new()).unwrap();
+        let (filter, stated) = (filter_est(&plan, table), noted(&plan, "est. rows"));
+        assert!((filter - stated).abs() < 1.0_f64 && stated > 5_000.0_f64, "{plan}");
+    }
+}
+
 /// A regular polygon of `sides` sides inscribed in the cell `(x, y)`.
 fn polygon(x: u32, y: u32, sides: u32) -> String {
     let (cx, cy) = (f64::from(x) + 0.5_f64, f64::from(y) + 0.5_f64);

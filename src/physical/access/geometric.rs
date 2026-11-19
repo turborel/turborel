@@ -20,7 +20,7 @@
 
 use crate::geometry::Geometry;
 use crate::logical::Cond;
-use crate::physical::estimate::Known;
+use crate::physical::estimate::{Known, selectivity};
 use crate::physical::spatial::{Beside, recognized};
 use crate::spatial::Bounds;
 use crate::spatial::window::{self, Radius};
@@ -116,6 +116,17 @@ pub(super) fn evaluation(conds: &[Cond], known: Known<'_>) -> Evaluation {
         evaluation.vertices += vertices;
     }
     evaluation
+}
+
+/// The share of a table access's rows a filter on `conds` keeps: each
+/// conjunct's selectivity, but of the windowed spatial conjuncts together
+/// the share `windowed` the spatial probe priced is taken to keep, so the
+/// filter's estimate is the probe's and not a guess.
+pub(super) fn kept(conds: &[Cond], known: Known<'_>, windowed: Option<f64>) -> f64 {
+    let is_windowed = |c: &&Cond| windowed.is_some() && recognized(c).is_some_and(|found| found.split().is_some());
+    let (spatial, rest): (Vec<&Cond>, Vec<&Cond>) = conds.iter().partition(is_windowed);
+    let share = if spatial.is_empty() { 1.0_f64 } else { windowed.unwrap_or(1.0_f64).clamp(0.0, 1.0) };
+    rest.into_iter().fold(share, |kept, c| kept * selectivity(c, known))
 }
 
 /// What `est` rows fetched by a probe cost less than a fetch each, `fetch`,
