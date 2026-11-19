@@ -219,3 +219,110 @@ fn support_values_survive_reopen() {
     assert_eq!(one(&a, "SELECT ID FROM T ORDER BY A"), "2;1");
     drop((a, db));
 }
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §18.1.1, §18.1.7
+/// to §18.1.26] ST_MaxDimension of collections is their elements'
+/// greatest, -1 of the empty set; each cast function ST_To...Ary takes an
+/// array of values of its type.
+#[test]
+fn array_casts_of_every_type_18_1() {
+    let db = database();
+    db.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
+    let a = db.session("A");
+    let dimensions = [
+        ("MULTIPOINT ((1 2))", "0"),
+        ("MULTILINESTRING ((0 0, 1 1))", "1"),
+        ("MULTICURVE ((0 0, 1 1))", "1"),
+        ("MULTIPOLYGON (((0 0, 1 0, 0 1, 0 0)))", "2"),
+        ("MULTISURFACE (((0 0, 1 0, 0 1, 0 0)))", "2"),
+        ("GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (0 0, 1 1))", "1"),
+        ("POINT EMPTY", "-1"),
+    ];
+    for (text, want) in dimensions {
+        assert_eq!(one(&a, &format!("VALUES ST_MAXDIMENSION(ARRAY[{}])", geo(text))), want, "{text}");
+    }
+    let placed = "REFERENCELOCATION AFFINEPLACEMENT (LOCATION (0 0), REFERENCEDIRECTIONS (VECTOR (1 0), VECTOR (0 1)))";
+    let casts = [
+        ("ST_TOLINESTRINGARY", "LINESTRING (0 0, 1 1)".to_owned()),
+        ("ST_TOCIRCULARARY", "CIRCULARSTRING (0 0, 1 1, 2 0)".to_owned()),
+        ("ST_TOCIRCLEARY", "CIRCLE (0 0, 1 1, 2 0)".to_owned()),
+        ("ST_TOGEODESICARY", "GEODESICSTRING (0 0, 1 1)".to_owned()),
+        ("ST_TOELLIPTICALARY", format!("ELLIPTICALCURVE ({placed}, UAXISLENGTH 2, VAXISLENGTH 1, STARTANGLE RADIANS (0), ENDANGLE RADIANS (1.5))")),
+        (
+            "ST_TONURBSARY",
+            "NURBSCURVE (DEGREE 1, CONTROLPOINTS (NURBSPOINT (WEIGHTEDPOINT (0 0), WEIGHT 1), NURBSPOINT (WEIGHTEDPOINT (1 0), WEIGHT 1)), \
+             KNOTS (KNOT (VALUE 0, MULTIPLICITY 2), KNOT (VALUE 1, MULTIPLICITY 2)))"
+                .to_owned(),
+        ),
+        ("ST_TOCLOTHOIDARY", format!("CLOTHOID ({placed}, SCALEFACTOR 10, STARTDISTANCE 0, ENDDISTANCE 5)")),
+        ("ST_TOSPIRALARY", format!("SPIRALCURVE ({placed}, LENGTH 10, STARTCURVATURE 0, ENDCURVATURE 0.1, SPIRALTYPE clothoid)")),
+        ("ST_TOCOMPOUNDARY", "COMPOUNDCURVE ((0 0, 1 1))".to_owned()),
+        ("ST_TOSURFACEARY", "POLYGON ((0 0, 1 0, 0 1, 0 0))".to_owned()),
+        ("ST_TOCURVEPOLYARY", "CURVEPOLYGON ((0 0, 1 0, 0 1, 0 0))".to_owned()),
+        ("ST_TOPOLYGONARY", "POLYGON ((0 0, 1 0, 0 1, 0 0))".to_owned()),
+        ("ST_TOCOMPSURFARY", "COMPOUNDSURFACE (POLYGON ((0 0, 1 0, 0 1, 0 0)))".to_owned()),
+        (
+            "ST_TOBREPSOLIDARY",
+            "BREPSOLID Z (POLYHEDRALSURFACE Z (PATCHES (POLYGON Z ((0 0 0, 0 1 0, 1 0 0, 0 0 0)), POLYGON Z ((0 0 0, 1 0 0, 0 0 1, 0 0 0)), \
+             POLYGON Z ((0 0 0, 0 0 1, 0 1 0, 0 0 0)), POLYGON Z ((1 0 0, 0 1 0, 0 0 1, 1 0 0)))))"
+                .to_owned(),
+        ),
+    ];
+    for (f, text) in casts {
+        assert_eq!(one(&a, &format!("VALUES CARDINALITY({f}(ARRAY[ST_GEOMFROMTEXT('{text}')]))")), "1", "{f}");
+    }
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §17.3.3, §17.3.4,
+/// §17.3.7] the mutators ST_Location and ST_RefDirections of an
+/// ST_AffinePlacement: a location of m is 2FF97, one of another system
+/// than the directions 2FF10, of another dimension 2FF25, a null argument
+/// 2FF03; a null placement gives the null value; a point of fewer
+/// coordinates than the directions does not transform (2FF02).
+#[test]
+fn placement_mutators_check_their_arguments_17_3() {
+    let db = database();
+    let a = db.session("A");
+    let placement = "NEW ST_AFFINEPLACEMENT(ST_POINT(1, 2), ARRAY[ST_VECTOR(1e0, 0e0), ST_VECTOR(0e0, 1e0)])";
+    assert_eq!(one(&a, &format!("VALUES {placement}.ST_LOCATION(ST_POINT(5, 6)).ST_LOCATION().ST_ASTEXT()")), "POINT (5 6)");
+    let one_direction = format!("{placement}.ST_REFDIRECTIONS(ARRAY[ST_VECTOR(2e0, 0e0)])");
+    assert_eq!(one(&a, &format!("VALUES CARDINALITY({one_direction}.ST_REFDIRECTIONS())")), "1");
+    assert_eq!(one(&a, "VALUES NEW ST_AFFINEPLACEMENT().ST_LOCATION(ST_POINT(5, 6)).ST_ISEMPTY()"), "0");
+    assert_eq!(state(&a, &format!("VALUES {placement}.ST_LOCATION(TREAT({} AS ST_POINT))", geo("POINT M (1 2 3)"))), "2FF97");
+    assert_eq!(state(&a, &format!("VALUES {placement}.ST_LOCATION(ST_POINT(1, 2, 4326))")), "2FF10");
+    assert_eq!(state(&a, &format!("VALUES {placement}.ST_LOCATION(TREAT({} AS ST_POINT))", geo("POINT Z (1 2 3)"))), "2FF25");
+    assert_eq!(state(&a, &format!("VALUES {placement}.ST_REFDIRECTIONS(ARRAY[ST_VECTOR(1e0, 0e0, 0e0)])")), "2FF25");
+    assert_eq!(state(&a, &format!("VALUES {placement}.ST_LOCATION(CAST(NULL AS ST_POINT))")), "2FF03");
+    assert_eq!(one(&a, "VALUES CAST(NULL AS ST_AFFINEPLACEMENT).ST_LOCATION(ST_POINT(5, 6)) IS NULL"), "TRUE");
+    let line = "NEW ST_AFFINEPLACEMENT(ST_POINT(1, 2), ARRAY[ST_VECTOR(1e0, 0e0), ST_VECTOR(0e0, 1e0), ST_VECTOR(1e0, 1e0)])";
+    assert_eq!(state(&a, &format!("VALUES {line}.ST_TRANSFORM(ST_POINT(3, 4))")), "2FF02");
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §17.2.2 to §17.2.6,
+/// §17.4.3, §17.5.4] ST_Vector of a text or binary string and an SRID;
+/// ST_Vector(x, y, z, srid) of null parts (2FF03 for x without y or z,
+/// 2FF16 of z without x, the empty vector of none, null of a null SRID);
+/// ST_Y and ST_Z as mutators; ST_Coordinates of the empty vector; the
+/// mutators of ST_NURBSPoint and ST_Knot, and ST_IsEmpty of a knot.
+#[test]
+fn vector_and_element_routines_of_null_parts_17_2() {
+    let db = database();
+    let a = db.session("A");
+    assert_eq!(one(&a, "VALUES ST_CHECKSRID(ARRAY[ST_VECTOR('VECTOR (1 2)', 4326)])"), "4326");
+    assert_eq!(one(&a, "VALUES ST_VECTOR(X'0165000000000000000000F03F0000000000000040', 7).ST_ASTEXT()"), "VECTOR (1 2)");
+    let null = "CAST(NULL AS DOUBLE PRECISION)";
+    assert_eq!(state(&a, &format!("VALUES ST_VECTOR(1e0, {null}, {null}, 0)")), "2FF03");
+    assert_eq!(state(&a, &format!("VALUES ST_VECTOR({null}, {null}, 1e0, 0)")), "2FF16");
+    assert_eq!(state(&a, &format!("VALUES ST_VECTOR(1e0, 2e0, {null}, 0)")), "2FF03");
+    assert_eq!(one(&a, "VALUES ST_VECTOR(1e0, 2e0, 3e0, CAST(NULL AS INTEGER)) IS NULL"), "TRUE");
+    assert_eq!(one(&a, &format!("VALUES ST_VECTOR({null}, {null}, {null}, 4326).ST_ISEMPTY()")), "1");
+    assert_eq!(one(&a, "VALUES ST_VECTOR(1e0, 2e0).ST_Y(5e0).ST_Y()"), "5E0");
+    assert_eq!(state(&a, &format!("VALUES ST_VECTOR(1e0, 2e0).ST_Y({null})")), "2FF03");
+    assert_eq!(one(&a, "VALUES CAST(NULL AS ST_VECTOR).ST_Y(5e0) IS NULL"), "TRUE");
+    assert_eq!(state(&a, "VALUES NEW ST_VECTOR().ST_Z(5e0)"), "2FF03");
+    assert_eq!(one(&a, "VALUES NEW ST_VECTOR().ST_COORDINATES() IS NULL"), "TRUE");
+    let nurbs = "NEW ST_NURBSPOINT(ST_POINT(1, 2), 0.5e0).ST_WEIGHTEDPOINT(ST_POINT(3, 4))";
+    assert_eq!(one(&a, &format!("VALUES {nurbs}.ST_WEIGHTEDPOINT().ST_ASTEXT()")), "POINT (3 4)");
+    assert_eq!(one(&a, "VALUES (NEW ST_KNOT().ST_ISEMPTY(), NEW ST_KNOT(1e0, 2).ST_ISEMPTY())"), "1,0");
+    assert_eq!(one(&a, "VALUES CAST(NULL AS ST_KNOT).ST_VALUE(1e0) IS NULL"), "TRUE");
+}
