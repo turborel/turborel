@@ -290,6 +290,11 @@ impl Parser {
     /// aggregate of a name no key word of SQL-92 [§10.9], or an SQL/JSON
     /// function [§6.28, §6.34, §6.35, §10.11], if one is next.
     fn composite_pattern_or_aggregate(&mut self) -> Result<Option<ValueExpression>> {
+        // [EXTENSION] UUID '...', a UUID's literal, CAST of its string to
+        // UUID (RULES.md D181).
+        if self.is_word(crate::value::types::uuid::UUID_NAME) && matches!(self.peek_at(1), Tok::CharacterString(_)) {
+            return self.uuid_literal().map(Some);
+        }
         // [EXTENSION] [P1 §4.7] a graph function, or a graph predicate as
         // a value, inside a GRAPH_TABLE.
         if let Some(graph) = self.graph_primary()? {
@@ -428,6 +433,15 @@ impl Parser {
         let passing = self.passing_mechanism()?;
         self.expect_delim(delim::RIGHT_PAREN)?;
         Ok(ValueExpression::Cast { operand, target, format, passing, at })
+    }
+
+    /// \[EXTENSION\] `UUID <character string literal>`: CAST of the string
+    /// to UUID (RULES.md D181).
+    fn uuid_literal(&mut self) -> Result<ValueExpression> {
+        let at = self.here();
+        let target = self.type_name()?;
+        let operand = Some(Box::new(ValueExpression::Value(self.value_specification()?)));
+        Ok(ValueExpression::Cast { operand, target, format: None, passing: None, at })
     }
 
     /// [ISO/IEC 9075-2:2023 §6.15] `<greatest or least function>` ::=

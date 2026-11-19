@@ -41,6 +41,9 @@ impl Parser {
     /// A syntax error, or valid SQL this implementation does not process.
     pub fn cursor_specification(&mut self) -> Result<CursorSpecification> {
         let query = self.query_expression()?;
+        // [ISO/IEC 9075-2:2023 §7.6] whose statements a cursor's query runs
+        // (RULES.md D174, D175).
+        query.admit_deltas();
         let updatability = self.updatability_clause()?;
         self.end()?;
         Ok(CursorSpecification { query, updatability })
@@ -523,6 +526,9 @@ impl Parser {
         }
         if let Some(special) = self.special_table()? {
             return Ok(special);
+        }
+        if let Some(delta) = self.delta_table()? {
+            return Ok(delta);
         }
         // [ISO/IEC 9075-2:2023 §7.6] <only spec>.
         let (table, only) = self.target_table()?;

@@ -54,4 +54,5 @@ mod shown;
 mod statements;
 mod timeouts;
 mod tls;
+mod uuids;
 mod xml;

@@ -388,6 +388,51 @@ VALUES GREATEST(1, 'one');
 turborel: SQLCODE -103 (SQLSTATE 2A000): the arguments of GREATEST are each comparable with each, not NUMERIC(1,0), CHARACTER(3) [ISO/IEC 9075-2:2023 §6.15 SR4] (at character 7)
 ```
 
+## UUID_V4 and UUID_V7
+
+*(extension)* UUID_V4() and UUID_V7() each make a new
+[UUID](02-data-types.md#uuids) of RFC 9562 at each call, so each row of
+a query gets its own. Neither takes an argument.
+
+UUID_V4() gives a random UUID of version 4, with its version and
+variant bits set and its other 122 bits random. UUID_V7() gives a
+time-ordered UUID of version 7, whose first 48 bits are the milliseconds
+since 1970 of the database's clock and the rest random. A version 7 UUID never sorts
+before the last one its database made, even within one millisecond or
+as the clock is set back, so the UUIDs a session makes sort in the order
+it made them, and a key of them grows at its end. The thirteenth hexadecimal
+digit of a UUID, the fifteenth character of its text, is its version.
+
+```sql
+VALUES (SUBSTRING(CAST(UUID_V4() AS VARCHAR(36)) FROM 15 FOR 1),
+    SUBSTRING(CAST(UUID_V7() AS VARCHAR(36)) FROM 15 FOR 1),
+    CHAR_LENGTH(CAST(UUID_V4() AS VARCHAR(36))));
+CREATE TABLE EVENTS (ID UUID PRIMARY KEY, N INTEGER);
+INSERT INTO EVENTS VALUES (UUID_V7(), 1);
+INSERT INTO EVENTS VALUES (UUID_V7(), 2);
+INSERT INTO EVENTS VALUES (UUID_V7(), 3);
+SELECT N FROM EVENTS ORDER BY ID;
+VALUES UUID_V4(1);
+```
+
+```
+                                      |                                      |
+--------------------------------------+--------------------------------------+----------------------
+ 4                                    | 7                                    |                   36
+(1 row)
+OK
+OK
+OK
+OK
+            N
+--------------
+            1
+            2
+            3
+(3 rows)
+turborel: SQLCODE -103 (SQLSTATE 2A000): UUID_V4 takes no arguments (at character 7)
+```
+
 ## Set functions
 
 A set function computes one value of a set of rows: of the whole table

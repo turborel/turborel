@@ -3,6 +3,7 @@
 //! connection failures (RULES.md R-TEST-1, R-TEST-2).
 
 mod geometry;
+mod uuid;
 
 use turborel::params::ParameterType;
 use turborel::storage::Row;

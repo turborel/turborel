@@ -5,11 +5,13 @@
 //! The client runs with `--null NULL`, as the manual says its examples do.
 
 mod backup;
+mod delta;
 mod embedding;
 mod extensions;
 mod hybrid;
 mod information;
 mod partitioning;
+mod uuids;
 mod vector;
 mod xml;
 

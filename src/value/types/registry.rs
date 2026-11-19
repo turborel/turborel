@@ -46,15 +46,17 @@ impl TypeRegistry {
     /// The kinds built in, SQL/MM Full-Text's FULLTEXT and FT_PATTERN
     /// (RULES.md D87), VECTOR (RULES.md D93), SQL/MM Spatial's geometry
     /// types (RULES.md D120) and its linear referencing types
-    /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15], which a registration
-    /// of a type of their names is refused beside.
+    /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15], and UUID (RULES.md
+    /// D180), which a registration of a type of their names is refused
+    /// beside.
     pub(crate) fn builtin() -> TypeRegistry {
         let kinds = crate::fulltext::types::types()
             .into_iter()
             .chain(crate::vector::types())
             .chain(crate::geometry::kinds().iter().copied())
             .chain(crate::spatial::lr::sql::kinds().iter().copied())
-            .chain(std::iter::once(crate::geometry::tin_element_kind()));
+            .chain(std::iter::once(crate::geometry::tin_element_kind()))
+            .chain(std::iter::once(super::uuid::kind()));
         // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §14, §16, §17] and the
         // types beside them (RULES.md D123).
         let kinds = kinds.chain(crate::geometry::support::kinds().iter().copied());

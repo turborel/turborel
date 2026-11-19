@@ -11,6 +11,7 @@ mod client;
 mod collations;
 mod composite;
 mod contents;
+mod delta_tables;
 mod dependencies;
 mod diagnostics;
 mod distinct;
@@ -133,9 +134,8 @@ mod xquery_modules;
 mod xquery_statics;
 mod zones;
 
-pub use self::{collations::COLLATIONS, fill::FILL, readers::READERS, server::SERVER, vr::VR, waits::WAITS, zones::ZONES};
+pub use self::{collations::COLLATIONS, fill::FILL, kept::KEPT, readers::READERS, server::SERVER, vr::VR, waits::WAITS, zones::ZONES};
 use super::{Mutation, Package};
-pub use kept::KEPT;
 pub use reads::READS;
 pub use shadow::SHADOW;
 pub use stats::STATS;
