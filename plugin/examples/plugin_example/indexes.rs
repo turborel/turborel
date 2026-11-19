@@ -11,7 +11,7 @@ use turborel::index::Probe;
 use turborel::plugin::values::{put_values, values};
 use turborel::storage::RowId;
 use turborel::value::{Value, compare};
-use turborel_plugin::{Answer, Entries, IndexMethod, Near, PluginError, Probed, Search, Write as Written, coordinates};
+use turborel_plugin::{Answer, Entries, IndexAnswer, IndexMethod, Near, PluginError, Probed, Search, Write as Written, coordinates};
 
 /// The method, of either name.
 pub struct Sorted;
@@ -173,5 +173,12 @@ impl IndexMethod for Sorted {
     }
     fn drop_index(&mut self, locator: &[u8]) -> Answer<()> {
         std::fs::remove_file(PathBuf::from(String::from_utf8_lossy(locator).into_owned())).map_err(|e| io(&e))
+    }
+    fn statistics(&mut self, locator: &[u8]) -> Answer<Option<IndexAnswer>> {
+        let ix = index(locator)?;
+        let mut keys: Vec<&Vec<Value>> = ix.entries.iter().map(|(k, _)| k).collect();
+        keys.dedup_by(|a, b| a.iter().zip(b.iter()).all(|(x, y)| compare(x, y).is_some_and(Ordering::is_eq)));
+        let count = |n: usize| f64::from(u32::try_from(n).unwrap_or(u32::MAX));
+        Ok(Some(IndexAnswer { entries: count(ix.entries.len()), distinct: count(keys.len()), pages: 1.0, refresh: 100 }))
     }
 }

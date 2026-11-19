@@ -210,12 +210,14 @@ impl Shared {
     }
 
     /// What the program knows of the index's entries, and after how many
-    /// written it is stale; none if it knows nothing (STATISTICS).
+    /// written it is stale; none if it knows nothing (STATISTICS): the
+    /// writes waiting given first, as before any read.
     ///
     /// # Errors
     ///
-    /// The call's.
+    /// The calls'.
     fn statistics(&self) -> Result<Option<(IndexAnswer, u64)>> {
+        self.give()?;
         let mut payload = Vec::new();
         crate::bytes::Put::put_bytes(&mut payload, &self.locator);
         let got = answer(&self.link.plain(INDEX_STATISTICS, payload)?, statistics::index)?;

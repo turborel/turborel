@@ -14,7 +14,9 @@
 //! `events.log` there. The host objects (`host_small.rs`,
 //! `host_store.rs`, `host_net.rs`, and LOOP and KEPT in
 //! `replication.rs`, SHIPPED in `shipped.rs`) serve a host plug-in's
-//! manifest, which declares them alone.
+//! manifest, which declares them alone. The optimizer rules and the
+//! procedure that asks for statistics are in `rules.rs`; FILES and SORTED
+//! answer the planner's statistics.
 
 mod files;
 mod functions;
@@ -24,6 +26,7 @@ mod host_store;
 mod indexes;
 mod later;
 mod replication;
+mod rules;
 mod services;
 mod sha256;
 mod shipped;
@@ -36,6 +39,8 @@ fn plugin() -> Plugin {
     let plugin = services::with(plugin);
     let plugin = later::with(plugin);
     let plugin = shipped::with(replication::with(host_net::with(host_store::with(host_small::with(plugin)))));
+    let plugin = plugin.rule("CONTRADICTION", rules::Contradiction).rule("BROKEN", rules::Broken { fails: false });
+    let plugin = plugin.rule("ERRING", rules::Broken { fails: true }).procedure("SKEW", rules::Skew);
     plugin.engine("FILES", files::Files::default()).index_method("SORTED", indexes::Sorted).index_method("NEAR", indexes::Sorted)
 }
 
