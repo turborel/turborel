@@ -4,5 +4,7 @@
 *.py
 *.pdf
 *.txt
+# The command-line client's text of `\?`, built into it.
+!cli/src/run/commands.txt
 .claude/settings.local.json
 .claude/worktrees/
