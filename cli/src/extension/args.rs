@@ -51,7 +51,7 @@ options:
                          log-storage, catalog-storage, spill, file-system,
                          served-connections, listener, package-crypto, keyring,
                          background-job, replica-transport, journal,
-                         state-transfer, consensus, archive
+                         state-transfer, consensus, archive, buffer-eviction
   --dir DIR              where new writes the project
   --sdk DIR              a turborel source tree the project of new depends on by
                          path; by default it depends on this release's crates

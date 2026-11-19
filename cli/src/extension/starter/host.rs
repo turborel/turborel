@@ -73,7 +73,7 @@ const VAULT: &str = concat!(
 );
 
 /// Every host kind, in the order of their codes.
-pub(in crate::extension) const HOST_STARTERS: [Starter; 17] = [
+pub(in crate::extension) const HOST_STARTERS: [Starter; 18] = [
     Starter {
         word: "encoding",
         code: 20,
@@ -360,7 +360,30 @@ impl Job for Tidy {
         source: VAULT,
         added: ".archive(\"VAULT\", Vault)",
     },
+    Starter {
+        word: "buffer-eviction",
+        code: 37,
+        declaration: "HOST BUFFER EVICTION SCANS (EVERY = 1000);\nSETTING ONCE TYPE INTEGER MIN 0 MAX 1000 DEFAULT 4",
+        uses: &["turborel_plugin::Cx", "turborel_plugin::host::EvictionAdvisor", "turborel_plugin::host::Policy", "turborel_plugin::host::Report", "turborel_plugin::host::policies"],
+        source: SCANS,
+        added: ".host_eviction(\"SCANS\", Scans)",
+    },
 ];
+
+/// SCANS: an eviction policy resisting scans, as its plug-in's setting
+/// ONCE weighs a page read once.
+const SCANS: &str = "/// SCANS: least recently used, a page read once evicted before one
+/// used again by as many intervals as the plug-in's setting ONCE says.
+struct Scans;
+
+impl EvictionAdvisor for Scans {
+    fn advise(&mut self, cx: &mut Cx<'_>, _report: &Report) -> Answer<Option<Policy>> {
+        let once = cx.settings().iter().find(|(n, _)| n.ends_with(\".ONCE\")).map(|(n, _)| n.clone());
+        let once = once.and_then(|n| cx.integer(&n)).and_then(|o| u32::try_from(o).ok()).unwrap_or(0);
+        Ok(Some(policies::scan_resistant(once)))
+    }
+}
+";
 
 /// FILES: the database's files, every call refused until it is written.
 const FILES: &str = "/// FILES: the database's files, every call refused until it is written.

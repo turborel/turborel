@@ -75,11 +75,12 @@ fn first(s: &Session, sql: &str) -> String {
     row.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")
 }
 
-/// Verifies: [EXTENSION] RULES.md D263: `new` refuses a directory that
+/// Verifies: [EXTENSION] RULES.md D263, D283: `new` refuses a directory that
 /// is there, a name that is not a plain identifier and a kind it does not
 /// know, naming those it does; `--kind` writes a project of each kind
 /// asked, once, in the order of their codes, at `--dir`; host kinds are
-/// asked alone, their README naming PLUGINS.HOST.
+/// asked alone, their README naming PLUGINS.HOST, an eviction policy
+/// with the setting it reads.
 #[test]
 fn new_refuses_what_it_cannot_make() {
     let f = Fixture::new("new");
@@ -103,6 +104,11 @@ fn new_refuses_what_it_cannot_make() {
     assert!(manifest.contains("HOST CLOCK SYSTEM (EVERY = 10);\nHOST LOG STORAGE LOG (BATCH = 256);\nHOST ARCHIVE VAULT;"), "{manifest}");
     assert!(turborel::plugin::manifest::Manifest::parse(&manifest).is_ok_and(|m| m.hosted.len() == 3));
     assert!(std::fs::read_to_string(root.join("vault").join("README.md")).unwrap().contains("PLUGINS.HOST=VAULT="));
+    ext_in(root, &["new", "scans", "--kind", "buffer-eviction"]).unwrap();
+    let manifest = std::fs::read_to_string(root.join("scans").join("turborel-plugin.manifest")).unwrap();
+    let parsed = turborel::plugin::manifest::Manifest::parse(&manifest).unwrap();
+    assert_eq!((parsed.hosted.len(), parsed.settings[0].qualified(&parsed.name)), (1, "SCANS.ONCE".to_owned()), "{manifest}");
+    assert!(std::fs::read_to_string(root.join("scans/src/main.rs")).unwrap().contains(".host_eviction(\"SCANS\", Scans)"));
 }
 
 /// Verifies: [EXTENSION] RULES.md D264, D265, D266: pack refuses a
