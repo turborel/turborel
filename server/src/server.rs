@@ -322,6 +322,12 @@ impl Services {
         self.0.cancels.register(stop)
     }
 
+    /// The attributes of the requests running, which QUERY_ATTRIBUTE reads
+    /// (RULES.md D191).
+    pub(crate) fn requests(&self) -> &Arc<shown::Requests> {
+        &self.0.shown.requests
+    }
+
     /// \[DESIGN\] Cancels the statement the session of `key` runs, if it
     /// is one's (RULES.md D45).
     pub fn cancel(&self, key: &CancelKey) {
@@ -359,6 +365,8 @@ impl Server {
         let shown = Arc::new(Shown::default());
         db.register_system_table(Box::new(shown::Connections(Arc::clone(&shown))))?;
         db.register_system_table(Box::new(shown::Server(Arc::clone(&shown))))?;
+        db.register_system_table(Box::new(shown::ConnectionAttributes(Arc::clone(&shown))))?;
+        db.replace_scalar_function(Box::new(shown::QueryAttribute(Arc::clone(&shown.requests))))?;
         db.set_served_connections(Box::new(Operator::of(&shown)))?;
         Ok(Server { db, authenticators: Vec::new(), shown })
     }

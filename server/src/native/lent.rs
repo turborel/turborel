@@ -105,8 +105,12 @@ impl Lent {
         permit.release();
         let began = Instant::now();
         let next = loop {
-            match self.wire.arrived(|request| super::work_of(request).ok().flatten().filter(|_| running.still())) {
-                Arrived::Taken(work) => break Some(work),
+            let granted = self.held.granted;
+            match self.wire.arrived(|request| super::next::work_of(request, granted).filter(|_| running.still())) {
+                Arrived::Taken(work) => {
+                    self.held.arrived();
+                    break Some(work);
+                }
                 Arrived::Left => break None,
                 Arrived::Awaited => {}
             }
@@ -290,7 +294,9 @@ mod tests {
             let slot = Slot::new();
             let (near, _far) = tokio::io::duplex(16);
             let wire = Wire::new(Box::new(near), 16, turborel::value::types::TypeRegistry::default());
-            let lent = Lent::new(Held::new(turborel::db::Database::new().session("X")), wire);
+            let db = turborel::db::Database::new();
+            let serves = super::super::requests::Serves { db: db.clone(), requests: Arc::default() };
+            let lent = Lent::new(Held::new(db.session("X"), serves, turborel_protocol::Capabilities::NONE), wire);
             let taking = tokio::spawn({
                 let slot = Arc::clone(&slot);
                 async move { slot.take().await }
