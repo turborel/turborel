@@ -183,3 +183,38 @@ fn a_search_list_grows_past_the_dead() {
         assert_eq!(stats.rounds, 1, "a list grown past the dead is searched once, of {}", stats.list);
     }
 }
+
+/// Verifies: [EXTENSION] (FreshDiskANN Algorithm 4) consolidation with
+/// no dead node changes nothing; with the medoid dead, the live node
+/// nearest it becomes the medoid and searches find the rest; with every
+/// node dead, no medoid is left, a search finds nothing, and an insert
+/// starts the graph again.
+#[test]
+fn consolidation_replaces_a_dead_medoid() {
+    let index = empty(4, 8, false);
+    let points: Vec<[f32; 4]> = (0..30_u8).map(|i| [f32::from(i), f32::from(i % 5), 1.0, 0.0]).collect();
+    for (row, p) in (0_u64..).zip(&points) {
+        index.insert(p, row).unwrap();
+    }
+    index.consolidate().unwrap();
+    assert_eq!(index.counts().live, 30);
+    let medoid = index.inner.medoid.load(Ordering::Acquire);
+    let mut node = Node::default();
+    index.read_node(medoid, &mut node).unwrap();
+    let medoid_vector = node.vector.clone();
+    index.remove(&medoid_vector, node.row).unwrap();
+    index.consolidate().unwrap();
+    let next = index.inner.medoid.load(Ordering::Acquire);
+    assert_ne!(next, medoid);
+    index.read_node(next, &mut node).unwrap();
+    assert!(node.live());
+    assert_eq!(index.search(&points[3], &ten()).unwrap().0.len(), 10);
+    for (row, p) in (0_u64..).zip(&points) {
+        index.remove(p, row).unwrap();
+    }
+    index.consolidate().unwrap();
+    assert_eq!(index.counts().live, 0);
+    assert_eq!(index.search(&points[3], &ten()).unwrap().0.len(), 0);
+    index.insert(&points[3], 3).unwrap();
+    assert_eq!(index.search(&points[3], &ten()).unwrap().0.len(), 1);
+}

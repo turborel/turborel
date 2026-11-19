@@ -7,6 +7,7 @@
 
 mod durable;
 mod fixture;
+mod quantized;
 mod served;
 
 use fixture::{METHODS, database, literal, nearest_sql, plan, query_of, recall, vector_of};

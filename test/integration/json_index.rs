@@ -266,3 +266,19 @@ fn a_temporary_table_has_a_json_index_of_its_own_rows() {
     assert_eq!(found(&one, "NOTES", "JSON_EXISTS(DOC, 'lax $.a')"), expected(&["1"]));
     assert_eq!(found(&two, "NOTES", "JSON_EXISTS(DOC, 'lax $.a')"), expected(&["3"]));
 }
+
+/// Verifies: [EXTENSION] RULES.md D34: a lookup of a filter of `&&` over
+/// `||`, and of `||` over `&&`, finds by its rarest conjunct the rows a
+/// scan finds, each other part checked of the documents found.
+#[test]
+fn nested_and_or_filters_find_what_a_scan_finds() {
+    let db = Database::new();
+    let s = documents(&db, 11, "");
+    for condition in [
+        "JSON_EXISTS(DOC, 'lax $ ? (@.a.b.c == 1 && (@.n == 4 || @.kind == \"red\"))')",
+        "JSON_EXISTS(DOC, 'lax $ ? (@.a.b.c == 2 && ((@.n == 4 && @.flag == true) || @.kind == \"blue\"))')",
+    ] {
+        assert!(probed(&s, condition), "{condition} reads the index");
+        assert_eq!(found(&s, "INDEXED", condition), found(&s, "PLAIN", condition), "{condition}");
+    }
+}

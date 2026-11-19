@@ -318,3 +318,23 @@ fn ivf_entries_gives_each_live_entry() {
     after.sort_unstable();
     assert_eq!(after, rows);
 }
+
+/// Verifies: [DESIGN] (D29) an entry removed is a tombstone that a new
+/// insert of it brings back to life, counted live again; a remove or a
+/// lookup of a vector of other dimensions finds nothing and changes
+/// nothing.
+#[test]
+fn ivf_tombstones_come_back_and_other_dimensions_find_nothing() {
+    let dims = 4;
+    let flat = clustered(50, dims, 2, 5);
+    let (ivf, _budget) = built(&flat, dims, None);
+    let v = &flat[..dims];
+    ivf.remove(v, row(0)).unwrap();
+    assert_eq!(ivf.rows(v).unwrap().len(), 0);
+    ivf.insert(v, row(0)).unwrap();
+    assert_eq!(ivf.rows(v).unwrap(), [row(0)]);
+    assert_eq!(ivf.counts().unwrap(), (50, 0));
+    ivf.remove(&[1.0; 3], row(0)).unwrap();
+    assert_eq!(ivf.rows(&[1.0; 3]).unwrap().len(), 0);
+    assert_eq!(ivf.counts().unwrap(), (50, 0));
+}
