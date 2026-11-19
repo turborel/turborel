@@ -135,14 +135,15 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    json.into_iter().chain(xml).chain(last())
+    // The transport's last, as `last` holds no more.
+    json.into_iter().chain(xml).chain(last()).chain([&super::transport::TRANSPORT[..]])
 }
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, external plug-ins' and
-/// packages', partitioning's, UUID's, the command-line client's, replication's, the server's, its
-/// transport's, the native protocol's and the client library's.
-fn last() -> [&'static [Mutation]; 49] {
+/// packages', partitioning's, UUID's, the command-line client's, replication's, the server's, the
+/// native protocol's and the client library's.
+fn last() -> [&'static [Mutation]; 48] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -190,7 +191,6 @@ fn last() -> [&'static [Mutation]; 49] {
         &super::WAITS,
         &super::VR,
         &super::SERVER,
-        &super::transport::TRANSPORT,
         &super::server::native::NATIVE,
         &super::client::CLIENT,
     ]

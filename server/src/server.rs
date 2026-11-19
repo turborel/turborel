@@ -37,6 +37,9 @@ use turborel_protocol::{CancelKey, broken};
 
 pub use crate::cancels::Registered;
 pub use crate::limit::Permit;
+pub(crate) use closed::{IDLE_WAITING, hurrying, went_past};
+
+mod closed;
 
 use crate::auth::{Authenticator, Peer};
 use crate::cancels::Cancels;
@@ -489,20 +492,6 @@ async fn listen(endpoint: Endpoint, services: Services, (connections, refusals):
     }
     drop(endpoint.listener);
     while open.join_next().await.is_some() {}
-}
-
-/// What the server waited on a client for, told once its idle time runs out.
-pub(crate) const IDLE_WAITING: &str = "with nothing from or to the client";
-
-/// The connection went past the setting `name`, `limit`, having waited
-/// `waiting`: closed.
-pub(crate) fn went_past(name: &str, limit: Duration, waiting: &str) -> SqlError {
-    broken(format!("[DESIGN] the connection went past {name}, {} ms, {waiting}: closed", limit.as_millis()))
-}
-
-/// The server hurries to stop: the connection is closed.
-pub(crate) fn hurrying() -> SqlError {
-    broken("[DESIGN] the server is stopping, past SERVER.SHUTDOWN_TIMEOUT_MS or told again: closed")
 }
 
 /// What a connection taken is served with.
