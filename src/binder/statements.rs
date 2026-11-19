@@ -53,6 +53,8 @@ pub(super) fn updatable_query(s: &QuerySpecification) -> bool {
 pub fn updatable_in(c: &CursorSpecification, catalog: &dyn Catalog, schema: &str) -> Option<QualifiedName> {
     let s = updatable(c)?;
     let name = qualify(&s.table_expression.from.first()?.named()?.table, schema);
+    // [EXTENSION] a partitioned table's too, its rows its partitions',
+    // each read by a plan of its own (RULES.md D156).
     (catalog.table(&name).is_some() || catalog.view(&name).is_some_and(|v| v.updates.is_some())).then_some(name)
 }
 

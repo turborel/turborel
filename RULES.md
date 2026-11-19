@@ -178,6 +178,13 @@ verification approach DO-178C expects (§8).
 | D150 | A reachability index prunes a search's starts by landmark labels |
 | D151 | A graph's statistics are made of its tables', and choose where a search starts |
 | D152 | A search expands a frontier at once and chooses MS-BFS and workers by cost |
+| D153 | A partitioned table is a base table of no rows, and its tree a catalog record |
+| D154 | Partition strategies are plug-ins, and the DEFAULT partition is the framework's |
+| D155 | A row goes down its tree to the partition that holds it, and moves when its key does |
+| D156 | A read of a partitioned table reads the partitions its conditions admit, each by its own paths |
+| D157 | A key holds across partitions by each partition's index, or by a global index if it lacks the partition key |
+| D158 | An index of a partitioned table is a template, made on each partition under a name that cannot collide |
+| D159 | A partitioning tree is logged as its statements, and its partitions keep their own histories |
 | D160 | A backup is a checkpoint's files, copied in chunks while the database serves, and the log written meanwhile |
 | D161 | A backup's objects are block files in the database's formats, so a backup is as checked and as sealed as its files |
 | D162 | A restore is offline, into a staging directory renamed once the database is whole |
@@ -6475,6 +6482,192 @@ but not freed when a checkpoint was taken are unreachable in it and stay
 allocated, as the B-link tree's do. `RTree::shape` reports nodes, bytes,
 fill and envelope overlap per level, which `bench/spatial_index.rs`
 prints after packed, inserted and aged loads.
+
+#### D153. A partitioned table is a base table of no rows, and its tree a catalog record
+
+PARTITION BY makes a partitioned table, and PARTITION OF a partition of
+one. Both are base tables of the catalog, so names, privileges, views,
+constraints and DROP TABLE treat them as any other. A partitioned table
+has storage of its engine that holds no row, and no index of its own.
+Its key, its strategy, its index templates (D158) and each partition's
+parent and bound are kept apart, in one catalog record, PARTITIONING
+(`catalog/partitions.rs`, `catalog/codec/partitions.rs`), of format
+version 1. Each partition has an id that orders its siblings and is
+never given again. A tree is at most 16 levels deep below its root.
+
+A partition takes its parent's columns, defaults, CHECK constraints and
+periods, and its own engine and options. ALTER TABLE changes no column
+or period of a table of a tree, and a partitioned table is given storage
+options and truncated through its partitions. A typed table is not
+partitioned, as its rows are its subtables' too, nor is a node or edge
+table, whose rows are its graph's. ATTACH PARTITION checks that the
+table has the parent's columns, in order, of one schema, temporary kind
+and periods, and system-versioned as the parent is, then checks each of
+its rows against the bound (D155). DETACH PARTITION and DROP TABLE of a
+partition are refused while a foreign key references the tree, whose
+rows they would take away. The Information Schema shows the trees in
+PARTITIONED_TABLES and PARTITIONS.
+
+#### D154. Partition strategies are plug-ins, and the DEFAULT partition is the framework's
+
+A strategy is a `PartitionStrategy` registered by its name, as an index
+method is (`partition.rs`). RANGE, LIST and HASH are built in. It checks
+a key's types and a bound, tells whether two siblings' bounds overlap
+and whether a bound holds a key, routes a key among siblings, and judges
+whether a bound may hold a row meeting a read's restrictions. The
+framework keeps the DEFAULT partition, which no strategy sees. HASH
+hashes a key's parts by their normalized bytes with MurmurHash3 x64 128
+and a fixed seed, the same on any machine, so a row's partition never
+depends on where it was written. A HASH bound's modulus divides or is
+divided by each sibling's, so the remainders of a tree cover each hash
+once when each modulus present is used. A tree whose strategy is not
+registered keeps its rows and is read whole, and a row written to it is
+refused. The contract is checked of each built-in strategy by
+`test/integration/partitioning/contract.rs`.
+
+#### D155. A row goes down its tree to the partition that holds it, and moves when its key does
+
+An INSERT, an UPDATE and a MERGE of a partitioned table route each row
+down its tree, at each level to the partition whose bound holds its key,
+else the DEFAULT, else nowhere, and the statement fails with SQLSTATE
+23T01 (`db/partitions/write.rs`). Each table's route is made once of a
+catalog and kept with it. A row written to a partition by name is
+checked against its bound and each of its ancestors'. An UPDATE or a
+MERGE that changes a row's key so another partition holds it deletes the
+row and inserts it where it is routed, its old version kept in its
+history if the table is system-versioned and the new one stamped as of
+now. A row moved is not changed again by the statement. A searched
+UPDATE or DELETE writes each partition its condition admits in turn, and
+a MERGE's target is its partitions, as a typed table's family is. A
+cursor of a partitioned table is updatable. It reads each partition by
+a plan of its own, as a typed table's cursor reads each subtable, and a
+positioned UPDATE or DELETE writes the row in the partition the cursor
+is on. A positioned UPDATE that changes the row's key so another
+partition holds it moves the row as a searched one does
+(`db/partitions/cursor.rs`).
+
+Row triggers of a table fire for the rows of the partitions under it, as
+a supertable's fire for its subtables' (D81). A row moved is an update
+of the tables both partitions are under, a deletion from those only its
+old partition is under, and an insertion into those only its new one is
+under.
+
+#### D156. A read of a partitioned table reads the partitions its conditions admit, each by its own paths
+
+The planner expands a read of a partitioned table into a read of each
+partition its conjuncts admit, each by its own indexes and statistics
+(`physical/access/partitioned.rs`). Comparisons of a key part with
+constants, IS NULL, IN and OR of equalities restrict the part
+(`partition/prune.rs`). Where every part is restricted to at most 64
+combinations of values, each is routed, and a partition is read only if
+one routes to it. Otherwise the strategy judges each bound and the
+DEFAULT is read. A prepared statement's slots restrict nothing, so a
+plan kept with them reads every partition. Its executions plan with
+their values until their plans take one shape, so a parameter of the key
+prunes as a constant does.
+
+A read in an order reads each partition in it, by an ordered path or a
+sort of its own, and merges them (`Plan::MergeAppend`, `exec/merged.rs`).
+A limit over the merge bounds each partition's sort, so ORDER BY with
+FETCH FIRST reads few rows of each. A nearest read of a partitioned
+table is a nearest read of each partition's index, appended, and the
+sort over them compares the exact measure of every candidate
+(`physical/nearest/partitioned.rs`). A read of row ids, of an UPDATE or
+DELETE, is of the partitioned table alone, whose statement writes each
+partition in turn. EXPLAIN shows the partitions read and the merge.
+
+A join whose equalities probe an index of a partitioned table's rows is
+an index nested-loop join into the partitioned table
+(`physical/indexed/routed.rs`, `exec/join/indexed/routed.rs`). The
+indexes it may probe are the table's global indexes (D157), one probe of
+every partition's rows, and the templates of the table and the tables
+above it (D158), which each partition has. A probe of a template's
+index is routed as its values are bound, to the partitions a read fixing
+those values would read, so the outer side's values prune the
+partitions at run time and a probe that fixes every partition key reads
+one partition's index. Each row found is read from the partition it is
+in. EXPLAIN shows the template's method followed by "each partition's,
+each probe routed to one", or by the number of partitions each probe
+reads. A FULL join and a join reading row ids do not probe a
+partitioned table. A subquery of an outer row's values is run with
+them, each read pruned by them as a constant prunes.
+
+#### D157. A key holds across partitions by each partition's index, or by a global index if it lacks the partition key
+
+A PRIMARY KEY or UNIQUE constraint of a partitioned table is a template
+(D158) made on each partition. Where the key holds every column of the
+partition key at every level, two rows of one key are of one partition,
+so each partition's unique index enforces it alone. Otherwise each
+partition's index of the key is not unique, and the table has a global
+index of the key, one index over the rows of every partition
+(`db/partitions/global.rs`). Its entry names a row by its partition's
+id and its id in the partition, packed into one row id, the partition's
+id in the 24 bits above the row's 40. A row or a partition past those
+bounds is refused with SQLCODE -900. The index lives on the partitioned
+table, named by the template's name and GLOBAL after two NUL
+characters, and is kept, checkpointed and reopened as any index. Its
+entries are written with each partition's rows, taken back with their
+versions, and mended by recovery with the rows of the partitions. A key
+is checked by probing it, each row it names read from its partition
+(`Dispatched`), as a typed table's is across its family. ATTACH adds the
+rows attached to it before they are checked, so a key another partition
+holds is refused and the statement undoes them. DETACH, TRUNCATE of a
+partition, a partition's new storage and DROP of a partition take their
+rows' entries out. An entry of a partition no longer in the tree names
+no row, as partition ids are never given again. A global index is made
+as a constraint or a partition makes one needed and dropped when none
+needs it. A temporary tree, whose rows are each session's own, has none,
+and its keys are checked across its partitions' indexes. Probing one
+index costs one descent, where checking each partition's costs one for
+each, so the global index is the cheaper at scale. A read whose
+equalities fix its columns reads the global index when it costs less
+than the partitions' paths. Foreign keys to and from a partitioned table
+find their rows through its partitions, and a partition's constraints
+are those of the tables above it.
+
+#### D158. An index of a partitioned table is a template, made on each partition under a name that cannot collide
+
+CREATE INDEX of a partitioned table records a template, its method,
+options, key and expressions, with the tree, and makes an index of it on
+each partition holding rows, now and as each is made or attached
+(`db/partitions/templates.rs`). Every index method serves as a template.
+The index of a template on a partition is named by the template's name,
+the partition's schema and its name, joined by NUL characters, which no
+name written holds, so two such names never meet and the template is
+found from the name (`derived_index_name`, `template_of`). Each is built
+as CREATE INDEX builds one while its partition is written, under the
+partitioned table's shared lock, then the template is logged. DROP INDEX
+and ALTER INDEX of a template drop or alter each index it made. ATTACH
+adopts an index of the table of the template's method, key, options and
+expressions, renamed, and builds one otherwise. DETACH keeps each index,
+renamed to the template's name and the table's after an underscore. A
+hybrid index of a MODEL on a partitioned table is a template, its
+full-text part made on each partition, and keeps one table of chunks of
+the tree's rows, keyed by the table's primary key, with the vector index
+of their embeddings. Its pipeline's triggers on the partitioned table
+fire for the rows of every partition, so the chunks follow rows written,
+moved and deleted, and HYBRID_SEARCH of the template reads every
+partition. A full-text index's ranking statistics are those of every
+index of its template together (`db/partitions/ranked.rs`), its
+documents and lengths summed and a term's documents summed, so Rank and
+a top-k's bounds score a row as an index of the table not partitioned
+would. The Information Schema maps each index to its template in
+PARTITION_INDEXES.
+
+#### D159. A partitioning tree is logged as its statements, and its partitions keep their own histories
+
+CREATE TABLE of a partitioned table or a partition, ATTACH and DETACH
+are logged as their text, and replayed as statements, so recovery makes
+the tree again with no record of its own. A checkpoint writes the
+PARTITIONING record with the catalog, at version 1. A template's CREATE
+INDEX is logged as an index's is, and its replay makes the template and
+each of its indexes. A partition of a system-versioned table is
+system-versioned, with a history of its own, where an UPDATE or DELETE
+of its rows keeps their old versions. FOR SYSTEM_TIME of the partitioned
+table reads its partitions and the union of their histories, so a row
+moved between partitions is read in each as it was. A global temporary
+partitioned table has partitions of its kind, each session's rows its
+own.
 
 #### D160. A backup is a checkpoint's files, copied in chunks while the database serves, and the log written meanwhile
 

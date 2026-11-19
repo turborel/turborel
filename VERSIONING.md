@@ -79,6 +79,7 @@ version, and comes with a major release (see
 | Block file (the log's segments, the catalog file, the replication journal) | 1 | the file's header | `disk/block/format.rs`, `FORMAT_VERSION` |
 | Page file (tables and indexes) | 1 | the file's header | `disk/pager/format.rs`, `FORMAT_VERSION` |
 | Catalog and checkpoint image | 1 | the image's first byte | `db/image.rs`, `IMAGE_FORMAT` |
+| Partitioning descriptors, keys, bounds and index templates | 1 | the catalog image's, as part of it | `catalog/codec/partitions.rs` |
 | Log record | 1 | each record's first byte | `log/record.rs`, `RECORD_VERSION` |
 | Row store table | 1 | its meta page | `engine/rows/meta.rs`, `TABLE_FORMAT` |
 | Column store row group | 1 | its header's first byte | `engine/columns/group.rs`, `GROUP_FORMAT` |

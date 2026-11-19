@@ -139,6 +139,7 @@ its own; class TB is turborel's own.
 | 2203G | SQL/JSON item cannot be cast to target type: JSON_VALUE of an item whose type does not cast to the returned type, as true to INTEGER |
 | 22W34 | Data exception: a CHEAPEST selector's COST of an edge that is negative or no number (GRF-0034) |
 | 23000 | Integrity constraint violation |
+| 23T01 | Integrity constraint violation: no partition holds the row, of a partitioned table, or a partition's bound does not hold a row written to it or attached *(extension)* |
 | 24000 | Invalid cursor state |
 | 25000 | Invalid transaction state |
 | 25006 | Invalid transaction state: read-only SQL-transaction, of TRUNCATE TABLE |

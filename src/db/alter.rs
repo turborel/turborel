@@ -171,6 +171,7 @@ impl State {
         (made, tx, epochs): (Option<&Made>, Option<&Txn>, &mut Epochs),
     ) -> Result<(Dropped, Made, Option<Reshape>)> {
         versioning::unversioned(self, qn, action)?;
+        self.check_alterable(qn, action)?;
         if let Some(desc) = self.catalog.table(qn) {
             Self::pseudo_unaltered(desc, action)?;
         }
@@ -209,9 +210,15 @@ impl State {
             AlterAction::Storage(_) => self.alter_storage(qn, action, (made, tx)),
             AlterAction::RevertCollation(name) => self.revert_collation(qn, name, (action, made)),
             AlterAction::Truncate { restart } => self.truncate_rows(qn, *restart, (action, made, epochs)),
+            AlterAction::AttachPartition { table, bound } => self.attach_partition((qn, names, zone), (table, bound), (made, tx)),
+            AlterAction::DetachPartition(table) => self.detach_partition((qn, names), table, tx),
         };
         // [EXTENSION] The property graphs that read it (§4.1 R4.7).
-        let (mut dropped, built, reshape) = altered?;
+        let (mut dropped, mut built, reshape) = altered?;
+        // [EXTENSION] a partitioned table's keys are its partitions' indexes (RULES.md D157).
+        if let AlterAction::AddConstraint(_) | AlterAction::DropConstraint { .. } = action {
+            dropped.indexes.extend(self.sync_templates(qn, (&mut built, made, tx))?);
+        }
         dropped.absorb(self.graphs_altered(qn, action)?);
         self.refresh_sys_graphs()?;
         Ok((dropped, built, reshape))
@@ -260,6 +267,8 @@ impl State {
             | AlterAction::DropVersioning { .. }
             | AlterAction::RevertCollation(_)
             | AlterAction::Truncate { .. }
+            | AlterAction::AttachPartition { .. }
+            | AlterAction::DetachPartition(_)
             | AlterAction::Storage(_) => {
                 return Err(api("[DESIGN] not a column action"));
             }
@@ -469,6 +478,8 @@ impl State {
                 | AlterAction::DropVersioning { .. }
                 | AlterAction::RevertCollation(_)
                 | AlterAction::Truncate { .. }
+                | AlterAction::AttachPartition { .. }
+                | AlterAction::DetachPartition(_)
                 | AlterAction::Storage(_) => api("[DESIGN] a default, a constraint, the storage or its rows change no view"),
             });
         };

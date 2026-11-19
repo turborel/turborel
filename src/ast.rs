@@ -47,6 +47,7 @@ mod json_table;
 mod merge;
 mod modules;
 mod ordered;
+mod partitions;
 mod pattern;
 mod periods;
 mod privileges;
@@ -117,6 +118,7 @@ pub use json_table::{
 pub use merge::{IntoProperty, MatchedAction, MergeInsert, MergeStatement, MergeWhen};
 pub use modules::ModuleDefinition;
 pub use ordered::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};
+pub use partitions::{BoundDatum, BoundSpec, PartitionBy, PartitionKeyPart, PartitionOfClause, TablePartitioning};
 pub use pattern::{
     Definition, EmptyMatches, Logical, Measure, Navigation, PatternCommon, Physical, Quantified, RecognizedTable, RowPattern,
     RowPatternRecognition, RowsPerMatch, Semantics, SkipTo, Subset, WindowRecognition,

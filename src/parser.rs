@@ -60,6 +60,7 @@ mod multisets;
 mod names;
 mod native;
 mod numeric;
+mod partitions;
 mod pattern;
 mod periods;
 mod primary;

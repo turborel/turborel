@@ -6,8 +6,13 @@
 //! subtable's rows at the same column positions; and a key or a referenced
 //! row is looked for in every table of the family of the table whose
 //! constraint it is (RULES.md D81).
+//!
+//! \[EXTENSION\] A partition's rows are its partitioned table's alike, at
+//! the same column positions (RULES.md D153): the constraints of each table
+//! it is a partition of are its own, and the family of a partitioned table
+//! is the partitions that hold its rows.
 
-use crate::catalog::{ConstraintDesc, ForeignKey, QualifiedName, TableDesc, proper_subtables, proper_supertables};
+use crate::catalog::{ConstraintDesc, ForeignKey, QualifiedName, TableDesc, proper_subtables, tables_above};
 use crate::db::State;
 
 impl State {
@@ -15,7 +20,7 @@ impl State {
     /// the nearest first.
     pub(super) fn constraints_of(&self, table: &QualifiedName) -> Vec<&ConstraintDesc> {
         let own = self.catalog.table(table).into_iter();
-        let supers = proper_supertables(&*self.catalog, table);
+        let supers = self.above(table);
         let tables = own.chain(supers.iter().filter_map(|s| self.catalog.table(s)));
         tables.flat_map(|d| d.constraints.iter()).collect()
     }
@@ -24,7 +29,7 @@ impl State {
     /// each with its name.
     pub(super) fn foreign_keys_of(&self, table: &QualifiedName) -> Vec<(&QualifiedName, &ForeignKey)> {
         let own = self.catalog.table(table).into_iter();
-        let supers = proper_supertables(&*self.catalog, table);
+        let supers = self.above(table);
         let tables = own.chain(supers.iter().filter_map(|s| self.catalog.table(s)));
         tables.flat_map(TableDesc::foreign_keys).collect()
     }
@@ -36,6 +41,9 @@ impl State {
         if self.catalog.table(table).is_some_and(|d| d.typed.is_some()) {
             all.extend(proper_subtables(&*self.catalog, table));
         }
+        if self.catalog.partitioning().is_partitioned(table) {
+            all.extend(self.catalog.partitioning().leaves(table));
+        }
         all
     }
 
@@ -43,6 +51,13 @@ impl State {
     /// `referenced`: it is the table, or a proper supertable of it, whose
     /// row is its superrow.
     pub(super) fn reaches(&self, table: &QualifiedName, referenced: &QualifiedName) -> bool {
-        table == referenced || proper_supertables(&*self.catalog, table).contains(referenced)
+        table == referenced || self.above(table).contains(referenced)
+    }
+
+    /// The tables whose rows `table`'s rows are: its proper supertables,
+    /// the nearest first, and the tables it is a partition of, its parent
+    /// first.
+    pub(super) fn above(&self, table: &QualifiedName) -> Vec<QualifiedName> {
+        tables_above(&*self.catalog, table)
     }
 }

@@ -22,7 +22,7 @@ use super::super::integrity::Effects;
 use super::super::{Session, State, StatementContext};
 use super::changes::{Event, StateChanges, activates};
 use super::run::{Invocation, subject_columns};
-use crate::catalog::{ActionTime, Catalog, QualifiedName, TriggerDesc, TriggerLevel, proper_supertables};
+use crate::catalog::{ActionTime, Catalog, QualifiedName, TriggerDesc, TriggerLevel, tables_above};
 use crate::error::Result;
 use crate::exec::{HeldRows, Runner};
 use crate::storage::{Row, RowId};
@@ -67,11 +67,44 @@ impl<'a> Triggered<'a> {
     /// Its list's, spilled.
     pub(in crate::db) fn record(&mut self, table: &QualifiedName, columns: &[usize], change: &(RowId, Row, Row)) -> Result<()> {
         let event = event_of(change);
-        for of in std::iter::once(table.clone()).chain(proper_supertables(&*self.catalog, table)) {
+        for of in std::iter::once(table.clone()).chain(tables_above(&*self.catalog, table)) {
             if self.after.contains(&of) {
                 let names = self.names(&of, columns);
                 self.changes.add((&of, event, &names), change.clone())?;
             }
+        }
+        Ok(())
+    }
+
+    /// \[EXTENSION\] The transitions of a row an UPDATE moved from the
+    /// partition `from`, where it was `old`, to the partition `to`, where
+    /// it is `new`, of id `id` there, giving values to `columns`: of each
+    /// table both are partitions of, an update; of each table only `from`
+    /// is or is of, a deletion, and only `to`, an insertion (RULES.md D155).
+    ///
+    /// # Errors
+    ///
+    /// As `record`.
+    pub(in crate::db) fn record_moved(
+        &mut self,
+        (from, to): (&QualifiedName, &QualifiedName),
+        columns: &[usize],
+        (id, old, new): (RowId, &Row, &Row),
+    ) -> Result<()> {
+        let left: Vec<QualifiedName> = std::iter::once(from.clone()).chain(tables_above(&*self.catalog, from)).collect();
+        let right: Vec<QualifiedName> = std::iter::once(to.clone()).chain(tables_above(&*self.catalog, to)).collect();
+        for of in left.iter().chain(right.iter().filter(|t| !left.contains(t))) {
+            if !self.after.contains(of) {
+                continue;
+            }
+            let both = left.contains(of) && right.contains(of);
+            let change = match (left.contains(of), right.contains(of)) {
+                (true, true) => (id, old.clone(), new.clone()),
+                (true, false) => (id, old.clone(), Row::new()),
+                (false, true) | (false, false) => (id, Row::new(), new.clone()),
+            };
+            let names = self.names(of, if both { columns } else { &[] });
+            self.changes.add((of, event_of(&change), &names), change)?;
         }
         Ok(())
     }
@@ -307,7 +340,7 @@ impl Effects<'_> {
         // [§15.7 GR6, §15.13 GR7] the state changes of the proper
         // supertables of a typed table, of the columns each has.
         let mut tables = vec![(of.0.clone(), of.2.to_vec())];
-        for s in proper_supertables(&*catalog, of.0) {
+        for s in tables_above(&*catalog, of.0) {
             let has = |n: &String| catalog.table(&s).is_some_and(|d| d.column(n).is_some());
             let names = of.2.iter().filter(|n| has(n)).cloned().collect();
             tables.push((s, names));

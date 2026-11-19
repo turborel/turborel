@@ -6,9 +6,10 @@ use crate::memory::{DEFAULT_BUDGET, MemoryBudget};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
+mod bare;
+
 use super::api;
 use super::files::Reopening;
-use super::sealing::DATABASE_OPTIONS;
 use super::users::Users;
 use crate::catalog::{Catalog, QualifiedName, TableDesc};
 use crate::disk::encoding::Encodings;
@@ -116,6 +117,9 @@ pub struct State {
     /// \[EXTENSION\] The rankings of full-text search (RULES.md D87),
     /// shared by every state.
     pub(crate) rankings: super::rankings::SharedRankings,
+    /// \[EXTENSION\] The partition strategies (RULES.md D154), shared
+    /// by every state.
+    pub(crate) strategies: super::partitions::SharedStrategies,
     /// \[EXTENSION\] The metrics and quantizers of VECTOR (RULES.md D93),
     /// shared by every state.
     pub(crate) vectors: super::vectors::SharedVectors,
@@ -190,61 +194,9 @@ impl State {
     /// set functions and optimizer rules, and nothing attached yet.
     pub(crate) fn with_builtins(catalog: Box<dyn Catalog>) -> State {
         let (memory, work) = budgets();
-        State {
-            generation: 0,
-            catalog: Arc::from(catalog),
-            engines: HashMap::new(),
-            table_options: vec![(DATABASE_OPTIONS.to_owned(), crate::storage::encodings_option())],
-            seals: Arc::default(),
-            index_options: Vec::new(),
-            methods: HashMap::new(),
-            placement: HashMap::new(),
-            hashes: crate::hash::crc::builtin(),
-            collations: crate::value::collation::builtin().into_iter().map(|c| (c.name().to_owned(), c)).collect(),
-            encodings: Arc::default(),
-            created: false,
-            retired: HashMap::new(),
-            stamp: crate::value::datetime::Now::default(),
-            settings: Settings::default(),
-            users: Users::default(),
-            system: crate::system::builtin(),
-            storage: MurmurMap::default(),
-            locks: MurmurMap::default(),
-            indexes: HashMap::new(),
-            functions: Registry::with_set_functions(),
-            xquery_functions: crate::xquery::Library::builtin(),
-            types: TypeRegistry::builtin(),
-            rankings: super::rankings::SharedRankings::default(),
-            vectors: super::vectors::SharedVectors::default(),
-            embedders: Arc::new(crate::vector::embed::Embedders::built_in()),
-            extensions: Arc::default(),
-            extension_host: Arc::new(crate::plugin::Host::new(Arc::clone(&memory))),
-            clock: Arc::new(crate::clock::SystemClock),
-            optimizer: Optimizer::with_builtin_rules(),
-            tx: Arc::new(Transactions::default()),
-            memory: Arc::clone(&memory),
-            pages: MemoryPages::new(crate::db::POOL_BYTES),
-            temporaries: Arc::default(),
-            sequences: Arc::default(),
-            work: Arc::clone(&work),
-            temp_lobs: Arc::new(crate::spill::TempLobStore::new(work)),
-            jobs: Arc::default(),
-            graph_runs: Arc::default(),
-            ahead: crate::disk::buffer::AheadReader::new(),
-            rekey: Arc::default(),
-            files: Arc::default(),
-            plugins: Arc::new(crate::files::plugins::PluginFiles::in_memory(Arc::clone(&memory))),
-            log: None,
-            reopening: None,
-            building: HashSet::new(),
-        }
-        .attached(&memory)
-    }
-
-    /// This state, with the built-ins attached (`attach_builtins`).
-    fn attached(mut self, memory: &Arc<MemoryBudget>) -> State {
-        self.attach_builtins(memory);
-        self
+        let mut st = State::bare(catalog, (&memory, work));
+        st.attach_builtins(&memory);
+        st
     }
 
     /// The built-in engines' and rules' settings declared. Of short names
@@ -432,9 +384,10 @@ impl State {
         self.catalog.as_ref()
     }
 
-    /// Rows currently stored in a table: a statistic for cost estimates.
+    /// Rows currently stored in a table, \[EXTENSION\] a partitioned one's
+    /// in its partitions: a statistic for cost estimates.
     pub fn row_count(&self, table: &QualifiedName) -> Option<usize> {
-        self.storage.get(table).map(|s| s.row_count())
+        self.catalog.partitioning().leaves(table).iter().map(|t| self.storage.get(t).map(|s| s.row_count())).sum()
     }
 
     /// What `table`'s engine knows of its rows, if anything (`stats.rs`).

@@ -35,17 +35,15 @@
 //! | `StateSource`       | `Database::export`    | state transfer (RULES.md D57)    |
 //! | `Ranking`           | BM25                  | full-text Rank (RULES.md D87)    |
 //! | `VectorMetric`, `Quantizer` | COSINE and others; PQ, SQ8, BQ | VECTOR_DISTANCE, vector indexes (RULES.md D93) |
+//! | `PartitionStrategy` | RANGE, LIST, HASH     | partitioned tables (RULES.md D154) |
 //! | `BackupTarget`, `TargetProvider` | a directory, memory | backups and the archive (RULES.md D166) |
 //!
 //! Plus the settings (`settings.rs`, RULES.md D36), plug-ins' too, per database and session.
 //!
-//! \[DESIGN\] A `Database` is a cheap handle that sessions share, on any
-//! number of threads (RULES.md D27). Each statement runs against a snapshot
-//! of the definitions taken when it starts, holding no lock on them while it
-//! runs; the data is guarded by the storage engines and indexes, and its
-//! isolation by the engine, or by the transaction coordinator's table locks
-//! for an engine that leaves it to them (RULES.md D29). A `Session` is used
-//! by one thread at a time, and may move between threads between calls.
+//! \[DESIGN\] A `Database` is a cheap handle that sessions share, on any number of threads (RULES.md D27). Each statement runs
+//! against a snapshot of the definitions taken when it starts, holding no lock on them while it runs; the data is guarded by the
+//! storage engines and indexes, and its isolation by the engine, or by the transaction coordinator's table locks for an engine that
+//! leaves it to them (RULES.md D29). A `Session` is used by one thread at a time, and may move between threads between calls.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -107,6 +105,7 @@ mod maintenance;
 mod merge;
 mod modules;
 mod nested;
+pub(crate) mod partitions;
 mod position;
 mod prepared;
 pub(crate) mod ptf;

@@ -81,8 +81,18 @@ impl Session {
         // subtables: each member's rows read by a plan of its own, the
         // table's own first, as the cursor's.
         let members = family_in(st, &logical).unwrap_or_default();
-        let others: Vec<LogicalPlan> = (1..members.len()).map(|k| member_plan(logical.clone(), &members, k)).collect();
+        let mut others: Vec<LogicalPlan> = (1..members.len()).map(|k| member_plan(logical.clone(), &members, k)).collect();
         let logical = if members.is_empty() { logical } else { member_plan(logical, &members, 0) };
+        // [EXTENSION] a partitioned table read with its partitions, each by
+        // a plan of its own, its own holding no row (RULES.md D156).
+        let tree = super::partitions::partition_members(st, &logical).filter(|_| members.is_empty());
+        let members = match tree.as_ref().and_then(|t| t.split_first()) {
+            Some((table, leaves)) => {
+                others = leaves.iter().map(|leaf| super::partitions::leaf_plan(logical.clone(), table, leaf)).collect();
+                tree.clone().unwrap_or_default()
+            }
+            None => members,
+        };
         let (optimized, trace, physical) = plan(st, logical);
         let c = Compiled { columns, key: None, bound: String::new(), trace, optimized, physical };
         let Some(table) = only_table(&c.optimized) else { return Ok(None) };

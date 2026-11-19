@@ -452,9 +452,16 @@ impl Subqueries for Runner {
             return Ok(taken.clone());
         }
         // An index dropped since the statement was bound ranks nothing.
-        let taken = match self.db.index_of(index) {
-            Ok(ix) => Arc::clone(ix).ranking_statistics()?,
-            Err(_) => None,
+        // [EXTENSION] of a partitioned table's index, or one it made, its
+        // partitions' indexes' together (RULES.md D158).
+        let template = crate::catalog::template_of(index).unwrap_or(index);
+        let taken = if self.db.template(template).is_some() {
+            self.db.template_statistics(template)?
+        } else {
+            match self.db.index_of(index) {
+                Ok(ix) => Arc::clone(ix).ranking_statistics()?,
+                Err(_) => None,
+            }
         };
         self.ranked.borrow_mut().insert(index.to_owned(), taken.clone());
         Ok(taken)

@@ -84,7 +84,9 @@ functions before a parenthesis, as the trims are. Within POSITION_REGEX,
 START and AFTER are words unless IN or FLAG follows, so
 `POSITION_REGEX(START IN S)` searches S for the value of a column START.
 PARTITION is read only where BY follows it after an operand of a join,
-so `FROM T PARTITION` still names T PARTITION.
+so `FROM T PARTITION` still names T PARTITION. In CREATE TABLE it is
+read before BY or OF, and in ALTER TABLE after ATTACH or DETACH, words
+read only there *(extension)*.
 In a GROUP BY, ROLLUP and CUBE are read only before a parenthesis, and
 GROUPING only before SETS, which SQL:2023 does not reserve. GROUPING is
 the grouping operation before a parenthesis in a value, so `GROUP BY

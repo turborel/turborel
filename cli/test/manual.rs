@@ -9,6 +9,7 @@ mod embedding;
 mod extensions;
 mod hybrid;
 mod information;
+mod partitioning;
 mod vector;
 mod xml;
 

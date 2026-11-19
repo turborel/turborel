@@ -143,6 +143,10 @@ fn updates(
         let table = merge.member(joined)?;
         // [GR6a i 4] a row changed through a cursor: a cursor operation conflict.
         effects.cursors.acted_on(table, *id);
+        // [EXTENSION] a row whose key leaves its partition moves (RULES.md D155).
+        if st.moves((&bound.table, table), new) {
+            return moved((StatementContext { st, tx }, merge, condition), (table, *id, joined, new), (effects, &mut *again), &columns);
+        }
         let mut recomputed = None;
         let mut recheck = |newest: &Row| {
             let Some(rejoined) = still_matched(merge, condition, newest, joined)? else { return Ok(Again::Skip) };
@@ -163,6 +167,27 @@ fn updates(
         }
         Ok(())
     })
+}
+
+/// \[EXTENSION\] Row `id` of the partition `table`, joined as `joined`,
+/// updated to `new` by a WHEN MATCHED clause of search condition
+/// `condition`, its key now another partition's: deleted, then inserted
+/// where the target routes it (RULES.md D155); left alone if another
+/// transaction changed it so it no longer matches.
+fn moved(
+    (cx, merge, condition): (StatementContext<'_>, &Merge<'_>, Option<&Cond>),
+    (table, id, joined, new): (&QualifiedName, RowId, &Row, &Row),
+    (effects, again): (&mut Effects<'_>, &mut Rewritten),
+    columns: &[usize],
+) -> Result<()> {
+    let mut recheck =
+        |newest: &Row| Ok(if still_matched(merge, condition, newest, joined)?.is_some() { Again::Delete } else { Again::Skip });
+    let Some(old) = cx.st.rewrite_row(cx.tx, (table, id), None, &mut recheck)? else {
+        again.insert(id, None);
+        return Ok(());
+    };
+    let (leaf, moved, new) = cx.st.insert_moved(cx.tx, &merge.bound.table, new)?;
+    effects.moved((table, id, old), (&leaf, moved, &new), columns)
 }
 
 /// [GR6a i 7] A WHEN MATCHED clause's deletes, of search condition
@@ -198,7 +223,8 @@ fn inserts(
     effects: &mut Effects<'_>,
 ) -> Result<()> {
     let table = table_of(merge, target)?.name();
-    rows.visit(&mut |row| effects.inserted(table, st.insert_row(tx, table, row)?, row))
+    // [EXTENSION] each in the partition that holds it (RULES.md D155).
+    rows.visit(&mut |row| st.insert_routed(tx, table, row).and_then(|(leaf, id)| effects.inserted(&leaf, id, row)))
 }
 
 /// [GR7] Each row `planned` updated or inserted, once all are written,

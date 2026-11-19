@@ -58,7 +58,12 @@ impl Binder<'_> {
         let hybrid = |ix: &IndexDesc| ix.method == crate::index::vector::hybrid::HYBRID_METHOD && ix.columns.first() == Some(&column);
         let ranking = |ix: &&IndexDesc| ix.method == FULLTEXT_METHOD && ix.columns.as_slice() == [column] || hybrid(ix);
         let indexes = self.db.catalog.indexes(&item.table);
-        indexes.into_iter().filter(ranking).map(|ix| ix.name.clone()).min()
+        let own = indexes.into_iter().filter(ranking).map(|ix| ix.name.clone()).min();
+        // [EXTENSION] a partitioned table's index ranks with its partitions' together (RULES.md D158).
+        own.or_else(|| {
+            let templates = &self.db.catalog.partitioning().key(&item.table)?.templates;
+            templates.iter().filter(|t| t.method == FULLTEXT_METHOD && t.columns.as_slice() == [column]).map(|t| t.name.clone()).min()
+        })
     }
 
     /// The argument `f` declares a call of `exprs` is given last

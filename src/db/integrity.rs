@@ -102,6 +102,9 @@ pub(super) struct Effects<'a> {
     /// Of a session's statement, the session: what runs a function that
     /// possibly modifies SQL-data its values invoke (`routines::Hosted`).
     pub(super) host: Option<&'a super::Session>,
+    /// \[EXTENSION\] The rows it moved to another partition, there
+    /// (RULES.md D155): not to be changed again by it.
+    moved_in: HashSet<(QualifiedName, RowId)>,
 }
 
 /// [ISO/IEC 9075:1992 §11.8 GR8] The rows a session changed through each
@@ -130,7 +133,7 @@ impl<'a> Effects<'a> {
     pub(super) fn new(user: Authorization, deferral: &'a RefCell<Deferral>, cursors: Cursored<'a>, space: ListSpace) -> Effects<'a> {
         let now = crate::value::datetime::Now::default();
         let (done, rewritten) = (HeldRows::new(space.clone()), Vec::new());
-        Effects { done, space, user, now, deferral, cursors, rewritten, triggered: None, host: None }
+        Effects { done, space, user, now, deferral, cursors, rewritten, triggered: None, host: None, moved_in: HashSet::new() }
     }
 
     /// Whose the statement is: the top cell of its authorization stack
@@ -164,6 +167,34 @@ impl<'a> Effects<'a> {
             t.record(table, columns, &(id, old.clone(), new.clone()))?;
         }
         self.done.push(Effect::Updated { table: table.clone(), id, old, columns: columns.to_vec() })
+    }
+
+    /// \[EXTENSION\] Row `id` of the partition `from`, `old`, moved by an
+    /// UPDATE giving values to `columns` to the partition `to`, as its row
+    /// `moved`, `new`: deleted from one and inserted in the other, each
+    /// checked so, and of the tables both are partitions of, an update
+    /// (RULES.md D155).
+    ///
+    /// # Errors
+    ///
+    /// As `inserted`.
+    pub(super) fn moved(
+        &mut self,
+        (from, id, old): (&QualifiedName, RowId, Row),
+        (to, moved, new): (&QualifiedName, RowId, &Row),
+        columns: &[usize],
+    ) -> Result<()> {
+        if let Some(t) = &mut self.triggered {
+            t.record_moved((from, to), columns, (moved, &old, new))?;
+        }
+        self.moved_in.insert((to.clone(), moved));
+        self.done.push(Effect::Deleted { table: from.clone(), id, old })?;
+        self.done.push(Effect::Inserted { table: to.clone(), id: moved })
+    }
+
+    /// Whether row `id` of `table` is one it moved there.
+    pub(super) fn moved_in(&self, table: &QualifiedName, id: RowId) -> bool {
+        self.moved_in.contains(&(table.clone(), id))
     }
 
     /// Row `id` of `table`, `old`, deleted: a transition of its state

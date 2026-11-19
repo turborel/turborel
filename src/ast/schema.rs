@@ -371,6 +371,8 @@ pub struct TableDefinition {
     pub versioning: Option<usize>,
     /// \[EXTENSION\] (§4.2) AS NODE or AS EDGE, if written, and where.
     pub graph: Option<(crate::catalog::NativeKind, usize)>,
+    /// \[EXTENSION\] Its PARTITION BY and PARTITION OF, if written (RULES.md D153).
+    pub partitioning: Option<Box<super::TablePartitioning>>,
 }
 
 /// \[EXTENSION\] `<table storage>` ::= \[USING `<engine name>`\] \[WITH

@@ -57,6 +57,7 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
+        | Plan::MergeAppend { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }
@@ -116,6 +117,7 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
+        | Plan::MergeAppend { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }
@@ -163,6 +165,7 @@ fn joined(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
+        | Plan::MergeAppend { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }
@@ -320,6 +323,7 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::Values { .. }
         | Plan::System { .. }
         | Plan::Sort { .. }
+        | Plan::MergeAppend { .. }
         | Plan::Limit { .. }
         | Plan::Distinct { .. }
         | Plan::Recursive { .. }

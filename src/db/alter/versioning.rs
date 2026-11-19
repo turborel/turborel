@@ -325,6 +325,8 @@ pub(super) fn unversioned(st: &State, qn: &QualifiedName, action: &AlterAction) 
         | AlterAction::DropVersioning { .. }
         | AlterAction::RevertCollation(_)
         | AlterAction::Truncate { .. }
+        | AlterAction::AttachPartition { .. }
+        | AlterAction::DetachPartition(_)
         | AlterAction::Storage(_) => return Ok(()),
     };
     if st.versioned(qn) {

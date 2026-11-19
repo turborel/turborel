@@ -132,7 +132,8 @@ names of a path it keeps; changing either makes it anew. See the
 An `xml_path`, `xml_value`, `xml_property` or `xml_primary` index keys
 one XML column: each element and attribute of its values, by its path,
 its value as a string and as a number, and its place in document order,
-each method in its own order ([XML indexes](../19-xml.md#xml-indexes));
+each method in its own order ([XML indexes](../19-xml.md#xml-indexes),
+[Partitioned Tables](../23-partitioning.md));
 `xml_primary` keeps each node's value whole up to 512 octets, so it
 answers of a row from the index alone. No comparison of SQL reads it, as
 XML values are not comparable: the planner reads it for the paths of
@@ -237,6 +238,14 @@ begins. A session whose transaction had its rows of the table open then
 uses the index only once that transaction ends; until then, a statement
 that would read or write through it is refused (SQLSTATE TB911), and is
 run again after COMMIT or ROLLBACK.
+
+An index of a partitioned table is a template *(extension)*: an index
+of its method, options and key is made on each of its partitions, now
+and as each is made or attached, named by the template, the partition's
+schema and its name apart by a NUL character. DROP INDEX and ALTER INDEX
+of the template drop or alter each of them. A hybrid index of a MODEL
+keeps one table of chunks of the rows of every partition
+([Partitioned Tables](../23-partitioning.md#indexes)).
 
 ## RULES
 

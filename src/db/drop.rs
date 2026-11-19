@@ -99,6 +99,8 @@ impl State {
         // [ISO/IEC 9075-2:2023 §11.31 SR6, GR1] its subtables first.
         let mut dropped = self.drop_pipelines_of(qn, cascade)?;
         dropped.absorb(self.drop_subtables(qn, cascade)?);
+        // [EXTENSION] its partitions, which hold its rows (RULES.md D153).
+        dropped.absorb(self.drop_partitions(qn, cascade)?);
         dropped.absorb(self.drop_dependents(qn, cascade, "§11.18 SR4")?);
         let mut catalog = self.catalog.duplicate();
         for ix in self.catalog.indexes(qn) {
@@ -107,6 +109,7 @@ impl State {
         }
         catalog.revoke_all(qn);
         catalog.remove_table(qn);
+        catalog.partitioning_mut().remove(qn);
         self.drop_history(&mut *catalog, qn, &mut dropped);
         let generation = self.generation_of(qn);
         self.retired.entry(qn.clone()).and_modify(|g| *g = (*g).max(generation)).or_insert(generation);
@@ -426,6 +429,13 @@ impl Session {
             wanted.sort();
             wanted.dedup();
             if wanted.is_empty() {
+                // [EXTENSION] a partition's rows out of the global indexes
+                // over them (RULES.md D157).
+                if let DropTarget::Table(qn) = target
+                    && fresh.catalog.partitioning().of(qn).is_some()
+                {
+                    fresh.unindex_partitions(tx, qn)?;
+                }
                 let change = Change::Drop { object: target.clone(), cascade };
                 self.stage(&fresh, tx, Changed { next: Arc::new(next), change, made: None })?;
                 return Ok(Completion::Success);

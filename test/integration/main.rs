@@ -204,6 +204,7 @@ mod ordered_joins;
 mod pages;
 mod partial_groups;
 mod partitioned_joins;
+mod partitioning;
 mod period_predicates;
 mod periods;
 mod planning;

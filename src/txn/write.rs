@@ -17,8 +17,17 @@ use crate::txn::{Concurrency, LockWait, Timestamp, Txn, Undo};
 use crate::value::Value;
 
 impl State {
-    fn table_indexes(&self, table: &QualifiedName) -> Vec<IndexDesc> {
-        self.catalog.indexes(table).into_iter().cloned().collect()
+    /// The indexes `table`'s rows have entries in: its own, each entry of
+    /// the row's id, and \[EXTENSION\] of a partition, the global indexes
+    /// over it, each of the id packed with the partition's (RULES.md D157).
+    pub(crate) fn table_indexes(&self, table: &QualifiedName) -> Vec<(IndexDesc, Option<u64>)> {
+        let own = self.catalog.indexes(table).into_iter().map(|ix| (ix.clone(), None));
+        own.chain(self.globals_over(table).into_iter().map(|(ix, partition)| (ix, Some(partition)))).collect()
+    }
+
+    /// The id of the entry of row `id` in an index, packed with `partition`.
+    pub(crate) fn entry_id(partition: Option<u64>, id: RowId) -> Result<RowId> {
+        partition.map_or(Ok(id), |p| crate::db::partitions::global::packed(p, id))
     }
 
     /// The key of `row` in the index `ix`: an error an expression of it
@@ -27,7 +36,7 @@ impl State {
         ix.computed_key(row)
     }
 
-    fn index_add(&self, tx: &Txn, ix: &IndexDesc, row: &Row, id: RowId) -> Result<()> {
+    pub(crate) fn index_add(&self, tx: &Txn, ix: &IndexDesc, row: &Row, id: RowId) -> Result<()> {
         let key = Self::index_key(ix, row)?;
         if ix.holds(&key) {
             let index = self.index_handle(&ix.name)?;
@@ -44,7 +53,7 @@ impl State {
         Ok(())
     }
 
-    fn index_remove(&self, tx: &Txn, ix: &IndexDesc, row: &Row, id: RowId) -> Result<()> {
+    pub(crate) fn index_remove(&self, tx: &Txn, ix: &IndexDesc, row: &Row, id: RowId) -> Result<()> {
         let key = Self::index_key(ix, row)?;
         if ix.holds(&key) {
             let index = self.index_handle(&ix.name)?;
@@ -64,6 +73,10 @@ impl State {
     /// §4.16, §7.3 GR3b i].
     pub(crate) fn insert_row(&self, tx: &Txn, table: &QualifiedName, row: &Row) -> Result<RowId> {
         crate::geometry::registered::check_row(&*self.catalog, table, row)?;
+        // [EXTENSION] a partition holds only the rows its bounds hold (RULES.md D155).
+        if !self.catalog.partitioning().is_empty() {
+            self.check_holds(table, row)?;
+        }
         self.prepare_write(tx, table)?;
         // A row of large objects is copied, so each names one the table
         // keeps for it, or is held in the row inside another value
@@ -87,18 +100,24 @@ impl State {
             let change = Change::Insert { table: table.clone(), generation: self.generation_of(table), row: id, after: kept.clone() };
             tx.log_sealed(change, self.seal_of(table)?.as_deref().map(|p| (p, id)))?;
         }
-        for ix in self.table_indexes(table) {
-            self.index_add(tx, &ix, kept, id)?;
+        for (ix, partition) in self.table_indexes(table) {
+            self.index_add(tx, &ix, kept, Self::entry_id(partition, id)?)?;
         }
         Ok(id)
     }
 
     /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.11] That a row `write`
     /// gives `table` holds in each registered geometry column a value of
-    /// the column's system (`geometry::registered`).
+    /// the column's system (`geometry::registered`), and \[EXTENSION\] of a
+    /// partition, is one its bounds hold.
     fn check_written(&self, table: &QualifiedName, write: &Write) -> Result<()> {
         match write {
-            Write::Update(row) => crate::geometry::registered::check_row(&*self.catalog, table, row),
+            Write::Update(row) => {
+                crate::geometry::registered::check_row(&*self.catalog, table, row)?;
+                // [EXTENSION] a row whose key leaves its partition is moved
+                // by its statement, never written there (RULES.md D155).
+                if self.catalog.partitioning().is_empty() { Ok(()) } else { self.check_holds(table, row) }
+            }
             Write::Delete => Ok(()),
         }
     }
@@ -256,16 +275,17 @@ impl State {
         // the readers that still see it, until the version is removed
         // (`TableStorage::gc`); the new version gets entries of its own.
         let versions = caps.concurrency != Concurrency::Coordinator;
-        for ix in self.table_indexes(table) {
+        for (ix, partition) in self.table_indexes(table) {
             // RULES.md D92: an entry of one row's one version keeps
             // its key while the columns its expressions read are unchanged.
             if !versions && ix.has_expressions() && ix.unchanged(old, row) {
                 continue;
             }
+            let entry = Self::entry_id(partition, id)?;
             if !versions {
-                self.index_remove(tx, &ix, old, id)?;
+                self.index_remove(tx, &ix, old, entry)?;
             }
-            self.index_add(tx, &ix, row, id)?;
+            self.index_add(tx, &ix, row, entry)?;
         }
         Ok(())
     }
@@ -277,8 +297,8 @@ impl State {
         // An engine keeping versions keeps the deleted version's entries
         // until it is removed, as for an update.
         if caps.concurrency == Concurrency::Coordinator {
-            for ix in self.table_indexes(table) {
-                self.index_remove(tx, &ix, old, id)?;
+            for (ix, partition) in self.table_indexes(table) {
+                self.index_remove(tx, &ix, old, Self::entry_id(partition, id)?)?;
             }
         }
         if caps.undo == Undo::Log {

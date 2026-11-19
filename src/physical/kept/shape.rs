@@ -51,6 +51,7 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
             let Plan::Append { left: left2, right: right2 } = other else { return false };
             same_shape(left, left2) && same_shape(right, right2)
         }
+        Plan::MergeAppend { .. } => same_merge(one, other),
         Plan::Product { .. }
         | Plan::HashJoin { .. }
         | Plan::IndexJoin { .. }
@@ -66,6 +67,15 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => false,
     }
+}
+
+/// Whether `one` and `other` are merges of one order, of inputs of one
+/// shape each.
+fn same_merge(one: &Plan, other: &Plan) -> bool {
+    let (Plan::MergeAppend { inputs, keys, .. }, Plan::MergeAppend { inputs: inputs2, keys: keys2, .. }) = (one, other) else {
+        return false;
+    };
+    keys == keys2 && inputs.len() == inputs2.len() && inputs.iter().zip(inputs2).all(|(a, b)| same_shape(a, b))
 }
 
 fn same_scan(one: &Plan, other: &Plan) -> bool {

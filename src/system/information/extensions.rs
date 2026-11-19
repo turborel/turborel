@@ -117,4 +117,73 @@ pub(super) const VIEWS: &[SystemView] = &[
      FROM INDEXES AS I
          WHERE I.METHOD_NAME = 'adjacency'",
     },
+    // [EXTENSION] PARTITIONED_TABLES (RULES.md D153): the partitioned
+    // tables the current user has a privilege on, each its strategy, key
+    // and number of partitions.
+    SystemView {
+        name: "PARTITIONED_TABLES",
+        query: r"SELECT
+       TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, STRATEGY, KEY_PARTS, PARTITION_COUNT
+     FROM DEFINITION_SCHEMA.PARTITIONED_TABLES
+         WHERE ( TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME )
+           IN (
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
+               UNION
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
+         AND TABLE_CATALOG
+           = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
+    },
+    // [EXTENSION] PARTITIONS (RULES.md D153): the partitions the current
+    // user has a privilege on, each the table it is a partition of, its
+    // bound, its level and whether it is partitioned again.
+    SystemView {
+        name: "PARTITIONS",
+        query: r"SELECT
+       TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME,
+       PARENT_TABLE_CATALOG, PARENT_TABLE_SCHEMA, PARENT_TABLE_NAME,
+       BOUND, PARTITION_LEVEL, IS_PARTITIONED
+     FROM DEFINITION_SCHEMA.PARTITIONS
+         WHERE ( TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME )
+           IN (
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
+               UNION
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
+         AND TABLE_CATALOG
+           = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
+    },
+    // [EXTENSION] PARTITION_INDEXES (RULES.md D158): of each index of a
+    // partitioned table the current user has a privilege on, the index it
+    // made on each partition.
+    SystemView {
+        name: "PARTITION_INDEXES",
+        query: r"SELECT
+       TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TEMPLATE_NAME, METHOD_NAME, IS_UNIQUE,
+       PARTITION_CATALOG, PARTITION_SCHEMA, PARTITION_NAME, INDEX_NAME
+     FROM DEFINITION_SCHEMA.PARTITION_INDEXES
+         WHERE ( TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME )
+           IN (
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.TABLE_PRIVILEGES
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) )
+               UNION
+               SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME
+                FROM DEFINITION_SCHEMA.COLUMN_PRIVILEGES
+                  WHERE ( GRANTEE IN ( 'PUBLIC', CURRENT_USER )
+                          OR GRANTEE IN ( SELECT ROLE_NAME FROM ENABLED_ROLES ) ) )
+         AND TABLE_CATALOG
+           = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
+    },
 ];

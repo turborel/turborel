@@ -323,8 +323,9 @@ impl Parser {
             let options = if self.accept_kw(kw::WITH) { self.table_options()? } else { Vec::new() };
             return Ok(AlterAction::Storage(TableStorage { engine, options }));
         }
-        if let Some(versioning) = self.versioning_action()? {
-            return Ok(versioning);
+        // [EXTENSION] or ATTACH or DETACH PARTITION (RULES.md D153).
+        if let Some(action) = self.versioning_action()?.map_or_else(|| self.partition_action(), |a| Ok(Some(a)))? {
+            return Ok(action);
         }
         if self.accept_kw(kw::ADD) {
             // [§11.16] ADD <table constraint definition>, or [§11.11] ADD

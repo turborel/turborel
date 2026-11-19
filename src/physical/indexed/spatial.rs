@@ -94,7 +94,8 @@ impl PhysicalPlanner<'_> {
         let outer_rows = self.rows_of(outer)?;
         let rows = cost_of(self.db.storage_of(read.table).ok()?.row_count());
         let mut best: Option<Choice> = None;
-        for ix in self.db.catalog.indexes(read.table) {
+        // [EXTENSION] a global index is probed by equalities alone (RULES.md D157).
+        for ix in self.db.catalog.indexes(read.table).into_iter().filter(|ix| !crate::catalog::is_global_index(&ix.name)) {
             let Some(predicate) = self.geometry_key(&read, ix, &binding) else { continue };
             let probe = JoinProbe::Predicate { predicate, outer: binding.outer, beside: beside.clone() };
             // Until geometry statistics exist, use the two-dimensional

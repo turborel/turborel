@@ -4130,6 +4130,22 @@ assertion, trigger, routine or generation expression reading the table
 names the column or its new name, or a view selects `*` of it, SQLCODE
 -103, as is one of a typed or system-versioned table.
 
+### Partitioned tables
+
+PARTITION BY and PARTITION OF of CREATE TABLE, ATTACH PARTITION and
+DETACH PARTITION of ALTER TABLE, and the views PARTITIONED_TABLES,
+PARTITIONS and PARTITION_INDEXES are extensions
+([Partitioned Tables](doc/sql/23-partitioning.md), RULES.md D153 to D159).
+
+| Use | Behaviour |
+|---|---|
+| Strategies | RANGE, LIST and HASH built in, others registered by `Database::register_partition_strategy`. A HASH table's moduli divide each other, and it has no DEFAULT partition. |
+| Rows | INSERT, UPDATE and MERGE route each row down the tree. A row no partition holds is SQLSTATE 23T01. A row whose key changes is moved, its row triggers fired as an update of the tables over both partitions. |
+| Reads | Partitions pruned by comparisons, IS NULL, IN and OR of the key with constants, and with a prepared statement's parameters as it runs. Reads in an order merged, nearest reads taken from each partition's index. Index nested-loop joins into a partitioned table, each probe routed to the partitions its values admit, or read through a global index. |
+| Keys | PRIMARY KEY and UNIQUE held across partitions, by each partition's index where the key holds the partition key, else by a global index over every partition's rows. Foreign keys to and from partitioned tables. CHECK constraints and defaults inherited. |
+| Indexes | Every method a template, made on each partition and adopted or built on ATTACH. A hybrid index of a MODEL keeps one table of chunks of the tree. A full-text rank uses the statistics of every partition. |
+| Tables | Temporary, system-versioned with a history per partition, and each partition of its own engine. Cursors over them updatable. Typed tables and node or edge tables are not partitioned. |
+
 ### Views of the running system
 
 | View | Shows |
