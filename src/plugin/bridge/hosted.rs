@@ -3,7 +3,9 @@
 //! A failed call stops the node (`plugin::hosted`), so a bridge that must
 //! answer, a checksum or the time, answers what does no harm after it.
 
+pub mod files;
 pub mod page;
+pub mod spill;
 pub mod store;
 pub mod time;
 pub mod trust;

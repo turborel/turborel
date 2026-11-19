@@ -13,10 +13,10 @@ use std::time::Duration;
 use crate::db::Database;
 use crate::error::Result;
 use crate::plugin::bridge::hosted::page::{PluginEncoding, PluginHash};
+use crate::plugin::bridge::hosted::spill::PluginSpill;
 use crate::plugin::bridge::hosted::store::{PluginCatalogStorage, PluginLogStorage};
 use crate::plugin::bridge::hosted::time::{PluginClock, PluginJob};
 use crate::plugin::bridge::hosted::trust::{PluginCrypto, PluginServed};
-use crate::plugin::errors::unavailable;
 use crate::plugin::hosted::HostLink;
 use crate::plugin::manifest::{HostDeclared, HostKind};
 
@@ -43,10 +43,7 @@ impl Database {
             }
             HostKind::LogStorage => self.set_log_storage(Box::new(PluginLogStorage::new(d, link)?)),
             HostKind::CatalogStorage => self.set_catalog_storage(Box::new(PluginCatalogStorage::new(d, link))),
-            HostKind::Spill => {
-                drop(link);
-                Err(unavailable(&format!("HOST {} {} is not served by this build", d.kind.word(), d.name)))
-            }
+            HostKind::Spill => self.set_spill(Box::new(PluginSpill::new(d, link))),
             HostKind::Keyring
             | HostKind::FileSystem
             | HostKind::Listener

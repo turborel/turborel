@@ -18,8 +18,29 @@
 //! 24 catalog storage      1 open          (nothing)                                  found u8 | last u8 | bytes if last
 //!                         2 create        (nothing)                                  (nothing)
 //!                         3 record        bytes | compact after u64                  (nothing), durable once answered
-//! 25 spill                `spill.rs`
-//! 26 file system          `files.rs`
+//! 25 spill                1 table         (nothing)                                  id u64
+//!                         2 run           (nothing)                                  id u64
+//!                         3 push          id u64 | count u32 | bytes...              (nothing)
+//!                         4 read          id u64 | from u64 | max u32                count u32 | bytes... | more u8
+//!                         5 insert        id u64 | count u32 | (key | value)...      (nothing)
+//!                         6 get           id u64 | key bytes                         count u32 | bytes...
+//!                         7 remove        id u64 | key bytes | value bytes           u8
+//!                         8 drop          id u64                                     (nothing)
+//! 26 file system          1 open          path str | mode u8 (0 new, 1 write, 2 read)  (nothing)
+//!                         2 read          path str | offset u64 | max u32            bytes
+//!                         3 write         path str | offset u64 | bytes              (nothing)
+//!                         4 size          path str                                   u64
+//!                         5 set size      path str | size u64                        (nothing)
+//!                         6 sync          path str | u8 (0 none, 1 data, 2 full)     (nothing)
+//!                         7 remove        path str                                   (nothing)
+//!                         8 exists        path str                                   u8
+//!                         9 create dirs   path str                                   (nothing)
+//!                         10 read dir     path str                                   strs (count u32)
+//!                         11 sync dir     path str                                   (nothing)
+//!                         12 lock         path str                                   lock u64
+//!                         13 unlock       lock u64                                   (nothing)
+//!                         14 rename       from str | to str                          (nothing)
+//!                         15 remove tree  path str                                   (nothing)
 //! 27 served connections   1 end           id u64                                     u8
 //!                         2 cancel        id u64                                     u8
 //! 28 listener             1 accept        (nothing)                                  peer str
@@ -61,6 +82,52 @@ pub const CATALOG_OPEN: u8 = 1;
 pub const CATALOG_CREATE: u8 = 2;
 /// 24 catalog storage: record an image, durably.
 pub const CATALOG_RECORD: u8 = 3;
+/// 25 spill: a new table.
+pub const SPILL_TABLE: u8 = 1;
+/// 25 spill: a new run.
+pub const SPILL_RUN: u8 = 2;
+/// 25 spill: records pushed onto a run.
+pub const SPILL_PUSH: u8 = 3;
+/// 25 spill: a page of a run's records.
+pub const SPILL_READ: u8 = 4;
+/// 25 spill: values inserted into a table.
+pub const SPILL_INSERT: u8 = 5;
+/// 25 spill: a table's values under a key.
+pub const SPILL_GET: u8 = 6;
+/// 25 spill: a value removed from a table.
+pub const SPILL_REMOVE: u8 = 7;
+/// 25 spill: a table or run dropped.
+pub const SPILL_DROP: u8 = 8;
+/// 26 file system: open or create a file.
+pub const FILES_OPEN: u8 = 1;
+/// 26 file system: read at an offset.
+pub const FILES_READ: u8 = 2;
+/// 26 file system: write at an offset.
+pub const FILES_WRITE: u8 = 3;
+/// 26 file system: a file's size.
+pub const FILES_SIZE: u8 = 4;
+/// 26 file system: set a file's size.
+pub const FILES_SET_SIZE: u8 = 5;
+/// 26 file system: make a file durable.
+pub const FILES_SYNC: u8 = 6;
+/// 26 file system: remove a file.
+pub const FILES_REMOVE: u8 = 7;
+/// 26 file system: whether a path is there.
+pub const FILES_EXISTS: u8 = 8;
+/// 26 file system: create directories.
+pub const FILES_CREATE_DIRS: u8 = 9;
+/// 26 file system: a directory's entries.
+pub const FILES_READ_DIR: u8 = 10;
+/// 26 file system: make a directory's entries durable.
+pub const FILES_SYNC_DIR: u8 = 11;
+/// 26 file system: lock a path.
+pub const FILES_LOCK: u8 = 12;
+/// 26 file system: give a lock up.
+pub const FILES_UNLOCK: u8 = 13;
+/// 26 file system: rename a path.
+pub const FILES_RENAME: u8 = 14;
+/// 26 file system: remove a directory and all it holds.
+pub const FILES_REMOVE_TREE: u8 = 15;
 /// 27 served connections: end one.
 pub const SERVED_END: u8 = 1;
 /// 27 served connections: cancel what one runs.

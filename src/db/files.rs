@@ -64,7 +64,7 @@ use crate::diagnostics::{Diagnostics, Event};
 use crate::disk::block::BlockOptions;
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::encoding::Pipeline;
-use crate::disk::io::{Durability, FileLock, FileSystem, OsFileSystem};
+use crate::disk::io::{Durability, FileLock, FileSystem};
 use crate::disk::pager::Pager;
 use crate::disk::shadow::ShadowFileSystem;
 use crate::engine::rows::{RowStore, TableFiles, TableOptions, UndoStore};
@@ -279,7 +279,7 @@ impl Database {
     /// As `open_files`.
     pub fn open(dir: &Path) -> Result<Database> {
         let db = Database::new();
-        let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
+        let fs = db.file_system()?;
         db.open_files(&fs, dir, &OpenOptions::default())?;
         Ok(db)
     }

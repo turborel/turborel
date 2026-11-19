@@ -24,7 +24,8 @@ use super::errors::{ENDED, TIMED_OUT, TOO_LONG, VIOLATION, host_failed, invalid_
 use super::host::Host;
 use super::manifest::{HostDeclared, HostKind, Manifest};
 use super::package::hex;
-use super::pool::{CallContext, Pool, Request};
+use super::pool::{CallContext, Lease, Pool, Request};
+use crate::sync::lock_builtin;
 
 /// The separator of PLUGINS.HOST's entries.
 const ENTRIES: char = ';';
@@ -293,7 +294,11 @@ impl HostLink {
     fn called(&self, op: u8, payload: Vec<u8>, stops: fn(&SqlError) -> bool) -> Result<Vec<u8>> {
         self.running()?;
         let request = Request { kind: self.kind, op, object: &self.object, payload };
-        let got = self.plugin.pool.call(&request, &mut CallContext::default());
+        self.failing(self.plugin.pool.call(&request, &mut CallContext::default()), stops)
+    }
+
+    /// `got`, its failure stopping the node if `stops` says it does.
+    fn failing<T>(&self, got: Result<T>, stops: fn(&SqlError) -> bool) -> Result<T> {
         got.map_err(|e| {
             if !stops(&e) {
                 return e;
@@ -302,6 +307,46 @@ impl HostLink {
             self.plugin.stop.stop(&why);
             host_failed(&self.plugin.manifest.name, &e.msg)
         })
+    }
+
+    /// A process of its plug-in kept for this object's calls, as a spill
+    /// area or a connection keeps what it holds in one program.
+    ///
+    /// # Errors
+    ///
+    /// SQLSTATE 38T11 if the node is stopped, or none can be leased.
+    pub fn lease(&self) -> Result<HostLease> {
+        self.running()?;
+        let lease = self.failing(self.plugin.pool.lease(), |_| true)?;
+        Ok(HostLease { link: self.clone(), lease: Mutex::new(lease) })
+    }
+}
+
+/// A process kept for one host object's calls, each failure of which
+/// stops the node.
+pub struct HostLease {
+    link: HostLink,
+    lease: Mutex<Lease>,
+}
+
+impl std::fmt::Debug for HostLease {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} (kept)", self.link)
+    }
+}
+
+impl HostLease {
+    /// Calls operation `op` with `payload` on its process, as
+    /// `HostLink::call`.
+    ///
+    /// # Errors
+    ///
+    /// SQLSTATE 38T11 if the node is stopped, or stops of this call.
+    pub fn call(&self, op: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
+        self.link.running()?;
+        let request = Request { kind: self.link.kind, op, object: &self.link.object, payload };
+        let got = lock_builtin(&self.lease).call(&request, &mut CallContext::default());
+        self.link.failing(got, |_| true)
     }
 }
 

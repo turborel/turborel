@@ -9,8 +9,11 @@ mod register;
 
 use super::Database;
 use super::state::State;
+use crate::disk::io::{FileSystem, OsFileSystem};
 use crate::error::Result;
-use crate::plugin::errors::host_failed;
+use crate::plugin::bridge::hosted::files::PluginFiles;
+use crate::plugin::bridge::hosted::trust::PluginKeys;
+use crate::plugin::errors::{host_failed, invalid_manifest};
 use crate::plugin::hosted::{HostLink, HostPlugin, HostSpec};
 use crate::plugin::manifest::{HostDeclared, HostKind};
 use crate::settings::PLUGINS_HOST;
@@ -51,6 +54,35 @@ impl Database {
     pub fn host_objects(&self, kind: HostKind) -> Result<Vec<(HostDeclared, HostLink)>> {
         let host = Arc::clone(&self.snapshot()?.extension_host);
         Ok(host.hosted().iter().flat_map(|p| p.declared(kind).map(|d| (d.clone(), p.link(d))).collect::<Vec<_>>()).collect())
+    }
+
+    /// \[EXTENSION\] The file system the database's files are opened
+    /// from (RULES.md D251): a host plug-in's, if one is started, else the
+    /// operating system's.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the database is closed; SQLSTATE 38T06 if more
+    /// than one host plug-in serves a file system.
+    pub fn file_system(&self) -> Result<Arc<dyn FileSystem>> {
+        let mut served = self.host_objects(HostKind::FileSystem)?;
+        if served.len() > 1 {
+            return Err(invalid_manifest("PLUGINS.HOST may start one HOST FILE SYSTEM, the one the files are opened from"));
+        }
+        Ok(match served.pop() {
+            Some((_, link)) => Arc::new(PluginFiles::new(link)),
+            None => Arc::new(OsFileSystem),
+        })
+    }
+
+    /// \[EXTENSION\] The keyrings host plug-ins serve (RULES.md D252),
+    /// for the encryption that reads its keys from them.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the database is closed.
+    pub fn host_keyrings(&self) -> Result<Vec<PluginKeys>> {
+        Ok(self.host_objects(HostKind::Keyring)?.into_iter().map(|(d, link)| PluginKeys::new(&d, link)).collect())
     }
 
     /// \[EXTENSION\] Why the node stopped, if a host plug-in's failure
