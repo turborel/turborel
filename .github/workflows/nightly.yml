@@ -1,0 +1,83 @@
+# The latest alpha, built for each platform once a change on main has
+# passed every check (verify.yml), so that it can be tried without a
+# build from source. The builds are published as one pre-release tagged
+# `nightly`, made again at each build, its files at fixed addresses
+# (doc/operator/01-installing.md). The toolchain comes from
+# rust-toolchain.toml (R-CM-1).
+name: nightly
+
+on:
+  workflow_run:
+    workflows: [verify]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+
+# A newer build replaces one still running.
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - name: Build the server and the client
+        run: cargo build --release --locked -p turboreld -p turborel-cli
+      - name: Package (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          dir=turborel-nightly-${{ matrix.target }}
+          mkdir "$dir"
+          cp target/release/turboreld target/release/turborel LICENSE README.md "$dir"/
+          tar -czf "$dir.tar.gz" "$dir"
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = "turborel-nightly-${{ matrix.target }}"
+          New-Item -ItemType Directory $dir | Out-Null
+          Copy-Item target/release/turboreld.exe, target/release/turborel.exe, LICENSE, README.md $dir
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: turborel-nightly-${{ matrix.target }}
+          path: turborel-nightly-${{ matrix.target }}.*
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: builds
+          merge-multiple: true
+      - name: Replace the nightly pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          gh release delete nightly --yes --cleanup-tag || true
+          gh release create nightly builds/* --prerelease --target "$SHA" \
+            --title "Nightly (alpha)" \
+            --notes "The latest alpha, built from $SHA once it passed every check. Anything may change from one build to the next (VERSIONING.md). Each archive holds turboreld, the server, and turborel, the client."
