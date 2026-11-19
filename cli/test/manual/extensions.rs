@@ -8,7 +8,7 @@ use turborel::db::Database;
 use turborel::value::Value;
 
 use super::Client;
-use crate::common::Scratch;
+use crate::common::{Scratch, plugin_example};
 
 /// The example's objects the pages call.
 const OBJECTS: &str = "FUNCTION TWICE(INTEGER) RETURNS INTEGER DETERMINISTIC BATCH 100;
@@ -24,15 +24,6 @@ XQUERY FUNCTION '{http://example.com/fn}twice' (INTEGER) RETURNS INTEGER;
 TYPE PAIR ORDERED; STORAGE ENGINE FILES BATCH 100;
 INDEX METHOD SORTED SUPPORTS (EQUALITY, RANGE) BATCH 50; INDEX METHOD NEAR SUPPORTS (NEAREST);";
 
-/// The example's program, as the workspace's tests built it.
-fn program() -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    let debug = exe.parent().and_then(Path::parent).unwrap();
-    let built = debug.join("examples").join(format!("plugin_example{}", std::env::consts::EXE_SUFFIX));
-    assert!(built.exists(), "{} is not built: cargo test --workspace builds it", built.display());
-    built
-}
-
 /// Installs the example at `version` under `root`, with `extra` items.
 fn install(root: &Path, version: &str, extra: &str) -> PathBuf {
     let dir = root.join("EXAMPLE").join(version);
@@ -40,8 +31,8 @@ fn install(root: &Path, version: &str, extra: &str) -> PathBuf {
     let exe = format!("plugin_example{}", std::env::consts::EXE_SUFFIX);
     let manifest = format!("NAME EXAMPLE; VERSION '{version}'; PROTOCOL 1; EXECUTABLE '{exe}'; {extra}\n{OBJECTS}");
     std::fs::write(dir.join("turborel-plugin.manifest"), manifest).unwrap();
-    if std::fs::hard_link(program(), dir.join(&exe)).is_err() {
-        std::fs::copy(program(), dir.join(&exe)).unwrap();
+    if std::fs::hard_link(plugin_example(), dir.join(&exe)).is_err() {
+        std::fs::copy(plugin_example(), dir.join(&exe)).unwrap();
     }
     dir
 }
