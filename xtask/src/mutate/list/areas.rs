@@ -140,8 +140,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 }
 
 /// External plug-ins' areas, in order: the plug-ins', the packages', the
-/// package files', the kinds', the SDK's and host plug-ins'.
-fn plugins() -> [&'static [Mutation]; 6] {
+/// package files', the kinds', the SDK's, host plug-ins' and the
+/// replication and archive host kinds'.
+fn plugins() -> [&'static [Mutation]; 7] {
     [
         &super::plugins::PLUGINS,
         &super::plugins::PACKAGES,
@@ -149,6 +150,7 @@ fn plugins() -> [&'static [Mutation]; 6] {
         &super::plugins::kinds::PLUGIN_KINDS,
         &super::plugins::sdk::SDK,
         &super::plugins::hosted::HOSTED,
+        &super::plugins::replication::REPLICATION_PLUGINS,
     ]
 }
 

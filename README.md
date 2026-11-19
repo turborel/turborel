@@ -129,6 +129,9 @@ behind it, and each can be replaced or added to.
   collations, storage engines and index methods among them, with an SDK.
 - [Host plug-ins](doc/client/04-plugins-host.md) beneath the database,
   its encodings, log, clock, files, keys and listeners among them.
+- [Replication and archive plug-ins](doc/client/04-plugins-replication.md):
+  a replica's transport, journal, state transfer and consensus, and a
+  backup's archive, served by host plug-ins that fail stop.
 - [Property graphs](doc/sql/20-property-graphs.md) over tables or
   queries' rows, queried by GRAPH_TABLE's path patterns through adjacency
   indexes, LINE_GRAPH among them.

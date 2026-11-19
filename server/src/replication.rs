@@ -37,8 +37,10 @@ use turborel::log::{FileLogOptions, Log, Lsn};
 use turborel::threads::JobHandle;
 use turborel_replication::driver::Retention;
 use turborel_replication::driver::{Blocking, Inbox, Ticks, Watch};
+use turborel_replication::plugin::{Plugged, plugged};
 use turborel_replication::{
-    Configuration, Driver, DriverJob, GroupLogs, Joined, Make, Member, PageDifferences, ReplicaEvent, ReplicaId, Vr, VrOptions, nonce,
+    Configuration, Driver, DriverJob, GroupLogs, Joined, Make, Member, PageDifferences, ReplicaEvent, ReplicaId, StateTransfer, Vr,
+    VrOptions, nonce,
 };
 
 use self::net::Security;
@@ -58,6 +60,9 @@ pub struct Prepared {
     transport: Arc<TcpTransport>,
     links: Arc<Links>,
     tick: Duration,
+    /// \[EXTENSION\] The parts its host plug-ins serve (RULES.md D270),
+    /// and where its frames arrive.
+    plugged: (Plugged, Arc<Inbox>),
 }
 
 /// \[EXTENSION\] A node started: its driver running as its database's
@@ -209,20 +214,41 @@ pub fn prepare(db: &Database, dir: &Path, new_group: bool) -> Result<Option<Prep
         };
         Ok(consensus)
     });
-    let sending: Arc<dyn turborel_replication::Transport> = Arc::<TcpTransport>::clone(&transport);
+    let configuration: Vec<Member> = members.iter().map(|(&id, address)| Member { id, address: address.clone() }).collect();
+    let plugs = plugged(db, dir, (&configuration, me))?;
+    let (sending, transfer) = parts_of(&plugs, &transport, dir);
     let joined = Joined {
         transport: sending,
-        inbox,
+        inbox: Arc::clone(&inbox),
         ticker: Arc::new(Ticks::every(tick)),
         wait: Arc::new(Blocking { most: tick }),
         watch: Arc::new(Telling { db: db.clone(), links: Arc::clone(&links) }),
-        transfer: Arc::new(PageDifferences::new(Arc::new(OsFileSystem), dir)),
+        transfer,
     };
     let retention = Retention { bytes: u64::try_from(settings::count(db, RETAIN_BYTES)).unwrap_or(u64::MAX) };
-    let configuration: Vec<Member> = members.iter().map(|(&id, address)| Member { id, address: address.clone() }).collect();
-    let logs = Arc::new(GroupLogs::in_files(FileLogOptions::default(), (&configuration, me), make, (joined, retention), new_group));
+    let make = plugs.make(make);
+    let logs = GroupLogs::in_files(FileLogOptions::default(), (&configuration, me), make, (joined, retention), new_group);
+    let logs = Arc::new(match plugs.journal.clone() {
+        Some(journal) => logs.with_journal(journal),
+        None => logs,
+    });
     db.set_log_storage(Box::new(Shared(Arc::clone(&logs))))?;
-    Ok(Some(Prepared { logs, transport, links, tick }))
+    Ok(Some(Prepared { logs, transport, links, tick, plugged: (plugs, inbox) }))
+}
+
+/// \[EXTENSION\] The transport and state transfer of a node: its host
+/// plug-ins' where they serve them (RULES.md D270), else TCP and the
+/// differences of pages.
+fn parts_of(plugs: &Plugged, tcp: &Arc<TcpTransport>, dir: &Path) -> (Arc<dyn turborel_replication::Transport>, Arc<dyn StateTransfer>) {
+    let sending: Arc<dyn turborel_replication::Transport> = match &plugs.transport {
+        Some(plugin) => Arc::<turborel_replication::plugin::PluginTransport>::clone(plugin),
+        None => Arc::<TcpTransport>::clone(tcp),
+    };
+    let transfer: Arc<dyn StateTransfer> = match &plugs.transfer {
+        Some(plugin) => Arc::<turborel_replication::plugin::PluginTransfer>::clone(plugin),
+        None => Arc::new(PageDifferences::new(Arc::new(OsFileSystem), dir)),
+    };
+    (sending, transfer)
 }
 
 impl Prepared {
@@ -237,6 +263,19 @@ impl Prepared {
     /// cannot listen; the driver's, the job's, the table's.
     pub fn start(self, db: &Database, runtime: &Handle, holds: Lsn) -> Result<Replication> {
         let driver = self.logs.driver().ok_or_else(|| refused("the database was not opened from its files"))?;
+        let (plugs, inbox) = &self.plugged;
+        if let Some(transport) = &plugs.transport {
+            driver.pump_with(transport.pump(Arc::clone(inbox)));
+        }
+        if plugs.any() {
+            // A dead replication plug-in stops the node, as any host
+            // plug-in's failure does (RULES.md D270).
+            let stopping = db.clone();
+            driver.on_halt(Arc::new(move |why| {
+                // Stopping a database already closed has nothing to stop.
+                let _closed = stopping.stop_node(&why.msg);
+            }));
+        }
         driver.join(holds)?;
         let job = db.add_job(Arc::new(DriverJob::new(Arc::clone(&driver), self.tick)))?;
         self.transport.serve(runtime, db, db.job_asker(job))?;

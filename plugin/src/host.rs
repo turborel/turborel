@@ -11,6 +11,7 @@ mod stores;
 pub use files::{Accept, Files, Mode};
 pub use small::{Checksum, Connections, Crypto, Job, Keys, PageEncoding, TimeSource};
 pub use stores::{CatalogKeeper, LogStore, Records, SpillStore};
+pub mod replication;
 
 use super::registry::Plugin;
 use super::serve::Cx;

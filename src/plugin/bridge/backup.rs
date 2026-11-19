@@ -20,12 +20,21 @@ use crate::backup::{BackupTarget, TargetProvider};
 #[derive(Debug)]
 pub struct PluginTargets {
     link: Arc<Link>,
+    /// \[EXTENSION\] The node's stop, of a host plug-in's archive (RULES.md
+    /// D274), which a process failing trips.
+    stop: Option<super::archive::Stopping>,
 }
 
 impl PluginTargets {
     /// The scheme `link` names.
     pub fn new(link: Link) -> PluginTargets {
-        PluginTargets { link: Arc::new(link) }
+        PluginTargets { link: Arc::new(link), stop: None }
+    }
+
+    /// \[EXTENSION\] The scheme `link` names, of a host plug-in whose
+    /// process failing trips `stop` (RULES.md D274).
+    pub fn stopping(link: Link, stop: super::archive::Stopping) -> PluginTargets {
+        PluginTargets { link: Arc::new(link), stop: Some(stop) }
     }
 }
 
@@ -37,15 +46,17 @@ impl TargetProvider for PluginTargets {
         let mut lease = self.link.pool.lease()?;
         let mut payload = Vec::new();
         payload.put_str(location);
-        let got = call(&mut lease, &self.link, TARGET_OPEN, payload)?;
+        let got = call(&mut lease, (&self.link, self.stop.as_ref()), TARGET_OPEN, payload)?;
         let target = answer(&got, super::number)?;
-        Ok(Arc::new(PluginTarget { link: Arc::clone(&self.link), location: location.to_owned(), target, lease: Mutex::new(lease) }))
+        let (link, stop) = (Arc::clone(&self.link), self.stop.clone());
+        Ok(Arc::new(PluginTarget { link, stop, location: location.to_owned(), target, lease: Mutex::new(lease) }))
     }
 }
 
 /// A target opened, on a process of its own.
 struct PluginTarget {
     link: Arc<Link>,
+    stop: Option<super::archive::Stopping>,
     location: String,
     target: u64,
     lease: Mutex<Lease>,
@@ -57,7 +68,7 @@ impl PluginTarget {
         let mut payload = Vec::new();
         payload.put_u64(self.target);
         rest(&mut payload);
-        call(&mut lock_builtin(&self.lease), &self.link, op, payload)
+        call(&mut lock_builtin(&self.lease), (&self.link, self.stop.as_ref()), op, payload)
     }
 
     /// Operation `op` of an upload, answered by nothing.
@@ -107,7 +118,12 @@ impl BackupTarget for PluginTarget {
     }
 }
 
-/// Operation `op` of `link`'s object, on the process `lease` keeps.
-fn call(lease: &mut Lease, link: &Link, op: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
-    lease.call(&Request { kind: link.kind, op, object: &link.object, payload }, &mut CallContext { interrupt: None, sql: None })
+/// Operation `op` of `link`'s object, on the process `lease` keeps; its
+/// process failing trips `stop`, if given.
+fn call(lease: &mut Lease, (link, stop): (&Link, Option<&super::archive::Stopping>), op: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
+    let got = lease.call(&Request { kind: link.kind, op, object: &link.object, payload }, &mut CallContext { interrupt: None, sql: None });
+    match stop {
+        Some(stop) => got.map_err(|e| stop.failed(link, e)),
+        None => got,
+    }
 }

@@ -22,6 +22,7 @@
 //! `kinds.rs` holds the object of each kind, bridged.
 
 pub mod aggregate;
+pub mod archive;
 pub mod auth;
 pub mod backup;
 pub mod collation;

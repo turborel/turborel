@@ -57,6 +57,7 @@ pub mod index;
 pub mod process;
 pub mod quantizer;
 pub mod ranking;
+pub mod replication;
 pub mod system;
 pub mod types;
 

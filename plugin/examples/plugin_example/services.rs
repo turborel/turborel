@@ -16,6 +16,7 @@ pub fn with(plugin: Plugin) -> Plugin {
         .embedder("VOWELS", Vowels)
         .authenticator("EXAMPLE", Sesame)
         .target("example", Files)
+        .archive("VAULT", Files)
         .partition_strategy("MODULUS", Modulus)
 }
 
@@ -63,8 +64,8 @@ impl Exchange for Asked {
     }
 }
 
-/// `example`: each object a file of the directory the location names,
-/// after its `example:`.
+/// `example`, and the host archive `vault`: each object a file of the
+/// directory the location names, after its scheme.
 struct Files;
 
 /// A target of `example`: its directory.
@@ -80,7 +81,7 @@ fn io(e: &std::io::Error) -> PluginError {
 
 impl Target for Files {
     fn open(&mut self, location: &str) -> Answer<Box<dyn TargetStore>> {
-        let dir = PathBuf::from(location.strip_prefix("example:").unwrap_or(location));
+        let dir = PathBuf::from(location.split_once(':').map_or(location, |(_, path)| path));
         std::fs::create_dir_all(&dir).map_err(|e| io(&e))?;
         Ok(Box::new(Dir(dir)))
     }

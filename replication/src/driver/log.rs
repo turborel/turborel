@@ -19,7 +19,7 @@ use turborel::error::{Code, Result, SqlError};
 use turborel::log::{FileLog, FileLogOptions, Log, LogCapabilities, Records};
 
 use super::{Core, Driver, Inbox, Parts, Ticker, Wait, Watch, misuse, position};
-use crate::{Configuration, Consensus, Input, LogJournal, Lsn, Member, Recovered, ReplicaId, StateTransfer, Transport};
+use crate::{Configuration, Consensus, Input, Journal, LogJournal, Lsn, Member, Recovered, ReplicaId, StateTransfer, Transport};
 
 /// \[EXTENSION\] A replica's log, over its driver: see the module's
 /// documentation.
@@ -180,7 +180,16 @@ pub struct Joined {
 pub struct GroupLogs {
     driver: Mutex<Option<Arc<Driver>>>,
     files: Option<OnFiles>,
+    /// \[EXTENSION\] What opens a journal a host plug-in serves (RULES.md
+    /// D272), in place of the file log, if one does.
+    journal: Option<OpenJournal>,
+    /// That journal, opened to tell whether it holds anything, and kept
+    /// for the driver made next.
+    opened: Mutex<Option<(Box<dyn Journal>, Recovered)>>,
 }
+
+/// \[EXTENSION\] What opens a replica's journal, and gives what it holds.
+pub type OpenJournal = Arc<dyn Fn() -> Result<(Box<dyn Journal>, Recovered)> + Send + Sync>;
 
 /// \[EXTENSION\] How much of the log a driver keeps (RULES.md D57, log
 /// retention).
@@ -209,7 +218,7 @@ struct OnFiles {
 impl GroupLogs {
     /// The log storage giving `driver`'s log.
     pub fn of(driver: Arc<Driver>) -> GroupLogs {
-        GroupLogs { driver: Mutex::new(Some(driver)), files: None }
+        GroupLogs { driver: Mutex::new(Some(driver)), files: None, journal: None, opened: Mutex::new(None) }
     }
 
     /// \[EXTENSION\] The log storage of replica `me` of `members`, whose
@@ -232,7 +241,21 @@ impl GroupLogs {
         new_group: bool,
     ) -> GroupLogs {
         let files = OnFiles { options, members: configuration.to_vec(), me, make, joined, retention, new_group };
-        GroupLogs { driver: Mutex::new(None), files: Some(files) }
+        GroupLogs { driver: Mutex::new(None), files: Some(files), journal: None, opened: Mutex::new(None) }
+    }
+
+    /// \[EXTENSION\] It, its journal the one `journal` opens, a host
+    /// plug-in's (RULES.md D272), not a file log in the directory.
+    #[must_use]
+    pub fn with_journal(mut self, journal: OpenJournal) -> GroupLogs {
+        self.journal = Some(journal);
+        self
+    }
+
+    /// The plug-in's journal, opened, or the one kept since `exists`.
+    fn plugin_journal(&self, open: &OpenJournal) -> Result<(Box<dyn Journal>, Recovered)> {
+        let kept = self.opened.lock().unwrap_or_else(PoisonError::into_inner).take();
+        kept.map_or_else(|| open(), Ok)
     }
 
     /// \[EXTENSION\] The driver, once the database is opened.
@@ -244,19 +267,25 @@ impl GroupLogs {
     /// kept, its consensus new if the journal was `created` of a new
     /// group; of a log storage of a driver given, that driver.
     fn made(&self, journal: Arc<dyn Log>, created: bool) -> Result<Arc<Driver>> {
+        let (journal, recovered) = LogJournal::open(journal)?;
+        self.made_of((Box::new(journal), recovered), created)
+    }
+
+    /// The driver over `journal`, which holds what it recovered, made and
+    /// kept as `made` says.
+    fn made_of(&self, (journal, recovered): (Box<dyn Journal>, Recovered), created: bool) -> Result<Arc<Driver>> {
         let mut kept = self.driver.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(driver) = &*kept {
             return Ok(Arc::clone(driver));
         }
         let files = self.files.as_ref().ok_or_else(|| misuse("the log storage has no driver"))?;
-        let (journal, recovered) = LogJournal::open(journal)?;
         let (first, records) = (recovered.first, recovered.records.clone());
         let held = (!(created && files.new_group)).then_some(recovered);
         let consensus = (files.make)(&files.members, files.me, held)?;
         let joined = &files.joined;
         let parts = Parts {
             consensus,
-            journal: Box::new(journal),
+            journal,
             first,
             records,
             retain_bytes: files.retention.bytes,
@@ -271,6 +300,12 @@ impl GroupLogs {
         *kept = Some(Arc::clone(&driver));
         Ok(driver)
     }
+}
+
+/// Whether a journal recovered holds anything: a state, a record, or
+/// records let go.
+fn holds_any(recovered: &Recovered) -> bool {
+    recovered.state.is_some() || !recovered.records.is_empty() || recovered.first > Lsn(0)
 }
 
 /// The name of `GroupLogs`, for messages and events.
@@ -299,6 +334,14 @@ impl LogStorage for GroupLogs {
             return Ok(Some(OpenedLog { log: driver.log(), cut: 0 }));
         }
         let Some(files) = &self.files else { return Ok(None) };
+        if let Some(open) = &self.journal {
+            let opened = self.plugin_journal(open)?;
+            if !holds_any(&opened.1) {
+                *self.opened.lock().unwrap_or_else(PoisonError::into_inner) = Some(opened);
+                return Ok(None);
+            }
+            return Ok(Some(OpenedLog { log: self.made_of(opened, false)?.log(), cut: 0 }));
+        }
         let dir = journal_dir(place);
         if !FileLog::exists(&**place.fs, &dir)? {
             return Ok(None);
@@ -317,6 +360,12 @@ impl LogStorage for GroupLogs {
         if self.files.is_none() || self.driver().is_some() {
             return Ok(false);
         }
+        if let Some(open) = &self.journal {
+            let opened = self.plugin_journal(open)?;
+            let held = holds_any(&opened.1);
+            *self.opened.lock().unwrap_or_else(PoisonError::into_inner) = Some(opened);
+            return Ok(held);
+        }
         FileLog::exists(&**place.fs, &journal_dir(place))
     }
 
@@ -325,6 +374,9 @@ impl LogStorage for GroupLogs {
             return Ok(driver.log());
         }
         let files = self.files.as_ref().ok_or_else(|| misuse("the log storage has no driver"))?;
+        if let Some(open) = &self.journal {
+            return Ok(self.made_of(self.plugin_journal(open)?, true)?.log());
+        }
         let options = FileLogOptions { pipeline: place.formats.pipeline.clone(), ..files.options.clone() };
         let journal = FileLog::create(Arc::clone(place.fs), &journal_dir(place), Arc::clone(&place.formats.hash), options)?;
         Ok(self.made(told(journal, place), true)?.log())

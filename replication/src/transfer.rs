@@ -103,7 +103,7 @@ pub trait Fetching: Send {
 /// \[DESIGN\] The bytes of a file an answer carries at most.
 pub const PIECE: usize = 1 << 20;
 /// \[DESIGN\] The ticks a fetch waits for an answer before it asks again.
-const ASK_AGAIN_TICKS: u64 = 5;
+pub(crate) const ASK_AGAIN_TICKS: u64 = 5;
 /// What a frame is called in errors.
 const FRAME: &str = "state transfer frame";
 /// A request for the manifest; or for a piece of a file.
@@ -226,7 +226,7 @@ impl StateTransfer for WholeFiles {
 }
 
 /// A plug-in's name, as an owner is carried: empty for the database's own.
-fn owner_name(owner: &FileOwner) -> String {
+pub(crate) fn owner_name(owner: &FileOwner) -> String {
     match owner {
         FileOwner::Plugin(name) => name.clone(),
         FileOwner::Database | FileOwner::Log | FileOwner::Spill | FileOwner::Server | FileOwner::Unknown => String::new(),
@@ -346,7 +346,7 @@ impl Fetch {
 }
 
 /// An export staged: its image, and its files where the fetch put them.
-struct Staged {
+pub(crate) struct Staged {
     fs: Arc<dyn FileSystem>,
     image: Vec<u8>,
     files: Vec<ExportedFile>,
@@ -355,7 +355,7 @@ struct Staged {
 
 impl Staged {
     /// The export of `image` whose files `files` lists, staged in `fs`.
-    fn new(fs: Arc<dyn FileSystem>, image: Vec<u8>, files: Vec<ExportedFile>) -> Staged {
+    pub(crate) fn new(fs: Arc<dyn FileSystem>, image: Vec<u8>, files: Vec<ExportedFile>) -> Staged {
         Staged { fs, image, files, open: BTreeMap::new() }
     }
 }

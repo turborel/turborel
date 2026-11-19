@@ -212,6 +212,7 @@ mod partitioning;
 mod period_predicates;
 mod periods;
 mod planning;
+mod plugin_archive;
 mod plugin_failures;
 mod plugin_files;
 mod plugin_kinds;

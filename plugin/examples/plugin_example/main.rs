@@ -12,8 +12,9 @@
 //! NEAR are a file each in the extension's directory, the program's
 //! working directory; the sink EVENTS appends what it is told to
 //! `events.log` there. The host objects (`host_small.rs`,
-//! `host_store.rs`, `host_net.rs`) serve a host plug-in's manifest,
-//! which declares them alone.
+//! `host_store.rs`, `host_net.rs`, and LOOP and KEPT in
+//! `replication.rs`) serve a host plug-in's manifest, which declares
+//! them alone.
 
 mod files;
 mod functions;
@@ -22,6 +23,7 @@ mod host_small;
 mod host_store;
 mod indexes;
 mod later;
+mod replication;
 mod services;
 mod sha256;
 
@@ -32,7 +34,7 @@ fn plugin() -> Plugin {
     let plugin = functions::with(Plugin::new("1.0.0"));
     let plugin = services::with(plugin);
     let plugin = later::with(plugin);
-    let plugin = host_net::with(host_store::with(host_small::with(plugin)));
+    let plugin = replication::with(host_net::with(host_store::with(host_small::with(plugin))));
     plugin.engine("FILES", files::Files::default()).index_method("SORTED", indexes::Sorted).index_method("NEAR", indexes::Sorted)
 }
 

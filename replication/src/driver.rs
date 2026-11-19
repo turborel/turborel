@@ -48,7 +48,7 @@ use turborel::db::Standby;
 use turborel::error::{Code, Result, SqlError};
 
 pub use self::job::{DriverJob, JOB_LABEL};
-pub use self::log::{GroupLog, GroupLogs, Joined, Make, Retention};
+pub use self::log::{GroupLog, GroupLogs, Joined, Make, OpenJournal, Retention};
 pub use self::seams::{Blocking, Inbox, Ticker, Ticks, Unwatched, Wait, Watch};
 use self::transfer::Served;
 use crate::transfer::{ANSWER, Fetching, REQUEST, StateTransfer};
@@ -114,7 +114,18 @@ pub struct Driver {
     /// The thread carrying out what the database is asked, while one is.
     applying: Mutex<Option<ThreadId>>,
     durable: bool,
+    /// \[EXTENSION\] What brings its frames in first each turn, a plug-in
+    /// transport's (RULES.md D271), if one does.
+    pump: Mutex<Option<Pump>>,
+    /// \[EXTENSION\] Who is told as it fails, the node's stop (RULES.md
+    /// D270), if one asked.
+    told: Mutex<Option<Halted>>,
 }
+
+/// \[EXTENSION\] What brings a driver's frames into its inbox as it turns.
+pub type Pump = Arc<dyn Fn() -> Result<()> + Send + Sync>;
+/// \[EXTENSION\] What is told, with the error, as a driver fails.
+pub type Halted = Arc<dyn Fn(&SqlError) + Send + Sync>;
 
 /// The consensus, its journal and transport, and what the driver keeps.
 struct Core {
@@ -206,6 +217,8 @@ impl Driver {
             wait: parts.wait,
             applying,
             durable,
+            pump: Mutex::new(None),
+            told: Mutex::new(None),
         })
     }
 
@@ -234,7 +247,10 @@ impl Driver {
     /// database's replay, promotion while it serves, or opening again; the
     /// driver then takes nothing.
     pub fn turn(self: &Arc<Self>, db: &dyn Standby) -> Result<()> {
-        self.step_inputs()?;
+        if let Err(e) = self.step_inputs() {
+            self.fail_stop(&e);
+            return Err(e);
+        }
         let me = thread::current().id();
         {
             let mut applying = self.applying.lock().unwrap_or_else(PoisonError::into_inner);
@@ -246,9 +262,33 @@ impl Driver {
         let applied = self.apply(db);
         *self.applying.lock().unwrap_or_else(PoisonError::into_inner) = None;
         if let Err(e) = &applied {
-            self.halt(e.clone());
+            self.fail_stop(e);
         }
         applied
+    }
+
+    /// \[EXTENSION\] Has `pump` called first in each step of its inputs:
+    /// a plug-in transport's frames brought into its inbox (RULES.md
+    /// D271). Its failure halts the driver.
+    pub fn pump_with(&self, pump: Pump) {
+        *self.pump.lock().unwrap_or_else(PoisonError::into_inner) = Some(pump);
+    }
+
+    /// \[EXTENSION\] Has `told` called, once, as a turn fails and the
+    /// driver halts of it, never as it is halted from outside: a node
+    /// whose replication is served by host plug-ins stops then (RULES.md
+    /// D270, `Database::stop_node`).
+    pub fn on_halt(&self, told: Halted) {
+        *self.told.lock().unwrap_or_else(PoisonError::into_inner) = Some(told);
+    }
+
+    /// Halts of `e`, a turn's failure, telling who asked, once.
+    fn fail_stop(&self, e: &SqlError) {
+        self.halt(e.clone());
+        let told = self.told.lock().unwrap_or_else(PoisonError::into_inner).take();
+        if let Some(tell) = told {
+            tell(e);
+        }
     }
 
     /// \[EXTENSION\] The frames arrived, the ticks due and the journal's
@@ -259,6 +299,14 @@ impl Driver {
     ///
     /// The driver's failure, or its journal's or transport's.
     pub fn step_inputs(&self) -> Result<()> {
+        let pump = self.pump.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        if let Some(pump) = pump {
+            self.core().map(drop)?;
+            if let Err(e) = pump() {
+                self.halt(e.clone());
+                return Err(e);
+            }
+        }
         let mut core = self.core()?;
         for (from, frame) in self.inbox.take() {
             match frame.first() {
@@ -363,6 +411,10 @@ impl Core {
     fn step(&mut self, input: Input) -> Result<()> {
         let mut out = Vec::new();
         self.consensus.step(input, &mut out);
+        if let Some(e) = self.consensus.failed() {
+            self.failed = Some(e.clone());
+            return Err(e);
+        }
         for output in out {
             if let Err(e) = self.carry(output) {
                 self.failed = Some(e.clone());

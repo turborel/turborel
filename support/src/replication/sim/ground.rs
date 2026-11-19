@@ -23,6 +23,7 @@ use turborel_replication::{Driver, Lsn, Parts, StateTransfer};
 
 use super::super::group::{Make, configuration};
 use super::parts::{journal, watch};
+use super::plugged::{Plug, Unplugged};
 use super::world::{Started, locked};
 use super::{Plan, Violation, World};
 
@@ -64,6 +65,9 @@ pub struct Ground {
     /// the others' do, as on a node's other threads, so a replica waiting
     /// on the group is served by it meanwhile.
     waiting: Mutex<BTreeSet<usize>>,
+    /// The plug-ins serving the replicas' parts, if any do
+    /// (`sim/plugged.rs`).
+    plug: Option<Arc<Plug>>,
 }
 
 impl Ground {
@@ -81,6 +85,9 @@ impl Ground {
     /// The first violation found.
     fn moment(&self, top: bool) -> std::result::Result<(), Violation> {
         let moved = self.world().moment(top)?;
+        if let Some(plug) = &self.plug {
+            plug.set_calm(self.world().calm());
+        }
         if top {
             self.held.lock().unwrap().clear();
         }
@@ -104,7 +111,8 @@ impl Ground {
             };
             let failed = turned.and_then(|()| driver.failed().map_or(Ok(()), Err));
             if let Err(e) = failed {
-                if !self.world().disk_failed(index) {
+                let plugin_died = self.plug.as_ref().is_some_and(|p| p.died(index));
+                if !self.world().disk_failed(index) && !plugin_died {
                     return Err(self.world().fail(&format!("replica {}: {e}", index + 1)));
                 }
                 self.crash(index);
@@ -153,34 +161,75 @@ impl Ground {
             (world.setting(index), world.id(index))
         };
         let Started { new_group, recovered, disk, link, inbox, ticks } = self.world().start(index);
-        let (begins, records) = (recovered.first, recovered.records.clone());
-        // Made as a node is: a new group's replica as the run begins, else
-        // from its journal, recovering if it holds nothing.
-        let consensus = (self.make)(&configuration(&members), id, (!new_group).then_some(recovered));
+        let (retain_bytes, transfer) = (self.world().plan().retain_bytes, self.host.lock().unwrap().transfer(index));
+        let unplugged = Unplugged {
+            index,
+            id,
+            members: configuration(&members),
+            journal: Box::new(journal(disk, &self.world, id)),
+            recovered,
+            link,
+            inbox,
+            transfer,
+        };
+        let replica = self.parts(unplugged, new_group).map_err(|e| self.world().fail(&format!("replica {}: {e}", index + 1)))?;
         let wait: Arc<dyn Wait> = Arc::new(SimWait(Weak::clone(&self.me)));
         let watch = Arc::new(watch(&self.world, id));
-        let (retain_bytes, transfer) = (self.world().plan().retain_bytes, self.host.lock().unwrap().transfer(index));
         let parts = Parts {
-            consensus,
-            journal: Box::new(journal(disk, &self.world, id)),
-            first: begins,
-            records,
+            consensus: replica.consensus,
+            journal: replica.parts.journal,
+            first: replica.first,
+            records: replica.records,
             retain_bytes,
-            transport: link,
-            inbox,
+            transport: replica.parts.transport,
+            inbox: Arc::clone(&replica.parts.inbox),
             ticker: ticks,
             wait,
             watch,
-            transfer,
+            transfer: replica.parts.transfer,
         };
         let driver = Driver::new(parts);
+        if let Some(t) = &replica.parts.pump {
+            driver.pump_with(t.pump(replica.parts.inbox));
+        }
         self.drivers.lock().unwrap()[index] = Some(Arc::clone(&driver));
         let opened = self.host.lock().unwrap().open(index, &driver);
         let (database, holds) = opened.map_err(|why| self.world().fail(&why))?;
         self.world().note(id, &format!("its database opened, holding the log through {}", holds.0));
-        driver.join(holds).map_err(|e| self.world().fail(&format!("replica {}: {e}", index + 1)))?;
         self.databases.lock().unwrap()[index] = Some(database);
+        if let Err(e) = driver.join(holds) {
+            // A plug-in that died as the replica joined fails it stop.
+            if !self.plug.as_ref().is_some_and(|p| p.died(index)) {
+                return Err(self.world().fail(&format!("replica {}: {e}", index + 1)));
+            }
+            self.crash(index);
+        }
         Ok(())
+    }
+
+    /// The parts of `u`, plugged as the run's plug says; its consensus
+    /// made as a node's is: a new group's replica as the run begins, else
+    /// from its journal, recovering if it holds nothing.
+    fn parts(&self, u: Unplugged, new_group: bool) -> Result<Replica> {
+        let (index, id, members) = (u.index, u.id, u.members.clone());
+        let parts = match &self.plug {
+            Some(plug) => plug.parts(u)?,
+            None => super::plugged::Parts {
+                journal: u.journal,
+                recovered: u.recovered,
+                transport: u.link,
+                inbox: u.inbox,
+                pump: None,
+                transfer: u.transfer,
+            },
+        };
+        let (first, records) = (parts.recovered.first, parts.recovered.records.clone());
+        let held = (!new_group).then(|| parts.recovered.clone());
+        let consensus = match &self.plug {
+            Some(plug) => plug.consensus(index, (&members, id), held, &self.make)?,
+            None => (self.make)(&members, id, held),
+        };
+        Ok(Replica { consensus, first, records, parts })
     }
 
     /// Replica `index` lost its driver and database: it crashed.
@@ -197,6 +246,14 @@ impl Ground {
         self.world().crash(index);
         self.lost(index);
     }
+}
+
+/// A replica's parts, made.
+struct Replica {
+    consensus: Box<dyn turborel_replication::Consensus>,
+    first: Lsn,
+    records: Vec<Vec<u8>>,
+    parts: super::plugged::Parts,
 }
 
 /// A sync's wait: a moment of the ground's, within the call, the waiting
@@ -234,6 +291,16 @@ impl<H: Host + Clone + 'static> Runner<H> {
     ///
     /// The first violation found.
     pub fn new(seed: u64, plan: Plan, make: &Make, host: H) -> std::result::Result<Runner<H>, Violation> {
+        Runner::plugged(seed, plan, (make, host), None)
+    }
+
+    /// A run as `new` makes one, its replicas' parts served by plug-ins
+    /// as `plug` says, if given.
+    ///
+    /// # Errors
+    ///
+    /// The first violation found.
+    pub fn plugged(seed: u64, plan: Plan, (make, host): (&Make, H), plug: Option<Arc<Plug>>) -> std::result::Result<Runner<H>, Violation> {
         let world = World::new(seed, plan);
         let count = world.replicas();
         let ground = Arc::new_cyclic(|me| Ground {
@@ -245,6 +312,7 @@ impl<H: Host + Clone + 'static> Runner<H> {
             host: Mutex::new(Box::new(host.clone())),
             held: Mutex::new(BTreeSet::new()),
             waiting: Mutex::new(BTreeSet::new()),
+            plug,
         });
         for index in (0..count).filter(|&i| ground.world().joined(i)) {
             ground.start(index)?;
@@ -260,6 +328,11 @@ impl<H: Host + Clone + 'static> Runner<H> {
     /// Replica `index`'s driver, while it is up.
     pub fn driver(&self, index: usize) -> Option<Arc<Driver>> {
         self.ground.driver(index)
+    }
+
+    /// The plug-ins' stand-ins killed so far, if plug-ins serve.
+    pub fn plugin_kills(&self) -> u64 {
+        self.ground.plug.as_ref().map_or(0, |p| p.kills())
     }
 
     /// Every replica's standing, for a violation.
