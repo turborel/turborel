@@ -106,6 +106,7 @@ One reference page for each statement, in alphabetical order.
 - [INSERT](insert.md): insert rows
 - [ITERATE](iterate.md): begin the next iteration of a loop *(in a labelled statement)*
 - [LEAVE](leave.md): end a labelled statement
+- [LOCK TABLE](lock-table.md): lock tables to the end of the transaction *(extension)*
 - [LOOP](loop.md): run statements again and again until something leaves
 - [MERGE](merge.md): update, delete and insert rows of a table from one source
 - [OPEN](open.md): open a cursor

@@ -113,6 +113,7 @@ pub(in crate::db) fn command_of(stmt: &SqlStatement) -> Command {
         SqlStatement::DeletePositioned { .. } => commands::DELETE_CURSOR,
         SqlStatement::DeleteSearched { .. } => commands::DELETE_WHERE,
         SqlStatement::Truncate { .. } => commands::TRUNCATE_TABLE,
+        SqlStatement::LockTable(_) => commands::LOCK_TABLE,
         SqlStatement::AlterTable { .. } => commands::ALTER_TABLE,
         SqlStatement::Drop { object, .. } => drop_command(object),
         SqlStatement::Fetch { .. } => commands::FETCH,

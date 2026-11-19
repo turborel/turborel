@@ -30,6 +30,7 @@ mod data_statements;
 mod data_type;
 mod datetime;
 mod ddl;
+mod delta;
 mod depth;
 mod diagnostics;
 mod distribution;
@@ -51,6 +52,7 @@ mod json;
 mod listagg;
 mod literal;
 mod locators;
+mod locking;
 mod merge;
 mod modules;
 mod multisets;
@@ -77,6 +79,7 @@ mod user_types;
 mod window;
 mod xml;
 pub(crate) use data_statements::{EXPLAIN, TRUNCATE, begins_word_statement};
+pub(crate) use delta::begins_returning;
 pub(crate) use {savepoints::SAVEPOINT, served::CANCEL};
 mod session;
 mod stored;
@@ -571,6 +574,10 @@ impl Parser {
         }
         let targets = self.target_list()?;
         let table_expression = self.table_expression()?;
+        // [EXTENSION] whose statement a SELECT INTO runs (RULES.md D183).
+        if let [crate::ast::TableReference::Delta(d)] = table_expression.from.as_slice() {
+            d.rows.admit();
+        }
         Ok(SqlStatement::Select { query: Box::new(QuerySpecification { distinct, select_list, table_expression }), targets })
     }
 }

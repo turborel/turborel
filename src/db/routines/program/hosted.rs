@@ -69,6 +69,10 @@ impl Subqueries for Hosted<'_> {
         self.runner.state()
     }
 
+    fn transaction(&self) -> Option<crate::txn::TxId> {
+        self.runner.transaction()
+    }
+
     fn invoke_hosted(&self, i: &Invocation, values: Vec<Value>) -> Option<Result<Option<Value>>> {
         let session = self.session.filter(|_| i.modifies)?;
         Some(session.invoke_function(self.cx, i, values))

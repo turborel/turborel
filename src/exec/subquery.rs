@@ -175,6 +175,12 @@ pub trait Subqueries {
         None
     }
 
+    /// \[EXTENSION\] The transaction the statement runs in, if one does:
+    /// what an advisory lock's function asks for it (RULES.md D187).
+    fn transaction(&self) -> Option<TxId> {
+        None
+    }
+
     /// The ranking statistics of index `index` (`CallContext`): a runner's
     /// taken the first time they are asked for, then the same snapshot for
     /// the rest of its statement; by default none.
@@ -445,6 +451,10 @@ impl Subqueries for Runner {
 
     fn state(&self) -> Option<&Arc<State>> {
         Some(&self.db)
+    }
+
+    fn transaction(&self) -> Option<TxId> {
+        Some(self.tx)
     }
 
     fn ranking_statistics(&self, index: &str) -> Result<Option<Arc<dyn Statistics>>> {

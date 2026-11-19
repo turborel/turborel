@@ -83,7 +83,12 @@ impl Registry {
         // Of a name, each function that declares its parameter types, as
         // SQL/MM Spatial's of several types do; else the last.
         let mut scalars: HashMap<String, Vec<ScalarRef>> = HashMap::new();
-        let all = strings::functions().into_iter().chain(trim::functions()).chain(numeric::functions()).chain(words());
+        let all = strings::functions()
+            .into_iter()
+            .chain(trim::functions())
+            .chain(numeric::functions())
+            .chain(words())
+            .chain(super::advisory::functions());
         for f in all.chain(super::xml::name_functions()) {
             let of_name = scalars.entry(f.name().to_string()).or_default();
             if f.parameter_types().is_none() || of_name.iter().any(|g| g.0.parameter_types().is_none()) {

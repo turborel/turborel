@@ -125,7 +125,8 @@ fn an_insensitive_cursor_sees_no_change_13_1() {
 /// ONLY makes a cursor of an updatable table read-only; FOR UPDATE OF
 /// columns lets a positioned UPDATE set those alone; FOR UPDATE of a table
 /// that is not updatable, or of a column it has not, is refused at OPEN;
-/// \[DESIGN\] an unnamed cursor is read-only, and not FOR UPDATE.
+/// \[DESIGN\] an unnamed cursor is read-only, its FOR UPDATE a locking
+/// clause (RULES.md D185).
 #[test]
 fn the_updatability_clause_13_1() {
     let db = five_rows();
@@ -144,7 +145,8 @@ fn the_updatability_clause_13_1() {
     assert_eq!(s.execute("OPEN D", &mut p).err().map(|e| e.code), Some(Code::SyntaxRule), "SR12: DISTINCT");
     s.declare_cursor("DECLARE E CURSOR FOR SELECT K FROM T FOR UPDATE OF NOPE").unwrap();
     assert_eq!(s.execute("OPEN E", &mut p).err().map(|e| e.code), Some(Code::SyntaxRule), "SR14");
-    assert_eq!(s.open_cursor("SELECT K FROM T FOR UPDATE").err().map(|e| e.code), Some(Code::SyntaxRule), "unnamed");
+    // [EXTENSION] RULES.md D185: an unnamed cursor's FOR UPDATE locks its rows.
+    assert_eq!(s.open_cursor("SELECT K FROM T FOR UPDATE").err().map(|e| e.code), None, "unnamed");
     assert_eq!(crate::common::count(&s, "SELECT K FROM T FOR READ ONLY"), 5);
 }
 

@@ -29,6 +29,12 @@ pub trait CallContext {
     /// folded, where a call reading a system defined must wait for its
     /// statement.
     fn spatial(&self) -> Option<&crate::catalog::SpatialCatalog>;
+    /// \[EXTENSION\] The database and transaction the call runs in, if
+    /// one runs it: of an advisory lock's function (RULES.md D187). None
+    /// by default.
+    fn transaction(&self) -> Option<(&Arc<crate::db::State>, crate::txn::TxId)> {
+        None
+    }
 }
 
 /// A query whose ARRAY a call is given as its last argument

@@ -204,7 +204,8 @@ pub(super) fn referenced<'f>(from: &'f [TableReference], name: &str) -> Option<&
             | TableReference::Polymorphic(_)
             | TableReference::Graph(_)
             | TableReference::Hybrid(_)
-            | TableReference::Gql(_) => {}
+            | TableReference::Gql(_)
+            | TableReference::Delta(_) => {}
         }
     }
     None

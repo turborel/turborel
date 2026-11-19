@@ -30,6 +30,7 @@
 )]
 
 mod adjacency_index;
+mod advisory_locks;
 mod collated_indexes;
 mod collation_usage;
 mod collations;
@@ -83,6 +84,7 @@ mod ddl;
 mod decfloat;
 mod defaults;
 mod deferred;
+mod delta_tables;
 mod dependencies;
 mod dependencies_drops;
 mod descriptor_lobs;
@@ -251,6 +253,7 @@ mod routines_fixed;
 mod routines_overloading;
 mod routines_privileges;
 mod routines_schema;
+mod row_locks;
 mod row_pattern_rules;
 mod row_pattern_windows;
 mod row_patterns;

@@ -117,6 +117,20 @@ impl Stream {
         Ok(Stream { ready: Some(held.into_iter()), failure: None, rest: None, reads: Arc::from([]), space })
     }
 
+    /// \[EXTENSION\] Itself with every row read now: of a locking query,
+    /// so each lock is taken, or refused, as it opens (RULES.md D185).
+    ///
+    /// # Errors
+    ///
+    /// The first error reading them raised.
+    pub(super) fn read_now(mut self) -> Result<Stream> {
+        self.read_ahead();
+        match self.failure.take() {
+            Some(e) => Err(e),
+            None => Ok(self),
+        }
+    }
+
     /// Reads the rest of the rows from the plan, if any are still to read,
     /// up to the first error.
     fn read_ahead(&mut self) {

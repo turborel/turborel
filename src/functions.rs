@@ -23,6 +23,7 @@ use crate::params::ParameterType;
 use crate::storage::{Floats, Ints, Texts};
 use crate::value::{DataType, Value};
 
+mod advisory;
 mod any_value;
 pub use any_value::ANY_VALUE;
 pub(crate) use any_value::GroupValue;
@@ -34,6 +35,7 @@ pub use arrays::{
 };
 mod context;
 mod count;
+pub use advisory::ADVISORY_ALIASES;
 pub use context::{AppendedQuery, CallContext};
 use count::Count;
 mod distribution;

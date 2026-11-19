@@ -83,6 +83,7 @@ fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
         | SqlStatement::SetTransformGroup(_)
         | SqlStatement::Commit
         | SqlStatement::Truncate { .. }
+        | SqlStatement::LockTable(_)
         | SqlStatement::AlterTable { .. }
         | SqlStatement::Drop { .. }
         | SqlStatement::Schema { .. }

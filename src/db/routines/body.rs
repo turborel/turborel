@@ -95,8 +95,7 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         // SAVEPOINT and ROLLBACK TO SAVEPOINT, with Feature T272.
         | SqlStatement::Savepoint(_)
         // [ISO/IEC 9075-2:2023 §11.60 SR23f] (IA078) a statement of a PTF
-        // data area alone, as the parser read it, of a PTF component
-        // procedure.
+        // data area alone, as read, of a PTF component procedure.
         | SqlStatement::Dynamic(_) => true,
         SqlStatement::Return(_) => return returning(desc),
         SqlStatement::Close(_)
@@ -105,6 +104,7 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         | SqlStatement::Commit
         | SqlStatement::DeletePositioned { .. }
         | SqlStatement::Truncate { .. }
+        | SqlStatement::LockTable(_)
         | SqlStatement::AlterTable { .. }
         | SqlStatement::Drop { .. }
         | SqlStatement::Schema { .. }
@@ -130,10 +130,7 @@ fn allowed(desc: &SqlRoutineDesc, stmt: &SqlStatement) -> Result<()> {
         | SqlStatement::SetConstraints { .. }
         | SqlStatement::UpdatePositioned { .. } => false,
     };
-    if may {
-        return Ok(());
-    }
-    Err(rule(
+    may.then_some(()).ok_or_else(|| rule(
         "[ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g; ISO/IEC 9075-4:2006 draft §11.60 SR23] an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS, SQL control statement, SIGNAL, RESIGNAL, savepoint's statement, a statement of a PTF data area or a function's RETURN (IA078)",
     ))
 }

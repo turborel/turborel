@@ -84,6 +84,7 @@ use crate::log::{Log, Lsn};
 use crate::sync::{Gate, lock, lock_builtin};
 
 mod access;
+mod advisory;
 mod capabilities;
 mod clock;
 mod end;
@@ -94,26 +95,30 @@ mod logging;
 mod marks;
 mod owed;
 mod reading;
+mod row_locks;
 mod savepoints;
 mod stop;
 mod undo;
+mod waiting;
 mod write;
 
+pub(crate) use advisory::{Advisory, AdvisoryKey, Asker};
 pub use capabilities::{Concurrency, Persistence, Policy, TxCapabilities, Undo};
 use clock::Clock;
 pub(crate) use end::remove_entries;
 pub(crate) use followed::{Followed, FollowedRecords, Following};
 pub use locks::Damage;
 pub(crate) use locks::TableLock;
-use locks::WaitsFor;
 pub(crate) use logging::Held;
 pub(crate) use marks::Mark;
 pub use reading::{ReadMode, Reading};
+pub(crate) use row_locks::{Locked, RowLocking};
 pub use stop::Stop;
 use stop::Stops;
-pub(crate) use stop::Window;
-pub(crate) use stop::checked;
+pub(crate) use stop::{Window, checked};
 use undo::UndoLog;
+use waiting::WaitsFor;
+pub(crate) use waiting::{Waiter, Waits};
 
 /// How a transaction begins: whether it waits for locks, how it reads, and
 /// what cancels its statements.
@@ -296,25 +301,6 @@ pub(crate) struct Transactions {
     names: Mutex<HashMap<QualifiedName, std::sync::Weak<TableLock>>>,
 }
 
-impl Transactions {
-    /// The lock of the name `name`, made if none is held.
-    pub(crate) fn name_lock(&self, name: &QualifiedName) -> Arc<TableLock> {
-        let mut names = lock_builtin(&self.names);
-        if let Some(held) = names.get(name).and_then(std::sync::Weak::upgrade) {
-            return held;
-        }
-        names.retain(|_, weak| weak.strong_count() > 0);
-        let made = Arc::new(TableLock::default());
-        names.insert(name.clone(), Arc::downgrade(&made));
-        made
-    }
-
-    /// What cancels the statements of open transaction `tx`, if it is one.
-    pub(crate) fn stop_of(&self, tx: TxId) -> Option<Arc<Stop>> {
-        self.stops.of(tx)
-    }
-}
-
 /// The first record an open transaction logged: its position, the row
 /// changes logged before it, and when.
 struct First {
@@ -377,7 +363,7 @@ impl Transactions {
     pub(crate) fn begin(self: &Arc<Self>, log: Option<Arc<dyn Log>>, (lock_wait, reading, stop): Beginning, space: UndoSpace) -> Txn {
         let (id, snapshot) = self.clock.begin();
         self.active.fetch_add(1, Ordering::SeqCst);
-        self.stops.insert(id, Arc::clone(&stop));
+        self.stops.insert(id, Arc::clone(&stop), lock_wait);
         Txn {
             id,
             snapshot: AtomicU64::new(snapshot),
@@ -561,6 +547,7 @@ impl Txn {
     /// for them, and forgets its snapshot. Called when it ends, and again
     /// when it is dropped, which finds nothing left to release.
     fn release(&self) {
+        self.shared.stops.advisory.release_tx(self.id);
         let held = mem::take(&mut lock_builtin(&self.state).held);
         for table in held {
             table.release(self.id);

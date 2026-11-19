@@ -334,6 +334,7 @@ impl State {
             | SqlStatement::SetTransformGroup(_)
             | SqlStatement::Commit
             | SqlStatement::Truncate { .. }
+            | SqlStatement::LockTable(_)
             | SqlStatement::AlterTable { .. }
             | SqlStatement::Drop { .. }
             | SqlStatement::Schema { .. }

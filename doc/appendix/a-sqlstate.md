@@ -59,6 +59,7 @@ its own; class TB is turborel's own.
 | 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
 | 0N002 | SQL/XML mapping error: invalid XML character: XMLCAST, XMLELEMENT, XMLFOREST, XMLPI or XMLTEXT of a string holding a character no XML 1.1 character |
 | 0W000 | Prohibited statement encountered during trigger execution: a savepoint statement in a procedure a trigger's action calls; told in the message of the 09000 it raises |
+| 0W001 | Prohibited statement encountered during trigger execution: modify table modified by data change delta table, an AFTER trigger's change of the subject table of a FINAL TABLE; told in the message of the 09000 it raises |
 | 10000 | XQuery error: XMLDOCUMENT of a value holding an attribute standing alone; XMLCAST of text that is no value of the XML Schema type cast to, or of more than one atomic value; XMLELEMENT of an attribute after other content, or of two attributes of one name; any static, type or dynamic error of a query XMLQUERY, XMLEXISTS or XMLTABLE evaluates, or static error of the library module CREATE XQUERY MODULE registers, its message naming the error's code, as err:XPST0008 |
 | 21000 | Cardinality violation: a subquery of one row gave more, or ELEMENT a multiset of more than one element |
 | 22000 | Data exception: a path's `%` of an approximate number or one with a fraction; vectors of other dimension counts or formats |
@@ -144,6 +145,7 @@ its own; class TB is turborel's own.
 | 25006 | Invalid transaction state: read-only SQL-transaction, of TRUNCATE TABLE |
 | 26000 | Invalid SQL statement name |
 | 27000 | Triggered data change violation: a row changed twice by referential actions |
+| 27001 | Triggered data change violation: modify table modified by data change delta table, a referential action's change of the subject table of a FINAL TABLE |
 | 28000 | Invalid authorization specification |
 | 2A000 | Syntax error or access rule violation in a direct SQL statement |
 | 2B000 | Dependent privilege descriptors still exist |
@@ -216,6 +218,7 @@ its own; class TB is turborel's own.
 | TB916 | Stored data failed its checksum or format |
 | TB918 | The memory budget is spent, a buffer pool has no frame free, or a recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | TB920 | The statement was cancelled |
+| TBL01 | Lock not available: a lock NOWAIT asked for, of a row or a table, is held by another transaction (SQLCODE -911) |
 
 Statements are run directly, so an error of the rules of a statement's
 form, its names or its privileges is class 2A; while preparing one, class

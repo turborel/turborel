@@ -71,6 +71,8 @@ verification approach DO-178C expects (§8).
 | D53 | One contract for data types, with the standard types built in |
 | D54 | Datetimes kept in UTC, shown in the session's zone, read from a clock |
 | D58 | Dynamic SQL in SQL text, with a session as the module |
+| D183 | A delta table's statement runs before its query is bound, and gives its rows as a transition table |
+| D184 | RETURNING is a query of a CHANGED delta table |
 | **Architecture** | |
 | D25 | One log, owned by the database |
 | D26 | Cryptography only from vetted crates, in plug-ins |
@@ -178,6 +180,9 @@ verification approach DO-178C expects (§8).
 | D150 | A reachability index prunes a search's starts by landmark labels |
 | D151 | A graph's statistics are made of its tables', and choose where a search starts |
 | D152 | A search expands a frontier at once and chooses MS-BFS and workers by cost |
+| D185 | Row locks are kept per table in stripes, and taken by a filter between a query's sort and its limit |
+| D186 | LOCK TABLE takes a table lock in one of three strengths |
+| D187 | Advisory locks are kept by key in the transaction coordinator, held by a session or a transaction |
 
 ### The project
 
@@ -1655,6 +1660,53 @@ because drivers' SQL often has comments.
 The implementation-defined limits are 100 occurrences for a descriptor
 area without WITH MAX, at most 1,000 [§17.2 SR2, GR3], and 64 areas a
 session. A plug-in's type has TYPE code -1 [§17.1 Table 18].
+
+#### D183. A delta table's statement runs before its query is bound, and gives its rows as a transition table
+
+A `<data change delta table>` [ISO/IEC 9075-2:2023 §7.6] is read where a
+cursor's query, directly run, prepared or declared, or a SELECT INTO, in a
+routine too, has it as the one table reference of its FROM clause. The
+parser marks it so as it reads such a query (`DeltaRows::admit`). The
+session runs its statement in the cursor's statement first, then binds the
+query over the rows the statement recorded, read as a transition table is
+(`db/delta.rs`). Anywhere else, in a subquery, a join, a view or a WITH
+clause, it is refused, SQLCODE -900. Its statement would run once per
+evaluation there, and when that is would be hard to tell. A prepared
+query is bound at PREPARE over no rows, of the subject table's columns,
+its statement bound too so its parameters are typed. Each opening runs
+the statement again.
+
+The statement's effects record each row of the subject table as they
+record it for triggers (`Effects::inserted`, `updated`, `deleted`). So a
+row is recorded as it is written, after BEFORE triggers, with its
+defaults, identity and generated columns, and OLD, NEW and FINAL read the
+old or new row [GR5b]. The collector is claimed by the statement's own
+effects. Their end, before referential actions run, takes it away, so a
+cascade or an AFTER trigger records nothing. Of FINAL the subject table
+is then the one name of the restricted subject table name list. A
+referential action that changes it is refused with SQLSTATE 27001
+[§15.18 GR15], and an AFTER trigger's statement with 0W001 [§15.21 GR6i],
+which the trigger's 09000 tells, as 0W000 is told. A subtable's rows that
+an UPDATE or DELETE of a typed table reaches are not the subject table's,
+and are not recorded.
+
+The query's rows are all read as the cursor opens, so an error of the
+query undoes the statement with it. A delta table's subject is a base
+table. One of a view is refused, SQLCODE -900, since the base rows of a
+CASCADED CHECK OPTION view [SR11b] are not yet traced back to it.
+
+#### D184. RETURNING is a query of a CHANGED delta table
+
+RETURNING `<select list>` after an INSERT, UPDATE, DELETE or MERGE is an
+extension. The parser reads it as the query SELECT `<select list>` FROM a
+delta table of the statement, of a result option no text writes,
+CHANGED, which records of a row inserted or updated the new row and of a
+row deleted the old (`parser/delta.rs`). So RETURNING has every rule of
+D183, and a session, a prepared statement and the protocol take it as a
+query. `kind_of` and `Session::direct` know it by a RETURNING outside
+parentheses after a statement's first word, which a JSON or XML
+function's RETURNING inside its parentheses never is. The protocol and
+client needed no change, and the protocol's version stays 1.
 
 ### Architecture
 
@@ -6326,6 +6378,66 @@ but not freed when a checkpoint was taken are unreachable in it and stay
 allocated, as the B-link tree's do. `RTree::shape` reports nodes, bytes,
 fill and envelope overlap per level, which `bench/spatial_index.rs`
 prints after packed, inserted and aged loads.
+
+#### D185. Row locks are kept per table in stripes, and taken by a filter between a query's sort and its limit
+
+FOR UPDATE and FOR SHARE, NOWAIT and SKIP LOCKED are an extension. A row
+lock is held by a transaction to its end, exclusive or shared, in the
+lock state of the row's table, in 64 stripes of row ids
+(`txn/row_locks.rs`). A writer of a table whose engine isolates
+transactions holds the row's stripe as it writes, and waits while another
+transaction holds a lock on the row (`txn/write.rs`). So a locked row is
+written only by its locker. A plain read takes no row lock.
+
+The binder admits a query of one base table, or of a view of one,
+through no join, grouping, DISTINCT, window or set operation, and appends
+the row id to its columns (`binder/locking.rs`). The session puts a
+filter that locks each row between the plan's sort and its row limit, so
+the limit counts rows locked, and reads all rows as the cursor opens. The
+filter raises nothing, so the limit stops at the rows it keeps and locks
+no other. A row changed since the snapshot is locked as it is now. At
+READ COMMITTED the statement runs again at a new snapshot, at most 64
+times. At REPEATABLE READ and SERIALIZABLE it is refused, SQLCODE -911,
+as a write of the row would be. SKIP LOCKED passes over such a row.
+NOWAIT refuses a lock held against it with SQLSTATE TBL01, SQLCODE -911.
+
+A table whose engine leaves isolation to the coordinator has no row
+locks. Its table lock is taken instead, Update for FOR UPDATE and Shared
+for FOR SHARE.
+
+Waits for table, row and advisory locks share one waiter
+(`txn/waiting.rs`). It checks for a cancel, then for holders against it,
+then NOWAIT, SKIP and LOCKS.WAIT, then a cycle in the graph of waits, then
+LOCKS.TIMEOUT_MS, and sleeps on the lock's signal between. So a deadlock
+across kinds is found at once, and every wait ends as a table lock's does.
+
+#### D186. LOCK TABLE takes a table lock in one of three strengths
+
+LOCK TABLE is an extension. Its eight modes map to the table lock's three
+modes. ACCESS SHARE, ROW SHARE and SHARE take Shared. ROW EXCLUSIVE and
+SHARE UPDATE EXCLUSIVE take Update. SHARE ROW EXCLUSIVE, EXCLUSIVE and
+ACCESS EXCLUSIVE, the default, take Exclusive. So two ROW EXCLUSIVE holders
+stand against each other, which a finer lattice would let through. The
+lock is the one the transaction's statements take, so LOCK TABLE adds no
+mode to the lock manager. A Shared lock needs SELECT, a stronger one
+DELETE. A typed table's subtables are locked unless ONLY is written. The
+tables are locked in the order written, and those locked before a failure
+stay locked. Its command code is -42.
+
+#### D187. Advisory locks are kept by key in the transaction coordinator, held by a session or a transaction
+
+Advisory locks are an extension. Each is a key, a BIGINT, two INTEGERs or
+a character string, held exclusive or shared by a session to its end or
+until unlocked, or by a transaction to its end (`txn/advisory.rs`). A hold
+names its session by the session's stop, whose transaction is the one a
+wait in the graph of waits stands against, so a cycle through advisory,
+row and table locks is a deadlock. A session's holds are released as it
+drops, and a transaction's as it ends, past a count that lets a
+transaction with none end at no cost. Taken again by its holder, a hold
+counts up, and is unlocked as many times. The functions are named
+neutrally, each with an alias of the prefix PG_ for programs written to
+that spelling, and run only in a session's statement, where they have its
+transaction (`CallContext::transaction`).
 
 ## 2. Project layout
 

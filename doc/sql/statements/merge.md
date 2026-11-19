@@ -91,6 +91,11 @@ changed from that version. If not, it is left alone, and it is never
 inserted instead. A row another transaction inserts meanwhile is not
 seen, so an insert of the same key fails its unique constraint.
 
+Written with RETURNING and a select list *(extension)*, the statement is
+a query of the rows it changed, and a query reads them as a table written
+OLD TABLE, NEW TABLE or FINAL TABLE around the statement
+([Data Change Delta Tables](../24-delta-tables.md)).
+
 ## RULES
 
 1. The table exists and is not read-only: a base table, or a view that
@@ -194,4 +199,5 @@ implementation's own (RULES.md D29), as is TB911. See
 ## SEE ALSO
 
 [INSERT](insert.md), [UPDATE](update.md), [DELETE](delete.md),
-[CREATE VIEW](create-view.md), [CREATE TRIGGER](create-trigger.md)
+[CREATE VIEW](create-view.md), [CREATE TRIGGER](create-trigger.md),
+[Data Change Delta Tables](../24-delta-tables.md)

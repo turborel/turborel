@@ -102,6 +102,12 @@ pub(super) struct Effects<'a> {
     /// Of a session's statement, the session: what runs a function that
     /// possibly modifies SQL-data its values invoke (`routines::Hosted`).
     pub(super) host: Option<&'a super::Session>,
+    /// \[EXTENSION\] Of a delta table's statement, where its rows are
+    /// recorded (`db/delta.rs`).
+    pub(super) delta: Option<super::delta::Collector>,
+    /// [ISO/IEC 9075-2:2023 §7.6 GR5a] A table none may change, of a FINAL
+    /// TABLE being read, refused with this SQLSTATE.
+    pub(super) restricted: Option<(QualifiedName, crate::error::SqlState)>,
 }
 
 /// [ISO/IEC 9075:1992 §11.8 GR8] The rows a session changed through each
@@ -130,7 +136,18 @@ impl<'a> Effects<'a> {
     pub(super) fn new(user: Authorization, deferral: &'a RefCell<Deferral>, cursors: Cursored<'a>, space: ListSpace) -> Effects<'a> {
         let now = crate::value::datetime::Now::default();
         let (done, rewritten) = (HeldRows::new(space.clone()), Vec::new());
-        Effects { done, space, user, now, deferral, cursors, rewritten, triggered: None, host: None }
+        Effects { done, space, user, now, deferral, cursors, rewritten, triggered: None, host: None, delta: None, restricted: None }
+    }
+
+    /// Of a delta table's statement, the row of `table` changed from `old`
+    /// to `new` recorded; a change of a table none may change refused.
+    fn noted(&self, table: &QualifiedName, old: Option<&Row>, new: Option<&Row>) -> Result<()> {
+        if let Some((name, state)) = &self.restricted
+            && name == table
+        {
+            return Err(super::delta::restricted(table, *state));
+        }
+        self.delta.as_ref().map_or(Ok(()), |c| c.record(table, old, new))
     }
 
     /// Whose the statement is: the top cell of its authorization stack
@@ -146,6 +163,7 @@ impl<'a> Effects<'a> {
     ///
     /// The spill area's, SQLCODE -918 if it cannot be reserved.
     pub(super) fn inserted(&mut self, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
+        self.noted(table, None, Some(row))?;
         if let Some(t) = &mut self.triggered {
             t.record(table, &[], &(id, Row::new(), row.clone()))?;
         }
@@ -160,6 +178,7 @@ impl<'a> Effects<'a> {
     ///
     /// As `inserted`.
     pub(super) fn updated(&mut self, table: &QualifiedName, id: RowId, (old, new): (Row, &Row), columns: &[usize]) -> Result<()> {
+        self.noted(table, Some(&old), Some(new))?;
         if let Some(t) = &mut self.triggered {
             t.record(table, columns, &(id, old.clone(), new.clone()))?;
         }
@@ -173,6 +192,7 @@ impl<'a> Effects<'a> {
     ///
     /// As `inserted`.
     pub(super) fn deleted(&mut self, table: &QualifiedName, id: RowId, old: Row) -> Result<()> {
+        self.noted(table, Some(&old), None)?;
         if let Some(t) = &mut self.triggered {
             t.record(table, &[], &(id, old.clone(), Row::new()))?;
         }
@@ -349,6 +369,11 @@ impl State {
     /// `end_statement`'s work, its reads checked: what its triggers are
     /// to read, of a statement whose state changes may activate some.
     fn checked<'a>(self: &Arc<Self>, tx: &Txn, mut effects: Effects<'a>) -> Result<Option<super::triggers::Triggered<'a>>> {
+        // [ISO/IEC 9075-2:2023 §7.6 GR5a, §15.18 GR15] its own changes
+        // made, no referential action of FINAL's changes the table.
+        if let Some(c) = effects.delta.take() {
+            effects.restricted = c.restricted().map(|t| (t.clone(), crate::error::SqlState::MODIFY_DELTA_TABLE));
+        }
         self.referential_actions(tx, &mut effects)?;
         let triggered = effects.triggered.take();
         let whole = effects.whole_assertions(self)?;

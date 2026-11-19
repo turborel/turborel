@@ -351,3 +351,5 @@ pub(in crate::db) const CREATE_XQUERY_MODULE: Command = command("CREATE XQUERY M
 pub(in crate::db) const DROP_XQUERY_MODULE: Command = command("DROP XQUERY MODULE", -25);
 /// \[EXTENSION\] ALTER XQUERY MODULE (RULES.md D106).
 pub(in crate::db) const ALTER_XQUERY_MODULE: Command = command("ALTER XQUERY MODULE", -26);
+/// \[EXTENSION\] LOCK TABLE (RULES.md D186).
+pub(in crate::db) const LOCK_TABLE: Command = command("LOCK TABLE", -42);

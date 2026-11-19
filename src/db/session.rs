@@ -130,6 +130,7 @@ impl Session {
             SqlStatement::Truncate { table, .. } => (!temporary(table), "§14.10 GR1"),
             SqlStatement::Drop { .. } | SqlStatement::AlterTable { .. } | SqlStatement::Schema { .. } => (true, "§12.3 GR6c v"),
             SqlStatement::Open(_)
+            | SqlStatement::LockTable(_)
             | SqlStatement::Fetch { .. }
             | SqlStatement::Close(_)
             | SqlStatement::Select { .. }

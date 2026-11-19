@@ -63,6 +63,11 @@ null if it has no such column or that column is an identity or
 generated one.
 An updatable view over such a view runs its trigger the same way.
 
+Written with RETURNING and a select list *(extension)*, the statement is
+a query of the rows it changed, and a query reads them as a table written
+OLD TABLE, NEW TABLE or FINAL TABLE around the statement
+([Data Change Delta Tables](../24-delta-tables.md)).
+
 ## RULES
 
 1. The table exists and is not read-only: a base table, or a view that
@@ -205,4 +210,5 @@ Features X082 and X132.
 
 [UPDATE](update.md), [DELETE](delete.md), [SELECT](select.md),
 [CREATE TABLE](create-table.md), [CREATE TRIGGER](create-trigger.md),
-[Changing Data](../../user/05-changing-data.md)
+[Changing Data](../../user/05-changing-data.md),
+[Data Change Delta Tables](../24-delta-tables.md)

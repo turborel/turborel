@@ -31,6 +31,10 @@ behind it, and each can be replaced or added to.
   control, a write-ahead log, checkpoints and recovery.
 - Savepoints, with SAVEPOINT, RELEASE SAVEPOINT and ROLLBACK TO SAVEPOINT
   at the savepoint levels of routines and ATOMIC blocks.
+- [Locks](doc/sql/23-locks.md): FOR UPDATE and FOR SHARE with NOWAIT and
+  SKIP LOCKED, LOCK TABLE, and advisory locks, deadlocks found at once.
+- [Data change delta tables](doc/sql/24-delta-tables.md), OLD, NEW and
+  FINAL TABLE of INSERT, UPDATE, DELETE and MERGE, and RETURNING.
 - Row and columnar storage, chosen per table.
 - Large objects up to 4G, stored, logged, read and sent a chunk at a
   time, and reached by locators.

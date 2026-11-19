@@ -40,10 +40,18 @@ impl Parser {
     ///
     /// A syntax error, or valid SQL this implementation does not process.
     pub fn cursor_specification(&mut self) -> Result<CursorSpecification> {
-        let query = self.query_expression()?;
-        let updatability = self.updatability_clause()?;
+        // [EXTENSION] a data change statement with RETURNING (RULES.md D184).
+        let query = match self.returning()? {
+            Some(query) => query,
+            None => self.query_expression()?,
+        };
+        // [EXTENSION] whose statement a cursor's query runs (RULES.md D183).
+        if let Some(delta) = query.delta() {
+            delta.rows.admit();
+        }
+        let (updatability, locking) = self.updatability_or_locking()?;
         self.end()?;
-        Ok(CursorSpecification { query, updatability })
+        Ok(CursorSpecification { query, updatability, locking })
     }
 
     /// [ISO/IEC 9075-2:2023 §10.10] `<null ordering>` ::= NULLS FIRST |
@@ -523,6 +531,9 @@ impl Parser {
         }
         if let Some(special) = self.special_table()? {
             return Ok(special);
+        }
+        if let Some(delta) = self.delta_table()? {
+            return Ok(delta);
         }
         // [ISO/IEC 9075-2:2023 §7.6] <only spec>.
         let (table, only) = self.target_table()?;

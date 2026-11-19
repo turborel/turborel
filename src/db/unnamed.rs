@@ -5,6 +5,8 @@
 
 use std::sync::{Arc, Mutex};
 
+mod locking;
+
 use super::area::commands::{self, Command};
 use super::stream::Stream;
 use super::{Completion, Cursor, Session, State, rule};
@@ -53,6 +55,9 @@ impl Session {
     pub(super) fn open_in(&self, call: &super::Call<'_>, sql: &str, params: &Params) -> Result<Cursor> {
         let timed = super::slow::Timed::of(call.state(), || sql.to_owned(), &self.auth());
         let spec = Self::parse_cursor(call.state(), sql, params)?;
+        if let Some(lock) = Self::locking_of(&spec) {
+            return self.unnamed(call, timed, |st, tx| self.open_locked(st, tx, &spec, (&lock, params)));
+        }
         Self::unnamed_only(&spec)?;
         self.unnamed(call, timed, |st, tx| self.open_rows(st, tx, &spec, (params, None)))
     }

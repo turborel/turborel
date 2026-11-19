@@ -59,6 +59,10 @@ impl Subqueries for Drawn<'_> {
         self.inner.state()
     }
 
+    fn transaction(&self) -> Option<crate::txn::TxId> {
+        self.inner.transaction()
+    }
+
     fn ranking_statistics(&self, index: &str) -> Result<Option<Arc<dyn crate::fulltext::rank::Statistics>>> {
         self.inner.ranking_statistics(index)
     }

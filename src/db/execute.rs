@@ -209,8 +209,7 @@ impl Session {
             SqlStatement::Served(served) => return self.served_statement(served),
             // [ISO/IEC 9075:1992 §4.28] not transaction initiating.
             SqlStatement::GetDiagnostics(get) => return self.get_diagnostics(st, get, params),
-            // [ISO/IEC 9075:1992 §13.11 GR4] for the session, in no
-            // transaction.
+            // [ISO/IEC 9075:1992 §13.11 GR4] for the session, in no transaction.
             SqlStatement::DeclareTable(t) => return self.declare_table(st, t),
             SqlStatement::Insert(_)
             | SqlStatement::Merge(_)
@@ -219,6 +218,7 @@ impl Session {
             | SqlStatement::UpdatePositioned { .. }
             | SqlStatement::DeletePositioned { .. }
             | SqlStatement::Truncate { .. }
+            | SqlStatement::LockTable(_)
             | SqlStatement::Open(_)
             | SqlStatement::Fetch { .. }
             | SqlStatement::Close(_)
@@ -243,8 +243,7 @@ impl Session {
         self.may_run(st, stmt)?;
         tx.begin_statement(|| !self.cursors_open())?;
         let cx = StatementContext { st, tx: &tx };
-        let ran = self.run_statement(cx, stmt, params, keeping);
-        self.db.noted(settled(cx, stmt, ran))
+        self.db.noted(settled(cx, stmt, self.run_statement(cx, stmt, params, keeping)))
     }
 
     /// [X3.135-1986 §8.4, §8.11] The positioned DELETE or UPDATE of
@@ -396,6 +395,7 @@ impl Session {
                 self.positioned_statement(cx, stmt, (params, keeping))
             }
             SqlStatement::Truncate { table, only, restart } => self.truncate_table(cx, (table, *only, *restart), params),
+            SqlStatement::LockTable(lock) => self.lock_table(cx, lock),
             SqlStatement::Open(_) | SqlStatement::Fetch { .. } | SqlStatement::Close(_) => self.cursor_statement(cx, stmt, params),
             SqlStatement::Dynamic(d) => self.run_dynamic(cx, d, params),
             SqlStatement::Select { query, targets } => self.select_into(cx, query, targets, params),
@@ -487,6 +487,7 @@ fn target_of(stmt: &SqlStatement) -> Option<&TableName> {
         | SqlStatement::Drop { object: DropObject::View(table), .. } => Some(table),
         SqlStatement::Schema { statement, .. } => schema_target(statement),
         SqlStatement::DeclareTable(t) => Some(&t.name),
+        SqlStatement::LockTable(lock) => lock.tables.first().map(|(table, ..)| table),
         SqlStatement::Dynamic(d) => dynamic::changed_table(d).map(|(table, _)| table),
         SqlStatement::Drop { .. }
         | SqlStatement::Control(_)

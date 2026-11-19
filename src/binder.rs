@@ -40,6 +40,7 @@ pub(crate) use vectors::sql_metric;
 pub(crate) use xml::{making_typed, making_typed_now};
 mod cursor;
 mod datetime;
+mod delta;
 mod dependencies;
 pub(crate) use dependencies::{DescribedKey, described_key};
 mod interval;
@@ -48,6 +49,7 @@ mod json;
 mod key_expression;
 mod listagg;
 mod lobs;
+mod locking;
 mod merge;
 mod multisets;
 pub(crate) use datetime::cast_is_valid;
@@ -119,6 +121,7 @@ pub use invocation::{
     Candidate, FunctionBody, alike, bind_function_body, definition_of, functions_named, grantably_held, held, resolve_procedure,
     routine_definition, sql_statement,
 };
+pub use locking::{Locking, bind_locking};
 pub use merge::{BoundAction, BoundMerge, BoundWhen, bind_merge};
 pub use parameters::{assigned_argument, bind_argument};
 pub(crate) use psm::{Frame, bind_program};

@@ -131,6 +131,13 @@ impl Session {
         spec: &CursorSpecification,
         (params, keeping): (&Params, Option<&Keeping<'_>>),
     ) -> Result<(Vec<OutColumn>, Stream)> {
+        // [EXTENSION] a delta table's statement run first, and the query
+        // bound over its rows, all read now, so that an error of the query
+        // undoes the statement with it (RULES.md D183).
+        if self.run_delta(st, tx, spec, params)? {
+            let (columns, logical) = self.cursor_bound(st, spec, params, None)?;
+            return Ok((columns, Stream::planned(st, tx, logical)?.read_now()?));
+        }
         if let Some((columns, physical, reads)) = keeping.map(|k| k.physical(params.dynamic_values())).transpose()?.flatten() {
             return Ok((columns, Stream::kept(st, tx, physical, reads)?));
         }
@@ -239,6 +246,14 @@ impl Session {
         }
         // [X3.135-1986 §8.8 GR3a] a copy of S with each parameter replaced by its value.
         let spec = Self::cursor_specification(st, text, params, keeping)?;
+        // [EXTENSION] A declared cursor's FOR UPDATE is its updatability
+        // clause alone (RULES.md D185).
+        if spec.locking.is_some() {
+            return fail(
+                Code::Unsupported,
+                "[EXTENSION] FOR SHARE, NOWAIT and SKIP LOCKED lock the rows of a query run directly or prepared, not of a declared cursor (RULES.md D185)",
+            );
+        }
         let wanted = wanted(&spec, flags)?;
         let updatable = match (wanted, binder::updatable_in(&spec, &*st.catalog, &self.default_schema())) {
             (Wanted::Written | Wanted::Implicit, Some(named)) => {
@@ -352,6 +367,10 @@ impl Session {
         targets: &[ParameterSpecification],
         params: &mut Params,
     ) -> Result<Completion> {
+        // [EXTENSION] a delta table's statement run first (RULES.md D183).
+        if let [crate::ast::TableReference::Delta(d)] = query.table_expression.from.as_slice() {
+            self.run_delta_table(cx.st, cx.tx, d, params)?;
+        }
         let bound = self.bound(cx.st, params, |b| bind_select(b, query))?;
         check_targets(&bound.columns, targets, params, "§8.10 SR3", "§8.10 SR4")?;
         let (optimized, _, physical) = plan(cx.st, bound.plan);

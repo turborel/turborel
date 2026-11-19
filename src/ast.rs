@@ -29,6 +29,7 @@ mod composite;
 mod connection;
 mod contents;
 mod cursor;
+mod delta;
 mod diagnostics;
 mod drop;
 mod dynamic;
@@ -43,6 +44,7 @@ mod insert;
 mod joined;
 mod json;
 mod json_table;
+mod locking;
 mod merge;
 mod modules;
 mod ordered;
@@ -73,6 +75,7 @@ pub use composite::{Composite, ValueOrder};
 pub use connection::{ConnectionStatement, Disconnected, ServedStatement};
 pub use contents::{AsSubquery, LikeClause};
 pub use cursor::{DeclareCursor, FetchOrientation};
+pub use delta::{DeltaResult, DeltaRows, DeltaTable, Given};
 pub use diagnostics::{AllQualifier, ConditionItem, DiagnosticsInformation, GetDiagnostics, StatementItem};
 pub use drop::{DropBehavior, DropObject};
 pub use dynamic::{
@@ -112,6 +115,7 @@ pub use json_table::{
     JsonTable, JsonTableColumn, JsonTableColumnKind, JsonTableFormatted, JsonTableNamed, JsonTableNested, JsonTablePath, JsonTablePlan,
     JsonTablePlanClause,
 };
+pub use locking::{LockTable, LockTableMode, LockWaits, LockingClause};
 pub use merge::{IntoProperty, MatchedAction, MergeInsert, MergeStatement, MergeWhen};
 pub use modules::ModuleDefinition;
 pub use ordered::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};
@@ -290,6 +294,8 @@ pub enum SqlStatement {
     },
     /// [ISO/IEC 9075-2:2023 §14.12] `<merge statement>`.
     Merge(Box<MergeStatement>),
+    /// \[EXTENSION\] `<lock table statement>` (RULES.md D186).
+    LockTable(LockTable),
     /// [ISO/IEC 9075-2:2023 §14.10] `<truncate table statement>` ::=
     ///     TRUNCATE TABLE `<target table>` \[CONTINUE IDENTITY | RESTART IDENTITY\]
     Truncate {

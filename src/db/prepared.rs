@@ -204,6 +204,11 @@ fn dynamic(state: SqlState, msg: String) -> SqlError {
 fn kind_of(tokens: &[Token]) -> Kind {
     let mut words = tokens.iter().map(|t| &t.tok);
     let (first, second) = (words.next(), words.next());
+    // [EXTENSION] a data change statement with RETURNING, a query
+    // (RULES.md D184).
+    if crate::parser::begins_returning(tokens) {
+        return Kind::Query;
+    }
     if begins_word_statement(first, second) {
         return Kind::Statement;
     }
@@ -286,6 +291,11 @@ impl Session {
                     && spec.updatability.is_none()
                     && matches!(tokens.first().map(|t| &t.tok), Some(Tok::KeyWord(kw::SELECT)));
                 let params = Params::preparing(parser.dynamic_parameters());
+                // [EXTENSION] a delta table's statement, its parameters'
+                // types found as it is bound (RULES.md D183).
+                if let Some(d) = spec.query.delta() {
+                    self.bind_only(st, &d.statement, &params)?;
+                }
                 let compiled = self.compile(st, &spec, &params)?;
                 key = compiled.key.unwrap_or(DescribedKey::Unknown);
                 (compiled.columns, params)
@@ -378,43 +388,42 @@ impl Session {
     /// would be run, without running it: so each `?` takes its type.
     fn bind_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
         match stmt {
-            SqlStatement::Insert(ins) => self.insert_only(st, ins, params)?,
+            SqlStatement::Insert(ins) => self.insert_only(st, ins, params),
             SqlStatement::UpdateSearched { table, only, portion, set, where_clause, .. } => {
-                self.write_only(st, params, (WriteKind::UpdateSearched, (table, *only, portion.as_deref()), set, where_clause.as_ref()))?;
+                self.write_only(st, params, (WriteKind::UpdateSearched, (table, *only, portion.as_deref()), set, where_clause.as_ref()))
             }
-            SqlStatement::Merge(merge) => self.merge_only(st, merge, params)?,
+            SqlStatement::Merge(merge) => self.merge_only(st, merge, params),
             SqlStatement::DeleteSearched { table, only, portion, where_clause, .. } => {
-                self.write_only(st, params, (WriteKind::DeleteSearched, (table, *only, portion.as_deref()), &[], where_clause.as_ref()))?;
+                self.write_only(st, params, (WriteKind::DeleteSearched, (table, *only, portion.as_deref()), &[], where_clause.as_ref()))
             }
-            SqlStatement::UpdatePositioned { .. } | SqlStatement::DeletePositioned { .. } => self.positioned_only(st, stmt, params)?,
+            SqlStatement::UpdatePositioned { .. } | SqlStatement::DeletePositioned { .. } => self.positioned_only(st, stmt, params),
             // [§17.6 GR5u]
             SqlStatement::SetCollation(Some(v))
             | SqlStatement::SetSchema(v)
             | SqlStatement::SetCatalog(v)
             | SqlStatement::SetSessionAuthorization(v)
-            | SqlStatement::SetRole(SetRole::Role(v)) => drop(self.value_in(st, v, params, Some(ParameterType::Varying))?),
-            SqlStatement::SetTimeZone(Some(v)) => drop(self.bound(st, params, |cx| binder::bind_value(cx, v))?),
+            | SqlStatement::SetRole(SetRole::Role(v)) => self.value_in(st, v, params, Some(ParameterType::Varying)).map(drop),
+            SqlStatement::SetTimeZone(Some(v)) => self.bound(st, params, |cx| binder::bind_value(cx, v)).map(drop),
             // [EXTENSION] the document of CREATE XML SCHEMA.
-            SqlStatement::Schema { statement: SchemaStatement::XmlSchema(x), .. } => self.document_only(st, &x.document, params)?,
+            SqlStatement::Schema { statement: SchemaStatement::XmlSchema(x), .. } => self.document_only(st, &x.document, params),
             // [ISO/IEC 9075-2:2023 §4.37.5] a locator, a four-octet integer.
-            SqlStatement::Locator { references, .. } => self.locators_only(st, references, params)?,
-            // Of a module's cursors and targets: FETCH and SELECT ... INTO
-            // name parameters, which a prepared statement has none of, so
-            // only OPEN and CLOSE reach here.
+            SqlStatement::Locator { references, .. } => self.locators_only(st, references, params),
+            // FETCH and SELECT ... INTO name a module's parameters, which a
+            // prepared statement has none of, so only OPEN and CLOSE come.
             SqlStatement::Open(_) | SqlStatement::Fetch { .. } | SqlStatement::Close(_) | SqlStatement::Select { .. } => {
-                return Err(not_preparable("a statement of a module's cursor"));
+                Err(not_preparable("a statement of a module's cursor"))
             }
-            SqlStatement::GetDiagnostics(_) => return Err(not_preparable("a <get diagnostics statement>")),
+            SqlStatement::GetDiagnostics(_) => Err(not_preparable("a <get diagnostics statement>")),
             // [ISO/IEC 9075-4:2006 draft §4.10.6] SIGNAL and RESIGNAL are
             // preparable, no SQL control statement is.
-            SqlStatement::Control(_) => return Err(not_preparable("an <SQL control statement>")),
-            SqlStatement::Signal(_) => self.bind_program_only(st, stmt, params)?,
-            SqlStatement::Dynamic(_) | SqlStatement::Execute(_) => return Err(not_preparable("an <SQL dynamic statement>")),
-            SqlStatement::ExecuteGql(_) => return Err(not_preparable("EXECUTE GQL")),
-            SqlStatement::DeclareTable(_) => return Err(not_preparable("a <temporary table declaration>")),
-            SqlStatement::Call(call) => self.call_only(st, call, params)?,
+            SqlStatement::Control(_) => Err(not_preparable("an <SQL control statement>")),
+            SqlStatement::Signal(_) => self.bind_program_only(st, stmt, params),
+            SqlStatement::Dynamic(_) | SqlStatement::Execute(_) => Err(not_preparable("an <SQL dynamic statement>")),
+            SqlStatement::ExecuteGql(_) => Err(not_preparable("EXECUTE GQL")),
+            SqlStatement::DeclareTable(_) => Err(not_preparable("a <temporary table declaration>")),
+            SqlStatement::Call(call) => self.call_only(st, call, params),
             // [ISO/IEC 9075-2:2023 §16.2 SR1] only in a function's body.
-            SqlStatement::Return(r) => return Err(super::routines::return_outside(r)),
+            SqlStatement::Return(r) => Err(super::routines::return_outside(r)),
             SqlStatement::Commit
             | SqlStatement::Rollback
             | SqlStatement::Savepoint(_)
@@ -428,14 +437,14 @@ impl Session {
             | SqlStatement::AlterTable { .. }
             | SqlStatement::Schema { .. }
             | SqlStatement::Truncate { .. }
+            | SqlStatement::LockTable(_)
             | SqlStatement::Index(_)
             | SqlStatement::User(_)
             | SqlStatement::SetCollation(None)
             | SqlStatement::SetTransformGroup(_)
             | SqlStatement::SetRole(SetRole::None)
-            | SqlStatement::Served(_) => {}
+            | SqlStatement::Served(_) => Ok(()),
         }
-        Ok(())
     }
 
     /// [§17.9 GR5a] `values`, one for each of `p`'s parameters.

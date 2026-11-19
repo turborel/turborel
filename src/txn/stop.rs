@@ -23,11 +23,11 @@
 //! its transaction, as it reaches the flag, wherever its rows are pulled.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use super::TxId;
+use super::{LockWait, Transactions, TxId};
 use crate::error::{Code, Result, SqlError, Warnings};
 use crate::sync::lock_builtin;
 
@@ -56,7 +56,16 @@ pub struct Stop {
     /// The warnings the statement running raised [ISO/IEC 9075:1992
     /// §3.3.4.1].
     warnings: Warnings,
+    /// \[EXTENSION\] Its session, by a number no other has, which holds
+    /// advisory locks (RULES.md D187); its transaction now, or its last;
+    /// and whether that one waits for locks.
+    pub(crate) session: u64,
+    pub(crate) tx: AtomicU64,
+    pub(crate) waits: AtomicBool,
 }
+
+/// The number the next session's `Stop` takes.
+static SESSIONS: AtomicU64 = AtomicU64::new(1);
 
 /// \[DESIGN\] Looks at a `Stop` as rows are read between two readings of
 /// the clock: a reading costs as much as reading a row or two, a look a
@@ -76,6 +85,9 @@ impl Default for Stop {
             looks: AtomicU64::new(0),
             epoch: Instant::now(),
             warnings: Warnings::default(),
+            session: SESSIONS.fetch_add(1, Ordering::Relaxed),
+            tx: AtomicU64::new(0),
+            waits: AtomicBool::new(false),
         }
     }
 }
@@ -200,11 +212,25 @@ const STOP_SHARDS: u64 = 32;
 /// plan's scans to look at: in `STOP_SHARDS` shards, by transaction id.
 pub(crate) struct Stops {
     shards: Vec<Mutex<HashMap<TxId, Arc<Stop>>>>,
+    /// \[EXTENSION\] The advisory locks sessions hold (RULES.md D187).
+    pub(crate) advisory: super::Advisory,
 }
 
 impl Default for Stops {
     fn default() -> Self {
-        Stops { shards: (0..STOP_SHARDS).map(|_| Mutex::new(HashMap::new())).collect() }
+        Stops { shards: (0..STOP_SHARDS).map(|_| Mutex::new(HashMap::new())).collect(), advisory: super::Advisory::default() }
+    }
+}
+
+impl Transactions {
+    /// What cancels the statements of open transaction `tx`, if it is one.
+    pub(crate) fn stop_of(&self, tx: TxId) -> Option<Arc<Stop>> {
+        self.stops.of(tx)
+    }
+
+    /// \[EXTENSION\] The advisory locks sessions hold (RULES.md D187).
+    pub(crate) fn advisory(&self) -> &super::Advisory {
+        &self.stops.advisory
     }
 }
 
@@ -215,7 +241,11 @@ impl Stops {
     }
 
     /// Notes `stop` as what cancels `tx`'s statements.
-    pub(crate) fn insert(&self, tx: TxId, stop: Arc<Stop>) {
+    /// It is its session's transaction now, waiting for locks as
+    /// `lock_wait` says.
+    pub(crate) fn insert(&self, tx: TxId, stop: Arc<Stop>, lock_wait: LockWait) {
+        stop.tx.store(tx, Ordering::SeqCst);
+        stop.waits.store(lock_wait == LockWait::Wait, Ordering::SeqCst);
         if let Some(shard) = self.shard(tx) {
             lock_builtin(shard).insert(tx, stop);
         }

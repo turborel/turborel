@@ -80,6 +80,7 @@ mod declared;
 mod defaults;
 mod deferral;
 mod definitions;
+mod delta;
 mod direct;
 mod domains;
 mod drop;
@@ -256,6 +257,9 @@ struct SessionState {
     area: area::Area,
     /// Its prepared statements and SQL descriptor areas (`db/dynamic.rs`).
     dynamic: dynamic::DynamicState,
+    /// \[EXTENSION\] Where the data change statement running records the
+    /// rows of its delta table, if a query reads it (`db/delta.rs`).
+    delta: Option<delta::Collector>,
 }
 
 /// \[DESIGN\] An application program bound to a `<module>`: an authorization
@@ -348,16 +352,6 @@ impl Call<'_> {
     /// (`txn/locks.rs`).
     fn runs(&self, tx: &Arc<Txn>) {
         self.session.runs(tx);
-    }
-}
-
-impl Drop for Call<'_> {
-    fn drop(&mut self) {
-        self.session.ran();
-        self.session.busy.set(false);
-        if let Some(timed) = self.timed.take() {
-            timed.done(&self.session.db);
-        }
     }
 }
 
@@ -582,8 +576,8 @@ impl Session {
 /// ROLLBACK is performed; which one is implementor-defined (`SessionEnd`).
 impl Drop for Session {
     fn drop(&mut self) {
-        // A session dropped by a plug-in while a call on it runs cannot end
-        // its transaction here.
+        self.unlock_advisory();
+        // A session dropped by a plug-in while a call on it runs cannot end its transaction here.
         let Ok(call) = self.enter() else { return };
         let st = call.state();
         // Drop cannot return an error. A failed commit has rolled back, and a

@@ -10,23 +10,19 @@
 //! wait takes the graph of who waits for whom; the lock order is the table's
 //! lock first, then the graph.
 
-use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::thread::{self, ThreadId};
-use std::time::Instant;
+use std::thread::ThreadId;
 
 use super::owed::OwedRemovals;
-use super::{LockMode, LockWait, Timestamp, Transactions, TxId, Txn};
+use super::row_locks::RowLocks;
+use super::waiting::{Waiter, Waits, refused, runs_here, wait_for};
+use super::{LockMode, Timestamp, Transactions, TxId, Txn};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::sync::{Signal, lock, lock_builtin};
-
-/// \[DESIGN\] How long a lock wait sleeps before it looks again for a
-/// cancel of its statement (RULES.md D44), unless a release wakes it.
-const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// \[DESIGN\] What a failed undo damaged (RULES.md D19).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +38,18 @@ pub enum Damage {
 /// Index builds under way (`Database::create_index`), which checkpoints
 /// wait for.
 impl Transactions {
+    /// The lock of the name `name`, made if none is held.
+    pub(crate) fn name_lock(&self, name: &QualifiedName) -> Arc<TableLock> {
+        let mut names = lock_builtin(&self.names);
+        if let Some(held) = names.get(name).and_then(std::sync::Weak::upgrade) {
+            return held;
+        }
+        names.retain(|_, weak| weak.strong_count() > 0);
+        let made = Arc::new(TableLock::default());
+        names.insert(name.clone(), Arc::downgrade(&made));
+        made
+    }
+
     /// How many transactions wait for others now.
     ///
     /// # Errors
@@ -145,10 +153,6 @@ impl Txn {
     }
 }
 
-/// The rule every refusal cites: the statement is undone, and the
-/// transaction goes on [X3.135-1986 §7.3 GR3b].
-const UNDONE: &str = "the statement is rejected and undone [X3.135-1986 §7.3 GR3b]";
-
 /// One transaction holding a table's lock.
 struct Holder {
     tx: TxId,
@@ -185,6 +189,8 @@ pub(crate) struct TableLock {
     /// The index entries collection could not take back, tried again by
     /// its next (`txn/owed.rs`).
     pub(crate) owed: OwedRemovals,
+    /// \[EXTENSION\] The locks of its rows (RULES.md D185).
+    pub(crate) rows: RowLocks,
 }
 
 impl TableLock {
@@ -275,27 +281,19 @@ impl TableLock {
     pub(super) fn release(&self, tx: TxId) {
         lock_builtin(&self.holders).retain(|h| h.tx != tx);
         self.released.notify_all();
+        self.rows.release(tx);
     }
 }
 
-/// The transactions that wait for others: for each, those it waits for.
-pub(super) type WaitsFor = HashMap<TxId, Vec<TxId>>;
-
-/// Whether `tx` waiting for `holders` would close a cycle of waiting
-/// transactions back to `tx`: a deadlock. Searched without recursion, each
-/// transaction once (RULES.md R-CF-6).
-fn would_deadlock(waits_for: &WaitsFor, tx: TxId, holders: &[TxId]) -> bool {
-    let mut seen: HashSet<TxId> = HashSet::new();
-    let mut next: Vec<TxId> = holders.to_vec();
-    while let Some(t) = next.pop() {
-        if t == tx {
-            return true;
-        }
-        if seen.insert(t) {
-            next.extend(waits_for.get(&t).into_iter().flatten().copied());
+impl Txn {
+    /// \[EXTENSION\] Records that it may hold locks of rows of the table
+    /// whose lock is `lk`, so its end releases them (RULES.md D185).
+    pub(crate) fn hold_rows(&self, lk: &Arc<TableLock>) {
+        let mut st = lock_builtin(&self.state);
+        if !st.held.iter().any(|held| Arc::ptr_eq(held, lk)) {
+            st.held.push(Arc::clone(lk));
         }
     }
-    false
 }
 
 impl LockMode {
@@ -304,11 +302,6 @@ impl LockMode {
     fn compatible(self, other: LockMode) -> bool {
         matches!((self, other), (LockMode::Shared, LockMode::Shared | LockMode::Update) | (LockMode::Update, LockMode::Shared))
     }
-}
-
-/// The refusal of a lock request, giving `why`.
-fn refused(why: &str) -> SqlError {
-    SqlError::new(Code::Conflict, format!("[DESIGN] {why}, so {UNDONE}"))
 }
 
 impl State {
@@ -326,7 +319,17 @@ impl State {
     /// (`Stop::check_now`); SQLCODE -910 if a lock is
     /// poisoned.
     pub(crate) fn acquire(&self, tx: &Txn, table: &QualifiedName, mode: LockMode) -> Result<()> {
-        acquire_lock(tx, table, self.lock_of(table)?, mode)
+        acquire_lock((tx, Waits::Setting), table, self.lock_of(table)?, mode)
+    }
+
+    /// \[EXTENSION\] As `acquire`, waiting as `waits` says: of LOCK TABLE
+    /// (RULES.md D186).
+    ///
+    /// # Errors
+    ///
+    /// As `acquire`'s; of NOWAIT, SQLSTATE TBL01 if the table is locked.
+    pub(crate) fn acquire_waiting(&self, tx: &Txn, table: &QualifiedName, mode: LockMode, waits: Waits) -> Result<()> {
+        acquire_lock((tx, waits), table, self.lock_of(table)?, mode)
     }
 
     /// Takes a lock on the name `name` in `mode` for `tx`, as `acquire`
@@ -338,13 +341,13 @@ impl State {
     /// As `acquire`'s.
     pub(crate) fn acquire_name(&self, tx: &Txn, name: &QualifiedName, mode: LockMode) -> Result<()> {
         let lk = self.locks.get(name).cloned().unwrap_or_else(|| self.tx.name_lock(name));
-        acquire_lock(tx, name, &lk, mode)
+        acquire_lock((tx, Waits::Setting), name, &lk, mode)
     }
 }
 
 /// Takes `lk`, the lock of `table`, in `mode` for `tx` (`State::acquire`).
-fn acquire_lock(tx: &Txn, table: &QualifiedName, lk: &Arc<TableLock>, mode: LockMode) -> Result<()> {
-    let (outcome, mut holders) = wait_on(tx, table, lk, &|h| h.tx != tx.id && !mode.compatible(h.mode))?;
+fn acquire_lock((tx, waits): (&Txn, Waits), table: &QualifiedName, lk: &Arc<TableLock>, mode: LockMode) -> Result<()> {
+    let (outcome, mut holders) = wait_on((&tx.waiter(), waits), table, lk, &|h| h.tx != tx.id && !mode.compatible(h.mode))?;
     let newly = outcome.is_ok() && grant(&mut holders, tx, mode);
     drop(holders);
     outcome?;
@@ -358,58 +361,23 @@ fn acquire_lock(tx: &Txn, table: &QualifiedName, lk: &Arc<TableLock>, mode: Lock
 
 /// The holders of `lk` once none `conflicts` with `tx`, or the refusal of
 /// the wait, `what` named in it: a table, or a row of one. Its lock held
-/// still, `tx` no longer among those waiting.
+/// still, `tx` no longer among those waiting (`waiting::wait_for`).
 ///
 /// # Errors
 ///
 /// SQLCODE -910 if a lock is poisoned.
 fn wait_on<'l>(
-    tx: &Txn,
+    (who, waits): (&Waiter, Waits),
     what: &dyn Display,
     lk: &'l TableLock,
     conflicts: &dyn Fn(&Holder) -> bool,
 ) -> Result<(Result<()>, MutexGuard<'l, Vec<Holder>>)> {
-    let me = thread::current().id();
-    let mut holders = lock(&lk.holders)?;
-    let mut waited = false;
-    let began = Instant::now();
-    let outcome = loop {
-        // A statement cancelled as it waits stops waiting (RULES.md D44).
-        if let Err(e) = tx.stop.check_now() {
-            break Err(e);
-        }
-        let conflicting: Vec<&Holder> = holders.iter().filter(|h| conflicts(h)).collect();
-        if conflicting.is_empty() {
-            break Ok(());
-        }
-        if tx.lock_wait == LockWait::NoWait {
-            break Err(refused(&format!("{what} is locked by another transaction; locking is no-wait")));
-        }
-        // A holder running a call on this very thread (a plug-in called
-        // back) could never release the lock.
-        if conflicting.iter().any(|h| *lock_builtin(&h.running) == Some(me)) {
-            break Err(refused(&format!("{what} is locked by a transaction running on this thread, which could never release it")));
-        }
-        let ids: Vec<TxId> = conflicting.iter().map(|h| h.tx).collect();
-        let mut waits_for = lock(&tx.shared.waits_for)?;
-        if would_deadlock(&waits_for, tx.id, &ids) {
-            break Err(refused(&format!(
-                "waiting for {what} would deadlock with another transaction (roll back to release this transaction's locks)"
-            )));
-        }
-        if let Some(most) = tx.stop.lock_timeout().filter(|&most| began.elapsed() >= most) {
-            break Err(refused(&format!("{what} stayed locked by another transaction past LOCKS.TIMEOUT_MS, {} ms", most.as_millis())));
-        }
-        waits_for.insert(tx.id, ids);
-        drop(waits_for);
-        waited = true;
-        // Woken by a release, or now and then to look for a cancel or a
-        // timeout.
-        holders = lk.released.wait_timeout(holders, STOP_POLL).map_err(|_| poisoned_wait())?.0;
+    let holding = |holders: &Vec<Holder>, me: ThreadId| -> Vec<(TxId, bool)> {
+        holders.iter().filter(|h| conflicts(h)).map(|h| (h.tx, runs_here(&h.running, me))).collect()
     };
-    if waited {
-        lock(&tx.shared.waits_for)?.remove(&tx.id);
-    }
+    let (outcome, holders) = wait_for((who, waits), what, (&lk.holders, &lk.released), &holding)?;
+    // A table's lock is never passed over: SKIP LOCKED is of rows alone.
+    let outcome = outcome.and_then(|free| free.then_some(()).ok_or_else(|| refused(&format!("{what} is locked by another transaction"))));
     Ok((outcome, holders))
 }
 
@@ -424,7 +392,18 @@ impl State {
     ///
     /// As `acquire`'s, the refusal naming a row of `table`.
     pub(crate) fn wait_for_writer(&self, tx: &Txn, table: &QualifiedName, writer: TxId) -> Result<()> {
-        let (outcome, holders) = wait_on(tx, &format_args!("a row of {table}"), self.lock_of(table)?, &|h| h.tx == writer)?;
+        self.lock_of(table)?.wait_for_writer(&tx.waiter(), &format_args!("a row of {table}"), writer)
+    }
+}
+
+impl TableLock {
+    /// As `State::wait_for_writer`, of `who`, the row named `what`.
+    ///
+    /// # Errors
+    ///
+    /// As `State::wait_for_writer`.
+    pub(crate) fn wait_for_writer(&self, who: &Waiter, what: &dyn Display, writer: TxId) -> Result<()> {
+        let (outcome, holders) = wait_on((who, Waits::Setting), what, self, &|h| h.tx == writer)?;
         drop(holders);
         outcome
     }
@@ -438,9 +417,4 @@ fn grant(holders: &mut Vec<Holder>, tx: &Txn, mode: LockMode) -> bool {
     }
     holders.push(Holder { tx: tx.id, mode, running: Arc::clone(&tx.running) });
     true
-}
-
-/// The error for a wait whose lock a panicking thread poisoned.
-fn poisoned_wait() -> SqlError {
-    SqlError::new(Code::Api, "[DESIGN] a thread panicked while it held a table's lock (RULES.md D27)")
 }

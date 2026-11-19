@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use super::UndoEntry;
+use super::row_locks::RowOf;
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::db::State;
 use crate::db::write::system_time::{Changed, Stamp};
@@ -152,13 +153,16 @@ impl State {
         }
         let mut seen: Option<(Timestamp, Row)> = None;
         let mut tries = 0_usize;
+        // [EXTENSION] A row another transaction locked waits for it (RULES.md D185).
+        let rows = (self.capabilities(table)?.concurrency != Concurrency::Coordinator).then(|| self.lock_of(table)).transpose()?;
         loop {
             if let Write::Update(row) = &mut write {
                 self.keep_lobs(tx, table, Some(id), row)?;
             }
             let attempt = {
-                // After any wait for a lock: a checkpoint never waits on a waiter.
-                let _gate = self.tx.gate.enter();
+                // The row's lock, then the gate, after any wait for the row,
+                // so a checkpoint never waits on a waiter.
+                let _held = (rows.map(|lk| lk.rows.writing(tx, &RowOf(table), id)).transpose()?, self.tx.gate.enter());
                 self.write_once(tx, (table, id), (&write, stamp.as_ref()), seen.as_ref())
             };
             let e = match attempt {

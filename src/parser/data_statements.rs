@@ -55,6 +55,7 @@ pub(crate) fn begins_word_statement(first: Option<&Tok>, second: Option<&Tok>) -
         || labelled
         || super::locators::begins_locator_statement(first, second)
         || super::savepoints::begins_savepoint_statement(first, second)
+        || super::locking::begins_lock_table(first, second)
 }
 
 impl Parser {
@@ -134,6 +135,8 @@ impl Parser {
             self.locator_statement()?
         } else if self.at_savepoint_statement() {
             self.savepoint_statement()?
+        } else if super::locking::begins_lock_table(Some(self.peek()), Some(self.peek_at(1))) {
+            SqlStatement::LockTable(self.lock_table_statement()?)
         } else {
             return Ok(None);
         };

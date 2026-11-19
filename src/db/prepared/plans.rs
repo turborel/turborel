@@ -440,6 +440,11 @@ impl Session {
         let k = self.keeping(st, &p.plans);
         let timed = super::super::slow::Timed::of(st, || p.sql.clone(), &self.auth());
         let spec = Self::cursor_specification(st, &p.sql, params, Some(&k))?;
+        // [EXTENSION] A locking query keeps no plan, as its filter is of
+        // its transaction (RULES.md D185).
+        if let Some(lock) = Self::locking_of(&spec) {
+            return self.unnamed(call, timed, |snapshot, tx| self.open_locked(snapshot, tx, &spec, (&lock, params)));
+        }
         Self::unnamed_only(&spec)?;
         self.unnamed(call, timed, |snapshot, tx| self.open_rows(snapshot, tx, &spec, (params, Some(&k))))
     }

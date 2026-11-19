@@ -43,4 +43,8 @@ impl CallContext for Context<'_> {
     fn spatial(&self) -> Option<&crate::catalog::SpatialCatalog> {
         self.0.state().map(|state| state.catalog.spatial())
     }
+
+    fn transaction(&self) -> Option<(&std::sync::Arc<crate::db::State>, crate::txn::TxId)> {
+        Some((self.0.state()?, self.0.transaction()?))
+    }
 }

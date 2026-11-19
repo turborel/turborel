@@ -49,6 +49,11 @@ impl Session {
         if let Some(done) = self.gql_direct(sql, first)? {
             return Ok(done);
         }
+        // [EXTENSION] a data change statement with RETURNING, a query
+        // (RULES.md D184).
+        if crate::parser::begins_returning(&tokens) {
+            return self.open_cursor(sql).map(Direct::Rows);
+        }
         let named_cancel = if let Some(Tok::Identifier(w)) = first { w == CANCEL } else { false };
         let cancel = (named_cancel && matches!(second, Some(Tok::KeyWord("CONNECTION")))) || begins_word_statement(first, second);
         let property = crate::parser::graph_algo::begins_property_statement(tokens.iter().map(|t| &t.tok));

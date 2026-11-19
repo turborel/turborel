@@ -1002,6 +1002,22 @@ MERGE, which SQL:2023 reserves and SQL-92 does not, stays an identifier,
 a key word only where INTO follows it at the start of a statement.
 MATCHED is a non-reserved word.
 
+### Data change delta tables
+
+Feature T495 (combined data change and retrieval). A `<data change delta
+table>`, OLD, NEW or FINAL TABLE of an INSERT, a searched UPDATE or
+DELETE, or a MERGE, is read as a table by the query that runs its
+statement [§7.6].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Where it stands | §7.6 SR11 | As the one table reference of the FROM clause of a cursor's query, directly run, prepared or declared, or of a SELECT INTO, in a routine too (RULES.md D183). Elsewhere SQLCODE -900. |
+| Its statement | SR11, SR11a | Not FOR PORTION OF, nor positioned. OLD of an INSERT, or of a MERGE that neither updates nor deletes, and NEW or FINAL of a DELETE, or of a MERGE that neither updates nor inserts, are SQLCODE -103. |
+| Its subject table | SR11b | A base table. A view's, of CASCADED CHECK OPTION or not, is SQLCODE -900. |
+| Its rows | GR5b | The old or new delta table of the operation, each row as the statement writes it, after its BEFORE triggers, its defaults, identity and generated columns given, before its referential actions and AFTER triggers. A MERGE's OLD has the rows it updated and deleted, its NEW those it inserted and updated. A derived column list renames the columns [SR12b ii]. |
+| FINAL | GR5a, §15.18 GR15, §15.21 GR6i | A referential action of the statement that changes the subject table is SQLSTATE 27001; an AFTER trigger's statement that does is 0W001, told by the trigger's 09000 [§15.21 GR6m]. |
+| Failure | | A statement that fails gives no rows, and the query fails with it. The query's rows are read as its cursor opens, so its own error undoes the statement too. |
+
 ### Diagnostics
 
 Features F122 (Enhanced diagnostics management), F123 (All diagnostics)
@@ -4122,6 +4138,28 @@ the physical plan follow in turn, as the library's `Session::explain`
 gives them. EXPLAIN is no key word. It is read as the statement only
 before SELECT, VALUES, TABLE, WITH or a parenthesis, so a table may be
 named EXPLAIN (`db/explain.rs`).
+
+### Locks
+
+Row locks, table locks and advisory locks share one graph of waits, so a
+cycle among them is a deadlock, refused at once (SQLCODE -911). A wait
+ends at LOCKS.TIMEOUT_MS or a cancel.
+
+| Facility | What turborel does |
+|---|---|
+| FOR UPDATE, FOR SHARE | After a cursor's query, OF naming its table, NOWAIT or SKIP LOCKED after. Each row it gives is locked, exclusive or shared, to the transaction's end, before its row limit counts it. A writer of a locked row waits. At READ COMMITTED a row changed since the snapshot runs the query again at a new one; at REPEATABLE READ and SERIALIZABLE it is SQLCODE -911. One base table, or a view of one, through no join, grouping, DISTINCT, window or set operation, else SQLCODE -900 (RULES.md D185). |
+| NOWAIT | A lock held against it is SQLSTATE TBL01, SQLCODE -911. |
+| SKIP LOCKED | Passes over a row locked against it, or changed since the snapshot. |
+| LOCK TABLE | `LOCK [TABLE] [ONLY] t [, ...] [IN mode MODE] [NOWAIT]`, of eight modes taken as the three of a table's lock, ACCESS EXCLUSIVE by default, to the transaction's end (RULES.md D186). Command code -42. |
+| Advisory locks | ADVISORY_LOCK, TRY_ADVISORY_LOCK, ADVISORY_UNLOCK and ADVISORY_UNLOCK_ALL, and ADVISORY_XACT_LOCK and TRY_ADVISORY_XACT_LOCK, each but the last two kinds with a _SHARED form, of a BIGINT, two INTEGERs or a string. Each is also named with the prefix PG_ (RULES.md D187). |
+
+### RETURNING
+
+`<data change statement> RETURNING <select list>` is the query SELECT
+`<select list>` FROM a delta table of the rows the statement changed, the
+new row of each inserted or updated and the old of each deleted, with
+every rule of a delta table (RULES.md D184). It is run, prepared and sent
+over a connection as a query.
 
 ### Plug-ins
 

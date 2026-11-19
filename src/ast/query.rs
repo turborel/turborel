@@ -22,6 +22,9 @@ pub struct CursorSpecification {
     pub query: QueryExpression,
     /// The `<updatability clause>`, if written.
     pub updatability: Option<Updatability>,
+    /// \[EXTENSION\] The `<locking clause>`, if written other than as an
+    /// `<updatability clause>` (RULES.md D185).
+    pub locking: Option<super::LockingClause>,
 }
 
 /// [ISO/IEC 9075:1992 §13.1] `<updatability clause>` ::= FOR {READ ONLY |
@@ -281,7 +284,8 @@ fn named_in_from<'a>(
             }
             // Its arguments are read again when it is bound; a GQL_TABLE's
             // text is read when it is bound.
-            TableReference::Hybrid(_) | TableReference::Gql(_) => {}
+            // A delta table's statement is run before its query is bound.
+            TableReference::Hybrid(_) | TableReference::Gql(_) | TableReference::Delta(_) => {}
             // [§7.6, §10.4] Its table arguments name tables and queries.
             TableReference::Polymorphic(p) => {
                 let named = |t: &NamedTable| t.table.auth.is_none() && scope.contains(&t.table.ident.as_str());
@@ -508,6 +512,9 @@ pub enum TableReference {
     /// \[EXTENSION\] A GQL_TABLE and its correlation name, if written
     /// (graph standard §9).
     Gql(Box<super::GqlTable>),
+    /// [ISO/IEC 9075-2:2023 §7.6] A `<data change delta table>` and its
+    /// correlation name, if written (RULES.md D183).
+    Delta(Box<super::DeltaTable>),
 }
 
 impl TableReference {
