@@ -60,6 +60,10 @@ const HOOKS_DIR: &str = ".githooks";
 /// Builds and runs every test target. Not `--all-targets`, which would run
 /// the benchmarks too, unoptimized: they measure, they do not test (D6).
 const TEST_ARGS: [&str; 8] = ["test", "--workspace", "--features", SIMULATOR, "--lib", "--bins", "--tests", "--quiet"];
+/// Builds the examples, which `TEST_ARGS` leaves out, before the tests
+/// run: the plug-in tests start the example plug-in as a program of its
+/// own, from the build directory.
+const EXAMPLE_ARGS: [&str; 6] = ["build", "--workspace", "--features", SIMULATOR, "--examples", "--quiet"];
 /// The support crate's simulator, a feature of its own so the core's own
 /// tests may use the crate without it: built and linted with the
 /// workspace, its `simulate` binary among them (RULES.md D57).
@@ -156,6 +160,7 @@ fn verify(root: &Path, with_coverage: bool) -> Result<()> {
     step("claimed features (R-TRACE-3)");
     features::check(root)?;
     step("tests: unit and integration (R-TEST)");
+    command::cargo(root, &EXAMPLE_ARGS, NO_ENV)?;
     command::cargo(root, &TEST_ARGS, NO_ENV)?;
     step("doc tests (R-TEST-1)");
     let mut doc_tests = vec!["test", "--doc", "--quiet"];
