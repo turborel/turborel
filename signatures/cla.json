@@ -1,3 +1,12 @@
 {
-   "signedContributors": []
+  "signedContributors": [
+    {
+      "name": "bschaatsbergen",
+      "id": 58337159,
+      "comment_id": 7004927306,
+      "created_at": "2026-11-19T09:18:46Z",
+      "repoId": 1436223965,
+      "pullRequestNo": 29
+    }
+  ]
 }
