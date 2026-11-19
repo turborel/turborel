@@ -10,7 +10,7 @@ use super::{Candidate, geometric, predicate};
 use crate::catalog::{IndexDesc, SpatialCatalog};
 use crate::geometry::{Geometry, fixed_srid, unit_scale};
 use crate::index::{Predicate, Probe};
-use crate::logical::{Cond, Slot};
+use crate::logical::{Cond, Slot, cond_columns};
 use crate::physical::estimate::Known;
 use crate::physical::spatial::{Beside, recognized};
 use crate::physical::{Place, ProbeSlot};
@@ -82,4 +82,33 @@ fn probed(
             Some((window::within(geometry, limit, scale), slots))
         }
     }
+}
+
+/// A conjunct an index scan may decide of each entry
+/// (`Plan::IndexScan::decided`): its position among the conjuncts, the
+/// table column its call is of, whether nothing else reads that column,
+/// so an entry decided needs no row, and the conjunct once taken from
+/// the filter (`Probed::answered`).
+pub(super) struct Decision {
+    pub(super) at: usize,
+    pub(super) column: usize,
+    pub(super) unread: bool,
+    pub(super) cond: Option<Cond>,
+}
+
+/// The conjunct of `conds` the candidate `c`'s probe lets the scan decide
+/// of each entry: the one its predicate is of, a call declaring a spatial
+/// operation (D85), unread if neither the node above the filter, reading
+/// `above` of the rows, nor another conjunct reads the call's column.
+pub(super) fn decision(c: &Candidate, conds: &[Cond], above: &[usize]) -> Option<Decision> {
+    let ([Probe::Predicate { predicate, .. }], [at]) = (c.probes.as_slice(), c.used.as_slice()) else { return None };
+    predicate.function.0.spatial_operation()?;
+    let (column, _, _) = recognized(conds.get(*at)?)?.split()?;
+    let reads = |cond: &Cond| {
+        let mut columns = Vec::new();
+        cond_columns(cond, &mut columns);
+        columns.contains(&column)
+    };
+    let others = conds.iter().enumerate().any(|(other, cond)| other != *at && reads(cond));
+    Some(Decision { at: *at, column, unread: !others && !above.contains(&column), cond: None })
 }

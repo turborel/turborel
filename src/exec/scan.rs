@@ -5,6 +5,8 @@
 //! row was read of [ISO/IEC 9075-2:2023 §14.12 GR6a]. Each row is read only
 //! while the statement is not cancelled (RULES.md D44).
 
+mod decided;
+
 use std::sync::Arc;
 
 use super::entries::{Reading, entry_row};
@@ -111,12 +113,13 @@ pub(super) fn filtered_input(input: Plan, cond: &Cond, db: &Arc<State>, tx: TxId
 }
 
 /// The rows the index scan `plan` finds, in index order or reversed: of a
-/// covering scan, made of their entries where it may (`entry_row`). Never
+/// covering scan, made of their entries where it may (`entry_row`); of a
+/// scan deciding a conjunct, those it holds of (`decided.rs`). Never
 /// inlined into `execute`, whose frame every level of a plan adds to the
 /// stack (RULES.md R-CF-6), as are the helpers below.
 #[inline(never)]
 pub(super) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
-    let Plan::IndexScan { table, index, probe, reverse, covering, columns: needed, located, .. } = plan else {
+    let Plan::IndexScan { table, index, probe, reverse, covering, columns: needed, located, decided, .. } = plan else {
         return failed(broken("an index scan is not one"));
     };
     if let Probe::Xml(asked) = &probe
@@ -125,13 +128,20 @@ pub(super) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         return super::answered::answered(db, tx, (&table, &index, asked), (&needed, located));
     }
     let width = covering.then(|| db.catalog.table(&table).map(|t| t.columns.len())).flatten();
-    match probe_index(db, &table, &index, &probe, reverse) {
+    // A scan deciding its entries, reading no column, reads few rows.
+    let reads_rows = !(decided.is_some() && needed.is_empty());
+    let deciding = decided.map(|decided| decided::Deciding::new(*decided, db, tx, &table, (needed.is_empty(), located)));
+    match probe_index(db, &table, &index, &probe, (reverse, reads_rows)) {
         Ok(Found { storage, ix, entries, projection, read }) => match read.record(&*storage, tx) {
             Ok(()) => {
                 let mut reading = Reading::of(&ix, Some(&needed), projection);
                 let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
                     let row = |(key, id)| {
-                        Ok(entry_row(&*storage, (&ix, width), &mut reading, (tx, id), key)?.map(|row| read_row(located, (id, row))))
+                        let row = match &deciding {
+                            Some(deciding) => deciding.row((&*storage, &ix), &mut reading, (tx, id), &key)?,
+                            None => entry_row(&*storage, (&ix, width), &mut reading, (tx, id), key)?,
+                        };
+                        Ok(row.map(|row| read_row(located, (id, row))))
                     };
                     entry.and_then(row).transpose()
                 });
@@ -174,10 +184,17 @@ pub(in crate::exec) fn asked(ix: &KeyShape, probe: Probe) -> Condition {
 }
 
 /// What `index` finds for `probe`, in index order, or reversed, read as
-/// it is taken: callers look for a cancel as each entry is read (RULES.md
-/// D44). The rows are chosen by a condition: callers tell the table's
-/// engine (`TableStorage::read_by_condition`).
-pub(super) fn probe_index(db: &State, table: &QualifiedName, index: &str, probe: &Probe, reverse: bool) -> Result<Found> {
+/// it is taken, the index told whether the rows found are read
+/// (`Index::search_for`): callers look for a cancel as each entry is read
+/// (RULES.md D44). The rows are chosen by a condition: callers tell the
+/// table's engine (`TableStorage::read_by_condition`).
+pub(super) fn probe_index(
+    db: &State,
+    table: &QualifiedName,
+    index: &str,
+    probe: &Probe,
+    (reverse, reading): (bool, bool),
+) -> Result<Found> {
     // [EXTENSION] a global index's rows, each read from its partition
     // (RULES.md D157).
     let storage: Arc<dyn TableStorage> = if crate::catalog::is_global_index(index) {
@@ -191,7 +208,7 @@ pub(super) fn probe_index(db: &State, table: &QualifiedName, index: &str, probe:
     let index = db.index_of(index)?;
     let projection = index.key_projection();
     let read = Asked::of(&**index, &ix, probe);
-    let entries = Arc::clone(index).search(probe, order);
+    let entries = Arc::clone(index).search_for(probe, order, reading);
     Ok(Found { storage, ix, entries, projection, read })
 }
 

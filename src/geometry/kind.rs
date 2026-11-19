@@ -123,9 +123,14 @@ pub fn data_type() -> DataType {
 
 /// The geometry type of the kind of type `t`, if it is one.
 pub fn geometry_kind(t: &dyn SqlType) -> Option<Kind> {
+    is_geometry(t).then(|| Kind::named(t.name())).flatten()
+}
+
+/// Whether the type `t` is a geometry type, of this family: by the
+/// family alone, so a row at a time costs no search of the kinds' names.
+pub fn is_geometry(t: &dyn SqlType) -> bool {
     let family: &dyn Family = &FAMILY;
-    t.family().filter(|f| std::ptr::addr_eq(*f, family))?;
-    Kind::named(t.name())
+    t.family().is_some_and(|f| std::ptr::addr_eq(f, family))
 }
 
 /// The geometry type of the data type `t`, if it is one.
@@ -152,10 +157,11 @@ pub(crate) fn wrap(bytes: Vec<u8>) -> Value {
     Value::Extension(ExtensionValue { kind: GEOMETRY, bytes: bytes.into() })
 }
 
-/// The payload of a geometry value `v`.
+/// The payload of a geometry value `v`: of a value of this family, by
+/// the family alone, so a row at a time costs no search of the kinds.
 pub(crate) fn payload(v: &Value) -> Option<&[u8]> {
     let Value::Extension(e) = v else { return None };
-    geometry_kind(e.kind).map(|_| e.bytes.as_ref())
+    is_geometry(e.kind).then(|| e.bytes.as_ref())
 }
 
 pub(super) fn value(g: &Geometry) -> Value {

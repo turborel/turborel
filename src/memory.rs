@@ -8,7 +8,10 @@
 //! A plug-in is given the budget as it is registered (`Host`), so its caches
 //! draw on the same limit as the built-in ones. Each reservation says what
 //! holds it, and the budget lists those held (`reservations`), as
-//! INFORMATION_SCHEMA.MEMORY_RESERVATIONS shows them.
+//! INFORMATION_SCHEMA.MEMORY_RESERVATIONS shows them. The list is kept in
+//! shards chosen by each reservation's number, so sessions reserving at
+//! once do not wait on one lock; a reservation's size is its own atomic,
+//! read by the list without a lock.
 //!
 //! The limit is the setting MEMORY.BUDGET_BYTES's (`settings.rs`). The budget is
 //! one for the database, shared by every snapshot of its definitions, and
@@ -30,15 +33,32 @@ use crate::sync::lock_builtin;
 /// buffer pools (`db::POOL_BYTES`), as a database may hold several at once.
 pub const DEFAULT_BUDGET: usize = 1 << 30;
 
+/// \[DESIGN\] The shards of a budget's list of reservations (RULES.md D38).
+/// Consecutive reservations fall in different shards, so sessions
+/// reserving at once rarely meet on a lock; more than the threads a
+/// machine runs gains nothing.
+const SHARDS: usize = 64;
+
+/// One reservation's entry in its budget's list: what holds it, and its
+/// bytes, which the reservation updates without taking the shard's lock.
+#[derive(Debug)]
+struct Held {
+    what: Box<str>,
+    bytes: AtomicUsize,
+}
+
+/// A shard of the list: entries by their reservation's number.
+type Shard = Mutex<BTreeMap<u64, Arc<Held>>>;
+
 /// \[DESIGN\] A database's memory budget: its limit, and what is reserved
 /// of it. It may be shared between threads.
 #[derive(Debug)]
 pub struct MemoryBudget {
     limit: AtomicUsize,
     reserved: AtomicUsize,
-    /// What holds each reservation, and its bytes, by the reservation's
-    /// number.
-    held: Mutex<BTreeMap<u64, (String, usize)>>,
+    /// What holds each reservation, and its bytes, in the shard its
+    /// number picks.
+    held: [Shard; SHARDS],
     /// The number of the next reservation.
     next: AtomicU64,
 }
@@ -49,15 +69,28 @@ impl MemoryBudget {
         Arc::new(MemoryBudget {
             limit: AtomicUsize::new(limit),
             reserved: AtomicUsize::new(0),
-            held: Mutex::new(BTreeMap::new()),
+            held: std::array::from_fn(|_| Mutex::new(BTreeMap::new())),
             next: AtomicU64::new(0),
         })
     }
 
     /// What holds each reservation of it, and its bytes, in the order they
-    /// were made.
+    /// were made: the shards merged by reservation number.
     pub fn reservations(&self) -> Vec<(String, usize)> {
-        lock_builtin(&self.held).values().cloned().collect()
+        let mut listed: Vec<(u64, String, usize)> = Vec::new();
+        for shard in &self.held {
+            let entries = lock_builtin(shard);
+            listed.extend(entries.iter().map(|(&id, held)| (id, held.what.to_string(), held.bytes.load(Ordering::Relaxed))));
+        }
+        listed.sort_unstable_by_key(|&(id, _, _)| id);
+        listed.into_iter().map(|(_, what, bytes)| (what, bytes)).collect()
+    }
+
+    /// The shard reservation `id`'s entry is kept in.
+    fn shard(&self, id: u64) -> Option<&Shard> {
+        let count = u64::try_from(self.held.len()).ok()?;
+        let at = usize::try_from(id.checked_rem(count)?).ok()?;
+        self.held.get(at)
     }
 
     /// Its limit, in bytes.
@@ -83,8 +116,11 @@ impl MemoryBudget {
     pub fn reserve(self: &Arc<Self>, bytes: usize, what: &str) -> Result<Reservation> {
         self.take(bytes, what)?;
         let id = self.next.fetch_add(1, Ordering::Relaxed);
-        lock_builtin(&self.held).insert(id, (what.to_owned(), bytes));
-        Ok(Reservation { budget: Arc::clone(self), bytes, id })
+        let held = Arc::new(Held { what: what.into(), bytes: AtomicUsize::new(bytes) });
+        if let Some(shard) = self.shard(id) {
+            lock_builtin(shard).insert(id, Arc::clone(&held));
+        }
+        Ok(Reservation { budget: Arc::clone(self), bytes, held, id })
     }
 
     /// Counts `bytes` more reserved, for `what`, if they fit its limit, or
@@ -179,6 +215,8 @@ impl Host {
 pub struct Reservation {
     budget: Arc<MemoryBudget>,
     bytes: usize,
+    /// Its entry in the budget's list, shared with it.
+    held: Arc<Held>,
     /// Its number in the budget's list.
     id: u64,
 }
@@ -198,8 +236,7 @@ impl Reservation {
     /// budget's limit; it then holds what it held.
     pub fn resize(&mut self, bytes: usize) -> Result<()> {
         if let Some(more) = bytes.checked_sub(self.bytes) {
-            let what = lock_builtin(&self.budget.held).get(&self.id).map(|(what, _)| what.clone()).unwrap_or_default();
-            self.budget.take(more, &what)?;
+            self.budget.take(more, &self.held.what)?;
         } else {
             self.budget.reserved.fetch_sub(self.bytes.saturating_sub(bytes), Ordering::AcqRel);
         }
@@ -219,18 +256,19 @@ impl Reservation {
         self.held(bytes);
     }
 
-    /// Notes that it holds `bytes`.
+    /// Notes that it holds `bytes`, in its entry too, without a lock: the
+    /// list reads the entry's atomic.
     fn held(&mut self, bytes: usize) {
         self.bytes = bytes;
-        if let Some(held) = lock_builtin(&self.budget.held).get_mut(&self.id) {
-            held.1 = bytes;
-        }
+        self.held.bytes.store(bytes, Ordering::Relaxed);
     }
 }
 
 impl Drop for Reservation {
     fn drop(&mut self) {
-        lock_builtin(&self.budget.held).remove(&self.id);
+        if let Some(shard) = self.budget.shard(self.id) {
+            lock_builtin(shard).remove(&self.id);
+        }
         self.budget.reserved.fetch_sub(self.bytes, Ordering::AcqRel);
     }
 }
@@ -283,6 +321,60 @@ mod tests {
         a.resize_anyway(20);
         drop(a);
         assert_eq!(budget.reserved(), 0);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D38: the list of reservations keeps the
+    /// order they were made in though they are kept in shards, the 65th
+    /// sharing the first's shard; each shows its size after it changes;
+    /// one dropped leaves the list, the others keep their places.
+    #[test]
+    fn the_list_keeps_creation_order_across_shards() {
+        let budget = MemoryBudget::new(usize::MAX);
+        let count = SHARDS.saturating_add(2);
+        let mut held: Vec<_> = (0..count).map(|n| budget.reserve(n, &format!("r{n}")).unwrap()).collect();
+        held[1].resize(1000).unwrap();
+        held.remove(2);
+        let expected: Vec<_> = (0..count).filter(|&n| n != 2).map(|n| (format!("r{n}"), if n == 1 { 1000 } else { n })).collect();
+        assert_eq!(budget.reservations(), expected, "in creation order, at their sizes");
+        drop(held);
+        assert_eq!(budget.reservations(), Vec::<(String, usize)>::new());
+        assert_eq!(budget.reserved(), 0);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D38: a reservation refused more bytes
+    /// names what holds it in its error (SQLCODE -918), as one refused at
+    /// first does.
+    #[test]
+    fn a_refused_growth_names_its_holder() {
+        let budget = MemoryBudget::new(100);
+        let mut a = budget.reserve(10, "the frontier").unwrap();
+        let refused = a.resize(101).unwrap_err();
+        assert_eq!(refused.code, Code::Resources);
+        assert!(refused.msg.contains("the frontier needs 91 bytes"), "{}", refused.msg);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D38: sessions reserving, growing and
+    /// giving back at once are all counted, and leave nothing reserved or
+    /// listed when done.
+    #[test]
+    fn sessions_reserve_at_once() {
+        let budget = MemoryBudget::new(usize::MAX);
+        std::thread::scope(|threads| {
+            for t in 0..8_usize {
+                let budget = &budget;
+                threads.spawn(move || churn(budget, t));
+            }
+        });
+        assert_eq!(budget.reserved(), 0);
+        assert_eq!(budget.reservations(), Vec::<(String, usize)>::new());
+    }
+
+    /// Reserves, grows and gives back 500 times, as one session would.
+    fn churn(budget: &Arc<MemoryBudget>, t: usize) {
+        for n in 0..500_usize {
+            let mut r = budget.reserve(n, "work").unwrap();
+            r.resize(n.saturating_add(t)).unwrap();
+        }
     }
 
     /// Verifies: [DESIGN] RULES.md D19, D38: while its thread undoes work,

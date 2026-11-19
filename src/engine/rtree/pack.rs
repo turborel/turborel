@@ -10,7 +10,9 @@
 //! leaves of `FILL` of a node. Tiled bottom-up instead, each level's
 //! slabs would cut across the slabs below, so siblings' envelopes would
 //! overlap and later inserts would widen leaves into each other.
-//! Identical entries become one counted entry.
+//! Identical entries become one counted entry. Entries the memory budget
+//! can hold are sorted and tiled in memory (`held.rs`); the rest go
+//! through the work area's sorted spill.
 //!
 //! The packed tree is made beside the tree, unreachable until done. Then,
 //! with every writer of the tree held out by its row locks, the entries
@@ -20,6 +22,8 @@
 //! changing, as CREATE INDEX's build does, and a failed load changes
 //! nothing. Each sort gets half the work area of the one whose records it
 //! is read from, as it runs while those are still being read.
+
+mod held;
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -91,17 +95,18 @@ impl RTree {
         loaded
     }
 
+    /// Packs `entries` into this tree, empty: in memory while the budget
+    /// holds them (`held.rs`), else through the work area's sorted spill.
     fn pack(&self, entries: &mut dyn Iterator<Item = Result<(Bounds, RowId)>>, work: (&WorkAreas, Area), first: u64) -> Result<()> {
-        let mut count = 0_usize;
-        let mut encoded = entries.map(|entry| {
-            count = count.saturating_add(1);
-            entry.map(|(bounds, row)| encode(&Entry { bounds, id: row, value: 1 }, X))
-        });
-        let sorted = sorted_records(work.0, work.1, &mut encoded)?;
-        drop(encoded);
-        let mut merged = coalesced(sorted);
         let mut packer = Packer { tree: self, next: first.saturating_add(1), fill: fill(self.inner.capacity), pages: Vec::new() };
-        let built = packer.height(count).and_then(|height| packer.tile(height, &mut merged, count, work)).map(|mut root| root.pop());
+        let mut gathered = held::gather(entries, work.0.budget())?;
+        let built = if gathered.all {
+            packer.pack_held(&mut gathered.entries)
+        } else {
+            let kept = std::mem::take(&mut gathered.entries);
+            let mut rest = kept.into_iter().map(|e| Ok((e.bounds, e.id))).chain(entries);
+            packer.pack_spilled(&mut rest, work)
+        };
         match built.and_then(|root| self.publish(root, packer.next)) {
             Ok(()) => Ok(()),
             Err(error) => {
@@ -155,6 +160,26 @@ impl RTree {
 }
 
 impl Packer<'_> {
+    /// The root's entry of the tree packed of `entries` through the work
+    /// area's sorted spill, identical entries made one counted entry; none
+    /// of no entries.
+    fn pack_spilled(
+        &mut self,
+        entries: &mut dyn Iterator<Item = Result<(Bounds, RowId)>>,
+        work: (&WorkAreas, Area),
+    ) -> Result<Option<Entry>> {
+        let mut count = 0_usize;
+        let mut encoded = entries.map(|entry| {
+            count = count.saturating_add(1);
+            entry.map(|(bounds, row)| encode(&Entry { bounds, id: row, value: 1 }, X))
+        });
+        let sorted = sorted_records(work.0, work.1, &mut encoded)?;
+        drop(encoded);
+        let mut merged = coalesced(sorted);
+        let height = self.height(count)?;
+        Ok(self.tile(height, &mut merged, count, work)?.pop())
+    }
+
     /// The nodes at `level` holding `entries`, at most `count`, in X
     /// order. They are cut into vertical slabs of about the square root of
     /// the nodes, each sorted by Y and cut into runs of one node's span,
@@ -167,11 +192,7 @@ impl Packer<'_> {
         count: usize,
         work: (&WorkAreas, Area),
     ) -> Result<Vec<Entry>> {
-        let span = self.span(level);
-        let nodes = count.div_ceil(span).max(1);
-        let root = nodes.isqrt();
-        let slabs = if root.saturating_mul(root) < nodes { root.saturating_add(1) } else { root };
-        let per_slab = span.saturating_mul(nodes.div_ceil(slabs.max(1)));
+        let (span, per_slab) = self.slabbed(level, count);
         let mut made = Vec::new();
         loop {
             let mut slab = (&mut *entries).take(per_slab).map(|entry| entry.map(|e| encode(&e, Y)));
@@ -207,6 +228,18 @@ impl Packer<'_> {
     /// The entries one node at `level` spans when packed.
     fn span(&self, level: u8) -> usize {
         self.fill.saturating_pow(u32::from(level).saturating_add(1))
+    }
+
+    /// The entries one node at `level` spans, and those one slab of a
+    /// tiling of `count` entries at that level holds: about the square
+    /// root of the nodes of slabs, each of whole nodes.
+    fn slabbed(&self, level: u8, count: usize) -> (usize, usize) {
+        let span = self.span(level);
+        let nodes = count.div_ceil(span).max(1);
+        let root = nodes.isqrt();
+        let slabs = if root.saturating_mul(root) < nodes { root.saturating_add(1) } else { root };
+        let per_slab = span.saturating_mul(nodes.div_ceil(slabs.max(1)));
+        (span, per_slab)
     }
 
     /// The level of a packed root over `count` entries.

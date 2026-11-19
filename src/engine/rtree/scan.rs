@@ -17,16 +17,19 @@ use crate::storage::RowId;
 
 /// A streaming rectangle search. Memory holds one leaf's entries and a
 /// depth-first stack of at most one node's children per level. No tree
-/// latch is held between calls to `next`.
+/// latch is held between calls to `next`. Leaves are read into one
+/// buffer, and branches into another, so a search allocates only as the
+/// largest node it reads grows them.
 pub struct Scan {
     walk: Walk,
-    entries: std::vec::IntoIter<Entry>,
+    entries: Vec<Entry>,
+    at: usize,
     failed: bool,
 }
 
 impl Scan {
     pub(super) fn new(tree: RTree, bounds: Option<Bounds>) -> Scan {
-        Scan { walk: Walk::new(tree, bounds), entries: Vec::new().into_iter(), failed: false }
+        Scan { walk: Walk::new(tree, bounds), entries: Vec::new(), at: 0, failed: false }
     }
 }
 
@@ -38,14 +41,15 @@ impl Iterator for Scan {
             return None;
         }
         loop {
-            if let Some(entry) = self.entries.next() {
+            if let Some(&entry) = self.entries.get(self.at) {
+                self.at = self.at.saturating_add(1);
                 if self.walk.bounds.is_none_or(|b| b.intersects(entry.bounds)) {
                     return Some(Ok((entry.bounds, entry.id)));
                 }
             } else {
-                match self.walk.leaf() {
-                    Ok(Some((_, node))) => self.entries = node.entries.into_iter(),
-                    Ok(None) => return None,
+                match self.walk.leaf_into(&mut self.entries) {
+                    Ok(true) => self.at = 0,
+                    Ok(false) => return None,
                     Err(error) => {
                         self.failed = true;
                         return Some(Err(error));
@@ -63,6 +67,8 @@ pub(super) struct Walk {
     error: Option<SqlError>,
     visited: u64,
     limit: u64,
+    /// The branch read last, its entries' allocation kept for the next.
+    scratch: Node,
     _pin: Pin,
 }
 
@@ -70,7 +76,8 @@ impl Walk {
     pub(super) fn new(tree: RTree, bounds: Option<Bounds>) -> Walk {
         let pin = tree.pin();
         let root = tree.root();
-        let mut walk = Walk { tree, bounds, stack: Vec::new(), error: None, visited: 0, limit: 0, _pin: pin };
+        let scratch = Node::empty(0, 0);
+        let mut walk = Walk { tree, bounds, stack: Vec::new(), error: None, visited: 0, limit: 0, scratch, _pin: pin };
         match root {
             Ok(root) => walk.stack.push(root),
             Err(error) => walk.error = Some(error),
@@ -88,12 +95,35 @@ impl Walk {
     }
 
     pub(super) fn node(&mut self) -> Result<Option<(PageId, Node)>> {
+        let mut node = Node::empty(0, 0);
+        Ok(self.visit_into(&mut node)?.map(|id| (id, node)))
+    }
+
+    /// The next leaf's entries, into `entries`, reusing both buffers;
+    /// false once the walk is done.
+    pub(super) fn leaf_into(&mut self, entries: &mut Vec<Entry>) -> Result<bool> {
+        let mut node = std::mem::replace(&mut self.scratch, Node::empty(0, 0));
+        let mut found = false;
+        while self.visit_into(&mut node)?.is_some() {
+            if node.level == 0 {
+                std::mem::swap(&mut node.entries, entries);
+                found = true;
+                break;
+            }
+        }
+        self.scratch = node;
+        Ok(found)
+    }
+
+    /// Reads the next node into `node`, queueing its split sibling and the
+    /// children its bounds allow; its page, or none once the walk is done.
+    fn visit_into(&mut self, node: &mut Node) -> Result<Option<PageId>> {
         if let Some(error) = self.error.take() {
             return Err(error);
         }
         let Some(visit) = self.stack.pop() else { return Ok(None) };
         self.count_visit()?;
-        let node = self.tree.read(visit.id)?;
+        self.tree.read_into(visit.id, node)?;
         if node.level != visit.level {
             return Err(corrupt("a child is not at the level its parent describes"));
         }
@@ -109,7 +139,7 @@ impl Walk {
                 }
             }
         }
-        Ok(Some((visit.id, node)))
+        Ok(Some(visit.id))
     }
 
     /// A valid traversal visits each physical node at most once. Read the

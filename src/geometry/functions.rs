@@ -515,12 +515,14 @@ impl GeometryFunction {
     }
 
     pub(super) fn pair(self, left: &Geometry, right: &Geometry) -> Result<Value> {
-        self.pair_located(left, right, None)
+        self.pair_located(left, right, None, None)
     }
 
-    pub(super) fn pair_located(self, left: &Geometry, right: &Geometry, located: Option<bool>) -> Result<Value> {
+    /// The pair's result, given a prepared operand's intersection decision
+    /// and, for a distance, the separation it measured.
+    pub(super) fn pair_located(self, left: &Geometry, right: &Geometry, located: Option<bool>, measured: Option<f64>) -> Result<Value> {
         if matches!(self, Self::Distance) {
-            return left.distance_located(right, located).map(|distance| distance.map_or(Value::Null, Value::Approx));
+            return left.distance_located(right, located, measured).map(|distance| distance.map_or(Value::Null, Value::Approx));
         }
         let Some(intersects) = left.intersects_located(right, located)? else { return Ok(Value::Null) };
         let result = if matches!(self, Self::Disjoint) { !intersects } else { intersects };

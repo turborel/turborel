@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::filled_scan;
 use crate::error::{Code, Result, SqlError, fail};
-use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, filled_cond, filled_expr};
+use crate::logical::{AggCall, Cond, Distribution, Expr, Fetch, Limit, Truth, filled_cond, filled_expr};
 use crate::memory::MemoryBudget;
 use crate::optimizer::prepared;
 use crate::physical::Plan;
@@ -35,6 +35,17 @@ impl Filling<'_> {
         Ok(prepared::condition(filled_cond(cond, self.values)?, self.budget))
     }
 
+    /// A scan's probe filled, and the conjunct it decides, if one, filled
+    /// and prepared as a filter's would be.
+    fn scan(&self, plan: Plan) -> Result<Plan> {
+        let mut plan = filled_scan(plan, self.values)?;
+        if let Plan::IndexScan { decided: Some(decided), .. } = &mut plan {
+            let cond = std::mem::replace(&mut decided.cond, Cond::Const(Truth::True));
+            decided.cond = self.cond(cond)?;
+        }
+        Ok(plan)
+    }
+
     fn nearest(&self, mut read: Box<crate::physical::NearestRead>) -> Result<Plan> {
         read.measure = self.expr(read.measure)?;
         read.condition = read.condition.map(|c| self.cond(c)).transpose()?;
@@ -55,7 +66,7 @@ impl Filling<'_> {
                 let cond = self.cond(cond)?;
                 Ok(Plan::Filter { cond, detail, est, input: Box::new(self.plan(*input)?) })
             }
-            Plan::IndexScan { .. } => filled_scan(plan, self.values),
+            Plan::IndexScan { .. } => self.scan(plan),
             Plan::SeqScan { .. } => Ok(plan),
             Plan::Nearest(read) => self.nearest(read),
             Plan::Aggregate { groups, collations, aggs, seeds, detail, input } => {
