@@ -14,6 +14,7 @@ mod diagnostics;
 mod distinct;
 mod distinct_predicate;
 mod distribution;
+mod dml_locks;
 mod explain;
 mod expression_index;
 mod fill;
@@ -129,11 +130,10 @@ mod xquery_modules;
 mod xquery_statics;
 mod zones;
 
-pub use self::{vr::VR, waits::WAITS, zones::ZONES};
+pub use self::{kept::KEPT, vr::VR, waits::WAITS, zones::ZONES};
 use super::{Mutation, Package};
 pub use collations::COLLATIONS;
 pub use fill::FILL;
-pub use kept::KEPT;
 pub use readers::READERS;
 pub use reads::READS;
 pub use server::SERVER;
@@ -274,9 +274,9 @@ pub const MUTATIONS: [Mutation; 41] = [
         name: "lock-wait",
         package: Package::Core,
         breaks: "the lock wait: a transaction set to wait takes a table locked against it",
-        file: "src/txn/locks.rs",
+        file: "src/txn/waiting.rs",
         original: "if conflicting.is_empty() {",
-        replacement: "if conflicting.is_empty() || tx.lock_wait == LockWait::Wait {",
+        replacement: "if conflicting.is_empty() || who.lock_wait == LockWait::Wait {",
         integration: &["threads::a_deadlock_is_refused", "cancel::a_wait_for_a_lock_past_its_timeout_is_refused"],
         unit: &[],
     },
