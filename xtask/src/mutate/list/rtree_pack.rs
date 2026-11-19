@@ -1,16 +1,19 @@
 //! Mutations of R-tree packing and reclamation (RULES.md R-TEST-9, D139):
-//! leaves filled past their fill, duplicate counts lost, the writers'
-//! entries dropped by a load, sparse leaves kept, merged leaves emptied
-//! under a scan, retired pages freed while scans hold them, and split
-//! stamps repeated.
+//! leaves filled past their fill, levels tiled across each other,
+//! duplicate counts lost, the writers' entries dropped by a load, sparse
+//! leaves or branches kept, merged leaves emptied under a scan, retired
+//! pages freed while scans hold them, split stamps repeated, ancestors
+//! left wide, a root kept over one child, a retired parent changed, and a
+//! narrowed entry ignored by a writer.
 
 use super::{Mutation, Package};
 
 const PACKED: &str = "engine::rtree::tests::pack::packed_and_inserted_trees_answer_alike";
+const SHORTER: &str = "engine::rtree::tests::branches::the_tree_grows_shorter_as_it_empties";
 const PAUSED: &str = "engine::rtree::tests::reclaim::a_paused_scan_survives_reclamation";
 
 /// The mutations of packing and reclamation, in the order they run.
-pub const RTREE_PACK: [Mutation; 7] = [
+pub const RTREE_PACK: [Mutation; 14] = [
     Mutation {
         name: "rtree-pack-fills-full",
         package: Package::Core,
@@ -80,5 +83,75 @@ pub const RTREE_PACK: [Mutation; 7] = [
         replacement: "meta.next = stamp.checked_add(0)",
         integration: &[],
         unit: &["engine::rtree::tests::reclaim::split_stamps_never_repeat"],
+    },
+    Mutation {
+        name: "rtree-pack-tiles-across",
+        package: Package::Core,
+        breaks: "each node's children are cut from the whole level, so siblings overlap",
+        file: "src/engine/rtree/pack.rs",
+        original: "let per_slab = span.saturating_mul(nodes.div_ceil(slabs.max(1)));",
+        replacement: "let per_slab = span.saturating_mul(nodes.div_ceil(slabs.max(1))).saturating_add(span / 2);",
+        integration: &[],
+        unit: &[PACKED],
+    },
+    Mutation {
+        name: "rtree-sparse-branches-kept",
+        package: Package::Core,
+        breaks: "only leaves are reclaimed, so emptied branches stay and the tree never shrinks",
+        file: "src/engine/rtree/reclaim.rs",
+        original: "            changed = true;\n",
+        replacement: "            changed = true;\n            break;\n",
+        integration: &[],
+        unit: &[SHORTER],
+    },
+    Mutation {
+        name: "rtree-root-kept",
+        package: Package::Core,
+        breaks: "a root over a single child stays, so the tree keeps its height",
+        file: "src/engine/rtree/reclaim.rs",
+        original: "if changed { self.shrink_root() } else { Ok(()) }",
+        replacement: "if changed { Ok(()) } else { Ok(()) }",
+        integration: &[],
+        unit: &[SHORTER],
+    },
+    Mutation {
+        name: "rtree-ancestors-left-wide",
+        package: Package::Core,
+        breaks: "ancestors keep envelopes of what was removed, so searches read empty branches",
+        file: "src/engine/rtree/reclaim/narrow.rs",
+        original: "        entry.bounds = envelope;\n",
+        replacement: "",
+        integration: &[],
+        unit: &["engine::rtree::tests::branches::ancestors_are_narrowed_after_reclamation"],
+    },
+    Mutation {
+        name: "rtree-retired-parent-changed",
+        package: Package::Core,
+        breaks: "a parent retired by a merge above is changed, stranding a retired child in its live copy",
+        file: "src/engine/rtree/reclaim.rs",
+        original: "&& !above.pending && !above.retired;",
+        replacement: "&& !above.pending;",
+        integration: &[],
+        unit: &["engine::rtree::tests::branches::a_retired_parent_is_never_changed"],
+    },
+    Mutation {
+        name: "rtree-narrowed-entry-ignored",
+        package: Package::Core,
+        breaks: "a writer adds outside a parent entry a narrowing shrank, so searches miss the entry",
+        file: "src/engine/rtree/write.rs",
+        original: "Ok(above.entries.iter().any(|e| e.id == child.0 && e.bounds.contains(bounds)))",
+        replacement: "Ok(above.entries.iter().any(|e| e.id == child.0))",
+        integration: &[],
+        unit: &["engine::rtree::tests::branches::a_writer_sees_a_narrowed_entry"],
+    },
+    Mutation {
+        name: "rtree-branch-merge-level",
+        package: Package::Core,
+        breaks: "a merged branch is written as a leaf, so its children read as rows",
+        file: "src/engine/rtree/reclaim.rs",
+        original: "let level = retired.first().map_or(0, |h| h.node.level);",
+        replacement: "let level = retired.first().map_or(0, |h| h.node.level.min(0));",
+        integration: &[],
+        unit: &[SHORTER],
     },
 ];

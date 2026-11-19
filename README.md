@@ -34,7 +34,7 @@ behind it, and each can be replaced or added to.
   time, and reached by locators.
 - Indexes as plug-ins. B-link trees, linear hash tables and R-trees over
   points and rectangles are built in, R-trees packed when built and their
-  emptied nodes reclaimed. Any other method registers with its
+  emptied nodes reclaimed up to the root. Any other method registers with its
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match.

@@ -163,7 +163,7 @@ verification approach DO-178C expects (§8).
 | D136 | Simple feature access is views over the SQL/MM catalog and routines named without ST_ |
 | D137 | A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them |
 | D138 | Spatial joins partition and spill past their work area, and descend two R-trees together |
-| D139 | R-trees are packed by Sort-Tile-Recursive, and sparse leaves are copied out and freed by epochs |
+| D139 | R-trees are packed by Sort-Tile-Recursive from the root down, and sparse nodes are copied out and freed by epochs |
 
 ### The project
 
@@ -2611,7 +2611,7 @@ additional physical write-ahead log.
 
 Forced reinsertion and deletion condensation are excluded. They move
 entries between unrelated branches, which split stamps cannot track for
-a scan already partway through the tree. Sparse leaves are instead
+a scan already partway through the tree. Sparse nodes are instead
 copied into a new node and their pages freed by epochs (D139), so no
 entry moves under a scan. Benchmarks must include aged trees, not only
 fresh loads. The
@@ -4642,22 +4642,31 @@ outer read, so no conflict is missed. The hull covers every entry of the
 outer tree, those of versions the reader does not see too, so it may
 refuse a commit it need not.
 
-#### D139. R-trees are packed by Sort-Tile-Recursive, and sparse leaves are copied out and freed by epochs
+#### D139. R-trees are packed by Sort-Tile-Recursive from the root down, and sparse nodes are copied out and freed by epochs
 
-An `rtree` index built whole is packed bottom-up by Sort-Tile-Recursive
+An `rtree` index built whole is packed by Sort-Tile-Recursive
 (Leutenegger, Lopez and Edgington, "STR: A Simple and Efficient
-Algorithm for R-Tree Packing", ICDE 1997).
-Entries are sorted by the centre of their X extent through the sorted
-spill (`spill::sorted_records`), cut into about the square root of the
-leaf count of vertical slabs, and each slab sorted again by Y and cut
-into leaves. Each level above is tiled the same way in memory, one entry
-for each node below, as the B-link tree's load holds its upper levels
-(D31). Nodes are filled to nine tenths, as loaded B-link nodes are, so
-early inserts do not split at once. Identical entries become one counted
-entry. Each of the two sorts gets half of the work area, so the load
-stays within MEMORY.WORK_BYTES. Hilbert order was the other choice. It
-needs the data's extent before the sort, or a curve over warped float
-bits, while STR needs only the count, which the first sort yields.
+Algorithm for R-Tree Packing", ICDE 1997), applied from the root down as
+Lee and Lee's OMT loading is (CAiSE 2003). Entries are sorted by the
+centre of their X extent through the sorted spill
+(`spill::sorted_records`) and cut into about the square root of the
+root's children of vertical slabs. Each slab is sorted by Y and cut into
+runs of as many entries as one child spans, and each run is tiled the
+same way for the level below, down to the leaves. Tiling bottom-up was
+tried first. Each level's slabs then cut across the slabs below, so
+sibling branches overlapped, and inserts into an aged packed tree widened
+leaves into each other until its leaf overlap was three times an
+inserted tree's. Splits were not the cause. Tiled from the root, the
+aged packed tree overlaps less than the inserted one. Nodes are filled
+to nine tenths, as loaded B-link nodes are (D31), so early inserts do not
+split at once. Identical entries become one counted entry. Each sort
+runs while the one it reads from is still open, so it gets half that
+one's work area, and the load stays within MEMORY.WORK_BYTES. Every
+entry is sorted twice per level, which costs a tall tree's load more
+sorts than a bottom-up one, still far below inserting. Hilbert order was
+the other choice. It needs the data's extent before the sort, or a curve
+over warped float bits, while STR needs only the count, which the first
+sort yields.
 
 CREATE INDEX fills an index while writers keep it up to date (D27), so
 `Index::load_beside_writers` lets a method build beside them. The rtree
@@ -4671,19 +4680,32 @@ holds the pages is recovered by building again from the rows, as for
 the other bulk-loaded methods.
 
 A remove that leaves a leaf empty, or under the R*-tree's minimum fill
-of two fifths, reclaims it. An empty leaf is taken out of its parent. A
+of two fifths, reclaims it. An empty node is taken out of its parent. A
 sparse one is merged with the sibling whose envelope grows least, if
 both fit a loaded node. The merge copies the entries into a new page,
-marks both old leaves retired with their entries, stamps and right links
+marks both old nodes retired with their entries, stamps and right links
 untouched, and then rewrites the parent in one write. A scan that read
-the parent before sees the frozen old leaves; one that read it after
+the parent before sees the frozen old nodes; one that read it after
 sees the new node; nothing moves into a node a scan has read, so no
-entry is missed or repeated. Writers that reach a retired leaf start
-again from the root. Locks go leaves by page number, then the parent,
-bottom-up as other writers lock. Only leaves are reclaimed, and only
-when their parent keeps another child, so no branch empties and the
-tree's height never shrinks. Ancestor envelopes above the parent are
-not narrowed; they remain valid upper bounds.
+entry is missed or repeated. Writers that reach a retired node start
+again from the root, and a split posted to a retired parent looks for
+its parent again. Locks go to the two nodes by page number, then the
+parent, bottom-up as other writers lock. A node is taken out only when
+its parent keeps another child, so no branch empties by it. A parent
+left sparse is then reclaimed a level up the same way, and so on up.
+
+After each parent a reclamation changes, the entry for it in each
+ancestor is narrowed to its envelope, from the bottom up while one
+changes, so searches stop reading branches with nothing in their window.
+A narrowing holds the child's lock and then the parent's. A writer
+enlarges a parent's entry before it locks the child, so it checks once
+it holds the child that the entry still covers its bounds, and descends
+again if a narrowing came between. When the root is left with one child,
+the meta page names that child, at the stamp the root's entry remembers,
+under the root's lock and then the meta lock, and the old root is
+retired. The tree grows shorter. A scan that began at the old root reads
+it frozen. If the child had split, its stamp sends readers right, and
+its writer finds it is now the root and grows a new one.
 
 Retired pages are freed after the tree's epoch has moved twice, with the
 B-link tree's epochs (`engine/tree/reclaim.rs`, D31). Every operation,

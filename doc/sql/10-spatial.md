@@ -1301,17 +1301,23 @@ turborel: SQLCODE -900 (SQLSTATE 0A000): the rtree index method needs GEOMETRY(s
 ```
 
 CREATE INDEX over rows already in the table builds the index whole. It
-sorts their envelopes by X, cuts them into slabs, sorts each slab by Y,
-and fills each node to nine tenths, from the leaves up
-(Sort-Tile-Recursive packing). The sorts spill to temporary files past
+sorts their envelopes by X, cuts them into slabs, sorts each slab by Y
+and cuts it into one run for each node under the root, then tiles each
+run the same way, down to leaves nine tenths full (Sort-Tile-Recursive
+packing, from the root down). So the nodes under any node tile its
+region and barely overlap. The sorts spill to temporary files past
 MEMORY.WORK_BYTES, so a large build stays within it. Rows that other
 transactions write while the build runs go into the index as usual and
 are moved into the packed tree before it takes the index's place.
 Recovery rebuilds an index the same way. A delete or update that leaves
 a node of the index empty, or under two fifths full, takes it out or
-merges it with a neighbour. Its page is freed for reuse once no query
-that began before can still read it, so a query running meanwhile
-neither misses a row nor sees one twice:
+merges it with a neighbour, and a node above left sparse by that goes
+the same way. The nodes above it shrink to what is left under them, so
+searches of an emptied region stop reading them, and when the top node
+keeps a single node under it, that one takes its place and the index
+grows shorter. A freed page is reused once no query that began before
+can still read it, so a query running meanwhile neither misses a row nor
+sees one twice:
 
 ```sql
 CREATE TABLE GRID (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));

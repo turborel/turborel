@@ -11,6 +11,7 @@ use crate::disk::pager::Pager;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::memory::MemoryBudget;
 
+mod branches;
 mod damage;
 mod join;
 mod nearest;
