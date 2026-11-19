@@ -25,8 +25,8 @@ use turborel::plugin::payload::replication::{
 };
 
 use super::{Pipe, Stopping};
-use crate::transfer::{ANSWER, ASK_AGAIN_TICKS, Fetching, PIECE, REQUEST, StateTransfer, Staged, owner_name};
 use crate::ReplicaId;
+use crate::transfer::{ANSWER, ASK_AGAIN_TICKS, Fetching, PIECE, REQUEST, Staged, StateTransfer, owner_name};
 
 /// \[DESIGN\] The pieces SERVE may ask for one answer at most: a program
 /// asking more is taken as looping, and breaks the protocol.

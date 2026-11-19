@@ -12,7 +12,8 @@ use crate::plugin::payload::reader;
 #[test]
 fn replication_payloads_read_back_as_written() {
     let members = vec![(1, "a:1".to_owned()), (2, "b:2".to_owned())];
-    let h = Held { durable: true, state: Some(vec![9]), first: 4, records: vec![vec![1], vec![2, 3]], marks: vec![(5, 2, members.clone())] };
+    let h =
+        Held { durable: true, state: Some(vec![9]), first: 4, records: vec![vec![1], vec![2, 3]], marks: vec![(5, 2, members.clone())] };
     let mut out = Vec::new();
     put_held(&mut out, &h);
     put_manifest(&mut out, &Manifest { image: vec![7], files: vec![("f".to_owned(), 3, String::new())] });

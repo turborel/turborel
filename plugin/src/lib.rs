@@ -60,8 +60,6 @@ use turborel::error::SqlError;
 pub use harness::Harness;
 pub use host::HostObject;
 pub use host::replication::{Consensus, Journal, ReplicaTransport, StateTransfer};
-pub use turborel::plugin::payload::replication::consensus::{Event as ReplicaEvent, Input as ReplicaInput, Output as ReplicaOutput};
-pub use turborel::plugin::payload::replication::{Held, Manifest, Member, Served};
 pub use kinds::{
     Aggregate, Authenticator, Collation, Credentials, Diagnostics, Embedder, Exchange, Metric, PartitionStrategy, Procedure, Quantizer,
     Ranking, Scalar, Step, SystemTable, TableFunction, Target, TargetStore, Type, Upload, Who, XQueryFunction,
@@ -73,6 +71,8 @@ pub use turborel::plugin::payload::engine::Opened;
 pub use turborel::plugin::payload::index::{Near, Probed, Write};
 pub use turborel::plugin::payload::process::Told;
 pub use turborel::plugin::payload::quantizer::{Trained, Training};
+pub use turborel::plugin::payload::replication::consensus::{Event as ReplicaEvent, Input as ReplicaInput, Output as ReplicaOutput};
+pub use turborel::plugin::payload::replication::{Held, Manifest, Member, Served};
 pub use turborel::plugin::payload::types::Made;
 pub use turborel::plugin::values::{coordinates, dense_vector};
 

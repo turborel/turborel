@@ -21,8 +21,8 @@ mod epochs;
 mod ground;
 mod network;
 mod parts;
-mod plugged;
 pub mod plans;
+mod plugged;
 mod rng;
 mod world;
 

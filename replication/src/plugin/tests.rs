@@ -128,10 +128,12 @@ fn a_plugin_transfer_stages_only_checked_chunks() {
     use turborel::disk::memory::MemoryFileSystem;
     use turborel::plugin::payload::replication::{Manifest, chunk_digest, put_manifest, put_optional};
 
-    let chunk = |bytes: &[u8], digest: u64| written(|o| {
-        o.put_bytes(bytes);
-        o.put_u64(digest);
-    });
+    let chunk = |bytes: &[u8], digest: u64| {
+        written(|o| {
+            o.put_bytes(bytes);
+            o.put_u64(digest);
+        })
+    };
     let (pipe, _) = scripted(vec![
         Some(written(|o| {
             o.put_u64(4);

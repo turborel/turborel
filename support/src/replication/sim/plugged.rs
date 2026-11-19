@@ -25,8 +25,8 @@ use turborel_replication::driver::Inbox;
 use turborel_replication::plugin::{Pipe, PluginConsensus, PluginJournal, PluginTransfer, PluginTransport};
 use turborel_replication::{Consensus, Journal, Member, Recovered, ReplicaId, StateTransfer, Transport};
 
-use super::Rng;
 use super::super::group::Make;
+use super::Rng;
 use serve::{ConsensusServe, JournalServe, Serve, TransferServe, TransportServe};
 
 /// A part of a replica a plug-in may serve.
@@ -225,7 +225,13 @@ impl Plug {
     /// # Errors
     ///
     /// The bridge's, opening.
-    pub fn consensus(self: &Arc<Self>, index: usize, (members, me): (&[Member], ReplicaId), recovered: Option<Recovered>, make: &Make) -> Result<Box<dyn Consensus>> {
+    pub fn consensus(
+        self: &Arc<Self>,
+        index: usize,
+        (members, me): (&[Member], ReplicaId),
+        recovered: Option<Recovered>,
+        make: &Make,
+    ) -> Result<Box<dyn Consensus>> {
         if !self.plugging.serves(Part::Consensus) {
             return Ok(make(members, me, recovered));
         }

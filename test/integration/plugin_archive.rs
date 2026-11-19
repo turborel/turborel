@@ -25,7 +25,7 @@ fn declaring(root: &Path) -> Database {
 /// Verifies: [EXTENSION] RULES.md D274: a backup written through a host
 /// archive is restored through it before any database opens, with no
 /// extension installed nor target registered; and the program's ERROR, a
-/// backup the archive does not hold, fails only the restore, the node
+/// location it cannot open, fails only the restore, the node
 /// going on.
 #[test]
 fn a_host_archive_serves_a_backup_and_its_restore() {
@@ -44,12 +44,21 @@ fn a_host_archive_serves_a_backup_and_its_restore() {
     assert!(scratch.path("store").join("backups").is_dir(), "written through the host plug-in");
     drop((s, db));
     let restore = |location: String, dir: &Path| {
-        let options = RestoreOptions { dir: dir.to_owned(), location, backup: String::new(), archive: None, target: RecoveryTarget::End, timeline: None };
+        let options = RestoreOptions {
+            dir: dir.to_owned(),
+            location,
+            backup: String::new(),
+            archive: None,
+            target: RecoveryTarget::End,
+            timeline: None,
+        };
         let restorer = declaring(&root);
         (restorer.restore(&options), restorer)
     };
-    let (missing, restorer) = restore(format!("vault:{}", scratch.path("empty").display()), &scratch.path("nothing"));
-    assert!(missing.is_err());
+    // The program cannot make a directory under a file: its ERROR.
+    std::fs::write(scratch.path("plain"), b"a file").unwrap();
+    let (missing, restorer) = restore(format!("vault:{}", scratch.path("plain").join("under").display()), &scratch.path("nothing"));
+    assert_eq!(missing.unwrap_err().state.map(|s| s.to_string()), Some("38000".to_owned()));
     assert!(restorer.host_stopped().unwrap().is_none(), "the archive's ERROR is the call's alone");
     let dir = scratch.path("back");
     let (restored, restorer) = restore(location, &dir);

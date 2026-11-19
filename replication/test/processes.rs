@@ -29,7 +29,8 @@ fn installed(scratch: &Scratch) -> PathBuf {
     let dir = scratch.path("repl");
     std::fs::create_dir_all(&dir).unwrap();
     let exe = format!("plugin_example{}", std::env::consts::EXE_SUFFIX);
-    let manifest = format!("NAME REPL; VERSION '1.0.0'; PROTOCOL 1; EXECUTABLE '{exe}';\nHOST REPLICA TRANSPORT LOOP;\nHOST JOURNAL KEPT;\n");
+    let manifest =
+        format!("NAME REPL; VERSION '1.0.0'; PROTOCOL 1; EXECUTABLE '{exe}';\nHOST REPLICA TRANSPORT LOOP;\nHOST JOURNAL KEPT;\n");
     std::fs::write(dir.join("turborel-plugin.manifest"), manifest).unwrap();
     if std::fs::hard_link(program(), dir.join(&exe)).is_err() {
         std::fs::copy(program(), dir.join(&exe)).unwrap();

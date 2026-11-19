@@ -67,7 +67,9 @@ pub fn plugged(db: &Database, dir: &Path, (configuration, me): (&[Member], Repli
         None => None,
     };
     let transfer = match one(db, HostKind::StateTransfer)? {
-        Some(link) => Some(Arc::new(PluginTransfer::new(Box::new(Hosted::new(link, STATE_TRANSFER)?), Arc::new(OsFileSystem), staging_dir(dir)))),
+        Some(link) => {
+            Some(Arc::new(PluginTransfer::new(Box::new(Hosted::new(link, STATE_TRANSFER)?), Arc::new(OsFileSystem), staging_dir(dir))))
+        }
         None => None,
     };
     let journal = one(db, HostKind::Journal)?.map(|link| {
@@ -87,7 +89,11 @@ fn one(db: &Database, kind: HostKind) -> Result<Option<HostLink>> {
     if found.len() > 1 {
         return Err(SqlError::new(
             Code::Api,
-            format!("[EXTENSION] RULES.md D270: PLUGINS.HOST declares {} objects of HOST {}, and a node takes one", found.len(), kind.word()),
+            format!(
+                "[EXTENSION] RULES.md D270: PLUGINS.HOST declares {} objects of HOST {}, and a node takes one",
+                found.len(),
+                kind.word()
+            ),
         ));
     }
     Ok(found.pop().map(|(_, link)| link))

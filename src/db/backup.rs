@@ -38,10 +38,10 @@ use crate::backup::history::BackupEntry;
 use crate::backup::object::{Reading, Writing};
 use crate::backup::{BackupTarget, TargetProvider, Targets, scheme_of};
 use crate::error::Result;
+use crate::log::Lsn;
 use crate::plugin::bridge::archive::archive_targets;
 use crate::plugin::bridge::backup::PluginTargets;
 use crate::plugin::manifest::HostKind;
-use crate::log::Lsn;
 use crate::sync::lock_builtin;
 
 /// \[EXTENSION\] A backup under way: its entry, and its bytes copied of

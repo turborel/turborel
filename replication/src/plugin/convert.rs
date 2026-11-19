@@ -29,11 +29,8 @@ pub fn recovered_to(recovered: &Recovered, durable: bool) -> Held {
 
 /// What a journal's OPEN answered, as the crate recovers from it.
 pub fn recovered_from(held: Held) -> Recovered {
-    let marks: BTreeMap<Lsn, Mark> = held
-        .marks
-        .into_iter()
-        .map(|(at, epoch, members)| (Lsn(at), Mark { epoch, configuration: configuration_from(members) }))
-        .collect();
+    let marks: BTreeMap<Lsn, Mark> =
+        held.marks.into_iter().map(|(at, epoch, members)| (Lsn(at), Mark { epoch, configuration: configuration_from(members) })).collect();
     Recovered { state: held.state, first: Lsn(held.first), records: held.records, marks }
 }
 
@@ -105,7 +102,9 @@ pub fn output_from(output: WireOutput) -> Output {
         WireOutput::Role(Some(view)) => Output::Role(Role::Primary { view }),
         WireOutput::Role(None) => Output::Role(Role::Backup),
         WireOutput::FetchState(from) => Output::FetchState { from: ReplicaId(from) },
-        WireOutput::Mark(at, epoch, members) => Output::Mark { at: Lsn(at), mark: Mark { epoch, configuration: configuration_from(members) } },
+        WireOutput::Mark(at, epoch, members) => {
+            Output::Mark { at: Lsn(at), mark: Mark { epoch, configuration: configuration_from(members) } }
+        }
         WireOutput::Reach(members) => Output::Reach(configuration_from(members)),
         WireOutput::Epoch(epoch, members) => Output::Epoch { epoch, configuration: configuration_from(members) },
         WireOutput::Retire => Output::Retire,

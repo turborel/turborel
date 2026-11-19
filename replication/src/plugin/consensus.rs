@@ -10,9 +10,7 @@
 
 use turborel::error::{Result, SqlError};
 use turborel::plugin::bridge::leaked;
-use turborel::plugin::payload::replication::consensus::{
-    CONSENSUS_DESCRIBE, CONSENSUS_OPEN, CONSENSUS_STEP, outputs, put_input, put_open,
-};
+use turborel::plugin::payload::replication::consensus::{CONSENSUS_DESCRIBE, CONSENSUS_OPEN, CONSENSUS_STEP, outputs, put_input, put_open};
 
 use super::convert::{configuration_to, input_to, output_from, recovered_to};
 use super::{Pipe, Stopping, text};
@@ -32,7 +30,12 @@ impl PluginConsensus {
     /// # Errors
     ///
     /// The pipe's.
-    pub fn open(pipe: Box<dyn Pipe>, (configuration, me): (&[Member], ReplicaId), recovered: Option<&Recovered>, nonce: u64) -> Result<PluginConsensus> {
+    pub fn open(
+        pipe: Box<dyn Pipe>,
+        (configuration, me): (&[Member], ReplicaId),
+        recovered: Option<&Recovered>,
+        nonce: u64,
+    ) -> Result<PluginConsensus> {
         let pipe = Stopping::new(pipe, "consensus");
         let held = recovered.map(|r| recovered_to(r, true));
         let mut payload = Vec::new();

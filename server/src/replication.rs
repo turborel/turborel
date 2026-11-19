@@ -37,11 +37,11 @@ use turborel::log::{FileLogOptions, Log, Lsn};
 use turborel::threads::JobHandle;
 use turborel_replication::driver::Retention;
 use turborel_replication::driver::{Blocking, Inbox, Ticks, Watch};
-use turborel_replication::{
-    Configuration, Driver, DriverJob, GroupLogs, Joined, Make, Member, PageDifferences, ReplicaEvent, ReplicaId, StateTransfer, Vr, VrOptions,
-    nonce,
-};
 use turborel_replication::plugin::{Plugged, plugged};
+use turborel_replication::{
+    Configuration, Driver, DriverJob, GroupLogs, Joined, Make, Member, PageDifferences, ReplicaEvent, ReplicaId, StateTransfer, Vr,
+    VrOptions, nonce,
+};
 
 use self::net::Security;
 pub use self::net::{TcpTransport, members_of};

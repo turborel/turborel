@@ -77,7 +77,6 @@ enum Action {
     Setting,
 }
 
-
 /// Each replica's file system, kept across its crashes, its database
 /// while it is up, and its session with a transaction open, serving, with
 /// the view it was opened in: a handle, shared with the run's ground.
@@ -584,7 +583,12 @@ pub fn simulate_databases(seed: u64, plan: &Plan, make: &Make) -> Result<Databas
 /// # Errors
 ///
 /// The first violation found, naming the seed.
-pub fn simulate_databases_plugged(seed: u64, plan: &Plan, make: &Make, plugging: Option<super::Plugging>) -> Result<DatabaseReport, Violation> {
+pub fn simulate_databases_plugged(
+    seed: u64,
+    plan: &Plan,
+    make: &Make,
+    plugging: Option<super::Plugging>,
+) -> Result<DatabaseReport, Violation> {
     let mut replicas = Replicas::plugged(seed, plan, make, plugging.map(|p| Plug::new(p, seed)))?;
     replicas.run()?;
     replicas.compare()

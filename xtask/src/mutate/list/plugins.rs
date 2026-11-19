@@ -8,6 +8,7 @@
 use super::{Mutation, Package};
 
 pub(super) mod kinds;
+pub(super) mod replication;
 pub(super) mod sdk;
 
 /// The mutations of extensions and their processes.
