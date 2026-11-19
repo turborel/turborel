@@ -48,6 +48,8 @@ fn the_policy_changes_which_frame_is_evicted() {
     assert_eq!(lru.victim(&|_| true), Some(2), "page 1 kept");
     assert_eq!(lru.victim(&|f| f == 1), Some(1), "a kept page is taken when it alone is evictable");
     assert_eq!(lru.victim(&|_| false), None);
+    let flat = Policy { recency: 0, ranges: vec![Range { file: 0, first: 0, last: 0, weight: 0 }], ..Policy::default() };
+    assert_eq!(filled(4, &flat).victim(&|_| true), Some(1), "a kept page loses a tie of scores");
 }
 
 /// Verifies: [DESIGN] RULES.md D284: HISTORY 2 counts a page's age from
