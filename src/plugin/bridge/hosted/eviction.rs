@@ -58,7 +58,8 @@ impl PluginEviction {
         Arc::new(move |frames| {
             let evictor = Arc::new(Weighted::new(frames, Arc::clone(&me.table)));
             crate::sync::lock_builtin(&me.made).push(Arc::downgrade(&evictor));
-            Box::new(evictor) as Box<dyn Eviction>
+            let made: Box<dyn Eviction> = Box::new(evictor);
+            made
         })
     }
 
@@ -88,10 +89,12 @@ impl PluginEviction {
         let mut payload = Vec::new();
         put_report(&mut payload, &report);
         let got = self.link.call(EVICTION_ADVISE, payload)?;
-        let policy = answer(&got, advised).map_err(|e| self.link.stopped_by(e))?;
+        let policy = answer(&got, advised).map_err(|e| self.link.stopped_by(&e))?;
         if let Some(policy) = policy {
             self.table.push(&policy);
-            alive.iter().for_each(|e| e.reweigh());
+            for evictor in &alive {
+                evictor.reweigh();
+            }
         }
         Ok(())
     }

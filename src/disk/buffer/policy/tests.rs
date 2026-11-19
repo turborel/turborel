@@ -89,7 +89,7 @@ fn reports_and_the_table() {
     assert_eq!((first.frames, first.sampled.len(), first.evicted.clone()), (4, 2, vec![(0, 0)]));
     assert_eq!(first.sampled[0].page, 7);
     let second = e.report(2);
-    assert!(second.evicted.is_empty());
+    assert_eq!(second.evicted, []);
     assert_eq!(second.sampled.iter().map(|s| s.page).collect::<Vec<_>>(), [2, 3]);
     let table = Table::default();
     let many = Policy { ranges: vec![Range { file: 0, first: 0, last: 0, weight: 0 }; super::RANGES + 1], ..Policy::default() };

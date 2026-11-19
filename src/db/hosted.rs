@@ -9,6 +9,7 @@ mod register;
 
 use super::Database;
 use super::state::State;
+use crate::disk::buffer::MakeEviction;
 use crate::disk::io::{FileSystem, OsFileSystem};
 use crate::error::Result;
 use crate::plugin::bridge::hosted::files::PluginFiles;
@@ -36,7 +37,7 @@ impl Database {
                 continue;
             }
             let plugin = HostPlugin::start(&spec, &host, &host.stop)?;
-            self.change(|st| st.declare_manifest_settings(&plugin.manifest, &plugin.pool, true))?;
+            self.change(|state| state.declare_manifest_settings(&plugin.manifest, &plugin.pool, true))?;
             host.add_hosted(Arc::clone(&plugin));
             for d in &plugin.manifest.hosted {
                 self.register_hosted(d, plugin.link(d))?;
@@ -118,6 +119,19 @@ impl Database {
     /// SQLCODE -910 if the database is closed.
     pub fn on_host_stop(&self, tell: crate::plugin::hosted::Told) -> Result<()> {
         self.snapshot_unstopped()?.extension_host.stop.on_stop(tell);
+        Ok(())
+    }
+
+    /// \[EXTENSION\] The pool of the data file made after this evicts by
+    /// what `make` makes for its frames, in place of CLOCK: set before
+    /// the database is opened from its files, as a host plug-in's BUFFER
+    /// EVICTION is (RULES.md D283). A pool made already keeps its own.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if the database is closed.
+    pub fn set_eviction(&self, make: MakeEviction) -> Result<()> {
+        self.snapshot()?.extension_host.eviction.set(make);
         Ok(())
     }
 }

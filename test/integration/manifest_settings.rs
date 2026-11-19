@@ -66,7 +66,7 @@ fn an_extensions_settings_are_set_and_told_by_scope() {
     s.commit().unwrap();
     s.run("SET DATABASE EXAMPLE.MODE = 'fast'").unwrap();
     assert_eq!((told(&s, "EXAMPLE.MODE"), told(&other, "EXAMPLE.MODE")), ("FAST".to_owned(), "FAST".to_owned()));
-    assert!(!told(&s, "SESSION.TIME_ZONE").is_empty());
+    assert_ne!(told(&s, "SESSION.TIME_ZONE"), "NULL");
     assert_eq!(told(&s, "STATEMENT.TIMEOUT_MS"), "NULL");
     let shown = "SELECT SETTING_NAME, SETTING_VALUE, VALUE_SOURCE, IS_SESSION_SETTABLE FROM INFORMATION_SCHEMA.SETTINGS \
                  WHERE SETTING_NAME LIKE 'EXAMPLE.%' ORDER BY 1";
@@ -119,7 +119,7 @@ fn update_and_drop_change_an_extensions_settings() {
     assert_eq!((told(&s, "EXAMPLE.DEPTH"), told(&s, "EXAMPLE.MODE")), ("9".to_owned(), "NULL".to_owned()));
     s.run("DROP EXTENSION example").unwrap();
     s.commit().unwrap();
-    assert!(rows(&s, names).unwrap().is_empty());
+    assert_eq!(rows(&s, names).unwrap().len(), 0);
     assert_eq!(exec(&s, "SET EXAMPLE.DEPTH = 4"), Err(Code::SyntaxRule));
     s.run("CREATE EXTENSION example").unwrap();
     s.commit().unwrap();

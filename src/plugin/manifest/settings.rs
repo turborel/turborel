@@ -101,7 +101,17 @@ pub struct SettingDeclared {
 impl SettingDeclared {
     /// A declaration of `name` and `kind`, of nothing more yet.
     pub fn new(name: String, kind: SettingType) -> SettingDeclared {
-        SettingDeclared { name, kind, min: None, max: None, choices: Vec::new(), default: None, scope: None, description: None, text: String::new() }
+        SettingDeclared {
+            name,
+            kind,
+            min: None,
+            max: None,
+            choices: Vec::new(),
+            default: None,
+            scope: None,
+            description: None,
+            text: String::new(),
+        }
     }
 
     /// Its name under its extension `extension`'s: `EXTENSION.NAME`.
@@ -162,7 +172,10 @@ impl SettingDeclared {
             SettingType::Number => {
                 let min = self.min.as_ref().map_or(Some(f64::MIN), Value::as_f64).ok_or("MIN is no number")?;
                 let max = self.max.as_ref().map_or(Some(f64::MAX), Value::as_f64).ok_or("MAX is no number")?;
-                if min > max { return Err("MIN is greater than MAX".to_owned()) } else { Kind::Number { min, max } }
+                if min > max {
+                    return Err("MIN is greater than MAX".to_owned());
+                }
+                Kind::Number { min, max }
             }
             SettingType::Text => {
                 if self.min.is_some() {

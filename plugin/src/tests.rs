@@ -302,7 +302,9 @@ fn an_advisor_reads_its_settings_and_answers_a_policy() {
     let mut h = Harness::new(Plugin::new("1.0.0").host_eviction("K", Keeping));
     let mut payload = Vec::new();
     put_report(&mut payload, &Report { interval: 9, frames: 4, ..Report::default() });
-    let asked = |h: &mut Harness| answer(&mut turborel::plugin::payload::reader(&h.call(38, EVICTION_ADVISE, "K", payload.clone()).unwrap())).unwrap();
+    let asked = |harness: &mut Harness| {
+        answer(&mut turborel::plugin::payload::reader(&harness.call(38, EVICTION_ADVISE, "K", payload.clone()).unwrap())).unwrap()
+    };
     assert_eq!(asked(&mut h), None);
     h.settings(&[("e.keep", Value::Exact(Decimal::new(3, 0))), ("E.MODE", Value::Char("ON".into()))]);
     let policy = asked(&mut h).unwrap();

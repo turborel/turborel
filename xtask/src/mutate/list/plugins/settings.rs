@@ -23,7 +23,7 @@ pub const SETTINGS_PLUGINS: [Mutation; 12] = [
         package: Package::Core,
         breaks: "a setting a plug-in's new manifest no longer declares lives on",
         file: "src/settings/extension.rs",
-        original: "        gone.iter().for_each(|n| self.retire(n));\n        Ok(())",
+        original: "        for name in &gone {\n            self.retire(name);\n        }\n        Ok(())",
         replacement: "        drop(gone);\n        Ok(())",
         integration: &["manifest_settings::update_and_drop_change_an_extensions_settings"],
         unit: &["settings::extension::tests::owned_settings_are_redeclared_and_retired"],

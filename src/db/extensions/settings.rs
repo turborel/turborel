@@ -8,8 +8,8 @@
 use super::super::State;
 use crate::error::Result;
 use crate::plugin::Manifest;
-use crate::plugin::pool::Pool;
 use crate::plugin::errors::invalid_manifest;
+use crate::plugin::pool::Pool;
 use crate::settings::Owner;
 
 impl State {

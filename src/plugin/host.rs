@@ -33,6 +33,9 @@ pub struct Host {
     /// The node's stop, which a host plug-in's failure trips (RULES.md D229).
     pub stop: Arc<Stop>,
     hosted: RwLock<Vec<Arc<HostPlugin>>>,
+    /// What the data file's pool made next evicts by: CLOCK, or a host
+    /// plug-in's BUFFER EVICTION's evictor (RULES.md D283).
+    pub eviction: crate::disk::buffer::EvictionSlot,
 }
 
 impl std::fmt::Debug for Host {
@@ -52,6 +55,7 @@ impl Host {
             trust: RwLock::new(Trust::default()),
             stop: Stop::new(),
             hosted: RwLock::new(Vec::new()),
+            eviction: crate::disk::buffer::EvictionSlot::default(),
         }
     }
 

@@ -278,7 +278,7 @@ impl HostLink {
 
     /// `e`, of an answer of the program that is none its kind takes, the
     /// node stopped for it, as any failed call stops it.
-    pub fn stopped_by(&self, e: SqlError) -> SqlError {
+    pub fn stopped_by(&self, e: &SqlError) -> SqlError {
         let why = format!("{}.{}: {}", self.plugin.manifest.name, self.object, e.msg);
         self.plugin.stop.stop(&why);
         host_failed(&self.plugin.manifest.name, &e.msg)

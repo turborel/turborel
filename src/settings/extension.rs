@@ -74,14 +74,18 @@ impl Settings {
             Arc::make_mut(&mut self.owners).insert(name.clone(), owner.clone());
         }
         let gone: Vec<String> = self.owners.iter().filter(|(n, o)| *o == owner && !names.contains(n)).map(|(n, _)| n.clone()).collect();
-        gone.iter().for_each(|n| self.retire(n));
+        for name in &gone {
+            self.retire(name);
+        }
         Ok(())
     }
 
     /// Retires every setting `plugin` declared, as it is dropped.
     pub(crate) fn retire_owned(&mut self, plugin: &str) {
         let gone: Vec<String> = self.owners.iter().filter(|(_, o)| o.plugin.eq_ignore_ascii_case(plugin)).map(|(n, _)| n.clone()).collect();
-        gone.iter().for_each(|n| self.retire(n));
+        for name in &gone {
+            self.retire(name);
+        }
     }
 
     /// The setting `name` retired: unnamed, its value gone.
@@ -120,7 +124,15 @@ mod tests {
     /// A database's whole-number setting `name` of `max`.
     fn integer(name: &str, max: i128) -> Definition {
         let kind = Kind::Integer { min: 0, max };
-        Definition { name: name.into(), kind, default: Value::Exact(Decimal::new(1, 0)), per_session: false, node: false, effect: Effect::Statement, doc: String::new() }
+        Definition {
+            name: name.into(),
+            kind,
+            default: Value::Exact(Decimal::new(1, 0)),
+            per_session: false,
+            node: false,
+            effect: Effect::Statement,
+            doc: String::new(),
+        }
     }
 
     /// Verifies: [EXTENSION] RULES.md D280: a plug-in's settings declared

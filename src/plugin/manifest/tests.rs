@@ -107,11 +107,14 @@ fn a_manifests_settings_read_back() {
     assert_eq!(m.reads_settings, ["SESSION.TIME_ZONE", "STATEMENT.TIMEOUT_MS"]);
     let defined: Vec<crate::settings::Definition> = m.settings.iter().map(|d| d.definition(&m.name, false).unwrap()).collect();
     let depth = &defined[0];
-    assert_eq!((depth.name.as_str(), &depth.kind, depth.per_session, depth.node), ("M.DEPTH", &Kind::Integer { min: 1, max: 10 }, true, false));
+    assert_eq!(
+        (depth.name.as_str(), &depth.kind, depth.per_session, depth.node),
+        ("M.DEPTH", &Kind::Integer { min: 1, max: 10 }, true, false)
+    );
     assert_eq!((depth.default.to_string(), depth.doc.as_str()), ("3".to_owned(), "How deep."));
     assert_eq!((defined[1].kind.described(), defined[1].default.to_string()), ("ONE OF FAST, SAFE".to_owned(), "FAST".to_owned()));
     assert_eq!((defined[1].per_session, defined[1].node), (false, false));
-    assert_eq!((defined[2].default.as_f64(), defined[3].default.to_string()), (Some(0.0), "OFF".to_owned()));
+    assert_eq!((defined[2].default.as_f64(), defined[3].default.to_string()), (Some(0.0_f64), "OFF".to_owned()));
     assert_eq!((&defined[4].kind, defined[5].node), (&Kind::Text { max: 8 }, true));
     assert!(m.settings[0].text.starts_with("SETTING DEPTH TYPE INTEGER"), "{}", m.settings[0].text);
     let host = Manifest::parse("NAME h; PROTOCOL 1; EXECUTABLE 'h'; HOST CLOCK C; SETTING EVERY TYPE INTEGER;").unwrap();

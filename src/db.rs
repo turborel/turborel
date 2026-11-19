@@ -85,7 +85,6 @@ mod direct;
 mod domains;
 mod drop;
 mod embedding;
-mod eviction;
 pub(crate) use embedding::model_named;
 pub(crate) mod dynamic;
 mod execute;
@@ -344,9 +343,7 @@ struct Call<'a> {
     _window: Window<'a>,
     /// The statement it runs, timed, to tell if it is slow (`db/slow.rs`).
     timed: Option<slow::Timed<&'a str>>,
-    /// While it runs, the settings its calls of extensions' programs are
-    /// told: its snapshot's, its session's own over the database's
-    /// (RULES.md D282).
+    /// The settings its calls of plug-ins are told, its session's (D282).
     _settings: Option<crate::plugin::settings::Calling>,
 }
 

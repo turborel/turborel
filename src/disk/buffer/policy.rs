@@ -238,7 +238,8 @@ impl Weighted {
             .filter_map(|s| {
                 let file = s.file.load(Ordering::Relaxed).checked_sub(1)?;
                 let age = now.saturating_sub(s.last.load(Ordering::Relaxed));
-                let (page, uses, weight) = (s.page.load(Ordering::Relaxed), s.uses.load(Ordering::Relaxed), s.weight.load(Ordering::Relaxed));
+                let (page, uses, weight) =
+                    (s.page.load(Ordering::Relaxed), s.uses.load(Ordering::Relaxed), s.weight.load(Ordering::Relaxed));
                 Some(Sampled { file, page, uses, age, weight })
             })
             .collect();
@@ -257,7 +258,7 @@ impl Weighted {
     }
 
     /// The score of `slot`, and whether its weight hints to keep it.
-    fn score(&self, slot: &Slot, (now, policy): (u64, &Scoring)) -> (bool, u64) {
+    fn score(slot: &Slot, (now, policy): (u64, &Scoring)) -> (bool, u64) {
         let stamp = if policy.history == 2 { slot.before.load(Ordering::Relaxed) } else { slot.last.load(Ordering::Relaxed) };
         let age = now.saturating_sub(stamp);
         let uses = slot.uses.load(Ordering::Relaxed);
@@ -328,7 +329,7 @@ impl Eviction for Arc<Weighted> {
         let mut best: Option<(bool, u64, usize)> = None;
         for frame in (0..looked).filter_map(|i| start.wrapping_add(i).checked_rem(frames)) {
             let Some(slot) = self.slots.get(frame).filter(|_| evictable(frame)) else { continue };
-            let (keep, score) = self.score(slot, (now, &scoring));
+            let (keep, score) = Weighted::score(slot, (now, &scoring));
             let better = best.is_none_or(|(k, s, _)| (k && !keep) || (k == keep && score > s));
             if better {
                 best = Some((keep, score, frame));
@@ -362,7 +363,8 @@ impl EvictionSlot {
     /// The evictor of a pool of `frames` frames.
     pub fn make(&self, frames: usize) -> Box<dyn Eviction> {
         let held = self.0.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
-        held.map_or_else(|| Box::new(super::Clock::new(frames)) as Box<dyn Eviction>, |make| make(frames))
+        let Some(make) = held else { return Box::new(super::Clock::new(frames)) };
+        make(frames)
     }
 }
 
