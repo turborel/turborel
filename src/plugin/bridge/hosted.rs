@@ -3,6 +3,7 @@
 //! A failed call stops the node (`plugin::hosted`), so a bridge that must
 //! answer, a checksum or the time, answers what does no harm after it.
 
+pub mod eviction;
 pub mod files;
 pub mod page;
 pub mod spill;

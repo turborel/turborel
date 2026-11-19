@@ -529,8 +529,9 @@ impl Database {
             Pagers::Open => Pager::open(fs, &path, &place.layout.formats.hashes, &place.layout.formats.encodings)?.0,
         };
         let st = self.snapshot()?;
-        let pool =
-            Arc::new(BufferPool::in_budget(&st.memory, (place.layout.pool_bytes, pager.page_size()), "the buffer pool of the data file")?);
+        let sizes = (place.layout.pool_bytes, pager.page_size());
+        let made = BufferPool::in_budget_evicting(&st.memory, sizes, "the buffer pool of the data file", &|n| st.eviction.make(n));
+        let pool = Arc::new(made?);
         st.ahead.serve(&pool);
         let file = pool.add_pager(Arc::new(pager));
         let _ = place.data.set((Arc::clone(&pool), file));

@@ -167,6 +167,9 @@ pub struct State {
     /// What reads ahead for its pools on its read-ahead job, shared by
     /// every snapshot (`disk/buffer/ahead.rs`, RULES.md D30).
     pub(crate) ahead: Arc<crate::disk::buffer::AheadReader>,
+    /// What its data file's pool evicts by, shared by every snapshot
+    /// (`db/eviction.rs`, RULES.md D283).
+    pub(crate) eviction: Arc<crate::disk::buffer::EvictionSlot>,
     /// The sweep writing its files again in the formats its settings name
     /// (`db/rekey.rs`).
     pub(crate) rekey: Arc<super::rekey::Rekey>,

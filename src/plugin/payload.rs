@@ -52,6 +52,7 @@
 
 pub mod collation;
 pub mod engine;
+pub mod eviction;
 pub mod hosted;
 pub mod index;
 pub mod process;

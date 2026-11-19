@@ -1,6 +1,7 @@
 //! \[DESIGN\] What the host kinds' calls carry (RULES.md D229, D246 to
 //! D254): each operation's code and its payloads. Replication's kinds
-//! and the archive's are in `replication.rs`.
+//! and the archive's are in `replication.rs`, buffer eviction's in
+//! `eviction.rs`.
 //!
 //! ```text
 //! kind                    op              CALL payload                               RESULT payload

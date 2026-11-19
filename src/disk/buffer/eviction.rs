@@ -1,8 +1,11 @@
 //! \[DESIGN\] Eviction policies for the buffer pool (RULES.md D30): which
 //! frame gives up its page when a page not in the pool is wanted. The
-//! policy is an extension point; CLOCK is built in.
+//! policy is an extension point; CLOCK is built in, and a policy pushed
+//! from outside is read by `policy.rs`'s evictor.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use super::Key;
 
 /// \[DESIGN\] An eviction policy: an extension point (RULES.md D30).
 ///
@@ -27,6 +30,10 @@ pub trait Eviction: Send + Sync {
     fn accessed(&self, frame: usize);
     /// A frame to evict, among those `evictable` accepts.
     fn victim(&self, evictable: &dyn Fn(usize) -> bool) -> Option<usize>;
+    /// Frame `frame` was given the page `key`, as it was read in, no lock
+    /// held: what a policy weighing pages by their file needs (RULES.md
+    /// D283). Default: nothing.
+    fn placed(&self, _frame: usize, _key: Key) {}
 }
 
 /// \[DESIGN\] CLOCK (Corbató, 1968): an approximation of least recently

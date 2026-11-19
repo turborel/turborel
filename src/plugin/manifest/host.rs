@@ -44,11 +44,13 @@ pub enum HostKind {
     Consensus,
     /// Where the log is archived and backups kept, beyond a target (D229).
     Archive,
+    /// The buffer pool's eviction policy, pushed to the pool (D283).
+    BufferEviction,
 }
 
 impl HostKind {
     /// Every kind, in the order of their codes.
-    pub const ALL: [HostKind; 17] = [
+    pub const ALL: [HostKind; 18] = [
         HostKind::Encoding,
         HostKind::HashFunction,
         HostKind::Clock,
@@ -66,6 +68,7 @@ impl HostKind {
         HostKind::StateTransfer,
         HostKind::Consensus,
         HostKind::Archive,
+        HostKind::BufferEviction,
     ];
 
     /// The kind's code in protocol 1, after the extensions' 1 to 19.
@@ -88,6 +91,7 @@ impl HostKind {
             HostKind::StateTransfer => 34,
             HostKind::Consensus => 35,
             HostKind::Archive => 36,
+            HostKind::BufferEviction => 37,
         }
     }
 
@@ -116,6 +120,7 @@ impl HostKind {
             HostKind::StateTransfer => &["STATE", "TRANSFER"],
             HostKind::Consensus => &["CONSENSUS"],
             HostKind::Archive => &["ARCHIVE"],
+            HostKind::BufferEviction => &["BUFFER", "EVICTION"],
         }
     }
 

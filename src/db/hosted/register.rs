@@ -1,7 +1,8 @@
 //! \[EXTENSION\] Each host plug-in's object registered as the host would
 //! register its own (RULES.md D229): an encoding and a checksum by their
 //! ids, the clock and its ticking job, the log's and the catalog's
-//! storage, spill, package cryptography, served connections and jobs,
+//! storage, spill, package cryptography, served connections, jobs and
+//! the buffer pool's eviction policy and its reporting job,
 //! each through the setter its trait has. A keyring is taken by the
 //! encryption that uses it, a file system by the opening of the files, a
 //! listener by the server, and replication's kinds and the archive's by
@@ -12,6 +13,7 @@ use std::time::Duration;
 
 use crate::db::Database;
 use crate::error::Result;
+use crate::plugin::bridge::hosted::eviction::PluginEviction;
 use crate::plugin::bridge::hosted::page::{PluginEncoding, PluginHash};
 use crate::plugin::bridge::hosted::spill::PluginSpill;
 use crate::plugin::bridge::hosted::store::{PluginCatalogStorage, PluginLogStorage};
@@ -32,6 +34,14 @@ impl Database {
                 self.set_clock(read_by)?;
                 let ticking = self.add_job(clock.ticker())?;
                 self.request_job(ticking, Duration::ZERO);
+                Ok(())
+            }
+            HostKind::BufferEviction => {
+                let eviction = PluginEviction::new(d, link)?;
+                self.set_eviction(eviction.maker())?;
+                let advising = self.add_job(eviction.advisor())?;
+                // The first policy was asked as it was registered.
+                self.request_job(advising, eviction.every());
                 Ok(())
             }
             HostKind::PackageCrypto => self.set_package_crypto(Arc::new(PluginCrypto::new(link))),
@@ -58,3 +68,4 @@ impl Database {
         }
     }
 }
+

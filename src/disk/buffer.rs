@@ -29,6 +29,7 @@
 mod ahead;
 mod eviction;
 mod hits;
+mod policy;
 mod pool;
 mod tally;
 
@@ -39,6 +40,8 @@ use std::time::{Duration, Instant};
 
 pub use ahead::{Ahead, AheadReader};
 pub use eviction::{Clock, Eviction};
+pub use policy::{DEFAULT_SAMPLE, EVICTED_KEPT, NEUTRAL, Policy, RANGES, Range, Report, Sampled, Table, Weighted};
+pub use policy::{EvictionSlot, MakeEviction};
 pub use pool::READ_AHEAD_PAGES;
 pub use tally::Tally;
 

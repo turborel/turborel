@@ -37,6 +37,7 @@
 //! | `VectorMetric`, `Quantizer` | COSINE and others; PQ, SQ8, BQ | VECTOR_DISTANCE, vector indexes (RULES.md D93) |
 //! | `PartitionStrategy` | RANGE, LIST, HASH     | partitioned tables (RULES.md D154) |
 //! | `BackupTarget`, `TargetProvider` | a directory, memory | backups and the archive (RULES.md D166) |
+//! | `Eviction`          | CLOCK                 | the data file's buffer pool (`set_eviction`, RULES.md D283) |
 //!
 //! Plus the settings (`settings.rs`, RULES.md D36), plug-ins' too, per database and session.
 //!
@@ -84,6 +85,7 @@ mod direct;
 mod domains;
 mod drop;
 mod embedding;
+mod eviction;
 pub(crate) use embedding::model_named;
 pub(crate) mod dynamic;
 mod execute;

@@ -65,6 +65,7 @@ impl State {
             jobs: Arc::default(),
             graph_runs: Arc::default(),
             ahead: crate::disk::buffer::AheadReader::new(),
+            eviction: Arc::default(),
             rekey: Arc::default(),
             files: Arc::default(),
             plugins: Arc::new(crate::files::plugins::PluginFiles::in_memory(Arc::clone(memory))),

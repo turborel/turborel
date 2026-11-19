@@ -337,3 +337,31 @@ impl Eviction for Arc<Weighted> {
         best.map(|(_, _, frame)| frame)
     }
 }
+
+/// What makes the evictor of a pool of so many frames.
+pub type MakeEviction = Arc<dyn Fn(usize) -> Box<dyn Eviction> + Send + Sync>;
+
+/// \[DESIGN\] What a database's pools are made to evict by (RULES.md
+/// D283): CLOCK, unless a host plug-in's policy was set before the pool
+/// is made.
+#[derive(Default)]
+pub struct EvictionSlot(std::sync::RwLock<Option<MakeEviction>>);
+
+impl std::fmt::Debug for EvictionSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EvictionSlot").finish_non_exhaustive()
+    }
+}
+
+impl EvictionSlot {
+    /// Pools made after evict by what `make` makes.
+    pub fn set(&self, make: MakeEviction) {
+        *self.0.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(make);
+    }
+
+    /// The evictor of a pool of `frames` frames.
+    pub fn make(&self, frames: usize) -> Box<dyn Eviction> {
+        let held = self.0.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        held.map_or_else(|| Box::new(super::Clock::new(frames)) as Box<dyn Eviction>, |make| make(frames))
+    }
+}
