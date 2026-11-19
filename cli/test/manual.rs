@@ -11,6 +11,7 @@ mod extensions;
 mod hybrid;
 mod information;
 mod partitioning;
+mod uuids;
 mod vector;
 mod xml;
 

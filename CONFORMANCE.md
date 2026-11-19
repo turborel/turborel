@@ -3258,6 +3258,17 @@ Plug-ins register these with `Database::register_type` (RULES.md D53).
 | Durability | Logged, checkpointed and recovered. A database whose files hold one is not opened without it. |
 | Clients | Sent as its type's name, its text and its bytes, and shown as its text by a client without the plug-in. |
 
+### UUID
+
+UUID, of RFC 9562, is built in, so it needs no plug-in, and is otherwise
+a type of the table above. See [Data Types](doc/sql/02-data-types.md#uuids)
+and [UUID_V4 and UUID_V7](doc/sql/04-expressions.md#uuid_v4-and-uuid_v7).
+
+| Facility | RULES.md | What turborel does |
+|---|---|---|
+| UUID | D180, D181, D184 | A type of 16 octets, `value/types/uuid.rs`. Its literal is `UUID '...'`. Text is read hyphenated, braced, in either case or as 32 bare digits, and written hyphenated in lower case. A binary string of 16 octets casts to it and from it. Compared, ordered, grouped and hashed by its octets, so it takes a primary key, a unique constraint and a btree or hash index. COLUMNS gives its DATA_TYPE as UUID with no length or precision. The native protocol carries it as tag 27. |
+| UUID_V4(), UUID_V7() | D182, D183 | A random UUID of version 4, and a time-ordered one of version 7 from the database's clock, `value/types/uuid/generate.rs`. A version 7 UUID never sorts before the last one its database made. |
+
 ### XMLMAP
 
 A value expression mapping a table, a schema or the catalog to XML and

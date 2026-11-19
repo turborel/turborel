@@ -1,6 +1,8 @@
 //! Each area's mutations, in the order they run, after the core's.
 
 mod budget;
+// UUID's mutations, here as `list.rs` holds no more modules.
+mod uuid;
 
 use super::Mutation;
 
@@ -138,8 +140,8 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, external plug-ins' and
-/// packages', partitioning's, replication's and the server's.
-fn last() -> [&'static [Mutation]; 44] {
+/// packages', partitioning's, UUID's, replication's and the server's.
+fn last() -> [&'static [Mutation]; 45] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -179,6 +181,7 @@ fn last() -> [&'static [Mutation]; 44] {
         &super::plugins::PACKAGES,
         &super::simple_features::SIMPLE_FEATURES,
         &super::partitioning::PARTITIONING,
+        &uuid::UUID,
         &super::FILL,
         &super::ZONES,
         &super::STATS,

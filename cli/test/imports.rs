@@ -112,3 +112,27 @@ fn an_import_needs_a_connection_and_its_output() {
     assert!(run.err.starts_with(&said), "{}", run.err);
     assert!(run.err.ends_with("; 0 rows committed, 0 rolled back\n"), "{}", run.err);
 }
+
+/// Verifies: [EXTENSION] RULES.md D59, D181, D184: UUIDs imported from
+/// CSV in their braced, upper-case and bare forms are stored, and shown
+/// in a column as wide as their text, hyphenated in lower case; a field
+/// that is no UUID's is skipped with 22018.
+#[test]
+fn uuids_are_imported_and_shown() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K UUID PRIMARY KEY, S VARCHAR(5))").unwrap();
+    let server = start(&db, &[]);
+    let scratch = Scratch::new("cli-import-uuids");
+    let text = "K,S\n{919108F7-52D1-4320-9BAC-F847DB4148A8},a\n0f0e0d0c0b0a49088706050403020100,b\nnot-a-uuid,c\n";
+    let csv = file(&scratch, "ids.csv", text);
+    let mut given = options(&server, vec![Input::Import(csv), command("SELECT K, S FROM T ORDER BY K")]);
+    given.import = Some(into_t(true));
+    let run = ran(&given, "", false);
+    assert!(run.err.contains("record 3, line 4: SQLCODE -301 (SQLSTATE 22018): "), "{}", run.err);
+    let shown = " K                                    | S\n\
+                 --------------------------------------+-------\n \
+                 0f0e0d0c-0b0a-4908-8706-050403020100 | b\n \
+                 919108f7-52d1-4320-9bac-f847db4148a8 | a\n\
+                 (2 rows)\n";
+    assert_eq!(run.out, format!("OK, 2 rows imported, 1 skipped\n{shown}"));
+}
