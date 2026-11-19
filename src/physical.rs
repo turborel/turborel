@@ -22,7 +22,7 @@ mod estimate;
 mod expression_index;
 mod indexed;
 mod join_probe;
-pub use join_probe::{Fields, JoinComparison, JoinProbe, Preserved, Supplied, Unmatched};
+pub use join_probe::{Fields, JoinComparison, JoinProbe, Paired, Preserved, Spatial, Supplied, Unmatched};
 mod join;
 pub use join::JoinKey;
 mod kept;
@@ -165,12 +165,11 @@ pub enum Plan {
     IndexJoin {
         /// The rows matching none it keeps, of a LEFT or FULL outer join.
         outer: Preserved,
-        /// An unordered fixed-SRID inner join may buffer a bounded outer
-        /// input and scan the table once when that costs less than probes.
-        /// Otherwise it continues the ordinary index nested-loop path.
-        /// Both geometry columns enforce the same SRID and all residuals
-        /// are non-raising: the join itself needs no eager error check.
-        spatial: bool,
+        /// None, probes alone; or, of an unordered fixed-SRID join, a scan
+        /// of the table matched with the outer rows held, or a traversal
+        /// of both tables' R-trees. Both geometry columns enforce one SRID
+        /// and every residual is non-raising, so it needs no eager check.
+        spatial: Option<Box<Spatial>>,
         /// The outer input, each of its rows probing the index.
         left: Box<Plan>,
         /// The table read.
@@ -189,7 +188,7 @@ pub enum Plan {
         width: usize,
         /// The table's columns the query uses, the only ones a row found
         /// is read of (`TableStorage::get_columns`).
-        columns: Vec<usize>,
+        columns: Box<[usize]>,
         /// The condition, as text.
         detail: Box<str>,
         /// The rows each probe is estimated to find.

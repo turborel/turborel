@@ -6,6 +6,7 @@
 mod held;
 mod observed;
 mod scan;
+mod spilled;
 
 use std::sync::Arc;
 
@@ -27,7 +28,7 @@ fn chosen(mut join: IndexJoin, mut columns: Vec<usize>, db: &Arc<State>) -> Resu
     let Some(mut held) = Held::new(db) else { return Ok(Box::new(join)) };
     let complete = held.read(&mut join.left)?;
     if !complete {
-        return Ok(held.resume(join));
+        return if held.outgrown() { spilled::chosen(join, held, columns, db) } else { Ok(held.resume(join)) };
     }
     let Some(width) = held.rows.first().map(Vec::len) else { return Ok(Box::new(std::iter::empty())) };
     let Some(binding) = Binding::of(&join, width) else { return Ok(held.resume(join)) };

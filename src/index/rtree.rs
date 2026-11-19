@@ -7,7 +7,10 @@
 
 mod clustered;
 mod geometry;
+mod paired;
 mod probe;
+
+pub use paired::{Envelopes, KeyPairs};
 
 use super::{
     Entries, Index, IndexMethod, Key, KeyOrder, KeyProjection, NearestQuery, NearestSupport, NeighbourEntries, Predicate, Probe,
@@ -23,6 +26,7 @@ use crate::engine::{MEMORY_POOL_BYTES, MemoryPages};
 use crate::error::{Code, Result, SqlError};
 use crate::memory::{Host, MemoryBudget};
 use crate::spatial::{Bounds, DIMENSIONS};
+use crate::spill::{Area, WorkAreas};
 use crate::storage::RowId;
 use crate::sync::lock_builtin;
 use crate::value::{CompOp, DataType, Value};
@@ -256,6 +260,10 @@ impl Index for RTreeIndex {
     fn read_region(&self, probe: &Probe) -> Option<Vec<Bounds>> {
         geometry::region(&self.tree, probe, self.srid?)
     }
+    /// Of a geometry index, its tree, whose keys are envelopes.
+    fn envelopes(&self) -> Option<Envelopes> {
+        Some(Envelopes::new(self.tree.clone(), self.srid?))
+    }
     fn insert(&self, key: Key, row: RowId) -> Result<()> {
         self.tree.insert(self.bounds(&key)?, row)
     }
@@ -264,6 +272,16 @@ impl Index for RTreeIndex {
         // Uniqueness is checked by the coordinator. A fallible search
         // after a successful insertion would break failure atomicity.
         Ok(false)
+    }
+    /// Packed bottom-up (`RTree::load`, RULES.md D139).
+    fn load(&self, entries: &mut dyn Iterator<Item = Result<(Key, RowId)>>, work: (&WorkAreas, Area)) -> Result<()> {
+        self.load_beside_writers(entries, work)
+    }
+    /// Packed beside the writers' entries, which the packed tree takes in
+    /// before it takes the old one's place.
+    fn load_beside_writers(&self, entries: &mut dyn Iterator<Item = Result<(Key, RowId)>>, work: (&WorkAreas, Area)) -> Result<()> {
+        let mut bounded = entries.map(|entry| entry.and_then(|(key, row)| Ok((self.bounds(&key)?, row))));
+        self.tree.load(&mut bounded, work)
     }
     fn remove(&self, key: &Key, row: RowId) -> Result<()> {
         self.tree.remove(self.bounds(key)?, row)

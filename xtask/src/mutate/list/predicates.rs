@@ -23,7 +23,7 @@ pub const PREDICATES: [Mutation; 2] = [
         package: Package::Core,
         breaks: "a function lookup skips the sort needed to put surviving nulls in SQL order",
         file: "src/physical/access.rs",
-        original: " && !predicate::untested_nulls(&columns, c.probes.first())",
+        original: " && !predicate::untested_nulls(on.columns, c.probes.first())",
         replacement: "",
         integration: &["predicate_indexes::nullable_candidates_keep_the_requested_null_order"],
         unit: &[],

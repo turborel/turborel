@@ -162,6 +162,9 @@ verification approach DO-178C expects (§8).
 | D134 | A spatial read records the envelopes it read, merged into their hull past a bound |
 | D135 | Geometry windows serve relate, distance and outer joins, reading every entry where a scan would raise |
 | D136 | Simple feature access is views over the SQL/MM catalog and routines named without ST_ |
+| D137 | A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them |
+| D138 | Spatial joins partition and spill past their work area, and descend two R-trees together |
+| D139 | R-trees are packed by Sort-Tile-Recursive from the root down, and sparse nodes are copied out and freed by epochs |
 
 ### The project
 
@@ -2671,10 +2674,10 @@ Readers use the expected-child-stamp protocol of
 A split gives the new right sibling the old stamp and gives the old node
 a fresh stamp. A search follows siblings through the stamp it remembered
 from the parent. This finds entries moved by a split without also visiting
-a sibling already queued from the parent. Allocated page identifiers
-supply unique stamps; pages are not recycled within a live tree. These
-stamps are internal structure metadata, independent of SQL sequences and
-transaction commit numbers.
+a sibling already queued from the parent. A counter in the meta page
+supplies unique stamps, since freed pages are allocated again (D139).
+These stamps are internal structure metadata, independent of SQL
+sequences and transaction commit numbers.
 
 Writers enlarge ancestor bounds before inserting, and recheck split
 stamps under node locks. A full node splits before the new entry is added:
@@ -2687,9 +2690,10 @@ additional physical write-ahead log.
 
 Forced reinsertion and deletion condensation are excluded. They move
 entries between unrelated branches, which split stamps cannot track for
-a scan already partway through the tree. Empty nodes stay linked. This
-trades space and possible overlap after updates for a smaller concurrency
-protocol; benchmarks must include aged trees, not only fresh loads. The
+a scan already partway through the tree. Sparse nodes are instead
+copied into a new node and their pages freed by epochs (D139), so no
+entry moves under a scan. Benchmarks must include aged trees, not only
+fresh loads. The
 implementation is an R-link tree with R* heuristics, not the complete
 R*-tree insertion algorithm. Node and metadata formats are versioned
 independently and reject unknown versions.
@@ -2846,7 +2850,8 @@ Changed split stamps, pending splits, malformed paths, arithmetic overflow
 or an exhausted page budget decline the estimate. The estimate is at least
 the candidate count already observed; it is approximate planning input,
 never a bound used to skip or accept rows. Numeric coordinate probes retain
-their existing exact-count cutoff.
+their existing exact-count cutoff. Once the column's statistics are
+gathered, its envelope grid replaces this sample for broad windows (D137).
 Geometry index locators use version 2: version and width bytes, a u32 SRID
 and a u64 metadata page, all integers little-endian. Numeric locators keep
 version 1; tree page formats are unchanged.
@@ -2857,7 +2862,7 @@ other conjuncts and the indexed table's filter must be non-raising, and
 the complete ON condition rechecks each visible pair. Planning considers
 both table orders and column projections. A NULL outer geometry makes no
 probe; an empty geometry finds no pair. Each probe records its outer
-row's envelope as a serializable read region (D134). This is not a
+row's envelope as a serializable read region (D134). D138 adds a
 simultaneous traversal of two indexes. D135 extends this
 path to outer joins, relate patterns and distance limits.
 
@@ -2874,7 +2879,8 @@ triggering adaptation. Already-emitted outer rows are never replayed.
 It buffers the remaining input within the work-area and global memory
 budgets, reserving row slots, payloads and hierarchy storage before growth.
 Refused growth resumes probing with the buffered rows and the first
-row that did not fit, without rereading input. Missing estimates retain
+row that did not fit, without rereading input. Input past the work area
+is spilled and partitioned instead (D138). Missing estimates retain
 probes. Otherwise the estimated probe
 fetch work is compared with one scan plus four binary searches per
 possible leaf, priced with the existing comparison cost. This conservative
@@ -5621,6 +5627,38 @@ omission of null rows assumes. EXPLAIN shows the outer joins as
 `LeftOuterIndexNestedLoop` and `FullOuterIndexNestedLoop`, and a
 distance window as `(ST_DISTANCE(column, value) * scale) <= limit`.
 
+A nearest read, `ORDER BY ST_DISTANCE(column, value, unit)` with FETCH
+FIRST, reads the index as one without a unit does. The index orders its
+candidates by bounds in the column's unit, and `NearestRead::bound`
+converts each by the unit's factors exactly as the measure is converted.
+That conversion never orders a greater distance below a lesser one, so a
+converted bound stays a bound of the measure, and a candidate tied with
+the last row kept is still read. A unit converts as the statement is
+planned or the read is a scan's. So is one that makes the greatest
+distance of the certified domain, half of the largest finite number,
+infinite, as FOOT does of a metre column, so that no converted bound or
+measure overflows where the scan's would not.
+
+The nearest read takes the rest of the orderings an incremental search
+can serve. FETCH FIRST WITH TIES gives it its count, as ONLY does,
+since its strict cutoff already keeps every row whose distance equals
+the last kept, among them the peers WITH TIES adds. A path read in
+order is still priced whole below WITH TIES. OFFSET, further sort keys
+and a filter were served before, the search going on until enough
+rows pass. `ORDER BY ST_DISTANCE(...) DESC NULLS LAST` reads the tree
+farthest first. Its priority is the negated upper bound of the
+distance between the rectangles (`Bounds::distance_upper_bound`), which
+shrinks with a child's rectangle, so the queue stays ordered. The
+stream's bounds are the lower bounds of the negated call, as a score's
+are (D87), and the same negated threshold cuts it off. PERCENT is
+refused, as its count is a share of every qualifying row, which only
+reading them all gives. NULLS FIRST is refused unless the filter
+excludes nulls, as before. A LATERAL derived table of a query is not in
+the grammar. A correlated subquery is bound to each outer row's values
+before it is planned (`Subquery::bound`), so a subquery ordered by the
+distance to its outer row's geometry gets a nearest read for each row,
+and an IN subquery gives each row's nearest few.
+
 #### D136. Simple feature access is views over the SQL/MM catalog and routines named without ST_
 
 The SQL option of Simple feature access [OGC 06-104r4] in its "SQL with
@@ -5681,6 +5719,209 @@ code's routine tables, method binding and stored forms. They have no
 ordering and no well-known forms. ANNOTATION_TEXT_METADATA [§6.2.9.2]
 is a third view of SF_INFORMTN_SCHEMA, of each text column, its
 defaults NULL.
+
+#### D137. A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them
+
+A geometry column's statistics are gathered in the pass that gathers the
+table's others (D31, `stats/envelopes.rs`), and kept and refreshed as
+they are. They hold three things. The first is a grid of 16 × 16 cells
+over the envelope of every value seen. Each cell keeps the share of a
+sample of the envelopes whose centres fall in it, and their mean width
+and height. The sample keeps envelopes alone, at most STATISTICS.SAMPLE
+of them, chosen as Algorithm R chooses. A geometry is not sampled whole
+for the column's histogram, since it has no order to place it by and one
+of many vertices would take the sample's memory. The second is the mean
+count of coordinates a value holds. The third is clustering, one less
+the mean distance between the centres of rows read one after another
+over that between random pairs of the sample, held to 0 to 1. A table
+laid out in space measures near 1, and one in no spatial order near 0.
+A sampled pass reads runs of 128 row ids, so its steps are mostly
+between neighbours too.
+
+A window's rows are the grid's estimate (`physical/access/geometric.rs`).
+Each cell's centres are taken as spread evenly over it, and those within
+the window grown by half the cell's mean extent meet it. The share is
+scaled by the rows not null and not empty. A distance window is its
+value's envelope grown by the radius. A window the grid puts at no more
+than 1000 rows is counted by the index exactly, as cheaply. A broader one
+is not read from the tree at all, so planning a broad window reads no
+page. Without statistics, before the first pass or of an engine that
+keeps none, the index's own count and sample (D85) stay the estimate.
+
+Every path pays for the windowed spatial conjuncts it evaluates. A row
+costs 0.2 rows of a scan for each such call and 0.03 for each vertex of
+the column's mean value, decoded. A scan pays it of every row it reads
+and a probe of the rows it finds, so a column of many vertices turns a
+scan into a probe at a broader window than points do. The exact test of
+a row whose envelope meets the window costs the same on either path, so
+it is not priced, though it is the dearest part of a broad read. A conjunct of a column without statistics is not priced. A
+probe's fetches are cheaper by the clustering. That share of its rows
+costs two rows of a scan each, an entry at a time near the last, in place
+of a fetch. A covering read keeps its own price (D34). Outside the
+geometry window, nothing changes for other indexes.
+
+EXPLAIN shows the cheapest spatial probe priced after the residual
+filter's condition: its rows and whether the statistics or the index
+estimated them, the vertices, the clustering, its cost and the scan's.
+The filter's own estimate takes the same rows for its windowed spatial
+conjuncts, read by the probe or by a scan, and each other conjunct's
+selectivity as before (`physical/access/filter.rs`), so the plan states
+one figure. Without a spatial probe priced, the conjunct keeps the
+default guess. A spatial conjunct of a join is checked above it, not by
+the table's access, so a join's order does not see this estimate.
+The estimates choose a plan only. None skips a row or certifies a
+result, and every candidate is checked as D85 says. The weights were
+measured by `bench/geometry_fetch.rs`, a row scanned in 229 ns, a point
+decoded in 40 ns and a vertex in 6.2 ns. The statistics are kept in memory as
+the others are, so no format changes.
+
+#### D138. Spatial joins partition and spill past their work area, and descend two R-trees together
+
+An adaptive spatial join (D85) held its outer rows in memory, and fell
+back to probes when they outgrew MEMORY.WORK_BYTES. Now an outer input
+past the work area is written to a run of the spill area (D38), and the
+probes are priced from the rows held, scaled to the whole input. If one
+scan of the table costs less, both inputs are partitioned by a grid
+over the hull of the outer envelopes (`exec/join/indexed/adaptive/spilled.rs`).
+The grid has as many cells as twice the input's bytes over the work
+area, at most half the runs the area writes at once and at most
+SPILL.PARTITIONS, and as near square as that count allows. A shape goes
+to every cell its envelope's corners span, a point beyond the hull to an
+edge cell. A pair is produced only in the cell of its reference point,
+the greater lower corner of the two envelopes, which lies in both, so
+each pair is produced once. Each cell's outer rows are held a work
+area's worth at a time, at least one row, in the hierarchy the in-memory
+scan builds, and its table rows are read once for each such part. No
+cell is partitioned again, so a cell of skewed data costs passes, not
+memory. NULL and empty geometries, and table rows apart from the hull,
+go to no cell, as they meet nothing. A refused reservation of the first
+run keeps the probes. The exact relationship and the rest of the
+condition judge every candidate as in memory, so the rows and the
+errors are the scan's, and the order is none.
+
+A join on a relationship true only of meeting operands, ST_Intersects
+or one of the meeting relationships, whose two geometry columns have one
+SRID and each an `rtree` index, may instead descend both trees together
+(`Plan::IndexJoin` with `Spatial::Paired`). The engine's join of two
+R-link trees prunes each pair of nodes whose envelopes are apart, and
+gives every pair of entries whose envelopes meet once while both are held
+(`engine/rtree/join.rs`). The index hands its tree out through
+`Index::envelopes`, and a method without one is probed. Each pair's rows
+are fetched as the statement sees them, each version's key rechecked as
+a probe's is, and kept only if the outer operand's filter is true of the
+outer row and the whole condition of the pair. The outer operand reads
+its table whole, through a filter that cannot raise, or through a
+projection of its columns. The planner takes the traversal when every
+entry of both trees compared, and the outer row of each pair fetched,
+cost less than the probes' descents and the outer scan, and only when no
+order is asked of the join. It also needs both tables' statistics (D137)
+and their envelope grids to put the pairs at no more than a quarter an
+outer row (`EnvelopeStats::joined`, `PAIRED_MOST`). Two measurements on
+`bench/geometry_join/large.rs` set that bound. A pair cost the traversal
+3.7 µs when it paired from the parcels but 9.8 µs from the points,
+against about 5 µs for a probe's descent, so the traversal gains only at
+about one pair an outer row, and beyond that it ran up to 2.7 times
+slower than the probes. And the grid takes shapes as independent within
+a cell, so it estimated 0.92 pairs a parcel where tables sharing their
+positions made 4.0, and less still of shapes along one line. A quarter
+estimated stands for about one made. Without statistics, or above the
+bound, the join probes. An inner join needs nothing more. A LEFT
+join keeps the ids of the outer rows paired, charged to the memory
+budget, and then reads the outer table for the rows no pair kept. A
+RIGHT join is the LEFT join of its operands swapped, and a FULL join
+also reads the probed table for its unpaired rows, as D135's does.
+EXPLAIN shows `SynchronizedSpatialJoin table using index with table
+using index`, prefixed `LeftOuter` or `FullOuter`.
+
+Under SERIALIZABLE the traversal records the whole outer table and, of
+the probed table, a region of the outer tree's hull (D134). A row of the
+probed table that would pair with a visible outer row meets that hull,
+and one that would pair with a new outer row is caught by the whole
+outer read, so no conflict is missed. The hull covers every entry of the
+outer tree, those of versions the reader does not see too, so it may
+refuse a commit it need not.
+
+#### D139. R-trees are packed by Sort-Tile-Recursive from the root down, and sparse nodes are copied out and freed by epochs
+
+An `rtree` index built whole is packed by Sort-Tile-Recursive
+(Leutenegger, Lopez and Edgington, "STR: A Simple and Efficient
+Algorithm for R-Tree Packing", ICDE 1997), applied from the root down as
+Lee and Lee's OMT loading is (CAiSE 2003). Entries are sorted by the
+centre of their X extent through the sorted spill
+(`spill::sorted_records`) and cut into about the square root of the
+root's children of vertical slabs. Each slab is sorted by Y and cut into
+runs of as many entries as one child spans, and each run is tiled the
+same way for the level below, down to the leaves. Tiling bottom-up was
+tried first. Each level's slabs then cut across the slabs below, so
+sibling branches overlapped, and inserts into an aged packed tree widened
+leaves into each other until its leaf overlap was three times an
+inserted tree's. Splits were not the cause. Tiled from the root, the
+aged packed tree overlaps less than the inserted one. Nodes are filled
+to nine tenths, as loaded B-link nodes are (D31), so early inserts do not
+split at once. Identical entries become one counted entry. Each sort
+runs while the one it reads from is still open, so it gets half that
+one's work area, and the load stays within MEMORY.WORK_BYTES. Every
+entry is sorted twice per level, which costs a tall tree's load more
+sorts than a bottom-up one, still far below inserting. Hilbert order was
+the other choice. It needs the data's extent before the sort, or a curve
+over warped float bits, while STR needs only the count, which the first
+sort yields.
+
+CREATE INDEX fills an index while writers keep it up to date (D27), so
+`Index::load_beside_writers` lets a method build beside them. The rtree
+packs into a side tree no one can reach, then holds out every writer by
+taking all its row-lock stripes, inserts the entries the writers made
+into the side tree, and names the side tree's root in the meta page. The
+old nodes are retired. Recovery, coordinator tables and reopening call
+`Index::load`, which is the same load into an empty tree. A failed load
+frees the side tree and changes nothing. A crash before a checkpoint
+holds the pages is recovered by building again from the rows, as for
+the other bulk-loaded methods.
+
+A remove that leaves a leaf empty, or under the R*-tree's minimum fill
+of two fifths, reclaims it. An empty node is taken out of its parent. A
+sparse one is merged with the sibling whose envelope grows least, if
+both fit a loaded node. The merge copies the entries into a new page,
+marks both old nodes retired with their entries, stamps and right links
+untouched, and then rewrites the parent in one write. A scan that read
+the parent before sees the frozen old nodes; one that read it after
+sees the new node; nothing moves into a node a scan has read, so no
+entry is missed or repeated. Writers that reach a retired node start
+again from the root, and a split posted to a retired parent looks for
+its parent again. Locks go to the two nodes by page number, then the
+parent, bottom-up as other writers lock. A node is taken out only when
+its parent keeps another child, so no branch empties by it. A parent
+left sparse is then reclaimed a level up the same way, and so on up.
+
+After each parent a reclamation changes, the entry for it in each
+ancestor is narrowed to its envelope, from the bottom up while one
+changes, so searches stop reading branches with nothing in their window.
+A narrowing holds the child's lock and then the parent's. A writer
+enlarges a parent's entry before it locks the child, so it checks once
+it holds the child that the entry still covers its bounds, and descends
+again if a narrowing came between. When the root is left with one child,
+the meta page names that child, at the stamp the root's entry remembers,
+under the root's lock and then the meta lock, and the old root is
+retired. The tree grows shorter. A scan that began at the old root reads
+it frozen. If the child had split, its stamp sends readers right, and
+its writer finds it is now the root and grows a new one.
+
+Retired pages are freed after the tree's epoch has moved twice, with the
+B-link tree's epochs (`engine/tree/reclaim.rs`, D31). Every operation,
+scan, nearest search, join and estimate is pinned in the epoch it began
+in, so no page it may still read is freed. Freed pages are allocated
+again, so a page number can repeat. Split stamps therefore come from a
+counter kept in the meta page and bumped under the meta lock, never from
+page numbers. A recycled number cannot give a node a stamp that a scan
+still remembers for it.
+
+Recovery needs nothing new. Pages are shadowed and the log is logical
+(D25), so a crash returns the tree to its checkpoint and recovery mends
+it through inserts and removes, which reclaim as they go. Pages retired
+but not freed when a checkpoint was taken are unreachable in it and stay
+allocated, as the B-link tree's do. `RTree::shape` reports nodes, bytes,
+fill and envelope overlap per level, which `bench/spatial_index.rs`
+prints after packed, inserted and aged loads.
 
 ## 2. Project layout
 

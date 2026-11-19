@@ -12,6 +12,8 @@
 )]
 
 mod harness;
+#[path = "geometry_join/large.rs"]
+mod large;
 
 use std::hint::black_box;
 use std::sync::Barrier;
@@ -41,6 +43,7 @@ fn main() {
             harness::note(&format!("join plan (width {width}{order}):\n{}", a.physical_plan(query, &Params::new()).unwrap()));
         }
     }
+    large::measure(&bench, &database());
 }
 
 fn windows(db: &Database, width: u64) {

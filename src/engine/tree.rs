@@ -61,6 +61,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::locks::{Locks, NodeLock};
 use node::{CHILD, ENTRY_OVERHEAD, HEADER, Node, Shape};
+pub(crate) use reclaim::{Entered, Epochs};
 pub use scan::{Direction, Scan, scan_of};
 pub use write::Update;
 #[cfg(test)]
@@ -128,7 +129,7 @@ pub struct BLinkTree {
     tally: Tally,
     /// The operations under way by epoch, and the pages taken out
     /// (`reclaim.rs`).
-    epochs: reclaim::Epochs,
+    epochs: Epochs,
 }
 
 /// What a descent looks for at each level.
@@ -257,7 +258,7 @@ impl BLinkTree {
             locks: Locks::new(),
             counters: Counters::default(),
             tally: Tally::default(),
-            epochs: reclaim::Epochs::new(),
+            epochs: Epochs::new(),
         }
     }
 

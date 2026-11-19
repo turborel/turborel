@@ -109,6 +109,13 @@ impl PhysicalPlanner<'_> {
         };
         let (cost, stats) = (self.db.cost(), self.db.statistics(read.table));
         let known = Known { stats: stats.as_deref(), cost: &cost };
-        (filtered(plan, conds, &Filtered { shown: read.shown, known, ordered: best.ordered, read: found, most }), indexed)
+        (
+            filtered(
+                plan,
+                conds,
+                &Filtered { shown: read.shown, known, ordered: best.ordered, read: found, most, note: &best.note, windowed: best.windowed },
+            ),
+            indexed,
+        )
     }
 }

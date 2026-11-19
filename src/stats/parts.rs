@@ -174,15 +174,6 @@ impl Reservoir {
         Reservoir { values: Vec::new(), most, seen: 0, random: SEED }
     }
 
-    /// The next of a xorshift sequence: random enough to sample by, and the
-    /// same every time.
-    fn next_random(&mut self) -> u64 {
-        self.random ^= self.random << 13_u32;
-        self.random ^= self.random >> 7_u32;
-        self.random ^= self.random << 17_u32;
-        self.random
-    }
-
     /// Adds `value`; NULL is not sampled. Algorithm R: the n-th value
     /// replaces a kept one with chance `most` / n, so every value is
     /// kept with the same chance.
@@ -195,7 +186,7 @@ impl Reservoir {
             self.values.push(sampled(value));
             return;
         }
-        let pick = self.next_random().checked_rem(self.seen).unwrap_or_default();
+        let pick = xorshift(&mut self.random).checked_rem(self.seen).unwrap_or_default();
         if let Some(kept) = usize::try_from(pick).ok().and_then(|i| self.values.get_mut(i)) {
             *kept = sampled(value);
         }
@@ -246,6 +237,15 @@ pub fn sampled(value: &Value) -> Value {
         | Value::Extension(_)
         | Value::Xml(_) => value.clone(),
     }
+}
+
+/// The next of the xorshift sequence `state` holds: random enough to
+/// sample by, and the same every time from the same seed.
+pub fn xorshift(state: &mut u64) -> u64 {
+    *state ^= *state << 13_u32;
+    *state ^= *state >> 7_u32;
+    *state ^= *state << 17_u32;
+    *state
 }
 
 /// An equi-depth histogram: bounds such that each bucket between two holds

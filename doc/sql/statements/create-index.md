@@ -85,11 +85,21 @@ enforce one SRID. NULLs are omitted and empty values never intersect.
 envelopes within the limit. Inner and outer joins, LEFT, RIGHT and FULL,
 can also probe it from the other operand's geometry; the full ON
 condition checks every candidate pair, and an outer join keeps the rows
-no probe matched, with nulls. Ascending
-ST_DISTANCE with FETCH FIRST can also use this index, refining each
+no probe matched, with nulls. ST_DISTANCE ordered with FETCH FIRST,
+ascending or descending, with a unit or without, can also use this
+index, refining each
 candidate's geometry before deciding which rows to return. See
 [Spatial Data](../10-spatial.md#the-rtree-index-method) for its rules and the
 [Spatial Guide](../../data/02-spatial.md) for runnable examples.
+
+An `rtree` made over rows already in the table is built whole and packed
+from the root down, its nodes nine tenths full, its sorts spilling past
+MEMORY.WORK_BYTES. Rows written while it is built are kept. A node that
+deletes leave empty or under two fifths full is taken out or merged, the
+nodes above it too when that leaves them sparse, and its space reused
+once no query can still read it. The index grows shorter as it empties
+(RULES.md D139). See
+[Spatial Data](../10-spatial.md#the-rtree-index-method).
 
 A `fulltext` index takes one FULLTEXT column, or one character string
 column with no collation. It keeps each word of the column's text and
@@ -286,6 +296,45 @@ ORDER BY C.ID, A.AREA_NAME;
  Bo           | West
  Chao         | East
 (3 rows)
+```
+
+A courier history of ten thousand positions, indexed after it is
+loaded, so the index is packed whole, then most of it deleted, which
+gives the emptied nodes' space back:
+
+```sql
+COMMIT;
+CREATE TABLE TRACKS (ID INTEGER PRIMARY KEY, X DOUBLE PRECISION NOT NULL, Y DOUBLE PRECISION NOT NULL);
+INSERT INTO TRACKS
+    WITH RECURSIVE N (I, X, Y) AS (
+        VALUES (CAST(0 AS INTEGER), CAST(0 AS INTEGER), CAST(0 AS INTEGER))
+        UNION ALL SELECT I + 1, CASE WHEN Y = 99 THEN X + 1 ELSE X END, CASE WHEN Y = 99 THEN 0 ELSE Y + 1 END
+        FROM N WHERE I < 9999)
+    SELECT I, X, Y FROM N;
+COMMIT;
+CREATE INDEX TRACKS_XY ON TRACKS (X, Y) USING RTREE;
+SELECT COUNT(*) AS SEEN FROM TRACKS WHERE X BETWEEN 10 AND 14 AND Y BETWEEN 0 AND 9;
+DELETE FROM TRACKS WHERE X < 90;
+COMMIT;
+SELECT COUNT(*) AS SEEN FROM TRACKS WHERE X BETWEEN 88 AND 92 AND Y BETWEEN 0 AND 9;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+                 SEEN
+----------------------
+                   50
+(1 row)
+OK
+OK
+                 SEEN
+----------------------
+                   30
+(1 row)
 ```
 
 A GEOMETRY location is indexed by its one column, of a fixed SRID. A

@@ -59,12 +59,23 @@ fn populated() -> Arc<State> {
 }
 
 fn populated_rows(count: i32) -> Arc<State> {
+    populated_with(count, &[], 0.0_f64)
+}
+
+/// The points of `populated_rows`, or squares of side `side` from them,
+/// its settings `settings` set first.
+fn populated_with(count: i32, settings: &[(&str, i128)], side: f64) -> Arc<State> {
     let db = Database::new();
+    for (name, value) in settings {
+        db.set_setting(name, &number(*value)).unwrap();
+    }
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE POINTS (ID INTEGER, G GEOMETRY(0))").unwrap();
     let a = db.session("A");
     let insert = a.prepare("INSERT INTO POINTS VALUES (?, ?)").unwrap();
     for n in 0_i32..count {
-        a.execute_prepared(&insert, &[number(i128::from(n)), Geometry::point(f64::from(n), f64::from(n), 0).unwrap().to_value()]).unwrap();
+        let at = f64::from(n);
+        let shape = if side > 0.0_f64 { Geometry::rectangle([at, at], [at + side, at + side], 0) } else { Geometry::point(at, at, 0) };
+        a.execute_prepared(&insert, &[number(i128::from(n)), shape.unwrap().to_value()]).unwrap();
     }
     a.commit().unwrap();
     db.create_index("POINTS_G", "A.POINTS", &["G"], "rtree").unwrap();
@@ -81,7 +92,7 @@ fn plan(regions: Vec<Row>, argument: usize) -> Plan {
     };
     Plan::IndexJoin {
         outer: crate::physical::Preserved::Inner,
-        spatial: true,
+        spatial: Some(Box::new(crate::physical::Spatial::Adaptive)),
         left: Box::new(Plan::Values {
             rows: regions.into_iter().map(|row| row.into_iter().map(Expr::Const).collect()).collect(),
             detail: String::new(),
@@ -96,7 +107,7 @@ fn plan(regions: Vec<Row>, argument: usize) -> Plan {
         },
         cond: Some(Cond::Compare(Expr::Call(function, args), CompOp::Eq, Expr::Const(number(1)))),
         width: 2,
-        columns: vec![0, 1],
+        columns: Box::new([0, 1]),
         detail: "".into(),
         est: 100.0,
         cost: 1000.0,
@@ -298,5 +309,53 @@ fn spatial_join_projections_survive_scan_and_probe_fallbacks() {
                 assert_eq!(actual, expected);
             }
         }
+    }
+}
+
+/// Squares spanning several cells of a partitioned join's grid.
+const SIDE: f64 = 30.0;
+
+/// The squares of `populated_with`, its joins' work area `work` bytes and
+/// their spill runs' batches `batch` bytes.
+fn populated_spilling(count: i32, (work, batch): (i128, i128)) -> Arc<State> {
+    populated_with(count, &[("MEMORY.WORK_BYTES", work), ("SPILL.BATCH_BYTES", batch)], SIDE)
+}
+
+/// Pairs of the outer row's first column and the table row's id.
+fn pairs_of(rows: &[Row]) -> Vec<(String, String)> {
+    let mut pairs: Vec<_> = rows.iter().map(|row| (row[0].to_string(), row[2].to_string())).collect();
+    pairs.sort();
+    pairs
+}
+
+/// Verifies: [DESIGN] D38, D138: a broad build past its work area is
+/// partitioned by a grid and spilled, in one cell or several, held a part
+/// at a time, and gives each pair once, as probes do. No probe follows the
+/// first, and NULL and empty outer geometries pair with nothing. Its
+/// reservations are all released.
+#[test]
+fn outgrown_spatial_builds_are_partitioned_and_spilled() {
+    let mut regions: Vec<Row> = (0_i32..600_i32)
+        .map(|n| {
+            let (x, y) = (f64::from(n % 90_i32) - 1.0_f64, f64::from((n * 7_i32) % 90_i32) - 1.0_f64);
+            vec![number(i128::from(n)), Geometry::rectangle([x, y], [x + 12.0_f64, y + 12.0_f64], 0).unwrap().to_value()]
+        })
+        .collect();
+    regions.insert(0, vec![number(-1), Geometry::rectangle([-1.0_f64, -1.0_f64], [100.0_f64, 100.0_f64], 0).unwrap().to_value()]);
+    regions.push(vec![number(4000), Value::Null]);
+    let unspilled = populated_with(100, &[], SIDE);
+    let (probes, expected) = run(&unspilled, plan(regions.clone(), 0), (0, true));
+    // The null outer geometry makes no probe.
+    let null_free = regions.len() - 1;
+    assert_eq!(probes, null_free);
+    for (work, batch) in [(65_536_i128, 16_384_i128), (65_536, 4_096), (98_304, 4_096)] {
+        let state = populated_spilling(100, (work, batch));
+        for argument in [0_usize, 1] {
+            let (searches, rows) = run(&state, plan(regions.clone(), argument), (usize::MAX, true));
+            assert_eq!(searches, 1, "{work} {batch}");
+            assert_eq!(pairs_of(&rows), pairs_of(&expected), "{work} {batch}");
+        }
+        let (searches, rows) = run(&state, plan(regions.clone(), 0), (usize::MAX, false));
+        assert_eq!((searches, pairs_of(&rows)), (null_free, pairs_of(&expected)));
     }
 }

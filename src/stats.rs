@@ -19,9 +19,11 @@
 //! values, so an engine feeds them a row at a time or a column at a time.
 //! `TableStats` is one way to answer from them: per column, the distinct
 //! values, the fraction that is NULL, the least and greatest values, and a
-//! histogram. `ColumnBuilder` gathers a column's; `StatsBuilder` gathers a
-//! table's from its rows.
+//! histogram, and of a geometry column, its envelopes' (`envelopes`).
+//! `ColumnBuilder` gathers a column's; `StatsBuilder` gathers a table's
+//! from its rows.
 
+pub mod envelopes;
 pub mod parts;
 
 use std::cmp::Ordering;
@@ -29,9 +31,11 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::BuildHasher;
 
+pub use envelopes::{EnvelopeBuilder, EnvelopeStats};
 pub use parts::Sampling;
 use parts::{Histogram, HyperLogLog, Reservoir, count};
 
+use crate::geometry::Geometry;
 use crate::hash::murmur::MurmurBuildHasher;
 use crate::storage::Row;
 use crate::value::{CompOp, Value, compare};
@@ -61,6 +65,10 @@ pub trait Statistics: Send + Sync + Debug {
     fn selectivity(&self, _column: usize, _op: CompOp, _value: &Value) -> Option<f64> {
         None
     }
+    /// Of a geometry `column`, its envelopes' statistics (RULES.md D137).
+    fn envelopes(&self, _column: usize) -> Option<&EnvelopeStats> {
+        None
+    }
 }
 
 /// What a column's values are like.
@@ -79,6 +87,8 @@ pub struct ColumnStats {
     /// Whether values may lie past `min` and `max`, they being a sample's,
     /// so a value outside them is not estimated to match no row.
     pub unbounded: bool,
+    /// Of a column of geometries, their envelopes' statistics.
+    pub envelopes: Option<Box<EnvelopeStats>>,
 }
 
 impl ColumnStats {
@@ -137,6 +147,9 @@ impl Statistics for TableStats {
     fn selectivity(&self, column: usize, op: CompOp, value: &Value) -> Option<f64> {
         Some(self.columns.get(column)?.selectivity(op, value))
     }
+    fn envelopes(&self, column: usize) -> Option<&EnvelopeStats> {
+        self.columns.get(column)?.envelopes.as_deref()
+    }
 }
 
 /// \[DESIGN\] Gathers one column's statistics from its values, in one pass.
@@ -152,6 +165,8 @@ pub struct ColumnBuilder {
     /// Of a sample of the rows, how often each value was seen, by the hash
     /// of its normalized form, for the distinct values to be scaled.
     seen: Option<HashMap<u64, u32>>,
+    /// Of a column of geometries, their envelopes, begun at the first.
+    envelopes: Option<EnvelopeBuilder>,
 }
 
 impl ColumnBuilder {
@@ -177,12 +192,28 @@ impl ColumnBuilder {
             let times = seen.entry(MurmurBuildHasher::default().hash_one(value.norm())).or_default();
             *times = times.saturating_add(1);
         }
-        self.sample.add(value);
+        if Geometry::is_geometry(value) {
+            self.add_geometry(value);
+        } else {
+            self.sample.add(value);
+        }
         if self.min.as_ref().is_none_or(|min| compare(value, min) == Some(Ordering::Less)) {
             self.min = Some(value.clone());
         }
         if self.max.as_ref().is_none_or(|max| compare(value, max) == Some(Ordering::Greater)) {
             self.max = Some(value.clone());
+        }
+    }
+
+    /// Adds the geometry `value` to its envelopes' statistics, not to the
+    /// sample: a geometry has no order a histogram could place it by, and
+    /// one of many vertices would take a sample's memory (RULES.md D137).
+    /// A value that cannot be read is left out, as a scan reading it would
+    /// raise its error.
+    fn add_geometry(&mut self, value: &Value) {
+        if let Ok(geometry) = Geometry::from_value(value) {
+            let most = self.sampling.values;
+            self.envelopes.get_or_insert_with(|| EnvelopeBuilder::keeping(most)).add(&geometry);
         }
     }
 
@@ -196,6 +227,7 @@ impl ColumnBuilder {
             max: self.max,
             histogram: Histogram::of_sorted(&self.sample.into_sorted(), self.sampling.buckets),
             unbounded: false,
+            envelopes: self.envelopes.and_then(EnvelopeBuilder::finish).map(Box::new),
         }
     }
 

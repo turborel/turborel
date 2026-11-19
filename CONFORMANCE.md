@@ -3331,19 +3331,39 @@ ST_Distance compared `<` or `<=` with a limit, in any unit that converts,
 read a window, the distance's widened by the limit
 (`index/rtree/geometry/within.rs`, RULES.md D135). A value of another
 SRID, or a tree whose distances may overflow, reads every entry, so the
-error is raised as a scan raises it. Simultaneous traversal of two
-spatial indexes is not implemented.
+error is raised as a scan raises it. The ON condition or filter must be
+one of these relationships or a distance limit, as no envelope test of
+its own is in SQL/MM, and a distance compared `>` or `>=` reads the
+table. A join of two columns of one SRID,
+each with an R-tree, on ST_Intersects or a meeting relationship, may
+descend both trees together, pairing the entries whose envelopes meet,
+inner or outer, when both tables' statistics put the pairs at a quarter
+an outer row or fewer, each pair rechecked against the visible rows, the outer
+operand's filter and the full condition
+(`physical/indexed/spatial/paired.rs`, `exec/join/indexed/paired.rs`,
+RULES.md D138).
 Under SERIALIZABLE, a filter's search and each join probe record the
 envelope window they read, not the whole table, and a change conflicts
 when its old or new envelope meets one (`exec/read.rs`,
 `storage/region.rs`, RULES.md D134).
+Choosing between a scan and a spatial probe is planning only, outside
+the standards. A geometry column's statistics keep a grid of its
+envelopes, its mean vertices and its clustering. A broad window's rows
+are estimated from the grid, and every path is priced for the spatial
+calls it evaluates and a probe for how closely its rows lie, as EXPLAIN
+shows. The filter over the access estimates the same rows
+(`stats/envelopes.rs`, `physical/access/geometric.rs`,
+`physical/access/filter.rs`, RULES.md D137). No result depends on the choice.
 An unordered inner join whose remaining outer rows fit its memory
 budgets can choose a single visible table scan when index estimates price
 it below repeated probes (`exec/join/indexed/adaptive.rs`). A temporary
 spatial hierarchy prunes groups; four boundary masks per leaf select
 envelope candidates; exact geometry relationships and the remaining ON condition
-still decide every result. Memory or capacity refusal resumes the buffered
-input through probes. Snapshot visibility and serializable reads use the
+still decide every result. Memory refusal resumes the buffered input
+through probes. Input past MEMORY.WORK_BYTES is spilled, and when a scan
+still costs less, both inputs are partitioned by a grid of envelopes and
+joined a cell at a time, each pair produced only in the cell of its
+reference point (`exec/join/indexed/adaptive/spilled.rs`, RULES.md D138). Snapshot visibility and serializable reads use the
 same storage contracts as ordinary scans.
 Optional setup waits until completed probes have read at least a table's
 worth of candidates, avoiding repeated estimates for a selective join.
@@ -3390,9 +3410,12 @@ ordinary function identity checks for other predicates.
 The index extension API can return geometry distance candidates in monotone
 envelope-bound order (`Index::nearest`, `src/index/nearest.rs`). Its finite
 range certificate includes every root split sibling and may decline a
-request before output. Ascending ST_DISTANCE with NULLS LAST and a known
-OFFSET plus FETCH FIRST ONLY count can select these candidates on a
-fixed-SRID geometry column (`physical/nearest.rs`, `exec/nearest.rs`).
+request before output. ST_DISTANCE with NULLS LAST and a known OFFSET
+plus FETCH FIRST count, ONLY or WITH TIES, can select these candidates on
+a fixed-SRID geometry column (`physical/nearest.rs`, `exec/nearest.rs`),
+of a distance in a unit too, each bound converted as the measure is.
+Ascending reads the nearest first, descending the farthest first by
+upper bounds (RULES.md D135). PERCENT and NULLS FIRST read the table.
 The full filter and visible geometry are evaluated before ranking; a
 strict cutoff keeps distance ties for the final SQL sort. Exhausted
 candidates are supplemented with qualifying NULL distances when needed.
@@ -3411,6 +3434,15 @@ coordinates and answers independent SQL comparisons (`index/rtree.rs`,
 `physical/access/columns.rs`, D72). Inner joins can bind these comparisons
 from each outer row (`physical/indexed/coordinates.rs`). Single-column
 geometry indexes use the projection contract described above (D85).
+An `rtree` built over existing rows, by CREATE INDEX, a rebuild or
+recovery, is packed by Sort-Tile-Recursive from the root down through
+the sorted spill. Nodes that deletes empty or leave under two fifths
+full, leaves and then the branches above them, are taken out or copied
+into a merged node, their pages freed by epochs, so scans neither miss
+nor repeat an entry. The ancestors' envelopes are then narrowed, and a
+root left with one child gives way to it (`engine/rtree/pack.rs`,
+`engine/rtree/reclaim.rs`, `engine/rtree/reclaim/narrow.rs`,
+`Index::load_beside_writers`, RULES.md D139).
 
 ```
 CREATE INDEX name ON table (columns) [USING method] [WITH (...)]
@@ -4587,6 +4619,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | §14.1 GR5 isolation level | SERIALIZABLE as itself. REPEATABLE READ as snapshot isolation. READ COMMITTED and READ UNCOMMITTED with a snapshot for each statement, kept while a cursor is open. Each as SERIALIZABLE on an engine that does not read below it. | `db/session.rs`, `txn.rs` |
 | §14.1 GR5, §4.28 what a SERIALIZABLE read through a spatial index reads | The rows whose geometries' envelopes, as the `rtree` index keys them, meet the window its search read, each join probe's own. A NULL is in no window and an empty geometry is at the origin. Past TRANSACTIONS.TRACKED_ROWS windows of a table, they merge into one rectangle of each column (RULES.md D134). | `storage/region.rs`, `exec/read.rs`, `engine/rows/mvcc/reads.rs` |
 | §14.1 GR5, §4.28 what a SERIALIZABLE distance read or outer join through a spatial index reads | A distance window's search reads its value's envelope widened by the limit, or the whole table where the tree cannot certify its distances finite. A FULL outer join's probes read their windows, and then the whole table, for the rows no probe matched (RULES.md D135). | `index/rtree/geometry/within.rs`, `exec/join/indexed/preserved.rs` |
+| §14.1 GR5, §4.28 what a SERIALIZABLE join reads that descends two spatial indexes together | The whole outer table, and of the other the rows whose envelopes meet the hull of the outer index's envelopes, and of a FULL join then the whole of it (RULES.md D138). | `exec/join/indexed/paired.rs` |
 | §4.30 the initial default schema | The session's authorization identifier, for every statement the session binds | `db/session.rs` |
 | 2023 §14.10 GR4, IA234, the changes TRUNCATE TABLE disallows that are not significant | Any other transaction's write of the table until the truncating one ends, and any use of the table by a transaction or statement that began before it committed (SQLCODE -911) | `db/truncate.rs`, `txn/locks.rs` |
 | 2023 §14.12 GR4, IA234, the changes MERGE disallows that are not significant | As of UPDATE, DELETE and INSERT. The rows it changes, and under a coordinator's locks the tables it reads, are another transaction's to write only once it ends. | `db/merge.rs`, `txn/access.rs` |

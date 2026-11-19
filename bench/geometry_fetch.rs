@@ -1,5 +1,7 @@
 //! Spatial candidate generation and row-fetch locality, without SQL or
 //! transaction bookkeeping. Every case reads the same envelope/row pairs.
+//! The phases of a broad read, traversal, row materialization, exact
+//! evaluation and wire encoding, are timed apart (`geometry_fetch/phases.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -12,6 +14,8 @@
 )]
 
 mod harness;
+#[path = "geometry_fetch/phases.rs"]
+mod phases;
 
 use std::hint::black_box;
 use std::sync::{Arc, Barrier};
@@ -42,6 +46,11 @@ fn main() {
     let expected: u64 = (0..WINDOWS).map(|n| harness::geometry::ids(n, 500).len() as u64).sum();
     let actual: u64 = windows.iter().map(|bounds| tree.scan(Some(*bounds)).map(Result::unwrap).count() as u64).sum();
     assert_eq!(actual, expected);
+    phases::measure(&bench, (&*table, &tree), &windows, expected);
+    phases::weights(&bench, &table);
+    if std::env::var("TURBOREL_FETCH_PHASES").is_ok() {
+        return;
+    }
     for threads in [1_usize, 4, 8] {
         for batch in [0_usize, 64, 256, 1024, 4096, 32768] {
             bench.measure(Case::new(format!("visible rows, sorted block {batch}"), "rows").threads(threads), || {

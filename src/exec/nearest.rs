@@ -42,7 +42,7 @@ fn open(read: NearestRead, db: &Arc<State>, tx: TxId) -> Result<RowIter> {
         return approx::approximate(read, storage, db, (tx, query));
     }
     let runner = Runner::new(db, tx);
-    if read.descending {
+    if read.descending && query.function.0.ranks() {
         query.statistics = runner.ranking_statistics(&read.index)?;
     }
     let Some(threshold) = Threshold::new(read.first, db).map(|t| t.negated(read.descending)) else {
@@ -140,7 +140,7 @@ impl Iterator for Search {
         loop {
             let Some(entry) = self.entries.next() else { return self.exhausted() };
             let outcome = entry.and_then(|(bound, key, id)| {
-                if self.threshold.beyond(bound)? {
+                if self.threshold.beyond(self.read.bound(bound))? {
                     self.ended = true;
                     return Ok(None);
                 }

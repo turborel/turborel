@@ -24,6 +24,8 @@ pub(super) struct Held {
     limit: usize,
     overflow: Option<Row>,
     payload: usize,
+    /// Whether reading stopped at the work area's limit, not a refusal.
+    outgrown: bool,
 }
 
 impl Held {
@@ -34,7 +36,7 @@ impl Held {
             return None;
         }
         let reservation = db.memory.reserve(bytes, "a bounded spatial join input").ok()?;
-        Some(Self { rows: Vec::with_capacity(ROWS), reservation, limit, overflow: None, payload: 0 })
+        Some(Self { rows: Vec::with_capacity(ROWS), reservation, limit, overflow: None, payload: 0, outgrown: false })
     }
 
     pub(super) fn read(&mut self, input: &mut RowIter) -> Result<bool> {
@@ -46,6 +48,7 @@ impl Held {
             let bytes = metadata(capacity).saturating_add(payload);
             if bytes > self.limit {
                 self.overflow = Some(row);
+                self.outgrown = true;
                 return Ok(false);
             }
             let reserved = self.reservation.resize(bytes);
@@ -58,6 +61,16 @@ impl Held {
             self.rows.push(row);
         }
         Ok(true)
+    }
+
+    /// Whether the input outgrew the work area, so it may be partitioned.
+    pub(super) fn outgrown(&self) -> bool {
+        self.outgrown
+    }
+
+    /// Its rows, then the row that did not fit, and its reservation.
+    pub(super) fn into_parts(self) -> (Vec<Row>, Option<Row>, Reservation) {
+        (self.rows, self.overflow, self.reservation)
     }
 
     pub(super) fn bounds(&self, column: usize) -> Result<Vec<Option<Bounds>>> {
@@ -84,7 +97,7 @@ impl Held {
 
 // Charge row slots, construction bounds, per-row functions and the full
 // hierarchy before growing. Rows' own payloads are charged separately.
-fn metadata(capacity: usize) -> usize {
+pub(super) fn metadata(capacity: usize) -> usize {
     let each = size_of::<Row>().saturating_add(size_of::<Option<Bounds>>()).saturating_add(size_of::<ScalarRef>());
     Packed::bytes(capacity).saturating_add(capacity.saturating_mul(each)).saturating_add(size_of::<Held>())
 }

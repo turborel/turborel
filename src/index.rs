@@ -42,7 +42,7 @@ pub use json::{JSON_METHOD, JsonMethod};
 pub use nearest::{Approximation, FilterHint, NearestQuery, NearestSupport, NeighbourEntries, RowFilter, same_metric};
 pub use probe::{ColumnComparison, Predicate, Probe};
 pub use projection::KeyProjection;
-pub use rtree::RTreeMethod;
+pub use rtree::{Envelopes, KeyPairs, RTreeMethod};
 pub use sparse::{BLOCK_SIZE_OPTION, QUANTIZATION_OPTION, SPARSE_METHOD, SparseIndex, SparseMethod, VECTOR_TYPE};
 pub use xml::{XML_PATH_METHOD, XML_PRIMARY_METHOD, XML_PROPERTY_METHOD, XML_VALUE_METHOD, XmlMethod};
 
@@ -376,6 +376,13 @@ pub trait Index: Send + Sync {
     fn read_region(&self, _probe: &Probe) -> Option<Vec<crate::spatial::Bounds>> {
         None
     }
+    /// \[DESIGN\] Its keys as a tree of envelopes, which a join descends
+    /// together with another index's (RULES.md D138). Its pairs, as a
+    /// search's entries, may include entries of versions a reader does
+    /// not see. None by default, and the join probes it instead.
+    fn envelopes(&self) -> Option<Envelopes> {
+        None
+    }
     /// Adds an entry of `row` under `key`. Keys containing a null are
     /// inserted only into the index of a UNIQUE NULLS NOT DISTINCT
     /// constraint [ISO/IEC 9075-2:2023 §11.7], to be found by `rows`: a
@@ -411,6 +418,23 @@ pub trait Index: Send + Sync {
     ///
     /// As `insert`'s; the entries' own; the spill area's.
     fn load(&self, entries: &mut dyn Iterator<Item = Result<(Key, RowId)>>, work: (&WorkAreas, Area)) -> Result<()> {
+        let _ = work;
+        for entry in entries {
+            let (key, row) = entry?;
+            self.insert(key, row)?;
+        }
+        Ok(())
+    }
+    /// \[DESIGN\] Adds every entry of `entries`, in any order, as `load`
+    /// does, to the index, which writers may change meanwhile: a CREATE
+    /// INDEX build's, whose writes keep it up to date as it fills
+    /// (`db/indexes.rs`). Default: `insert`, one by one. A method may build
+    /// it whole beside the writers' entries and keep both (RULES.md D139).
+    ///
+    /// # Errors
+    ///
+    /// As `load`'s.
+    fn load_beside_writers(&self, entries: &mut dyn Iterator<Item = Result<(Key, RowId)>>, work: (&WorkAreas, Area)) -> Result<()> {
         let _ = work;
         for entry in entries {
             let (key, row) = entry?;

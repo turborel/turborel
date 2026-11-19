@@ -229,7 +229,11 @@ SET DATABASE JOBS.POLICY = 'PAUSED'
 A table's statistics are gathered from every row of a table of up to
 60,000 rows. A larger table is sampled, about 30,000 of its rows read, so
 a pass costs the same however large the table grows, and its distinct
-values are estimated from the sample.
+values are estimated from the sample. Of a geometry column, the pass
+also keeps a grid of its envelopes, the coordinates a value holds on
+average, and how closely rows near in the table lie near in space, which
+price a search of an `rtree` index against a scan
+([Spatial Data](../sql/10-spatial.md#the-rtree-index-method)).
 
 Each thread started or stopped is told to the diagnostics, `thread`, as
 is each failure of its work. The threads are named for their work:

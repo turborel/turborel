@@ -136,6 +136,26 @@ impl Bounds {
         let squared = down(down(x * x) + down(y * y));
         down(squared.sqrt()).max(x).max(y)
     }
+
+    /// An upper bound on the Euclidean distance between a point of one
+    /// rectangle and a point of the other, for farthest-first traversal
+    /// (RULES.md D135). Shrinking either rectangle cannot increase it. The
+    /// spans round up and the result is widened by a relative slack far
+    /// above the roundings a computed distance of points within them
+    /// carries; spans past the finite range give infinity.
+    pub fn distance_upper_bound(self, other: Bounds) -> f64 {
+        let x = up((self.max_x - other.min_x).max(other.max_x - self.min_x));
+        let y = up((self.max_y - other.min_y).max(other.max_y - self.min_y));
+        up(up(x.hypot(y)) * (1.0_f64 + UPPER_SLACK))
+    }
+}
+
+/// The relative room `distance_upper_bound` adds above its rounded value.
+const UPPER_SLACK: f64 = 1.0e-9;
+
+/// The next representable value above a nonnegative one.
+fn up(value: f64) -> f64 {
+    value.max(0.0_f64).next_up()
 }
 
 /// The preceding representable nonnegative value; overflow becomes the

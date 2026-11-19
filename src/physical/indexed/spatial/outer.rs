@@ -39,7 +39,9 @@ impl PhysicalPlanner<'_> {
         if swapped.as_ref().is_some_and(|s| normal.as_ref().is_none_or(|n| s.total < n.total)) {
             return Some(Built::unordered(self.swapped(swapped?, right, (reversed, flip, shown))));
         }
-        let choice = normal?;
+        let mut choice = normal?;
+        // A traversal pairs rows in the trees' order, not the left's.
+        choice.paired = choice.paired.filter(|_| want.is_empty());
         // The unmatched rows of a FULL join's table follow the rest.
         let wanted = if kind == OuterJoin::Full { &[] } else { of_left(want, left.width()) };
         let outer = self.build_node(left, wanted);
