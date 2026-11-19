@@ -256,6 +256,11 @@ verification approach DO-178C expects (§8).
 | D235 | A server stopping sends the replies in flight whole, and runs no request pipelined behind them |
 | D236 | The network benchmark is an example of the server's crate, on the shared harness |
 | D240 | A completion carries the server's time for its statement, and the waits it can measure for free |
+| D270 | A replication or archive plug-in is a host plug-in, fail-stop, and its death stops the node |
+| D271 | A plug-in transport carries whole frames, taken as the driver turns |
+| D272 | A plug-in journal acknowledges what it names durable, and a plug-in transfer stages chunks it checks |
+| D273 | A plug-in consensus steps whole in one call, made again from its journal, VR still built in |
+| D274 | A plug-in archive is a target reached before any database opens, its errors the call's own |
 
 ### The project
 
@@ -7942,6 +7947,79 @@ network` runs it optimized, keeping and comparing its results as it does
 the others' (`xtask/src/bench.rs`, `SERVED`). It measures over loopback
 TCP, a Unix socket and TLS, against servers in its own process on
 runtimes of their own, over in-memory databases.
+
+#### D270. A replication or archive plug-in is a host plug-in, fail-stop, and its death stops the node
+
+A replica's transport, journal, state transfer and consensus, and a
+backup's archive, may each be served by a host plug-in (D229), of host
+kinds 32 to 36 (`plugin/payload/replication.rs`). PLUGINS.HOST declares
+it, and the node takes its objects with `Database::host_objects` as
+replication starts (`replication/src/plugin/node.rs`), one of each kind
+at most. Each object pins a process of its own for the replica's life,
+so PLUGINS.PROCESSES must be at least the objects a plug-in serves. Any
+failure of a call, an ERROR, a process ended, a call timed out, an answer
+too long or not of the protocol, fails the part stop. The bridge keeps
+the first failure and answers it to every later call, the driver halts,
+and `Driver::on_halt` stops the node (`Database::stop_node`), which
+recovers from its files and journal as it next opens. A replica that
+keeps going on a part that may have half acted could diverge, and one
+stopped cannot. The driver calls its parts under its core lock, as it
+calls the built-in ones. A host call makes no SQL, so it cannot re-enter
+the database, and the call's timeout bounds the time the lock is held.
+Each call costs one CALL and one RESULT.
+
+#### D271. A plug-in transport carries whole frames, taken as the driver turns
+
+A frame sent is one SEND, and a frame is a field of a message of protocol
+1, which the host reads whole or refuses. A program that ends
+mid-message gives no part of one, and the node stops (D270). The frames
+arrived are taken by one RECEIVE at the start of each turn of the driver,
+outside its core lock (`Driver::pump_with`). The members OPEN and
+RECONFIGURE answered are kept, so asking them makes no call. A frame the
+program loses is as a frame the network loses, which the protocol
+recovers.
+
+#### D272. A plug-in journal acknowledges what it names durable, and a plug-in transfer stages chunks it checks
+
+A journal's writes are one call each, and SYNC and FLUSH answer the
+positions made durable since, each once, in the order persisted,
+truncated since or not. The bridge keeps the positions persisted and not
+named. A position named out of that order, or never given, breaks the
+protocol, so no record is acknowledged that the program was not given.
+A program that ends mid-append acknowledges nothing more. A state
+transfer's program makes and reads the frames, and the host keeps the
+export and the staging. Serving, the export is told once and each
+request answered by SERVE, which asks for the pieces it needs, one a
+call, at most 64 an answer. Fetching, the files are copied out in chunks,
+each checked by `chunk_digest` before it is written to the database's
+`transfer/` and made durable. A program that ends mid-chunk stops the
+node, and the replica made again clears `transfer/` and fetches anew, so
+nothing half fetched is installed. A transfer costs a call a request
+served, one a piece, and one a chunk fetched.
+
+#### D273. A plug-in consensus steps whole in one call, made again from its journal, VR still built in
+
+A consensus can cross the process boundary because it is a deterministic
+machine: one STEP gives every output of an input in one RESULT, so the
+driver never acts on part of a step. OPEN gives it what the journal held
+and the recovery's nonce, as `Vr::restart` is given them. A step that
+fails answers no outputs, `Consensus::failed` tells the driver, and the
+driver halts before it acts on anything (D270). The consensus made again
+is opened from the journal, which holds all it made durable, so a
+program killed mid-view-change is recovered as a crash of the replica
+is. VR stays built in, and a node serves it unless a plug-in is declared.
+A step costs one call.
+
+#### D274. A plug-in archive is a target reached before any database opens, its errors the call's own
+
+An archive is a backup target's provider of the scheme its object's name
+is, with the calls of kind 8 (D166). It is a host kind because a restore
+runs before any database opens, when no extension is installed, so
+`restore` starts the host plug-ins first and `open_target` asks a host
+archive of the scheme before an extension's. A process that fails stops
+the node, as any host plug-in's does. A program's own ERROR fails only
+the call, as a built-in target out of reach fails the backup, the
+archive round or the restore asked, and leaves nothing a restore takes.
 
 ## 2. Project layout
 

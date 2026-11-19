@@ -126,6 +126,9 @@ behind it, and each can be replaced or added to.
   own, installed from signed packages and registries.
 - [Every plug-in kind external](doc/client/04-plugins-kinds.md), types,
   collations, storage engines and index methods among them, with an SDK.
+- [Replication and archive plug-ins](doc/client/04-plugins-replication.md):
+  a replica's transport, journal, state transfer and consensus, and a
+  backup's archive, served by host plug-ins that fail stop.
 - [Property graphs](doc/sql/20-property-graphs.md) over tables or
   queries' rows, queried by GRAPH_TABLE's path patterns through adjacency
   indexes, LINE_GRAPH among them.
