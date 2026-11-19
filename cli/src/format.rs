@@ -212,6 +212,9 @@ pub struct Printer<'a> {
     widths: Widths,
     /// The first failure to write: nothing more is written after it.
     failed: Option<io::Error>,
+    /// The widest value of each column, of rows known before they are
+    /// written, so their columns are no wider than they need be.
+    known: Option<Vec<usize>>,
 }
 
 impl<'a> Printer<'a> {
@@ -220,7 +223,21 @@ impl<'a> Printer<'a> {
     /// layout says.
     pub fn new(out: &'a mut dyn Write, layout: &'a Layout, screen: Option<usize>, expanded: bool) -> Printer<'a> {
         let expanded = expanded || layout.expanded == Expanded::On;
-        Printer { out, layout, screen, expanded, names: Vec::new(), shapes: Vec::new(), rows: 0, widths: Widths::default(), failed: None }
+        Printer { out, layout, screen, expanded, names: Vec::new(), shapes: Vec::new(), rows: 0, widths: Widths::default(), failed: None, known: None }
+    }
+
+    /// The printer, its columns as wide as `rows`, all it is to write,
+    /// need, or their names.
+    pub fn fitted(mut self, rows: &[Row]) -> Printer<'a> {
+        let mut widest: Vec<usize> = Vec::new();
+        for row in rows {
+            widest.resize(widest.len().max(row.len()), 0);
+            for (w, v) in widest.iter_mut().zip(row) {
+                *w = (*w).max(self.widths.of(&cell(v, &self.layout.null)));
+            }
+        }
+        self.known = Some(widest);
+        self
     }
 
     /// Ends the output, `count` rows written, and the SQLSTATE of the
@@ -251,6 +268,13 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Writes `text` as it is, unless writing failed.
+    fn put(&mut self, text: &str) {
+        if self.failed.is_none() {
+            self.failed = self.out.write_all(text.as_bytes()).err();
+        }
+    }
+
     /// Whether this result's rows are expanded: asked for, or automatic
     /// and wider than the screen, `width` columns.
     fn decide(&mut self, width: usize) {
@@ -263,7 +287,12 @@ impl Sink for Printer<'_> {
     fn columns(&mut self, columns: &[Column]) {
         self.names = columns.iter().map(|c| c.name.clone().unwrap_or_default()).collect();
         let named: Vec<usize> = self.names.iter().map(|n| self.widths.of(n)).collect();
-        self.shapes = columns.iter().zip(named).map(|(c, w)| shape(w, &c.data_type)).collect();
+        self.shapes = columns.iter().zip(&named).map(|(c, w)| shape(*w, &c.data_type)).collect();
+        if let Some(known) = &self.known {
+            for ((s, w), name) in self.shapes.iter_mut().zip(known.iter().chain(std::iter::repeat(&0))).zip(named) {
+                s.width = s.width.min((*w).max(name));
+            }
+        }
         match self.layout.style {
             Style::Aligned | Style::Wrapped => table::columns(self),
             Style::Unaligned | Style::Csv | Style::Tabs => text::columns(self),

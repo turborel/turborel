@@ -95,7 +95,8 @@ pub const USAGE: &str = "usage: turborel [options]
   -q, --quiet            write no OK after a statement that is not a query
       --safe-updates     refuse an UPDATE or DELETE without WHERE
   -A, --unaligned        rows unaligned, their fields between the separator
-  -B, --tab-separated    rows tab-separated, without header or footer
+  -B, --tab-separated    rows tab-separated, after a line naming the columns,
+                         without a footer
       --csv, --html, --json
                          rows as CSV, an HTML table, or JSON objects
       --style STYLE      aligned, unaligned, wrapped, csv, html, json or tabs

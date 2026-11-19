@@ -192,7 +192,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
             None => &mut *self.out,
         };
         let mut out = super::output::Out { main, tee: self.tee.as_mut(), pager: None };
-        let mut printer = Printer::new(&mut out, &self.layout, width, false);
+        let mut printer = Printer::new(&mut out, &self.layout, width, false).fitted(&kept.rows);
         use turborel_client::connection::Sink as _;
         printer.columns(&kept.columns);
         printer.rows(&kept.rows);

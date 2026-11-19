@@ -20,7 +20,7 @@ use crate::format::cell;
 use crate::vars::literal;
 
 /// The schemas of the system, left out unless `S` asks for them.
-const SYSTEM_SCHEMAS: &str = "('INFORMATION_SCHEMA', 'DEFINITION_SCHEMA')";
+const SYSTEM_SCHEMAS: &str = "('INFORMATION_SCHEMA', 'DEFINITION_SCHEMA', 'FT_INFORMATION_SCHEMA', 'ST_DEFINITION_SCHEMA')";
 /// The escape character of a pattern's LIKE.
 const ESCAPE: char = '\\';
 /// The commands, before their `+` and `S`.
@@ -142,8 +142,8 @@ pub fn plan(name: &str, pattern: Option<&str>) -> Result<Plan, String> {
     let listing = |sql: String| Ok(Plan::Sections(vec![Section::listing(sql)]));
     match base {
         "d" => Ok(relations(pattern, more, system)),
-        "dt" => listing(tables(pattern, "'BASE TABLE'", more, system)),
-        "dv" => listing(tables(pattern, "'VIEW'", more, system)),
+        "dt" => listing(tables(pattern, "TABLE_TYPE = 'BASE TABLE'", more, system)),
+        "dv" => listing(tables(pattern, "TABLE_TYPE = 'VIEW'", more, system)),
         "di" => listing(indexes(pattern, more, system)),
         "ds" => listing(sequences(pattern, more, system)),
         "df" => listing(routines(pattern, more, system)),
@@ -163,7 +163,7 @@ pub fn plan(name: &str, pattern: Option<&str>) -> Result<Plan, String> {
 /// view it matches described.
 fn relations(pattern: Option<&str>, more: bool, system: bool) -> Plan {
     let Some(named) = pattern else {
-        let mut sections = vec![Section::listing(tables(None, "'BASE TABLE', 'VIEW'", more, system))];
+        let mut sections = vec![Section::listing(tables(None, "TABLE_TYPE IN ('BASE TABLE', 'VIEW')", more, system))];
         sections.push(Section::titled("Sequences", sequences(None, more, system)));
         return Plan::Sections(sections);
     };
@@ -265,12 +265,12 @@ fn table_sections(table: (&str, &str)) -> Vec<Section> {
     ]
 }
 
-/// The tables of the types `types`.
+/// The tables whose type `types`, a condition, allows.
 fn tables(pattern: Option<&str>, types: &str, more: bool, system: bool) -> String {
     let extra = if more { ", IS_INSERTABLE_INTO AS \"Insertable\", COMMIT_ACTION AS \"On commit\"" } else { "" };
     format!(
         "SELECT TABLE_SCHEMA AS \"Schema\", TABLE_NAME AS \"Name\", TABLE_TYPE AS \"Type\"{extra} FROM INFORMATION_SCHEMA.TABLES \
-         WHERE TABLE_TYPE IN ({types}) AND {} ORDER BY TABLE_SCHEMA, TABLE_NAME",
+         WHERE {types} AND {} ORDER BY TABLE_SCHEMA, TABLE_NAME",
         matching(pattern, ("TABLE_SCHEMA", "TABLE_NAME"), system)
     )
 }

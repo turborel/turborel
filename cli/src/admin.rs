@@ -200,7 +200,7 @@ fn show<S: Statements + ?Sized>(connection: &mut S, sql: &str, expanded: bool, c
     let mut kept = Kept::default();
     connection.query_into(sql, &mut kept).map_err(|f| f.to_string())?;
     let layout = Layout { expanded: if expanded { Expanded::On } else { Expanded::Off }, ..Layout::default() };
-    let mut printer = Printer::new(&mut *console.out, &layout, None, false);
+    let mut printer = Printer::new(&mut *console.out, &layout, None, false).fitted(&kept.rows);
     printer.columns(&kept.columns);
     printer.rows(&kept.rows);
     printer.finish(u64::try_from(kept.rows.len()).unwrap_or(u64::MAX), None).map_err(|e| e.to_string())

@@ -164,7 +164,7 @@ fn html_tables() {
 /// write as one, as a string.
 #[test]
 fn json_arrays() {
-    assert_eq!(written(&layout(Style::Json), None, false), "[\n{\"NAME\":\"a, \\\"b\\\"\",\"N\":7}\n,{\"NAME\":null,\"N\":-12}\n]\n");
+    assert_eq!(written(&layout(Style::Json), None, false), "[\n{\"NAME\":\"a, \\\"b\\\"\",\"N\":7},\n{\"NAME\":null,\"N\":-12}\n]\n");
     assert_eq!(markup::json_string("a\u{1}\n"), "\"a\\u0001\\n\"");
     let mut out = Vec::new();
     let given = layout(Style::Json);

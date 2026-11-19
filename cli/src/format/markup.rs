@@ -83,7 +83,7 @@ fn align(p: &Printer<'_>, at: usize) -> &'static str {
 /// Writes the beginning: the table and its header row, or the array.
 pub(super) fn columns(p: &mut Printer<'_>) {
     if p.layout.style == Style::Json {
-        p.write("[");
+        p.put("[");
         return;
     }
     p.decide(0);
@@ -100,8 +100,8 @@ pub(super) fn row(p: &mut Printer<'_>, row: &Row, cells: &[String]) {
     if p.layout.style == Style::Json {
         let members: Vec<String> =
             p.names.iter().zip(row.iter().zip(cells)).map(|(n, (v, text))| format!("{}:{}", json_string(n), json_value(v, text))).collect();
-        let lead = if p.rows > 1 { "," } else { "" };
-        p.write(&format!("{lead}{{{}}}", members.join(",")));
+        let lead = if p.rows > 1 { ",\n" } else { "\n" };
+        p.put(&format!("{lead}{{{}}}", members.join(",")));
         return;
     }
     if !p.expanded {
@@ -119,7 +119,7 @@ pub(super) fn row(p: &mut Printer<'_>, row: &Row, cells: &[String]) {
 /// Writes the end: the table closed and its footer, or the array closed.
 pub(super) fn finish(p: &mut Printer<'_>, footer: Option<&str>) {
     if p.layout.style == Style::Json {
-        p.write("]");
+        p.write(if p.rows > 0 { "\n]" } else { "]" });
         return;
     }
     p.write("</table>");
