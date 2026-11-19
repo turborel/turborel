@@ -7,7 +7,9 @@
 //! read its table whole or through a filter that cannot raise, as the
 //! traversal reads its rows only through their entries, perhaps under a
 //! projection of its columns, as a derived table's is. The join keeps
-//! its probes when the cost of the probes and the outer scan is lower.
+//! its probes when the cost of the probes and the outer scan is lower,
+//! and only if both tables' statistics put the pairs at no more than
+//! `PAIRED_MOST` an outer row (D138).
 
 use super::{Binding, Choice, Preserve, Read, read_table};
 use crate::catalog::IndexDesc;
@@ -15,6 +17,16 @@ use crate::geometry::SpatialOperation;
 use crate::logical::LogicalPlan;
 use crate::physical::{Paired, PhysicalPlanner};
 use crate::storage::cost_of;
+
+/// \[DESIGN\] The most pairs an outer row may be estimated to make, by both
+/// columns' envelope grids, for a traversal to be taken. A pair costs the
+/// traversal 3.7 to 9.8 µs, by which table it pairs from, against about
+/// 5 µs for a probe's descent, so only joins of about one pair an outer
+/// row gain. The grid takes shapes as independent within a cell, so it
+/// underestimates tables that share their positions: 0.92 pairs where
+/// 4.0 were made on `bench/geometry_join/large.rs`. A quarter of a pair
+/// estimated stands for about one made.
+const PAIRED_MOST: f64 = 0.25;
 
 impl PhysicalPlanner<'_> {
     /// The outer table's R-tree, if `choice`, a probe of `binding`'s
@@ -29,6 +41,15 @@ impl PhysicalPlanner<'_> {
         let read = read_table(outer)?;
         self.db.index_of(&choice.read.index).ok()?.envelopes()?;
         let ix = self.db.catalog.indexes(read.table).into_iter().find(|ix| self.traversable(ix, binding.outer))?;
+        let probed = self.db.catalog.indexes(&choice.read.table).into_iter().find(|p| p.name == choice.read.index)?;
+        let (outer_stats, inner_stats) = (self.db.statistics(read.table)?, self.db.statistics(&choice.read.table)?);
+        let (from, to) = (ix.columns.first().copied()?, probed.columns.first().copied()?);
+        let each = cost_of(self.db.storage_of(&choice.read.table).ok()?.row_count())
+            * (1.0_f64 - inner_stats.nulls(to).unwrap_or(0.0_f64))
+            * outer_stats.envelopes(from)?.joined(inner_stats.envelopes(to)?);
+        if each > PAIRED_MOST {
+            return None;
+        }
         (self.traversal_cost(&read, choice)? < self.probes_cost(outer, &read, choice)?).then(|| {
             Box::new(Paired {
                 table: read.table.clone(),

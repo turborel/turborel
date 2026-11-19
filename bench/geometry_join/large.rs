@@ -35,10 +35,12 @@ pub fn measure(bench: &Bench, db: &Database) {
     note(&format!("spilled join: {in_memory} pairs"));
     fill(db, "PARCELS", (PARCELS, PARCEL_WIDTH));
     db.create_index("PARCELS_G", "B.PARCELS", &["G"], "rtree").unwrap();
+    db.analyze("B.POINTS").unwrap();
+    db.analyze("B.PARCELS").unwrap();
     note(&format!("paired plan:\n{}", planned(db, PAIRED)));
     let paired = counted(db, PAIRED, None);
     assert_eq!(paired, expected((PARCELS, PARCEL_WIDTH)), "paired");
-    bench.measure(Case::new(format!("{ROWS} points, {PARCELS} parcels, two trees descended together"), "joins"), || {
+    bench.measure(Case::new(format!("{ROWS} points, {PARCELS} parcels, both indexed, as planned"), "joins"), || {
         black_box(counted(db, PAIRED, None));
         1
     });

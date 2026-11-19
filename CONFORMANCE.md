@@ -3025,7 +3025,8 @@ its own is in SQL/MM, and a distance compared `>` or `>=` reads the
 table. A join of two columns of one SRID,
 each with an R-tree, on ST_Intersects or a meeting relationship, may
 descend both trees together, pairing the entries whose envelopes meet,
-inner or outer, each pair rechecked against the visible rows, the outer
+inner or outer, when both tables' statistics put the pairs at a quarter
+an outer row or fewer, each pair rechecked against the visible rows, the outer
 operand's filter and the full condition
 (`physical/indexed/spatial/paired.rs`, `exec/join/indexed/paired.rs`,
 RULES.md D138).

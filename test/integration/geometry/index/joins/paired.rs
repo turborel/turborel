@@ -10,7 +10,8 @@ use turborel::params::Params;
 const JOIN: &str = "SELECT P.ID, Z.ID FROM ZONES Z JOIN SHAPES P ON ST_INTERSECTS(P.G, Z.G) = 1";
 
 /// SHAPES with zones beside it: small squares, a square with a hole, an
-/// empty geometry and a null, both tables indexed.
+/// empty geometry and a null, both tables indexed, their statistics
+/// gathered.
 fn zoned() -> Database {
     let db = populated();
     let a = db.session("A");
@@ -23,6 +24,8 @@ fn zoned() -> Database {
     a.run("INSERT INTO ZONES VALUES (900, ST_GEOMFROMTEXT('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 2 8, 8 8, 8 2, 2 2))', 4326)), (901, ST_GEOMFROMTEXT('POINT EMPTY', 4326)), (902, NULL)").unwrap();
     a.commit().unwrap();
     db.create_index("ZONES_G", "A.ZONES", &["G"], "rtree").unwrap();
+    db.analyze("A.SHAPES").unwrap();
+    db.analyze("A.ZONES").unwrap();
     db
 }
 
@@ -88,6 +91,34 @@ fn synchronized_spatial_joins_are_chosen_by_cost_and_order() {
     ] {
         let plan = a.physical_plan(&query, &Params::new()).unwrap();
         assert!(!plan.contains("SynchronizedSpatialJoin"), "{query}\n{plan}");
+    }
+}
+
+/// Verifies: [DESIGN] D137, D138: a traversal is taken only when both
+/// tables' statistics put the pairs at about one an outer row; zones as
+/// many and as indexed, but broad enough to meet many shapes each, or
+/// without statistics, keep their probes. MC/DC: the grid's pairs and
+/// the statistics' presence each decide alone.
+#[test]
+fn synchronized_spatial_joins_need_few_pairs_by_the_statistics() {
+    let db = zoned();
+    let a = db.session("A");
+    for (name, side) in [("BROAD", 40), ("UNGATHERED", 1)] {
+        a.run(&format!("CREATE TABLE {name} (ID INTEGER, G GEOMETRY(4326))")).unwrap();
+        let values: Vec<_> =
+            (0..150_i32).map(|id| format!("({id}, ST_MAKEENVELOPE({0}, {0}, {1}, {1}, 4326))", id * 3, id * 3 + side)).collect();
+        a.run(&format!("INSERT INTO {name} VALUES {}", values.join(","))).unwrap();
+    }
+    a.commit().unwrap();
+    for name in ["BROAD", "UNGATHERED"] {
+        db.create_index(&format!("{name}_G"), &format!("A.{name}"), &["G"], "rtree").unwrap();
+    }
+    db.analyze("A.BROAD").unwrap();
+    assert!(a.physical_plan(JOIN, &Params::new()).unwrap().contains("SynchronizedSpatialJoin"));
+    for name in ["BROAD", "UNGATHERED"] {
+        let query = JOIN.replace("ZONES", name);
+        let plan = a.physical_plan(&query, &Params::new()).unwrap();
+        assert!(!plan.contains("SynchronizedSpatialJoin") && plan.contains("A.SHAPES using SHAPES_G"), "{query}\n{plan}");
     }
 }
 
