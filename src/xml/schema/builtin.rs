@@ -52,6 +52,9 @@ pub(super) fn named(local: &str) -> Option<TypeDef> {
         ENTITIES => return Some(TypeDef::Simple(Simple::List(AtomicType::Entity))),
         _ => {}
     }
+    if let Some(item) = local.strip_prefix(ANONYMOUS_LIST) {
+        return AtomicType::all().find(|t| t.name().strip_prefix(XS_QUALIFIED) == Some(item)).map(|t| TypeDef::Simple(Simple::List(t)));
+    }
     AtomicType::all().find(|t| t.name().strip_prefix(XS_QUALIFIED) == Some(local)).map(|t| TypeDef::Simple(Simple::Atomic(t)))
 }
 
@@ -61,10 +64,27 @@ pub fn simple_name(schema: &Schema, s: Simple) -> Option<Expanded> {
     let local = match s {
         Simple::AnySimple => ANY_SIMPLE_TYPE,
         Simple::Atomic(t) => t.name().strip_prefix(XS_QUALIFIED).unwrap_or(t.name()),
-        Simple::List(t) => BUILT_IN_LISTS.iter().find(|(item, ..)| *item == t).map_or(NMTOKENS, |(_, _, name)| *name),
+        Simple::List(t) => BUILT_IN_LISTS.iter().find(|(item, ..)| *item == t).map(|(_, _, name)| *name)?,
         Simple::Defined(id) => return schema.simple(id).and_then(|d| d.name.clone()),
     };
     Some(Expanded::new(Some(XS_NAMESPACE), local))
+}
+
+/// The prefix of the type-name of an anonymous list of a built-in atomic
+/// type that no built-in list type is, as `xsi:schemaLocation`'s list of
+/// `xs:anyURI` [Schema1 §3.2.7], its item type's local name after it.
+const ANONYMOUS_LIST: &str = "#anonymous-list-";
+
+/// \[DESIGN\] The type-name [XQueryDM §3.3.1.1] of `s` if it is an
+/// anonymous list of a built-in atomic type, made from its item type so
+/// that `named` finds the list again; none of any other type.
+pub(super) fn anonymous_list(s: Simple) -> Option<Expanded> {
+    let Simple::List(t) = s else { return None };
+    if BUILT_IN_LISTS.iter().any(|(item, ..)| *item == t) {
+        return None;
+    }
+    let item = t.name().strip_prefix(XS_QUALIFIED).unwrap_or(t.name());
+    Some(Expanded::new(Some(XS_NAMESPACE), &format!("{ANONYMOUS_LIST}{item}")))
 }
 
 /// The name of `xs:anyType`.

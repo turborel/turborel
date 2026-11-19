@@ -83,15 +83,6 @@ impl Plane {
         Plane { n: scaled, d: if positive { offset } else { offset.neg() } }
     }
 
-    /// The plane `x[axis] = value`, positive above it.
-    pub fn axis(axis: usize, value: &Big) -> Plane {
-        let mut n = [Big::zero(), Big::zero(), Big::zero()];
-        if let Some(slot) = n.get_mut(axis) {
-            *slot = Big::of(1);
-        }
-        Plane { n, d: value.neg() }
-    }
-
     /// The same plane facing the other way.
     #[must_use]
     pub fn flipped(&self) -> Plane {

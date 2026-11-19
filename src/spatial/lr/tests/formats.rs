@@ -4,24 +4,6 @@
 //! the representation is refused.
 
 use super::*;
-use crate::spatial::formats::gml::Srs;
-
-/// Reference systems naming none: every sample is of SRID 0.
-struct NoSrs;
-
-impl Srs for NoSrs {
-    fn by_text(&self, _text: &str) -> Option<i32> {
-        None
-    }
-
-    fn by_code(&self, _authority: &str, _code: &str) -> Option<i32> {
-        None
-    }
-
-    fn name(&self, _srid: i32) -> Option<String> {
-        None
-    }
-}
 
 /// A distance expression with every attribute: referents with feature
 /// ids, a lateral offset from a geometry and a vertical one of no
@@ -240,4 +222,30 @@ fn text_is_bounded() {
     let long = " ".repeat(MAX_TEXT.saturating_add(1));
     assert_eq!(from_text(&long, LrKind::Lrm, &cat).unwrap_err().code, Code::Unsupported);
     assert_eq!(from_gml(&long, LrKind::Lrm, &cat, &NoSrs).unwrap_err().code, Code::Unsupported);
+}
+
+/// Verifies: [DESIGN] the stored form's own checks: a presence octet
+/// other than 0 or 1, an element inside a position expression whose type
+/// code names a type that is no linear element, and more than three
+/// vectors are corruption (SQLCODE -916).
+#[test]
+fn stored_form_checks_its_codes() {
+    let position = LrValue::PositionExp(PositionExp::of_element_and_id(full_feature(), 3, DistanceExp::along(m(3.0_f64))));
+    let good = position.encode().unwrap();
+    assert_eq!(good[6], 1, "the element's presence octet");
+    assert_eq!(good[7], LrKind::LrFeature.code(), "the element's type code");
+    let mut presence = good.clone();
+    presence[6] = 2;
+    assert_eq!(LrValue::decode(&presence).unwrap_err().code, Code::Corrupt);
+    for kind in [LrKind::Lrm, LrKind::LinearElement, LrKind::VectorOffsetExp] {
+        let mut not_element = good.clone();
+        not_element[7] = kind.code();
+        assert_eq!(LrValue::decode(&not_element).unwrap_err().code, Code::Corrupt, "{kind:?}");
+    }
+    let vectors = LrValue::VectorOffsetExp(VectorOffsetExp::new(vec![Vector::xy(1.0_f64, 2.0_f64)]).unwrap());
+    let mut four = vectors.encode().unwrap();
+    assert_eq!(four[2..6], 1_u32.to_le_bytes());
+    four[2..6].copy_from_slice(&4_u32.to_le_bytes());
+    four.extend(four[6..].to_vec().repeat(3));
+    assert_eq!(LrValue::decode(&four).unwrap_err().code, Code::Corrupt);
 }

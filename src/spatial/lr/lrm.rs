@@ -47,8 +47,8 @@ pub struct LrmParts {
     pub lrm_type: Option<String>,
     /// aunitofmeasure.
     pub units: Option<String>,
-    /// aconstraintarray.
-    pub constraints: Option<Vec<String>>,
+    /// aconstraintarray, a null element kept.
+    pub constraints: Option<Vec<Option<String>>>,
 }
 
 /// The three further arguments of ST_LRM's eight-argument constructor.
@@ -181,13 +181,13 @@ impl Lrm {
     }
 
     /// [§15.1.7 Description 2] ST_Constraints().
-    pub fn constraints(&self) -> Option<&[String]> {
+    pub fn constraints(&self) -> Option<&[Option<String>]> {
         self.constraints.as_deref()
     }
 
     /// [§15.1.7 Description 4] ST_Constraints(CHARACTER VARYING ARRAY).
     #[must_use]
-    pub fn with_constraints(this: Option<&Lrm>, aconstraintarray: Option<Vec<String>>) -> Option<Lrm> {
+    pub fn with_constraints(this: Option<&Lrm>, aconstraintarray: Option<Vec<Option<String>>>) -> Option<Lrm> {
         this.map(|l| Lrm { constraints: aconstraintarray, ..l.clone() })
     }
 

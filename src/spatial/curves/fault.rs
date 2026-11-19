@@ -164,4 +164,45 @@ mod tests {
             assert_ne!(kind.words(), "");
         }
     }
+
+    /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §22 Table 16] Every
+    /// condition of the table has its own subclass of class 2F and the
+    /// table's words, and its error carries that SQLSTATE.
+    #[test]
+    fn every_condition_has_its_table_16_subclass_and_words() {
+        let table = [
+            (Fault::InvalidArgument, "2FF02", "invalid argument"),
+            (Fault::NullArgument, "2FF03", "null argument"),
+            (Fault::NullExteriorRing, "2FF07", "null exterior ring"),
+            (Fault::ElementEmpty, "2FF06", "element is an empty set"),
+            (Fault::NonContiguousCurves, "2FF11", "non-contiguous curves"),
+            (Fault::UnsupportedUnit, "2FF14", "unsupported unit specified"),
+            (Fault::InvalidText, "2FF22", "invalid well-known text representation"),
+            (Fault::InvalidBinary, "2FF23", "invalid well-known binary representation"),
+            (Fault::InvalidGml, "2FF24", "invalid GML representation"),
+            (Fault::MixedDimensions, "2FF25", "mixed coordinate dimensions"),
+            (Fault::UnknownSrs, "2FF59", "unknown spatial reference system"),
+            (Fault::NotATriangle, "2FF67", "polygon value is not a triangle value"),
+            (Fault::TrianglesHaveNoHoles, "2FF66", "triangles cannot have holes"),
+            (Fault::ThreePointsRequired, "2FF71", "at least 3 points are required"),
+            (Fault::BothNot3D, "2FF72", "both geometries must be 3D"),
+            (Fault::InvalidGeometry, "2FF74", "invalid geometry"),
+            (Fault::FourPointRing, "2FF75", "exterior ring must have exactly 4 points"),
+            (Fault::MultipleSegments, "2FF76", "curve has multiple segments"),
+            (Fault::ExactlyThreePoints, "2FF77", "exactly three points are required"),
+            (Fault::Collinear, "2FF78", "points are collinear"),
+            (Fault::DistanceTooLong, "2FF79", "the given distance is longer than curve"),
+            (Fault::PointNotOnCurve, "2FF80", "the point is not on the curve"),
+            (Fault::MissingMeasures, "2FF84", "missing measure value(s)"),
+            (Fault::NonContiguousSurfaces, "2FF85", "non-contiguous surfaces"),
+            (Fault::VectorCount, "2FF86", "incorrect number of vectors"),
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for (kind, state, words) in table {
+            assert_eq!(kind.sqlstate(), state);
+            assert_eq!(kind.words(), words);
+            assert_eq!(fault(kind, "§22", "detail").sqlstate().as_str(), state);
+            assert!(seen.insert(state), "{state} is given twice");
+        }
+    }
 }

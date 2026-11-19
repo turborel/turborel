@@ -44,3 +44,33 @@ fn a_merged_build_reaches_every_node() {
     let (rate, _) = recall(&merged, &points, &queries, &Search { list: Some(200), ..ten() });
     assert!(rate >= 0.7_f64, "far-apart merged recall {rate}");
 }
+
+/// The entries of `points`, rows 0.., each twice, then an entry of the
+/// first point's vector under another row.
+fn repeated(points: &[Vec<f32>]) -> Vec<Result<(Vec<f32>, u64)>> {
+    let mut entries: Vec<Result<(Vec<f32>, u64)>> = points.iter().cloned().zip(0_u64..).flat_map(|e| [Ok(e.clone()), Ok(e)]).collect();
+    entries.push(Ok((points[0].clone(), 9_999)));
+    entries
+}
+
+/// Verifies: [DESIGN] (D29) a load counts a repeated entry on one node,
+/// as inserts do, whether its build keeps the vectors in memory or has
+/// spilled them to their pages for a merged build; two removes take it
+/// out; a load into an index not empty is refused, SQLCODE -910.
+#[test]
+fn a_load_counts_repeated_entries_in_memory_and_merged() {
+    let (points, _) = dataset(600, 1, (8, 6), 9);
+    for tuning in [tuning(), Tuning { build_memory: 8 << 10, clusters: 4, ..tuning() }] {
+        let (pool, file, budget) = pool();
+        let index = DiskAnn::create(pool, file, layout(8, 16), (tuning, plugins(false)), budget).unwrap();
+        index.load(&mut repeated(&points).into_iter()).unwrap();
+        assert_eq!(index.counts().live, 601);
+        assert_eq!(index.rows(&points[0]).unwrap().len(), 2);
+        index.remove(&points[5], 5).unwrap();
+        assert!(index.rows(&points[5]).unwrap().contains(&5));
+        index.remove(&points[5], 5).unwrap();
+        assert!(!index.rows(&points[5]).unwrap().contains(&5));
+        let again = index.load(&mut points.iter().cloned().zip(0_u64..).map(Ok)).unwrap_err();
+        assert_eq!(again.sqlcode(), -910_i32);
+    }
+}

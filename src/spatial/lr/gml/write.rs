@@ -6,7 +6,7 @@
 use super::{
     CONSTRAINT, CONSTRAINTS, CURVE, DEFAULT_LRM, DEFAULT_MEASURE, DISTANCE_ALONG, DISTANCE_EXPRESSION, EDGE_ID, ELEMENT_ID, ELEMENT_TYPE,
     FEATURE_GEOMETRY, FEATURE_ID, FROM_FEATURE, FROM_NAME, LATERAL_DIRECTION, LATERAL_OFFSET, LINEAR_ELEMENT, LOCATION, LR_CURVE,
-    LR_DIRECTED_EDGE, LR_FEATURE, LR_MEASURE, LRM, LRM_ID, LRM_VALUE, MEASURE, NAME, OFFSET_DESCRIPTION, OFFSET_DISTANCE, OFFSET_UNIT,
+    LR_DIRECTED_EDGE, LR_FEATURE, LR_MEASURE, LRM, LRM_ID, LRM_VALUE, MEASURE, NAME, NIL, OFFSET_DESCRIPTION, OFFSET_DISTANCE, OFFSET_UNIT,
     POSITION, POSITION_EXPRESSION, REFERENT, REFERENTS, START_VALUE, START_VALUES, TOPOLOGY_NAME, TOPOLOGY_TYPE, TOWARDS_FEATURE,
     TOWARDS_NAME, TYPE, UNIT_OF_MEASURE, UOM, VECTOR, VECTOR_OFFSET, VERTICAL_DIRECTION, VERTICAL_OFFSET, X, Y, Z,
 };
@@ -68,12 +68,18 @@ fn lrm(l: &Lrm) -> String {
     out.push_str(&leaf(TYPE, &l.lrm_type));
     out.push_str(&leaf(UNIT_OF_MEASURE, &l.units));
     if let Some(cs) = &l.constraints {
-        out.push_str(&wrap(CONSTRAINTS, &cs.iter().map(|c| leaf(CONSTRAINT, c)).collect::<String>()));
+        out.push_str(&wrap(CONSTRAINTS, &cs.iter().map(|c| constraint(c.as_deref())).collect::<String>()));
     }
     out.push_str(&opt_leaf(OFFSET_UNIT, l.offset_units.as_deref()));
     out.push_str(&opt_leaf(LATERAL_DIRECTION, l.lateral_direction.as_deref()));
     out.push_str(&opt_leaf(VERTICAL_DIRECTION, l.vertical_direction.as_deref()));
     wrap(LRM, &out)
+}
+
+/// [§15.1.1 Description 6] One element of the constraints, a null one
+/// marked `nil`.
+fn constraint(c: Option<&str>) -> String {
+    c.map_or_else(|| format!("<{CONSTRAINT} {NIL}=\"true\"/>"), |t| leaf(CONSTRAINT, t))
 }
 
 /// [§15.8.1] An ST_StartValue.

@@ -244,3 +244,25 @@ fn a_product_by_batches_is_cancelled_as_it_pairs() {
     exec(&a, "SET STATEMENT.TIMEOUT_MS = 50").unwrap();
     assert_eq!(rows(&a, "SELECT COUNT(*) FROM T A, T B, T C").err(), Some(Code::Cancelled));
 }
+
+/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.20 GR2b]: a product
+/// read by batches whose right operand's batches outgrow the work area
+/// though the rows it keeps fit, so it holds those rows, pairs each left
+/// row with each of them, as row by row; a left batch keeping no row adds
+/// none.
+#[test]
+fn a_product_of_held_rows_answers_as_row_by_row() {
+    let db = Database::new();
+    let a = tables(&db);
+    exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
+    // F.B < 3 keeps K of 0, 334 and 667 in each thousand, 18 rows.
+    for (query, answer) in [
+        ("SELECT COUNT(*) FROM D, F WHERE F.B < 3", "144"),
+        ("SELECT MAX(F.K) FROM D, F WHERE F.B < 3", "5667"),
+        ("SELECT COUNT(*) FROM F, D WHERE F.K >= 5000", "8000"),
+        ("SELECT MIN(F.K) FROM F, D WHERE F.K >= 5000 AND D.G = 2", "5000"),
+    ] {
+        let (batched, row) = both_ways(&a, query);
+        assert_eq!((batched, row), (vec![answer.to_owned()], vec![answer.to_owned()]), "{query}");
+    }
+}

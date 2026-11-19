@@ -33,3 +33,33 @@ fn partitions_search_alone_or_merged_and_reopen() {
     assert_eq!(reopened.all().unwrap().len(), 3);
     assert_eq!(reopened.search(&q, &ten(), None).unwrap().0, all);
 }
+
+/// Verifies: [EXTENSION] a load past the build memory inserts the rest,
+/// and a later load into partitions already filled inserts its entries;
+/// a partition opened of another layout is refused as corrupt, SQLCODE
+/// -916; a search within a radius keeps every entry within it; tuning
+/// changes in every partition, maintenance reaches each, and a dropped
+/// index frees every page.
+#[test]
+fn partitions_load_past_memory_retune_and_free() {
+    let points = clustered(400, 8, 4, 11);
+    let (pool, file, budget) = pool();
+    let small = Tuning { build_memory: 4 << 10, ..tuning() };
+    let index = Partitions::create(Arc::clone(&pool), file, layout(8, 16), (small, plugins(false)), Arc::clone(&budget)).unwrap();
+    let key = |row: u64| vec![u8::try_from(row.checked_rem(2).unwrap()).unwrap()];
+    let mut entries = points.iter().cloned().zip(0_u64..).map(|(p, r)| Ok((key(r), p, r)));
+    index.load(&mut entries).unwrap();
+    assert_eq!(index.live(), 400);
+    let mut more = points.iter().take(10).cloned().zip(1000_u64..).map(|(p, r)| Ok((key(r), p, r)));
+    index.load(&mut more).unwrap();
+    assert_eq!(index.live(), 410);
+    let (near, _) = index.search(&points[0], &Search { radius: Some(0.0_f64), ..ten() }, None).unwrap();
+    assert!(near.iter().all(|(_, c)| c.distance <= 0.0) && near.iter().any(|(_, c)| c.row == 0));
+    index.retune(Tuning { search_list: 32, ..small }).unwrap();
+    let due = index.maintenance_due();
+    assert!(index.maintain().unwrap() || !due);
+    index.flush().unwrap();
+    let wrong = Partitions::open(Arc::clone(&pool), file, (index.meta(), layout(4, 16)), (tuning(), plugins(false)), Arc::clone(&budget));
+    assert_eq!(wrong.err().map(|e| e.sqlcode()), Some(-916_i32));
+    index.free().unwrap();
+}

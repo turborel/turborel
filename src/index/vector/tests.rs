@@ -305,3 +305,35 @@ fn normed_cosine_is_the_folded_one_bit_for_bit() {
     }
     assert!(super::normed(&metric_named(&metrics, "EUCLIDEAN").unwrap()).is_none());
 }
+
+/// Verifies: [EXTENSION] the vector design document R3.11, R10.6: an
+/// insert alone never finds a duplicate, as no UNIQUE vector index is
+/// made; every entry is estimated and counted as a distinct key, no
+/// comparison; a search by comparison and a key of two columns are
+/// refused; a load skips nulls and fails with its entries' first error;
+/// a dropped index frees its pages once its last reader lets it go.
+#[test]
+fn every_method_answers_counts_and_refuses_comparisons() {
+    for method in methods() {
+        let index = filled(&*method);
+        assert!(!index.insert_alone(key(ROWS), ROWS).unwrap(), "{}", method.name());
+        let live = usize::try_from(ROWS + 1).unwrap();
+        assert_eq!(index.estimate(&Probe::All), Some(live), "{}", method.name());
+        assert_eq!(index.estimate(&Probe::Columns(Vec::new())), None, "{}", method.name());
+        assert_eq!(index.distinct_keys(), Some(f64::from(u32::try_from(live).unwrap())), "{}", method.name());
+        let refused = Arc::clone(&index).search(&Probe::Columns(Vec::new()), crate::index::KeyOrder::Ascending).next().unwrap();
+        assert!(refused.is_err(), "{}", method.name());
+        assert!(index.insert(Key(vec![vector(&point(1)), vector(&point(2))]), 1).is_err(), "{}", method.name());
+        let loaded: Arc<dyn Index> = Arc::from(method.create(&[column()]).unwrap());
+        let work = crate::spill::WorkAreas::new(MemoryBudget::new(usize::MAX));
+        let entries = vec![Ok((key(1), 1)), Ok((Key(vec![Value::Null]), 2)), Ok((key(3), 3))];
+        loaded.load(&mut entries.into_iter(), (&work, crate::spill::Area::new(4_096, 64))).unwrap();
+        assert_eq!(loaded.estimate(&Probe::All), Some(2), "{}", method.name());
+        let failing: Arc<dyn Index> = Arc::from(method.create(&[column()]).unwrap());
+        let broken = vec![Ok((key(1), 1)), Err(crate::error::SqlError::new(Code::Api, "[DESIGN] a failing entry"))];
+        let failed = failing.load(&mut broken.into_iter(), (&work, crate::spill::Area::new(4_096, 64)));
+        assert_eq!(failed.err().map(|e| e.code), Some(Code::Api), "{}", method.name());
+        index.discard();
+        drop(index);
+    }
+}

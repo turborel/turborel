@@ -4,10 +4,12 @@
 
 mod brute;
 mod constructions;
+mod limits;
 mod measures;
 mod operations;
 mod oracle;
 mod relationships;
+mod rings;
 
 use super::{Geometry, Point};
 

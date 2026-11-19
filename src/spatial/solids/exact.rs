@@ -115,12 +115,6 @@ impl Big {
         Big::from_parts(self.negative != other.negative, limbs)
     }
 
-    /// `self * self`.
-    #[must_use]
-    pub fn square(&self) -> Big {
-        self.mul(self)
-    }
-
     /// Compares two integers.
     pub fn compare(&self, other: &Big) -> Ordering {
         self.sub(other).sign()

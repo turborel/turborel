@@ -132,3 +132,6 @@ fn routine_tables_are_whole() {
     assert_eq!(size("ST_MaxDirectionString"), i64::try_from(crate::spatial::srs::direction::MAX_DIRECTION_STRING).ok());
     assert_eq!(sizings().len(), 11);
 }
+
+mod types;
+mod vector_formats;

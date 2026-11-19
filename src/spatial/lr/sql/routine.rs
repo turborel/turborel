@@ -105,3 +105,31 @@ fn cardinality(count: usize) -> Result<()> {
     let msg = format!("[ISO/IEC 9075-2:2023 §9.2 GR3b xxii 2B] an array of {count} elements does not fit an array of {MAX_ARRAY}");
     Err(SqlError::new(Code::Data, msg).with_state(SqlState::ARRAY_DATA_RIGHT_TRUNCATION))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies: [DESIGN] a routine made by `null_call` returns null on
+    /// null input and one made by `called` is called on it; neither reads
+    /// the catalogs until `reading` says so, and each keeps its name,
+    /// parameters and result.
+    #[test]
+    fn routine_builders_set_their_flags() {
+        let n = null_call("ST_X", &[P::Int], P::Double, |_| Ok(Value::Null));
+        let c = called("ST_Y", &[P::Int, P::Int], P::Int, |_| Ok(Value::Null)).reading();
+        assert!(n.null_call && !n.catalog);
+        assert!(!c.null_call && c.catalog);
+        assert_eq!((n.name, n.params.len(), c.name, c.params.len()), ("ST_X", 1, "ST_Y", 2));
+        assert!(matches!(n.result, P::Double));
+    }
+
+    /// Verifies: [ISO/IEC 9075-2:2023 §9.2 GR3b xxii 2B] an array of more
+    /// elements than `MAX_ARRAY` raises 2202F; one of `MAX_ARRAY` fits.
+    #[test]
+    fn arrays_past_their_cardinality_are_refused() {
+        let most = usize::try_from(MAX_ARRAY).unwrap();
+        assert!(cardinality(most).is_ok());
+        assert_eq!(cardinality(most.saturating_add(1)).unwrap_err().state, Some(SqlState::ARRAY_DATA_RIGHT_TRUNCATION));
+    }
+}

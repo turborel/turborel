@@ -200,3 +200,8 @@ impl SqlType for ReferenceKind {
         octets(v).map(|_| (v.clone(), true))
     }
 }
+
+// Unit tests: the kind's text, comparison by octets, CAST and assignment,
+// parameters and keys.
+#[cfg(test)]
+mod tests;

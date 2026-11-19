@@ -258,19 +258,19 @@ impl Args<'_> {
         Ok(self.text(at)?.map(|s| s.chars().next().unwrap_or(' ')))
     }
 
-    /// Argument `at` as an ARRAY of text, its null elements empty.
+    /// Argument `at` as an ARRAY of text, its null elements kept.
     ///
     /// # Errors
     ///
     /// SQLCODE -301 if it is no array of character strings.
-    pub fn texts(&self, at: usize) -> Result<Option<Vec<String>>> {
+    pub fn texts(&self, at: usize) -> Result<Option<Vec<Option<String>>>> {
         let Some(v) = self.at(at) else { return Ok(None) };
         let Value::Array(items) = v else { return Err(not_of(at, "an array")) };
-        let one = |item: &Value| -> Result<String> {
+        let one = |item: &Value| -> Result<Option<String>> {
             if item.is_null() {
-                return Ok(String::new());
+                return Ok(None);
             }
-            text_of(item)?.ok_or_else(|| not_of(at, "an array of character strings"))
+            text_of(item)?.map(Some).ok_or_else(|| not_of(at, "an array of character strings"))
         };
         items.iter().map(one).collect::<Result<Vec<_>>>().map(Some)
     }

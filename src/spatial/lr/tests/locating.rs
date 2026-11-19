@@ -274,3 +274,44 @@ fn translate_to_type() {
     assert_eq!(state(me.translate_to_type(Some(&source), Some("canal"), None, &cat)), SqlState::SPATIAL_CANNOT_TRANSLATE);
     assert_eq!(state(me.translate_to_type(Some(&source), None, None, &cat)), SqlState::SPATIAL_NULL_ARGUMENT);
 }
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15.2.7 Description
+/// 2b, 2c] A source naming another element than SELF is located along
+/// that element of the catalog; a target in another spatial reference
+/// system cannot hold the place (2FF87).
+#[test]
+fn translate_a_place_of_another_element() {
+    let all = units();
+    let lrms = lrms();
+    let elements = [LinearElement::Curve(road())];
+    let cat = Catalog { units: &all, lrms: &lrms, elements: &elements, metres_per_unit: 1.0_f64 };
+    let source = PositionExp::of_ids(1, 1, DistanceExp::along(m(25.0_f64)));
+    let rail = LinearElement::Curve(curve(3, 1, line(&[20.0_f64, 0.0_f64, 120.0_f64, 0.0_f64], Dims::Xy)));
+    let d = rail.translate_to_inst(Some(&source), Some(&LinearElement::Curve(road())), None, &cat).unwrap();
+    assert!((d.distance_along().measure() - 25.0_f64).abs() < 1e-9_f64);
+    let far = Geom::new(4326, Dims::Xy, Body::Curve(Curve::LineString(vec![0.0_f64, 0.0_f64, 1.0_f64, 0.0_f64]))).unwrap();
+    let elsewhere = LinearElement::Curve(curve(5, 1, far));
+    assert_eq!(state(rail.translate_to_inst(Some(&source), Some(&elsewhere), None, &cat)), SqlState::SPATIAL_CANNOT_TRANSLATE);
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15.2.8 Definitional
+/// Rule 1] A translation giving more positions than
+/// ST_MaxPositionExpArrayElements raises 2202F; as many is the limit.
+#[test]
+fn translate_to_type_is_bounded() {
+    let all = units();
+    let lrms = lrms();
+    let typed = |id: usize| {
+        let id = i32::try_from(id).unwrap() + 10_i32;
+        let p = ElementParts { element_type: Some("rail".to_owned()), ..parts(id, 1) };
+        LinearElement::Curve(LrCurve::new(p, Some(line(&[20.0_f64, 0.0_f64, 120.0_f64, 0.0_f64], Dims::Xy))).unwrap())
+    };
+    let source = PositionExp::of_ids(1, 1, DistanceExp::along(m(25.0_f64)));
+    let me = LinearElement::Curve(road());
+    let mut elements: Vec<LinearElement> = std::iter::once(LinearElement::Curve(road())).chain((0..MAX_POSITION_EXPS).map(typed)).collect();
+    let cat = Catalog { units: &all, lrms: &lrms, elements: &elements, metres_per_unit: 1.0_f64 };
+    assert_eq!(me.translate_to_type(Some(&source), Some("rail"), None, &cat).unwrap().len(), MAX_POSITION_EXPS);
+    elements.push(typed(MAX_POSITION_EXPS));
+    let past = Catalog { units: &all, lrms: &lrms, elements: &elements, metres_per_unit: 1.0_f64 };
+    assert_eq!(state(me.translate_to_type(Some(&source), Some("rail"), None, &past)), SqlState::ARRAY_DATA_RIGHT_TRUNCATION);
+}

@@ -138,3 +138,20 @@ fn paths_only_finds_by_paths() {
     index.insert(doc(r#"{"b":1}"#), 3).unwrap();
     assert_eq!(found(&index, &contains(r#"{"a":1}"#)), BTreeSet::from([1, 2]));
 }
+
+/// Verifies: [EXTENSION] RULES.md D34: `Probe::All` gives every document
+/// once, in row order, one no JSON text among them; a comparison, or a
+/// predicate of no SQL/JSON call, is refused as unsupported.
+#[test]
+fn every_document_and_refused_probes() {
+    let index = index();
+    for (key, row) in documents().into_iter().take(5) {
+        index.insert(key, row).unwrap();
+    }
+    index.insert(doc("{ not json"), 9).unwrap();
+    assert_eq!(found(&index, &Probe::All), BTreeSet::from([0, 1, 2, 3, 4, 9]));
+    let refused = |probe: &Probe| Arc::clone(&index).search(probe, KeyOrder::Ascending).next().unwrap().unwrap_err().code;
+    assert_eq!(refused(&Probe::Columns(Vec::new())), Code::Unsupported);
+    let predicate = Box::new(Predicate { function: ScalarRef(Arc::new(crate::fulltext::matches::TextMatches)), column: 0, argument: None });
+    assert_eq!(refused(&Probe::Predicate { predicate, value: Value::Null }), Code::Unsupported);
+}
