@@ -81,6 +81,10 @@ pub(super) struct Model {
     pub(super) orders: Vec<(usize, usize, bool)>,
     /// Of each relation, its first column and how many it has.
     pub(super) spans: Vec<(usize, usize)>,
+    /// The class whose ascending order is the order asked of the chain, if
+    /// it asks one key's, ascending with nulls as implied, of a column a
+    /// merge join may join by: a merge join's rows answer it too.
+    pub(super) want_class: Option<usize>,
     /// The weights.
     pub(super) cost: CostModel,
 }
@@ -110,6 +114,15 @@ impl Model {
     /// may join by it.
     pub(super) fn order_of(&self, column: usize) -> Option<(usize, bool)> {
         self.orders.iter().find(|(c, _, _)| *c == column).map(|&(_, class, merges)| (class, merges))
+    }
+
+    /// Whether a plan in the order `order` is in the order asked.
+    pub(super) fn answers(&self, order: Order) -> bool {
+        match order {
+            Order::Want => true,
+            Order::Class(k) => self.want_class == Some(k),
+            Order::None => false,
+        }
     }
 
     /// The cost of sorting `rows` rows.

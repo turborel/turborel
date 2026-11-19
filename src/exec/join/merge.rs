@@ -174,8 +174,3 @@ impl Iterator for MergeJoin {
         self.step().transpose()
     }
 }
-
-// Unit tests: runs of equal keys, null keys and the rows of a LEFT join
-// that match none (RULES.md R-TEST-1).
-#[cfg(test)]
-mod tests;

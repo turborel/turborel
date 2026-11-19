@@ -164,6 +164,7 @@ mod information_timestamps;
 mod information_usage;
 mod intervals;
 mod isolation;
+mod join_enumeration;
 mod joined_tables;
 mod joins;
 mod json_conformance;

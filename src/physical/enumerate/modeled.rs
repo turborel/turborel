@@ -85,7 +85,12 @@ impl PhysicalPlanner<'_> {
             .map(|((op, c), key)| Conj { reads: q.reads(c), op: *op, fraction: estimate::selectivity(c, known), key: *key, class: key.and_then(|(a, _)| class_of(a)) })
             .collect();
         let preds = q.preds.iter().zip(pred_keys).map(|(p, keys)| p.as_ref().map(|c| Pred { fraction: self.pred_fraction(c, q), keys })).collect();
-        let mut model = Model { rels: Vec::new(), conjuncts, preds, kinds: q.shapes.iter().map(|s| s.kind).collect(), classes, orders, spans: q.leaves.iter().map(|l| (l.start, l.width)).collect(), cost };
+        let want_class = match want {
+            [key] if *key == SortKey::ascending(key.column) => orders.iter().find(|&&(c, _, merge)| c == key.column && merge).map(|&(_, class, _)| class),
+            _ => None,
+        };
+        let spans = q.leaves.iter().map(|l| (l.start, l.width)).collect();
+        let mut model = Model { rels: Vec::new(), conjuncts, preds, kinds: q.shapes.iter().map(|s| s.kind).collect(), classes, orders, spans, cost, want_class };
         model.rels = (0..q.leaves.len()).map(|r| self.rel(q, r, (&model, want))).collect::<Option<_>>()?;
         Some(model)
     }

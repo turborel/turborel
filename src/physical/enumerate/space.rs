@@ -197,7 +197,8 @@ impl<'m> Space<'m> {
         let entry = self.table.get(&s)?;
         let best = entry.best()?;
         let sorted = best.cost + self.model.sort(entry.rows);
-        Some(entry.of_order(want).filter(|o| want != Order::None && o.cost <= sorted).unwrap_or(best))
+        let answering = entry.cands.iter().filter(|c| want != Order::None && self.model.answers(c.order)).min_by(|a, b| a.cost.total_cmp(&b.cost));
+        Some(answering.filter(|o| o.cost <= sorted).copied().unwrap_or(best))
     }
 
     /// Of a set of one relation, which.

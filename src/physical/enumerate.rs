@@ -24,8 +24,8 @@
 //! A plan is taken if it is estimated cheaper than the FROM clause's
 //! tree, planned by the same methods, by the gain PLANNER.REORDER_GAIN
 //! gives; else the chain is planned as written. A chain of fewer than
-//! `MIN_RELATIONS` relations is planned as written too, its one join's
-//! build side chosen by the hash join (`physical/join.rs`). EXPLAIN shows
+//! `MIN_RELATIONS` relations, or of more than 128, is left to the greedy
+//! planner. EXPLAIN shows
 //! the order taken and the algorithm that found it on the plan's top join.
 
 mod bits;
@@ -75,7 +75,8 @@ const ALWAYS_EXACT: usize = 14;
 /// of a hypergraph, which cannot be linearized: the paper's 10 (§4.3).
 const HYPER_SUBTREE: usize = 10;
 /// \[DESIGN\] The fewest relations a chain is enumerated of: two have one
-/// join, whose build side the hash join chooses.
+/// join, which the greedy planner already chooses the method and the
+/// sides of.
 const MIN_RELATIONS: usize = 3;
 
 /// What became of a chain: planned, planned as written, or left to the
@@ -135,10 +136,7 @@ impl PhysicalPlanner<'_> {
         }
         let Some(query) = extract::extract(plan) else { return Outcome::Greedy };
         let n = query.leaves.len();
-        if n < MIN_RELATIONS {
-            return Outcome::Kept;
-        }
-        if n > MAX_RELATIONS {
+        if !(MIN_RELATIONS..=MAX_RELATIONS).contains(&n) {
             return Outcome::Greedy;
         }
         let Some(model) = self.model(&query, want) else { return Outcome::Greedy };
@@ -176,7 +174,7 @@ impl PhysicalPlanner<'_> {
         let exprs: Vec<Expr> = (0..cx.query.width).map(|c| Expr::Column(cx.place_of(&layout, c).unwrap_or(c))).collect();
         let inner_names: Option<Vec<String>> = self.shown.then(|| layout.iter().filter_map(|&r| cx.query.leaves.get(r)).flat_map(|l| l.plan.names()).collect());
         let detail = inner_names.map(|n| exprs.iter().map(|e| crate::logical::render_expr(e, &n)).collect::<Vec<_>>().join(", ")).unwrap_or_default();
-        Built { plan: Plan::Project { exprs, detail, input: Box::new(plan) }, ordered: order == Order::Want }
+        Built { plan: Plan::Project { exprs, detail, input: Box::new(plan) }, ordered: !cx.want.is_empty() && cx.model.answers(order) }
     }
 }
 

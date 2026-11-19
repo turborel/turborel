@@ -13,9 +13,12 @@
 //!   each left row probes it (`physical/indexed.rs`). It keeps the left's
 //!   order.
 //! * A merge join, of an inner or LEFT join on an equality of columns
-//!   whose types order as they compare: each operand in the key's order,
-//!   from a plan of that order or sorted, then each row compared once
-//!   (`CostModel::sort_compare`). Its rows are in the key's order.
+//!   whose types order as they compare, if one operand has a plan in the
+//!   key's order, as Selinger et al., "Access Path Selection in a
+//!   Relational Database Management System", 1979, §5, keep: the other
+//!   from a plan of that order too or sorted, then each row compared once
+//!   (`CostModel::sort_compare`). Its rows are in the key's order. Where
+//!   both would be sorted the hash join is taken, which reads each once.
 //! * A nested loop, which pairs every row, when no equality joins them.
 
 use super::bits::Set;
@@ -102,6 +105,9 @@ impl Space<'_> {
         for &(a, b) in keys {
             let (Some((ka, true)), Some((kb, true))) = (self.model.order_of(a), self.model.order_of(b)) else { continue };
             let (Some(left), Some(right)) = (self.ordered(sides.left, ka), self.ordered(sides.right, kb)) else { continue };
+            if !(left.2 || right.2) {
+                continue;
+            }
             let compared = self.model.cost.sort_compare * (sides.left.rows + sides.right.rows);
             let cost = left.0 + right.0 + compared + rows;
             out.push((Cand { cost, order: Order::Class(ka), tree: 0 }, ka, (left.1, right.1)));
@@ -110,10 +116,11 @@ impl Space<'_> {
     }
 
     /// The cheapest way to have the rows of `entry` in the order of class
-    /// `class`: a plan of that order, or its best sorted; its cost and tree.
-    fn ordered(&self, entry: &Entry, class: usize) -> Option<(f64, usize)> {
+    /// `class`: a plan of that order, or its best sorted; its cost, tree,
+    /// and whether it is in the order unsorted.
+    fn ordered(&self, entry: &Entry, class: usize) -> Option<(f64, usize, bool)> {
         let best = entry.best()?;
-        let sorted = (best.cost + self.model.sort(entry.rows), best.tree);
-        Some(entry.of_order(Order::Class(class)).filter(|c| c.cost < sorted.0).map_or(sorted, |c| (c.cost, c.tree)))
+        let sorted = (best.cost + self.model.sort(entry.rows), best.tree, false);
+        Some(entry.of_order(Order::Class(class)).filter(|c| c.cost < sorted.0).map_or(sorted, |c| (c.cost, c.tree, true)))
     }
 }
