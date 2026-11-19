@@ -1,7 +1,6 @@
 //! \[DESIGN\] A statement run (RULES.md D46, D212, D215, D219), echoed if
-//! ECHO says, refused if SAFE_UPDATES finds it changes every row, in a
-//! savepoint of its own if ROLLBACK_ON_ERROR says, its own transaction if
-//! AUTOCOMMIT says, its rows written as the layout says, timed if asked;
+//! ECHO says, refused if SAFE_UPDATES finds it changes every row, its own
+//! transaction if AUTOCOMMIT says, its rows written as the layout says, timed if asked;
 //! then ROW_COUNT, ERROR, SQLSTATE and the last error's variables set.
 
 use std::io::Write;
@@ -19,8 +18,6 @@ use crate::format::Printer;
 use crate::vars::{self, Echo, Verbosity};
 use crate::words;
 
-/// The savepoint a statement is run in under ROLLBACK_ON_ERROR.
-const SAVEPOINT: &str = "TURBOREL_STATEMENT";
 /// The SQLSTATE of success [ISO/IEC 9075:1992 §22.1].
 const SUCCESS: &str = "00000";
 
@@ -94,7 +91,6 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         }
         let single = self.options.settings.single_transaction;
         self.connection.set_autocommit(self.vars.on(vars::AUTOCOMMIT) && !single);
-        let saved = self.vars.rollback_on_error(typed) && self.savepoint(sql);
         // Only a statement typed at a terminal, its output on a screen, is
         // timed (RULES.md D46). A script, `-c`, `-f` and piped output are not.
         let began = (typed && self.terminal.screen.is_some()).then(|| (self.now)());
@@ -106,14 +102,10 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         let next = match ran {
             Ok(state) => {
                 self.succeeded(sql, &state);
-                self.quietly(saved, &format!("RELEASE SAVEPOINT {SAVEPOINT}"));
                 Next::Go
             }
             Err(Wrong::Unwritten(e)) => self.tell(&format!("cannot write: {e}"), Next::Stop),
-            Err(Wrong::Failed(failure)) => {
-                self.quietly(saved, &format!("ROLLBACK TO SAVEPOINT {SAVEPOINT}"));
-                self.failed_statement(&failure, sql, typed)
-            }
+            Err(Wrong::Failed(failure)) => self.failed_statement(&failure, sql, typed),
         };
         if let Some(time) = elapsed {
             // Nothing is left to tell a failure to write a failure to.
@@ -121,25 +113,6 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
             let _ = writeln!(self.err, "{shown}").and_then(|()| self.err.flush());
         }
         next
-    }
-
-    /// Takes the savepoint `sql` runs in, if its transaction is active
-    /// and it neither ends nor marks one, and returns whether it was taken.
-    fn savepoint(&mut self, sql: &str) -> bool {
-        let control = words::first(sql).is_some_and(|w| words::TRANSACTION_CONTROL.contains(&w.as_str()));
-        if control || !self.connection.in_transaction() {
-            return false;
-        }
-        self.connection.query_into(&format!("SAVEPOINT {SAVEPOINT}"), &mut Kept::default()).is_ok()
-    }
-
-    /// Runs `sql` unseen, if `wanted`. Its outcome does not change the
-    /// statement's.
-    fn quietly(&mut self, wanted: bool, sql: &str) {
-        if wanted {
-            // The statement's own outcome is what is told.
-            drop(self.connection.query_into(sql, &mut Kept::default()));
-        }
     }
 
     /// Runs `sql`, its results written as `how` says, and returns the

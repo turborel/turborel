@@ -6338,7 +6338,7 @@ variable is set. The splitter substitutes them as it reads, so a value
 may hold a statement's end only where it is written as text. A variable
 not set, and the colons of `::`, are left as written. The client's own
 settings are variables too (AUTOCOMMIT, STOP_ON_ERROR,
-ROLLBACK_ON_ERROR, ECHO, QUIET, FETCH_COUNT, VERBOSITY,
+ECHO, QUIET, FETCH_COUNT, VERBOSITY,
 SAFE_UPDATES, the prompts and the history's). Each statement sets
 ROW_COUNT, ERROR, SQLSTATE and the last failure's message and SQLSTATE.
 `\if`, `\elif`, `\else` and `\endif` nest to 64 deep (R-CF-6). In a
@@ -6380,8 +6380,9 @@ run could not begin, 2 when the connection was lost, and 3 when
 STOP_ON_ERROR ended it at a statement that failed. So a caller tells a
 stopped script from a lost server. `--single-transaction` runs a script
 as one transaction, committed if all succeeded and rolled back if any
-failed. ROLLBACK_ON_ERROR takes a savepoint before each statement in an
-active transaction and rolls back to it alone on failure. `\i` and
+failed. The client takes no savepoint around a statement, since a
+failed statement leaves no effect and its transaction goes on (R-ERR-5).
+`\i` and
 `\ir` include files, at most 16 deep (R-CF-6), `\ir` from the
 including file's directory. `\o` and `\g` send results to a file or a
 program. `\gset` stores one row as variables, and `\gexec` runs each
@@ -6428,8 +6429,11 @@ each command is one or two statements. It shows through the
 Information Schema's SERVER, CONNECTIONS and SETTINGS, and changes
 through END CONNECTION, CANCEL CONNECTION, SET DATABASE, CREATE SCHEMA,
 DROP SCHEMA and ALTER USER. So every command is authorized as its
-statement is, and none needs a protocol message of its own. Dropping a schema asks first, unless `--yes`, and is
-refused without a terminal to ask at. `ping` runs a statement that reads
+statement is, and none needs a protocol message of its own. There are
+eleven commands, `ping`, `status`, `processlist`, `kill`, `cancel`,
+`variables`, `password`, `create-schema`, `drop-schema`, `version` and
+`tls`. Dropping a schema asks first, unless `--yes`, and is refused
+without a terminal to ask at. `ping` runs a statement that reads
 nothing until the protocol has a message for it; `tls` names new files,
 and files changed in place are taken on SIGHUP.
 

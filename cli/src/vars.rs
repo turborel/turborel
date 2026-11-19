@@ -10,9 +10,6 @@ use std::collections::BTreeMap;
 pub const AUTOCOMMIT: &str = "AUTOCOMMIT";
 /// A run not typed ends at the first statement that fails, when on.
 pub const STOP_ON_ERROR: &str = "STOP_ON_ERROR";
-/// A statement that fails in a transaction is rolled back alone, by a
-/// savepoint taken before it, as `on`, `off` or `interactive` says.
-pub const ROLLBACK_ON_ERROR: &str = "ROLLBACK_ON_ERROR";
 /// What is written as it runs, `none`, `queries` or `errors`.
 pub const ECHO: &str = "ECHO";
 /// The completions of statements other than queries, `OK` and the like,
@@ -52,8 +49,6 @@ pub const SERVER: &str = "SERVER";
 const TRUE_WORDS: [&str; 4] = ["on", "true", "yes", "1"];
 /// The values a variable is false by, in any case.
 const FALSE_WORDS: [&str; 4] = ["off", "false", "no", "0"];
-/// What `ROLLBACK_ON_ERROR` takes beside on and off.
-pub const INTERACTIVE: &str = "interactive";
 
 /// \[DESIGN\] RULES.md D212: the truth `text` names, if it names one,
 /// which is on, true, yes or 1, or off, false, no or 0, in any case.
@@ -208,13 +203,6 @@ impl Variables {
             Some(_) | None => Echo::None,
         }
     }
-
-    /// Whether a statement is rolled back alone when it fails, in a run
-    /// `typed` or not: ROLLBACK_ON_ERROR on, or `interactive` and typed.
-    pub fn rollback_on_error(&self, typed: bool) -> bool {
-        let value = self.get(ROLLBACK_ON_ERROR).unwrap_or_default();
-        self.on(ROLLBACK_ON_ERROR) || (typed && value.eq_ignore_ascii_case(INTERACTIVE))
-    }
 }
 
 #[cfg(test)]
@@ -244,9 +232,8 @@ mod tests {
         assert!(!is_name(""));
     }
 
-    /// Verifies: [DESIGN] RULES.md D212: VERBOSITY, ECHO and
-    /// ROLLBACK_ON_ERROR are read in any case, an unknown value taken as
-    /// the default; `interactive` rolls back only a run typed.
+    /// Verifies: [DESIGN] RULES.md D212: VERBOSITY and ECHO are read in
+    /// any case, an unknown value taken as the default.
     #[test]
     fn the_clients_own_variables_are_read() {
         let mut vars = Variables::default();
@@ -260,12 +247,6 @@ mod tests {
         assert_eq!(vars.echo(), Echo::Queries);
         vars.set(ECHO, "Errors");
         assert_eq!(vars.echo(), Echo::Errors);
-        assert!(!vars.rollback_on_error(true));
-        vars.set(ROLLBACK_ON_ERROR, "interactive");
-        assert!(vars.rollback_on_error(true));
-        assert!(!vars.rollback_on_error(false));
-        vars.set(ROLLBACK_ON_ERROR, "on");
-        assert!(vars.rollback_on_error(false));
     }
 
     /// Verifies: [DESIGN] RULES.md D212; [ISO/IEC 9075:1992 §5.2, §5.3] a

@@ -15,7 +15,7 @@ pub const WHERE: &str = "WHERE";
 /// holds, or undo such a change, so tab completion reads them again after.
 pub const SCHEMA_CHANGES: [&str; 5] = ["CREATE", "ALTER", "DROP", "ROLLBACK", "IMPORT"];
 /// The first words of statements that end or mark a transaction, or
-/// change the connection, which take no savepoint of their own.
+/// change the connection, so the prompt's session status is read again.
 pub const TRANSACTION_CONTROL: [&str; 8] = ["COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE", "START", "SET", "CONNECT", "DISCONNECT"];
 
 /// What is being read.

@@ -122,7 +122,6 @@ These variables are the client's own:
 |---|---|
 | AUTOCOMMIT | `on` makes each statement a transaction of its own, committed as it ends; `off` by default |
 | STOP_ON_ERROR | `on` ends a run that is not typed at the first statement that fails; `--stop-on-error` sets it |
-| ROLLBACK_ON_ERROR | `on` undoes a failed statement within a transaction alone, by a savepoint taken before it, and the transaction goes on; `interactive` does so only for typed statements; `off` by default |
 | ECHO | `queries` writes each statement before it runs; `errors` writes a failed statement with its failure; `-e` sets `queries` |
 | QUIET | `on` writes no `OK` after a statement that is not a query; `-q` sets it |
 | SAFE_UPDATES | `on` refuses an UPDATE or DELETE without WHERE before it is sent; `--safe-updates` sets it |
@@ -337,7 +336,9 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): no table in the FROM clause has a colum
 
 `-1`, `--single-transaction`, runs every statement in one transaction.
 It is committed as the run ends if all succeeded, and rolled back if
-any failed. ROLLBACK_ON_ERROR undoes a failed statement alone instead.
+any failed. Without it, a statement that fails leaves no effect and the
+transaction goes on, so nothing is needed to undo a failed statement
+alone.
 
 `\i FILE` runs a file's lines where it stands. `\ir FILE` finds the
 file from the directory of the file being run, so files that include

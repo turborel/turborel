@@ -86,10 +86,10 @@ fn outcomes_give_exit_statuses() {
     assert_eq!((stopped.outcome, stopped.outcome.code(), stopped.out.as_str()), (Outcome::Stopped, 3, ""));
 }
 
-/// Verifies: [DESIGN] RULES.md D215: with `--single-transaction` every
-/// statement is one transaction, rolled back when one fails; with
-/// ROLLBACK_ON_ERROR a failed statement is undone alone, by a savepoint,
-/// and the transaction goes on.
+/// Verifies: [DESIGN] RULES.md D215, R-ERR-5: with `--single-transaction`
+/// every statement is one transaction, rolled back when one fails.
+/// Without it a failed statement leaves no effect, so the transaction
+/// goes on and what it did before the failure is committed.
 #[test]
 fn transactions_are_kept_whole_or_rolled_back_a_statement_at_a_time() {
     let (_db, server) = served();
@@ -97,7 +97,7 @@ fn transactions_are_kept_whole_or_rolled_back_a_statement_at_a_time() {
     assert_eq!(one.outcome, Outcome::Failed);
     let after = script(&server, &["-t", "-A"], "SELECT COUNT(*) FROM T;");
     assert_eq!(after.out, "2\n", "rolled back");
-    let saved = "\\set ROLLBACK_ON_ERROR on\nINSERT INTO T VALUES (4, 'd');\nINSERT INTO T VALUES (1, 'dup');\nCOMMIT;\n";
+    let saved = "INSERT INTO T VALUES (4, 'd');\nINSERT INTO T VALUES (1, 'dup');\nCOMMIT;\n";
     assert_eq!(script(&server, &["-q"], saved).outcome, Outcome::Failed);
     assert_eq!(script(&server, &["-t", "-A"], "SELECT COUNT(*) FROM T;").out, "3\n", "the good insert kept");
 }
