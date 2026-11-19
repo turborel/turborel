@@ -37,7 +37,13 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
             truth(&words).ok_or_else(|| format!("\\{name}: {words:?} is neither true nor false"))
         };
         let done = match name {
-            "if" => value().and_then(|v| conditions.begin(v)),
+            // A value that is neither opens the block even so, as false,
+            // so its branches are not all run.
+            "if" => {
+                let read = value();
+                let opened = conditions.begin(read.as_ref().is_ok_and(|v| *v));
+                read.and(opened)
+            }
             "elif" => value().and_then(|v| conditions.elif(v)),
             "else" => conditions.otherwise(),
             "endif" => conditions.end(),

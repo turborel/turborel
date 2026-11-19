@@ -229,7 +229,11 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
     pub(super) fn kept(&mut self, sql: &str) -> Option<Kept> {
         let mut kept = Kept::default();
         match self.connection.query_into(sql, &mut kept) {
-            Ok(_) => Some(kept),
+            Ok(_) => {
+                let count = u64::try_from(kept.rows.len()).unwrap_or(u64::MAX);
+                self.succeeded(sql, &(SUCCESS.to_owned(), Some(count)));
+                Some(kept)
+            }
             Err(failure) => {
                 self.failed_statement(&failure, sql, self.typing);
                 None
