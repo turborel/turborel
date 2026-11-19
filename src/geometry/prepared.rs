@@ -167,10 +167,11 @@ impl Prepared {
         args.get(self.position).is_some_and(|now| self.holds(now))
     }
 
-    /// Whether `now` is the operand prepared.
+    /// Whether `now` is the operand prepared: a geometry, by its family
+    /// alone, of the bytes prepared.
     fn holds(&self, now: &Value) -> bool {
         let (Value::Extension(was), Value::Extension(now)) = (&self.value, now) else { return false };
-        kind::geometry_kind(now.kind).is_some() && (Arc::ptr_eq(&was.bytes, &now.bytes) || was.bytes == now.bytes)
+        kind::is_geometry(now.kind) && (Arc::ptr_eq(&was.bytes, &now.bytes) || was.bytes == now.bytes)
     }
 
     /// "`f(other, polygon) op value`", or the polygon first, of `other` a
