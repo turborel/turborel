@@ -15,6 +15,9 @@ use turborel_protocol::capability::{ALL, COMPRESSION};
 use turborel_protocol::compress::DEFAULT_THRESHOLD;
 use turborel_protocol::{Attributes, Capabilities, Notice};
 
+/// \[DESIGN\] The connection attribute that names the program.
+pub const APPLICATION: &str = "application";
+
 /// What a connection asks for as it opens.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Offer {
@@ -25,7 +28,7 @@ pub struct Offer {
     /// INFORMATION_SCHEMA.CONNECTION_ATTRIBUTES: at most
     /// `turborel_protocol::MAX_ATTRIBUTES`, each name of at most
     /// `MAX_ATTRIBUTE_NAME` bytes and value of at most
-    /// `MAX_ATTRIBUTE_VALUE`. APPLICATION names the program.
+    /// `MAX_ATTRIBUTE_VALUE`. `APPLICATION` names the program.
     pub attributes: Attributes,
     /// The shortest request sent compressed, once compression is granted.
     pub compress_from: usize,

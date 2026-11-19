@@ -41,7 +41,7 @@ impl<S: Read + Write> Connection<S> {
     /// \[DESIGN\] RULES.md D190: the value of the session's setting `name`,
     /// as the server last told it, with no round trip: SESSION.TIME_ZONE,
     /// TRANSACTION.ISOLATION, any a session may set; AUTHORIZATION, SCHEMA,
-    /// READ_ONLY and SERVER_VERSION. None if it told none of that name, as
+    /// READ_ONLY, SERVER_READ_ONLY, CATALOG, OWNER and SERVER_VERSION. None if it told none of that name, as
     /// a server not granting `status` tells none.
     pub fn setting(&self, name: &str) -> Option<&str> {
         self.told.settings.get(name).map(String::as_str)

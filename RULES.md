@@ -71,6 +71,8 @@ verification approach DO-178C expects (§8).
 | D53 | One contract for data types, with the standard types built in |
 | D54 | Datetimes kept in UTC, shown in the session's zone, read from a clock |
 | D58 | Dynamic SQL in SQL text, with a session as the module |
+| D174 | A delta table's statement runs before its query is bound, and gives its rows as a transition table |
+| D175 | Delta tables stand in WITH list elements, INSERT queries and MERGE sources, of views through their base table |
 | **Architecture** | |
 | D25 | One log, owned by the database |
 | D26 | Cryptography only from vetted crates, in plug-ins |
@@ -199,6 +201,11 @@ verification approach DO-178C expects (§8).
 | D171 | Extensions are versioned packages, resolved together and locked per database |
 | D172 | What a plug-in does is shown, and its errors keep their class |
 | D173 | Only the operator chooses what runs, and packages are checked by digest and signature |
+| D180 | UUID is a built-in type of 16 octets, ordered, hashed and indexed by its octets |
+| D181 | A UUID's text is read in its common forms and written hyphenated in lower case |
+| D182 | UUID_V4 draws on the standard library's random hash keys, so the core keeps no dependency |
+| D183 | UUID_V7 takes the database's clock, and never sorts before the last one its database made |
+| D184 | The native protocol carries a UUID under a tag of its own |
 | D185 | The protocol grows by capabilities a client asks for and the server grants, its version staying 1 |
 | D186 | A failure carries structured diagnostics, filled where it is raised |
 | D187 | A statement's conditions are one list, told in its completion or as notices before it |
@@ -214,6 +221,13 @@ verification approach DO-178C expects (§8).
 | D197 | A completion carries the rows its statement counted, as GET DIAGNOSTICS does |
 | D198 | An INSERT's completion carries the identity values it generated |
 | D199 | A cursor opened under autocommit ends its transaction as it ends |
+| D200 | A pipeline writes its requests a window at a time, and skips after an error by savepoints |
+| D201 | Several servers are tried in order or at random, and a server of the wrong role is left |
+| D202 | Connection settings are layers, the program's over a service's over the environment's |
+| D203 | A service file names sections of settings, and a password file gives passwords by server and user |
+| D204 | TLS by mode, and channel binding disabled, preferred or required |
+| D205 | The SCRAM keys a password derives are cached by salt, iterations and a keyed tag of the password |
+| D206 | A pool hands out checked connections and takes them back reset, by the standard library alone |
 | D240 | A completion carries the server's time for its statement, and the waits it can measure for free |
 
 ### The project
@@ -1693,6 +1707,67 @@ The implementation-defined limits are 100 occurrences for a descriptor
 area without WITH MAX, at most 1,000 [§17.2 SR2, GR3], and 64 areas a
 session. A plug-in's type has TYPE code -1 [§17.1 Table 18].
 
+#### D174. A delta table's statement runs before its query is bound, and gives its rows as a transition table
+
+A `<data change delta table>` [ISO/IEC 9075-2:2023 §7.6] is read where a
+cursor's query, directly run, prepared or declared, or a SELECT INTO, in a
+routine too, has it as the one table reference of its FROM clause, and
+where D175 lets it stand. The parser marks it so as it reads such a query
+(`DeltaRows::admit`). The session runs its statement in the cursor's
+statement first, then binds the query over the rows the statement
+recorded, read as a transition table is (`db/delta.rs`). A prepared query
+is bound at PREPARE over no rows, of the subject table's columns, its
+statement bound too so its parameters are typed. Each opening runs the
+statement again.
+
+The statement's effects record each row of the subject table as they
+record it for triggers (`Effects::inserted`, `updated`, `deleted`). So a
+row is recorded as it is written, after BEFORE triggers, with its
+defaults, identity and generated columns, and OLD, NEW and FINAL read the
+old or new row [GR5b]. The collector is claimed by the statement's own
+effects. Their end, before referential actions run, takes it away, so a
+cascade or an AFTER trigger records nothing. Of FINAL the subject table
+is then the one name of the restricted subject table name list. A
+referential action that changes it is refused with SQLSTATE 27001
+[§15.18 GR15], and an AFTER trigger's statement with 0W001 [§15.21 GR6i],
+which the trigger's 09000 tells, as 0W000 is told. The rows of a typed
+table's proper subtables that an UPDATE or DELETE of it reaches are
+recorded too, each by its superrow, the first columns of the subtable's
+row, which are the typed table's [§14.9 GR4, §14.14 GR6]. The rows a
+statement of a partitioned table writes to its partitions are recorded
+alike (D153), and a row an UPDATE moves to another partition is one row
+updated, not a row deleted and one inserted (`Effects::moved`).
+
+The query's rows are all read as the cursor opens, so an error of the
+query undoes the statement with it. The protocol and the client needed
+no change, and the protocol's version stays 1.
+
+#### D175. Delta tables stand in WITH list elements, INSERT queries and MERGE sources, of views through their base table
+
+A delta table stands where the standard lets it and nowhere else. It is
+the one table reference of a FROM clause [§7.5 SR3], of a query
+specification that is the body of its query expression [§7.17 SR2]. That
+query expression is a cursor's, a `<with list element>`'s [§7.17 SR3d
+iv], an INSERT's, or a SELECT INTO's, or the delta table is a MERGE's
+source. A subquery, scalar, row or table, holds none unless it is a with
+list element's [§7.19 SR1], so neither a predicate's subquery nor a
+derived table does. A view's query holds none [§11.32 SR7].
+`QueryExpression::deltas` finds them, each with list element's in the
+order written and then the query's own, and the session runs their
+statements in that order [§7.17 GR1a]. A delta table found nowhere it
+may stand is refused as it is bound, SQLCODE -103, its statement not run.
+A delta table of a statement inside another's keeps the other's
+collector aside while it runs, and gives it back after. An INSERT or
+MERGE reading one is bound again at each execution, keeping no plan.
+
+A delta table's subject is a base table or a view with CASCADED CHECK
+OPTION [§7.6 SR11b i]. One without is refused, SQLCODE -103. Such a view
+has no INSTEAD OF trigger, nor has any view under it [§11.49 SR4c, SR4d],
+so no view of it is trigger updatable [SR11b ii]. The base table the
+view's change writes is found as the change finds it (`write_target`),
+and each row recorded of it is put in the view's columns by the view's
+map of them. The CHECK OPTION keeps every new row in the view.
+
 ### Architecture
 
 #### D25. One log, owned by the database
@@ -2210,6 +2285,12 @@ life. Without the opt-in, or if an argument expression or any other part
 of the filter can raise, the planner reads the table whole. A lookup must
 not hide an error on a row it skips (D15).
 
+The executor checks the full WHERE condition on the rows a function
+lookup finds, but for a spatial conjunct a scan decides of each entry
+itself (D85, `Plan::IndexScan::decided`): the planner takes that
+conjunct from the filter, and the scan judges it of every entry, from
+the entry's point where the entry is one, else from its row.
+
 The index returns every matching inserted `(Key, RowId)` pair, each once.
 It may also return pairs that do not match, called extra candidates. The
 keys contain inserted values unless `Index::key_projection` explicitly
@@ -2387,7 +2468,13 @@ without binding plug-ins to one page cache. Each database has one budget in
 bytes, MEMORY.BUDGET_BYTES. Pools reserve from it, a reservation past it is
 refused (SQLCODE -918), and so is a page wanted from a full pool. Plug-ins
 get the budget when registered. INFORMATION_SCHEMA.MEMORY_RESERVATIONS shows
-each reservation to the database's owner.
+each reservation to the database's owner. Admission is one atomic total.
+The list behind that view is kept in 64 shards chosen by each
+reservation's number, and a reservation's size is an atomic of its own
+entry, so sessions reserving, resizing and releasing at once take no
+database-wide lock. The view merges the shards in creation order. A
+single list took a fifth of thread time in waits for four to eight
+sessions of nearest-neighbour queries.
 
 Undo is never refused by the budget, because a refusal would damage a table
 (D19). A failed statement's undo and a ROLLBACK reserve what they need even
@@ -2762,7 +2849,14 @@ Nearest-neighbour traversal expands the branch with the lowest distance
 bound next. Each arithmetic step of a branch bound rounds downward, so
 rounding cannot hide a nearer entry. Leaf rectangle distances and row
 identifiers order the results; every branch tied at that distance is
-expanded first. The frontier reserves memory before growing (D38), and
+expanded first. The frontier keeps each expanded node's items as one run,
+a binary heap built in place in linear time in an arena all runs share,
+and orders the runs by their nearest remaining item; it gives the order a
+single heap of every item would. A node then costs one heap build and one
+push rather than a logarithmic push per entry, and a leaf's entries past
+the search's end are never sifted. Pushing every entry made the frontier
+the largest cost of a ten-nearest query. The frontier reserves memory
+before growing (D38), and
 dropping the iterator releases it. A new entry behind the distance already
 returned is omitted, as concurrent inserts are optional to an index scan.
 This ordering is exact for indexed rectangles and points. A geometry
@@ -2872,9 +2966,27 @@ Orientation first tries Shewchuk's binary64 rounding-error bound
 ([reference implementation](https://www.cs.cmu.edu/afs/cs/project/quake/public/code/predicates.c),
 `ccwerrboundA`). It accepts a sign only when both products, the determinant
 and the error bound are normal, and the determinant's magnitude exceeds
-that bound. Other cases use outward-rounded intervals, then exact bounded
-integers on binary64's dyadic coordinates. No tolerance changes a
-topological decision, including at extreme exponents.
+that bound. When a product's two differences are exact, or one is an exact
+zero, the determinant is next decided exactly as a four-term
+floating-point expansion: each product split into its rounded value and
+the error a fused multiply-add gives, then Shewchuk's Two-Two-Diff and the
+sign of its largest nonzero term. The split is used only for products of
+magnitude between 2^-969 and the largest finite value over eight, so the
+error is a binary64 number and no sum overflows. Grid-aligned data, where
+collinear triples are common and the bound cannot prove a zero, takes this
+path without allocating. Other cases use outward-rounded intervals, then
+exact bounded integers on binary64's dyadic coordinates. No tolerance
+changes a topological decision, including at extreme exponents.
+Lines and polygon rings with at least 4,096 pairs of edges are compared
+through buckets of the same dyadic grid prepared polygons use, over the
+two envelopes' overlap, padded to a square where they touch along an
+axis-parallel line. One side's edges are filed under every cell they may
+touch, each edge of the other is tested exactly against the edges filed
+under its cells, and the first meeting ends the search. The cells an edge
+is said to touch include every cell it touches, so two edges that meet
+share a cell and no meeting pair is skipped; an edge whose envelope misses
+the overlap cannot meet the other side and is not filed. Where the grid
+declines, or with fewer pairs, every pair is tested as before.
 
 `ScalarFunction::spatial_operation` declares equivalent spatial semantics,
 including result types, NULL propagation and SRID errors. It is separate
@@ -2885,6 +2997,31 @@ constant or parameter, and every other conjunct must be non-raising.
 The full condition remains a residual. If a later parameter has a different
 SRID, the index returns all entries, including empties, so pruning cannot
 hide the runtime error. NULL and matching-SRID EMPTY queries return none.
+
+Under a projection or a grouping, which read known columns of the rows,
+a scan of a windowed spatial lookup, an intersection's, a relate's or a
+distance's (D135), decides its conjunct of each entry itself, and the
+filter no longer judges it (D34). An entry whose envelope is one
+point, not the origin an empty geometry projects to, is the closed point
+set of its row's geometry, whatever its kind, so the call's function
+decides the comparison from the point and the column's SRID
+(`ScalarFunction::point_compared`), raising a reference mismatch as the
+call would; any other entry's row is read and the conjunct judged of
+it. Where nothing else reads the column, a point entry decided true
+needs no row if every reader sees it (`TableStorage::visible_to_all`),
+as an index-only scan's entry needs none; else its row is read. Such a
+scan is priced as a covering scan. A prepared polygon decides
+"distance op constant" of a point by bounds its cells put on the
+distance (`prepared/cells/within.rs`): each cell's Chebyshev distance,
+in cells, to the nearest cell edges may touch, counted by a two-pass
+chamfer; a point's distance is at least a cell less than that, and at
+most two cells more along a diagonal, so where the bound lies below the
+constant by more than the measures' rounding, or above by more, as the
+nearest-edge search's reach bounds it, the comparison is decided
+without measuring. The same decision serves a filter's comparison of
+the call with a constant, either way round, a row at a time or over a
+batch (`ScalarFunction::call_compared`, `exec/eval.rs`,
+`exec/batch/judge/calls.rs`).
 An empty stored geometry projects to an origin rectangle, adding candidates
 but no false negatives. NULL keys are omitted. Readers compare the visible
 version's projection with the entry before evaluating the full condition.
@@ -2995,6 +3132,15 @@ or intermediate overflow. Final magnitudes remain approximate binary64
 values; underflow may round a positive distance to zero. Only a final
 minimum beyond the finite range raises SQLSTATE 22003, not an intermediate
 component distance. It is not a substitute for a topological predicate.
+Chains with at least 4,096 pairs of edges are measured by an expanding
+search: one chain's edge envelopes go into a packed hierarchy, and each
+edge of the other is measured only against edges whose envelopes come
+within the best measure so far, widened by 2^-20 of it plus 64 units in
+the last place of the largest coordinate, far more than any rounding of
+a measure. Every pair whose measure could be least is still measured, by
+the same per-pair measure, so the result is the nested loops' to the
+bit; where the search's arithmetic would leave the finite range, every
+pair is measured as before.
 
 Distance bounds round each positive operation down. The Euclidean term
 uses unscaled squares and a square root, combined with the greatest axis
@@ -3041,7 +3187,8 @@ PERCENT and other distance orders retain ordinary plans. Learned plans
 fill and prepare both their distance measure and full filter each run.
 
 Constant folding may replace a scalar call with its `specialize` result
-(D53). The replacement preserves its contracts and errors, remains correct
+(D53), in a condition, a select list or a set function's argument. The
+replacement preserves its contracts and errors, remains correct
 if given different arguments, and must not perform work with visible side
 effects. Retained state reserves memory from the supplied database budget
 (D38); failed preparation leaves the original call for runtime. Filling a
@@ -3069,9 +3216,76 @@ range contains its Y; the shared exact ray-crossing rule still decides
 boundary membership and shell-minus-hole interiors. These immutable trees
 reserve vector capacity before allocation, have depth bounded by the
 geometry coordinate limit, and decline independently when memory is short.
-The decoded operand remains usable without them. Distance reuses the
-prepared intersection decision, then keeps its ordinary separation kernel
-and result bounds; segment-distance pruning is not implied.
+The decoded operand remains usable without them.
+A Polygon or MultiPolygon operand of at least 32 edges also builds exact
+cell certificates, once it has located eight points per edge plus 256,
+or its interval trees have tested about 2,048 edges per edge, as rays
+across many teeth do first, the tests of later points estimated from
+those of the first 64, so an operand prepared for a few rows of a join
+never pays for them. Its
+envelope gets a grid of square cells whose side is a power of two, about
+64 cells per edge and at most 1,024 along an axis, their bounds 2^-8 of
+a cell past multiples of the side so round coordinates rarely fall on
+one. Cell bounds and row centres are exact, and a point's cell is found
+by an exact multiplication and a floor checked against the cell's exact
+lower bound, as subtracting the shift from a negative coordinate can
+round. A cell an edge may touch is a boundary cell:
+an edge within one row's height, or a vertical one, is marked over its
+exact extent, and any other over each row band's computed extent widened
+by a doubled bound on that computation's error. The grid is swept a row
+at a time from the edges that may touch that row, so only one row's
+crossings are held. Every other cell holds no boundary point and is
+labelled interior or exterior from the exact half-open crossings of its
+row's centre line, each placed in its column by exact orientation, by
+its slope where it meets a column's side, and so wholly left or right of
+the cell. Each ring's parity is kept, and shells,
+holes and parts combine as point location combines them, so a label never
+differs from location, valid topology or not. A point in a labelled cell
+is decided by one lookup. A boundary cell only one ring's edges may touch
+keeps that ring's side where the cell's right side meets the centre line,
+unless another part holds it whole or a hole's shell leaves it outside.
+A point in it is located from the edges whose envelopes meet the closed
+cell, found in a hierarchy of the operand's edges split at the median
+along the axis whose halves' envelopes overlap least, then whose halves
+are smaller, edges with equal centres ordered along the other axis,
+reserved from the budget the first time a point needs it. The point's
+half-open ray is replaced by
+a run right to the cell's side and a rise along it to the centre line,
+which cross a ring as often as the ray does, modulo two: the rise lies
+just left of the side, nearer to it than the run and the centre line lie
+above their heights, so no vertex lies on the path, and an edge through
+one of its corners is placed by its slope. A cell several rings' edges
+may touch, or whose one ring does not decide it alone, keeps a record:
+for each polygon of its rings whose shell touches or holds it, the
+shell's part, the first hole, in order, that holds it without touching
+it, and each touching ring's parity at the reference point. A polygon
+that holds the cell untouched makes it interior, and one whose untouched
+shell does not hold it is left out. A point in it follows each ring's
+parity apart along the same path, and the polygons combine as location
+combines them. A cell with more than 64 such rings, or whose row's
+rings outgrow the room to note them, leaves its points to the interval
+tree or the ring scan.
+Certificates decline when a cell
+would be within 256 units in the last place of the largest coordinate, a
+scaled coordinate would reach 2^44, the side would fall below 1e-280, or
+the budget refuses their cells.
+The same operands, from the second line, polygon or multi-part form of
+them they test, keep their edges filed in that grid over their envelope,
+as intersection tests file one side (above), reserved from the budget. Each
+operand then probes only the filed edges in the cells its own edges may
+touch, and decides as the unprepared relationship does: edges that meet,
+or a first vertex of either shape, part by part, not outside the other,
+the prepared polygon's points placed by its cells, interval tree or
+rings. Collections keep the general path. Distance reuses the
+prepared intersection decision and keeps its result bounds. From the
+seventeenth point it measures, such an operand finds a point's
+separation by searching the hierarchy of its edges for the nearest,
+depth first and nearer child first: a subtree or an edge is skipped
+only when its envelope misses the square within the best measure so
+far, widened as the chains' search widens it, or lies beyond that reach
+by squared distance with a factor of 1 + 2^-40 for that distance's
+rounding, so every edge whose measure could be least is measured and
+the minimum is the scan's to the bit.
 Spatial probes with equal declared semantics and deterministic
 functions have one learned plan shape even when preparation changes the
 function object. Ordinary function probes still require object identity;
@@ -6443,6 +6657,16 @@ the other choice. It needs the data's extent before the sort, or a curve
 over warped float bits, while STR needs only the count, which the first
 sort yields.
 
+A load whose entries the memory budget can hold is tiled in memory
+(`pack/held.rs`): the entries are gathered into a vector reserved of the
+budget, its room grown geometrically while the budget grants it, and
+each slab and run is a slice sorted in place, so no record is encoded,
+written to a work area or read back. Where the budget stops granting,
+the entries gathered go to the sorted spill ahead of the rest, within
+MEMORY.WORK_BYTES as above. Both tile the same tree. Measured on a
+million points (`bench/geometry.md`), the held load builds the index in
+0.6 s against 4.1 s through the spill.
+
 CREATE INDEX fills an index while writers keep it up to date (D27), so
 `Index::load_beside_writers` lets a method build beside them. The rtree
 packs into a side tree no one can reach, then holds out every writer by
@@ -6791,6 +7015,75 @@ them, and a non-owner sees no rows. RESCAN BACKUP TARGET reads a
 target's manifests and segments and records what the history lacks,
 and marks GONE each completed backup the target no longer holds.
 
+#### D180. UUID is a built-in type of 16 octets, ordered, hashed and indexed by its octets
+
+UUID [RFC 9562] is a type beyond the standard (D53), built in as VECTOR
+is (D93), so no plug-in is needed and a database holding one opens
+anywhere. The type registry holds its kind (`value/types/uuid.rs`), and
+the engine knows nothing else of it. A value is an extension value whose
+bytes are its 16 octets in the order RFC 9562 §4 writes them. Its order
+is those octets', unsigned, from the first, which is also its text's
+order, so a version 7 UUID sorts by its time. Its record and its index
+key are the 16 octets, fixed in width, so a key of it never begins
+another and both the btree and the hash method index it. The
+Information Schema gives its DATA_TYPE as UUID, with no length or
+precision. Its format is version 1 and is written nowhere, since a
+column's type names UUID.
+
+#### D181. A UUID's text is read in its common forms and written hyphenated in lower case
+
+CAST of a character string to UUID, and a string stored in a UUID column
+(`SqlType::assigns_text`), reads 32 hexadecimal digits in either case,
+its spaces trimmed, braced or not, with a hyphen allowed after any group
+of four digits but the last. So the hyphenated form, the braced form and
+the bare 32 digits all read. Its text is always the hyphenated form in
+lower case, 36 characters, which the command-line client sizes a column
+by. Text that is no UUID's is 22018. A binary string of 16 octets casts
+to UUID, one of another length is 22018, and a UUID casts to a binary
+string as its octets. Another type does not cast to it (22005).
+`UUID '...'` is a literal, CAST of its string, written so by a view's
+text. A UUID is comparable only with a UUID, so comparing one with text
+needs CAST.
+
+#### D182. UUID_V4 draws on the standard library's random hash keys, so the core keeps no dependency
+
+The core holds no dependency (D3), no unsafe code and no code of one
+operating system, so it reads no system generator itself. The standard
+library's `RandomState` does, once a thread, for its SipHash keys, and
+steps them by one for each state made. UUID_V4 makes a fresh state for
+each 64 bits it needs and hashes the word's index with it
+(`uuid/generate.rs`). The bits are unpredictable to one who does not know
+the keys, and two calls never share a key, but they are not a
+cryptographic generator's, so a UUID is an identifier and never a
+secret. No plug-in point was added for a source, since none is needed
+for that use. The version and variant are set as RFC 9562 §5.4 says.
+
+#### D183. UUID_V7 takes the database's clock, and never sorts before the last one its database made
+
+UUID_V7 lays out RFC 9562 §5.7's fields. Its first 48 bits are the
+milliseconds since 1970 of the clock the database reads (D54,
+`Database::set_clock`), and its 74 other bits random, as D182 draws them.
+The database keeps the last one it made, shared by every snapshot of its
+state. One that would not exceed it is that one plus one, its random
+bits then a counter, which is §6.2's method 2, so the UUIDs a database
+makes, and so a session's, sort in the order made, whatever the clock
+does. A call with no database, as a constant would be folded, reads the
+system clock and keeps no order. Neither function is deterministic,
+so neither is folded, and each row gets its own value. They take no
+argument, and their names say the version rather than borrowing another
+system's.
+
+#### D184. The native protocol carries a UUID under a tag of its own
+
+A type beyond the standard goes over the native protocol by its name,
+its text and its bytes, and a client without its kind holds it
+unregistered (D53). UUID has tag 27 instead, as a type with no
+parameters and as a value its kind's bytes, the count then the 16
+octets (`protocol/src/fields.rs`). A client then reads a UUID as a UUID
+with no type registry, and sends one back as a parameter the same way.
+This is part of protocol version 1, which stays 1 while turborel is in
+alpha.
+
 #### D185. The protocol grows by capabilities a client asks for and the server grants, its version staying 1
 
 Hello names the capabilities a client asks for, as strings, and Ready
@@ -6873,7 +7166,12 @@ With `status`, the server sends a Status, a name and its value as text,
 for each of the session's settings before Ready, and again for each one a
 statement changed, before that statement's last reply
 (`native/status.rs`). Besides the per-session settings, AUTHORIZATION,
-SCHEMA, READ_ONLY and SERVER_VERSION are told. Only what changed since
+SCHEMA, READ_ONLY, SERVER_READ_ONLY, CATALOG, OWNER (YES while the
+session's user is the database's owner, looked at again only as the
+identifier changes) and SERVER_VERSION are told.
+SERVER_READ_ONLY is YES while the database takes no changes, as a
+replica following its group, so a client tells a primary from a replica
+with no query and whatever its user (D201). Only what changed since
 the client was told is sent, so a statement that changed nothing costs
 nothing, and the client reads a setting with no round trip
 (`Connection::setting`).
@@ -6987,6 +7285,163 @@ commit at Close loses nothing and keeps what was done. Without the
 capability the transaction stays active once the cursor is open, as in
 the first form, and the client library opens a cursor under autocommit
 with ends only when granted.
+
+#### D200. A pipeline writes its requests a window at a time, and skips after an error by savepoints
+
+The server answers each request alone and in turn (D45), so a client
+need not wait for one reply before it sends the next. A `Pipeline`
+borrowed from a connection queues queries and executions of prepared
+statements and reads one outcome for each, in order. It writes them a
+window of at most 64 KiB at a time (`PIPELINE_WINDOW`) and reads the
+window's replies before it writes the next. A window fits the socket
+buffers between client and server, so it is written whole even while
+the server writes replies and reads nothing. A client that wrote more
+before reading could wait on a server waiting on it.
+
+A failure is its request's own and the rest run, as the requests are
+independent. `OnError::Skip` stops a batch at its first failure and
+keeps what came before. A savepoint is set before each request but the
+first, the requests after a failure are rolled back to the savepoint
+set after it, and a window not yet written is never sent. Each is
+reported `Skipped`. The batch is one transaction, committed as it ends
+under autocommit if it began none. The protocol has no request that
+skips the requests after a failure. A Query of several statements stops
+at its first failure (D192), but among its own statements alone, not
+the executions of prepared statements a pipeline also holds. So the
+savepoints stay, set by `guarded` in `pipeline.rs`.
+
+#### D201. Several servers are tried in order or at random, and a server of the wrong role is left
+
+Settings may name several hosts, each with its port. They are tried in
+the order given, or in an order drawn at random for each connection
+under `load_balance=random`, seeded from the standard library's
+`RandomState` so no dependency is added. Each address a name resolves
+to is tried in turn, each step within the connect timeout. With no
+server kept, the failure (SQLSTATE 08001) names each address and why
+it was passed.
+
+`target=read-write` keeps a server that takes changes and
+`target=read-only` one that takes none. A replica following its group
+refuses every change (D57) and shows its role in
+INFORMATION_SCHEMA.REPLICAS to the owner alone, and a server alone has
+no such table. So the client reads `ROLE_QUERY` as a statement that is
+its own transaction. A missing table means a server alone, read-write.
+A row PRIMARY means read-write and any other row read-only. No row, as
+any session but the owner's sees on a replica, means a role it cannot
+see, which meets neither target. A server that grants `status` (D190)
+tells every session SERVER_READ_ONLY, YES of a database following its
+group or deposed, as the session begins and again after each statement
+(`Session::takes_changes`). The client reads its role from it with no
+query, whoever the user, and asks `ROLE_QUERY` only of a server that
+grants no `status`.
+
+#### D202. Connection settings are layers, the program's over a service's over the environment's
+
+A program, a person or an operator may each say how to connect. The
+settings are one vocabulary of names (`settings::KEYS`), written alike in
+a connection URI's query, a service file and the program's `Options`.
+The layers are laid in a fixed order, the program's own (or its URI's)
+over the named service's section, over the environment's variables,
+over the defaults, each setting taken from the first layer that has it.
+The service and its file are named by the program or the environment,
+never by a service.
+
+The environment's variables are TURBOREL_HOST, TURBOREL_PORT,
+TURBOREL_USER, TURBOREL_PASSWORD, TURBOREL_TLS_MODE,
+TURBOREL_APPLICATION_NAME, TURBOREL_CONNECT_TIMEOUT, TURBOREL_SERVICE,
+TURBOREL_SERVICE_FILE and TURBOREL_PASSFILE. An empty one gives
+nothing. The environment is read through a function the caller may
+give (`Settings::resolve_in`), so tests set no process variable.
+
+A URI is `turborel://user:password@host:port,host:port/?key=value`,
+percent-encoded, an IPv6 address bracketed and a local socket an
+encoded path. A server serves one database, so the URI names none and
+has no path. A setting that cannot be read is SQLSTATE 08001. The
+application name is sent as the connection attribute `application`
+(D191), which INFORMATION_SCHEMA.CONNECTION_ATTRIBUTES shows.
+
+#### D203. A service file names sections of settings, and a password file gives passwords by server and user
+
+A service file, `~/.turborel_service.conf` unless named, holds `[name]`
+sections of `key = value` lines, with `#` comments. A malformed line, a
+key that names no setting, or `service` set by a service is refused,
+naming the file and line.
+
+A password file, `~/.turborel_pass` unless named, holds lines
+`host:port:user:password`. A plain `*` field matches anything, `\`
+takes the next character as it is, and the first matching line wins. A
+password the settings give prevails over it. A password file should be
+readable by its owner alone, but the standard library has no portable
+way to read a file's owner or permissions, and the client has no
+OS-specific code. So it checks only that the file is a regular file,
+and its owner answers for the rest. This limit is stated in the manual.
+
+#### D204. TLS by mode, and channel binding disabled, preferred or required
+
+`tls_mode` is `disable`, `prefer` (the default), `require`, `verify-ca`
+or `verify-full`, for TCP alone, as a local socket is private.
+`prefer` and `require` encrypt and check that the server holds its
+certificate's key, not who signed it. They keep out an eavesdropper,
+not a server in the middle. `verify-ca` checks the certificate against
+the authorities trusted and not its name, and `verify-full` checks both
+(`tls/modes.rs`, custom rustls verifiers over its WebPKI verifier). A
+TLS stream begins with its handshake, so `prefer` reconnects in the
+clear when the server is reached but its handshake fails, never doubling
+the wait of a server that cannot be reached.
+
+`channel_binding` is `disable`, `prefer` or `require`. `disable` makes
+SCRAM unbound even over TLS, and `prefer` binds where the connection
+has a binding (D43). `require` refuses, before any connection, settings
+whose mechanism binds nothing or whose transport is not TLS, and SCRAM
+itself refuses to send its proof unbound (SQLSTATE 28000).
+
+#### D205. The SCRAM keys a password derives are cached by salt, iterations and a keyed tag of the password
+
+PBKDF2 is the slow step of a SCRAM login, by design. A server sends a
+user the same salt and iterations at each login, so a `KeyCache` keeps
+ClientKey and ServerKey after an exchange the server proved, and a
+reconnection that meets them again skips the derivation.
+
+An entry is found by the salt, the iterations and an HMAC of the
+password under a random secret of the cache's own. So a wrong password
+finds nothing, and the cache holds neither the password nor anything to
+guess it from offline. The keys depend on the password, salt and
+iterations alone, so the user and server are not part of the index.
+The cache is bounded at 64 entries, the oldest dropped first, and an
+entry is dropped when an exchange that used it fails, by the server's
+refusal (`Mechanism::refused`) or its wrong signature. It is shared by
+its clones across threads, and `Settings` keeps one for all the
+connections it makes. The protocol's own client
+(`turborel_protocol::scram::Client`) proves from derived keys: `read`
+gives the salt and iterations of the server's first message, and
+`prove` answers it by a `Derived`, the cache's or one the password
+derives. So the client library makes no SCRAM message of its own, and
+the protocol's server side checks it in the client's tests.
+
+#### D206. A pool hands out checked connections and takes them back reset, by the standard library alone
+
+A `Pool` holds at most `max` connections a `Source` makes, such as
+`Settings` or a closure, shared by its clones under a `Mutex` and a
+`Condvar`. It starts no thread (D55), and each wait is the borrower's.
+`get` hands out an idle connection that answers, makes one while there
+is room, or waits for one to come back within `wait` (SQLSTATE 08001
+past it). A connection idle past `idle_timeout`, older than
+`max_lifetime`, or beyond `max_idle` is closed rather than kept.
+
+A `Pooled` gives its connection back as it is dropped, reset. Of a
+server that grants `reset` it sends Reset (D189), which ends the
+session's transaction, prepared statements, cursors, temporary tables
+and settings in one request and keeps its user. Of another it resets in
+one pipeline. Its transaction is rolled back, the statements it
+prepared are closed and destroyed, its user, role and schema are its
+login's, and its zone is local, and a setting a borrower SET stays.
+Either way autocommit is off and the program's own statements run. A
+connection lost, or whose reset fails, is closed, so no borrower sees
+another's session. The check is Ping, which the server answers with no
+worker, of a server that grants `ping`, else ROLLBACK, which does
+nothing outside a transaction. Check and reset each wait at most
+`RESET_WITHIN`, so a server that hangs holds the borrower no longer
+than a step of connecting (`pool/reset.rs`).
 
 #### D240. A completion carries the server's time for its statement, and the waits it can measure for free
 

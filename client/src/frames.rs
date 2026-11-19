@@ -17,17 +17,32 @@ const RESERVED: usize = 64 * 1024;
 
 impl<S: Read + Write> Connection<S> {
     pub(crate) fn send(&mut self, request: &Request) -> Result<()> {
+        let mut bytes = Vec::new();
+        request.encode(&mut bytes);
+        self.write_encoded(&bytes)
+    }
+
+    /// Writes `bytes`, requests already encoded, at once: one request, or
+    /// a pipeline's batch (`pipeline.rs`); each frame past the threshold
+    /// compressed, once compression is granted.
+    ///
+    /// # Errors
+    ///
+    /// The failure that lost the connection, before or as they are
+    /// written.
+    pub(crate) fn write_encoded(&mut self, bytes: &[u8]) -> Result<()> {
         if let Some(lost) = &self.lost {
             return Err(lost.clone());
         }
-        let mut bytes = Vec::new();
-        request.encode(&mut bytes);
-        if let Some(threshold) = self.told.compress {
-            let plain = std::mem::take(&mut bytes);
-            compress_frames(&mut bytes, &plain, threshold);
-        }
+        let mut compressed = Vec::new();
+        let bytes = if let Some(threshold) = self.told.compress {
+            compress_frames(&mut compressed, bytes, threshold);
+            compressed.as_slice()
+        } else {
+            bytes
+        };
         let stream = self.stream.get_mut();
-        let sent = stream.write_all(&bytes).and_then(|()| stream.flush());
+        let sent = stream.write_all(bytes).and_then(|()| stream.flush());
         sent.map_err(|e| self.lost_by(io_failed("send", &e)))
     }
 

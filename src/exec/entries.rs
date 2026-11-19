@@ -12,7 +12,7 @@ use crate::db::State;
 use crate::error::Result;
 use crate::index::{Key, KeyProjection, Probe};
 use crate::logical::{Truth, pushed_conjuncts};
-use crate::physical::Plan;
+use crate::physical::{Decided, Plan};
 use crate::storage::{Near, Row, RowId, TableStorage};
 use crate::txn::{TxId, checked};
 use crate::value::Value;
@@ -116,7 +116,7 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
         Plan::SeqScan { table, columns, .. } => {
             Ok(Box::new(checked(Arc::clone(db.storage_of(&table)?).scan(tx, &columns), db.tx.stop_of(tx))))
         }
-        Plan::IndexScan { table, index, probe, reverse, .. } => index_entries((&table, &index, probe, reverse), db, tx),
+        Plan::IndexScan { table, index, probe, reverse, decided, .. } => index_entries((&table, &index, probe, reverse), decided, db, tx),
         Plan::Filter { cond, input, .. } => {
             let rows: Entries = match (*input, pushed_conjuncts(&cond)) {
                 (Plan::SeqScan { table, columns, .. }, Some(condition)) => {
@@ -159,22 +159,36 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
 
 /// The rows, with their ids, the probe `probe` of index `index` of `table`
 /// finds, read `reverse` if so; of an XML query the index answers, those
-/// it answers (`exec/answered.rs`).
+/// it answers (`exec/answered.rs`). The conjunct the scan decides of each
+/// entry, `decided` (`Plan::IndexScan`), is judged of each row read, as
+/// its filter would.
 ///
 /// # Errors
 ///
 /// As `table_entries`.
-fn index_entries((table, index, probe, reverse): (&QualifiedName, &str, Probe, bool), db: &Arc<State>, tx: TxId) -> Result<Entries> {
+fn index_entries(
+    (table, index, probe, reverse): (&QualifiedName, &str, Probe, bool),
+    decided: Option<Box<Decided>>,
+    db: &Arc<State>,
+    tx: TxId,
+) -> Result<Entries> {
     if let Probe::Xml(asked) = &probe
         && asked.answered
     {
         return super::answered::answered_entries(db, tx, (table, index, asked), None);
     }
-    let Found { storage, ix, entries, projection, read } = probe_index(db, table, index, &probe, reverse)?;
+    let Found { storage, ix, entries, projection, read } = probe_index(db, table, index, &probe, (reverse, true))?;
     read.record(&*storage, tx)?;
     let mut reading = Reading::of(&ix, None, projection);
-    let rows = checked(entries, db.tx.stop_of(tx))
-        .filter_map(move |entry| entry.and_then(|(key, id)| fetch(&*storage, &ix, &mut reading, (tx, id), &key)).transpose());
+    let runner = Runner::new(db, tx);
+    let judge = move |(id, row): (RowId, Row)| -> Result<Option<(RowId, Row)>> {
+        let Some(decided) = &decided else { return Ok(Some((id, row))) };
+        Ok((eval_cond(&decided.cond, &row, &runner)? == Truth::True).then_some((id, row)))
+    };
+    let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
+        let fetched = entry.and_then(|(key, id)| fetch(&*storage, &ix, &mut reading, (tx, id), &key));
+        fetched.and_then(|found| found.map_or(Ok(None), &judge)).transpose()
+    });
     Ok(Box::new(checked(rows, db.tx.stop_of(tx))))
 }
 

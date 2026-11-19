@@ -114,6 +114,18 @@ pub struct Connection<S: Read + Write> {
     pub(crate) told: Told,
 }
 
+impl<S: Read + Write> std::fmt::Debug for Connection<S> {
+    /// Where it reached, as whom, and whether it is lost: never its
+    /// cancel key.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Connection")
+            .field("target", &self.reach)
+            .field("authorization", &self.authorization)
+            .field("lost", &self.lost.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 /// Connects to the server at `address` as `user`, authenticated by
 /// `mechanism`, waiting as `Timeouts::default` says: to connect and log
 /// in, `CONNECT_WITHIN` each step; then without limit.
@@ -189,8 +201,32 @@ impl<S: Read + Write> Connection<S> {
     ///
     /// As `open`'s.
     pub fn open_offering(stream: S, (user, mechanism): (&str, &mut dyn Mechanism), offer: Offer) -> Result<Connection<S>> {
-        let mut connection = Connection {
-            stream: BufReader::new(stream),
+        let mut connection = Connection::unopened(BufReader::new(stream));
+        let hello = Request::Hello {
+            version: VERSION,
+            user: user.to_owned(),
+            mechanism: mechanism.name().to_owned(),
+            initial: mechanism.initial(),
+            capabilities: offer.capabilities,
+            attributes: offer.attributes,
+        };
+        connection.send(&hello)?;
+        connection.logged_in(mechanism, offer.compress_from)
+    }
+
+    /// A connection over `stream` that takes nothing, lost as it is made:
+    /// what stands in a `Pooled` for the connection it gives back
+    /// (`pool.rs`).
+    pub(crate) fn stand_in(stream: S) -> Connection<S> {
+        let mut connection = Connection::unopened(BufReader::with_capacity(0, stream));
+        connection.lost = Some(failed("[DESIGN] the connection went back to its pool"));
+        connection
+    }
+
+    /// A connection over `stream`, not yet logged in.
+    fn unopened(stream: BufReader<S>) -> Connection<S> {
+        Connection {
+            stream,
             authorization: String::new(),
             server: String::new(),
             max_body: MAX_BODY,
@@ -204,28 +240,28 @@ impl<S: Read + Write> Connection<S> {
             warning: None,
             autocommit: false,
             told: Told::default(),
-        };
-        let hello = Request::Hello {
-            version: VERSION,
-            user: user.to_owned(),
-            mechanism: mechanism.name().to_owned(),
-            initial: mechanism.initial(),
-            capabilities: offer.capabilities,
-            attributes: offer.attributes,
-        };
-        connection.send(&hello)?;
+        }
+    }
+
+    /// It, logged in by `mechanism` once Hello is sent: each challenge
+    /// answered until Ready, requests of at least `compress_from` bytes
+    /// compressed from then on if compression was granted.
+    fn logged_in(mut self, mechanism: &mut dyn Mechanism, compress_from: usize) -> Result<Connection<S>> {
         loop {
-            match connection.receive()? {
+            match self.receive()? {
                 Reply::Challenge(challenge) => {
                     let answer = mechanism.answer(&challenge)?;
-                    connection.send(&Request::Answer(answer))?;
+                    self.send(&Request::Answer(answer))?;
                 }
                 Reply::Ready { authorization, key, capabilities, server } => {
                     mechanism.ready()?;
-                    connection.ready((authorization, key, &capabilities, server), offer.compress_from);
-                    return Ok(connection);
+                    self.ready((authorization, key, &capabilities, server), compress_from);
+                    return Ok(self);
                 }
-                Reply::Error(failure) => return Err(failure),
+                Reply::Error(failure) => {
+                    mechanism.refused();
+                    return Err(failure);
+                }
                 Reply::Prepared { .. }
                 | Reply::Description(_)
                 | Reply::Rows(_)
@@ -235,7 +271,7 @@ impl<S: Read + Write> Connection<S> {
                 | Reply::Notice(_)
                 | Reply::Status { .. }
                 | Reply::Pong => {
-                    return Err(connection.lose("[DESIGN] the server sent no Ready"));
+                    return Err(self.lose("[DESIGN] the server sent no Ready"));
                 }
             }
         }
@@ -257,12 +293,29 @@ impl<S: Read + Write> Connection<S> {
     /// # Errors
     ///
     /// As `open`'s; a connection failure if a wait runs out.
-    pub(crate) fn open_timed(stream: S, (user, mechanism): (&str, &mut dyn Mechanism), timeouts: Timeouts) -> Result<Connection<S>>
+    pub(crate) fn open_timed(stream: S, login: (&str, &mut dyn Mechanism), timeouts: Timeouts) -> Result<Connection<S>>
+    where
+        S: Bound,
+    {
+        Connection::open_timed_offering(stream, login, (timeouts, Offer::default()))
+    }
+
+    /// Opens a connection over `stream` as `open_timed` does, asking for
+    /// what `offer` asks, as `open_offering`.
+    ///
+    /// # Errors
+    ///
+    /// As `open_timed`'s.
+    pub(crate) fn open_timed_offering(
+        stream: S,
+        login: (&str, &mut dyn Mechanism),
+        (timeouts, offer): (Timeouts, Offer),
+    ) -> Result<Connection<S>>
     where
         S: Bound,
     {
         limit(&stream, timeouts.connect)?;
-        let mut connection = Connection::open(stream, user, mechanism)?;
+        let mut connection = Connection::open_offering(stream, login, offer)?;
         limit(connection.stream.get_ref(), timeouts.read)?;
         connection.bounded = Some(limit::<S>);
         connection.timeouts = timeouts;
@@ -281,6 +334,12 @@ impl<S: Read + Write> Connection<S> {
         bounded(self.stream.get_ref(), within)?;
         self.timeouts.read = within;
         Ok(())
+    }
+
+    /// How long each read or write of the server waits, as the connection
+    /// was made or `set_read_timeout` last said; none, no limit.
+    pub fn read_timeout(&self) -> Option<Duration> {
+        self.timeouts.read
     }
 
     /// Takes replies of at most `bytes` bytes from now on: `MAX_BODY`, the
@@ -340,6 +399,13 @@ impl<S: Read + Write> Connection<S> {
         self
     }
 
+    /// Where the connection reached its server, and how: none for a
+    /// connection made over a stream given to `open`. A `Target::Tls` is
+    /// a connection TLS secures.
+    pub fn target(&self) -> Option<&Target> {
+        self.reach.as_ref()
+    }
+
     /// What cancels the statement this connection runs, from another
     /// thread: none for a connection made over a stream given to `open`,
     /// whose server it cannot reach again.
@@ -356,6 +422,16 @@ impl<S: Read + Write> Connection<S> {
     /// The statement's, as the server reports it; a connection failure.
     pub fn query(&mut self, sql: &str) -> Result<Outcome> {
         self.send(&Request::Query { sql: sql.to_owned(), ends: self.autocommit, attributes: self.told.attributes(), multi: false })?;
+        self.query_reply()
+    }
+
+    /// The reply to a Query sent: a query's rows, or another statement's
+    /// completion.
+    ///
+    /// # Errors
+    ///
+    /// As `query`'s.
+    pub(crate) fn query_reply(&mut self) -> Result<Outcome> {
         let columns = match self.receive()? {
             Reply::Complete(completed) => return Ok(Outcome::Done(completed)),
             Reply::Description(columns) => columns,

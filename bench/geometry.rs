@@ -48,6 +48,10 @@ const DISTANCE_STRIDE: usize = 79;
 const RELATION_ROUNDS: u64 = 32;
 const DISTANCE_ROUNDS: u64 = 16;
 const CODEC_ROUNDS: u32 = 4;
+/// Repetitions of each large polygon pair.
+const PAIR_ROUNDS: u64 = 64;
+/// Repetitions of the small squares against a prepared polygon.
+const SQUARE_ROUNDS: u64 = 2;
 
 fn main() {
     let bench = Bench::new("geometry");
@@ -81,8 +85,100 @@ fn main() {
     for edges in [4_u32, 8, 16, 32, 64, 128] {
         prepared(&bench, &format!("{edges}-edge polygon"), &points, &circle(edges));
     }
+    for teeth in [64_u32, 1_024, 8_192] {
+        prepared(&bench, &format!("{}-edge comb", teeth * 4 + 4), &points, &comb(teeth));
+    }
+    polygon_pairs(&bench);
+    prepared_shapes(&bench, &points);
     planar::run(&bench);
     curves::run(&bench);
+}
+
+/// Small squares, one at each grid point, against a large prepared
+/// polygon: a join's inner candidates against its prepared outer row.
+fn prepared_shapes(bench: &Bench, points: &[Geometry]) {
+    let budget = MemoryBudget::new(usize::MAX);
+    let squares: Vec<_> = points
+        .iter()
+        .map(|point| {
+            let [x, y] = point.coordinates().unwrap().unwrap();
+            Geometry::rectangle([x, y], [x + 0.5_f64, y + 0.5_f64], 0).unwrap().to_value()
+        })
+        .collect();
+    for (name, polygon) in [("4096-edge circle", ring(4_096, 50.0_f64, 25.0_f64)), ("4100-edge comb", comb(1_024))] {
+        let value = polygon.to_value();
+        let call = GeometryFunction::Intersects.specialize(&[None, Some(&value)], &budget).unwrap();
+        bench.measure(Case::new(format!("square/{name}, prepared intersection"), "pairs"), || {
+            for _ in 0..SQUARE_ROUNDS {
+                for square in &squares {
+                    black_box(call.0.call(&[square.clone(), value.clone()]).unwrap());
+                }
+            }
+            squares.len() as u64 * SQUARE_ROUNDS
+        });
+    }
+}
+
+/// Pairs of large polygons: boundaries that cross, one polygon nested in
+/// another, and interleaved combs whose envelopes overlap but whose edges
+/// never meet, the cases where every pair of edges may be tested.
+fn polygon_pairs(bench: &Bench) {
+    let pairs = [
+        ("4096-edge circles crossing", ring(4_096, 50.0_f64, 25.0_f64), ring(4_096, 60.0_f64, 25.0_f64)),
+        ("4096-edge circles nested", ring(4_096, 50.0_f64, 25.0_f64), ring(4_096, 50.0_f64, 10.0_f64)),
+        ("1024-tooth combs interleaved", comb(1_024), hanging_comb(1_024)),
+    ];
+    for (name, left, right) in pairs {
+        bench.measure(Case::new(format!("{name}, decoded intersection"), "pairs"), || {
+            for _ in 0..PAIR_ROUNDS {
+                black_box(left.intersects(black_box(&right)).unwrap());
+            }
+            PAIR_ROUNDS
+        });
+    }
+    let (left, right) = (ring(1_024, 50.0_f64, 25.0_f64), ring(1_024, 110.0_f64, 25.0_f64));
+    bench.measure(Case::new("1024-edge circles apart, decoded distance", "pairs"), || {
+        black_box(left.distance(black_box(&right)).unwrap());
+        1
+    });
+}
+
+/// A regular polygon of `edges` edges about (`x`, 50) with radius `r`.
+fn ring(edges: u32, x: f64, r: f64) -> Geometry {
+    let coordinates: Vec<_> = (0..edges)
+        .map(|n| {
+            let angle = f64::from(n) / f64::from(edges) * std::f64::consts::TAU;
+            format!("{} {}", x + r * angle.cos(), 50.0_f64 + r * angle.sin())
+        })
+        .collect();
+    Geometry::from_wkt(&format!("POLYGON (({}, {}))", coordinates.join(", "), coordinates[0]), 0).unwrap()
+}
+
+/// A comb hanging from y = 100 to 50, its teeth between those of `comb`.
+fn hanging_comb(teeth: u32) -> Geometry {
+    let width = f64::from(SIDE) / f64::from(teeth);
+    let mut coordinates = vec!["0 100".to_owned()];
+    for k in 0..teeth {
+        let left = f64::from(k) * width + width * 0.5_f64 + width * 0.125_f64;
+        let right = left + width * 0.25_f64;
+        coordinates.extend([format!("{left} 95"), format!("{left} 50"), format!("{right} 50"), format!("{right} 95")]);
+    }
+    coordinates.extend([format!("{SIDE} 95"), format!("{SIDE} 100"), "0 100".to_owned()]);
+    Geometry::from_wkt(&format!("POLYGON (({}))", coordinates.join(", ")), 0).unwrap()
+}
+
+/// A comb over the point grid: a base and `teeth` narrow teeth, so a
+/// horizontal ray through the teeth crosses many edges.
+fn comb(teeth: u32) -> Geometry {
+    let width = f64::from(SIDE) / f64::from(teeth);
+    let mut coordinates = vec!["0 0".to_owned()];
+    for k in 0..teeth {
+        let left = f64::from(k) * width;
+        let right = left + width / 2.0_f64;
+        coordinates.extend([format!("{left} 10"), format!("{left} 90"), format!("{right} 90"), format!("{right} 10")]);
+    }
+    coordinates.extend([format!("{SIDE} 10"), format!("{SIDE} 0"), "0 0".to_owned()]);
+    Geometry::from_wkt(&format!("POLYGON (({}))", coordinates.join(", ")), 0).unwrap()
 }
 
 fn circle(edges: u32) -> Geometry {

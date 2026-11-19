@@ -31,6 +31,7 @@ mod data_statements;
 mod data_type;
 mod datetime;
 mod ddl;
+mod delta;
 mod depth;
 mod diagnostics;
 mod distribution;
@@ -575,6 +576,11 @@ impl Parser {
         }
         let targets = self.target_list()?;
         let table_expression = self.table_expression()?;
+        // [ISO/IEC 9075-2:2023 §7.6] whose statement a SELECT INTO runs
+        // (RULES.md D174).
+        if let [crate::ast::TableReference::Delta(d)] = table_expression.from.as_slice() {
+            d.rows.admit();
+        }
         Ok(SqlStatement::Select { query: Box::new(QuerySpecification { distinct, select_list, table_expression }), targets })
     }
 }

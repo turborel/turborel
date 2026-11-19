@@ -68,6 +68,8 @@ fn the_sessions_settings_are_told_as_they_change() {
     assert_eq!(c.setting("AUTHORIZATION"), Some("X"));
     assert_eq!(c.setting("SCHEMA"), Some("X"));
     assert_eq!(c.setting("READ_ONLY"), Some("NO"));
+    assert_eq!(c.setting("SERVER_READ_ONLY"), Some("NO"), "a database alone takes changes");
+    assert_eq!((c.setting("CATALOG"), c.setting("OWNER")), (Some("TURBOREL"), Some("NO")));
     assert_eq!(c.setting("SERVER_VERSION"), Some(turborel::product().as_str()));
     assert!(c.setting("SESSION.TIME_ZONE").is_some());
     c.query("SET TIME ZONE INTERVAL '+05:30' HOUR TO MINUTE").unwrap();
@@ -142,7 +144,8 @@ fn a_session_is_pinged_reset_and_changed() {
 /// by QUERY_ATTRIBUTE, null for one not given; a connection's attributes
 /// are shown to the database's owner in
 /// INFORMATION_SCHEMA.CONNECTION_ATTRIBUTES, and its `application` in
-/// CONNECTIONS.
+/// CONNECTIONS, a connection of settings naming its `application_name`
+/// so.
 #[test]
 fn attributes_are_read_in_sql_and_shown() {
     let db = database();
@@ -160,6 +163,11 @@ fn attributes_are_read_in_sql_and_shown() {
     assert_eq!(rows(&shown), ["application,billing", "region,eu"]);
     let application = owner.query("SELECT APPLICATION FROM INFORMATION_SCHEMA.CONNECTIONS ORDER BY 1").unwrap();
     assert_eq!(rows(&application), ["billing", "NULL"], "the owner's own gave none");
+    let uri = format!("turborel://X@{}/?tls_mode=disable&application_name=reports", server.address);
+    let options = turborel_client::settings::Options::from_uri(&uri).unwrap();
+    let _named = turborel_client::settings::Settings::resolve_in(&options, |_| None).unwrap().connect().unwrap();
+    let application = owner.query("SELECT APPLICATION FROM INFORMATION_SCHEMA.CONNECTIONS WHERE APPLICATION = 'reports'").unwrap();
+    assert_eq!(rows(&application), ["reports"], "the settings' application_name sent as the attribute");
 }
 
 /// Verifies: [DESIGN] RULES.md D192: a Query of several statements runs

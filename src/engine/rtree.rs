@@ -340,7 +340,9 @@ impl RTree {
 
     fn root(&self) -> Result<Visit> {
         let meta = self.meta_fields()?;
-        let level = self.read(meta.root)?.level;
+        // The root's level is in its header; its entries are read by
+        // whoever visits it.
+        let level = Node::level_of(&self.inner.pool.read(self.inner.file, meta.root.0)?)?;
         Ok(Visit { id: meta.root, stamp: meta.stamp, level })
     }
 
@@ -370,12 +372,19 @@ impl RTree {
     }
 
     fn read(&self, id: PageId) -> Result<Node> {
+        let mut node = Node::empty(0, 0);
+        self.read_into(id, &mut node)?;
+        Ok(node)
+    }
+
+    /// Reads node `id` into `node`, reusing its entries' allocation.
+    fn read_into(&self, id: PageId, node: &mut Node) -> Result<()> {
         let page = self.inner.pool.read(self.inner.file, id.0)?;
-        let node = Node::parse(&page)?;
+        node.parse_into(&page)?;
         if node.right == Some(id) || node.entries.len() > self.inner.capacity {
             return Err(corrupt("a node links to itself or exceeds its capacity"));
         }
-        Ok(node)
+        Ok(())
     }
 
     fn store(&self, id: PageId, node: &Node) -> Result<()> {

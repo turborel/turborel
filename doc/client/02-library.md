@@ -8,7 +8,10 @@ alone; over TLS with its feature `tls`, trusting the platform's
 certificate authorities too with `system-roots`; and proving a password by
 SCRAM-SHA-256, or SCRAM-SHA-256-PLUS over TLS, with its feature `scram`. A program that embeds the
 database uses the crate `turborel` instead, and its `Database` and
-`Session` ([The Embedded Library](03-embedding.md)).
+`Session` ([The Embedded Library](03-embedding.md)). Settings read from
+outside the program, several servers, TLS by mode, pipelines, pools and
+the SCRAM key cache are in [Settings, Pipelines and
+Pools](02-library-connections.md).
 
 ## Connecting
 
@@ -227,6 +230,28 @@ if let Outcome::Rows { rows, .. } = conn.query("SELECT BODY FROM ORDERS WHERE ID
     if let Value::Xml(body) = &rows[0][0] {
         let text = body.text()?;
         // text: <order no="18"><item>jam</item></order>
+    }
+}
+```
+
+## UUIDs
+
+A [UUID](../sql/02-data-types.md#uuids) comes as a `Value::Extension` of
+the UUID type, whatever types the client has registered.
+`turborel::value::types::uuid::octets_of` gives its 16 octets and
+`uuid::text` its text. To send one as a parameter, make it of its octets
+with `uuid_value`, or of its text with `uuid::parse`.
+
+```rust
+use turborel::value::types::uuid::{self, octets_of, uuid_value};
+
+let insert = conn.prepare("INSERT INTO TICKETS VALUES (?, ?)")?;
+let id = uuid::parse("919108f7-52d1-4320-9bac-f847db4148a8").unwrap_or_default();
+conn.execute(&insert, &[uuid_value(id), Value::Char("12A".into())])?;
+if let Outcome::Rows { rows, .. } = conn.query("SELECT ID FROM TICKETS")? {
+    if let Some(octets) = octets_of(&rows[0][0]) {
+        let text = uuid::text(&octets);
+        // text: 919108f7-52d1-4320-9bac-f847db4148a8
     }
 }
 ```

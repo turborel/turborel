@@ -43,4 +43,10 @@ impl CallContext for Context<'_> {
     fn spatial(&self) -> Option<&crate::catalog::SpatialCatalog> {
         self.0.state().map(|state| state.catalog.spatial())
     }
+
+    fn uuid_clock(
+        &self,
+    ) -> Option<(std::sync::Arc<dyn crate::clock::Clock>, std::sync::Arc<crate::value::types::uuid::generate::Ordered>)> {
+        self.0.state().map(|state| (std::sync::Arc::clone(&state.clock), std::sync::Arc::clone(&state.uuids)))
+    }
 }

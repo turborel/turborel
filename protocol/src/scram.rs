@@ -131,7 +131,8 @@ fn refused(why: &str) -> SqlError {
     SqlError::new(Code::Connection, format!("[DESIGN] SCRAM: {why}")).with_state(SqlState::INVALID_AUTHORIZATION)
 }
 
-fn hmac(key: &[u8], data: &[u8]) -> Key {
+/// HMAC-SHA-256 of `data` under `key` [RFC 2104 §2].
+pub fn hmac(key: &[u8], data: &[u8]) -> Key {
     let tag = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, key), data);
     tag.as_ref().try_into().unwrap_or([0; KEY_BYTES])
 }
@@ -218,7 +219,7 @@ fn text(bytes: &[u8]) -> Result<&str> {
 mod client;
 mod server;
 
-pub use client::Client;
+pub use client::{Client, Derived, ServerFirst};
 pub use server::{First, Offer, Server};
 
 #[cfg(test)]

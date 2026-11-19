@@ -45,7 +45,12 @@ pub fn start_with(db: &Database, settings: &[(&str, i128)], more: Vec<Arc<dyn Au
     let (stop, stopped) = oneshot::channel::<()>();
     let (tell, told) = std::sync::mpsc::channel();
     let mut server = Server::new(db.clone()).unwrap();
-    set(db, PORT, 0);
+    let any = Value::Exact(Decimal::new(0, 0));
+    if db.set_setting(PORT, &any).is_err() {
+        // A database following a group's log takes no change (RULES.md
+        // D57), so its server is given the port as a default kept nowhere.
+        db.set_setting_default(PORT, &any).unwrap();
+    }
     for (name, n) in settings {
         set(db, name, *n);
     }

@@ -1,5 +1,9 @@
 //! Each area's mutations, in the order they run, after the core's.
 
+mod budget;
+// UUID's mutations, here as `list.rs` holds no more modules.
+mod uuid;
+
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
@@ -57,7 +61,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order.
-fn second() -> [&'static [Mutation]; 30] {
+fn second() -> [&'static [Mutation]; 31] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -89,12 +93,11 @@ fn second() -> [&'static [Mutation]; 30] {
         &super::vector_embed::VECTOR_EMBED,
         &super::vector_hybrid::VECTOR_HYBRID,
         &super::vector::VECTOR,
+        &super::delta_tables::DELTA_TABLES,
     ]
 }
 
-/// The areas after the rest, in order: projection's, JSON's, expression indexes', full-text's,
-/// T621's, the graph syntax's, path search's and its choice's and GQL's, then the raising guards',
-/// XQuery's and XML's, the Information Schema's among them, then the last areas (`last`).
+/// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's and the server's.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     let json: [&'static [Mutation]; 15] = [
         &super::projection::PROJECTION,
@@ -137,8 +140,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, external plug-ins' and
-/// packages', partitioning's, replication's and the server's.
-fn last() -> [&'static [Mutation]; 38] {
+/// packages', partitioning's, UUID's, replication's, the server's, the native
+/// protocol's and the client library's.
+fn last() -> [&'static [Mutation]; 47] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -149,6 +153,13 @@ fn last() -> [&'static [Mutation]; 38] {
         &super::rtree_pack::RTREE_PACK,
         &super::rtree_joins::RTREE_JOINS,
         &super::geometry::GEOMETRY,
+        &super::geometry::orientation::ORIENTATION,
+        &super::geometry::cells::CELLS,
+        &super::geometry::buckets::BUCKETS,
+        &super::geometry::filed::FILED,
+        &super::geometry::reach::REACH,
+        &super::geometry::within::WITHIN,
+        &budget::BUDGET,
         &super::spatial_types::SPATIAL_TYPES,
         &super::spatial_curves::SPATIAL_CURVES,
         &super::spatial_routines::SPATIAL_ROUTINES,
@@ -171,6 +182,7 @@ fn last() -> [&'static [Mutation]; 38] {
         &super::plugins::PACKAGES,
         &super::simple_features::SIMPLE_FEATURES,
         &super::partitioning::PARTITIONING,
+        &uuid::UUID,
         &super::FILL,
         &super::ZONES,
         &super::STATS,
@@ -178,5 +190,6 @@ fn last() -> [&'static [Mutation]; 38] {
         &super::VR,
         &super::SERVER,
         &super::server::native::NATIVE,
+        &super::client::CLIENT,
     ]
 }

@@ -3,6 +3,7 @@
 use std::sync::Mutex;
 
 use super::*;
+use crate::error::{Code, fail};
 
 struct Recorded(Mutex<Vec<Vec<String>>>);
 

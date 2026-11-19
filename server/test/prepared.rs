@@ -340,3 +340,25 @@ fn plug_in_values_cross_the_wire() {
     assert!(matches!(c.execute(&insert, &[k]).unwrap(), Outcome::Done(_)), "sent back, read as an IDENT");
     assert_eq!(rows(&c.query("SELECT COUNT(*) FROM T WHERE N IS NULL").unwrap()), ["1"]);
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §7.6] RULES.md D174: over a connection
+/// a query of a delta table sends rows, directly and prepared, the
+/// statement run at each opening.
+#[test]
+fn rows_of_a_data_change_statement_are_sent() {
+    let db = database(2);
+    let server = start(&db, &[]);
+    let mut c = server.connect("X");
+    let Outcome::Rows { rows: inserted, .. } = c.query("SELECT K FROM NEW TABLE (INSERT INTO T VALUES (7))").unwrap() else {
+        panic!("rows")
+    };
+    assert_eq!(keys(&inserted), ["7"]);
+    let Outcome::Rows { rows: gone, .. } = c.query("SELECT K FROM OLD TABLE (DELETE FROM T WHERE K = 1)").unwrap() else { panic!("rows") };
+    assert_eq!(keys(&gone), ["1"]);
+    let update = c.prepare("SELECT K FROM FINAL TABLE (UPDATE T SET K = K + ? WHERE K = 2)").unwrap();
+    assert_eq!((update.parameters().len(), update.columns()[0].name.as_deref()), (1, Some("K")));
+    let Outcome::Rows { rows: updated, .. } = c.execute(&update, &[int(10)]).unwrap() else { panic!("rows") };
+    assert_eq!(keys(&updated), ["12"]);
+    let Outcome::Rows { rows: left, .. } = c.query("SELECT K FROM T ORDER BY K").unwrap() else { panic!("rows") };
+    assert_eq!(keys(&left), ["7", "12"]);
+}

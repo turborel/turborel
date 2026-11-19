@@ -4,6 +4,7 @@
 
 mod added;
 mod geometry;
+mod uuid;
 
 use turborel::params::ParameterType;
 use turborel::storage::Row;

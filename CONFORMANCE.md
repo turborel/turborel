@@ -1020,6 +1020,22 @@ MERGE, which SQL:2023 reserves and SQL-92 does not, stays an identifier,
 a key word only where INTO follows it at the start of a statement.
 MATCHED is a non-reserved word.
 
+### Data change delta tables
+
+Feature T495 (combined data change and retrieval). A `<data change delta
+table>`, OLD, NEW or FINAL TABLE of an INSERT, a searched UPDATE or
+DELETE, or a MERGE, is read as a table by the query that runs its
+statement [§7.6].
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| Where it stands | §7.5 SR3, §7.17 SR2, SR3d iv, GR1a, §7.19 SR1, §11.32 SR7 | As the one table reference of the FROM clause of a query specification that is the body of a cursor's query, directly run, prepared or declared, of a SELECT INTO, in a routine too, of a WITH list element, one each, or of an INSERT's query; or as a MERGE's source. WITH list elements' statements run in the order written, then the query's own (RULES.md D174, D175). In a subquery, a derived table, beside another table reference, in a set operation's operand or in a view, SQLCODE -103, its statement not run. |
+| Its statement | SR11, SR11a | Not FOR PORTION OF, nor positioned. OLD of an INSERT, or of a MERGE that neither updates nor deletes, and NEW or FINAL of a DELETE, or of a MERGE that neither updates nor inserts, are SQLCODE -103. |
+| Its subject table | SR11b | A base table, or a view of CASCADED CHECK OPTION, its rows the base table's change made, in the view's columns; any other view is SQLCODE -103. Of a typed table, the rows of its subtables an UPDATE or DELETE reaches, by their superrows [§14.9 GR4, §14.14 GR6] (RULES.md D175). |
+| Its rows | GR5b | The old or new delta table of the operation, each row as the statement writes it, after its BEFORE triggers, its defaults, identity and generated columns given, before its referential actions and AFTER triggers. A MERGE's OLD has the rows it updated and deleted, its NEW those it inserted and updated. A derived column list renames the columns [SR12b ii]. |
+| FINAL | GR5a, §15.18 GR15, §15.21 GR6i | A referential action of the statement that changes the subject table is SQLSTATE 27001; an AFTER trigger's statement that does is 0W001, told by the trigger's 09000 [§15.21 GR6m]. |
+| Failure | | A statement that fails gives no rows, and the query fails with it. The query's rows are read as its cursor opens, so its own error undoes the statement too. |
+
 ### Diagnostics
 
 Features F122 (Enhanced diagnostics management), F123 (All diagnostics)
@@ -3260,6 +3276,17 @@ Plug-ins register these with `Database::register_type` (RULES.md D53).
 | Durability | Logged, checkpointed and recovered. A database whose files hold one is not opened without it. |
 | Clients | Sent as its type's name, its text and its bytes, and shown as its text by a client without the plug-in. |
 
+### UUID
+
+UUID, of RFC 9562, is built in, so it needs no plug-in, and is otherwise
+a type of the table above. See [Data Types](doc/sql/02-data-types.md#uuids)
+and [UUID_V4 and UUID_V7](doc/sql/04-expressions.md#uuid_v4-and-uuid_v7).
+
+| Facility | RULES.md | What turborel does |
+|---|---|---|
+| UUID | D180, D181, D184 | A type of 16 octets, `value/types/uuid.rs`. Its literal is `UUID '...'`. Text is read hyphenated, braced, in either case or as 32 bare digits, and written hyphenated in lower case. A binary string of 16 octets casts to it and from it. Compared, ordered, grouped and hashed by its octets, so it takes a primary key, a unique constraint and a btree or hash index. COLUMNS gives its DATA_TYPE as UUID with no length or precision. The native protocol carries it as tag 27. |
+| UUID_V4(), UUID_V7() | D182, D183 | A random UUID of version 4, and a time-ordered one of version 7 from the database's clock, `value/types/uuid/generate.rs`. A version 7 UUID never sorts before the last one its database made. |
+
 ### XMLMAP
 
 A value expression mapping a table, a schema or the catalog to XML and
@@ -4319,6 +4346,7 @@ parts: `cargo xtask features` writes their rows from it, and
 | F312 | MERGE statement | [MERGE](#merge) |
 | F313 | Enhanced MERGE statement | [MERGE](#merge) |
 | F314 | MERGE statement with DELETE branch | [MERGE](#merge) |
+| T495 | Combined data change and retrieval | [Data change delta tables](#data-change-delta-tables) |
 | F122 | Enhanced diagnostics management | [Diagnostics](#diagnostics) |
 | F123 | All diagnostics | [Diagnostics](#diagnostics) |
 | T511 | Transaction counts | [Diagnostics](#diagnostics) |

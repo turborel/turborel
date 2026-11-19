@@ -85,7 +85,8 @@ impl PhysicalPlanner<'_> {
             let pages = found.probe_pages(&probe).map_or(descent, |pages| cost.index_descent * pages);
             let total = pages + found.probe_missed().unwrap_or(0.0_f64) * miss + fetch;
             let (index, method, columns) = (ix.name.clone(), ix.method.clone(), ix.columns.clone());
-            let mut probed = Probed { index, method, columns, probes: vec![probe], slots, used, loose: false, covering: false };
+            let mut probed =
+                Probed { index, method, columns, probes: vec![probe], slots, used, loose: false, covering: false, decided: None };
             let mut kept = conds.to_vec();
             let answered = probed.answered(&mut kept);
             let plan = scans::index_scans(read, probed, answered, (1.0_f64, total, false));
