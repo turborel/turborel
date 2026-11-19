@@ -96,7 +96,8 @@ fn position(text: &str) -> Result<Lsn, String> {
 /// one there already; a backup damaged or missing; a target not met.
 pub fn run_backup(config: &Config, command: &BackupCommand, out: &mut dyn Write) -> Result<(), String> {
     let db = Database::new();
-    register(&db, config)?;
+    let host_keys = register(&db, config)?;
+    crate::hosted::start(&db, config, &host_keys, true)?;
     let written = |e: std::io::Error| format!("cannot write: {e}");
     match command {
         BackupCommand::Restore { location, backup, archive, target } => {

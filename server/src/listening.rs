@@ -1,7 +1,8 @@
 //! \[DESIGN\] Where a server listens (RULES.md D42), as its database's
 //! settings say when it starts: SERVER.HOST and SERVER.PORT for TCP, with
 //! TLS as SERVER.TLS says; and SERVER.SOCKET for a Unix socket, on Windows
-//! a named pipe, which needs no TLS: only this machine reaches it.
+//! a named pipe, which needs no TLS: only this machine reaches it; and
+//! each HOST LISTENER a host plug-in serves (`transport/hosted.rs`).
 
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::path::Path;
@@ -9,6 +10,7 @@ use std::sync::Arc;
 
 use turborel::db::Database;
 use turborel::error::{Code, Result, SqlError};
+use turborel::plugin::manifest::HostKind;
 
 use crate::server::{Endpoint, Protocol};
 use crate::settings::{self, HOST, PORT, SOCKET, TLS};
@@ -86,8 +88,12 @@ pub async fn bind(db: &Database, protocol: &Arc<dyn Protocol>) -> Result<Vec<End
     if !socket.is_empty() {
         endpoints.push(Endpoint { listener: local(db, &socket).await?, protocol: Arc::clone(protocol), tls: None });
     }
+    for (_, link) in db.host_objects(HostKind::Listener)? {
+        let listener = Box::new(crate::transport::hosted::HostListener::new(link));
+        endpoints.push(Endpoint { listener, protocol: Arc::clone(protocol), tls: secured.clone() });
+    }
     if endpoints.is_empty() {
-        return Err(unable("[DESIGN] SERVER.HOST and SERVER.SOCKET name nowhere to listen".into()));
+        return Err(unable("[DESIGN] SERVER.HOST, SERVER.SOCKET and PLUGINS.HOST name nowhere to listen".into()));
     }
     Ok(endpoints)
 }

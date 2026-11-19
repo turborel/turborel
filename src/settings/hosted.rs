@@ -19,7 +19,7 @@ pub(super) fn definitions() -> [Definition; 1] {
         default: text(""),
         per_session: false,
         node: true,
-        effect: Effect::Statement,
+        effect: Effect::Start,
         doc: "The host plug-ins the node starts before the database opens, each name=directory, its program's SHA-256 digest pinned by @digest after the directory, separated by ';'; empty, as it is until the host sets it, for none. The host sets it; SQL may not.".to_owned(),
     }]
 }
