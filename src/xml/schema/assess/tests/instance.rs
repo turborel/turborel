@@ -36,7 +36,7 @@ fn instance_attributes_are_typed_and_xsi_type_resolved() {
     let Typing::List(item) = locations else { panic!("{locations:?}") };
     assert_eq!(item.kind, crate::xml::AtomicType::AnyUri);
     let location_type = &tree.annotation(attribute(tree, n, "schemaLocation").unwrap()).unwrap().name;
-    assert_eq!(location_type.local.as_ref() as &str, "#anonymous-list-anyURI");
+    assert_eq!(&*location_type.local, "#anonymous-list-anyURI");
     let uris =
         super::super::super::component::TypeDef::Simple(super::super::super::component::Simple::List(crate::xml::AtomicType::AnyUri));
     let s = schema(body).unwrap();
