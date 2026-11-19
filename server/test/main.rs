@@ -42,6 +42,7 @@ mod connections;
 mod copying;
 mod diagnostics;
 mod ending;
+mod host_plugins;
 mod imports;
 mod json;
 mod lobs;

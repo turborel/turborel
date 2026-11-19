@@ -43,7 +43,7 @@
 //!                         15 remove tree  path str                                   (nothing)
 //! 27 served connections   1 end           id u64                                     u8
 //!                         2 cancel        id u64                                     u8
-//! 28 listener             1 accept        (nothing)                                  peer str
+//! 28 listener             1 accept        wait ms u32                                found u8 | peer str
 //!                         2 relay         wait ms u32 | bytes to the client           closed u8 | bytes from it
 //! 29 package crypto       1 sha256        bytes                                      32 bytes
 //!                         2 verify        key 32 | message bytes | signature 64      u8

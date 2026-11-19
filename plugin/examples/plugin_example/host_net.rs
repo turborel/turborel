@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use turborel_plugin::host::{Accept, Files, Mode};
 use turborel_plugin::{Answer, Plugin, PluginError};
@@ -121,18 +121,34 @@ struct Tcp {
 }
 
 impl Accept for Tcp {
-    fn accept(&mut self) -> Answer<String> {
+    fn accept(&mut self, wait_ms: u32) -> Answer<Option<String>> {
         if self.listener.is_none() {
             let bound = TcpListener::bind("127.0.0.1:0").map_err(|e| failed(&e))?;
+            bound.set_nonblocking(true).map_err(|e| failed(&e))?;
             let port = bound.local_addr().map_err(|e| failed(&e))?.port();
             std::fs::write(format!("listener-{}.port", std::process::id()), port.to_string()).map_err(|e| failed(&e))?;
             self.listener = Some(bound);
         }
         let listener = self.listener.as_ref().ok_or_else(|| PluginError::external("no listener"))?;
-        let (client, from) = listener.accept().map_err(|e| failed(&e))?;
-        client.set_nodelay(true).map_err(|e| failed(&e))?;
-        self.client = Some(client);
-        Ok(from.to_string())
+        let until = Instant::now() + Duration::from_millis(u64::from(wait_ms));
+        loop {
+            match listener.accept() {
+                Ok((client, from)) => {
+                    client.set_nonblocking(false).and_then(|()| client.set_nodelay(true)).map_err(|e| failed(&e))?;
+                    self.client = Some(client);
+                    return Ok(Some(from.to_string()));
+                }
+                Err(e) => {
+                    if e.kind() != ErrorKind::WouldBlock {
+                        return Err(failed(&e));
+                    }
+                }
+            }
+            if Instant::now() >= until {
+                return Ok(None);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
     fn relay(&mut self, wait_ms: u32, out: &[u8]) -> Answer<(bool, Vec<u8>)> {
         let client = self.client.as_mut().ok_or_else(|| PluginError::external("no connection"))?;

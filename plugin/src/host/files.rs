@@ -119,12 +119,13 @@ pub trait Files: Send {
 /// Kind 28, a listener. Its process keeps one connection from `accept`
 /// until it closes.
 pub trait Accept: Send {
-    /// Waits for a client: where it is from, an address or `local`.
+    /// Waits `wait_ms` at most for a client: where it is from, an
+    /// address or `local`; none if none came.
     ///
     /// # Errors
     ///
     /// The listener's, which stops the node.
-    fn accept(&mut self) -> Answer<String>;
+    fn accept(&mut self, wait_ms: u32) -> Answer<Option<String>>;
     /// `out` sent to the client, then what it sent, waiting `wait_ms` at
     /// most for some if `out` is empty; and whether it closed.
     ///
@@ -205,7 +206,11 @@ impl<T: Accept> HostObject for Listening<T> {
     fn answer(&mut self, _: &mut Cx<'_>, op: u8, payload: &[u8]) -> Answer<Vec<u8>> {
         let mut out = Vec::new();
         match op {
-            h::LISTENER_ACCEPT => out.put_str(&self.0.accept()?),
+            h::LISTENER_ACCEPT => {
+                let from = self.0.accept(Reader::received(payload, "host call").u32()?)?;
+                out.put_u8(u8::from(from.is_some()));
+                out.put_str(&from.unwrap_or_default());
+            }
             h::LISTENER_RELAY => {
                 let mut r = Reader::received(payload, "host call");
                 let wait = r.u32()?;
