@@ -26,6 +26,20 @@ Each archive holds the two programs [What is installed](#what-is-installed)
 describes. As an alpha, a build may not open a database another made
 ([VERSIONING.md](../../VERSIONING.md#alpha)).
 
+### The container image
+
+The nightly is also a container image, `ghcr.io/turborel/turborel:nightly`,
+for Linux on x86-64 and arm64. It holds `turboreld` and `turborel` and
+nothing else. The data lives in `/var/lib/turborel`; keep it on a volume.
+
+```
+docker run -d -p 7422:7422 -v turborel:/var/lib/turborel ghcr.io/turborel/turborel:nightly
+```
+
+Arguments after the image name go to `turboreld`
+([Running the Server](02-turboreld.md)). To stay on one build, use its
+tag `sha-<commit>` instead of `nightly`.
+
 ## Building from source
 
 Turborel is built with Rust's cargo, of Rust 1.89 or later:
