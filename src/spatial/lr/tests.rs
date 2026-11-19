@@ -11,6 +11,7 @@ use crate::geometry::model::{Body, Curve, Dims, Geom};
 mod build;
 mod formats;
 mod locating;
+mod paths;
 mod types;
 
 /// The unit every sample measures in.
