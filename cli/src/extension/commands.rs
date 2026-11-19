@@ -103,7 +103,13 @@ fn settle(
 
 /// Installs the version `c` chosen, unless it is installed, and gives
 /// its lock entry, asked for by name with `range` if it was.
-fn take(cx: &Context, c: &Candidate, (lock, given): (&Lock, &[Given]), range: Option<Range>, out: &mut dyn Write) -> Result<Locked, String> {
+fn take(
+    cx: &Context,
+    c: &Candidate,
+    (lock, given): (&Lock, &[Given]),
+    range: Option<Range>,
+    out: &mut dyn Write,
+) -> Result<Locked, String> {
     let how = if range.is_some() { Installed::Explicit } else { Installed::Dependency };
     let locked = lock.get(&c.name).filter(|l| l.version == c.version);
     let (dir, digest) = match &c.origin {
@@ -125,7 +131,14 @@ fn take(cx: &Context, c: &Candidate, (lock, given): (&Lock, &[Given]), range: Op
         mark(&dir, how).map_err(|e| e.to_string())?;
     }
     let license = license_of(&dir);
-    Ok(Locked { name: c.name.clone(), version: c.version.clone(), digest, wanted: range, license: license.expression, license_file: license.file })
+    Ok(Locked {
+        name: c.name.clone(),
+        version: c.version.clone(),
+        digest,
+        wanted: range,
+        license: license.expression,
+        license_file: license.file,
+    })
 }
 
 /// What stands for the digest of a package installed with no file given:

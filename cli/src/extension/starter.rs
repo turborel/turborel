@@ -105,11 +105,7 @@ fn dependencies(inv: &Invocation) -> Result<String, String> {
         return Err(format!("{} is no turborel source tree: it has no {SDK_CRATE}/Cargo.toml", sdk.display()));
     }
     let quoted = |p: &Path| p.display().to_string().replace('\\', "\\\\");
-    Ok(format!(
-        "turborel = {{ path = \"{}\" }}\nturborel-plugin = {{ path = \"{}\" }}\n",
-        quoted(&tree),
-        quoted(&tree.join(SDK_CRATE))
-    ))
+    Ok(format!("turborel = {{ path = \"{}\" }}\nturborel-plugin = {{ path = \"{}\" }}\n", quoted(&tree), quoted(&tree.join(SDK_CRATE))))
 }
 
 /// The project's Cargo.toml.

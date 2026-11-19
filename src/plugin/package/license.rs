@@ -127,9 +127,9 @@ fn idstring(s: &str) -> bool {
 
 /// Whether `word` is a simple expression.
 fn simple(word: &str) -> bool {
-    let reference = word.split_once(':').map_or(Some(word), |(document, rest)| {
-        document.strip_prefix(DOCUMENT_REF).filter(|d| idstring(d)).map(|_| rest)
-    });
+    let reference = word
+        .split_once(':')
+        .map_or(Some(word), |(document, rest)| document.strip_prefix(DOCUMENT_REF).filter(|d| idstring(d)).map(|_| rest));
     if let Some(r) = reference.and_then(|r| r.strip_prefix(LICENSE_REF)) {
         return idstring(r);
     }
@@ -258,8 +258,19 @@ mod tests {
             check_expression(t).unwrap_or_else(|e| panic!("{t}: {}", e.msg));
         }
         let deep = format!("{}MIT{}", "(".repeat(MAX_DEPTH + 1), ")".repeat(MAX_DEPTH + 1));
-        let refused =
-            ["", "MIT or Apache-2.0", "MIT Apache-2.0", "MIT AND", "OR MIT", "(MIT", "MIT)", "MIT WITH", "LicenseRef-", "a:b", deep.as_str()];
+        let refused = [
+            "",
+            "MIT or Apache-2.0",
+            "MIT Apache-2.0",
+            "MIT AND",
+            "OR MIT",
+            "(MIT",
+            "MIT)",
+            "MIT WITH",
+            "LicenseRef-",
+            "a:b",
+            deep.as_str(),
+        ];
         for t in refused {
             assert_eq!(check_expression(t).unwrap_err().sqlstate(), crate::plugin::errors::INVALID_MANIFEST, "{t}");
         }

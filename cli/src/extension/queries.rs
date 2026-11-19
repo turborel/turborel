@@ -121,7 +121,9 @@ pub(super) fn license(cx: &Context, typed: &str, out: &mut dyn Write) -> Result<
     let license = package_license(&p.dir).map_err(|e| e.to_string())?;
     match (&license.text, &license.expression) {
         (Some(text), _) => write!(out, "{text}").map_err(|e| format!("cannot write the report: {e}")),
-        (None, Some(expression)) => say(out, &format!("{name} {} is licensed {expression}, and its package holds no text of it", p.version)),
+        (None, Some(expression)) => {
+            say(out, &format!("{name} {} is licensed {expression}, and its package holds no text of it", p.version))
+        }
         (None, None) => say(out, &format!("{name} {} declares no license", p.version)),
     }
 }

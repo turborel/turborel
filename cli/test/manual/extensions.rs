@@ -76,7 +76,7 @@ const AUTHOR_SEED: &str = "07070707070707070707070707070707070707070707070707070
 pub(super) fn ran(args: &str, scratch: &Scratch) -> String {
     let words: Vec<String> = args.split_whitespace().map(str::to_owned).collect();
     let mut inv = turborel_cli::extension::parse(&words, &|_| None).unwrap().unwrap();
-    inv.context.cwd = scratch.dir.clone();
+    inv.context.cwd.clone_from(&scratch.dir);
     let mut out = Vec::new();
     match turborel_cli::extension::run(&inv, &mut out) {
         Ok(()) => String::from_utf8(out).unwrap(),

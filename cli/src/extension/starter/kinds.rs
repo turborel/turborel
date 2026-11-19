@@ -243,7 +243,12 @@ impl PartitionStrategy for Buckets {
         word: "ranking",
         code: 10,
         declaration: "RANKING FLAT",
-        uses: &["turborel::fulltext::rank::Corpus", "turborel::fulltext::rank::InDocument", "turborel::fulltext::rank::TermStats", "turborel_plugin::Ranking"],
+        uses: &[
+            "turborel::fulltext::rank::Corpus",
+            "turborel::fulltext::rank::InDocument",
+            "turborel::fulltext::rank::TermStats",
+            "turborel_plugin::Ranking",
+        ],
         source: "/// FLAT: every term found weighs 1.
 struct Flat;
 

@@ -286,16 +286,30 @@ fn a_lock_round_trips() {
     let mut lock = Lock::default();
     let wanted = Some(Range::parse("^1.0.0 || >=3.0.0").unwrap());
     let license = (Some("MIT OR Apache-2.0".to_owned()), Some("LICENSE".to_owned()));
-    let top = Locked { name: "TOP".to_owned(), version: Version::new(1, 2, 0), digest: toy(b"a"), wanted, license: license.0, license_file: license.1 };
+    let top = Locked {
+        name: "TOP".to_owned(),
+        version: Version::new(1, 2, 0),
+        digest: toy(b"a"),
+        wanted,
+        license: license.0,
+        license_file: license.1,
+    };
     lock.put(top);
-    let base = Locked { name: "BASE".to_owned(), version: Version::new(1, 0, 0), digest: toy(b"b"), wanted: None, license: None, license_file: None };
+    let base = Locked {
+        name: "BASE".to_owned(),
+        version: Version::new(1, 0, 0),
+        digest: toy(b"b"),
+        wanted: None,
+        license: None,
+        license_file: None,
+    };
     lock.put(base.clone());
     assert_eq!(lock.packages[0].name, "BASE");
     let text = lock.write();
     assert!(text.contains("explicit ^1.0.0 || >=3.0.0\nlicense MIT OR Apache-2.0\nlicense file LICENSE\n"), "{text}");
     assert_eq!(Lock::parse(&text).unwrap(), lock);
-    let bare = format!("turborel-lock 1\nBASE 1.0.0 {} dependency\n", hex(&toy(b"b")));
-    assert_eq!(Lock::parse(&bare).unwrap().packages, [base]);
+    let unlicensed = format!("turborel-lock 1\nBASE 1.0.0 {} dependency\n", hex(&toy(b"b")));
+    assert_eq!(Lock::parse(&unlicensed).unwrap().packages, [base]);
     assert!(Lock::parse("turborel-lock 2\n").is_err());
     assert!(Lock::parse("turborel-lock 1\nlicense MIT\n").is_err());
 }

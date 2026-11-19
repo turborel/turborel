@@ -42,8 +42,7 @@ pub(super) fn pack(inv: &Invocation, dir: Option<&str>, out: &mut dyn Write) -> 
     let typed = PathBuf::from(dir.unwrap_or("."));
     let project = inv.context.at(&typed);
     let built = inv.target_dir.as_ref().map_or_else(|| project.join(TARGET), |t| inv.context.at(t)).join(RELEASE);
-    let mut package =
-        pack_project(Project { dir: &project, built: &built }, &Crypto).map_err(|e| format!("{}: {e}", typed.display()))?;
+    let mut package = pack_project(Project { dir: &project, built: &built }, &Crypto).map_err(|e| format!("{}: {e}", typed.display()))?;
     let key = key(inv)?;
     if let Some(key) = &key {
         package.sign(key).map_err(|e| e.to_string())?;

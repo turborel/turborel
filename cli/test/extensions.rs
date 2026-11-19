@@ -101,12 +101,22 @@ fn a_signed_package_is_packed_installed_and_verified() {
     assert!(packed.starts_with("warning: the manifest declares no LICENSE"), "{packed}");
     ext_in(root, &["pack", &src, "--out", "unsigned.tbpkg"]).unwrap();
     let mut strict = f.options.clone();
-    strict.extend(["--set".to_owned(), format!("PLUGINS.TRUSTED_KEYS={public}"), "--set".to_owned(), "PLUGINS.REQUIRE_SIGNED=ON".to_owned()]);
+    strict.extend([
+        "--set".to_owned(),
+        format!("PLUGINS.TRUSTED_KEYS={public}"),
+        "--set".to_owned(),
+        "PLUGINS.REQUIRE_SIGNED=ON".to_owned(),
+    ]);
     let on = |verb: &[&str], options: &[String]| ext_in(root, &[verb, &options.iter().map(String::as_str).collect::<Vec<_>>()].concat());
     assert!(on(&["install", "unsigned.tbpkg"], &strict).unwrap_err().contains("not signed"));
     let (_, other) = key(root, "other");
     let mut untrusting = f.options.clone();
-    untrusting.extend(["--set".to_owned(), format!("PLUGINS.TRUSTED_KEYS={other}"), "--set".to_owned(), "PLUGINS.REQUIRE_SIGNED=ON".to_owned()]);
+    untrusting.extend([
+        "--set".to_owned(),
+        format!("PLUGINS.TRUSTED_KEYS={other}"),
+        "--set".to_owned(),
+        "PLUGINS.REQUIRE_SIGNED=ON".to_owned(),
+    ]);
     assert!(on(&["install", "demo.tbpkg"], &untrusting).unwrap_err().contains("not in PLUGINS.TRUSTED_KEYS"));
     let mut tampered = std::fs::read(root.join("demo.tbpkg")).unwrap();
     let at = tampered.windows(10).position(|w| w == b"program of").unwrap();
@@ -233,9 +243,10 @@ fn the_extension_command_line() {
     let inv = parse(&args(&["install", "x.tbpkg", "--set", "plugins.require_signed=on"]), &env).unwrap().unwrap();
     assert_eq!(inv.context.directories.paths(), [PathBuf::from("/env")]);
     assert!(inv.context.trust.require_signed);
-    let set = parse(&args(&["new", "hello", "--kind", "metric", "--kind", "scalar", "--dir", "d", "--set", "PLUGINS.DIRECTORIES=/set"]), &env)
-        .unwrap()
-        .unwrap();
+    let set =
+        parse(&args(&["new", "hello", "--kind", "metric", "--kind", "scalar", "--dir", "d", "--set", "PLUGINS.DIRECTORIES=/set"]), &env)
+            .unwrap()
+            .unwrap();
     assert_eq!((set.kinds.len(), set.dir.as_deref()), (2, Some(Path::new("d"))));
     assert_eq!(set.context.directories.paths(), [PathBuf::from("/set")]);
     assert!(parse(&args(&[]), &env).unwrap().is_none() && parse(&args(&["--help"]), &env).unwrap().is_none());
