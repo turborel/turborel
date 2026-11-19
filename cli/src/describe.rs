@@ -369,12 +369,19 @@ fn domains(pattern: Option<&str>, system: bool) -> String {
     )
 }
 
-/// The extension modules the server runs.
+/// The extension modules the server runs, with `more` their processes,
+/// calls and license.
 fn extensions(pattern: Option<&str>, more: bool) -> String {
     let names = named("EXTENSION_NAME", pattern);
-    let extra = if more { ", PROCESSES_RUNNING AS \"Running\", CALLS AS \"Calls\", CALLS_FAILED AS \"Calls failed\"" } else { "" };
+    // The license is the package's, of the database's lock (RULES.md D267).
+    let extra = if more {
+        ", PROCESSES_RUNNING AS \"Running\", CALLS AS \"Calls\", CALLS_FAILED AS \"Calls failed\", \
+         (SELECT P.LICENSE FROM INFORMATION_SCHEMA.EXTENSION_PACKAGES AS P WHERE P.PACKAGE_NAME = E.EXTENSION_NAME) AS \"License\""
+    } else {
+        ""
+    };
     format!(
-        "SELECT EXTENSION_NAME AS \"Name\", VERSION AS \"Version\", SIGNER AS \"Signer\"{extra} FROM INFORMATION_SCHEMA.EXTENSIONS \
+        "SELECT EXTENSION_NAME AS \"Name\", VERSION AS \"Version\", SIGNER AS \"Signer\"{extra} FROM INFORMATION_SCHEMA.EXTENSIONS AS E \
          WHERE {names} ORDER BY EXTENSION_NAME"
     )
 }

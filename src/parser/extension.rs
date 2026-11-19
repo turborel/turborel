@@ -9,8 +9,7 @@
 //! DROP EXTENSION <identifier> [ RESTRICT | CASCADE ]
 //! <extension as read> ::= MANIFEST <binary string literal>
 //!     DIRECTORY <character string literal> [ SIGNER <character string literal> ]
-//!     [ DIGEST <character string literal> ] [ REGISTRY <character string literal> ]
-//!     [ AS DEPENDENCY ]
+//!     [ DIGEST <character string literal> ] [ AS DEPENDENCY ]
 //! ```
 //!
 //! `<extension as read>` is what the database writes into the text it
@@ -29,7 +28,7 @@ const EXTENSION: &str = "EXTENSION";
 /// The words of the statements, in the order of the grammar.
 const WORDS: [&str; 6] = ["VERSION", "FROM", "UPDATE", "TO", "MANIFEST", "DIRECTORY"];
 /// The words of what the database read.
-const READ: [&str; 5] = ["SIGNER", "DIGEST", "REGISTRY", "AS", "DEPENDENCY"];
+const READ: [&str; 4] = ["SIGNER", "DIGEST", "AS", "DEPENDENCY"];
 
 impl Parser {
     /// Whether `word`, a key word or not, is the token `n` ahead.
@@ -111,15 +110,14 @@ impl Parser {
         let manifest = self.manifest_text()?;
         self.expect_extension_word(directory_word)?;
         let directory = self.character_string_literal("<directory>")?;
-        let [signer_word, digest_word, registry_word, as_word, dependency_word] = READ;
+        let [signer_word, digest_word, as_word, dependency_word] = READ;
         let signer = self.optional_literal(signer_word)?;
         let digest = self.optional_literal(digest_word)?;
-        let registry = self.optional_literal(registry_word)?;
         let dependency = self.accept_extension_word(as_word);
         if dependency {
             self.expect_extension_word(dependency_word)?;
         }
-        Ok(Some(ExtensionRead { manifest, directory, signer, digest, registry, dependency }))
+        Ok(Some(ExtensionRead { manifest, directory, signer, digest, dependency }))
     }
 
     /// The manifest of `<extension as read>`: a `<binary string literal>`

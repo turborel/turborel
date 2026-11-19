@@ -6,7 +6,7 @@ use super::builtin::text;
 use super::{Definition, Effect, Key, Kind};
 
 /// PLUGINS.HOST.
-pub const PLUGINS_HOST: Key = Key(80);
+pub const PLUGINS_HOST: Key = Key(78);
 
 /// The most characters of the list of host plug-ins.
 const LIST: Kind = Kind::Text { max: 65_536 };

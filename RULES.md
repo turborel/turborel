@@ -267,6 +267,15 @@ verification approach DO-178C expects (§8).
 | D253 | A host plug-in's jobs run as the database's own |
 | D254 | A host plug-in serves connections, their bytes relayed, and ends them by id |
 | D255 | The points that are no kind, each for its reason |
+| D260 | turborel has no registry; packages are files, distributed by the operator |
+| D261 | Install resolves among the package files given and the packages installed |
+| D262 | The lock holds each package file's digest and license, and install reproduces it from files |
+| D263 | `turborel extension new` writes a starter project that builds as written, on the SDK |
+| D264 | Pack takes the manifest, what it names, and doc/ and data/, and finds the program cargo built |
+| D265 | A license is an SPDX expression, checked against the grammar alone |
+| D266 | A license's file is an entry of the package, covered by its digest and signature |
+| D267 | A license is told, never enforced |
+| D268 | A host's plug-in reads a package's license through `package_license` |
 
 ### The project
 
@@ -6517,9 +6526,10 @@ refuses a cycle, a conflict or a package missing with SQLSTATE 38T09
 (`plugin/package/resolve.rs`). CREATE EXTENSION creates the extensions
 required first, AS DEPENDENCY, keeping the versions the database has.
 The versions created are the database's lock, kept in its catalog and
-shown by INFORMATION_SCHEMA.EXTENSION_PACKAGES, which `turborel
-extension lock export` writes to a file and `install` reproduces
-exactly, each digest checked. ALTER EXTENSION ... UPDATE runs the
+shown by INFORMATION_SCHEMA.EXTENSION_PACKAGES. The plug-in directory
+keeps a lock of its own, which `turborel extension lock export` writes
+to a file and `install --lock` reproduces exactly from the package files
+given, each digest checked (D262). ALTER EXTENSION ... UPDATE runs the
 scripts of SQL the new manifest names for the version it had, in the
 transaction, after each extension requiring it is checked to accept the
 new version.
@@ -6551,13 +6561,9 @@ refused without it. A package installs into
 `<first PLUGINS.DIRECTORIES>/<NAME>/<version>/` with its digests and
 signature beside it, checked again each time its program starts; with
 PLUGINS.REQUIRE_SIGNED ON, an unsigned package, or one signed by a key
-not trusted, is refused with 38T08. A registry is static files, a signed
-index and its packages; a client trusts the index only when a key of
-PLUGINS.TRUSTED_KEYS signed it and it has not expired, and the digests
-it lists only then. Several registries are tried in the order of
-PLUGINS.REGISTRIES, a package pinned to one by PLUGINS.PINS, and none is
-configured by default. The command-line client fetches over HTTPS with
-rustls (`client/src/fetch.rs`); the server never fetches.
+not trusted, is refused with 38T08. turborel has no registry, and
+neither the server nor the command-line client fetches a package
+(D260).
 
 #### D210. The client's own commands begin with a backslash, and are read by the splitter
 
@@ -8096,6 +8102,120 @@ network` runs it optimized, keeping and comparing its results as it does
 the others' (`xtask/src/bench.rs`, `SERVED`). It measures over loopback
 TCP, a Unix socket and TLS, against servers in its own process on
 runtimes of their own, over in-memory databases.
+
+#### D260. turborel has no registry; packages are files, distributed by the operator
+
+turborel runs no registry, reads no index of one and fetches nothing,
+neither in the server nor in the command-line client. A package is a
+file, `.tbpkg`, and its author hands it to operators by whatever means
+they share files, which turborel does not choose for them. So no
+setting names a registry or pins a package to one, no cache of fetched
+packages is kept, and the client needs no HTTPS for packages. What a
+registry gave is kept in the file itself. Each entry carries its digest
+and the package its optional signature, checked against
+PLUGINS.TRUSTED_KEYS as it is installed and as each process starts
+(D173). An operator who wants a shared store of packages keeps a
+directory of files, which `install` takes whole (D261).
+
+#### D261. Install resolves among the package files given and the packages installed
+
+`turborel extension install FILE...` takes package files, and
+directories whose `.tbpkg` files it takes in the order of their names
+(`cli/src/extension/files.rs`). Each is read and its entries' digests
+checked before anything is chosen. Two files of one name and version
+with other contents are refused. The packages asked for by name are the
+files no other file given requires, each with a caret range of its
+version, or all of them when each is required by another, so a cycle is
+found by resolution. Those asked for by name before are kept. Resolution
+(D171) chooses among the files given and the packages installed, a file
+first where both hold a version, the versions locked kept where they
+still fit. A requirement nothing meets is refused with 38T09, naming it
+and the package file to add, as the operator has no other place to find
+one. A file nothing chosen needs is passed over and told.
+
+#### D262. The lock holds each package file's digest and license, and install reproduces it from files
+
+The lock of the first plug-in directory, `turborel-extensions.lock`,
+format 1, has a line of each package, its name, version, the SHA-256
+digest of its package file, and its range if asked for by name, and a
+line of its license expression and one of its license's file after it
+if it declares them (`plugin/package/lock.rs`). A license line before
+any package is malformed. `lock export FILE` writes it with each
+license as the installed manifest declares it. `install --lock FILE`
+with the package files installs exactly what that lock names and keeps
+it as the lock. A package installed already is checked and kept, a file
+of a locked version whose digest differs is refused with 38T07, and a
+locked package neither installed nor given is refused with 38T09. The
+format stays 1, as an alpha's formats change without migration.
+
+#### D263. `turborel extension new` writes a starter project that builds as written, on the SDK
+
+`new NAME` writes a project into `--dir`, or NAME in lower case, and
+refuses a directory that exists, writing nothing into it
+(`cli/src/extension/starter.rs`). The project is a crate of its own,
+with an empty `[workspace]` so it builds when made inside another
+workspace, depending on `turborel` and `turborel-plugin` of this
+release by exact version, or with `--sdk DIR` on a source tree by path.
+Its program serves one object of each `--kind` asked, scalar if none,
+each written once, in the order of the kinds' codes, from templates of
+`starter/kinds.rs`, and tests on the SDK's `Harness` that WELCOME names
+each kind and, with the scalar, that TWICE doubles 21. Its manifest
+declares `LICENSE 'LicenseRef-Proprietary'` and `LICENSE FILE
+'LICENSE'`, a placeholder its author replaces, and EXECUTABLE the crate
+with the platform's suffix. The README tells how to build, test, pack
+and install it. Every template's project is built and tested once as
+the templates change, as a test may not run cargo.
+
+#### D264. Pack takes the manifest, what it names, and doc/ and data/, and finds the program cargo built
+
+`pack [DIR]` builds the package of a project, the manifest, its
+executables, its upgrade scripts, its LICENSE FILE, and the files under
+`doc/` and `data/`, and nothing else, so sources, build output and keys
+left in the project never ship (`plugin/package/project.rs`). An
+executable is taken at its path in DIR, or else by its file's name under
+`target/release` of DIR, or of CARGO_TARGET_DIR if set, where `cargo
+build --release` puts it. A file the manifest names that is in neither
+place is refused with 38T06, saying to build the program first. With
+`--key` the package is signed. It is written to `--out`, or into DIR as
+its name in lower case, its version and `.tbpkg`.
+
+#### D265. A license is an SPDX expression, checked against the grammar alone
+
+LICENSE is an SPDX license expression (SPDX 2.3 Annex D): identifiers,
+`+`, `LicenseRef-` and `DocumentRef-...:LicenseRef-` references, WITH
+an exception, AND over OR and parentheses, nested at most 32 deep
+(`plugin/package/license.rs`). A list of identifiers separated by
+commas, an operator in a wrong place, or a parenthesis left open is
+refused with 38T06 as the manifest is read. Identifiers are not looked
+up in SPDX's list, which changes after a release, so a new one is taken.
+LICENSE and LICENSE FILE are each optional and written once at most.
+
+#### D266. A license's file is an entry of the package, covered by its digest and signature
+
+LICENSE FILE names a path inside the package, as EXECUTABLE does. Pack
+puts the file in as a document entry and refuses a project that lacks
+it, so its digest is among the package's and the signature covers it as
+it covers the program, and a text changed after packing is refused as
+any file is (38T07).
+
+#### D267. A license is told, never enforced
+
+Pack warns of a manifest that declares no license. Install tells each
+package's license, or that it declares none, and installs it either way.
+No setting refuses a package by its license, as which licenses an
+operator accepts is their policy and not turborel's. The license is
+shown by `turborel extension license NAME`, which writes its file's
+text, by `info`, `\dx+`, the lock export, and the columns LICENSE and
+LICENSE_FILE of INFORMATION_SCHEMA.EXTENSION_PACKAGES.
+
+#### D268. A host's plug-in reads a package's license through `package_license`
+
+`turborel::plugin::package::package_license(dir)` reads the license of
+the package installed in `dir`, its expression, its file's path and
+that file's text, so a plug-in of the host's own, or a host's tool, tells
+licenses as the command line does without parsing the manifest itself.
+It reads the files as installed, which `verify` checks against their
+digests.
 
 ## 2. Project layout
 

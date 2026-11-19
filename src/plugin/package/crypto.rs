@@ -26,7 +26,7 @@ pub trait PackageCrypto: Send + Sync {
     fn verify(&self, key: &PublicKey, message: &[u8], signature: &Signature) -> bool;
 }
 
-/// What signs a package or an index: an Ed25519 private key, held where
+/// What signs a package: an Ed25519 private key, held where
 /// the cryptography is (`turborel_protocol::packages::SigningKey`).
 pub trait Signer {
     /// Its public key.

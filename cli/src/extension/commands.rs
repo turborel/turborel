@@ -1,41 +1,40 @@
 //! \[EXTENSION\] The commands that change the plug-in directory (design
-//! document §13.3, §13.6): install, upgrade, remove, autoremove, clean,
-//! and the lock's export and import.
+//! document §13.3, §13.6, RULES.md D261, D262): install, remove,
+//! autoremove, and the lock's export.
 //!
-//! Install and upgrade resolve the whole set again: every package asked
-//! for by name, with its range, and those they require, the versions
-//! locked kept where they still fit. What is chosen is fetched, checked
-//! and unpacked, and the lock is written as the set chosen. Install with
-//! no package, and the lock's import, install exactly what the lock
-//! names, each package file checked against the digest locked.
+//! Install resolves the whole set again: every package the files given
+//! ask for by name, those already asked for by name, and what they
+//! require, chosen among the files given and the packages installed, the
+//! versions locked kept where they still fit. What is chosen is checked
+//! and unpacked, its license told, and the lock is written as the set
+//! chosen. With `--lock`, install takes exactly what a lock names, each
+//! from a package installed or a file given whose digest is the one
+//! locked.
 
 use std::io::Write;
 use std::path::Path;
 
-use turborel::plugin::package::archive::Package;
-use turborel::plugin::package::index::IndexSource;
+use turborel::plugin::package::errors::{changed, conflict};
 use turborel::plugin::package::install::{Installed, install_package, mark};
 use turborel::plugin::package::lock::{Lock, Locked};
 use turborel::plugin::package::resolve::{Candidate, InstalledSource, Origin, Request, Source, resolve, this_release};
 use turborel::plugin::package::semver::{Range, Version};
-use turborel::plugin::package::{DIGESTS_FILE, PACKAGE_EXTENSION, PackageCrypto, verify_installed};
+use turborel::plugin::package::{DIGESTS_FILE, License, PackageCrypto, verify_installed};
 use turborel_client::packages::Crypto;
 
-use super::installed::{self, read_lock, write_lock};
-use super::{Context, package_name, registry, say};
+use super::files::{Given, GivenSource, given, roots};
+use super::installed::{self, license_of, read_lock, write_lock};
+use super::{Context, package_name, say};
 
-/// The digests of package files given, by the name of each package.
-type FileDigests = [(String, [u8; 32])];
-
-/// The versions of the registries, then those installed.
+/// The versions of the files given, then those installed.
 struct Everywhere<'a> {
-    registries: IndexSource,
+    given: GivenSource<'a>,
     installed: InstalledSource<'a>,
 }
 
 impl Source for Everywhere<'_> {
     fn versions(&self, name: &str) -> turborel::error::Result<Vec<Candidate>> {
-        let mut all = self.registries.versions(name)?;
+        let mut all = self.given.versions(name)?;
         for c in self.installed.versions(name)? {
             if !all.iter().any(|a| a.version == c.version) {
                 all.push(c);
@@ -45,60 +44,37 @@ impl Source for Everywhere<'_> {
     }
 }
 
-/// `NAME[@RANGE]` as typed.
-fn wanted(typed: &str) -> Result<(String, Range), String> {
-    let (name, range) = typed.split_once('@').map_or((typed, "*"), |(n, r)| (n, r));
-    Ok((package_name(name), Range::parse(range).map_err(|e| e.to_string())?))
-}
-
-/// Installs `words`: names with ranges, or package files; with none,
-/// exactly what the lock names.
+/// Installs the package files `words` name, or with `lock_file` exactly
+/// what that lock names.
 ///
 /// # Errors
 ///
 /// Why it cannot, for the user.
-pub(super) fn install(cx: &Context, words: &[String], out: &mut dyn Write) -> Result<(), String> {
+pub(super) fn install(cx: &Context, words: &[String], lock_file: Option<&Path>, out: &mut dyn Write) -> Result<(), String> {
+    if words.is_empty() && lock_file.is_none() {
+        return Err("name the package files to install, or directories of them; see turborel extension --help".to_owned());
+    }
+    let files = given(cx, words)?;
+    if let Some(file) = lock_file {
+        let text = std::fs::read_to_string(cx.at(file)).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
+        let locked = Lock::parse(&text).map_err(|e| format!("{}: {e}", file.display()))?;
+        return reproduce(cx, &locked, &files, out);
+    }
     let lock = read_lock(cx)?;
-    if words.is_empty() {
-        return reproduce(cx, &lock, out);
-    }
-    let mut roots: Vec<(String, Range)> = Vec::new();
-    let mut files = Vec::new();
-    for word in words {
-        if word.ends_with(&format!(".{PACKAGE_EXTENSION}")) || Path::new(word).is_file() {
-            let (name, version, digest) = install_file(cx, Path::new(word), out)?;
-            roots.push((name.clone(), Range::parse(&format!("^{version}")).map_err(|e| e.to_string())?));
-            files.push((name, digest));
-        } else {
-            roots.push(wanted(word)?);
-        }
-    }
+    let roots = roots(&files)?;
     let asked: Vec<String> = roots.iter().map(|(n, _)| n.clone()).collect();
     let pinned: Vec<(String, Version)> =
         lock.packages.iter().filter(|p| !asked.contains(&p.name)).map(|p| (p.name.clone(), p.version.clone())).collect();
     settle(cx, (lock, roots), (&pinned, &files), out)
 }
 
-/// Installs the package file `file`, by name: its name, version and
-/// digest.
-fn install_file(cx: &Context, file: &Path, out: &mut dyn Write) -> Result<(String, Version, [u8; 32]), String> {
-    let bytes = std::fs::read(file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
-    let package = Package::read(&bytes, &Crypto).map_err(|e| format!("{}: {e}", file.display()))?;
-    let dir = install_package(&package, &cx.directories, (&Crypto, &cx.trust), Installed::Explicit).map_err(|e| e.to_string())?;
-    registry::keep(cx, &bytes)?;
-    let manifest = package.manifest().map_err(|e| e.to_string())?;
-    let version = Version::parse(&manifest.version).map_err(|e| e.to_string())?;
-    say(out, &format!("unpacked {} {} into {}", manifest.name, version, dir.display()))?;
-    Ok((manifest.name, version, Crypto.sha256(&bytes)))
-}
-
 /// Resolves `roots`, with the packages already `lock`ed, those `pinned`
-/// kept, and installs what is chosen; the digests of package files
-/// installed are `files`'.
+/// kept, among the files `given` and the packages installed, and installs
+/// what is chosen.
 fn settle(
     cx: &Context,
     (lock, mut roots): (Lock, Vec<(String, Range)>),
-    (pinned, files): (&[(String, Version)], &FileDigests),
+    (pinned, given): (&[(String, Version)], &[Given]),
     out: &mut dyn Write,
 ) -> Result<(), String> {
     for p in lock.packages.iter().filter(|p| p.wanted.is_some()) {
@@ -106,7 +82,8 @@ fn settle(
             roots.push((p.name.clone(), p.wanted.clone().unwrap_or_else(Range::any)));
         }
     }
-    let source = Everywhere { registries: registry::indexes(cx)?, installed: InstalledSource(&cx.directories) };
+    let dirs = cx.dirs();
+    let source = Everywhere { given: GivenSource(given), installed: InstalledSource(&dirs) };
     let explicit_pins: Vec<(String, Version)> =
         pinned.iter().filter(|(n, _)| lock.get(n).is_some_and(|l| l.wanted.is_some())).cloned().collect();
     let request = |pins: &[(String, Version)]| Request { roots: roots.clone(), pinned: pins.to_vec(), turborel: this_release() };
@@ -116,137 +93,84 @@ fn settle(
     let mut next = Lock::default();
     for c in &chosen {
         let range = roots.iter().find(|(n, _)| *n == c.name).map(|(_, r)| r.clone());
-        next.put(take(cx, c, (&lock, files), range, out)?);
+        next.put(take(cx, c, (&lock, given), range, out)?);
+    }
+    for g in given.iter().filter(|g| !chosen.iter().any(|c| c.name == g.manifest.name && c.version == g.version)) {
+        say(out, &format!("passed over {} {} of {}, which nothing chosen needs", g.manifest.name, g.version, g.file.display()))?;
     }
     write_lock(cx, &next)
 }
 
-/// Installs the version `c` chosen, unless it is: its lock entry, asked
-/// for by name with `range` if it was.
+/// Installs the version `c` chosen, unless it is installed, and gives
+/// its lock entry, asked for by name with `range` if it was.
 fn take(
     cx: &Context,
     c: &Candidate,
-    (lock, files): (&Lock, &FileDigests),
+    (lock, given): (&Lock, &[Given]),
     range: Option<Range>,
     out: &mut dyn Write,
 ) -> Result<Locked, String> {
     let how = if range.is_some() { Installed::Explicit } else { Installed::Dependency };
     let locked = lock.get(&c.name).filter(|l| l.version == c.version);
-    let (dir, digest, registry) = match &c.origin {
-        Origin::Registry { registry, file, digest, .. } => {
-            let dir = if let Some(present) = installed::find(cx, &c.name, &c.version)? {
-                present.dir
-            } else {
-                let bytes = registry::package(cx, (registry, file), digest)?;
-                let package = Package::read(&bytes, &Crypto).map_err(|e| e.to_string())?;
-                let dir = install_package(&package, &cx.directories, (&Crypto, &cx.trust), how).map_err(|e| e.to_string())?;
-                say(out, &format!("installed {} {} from {registry}", c.name, c.version))?;
-                dir
-            };
-            (dir, *digest, Some(registry.clone()))
+    let (dir, digest) = match &c.origin {
+        Origin::File { file, digest } => {
+            let g = given.iter().find(|g| g.file == *file).ok_or_else(|| format!("{} was not read", file.display()))?;
+            let present = installed::find(cx, &c.name, &c.version)?.is_some();
+            let dir = install_package(&g.package, &cx.dirs(), (&Crypto, &cx.trust), how).map_err(|e| e.to_string())?;
+            let verb = if present { "kept" } else { "installed" };
+            say(out, &format!("{verb} {} {} from {}, {}", c.name, c.version, file.display(), License::of(&g.manifest).told()))?;
+            (dir, *digest)
         }
         Origin::Installed(dir) => {
-            let from_file = files.iter().find(|(n, _)| *n == c.name).map(|(_, d)| *d);
-            let digest = locked.map(|l| l.digest).or(from_file).unwrap_or_else(|| digest_of_installed(dir));
-            (dir.clone(), digest, locked.and_then(|l| l.registry.clone()))
+            let digest = locked.map_or_else(|| digest_of_installed(dir), |l| l.digest);
+            (dir.clone(), digest)
         }
     };
     verify_installed(&dir, &Crypto, &cx.trust).map_err(|e| e.to_string())?;
     if how == Installed::Explicit || locked.is_none_or(|l| l.wanted.is_none()) {
         mark(&dir, how).map_err(|e| e.to_string())?;
     }
-    Ok(Locked { name: c.name.clone(), version: c.version.clone(), digest, registry, wanted: range })
+    let license = license_of(&dir);
+    Ok(Locked {
+        name: c.name.clone(),
+        version: c.version.clone(),
+        digest,
+        wanted: range,
+        license: license.expression,
+        license_file: license.file,
+    })
 }
 
-/// What stands for the digest of a package installed with no file
-/// fetched or given: the digest of its digests file, which names every
-/// file's.
+/// What stands for the digest of a package installed with no file given:
+/// the digest of its digests file, which names every file's.
 fn digest_of_installed(dir: &Path) -> [u8; 32] {
     Crypto.sha256(&std::fs::read(dir.join(DIGESTS_FILE)).unwrap_or_default())
 }
 
 /// Installs exactly what `lock` names: each package installed already
-/// checked, the others from the cache or their registry, each file's
-/// digest the one locked.
-fn reproduce(cx: &Context, lock: &Lock, out: &mut dyn Write) -> Result<(), String> {
+/// checked, the others from the files `given`, each file's digest the one
+/// locked; then keeps `lock` as the lock.
+fn reproduce(cx: &Context, lock: &Lock, given: &[Given], out: &mut dyn Write) -> Result<(), String> {
     for p in &lock.packages {
         let how = if p.wanted.is_some() { Installed::Explicit } else { Installed::Dependency };
+        let file = given.iter().find(|g| g.manifest.name == p.name && g.version == p.version);
+        if let Some(g) = file.filter(|g| g.digest != p.digest) {
+            let why = format!("{} holds {} {} with another digest than the lock's", g.file.display(), p.name, p.version);
+            return Err(changed(&why).to_string());
+        }
         if let Some(present) = installed::find(cx, &p.name, &p.version)? {
             verify_installed(&present.dir, &Crypto, &cx.trust).map_err(|e| e.to_string())?;
             say(out, &format!("kept {} {}", p.name, p.version))?;
             continue;
         }
-        let bytes = match registry::from_cache(cx, &p.digest) {
-            Some(bytes) => bytes,
-            None => fetch_locked(cx, p)?,
-        };
-        let package = Package::read(&bytes, &Crypto).map_err(|e| e.to_string())?;
-        install_package(&package, &cx.directories, (&Crypto, &cx.trust), how).map_err(|e| e.to_string())?;
-        say(out, &format!("installed {} {}", p.name, p.version))?;
+        let g = file.ok_or_else(|| {
+            let why = format!("the lock names {} {}, which is not installed; add its package file to the files given", p.name, p.version);
+            conflict(&why).to_string()
+        })?;
+        install_package(&g.package, &cx.dirs(), (&Crypto, &cx.trust), how).map_err(|e| e.to_string())?;
+        say(out, &format!("installed {} {} from {}, {}", p.name, p.version, g.file.display(), License::of(&g.manifest).told()))?;
     }
     write_lock(cx, lock)
-}
-
-/// The package file `p` locks, from its registry: the index must list it
-/// with the digest locked.
-fn fetch_locked(cx: &Context, p: &Locked) -> Result<Vec<u8>, String> {
-    let url = p.registry.as_deref().ok_or_else(|| format!("{} {} is in no registry and not in the cache", p.name, p.version))?;
-    let index = registry::index(cx, url)?;
-    let listed = index
-        .packages
-        .iter()
-        .find(|l| l.name == p.name && l.version == p.version)
-        .ok_or_else(|| format!("{url} no longer lists {} {}", p.name, p.version))?;
-    if listed.digest != p.digest {
-        return Err(turborel::plugin::package::errors::changed(&format!(
-            "{url} lists {} {} with another digest than the lock's",
-            p.name, p.version
-        ))
-        .to_string());
-    }
-    registry::package(cx, (url, &listed.file), &p.digest)
-}
-
-/// Upgrades `words`, or every package asked for by name: to the newest
-/// versions their ranges allow, or with `latest` beyond them, the range
-/// kept then the newest's caret.
-///
-/// # Errors
-///
-/// Why it cannot, for the user.
-pub(super) fn upgrade(cx: &Context, words: &[String], latest: bool, out: &mut dyn Write) -> Result<(), String> {
-    let mut lock = read_lock(cx)?;
-    let targets: Vec<String> = if words.is_empty() {
-        lock.packages.iter().filter(|p| p.wanted.is_some()).map(|p| p.name.clone()).collect()
-    } else {
-        words.iter().map(|w| package_name(w)).collect()
-    };
-    for t in &targets {
-        if lock.get(t).is_none() {
-            return Err(format!("{t} is not installed"));
-        }
-    }
-    let mut roots = Vec::new();
-    for p in lock.packages.iter_mut().filter(|p| p.wanted.is_some()) {
-        let range = if latest && targets.contains(&p.name) { Range::any() } else { p.wanted.clone().unwrap_or_else(Range::any) };
-        p.wanted = Some(range.clone());
-        roots.push((p.name.clone(), range));
-    }
-    let pinned: Vec<(String, Version)> = lock
-        .packages
-        .iter()
-        .filter(|p| p.wanted.is_some() && !targets.contains(&p.name))
-        .map(|p| (p.name.clone(), p.version.clone()))
-        .collect();
-    settle(cx, (lock, roots), (&pinned, &[]), out)?;
-    if latest {
-        let mut relocked = read_lock(cx)?;
-        for p in relocked.packages.iter_mut().filter(|p| targets.contains(&p.name)) {
-            p.wanted = Range::parse(&format!("^{}", p.version)).ok();
-        }
-        write_lock(cx, &relocked)?;
-    }
-    Ok(())
 }
 
 /// The names of the packages installed that require `name`.
@@ -322,36 +246,20 @@ pub(super) fn autoremove(cx: &Context, out: &mut dyn Write) -> Result<(), String
     write_lock(cx, &lock)
 }
 
-/// Empties the cache.
-///
-/// # Errors
-///
-/// If it cannot be removed.
-pub(super) fn clean(cx: &Context, out: &mut dyn Write) -> Result<(), String> {
-    let dir = cx.cache_dir()?;
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir).map_err(|e| format!("cannot empty {}: {e}", dir.display()))?;
-    }
-    say(out, &format!("emptied {}", dir.display()))
-}
-
-/// Writes the lock to `file`.
+/// Writes the lock to `file`, each package's license as its manifest
+/// installed declares it.
 ///
 /// # Errors
 ///
 /// If it cannot be written.
 pub(super) fn lock_export(cx: &Context, file: &str, out: &mut dyn Write) -> Result<(), String> {
-    std::fs::write(file, read_lock(cx)?.write()).map_err(|e| format!("cannot write {file}: {e}"))?;
+    let mut lock = read_lock(cx)?;
+    for p in &mut lock.packages {
+        if let Some(present) = installed::find(cx, &p.name, &p.version)? {
+            let license = License::of(&present.manifest);
+            (p.license, p.license_file) = (license.expression, license.file);
+        }
+    }
+    std::fs::write(cx.at(Path::new(file)), lock.write()).map_err(|e| format!("cannot write {file}: {e}"))?;
     say(out, &format!("wrote the lock to {file}"))
-}
-
-/// Installs exactly what the lock `file` names, and keeps it as the lock.
-///
-/// # Errors
-///
-/// Why it cannot, for the user.
-pub(super) fn lock_import(cx: &Context, file: &str, out: &mut dyn Write) -> Result<(), String> {
-    let text = std::fs::read_to_string(file).map_err(|e| format!("cannot read {file}: {e}"))?;
-    let lock = Lock::parse(&text).map_err(|e| format!("{file}: {e}"))?;
-    reproduce(cx, &lock, out)
 }

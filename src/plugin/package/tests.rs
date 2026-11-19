@@ -1,15 +1,15 @@
-//! Unit tests of packages: the archive, installing and checking one,
-//! resolution, the registry's index and the lock file, over a stand-in
+//! Unit tests of packages: the archive, packing a project, installing
+//! and checking one, resolution, licenses and the lock file, over a stand-in
 //! for the cryptography (the real one is the protocol crate's, tested
 //! there and by the command-line client's tests).
 
 use std::path::{Path, PathBuf};
 
-use super::archive::{EntryKind, Package, pack};
+use super::archive::{EntryKind, Package};
 use super::crypto::{Digest, PackageCrypto, PublicKey, Signature, Signer};
-use super::index::{Index, IndexSource, Listed, Registries, format_time, parse_time};
 use super::install::{Installed, installed_how};
 use super::lock::{Lock, Locked};
+use super::project::{Project, pack_project};
 use super::resolve::{Candidate, Origin, Request, Source, resolve};
 use super::semver::{Range, Version};
 use super::*;
@@ -71,27 +71,36 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 /// Writes a plug-in's directory: its manifest of `name`, `version` and
-/// `extra` items, an executable `run`, a doc, a data file and an upgrade
-/// script.
+/// `extra` items, an executable `run`, a doc, a data file, an upgrade
+/// script and a source file.
 fn plugin(at: &Path, name: &str, version: &str, extra: &str) {
     std::fs::create_dir_all(at.join("doc")).unwrap();
+    std::fs::create_dir_all(at.join("data")).unwrap();
     std::fs::create_dir_all(at.join("up")).unwrap();
     let manifest =
         format!("NAME {name}; VERSION '{version}'; PROTOCOL 1; EXECUTABLE 'run'; FUNCTION TWICE(INTEGER) RETURNS INTEGER; {extra}");
     std::fs::write(at.join(crate::plugin::MANIFEST_FILE), manifest).unwrap();
     std::fs::write(at.join("run"), b"program").unwrap();
     std::fs::write(at.join("doc/readme.txt"), b"docs").unwrap();
-    std::fs::write(at.join("data.bin"), b"data").unwrap();
+    std::fs::write(at.join("data/data.bin"), b"data").unwrap();
     std::fs::write(at.join("up/1.sql"), b"SELECT 1").unwrap();
+    std::fs::write(at.join("main.rs"), b"fn main() {}").unwrap();
+}
+
+/// The package of the project in `dir`, its build in `dir/target/release`.
+fn pack(dir: &Path, crypto: &dyn PackageCrypto) -> crate::error::Result<Package> {
+    pack_project(Project { dir, built: &dir.join("target").join("release") }, crypto)
 }
 
 fn trust(keys: &[&ToyKey], require: bool) -> Trust {
     Trust { keys: keys.iter().map(|k| k.public_key()).collect(), require_signed: require }
 }
 
-/// Verifies: [EXTENSION] design document §13.1: hexadecimal round trips;
-/// a package packed from a directory holds the manifest first and each
-/// file of its kind, writes and reads back the same, signed or not; an
+/// Verifies: [EXTENSION] design document §13.1, RULES.md D264:
+/// hexadecimal round trips; a package packed from a project holds the
+/// manifest first and each file it names, and those under `doc/` and
+/// `data/`, of its kind, and no source file; it writes and reads back
+/// the same, signed or not; an
 /// entry changed is refused with SQLSTATE 38T07, as is another format, a
 /// second manifest or a path that leaves the package.
 #[test]
@@ -104,7 +113,8 @@ fn a_package_packs_writes_and_reads_back() {
     let kinds: Vec<(&str, EntryKind)> = package.entries.iter().map(|e| (e.path.as_str(), e.kind)).collect();
     assert_eq!(kinds[0], (crate::plugin::MANIFEST_FILE, EntryKind::Manifest));
     assert!(kinds.contains(&("run", EntryKind::Executable)) && kinds.contains(&("doc/readme.txt", EntryKind::Doc)));
-    assert!(kinds.contains(&("up/1.sql", EntryKind::Upgrade)) && kinds.contains(&("data.bin", EntryKind::Data)));
+    assert!(kinds.contains(&("up/1.sql", EntryKind::Upgrade)) && kinds.contains(&("data/data.bin", EntryKind::Data)));
+    assert!(!kinds.iter().any(|(p, _)| *p == "main.rs"), "{kinds:?}");
     assert_eq!(Package::read(&package.write(), &Toy).unwrap(), package);
     package.sign(&ToyKey(1)).unwrap();
     let bytes = package.write();
@@ -148,7 +158,7 @@ fn installing_checks_digests_and_signatures() {
     assert_eq!(verify_installed(&dir, &Toy, &trusted).unwrap(), Some(hex(&ToyKey(7).public_key())));
     assert_eq!(install_package(&signed, &dirs, (&Toy, &trusted), Installed::Explicit).unwrap(), dir);
     assert_eq!(installed_how(&dir), Installed::Explicit);
-    std::fs::write(source.join("data.bin"), b"other").unwrap();
+    std::fs::write(source.join("data/data.bin"), b"other").unwrap();
     let different = pack(&source, &Toy).unwrap();
     let again = install_package(&different, &dirs, (&Toy, &trust(&[], false)), Installed::Explicit).unwrap_err();
     assert_eq!(again.sqlstate(), errors::CHANGED);
@@ -206,7 +216,8 @@ fn solve(all: &[Candidate], roots: &[(&str, &str)], pinned: &[(&str, &str)]) -> 
 /// version when the newest conflicts; meets a diamond with one version;
 /// keeps a version pinned; passes over a version whose TURBOREL range
 /// leaves out this release and a prerelease not asked for; and refuses a
-/// conflict, a missing package and a cycle with SQLSTATE 38T09.
+/// conflict, a missing package, naming the requirement and the file to
+/// add, and a cycle with SQLSTATE 38T09.
 #[test]
 fn resolution_picks_the_newest_compatible_set() {
     let all = vec![
@@ -243,6 +254,8 @@ fn resolution_picks_the_newest_compatible_set() {
     for refused in refusals {
         assert_eq!(refused.unwrap_err().sqlstate(), errors::CONFLICT);
     }
+    let missing = solve(&all, &[("APP", "*"), ("NOPE", "^1.2.0")], &[]).unwrap_err();
+    assert!(missing.msg.contains("requires NOPE ^1.2.0") && missing.msg.contains("add a package file of NOPE"), "{}", missing.msg);
     let cycle = solve(&[c("A", "1.0.0", &[("B", "*")]), c("B", "1.0.0", &[("A", "*")])], &[("A", "*")], &[]).unwrap_err();
     assert!(cycle.msg.contains("A requires B requires A"), "{}", cycle.msg);
 }
@@ -263,81 +276,71 @@ fn installed_packages_resolve_by_name() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
-fn listed(name: &str, version: &str, file: &str) -> Listed {
-    Listed {
-        name: name.to_owned(),
-        version: Version::parse(version).unwrap(),
-        file: file.to_owned(),
-        digest: toy(file.as_bytes()),
-        signer: None,
-        requires: Vec::new(),
-        turborel: None,
-    }
-}
-
-/// Verifies: [EXTENSION] design document §13.6: an index writes and reads
-/// back; it is trusted only signed by a key trusted and before it
-/// expires, refused otherwise with SQLSTATE 38T08, whatever
-/// PLUGINS.REQUIRE_SIGNED says; time stamps round trip.
-#[test]
-fn a_registry_index_is_signed_and_expires() {
-    assert_eq!(parse_time("2026-11-19T12:34:56Z"), Some(1_795_091_696));
-    assert_eq!(format_time(1_795_091_696), "2026-11-19T12:34:56Z");
-    assert_eq!(format_time(951_782_400), "2000-02-29T00:00:00Z");
-    assert!(parse_time("2026-13-01T00:00:00Z").is_none() && parse_time("2026-11-19 00:00:00").is_none());
-    let mut a = listed("DEMO", "1.0.0", "demo-1.0.0.tbpkg");
-    a.requires.push(("BASE".to_owned(), ">=1.0.0 <2.0.0".to_owned()));
-    a.turborel = Some(">=0.0.0".to_owned());
-    a.signer = Some(hex(&ToyKey(1).public_key()));
-    let index = Index { expires: 2_000_000_000, packages: vec![a, listed("BASE", "1.0.0", "base-1.0.0.tbpkg")] };
-    let text = index.write();
-    assert_eq!(Index::parse(&text).unwrap(), index);
-    let signature = Index::sign(&text, &ToyKey(1));
-    let open = trust(&[&ToyKey(1)], false);
-    assert_eq!(Index::verified(text.as_bytes(), &signature, (&Toy, &open), 1_900_000_000).unwrap(), index);
-    let expired = Index::verified(text.as_bytes(), &signature, (&Toy, &open), 2_000_000_000).unwrap_err();
-    let tampered = Index::verified(text.replace("1.0.0", "1.0.1").as_bytes(), &signature, (&Toy, &open), 0).unwrap_err();
-    let untrusted = Index::verified(text.as_bytes(), &signature, (&Toy, &trust(&[&ToyKey(2)], false)), 0).unwrap_err();
-    let unsigned = Index::verified(text.as_bytes(), "", (&Toy, &open), 0).unwrap_err();
-    for e in [expired, tampered, untrusted, unsigned] {
-        assert_eq!(e.sqlstate(), errors::UNTRUSTED, "{}", e.msg);
-    }
-}
-
-/// Verifies: [EXTENSION] design document §13.6: registries are tried in
-/// the order written, the first listing a name giving its versions, and a
-/// name pinned takes its versions from its registry alone.
-#[test]
-fn registries_have_priorities_and_pins() {
-    let registries = Registries::parse("https://one/ ; https://two", "DEMO=https://two/").unwrap();
-    assert_eq!(registries.urls, ["https://one/", "https://two"]);
-    assert_eq!(registries.pinned("DEMO"), Some("https://two/"));
-    assert!(Registries::parse("", "nopin").is_err());
-    let one = Index { expires: u64::MAX, packages: vec![listed("DEMO", "1.0.0", "a"), listed("BASE", "1.0.0", "b")] };
-    let two = Index { expires: u64::MAX, packages: vec![listed("DEMO", "2.0.0", "c"), listed("BASE", "9.0.0", "d")] };
-    let source = IndexSource { indexes: vec![("https://one/".to_owned(), one), ("https://two".to_owned(), two)], pins: registries.pins };
-    let version = |name: &str| source.versions(name).unwrap().iter().map(|c| c.version.to_string()).collect::<Vec<_>>();
-    assert_eq!(version("BASE"), ["1.0.0"]);
-    assert_eq!(version("DEMO"), ["2.0.0"]);
-    assert_eq!(version("NONE"), Vec::<String>::new());
-}
-
-/// Verifies: [EXTENSION] design document §13.6: a lock writes and reads
-/// back, keeping the range of a package asked for by name; one of another
-/// format is refused.
+/// Verifies: [EXTENSION] design document §13.6, RULES.md D262, D267: a
+/// lock writes and reads back, keeping the range of a package asked for
+/// by name and each license, expression and file, of a package that
+/// declares one; a lock of no license lines reads; one of another format,
+/// or that begins with a license, is refused.
 #[test]
 fn a_lock_round_trips() {
     let mut lock = Lock::default();
     let wanted = Some(Range::parse("^1.0.0 || >=3.0.0").unwrap());
-    lock.put(Locked {
+    let license = (Some("MIT OR Apache-2.0".to_owned()), Some("LICENSE".to_owned()));
+    let top = Locked {
         name: "TOP".to_owned(),
         version: Version::new(1, 2, 0),
         digest: toy(b"a"),
-        registry: Some("https://r".to_owned()),
         wanted,
-    });
-    lock.put(Locked { name: "BASE".to_owned(), version: Version::new(1, 0, 0), digest: toy(b"b"), registry: None, wanted: None });
+        license: license.0,
+        license_file: license.1,
+    };
+    lock.put(top);
+    let base = Locked {
+        name: "BASE".to_owned(),
+        version: Version::new(1, 0, 0),
+        digest: toy(b"b"),
+        wanted: None,
+        license: None,
+        license_file: None,
+    };
+    lock.put(base.clone());
     assert_eq!(lock.packages[0].name, "BASE");
-    assert_eq!(Lock::parse(&lock.write()).unwrap(), lock);
+    let text = lock.write();
+    assert!(text.contains("explicit ^1.0.0 || >=3.0.0\nlicense MIT OR Apache-2.0\nlicense file LICENSE\n"), "{text}");
+    assert_eq!(Lock::parse(&text).unwrap(), lock);
+    let unlicensed = format!("turborel-lock 1\nBASE 1.0.0 {} dependency\n", hex(&toy(b"b")));
+    assert_eq!(Lock::parse(&unlicensed).unwrap().packages, [base]);
     assert!(Lock::parse("turborel-lock 2\n").is_err());
+    assert!(Lock::parse("turborel-lock 1\nlicense MIT\n").is_err());
+}
+
+/// Verifies: [EXTENSION] RULES.md D265, D266, D268: a manifest's LICENSE
+/// and LICENSE FILE are read, and the file is packed and its text read
+/// back from the package installed by `package_license`; a LICENSE FILE
+/// not in the project refuses the package (38T06), as do a LICENSE not of
+/// the SPDX grammar, one written twice and a LICENSE FILE that leaves the
+/// directory; a manifest of neither still reads, declaring no license.
+#[test]
+fn licenses_are_read_packed_and_shown() {
+    let root = scratch("license");
+    let (source, dirs) = (root.join("src"), Directories::parse(&root.join("plugins").display().to_string()));
+    std::fs::create_dir_all(root.join("plugins")).unwrap();
+    plugin(&source, "DEMO", "1.0.0", "LICENSE 'MIT OR Apache-2.0'; LICENSE FILE 'COPYING';");
+    let missing = pack(&source, &Toy).unwrap_err();
+    assert!(missing.sqlstate() == crate::plugin::errors::INVALID_MANIFEST && missing.msg.contains("COPYING"), "{}", missing.msg);
+    std::fs::write(source.join("COPYING"), "the text").unwrap();
+    let package = pack(&source, &Toy).unwrap();
+    assert!(package.entries.iter().any(|e| e.path == "COPYING" && e.kind == EntryKind::Doc));
+    let dir = install_package(&package, &dirs, (&Toy, &trust(&[], false)), Installed::Explicit).unwrap();
+    let license = package_license(&dir).unwrap();
+    assert_eq!(license.expression.as_deref(), Some("MIT OR Apache-2.0"));
+    assert_eq!((license.file.as_deref(), license.text.as_deref()), (Some("COPYING"), Some("the text")));
+    assert_eq!(license.told(), "license MIT OR Apache-2.0 (text in COPYING)");
+    let manifest = |extra: &str| crate::plugin::manifest::Manifest::parse(&format!("NAME D; PROTOCOL 1; EXECUTABLE 'run'; {extra}"));
+    assert!(!License::of(&manifest("").unwrap()).declared());
+    assert_eq!(License::default().told(), "no license declared");
+    for bad in ["LICENSE 'MIT or GPL-2.0';", "LICENSE 'MIT'; LICENSE 'MIT';", "LICENSE FILE '../COPYING';"] {
+        assert_eq!(manifest(bad).unwrap_err().sqlstate(), crate::plugin::errors::INVALID_MANIFEST, "{bad}");
+    }
+    std::fs::remove_dir_all(&root).unwrap();
 }

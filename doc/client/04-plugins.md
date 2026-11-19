@@ -18,8 +18,9 @@ memory with the database.
 
 A program that embeds the database may instead register plug-ins of
 Rust in its own process ([The Embedded Library](03-embedding.md)).
-[Packages and Registries](04-plugins-packages.md) tells how a plug-in is
-packed, signed, published and installed.
+[Writing a Plug-in](04-plugins-sdk.md) walks through a plug-in's project
+from start to call, and [Packages](04-plugins-packages.md) tells how a
+plug-in is packed, signed, licensed and installed.
 
 ## Loading an extension
 
@@ -62,6 +63,7 @@ folded to upper case as an identifier is.
     | REQUIRES <identifier> <character string literal>
     | TURBOREL <character string literal>
     | UPGRADE FROM <character string literal> SCRIPT <character string literal>
+    | LICENSE [ FILE ] <character string literal>
     | FUNCTION <identifier> ( <data type>, ... ) RETURNS <data type>
           [ [ NOT ] DETERMINISTIC ] [ BATCH <unsigned integer> ]
     | AGGREGATE <identifier> ( <data type> ) RETURNS <data type> [ BATCH <unsigned integer> ]
@@ -89,8 +91,8 @@ folded to upper case as an identifier is.
 NAME, VERSION, PROTOCOL and an EXECUTABLE are required. EXECUTABLE
 names the program, a path inside the directory; one written FOR a
 platform (`linux`, `macos`, `windows`) is taken there before one written
-for any. VERSION is a semantic version. REQUIRES, TURBOREL and UPGRADE
-are a package's ([Packages and Registries](04-plugins-packages.md)).
+for any. VERSION is a semantic version. REQUIRES, TURBOREL, UPGRADE and
+LICENSE are a package's ([Packages](04-plugins-packages.md)).
 
 BATCH is how many rows, candidates or texts one call carries: 1,024 for
 a function or aggregate, 4,096 for a metric and 64 for a model if it is

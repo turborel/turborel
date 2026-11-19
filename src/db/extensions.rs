@@ -151,7 +151,6 @@ impl State {
             manifest: m.text.clone(),
             signer: read.signer.clone(),
             digest: read.digest.clone(),
-            registry: read.registry.clone(),
             explicit,
         };
         let mut all: Vec<ExtensionDesc> = self.catalog.extensions().iter().filter(|e| e.name != m.name).cloned().collect();
@@ -243,7 +242,6 @@ impl State {
                 directory: d.directory.clone(),
                 signer: d.signer.clone(),
                 digest: d.digest.clone(),
-                registry: d.registry.clone(),
                 dependency: !d.explicit,
             };
             let installed = Arc::new(self.installed(Manifest::parse(&d.manifest)?, &read)?);

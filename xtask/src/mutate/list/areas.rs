@@ -140,9 +140,15 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 }
 
 /// External plug-ins' areas, in order: the plug-ins', the packages', the
-/// kinds' and the SDK's.
-fn plugins() -> [&'static [Mutation]; 4] {
-    [&super::plugins::PLUGINS, &super::plugins::PACKAGES, &super::plugins::kinds::PLUGIN_KINDS, &super::plugins::sdk::SDK]
+/// package files', the kinds' and the SDK's.
+fn plugins() -> [&'static [Mutation]; 5] {
+    [
+        &super::plugins::PLUGINS,
+        &super::plugins::PACKAGES,
+        &super::plugins::files::FILES,
+        &super::plugins::kinds::PLUGIN_KINDS,
+        &super::plugins::sdk::SDK,
+    ]
 }
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the

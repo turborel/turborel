@@ -92,9 +92,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | PLUGINS.MAX_CALL_BYTES | 67108864 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | PLUGINS.MAX_MESSAGE_BYTES | 16777216 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | PLUGINS.MEMORY_BYTES | 268435456 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
-| PLUGINS.PINS | (empty) | TEXT OF AT MOST 65536 CHARACTERS | at once |  |
 | PLUGINS.PROCESSES | 4 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
-| PLUGINS.REGISTRIES | (empty) | TEXT OF AT MOST 65536 CHARACTERS | at once |  |
 | PLUGINS.REQUIRE_SIGNED | OFF | ONE OF ON, OFF | at once | *node* |
 | PLUGINS.TRUSTED_KEYS | (empty) | TEXT OF AT MOST 65536 CHARACTERS | at once | *node* |
 | SESSION.COMMIT_AT_END | ON | ONE OF ON, OFF | at once | *session* |
@@ -188,11 +186,9 @@ Each in a sentence:
 - **PLUGINS.MAX_CALL_BYTES**: The most bytes a plug-in sends in answer to one call, all its messages together; more stops its process, and the call fails with SQLSTATE 38T04.
 - **PLUGINS.MAX_MESSAGE_BYTES**: The most bytes of one message a plug-in sends; a longer one stops its process, and the call fails with SQLSTATE 38T04.
 - **PLUGINS.MEMORY_BYTES**: The memory a plug-in is told it may use, in its HELLO; a program that uses more is the operator's to stop, as the database makes no calls of the operating system to cap it.
-- **PLUGINS.PINS**: Packages each found only in one registry, written name=URL, separated by ';'.
 - **PLUGINS.PROCESSES**: The most processes of one extension running at once; a call waits for one to be free. 0 is taken as 1.
-- **PLUGINS.REGISTRIES**: The registries packages are found in, by priority, each an https URL of a directory holding an index, separated by ';'; empty, as no registry is run for all, for none.
 - **PLUGINS.REQUIRE_SIGNED**: Whether a package must be signed by a key of PLUGINS.TRUSTED_KEYS to be installed or loaded, ON, or may be unsigned, OFF. The host sets it; SQL may not.
-- **PLUGINS.TRUSTED_KEYS**: The Ed25519 public keys whose signatures on a package or a registry's index are trusted, each 64 hexadecimal digits, separated by ';', or '@' and a file of one a line. The host sets it; SQL may not.
+- **PLUGINS.TRUSTED_KEYS**: The Ed25519 public keys whose signatures on a package are trusted, each 64 hexadecimal digits, separated by ';', or '@' and a file of one a line. The host sets it; SQL may not.
 - **SESSION.COMMIT_AT_END**: Whether a transaction open when its session ends is committed, ON, or rolled back, OFF [X3.135-1986 §7.1 GR2].
 - **SESSION.LANGUAGE**: The language a session's direct statements are read in, SQL or GQL; in GQL each statement but SET is a GQL request.
 - **SESSION.TIME_ZONE**: The time zone displacement of an SQL-session, ±HH:MM from -12:59 to +14:00 [ISO/IEC 9075-2:2023 §4.7.2]: of CURRENT_TIME and CURRENT_TIMESTAMP, and implied by a time or timestamp without time zone.

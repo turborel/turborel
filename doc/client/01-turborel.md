@@ -320,47 +320,43 @@ turborel: SQLCODE -920 (SQLSTATE TB920): the statement was cancelled
 
 `turborel extension COMMAND` manages the packages of extensions in a
 server's plug-in directory, on the server's machine, and needs no
-connection. [Packages and Registries](04-plugins-packages.md) describes
-packages, registries and every command.
+connection. turborel has no registry. A package is a `.tbpkg` file the
+operator copies to the machine. It also starts and packs a plug-in's
+project for its author. [Packages](04-plugins-packages.md) describes
+packages and every command, and [Writing a Plug-in](04-plugins-sdk.md)
+walks through a project.
 
 ```
-turborel extension search WORDS...
-turborel extension info NAME
-turborel extension install [NAME[@RANGE] | FILE.tbpkg]...
-turborel extension upgrade [NAME]... [--latest]
+turborel extension install FILE|DIR... [--lock FILE]
 turborel extension remove NAME
 turborel extension autoremove
 turborel extension list
+turborel extension info NAME
+turborel extension license NAME
 turborel extension verify
-turborel extension outdated
 turborel extension why NAME
-turborel extension clean
 turborel extension lock export FILE
-turborel extension lock import FILE
-turborel extension pack DIR [--key FILE] [--output FILE]
-turborel extension publish DIR --registry-dir DIR --key FILE [--expires-days DAYS]
-turborel extension keygen --output FILE
+turborel extension new NAME [--kind KIND]... [--dir DIR] [--sdk DIR]
+turborel extension pack [DIR] [--key FILE] [--out FILE]
+turborel extension keygen --out FILE
 ```
 
 | Option | Meaning |
 |---|---|
-| `--set NAME=VALUE` | a setting of the server, PLUGINS.DIRECTORIES, PLUGINS.REGISTRIES, PLUGINS.PINS, PLUGINS.TRUSTED_KEYS or PLUGINS.REQUIRE_SIGNED |
-| `--cache DIR` | where packages fetched are kept; `.cache` in the plug-in directory by default |
-| `--tls FILE` | trust the registries' certificates of the PEM file FILE instead of the platform's authorities |
-| `--latest` | upgrade beyond the ranges asked for |
-| `--key FILE` | the signing key of `pack` and `publish` |
-| `--output FILE` | where `pack` and `keygen` write |
-| `--registry-dir DIR` | the registry directory `publish` writes into |
-| `--expires-days DAYS` | how long the index `publish` signs is trusted; 30 by default |
+| `--set NAME=VALUE` | a setting of the server, PLUGINS.DIRECTORIES, PLUGINS.TRUSTED_KEYS or PLUGINS.REQUIRE_SIGNED |
+| `--lock FILE` | the lock `install` reproduces, from the files given |
+| `--kind KIND` | a kind of object the project of `new` serves; `scalar` if none is given |
+| `--dir DIR` | where `new` writes the project; NAME in lower case by default |
+| `--sdk DIR` | a turborel source tree the project of `new` depends on by path |
+| `--key FILE` | the signing key of `pack` |
+| `--out FILE` | where `pack` and `keygen` write |
 
 The environment variable `TURBOREL_PLUGINS_DIRECTORIES` gives
 PLUGINS.DIRECTORIES, and so on for each setting. A command that fails
 writes why to standard error and exits with 1.
 
 ```
-$ turborel extension list --set PLUGINS.DIRECTORIES=/var/lib/turborel/plugins
-GEO_TOOLS 1.4.0 explicit ^1.0.0 https://plugins.example.com/
-UNITS 2.1.0 dependency https://plugins.example.com/
+turborel extension list --set PLUGINS.DIRECTORIES=/var/lib/turborel/plugins
 ```
 
 ## Exit status

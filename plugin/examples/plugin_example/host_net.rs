@@ -130,7 +130,8 @@ impl Accept for Tcp {
             self.listener = Some(bound);
         }
         let listener = self.listener.as_ref().ok_or_else(|| PluginError::external("no listener"))?;
-        let until = Instant::now() + Duration::from_millis(u64::from(wait_ms));
+        let start = Instant::now();
+        let wait = Duration::from_millis(u64::from(wait_ms));
         loop {
             match listener.accept() {
                 Ok((client, from)) => {
@@ -144,7 +145,7 @@ impl Accept for Tcp {
                     }
                 }
             }
-            if Instant::now() >= until {
+            if start.elapsed() >= wait {
                 return Ok(None);
             }
             std::thread::sleep(Duration::from_millis(5));

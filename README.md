@@ -123,7 +123,8 @@ behind it, and each can be replaced or added to.
   embedded after commit.
 - [External plug-ins](doc/client/04-plugins.md): functions, metrics,
   models and more from programs of other parties, run as processes of their
-  own, installed from signed packages and registries.
+  own, installed from signed package files, with a starter project and
+  `pack` for authors and licenses told.
 - [Every plug-in kind external](doc/client/04-plugins-kinds.md), types,
   collations, storage engines and index methods among them, with an SDK.
 - [Host plug-ins](doc/client/04-plugins-host.md) beneath the database,

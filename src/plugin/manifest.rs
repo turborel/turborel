@@ -268,6 +268,11 @@ pub enum Item {
     /// UPGRADE FROM: a range of versions upgraded from, and the script of
     /// SQL that does it, relative to the directory.
     Upgrade(String, String),
+    /// LICENSE: the SPDX license expression of the package.
+    License(String),
+    /// LICENSE FILE: the file of the license's text, relative to the
+    /// directory.
+    LicenseFile(String),
     /// An object declared.
     Object(Box<Declared>),
     /// A host plug-in's object (RULES.md D229).
@@ -295,6 +300,10 @@ pub struct Manifest {
     pub turborel: Option<String>,
     /// UPGRADE FROM: each range of old versions and its script.
     pub upgrades: Vec<(String, String)>,
+    /// LICENSE: the SPDX license expression, if written.
+    pub license: Option<String>,
+    /// LICENSE FILE: the file of the license's text, if written.
+    pub license_file: Option<String>,
 }
 
 impl Manifest {
@@ -316,6 +325,8 @@ impl Manifest {
             requires: Vec::new(),
             turborel: None,
             upgrades: Vec::new(),
+            license: None,
+            license_file: None,
         };
         let mut protocol = None;
         for item in items {
@@ -337,6 +348,8 @@ impl Manifest {
                     }
                 }
                 Item::Upgrade(range, script) => m.upgrades.push((range, script)),
+                Item::License(expression) => written_once(&mut m.license, expression, "LICENSE")?,
+                Item::LicenseFile(path) => written_once(&mut m.license_file, path, "LICENSE FILE")?,
             }
         }
         if protocol != Some(super::PROTOCOL) {
@@ -354,6 +367,12 @@ impl Manifest {
         check_executables(&self.executables)?;
         for (_, script) in &self.upgrades {
             inside(script, "SCRIPT")?;
+        }
+        if let Some(expression) = &self.license {
+            crate::plugin::package::license::check_expression(expression)?;
+        }
+        if let Some(path) = &self.license_file {
+            inside(path, "LICENSE FILE")?;
         }
         let mut seen = HashSet::new();
         for d in &self.objects {
@@ -402,6 +421,14 @@ fn once(slot: &mut String, value: String, item: &str) -> Result<()> {
         return Err(invalid_manifest(&format!("{item} is written twice")));
     }
     *slot = value;
+    Ok(())
+}
+
+/// `value` written to the optional `slot`, written once.
+fn written_once(slot: &mut Option<String>, value: String, item: &str) -> Result<()> {
+    if slot.replace(value).is_some() {
+        return Err(invalid_manifest(&format!("{item} is written twice")));
+    }
     Ok(())
 }
 

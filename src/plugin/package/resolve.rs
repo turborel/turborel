@@ -27,16 +27,12 @@ pub const MAX_STEPS: u32 = 100_000;
 pub enum Origin {
     /// Installed, in this directory.
     Installed(PathBuf),
-    /// In a registry: its URL, the package file's name and its digest.
-    Registry {
-        /// The registry's URL.
-        registry: String,
-        /// The package file, relative to it.
-        file: String,
-        /// The SHA-256 digest of the file.
+    /// A package file given, not yet installed.
+    File {
+        /// The file.
+        file: PathBuf,
+        /// The SHA-256 digest of its bytes.
         digest: Digest,
-        /// The signer the index names, in hexadecimal, if any.
-        signer: Option<String>,
     },
 }
 
@@ -132,7 +128,11 @@ impl Search<'_> {
         }
         let candidates = self.candidates(need)?;
         if candidates.is_empty() {
-            self.failed(chosen.len(), format!("{} requires {} {}, and no version of it found meets that", need.by, need.name, need.range));
+            let why = format!(
+                "{} requires {} {}, and no version of it found meets that; add a package file of {} of a version in {}",
+                need.by, need.name, need.range, need.name, need.range
+            );
+            self.failed(chosen.len(), why);
             return Ok(false);
         }
         for c in candidates {
@@ -292,7 +292,7 @@ pub fn resolve_installed(
         .into_iter()
         .filter_map(|c| match c.origin {
             Origin::Installed(dir) => Some((c.name, c.version, dir)),
-            Origin::Registry { .. } => None,
+            Origin::File { .. } => None,
         })
         .collect())
 }

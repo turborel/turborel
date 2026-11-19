@@ -8,19 +8,19 @@ use super::builtin::{text, whole};
 use super::{Definition, Effect, Key, Kind, OFF, SWITCHES};
 
 /// ARCHIVE.MODE.
-pub const ARCHIVE_MODE: Key = Key(73);
+pub const ARCHIVE_MODE: Key = Key(71);
 /// ARCHIVE.TARGET.
-pub const ARCHIVE_TARGET: Key = Key(74);
+pub const ARCHIVE_TARGET: Key = Key(72);
 /// ARCHIVE.RETENTION_SECONDS.
-pub const ARCHIVE_RETENTION_SECONDS: Key = Key(75);
+pub const ARCHIVE_RETENTION_SECONDS: Key = Key(73);
 /// ARCHIVE.SEGMENT_BYTES.
-pub const ARCHIVE_SEGMENT_BYTES: Key = Key(76);
+pub const ARCHIVE_SEGMENT_BYTES: Key = Key(74);
 /// ARCHIVE.TIMEOUT_MS.
-pub const ARCHIVE_TIMEOUT_MS: Key = Key(77);
+pub const ARCHIVE_TIMEOUT_MS: Key = Key(75);
 /// ARCHIVE.TIMELINE.
-pub const ARCHIVE_TIMELINE: Key = Key(78);
+pub const ARCHIVE_TIMELINE: Key = Key(76);
 /// BACKUP.COMPRESSION.
-pub const BACKUP_COMPRESSION: Key = Key(79);
+pub const BACKUP_COMPRESSION: Key = Key(77);
 
 /// \[EXTENSION\] The default of ARCHIVE.SEGMENT_BYTES: 16 MiB of records an
 /// object, few objects for a busy log and little lost to a target's per
