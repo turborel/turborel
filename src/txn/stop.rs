@@ -20,7 +20,10 @@
 //!
 //! It holds the warnings the session's statements raise as they evaluate
 //! expressions, too (`error::Warnings`): what a statement reaches through
-//! its transaction, as it reaches the flag, wherever its rows are pulled.
+//! its transaction, as it reaches the flag, wherever its rows are pulled;
+//! and what a server takes of them for its client (`stop/served.rs`).
+
+mod served;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -30,6 +33,8 @@ use std::time::Instant;
 use super::TxId;
 use crate::error::{Code, Result, SqlError, Warnings};
 use crate::sync::lock_builtin;
+
+pub use served::{MAX_NOTES, Served};
 
 /// The flag a session's statements look at.
 #[derive(Debug)]
@@ -56,6 +61,8 @@ pub struct Stop {
     /// The warnings the statement running raised [ISO/IEC 9075:1992
     /// §3.3.4.1].
     warnings: Warnings,
+    /// What a server takes of its statements for its client.
+    served: Served,
 }
 
 /// \[DESIGN\] Looks at a `Stop` as rows are read between two readings of
@@ -76,6 +83,7 @@ impl Default for Stop {
             looks: AtomicU64::new(0),
             epoch: Instant::now(),
             warnings: Warnings::default(),
+            served: Served::default(),
         }
     }
 }
@@ -118,6 +126,13 @@ impl Stop {
     pub(crate) fn lock_timeout(&self) -> Option<std::time::Duration> {
         let millis = self.lock_timeout.load(Ordering::SeqCst);
         (millis > 0).then(|| std::time::Duration::from_millis(millis))
+    }
+
+    /// \[DESIGN\] What a server takes of the session's statements for its
+    /// client: the last commit's position, the trace context, the notices
+    /// (RULES.md D187, D191, D194).
+    pub fn served(&self) -> &Served {
+        &self.served
     }
 
     /// The warnings the session's statement raises as it runs, taken as it

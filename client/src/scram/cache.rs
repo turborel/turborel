@@ -19,9 +19,7 @@ use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use turborel_protocol::scram::{Key, nonce};
-
-use super::exchange::{Derived, derive, hmac};
+use turborel_protocol::scram::{Derived, Key, hmac, nonce};
 
 /// \[DESIGN\] The most entries a cache holds: a process's servers and
 /// users, few, each of one salt at a time.
@@ -86,7 +84,7 @@ impl KeyCache {
     /// The keys `password` derives under `salt` and `iterations`: the
     /// cache's, or derived, outside the lock, and kept.
     pub(crate) fn derived(&self, password: &str, salt: &[u8], iterations: NonZeroU32) -> Derived {
-        let Some(index) = self.index(password, salt, iterations) else { return derive(password, salt, iterations) };
+        let Some(index) = self.index(password, salt, iterations) else { return Derived::of(password, salt, iterations) };
         {
             let mut entries = self.entries();
             let found = entries.held.iter().find(|(i, _)| *i == index).map(|(_, keys)| keys.clone());
@@ -96,7 +94,7 @@ impl KeyCache {
             }
             entries.misses = entries.misses.saturating_add(1);
         }
-        let keys = derive(password, salt, iterations);
+        let keys = Derived::of(password, salt, iterations);
         let mut entries = self.entries();
         if !entries.held.iter().any(|(i, _)| *i == index) {
             if entries.held.len() >= KEY_CACHE_ENTRIES {

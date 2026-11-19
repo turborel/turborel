@@ -204,6 +204,12 @@ impl Registry {
         }
     }
 
+    /// \[DESIGN\] Takes away every scalar function named `name`, as one
+    /// registered in their place replaces them (RULES.md D191).
+    pub fn remove_scalars(&mut self, name: &str) {
+        self.scalars.remove(name);
+    }
+
     /// \[EXTENSION\] Takes away the aggregate function `f`, the very one
     /// added (RULES.md D169).
     pub fn remove_aggregate(&mut self, f: &Arc<dyn AggregateFunction>) {

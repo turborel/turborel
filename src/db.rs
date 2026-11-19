@@ -106,6 +106,7 @@ mod maintenance;
 mod merge;
 mod modules;
 mod nested;
+mod observed;
 pub(crate) mod partitions;
 mod position;
 mod prepared;

@@ -116,6 +116,7 @@ fn begin(raw: &mut Raw, user: &str, (client, nonce): (&mut Client, &str)) -> Vec
         mechanism: MECHANISM.into(),
         initial,
         capabilities: vec![],
+        attributes: Vec::new(),
     });
     let Some(Reply::Challenge(server_first)) = raw.receive() else { panic!("no server-first") };
     server_first

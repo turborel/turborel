@@ -1,14 +1,23 @@
-//! What a server sends.
+//! What a server sends: the replies of version 1's first form, and those
+//! added since, each behind its capability (RULES.md D185).
+//!
+//! ```text
+//! 'N' notice:     as `diagnostics.rs` says
+//! 'T' status:     name, value (strings)
+//! 'G' pong
+//! ```
 
 use turborel::bytes::{Put, Reader};
 use turborel::error::Result;
 use turborel::params::ParameterType;
 use turborel::storage::Row;
 
+use crate::diagnostics::Notice;
 use crate::fields::{
     column, counted, failure, flag, parameter, put_column, put_count, put_failure, put_flag, put_parameter, put_row, put_strs, row, strs,
 };
-use crate::{CancelKey, Column, Completed, Failure, KEY_BYTES, LobReply, broken, frame};
+use crate::tail::{CONDITIONS, GENERATED, MORE, POSITION, ROWS as INSERTED, TIME, Tail, put_long, put_mark};
+use crate::{CancelKey, Column, Completed, Failure, KEY_BYTES, LobReply, Timing, broken, frame};
 
 const CHALLENGE: u8 = b'C';
 const READY: u8 = b'R';
@@ -19,6 +28,9 @@ const SUSPENDED: u8 = b'S';
 const COMPLETE: u8 = b'K';
 const ERROR: u8 = b'E';
 const LOB: u8 = b'L';
+const NOTICE: u8 = b'N';
+const STATUS: u8 = b'T';
+const PONG: u8 = b'G';
 
 /// What a server sends. Not comparable: its values compare as SQL
 /// says, not as data; compare the bytes they encode to.
@@ -63,6 +75,20 @@ pub enum Reply {
     Error(Failure),
     /// \[DESIGN\] What a Lob request gave back (`lobs.rs`, RULES.md D79).
     Lob(LobReply),
+    /// \[DESIGN\] With `notices`, a completion condition of class 01, or
+    /// a notice of the server's own, before the statement's completion
+    /// (RULES.md D187).
+    Notice(Notice),
+    /// \[DESIGN\] With `status`, a setting of the session, as it begins or
+    /// as a statement changed it (RULES.md D190).
+    Status {
+        /// Its name.
+        name: String,
+        /// Its value, as SQL writes it; empty for a null.
+        value: String,
+    },
+    /// \[DESIGN\] With `ping`, Ping's answer (RULES.md D189).
+    Pong,
 }
 
 impl Reply {
@@ -96,9 +122,21 @@ impl Reply {
                 b.put_u32(c.sqlcode.cast_unsigned());
                 b.put_str(&c.sqlstate);
                 put_flag(b, c.active);
+                put_long(b, POSITION, c.position);
+                put_mark(b, MORE, c.more);
+                put_long(b, INSERTED, c.rows);
+                put_generated(b, &c.generated);
+                put_conditions(b, &c.conditions);
+                put_time(b, c.time);
             }),
             Reply::Error(failure) => frame(out, ERROR, |b| put_failure(b, failure)),
             Reply::Lob(lob) => frame(out, LOB, |b| lob.put(b)),
+            Reply::Notice(notice) => frame(out, NOTICE, |b| notice.put(b)),
+            Reply::Status { name, value } => frame(out, STATUS, |b| {
+                b.put_str(name);
+                b.put_str(value);
+            }),
+            Reply::Pong => frame(out, PONG, |_| ()),
         }
     }
 
@@ -120,9 +158,12 @@ impl Reply {
             DESCRIPTION => Reply::Description(counted(&mut r, column)?),
             ROWS => Reply::Rows(counted(&mut r, row)?),
             SUSPENDED => Reply::Suspended,
-            COMPLETE => Reply::Complete(Completed { sqlcode: r.u32()?.cast_signed(), sqlstate: r.str()?, active: flag(&mut r)? }),
+            COMPLETE => Reply::Complete(completed(&mut r)?),
             ERROR => Reply::Error(failure(&mut r)?),
             LOB => Reply::Lob(LobReply::read(&mut r)?),
+            NOTICE => Reply::Notice(Notice::read(&mut r)?),
+            STATUS => Reply::Status { name: r.str()?, value: r.str()? },
+            PONG => Reply::Pong,
             other => return Err(broken(format!("[DESIGN] no reply is of kind {other}"))),
         };
         r.finish()?;
@@ -135,4 +176,71 @@ fn put_columns(b: &mut Vec<u8>, columns: &[Column]) {
     for c in columns {
         put_column(b, c);
     }
+}
+
+/// A Complete's body, its tail of a commit's position, more replies to
+/// come, and the rows inserted.
+fn completed(r: &mut Reader<'_>) -> Result<Completed> {
+    let (sqlcode, sqlstate, active) = (r.u32()?.cast_signed(), r.str()?, flag(r)?);
+    let mut c = Completed { sqlcode, sqlstate, active, ..Completed::default() };
+    let mut tail = Tail::new();
+    while let Some(tag) = tail.next(r, &[POSITION, MORE, INSERTED, GENERATED, CONDITIONS, TIME])? {
+        match tag {
+            POSITION => c.position = Some(r.u64()?),
+            MORE => c.more = true,
+            INSERTED => c.rows = Some(r.u64()?),
+            GENERATED => c.generated = generated(r)?,
+            CONDITIONS => c.conditions = conditions(r)?,
+            _ => c.time = Some(Timing { total: r.u64()?, queued: r.u64()?, locks: r.u64()? }),
+        }
+    }
+    Ok(c)
+}
+
+/// Writes the server's time for a statement, if told.
+fn put_time(b: &mut Vec<u8>, time: Option<Timing>) {
+    let Some(t) = time else { return };
+    b.put_u8(TIME);
+    for n in [t.total, t.queued, t.locks] {
+        b.put_u64(n);
+    }
+}
+
+/// Writes the identity values an INSERT generated, if any.
+fn put_generated(b: &mut Vec<u8>, generated: &[String]) {
+    if generated.is_empty() {
+        return;
+    }
+    b.put_u8(GENERATED);
+    put_strs(b, generated);
+}
+
+/// The identity values `put_generated` wrote.
+fn generated(r: &mut Reader<'_>) -> Result<Vec<String>> {
+    strs(r)
+}
+
+/// Writes the conditions a statement raised, if any: each the body of an
+/// Error, so its own tail ends where it does.
+fn put_conditions(b: &mut Vec<u8>, conditions: &[Failure]) {
+    if conditions.is_empty() {
+        return;
+    }
+    b.put_u8(CONDITIONS);
+    put_count(b, conditions.len());
+    for condition in conditions {
+        let mut body = Vec::new();
+        put_failure(&mut body, condition);
+        b.put_bytes(&body);
+    }
+}
+
+/// The conditions `put_conditions` wrote.
+fn conditions(r: &mut Reader<'_>) -> Result<Vec<Failure>> {
+    counted(r, |r| {
+        let mut inner = Reader::new(r.bytes()?, "a condition");
+        let condition = failure(&mut inner)?;
+        inner.finish()?;
+        Ok(condition)
+    })
 }

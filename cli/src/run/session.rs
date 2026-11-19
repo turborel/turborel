@@ -21,6 +21,12 @@ use crate::{help, password};
 const CATALOG_QUERY: &str = "SELECT CATALOG_NAME FROM INFORMATION_SCHEMA.INFORMATION_SCHEMA_CATALOG_NAME";
 /// The query of whether the session's user is the database's owner.
 const OWNER_QUERY: &str = "SELECT IS_OWNER FROM INFORMATION_SCHEMA.USERS WHERE USER_NAME = CURRENT_USER";
+/// The session statuses of the catalog, whether the user is the owner,
+/// the user and the default schema (RULES.md D190).
+const CATALOG: &str = "CATALOG";
+const OWNER: &str = "OWNER";
+const AUTHORIZATION: &str = "AUTHORIZATION";
+const SCHEMA: &str = "SCHEMA";
 /// What the names of connections `\c` makes begin with.
 const CONNECTION_NAME: &str = "TURBOREL_";
 /// The SQLCODE of a syntax error, as a server that does not know a
@@ -68,17 +74,30 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         ran.ok().map(|_| kept.rows)
     }
 
+    /// The prompt's status as the server's session status last told it
+    /// (RULES.md D190), with no statement; none of a server that tells
+    /// none, whose status is probed.
+    fn told_status(&self) -> Option<Status> {
+        let catalog = self.connection.status(CATALOG)?;
+        let owner = self.connection.status(OWNER)? == "YES";
+        Some(Status { catalog, owner })
+    }
+
     /// The prompt for the line after the text `splitter` holds.
     pub(super) fn prompt(&mut self, splitter: &Splitter) -> String {
         let pending = splitter.pending();
         let template = self.vars.get(if pending { vars::PROMPT_MORE } else { vars::PROMPT }).unwrap_or_default().to_owned();
-        if prompt::needs_status(&template) && self.status.is_none() {
+        if let Some(told) = self.told_status() {
+            self.status = Some(told);
+        } else if prompt::needs_status(&template) && self.status.is_none() {
             let catalog = self.probe(CATALOG_QUERY).and_then(|rows| first_text(&rows)).unwrap_or_default();
             let owner = self.probe(OWNER_QUERY).and_then(|rows| first_text(&rows)).is_some_and(|o| o == "YES");
             self.status = Some(Status { catalog, owner });
         }
-        let (server, user) = self.connection.session().unwrap_or_default();
-        let schema = self.schema.clone().unwrap_or_else(|| user.clone());
+        let (server, login) = self.connection.session().unwrap_or_default();
+        let user = self.connection.status(AUTHORIZATION).unwrap_or(login);
+        let told_schema = self.connection.status(SCHEMA);
+        let schema = told_schema.or_else(|| self.schema.clone()).unwrap_or_else(|| user.clone());
         let active = self.connection.in_transaction();
         let context = Context { user: &user, server: &server, schema: &schema, status: self.status.as_ref(), active, pending };
         prompt::expand(&template, &context)

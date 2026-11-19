@@ -99,7 +99,14 @@ impl Raw {
             Kind::Unix => Stream::Unix(std::os::unix::net::UnixStream::connect(&served.socket).unwrap()),
         };
         let mut raw = Raw { stream: BufReader::with_capacity(64 * 1024, stream), out: Vec::new(), body: Vec::new(), bytes: 0, rows: 0 };
-        let hello = Request::Hello { version: VERSION, user: "X".into(), mechanism: "trust".into(), initial: vec![], capabilities: vec![] };
+        let hello = Request::Hello {
+            version: VERSION,
+            user: "X".into(),
+            mechanism: "trust".into(),
+            initial: vec![],
+            capabilities: vec![],
+            attributes: Vec::new(),
+        };
         raw.queue(&hello);
         raw.flush();
         assert_eq!(raw.frame(), READY, "logged in");

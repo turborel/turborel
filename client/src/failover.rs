@@ -22,6 +22,7 @@ use crate::role::{Role, role};
 use crate::settings::{ChannelBinding, Host, LoadBalance, Settings, TargetRole, TlsMode, invalid};
 use crate::target::{Target, log_in};
 use crate::timeouts::{Timeouts, io_failed};
+use crate::told::{APPLICATION, Offer};
 
 /// \[DESIGN\] The multiplier of the generator that orders hosts at random
 /// (Knuth's MMIX linear congruential generator).
@@ -206,9 +207,20 @@ impl Settings {
         if target.is_plain_tcp() {
             in_the_clear(proof.mechanism())?;
         }
-        let mut connection = log_in(&target, opened, (&self.user, proof.mechanism()), timeouts)?;
+        let mut connection = log_in(&target, opened, (&self.user, proof.mechanism()), (timeouts, self.offer()))?;
         self.of_role(&mut connection)?;
         Ok(connection)
+    }
+
+    /// What a connection of the settings asks for as it opens: every
+    /// capability but compression, and the program's name, if given, as
+    /// the connection attribute APPLICATION (RULES.md D191, D202).
+    fn offer(&self) -> Offer {
+        let offer = Offer::default();
+        match &self.application_name {
+            Some(name) => offer.attribute(APPLICATION, name),
+            None => offer,
+        }
     }
 
     /// Refuses `connection`, ended, if its server is not of the role the

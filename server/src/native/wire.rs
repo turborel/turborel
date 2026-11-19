@@ -10,6 +10,12 @@
 //! reserved whole as a header declares it: a client that declares a long
 //! body and sends little of it holds little, and a connection holds
 //! `INBOX` bytes between requests.
+//!
+//! Once a client is granted `compression` (RULES.md D196), each frame
+//! sent of at least SERVER.COMPRESSION_MIN_BYTES is compressed where that
+//! makes it shorter, and a compressed frame received is inflated, to at
+//! most SERVER.MAX_MESSAGE_BYTES, before it is read. An Error sent carries
+//! its diagnostics only to a client granted `diagnostics` (D186).
 
 use std::io::ErrorKind;
 use std::time::Duration;
@@ -17,6 +23,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use turborel::error::{Result, SqlError};
 use turborel::value::types::TypeRegistry;
+use turborel_protocol::compress::{COMPRESSED, compress_frames, decompress};
 use turborel_protocol::{Failure, HEADER, Reply, Request, broken};
 
 use crate::transport::Transport;
@@ -43,6 +50,11 @@ pub(super) struct Wire {
     /// The replies encoded last, and how many of their bytes are sent.
     out: Vec<u8>,
     sent: usize,
+    /// What the client was granted of the wire's own: the shortest frame
+    /// compressed, if it was granted `compression`, and whether an Error
+    /// carries diagnostics.
+    compress: Option<usize>,
+    diagnostics: bool,
 }
 
 /// A whole request in the inbox, as `Wire::arrived` finds it.
@@ -81,11 +93,52 @@ fn closed(within_message: bool) -> SqlError {
     cannot_receive(&"the client closed the connection")
 }
 
+/// `reply` as it is sent: the diagnostics of an Error, a Notice or each
+/// condition a Complete carries left out unless the client was granted
+/// them (`diagnostics`), so every condition reads alike.
+fn told(reply: &Reply, diagnostics: bool) -> std::borrow::Cow<'_, Reply> {
+    use std::borrow::Cow;
+    match (reply, diagnostics) {
+        (Reply::Error(f), false) => Cow::Owned(Reply::Error(f.clone().plain())),
+        (Reply::Notice(n), false) => {
+            Cow::Owned(Reply::Notice(turborel_protocol::Notice { diagnostics: turborel_protocol::Diagnostics::default(), ..n.clone() }))
+        }
+        (Reply::Complete(c), false) => {
+            if c.conditions.is_empty() {
+                return Cow::Borrowed(reply);
+            }
+            let conditions = c.conditions.iter().map(|f| f.clone().plain()).collect();
+            Cow::Owned(Reply::Complete(turborel_protocol::Completed { conditions, ..c.clone() }))
+        }
+        (Reply::Error(_) | Reply::Notice(_) | Reply::Complete(_), true)
+        | (
+            Reply::Challenge(_)
+            | Reply::Ready { .. }
+            | Reply::Prepared { .. }
+            | Reply::Description(_)
+            | Reply::Rows(_)
+            | Reply::Suspended
+            | Reply::Lob(_)
+            | Reply::Status { .. }
+            | Reply::Pong,
+            _,
+        ) => Cow::Borrowed(reply),
+    }
+}
+
 impl Wire {
     /// The messages of `transport`: its requests, of at most `max_body`
     /// bytes, and its replies.
     pub(super) fn new(transport: Box<dyn Transport>, max_body: u32, types: TypeRegistry) -> Wire {
-        Wire { transport, inbox: vec![0; INBOX], start: 0, end: 0, max_body, types, out: Vec::new(), sent: 0 }
+        let (out, compress, diagnostics) = (Vec::new(), None, false);
+        Wire { transport, inbox: vec![0; INBOX], start: 0, end: 0, max_body, types, out, sent: 0, compress, diagnostics }
+    }
+
+    /// Compresses each frame sent of at least `threshold` bytes from now
+    /// on, none if `None`, and inflates those received; sends Errors with
+    /// their diagnostics if `diagnostics`.
+    pub(super) fn grant(&mut self, compress: Option<usize>, diagnostics: bool) {
+        (self.compress, self.diagnostics) = (compress, diagnostics);
     }
 
     /// Takes requests of at most `max_body` bytes from now on.
@@ -151,7 +204,7 @@ impl Wire {
             Ok(None) => return Arrived::Awaited,
             Err(_) => return Arrived::Left,
         };
-        let Ok(request) = Request::decode_with(kind, self.body(len), &self.types) else { return Arrived::Left };
+        let Ok(request) = self.decoded(kind, len) else { return Arrived::Left };
         match take(request) {
             Some(taken) => {
                 self.consume(len);
@@ -164,9 +217,23 @@ impl Wire {
     /// The next request, taken, if it has come whole.
     fn whole(&mut self) -> Result<Option<Request>> {
         let Some((kind, len)) = self.framed()? else { return Ok(None) };
-        let request = Request::decode_with(kind, self.body(len), &self.types);
+        let request = self.decoded(kind, len);
         self.consume(len);
         request.map(Some)
+    }
+
+    /// The request of `kind` whose frame is `len` bytes, the next: inflated
+    /// first if it is compressed, and compression was granted.
+    fn decoded(&self, kind: u8, len: usize) -> Result<Request> {
+        let body = self.body(len);
+        if kind != COMPRESSED {
+            return Request::decode_with(kind, body, &self.types);
+        }
+        if self.compress.is_none() {
+            return Err(cannot_receive(&"a compressed frame, compression not granted"));
+        }
+        let (inner, inflated) = decompress(body, self.max_body)?;
+        Request::decode_with(inner, &inflated, &self.types)
     }
 
     /// The kind and whole length of the next request, if it has come
@@ -226,15 +293,21 @@ impl Wire {
         HEADER.saturating_add(length).saturating_sub(self.end.saturating_sub(self.start))
     }
 
-    /// Queues `replies` behind those not yet sent, for the next write: the
-    /// replies of requests a client pipelined go out together.
+    /// Queues `replies` behind those not yet sent, for the next write, each
+    /// frame compressed if compression was granted: the replies of requests
+    /// a client pipelined go out together.
     pub(super) fn queue(&mut self, replies: &[Reply]) {
         if self.sent == self.out.len() {
             self.out.clear();
             self.sent = 0;
         }
+        let mut plain = Vec::new();
+        let into = if self.compress.is_some() { &mut plain } else { &mut self.out };
         for reply in replies {
-            reply.encode(&mut self.out);
+            told(reply, self.diagnostics).encode(into);
+        }
+        if let Some(threshold) = self.compress {
+            compress_frames(&mut self.out, &plain, threshold);
         }
     }
 
@@ -378,9 +451,9 @@ mod tests {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         runtime.block_on(async {
             let (mut wire, mut far) = piped(1024, 1024);
-            let mut bytes = encoded(&Request::Query { sql: "SELECT 1".into(), ends: false });
+            let mut bytes = encoded(&Request::Query { sql: "SELECT 1".into(), ends: false, attributes: Vec::new(), multi: false });
             bytes.extend(encoded(&Request::Terminate));
-            bytes.extend(encoded(&Request::Fetch { statement: 1, rows: 2 }));
+            bytes.extend(encoded(&Request::Fetch { statement: 1, cursor: 0, rows: 2 }));
             let rest = bytes.split_off(3);
             far.write_all(&bytes).await.unwrap();
             let far = tokio::spawn(async move {
@@ -393,7 +466,7 @@ mod tests {
             assert!(matches!(wire.arrived(|_| None::<()>), Arrived::Left), "whole, not taken");
             let terminate = wire.arrived(|request| matches!(request, Request::Terminate).then_some(()));
             assert!(matches!(terminate, Arrived::Taken(())));
-            assert!(matches!(wire.receive().await.unwrap(), Request::Fetch { statement: 1, rows: 2 }));
+            assert!(matches!(wire.receive().await.unwrap(), Request::Fetch { statement: 1, cursor: 0, rows: 2 }));
             assert!(matches!(wire.arrived(|_| Some(())), Arrived::Awaited), "nothing there");
             wire.queue(&[Reply::Suspended]);
             assert!(!wire.sent_now().unwrap(), "not written apart from the runtime");
@@ -436,7 +509,7 @@ mod tests {
             assert!(!wire.has_whole());
             let mut many = Vec::new();
             for _ in 0..2_000_u32 {
-                many.extend(encoded(&Request::Fetch { statement: 1, rows: 2 }));
+                many.extend(encoded(&Request::Fetch { statement: 1, cursor: 0, rows: 2 }));
             }
             far.write_all(&many).await.unwrap();
             assert!(matches!(wire.receive().await.unwrap(), Request::Fetch { .. }));
@@ -461,7 +534,7 @@ mod tests {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         runtime.block_on(async {
             let (mut short, mut client) = piped(1 << 20, 16);
-            let long = Request::Query { sql: "x".repeat(200_000), ends: false };
+            let long = Request::Query { sql: "x".repeat(200_000), ends: false, attributes: Vec::new(), multi: false };
             let bytes = encoded(&long);
             client.write_all(&bytes[..HEADER]).await.unwrap();
             let refused = short.receive().await.unwrap_err();

@@ -6,6 +6,8 @@
 
 use super::{Mutation, Package};
 
+pub mod native;
+
 /// The server's mutations, in the order they run.
 pub const SERVER: [Mutation; 3] = [
     Mutation {

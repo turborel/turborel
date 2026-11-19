@@ -73,7 +73,7 @@ fn identifier(s: &str) -> Option<String> {
 
 /// SQLCODE 0, of `state`.
 fn done(state: SqlState) -> Completed {
-    Completed { sqlcode: 0, sqlstate: state.as_str().to_owned(), active: false }
+    Completed::of(0, state.as_str())
 }
 
 impl<C: Connector> Agent<C> {
@@ -101,6 +101,12 @@ impl<C: Connector> Agent<C> {
             .get_mut(index)
             .map(|h| &mut h.connection)
             .ok_or_else(|| exception(SqlState::CONNECTION_DOES_NOT_EXIST, "[DESIGN] the current connection is gone"))
+    }
+
+    /// The current connection, if there is one, to read what its server
+    /// last told it.
+    pub fn current_connection(&self) -> Option<&Connected> {
+        Some(&self.held.get(self.current?)?.connection)
     }
 
     /// What cancels the current connection's statement, if any.

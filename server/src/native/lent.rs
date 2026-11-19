@@ -142,8 +142,7 @@ impl Lent {
     ///
     /// The read failed: the connection is gone.
     fn arrived_or_waited(&mut self, running: &Running) -> Result<Option<Work>> {
-        let take = |request| super::work_of(request).ok().flatten().filter(|_| running.still());
-        match self.wire.arrived(take) {
+        match self.taken(running) {
             Arrived::Taken(work) => return Ok(Some(work)),
             Arrived::Left => return Ok(None),
             Arrived::Awaited => {}
@@ -161,7 +160,7 @@ impl Lent {
                 self.fast = false;
                 break None;
             }
-            match self.wire.arrived(take) {
+            match self.taken(running) {
                 Arrived::Taken(work) => break Some(work),
                 Arrived::Left => break None,
                 Arrived::Awaited => {}
@@ -169,6 +168,17 @@ impl Lent {
         };
         drop(kept);
         Ok(next)
+    }
+
+    /// The client's next request, as `Wire::arrived` finds it; work taken
+    /// has its wait for a worker measured from now (`Held::arrived`).
+    fn taken(&mut self, running: &Running) -> Arrived<Work> {
+        let granted = self.held.granted;
+        let arrived = self.wire.arrived(|request| super::next::work_of(request, granted).filter(|_| running.still()));
+        if let Arrived::Taken(_) = arrived {
+            self.held.arrived();
+        }
+        arrived
     }
 }
 
@@ -398,7 +408,9 @@ mod tests {
             let slot = Slot::new();
             let (near, _far) = tokio::io::duplex(16);
             let wire = Wire::new(Box::new(near), 16, turborel::value::types::TypeRegistry::default());
-            let lent = Lent::new(Held::new(turborel::db::Database::new().session("X")), wire);
+            let db = turborel::db::Database::new();
+            let serves = super::super::requests::Serves { db: db.clone(), requests: Arc::default() };
+            let lent = Lent::new(Held::new(db.session("X"), serves, turborel_protocol::Capabilities::NONE), wire);
             let taking = tokio::spawn({
                 let slot = Arc::clone(&slot);
                 async move { slot.take().await }

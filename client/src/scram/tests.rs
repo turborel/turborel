@@ -1,10 +1,9 @@
-//! Unit tests of the client's SCRAM: HMAC-SHA-256 against RFC 4231's
-//! vectors, exchanges checked by the protocol's own server side, and the
-//! key cache's hits, misses, bound and forgetting (RULES.md D205).
+//! Unit tests of the client's SCRAM: exchanges checked by the protocol's
+//! own server side, and the key cache's hits, misses, bound and
+//! forgetting (RULES.md D205).
 
 use std::num::NonZeroU32;
 
-use turborel::plugin::package::hex;
 use turborel_protocol::Failure;
 use turborel_protocol::scram::{First, Keys, Offer, Server, salted_password};
 
@@ -31,20 +30,6 @@ fn login(scram: &mut Scram, password: &str, salt: &[u8]) -> Result<()> {
     scram.ready()
 }
 
-/// Verifies: [DESIGN] RFC 2104 §2, RFC 4231 §4.2, §4.3, §4.7: HMAC-SHA-256
-/// made of the protocol's SHA-256 gives RFC 4231's test cases 1, 2 and 6,
-/// the last of a key longer than SHA-256's block, hashed first.
-#[test]
-fn hmac_gives_the_rfc_4231_vectors() {
-    assert_eq!(hex(&exchange::hmac(&[0x0b; 20], b"Hi There")), "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7");
-    assert_eq!(
-        hex(&exchange::hmac(b"Jefe", b"what do ya want for nothing?")),
-        "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
-    );
-    let long = exchange::hmac(&[0xaa; 131], b"Test Using Larger Than Block-Size Key - Hash Key First");
-    assert_eq!(hex(&long), "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54");
-}
-
 /// Verifies: [DESIGN] RULES.md D43, D205: the client's exchange, proved
 /// from derived keys, is taken by the protocol's server side and proves
 /// the server in turn; a wrong password's proof is refused (SQLSTATE
@@ -54,7 +39,7 @@ fn an_exchange_of_derived_keys_is_taken_by_the_server() {
     login(&mut Scram::new("right"), "right", SALT).unwrap();
     let wrong = login(&mut Scram::new("wrong"), "right", SALT).unwrap_err();
     assert_eq!(wrong.sqlstate, "28000");
-    assert_eq!(format!("{:?}", derive("right", SALT, ITERATIONS)), "Derived(..)");
+    assert_eq!(format!("{:?}", Derived::of("right", SALT, ITERATIONS)), "Derived(..)");
 }
 
 /// Verifies: [DESIGN] RULES.md D205: a second login by the same password

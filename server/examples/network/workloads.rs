@@ -31,7 +31,7 @@ const TRIVIAL: &str = "SELECT K FROM ONE";
 
 /// The trivial query, as a request that is its own transaction.
 fn trivial() -> Request {
-    Request::Query { sql: TRIVIAL.into(), ends: true }
+    Request::Query { sql: TRIVIAL.into(), ends: true, attributes: Vec::new(), multi: false }
 }
 
 /// The round trip of the trivial query, through the client library.
@@ -87,13 +87,13 @@ pub fn small(bench: &Bench, served: &Served) {
 pub fn streaming(bench: &Bench, served: &Served) {
     for kind in Kind::ALL {
         let mut raw = Raw::connect(served, kind);
-        raw.queue(&Request::Query { sql: "SELECT K, V FROM BIG".into(), ends: true });
+        raw.queue(&Request::Query { sql: "SELECT K, V FROM BIG".into(), ends: true, attributes: Vec::new(), multi: false });
         raw.flush();
         assert_eq!(raw.answered(), Ended::Complete);
         let per_row = raw.bytes as usize / BIG_ROWS;
         bench.measure(Case::new(format!("stream {BIG_ROWS} rows {}", kind.name()), "row").bytes(per_row), || {
             raw.rows = 0;
-            raw.queue(&Request::Query { sql: "SELECT K, V FROM BIG".into(), ends: true });
+            raw.queue(&Request::Query { sql: "SELECT K, V FROM BIG".into(), ends: true, attributes: Vec::new(), multi: false });
             raw.flush();
             assert_eq!(raw.answered(), Ended::Complete);
             raw.rows
@@ -127,10 +127,10 @@ pub fn inserts(bench: &Bench, served: &Served) {
         raw.queue(&Request::Prepare { statement: 1, sql: "INSERT INTO B VALUES (?, ?)".into() });
         raw.flush();
         assert_eq!(raw.answered(), Ended::Prepared);
-        let execute = |n: usize| Request::Execute { statement: 1, values: row(n), rows: 0, ends: false };
+        let execute = |n: usize| Request::Execute { statement: 1, values: row(n), cursor: 0, rows: 0, ends: false, attributes: Vec::new() };
         bench.measure_fresh(Case::new(format!("insert prepared pipelined {}", kind.name()), "row"), emptied, |_| {
             pipelined(&mut raw, INSERTS, DEPTH, &execute);
-            pipelined(&mut raw, 1, 1, &|_| Request::Query { sql: "COMMIT".into(), ends: false });
+            pipelined(&mut raw, 1, 1, &|_| Request::Query { sql: "COMMIT".into(), ends: false, attributes: Vec::new(), multi: false });
             INSERTS as u64
         });
         raw.terminate();

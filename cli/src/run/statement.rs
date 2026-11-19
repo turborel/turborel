@@ -9,7 +9,7 @@ use std::time::Duration;
 use turborel::error::{Code, SqlError};
 use turborel::storage::Row;
 use turborel_client::connection::{Sink, Streamed};
-use turborel_client::{Column, Failure};
+use turborel_client::{Column, Failure, Notice};
 
 use super::output::{Out, Redirect};
 use super::{Next, Outcome, Shell, Statements, Wrong, cancelled};
@@ -73,6 +73,15 @@ fn told(failure: &Failure, verbosity: Verbosity, sql: &str) -> String {
     }
 }
 
+/// The lines that tell `notice`: its SQLSTATE and message, then its
+/// detail and hint, if it has them.
+pub(super) fn notice_line(notice: &Notice) -> String {
+    let first = format!("turborel: notice (SQLSTATE {}): {}", notice.sqlstate, notice.message);
+    let parts = [("DETAIL", &notice.diagnostics.detail), ("HINT", &notice.diagnostics.hint)];
+    let more = parts.into_iter().filter_map(|(name, part)| part.as_ref().map(|p| format!("{name}: {p}")));
+    std::iter::once(first).chain(more).collect::<Vec<_>>().join("\n")
+}
+
 impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
     /// Runs `sql`, typed or not, its results written as the layout says.
     pub(super) fn statement(&mut self, sql: &str, typed: bool) -> Next {
@@ -99,6 +108,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         if let Some(interrupts) = self.interrupts {
             interrupts.cancel_by(self.connection.canceller());
         }
+        self.notices();
         let next = match ran {
             Ok(state) => {
                 self.succeeded(sql, &state);
@@ -113,6 +123,15 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
             let _ = writeln!(self.err, "{shown}").and_then(|()| self.err.flush());
         }
         next
+    }
+
+    /// Tells the notices the server sent with the last statement, each a
+    /// warning it raised (RULES.md D187), as failures are told.
+    pub(super) fn notices(&mut self) {
+        for notice in self.connection.take_notices() {
+            // Nothing is left to tell a failure to write a notice to.
+            let _ = writeln!(self.err, "{}", notice_line(&notice));
+        }
     }
 
     /// Runs `sql`, its results written as `how` says, and returns the
@@ -234,6 +253,7 @@ mod tests {
             rule: Some("X".into()),
             position: Some(10),
             active: false,
+            diagnostics: None,
         };
         assert_eq!(told(&failure, Verbosity::Terse, ""), "SQLCODE -103 (SQLSTATE 2A000): no");
         assert_eq!(told(&failure, Verbosity::Default, ""), failure.to_string());
@@ -241,5 +261,18 @@ mod tests {
         assert_eq!(told(&failure, Verbosity::Verbose, sql), format!("{failure}\nline 2: FROM NOPE\n        ^"));
         let nowhere = Failure { position: None, ..failure.clone() };
         assert_eq!(told(&nowhere, Verbosity::Verbose, sql), nowhere.to_string());
+    }
+
+    /// Verifies: [DESIGN] RULES.md D187, D217: a notice is told by its
+    /// SQLSTATE and message, then its detail and hint, each on its own
+    /// line, if it has them.
+    #[test]
+    fn notices_are_told_with_their_detail_and_hint() {
+        let plain = Notice { sqlstate: "01H01".into(), message: "careful".into(), diagnostics: turborel_client::Diagnostics::default() };
+        assert_eq!(notice_line(&plain), "turborel: notice (SQLSTATE 01H01): careful");
+        let mut more = plain.clone();
+        more.diagnostics.detail = Some("row 3".into());
+        more.diagnostics.hint = Some("look".into());
+        assert_eq!(notice_line(&more), "turborel: notice (SQLSTATE 01H01): careful\nDETAIL: row 3\nHINT: look");
     }
 }

@@ -51,9 +51,10 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
     /// names, read as `dialect` says. Each row skipped is told as a
     /// failure, and what was imported is said.
     ///
-    /// The rows go through one prepared INSERT, a batch to a transaction
-    /// (`turborel_client::import`); a bulk copy of the protocol, once it
-    /// has one, takes its place here.
+    /// The rows go by the protocol's bulk copy, a batch to a copy that
+    /// commits it, where the server grants `copy` and no bad row is to be
+    /// skipped; else through one prepared INSERT, a batch to a transaction
+    /// (`turborel_client::import`, RULES.md D195).
     fn import_rows(&mut self, path: &Path, into: &Import, dialect: Dialect) -> Next {
         let file = match File::open(path) {
             Ok(file) => file,

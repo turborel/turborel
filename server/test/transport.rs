@@ -13,14 +13,17 @@ use rustls::{ClientConnection, StreamOwned};
 use turborel::db::Database;
 use turborel_client::connection::{self, Trust};
 use turborel_client::tls;
+use turborel_protocol::compress::{COMPRESSED, decompress};
 use turborel_protocol::{Completed, HEADER, Reply, Request, VERSION, header};
-use turborel_server::settings::{BATCH_BYTES, IDLE_TIMEOUT_MS, MAX_CONNECTIONS};
+use turborel_server::settings::{BATCH_BYTES, COMPRESSION_MIN_BYTES, IDLE_TIMEOUT_MS, MAX_CONNECTIONS};
 
 use crate::common::{Pki, Running, pki, rows, secured, start};
 
 /// A stream to a server, in the clear or over TLS, spoken to by hand.
 struct Hand<S: Read + Write> {
     stream: BufReader<S>,
+    /// The compressed replies read.
+    compressed: usize,
 }
 
 type Tls = StreamOwned<ClientConnection, TcpStream>;
@@ -28,8 +31,20 @@ type Tls = StreamOwned<ClientConnection, TcpStream>;
 impl<S: Read + Write> Hand<S> {
     /// `stream`, logged in as X, trusted.
     fn hello(stream: S) -> Hand<S> {
-        let mut hand = Hand { stream: BufReader::new(stream) };
-        let hello = Request::Hello { version: VERSION, user: "X".into(), mechanism: "trust".into(), initial: vec![], capabilities: vec![] };
+        Hand::asking(stream, vec![])
+    }
+
+    /// `stream`, logged in as X, trusted, asking `capabilities`.
+    fn asking(stream: S, capabilities: Vec<String>) -> Hand<S> {
+        let mut hand = Hand { stream: BufReader::new(stream), compressed: 0 };
+        let hello = Request::Hello {
+            version: VERSION,
+            user: "X".into(),
+            mechanism: "trust".into(),
+            initial: vec![],
+            capabilities,
+            attributes: Vec::new(),
+        };
         hand.send(&[hello]);
         assert!(matches!(hand.receive(), Some(Reply::Ready { .. })));
         hand
@@ -53,7 +68,12 @@ impl<S: Read + Write> Hand<S> {
         let (kind, length) = header(head, u32::MAX).unwrap();
         let mut body = vec![0_u8; length];
         self.stream.read_exact(&mut body).unwrap();
-        Some(Reply::decode(kind, &body).unwrap())
+        if kind != COMPRESSED {
+            return Some(Reply::decode(kind, &body).unwrap());
+        }
+        self.compressed = self.compressed.saturating_add(1);
+        let (inner, inflated) = decompress(&body, u32::MAX).unwrap();
+        Some(Reply::decode(inner, &inflated).unwrap())
     }
 
     /// The rows of a query's replies, as text, to its Complete.
@@ -95,7 +115,7 @@ fn numbered(n: usize) -> Database {
 
 /// The query of row `k` alone.
 fn row(k: usize) -> Request {
-    Request::Query { sql: format!("SELECT K FROM T WHERE K = {k}"), ends: true }
+    Request::Query { sql: format!("SELECT K FROM T WHERE K = {k}"), ends: true, attributes: Vec::new(), multi: false }
 }
 
 /// Sends a hundred queries in one write and checks each is answered, in
@@ -136,9 +156,9 @@ fn over_tls_the_worker_reads_and_writes_the_session_itself() {
     let server = start(&db, &[]);
     let mut hand = Hand::hello(tls_to(&server, &pki));
     let long = format!("SELECT K FROM T WHERE K = 7 -- {}\n", "a comment ".repeat(5_000));
-    hand.send(&[Request::Query { sql: long, ends: true }]);
+    hand.send(&[Request::Query { sql: long, ends: true, attributes: Vec::new(), multi: false }]);
     assert_eq!(hand.rows(), ["7"], "a request of many records");
-    hand.send(&[Request::Query { sql: "SELECT K, S FROM T".into(), ends: true }]);
+    hand.send(&[Request::Query { sql: "SELECT K, S FROM T".into(), ends: true, attributes: Vec::new(), multi: false }]);
     assert_eq!(hand.rows().len(), 4000, "two megabytes of rows");
     hand.stream.get_mut().conn.refresh_traffic_keys().unwrap();
     pipelined(&mut hand);
@@ -158,8 +178,13 @@ fn a_half_closed_client_hears_every_reply() {
     let server = start(&db, &[]);
     let tcp = TcpStream::connect(server.address).unwrap();
     let mut hand = Hand::hello(tcp.try_clone().unwrap());
-    let mut requests = vec![Request::Query { sql: "DELETE FROM T".into(), ends: false }];
-    requests.extend((0..5).map(|k| Request::Query { sql: format!("SELECT K FROM T WHERE K = {k}"), ends: false }));
+    let mut requests = vec![Request::Query { sql: "DELETE FROM T".into(), ends: false, attributes: Vec::new(), multi: false }];
+    requests.extend((0..5).map(|k| Request::Query {
+        sql: format!("SELECT K FROM T WHERE K = {k}"),
+        ends: false,
+        attributes: Vec::new(),
+        multi: false,
+    }));
     hand.send(&requests);
     tcp.shutdown(Shutdown::Write).unwrap();
     assert!(matches!(hand.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
@@ -184,7 +209,7 @@ fn a_tls_client_closed_without_close_notify_is_lost() {
     secured(&db, &pki, "REQUIRED");
     let server = start(&db, &[(MAX_CONNECTIONS, 1)]);
     let mut hand = Hand::hello(tls_to(&server, &pki));
-    hand.send(&[Request::Query { sql: "DELETE FROM T".into(), ends: false }]);
+    hand.send(&[Request::Query { sql: "DELETE FROM T".into(), ends: false, attributes: Vec::new(), multi: false }]);
     assert!(matches!(hand.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     hand.stream.get_mut().sock.shutdown(Shutdown::Both).unwrap();
     drop(hand);
@@ -208,9 +233,9 @@ fn a_slow_or_idle_tls_client_is_let_go() {
     secured(&db, &pki, "REQUIRED");
     let server = start(&db, &[(MAX_CONNECTIONS, 1), (BATCH_BYTES, 1), (IDLE_TIMEOUT_MS, 100)]);
     let mut slow = Hand::hello(tls_to(&server, &pki));
-    slow.send(&[Request::Query { sql: "DELETE FROM T WHERE K = 0".into(), ends: false }]);
+    slow.send(&[Request::Query { sql: "DELETE FROM T WHERE K = 0".into(), ends: false, attributes: Vec::new(), multi: false }]);
     assert!(matches!(slow.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
-    slow.send(&[Request::Query { sql: "SELECT K, S FROM T".into(), ends: false }]);
+    slow.send(&[Request::Query { sql: "SELECT K, S FROM T".into(), ends: false, attributes: Vec::new(), multi: false }]);
     let config = tls::trusting(&pki.authority).unwrap();
     let reconnect = || {
         (0..1_000).find_map(|_| {
@@ -240,7 +265,10 @@ fn a_server_stopping_sends_the_replies_in_flight() {
     let holder = db.session("X");
     holder.run("UPDATE T SET S = 'held' WHERE K = 1").unwrap();
     let mut hand = Hand::hello(TcpStream::connect(server.address).unwrap());
-    hand.send(&[Request::Query { sql: "UPDATE T SET S = 'mine' WHERE K = 1".into(), ends: true }, row(2)]);
+    hand.send(&[
+        Request::Query { sql: "UPDATE T SET S = 'mine' WHERE K = 1".into(), ends: true, attributes: Vec::new(), multi: false },
+        row(2),
+    ]);
     // The update is in flight, waiting on the lock, before the stop.
     while crate::common::busy(&db, "OWN") != "1" {
         std::thread::yield_now();
@@ -284,9 +312,9 @@ fn a_hurried_server_lets_go_a_client_taking_no_rows() {
     let (hurry, hurried) = tokio::sync::oneshot::channel::<()>();
     let serving = runtime.spawn(server.serve_until(endpoints, async { drop(stopped.await) }, async { drop(hurried.await) }));
     let mut slow = Hand::hello(TcpStream::connect(address).unwrap());
-    slow.send(&[Request::Query { sql: "DELETE FROM T WHERE K = 0".into(), ends: false }]);
+    slow.send(&[Request::Query { sql: "DELETE FROM T WHERE K = 0".into(), ends: false, attributes: Vec::new(), multi: false }]);
     assert!(matches!(slow.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
-    slow.send(&[Request::Query { sql: "SELECT K, S FROM T".into(), ends: false }]);
+    slow.send(&[Request::Query { sql: "SELECT K, S FROM T".into(), ends: false, attributes: Vec::new(), multi: false }]);
     assert!(matches!(slow.receive(), Some(Reply::Description(_))), "its rows begun, then not taken");
     stop.send(()).unwrap();
     hurry.send(()).unwrap();
@@ -295,4 +323,26 @@ fn a_hurried_server_lets_go_a_client_taking_no_rows() {
     let session = db.session("X");
     let mut cursor = session.open_cursor("SELECT COUNT(*) FROM T").unwrap();
     assert_eq!(cursor.fetch().unwrap().unwrap()[0].to_string(), "4000", "rolled back");
+}
+
+/// Verifies: [DESIGN] RULES.md D196, D231: a client granted compression
+/// that pipelines its requests is answered in order, each reply long
+/// enough compressed on its own, though the replies share a write.
+#[test]
+fn pipelined_replies_granted_compression_come_in_order() {
+    let db = numbered(10);
+    let server = start(&db, &[(COMPRESSION_MIN_BYTES, 64)]);
+    let tcp = TcpStream::connect(server.address).unwrap();
+    let mut hand = Hand::asking(tcp, vec![turborel_protocol::capability::COMPRESSION.into()]);
+    let requests: Vec<Request> = (0..10)
+        .map(|k| Request::Query { sql: format!("SELECT S, K FROM T WHERE K = {k}"), ends: true, attributes: Vec::new(), multi: false })
+        .collect();
+    hand.send(&requests);
+    for k in 0..10 {
+        assert!(matches!(hand.receive(), Some(Reply::Description(_))));
+        let Some(Reply::Rows(rows)) = hand.receive() else { panic!("rows") };
+        assert_eq!(rows[0][1].to_string(), k.to_string(), "in order");
+        assert!(matches!(hand.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
+    }
+    assert!(hand.compressed >= 10, "each row of 500 characters compressed: {}", hand.compressed);
 }

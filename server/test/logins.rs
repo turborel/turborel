@@ -40,7 +40,7 @@ fn logins_never_wait_for_the_workers() {
     let mut waiting = server.raw();
     waiting.hello("X");
     // Four megabytes of rows, more than the sockets hold, not read yet.
-    waiting.send(&Request::Query { sql: "SELECT K, S FROM T".into(), ends: false });
+    waiting.send(&Request::Query { sql: "SELECT K, S FROM T".into(), ends: false, attributes: Vec::new(), multi: false });
     assert!(
         (0..1000).any(|_| {
             std::thread::sleep(Duration::from_millis(5));
@@ -118,13 +118,14 @@ fn messages_before_a_login_are_small() {
         mechanism: "trust".into(),
         initial: vec![0; long],
         capabilities: vec![],
+        attributes: Vec::new(),
     });
     let refused = raw.refusal();
     assert_eq!(state(&refused), ("08006", -919));
     assert!(refused.message.contains(&format!("longer than the {LOGIN_MESSAGE_BYTES} taken")), "{}", refused.message);
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Query { sql: format!("VALUES 1{}", " ".repeat(long)), ends: false });
+    raw.send(&Request::Query { sql: format!("VALUES 1{}", " ".repeat(long)), ends: false, attributes: Vec::new(), multi: false });
     assert!(matches!(raw.receive(), Some(Reply::Description(_))), "taken once authenticated");
     let mut cut = server.raw();
     let mut hello = Vec::new();
@@ -134,6 +135,7 @@ fn messages_before_a_login_are_small() {
         mechanism: "trust".into(),
         initial: vec![0; 100],
         capabilities: vec![],
+        attributes: Vec::new(),
     }
     .encode(&mut hello);
     cut.send_bytes(&hello[..50]);

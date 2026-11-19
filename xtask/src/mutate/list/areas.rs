@@ -140,9 +140,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, external plug-ins' and
-/// packages', partitioning's, UUID's, the command-line client's, replication's, the server's and its
-/// transport's, and the client library's.
-fn last() -> [&'static [Mutation]; 48] {
+/// packages', partitioning's, UUID's, the command-line client's, replication's, the server's, its
+/// transport's, the native protocol's and the client library's.
+fn last() -> [&'static [Mutation]; 49] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -191,6 +191,7 @@ fn last() -> [&'static [Mutation]; 48] {
         &super::VR,
         &super::SERVER,
         &super::transport::TRANSPORT,
+        &super::server::native::NATIVE,
         &super::client::CLIENT,
     ]
 }

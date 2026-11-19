@@ -166,7 +166,9 @@ impl<'s> KeyCheck<'s> {
         if self.failed.is_some() || self.nulls_distinct && key.0.iter().any(Value::is_null) {
             return Ok(());
         }
-        match (self.duplicate(&key), self.primary) {
+        // [DESIGN] the key's values, for a client's structured failure (RULES.md D186).
+        let duplicate = self.duplicate(&key).map_err(|e| self.about(e).with_detail(held_by_another(&key)));
+        match (duplicate, self.primary) {
             (Ok(()), _) => Ok(()),
             (Err(e), true) => {
                 self.failed = Some(e);
@@ -183,7 +185,15 @@ impl<'s> KeyCheck<'s> {
     /// That failure, about the constraint and its table.
     pub(in crate::db) fn finish(self) -> Result<()> {
         let subject = Subject::constraint(self.name.parts(), self.desc.name.parts());
-        self.failed.map_or(Ok(()), |e| Err(if e.code == Code::Constraint && e.subject.is_none() { e.about(subject) } else { e }))
+        self.failed.map_or(Ok(()), |e| Err(if e.code == Code::Constraint && e.about_nothing() { e.about(subject) } else { e }))
+    }
+
+    /// `e`, about the constraint and its table if it is about nothing.
+    fn about(&self, e: SqlError) -> SqlError {
+        if e.code == Code::Constraint && e.about_nothing() {
+            return e.about(Subject::constraint(self.name.parts(), self.desc.name.parts()));
+        }
+        e
     }
 
     /// The key of `row`.
@@ -357,6 +367,13 @@ fn holds(newest: &Newest, has_key: &dyn Fn(&Row) -> Result<bool>) -> Result<bool
 /// The message of a duplicate of `columns` of the table `desc`: its
 /// UNIQUE or PRIMARY KEY constraint `name`, as GET DIAGNOSTICS names it,
 /// and of one WITHOUT OVERLAPS, its period.
+/// \[DESIGN\] What a key another row holds says, as a structured failure's
+/// detail (RULES.md D186): its values as SQL writes them.
+fn held_by_another(key: &Key) -> String {
+    let values: Vec<String> = key.0.iter().map(Value::to_literal).collect();
+    format!("the key ({}) is held by another row", values.join(", "))
+}
+
 fn duplicated(desc: &TableDesc, name: &QualifiedName, columns: &[usize]) -> String {
     let names: Vec<&str> = columns.iter().filter_map(|&c| desc.columns.get(c)).map(|c| c.name.as_str()).collect();
     let constraint = desc.constraints.iter().find_map(|c| match &c.kind {

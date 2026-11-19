@@ -4,8 +4,11 @@
 //!
 //! * INFORMATION_SCHEMA.CONNECTIONS: each connection served, by its
 //!   number: its user once authenticated, where it came from, whether it
-//!   is secure, and whether it is logging in, idle or running a
-//!   statement.
+//!   is secure, whether it is logging in, idle or running a statement, and
+//!   the application its client named.
+//! * INFORMATION_SCHEMA.CONNECTION_ATTRIBUTES: the attributes each
+//!   connection's client gave in Hello (`shown/attributes.rs`, RULES.md
+//!   D191).
 //! * INFORMATION_SCHEMA.SERVER: one row of counts: workers running a
 //!   statement, statements waiting for one, connections, and those refused
 //!   past SERVER.MAX_CONNECTIONS, told or closed at once.
@@ -15,6 +18,9 @@
 //! An operator ends a connection by its ID (`Operator::end`): what it runs
 //! is cancelled, as a client's cancel does (RULES.md D44), and it is closed
 //! once that has stopped, its session rolled back.
+
+mod attributes;
+mod requests;
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,6 +38,10 @@ use turborel::value::{CharUnits, DataType, Decimal, MAX_EXACT_PRECISION, Spelled
 
 use crate::auth::Peer;
 
+pub(crate) use attributes::ConnectionAttributes;
+use attributes::application;
+pub(crate) use requests::{QueryAttribute, Requests, trace};
+
 /// What the server shows: its connections, and its counts.
 #[derive(Default)]
 pub(crate) struct Shown {
@@ -45,6 +55,8 @@ pub(crate) struct Shown {
     pub(crate) refused: AtomicU64,
     /// Connections closed at once past the refusals in flight.
     pub(crate) closed: AtomicU64,
+    /// The attributes of the requests running (`shown/requests.rs`).
+    pub(crate) requests: Arc<Requests>,
 }
 
 /// One more of a count of the server's, while it is held.
@@ -75,6 +87,8 @@ struct Entry {
     end: Arc<watch::Sender<bool>>,
     /// What cancels its session's statements, once it has one.
     stop: Option<Arc<Stop>>,
+    /// The attributes its client gave in Hello (RULES.md D191).
+    attributes: Arc<turborel_protocol::Attributes>,
 }
 
 /// \[DESIGN\] A connection's row of CONNECTIONS, while it is served: what
@@ -95,7 +109,15 @@ impl Shown {
     pub(crate) fn connected(self: &Arc<Self>, peer: &Peer) -> (Present, Listed) {
         let id = self.next.fetch_add(1, Ordering::Relaxed).saturating_add(1);
         let (end, ended) = watch::channel(false);
-        let entry = Entry { user: None, peer: peer.name(), secure: peer.secure, state: "LOGIN", end: Arc::new(end), stop: None };
+        let entry = Entry {
+            user: None,
+            peer: peer.name(),
+            secure: peer.secure,
+            state: "LOGIN",
+            end: Arc::new(end),
+            stop: None,
+            attributes: Arc::default(),
+        };
         self.locked().insert(id, entry);
         (Present { shown: Arc::clone(self), id, ended }, Listed { shown: Arc::clone(self), id })
     }
@@ -132,6 +154,14 @@ impl Present {
         if let Some(entry) = self.shown.locked().get_mut(&self.id) {
             entry.user = Some(user.to_owned());
             entry.state = "IDLE";
+        }
+    }
+
+    /// \[DESIGN\] The attributes its client gave in Hello, `attributes`
+    /// (RULES.md D191).
+    pub fn attributed(&self, attributes: turborel_protocol::Attributes) {
+        if let Some(entry) = self.shown.locked().get_mut(&self.id) {
+            entry.attributes = Arc::new(attributes);
         }
     }
 
@@ -272,7 +302,15 @@ impl SystemTable for Connections {
     }
 
     fn columns(&self) -> Vec<ColumnDesc> {
-        vec![counted("ID"), text("USER_NAME", 128, false), text("PEER", 128, true), text("SECURE", 3, true), text("STATE", 7, true)]
+        let application = text("APPLICATION", attributes::value_length(), false);
+        vec![
+            counted("ID"),
+            text("USER_NAME", 128, false),
+            text("PEER", 128, true),
+            text("SECURE", 3, true),
+            text("STATE", 7, true),
+            application,
+        ]
     }
 
     fn rows(&self, seen: &Seen<'_>) -> Result<Vec<Row>> {
@@ -290,6 +328,7 @@ impl SystemTable for Connections {
                     Value::Char(e.peer),
                     yes(e.secure),
                     Value::Char(e.state.to_owned()),
+                    application(&e.attributes),
                 ]
             })
             .collect())
@@ -342,7 +381,7 @@ mod tests {
         drop(present);
         assert_eq!(row(&shown).map(|r| r.3), Some("IDLE"), "kept by its row");
         drop(kept);
-        assert!(shown.locked().is_empty(), "gone");
+        assert_eq!(shown.locked().len(), 0, "gone");
     }
 
     /// Verifies: [DESIGN] RULES.md D42: an operator ends a connection by

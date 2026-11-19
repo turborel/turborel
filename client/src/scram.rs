@@ -7,21 +7,21 @@
 //! exports, else by `tls-server-end-point` (RFC 5929 §4), the hash of the
 //! certificate the server presented; so a server in the middle cannot
 //! relay it. The
-//! messages are the protocol's (`turborel_protocol::scram`), proved from
-//! the keys a password derives (`exchange.rs`), which a `KeyCache` may
-//! keep (`cache.rs`, RULES.md D205), so a connection made again skips
-//! their slow derivation. Whether it binds, its `ChannelBinding` says
+//! exchange is the protocol's own client (`turborel_protocol::scram::Client`),
+//! proving from the keys a password derives, which a `KeyCache` may keep
+//! (`cache.rs`, RULES.md D205), so a connection made again skips their
+//! slow derivation. Whether it binds, its `ChannelBinding` says
 //! (RULES.md D204).
 
 mod cache;
-mod exchange;
 
 use std::num::NonZeroU32;
 
-use turborel_protocol::scram::{self, Channel};
+use turborel::error::{Code, SqlError, SqlState};
+use turborel_protocol::Failure;
+use turborel_protocol::scram::{self, Channel, Client, Derived};
 
 pub use cache::{KEY_CACHE_ENTRIES, KeyCache};
-use exchange::{Exchange, derive, refused};
 
 use crate::connection::{Mechanism, Result, TlsChannel};
 use crate::settings::ChannelBinding;
@@ -47,7 +47,7 @@ use crate::settings::ChannelBinding;
 #[derive(Clone)]
 pub struct Scram {
     password: String,
-    exchange: Option<Exchange>,
+    exchange: Option<Client>,
     clear: bool,
     /// The channel binding of the connection about to carry it, as
     /// `bind` set it; taken by `initial`, so the next connection binds
@@ -58,6 +58,12 @@ pub struct Scram {
     /// The salt and iterations of the keys the exchange used, to forget
     /// them if it fails.
     used: Option<(Vec<u8>, NonZeroU32)>,
+}
+
+/// A refusal of the exchange: credentials refused (SQLSTATE 28000).
+fn refused(why: &str) -> Failure {
+    let e = SqlError::new(Code::Connection, format!("[DESIGN] SCRAM: {why}")).with_state(SqlState::INVALID_AUTHORIZATION);
+    Failure::from(&e)
 }
 
 impl std::fmt::Debug for Scram {
@@ -112,13 +118,13 @@ impl Scram {
     /// client-final, answering `challenge`, server-first.
     fn prove(&mut self, challenge: &[u8]) -> Result<Vec<u8>> {
         let Some(exchange) = &mut self.exchange else { return Err(crate::connection::failed("[DESIGN] SCRAM was not begun")) };
-        if self.binding == ChannelBinding::Require && !exchange.bound() {
+        if self.binding == ChannelBinding::Require && !exchange.is_bound() {
             return Err(refused("channel binding is required, and this connection is not bound"));
         }
-        let first = exchange.read(challenge)?;
+        let first = exchange.read(challenge).map_err(|e| Failure::from(&e))?;
         let keys = match &self.cache {
             Some(cache) => cache.derived(&self.password, &first.salt, first.iterations),
-            None => derive(&self.password, &first.salt, first.iterations),
+            None => Derived::of(&self.password, &first.salt, first.iterations),
         };
         self.used = Some((first.salt.clone(), first.iterations));
         Ok(exchange.prove(&first, &keys))
@@ -139,7 +145,9 @@ impl Mechanism for Scram {
     /// one Hello names, so none is given here.
     fn initial(&mut self) -> Vec<u8> {
         let channel = std::mem::replace(&mut self.channel, Channel::Unbound);
-        let mut exchange = Exchange::new(channel);
+        // The user is Hello's, and the proof is made from derived keys, so
+        // the exchange holds neither.
+        let mut exchange = Client::new("", "").bound(channel);
         // With no randomness, no nonce: the empty one sent is refused by
         // the server as malformed.
         let first = exchange.first(&scram::nonce().unwrap_or_default());
@@ -153,7 +161,7 @@ impl Mechanism for Scram {
     /// cache gave.
     fn answer(&mut self, challenge: &[u8]) -> Result<Vec<u8>> {
         let answered = if challenge.starts_with(b"v=") || challenge.starts_with(b"e=") {
-            let verified = self.exchange.as_mut().map(|e| e.verify(challenge));
+            let verified = self.exchange.as_mut().map(|e| e.verify(challenge).map_err(|e| Failure::from(&e)));
             verified.unwrap_or_else(|| Err(crate::connection::failed("[DESIGN] SCRAM was not begun"))).map(|()| Vec::new())
         } else {
             self.prove(challenge)
@@ -182,7 +190,7 @@ impl Mechanism for Scram {
     }
 
     fn ready(&self) -> Result<()> {
-        if self.exchange.as_ref().is_some_and(Exchange::verified) {
+        if self.exchange.as_ref().is_some_and(Client::verified) {
             return Ok(());
         }
         Err(crate::connection::failed("[DESIGN] the server did not prove it knows the user's verifier"))

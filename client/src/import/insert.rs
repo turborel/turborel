@@ -81,7 +81,7 @@ pub enum Cause {
 impl Cause {
     /// The SQL condition `failure`, of a statement the import made, not
     /// the user: so without its position in that statement.
-    fn sql(failure: Failure) -> Cause {
+    pub(super) fn sql(failure: Failure) -> Cause {
         Cause::Sql(Box::new(Failure { position: None, ..failure }))
     }
 }
@@ -189,7 +189,7 @@ fn column_name(heading: &Heading) -> String {
 /// long is refused, where the CAST of a parameter's value would cut it,
 /// with a warning [§6.10 GR5c ii, GR6c ii; §17.9 GR5g]; any other value
 /// as it is, for the server to cast.
-fn assigned(values: &[Value], types: &[ParameterType]) -> Result<Vec<Value>, Failure> {
+pub(super) fn assigned(values: &[Value], types: &[ParameterType]) -> Result<Vec<Value>, Failure> {
     let each = values.iter().zip(types).map(|(v, t)| {
         let to = t.clone().data_type();
         let string = matches!(v, Value::Char(_)) && to.is_character();
@@ -199,7 +199,7 @@ fn assigned(values: &[Value], types: &[ParameterType]) -> Result<Vec<Value>, Fai
 }
 
 /// Whether `failure` is of a statement cancelled (RULES.md D44).
-fn cancelled(failure: &Failure) -> bool {
+pub(super) fn cancelled(failure: &Failure) -> bool {
     failure.sqlcode == SqlError::new(Code::Cancelled, "").sqlcode()
 }
 
@@ -222,7 +222,14 @@ pub fn import<S: Read + Write, R: Source>(
     how: &Import,
     rejected: &mut impl FnMut(Rejected),
 ) -> Result<Imported, ImportError> {
-    let insert = prepared(connection, source, how)?;
+    let (insert, columns) = prepared(connection, source, how)?;
+    if super::copied::copies(connection, &insert, how) {
+        let table = table_name(&how.table).map_err(|msg| before(Cause::Input(msg)))?;
+        let types = insert.parameters().to_vec();
+        // Its parameters' types known, the INSERT is of no more use.
+        connection.deallocate(insert).map_err(|f| before(Cause::sql(f)))?;
+        return super::copied::import(connection, source, (how, &table, columns), types);
+    }
     let mut run = Run { connection, insert, how, committed: 0, in_batch: 0, rejected: 0 };
     let done = run.rows(source, rejected);
     let Run { connection: over, insert: statement, .. } = run;
@@ -238,7 +245,11 @@ pub fn import<S: Read + Write, R: Source>(
 
 /// The INSERT that puts `source`'s records into the table `how` names,
 /// prepared over `connection`.
-fn prepared<S: Read + Write, R: Source>(connection: &mut Connection<S>, source: &mut R, how: &Import) -> Result<Statement, ImportError> {
+fn prepared<S: Read + Write, R: Source>(
+    connection: &mut Connection<S>,
+    source: &mut R,
+    how: &Import,
+) -> Result<(Statement, Vec<String>), ImportError> {
     if connection.in_transaction() {
         let msg = "[DESIGN] an import begins with no transaction active, as it commits its batches";
         return Err(before(Cause::Input(msg.to_owned())));
@@ -252,7 +263,7 @@ fn prepared<S: Read + Write, R: Source>(connection: &mut Connection<S>, source: 
     let names: Vec<String> = columns.iter().map(|c| delimited(c)).collect();
     let marks = vec!["?"; names.len()].join(", ");
     let sql = format!("INSERT INTO {table} ({}) VALUES ({marks})", names.join(", "));
-    connection.prepare(&sql).map_err(|f| before(Cause::sql(f)))
+    connection.prepare(&sql).map(|insert| (insert, names)).map_err(|f| before(Cause::sql(f)))
 }
 
 /// [ISO/IEC 9075:1992 §17.9 GR3] The names of `table`'s columns, in

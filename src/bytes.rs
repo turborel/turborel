@@ -204,6 +204,12 @@ impl<'a> Reader<'a> {
         String::from_utf8(bytes.to_vec()).map_err(|_| self.corrupt("a string is not UTF-8"))
     }
 
+    /// Whether every byte was read: so a message's optional fields after
+    /// its required ones are read while any are left.
+    pub fn at_end(&self) -> bool {
+        self.at >= self.bytes.len()
+    }
+
     /// Checks that every byte was read.
     ///
     /// # Errors

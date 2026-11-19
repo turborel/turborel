@@ -153,6 +153,7 @@ impl Raw {
             mechanism: "trust".into(),
             initial: vec![],
             capabilities: vec![],
+            attributes: vec![],
         });
         assert!(matches!(self.receive(), Some(Reply::Ready { .. })));
     }
@@ -166,6 +167,7 @@ impl Raw {
             mechanism: "trust".into(),
             initial: vec![],
             capabilities: vec![],
+            attributes: vec![],
         });
         self.refusal()
     }

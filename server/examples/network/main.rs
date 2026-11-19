@@ -11,7 +11,7 @@
 //! depends on nothing (RULES.md D3), so one that needs the server and the
 //! client is an example of the server's crate, run on the same harness
 //! (RULES.md R-BENCH-1): `cargo xtask bench network`. Its results are
-//! kept and compared as every benchmark's are. See `bench/network.md`.
+//! kept and compared as every benchmark's are.
 //! `TURBOREL_NETWORK_ONLY=stream,small` runs those workloads alone.
 
 #![allow(

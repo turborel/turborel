@@ -1,15 +1,20 @@
 //! A replicated group's servers (RULES.md D201, D206, D57): a connection
 //! asking for a read-only server lands on a replica following the group,
 //! one asking for a read-write server on its primary, the role each
-//! session reads from INFORMATION_SCHEMA.REPLICAS its server's, and a
-//! pool of read-only settings handing out the replica's connections.
+//! session told by its session status, or read from
+//! INFORMATION_SCHEMA.REPLICAS without it, and a pool of read-only
+//! settings handing out the replica's connections.
 
+use std::net::TcpStream;
 use turborel::db::Database;
 use turborel::error::Code;
 use turborel_client::pool::{Pool, PoolConfig};
-use turborel_client::role::{Role, role};
+
+use turborel_client::connection::{Connection, Trust};
+use turborel_client::role::{Role, SERVER_READ_ONLY, role};
 use turborel_client::settings::{Options, Settings};
 use turborel_client::target::Target;
+use turborel_client::told::Offer;
 
 use turborel_test_support::database::rows as session_rows;
 
@@ -53,8 +58,11 @@ fn targets_land(primary: &Running, replica: &Running) {
     assert_eq!(rows(&reader.query("SELECT K FROM Y.T").unwrap()), ["1"]);
     let refused = reader.query("INSERT INTO Y.T VALUES (2)").unwrap_err();
     assert_eq!(refused.sqlcode, -917, "{}", refused.message);
-    let unseen = settings(&format!("turborel://Y@{r}/?tls_mode=disable&target=read-only")).connect().unwrap_err();
-    assert_eq!(unseen.sqlstate, "08001", "{}", unseen.message);
+    let told = settings(&format!("turborel://Y@{p},{r}/?tls_mode=disable&target=read-only")).connect().unwrap();
+    assert!(reached(told.target(), replica), "{:?}", told.target());
+    assert_eq!(told.setting(SERVER_READ_ONLY), Some("YES"));
+    let mut asked = Connection::open_offering(TcpStream::connect(r).unwrap(), ("Y", &mut Trust), Offer::none()).unwrap();
+    assert_eq!(role(&mut asked).unwrap(), Role::Unknown, "with no status, the query, which Y cannot see");
 }
 
 /// Asserts a pool of read-only settings over both servers hands out the
@@ -76,11 +84,12 @@ fn pool_reads_the_replica(primary: &Running, replica: &Running) {
 /// Verifies: [DESIGN] RULES.md D201, D206, D57: of a group of three over
 /// TCP, a server of its primary and one of a backup following it. Settings
 /// asking for a read-write server pass the replica listed first and
-/// connect to the primary, whose role the owner's session reads as
-/// read-write; asking for a read-only server they pass the primary listed
-/// first and connect to the replica, read-only, which serves the rows
-/// committed and refuses a change (SQLCODE -917). A user not the owner
-/// cannot see the replica's role, so is kept by neither (SQLSTATE 08001).
+/// connect to the primary, whose role the session is told is read-write;
+/// asking for a read-only server they pass the primary listed first and
+/// connect to the replica, read-only, which serves the rows committed and
+/// refuses a change (SQLCODE -917). A user not the owner is told the
+/// replica's role by its session status too, and kept; without status,
+/// it asks REPLICAS, whose row it cannot see, so the role is unknown.
 /// A pool of read-only settings hands out the replica's connections, and
 /// again as they come back reset.
 #[test]
