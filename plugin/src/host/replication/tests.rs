@@ -254,3 +254,56 @@ fn an_archive_answers_as_a_target() {
     begin.put_str("b");
     assert_eq!(h.call(p::ARCHIVE, payload::TARGET_BEGIN, "SHELF", begin).unwrap_err().state, "38000");
 }
+
+/// The code of a backup target's kind.
+const KIND_TARGET: u8 = 8;
+
+/// A kind 8 target whose stores read what it was named.
+struct Labelled(&'static [u8]);
+
+impl Target for Labelled {
+    fn open(&mut self, _location: &str) -> Answer<Box<dyn TargetStore>> {
+        Ok(Box::new(Label(self.0)))
+    }
+}
+
+/// A store of `Labelled`.
+struct Label(&'static [u8]);
+
+impl TargetStore for Label {
+    fn begin(&mut self, object: &str) -> Answer<Box<dyn Upload>> {
+        Err(PluginError::external(&format!("{object} is read only")))
+    }
+    fn read(&mut self, _object: &str, _offset: u64, _max: u32) -> Answer<Vec<u8>> {
+        Ok(self.0.to_vec())
+    }
+    fn list(&mut self, _prefix: &str) -> Answer<Vec<String>> {
+        Ok(Vec::new())
+    }
+    fn remove(&mut self, _object: &str) -> Answer<()> {
+        Ok(())
+    }
+}
+
+/// Verifies: [EXTENSION] RULES.md D274: an archive and a kind 8 target of
+/// one name are two objects, each opening its own stores, numbered apart.
+#[test]
+fn an_archive_and_a_target_of_one_name_stay_apart() {
+    let plugin = Plugin::new("1.0.0").target("SHELF", Labelled(b"target")).archive("SHELF", Shelf);
+    let mut h = Harness::new(plugin);
+    let mut open = Vec::new();
+    open.put_str("shelf://x");
+    let archive_store = h.call(p::ARCHIVE, payload::TARGET_OPEN, "SHELF", open.clone()).unwrap();
+    let target_store = h.call(KIND_TARGET, payload::TARGET_OPEN, "SHELF", open).unwrap();
+    let read_of = |store: &[u8]| {
+        let mut read = store.to_vec();
+        read.put_str("a");
+        read.put_u64(0);
+        read.put_u32(16);
+        read
+    };
+    let got = h.call(KIND_TARGET, payload::TARGET_READ, "SHELF", read_of(&target_store)).unwrap();
+    assert_eq!(payload::reader(&got).bytes().unwrap(), b"target");
+    let got = h.call(p::ARCHIVE, payload::TARGET_READ, "SHELF", read_of(&archive_store)).unwrap();
+    assert_eq!(payload::reader(&got).bytes().unwrap(), b"kept");
+}

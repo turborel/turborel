@@ -8269,7 +8269,11 @@ each checked by `chunk_digest` before it is written to the database's
 `transfer/` and made durable. A program that ends mid-chunk stops the
 node, and the replica made again clears `transfer/` and fetches anew, so
 nothing half fetched is installed. A transfer costs a call a request
-served, one a piece, and one a chunk fetched.
+served, one a piece, and one a chunk fetched. Staging goes through the
+node's file system, a host plug-in's if one serves it (D251). A real
+process's test kills the example plug-in's SHIPPED mid-chunk. A
+consensus has no example program, as it would need a whole protocol, so
+the simulator's stand-ins cover it through the real bridges.
 
 #### D273. A plug-in consensus steps whole in one call, made again from its journal, VR still built in
 
@@ -8287,7 +8291,10 @@ A step costs one call.
 #### D274. A plug-in archive is a target reached before any database opens, its errors the call's own
 
 An archive is a backup target's provider of the scheme its object's name
-is, with the calls of kind 8 (D166). It is a host kind because a restore
+is, with the calls of kind 8 (D166), an object of its own with stores and
+uploads of its own, apart from a kind 8 target of the same name. The SDK
+holds it as any host object, which need not be `Send` since `serve_on`
+keeps the plug-in on the thread that serves it. It is a host kind because a restore
 runs before any database opens, when no extension is installed, so
 `restore` starts the host plug-ins first and `open_target` asks a host
 archive of the scheme before an extension's. A process that fails stops

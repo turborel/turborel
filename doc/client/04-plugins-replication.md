@@ -29,12 +29,13 @@ HOST ARCHIVE <identifier>
 ```
 
 The example plug-in's manifest, as the tests write it, serves a
-transport and a journal.
+transport, a journal and a state transfer.
 
 ```
 NAME REPL; VERSION '1.0.0'; PROTOCOL 1; EXECUTABLE 'plugin_example';
 HOST REPLICA TRANSPORT LOOP;
 HOST JOURNAL KEPT;
+HOST STATE TRANSFER SHIPPED;
 ```
 
 The host declares the plug-in in PLUGINS.HOST, as `NAME=directory`, the
@@ -149,6 +150,15 @@ file is staged and made durable, and a program that ends mid-chunk stops
 the node. The replica started again clears `transfer/` and fetches
 anew, so nothing half fetched is ever installed.
 
+The example's SHIPPED keeps each fetch in a directory of its own,
+`shipped/` of its working directory, cleared as the fetch begins. Its
+request names a file and an offset, or asks for the manifest, and its
+answer carries the manifest or the piece, which it appends to its file.
+CHUNK reads the files back, 64 KiB at most a call, so a file of 200,000
+bytes is staged in four chunks. The tests kill it after the first chunk
+of a file and check that the node stopped, and that the node started
+again clears what was staged and fetches every file whole.
+
 ## Consensus
 
 A consensus is a deterministic machine of inputs and outputs, so it can
@@ -177,11 +187,18 @@ made again is opened from the journal, which holds everything it made
 durable, so one killed while it changes views recovers as a replica
 that crashed does.
 
+The example plug-in serves no consensus, as one would need a whole
+protocol of its own. The simulator's stand-ins serve one through the
+real bridges, killed at moments each seed chooses and in the middle of
+view changes, and the group stays safe and converges.
+
 ## Archives
 
 An archive serves the backup targets of one scheme, with the calls a
 target of an extension has ([Plug-ins](04-plugins.md)), its kind's code
-36 in place of 8. A restore starts the host plug-ins before it does
+36 in place of 8. An archive is an object of its own, apart from a
+kind 8 target of the same name that the same program serves, and each
+keeps its own stores and uploads. A restore starts the host plug-ins before it does
 anything, so a location of an archive's scheme is reached with no
 database open. A target the host registered serves its scheme first,
 then a host plug-in's archive, then an extension's target.

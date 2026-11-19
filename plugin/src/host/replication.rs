@@ -1,8 +1,8 @@
 //! \[EXTENSION\] The host kinds replication and the archive are served by
 //! (RULES.md D270 to D274), one trait each: a replica transport, a
 //! journal, a state transfer (`replication/transfer.rs`), a consensus,
-//! and an archive (a backup target's `Target`, its calls dispatched as
-//! kind 8's).
+//! and an archive (a backup target's `Target`, its calls a kind 8
+//! target's operations, its stores its own).
 //! Each is registered by a method of `Plugin` naming it, served as a host
 //! object of its kind, its payloads read and written as
 //! `turborel::plugin::payload::replication` gives them.
@@ -18,7 +18,8 @@ use turborel::plugin::payload::replication::{self as p, Held, Member};
 
 pub use self::transfer::StateTransfer;
 
-use super::super::dispatch::{read, u64_of};
+use super::super::dispatch::{read, target, u64_of};
+use super::super::objects::Held as Numbered;
 use super::super::registry::Plugin;
 use super::super::serve::Cx;
 use super::super::{Answer, PluginError, Target};
@@ -161,18 +162,23 @@ impl Plugin {
     /// It, serving `target` as the archive of the scheme `name`.
     #[must_use]
     pub fn archive(self, name: &str, target: impl Target + 'static) -> Plugin {
-        self.target(name, target).host(p::ARCHIVE, name, Archived)
+        self.host(p::ARCHIVE, name, Archived { scheme: Box::new(target), held: Numbered::default() })
     }
 }
 
-/// What announces an archive's kind: its calls are a backup target's,
-/// dispatched as kind 8's to the target of its name, which holds its
-/// stores and uploads, so this answers none.
-struct Archived;
+/// An archive as a host object: a backup target's calls (kind 8's
+/// operations), answered by its own scheme with stores and uploads of its
+/// own, apart from any kind 8 target of its name.
+struct Archived {
+    /// The scheme.
+    scheme: Box<dyn Target>,
+    /// Its stores and uploads, by number.
+    held: Numbered,
+}
 
 impl HostObject for Archived {
-    fn answer(&mut self, _cx: &mut Cx<'_>, op: u8, _payload: &[u8]) -> Answer<Vec<u8>> {
-        Err(unknown("archive", op))
+    fn answer(&mut self, _cx: &mut Cx<'_>, op: u8, payload: &[u8]) -> Answer<Vec<u8>> {
+        target(self.scheme.as_mut(), &mut self.held, op, &mut turborel::plugin::payload::reader(payload))
     }
 }
 

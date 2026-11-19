@@ -18,8 +18,11 @@ use super::serve::Cx;
 use super::{Answer, PluginError};
 
 /// An object of a host kind, as the protocol calls it: an operation and
-/// its payload, answered with the RESULT's payload.
-pub trait HostObject: Send {
+/// its payload, answered with the RESULT's payload. It need not be `Send`,
+/// as no object of an extension's kind need be: `serve_on` keeps the
+/// plug-in on the thread that serves it, and only the reading of its
+/// input runs on another.
+pub trait HostObject {
     /// The answer of operation `op` with `payload`.
     ///
     /// # Errors

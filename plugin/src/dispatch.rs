@@ -13,7 +13,7 @@ use turborel::plugin::wire::{put_rows, rows};
 use turborel::value::Value;
 
 use super::kinds::{Step, Who};
-use super::objects::numbered;
+use super::objects::{Held, numbered};
 use super::registry::{Plugin, find};
 use super::serve::Cx;
 use super::{Answer, PluginError, coordinates, dense_vector};
@@ -61,8 +61,7 @@ pub(super) fn answer(plugin: &mut Plugin, cx: &mut Cx<'_>, (kind, op, object): (
         5 => metric(plugin, object, &mut r),
         6 => embed(plugin, object, &mut r),
         7 => authenticate(plugin, object, op, &mut r),
-        // \[EXTENSION\] An archive's calls are a target's (RULES.md D274).
-        8 | p::replication::ARCHIVE => target(plugin, object, op, &mut r),
+        8 => target(find(&mut plugin.targets, object)?.as_mut(), &mut plugin.held, op, &mut r),
         9 => partition(plugin, object, op, &mut r),
         20.. => super::host::answer(plugin, cx, (kind, op, object), payload),
         _ => later::answer(plugin, cx, (kind, op, object), &mut r),
@@ -172,18 +171,19 @@ fn authenticate(plugin: &mut Plugin, object: &str, op: u8, r: &mut Reader<'_>) -
     Ok(out)
 }
 
-/// A backup target's operation.
-fn target(plugin: &mut Plugin, object: &str, op: u8, r: &mut Reader<'_>) -> Answer<Vec<u8>> {
+/// A backup target's operation, its stores and uploads kept in `held`:
+/// a kind 8 target's in the plug-in's, an archive's in its own (RULES.md
+/// D274), so the two of one name never share one.
+pub(super) fn target(scheme: &mut dyn super::Target, held: &mut Held, op: u8, r: &mut Reader<'_>) -> Answer<Vec<u8>> {
     let mut out = Vec::new();
     if op == p::TARGET_OPEN {
-        let store = find(&mut plugin.targets, object)?.open(&read(r, str_of)?)?;
-        let n = plugin.held.number();
-        plugin.held.stores.insert(n, store);
+        let store = scheme.open(&read(r, str_of)?)?;
+        let n = held.number();
+        held.stores.insert(n, store);
         out.put_u64(n);
         return Ok(out);
     }
     let store = read(r, u64_of)?;
-    let held = &mut plugin.held;
     match op {
         p::TARGET_BEGIN => {
             let upload = numbered(&mut held.stores, store, "target")?.begin(&read(r, str_of)?)?;

@@ -2,13 +2,14 @@
 //! (RULES.md D270): the objects of kinds 32 to 35 that PLUGINS.HOST's
 //! plug-ins declare, at most one of each kind, each on a process of its
 //! own (`Hosted`), in place of the built-in transport, journal, state
-//! transfer and consensus. A kind no plug-in serves stays built in.
+//! transfer and consensus. A kind no plug-in serves stays built in. A
+//! transfer stages what it fetches through the node's file system, a host
+//! plug-in's if one serves it (D251).
 
 use std::path::Path;
 use std::sync::Arc;
 
 use turborel::db::Database;
-use turborel::disk::io::OsFileSystem;
 use turborel::error::{Code, Result, SqlError};
 use turborel::plugin::hosted::HostLink;
 use turborel::plugin::manifest::HostKind;
@@ -68,7 +69,7 @@ pub fn plugged(db: &Database, dir: &Path, (configuration, me): (&[Member], Repli
     };
     let transfer = match one(db, HostKind::StateTransfer)? {
         Some(link) => {
-            Some(Arc::new(PluginTransfer::new(Box::new(Hosted::new(link, STATE_TRANSFER)?), Arc::new(OsFileSystem), staging_dir(dir))))
+            Some(Arc::new(PluginTransfer::new(Box::new(Hosted::new(link, STATE_TRANSFER)?), db.file_system()?, staging_dir(dir))))
         }
         None => None,
     };

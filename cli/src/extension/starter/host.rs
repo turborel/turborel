@@ -8,20 +8,67 @@
 
 use super::kinds::Starter;
 
-/// The source of a host object of replication's or the archive's, served
-/// by its operations' codes until the SDK's trait is written.
-macro_rules! raw {
-    ($name:literal, $ty:literal, $what:literal) => {
-        concat!(
-            "/// ", $name, ": ", $what, ", every operation refused until it is written.\nstruct ", $ty, ";\n\n",
-            "impl HostObject for ", $ty, " {\n    fn answer(&mut self, _cx: &mut Cx<'_>, op: u8, _payload: &[u8]) -> Answer<Vec<u8>> {\n        ",
-            "Err(PluginError::external(&format!(\"", $name, " does not serve operation {op} yet\")))\n    }\n}\n"
-        )
+/// The refusal of every call of a starter's object `name` not yet
+/// written, as its methods' body.
+macro_rules! refused {
+    ($name:literal) => {
+        concat!("Err(PluginError::external(\"", $name, " is not written yet\"))")
     };
 }
 
-/// The paths a raw host object uses.
-const RAW: &[&str] = &["turborel_plugin::Cx", "turborel_plugin::HostObject", "turborel_plugin::PluginError"];
+/// WIRE: a replica transport refusing each call.
+const WIRE: &str = concat!(
+    "/// WIRE: how replicas reach each other, every call refused until it is written.\nstruct Wire;\n\n",
+    "impl ReplicaTransport for Wire {\n",
+    "    fn open(&mut self, _me: u32, _configuration: &[Member]) -> Answer<Vec<u32>> {\n        ", refused!("WIRE"), "\n    }\n",
+    "    fn send(&mut self, _to: u32, _frame: &[u8]) -> Answer<bool> {\n        ", refused!("WIRE"), "\n    }\n",
+    "    fn receive(&mut self) -> Answer<Vec<(u32, Vec<u8>)>> {\n        ", refused!("WIRE"), "\n    }\n",
+    "    fn reconfigure(&mut self, _configuration: &[Member]) -> Answer<Vec<u32>> {\n        ", refused!("WIRE"), "\n    }\n}\n"
+);
+
+/// BOOK: a journal refusing each call.
+const BOOK: &str = concat!(
+    "/// BOOK: the consensus journal's storage, every call refused until it is written.\nstruct Book;\n\n",
+    "impl Journal for Book {\n",
+    "    fn open(&mut self) -> Answer<Held> {\n        ", refused!("BOOK"), "\n    }\n",
+    "    fn persist(&mut self, _at: u64, _record: &[u8]) -> Answer<()> {\n        ", refused!("BOOK"), "\n    }\n",
+    "    fn truncate(&mut self, _after: u64) -> Answer<()> {\n        ", refused!("BOOK"), "\n    }\n",
+    "    fn retain(&mut self, _through: u64) -> Answer<()> {\n        ", refused!("BOOK"), "\n    }\n",
+    "    fn mark(&mut self, _at: u64, _epoch: u64, _members: &[Member]) -> Answer<()> {\n        ", refused!("BOOK"), "\n    }\n",
+    "    fn persist_state(&mut self, _state: &[u8]) -> Answer<()> {\n        ", refused!("BOOK"), "\n    }\n",
+    "    fn sync(&mut self) -> Answer<Vec<u64>> {\n        ", refused!("BOOK"), "\n    }\n",
+    "    fn flush(&mut self) -> Answer<Vec<u64>> {\n        ", refused!("BOOK"), "\n    }\n}\n"
+);
+
+/// SHIP: a state transfer refusing each call.
+const SHIP: &str = concat!(
+    "/// SHIP: how a replica's state is shipped, every call refused until it is written.\nstruct Ship;\n\n",
+    "impl StateTransfer for Ship {\n",
+    "    fn begin(&mut self, _from: u32) -> Answer<(u64, Option<Vec<u8>>)> {\n        ", refused!("SHIP"), "\n    }\n",
+    "    fn take(&mut self, _fetch: u64, _frame: &[u8]) -> Answer<(bool, Option<Vec<u8>>)> {\n        ", refused!("SHIP"), "\n    }\n",
+    "    fn fetched(&mut self, _fetch: u64) -> Answer<Manifest> {\n        ", refused!("SHIP"), "\n    }\n",
+    "    fn chunk(&mut self, _fetch: u64, _file: u32, _at: u64, _max: u32) -> Answer<Vec<u8>> {\n        ", refused!("SHIP"), "\n    }\n",
+    "    fn export(&mut self, _export: u64, _manifest: Manifest) -> Answer<()> {\n        ", refused!("SHIP"), "\n    }\n",
+    "    fn serve(&mut self, _to_export: (u32, u64), _request: &[u8], _given: Option<(u32, u64, Vec<u8>)>) -> Answer<Served> {\n        ",
+    refused!("SHIP"), "\n    }\n}\n"
+);
+
+/// VOTE: a consensus refusing each step.
+const VOTE: &str = concat!(
+    "/// VOTE: the replication protocol, every step refused until it is written.\nstruct Vote;\n\n",
+    "impl Consensus for Vote {\n",
+    "    fn open(&mut self, _me: u32, _configuration: &[Member], _recovered: Option<Held>, _nonce: u64) -> Answer<()> {\n        ",
+    refused!("VOTE"), "\n    }\n",
+    "    fn step(&mut self, _input: ReplicaInput) -> Answer<Vec<ReplicaOutput>> {\n        ", refused!("VOTE"), "\n    }\n",
+    "    fn describe(&mut self) -> String {\n        \"VOTE, not written yet\".to_owned()\n    }\n}\n"
+);
+
+/// VAULT: an archive refusing each call.
+const VAULT: &str = concat!(
+    "/// VAULT: where the log is archived and backups kept, refused until it is written.\nstruct Vault;\n\n",
+    "impl Target for Vault {\n",
+    "    fn open(&mut self, _location: &str) -> Answer<Box<dyn TargetStore>> {\n        ", refused!("VAULT"), "\n    }\n}\n"
+);
 
 /// Every host kind, in the order of their codes.
 pub(in crate::extension) const HOST_STARTERS: [Starter; 17] = [
@@ -180,9 +227,9 @@ impl SpillStore for Areas {
         declaration: "HOST SERVED CONNECTIONS SERVED",
         uses: &["turborel_plugin::host::Connections"],
         source: "/// SERVED: connections it ends and cancels none of.
-struct Served;
+struct Sessions;
 
-impl Connections for Served {
+impl Connections for Sessions {
     fn end(&mut self, _id: u64) -> bool {
         false
     }
@@ -191,7 +238,7 @@ impl Connections for Served {
     }
 }
 ",
-        added: ".host_connections(\"SERVED\", Served)",
+        added: ".host_connections(\"SERVED\", Sessions)",
     },
     Starter {
         word: "listener",
@@ -268,41 +315,41 @@ impl Job for Tidy {
         word: "replica-transport",
         code: 32,
         declaration: "HOST REPLICA TRANSPORT WIRE",
-        uses: RAW,
-        source: raw!("WIRE", "Wire", "how replicas reach each other"),
-        added: ".host(32, \"WIRE\", Wire)",
+        uses: &["turborel_plugin::ReplicaTransport", "turborel_plugin::Member", "turborel_plugin::PluginError"],
+        source: WIRE,
+        added: ".replica_transport(\"WIRE\", Wire)",
     },
     Starter {
         word: "journal",
         code: 33,
         declaration: "HOST JOURNAL BOOK",
-        uses: RAW,
-        source: raw!("BOOK", "Book", "the consensus journal's storage"),
-        added: ".host(33, \"BOOK\", Book)",
+        uses: &["turborel_plugin::Journal", "turborel_plugin::Held", "turborel_plugin::Member", "turborel_plugin::PluginError"],
+        source: BOOK,
+        added: ".journal(\"BOOK\", Book)",
     },
     Starter {
         word: "state-transfer",
         code: 34,
         declaration: "HOST STATE TRANSFER SHIP",
-        uses: RAW,
-        source: raw!("SHIP", "Ship", "how a replica's state is shipped"),
-        added: ".host(34, \"SHIP\", Ship)",
+        uses: &["turborel_plugin::StateTransfer", "turborel_plugin::Manifest", "turborel_plugin::Served", "turborel_plugin::PluginError"],
+        source: SHIP,
+        added: ".state_transfer(\"SHIP\", Ship)",
     },
     Starter {
         word: "consensus",
         code: 35,
         declaration: "HOST CONSENSUS VOTE",
-        uses: RAW,
-        source: raw!("VOTE", "Vote", "the replication protocol"),
-        added: ".host(35, \"VOTE\", Vote)",
+        uses: &["turborel_plugin::Consensus", "turborel_plugin::Held", "turborel_plugin::Member", "turborel_plugin::ReplicaInput", "turborel_plugin::ReplicaOutput", "turborel_plugin::PluginError"],
+        source: VOTE,
+        added: ".consensus(\"VOTE\", Vote)",
     },
     Starter {
         word: "archive",
         code: 36,
         declaration: "HOST ARCHIVE VAULT",
-        uses: RAW,
-        source: raw!("VAULT", "Vault", "where the log is archived and backups kept"),
-        added: ".host(36, \"VAULT\", Vault)",
+        uses: &["turborel_plugin::Target", "turborel_plugin::TargetStore", "turborel_plugin::PluginError"],
+        source: VAULT,
+        added: ".archive(\"VAULT\", Vault)",
     },
 ];
 

@@ -18,7 +18,7 @@ pub fn with(plugin: Plugin) -> Plugin {
 
 /// The program ended as a process killed mid-write: `partial` written to
 /// `out`, and no more.
-fn killed(out: &mut dyn Write, partial: &[u8]) -> ! {
+pub fn killed(out: &mut dyn Write, partial: &[u8]) -> ! {
     let _written = out.write_all(partial).and_then(|()| out.flush());
     std::process::abort()
 }
