@@ -47,7 +47,7 @@
 
 mod dispatch;
 mod harness;
-mod host;
+pub mod host;
 mod input;
 mod kinds;
 mod objects;

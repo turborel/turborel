@@ -4,6 +4,14 @@
 //! gives a trait of its own and serves it so, its payloads read and
 //! written as the database's `plugin::payload` gives them.
 
+mod files;
+mod small;
+mod stores;
+
+pub use files::{Accept, Files, Mode};
+pub use small::{Checksum, Connections, Crypto, Job, Keys, PageEncoding, TimeSource};
+pub use stores::{CatalogKeeper, LogStore, Records, SpillStore};
+
 use super::registry::Plugin;
 use super::serve::Cx;
 use super::{Answer, PluginError};

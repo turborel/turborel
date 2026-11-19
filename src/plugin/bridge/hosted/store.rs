@@ -19,7 +19,7 @@ use crate::db::{CatalogStorage, CatalogStore, LogStorage, OpenedLog, StorePlace}
 use crate::error::{Result, SqlError};
 use crate::log::{Log, LogCapabilities, Lsn, Records};
 use crate::plugin::bridge::{answer, byte, leaked};
-use crate::plugin::errors::{host_failed, violation};
+use crate::plugin::errors::violation;
 use crate::plugin::hosted::HostLink;
 use crate::plugin::manifest::HostDeclared;
 use crate::plugin::payload::hosted::{
@@ -86,13 +86,13 @@ impl LogStorage for PluginLogStorage {
 
 /// What a host log holds of its own: the next position, the records not
 /// yet sent, the position durable through, whether a sync is sending,
-/// and why one failed, if one did.
+/// and how one failed, if one did: every later sync fails so too.
 struct Held {
     next: u64,
     sent: Vec<(u64, Vec<u8>)>,
     durable: u64,
     sending: bool,
-    failed: Option<String>,
+    failed: Option<SqlError>,
 }
 
 /// A log a host plug-in keeps.
@@ -118,11 +118,6 @@ impl PluginLog {
         put_records(&mut payload, records);
         self.link.call(LOG_APPEND, payload).map(drop)
     }
-
-    /// The failure of a sync after one failed.
-    fn failed(&self, why: &str) -> SqlError {
-        host_failed(&self.link.plugin().manifest.name, why)
-    }
 }
 
 impl Log for PluginLog {
@@ -140,8 +135,8 @@ impl Log for PluginLog {
     fn sync(&self, through: Lsn) -> Result<()> {
         let mut held = self.held();
         loop {
-            if let Some(why) = &held.failed {
-                return Err(self.failed(why));
+            if let Some(failed) = &held.failed {
+                return Err(failed.clone());
             }
             if held.durable >= through.0 {
                 return Ok(());
@@ -159,7 +154,7 @@ impl Log for PluginLog {
             held.sending = false;
             match done {
                 Ok(()) => held.durable = held.durable.max(last),
-                Err(e) => held.failed = Some(e.msg),
+                Err(e) => held.failed = Some(e),
             }
             self.given.notify_all();
         }

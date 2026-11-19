@@ -172,7 +172,7 @@ impl HostPlugin {
         let pinned = pinned_check(host, spec, &program)?;
         pinned(&directory)?;
         let limits = (Arc::clone(&host.limits), Arc::clone(&host.memory));
-        let pool = Pool::new(&manifest.name, (directory.clone(), executable), manifest.kinds(), limits).with_check(pinned);
+        let pool = Pool::new(&manifest.name, (directory.clone(), executable), manifest.kinds(), limits).with_check(pinned).named_by_host();
         let plugin = Arc::new(HostPlugin { manifest, directory, pool: Arc::new(pool), stop: Arc::clone(stop) });
         drop(plugin.pool.lease()?);
         Ok(plugin)
@@ -216,11 +216,15 @@ fn pinned_check(host: &Arc<Host>, spec: &HostSpec, program: &Path) -> Result<sup
             spec.name
         )));
     }
+    // The host's own cryptography as the plug-in starts, kept: a plug-in
+    // that brings package cryptography replaces it, and is never checked
+    // by itself.
+    let own = spec.digest.as_ref().map(|_| host.crypto()).transpose()?;
     let (host, digest, program) = (Arc::clone(host), spec.digest.clone(), program.to_path_buf());
     Ok(Arc::new(move |dir: &Path| {
-        if let Some(wanted) = &digest {
+        if let (Some(wanted), Some(own)) = (&digest, &own) {
             let bytes = std::fs::read(&program).map_err(|e| unavailable(&format!("{}: {e}", program.display())))?;
-            let got = hex(&host.crypto()?.sha256(&bytes));
+            let got = hex(&own.sha256(&bytes));
             if &got != wanted {
                 return Err(super::package::errors::changed(&format!(
                     "{} is of digest {got}, not the {wanted} PLUGINS.HOST pins",

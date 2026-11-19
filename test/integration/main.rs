@@ -149,6 +149,7 @@ mod graph_table;
 mod grouping_sets;
 mod guarded_reads;
 mod held_lobs;
+mod host_plugins;
 mod hybrid_layout;
 mod hypothetical;
 mod identity;

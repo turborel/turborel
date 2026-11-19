@@ -87,6 +87,9 @@ pub struct Pool {
     limits: Arc<Limits>,
     /// What checks its directory as each process starts.
     check: Option<super::host::Check>,
+    /// Whether the host named its directory itself, as PLUGINS.HOST does,
+    /// so PLUGINS.DIRECTORIES need not hold it (RULES.md D229).
+    named: bool,
     idle: Mutex<Idle>,
     freed: Condvar,
     next_call: AtomicU64,
@@ -125,6 +128,7 @@ impl Pool {
             executable,
             limits,
             check: None,
+            named: false,
             idle: Mutex::new(Idle::default()),
             freed: Condvar::new(),
             next_call: AtomicU64::new(1),
@@ -140,6 +144,14 @@ impl Pool {
     #[must_use]
     pub fn with_check(mut self, check: super::host::Check) -> Pool {
         self.check = Some(check);
+        self
+    }
+
+    /// It, its directory named by the host itself, as a host plug-in's
+    /// is, so PLUGINS.DIRECTORIES need not hold it (RULES.md D229).
+    #[must_use]
+    pub fn named_by_host(mut self) -> Pool {
+        self.named = true;
         self
     }
 
@@ -220,9 +232,10 @@ impl Pool {
     }
 
     /// How to start its program now: its directory allowed by
-    /// PLUGINS.DIRECTORIES as it is now (RULES.md D173).
+    /// PLUGINS.DIRECTORIES as it is now (RULES.md D173), unless the host
+    /// named it.
     fn spawned(&self) -> Result<Spawn> {
-        let directory = self.limits.directories().allowed(&self.spawn.directory)?;
+        let directory = if self.named { self.spawn.directory.clone() } else { self.limits.directories().allowed(&self.spawn.directory)? };
         if let Some(check) = &self.check {
             check(&directory)?;
         }
