@@ -512,7 +512,8 @@ pub fn assign(v: Value, target: &DataType, rule: &str) -> Result<Value> {
     }
     let from_text = matches!((&v, target), (Value::Char(_), DataType::Extension(_))) && kind.assigns_text();
     let given = if from_text { kind.cast(v, target)? } else { v };
-    kind.assign(given, target, rule)
+    // [DESIGN] the type assigned to, for a client's structured failure (RULES.md D186).
+    kind.assign(given, target, rule).map_err(|e| e.or_of_type(target))
 }
 
 /// The citation of the rule `rule` that assigns a value, and of the

@@ -146,6 +146,10 @@ impl Host for SessionHost<'_, '_> {
         self.session.stop.check()
     }
 
+    fn noted(&self, e: &SqlError) {
+        self.session.stop.served().note(e.sqlstate(), &e.msg);
+    }
+
     fn run(&mut self, c: &Contained, frame: &mut Params) -> Result<Completion> {
         if matches!(c.statement(), SqlStatement::Commit | SqlStatement::Rollback) {
             return self.end_transaction(matches!(c.statement(), SqlStatement::Commit));

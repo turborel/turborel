@@ -6,11 +6,12 @@
 //! statement and `-` within one, `%S` the server's product and version,
 //! and `%%` a percent sign. Any other `%` is written as it is.
 //!
-//! The catalog and whether the user is the owner are read from the
-//! Information Schema, only for a prompt that shows them, and again after
-//! a statement that may change them; the schema is the user's at first,
-//! then what SET SCHEMA set. A status the protocol sends with each
-//! statement, once it has one, takes the place of both (`Status`).
+//! The catalog, whether the user is the owner, the user and the default
+//! schema are what the server's session status last told (RULES.md D190),
+//! with no statement. Of a server that tells none, the catalog and the
+//! owner are read from the Information Schema, only for a prompt that
+//! shows them, and again after a statement that may change them, and the
+//! schema is the user's at first, then what SET SCHEMA set (`Status`).
 
 /// What begins an escape.
 const ESCAPE: char = '%';

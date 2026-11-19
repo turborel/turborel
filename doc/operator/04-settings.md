@@ -55,6 +55,7 @@ SELECT SETTING_NAME, TAKES_EFFECT FROM INFORMATION_SCHEMA.SETTINGS
 ```
  SETTING_NAME                                                 | TAKES_EFFECT
 --------------------------------------------------------------+--------------
+ SERVER.COMPRESSION_MIN_BYTES                                 | CONNECTION
  SERVER.KEEPALIVE_IDLE_MS                                     | CONNECTION
  SERVER.KEEPALIVE_INTERVAL_MS                                 | CONNECTION
  SERVER.KEEPALIVE_PROBES                                      | CONNECTION
@@ -83,7 +84,7 @@ SELECT SETTING_NAME, TAKES_EFFECT FROM INFORMATION_SCHEMA.SETTINGS
  LOCKS.WAIT                                                   | TRANSACTION
  TRANSACTION.ISOLATION                                        | TRANSACTION
  TRANSACTION.STRICT                                           | TRANSACTION
-(28 rows)
+(29 rows)
 ```
 
 A setting fixed when the database is made is refused after:

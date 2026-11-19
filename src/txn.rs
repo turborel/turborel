@@ -109,10 +109,10 @@ use locks::WaitsFor;
 pub(crate) use logging::Held;
 pub(crate) use marks::Mark;
 pub use reading::{ReadMode, Reading};
-pub use stop::Stop;
 use stop::Stops;
 pub(crate) use stop::Window;
 pub(crate) use stop::checked;
+pub use stop::{MAX_NOTES, Served, Stop};
 use undo::UndoLog;
 
 /// How a transaction begins: whether it waits for locks, how it reads, and

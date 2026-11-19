@@ -6,11 +6,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use std::net::TcpStream;
 use turborel::db::Database;
-use turborel_client::connection::Trust;
-use turborel_client::pool::{Pool, PoolConfig};
+
+use turborel_client::connection::{Connection, Trust};
+use turborel_client::pool::{Pool, PoolConfig, Pooled, RESET_MOST_STATEMENTS, Source};
 use turborel_client::settings::{Options, Settings};
-use turborel_client::target::{Target, connect_to};
+use turborel_client::target::{Duplex, Target, connect_to};
+use turborel_client::told::Offer;
+use turborel_protocol::capability::Capabilities;
 
 use crate::common::{Running, done, rows, start};
 
@@ -75,15 +79,49 @@ fn an_exhausted_pool_waits_its_limit() {
     drop(again);
 }
 
-/// Verifies: [DESIGN] RULES.md D206: a connection given back is reset to
-/// its login: its transaction rolled back, the rows it wrote gone; its
-/// prepared statements destroyed, so the next borrower prepares afresh;
-/// its schema its user's again, autocommit off.
+/// Verifies: [DESIGN] RULES.md D206, D189: a connection given back is
+/// reset to its login, by Reset of a server that grants it: its
+/// transaction rolled back, the rows it wrote gone; its prepared
+/// statements destroyed, so the next borrower prepares afresh, more of
+/// them than statements would destroy kept the connection; its schema its
+/// user's again, autocommit off.
 #[test]
 fn a_connection_given_back_is_reset() {
     let (_db, server) = served();
     let pool = pool(&server, 1, Duration::from_secs(30));
     let mut c = pool.get().unwrap();
+    for _ in 0..=RESET_MOST_STATEMENTS {
+        c.prepare("VALUES 1").unwrap();
+    }
+    given_back_reset(&pool, c);
+}
+
+/// Verifies: [DESIGN] RULES.md D206: of a server that grants neither Ping
+/// nor Reset, a connection is checked by ROLLBACK and reset by statements,
+/// to the same login; with too many statements left prepared, it is
+/// closed rather than kept.
+#[test]
+fn a_connection_granted_nothing_is_reset_by_statements() {
+    let (_db, server) = served();
+    let address = server.address;
+    let connect = move || {
+        let stream: Box<dyn Duplex> = Box::new(TcpStream::connect(address).unwrap());
+        Connection::open_offering(stream, ("X", &mut Trust), Offer::none())
+    };
+    let pool = Pool::new(connect, PoolConfig { max: 1, max_idle: 1, ..PoolConfig::default() });
+    let c = pool.get().unwrap();
+    assert_eq!(c.granted(), Capabilities::NONE);
+    given_back_reset(&pool, c);
+    let mut many = pool.get().unwrap();
+    for _ in 0..=RESET_MOST_STATEMENTS {
+        many.prepare("VALUES 1").unwrap();
+    }
+    drop(many);
+    assert_eq!(pool.counts().unwrap(), (0, 0), "closed rather than reset");
+}
+
+/// Asserts `c`, of `pool`, given back is reset.
+fn given_back_reset<S: Source>(pool: &Pool<S>, mut c: Pooled<S>) {
     c.query("INSERT INTO T VALUES (1)").unwrap();
     let statement = c.prepare("SELECT K FROM T").unwrap();
     c.open_cursor(&statement, &[], 1).unwrap();

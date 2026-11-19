@@ -18,14 +18,15 @@
 //! savepoint set after it, or never sent if their window was not yet
 //! written; each is `Piped::Skipped`. Its requests are of one
 //! transaction, which under autocommit, of a batch that began none, is
-//! committed as the batch ends. The protocol's coming message that skips
-//! a batch's requests after a failure replaces the savepoints (`guarded`
-//! is its seam).
+//! committed as the batch ends. The protocol has no request that skips
+//! the requests after a failure: a Query of several statements stops at
+//! its first failure (RULES.md D192), but only among its own statements,
+//! not among prepared executions. So the savepoints stay (`guarded`).
 
 use std::io::{Read, Write};
 
 use turborel::value::Value;
-use turborel_protocol::{Failure, Request};
+use turborel_protocol::{Attributes, Failure, Request};
 
 use crate::connection::{Connection, Outcome, Result};
 use crate::statements::{Statement, execute_request};
@@ -142,7 +143,8 @@ impl<S: Read + Write> Pipeline<'_, S> {
         let sent = if skip { guarded(queued) } else { queued };
         let ends = connection.autocommit && !skip;
         let mut outcomes = Vec::with_capacity(sent.len());
-        for window in windows(&sent, ends) {
+        let attributes = connection.told.attributes();
+        for window in windows(&sent, (ends, &attributes)) {
             if skip && outcomes.iter().any(|o| matches!(o, Piped::Failed(_))) {
                 outcomes.extend(window.iter().map(|_| Piped::Skipped));
                 continue;
@@ -175,10 +177,11 @@ fn guarded(queued: Vec<Queued>) -> Vec<Queued> {
     sent
 }
 
-/// The requests of `queued`, the transaction ended with each if `ends`,
+/// The requests of `queued`, the transaction ended with each if `ends.0`,
+/// carrying the attributes `ends.1`,
 /// grouped into windows of at most `PIPELINE_WINDOW` bytes: a request
 /// longer than that alone in its own.
-fn windows(queued: &[Queued], ends: bool) -> Vec<Vec<(&Queued, Vec<u8>)>> {
+fn windows<'q>(queued: &'q [Queued], ends: (bool, &Attributes)) -> Vec<Vec<(&'q Queued, Vec<u8>)>> {
     let mut windows: Vec<Vec<(&Queued, Vec<u8>)>> = Vec::new();
     let mut filled = PIPELINE_WINDOW;
     for q in queued {
@@ -196,14 +199,17 @@ fn windows(queued: &[Queued], ends: bool) -> Vec<Vec<(&Queued, Vec<u8>)>> {
     windows
 }
 
-/// The request `q` sends.
-fn request(q: &Queued, ends: bool) -> Request {
+/// The request `q` sends, the transaction ended with it if `ends`, a
+/// statement of the program's carrying `attributes`.
+fn request(q: &Queued, (ends, attributes): (bool, &Attributes)) -> Request {
     match q {
-        Queued::Query(sql) => Request::Query { sql: sql.clone(), ends },
-        Queued::Execute(statement, values) => execute_request(statement, values, 0, ends),
-        Queued::Close(statement) => Request::Close { statement: *statement },
+        Queued::Query(sql) => Request::Query { sql: sql.clone(), ends, attributes: attributes.clone(), multi: false },
+        Queued::Execute(statement, values) => execute_request(statement, (0, values), 0, (ends, attributes.clone())),
+        Queued::Close(statement) => Request::Close { statement: *statement, cursor: 0 },
         Queued::Deallocate(statement) => Request::Deallocate { statement: *statement },
-        Queued::Savepoint(n) => Request::Query { sql: format!("SAVEPOINT {}", savepoint(*n)), ends: false },
+        Queued::Savepoint(n) => {
+            Request::Query { sql: format!("SAVEPOINT {}", savepoint(*n)), ends: false, attributes: Vec::new(), multi: false }
+        }
     }
 }
 
@@ -259,7 +265,7 @@ fn settle<S: Read + Write>(connection: &mut Connection<S>, sent: &[Queued], outc
 /// Runs `sql` within the transaction, whatever `set_autocommit` says: a
 /// statement of the batch's own, which must not end it.
 fn within<S: Read + Write>(connection: &mut Connection<S>, sql: &str) -> Result<()> {
-    connection.send(&Request::Query { sql: sql.to_owned(), ends: false })?;
+    connection.send(&Request::Query { sql: sql.to_owned(), ends: false, attributes: Vec::new(), multi: false })?;
     connection.query_reply().map(drop)
 }
 
@@ -276,15 +282,15 @@ mod tests {
         let half = Queued::Query("x".repeat(PIPELINE_WINDOW.checked_div(2).unwrap()));
         let long = Queued::Query("y".repeat(PIPELINE_WINDOW));
         let queued = [Queued::Query("a".to_owned()), small, half, long, Queued::Query("z".to_owned())];
-        let sizes: Vec<usize> = windows(&queued, false).iter().map(Vec::len).collect();
+        let sizes: Vec<usize> = windows(&queued, (false, &Vec::new())).iter().map(Vec::len).collect();
         assert_eq!(sizes, [3, 1, 1]);
-        let all: usize = windows(&queued, true).iter().flatten().map(|(_, b)| b.len()).sum();
+        let all: usize = windows(&queued, (true, &Vec::new())).iter().flatten().map(|(_, b)| b.len()).sum();
         let mut whole = Vec::new();
         for q in &queued {
-            request(q, true).encode(&mut whole);
+            request(q, (true, &Vec::new())).encode(&mut whole);
         }
         assert_eq!(all, whole.len(), "every request, each once");
-        assert!(windows(&[], false).is_empty());
+        assert!(windows(&[], (false, &Vec::new())).is_empty());
         assert_eq!(OnError::default(), OnError::Continue);
     }
 }

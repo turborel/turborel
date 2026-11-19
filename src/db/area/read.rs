@@ -101,7 +101,7 @@ impl Reader<'_> {
             let name = QualifiedName { auth: schema.clone(), ident: ident.clone() };
             access || !applicable(&*st.catalog, self.user.cell, &name).0.is_empty()
         };
-        let Subject { constraint, table, column, cursor, assertion, trigger, routine, signalled } = &condition.subject;
+        let Subject { constraint, table, column, cursor, assertion, trigger, routine, signalled, .. } = &condition.subject;
         let named = table.is_some();
         let table = table.clone().filter(visible);
         // [GR3j iii] a table constraint goes with its table; [GR3j iv] an

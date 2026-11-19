@@ -149,7 +149,9 @@ fn describe_commands_read_the_information_schema() {
 
 /// Verifies: [DESIGN] RULES.md D215, D216: `\i` and `\ir` run files, the
 /// latter named from the current file's directory; `\o` sends results to
-/// a file; `\export` writes rows that `\import` reads back.
+/// a file; `\export` writes rows that `\import` reads back, by the
+/// protocol's bulk copy; `\export ... native` writes the protocol's own
+/// frames, which the client library reads back.
 #[test]
 fn files_are_included_written_and_read_back() {
     let (_db, server) = served();
@@ -169,6 +171,10 @@ fn files_are_included_written_and_read_back() {
     let imported = script(&server, &[], &format!("\\import T {} header\n", csv.display()));
     assert_eq!(imported.out, "OK, 2 rows imported\n");
     assert_eq!(script(&server, &["-t", "-A"], "SELECT COUNT(*) FROM T;").out, "4\n");
+    let native = scratch.path("t.native");
+    assert_eq!(script(&server, &[], &format!("\\export T {} native\n", native.display())).out, "OK, 4 rows exported\n");
+    let (columns, rows) = turborel_client::export::read_native(&mut std::fs::File::open(&native).unwrap()).unwrap();
+    assert_eq!((columns.len(), rows.len()), (2, 4), "every row, in the protocol's own frames");
 }
 
 /// Verifies: [DESIGN] RULES.md D215: `\gset` stores a row's columns as

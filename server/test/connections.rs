@@ -21,14 +21,14 @@ fn a_connection_breaking_the_protocol_is_closed() {
     let db = Database::new();
     let server = start(&db, &[(MAX_MESSAGE_BYTES, 1024)]);
     let mut raw = server.raw();
-    raw.send(&Request::Query { sql: "SELECT 1".into(), ends: false });
+    raw.send(&Request::Query { sql: "SELECT 1".into(), ends: false, attributes: Vec::new(), multi: false });
     assert_eq!(state(&raw.refusal()), ("08006", -919), "no Hello");
     let mut raw = server.raw();
     raw.send_bytes(&[0, 0, 0, 0, 0]);
     assert_eq!(state(&raw.refusal()), ("08006", -919), "no such kind");
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Query { sql: "X".repeat(1025), ends: false });
+    raw.send(&Request::Query { sql: "X".repeat(1025), ends: false, attributes: Vec::new(), multi: false });
     assert_eq!(state(&raw.refusal()), ("08006", -919), "too long");
     for again in [
         Request::Hello {
@@ -37,6 +37,7 @@ fn a_connection_breaking_the_protocol_is_closed() {
             mechanism: "trust".into(),
             initial: vec![],
             capabilities: vec![],
+            attributes: Vec::new(),
         },
         Request::Answer(vec![]),
     ] {
@@ -131,7 +132,7 @@ fn an_idle_connection_is_closed_and_rolled_back() {
     let server = start(&db, &[(MAX_CONNECTIONS, 1), (IDLE_TIMEOUT_MS, 50)]);
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Query { sql: "INSERT INTO T VALUES (1)".into(), ends: false });
+    raw.send(&Request::Query { sql: "INSERT INTO T VALUES (1)".into(), ends: false, attributes: Vec::new(), multi: false });
     assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     let refused = raw.refusal();
     assert_eq!(state(&refused), ("08006", -919));
@@ -155,10 +156,10 @@ fn a_client_not_taking_its_rows_is_let_go() {
     let server = start(&db, &[(MAX_CONNECTIONS, 1), (BATCH_BYTES, 1), (IDLE_TIMEOUT_MS, 100)]);
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Query { sql: "DELETE FROM T WHERE K = 0".into(), ends: false });
+    raw.send(&Request::Query { sql: "DELETE FROM T WHERE K = 0".into(), ends: false, attributes: Vec::new(), multi: false });
     assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     // Four megabytes of rows, more than the sockets hold, never read.
-    raw.send(&Request::Query { sql: "SELECT K, S FROM T".into(), ends: false });
+    raw.send(&Request::Query { sql: "SELECT K, S FROM T".into(), ends: false, attributes: Vec::new(), multi: false });
     let mut c = reconnected(&server);
     assert_eq!(crate::common::rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["4000"], "rolled back");
     drop(raw);
@@ -210,7 +211,8 @@ fn a_client_loses_a_connection_its_server_breaks() {
     let rows = vec![Reply::Description(vec![]), Reply::Challenge(vec![])];
     let mut c = connection::connect(scripted(vec![ready(), rows]), "X", &mut Trust).unwrap();
     assert_eq!(state(&c.query("SELECT 1").unwrap_err()).0, "08006");
-    let answered = vec![ready(), vec![Reply::Complete(Completed { sqlcode: 0, sqlstate: "00000".into(), active: false })]];
+    let answered =
+        vec![ready(), vec![Reply::Complete(Completed { sqlcode: 0, sqlstate: "00000".into(), active: false, ..Completed::default() })]];
     let c = connection::connect(scripted(answered), "X", &mut Trust).unwrap();
     assert_eq!(state(&c.terminate().unwrap_err()).0, "08006");
     let refused = turborel_protocol::Failure::from(&turborel_protocol::broken("no"));
@@ -257,9 +259,9 @@ fn a_client_gone_amid_its_rows_is_let_go() {
     let server = start(&db, &[(MAX_CONNECTIONS, 1), (BATCH_BYTES, 1)]);
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Query { sql: "DELETE FROM T WHERE K = 0".into(), ends: false });
+    raw.send(&Request::Query { sql: "DELETE FROM T WHERE K = 0".into(), ends: false, attributes: Vec::new(), multi: false });
     assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
-    raw.send(&Request::Query { sql: "SELECT K FROM T".into(), ends: false });
+    raw.send(&Request::Query { sql: "SELECT K FROM T".into(), ends: false, attributes: Vec::new(), multi: false });
     assert!(matches!(raw.receive(), Some(Reply::Description(_))));
     drop(raw);
     let again = (0..10_000).find_map(|_| {

@@ -1,21 +1,25 @@
-//! \[DESIGN\] A pooled connection's check and reset (RULES.md D206), by
-//! statements of today's protocol. `answers` sends ROLLBACK, which a
-//! session outside a transaction completes doing nothing, and waits for
-//! its answer. `reset` gives the session back as it logged in, in one
-//! pipeline: its transaction rolled back, the statements it prepared
-//! closed and destroyed, its user, role, schema and zone those of its
-//! login, autocommit off, then the program's own statements. A setting a
-//! borrower SET stays, as no statement of today sets every setting back.
+//! \[DESIGN\] A pooled connection's check and reset (RULES.md D206).
+//! Granted `ping`, `answers` sends Ping, which the server answers with no
+//! worker and no statement (D189). Granted `reset`, `reset` sends Reset,
+//! which ends all the session holds in one request, its transaction,
+//! prepared statements, cursors, temporary tables and settings, and keeps
+//! its user; then the program's own statements run.
 //!
-//! The protocol's coming Ping and Reset messages replace the two (`answers`
-//! and `reset` are their seams): Reset ends all a session holds, its
-//! settings with the rest, in one request.
+//! A server that grants neither is checked and reset by statements.
+//! `answers` sends ROLLBACK, which a session outside a transaction
+//! completes doing nothing. `reset` gives the session back as it logged
+//! in, in one pipeline: its transaction rolled back, the statements it
+//! prepared closed and destroyed, its user, role, schema and zone those of
+//! its login, then the program's own statements. A setting a borrower SET
+//! stays, as no statement sets every setting back. Either way autocommit
+//! is off after.
 
 use std::time::Duration;
 
 use crate::agent::Connected;
 use crate::connection::{Outcome, Result, failed};
 use crate::pipeline::Piped;
+use turborel_protocol::capability::{PING, RESET};
 
 /// \[DESIGN\] How long a pooled connection's check and reset wait on its
 /// server, at most: as long as a step of connecting, so a server that
@@ -34,7 +38,22 @@ pub const RESET_MOST_STATEMENTS: u32 = 256;
 ///
 /// A connection failure, if it is lost or does not answer.
 pub(super) fn answers(connection: &mut Connected) -> Result<()> {
+    if connection.granted().has(PING) {
+        return bounded(connection, Connected::ping);
+    }
     bounded(connection, |c| c.query(CHECK).map(drop))
+}
+
+/// Resets `connection` by the protocol's Reset, then runs `more`.
+///
+/// # Errors
+///
+/// A connection failure; any of `more`'s failures.
+fn renewed(connection: &mut Connected, more: &[String]) -> Result<()> {
+    connection.reset()?;
+    // Every statement it prepared went with the session it had.
+    connection.next_statement = 0;
+    more.iter().try_for_each(|sql| connection.query(sql).map(drop))
 }
 
 /// `run` of `connection`, each of its waits at most `RESET_WITHIN`, or
@@ -72,6 +91,10 @@ pub(super) fn reset(connection: &mut Connected, more: &[String]) -> Result<()> {
 fn reset_now(connection: &mut Connected, more: &[String]) -> Result<()> {
     if connection.is_lost() {
         return Err(failed("[DESIGN] a lost connection is not given back"));
+    }
+    if connection.granted().has(RESET) {
+        connection.set_autocommit(false);
+        return renewed(connection, more);
     }
     let prepared = connection.next_statement;
     if prepared > RESET_MOST_STATEMENTS {

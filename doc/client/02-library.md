@@ -290,6 +290,108 @@ let done = import(&mut conn, &mut source, &Import::into("STAFF"), &mut |skipped|
 // done.rows: 2
 ```
 
+## What a connection asks for
+
+A connection asks the server for capabilities as it opens, and the server
+grants those it serves ([The Native Protocol](05-protocol.md)). `connect`
+asks for every one but compression. `Connection::open_offering` takes an
+`Offer` of its own: `Offer::none()` asks for none, `compressed()` adds
+compression, and `attribute(name, value)` adds a connection attribute,
+which the server shows in INFORMATION_SCHEMA.CONNECTION_ATTRIBUTES, the
+one named `application` in CONNECTIONS too. `granted` gives what was
+granted. A method that needs a capability not granted fails before it
+sends anything.
+
+## What the server tells
+
+Granted `status`, `setting(name)` gives the value of one of the
+session's settings as the server last told it, with no round trip, and
+`settings` all of them. The server tells them as the session begins, and
+again as a statement changes one, so a SET is seen at once. Besides the
+settings, AUTHORIZATION, SCHEMA, READ_ONLY and SERVER_VERSION are told.
+
+A statement's warnings come as notices before its outcome. A handler set
+by `set_notice_handler` is given each as it comes. With none, the last 64
+are kept, and `take_notices` takes them. Granted `conditions`, the
+warnings come in the completion instead, and `conditions` gives the last
+statement's, each a `Failure` of its SQLSTATE, SQLCODE and message.
+
+The last statement's completion tells more, each part as granted.
+`rows_affected` gives the rows an INSERT, UPDATE, DELETE or MERGE
+changed, as GET DIAGNOSTICS ROW_COUNT gives them, or the rows a query
+returned. `last_generated` gives the identity values an INSERT
+generated, in the order of its rows, as SQL writes them; none of a
+trigger's statements, and none of a MERGE. `server_time` gives the
+server's time for the statement in microseconds, from when a worker
+began it until its completion was ready, a cursor's summed over its
+fetches, with the time its request waited for a worker and the time it
+waited for locks. `commit_position` gives the log position of the last
+commit, for a replica's session to read after
+([Replication](../operator/09-replication.md)).
+
+```rust
+conn.set_autocommit(true);
+conn.query("INSERT INTO STAFF (NAME) VALUES ('Edsger'), ('Barbara')")?;
+// conn.rows_affected(): Some(2)
+// conn.last_generated(): ["3", "4"], STAFF's identity column ID
+// conn.server_time(): Some(Timing { total: 180, queued: 4, locks: 0 })
+```
+
+A failure granted `diagnostics` carries what it is about, its
+`diagnostics` giving its severity, detail, hint, context, and the
+schema, table, column, data type and constraint, each if known. A
+duplicate key names its constraint and table, and its detail gives the
+key.
+
+Under autocommit, a cursor `open_cursor` opens ends its transaction as
+it ends when `fetch-ends` is granted. The fetch that reads its last row
+commits, a fetch that fails rolls back, and `close` commits.
+
+## Controlling the session
+
+`ping` asks whether the server and the connection are alive, with no
+statement run. `reset` puts the session back as it was at login, its
+transaction rolled back, its prepared statements and settings gone, its
+user kept. `change_user` authenticates the connection again as another
+user, whose new session it then is. A transaction either rolls back is
+told by notice 01T01.
+
+`set_query_attributes` sets attributes every later statement carries,
+read in SQL by QUERY_ATTRIBUTE(name), until set again. One named
+`traceparent` is written in the server's log of a slow statement.
+
+`query_many` runs a text of several statements as one request, each in
+order, until one fails. Its `Ran` gives each outcome, and the failure
+that stopped the rest.
+
+`describe` describes a prepared statement again. `open_cursor_numbered`,
+`fetch_numbered` and `close_numbered` keep several cursors of one
+statement open at once, each by a number of the program's, and
+`describe_cursor` gives an open cursor's columns.
+
+## Copying and exporting
+
+`copy_in` begins a copy of rows into a table, of the columns named, or
+all. `Copying::send` sends rows, many to a message and no reply each, and
+`finish` ends the copy, giving the rows inserted. Each value is assigned
+to its column as INSERT assigns it. A copy is all or nothing, so a row
+refused undoes every row of it, its failure's detail naming the row. A
+copy dropped before `finish` is abandoned. `copy_rows` copies the rows
+an iterator gives. Importing copies where the server grants it, and no
+column is a large object.
+
+```rust
+let rows = vec![vec![Value::Exact(Decimal::new(7, 0)), Value::Char("Niklaus".into())]];
+let inserted = conn.copy_rows("STAFF", &["ID", "NAME"], rows)?;
+// inserted: 1
+```
+
+`export` runs a query and writes its rows to any `Write` as they come,
+as CSV, a header of its columns' names then a record for each row
+(`ExportFormat::Csv`), or as the protocol's own frames
+(`ExportFormat::Native`), which `export::read_native` reads back with
+every value as it was.
+
 ## The SQL-agent
 
 `agent::Agent` holds a program's connections, each named, one current,

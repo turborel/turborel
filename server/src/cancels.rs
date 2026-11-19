@@ -21,6 +21,14 @@ pub struct Registered {
     pub key: CancelKey,
 }
 
+impl Registered {
+    /// \[DESIGN\] The key, cancelling `stop`'s statements from now on: a
+    /// session reset keeps its client's key (RULES.md D189).
+    pub fn rebind(&self, stop: Arc<Stop>) {
+        self.cancels.locked().insert(self.key, stop);
+    }
+}
+
 impl Drop for Registered {
     fn drop(&mut self) {
         self.cancels.locked().remove(&self.key);

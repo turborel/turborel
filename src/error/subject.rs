@@ -30,6 +30,26 @@ pub struct Subject {
     /// [ISO/IEC 9075-4:2006 draft §17.2 GR2 to GR4] Of a condition SIGNAL
     /// or RESIGNAL raised, its condition identifier and the items it set.
     pub signalled: Option<Box<Signalled>>,
+    /// \[EXTENSION\] More of what happened than the message says, as the
+    /// values of the key a constraint refused: for a client's structured
+    /// failure (RULES.md D186), never in GET DIAGNOSTICS.
+    pub detail: Option<String>,
+    /// \[EXTENSION\] What may be done about it, for a client's structured
+    /// failure (RULES.md D186).
+    pub hint: Option<String>,
+    /// \[EXTENSION\] The data type of the value it is about, as SQL writes
+    /// it, for a client's structured failure (RULES.md D186).
+    pub data_type: Option<String>,
+}
+
+impl Subject {
+    /// Whether it names nothing, holding at most what a client is told
+    /// beside the names: a detail, a hint, a data type (RULES.md D186).
+    pub fn names_nothing(&self) -> bool {
+        let told =
+            Subject { detail: self.detail.clone(), hint: self.hint.clone(), data_type: self.data_type.clone(), ..Subject::default() };
+        *self == told
+    }
 }
 
 /// [ISO/IEC 9075-4:2006 draft §17.2 GR2 to GR4] What SIGNAL or RESIGNAL set
@@ -110,5 +130,32 @@ impl Subject {
     /// The cursor `name` \[GR3h\].
     pub fn cursor(name: &str) -> Subject {
         Subject { cursor: Some(name.to_owned()), ..Subject::default() }
+    }
+}
+
+impl super::SqlError {
+    /// \[EXTENSION\] This error, saying `detail` beyond its message
+    /// (RULES.md D186).
+    #[must_use]
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.subject.get_or_insert_with(Box::default).detail = Some(detail.into());
+        self
+    }
+
+    /// \[EXTENSION\] This error, saying `hint` of what may be done about it
+    /// (RULES.md D186).
+    #[must_use]
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.subject.get_or_insert_with(Box::default).hint = Some(hint.into());
+        self
+    }
+
+    /// \[EXTENSION\] This error, about a value of the data type `data_type`
+    /// (RULES.md D186), unless it names one already.
+    #[must_use]
+    pub fn or_of_type(mut self, data_type: &dyn std::fmt::Display) -> Self {
+        let subject = self.subject.get_or_insert_with(Box::default);
+        subject.data_type.get_or_insert_with(|| data_type.to_string());
+        self
     }
 }

@@ -238,6 +238,7 @@ impl Session {
         }
         st.end_statement(tx, effects)?;
         self.note_drawn(target.generating.drawn_identity(), &mut rows)?;
+        self.note_generated(target.generating.identity_column(), &mut rows)?;
         Ok(rows.len())
     }
 

@@ -13,6 +13,8 @@
 
 mod reset;
 
+pub use reset::{RESET_MOST_STATEMENTS, RESET_WITHIN};
+
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 

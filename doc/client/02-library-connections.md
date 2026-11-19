@@ -82,8 +82,9 @@ does to give one of its own.
 
 A setting that cannot be read, a service file that cannot be read or
 has no section of the name, and settings that name no user are refused
-with SQLSTATE 08001. `application_name` is kept by the settings; the
-protocol has no place to send it yet.
+with SQLSTATE 08001. `application_name` is sent as the connection
+attribute `application`, which the database's owner sees in
+INFORMATION_SCHEMA.CONNECTIONS and CONNECTION_ATTRIBUTES.
 
 ### The connection URI
 
@@ -170,8 +171,11 @@ the user).
 
 `target` asks for a role. `read-write` keeps a server that takes changes:
 a server alone, or its replicated group's primary. `read-only` keeps a
-replica that follows its group, which refuses every change. A replica
-shows its role in INFORMATION_SCHEMA.REPLICAS to the database's owner
+replica that follows its group, which refuses every change. The server
+tells each session whether it takes changes, as its session status
+SERVER_READ_ONLY, so any user's connection finds its role with no
+query. Of a server that does not tell it, the role is read from
+INFORMATION_SCHEMA.REPLICAS, which shows it to the database's owner
 alone, so another user's session cannot see a replica's role, and a
 connection of its asking for either is passed. `role::role` gives the
 role a connection's session sees.
@@ -289,12 +293,16 @@ std::thread::spawn(move || {
 | `check` | Whether an idle connection is checked to answer before it is handed out | yes |
 | `reset` | Statements run as each comes back, after the pool's own | none |
 
-A connection comes back reset to the session it logged in with, in one
-pipeline: its transaction rolled back, the statements it prepared closed
-and destroyed, its user, role and schema those of its login, its time
-zone local and autocommit off; then `reset`'s statements run. A setting
-a borrower changed by SET stays as it set it, unless `reset` sets it
-back. A connection lost, whose reset fails, that has lived its time, or
+A connection comes back reset to the session it logged in with, by the
+protocol's Reset, one request that ends its transaction, prepared
+statements, cursors, temporary tables and settings and keeps its user;
+autocommit is off, then `reset`'s statements run. Its check is a Ping,
+which the server answers without a worker. Of a server that takes
+neither, the check is ROLLBACK and the reset one pipeline: its
+transaction rolled back, the statements it prepared closed and
+destroyed, its user, role and schema those of its login and its time
+zone local, and a setting a borrower changed by SET stays as it set it,
+unless `reset` sets it back. A connection lost, whose reset fails, that has lived its time, or
 beyond `max_idle` is closed, never handed out again. One idle past
 `idle_timeout`, or that does not answer its check, is closed as `get`
 meets it, and another taken or made.

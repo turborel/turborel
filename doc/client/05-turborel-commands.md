@@ -410,13 +410,17 @@ VALUES 1; //
 `\import TABLE FILE` inserts a file's rows into a table, as `--import`
 does ([Importing](01-turborel.md#importing)). Its options are words
 after the file, which are `csv` or `tsv`, `header`, `delimiter C`,
-`null TEXT`, `batch N` and `skip`.
+`null TEXT`, `batch N` and `skip`. Where the server takes a bulk copy,
+the rows go a batch to a copy, each committed as it ends; with `skip`
+they go through one prepared INSERT, so a bad row is passed over.
 
 `\export TABLE FILE`, or `\export (QUERY) FILE`, writes a table's or a
 query's rows to a file as they come. It writes CSV, or tab-separated
 text with `text`, and takes the options `header`, `delimiter C` and
 `null TEXT`. In CSV a value that would read back as a null, as an empty
 string does, is quoted, so `\import` reads back what `\export` wrote.
+With `native` it writes the protocol's own frames, which keep each
+value's type, for a program to read back with the client library.
 
 ```
 turborel> \export (SELECT ID, NAME FROM STAFF WHERE ID < 3) two.csv header

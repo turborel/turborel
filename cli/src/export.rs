@@ -5,8 +5,11 @@
 //! and a value that would read back as a null, the empty string among
 //! them, is quoted; in text a value cannot hold a tab or a line break.
 //!
-//! The rows come by a query (`Statements::query_into`); a bulk copy of the
-//! protocol, once it has one, takes its place in `export`.
+//! The rows come by a query (`Statements::query_into`), the protocol's
+//! export of a query's rows as they come. `native` writes them as the
+//! protocol's own frames instead (`Statements::export_native`), every
+//! value with its type, as `turborel_client::export::read_native` reads
+//! them back.
 
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
@@ -26,6 +29,9 @@ pub enum Form {
     Csv,
     /// Tab-separated text.
     Text,
+    /// The protocol's own frames, its columns then its rows, which keep
+    /// every value's type (RULES.md D195).
+    Native,
 }
 
 /// What `\export` writes, and how.
@@ -78,6 +84,7 @@ impl Export {
             match option {
                 "csv" => (how.form, how.delimiter) = (Form::Csv, ','),
                 "text" => (how.form, how.delimiter) = (Form::Text, '\t'),
+                "native" => how.form = Form::Native,
                 "header" => how.header = true,
                 "delimiter" => how.delimiter = one_char(value()?)?,
                 "null" => value()?.clone_into(&mut how.null),
@@ -106,6 +113,8 @@ impl Export {
                 }
                 Ok(text)
             }
+            // Native rows are written as frames, never as fields.
+            Form::Native => Ok(text),
         }
     }
 }
@@ -153,6 +162,10 @@ impl Sink for Writer<'_> {
 /// The query fails, gives no rows, or the file cannot be written.
 pub fn export<S: Statements + ?Sized>(connection: &mut S, how: &Export) -> Result<u64, String> {
     let file = File::create(&how.file).map_err(|e| format!("cannot write {}: {e}", how.file.display()))?;
+    if how.form == Form::Native {
+        let mut out = BufWriter::new(file);
+        return connection.export_native(&how.query, &mut out).map_err(|f| f.to_string());
+    }
     let mut writer = Writer { how, out: BufWriter::new(file), failed: None };
     let streamed = connection.query_into(&how.query, &mut writer).map_err(|f| f.to_string())?;
     if let Some(e) = writer.failed {
@@ -182,6 +195,7 @@ mod tests {
         assert_eq!((how.query.as_str(), how.header, how.null.as_str(), how.delimiter), ("TABLE STAFF", true, "-", ';'));
         let query = Export::parse(&["(SELECT 1)".to_owned(), "o".to_owned(), "text".to_owned()]).unwrap();
         assert_eq!((query.query.as_str(), query.form, query.delimiter), ("SELECT 1", Form::Text, '\t'));
+        assert_eq!(Export::parse(&args("T f native")).unwrap().form, Form::Native);
         assert!(Export::parse(&args("T")).is_err());
         assert!(Export::parse(&args("T f nope")).is_err());
         assert!(Export::parse(&args("T f delimiter")).is_err());

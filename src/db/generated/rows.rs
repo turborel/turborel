@@ -130,6 +130,12 @@ impl Generating {
         self.native.as_ref().and_then(crate::db::graphs::native::Native::drawn)
     }
 
+    /// \[DESIGN\] The position of the identity column it gives each row
+    /// the next value of, if it gives one (RULES.md D198).
+    pub(in crate::db) fn identity_column(&self) -> Option<usize> {
+        self.draw.as_ref().map(|(at, ..)| *at)
+    }
+
     /// Whether it gives each row its identity column's next value.
     pub(in crate::db) fn draws(&self) -> bool {
         self.draw.is_some()

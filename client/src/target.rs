@@ -11,6 +11,7 @@ use crate::connection::{Connection, Mechanism, Result, TlsChannel, failed, in_th
 #[cfg(unix)]
 use crate::timeouts::limit;
 use crate::timeouts::{Bound, Timeouts, io_failed};
+use crate::told::Offer;
 
 /// A stream that reads and writes, of any transport.
 pub trait Duplex: Read + Write + Send + Bound {}
@@ -223,11 +224,12 @@ pub fn connect_to_within(
         in_the_clear(mechanism)?;
     }
     let opened = target.opened(timeouts.connect)?;
-    log_in(target, opened, (user, mechanism), timeouts)
+    log_in(target, opened, (user, mechanism), (timeouts, Offer::default()))
 }
 
 /// Logs in over `opened`, a stream to the server at `target`, as `user`,
-/// authenticated by `mechanism`, bound to its TLS channel if it has one.
+/// authenticated by `mechanism`, bound to its TLS channel if it has one,
+/// asking for what `offer` asks.
 ///
 /// # Errors
 ///
@@ -236,10 +238,10 @@ pub(crate) fn log_in(
     target: &Target,
     (stream, channel): Opened,
     (user, mechanism): (&str, &mut dyn Mechanism),
-    timeouts: Timeouts,
+    (timeouts, offer): (Timeouts, Offer),
 ) -> Result<Connection<Box<dyn Duplex>>> {
     if let Some(secured) = channel {
         mechanism.bind(&secured);
     }
-    Ok(Connection::open_timed(stream, (user, mechanism), timeouts)?.reached_by(target.clone()))
+    Ok(Connection::open_timed_offering(stream, (user, mechanism), (timeouts, offer))?.reached_by(target.clone()))
 }
