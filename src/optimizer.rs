@@ -16,17 +16,21 @@
 //! costs belongs in physical.rs.
 
 mod folding;
+mod inlining;
 mod outer;
 pub(crate) mod plugged;
 pub(crate) mod prepared;
 mod raising;
 mod transitivity;
+pub(crate) mod unnesting;
 mod views;
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::db::State;
+pub use inlining::{INLINE_FUNCTIONS, InlineFunctions};
+pub use unnesting::{UNNEST_SUBQUERIES, UnnestSubqueries};
 use crate::logical::{Cond, Expr, LogicalPlan, Truth, and_all, cond_columns, map_cond_columns, split_and};
 use crate::settings::{Key, OPTIMIZER_MAX_PASSES};
 
@@ -123,6 +127,9 @@ impl Optimizer {
     /// An optimizer with the built-in rules.
     pub fn with_builtin_rules() -> Optimizer {
         let mut o = Optimizer::empty();
+        // Before the others, which then move the conditions they make.
+        o.add(Box::new(InlineFunctions));
+        o.add(Box::new(UnnestSubqueries));
         o.add(Box::new(ConstantFolding));
         o.add(Box::new(SimplifyConditions));
         o.add(Box::new(MergeFilters));
