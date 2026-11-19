@@ -47,6 +47,7 @@
 
 mod dispatch;
 mod harness;
+mod host;
 mod input;
 mod kinds;
 mod objects;
@@ -57,6 +58,7 @@ mod storage;
 use turborel::error::SqlError;
 
 pub use harness::Harness;
+pub use host::HostObject;
 pub use kinds::{
     Aggregate, Authenticator, Collation, Credentials, Diagnostics, Embedder, Exchange, Metric, PartitionStrategy, Procedure, Quantizer,
     Ranking, Scalar, Step, SystemTable, TableFunction, Target, TargetStore, Type, Upload, Who, XQueryFunction,

@@ -29,6 +29,9 @@ pub const INVALID_MANIFEST: SqlState = SqlState::of_bytes(*b"38T06");
 /// told made or undone: the object is damaged until the database is
 /// opened again and recovers it (RULES.md D225, D227).
 pub const BROKEN: SqlState = SqlState::of_bytes(*b"38T10");
+/// A host plug-in failed, and its node stopped until it starts again
+/// (RULES.md D229).
+pub const HOST_FAILED: SqlState = SqlState::of_bytes(*b"38T11");
 
 /// The classes a program's error keeps: data exception, integrity
 /// constraint violation, external routine exception, external routine
@@ -99,6 +102,11 @@ pub fn raised(object: &str, state: &str, message: &str) -> SqlError {
         _ => Code::Data,
     };
     SqlError::new(code, format!("[EXTENSION] {object} failed: {message}")).with_state(chosen)
+}
+
+/// 38T11: the host plug-in `plugin` failed, `why`, and the node stopped.
+pub fn host_failed(plugin: &str, why: &str) -> SqlError {
+    failed(HOST_FAILED, &format!("the host plug-in {plugin} failed, so the node stopped until it starts again: {why}"))
 }
 
 #[cfg(test)]

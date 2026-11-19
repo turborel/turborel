@@ -29,6 +29,7 @@
 //!   | STORAGE ENGINE <identifier> [ BATCH <unsigned integer> ]
 //!   | INDEX METHOD <identifier> SUPPORTS ( <identifier> [ , ... ] ) [ BATCH <unsigned integer> ]
 //!   | CREDENTIALS <identifier> | DIAGNOSTICS <identifier> [ BATCH <unsigned integer> ]
+//!   | HOST <host kind> <identifier> [ ( <identifier> = <unsigned integer> | <character string literal> [ , ... ] ) ]
 //! <parameters>     ::= ( [ <data type> [ , <data type> ]... ] )
 //! <determinism>    ::= DETERMINISTIC | NOT DETERMINISTIC
 //! ```
@@ -43,10 +44,12 @@ use super::Parser;
 use crate::ast::TypeName;
 use crate::error::Result;
 use crate::lexer::{Tok, delim};
-use crate::plugin::manifest::{Declared, Item, ObjectKind};
+use crate::plugin::manifest::{Declared, HostDeclared, HostKind, HostOption, Item, ObjectKind};
 
 /// The words of the manifest, in the order of its grammar.
 const WORDS: [&str; 9] = ["NAME", "VERSION", "PROTOCOL", "EXECUTABLE", "FOR", "RETURNS", "BATCH", "DETERMINISTIC", "NOT"];
+/// The word a host plug-in's declaration begins with (RULES.md D229).
+const HOST: &str = "HOST";
 /// The words of a package's items.
 const PACKAGE_WORDS: [&str; 5] = ["REQUIRES", "TURBOREL", "UPGRADE", "FROM", "SCRIPT"];
 /// The word of RETURNS TABLE.
@@ -123,6 +126,9 @@ impl Parser {
             let os = if self.accept_manifest_word(platform) { Some(self.character_string_literal("<platform>")?) } else { None };
             return Ok(Item::Executable(os, self.character_string_literal("<executable>")?));
         }
+        if self.accept_manifest_word(HOST) {
+            return self.host_declaration().map(|d| Item::Host(Box::new(d)));
+        }
         match self.package_item() {
             Some(item) => item,
             None => self.object_declaration().map(|d| Item::Object(Box::new(d))),
@@ -148,6 +154,45 @@ impl Parser {
             self.expect_manifest_word(script)?;
             Ok(Item::Upgrade(range, self.character_string_literal("<script>")?))
         })())
+    }
+
+    /// `<host declaration>`, after HOST (RULES.md D229).
+    fn host_declaration(&mut self) -> Result<HostDeclared> {
+        let at = self.here();
+        let kind = self.host_kind()?;
+        let name = self.identifier()?;
+        let mut options = Vec::new();
+        if self.accept_delim(delim::LEFT_PAREN) {
+            loop {
+                let option = self.identifier()?;
+                self.expect_delim(delim::EQUALS)?;
+                let value = if let Tok::CharacterString(_) = self.peek() {
+                    HostOption::Text(self.character_string_literal("<option value>")?)
+                } else {
+                    HostOption::Number(u64::from(self.unsigned_integer()?))
+                };
+                options.push((option, value));
+                if !self.accept_delim(delim::COMMA) {
+                    break;
+                }
+            }
+            self.expect_delim(delim::RIGHT_PAREN)?;
+        }
+        Ok(HostDeclared { kind, name, options, text: self.text_from(at) })
+    }
+
+    /// The words of a host declaration's kind.
+    fn host_kind(&mut self) -> Result<HostKind> {
+        for kind in HostKind::ALL {
+            let [first, rest @ ..] = kind.words() else { continue };
+            if self.accept_manifest_word(first) {
+                for word in rest {
+                    self.expect_manifest_word(word)?;
+                }
+                return Ok(kind);
+            }
+        }
+        Err(self.syntax("expected the kind of a host object"))
     }
 
     /// `<object declaration>`.

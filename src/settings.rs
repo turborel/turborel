@@ -14,6 +14,7 @@ mod backup;
 mod builtin;
 mod configurable;
 mod graph;
+mod hosted;
 mod kind;
 mod plugins;
 mod started;
@@ -48,6 +49,7 @@ pub use graph::{
     DEFAULT_MAX_SEARCH_STATES, GRAPH_DETERMINISTIC_PATHS, GRAPH_MAX_PATH_LENGTH, GRAPH_MAX_PATHS_PER_PARTITION, GRAPH_MAX_SEARCH_STATES,
     GRAPH_ON_LIMIT, GRAPH_PARALLEL_MIN_STATES, TRUNCATE,
 };
+pub use hosted::PLUGINS_HOST;
 pub use kind::{Kind, column_list, column_names};
 pub use plugins::{
     HOST_ONLY, PLUGINS_CALL_TIMEOUT_MS, PLUGINS_CANCEL_GRACE_MS, PLUGINS_DIRECTORIES, PLUGINS_MAX_CALL_BYTES, PLUGINS_MAX_MESSAGE_BYTES,

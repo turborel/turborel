@@ -95,6 +95,7 @@ mod formats;
 mod functions;
 mod generated;
 mod graphs;
+mod hosted;
 mod image;
 mod index_statements;
 mod indexes;

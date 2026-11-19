@@ -15,6 +15,7 @@ use crate::error::Result;
 use crate::memory::MemoryBudget;
 
 use super::errors::unavailable;
+use super::hosted::{HostPlugin, Stop};
 use super::limits::{Limits, Told};
 use super::package::{PackageCrypto, Trust, verify_installed};
 
@@ -29,6 +30,9 @@ pub struct Host {
     pub memory: Arc<MemoryBudget>,
     crypto: RwLock<Option<Arc<dyn PackageCrypto>>>,
     trust: RwLock<Trust>,
+    /// The node's stop, which a host plug-in's failure trips (RULES.md D229).
+    pub stop: Arc<Stop>,
+    hosted: RwLock<Vec<Arc<HostPlugin>>>,
 }
 
 impl std::fmt::Debug for Host {
@@ -41,7 +45,24 @@ impl Host {
     /// A host of the budget `memory`, its limits the defaults, trusting
     /// no key, no cryptography registered.
     pub fn new(memory: Arc<MemoryBudget>) -> Host {
-        Host { limits: Arc::new(Limits::default()), memory, crypto: RwLock::new(None), trust: RwLock::new(Trust::default()) }
+        Host {
+            limits: Arc::new(Limits::default()),
+            memory,
+            crypto: RwLock::new(None),
+            trust: RwLock::new(Trust::default()),
+            stop: Stop::new(),
+            hosted: RwLock::new(Vec::new()),
+        }
+    }
+
+    /// Keeps the host plug-in `plugin`, started (RULES.md D229).
+    pub fn add_hosted(&self, plugin: Arc<HostPlugin>) {
+        self.hosted.write().unwrap_or_else(PoisonError::into_inner).push(plugin);
+    }
+
+    /// The host plug-ins started, in the order they were.
+    pub fn hosted(&self) -> Vec<Arc<HostPlugin>> {
+        self.hosted.read().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
     /// Registers the cryptography packages are checked by.

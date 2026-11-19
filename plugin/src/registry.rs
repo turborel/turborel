@@ -41,6 +41,8 @@ pub struct Plugin {
     pub(super) diagnostics: Of<dyn Diagnostics>,
     /// What calls keep between them.
     pub(super) held: Held,
+    /// The host objects, by kind's code and name (RULES.md D229).
+    pub(super) hosted: HashMap<(u8, String), Box<dyn super::host::HostObject>>,
 }
 
 /// Adds a builder method for a kind.
@@ -161,7 +163,11 @@ impl Plugin {
             self.credentials.len(),
             self.diagnostics.len(),
         ];
-        (1_u8..).zip(counts).filter(|(_, n)| *n > 0).map(|(k, _)| k).collect()
+        let mut kinds: Vec<u8> = (1_u8..).zip(counts).filter(|(_, n)| *n > 0).map(|(k, _)| k).collect();
+        kinds.extend(self.hosted.keys().map(|(k, _)| *k));
+        kinds.sort_unstable();
+        kinds.dedup();
+        kinds
     }
 }
 

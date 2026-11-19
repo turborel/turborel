@@ -162,13 +162,15 @@ impl Database {
         Ok(Database::over(st))
     }
 
-    /// The current snapshot of the definitions, for one statement or cursor.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if a thread panicked while publishing a snapshot, or
-    /// the database is closed.
+    /// The current snapshot of the definitions, for one statement or
+    /// cursor: SQLCODE -910 if the database is closed or a thread panicked
+    /// publishing one, SQLSTATE 38T11 if a host plug-in stopped the node.
     pub(crate) fn snapshot(&self) -> Result<Arc<State>> {
+        super::hosted::running(self.snapshot_unstopped()?)
+    }
+
+    /// `snapshot`, whether or not a host plug-in stopped the node.
+    pub(crate) fn snapshot_unstopped(&self) -> Result<Arc<State>> {
         if self.0.closed.load(Ordering::Acquire) {
             return fail(Code::Api, "[DESIGN] the database is closed");
         }
@@ -298,14 +300,12 @@ impl Database {
     }
 
     /// \[DESIGN\] Gives `event` to its sink, as a program serving it tells
-    /// what it does itself (RULES.md D40, D42); dropped if below
-    /// DIAGNOSTICS.LEVEL. The sink runs with no lock held.
+    /// what it does itself (RULES.md D40, D42), as `emit` does.
     pub fn tell(&self, event: &Event) {
         self.emit(event);
     }
 
-    /// Where what ends a serving server's connections is kept
-    /// (`db/served.rs`).
+    /// Where what ends a serving server's connections is kept (`served.rs`).
     pub(super) fn served_slot(&self) -> &RwLock<Option<Arc<dyn ServedConnections>>> {
         &self.0.served
     }
