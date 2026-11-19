@@ -83,7 +83,7 @@ impl State {
         }
         let installed = Arc::new(self.installed(manifest, read)?);
         self.register_extension(&installed)?;
-        self.declare_manifest_settings(&installed.manifest, false)?;
+        self.declare_manifest_settings(&installed.manifest, &installed.pool, false)?;
         self.put_extension(&installed, read, !read.dependency);
         Ok(Defined { locks, ..Defined::default() })
     }
@@ -116,7 +116,7 @@ impl State {
         let explicit = self.catalog.extensions().iter().find(|e| e.name == d.name).is_none_or(|e| e.explicit);
         let installed = Arc::new(self.installed(manifest, read)?);
         self.register_extension(&installed)?;
-        self.declare_manifest_settings(&installed.manifest, false)?;
+        self.declare_manifest_settings(&installed.manifest, &installed.pool, false)?;
         self.put_extension(&installed, read, explicit);
         Ok(Defined::default())
     }
@@ -252,7 +252,7 @@ impl State {
             };
             let installed = Arc::new(self.installed(Manifest::parse(&d.manifest)?, &read)?);
             self.register_extension(&installed)?;
-            self.declare_manifest_settings(&installed.manifest, false)?;
+            self.declare_manifest_settings(&installed.manifest, &installed.pool, false)?;
             map.insert(d.name.clone(), installed);
             self.extensions = Arc::new(map.clone());
         }

@@ -36,7 +36,7 @@ impl Database {
                 continue;
             }
             let plugin = HostPlugin::start(&spec, &host, &host.stop)?;
-            self.change(|st| st.declare_manifest_settings(&plugin.manifest, true))?;
+            self.change(|st| st.declare_manifest_settings(&plugin.manifest, &plugin.pool, true))?;
             host.add_hosted(Arc::clone(&plugin));
             for d in &plugin.manifest.hosted {
                 self.register_hosted(d, plugin.link(d))?;

@@ -8,21 +8,29 @@
 use super::super::State;
 use crate::error::Result;
 use crate::plugin::Manifest;
+use crate::plugin::pool::Pool;
 use crate::plugin::errors::invalid_manifest;
 use crate::settings::Owner;
 
 impl State {
     /// Declares the settings `manifest` declares, of a host plug-in if
-    /// `host`, and retires those its plug-in declared before and no more.
+    /// `host`, and retires those its plug-in declared before and no more;
+    /// then tells `pool`, its processes', their values now, so a call made
+    /// with no statement before the next change is published is told a
+    /// value kept or given before the setting was declared.
     ///
     /// # Errors
     ///
     /// SQLSTATE 38T06 if one is not of its type, or is named as another
     /// setting is.
-    pub(in crate::db) fn declare_manifest_settings(&mut self, manifest: &Manifest, host: bool) -> Result<()> {
+    pub(in crate::db) fn declare_manifest_settings(&mut self, manifest: &Manifest, pool: &Pool, host: bool) -> Result<()> {
         let definitions = manifest.settings.iter().map(|d| d.definition(&manifest.name, host)).collect::<Result<Vec<_>>>()?;
         let owner = Owner { plugin: manifest.name.clone(), host };
-        self.settings.declare_owned(&owner, definitions).map_err(|e| invalid_manifest(&e.msg))
+        self.settings.declare_owned(&owner, definitions).map_err(|e| invalid_manifest(&e.msg))?;
+        if let Some(feed) = pool.feed() {
+            feed.tell(&self.settings);
+        }
+        Ok(())
     }
 
     /// Retires the settings the extension `name` declared, as it is dropped.
