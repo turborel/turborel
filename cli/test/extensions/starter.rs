@@ -45,7 +45,9 @@ fn a_starter_is_made_packed_installed_and_called() {
     std::fs::create_dir_all(&release).unwrap();
     std::fs::copy(plugin_example(), release.join(format!("hello{}", std::env::consts::EXE_SUFFIX))).unwrap();
     let packed = ext_in(root, &["pack", "hello"]).unwrap();
-    assert!(packed.contains("packed HELLO 0.1.0 into hello/hello-0.1.0.tbpkg, unsigned, license LicenseRef-Proprietary (text in LICENSE)"), "{packed}");
+    let into = std::path::Path::new("hello").join("hello-0.1.0.tbpkg");
+    let told = format!("packed HELLO 0.1.0 into {}, unsigned, license LicenseRef-Proprietary (text in LICENSE)", into.display());
+    assert!(packed.contains(&told), "{packed}");
     let file = project.join("hello-0.1.0.tbpkg").display().to_string();
     let said = f.on(&["install", &file]).unwrap();
     assert!(said.contains("installed HELLO 0.1.0 from") && said.ends_with("license LicenseRef-Proprietary (text in LICENSE)\n"), "{said}");

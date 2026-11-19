@@ -214,6 +214,9 @@ impl Client {
     /// What `turborel` shows run with `args`, at the client's server, the
     /// files it names in `scratch`, named as given.
     fn ran(&self, args: &str, scratch: &Scratch) -> String {
+        if let Some(rest) = args.strip_prefix("extension ") {
+            return extensions::ran(rest, scratch);
+        }
         let port = self.server.address.port().to_string();
         let line: Vec<String> = match args.strip_prefix("admin ") {
             // An administrative command's words follow its options.

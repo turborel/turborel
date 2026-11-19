@@ -83,6 +83,8 @@ fn listings_read_their_views() {
         assert!(sql(name).contains(&format!("INFORMATION_SCHEMA.{view} ")) || sql(name).ends_with(view), "{name}");
     }
     assert!(sql("dt+").contains("Insertable"));
+    assert!(sql("dx+").contains("EXTENSION_PACKAGES") && sql("dx+").contains("\"License\""));
+    assert!(!sql("dx").contains("License"));
     assert!(!sql("dt").contains("Insertable"));
     assert!(sql("dt").contains("NOT IN"));
     assert!(!sql("dtS").contains("NOT IN"));

@@ -265,7 +265,7 @@ any session of the user may see.
 | `\dn` | schemas |
 | `\du` | users, and the roles granted |
 | `\dT`, `\dD` | user-defined types, domains |
-| `\dx` | the extension modules the server runs |
+| `\dx` | the extension modules the server runs, and with `+` their processes, calls and the license of each package |
 | `\dG` | property graphs |
 | `\dp` | privileges on tables |
 | `\l` | the catalog |

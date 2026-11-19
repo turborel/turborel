@@ -1,6 +1,8 @@
 //! The examples of extensions, run as printed: the example plug-in,
 //! `plugin/examples/plugin_example`, built with the tests, installed
-//! under PLUGINS.DIRECTORIES of a database of its own for each page.
+//! under PLUGINS.DIRECTORIES of a database of its own for each page; and
+//! the sessions of `turborel extension` of the pages of packages and of
+//! writing a plug-in, each in a directory of its own.
 
 use std::path::{Path, PathBuf};
 
@@ -62,4 +64,74 @@ fn the_extension_examples_run_as_printed() {
         db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
         assert!(Client::of(&db, "ANN").page(page) > 0, "{page} shows its examples' output");
     }
+}
+
+/// The seed of the author's key the pages sign with, so the public key
+/// they print is the same each run.
+const AUTHOR_SEED: &str = "0707070707070707070707070707070707070707070707070707070707070707";
+
+/// What `turborel extension` shows run with `args`, in `scratch`, as a
+/// terminal shows it: its output, or its failure as the program writes
+/// it.
+pub(super) fn ran(args: &str, scratch: &Scratch) -> String {
+    let words: Vec<String> = args.split_whitespace().map(str::to_owned).collect();
+    let mut inv = turborel_cli::extension::parse(&words, &|_| None).unwrap().unwrap();
+    inv.context.cwd = scratch.dir.clone();
+    let mut out = Vec::new();
+    match turborel_cli::extension::run(&inv, &mut out) {
+        Ok(()) => String::from_utf8(out).unwrap(),
+        Err(e) => format!("{}turborel extension: {e}\n", String::from_utf8(out).unwrap()),
+    }
+}
+
+/// A database whose plug-ins are installed under `scratch`, its packages
+/// checked, ANN's schema in it.
+fn packaged(scratch: &Scratch) -> Database {
+    let db = Database::new();
+    db.set_package_crypto(std::sync::Arc::new(turborel_client::packages::Crypto)).unwrap();
+    db.set_setting("PLUGINS.DIRECTORIES", &Value::Char(scratch.path("plugins").display().to_string())).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
+    std::fs::write(scratch.path("author.key"), AUTHOR_SEED).unwrap();
+    db
+}
+
+/// Verifies: [EXTENSION] RULES.md R-DOC-8, D263, D264, D267: the
+/// walkthrough of writing a plug-in runs as printed: the project made by
+/// `new`, packed signed, installed, and its function called by ANN. The
+/// example plug-in's program, built with the tests, stands in for the
+/// one `cargo build --release` builds, as a test runs no cargo.
+#[test]
+fn the_sdk_walkthrough_runs_as_printed() {
+    let page = "client/04-plugins-sdk.md";
+    let scratch = Scratch::new("manual-sdk");
+    let db = packaged(&scratch);
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.section(page, "## Starting a project", &scratch) > 0);
+    let release = scratch.path("hello").join("target").join("release");
+    std::fs::create_dir_all(&release).unwrap();
+    std::fs::copy(plugin_example(), release.join(format!("hello{}", std::env::consts::EXE_SUFFIX))).unwrap();
+    assert!(ann.section(page, "## Packing", &scratch) > 0);
+    assert!(ann.section(page, "## Installing", &scratch) > 0);
+}
+
+/// Verifies: [EXTENSION] RULES.md R-DOC-8, D260 to D262, D265 to D267: the
+/// examples of packages run as printed: the projects' manifests written,
+/// packed, one signed and licensed, one not; a requirement missing
+/// refused naming the file to add; both installed from their files; the
+/// lock exported and reproduced elsewhere; and the packages told.
+#[test]
+fn the_package_examples_run_as_printed() {
+    let page = "client/04-plugins-packages.md";
+    let scratch = Scratch::new("manual-packages");
+    let db = packaged(&scratch);
+    for dir in ["geo_tools/bin", "geo_tools/upgrade", "units/bin", "packages", "plugins", "replica"] {
+        std::fs::create_dir_all(scratch.path(dir)).unwrap();
+    }
+    for program in ["geo_tools/bin/geo-tools", "geo_tools/bin/geo-tools.exe", "geo_tools/bin/geo-tools-macos", "units/bin/units"] {
+        std::fs::write(scratch.path(program), "a program").unwrap();
+    }
+    std::fs::write(scratch.path("geo_tools/upgrade/1.4.sql"), "VALUES (1)").unwrap();
+    let mut ann = Client::of(&db, "ANN");
+    assert!(ann.section(page, "## For authors", &scratch) > 0);
+    assert!(ann.section(page, "## For operators", &scratch) > 0);
 }
