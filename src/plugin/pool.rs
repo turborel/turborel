@@ -90,6 +90,9 @@ pub struct Pool {
     /// Whether the host named its directory itself, as PLUGINS.HOST does,
     /// so PLUGINS.DIRECTORIES need not hold it (RULES.md D229).
     named: bool,
+    /// The settings its program is told, if its manifest has any
+    /// (RULES.md D282).
+    feed: Option<Arc<super::settings::Feed>>,
     idle: Mutex<Idle>,
     freed: Condvar,
     next_call: AtomicU64,
@@ -129,6 +132,7 @@ impl Pool {
             limits,
             check: None,
             named: false,
+            feed: None,
             idle: Mutex::new(Idle::default()),
             freed: Condvar::new(),
             next_call: AtomicU64::new(1),
@@ -153,6 +157,19 @@ impl Pool {
     pub fn named_by_host(mut self) -> Pool {
         self.named = true;
         self
+    }
+
+    /// It, its program told the settings `feed` names before each call,
+    /// as they change (RULES.md D282).
+    #[must_use]
+    pub fn with_feed(mut self, feed: Option<Arc<super::settings::Feed>>) -> Pool {
+        self.feed = feed;
+        self
+    }
+
+    /// The settings its program is told, if any.
+    pub fn feed(&self) -> Option<&Arc<super::settings::Feed>> {
+        self.feed.as_ref()
     }
 
     /// The extension's name.
@@ -324,6 +341,10 @@ impl Lease {
             object: request.object.to_owned(),
             payload: request.payload.clone(),
         });
+        if let Some(feed) = self.pool.feed.clone() {
+            let told = self.process()?.tell_settings(&feed);
+            told.map_err(|e| self.stop(e))?;
+        }
         let sent = self.process()?.send(&message);
         sent.map_err(|e| self.stop(e))?;
         let limits = Arc::clone(&self.pool.limits);
@@ -384,6 +405,7 @@ impl Lease {
             | Message::Call(_)
             | Message::Cancel { .. }
             | Message::Shutdown
+            | Message::Settings(_)
             | Message::SqlDone { .. } => Err(self.stop(violation("a message a program never sends"))),
         }
     }
@@ -423,7 +445,7 @@ fn message_call(message: &Message) -> Option<u64> {
         | Message::Sql { call, .. }
         | Message::SqlDone { call, .. } => Some(*call),
         Message::Call(c) => Some(c.call),
-        Message::Hello(_) | Message::Welcome(_) | Message::Shutdown => None,
+        Message::Hello(_) | Message::Welcome(_) | Message::Shutdown | Message::Settings(_) => None,
     }
 }
 

@@ -28,6 +28,7 @@ pub mod package;
 pub mod payload;
 pub mod pool;
 mod process;
+pub mod settings;
 pub mod values;
 pub mod wire;
 

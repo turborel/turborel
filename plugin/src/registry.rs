@@ -43,6 +43,8 @@ pub struct Plugin {
     pub(super) held: Held,
     /// The host objects, by kind's code and name (RULES.md D229).
     pub(super) hosted: HashMap<(u8, String), Box<dyn super::host::HostObject>>,
+    /// The settings' values the last SETTINGS gave (RULES.md D282).
+    pub(super) settings: Vec<(String, turborel::value::Value)>,
 }
 
 /// Adds a builder method for a kind.

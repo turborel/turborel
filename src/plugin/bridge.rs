@@ -96,6 +96,7 @@ impl Installed {
         let executable = manifest.executable(std::env::consts::OS)?;
         let limits = (Arc::clone(&host.limits), Arc::clone(&host.memory));
         let pool = Pool::new(&manifest.name, (directory.clone(), executable), manifest.kinds(), limits).with_check(host.check());
+        let pool = pool.with_feed(super::settings::Feed::of(&manifest, false));
         let pool = Arc::new(pool);
         let objects = manifest
             .objects

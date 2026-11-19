@@ -342,6 +342,10 @@ struct Call<'a> {
     _window: Window<'a>,
     /// The statement it runs, timed, to tell if it is slow (`db/slow.rs`).
     timed: Option<slow::Timed<&'a str>>,
+    /// While it runs, the settings its calls of extensions' programs are
+    /// told: its snapshot's, its session's own over the database's
+    /// (RULES.md D282).
+    _settings: Option<crate::plugin::settings::Calling>,
 }
 
 impl Call<'_> {
@@ -428,7 +432,8 @@ impl Session {
                 let millis = |key| u64::try_from(snapshot.settings.integer(key)).unwrap_or(0);
                 self.stop.set_timeout(millis(STATEMENT_TIMEOUT_MS));
                 self.stop.set_lock_timeout(millis(LOCKS_TIMEOUT_MS));
-                Ok(Call { session: self, snapshot, _window: self.stop.window(), timed: None })
+                let settings = (!snapshot.extensions.is_empty()).then(|| extensions::calling(&snapshot));
+                Ok(Call { session: self, snapshot, _window: self.stop.window(), timed: None, _settings: settings })
             }
             Err(e) => {
                 self.busy.set(false);

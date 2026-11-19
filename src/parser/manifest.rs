@@ -31,6 +31,7 @@
 //!   | INDEX METHOD <identifier> SUPPORTS ( <identifier> [ , ... ] ) [ BATCH <unsigned integer> ]
 //!   | CREDENTIALS <identifier> | DIAGNOSTICS <identifier> [ BATCH <unsigned integer> ]
 //!   | HOST <host kind> <identifier> [ ( <identifier> = <unsigned integer> | <character string literal> [ , ... ] ) ]
+//!   | <setting declaration> | <reads settings>
 //! <parameters>     ::= ( [ <data type> [ , <data type> ]... ] )
 //! <determinism>    ::= DETERMINISTIC | NOT DETERMINISTIC
 //! ```
@@ -39,7 +40,10 @@
 //! standard, as a column's is (`TypeName`). An XQuery function is named by
 //! its expanded QName as one literal, its namespace's URI in braces before
 //! its local name, `'{uri}local'` \[DESIGN\], as its local name is
-//! case-sensitive and an `<identifier>` is not.
+//! case-sensitive and an `<identifier>` is not. A setting's declaration
+//! and READS SETTINGS are `manifest/settings.rs`'s.
+
+mod settings;
 
 use super::Parser;
 use crate::ast::TypeName;
@@ -131,6 +135,9 @@ impl Parser {
         }
         if self.accept_manifest_word(HOST) {
             return self.host_declaration().map(|d| Item::Host(Box::new(d)));
+        }
+        if let Some(item) = self.setting_item() {
+            return item;
         }
         match self.package_item() {
             Some(item) => item,

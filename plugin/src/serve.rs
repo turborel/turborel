@@ -1,13 +1,15 @@
 //! \[EXTENSION\] A plug-in served (RULES.md D167): HELLO answered by
 //! WELCOME, each CALL by RESULT or ERROR, until SHUTDOWN or the end of
-//! its input. A call is given a `Cx`, through which it hears a CANCEL and
-//! runs SQL in the call's transaction.
+//! its input. A call is given a `Cx`, through which it hears a CANCEL,
+//! runs SQL in the call's transaction, and reads the settings its
+//! manifest declares and reads, as the last SETTINGS before it gave them
+//! (RULES.md D282).
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::sync::mpsc::Receiver;
 
-use turborel::plugin::wire::{BATCH, CANCEL_CAPABILITY, Call, Hello, Message, SQL_CAPABILITY, Welcome, write_message};
+use turborel::plugin::wire::{BATCH, CANCEL_CAPABILITY, Call, Hello, Message, SETTINGS_CAPABILITY, SQL_CAPABILITY, Welcome, write_message};
 use turborel::value::Value;
 
 use super::registry::Plugin;
@@ -41,6 +43,7 @@ pub struct Cx<'a> {
     pub(super) call: u64,
     pub(super) link: &'a mut dyn Link,
     pub(super) limits: Limits,
+    pub(super) settings: &'a [(String, Value)],
 }
 
 impl Cx<'_> {
@@ -81,6 +84,32 @@ impl Cx<'_> {
     /// The limits HELLO gave.
     pub fn limits(&self) -> Limits {
         self.limits
+    }
+
+    /// The value the call runs with of the setting `name`: one its
+    /// manifest declares, named under its extension's name
+    /// (`EXAMPLE.DEPTH`), or a built-in one its READS SETTINGS names; of a
+    /// session's call, the session's own value if it set one. None of a
+    /// setting it neither declares nor reads (RULES.md D282).
+    pub fn setting(&self, name: &str) -> Option<&Value> {
+        self.settings.iter().find(|(n, _)| n.eq_ignore_ascii_case(name.trim())).map(|(_, v)| v)
+    }
+
+    /// The whole number of the setting `name`, if it is one.
+    pub fn integer(&self, name: &str) -> Option<i128> {
+        let Value::Exact(d) = self.setting(name)? else { return None };
+        (d.scale == 0).then_some(d.units)
+    }
+
+    /// The word or text of the setting `name`, if it is one.
+    pub fn text(&self, name: &str) -> Option<&str> {
+        let Value::Char(s) = self.setting(name)? else { return None };
+        Some(s)
+    }
+
+    /// Every setting the call runs with, each with its name.
+    pub fn settings(&self) -> &[(String, Value)] {
+        self.settings
     }
 }
 
@@ -161,6 +190,7 @@ pub fn serve_on(mut plugin: Plugin, input: impl Read + Send + 'static, output: i
                 let answer = called(&mut plugin, &mut pipes, limits, &c);
                 pipes.send(&answer)?;
             }
+            Message::Settings(told) => plugin.settings = told,
             Message::Shutdown => return Ok(()),
             Message::Welcome(_)
             | Message::Result { .. }
@@ -176,7 +206,7 @@ pub fn serve_on(mut plugin: Plugin, input: impl Read + Send + 'static, output: i
 /// WELCOME of `hello`: protocol 1, what it takes of what the host offers,
 /// and the kinds `plugin` serves.
 pub(super) fn welcome(plugin: &Plugin, hello: &Hello) -> Message {
-    let taken = [BATCH, SQL_CAPABILITY, CANCEL_CAPABILITY];
+    let taken = [BATCH, SQL_CAPABILITY, CANCEL_CAPABILITY, SETTINGS_CAPABILITY];
     let capabilities = hello.capabilities.iter().filter(|c| taken.contains(&c.as_str())).cloned().collect();
     Message::Welcome(Welcome {
         protocol: 1,
@@ -190,8 +220,10 @@ pub(super) fn welcome(plugin: &Plugin, hello: &Hello) -> Message {
 /// The answer of `c`, RESULT or ERROR, an answer longer than the limits
 /// allow an ERROR of SQLSTATE 38T04, as the database would refuse it.
 pub(super) fn called(plugin: &mut Plugin, link: &mut dyn Link, limits: Limits, c: &Call) -> Message {
-    let mut cx = Cx { call: c.call, link, limits };
+    let told = std::mem::take(&mut plugin.settings);
+    let mut cx = Cx { call: c.call, link, limits, settings: &told };
     let got = dispatch::answer(plugin, &mut cx, (c.kind, c.op, &c.object), &c.payload);
+    plugin.settings = told;
     let most = [limits.max_message_bytes, limits.max_call_bytes].into_iter().filter(|m| *m > 0).min();
     let too_long = |p: &Vec<u8>| most.is_some_and(|m| u64::try_from(p.len()).unwrap_or(u64::MAX).saturating_add(16) > m);
     let refused = |state: String, message: String| Message::Error { call: c.call, state, message };

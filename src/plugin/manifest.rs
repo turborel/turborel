@@ -14,8 +14,10 @@ use crate::vector::Element;
 use super::errors::invalid_manifest;
 
 pub mod host;
+pub mod settings;
 
 pub use host::{HostDeclared, HostKind, HostOption};
+pub use settings::{Scope, SettingDeclared, SettingType};
 
 /// The words of a metric's PROPERTIES.
 pub const SYMMETRIC: &str = "SYMMETRIC";
@@ -277,6 +279,10 @@ pub enum Item {
     Object(Box<Declared>),
     /// A host plug-in's object (RULES.md D229).
     Host(Box<HostDeclared>),
+    /// A setting it declares (RULES.md D280).
+    Setting(Box<SettingDeclared>),
+    /// READS SETTINGS: the built-in settings its program is told.
+    ReadsSettings(Vec<String>),
 }
 
 /// A manifest, checked.
@@ -304,6 +310,10 @@ pub struct Manifest {
     pub license: Option<String>,
     /// LICENSE FILE: the file of the license's text, if written.
     pub license_file: Option<String>,
+    /// The settings it declares (RULES.md D280).
+    pub settings: Vec<SettingDeclared>,
+    /// READS SETTINGS: the built-in settings its program is told, upper case.
+    pub reads_settings: Vec<String>,
 }
 
 impl Manifest {
@@ -327,6 +337,8 @@ impl Manifest {
             upgrades: Vec::new(),
             license: None,
             license_file: None,
+            settings: Vec::new(),
+            reads_settings: Vec::new(),
         };
         let mut protocol = None;
         for item in items {
@@ -350,6 +362,8 @@ impl Manifest {
                 Item::Upgrade(range, script) => m.upgrades.push((range, script)),
                 Item::License(expression) => written_once(&mut m.license, expression, "LICENSE")?,
                 Item::LicenseFile(path) => written_once(&mut m.license_file, path, "LICENSE FILE")?,
+                Item::Setting(d) => m.settings.push(*d),
+                Item::ReadsSettings(names) => m.reads_settings.extend(names.into_iter().map(|n| n.trim().to_ascii_uppercase())),
             }
         }
         if protocol != Some(super::PROTOCOL) {
@@ -390,7 +404,7 @@ impl Manifest {
         if !self.hosted.is_empty() && !self.objects.is_empty() {
             return Err(invalid_manifest("a host plug-in declares host objects alone, and an extension none (RULES.md D229)"));
         }
-        Ok(())
+        settings::check(&self.name, &self.settings, &self.reads_settings, !self.hosted.is_empty())
     }
 
     /// The executable of the platform `os`, relative to its directory: the

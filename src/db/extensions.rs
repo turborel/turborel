@@ -15,6 +15,9 @@ mod dependents;
 mod host;
 mod objects;
 mod session;
+mod settings;
+
+pub(super) use settings::calling;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -80,6 +83,7 @@ impl State {
         }
         let installed = Arc::new(self.installed(manifest, read)?);
         self.register_extension(&installed)?;
+        self.declare_manifest_settings(&installed.manifest, false)?;
         self.put_extension(&installed, read, !read.dependency);
         Ok(Defined { locks, ..Defined::default() })
     }
@@ -112,6 +116,7 @@ impl State {
         let explicit = self.catalog.extensions().iter().find(|e| e.name == d.name).is_none_or(|e| e.explicit);
         let installed = Arc::new(self.installed(manifest, read)?);
         self.register_extension(&installed)?;
+        self.declare_manifest_settings(&installed.manifest, false)?;
         self.put_extension(&installed, read, explicit);
         Ok(Defined::default())
     }
@@ -217,6 +222,7 @@ impl State {
     /// `installed` gone: its objects, its descriptor and its place.
     fn forget_extension(&mut self, installed: &Installed) {
         self.unregister_extension(installed);
+        self.retire_manifest_settings(&installed.manifest.name);
         let name = &installed.manifest.name;
         let kept: Vec<ExtensionDesc> = self.catalog.extensions().iter().filter(|e| e.name != *name).cloned().collect();
         let mut catalog = self.catalog.duplicate();
@@ -246,6 +252,7 @@ impl State {
             };
             let installed = Arc::new(self.installed(Manifest::parse(&d.manifest)?, &read)?);
             self.register_extension(&installed)?;
+            self.declare_manifest_settings(&installed.manifest, false)?;
             map.insert(d.name.clone(), installed);
             self.extensions = Arc::new(map.clone());
         }

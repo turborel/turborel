@@ -3,7 +3,8 @@
 //! directory, whether PLUGINS.HOST pins its digest, and its license as
 //! its manifest declares it (RULES.md D267, `package_license`); its
 //! processes running, the calls made of its plug-in, and why the node
-//! stopped, if a host plug-in's failure stopped it. Host plug-ins are the
+//! stopped, if a host plug-in's failure stopped it. Each setting its
+//! manifest declares is a row of type SETTING (RULES.md D281). Host plug-ins are the
 //! node's, so the database's owner sees them; any other, none.
 
 use super::{INFORMATION_SCHEMA, Seen, SystemTable, cardinal, identifier, number, text, text_column, yes};
@@ -13,6 +14,8 @@ use crate::plugin::package::license::License;
 use crate::storage::Row;
 use crate::value::Value;
 
+/// The type of a row of a setting the plug-in declares (RULES.md D281).
+const SETTING: &str = "SETTING";
 /// The longest directory, license or reason shown.
 const TEXT_LENGTH: u32 = 4000;
 
@@ -55,9 +58,11 @@ impl SystemTable for HostPlugins {
         let mut rows = Vec::new();
         for p in &host.hosted() {
             let (info, license) = (p.pool.info(), License::of(&p.manifest));
-            for d in &p.manifest.hosted {
+            let objects = p.manifest.hosted.iter().map(|d| (d.kind.word(), d.name.clone()));
+            let settings = p.manifest.settings.iter().map(|d| (SETTING.to_owned(), d.qualified(&p.manifest.name)));
+            for (kind, name) in objects.chain(settings) {
                 let mut row = vec![text(&p.manifest.name), text(&p.manifest.version), text(&p.directory.display().to_string())];
-                row.extend([yes(p.pinned), text(&d.kind.word()), text(&d.name)]);
+                row.extend([yes(p.pinned), text(&kind), text(&name)]);
                 row.extend([optional(license.expression.as_deref()), optional(license.file.as_deref())]);
                 row.extend([count(info.running), count(info.calls), optional(stopped.as_deref())]);
                 rows.push(row);

@@ -6,7 +6,9 @@
 //!   and its processes running and started, calls made and processes
 //!   stopped after a failure since the database opened.
 //! * EXTENSION_OBJECTS: each object an extension declares, its kind,
-//!   name, determinism and batch, and its declaration as written.
+//!   name, determinism and batch, and its declaration as written; and
+//!   each setting it declares, of type SETTING, and each built-in one it
+//!   reads, of type READS SETTING (RULES.md D281).
 //! * EXTENSION_PACKAGES: the database's lock of packages, each extension
 //!   with its digest, whether CREATE EXTENSION named it, the ranges it
 //!   requires of others, and its license (RULES.md D267).
@@ -22,6 +24,13 @@ use crate::value::Value;
 /// The longest directory, digest, declaration or list of requirements
 /// shown.
 const TEXT_LENGTH: u32 = 4000;
+
+/// The type of a row of EXTENSION_OBJECTS of a setting the extension
+/// declares (RULES.md D281).
+const SETTING: &str = "SETTING";
+/// The type of a row of EXTENSION_OBJECTS of a built-in setting the
+/// extension reads.
+const READS_SETTING: &str = "READS SETTING";
 
 /// EXTENSIONS.
 struct Extensions;
@@ -97,6 +106,12 @@ impl SystemTable for Objects {
                 let batch = d.batch.map_or(Value::Null, |b| count(u64::from(b)));
                 let row = vec![text(&e.manifest.name), text(d.kind.word()), text(&d.name), yes(d.deterministic), batch, text(&d.text)];
                 rows.push(row);
+            }
+            let m = &e.manifest;
+            let declared = m.settings.iter().map(|d| (SETTING, d.qualified(&m.name), d.text.clone()));
+            let read = m.reads_settings.iter().map(|n| (READS_SETTING, n.clone(), format!("READS SETTINGS ('{n}')")));
+            for (kind, name, declaration) in declared.chain(read) {
+                rows.push(vec![text(&m.name), text(kind), text(&name), yes(false), Value::Null, text(&declaration)]);
             }
         }
         Ok(rows)

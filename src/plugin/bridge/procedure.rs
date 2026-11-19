@@ -54,6 +54,7 @@ impl Procedure for PluginProcedure {
         let modifies = self.modifies;
         let mut sql = |rows: bool, text: &str, given: &[Value]| -> Result<Vec<Vec<Value>>> {
             let mut cx = cx.borrow_mut();
+            crate::plugin::settings::own_settings_only(self.link.pool.extension(), text)?;
             if rows {
                 return cx.rows(text, given);
             }

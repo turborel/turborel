@@ -79,6 +79,12 @@ impl Harness {
         self
     }
 
+    /// Its calls made with the settings `told`, each with its name, as a
+    /// SETTINGS frame gives them (RULES.md D282).
+    pub fn settings(&mut self, told: &[(&str, Value)]) {
+        self.plugin.settings = told.iter().map(|(n, v)| ((*n).to_owned(), v.clone())).collect();
+    }
+
     /// Its calls cancelled, as the database asks, or not.
     pub fn cancel(&mut self, cancel: bool) {
         self.cancel = cancel;
@@ -103,6 +109,7 @@ impl Harness {
             | Message::Cancel { .. }
             | Message::Shutdown
             | Message::Sql { .. }
+            | Message::Settings(_)
             | Message::SqlDone { .. } => Vec::new(),
         }
     }
@@ -126,6 +133,7 @@ impl Harness {
             | Message::Cancel { .. }
             | Message::Shutdown
             | Message::Sql { .. }
+            | Message::Settings(_)
             | Message::SqlDone { .. } => Err(PluginError::external("no answer")),
         }
     }

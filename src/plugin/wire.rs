@@ -16,6 +16,9 @@
 //! SHUTDOWN 7  (nothing)
 //! SQL      8  call u64 | mode u8 (0 run, 1 rows) | text str | values
 //! SQLDONE  9  call u64 | rows
+//! SETTINGS 10 names (count u32, str each) | values: the settings' values
+//!             the next CALL runs with, sent before it when they changed
+//!             since the last the process was sent (RULES.md D282)
 //! ```
 //!
 //! Every integer is little-endian, as `bytes.rs` writes every other
@@ -48,6 +51,8 @@ pub const SHUTDOWN: u8 = 7;
 pub const SQL: u8 = 8;
 /// The type byte of SQLDONE.
 pub const SQL_DONE: u8 = 9;
+/// The type byte of SETTINGS.
+pub const SETTINGS: u8 = 10;
 
 /// The bytes of a frame's length.
 const LENGTH_BYTES: usize = 4;
@@ -61,8 +66,11 @@ pub const BATCH: &str = "batch";
 pub const SQL_CAPABILITY: &str = "sql";
 /// The capability of CANCEL read while a call runs.
 pub const CANCEL_CAPABILITY: &str = "cancel";
+/// The capability of SETTINGS, the values of the settings a manifest
+/// declares and reads, sent before a CALL as they change (RULES.md D282).
+pub const SETTINGS_CAPABILITY: &str = "settings";
 /// The capabilities a host of protocol 1 offers.
-pub const HOST_CAPABILITIES: [&str; 3] = [BATCH, SQL_CAPABILITY, CANCEL_CAPABILITY];
+pub const HOST_CAPABILITIES: [&str; 4] = [BATCH, SQL_CAPABILITY, CANCEL_CAPABILITY, SETTINGS_CAPABILITY];
 
 /// What the host tells a program first.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,6 +162,9 @@ pub enum Message {
         /// The values of its `?`s.
         args: Vec<Value>,
     },
+    /// SETTINGS: the values of the settings the next call runs with, each
+    /// with its name.
+    Settings(Vec<(String, Value)>),
     /// SQLDONE: the rows of the SQL asked for.
     SqlDone {
         /// The call.
@@ -195,6 +206,7 @@ impl Message {
             Message::Shutdown => SHUTDOWN,
             Message::Sql { .. } => SQL,
             Message::SqlDone { .. } => SQL_DONE,
+            Message::Settings(_) => SETTINGS,
         }
     }
 
@@ -253,6 +265,10 @@ impl Message {
                 out.put_u64(*call);
                 put_rows(out, rows)?;
             }
+            Message::Settings(told) => {
+                put_strings(out, &told.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>());
+                put_values(out, &told.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>())?;
+            }
         }
         Ok(())
     }
@@ -302,6 +318,13 @@ impl Message {
             SHUTDOWN => Message::Shutdown,
             SQL => Message::Sql { call: r.u64()?, rows: r.u8()? != 0, text: r.str()?, args: values(r)? },
             SQL_DONE => Message::SqlDone { call: r.u64()?, rows: rows(r)? },
+            SETTINGS => {
+                let (names, told) = (strings(r)?, values(r)?);
+                if names.len() != told.len() {
+                    return Err(violation("SETTINGS names as many settings as it gives values"));
+                }
+                Message::Settings(names.into_iter().zip(told).collect())
+            }
             other => return Err(violation(&format!("no message is of type {other}"))),
         };
         r.finish()?;
