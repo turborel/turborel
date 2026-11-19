@@ -9,7 +9,8 @@
 > from one build to the next, SQL, API, protocol and files alike. See
 > [VERSIONING.md](VERSIONING.md). The latest alpha is built for Linux,
 > macOS and Windows as the pre-release
-> [nightly](https://github.com/turborel/turborel/releases/tag/nightly).
+> [nightly](https://github.com/turborel/turborel/releases/tag/nightly),
+> and as the image `ghcr.io/turborel/turborel:nightly`.
 
 Turborel (TUR-boh-rel) is a relational database system written in
 Rust. Embed it as a library, or run it as a server, `turboreld`, for

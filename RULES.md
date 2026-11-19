@@ -199,6 +199,7 @@ verification approach DO-178C expects (§8).
 | D171 | Extensions are versioned packages, resolved together and locked per database |
 | D172 | What a plug-in does is shown, and its errors keep their class |
 | D173 | Only the operator chooses what runs, and packages are checked by digest and signature |
+| D174 | The server ships as a container image, built by CI from the Dockerfile |
 
 ### The project
 
@@ -337,6 +338,17 @@ The hook (`cargo xtask install-hooks`) runs before each commit. CI runs on
 Linux, macOS and Windows for every push and pull request, with coverage on
 Linux. We need both because a hook can be skipped and only checks one
 platform.
+
+#### D174. The server ships as a container image, built by CI from the Dockerfile
+
+The image holds `turboreld` and `turborel` on a distroless base, as a
+non-root user, for Linux x86-64 and arm64. CI (`image.yml`) builds it
+once a change on main has passed `verify`, each platform on a runner of
+its own architecture, and publishes it to ghcr.io as `nightly` and by
+commit, as the archives are. Its build stage is the official Rust image
+at the version `rust-toolchain.toml` pins, and the build fails if the two
+differ, so the compiler stays one configuration item (R-CM-1): a
+toolchain change moves both.
 
 #### D22. No instrumented MC/DC
 
@@ -6991,7 +7003,7 @@ Rust's short-circuit `&&` and `||`.
 | R-PROC-5 | A release's crates **shall** be published together at its number, from a pushed commit passing `cargo xtask verify --coverage`, dry run first, per VERSIONING.md. | review |
 | R-TOOL-1 | Project automation **shall** be Rust in `xtask/`, never shell scripts (D7). | review |
 | R-TOOL-2 | `xtask` **shall** follow these rules, use only std, and test its own decisions (`[TOOL]` requirements). | `xtask verify` |
-| R-CM-1 | The toolchain is pinned (D8); a change **shall** be its own commit, passing `cargo xtask verify --coverage`. | review |
+| R-CM-1 | The toolchain is pinned (D8), and the Dockerfile's build image with it (D174); a change **shall** be its own commit, changing both, passing `cargo xtask verify --coverage`. | review |
 | R-CM-2 | `Cargo.lock` and the baselines **shall** be under version control. | review |
 
 The review checklist:
