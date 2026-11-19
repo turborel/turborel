@@ -44,7 +44,7 @@ pub(in crate::xml::schema) fn type_name(schema: &Schema, t: TypeDef) -> QName {
         TypeDef::Simple(Simple::Defined(id)) => {
             return schema.simple(id).map_or_else(|| QName::local(ANONYMOUS_SIMPLE), |d| simple_type_name(d, id));
         }
-        TypeDef::Simple(s) => builtin::simple_name(schema, s).unwrap_or_else(builtin::any_type_name),
+        TypeDef::Simple(s) => builtin::simple_name(schema, s).or_else(|| builtin::anonymous_list(s)).unwrap_or_else(builtin::any_type_name),
         TypeDef::Complex(c) => schema.complex(c).map_or_else(builtin::any_type_name, |d| {
             d.name.clone().unwrap_or_else(|| Expanded::new(d.namespace.as_deref(), &format!("{ANONYMOUS}{}", c.0)))
         }),

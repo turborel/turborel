@@ -21,7 +21,8 @@ fn each_broken(body: &str, cases: &[(&str, &str)]) {
 /// §3.3.4 cvc-elt.4.1, 4.2] the instance attributes are allowed on an
 /// element of a simple type and annotated with their own types;
 /// `xsi:type` names a type by a QName in scope, a built-in type included,
-/// never `xs:NOTATION`.
+/// never `xs:NOTATION`. `xsi:schemaLocation`'s list of `xs:anyURI` is
+/// anonymous, its type-name found again as that list [XQueryDM §3.3.1.1].
 #[test]
 fn instance_attributes_are_typed_and_xsi_type_resolved() {
     let body = r#"<xs:element name="n" type="xs:decimal"/>"#;
@@ -34,6 +35,13 @@ fn instance_attributes_are_typed_and_xsi_type_resolved() {
     let locations = tree.annotation(attribute(tree, n, "schemaLocation").unwrap()).unwrap().typing.clone();
     let Typing::List(item) = locations else { panic!("{locations:?}") };
     assert_eq!(item.kind, crate::xml::AtomicType::AnyUri);
+    let location_type = &tree.annotation(attribute(tree, n, "schemaLocation").unwrap()).unwrap().name;
+    assert_eq!(location_type.local.as_ref() as &str, "#anonymous-list-anyURI");
+    let uris =
+        super::super::super::component::TypeDef::Simple(super::super::super::component::Simple::List(crate::xml::AtomicType::AnyUri));
+    let s = schema(body).unwrap();
+    assert_eq!(super::super::super::named::annotated_type(&s, location_type), Some(uris));
+    assert_eq!(super::super::super::check::type_name(&s, uris), None);
     each_broken(
         body,
         &[
