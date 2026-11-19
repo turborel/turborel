@@ -1,4 +1,4 @@
-//! \[DESIGN\] Conditional blocks (RULES.md D212): `\if`, `\elif`, `\else`
+//! \[DESIGN\] Conditional blocks (RULES.md D212), `\if`, `\elif`, `\else`
 //! and `\endif`, nested, on the truth of their argument once variables are
 //! read into it. In a branch not taken, lines are passed over unread but
 //! for these four commands, so blocks nested in it still pair up.
@@ -15,7 +15,7 @@ enum Branch {
     Waiting,
     /// A branch was taken; none after is.
     Done,
-    /// The block is within a branch not taken: none of it is.
+    /// The block is within a branch not taken, so none of it is.
     Skipped,
 }
 
@@ -34,8 +34,8 @@ pub struct Conditions {
 }
 
 impl Conditions {
-    /// Whether lines are read: no block open, or the innermost's branch
-    /// taken.
+    /// Whether lines are read, as with no block open or the innermost's
+    /// branch taken.
     pub fn active(&self) -> bool {
         self.open.last().is_none_or(|b| b.branch == Branch::Taken)
     }
@@ -64,7 +64,7 @@ impl Conditions {
         Ok(())
     }
 
-    /// `\elif`, of the truth `value`: taken if no branch before was.
+    /// `\elif`, of the truth `value`, taken if no branch before was.
     ///
     /// # Errors
     ///
@@ -80,7 +80,7 @@ impl Conditions {
         Ok(())
     }
 
-    /// `\else`: taken if no branch before was.
+    /// `\else`, taken if no branch before was.
     ///
     /// # Errors
     ///
@@ -96,7 +96,7 @@ impl Conditions {
         Ok(())
     }
 
-    /// `\endif`: the innermost block closed.
+    /// `\endif` closes the innermost block.
     ///
     /// # Errors
     ///

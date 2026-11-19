@@ -1,5 +1,5 @@
 //! \[DESIGN\] A session's statements run, one at a time, in the order
-//! given (RULES.md D46): each a `<direct SQL statement>` [ISO/IEC
+//! given (RULES.md D46), each a `<direct SQL statement>` [ISO/IEC
 //! 9075:1992 §20.1], its rows shown as they come, its failure told and the
 //! run gone on. A run not typed stops at a cancelled statement, or with
 //! STOP_ON_ERROR at the first that fails; any run stops once the
@@ -61,7 +61,7 @@ pub struct Completion {
     pub candidates: Vec<String>,
 }
 
-/// What reads typed lines: a line editor (`line.rs`).
+/// What reads typed lines, a line editor (`line.rs`).
 pub trait Lines {
     /// A line typed after `prompt`, without its newline; none at the end
     /// of input. `complete` gives the completions of the text before the
@@ -83,7 +83,7 @@ pub type Secret<'a> = &'a mut dyn FnMut(&str) -> io::Result<String>;
 /// What a terminal adds to a run, if it has one.
 #[derive(Default)]
 pub struct Terminal<'a> {
-    /// The screen's size, if output is a screen: for the pager, wrapped
+    /// The screen's size, if output is a screen, for the pager, wrapped
     /// output and expanded output decided by width.
     pub screen: Option<Screen>,
     /// The line editor typed lines are read by, if any.
@@ -96,14 +96,14 @@ pub struct Terminal<'a> {
 pub struct Io<'a> {
     /// Standard input.
     pub input: &'a mut dyn BufRead,
-    /// Whether it is typed at a terminal: prompted, and not stopped by a
+    /// Whether it is typed at a terminal, so prompted and not stopped by a
     /// failure.
     pub typed: bool,
     /// Where results go.
     pub out: &'a mut dyn Write,
     /// Where failures go.
     pub err: &'a mut dyn Write,
-    /// What Ctrl-C cancels, if it is taken: kept to the current
+    /// What Ctrl-C cancels, if it is taken, kept to the current
     /// connection's statement as connection statements change it.
     pub interrupts: Option<&'a Interrupts>,
     /// What the terminal adds, if any.
@@ -167,7 +167,7 @@ struct Shell<'a, S: Statements + ?Sized, C: FnMut() -> Duration> {
     terminal: Terminal<'a>,
     /// Whether the text being read is typed at a terminal.
     typing: bool,
-    /// A monotonic elapsed clock: `Instant` in a run, supplied in tests
+    /// A monotonic elapsed clock, `Instant` in a run, supplied in tests
     /// (RULES.md R-TEST-5).
     now: C,
     vars: Variables,
@@ -194,13 +194,13 @@ struct Shell<'a, S: Statements + ?Sized, C: FnMut() -> Duration> {
     ended: Option<Outcome>,
 }
 
-/// Runs `options`' inputs over `connection`, as `io` says: whether every
-/// statement succeeded. What failed is told to `io.err`.
+/// Runs `options`' inputs over `connection`, as `io` says, and returns
+/// whether every statement succeeded. What failed is told to `io.err`.
 pub fn run<'a, S: Statements + ?Sized>(connection: &'a mut S, options: &'a Options, io: Io<'a>) -> bool {
     outcome(connection, options, io) == Outcome::Succeeded
 }
 
-/// Runs as `run` does: how the run ended (RULES.md D215).
+/// Runs as `run` does and returns how the run ended (RULES.md D215).
 pub fn outcome<'a, S: Statements + ?Sized>(connection: &'a mut S, options: &'a Options, io: Io<'a>) -> Outcome {
     let origin = Instant::now();
     run_with_clock(connection, options, io, || origin.elapsed())
@@ -253,12 +253,11 @@ fn cancelled(failure: &Failure) -> bool {
 }
 
 impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
-    /// Sets the variables a run begins with: the client's defaults, then
+    /// Sets the variables a run begins with, the client's defaults, then
     /// those `-v` set.
     fn begin(&mut self) {
         self.vars.set(vars::STOP_ON_ERROR, if self.options.stop_on_error { "on" } else { "off" });
         self.vars.set(vars::AUTOCOMMIT, "off");
-        self.vars.set(vars::TIMING, if self.options.timing { "on" } else { "off" });
         self.vars.set(vars::PROMPT, PROMPT);
         self.vars.set(vars::PROMPT_MORE, MORE);
         self.vars.set(vars::VERBOSITY, "default");
@@ -275,8 +274,8 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         }
     }
 
-    /// Ends the run: a single transaction committed or rolled back, the
-    /// output redirected closed; how it ended.
+    /// Ends the run, a single transaction committed or rolled back, the
+    /// output redirected closed, and returns how it ended.
     fn end(&mut self) -> Outcome {
         if self.options.settings.single_transaction && self.ended != Some(Outcome::Lost) {
             let end = if self.failed { "ROLLBACK" } else { "COMMIT" };
@@ -297,7 +296,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         match input {
             Input::Command(sql) => self.text(&mut sql.as_bytes(), false),
             Input::File(path) => self.file(path),
-            // Read once: a second time, it is at its end.
+            // Read once, as a second time it is at its end.
             Input::Standard => match self.input.take() {
                 Some(standard) => self.text(standard, self.typed),
                 None => Next::Go,
@@ -306,7 +305,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         }
     }
 
-    /// Tells `msg` as a failure: the run then does `next`.
+    /// Tells `msg` as a failure, and the run then does `next`.
     fn tell(&mut self, msg: &str, next: Next) -> Next {
         self.failed = true;
         self.told(&format!("turborel: {msg}"));
@@ -392,7 +391,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         }
     }
 
-    /// Runs what `line` holds: in a branch not taken, its conditional
+    /// Runs what `line` holds, or in a branch not taken its conditional
     /// command alone, if it is one.
     fn line_read(&mut self, line: &str, splitter: &mut Splitter, conditions: &mut Conditions) -> Next {
         if !conditions.active() {

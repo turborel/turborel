@@ -21,14 +21,14 @@ use crate::run::{Completion, Lines, Screen};
 
 /// The program that sets the terminal's modes.
 const STTY: &str = "stty";
-/// The modes of raw input: each byte as typed, not echoed, Ctrl-C and
+/// The modes of raw input, each byte as typed, not echoed, Ctrl-C and
 /// Ctrl-Z and flow control read as keys.
 const RAW: [&str; 6] = ["-icanon", "-echo", "-isig", "-ixon", "min", "1"];
 /// The columns of a screen whose size is not known.
 const DEFAULT_WIDTH: usize = 80;
 
-/// Runs `stty` with `args`, the terminal its input: what it wrote, if it
-/// succeeded.
+/// Runs `stty` with `args`, the terminal its input, and returns what it
+/// wrote, if it succeeded.
 fn stty(args: &[&str]) -> Option<String> {
     let out = Command::new(STTY).args(args).stdin(Stdio::inherit()).stderr(Stdio::null()).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
@@ -143,8 +143,8 @@ impl Lines for LineEditor {
     fn remember(&mut self, entry: &str, size: usize, file: Option<&Path>) {
         self.history.add(entry, size);
         if let Some(file) = file {
-            // The history is the user's convenience: a file that cannot be
-            // written leaves it kept for this session alone.
+            // The history is the user's convenience, so a file that cannot
+            // be written leaves it kept for this session alone.
             drop(self.history.save(file));
         }
     }

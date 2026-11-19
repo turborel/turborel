@@ -2660,15 +2660,19 @@ input. Each statement runs alone as a `<direct SQL statement>` [ISO/IEC
 to standard error and the run continues, unless `--stop-on-error` is given
 or the connection is lost. The exit status tells how the run ended (D215).
 
-`--timing` reports each attempted SQL statement's elapsed time in whole
-nanoseconds to standard error, after the statement. It uses the client's
+A session typed at a terminal, its output on a screen, reports each
+attempted SQL statement's elapsed time in whole nanoseconds to standard
+error, after the statement. Nothing else is timed, so a script, `-c`,
+`-f`, an included file and piped output never show a time, and no
+option or command turns it on or off. It uses the client's
 monotonic clock, from starting the statement through receiving its outcome
 and writing any result rows: server work, network transfer and streamed
 output are included; writing a failure's diagnostic is not. Reading input,
 the initial connection and login, and imports are outside it. Nanoseconds
 are the unit, not a promise of clock precision. A failure to write timing
-is ignored, as one to write a diagnostic is. Timing is off by default and
-changes no protocol message (D45).
+is ignored, as one to write a diagnostic is. Timing changes no protocol
+message (D45). The time the server reports for a statement follows the
+round trip once the client gives it (D215).
 
 The client library is the SQL-agent [ISO/IEC 9075:1992 §15]
 (`turborel_client::agent`). It runs CONNECT, SET CONNECTION and DISCONNECT
@@ -6334,7 +6338,7 @@ variable is set. The splitter substitutes them as it reads, so a value
 may hold a statement's end only where it is written as text. A variable
 not set, and the colons of `::`, are left as written. The client's own
 settings are variables too (AUTOCOMMIT, STOP_ON_ERROR,
-ROLLBACK_ON_ERROR, ECHO, QUIET, TIMING, FETCH_COUNT, VERBOSITY,
+ROLLBACK_ON_ERROR, ECHO, QUIET, FETCH_COUNT, VERBOSITY,
 SAFE_UPDATES, the prompts and the history's). Each statement sets
 ROW_COUNT, ERROR, SQLSTATE and the last failure's message and SQLSTATE.
 `\if`, `\elif`, `\else` and `\endif` nest to 64 deep (R-CF-6). In a
@@ -6383,7 +6387,12 @@ including file's directory. `\o` and `\g` send results to a file or a
 program. `\gset` stores one row as variables, and `\gexec` runs each
 value as a statement. `\watch` runs one again on an interval until
 Ctrl-C, reading the count of presses from the handler (D44). `\e` edits
-the statement begun in the editor the environment names.
+the statement begun in the editor the environment names. In a session
+typed at a screen, each statement's line shows the round trip the
+client measured, and then the time the server reports for it, split
+into planning, execution and waiting as far as the server splits it. The protocol
+does not yet carry that report. `Statements::server_time` is its seam,
+and until it gives a time the line shows the round trip alone.
 
 #### D216. `\import` and `\export` stream rows through statements, and leave a seam for a bulk copy
 

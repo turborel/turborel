@@ -1,7 +1,7 @@
-//! \[DESIGN\] The client's variables (RULES.md D212): names set and unset
+//! \[DESIGN\] The client's variables (RULES.md D212), names set and unset
 //! by `\set` and `\unset` or `-v NAME=VALUE`, their values text, read back
 //! into statements by `:NAME`, `:'NAME'` and `:"NAME"` (`split/subst.rs`)
-//! and into commands' arguments. Some names are the client's own: setting
+//! and into commands' arguments. Some names are the client's own; setting
 //! them changes how it runs, and it sets others after each statement.
 
 use std::collections::BTreeMap;
@@ -11,16 +11,16 @@ pub const AUTOCOMMIT: &str = "AUTOCOMMIT";
 /// A run not typed ends at the first statement that fails, when on.
 pub const STOP_ON_ERROR: &str = "STOP_ON_ERROR";
 /// A statement that fails in a transaction is rolled back alone, by a
-/// savepoint taken before it: `on`, `off` or `interactive`.
+/// savepoint taken before it, as `on`, `off` or `interactive` says.
 pub const ROLLBACK_ON_ERROR: &str = "ROLLBACK_ON_ERROR";
-/// What is written as it runs: `none`, `queries` or `errors`.
+/// What is written as it runs, `none`, `queries` or `errors`.
 pub const ECHO: &str = "ECHO";
 /// The completions of statements other than queries, `OK` and the like,
 /// left unwritten, when on.
 pub const QUIET: &str = "QUIET";
 /// The rows the last query gave.
 pub const ROW_COUNT: &str = "ROW_COUNT";
-/// Whether the last statement failed: `true` or `false`.
+/// Whether the last statement failed, `true` or `false`.
 pub const ERROR: &str = "ERROR";
 /// The SQLSTATE the last statement completed with.
 pub const SQLSTATE: &str = "SQLSTATE";
@@ -39,13 +39,10 @@ pub const HISTORY_SIZE: &str = "HISTORY_SIZE";
 /// A query's rows fetched this many at a time through a cursor, if more
 /// than 0.
 pub const FETCH_COUNT: &str = "FETCH_COUNT";
-/// How much of a failure is told: `terse`, `default` or `verbose`.
+/// How much of a failure is told, `terse`, `default` or `verbose`.
 pub const VERBOSITY: &str = "VERBOSITY";
 /// UPDATE and DELETE without WHERE refused before they are sent, when on.
 pub const SAFE_UPDATES: &str = "SAFE_UPDATES";
-/// Whether each statement's time is told, as `\timing` and `--timing`
-/// set it.
-pub const TIMING: &str = "TIMING";
 /// The user the session is of, set as it begins.
 pub const USER: &str = "USER";
 /// The server's product and version, set as the session begins.
@@ -58,8 +55,8 @@ const FALSE_WORDS: [&str; 4] = ["off", "false", "no", "0"];
 /// What `ROLLBACK_ON_ERROR` takes beside on and off.
 pub const INTERACTIVE: &str = "interactive";
 
-/// \[DESIGN\] RULES.md D212: the truth `text` names, if it names one: on,
-/// true, yes or 1; off, false, no or 0; in any case.
+/// \[DESIGN\] RULES.md D212: the truth `text` names, if it names one,
+/// which is on, true, yes or 1, or off, false, no or 0, in any case.
 pub fn truth(text: &str) -> Option<bool> {
     let word = text.trim();
     if TRUE_WORDS.iter().any(|w| w.eq_ignore_ascii_case(word)) {
@@ -71,8 +68,8 @@ pub fn truth(text: &str) -> Option<bool> {
     }
 }
 
-/// Whether `name` may name a variable: letters, digits and underscores,
-/// at least one.
+/// Whether `name` may name a variable, being letters, digits and
+/// underscores, at least one.
 pub fn is_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(is_name_char)
 }
@@ -94,7 +91,7 @@ pub fn identifier(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 
-/// What begins a reference to whether a variable is set: `:{?NAME}`.
+/// What begins a reference to whether a variable is set, as in `:{?NAME}`.
 const DEFINED_OPEN: &str = ":{?";
 /// What ends one.
 const DEFINED_CLOSE: char = '}';
@@ -104,7 +101,7 @@ const TRUE_TEXT: &str = "true";
 const FALSE_TEXT: &str = "false";
 
 /// \[DESIGN\] RULES.md D212: the text of the reference to a variable a
-/// `:` at `at` in `chars` begins, and where after it: `:NAME` its value,
+/// `:` at `at` in `chars` begins, and where after it; `:NAME` its value,
 /// `:'NAME'` its value as a literal, `:"NAME"` as a delimited identifier,
 /// `:{?NAME}` `true` if it is set, else `false`. None if the colon begins
 /// no reference, or one to a variable not set.
@@ -192,7 +189,7 @@ impl Variables {
         self.get(name).and_then(|v| v.trim().parse().ok())
     }
 
-    /// How much of a failure is told, as VERBOSITY says: by default, its
+    /// How much of a failure is told, as VERBOSITY says, by default its
     /// rule and where.
     pub fn verbosity(&self) -> Verbosity {
         match self.get(VERBOSITY).map(str::to_ascii_lowercase).as_deref() {
@@ -202,7 +199,7 @@ impl Variables {
         }
     }
 
-    /// What is written as statements run, as ECHO says: by default,
+    /// What is written as statements run, as ECHO says, by default
     /// nothing.
     pub fn echo(&self) -> Echo {
         match self.get(ECHO).map(str::to_ascii_lowercase).as_deref() {

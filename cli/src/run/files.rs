@@ -14,8 +14,8 @@ use super::{MAX_INCLUDES, Next, Outcome, Shell, Statements, cancelled};
 use crate::export::{self, Export};
 
 impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
-    /// Runs the statements of the file at `path`: unreadable, the run
-    /// stops.
+    /// Runs the statements of the file at `path`. If it cannot be read,
+    /// the run stops.
     pub(super) fn file(&mut self, path: &Path) -> Next {
         if self.files.len() >= MAX_INCLUDES {
             return self.tell(&format!("cannot read {}: files are included at most {MAX_INCLUDES} deep", path.display()), Next::Stop);
@@ -30,7 +30,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         next
     }
 
-    /// `\i` and `\ir`: the statements of `path` run, named from the
+    /// `\i` and `\ir` run the statements of `path`, named from the
     /// directory of the current file if `relative`, else from the
     /// current directory.
     pub(super) fn include(&mut self, path: &Path, relative: bool) -> Next {
@@ -48,8 +48,8 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
     }
 
     /// Imports the rows of the file at `path` into the table `into`
-    /// names, read as `dialect` says: each row skipped told as a failure,
-    /// and what was imported said.
+    /// names, read as `dialect` says. Each row skipped is told as a
+    /// failure, and what was imported is said.
     ///
     /// The rows go through one prepared INSERT, a batch to a transaction
     /// (`turborel_client::import`); a bulk copy of the protocol, once it
@@ -123,8 +123,8 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         }
     }
 
-    /// `\export {TABLE | (QUERY)} FILE [OPTION...]`: the rows written,
-    /// and how many said.
+    /// `\export {TABLE | (QUERY)} FILE [OPTION...]` writes the rows and
+    /// says how many.
     pub(super) fn export(&mut self, args: &[String]) -> Next {
         let how = match Export::parse(args) {
             Ok(how) => how,

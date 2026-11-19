@@ -1,4 +1,4 @@
-//! \[DESIGN\] One line being typed (RULES.md D211): the keys applied to
+//! \[DESIGN\] One line being typed (RULES.md D211), the keys applied to
 //! its buffer, Up and Down walking the history, Ctrl-R searching it, and
 //! the line drawn again after each key. An entry of several lines is
 //! edited as one line, each line break shown as a space and kept. A line
@@ -14,7 +14,7 @@ use crate::run::Completion;
 pub enum Action {
     /// Typing goes on.
     Go,
-    /// The line is done: its text.
+    /// The line is done, with its text.
     Submit(String),
     /// Input ended.
     End,
@@ -196,9 +196,9 @@ impl<'h> Editor<'h> {
         self.key(key)
     }
 
-    /// Applies `completion` of the text before the cursor: one candidate
-    /// put in place of the word, several their common start; the
-    /// candidates to list, if it did not add to the word and there are
+    /// Applies `completion` of the text before the cursor, one candidate
+    /// put in place of the word, several their common start. It returns
+    /// the candidates to list, if it did not add to the word and there are
     /// several.
     pub fn complete(&mut self, completion: &Completion) -> Option<Vec<String>> {
         let before = self.buffer.before();

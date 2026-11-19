@@ -1,5 +1,5 @@
-//! \[DESIGN\] `\export` (RULES.md D216): a table's or a query's rows,
-//! streamed from the server as they come, written to a file as CSV (RFC
+//! \[DESIGN\] `\export` (RULES.md D216) writes a table's or a query's
+//! rows, streamed from the server as they come, to a file as CSV (RFC
 //! 4180) or as tab-separated text, so `\import` and `--import` read them
 //! back as they were. In CSV a null is written as the null text, unquoted,
 //! and a value that would read back as a null, the empty string among
@@ -59,8 +59,8 @@ pub fn one_char(text: &str) -> Result<char, String> {
 }
 
 impl Export {
-    /// What `args` ask for: a table, or a query in parentheses, a file,
-    /// and options.
+    /// What `args` ask for, which is a table or a query in parentheses, a
+    /// file, and options.
     ///
     /// # Errors
     ///
@@ -114,7 +114,7 @@ impl Export {
 struct Writer<'e> {
     how: &'e Export,
     out: BufWriter<File>,
-    /// The first failure: nothing more is written after it.
+    /// The first failure. Nothing more is written after it.
     failed: Option<String>,
 }
 
@@ -146,7 +146,7 @@ impl Sink for Writer<'_> {
     }
 }
 
-/// Writes the rows `how` asks for over `connection`: how many.
+/// Writes the rows `how` asks for over `connection` and returns how many.
 ///
 /// # Errors
 ///

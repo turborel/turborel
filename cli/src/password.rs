@@ -12,7 +12,7 @@
 //! the server's own layout (`turborel_server::password`). HMAC is RFC
 //! 2104's, over the SHA-256 the client already links
 //! (`turborel_client::packages`). The salt is 16 bytes of the standard
-//! library's per-process random keys, through SipHash: a salt need be
+//! library's per-process random keys, through SipHash, as a salt need be
 //! unique, not secret [RFC 5802 §5.1].
 
 use std::collections::hash_map::RandomState;
@@ -84,7 +84,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<String>>().concat()
 }
 
-/// A new salt: unique to this process and call.
+/// A new salt, unique to this process and call.
 pub fn salt() -> [u8; SALT_BYTES] {
     let keys = RandomState::new();
     let mut out = [0_u8; SALT_BYTES];

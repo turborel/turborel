@@ -1,11 +1,12 @@
-//! \[DESIGN\] Statements of text, split at each `;` that ends one: not one
-//! in a `<character string literal>` or a `<delimited identifier>`, where
-//! a quote is written twice, nor in a `<comment>`, which runs from two
-//! minus signs or more to the end of the line [ISO/IEC 9075:1992 §5.2,
-//! §5.3]. A statement of nothing but separators is none. A statement is
-//! sent without the separators around it, but for the `<newline>` that
-//! ends a comment last in it, which a comment needs [X3.135-1986 §5.3];
-//! the end of the text ends a comment as a newline would.
+//! \[DESIGN\] Statements of text, split at each `;` that ends one, but
+//! not at one in a `<character string literal>` or a
+//! `<delimited identifier>`, where a quote is written twice, nor in a
+//! `<comment>`, which runs from two minus signs or more to the end of the
+//! line [ISO/IEC 9075:1992 §5.2, §5.3]. A statement of nothing but
+//! separators is none. A statement is sent without the separators around
+//! it, but for the `<newline>` that ends a comment last in it, which a
+//! comment needs [X3.135-1986 §5.3]; the end of the text ends a comment
+//! as a newline would.
 //!
 //! A `;` in a `<compound triggered SQL statement>` [ISO/IEC 9075-2:2023
 //! §11.49], or a `<compound statement>` or another SQL control statement
@@ -92,7 +93,7 @@ enum Lead {
 pub enum Piece {
     /// A statement, ended.
     Statement(String),
-    /// A backslash command: the line after its `\`, without its newline.
+    /// A backslash command, the line after its `\`, without its newline.
     Command(String),
 }
 
@@ -109,7 +110,7 @@ pub struct Splitter {
     dash: bool,
     /// Whether the statement has a character outside separators.
     significant: bool,
-    /// Whether it had one before that minus sign: if a second makes the
+    /// Whether it had one before that minus sign, as if a second makes the
     /// two a comment, the first was none.
     before_dash: bool,
     /// Where the `<newline>` ending the last comment ends, in `text`.
@@ -127,7 +128,7 @@ pub struct Splitter {
 
 impl Splitter {
     /// The statements `chunk` ends, with what came before it, read as
-    /// SQL alone: no command, no variable.
+    /// SQL alone, with no command and no variable.
     pub fn feed(&mut self, chunk: &str) -> Vec<String> {
         chunk.chars().filter_map(|c| self.take(c)).collect()
     }
@@ -157,7 +158,7 @@ impl Splitter {
         done
     }
 
-    /// What ends a statement from now on: `delimiter`, or `;` for none.
+    /// What ends a statement from now on, `delimiter`, or `;` for none.
     ///
     /// # Errors
     ///
@@ -227,7 +228,7 @@ impl Splitter {
     }
 
     /// The statement a delimiter `\delimiter` named ends, if the text read
-    /// in code ends with it: the delimiter cut.
+    /// in code ends with it, the delimiter cut.
     fn delimited(&mut self) -> Option<String> {
         let delimiter = self.delimiter.as_deref()?;
         if self.code_run < delimiter.chars().count() || !self.text.ends_with(delimiter) {
@@ -304,7 +305,7 @@ impl Splitter {
         self.significant || self.state != State::Code
     }
 
-    /// The statement left at the end of the text, ended by it: if it is
+    /// The statement left at the end of the text, ended by it, if it is
     /// one.
     pub fn finish(&mut self) -> Option<String> {
         if self.state == State::Comment {

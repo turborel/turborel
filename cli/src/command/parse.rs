@@ -40,7 +40,6 @@ pub fn parse(name: &str, args: Vec<String>, rest: &str) -> Result<Command, Strin
         "gset" => Ok(Command::Gset(args.into_iter().next().unwrap_or_default())),
         "watch" => watch(&args),
         "e" | "edit" => Ok(Command::Edit(args.into_iter().next().map(PathBuf::from))),
-        "timing" => toggle(name, &args).map(Command::Timing),
         "t" => toggle(name, &args).map(Command::Tuples),
         "x" => expansion(&args).map(Command::Expanded),
         "format" => Ok(Command::Format(format(args))),
@@ -54,7 +53,7 @@ pub fn parse(name: &str, args: Vec<String>, rest: &str) -> Result<Command, Strin
     }
 }
 
-/// The commands that take no arguments, and `\h`, `\G`: if `name` names
+/// The commands that take no arguments, and `\h`, `\G`, if `name` names
 /// one.
 fn simple(name: &str, args: &[String]) -> Result<Option<Command>, String> {
     let found = match name {
@@ -88,8 +87,8 @@ fn one(name: &str, args: Vec<String>) -> Result<String, String> {
     }
 }
 
-/// `\set`'s variable and value, its words after the name joined: none to
-/// list them.
+/// `\set`'s variable and value, its words after the name joined, or none
+/// to list them.
 fn set(args: Vec<String>) -> Option<(String, String)> {
     let mut each = args.into_iter();
     let name = each.next()?;
@@ -132,7 +131,7 @@ fn format(args: Vec<String>) -> Option<(String, Option<String>)> {
     Some((option, each.next()))
 }
 
-/// `\export`'s arguments: a query in parentheses kept whole, as typed,
+/// `\export`'s arguments, a query in parentheses kept whole, as typed,
 /// then the rest.
 fn export(rest: &str, args: Vec<String>) -> Vec<String> {
     let Some(inner) = rest.trim_start().strip_prefix('(') else { return args };
@@ -152,7 +151,7 @@ fn export(rest: &str, args: Vec<String>) -> Vec<String> {
     args
 }
 
-/// `\c`'s server and user: `-` for the server is the default one.
+/// `\c`'s server and user, where `-` for the server is the default one.
 fn connect(args: Vec<String>) -> Command {
     let mut each = args.into_iter();
     let server = each.next().filter(|s| s != "-");

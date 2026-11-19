@@ -1,4 +1,4 @@
-//! \[DESIGN\] The session's own commands (RULES.md D214, D217, D219): the
+//! \[DESIGN\] The session's own commands (RULES.md D214, D217, D219), the
 //! prompt, `\conninfo`, `\c`, `\password`, the describe family and `\h`.
 
 use std::time::Duration;
@@ -42,8 +42,8 @@ fn address(server: &Server) -> String {
     }
 }
 
-/// Whether a password sent to `server` is secured: over TLS or a local
-/// socket (RULES.md D43).
+/// Whether a password sent to `server` is secured, as it is over TLS or a
+/// local socket (RULES.md D43).
 pub(crate) fn secured(server: &Server) -> bool {
     match server {
         Server::Tcp { tls, .. } => tls.is_some(),
@@ -53,8 +53,8 @@ pub(crate) fn secured(server: &Server) -> bool {
 }
 
 impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
-    /// Runs `sql` unseen, no transaction begun by it: its rows, or none
-    /// if it failed.
+    /// Runs `sql` unseen, no transaction begun by it, and returns its
+    /// rows, or none if it failed.
     pub(super) fn probe(&mut self, sql: &str) -> Option<Vec<Row>> {
         let alone = !self.connection.in_transaction();
         if alone {
@@ -95,7 +95,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         self.schema = Some(value.map_or_else(|| user.clone(), |v| prompt::schema_of(&v, &user)));
     }
 
-    /// `\conninfo`: the server, the user, where, and the connection.
+    /// `\conninfo` shows the server, the user, where, and the connection.
     pub(super) fn conninfo(&mut self) -> Next {
         let Some((server, user)) = self.connection.session() else { return self.tell("\\conninfo: there is no connection", Next::Go) };
         let by = self.connection.connection_name().map_or_else(
@@ -106,9 +106,9 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         self.say(&format!("Connected to {server} as {user}, {by}{active}."))
     }
 
-    /// `\c`: a new connection to `server`, else the default server, as
-    /// `user`, else the command line's; the connection before ended once
-    /// it is made.
+    /// `\c` makes a new connection to `server`, else the default server,
+    /// as `user`, else the command line's; the connection before is ended
+    /// once it is made.
     pub(super) fn reconnect(&mut self, server: Option<&str>, user: Option<&str>) -> Next {
         let before = self.connection.connection_name();
         self.connections = self.connections.saturating_add(1);
@@ -133,8 +133,8 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         self.say(&format!("Connected to {server_name} as {user_name}, by the connection {name}."))
     }
 
-    /// `\password`: a new password for `user`, else the session's, typed
-    /// twice; its verifier made here and sent.
+    /// `\password` sets a new password for `user`, else the session's,
+    /// typed twice; its verifier is made here and sent.
     pub(super) fn password(&mut self, user: Option<&str>) -> Next {
         let who = user.map(str::to_owned).or_else(|| self.connection.session().map(|(_, u)| u)).unwrap_or_default();
         let Some(secret) = self.terminal.secret.as_deref_mut() else {
@@ -179,7 +179,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         Next::Go
     }
 
-    /// Writes `section`: its title and rows, or nothing if it has no rows
+    /// Writes `section`, its title and rows, or nothing if it has no rows
     /// and is left out so.
     fn section(&mut self, section: &Section) -> Next {
         let Some(kept) = self.kept(&section.sql) else { return Next::Go };
@@ -207,7 +207,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         }
     }
 
-    /// `\h`: a statement's syntax, or the statements there are.
+    /// `\h` shows a statement's syntax, or lists the statements there are.
     pub(super) fn syntax(&mut self, topic: Option<&str>) -> Next {
         match help::help(topic) {
             Ok(text) => self.say(text.trim_end()),

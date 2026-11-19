@@ -5,7 +5,17 @@
 use super::{Mutation, Package};
 
 /// Each mechanism of the client broken alone, and the tests that fail.
-pub const CLI: [Mutation; 17] = [
+pub const CLI: [Mutation; 18] = [
+    Mutation {
+        name: "cli-timing-off-screen",
+        package: Package::Cli,
+        breaks: "a statement typed with output off a screen, piped, is timed",
+        file: "cli/src/run/statement.rs",
+        original: "        let began = (typed && self.terminal.screen.is_some()).then(|| (self.now)());",
+        replacement: "        let began = typed.then(|| (self.now)());",
+        integration: &[],
+        unit: &["run::tests::only_an_interactive_session_is_timed"],
+    },
     Mutation {
         name: "cli-safe-updates-ignore-where",
         package: Package::Cli,

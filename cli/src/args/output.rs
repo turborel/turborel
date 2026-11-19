@@ -32,7 +32,7 @@ pub struct Environment {
     pub pager: Option<String>,
     /// The editor, if `TURBOREL_EDITOR` or `EDITOR` names one.
     pub editor: Option<String>,
-    /// The history file: as `TURBOREL_HISTORY` names it, else
+    /// The history file, as `TURBOREL_HISTORY` names it, else
     /// `.turborel_history` in the home directory, if one is named.
     pub history: Option<PathBuf>,
     /// The directories programs are found in.
@@ -67,7 +67,7 @@ pub struct Settings {
 }
 
 /// Takes `arg`, an option of these settings, into `settings`, `value`
-/// giving its value if it takes one: whether it was one.
+/// giving its value if it takes one, and returns whether it was one.
 ///
 /// # Errors
 ///

@@ -1,6 +1,6 @@
 //! \[DESIGN\] The prompt (RULES.md D217): PROMPT before a statement,
 //! PROMPT_MORE before the rest of one begun, each with escapes read as it
-//! is written: `%n` the session's user, `%c` the catalog, `%s` the
+//! is written. `%n` writes the session's user, `%c` the catalog, `%s` the
 //! default schema, `%#` `#` for the database's owner and `>` for anyone
 //! else, `%x` `*` while a transaction is active, `%R` `>` before a
 //! statement and `-` within one, `%S` the server's product and version,
@@ -78,9 +78,9 @@ pub fn expand(template: &str, context: &Context<'_>) -> String {
 }
 
 /// \[DESIGN\] RULES.md D217: the default schema SET SCHEMA `value` sets,
-/// `value` its literal's text, of a session of `user`: trimmed, the part
-/// after a catalog's name and period, a delimited identifier's body, or
-/// a regular identifier in upper case.
+/// `value` its literal's text, of a session of `user`. The text is
+/// trimmed, then taken as the part after a catalog's name and period, a
+/// delimited identifier's body, or a regular identifier in upper case.
 pub fn schema_of(value: &str, user: &str) -> String {
     let trimmed = value.trim();
     let named = trimmed.rsplit_once('.').filter(|(_, s)| !s.ends_with('"') || s.starts_with('"')).map_or(trimmed, |(_, s)| s);
@@ -97,7 +97,7 @@ pub fn schema_of(value: &str, user: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Verifies: [DESIGN] RULES.md D217: each escape is read: user,
+    /// Verifies: [DESIGN] RULES.md D217: each escape is read, the user,
     /// catalog, schema, owner marker, transaction, continuation, server
     /// and percent; an unknown escape and a last `%` are written as they
     /// are; the status is needed only by `%c` and `%#`.

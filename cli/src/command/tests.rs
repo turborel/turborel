@@ -57,7 +57,7 @@ fn layout_and_session_commands_are_read() {
     assert_eq!(read("x auto"), Ok(Command::Expanded(Expansion::Auto)));
     assert_eq!(read("x"), Ok(Command::Expanded(Expansion::Toggle)));
     assert_eq!(read("x off"), Ok(Command::Expanded(Expansion::Set(false))));
-    assert_eq!(read("timing on"), Ok(Command::Timing(Some(true))));
+    assert_eq!(read("t on"), Ok(Command::Tuples(Some(true))));
     assert_eq!(read("format border 2"), Ok(Command::Format(Some(("border".into(), Some("2".into()))))));
     assert_eq!(read("dt+ S*"), Ok(Command::Describe("dt+".into(), Some("S*".into()))));
     assert_eq!(read("c - BOB"), Ok(Command::Connect(None, Some("BOB".into()))));
@@ -75,7 +75,8 @@ fn wrong_commands_are_refused() {
     assert!(read("nope").is_err());
     assert!(read("q now").is_err());
     assert!(read("unset").is_err());
-    assert!(read("timing maybe").is_err());
+    assert!(read("timing").is_err(), "statement time has no command");
+    assert!(read("t maybe").is_err());
     assert!(read("watch 1 2 3").is_err());
     assert!(read("watch x").is_err());
 }

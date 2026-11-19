@@ -29,19 +29,19 @@ fn field(p: &Printer<'_>, value: &str) -> String {
     }
 }
 
-/// [RFC 4180 §2] `value` as a CSV field: enclosed in double quotes, each
+/// [RFC 4180 §2] `value` as a CSV field, enclosed in double quotes, each
 /// doubled, if it holds a comma, a quote or a line break.
 pub(crate) fn csv(value: &str) -> String {
     if value.contains([',', '"', '\r', '\n']) { format!("\"{}\"", value.replace('"', "\"\"")) } else { value.to_owned() }
 }
 
-/// `value` as a tab-separated field: its backslashes, tabs, newlines and
+/// `value` as a tab-separated field, its backslashes, tabs, newlines and
 /// carriage returns escaped.
 pub(crate) fn escaped(value: &str) -> String {
     value.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n").replace('\r', "\\r")
 }
 
-/// Writes the header: the columns' names, unless rows alone are asked for
+/// Writes the header, the columns' names, unless rows alone are asked for
 /// or rows are expanded.
 pub(super) fn columns(p: &mut Printer<'_>) {
     let sep = separator(p).len().saturating_mul(p.shapes.len().saturating_sub(1));
@@ -54,7 +54,7 @@ pub(super) fn columns(p: &mut Printer<'_>) {
     p.write(&line);
 }
 
-/// Writes a row of `cells`: on a line, or expanded.
+/// Writes a row of `cells` on a line, or expanded.
 pub(super) fn row(p: &mut Printer<'_>, cells: &[String]) {
     let sep = separator(p).to_owned();
     if !p.expanded {

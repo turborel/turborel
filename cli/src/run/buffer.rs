@@ -1,5 +1,5 @@
 //! \[DESIGN\] The commands of the statement begun (RULES.md D210, D215,
-//! D219): `\g` and `\G` run it, or the last statement if none is begun,
+//! D219). `\g` and `\G` run it, or the last statement if none is begun,
 //! its results sent elsewhere or expanded; `\gset` stores its one row's
 //! columns as variables; `\gexec` runs each value of its result as a
 //! statement; `\watch` runs it again and again; `\e` edits it.
@@ -32,14 +32,14 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         found
     }
 
-    /// `\g` and `\G`: the statement begun, or the last, run, its results
+    /// `\g` and `\G` run the statement begun, or the last, its results
     /// sent to `target`, expanded if `expanded`.
     pub(super) fn go(&mut self, splitter: &mut Splitter, target: Target, expanded: bool) -> Next {
         let Some(sql) = self.begun(splitter, "g") else { return Next::Go };
         self.statement_as(&sql, self.typing, &How { target, expanded })
     }
 
-    /// `\gset`: the statement's one row stored, each column the variable
+    /// `\gset` stores the statement's one row, each column as the variable
     /// `prefix` and its name; a null unsets it.
     pub(super) fn gset(&mut self, splitter: &mut Splitter, prefix: &str) -> Next {
         let Some(sql) = self.begun(splitter, "gset") else { return Next::Go };
@@ -62,8 +62,8 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         Next::Go
     }
 
-    /// `\gexec`: the statement run, then each value of its result, row by
-    /// row, as a statement; nulls passed over.
+    /// `\gexec` runs the statement, then each value of its result, row by
+    /// row, as a statement; nulls are passed over.
     pub(super) fn gexec(&mut self, splitter: &mut Splitter) -> Next {
         let Some(sql) = self.begun(splitter, "gexec") else { return Next::Go };
         self.last = Some(sql.clone());
@@ -79,8 +79,8 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         Next::Go
     }
 
-    /// `\watch`: the statement run every `every`, `count` times if given,
-    /// else until Ctrl-C or a failure; a line naming each run before it.
+    /// `\watch` runs the statement every `every`, `count` times if given,
+    /// else until Ctrl-C or a failure; a line names each run before it.
     pub(super) fn watch(&mut self, splitter: &mut Splitter, every: Duration, count: Option<u64>) -> Next {
         let Some(sql) = self.begun(splitter, "watch") else { return Next::Go };
         let pressed = self.interrupts.map(crate::interrupt::Interrupts::presses);
@@ -105,8 +105,8 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         Next::Go
     }
 
-    /// Sleeps `every`, a step at a time: whether it slept it all, Ctrl-C
-    /// not pressed since `pressed` presses.
+    /// Sleeps `every`, a step at a time, and returns whether it slept it
+    /// all, Ctrl-C not pressed since `pressed` presses.
     fn slept(&self, every: Duration, pressed: Option<u64>) -> bool {
         let mut left = every;
         while !left.is_zero() {
@@ -120,8 +120,8 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         self.interrupts.map(crate::interrupt::Interrupts::presses) == pressed
     }
 
-    /// `\e`: the statement begun, or the last, or the file `path`, edited
-    /// in the editor, then read as if typed.
+    /// `\e` edits the statement begun, or the last, or the file `path`, in
+    /// the editor, then reads it as if typed.
     pub(super) fn edit(&mut self, splitter: &mut Splitter, path: Option<&Path>) -> Next {
         let made = std::env::temp_dir().join(format!("{EDIT_FILE}{}.sql", std::process::id()));
         let file = path.unwrap_or(&made);
@@ -152,7 +152,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         }
     }
 
-    /// Reads `text`, edited, into `splitter` as if typed: statements it
+    /// Reads `text`, edited, into `splitter` as if typed. Statements it
     /// ends are run, and the rest is the statement begun.
     fn edited(&mut self, text: &str, splitter: &mut Splitter) -> Next {
         let mut conditions = crate::conditional::Conditions::default();

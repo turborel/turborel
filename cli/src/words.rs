@@ -1,5 +1,5 @@
 //! \[DESIGN\] The words of a statement as the client reads them for
-//! itself (RULES.md D210, D219): its `<regular identifier>`s and key
+//! itself (RULES.md D210, D219), its `<regular identifier>`s and key
 //! words in upper case, outside literals, delimited identifiers and
 //! comments [ISO/IEC 9075:1992 §5.2, §5.3], so it can tell an UPDATE
 //! without WHERE, a statement that changes the schema, or the context a
@@ -12,7 +12,7 @@ pub const DELETE: &str = "DELETE";
 /// WHERE.
 pub const WHERE: &str = "WHERE";
 /// The first words of statements that may change the names the schema
-/// holds, or undo such a change: tab completion reads them again after.
+/// holds, or undo such a change, so tab completion reads them again after.
 pub const SCHEMA_CHANGES: [&str; 5] = ["CREATE", "ALTER", "DROP", "ROLLBACK", "IMPORT"];
 /// The first words of statements that end or mark a transaction, or
 /// change the connection, which take no savepoint of their own.

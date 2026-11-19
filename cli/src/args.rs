@@ -19,8 +19,6 @@ pub const DEFAULT_PORT: u16 = 7422;
 /// The environment variable a password may be given in.
 pub const PASSWORD_VARIABLE: &str = "TURBOREL_PASSWORD";
 
-/// The option that asks for each statement's elapsed time (RULES.md D46).
-const TIMING: &str = "--timing";
 /// The word that begins the administrative commands (RULES.md D218).
 const ADMIN: &str = "admin";
 
@@ -112,9 +110,6 @@ pub struct Options {
     pub inputs: Vec<Input>,
     /// Whether the first statement that fails ends a run not typed.
     pub stop_on_error: bool,
-    /// Whether each SQL statement's elapsed time is written to standard
-    /// error, in nanoseconds, including transfer and result output.
-    pub timing: bool,
     /// What a null value is shown as, and what a field imported is
     /// written as to be null.
     pub null: String,
@@ -182,7 +177,6 @@ struct Named {
 /// What the command line named of how results are shown.
 #[derive(Debug, Default)]
 struct NamedOutput {
-    timing: bool,
     null: Option<String>,
 }
 
@@ -256,7 +250,6 @@ fn named(args: &[String], words: bool) -> Result<(Named, Vec<String>), String> {
             "-c" | "--command" => named.inputs.push(Input::Command(value()?)),
             "-f" | "--file" => named.inputs.push(Input::File(PathBuf::from(value()?))),
             "--stop-on-error" => named.stop_on_error = true,
-            TIMING => named.output.timing = true,
             "--null" => named.output.null = Some(value()?),
             "--connect-timeout" => named.timeouts.connect = seconds(&value()?)?,
             "--read-timeout" => named.timeouts.read = seconds(&value()?)?,
@@ -356,7 +349,7 @@ fn options(named: Named, env: &dyn Fn(&str) -> Option<String>) -> Result<Options
     let mut settings = named.settings;
     settings.environment = Environment::of(env);
     settings.layout.null.clone_from(&null);
-    Ok(Options { server, user, credentials, inputs, stop_on_error, timing: named.output.timing, null, timeouts, import, settings })
+    Ok(Options { server, user, credentials, inputs, stop_on_error, null, timeouts, import, settings })
 }
 
 /// Where the server is: at the Unix socket or named pipe `socket`, if one

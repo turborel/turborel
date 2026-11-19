@@ -1,5 +1,6 @@
-//! [DESIGN] RULES.md D46: optional statement timing, with a supplied
-//! clock so no test depends on elapsed real time (R-TEST-5).
+//! [DESIGN] RULES.md D46: statement time, shown only in a session typed
+//! at a terminal whose output is a screen, with a supplied clock so no
+//! test depends on elapsed real time (R-TEST-5).
 
 use std::cell::Cell;
 
@@ -10,19 +11,38 @@ use turborel_test_support::server::start;
 use super::*;
 use crate::args::{Command, parse};
 
-/// Options to time `sql`, parsed as the program's are.
-fn options(sql: &str) -> Options {
-    let args = ["-U", "X", "--timing", "-c", sql].map(str::to_owned);
-    let Command::Run(options) = parse(&args, &|_| None).unwrap() else { panic!("a run") };
+/// A screen tall enough that no output is paged.
+const SCREEN: Screen = Screen { width: 80, height: 10_000 };
+
+/// Options parsed as the program's are from `args`, as the user X.
+fn options(args: &[&str]) -> Options {
+    let line: Vec<String> = ["-U", "X"].iter().chain(args).map(|a| (*a).to_owned()).collect();
+    let Command::Run(options) = parse(&line, &|_| None).unwrap() else { panic!("a run") };
     *options
 }
 
+/// Where a run reads and writes, of `shown`.
+struct Seat<'a> {
+    /// Standard input.
+    standard: &'a str,
+    /// Whether standard input is typed at a terminal.
+    typed: bool,
+    /// The screen standard output is, if it is one.
+    screen: Option<Screen>,
+}
+
+/// A typed session on a screen, reading `standard`.
+fn interactive(standard: &str) -> Seat<'_> {
+    Seat { standard, typed: true, screen: Some(SCREEN) }
+}
+
 /// A run's success, results and diagnostics, measured with `times`.
-fn shown(given: &Options, (standard, typed): (&str, bool), times: &[Duration]) -> (bool, String, String) {
+fn shown(given: &Options, seat: &Seat<'_>, times: &[Duration]) -> (bool, String, String) {
     let server = start(&Database::new(), &[]);
     let mut connection = server.connect("X");
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let io = Io { input: &mut standard.as_bytes(), typed, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
+    let terminal = Terminal { screen: seat.screen, ..Terminal::default() };
+    let io = Io { input: &mut seat.standard.as_bytes(), typed: seat.typed, out: &mut out, err: &mut err, interrupts: None, terminal };
     let mut ticks = times.iter().copied();
     let succeeded =
         run_with_clock(&mut connection, given, io, || ticks.next().expect("one start and end per statement")) == Outcome::Succeeded;
@@ -30,13 +50,12 @@ fn shown(given: &Options, (standard, typed): (&str, bool), times: &[Duration]) -
     (succeeded, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
 }
 
-/// Verifies: [DESIGN] RULES.md D46: each statement has its own time on
-/// stderr, in whole nanoseconds, while stdout keeps its results. A zero
-/// duration and a duration whose nanoseconds exceed u64 are shown whole.
-/// Time between statements is excluded.
+/// Verifies: [DESIGN] RULES.md D46: each statement typed has its own time
+/// on stderr, in whole nanoseconds, while stdout keeps its results. A
+/// zero duration and a duration whose nanoseconds exceed u64 are shown
+/// whole. Time between statements is excluded.
 #[test]
 fn each_statement_reports_its_own_nanoseconds() {
-    let given = options("COMMIT; VALUES 1; VALUES 2");
     let times = [
         Duration::ZERO,
         Duration::ZERO,
@@ -45,77 +64,68 @@ fn each_statement_reports_its_own_nanoseconds() {
         Duration::from_secs(2),
         Duration::MAX,
     ];
-    let (ok, out, err) = shown(&given, ("", false), &times);
+    let (ok, out, err) = shown(&options(&[]), &interactive("COMMIT;\nVALUES 1;\nVALUES 2;\n"), &times);
     assert!(ok, "{err}");
-    assert!(out.starts_with("OK\n"));
+    assert!(out.contains("OK\n"), "{out}");
     assert_eq!(out.matches("(1 row)").count(), 2);
     let longest = Duration::MAX.saturating_sub(Duration::from_secs(2)).as_nanos();
     assert_eq!(err, format!("Time: 0 ns\nTime: 123 ns\nTime: {longest} ns\n"));
-    let mut untimed = given.clone();
-    untimed.timing = false;
-    let (without_ok, original, without_err) = shown(&untimed, ("", false), &[]);
-    assert!(without_ok);
-    assert_eq!(out, original, "timing leaves stdout unchanged");
-    assert_eq!(without_err, "");
+}
+
+/// Verifies: [DESIGN] RULES.md D46: no statement is timed, and the clock
+/// is never read, unless it is typed at a terminal and output is a
+/// screen. Scripts, `-c`, `-f`, piped input and output not on a screen
+/// show no time, and `--timing` is an unknown option.
+#[test]
+fn only_an_interactive_session_is_timed() {
+    let sql = "COMMIT;\nVALUES 1;\n";
+    let scratch = Scratch::new("cli-timing");
+    let file = scratch.path("statements.sql");
+    std::fs::write(&file, sql).unwrap();
+    let path = file.display().to_string();
+    let file_given = options(&["-f", &path]);
+    let command_given = options(&["-c", "COMMIT; VALUES 1"]);
+    let seats = [
+        (&command_given, Seat { standard: "", typed: true, screen: Some(SCREEN) }),
+        (&file_given, Seat { standard: "", typed: true, screen: Some(SCREEN) }),
+        (&options(&[]), Seat { standard: sql, typed: false, screen: Some(SCREEN) }),
+        (&options(&[]), Seat { standard: sql, typed: true, screen: None }),
+        (&options(&[]), Seat { standard: &format!("\\i {path}\n"), typed: true, screen: Some(SCREEN) }),
+    ];
+    for (given, seat) in &seats {
+        let (ok, out, err) = shown(given, seat, &[]);
+        assert!(ok, "{err}");
+        assert!(out.contains("(1 row)"), "{out}");
+        assert!(!err.contains("Time:"), "{err}");
+    }
+    assert!(parse(&["--timing".to_owned()], &|_| None).is_err(), "--timing is no option");
 }
 
 /// Verifies: [DESIGN] RULES.md D46: warnings, empty results and no-data
 /// completions retain their output and each get a timing line.
 #[test]
 fn warnings_and_empty_results_are_timed() {
-    let given =
-        options("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (N INTEGER); DELETE FROM T; SELECT N FROM T; VALUES CAST('abc' AS CHAR(1))");
-    let (ok, out, err) = shown(&given, ("", false), &[Duration::ZERO; 8]);
+    let typed =
+        "CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (N INTEGER);\nDELETE FROM T;\nSELECT N FROM T;\nVALUES CAST('abc' AS CHAR(1));\n";
+    let (ok, out, err) = shown(&options(&[]), &interactive(typed), &[Duration::ZERO; 8]);
     assert!(ok, "{err}");
-    assert!(out.starts_with("OK\nno data\n"), "{out}");
+    assert!(out.contains("OK\n"), "{out}");
+    assert!(out.contains("no data\n"), "{out}");
     assert!(out.contains("(0 rows)"), "{out}");
     assert!(out.contains("(1 row, with a warning: SQLSTATE 01004)"), "{out}");
     assert_eq!(err, "Time: 0 ns\n".repeat(4));
 }
 
 /// Verifies: [DESIGN] RULES.md D46: a failed SQL statement gets its time
-/// after its diagnostic, and timing preserves continuation and
-/// --stop-on-error. SQLCODE -301 is retained.
+/// after its diagnostic, and the session goes on. SQLCODE -301 is
+/// retained. Blank lines and comments produce no timing line.
 #[test]
-fn failures_are_timed_before_continuing_or_stopping() {
-    let mut given = options("VALUES 1 / 0; VALUES 2");
-    let (ok, out, err) = shown(&given, ("", false), &[Duration::ZERO; 4]);
+fn failures_are_timed_and_the_session_goes_on() {
+    let (ok, out, err) = shown(&options(&[]), &interactive("VALUES 1 / 0;\n\n-- a comment\nVALUES 2;\n"), &[Duration::ZERO; 4]);
     assert!(!ok);
     assert!(out.contains("(1 row)"));
     assert!(err.starts_with("turborel: SQLCODE -301 (SQLSTATE 22012):"), "{err}");
     assert!(err.ends_with("\nTime: 0 ns\nTime: 0 ns\n"), "{err}");
-    given.stop_on_error = true;
-    let (stopped_ok, stopped_out, stopped_err) = shown(&given, ("", false), &[Duration::ZERO; 2]);
-    assert!(!stopped_ok);
-    assert!(!stopped_out.contains("(1 row)"));
-    assert_eq!(stopped_err.matches("Time: 0 ns").count(), 1);
-    given.timing = false;
-    let (without_ok, _, without_err) = shown(&given, ("", false), &[]);
-    assert!(!without_ok);
-    assert!(!without_err.contains("Time:"));
-}
-
-/// Verifies: [DESIGN] RULES.md D46: files, piped input and typed input
-/// time each SQL statement, including an unterminated last one. Blank
-/// input and comments produce no timing line.
-#[test]
-fn every_sql_input_is_timed_without_timing_empty_input() {
-    let sql = "-- a comment;\nCOMMIT;\nVALUES 1";
-    let scratch = Scratch::new("cli-timing");
-    let file = scratch.path("statements.sql");
-    std::fs::write(&file, sql).unwrap();
-    let mut given = options("");
-    given.inputs = vec![Input::File(file)];
-    let (ok, _, err) = shown(&given, ("", false), &[Duration::ZERO; 4]);
-    assert!(ok);
-    assert_eq!(err, "Time: 0 ns\nTime: 0 ns\n");
-    given.inputs = vec![Input::Standard];
-    for typed in [false, true] {
-        let (standard_ok, _, standard_err) = shown(&given, (sql, typed), &[Duration::ZERO; 4]);
-        assert!(standard_ok);
-        assert_eq!(standard_err, "Time: 0 ns\nTime: 0 ns\n");
-        assert_eq!(shown(&given, ("\n-- only a comment\n", typed), &[]).2, "");
-    }
 }
 
 /// Output that advances a supplied clock by a nanosecond per byte.
@@ -143,15 +153,17 @@ impl Write for Output<'_> {
 fn streamed_output_is_inside_the_measurement() {
     let server = start(&Database::new(), &[]);
     let mut connection = server.connect("X");
-    let given = options("VALUES (1), (2)");
+    let given = options(&[]);
     let now = Cell::new(Duration::ZERO);
     let mut out = Output { now: &now, bytes: Vec::new() };
     let mut err = Output { now: &now, bytes: Vec::new() };
-    let io = Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
+    let terminal = Terminal { screen: Some(SCREEN), ..Terminal::default() };
+    let io = Io { input: &mut "VALUES (1), (2);\n".as_bytes(), typed: true, out: &mut out, err: &mut err, interrupts: None, terminal };
     assert_eq!(run_with_clock(&mut connection, &given, io, || now.get()), Outcome::Succeeded);
     let shown = String::from_utf8(out.bytes).unwrap();
-    assert!(shown.ends_with("(2 rows)\n"), "{shown}");
-    assert_eq!(String::from_utf8(err.bytes).unwrap(), format!("Time: {} ns\n", shown.len()));
+    let result = shown.strip_prefix(PROMPT).and_then(|s| s.strip_suffix(&format!("{PROMPT}\n"))).unwrap_or_else(|| panic!("{shown}"));
+    assert!(result.ends_with("(2 rows)\n"), "{shown}");
+    assert_eq!(String::from_utf8(err.bytes).unwrap(), format!("Time: {} ns\n", result.len()));
 }
 
 /// A timing destination that refuses writes, or only its flush.
@@ -177,18 +189,18 @@ fn unwritten_timing_is_ignored() {
     for on_flush in [false, true] {
         let server = start(&Database::new(), &[]);
         let mut connection = server.connect("X");
-        let given = options("COMMIT; COMMIT");
+        let given = options(&[]);
         let mut out = Vec::new();
         let mut err = Broken { on_flush };
-        let io =
-            Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
+        let terminal = Terminal { screen: Some(SCREEN), ..Terminal::default() };
+        let io = Io { input: &mut "COMMIT;\nCOMMIT;\n".as_bytes(), typed: true, out: &mut out, err: &mut err, interrupts: None, terminal };
         let calls = Cell::new(0_u32);
         let clock = || {
             calls.set(calls.get() + 1);
             Duration::ZERO
         };
         assert_eq!(run_with_clock(&mut connection, &given, io, clock), Outcome::Succeeded);
-        assert_eq!(out, b"OK\nOK\n");
+        assert_eq!(String::from_utf8(out).unwrap(), format!("{PROMPT}OK\n{PROMPT}OK\n{PROMPT}\n"));
         assert_eq!(calls.get(), 4, "a start and an end per statement");
     }
 }

@@ -1,5 +1,5 @@
-//! \[DESIGN\] `\h` (RULES.md D219): a statement's syntax, from the pages
-//! of `doc/sql/statements`, compiled into the client so it is the
+//! \[DESIGN\] `\h` (RULES.md D219) shows a statement's syntax, from the
+//! pages of `doc/sql/statements`, compiled into the client so it is the
 //! syntax of the release it came with. `\h` alone lists the statements;
 //! `\h NAME` writes the page's one-line summary and its synopsis. A name
 //! is matched in upper case, its spaces as one; a name no page has
@@ -10,7 +10,7 @@ mod pages;
 
 use pages::PAGES;
 
-/// The statement a page's file name names: `alter-table.md` is ALTER
+/// The statement a page's file name names, so `alter-table.md` is ALTER
 /// TABLE.
 fn statement(file: &str) -> String {
     file.trim_end_matches(".md").replace('-', " ").to_uppercase()

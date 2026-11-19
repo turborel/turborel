@@ -2,7 +2,7 @@
 //! header row of the columns' names and a row for each row, `&`, `<`, `>`
 //! and `"` written as references; expanded, a pair of cells for each
 //! column. JSON (RFC 8259) is an array of an object for each row, a
-//! column's name its member's: a number as a number, a truth value as
+//! column's name its member's; a number as a number, a truth value as
 //! `true` or `false`, a null as `null`, a JSON value as itself, anything
 //! else as a string; expanded or not alike.
 
@@ -84,7 +84,7 @@ fn align(p: &Printer<'_>, at: usize) -> &'static str {
     if p.shapes.get(at).is_some_and(|s| s.right) { "right" } else { "left" }
 }
 
-/// Writes the beginning: the table and its header row, or the array.
+/// Writes the beginning, the table and its header row, or the array.
 pub(super) fn columns(p: &mut Printer<'_>) {
     if p.layout.style == Style::Json {
         p.put("[");
@@ -120,7 +120,7 @@ pub(super) fn row(p: &mut Printer<'_>, row: &Row, cells: &[String]) {
     }
 }
 
-/// Writes the end: the table closed and its footer, or the array closed.
+/// Writes the end, the table closed and its footer, or the array closed.
 pub(super) fn finish(p: &mut Printer<'_>, footer: Option<&str>) {
     if p.layout.style == Style::Json {
         p.write(if p.rows > 0 { "\n]" } else { "]" });

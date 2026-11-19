@@ -1,8 +1,8 @@
-//! \[DESIGN\] Aligned and wrapped output (RULES.md D46, D213): columns as
-//! wide as their types, or made narrower to fit the screen and their
-//! values wrapped within them; a border of none, of lines between columns
-//! (the default), or around them too; or each row expanded, a line for
-//! each of its columns, its name then its value.
+//! \[DESIGN\] Aligned and wrapped output (RULES.md D46, D213). It has
+//! columns as wide as their types, or made narrower to fit the screen and
+//! their values wrapped within them; a border of none, of lines between
+//! columns (the default), or around them too; or each row expanded, a
+//! line for each of its columns, its name then its value.
 
 use super::{Printer, Style};
 
@@ -32,8 +32,8 @@ fn line_width(widths: impl Iterator<Item = usize>, b: usize) -> usize {
     total.saturating_add(between).saturating_add(ends)
 }
 
-/// Writes the header, after the columns are known: wrapped columns made
-/// narrower to fit the screen first, and expanded rows decided.
+/// Writes the header, after the columns are known. Wrapped columns are
+/// made narrower to fit the screen first, and expanded rows decided.
 pub(super) fn columns(p: &mut Printer<'_>) {
     let b = border(p);
     p.decide(line_width(p.shapes.iter().map(|s| s.width), b));
@@ -86,8 +86,9 @@ pub(super) fn row(p: &mut Printer<'_>, cells: &[String]) {
     }
 }
 
-/// Writes the lines of `cells` in their columns: one, values past their
-/// columns shown whole; or, wrapped, as many as the longest value needs.
+/// Writes the lines of `cells` in their columns, either one, values past
+/// their columns shown whole, or, wrapped, as many as the longest value
+/// needs.
 fn lines(p: &mut Printer<'_>, cells: &[String]) {
     let b = border(p);
     let wrapped = p.layout.style == Style::Wrapped;
@@ -109,8 +110,8 @@ fn lines(p: &mut Printer<'_>, cells: &[String]) {
     }
 }
 
-/// `text` as lines of at most `width` columns: at each newline, and where
-/// a line fills the width.
+/// `text` as lines of at most `width` columns, broken at each newline and
+/// where a line fills the width.
 fn wrap(p: &mut Printer<'_>, text: &str, width: usize) -> Vec<String> {
     let mut out = Vec::new();
     for piece in text.split('\n') {
@@ -127,7 +128,7 @@ fn wrap(p: &mut Printer<'_>, text: &str, width: usize) -> Vec<String> {
     out
 }
 
-/// Writes a row expanded: a line naming it, then each column's name and
+/// Writes a row expanded, a line naming it, then each column's name and
 /// value, values wrapped to the screen if the style is wrapped.
 fn expanded(p: &mut Printer<'_>, cells: &[String]) {
     let b = border(p);
@@ -156,7 +157,7 @@ fn expanded(p: &mut Printer<'_>, cells: &[String]) {
     }
 }
 
-/// Writes the end: the frame of border 2, then the footer, if any.
+/// Writes the end, the frame of border 2, then the footer, if any.
 pub(super) fn finish(p: &mut Printer<'_>, footer: Option<&str>) {
     let b = border(p);
     if b == 2 && !p.expanded && !p.shapes.is_empty() {

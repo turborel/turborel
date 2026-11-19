@@ -125,7 +125,6 @@ These variables are the client's own:
 | ROLLBACK_ON_ERROR | `on` undoes a failed statement within a transaction alone, by a savepoint taken before it, and the transaction goes on; `interactive` does so only for typed statements; `off` by default |
 | ECHO | `queries` writes each statement before it runs; `errors` writes a failed statement with its failure; `-e` sets `queries` |
 | QUIET | `on` writes no `OK` after a statement that is not a query; `-q` sets it |
-| TIMING | `on` tells each statement's time; `\timing` and `--timing` set it |
 | SAFE_UPDATES | `on` refuses an UPDATE or DELETE without WHERE before it is sent; `--safe-updates` sets it |
 | FETCH_COUNT | a number of rows; a query's rows are fetched that many at a time by a cursor, rather than all at once |
 | VERBOSITY | `terse` shows a failure's codes and message; `default` adds its rule and character; `verbose` also shows the statement's line, with the place marked |
@@ -382,7 +381,7 @@ OK
 
 `\watch SECONDS COUNT` runs the statement again every SECONDS, 2 by
 default, COUNT times or until Ctrl-C or a failure. It writes a line
-before each run. `\timing` toggles the report of each statement's time.
+before each run.
 `\e` edits the statement begun, or the last, in the editor
 TURBOREL_EDITOR or EDITOR names, `vi` by default. What is saved is read
 as if typed. `\e FILE` edits a file the same way. `\p` writes the

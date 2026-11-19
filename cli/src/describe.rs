@@ -1,11 +1,11 @@
-//! \[DESIGN\] The describe commands (RULES.md D214): what the database
-//! holds, read from the Information Schema [ISO/IEC 9075-11:2006 draft
+//! \[DESIGN\] The describe commands (RULES.md D214) read what the
+//! database holds from the Information Schema [ISO/IEC 9075-11:2006 draft
 //! §5], so they show what any session of the user may see and need
 //! nothing of the server's own.
 //!
 //! `\d` lists the tables, views and sequences, and `\d PATTERN` describes
-//! each table or view it matches: its columns, with their types, defaults
-//! and nullability, then its indexes, constraints, foreign keys, the
+//! each table or view it matches, giving its columns, with their types,
+//! defaults and nullability, then its indexes, constraints, foreign keys, the
 //! tables whose foreign keys reference it, and its triggers, each section
 //! left out when it has no rows; a view's definition after its columns.
 //! The rest list one kind of object each, as `\?` names them. A pattern
@@ -26,8 +26,8 @@ const ESCAPE: char = '\\';
 /// The commands, before their `+` and `S`.
 const COMMANDS: [&str; 14] = ["d", "dt", "dv", "di", "ds", "df", "dn", "du", "dT", "dD", "dx", "dG", "dp", "l"];
 
-/// What `+` and `S` ask a command to show: more columns, and the
-/// system's own schemas.
+/// What `+` and `S` ask a command to show, more columns and the system's
+/// own schemas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Show {
     more: bool,
@@ -88,9 +88,9 @@ pub fn is_describe(name: &str) -> bool {
     COMMANDS.contains(&modifiers(name).0)
 }
 
-/// One part of a pattern as the LIKE pattern of a name: delimited, as
-/// written; else in upper case; `*` and `?` the wild cards, `%` and `_`
-/// themselves.
+/// One part of a pattern as the LIKE pattern of a name. A delimited part
+/// is taken as written, else in upper case; `*` and `?` are the wild
+/// cards, `%` and `_` themselves.
 fn like_part(part: &str) -> String {
     let (text, delimited) = match part.strip_prefix('"').and_then(|p| p.strip_suffix('"')) {
         Some(body) => (body.replace("\"\"", "\""), true),
@@ -168,8 +168,8 @@ pub fn plan(name: &str, pattern: Option<&str>) -> Result<Plan, String> {
     }
 }
 
-/// `\d`: every table, view and sequence; with a pattern, each table or
-/// view it matches described.
+/// `\d` lists every table, view and sequence; with a pattern, it
+/// describes each table or view it matches.
 fn relations(pattern: Option<&str>, show: Show) -> Plan {
     let Some(named) = pattern else {
         let mut sections = vec![Section::listing(tables(None, "TABLE_TYPE IN ('BASE TABLE', 'VIEW')", show))];

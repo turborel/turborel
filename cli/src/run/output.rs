@@ -1,4 +1,4 @@
-//! \[DESIGN\] Where results go (RULES.md D213, D215, D219): to the
+//! \[DESIGN\] Where results go (RULES.md D213, D215, D219), to the
 //! output, or a file or program `\o` or `\g` names; copied to the file
 //! `\tee` names; through the pager when the output is a screen.
 
@@ -21,7 +21,7 @@ pub(super) enum Redirect {
 }
 
 impl Redirect {
-    /// What `target` names, opened: none for the default.
+    /// What `target` names, opened, or none for the default.
     ///
     /// # Errors
     ///
@@ -47,7 +47,7 @@ impl Redirect {
         }
     }
 
-    /// Ends it: the file flushed, or the program waited for once its input
+    /// Ends it, the file flushed, or the program waited for once its input
     /// is closed.
     ///
     /// # Errors
@@ -64,7 +64,7 @@ impl Redirect {
     }
 }
 
-/// The writer of one result: its target, copied to the tee, through the
+/// The writer of one result, its target, copied to the tee, through the
 /// pager if one is wanted.
 pub(super) struct Out<'w> {
     pub(super) main: &'w mut dyn Write,
@@ -93,7 +93,7 @@ impl Write for Out<'_> {
 }
 
 impl Out<'_> {
-    /// Ends the result: what the pager held written, or the pager waited
+    /// Ends the result, what the pager held written, or the pager waited
     /// for.
     ///
     /// # Errors
@@ -108,9 +108,9 @@ impl Out<'_> {
 }
 
 impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
-    /// The pager a result to the output wants: if output is a screen and
-    /// paging is on, a pager is named or found, and neither `\o` nor a
-    /// target of its own sends it elsewhere.
+    /// The pager a result to the output wants. There is one if output is
+    /// a screen and paging is on, a pager is named or found, and neither
+    /// `\o` nor a target of its own sends it elsewhere.
     pub(super) fn pager(&self, elsewhere: bool) -> Option<Paged> {
         let screen = self.terminal.screen?;
         let lines = match self.layout.paging {
@@ -124,7 +124,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         pager::command(&self.options.settings.environment).map(|program| Paged::new(program, lines))
     }
 
-    /// `\o`: results sent to `target` from now on, the target before
+    /// `\o` sends results to `target` from now on, the target before
     /// closed.
     pub(super) fn redirect(&mut self, target: &Target) -> Next {
         self.close_output();
@@ -146,7 +146,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         }
     }
 
-    /// `\tee FILE`: output copied to the file from now on.
+    /// `\tee FILE` copies output to the file from now on.
     pub(super) fn tee(&mut self, path: &std::path::Path) -> Next {
         match File::create(path) {
             Ok(file) => {
@@ -157,7 +157,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         }
     }
 
-    /// Writes `line` to where results go now: `\o`'s target or the
+    /// Writes `line` to where results go now, `\o`'s target or the
     /// output, copied to the tee.
     pub(super) fn result_line(&mut self, line: &str) -> io::Result<()> {
         let main: &mut dyn Write = match &mut self.redirect {

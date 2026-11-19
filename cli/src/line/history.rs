@@ -1,10 +1,10 @@
-//! \[DESIGN\] The history (RULES.md D211): each statement or command
+//! \[DESIGN\] The history (RULES.md D211). Each statement or command
 //! typed is one entry, the lines of a statement typed over several lines
 //! together. An entry that begins with a space is not kept, nor one the
 //! same as the entry before. At most HISTORY_SIZE entries are kept, the
 //! oldest dropped first. The entries are kept in a file, HISTORY_FILE,
 //! else `TURBOREL_HISTORY`'s, else `.turborel_history` in the home
-//! directory: one entry a line, a backslash written `\\` and a line break
+//! directory, one entry a line, a backslash written `\\` and a line break
 //! `\n`, so an entry of several lines is one line of the file.
 
 use std::fs;

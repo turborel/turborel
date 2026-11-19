@@ -1,4 +1,4 @@
-//! \[DESIGN\] A backslash command run (RULES.md D210): its line read, its
+//! \[DESIGN\] A backslash command run (RULES.md D210), its line read, its
 //! arguments' variables read, and what it names done.
 
 use std::time::Duration;
@@ -29,7 +29,8 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
     }
 
     /// Runs `text` if it is a conditional command, `\if`, `\elif`, `\else`
-    /// or `\endif`, in `conditions`: how the run goes on, if it was one.
+    /// or `\endif`, in `conditions`, and returns how the run goes on if it
+    /// was one.
     pub(super) fn conditional(&mut self, text: &str, conditions: &mut Conditions) -> Option<Next> {
         let (name, rest) = command::split_name(text);
         let value = || -> Result<bool, String> {
@@ -70,7 +71,6 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
             Command::Edit(path) => self.edit(splitter, path.as_deref()),
             Command::Print => self.say(splitter.pending_text().trim_end()),
             Command::Reset => Self::reset(splitter),
-            Command::Timing(on) => self.timing(on),
             Command::Expanded(how) => self.expanded(how),
             Command::Aligned => self.aligned(),
             Command::Tuples(on) => self.tuples(on),
@@ -94,27 +94,20 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         Next::Go
     }
 
-    /// `\r`: the statement begun thrown away.
+    /// `\r` throws the statement begun away.
     fn reset(splitter: &mut Splitter) -> Next {
         splitter.reset();
         Next::Go
     }
 
-    /// `\timing`: set, or toggled.
-    fn timing(&mut self, on: Option<bool>) -> Next {
-        let timing = on.unwrap_or(!self.vars.on(crate::vars::TIMING));
-        self.vars.set(crate::vars::TIMING, if timing { "on" } else { "off" });
-        self.say(if timing { "Timing is on." } else { "Timing is off." })
-    }
-
-    /// `\a`: aligned output if unaligned, else unaligned.
+    /// `\a` makes output aligned if unaligned, else unaligned.
     fn aligned(&mut self) -> Next {
         self.layout.style = if self.layout.style == Style::Aligned { Style::Unaligned } else { Style::Aligned };
         let shown = self.layout.get("style").unwrap_or_default();
         self.say(&format!("Output is {shown}."))
     }
 
-    /// `\t`: the rows alone, set or toggled.
+    /// `\t` sets or toggles the rows alone.
     fn tuples(&mut self, on: Option<bool>) -> Next {
         self.layout.tuples_only = on.unwrap_or(!self.layout.tuples_only);
         self.say(if self.layout.tuples_only { "Rows alone are on." } else { "Rows alone are off." })
@@ -131,7 +124,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         if self.print_line(text).is_err() { Next::Stop } else { Next::Go }
     }
 
-    /// `\set`: the variables listed, or one set.
+    /// `\set` lists the variables, or sets one.
     fn set(&mut self, assignment: Option<(String, String)>) -> Next {
         let Some((name, value)) = assignment else {
             let all: Vec<String> = self.vars.all().map(|(n, v)| format!("{n} = {}", crate::vars::literal(v))).collect();
@@ -144,7 +137,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         Next::Go
     }
 
-    /// `\x`: expanded output set.
+    /// `\x` sets expanded output.
     fn expanded(&mut self, how: Expansion) -> Next {
         self.layout.expanded = match (how, self.layout.expanded) {
             (Expansion::Toggle, Expanded::Off) | (Expansion::Set(true), _) => Expanded::On,
@@ -155,7 +148,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         self.say(&format!("Expanded output is {shown}."))
     }
 
-    /// `\format`: every option listed, one shown, or one set.
+    /// `\format` lists every option, shows one, or sets one.
     fn format(&mut self, option: Option<(String, Option<String>)>) -> Next {
         match option {
             None => {

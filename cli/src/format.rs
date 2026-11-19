@@ -1,4 +1,4 @@
-//! \[DESIGN\] How a query's rows are written (RULES.md D46, D213): aligned
+//! \[DESIGN\] How a query's rows are written (RULES.md D46, D213), aligned
 //! in columns, as they come (the default); unaligned, apart by a
 //! separator; wrapped to the screen's width; as CSV (RFC 4180), as an
 //! HTML table, as JSON, or as tab-separated text. Each style may be
@@ -210,7 +210,7 @@ pub struct Printer<'a> {
     /// The rows written so far.
     rows: u64,
     widths: Widths,
-    /// The first failure to write: nothing more is written after it.
+    /// The first failure to write. Nothing more is written after it.
     failed: Option<io::Error>,
     /// The widest value of each column, of rows known before they are
     /// written, so their columns are no wider than they need be.
@@ -287,7 +287,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Whether this result's rows are expanded: asked for, or automatic
+    /// Whether this result's rows are expanded, as asked for, or automatic
     /// and wider than the screen, `width` columns.
     fn decide(&mut self, width: usize) {
         let auto = self.layout.expanded == Expanded::Auto && self.screen.is_some_and(|s| width > s);

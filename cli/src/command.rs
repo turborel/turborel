@@ -1,4 +1,4 @@
-//! \[DESIGN\] The client's backslash commands (RULES.md D210): a `\` in
+//! \[DESIGN\] The client's backslash commands (RULES.md D210). A `\` in
 //! code, outside a literal, an identifier or a comment, begins one, which
 //! runs to the end of its line (`split.rs`). Its name is the word after
 //! the `\`; its arguments are words apart by spaces, a word in single
@@ -43,13 +43,13 @@ pub enum Expansion {
 /// A command, its arguments read.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    /// `\q`: end the run.
+    /// `\q` ends the run.
     Quit,
-    /// `\?`: the commands.
+    /// `\?` lists the commands.
     Commands,
-    /// `\h [STATEMENT]`: a statement's syntax, or the statements.
+    /// `\h [STATEMENT]` shows a statement's syntax, or lists the statements.
     Syntax(Option<String>),
-    /// `\set [NAME [VALUE...]]`: list the variables, or set one.
+    /// `\set [NAME [VALUE...]]` lists the variables, or sets one.
     Set(Option<(String, String)>),
     /// `\unset NAME`.
     Unset(String),
@@ -61,9 +61,9 @@ pub enum Command {
     Else,
     /// `\endif`.
     Endif,
-    /// `\echo TEXT...`: the text written.
+    /// `\echo TEXT...` writes the text.
     Echo(String),
-    /// `\i FILE` and `\ir FILE`: a file's statements run, the second's
+    /// `\i FILE` and `\ir FILE` run a file's statements, the second's
     /// path from the directory of the file it is in.
     Include {
         /// The file.
@@ -71,9 +71,9 @@ pub enum Command {
         /// Whether its path is from the directory of the current file.
         relative: bool,
     },
-    /// `\o [FILE | |PROGRAM]`: where results go from now on.
+    /// `\o [FILE | |PROGRAM]` sets where results go from now on.
     Output(Target),
-    /// `\g [FILE | |PROGRAM]` and `\G`: the statement begun run, or the
+    /// `\g [FILE | |PROGRAM]` and `\G` run the statement begun, or the
     /// last, its results sent to the target, expanded for `\G`.
     Go {
         /// Where its results go.
@@ -81,32 +81,30 @@ pub enum Command {
         /// Whether its results are expanded.
         expanded: bool,
     },
-    /// `\gset [PREFIX]`: a query's one row stored, each column a variable.
+    /// `\gset [PREFIX]` stores a query's one row, each column a variable.
     Gset(String),
-    /// `\gexec`: each value of a query's result run as a statement.
+    /// `\gexec` runs each value of a query's result as a statement.
     Gexec,
-    /// `\watch [SECONDS [COUNT]]`: the statement run again and again.
+    /// `\watch [SECONDS [COUNT]]` runs the statement again and again.
     Watch {
         /// The interval between runs.
         every: Duration,
         /// How many runs, if limited.
         count: Option<u64>,
     },
-    /// `\e [FILE]`: the statement begun, or a file, edited.
+    /// `\e [FILE]` edits the statement begun, or a file.
     Edit(Option<PathBuf>),
-    /// `\p`: the statement begun written.
+    /// `\p` writes the statement begun.
     Print,
-    /// `\r`: the statement begun thrown away.
+    /// `\r` throws the statement begun away.
     Reset,
-    /// `\timing [on | off]`.
-    Timing(Option<bool>),
     /// `\x [on | off | auto]`.
     Expanded(Expansion),
-    /// `\a`: aligned output if unaligned, else unaligned.
+    /// `\a` makes output aligned if unaligned, else unaligned.
     Aligned,
-    /// `\t [on | off]`: the rows alone, without header or footer.
+    /// `\t [on | off]` writes the rows alone, without header or footer.
     Tuples(Option<bool>),
-    /// `\format [OPTION [VALUE]]`: how results are written.
+    /// `\format [OPTION [VALUE]]` sets how results are written.
     Format(Option<(String, Option<String>)>),
     /// A command of the describe family (`describe.rs`), its name and
     /// pattern.
@@ -115,17 +113,17 @@ pub enum Command {
     Import(Vec<String>),
     /// `\export {TABLE | (QUERY)} FILE [OPTION...]`.
     Export(Vec<String>),
-    /// `\conninfo`: the connection, its server and user.
+    /// `\conninfo` shows the connection, its server and user.
     ConnInfo,
-    /// `\c [SERVER [USER]]`: connect anew, the old connection ended.
+    /// `\c [SERVER [USER]]` connects anew, the old connection ended.
     Connect(Option<String>, Option<String>),
-    /// `\password [USER]`: a new password, its verifier made here.
+    /// `\password [USER]` sets a new password, its verifier made here.
     Password(Option<String>),
-    /// `\tee FILE`: everything written copied to the file too.
+    /// `\tee FILE` copies everything written to the file too.
     Tee(PathBuf),
-    /// `\notee`: the copy ended.
+    /// `\notee` ends the copy.
     NoTee,
-    /// `\delimiter [TEXT]`: what ends a statement, a semicolon if none.
+    /// `\delimiter [TEXT]` sets what ends a statement, a semicolon if none.
     Delimiter(Option<String>),
 }
 
@@ -193,7 +191,8 @@ fn quoted(chars: &[char], from: usize, quote: char) -> Result<(String, usize), S
     }
 }
 
-/// The target `args` name: none, a file, or `|` and a program's words.
+/// The target `args` name, which is none, a file, or `|` and a program's
+/// words.
 pub fn target(args: &[String]) -> Target {
     let joined = args.join(" ");
     if let Some(program) = joined.strip_prefix(PIPE) {

@@ -1,4 +1,4 @@
-//! \[DESIGN\] The pager (RULES.md D213): output to a screen taller than it
+//! \[DESIGN\] The pager (RULES.md D213). Output to a screen taller than it
 //! goes through a program that shows it a screen at a time. The program
 //! is `TURBOREL_PAGER`'s, else `PAGER`'s, else `less -S` if a `less` is
 //! found in the directories of `PATH`, else none; an empty value names
@@ -48,8 +48,8 @@ impl Paged {
         Paged { program, lines, held: Vec::new(), seen: 0, started: None, direct: false }
     }
 
-    /// Writes `bytes`: held, given to the pager, or to `main` if none
-    /// could be started.
+    /// Writes `bytes`, which are held, given to the pager, or written to
+    /// `main` if none could be started.
     ///
     /// # Errors
     ///
@@ -87,7 +87,7 @@ impl Paged {
         Ok(())
     }
 
-    /// Ends the output: what was held written to `main`, or the pager
+    /// Ends the output, what was held written to `main`, or the pager
     /// waited for once its input is closed.
     ///
     /// # Errors

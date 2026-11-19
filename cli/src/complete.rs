@@ -1,7 +1,7 @@
-//! \[DESIGN\] Tab completion (RULES.md D211): the word before the cursor
-//! completed by what its context allows. After `\`, a backslash command;
-//! after FROM, JOIN, INTO, UPDATE, TABLE, a describe command and the like,
-//! a table or view; after SCHEMA, a schema; after USER, ROLE,
+//! \[DESIGN\] Tab completion (RULES.md D211). The word before the cursor
+//! is completed by what its context allows. After `\`, a backslash
+//! command; after FROM, JOIN, INTO, UPDATE, TABLE, a describe command and
+//! the like, a table or view; after SCHEMA, a schema; after USER, ROLE,
 //! AUTHORIZATION and TO, a user or role; after SELECT, WHERE, BY, SET, ON,
 //! a comparison or a comma, a column or key word; else a key word of the
 //! lexer's. A word typed in lower case is completed in lower case.
@@ -33,7 +33,7 @@ const COLUMN_WORDS: [&str; 10] = ["SELECT", "WHERE", "BY", "SET", "AND", "OR", "
 /// The words after which a user or role is named.
 const USER_WORDS: [&str; 4] = ["USER", "ROLE", "AUTHORIZATION", "TO"];
 /// The backslash commands completed after `\`.
-pub const COMMAND_NAMES: [&str; 49] = [
+pub const COMMAND_NAMES: [&str; 48] = [
     "?",
     "a",
     "c",
@@ -79,7 +79,6 @@ pub const COMMAND_NAMES: [&str; 49] = [
     "set",
     "t",
     "tee",
-    "timing",
     "unset",
     "watch",
     "x",
@@ -198,7 +197,7 @@ pub fn candidates(context: Context, word: &str, names: Option<&Names>) -> Vec<St
     found
 }
 
-/// The completions of the text `before` the cursor: the names they need
+/// The completions of the text `before` the cursor, the names they need
 /// read over `connection` into `names` if not yet read.
 pub fn complete<S: Statements + ?Sized>(before: &str, names: &mut Option<Names>, connection: &mut S) -> Completion {
     let start = word_start(before);
@@ -220,9 +219,9 @@ mod tests {
     }
 
     /// Verifies: [DESIGN] RULES.md D211: the context of a word is read
-    /// from what comes before it: a backslash, a table word, SCHEMA, a
-    /// user word, a column word or comparison, a describe command, else a
-    /// key word.
+    /// from what comes before it, which is a backslash, a table word,
+    /// SCHEMA, a user word, a column word or comparison, a describe
+    /// command, else a key word.
     #[test]
     fn contexts_are_read_from_the_words_before() {
         assert_eq!(at("\\ti"), Context::Command);
@@ -255,7 +254,7 @@ mod tests {
         assert_eq!(candidates(Context::Table, "S", None), Vec::<String>::new());
         assert!(candidates(Context::Column, "SAL", Some(&names)).contains(&"SALARY".to_owned()));
         assert!(candidates(Context::KeyWord, "SELE", None).contains(&"SELECT".to_owned()));
-        assert_eq!(candidates(Context::Command, "ti", None), ["timing"]);
+        assert_eq!(candidates(Context::Command, "te", None), ["tee"]);
         assert_eq!(candidates(Context::User, "A", Some(&names)), ["ANN"]);
         assert_eq!(candidates(Context::Schema, "", Some(&names)), ["S"]);
     }

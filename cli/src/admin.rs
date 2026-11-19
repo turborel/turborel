@@ -1,4 +1,4 @@
-//! \[DESIGN\] `turborel admin COMMAND` (RULES.md D218): a server's
+//! \[DESIGN\] `turborel admin COMMAND` (RULES.md D218) is a server's
 //! administration from the command line, each command one or two
 //! statements the server already runs, over a session the connection
 //! options open as any other. What they show is the Information Schema's
@@ -207,7 +207,7 @@ pub fn run<S: Statements + ?Sized>(connection: &mut S, invocation: &Invocation, 
     }
 }
 
-/// `ping`: the statement run, and how soon it was answered.
+/// `ping` runs the statement and tells how soon it was answered.
 fn ping<S: Statements + ?Sized>(connection: &mut S, console: &mut Console<'_>) -> Result<(), String> {
     let began = Instant::now();
     connection.query_into(PING, &mut Kept::default()).map_err(|f| f.to_string())?;
@@ -236,7 +236,7 @@ fn done<S: Statements + ?Sized>(connection: &mut S, sql: &str, said: &str, conso
     writeln!(console.out, "{said}").map_err(|e| e.to_string())
 }
 
-/// `drop-schema`: asked first unless `yes`, then dropped.
+/// `drop-schema` asks first unless `yes`, then drops the schema.
 fn drop_schema<S: Statements + ?Sized>(
     connection: &mut S,
     (name, cascade, yes): (&str, bool, bool),
@@ -255,7 +255,7 @@ fn drop_schema<S: Statements + ?Sized>(
     done(connection, &format!("DROP SCHEMA {} {how}", identifier(name)), &format!("Schema {name} is dropped."), console)
 }
 
-/// `password`: the new password typed twice, its verifier sent.
+/// `password` has the new password typed twice, then sends its verifier.
 fn password<S: Statements + ?Sized>(
     connection: &mut S,
     user: Option<&str>,

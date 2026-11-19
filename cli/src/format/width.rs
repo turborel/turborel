@@ -1,6 +1,6 @@
 //! \[DESIGN\] How many columns of a terminal text takes (RULES.md D213),
 //! measured from the Unicode 13.0 data turborel's regular expressions read
-//! (`turborel::regex`, RULES.md D61): a character of a nonspacing or
+//! (`turborel::regex`, RULES.md D61). A character of a nonspacing or
 //! enclosing mark, a format character or a control takes none; one of the
 //! blocks of East Asian ideographs, syllables and pictographs takes two,
 //! as do the fullwidth forms; any other takes one.
@@ -9,8 +9,8 @@ use std::collections::HashMap;
 
 use turborel::regex::Regex;
 
-/// The general categories of characters that take no column: nonspacing
-/// and enclosing marks, format characters and controls.
+/// The general categories of characters that take no column, which are
+/// nonspacing and enclosing marks, format characters and controls.
 const NONE_WIDE: &str = r"[\p{Mn}\p{Me}\p{Cf}\p{Cc}]";
 /// The blocks whose characters take two columns, by their names in
 /// Unicode 13.0's Blocks.txt, normalized [XSD 1.1 Part 2 §G.4.2.3].
@@ -59,7 +59,7 @@ const DOUBLE: usize = 2;
 enum Classes {
     /// Made.
     Made(Box<(Regex, Regex)>),
-    /// They could not be made: every character is one column.
+    /// They could not be made, so every character is one column.
     Unmade,
 }
 
@@ -110,8 +110,8 @@ impl Widths {
     }
 
     /// The longest start of `text` that takes at most `columns`, and the
-    /// rest: at least one character, so a character wider than `columns`
-    /// still moves on.
+    /// rest. The start holds at least one character, so a character wider
+    /// than `columns` still moves on.
     pub fn split_at_width<'t>(&mut self, text: &'t str, columns: usize) -> (&'t str, &'t str) {
         let mut taken = 0_usize;
         for (at, c) in text.char_indices() {

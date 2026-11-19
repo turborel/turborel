@@ -5,6 +5,7 @@
 //! The client runs with `--null NULL`, as the manual says its examples do.
 
 mod backup;
+mod commands;
 mod embedding;
 mod extensions;
 mod hybrid;
@@ -219,7 +220,7 @@ impl Client {
         };
         let parsed = turborel_cli::parse(&line, &|_| None);
         if let Ok(Command::Admin(invocation)) = parsed {
-            return administered(&invocation);
+            return commands::administered(&invocation);
         }
         let Ok(Command::Run(mut given)) = parsed else { panic!("{args}") };
         for input in &mut given.inputs {
@@ -247,48 +248,6 @@ impl Client {
         let within = from.split("\n## ").next().unwrap_or_default();
         self.run(page, &examples_in(within), Some(scratch))
     }
-}
-
-/// What `turborel admin` shows run as `invocation` says, nothing asked
-/// of the terminal.
-fn administered(invocation: &turborel_cli::admin::Invocation) -> String {
-    let connection = turborel_cli::connect(&invocation.options, || Ok(String::new())).unwrap();
-    let mut agent = Agent::connected(Dialer::new(invocation.options.clone(), Box::new(|| Ok(String::new()))), connection);
-    let mut out = Vec::new();
-    let mut console = turborel_cli::admin::Console { out: &mut out, confirm: None, secret: None };
-    let done = turborel_cli::admin::run(&mut agent, invocation, &mut console);
-    agent.terminate().unwrap();
-    let mut shown = String::from_utf8(out).unwrap();
-    if let Err(e) = done {
-        shown.push_str(&format!("turborel admin: {e}\n"));
-    }
-    shown
-}
-
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D210 to D219: the chapter of the
-/// client's backslash commands runs as printed, as ANN, the database's
-/// owner, each file shown made.
-#[test]
-fn the_command_guide_runs_as_printed() {
-    let db = Database::new();
-    db.create_user("ANN", b"x").unwrap();
-    db.set_owner("ANN").unwrap();
-    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
-    let mut ann = Client::of(&db, "ANN");
-    let scratch = Scratch::new("manual-commands");
-    let page = "client/05-turborel-commands.md";
-    assert!(ann.run(page, &examples(page), Some(&scratch)) > 0, "the chapter shows its examples");
-}
-
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D59: the Client Reference's
-/// examples of importing run as printed, as ANN, each file shown made.
-#[test]
-fn the_import_examples_run_as_printed() {
-    let db = Database::new();
-    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
-    let mut ann = Client::of(&db, "ANN");
-    let scratch = Scratch::new("manual-import");
-    assert!(ann.section("client/01-turborel.md", "## Importing", &scratch) > 0, "the section shows its examples");
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8: the User's Guide's examples, of

@@ -1,9 +1,9 @@
 //! \[DESIGN\] The line editor (RULES.md D211), the client's own, as it
-//! takes no dependency for one: the line typed is held as characters
+//! takes no dependency for one. The line typed is held as characters
 //! with a cursor, edited by keys decoded from the bytes a terminal sends,
 //! its history kept in a file and searched backwards. This module holds
-//! what is pure, so it is tested without a terminal: the keys, the bytes
-//! they are sent as, and the buffer. `editor.rs` is the state of one line
+//! what is pure, the keys, the bytes they are sent as, and the buffer, so
+//! it is tested without a terminal. `editor.rs` is the state of one line
 //! being typed, `history.rs` the entries kept, and `terminal.rs` what
 //! puts the terminal in raw mode by `stty` and reads it.
 //!
@@ -47,23 +47,23 @@ pub enum Key {
     WordLeft,
     /// One word right.
     WordRight,
-    /// Tab: completes.
+    /// Tab completes.
     Tab,
-    /// Ctrl-R: searches the history backwards.
+    /// Ctrl-R searches the history backwards.
     Search,
-    /// Ctrl-C: throws the line away.
+    /// Ctrl-C throws the line away.
     Interrupt,
-    /// Ctrl-D: ends input, on an empty line; else deletes.
+    /// Ctrl-D ends input, on an empty line; else it deletes.
     EndOfInput,
-    /// Ctrl-U: cuts before the cursor.
+    /// Ctrl-U cuts before the cursor.
     CutStart,
-    /// Ctrl-K: cuts after it.
+    /// Ctrl-K cuts after it.
     CutEnd,
-    /// Ctrl-W: cuts the word before it.
+    /// Ctrl-W cuts the word before it.
     CutWord,
-    /// Ctrl-L: redraws.
+    /// Ctrl-L redraws.
     Redraw,
-    /// Escape, or Ctrl-G: leaves a search.
+    /// Escape, or Ctrl-G, leaves a search.
     Cancel,
     /// A key the editor does nothing with.
     Other,
@@ -131,8 +131,8 @@ fn controlled(byte: u8) -> Key {
     if byte < b' ' { Key::Other } else { Key::Char(char::from(byte)) }
 }
 
-/// The key an escape sequence `after` its escape is, if it is whole: none
-/// if more bytes are to come.
+/// The key an escape sequence `after` its escape is, if it is whole, or
+/// none if more bytes are to come.
 fn escaped(after: &[u8]) -> Option<Key> {
     let whole = match after {
         [] | [b'[' | b'O'] => false,

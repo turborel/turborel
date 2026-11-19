@@ -29,7 +29,6 @@ as a table as they come, and each statement's outcome.
 | `-c`, `--command SQL` | run SQL's statements; more than once for more |
 | `-f`, `--file FILE` | run FILE's statements; more than once for more |
 | `--stop-on-error` | end the run at the first statement that fails |
-| `--timing` | report each statement's elapsed time to standard error ([Timing](#timing)); off by default |
 | `--null TEXT` | show a null value as TEXT, and import a field written TEXT as null; nothing by default |
 | `--import FILE` | insert FILE's rows into the table `--table` names; more than once for more, in turn with `-c` and `-f` ([Importing](#importing)) |
 | `--table NAME` | the table rows are imported into |
@@ -169,10 +168,14 @@ the transaction rolled back, and the program exits with 1.
 
 ## Timing
 
-`--timing` writes `Time: N ns` to standard error after each SQL statement,
-including one that fails or is cancelled. It applies to commands, files
-and standard input, including typed sessions. Each statement gets its own
-time; the results on standard output keep their usual format.
+A session typed at a terminal, its output on a screen, writes
+`Time: N ns` to standard error after each SQL statement, including one
+that fails or is cancelled. Each statement gets its own time, and the
+results on standard output keep their usual format. Nothing else is
+timed. Commands given with `-c`, files given with `-f` or included with
+`\i`, piped input and output sent to a file or a pipe never show a
+time, so a script's output is the same on every run. No option or
+command turns timing on or off.
 
 The client measures elapsed time with a monotonic clock, from starting the
 statement through receiving its outcome and writing any result rows. This
@@ -182,6 +185,12 @@ diagnostic is not included. It is not a measurement of server execution
 alone. Reading SQL input, the initial connection and login, and
 `--import` are outside the measurement. Nanoseconds are the unit shown;
 the clock's precision depends on the platform.
+
+When the server reports the time it spent on a statement, the line
+shows it after the round trip, as in `Time: 9000 ns, server 6000 ns
+(planning 1000 ns, execution 4000 ns, waiting 1000 ns)`. Only the parts
+the server reports are listed. A server that reports no time leaves
+the line as the round trip alone.
 
 ## Importing
 

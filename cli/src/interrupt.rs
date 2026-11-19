@@ -1,7 +1,7 @@
-//! \[DESIGN\] What Ctrl-C does (RULES.md D46): once connected, it cancels
+//! \[DESIGN\] What Ctrl-C does (RULES.md D46). Once connected, it cancels
 //! the statement the session runs (RULES.md D44), and the program goes on;
 //! before, it ends the program, as it would have. Taken by tokio's signals,
-//! on a thread of their own, so it is portable: SIGINT on Unix, the
+//! on a thread of their own, so it is portable, SIGINT on Unix and the
 //! console's Ctrl-C on Windows.
 
 use std::future::Future;
@@ -27,7 +27,7 @@ pub struct Interrupts {
 pub type Handlers = (fn(), fn(&Failure));
 
 impl Interrupts {
-    /// Takes Ctrl-C from now on: `handlers.0` called for it until there is
+    /// Takes Ctrl-C from now on, `handlers.0` called for it until there is
     /// a canceller, `handlers.1` with a failure to cancel.
     ///
     /// # Errors
@@ -54,14 +54,14 @@ impl Interrupts {
         self.presses.load(Ordering::SeqCst)
     }
 
-    /// Cancels by `canceller` from now on, or, for none, by nothing: the
-    /// current connection's, as SET CONNECTION and DISCONNECT change it.
+    /// Cancels by `canceller` from now on, or, for none, by nothing. It is
+    /// the current connection's, as SET CONNECTION and DISCONNECT change it.
     pub fn cancel_by(&self, canceller: Option<Canceller>) {
         *self.canceller.lock().unwrap_or_else(PoisonError::into_inner) = canceller;
     }
 }
 
-/// Answers each signal `signal` gives until it fails: by `canceller`, once
+/// Answers each signal `signal` gives until it fails, by `canceller` once
 /// it is set, else `handlers.0`. Tells `ready` once the first is awaited,
 /// so a signal sent after that is answered; or why it cannot be.
 pub(crate) async fn answer<F: Future<Output = io::Result<()>>>(

@@ -1,4 +1,4 @@
-//! \[DESIGN\] What runs a run's statements (RULES.md D46): a connection,
+//! \[DESIGN\] What runs a run's statements (RULES.md D46), a connection,
 //! or an SQL-agent's connections [ISO/IEC 9075:1992 §15], which takes
 //! CONNECT, SET CONNECTION and DISCONNECT itself.
 
@@ -24,9 +24,9 @@ pub trait Statements {
     fn query_into(&mut self, sql: &str, sink: &mut dyn Sink) -> Result<Streamed, Failure>;
 
     /// Runs `sql` as `query_into` does, a query's rows fetched `rows` at a
-    /// time through a cursor (FETCH_COUNT, RULES.md D212): a statement
-    /// that cannot be prepared, or is no query, run as `query_into` runs
-    /// it.
+    /// time through a cursor (FETCH_COUNT, RULES.md D212). A statement
+    /// that cannot be prepared, or is no query, is run as `query_into`
+    /// runs it.
     ///
     /// # Errors
     ///
@@ -43,6 +43,14 @@ pub trait Statements {
     /// it did.
     fn warning(&self) -> Option<&str>;
 
+    /// The time the server reports spending on the last statement. This
+    /// is the seam of server-measured time. The client does not give it
+    /// yet, so a connection reports none until it does, and the time
+    /// shown is the round trip alone.
+    fn server_time(&self) -> Option<crate::timing::ServerTime> {
+        None
+    }
+
     /// Whether the session's transaction is active, as the server last
     /// said; false with no connection.
     fn in_transaction(&mut self) -> bool;
@@ -54,8 +62,8 @@ pub trait Statements {
     /// current connection, if there is one.
     fn session(&mut self) -> Option<(String, String)>;
 
-    /// The current connection's name: none for the default one, or for a
-    /// connection not an agent's.
+    /// The current connection's name, or none for the default one, or for
+    /// a connection not an agent's.
     fn connection_name(&self) -> Option<String>;
 
     /// Imports `source`'s rows as `how` says (RULES.md D59), each row
@@ -67,7 +75,7 @@ pub trait Statements {
     fn import(&mut self, source: &mut FileSource, how: &Import, rejected: &mut dyn FnMut(Rejected)) -> Result<Imported, ImportError>;
 }
 
-/// An import's failure `failure` before it began: nothing kept.
+/// An import's failure `failure` before it began, so nothing kept.
 fn unbegun(failure: Failure) -> ImportError {
     ImportError { position: None, cause: Cause::Sql(Box::new(failure)), committed: 0, rolled_back: 0 }
 }
@@ -83,7 +91,7 @@ fn fetched<S: Read + Write>(
 ) -> Option<Result<Streamed, Failure>> {
     let statement = connection.prepare(sql).ok()?;
     if statement.columns().is_empty() {
-        // Nothing of it ran: preparing has no effect but its number.
+        // Nothing of it ran, as preparing has no effect but its number.
         drop(connection.deallocate(statement));
         return None;
     }
