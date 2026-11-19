@@ -1514,7 +1514,7 @@ OK
 The SQL option of Simple feature access, OGC 06-104r4 (ISO 19125-2), is
 built in its "SQL with Geometry Types" environment, over the types and
 routines of SQL/MM Spatial, so a tool written for either finds what it
-reads. Its tables are two views of the schema SF_INFORMTN_SCHEMA, and
+reads. Its tables are views of the schema SF_INFORMTN_SCHEMA, and
 SELECT on each is everyone's.
 
 | View | Rows |
@@ -1612,6 +1612,56 @@ SELECT H.NumSurfaces() AS PATCHES, AsText(H.SURFACE(2)) AS PATCH_2 FROM (VALUES 
 --------------+--------------------------------------------------------------
             2 | POLYGON Z ((0 0 0, 0 1 0, 0 0 1, 0 0 0))
 (1 row)
+```
+
+### Annotation text
+
+Text placed on a map is a value of ANNOTATION_TEXT, the text types of
+Simple feature access. An ANNOTATION_TEXT_ELEMENT is a string, the
+point it is placed at, a leader line from it, and its text attributes,
+written as XML. Each is read by a method of its name, `Value()`,
+`Location()`, `LeaderLine()` and `TextAttributes()`, and changed by the
+same method of one argument. The constructor takes all four, and NEW
+ANNOTATION_TEXT_ELEMENT() makes one whose attributes are all NULL. An
+ANNOTATION_TEXT_ELEMENT_ARRAY holds elements. `ElementN(n)` reads one,
+and `ElementN(element, n)` replaces it or adds one after the last. An
+ANNOTATION_TEXT is made of an array. `ELEMENT_ARRAY()` gives the array
+back, `ENVELOPE()` gives the envelope of the elements' locations and
+leader lines, and `CONCAT(other)` appends another text's elements.
+
+Strings, attributes and arrays hold at most 4096 characters or
+elements. A text has no well-known text or binary form, and is shown as
+the constructors that make it. ANNOTATION_TEXT_METADATA, a view of
+SF_INFORMTN_SCHEMA, lists each column of type ANNOTATION_TEXT the user
+may see. Its default base scale, expression and attributes are NULL.
+
+```sql
+CREATE TABLE LABELS (ID INTEGER PRIMARY KEY, LABEL ANNOTATION_TEXT);
+INSERT INTO LABELS VALUES (1, ANNOTATION_TEXT(ANNOTATION_TEXT_ELEMENT_ARRAY(ARRAY[ANNOTATION_TEXT_ELEMENT('Pond', ST_POINT(5, 5), GeomFromText('LINESTRING (5 5, 7 8)'), '<font size="9"/>')])));
+SELECT AsText(LABEL.ENVELOPE()) AS BOX, LABEL.ELEMENT_ARRAY().ElementN(1).Value() AS WORDS FROM LABELS;
+UPDATE LABELS SET LABEL = LABEL.CONCAT(ANNOTATION_TEXT(ANNOTATION_TEXT_ELEMENT_ARRAY(ARRAY[(NEW ANNOTATION_TEXT_ELEMENT()).Value('Well').Location(ST_POINT(2, 2))]))) WHERE ID = 1;
+SELECT AsText(LABEL.ENVELOPE()) AS BOX, LABEL.ELEMENT_ARRAY().ElementN(2).Value() AS WORDS, LABEL.ELEMENT_ARRAY().ElementN(2).LeaderLine() AS LEADER FROM LABELS;
+SELECT F_TABLE_NAME, F_TEXT_COLUMN, A_TEXT_DEFAULT_MAP_BASE_SCALE FROM ANNOTATION_TEXT_METADATA;
+ROLLBACK;
+```
+
+```
+OK
+OK
+ BOX                                                          | WORDS
+--------------------------------------------------------------+--------------------------------------------------------------
+ POLYGON ((5 5, 7 5, 7 8, 5 8, 5 5))                          | Pond
+(1 row)
+OK
+ BOX                                                          | WORDS                                                        | LEADER
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ POLYGON ((2 2, 7 2, 7 8, 2 8, 2 2))                          | Well                                                         | NULL
+(1 row)
+ F_TABLE_NAME                                                 | F_TEXT_COLUMN                                                | A_TEXT_DEFAULT_MAP_BASE_SCALE
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ LABELS                                                       | LABEL                                                        | NULL
+(1 row)
+OK
 ```
 
 ## Errors

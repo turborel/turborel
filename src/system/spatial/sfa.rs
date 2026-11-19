@@ -20,11 +20,17 @@
 //!   column's declared type, with 1000 of z in three coordinate
 //!   dimensions; null of a type neither table codes.
 //!
-//! An unqualified name of either view that no table of the default
+//! ANNOTATION_TEXT_METADATA [§6.2.9.2 Table 3] lists each column of type
+//! ANNOTATION_TEXT [§7.2.20] the same way, from the base table
+//! SF_ANNOTATION_TEXT_METADATA. Its defaults are null: no map base scale,
+//! expression or attributes is kept beside a column, each text value
+//! holding its own.
+//!
+//! An unqualified name of a view that no table of the default
 //! schema has names it (`binder/from.rs`), as a client of Simple feature
 //! access writes `FROM geometry_columns` [Annex C.3.3.3 T1].
 
-use super::super::{Defined, Rows, Seen, SystemTable, SystemView, catalog_name, identifier, text};
+use super::super::{Defined, Rows, Seen, SystemTable, SystemView, catalog_name, identifier, text, text_column};
 use super::{SRS_SEED, ST_DEFINITION_SCHEMA, int, integer};
 use crate::catalog::{ColumnDesc, QualifiedName};
 use crate::storage::Row;
@@ -45,9 +51,45 @@ const TWO_DIMENSIONS: i64 = 2;
 /// [§7.1.3.3 Table 4] What a type's code adds of z.
 const Z_CODE: i64 = 1000;
 
-/// The base table of GEOMETRY_COLUMNS.
-pub(super) fn table() -> std::sync::Arc<dyn SystemTable> {
-    std::sync::Arc::new(Defined { schema: ST_DEFINITION_SCHEMA, name: BASE, columns, rows: Rows::Infallible(rows) })
+/// The base table ANNOTATION_TEXT_METADATA reads.
+const TEXT_BASE: &str = "SF_ANNOTATION_TEXT_METADATA";
+
+/// The base tables of GEOMETRY_COLUMNS and ANNOTATION_TEXT_METADATA.
+pub(super) fn tables() -> [std::sync::Arc<dyn SystemTable>; 2] {
+    [
+        std::sync::Arc::new(Defined { schema: ST_DEFINITION_SCHEMA, name: BASE, columns, rows: Rows::Infallible(rows) }),
+        std::sync::Arc::new(Defined {
+            schema: ST_DEFINITION_SCHEMA,
+            name: TEXT_BASE,
+            columns: text_columns,
+            rows: Rows::Infallible(text_rows),
+        }),
+    ]
+}
+
+/// [§6.2.9.2 Table 3] The columns of ANNOTATION_TEXT_METADATA.
+fn text_columns() -> Vec<ColumnDesc> {
+    let names = ["F_TABLE_CATALOG", "F_TABLE_SCHEMA", "F_TABLE_NAME", "F_TEXT_COLUMN"];
+    let mut all: Vec<ColumnDesc> = names.iter().map(|n| identifier(n, true)).collect();
+    let length = crate::geometry::support::MAX_ANNOTATION_SIZE;
+    let defaults = ["A_TEXT_DEFAULT_MAP_BASE_SCALE", "A_TEXT_DEFAULT_EXPRESSION", "A_TEXT_DEFAULT_ATTRIBUTES"];
+    all.extend(defaults.iter().map(|n| text_column((n, length), false)));
+    all
+}
+
+/// Each column of a base table or view of type ANNOTATION_TEXT.
+fn text_rows(seen: &Seen<'_>) -> Vec<Row> {
+    let catalog = catalog_name(seen);
+    let tables = seen.state.catalog.tables().into_iter().map(|t| (&t.name, &t.columns));
+    let views = seen.state.catalog.views().into_iter().map(|v| (&v.name, &v.columns));
+    let text_type = Some(crate::geometry::support::Support::AnnotationText);
+    let mut rows = Vec::new();
+    for (name, columns) in tables.chain(views) {
+        for c in columns.iter().filter(|c| crate::geometry::support::of_data_type(&c.data_type) == text_type) {
+            rows.push(vec![catalog.clone(), text(&name.auth), text(&name.ident), text(&c.name), Value::Null, Value::Null, Value::Null]);
+        }
+    }
+    rows
 }
 
 /// [§7.1.3.2] The columns of GEOMETRY_COLUMNS.
@@ -97,7 +139,7 @@ fn geocentric(seen: &Seen<'_>, srid: i32) -> bool {
     supplied.or_else(defined).is_some_and(|d| d.trim_start().get(..GEOCENTRIC.len()).is_some_and(|w| w.eq_ignore_ascii_case(GEOCENTRIC)))
 }
 
-/// [§7.1.2.2, §7.1.3.2] The views, of SF_INFORMTN_SCHEMA.
+/// [§6.2.9.2, §7.1.2.2, §7.1.3.2] The views, of SF_INFORMTN_SCHEMA.
 pub const VIEWS: &[SystemView] = &[
     SystemView {
         name: "GEOMETRY_COLUMNS",
@@ -114,6 +156,15 @@ pub const VIEWS: &[SystemView] = &[
         query: r"SELECT SRS_ID AS SRID, ORGANIZATION AS AUTH_NAME, ORGANIZATION_COORDSYS_ID AS AUTH_SRID,
          DEFINITION AS SRTEXT
        FROM ST_DEFINITION_SCHEMA.ST_SPATIAL_REFERENCE_SYSTEMS",
+    },
+    SystemView {
+        name: "ANNOTATION_TEXT_METADATA",
+        query: r"SELECT a.F_TABLE_CATALOG, a.F_TABLE_SCHEMA, a.F_TABLE_NAME, a.F_TEXT_COLUMN,
+         a.A_TEXT_DEFAULT_MAP_BASE_SCALE, a.A_TEXT_DEFAULT_EXPRESSION, a.A_TEXT_DEFAULT_ATTRIBUTES
+       FROM INFORMATION_SCHEMA.COLUMNS AS c
+            JOIN ST_DEFINITION_SCHEMA.SF_ANNOTATION_TEXT_METADATA AS a ON
+              ( c.TABLE_CATALOG = a.F_TABLE_CATALOG AND c.TABLE_SCHEMA = a.F_TABLE_SCHEMA AND
+                c.TABLE_NAME = a.F_TABLE_NAME AND c.COLUMN_NAME = a.F_TEXT_COLUMN )",
     },
 ];
 

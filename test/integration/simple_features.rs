@@ -4,6 +4,7 @@
 //! [§7.2], PolyhedSurface [§7.2.14] and the text and binary forms of OGC
 //! 06-103r4 (RULES.md D136).
 
+mod annotation;
 mod blue_lake;
 mod routines;
 
@@ -114,7 +115,7 @@ fn the_views_are_read_as_the_information_schema_is() {
     assert_eq!(rows(&a, "SELECT count(*) FROM GEOMETRY_COLUMNS").unwrap(), ["0"]);
     assert_eq!(rows(&b, "SELECT count(*) FROM geometry_columns").unwrap(), ["1"]);
     let schemas = "SELECT count(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'SF_INFORMTN_SCHEMA'";
-    assert_eq!(rows(&a, schemas).unwrap(), ["2"]);
+    assert_eq!(rows(&a, schemas).unwrap(), ["3"]);
 }
 
 /// Verifies: [OGC 06-104r4 §7.1.2.2, §7.1.1] SPATIAL_REF_SYS holds each

@@ -1,12 +1,13 @@
 //! Mutations of Simple feature access, SQL option [OGC 06-104r4]: the
 //! views GEOMETRY_COLUMNS and SPATIAL_REF_SYS and their unqualified
 //! names, the routines named without ST_, PolyhedSurface, and the text
-//! and binary forms of OGC 06-103r4 (RULES.md D136, R-TEST-9).
+//! and binary forms of OGC 06-103r4, and the text types of §7.2.20 and
+//! their metadata (RULES.md D136, R-TEST-9).
 
 use super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the Simple feature access tests.
-pub const SIMPLE_FEATURES: [Mutation; 16] = [
+pub const SIMPLE_FEATURES: [Mutation; 22] = [
     Mutation {
         name: "sfa-registered-srid",
         package: Package::Core,
@@ -165,6 +166,66 @@ pub const SIMPLE_FEATURES: [Mutation; 16] = [
         original: "            all.insert(name.to_owned(), crate::geometry::kind_of(kind));\n",
         replacement: "",
         integration: &["simple_features::routines::polyhedral_surfaces_are_counted_by_their_patches"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sfa-text-envelope-leader",
+        package: Package::Core,
+        breaks: "a text's envelope leaves out the leader lines",
+        file: "src/geometry/support/annotation.rs",
+        original: "flat_map(|e| [e.location.as_deref(), e.leader.as_deref()])",
+        replacement: "flat_map(|e| [e.location.as_deref(), None])",
+        integration: &["simple_features::annotation::texts_hold_their_elements_and_envelope"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sfa-text-concat-order",
+        package: Package::Core,
+        breaks: "CONCAT puts the other text's elements first",
+        file: "src/geometry/support/annotation.rs",
+        original: "[text_elements(arg(a, 0)?)?, text_elements(arg(a, 1)?)?].concat()",
+        replacement: "[text_elements(arg(a, 1)?)?, text_elements(arg(a, 0)?)?].concat()",
+        integration: &["simple_features::annotation::texts_hold_their_elements_and_envelope"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sfa-text-mixed-srid",
+        package: Package::Core,
+        breaks: "a text of elements of two SRIDs is taken",
+        file: "src/geometry/support/annotation.rs",
+        original: "if srid.is_some_and(|s| s != g.srid) {",
+        replacement: "if srid.is_some_and(|s| s != g.srid && false) {",
+        integration: &["simple_features::annotation::texts_hold_their_elements_and_envelope"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sfa-element-n-far",
+        package: Package::Core,
+        breaks: "ElementN(element, n) takes a position two past the end",
+        file: "src/geometry/support/annotation.rs",
+        original: ".filter(|i| *i <= len && *i < room)",
+        replacement: ".filter(|i| *i <= len.saturating_add(1) && *i < room)",
+        integration: &["simple_features::annotation::element_arrays_are_read_and_changed_by_position"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sfa-leader-line",
+        package: Package::Core,
+        breaks: "LeaderLine() reads the location",
+        file: "src/geometry/support/annotation.rs",
+        original: "Ok(geometry_value(Element::of(arg(a, 0)?)?.leader))",
+        replacement: "Ok(geometry_value(Element::of(arg(a, 0)?)?.location))",
+        integration: &["simple_features::annotation::text_elements_are_made_read_and_changed"],
+        unit: &[],
+    },
+    Mutation {
+        name: "sfa-text-metadata",
+        package: Package::Core,
+        breaks: "ANNOTATION_TEXT_METADATA lists the columns of other types",
+        file: "src/system/spatial/sfa.rs",
+        original: "of_data_type(&c.data_type) == text_type)",
+        replacement: "of_data_type(&c.data_type) != text_type)",
+        integration: &["simple_features::annotation::text_columns_are_kept_and_listed"],
         unit: &[],
     },
 ];

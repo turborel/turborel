@@ -33,7 +33,7 @@ pub struct SupportType {
 }
 
 /// The types, as `SUPPORTS` orders them.
-pub(super) static TYPES: [SupportType; 7] = [
+pub(super) static TYPES: [SupportType; 10] = [
     SupportType { which: SUPPORTS[0] },
     SupportType { which: SUPPORTS[1] },
     SupportType { which: SUPPORTS[2] },
@@ -41,6 +41,9 @@ pub(super) static TYPES: [SupportType; 7] = [
     SupportType { which: SUPPORTS[4] },
     SupportType { which: SUPPORTS[5] },
     SupportType { which: SUPPORTS[6] },
+    SupportType { which: SUPPORTS[7] },
+    SupportType { which: SUPPORTS[8] },
+    SupportType { which: SUPPORTS[9] },
 ];
 
 /// The family of one type, ordered EQUALS ONLY.
@@ -79,9 +82,12 @@ impl SupportType {
             Support::Angle => Ok(angle_value(Angle::from_text(text).map_err(f)?)),
             Support::Direction => Ok(direction_value(Direction::from_text(text).map_err(f)?)),
             Support::Vector => Ok(read_text(text, 0)?.value()),
-            Support::AffinePlacement | Support::NurbsPoint | Support::Knot => {
-                uncastable(&Value::Char(text.to_owned()), &super::data_type(self.which))
-            }
+            Support::AffinePlacement
+            | Support::NurbsPoint
+            | Support::Knot
+            | Support::TextElement
+            | Support::TextElementArray
+            | Support::AnnotationText => uncastable(&Value::Char(text.to_owned()), &super::data_type(self.which)),
         }
     }
 
@@ -113,19 +119,19 @@ impl SupportType {
 }
 
 /// `text` quoted as a character string literal.
-fn quoted(text: &str) -> String {
+pub(super) fn quoted(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
 /// The literal of a geometry payload.
-fn geometry_literal(bytes: &[u8]) -> String {
+pub(super) fn geometry_literal(bytes: &[u8]) -> String {
     crate::geometry::GEOMETRY.literal(&crate::geometry::kind::wrap(bytes.to_vec()))
 }
 
 /// A value of attributes `parts`, each a method and its argument's
 /// literal if the attribute is present: the constructor `name` of them
 /// all if all are, else the constructor function and the mutators.
-fn constructed(name: &str, parts: &[(&str, Option<String>)]) -> String {
+pub(super) fn constructed(name: &str, parts: &[(&str, Option<String>)]) -> String {
     if let Some(all) = parts.iter().map(|(_, p)| p.clone()).collect::<Option<Vec<String>>>() {
         return format!("{name}({})", all.join(", "));
     }
@@ -156,6 +162,7 @@ fn shown(s: Support, v: &Value) -> Result<String> {
                 [("ST_LOCATION", p.location.as_deref().map(geometry_literal)), ("ST_REFDIRECTIONS", p.directions.as_ref().map(vectors))];
             constructed(s.name(), &parts)
         }
+        Support::TextElement | Support::TextElementArray | Support::AnnotationText => super::annotation::shown(s, v)?,
         Support::SpatialRefSys | Support::Angle | Support::Direction | Support::Vector => text_of(s, v)?,
     })
 }
@@ -167,7 +174,12 @@ fn text_of(s: Support, v: &Value) -> Result<String> {
         Support::Angle => Ok(angle_of(v)?.as_text()),
         Support::Direction => Ok(direction_of(v)?.as_text()),
         Support::Vector => write_text(&Vector::of(v)?),
-        Support::AffinePlacement | Support::NurbsPoint | Support::Knot => shown(s, v),
+        Support::AffinePlacement
+        | Support::NurbsPoint
+        | Support::Knot
+        | Support::TextElement
+        | Support::TextElementArray
+        | Support::AnnotationText => shown(s, v),
     }
 }
 
@@ -185,7 +197,14 @@ impl SqlType for SupportType {
         match self.which {
             Support::SpatialRefSys => Some(&SYSTEMS),
             Support::Vector => Some(&VECTORS),
-            Support::Angle | Support::Direction | Support::AffinePlacement | Support::NurbsPoint | Support::Knot => None,
+            Support::Angle
+            | Support::Direction
+            | Support::AffinePlacement
+            | Support::NurbsPoint
+            | Support::Knot
+            | Support::TextElement
+            | Support::TextElementArray
+            | Support::AnnotationText => None,
         }
     }
 
@@ -246,7 +265,12 @@ impl SqlType for SupportType {
                 let srid = Vector::of(v).map_or(0, |v| v.srid);
                 format!("ST_VECTORFROMTEXT({}, {srid})", text(text_of(self.which, v)))
             }
-            Support::AffinePlacement | Support::NurbsPoint | Support::Knot => shown(self.which, v).unwrap_or_default(),
+            Support::AffinePlacement
+            | Support::NurbsPoint
+            | Support::Knot
+            | Support::TextElement
+            | Support::TextElementArray
+            | Support::AnnotationText => shown(self.which, v).unwrap_or_default(),
         }
     }
 

@@ -4484,8 +4484,15 @@ in a column's type and in NEW.
 UNION and OVERLAPS are reserved words, and INTERSECTION a set function.
 Before a parenthesis at the start of an operand none of them can begin
 anything else, so `Union(a, b)` and `Overlaps(a, b)` are calls, and
-INTERSECTION of two arguments or more is one. The annotation text of
-§7.2.20 is an optional choice and is not built.
+INTERSECTION of two arguments or more is one.
+
+The text types of §7.2.20, ANNOTATION_TEXT, ANNOTATION_TEXT_ELEMENT and
+ANNOTATION_TEXT_ELEMENT_ARRAY, are kinds of type beside SQL/MM's
+support types (`geometry/support/annotation.rs`). They share that
+code's routine tables, method binding and stored forms. They have no
+ordering and no well-known forms. ANNOTATION_TEXT_METADATA [§6.2.9.2]
+is a third view of SF_INFORMTN_SCHEMA, of each text column, its
+defaults NULL.
 
 ## 2. Project layout
 

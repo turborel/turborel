@@ -57,7 +57,7 @@ pub(super) fn tables() -> Vec<std::sync::Arc<dyn SystemTable>> {
     let table = |name, columns, rows| -> std::sync::Arc<dyn SystemTable> {
         std::sync::Arc::new(Defined { schema: ST_DEFINITION_SCHEMA, name, columns, rows: Rows::Infallible(rows) })
     };
-    vec![
+    [
         table("ST_GEOMETRY_COLUMNS", geometry_columns_columns, geometry_columns),
         table("ST_SPATIAL_REFERENCE_SYSTEMS", systems_columns, systems),
         table("ST_UNITS_OF_MEASURE", units_columns, units),
@@ -65,9 +65,12 @@ pub(super) fn tables() -> Vec<std::sync::Arc<dyn SystemTable>> {
         // [§21.2] Linear referencing.
         table("ST_LR_COLUMNS", lr::lr_columns_columns, lr::lr_columns),
         table("ST_LRMS", lr::lrms_columns, lr::lrms),
-        // [OGC 06-104r4 §7.1.3] Simple feature access's GEOMETRY_COLUMNS.
-        sfa::table(),
     ]
+    .into_iter()
+    // [OGC 06-104r4 §6.2.9.2, §7.1.3] Simple feature access's
+    // GEOMETRY_COLUMNS and ANNOTATION_TEXT_METADATA.
+    .chain(sfa::tables())
+    .collect()
 }
 
 /// A column of INTEGER, NOT NULL if `not_null`.

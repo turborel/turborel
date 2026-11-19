@@ -37,7 +37,7 @@ The claim follows SQL-86 §3.4.
 | Environment [§4.6, §4.7] | A database kept in a directory (`Database::open_files`) keeps its schemas and committed changes, and is recovered after a failure [§4.16]. A database made with `Database::new` is held in memory and ends with the process. |
 | SQL/MM Full-Text | The public types and routines of ISO/IEC 13249-2:2002 (CD, SC32 N0640) §12.1, built in, with the choices that part leaves to an implementation listed [below](#sqlmm-full-text) [§12.2]. |
 | SQL/MM Spatial | The types and routines of ISO/IEC 13249-3:2016 (DIS, SC32 N2593), with topology, networks, shortest paths and linear referencing, built in. What is not built yet, and the choices that part leaves to an implementation, are listed [below](#sqlmm-spatial). No claim of its §23 is made yet. |
-| Simple feature access | The SQL option of OGC 06-104r4 (ISO 19125-2), "SQL with Geometry Types", conformance class (gS, f, 3D, M, tN) of Annex A.4, listed [below](#simple-feature-access-sql-option). |
+| Simple feature access | The SQL option of OGC 06-104r4 (ISO 19125-2), "SQL with Geometry Types", conformance class (gS, f, 3D, M, tS) of Annex A.4, listed [below](#simple-feature-access-sql-option). |
 | Limits | SQL-86 sets one limit of its own, 18 characters in an `<identifier>` [§5.3 SR3], which SQL-92 raises to 128. A statement past one of this implementation's [limits](#limits) gets SQLCODE -900 ("valid, but not processed"). |
 
 Every outcome has an SQLSTATE beside its SQLCODE [ISO/IEC 9075:1992 §22.1].
@@ -2813,9 +2813,9 @@ cites as `[OGC 06-104r4 §N]`. Part 1, OGC 06-103r4, is cited for the
 text and binary forms. The manual is the section "Simple feature access"
 of [doc/sql/10-spatial.md](doc/sql/10-spatial.md).
 
-The claim is the conformance class (gS, f, 3D, M, tN) of Annex A.4: the
-geometry types environment, its features, values of z and of m, and no
-annotation text. Its tests T1 to T52 of Annex C.3.3 run in
+The claim is the conformance class (gS, f, 3D, M, tS) of Annex A.4,
+which is the geometry types environment, its features, values of z and
+of m, and annotation text of SQL types [Annex A.2.6.2]. Its tests T1 to T52 of Annex C.3.3 run in
 `test/integration/simple_features/blue_lake.rs`.
 
 | Feature | Rules | What turborel does |
@@ -2828,7 +2828,8 @@ annotation text. Its tests T1 to T52 of Annex C.3.3 run in
 | Routines | §7.2.4 to §7.2.19 | SQL/MM's routines, called by their names without ST_ too, functions and methods. |
 | GeometryType, AsText, AsBinary | §7.2.8, Annex C.3.3.3 | Functions of their own, giving the type's name without ST_ and Part 1's text and binary forms. |
 | PolyhedSurface | §7.2.14 | Its six constructors through NEW, and NumSurfaces, SURFACE and ST_Geometries, ST_NumGeometries and ST_GeometryN of its patches. |
-| Text | §7.2.20 | Not built (tN). |
+| Text | §7.2.20 | ANNOTATION_TEXT, ANNOTATION_TEXT_ELEMENT and ANNOTATION_TEXT_ELEMENT_ARRAY, each with its constructor and every method of the clause. |
+| Text metadata | §6.2.9.2 | ANNOTATION_TEXT_METADATA, a view of SF_INFORMTN_SCHEMA of every column of type ANNOTATION_TEXT a user may see, with Table 3's columns. |
 | Well-known text and binary | OGC 06-103r4 §7, §8 | Read in both standards' forms; Part 1's written by AsText and AsBinary. |
 
 ### Readings of the standard
@@ -2883,6 +2884,36 @@ annotation text. Its tests T1 to T52 of Annex C.3.3 run in
   ST_Equals refuses. The test uses SRID 101 for both.
 - A structured type a schema defines of a name of §7.2.2.2, POINT say,
   is the type that name names in that schema.
+- The text types are built in as the geometry types are, with no
+  ordering, so no comparison, key or index takes them. A value is shown,
+  and CAST to a character string, as the constructors that make it. The
+  clause gives the text no well-known text or binary [Annex A.2.6 Note].
+- MaxArraySize, which the clause leaves open, is 4096. It bounds a
+  text string, text attributes and an array's elements. A longer string
+  raises 22001 and a longer array 2202E.
+- §4.9.3.3 of ISO/IEC 9075-2 names a constructor method as its type, so
+  the element's constructor is ANNOTATION_TEXT_ELEMENT. The clause's
+  AnnotationTextElement is a function of the same four arguments.
+- Each type has the constructor function of §4.9.3.3, its attributes
+  null. An element is then given a value without a leader line through
+  the methods of one argument. Every other routine returns NULL on NULL
+  input, as the clause declares, so a null argument gives the null
+  value.
+- The clause gives ANNOTATION_TEXT_ELEMENT_ARRAY no constructor. It has
+  one of an array of elements, none of them null (2FF09), and the
+  constructor function, whose array is empty. ElementN(n) past either
+  end is the null value. ElementN(element, n) replaces element n, or
+  adds it after the last for n one past it, and raises 2202E for any
+  other n.
+- A text's envelope, which the clause names without defining, is the
+  envelope ST_Envelope gives of its elements' locations and leader
+  lines, or NULL if they have none. Geometries of two SRIDs raise 2FF10.
+  CONCAT appends the other text's elements and so widens the envelope.
+- ANNOTATION_TEXT_METADATA's F_TEXT_COLUMN is named as §6.2.9.2's table
+  names it, where Table 3 writes F_TEXT_COLUMN_NAME. Its three defaults
+  are NULL, since §6.2.9.2 says nothing of how one is set. Each text
+  value then holds its own text and attributes. A text column is not a
+  geometry column, so GEOMETRY_COLUMNS does not list it.
 
 ## Extensions
 
