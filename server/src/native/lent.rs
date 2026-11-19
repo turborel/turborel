@@ -7,7 +7,10 @@
 //! but the one that runs it, and a reply is written by the thread that
 //! made it, from its own cache. A request that comes later, the
 //! connection's task reads through the runtime, and lends the session and
-//! wire again. A worker that cannot give the loan back as it should,
+//! wire again. A request that has come whole behind the one answered the
+//! worker takes at once, its replies joining the last one's in one write
+//! (RULES.md D231); a client slow to take them it waits on in the write
+//! itself (D232). A worker that cannot give the loan back as it should,
 //! having panicked or never run, gives it back failed, so the connection
 //! ends rather than waits for it.
 
@@ -21,7 +24,8 @@ use turborel_protocol::{Reply, broken};
 
 use super::requests::{Held, Outgoing, Work};
 use super::wire::{Arrived, Wire};
-use crate::server::{Permit, Services};
+use crate::server::{IDLE_WAITING, Permit, Services};
+use crate::settings;
 use crate::shown::Present;
 
 /// \[DESIGN\] How long a worker waits for a client's next request before
@@ -32,6 +36,13 @@ use crate::shown::Present;
 /// shape of a hand-off between threads, which no work of the server's
 /// tunes.
 pub(super) const WAITED: Duration = Duration::from_millis(1);
+
+/// \[DESIGN\] How often a worker waiting on its client to take its replies
+/// looks whether the operator ended the connection or the server hurries:
+/// as often as an operator's end cancels a statement again
+/// (`native.rs`'s `CANCEL_AGAIN`), so either is seen as soon. Fixed, not a
+/// setting (RULES.md D36).
+const LOOKED: Duration = Duration::from_millis(20);
 
 /// What a worker is lent: the session and what it holds between requests,
 /// the wire of the connection's messages, why the connection failed, if a
@@ -70,7 +81,10 @@ impl Lent {
 
     /// Does `work` (`Held::handle`), its replies written through `running`
     /// in batches of about `batch` bytes, within `max_statements` prepared
-    /// statements; shown running meanwhile.
+    /// statements; shown running meanwhile. Its last replies are queued
+    /// rather than written while the client's next request has come whole
+    /// and fewer than `batch` bytes are queued: a client that pipelines its
+    /// requests reads their replies in one write (RULES.md D231).
     ///
     /// # Errors
     ///
@@ -78,54 +92,99 @@ impl Lent {
     fn answer(&mut self, work: Work, running: &Running, (batch, max_statements, inline): (usize, usize, usize)) -> Result<()> {
         let Lent { held, wire, .. } = self;
         running.present.running(true);
-        let mut sink = |replies: Vec<Reply>| running.send(wire, &replies);
+        let mut sink = |replies: Vec<Reply>| {
+            wire.queue(&replies);
+            running.flush(wire)
+        };
         let mut out = Outgoing::new(&mut sink, batch).inlining(inline);
-        let written = held.handle(work, &mut out, max_statements).and_then(|()| out.finish());
+        let handled = held.handle(work, &mut out, max_statements);
+        let last = out.finish();
         running.present.running(false);
-        written
+        handled?;
+        wire.queue(&last);
+        let pipelined = Pipelined { whole: wire.has_whole(), room: wire.queued() < batch };
+        if pipelined.held() {
+            return Ok(());
+        }
+        running.flush(wire)
     }
 
-    /// The client's next request, waited for `WAITED` apart from the
-    /// runtime, if the client is fast and the wire can be read so
-    /// (`MayWait`) and the connection may keep a worker (`Services::hot`); `permit` given up while it waits, and
-    /// taken again once a request to run came. None, the client slow from
-    /// now, if none came in time; none, too, for a request the connection's
-    /// task is to read: one that is no work, or malformed, or that came
-    /// once the connection is no longer served.
+    /// The client's next request, if it has come whole, or else, waited
+    /// for `WAITED` apart from the runtime, if the client is fast and the
+    /// wire can be read so (`MayWait`) and the connection may keep a worker
+    /// (`Services::hot`); `permit` given up meanwhile, and taken again once
+    /// a request to run came. The replies queued are sent before it waits,
+    /// and before it gives the client back to the connection's task. None,
+    /// the client slow from now, if none came in time; none, too, for a
+    /// request the connection's task is to read: one that is no work, or
+    /// malformed, or that came once the connection is no longer served.
+    ///
+    /// # Errors
+    ///
+    /// The read or a write failed: the connection is gone.
+    fn next(&mut self, running: &Running, permit: &mut Permit) -> Result<Option<Work>> {
+        if !self.wire.has_whole() {
+            running.flush(&mut self.wire)?;
+        }
+        permit.release();
+        let next = self.arrived_or_waited(running)?;
+        match next {
+            Some(_) => permit.retake(&running.handle),
+            None => running.flush(&mut self.wire)?,
+        }
+        Ok(next)
+    }
+
+    /// The client's next request, taken if it has come whole, or waited
+    /// for as `next` says.
     ///
     /// # Errors
     ///
     /// The read failed: the connection is gone.
-    fn next(&mut self, running: &Running, permit: &mut Permit) -> Result<Option<Work>> {
+    fn arrived_or_waited(&mut self, running: &Running) -> Result<Option<Work>> {
+        let take = |request| super::work_of(request).ok().flatten().filter(|_| running.still());
+        match self.wire.arrived(take) {
+            Arrived::Taken(work) => return Ok(Some(work)),
+            Arrived::Left => return Ok(None),
+            Arrived::Awaited => {}
+        }
         let may = MayWait { fast: self.fast, direct: self.wire.is_direct() };
         if !may.allowed() {
             return Ok(None);
         }
         let Some(kept) = running.services.hot() else { return Ok(None) };
-        permit.release();
         let began = Instant::now();
         let next = loop {
-            match self.wire.arrived(|request| super::work_of(request).ok().flatten().filter(|_| running.still())) {
-                Arrived::Taken(work) => break Some(work),
-                Arrived::Left => break None,
-                Arrived::Awaited => {}
-            }
             let left = WAITED.saturating_sub(began.elapsed());
-            if left.is_zero() {
-                self.fast = false;
-                break None;
-            }
-            let came = self.wire.fill_within(left)?;
+            let came = if left.is_zero() { false } else { self.wire.fill_within(left)? };
             if !came {
                 self.fast = false;
                 break None;
             }
+            match self.wire.arrived(take) {
+                Arrived::Taken(work) => break Some(work),
+                Arrived::Left => break None,
+                Arrived::Awaited => {}
+            }
         };
         drop(kept);
-        if next.is_some() {
-            permit.retake(&running.handle);
-        }
         Ok(next)
+    }
+}
+
+/// What says whether a request's last replies wait for the next's.
+struct Pipelined {
+    /// The client's next request has come whole (`Wire::has_whole`).
+    whole: bool,
+    /// Fewer than SERVER.BATCH_BYTES are queued.
+    room: bool,
+}
+
+impl Pipelined {
+    /// Whether they wait: a reply is never held for a request not yet
+    /// sent, nor past a batch.
+    fn held(&self) -> bool {
+        self.whole && self.room
     }
 }
 
@@ -243,18 +302,25 @@ impl Running {
         self.services.is_serving() && !ended && self.user.as_deref().is_none_or(|name| db.is_user(name).unwrap_or(false))
     }
 
-    /// Sends `replies` through `wire`: apart from the runtime, as far as
-    /// the wire allows; the rest on the runtime, within
-    /// SERVER.IDLE_TIMEOUT_MS (`Services::idle`), unless the operator ends
-    /// the connection first.
+    /// Sends the replies queued in `wire`: apart from the runtime, waiting
+    /// on the socket itself if the wire allows (`flush_waiting`); else the
+    /// rest on the runtime, within SERVER.IDLE_TIMEOUT_MS
+    /// (`Services::idle`), unless the operator ends the connection first.
     ///
     /// # Errors
     ///
     /// The write failed, or ran out of time; the operator ended the
     /// connection.
-    fn send(&self, wire: &mut Wire, replies: &[Reply]) -> Result<()> {
-        if wire.sent_now(replies)? {
+    fn flush(&self, wire: &mut Wire) -> Result<()> {
+        if wire.queued() == 0 {
             return Ok(());
+        }
+        let all = wire.sent_now()?;
+        if all {
+            return Ok(());
+        }
+        if wire.is_direct() {
+            return self.flush_waiting(wire);
         }
         self.handle.block_on(async {
             tokio::select! {
@@ -262,6 +328,37 @@ impl Running {
                 () = self.present.ended() => Err(super::ended()),
             }
         })
+    }
+
+    /// Sends the replies queued in `wire`, the worker waiting on the socket
+    /// itself as the client takes them, so a client that reads as fast as
+    /// they are made is fed at the socket's pace, its worker woken by the
+    /// system alone (RULES.md D232). It looks every `LOOKED` whether the
+    /// operator ended the connection or the server hurries, and gives up
+    /// once SERVER.IDLE_TIMEOUT_MS passes before the client has taken them
+    /// all, as `Services::idle` would.
+    ///
+    /// # Errors
+    ///
+    /// As `flush`'s; the server hurried.
+    fn flush_waiting(&self, wire: &mut Wire) -> Result<()> {
+        let limit = settings::millis(self.services.database(), settings::IDLE_TIMEOUT_MS);
+        let began = Instant::now();
+        loop {
+            if *self.ended.borrow() {
+                return Err(super::ended());
+            }
+            if self.services.is_hurried() {
+                return Err(crate::server::hurrying());
+            }
+            let left = limit.map_or(LOOKED, |l| l.saturating_sub(began.elapsed()));
+            if left.is_zero() {
+                return Err(crate::server::went_past(settings::IDLE_TIMEOUT_MS, limit.unwrap_or_default(), IDLE_WAITING));
+            }
+            if wire.sent_within(left.min(LOOKED))? {
+                return Ok(());
+            }
+        }
     }
 }
 
@@ -278,6 +375,17 @@ mod tests {
         assert!(MayWait { fast: true, direct: true }.allowed());
         assert!(!MayWait { fast: false, direct: true }.allowed(), "slow");
         assert!(!MayWait { fast: true, direct: false }.allowed(), "through the runtime only");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D231: a request's last replies wait for
+    /// the next request's only while that has come whole and fewer than a
+    /// batch's bytes wait. MC/DC pairs, from both: `whole` false; `room`
+    /// false: each alone sends them.
+    #[test]
+    fn replies_wait_only_for_a_request_come_whole_within_a_batch() {
+        assert!(Pipelined { whole: true, room: true }.held());
+        assert!(!Pipelined { whole: false, room: true }.held(), "no request come");
+        assert!(!Pipelined { whole: true, room: false }.held(), "a batch waits already");
     }
 
     /// Verifies: [DESIGN] RULES.md D42: the loan is taken once it is given

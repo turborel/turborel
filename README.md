@@ -160,7 +160,8 @@ behind it, and each can be replaced or added to.
 - Import of CSV and tab-separated files through the client.
 - Library, embedded modes
 - A server over TCP, Unix sockets or Windows named pipes, with TLS,
-  users and passwords, prepared statements and cancellation.
+  users and passwords, prepared statements, pipelined requests whose
+  replies share a write, and cancellation.
 - Bounded memory with one budget over every cache, with sorts, joins and
   grouping that spill to disk.
 

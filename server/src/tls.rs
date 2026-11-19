@@ -7,6 +7,9 @@
 //! offered, a client without it is served in the clear; with TLS required,
 //! it is refused (SQLSTATE 08004), and told why. The handshake runs in the
 //! connection's own task, so a slow client never holds up the others.
+//! After it, the worker answering a request reads and writes the session
+//! itself, as it does a socket in the clear (`tls/direct.rs`, RULES.md
+//! D230).
 //!
 //! TLS 1.2 and 1.3, rustls's safe defaults. With SERVER.TLS_CLIENT_CA, a
 //! client may present a certificate, verified against those authorities
@@ -34,6 +37,7 @@
 //! reload that fails keeps the files it had, and is told
 //! (`Event::TlsReloadFailed`).
 
+mod direct;
 mod subject;
 
 use std::io;
@@ -398,7 +402,7 @@ impl Tls {
         let connection = secured.get_ref().1;
         let certificate = connection.peer_certificates().and_then(<[_]>::first).and_then(|c| common_name(c));
         let told = Handshaken { certificate, end_point: offered.end_point.clone(), exporter: exporter(connection) };
-        Ok(Secured::Tls(Box::new(secured), told))
+        Ok(Secured::Tls(Box::new(direct::Encrypted(secured)), told))
     }
 }
 
@@ -420,8 +424,6 @@ impl Transport for Prefixed {
 
 /// The TLS state is the runtime's: a thread cannot read or write through
 /// it itself.
-impl Transport for tokio_rustls::server::TlsStream<Prefixed> {}
-
 impl AsyncRead for Prefixed {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         if buf.remaining() > 0
@@ -437,6 +439,16 @@ impl AsyncRead for Prefixed {
 impl AsyncWrite for Prefixed {
     fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
         Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    // A TLS session's records go to the socket in one write, not one
+    // each (`Holding` passes it on likewise).
+    fn poll_write_vectored(mut self: Pin<&mut Self>, cx: &mut Context<'_>, bufs: &[io::IoSlice<'_>]) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {

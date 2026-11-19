@@ -141,6 +141,41 @@ TLS the place is given back before the server's closing message
 its socket open, outside the limit, for SERVER.IDLE_TIMEOUT_MS at most,
 or until the server hurries to stop if that is 0.
 
+## What a connection holds
+
+A connection holds little memory of the server's, and none grows with
+what its client sends or fails to read:
+
+| What | Bytes |
+|---|---|
+| what the client has sent and the server has not taken | 8 KiB; a longer request grows it by at most 64 KiB at a time as its bytes arrive, to SERVER.MAX_MESSAGE_BYTES, and it shrinks back once the request is taken |
+| replies not yet sent | about SERVER.BATCH_BYTES of rows, with the replies of the requests it answered before them while they wait for one write |
+| over TLS | the session's records besides, at most 64 KiB to send and one record, 16 KiB, read |
+
+A client that sends requests faster than it reads their replies is
+read no further once its replies cannot be sent: the server waits on
+it, within SERVER.IDLE_TIMEOUT_MS, and reads its next request only
+once those are taken. A client that stops reading rows, or sends
+nothing, is closed once SERVER.IDLE_TIMEOUT_MS runs out, its
+transaction rolled back.
+
+## Pipelined requests
+
+A client may send its requests without waiting for each reply. The
+server runs them one at a time, in order, and sends the replies of
+those that came together in one write, up to SERVER.BATCH_BYTES at a
+time, so a client that pipelines a hundred small statements reads their
+replies in a few writes, not a hundred. A reply is held only while the
+next request has come whole: a request sent alone is answered at once.
+
+A client that closes its side of the connection after its requests,
+without Terminate, still hears every reply to them; the connection is
+then closed, its transaction rolled back, as a connection lost. Over
+TLS, a client ends its stream with TLS's closing message, close_notify;
+one whose socket closes without it is a connection lost too, never
+taken to have ended cleanly. The server never renegotiates TLS; a TLS
+1.3 client may update its keys at any time.
+
 ## Logins
 
 A client logging in holds little of the server. Until it is
