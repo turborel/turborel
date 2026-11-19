@@ -74,7 +74,7 @@ const MIN_CELL_USES: usize = 256;
 /// \[DESIGN\] Edges the interval trees test, per edge, before the
 /// certificates are built however few points were located: building a
 /// comb's certificates, whose teeth span every row, costs about as much
-/// as 1,400 to 2,200 such tests per edge (`bench/geometry.md`).
+/// as 1,400 to 2,200 such tests per edge, as `bench/geometry.rs` measures.
 const CELL_VISITS_PER_EDGE: usize = 2_048;
 /// The first points located whose tests are counted; later points are
 /// assumed to test as many, so they pay nothing for the count.

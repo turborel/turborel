@@ -3224,7 +3224,7 @@ rectangles retain general point location. It uses no area arithmetic or
 tolerance, including for subnormal and extreme coordinates.
 Polygon and MultiPolygon operands with at least one ring of 64
 edges can also keep a Y-interval tree for each ring. The threshold follows
-the measured crossover in `bench/geometry.md`; shorter boundaries retain
+the crossover the geometry benchmark measures (`bench/geometry.rs`); shorter boundaries retain
 linear scans. A query point visits only subtrees whose closed ordinate
 range contains its Y; the shared exact ray-crossing rule still decides
 boundary membership and shell-minus-hole interiors. These immutable trees
@@ -6845,9 +6845,9 @@ budget, its room grown geometrically while the budget grants it, and
 each slab and run is a slice sorted in place, so no record is encoded,
 written to a work area or read back. Where the budget stops granting,
 the entries gathered go to the sorted spill ahead of the rest, within
-MEMORY.WORK_BYTES as above. Both tile the same tree. Measured on a
-million points (`bench/geometry.md`), the held load builds the index in
-0.6 s against 4.1 s through the spill.
+MEMORY.WORK_BYTES as above. Both tile the same tree. The held load
+builds the index several times faster than the spill, as the geometry
+benchmark (`bench/geometry.rs`) measures on a million points.
 
 CREATE INDEX fills an index while writers keep it up to date (D27), so
 `Index::load_beside_writers` lets a method build beside them. The rtree
