@@ -5,6 +5,8 @@
 
 use std::collections::BTreeMap;
 
+use turborel::error::SqlError;
+
 use crate::{Configuration, Lsn, Mark, ReplicaEvent, ReplicaId, Role};
 
 /// \[EXTENSION\] A consensus protocol, as a state machine.
@@ -55,6 +57,13 @@ pub trait Consensus: Send {
     /// simulator's violation names it. Default: nothing.
     fn describe(&self) -> String {
         String::new()
+    }
+    /// \[EXTENSION\] Why it can take no more input, if it cannot: a
+    /// consensus served by a process that failed (RULES.md D273), whose
+    /// step answered nothing. The driver reads it after each step and
+    /// halts. Default: never, for a consensus in the database's process.
+    fn failed(&self) -> Option<SqlError> {
+        None
     }
 }
 
