@@ -2,7 +2,8 @@
 //! statements, prepared ones among them [ISO/IEC 9075:1992 §17], and their
 //! cursors. Its replies are gathered, and written a batch's worth at a
 //! time, the rest with the last (`Outgoing`), so a small result takes one
-//! write. A request that ends the transaction with its statement
+//! write, and the small results of pipelined requests one between them
+//! (`native/lent.rs`, RULES.md D231). A request that ends the transaction with its statement
 //! \[EXTENSION\] commits once the statement is done, or rolls back if it
 //! failed, its one reply saying no transaction is active, so a statement
 //! that is its own transaction is one request and one reply. Nothing else
@@ -206,16 +207,10 @@ impl<'a> Outgoing<'a> {
         Outgoing { inline: bytes, ..self }
     }
 
-    /// Sends the replies gathered and not sent ahead: the request's last.
-    ///
-    /// # Errors
-    ///
-    /// The sink's: the connection is gone.
-    pub(super) fn finish(self) -> Result<()> {
-        if self.gathered.is_empty() {
-            return Ok(());
-        }
-        (self.sink)(self.gathered)
+    /// The replies gathered and not sent ahead: the request's last, for
+    /// the wire to send, or to queue before the next pipelined request's.
+    pub(super) fn finish(self) -> Vec<Reply> {
+        self.gathered
     }
 
     /// Sends what is gathered, ahead of the rest.
