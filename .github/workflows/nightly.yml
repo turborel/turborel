@@ -13,10 +13,12 @@ on:
     types: [completed]
   workflow_dispatch:
 
-# A newer build replaces one still running.
+# Builds run one at a time. A build that has started always finishes, so
+# frequent merges cannot cancel each one before it publishes. Of the
+# builds waiting, only the newest is kept.
 concurrency:
   group: nightly
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -77,6 +79,16 @@ jobs:
           GH_REPO: ${{ github.repository }}
           SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
+          # Checks of older commits can finish after newer ones, so a build
+          # never replaces a nightly built from a later commit of main.
+          old=$(gh release view nightly --json targetCommitish -q .targetCommitish 2>/dev/null || true)
+          if [ -n "$old" ]; then
+            order=$(gh api "repos/$GH_REPO/compare/$old...$SHA" -q .status)
+            if [ "$order" = "behind" ] || [ "$order" = "identical" ]; then
+              echo "The nightly already holds $old, which is not older than $SHA."
+              exit 0
+            fi
+          fi
           gh release delete nightly --yes --cleanup-tag || true
           gh release create nightly builds/* --prerelease --target "$SHA" \
             --title "Nightly (alpha)" \
