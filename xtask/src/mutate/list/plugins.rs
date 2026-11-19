@@ -8,6 +8,7 @@
 use super::{Mutation, Package};
 
 pub(super) mod files;
+pub(super) mod hosted;
 pub(super) mod kinds;
 pub(super) mod sdk;
 

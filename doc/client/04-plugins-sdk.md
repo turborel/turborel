@@ -57,6 +57,23 @@ serves a small object of each ([Kinds of Plug-in](04-plugins-kinds.md)).
 `--sdk DIR` makes the project depend on a turborel source tree at DIR
 by path instead of on the release's crates.
 
+A host plug-in's project asks for host kinds alone, as a manifest
+declares host objects or an extension's, never both ([Host
+Plug-ins](04-plugins-host.md)). `--kind` takes `encoding`,
+`hash-function`, `clock`, `log-storage`, `catalog-storage`, `spill`,
+`file-system`, `served-connections`, `listener`, `package-crypto`,
+`keyring`, `background-job`, `replica-transport`, `journal`,
+`state-transfer`, `consensus` and `archive`. A kind that keeps what the
+database relies on starts refusing each call, which stops the node,
+until its author writes it. Its README tells how the node names it in
+PLUGINS.HOST.
+
+```
+$ turborel extension new vault --kind clock --kind log-storage
+made the project of VAULT in vault, serving clock, log-storage
+  Cargo.toml src/main.rs turborel-plugin.manifest LICENSE README.md .gitignore
+```
+
 ## Building
 
 The program is built as any crate is.
