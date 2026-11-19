@@ -113,7 +113,7 @@ labelled CITY are found in the bitmaps of the labels, the travellers.
 ## STANDARD
 
 The property graph implementation standard has no such statement: it
-is an extension (RULES.md D115).
+is an extension (RULES.md D149).
 
 ## SEE ALSO
 

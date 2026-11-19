@@ -25,7 +25,7 @@ fn live(ix: &Arc<dyn Index>) -> Vec<RowId> {
     (0..u32::try_from(set.len()).unwrap()).filter(|&id| set.holds(id)).map(|id| set.row(id).unwrap()).collect()
 }
 
-/// Verifies: [DESIGN] RULES.md D115, D34: rows are numbered in the order
+/// Verifies: [DESIGN] RULES.md D149, D34: rows are numbered in the order
 /// of the rows as the numbering is made of the tree, then as written; a
 /// row keeps its number while a version holds an entry, and its last
 /// taken back leaves the number unused (normal range).
@@ -51,7 +51,7 @@ fn rows_are_numbered_as_written_and_taken_back() {
     assert_eq!(live(&ix), [10, 20, 30, 5], "its number given back");
 }
 
-/// Verifies: [DESIGN] RULES.md D115: maintenance numbers the rows again
+/// Verifies: [DESIGN] RULES.md D149: maintenance numbers the rows again
 /// once more than an eighth of the numbers, and more than LEAST_DEAD,
 /// are unused, so they are dense again; not before (boundaries).
 #[test]
@@ -76,7 +76,7 @@ fn maintenance_numbers_the_rows_again_once_many_are_gone() {
     assert_eq!(set.id(rows), Some(0));
 }
 
-/// Verifies: [DESIGN] RULES.md D115, D25: the index reopened of its
+/// Verifies: [DESIGN] RULES.md D149, D25: the index reopened of its
 /// locator holds its entries, given by a search of them all and by key,
 /// and numbers its rows of them (normal range); a locator of another
 /// format is refused (robustness).
@@ -96,7 +96,7 @@ fn an_index_reopened_of_its_locator_holds_its_rows() {
     assert!(method.open(&[int()], &[1, 2]).is_err());
 }
 
-/// Verifies: [DESIGN] RULES.md D115, D38: a numbering the memory budget
+/// Verifies: [DESIGN] RULES.md D149, D38: a numbering the memory budget
 /// refuses is not made, so the index gives no members and the table is
 /// read instead, until as many rows were written as it held (robustness).
 #[test]

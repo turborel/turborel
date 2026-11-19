@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The built-in reachability index, "reachability"
-//! (RULES.md D34, D116): which vertices an edge table's edges lead to,
+//! (RULES.md D34, D150): which vertices an edge table's edges lead to,
 //! by pruned landmark labelling (`landmarks.rs`), so a GRAPH_TABLE's
 //! search drops the starts that reach no vertex its end could bind
 //! (`exec/graph_table/reach.rs`). Its key is the source's columns, then

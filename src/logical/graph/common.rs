@@ -1,5 +1,5 @@
 //! \[EXTENSION\] [GS §16 R16.6] Common sub-pattern elimination (RULES.md
-//! D114): of comma-separated path patterns, one written as an earlier one
+//! D148): of comma-separated path patterns, one written as an earlier one
 //! is, of the same variables, element patterns, prefilters and starts, is
 //! searched once, its bindings the earlier's. Anonymous element patterns
 //! are alike by their place, as their numbers in each path pattern are.

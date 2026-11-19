@@ -4,7 +4,7 @@ use turborel::db::Database;
 
 use super::Client;
 
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D106: the examples of
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D140: the examples of
 /// CREATE PROPERTY GRAPH, then those of ALTER PROPERTY GRAPH and of DROP
 /// PROPERTY GRAPH, run as printed, as ANN.
 #[test]
@@ -19,7 +19,7 @@ fn the_property_graph_examples_run_as_printed() {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md R-DOC-8, D110: the examples of CREATE
+/// Verifies: [EXTENSION] RULES.md R-DOC-8, D144: the examples of CREATE
 /// GRAPH TYPE, CREATE GRAPH, EXECUTE GQL, DROP GRAPH and DROP GRAPH TYPE,
 /// run as printed, as ANN.
 #[test]
@@ -39,17 +39,17 @@ fn the_gql_examples_run_as_printed() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D111: the chapter of the
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D145: the chapter of the
 /// graph algorithms runs as printed, as ANN.
 #[test]
 fn the_graph_algorithm_examples_run_as_printed() {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
     let mut ann = Client::of(&db, "ANN");
-    assert!(ann.page("sql/20-graph-algorithms.md") > 0, "the chapter shows its examples' output");
+    assert!(ann.page("sql/21-graph-algorithms.md") > 0, "the chapter shows its examples' output");
 }
 
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D107, D108, D115, D116: the SQL
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D141, D142, D149, D150: the SQL
 /// Reference Manual's chapter of property graphs and the examples of
 /// CREATE ADJACENCY INDEX, CREATE LABEL INDEX and CREATE REACHABILITY
 /// INDEX run as printed, each as ANN in a database of its own;
@@ -57,7 +57,7 @@ fn the_graph_algorithm_examples_run_as_printed() {
 #[test]
 fn the_graph_table_examples_run_as_printed() {
     let pages = [
-        "sql/19-property-graphs.md",
+        "sql/20-property-graphs.md",
         "sql/statements/create-adjacency-index.md",
         "sql/statements/create-label-index.md",
         "sql/statements/create-reachability-index.md",
@@ -73,7 +73,7 @@ fn the_graph_table_examples_run_as_printed() {
     assert!(ann.page("data/05-graphs.md") > 0, "the guide shows its examples' output");
 }
 
-/// Verifies: [DESIGN] RULES.md R-DOC-8, D117: the examples of
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D151: the examples of
 /// GRAPH_STATISTICS of the Information Schema's chapter run as printed,
 /// as ANN, the statistics of its tables gathered after the first, as the
 /// chapter says the maintenance has.
@@ -100,5 +100,5 @@ fn the_graph_compatibility_examples_run_as_printed() {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
     let mut ann = Client::of(&db, "ANN");
-    assert!(ann.page("sql/21-graph-compatibility.md") > 0, "the chapter shows its examples' output");
+    assert!(ann.page("sql/22-graph-compatibility.md") > 0, "the chapter shows its examples' output");
 }

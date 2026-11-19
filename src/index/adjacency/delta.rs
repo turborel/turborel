@@ -1,5 +1,5 @@
 //! \[DESIGN\] What an adjacency index wrote since its compacted adjacency
-//! was built (RULES.md D107): the delta, kept as the vertices
+//! was built (RULES.md D141): the delta, kept as the vertices
 //! whose lists were written, by direction. A reader of a vertex not in it
 //! reads the compacted adjacency, which holds that vertex's list as the
 //! tree does; of a vertex in it, the tree, which holds the compacted

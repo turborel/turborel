@@ -1,4 +1,4 @@
-//! \[EXTENSION\] Native node and edge tables (RULES.md D109),
+//! \[EXTENSION\] Native node and edge tables (RULES.md D143),
 //! Mode B of the property graph implementation standard (§4.2): the hidden
 //! pseudo-columns a table created AS NODE or AS EDGE has, what tells the
 //! two apart, the identity text of a node or edge (R5.1), and a CONNECTION

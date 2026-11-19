@@ -1,5 +1,5 @@
 //! \[EXTENSION\] A GQL MATCH's graph pattern written again as a
-//! GRAPH_TABLE's (RULES.md D110), for the shared binder and path search
+//! GRAPH_TABLE's (RULES.md D144), for the shared binder and path search
 //! to match: its tokens copied as written, but for what reads the binding
 //! table, which becomes its columns, read laterally.
 //!

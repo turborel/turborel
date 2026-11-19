@@ -1,4 +1,4 @@
-//! Unit tests of GQL's reading (RULES.md D110): each statement read into
+//! Unit tests of GQL's reading (RULES.md D144): each statement read into
 //! its clauses, the session and transaction statements, and the
 //! statements of graph types and graphs SQL text holds.
 
@@ -23,7 +23,7 @@ fn clauses(text: &str) -> Vec<GqlClause> {
     procedure(text).statements.into_iter().next().map(|c| c.first.clauses).unwrap_or_default()
 }
 
-/// Verifies: [EXTENSION] RULES.md D110: MATCH, OPTIONAL MATCH, FILTER,
+/// Verifies: [EXTENSION] RULES.md D144: MATCH, OPTIONAL MATCH, FILTER,
 /// WHERE, LET and FOR read as their clauses, in order.
 #[test]
 fn reading_clauses() {
@@ -42,7 +42,7 @@ fn reading_clauses() {
     assert_eq!(place, &Some(("K".to_owned(), true)));
 }
 
-/// Verifies: [EXTENSION] RULES.md D110: RETURN with DISTINCT, items,
+/// Verifies: [EXTENSION] RULES.md D144: RETURN with DISTINCT, items,
 /// GROUP BY, ORDER BY, OFFSET or SKIP, and LIMIT.
 #[test]
 fn reading_return() {
@@ -57,7 +57,7 @@ fn reading_return() {
     assert!(matches!(procedure("MATCH (a) FINISH").statements[0].first.result, GqlResult::Finish));
 }
 
-/// Verifies: [EXTENSION] RULES.md D110: NEXT chains statements, and
+/// Verifies: [EXTENSION] RULES.md D144: NEXT chains statements, and
 /// UNION, EXCEPT, INTERSECT and OTHERWISE combine them.
 #[test]
 fn reading_next_and_set_operators() {
@@ -69,7 +69,7 @@ fn reading_next_and_set_operators() {
     assert_eq!(i.statements[0].rest[0].0, GqlSetOperator::Intersect(false));
 }
 
-/// Verifies: [EXTENSION] RULES.md D110: USE names a statement's graph,
+/// Verifies: [EXTENSION] RULES.md D144: USE names a statement's graph,
 /// and CALL is inline, with its scope, or named, with YIELD.
 #[test]
 fn reading_use_and_call() {
@@ -87,7 +87,7 @@ fn reading_use_and_call() {
     assert_eq!(yields, &[("C".to_owned(), "D".to_owned())]);
 }
 
-/// Verifies: [EXTENSION] RULES.md D110: INSERT, SET, REMOVE, DELETE and
+/// Verifies: [EXTENSION] RULES.md D144: INSERT, SET, REMOVE, DELETE and
 /// DETACH DELETE read as their statements.
 #[test]
 fn reading_data_modifying_statements() {
@@ -115,7 +115,7 @@ fn removed_at(r: &GqlRemoveItem) -> usize {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md D110: the session and transaction
+/// Verifies: [EXTENSION] RULES.md D144: the session and transaction
 /// statements.
 #[test]
 fn reading_session_and_transaction_statements() {
@@ -138,7 +138,7 @@ fn reading_session_and_transaction_statements() {
     assert_eq!(transaction("ROLLBACK"), "Rollback");
 }
 
-/// Verifies: [EXTENSION] RULES.md D110: what is no GQL is refused with
+/// Verifies: [EXTENSION] RULES.md D144: what is no GQL is refused with
 /// SQLCODE -102.
 #[test]
 fn refusing_what_is_no_gql() {

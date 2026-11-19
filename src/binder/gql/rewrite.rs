@@ -1,5 +1,5 @@
 //! \[EXTENSION\] A GQL expression written again as SQL over the columns of
-//! a binding table (RULES.md D110): its tokens copied, but for those of
+//! a binding table (RULES.md D144): its tokens copied, but for those of
 //! its variables.
 //!
 //! An element variable `x` is its identity's column, `x.p` its property's

@@ -2,7 +2,7 @@
 //! through GRAPH_TABLE, a GQL session, the data-modifying statements over
 //! graphs of tables, of node and edge tables and of Mode C, the
 //! identities they read and draw, and the views of graph types (RULES.md
-//! R-TEST-9, D110).
+//! R-TEST-9, D144).
 
 use super::{Mutation, Package};
 

@@ -1,5 +1,5 @@
 //! The mutations of rigid graph patterns as joins (RULES.md R-TEST-9,
-//! D113, D114): of the joins, a self-loop walked both ways, SIMPLE's
+//! D147, D148): of the joins, a self-loop walked both ways, SIMPLE's
 //! closed path, the scans of unindexed edge tables, ends that may be
 //! null, a search hint, a quantifier's iterations, an unrolled
 //! prefilter and an edge pattern written twice; of Expand, the reverse

@@ -1,5 +1,5 @@
 //! How fast the graph algorithm library runs (the graph standard's §18,
-//! RULES.md D111): PAGERANK, WCC and TRIANGLE_COUNT on a
+//! RULES.md D145): PAGERANK, WCC and TRIANGLE_COUNT on a
 //! generated graph of 1,000,000 edges, on one thread and on four, each
 //! rate of edges per second. The graph is a skewed one, each edge's
 //! source drawn uniformly and its destination from the square of a

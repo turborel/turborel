@@ -8,7 +8,7 @@ paths, and by the shortest or cheapest. This guide presents the tables
 as a property graph, matches patterns of accounts and transfers with
 GRAPH_TABLE, finds paths of several transfers, and indexes the
 transfers so the search follows them quickly. The
-[reference](../sql/19-property-graphs.md) gives every rule.
+[reference](../sql/20-property-graphs.md) gives every rule.
 
 ## The accounts and transfers
 

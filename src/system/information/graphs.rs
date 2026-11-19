@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The views of the Information Schema of property graphs
-//! (RULES.md D106, §20 of the property graph implementation
+//! (RULES.md D140, §20 of the property graph implementation
 //! standard), each over its table of the Definition Schema
 //! (`definition/graphs.rs`): PROPERTY_GRAPHS, each graph the current user
 //! or an enabled role holds SELECT on, its definition shown to the owner
@@ -8,7 +8,7 @@
 //! and PG_EDGE_ENDPOINTS, the parts of those graphs; and
 //! PROPERTY_GRAPH_PRIVILEGES, each SELECT on a graph granted to or by
 //! them, as TABLE_PRIVILEGES shows a table's [§21.2.10]; and
-//! GRAPH_STATISTICS, the statistics of those graphs (RULES.md D117,
+//! GRAPH_STATISTICS, the statistics of those graphs (RULES.md D151,
 //! `definition/graph_statistics.rs`).
 
 use super::SystemView;

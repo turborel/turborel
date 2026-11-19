@@ -78,7 +78,7 @@ pub(super) struct Test {
 /// \[GS §6.8\] An element pattern's prefilter reading a variable bound
 /// after it: each element the pattern binds is kept, with what it reads
 /// bound so far, in `register`, and tested as the variables it waits
-/// for are bound (RULES.md D108).
+/// for are bound (RULES.md D142).
 #[derive(Clone, Debug)]
 pub(super) struct Pending {
     pub(super) register: usize,

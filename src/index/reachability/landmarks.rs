@@ -1,4 +1,4 @@
-//! \[DESIGN\] Pruned landmark labelling for reachability (RULES.md D116;
+//! \[DESIGN\] Pruned landmark labelling for reachability (RULES.md D150;
 //! Yano, Akiba, Iwata and Yoshida, "Fast and Scalable Reachability Queries
 //! on Graphs by Pruned Labeling with Landmarks and Paths", CIKM 2013):
 //! each vertex has an out label, the landmarks it reaches, and an in

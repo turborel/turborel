@@ -108,7 +108,7 @@ one leg or more back to itself.
 ## STANDARD
 
 The property graph implementation standard has no such statement: it
-is an extension (RULES.md D116).
+is an extension (RULES.md D150).
 
 ## SEE ALSO
 

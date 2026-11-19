@@ -13,7 +13,7 @@
 //! postfilter is true (`graph_table/values.rs`). A search ended by a
 //! limit ON LIMIT TRUNCATE warns, 01W61. Rigid, cyclic path patterns the
 //! binder chose it for are matched by a worst-case optimal join instead
-//! (`graph::wcoj`, RULES.md D114).
+//! (`graph::wcoj`, RULES.md D148).
 
 mod correlated;
 mod labels;

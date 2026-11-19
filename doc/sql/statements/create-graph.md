@@ -84,7 +84,7 @@ OK
 
 ISO/IEC 39075:2024 (GQL) defines CREATE GRAPH. turborel holds a GQL
 graph in tables it generates, Mode C of its property graph
-implementation standard (§4.3, RULES.md D110).
+implementation standard (§4.3, RULES.md D144).
 
 ## SEE ALSO
 

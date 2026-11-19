@@ -1,5 +1,5 @@
 //! The mutations of GRAPH_TABLE's subpaths and iterations (RULES.md
-//! R-TEST-9, D108): of a subpath variable, its span, its place outside
+//! R-TEST-9, D142): of a subpath variable, its span, its place outside
 //! a quantifier and a path variable declared twice; of a parenthesized
 //! WHERE, its set functions' elements, its local exposure, PREV and
 //! FIRST; of FOR EACH SEGMENT, its test; of AS OF SCN, its range; and of

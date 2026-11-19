@@ -2,7 +2,7 @@
 //! clause, bound as the query of a GRAPH_TABLE it is: the MATCH's GPML,
 //! in the graph of the FROM clause's tables (`graph_match/graph.rs`),
 //! each variable of a table labeled by it. The graph is found here, of
-//! the catalog, not named by the parser (RULES.md D112).
+//! the catalog, not named by the parser (RULES.md D146).
 //!
 //! The MATCHes that are conjuncts of the WHERE clause become one
 //! GRAPH_TABLE of the FROM clause, in place of its FOR PATH tables, whose

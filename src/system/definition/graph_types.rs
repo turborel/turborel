@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The Definition Schema's base tables of Mode C of the
-//! property graph implementation standard (§4.3, RULES.md D110):
+//! property graph implementation standard (§4.3, RULES.md D144):
 //! GRAPH_TYPES, of each graph type, its definition text; and GQL_GRAPHS,
 //! of each GQL graph, the graph type it is of, null if it is open. The
 //! views read them (`system/information/graph_types.rs`).

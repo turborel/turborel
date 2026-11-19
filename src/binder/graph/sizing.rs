@@ -1,4 +1,4 @@
-//! \[DESIGN\] What a GRAPH_TABLE's searches are chosen by (RULES.md D118):
+//! \[DESIGN\] What a GRAPH_TABLE's searches are chosen by (RULES.md D152):
 //! the rows of each of its stored element tables, as the storage counts
 //! them, the edges a step of each path pattern may follow, as its graph's
 //! statistics count the label transitions (source, edge, destination)

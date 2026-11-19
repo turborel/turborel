@@ -1,5 +1,5 @@
 //! \[DESIGN\] Where the planner's estimates read a property graph's
-//! statistics (RULES.md D117, `stats/graph.rs`): the rows a probe of an
+//! statistics (RULES.md D151, `stats/graph.rs`): the rows a probe of an
 //! edge table's index finds for one vertex, its fan-out, is the average
 //! degree at the end whose endpoint columns the probe gives, if a graph
 //! over the table knows it.

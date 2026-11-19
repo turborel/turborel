@@ -1,6 +1,6 @@
 //! \[EXTENSION\] A property graph of the catalog as the edges of a
 //! function of GRAPH_ALGO, the graph standard's §18 (RULES.md
-//! D111): `PAGERANK(g)`, a graph of CREATE PROPERTY GRAPH or a
+//! D145): `PAGERANK(g)`, a graph of CREATE PROPERTY GRAPH or a
 //! schema's SYS_GRAPH of its node and edge tables (§4.2).
 //!
 //! The graph is read as a query of each of its element tables, bound as

@@ -1,4 +1,4 @@
-//! GRAPH_TABLE over property graphs [GS §8] (RULES.md D108):
+//! GRAPH_TABLE over property graphs [GS §8] (RULES.md D142):
 //! the conformance tests T1 to T12 of the standard (§23.2) on its bank
 //! fixture (§23.1), with the rows each gives, and the modules below of
 //! what else a GRAPH_TABLE does: its functions and predicates, rows

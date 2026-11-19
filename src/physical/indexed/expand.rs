@@ -1,5 +1,5 @@
 //! \[EXTENSION\] [GS §16 R16.1, R16.2] Expand and ExpandInto (RULES.md
-//! D113): an index join probing an adjacency index is a graph's Expand,
+//! D147): an index join probing an adjacency index is a graph's Expand,
 //! each left row's vertex's edges read of its list. Of the source's
 //! columns it is Expand, of the destination's, by the reverse entries an
 //! index keeping both ways holds, Expand walked the other way, and of both

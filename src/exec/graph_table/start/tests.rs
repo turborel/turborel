@@ -1,4 +1,4 @@
-//! Unit tests of a path pattern searched from its end (RULES.md D117).
+//! Unit tests of a path pattern searched from its end (RULES.md D151).
 
 use super::*;
 use crate::graph::view::ElementId;
@@ -22,7 +22,7 @@ fn spelled(shape: &PatternShape) -> String {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D117: a pattern reversed is its parts in
+/// Verifies: [DESIGN] RULES.md D151: a pattern reversed is its parts in
 /// the reverse order, within a quantifier and a group too, each edge
 /// pattern's orientation reversed, an undirected one kept; its first and
 /// last vertex tests are its ends, and its first edge from either end is
@@ -46,7 +46,7 @@ fn a_pattern_is_reversed() {
     assert_eq!(first_edge(&pattern, true).map(|(t, o)| (t.shape, o)), Some((4, Orientation::RIGHT)));
 }
 
-/// Verifies: [DESIGN] RULES.md D117: a path found from the end is given
+/// Verifies: [DESIGN] RULES.md D151: a path found from the end is given
 /// as the pattern written finds it: its elements, their variables and the
 /// branches at each vertex in the reverse order; one found from the
 /// first vertex is given as found.

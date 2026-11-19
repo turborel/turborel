@@ -1,5 +1,5 @@
 //! \[EXTENSION\] A GQL procedure that modifies data (graph standard
-//! §12.3, RULES.md D110), run clause by clause [P2 §5.1].
+//! §12.3, RULES.md D144), run clause by clause [P2 §5.1].
 //!
 //! Its reading clauses are lowered as a query's are. At each
 //! data-modifying statement the binding table so far is read whole, with

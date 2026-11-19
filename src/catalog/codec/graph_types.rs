@@ -1,4 +1,4 @@
-//! \[DESIGN\] Graph type and GQL graph descriptors (RULES.md D110) in the
+//! \[DESIGN\] Graph type and GQL graph descriptors (RULES.md D144) in the
 //! catalog's bytes.
 //!
 //! ```text

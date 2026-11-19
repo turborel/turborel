@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The writes of GQL's data-modifying statements to a
-//! graph's element tables (graph standard §12, RULES.md D110), each an
+//! graph's element tables (graph standard §12, RULES.md D144), each an
 //! SQL statement of the session's transaction with its values as
 //! parameters, so R12.3 holds: they are logged and undone as SQL's are.
 //!

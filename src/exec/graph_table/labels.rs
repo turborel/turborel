@@ -1,5 +1,5 @@
 //! \[EXTENSION\] A GRAPH_TABLE's label tests read through label indexes
-//! (RULES.md D115). Each element table with one has its rows numbered
+//! (RULES.md D149). Each element table with one has its rows numbered
 //! by it; numbered after those of the tables before it, at a word's
 //! boundary, they are one space of the graph's elements, and each label
 //! is a bitmap of the elements carrying it, across every table sharing

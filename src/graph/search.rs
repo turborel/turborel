@@ -62,7 +62,7 @@ pub struct SearchOptions {
     /// GRAPH.PARALLEL_MIN_STATES; 0 for any.
     pub parallel_min_states: usize,
     /// The edges a step of its pattern may follow, of the graph's label
-    /// transition counts (RULES.md D118); the graph's edges if none.
+    /// transition counts (RULES.md D152); the graph's edges if none.
     pub step_edges: Option<u64>,
 }
 

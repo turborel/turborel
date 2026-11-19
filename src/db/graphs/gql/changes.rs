@@ -1,5 +1,5 @@
 //! \[EXTENSION\] SET, REMOVE and DELETE of GQL (graph standard §12.3,
-//! RULES.md D110), of one row of the binding table: each element's
+//! RULES.md D144), of one row of the binding table: each element's
 //! table and row found from its identity.
 //!
 //! A property of a graph over tables is its column, set or made null; a

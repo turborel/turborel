@@ -1,5 +1,5 @@
 //! \[EXTENSION\] Abstract syntax of the statements that define property
-//! graphs over tables (RULES.md D106): CREATE, ALTER and DROP
+//! graphs over tables (RULES.md D140): CREATE, ALTER and DROP
 //! PROPERTY GRAPH, Mode A of the property graph implementation standard
 //! (§4.1), the form of SQL/PGQ, ISO/IEC 9075-16:2023.
 

@@ -1,4 +1,4 @@
-//! What a GQL MATCH shares with GRAPH_TABLE (RULES.md D110): CHEAPEST
+//! What a GQL MATCH shares with GRAPH_TABLE (RULES.md D144): CHEAPEST
 //! and the path functions, restrictors over whole paths, group
 //! variables' aggregates, a graph's definer's rights, and the identities
 //! a data-modifying statement reads and draws.

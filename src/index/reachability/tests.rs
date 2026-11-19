@@ -70,7 +70,7 @@ fn index(method: &ReachabilityMethod) -> Arc<dyn Index> {
     Arc::from(method.create(&[int(), int()]).unwrap())
 }
 
-/// Verifies: [DESIGN] RULES.md D116: labels made of every edge at once
+/// Verifies: [DESIGN] RULES.md D150: labels made of every edge at once
 /// answer each pair as a search of the edges does, on seeded random
 /// graphs, cycles and self-loops among them (normal range).
 #[test]
@@ -82,7 +82,7 @@ fn labels_made_at_once_are_exact() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D116: labels kept as edges are added one
+/// Verifies: [DESIGN] RULES.md D150: labels kept as edges are added one
 /// by one stay exact after each, whether the edge joins new pairs or
 /// not, each search pruned at what was reached before (normal range).
 #[test]
@@ -99,7 +99,7 @@ fn labels_kept_as_edges_are_added_stay_exact() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D116: a chain added edge by edge from
+/// Verifies: [DESIGN] RULES.md D150: a chain added edge by edge from
 /// both ends, the case where a new edge's backward and forward searches
 /// both reach far, reaches end to end, and not back (normal range).
 #[test]
@@ -112,7 +112,7 @@ fn a_chain_joined_in_the_middle_reaches_end_to_end() {
     exact(&made, &edges, 7);
 }
 
-/// Verifies: [DESIGN] RULES.md D116: of several starts and ends at once,
+/// Verifies: [DESIGN] RULES.md D150: of several starts and ends at once,
 /// each start reaches an end if one of them is reached, or it is one; a
 /// start no edge touches reaches only itself, and one of no key reaches
 /// (normal range, boundaries).
@@ -127,7 +127,7 @@ fn reaching_answers_each_start_of_several_ends() {
     assert_eq!(made.reaching(&starts, &[], false), [false, false, false, false, true]);
 }
 
-/// Verifies: [DESIGN] RULES.md D116, D34: the index answers through
+/// Verifies: [DESIGN] RULES.md D150, D34: the index answers through
 /// `Reachability`; a version of an edge taken back while another holds
 /// it changes nothing, the last one drops the labels, so it answers
 /// nothing until maintenance makes them again, exact (normal range).
@@ -153,7 +153,7 @@ fn a_removal_drops_the_labels_until_maintenance() {
     assert_eq!(reach.reaching(&[vertex(1), vertex(3)], &[vertex(4)], false).unwrap(), Some(vec![false, true]));
 }
 
-/// Verifies: [DESIGN] RULES.md D116, D25: the index reopened of its
+/// Verifies: [DESIGN] RULES.md D150, D25: the index reopened of its
 /// locator holds its entries, given by a search of them all, and makes
 /// its labels of them (normal range).
 #[test]
@@ -172,7 +172,7 @@ fn an_index_reopened_of_its_locator_holds_its_edges() {
     assert!(method.open(&[int(), int()], &[9]).is_err(), "a locator of another format");
 }
 
-/// Verifies: [DESIGN] RULES.md D116, D38: labels the memory budget
+/// Verifies: [DESIGN] RULES.md D150, D38: labels the memory budget
 /// refuses are not made, so the index answers nothing; a key whose ends
 /// differ in type is refused (robustness).
 #[test]

@@ -1,4 +1,4 @@
-//! The mutations of GRAPH_TABLE (RULES.md R-TEST-9, D107, D108): of its
+//! The mutations of GRAPH_TABLE (RULES.md R-TEST-9, D141, D142): of its
 //! binding, a variable's candidate tables and an anonymous element's
 //! variable; of its run, a LEFT join's padding, the postfilter, DISTINCT
 //! of a group's set function, ONE ROW PER STEP's steps, an OPTION's limit

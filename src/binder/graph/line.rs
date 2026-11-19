@@ -1,7 +1,7 @@
 //! \[EXTENSION\] LINE_GRAPH ( g , L ) [GS §11.3]: the graph whose vertices
 //! are g's edges of label L and whose edges join each such edge to each
 //! one that may follow it in a path, so a condition between consecutive
-//! edges is one between adjacent vertices (RULES.md D108).
+//! edges is one between adjacent vertices (RULES.md D142).
 //!
 //! It is made as the GRAPH_TABLE is bound and read as it is searched,
 //! never stored. Each edge table of label L is a vertex table of it, of

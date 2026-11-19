@@ -1,6 +1,6 @@
 //! The adjacency index's options, kept edges, budget, temporary tables,
 //! joins, refusals and Information Schema views (RULES.md D41, D49,
-//! D107).
+//! D141).
 
 use turborel::db::Database;
 use turborel::error::Code;

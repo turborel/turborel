@@ -1,5 +1,5 @@
 //! \[EXTENSION\] INTO PROPERTY of a property graph named in place of the
-//! edges (RULES.md D111), the standard's "written as a new
+//! edges (RULES.md D145), the standard's "written as a new
 //! property" [GS §18]: the result's value written to a column of each of
 //! the graph's vertex tables, or of the one OF names, each row's of the
 //! vertex the result names.

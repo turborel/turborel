@@ -99,7 +99,7 @@ pub(super) const VIEWS: &[SystemView] = &[
          AND TABLE_CATALOG
            = ( SELECT CATALOG_NAME FROM INFORMATION_SCHEMA_CATALOG_NAME )",
     },
-    // [EXTENSION] ADJACENCY_INDEXES (RULES.md D107): the
+    // [EXTENSION] ADJACENCY_INDEXES (RULES.md D141): the
     // adjacency indexes of those tables, each with the options that lay
     // out its key and bound its compacted adjacency.
     SystemView {

@@ -1,5 +1,5 @@
 //! \[DESIGN\] What the label and reachability index methods give a path
-//! search (RULES.md D115, D116), as `adjacency.rs` is what the adjacency
+//! search (RULES.md D149, D150), as `adjacency.rs` is what the adjacency
 //! method gives: the members of an element table by dense id, and whether
 //! vertices reach others by an edge table's edges.
 

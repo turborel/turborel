@@ -12,7 +12,7 @@
 //! KNOWS triangles of every person; and friends one and two away in
 //! PLAIN, a TRUSTED graph whose copy of KNOWS has no adjacency index, so
 //! its 2 joins of one whole scan are joined and its 8 of two searched
-//! (RULES.md D113, R-BENCH-1).
+//! (RULES.md D147, R-BENCH-1).
 //!
 //! The scale is `SCALE_VAR`, 1 if unset; `WORKLOAD_VAR` runs one workload
 //! alone. Each workload's rows are summed
@@ -270,7 +270,7 @@ pub fn workloads(bench: &Bench) {
 }
 
 /// A TRAIL of 1 to 3 edges, searched, and the workloads a rigid
-/// pattern's join plan answers (RULES.md D113, D114): an edge walked
+/// pattern's join plan answers (RULES.md D147, D148): an edge walked
 /// back, a small quantifier unrolled, and a cycle; each from `from` where
 /// it starts from a person, in `s`.
 fn planned(bench: &Bench, s: &Session, from: &[u64]) {
@@ -296,7 +296,7 @@ fn planned(bench: &Bench, s: &Session, from: &[u64]) {
             .to_owned(),
     ];
     workload(bench, s, "social KNOWS triangles", &triangles);
-    // [RULES.md D113] Past 4 whole scans of an edge table of no adjacency index, a search.
+    // [RULES.md D147] Past 4 whole scans of an edge table of no adjacency index, a search.
     for (name, path) in
         [("1 hop", "(a:PERSON WHERE a.id = {p})-[:KNOWS]-(b)"), ("2 hops", "(a:PERSON WHERE a.id = {p})-[:KNOWS]-()-[:KNOWS]-(b)")]
     {

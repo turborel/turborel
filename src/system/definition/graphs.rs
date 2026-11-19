@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The Definition Schema's base tables of property graphs
-//! (RULES.md D106, §20 of the property graph implementation
+//! (RULES.md D140, §20 of the property graph implementation
 //! standard): PROPERTY_GRAPHS, of each graph descriptor, its definition
 //! text as `GraphDesc::definition` writes it; PG_ELEMENT_TABLES, of each
 //! element table; PG_LABELS, of each label of one; PG_PROPERTIES, of each

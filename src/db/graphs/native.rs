@@ -1,4 +1,4 @@
-//! \[EXTENSION\] Native node and edge tables (RULES.md D109),
+//! \[EXTENSION\] Native node and edge tables (RULES.md D143),
 //! Mode B of the property graph implementation standard (§4.2): a table
 //! created AS NODE or AS EDGE, its hidden pseudo-columns, its indexes,
 //! its CONNECTION constraints' rules, and the implicit graph SYS_GRAPH of
@@ -12,7 +12,7 @@
 //! An edge's `$FROM_ID` and `$TO_ID` are the texts of two nodes of its
 //! schema. Each pseudo-column is NOT NULL. A node table has an index of
 //! its `$NODE_ID`, an edge table one of its `$EDGE_ID` and an `adjacency`
-//! index of its endpoints (§13.2, RULES.md D107).
+//! index of its endpoints (§13.2, RULES.md D141).
 
 mod graph;
 mod rows;

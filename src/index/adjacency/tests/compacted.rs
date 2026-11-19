@@ -1,6 +1,6 @@
 //! The compacted adjacency and its delta against the tree: built by
 //! maintenance and by a load, read while written, dropped, and refused by
-//! a budget too small (RULES.md D107, D38).
+//! a budget too small (RULES.md D141, D38).
 
 use std::thread;
 
@@ -24,7 +24,7 @@ fn compacted(index: &AdjacencyIndex, vertex: i128, direction: Direction) -> bool
     index.delta.csr(direction, &bytes).unwrap().is_some()
 }
 
-/// Verifies: [DESIGN] RULES.md D107: maintenance builds the
+/// Verifies: [DESIGN] RULES.md D141: maintenance builds the
 /// compacted adjacency, and every vertex's steps and degree, both ways,
 /// are then the tree's; written again, the vertices written are read of
 /// the tree and the others of the compacted adjacency, still the tree's
@@ -117,7 +117,7 @@ fn marks_past_the_vertices_drop_it() {
     agrees(&ix, &model, 20, "dropped");
 }
 
-/// Verifies: [DESIGN] RULES.md D107: builds made while
+/// Verifies: [DESIGN] RULES.md D141: builds made while
 /// writers insert and remove edges leave every list the tree's: a vertex
 /// written while a build reads the tree is marked for it.
 #[test]

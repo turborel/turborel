@@ -322,18 +322,18 @@ pub trait Index: Send + Sync {
     }
     /// \[EXTENSION\] The adjacency it keeps of a graph's edges, read by
     /// path search as `nearest` is by a distance search (RULES.md
-    /// D107); none by default. It may retain the index.
+    /// D141); none by default. It may retain the index.
     fn adjacency(self: Arc<Self>) -> Option<Arc<dyn crate::graph::adjacency::Adjacency>> {
         None
     }
     /// \[EXTENSION\] The members of an element table it numbers, read by
-    /// a GRAPH_TABLE's label tests (RULES.md D115); none by default.
+    /// a GRAPH_TABLE's label tests (RULES.md D149); none by default.
     fn members(self: Arc<Self>) -> Option<Arc<dyn crate::graph::indexes::Members>> {
         None
     }
     /// \[EXTENSION\] The reachability it keeps of an edge table's edges,
     /// read by a GRAPH_TABLE's search to prune its starts (RULES.md
-    /// D116); none by default.
+    /// D150); none by default.
     fn reachability(self: Arc<Self>) -> Option<Arc<dyn crate::graph::indexes::Reachability>> {
         None
     }

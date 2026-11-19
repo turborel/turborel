@@ -1,4 +1,4 @@
-//! \[DESIGN\] What a thread keeps beside its bindings (RULES.md D108):
+//! \[DESIGN\] What a thread keeps beside its bindings (RULES.md D142):
 //! the path so far, for a prefilter's path function [GS §6.9], and the
 //! elements of an element pattern whose prefilter reads a variable bound
 //! after it, tested as that variable is bound [GS §6.8].

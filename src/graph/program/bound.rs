@@ -5,7 +5,7 @@
 //! The path so far is a register of the thread's, of its elements in
 //! order and a sign of each subpath mark where it is bound, so a
 //! prefilter's path function sees the partial path, as a thread's other
-//! registers tell its bindings apart (RULES.md D108).
+//! registers tell its bindings apart (RULES.md D142).
 
 use super::VarId;
 use crate::graph::binding::PathBinding;
@@ -77,7 +77,7 @@ pub(in crate::graph) type Resolved = (VarId, Option<usize>, Option<usize>, Optio
 impl Bound<'static> {
     /// What the prefilter of an element pattern of variable `var` that
     /// reads no other variable is given of `element` alone, as a search
-    /// that has not reached it asks beforehand (RULES.md D116).
+    /// that has not reached it asks beforehand (RULES.md D150).
     pub fn alone(var: Option<VarId>, element: ElementId) -> Bound<'static> {
         Bound { element: Some((var, element)), registers: &[], reads: &[], path: &[] }
     }

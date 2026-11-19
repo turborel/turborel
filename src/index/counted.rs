@@ -1,5 +1,5 @@
 //! \[DESIGN\] What the label and reachability index methods share
-//! (RULES.md D115, D116): their pager file, made in memory for a method
+//! (RULES.md D149, D150): their pager file, made in memory for a method
 //! with none, and a B-link tree of counted entries. An entry's value
 //! counts the versions of its row holding it (D29), four bytes, so each
 //! insert is taken back by one remove (D34), changed in one descent under

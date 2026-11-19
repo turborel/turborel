@@ -4,7 +4,7 @@
 
 Queries of property graphs may be written as SQL Server, Oracle, PGQL and
 openCypher write them. Each is read as a query of GRAPH_TABLE
-([Property Graphs](19-property-graphs.md)), one for each MATCH clause of
+([Property Graphs](20-property-graphs.md)), one for each MATCH clause of
 Cypher and one otherwise, so it matches as GRAPH_TABLE does and gives
 the same rows. The examples here read schema ANN's node
 table PERSON and edge table FRIEND_OF, and the graph CHAIN of the same

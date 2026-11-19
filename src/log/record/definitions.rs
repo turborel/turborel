@@ -71,15 +71,15 @@ pub enum DropTarget {
     /// A type's transform group, or all of them [ISO/IEC 9075-2:2023
     /// §11.71].
     Transform(QualifiedName, Option<String>),
-    /// \[EXTENSION\] A property graph (RULES.md D106).
+    /// \[EXTENSION\] A property graph (RULES.md D140).
     Graph(QualifiedName),
     /// \[EXTENSION\] An embedding model (the vector design's §12.1).
     Model(QualifiedName),
     /// \[EXTENSION\] A vector pipeline (§12.5).
     Pipeline(QualifiedName),
-    /// \[EXTENSION\] A graph type (RULES.md D110).
+    /// \[EXTENSION\] A graph type (RULES.md D144).
     GraphType(QualifiedName),
-    /// \[EXTENSION\] A GQL graph, with its tables (RULES.md D110).
+    /// \[EXTENSION\] A GQL graph, with its tables (RULES.md D144).
     GqlGraph(QualifiedName),
 }
 

@@ -1,10 +1,10 @@
-//! The mutations of a graph's statistics (RULES.md R-TEST-9, D117): of
+//! The mutations of a graph's statistics (RULES.md R-TEST-9, D151): of
 //! the statistics, an average degree, the maximum of a key of several
 //! columns, a transition's labels, a property that is an expression and
 //! a sample's frequencies scaled; of the planner, the fan-out of a probe;
 //! of the end a search starts from, a hint, the estimate, the path
 //! reversed back and the orientation reversed; of a search's choice, a
-//! step's label transitions and its endpoints' labels (D118); and of the view, a row's kind. Every
+//! step's label transitions and its endpoints' labels (D152); and of the view, a row's kind. Every
 //! search they change is bounded by its quantifier.
 
 use super::super::{Mutation, Package};

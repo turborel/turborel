@@ -214,7 +214,7 @@ ISO/IEC 39075:2024 (GQL) defines the requests. EXECUTE GQL, GQL_TABLE
 and the setting SESSION.LANGUAGE are turborel's, of its property graph
 implementation standard (§9). A query is translated to SQL clause by
 clause, as Francis et al. show it can be, and a procedure that writes
-runs its clauses in order (RULES.md D110).
+runs its clauses in order (RULES.md D144).
 
 ## SEE ALSO
 

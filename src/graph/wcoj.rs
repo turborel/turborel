@@ -1,4 +1,4 @@
-//! \[EXTENSION\] [GS §16 R16.2] A worst-case optimal join (RULES.md D114):
+//! \[EXTENSION\] [GS §16 R16.2] A worst-case optimal join (RULES.md D148):
 //! the matches of rigid path patterns whose node patterns make a cycle,
 //! by generic join over the adjacency.
 //!

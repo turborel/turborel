@@ -1,5 +1,5 @@
 //! GRAPH_TABLE over SYS_GRAPH, the implicit graph of a schema's node and
-//! edge tables (RULES.md D109): its vertices the nodes, keyed by
+//! edge tables (RULES.md D143): its vertices the nodes, keyed by
 //! `$NODE_ID`, its edges joined by `$FROM_ID` and `$TO_ID`.
 
 use turborel::db::{Database, Session};

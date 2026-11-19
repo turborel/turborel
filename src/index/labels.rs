@@ -1,4 +1,4 @@
-//! \[EXTENSION\] The built-in label index, "labels" (RULES.md D34, D115):
+//! \[EXTENSION\] The built-in label index, "labels" (RULES.md D34, D149):
 //! the rows of a property graph's element table, each numbered densely,
 //! so a GRAPH_TABLE tests a reached element's labels by its number and
 //! finds the start candidates of a label expression in bitmaps, without

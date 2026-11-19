@@ -1,4 +1,4 @@
-//! A graph's statistics (RULES.md D117): INFORMATION_SCHEMA.GRAPH_STATISTICS,
+//! A graph's statistics (RULES.md D151): INFORMATION_SCHEMA.GRAPH_STATISTICS,
 //! gathered as its tables' statistics are and gathered again once a
 //! database reopened asks for them; the planner's estimate of a probe of
 //! an edge table by its endpoint columns; and the end a GRAPH_TABLE's
@@ -73,7 +73,7 @@ const GATHERED: &[&str] = &[
     "VERTEX,N,NULL,NULL,NULL,NULL,8.00,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL",
 ];
 
-/// Verifies: [EXTENSION] RULES.md D117: GRAPH_STATISTICS shows a graph's
+/// Verifies: [EXTENSION] RULES.md D151: GRAPH_STATISTICS shows a graph's
 /// element tables, its properties and its label transitions, every
 /// statistic NULL until its tables' statistics are gathered; then each
 /// table's rows, an edge table's out-degree and in-degree distribution,
@@ -101,7 +101,7 @@ fn opened(dir: &Path) -> Database {
     db
 }
 
-/// Verifies: [EXTENSION] RULES.md D117, D25: a graph's statistics are a
+/// Verifies: [EXTENSION] RULES.md D151, D25: a graph's statistics are a
 /// database's again once it reopens and its maintenance gathers its
 /// tables' statistics, due as they are first asked for; and follow its
 /// changes once committed.
@@ -135,7 +135,7 @@ fn each(s: &Session, sql: &str) -> String {
     line.split("est. rows each=").nth(1).and_then(|r| r.split(',').next()).unwrap().to_owned()
 }
 
-/// Verifies: [EXTENSION] RULES.md D117: the planner estimates the rows a
+/// Verifies: [EXTENSION] RULES.md D151: the planner estimates the rows a
 /// probe of an edge table's adjacency index by its source column finds as
 /// the average out-degree its graph's statistics know, once gathered, in
 /// place of its guess: 800 links of 200 nodes, 4 of each.
@@ -172,7 +172,7 @@ fn outcome(s: &Session, query: &str) -> String {
     got.map_or_else(|e| e.sqlstate().as_str().to_owned(), |()| "00000".to_owned())
 }
 
-/// Verifies: [EXTENSION] RULES.md D117, [GS §16 R16.8]: a search whose
+/// Verifies: [EXTENSION] RULES.md D151, [GS §16 R16.8]: a search whose
 /// both ends are filtered starts, once statistics are gathered, from the
 /// end of fewer candidates times fan-out, here its last vertex, and finds
 /// the same rows, each path in its order, as from its first; so do the
@@ -195,7 +195,7 @@ fn a_search_starts_from_the_cheaper_end_with_the_same_rows() {
     assert_eq!(rows(&s, &shortest).len(), 6);
 }
 
-/// Verifies: [EXTENSION] RULES.md D117: which end a search starts from is
+/// Verifies: [EXTENSION] RULES.md D151: which end a search starts from is
 /// seen in the states it makes: from node 8 the search fits a
 /// MAX_SEARCH_STATES that from the six nodes of group 0 does not, once
 /// statistics are gathered or GRAPH_START names b, and not if GRAPH_START
@@ -212,7 +212,7 @@ fn the_end_chosen_makes_fewer_states() {
     assert_eq!(outcome(&s, &to_eight("OPTIONS (MAX_SEARCH_STATES 20, GRAPH_START(a))")), "54061");
 }
 
-/// Verifies: [EXTENSION] [GS §15, §17] RULES.md D118: a search's estimate
+/// Verifies: [EXTENSION] [GS §15, §17] RULES.md D152: a search's estimate
 /// of a step follows the edges its labels match, as the graph's label
 /// transitions count them: of 40 KNOWS edges among 80 people beside 800
 /// LIKES edges, ANY SHORTEST over KNOWS from every person is BFS from
@@ -256,7 +256,7 @@ fn a_step_is_estimated_by_its_label_transitions() {
     assert_eq!(rows(&s, &format!("{})", q(":KNOWS"))), rows(&s, &forced));
 }
 
-/// Verifies: [EXTENSION] [GS §15, §17] RULES.md D118: a step's estimate
+/// Verifies: [EXTENSION] [GS §15, §17] RULES.md D152: a step's estimate
 /// counts the label transitions of its edge's labels between the labels of
 /// the node patterns beside it: of LINK edges, 40 between people and 800
 /// from people to cities, ANY SHORTEST over LINK from person to person is

@@ -1,4 +1,4 @@
-//! Unit tests of a graph's statistics (RULES.md D117): made of its
+//! Unit tests of a graph's statistics (RULES.md D151): made of its
 //! tables' statistics as given.
 
 use std::sync::Arc;
@@ -100,7 +100,7 @@ fn tables(name: &QualifiedName) -> Option<(Arc<dyn Statistics>, Vec<String>)> {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D117: of an endpoint of several columns,
+/// Verifies: [DESIGN] RULES.md D151: of an endpoint of several columns,
 /// the degrees are those of its column of most distinct values, the
 /// maximum the least of its columns' maxima; of one column, its values'
 /// frequencies; the fan-out is the edges by the vertex table's rows, an
@@ -122,7 +122,7 @@ fn degrees_of_one_column_and_of_several() {
     assert_eq!((stats.rows("V"), stats.rows("E"), stats.rows("F"), stats.rows("X")), (Some(4.0_f64), Some(6.0_f64), None, None));
 }
 
-/// Verifies: [DESIGN] RULES.md D117: each label transition of an edge
+/// Verifies: [DESIGN] RULES.md D151: each label transition of an edge
 /// table whose statistics are known counts its edges with neither end
 /// NULL, once for each source and destination label; asked for by any
 /// part, they are summed; a property that is a column alone has that

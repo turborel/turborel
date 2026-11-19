@@ -59,7 +59,7 @@ pub(super) struct Store {
     adjacency: Vec<Option<Arc<dyn Adjacency>>>,
     lists: Mutex<HashMap<(usize, bool), Arc<Listed>>>,
     lookups: Mutex<Lookups>,
-    /// The label bitmaps of its label indexes (RULES.md D115).
+    /// The label bitmaps of its label indexes (RULES.md D149).
     labels: GraphLabels,
 }
 

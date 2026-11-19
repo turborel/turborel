@@ -26,7 +26,7 @@ pub enum PrivilegeObject {
     /// [ISO/IEC 9075-4:2006 draft §10.2] MODULE `<module name>`.
     Module,
     /// \[EXTENSION\] PROPERTY GRAPH `<property graph name>` (RULES.md
-    /// D106).
+    /// D140).
     Graph,
     /// \[EXTENSION\] EMBEDDING MODEL `<model name>` (the vector design's
     /// §16).

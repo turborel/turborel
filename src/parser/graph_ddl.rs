@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The statements that define property graphs over tables
-//! (RULES.md D106), Mode A of the property graph
+//! (RULES.md D140), Mode A of the property graph
 //! implementation standard (§4.1), written in the notation of SQL/PGQ:
 //!
 //! ```text

@@ -1,5 +1,5 @@
 //! \[DESIGN\] A property graph's statistics as the planner and the
-//! executor ask for them (RULES.md D117, `stats/graph.rs`): made of its
+//! executor ask for them (RULES.md D151, `stats/graph.rs`): made of its
 //! element tables' statistics, each asked for as `State::statistics` asks,
 //! so a table's not gathered yet are made due and none wait for them.
 

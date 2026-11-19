@@ -1,4 +1,4 @@
-//! \[EXTENSION\] INSERT of GQL (graph standard §12.1, RULES.md D110):
+//! \[EXTENSION\] INSERT of GQL (graph standard §12.1, RULES.md D144):
 //! the elements its path patterns write, planned once for the statement,
 //! and written for each row of the binding table.
 //!

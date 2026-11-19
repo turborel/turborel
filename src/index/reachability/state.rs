@@ -1,4 +1,4 @@
-//! \[DESIGN\] What a reachability index's labels are now (RULES.md D116):
+//! \[DESIGN\] What a reachability index's labels are now (RULES.md D150):
 //! not made yet, made and exact, or dropped, as an edge was taken back or
 //! the memory budget refused them (D38). Unmade, they are made as first
 //! read; dropped, by maintenance, at once after a removal, and after a

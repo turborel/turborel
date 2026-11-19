@@ -9,7 +9,7 @@
 //! bindings. Within a quantifier the search keeps each element it binds
 //! and tests it as the variables it waits for are bound. One reading a
 //! variable of another path pattern is tested with that pattern's
-//! binding, searched first (RULES.md D108).
+//! binding, searched first (RULES.md D142).
 
 use std::collections::BTreeSet;
 

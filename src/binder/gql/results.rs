@@ -1,5 +1,5 @@
 //! \[EXTENSION\] A GQL procedure's result lowered to SQL (RULES.md
-//! D110): RETURN projects the binding table, grouping by its items that
+//! D144): RETURN projects the binding table, grouping by its items that
 //! are no aggregate when one is; the set operators combine statements'
 //! tables by column name, OTHERWISE the right's rows if the left has
 //! none; NEXT feeds a statement's table to the next [P2 §5.1].

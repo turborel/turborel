@@ -1,5 +1,5 @@
 //! \[EXTENSION\] A path pattern's starts pruned by a reachability index
-//! (RULES.md D116), where the bound form says one may be read
+//! (RULES.md D150), where the bound form says one may be read
 //! (`GraphMatch::pruning`): the ends are the vertices of the edge
 //! table's vertex table its last node pattern's WHERE keeps, each tested
 //! alone before the search; a start of that table is kept if the index

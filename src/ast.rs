@@ -532,9 +532,9 @@ pub enum IndexStatement {
     },
     /// \[EXTENSION\] [GS §13.2] CREATE ADJACENCY INDEX ON GRAPH.
     Adjacency(Box<AdjacencyIndex>),
-    /// \[EXTENSION\] CREATE LABEL INDEX ON GRAPH (RULES.md D115).
+    /// \[EXTENSION\] CREATE LABEL INDEX ON GRAPH (RULES.md D149).
     Labels(Box<LabelIndex>),
-    /// \[EXTENSION\] CREATE REACHABILITY INDEX ON GRAPH (RULES.md D116).
+    /// \[EXTENSION\] CREATE REACHABILITY INDEX ON GRAPH (RULES.md D150).
     Reachability(Box<ReachabilityIndex>),
     /// `<alter index statement>` ::= ALTER INDEX `<index name>` SET `<table options>`
     Alter {

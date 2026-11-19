@@ -1,5 +1,5 @@
 //! \[DESIGN\] Which end a path pattern's search starts from (RULES.md
-//! D117). A pattern whose matches are the same searched either way may
+//! D151). A pattern whose matches are the same searched either way may
 //! be searched from its last vertex, its pattern reversed, each edge
 //! pattern's orientation reversed with it, and each path found reversed
 //! again, so its rows are the same.

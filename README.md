@@ -83,17 +83,17 @@ behind it, and each can be replaced or added to.
   top-k by RRF or weighted scores.
 - Embedding models, pipelines that chunk and embed text, and columns
   embedded after commit.
-- [Property graphs](doc/sql/19-property-graphs.md) over tables or
+- [Property graphs](doc/sql/20-property-graphs.md) over tables or
   queries' rows, queried by GRAPH_TABLE's path patterns through adjacency
   indexes, LINE_GRAPH among them.
 - Native graph tables, CREATE TABLE ... AS NODE and AS EDGE, with hidden
   identities, CONNECTION constraints and each schema's SYS_GRAPH.
-- [Graph compatibility syntax](doc/sql/21-graph-compatibility.md):
+- [Graph compatibility syntax](doc/sql/22-graph-compatibility.md):
   SQL Server's MATCH, Oracle's identity functions and hints, PGQL and
   Cypher queries, as GRAPH_TABLE.
 - [GQL](doc/sql/statements/execute-gql.md) by EXECUTE GQL, GQL_TABLE or
   a GQL session, over property graphs and typed or open graphs.
-- [Graph algorithms](doc/sql/20-graph-algorithms.md) such as PAGERANK,
+- [Graph algorithms](doc/sql/21-graph-algorithms.md) such as PAGERANK,
   WCC, LOUVAIN and SSSP over a property graph or a table of edges, in
   parallel, with INTO PROPERTY.
 - Graph plans that join rigid patterns, Expand edges and take a

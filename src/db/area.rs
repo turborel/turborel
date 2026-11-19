@@ -76,7 +76,7 @@ pub(super) struct Area {
     more: bool,
     /// \[EXTENSION\] (§4.2) The identities a node or edge table drew for
     /// the rows it inserted, in order, which GQL's INSERT reads (RULES.md
-    /// D110).
+    /// D144).
     drawn: Vec<Value>,
     /// [ISO/IEC 9075-2:2023 §23.2] The areas below it on the diagnostics
     /// area stack, pushed as handlers were activated, the second last: the

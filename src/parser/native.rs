@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The syntax of native node and edge tables (RULES.md
-//! D109), Mode B of the property graph implementation standard
+//! D143), Mode B of the property graph implementation standard
 //! (§4.2): AS NODE or AS EDGE after a `<table definition>`'s elements, and
 //! the CONNECTION constraint of an edge table. NODE and EDGE are words
 //! read as `<non-reserved word>`s, so a column or table may still be named

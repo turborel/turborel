@@ -1,5 +1,5 @@
 //! \[EXTENSION\] INFORMATION_SCHEMA.GRAPH_ALGO_RUNS, of the graph
-//! standard's §20 (RULES.md D111): the latest runs of the
+//! standard's §20 (RULES.md D145): the latest runs of the
 //! functions of GRAPH_ALGO, each its number, algorithm, arguments, user,
 //! start and time taken, its graph's vertices and edges, its rows, its
 //! threads and how it ended. The log is the database's, in memory, of the

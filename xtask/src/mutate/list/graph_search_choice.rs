@@ -1,5 +1,5 @@
 //! The mutations of how a path search is chosen and how it expands a
-//! frontier (RULES.md R-TEST-9, D118): MS-BFS chosen by cost, a start's
+//! frontier (RULES.md R-TEST-9, D152): MS-BFS chosen by cost, a start's
 //! estimated reach, workers used when the work pays, a PATH_ALGO hint, a
 //! level's hops asked at once, a frontier's lists read of the compacted
 //! adjacency, and the store's hops of a frontier put back by vertex. None

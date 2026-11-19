@@ -1,4 +1,4 @@
-//! \[DESIGN\] Statistics of a property graph (RULES.md D117), for the
+//! \[DESIGN\] Statistics of a property graph (RULES.md D151), for the
 //! planner's estimates of a pattern's matches and the executor's choice of
 //! where a search starts: of each element table its rows, and the
 //! statistics of each property that is a column alone; of each edge table

@@ -1,4 +1,4 @@
-//! \[DESIGN\] How often a column's values repeat (RULES.md D117): of the
+//! \[DESIGN\] How often a column's values repeat (RULES.md D151): of the
 //! rows holding each distinct non-null value, the most, the median and
 //! the 90th and 99th percentiles. Of an edge table's endpoint column they
 //! are its degree distribution, each vertex with an edge counted once

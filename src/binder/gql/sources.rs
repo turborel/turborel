@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The element tables an element pattern of a GQL MATCH may
-//! bind to, and its variable's properties (RULES.md D110); label
+//! bind to, and its variable's properties (RULES.md D144); label
 //! expressions as tests of a label set held as text, `|A|B|`, as an open
 //! graph's two tables hold it.
 

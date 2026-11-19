@@ -1,4 +1,4 @@
-//! \[EXTENSION\] Property graphs over tables (RULES.md D106),
+//! \[EXTENSION\] Property graphs over tables (RULES.md D140),
 //! Mode A of the property graph implementation standard (§4.1): CREATE,
 //! ALTER and DROP PROPERTY GRAPH, in a transaction as a view's statements
 //! are (`db/definitions.rs`, `db/drop.rs`).

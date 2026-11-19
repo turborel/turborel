@@ -1,6 +1,6 @@
 //! \[EXTENSION\] Each path pattern searched, those whose prefilters read
 //! another path pattern's bindings after that one [GS §6.8] (RULES.md
-//! D108).
+//! D142).
 //!
 //! A prefilter is applied before its path pattern's selector, so a
 //! variable of another path pattern it reads must be bound as it is

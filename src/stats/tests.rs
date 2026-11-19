@@ -264,7 +264,7 @@ fn a_sample_scales_its_distinct_values_and_bounds_nothing() {
     assert_eq!(whole.selectivity(CompOp::Eq, &number(0)), 0.0_f64, "below the least");
 }
 
-/// Verifies: [DESIGN] RULES.md D117, frequencies: of a sample of every
+/// Verifies: [DESIGN] RULES.md D151, frequencies: of a sample of every
 /// value, each value's rows exactly, their most, median and percentiles;
 /// of a sample of some, scaled to the table's rows; none of no value.
 #[test]

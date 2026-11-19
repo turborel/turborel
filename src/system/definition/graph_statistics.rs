@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The Definition Schema's table GRAPH_STATISTICS (RULES.md
-//! D117): of each property graph, the statistics its planner reads
+//! D151): of each property graph, the statistics its planner reads
 //! (`stats/graph.rs`), a row of each kind of them. VERTEX and EDGE, of an
 //! element table: its rows and, of an edge table, its out-degree and
 //! in-degree distributions, each vertex with an edge there counted once.

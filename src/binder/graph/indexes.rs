@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The label and reachability indexes a GRAPH_TABLE's
-//! element table is read through, if it has them (RULES.md D115, D116):
+//! element table is read through, if it has them (RULES.md D149, D150):
 //! of a base table, any index of the labels method, as each holds every
 //! row; of a base edge table, an index of the reachability method of its
 //! source's columns, then its destination's, split there.

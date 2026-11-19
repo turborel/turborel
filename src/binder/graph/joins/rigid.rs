@@ -1,5 +1,5 @@
 //! \[EXTENSION\] [GS §16 R16.2, R16.4] The shape of a rigid pattern as a
-//! join takes it (RULES.md D113, D114): its element patterns from a node
+//! join takes it (RULES.md D147, D148): its element patterns from a node
 //! to a node, each an instance of its variable, one operand of the join.
 //!
 //! A quantifier of at most `MOST_UNROLLED` iterations, of a body that is

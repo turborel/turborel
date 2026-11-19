@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The views of the Information Schema of Mode C of the
-//! property graph implementation standard (§4.3, RULES.md D110), each
+//! property graph implementation standard (§4.3, RULES.md D144), each
 //! over its table of the Definition Schema
 //! (`definition/graph_types.rs`): GRAPH_TYPES, each graph type, its
 //! definition shown to the owner of its schema alone, as VIEWS shows a

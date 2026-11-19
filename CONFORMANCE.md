@@ -3318,12 +3318,12 @@ SELECT ... FROM GRAPH_TABLE ({g | LINE_GRAPH (g, label)} MATCH pattern [WHERE co
     [FOR SYSTEM_TIME AS OF t] [[AS] name] [AS OF {TIMESTAMP t | SCN n}]
 ```
 
-A property graph (RULES.md D106) is defined over tables and views, and
+A property graph (RULES.md D140) is defined over tables and views, and
 the schema of node and edge tables has SYS_GRAPH, which the database
 keeps ([CREATE PROPERTY GRAPH](doc/sql/statements/create-property-graph.md)).
-GRAPH_TABLE (RULES.md D108) matches its pattern of the property graph
+GRAPH_TABLE (RULES.md D142) matches its pattern of the property graph
 standard's GPML [GS §6] and gives rows to the query around it, which it
-may read laterally ([Property graphs](doc/sql/19-property-graphs.md)).
+may read laterally ([Property graphs](doc/sql/20-property-graphs.md)).
 It takes the selectors ANY, ANY k, ANY SHORTEST, ALL SHORTEST,
 SHORTEST k [GROUPS] and ANY, ALL or k CHEAPEST [COST expression]; the
 restrictors WALK, TRAIL, ACYCLIC and SIMPLE; the match modes REPEATABLE
@@ -3354,15 +3354,15 @@ timestamp, which TIMESTAMP_TO_SCN and SCN_TO_TIMESTAMP convert; an SCN
 no instant is 22008. EXPLAIN shows each path's
 automaton, the algorithm chosen and how each edge table is followed.
 A rigid pattern is planned as a join, its edges read by Expand,
-Expand (reverse) or ExpandInto (RULES.md D113), a cyclic one by a
+Expand (reverse) or ExpandInto (RULES.md D147), a cyclic one by a
 worst-case optimal join, and a small quantifier is unrolled (RULES.md
-D114). OPTIONS also take the hints GRAPH_START, GRAPH_DIRECTION,
+D148). OPTIONS also take the hints GRAPH_START, GRAPH_DIRECTION,
 NO_WCOJ, USE_ADJACENCY and PATH_ALGO [GS §16 R16.8].
-An edge table is followed through its adjacency index (RULES.md D107)
+An edge table is followed through its adjacency index (RULES.md D141)
 if it has one, and an ENFORCED graph's base edge tables are given one
-as it commits. A label index (RULES.md D115) gives a GRAPH_TABLE its
+as it commits. A label index (RULES.md D149) gives a GRAPH_TABLE its
 label tests and starts as bitmaps, and a reachability index (RULES.md
-D116) drops the starts of a quantified search that reach no end, with
+D150) drops the starts of a quantified search that reach no end, with
 the same rows. A search past a limit fails with SQLSTATE 54061, or ON
 LIMIT TRUNCATE ends with warning 01W61. A negative COST is 22W34.
 
@@ -3375,7 +3375,7 @@ CREATE TABLE e [(column, ..., CONSTRAINT c CONNECTION (A TO B [, ...])
 ```
 
 The property graph standard's Mode B [GS §4.2] is native node and edge
-tables (RULES.md D109). It covers CREATE TABLE ... AS NODE and AS EDGE,
+tables (RULES.md D143). It covers CREATE TABLE ... AS NODE and AS EDGE,
 their pseudo-columns, CONNECTION constraints, the implicit graph
 SYS_GRAPH, and DML on them [GS §12.2]
 ([CREATE TABLE](doc/sql/statements/create-table.md)).
@@ -3403,8 +3403,8 @@ SELECT ... FROM MATCH (a)-[e]->(b) [ON g] [WHERE ...] ...    -- PGQL
 ```
 
 The compatibility syntax of the property graph standard [GS §10]
-[EXTENSION] compiles to GRAPH_TABLE (RULES.md D112,
-[Graph Compatibility Syntax](doc/sql/21-graph-compatibility.md)).
+[EXTENSION] compiles to GRAPH_TABLE (RULES.md D146,
+[Graph Compatibility Syntax](doc/sql/22-graph-compatibility.md)).
 
 | Item | Behaviour |
 |---|---|
@@ -3428,7 +3428,7 @@ DROP GRAPH TYPE [IF EXISTS] t [CASCADE | RESTRICT]
 ```
 
 GQL (ISO/IEC 39075:2024) is read beside SQL over the same tables and
-transactions (RULES.md D110,
+transactions (RULES.md D144,
 [EXECUTE GQL](doc/sql/statements/execute-gql.md)). It reads and writes
 a property graph of Mode A, a schema's SYS_GRAPH of Mode B, and the
 typed and open graphs of Mode C. No word of GQL is reserved in SQL.
@@ -3455,10 +3455,10 @@ SELECT ... FROM GRAPH_ALGO.name({TABLE (edges) | TABLE (query) | graph}
 GRAPH_ALGO.name(...) INTO PROPERTY column [OF table [(key)]]
 ```
 
-The functions of schema GRAPH_ALGO [GS §18] (RULES.md D111) run
+The functions of schema GRAPH_ALGO [GS §18] (RULES.md D145) run
 over a property graph or a table of edges, in parallel, the same rows
 on any number of threads
-([Graph Algorithms](doc/sql/20-graph-algorithms.md)).
+([Graph Algorithms](doc/sql/21-graph-algorithms.md)).
 
 | Clause | Behaviour |
 |---|---|
@@ -3914,7 +3914,7 @@ defaults that turborel tunes (RULES.md D93 to D104).
 ### Property graphs
 
 The property graph standard leaves these to the implementation (RULES.md
-D106 to D111, D113 to D118).
+D140 to D145, D147 to D152).
 
 | Rule | Choice | Where |
 |---|---|---|
@@ -3937,7 +3937,7 @@ D106 to D111, D113 to D118).
 | GS §16 R16.4 unrolling | Quantifiers of at most 3 iterations within no other, at most 16 rigid patterns | `binder/graph/joins/rigid.rs` |
 | A label index's name | `GRAPH_ALIAS_LABELS`, or `NAME_ALIAS` of each table if no table is written | `db/graphs/indexes.rs` |
 | A reachability index's name | `GRAPH_ALIAS_REACHABILITY` if none is written | `db/graphs/indexes.rs` |
-| GS §13.6 statistics | INFORMATION_SCHEMA.GRAPH_STATISTICS: each element table's rows, an edge table's out-degree and in-degree average, median, 90th and 99th percentiles and maximum, a column property's distinct values and share NULL, and each label transition's edges, made of the tables' statistics (RULES.md D117); of an endpoint of several columns, its column of most distinct values stands for it | `stats/graph.rs` |
+| GS §13.6 statistics | INFORMATION_SCHEMA.GRAPH_STATISTICS: each element table's rows, an edge table's out-degree and in-degree average, median, 90th and 99th percentiles and maximum, a column property's distinct values and share NULL, and each label transition's edges, made of the tables' statistics (RULES.md D151); of an endpoint of several columns, its column of most distinct values stands for it | `stats/graph.rs` |
 | GS §16 R16.8 where a search starts | GRAPH_START, GRAPH_DIRECTION (e, REVERSE), else the end of fewer candidates times fan-out once statistics are known, of a pattern of no selector, ALL SHORTEST or SHORTEST k GROUP, no COST, no limit cutting it and no DETERMINISTIC_PATHS; any other is searched from its first vertex | `exec/graph_table/start.rs` |
 
 ### Memory

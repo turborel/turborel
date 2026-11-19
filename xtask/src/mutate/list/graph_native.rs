@@ -2,7 +2,7 @@
 //! named, the identities drawn and endpoints kept in one form, CONNECTION
 //! constraints, a node's deletion with its edges, the implicit graph
 //! SYS_GRAPH, and what other statements may not do to them (RULES.md
-//! R-TEST-9, D109).
+//! R-TEST-9, D143).
 
 use super::{Mutation, Package};
 

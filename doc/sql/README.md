@@ -24,7 +24,7 @@ The language, element by element, and each statement on a reference page of its 
 - [Topology-Geometry](16-topology.md)
 - [Linear Referencing](17-linear-referencing.md)
 - [Spatial Networks](18-spatial-networks.md)
-- [Property Graphs](19-property-graphs.md) *(extension)*
-- [Graph Algorithms](20-graph-algorithms.md) *(extension)*
-- [Graph Compatibility Syntax](21-graph-compatibility.md) *(extension)*
+- [Property Graphs](20-property-graphs.md) *(extension)*
+- [Graph Algorithms](21-graph-algorithms.md) *(extension)*
+- [Graph Compatibility Syntax](22-graph-compatibility.md) *(extension)*
 - [Statements](statements/README.md)

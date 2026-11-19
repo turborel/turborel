@@ -546,7 +546,7 @@ pub trait Catalog: Send + Sync {
     /// Its routines and tables are removed by the caller.
     fn remove_module(&mut self, name: &QualifiedName);
     /// \[EXTENSION\] Record the property graph `graph`, in place of any of
-    /// its name (RULES.md D106).
+    /// its name (RULES.md D140).
     fn put_graph(&mut self, graph: GraphDesc);
     /// The property graph of this name, if any.
     fn graph(&self, name: &QualifiedName) -> Option<&GraphDesc>;
@@ -554,7 +554,7 @@ pub trait Catalog: Send + Sync {
     fn graphs(&self) -> Vec<&GraphDesc>;
     /// Forget the property graph of this name: one dropped.
     fn remove_graph(&mut self, name: &QualifiedName);
-    /// \[EXTENSION\] The graph types and GQL graphs (RULES.md D110).
+    /// \[EXTENSION\] The graph types and GQL graphs (RULES.md D144).
     fn gql(&self) -> &GqlCatalog;
     /// The same, to change.
     fn gql_mut(&mut self) -> &mut GqlCatalog;

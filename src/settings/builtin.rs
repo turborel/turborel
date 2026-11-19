@@ -330,7 +330,7 @@ fn later() -> [Definition; 5] {
 }
 
 /// \[EXTENSION\] The threads a graph algorithm runs on (RULES.md
-/// D111), at its key's place, after the others, though of the
+/// D145), at its key's place, after the others, though of the
 /// executor's settings: 1, the statement's own thread alone, so many
 /// sessions do not each take every core unasked.
 fn graph_threads() -> Definition {
@@ -341,7 +341,7 @@ fn graph_threads() -> Definition {
     )
 }
 
-/// \[EXTENSION\] A GQL session (graph standard §9, RULES.md D110): the
+/// \[EXTENSION\] A GQL session (graph standard §9, RULES.md D144): the
 /// language a session's direct statements are read in, and the graph a
 /// GQL statement that names none reads.
 fn gql_session() -> [Definition; 2] {

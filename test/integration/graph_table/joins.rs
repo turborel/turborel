@@ -1,4 +1,4 @@
-//! Rigid patterns planned as joins (RULES.md D113): each gives the rows
+//! Rigid patterns planned as joins (RULES.md D147): each gives the rows
 //! the path search gives, which PATH_ALGO keeps it on; EXPLAIN shows the
 //! join and its Expand, Expand walked in reverse and ExpandInto.
 
@@ -21,7 +21,7 @@ fn both(s: &Session, (pattern, columns): (&str, &str)) -> (Vec<String>, Vec<Stri
     (rows(s, &joined), rows(s, &searched))
 }
 
-/// Verifies: [EXTENSION] [GS §16 R16.2] RULES.md D113: each rigid pattern
+/// Verifies: [EXTENSION] [GS §16 R16.2] RULES.md D147: each rigid pattern
 /// of every orientation, of variables binding several tables, of shared
 /// labels, of cycles, of two path patterns, of prefilters and postfilters,
 /// of element functions, of each restrictor and match mode, of small
@@ -106,7 +106,7 @@ fn roads() -> (Database, Session) {
     (db, s)
 }
 
-/// Verifies: [EXTENSION] [GS §16 R16.1, R16.2] RULES.md D113: a rigid
+/// Verifies: [EXTENSION] [GS §16 R16.1, R16.2] RULES.md D147: a rigid
 /// pattern's edges are read through the adjacency index, from a vertex
 /// bound before as Expand, from its destination as Expand walked in
 /// reverse; the rows are the search's, which a search hint keeps.
@@ -132,7 +132,7 @@ fn edges_are_expanded_either_way_16() {
     assert_eq!(rows(&s, hinted), ["w", "x"]);
 }
 
-/// Verifies: [EXTENSION] [GS §16 R16.2, R16.8] RULES.md D114: a rigid
+/// Verifies: [EXTENSION] [GS §16 R16.2, R16.8] RULES.md D148: a rigid
 /// pattern whose node patterns close a cycle, over edge tables each with
 /// an adjacency index, is matched by the worst-case optimal join, of one
 /// path pattern or several, of prefilters and postfilters; it
@@ -165,7 +165,7 @@ fn cycles_take_the_worst_case_optimal_join_16() {
     }
 }
 
-/// Verifies: [EXTENSION] [GS §16 R16.6] RULES.md D114: a path pattern
+/// Verifies: [EXTENSION] [GS §16 R16.6] RULES.md D148: a path pattern
 /// written as an earlier one is, anonymous elements aside, is searched
 /// once, as EXPLAIN shows, and gives the rows it gives searched again;
 /// an edge pattern written twice in a join is joined once.

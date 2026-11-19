@@ -1,4 +1,4 @@
-//! The mutations of the graph indexes (RULES.md R-TEST-9, D115, D116): of
+//! The mutations of the graph indexes (RULES.md R-TEST-9, D149, D150): of
 //! the reachability labels, an edge added and an edge taken back; of the
 //! pruning, the starts that are ends and the way edges are followed; of
 //! the label bitmaps, a negated label; of the label numbering, its

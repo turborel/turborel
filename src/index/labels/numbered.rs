@@ -1,4 +1,4 @@
-//! \[DESIGN\] A label index's numbering of its rows (RULES.md D115): each
+//! \[DESIGN\] A label index's numbering of its rows (RULES.md D149): each
 //! row with an entry has a dense number, given in the order of the rows
 //! as it is made of the tree and in the order they come after, and the
 //! versions holding its entries counted. A row whose last entry is taken

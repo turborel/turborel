@@ -2,7 +2,7 @@
 //! pattern matches the path p binds, walked in path order. Each pattern
 //! is bound as a path pattern of its own, numbered after the graph
 //! pattern's, its variables and prefilters the GRAPH_TABLE's; the
-//! predicate is a slot of a path function of p (RULES.md D108).
+//! predicate is a slot of a path function of p (RULES.md D142).
 
 use super::super::rule;
 use crate::ast::{GraphPattern, GraphTable, ParenthesizedPath, PathExpression, PathFactor, PathPattern, PathPrimary, PathTerm};

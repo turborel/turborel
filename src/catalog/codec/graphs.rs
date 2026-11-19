@@ -1,4 +1,4 @@
-//! \[DESIGN\] Property graph descriptors (RULES.md D106) in the
+//! \[DESIGN\] Property graph descriptors (RULES.md D140) in the
 //! catalog's bytes, as `catalog/codec.rs` writes the rest of its
 //! descriptions.
 //!

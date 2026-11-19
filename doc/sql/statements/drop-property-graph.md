@@ -75,7 +75,7 @@ OK
 ISO/IEC 9075-16:2023 (SQL/PGQ) defines DROP PROPERTY GRAPH. turborel
 follows its implementation standard's Mode A (§4.1), whose IF EXISTS
 is an extension, and takes RESTRICT where no `<drop behavior>` is
-written (RULES.md D106).
+written (RULES.md D140).
 
 ## SEE ALSO
 

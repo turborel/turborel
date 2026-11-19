@@ -1,5 +1,5 @@
 //! \[EXTENSION\] GQL requests run by a session (graph standard §9,
-//! RULES.md D110): EXECUTE GQL, and each direct statement of a session
+//! RULES.md D144): EXECUTE GQL, and each direct statement of a session
 //! whose SESSION.LANGUAGE is GQL.
 //!
 //! A query is lowered to SQL (`binder/gql.rs`) and its rows read as a

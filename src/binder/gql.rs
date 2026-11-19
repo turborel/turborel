@@ -1,5 +1,5 @@
 //! \[EXTENSION\] GQL lowered to SQL (graph standard §9 R9.1, R9.2;
-//! RULES.md D110): each GQL query becomes a `<query expression>` the SQL
+//! RULES.md D144): each GQL query becomes a `<query expression>` the SQL
 //! binder binds, so GQL shares SQL's optimizer and executor.
 //!
 //! The lowering is [P2]'s linear composition (Theorem 5.1). A binding

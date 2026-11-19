@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The label and reachability indexes of a property graph
-//! (RULES.md D115, D116): CREATE LABEL INDEX and CREATE REACHABILITY
+//! (RULES.md D149, D150): CREATE LABEL INDEX and CREATE REACHABILITY
 //! INDEX, each the CREATE INDEX of its method, as CREATE ADJACENCY INDEX
 //! is (`graph_ddl.rs`).
 

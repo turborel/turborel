@@ -1,5 +1,5 @@
 //! \[EXTENSION\] Which label and reachability indexes a GRAPH_TABLE reads
-//! (RULES.md D115, D116), decided of its bound form alone, so EXPLAIN
+//! (RULES.md D149, D150), decided of its bound form alone, so EXPLAIN
 //! names those the search will read.
 //!
 //! A path pattern's starts are pruned by a reachability index when every
@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 use super::{GraphMatch, PathShape, PatternShape, TestShape};
 use crate::graph::view::Orientation;
 
-/// \[EXTENSION\] How a path pattern's starts are pruned (RULES.md D116).
+/// \[EXTENSION\] How a path pattern's starts are pruned (RULES.md D150).
 #[derive(Debug, Clone)]
 pub struct Pruning {
     /// The edge table every edge of a match is of.
@@ -86,7 +86,7 @@ impl GraphMatch {
     }
 
     /// \[EXTENSION\] How `path`'s starts are pruned by a reachability
-    /// index, if they are (RULES.md D116).
+    /// index, if they are (RULES.md D150).
     pub fn pruning(&self, path: &PathShape) -> Option<Pruning> {
         let mut edges = Vec::new();
         if !edges_of(&path.pattern, &mut edges) {

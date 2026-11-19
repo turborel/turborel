@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The views of the Information Schema of node and edge
-//! tables (§4.2, RULES.md D109), each over its table of the
+//! tables (§4.2, RULES.md D143), each over its table of the
 //! Definition Schema (`definition/native.rs`): GRAPH_TABLES, whether each
 //! table is a node or an edge table; and CONNECTION_CONSTRAINTS, the
 //! clauses of the CONNECTION constraints of edge tables. Each shows the

@@ -1,4 +1,4 @@
-//! \[EXTENSION\] [GS §16 R16.2] Rigid patterns as joins (RULES.md D113): a
+//! \[EXTENSION\] [GS §16 R16.2] Rigid patterns as joins (RULES.md D147): a
 //! GRAPH_TABLE whose path patterns have no quantifier is the join of its
 //! element variables' tables on their edges' ends, which the ordinary
 //! planner orders and reads (`physical/order.rs`), each edge table probed
@@ -62,7 +62,7 @@ struct Branch {
 /// of joins of its element tables giving its COLUMNS, if it is rigid and
 /// a join gives what its search would; none if it is searched. A cyclic
 /// one whose edge tables each have an adjacency index is matched by the
-/// worst-case optimal join instead, unless NO_WCOJ (RULES.md D114).
+/// worst-case optimal join instead, unless NO_WCOJ (RULES.md D148).
 pub(super) fn planned(cx: Context<'_>, g: &mut GraphMatch, operands: &[Expr]) -> Option<LogicalPlan> {
     // [GS §16 R16.8] A hint of how to search keeps the pattern searched.
     let h = &g.hints;

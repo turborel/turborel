@@ -153,10 +153,10 @@ pub struct ElementSource {
     /// its edges are followed through, if one is (`exec/graph_table`).
     pub adjacency: Option<String>,
     /// Of a stored table, the label index of its rows, if it has one
-    /// (RULES.md D115).
+    /// (RULES.md D149).
     pub labels_index: Option<String>,
     /// Of a stored edge table, the reachability index of its ends'
-    /// columns, if it has one (RULES.md D116).
+    /// columns, if it has one (RULES.md D150).
     pub reachability: Option<String>,
 }
 
@@ -263,7 +263,7 @@ pub struct Prefilter {
     /// it reads that are bound after it, so tested as they are bound.
     pub later: Vec<usize>,
     /// The element variables it reads of other path patterns, bound as
-    /// those are searched first (RULES.md D108).
+    /// those are searched first (RULES.md D142).
     pub across: Vec<usize>,
 }
 
@@ -464,7 +464,7 @@ impl GraphMatch {
 
     /// \[GS §6.8\] The path patterns whose bindings the prefilters of
     /// path pattern `n` read, which are searched before it (RULES.md
-    /// D108).
+    /// D142).
     pub fn depends(&self, n: usize) -> Vec<usize> {
         let mut out = Vec::new();
         for p in self.prefilters.iter().filter(|p| p.path == n) {

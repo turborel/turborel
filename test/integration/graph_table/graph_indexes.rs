@@ -1,5 +1,5 @@
 //! Label and reachability indexes of a graph's element tables (RULES.md
-//! D115, D116): CREATE LABEL INDEX and CREATE REACHABILITY INDEX ON
+//! D149, D150): CREATE LABEL INDEX and CREATE REACHABILITY INDEX ON
 //! GRAPH, the CREATE INDEX statements they are, what EXPLAIN names of
 //! them, and a GRAPH_TABLE read through them giving the rows it gives
 //! without them, after changes, maintenance, reopened and after a crash.
@@ -98,7 +98,7 @@ fn same(plain: &Session, kept: &Session, when: &str) {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md D115, D116: CREATE LABEL INDEX makes an
+/// Verifies: [EXTENSION] RULES.md D149, D150: CREATE LABEL INDEX makes an
 /// index of the labels method of each base element table's key, named of
 /// the graph or of the name written, or of the one table it names;
 /// CREATE REACHABILITY INDEX one of the reachability method of an edge
@@ -133,7 +133,7 @@ fn graph_index_statements_make_indexes() {
     assert_eq!(s.run("CREATE INDEX L3 ON ACCOUNT (OWNER) USING labels").unwrap_err().sqlcode(), -900);
 }
 
-/// Verifies: [EXTENSION] RULES.md D115, D116: a GRAPH_TABLE read through
+/// Verifies: [EXTENSION] RULES.md D149, D150: a GRAPH_TABLE read through
 /// label and reachability indexes gives the rows, or the error, it gives
 /// without them, of every label operator and of pruned searches, after
 /// edges are added (labels kept), taken back (labels dropped) and once
@@ -160,7 +160,7 @@ fn indexed_searches_give_the_rows_unindexed_ones_do() {
     assert!(answers(&plain, &[failing])[0].is_err(), "the search reaches a6");
 }
 
-/// Verifies: [EXTENSION] RULES.md D115, D116: within a transaction a
+/// Verifies: [EXTENSION] RULES.md D149, D150: within a transaction a
 /// GRAPH_TABLE read through the indexes sees its own changes, and not
 /// those it rolled back.
 #[test]
@@ -178,7 +178,7 @@ fn indexed_searches_see_their_own_changes() {
     same(&plain, &kept, "rolled back");
 }
 
-/// Verifies: [EXTENSION] [GS §16 R16.9] RULES.md D115, D116: EXPLAIN
+/// Verifies: [EXTENSION] [GS §16 R16.9] RULES.md D149, D150: EXPLAIN
 /// names the reachability index that prunes a path pattern's starts and
 /// the label index each element table's labels are tested by; a pattern
 /// whose end has no WHERE of its own is not pruned.
@@ -206,7 +206,7 @@ fn opened(dir: &Path, crashed: bool) -> Database {
     db
 }
 
-/// Verifies: [EXTENSION] RULES.md D25, D115, D116: a graph's label and
+/// Verifies: [EXTENSION] RULES.md D25, D149, D150: a graph's label and
 /// reachability indexes opened again, and after a crash, give the rows
 /// they gave, committed changes found and an uncommitted one not.
 #[test]
@@ -240,7 +240,7 @@ fn graph_indexes_are_reopened_and_recovered() {
     assert_eq!(answers(&s, SEARCHES), changed.0, "dropped no index");
 }
 
-/// Verifies: [EXTENSION] RULES.md D49, D115, D116: a temporary table
+/// Verifies: [EXTENSION] RULES.md D49, D149, D150: a temporary table
 /// takes indexes of both methods, kept in memory of each session's rows.
 #[test]
 fn temporary_tables_take_graph_indexes() {
@@ -257,7 +257,7 @@ fn temporary_tables_take_graph_indexes() {
     assert_eq!(rows(&s, "SELECT SRC FROM HOP"), ["2"]);
 }
 
-/// Verifies: [EXTENSION] [GS §20] RULES.md D116: the starts a
+/// Verifies: [EXTENSION] [GS §20] RULES.md D150: the starts a
 /// reachability index drops are not searched: a search to the account no
 /// transfer reaches passes MAX_SEARCH_STATES from every account, 54061,
 /// and not from the one start kept, which is its end.

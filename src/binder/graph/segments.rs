@@ -43,7 +43,7 @@ pub(super) fn segments(
 }
 
 /// \[GS §6.8\] The path patterns of `g` whose prefilters read another's
-/// variables, each searched after those it reads (RULES.md D108).
+/// variables, each searched after those it reads (RULES.md D142).
 ///
 /// # Errors
 ///

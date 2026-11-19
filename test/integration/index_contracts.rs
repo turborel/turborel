@@ -266,7 +266,7 @@ fn spatial_method_keeps_the_index_contract() {
     }
 }
 
-/// Verifies: [EXTENSION] RULES.md D107: the adjacency
+/// Verifies: [EXTENSION] RULES.md D141: the adjacency
 /// method passes the comparison, streaming, key, counted-entry and prefix
 /// contracts of the other built-ins, of a key of a source column and a
 /// destination column, in memory and in a pager file; it answers

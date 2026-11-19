@@ -3,7 +3,7 @@
 //! is run along the path from each of its vertices, each step the next
 //! edge of the path to its next vertex alone, until a thread accepts;
 //! the path is finite, so no selector or restrictor is needed for it to
-//! end (RULES.md D108).
+//! end (RULES.md D142).
 
 use super::nfa::Nfa;
 use super::program::{PathPattern, Selector};

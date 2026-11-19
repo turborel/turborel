@@ -1,7 +1,7 @@
 //! \[EXTENSION\] [GS §10] The compatibility syntax, each front end
 //! compiling to the one GPML tree GRAPH_TABLE reads [GS §14], bound by
 //! GRAPH_TABLE's binder and run by its operator, never a second one
-//! (RULES.md D112):
+//! (RULES.md D146):
 //!
 //! * MATCH in a WHERE clause over the tables of the FROM clause, with
 //!   SHORTEST_PATH, LAST_NODE, FOR PATH tables and WITHIN GROUP (GRAPH

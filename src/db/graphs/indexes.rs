@@ -1,5 +1,5 @@
 //! \[EXTENSION\] Label and reachability indexes of a property graph's
-//! element tables (RULES.md D115, D116): CREATE LABEL INDEX, an index of
+//! element tables (RULES.md D149, D150): CREATE LABEL INDEX, an index of
 //! the labels method of an element table's key, or of each base element
 //! table's; and CREATE REACHABILITY INDEX, one of the reachability method
 //! of an edge table's ends, its source's first. Each is the CREATE INDEX
