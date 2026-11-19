@@ -203,3 +203,7 @@ impl SqlType for JsonKind {
         json(v).map(|_| (v.clone(), true))
     }
 }
+
+// Unit tests: the kind's text, comparison, CAST and assignment, and keys.
+#[cfg(test)]
+mod tests;

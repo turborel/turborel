@@ -392,3 +392,8 @@ impl SqlType for StructuredKind {
         v.structured().map(|_| (v.clone(), true))
     }
 }
+
+// Unit tests: the kind's text, comparison by keys, CAST and assignment,
+// and its stored form.
+#[cfg(test)]
+mod tests;
