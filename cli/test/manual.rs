@@ -7,6 +7,7 @@
 mod embedding;
 mod hybrid;
 mod information;
+mod locks;
 mod vector;
 mod xml;
 
