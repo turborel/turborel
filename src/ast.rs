@@ -34,6 +34,7 @@ mod drop;
 mod dynamic;
 mod embedding;
 mod expression;
+mod extension;
 mod generated;
 mod gql;
 mod graph;
@@ -84,6 +85,7 @@ pub use expression::{
     CaseExpression, ColumnSpecification, DatetimeFunction, ExtractField, Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue,
     ValueExpression, WhenOperand,
 };
+pub use extension::{ExtensionDefinition, ExtensionRead, ExtensionStatement};
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use gql::{
     EdgeTypeDefinition, ExecuteGql, GqlCall, GqlClause, GqlComposite, GqlCondition, GqlExpression, GqlGraphDefinition, GqlLinear, GqlPage,

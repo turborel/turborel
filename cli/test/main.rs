@@ -33,6 +33,7 @@
 mod args;
 mod common;
 mod connections;
+mod extensions;
 mod imports;
 mod manual;
 mod program;

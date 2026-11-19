@@ -107,6 +107,12 @@ version, and comes with a major release (see
 | Replication state in the journal | 1 | its first byte | `replication/src/vr/frame.rs`, `STATE_FORMAT` |
 | Replication connection | 1 | its hello, `TBREPL\0\x01` | `server/src/replication/net.rs` |
 | Native protocol | 1 | the client's Hello | `protocol/src/lib.rs`, `VERSION` |
+| Plug-in protocol | 1 | HELLO and WELCOME's first field | `plugin.rs`, `PROTOCOL` |
+| Plug-in manifest (`turborel-plugin.manifest`) | 1 | its PROTOCOL item | `plugin/manifest.rs` |
+| Extension package file | 1 | the byte after its magic `TBPKG\0` | `plugin/package/archive.rs`, `plugin/package.rs` `FORMAT` |
+| Installed package digests file (`turborel-package.digests`) | 1 | its first line | `plugin/package/install.rs` |
+| Registry index (`index`) | 1 | its first line | `plugin/package/index.rs` |
+| Extension lock file (`turborel-extensions.lock`) | 1 | its first line | `plugin/package/lock.rs` |
 
 A server refuses a Hello of a protocol version it does not speak, saying
 which it does (SQLSTATE 08004).

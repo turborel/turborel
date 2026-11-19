@@ -127,6 +127,8 @@ pub(super) struct Snapshot {
     /// The spatial reference systems defined and the geometry columns
     /// registered.
     spatial: crate::catalog::SpatialCatalog,
+    /// \[EXTENSION\] The extensions created, in the order made.
+    extensions: Vec<crate::catalog::ExtensionDesc>,
 }
 
 impl Snapshot {
@@ -187,6 +189,7 @@ impl Snapshot {
             xml_schemas: st.catalog.xml_schemas().into_iter().cloned().collect(),
             xquery_modules: st.catalog.xquery_modules().into_iter().cloned().collect(),
             spatial: st.catalog.spatial().clone(),
+            extensions: st.catalog.extensions().to_vec(),
         })
     }
 
@@ -283,6 +286,7 @@ impl Snapshot {
         out.put_u32(count(self.xquery_modules.len()));
         self.xquery_modules.iter().for_each(|m| put_xquery_module(out, m));
         crate::catalog::codec::put_spatial(out, &self.spatial);
+        crate::catalog::put_extensions(out, &self.extensions);
     }
 
     /// The snapshot `put` wrote.
@@ -326,6 +330,7 @@ impl Snapshot {
             xml_schemas: (0..r.u32()?).map(|_| xml_schema(r)).collect::<Result<_>>()?,
             xquery_modules: (0..r.u32()?).map(|_| xquery_module(r)).collect::<Result<_>>()?,
             spatial: crate::catalog::codec::spatial(r)?,
+            extensions: crate::catalog::extensions(r)?,
         })
     }
 }
@@ -411,7 +416,8 @@ impl State {
         snapshot.creators.iter().for_each(|c| self.users.replay_creator(c, true));
         catalog.set_roles(snapshot.roles.clone());
         self.catalog = Arc::from(catalog);
-        Ok(())
+        // [EXTENSION] Its extensions' objects, which its views may call.
+        self.attach_extensions()
     }
     /// The counters of `snapshot`'s sequence generators, each set at its
     /// base, and the epochs past its last (RULES.md D62).
@@ -460,6 +466,7 @@ fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.graph_types.iter().cloned().for_each(|t| catalog.gql_mut().put_graph_type(t));
     snapshot.gql_graphs.iter().cloned().for_each(|g| catalog.gql_mut().put_gql_graph(g));
     catalog.set_spatial(snapshot.spatial.clone());
+    catalog.set_extensions(snapshot.extensions.clone());
 }
 
 /// [ISO/IEC 9075-4:2006 draft §12.8] Puts in `catalog` the declared tables

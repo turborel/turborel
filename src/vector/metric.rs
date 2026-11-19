@@ -75,6 +75,23 @@ pub trait VectorMetric: Send + Sync {
     fn lower_bound(&self, _query: VectorRef<'_>, _low: &[f32], _high: &[f32]) -> Option<f64> {
         None
     }
+    /// The distances from `query` to each of `candidates`, in order, each
+    /// as `distance` gives it: one call for many, as a plug-in's metric
+    /// measures them in one round trip (RULES.md D169). Default: `distance`
+    /// of each.
+    ///
+    /// # Errors
+    ///
+    /// As `distance`.
+    fn distances(&self, query: VectorRef<'_>, candidates: &[VectorRef<'_>]) -> Result<Vec<Option<f64>>> {
+        candidates.iter().map(|c| self.distance(query, *c)).collect()
+    }
+    /// Whether `distances` is cheaper than `distance` of each, as a
+    /// plug-in's is: the engines then gather a node's neighbours before
+    /// they measure them. Default: no.
+    fn batches(&self) -> bool {
+        false
+    }
 }
 
 /// The metrics a database knows, given fresh on each call: the built-in
@@ -158,6 +175,31 @@ impl VectorMetric for CallbackMetric {
 /// (VEC-0008); SQLSTATE 22003 for an overflow (VEC-0012); SQLCODE -910
 /// for a negative distance from a metric declared never negative.
 pub fn distance(metric: &dyn VectorMetric, a: VectorRef<'_>, b: VectorRef<'_>) -> Result<Option<f64>> {
+    measurable(metric, a, b)?;
+    let Some(d) = metric.distance(a, b)? else { return Ok(None) };
+    kept(metric, d).map(Some)
+}
+
+/// \[EXTENSION\] The distances from `query` to each of `candidates` by
+/// `metric`, in one call of it (`VectorMetric::distances`), each checked as
+/// `distance` checks one.
+///
+/// # Errors
+///
+/// As `distance`; SQLCODE -910 if the metric answers another count.
+pub fn distances(metric: &dyn VectorMetric, query: VectorRef<'_>, candidates: &[VectorRef<'_>]) -> Result<Vec<Option<f64>>> {
+    for c in candidates {
+        measurable(metric, query, *c)?;
+    }
+    let got = metric.distances(query, candidates)?;
+    if got.len() != candidates.len() {
+        return Err(broken(metric.name(), "gave another count of distances than it was asked"));
+    }
+    got.into_iter().map(|d| d.map(|d| kept(metric, d)).transpose()).collect()
+}
+
+/// That `metric` measures `a` and `b`, of one shape.
+fn measurable(metric: &dyn VectorMetric, a: VectorRef<'_>, b: VectorRef<'_>) -> Result<()> {
     if a.dims != b.dims {
         return Err(mismatch(&format!("dimension mismatch: {} and {}", a.dims, b.dims)));
     }
@@ -170,14 +212,18 @@ pub fn distance(metric: &dyn VectorMetric, a: VectorRef<'_>, b: VectorRef<'_>) -
     if !metric.formats().contains(&a.element) {
         return Err(mismatch(&format!("the metric {} does not measure {} vectors", metric.name(), a.element.name())));
     }
-    let Some(d) = metric.distance(a, b)? else { return Ok(None) };
+    Ok(())
+}
+
+/// `d`, a distance `metric` gave, if it keeps the metric's contract.
+fn kept(metric: &dyn VectorMetric, d: f64) -> Result<f64> {
     if !d.is_finite() {
         return Err(out_of_range(&format!("the {} distance overflowed", metric.name())));
     }
     if d < 0.0_f64 && metric.properties().non_negative {
         return Err(broken(metric.name(), "gave a negative distance"));
     }
-    Ok(Some(d))
+    Ok(d)
 }
 
 fn broken(name: &str, what: &str) -> SqlError {

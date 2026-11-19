@@ -42,6 +42,9 @@ pub enum DropObject {
     Graph(TableName, bool),
     /// \[EXTENSION\] An embedding model or a vector pipeline.
     Vector(super::VectorObject, TableName),
+    /// \[EXTENSION\] An extension (RULES.md D168), by its name, and where
+    /// its name begins.
+    Extension(String, usize),
     /// \[EXTENSION\] A graph type (graph standard §4.3), and whether IF
     /// EXISTS was written.
     GraphType(TableName, bool),
@@ -86,7 +89,7 @@ impl DropObject {
             | DropObject::Vector(_, name)
             | DropObject::GraphType(name, _)
             | DropObject::GqlGraph(name, _) => name.at,
-            DropObject::Cast(_, at) | DropObject::Schema { at, .. } => *at,
+            DropObject::Cast(_, at) | DropObject::Extension(_, at) | DropObject::Schema { at, .. } => *at,
             DropObject::Routine(designator) => designator.name.at,
         }
     }

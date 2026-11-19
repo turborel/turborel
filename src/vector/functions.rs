@@ -14,6 +14,7 @@
 //! the distance operators of §6.3 into the calls `OPERATORS` names.
 
 mod arithmetic;
+mod batched;
 mod convert;
 mod distance;
 mod quantize;
@@ -330,6 +331,21 @@ impl ScalarFunction for VectorFunction {
             Routine::Arithmetic(r) => r.call(args),
             Routine::Quantize(r) => r.call(args),
         }
+    }
+
+    /// VECTOR_DISTANCE gathers rows, so a metric that measures many at
+    /// once, as a plug-in's does, is called once for them (`batched.rs`).
+    fn batches(&self) -> bool {
+        matches!(self.routine, Routine::Distance(Distance::VectorDistance))
+    }
+
+    fn call_many(&self, rows: &[Vec<Value>]) -> Result<Vec<Value>> {
+        if self.batches()
+            && let Some(done) = batched::call_many(rows, &self.metrics)
+        {
+            return done;
+        }
+        rows.iter().map(|r| self.call(r)).collect()
     }
 }
 

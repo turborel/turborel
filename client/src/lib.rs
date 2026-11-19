@@ -19,6 +19,11 @@ pub mod timeouts;
 pub use cancel::Canceller;
 /// What a connection's results and failures are made of.
 pub use turborel_protocol::{Column, Completed, Failure};
+#[cfg(feature = "tls")]
+pub mod fetch;
+/// The cryptography of extension packages (`turborel_protocol::packages`).
+#[cfg(feature = "tls")]
+pub use turborel_protocol::packages;
 #[cfg(feature = "scram")]
 pub mod scram;
 #[cfg(feature = "tls")]

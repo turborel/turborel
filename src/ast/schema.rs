@@ -129,6 +129,9 @@ pub enum SchemaStatement {
     /// \[EXTENSION\] A statement of an embedding model or a vector
     /// pipeline (`ast/embedding.rs`).
     Vector(Box<super::VectorStatement>),
+    /// \[EXTENSION\] CREATE EXTENSION or ALTER EXTENSION ... UPDATE
+    /// (RULES.md D168).
+    Extension(Box<super::ExtensionStatement>),
     /// \[EXTENSION\] CREATE GRAPH TYPE (graph standard §4.3).
     GraphType(Box<super::GraphTypeDefinition>),
     /// \[EXTENSION\] CREATE GRAPH, of a GQL graph typed or open (§4.3).

@@ -56,6 +56,7 @@ pub mod params;
 pub mod parser;
 pub mod pattern;
 pub mod physical;
+pub mod plugin;
 pub mod regex;
 pub mod settings;
 pub mod spatial;

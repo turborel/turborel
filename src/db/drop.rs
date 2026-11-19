@@ -76,6 +76,7 @@ impl State {
             DropTarget::GqlGraph(qn) => self.drop_gql_graph(qn, cascade),
             DropTarget::XmlSchema(qn) => self.drop_xml_schema(qn, cascade),
             DropTarget::XQueryModule(qn) => self.drop_xquery_module(qn, cascade),
+            DropTarget::Extension(qn) => self.drop_extension(qn, cascade),
         }
     }
 
@@ -405,32 +406,7 @@ impl Session {
     /// first, then made once the locks of all it drops or changes are
     /// held, on the definitions then.
     fn drop_reverted(&self, st: &Arc<State>, tx: &Txn, target: &DropTarget, cascade: bool) -> Result<Completion> {
-        let reverting: Vec<(QualifiedName, Vec<QualifiedName>)> = match target {
-            DropTarget::Collation(qn) => vec![(qn.clone(), st.tables_of_collation(qn, None))],
-            // [§11.2 GR5] Its own tables go, those of other schemas revert.
-            DropTarget::Schema(auth) => {
-                st.schema_collations(auth).into_iter().map(|qn| (qn.clone(), st.tables_of_collation(&qn, Some(auth)))).collect()
-            }
-            DropTarget::Table(_)
-            | DropTarget::View(_)
-            | DropTarget::Domain(_)
-            | DropTarget::Assertion(_)
-            | DropTarget::Sequence(_)
-            | DropTarget::Type(_)
-            | DropTarget::Trigger(_)
-            | DropTarget::Routine(_)
-            | DropTarget::Module(_)
-            | DropTarget::Cast(_)
-            | DropTarget::Ordering(_)
-            | DropTarget::XmlSchema(_)
-            | DropTarget::XQueryModule(_)
-            | DropTarget::Transform(..)
-            | DropTarget::Graph(_)
-            | DropTarget::Model(_)
-            | DropTarget::Pipeline(_)
-            | DropTarget::GraphType(_)
-            | DropTarget::GqlGraph(_) => Vec::new(),
-        };
+        let reverting = reverting_of(st, target);
         if !reverting.is_empty() {
             // Refused before a row is copied: a statement undone takes
             // back its rows, not a table's new definition.
@@ -505,6 +481,7 @@ impl Session {
             DropObject::XmlSchema(name) => self.xml_schema_target(st, name),
             // [EXTENSION] as of a collation [ISO/IEC 9075-2:2023 §11.44 AR1].
             DropObject::XQueryModule(name) => Ok(DropTarget::XQueryModule(self.owned(st, name, "EXTENSION")?)),
+            DropObject::Extension(name, at) => self.extension_drop_target(name, *at),
             DropObject::Schema { catalog, name, at } => {
                 let ours = st.settings.get(CATALOG_NAME).to_string();
                 if let Some(other) = catalog.as_ref().filter(|c| **c != ours.trim_end()) {
@@ -551,5 +528,37 @@ impl Session {
             return fail(Code::Privilege, format!("[{cited}] {qn} is in a schema {} does not own", self.auth())).or_at(name.at);
         }
         Ok(qn)
+    }
+}
+
+/// The collations whose columns DROP of `target` reverts, in `st`, each
+/// with the tables of its columns that revert.
+fn reverting_of(st: &State, target: &DropTarget) -> Vec<(QualifiedName, Vec<QualifiedName>)> {
+    match target {
+        DropTarget::Collation(qn) => vec![(qn.clone(), st.tables_of_collation(qn, None))],
+        // [§11.2 GR5] Its own tables go, those of other schemas revert.
+        DropTarget::Schema(auth) => {
+            st.schema_collations(auth).into_iter().map(|qn| (qn.clone(), st.tables_of_collation(&qn, Some(auth)))).collect()
+        }
+        DropTarget::Table(_)
+        | DropTarget::View(_)
+        | DropTarget::Domain(_)
+        | DropTarget::Assertion(_)
+        | DropTarget::Sequence(_)
+        | DropTarget::Type(_)
+        | DropTarget::Trigger(_)
+        | DropTarget::Routine(_)
+        | DropTarget::Module(_)
+        | DropTarget::Cast(_)
+        | DropTarget::Ordering(_)
+        | DropTarget::XmlSchema(_)
+        | DropTarget::XQueryModule(_)
+        | DropTarget::Transform(..)
+        | DropTarget::Graph(_)
+        | DropTarget::Model(_)
+        | DropTarget::Extension(_)
+        | DropTarget::Pipeline(_)
+        | DropTarget::GraphType(_)
+        | DropTarget::GqlGraph(_) => Vec::new(),
     }
 }

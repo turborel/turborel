@@ -63,16 +63,29 @@ pub(crate) fn distance(metric: &Arc<dyn VectorMetric>, column: Column) -> Distan
 /// `metric` as DiskANN measures with it: `distance`, and of a metric
 /// measured by norms, `normed` given the norms its node records keep.
 pub(crate) fn disk_metric(metric: &Arc<dyn VectorMetric>, column: Column) -> Arc<dyn diskann::Metric> {
-    Arc::new(DiskMetric { distance: distance(metric, column), normed: normed(metric) })
+    let batched = metric.batches().then(|| (Arc::clone(metric), column));
+    Arc::new(DiskMetric { distance: distance(metric, column), normed: normed(metric), batched })
 }
 
 /// DiskANN's metric over a database metric.
 struct DiskMetric {
     distance: Distance,
     normed: Option<NormedDistance>,
+    /// A metric that measures many at once, as a plug-in's does, and the
+    /// column's shape.
+    batched: Option<(Arc<dyn VectorMetric>, Column)>,
 }
 
 impl diskann::Metric for DiskMetric {
+    fn batches(&self) -> bool {
+        self.batched.is_some()
+    }
+    fn distances(&self, a: &[f32], many: &[&[f32]]) -> Vec<f32> {
+        match &self.batched {
+            Some((metric, column)) => called_many(&**metric, *column, a, many),
+            None => many.iter().map(|b| (self.distance)(a, b)).collect(),
+        }
+    }
     fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
         (self.distance)(a, b)
     }
@@ -133,6 +146,21 @@ fn called(metric: &dyn VectorMetric, column: Column, (a, b): (&[f32], &[f32])) -
         Ok(Some(d)) => Some(single(d)).filter(|d| d.is_finite()).unwrap_or(FARTHEST),
         Ok(None) | Err(_) => FARTHEST,
     }
+}
+
+/// A metric's distances from `a` to each of `many`, given in `column`'s
+/// format, in one call; each failure or null, or all if the call fails,
+/// farthest.
+fn called_many(metric: &dyn VectorMetric, column: Column, a: &[f32], many: &[&[f32]]) -> Vec<f32> {
+    let query = packed(column.element, a);
+    let others: Vec<Vec<u8>> = many.iter().map(|b| packed(column.element, b)).collect();
+    let view = |bytes| VectorRef { element: column.element, dims: column.dims, norm: None, normalized: false, bytes, indices: None };
+    let candidates: Vec<VectorRef<'_>> = others.iter().map(|b| view(b)).collect();
+    let got = metric.distances(view(&query), &candidates).ok().filter(|got| got.len() == many.len());
+    got.map_or_else(
+        || vec![FARTHEST; many.len()],
+        |got| got.into_iter().map(|d| d.map(single).filter(|d| d.is_finite()).unwrap_or(FARTHEST)).collect(),
+    )
 }
 
 /// `v`, read from a vector of format `element`, packed in that format

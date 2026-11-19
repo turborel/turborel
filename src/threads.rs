@@ -18,6 +18,7 @@
 //! itself (RULES.md R-ERR-4).
 
 mod morsels;
+mod pipes;
 mod turn;
 mod worker;
 
@@ -26,6 +27,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub(crate) use morsels::morsels;
+pub(crate) use pipes::pipe_reader;
 pub(crate) use turn::{Hold, Turn, Turned};
 use worker::Worker;
 

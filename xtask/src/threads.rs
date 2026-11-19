@@ -12,10 +12,17 @@ use crate::files;
 const STARTS: &[&str] = &["thread::spawn", "thread::Builder", "Builder::new_multi_thread", "Builder::new_current_thread", "Runtime::new("];
 
 /// The places that may: the database's jobs' threads, a path search's
-/// scoped workers, the graph algorithms' scoped workers, the server's
-/// runtime, and the command-line client's thread hearing Ctrl-C.
-const MAKERS: &[&str] =
-    &["src/threads/worker.rs", "src/threads/morsels.rs", "src/graph/algo/parallel.rs", "server/src/runtime.rs", "cli/src/interrupt.rs"];
+/// scoped workers, the readers of plug-in processes' pipes, the graph
+/// algorithms' scoped workers, the server's runtime, and the command-line
+/// client's thread hearing Ctrl-C.
+const MAKERS: &[&str] = &[
+    "src/threads/worker.rs",
+    "src/threads/morsels.rs",
+    "src/threads/pipes.rs",
+    "src/graph/algo/parallel.rs",
+    "server/src/runtime.rs",
+    "cli/src/interrupt.rs",
+];
 
 /// Checks that no production source but `MAKERS` starts a thread.
 pub fn check(root: &Path) -> Result<()> {

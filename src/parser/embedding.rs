@@ -95,6 +95,9 @@ impl Parser {
         if self.at_vector_object() {
             return self.vector_object_statement();
         }
+        if self.at_extension_statement() {
+            return self.extension_statement();
+        }
         self.schema_manipulation()
     }
 
