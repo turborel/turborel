@@ -4201,6 +4201,7 @@ PARTITIONS and PARTITION_INDEXES are extensions
 | MEMORY_RESERVATIONS | What holds its memory |
 | GRAPH_ALGO_RUNS | The latest 1000 runs of graph algorithms |
 | EXTENSIONS, EXTENSION_OBJECTS, EXTENSION_PACKAGES | The extensions created, the objects their manifests declare, and the database's lock of their packages |
+| HOST_PLUGINS | The host plug-ins the node started, each object with its license, processes and calls, to the database's owner |
 | BACKUPS, ARCHIVED_SEGMENTS, RESTORE_POINTS | A database's backup history (RULES.md D166) |
 
 ### Plans

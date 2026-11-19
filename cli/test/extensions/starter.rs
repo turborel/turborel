@@ -78,7 +78,8 @@ fn first(s: &Session, sql: &str) -> String {
 /// Verifies: [EXTENSION] RULES.md D263: `new` refuses a directory that
 /// is there, a name that is not a plain identifier and a kind it does not
 /// know, naming those it does; `--kind` writes a project of each kind
-/// asked, once, in the order of their codes, at `--dir`.
+/// asked, once, in the order of their codes, at `--dir`; host kinds are
+/// asked alone, their README naming PLUGINS.HOST.
 #[test]
 fn new_refuses_what_it_cannot_make() {
     let f = Fixture::new("new");
@@ -94,6 +95,14 @@ fn new_refuses_what_it_cannot_make() {
     let manifest = std::fs::read_to_string(root.join("m").join("turborel-plugin.manifest")).unwrap();
     assert_eq!(manifest.matches("METRIC TAXICAB").count(), 1, "{manifest}");
     assert!(std::fs::read_to_string(root.join("m/src/main.rs")).unwrap().contains(".kinds(\"MULTI\"), [1, 5]"));
+    let mixed = ext_in(root, &["new", "mixed", "--kind", "clock", "--kind", "scalar"]).unwrap_err();
+    assert!(mixed.contains("host kinds alone"), "{mixed}");
+    let hosted = ext_in(root, &["new", "vault", "--kind", "log-storage", "--kind", "clock", "--kind", "archive"]).unwrap();
+    assert!(hosted.contains("serving clock, log-storage, archive"), "{hosted}");
+    let manifest = std::fs::read_to_string(root.join("vault").join("turborel-plugin.manifest")).unwrap();
+    assert!(manifest.contains("HOST CLOCK SYSTEM (EVERY = 10);\nHOST LOG STORAGE LOG (BATCH = 256);\nHOST ARCHIVE VAULT;"), "{manifest}");
+    assert!(turborel::plugin::manifest::Manifest::parse(&manifest).is_ok_and(|m| m.hosted.len() == 3));
+    assert!(std::fs::read_to_string(root.join("vault").join("README.md")).unwrap().contains("PLUGINS.HOST=VAULT="));
 }
 
 /// Verifies: [EXTENSION] RULES.md D264, D265, D266: pack refuses a

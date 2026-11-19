@@ -55,6 +55,21 @@ db.start_host_plugins()?;
 db.open_files(&db.file_system()?, Path::new("/srv/db"), &OpenOptions::default())?;
 ```
 
+INFORMATION_SCHEMA.HOST_PLUGINS shows the database's owner each object
+started, with its license as the manifest declares it, and `turborel
+admin host-plugins` lists them from the command line.
+
+```
+turborel admin host-plugins
+```
+
+```
+PLUGIN_NAME  VERSION  OBJECT_TYPE  OBJECT_NAME  IS_PINNED  LICENSE  PROCESSES_RUNNING  CALLS  STOPPED
+-----------  -------  -----------  -----------  ---------  -------  -----------------  -----  -------
+VAULT        1.0.0    CLOCK        SYSTEM       NO         MIT                      1     52  NULL
+(1 row)
+```
+
 ## When a host plug-in fails
 
 A host object either answers or stops the node. A process that ends,

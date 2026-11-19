@@ -46,7 +46,12 @@ options:
   --kind KIND            a kind of object new serves: scalar, aggregate, table,
                          procedure, metric, embedding, authenticator, target,
                          partition, ranking, quantizer, collation, system-table,
-                         xquery, type, engine, index-method, credentials, diagnostics
+                         xquery, type, engine, index-method, credentials, diagnostics;
+                         or host kinds alone: encoding, hash-function, clock,
+                         log-storage, catalog-storage, spill, file-system,
+                         served-connections, listener, package-crypto, keyring,
+                         background-job, replica-transport, journal,
+                         state-transfer, consensus, archive
   --dir DIR              where new writes the project
   --sdk DIR              a turborel source tree the project of new depends on by
                          path; by default it depends on this release's crates

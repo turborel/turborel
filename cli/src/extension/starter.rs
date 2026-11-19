@@ -5,6 +5,7 @@
 //! pack`. The project depends on this release's crates by version, or on
 //! a turborel source tree by path with `--sdk`.
 
+mod host;
 mod kinds;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -16,6 +17,7 @@ use turborel::plugin::MANIFEST_FILE;
 
 use super::args::Invocation;
 use super::say;
+use host::{HOST_STARTERS, is_host};
 use kinds::{DEFAULT_KIND, STARTERS, Starter};
 
 /// The version a starter begins at.
@@ -82,11 +84,14 @@ fn starting<'a>(typed: &str, words: &[String]) -> Result<Starting<'a>, String> {
     let asked: Vec<&str> = if words.is_empty() { vec![DEFAULT_KIND] } else { words.iter().map(String::as_str).collect() };
     let mut kinds = Vec::new();
     for word in asked {
-        let starter = STARTERS.iter().find(|s| s.word == word).ok_or_else(|| {
-            let known: Vec<&str> = STARTERS.iter().map(|s| s.word).collect();
+        let starter = STARTERS.iter().chain(&HOST_STARTERS).find(|s| s.word == word).ok_or_else(|| {
+            let known: Vec<&str> = STARTERS.iter().chain(&HOST_STARTERS).map(|s| s.word).collect();
             format!("{word} is no kind of plug-in; --kind takes {}", known.join(", "))
         })?;
         kinds.push(starter);
+    }
+    if kinds.iter().any(|k| is_host(k)) && !kinds.iter().all(|k| is_host(k)) {
+        return Err("a host plug-in serves host kinds alone, and an extension none (RULES.md D229); ask for one or the other".into());
     }
     kinds.sort_by_key(|k| k.code);
     kinds.dedup_by_key(|k| k.code);
@@ -213,6 +218,7 @@ fn license_text(s: &Starting<'_>) -> String {
 fn readme(s: &Starting<'_>) -> String {
     let (name, krate) = (&s.name, &s.krate);
     let call = if s.kinds.iter().any(|k| k.word == DEFAULT_KIND) { "\n    VALUES (TWICE(21));" } else { "" };
+    let hosted = s.kinds.iter().any(|k| is_host(k));
     format!(
         "# {name}\n\nA plug-in of turborel, served by the plug-in SDK. Its objects are\ndeclared in `{MANIFEST_FILE}` and \
          served by `src/main.rs`.\n\n\
@@ -223,7 +229,18 @@ fn readme(s: &Starting<'_>) -> String {
          This writes `{krate}-{FIRST_VERSION}.tbpkg`, signed if `--key` names a key\n\
          `turborel extension keygen --out author.key` made.\n\n\
          ## Install\n\nOn the server's machine, into its plug-in directory:\n\n\
-         \x20   turborel extension install {krate}-{FIRST_VERSION}.tbpkg --set PLUGINS.DIRECTORIES=/srv/turborel/plugins\n\n\
-         Then, as the database's owner:\n\n    CREATE EXTENSION {name};{call}\n"
+         {}",
+        if hosted {
+            format!(
+                "\x20   turborel extension install {krate}-{FIRST_VERSION}.tbpkg --set PLUGINS.DIRECTORIES=/srv/turborel/plugins\n\n\
+                 It is a host plug-in, which the node starts before the database opens:\n\n\
+                 \x20   turboreld --set \"PLUGINS.HOST={name}=/srv/turborel/plugins/{name}/{FIRST_VERSION}\"\n"
+            )
+        } else {
+            format!(
+                "\x20   turborel extension install {krate}-{FIRST_VERSION}.tbpkg --set PLUGINS.DIRECTORIES=/srv/turborel/plugins\n\n\
+                 Then, as the database's owner:\n\n    CREATE EXTENSION {name};{call}\n"
+            )
+        }
     )
 }

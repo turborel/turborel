@@ -2,7 +2,7 @@
 //! administration from the command line, each command one or two
 //! statements the server already runs, over a session the connection
 //! options open as any other. What they show is the Information Schema's
-//! (`SERVER`, `CONNECTIONS`, `SETTINGS`); what they change, the operator
+//! (`SERVER`, `CONNECTIONS`, `SETTINGS`, `HOST_PLUGINS`); what they change, the operator
 //! statements END CONNECTION, CANCEL CONNECTION and SET DATABASE, and
 //! CREATE SCHEMA, DROP SCHEMA and ALTER USER. Dropping a schema asks
 //! first, unless `--yes` is given; without a terminal to ask at, it is
@@ -42,12 +42,18 @@ pub const ADMIN_USAGE: &str = "usage: turborel admin [connection options] COMMAN
                          drop a schema, asked first unless --yes; with --cascade,
                          with all it holds
   version                the server's product and release
+  host-plugins           the host plug-ins the node started, each object, its
+                         license, processes and calls, and why the node stopped
   tls CERTIFICATE KEY    the PEM files of the server's certificate chain and key,
                          taken for the connections after
 
 The connection options are turborel's: turborel --help tells them. The
 program exits with 0 if the command succeeded, 1 if it failed, and 2 if the
 connection was lost.";
+
+/// The statement `host-plugins` runs.
+const HOST_PLUGINS: &str = "SELECT PLUGIN_NAME, VERSION, OBJECT_TYPE, OBJECT_NAME, IS_PINNED, LICENSE, PROCESSES_RUNNING, CALLS, STOPPED \
+                            FROM INFORMATION_SCHEMA.HOST_PLUGINS ORDER BY PLUGIN_NAME, OBJECT_TYPE, OBJECT_NAME";
 
 /// The statement `ping` runs.
 const PING: &str = "VALUES 1";
@@ -61,6 +67,8 @@ pub enum Admin {
     Status,
     /// `processlist`.
     Processes,
+    /// `host-plugins`.
+    HostPlugins,
     /// `kill ID`.
     Kill(u64),
     /// `cancel ID`.
@@ -116,6 +124,7 @@ impl Invocation {
             "ping" => Admin::Ping,
             "status" => Admin::Status,
             "processlist" => Admin::Processes,
+            "host-plugins" => Admin::HostPlugins,
             "kill" => Admin::Kill(id(first)?),
             "cancel" => Admin::Cancel(id(first)?),
             "variables" => Admin::Variables(first.cloned()),
@@ -171,6 +180,7 @@ pub fn run<S: Statements + ?Sized>(connection: &mut S, invocation: &Invocation, 
         Admin::Processes => {
             show(connection, "SELECT ID, USER_NAME, PEER, SECURE, STATE FROM INFORMATION_SCHEMA.CONNECTIONS ORDER BY ID", false, console)
         }
+        Admin::HostPlugins => show(connection, HOST_PLUGINS, false, console),
         Admin::Kill(id) => done(connection, &format!("END CONNECTION {id}"), &format!("Connection {id} is ended."), console),
         Admin::Cancel(id) => {
             done(connection, &format!("CANCEL CONNECTION {id}"), &format!("The statement of connection {id} is cancelled."), console)
@@ -316,6 +326,7 @@ mod tests {
         assert_eq!(invocation("version"), Ok(Admin::Version));
         assert_eq!(invocation("status"), Ok(Admin::Status));
         assert_eq!(invocation("processlist"), Ok(Admin::Processes));
+        assert_eq!(invocation("host-plugins"), Ok(Admin::HostPlugins));
     }
 
     /// Verifies: [DESIGN] RULES.md D218: a setting's pattern is upper case,

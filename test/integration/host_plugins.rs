@@ -75,7 +75,8 @@ pub fn eventually(done: impl Fn() -> bool) -> bool {
 /// host plug-in PLUGINS.HOST names starts before the database opens, and
 /// each object it serves is registered as the host's own: its encoding
 /// and checksum named by the settings, its clock read by CURRENT_TIMESTAMP,
-/// its keyring's keys, served connections asked, and its job run.
+/// its keyring's keys, served connections asked, and its job run, each
+/// shown in INFORMATION_SCHEMA.HOST_PLUGINS to the database's owner.
 #[test]
 fn a_host_plugins_objects_are_the_hosts_own() {
     let (_scratch, dir, spec) = hosted("host_small", SMALL);
@@ -100,6 +101,13 @@ fn a_host_plugins_objects_are_the_hosts_own() {
     assert!(db.jobs().iter().any(|j| j.label == "turborel-tick" && j.runs > 0), "shown among the database's jobs");
     assert!(db.jobs().iter().any(|j| j.label == "turborel-host-clock"), "the clock's ticking");
     assert_eq!(db.host_stopped().unwrap(), None);
+    db.create_user("OWNER", b"x").unwrap();
+    db.set_owner("OWNER").unwrap();
+    let sql = "SELECT OBJECT_TYPE, OBJECT_NAME, IS_PINNED, COALESCE(LICENSE, '-'), STOPPED FROM INFORMATION_SCHEMA.HOST_PLUGINS ORDER BY OBJECT_TYPE";
+    let shown = rows(&db.session("OWNER"), sql).unwrap();
+    assert_eq!(shown.len(), 6, "{shown:?}");
+    assert_eq!(shown[0], "BACKGROUND JOB,TICK,NO,-,NULL");
+    assert_eq!(rows(&s, sql).unwrap(), Vec::<String>::new(), "the node's, shown to its owner alone");
 }
 
 /// Verifies: [EXTENSION] RULES.md D229: a manifest declares host objects

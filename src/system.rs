@@ -43,6 +43,7 @@ mod formats;
 mod fulltext;
 mod graph_runs;
 mod information;
+mod host_plugins;
 mod jobs;
 mod memory;
 mod settings;
@@ -158,6 +159,7 @@ pub(crate) fn builtin() -> SystemTables {
         Arc::new(users::Users),
         Arc::new(memory::MemoryReservations),
         Arc::new(jobs::Jobs),
+        Arc::new(host_plugins::HostPlugins),
         Arc::new(graph_runs::GraphAlgoRuns),
         Arc::new(files::Files),
         Arc::new(formats::FileFormats),
