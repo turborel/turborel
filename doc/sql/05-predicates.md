@@ -492,7 +492,7 @@ SELECT N FROM ORDERS WHERE DEREF(WHAT) IS OF (ONLY ITEM);
 
 ## DOCUMENT and CONTENT
 
-`x IS DOCUMENT` is true if the [XML value](16-xml.md) x is a document: one
+`x IS DOCUMENT` is true if the [XML value](19-xml.md) x is a document: one
 document node whose children are one element, with comments and
 processing instructions beside it. `x IS CONTENT` is true if x is one
 document node, of any children. Each is unknown if x is null, and takes

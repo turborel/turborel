@@ -117,8 +117,20 @@ fn a_type_is_registered_once_by_its_name() {
     }
     db.register_type(Box::new(Ident)).unwrap();
     assert_eq!(db.register_type(Box::new(Named("IDENT", None))).err().map(|e| e.code), Some(Code::Api), "twice");
-    // Beside the built-in full-text types (RULES.md D87) and VECTOR.
-    assert_eq!(db.types().unwrap().names().collect::<Vec<_>>(), ["FT_PATTERN", "FULLTEXT", "IDENT", "VECTOR"]);
+    // Beside the built-in full-text types (RULES.md D87), VECTOR (D93), the
+    // geometry types (D120), the thirteen linear referencing
+    // types of SQL/MM Spatial §15, ST_TINELEMENT, and its seven other types
+    // of §14, §16 and §17 (D123), and the twelve names of Simple feature
+    // access for geometry types and its three text types (D136).
+    let types = db.types().unwrap();
+    let names: Vec<_> = types.names().filter(|n| !n.starts_with("ST_") && *n != "GEOMETRY").collect();
+    let simple = ["CURVE", "GEOMCOLLECTION", "LINESTRING", "MULTICURVE", "MULTILINESTRING", "MULTIPOINT", "MULTIPOLYGON"];
+    let more = ["MULTISURFACE", "POINT", "POLYGON", "POLYHEDSURFACE", "SURFACE"];
+    let others: Vec<_> = names.iter().filter(|n| !simple.contains(n) && !more.contains(n)).collect();
+    let text = [&"ANNOTATION_TEXT", &"ANNOTATION_TEXT_ELEMENT", &"ANNOTATION_TEXT_ELEMENT_ARRAY"];
+    assert_eq!(others, [text.as_slice(), &[&"FT_PATTERN", &"FULLTEXT", &"IDENT", &"VECTOR"]].concat());
+    assert_eq!(names.len(), others.len() + simple.len() + more.len());
+    assert_eq!(types.names().filter(|n| n.starts_with("ST_")).count(), 48);
 }
 
 /// Verifies: [EXTENSION] RULES.md D53: a column of a type beyond the

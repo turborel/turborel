@@ -3,7 +3,6 @@
 use super::{MAX_BODY, Reply, unframed};
 use turborel::bytes::Reader;
 use turborel::geometry::{GEOMETRY, Geometry};
-use turborel::value::SqlType;
 use turborel::value::types::parts;
 
 /// Verifies: [DESIGN] D45, D53, D82: an unaware client preserves a
@@ -19,7 +18,7 @@ fn opaque_geometry_round_trips_without_a_protocol_change() {
         let decoded = Reply::decode(tag, body).unwrap();
         let Reply::Rows(rows) = &decoded else { panic!("expected rows") };
         let (name, displayed, payload) = parts(&rows[0][0]).unwrap();
-        assert_eq!(name, "GEOMETRY");
+        assert_eq!(name, "ST_GEOMETRY");
         assert_eq!(displayed, text);
         let value = GEOMETRY.value(&mut Reader::received(&payload, "geometry")).unwrap();
         let restored = Geometry::from_value(&value).unwrap();

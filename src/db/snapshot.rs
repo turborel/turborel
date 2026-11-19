@@ -29,10 +29,11 @@
 //!           u32, each a module, in the order of their timestamps of
 //!           creation), structured types (count u32, each a type),
 //!           user-defined casts, orderings and transforms (likewise),
-//!           embedding models and vector pipelines (`catalog/embedding.rs`)
-//!           user-defined casts, orderings and transforms (likewise),
+//!           embedding models and vector pipelines (`catalog/embedding.rs`),
 //!           registered XML Schemas (count u32, each an XML Schema),
-//!           registered XQuery modules (count u32, each an XQuery module)
+//!           registered XQuery modules (count u32, each an XQuery module),
+//!           then the spatial reference systems defined and the geometry
+//!           columns registered (as `catalog/codec/spatial.rs` writes them)
 //! ```
 
 pub(super) mod xml_schemas;
@@ -111,6 +112,9 @@ pub(super) struct Snapshot {
     xml_schemas: Vec<XmlSchemaDesc>,
     /// The registered XQuery modules, by name.
     xquery_modules: Vec<XQueryModuleDesc>,
+    /// The spatial reference systems defined and the geometry columns
+    /// registered.
+    spatial: crate::catalog::SpatialCatalog,
 }
 
 impl Snapshot {
@@ -171,6 +175,7 @@ impl Snapshot {
             embeddings: st.catalog.embeddings().clone(),
             xml_schemas: st.catalog.xml_schemas().into_iter().cloned().collect(),
             xquery_modules: st.catalog.xquery_modules().into_iter().cloned().collect(),
+            spatial: st.catalog.spatial().clone(),
         })
     }
 
@@ -260,6 +265,7 @@ impl Snapshot {
         self.xml_schemas.iter().for_each(|x| put_xml_schema(out, x));
         out.put_u32(count(self.xquery_modules.len()));
         self.xquery_modules.iter().for_each(|m| put_xquery_module(out, m));
+        crate::catalog::codec::put_spatial(out, &self.spatial);
     }
 
     /// The snapshot `put` wrote.
@@ -299,6 +305,7 @@ impl Snapshot {
             embeddings: embeddings(r)?,
             xml_schemas: (0..r.u32()?).map(|_| xml_schema(r)).collect::<Result<_>>()?,
             xquery_modules: (0..r.u32()?).map(|_| xquery_module(r)).collect::<Result<_>>()?,
+            spatial: crate::catalog::codec::spatial(r)?,
         })
     }
 }
@@ -429,6 +436,7 @@ fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.routines.iter().cloned().for_each(|r| catalog.put_routine(r));
     snapshot.modules.iter().cloned().for_each(|m| catalog.put_module(m));
     catalog.set_embeddings(snapshot.embeddings.clone());
+    catalog.set_spatial(snapshot.spatial.clone());
 }
 
 /// [ISO/IEC 9075-4:2006 draft §12.8] Puts in `catalog` the declared tables

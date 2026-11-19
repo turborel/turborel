@@ -25,7 +25,7 @@ CREATE XQUERY MODULE: register an XQuery library module
 
 CREATE XQUERY MODULE registers an XQuery library module under a name in
 an SQL schema. A query of [XMLQUERY, XMLEXISTS or
-XMLTABLE](../16-xml.md#querying-xml), or another library module, imports
+XMLTABLE](../19-xml.md#querying-xml), or another library module, imports
 it by `import module`, and calls its functions and reads its variables.
 
 The text is a library module of XQuery 1.0: a module declaration, which
@@ -112,5 +112,5 @@ statement is turborel's. See [CONFORMANCE.md](../../../CONFORMANCE.md#sqlxml).
 
 ## SEE ALSO
 
-[ALTER XQUERY MODULE](alter-xquery-module.md), [DROP XQUERY MODULE](drop-xquery-module.md), [XML Values](../16-xml.md#xquery-modules),
+[ALTER XQUERY MODULE](alter-xquery-module.md), [DROP XQUERY MODULE](drop-xquery-module.md), [XML Values](../19-xml.md#xquery-modules),
 [GRANT](grant.md), [DROP SCHEMA](drop-schema.md)

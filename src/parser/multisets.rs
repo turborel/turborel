@@ -7,7 +7,9 @@
 //!
 //! \[DESIGN\] None of MULTISET, ELEMENT, MEMBER, SUBMULTISET, COLLECT,
 //! FUSION and INTERSECTION is a key word of SQL-92, so each is one only
-//! where what follows makes it so (RULES.md D80).
+//! where what follows makes it so (RULES.md D80). INTERSECTION of two
+//! arguments or more is a function's call, as Simple feature access's
+//! Intersection [OGC 06-104r4 §7.2.8] (RULES.md D136).
 
 use super::Parser;
 use crate::ast::{Composite, SetArg, SetFunctionSpecification, ValueExpression};
@@ -36,7 +38,7 @@ impl Parser {
                 composite(Composite::MultisetQuery(Box::new(self.subquery()?), false))
             }
             ELEMENT if opens(delim::LEFT_PAREN) => composite(Composite::MultisetElement(Box::new(self.multiset_operand_of()?))),
-            COLLECT | FUSION | INTERSECTION if opens(delim::LEFT_PAREN) => Some(ValueExpression::SetFunction(self.multiset_aggregate()?)),
+            COLLECT | FUSION | INTERSECTION if opens(delim::LEFT_PAREN) => Some(self.multiset_aggregate()?),
             _ => None,
         })
     }
@@ -73,7 +75,7 @@ impl Parser {
     /// [ISO/IEC 9075-2:2023 §10.9] COLLECT, FUSION or INTERSECTION (
     /// \[DISTINCT | ALL\] `<value expression>` ), a `<general set
     /// function>`.
-    fn multiset_aggregate(&mut self) -> Result<SetFunctionSpecification> {
+    fn multiset_aggregate(&mut self) -> Result<ValueExpression> {
         let at = self.here();
         let name = [COLLECT, FUSION].into_iter().find(|n| self.is_word(n)).unwrap_or(INTERSECTION);
         self.advance();
@@ -83,10 +85,14 @@ impl Parser {
         } else {
             // [§10.9 SR1] ALL, written or implicit.
             self.accept_kw(kw::ALL);
-            SetArg::All(Box::new(self.value_expression()?))
+            let first = self.value_expression()?;
+            if name == INTERSECTION && self.is_delim(delim::COMMA) {
+                return self.intersection_call(first, at);
+            }
+            SetArg::All(Box::new(first))
         };
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(SetFunctionSpecification {
+        let set = SetFunctionSpecification {
             name,
             arg,
             order_by: Vec::new(),
@@ -96,7 +102,19 @@ impl Parser {
             semantics: None,
             returning: None,
             at,
-        })
+        };
+        Ok(ValueExpression::SetFunction(set))
+    }
+
+    /// The rest of INTERSECTION ( `first` , ... ): a function's call, of
+    /// two arguments or more [OGC 06-104r4 §7.2.8].
+    fn intersection_call(&mut self, first: ValueExpression, at: usize) -> Result<ValueExpression> {
+        let mut args = vec![first];
+        while self.accept_delim(delim::COMMA) {
+            args.push(self.value_expression()?);
+        }
+        self.expect_delim(delim::RIGHT_PAREN)?;
+        Ok(ValueExpression::Call { schema: None, name: INTERSECTION.to_owned(), args, at, extension: self.extensions })
     }
 
     /// [ISO/IEC 9075-2:2023 §6.50] The rest of a `<multiset value

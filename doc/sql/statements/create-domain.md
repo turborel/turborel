@@ -41,7 +41,7 @@ CAST to a domain gives a value of its data type, which each of its
 constraints is checked of: one false of it refuses the CAST.
 
 A constraint's XML options, XMLNAMESPACES and XMLBINARY, are in scope of
-its condition, and kept with it on each column: see [XML Values](../16-xml.md#xml-options-of-a-scope).
+its condition, and kept with it on each column: see [XML Values](../19-xml.md#xml-options-of-a-scope).
 
 CREATE DOMAIN runs within the session's transaction: ROLLBACK undoes it.
 

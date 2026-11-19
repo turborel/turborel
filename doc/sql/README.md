@@ -21,5 +21,8 @@ The language, element by element, and each statement on a reference page of its 
 - [JSON_TABLE](13-json-table.md)
 - [Vectors](14-vectors.md) *(extension)*
 - [Hybrid Search](15-hybrid-search.md) *(extension)*
-- [XML Values](16-xml.md)
+- [Topology-Geometry](16-topology.md)
+- [Linear Referencing](17-linear-referencing.md)
+- [Spatial Networks](18-spatial-networks.md)
+- [XML Values](19-xml.md)
 - [Statements](statements/README.md)

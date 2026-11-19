@@ -276,14 +276,14 @@ ELEMENT_TYPES and FIELDS join to COLUMNS and DOMAINS by it.
 The views that describe a type, COLUMNS, DOMAINS, ELEMENT_TYPES, FIELDS,
 ATTRIBUTES, METHOD_SPECIFICATIONS, METHOD_SPECIFICATION_PARAMETERS,
 ROUTINES and PARAMETERS, have seven more columns, as SQL/XML (ISO/IEC
-9075-14) names them. Of an [XML type](16-xml.md), XML_PRIMARY_MODIFIER is
+9075-14) names them. Of an [XML type](19-xml.md), XML_PRIMARY_MODIFIER is
 DOCUMENT, CONTENT or SEQUENCE, and XML_SECONDARY_MODIFIER is UNTYPED or
 ANY, null of SEQUENCE, so a column declared XML alone shows SEQUENCE.
 XML_SCHEMA_CATALOG, XML_SCHEMA_SCHEMA, XML_SCHEMA_NAME,
 XML_SCHEMA_NAMESPACE and XML_SCHEMA_ELEMENT name the registered XML
 Schema of a type of XMLSCHEMA, and its namespace and element if the type
 names them, null of another XML type ([The XMLSCHEMA
-types](16-xml.md#the-xmlschema-types)). All seven are null of a type that is
+types](19-xml.md#the-xmlschema-types)). All seven are null of a type that is
 not XML. They follow the view's other columns, but in ROUTINES, where
 they follow DTD_IDENTIFIER.
 
@@ -368,10 +368,10 @@ of an XML type, which is passed by reference, and null of another.
 ROUTINES and METHOD_SPECIFICATIONS have the seven XML columns of a result
 cast's type too, named RESULT_CAST_XML_PRIMARY_MODIFIER and so on, before
 those twelve in ROUTINES, and last in METHOD_SPECIFICATIONS; null, as
-there is none. [XML Values](16-xml.md#the-type) has an example.
+there is none. [XML Values](19-xml.md#the-type) has an example.
 
 Three views of SQL/XML describe the registered XML Schemas the user, PUBLIC
-or an enabled role holds USAGE on ([XML Values](16-xml.md#registered-xml-schemas)),
+or an enabled role holds USAGE on ([XML Values](19-xml.md#registered-xml-schemas)),
 the permanently registered INFORMATION_SCHEMA.XS, XSI and SQLXML among
 them, which every user does:
 

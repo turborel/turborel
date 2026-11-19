@@ -58,7 +58,7 @@ parameters or other variables.
 DECLARE's XML options, XMLNAMESPACES and XMLBINARY, first of all, are
 in scope of all it holds, a compound statement within it too, whose
 own are more inner, and a statement's own WITH more inner still: see
-[XML Values](../16-xml.md#xml-options-of-a-scope).
+[XML Values](../19-xml.md#xml-options-of-a-scope).
 
 A variable is named in any value, condition or query within, and
 assigned by [SET](set-variable.md), SELECT INTO, FETCH INTO and GET

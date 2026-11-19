@@ -18,10 +18,6 @@ fn physical(p: &Prepared) -> String {
 
 fn spatial_table() -> (Database, Session) {
     let db = Database::new();
-    db.register_type(Box::new(crate::geometry::GeometryType)).unwrap();
-    for function in crate::geometry::FUNCTIONS {
-        db.register_scalar_function(Box::new(function)).unwrap();
-    }
     db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE P (ID INTEGER, G GEOMETRY(0))").unwrap();
     let s = db.session("A");

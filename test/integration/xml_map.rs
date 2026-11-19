@@ -441,9 +441,10 @@ fn schemas_of_visible_tables_4_10_8() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §9.15, §9.16,
 /// §9.17] CATALOG: the catalog's element of each XML visible schema's,
-/// in order of name, SQL/MM Full-Text's FT_INFORMATION_SCHEMA and the
-/// Information Schema among them; the schema document of the catalog's
-/// type, of all the schemas.
+/// in order of name, SQL/MM Full-Text's FT_INFORMATION_SCHEMA, the
+/// Information Schema, Simple feature access's SF_INFORMTN_SCHEMA and
+/// SQL/MM Spatial's ST_INFORMTN_SCHEMA among them; the schema document of
+/// the catalog's type, of all the schemas.
 #[test]
 fn the_catalog_9_17() {
     let db = mapped();
@@ -452,9 +453,11 @@ fn the_catalog_9_17() {
     let t = "<T><row><K>1</K><S>a&lt;b</S><B>0FB7</B><X><p/></X></row><row><K>2</K></row></T>";
     assert!(data.starts_with(&format!("<TURBOREL {XSI}><A>{t}</A><FT_INFORMATION_SCHEMA>")), "{data}");
     assert!(data.contains("</FT_INFORMATION_SCHEMA><INFORMATION_SCHEMA>"), "{data}");
-    assert!(data.ends_with("</INFORMATION_SCHEMA></TURBOREL>"));
+    assert!(data.contains("</INFORMATION_SCHEMA><SF_INFORMTN_SCHEMA>"), "{data}");
+    assert!(data.contains("</SF_INFORMTN_SCHEMA><ST_INFORMTN_SCHEMA>"), "{data}");
+    assert!(data.ends_with("</ST_INFORMTN_SCHEMA></TURBOREL>"));
     let schema = text(&a, "XMLMAP(CATALOG METADATA)");
-    let catalog = r#"<xs:complexType name="CatalogType.TURBOREL"><xs:all><xs:element name="A" type="SchemaType.TURBOREL.A"/><xs:element name="FT_INFORMATION_SCHEMA" type="SchemaType.TURBOREL.FT_INFORMATION_SCHEMA"/><xs:element name="INFORMATION_SCHEMA" type="SchemaType.TURBOREL.INFORMATION_SCHEMA"/></xs:all></xs:complexType><xs:element name="TURBOREL" type="CatalogType.TURBOREL"/></xs:schema>"#;
+    let catalog = r#"<xs:complexType name="CatalogType.TURBOREL"><xs:all><xs:element name="A" type="SchemaType.TURBOREL.A"/><xs:element name="FT_INFORMATION_SCHEMA" type="SchemaType.TURBOREL.FT_INFORMATION_SCHEMA"/><xs:element name="INFORMATION_SCHEMA" type="SchemaType.TURBOREL.INFORMATION_SCHEMA"/><xs:element name="SF_INFORMTN_SCHEMA" type="SchemaType.TURBOREL.SF_INFORMTN_SCHEMA"/><xs:element name="ST_INFORMTN_SCHEMA" type="SchemaType.TURBOREL.ST_INFORMTN_SCHEMA"/></xs:all></xs:complexType><xs:element name="TURBOREL" type="CatalogType.TURBOREL"/></xs:schema>"#;
     assert!(schema.ends_with(catalog), "{schema}");
     let information = text(&a, "XMLMAP(SCHEMA INFORMATION_SCHEMA)");
     assert!(

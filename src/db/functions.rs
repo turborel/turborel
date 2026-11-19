@@ -7,6 +7,7 @@ use std::sync::Arc;
 use super::Database;
 use crate::diagnostics::Extension;
 use crate::error::Result;
+use crate::functions::builtin::{Procedure, TableFunction};
 use crate::functions::{AggregateFunction, ScalarFunction};
 use crate::xquery::XQueryFunction;
 
@@ -71,5 +72,30 @@ impl Database {
             st.xquery_functions.add(Arc::clone(&f))
         });
         self.registered((Extension::XQueryFunction, &name), done.and_then(|()| self.tell_plugin(f.configurable())))
+    }
+
+    /// \[EXTENSION\] Register a table function written in Rust, invoked
+    /// as `TABLE(f(args))` in a FROM clause (`functions/builtin.rs`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a table function of its name is registered.
+    pub fn register_table_function(&self, f: Box<dyn TableFunction>) -> Result<()> {
+        let (name, f): (String, Arc<dyn TableFunction>) = (f.name().to_owned(), Arc::from(f));
+        let done = self.change(|st| st.functions.add_table(Arc::clone(&f)));
+        self.registered((Extension::Function, &name), done)
+    }
+
+    /// \[EXTENSION\] Register a procedure written in Rust, invoked by
+    /// CALL of its name, unqualified, in the caller's transaction
+    /// (`functions/builtin.rs`).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a procedure of its name is registered.
+    pub fn register_procedure(&self, p: Box<dyn Procedure>) -> Result<()> {
+        let (name, p): (String, Arc<dyn Procedure>) = (p.name().to_owned(), Arc::from(p));
+        let done = self.change(|st| st.functions.add_procedure(Arc::clone(&p)));
+        self.registered((Extension::Function, &name), done)
     }
 }

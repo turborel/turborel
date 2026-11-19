@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use super::entries::{Reading, entry_row};
+use super::read::Asked;
 use super::{RowIter, broken, execute, failed, sort};
 use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
@@ -125,7 +126,7 @@ pub(super) fn indexed(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
     }
     let width = covering.then(|| db.catalog.table(&table).map(|t| t.columns.len())).flatten();
     match probe_index(db, &table, &index, &probe, reverse) {
-        Ok(Found { storage, ix, entries, projection }) => match storage.read_by_condition(tx, &asked(&ix, probe)) {
+        Ok(Found { storage, ix, entries, projection, read }) => match read.record(&*storage, tx) {
             Ok(()) => {
                 let mut reading = Reading::of(&ix, Some(&needed), projection);
                 let rows = checked(entries, db.tx.stop_of(tx)).filter_map(move |entry| {
@@ -151,9 +152,12 @@ pub(super) struct Found {
     pub(super) entries: IndexEntries,
     /// Present only when entries contain projections of the original keys.
     pub(super) projection: Option<Arc<dyn KeyProjection>>,
+    /// What the probe read, which callers record before taking an entry.
+    pub(super) read: Asked,
 }
 
-/// What an engine is told a probe of `ix` reads. A key by a sort key is no
+/// What an engine is told a probe of `ix` reads, but for a region an index
+/// names (`read.rs`). A key by a sort key is no
 /// value of its columns, so the probe cannot say which rows it chose, and
 /// the engine is told every row with a key: never narrower than the index,
 /// so it may refuse more commits, and never fewer (RULES.md D60).
@@ -180,8 +184,9 @@ pub(super) fn probe_index(db: &State, table: &QualifiedName, index: &str, probe:
     let order = if reverse { KeyOrder::Descending } else { KeyOrder::Ascending };
     let index = db.index_of(index)?;
     let projection = index.key_projection();
+    let read = Asked::of(&**index, &ix, probe);
     let entries = Arc::clone(index).search(probe, order);
-    Ok(Found { storage, ix, entries, projection })
+    Ok(Found { storage, ix, entries, projection, read })
 }
 
 // Unit tests: located reads (RULES.md R-TEST-1).

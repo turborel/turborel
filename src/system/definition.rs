@@ -242,7 +242,7 @@ pub(super) fn objects(seen: &Seen<'_>) -> Result<Vec<Object>> {
     let mut system: Vec<Object> = st
         .system
         .values()
-        .filter(|t| t.schema() != DEFINITION_SCHEMA)
+        .filter(|t| t.schema() != DEFINITION_SCHEMA && t.schema() != super::ST_DEFINITION_SCHEMA)
         .map(|t| {
             let desc = desc_of(&**t);
             Object { name: desc.name, view: false, columns: desc.columns }
@@ -251,7 +251,7 @@ pub(super) fn objects(seen: &Seen<'_>) -> Result<Vec<Object>> {
     system.sort_by(|a, b| (&a.name.auth, &a.name.ident).cmp(&(&b.name.auth, &b.name.ident)));
     let mut all: Vec<Object> = tables.chain(views).chain(system).collect();
     for (v, columns) in super::information::views().iter().zip(information_columns(seen)?) {
-        all.push(Object { name: information(v.name), view: true, columns });
+        all.push(Object { name: super::spatial::name_of(v), view: true, columns });
     }
     Ok(all)
 }
@@ -273,10 +273,12 @@ fn information_columns(seen: &Seen<'_>) -> Result<Vec<Vec<ColumnDesc>>> {
 }
 
 /// [ISO/IEC 9075:1992 §21.3.4] Every schema: the catalog's, in the order
-/// created, then the system tables', in order of name.
+/// created, then the system tables', ST_INFORMTN_SCHEMA and
+/// SF_INFORMTN_SCHEMA, in order of name.
 pub(super) fn schemas(seen: &Seen<'_>) -> Vec<String> {
     let mut all: Vec<String> = seen.state.catalog.schemas().into_iter().map(str::to_owned).collect();
-    let mut system: Vec<String> = seen.state.system.keys().map(|t| t.auth.clone()).filter(|s| !all.contains(s)).collect();
+    let views = [super::ST_INFORMTN_SCHEMA, super::SF_INFORMTN_SCHEMA].map(str::to_owned);
+    let mut system: Vec<String> = seen.state.system.keys().map(|t| t.auth.clone()).chain(views).filter(|s| !all.contains(s)).collect();
     system.sort_unstable();
     system.dedup();
     all.extend(system);
@@ -467,7 +469,7 @@ fn views(seen: &Seen<'_>) -> Vec<Row> {
         })
         .collect();
     for v in super::information::views() {
-        rows.push([ids(&catalog, &information(v.name)).to_vec(), vec![long(v.query), text("NONE"), yes(false)]].concat());
+        rows.push([ids(&catalog, &super::spatial::name_of(v)).to_vec(), vec![long(v.query), text("NONE"), yes(false)]].concat());
     }
     rows
 }

@@ -22,8 +22,8 @@ Then connect at that socket:
 $ turborel --socket /run/turborel/socket -U ann -W
 password:
 turborel 0.0.0 (alpha), the command-line client
-Copyright 2026, Turborel contributors.
-Distributed under the BSD 2-Clause License.
+Copyright 2026, Turborel Inc.
+Distributed under the BSD-2-Clause Plus Patent License.
 
 Connected to turborel 0.0.0 (alpha) at the socket /run/turborel/socket, as ANN.
 End each statement with a semicolon; end of input (Ctrl-D) quits.

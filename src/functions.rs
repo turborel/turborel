@@ -27,6 +27,7 @@ mod any_value;
 pub use any_value::ANY_VALUE;
 pub(crate) use any_value::GroupValue;
 mod arrays;
+pub mod builtin;
 pub use arrays::{
     ARRAY_AGG, ARRAY_MAX_CARDINALITY, ArrayAggregate, ArrayConcatenation, ArrayOf, AssignElement, CARDINALITY, CardinalityOf, ElementOf,
     TRIM_ARRAY, TrimArrayOf,
@@ -38,8 +39,10 @@ use count::Count;
 mod distribution;
 pub use distribution::{FRACTION, InverseDistribution, PERCENTILE_CONT, PERCENTILE_DISC, Picked, picked, picked_value};
 mod extremes;
+mod family;
 pub use extremes::CollatedExtreme;
 use extremes::Extreme;
+pub use family::{FamilySpecificType, FamilyTreat, FamilyTypeTest, below};
 mod floats;
 mod formatted;
 pub(crate) use formatted::json_datetime_cast;
@@ -304,6 +307,19 @@ pub trait ScalarFunction: Send + Sync {
     fn appended_query(&self, _constants: &[Option<&Value>]) -> Option<AppendedQuery> {
         None
     }
+    /// \[EXTENSION\] As `appended_query`, given too the types of the
+    /// call's arguments and the catalog it is bound in, so a query may
+    /// read the tables the catalog registers, as SQL/MM Spatial's linear
+    /// referencing reads the linear elements of the columns ST_LR_COLUMNS
+    /// lists (`spatial/lr/sql/catalog.rs`). By default `appended_query`.
+    fn catalog_query(
+        &self,
+        constants: &[Option<&Value>],
+        _types: &[DataType],
+        _catalog: &dyn crate::catalog::Catalog,
+    ) -> Option<AppendedQuery> {
+        self.appended_query(constants)
+    }
     /// \[EXTENSION\] Whether the binder gives a call, before any appended
     /// query (`appended_query`), the name of the index that ranks the column
     /// its first argument reads, if it reads a base table's column one does:
@@ -321,10 +337,10 @@ pub trait ScalarFunction: Send + Sync {
     fn ranks(&self) -> bool {
         false
     }
-    /// \[EXTENSION\] Whether a call reads what its statement holds beside
-    /// its arguments (`CallContext`), so it is evaluated a row at a time
-    /// by `call_in`, never by a batch. False by default.
-    fn uses_context(&self) -> bool {
+    /// \[EXTENSION\] Whether a call of `arity` arguments reads what its
+    /// statement holds beside them (`CallContext`), so it is evaluated a
+    /// row at a time by `call_in`, never by a batch. False by default.
+    fn uses_context(&self, _arity: usize) -> bool {
         false
     }
     /// A call of `args` in the statement `cx` gives (`uses_context`). By

@@ -218,7 +218,7 @@ impl ScalarFunction for Contains {
         true
     }
 
-    fn uses_context(&self) -> bool {
+    fn uses_context(&self, _arity: usize) -> bool {
         true
     }
 
@@ -318,7 +318,7 @@ impl ScalarFunction for Rank {
         true
     }
 
-    fn uses_context(&self) -> bool {
+    fn uses_context(&self, _arity: usize) -> bool {
         true
     }
 

@@ -91,7 +91,7 @@ columns. SELECT on each table the query reads.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist or is read-only; a column listed is not of it, or is listed twice; the query's columns are not as many as those inserted into, or a value is not assignable to its column; WITH's XML options break a rule of [XML Values](../16-xml.md#xml-options-of-a-scope) |
+| 2A000 | -103 | The table does not exist or is read-only; a column listed is not of it, or is listed twice; the query's columns are not as many as those inserted into, or a value is not assignable to its column; WITH's XML options break a rule of [XML Values](../19-xml.md#xml-options-of-a-scope) |
 | 2A000 | -104 | Its user lacks a privilege it needs |
 | 23000 | -201 | A row breaks a constraint: NOT NULL, UNIQUE, PRIMARY KEY, a foreign key or a CHECK |
 | 44000 | -201 | A row inserted through a view WITH CHECK OPTION is not a row of the view |

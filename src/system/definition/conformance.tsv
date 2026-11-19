@@ -224,13 +224,13 @@ FEATURE	F865	 	Dynamic offset row count in OFFSET	 	YES		CONFORMANCE.md, ORDER B
 FEATURE	F866	 	FETCH FIRST clause: PERCENT option	 	YES		CONFORMANCE.md, ORDER BY, OFFSET and FETCH FIRST
 FEATURE	F867	 	FETCH FIRST clause: WITH TIES option	 	YES		CONFORMANCE.md, ORDER BY, OFFSET and FETCH FIRST
 FEATURE	F868	 	ORDER BY in grouped table	 	YES		CONFORMANCE.md, Sort keys
-FEATURE	P001	 	Stored modules	 	YES		CONFORMANCE.md, SQL/PSM
-FEATURE	P002	 	Computational completeness	 	YES		CONFORMANCE.md, SQL/PSM
-FEATURE	P003	 	Information Schema views	 	YES		CONFORMANCE.md, SQL/PSM
-FEATURE	P004	 	Extended CASE statement	 	YES		CONFORMANCE.md, SQL/PSM
-FEATURE	P005	 	Qualified SQL variable references	 	YES		CONFORMANCE.md, SQL/PSM
-FEATURE	P006	 	Multiple assignment	 	YES		CONFORMANCE.md, SQL/PSM
-FEATURE	P007	 	Enhanced diagnostics management	 	YES		CONFORMANCE.md, SQL/PSM
+FEATURE	P001	 	Stored modules	 	NO		
+FEATURE	P002	 	Computational completeness	 	NO		
+FEATURE	P003	 	Information Schema views	 	NO		
+FEATURE	P004	 	Extended CASE statement	 	NO		
+FEATURE	P005	 	Qualified SQL variable references	 	NO		
+FEATURE	P006	 	Multiple assignment	 	NO		
+FEATURE	P007	 	Enhanced diagnostics management	 	NO		
 FEATURE	P008	 	Comma-separated predicates in a CASE statement	 	YES		CONFORMANCE.md, SQL/PSM
 FEATURE	R010	 	Row pattern recognition: FROM clause	 	YES		CONFORMANCE.md, Row pattern recognition
 FEATURE	R020	 	Row pattern recognition: WINDOW clause	 	YES		CONFORMANCE.md, Row pattern recognition
@@ -732,8 +732,8 @@ SUBFEATURE	F311	04	Schema definition statement	CREATE VIEW: WITH CHECK OPTION	NO
 SUBFEATURE	F311	05	Schema definition statement	GRANT statement	NO		
 SUBFEATURE	F501	01	Features and conformance views	SQL_FEATURES view	YES		CONFORMANCE.md, Transactions, sessions and the Information Schema
 SUBFEATURE	F501	02	Features and conformance views	SQL_SIZING view	YES		CONFORMANCE.md, Transactions, sessions and the Information Schema
-SUBFEATURE	P001	01	Stored modules	<SQL-server module definition>	YES		CONFORMANCE.md, SQL/PSM
-SUBFEATURE	P001	02	Stored modules	<drop module statement>	YES		CONFORMANCE.md, SQL/PSM
+SUBFEATURE	P001	01	Stored modules	<SQL-server module definition>	NO		
+SUBFEATURE	P001	02	Stored modules	<drop module statement>	NO		
 SUBFEATURE	P002	01	Computational completeness	<compound statement>	YES		CONFORMANCE.md, SQL/PSM
 SUBFEATURE	P002	02	Computational completeness	<handler declaration>	YES		CONFORMANCE.md, SQL/PSM
 SUBFEATURE	P002	03	Computational completeness	<condition declaration>	YES		CONFORMANCE.md, SQL/PSM
@@ -749,11 +749,11 @@ SUBFEATURE	P002	12	Computational completeness	<while statement>	YES		CONFORMANCE
 SUBFEATURE	P002	13	Computational completeness	<for statement>	YES		CONFORMANCE.md, SQL/PSM
 SUBFEATURE	P002	14	Computational completeness	<signal statement>	YES		CONFORMANCE.md, SQL/PSM
 SUBFEATURE	P002	15	Computational completeness	<resignal statement>	YES		CONFORMANCE.md, SQL/PSM
-SUBFEATURE	P002	16	Computational completeness	<control statement>s as the SQL-statement of an externally-invoked procedure	YES		CONFORMANCE.md, SQL/PSM
-SUBFEATURE	P003	01	Information Schema views	MODULES view	YES		CONFORMANCE.md, SQL/PSM
-SUBFEATURE	P003	02	Information Schema views	MODULE_TABLE_USAGE view	YES		CONFORMANCE.md, SQL/PSM
-SUBFEATURE	P003	03	Information Schema views	MODULE_COLUMN_USAGE view	YES		CONFORMANCE.md, SQL/PSM
-SUBFEATURE	P003	04	Information Schema views	MODULE_PRIVILEGES view	YES		CONFORMANCE.md, SQL/PSM
+SUBFEATURE	P002	16	Computational completeness	<control statement>s as the SQL-statement of an externally-invoked procedure	NO		
+SUBFEATURE	P003	01	Information Schema views	MODULES view	NO		
+SUBFEATURE	P003	02	Information Schema views	MODULE_TABLE_USAGE view	NO		
+SUBFEATURE	P003	03	Information Schema views	MODULE_COLUMN_USAGE view	NO		
+SUBFEATURE	P003	04	Information Schema views	MODULE_PRIVILEGES view	NO		
 SUBFEATURE	S011	01	Distinct data types	USER_DEFINED_TYPES view	YES		CONFORMANCE.md, Distinct types
 SUBFEATURE	T321	01	Basic SQL-invoked routines	User-defined functions with no overloading	YES		CONFORMANCE.md, SQL-invoked routines
 SUBFEATURE	T321	02	Basic SQL-invoked routines	User-defined stored procedures with no overloading	YES		CONFORMANCE.md, SQL-invoked routines

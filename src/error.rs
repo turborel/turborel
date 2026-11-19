@@ -3,12 +3,14 @@
 //! [X3.135-1986 §7.3 GR3a]; 0 is success. Each also has an SQLSTATE
 //! (`state.rs`).
 
+mod spatial;
 mod state;
 mod subject;
 mod warnings;
 
 use std::fmt;
 
+pub use spatial::SPATIAL_STATES;
 pub use state::SqlState;
 pub use subject::{RoutineSubject, Signalled, Subject};
 pub use warnings::Warnings;

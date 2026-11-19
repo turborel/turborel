@@ -8,7 +8,7 @@ use crate::catalog::QualifiedName;
 use crate::db::Database;
 use crate::exec::execute;
 use crate::functions::ScalarRef;
-use crate::geometry::{Geometry, GeometryFunction, GeometryType};
+use crate::geometry::{Geometry, GeometryFunction};
 use crate::index::{Entries, Index, Key, KeyOrder, KeyProjection, Predicate, Probe};
 use crate::logical::{Cond, Expr};
 use crate::memory::MemoryBudget;
@@ -37,6 +37,9 @@ impl Index for Counted {
     fn key_projection(&self) -> Option<Arc<dyn KeyProjection>> {
         self.inner.key_projection()
     }
+    fn read_region(&self, probe: &Probe) -> Option<Vec<crate::spatial::Bounds>> {
+        self.inner.read_region(probe)
+    }
     fn estimate(&self, probe: &Probe) -> Option<usize> {
         self.estimates_made.fetch_add(1, Ordering::Relaxed);
         self.estimates.then(|| self.inner.estimate(probe)).flatten()
@@ -57,7 +60,6 @@ fn populated() -> Arc<State> {
 
 fn populated_rows(count: i32) -> Arc<State> {
     let db = Database::new();
-    db.register_type(Box::new(GeometryType)).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE POINTS (ID INTEGER, G GEOMETRY(0))").unwrap();
     let a = db.session("A");
     let insert = a.prepare("INSERT INTO POINTS VALUES (?, ?)").unwrap();
@@ -78,7 +80,7 @@ fn plan(regions: Vec<Row>, argument: usize) -> Plan {
         vec![Expr::Column(1), Expr::Column(width.saturating_add(1))]
     };
     Plan::IndexJoin {
-        outer: false,
+        outer: crate::physical::Preserved::Inner,
         spatial: true,
         left: Box::new(Plan::Values {
             rows: regions.into_iter().map(|row| row.into_iter().map(Expr::Const).collect()).collect(),
@@ -90,11 +92,12 @@ fn plan(regions: Vec<Row>, argument: usize) -> Plan {
         probe: JoinProbe::Predicate {
             predicate: Box::new(Predicate { function: function.clone(), column: 0, argument: Some(argument) }),
             outer: 1,
+            beside: None,
         },
         cond: Some(Cond::Compare(Expr::Call(function, args), CompOp::Eq, Expr::Const(number(1)))),
         width: 2,
         columns: vec![0, 1],
-        detail: String::new(),
+        detail: "".into(),
         est: 100.0,
         cost: 1000.0,
         located: false,

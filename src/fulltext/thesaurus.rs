@@ -59,7 +59,7 @@ pub fn relations_query(constant: Option<&Value>) -> Option<AppendedQuery> {
         return None;
     }
     let tables = TABLES.iter().map(|t| (SCHEMA.to_owned(), (*t).to_owned())).collect();
-    Some(AppendedQuery { query: query(), tables })
+    Some(AppendedQuery { query: query(), tables, columns: Vec::new() })
 }
 
 /// The text of the query of the relations: one column, a row of each

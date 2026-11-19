@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::error::{Code, Result, SqlError};
 use crate::geometry::MAX_PARTS;
-use crate::geometry::relate::{Location, Ray, segments};
+use crate::geometry::crossing::{Location, Ray, segments};
 use crate::geometry::shape::{MULTIPOLYGON, Point, Shape};
 use crate::memory::{MemoryBudget, Reservation};
 

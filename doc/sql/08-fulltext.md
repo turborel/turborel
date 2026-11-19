@@ -639,7 +639,10 @@ SELECT SCHEMA_NAME, SCHEMA_OWNER, DEFAULT_CHARACTER_SET_NAME FROM FT_INFORMATION
  DEFINITION_SCHEMA                                            | DEFINITION_SCHEMA                                            | SQL_TEXT
  FT_INFORMATION_SCHEMA                                        | FT_INFORMATION_SCHEMA                                        | SQL_TEXT
  INFORMATION_SCHEMA                                           | INFORMATION_SCHEMA                                           | SQL_TEXT
-(4 rows)
+ SF_INFORMTN_SCHEMA                                           | SF_INFORMTN_SCHEMA                                           | SQL_TEXT
+ ST_DEFINITION_SCHEMA                                         | ST_DEFINITION_SCHEMA                                         | SQL_TEXT
+ ST_INFORMTN_SCHEMA                                           | ST_INFORMTN_SCHEMA                                           | SQL_TEXT
+(7 rows)
 ```
 
 The maximum length of a pattern, FT_MaxPatternLength, is 32,767 too.

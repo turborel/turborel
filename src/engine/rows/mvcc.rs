@@ -27,7 +27,9 @@
 //! after *c* from a snapshot before *c*. A row read by id is matched by id.
 //! A read by condition, through a filtered scan or an index, is matched
 //! against the rows the writer changed, before and after each change, which
-//! catches phantoms. A scan with no condition counts as reading the whole
+//! catches phantoms. A read through a spatial index is matched by the
+//! envelopes of those rows' geometries against the region it read (RULES.md
+//! D134). A scan with no condition counts as reading the whole
 //! table. A transaction that wrote nothing commits at its snapshot and is
 //! never checked (`txn.rs`).
 //!
@@ -49,7 +51,8 @@
 //! What a transaction keeps stays bounded (RULES.md D38). Past
 //! TRANSACTIONS.TRACKED_ROWS rows or conditions, its reads count as reading
 //! the whole table and its validated writes as writing every row, which may
-//! refuse a commit it need not. Its changes and a commit's garbage spill
+//! refuse a commit it need not. Past as many envelopes, its regions merge
+//! into one rectangle of each column. Its changes and a commit's garbage spill
 //! past TRANSACTIONS.HELD_BYTES (`lists.rs`). Changed rows shrink to each
 //! column's least and greatest value past the same limit (`reads.rs`). A
 //! commit whose changes can't be read back counts as committed and is never
@@ -203,7 +206,9 @@ impl Validated {
             return reads.any();
         }
         !self.writes.is_empty()
-            && (reads.all || reads.rows.iter().any(|id| self.writes.contains(id)) || self.changed.matched_by(&reads.conditions))
+            && (reads.all
+                || reads.rows.iter().any(|id| self.writes.contains(id))
+                || self.changed.matched_by(&reads.conditions, &reads.regions))
     }
 }
 

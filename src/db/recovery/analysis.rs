@@ -51,6 +51,7 @@ impl Analysis {
             | Change::Drop { .. }
             | Change::AlterTable { .. }
             | Change::Defined { .. }
+            | Change::Spatial(_)
             | Change::Setting { .. }
             | Change::User { .. }
             | Change::Owner { .. }

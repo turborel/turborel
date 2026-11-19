@@ -275,7 +275,10 @@ pub(super) fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, fr
         TableReference::Unnest(u) => unnest_item(b, u, start, from).or_at(u.at)?,
         TableReference::Json(j) => super::json::json_table_item(b, j, start, from).or_at(j.at)?,
         TableReference::Recognized(r) => super::pattern::recognized(b, r, start).or_at(r.at)?,
-        TableReference::Polymorphic(p) => return super::ptf::ptf_reference(b, p, start, from),
+        TableReference::Polymorphic(p) => match super::builtin_table::builtin_item(b, p, start, from).or_at(p.at)? {
+            Some(item) => item,
+            None => return super::ptf::ptf_reference(b, p, start, from),
+        },
         TableReference::Hybrid(h) => super::hybrid_search::hybrid_item(b, h, start)?,
     };
     from.items.push(item);
@@ -298,7 +301,7 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
         return super::system_time::unversioned(t).map(|()| transition);
     }
     let cx = b.cx;
-    let name = qualify(&t.table, cx.schema);
+    let (name, correlation) = super::views::public_view(cx.db, &t.table, cx.schema).unwrap_or_else(|| (qualify(&t.table, cx.schema), None));
     let Named { desc, source } = named(cx.db, &name, Reader::of(&cx)).map_err(|e| SqlError { pos: None, ..e })?;
     if cx.purpose == Purpose::Constraint {
         // [ISO/IEC 9075:1992 §11.9 AR1] REFERENCES, not SELECT, for a
@@ -325,7 +328,7 @@ fn from_item(b: Bounds<'_>, t: &NamedTable, offset: usize) -> Result<FromItem> {
     Ok(FromItem {
         table: name,
         at: t.table.at,
-        correlation: t.correlation.clone(),
+        correlation: t.correlation.clone().or(correlation),
         desc,
         offset,
         source,

@@ -118,7 +118,7 @@ inserts, and SELECT on the source's tables.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist or is read-only; the source is a joined table, or exposes the target's name; a column is not of the table, or is named twice; the values are not as many as the columns, or one is not assignable to its column; a target column is named in the values; a set function is in a condition or a value; WITH's XML options break a rule of [XML Values](../16-xml.md#xml-options-of-a-scope) |
+| 2A000 | -103 | The table does not exist or is read-only; the source is a joined table, or exposes the target's name; a column is not of the table, or is named twice; the values are not as many as the columns, or one is not assignable to its column; a target column is named in the values; a set function is in a condition or a value; WITH's XML options break a rule of [XML Values](../19-xml.md#xml-options-of-a-scope) |
 | 2A000 | -104 | Its user lacks a privilege the statement needs |
 | 21000 | -811 | Two source rows a WHEN MATCHED clause is true of match one target row |
 | 23000 | -201 | A row as changed breaks a constraint |

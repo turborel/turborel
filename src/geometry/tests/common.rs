@@ -1,6 +1,6 @@
 //! Shared geometry fixtures for kernel and prepared-function unit tests.
 
-use crate::geometry::relate::segments;
+use crate::geometry::crossing::segments;
 use crate::geometry::shape::Point;
 
 /// A square with many collinear edges, retaining exact axis-aligned

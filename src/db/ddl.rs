@@ -41,7 +41,7 @@ use crate::exec::NoSubqueries;
 use crate::index::Index;
 use crate::log::record::Change;
 use crate::parser::Parser;
-use crate::settings::XQUERY_STATIC_TYPING;
+use crate::settings::{FUNCTION_CALLS, XQUERY_STATIC_TYPING};
 use crate::storage::TableStorage;
 use crate::txn::{LockMode, Timestamp, Txn};
 use crate::value::Value;
@@ -147,6 +147,13 @@ impl State {
                 let _typed = making_typed(*typed);
                 self.reschema((sql, owner, *now), engines, made, epochs)
             }
+            Change::Spatial(c) => {
+                let next = self.catalog.spatial().applied(c)?;
+                let mut catalog = self.catalog.duplicate();
+                catalog.set_spatial(next);
+                self.catalog = Arc::from(catalog);
+                Ok(Dropped::default())
+            }
             Change::Insert { .. }
             | Change::Update { .. }
             | Change::Delete { .. }
@@ -205,6 +212,7 @@ impl State {
                 | Change::Owner { .. }
                 | Change::RoleCreator { .. }
                 | Change::Sequence { .. }
+                | Change::Spatial(_)
                 | Change::Reconfiguration { .. } => Vec::new(),
             };
             for table in renewed {
@@ -258,6 +266,10 @@ impl Session {
         tx: &Txn,
         (table, action, text): (&TableName, &AlterAction, &str),
     ) -> Result<Completion> {
+        // Its own texts read again as the session read it, so a CHECK or
+        // a generation expression it adds takes calls of registered
+        // functions only as the session does (RULES.md D74).
+        let _calls = Parser::refusing_calls(text, st.settings.is_on(FUNCTION_CALLS));
         let schema = self.default_schema();
         let qn = qualify(table, &schema);
         // [AR1] only the owner of its schema alters a table.

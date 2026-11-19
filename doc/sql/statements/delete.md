@@ -46,7 +46,7 @@ its INSERT triggers running; the constraints judge it with the rest as
 the statement ends. Its row count is of the rows deleted.
 
 WITH's XML options, XMLNAMESPACES and XMLBINARY, are in scope of the
-whole statement, its search condition and subqueries too: see [XML Values](../16-xml.md#xml-options-of-a-scope).
+whole statement, its search condition and subqueries too: see [XML Values](../19-xml.md#xml-options-of-a-scope).
 
 The positioned form, WHERE CURRENT OF a cursor, runs only in a program
 that embeds turborel; see [DECLARE CURSOR](declare-cursor.md), and, of a
@@ -76,7 +76,7 @@ DELETE on the table. SELECT on each other table a subquery reads.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist or is read-only; the search condition has a set function outside a subquery; a rule of FOR PORTION OF is broken (rule 5); WITH's XML options break a rule of [XML Values](../16-xml.md#xml-options-of-a-scope) |
+| 2A000 | -103 | The table does not exist or is read-only; the search condition has a set function outside a subquery; a rule of FOR PORTION OF is broken (rule 5); WITH's XML options break a rule of [XML Values](../19-xml.md#xml-options-of-a-scope) |
 | 2A000 | -104 | Its user lacks DELETE on the table, or SELECT on a table read |
 | 23000 | -201 | A row deleted is referenced by a foreign key whose action refuses it, or a referential action breaks a constraint |
 | 2201H | -301 | A row of a system-time period begins after the transaction timestamp: another transaction changed it later |

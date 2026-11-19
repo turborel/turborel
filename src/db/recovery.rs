@@ -272,7 +272,7 @@ impl Database {
                 self.definition_at((lsn, tx), definition, replaying, report)?;
                 None
             }
-            definition @ (Change::Drop { .. } | Change::AlterTable { .. } | Change::Defined { .. }) => {
+            definition @ (Change::Drop { .. } | Change::AlterTable { .. } | Change::Defined { .. } | Change::Spatial(_)) => {
                 replaying.pending.entry(tx).or_default().push((lsn, definition));
                 None
             }
@@ -355,9 +355,8 @@ impl Database {
                 }
                 Change::AlterIndex { name, options } => st.replay_index_options(name, options.clone())?,
                 Change::DropIndex { name } => st.drop_index(name)?,
-                // As it was set: an engine registered later is found as the
-                // setting is used, and a plug-in's setting is kept until it
-                // is declared.
+                // As it was set: an engine registered later is found as the setting is used,
+                // and a plug-in's setting is kept until it is declared.
                 Change::Setting { name, value } => st.settings.set(name, value.as_ref())?,
                 Change::User { name, verifier } => st.users.replay_user(name, verifier.clone()),
                 Change::Owner { name } => st.users.replay_owner(name),
@@ -366,7 +365,9 @@ impl Database {
                 Change::Reconfiguration { .. } => {}
                 // [DESIGN] RULES.md D62: its counter goes on from there.
                 Change::Sequence { name, epoch, resume } => st.sequences.replay(name, *epoch, *resume)?,
-                Change::Drop { .. } | Change::AlterTable { .. } | Change::Defined { .. } => st.apply_change(change, None)?.discard(),
+                Change::Drop { .. } | Change::AlterTable { .. } | Change::Defined { .. } | Change::Spatial(_) => {
+                    st.apply_change(change, None)?.discard();
+                }
                 Change::Insert { .. }
                 | Change::Update { .. }
                 | Change::Delete { .. }

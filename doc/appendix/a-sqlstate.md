@@ -12,7 +12,9 @@ SQLCODE, a number. The client shows both of an error or a warning:
 An SQLSTATE is a class, its first two characters, and a subclass, the
 other three; subclass 000 is the class alone. Class 00 is success, 01 a
 warning, 02 no data; any other is an exception, the statement undone.
-The classes of the standard are of ISO 9075; class TB is turborel's own.
+The classes of the standard are of ISO 9075, and class 2FF of its SQL/MM
+parts, Full-Text and Spatial each giving its subclasses a meaning of
+its own; class TB is turborel's own.
 
 | SQLSTATE | Condition |
 |---|---|
@@ -27,6 +29,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 01009 | Warning: search condition too long for the Information Schema |
 | 0100A | Warning: query expression too long for the Information Schema |
 | 01010 | Warning: column cannot be mapped: XMLMAP left out a column the user may read, whose type does not map to XML |
+| 01F01 | SQL/MM Spatial warning: invalid position: a method of a position given one outside the value, its result null |
 | 02000 | No data |
 | 07000 | Dynamic SQL error |
 | 07001 | Dynamic SQL error: the arguments do not match the dynamic parameters |
@@ -51,6 +54,7 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 09000 | Triggered action exception: a trigger's action failed; the message gives the trigger and the SQLSTATE and message of its failure |
 | 0A000 | Feature not supported: valid SQL Turborel does not process |
 | 0A001 | Feature not supported: multiple server transactions |
+| 0D000 | Invalid target type specification: TREAT of a value whose most specific type is not the target's or below it |
 | 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
 | 0N002 | SQL/XML mapping error: invalid XML character: XMLCAST, XMLELEMENT, XMLFOREST, XMLPI or XMLTEXT of a string holding a character no XML 1.1 character |
 | 0W000 | Prohibited statement encountered during trigger execution: a savepoint statement in a procedure a trigger's action calls; told in the message of the 09000 it raises |
@@ -144,8 +148,47 @@ The classes of the standard are of ISO 9075; class TB is turborel's own.
 | 2E000 | Invalid connection name |
 | 2F005 | SQL routine exception: function executed no return statement, of a function whose body is no RETURN |
 | 2FF01 | SQL/MM Full-Text exception: invalid search expression, a pattern not of the [pattern language](../sql/09-fulltext-patterns.md) |
-| 2FF02 | SQL/MM Full-Text exception: invalid language specification, a language null, empty or unknown |
-| 2FF03 | SQL/MM Full-Text exception: effectively empty search expression, every word of the pattern a stop word |
+| 2FF02 | SQL/MM Full-Text exception: invalid language specification, a language null, empty or unknown; of a spatial routine, SQL/MM Spatial exception: invalid argument |
+| 2FF03 | SQL/MM Full-Text exception: effectively empty search expression, every word of the pattern a stop word; of a spatial routine, SQL/MM Spatial exception: null argument |
+| 2FF05 | SQL/MM Spatial exception: duplicate value: two rows of a shortest path's table of one identifier |
+| 2FF06 | SQL/MM Spatial exception: element is an empty set: a compound curve's or surface's part empty |
+| 2FF07 | SQL/MM Spatial exception: null exterior ring: a polygon's or a triangle's ring missing |
+| 2FF08 | SQL/MM Spatial exception: element is not a valid type: a value not of the type it is assigned or cast to, or a solid's shell of another type |
+| 2FF10 | SQL/MM Spatial exception: mixed spatial reference systems: a network's geometry of another SRID |
+| 2FF11 | SQL/MM Spatial exception: non-contiguous curves: a compound curve whose parts do not meet end to start |
+| 2FF18 | SQL/MM Spatial exception: point value not well formed: a coordinate not finite |
+| 2FF22 | SQL/MM Spatial exception: invalid well-known text representation, or a typed constructor's text of another type |
+| 2FF23 | SQL/MM Spatial exception: invalid well-known binary representation |
+| 2FF24 | SQL/MM Spatial exception: invalid GML representation, or a typed constructor's GML of another type |
+| 2FF25 | SQL/MM Spatial exception: mixed coordinate dimensions: parts of one value with and without Z or M |
+| 2FF31 | SQL/MM Spatial exception: empty network: a network checked has no node and no link |
+| 2FF33 | SQL/MM Spatial exception: end node not geometry end: a link's curve not ending at its end node's point |
+| 2FF38 | SQL/MM Spatial exception: link has null geometry: a link split by a point has no curve |
+| 2FF41 | SQL/MM Spatial exception: non-connected links: links healed that share no node |
+| 2FF42 | SQL/MM Spatial exception: non-empty view: a network filled that has nodes or links |
+| 2FF45 | SQL/MM Spatial exception: non-existent link |
+| 2FF46 | SQL/MM Spatial exception: non-existent node |
+| 2FF47 | SQL/MM Spatial exception: non-existent schema: a topology or network read that is not there |
+| 2FF48 | SQL/MM Spatial exception: non-existent view: a topology or network without one of its views |
+| 2FF49 | SQL/MM Spatial exception: not a logical link: a link split logically has a curve |
+| 2FF50 | SQL/MM Spatial exception: not isolated node: a node moved or removed that a link ends at |
+| 2FF53 | SQL/MM Spatial exception: other links connected: the node two healed links share ends another link |
+| 2FF55 | SQL/MM Spatial exception: point not on link: a split's point not within the link |
+| 2FF56 | SQL/MM Spatial exception: schema already exists: of ST_INITTOPONET |
+| 2FF57 | SQL/MM Spatial exception: start node not geometry start: a link's curve not starting at its start node's point |
+| 2FF58 | SQL/MM Spatial exception: null node geometry: a link's curve changed whose node has no point |
+| 2FF62 | SQL/MM Spatial exception: invalid topology name |
+| 2FF63 | SQL/MM Spatial exception: topology privilege denied |
+| 2FF64 | SQL/MM Spatial exception: invalid network name: a name that is no name or names no network |
+| 2FF65 | SQL/MM Spatial exception: network privilege denied |
+| 2FF74 | SQL/MM Spatial exception: invalid geometry: a TIN element's geometry not of the type its element type takes |
+| 2FF75 | SQL/MM Spatial exception: exterior ring not four points: a triangle's ring |
+| 2FF76 | SQL/MM Spatial exception: curve has multiple segments: ST_CENTER, ST_RADIUS or ST_BULGE of more than one arc |
+| 2FF77 | SQL/MM Spatial exception: exactly three points: a circle not of three points |
+| 2FF79 | SQL/MM Spatial exception: the given distance is longer than curve: ST_POINTATDISTANCE |
+| 2FF80 | SQL/MM Spatial exception: the point is not on the curve: ST_DISTANCETOPOINT |
+| 2FF84 | SQL/MM Spatial exception: missing measure values: a curve given by parameters with M but no measures, or measures without M |
+| 2FF98 | SQL/MM Spatial exception: null exterior shell: a solid's shell empty |
 | 2H000 | Invalid collation name |
 | 33000 | Invalid SQL descriptor name |
 | 34000 | Invalid cursor name: of a cursor allocated, or a positioned statement prepared |

@@ -11,7 +11,7 @@ use crate::ast::{RowValue, ValueExpression};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::logical::{Cond, Expr};
-use crate::value::datetime::{Datetime, Field, MAX_DISPLACEMENT, MAX_TIME_PRECISION, MIN_DISPLACEMENT};
+use crate::value::datetime::{Datetime, Field, MAX_DISPLACEMENT, MAX_TIME_PRECISION, MIN_DISPLACEMENT, displacement_range};
 use crate::value::interval::{MAX_LEADING_PRECISION, Qualifier, difference, minutes};
 use crate::value::{ArithOp, CompOp, DataType, MAX_EXACT_PRECISION, Spelled, Value};
 
@@ -86,8 +86,9 @@ impl ScalarFunction for AtZone {
     fn return_type(&self, args: &[DataType]) -> Result<DataType> {
         Ok(args.first().cloned().unwrap_or(DataType::Date))
     }
-    /// [GR2] null of a null displacement; [GR4b] 22009 of one out of
-    /// -12:59 to +13:00.
+    /// [GR2] null of a null displacement; 22009 of one out of
+    /// `MIN_DISPLACEMENT` to `MAX_DISPLACEMENT` [ISO/IEC 9075-2:2023 §6.42
+    /// GR5b ii 2 A].
     fn call(&self, args: &[Value]) -> Result<Value> {
         let zone = match args.get(1) {
             None => Some(self.local),
@@ -100,7 +101,7 @@ impl ScalarFunction for AtZone {
             None => fail_with(
                 Code::Data,
                 SqlState::INVALID_TIME_ZONE_DISPLACEMENT,
-                "[ISO/IEC 9075:1992 §6.14 GR4b] a time zone displacement is not from -12:59 to +13:00",
+                format!("[ISO/IEC 9075-2:2023 §6.42 GR5b ii 2 A] a time zone displacement is not {}", displacement_range()),
             ),
         }
     }
@@ -141,7 +142,8 @@ pub fn is_displacement(t: &DataType) -> bool {
 }
 
 /// The value of the time zone displacement `v`, an interval HOUR TO
-/// MINUTE, in minutes, if it is one from -12:59 to +13:00 [§16.5 GR1b].
+/// MINUTE, in minutes, if it is one from `MIN_DISPLACEMENT` to
+/// `MAX_DISPLACEMENT` [ISO/IEC 9075-2:2023 §19.4 GR1b].
 pub fn displacement_of(v: &Value) -> Option<i16> {
     let Value::Interval(i) = v else { return None };
     minutes(i).filter(|z| (MIN_DISPLACEMENT..=MAX_DISPLACEMENT).contains(z))

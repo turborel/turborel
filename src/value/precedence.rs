@@ -15,6 +15,7 @@
 //! list.
 
 use super::DataType;
+use super::types::family::family_of;
 
 /// The places in a type precedence list [ISO/IEC 9075-2:2023 §9.7]: the
 /// first, of the type's own designator, and those after it; no list here
@@ -74,10 +75,30 @@ pub fn position(p: &DataType, t: &DataType) -> Option<u8> {
         }
         // [SR4] a user-defined type's own name, as no distinct type has a
         // proper supertype; [SR19] a row type is no parameter's type.
-        DataType::Distinct(_) | DataType::Row(_) | DataType::Json | DataType::Extension(_) => (p == t).then_some(FIRST),
+        DataType::Distinct(_) | DataType::Row(_) | DataType::Json => (p == t).then_some(FIRST),
+        DataType::Extension(_) => extension(p, t),
         // [ISO/IEC 9075-14:2006 draft §10.4 SR1] XML, of every XML type.
         DataType::Xml(_) => matches!(t, DataType::Xml(_)).then_some(FIRST),
     }
+}
+
+/// \[EXTENSION\] [SR4] A type of a family built in, among its own type
+/// and its supertypes', the nearest first, whatever their parameters, as
+/// a structured type's (RULES.md D120); another extension
+/// type itself alone.
+fn extension(p: &DataType, t: &DataType) -> Option<u8> {
+    if let (Some((f, want)), Some((g, mut at))) = (family_of(p), family_of(t))
+        && std::ptr::addr_eq(f, g)
+    {
+        for place in FIRST..=u8::MAX {
+            if at.name() == want.name() {
+                return Some(place);
+            }
+            at = *f.supertype(at)?;
+        }
+        return None;
+    }
+    (p == t).then_some(FIRST)
 }
 
 /// [ISO/IEC 9075-2:2023 §9.7 SR4] Where `name` is in the type precedence

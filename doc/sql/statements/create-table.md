@@ -125,7 +125,7 @@ given if none is written.
 
 A CHECK's and a generation expression's XML options, XMLNAMESPACES and
 XMLBINARY, are in scope of it, and kept with its text: see
-[XML Values](../16-xml.md#xml-options-of-a-scope). The Information Schema's CHECK_CLAUSE
+[XML Values](../19-xml.md#xml-options-of-a-scope). The Information Schema's CHECK_CLAUSE
 shows the search condition without them.
 
 A generated column holds the value of its expression, computed from the
@@ -290,7 +290,9 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
 6. A CHECK contains no USER, CURRENT_USER, CURRENT_ROLE, SESSION_USER or
    SYSTEM_USER,
    no CURRENT_DATE, CURRENT_TIME or CURRENT_TIMESTAMP, and is not
-   possibly non-deterministic.
+   possibly non-deterministic. A call of a function the program
+   registered is possibly non-deterministic if the function says it is
+   not deterministic *(extension)*.
 7. A default is of the column's type: a literal it can hold, a user
    function of a character column of at least 128 characters, or a
    datetime value function of its fields.
@@ -307,8 +309,9 @@ CREATE TABLE runs within the session's transaction: ROLLBACK undoes it.
 13. A generation expression references only columns of its table that
     are not generated columns. It contains no subquery, no set function,
     no USER or other user function, no CURRENT_DATE or other datetime
-    value function, and is not possibly non-deterministic. Its type is
-    assignable to the column's.
+    value function, and is not possibly non-deterministic, a registered
+    function's call included, as in a CHECK. Its type is assignable to
+    the column's.
 14. A foreign key whose referencing columns include a generated column
     has no SET NULL or SET DEFAULT action and no ON UPDATE CASCADE.
 15. LIKE names a table or view that exists, and writes each of its
@@ -443,6 +446,20 @@ OK
           100 |            2 |        4.50 |                 9.00
           101 |           10 |        1.25 |                12.50
 (2 rows)
+```
+
+A registered function that is not deterministic, as EMBED_VERSION,
+whose answer changes as its model does, is refused in a CHECK and in a
+generation expression *(extension)*:
+
+```sql
+CREATE TABLE TAGS (MODEL VARCHAR(100) CHECK (EMBED_VERSION(MODEL) IS NOT NULL));
+CREATE TABLE TAGS (MODEL VARCHAR(100), V VARCHAR(100) GENERATED ALWAYS AS (EMBED_VERSION(MODEL)));
+```
+
+```
+turborel: SQLCODE -103 (SQLSTATE 2A000): CHECK ANN.TAGS_CHECK1: a CHECK condition shall not contain a potential source of non-determinism: a call of function EMBED_VERSION, registered, which is not deterministic [ISO/IEC 9075-2:2023 §9.16 SR1am, §11.9 CR2] (at character 13)
+turborel: SQLCODE -103 (SQLSTATE 2A000): the generation expression of column V of ANN.TAGS: a generation expression shall not contain a call of function EMBED_VERSION, registered, which is not deterministic [ISO/IEC 9075-2:2023 §11.4 SR10d, §9.16 SR1am] (at character 39)
 ```
 
 A table that copies another's columns, its identity column and its

@@ -39,4 +39,8 @@ impl CallContext for Context<'_> {
             None => crate::fulltext::rank::named(&crate::fulltext::rank::built_in(), name),
         }
     }
+
+    fn spatial(&self) -> Option<&crate::catalog::SpatialCatalog> {
+        self.0.state().map(|state| state.catalog.spatial())
+    }
 }

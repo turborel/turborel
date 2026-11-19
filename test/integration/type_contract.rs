@@ -234,6 +234,17 @@ fn arrays_keep_the_type_contract() {
     type_contract_of_arrays(&nested, &[array([strings, Value::Null]), array([array([])]), array([])]);
 }
 
+/// `codec_contract` of `t` on `values`, none of which has a key, each its
+/// own anchor: of a type ordered by RELATIVE (RULES.md D81,
+/// D120).
+pub(crate) fn type_contract_unkeyed(t: &DataType, values: &[Value]) {
+    for v in codec_contract(t, values) {
+        assert!(t.kind().encode_key(&v, t, &mut Vec::new()).is_err(), "{v} has no key");
+        let (anchor, exact) = t.kind().anchor(&v, t).unwrap();
+        assert!(exact && anchor.to_literal() == v.to_literal(), "{v} is its own anchor");
+    }
+}
+
 /// `codec_contract` of the array type `t` on `values`, none of which has a
 /// key.
 fn type_contract_of_arrays(t: &DataType, values: &[Value]) {

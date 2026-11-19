@@ -25,11 +25,15 @@ pub const MICROS_PER_DAY: i64 = 24 * 60 * MICROS_PER_MINUTE;
 /// [ISO/IEC 9075:1992 §6.1 SR26] The greatest `<time fractional seconds
 /// precision>`, implementation-defined, at least 6: microseconds.
 pub const MAX_TIME_PRECISION: u32 = 6;
-/// [ISO/IEC 9075:1992 §5.3 SR25] The least time zone displacement, -12:59,
-/// in minutes.
+/// [ISO/IEC 9075-2:2023 §4.7.2, §6.1 Table 13] The least time zone
+/// displacement, implementation-defined (IL061), not greater than -12:00:
+/// -12:59, in minutes, as SQL-92 has it [ISO/IEC 9075:1992 §5.3 SR25].
 pub const MIN_DISPLACEMENT: i16 = -(12 * 60 + 59);
-/// [ISO/IEC 9075:1992 §5.3 SR25] The greatest, +13:00.
-pub const MAX_DISPLACEMENT: i16 = 13 * 60;
+/// [ISO/IEC 9075-2:2023 §4.7.2, §6.1 Table 13] The greatest,
+/// implementation-defined (IL062), not less than +14:00: +14:00, the
+/// easternmost zone in use. SQL-92's +13:00 [ISO/IEC 9075:1992 §5.3 SR25]
+/// gives way to it (RULES.md D32).
+pub const MAX_DISPLACEMENT: i16 = 14 * 60;
 /// Days from 0001-01-01 to 1970-01-01.
 const UNIX_EPOCH_DAYS: i64 = 719_162;
 /// The last day of 9999, from 0001-01-01.
@@ -239,8 +243,9 @@ fn time_value(text: &[u8]) -> Option<(i64, Option<i16>, u32)> {
     Some((seconds.saturating_mul(MICROS_PER_SECOND).saturating_add(micros), zone, precision))
 }
 
-/// [ISO/IEC 9075:1992 §5.3 SR25] `<time zone interval>`, ±HH:MM, all of
-/// `text`, from -12:59 to +13:00: in minutes.
+/// [ISO/IEC 9075:1992 §5.3] `<time zone interval>`, ±HH:MM, all of
+/// `text`, from `MIN_DISPLACEMENT` to `MAX_DISPLACEMENT` [ISO/IEC
+/// 9075-2:2023 §5.3 SR43]: in minutes.
 fn displacement(text: &[u8]) -> Option<i16> {
     let negative = match text.first()? {
         b'+' => false,
@@ -256,16 +261,23 @@ fn displacement(text: &[u8]) -> Option<i16> {
     (MIN_DISPLACEMENT..=MAX_DISPLACEMENT).contains(&zone).then_some(zone)
 }
 
-/// [ISO/IEC 9075:1992 §5.3 SR25] `text` as a time zone displacement,
+/// [ISO/IEC 9075-2:2023 §5.3 SR43] `text` as a time zone displacement,
 /// ±HH:MM, in minutes; none if it is not one in range.
 pub fn parse_displacement(text: &str) -> Option<i16> {
     displacement(text.as_bytes())
 }
 
+/// The range of time zone displacements in words, `from -12:59 to
+/// +14:00`, as a message tells it: made of the bounds, so it never
+/// disagrees with them.
+pub fn displacement_range() -> String {
+    format!("from {} to {}", Datetime::displacement_text(MIN_DISPLACEMENT), Datetime::displacement_text(MAX_DISPLACEMENT))
+}
+
 /// [ISO/IEC 9075:1992 §5.3] The fields `text` writes, the body of a
 /// literal of `moment`: a `<date string>`'s, a `<time string>`'s or a
 /// `<timestamp string>`'s, without its quotes; none if it writes no valid
-/// datetime [SR21, SR22, SR25].
+/// datetime [SR21, SR22; ISO/IEC 9075-2:2023 §5.3 SR43].
 pub fn parse(moment: Moment, text: &str) -> Option<Written> {
     let bytes = text.as_bytes();
     let (local, zone, precision) = match moment {

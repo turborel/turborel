@@ -29,6 +29,7 @@ choices:
 | An interval's leading field | at most 9 digits |
 | The difference of two datetimes | truncated, toward 0, to its least field |
 | A session's time zone | the setting SESSION.TIME_ZONE, +00:00 unless set |
+| The least and greatest time zone displacements | -12:59 and +14:00 |
 | CURRENT_USER, SESSION_USER, SYSTEM_USER | CURRENT_USER the session's authorization identifier, or null in a trigger or routine of a schema a role owns; SESSION_USER and SYSTEM_USER the session's user |
 | Who may create a role | the database's owner, and each user it allows by ALTER USER ... CREATE ROLE |
 | The default schema | the session's authorization identifier, until SET SCHEMA |

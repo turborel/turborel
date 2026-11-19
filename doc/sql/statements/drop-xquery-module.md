@@ -83,5 +83,5 @@ implementation; this statement is turborel's. See
 
 ## SEE ALSO
 
-[CREATE XQUERY MODULE](create-xquery-module.md), [XML Values](../16-xml.md#xquery-modules),
+[CREATE XQUERY MODULE](create-xquery-module.md), [XML Values](../19-xml.md#xquery-modules),
 [DROP SCHEMA](drop-schema.md)

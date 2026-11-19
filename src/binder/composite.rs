@@ -94,8 +94,10 @@ pub(crate) fn grouping_operand(db: &State, t: &DataType, what: &str) -> Result<(
 /// SQLCODE -103 if it is.
 pub(crate) fn orderless_operand(t: &DataType, what: &str) -> Result<()> {
     if crate::value::types::composite::orderless(t) {
+        let spatial = crate::geometry::support::of_data_type(t).is_some();
+        let hint = if spatial { "its type declares no ordering" } else { "VECTOR_EQUALS compares vectors" };
         return Err(rule(format!(
-            "[EXTENSION] {what} orders, groups, compares or keys values of {t}, which have no order and no equality; VECTOR_EQUALS compares vectors"
+            "[EXTENSION] {what} orders, groups, compares or keys values of {t}, which have no order and no equality; {hint}"
         )));
     }
     Ok(())

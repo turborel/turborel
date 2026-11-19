@@ -249,11 +249,16 @@ impl Binder<'_> {
                 Called::Pass(passed) => passed,
             }
         };
+        if schema.is_none()
+            && let Some(built_in) = self.builtin_function(name, args, scope).or_at(at)?
+        {
+            return Ok(built_in);
+        }
         if let (None, Some(embedded)) = (schema, self.catalog_embed(name, args, scope).or_at(at)?) {
             return Ok(embedded);
         }
         let aggregate = self.db.functions.aggregate(name).is_some();
-        let called = || self.call((schema, name, extension), args, passed, scope);
+        let called = || self.simple_feature((schema, name, extension), (args, at), passed, scope);
         self.drawing(self.drawing.get() && !aggregate, called).or_at(at)
     }
 
@@ -420,8 +425,9 @@ impl Binder<'_> {
                     refusal.unwrap_or_else(|| rule(format!("[EXTENSION] no function {name} registered takes arguments of ({shown})")))
                 );
             };
+            self.registered_permitted(name, f.0.deterministic())?;
             let (mut exprs, mut types) = self.arguments_of(&*f.0, args, bound, scope)?;
-            for (e, t) in self.appended_arguments(&*f.0, (args, &exprs), scope)? {
+            for (e, t) in self.appended_arguments(&*f.0, (args, &exprs, &types), scope)? {
                 exprs.push(e);
                 types.push(t);
             }

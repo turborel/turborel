@@ -60,7 +60,7 @@ fn every_kind() -> Vec<Record> {
         Change::Sequence { name: table(), epoch: u64::MAX, resume: i128::MIN },
         Change::Sequence { name: table(), epoch: 1, resume: i128::MAX },
     ];
-    let all = changes.into_iter().chain(drops()).chain(definitions());
+    let all = changes.into_iter().chain(drops()).chain(definitions()).chain(spatial());
     all.enumerate().map(|(n, change)| Record { tx: u64::try_from(n).unwrap().checked_add(1).unwrap(), change }).collect()
 }
 
@@ -127,6 +127,21 @@ fn definitions() -> Vec<Change> {
             epochs: vec![],
             typed: false,
         },
+    ]
+}
+
+/// One record of each change to the spatial catalog: a reference system
+/// defined, and a geometry column no longer registered.
+fn spatial() -> Vec<Change> {
+    vec![
+        Change::Spatial(crate::catalog::SpatialChange::Define(crate::catalog::SpatialRefSysDesc {
+            name: "ßystem".into(),
+            id: i32::MIN,
+            organization: Some((String::new(), i32::MAX)),
+            definition: "LOCAL_CS[\"x\"]".into(),
+            description: None,
+        })),
+        Change::Spatial(crate::catalog::SpatialChange::Unregister(table(), String::new())),
     ]
 }
 

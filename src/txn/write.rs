@@ -63,6 +63,7 @@ impl State {
     /// table's lock (`prepare_write`), logging what undoes it [X3.135-1986
     /// §4.16, §7.3 GR3b i].
     pub(crate) fn insert_row(&self, tx: &Txn, table: &QualifiedName, row: &Row) -> Result<RowId> {
+        crate::geometry::registered::check_row(&*self.catalog, table, row)?;
         self.prepare_write(tx, table)?;
         // A row of large objects is copied, so each names one the table
         // keeps for it, or is held in the row inside another value
@@ -90,6 +91,16 @@ impl State {
             self.index_add(tx, &ix, kept, id)?;
         }
         Ok(id)
+    }
+
+    /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.11] That a row `write`
+    /// gives `table` holds in each registered geometry column a value of
+    /// the column's system (`geometry::registered`).
+    fn check_written(&self, table: &QualifiedName, write: &Write) -> Result<()> {
+        match write {
+            Write::Update(row) => crate::geometry::registered::check_row(&*self.catalog, table, row),
+            Write::Delete => Ok(()),
+        }
     }
 
     /// [X3.135-1986 §8.11, §8.12] Replaces row `id` with `row`, as `insert_row`
@@ -131,6 +142,7 @@ impl State {
         mut write: Write,
         mut recheck: Option<Recheck<'_>>,
     ) -> Result<Option<Row>> {
+        self.check_written(table, &write)?;
         self.prepare_write(tx, table)?;
         // [ISO/IEC 9075-2:2023 §15.14 GR10a] a row of a system-time period
         // stamped, and of a system-versioned table, kept as it was.

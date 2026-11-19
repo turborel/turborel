@@ -36,7 +36,7 @@ impl Session {
     /// Stages `sql`, of the schema `name`, in `tx`: made on the definitions
     /// published once its name is held, with those `tx` staged before; its
     /// assertions checked [§11.34 GR2].
-    fn stage_schema(&self, st: &Arc<State>, tx: &Txn, sql: &str, name: &str) -> Result<Completion> {
+    pub(in crate::db) fn stage_schema(&self, st: &Arc<State>, tx: &Txn, sql: &str, name: &str) -> Result<Completion> {
         // Its own texts read again as the session read it (RULES.md D74).
         let _calls = Parser::refusing_calls(sql, st.settings.is_on(FUNCTION_CALLS));
         // [XQuery §5.2.3] typed statically as the session asks, logged with it.

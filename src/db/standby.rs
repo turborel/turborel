@@ -178,6 +178,7 @@ fn scope(record: &Record) -> Scope {
         | Change::Drop { .. }
         | Change::AlterTable { .. }
         | Change::Defined { .. }
+        | Change::Spatial(_)
         | Change::Schema { .. }
         | Change::LobPut { .. } => true,
         Change::CreateIndex { .. }

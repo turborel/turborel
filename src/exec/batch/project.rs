@@ -54,7 +54,7 @@ fn plain(e: &Expr) -> bool {
         | Expr::Domain(..)
         | Expr::Warned(..) => true,
         // One that reads its statement is evaluated a row at a time (D87).
-        Expr::Call(function, _) => !function.0.uses_context(),
+        Expr::Call(function, args) => !function.0.uses_context(args.len()),
     };
     let mut all = own;
     e.for_each_child(&mut |child| all = all && plain(child));

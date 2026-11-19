@@ -331,6 +331,15 @@ impl Session {
         self.bound(st, params, |cx| bind_searched_write(cx, kind, table, set, cond)).map(drop)
     }
 
+    /// `call` bound as `bind_only` binds it: of a procedure written in
+    /// Rust, its arguments alone.
+    fn call_only(&self, st: &State, call: &crate::ast::CallStatement, params: &Params) -> Result<()> {
+        if let Some(p) = Session::rust_procedure(st, call) {
+            return self.bound(st, params, |cx| super::routines::rust_arguments(cx, &*p, call)).map(drop);
+        }
+        self.bound(st, params, |cx| State::bind_call(cx, call)).map(drop)
+    }
+
     /// `stmt`, a positioned UPDATE or DELETE, bound as `bind_only` binds it.
     fn positioned_only(&self, st: &State, stmt: &SqlStatement, params: &Params) -> Result<()> {
         if let SqlStatement::UpdatePositioned { table, only, set, .. } = stmt {
@@ -389,7 +398,7 @@ impl Session {
             SqlStatement::Signal(_) => self.bind_program_only(st, stmt, params)?,
             SqlStatement::Dynamic(_) | SqlStatement::Execute(_) => return Err(not_preparable("an <SQL dynamic statement>")),
             SqlStatement::DeclareTable(_) => return Err(not_preparable("a <temporary table declaration>")),
-            SqlStatement::Call(call) => drop(self.bound(st, params, |cx| State::bind_call(cx, call))?),
+            SqlStatement::Call(call) => self.call_only(st, call, params)?,
             // [ISO/IEC 9075-2:2023 §16.2 SR1] only in a function's body.
             SqlStatement::Return(r) => return Err(super::routines::return_outside(r)),
             SqlStatement::Commit

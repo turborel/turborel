@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use super::held::HeldRows;
-use super::scan::{Found, asked, probe_index};
+use super::scan::{Found, probe_index};
 use super::{Runner, broken, eval_cond};
 use crate::catalog::{KeyShape, QualifiedName};
 use crate::db::State;
@@ -169,8 +169,8 @@ fn index_entries((table, index, probe, reverse): (&QualifiedName, &str, Probe, b
     {
         return super::answered::answered_entries(db, tx, (table, index, asked), None);
     }
-    let Found { storage, ix, entries, projection } = probe_index(db, table, index, &probe, reverse)?;
-    storage.read_by_condition(tx, &asked(&ix, probe))?;
+    let Found { storage, ix, entries, projection, read } = probe_index(db, table, index, &probe, reverse)?;
+    read.record(&*storage, tx)?;
     let mut reading = Reading::of(&ix, None, projection);
     let rows = checked(entries, db.tx.stop_of(tx))
         .filter_map(move |entry| entry.and_then(|(key, id)| fetch(&*storage, &ix, &mut reading, (tx, id), &key)).transpose());

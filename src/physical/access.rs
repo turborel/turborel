@@ -253,7 +253,8 @@ impl PhysicalPlanner<'_> {
         let alternatives: &[Alternatives] = if ix.is_collated() { &[] } else { asked.ors };
         let mut candidates = columns::candidates((&ix.columns, types), (&served, alternatives), (all, asked.known), kind);
         candidates.extend(predicate::candidates(asked.answerable, ix, self.values, all));
-        candidates.extend(spatial::candidates(asked.conds, ix, types, self.values, all));
+        let against = spatial::Against { ix, types, values: self.values, systems: self.db.catalog.spatial() };
+        candidates.extend(spatial::candidates(asked.conds, &against, all));
         // A json index's lookups raise what a scan would of the calls it rechecks (`access/json.rs`).
         candidates.extend(json::candidates(asked.conds, ix, types, self.values, all));
         candidates.extend(xml::candidates((asked.conds, asked.implied), ix, found, all));

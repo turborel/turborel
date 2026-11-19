@@ -18,6 +18,12 @@ use super::Code;
 pub struct SqlState([u8; 5]);
 
 impl SqlState {
+    /// The value of five characters `bytes`, each a digit or a simple Latin
+    /// upper case letter, for the tables of other modules (`error/spatial.rs`).
+    pub(crate) const fn of_bytes(bytes: [u8; 5]) -> SqlState {
+        SqlState(bytes)
+    }
+
     /// Successful completion.
     pub const SUCCESSFUL_COMPLETION: SqlState = SqlState(*b"00000");
     /// No data.

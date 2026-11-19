@@ -28,7 +28,7 @@ impl<'a> Call<'a> {
             _ => return None,
         };
         // One that reads its statement is evaluated a row at a time (D87).
-        if function.0.uses_context() {
+        if function.0.uses_context(args.len()) {
             return None;
         }
         let mut call = Self { function, args: Vec::with_capacity(args.len()), columns: Vec::new(), comparison: (*op, constant), reversed };

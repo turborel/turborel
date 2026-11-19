@@ -30,7 +30,8 @@ impl Parser {
     /// [ISO/IEC 9075:1992 §5.3] `<datetime literal>` ::= DATE `<date string>`
     /// | TIME `<time string>` | TIMESTAMP `<timestamp string>`, its string of
     /// the fields and digits SR21 says, valid in the calendar [SR22], its
-    /// displacement from -12:59 to +13:00 [SR25].
+    /// displacement a valid one, from -12:59 to +14:00 [ISO/IEC 9075-2:2023
+    /// §5.3 SR43].
     pub(super) fn datetime_literal(&mut self) -> Result<Literal> {
         let at = self.here();
         let Tok::KeyWord(word) = *self.peek() else { return Err(self.syntax("expected a <datetime literal>")) };
@@ -38,7 +39,9 @@ impl Parser {
         self.advance();
         let Tok::CharacterString(text) = self.peek().clone() else { return Err(self.syntax("expected a <datetime literal>'s string")) };
         let Some(written) = parse(moment, &text) else {
-            let msg = format!("[ISO/IEC 9075:1992 §5.3 SR21, SR22, SR25] {word} '{text}' is no valid <datetime literal>");
+            let msg = format!(
+                "[ISO/IEC 9075:1992 §5.3 SR21, SR22; ISO/IEC 9075-2:2023 §5.3 SR43] {word} '{text}' is no valid <datetime literal>"
+            );
             return Err(SqlError::at(Code::SyntaxRule, at, msg));
         };
         if written.precision > MAX_TIME_PRECISION {

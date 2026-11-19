@@ -3,9 +3,10 @@
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 10] {
+pub fn core() -> [&'static [Mutation]; 11] {
     [
         &super::MUTATIONS,
+        &super::hash::HASH,
         &super::rekey::REKEY,
         &super::KEPT,
         &super::READERS,
@@ -89,8 +90,8 @@ fn second() -> [&'static [Mutation]; 28] {
 }
 
 /// The areas after the rest, in order: projection's, JSON's, expression indexes', full-text's
-/// and T621's, then the hash index's, XQuery's and XML's, the Information Schema's among them, then
-/// the spatial areas', replication's and the server's.
+/// and T621's, then the raising guards', XQuery's and XML's, the Information Schema's among them,
+/// then the last areas (`last`).
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     let json: [&'static [Mutation]; 10] = [
         &super::projection::PROJECTION,
@@ -104,8 +105,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::sqlmm_fulltext::SQLMM_FULLTEXT,
         &super::t621::T621,
     ];
-    let xml: [&'static [Mutation]; 18] = [
-        &super::hash::HASH,
+    let xml: [&'static [Mutation]; 17] = [
         &super::guarded::GUARDED,
         &super::xquery::XQUERY,
         &super::xquery_functions::XQUERY_FUNCTIONS,
@@ -124,16 +124,36 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    let last: [&'static [Mutation]; 9] = [
+    json.into_iter().chain(xml).chain(last())
+}
+
+/// The last areas, in order: the spatial areas', the planar engine's, stored CHECKs' calls,
+/// replication's and the server's.
+fn last() -> [&'static [Mutation]; 24] {
+    [
         &super::near::NEAR,
         &super::rtree::RTREE,
+        &super::spatial_regions::SPATIAL_REGIONS,
+        &super::rtree_windows::RTREE_WINDOWS,
         &super::geometry::GEOMETRY,
+        &super::spatial_types::SPATIAL_TYPES,
+        &super::spatial_curves::SPATIAL_CURVES,
+        &super::spatial_routines::SPATIAL_ROUTINES,
+        &super::spatial_mutators::SPATIAL_MUTATORS,
+        &super::spatial_planar::SPATIAL_PLANAR,
+        &super::spatial_srs::SPATIAL_SRS,
+        &super::spatial_support::SPATIAL_SUPPORT,
+        &super::spatial_solids::SPATIAL_SOLIDS,
+        &super::spatial_topology::SPATIAL_TOPOLOGY,
+        &super::spatial_lr::SPATIAL_LR,
+        &super::spatial_network::SPATIAL_NETWORK,
+        &super::check_rebind::CHECK_REBIND,
+        &super::simple_features::SIMPLE_FEATURES,
         &super::FILL,
         &super::ZONES,
         &super::STATS,
         &super::WAITS,
         &super::VR,
         &super::SERVER,
-    ];
-    json.into_iter().chain(xml).chain(last)
+    ]
 }

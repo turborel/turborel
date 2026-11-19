@@ -70,7 +70,11 @@ impl Plan {
             writeln!(
                 out,
                 "{pad}{}IndexNestedLoop {table} using {index} [{method}]: {detail}  (est. rows each={est:.0}, cost={cost:.1})",
-                if *outer { "LeftOuter" } else { "" }
+                match outer {
+                    super::Preserved::Inner => "",
+                    super::Preserved::Outer => "LeftOuter",
+                    super::Preserved::Both(_) => "FullOuter",
+                }
             )
         }
     }

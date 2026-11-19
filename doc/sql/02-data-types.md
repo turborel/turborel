@@ -10,11 +10,10 @@ of a [reference type](#reference-types), or *(extension)* of a type a plug-in
 registers, written by its name and, in parentheses, one or two unsigned
 integers it takes; so may a domain.
 
-Two such types are built in, FULLTEXT and FT_PATTERN, of
-[Full-Text Search](08-fulltext.md). A third, GEOMETRY, of XY points,
-lines, polygons and collections ([Spatial Data](10-spatial.md)), is
-registered by the server, `turboreld`, and by a program embedding the
-library that uses it.
+Such types are built in. FULLTEXT and FT_PATTERN are of
+[Full-Text Search](08-fulltext.md). ST_GEOMETRY, also named GEOMETRY,
+and its 26 subtypes, of points, curves, surfaces, solids and
+collections, are of [Spatial Data](10-spatial.md).
 
 ```
 <data type> ::=
@@ -50,7 +49,7 @@ library that uses it.
 | INTERVAL q | a span of time, of the fields its qualifier names | INTERVAL '3' DAY |
 | ROW(f t, ...) | a value of each field f, of type t | |
 | t ARRAY[n] | up to n values of type t, in order | t ARRAY is t ARRAY[65535] |
-| XML(SEQUENCE) | an XML document, fragment or sequence | XML; XML(DOCUMENT), XML(CONTENT); see [XML Values](16-xml.md) |
+| XML(SEQUENCE) | an XML document, fragment or sequence | XML; XML(DOCUMENT), XML(CONTENT); see [XML Values](19-xml.md) |
 
 The longest string is 32,767 characters, the longest binary string 32,767
 octets, the longest large object 4G characters or octets, an exact number holds at most 18 digits and a DECFLOAT at most
@@ -415,7 +414,7 @@ so its binary value, 1000000000000000019884624838656, is the factor.
 
 DATE holds a date of the years 1 to 9999; TIME(p) a time of day, its
 seconds of p fraction digits, at most 6; TIMESTAMP(p) a date and a time.
-WITH TIME ZONE adds a time zone displacement, from -12:59 to +13:00.
+WITH TIME ZONE adds a time zone displacement, from -12:59 to +14:00.
 Literals are written `DATE '2026-10-28'`, `TIME '13:45:30.125'`,
 `TIMESTAMP '2026-10-28 13:45:30'`, a displacement after the time if
 written, `+02:00`.
@@ -452,7 +451,7 @@ OK
 ----------------------------------+----------------------------
  2026-10-28 13:45:30.000000+02:00 | 2026-10-28 19:15:30.123456
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): DATE '2026-02-30' is no valid <datetime literal> [ISO/IEC 9075:1992 §5.3 SR21, SR22, SR25] (at character 27)
+turborel: SQLCODE -103 (SQLSTATE 2A000): DATE '2026-02-30' is no valid <datetime literal> [ISO/IEC 9075:1992 §5.3 SR21, SR22; ISO/IEC 9075-2:2023 §5.3 SR43] (at character 27)
 ```
 
 TIME(2) kept two of the three fraction digits written, the third
@@ -635,7 +634,7 @@ and may be elements of arrays and multisets.
 ## XML
 
 XML, XML(DOCUMENT), XML(CONTENT) and XML(SEQUENCE) hold XML documents
-and fragments of them. [XML Values](16-xml.md) describes them, and XMLPARSE,
+and fragments of them. [XML Values](19-xml.md) describes them, and XMLPARSE,
 XMLDOCUMENT, XMLCAST, the publishing operators and XMLSERIALIZE, which
 make and write them.
 
@@ -732,5 +731,6 @@ The standard: ISO/IEC 9075:1992 §4.2–§4.5 and §6.1 the types, §6.10
 CAST, §9.1 and §9.2 assignment, §10.1 the interval qualifier; ISO/IEC
 9075-2:2023 §4.4, §4.6 and §6.1 the binary string and Boolean types,
 §6.13 their CAST, §9.1 and §9.2 their assignment, §4.5 and §6.30 the
-decimal floating-point type and its arithmetic; X3.135-1986 §5.5,
+decimal floating-point type and its arithmetic, §4.7.2 the range of time
+zone displacements (IL061, IL062); X3.135-1986 §5.5,
 whose types are CHARACTER and the numbers.

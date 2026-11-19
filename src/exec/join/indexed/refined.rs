@@ -28,8 +28,8 @@ pub(super) struct Binding {
 
 impl Binding {
     pub(super) fn of(join: &IndexJoin, width: usize) -> Option<Self> {
-        let JoinProbe::Predicate { predicate, outer } = &join.probe else { return None };
-        if predicate.function.0.spatial_operation() != Some(SpatialOperation::Intersects) {
+        let JoinProbe::Predicate { predicate, outer, .. } = &join.probe else { return None };
+        if !predicate.function.0.spatial_operation().is_some_and(SpatialOperation::windowed) {
             return None;
         }
         let [inner] = join.table.ix.columns.as_slice() else { return None };

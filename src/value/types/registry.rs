@@ -44,11 +44,30 @@ impl TypeRegistry {
     }
 
     /// The kinds built in, SQL/MM Full-Text's FULLTEXT and FT_PATTERN
-    /// (RULES.md D87) and VECTOR (RULES.md D93), which a registration of a
-    /// type of their names is refused beside.
+    /// (RULES.md D87), VECTOR (RULES.md D93), SQL/MM Spatial's geometry
+    /// types (RULES.md D120) and its linear referencing types
+    /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15], which a registration
+    /// of a type of their names is refused beside.
     pub(crate) fn builtin() -> TypeRegistry {
-        let kinds = crate::fulltext::types::types().into_iter().chain(crate::vector::types());
-        TypeRegistry { kinds: Some(Arc::new(kinds.map(|kind: Kind| (kind.name().to_owned(), kind)).collect())) }
+        let kinds = crate::fulltext::types::types()
+            .into_iter()
+            .chain(crate::vector::types())
+            .chain(crate::geometry::kinds().iter().copied())
+            .chain(crate::spatial::lr::sql::kinds().iter().copied())
+            .chain(std::iter::once(crate::geometry::tin_element_kind()));
+        // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §14, §16, §17] and the
+        // types beside them (RULES.md D123).
+        let kinds = kinds.chain(crate::geometry::support::kinds().iter().copied());
+        let mut all: BTreeMap<String, Kind> = kinds.map(|kind: Kind| (kind.name().to_owned(), kind)).collect();
+        // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.2] GEOMETRY names
+        // ST_GEOMETRY too, as ISO/IEC 19125-2 and D85 wrote it.
+        all.insert(crate::geometry::NAME.to_owned(), crate::geometry::kind_of(crate::geometry::model::Kind::Geometry));
+        // [OGC 06-104r4 §7.2.2.2] And each of Simple feature access's
+        // names without ST_ the type it names (RULES.md D136).
+        for (name, kind) in crate::geometry::sfa::TYPE_NAMES {
+            all.insert(name.to_owned(), crate::geometry::kind_of(kind));
+        }
+        TypeRegistry { kinds: Some(Arc::new(all)) }
     }
 
     /// Registers `kind`.

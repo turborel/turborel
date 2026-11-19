@@ -28,7 +28,7 @@ use super::from::FromItem;
 use super::set_operations::bind_query_expression;
 use super::subquery::Outer;
 use super::with::{element_nesting, with_scope};
-use super::{Binder, Context, Selected, Uses, qualify, views};
+use super::{Binder, Context, Selected, Uses, views};
 use crate::ast::{
     Correspondence, Literal, QueryExpression, QuerySpecification, SelectItem, SelectList, SelectSublist, SetOperation, TableName,
     TableReference, ValueExpression, ValueSpecification,
@@ -206,7 +206,7 @@ fn query_leaves(cx: Context<'_>, q: &QueryExpression, leaves: &mut Vec<Qualified
 /// it, or, of a query a `<with clause>` around names, its query's.
 fn named_leaves(cx: Context<'_>, name: &TableName) -> Vec<QualifiedName> {
     let query = name.auth.is_none().then(|| cx.queries.and_then(|q| q.leaves_of(&name.ident))).flatten();
-    query.unwrap_or_else(|| vec![qualify(name, cx.schema)])
+    query.unwrap_or_else(|| vec![views::resolved(cx.db, name, cx.schema)])
 }
 
 /// Adds to `to` those of `more` it has not.

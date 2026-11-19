@@ -306,6 +306,7 @@ impl<'a> Binder<'a> {
             null_call: true,
             deterministic: false,
             overrides: None,
+            rust: None,
         };
         Ok(Expr::Invoked(Arc::new(invocation)))
     }

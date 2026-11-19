@@ -75,15 +75,19 @@ the complete join condition.
 
 An `rtree` can also index one `GEOMETRY(srid)` column. It stores the
 geometry's envelope and can supply candidates for
-`ST_INTERSECTS(column, value) = 1`, where `value` is a constant or parameter.
+`ST_INTERSECTS(column, value) = 1`, where `value` is a constant or parameter,
+and for the other relationships true only of values that meet, ST_RELATE
+of a pattern asking them to meet among them.
 The executor fetches the visible geometry and checks the full condition;
 an envelope match alone never establishes intersection. The column must
 enforce one SRID. NULLs are omitted and empty values never intersect.
-Inner joins can also probe it when both geometry columns enforce the same
-SRID; the full ON condition checks every candidate pair. Ascending
+`ST_DISTANCE(column, value [, unit]) <= limit`, or `<`, reads the
+envelopes within the limit. Inner and outer joins, LEFT, RIGHT and FULL,
+can also probe it from the other operand's geometry; the full ON
+condition checks every candidate pair, and an outer join keeps the rows
+no probe matched, with nulls. Ascending
 ST_DISTANCE with FETCH FIRST can also use this index, refining each
-candidate's geometry before deciding which rows to return. Geometry outer
-joins and distance filters are not indexed. See
+candidate's geometry before deciding which rows to return. See
 [Spatial Data](../10-spatial.md#the-rtree-index-method) for its rules and the
 [Spatial Guide](../../data/02-spatial.md) for runnable examples.
 
@@ -114,12 +118,12 @@ names of a path it keeps; changing either makes it anew. See the
 An `xml_path`, `xml_value`, `xml_property` or `xml_primary` index keys
 one XML column: each element and attribute of its values, by its path,
 its value as a string and as a number, and its place in document order,
-each method in its own order ([XML indexes](../16-xml.md#xml-indexes));
+each method in its own order ([XML indexes](../19-xml.md#xml-indexes));
 `xml_primary` keeps each node's value whole up to 512 octets, so it
 answers of a row from the index alone. No comparison of SQL reads it, as
 XML values are not comparable: the planner reads it for the paths of
 XMLEXISTS, XMLQUERY and XMLTABLE ([Queries an XML index reads
-for](../16-xml.md#queries-an-xml-index-reads-for)). A value with more
+for](../19-xml.md#queries-an-xml-index-reads-for)). A value with more
 elements and attributes than it keys,
 or a name or path longer than the database's page size holds, is refused
 as it is written.
@@ -316,6 +320,31 @@ OK
 (1 row)
 ```
 
+The same index finds the depots near a point, and those near each stop,
+a stop near none kept with nulls:
+
+```sql
+SELECT NAME FROM PICKUP_DEPOTS WHERE ST_DISTANCE(LOCATION, ST_POINT(900, 300)) <= 150 ORDER BY ID;
+CREATE TABLE STOPS (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));
+INSERT INTO STOPS VALUES (1, ST_POINT(120, 700)), (2, ST_POINT(500, 500));
+SELECT S.ID, D.NAME FROM STOPS S LEFT JOIN PICKUP_DEPOTS D
+    ON ST_DISTANCE(S.SPOT, D.LOCATION) < 50 ORDER BY S.ID;
+```
+
+```
+ NAME
+--------------
+ Market depot
+(1 row)
+OK
+OK
+           ID | NAME
+--------------+--------------
+            1 | Canal depot
+            2 | NULL
+(2 rows)
+```
+
 The planner may still read so small a table whole, as it chooses by
 cost. The [Spatial Guide](../../data/02-spatial.md) has service-area
 joins and nearest-depot searches.
@@ -483,4 +512,4 @@ An extension: neither SQL-86 nor SQL-92 has indexes.
 [CREATE TABLE](create-table.md),
 [Full-Text Search](../08-fulltext.md),
 [Spatial Data](../10-spatial.md),
-[XML indexes](../16-xml.md#xml-indexes)
+[XML indexes](../19-xml.md#xml-indexes)

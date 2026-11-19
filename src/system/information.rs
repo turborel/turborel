@@ -34,7 +34,7 @@ mod xml_schemas;
 
 use std::sync::OnceLock;
 
-use super::{INFORMATION_SCHEMA, Seen, SystemTable, catalog_name, identifier};
+use super::{Seen, SystemTable, catalog_name, identifier};
 use crate::catalog::{ColumnDesc, QualifiedName};
 use crate::error::Result;
 use crate::storage::Row;
@@ -65,9 +65,9 @@ pub struct SystemView {
     pub query: &'static str,
 }
 
-/// The Information Schema view `name`, if there is one.
+/// The view `name` of the Information Schema, or of SQL/MM Spatial's.
 pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
-    views().iter().find(|v| name.auth == INFORMATION_SCHEMA && v.name == name.ident)
+    views().iter().find(|v| super::spatial::name_of(v) == *name)
 }
 
 /// The views of the Information Schema: those of ISO/IEC 9075:1992
@@ -76,7 +76,8 @@ pub fn view(name: &QualifiedName) -> Option<&'static SystemView> {
 /// roles, triggers, SQL-server modules, usage (`usage.rs`), what this
 /// implementation supports (`conformance.rs`) and registered XML Schemas,
 /// then the short name views (`short_names.rs`), then the extensions
-/// (`extensions.rs`).
+/// (`extensions.rs`), then SQL/MM Spatial's, then Simple feature access's
+/// (`spatial/sfa.rs`).
 pub(crate) fn views() -> &'static [SystemView] {
     static ALL: OnceLock<Vec<SystemView>> = OnceLock::new();
     let parts = [
@@ -91,5 +92,6 @@ pub(crate) fn views() -> &'static [SystemView] {
     ];
     let short = short_names::PARTS.as_slice();
     let standard = [objects::VIEWS, constraints::VIEWS];
-    ALL.get_or_init(|| [standard.as_slice(), parts.as_slice(), &[xml_schemas::VIEWS], short, &[extensions::VIEWS]].concat().concat())
+    let ours = [extensions::VIEWS, super::spatial::SPATIAL_VIEWS, super::spatial::SF_VIEWS];
+    ALL.get_or_init(|| [standard.as_slice(), parts.as_slice(), &[xml_schemas::VIEWS], short, ours.as_slice()].concat().concat())
 }

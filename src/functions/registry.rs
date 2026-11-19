@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::builtin::{Procedure, TableFunction};
 use super::{
     AggregateFunction, AggregateRef, Avg, Count, Extreme, ScalarFunction, ScalarRef, Sum, Truths, any_value, numeric, statistics, strings,
     trim,
@@ -25,6 +26,10 @@ pub struct Registry {
     /// The standard COUNT, MAX, MIN, SUM and AVG, in `Standard`'s order,
     /// which a plug-in of its name may replace.
     standard: [AggregateRef; 5],
+    /// \[EXTENSION\] The table functions and procedures written in Rust,
+    /// by name (`functions/builtin.rs`).
+    tables: HashMap<String, Arc<dyn TableFunction>>,
+    procedures: HashMap<String, Arc<dyn Procedure>>,
 }
 
 /// A set function a `Registry` holds as the standard defines it, no
@@ -51,7 +56,11 @@ fn words() -> Vec<Arc<dyn ScalarFunction>> {
     words.extend(crate::fulltext::types::functions());
     // \[EXTENSION\] JSON_CONTAINS, which a json index answers too.
     words.push(Arc::new(super::JsonContains));
-    words
+    // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593)] the routines of SQL/MM
+    // Spatial (RULES.md D120).
+    words.extend(crate::geometry::functions());
+    // [§15] Those of linear referencing, a name of both one function.
+    crate::spatial::lr::sql::with_functions(words)
 }
 
 impl Registry {
@@ -69,20 +78,37 @@ impl Registry {
             AggregateRef(Arc::new(Sum)),
             AggregateRef(Arc::new(Avg)),
         ];
-        let scalars = strings::functions()
-            .into_iter()
-            .chain(trim::functions())
-            .chain(numeric::functions())
-            .chain(words())
-            .chain(super::xml::name_functions())
-            .map(|f| (f.name().to_string(), vec![ScalarRef(f)]))
-            .collect();
+        // Of a name, each function that declares its parameter types, as
+        // SQL/MM Spatial's of several types do; else the last.
+        let mut scalars: HashMap<String, Vec<ScalarRef>> = HashMap::new();
+        let all = strings::functions().into_iter().chain(trim::functions()).chain(numeric::functions()).chain(words());
+        for f in all.chain(super::xml::name_functions()) {
+            let of_name = scalars.entry(f.name().to_string()).or_default();
+            if f.parameter_types().is_none() || of_name.iter().any(|g| g.0.parameter_types().is_none()) {
+                of_name.clear();
+            }
+            of_name.push(ScalarRef(f));
+        }
         let truths = [Truths::EVERY, Truths::ANY, Truths::SOME].map(|t| AggregateRef(Arc::new(t)));
         let any_value = [AggregateRef(Arc::new(any_value::AnyValue))];
         let statistics = statistics::functions().into_iter().map(AggregateRef).collect::<Vec<_>>();
         let aggregates =
             standard.iter().chain(&truths).chain(&any_value).chain(&statistics).map(|f| (f.0.name().to_string(), f.clone())).collect();
-        Registry { scalars, aggregates, standard }
+        let procedures = crate::geometry::procedures()
+            .into_iter()
+            .chain(crate::spatial::topology::sql::procedures())
+            .chain(crate::spatial::lr::sql::procedures())
+            .chain(crate::spatial::network::sql::procedures())
+            .map(|p| (p.name().to_owned(), p))
+            .collect();
+        let tables = crate::geometry::table_functions()
+            .into_iter()
+            .chain(crate::spatial::topology::sql::tables())
+            .chain(crate::spatial::network::sql::tables())
+            .chain(crate::spatial::paths::sql::tables())
+            .map(|f| (f.name().to_owned(), f))
+            .collect();
+        Registry { scalars, aggregates, standard, tables, procedures }
     }
 
     /// Adds a scalar function: of a name already a scalar function's, a
@@ -132,6 +158,44 @@ impl Registry {
         }
         self.aggregates.insert(name, AggregateRef(f));
         Ok(())
+    }
+
+    /// \[EXTENSION\] Adds a table function.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if one of its name is there.
+    pub fn add_table(&mut self, f: Arc<dyn TableFunction>) -> Result<()> {
+        let name = f.name().to_owned();
+        if self.tables.contains_key(&name) {
+            return fail(Code::Api, format!("[EXTENSION] {name} is already a table function"));
+        }
+        self.tables.insert(name, f);
+        Ok(())
+    }
+
+    /// \[EXTENSION\] Adds a procedure.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if one of its name is there.
+    pub fn add_procedure(&mut self, p: Arc<dyn Procedure>) -> Result<()> {
+        let name = p.name().to_owned();
+        if self.procedures.contains_key(&name) {
+            return fail(Code::Api, format!("[EXTENSION] {name} is already a procedure"));
+        }
+        self.procedures.insert(name, p);
+        Ok(())
+    }
+
+    /// The table function named `name`, if there is one.
+    pub fn table(&self, name: &str) -> Option<Arc<dyn TableFunction>> {
+        self.tables.get(name).cloned()
+    }
+
+    /// The procedure named `name`, if there is one.
+    pub fn procedure(&self, name: &str) -> Option<Arc<dyn Procedure>> {
+        self.procedures.get(name).cloned()
     }
 
     /// Each function registered that declares settings (RULES.md D36).

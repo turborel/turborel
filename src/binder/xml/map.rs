@@ -30,7 +30,7 @@ use crate::functions::xml_map::{
 use crate::functions::{AggregateRef, BinaryEncoding, RowOf, ScalarRef};
 use crate::logical::Expr;
 use crate::parser::mapped_sources;
-use crate::system::{DEFINITION_SCHEMA, INFORMATION_SCHEMA, information_views};
+use crate::system::{DEFINITION_SCHEMA, ST_DEFINITION_SCHEMA, information_view_name, information_views};
 use crate::value::{DataType, Decimal, Value};
 use crate::xml::{Version, XML_NAMESPACE, XMLNS_NAMESPACE, is_char};
 
@@ -213,7 +213,8 @@ impl Binder<'_> {
     /// SQLSTATE 3F000 if there is no schema `schema`.
     fn schema_reads(&self, schema: &str) -> Result<Vec<Read>> {
         let db = self.db;
-        let known = db.catalog.schema_exists(schema) || schema == INFORMATION_SCHEMA || db.system.keys().any(|t| t.auth == schema);
+        let information = information_views().iter().any(|v| information_view_name(v).auth == schema);
+        let known = db.catalog.schema_exists(schema) || information || db.system.keys().any(|t| t.auth == schema);
         if !known {
             let msg = format!("[EXTENSION] [ISO/IEC 9075:1992 §5.4 SR5] there is no schema {schema}");
             return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::INVALID_SCHEMA_NAME));
@@ -228,23 +229,22 @@ impl Binder<'_> {
         let db = self.db;
         let mut schemas: Vec<String> = db.catalog.schemas().into_iter().map(str::to_owned).collect();
         schemas.extend(db.system.keys().map(|t| t.auth.clone()));
-        schemas.push(INFORMATION_SCHEMA.to_owned());
+        schemas.extend(information_views().iter().map(|v| information_view_name(v).auth));
         schemas.sort_unstable();
         schemas.dedup();
-        let tables = schemas.iter().filter(|s| *s != DEFINITION_SCHEMA).flat_map(|s| self.tables_in(s));
+        let tables = schemas.iter().flat_map(|s| self.tables_in(s));
         tables.filter(|name| self.selects(name) && !self.view_maps(name)).map(|name| Read { name, at: 0, alone: false }).collect()
     }
 
     /// The tables, views and system tables of `schema`, in order of name;
-    /// none of the Definition Schema, which no statement reads [ISO/IEC
-    /// 9075:1992 §21.1].
+    /// none of the Definition Schema, or of SQL/MM Spatial's, which no
+    /// statement reads [ISO/IEC 9075:1992 §21.1].
     fn tables_in(&self, schema: &str) -> Vec<QualifiedName> {
-        if schema == DEFINITION_SCHEMA {
+        if schema == DEFINITION_SCHEMA || schema == ST_DEFINITION_SCHEMA {
             return Vec::new();
         }
         let db = self.db;
-        let information =
-            information_views().iter().map(|v| QualifiedName { auth: INFORMATION_SCHEMA.to_owned(), ident: v.name.to_owned() });
+        let information = information_views().iter().map(information_view_name);
         let mut names: Vec<QualifiedName> = db
             .catalog
             .tables()

@@ -8,6 +8,7 @@ mod embedding;
 mod hybrid;
 mod information;
 mod vector;
+mod xml;
 
 use std::cell::RefCell;
 use std::io::{self, Write};
@@ -15,7 +16,6 @@ use std::path::Path;
 use std::rc::Rc;
 
 use turborel::db::Database;
-use turborel::geometry::{FUNCTIONS, GeometryType};
 use turborel_cli::{Command, Dialer, Input, Io};
 use turborel_client::agent::Agent;
 
@@ -290,43 +290,6 @@ fn the_json_examples_run_as_printed() {
     assert!(ann.page("data/03-json.md") > 0, "the guide shows its examples' output");
 }
 
-/// Verifies: [ISO/IEC 9075-14:2006 draft §6.8, §6.16] [DESIGN] RULES.md
-/// R-DOC-8, D106: the examples of XML values run as printed, as ANN.
-#[test]
-fn the_xml_examples_run_as_printed() {
-    let db = Database::new();
-    db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
-    let mut ann = Client::of(&db, "ANN");
-    assert!(ann.page("sql/16-xml.md") > 0, "it shows its examples' output");
-}
-
-/// Verifies: [EXTENSION] [ISO/IEC 9075-14:2006 draft §4.2.6] [DESIGN]
-/// RULES.md R-DOC-8, D106: the examples of CREATE XML SCHEMA and of DROP
-/// XML SCHEMA run as printed, as ANN, each page in a database of its own.
-#[test]
-fn the_xml_schema_examples_run_as_printed() {
-    for page in ["sql/statements/create-xml-schema.md", "sql/statements/drop-xml-schema.md"] {
-        let db = Database::new();
-        db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
-        let mut ann = Client::of(&db, "ANN");
-        assert!(ann.page(page) > 0, "{page} shows its examples' output");
-    }
-}
-
-/// Verifies: [EXTENSION] RULES.md R-DOC-8, D106 [XQuery §5.2.5]: the
-/// examples of CREATE, ALTER and DROP XQUERY MODULE run as printed, as
-/// ANN, each page in a database of its own.
-#[test]
-fn the_xquery_module_examples_run_as_printed() {
-    for page in ["sql/statements/create-xquery-module.md", "sql/statements/alter-xquery-module.md", "sql/statements/drop-xquery-module.md"]
-    {
-        let db = Database::new();
-        db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
-        let mut ann = Client::of(&db, "ANN");
-        assert!(ann.page(page) > 0, "{page} shows its examples' output");
-    }
-}
-
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D64: the examples of TRUNCATE
 /// TABLE run as printed, as ANN.
 #[test]
@@ -549,15 +512,10 @@ fn the_psm_examples_run_as_printed() {
     }
 }
 
-/// A database with GEOMETRY and its functions registered, as `turboreld`
-/// registers them before it opens its files.
+/// A database of the geometry types and their functions, which are built
+/// in (RULES.md D120).
 fn spatial_database() -> Database {
-    let db = Database::new();
-    db.register_type(Box::new(GeometryType)).unwrap();
-    for function in FUNCTIONS {
-        db.register_scalar_function(Box::new(function)).unwrap();
-    }
-    db
+    Database::new()
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D85: the SQL Reference Manual's
@@ -569,6 +527,33 @@ fn the_spatial_examples_run_as_printed() {
         let db = spatial_database();
         assert!(Client::of(&db, "ANN").page(page) > 0, "{page} shows its examples' output");
     }
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §11] RULES.md
+/// R-DOC-8: the SQL Reference Manual's chapter of topology-geometry runs
+/// as printed, as ANN.
+#[test]
+fn the_topology_examples_run_as_printed() {
+    let db = spatial_database();
+    assert!(Client::of(&db, "ANN").page("sql/16-topology.md") > 0, "it shows its examples' output");
+}
+
+/// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15] RULES.md
+/// R-DOC-8: the SQL Reference Manual's chapter of linear referencing runs
+/// as printed, as ANN.
+#[test]
+fn the_linear_referencing_examples_run_as_printed() {
+    let db = spatial_database();
+    assert!(Client::of(&db, "ANN").page("sql/17-linear-referencing.md") > 0, "it shows its examples' output");
+}
+
+/// Verifies: [DESIGN] RULES.md R-DOC-8, D129: the SQL
+/// Reference Manual's chapter of spatial networks and shortest paths runs
+/// as printed, as ANN.
+#[test]
+fn the_spatial_network_examples_run_as_printed() {
+    let db = spatial_database();
+    assert!(Client::of(&db, "ANN").page("sql/18-spatial-networks.md") > 0, "it shows its examples' output");
 }
 
 /// Verifies: [DESIGN] RULES.md R-DOC-8, D85: the examples of CREATE INDEX

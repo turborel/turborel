@@ -71,7 +71,7 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | PLANNER.REORDER_GAIN | 9E-1 | NUMBER FROM 0E0 TO 9.99E-1 | at once |  |
 | PLANNER.SORT_COMPARE_COST | 1E-1 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |
 | SESSION.COMMIT_AT_END | ON | ONE OF ON, OFF | at once | *session* |
-| SESSION.TIME_ZONE | +00:00 | A TIME ZONE DISPLACEMENT FROM -12:59 TO +13:00 | at once | *session* |
+| SESSION.TIME_ZONE | +00:00 | A TIME ZONE DISPLACEMENT FROM -12:59 TO +14:00 | at once | *session* |
 | SPILL.BATCH_BYTES | 16384 | INTEGER FROM 4096 TO 1048576 | at once | *session* |
 | SPILL.ENCODINGS | (empty) | ENCODINGS, BY COMMAS | at once |  |
 | SPILL.PARTITIONS | 64 | INTEGER FROM 2 TO 4096 | at once | *session* |
@@ -139,12 +139,12 @@ Each in a sentence:
 - **PLANNER.REORDER_GAIN**: A join order is taken over the FROM clause's if its estimated cost is less than this fraction of that order's.
 - **PLANNER.SORT_COMPARE_COST**: The cost of one comparison of a sort, a row read in sequence costing 1.
 - **SESSION.COMMIT_AT_END**: Whether a transaction open when its session ends is committed, ON, or rolled back, OFF [X3.135-1986 §7.1 GR2].
-- **SESSION.TIME_ZONE**: The time zone displacement of an SQL-session, ±HH:MM from -12:59 to +13:00 [ISO/IEC 9075:1992 §4.5.1]: of CURRENT_TIME and CURRENT_TIMESTAMP, and implied by a time or timestamp without time zone.
+- **SESSION.TIME_ZONE**: The time zone displacement of an SQL-session, ±HH:MM from -12:59 to +14:00 [ISO/IEC 9075-2:2023 §4.7.2]: of CURRENT_TIME and CURRENT_TIMESTAMP, and implied by a time or timestamp without time zone.
 - **SPILL.BATCH_BYTES**: The bytes of rows a spilling operator gathers before it writes them to its work area; it reads or writes a run for every two batches its MEMORY.WORK_BYTES holds.
 - **SPILL.ENCODINGS**: The encodings, as compression, the pages of work areas' files pass through as each is written from now on, by commas, in order, before the encryption they pass through while the database encrypts anything; none if empty.
 - **SPILL.PARTITIONS**: The most partitions a spilled operator (a join, grouping, DISTINCT, EXCEPT or INTERSECT) writes at once; it writes fewer if its MEMORY.WORK_BYTES holds fewer runs.
 - **SPILL.PARTITION_DEPTH**: The most times a spilled operator partitions a partition again, before it holds the partition in a table, or, grouping and an outer join, makes it in passes.
-- **SQL.FUNCTION_CALLS**: Whether a statement may call a function the program registered, of no schema, by NAME(arguments): ON; or takes calls of the schema's own functions alone, as SQL does, OFF.
+- **SQL.FUNCTION_CALLS**: Whether a statement may call a function the program registered, of no schema, by NAME(arguments): ON; or takes calls of the schema's own functions alone, as SQL does, OFF. A definition, as a CHECK, is checked as it is written, and keeps its calls whatever the setting is later.
 - **STATEMENT.TIMEOUT_MS**: The milliseconds a statement may run, each call and each fetch of a cursor alone, before it is cancelled (SQLCODE -920); 0 for no limit.
 - **STORAGE.CHECKSUM**: The hash function every file is checksummed with.
 - **STORAGE.CHECKSUM_KEY**: The name of the key, of the keyring, a keyed checksum (STORAGE.CHECKSUM, as HMAC-SHA-256) makes its digests with from now on; empty, the key the function was registered with. What was checksummed with a key before is verified with it while the keyring holds it.
