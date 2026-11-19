@@ -40,6 +40,20 @@ as a table as they come, and each statement's outcome.
 | `--skip-bad-rows` | tell a row that fails to import, and import the rest |
 | `--connect-timeout SECONDS` | wait at most SECONDS to connect, begin TLS and for each step of the login; 30 by default, 0 for no limit |
 | `--read-timeout SECONDS` | wait at most SECONDS for each reply of the server; 0, no limit, by default, as a statement may run long |
+| `-v`, `--set NAME=VALUE` | set a variable before the first statement ([Variables](05-turborel-commands.md#variables)) |
+| `-1`, `--single-transaction` | run every statement in one transaction, committed if all succeed, rolled back if any fails |
+| `-e`, `--echo` | write each statement before it runs |
+| `-q`, `--quiet` | write no `OK` after a statement that is not a query |
+| `--safe-updates` | refuse an UPDATE or DELETE without WHERE |
+| `-A`, `--unaligned` | write rows unaligned, their values between the separator ([Output formats](05-turborel-commands.md#output-formats)) |
+| `-B`, `--tab-separated` | write rows tab-separated, after a line of the columns' names, without a count |
+| `--csv`, `--html`, `--json` | write rows as CSV, an HTML table, or a JSON array |
+| `--style STYLE` | `aligned`, `wrapped`, `unaligned`, `csv`, `html`, `json` or `tabs` |
+| `--border N` | 0, 1 or 2 lines about aligned rows; 1 by default |
+| `-F`, `--separator TEXT` | what is between unaligned values; `\|` by default |
+| `-t`, `--tuples-only` | write the rows alone, without the columns' names or the count |
+| `-x`, `--expanded` | write each row as lines of a column's name and value |
+| `--auto-expanded` | expand only a row wider than the screen |
 | `--help` | print the usage |
 | `--version` | print the release |
 
@@ -117,6 +131,10 @@ OK, with a warning: SQLSTATE 01007
 A query that completes with a warning, as a set function that leaves
 out a null does, says so after its count of rows: `(1 row, with a
 warning: SQLSTATE 01003)`.
+
+Lines are typed with the client's own line editor, kept in a history
+and completed by Tab, and may hold backslash commands, done by the
+client itself ([Working in the turborel Command](05-turborel-commands.md)).
 
 A statement left without its semicolon at the end of the input runs as
 the input ends. Semicolons in strings, delimited identifiers and
@@ -336,9 +354,11 @@ UNITS 2.1.0 dependency https://plugins.example.com/
 
 ## Exit status
 
-0 if every statement and import succeeded; 1 if one failed, or an
-import skipped a row, or the client could not connect, or its command
-line is wrong; 130 if Ctrl-C ended it before it connected.
+The exit status is 0 if every statement and import succeeded. It is 1
+if one failed, an import skipped a row, the client could not connect,
+or its command line is wrong. It is 2 if the connection was lost, 3 if
+STOP_ON_ERROR ended a run at a statement that failed, and 130 if Ctrl-C
+ended it before it connected.
 
 ```
 $ turborel -p 1 -U ann -c "VALUES 1"

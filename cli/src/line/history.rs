@@ -96,6 +96,8 @@ mod tests {
             history.add(entry, 2);
         }
         assert_eq!(history.entries(), ["b", "c"]);
+        history.add(" secret", 10);
+        assert_eq!(history.entries(), ["b", "c"], "an entry that begins with a space is not kept");
         history.add("d", 0);
         assert_eq!(history.entries(), Vec::<String>::new());
     }

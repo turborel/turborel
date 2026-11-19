@@ -200,6 +200,8 @@ mod tests {
         assert_eq!(field(&csv, "").unwrap(), "\"\"");
         assert_eq!(field(&csv, "a,\"b\"").unwrap(), "\"a,\"\"b\"\"\"");
         assert_eq!(field(&csv, "plain").unwrap(), "plain");
+        let dashed = Export::parse(&args("T f null -")).unwrap();
+        assert_eq!(field(&dashed, "").unwrap(), "\"\"", "the empty string is quoted, whatever the null text");
         let text = Export::parse(&args("T f text null N")).unwrap();
         assert_eq!(field(&text, "a b").unwrap(), "a b");
         assert!(field(&text, "a\tb").is_err());

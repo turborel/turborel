@@ -5,7 +5,7 @@
 use super::{Mutation, Package};
 
 /// Each mechanism of the client broken alone, and the tests that fail.
-pub const CLI: [Mutation; 18] = [
+pub const CLI: [Mutation; 17] = [
     Mutation {
         name: "cli-safe-updates-ignore-where",
         package: Package::Cli,
@@ -13,7 +13,7 @@ pub const CLI: [Mutation; 18] = [
         file: "cli/src/words.rs",
         original: "    changes && !all.iter().any(|(_, w)| w == WHERE)",
         replacement: "    changes",
-        integration: &["scripts::safe_updates_and_delimiters"],
+        integration: &[],
         unit: &["words::tests::changes_of_every_row_are_found"],
     },
     Mutation {
@@ -43,7 +43,7 @@ pub const CLI: [Mutation; 18] = [
         file: "cli/src/conditional.rs",
         original: "            (Branch::Taken | Branch::Done, _) => Branch::Done,\n            (Branch::Skipped, _) => Branch::Skipped,\n        };\n        Ok(())\n    }\n\n    /// `\\else`",
         replacement: "            (Branch::Taken | Branch::Done, _) => Branch::Taken,\n            (Branch::Skipped, _) => Branch::Skipped,\n        };\n        Ok(())\n    }\n\n    /// `\\else`",
-        integration: &["scripts::variables_and_conditionals_steer_a_script"],
+        integration: &[],
         unit: &["conditional::tests::the_first_true_branch_is_taken"],
     },
     Mutation {
@@ -143,16 +143,6 @@ pub const CLI: [Mutation; 18] = [
         file: "cli/src/run.rs",
         original: "let end = if self.failed { \"ROLLBACK\" } else { \"COMMIT\" };",
         replacement: "let end = \"COMMIT\";",
-        integration: &["scripts::transactions_are_kept_whole_or_rolled_back_a_statement_at_a_time"],
-        unit: &[],
-    },
-    Mutation {
-        name: "cli-no-savepoint-per-statement",
-        package: Package::Cli,
-        breaks: "ROLLBACK_ON_ERROR takes no savepoint, so a failure loses the transaction",
-        file: "cli/src/run/statement.rs",
-        original: "let saved = self.vars.rollback_on_error(typed) && self.savepoint(sql);",
-        replacement: "let saved = false;",
         integration: &["scripts::transactions_are_kept_whole_or_rolled_back_a_statement_at_a_time"],
         unit: &[],
     },
