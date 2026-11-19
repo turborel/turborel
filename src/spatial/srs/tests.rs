@@ -6,6 +6,7 @@
 mod angles;
 mod directions;
 mod geodesics;
+mod limits;
 mod polygons;
 mod projections;
 mod systems;

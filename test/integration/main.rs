@@ -283,6 +283,7 @@ mod spatial_support;
 mod spatial_support_vectors;
 mod spatial_systems;
 mod spatial_topology;
+mod spatial_topology_access;
 mod spatial_types;
 mod spill_encodings;
 mod spilled_actions;

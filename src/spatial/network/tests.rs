@@ -8,6 +8,8 @@ use super::{Change, Link, Network, Problem, logical_problems, spatial_problems};
 use crate::error::SqlState;
 use crate::geometry::model::{Body, Collection, Curve, Dims, Geom, Surface};
 
+mod kinds;
+
 /// The point (x, y) of SRID 0.
 fn pt(x: f64, y: f64) -> Geom {
     Geom::new(0, Dims::Xy, Body::Point(vec![x, y])).unwrap()
