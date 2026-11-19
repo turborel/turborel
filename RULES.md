@@ -71,6 +71,8 @@ verification approach DO-178C expects (§8).
 | D53 | One contract for data types, with the standard types built in |
 | D54 | Datetimes kept in UTC, shown in the session's zone, read from a clock |
 | D58 | Dynamic SQL in SQL text, with a session as the module |
+| D174 | A delta table's statement runs before its query is bound, and gives its rows as a transition table |
+| D175 | Delta tables stand in WITH list elements, INSERT queries and MERGE sources, of views through their base table |
 | **Architecture** | |
 | D25 | One log, owned by the database |
 | D26 | Cryptography only from vetted crates, in plug-ins |
@@ -1676,6 +1678,67 @@ because drivers' SQL often has comments.
 The implementation-defined limits are 100 occurrences for a descriptor
 area without WITH MAX, at most 1,000 [§17.2 SR2, GR3], and 64 areas a
 session. A plug-in's type has TYPE code -1 [§17.1 Table 18].
+
+#### D174. A delta table's statement runs before its query is bound, and gives its rows as a transition table
+
+A `<data change delta table>` [ISO/IEC 9075-2:2023 §7.6] is read where a
+cursor's query, directly run, prepared or declared, or a SELECT INTO, in a
+routine too, has it as the one table reference of its FROM clause, and
+where D175 lets it stand. The parser marks it so as it reads such a query
+(`DeltaRows::admit`). The session runs its statement in the cursor's
+statement first, then binds the query over the rows the statement
+recorded, read as a transition table is (`db/delta.rs`). A prepared query
+is bound at PREPARE over no rows, of the subject table's columns, its
+statement bound too so its parameters are typed. Each opening runs the
+statement again.
+
+The statement's effects record each row of the subject table as they
+record it for triggers (`Effects::inserted`, `updated`, `deleted`). So a
+row is recorded as it is written, after BEFORE triggers, with its
+defaults, identity and generated columns, and OLD, NEW and FINAL read the
+old or new row [GR5b]. The collector is claimed by the statement's own
+effects. Their end, before referential actions run, takes it away, so a
+cascade or an AFTER trigger records nothing. Of FINAL the subject table
+is then the one name of the restricted subject table name list. A
+referential action that changes it is refused with SQLSTATE 27001
+[§15.18 GR15], and an AFTER trigger's statement with 0W001 [§15.21 GR6i],
+which the trigger's 09000 tells, as 0W000 is told. The rows of a typed
+table's proper subtables that an UPDATE or DELETE of it reaches are
+recorded too, each by its superrow, the first columns of the subtable's
+row, which are the typed table's [§14.9 GR4, §14.14 GR6]. The rows a
+statement of a partitioned table writes to its partitions are recorded
+alike (D153), and a row an UPDATE moves to another partition is one row
+updated, not a row deleted and one inserted (`Effects::moved`).
+
+The query's rows are all read as the cursor opens, so an error of the
+query undoes the statement with it. The protocol and the client needed
+no change, and the protocol's version stays 1.
+
+#### D175. Delta tables stand in WITH list elements, INSERT queries and MERGE sources, of views through their base table
+
+A delta table stands where the standard lets it and nowhere else. It is
+the one table reference of a FROM clause [§7.5 SR3], of a query
+specification that is the body of its query expression [§7.17 SR2]. That
+query expression is a cursor's, a `<with list element>`'s [§7.17 SR3d
+iv], an INSERT's, or a SELECT INTO's, or the delta table is a MERGE's
+source. A subquery, scalar, row or table, holds none unless it is a with
+list element's [§7.19 SR1], so neither a predicate's subquery nor a
+derived table does. A view's query holds none [§11.32 SR7].
+`QueryExpression::deltas` finds them, each with list element's in the
+order written and then the query's own, and the session runs their
+statements in that order [§7.17 GR1a]. A delta table found nowhere it
+may stand is refused as it is bound, SQLCODE -103, its statement not run.
+A delta table of a statement inside another's keeps the other's
+collector aside while it runs, and gives it back after. An INSERT or
+MERGE reading one is bound again at each execution, keeping no plan.
+
+A delta table's subject is a base table or a view with CASCADED CHECK
+OPTION [§7.6 SR11b i]. One without is refused, SQLCODE -103. Such a view
+has no INSTEAD OF trigger, nor has any view under it [§11.49 SR4c, SR4d],
+so no view of it is trigger updatable [SR11b ii]. The base table the
+view's change writes is found as the change finds it (`write_target`),
+and each row recorded of it is put in the view's columns by the view's
+map of them. The CHECK OPTION keeps every new row in the view.
 
 ### Architecture
 
