@@ -172,6 +172,9 @@ pub enum Event {
         millis: u64,
         /// Its text, if it may be told.
         statement: Option<String>,
+        /// \[DESIGN\] The trace context of the client's request it ran for,
+        /// its attribute `traceparent`, if given (RULES.md D191).
+        trace: Option<String>,
     },
     /// \[DESIGN\] More of the database's files were opened again, in a
     /// minute, than FILES.MAX_OPEN lets be open: the limit is too low for

@@ -169,6 +169,10 @@ behind it, and each can be replaced or added to.
 - Library, embedded modes
 - A server over TCP, Unix sockets or Windows named pipes, with TLS,
   users and passwords, prepared statements and cancellation.
+- A [native protocol](doc/client/05-protocol.md) that grows by
+  negotiated capabilities: structured errors and notices, row counts,
+  generated keys and server time in each completion, bulk copy,
+  compression, session status, and reads after a commit on replicas.
 - A [client library](doc/client/02-library-connections.md) that pipelines
   requests, pools connections, fails over across servers, and takes its
   settings from a URI, the environment, a service file or a password file.

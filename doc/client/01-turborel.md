@@ -188,7 +188,9 @@ the clock's precision depends on the platform.
 
 When the server reports the time it spent on a statement, the line
 shows it after the round trip, as in `Time: 9000 ns, server 6000 ns
-(planning 1000 ns, execution 4000 ns, waiting 1000 ns)`. Only the parts
+(waiting 1000 ns, queued 2000 ns)`. Waiting is the time the statement
+waited for locks, within the server's time, and queued the time its
+request waited for a worker before it began, outside it. Only the parts
 the server reports are listed. A server that reports no time leaves
 the line as the round trip alone.
 

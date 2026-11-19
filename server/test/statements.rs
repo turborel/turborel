@@ -148,7 +148,7 @@ fn errors_reach_the_client_as_the_database_gives_them() {
     }
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Query { sql: "SELECT K FROM Y.B".into(), ends: false });
+    raw.send(&Request::Query { sql: "SELECT K FROM Y.B".into(), ends: false, attributes: Vec::new(), multi: false });
     assert!(matches!(raw.receive(), Some(Reply::Description(_))));
     assert!(matches!(raw.receive(), Some(Reply::Rows(rows)) if rows.len() == 1), "the row read before");
     assert!(matches!(raw.receive(), Some(Reply::Error(failure)) if failure.sqlcode == -915));
@@ -172,13 +172,13 @@ fn rows_come_in_batches_after_their_description() {
         let server = start(&db, &[(BATCH_BYTES, batch)]);
         let mut raw = server.raw();
         raw.hello("X");
-        raw.send(&Request::Query { sql: "SELECT K FROM T ORDER BY K".into(), ends: false });
+        raw.send(&Request::Query { sql: "SELECT K FROM T ORDER BY K".into(), ends: false, attributes: Vec::new(), multi: false });
         assert!(matches!(raw.receive(), Some(Reply::Description(columns)) if columns.len() == 1));
         for size in sizes {
             assert!(matches!(raw.receive(), Some(Reply::Rows(rows)) if rows.len() == size));
         }
         assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
-        raw.send(&Request::Query { sql: "SELECT K FROM T WHERE K > 3".into(), ends: false });
+        raw.send(&Request::Query { sql: "SELECT K FROM T WHERE K > 3".into(), ends: false, attributes: Vec::new(), multi: false });
         assert!(matches!(raw.receive(), Some(Reply::Description(_))));
         assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 100, .. }))));
     }
@@ -206,7 +206,7 @@ fn a_session_ends_as_its_connection_does() {
     assert_eq!(embedded(&db, "SELECT K FROM T"), ["1"], "rolled back");
     let mut raw = server.raw();
     raw.hello("X");
-    raw.send(&Request::Query { sql: "INSERT INTO T (K) VALUES (3)".into(), ends: false });
+    raw.send(&Request::Query { sql: "INSERT INTO T (K) VALUES (3)".into(), ends: false, attributes: Vec::new(), multi: false });
     assert!(matches!(raw.receive(), Some(Reply::Complete(Completed { sqlcode: 0, .. }))));
     raw.0.shutdown(std::net::Shutdown::Write).unwrap();
     assert_eq!(state(&raw.refusal()).0, "08006", "the server closes, saying why");
@@ -239,7 +239,7 @@ fn a_commit_that_fails_as_the_client_terminates_is_told() {
     c.query("INSERT INTO U VALUES (1)").unwrap();
     let failed = c.terminate().unwrap_err();
     assert_eq!(failed.sqlstate, "40002", "{failed}");
-    assert!(embedded(&db, "SELECT K FROM Y.U").is_empty(), "nothing committed");
+    assert_eq!(embedded(&db, "SELECT K FROM Y.U").len(), 0, "nothing committed");
     let mut c = server.connect("Y");
     c.query("INSERT INTO U VALUES (2)").unwrap();
     c.terminate().unwrap();

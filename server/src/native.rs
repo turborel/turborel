@@ -29,21 +29,28 @@
 //! transaction is active. A session of a user is ended at its next request
 //! once the user is dropped (RULES.md D43).
 
+mod copy;
 mod lent;
 mod lobs;
+mod next;
+mod notices;
+mod position;
+mod renew;
 mod requests;
+mod status;
 mod wire;
 
 use std::future::Future;
 use std::sync::Arc;
-use std::time::Instant;
 
 use lent::{Lent, Loan, Running, Slot};
-use requests::{Held, Work};
+use next::{Next, next_work};
+use requests::{Held, Serves};
 use turborel::db::Session;
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::value::types::TypeRegistry;
-use turborel_protocol::{Reply, Request, VERSION, broken};
+use turborel_protocol::capability::{COMPRESSION, DIAGNOSTICS, STATUS};
+use turborel_protocol::{Attributes, Capabilities, Reply, Request, VERSION, broken};
 use wire::Wire;
 
 use crate::auth::{Authenticator, Exchange, Peer, Step};
@@ -123,12 +130,28 @@ async fn stopped<T>(worked: impl Future<Output = T>, present: &Present) -> T {
     }
 }
 
-/// A client authenticated: its session, its cancel key, registered while
-/// this lives, and the user it logged in as, if that was a user.
-struct Admitted {
-    session: Session,
+/// Who a connection's session is of: its cancel key, registered while
+/// this lives, the user it logged in as, if that was a user, and its
+/// authorization identifier.
+struct Login {
     key: Registered,
     user: Option<String>,
+    authorization: String,
+}
+
+/// A client authenticated: its session, its login, and what it was
+/// granted (RULES.md D185).
+struct Admitted {
+    session: Session,
+    login: Login,
+    granted: Capabilities,
+}
+
+/// What a Hello offers beside its credentials: the capabilities it asks
+/// for and the connection's attributes (RULES.md D185, D191).
+struct Offer {
+    capabilities: Vec<String>,
+    attributes: Attributes,
 }
 
 /// Serves `connection` to its end.
@@ -142,7 +165,7 @@ async fn serve(connection: Connection) {
     let (mut wire, ended) = match services.login(arrived, welcome(&mut wire, (&peer, &present), &services)).await {
         Ok(Some(admitted)) => {
             wire.set_max_body(max_body);
-            run(wire, (&services, &present), admitted).await
+            Box::pin(run(wire, (&services, &present, &peer), admitted)).await
         }
         Ok(None) => (wire, Ok(())),
         Err(e) => (wire, Err(e)),
@@ -177,9 +200,9 @@ async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: 
             services.cancel(&key);
             Ok(None)
         }
-        // No capability is defined in version 1, so none is taken.
-        Request::Hello { version, user, mechanism, initial, capabilities: _ } => {
-            authenticate(wire, (peer, present), services, (version, user, mechanism, initial)).await.map(Some)
+        Request::Hello { version, user, mechanism, initial, capabilities, attributes } => {
+            let offer = Offer { capabilities, attributes };
+            authenticate(wire, (peer, present), services, ((version, user, mechanism, initial), offer)).await.map(Some)
         }
         Request::Answer(_)
         | Request::Query { .. }
@@ -189,6 +212,13 @@ async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: 
         | Request::Close { .. }
         | Request::Deallocate { .. }
         | Request::Lob(_)
+        | Request::Describe(_)
+        | Request::Ping
+        | Request::Reset
+        | Request::ChangeUser { .. }
+        | Request::CopyIn { .. }
+        | Request::CopyData(_)
+        | Request::CopyEnd { .. }
         | Request::Terminate => Err(broken("[DESIGN] a connection begins with Hello, or Cancel")),
     }
 }
@@ -203,7 +233,7 @@ async fn authenticate(
     wire: &mut Wire,
     (peer, present): (&Peer, &Present),
     services: &Services,
-    hello: (u32, String, String, Vec<u8>),
+    (hello, offer): ((u32, String, String, Vec<u8>), Offer),
 ) -> Result<Admitted> {
     let (version, given, mechanism, initial) = hello;
     let (logins, db) = (services.logins(), services.database());
@@ -218,18 +248,34 @@ async fn authenticate(
     };
     let exchange = authenticator.begin(&user, peer);
     let authorization = exchanged(wire, (peer, present), services, (exchange, initial)).await?;
-    if db.is_role(&authorization)? {
-        let msg = format!("[ISO/IEC 9075-2:2023 §19.2 GR5] {authorization} is a role's name, and a session's user is a user's");
-        return Err(refused(msg));
-    }
+    not_a_role(services, &authorization)?;
     // A user's session lasts while the user does (RULES.md D43).
     let member = db.is_user(&authorization)?.then(|| authorization.clone());
     let session = db.session(&authorization);
     let key = services.register_cancel(session.canceller())?;
     present.stoppable(session.canceller());
     present.authenticated(&authorization);
-    wire.send_now(&Reply::Ready { authorization, key: key.key, capabilities: Vec::new(), server: turborel::product() }).await?;
-    Ok(Admitted { session, key, user: member })
+    present.attributed(offer.attributes);
+    let threshold = settings::count(db, settings::COMPRESSION_MIN_BYTES);
+    let offered = if threshold == 0 { Capabilities::all().without(COMPRESSION) } else { Capabilities::all() };
+    let granted = Capabilities::of(&offer.capabilities).and(offered);
+    let mut replies = if granted.has(STATUS) { status::Status::default().begun(&session) } else { Vec::new() };
+    let ready =
+        Reply::Ready { authorization: authorization.clone(), key: key.key, capabilities: granted.names(), server: turborel::product() };
+    replies.push(ready);
+    wire.send_all(&replies).await?;
+    wire.grant(granted.has(COMPRESSION).then_some(threshold), granted.has(DIAGNOSTICS));
+    Ok(Admitted { session, login: Login { key, user: member, authorization }, granted })
+}
+
+/// Refuses `authorization` as a session's user (SQLSTATE 28000) if it is
+/// a role's name.
+fn not_a_role(services: &Services, authorization: &str) -> Result<()> {
+    if services.database().is_role(authorization)? {
+        let msg = format!("[ISO/IEC 9075-2:2023 §19.2 GR5] {authorization} is a role's name, and a session's user is a user's");
+        return Err(refused(msg));
+    }
+    Ok(())
 }
 
 /// The user a Hello of `version`, naming `user` and `mechanism`, logs in
@@ -287,44 +333,6 @@ async fn exchanged(
     }
 }
 
-/// The work `request` asks of the session; none for Terminate.
-fn work_of(request: Request) -> Result<Option<Work>> {
-    Ok(Some(match request {
-        Request::Query { sql, ends } => Work::Query { sql, ends },
-        Request::Prepare { statement, sql } => Work::Prepare(statement, sql),
-        Request::Execute { statement, values, rows, ends } => Work::Execute { statement, values, rows, ends },
-        Request::Fetch { statement, rows } => Work::Fetch(statement, rows),
-        Request::Close { statement } => Work::Close(statement),
-        Request::Deallocate { statement } => Work::Deallocate(statement),
-        Request::Lob(request) => Work::Lob(request),
-        Request::Terminate => return Ok(None),
-        Request::Hello { .. } | Request::Answer(_) => return Err(broken("[DESIGN] a connection is authenticated once")),
-        Request::Cancel(_) => return Err(broken("[DESIGN] a Cancel is a connection's first and only message")),
-    }))
-}
-
-/// The work of the client's next request, none for Terminate: waited for
-/// SERVER.IDLE_TIMEOUT_MS, or SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS too while
-/// the session's transaction is active; the client fast if it came within
-/// `lent::WAITED` (`Lent::fast`). Refused (SQLSTATE 28000) if the session
-/// is `user`'s, and the user has been dropped since it logged in.
-async fn next_work(lent: &mut Lent, (services, present): (&Services, &Present), user: Option<&str>) -> Result<Option<Work>> {
-    let began = Instant::now();
-    let receiving = next(&mut lent.wire, services, present);
-    let request = if lent.held.session.transaction().is_some() {
-        services.idle_in_transaction(receiving).await
-    } else {
-        services.idle(receiving).await
-    };
-    lent.fast = began.elapsed() < lent::WAITED;
-    let work = work_of(request?)?;
-    let Some(name) = user else { return Ok(work) };
-    if services.database().is_user(name)? {
-        return Ok(work);
-    }
-    Err(refused(format!("[DESIGN] the user {name} was dropped: its connections end")))
-}
-
 /// SERVER.BATCH_BYTES, SERVER.MAX_STATEMENTS and SERVER.LOB_INLINE_BYTES,
 /// as they are now.
 fn limits(services: &Services) -> (usize, usize, usize) {
@@ -343,17 +351,30 @@ fn limits(services: &Services) -> (usize, usize, usize) {
 /// back [ISO/IEC 9075:1992 §20.1 GR2a]. Each request read here runs on a
 /// worker lent the session and `wire` (`native/lent.rs`), which answers a
 /// fast client's next requests too, shown running meanwhile; the wire
-/// comes back with the outcome, for the connection to close with.
-async fn run(wire: Wire, (services, present): (&Services, &Present), admitted: Admitted) -> (Wire, Result<()>) {
-    // The key cancels the session's statements while it lives.
-    let Admitted { session, key: _key, user } = admitted;
+/// comes back with the outcome, for the connection to close with. A Reset
+/// or a ChangeUser renews the session here (`native/renew.rs`).
+async fn run(wire: Wire, (services, present, peer): (&Services, &Present, &Peer), admitted: Admitted) -> (Wire, Result<()>) {
+    let Admitted { session, mut login, granted } = admitted;
     let slot = Slot::new();
-    let running = Running::new(services, present, user.as_deref());
-    let mut lent = Lent::new(Held::new(session), wire);
+    let mut running = Running::new(services, present, login.user.as_deref());
+    let serves = Serves { db: services.database().clone(), requests: Arc::clone(services.requests()) };
+    let mut lent = Lent::new(Held::new(session, serves, granted), wire);
     let ended = loop {
-        let work = match next_work(&mut lent, (services, present), user.as_deref()).await {
-            Ok(Some(work)) => work,
-            Ok(None) => break Ok(()),
+        let work = match next_work(&mut lent, (services, present), login.user.as_deref()).await {
+            Ok(Next::Work(work)) => work,
+            Ok(Next::Terminate) => break Ok(()),
+            Ok(Next::Reset) => match renew::reset(&mut lent, (services, present), &login).await {
+                Ok(()) => continue,
+                Err(e) => break Err(e),
+            },
+            Ok(Next::ChangeUser { user, mechanism, initial }) => {
+                let changed = renew::change_user(&mut lent, (services, present, peer), &mut login, (user, mechanism, initial)).await;
+                running = Running::new(services, present, login.user.as_deref());
+                match changed {
+                    Ok(()) => continue,
+                    Err(e) => break Err(e),
+                }
+            }
             Err(e) => break Err(e),
         };
         let (loan, running, limits) = (Loan::new(&slot, lent), running.clone(), limits(services));
@@ -378,8 +399,13 @@ async fn run(wire: Wire, (services, present): (&Services, &Present), admitted: A
 /// Ends `held`'s session on a worker as SESSION.COMMIT_AT_END says, its client
 /// having terminated it [ISO/IEC 9075:1992 §20.1 GR2a]: a commit that
 /// fails, as a deferred constraint not satisfied, is the client's error.
-async fn terminated(services: &Services, held: Held) -> Result<()> {
-    services.run(move || held.session.end()).await?
+async fn terminated(services: &Services, mut held: Held) -> Result<()> {
+    services
+        .run(move || {
+            held.abandon_copy();
+            held.session.end()
+        })
+        .await?
 }
 
 /// Ends `held`'s session on a worker, rolled back: it ended unexpectedly

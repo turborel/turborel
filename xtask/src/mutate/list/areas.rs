@@ -145,8 +145,9 @@ fn plugins() -> [&'static [Mutation]; 4] {
 }
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
-/// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, simple features', partitioning's, UUID's, the command-line client's, replication's, the server's and the client library's.
-fn last() -> [&'static [Mutation]; 45] {
+/// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, simple features', partitioning's, UUID's,
+/// the command-line client's, replication's, the server's, the native protocol's and the client library's.
+fn last() -> [&'static [Mutation]; 46] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -192,6 +193,7 @@ fn last() -> [&'static [Mutation]; 45] {
         &super::WAITS,
         &super::VR,
         &super::SERVER,
+        &super::server::native::NATIVE,
         &super::client::CLIENT,
     ]
 }

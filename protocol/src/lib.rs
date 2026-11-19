@@ -3,8 +3,9 @@
 //! share one codec and tests can check it byte by byte.
 //!
 //! A connection begins with the client's Hello: the protocol version, the
-//! user, a mechanism of authentication with its first bytes, and the
-//! capabilities the client has. The server answers each step of the
+//! user, a mechanism of authentication with its first bytes, the
+//! capabilities the client asks for (`capability.rs`) and the connection's
+//! attributes. The server answers each step of the
 //! exchange with a Challenge, the client each Challenge with an Answer,
 //! until the server sends Ready, with the session's authorization
 //! identifier, the key that cancels its statements, the capabilities both
@@ -31,6 +32,13 @@
 //! autocommit has it, is one request and one reply. A query's cursor left
 //! open keeps the transaction.
 //!
+//! Version 1 grew after its first form by capabilities (RULES.md D185):
+//! each added behaviour is granted in Ready only if the client asked for
+//! it in Hello, so a peer that never asks sees the first form alone. The
+//! fields a message of the first form gained are its tail (`tail.rs`),
+//! written only where granted; the messages added are in `request/added.rs`
+//! and `reply.rs`; compressed frames are `compress.rs`.
+//!
 //! A statement running is cancelled from another connection, whose first
 //! and only message is Cancel with the key: the server closes it, and the
 //! statement fails (SQLCODE -920).
@@ -50,8 +58,9 @@
 //!             u64; 13 interval, its qualifier
 //!             as its data type's, then units i128; 14 truth value, 0 or
 //!             1 u8; 15 decimal floating point, coefficient i128 then
-//!             exponent, an i32's bits in a u32; 25 XML, its serialization
-//!             as CONTENT, a string
+//!             exponent, an i32's bits in a u32; 16 to 26 the constructed,
+//!             large object, JSON and XML values, as `fields.rs` writes
+//!             them, 26 XML its serialization as CONTENT, a string
 //! data type:  tag u8: 1 character, 5 character varying, 6 binary, 7
 //!             binary varying, each length u32; 2 exact, precision u32 then scale
 //!             u32; 3 approximate, precision u32; 4 beyond the standard, its
@@ -59,24 +68,28 @@
 //!             10 time with time zone, 11 timestamp, 12 timestamp with time
 //!             zone, each precision u32; 13 interval, start field, end field,
 //!             leading precision and fractional precision, each u32; 14
-//!             boolean; 15 decfloat, precision u32; 25 XML, its primary
+//!             boolean; 15 decfloat, precision u32; 16 to 25 as `fields.rs`
+//!             writes them; 26 XML, its primary
 //!             modifier u8 (0 DOCUMENT, 1 CONTENT, 2 SEQUENCE), then its
 //!             secondary u8 (0 UNTYPED or none, 1 ANY)
 //! parameter:  varying u8 (CHARACTER VARYING if 1); data type
 //! column:     named u8, its name if 1; data type; not null u8
 //! failure:    sqlcode i32 as u32; sqlstate, a string of 5; message;
 //!             cited u8, the rule if 1; placed u8, the position u64 if 1;
-//!             active u8 (the transaction active after it if 1)
+//!             active u8 (the transaction active after it if 1); tail:
+//!             its diagnostics, with `diagnostics`
 //! key:        16 bytes
 //!
 //! client      'H' hello: version u32, user, mechanism, initial bytes,
-//!                 capabilities (strings)
+//!                 capabilities (strings); tail: attributes
 //!             'A' answer: bytes
-//!             'Q' query: the SQL, ends u8 (the transaction ends with it if 1)
+//!             'Q' query: the SQL, ends u8 (the transaction ends with it if
+//!                 1); tail: attributes, multi
 //!             'P' prepare: statement u32, the SQL
-//!             'E' execute: statement u32, values, rows u32 (0: all), ends u8
-//!             'F' fetch: statement u32, rows u32 (0: all)
-//!             'C' close: statement u32
+//!             'E' execute: statement u32, values, rows u32 (0: all), ends
+//!                 u8; tail: attributes, cursor
+//!             'F' fetch: statement u32, rows u32 (0: all); tail: cursor
+//!             'C' close: statement u32; tail: cursor
 //!             'D' deallocate: statement u32
 //!             'Z' cancel: key
 //!             'X' terminate
@@ -88,11 +101,19 @@
 //!             'B' rows: each row's values
 //!             'S' suspended
 //!             'K' complete: sqlcode i32 as u32; sqlstate, a string of 5;
-//!                 active u8, as a failure's
+//!                 active u8, as a failure's; tail: position, more, rows,
+//!                 generated, conditions, time
 //!             'E' error: failure
 //! ```
+//!
+//! The messages version 1 added, each behind its capability, and every
+//! layout byte for byte, are in the protocol's reference
+//! (`doc/client/05-protocol.md`).
 
+pub mod capability;
+pub mod compress;
 pub mod der;
+mod diagnostics;
 mod fields;
 mod lobs;
 #[cfg(feature = "scram")]
@@ -102,6 +123,9 @@ mod reply;
 mod request;
 #[cfg(feature = "scram")]
 pub mod scram;
+pub mod split;
+mod tail;
+pub mod zlib;
 
 use turborel::binder::OutColumn;
 use turborel::bytes::Put;
@@ -109,10 +133,17 @@ use turborel::db::Completion;
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::value::DataType;
 
+pub use capability::Capabilities;
+pub use diagnostics::{Diagnostics, ERROR, FATAL, NOTICE, Notice, WARNING};
 pub use fields::row_size;
 pub use lobs::{LobReply, LobRequest};
 pub use reply::Reply;
-pub use request::Request;
+pub use request::{Described, Request};
+pub use tail::{MAX_ATTRIBUTE_NAME, MAX_ATTRIBUTE_VALUE, MAX_ATTRIBUTES};
+
+/// \[DESIGN\] Attributes of a connection or a request: each a name and a
+/// value (RULES.md D191).
+pub type Attributes = Vec<(String, String)>;
 
 /// The protocol's version, the first field of Hello.
 pub const VERSION: u32 = 1;
@@ -160,7 +191,7 @@ impl From<&OutColumn> for Column {
 /// A statement's completion as a client receives it: SQLCODE 0 or 100,
 /// and its SQLSTATE, that of a warning [ISO/IEC 9075:1992 §22.1] among
 /// them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Completed {
     /// Its SQLCODE.
     pub sqlcode: i32,
@@ -170,15 +201,71 @@ pub struct Completed {
     /// 9075:1992 §4.28], as a client's connection statements need to know
     /// [§15.1 GR1, §15.3 GR6].
     pub active: bool,
+    /// \[DESIGN\] With `commit-position`, the log position of the commit it
+    /// made, if it committed (RULES.md D194), which a replica's session
+    /// waits for with REPLICATION.READ_AFTER. Its tail.
+    pub position: Option<u64>,
+    /// \[DESIGN\] With `multi-statement`, whether another statement's
+    /// replies follow, of a Query of several (RULES.md D192). Its tail.
+    pub more: bool,
+    /// \[DESIGN\] With `row-counts`, the rows its statement inserted,
+    /// updated, deleted or merged, as GET DIAGNOSTICS ROW_COUNT gives
+    /// them, or the rows a query returned (RULES.md D197); with `copy`,
+    /// the rows a copy inserted (D195). Its tail.
+    pub rows: Option<u64>,
+    /// \[DESIGN\] With `generated-values`, the identity values an INSERT
+    /// generated, in the order of its rows, as SQL writes them (RULES.md
+    /// D198). Its tail.
+    pub generated: Vec<String>,
+    /// \[DESIGN\] With `conditions`, each condition its statement raised,
+    /// in order (RULES.md D187). Its tail.
+    pub conditions: Vec<Failure>,
+    /// \[DESIGN\] With `row-counts`, the server's time for its statement
+    /// (RULES.md D240). Its tail.
+    pub time: Option<Timing>,
+}
+
+/// \[DESIGN\] The server's time for a statement, in microseconds (RULES.md
+/// D240): from when a worker began its request until its completion was
+/// ready, a cursor's summed over the Execute and every Fetch, a copy's
+/// over its requests; the time its requests waited for a worker before
+/// that; and the time it waited for locks, a part of the whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Timing {
+    /// The whole time, from when a worker began each request.
+    pub total: u64,
+    /// The time its requests waited, read, for a worker to run them,
+    /// before the whole and not in it.
+    pub queued: u64,
+    /// The time it waited for locks other transactions held, in the whole.
+    pub locks: u64,
+}
+
+impl Timing {
+    /// This and `other`, summed.
+    #[must_use]
+    pub fn plus(self, other: Timing) -> Timing {
+        Timing {
+            total: self.total.saturating_add(other.total),
+            queued: self.queued.saturating_add(other.queued),
+            locks: self.locks.saturating_add(other.locks),
+        }
+    }
 }
 
 impl From<Completion> for Completed {
     fn from(c: Completion) -> Completed {
-        Completed { sqlcode: c.sqlcode(), sqlstate: c.sqlstate().as_str().to_owned(), active: false }
+        Completed::of(c.sqlcode(), c.sqlstate().as_str())
     }
 }
 
 impl Completed {
+    /// A completion of `sqlcode` and `sqlstate`, no transaction active
+    /// after it, its tail empty.
+    pub fn of(sqlcode: i32, sqlstate: &str) -> Completed {
+        Completed { sqlcode, sqlstate: sqlstate.to_owned(), ..Completed::default() }
+    }
+
     /// Whether it is a warning: SQLSTATE class 01.
     pub fn is_warning(&self) -> bool {
         self.sqlstate.starts_with("01")
@@ -202,18 +289,25 @@ pub struct Failure {
     /// Whether the session's transaction is active after it, as
     /// `Completed::active`.
     pub active: bool,
+    /// \[DESIGN\] With `diagnostics`, its severity and what it is about
+    /// (RULES.md D186). Its tail.
+    pub diagnostics: Option<Box<Diagnostics>>,
 }
 
 impl From<&SqlError> for Failure {
     fn from(e: &SqlError) -> Failure {
-        Failure {
+        let mut failure = Failure {
             sqlcode: e.sqlcode(),
             sqlstate: e.sqlstate().as_str().to_owned(),
             message: e.msg.clone(),
             rule: e.rule.clone(),
             position: e.pos.and_then(|p| u64::try_from(p).ok()),
             active: false,
-        }
+            diagnostics: None,
+        };
+        let severity = if failure.ends_connection() { FATAL } else { ERROR };
+        failure.diagnostics = Some(Box::new(Diagnostics::of(e, severity)));
+        failure
     }
 }
 
@@ -233,6 +327,13 @@ impl std::fmt::Display for Failure {
 impl std::error::Error for Failure {}
 
 impl Failure {
+    /// It, without its diagnostics: as a peer not granted `diagnostics`
+    /// reads it.
+    #[must_use]
+    pub fn plain(self) -> Failure {
+        Failure { diagnostics: None, ..self }
+    }
+
     /// Whether the connection it came on is lost: a connection exception
     /// (SQLSTATE class 08), or credentials refused as it is made (28, of a
     /// connection exception's SQLCODE), after which the server closes it.

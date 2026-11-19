@@ -2,14 +2,54 @@
 //! (RFC 5802 §3, §6, §7): its first message, its proof answering the
 //! server's first, bound to the channel its `Channel` says, and the
 //! server's signature checked, so the client knows the server knew the
-//! verifier.
+//! verifier. Its proof is made from the keys a password derives
+//! (`Derived`), so a client that keeps them (a key cache) proves without
+//! the slow derivation, by `read` and `prove`; `answer` derives them.
 
 use std::num::NonZeroU32;
 
 use aws_lc_rs::constant_time;
 use turborel::error::Result;
 
-use super::{Channel, Key, Keys, attribute, decode, encode, hmac, is_nonce, refused, salted_password, saslname, text, xor};
+use super::{Channel, Key, attribute, decode, encode, hmac, is_nonce, refused, salted_password, saslname, sha256, text, xor};
+
+/// What a password derives under a salt and iterations: ClientKey and
+/// ServerKey [RFC 5802 §3]. Never the password, nor SaltedPassword.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Derived {
+    /// ClientKey.
+    pub client: Key,
+    /// ServerKey.
+    pub server: Key,
+}
+
+impl std::fmt::Debug for Derived {
+    /// Never the keys.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Derived(..)")
+    }
+}
+
+impl Derived {
+    /// The keys `password` derives under `salt` and `iterations`: the
+    /// slow step, PBKDF2's iterations.
+    pub fn of(password: &str, salt: &[u8], iterations: NonZeroU32) -> Derived {
+        let salted = salted_password(password, salt, iterations);
+        Derived { client: hmac(&salted, super::CLIENT_KEY), server: hmac(&salted, super::SERVER_KEY) }
+    }
+}
+
+/// The server's first message, read and checked: its whole text, both
+/// nonces, and the salt and iterations the keys are derived under.
+#[derive(Debug, Clone)]
+pub struct ServerFirst {
+    message: String,
+    both: String,
+    /// The salt.
+    pub salt: Vec<u8>,
+    /// The iterations.
+    pub iterations: NonZeroU32,
+}
 
 /// How far the client has come.
 #[derive(Clone)]
@@ -66,14 +106,26 @@ impl Client {
         message.into_bytes()
     }
 
-    /// client-final, answering `server_first`.
+    /// client-final, answering `server_first` by the keys its password
+    /// derives.
+    ///
+    /// # Errors
+    ///
+    /// As `read`'s.
+    pub fn answer(&mut self, server_first: &[u8]) -> Result<Vec<u8>> {
+        let first = self.read(server_first)?;
+        let keys = Derived::of(&self.password, &first.salt, first.iterations);
+        Ok(self.prove(&first, &keys))
+    }
+
+    /// `server_first`, read and checked against this exchange.
     ///
     /// # Errors
     ///
     /// SQLSTATE 28000 if it is not the server-first of this exchange: out
     /// of turn, malformed, or its nonce not begun with the client's.
-    pub fn answer(&mut self, server_first: &[u8]) -> Result<Vec<u8>> {
-        let Stage::Sent { bare, nonce } = &self.stage else { return Err(refused("the server's first message came out of turn")) };
+    pub fn read(&self, server_first: &[u8]) -> Result<ServerFirst> {
+        let Stage::Sent { nonce, .. } = &self.stage else { return Err(refused("the server's first message came out of turn")) };
         let message = text(server_first)?;
         let mut fields = message.split(',');
         let (both, salt, iterations) = (attribute(fields.next(), 'r')?, attribute(fields.next(), 's')?, attribute(fields.next(), 'i')?);
@@ -85,14 +137,22 @@ impl Client {
         }
         let salt = decode(salt).ok_or_else(|| refused("the salt is not base 64"))?;
         let iterations: NonZeroU32 = iterations.parse().map_err(|_| refused("the iterations are no positive number"))?;
-        let salted = salted_password(&self.password, &salt, iterations);
-        let client_key = hmac(&salted, super::CLIENT_KEY);
-        let keys = Keys::of(&salted);
-        let without_proof = format!("c={},r={both}", encode(&self.channel.input()));
-        let auth = format!("{bare},{message},{without_proof}");
-        let proof = xor(&client_key, &hmac(&keys.stored, auth.as_bytes()));
+        Ok(ServerFirst { message: message.to_owned(), both: both.to_owned(), salt, iterations })
+    }
+
+    /// client-final, answering `first`, which `read` gave, by `keys`, as
+    /// its salt and iterations derive them: the server's signature then
+    /// expected.
+    pub fn prove(&mut self, first: &ServerFirst, keys: &Derived) -> Vec<u8> {
+        let bare = match &self.stage {
+            Stage::Sent { bare, .. } => bare.clone(),
+            Stage::Begun | Stage::Proved(_) | Stage::Verified => String::new(),
+        };
+        let without_proof = format!("c={},r={}", encode(&self.channel.input()), first.both);
+        let auth = format!("{bare},{},{without_proof}", first.message);
+        let proof = xor(&keys.client, &hmac(&sha256(&keys.client), auth.as_bytes()));
         self.stage = Stage::Proved(hmac(&keys.server, auth.as_bytes()));
-        Ok(format!("{without_proof},p={}", encode(&proof)).into_bytes())
+        format!("{without_proof},p={}", encode(&proof)).into_bytes()
     }
 
     /// Checks `server_final`: the server's signature, proving it knew the
@@ -117,5 +177,10 @@ impl Client {
     /// Whether the server proved it knew the user's verifier.
     pub fn verified(&self) -> bool {
         matches!(self.stage, Stage::Verified)
+    }
+
+    /// Whether the exchange is bound to its channel.
+    pub fn is_bound(&self) -> bool {
+        matches!(self.channel, Channel::EndPoint(_) | Channel::Exporter(_))
     }
 }

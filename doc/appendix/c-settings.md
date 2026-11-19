@@ -226,11 +226,13 @@ Each in a sentence:
 | REPLICATION.CA | (empty) | TEXT OF AT MOST 1024 CHARACTERS | at the next start | *node* |
 | REPLICATION.LISTEN | (empty) | TEXT OF AT MOST 1024 CHARACTERS | at the next start | *node* |
 | REPLICATION.MEMBERS | (empty) | TEXT OF AT MOST 1024 CHARACTERS | at the next start | *node* |
+| REPLICATION.READ_AFTER | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | REPLICATION.REPLICA | 0 | INTEGER FROM 0 TO 4294967295 | at the next start | *node* |
 | REPLICATION.RETAIN_BYTES | 268435456 | INTEGER FROM 0 TO 9223372036854775807 | at the next start | *node* |
 | REPLICATION.TICK_MS | 100 | INTEGER FROM 10 TO 60000 | at the next start | *node* |
 | REPLICATION.TLS | ON | ONE OF ON, OFF | at the next start | *node* |
 | SERVER.BATCH_BYTES | 65536 | INTEGER FROM 1 TO 4294967295 | at once |  |
+| SERVER.COMPRESSION_MIN_BYTES | 1024 | INTEGER FROM 0 TO 16777216 | from the next connection |  |
 | SERVER.HOST | 127.0.0.1 | TEXT OF AT MOST 1024 CHARACTERS | at the next start |  |
 | SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS | 0 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | SERVER.IDLE_TIMEOUT_MS | 0 | INTEGER FROM 0 TO 4294967295 | at once |  |
@@ -262,11 +264,13 @@ Each in a sentence:
 - **REPLICATION.CA**: The PEM file of the authorities the members' certificates are verified against, each member presenting SERVER.TLS_CERTIFICATE and SERVER.TLS_KEY to the others.
 - **REPLICATION.LISTEN**: The host and port this node takes the other members' frames at; empty, those its own member names in REPLICATION.MEMBERS.
 - **REPLICATION.MEMBERS**: The members of the replica group: each its number, =, and the host and port its replica takes frames at, by commas, as 1=db1.example.com:7423,2=db2.example.com:7423.
+- **REPLICATION.READ_AFTER**: The log position, as a commit's Complete gave it, that a session's statements wait for the database to have applied before they run, within STATEMENT.TIMEOUT_MS; 0 for none.
 - **REPLICATION.REPLICA**: This node's number among the members of its database's replica group; 0, the database is not replicated.
 - **REPLICATION.RETAIN_BYTES**: The bytes of the group's log the replica keeps before its database's last checkpoint at least: a backup behind by less catches up from the log, one behind by more from a state transfer of the primary's files.
 - **REPLICATION.TICK_MS**: The milliseconds between the ticks of the replica's consensus, in which its heartbeats and the timeouts of its view changes count.
 - **REPLICATION.TLS**: Whether the members secure their frames to each other by mutual TLS, ON; OFF only for a group on one machine, as in tests.
 - **SERVER.BATCH_BYTES**: About how many bytes of rows the server sends in one batch.
+- **SERVER.COMPRESSION_MIN_BYTES**: The bytes of the shortest frame sent compressed to a client that asked for compression, read as it connects; 0 for no compression.
 - **SERVER.HOST**: Hosts or addresses, by commas, where TCP connections are taken.
 - **SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS**: The milliseconds the server waits for the next request of a client in a transaction before it closes the connection, the transaction rolled back and its locks let go; 0 for no limit.
 - **SERVER.IDLE_TIMEOUT_MS**: The milliseconds the server waits on a client, for its next request or to take what it is sent, before it closes the connection, its transaction rolled back; 0 for no limit.

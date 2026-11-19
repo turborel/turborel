@@ -47,7 +47,22 @@ fn shown(given: &Options, seat: &Seat<'_>, times: &[Duration]) -> (bool, String,
     let succeeded =
         run_with_clock(&mut connection, given, io, || ticks.next().expect("one start and end per statement")) == Outcome::Succeeded;
     assert_eq!(ticks.next(), None, "every attempted statement was timed");
-    (succeeded, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
+    (succeeded, String::from_utf8(out).unwrap(), round_trips(&String::from_utf8(err).unwrap()))
+}
+
+/// `err` with each timing line's round trip alone: the server's time,
+/// which the line of each statement completed carries (RULES.md D240)
+/// and no supplied clock fixes, cut from it.
+fn round_trips(err: &str) -> String {
+    let cut = |line: &str| match line.split_once(", server ") {
+        Some((round_trip, server)) => {
+            assert!(server.ends_with(" ns)") && server.contains("queued "), "{line}");
+            round_trip.to_owned()
+        }
+        // A failure's line has none, as an Error carries no time.
+        None => line.to_owned(),
+    };
+    err.lines().flat_map(|line| [cut(line), "\n".to_owned()]).collect()
 }
 
 /// Verifies: [DESIGN] RULES.md D46: each statement typed has its own time
@@ -113,7 +128,7 @@ fn warnings_and_empty_results_are_timed() {
     assert!(out.contains("no data\n"), "{out}");
     assert!(out.contains("(0 rows)"), "{out}");
     assert!(out.contains("(1 row, with a warning: SQLSTATE 01004)"), "{out}");
-    assert_eq!(err, "Time: 0 ns\n".repeat(4));
+    assert_eq!(err, "Time: 0 ns\n".repeat(4), "the warning the statement completed with named by its result alone");
 }
 
 /// Verifies: [DESIGN] RULES.md D46: a failed SQL statement gets its time
@@ -163,7 +178,7 @@ fn streamed_output_is_inside_the_measurement() {
     let shown = String::from_utf8(out.bytes).unwrap();
     let result = shown.strip_prefix(PROMPT).and_then(|s| s.strip_suffix(&format!("{PROMPT}\n"))).unwrap_or_else(|| panic!("{shown}"));
     assert!(result.ends_with("(2 rows)\n"), "{shown}");
-    assert_eq!(String::from_utf8(err.bytes).unwrap(), format!("Time: {} ns\n", result.len()));
+    assert_eq!(round_trips(&String::from_utf8(err.bytes).unwrap()), format!("Time: {} ns\n", result.len()));
 }
 
 /// A timing destination that refuses writes, or only its flush.

@@ -108,6 +108,9 @@ version, and comes with a major release (see
 | Encrypted page sealing | 1 | the sealed header | `aes/src/sealer.rs` |
 | Replication state in the journal | 1 | its first byte | `replication/src/vr/frame.rs`, `STATE_FORMAT` |
 | Replication connection | 1 | its hello, `TBREPL\0\x01` | `server/src/replication/net.rs` |
+| Native protocol capabilities, and a message's tail of tagged fields | 1, the protocol's | Hello asks by name, Ready grants as bits | `protocol/src/capability.rs`, `protocol/src/tail.rs` |
+| Native compressed frame (`z`), a zlib stream | 1, the protocol's; RFC 1950 | the stream's header | `protocol/src/compress.rs`, `protocol/src/zlib.rs` |
+| Native export file | 1, the protocol's | none, its frames being the protocol's | `client/src/export.rs` |
 | Native protocol, a UUID's field (tag 27) among it | 1 | the client's Hello | `protocol/src/lib.rs`, `VERSION`; `protocol/src/fields.rs` |
 | Plug-in protocol | 1 | HELLO and WELCOME's first field | `plugin.rs`, `PROTOCOL` |
 | Plug-in payloads of kinds 10 to 19 (rankings to sinks of events) | 1, as the protocol | the protocol's version | `plugin/payload/` |

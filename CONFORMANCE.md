@@ -180,6 +180,24 @@ client (RULES.md D42), and the command-line client `turborel` (D46).
 | A schema definition | Processed as the session's own. |
 | Any other | Its completion. |
 
+### The native protocol
+
+A server's client asks for capabilities in Hello and is granted those the
+server serves in Ready, the protocol staying version 1 (RULES.md D185,
+[The Native Protocol](doc/client/05-protocol.md)). What each adds to a
+statement's outcome, as the client library exposes it, follows.
+
+| Capability | Rules | What turborel does |
+|---|---|---|
+| `diagnostics` | §18.1 GR3 | An Error carries its severity, detail, hint, context, and the CONSTRAINT_NAME, SCHEMA_NAME, TABLE_NAME and COLUMN_NAME of the condition, and the data type it is about (D186). |
+| `conditions`, `notices` | §18.1, §3.3.4.1 | Every condition a statement raised, in order, in its completion, or each a Notice before it, a SIGNAL's of class 01 or 02 and its completion's warning (D187). |
+| `row-counts` | §18.1 GR1e | A completion's rows are ROW_COUNT's for an INSERT, UPDATE, DELETE or MERGE, and a query's rows returned (D197). It carries the server's time for the statement too (D240). |
+| `generated-values` | ISO/IEC 9075-2:2023 §11.4 SR10, §15.10 | An INSERT's identity values, in the order of its rows, none of its triggers' statements, none of a MERGE (D198). |
+| `describe`, `cursors` | §17.7, §17.13, §13.1 to §13.4 | A statement or an open cursor described again, and several cursors of one statement open at once (D188). |
+| `fetch-ends` | §4.28 | A cursor opened under autocommit commits as its last row is sent or it is closed, and rolls back as its rows fail (D199). |
+| `copy` | §13.8 GR4b iii | Rows copied in, each value assigned as INSERT assigns it, all or nothing (D195). |
+| `status`, `ping`, `reset`, `change-user`, `query-attributes`, `connection-attributes`, `multi-statement`, `compression`, `commit-position` | none | Extensions of the protocol, RULES.md D189 to D194 and D196. |
+
 ### Dynamic SQL
 
 Prepared statements come in two forms, both with `<dynamic parameter

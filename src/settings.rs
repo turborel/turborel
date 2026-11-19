@@ -508,6 +508,11 @@ impl Own {
         self.0.is_empty() && self.1 == TransformNames::default()
     }
 
+    /// Each setting it set, and its value, in the order set.
+    pub fn values(&self) -> impl Iterator<Item = &(Key, Value)> {
+        self.0.iter()
+    }
+
     /// Whether it sets the values `other` sets, of the same settings.
     pub fn same_as(&self, other: &Own) -> bool {
         self.1 == other.1

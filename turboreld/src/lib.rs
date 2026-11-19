@@ -126,6 +126,7 @@ The server's settings, beside the database's:
   SERVER.MAX_REFUSALS    connections past those refused at once, told why; past these,
                          closed untold (default 16)
   SERVER.MAX_MESSAGE_BYTES  the longest message taken from a client (default 16 MiB)
+  SERVER.COMPRESSION_MIN_BYTES  the shortest message compressed (default 1024; 0 grants none)
   SERVER.MAX_STATEMENTS  prepared statements a connection holds at once (default 1024)
   SERVER.BATCH_BYTES     about how many bytes of rows go in a batch (default 64 KiB)
   SERVER.LOB_INLINE_BYTES  the longest large object a result sends whole; a longer one

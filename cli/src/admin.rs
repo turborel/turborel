@@ -8,9 +8,9 @@
 //! first, unless `--yes` is given; without a terminal to ask at, it is
 //! refused.
 //!
-//! `ping` runs a statement that reads nothing; a message of the protocol
-//! that does so without a statement, once it has one, takes its place in
-//! `ping`. `tls` names new files for the server to take for the next
+//! `ping` sends the protocol's Ping, which the server answers with no
+//! worker and no statement; a server that does not take it is sent a
+//! statement that reads nothing. `tls` names new files for the server to take for the next
 //! connection; files named again, changed in place, are taken when
 //! `turboreld` is sent SIGHUP.
 
@@ -207,10 +207,12 @@ pub fn run<S: Statements + ?Sized>(connection: &mut S, invocation: &Invocation, 
     }
 }
 
-/// `ping` runs the statement and tells how soon it was answered.
+/// `ping` sends Ping, which no worker of the server takes (RULES.md
+/// D189), else runs the statement, and tells how soon it was answered.
 fn ping<S: Statements + ?Sized>(connection: &mut S, console: &mut Console<'_>) -> Result<(), String> {
     let began = Instant::now();
-    connection.query_into(PING, &mut Kept::default()).map_err(|f| f.to_string())?;
+    let answered = connection.ping().unwrap_or_else(|| connection.query_into(PING, &mut Kept::default()).map(drop));
+    answered.map_err(|f| f.to_string())?;
     let took: Duration = began.elapsed();
     let (server, _) = connection.session().unwrap_or_default();
     writeln!(console.out, "{server} answers, in {} ms.", took.as_millis()).map_err(|e| e.to_string())

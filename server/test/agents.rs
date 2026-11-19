@@ -27,6 +27,7 @@ impl Connector for Named {
                 rule: None,
                 position: None,
                 active: false,
+                diagnostics: None,
             });
         };
         connect_to(&Target::Tcp(*address), user.unwrap_or("X"), &mut Trust)

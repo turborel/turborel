@@ -4,12 +4,20 @@
 
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
+use std::time::Duration;
 
 use turborel::storage::Row;
 use turborel_client::agent::{Agent, Connector};
+use turborel_client::capability::PING;
 use turborel_client::connection::{Connection, Sink, Streamed};
+use turborel_client::export::ExportFormat;
 use turborel_client::import::{self, Cause, Delimited, Import, ImportError, Imported, Rejected};
-use turborel_client::{Canceller, Failure};
+use turborel_client::{Canceller, Failure, Notice, Timing};
+
+use crate::timing::ServerTime;
+
+/// The SQLSTATE class of a warning [ISO/IEC 9075:1992 §22.1].
+const WARNING_CLASS: &str = "01";
 
 /// What a file `--import` names is read by.
 pub type FileSource = Delimited<BufReader<File>>;
@@ -43,13 +51,39 @@ pub trait Statements {
     /// it did.
     fn warning(&self) -> Option<&str>;
 
-    /// The time the server reports spending on the last statement. This
-    /// is the seam of server-measured time. The client does not give it
-    /// yet, so a connection reports none until it does, and the time
-    /// shown is the round trip alone.
-    fn server_time(&self) -> Option<crate::timing::ServerTime> {
+    /// The time the server reports spending on the last statement, as
+    /// its completion told it (RULES.md D240); none of a server that
+    /// tells none, and the time shown is the round trip alone.
+    fn server_time(&self) -> Option<ServerTime> {
         None
     }
+
+    /// Whether the server answers, asked by Ping, which no worker of its
+    /// takes (RULES.md D189); none if the server does not take Ping.
+    fn ping(&mut self) -> Option<Result<(), Failure>> {
+        None
+    }
+
+    /// The session status `name`, as the server last told it, with no
+    /// round trip (RULES.md D190); none of a server that tells none.
+    fn status(&self, _name: &str) -> Option<String> {
+        None
+    }
+
+    /// The notices the server sent since they were last taken, and the
+    /// warnings the last statement completed with, each once (RULES.md
+    /// D187).
+    fn take_notices(&mut self) -> Vec<Notice> {
+        Vec::new()
+    }
+
+    /// Writes the rows of the query `sql` to `out` as the protocol's own
+    /// frames, as they come (RULES.md D195): how many.
+    ///
+    /// # Errors
+    ///
+    /// The query's failure, or the write's.
+    fn export_native(&mut self, sql: &str, out: &mut dyn Write) -> Result<u64, Failure>;
 
     /// Whether the session's transaction is active, as the server last
     /// said; false with no connection.
@@ -116,7 +150,65 @@ fn fetched<S: Read + Write>(
     Some(read.map(|()| Streamed::Rows(count)))
 }
 
+/// `timing`, the server's report of a statement's time, as the timing
+/// line shows it: its waits for locks among the whole, and its wait for
+/// a worker before it.
+fn shown(timing: Timing) -> ServerTime {
+    let micros = Duration::from_micros;
+    ServerTime {
+        total: micros(timing.total),
+        waiting: Some(micros(timing.locks)),
+        queued: Some(micros(timing.queued)),
+        ..ServerTime::default()
+    }
+}
+
+/// The notices `connection`'s server sent since they were last taken,
+/// and the warnings among the conditions its last completion carried, as
+/// notices: class 01 alone, as a statement's other conditions, no data
+/// among them, are told by its result, and not the last when the
+/// statement completed with it, which its result names.
+fn noticed<S: Read + Write>(connection: &mut Connection<S>) -> Vec<Notice> {
+    let mut all = connection.take_notices();
+    let mut conditions = connection.take_conditions();
+    if conditions.last().is_some_and(|c| Some(c.sqlstate.as_str()) == connection.warning()) {
+        conditions.pop();
+    }
+    let warnings = conditions.into_iter().filter(|c| c.sqlstate.starts_with(WARNING_CLASS));
+    all.extend(warnings.map(|c| Notice {
+        sqlstate: c.sqlstate,
+        message: c.message,
+        diagnostics: c.diagnostics.map(|d| *d).unwrap_or_default(),
+    }));
+    all
+}
+
+/// Whether `connection`'s server answers its Ping, if it takes one.
+fn pinged<S: Read + Write>(connection: &mut Connection<S>) -> Option<Result<(), Failure>> {
+    connection.granted().has(PING).then(|| connection.ping())
+}
+
 impl<S: Read + Write> Statements for Connection<S> {
+    fn server_time(&self) -> Option<ServerTime> {
+        Connection::server_time(self).map(shown)
+    }
+
+    fn ping(&mut self) -> Option<Result<(), Failure>> {
+        pinged(self)
+    }
+
+    fn status(&self, name: &str) -> Option<String> {
+        self.setting(name).map(str::to_owned)
+    }
+
+    fn take_notices(&mut self) -> Vec<Notice> {
+        noticed(self)
+    }
+
+    fn export_native(&mut self, sql: &str, out: &mut dyn Write) -> Result<u64, Failure> {
+        self.export(sql, out, ExportFormat::Native)
+    }
+
     fn query_into(&mut self, sql: &str, sink: &mut dyn Sink) -> Result<Streamed, Failure> {
         Connection::query_into(self, sql, sink)
     }
@@ -159,6 +251,26 @@ impl<S: Read + Write> Statements for Connection<S> {
 }
 
 impl<C: Connector> Statements for Agent<C> {
+    fn server_time(&self) -> Option<ServerTime> {
+        self.current_connection()?.server_time().map(shown)
+    }
+
+    fn ping(&mut self) -> Option<Result<(), Failure>> {
+        pinged(self.current().ok()?)
+    }
+
+    fn status(&self, name: &str) -> Option<String> {
+        self.current_connection()?.setting(name).map(str::to_owned)
+    }
+
+    fn take_notices(&mut self) -> Vec<Notice> {
+        self.current().map(noticed).unwrap_or_default()
+    }
+
+    fn export_native(&mut self, sql: &str, out: &mut dyn Write) -> Result<u64, Failure> {
+        self.current()?.export(sql, out, ExportFormat::Native)
+    }
+
     fn query_into(&mut self, sql: &str, sink: &mut dyn Sink) -> Result<Streamed, Failure> {
         Agent::query_into(self, sql, sink)
     }

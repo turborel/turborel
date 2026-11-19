@@ -15,3 +15,4 @@ the library a program embeds the database by.
 - [Plug-ins](04-plugins.md)
 - [Kinds of Plug-in](04-plugins-kinds.md)
 - [Packages and Registries](04-plugins-packages.md)
+- [The Native Protocol](05-protocol.md)

@@ -7,7 +7,10 @@
 //! TCP keepalive's times and the longest message, as connections begin;
 //! its limits as statements and connections begin, and its time to stop
 //! as it is told to, so a change of one takes effect with no restart. One
-//! that cannot be read is read as its default.
+//! that cannot be read is read as its default. The native protocol's are
+//! `settings/protocol.rs`.
+
+mod protocol;
 
 use std::num::NonZeroUsize;
 
@@ -16,6 +19,8 @@ use turborel::error::Result;
 use turborel::settings::{Definition, Effect, Kind, OFF, ON, SWITCHES};
 use turborel::value::{Decimal, Value};
 use turborel_protocol::{DEFAULT_PORT, MAX_BODY};
+
+pub use protocol::{COMPRESSION_MIN_BYTES, READ_AFTER, read_after};
 
 /// Where TCP connections are taken: hosts or addresses, by commas.
 pub const HOST: &str = "SERVER.HOST";
@@ -138,11 +143,9 @@ pub const REPLICA: &str = "REPLICATION.REPLICA";
 /// \[EXTENSION\] The members of the group: each its number, `=`, and the
 /// host and port its replica takes frames at, by commas.
 pub const MEMBERS: &str = "REPLICATION.MEMBERS";
-/// \[EXTENSION\] The address this node takes the other members' frames
-/// at; empty, its own member's host and port.
+/// \[EXTENSION\] Where this node takes the members' frames; empty, its own.
 pub const LISTEN: &str = "REPLICATION.LISTEN";
-/// \[EXTENSION\] The PEM file of the authorities the members' certificates
-/// are verified against.
+/// \[EXTENSION\] The PEM file of the members' certificates' authorities.
 pub const REPLICATION_CA: &str = "REPLICATION.CA";
 /// \[EXTENSION\] Whether the members secure their frames by mutual TLS:
 /// ON, or OFF for a group on one machine, as in tests.
@@ -171,15 +174,13 @@ pub const MAX_WORKERS: usize = 1024;
 /// processor, a client a processor too many waited at each request, and a
 /// worker holding a permit that the system preempted held up the rest.
 pub const WORKERS_PER_PROCESSOR: usize = 4;
-/// \[DESIGN\] The default host: this machine only, so a server is reached
-/// from others only once its operator says so.
+/// \[DESIGN\] The default host: this machine only, until the operator says.
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 /// \[DESIGN\] The default limit of connections.
 pub const DEFAULT_MAX_CONNECTIONS: usize = 100;
 /// \[DESIGN\] The default batch of rows: about 64 KiB.
 pub const DEFAULT_BATCH_BYTES: usize = 64 * 1024;
-/// \[DESIGN\] The shortest limit of messages: room for any message but a
-/// statement or a row.
+/// \[DESIGN\] The shortest limit of messages: any but a statement or a row.
 const MIN_MESSAGE_BYTES: i128 = 1024;
 /// \[DESIGN\] The longest text of a host list or a socket's path.
 const MAX_TEXT: usize = 1024;
@@ -220,6 +221,7 @@ pub fn definitions() -> Vec<Definition> {
     all.extend(proofs());
     all.extend(kept_alive());
     all.extend(replication());
+    all.extend(protocol::definitions());
     all
 }
 
@@ -316,9 +318,8 @@ fn kept_alive() -> [Definition; 3] {
     ]
 }
 
-/// TLS's files and what clients prove themselves by, read as each
-/// connection is secured or authenticated: a change taken for the
-/// connections after (`tls.rs`).
+/// TLS's files and what clients prove themselves by, read as each connection
+/// is secured or authenticated, a change taken for those after (`tls.rs`).
 fn proofs() -> [Definition; 4] {
     let text = Kind::Text { max: MAX_TEXT };
     [

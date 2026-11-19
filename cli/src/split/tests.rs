@@ -199,3 +199,33 @@ fn a_delimiter_named_ends_statements() {
     splitter.set_delimiter(None).unwrap();
     assert_eq!(splitter.pieces("SELECT 4;", None), [statement("SELECT 4")]);
 }
+
+/// Verifies: [DESIGN] RULES.md D192, D210: SQL alone, with no command and
+/// no variable, splits here as the protocol's splitter splits it, which
+/// the server runs a Query of several statements by; so text typed and
+/// text sent whole end their statements alike, whole or in parts.
+#[test]
+fn sql_splits_as_the_servers_splitter_splits_it() {
+    let texts = [
+        "SELECT 1; SELECT 2",
+        "SELECT 'a;b''c;'; SELECT \"x;\"\"y\" FROM T;",
+        "SELECT 1 -- a; comment\n; ;;",
+        "SELECT 1 -- open",
+        "CREATE PROCEDURE P() BEGIN IF 1 = 1 THEN SET X = 1; END IF; END; CALL P()",
+        "L: WHILE X < 3 DO SET X = X + 1; END WHILE L; VALUES 1",
+        "CREATE MODULE M CREATE PROCEDURE P() BEGIN END; END MODULE; VALUES 2",
+        "CASE WHEN 1 = 1 THEN SET X = 1; ELSE SET X = 2; END CASE; FOR R AS SELECT 1 DO SET Y = 1; END FOR",
+    ];
+    for text in texts {
+        let mut server = turborel_client::Splitter::default();
+        let mut sent = server.feed(text);
+        sent.extend(server.finish());
+        assert_eq!(split(text), sent, "{text}");
+        let (mut here, mut there) = (Splitter::default(), turborel_client::Splitter::default());
+        for c in text.chars() {
+            let mut one = [0_u8; 4];
+            assert_eq!(here.feed(c.encode_utf8(&mut one)), there.feed(c.encode_utf8(&mut one)), "{text}");
+            assert_eq!(here.pending(), there.pending(), "{text}");
+        }
+    }
+}
