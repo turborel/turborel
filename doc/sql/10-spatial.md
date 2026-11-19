@@ -1509,9 +1509,9 @@ same 20,000 points are inserted in order and scattered, and the same
 window of three tenths of them is read through the index of the first
 and by a scan of the second. The filter's own estimate is the same
 figure. The two counts are the first queries to plan with the tables,
-so the maintenance then gathers their statistics, and the EXPLAINs show
-them once it has. A program embedding the database gathers them at
-once, before it goes on, with `Database::analyze`:
+so the maintenance then gathers their statistics in the background. A
+program embedding the database gathers them at once, before it goes on,
+with `Database::analyze`:
 
 ```sql
 CREATE TABLE LAID (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));
@@ -1526,26 +1526,34 @@ CREATE INDEX LAID_SPOT ON LAID (SPOT) USING RTREE;
 CREATE INDEX STREWN_SPOT ON STREWN (SPOT) USING RTREE;
 SELECT COUNT(*) FROM LAID WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(0, 0, 59.5, 100)) = 1;
 SELECT COUNT(*) FROM STREWN WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(0, 0, 59.5, 100)) = 1;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+
+----------------------
+                 6000
+(1 row)
+
+----------------------
+                 6000
+(1 row)
+```
+
+Once the statistics are gathered, EXPLAIN of the same window shows
+them. The output below is that of a run, shown rather than run here,
+since when the background pass ends is not fixed:
+
+```text
 EXPLAIN SELECT ID FROM LAID WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(0, 0, 59.5, 100)) = 1;
 EXPLAIN SELECT ID FROM STREWN WHERE ST_INTERSECTS(SPOT, ST_MAKEENVELOPE(0, 0, 59.5, 100)) = 1;
-```
 
-```
-OK
-OK
-OK
-OK
-OK
-OK
-OK
-
-----------------------
-                 6000
-(1 row)
-
-----------------------
-                 6000
-(1 row)
  PLAN
 --------------------------------------------------------------
  -- bound:
@@ -1617,13 +1625,6 @@ CREATE INDEX STOPS_SPOT ON STOPS (SPOT) USING RTREE;
 CREATE INDEX BLOCKS_AREA ON BLOCKS (AREA) USING RTREE;
 SELECT COUNT(*) FROM STOPS;
 SELECT COUNT(*) FROM BLOCKS;
--- once the statistics are gathered:
-EXPLAIN SELECT B.ID, S.ID FROM BLOCKS B JOIN STOPS S ON ST_INTERSECTS(S.SPOT, B.AREA) = 1;
-SELECT COUNT(*) AS PAIRS, COUNT(S.ID) AS PAIRED FROM BLOCKS B LEFT JOIN STOPS S
-    ON ST_INTERSECTS(S.SPOT, B.AREA) = 1 AND S.ID < 400;
-DROP TABLE STOPS CASCADE;
-DROP TABLE BLOCKS CASCADE;
-COMMIT;
 ```
 
 ```
@@ -1642,6 +1643,15 @@ OK
 ----------------------
                   200
 (1 row)
+```
+
+Once both tables' statistics are gathered, EXPLAIN of the join shows the
+traversal. The output below is that of a run, shown rather than run
+here, since when the background pass ends is not fixed:
+
+```text
+EXPLAIN SELECT B.ID, S.ID FROM BLOCKS B JOIN STOPS S ON ST_INTERSECTS(S.SPOT, B.AREA) = 1;
+
  PLAN
 --------------------------------------------------------------
  -- bound:
@@ -1662,6 +1672,19 @@ OK
    SynchronizedSpatialJoin ANN.BLOCKS using BLOCKS_AREA with ANN.STOPS using STOPS_SPOT [rtree]: ST_INTERSECTS(S.SPOT, B.AREA) = 1  (est. rows each=22, cost=237017.4)
      SeqScan ANN.STOPS  (rows=1000, cost=1000.0)
 (17 rows)
+```
+
+The join's rows are the same whichever way it is read:
+
+```sql
+SELECT COUNT(*) AS PAIRS, COUNT(S.ID) AS PAIRED FROM BLOCKS B LEFT JOIN STOPS S
+    ON ST_INTERSECTS(S.SPOT, B.AREA) = 1 AND S.ID < 400;
+DROP TABLE STOPS CASCADE;
+DROP TABLE BLOCKS CASCADE;
+COMMIT;
+```
+
+```
                 PAIRS |               PAIRED
 ----------------------+----------------------
                   200 |                  100
