@@ -26,6 +26,11 @@ XQUERY FUNCTION '{http://example.com/fn}twice' (INTEGER) RETURNS INTEGER;
 TYPE PAIR ORDERED; STORAGE ENGINE FILES BATCH 100;
 INDEX METHOD SORTED SUPPORTS (EQUALITY, RANGE) BATCH 50; INDEX METHOD NEAR SUPPORTS (NEAREST);";
 
+/// The objects the page of optimizer rules and statistics shows.
+const PLANNER: &str = "OPTIMIZER RULE CONTRADICTION PHASE BOUND; OPTIMIZER RULE ERRING;
+STORAGE ENGINE FILES; INDEX METHOD SORTED SUPPORTS (EQUALITY, RANGE);
+PROCEDURE SKEW(VARCHAR(128), VARCHAR(128)) MODIFIES SQL DATA;";
+
 /// Installs the example at `version` under `root`, with `extra` items.
 fn install(root: &Path, version: &str, extra: &str) -> PathBuf {
     let dir = root.join("EXAMPLE").join(version);
@@ -47,6 +52,7 @@ fn the_extension_examples_run_as_printed() {
     let pages = [
         "client/04-plugins.md",
         "client/04-plugins-kinds.md",
+        "client/04-plugins-planner.md",
         "sql/statements/create-extension.md",
         "sql/statements/alter-extension.md",
         "sql/statements/drop-extension.md",
@@ -54,7 +60,8 @@ fn the_extension_examples_run_as_printed() {
     for page in pages {
         let scratch = Scratch::new("manual-extensions");
         let root = scratch.path("plugins");
-        install(&root, "1.0.0", if page.contains("kinds") { KINDS } else { "" });
+        let extra = [("kinds", KINDS), ("planner", PLANNER)].into_iter().find(|(name, _)| page.contains(name)).map_or("", |(_, objects)| objects);
+        install(&root, "1.0.0", extra);
         if page.contains("alter") {
             let up = install(&root, "1.1.0", "UPGRADE FROM '<1.1.0' SCRIPT 'up.sql';");
             std::fs::write(up.join("up.sql"), "CALL NOTE('updated to 1.1.0')").unwrap();

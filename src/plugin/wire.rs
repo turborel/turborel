@@ -16,8 +16,8 @@
 //! SHUTDOWN 7  (nothing)
 //! SQL      8  call u64 | mode u8 (0 run, 1 rows) | text str | values
 //! SQLDONE  9  call u64 | rows
-//! STATISTICS      10  call u64 | asked (`payload/statistics.rs`)
-//! STATISTICSDONE  11  call u64 | table or index statistics, as asked
+//! STATISTICS      11  call u64 | asked (`payload/statistics.rs`)
+//! STATISTICSDONE  12  call u64 | table or index statistics, as asked
 //! ```
 //!
 //! Every integer is little-endian, as `bytes.rs` writes every other
@@ -52,9 +52,9 @@ pub const SQL: u8 = 8;
 /// The type byte of SQLDONE.
 pub const SQL_DONE: u8 = 9;
 /// The type byte of STATISTICS (RULES.md D279).
-pub const STATISTICS: u8 = 10;
+pub const STATISTICS: u8 = 11;
 /// The type byte of STATISTICSDONE.
-pub const STATISTICS_DONE: u8 = 11;
+pub const STATISTICS_DONE: u8 = 12;
 
 /// The bytes of a frame's length.
 const LENGTH_BYTES: usize = 4;

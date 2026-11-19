@@ -16,6 +16,7 @@ the library a program embeds the database by.
 - [Kinds of Plug-in](04-plugins-kinds.md)
 - [Host Plug-ins](04-plugins-host.md)
 - [Replication and Archive Plug-ins](04-plugins-replication.md)
+- [Optimizer Rules and Statistics](04-plugins-planner.md)
 - [Writing a Plug-in](04-plugins-sdk.md)
 - [Packages](04-plugins-packages.md)
 - [The Native Protocol](05-protocol.md)

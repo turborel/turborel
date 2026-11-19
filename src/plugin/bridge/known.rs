@@ -74,3 +74,6 @@ impl<T> Known<T> {
         answer
     }
 }
+
+#[cfg(test)]
+mod tests;

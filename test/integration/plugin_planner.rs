@@ -129,11 +129,11 @@ fn an_engine_and_an_index_give_statistics() {
     db.analyze("U.F").unwrap();
     assert_eq!(calls(&s), asked + 1, "asked again as the table is analyzed");
     for v in 100..200 {
-        s.run(&format!("INSERT INTO F VALUES ({}, {v})", v % 8)).unwrap();
+        s.run(&format!("INSERT INTO F VALUES ({}, {v})", v % 4)).unwrap();
     }
     s.commit().unwrap();
     let shown = explained(&s, query);
-    assert!(shown.contains("est. rows=25"), "200 rows of 8 keys, asked again: {shown}");
+    assert!(shown.contains("est. rows=50"), "200 rows of 4 keys, asked again: {shown}");
     s.run("CREATE TABLE N (K INTEGER, V INTEGER)").unwrap();
     let values: Vec<String> = (0..300).map(|v| format!("({}, {v})", v % 100)).collect();
     s.run(&format!("INSERT INTO N VALUES {}", values.join(", "))).unwrap();

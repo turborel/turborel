@@ -124,6 +124,8 @@ then them.
 | 7 | SHUTDOWN | database | nothing |
 | 8 | SQL | plug-in | call u64, rows u8, text str, values |
 | 9 | SQL_DONE | database | call u64, rows (count u32, each values) |
+| 11 | STATISTICS | plug-in | call u64, what is asked ([Optimizer Rules and Statistics](04-plugins-planner.md)) |
+| 12 | STATISTICS_DONE | database | call u64, the statistics asked |
 
 The database begins with HELLO; the program answers WELCOME, naming the
 extension HELLO named and every kind its manifest declares. Then the
@@ -157,16 +159,19 @@ are counted, a count u32 before them.
 | 13 system table | 1 rows |
 | 14 XQuery function | 1 call |
 | 15 type | 1 input; 2 receive |
-| 16 storage engine | 1 create; 2 open; 3 scan; 4 get; 5 apply; 6 checkpoint; 7 drop |
-| 17 index method | 1 create; 2 open; 3 write; 4 search; 5 rows; 6 nearest; 7 checkpoint; 8 drop |
+| 16 storage engine | 1 create; 2 open; 3 scan; 4 get; 5 apply; 6 checkpoint; 7 drop; 8 statistics |
+| 17 index method | 1 create; 2 open; 3 write; 4 search; 5 rows; 6 nearest; 7 checkpoint; 8 drop; 9 statistics |
 | 18 credentials | 1 verifier |
 | 19 sink of events | 1 events |
+| 37 optimizer rule | 1 rewrite: plan form → u8 0, or u8 1 and the plan form rewritten |
 
 An aggregate's state is the program's own bytes, which the database
 keeps, so a program holds nothing between calls; it starts empty. An
 exchange, a target and an upload are the program's, so the database
 keeps one process for each until it ends. The payloads of kinds 10 to
-19 are in [Kinds of Plug-in](04-plugins-kinds.md), a section each.
+19 are in [Kinds of Plug-in](04-plugins-kinds.md), a section each, and
+statistics and kind 37 in [Optimizer Rules and
+Statistics](04-plugins-planner.md).
 
 ## The plug-in SDK
 
@@ -327,6 +332,15 @@ whether it is clean), makes a batch of `Write`s, searches a page of
 entries in key order by a `Search` and a cursor, gives a key's rows,
 gives the nearest entries of a `Near`, keeps a checkpoint, and drops an
 index (`Plugin::index_method`).
+
+### Optimizer rules and statistics
+
+`Rule::rewrite(cx, form)` gives a plan form rewritten, or none for no
+change (`Plugin::rule`). `Engine::statistics` and
+`IndexMethod::statistics` tell the planner what they know, and
+`Cx::table_statistics`, `Cx::column_statistics` and
+`Cx::index_statistics` ask the database ([Optimizer Rules and
+Statistics](04-plugins-planner.md)).
 
 ### Credentials and sinks of events
 

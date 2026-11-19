@@ -259,3 +259,6 @@ impl Statistics for TableAnswer {
         Some(self.columns.get(column)?.histogram.clone()).filter(|h| !h.is_empty())
     }
 }
+
+#[cfg(test)]
+mod tests;

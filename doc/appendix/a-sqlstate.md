@@ -31,6 +31,7 @@ its own; class TB is turborel's own.
 | 01010 | Warning: column cannot be mapped: XMLMAP left out a column the user may read, whose type does not map to XML |
 | 01F01 | SQL/MM Spatial warning: invalid position: a method of a position given one outside the value, its result null |
 | 01T01 | Warning: the transaction active was rolled back by a Reset or a ChangeUser of the native protocol, told as a notice *(extension)* |
+| 01T02 | Warning: an optimizer rule of an extension was skipped, as it failed or gave a plan not valid; the statement was planned without it *(extension)* |
 | 01W61 | Warning: a GRAPH_TABLE's search ended at a limit ON LIMIT TRUNCATE, its rows those of the paths found (GRF-0061) |
 | 02000 | No data |
 | 07000 | Dynamic SQL error |

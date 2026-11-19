@@ -11,8 +11,8 @@ fn again(m: &Message) -> Message {
     Message::decode(&body).unwrap()
 }
 
-/// Verifies: [DESIGN] RULES.md D167: every message of protocol 1 reads
-/// back as framed, its length first, then its type.
+/// Verifies: [DESIGN] RULES.md D167, D279: every message of protocol 1
+/// reads back as framed, its length first, then its type.
 #[test]
 fn messages_read_back_as_framed() {
     let hello = Hello {
@@ -35,6 +35,8 @@ fn messages_read_back_as_framed() {
         Message::Shutdown,
         Message::Sql { call: 3, rows: true, text: "VALUES 1".into(), args: vec![Value::Bool(true)] },
         Message::SqlDone { call: 3, rows: vec![vec![Value::Null], vec![]] },
+        Message::Statistics { call: 3, asked: Asked::Column("U.T".into(), "A".into()) },
+        Message::StatisticsDone { call: 3, payload: vec![0] },
     ];
     for m in all {
         assert_eq!(format!("{:?}", again(&m)), format!("{m:?}"));

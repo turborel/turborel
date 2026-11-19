@@ -281,6 +281,11 @@ verification approach DO-178C expects (§8).
 | D272 | A plug-in journal acknowledges what it names durable, and a plug-in transfer stages chunks it checks |
 | D273 | A plug-in consensus steps whole in one call, made again from its journal, VR still built in |
 | D274 | A plug-in archive is a target reached before any database opens, its errors the call's own |
+| D275 | An optimizer rule is a plug-in kind over a plan form of its own, format 1 |
+| D276 | A rule runs in the phase its manifest names, in a fixed order, for bounded passes |
+| D277 | A rule's plan is checked whole, and a rule that fails is skipped with a warning |
+| D278 | An engine's or index's statistics are asked once, kept, and asked again when stale |
+| D279 | A plug-in asks the database's statistics by its call's privileges |
 
 ### The project
 
@@ -7030,11 +7035,9 @@ cancels connections by id, one call each.
 
 #### D255. The points that are no kind, each for its reason
 
-The optimizer's rules (`Rule`) rewrite the logical plan, whose types
-change with every release of the planner. Protocol 1 promises payloads
-that never change, so a plan carried in it would freeze the planner, and
-a program built against one build's plan would rewrite another's. A
-rule stays code linked into the host. A wire protocol (`Protocol`) is
+The optimizer's rules are a kind of their own, kind 37 (D275), as the
+plan they rewrite crosses in a form of its own, apart from the planner's
+types, and statistics cross both ways (D278, D279). A wire protocol (`Protocol`) is
 served by a HOST LISTENER, which may translate any protocol to the
 native one. The catalog (`with_catalog`) is the descriptors in memory,
 whose keeping is CATALOG STORAGE's, and a log given whole (`set_log`)
@@ -7044,8 +7047,8 @@ log) are served with their kind. The policies set by `set_job_policy`,
 `set_transaction_policy`, `set_session_end`, `set_lock_wait`, the cost
 model and the optimizer's parameters are values, which settings give.
 The rest are the database's internals, which nothing outside supplies
-(eviction, codecs, seals, statistics, the graph and vector indexes'
-parts, and the contexts a call is given).
+(eviction, codecs, seals, the graph and vector indexes' parts, and the
+contexts a call is given).
 
 #### D137. A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them
 
@@ -8301,6 +8304,91 @@ archive of the scheme before an extension's. A process that fails stops
 the node, as any host plug-in's does. A program's own ERROR fails only
 the call, as a built-in target out of reach fails the backup, the
 archive round or the restore asked, and leaves nothing a restore takes.
+
+#### D275. An optimizer rule is a plug-in kind over a plan form of its own, format 1
+
+An optimizer rule is kind 37, OPTIMIZER RULE in a manifest, an extension
+kind created with its extension. Its one operation, REWRITE, sends the
+plan in the plan form (`plugin/plan.rs`) and takes back the form
+rewritten, or no change. The planner's own types change with its
+releases, so the form is apart from them, versioned as format 1 with
+protocol 1 (VERSIONING.md). Each relational operator has a code that
+never changes. Scan, filter, project, join of its kind, sort, distinct,
+set operation and VALUES are said whole. Aggregate, limit and the rest
+are kept, shown by a label with their inputs open, so a rule may move
+them and rewrite what is under them but not open them. Expressions are
+a tree of column references, literals as protocol 1 values, functions
+by name, operators by code and casts by type text. What the form cannot
+say is opaque, an id over the columns it reads, which a rule may move
+and name again but not open. Each node carries its output columns with
+their types and the planner's estimates of its rows and width, and a
+scan its table's column statistics, so a rule asks nothing more. The
+whole plan is sent each pass, as a rule may rewrite across nodes, and a
+plan is small beside the rows it reads.
+
+#### D276. A rule runs in the phase its manifest names, in a fixed order, for bounded passes
+
+A rule's PHASE is BOUND, before the built-in rules, or REWRITTEN, after
+them and before the physical planner orders joins, the default. The
+rules of a phase run in the order of their extensions' names, then of
+their manifests, so a plan is rewritten the same way each time. Each
+runs a pass at a time until it answers no change, at most its PASSES (1
+unless written) and OPTIMIZER.MAX_PASSES. Rules run where a statement
+is planned (`db/compiled.rs`), and not where a subquery is planned
+again as it runs, which they see opaque. A prepared statement's plan,
+kept, makes no call. Each pass is one call, a round trip of every
+statement planned, and crossing a process is the operator's choice,
+never a reason to refuse a kind.
+
+#### D277. A rule's plan is checked whole, and a rule that fails is skipped with a warning
+
+The plan of a form a rule gives back is made and checked at once
+(`plugin/plan/back.rs`, `exprs.rs`). Each node has the inputs its
+operator takes, each column reference is one of its input's columns,
+each table is one the catalog holds, each function one its name finds
+alone and taking its arguments, each comparison of comparable types and
+each condition BOOLEAN. Each kept node and opaque expression is one the
+form held, used once, a kept node's inputs keeping their types. The
+plan gives the columns and types it gave. Whether it returns the same
+rows the planner cannot check, so that is the rule's own contract. A
+rule is an optimization, so a rule whose call fails, runs past
+PLUGINS.CALL_TIMEOUT_MS or gives a plan not valid fails nothing. It is
+skipped for the statement, every pass it made undone, EXPLAIN names it
+skipped, and the statement completes with the warning SQLSTATE 01T02
+where a transaction hears its warnings.
+
+#### D278. An engine's or index's statistics are asked once, kept, and asked again when stale
+
+A plug-in engine answers operation 8, STATISTICS, of a table, and an
+index method operation 9 of an index (`plugin/payload/statistics.rs`).
+A table's answer holds its rows and width, and each column's distinct
+values, null share, bounds, equi-depth histogram and repetition
+percentiles, the core's `Statistics` whole. An index's holds its
+entries, distinct keys and the pages a probe reads. Each number may be
+not known. The bridge asks when the planner first asks, through
+`TableStorage::statistics` and the index's `distinct_keys` and
+`probe_pages`, and keeps the answer (`plugin/bridge/known.rs`). It asks
+again at the planner's next question once the rows or entries written
+reach the count the answer named, and when the table is analyzed. An
+index's waiting writes are given before it is asked, as before any
+read. A call that fails, or no answer, is kept as none, so the planner
+takes its defaults as it does today, and no failure of statistics fails
+a statement. No lock is held across the call (R-ERR-4).
+
+#### D279. A plug-in asks the database's statistics by its call's privileges
+
+While a call runs, its program may send STATISTICS of a table, a
+column or an index, and the database answers STATISTICSDONE or ERROR
+(`plugin/wire.rs`), in the same blocks D278 defines. The answer is what
+the newest state keeps, the statistics the planner reads, served by
+what the database registers with its host as it opens
+(`db/extensions/statistics.rs`). A call that runs SQL, a procedure's or
+a table function's, asks by its user's privileges, checked by a query
+of the table that reads no row in the call's transaction. A call of
+another kind runs with the server's rights, as every extension's
+process does (D173), so it may ask of any table. A rule needs to ask
+nothing, as D275's form holds its scans' statistics. Each question is
+one round trip.
 
 ## 2. Project layout
 
