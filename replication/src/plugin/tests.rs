@@ -115,3 +115,50 @@ fn a_plugin_consensus_that_dies_answers_nothing() {
     assert!(c.failed().is_some());
     assert!(c.describe().contains("D270"));
 }
+
+/// Verifies: [EXTENSION] RULES.md D272: a plug-in's state transfer stages
+/// each chunk only once its digest is checked; a chunk not of its digest
+/// fails the fetch stop, nothing is installed, and the next fetch begins
+/// by clearing what was half staged.
+#[test]
+fn a_plugin_transfer_stages_only_checked_chunks() {
+    use turborel::disk::io::FileSystem;
+
+    use crate::StateTransfer;
+    use turborel::disk::memory::MemoryFileSystem;
+    use turborel::plugin::payload::replication::{Manifest, chunk_digest, put_manifest, put_optional};
+
+    let chunk = |bytes: &[u8], digest: u64| written(|o| {
+        o.put_bytes(bytes);
+        o.put_u64(digest);
+    });
+    let (pipe, _) = scripted(vec![
+        Some(written(|o| {
+            o.put_u64(4);
+            put_optional(o, Some(&[crate::transfer::REQUEST]));
+        })),
+        Some(written(|o| {
+            o.put_u8(1);
+            put_optional(o, None);
+        })),
+        Some(written(|o| put_manifest(o, &Manifest { image: vec![1], files: vec![("data".into(), 6, String::new())] }))),
+        Some(chunk(b"abc", chunk_digest(b"abc"))),
+        Some(chunk(b"def", chunk_digest(b"abc"))),
+    ]);
+    let fs: Arc<dyn FileSystem> = Arc::new(MemoryFileSystem::new());
+    let dir = std::path::PathBuf::from("/staging");
+    let transfer = PluginTransfer::new(pipe, Arc::clone(&fs), dir.clone());
+    let mut fetch = transfer.begin(ReplicaId(2)).unwrap();
+    assert_eq!(fetch.request(), Some(vec![crate::transfer::REQUEST]));
+    assert!(fetch.take(&[crate::transfer::ANSWER]).unwrap());
+    let refused = fetch.fetched().err().unwrap();
+    assert_eq!(refused.state, Some(turborel::plugin::errors::VIOLATION));
+    assert!(transfer.failed().is_some());
+    assert_eq!(fs.read_dir(&dir).unwrap().len(), 1, "the file half staged");
+    let (again, _) = scripted(vec![Some(written(|o| {
+        o.put_u64(5);
+        put_optional(o, None);
+    }))]);
+    PluginTransfer::new(again, Arc::clone(&fs), dir.clone()).begin(ReplicaId(2)).unwrap();
+    assert!(fs.read_dir(&dir).unwrap().is_empty(), "a new fetch clears what was half staged");
+}
