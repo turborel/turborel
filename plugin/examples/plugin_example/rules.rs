@@ -81,7 +81,15 @@ impl Rule for Broken {
         if self.fails {
             return Err(PluginError::new("38000", "the rule fails"));
         }
-        let none = Node { op: Op::Project, id: 0, kept: false, columns: Vec::new(), body: Body::Project(Vec::new()), inputs: vec![form.root.clone()], ..form.root.clone() };
+        let none = Node {
+            op: Op::Project,
+            id: 0,
+            kept: false,
+            columns: Vec::new(),
+            body: Body::Project(Vec::new()),
+            inputs: vec![form.root.clone()],
+            ..form.root.clone()
+        };
         Ok(Some(Form { root: none }))
     }
 }

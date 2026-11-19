@@ -10,7 +10,7 @@
 //! and takes back the form rewritten, which is checked whole
 //! (`plan/back.rs`).
 //!
-//! A rule is an optimization, so its failure fails nothing: a rule whose
+//! A rule is an optimization, so its failure fails nothing. A rule whose
 //! call fails, runs past PLUGINS.CALL_TIMEOUT_MS or gives a plan not
 //! valid is skipped for the statement, every pass of it undone, EXPLAIN
 //! names it skipped, and the statement completes with the warning

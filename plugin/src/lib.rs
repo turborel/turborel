@@ -76,8 +76,8 @@ pub use turborel::plugin::payload::quantizer::{Trained, Training};
 pub use turborel::plugin::payload::replication::consensus::{Event as ReplicaEvent, Input as ReplicaInput, Output as ReplicaOutput};
 pub use turborel::plugin::payload::replication::{Held, Manifest, Member, Served};
 pub use turborel::plugin::payload::statistics::{ColumnAnswer, IndexAnswer, TableAnswer};
-pub use turborel::plugin::plan;
 pub use turborel::plugin::payload::types::Made;
+pub use turborel::plugin::plan;
 pub use turborel::plugin::values::{coordinates, dense_vector};
 
 /// \[EXTENSION\] Why a call failed: a SQLSTATE and a message, sent as its

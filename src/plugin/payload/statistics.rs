@@ -142,8 +142,11 @@ fn column(r: &mut Reader<'_>) -> Result<ColumnAnswer> {
     let (distinct, nulls) = (read_f64(r)?, read_f64(r)?);
     let bounds = if r.u8()? == 0 { None } else { Some((value(r)?, value(r)?)) };
     let histogram = (0..r.u32()?).map(|_| value(r)).collect::<Result<_>>()?;
-    let frequencies =
-        if r.u8()? == 0 { None } else { Some(Frequencies { most: read_f64(r)?, median: read_f64(r)?, p90: read_f64(r)?, p99: read_f64(r)? }) };
+    let frequencies = if r.u8()? == 0 {
+        None
+    } else {
+        Some(Frequencies { most: read_f64(r)?, median: read_f64(r)?, p90: read_f64(r)?, p99: read_f64(r)? })
+    };
     Ok(ColumnAnswer { distinct, nulls, bounds, histogram, frequencies })
 }
 

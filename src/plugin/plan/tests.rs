@@ -52,7 +52,12 @@ fn a_form_is_read_as_written() {
 #[test]
 fn a_form_is_taken_back_checked() {
     let st = state();
-    let scan = LogicalPlan::Scan { table: crate::catalog::QualifiedName { auth: "U".into(), ident: "T".into() }, names: vec!["A".into(), "B".into()], needed: vec![0, 1], located: false };
+    let scan = LogicalPlan::Scan {
+        table: crate::catalog::QualifiedName { auth: "U".into(), ident: "T".into() },
+        names: vec!["A".into(), "B".into()],
+        needed: vec![0, 1],
+        located: false,
+    };
     let cond = Cond::Compare(Expr::Column(0), CompOp::Gt, Expr::Const(Value::Exact(Decimal::new(3, 0))));
     let plan = LogicalPlan::Filter { cond, input: Box::new(scan) };
     let (form, kept) = form_of(&plan, &st).unwrap();

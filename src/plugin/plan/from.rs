@@ -127,7 +127,11 @@ impl Making<'_> {
             }
         }
         let types = types_of(plan, &inner, self.st);
-        let size = if let LogicalPlan::Scan { table, names, .. } = plan { scanned(self.st, table, names.len()).0 } else { of_node(self.st, plan, &sizes) };
+        let size = if let LogicalPlan::Scan { table, names, .. } = plan {
+            scanned(self.st, table, names.len()).0
+        } else {
+            of_node(self.st, plan, &sizes)
+        };
         let kept = body.is_none();
         if kept {
             let node = if opens_inputs(plan) { stripped(plan) } else { plan.clone() };

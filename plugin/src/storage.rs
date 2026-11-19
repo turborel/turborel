@@ -73,8 +73,8 @@ pub trait Engine {
     /// What it knows of the table's rows, for the planner, each column's
     /// in order or none, and `refresh`, the rows written after which the
     /// database asks again (RULES.md D278). Asked once, then as the answer
-    /// goes stale or the table is analyzed. Default: nothing, and the
-    /// planner takes its defaults.
+    /// goes stale or the table is analyzed. By default it knows nothing, and
+    /// the planner takes its defaults.
     ///
     /// # Errors
     ///
@@ -139,8 +139,8 @@ pub trait IndexMethod {
     ///
     /// The method's.
     fn drop_index(&mut self, locator: &[u8]) -> Answer<()>;
-    /// What it knows of the index's entries, for the planner: as an
-    /// engine's `statistics`. Default: nothing.
+    /// What it knows of the index's entries, for the planner, as an
+    /// engine's `statistics`. By default it knows nothing.
     ///
     /// # Errors
     ///

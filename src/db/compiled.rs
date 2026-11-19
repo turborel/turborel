@@ -53,7 +53,12 @@ fn described(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str
 
 /// `logical` optimized, by the built-in rules and the extensions', the
 /// rules that fired, and the physical plan `planner` chooses for it.
-fn planned(st: &State, logical: LogicalPlan, planner: PhysicalPlanner<'_>, heard: Option<&Warnings>) -> (LogicalPlan, Vec<&'static str>, Plan) {
+fn planned(
+    st: &State,
+    logical: LogicalPlan,
+    planner: PhysicalPlanner<'_>,
+    heard: Option<&Warnings>,
+) -> (LogicalPlan, Vec<&'static str>, Plan) {
     let (optimized, trace) = plugged::optimize(st, logical, heard);
     let physical = planner.plan(&optimized);
     (optimized, trace, physical)

@@ -203,7 +203,9 @@ fn body(r: &mut Reader<'_>, op: Op, depth: usize) -> Result<Body> {
             Body::Join { kind, condition: if r.u8()? == 0 { None } else { Some(expr(r, depth)?) } }
         }
         Op::Sort => Body::Sort(
-            (0..r.u32()?).map(|_| Ok(Key { column: r.u32()?, descending: r.u8()? != 0, nulls_first: r.u8()? != 0 })).collect::<Result<_>>()?,
+            (0..r.u32()?)
+                .map(|_| Ok(Key { column: r.u32()?, descending: r.u8()? != 0, nulls_first: r.u8()? != 0 }))
+                .collect::<Result<_>>()?,
         ),
         Op::Distinct => Body::Distinct,
         Op::Set => Body::Set { op: set_kind(r.u8()?)?, all: r.u8()? != 0 },

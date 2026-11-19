@@ -9,7 +9,7 @@
 //! expression the form does not say) the rule may move, as a whole, to
 //! another place where its columns are, but not open or copy. The
 //! planner checks the plan it is given back, and a plan not valid skips
-//! the rule for the statement: the rule's own contract is that the plan
+//! the rule for the statement. The rule's own contract is that the plan
 //! it gives returns the same rows.
 
 use turborel::plugin::bridge::rule::put_rewritten;
@@ -26,7 +26,7 @@ pub trait Rule {
     ///
     /// # Errors
     ///
-    /// The rule's: the statement is planned as if the rule were not there.
+    /// The rule's, and the statement is planned as if the rule were not there.
     fn rewrite(&mut self, cx: &mut Cx<'_>, form: &Form) -> Answer<Option<Form>>;
 }
 
@@ -35,7 +35,12 @@ pub trait Rule {
 /// # Errors
 ///
 /// The rule's, or SQLSTATE 38000 of an operation unknown.
-pub(super) fn rewrite(plugin: &mut Plugin, cx: &mut Cx<'_>, (op, object): (u8, &str), r: &mut turborel::bytes::Reader<'_>) -> Answer<Vec<u8>> {
+pub(super) fn rewrite(
+    plugin: &mut Plugin,
+    cx: &mut Cx<'_>,
+    (op, object): (u8, &str),
+    r: &mut turborel::bytes::Reader<'_>,
+) -> Answer<Vec<u8>> {
     if op != turborel::plugin::payload::RULE_REWRITE {
         return Err(PluginError::external(&format!("a rule has no operation {op}")));
     }

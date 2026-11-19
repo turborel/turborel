@@ -98,7 +98,9 @@ impl Installed {
     pub fn new(manifest: Manifest, directory: PathBuf, host: &Arc<Host>, resolve: Resolve<'_>) -> Result<Installed> {
         let executable = manifest.executable(std::env::consts::OS)?;
         let limits = (Arc::clone(&host.limits), Arc::clone(&host.memory));
-        let pool = Pool::new(&manifest.name, (directory.clone(), executable), manifest.kinds(), limits).with_check(host.check()).with_statistics(host.statistics());
+        let pool = Pool::new(&manifest.name, (directory.clone(), executable), manifest.kinds(), limits)
+            .with_check(host.check())
+            .with_statistics(host.statistics());
         let pool = Arc::new(pool);
         let objects = manifest
             .objects

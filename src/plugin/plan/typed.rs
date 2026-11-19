@@ -12,7 +12,6 @@ use crate::logical::{Expr, LogicalPlan};
 use crate::parser::Parser;
 use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled, Value};
 
-
 /// A column's type, or none if not known.
 pub type Typed = Option<DataType>;
 

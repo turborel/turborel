@@ -60,7 +60,8 @@ fn the_extension_examples_run_as_printed() {
     for page in pages {
         let scratch = Scratch::new("manual-extensions");
         let root = scratch.path("plugins");
-        let extra = [("kinds", KINDS), ("planner", PLANNER)].into_iter().find(|(name, _)| page.contains(name)).map_or("", |(_, objects)| objects);
+        let extra =
+            [("kinds", KINDS), ("planner", PLANNER)].into_iter().find(|(name, _)| page.contains(name)).map_or("", |(_, objects)| objects);
         install(&root, "1.0.0", extra);
         if page.contains("alter") {
             let up = install(&root, "1.1.0", "UPGRADE FROM '<1.1.0' SCRIPT 'up.sql';");

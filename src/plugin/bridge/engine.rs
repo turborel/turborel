@@ -201,7 +201,11 @@ impl Shared {
         crate::bytes::Put::put_bytes(&mut payload, &self.locator);
         let Some(got) = answer(&self.link.plain(ENGINE_STATISTICS, payload)?, statistics::table)? else { return Ok(None) };
         if got.columns.len() != self.columns.len() && !got.columns.is_empty() {
-            return Err(crate::plugin::errors::violation(&format!("statistics of {} columns, of {}", got.columns.len(), self.columns.len())));
+            return Err(crate::plugin::errors::violation(&format!(
+                "statistics of {} columns, of {}",
+                got.columns.len(),
+                self.columns.len()
+            )));
         }
         let refresh = got.refresh;
         Ok(Some((got, refresh)))

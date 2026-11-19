@@ -56,7 +56,8 @@ const QUERIES: [&str; 3] = [
 ];
 
 /// Verifies: [EXTENSION] RULES.md D275, D276: an optimizer rule of an
-/// extension rewrites the plan form, one call a pass; the plan it gives,
+/// extension rewrites the plan form, one call a pass, in its PHASE, BOUND
+/// before the built-in rules fold a sum; the plan it gives,
 /// a filter no row passes made an empty VALUES, is planned and run, and
 /// EXPLAIN names the rule among those that fired; each query returns the
 /// rows it returns with no rule, the extension dropped.
@@ -71,6 +72,8 @@ fn a_rule_rewrites_the_plan() {
     assert!(shown.contains("PLANNER.CONTRADICTION"), "{shown}");
     assert!(!shown.contains("SeqScan"), "no table is read: {shown}");
     assert!(!explained(&s, QUERIES[1]).contains("PLANNER.CONTRADICTION"), "no change");
+    let folded = explained(&s, "SELECT A FROM T WHERE A > 2 + 3 AND A < 3");
+    assert!(!folded.contains("PLANNER.CONTRADICTION"), "PHASE BOUND sees 2 + 3 before it is folded: {folded}");
     let before = calls(&s);
     rows(&s, QUERIES[1]).unwrap();
     assert_eq!(calls(&s) - before, 2, "a call a statement planned, the count's own among them");
@@ -129,11 +132,11 @@ fn an_engine_and_an_index_give_statistics() {
     db.analyze("U.F").unwrap();
     assert_eq!(calls(&s), asked + 1, "asked again as the table is analyzed");
     for v in 100..200 {
-        s.run(&format!("INSERT INTO F VALUES ({}, {v})", v % 4)).unwrap();
+        s.run(&format!("INSERT INTO F VALUES ({}, {v})", v % 8)).unwrap();
     }
     s.commit().unwrap();
     let shown = explained(&s, query);
-    assert!(shown.contains("est. rows=50"), "200 rows of 4 keys, asked again: {shown}");
+    assert!(shown.contains("est. rows=25"), "200 rows of 8 keys, asked again, not 4 keys kept: {shown}");
     s.run("CREATE TABLE N (K INTEGER, V INTEGER)").unwrap();
     let values: Vec<String> = (0..300).map(|v| format!("({}, {v})", v % 100)).collect();
     s.run(&format!("INSERT INTO N VALUES {}", values.join(", "))).unwrap();

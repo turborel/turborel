@@ -7,9 +7,9 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::sync::mpsc::Receiver;
 
-use turborel::plugin::wire::{BATCH, CANCEL_CAPABILITY, Call, Hello, Message, SQL_CAPABILITY, Welcome, write_message};
 use turborel::plugin::payload::reader;
 use turborel::plugin::payload::statistics::{self, Asked};
+use turborel::plugin::wire::{BATCH, CANCEL_CAPABILITY, Call, Hello, Message, SQL_CAPABILITY, Welcome, write_message};
 use turborel::value::Value;
 
 use super::registry::Plugin;
@@ -163,11 +163,19 @@ impl<W: Write> Link for Pipes<W> {
     fn sql(&mut self, call: u64, rows: bool, text: &str, args: &[Value]) -> Answer<Vec<Vec<Value>>> {
         let asked = Message::Sql { call, rows, text: text.to_owned(), args: args.to_vec() };
         let got = self.asked(&asked)?;
-        if let Message::SqlDone { rows: given, .. } = got { Ok(given) } else { Err(PluginError::external("the database answered SQL with statistics")) }
+        if let Message::SqlDone { rows: given, .. } = got {
+            Ok(given)
+        } else {
+            Err(PluginError::external("the database answered SQL with statistics"))
+        }
     }
     fn statistics(&mut self, call: u64, asked: &Asked) -> Answer<Vec<u8>> {
         let got = self.asked(&Message::Statistics { call, asked: asked.clone() })?;
-        if let Message::StatisticsDone { payload, .. } = got { Ok(payload) } else { Err(PluginError::external("the database answered statistics with rows")) }
+        if let Message::StatisticsDone { payload, .. } = got {
+            Ok(payload)
+        } else {
+            Err(PluginError::external("the database answered statistics with rows"))
+        }
     }
 }
 

@@ -4,7 +4,7 @@
 
 The planner takes plug-ins at two places. An optimizer rule rewrites
 the logical plan of each statement as it is planned. Statistics cross
-both ways: a storage engine or an index method tells the planner what it
+both ways. A storage engine or an index method tells the planner what it
 knows of its rows, and a plug-in asks the database what it keeps of a
 table, a column or an index. What each costs is a count of calls. A
 rule costs one call a pass of every statement planned. An engine's or
@@ -131,7 +131,7 @@ node:   op u8 | id u32 | kept u8 | columns: count u32 | (name str | type str)...
 
 | Code | Operator | Body |
 |---|---|---|
-| 1 | SCAN | table str, then each column's statistics: distinct f64, nulls f64, u8 0 or u8 1 and its least and greatest values |
+| 1 | SCAN | table str, then each column's statistics, distinct f64, nulls f64, u8 0 or u8 1 and its least and greatest values |
 | 2 | FILTER | condition |
 | 3 | PROJECT | count u32, expressions |
 | 4 | JOIN | kind u8 (0 cross, 1 left, 2 right, 3 full), u8 0, or u8 1 and its condition |

@@ -2,7 +2,7 @@
 //! an index, kept for the planner (RULES.md D278).
 //!
 //! The first time the planner asks, the program is asked (STATISTICS),
-//! and its answer is kept: the planner's later questions cost no call.
+//! and its answer is kept, so the planner's later questions cost no call.
 //! It is asked again at the planner's next question once the rows or
 //! entries written since reach the count its answer gave to refresh
 //! after, and at once when the table is analyzed (`Database::analyze`);
