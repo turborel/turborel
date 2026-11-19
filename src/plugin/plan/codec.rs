@@ -162,7 +162,9 @@ fn put_expr(out: &mut Vec<u8>, e: &Expression) -> Result<()> {
             out.put_u8(6);
             out.put_u32(*id);
             out.put_u32(count(columns.len()));
-            columns.iter().for_each(|c| out.put_u32(*c));
+            for c in columns {
+                out.put_u32(*c);
+            }
         }
     }
     Ok(())

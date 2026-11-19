@@ -272,6 +272,18 @@ impl Histogram {
         Histogram { bounds }
     }
 
+    /// The histogram of `bounds`, ascending, each bucket between two of
+    /// them holding as many values: as an engine of a plug-in gives it
+    /// (RULES.md D278).
+    pub fn of_bounds(bounds: Vec<Value>) -> Histogram {
+        Histogram { bounds }
+    }
+
+    /// Its bounds, ascending.
+    pub fn bounds(&self) -> &[Value] {
+        &self.bounds
+    }
+
     /// The fraction of the values below `value`, if the histogram has any:
     /// whole buckets below it, and within its bucket, a share interpolated
     /// between the bounds for a kind with a position (`SqlType::position`:

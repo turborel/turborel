@@ -12,7 +12,6 @@ use crate::logical::{Expr, LogicalPlan};
 use crate::parser::Parser;
 use crate::value::{ArithOp, DOUBLE_PRECISION, DataType, MAX_DECFLOAT_PRECISION, MAX_EXACT_PRECISION, Spelled, Value};
 
-use super::MAX_DEPTH;
 
 /// A column's type, or none if not known.
 pub type Typed = Option<DataType>;
@@ -100,14 +99,14 @@ pub fn of_arithmetic(op: ArithOp, a: &Typed, b: &Typed) -> Typed {
 }
 
 /// The type of `e` over a row of columns of `input`'s types.
-pub fn of_expr(e: &Expr, input: &[Typed], st: &State) -> Typed {
+pub fn of_expr(e: &Expr, input: &[Typed]) -> Typed {
     match e {
         Expr::Column(i) => input.get(*i).cloned().flatten(),
         Expr::Const(v) => of_value(v),
-        Expr::Neg(x) => of_expr(x, input, st).filter(DataType::is_numeric),
-        Expr::Arith(a, op, b) => of_arithmetic(*op, &of_expr(a, input, st), &of_expr(b, input, st)),
+        Expr::Neg(x) => of_expr(x, input).filter(DataType::is_numeric),
+        Expr::Arith(a, op, b) => of_arithmetic(*op, &of_expr(a, input), &of_expr(b, input)),
         Expr::Call(f, args) => {
-            let types = args.iter().map(|a| of_expr(a, input, st)).collect::<Option<Vec<_>>>()?;
+            let types = args.iter().map(|a| of_expr(a, input)).collect::<Option<Vec<_>>>()?;
             f.0.return_type(&types).ok()
         }
         Expr::Cast(_, t) => Some(t.clone()),
@@ -122,20 +121,6 @@ pub fn of_expr(e: &Expr, input: &[Typed], st: &State) -> Typed {
         | Expr::Invoked(_)
         | Expr::Warned(..) => None,
     }
-}
-
-/// The types of `plan`'s output columns.
-pub fn of_plan(plan: &LogicalPlan, st: &State) -> Vec<Typed> {
-    of_plan_at(plan, st, 0)
-}
-
-/// `of_plan`, at `depth`: none known past `MAX_DEPTH` (RULES.md R-CF-6).
-fn of_plan_at(plan: &LogicalPlan, st: &State, depth: usize) -> Vec<Typed> {
-    if depth >= MAX_DEPTH {
-        return vec![None; plan.width()];
-    }
-    let inner: Vec<Vec<Typed>> = plan.inputs().map(|i| of_plan_at(i, st, depth.saturating_add(1))).collect();
-    of_node(plan, &inner, st)
 }
 
 /// The types of `plan`'s output columns, its inputs' being `inner`.
@@ -162,7 +147,7 @@ pub fn of_node(plan: &LogicalPlan, inner: &[Vec<Typed>], st: &State) -> Vec<Type
             types.extend(aggs.iter().map(|a| Some(a.result.clone())));
             types
         }
-        LogicalPlan::Project { exprs, .. } => exprs.iter().map(|e| of_expr(e, &first, st)).collect(),
+        LogicalPlan::Project { exprs, .. } => exprs.iter().map(|e| of_expr(e, &first)).collect(),
         LogicalPlan::Values { types, .. } => types.iter().cloned().map(Some).collect(),
         LogicalPlan::System { .. }
         | LogicalPlan::Recursive { .. }

@@ -66,7 +66,7 @@ pub const FORMAT: u32 = 1;
 pub const MAX_DEPTH: usize = 400;
 
 /// A plan form: its root.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Form {
     /// The root node.
     pub root: Node,
@@ -82,7 +82,7 @@ pub struct Column {
 }
 
 /// What the database keeps of a column of a table it scans.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ColumnStatistics {
     /// Its distinct non-null values; negative if not known.
     pub distinct: f64,
@@ -93,7 +93,7 @@ pub struct ColumnStatistics {
 }
 
 /// A node of a plan form.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Node {
     /// Its operator.
     pub op: Op,
@@ -208,7 +208,7 @@ impl Op {
 }
 
 /// What a node does, as its operator says.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Body {
     /// Of a kept node: a label, for people.
     Kept(String),
@@ -282,7 +282,7 @@ pub struct Key {
 }
 
 /// An expression of the plan form, over its node's input row.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Expression {
     /// The column of the input row at this place, from 0.
     Column(u32),

@@ -12,7 +12,7 @@ use super::typed::{Typed, of_node as types_of, of_value, parsed, same, text};
 use super::{Body, Column, Expression, Form, JoinKind, Key, MAX_DEPTH, Node, Op, Operator, SetKind};
 use crate::db::State;
 use crate::error::Result;
-use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, SetOp, Truth, cond_columns, expr_columns};
+use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, SetOp, cond_columns, expr_columns};
 use crate::plugin::errors::violation;
 use crate::value::{ArithOp, CompOp, DataType, Value};
 
@@ -127,13 +127,11 @@ impl Making<'_> {
             }
         }
         let types = types_of(plan, &inner, self.st);
-        let size = match plan {
-            LogicalPlan::Scan { table, names, .. } => scanned(self.st, table, names.len()).0,
-            _ => of_node(self.st, plan, &sizes),
-        };
+        let size = if let LogicalPlan::Scan { table, names, .. } = plan { scanned(self.st, table, names.len()).0 } else { of_node(self.st, plan, &sizes) };
         let kept = body.is_none();
         if kept {
-            self.kept.nodes.insert(id, KeptNode { node: stripped(plan), inputs: inner, types: types.clone() });
+            let node = if opens_inputs(plan) { stripped(plan) } else { plan.clone() };
+            self.kept.nodes.insert(id, KeptNode { node, inputs: inner, types: types.clone() });
         }
         let names = plan.names();
         let columns = names.into_iter().zip(&types).map(|(name, t)| Column { name, data_type: text(t) }).collect();
@@ -171,7 +169,18 @@ impl Making<'_> {
             LogicalPlan::Values { rows, .. } => {
                 (Op::Values, Body::Values(rows.iter().map(|row| self.exprs(row, depth)).collect::<Result<_>>()?))
             }
-            _ => return Ok(None),
+            LogicalPlan::Scan { .. }
+            | LogicalPlan::SetOp { .. }
+            | LogicalPlan::Aggregate { .. }
+            | LogicalPlan::System { .. }
+            | LogicalPlan::Limit { .. }
+            | LogicalPlan::Recursive { .. }
+            | LogicalPlan::WorkTable { .. }
+            | LogicalPlan::Transition { .. }
+            | LogicalPlan::Unnest(_)
+            | LogicalPlan::Window(_)
+            | LogicalPlan::Recognize(_)
+            | LogicalPlan::Polymorphic(_) => return Ok(None),
         }))
     }
 
@@ -200,13 +209,36 @@ impl Making<'_> {
         let operator = |op, args| Expression::Operator { op, args };
         Ok(match e {
             Expr::Column(i) => Expression::Column(column(*i)),
-            Expr::Const(v) if literal(v) => Expression::Literal { data_type: text(&of_value(v)), value: v.clone() },
+            Expr::Const(v) => {
+                if !literal(v) {
+                    return Ok(self.opaque(Held::Expr(e.clone())));
+                }
+                Expression::Literal { data_type: text(&of_value(v)), value: v.clone() }
+            }
             Expr::Neg(x) => operator(Operator::Negate, vec![self.expr(x, deeper)?]),
             Expr::Arith(a, op, b) => operator(arith(*op), vec![self.expr(a, deeper)?, self.expr(b, deeper)?]),
-            Expr::Call(f, args) if self.named(f) => Expression::Call { name: f.0.name().to_owned(), args: self.exprs(args, deeper)? },
-            Expr::Cast(x, t) if says(t) => Expression::Cast { data_type: t.to_string(), arg: Box::new(self.expr(x, deeper)?) },
+            Expr::Call(f, args) => {
+                if !self.named(f) {
+                    return Ok(self.opaque(Held::Expr(e.clone())));
+                }
+                Expression::Call { name: f.0.name().to_owned(), args: self.exprs(args, deeper)? }
+            }
+            Expr::Cast(x, t) => {
+                if !says(t) {
+                    return Ok(self.opaque(Held::Expr(e.clone())));
+                }
+                Expression::Cast { data_type: t.to_string(), arg: Box::new(self.expr(x, deeper)?) }
+            }
             Expr::Truth(c) => self.cond(c, deeper)?,
-            _ => self.opaque(Held::Expr(e.clone())),
+            Expr::Outer(..)
+            | Expr::Dynamic(_)
+            | Expr::Case(..)
+            | Expr::Domain(..)
+            | Expr::SortKey(..)
+            | Expr::Subquery(..)
+            | Expr::NextValue(_)
+            | Expr::Invoked(_)
+            | Expr::Warned(..) => self.opaque(Held::Expr(e.clone())),
         })
     }
 
@@ -214,7 +246,7 @@ impl Making<'_> {
     /// finds it again.
     fn named(&self, f: &crate::functions::ScalarRef) -> bool {
         let all = self.st.functions.scalars(f.0.name());
-        matches!(all.as_slice(), [one] if std::ptr::addr_eq(Arc::as_ptr(&one.0), Arc::as_ptr(&f.0)))
+        if let [one] = all.as_slice() { std::ptr::addr_eq(Arc::as_ptr(&one.0), Arc::as_ptr(&f.0)) } else { false }
     }
 
     /// The form of `c`.
@@ -229,7 +261,14 @@ impl Making<'_> {
             Cond::Compare(a, op, b) => operator(compared(*op), vec![self.expr(a, deeper)?, self.expr(b, deeper)?]),
             Cond::IsNull(e, not) => operator(if *not { Operator::IsNotNull } else { Operator::IsNull }, vec![self.expr(e, deeper)?]),
             Cond::Value(e) => self.expr(e, deeper)?,
-            _ => self.opaque(Held::Cond(c.clone())),
+            Cond::Distinct(..)
+            | Cond::Like(..)
+            | Cond::Exists(_)
+            | Cond::Quantified(..)
+            | Cond::Is(..)
+            | Cond::Unique(..)
+            | Cond::Match { .. }
+            | Cond::In(..) => self.opaque(Held::Cond(c.clone())),
         })
     }
 }
@@ -280,9 +319,4 @@ fn set_kind(op: SetOp) -> SetKind {
         SetOp::Except => SetKind::Except,
         SetOp::Intersect => SetKind::Intersect,
     }
-}
-
-/// The truth value of a literal of BOOLEAN, as `Truth::of` reads one.
-pub(super) fn truth(v: &Value) -> Truth {
-    Truth::of(v)
 }

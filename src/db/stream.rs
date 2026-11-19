@@ -62,7 +62,8 @@ impl Stream {
     ///
     /// A lock is not granted; as `open`.
     pub(super) fn planned(st: &Arc<State>, tx: &Txn, logical: LogicalPlan) -> Result<Stream> {
-        let (optimized, _, physical) = super::plan(st, logical);
+        let stop = st.tx.stop_of(tx.id);
+        let (optimized, _, physical) = super::plan_heard(st, logical, stop.as_deref().map(Stop::warnings));
         Stream::kept(st, tx, physical, optimized.tables().into())
     }
 

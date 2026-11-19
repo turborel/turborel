@@ -18,6 +18,7 @@
 //!   functions, credentials and diagnostics (RULES.md D222).
 //! * `types.rs`, `engine.rs`, `index.rs`: types, storage engines and
 //!   index methods (RULES.md D223 to D227).
+//! * `rule.rs`: optimizer rules, over the plan form (RULES.md D275).
 //!
 //! `kinds.rs` holds the object of each kind, bridged.
 
@@ -37,6 +38,7 @@ pub mod procedure;
 pub mod process;
 pub mod quantizer;
 pub mod ranking;
+pub mod rule;
 pub mod scalar;
 pub mod system;
 pub mod table;

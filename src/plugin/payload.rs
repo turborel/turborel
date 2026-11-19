@@ -37,9 +37,12 @@
 //! 15 type           1 input       `types.rs`
 //!                   2 receive
 //! 16 engine         1 create .. 7 drop   `engine.rs`
+//!                   8 statistics  `statistics.rs`
 //! 17 index method   1 create .. 8 drop   `index.rs`
+//!                   9 statistics  `statistics.rs`
 //! 18 credentials    1 verifier    `process.rs`
 //! 19 diagnostics    1 events      `process.rs`
+//! 37 optimizer rule 1 rewrite     plan form (`plan.rs`)             u8 0 (no change), or u8 1 | plan form
 //! ```
 //!
 //! The kinds from 10 (RULES.md D220) each have a module of their own,
@@ -58,6 +61,7 @@ pub mod process;
 pub mod quantizer;
 pub mod ranking;
 pub mod replication;
+pub mod statistics;
 pub mod system;
 pub mod types;
 
@@ -173,6 +177,12 @@ pub const INDEX_NEAREST: u8 = 6;
 pub const INDEX_CHECKPOINT: u8 = 7;
 /// An index dropped.
 pub const INDEX_DROP: u8 = 8;
+/// What a table's engine knows of its rows (`statistics.rs`, RULES.md D278).
+pub const ENGINE_STATISTICS: u8 = 8;
+/// What an index's method knows of its entries (`statistics.rs`).
+pub const INDEX_STATISTICS: u8 = 9;
+/// An optimizer rule's rewrite of a plan form (RULES.md D275).
+pub const RULE_REWRITE: u8 = 1;
 
 /// Strings, counted.
 pub fn put_strings(out: &mut Vec<u8>, all: &[String]) {
