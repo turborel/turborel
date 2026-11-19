@@ -73,10 +73,11 @@ impl Locator {
         Some(Box::new(Self { polygons, _held: held }))
     }
 
-    pub(super) fn locate(&self, point: Point) -> Result<Location> {
+    /// Where `point` lies, counting in `tally` the edges its rays test.
+    pub(super) fn locate<T: Tally>(&self, point: Point, tally: &mut T) -> Result<Location> {
         let mut location = Location::Exterior;
         for polygon in &self.polygons {
-            match polygon.locate(point)? {
+            match polygon.locate(point, tally)? {
                 Location::Interior => return Ok(Location::Interior),
                 Location::Boundary => location = Location::Boundary,
                 Location::Exterior => (),
@@ -87,14 +88,14 @@ impl Locator {
 }
 
 impl Polygon {
-    fn locate(&self, point: Point) -> Result<Location> {
+    fn locate<T: Tally>(&self, point: Point, tally: &mut T) -> Result<Location> {
         let Some((shell, holes)) = self.rings.split_first() else { return Ok(Location::Exterior) };
-        let shell = in_ring(point, shell)?;
+        let shell = in_ring(point, shell, tally)?;
         if shell != Location::Interior {
             return Ok(shell);
         }
         for hole in holes {
-            match in_ring(point, hole)? {
+            match in_ring(point, hole, tally)? {
                 Location::Interior => return Ok(Location::Exterior),
                 Location::Boundary => return Ok(Location::Boundary),
                 Location::Exterior => (),
@@ -145,9 +146,9 @@ fn maxima(edges: &mut [Edge], depth: u32) -> Result<f64> {
     Ok(edge.maximum)
 }
 
-fn in_ring(point: Point, edges: &[Edge]) -> Result<Location> {
+fn in_ring<T: Tally>(point: Point, edges: &[Edge], tally: &mut T) -> Result<Location> {
     let mut ray = Ray::new(point);
-    let boundary = visit(edges, &mut ray, 0)?;
+    let boundary = visit(edges, &mut ray, 0, tally)?;
     if boundary {
         return Ok(Location::Boundary);
     }
@@ -157,7 +158,8 @@ fn in_ring(point: Point, edges: &[Edge]) -> Result<Location> {
 /// Median nodes store the maximum Y of their whole subtree; the first
 /// element supplies its minimum. Closed bounds retain horizontal edges
 /// and vertices. No midpoint arithmetic or rounded tolerance is needed.
-fn visit(edges: &[Edge], ray: &mut Ray, depth: u32) -> Result<bool> {
+/// Each edge the ray tests is counted in `tally`.
+fn visit<T: Tally>(edges: &[Edge], ray: &mut Ray, depth: u32, tally: &mut T) -> Result<bool> {
     let Some(first) = edges.first() else { return Ok(false) };
     if depth >= LEVELS {
         return Err(malformed());
@@ -169,16 +171,33 @@ fn visit(edges: &[Edge], ray: &mut Ray, depth: u32) -> Result<bool> {
     if y < first.lower() || y > edge.maximum {
         return Ok(false);
     }
+    tally.tested();
     let boundary = ray.add(edge.start, edge.end);
     if boundary {
         return Ok(true);
     }
     let next = depth.saturating_add(1);
-    let left_boundary = visit(left, ray, next)?;
+    let left_boundary = visit(left, ray, next, tally)?;
     if left_boundary {
         return Ok(true);
     }
-    visit(right, ray, next)
+    visit(right, ray, next, tally)
+}
+
+/// A count of the edges a ray tests: a number, or nothing kept, so a
+/// location that is not counted pays nothing for it.
+pub(super) trait Tally {
+    fn tested(&mut self);
+}
+
+impl Tally for usize {
+    fn tested(&mut self) {
+        *self = self.saturating_add(1);
+    }
+}
+
+impl Tally for () {
+    fn tested(&mut self) {}
 }
 
 fn malformed() -> SqlError {

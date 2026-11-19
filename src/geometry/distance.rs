@@ -3,6 +3,8 @@
 //! by points or line segments on their boundaries. Empty components
 //! contribute infinity, never a spurious zero or an early overflow error.
 
+mod near;
+
 use super::crossing::segments;
 use super::robust::distance::{point, segment};
 use super::shape::{Point, Shape};
@@ -44,8 +46,43 @@ fn to_point(p: Point, shape: &Shape) -> f64 {
     }
 }
 
+/// The least measure between the chains' edges: by an expanding search
+/// once the pairs are many enough to repay it, else, or where its
+/// arithmetic declines, over every pair.
 fn lines(left: &[Point], right: &[Point]) -> f64 {
-    minimum(segments(left).flat_map(|(a, b)| segments(right).map(move |(c, d)| between(a, b, c, d))))
+    let pairs = left.len().saturating_sub(1).saturating_mul(right.len().saturating_sub(1));
+    let searched = (pairs >= SEARCH_PAIRS).then(|| near::nearest(left, right)).flatten();
+    searched.unwrap_or_else(|| minimum(segments(left).flat_map(|(a, b)| segments(right).map(move |(c, d)| between(a, b, c, d)))))
+}
+
+/// \[DESIGN\] Edge pairs from which an expanding search repays building
+/// its hierarchy.
+const SEARCH_PAIRS: usize = 4_096;
+
+/// IEEE 754 binary64 layout, for a unit in the last place.
+const FRACTION_BITS: u32 = 52;
+const EXPONENT_MASK: u64 = 0x7ff;
+/// The widening of a search beyond its best measure: far more than a
+/// measure's relative rounding, plus far more than the absolute rounding
+/// of coordinate differences, in units of the largest coordinate's last
+/// place.
+const SLACK: f64 = 9.536_743_164_062_5e-7;
+const UNITS: f64 = 64.0;
+
+/// How far beyond the best measure so far, `best`, a search must still
+/// look for a measure that could be least, for `unit` a unit in the last
+/// place of the largest coordinate. An edge whose envelope lies farther
+/// has a true distance beyond it, so its measure exceeds `best`.
+pub(super) fn reach(best: f64, unit: f64) -> f64 {
+    best + best * SLACK + unit * UNITS
+}
+
+/// A unit in the last place of `largest`, the largest coordinate
+/// magnitude, or none if it is not finite.
+pub(super) fn unit_of(largest: f64) -> Option<f64> {
+    let exponent = (largest.to_bits() >> FRACTION_BITS) & EXPONENT_MASK;
+    let bits = exponent.checked_sub(u64::from(FRACTION_BITS)).filter(|&e| e > 0).map_or(1_u64, |e| e << FRACTION_BITS);
+    largest.is_finite().then(|| f64::from_bits(bits))
 }
 
 fn between(a: Point, b: Point, c: Point, d: Point) -> f64 {

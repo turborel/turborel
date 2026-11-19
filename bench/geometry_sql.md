@@ -171,3 +171,38 @@ pool's misses, not the disk's. The sustained case moves parcels of
 disjoint partitions while the others read, on a fresh database each run.
 Latencies are closed loop, five runs of each case pooled, with no
 independent arrival queue.
+
+## Reading R-tree nodes without a fresh allocation per visit
+
+Profiles of narrow filters with updates put R-tree node parsing first:
+each visit decoded every 48-byte entry field by field through the
+checked byte reader into a new vector. Entries are now read as whole
+6-word records into a buffer the scan, its branches and the
+nearest-neighbour search reuse, with the same checks of finite, ordered
+bounds and nonzero leaf counts; finding the root reads only its header's
+level. The page format is unchanged.
+
+Measured on an Apple M4, Rust 1.99.0. Each side ran twice and the second
+run is reported, since the first after a build is slowed by on-access
+scanning of the new binaries:
+
+```text
+cargo xtask bench geometry_sql --save q3-before
+TURBOREL_NEAREST_QUERIES=1024 cargo xtask bench geometry_nearest --save q3-before
+cargo xtask bench geometry_sql --save q3 --compare q3-before
+TURBOREL_NEAREST_QUERIES=1024 cargo xtask bench geometry_nearest --save q3 --compare q3-before
+```
+
+| Workload | Sessions | Before | After | Change |
+|---|---:|---:|---:|---:|
+| Width-10 filter, queries/s | 1 | 43,321 | 47,554 | +9.8% |
+| Width-10 filter, queries/s | 4 | 103,469 | 117,162 | +13.2% |
+| 80% filters / 20% updates, operations/s | 1 | 37,363 | 41,973 | +12.3% |
+| 80% filters / 20% updates, operations/s | 4 | 114,496 | 125,037 | +9.2% |
+| Nearest 10 points, queries/s | 1 | 54,230 | 61,066 | +12.6% |
+| Nearest 10 points, queries/s | 4 | 168,930 | 186,401 | +10.3% |
+| Nearest 10 rectangles, queries/s | 1 | 48,943 | 57,955 | +18.4% |
+
+Width-500 filters stayed within noise: they spend their time fetching and
+checking rows, not in the tree. Eight-session narrow filters moved +3.7%,
+within noise.

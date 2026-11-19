@@ -35,8 +35,11 @@ fn a_table_without_storage_is_scanned_and_reported() {
     );
     let st = Arc::new(State::with_builtins(Box::new(catalog)));
     let conds = vec![Cond::Const(crate::logical::Truth::True)];
-    let built =
-        PhysicalPlanner::new(&st).access(TableRead { table: &name, shown: Shown::of(None), needed: &[], located: false }, conds, &[]);
+    let built = PhysicalPlanner::new(&st).access(
+        TableRead { table: &name, shown: Shown::of(None), needed: &[], located: false, above: None },
+        conds,
+        &[],
+    );
     assert!(matches!(&built.plan, Plan::Filter { input, .. } if matches!(**input, Plan::SeqScan { .. })));
     let failed = execute(built.plan, &st, NO_TRANSACTION).collect::<Result<Vec<_>>>();
     assert_eq!(failed.err().map(|e| e.code), Some(Code::Api));

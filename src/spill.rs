@@ -265,6 +265,11 @@ impl WorkAreas {
         WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))) }
     }
 
+    /// The budget its areas are reserved of, for what is held beside them.
+    pub(crate) fn budget(&self) -> &Arc<MemoryBudget> {
+        &self.memory
+    }
+
     /// A new area as `area` asks, reserved of the budget.
     ///
     /// # Errors

@@ -1,6 +1,7 @@
 //! Mutations of R-tree packing and reclamation (RULES.md R-TEST-9, D139):
 //! leaves filled past their fill, levels tiled across each other,
-//! duplicate counts lost, the writers' entries dropped by a load, sparse
+//! duplicate counts lost, held or spilled, a load held past what the
+//! budget grants, the writers' entries dropped by a load, sparse
 //! leaves or branches kept, merged leaves emptied under a scan, retired
 //! pages freed while scans hold them, split stamps repeated, ancestors
 //! left wide, a root kept over one child, a retired parent changed, and a
@@ -9,11 +10,33 @@
 use super::{Mutation, Package};
 
 const PACKED: &str = "engine::rtree::tests::pack::packed_and_inserted_trees_answer_alike";
+const SPILLED: &str = "engine::rtree::tests::pack::spilled_loads_pack_as_held_ones_do";
+const COUNTED: &str = "engine::rtree::tests::pack::duplicate_loaded_entries_are_counted";
 const SHORTER: &str = "engine::rtree::tests::branches::the_tree_grows_shorter_as_it_empties";
 const PAUSED: &str = "engine::rtree::tests::reclaim::a_paused_scan_survives_reclamation";
 
 /// The mutations of packing and reclamation, in the order they run.
-pub const RTREE_PACK: [Mutation; 14] = [
+pub const RTREE_PACK: [Mutation; 16] = [
+    Mutation {
+        name: "rtree-pack-held-budget",
+        package: Package::Core,
+        breaks: "a load holds its entries in memory past what the budget grants, instead of spilling the rest",
+        file: "src/engine/rtree/pack/held.rs",
+        original: "    if granted.is_err() {\n        return false;\n    }",
+        replacement: "    if granted.is_err() {\n        held.resize_anyway(room.saturating_mul(size_of::<Entry>()));\n    }",
+        integration: &[],
+        unit: &["engine::rtree::tests::pack::a_load_the_budget_cannot_hold_is_spilled"],
+    },
+    Mutation {
+        name: "rtree-pack-held-counts",
+        package: Package::Core,
+        breaks: "identical entries of a load held in memory become one entry counting one reference",
+        file: "src/engine/rtree/pack/held.rs",
+        original: "kept.value = kept.value.saturating_add(next.value);",
+        replacement: "kept.value = next.value;",
+        integration: &[],
+        unit: &[COUNTED],
+    },
     Mutation {
         name: "rtree-pack-fills-full",
         package: Package::Core,
@@ -32,7 +55,7 @@ pub const RTREE_PACK: [Mutation; 14] = [
         original: "entry.value = entry.value.saturating_add(added);",
         replacement: "entry.value = entry.value.max(added);",
         integration: &[],
-        unit: &["engine::rtree::tests::pack::duplicate_loaded_entries_are_counted"],
+        unit: &[COUNTED],
     },
     Mutation {
         name: "rtree-load-drops-writers",
@@ -92,7 +115,7 @@ pub const RTREE_PACK: [Mutation; 14] = [
         original: "let per_slab = span.saturating_mul(nodes.div_ceil(slabs.max(1)));",
         replacement: "let per_slab = span.saturating_mul(nodes.div_ceil(slabs.max(1))).saturating_add(span / 2);",
         integration: &[],
-        unit: &[PACKED],
+        unit: &[PACKED, SPILLED],
     },
     Mutation {
         name: "rtree-sparse-branches-kept",

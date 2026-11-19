@@ -538,10 +538,14 @@ pub trait Index: Send + Sync {
     }
     /// The entries the probe selects, each (key, row) pair once, read as
     /// they are taken: in `order` if the method is ordered. It holds the
-    /// index (`self: Arc<Self>`), so what it gives may outlive the call
-    /// that asked, as a cursor's rows do; an error of its storage is one
-    /// of the entries.
+    /// index (`self: Arc<Self>`), so what it gives may outlive the call that
+    /// asked, as a cursor's rows do; an error of its storage is an entry.
     fn search(self: Arc<Self>, probe: &Probe, order: KeyOrder) -> Entries;
+    /// \[DESIGN\] As `search`, told whether the entries' rows are read, so a
+    /// method groups them for their reads only then (RULES.md D85). Default: `search`.
+    fn search_for(self: Arc<Self>, probe: &Probe, order: KeyOrder, _reading: bool) -> Entries {
+        self.search(probe, order)
+    }
     /// What finds this index again when the database is opened
     /// (`IndexMethod::open`), kept in the catalog. Default: nothing.
     fn locator(&self) -> Vec<u8> {
