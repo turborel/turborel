@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use super::{Session, State};
+use super::{Call, Session, State};
 use crate::error::Result;
 use crate::txn::Txn;
 
@@ -82,5 +82,16 @@ impl Session {
         let ended = if commit { self.commit_in(st) } else { self.rollback_in(st) };
         self.ran();
         self.db.noted(ended)
+    }
+}
+
+/// As a call ends, the session is no longer busy, and its statement is timed.
+impl Drop for Call<'_> {
+    fn drop(&mut self) {
+        self.session.ran();
+        self.session.busy.set(false);
+        if let Some(timed) = self.timed.take() {
+            timed.done(&self.session.db);
+        }
     }
 }

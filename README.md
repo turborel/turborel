@@ -31,6 +31,8 @@ behind it, and each can be replaced or added to.
   control, a write-ahead log, checkpoints and recovery.
 - Savepoints, with SAVEPOINT, RELEASE SAVEPOINT and ROLLBACK TO SAVEPOINT
   at the savepoint levels of routines and ATOMIC blocks.
+- [Data change delta tables](doc/sql/24-delta-tables.md), OLD, NEW and
+  FINAL TABLE of INSERT, UPDATE, DELETE and MERGE.
 - Row and columnar storage, chosen per table.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
   or a strategy a plug-in registers, many levels deep, attached and
