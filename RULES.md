@@ -238,6 +238,13 @@ verification approach DO-178C expects (§8).
 | D217 | The prompt, the connection commands and `\password` are built on SQL, the verifier made by the client |
 | D218 | `turborel admin` maps each command onto statements the server runs |
 | D219 | The client adds `\G`, `\tee`, tab-separated output, safe updates, a delimiter and statement help |
+| D230 | A stream TLS secures is read and written by its worker itself, through its session |
+| D231 | The replies of pipelined requests go out together, never held for a request not sent nor past a batch |
+| D232 | A worker waits on the socket itself for a slow client to take its replies, and a session's records go in one write |
+| D233 | A connection's memory is bounded, whatever its client sends or fails to read |
+| D234 | A client half closed hears every reply, and a TLS stream cut without close_notify is a connection lost |
+| D235 | A server stopping sends the replies in flight whole, and runs no request pipelined behind them |
+| D236 | The network benchmark is an example of the server's crate, on the shared harness |
 | D240 | A completion carries the server's time for its statement, and the waits it can measure for free |
 
 ### The project
@@ -2585,8 +2592,9 @@ waits wakes no other. A waiting worker holds no permit, so as many keep
 waiting as the blocking pool has threads for, while statements wait for
 permits too. A request that comes
 later the connection's task reads through the runtime, which takes the
-socket back. A stream TLS secures, or a named pipe, is not handed so, and
-takes the task's path. Each connection runs one request at a time.
+socket back. A stream TLS secures is read so too, through its session
+(D230); a named pipe is not handed so, and takes the task's path. Each
+connection runs one request at a time.
 
 Time limits bound every client, and memory is taken as bytes arrive, never
 as a header declares (`SERVER.*_TIMEOUT_MS`, `native::LOGIN_MESSAGE_BYTES`).
@@ -7648,6 +7656,110 @@ nothing. Planning is not told apart from execution, as a Query parses,
 binds and plans inside the one call that runs it, and a prepared
 statement's planning is its Prepare's, which has no completion. Without
 the capability no clock is read.
+
+#### D230. A stream TLS secures is read and written by its worker itself, through its session
+
+A request over TLS used to hop threads three times: the connection's task
+read it, a worker ran it and wrote its replies through the runtime, then
+gave the session back, so a fast client's next request waited on the task
+again. Now the worker reads and writes a TLS stream as it does a socket in
+the clear (D42): `tls/direct.rs` drives the rustls session over the socket
+below it, which `Handed` lends the thread. The runtime reads and writes
+the same session through `tokio_rustls` when no worker has it, so no
+record is lost or read twice between them.
+
+The records the session holds to send are pushed before more plaintext is
+taken, so it holds one write's records and rustls's own 64 KiB at most. A
+close_notify read ends the stream as a read of nothing; a socket closed
+without one fails the read, so a request cut short is never taken whole.
+rustls never renegotiates, so no read waits on a handshake; a TLS 1.3 key
+update is answered as it is read. Over TLS, `cargo xtask bench network`
+shows serial small queries faster and pipelined ones several times
+faster (`server/examples/network/`).
+
+#### D231. The replies of pipelined requests go out together, never held for a request not sent nor past a batch
+
+A client that pipelines its requests used to get one write, and the
+client one wakeup, for each reply. A request's last replies now wait in
+the connection's buffer while its client's next request has come whole and
+fewer than SERVER.BATCH_BYTES are queued (`lent::Pipelined`); the next
+request's replies join them, and they go in one write. A request that has
+come whole is taken whether or not the client counts as fast, since taking
+it costs no wait; the worker's permit is given up and taken again between
+requests, so a pipelining client holds no more of SERVER.WORKERS than one
+that sends a request at a time.
+
+A reply is never held for a request not yet sent, so a client sending one
+request at a time is answered as before, and never past a batch, so the
+replies held are bounded. They are sent before the worker waits for more,
+before the connection's task takes the session back, and as the server
+stops. A reply waits at most as long as the requests that came with it
+take to run: a client pipelining a long statement behind a short one reads
+the short one's reply with the long one's first batch. Pipelined small
+queries and prepared inserts take fewer writes and wakeups, so they run
+faster in the clear and several times faster over TLS.
+
+#### D232. A worker waits on the socket itself for a slow client to take its replies, and a session's records go in one write
+
+A worker whose client could not take a batch at once used to hand the rest
+to the runtime and wait for it there, so each batch a client took slowly
+woke an I/O thread and then the worker. Now a worker of a socket it may
+read itself (D42, D230) waits in the write, the socket lent it with a
+timeout of `lent::LOOKED`, 20 ms, so the system wakes it alone as the
+client takes its bytes, and a large result streams at the socket's pace.
+Each time the timeout passes it looks whether the operator ended the
+connection or the server hurries, and it gives up once
+SERVER.IDLE_TIMEOUT_MS passes before the client has taken the batch, as
+the runtime's wait did. A named pipe still waits through the runtime.
+
+A TLS session's records go to the socket in one vectored write: `Handed`
+writes vectored apart from the runtime as through it, and the stream that
+puts TLS's first byte back passes vectored writes on, where it wrote one
+record a write before.
+
+#### D233. A connection's memory is bounded, whatever its client sends or fails to read
+
+A connection holds, beside its session: an inbox of 8 KiB
+(`wire::INBOX`), grown by at most 64 KiB at a time as a longer request's
+bytes arrive, to SERVER.MAX_MESSAGE_BYTES, and shrunk once it is taken;
+the replies queued, about SERVER.BATCH_BYTES of rows with the last
+replies of the requests answered before them (D231); and over TLS the
+session's records, 64 KiB to send and a record read. The inbox is read
+only when no whole request is in it, so a client that pipelines faster
+than it reads is read no further while its replies wait to be sent. A
+client that takes nothing, or sends nothing, is closed after
+SERVER.IDLE_TIMEOUT_MS. These bounds are in the operator's manual.
+
+#### D234. A client half closed hears every reply, and a TLS stream cut without close_notify is a connection lost
+
+A client that shuts its side after its requests, without Terminate, has
+each request that came whole answered, in order, then its connection
+closed and its session rolled back, a connection lost [ISO/IEC 9075:1992
+§20.1 GR2a]: requests are taken from the inbox before it is read again,
+so the end of the stream is met only once they are done. Over TLS the
+end is close_notify; a socket closed without it is a failure, never an
+end, whether the runtime or the worker reads it (D230).
+
+#### D235. A server stopping sends the replies in flight whole, and runs no request pipelined behind them
+
+As D42 says, a server told to stop lets each connection finish its
+statement. Its replies, those held for a pipeline among them (D231), are
+sent whole before the connection closes; a request that came behind it is
+not run, and the client is told the server stops (SQLSTATE 08006). Past
+SERVER.SHUTDOWN_TIMEOUT_MS the server hurries, and a worker waiting on a
+slow client stops within `lent::LOOKED` (D232).
+
+#### D236. The network benchmark is an example of the server's crate, on the shared harness
+
+The benchmarks of `bench/` are targets of the core crate, which depends
+on nothing (D3), so one that needs the server and the client cannot be
+among them without a dependency the core must not have. The network
+benchmark is an example of the server's crate, `server/examples/network/`,
+on `bench/harness.rs` like every other (R-BENCH-1), and `cargo xtask bench
+network` runs it optimized, keeping and comparing its results as it does
+the others' (`xtask/src/bench.rs`, `SERVED`). It measures over loopback
+TCP, a Unix socket and TLS, against servers in its own process on
+runtimes of their own, over in-memory databases.
 
 ## 2. Project layout
 

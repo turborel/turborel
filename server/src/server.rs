@@ -37,6 +37,9 @@ use turborel_protocol::{CancelKey, broken};
 
 pub use crate::cancels::Registered;
 pub use crate::limit::Permit;
+pub(crate) use closed::{IDLE_WAITING, hurrying, went_past};
+
+mod closed;
 
 use crate::auth::{Authenticator, Peer};
 use crate::cancels::Cancels;
@@ -244,7 +247,7 @@ impl Services {
     ///
     /// `work`'s; a connection failure if the time ran out.
     pub async fn idle<T>(&self, work: impl Future<Output = Result<T>>) -> Result<T> {
-        self.bounded(IDLE_TIMEOUT_MS, Instant::now(), work, "with nothing from or to the client").await
+        self.bounded(IDLE_TIMEOUT_MS, Instant::now(), work, IDLE_WAITING).await
     }
 
     /// `work`, if it is done within the milliseconds of the setting `name`
@@ -254,14 +257,18 @@ impl Services {
     async fn bounded<T>(&self, name: &str, from: Instant, work: impl Future<Output = Result<T>>, waiting: &str) -> Result<T> {
         let timed = async {
             let Some(limit) = millis(self.database(), name) else { return work.await };
-            tokio::time::timeout(limit.saturating_sub(from.elapsed()), work).await.unwrap_or_else(|_| {
-                Err(broken(format!("[DESIGN] the connection went past {name}, {} ms, {waiting}: closed", limit.as_millis())))
-            })
+            tokio::time::timeout(limit.saturating_sub(from.elapsed()), work).await.unwrap_or_else(|_| Err(went_past(name, limit, waiting)))
         };
         tokio::select! {
             done = timed => done,
-            () = self.hurried() => Err(broken("[DESIGN] the server is stopping, past SERVER.SHUTDOWN_TIMEOUT_MS or told again: closed")),
+            () = self.hurried() => Err(hurrying()),
         }
+    }
+
+    /// Whether the server hurries, for a worker that waits on its client
+    /// itself, as `bounded` would end its wait (`native/lent.rs`).
+    pub(crate) fn is_hurried(&self) -> bool {
+        *self.0.stop.borrow() == Stage::Hurried
     }
 
     /// `work`, if it is done within SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS

@@ -293,9 +293,14 @@ impl Wire {
         HEADER.saturating_add(length).saturating_sub(self.end.saturating_sub(self.start))
     }
 
-    /// Encodes `replies` as the next write.
-    fn encode(&mut self, replies: &[Reply]) {
-        self.out.clear();
+    /// Queues `replies` behind those not yet sent, for the next write, each
+    /// frame compressed if compression was granted: the replies of requests
+    /// a client pipelined go out together.
+    pub(super) fn queue(&mut self, replies: &[Reply]) {
+        if self.sent == self.out.len() {
+            self.out.clear();
+            self.sent = 0;
+        }
         let mut plain = Vec::new();
         let into = if self.compress.is_some() { &mut plain } else { &mut self.out };
         for reply in replies {
@@ -304,14 +309,24 @@ impl Wire {
         if let Some(threshold) = self.compress {
             compress_frames(&mut self.out, &plain, threshold);
         }
-        self.sent = 0;
     }
 
-    /// Writes `replies` apart from the runtime, as much as the transport
-    /// takes at once, or within its wait: whether all of it; the rest is
-    /// for `send_rest`. None of it if the transport cannot be written so.
-    pub(super) fn sent_now(&mut self, replies: &[Reply]) -> Result<bool> {
-        self.encode(replies);
+    /// The bytes queued and not yet sent.
+    pub(super) fn queued(&self) -> usize {
+        self.out.len().saturating_sub(self.sent)
+    }
+
+    /// Whether the client's next request has come whole: a client that
+    /// pipelines its requests reads their replies together.
+    pub(super) fn has_whole(&self) -> bool {
+        matches!(self.framed(), Ok(Some(_)))
+    }
+
+    /// Writes the replies queued apart from the runtime, as much as the
+    /// transport takes at once, or within its wait: whether all of it; the
+    /// rest is for `send_rest`. None of it if the transport cannot be
+    /// written so.
+    pub(super) fn sent_now(&mut self) -> Result<bool> {
         let Wire { transport, out, sent, .. } = self;
         let Some(direct) = transport.direct() else { return Ok(false) };
         while *sent < out.len() {
@@ -329,10 +344,31 @@ impl Wire {
                 }
             }
         }
-        Ok(true)
+        // A stream TLS secures may hold the last records back.
+        match direct.flush() {
+            Ok(()) => Ok(true),
+            Err(e) => {
+                if nothing_yet(&e) {
+                    return Ok(false);
+                }
+                Err(cannot_send(&e))
+            }
+        }
     }
 
-    /// Sends the rest of the replies encoded last, through the runtime.
+    /// Writes the replies queued apart from the runtime, waiting at most
+    /// `within` for the client to take each part: whether all of it.
+    ///
+    /// # Errors
+    ///
+    /// The write failed: the connection is gone.
+    pub(super) fn sent_within(&mut self, within: Duration) -> Result<bool> {
+        let Some(direct) = self.transport.direct() else { return Ok(false) };
+        direct.wait(within).map_err(|e| cannot_send(&e))?;
+        self.sent_now()
+    }
+
+    /// Sends the rest of the replies queued, through the runtime.
     pub(super) async fn send_rest(&mut self) -> Result<()> {
         let rest = self.out.get(self.sent..).unwrap_or_default();
         self.transport.write_all(rest).await.map_err(|e| cannot_send(&e))?;
@@ -340,9 +376,10 @@ impl Wire {
         self.transport.flush().await.map_err(|e| cannot_send(&e))
     }
 
-    /// Sends `replies` at once, in one write if they fit one.
+    /// Sends `replies` at once, behind any queued, in one write if they
+    /// fit one.
     pub(super) async fn send_all(&mut self, replies: &[Reply]) -> Result<()> {
-        self.encode(replies);
+        self.queue(replies);
         self.send_rest().await
     }
 
@@ -431,7 +468,8 @@ mod tests {
             assert!(matches!(terminate, Arrived::Taken(())));
             assert!(matches!(wire.receive().await.unwrap(), Request::Fetch { statement: 1, cursor: 0, rows: 2 }));
             assert!(matches!(wire.arrived(|_| Some(())), Arrived::Awaited), "nothing there");
-            assert!(!wire.sent_now(&[Reply::Suspended]).unwrap(), "not written apart from the runtime");
+            wire.queue(&[Reply::Suspended]);
+            assert!(!wire.sent_now().unwrap(), "not written apart from the runtime");
             wire.send_rest().await.unwrap();
             let mut far = far.await.unwrap();
             let mut expected = Vec::new();
@@ -441,6 +479,42 @@ mod tests {
             assert_eq!(got, expected);
             wire.close().await;
             assert_eq!(far.read(&mut got).await.unwrap(), 0, "closed");
+        });
+    }
+
+    /// Verifies: [DESIGN] RULES.md D231, D233: replies queued wait behind
+    /// those not yet sent, and go in one write; once all are sent the next
+    /// queued begins the buffer anew, so it holds one write's replies, not
+    /// every reply sent. A request come whole is seen without taking it;
+    /// many come whole hold the inbox at `INBOX`, the server reading no
+    /// more until they are taken.
+    #[test]
+    fn replies_queue_into_one_write_and_requests_are_seen_whole() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let (mut wire, mut far) = piped(1 << 20, 1 << 20);
+            let mut one = Vec::new();
+            Reply::Suspended.encode(&mut one);
+            wire.queue(&[Reply::Suspended]);
+            wire.queue(&[Reply::Suspended]);
+            assert_eq!(wire.queued(), 2 * one.len(), "behind the first");
+            wire.send_rest().await.unwrap();
+            assert_eq!(wire.queued(), 0);
+            wire.queue(&[Reply::Suspended]);
+            assert_eq!(wire.out.len(), one.len(), "begun anew");
+            wire.send_rest().await.unwrap();
+            let mut got = vec![0; 3 * one.len()];
+            far.read_exact(&mut got).await.unwrap();
+            assert_eq!(got, one.repeat(3));
+            assert!(!wire.has_whole());
+            let mut many = Vec::new();
+            for _ in 0..2_000_u32 {
+                many.extend(encoded(&Request::Fetch { statement: 1, cursor: 0, rows: 2 }));
+            }
+            far.write_all(&many).await.unwrap();
+            assert!(matches!(wire.receive().await.unwrap(), Request::Fetch { .. }));
+            assert!(wire.has_whole(), "the next come whole, not taken");
+            assert_eq!(wire.inbox.len(), INBOX, "read no further than the inbox");
         });
     }
 

@@ -192,7 +192,13 @@ turboreld: cannot open /var/lib/turborel/main: SQLCODE -915 (SQLSTATE TB915): /v
 Ctrl-C, or SIGTERM on Unix, stops the server: it takes no new
 connections, each connection finishes the statement it runs, its
 transaction rolled back, and the database is closed cleanly, which the
-diagnostics tell as `stopping`, then `closed`.
+diagnostics tell as `stopping`, then `closed`. The replies of the
+request a connection runs are sent whole before it closes; a request
+its client sent behind it is not run, and the client is told:
+
+```
+turborel: SQLCODE -919 (SQLSTATE 08006): the server is stopping
+```
 
 A statement that runs on is given SERVER.SHUTDOWN_TIMEOUT_MS, 30,000
 milliseconds by default, 0 for no limit. Past it, or at a second Ctrl-C

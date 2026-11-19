@@ -4,7 +4,9 @@
 //! in; TLS (`tls.rs`) secures a listener's streams, in the connection's
 //! own task. A TCP or Unix stream is handed to the worker answering a
 //! request (`handed.rs`), so it takes a fast client's next itself, apart
-//! from the runtime; a named pipe's, or a stream TLS secures, the runtime
+//! from the runtime, and waits in the write for a slow client to take its
+//! replies; a stream TLS secures over one is read so through its session
+//! (`tls/direct.rs`, RULES.md D230, D232); a named pipe's the runtime
 //! reads for it.
 
 mod handed;
@@ -28,9 +30,9 @@ use crate::keepalive::Keepalive;
 ///
 /// Contract (RULES.md R-SAFE-3): it reads and writes through the runtime.
 /// One a thread can read and write itself, apart from the runtime, gives
-/// itself so from `direct` (`Handed`); one that cannot, as a stream TLS
-/// secures, leaves it `None`, the default, so an `impl Transport for It
-/// {}` is enough.
+/// itself so from `direct` (`Handed`, and a stream TLS secures over one);
+/// one that cannot, as a named pipe, leaves it `None`, the default, so an
+/// `impl Transport for It {}` is enough.
 pub trait Transport: AsyncRead + AsyncWrite + Unpin + Send + 'static {
     /// The stream as a thread reads and writes it itself, if it can.
     fn direct(&mut self) -> Option<&mut dyn Direct> {

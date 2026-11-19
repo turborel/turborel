@@ -57,5 +57,6 @@ mod shown;
 mod statements;
 mod timeouts;
 mod tls;
+mod transport;
 mod uuids;
 mod xml;

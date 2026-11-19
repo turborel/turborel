@@ -56,7 +56,7 @@ impl Bench {
     }
 
     fn mixed_latency(&self, case: &Case, group: &str, samples: &mut [Duration]) {
-        assert_ne!(samples, []);
+        assert_ne!(samples, &[] as &[Duration]);
         samples.sort_unstable();
         let percentile = |p: usize| samples[(samples.len() * p).div_ceil(100).saturating_sub(1)].as_secs_f64() * 1e6_f64;
         let (p50, p95, p99) = (percentile(50), percentile(95), percentile(99));

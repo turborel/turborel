@@ -166,7 +166,8 @@ behind it, and each can be replaced or added to.
   variables, scripting and seven output formats ([guide](doc/client/05-turborel-commands.md)).
 - Library, embedded modes
 - A server over TCP, Unix sockets or Windows named pipes, with TLS,
-  users and passwords, prepared statements and cancellation.
+  users and passwords, prepared statements, pipelined requests whose
+  replies share a write, and cancellation.
 - A [native protocol](doc/client/05-protocol.md) that grows by
   negotiated capabilities: structured errors and notices, row counts,
   generated keys and server time in each completion, bulk copy,

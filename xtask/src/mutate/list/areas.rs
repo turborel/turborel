@@ -135,7 +135,8 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    json.into_iter().chain(xml).chain(last())
+    // The transport's last, as `last` holds no more.
+    json.into_iter().chain(xml).chain(last()).chain([&super::transport::TRANSPORT[..]])
 }
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
