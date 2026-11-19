@@ -131,6 +131,14 @@ impl Session {
         spec: &CursorSpecification,
         (params, keeping): (&Params, Option<&Keeping<'_>>),
     ) -> Result<(Vec<OutColumn>, Stream)> {
+        // [ISO/IEC 9075-2:2023 §7.6 GR5] a delta table's statement run
+        // first, and the query bound over its rows, all read now, so that
+        // an error of the query undoes the statement with it (RULES.md
+        // D174).
+        if self.run_delta(st, tx, spec, params)? {
+            let (columns, logical) = self.cursor_bound(st, spec, params, None)?;
+            return Ok((columns, Stream::planned(st, tx, logical)?.read_now()?));
+        }
         if let Some((columns, physical, reads)) = keeping.map(|k| k.physical(params.dynamic_values())).transpose()?.flatten() {
             return Ok((columns, Stream::kept(st, tx, physical, reads)?));
         }
@@ -352,6 +360,11 @@ impl Session {
         targets: &[ParameterSpecification],
         params: &mut Params,
     ) -> Result<Completion> {
+        // [ISO/IEC 9075-2:2023 §7.6 GR5] a delta table's statement run
+        // first (RULES.md D174).
+        if let [crate::ast::TableReference::Delta(d)] = query.table_expression.from.as_slice() {
+            self.run_delta_table(cx.st, cx.tx, d, params)?;
+        }
         let bound = self.bound(cx.st, params, |b| bind_select(b, query))?;
         check_targets(&bound.columns, targets, params, "§8.10 SR3", "§8.10 SR4")?;
         let (optimized, _, physical) = plan(cx.st, bound.plan);

@@ -32,6 +32,11 @@ impl Session {
         effects.now = self.now.get();
         effects.triggered = super::triggers::Triggered::of(self, st);
         effects.host = Some(self);
+        // [ISO/IEC 9075-2:2023 §7.6 GR5] of a delta table's statement
+        // (RULES.md D174).
+        let (delta, restricted) = self.delta_effects();
+        effects.delta = delta;
+        effects.restricted = restricted.map(|t| (t, SqlState::MODIFY_DELTA_TABLE_IN_TRIGGER));
         effects
     }
 

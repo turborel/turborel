@@ -35,6 +35,24 @@ impl Database {
         self.registered((Extension::Function, &name), done.and_then(|()| self.tell_plugin(f.configurable())))
     }
 
+    /// \[DESIGN\] Registers the scalar function `f` in place of every scalar
+    /// function of its name, as what serves a database registers its own
+    /// again when it is served again (RULES.md D191).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if an aggregate function has its name, or a setting it
+    /// declares is refused (D36).
+    pub fn replace_scalar_function(&self, f: Box<dyn ScalarFunction>) -> Result<()> {
+        let (name, f): (String, Arc<dyn ScalarFunction>) = (f.name().to_owned(), Arc::from(f));
+        let done = self.change(|st| {
+            st.declare_plugin(&name, f.configurable())?;
+            st.functions.remove_scalars(&name);
+            st.functions.add_scalar(Arc::clone(&f))
+        });
+        self.registered((Extension::Function, &name), done.and_then(|()| self.tell_plugin(f.configurable())))
+    }
+
     /// \[EXTENSION\] Register an aggregate. Registering COUNT, SUM, AVG, MAX or
     /// MIN replaces that set function's implementation [X3.135-1986 §5.8];
     /// any other name is callable only through the function call syntax.

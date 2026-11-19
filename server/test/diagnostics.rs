@@ -231,6 +231,7 @@ fn hello(address: std::net::SocketAddr, (version, user, mechanism): (u32, &str, 
         mechanism: mechanism.into(),
         initial: b"hunter2".to_vec(),
         capabilities: vec![],
+        attributes: Vec::new(),
     };
     let mut bytes = Vec::new();
     hello.encode(&mut bytes);

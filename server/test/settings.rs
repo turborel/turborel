@@ -17,7 +17,7 @@ fn the_servers_settings_are_the_databases() {
     let listed = db.settings().unwrap();
     let effect = |name: &str| listed.iter().find(|l| l.definition.name == name).map(|l| l.definition.effect);
     assert_eq!((effect(HOST), effect(PORT), effect(WORKERS)), (Some(Effect::Start), Some(Effect::Start), Some(Effect::Statement)));
-    assert_eq!(listed.iter().filter(|l| l.definition.name.starts_with("SERVER.")).count(), 26);
+    assert_eq!(listed.iter().filter(|l| l.definition.name.starts_with("SERVER.")).count(), 27);
     assert_eq!(db.setting(PORT).unwrap().to_string(), "7422");
     let processors = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     let workers = processors.saturating_mul(WORKERS_PER_PROCESSOR).min(MAX_WORKERS);

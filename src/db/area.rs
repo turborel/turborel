@@ -78,6 +78,9 @@ pub(super) struct Area {
     /// the rows it inserted, in order, which GQL's INSERT reads (RULES.md
     /// D144).
     drawn: Vec<Value>,
+    /// \[DESIGN\] The values an INSERT generated for its table's identity
+    /// column, in the order of its rows (RULES.md D198).
+    generated: Vec<Value>,
     /// [ISO/IEC 9075-2:2023 §23.2] The areas below it on the diagnostics
     /// area stack, pushed as handlers were activated, the second last: the
     /// one GET STACKED DIAGNOSTICS reads (`area/stack.rs`).
@@ -174,6 +177,31 @@ impl Session {
         })?;
         self.inner.borrow_mut().area.drawn = drawn;
         Ok(())
+    }
+
+    /// \[DESIGN\] The values the INSERT generated for its table's identity
+    /// column, the column at `at` of each of `rows`, if it generated them;
+    /// kept in the area in place of any an INSERT a trigger ran kept, so
+    /// the statement's own are told (RULES.md D198).
+    ///
+    /// # Errors
+    ///
+    /// As reading `rows` again.
+    pub(super) fn note_generated(&self, at: Option<usize>, rows: &mut crate::exec::HeldRows<crate::storage::Row>) -> Result<()> {
+        let mut generated = Vec::new();
+        if let Some(at) = at {
+            rows.visit(&mut |row| {
+                generated.extend(row.get(at).cloned());
+                Ok(())
+            })?;
+        }
+        self.inner.borrow_mut().area.generated = generated;
+        Ok(())
+    }
+
+    /// The values the last INSERT generated for its identity column.
+    pub(in crate::db) fn generated_identities(&self) -> Vec<Value> {
+        self.inner.borrow().area.generated.clone()
     }
 
     /// \[EXTENSION\] (§4.2) The identities a node or edge table drew for

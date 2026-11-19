@@ -1,4 +1,4 @@
-# The server's image (RULES.md D174): built once verify has passed on main,
+# The server's image (RULES.md D241): built once verify has passed on main,
 # each platform on a runner of its own architecture, and published to
 # ghcr.io as nightly and by commit. A pull request that touches the
 # Dockerfile builds it and publishes nothing.

@@ -1,5 +1,7 @@
 //! RULES.md R-BENCH-1: `cargo xtask bench` runs the benchmarks in `bench/`,
-//! built optimized, keeps their results, and compares two runs.
+//! built optimized, keeps their results, and compares two runs. Those that
+//! need the server and the client are examples of the server's crate on
+//! the same harness (`SERVED`), as `network` is.
 //!
 //! Each benchmark appends its results to the file named by `OUT_VAR`
 //! (`bench/harness.rs`), one line each: benchmark, operation, threads,
@@ -39,6 +41,23 @@ const LATENCY: &str = "@latency\t";
 /// the spread within one run shows.
 const NOISE_FLOOR: f64 = 0.05;
 
+/// \[DESIGN\] The benchmarks that need the server and the client, which
+/// the core crate's targets cannot depend on (RULES.md D3): examples of the
+/// server's crate on the same harness, run optimized as a benchmark is.
+const SERVED: [&str; 1] = ["network"];
+/// The package they are examples of.
+const SERVED_PACKAGE: &str = "turborel-server";
+
+/// The arguments to cargo that run the served benchmark `name`.
+fn served_args(name: &str) -> [&str; 7] {
+    ["run", "--quiet", "--release", "-p", SERVED_PACKAGE, "--example", name]
+}
+
+/// The arguments to cargo that run the benchmark `name`.
+fn bench_args(name: &str) -> Vec<&str> {
+    if SERVED.contains(&name) { served_args(name).to_vec() } else { vec!["bench", "--quiet", "--bench", name] }
+}
+
 /// What to run, and what to do with the results.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Options<'a> {
@@ -57,12 +76,16 @@ pub fn run(root: &Path, args: &[&str]) -> Result<()> {
     fs::create_dir_all(&dir).map_err(|e| Error::new(format!("cannot create {}: {e}", dir.display())))?;
     let last = dir.join(results_file(LAST));
     write(&last, &header(root)?)?;
-    let mut cargo_args = vec!["bench", "--quiet"];
-    match options.bench {
-        Some(name) => cargo_args.extend(["--bench", name]),
-        None => cargo_args.push("--benches"),
+    let envs = [(OUT_VAR, last.as_os_str())];
+    let runs: Vec<Vec<&str>> = match options.bench {
+        Some(name) => vec![bench_args(name)],
+        None => {
+            std::iter::once(vec!["bench", "--quiet", "--benches"]).chain(SERVED.iter().map(|name| served_args(name).to_vec())).collect()
+        }
+    };
+    for cargo_args in runs {
+        command::cargo(root, &cargo_args, &envs)?;
     }
-    command::cargo(root, &cargo_args, &[(OUT_VAR, last.as_os_str())])?;
     if let Some(label) = options.save {
         let kept = dir.join(results_file(label));
         let before = if kept.exists() { read(&kept)? } else { String::new() };
@@ -227,6 +250,15 @@ mod tests {
         assert!(options(&["--save"]).is_err());
         assert!(options(&["pages", "tree"]).is_err());
         assert!(options(&["--fast"]).is_err());
+    }
+
+    /// Verifies: [TOOL] R-BENCH-1 a benchmark of the core crate runs as
+    /// its bench target; one that needs the server, as the server's example,
+    /// optimized (RULES.md D236).
+    #[test]
+    fn served_benchmarks_run_as_the_servers_examples() {
+        assert_eq!(bench_args("pages"), ["bench", "--quiet", "--bench", "pages"]);
+        assert_eq!(bench_args("network"), ["run", "--quiet", "--release", "-p", "turborel-server", "--example", "network"]);
     }
 
     /// Verifies: [TOOL] R-BENCH-1 a results file is read line by line,

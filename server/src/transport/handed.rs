@@ -62,6 +62,13 @@ pub trait Socket: Read + Write + Send + Unpin + Sized + 'static {
     ///
     /// The write's.
     fn write_now(registered: &Self::Registered, buf: &[u8]) -> io::Result<usize>;
+    /// How much of `bufs`, in order, `registered` takes now, in one
+    /// write: `WouldBlock` for nothing.
+    ///
+    /// # Errors
+    ///
+    /// The write's.
+    fn write_vectored_now(registered: &Self::Registered, bufs: &[io::IoSlice<'_>]) -> io::Result<usize>;
 }
 
 impl Socket for std::net::TcpStream {
@@ -90,6 +97,10 @@ impl Socket for std::net::TcpStream {
 
     fn write_now(registered: &tokio::net::TcpStream, buf: &[u8]) -> io::Result<usize> {
         registered.try_write(buf)
+    }
+
+    fn write_vectored_now(registered: &tokio::net::TcpStream, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
+        registered.try_write_vectored(bufs)
     }
 }
 
@@ -120,6 +131,10 @@ impl Socket for std::os::unix::net::UnixStream {
 
     fn write_now(registered: &tokio::net::UnixStream, buf: &[u8]) -> io::Result<usize> {
         registered.try_write(buf)
+    }
+
+    fn write_vectored_now(registered: &tokio::net::UnixStream, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
+        registered.try_write_vectored(bufs)
     }
 }
 
@@ -271,6 +286,15 @@ impl<S: Socket> Write for Handed<S> {
         }
     }
 
+    // A TLS session's records go in one write, not one each.
+    fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
+        match &mut self.held {
+            Held::Runtime(registered) => S::write_vectored_now(registered, bufs),
+            Held::Thread(socket) => socket.write_vectored(bufs),
+            Held::Lost => Err(lost()),
+        }
+    }
+
     fn flush(&mut self) -> io::Result<()> {
         match &mut self.held {
             // A socket the runtime has holds nothing back from a write.
@@ -395,6 +419,11 @@ mod tests {
         fn write_now(registered: &Told, buf: &[u8]) -> io::Result<usize> {
             registered.note("written now");
             Ok(buf.len())
+        }
+
+        fn write_vectored_now(registered: &Told, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
+            registered.note("written now, vectored");
+            Ok(bufs.iter().map(|b| b.len()).sum())
         }
     }
 

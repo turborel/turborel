@@ -116,6 +116,7 @@ impl<'p, H: Host> Run<'p, '_, H> {
                     // [§17.3 GR6a iii NOTE 28] an unhandled completion
                     // condition: on without altering the flow of control.
                     (None, Some(completion)) => {
+                        self.host.noted(&e);
                         completed = completion;
                         Flow::Next
                     }

@@ -58,6 +58,8 @@ fn words() -> Vec<Arc<dyn ScalarFunction>> {
     words.push(Arc::new(super::JsonContains));
     // \[EXTENSION\] SCN_TO_TIMESTAMP and TIMESTAMP_TO_SCN, of AS OF SCN.
     words.extend(super::scn::functions());
+    // \[EXTENSION\] UUID_V4 and UUID_V7 (RULES.md D182, D183).
+    words.extend(crate::value::types::uuid::generate::functions());
     // [ISO/IEC 13249-3:2016 (DIS, SC32 N2593)] the routines of SQL/MM
     // Spatial (RULES.md D120).
     words.extend(crate::geometry::functions());
@@ -200,6 +202,12 @@ impl Registry {
                 self.scalars.remove(&name);
             }
         }
+    }
+
+    /// \[DESIGN\] Takes away every scalar function named `name`, as one
+    /// registered in their place replaces them (RULES.md D191).
+    pub fn remove_scalars(&mut self, name: &str) {
+        self.scalars.remove(name);
     }
 
     /// \[EXTENSION\] Takes away the aggregate function `f`, the very one

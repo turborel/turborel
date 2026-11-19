@@ -75,6 +75,10 @@ The positioned form, WHERE CURRENT OF a cursor, of a cursor named by
 an extended name too ([ALLOCATE CURSOR](allocate-cursor.md)), runs only
 in a program that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
 
+A query reads the rows the statement changed as a table, written OLD
+TABLE, NEW TABLE or FINAL TABLE around the statement
+([Data Change Delta Tables](../24-delta-tables.md)).
+
 ## RULES
 
 1. The table exists and is not read-only: a base table, or a view that
@@ -246,4 +250,5 @@ Features X082 and X132. TB911 is this implementation's own.
 
 [INSERT](insert.md), [DELETE](delete.md), [CREATE TRIGGER](create-trigger.md),
 [DECLARE CURSOR](declare-cursor.md), [SET TRANSACTION](set-transaction.md),
-[Changing Data](../../user/05-changing-data.md)
+[Changing Data](../../user/05-changing-data.md),
+[Data Change Delta Tables](../24-delta-tables.md)

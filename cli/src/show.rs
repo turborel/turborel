@@ -1,15 +1,10 @@
-//! \[DESIGN\] A query's rows shown as a table as they come (RULES.md D46):
-//! each column as wide as its type's values are, or its name, so no row
-//! need be held to measure them; numbers aligned right, text left. A value
-//! wider than its column is shown whole, past it.
+//! \[DESIGN\] How wide a column of a query's rows is shown (RULES.md
+//! D46): as wide as its type's values are, or its name, so no row need be
+//! held to measure them; numbers aligned right, text left. A value wider
+//! than its column is shown whole, past it (`format.rs`).
 
-use std::io::{self, Write};
-
-use turborel::storage::Row;
-use turborel::value::types::MAX_TYPE_NESTING;
-use turborel::value::{DataType, Value};
-use turborel_client::Column;
-use turborel_client::connection::Sink;
+use turborel::value::DataType;
+use turborel::value::types::{ExtensionType, MAX_TYPE_NESTING, uuid};
 
 /// The widest a column is made for its type: wider values go past it.
 pub const MAX_WIDTH: usize = 60;
@@ -24,9 +19,11 @@ const HEXITS_PER_OCTET: usize = 2;
 
 /// How a column is shown.
 #[derive(Debug, Clone, Copy)]
-struct Shape {
-    width: usize,
-    right: bool,
+pub(crate) struct Shape {
+    /// Its width, in columns of a screen.
+    pub(crate) width: usize,
+    /// Whether its values align right.
+    pub(crate) right: bool,
 }
 
 /// [ISO/IEC 9075:1992 §6.1 SR27] The positions of a DATE, of a TIME and of
@@ -49,10 +46,10 @@ fn positions(base: usize, precision: u32, zoned: bool) -> usize {
     base.saturating_add(fraction).saturating_add(usize::from(fraction > 0)).saturating_add(if zoned { ZONE_WIDTH } else { 0 })
 }
 
-/// What a column of `t`'s values needs, named `name`.
-fn shape(name: &str, t: &DataType) -> Shape {
+/// What a column of `t`'s values needs, its name `named` columns wide.
+pub(crate) fn shape(named: usize, t: &DataType) -> Shape {
     let (width, right) = measured(t, 0);
-    Shape { width: width.min(MAX_WIDTH).max(name.chars().count()), right }
+    Shape { width: width.min(MAX_WIDTH).max(named), right }
 }
 
 /// The characters of an array's text beside its elements: `ARRAY[]`.
@@ -97,14 +94,14 @@ fn measured(t: &DataType, depth: usize) -> (usize, bool) {
         DataType::Row(r) => (r.fields.iter().map(|f| part(&f.data_type)).fold(ROW_EXTRA, usize::saturating_add), false),
         // A distinct type as its source, as its values are.
         DataType::Distinct(d) => measured(&d.source, depth),
-        // A type beyond the standard, shown as its text, as wide as it is;
-        // a large object as its text or hexits, as wide as a column grows.
+        // A type beyond the standard, shown as its text, as wide as it is
+        // (`extension_width`); a large object as its text or hexits, as wide as a column grows.
         // A multiset, of no maximum cardinality [ISO/IEC 9075-2:2023
         // §6.52], as wide as a column may be; a structured value, whose
         // attributes the catalog holds, a reference, a JSON value's text
         // and an XML value's serialization, as wide too.
-        DataType::Extension(_)
-        | DataType::Xml(_)
+        DataType::Extension(e) => (extension_width(e), false),
+        DataType::Xml(_)
         | DataType::Lob { .. }
         | DataType::Multiset(_)
         | DataType::Structured(_)
@@ -114,156 +111,31 @@ fn measured(t: &DataType, depth: usize) -> (usize, bool) {
     (width.min(MAX_WIDTH), right)
 }
 
-/// A table written to `out` as rows come, nulls shown as `null`.
-pub struct Table<'a> {
-    out: &'a mut dyn Write,
-    null: &'a str,
-    shapes: Vec<Shape>,
-    /// The first failure to write: nothing more is written after it.
-    failed: Option<io::Error>,
-}
-
-impl<'a> Table<'a> {
-    /// A table to write to `out`, nulls shown as `null`.
-    pub fn new(out: &'a mut dyn Write, null: &'a str) -> Table<'a> {
-        Table { out, null, shapes: Vec::new(), failed: None }
-    }
-
-    /// Ends the table, `count` rows shown, and the SQLSTATE of the warning
-    /// its query completed with, if any [ISO/IEC 9075:1992 §22.1].
-    ///
-    /// # Errors
-    ///
-    /// The first failure to write the table.
-    pub fn finish(mut self, count: u64, warning: Option<&str>) -> io::Result<()> {
-        let plural = if count == 1 { "" } else { "s" };
-        let warned = warning.map_or_else(String::new, |state| format!(", with a warning: SQLSTATE {state}"));
-        self.write(&format!("({count} row{plural}{warned})"));
-        self.failed.map_or(Ok(()), Err)
-    }
-
-    /// Writes `line`, its trailing spaces cut, unless writing failed.
-    fn write(&mut self, line: &str) {
-        if self.failed.is_none() {
-            self.failed = writeln!(self.out, "{}", line.trim_end()).err();
-        }
-    }
-
-    /// The line of `cells`, each in its column.
-    fn line<'c>(&self, cells: impl Iterator<Item = &'c str>) -> String {
-        let padded = cells.zip(&self.shapes).map(|(cell, shape)| {
-            if shape.right { format!("{cell:>width$}", width = shape.width) } else { format!("{cell:<width$}", width = shape.width) }
-        });
-        format!(" {}", padded.collect::<Vec<_>>().join(" | "))
-    }
-}
-
-impl Sink for Table<'_> {
-    fn columns(&mut self, columns: &[Column]) {
-        let names: Vec<&str> = columns.iter().map(|c| c.name.as_deref().unwrap_or("")).collect();
-        self.shapes = names.iter().zip(columns).map(|(name, c)| shape(name, &c.data_type)).collect();
-        let header = self.line(names.into_iter());
-        let rule = self.shapes.iter().map(|s| "-".repeat(s.width.saturating_add(2))).collect::<Vec<_>>().join("+");
-        self.write(&header);
-        self.write(&rule);
-    }
-
-    fn rows(&mut self, rows: &[Row]) {
-        for row in rows {
-            let cells: Vec<String> = row
-                .iter()
-                .map(|v| match v {
-                    Value::Null => self.null.to_owned(),
-                    Value::Char(_)
-                    | Value::Exact(_)
-                    | Value::Approx(_)
-                    | Value::DecFloat(_)
-                    | Value::Binary(_)
-                    | Value::Bool(_)
-                    | Value::Datetime(_)
-                    | Value::Interval(_)
-                    | Value::Array(_)
-                    | Value::Multiset(_)
-                    | Value::Structured(_)
-                    | Value::Reference(_)
-                    | Value::Json(_)
-                    | Value::Row(_)
-                    | Value::Lob(_)
-                    | Value::Extension(_)
-                    | Value::Xml(_) => v.to_string(),
-                })
-                .collect();
-            let line = self.line(cells.iter().map(String::as_str));
-            self.write(&line);
-        }
-        if self.failed.is_none() {
-            self.failed = self.out.flush().err();
-        }
-    }
+/// \[EXTENSION\] The width of a type beyond the standard's values: a
+/// UUID's text, of one length (RULES.md D181), else as wide as a column
+/// grows.
+fn extension_width(e: &ExtensionType) -> usize {
+    if e.kind.name() == uuid::UUID_NAME { uuid::UUID_TEXT_LENGTH } else { MAX_WIDTH }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use turborel::value::Decimal;
-    use turborel::value::Spelled;
-
-    fn column(name: Option<&str>, data_type: DataType) -> Column {
-        Column { name: name.map(str::to_owned), data_type, not_null: false }
-    }
-
-    /// Verifies: [DESIGN] RULES.md D46: a column is as wide as its type's
-    /// values, at most `MAX_WIDTH`, or its name; numbers align right, text
-    /// left; a null is shown as asked; the count ends the table.
-    #[test]
-    fn a_table_is_shaped_by_its_types() {
-        let mut out = Vec::new();
-        let mut table = Table::new(&mut out, "?");
-        let columns = [
-            column(Some("NAME"), DataType::character(3)),
-            column(Some("N"), DataType::Exact { precision: 3, scale: 1, spelled: Spelled::Numeric }),
-            column(None, DataType::Approximate { precision: 53, spelled: Spelled::Float }),
-            column(Some("LONG"), DataType::character(32767)),
-        ];
-        table.columns(&columns);
-        let row = vec![Value::Char("ab".into()), Value::Exact(Decimal::new(-125, 1)), Value::Null, Value::Char("x".into())];
-        table.rows(&[row]);
-        table.finish(1, None).unwrap();
-        let text = String::from_utf8(out).unwrap();
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 4);
-        assert_eq!(lines[0], format!(" NAME |     N | {:24} | LONG", ""));
-        assert_eq!(lines[1], format!("------+-------+{}+{}", "-".repeat(26), "-".repeat(MAX_WIDTH + 2)));
-        assert_eq!(lines[2], format!(" ab   | -12.5 | {:>24} | x", "?"));
-        assert_eq!(lines[3], "(1 row)");
-    }
-
-    /// Verifies: [DESIGN] RULES.md D46; [ISO/IEC 9075:1992 §22.1] a query
-    /// that completed with a warning says so after its count, with its
-    /// SQLSTATE.
-    #[test]
-    fn a_warning_follows_the_count() {
-        let mut out = Vec::new();
-        let mut table = Table::new(&mut out, "");
-        table.columns(&[column(Some("A"), DataType::character(1))]);
-        table.rows(&[vec![Value::Char("a".into())], vec![Value::Char("b".into())]]);
-        table.finish(2, Some("01004")).unwrap();
-        let text = String::from_utf8(out).unwrap();
-        assert_eq!(text.lines().last(), Some("(2 rows, with a warning: SQLSTATE 01004)"));
-    }
 
     /// Verifies: [DESIGN] RULES.md D46; [ISO/IEC 9075:1992 §6.1 SR27] a
     /// column of a datetime is as wide as its length in positions, its
-    /// fraction and displacement counted; of a binary string, its hexits.
+    /// fraction and displacement counted; of a binary string, its hexits;
+    /// never narrower than its name.
     #[test]
     fn datetime_columns_are_as_wide_as_their_positions() {
-        let width = |t: DataType| shape("C", &t).width;
+        let width = |t: DataType| shape(1, &t).width;
         assert_eq!(width(DataType::Date), 10);
         assert_eq!(width(DataType::Time { precision: 0, zoned: false }), 8);
         assert_eq!(width(DataType::Time { precision: 2, zoned: true }), 17);
         assert_eq!(width(DataType::Timestamp { precision: 6, zoned: false }), 26);
         assert_eq!(width(DataType::Timestamp { precision: 3, zoned: true }), 29);
         assert_eq!(width(DataType::VarBinary { length: 12 }), 24);
+        assert_eq!(shape(12, &DataType::Date).width, 12);
         let day_second = turborel::value::interval::Qualifier::new(
             turborel::value::datetime::Field::Day,
             turborel::value::datetime::Field::Second,
@@ -273,23 +145,17 @@ mod tests {
         assert_eq!(width(DataType::Interval(day_second)), 19, "its positions and its sign");
     }
 
-    /// Verifies: [DESIGN] RULES.md D46: a failure to write is kept, and
-    /// nothing more is written after it.
+    /// Verifies: [EXTENSION] RULES.md D46, D181: a UUID column is as wide
+    /// as a UUID's text, 36 characters, and shows it left aligned; another
+    /// type beyond the standard as wide as a column grows.
     #[test]
-    fn a_failure_to_write_is_reported() {
-        struct Broken;
-        impl Write for Broken {
-            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
-                Err(io::Error::other("closed"))
-            }
-            fn flush(&mut self) -> io::Result<()> {
-                Ok(())
-            }
-        }
-        let mut out = Broken;
-        let mut table = Table::new(&mut out, "");
-        table.columns(&[column(Some("A"), DataType::character(1))]);
-        table.rows(&[vec![Value::Char("a".into())]]);
-        assert_eq!(table.finish(2, None).unwrap_err().to_string(), "closed");
+    fn uuid_columns_are_as_wide_as_their_text() {
+        let shaped = shape(2, &uuid::UuidType::data_type());
+        assert_eq!((shaped.width, shaped.right), (36, false));
+        let other = DataType::Extension(ExtensionType {
+            kind: &turborel::value::types::UNREGISTERED_KIND,
+            params: turborel::value::types::TypeParams::default(),
+        });
+        assert_eq!(shape(1, &other).width, MAX_WIDTH);
     }
 }

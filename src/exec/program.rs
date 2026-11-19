@@ -58,6 +58,12 @@ pub(crate) trait Host {
     /// `row`, of a query, as the session shows its datetimes.
     fn present(&self, row: &mut Row);
 
+    /// \[DESIGN\] [ISO/IEC 9075-4:2006 draft §17.3 GR6a iii] The completion
+    /// condition `e` raised, a SIGNAL of class 01 or 02 no handler handled,
+    /// for the session's client to be told of (RULES.md D187). Default: a
+    /// host of no session tells no one.
+    fn noted(&self, _e: &SqlError) {}
+
     /// Whether the program's statement has been cancelled, or has run past
     /// its time: checked as each iterated statement repeats (RULES.md D44).
     ///

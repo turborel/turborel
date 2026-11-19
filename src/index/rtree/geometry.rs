@@ -148,7 +148,10 @@ fn related(value: &Value, srid: i32) -> Result<Search> {
     windowed(geometry, srid, Search::Empty)
 }
 
-pub(super) fn matching(tree: &RTree, probe: &Probe, srid: i32, budget: &Arc<MemoryBudget>) -> Entries {
+/// The entries `probe` finds, grouped by row id for their rows' reads
+/// (`clustered.rs`), in `budget`'s room, if a budget is given: none where
+/// the rows are not read (`Index::search_for`).
+pub(super) fn matching(tree: &RTree, probe: &Probe, srid: i32, budget: Option<&Arc<MemoryBudget>>) -> Entries {
     let window = match search(probe, srid) {
         Ok(Search::Empty) => return Box::new(std::iter::empty()),
         Ok(Search::All) => None,
@@ -159,10 +162,11 @@ pub(super) fn matching(tree: &RTree, probe: &Probe, srid: i32, budget: &Arc<Memo
     scanned(tree, window, budget)
 }
 
-/// The entries meeting `window`, or every entry, grouped by row id.
-fn scanned(tree: &RTree, window: Option<Bounds>, budget: &Arc<MemoryBudget>) -> Entries {
+/// The entries meeting `window`, or every entry, grouped by row id in
+/// `budget`'s room, if a window and a budget are given.
+fn scanned(tree: &RTree, window: Option<Bounds>, budget: Option<&Arc<MemoryBudget>>) -> Entries {
     let scan = tree.scan(window);
-    let buffered = super::clustered::Clustered::new(scan, window.map(|_| budget));
+    let buffered = super::clustered::Clustered::new(scan, window.and(budget));
     Box::new(buffered.map(|entry| entry.map(|(bounds, row)| (probe::key(bounds, RECTANGLE_COLUMNS), row))))
 }
 

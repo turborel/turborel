@@ -43,8 +43,9 @@ pub(super) fn search(value: &Value, srid: i32) -> Result<Search> {
 
 /// The entries within `radius` of `bounds`, if the tree certifies them;
 /// of a radius no distance compares true within, none. Without the
-/// certificate, every entry.
-pub(super) fn near(tree: &RTree, (bounds, radius): (Bounds, Radius), budget: &Arc<MemoryBudget>) -> Entries {
+/// certificate, every entry. Grouped by row id for their rows' reads in
+/// `budget`'s room, if a budget is given.
+pub(super) fn near(tree: &RTree, (bounds, radius): (Bounds, Radius), budget: Option<&Arc<MemoryBudget>>) -> Entries {
     let (window, radius) = match read(tree, (bounds, radius)) {
         Err(error) => return Box::new(std::iter::once(Err(error))),
         Ok(Read::Every) => return scanned(tree, None, budget),
@@ -53,7 +54,7 @@ pub(super) fn near(tree: &RTree, (bounds, radius): (Bounds, Radius), budget: &Ar
     };
     let scan =
         tree.scan(Some(window)).filter(move |entry| !entry.as_ref().is_ok_and(|(found, _)| found.distance_lower_bound(bounds) > radius));
-    let buffered = super::super::clustered::Clustered::new(scan, Some(budget));
+    let buffered = super::super::clustered::Clustered::new(scan, budget);
     Box::new(buffered.map(|entry| entry.map(|(found, row)| (probe::key(found, RECTANGLE_COLUMNS), row))))
 }
 

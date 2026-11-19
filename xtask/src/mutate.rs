@@ -35,7 +35,18 @@ pub enum Package {
     Replication,
     /// The server, `turborel-server`.
     Server,
+    /// The client, `turborel-client`: its unit tests alone, with its
+    /// features `tls` and `scram`. A mutation of the client caught by its
+    /// tests against a server is the server's, whose integration binary
+    /// holds them.
+    Client,
+    /// The command-line client, `turborel-cli`.
+    Cli,
 }
+
+/// \[TOOL\] The client's features its unit tests are built with: every
+/// mechanism it has.
+const CLIENT_FEATURES: &str = "tls,scram";
 
 impl Package {
     /// Its name, as cargo knows it.
@@ -44,6 +55,8 @@ impl Package {
             Package::Core => "turborel",
             Package::Replication => "turborel-replication",
             Package::Server => "turborel-server",
+            Package::Client => "turborel-client",
+            Package::Cli => "turborel-cli",
         }
     }
 
@@ -52,7 +65,8 @@ impl Package {
         match self {
             Package::Core => "integration",
             Package::Replication => "replication",
-            Package::Server => "server",
+            Package::Server | Package::Client => "server",
+            Package::Cli => "cli",
         }
     }
 }
@@ -98,7 +112,10 @@ impl Target {
     fn args(self, package: Package) -> Vec<&'static str> {
         match self {
             Target::Integration => vec!["--test", package.integration()],
-            Target::Unit => vec!["--lib"],
+            Target::Unit => match package {
+                Package::Client => vec!["--lib", "--features", CLIENT_FEATURES],
+                Package::Core | Package::Replication | Package::Server | Package::Cli => vec!["--lib"],
+            },
         }
     }
 }
@@ -166,7 +183,7 @@ fn apply(source: &str, m: &Mutation) -> Result<String> {
 /// is not there.
 fn unmutated_problems(root: &Path, chosen: &[&Mutation]) -> Result<Vec<String>> {
     let mut problems = Vec::new();
-    for package in [Package::Core, Package::Replication, Package::Server] {
+    for package in [Package::Core, Package::Replication, Package::Server, Package::Client, Package::Cli] {
         for target in [Target::Integration, Target::Unit] {
             let mut names: Vec<&str> = chosen.iter().filter(|m| m.package == package).flat_map(|m| m.tests(target)).copied().collect();
             names.sort_unstable();

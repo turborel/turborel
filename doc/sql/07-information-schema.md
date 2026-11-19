@@ -650,7 +650,8 @@ OK
 | SETTINGS | SETTING_NAME, SETTING_VALUE, VALUE_SOURCE, DEFAULT_VALUE, VALUE_KIND, IS_SESSION_SETTABLE, TAKES_EFFECT, DESCRIPTION, STARTED_VALUE, IS_PENDING | setting, its value for the session; of one taken at the next start, the value it started with, or null, and whether the value set waits for a restart |
 | USERS | USER_NAME, IS_OWNER, CREATE_ROLE | user: to the owner every one, to another user itself; CREATE_ROLE YES if it may create a role |
 | MEMORY_RESERVATIONS | RESERVED_BY, BYTES | part of the memory budget reserved, as a buffer pool's |
-| CONNECTIONS | ID, USER_NAME, PEER, SECURE, STATE | connection a server serves: its user once authenticated, or NULL; where it came from, an address or `local`; whether it is secure; LOGIN, IDLE or RUNNING a statement |
+| CONNECTIONS | ID, USER_NAME, PEER, SECURE, STATE, APPLICATION | connection a server serves: its user once authenticated, or NULL; where it came from, an address or `local`; whether it is secure; LOGIN, IDLE or RUNNING a statement; the attribute `application` its client gave, or NULL |
+| CONNECTION_ATTRIBUTES | CONNECTION_ID, ATTRIBUTE_NAME, ATTRIBUTE_VALUE | attribute a connection's client gave as it opened, by the connection's ID *(extension)* ([The Native Protocol](../client/05-protocol.md)) |
 | SERVER | WORKERS_BUSY, STATEMENTS_WAITING, CONNECTIONS, REFUSED, CLOSED_UNTOLD | one row: the workers running a statement, the statements waiting for one, the connections, and those refused past SERVER.MAX_CONNECTIONS, told why or closed at once |
 | REPLICAS | MEMBER, ADDRESS, IS_SELF, ROLE, EPOCH, VIEW_NUMBER, IS_CONNECTED, LAST_HEARD_MS | member of the database's replica group ([Replication](../operator/09-replication.md)), in the epoch this node is in, to the owner: its number and address; whether it is this node; PRIMARY, BACKUP or UNKNOWN in the view this node knows; the epoch, and that view, or NULL; whether this node's link to it is up; the milliseconds since a frame from it arrived, or NULL |
 | FILES | PATH, KIND, CLASS, IS_OPEN, READS, WRITES, SYNCS | file of the database: DATA, SHADOW (a side file of the data file, or of a plug-in's shadowed file), CATALOG, LOG, UNDO, SPILL, TRANSFER (a state transfer being fetched by a replica), PLUGIN (a plug-in's own), SERVER (its server's own: the diagnostics log, the socket, the TLS and key files) or OTHER; its class of durability, DURABLE (DATA, CATALOG, LOG, PLUGIN), DURABLE AT COMMIT (SHADOW), UNSYNCED (UNDO), SCRATCH (SPILL, TRANSFER), or null for a file not the database's; whether it is open now; its reads, writes and syncs |
@@ -708,10 +709,11 @@ SELECT * FROM INFORMATION_SCHEMA.MEMORY_RESERVATIONS;
 ```
 
 The second, of a database kept in a directory: one in memory has no
-buffer pool. MEMORY_RESERVATIONS, FILES, JOBS, CONNECTIONS, SERVER, BACKUPS,
-ARCHIVED_SEGMENTS and RESTORE_POINTS show their rows to the database's
-owner alone, and a non-owner sees no rows. CONNECTIONS and SERVER are a
-server's: a database a server serves, as `turboreld`'s, has them, and
+buffer pool. MEMORY_RESERVATIONS, FILES, JOBS, CONNECTIONS,
+CONNECTION_ATTRIBUTES, SERVER, BACKUPS, ARCHIVED_SEGMENTS and
+RESTORE_POINTS show their rows to the database's
+owner alone, and a non-owner sees no rows. CONNECTIONS,
+CONNECTION_ATTRIBUTES and SERVER are a server's: a database a server serves, as `turboreld`'s, has them, and
 they show no connection, and counts of none, while it does not serve.
 JOBS.POLICY says how the jobs JOBS lists are run
 ([Settings](../appendix/c-settings.md)).

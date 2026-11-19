@@ -358,6 +358,7 @@ mod tests {
             cost: 1.0_f64,
             covering: false,
             located: false,
+            decided: None,
         }
     }
 

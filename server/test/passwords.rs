@@ -69,6 +69,7 @@ fn a_user_proves_itself_by_its_password() {
         mechanism: "password".into(),
         initial: vec![],
         capabilities: vec![],
+        attributes: Vec::new(),
     });
     assert_eq!(state(&raw.refusal()).0, "28000", "not an identifier");
     #[cfg(any(unix, windows))]

@@ -72,7 +72,7 @@ fn fields(json: &mut Json, event: &Event) {
         Event::Registered { kind, name } => json.texts(&[("event", "registered"), ("kind", &format!("{kind:?}")), ("name", name)]),
         Event::Failed(e) => failed(json, e),
         Event::Thread { label, change } => thread(json, label, change),
-        Event::SlowStatement { user, millis, statement } => slow(json, user, *millis, statement.as_deref()),
+        Event::SlowStatement { user, millis, statement, trace } => slow(json, (user, *millis), statement.as_deref(), trace.as_deref()),
         Event::FilesReopened { reopened, limit } => counts(json, "files_reopened", &[("reopened", *reopened), ("limit", *limit)]),
         Event::CheckpointOverdue { changes, cause } => overdue(json, *changes, cause),
         Event::FormatsSettled { encodings, checksum_key } => {
@@ -218,13 +218,17 @@ fn overdue(json: &mut Json, changes: u64, cause: &Overdue) {
 
 /// The fields of a statement of `user` whose work took `millis`, its text
 /// `statement` if it may be told.
-fn slow(json: &mut Json, user: &str, millis: u64, statement: Option<&str>) {
+fn slow(json: &mut Json, (user, millis): (&str, u64), statement: Option<&str>, trace: Option<&str>) {
     json.text("event", "slow_statement");
     json.text("user", user);
     json.number("millis", millis);
     match statement {
         Some(text) => json.text("statement", text),
         None => json.raw("statement", "null"),
+    }
+    // [DESIGN] RULES.md D191: the request's trace context, where given.
+    if let Some(trace) = trace {
+        json.text("traceparent", trace);
     }
 }
 
@@ -373,21 +377,24 @@ mod tests {
         assert_eq!(timestamp(at(1_793_131_256, 701)), "2026-10-27T20:00:56.701Z");
     }
 
-    /// Verifies: [DESIGN] RULES.md D40: a slow statement, told or not, and
-    /// the files reopened are lines of JSON, the statement's text escaped.
+    /// Verifies: [DESIGN] RULES.md D40, D191: a slow statement, told or not,
+    /// and the files reopened are lines of JSON, the statement's text
+    /// escaped, its request's trace context after it where given.
     #[test]
     fn statements_and_files_are_lines_of_json() {
         let shown = |event: &Event| line(at(0, 0), event);
         let head = r#"{"time":"1970-01-01T00:00:00.000Z","#;
-        let slow = Event::SlowStatement { user: "ANN".into(), millis: 2400, statement: Some("SELECT 'a\"b'\n\u{1}".into()) };
+        let slow = Event::SlowStatement { user: "ANN".into(), millis: 2400, statement: Some("SELECT 'a\"b'\n\u{1}".into()), trace: None };
         assert_eq!(
             shown(&slow),
             format!(r#"{head}"level":"warning","event":"slow_statement","user":"ANN","millis":2400,"statement":"SELECT 'a\"b'\n\u0001"}}"#)
         );
-        let untold = Event::SlowStatement { user: "ANN".into(), millis: 2400, statement: None };
+        let untold = Event::SlowStatement { user: "ANN".into(), millis: 2400, statement: None, trace: Some("00-ab-cd-01".into()) };
         assert_eq!(
             shown(&untold),
-            format!(r#"{head}"level":"warning","event":"slow_statement","user":"ANN","millis":2400,"statement":null}}"#)
+            format!(
+                r#"{head}"level":"warning","event":"slow_statement","user":"ANN","millis":2400,"statement":null,"traceparent":"00-ab-cd-01"}}"#
+            )
         );
         let reopened = Event::FilesReopened { reopened: 3000, limit: 1024 };
         assert_eq!(shown(&reopened), format!(r#"{head}"level":"warning","event":"files_reopened","reopened":3000,"limit":1024}}"#));

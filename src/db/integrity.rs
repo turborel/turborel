@@ -28,6 +28,7 @@
 
 mod actions;
 mod before;
+mod changes;
 mod connections;
 mod gather;
 mod held;
@@ -102,6 +103,12 @@ pub(super) struct Effects<'a> {
     /// Of a session's statement, the session: what runs a function that
     /// possibly modifies SQL-data its values invoke (`routines::Hosted`).
     pub(super) host: Option<&'a super::Session>,
+    /// [ISO/IEC 9075-2:2023 §7.6 GR5] Of a delta table's statement, where its rows are
+    /// recorded (`db/delta.rs`).
+    pub(super) delta: Option<super::delta::Collector>,
+    /// [ISO/IEC 9075-2:2023 §7.6 GR5a] A table none may change, of a FINAL
+    /// TABLE being read, refused with this SQLSTATE.
+    pub(super) restricted: Option<(Vec<QualifiedName>, crate::error::SqlState)>,
     /// \[EXTENSION\] The rows it moved to another partition, there
     /// (RULES.md D155): not to be changed again by it.
     moved_in: HashSet<(QualifiedName, RowId)>,
@@ -133,81 +140,26 @@ impl<'a> Effects<'a> {
     pub(super) fn new(user: Authorization, deferral: &'a RefCell<Deferral>, cursors: Cursored<'a>, space: ListSpace) -> Effects<'a> {
         let now = crate::value::datetime::Now::default();
         let (done, rewritten) = (HeldRows::new(space.clone()), Vec::new());
-        Effects { done, space, user, now, deferral, cursors, rewritten, triggered: None, host: None, moved_in: HashSet::new() }
+        Effects {
+            done,
+            space,
+            user,
+            now,
+            deferral,
+            cursors,
+            rewritten,
+            triggered: None,
+            host: None,
+            delta: None,
+            restricted: None,
+            moved_in: HashSet::new(),
+        }
     }
 
     /// Whose the statement is: the top cell of its authorization stack
     /// and its SQL-session user identifier.
     pub(super) fn user(&self) -> &Authorization {
         &self.user
-    }
-
-    /// Row `id` of `table`, `row`, inserted: a transition of its state
-    /// change, if a trigger may read it [ISO/IEC 9075-2:2023 §15.11 GR5].
-    ///
-    /// # Errors
-    ///
-    /// The spill area's, SQLCODE -918 if it cannot be reserved.
-    pub(super) fn inserted(&mut self, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
-        if let Some(t) = &mut self.triggered {
-            t.record(table, &[], &(id, Row::new(), row.clone()))?;
-        }
-        self.done.push(Effect::Inserted { table: table.clone(), id })
-    }
-
-    /// Row `id` of `table` updated from `old` to `new`, giving values to
-    /// `columns`: a transition of its state change, if a trigger may read
-    /// it [ISO/IEC 9075-2:2023 §15.14 GR8].
-    ///
-    /// # Errors
-    ///
-    /// As `inserted`.
-    pub(super) fn updated(&mut self, table: &QualifiedName, id: RowId, (old, new): (Row, &Row), columns: &[usize]) -> Result<()> {
-        if let Some(t) = &mut self.triggered {
-            t.record(table, columns, &(id, old.clone(), new.clone()))?;
-        }
-        self.done.push(Effect::Updated { table: table.clone(), id, old, columns: columns.to_vec() })
-    }
-
-    /// \[EXTENSION\] Row `id` of the partition `from`, `old`, moved by an
-    /// UPDATE giving values to `columns` to the partition `to`, as its row
-    /// `moved`, `new`: deleted from one and inserted in the other, each
-    /// checked so, and of the tables both are partitions of, an update
-    /// (RULES.md D155).
-    ///
-    /// # Errors
-    ///
-    /// As `inserted`.
-    pub(super) fn moved(
-        &mut self,
-        (from, id, old): (&QualifiedName, RowId, Row),
-        (to, moved, new): (&QualifiedName, RowId, &Row),
-        columns: &[usize],
-    ) -> Result<()> {
-        if let Some(t) = &mut self.triggered {
-            t.record_moved((from, to), columns, (moved, &old, new))?;
-        }
-        self.moved_in.insert((to.clone(), moved));
-        self.done.push(Effect::Deleted { table: from.clone(), id, old })?;
-        self.done.push(Effect::Inserted { table: to.clone(), id: moved })
-    }
-
-    /// Whether row `id` of `table` is one it moved there.
-    pub(super) fn moved_in(&self, table: &QualifiedName, id: RowId) -> bool {
-        self.moved_in.contains(&(table.clone(), id))
-    }
-
-    /// Row `id` of `table`, `old`, deleted: a transition of its state
-    /// change, if a trigger may read it [ISO/IEC 9075-2:2023 §15.8 GR3].
-    ///
-    /// # Errors
-    ///
-    /// As `inserted`.
-    pub(super) fn deleted(&mut self, table: &QualifiedName, id: RowId, old: Row) -> Result<()> {
-        if let Some(t) = &mut self.triggered {
-            t.record(table, &[], &(id, old.clone(), Row::new()))?;
-        }
-        self.done.push(Effect::Deleted { table: table.clone(), id, old })
     }
 
     /// Calls `each` with the rows of `of` the statement changed, each
@@ -380,6 +332,11 @@ impl State {
     /// `end_statement`'s work, its reads checked: what its triggers are
     /// to read, of a statement whose state changes may activate some.
     fn checked<'a>(self: &Arc<Self>, tx: &Txn, mut effects: Effects<'a>) -> Result<Option<super::triggers::Triggered<'a>>> {
+        // [ISO/IEC 9075-2:2023 §7.6 GR5a, §15.18 GR15] its own changes
+        // made, no referential action of FINAL's changes the table.
+        if let Some(c) = effects.delta.take() {
+            effects.restricted = c.restricted().map(|t| (t, crate::error::SqlState::MODIFY_DELTA_TABLE));
+        }
         self.referential_actions(tx, &mut effects)?;
         let triggered = effects.triggered.take();
         let whole = effects.whole_assertions(self)?;
@@ -451,7 +408,7 @@ impl State {
         let Some(table) = check.table() else { return self.check_assertion_whole(tx, check.constraint()) };
         let (Some(c), Some(desc)) = (self.constraint_of(check), self.catalog.table(table)) else { return Ok(()) };
         let broken = |e: SqlError| {
-            if e.code == Code::Constraint && e.subject.is_none() {
+            if e.code == Code::Constraint && e.about_nothing() {
                 e.about(Subject::constraint(c.name.parts(), desc.name.parts()))
             } else {
                 e

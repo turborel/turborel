@@ -438,7 +438,7 @@ impl Session {
     pub(in crate::db) fn open_kept(&self, call: &Call<'_>, p: &Prepared, params: &Params) -> Result<Cursor> {
         let st = call.state();
         let k = self.keeping(st, &p.plans);
-        let timed = super::super::slow::Timed::of(st, || p.sql.clone(), &self.auth());
+        let timed = super::super::slow::Timed::of(st, || p.sql.clone(), (&self.auth(), &self.stop));
         let spec = Self::cursor_specification(st, &p.sql, params, Some(&k))?;
         Self::unnamed_only(&spec)?;
         self.unnamed(call, timed, |snapshot, tx| self.open_rows(snapshot, tx, &spec, (params, Some(&k))))

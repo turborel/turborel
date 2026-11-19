@@ -71,6 +71,8 @@ verification approach DO-178C expects (§8).
 | D53 | One contract for data types, with the standard types built in |
 | D54 | Datetimes kept in UTC, shown in the session's zone, read from a clock |
 | D58 | Dynamic SQL in SQL text, with a session as the module |
+| D174 | A delta table's statement runs before its query is bound, and gives its rows as a transition table |
+| D175 | Delta tables stand in WITH list elements, INSERT queries and MERGE sources, of views through their base table |
 | **Architecture** | |
 | D25 | One log, owned by the database |
 | D26 | Cryptography only from vetted crates, in plug-ins |
@@ -199,7 +201,52 @@ verification approach DO-178C expects (§8).
 | D171 | Extensions are versioned packages, resolved together and locked per database |
 | D172 | What a plug-in does is shown, and its errors keep their class |
 | D173 | Only the operator chooses what runs, and packages are checked by digest and signature |
-| D174 | The server ships as a container image, built by CI from the Dockerfile |
+| D180 | UUID is a built-in type of 16 octets, ordered, hashed and indexed by its octets |
+| D181 | A UUID's text is read in its common forms and written hyphenated in lower case |
+| D182 | UUID_V4 draws on the standard library's random hash keys, so the core keeps no dependency |
+| D183 | UUID_V7 takes the database's clock, and never sorts before the last one its database made |
+| D184 | The native protocol carries a UUID under a tag of its own |
+| D185 | The protocol grows by capabilities a client asks for and the server grants, its version staying 1 |
+| D186 | A failure carries structured diagnostics, filled where it is raised |
+| D187 | A statement's conditions are one list, told in its completion or as notices before it |
+| D188 | Describe, and several numbered cursors of one prepared statement |
+| D189 | Ping is answered without a worker, and Reset and ChangeUser renew the session |
+| D190 | The session's settings are pushed as it begins and as a statement changes them |
+| D191 | Query attributes are read in SQL, and connection attributes are shown |
+| D192 | A Query may hold several statements, run one by one until one fails |
+| D193 | zlib is written in the tree |
+| D194 | A commit's completion carries its log position, which a replica's session reads after |
+| D195 | Rows are copied in all or nothing, and a query's rows exported as CSV or native rows |
+| D196 | Frames past a threshold travel compressed, both ways |
+| D197 | A completion carries the rows its statement counted, as GET DIAGNOSTICS does |
+| D198 | An INSERT's completion carries the identity values it generated |
+| D199 | A cursor opened under autocommit ends its transaction as it ends |
+| D200 | A pipeline writes its requests a window at a time, and skips after an error by savepoints |
+| D201 | Several servers are tried in order or at random, and a server of the wrong role is left |
+| D202 | Connection settings are layers, the program's over a service's over the environment's |
+| D203 | A service file names sections of settings, and a password file gives passwords by server and user |
+| D204 | TLS by mode, and channel binding disabled, preferred or required |
+| D205 | The SCRAM keys a password derives are cached by salt, iterations and a keyed tag of the password |
+| D206 | A pool hands out checked connections and takes them back reset, by the standard library alone |
+| D210 | The client's own commands begin with a backslash, and are read by the splitter |
+| D211 | The line editor is the client's own, over `stty`, with its history and completion |
+| D212 | Variables are substituted by the splitter, as text, literal or identifier, and steer conditionals |
+| D213 | Rows are written in seven styles, measured in terminal columns, through a pager on a screen |
+| D214 | The describe commands read the Information Schema alone |
+| D215 | A script's outcome is its exit status, and its statements may be steered from results |
+| D216 | `\import` goes by bulk copy, and `\export` streams a query's rows, in the protocol's frames if asked |
+| D217 | The prompt, the connection commands and `\password` are built on SQL, the verifier made by the client |
+| D218 | `turborel admin` maps each command onto statements the server runs |
+| D219 | The client adds `\G`, `\tee`, tab-separated output, safe updates, a delimiter and statement help |
+| D230 | A stream TLS secures is read and written by its worker itself, through its session |
+| D231 | The replies of pipelined requests go out together, never held for a request not sent nor past a batch |
+| D232 | A worker waits on the socket itself for a slow client to take its replies, and a session's records go in one write |
+| D233 | A connection's memory is bounded, whatever its client sends or fails to read |
+| D234 | A client half closed hears every reply, and a TLS stream cut without close_notify is a connection lost |
+| D235 | A server stopping sends the replies in flight whole, and runs no request pipelined behind them |
+| D236 | The network benchmark is an example of the server's crate, on the shared harness |
+| D240 | A completion carries the server's time for its statement, and the waits it can measure for free |
+| D241 | The server ships as a container image, built by CI from the Dockerfile |
 
 ### The project
 
@@ -339,7 +386,7 @@ Linux, macOS and Windows for every push and pull request, with coverage on
 Linux. We need both because a hook can be skipped and only checks one
 platform.
 
-#### D174. The server ships as a container image, built by CI from the Dockerfile
+#### D241. The server ships as a container image, built by CI from the Dockerfile
 
 The image holds `turboreld` and `turborel` on a distroless base, as a
 non-root user, for Linux x86-64 and arm64. CI (`image.yml`) builds it
@@ -1689,6 +1736,67 @@ The implementation-defined limits are 100 occurrences for a descriptor
 area without WITH MAX, at most 1,000 [§17.2 SR2, GR3], and 64 areas a
 session. A plug-in's type has TYPE code -1 [§17.1 Table 18].
 
+#### D174. A delta table's statement runs before its query is bound, and gives its rows as a transition table
+
+A `<data change delta table>` [ISO/IEC 9075-2:2023 §7.6] is read where a
+cursor's query, directly run, prepared or declared, or a SELECT INTO, in a
+routine too, has it as the one table reference of its FROM clause, and
+where D175 lets it stand. The parser marks it so as it reads such a query
+(`DeltaRows::admit`). The session runs its statement in the cursor's
+statement first, then binds the query over the rows the statement
+recorded, read as a transition table is (`db/delta.rs`). A prepared query
+is bound at PREPARE over no rows, of the subject table's columns, its
+statement bound too so its parameters are typed. Each opening runs the
+statement again.
+
+The statement's effects record each row of the subject table as they
+record it for triggers (`Effects::inserted`, `updated`, `deleted`). So a
+row is recorded as it is written, after BEFORE triggers, with its
+defaults, identity and generated columns, and OLD, NEW and FINAL read the
+old or new row [GR5b]. The collector is claimed by the statement's own
+effects. Their end, before referential actions run, takes it away, so a
+cascade or an AFTER trigger records nothing. Of FINAL the subject table
+is then the one name of the restricted subject table name list. A
+referential action that changes it is refused with SQLSTATE 27001
+[§15.18 GR15], and an AFTER trigger's statement with 0W001 [§15.21 GR6i],
+which the trigger's 09000 tells, as 0W000 is told. The rows of a typed
+table's proper subtables that an UPDATE or DELETE of it reaches are
+recorded too, each by its superrow, the first columns of the subtable's
+row, which are the typed table's [§14.9 GR4, §14.14 GR6]. The rows a
+statement of a partitioned table writes to its partitions are recorded
+alike (D153), and a row an UPDATE moves to another partition is one row
+updated, not a row deleted and one inserted (`Effects::moved`).
+
+The query's rows are all read as the cursor opens, so an error of the
+query undoes the statement with it. The protocol and the client needed
+no change, and the protocol's version stays 1.
+
+#### D175. Delta tables stand in WITH list elements, INSERT queries and MERGE sources, of views through their base table
+
+A delta table stands where the standard lets it and nowhere else. It is
+the one table reference of a FROM clause [§7.5 SR3], of a query
+specification that is the body of its query expression [§7.17 SR2]. That
+query expression is a cursor's, a `<with list element>`'s [§7.17 SR3d
+iv], an INSERT's, or a SELECT INTO's, or the delta table is a MERGE's
+source. A subquery, scalar, row or table, holds none unless it is a with
+list element's [§7.19 SR1], so neither a predicate's subquery nor a
+derived table does. A view's query holds none [§11.32 SR7].
+`QueryExpression::deltas` finds them, each with list element's in the
+order written and then the query's own, and the session runs their
+statements in that order [§7.17 GR1a]. A delta table found nowhere it
+may stand is refused as it is bound, SQLCODE -103, its statement not run.
+A delta table of a statement inside another's keeps the other's
+collector aside while it runs, and gives it back after. An INSERT or
+MERGE reading one is bound again at each execution, keeping no plan.
+
+A delta table's subject is a base table or a view with CASCADED CHECK
+OPTION [§7.6 SR11b i]. One without is refused, SQLCODE -103. Such a view
+has no INSTEAD OF trigger, nor has any view under it [§11.49 SR4c, SR4d],
+so no view of it is trigger updatable [SR11b ii]. The base table the
+view's change writes is found as the change finds it (`write_target`),
+and each row recorded of it is put in the view's columns by the view's
+map of them. The CHECK OPTION keeps every new row in the view.
+
 ### Architecture
 
 #### D25. One log, owned by the database
@@ -2206,6 +2314,12 @@ life. Without the opt-in, or if an argument expression or any other part
 of the filter can raise, the planner reads the table whole. A lookup must
 not hide an error on a row it skips (D15).
 
+The executor checks the full WHERE condition on the rows a function
+lookup finds, but for a spatial conjunct a scan decides of each entry
+itself (D85, `Plan::IndexScan::decided`): the planner takes that
+conjunct from the filter, and the scan judges it of every entry, from
+the entry's point where the entry is one, else from its row.
+
 The index returns every matching inserted `(Key, RowId)` pair, each once.
 It may also return pairs that do not match, called extra candidates. The
 keys contain inserted values unless `Index::key_projection` explicitly
@@ -2383,7 +2497,13 @@ without binding plug-ins to one page cache. Each database has one budget in
 bytes, MEMORY.BUDGET_BYTES. Pools reserve from it, a reservation past it is
 refused (SQLCODE -918), and so is a page wanted from a full pool. Plug-ins
 get the budget when registered. INFORMATION_SCHEMA.MEMORY_RESERVATIONS shows
-each reservation to the database's owner.
+each reservation to the database's owner. Admission is one atomic total.
+The list behind that view is kept in 64 shards chosen by each
+reservation's number, and a reservation's size is an atomic of its own
+entry, so sessions reserving, resizing and releasing at once take no
+database-wide lock. The view merges the shards in creation order. A
+single list took a fifth of thread time in waits for four to eight
+sessions of nearest-neighbour queries.
 
 Undo is never refused by the budget, because a refusal would damage a table
 (D19). A failed statement's undo and a ROLLBACK reserve what they need even
@@ -2484,8 +2604,9 @@ waits wakes no other. A waiting worker holds no permit, so as many keep
 waiting as the blocking pool has threads for, while statements wait for
 permits too. A request that comes
 later the connection's task reads through the runtime, which takes the
-socket back. A stream TLS secures, or a named pipe, is not handed so, and
-takes the task's path. Each connection runs one request at a time.
+socket back. A stream TLS secures is read so too, through its session
+(D230); a named pipe is not handed so, and takes the task's path. Each
+connection runs one request at a time.
 
 Time limits bound every client, and memory is taken as bytes arrive, never
 as a header declares (`SERVER.*_TIMEOUT_MS`, `native::LOGIN_MESSAGE_BYTES`).
@@ -2660,17 +2781,21 @@ SQL without writing a program. Input comes from `-c`, `-f` or standard
 input. Each statement runs alone as a `<direct SQL statement>` [ISO/IEC
 9075:1992 §20.1]. Rows stream as a table, which bounds memory. Failures go
 to standard error and the run continues, unless `--stop-on-error` is given
-or the connection is lost. Exit status is 1 if any statement failed.
+or the connection is lost. The exit status tells how the run ended (D215).
 
-`--timing` reports each attempted SQL statement's elapsed time in whole
-nanoseconds to standard error, after the statement. It uses the client's
+A session typed at a terminal, its output on a screen, reports each
+attempted SQL statement's elapsed time in whole nanoseconds to standard
+error, after the statement. Nothing else is timed, so a script, `-c`,
+`-f`, an included file and piped output never show a time, and no
+option or command turns it on or off. It uses the client's
 monotonic clock, from starting the statement through receiving its outcome
 and writing any result rows: server work, network transfer and streamed
 output are included; writing a failure's diagnostic is not. Reading input,
 the initial connection and login, and imports are outside it. Nanoseconds
 are the unit, not a promise of clock precision. A failure to write timing
-is ignored, as one to write a diagnostic is. Timing is off by default and
-changes no protocol message (D45).
+is ignored, as one to write a diagnostic is. Timing changes no protocol
+message (D45). The time the server reports for a statement follows the
+round trip once the client gives it (D215).
 
 The client library is the SQL-agent [ISO/IEC 9075:1992 §15]
 (`turborel_client::agent`). It runs CONNECT, SET CONNECTION and DISCONNECT
@@ -2758,7 +2883,14 @@ Nearest-neighbour traversal expands the branch with the lowest distance
 bound next. Each arithmetic step of a branch bound rounds downward, so
 rounding cannot hide a nearer entry. Leaf rectangle distances and row
 identifiers order the results; every branch tied at that distance is
-expanded first. The frontier reserves memory before growing (D38), and
+expanded first. The frontier keeps each expanded node's items as one run,
+a binary heap built in place in linear time in an arena all runs share,
+and orders the runs by their nearest remaining item; it gives the order a
+single heap of every item would. A node then costs one heap build and one
+push rather than a logarithmic push per entry, and a leaf's entries past
+the search's end are never sifted. Pushing every entry made the frontier
+the largest cost of a ten-nearest query. The frontier reserves memory
+before growing (D38), and
 dropping the iterator releases it. A new entry behind the distance already
 returned is omitted, as concurrent inserts are optional to an index scan.
 This ordering is exact for indexed rectangles and points. A geometry
@@ -2868,9 +3000,27 @@ Orientation first tries Shewchuk's binary64 rounding-error bound
 ([reference implementation](https://www.cs.cmu.edu/afs/cs/project/quake/public/code/predicates.c),
 `ccwerrboundA`). It accepts a sign only when both products, the determinant
 and the error bound are normal, and the determinant's magnitude exceeds
-that bound. Other cases use outward-rounded intervals, then exact bounded
-integers on binary64's dyadic coordinates. No tolerance changes a
-topological decision, including at extreme exponents.
+that bound. When a product's two differences are exact, or one is an exact
+zero, the determinant is next decided exactly as a four-term
+floating-point expansion: each product split into its rounded value and
+the error a fused multiply-add gives, then Shewchuk's Two-Two-Diff and the
+sign of its largest nonzero term. The split is used only for products of
+magnitude between 2^-969 and the largest finite value over eight, so the
+error is a binary64 number and no sum overflows. Grid-aligned data, where
+collinear triples are common and the bound cannot prove a zero, takes this
+path without allocating. Other cases use outward-rounded intervals, then
+exact bounded integers on binary64's dyadic coordinates. No tolerance
+changes a topological decision, including at extreme exponents.
+Lines and polygon rings with at least 4,096 pairs of edges are compared
+through buckets of the same dyadic grid prepared polygons use, over the
+two envelopes' overlap, padded to a square where they touch along an
+axis-parallel line. One side's edges are filed under every cell they may
+touch, each edge of the other is tested exactly against the edges filed
+under its cells, and the first meeting ends the search. The cells an edge
+is said to touch include every cell it touches, so two edges that meet
+share a cell and no meeting pair is skipped; an edge whose envelope misses
+the overlap cannot meet the other side and is not filed. Where the grid
+declines, or with fewer pairs, every pair is tested as before.
 
 `ScalarFunction::spatial_operation` declares equivalent spatial semantics,
 including result types, NULL propagation and SRID errors. It is separate
@@ -2881,6 +3031,31 @@ constant or parameter, and every other conjunct must be non-raising.
 The full condition remains a residual. If a later parameter has a different
 SRID, the index returns all entries, including empties, so pruning cannot
 hide the runtime error. NULL and matching-SRID EMPTY queries return none.
+
+Under a projection or a grouping, which read known columns of the rows,
+a scan of a windowed spatial lookup, an intersection's, a relate's or a
+distance's (D135), decides its conjunct of each entry itself, and the
+filter no longer judges it (D34). An entry whose envelope is one
+point, not the origin an empty geometry projects to, is the closed point
+set of its row's geometry, whatever its kind, so the call's function
+decides the comparison from the point and the column's SRID
+(`ScalarFunction::point_compared`), raising a reference mismatch as the
+call would; any other entry's row is read and the conjunct judged of
+it. Where nothing else reads the column, a point entry decided true
+needs no row if every reader sees it (`TableStorage::visible_to_all`),
+as an index-only scan's entry needs none; else its row is read. Such a
+scan is priced as a covering scan. A prepared polygon decides
+"distance op constant" of a point by bounds its cells put on the
+distance (`prepared/cells/within.rs`): each cell's Chebyshev distance,
+in cells, to the nearest cell edges may touch, counted by a two-pass
+chamfer; a point's distance is at least a cell less than that, and at
+most two cells more along a diagonal, so where the bound lies below the
+constant by more than the measures' rounding, or above by more, as the
+nearest-edge search's reach bounds it, the comparison is decided
+without measuring. The same decision serves a filter's comparison of
+the call with a constant, either way round, a row at a time or over a
+batch (`ScalarFunction::call_compared`, `exec/eval.rs`,
+`exec/batch/judge/calls.rs`).
 An empty stored geometry projects to an origin rectangle, adding candidates
 but no false negatives. NULL keys are omitted. Readers compare the visible
 version's projection with the entry before evaluating the full condition.
@@ -2991,6 +3166,15 @@ or intermediate overflow. Final magnitudes remain approximate binary64
 values; underflow may round a positive distance to zero. Only a final
 minimum beyond the finite range raises SQLSTATE 22003, not an intermediate
 component distance. It is not a substitute for a topological predicate.
+Chains with at least 4,096 pairs of edges are measured by an expanding
+search: one chain's edge envelopes go into a packed hierarchy, and each
+edge of the other is measured only against edges whose envelopes come
+within the best measure so far, widened by 2^-20 of it plus 64 units in
+the last place of the largest coordinate, far more than any rounding of
+a measure. Every pair whose measure could be least is still measured, by
+the same per-pair measure, so the result is the nested loops' to the
+bit; where the search's arithmetic would leave the finite range, every
+pair is measured as before.
 
 Distance bounds round each positive operation down. The Euclidean term
 uses unscaled squares and a square root, combined with the greatest axis
@@ -3037,7 +3221,8 @@ PERCENT and other distance orders retain ordinary plans. Learned plans
 fill and prepare both their distance measure and full filter each run.
 
 Constant folding may replace a scalar call with its `specialize` result
-(D53). The replacement preserves its contracts and errors, remains correct
+(D53), in a condition, a select list or a set function's argument. The
+replacement preserves its contracts and errors, remains correct
 if given different arguments, and must not perform work with visible side
 effects. Retained state reserves memory from the supplied database budget
 (D38); failed preparation leaves the original call for runtime. Filling a
@@ -3059,15 +3244,82 @@ rectangles retain general point location. It uses no area arithmetic or
 tolerance, including for subnormal and extreme coordinates.
 Polygon and MultiPolygon operands with at least one ring of 64
 edges can also keep a Y-interval tree for each ring. The threshold follows
-the measured crossover in `bench/geometry.md`; shorter boundaries retain
+the crossover the geometry benchmark measures (`bench/geometry.rs`); shorter boundaries retain
 linear scans. A query point visits only subtrees whose closed ordinate
 range contains its Y; the shared exact ray-crossing rule still decides
 boundary membership and shell-minus-hole interiors. These immutable trees
 reserve vector capacity before allocation, have depth bounded by the
 geometry coordinate limit, and decline independently when memory is short.
-The decoded operand remains usable without them. Distance reuses the
-prepared intersection decision, then keeps its ordinary separation kernel
-and result bounds; segment-distance pruning is not implied.
+The decoded operand remains usable without them.
+A Polygon or MultiPolygon operand of at least 32 edges also builds exact
+cell certificates, once it has located eight points per edge plus 256,
+or its interval trees have tested about 2,048 edges per edge, as rays
+across many teeth do first, the tests of later points estimated from
+those of the first 64, so an operand prepared for a few rows of a join
+never pays for them. Its
+envelope gets a grid of square cells whose side is a power of two, about
+64 cells per edge and at most 1,024 along an axis, their bounds 2^-8 of
+a cell past multiples of the side so round coordinates rarely fall on
+one. Cell bounds and row centres are exact, and a point's cell is found
+by an exact multiplication and a floor checked against the cell's exact
+lower bound, as subtracting the shift from a negative coordinate can
+round. A cell an edge may touch is a boundary cell:
+an edge within one row's height, or a vertical one, is marked over its
+exact extent, and any other over each row band's computed extent widened
+by a doubled bound on that computation's error. The grid is swept a row
+at a time from the edges that may touch that row, so only one row's
+crossings are held. Every other cell holds no boundary point and is
+labelled interior or exterior from the exact half-open crossings of its
+row's centre line, each placed in its column by exact orientation, by
+its slope where it meets a column's side, and so wholly left or right of
+the cell. Each ring's parity is kept, and shells,
+holes and parts combine as point location combines them, so a label never
+differs from location, valid topology or not. A point in a labelled cell
+is decided by one lookup. A boundary cell only one ring's edges may touch
+keeps that ring's side where the cell's right side meets the centre line,
+unless another part holds it whole or a hole's shell leaves it outside.
+A point in it is located from the edges whose envelopes meet the closed
+cell, found in a hierarchy of the operand's edges split at the median
+along the axis whose halves' envelopes overlap least, then whose halves
+are smaller, edges with equal centres ordered along the other axis,
+reserved from the budget the first time a point needs it. The point's
+half-open ray is replaced by
+a run right to the cell's side and a rise along it to the centre line,
+which cross a ring as often as the ray does, modulo two: the rise lies
+just left of the side, nearer to it than the run and the centre line lie
+above their heights, so no vertex lies on the path, and an edge through
+one of its corners is placed by its slope. A cell several rings' edges
+may touch, or whose one ring does not decide it alone, keeps a record:
+for each polygon of its rings whose shell touches or holds it, the
+shell's part, the first hole, in order, that holds it without touching
+it, and each touching ring's parity at the reference point. A polygon
+that holds the cell untouched makes it interior, and one whose untouched
+shell does not hold it is left out. A point in it follows each ring's
+parity apart along the same path, and the polygons combine as location
+combines them. A cell with more than 64 such rings, or whose row's
+rings outgrow the room to note them, leaves its points to the interval
+tree or the ring scan.
+Certificates decline when a cell
+would be within 256 units in the last place of the largest coordinate, a
+scaled coordinate would reach 2^44, the side would fall below 1e-280, or
+the budget refuses their cells.
+The same operands, from the second line, polygon or multi-part form of
+them they test, keep their edges filed in that grid over their envelope,
+as intersection tests file one side (above), reserved from the budget. Each
+operand then probes only the filed edges in the cells its own edges may
+touch, and decides as the unprepared relationship does: edges that meet,
+or a first vertex of either shape, part by part, not outside the other,
+the prepared polygon's points placed by its cells, interval tree or
+rings. Collections keep the general path. Distance reuses the
+prepared intersection decision and keeps its result bounds. From the
+seventeenth point it measures, such an operand finds a point's
+separation by searching the hierarchy of its edges for the nearest,
+depth first and nearer child first: a subtree or an edge is skipped
+only when its envelope misses the square within the best measure so
+far, widened as the chains' search widens it, or lies beyond that reach
+by squared distance with a factor of 1 + 2^-40 for that distance's
+rounding, so every edge whose measure could be least is measured and
+the minimum is the scan's to the bit.
 Spatial probes with equal declared semantics and deterministic
 functions have one learned plan shape even when preparation changes the
 function object. Ordinary function probes still require object identity;
@@ -6292,6 +6544,174 @@ PLUGINS.REGISTRIES, a package pinned to one by PLUGINS.PINS, and none is
 configured by default. The command-line client fetches over HTTPS with
 rustls (`client/src/fetch.rs`); the server never fetches.
 
+#### D210. The client's own commands begin with a backslash, and are read by the splitter
+
+A line of the client may hold, besides SQL, a command the client does
+itself, such as describing objects, setting the layout or running
+files. A command begins with a backslash outside a literal, a delimited
+identifier or a comment, where no SQL text holds one [ISO/IEC
+9075:1992 §5.2]. So the splitter that ends statements tells commands
+apart in the same pass (`split.rs`, `Piece`). A command may end the
+statement begun on its line (`\g`). A command runs to the end of its
+line, and its arguments split at spaces, quoted ones whole
+(`command.rs`). The Client Reference describes the commands. Each maps
+onto SQL the server already runs or onto the client's own state, and
+none adds a protocol message.
+
+#### D211. The line editor is the client's own, over `stty`, with its history and completion
+
+Typed lines are edited by the client's own line editor, as no
+dependency is taken for one (`line.rs`). It decodes keys from the bytes
+a terminal sends, keeps a buffer with a cursor, searches a history
+backwards and completes by Tab. The `stty` program puts the terminal in
+raw mode. It is run through `std::process::Command` with the terminal
+as its input, and only where `std::io::IsTerminal` holds for standard
+input and output and `stty` saves their modes. A guard puts the modes
+back after each line, also when a panic unwinds, so a statement runs
+with the terminal as it was and Ctrl-C cancels it (D44). Elsewhere
+lines are read whole. No code is written for one platform, so a
+platform without `stty` reads lines whole. A statement typed over
+several lines is one history entry, kept in the file as one line with
+its line breaks escaped. An entry that begins with a space is not kept.
+Completion reads the names of tables, columns, schemas and users from
+the Information Schema the first time a context needs them, and again
+after a statement that may change them.
+
+#### D212. Variables are substituted by the splitter, as text, literal or identifier, and steer conditionals
+
+The client keeps variables (`vars.rs`). In code outside literals,
+delimited identifiers and comments, `:NAME` is the value as text,
+`:'NAME'` a character string literal and `:"NAME"` a delimited
+identifier. Quotes inside are doubled, so a value read into a statement
+cannot end its literal or identifier. `:{?NAME}` is whether the
+variable is set. The splitter substitutes them as it reads, so a value
+may hold a statement's end only where it is written as text. A variable
+not set, and the colons of `::`, are left as written. The client's own
+settings are variables too (AUTOCOMMIT, STOP_ON_ERROR,
+ECHO, QUIET, FETCH_COUNT, VERBOSITY,
+SAFE_UPDATES, the prompts and the history's). Each statement sets
+ROW_COUNT, ERROR, SQLSTATE and the last failure's message and SQLSTATE.
+`\if`, `\elif`, `\else` and `\endif` nest to 64 deep (R-CF-6). In a
+branch not taken only those commands are read. A value neither true nor
+false opens its block as false, and the client says so.
+
+#### D213. Rows are written in seven styles, measured in terminal columns, through a pager on a screen
+
+A query's rows are written as they come (D46) by one printer
+(`format.rs`). Its styles are aligned, wrapped, unaligned, CSV
+(RFC 4180), HTML, JSON (RFC 8259) and tab-separated. Each may be
+expanded to a line a column, on request or when a row is wider than the
+screen. A column's width comes from its type, so a streamed result
+needs no second pass. Rows held before they are written, as the
+describe commands' are, are as wide as their values. A value's width is
+its terminal columns. A combining mark, a format or a control character
+takes none, and a character of the wide East Asian blocks takes two, as
+the regex engine's Unicode classes tell. On a screen, output taller
+than the screen goes through `TURBOREL_PAGER`, `PAGER` or a `less`
+found in PATH. The pager starts only once the first screen is full, so
+a short result never starts one.
+
+#### D214. The describe commands read the Information Schema alone
+
+`\d` and its family are queries of the Information Schema [ISO/IEC
+9075-11:2006 draft §5] (`describe.rs`). So they show what any session
+of the user may see, need nothing of the server's own, and keep working
+as the catalog grows. A pattern is matched by LIKE, with `*` and `?` as
+its wild cards and `%` and `_` escaped. An undelimited part is taken in
+upper case, as SQL takes a name. `\d NAME` looks its tables up first,
+then describes each in sections, leaving out a section without rows.
+The system's schemas are left out unless `S` asks for them.
+
+#### D215. A script's outcome is its exit status, and its statements may be steered from results
+
+How a run ended is its exit status (`run.rs`, `Outcome`). It is 0 when
+every statement succeeded, 1 when one failed and the run went on or the
+run could not begin, 2 when the connection was lost, and 3 when
+STOP_ON_ERROR ended it at a statement that failed. So a caller tells a
+stopped script from a lost server. `--single-transaction` runs a script
+as one transaction, committed if all succeeded and rolled back if any
+failed. The client takes no savepoint around a statement, since a
+failed statement leaves no effect and its transaction goes on (R-ERR-5).
+`\i` and
+`\ir` include files, at most 16 deep (R-CF-6), `\ir` from the
+including file's directory. `\o` and `\g` send results to a file or a
+program. `\gset` stores one row as variables, and `\gexec` runs each
+value as a statement. `\watch` runs one again on an interval until
+Ctrl-C, reading the count of presses from the handler (D44). `\e` edits
+the statement begun in the editor the environment names. In a session
+typed at a screen, each statement's line shows the round trip the
+client measured, and then the time the server reports for it, split
+into planning, execution and waiting as far as the server splits it. The server
+reports it in the statement's completion (D240), its waits for locks as
+the waiting, and the time the request waited for a worker after it as
+queued (`Statements::server_time`). Of a server that reports none, the
+line shows the round trip alone.
+
+#### D216. `\import` goes by bulk copy, and `\export` streams a query's rows, in the protocol's frames if asked
+
+`\import` is `--import` (D59) from a line of the session.
+`\export` writes a table's or a query's rows to a file as the server
+streams them. It writes CSV, quoting values that would read back as a
+null, so `\import` reads back what `\export` wrote. It also writes
+tab-separated text, refusing a value that format cannot hold, and
+with `native` the protocol's own frames, which keep every value's type
+(D195, `Statements::export_native`). `\import` goes by the protocol's
+bulk copy where the server grants `copy`, a batch to a copy that
+commits it, and through a prepared INSERT with one transaction a batch
+where it does not, or where `skip` passes bad rows over
+(`turborel_client::import`). The rows of `\export` come by a query as
+the server streams them.
+
+#### D217. The prompt, the connection commands and `\password` are built on SQL, the verifier made by the client
+
+The prompt's escapes show the user, the catalog, the default schema,
+whether the user is the owner, and whether a transaction is active
+(`prompt.rs`). The catalog and the owner are read from the Information
+Schema only for a prompt that shows them, and again after a statement
+that may change them; the schema is tracked from SET SCHEMA. Of a
+server that grants `status`, the catalog, the owner, the user and the
+schema are what its session status last told (CATALOG, OWNER,
+AUTHORIZATION and SCHEMA, D190), and nothing is probed. Each notice the
+server sends with a statement (D187), and each warning among the
+conditions its completion carries but the one it completed with, which
+its result names, is told after it as failures are, its SQLSTATE and
+message, then its detail and hint. `\c` runs CONNECT and then DISCONNECT of the connection before
+through the SQL-agent (D46). `\password` makes the SCRAM-SHA-256
+verifier the server keeps (D43), PBKDF2 and HMAC written over the
+SHA-256 the client links (`password.rs`), and sends it by `ALTER USER
+... PASSWORD VERIFIER`; a server that does not take that form is sent
+the password only over TLS or a local socket, never plain TCP.
+
+#### D218. `turborel admin` maps each command onto statements the server runs
+
+`turborel admin COMMAND` (`admin.rs`) is a session like any other, and
+each command is one or two statements. It shows through the
+Information Schema's SERVER, CONNECTIONS and SETTINGS, and changes
+through END CONNECTION, CANCEL CONNECTION, SET DATABASE, CREATE SCHEMA,
+DROP SCHEMA and ALTER USER. So every command is authorized as its
+statement is, and none needs a protocol message of its own. There are
+eleven commands, `ping`, `status`, `processlist`, `kill`, `cancel`,
+`variables`, `password`, `create-schema`, `drop-schema`, `version` and
+`tls`. Dropping a schema asks first, unless `--yes`, and is refused
+without a terminal to ask at. `ping` sends the protocol's Ping (D189),
+which the server answers with no worker, and runs a statement that
+reads nothing only of a server that does not take it; `tls` names new files,
+and files changed in place are taken on SIGHUP.
+
+#### D219. The client adds `\G`, `\tee`, tab-separated output, safe updates, a delimiter and statement help
+
+A statement ended by `\G` has its rows expanded, for that statement
+only.
+`\tee` copies all that is written, failures too, to a file. `-B` writes
+tab-separated rows for other programs. SAFE_UPDATES refuses an UPDATE or
+DELETE without WHERE before it is sent, read from the statement's
+words outside literals and comments (`words.rs`), so a slip at the
+prompt changes no row. `\delimiter` ends statements with another text,
+so a routine's body may be typed with its semicolons. `\h` writes a
+statement's syntax from the pages of `doc/sql/statements`, compiled
+into the client, so it describes the release it came with; a test holds
+the list to the directory.
+
 #### D137. A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them
 
 A geometry column's statistics are gathered in the pass that gathers the
@@ -6438,6 +6858,16 @@ sorts than a bottom-up one, still far below inserting. Hilbert order was
 the other choice. It needs the data's extent before the sort, or a curve
 over warped float bits, while STR needs only the count, which the first
 sort yields.
+
+A load whose entries the memory budget can hold is tiled in memory
+(`pack/held.rs`): the entries are gathered into a vector reserved of the
+budget, its room grown geometrically while the budget grants it, and
+each slab and run is a slice sorted in place, so no record is encoded,
+written to a work area or read back. Where the budget stops granting,
+the entries gathered go to the sorted spill ahead of the rest, within
+MEMORY.WORK_BYTES as above. Both tile the same tree. The held load
+builds the index several times faster than the spill, as the geometry
+benchmark (`bench/geometry.rs`) measures on a million points.
 
 CREATE INDEX fills an index while writers keep it up to date (D27), so
 `Index::load_beside_writers` lets a method build beside them. The rtree
@@ -6787,6 +7217,562 @@ them, and a non-owner sees no rows. RESCAN BACKUP TARGET reads a
 target's manifests and segments and records what the history lacks,
 and marks GONE each completed backup the target no longer holds.
 
+#### D180. UUID is a built-in type of 16 octets, ordered, hashed and indexed by its octets
+
+UUID [RFC 9562] is a type beyond the standard (D53), built in as VECTOR
+is (D93), so no plug-in is needed and a database holding one opens
+anywhere. The type registry holds its kind (`value/types/uuid.rs`), and
+the engine knows nothing else of it. A value is an extension value whose
+bytes are its 16 octets in the order RFC 9562 §4 writes them. Its order
+is those octets', unsigned, from the first, which is also its text's
+order, so a version 7 UUID sorts by its time. Its record and its index
+key are the 16 octets, fixed in width, so a key of it never begins
+another and both the btree and the hash method index it. The
+Information Schema gives its DATA_TYPE as UUID, with no length or
+precision. Its format is version 1 and is written nowhere, since a
+column's type names UUID.
+
+#### D181. A UUID's text is read in its common forms and written hyphenated in lower case
+
+CAST of a character string to UUID, and a string stored in a UUID column
+(`SqlType::assigns_text`), reads 32 hexadecimal digits in either case,
+its spaces trimmed, braced or not, with a hyphen allowed after any group
+of four digits but the last. So the hyphenated form, the braced form and
+the bare 32 digits all read. Its text is always the hyphenated form in
+lower case, 36 characters, which the command-line client sizes a column
+by. Text that is no UUID's is 22018. A binary string of 16 octets casts
+to UUID, one of another length is 22018, and a UUID casts to a binary
+string as its octets. Another type does not cast to it (22005).
+`UUID '...'` is a literal, CAST of its string, written so by a view's
+text. A UUID is comparable only with a UUID, so comparing one with text
+needs CAST.
+
+#### D182. UUID_V4 draws on the standard library's random hash keys, so the core keeps no dependency
+
+The core holds no dependency (D3), no unsafe code and no code of one
+operating system, so it reads no system generator itself. The standard
+library's `RandomState` does, once a thread, for its SipHash keys, and
+steps them by one for each state made. UUID_V4 makes a fresh state for
+each 64 bits it needs and hashes the word's index with it
+(`uuid/generate.rs`). The bits are unpredictable to one who does not know
+the keys, and two calls never share a key, but they are not a
+cryptographic generator's, so a UUID is an identifier and never a
+secret. No plug-in point was added for a source, since none is needed
+for that use. The version and variant are set as RFC 9562 §5.4 says.
+
+#### D183. UUID_V7 takes the database's clock, and never sorts before the last one its database made
+
+UUID_V7 lays out RFC 9562 §5.7's fields. Its first 48 bits are the
+milliseconds since 1970 of the clock the database reads (D54,
+`Database::set_clock`), and its 74 other bits random, as D182 draws them.
+The database keeps the last one it made, shared by every snapshot of its
+state. One that would not exceed it is that one plus one, its random
+bits then a counter, which is §6.2's method 2, so the UUIDs a database
+makes, and so a session's, sort in the order made, whatever the clock
+does. A call with no database, as a constant would be folded, reads the
+system clock and keeps no order. Neither function is deterministic,
+so neither is folded, and each row gets its own value. They take no
+argument, and their names say the version rather than borrowing another
+system's.
+
+#### D184. The native protocol carries a UUID under a tag of its own
+
+A type beyond the standard goes over the native protocol by its name,
+its text and its bytes, and a client without its kind holds it
+unregistered (D53). UUID has tag 27 instead, as a type with no
+parameters and as a value its kind's bytes, the count then the 16
+octets (`protocol/src/fields.rs`). A client then reads a UUID as a UUID
+with no type registry, and sends one back as a parameter the same way.
+This is part of protocol version 1, which stays 1 while turborel is in
+alpha.
+
+#### D185. The protocol grows by capabilities a client asks for and the server grants, its version staying 1
+
+Hello names the capabilities a client asks for, as strings, and Ready
+grants a subset of them as a set of bits (`turborel_protocol::capability`).
+A server grants what it serves of what was asked and nothing else, a name
+it does not know ignored, so a client and a server of different releases
+agree on what both know. Each behaviour version 1 gained after its first
+form has a capability, and a peer never sends what was not granted, so a
+client that asks for none speaks the first form byte for byte. A request
+of a capability not granted is a connection failure (SQLSTATE 08006),
+and the client library refuses it before sending.
+
+A message gains fields as its tail (`tail.rs`), each a tag of one octet
+and its field, in increasing order of tag, to the end of the body. A field
+is written only where it says something, so a message whose tail is empty
+is its first form. A tag a message does not take, or one out of order, is
+a connection failure. Tags are shared across messages and never reused.
+
+The client library asks for every capability but compression by
+default, as compression costs time where the network is fast
+(`Offer::default`).
+
+#### D186. A failure carries structured diagnostics, filled where it is raised
+
+With `diagnostics`, an Error carries its severity, detail, hint, context,
+and the schema, table, column, data type and constraint it is about, each
+a tail field (tags 7 to 15), each written only if known
+(`turborel_protocol::diagnostics`). The severity is FATAL for a failure
+that ends the connection, ERROR else, and WARNING for a condition that is
+not a failure. The names come from what the core's error is about
+(`SqlError::about`), so a raise site fills them once and every protocol
+reads them. A duplicate key names its constraint, table and schema, and
+its detail gives the key as SQL writes its values. A value refused by its
+column names the column's type. A routine's or trigger's failure names
+it as the context. Without the capability the server sends the first
+form, the diagnostics dropped as the frame is written (`native/wire.rs`),
+of an Error, a Notice and each condition a Complete carries alike.
+
+#### D187. A statement's conditions are one list, told in its completion or as notices before it
+
+A statement raises a condition for each SIGNAL of class 01 or 02 it ran,
+and for the completion condition of class 01 it completed with, named by
+its subclass (`native/notices.rs`). They are one list, in order. With
+`conditions`, the completion carries all of them, each with the fields of
+an Error (tag 17), SQLCODE 100 for class 02 and 0 else, and no Notice is
+sent. Else, with `notices`, each is a Notice before the completion. The
+server's own notices are always a Notice, as they belong to no
+statement, such as 01T01, the transaction Reset or ChangeUser rolled
+back. A client granted neither hears none. The client library hands each
+Notice to the handler set, or keeps the last 64 with none
+(`KEPT_NOTICES`), and exposes the last statement's conditions.
+
+#### D188. Describe, and several numbered cursors of one prepared statement
+
+With `describe`, Describe gives a prepared statement's parameters and
+columns again, or an open cursor's columns, so a client that lost them
+need not prepare again. With `cursors`, Execute, Fetch and Close carry a
+cursor number of the client's (tag 3), and a statement has as many
+cursors open at once as numbers, each read on its own [ISO/IEC 9075:1992
+§13.2]. Without it every cursor is number 0, as in the first form. A
+statement with a cursor open is not deallocated (SQLSTATE 24000).
+
+#### D189. Ping is answered without a worker, and Reset and ChangeUser renew the session
+
+With `ping`, Ping is answered by Pong from the connection's own task, no
+worker taken, so a pool checks a connection without competing with
+statements. With `reset`, Reset puts the session back as it was at
+login, its transaction rolled back, its prepared statements, cursors,
+temporary tables and settings gone, its user, cancel key and grants kept,
+the Status of every setting told again, and its reply a Complete. With
+`change-user`, ChangeUser authenticates the connection again, as another
+user or the same, through the exchange Hello begins, then renews the
+session as Reset does, with a new cancel key, its reply Ready. A
+transaction either rolled back is told by notice 01T01 before the reply.
+A ChangeUser refused ends the connection, as a refused Hello does.
+
+#### D190. The session's settings are pushed as it begins and as a statement changes them
+
+With `status`, the server sends a Status, a name and its value as text,
+for each of the session's settings before Ready, and again for each one a
+statement changed, before that statement's last reply
+(`native/status.rs`). Besides the per-session settings, AUTHORIZATION,
+SCHEMA, READ_ONLY, SERVER_READ_ONLY, CATALOG, OWNER (YES while the
+session's user is the database's owner, looked at again only as the
+identifier changes) and SERVER_VERSION are told.
+SERVER_READ_ONLY is YES while the database takes no changes, as a
+replica following its group, so a client tells a primary from a replica
+with no query and whatever its user (D201). Only what changed since
+the client was told is sent, so a statement that changed nothing costs
+nothing, and the client reads a setting with no round trip
+(`Connection::setting`).
+
+#### D191. Query attributes are read in SQL, and connection attributes are shown
+
+With `query-attributes`, Query and Execute carry attributes, names and
+values (tag 1), at most 32, a name of 1 to 64 octets and a value of at
+most 1024. QUERY_ATTRIBUTE(name) reads one in SQL, null if not given, and
+`traceparent` is copied into the slow statement's log event
+(`shown/requests.rs`). The attributes are kept by the thread that runs the
+request, as a request runs on one thread from start to reply. A cursor's
+fetches run with the attributes of the Execute that opened it. Hello
+carries the connection's attributes, under the same bounds, read by every
+server of version 1 since they come before anything is granted, and
+INFORMATION_SCHEMA.CONNECTION_ATTRIBUTES shows them to the database's
+owner, and CONNECTIONS.APPLICATION the one named `application`.
+
+#### D192. A Query may hold several statements, run one by one until one fails
+
+With `multi-statement`, a Query marked multi (tag 2) holds several
+statements, split as the client library splits a script
+(`turborel_protocol::split`). The command-line client keeps its own
+splitter, which also reads backslash commands, variables and
+`\delimiter` (D210, D212, D219), and a test holds the two to splitting
+SQL alike, whole or a character at a time. The server runs each as a Query of it
+would, each statement's replies its own, every completion but the last
+marked more (tag 5). The first that fails is the last run, and its Error
+ends the replies. Under autocommit each statement is its own transaction.
+A Query of no statement completes.
+
+#### D193. zlib is written in the tree
+
+Compression is zlib (RFC 1950) over DEFLATE (RFC 1951), written in
+`turborel_protocol::zlib`, as no dependency may be added for it and the
+core makes no I/O. It deflates with hash chains and dynamic Huffman
+blocks, or stored blocks where smaller, and inflates every stream
+RFC 1950 allows but one with a preset dictionary. Inflation stops at a
+limit its caller gives, so a stream that would grow past it is refused
+rather than held.
+
+#### D194. A commit's completion carries its log position, which a replica's session reads after
+
+With `commit-position`, the completion of a statement that committed
+carries the log position of its commit record (tag 4), taken as the
+record is appended (`txn/logging.rs`). A session whose
+REPLICATION.READ_AFTER names a position waits, before each statement,
+until the database has applied the log to it, looking every 5 ms, for at
+most STATEMENT.TIMEOUT_MS, or 30 s if it is 0. Past that the statement
+fails with SQLSTATE TBR01 (SQLCODE -920), and nothing runs. A Query of a
+SET never waits, so a session can always change or clear the setting
+however far its replica lags. A database with no log has no positions.
+
+#### D195. Rows are copied in all or nothing, and a query's rows exported as CSV or native rows
+
+With `copy`, CopyIn names a table and its columns, CopyData sends rows
+with no reply, and CopyEnd ends the copy, or abandons it. Each value is
+assigned to its column as INSERT assigns it [ISO/IEC 9075:1992 §13.8 GR4b
+iii], so a string too long is refused rather than cut. Rows are inserted
+in batches of 64 by one prepared INSERT, a batch that fails retried row
+by row to find the row, its failure's detail "row N of the copy". A copy
+is all or nothing, under a savepoint within the transaction, or its own
+transaction if CopyIn says it ends it. A savepoint that cannot be taken
+fails the copy before it inserts anything, and a client that terminates
+the session during a copy has it undone before the session ends. CopyEnd's completion carries the
+rows inserted whatever was granted. The client library's import copies
+when granted and no column is a large object, and inserts else.
+`Connection::export` writes a query's rows as CSV (RFC 4180), a header
+then a record each, or as native rows, the protocol's encoding, read
+back by `read_native`.
+
+#### D196. Frames past a threshold travel compressed, both ways
+
+With `compression`, a frame of at least a threshold of octets is sent as
+a compressed frame, kind `z`, its body the original kind, its length,
+and the zlib stream of its body (`turborel_protocol::compress`). The
+server's threshold is SERVER.COMPRESSION_MIN_BYTES, 0 granting no
+compression, and the client's an option of 1024 by default. The Ready
+of a login is sent uncompressed, as compression starts once it is
+granted, and the replies of a ChangeUser, which comes once it was, may
+be compressed. A
+compressed frame is inflated to at most SERVER.MAX_MESSAGE_BYTES.
+
+#### D197. A completion carries the rows its statement counted, as GET DIAGNOSTICS does
+
+With `row-counts`, the completion of an INSERT, UPDATE, DELETE or MERGE
+carries the rows it changed (tag 6), read from the same diagnostics area
+GET DIAGNOSTICS ROW_COUNT reads [ISO/IEC 9075:1992 §18.1 GR1e], so the
+two always agree. A query's completion carries the rows it returned, a
+cursor's the rows of all its fetches, once the last is sent. Other
+statements carry none.
+
+#### D198. An INSERT's completion carries the identity values it generated
+
+With `generated-values`, the completion of an INSERT into a table with
+an identity column carries the values the INSERT generated for it, in the
+order of its rows, as SQL writes them (tag 16), whether its rows come of
+VALUES or of a query. They are noted as the statement's own rows are
+written, after its triggers ran, so values generated by a trigger's
+statements are never among them. A MERGE's completion carries none, as
+its inserted rows are mixed with updated and deleted ones and a list of
+values alone would not say which row each came of. An INSERT into a
+table without an identity column, or any other statement, carries none.
+
+#### D199. A cursor opened under autocommit ends its transaction as it ends
+
+With `fetch-ends`, an Execute that ends its transaction and leaves its
+cursor open ends the transaction as the cursor ends. The Fetch that sends
+its last row commits, a Fetch or an Execute whose rows fail rolls back,
+and a Close of the cursor before its end commits. A query's transaction
+read what was sent, and a data change statement's effect is complete when
+its Execute completes, as only a query has a cursor to leave open, so a
+commit at Close loses nothing and keeps what was done. Without the
+capability the transaction stays active once the cursor is open, as in
+the first form, and the client library opens a cursor under autocommit
+with ends only when granted.
+
+#### D200. A pipeline writes its requests a window at a time, and skips after an error by savepoints
+
+The server answers each request alone and in turn (D45), so a client
+need not wait for one reply before it sends the next. A `Pipeline`
+borrowed from a connection queues queries and executions of prepared
+statements and reads one outcome for each, in order. It writes them a
+window of at most 64 KiB at a time (`PIPELINE_WINDOW`) and reads the
+window's replies before it writes the next. A window fits the socket
+buffers between client and server, so it is written whole even while
+the server writes replies and reads nothing. A client that wrote more
+before reading could wait on a server waiting on it.
+
+A failure is its request's own and the rest run, as the requests are
+independent. `OnError::Skip` stops a batch at its first failure and
+keeps what came before. A savepoint is set before each request but the
+first, the requests after a failure are rolled back to the savepoint
+set after it, and a window not yet written is never sent. Each is
+reported `Skipped`. The batch is one transaction, committed as it ends
+under autocommit if it began none. The protocol has no request that
+skips the requests after a failure. A Query of several statements stops
+at its first failure (D192), but among its own statements alone, not
+the executions of prepared statements a pipeline also holds. So the
+savepoints stay, set by `guarded` in `pipeline.rs`.
+
+#### D201. Several servers are tried in order or at random, and a server of the wrong role is left
+
+Settings may name several hosts, each with its port. They are tried in
+the order given, or in an order drawn at random for each connection
+under `load_balance=random`, seeded from the standard library's
+`RandomState` so no dependency is added. Each address a name resolves
+to is tried in turn, each step within the connect timeout. With no
+server kept, the failure (SQLSTATE 08001) names each address and why
+it was passed.
+
+`target=read-write` keeps a server that takes changes and
+`target=read-only` one that takes none. A replica following its group
+refuses every change (D57) and shows its role in
+INFORMATION_SCHEMA.REPLICAS to the owner alone, and a server alone has
+no such table. So the client reads `ROLE_QUERY` as a statement that is
+its own transaction. A missing table means a server alone, read-write.
+A row PRIMARY means read-write and any other row read-only. No row, as
+any session but the owner's sees on a replica, means a role it cannot
+see, which meets neither target. A server that grants `status` (D190)
+tells every session SERVER_READ_ONLY, YES of a database following its
+group or deposed, as the session begins and again after each statement
+(`Session::takes_changes`). The client reads its role from it with no
+query, whoever the user, and asks `ROLE_QUERY` only of a server that
+grants no `status`.
+
+#### D202. Connection settings are layers, the program's over a service's over the environment's
+
+A program, a person or an operator may each say how to connect. The
+settings are one vocabulary of names (`settings::KEYS`), written alike in
+a connection URI's query, a service file and the program's `Options`.
+The layers are laid in a fixed order, the program's own (or its URI's)
+over the named service's section, over the environment's variables,
+over the defaults, each setting taken from the first layer that has it.
+The service and its file are named by the program or the environment,
+never by a service.
+
+The environment's variables are TURBOREL_HOST, TURBOREL_PORT,
+TURBOREL_USER, TURBOREL_PASSWORD, TURBOREL_TLS_MODE,
+TURBOREL_APPLICATION_NAME, TURBOREL_CONNECT_TIMEOUT, TURBOREL_SERVICE,
+TURBOREL_SERVICE_FILE and TURBOREL_PASSFILE. An empty one gives
+nothing. The environment is read through a function the caller may
+give (`Settings::resolve_in`), so tests set no process variable.
+
+A URI is `turborel://user:password@host:port,host:port/?key=value`,
+percent-encoded, an IPv6 address bracketed and a local socket an
+encoded path. A server serves one database, so the URI names none and
+has no path. A setting that cannot be read is SQLSTATE 08001. The
+application name is sent as the connection attribute `application`
+(D191), which INFORMATION_SCHEMA.CONNECTION_ATTRIBUTES shows.
+
+#### D203. A service file names sections of settings, and a password file gives passwords by server and user
+
+A service file, `~/.turborel_service.conf` unless named, holds `[name]`
+sections of `key = value` lines, with `#` comments. A malformed line, a
+key that names no setting, or `service` set by a service is refused,
+naming the file and line.
+
+A password file, `~/.turborel_pass` unless named, holds lines
+`host:port:user:password`. A plain `*` field matches anything, `\`
+takes the next character as it is, and the first matching line wins. A
+password the settings give prevails over it. A password file should be
+readable by its owner alone, but the standard library has no portable
+way to read a file's owner or permissions, and the client has no
+OS-specific code. So it checks only that the file is a regular file,
+and its owner answers for the rest. This limit is stated in the manual.
+
+#### D204. TLS by mode, and channel binding disabled, preferred or required
+
+`tls_mode` is `disable`, `prefer` (the default), `require`, `verify-ca`
+or `verify-full`, for TCP alone, as a local socket is private.
+`prefer` and `require` encrypt and check that the server holds its
+certificate's key, not who signed it. They keep out an eavesdropper,
+not a server in the middle. `verify-ca` checks the certificate against
+the authorities trusted and not its name, and `verify-full` checks both
+(`tls/modes.rs`, custom rustls verifiers over its WebPKI verifier). A
+TLS stream begins with its handshake, so `prefer` reconnects in the
+clear when the server is reached but its handshake fails, never doubling
+the wait of a server that cannot be reached.
+
+`channel_binding` is `disable`, `prefer` or `require`. `disable` makes
+SCRAM unbound even over TLS, and `prefer` binds where the connection
+has a binding (D43). `require` refuses, before any connection, settings
+whose mechanism binds nothing or whose transport is not TLS, and SCRAM
+itself refuses to send its proof unbound (SQLSTATE 28000).
+
+#### D205. The SCRAM keys a password derives are cached by salt, iterations and a keyed tag of the password
+
+PBKDF2 is the slow step of a SCRAM login, by design. A server sends a
+user the same salt and iterations at each login, so a `KeyCache` keeps
+ClientKey and ServerKey after an exchange the server proved, and a
+reconnection that meets them again skips the derivation.
+
+An entry is found by the salt, the iterations and an HMAC of the
+password under a random secret of the cache's own. So a wrong password
+finds nothing, and the cache holds neither the password nor anything to
+guess it from offline. The keys depend on the password, salt and
+iterations alone, so the user and server are not part of the index.
+The cache is bounded at 64 entries, the oldest dropped first, and an
+entry is dropped when an exchange that used it fails, by the server's
+refusal (`Mechanism::refused`) or its wrong signature. It is shared by
+its clones across threads, and `Settings` keeps one for all the
+connections it makes. The protocol's own client
+(`turborel_protocol::scram::Client`) proves from derived keys: `read`
+gives the salt and iterations of the server's first message, and
+`prove` answers it by a `Derived`, the cache's or one the password
+derives. So the client library makes no SCRAM message of its own, and
+the protocol's server side checks it in the client's tests.
+
+#### D206. A pool hands out checked connections and takes them back reset, by the standard library alone
+
+A `Pool` holds at most `max` connections a `Source` makes, such as
+`Settings` or a closure, shared by its clones under a `Mutex` and a
+`Condvar`. It starts no thread (D55), and each wait is the borrower's.
+`get` hands out an idle connection that answers, makes one while there
+is room, or waits for one to come back within `wait` (SQLSTATE 08001
+past it). A connection idle past `idle_timeout`, older than
+`max_lifetime`, or beyond `max_idle` is closed rather than kept.
+
+A `Pooled` gives its connection back as it is dropped, reset. Of a
+server that grants `reset` it sends Reset (D189), which ends the
+session's transaction, prepared statements, cursors, temporary tables
+and settings in one request and keeps its user. Of another it resets in
+one pipeline. Its transaction is rolled back, the statements it
+prepared are closed and destroyed, its user, role and schema are its
+login's, and its zone is local, and a setting a borrower SET stays.
+Either way autocommit is off and the program's own statements run. A
+connection lost, or whose reset fails, is closed, so no borrower sees
+another's session. The check is Ping, which the server answers with no
+worker, of a server that grants `ping`, else ROLLBACK, which does
+nothing outside a transaction. Check and reset each wait at most
+`RESET_WITHIN`, so a server that hangs holds the borrower no longer
+than a step of connecting (`pool/reset.rs`).
+
+#### D240. A completion carries the server's time for its statement, and the waits it can measure for free
+
+With `row-counts`, which grants a completion's metadata, a completion
+carries the server's time for its statement in microseconds (tag 18),
+from when a worker began its request until its completion was ready, the
+transaction it ends committed by then (`native/requests/timed.rs`). A
+cursor's time is summed over its Execute and each Fetch and told by the
+Fetch that completes it, the time between requests not the server's. A
+copy's is summed over its requests and told by CopyEnd. The completion
+of a Close, a Deallocate, a request of a large object or a Reset carries
+none, as no statement ran. Two parts are
+told beside the whole. The time the request waited, read, for a worker is
+measured from when it was read to when a worker began it, before the
+whole and not in it. The time the statement waited for locks other
+transactions held is among the whole, added by a lock only once it was
+waited for (`txn/locks.rs`), so a statement that waits for none pays
+nothing. Planning is not told apart from execution, as a Query parses,
+binds and plans inside the one call that runs it, and a prepared
+statement's planning is its Prepare's, which has no completion. Without
+the capability no clock is read.
+
+#### D230. A stream TLS secures is read and written by its worker itself, through its session
+
+A request over TLS used to hop threads three times: the connection's task
+read it, a worker ran it and wrote its replies through the runtime, then
+gave the session back, so a fast client's next request waited on the task
+again. Now the worker reads and writes a TLS stream as it does a socket in
+the clear (D42): `tls/direct.rs` drives the rustls session over the socket
+below it, which `Handed` lends the thread. The runtime reads and writes
+the same session through `tokio_rustls` when no worker has it, so no
+record is lost or read twice between them.
+
+The records the session holds to send are pushed before more plaintext is
+taken, so it holds one write's records and rustls's own 64 KiB at most. A
+close_notify read ends the stream as a read of nothing; a socket closed
+without one fails the read, so a request cut short is never taken whole.
+rustls never renegotiates, so no read waits on a handshake; a TLS 1.3 key
+update is answered as it is read. Over TLS, `cargo xtask bench network`
+shows serial small queries faster and pipelined ones several times
+faster (`server/examples/network/`).
+
+#### D231. The replies of pipelined requests go out together, never held for a request not sent nor past a batch
+
+A client that pipelines its requests used to get one write, and the
+client one wakeup, for each reply. A request's last replies now wait in
+the connection's buffer while its client's next request has come whole and
+fewer than SERVER.BATCH_BYTES are queued (`lent::Pipelined`); the next
+request's replies join them, and they go in one write. A request that has
+come whole is taken whether or not the client counts as fast, since taking
+it costs no wait; the worker's permit is given up and taken again between
+requests, so a pipelining client holds no more of SERVER.WORKERS than one
+that sends a request at a time.
+
+A reply is never held for a request not yet sent, so a client sending one
+request at a time is answered as before, and never past a batch, so the
+replies held are bounded. They are sent before the worker waits for more,
+before the connection's task takes the session back, and as the server
+stops. A reply waits at most as long as the requests that came with it
+take to run: a client pipelining a long statement behind a short one reads
+the short one's reply with the long one's first batch. Pipelined small
+queries and prepared inserts take fewer writes and wakeups, so they run
+faster in the clear and several times faster over TLS.
+
+#### D232. A worker waits on the socket itself for a slow client to take its replies, and a session's records go in one write
+
+A worker whose client could not take a batch at once used to hand the rest
+to the runtime and wait for it there, so each batch a client took slowly
+woke an I/O thread and then the worker. Now a worker of a socket it may
+read itself (D42, D230) waits in the write, the socket lent it with a
+timeout of `lent::LOOKED`, 20 ms, so the system wakes it alone as the
+client takes its bytes, and a large result streams at the socket's pace.
+Each time the timeout passes it looks whether the operator ended the
+connection or the server hurries, and it gives up once
+SERVER.IDLE_TIMEOUT_MS passes before the client has taken the batch, as
+the runtime's wait did. A named pipe still waits through the runtime.
+
+A TLS session's records go to the socket in one vectored write: `Handed`
+writes vectored apart from the runtime as through it, and the stream that
+puts TLS's first byte back passes vectored writes on, where it wrote one
+record a write before.
+
+#### D233. A connection's memory is bounded, whatever its client sends or fails to read
+
+A connection holds, beside its session: an inbox of 8 KiB
+(`wire::INBOX`), grown by at most 64 KiB at a time as a longer request's
+bytes arrive, to SERVER.MAX_MESSAGE_BYTES, and shrunk once it is taken;
+the replies queued, about SERVER.BATCH_BYTES of rows with the last
+replies of the requests answered before them (D231); and over TLS the
+session's records, 64 KiB to send and a record read. The inbox is read
+only when no whole request is in it, so a client that pipelines faster
+than it reads is read no further while its replies wait to be sent. A
+client that takes nothing, or sends nothing, is closed after
+SERVER.IDLE_TIMEOUT_MS. These bounds are in the operator's manual.
+
+#### D234. A client half closed hears every reply, and a TLS stream cut without close_notify is a connection lost
+
+A client that shuts its side after its requests, without Terminate, has
+each request that came whole answered, in order, then its connection
+closed and its session rolled back, a connection lost [ISO/IEC 9075:1992
+§20.1 GR2a]: requests are taken from the inbox before it is read again,
+so the end of the stream is met only once they are done. Over TLS the
+end is close_notify; a socket closed without it is a failure, never an
+end, whether the runtime or the worker reads it (D230).
+
+#### D235. A server stopping sends the replies in flight whole, and runs no request pipelined behind them
+
+As D42 says, a server told to stop lets each connection finish its
+statement. Its replies, those held for a pipeline among them (D231), are
+sent whole before the connection closes; a request that came behind it is
+not run, and the client is told the server stops (SQLSTATE 08006). Past
+SERVER.SHUTDOWN_TIMEOUT_MS the server hurries, and a worker waiting on a
+slow client stops within `lent::LOOKED` (D232).
+
+#### D236. The network benchmark is an example of the server's crate, on the shared harness
+
+The benchmarks of `bench/` are targets of the core crate, which depends
+on nothing (D3), so one that needs the server and the client cannot be
+among them without a dependency the core must not have. The network
+benchmark is an example of the server's crate, `server/examples/network/`,
+on `bench/harness.rs` like every other (R-BENCH-1), and `cargo xtask bench
+network` runs it optimized, keeping and comparing its results as it does
+the others' (`xtask/src/bench.rs`, `SERVED`). It measures over loopback
+TCP, a Unix socket and TLS, against servers in its own process on
+runtimes of their own, over in-memory databases.
+
 ## 2. Project layout
 
 ```
@@ -6795,7 +7781,7 @@ clippy.toml             lint thresholds
 rustfmt.toml            formatting (D9)
 rust-toolchain.toml     pinned toolchain (D8)
 .cargo/config.toml      the `cargo xtask` alias
-Dockerfile              the server's image (D174)
+Dockerfile              the server's image (D241)
 .dockerignore           what the image's build does not read
 README.md               what turborel is; how to build and test it
 RULES.md                this file
@@ -7003,7 +7989,7 @@ Rust's short-circuit `&&` and `||`.
 | R-PROC-5 | A release's crates **shall** be published together at its number, from a pushed commit passing `cargo xtask verify --coverage`, dry run first, per VERSIONING.md. | review |
 | R-TOOL-1 | Project automation **shall** be Rust in `xtask/`, never shell scripts (D7). | review |
 | R-TOOL-2 | `xtask` **shall** follow these rules, use only std, and test its own decisions (`[TOOL]` requirements). | `xtask verify` |
-| R-CM-1 | The toolchain is pinned (D8), and the Dockerfile's build image with it (D174); a change **shall** be its own commit, changing both, passing `cargo xtask verify --coverage`. | review |
+| R-CM-1 | The toolchain is pinned (D8), and the Dockerfile's build image with it (D241); a change **shall** be its own commit, changing both, passing `cargo xtask verify --coverage`. | review |
 | R-CM-2 | `Cargo.lock` and the baselines **shall** be under version control. | review |
 
 The review checklist:

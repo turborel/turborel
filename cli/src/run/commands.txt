@@ -1,0 +1,62 @@
+General
+  \q                     end the session
+  \?                     list these commands
+  \h [STATEMENT]         a statement's syntax, or the statements there are
+
+The statement begun
+  \g [FILE | |PROGRAM]   run it, or the last one, its results to FILE or PROGRAM
+  \G                     run it, its rows expanded
+  \gx [FILE | |PROGRAM]  as \g, its rows expanded
+  \gset [PREFIX]         run it, its one row's columns stored as variables
+  \gexec                 run it, then each value of its result as a statement
+  \watch [SECONDS [COUNT]]
+                         run it again every SECONDS (2), COUNT times or until Ctrl-C
+  \e [FILE]              edit it, or FILE, in the editor
+  \p                     write it
+  \r                     throw it away
+  \delimiter [TEXT]      end statements with TEXT, or with a semicolon
+
+Variables and conditions
+  \set [NAME [VALUE]]    set a variable, or list them
+  \unset NAME            unset a variable
+  \if VALUE, \elif VALUE, \else, \endif
+                         run the lines of the first branch whose VALUE is true
+  \echo TEXT             write TEXT
+
+Files and output
+  \i FILE                run FILE's statements
+  \ir FILE               the same, FILE named from the current file's directory
+  \o [FILE | |PROGRAM]   send results to FILE or PROGRAM, or back to the output
+  \tee FILE              copy everything written to FILE too
+  \notee                 stop copying
+  \import TABLE FILE [csv | tsv] [header] [delimiter C] [null TEXT] [batch N] [skip]
+                         insert FILE's rows into TABLE
+  \export {TABLE | (QUERY)} FILE [csv | text | native] [header] [delimiter C] [null TEXT]
+                         write a table's or a query's rows to FILE
+
+How results are written
+  \format [OPTION [VALUE]]
+                         style (aligned, unaligned, wrapped, csv, html, json, tabs),
+                         expanded, border, null, separator, tuples, footer, pager
+  \x [on | off | auto]   expanded rows
+  \a                     aligned or unaligned
+  \t [on | off]          the rows alone, without header or footer
+
+Describing the database (PATTERN: * any text, ? one character, SCHEMA.NAME)
+  \d [PATTERN]           the tables, views and sequences, or one table's columns,
+                         indexes, constraints, foreign keys, references and triggers
+  \dt, \dv, \di, \ds     tables, views, indexes, sequences
+  \df                    routines
+  \dn                    schemas
+  \du                    users and roles
+  \dT, \dD               user-defined types, domains
+  \dx                    extension modules
+  \dG                    property graphs
+  \dp                    table privileges
+  \l                     the catalog
+                         + after a name shows more, S includes the system's schemas
+
+The connection
+  \conninfo              the server, the user and how they are connected
+  \c [SERVER | - [USER]] connect anew, ending the connection before
+  \password [USER]       set a user's password, its verifier made here

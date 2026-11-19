@@ -2,19 +2,33 @@
 //! preparation avoids decoding a query polygon for every input row and
 //! introduces no cache lock shared by concurrent sessions. Errors remain
 //! at evaluation time, including mixed-SRID and malformed-value errors.
+//! A polygon's cell certificates (`cells.rs`) are built once, the first
+//! time the operand has located enough points, or its interval trees
+//! tested enough edges, to repay them, so an operand prepared for a few
+//! rows of a join never pays for them; the
+//! hierarchy of its edges (`tree.rs`), the first time a point in a
+//! boundary cell needs the edges near it, or once a few distances have
+//! repaid it; a point's distance then searches it for the nearest edge.
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 
+mod cells;
 mod locator;
 mod rectangle;
+mod shapes;
+mod tree;
 
 use super::{Geometry, GeometryFunction, kind};
 use crate::error::Result;
 use crate::functions::{ScalarFunction, ScalarRef};
 use crate::memory::{MemoryBudget, Reservation};
 use crate::params::ParameterType;
-use crate::value::{DataType, Value};
+use crate::value::{CompOp, DataType, Value, compare};
+use cells::Cells;
 use locator::Locator;
+use shapes::FiledEdges;
+use tree::EdgeTree;
 
 struct Prepared {
     function: GeometryFunction,
@@ -22,8 +36,74 @@ struct Prepared {
     value: Value,
     geometry: Geometry,
     locator: Option<Box<Locator>>,
+    /// Built at the `cells_after`th point located; never if that is
+    /// `usize::MAX`.
+    cells: OnceLock<Option<Box<Cells>>>,
+    cells_after: usize,
+    located: AtomicUsize,
+    /// Or once the interval trees' tests, estimated from those of the
+    /// first points located, reach `visits_after`.
+    visits_after: usize,
+    visited: AtomicUsize,
+    /// Built at the `filed_after`th line or polygon tested; never if that
+    /// is `usize::MAX`.
+    filed: OnceLock<Option<Box<FiledEdges>>>,
+    filed_after: usize,
+    probed: AtomicUsize,
+    /// The polygon's edges, and their hierarchy once a point needs it.
+    edges: usize,
+    tree: OnceLock<Option<Box<EdgeTree>>>,
+    /// Point distances measured before the hierarchy is searched.
+    measured: AtomicUsize,
+    /// The constant a distance is compared with, as a binary64 number,
+    /// converted once for the first value compared with.
+    radius: OnceLock<(Value, Option<f64>)>,
+    /// The budget certificates, filed edges and the hierarchy would reserve
+    /// from, kept only for an operand that may build them.
+    budget: Option<Arc<MemoryBudget>>,
     rectangle: bool,
     _held: Reservation,
+}
+
+/// \[DESIGN\] Points located before a polygon's cell certificates are
+/// built: a grid's cells cost about as much to build as this many lookups
+/// save, per edge.
+const CELL_USES_PER_EDGE: usize = 8;
+/// The fewest points located before building them.
+const MIN_CELL_USES: usize = 256;
+/// \[DESIGN\] Edges the interval trees test, per edge, before the
+/// certificates are built however few points were located: building a
+/// comb's certificates, whose teeth span every row, costs about as much
+/// as 1,400 to 2,200 such tests per edge, as `bench/geometry.rs` measures.
+const CELL_VISITS_PER_EDGE: usize = 2_048;
+/// The first points located whose tests are counted; later points are
+/// assumed to test as many, so they pay nothing for the count.
+const COUNTED_POINTS: usize = 64;
+/// \[DESIGN\] Lines and polygons tested before a polygon's edges are
+/// filed: filing costs about one unprepared test, which files the larger
+/// side's edges anyway.
+const FILED_AFTER_USES: usize = 1;
+/// \[DESIGN\] Point distances measured by a scan before the edges'
+/// hierarchy is searched instead: building it costs about as much as
+/// twelve to sixteen scans of 4,100 to 32,772 edges.
+const MEASURED_AFTER_USES: usize = 16;
+/// Far more than the relative rounding of a decimal's conversion to a
+/// binary64 number (`Decimal::to_f64`, two roundings): numbers apart by
+/// more compare as their exact values do.
+const CONVERSION_ROUNDING: f64 = 8.0_f64 * f64::EPSILON;
+
+/// `value` as a finite binary64 number, if it is numeric.
+fn finite(value: &Value) -> Option<f64> {
+    value.as_f64().filter(|radius| radius.is_finite())
+}
+
+/// Whether `a` and `b` are one number, written alike.
+fn same_number(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Exact(a), Value::Exact(b)) => a.units == b.units && a.scale == b.scale,
+        (Value::Approx(a), Value::Approx(b)) => a.to_bits() == b.to_bits(),
+        _ => false,
+    }
 }
 
 pub(super) fn specialize(function: GeometryFunction, args: &[Option<&Value>], budget: &Arc<MemoryBudget>) -> Option<ScalarRef> {
@@ -45,30 +125,265 @@ impl Prepared {
         let geometry = Geometry::from_value(value).ok()?;
         held.resize(base.checked_add(geometry.shape.heap_bytes()?)?).ok()?;
         // The locator's ring parity is the engine's location for a valid
-        // polygon only, so another polygon is left to the engine.
+        // polygon only, so another polygon is left to the engine, as are
+        // its cells, labelled by the same parity.
         let valid = crate::spatial::planar::is_valid(&super::engine::of_shape(&geometry.shape)).unwrap_or(false);
         let locator = if valid { Locator::new(&geometry.shape, budget) } else { None };
+        let edges = cells::edges(&geometry.shape).unwrap_or(0);
+        let cells_after = Some(edges)
+            .filter(|&edges| valid && edges >= cells::MIN_EDGES)
+            .and_then(|edges| edges.checked_mul(CELL_USES_PER_EDGE)?.checked_add(MIN_CELL_USES))
+            .unwrap_or(usize::MAX);
+        let visits_after = if cells_after == usize::MAX { usize::MAX } else { edges.saturating_mul(CELL_VISITS_PER_EDGE) };
         let rectangle = rectangle::recognizes(&geometry.shape);
-        Some(Self { function, position, value: value.clone(), geometry, locator, rectangle, _held: held })
+        let budget = (cells_after < usize::MAX).then(|| Arc::clone(budget));
+        let filed_after = if budget.is_some() { FILED_AFTER_USES } else { usize::MAX };
+        let (cells, located, filed, probed) = (OnceLock::new(), AtomicUsize::new(0), OnceLock::new(), AtomicUsize::new(0));
+        Some(Self {
+            function,
+            position,
+            value: value.clone(),
+            geometry,
+            locator,
+            cells,
+            cells_after,
+            located,
+            visits_after,
+            visited: AtomicUsize::new(0),
+            filed,
+            filed_after,
+            probed,
+            edges,
+            tree: OnceLock::new(),
+            measured: AtomicUsize::new(0),
+            radius: OnceLock::new(),
+            budget,
+            rectangle,
+            _held: held,
+        })
     }
 
     fn matches(&self, args: &[&Value]) -> bool {
-        let (Value::Extension(was), Some(Value::Extension(now))) = (&self.value, args.get(self.position).copied()) else { return false };
-        kind::geometry_kind(now.kind).is_some() && (Arc::ptr_eq(&was.bytes, &now.bytes) || was.bytes == now.bytes)
+        args.get(self.position).is_some_and(|now| self.holds(now))
+    }
+
+    /// Whether `now` is the operand prepared: a geometry, by its family
+    /// alone, of the bytes prepared.
+    fn holds(&self, now: &Value) -> bool {
+        let (Value::Extension(was), Value::Extension(now)) = (&self.value, now) else { return false };
+        kind::is_geometry(now.kind) && (Arc::ptr_eq(&was.bytes, &now.bytes) || was.bytes == now.bytes)
+    }
+
+    /// "`f(other, polygon) op value`", or the polygon first, of `other` a
+    /// point: decided from the polygon's cells where a distance within a
+    /// constant needs no measure (`within_cells`), else by the call's
+    /// value, compared as SQL compares it [X3.135-1986 §5.11 GR2, GR3];
+    /// raising what the call would. None of no point.
+    fn point_decided(&self, other: &Geometry, op: CompOp, value: &Value) -> Option<Result<Option<bool>>> {
+        let super::Shape::Point(Some(point)) = other.shape else { return None };
+        Some(self.decide(point, other, op, value))
+    }
+
+    fn decide(&self, point: super::shape::Point, other: &Geometry, op: CompOp, value: &Value) -> Result<Option<bool>> {
+        let measuring = matches!(self.function, GeometryFunction::Distance);
+        if measuring {
+            // The cells' bounds decide a point's distance without locating
+            // it; the reference mismatch the call raises is raised first.
+            self.geometry.same_reference(other)?;
+            if let Some(decided) = self.within_bounded(point, op, value) {
+                return Ok(Some(decided));
+            }
+        }
+        let located = self.point_intersection(point, other)?;
+        if let Some(decided) = measuring.then(|| self.within_measured(located, op, value)).flatten() {
+            return Ok(Some(decided));
+        }
+        let measured = self.separation(other, located);
+        let result = if self.position == 0 {
+            self.function.pair_located(&self.geometry, other, located, measured)?
+        } else {
+            self.function.pair_located(other, &self.geometry, located, measured)?
+        };
+        Ok(self.compared(&result, op, value))
+    }
+
+    /// Whether a point's distance compares within `value` by `op`, decided
+    /// by the cells' bounds on it (`cells/within.rs`), once they are
+    /// built: where the measure lies below the value by more than its
+    /// rounding, or above by more, as the nearest-edge search's reach
+    /// bounds that rounding.
+    fn within_bounded(&self, point: super::shape::Point, op: CompOp, value: &Value) -> Option<bool> {
+        let radius = self.radius_of(value)?;
+        let cells = self.cells.get()?.as_deref()?;
+        let (lower, upper) = cells.measure_bounds(point, self.budget.as_ref()?)?;
+        let unit = cells.unit_at(point)?;
+        if super::distance::reach(upper, unit) < radius {
+            return Some(op.holds(std::cmp::Ordering::Less));
+        }
+        (lower > super::distance::reach(radius, unit)).then(|| op.holds(std::cmp::Ordering::Greater))
+    }
+
+    /// Whether a point's distance compares within `value` by `op`, decided
+    /// without the measure: zero, of a point the polygon holds, `located`,
+    /// unless no binary64 number tells the value from zero.
+    fn within_measured(&self, located: Option<bool>, op: CompOp, value: &Value) -> Option<bool> {
+        let radius = self.radius_of(value).filter(|_| located == Some(true))?;
+        Some(0.0_f64.partial_cmp(&radius)?).filter(|ordering| ordering.is_ne()).map(|ordering| op.holds(ordering))
+    }
+
+    /// "`result op value`", as SQL compares them [X3.135-1986 §5.11 GR2,
+    /// GR3]: two exact numbers of one scale by their units; a measure and
+    /// a radius by their binary64 numbers where those decide it, apart by
+    /// more than the radius's conversion rounds.
+    fn compared(&self, result: &Value, op: CompOp, value: &Value) -> Option<bool> {
+        if let (Value::Exact(result), Value::Exact(value)) = (result, value)
+            && result.scale == value.scale
+        {
+            return Some(op.holds(result.units.cmp(&value.units)));
+        }
+        if let (Value::Approx(measure), Some(radius)) = (result, self.radius_of(value)) {
+            let apart = (measure - radius).abs() > measure.abs().max(radius.abs()) * CONVERSION_ROUNDING;
+            if let Some(ordering) = apart.then(|| measure.partial_cmp(&radius)).flatten() {
+                return Some(op.holds(ordering));
+            }
+        }
+        compare(result, value).map(|ordering| op.holds(ordering))
+    }
+
+    /// `value` as a finite binary64 number, if it is numeric: converted
+    /// once for the first value asked, which every call of a scan is.
+    fn radius_of(&self, value: &Value) -> Option<f64> {
+        let (first, radius) = self.radius.get_or_init(|| (value.clone(), finite(value)));
+        if same_number(first, value) { *radius } else { finite(value) }
     }
 
     fn intersection(&self, other: &Geometry) -> Result<Option<bool>> {
-        let super::Shape::Point(Some(point)) = &other.shape else { return Ok(None) };
+        match &other.shape {
+            super::Shape::Point(Some(point)) => self.point_intersection(*point, other),
+            super::Shape::Point(None) => Ok(None),
+            super::Shape::Line(_) | super::Shape::Polygon(_) | super::Shape::Multi(_, _) => self.shape_intersection(other),
+        }
+    }
+
+    fn point_intersection(&self, point: super::shape::Point, other: &Geometry) -> Result<Option<bool>> {
         if self.rectangle {
             self.geometry.same_reference(other)?;
             return Ok(self.geometry.bounds.zip(other.bounds).map(|(a, b)| a.intersects(b)));
         }
-        let Some(locator) = &self.locator else { return Ok(None) };
+        if self.locator.is_none() && self.cells_after == usize::MAX {
+            return Ok(None);
+        }
         self.geometry.same_reference(other)?;
         if self.geometry.bounds.zip(other.bounds).is_some_and(|(a, b)| !a.intersects(b)) {
             return Ok(Some(false));
         }
-        locator.locate(*point).map(|location| Some(location != super::crossing::Location::Exterior))
+        // A cell decides the point exactly, by its label or the edges near
+        // the point; a cell several rings touch leaves it to the locator.
+        if let Some(location) = self.cells().and_then(|cells| cells.decide(point, || self.tree())) {
+            return Ok(Some(location != super::crossing::Location::Exterior));
+        }
+        let Some(locator) = &self.locator else { return Ok(None) };
+        self.locate_by(locator, point).map(|location| Some(location != super::crossing::Location::Exterior))
+    }
+
+    /// A line or polygon tested against a polygon with filed edges probes
+    /// only the edges filed near its own; others take the general path.
+    fn shape_intersection(&self, other: &Geometry) -> Result<Option<bool>> {
+        if self.filed_after == usize::MAX {
+            return Ok(None);
+        }
+        self.geometry.same_reference(other)?;
+        if self.geometry.bounds.zip(other.bounds).is_none_or(|(a, b)| !a.intersects(b)) {
+            return Ok(None);
+        }
+        let Some(filed) = self.filed() else { return Ok(None) };
+        let locate = |point| self.location(point);
+        Ok(filed.meets(&self.geometry.shape, &other.shape, &locate))
+    }
+
+    /// A point's separation from the polygon, for a distance whose point
+    /// the polygon does not hold, by a nearest-edge search once enough
+    /// distances have repaid the hierarchy: the scan's minimum, to the bit.
+    fn separation(&self, other: &Geometry, located: Option<bool>) -> Option<f64> {
+        let (GeometryFunction::Distance, super::Shape::Point(Some(point))) = (self.function, &other.shape) else { return None };
+        if located == Some(true) || self.cells_after == usize::MAX {
+            return None;
+        }
+        let built = self.tree.get().is_some();
+        let measured = if built { MEASURED_AFTER_USES } else { self.measured.fetch_add(1, Ordering::Relaxed) };
+        if measured < MEASURED_AFTER_USES {
+            return None;
+        }
+        self.tree()?.nearest(*point)
+    }
+
+    /// Where `point` lies in the prepared polygon, exactly: by its cell,
+    /// its interval tree or its rings.
+    fn location(&self, point: super::shape::Point) -> super::crossing::Location {
+        self.cells().and_then(|cells| cells.decide(point, || self.tree())).unwrap_or_else(|| {
+            self.locator
+                .as_ref()
+                .and_then(|locator| self.locate_by(locator, point).ok())
+                .unwrap_or_else(|| super::crossing::locate(point, &self.geometry.shape))
+        })
+    }
+}
+
+impl Prepared {
+    /// The polygon's cell certificates, once it has located enough points,
+    /// or its interval trees tested enough edges, to repay building them.
+    fn cells(&self) -> Option<&Cells> {
+        if let Some(cells) = self.cells.get() {
+            return cells.as_deref();
+        }
+        let located = self.located.fetch_add(1, Ordering::Relaxed);
+        if located < self.cells_after && !self.repaid(located) {
+            return None;
+        }
+        let build = || Cells::new(&self.geometry.shape, self.geometry.bounds?, self.budget.as_ref()?);
+        self.cells.get_or_init(build).as_deref()
+    }
+
+    /// Whether the interval trees' tests for `located` points, estimated
+    /// from those of the first points counted, reach the certificates' cost.
+    fn repaid(&self, located: usize) -> bool {
+        let counted = located.clamp(1, COUNTED_POINTS);
+        let tests = self.visited.load(Ordering::Relaxed).saturating_mul(located).checked_div(counted);
+        tests.is_some_and(|tests| tests >= self.visits_after)
+    }
+
+    /// Where `point` lies by the interval trees, counting the edges they
+    /// test for the first points located while certificates may follow.
+    fn locate_by(&self, locator: &Locator, point: super::shape::Point) -> Result<super::crossing::Location> {
+        let counting = self.cells_after < usize::MAX && self.located.load(Ordering::Relaxed) <= COUNTED_POINTS;
+        if !counting || self.cells.get().is_some() {
+            return locator.locate(point, &mut ());
+        }
+        let mut tested = 0_usize;
+        let location = locator.locate(point, &mut tested);
+        self.visited.fetch_add(tested, Ordering::Relaxed);
+        location
+    }
+
+    /// The hierarchy of the polygon's edges, built the first time it is
+    /// asked for.
+    fn tree(&self) -> Option<&EdgeTree> {
+        let build = || EdgeTree::new(&self.geometry.shape, self.edges, self.budget.as_ref()?);
+        self.tree.get_or_init(build).as_deref()
+    }
+
+    /// The polygon's filed edges, once it has tested enough lines and
+    /// polygons to repay filing them.
+    fn filed(&self) -> Option<&FiledEdges> {
+        if let Some(filed) = self.filed.get() {
+            return filed.as_deref();
+        }
+        let probed = self.probed.fetch_add(1, Ordering::Relaxed);
+        if probed < self.filed_after {
+            return None;
+        }
+        let build = || FiledEdges::new(&self.geometry.shape, self.geometry.bounds?, self.budget.as_ref()?);
+        self.filed.get_or_init(build).as_deref()
     }
 }
 
@@ -98,6 +413,23 @@ impl ScalarFunction for Prepared {
         self.call_borrowed(&[left, right], None)
     }
 
+    fn call_compared(&self, args: &[&Value], op: CompOp, value: &Value) -> Option<Result<Option<bool>>> {
+        let [left, right] = args else { return None };
+        if !self.matches(args) || left.is_null() || right.is_null() {
+            return None;
+        }
+        let other = Geometry::from_value(if self.position == 0 { right } else { left }).ok()?;
+        self.point_decided(&other, op, value)
+    }
+
+    fn point_compared(&self, ([x, y], srid): ([f64; 2], i32), other: &Value, op: CompOp, value: &Value) -> Option<Result<Option<bool>>> {
+        if !self.holds(other) {
+            return None;
+        }
+        let point = Geometry::point(x, y, srid).ok()?;
+        self.point_decided(&point, op, value)
+    }
+
     fn call_borrowed(&self, args: &[&Value], temp: Option<&dyn crate::value::lob::TempLobs>) -> Result<Value> {
         let [left, right] = args else { return self.function.call_borrowed(args, temp) };
         if !self.matches(args) {
@@ -109,10 +441,11 @@ impl ScalarFunction for Prepared {
         let other = if self.position == 0 { right } else { left };
         let other = Geometry::from_value(other)?;
         let located = self.intersection(&other)?;
+        let measured = self.separation(&other, located);
         if self.position == 0 {
-            self.function.pair_located(&self.geometry, &other, located)
+            self.function.pair_located(&self.geometry, &other, located, measured)
         } else {
-            self.function.pair_located(&other, &self.geometry, located)
+            self.function.pair_located(&other, &self.geometry, located, measured)
         }
     }
 }

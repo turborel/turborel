@@ -409,6 +409,8 @@ fn wait_on<'l>(
     };
     if waited {
         lock(&tx.shared.waits_for)?.remove(&tx.id);
+        // [DESIGN] RULES.md D240: the time waited, for the client.
+        tx.stop.served().waited(began.elapsed());
     }
     Ok((outcome, holders))
 }

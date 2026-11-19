@@ -282,6 +282,7 @@ pub(super) fn bind_reference(b: Bounds<'_>, r: &TableReference, start: usize, fr
         TableReference::Graph(g) => super::graph::graph_table_item(b, g, start, from).or_at(g.at)?,
         TableReference::Hybrid(h) => super::hybrid_search::hybrid_item(b, h, start)?,
         TableReference::Gql(g) => derived(b, &super::gql::derived_of(b.cx, g).or_at(g.at)?, start).or_at(g.at)?,
+        TableReference::Delta(d) => super::delta::delta_item(&b, d, start).or_at(d.at)?,
     };
     from.items.push(item);
     Ok(Tree::Item(from.items.len().saturating_sub(1)))

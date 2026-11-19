@@ -30,6 +30,7 @@ its own; class TB is turborel's own.
 | 0100A | Warning: query expression too long for the Information Schema |
 | 01010 | Warning: column cannot be mapped: XMLMAP left out a column the user may read, whose type does not map to XML |
 | 01F01 | SQL/MM Spatial warning: invalid position: a method of a position given one outside the value, its result null |
+| 01T01 | Warning: the transaction active was rolled back by a Reset or a ChangeUser of the native protocol, told as a notice *(extension)* |
 | 01W61 | Warning: a GRAPH_TABLE's search ended at a limit ON LIMIT TRUNCATE, its rows those of the paths found (GRF-0061) |
 | 02000 | No data |
 | 07000 | Dynamic SQL error |
@@ -59,6 +60,7 @@ its own; class TB is turborel's own.
 | 0F001 | Locator exception: invalid specification: a large object locator freed, of a transaction that ended, or never given |
 | 0N002 | SQL/XML mapping error: invalid XML character: XMLCAST, XMLELEMENT, XMLFOREST, XMLPI or XMLTEXT of a string holding a character no XML 1.1 character |
 | 0W000 | Prohibited statement encountered during trigger execution: a savepoint statement in a procedure a trigger's action calls; told in the message of the 09000 it raises |
+| 0W001 | Prohibited statement encountered during trigger execution: modify table modified by data change delta table, an AFTER trigger's change of the subject table of a FINAL TABLE; told in the message of the 09000 it raises |
 | 10000 | XQuery error: XMLDOCUMENT of a value holding an attribute standing alone; XMLCAST of text that is no value of the XML Schema type cast to, or of more than one atomic value; XMLELEMENT of an attribute after other content, or of two attributes of one name; any static, type or dynamic error of a query XMLQUERY, XMLEXISTS or XMLTABLE evaluates, or static error of the library module CREATE XQUERY MODULE registers, its message naming the error's code, as err:XPST0008 |
 | 21000 | Cardinality violation: a subquery of one row gave more, or ELEMENT a multiset of more than one element |
 | 22000 | Data exception: a path's `%` of an approximate number or one with a fraction; vectors of other dimension counts or formats |
@@ -145,6 +147,7 @@ its own; class TB is turborel's own.
 | 25006 | Invalid transaction state: read-only SQL-transaction, of TRUNCATE TABLE |
 | 26000 | Invalid SQL statement name |
 | 27000 | Triggered data change violation: a row changed twice by referential actions |
+| 27001 | Triggered data change violation: modify table modified by data change delta table, a referential action's change of the subject table of a FINAL TABLE |
 | 28000 | Invalid authorization specification |
 | 2A000 | Syntax error or access rule violation in a direct SQL statement |
 | 2B000 | Dependent privilege descriptors still exist |
@@ -230,6 +233,7 @@ its own; class TB is turborel's own.
 | TB920 | The statement was cancelled |
 | TBB01 | A backup or an archived segment failed its checksum or format, its object named *(extension)* |
 | TBB02 | A restore's recovery target is not among the records the backup and the archive hold *(extension)* |
+| TBR01 | A session's REPLICATION.READ_AFTER names a log position the database did not apply within STATEMENT.TIMEOUT_MS *(extension)* |
 
 Statements are run directly, so an error of the rules of a statement's
 form, its names or its privileges is class 2A; while preparing one, class

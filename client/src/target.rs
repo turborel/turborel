@@ -11,6 +11,7 @@ use crate::connection::{Connection, Mechanism, Result, TlsChannel, failed, in_th
 #[cfg(unix)]
 use crate::timeouts::limit;
 use crate::timeouts::{Bound, Timeouts, io_failed};
+use crate::told::Offer;
 
 /// A stream that reads and writes, of any transport.
 pub trait Duplex: Read + Write + Send + Bound {}
@@ -58,6 +59,67 @@ impl std::fmt::Debug for Target {
 }
 
 impl Target {
+    /// The local socket at `path`: a Unix socket, or on Windows a named
+    /// pipe.
+    ///
+    /// # Errors
+    ///
+    /// A connection failure on a platform with neither.
+    #[cfg(any(unix, windows))]
+    pub fn local(path: &std::path::Path) -> Result<Target> {
+        Ok(Target::Local(path.to_path_buf()))
+    }
+
+    /// Refused, as this platform has no local socket.
+    ///
+    /// # Errors
+    ///
+    /// A connection failure.
+    #[cfg(not(any(unix, windows)))]
+    pub fn local(path: &std::path::Path) -> Result<Target> {
+        Err(failed(&format!("[DESIGN] {} names a local socket, and this platform has none", path.display())))
+    }
+
+    /// Whether it is a plain TCP connection, over which a secret
+    /// mechanism is refused.
+    pub fn is_plain_tcp(&self) -> bool {
+        matches!(self, Target::Tcp(_))
+    }
+
+    /// Whether TLS secures it, so a mechanism may bind to its channel.
+    pub fn is_tls(&self) -> bool {
+        match self {
+            Target::Tcp(_) => false,
+            #[cfg(any(unix, windows))]
+            Target::Local(_) => false,
+            #[cfg(feature = "tls")]
+            Target::Tls(..) => true,
+        }
+    }
+
+    /// A stream to the server, as `opened`; but of a `Target::Tls` whose
+    /// server is reached and its TLS handshake fails, the same connection
+    /// made again over plain TCP, and that target, as `TlsMode::Prefer`
+    /// asks: never twice the wait of a server that cannot be reached.
+    ///
+    /// # Errors
+    ///
+    /// As `opened`'s.
+    pub(crate) fn opened_preferring(&self, within: Option<Duration>) -> Result<(Target, Opened)> {
+        #[cfg(feature = "tls")]
+        if let Target::Tls(address, name, config) = self {
+            let tcp = connected(address, within)?;
+            return match crate::tls::secured(tcp, (name, config)) {
+                Ok(stream) => {
+                    let channel = crate::tls::channel(&stream);
+                    Ok((self.clone(), (Box::new(stream), Some(channel))))
+                }
+                Err(_) => Target::Tcp(*address).opened(within).map(|opened| (Target::Tcp(*address), opened)),
+            };
+        }
+        self.opened(within).map(|opened| (self.clone(), opened))
+    }
+
     /// A stream to the server: TLS's handshake done.
     ///
     /// # Errors
@@ -161,9 +223,25 @@ pub fn connect_to_within(
     if matches!(target, Target::Tcp(_)) {
         in_the_clear(mechanism)?;
     }
-    let (stream, channel) = target.opened(timeouts.connect)?;
+    let opened = target.opened(timeouts.connect)?;
+    log_in(target, opened, (user, mechanism), (timeouts, Offer::default()))
+}
+
+/// Logs in over `opened`, a stream to the server at `target`, as `user`,
+/// authenticated by `mechanism`, bound to its TLS channel if it has one,
+/// asking for what `offer` asks.
+///
+/// # Errors
+///
+/// As `Connection::open`'s.
+pub(crate) fn log_in(
+    target: &Target,
+    (stream, channel): Opened,
+    (user, mechanism): (&str, &mut dyn Mechanism),
+    (timeouts, offer): (Timeouts, Offer),
+) -> Result<Connection<Box<dyn Duplex>>> {
     if let Some(secured) = channel {
         mechanism.bind(&secured);
     }
-    Ok(Connection::open_timed(stream, (user, mechanism), timeouts)?.reached_by(target.clone()))
+    Ok(Connection::open_timed_offering(stream, (user, mechanism), (timeouts, offer))?.reached_by(target.clone()))
 }

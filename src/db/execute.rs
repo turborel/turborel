@@ -63,7 +63,7 @@ impl Session {
     pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: Option<(Command, &Plans)>) -> Result<Completion> {
         self.wait_if_hinted(sql)?;
         let mut call = self.enter()?;
-        call.timed = slow::Timed::of(call.state(), || sql, &self.auth());
+        call.timed = slow::Timed::of(call.state(), || sql, (&self.auth(), &self.stop));
         let keeping = prepared.map(|(_, plans)| self.keeping(call.state(), plans));
         let parsed = Self::parsed(&call, sql, params, keeping.as_ref()).and_then(|s| super::embedding::blob_given(s, params));
         // [ISO/IEC 9075:1992 §4.19] GET DIAGNOSTICS reads the area as the
@@ -349,6 +349,10 @@ impl Session {
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
         let _compiling = self.compiling(cx.st, cx.tx.id);
+        // [ISO/IEC 9075-2:2023 §7.6 GR5] the statements of the delta tables
+        // an INSERT or a MERGE reads run first; a plan kept is not of
+        // their rows (RULES.md D175).
+        let keeping = if self.run_change_deltas(cx.st, cx.tx, stmt, params)? { None } else { keeping };
         // [ISO/IEC 9075-2:2023 §15.10, §15.13, §15.16] a view's INSTEAD OF
         // trigger in place of the change.
         if let Some(n) = self.instead_of(cx, stmt, params)? {

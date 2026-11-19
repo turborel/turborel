@@ -89,6 +89,17 @@ SELECT MEMBER, ADDRESS, IS_SELF, ROLE, EPOCH, VIEW_NUMBER, IS_CONNECTED, LAST_HE
 It is the owner's to read. A commit on the primary returns once a
 majority holds the change: while fewer nodes are up, commits wait.
 
+A backup applies the log a little after the primary commits, so a
+client that wrote on the primary and reads on a backup may not see its
+write yet. A commit's completion carries the log position of its commit
+record, to a client that asks for it ([The Native
+Protocol](../client/05-protocol.md)). A session on the backup set to
+read after it, by SET REPLICATION.READ_AFTER to that position, waits
+before each statement until the backup has applied the log that far,
+for at most STATEMENT.TIMEOUT_MS, or 30 seconds if that is 0. Past it the
+statement fails with SQLSTATE TBR01, and runs nothing. A SET never
+waits, so the setting can always be cleared, to 0.
+
 The replica's life is told to the diagnostics as `replica` events
 ([Diagnostics](08-diagnostics.md)): the view entered and its primary,
 the epoch entered and its members, this node serving, stopped or

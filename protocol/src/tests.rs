@@ -2,7 +2,9 @@
 //! byte by byte where the layout is the contract; malformed ones refused as
 //! connection failures (RULES.md R-TEST-1, R-TEST-2).
 
+mod added;
 mod geometry;
+mod uuid;
 
 use turborel::params::ParameterType;
 use turborel::storage::Row;
@@ -65,24 +67,27 @@ fn requests_read_back_as_written() {
         mechanism: "trust".into(),
         initial: vec![1, 2],
         capabilities: vec!["one".into(), String::new()],
+        attributes: Vec::new(),
     };
     let key = CancelKey([7; KEY_BYTES]);
     let requests = [
         hello,
         Request::Answer(vec![]),
         Request::Answer(vec![9; 300]),
-        Request::Query { sql: "SELECT 1".into(), ends: false },
-        Request::Query { sql: "INSERT INTO T VALUES (1)".into(), ends: true },
+        Request::Query { sql: "SELECT 1".into(), ends: false, attributes: Vec::new(), multi: false },
+        Request::Query { sql: "INSERT INTO T VALUES (1)".into(), ends: true, attributes: Vec::new(), multi: false },
         Request::Prepare { statement: u32::MAX, sql: "SELECT ? FROM T".into() },
         Request::Execute {
             statement: 0,
+            cursor: 0,
+            attributes: Vec::new(),
             values: vec![Value::Null, Value::Char("é".into()), Value::Exact(Decimal::new(-5, 1))],
             rows: 10,
             ends: false,
         },
-        Request::Execute { statement: 1, values: vec![], rows: 0, ends: true },
-        Request::Fetch { statement: 2, rows: u32::MAX },
-        Request::Close { statement: 3 },
+        Request::Execute { statement: 1, cursor: 0, values: vec![], rows: 0, ends: true, attributes: Vec::new() },
+        Request::Fetch { statement: 2, cursor: 0, rows: u32::MAX },
+        Request::Close { statement: 3, cursor: 0 },
         Request::Deallocate { statement: 4 },
         Request::Cancel(key),
         Request::Terminate,
@@ -95,7 +100,7 @@ fn requests_read_back_as_written() {
     Request::Cancel(key).encode(&mut cancel);
     assert_eq!(cancel, [&[b'Z', 16, 0, 0, 0][..], &[7; 16][..]].concat());
     let mut bytes = Vec::new();
-    Request::Query { sql: "AB".into(), ends: true }.encode(&mut bytes);
+    Request::Query { sql: "AB".into(), ends: true, attributes: Vec::new(), multi: false }.encode(&mut bytes);
     assert_eq!(bytes, [b'Q', 7, 0, 0, 0, 2, 0, 0, 0, b'A', b'B', 1]);
     bytes.clear();
     Request::Terminate.encode(&mut bytes);
@@ -154,8 +159,10 @@ fn every_reply() -> Vec<Reply> {
         rule: Some("X3.135-1986 §5.7 SR3b".into()),
         position: Some(7),
         active: false,
+        diagnostics: None,
     };
-    let plain = Failure { sqlcode: -911, sqlstate: "TB911".into(), message: String::new(), rule: None, position: None, active: true };
+    let (rule, position) = (None, None);
+    let plain = Failure { sqlcode: -911, sqlstate: "TB911".into(), message: String::new(), rule, position, active: true, ..cited.clone() };
     let parameters = vec![ParameterType::Varying, ParameterType::Of(DataType::Exact { precision: 5, scale: 2, spelled: Spelled::Numeric })];
     vec![
         Reply::Challenge(vec![0xff]),
@@ -171,9 +178,9 @@ fn every_reply() -> Vec<Reply> {
         Reply::Description(columns),
         Reply::Description(vec![]),
         Reply::Rows(edge_rows()),
-        Reply::Complete(Completed { sqlcode: 0, sqlstate: "00000".into(), active: true }),
-        Reply::Complete(Completed { sqlcode: 100, sqlstate: "02000".into(), active: false }),
-        Reply::Complete(Completed { sqlcode: i32::MIN, sqlstate: "01007".into(), active: false }),
+        Reply::Complete(Completed { active: true, ..Completed::of(0, "00000") }),
+        Reply::Complete(Completed::of(100, "02000")),
+        Reply::Complete(Completed::of(i32::MIN, "01007")),
         Reply::Error(cited),
         Reply::Error(plain),
     ]
@@ -205,7 +212,7 @@ fn replies_read_back_as_written() {
 #[test]
 fn a_body_past_the_limit_is_refused_from_its_header() {
     let mut bytes = Vec::new();
-    Request::Query { sql: "12".into(), ends: false }.encode(&mut bytes);
+    Request::Query { sql: "12".into(), ends: false, attributes: Vec::new(), multi: false }.encode(&mut bytes);
     assert!(unframed(&bytes, 7).is_ok());
     assert_eq!(unframed(&bytes, 6).map_err(|e| kind_of(&e)).err(), Some(FAILED));
     assert_eq!(header([b'Q', 0xff, 0xff, 0xff, 0xff], MAX_BODY).map_err(|e| kind_of(&e)).err(), Some(FAILED));

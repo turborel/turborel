@@ -16,7 +16,7 @@ ARG TARGETARCH
 WORKDIR /src
 COPY . .
 
-# The image's compiler and rust-toolchain.toml are one configuration item (RULES.md D174).
+# The image's compiler and rust-toolchain.toml are one configuration item (RULES.md D241).
 RUN channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"; \
     if [ "$channel" != "$RUST_VERSION" ]; then \
         echo "rust-toolchain.toml pins Rust $channel, the build image holds $RUST_VERSION" >&2; \

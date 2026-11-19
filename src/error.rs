@@ -177,17 +177,25 @@ impl SqlError {
     /// This error, about `subject` [ISO/IEC 9075:1992 §18.1 GR3].
     #[must_use]
     pub fn about(mut self, subject: Subject) -> Self {
-        self.subject = Some(Box::new(subject));
+        // What a client is told beside the names is kept (RULES.md D186).
+        let kept = self.subject.take().map(|s| *s).unwrap_or_default();
+        let (detail, hint, data_type) = (subject.detail.or(kept.detail), subject.hint.or(kept.hint), subject.data_type.or(kept.data_type));
+        self.subject = Some(Box::new(Subject { detail, hint, data_type, ..subject }));
         self
+    }
+
+    /// Whether this error names nothing it is about, though a client may be
+    /// told more of it (`Subject::names_nothing`).
+    pub fn about_nothing(&self) -> bool {
+        self.subject.as_deref().is_none_or(Subject::names_nothing)
     }
 
     /// This error, about `subject` unless it is about something already:
     /// an error names what the innermost construct that knows it says it
     /// is about [ISO/IEC 9075:1992 §18.1 GR3].
     #[must_use]
-    pub fn or_about(mut self, subject: Subject) -> Self {
-        self.subject.get_or_insert_with(|| Box::new(subject));
-        self
+    pub fn or_about(self, subject: Subject) -> Self {
+        if self.about_nothing() { self.about(subject) } else { self }
     }
 
     /// This error, if a syntax error or access rule violation about

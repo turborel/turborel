@@ -2,7 +2,8 @@
 //! statements, prepared ones among them [ISO/IEC 9075:1992 §17], and their
 //! cursors. Its replies are gathered, and written a batch's worth at a
 //! time, the rest with the last (`Outgoing`), so a small result takes one
-//! write. A request that ends the transaction with its statement
+//! write, and the small results of pipelined requests one between them
+//! (`native/lent.rs`, RULES.md D231). A request that ends the transaction with its statement
 //! \[EXTENSION\] commits once the statement is done, or rolls back if it
 //! failed, its one reply saying no transaction is active, so a statement
 //! that is its own transaction is one request and one reply. Nothing else
@@ -11,54 +12,120 @@
 
 use std::collections::HashMap;
 use std::mem;
+use std::sync::Arc;
+use std::time::Instant;
 
-use turborel::db::{Completion, Cursor, Direct, Prepared, Session};
+use turborel::db::{Completion, Cursor, Database, Direct, Prepared, Session};
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::storage::Row;
 use turborel::value::Value;
-use turborel_protocol::{Column, Completed, Failure, Reply, row_size};
+use turborel_protocol::{Attributes, Capabilities, Column, Completed, Described, Failure, LobRequest, Reply, Timing, row_size};
 
+use super::copy::{self, Copy};
+use super::status::Status;
 use crate::settings::DEFAULT_LOB_INLINE_BYTES;
+use crate::shown::Requests;
+
+mod replied;
+mod timed;
+
+/// The number of a prepared statement and of one of its cursors, the
+/// client's to choose (RULES.md D188); 0 for its one cursor.
+pub(super) type At = (u32, u32);
 
 /// What a worker is asked to do.
 pub(super) enum Work {
     /// A `<direct SQL statement>`: all its rows; the transaction ended
-    /// with it if `ends` (`Request::Query`).
-    Query { sql: String, ends: bool },
+    /// with it if `ends`; several, run in order, if `multi` (RULES.md
+    /// D192); of the request's `attributes` (D191).
+    Query { sql: String, ends: bool, attributes: Option<Arc<Attributes>>, multi: bool },
     /// [§17.6] A statement to prepare as number `.0`.
     Prepare(u32, String),
-    /// [§17.10, §17.14] Statement `statement` executed with `values`; of a
-    /// query, at most `rows` rows sent, all if 0; the transaction ended
-    /// with it if `ends` (`Request::Execute`).
-    Execute { statement: u32, values: Vec<Value>, rows: u32, ends: bool },
-    /// [§17.15] At most `.1` more rows of statement `.0`'s cursor.
-    Fetch(u32, u32),
-    /// [§17.16] Statement `.0`'s cursor closed.
-    Close(u32),
+    /// [§17.10, §17.14] Statement `at.0` executed with `values`, its
+    /// cursor, of a query, numbered `at.1`; at most `rows` rows sent, all
+    /// if 0; the transaction ended with it if `ends`.
+    Execute { at: At, values: Vec<Value>, rows: u32, ends: bool, attributes: Option<Arc<Attributes>> },
+    /// [§17.15] At most `.1` more rows of the cursor `.0`.
+    Fetch(At, u32),
+    /// [§17.16] The cursor `.0` closed.
+    Close(At),
     /// [§17.7] Statement `.0` destroyed.
     Deallocate(u32),
     /// \[DESIGN\] What a client asks of a large object by its locator
     /// (`native/lobs.rs`).
-    Lob(turborel_protocol::LobRequest),
+    Lob(LobRequest),
+    /// \[DESIGN\] A prepared statement or an open cursor described.
+    Describe(Described),
+    /// \[DESIGN\] A copy into `table`'s `columns` begun (`native/copy.rs`).
+    CopyIn { table: String, columns: Vec<String>, ends: bool },
+    /// Rows of the copy.
+    CopyData(Vec<Row>),
+    /// The copy's end, abandoned if `.0`.
+    CopyEnd(bool),
 }
 
 impl Work {
-    /// Whether the transaction ends with it.
-    fn ends(&self) -> bool {
+    /// Whether it is of a copy under way.
+    fn copies(&self) -> bool {
         match self {
-            Work::Query { ends, .. } | Work::Execute { ends, .. } => *ends,
-            Work::Prepare(..) | Work::Fetch(..) | Work::Close(_) | Work::Deallocate(_) | Work::Lob(_) => false,
+            Work::CopyData(_) | Work::CopyEnd(_) => true,
+            Work::Query { .. }
+            | Work::Prepare(..)
+            | Work::Execute { .. }
+            | Work::Fetch(..)
+            | Work::Close(_)
+            | Work::Deallocate(_)
+            | Work::Lob(_)
+            | Work::Describe(_)
+            | Work::CopyIn { .. } => false,
         }
     }
 }
 
 /// A cursor of a prepared statement, open between requests, the row read
-/// past the last sent, which showed it had more, and the warning its rows
-/// raised as it was opened, its completion's once all are sent.
+/// past the last sent, which showed it had more, the warning its rows
+/// raised as it was opened, its completion's once all are sent, the
+/// attributes of the Execute that opened it, its fetches' too, the rows
+/// sent so far, and whether the transaction ends as it does (RULES.md
+/// D199).
 struct Open {
     cursor: Cursor,
     next: Option<Row>,
     warning: Option<SqlState>,
+    attributes: Option<Arc<Attributes>>,
+    sent: u64,
+    ends: bool,
+    /// The time of the requests that read it so far (RULES.md D240).
+    spent: Timing,
+}
+
+impl Open {
+    /// `cursor`, just opened, its rows raising `warning`.
+    fn new(cursor: Cursor, warning: Option<SqlState>) -> Open {
+        Open { cursor, next: None, warning, attributes: None, sent: 0, ends: false, spent: Timing::default() }
+    }
+}
+
+/// What a request's work is, as its completion counts it (RULES.md D197).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Counted {
+    /// A statement run: its rows, as ROW_COUNT gives them, or a query's.
+    Statement,
+    /// A cursor's rows fetched: the query's, so far.
+    Fetched,
+    /// A copy: its rows, whatever was granted.
+    Copy,
+    /// Anything else: none.
+    Uncounted,
+}
+
+/// What a session's requests reach beyond it: the database it is of,
+/// which a statement waits on to have applied a commit (`native/position.rs`),
+/// and the attributes of the requests running (`shown/requests.rs`).
+#[derive(Clone)]
+pub(super) struct Serves {
+    pub(super) db: Database,
+    pub(super) requests: Arc<Requests>,
 }
 
 /// A connection's session and what it holds between requests: moved to the
@@ -66,7 +133,19 @@ struct Open {
 pub(super) struct Held {
     pub(super) session: Session,
     statements: HashMap<u32, Prepared>,
-    cursors: HashMap<u32, Open>,
+    cursors: HashMap<At, Open>,
+    copy: Option<Copy>,
+    /// What the client was granted (RULES.md D185).
+    pub(super) granted: Capabilities,
+    /// What it was last told of the session's settings (`native/status.rs`).
+    pub(super) status: Status,
+    pub(super) serves: Serves,
+    /// When the request was read, if its time is told (`requests/timed.rs`).
+    arrived: Option<Instant>,
+    /// The clock of the statement running, if its time is told.
+    clock: Option<timed::Clock>,
+    /// The time of a cursor's earlier requests, or a copy's.
+    carried: Timing,
 }
 
 /// Why rows stopped before their end.
@@ -89,6 +168,20 @@ fn cursor_state(msg: &str) -> SqlError {
     SqlError::new(Code::Cursor, msg)
 }
 
+/// The cursor is not open [ISO/IEC 9075:1992 §13.3 GR1, §13.4 GR1].
+fn not_open() -> SqlError {
+    cursor_state("[ISO/IEC 9075:1992 §13.3 GR1, §13.4 GR1] the cursor is not open")
+}
+
+/// The reply that describes `prepared`, statement `n`.
+fn prepared_reply(n: u32, prepared: &Prepared) -> Reply {
+    Reply::Prepared {
+        statement: n,
+        parameters: prepared.parameters().to_vec(),
+        columns: prepared.columns().iter().map(Column::from).collect(),
+    }
+}
+
 /// A request's replies: those gathered, and what a batch's worth is sent
 /// through, ahead of the rest.
 pub(super) struct Outgoing<'a> {
@@ -99,7 +192,7 @@ pub(super) struct Outgoing<'a> {
     inline: usize,
     /// Whether a locator was sent (`native/lobs.rs`).
     located: bool,
-    gathered: Vec<Reply>,
+    pub(super) gathered: Vec<Reply>,
 }
 
 impl<'a> Outgoing<'a> {
@@ -114,16 +207,10 @@ impl<'a> Outgoing<'a> {
         Outgoing { inline: bytes, ..self }
     }
 
-    /// Sends the replies gathered and not sent ahead: the request's last.
-    ///
-    /// # Errors
-    ///
-    /// The sink's: the connection is gone.
-    pub(super) fn finish(self) -> Result<()> {
-        if self.gathered.is_empty() {
-            return Ok(());
-        }
-        (self.sink)(self.gathered)
+    /// The replies gathered and not sent ahead: the request's last, for
+    /// the wire to send, or to queue before the next pipelined request's.
+    pub(super) fn finish(self) -> Vec<Reply> {
+        self.gathered
     }
 
     /// Sends what is gathered, ahead of the rest.
@@ -140,40 +227,114 @@ impl<'a> Outgoing<'a> {
 }
 
 impl Held {
-    /// What `session` holds, as it begins.
-    pub(super) fn new(session: Session) -> Held {
-        Held { session, statements: HashMap::new(), cursors: HashMap::new() }
+    /// What `session` holds, as it begins, its client granted `granted`.
+    pub(super) fn new(session: Session, serves: Serves, granted: Capabilities) -> Held {
+        let (statements, cursors, status) = (HashMap::new(), HashMap::new(), Status::default());
+        Held { session, statements, cursors, copy: None, granted, status, serves, arrived: None, clock: None, carried: Timing::default() }
+    }
+
+    /// Abandons the copy under way, if one is, everything it did undone:
+    /// as the client terminates the session, so a copy is never committed
+    /// in part.
+    pub(super) fn abandon_copy(&mut self) {
+        if let Some(copy) = self.copy.take() {
+            // A failed undo has marked its tables damaged (RULES.md D19).
+            let _ = copy.end(&self.session, true);
+        }
+    }
+
+    /// `session` in place of this one's session, holding nothing yet, the
+    /// client's grants kept (RULES.md D189): the old one.
+    pub(super) fn renew(&mut self, session: Session) -> Session {
+        self.cursors.clear();
+        self.statements.clear();
+        (self.copy, self.status, self.carried) = (None, Status::default(), Timing::default());
+        mem::replace(&mut self.session, session)
     }
 
     /// Does `work`, its replies gathered in `out`, within `max_statements`
-    /// prepared statements; the transaction ended after it if the request
-    /// says so (`ended`).
+    /// prepared statements: one statement, or each of several in order.
+    ///
+    /// # Errors
+    ///
+    /// A write of replies failed: the connection is gone; or a copy's
+    /// request came out of turn.
+    pub(super) fn handle(&mut self, work: Work, out: &mut Outgoing<'_>, max_statements: usize) -> Result<()> {
+        if self.copy.is_some() != work.copies() {
+            return Err(copy::out_of_turn());
+        }
+        if let Work::Query { sql, ends, attributes, multi: true } = work {
+            return self.several(&sql, ends, attributes.as_ref(), out);
+        }
+        self.one(work, out, (max_statements, false)).map(drop)
+    }
+
+    /// Does `work`, one statement's: its last reply gathered, after its
+    /// notices and the settings it changed (`Held::told`); followed by
+    /// another statement's if `more`; whether it failed. The transaction
+    /// is ended after it if the request says so (`ended`).
     ///
     /// # Errors
     ///
     /// A write of replies failed: the connection is gone.
-    pub(super) fn handle(&mut self, work: Work, out: &mut Outgoing<'_>, max_statements: usize) -> Result<()> {
-        let ends = work.ends();
-        let last = match self.done(work, out, max_statements) {
+    pub(super) fn one(&mut self, work: Work, out: &mut Outgoing<'_>, (max_statements, more): (usize, bool)) -> Result<bool> {
+        self.start();
+        let ends = self.ends(&work);
+        let counted = Counted::of(&work);
+        let attributes = self.attributes(&work);
+        let requests = Arc::clone(&self.serves.requests);
+        let running = requests.running(attributes.as_ref());
+        let served = Arc::clone(&self.session.canceller());
+        served.served().set_trace(crate::shown::trace(attributes.as_deref()));
+        let done = self.done(work, out, max_statements);
+        served.served().set_trace(None);
+        drop(running);
+        let last = match done {
             Ok(Some(last)) => last,
-            Ok(None) => return Ok(()),
+            Ok(None) => {
+                self.kept();
+                return Ok(false);
+            }
             Err(Cut::Gone(e)) => return Err(e),
             Err(Cut::Failed(e)) => Reply::Error(Failure::from(&e)),
         };
+        // Counted before the transaction ends, as the statement left them.
+        let last = self.counted(last, counted);
         // A locator sent is valid until the transaction ends: it is kept.
         let last = if ends && !out.located { self.ended(last) } else { last };
-        // [ISO/IEC 9075:1992 §15.1 GR1, §15.3 GR6] whether the transaction
-        // is active, for the client's connection statements.
-        let active = self.session.transaction().is_some();
-        let last = if let Reply::Complete(c) = last {
-            Reply::Complete(Completed { active, ..c })
-        } else if let Reply::Error(f) = last {
-            Reply::Error(Failure { active, ..f })
-        } else {
-            last
-        };
+        let last = self.timed(last, counted);
+        let last = self.finished(last, more);
+        let last = self.told(last, out);
+        let failed = matches!(last, Reply::Error(_));
         out.gathered.push(last);
-        Ok(())
+        Ok(failed)
+    }
+
+    /// Whether the transaction ends with `work`.
+    fn ends(&self, work: &Work) -> bool {
+        match work {
+            Work::Query { ends, .. } | Work::Execute { ends, .. } => *ends,
+            Work::CopyEnd(_) => self.copy.as_ref().is_some_and(Copy::ends),
+            Work::Fetch(at, _) | Work::Close(at) => self.cursors.get(at).is_some_and(|open| open.ends),
+            Work::Prepare(..) | Work::Deallocate(_) | Work::Lob(_) | Work::Describe(_) | Work::CopyIn { .. } | Work::CopyData(_) => false,
+        }
+    }
+
+    /// The attributes `work` runs with: its own, or those of the Execute
+    /// that opened the cursor it fetches from.
+    fn attributes(&self, work: &Work) -> Option<Arc<Attributes>> {
+        match work {
+            Work::Query { attributes, .. } | Work::Execute { attributes, .. } => attributes.clone(),
+            Work::Fetch(at, _) => self.cursors.get(at).and_then(|open| open.attributes.clone()),
+            Work::Prepare(..)
+            | Work::Close(_)
+            | Work::Deallocate(_)
+            | Work::Lob(_)
+            | Work::Describe(_)
+            | Work::CopyIn { .. }
+            | Work::CopyData(_)
+            | Work::CopyEnd(_) => None,
+        }
     }
 
     /// \[EXTENSION\] `last`, the reply of a statement whose request ends the
@@ -192,7 +353,10 @@ impl Held {
             | Reply::Description(_)
             | Reply::Rows(_)
             | Reply::Challenge(_)
-            | Reply::Ready { .. } => {
+            | Reply::Ready { .. }
+            | Reply::Notice(_)
+            | Reply::Status { .. }
+            | Reply::Pong => {
                 return last;
             }
         };
@@ -202,36 +366,76 @@ impl Held {
         }
     }
 
-    /// Does `work`: the last reply, none if its rows ended it.
+    /// Does `work`: the last reply, none if it has none.
     fn done(&mut self, work: Work, out: &mut Outgoing<'_>, max_statements: usize) -> std::result::Result<Option<Reply>, Cut> {
         let failed = Cut::Failed;
         match work {
-            Work::Query { sql, .. } => match self.session.direct(&sql).map_err(failed)? {
-                Direct::Done(completion) => Ok(Some(Reply::Complete(completion.into()))),
-                Direct::Rows(cursor) => {
-                    let mut open = Open { cursor, next: None, warning: self.session.warning() };
-                    describe(&open.cursor, out);
-                    send_rows(&self.session, &mut open, 0, out).map(|ended| Some(ended.reply()))
-                }
-            },
+            Work::Query { sql, .. } => {
+                super::position::applied(&self.session, &self.serves.db, Some(&sql)).map_err(failed)?;
+                self.direct(&sql, out).map(Some)
+            }
             Work::Prepare(n, sql) => self.prepare(n, &sql, max_statements).map(Some).map_err(failed),
-            Work::Execute { statement, values, rows, .. } => self.execute(statement, &values, (rows, out)),
-            Work::Fetch(n, rows) => self.fetch(n, (rows, out)),
-            Work::Close(n) => {
+            Work::Execute { at, values, rows, attributes, ends } => {
+                super::position::applied(&self.session, &self.serves.db, None).map_err(failed)?;
+                let ends = ends && self.granted.has(turborel_protocol::capability::FETCH_ENDS);
+                self.execute(at, &values, (rows, out), (attributes, ends))
+            }
+            Work::Fetch(at, rows) => self.fetch(at, (rows, out)),
+            Work::Close(at) => {
                 // [§17.16 GR1, §13.4 GR1]
-                let closed = self.cursors.remove(&n).ok_or_else(|| cursor_state("[ISO/IEC 9075:1992 §13.4 GR1] the cursor is not open"));
+                let closed = self.cursors.remove(&at).ok_or_else(not_open);
                 closed.map(|_| Some(Reply::Complete(Completion::Success.into()))).map_err(failed)
             }
             Work::Deallocate(n) => self.deallocate(n).map(|()| Some(Reply::Complete(Completion::Success.into()))).map_err(failed),
             Work::Lob(request) => self.lob(request).map(Some).map_err(failed),
+            Work::Describe(what) => self.describe(what).map(Some).map_err(failed),
+            Work::CopyIn { table, columns, ends } => {
+                self.copy = Some(Copy::begin(&self.session, (&table, &columns), ends));
+                Ok(None)
+            }
+            Work::CopyData(rows) => {
+                if let Some(copy) = self.copy.as_mut() {
+                    copy.rows(&self.session, rows);
+                }
+                Ok(None)
+            }
+            Work::CopyEnd(abandon) => {
+                let copy = self.copy.take().ok_or_else(|| Cut::Gone(copy::out_of_turn()))?;
+                copy.end(&self.session, abandon).map(|c| Some(Reply::Complete(c))).map_err(failed)
+            }
+        }
+    }
+
+    /// Runs `sql` directly: its rows, after their Description, then its
+    /// completion.
+    fn direct(&mut self, sql: &str, out: &mut Outgoing<'_>) -> std::result::Result<Reply, Cut> {
+        match self.session.direct(sql).map_err(Cut::Failed)? {
+            Direct::Done(completion) => Ok(Reply::Complete(completion.into())),
+            Direct::Rows(cursor) => {
+                let mut open = Open::new(cursor, self.session.warning());
+                describe(&open.cursor, out);
+                send_rows(&self.session, &mut open, 0, out).map(|ended| ended.reply())
+            }
+        }
+    }
+
+    /// \[DESIGN\] RULES.md D188: describes a prepared statement, its
+    /// parameters and columns, or an open cursor, its columns.
+    fn describe(&self, what: Described) -> Result<Reply> {
+        match what {
+            Described::Statement(n) => self.statements.get(&n).map(|p| prepared_reply(n, p)).ok_or_else(|| no_statement(n)),
+            Described::Cursor { statement, cursor } => {
+                let open = self.cursors.get(&(statement, cursor)).ok_or_else(not_open)?;
+                Ok(Reply::Description(open.cursor.columns.iter().map(Column::from).collect()))
+            }
         }
     }
 
     /// [§17.7] Destroys statement `n`: SQLSTATE 26000 if there is none
     /// \[GR1\], 24000 if its cursor is open \[GR2\].
     fn deallocate(&mut self, n: u32) -> Result<()> {
-        if self.cursors.contains_key(&n) {
-            return Err(cursor_state("[ISO/IEC 9075:1992 §17.7 GR2] the statement's cursor is open: close it first"));
+        if self.cursors.keys().any(|(statement, _)| *statement == n) {
+            return Err(cursor_state("[ISO/IEC 9075:1992 §17.7 GR2] a cursor of the statement is open: close it first"));
         }
         self.statements.remove(&n).map(drop).ok_or_else(|| no_statement(n))
     }
@@ -246,46 +450,51 @@ impl Held {
             return Err(SqlError::new(Code::Resources, msg));
         }
         let prepared = self.session.prepare(sql)?;
-        let reply = Reply::Prepared {
-            statement: n,
-            parameters: prepared.parameters().to_vec(),
-            columns: prepared.columns().iter().map(Column::from).collect(),
-        };
+        let reply = prepared_reply(n, &prepared);
         self.statements.insert(n, prepared);
         Ok(reply)
     }
 
-    /// [§17.10, §17.14] Executes statement `n` with `values`; a query's
-    /// cursor opened, at most `rows` of it sent, of the columns Prepared
-    /// gave: no Description.
-    fn execute(&mut self, n: u32, values: &[Value], (rows, out): (u32, &mut Outgoing<'_>)) -> std::result::Result<Option<Reply>, Cut> {
-        let prepared = self.statements.get(&n).ok_or_else(|| Cut::Failed(no_statement(n)))?;
+    /// [§17.10, §17.14] Executes statement `at.0` with `values`; a
+    /// query's cursor opened as `at.1`, of `attributes`, the transaction
+    /// ending as it does if `ends`, at most `rows` of it sent, of the
+    /// columns Prepared gave: no Description.
+    fn execute(
+        &mut self,
+        at: At,
+        values: &[Value],
+        (rows, out): (u32, &mut Outgoing<'_>),
+        (attributes, ends): (Option<Arc<Attributes>>, bool),
+    ) -> std::result::Result<Option<Reply>, Cut> {
+        let prepared = self.statements.get(&at.0).ok_or_else(|| Cut::Failed(no_statement(at.0)))?;
         if !prepared.is_query() {
             return self.session.execute_prepared(prepared, values).map(|c| Some(Reply::Complete(c.into()))).map_err(Cut::Failed);
         }
         // [§17.14 GR6, §13.2 GR1]
-        if self.cursors.contains_key(&n) {
-            return Err(Cut::Failed(cursor_state("[ISO/IEC 9075:1992 §13.2 GR1] the statement's cursor is open")));
+        if self.cursors.contains_key(&at) {
+            return Err(Cut::Failed(cursor_state("[ISO/IEC 9075:1992 §13.2 GR1] the cursor is open")));
         }
         let cursor = self.session.open_prepared(prepared, values).map_err(Cut::Failed)?;
         let warning = self.session.warning();
-        self.sent(n, Open { cursor, next: None, warning }, (rows, out))
+        self.sent(at, Open { attributes, ends, ..Open::new(cursor, warning) }, (rows, out))
     }
 
-    /// [§17.15] At most `rows` more rows of statement `n`'s cursor: SQLSTATE
+    /// [§17.15] At most `rows` more rows of the cursor `at`: SQLSTATE
     /// 24000 if it is not open [§13.3 GR1].
-    fn fetch(&mut self, n: u32, (rows, out): (u32, &mut Outgoing<'_>)) -> std::result::Result<Option<Reply>, Cut> {
-        let open =
-            self.cursors.remove(&n).ok_or_else(|| Cut::Failed(cursor_state("[ISO/IEC 9075:1992 §13.3 GR1] the cursor is not open")))?;
-        self.sent(n, open, (rows, out))
+    fn fetch(&mut self, at: At, (rows, out): (u32, &mut Outgoing<'_>)) -> std::result::Result<Option<Reply>, Cut> {
+        let open = self.cursors.remove(&at).ok_or_else(|| Cut::Failed(not_open()))?;
+        self.sent(at, open, (rows, out))
     }
 
-    /// Sends at most `rows` rows of `open`, statement `n`'s cursor: kept
-    /// open if it has more, closed once all are sent.
-    fn sent(&mut self, n: u32, mut open: Open, (rows, out): (u32, &mut Outgoing<'_>)) -> std::result::Result<Option<Reply>, Cut> {
+    /// Sends at most `rows` rows of `open`, the cursor `at`: kept open if
+    /// it has more, closed once all are sent.
+    fn sent(&mut self, at: At, mut open: Open, (rows, out): (u32, &mut Outgoing<'_>)) -> std::result::Result<Option<Reply>, Cut> {
         let ended = send_rows(&self.session, &mut open, rows, out)?;
         if let Ended::More = ended {
-            self.cursors.insert(n, open);
+            open.spent = self.so_far().map_or(open.spent, |t| open.spent.plus(t));
+            self.cursors.insert(at, open);
+        } else {
+            self.carried = open.spent;
         }
         Ok(Some(ended.reply()))
     }
@@ -295,9 +504,10 @@ impl Held {
 enum Ended {
     /// The cursor has more.
     More,
-    /// It has no more: whether any were sent [ISO/IEC 9075:1992 §20.2 GR3],
-    /// and the warning its rows raised, if any.
-    Done(bool, Option<SqlState>),
+    /// It has no more: how many were sent, so far [ISO/IEC 9075:1992 §20.2
+    /// GR3], whether any were by this request, and the warning its rows
+    /// raised, if any.
+    Done(u64, bool, Option<SqlState>),
 }
 
 impl Ended {
@@ -306,8 +516,10 @@ impl Ended {
     fn reply(&self) -> Reply {
         match self {
             Ended::More => Reply::Suspended,
-            Ended::Done(true, warning) => Reply::Complete(Completion::Success.warned(*warning).into()),
-            Ended::Done(false, _) => Reply::Complete(Completion::NoData.into()),
+            Ended::Done(all, true, warning) => {
+                Reply::Complete(Completed { rows: Some(*all), ..Completion::Success.warned(*warning).into() })
+            }
+            Ended::Done(all, false, _) => Reply::Complete(Completed { rows: Some(*all), ..Completion::NoData.into() }),
         }
     }
 }
@@ -335,6 +547,7 @@ fn send_rows(session: &Session, open: &mut Open, limit: u32, out: &mut Outgoing<
             return Ok(Ended::More);
         }
         sent = sent.saturating_add(1);
+        open.sent = open.sent.saturating_add(1);
         let row = super::lobs::placed_row(session, row, out.inline, &mut out.located).map_err(Cut::Failed)?;
         bytes = bytes.saturating_add(row_size(&row));
         rows.push(row);
@@ -345,75 +558,8 @@ fn send_rows(session: &Session, open: &mut Open, limit: u32, out: &mut Outgoing<
         }
     }
     out.rows(&mut rows);
-    Ok(Ended::Done(sent > 0, open.warning))
+    Ok(Ended::Done(open.sent, sent > 0, open.warning))
 }
 
 #[cfg(test)]
-mod tests {
-    use turborel::db::Database;
-
-    use super::*;
-
-    /// A session of user X, of a database whose table X.T is empty.
-    fn held() -> Held {
-        let db = Database::new();
-        db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER NOT NULL)").unwrap();
-        Held::new(db.session("X"))
-    }
-
-    /// Runs `work` in `held`, with batches too large for anything to be
-    /// sent ahead: the replies gathered.
-    fn run(held: &mut Held, work: Work) -> Vec<Reply> {
-        let mut sink = |_: Vec<Reply>| Ok(());
-        let mut out = Outgoing::new(&mut sink, 1 << 20);
-        held.handle(work, &mut out, 8).unwrap();
-        out.gathered
-    }
-
-    /// Whether `replies` is one completion, of a transaction `active` or
-    /// not.
-    fn completed(replies: &[Reply], active: bool) -> bool {
-        matches!(replies, [Reply::Complete(Completed { sqlcode: 0, active: a, .. })] if *a == active)
-    }
-
-    /// The work that inserts `k`, the transaction ended with it if `ends`.
-    fn insert(k: i32, ends: bool) -> Work {
-        Work::Query { sql: format!("INSERT INTO T VALUES ({k})"), ends }
-    }
-
-    /// Verifies: [EXTENSION] [DESIGN] RULES.md D45: a request that ends the
-    /// transaction with its statement commits it once the statement is
-    /// done, or rolls it back if the statement failed, its one reply saying
-    /// no transaction is active; one that does not leaves it active.
-    #[test]
-    fn a_request_that_ends_its_transaction_commits_or_rolls_back() {
-        let mut held = held();
-        assert!(completed(&run(&mut held, insert(1_i32, true)), false), "committed");
-        assert!(held.session.transaction().is_none());
-        assert!(completed(&run(&mut held, insert(2_i32, false)), true), "left active");
-        let failed = run(&mut held, Work::Query { sql: "INSERT INTO T VALUES ('x')".into(), ends: true });
-        assert!(matches!(failed.as_slice(), [Reply::Error(Failure { active: false, .. })]), "{failed:?}");
-        assert!(held.session.transaction().is_none(), "rolled back");
-        let counted = run(&mut held, Work::Query { sql: "SELECT COUNT(*) FROM T".into(), ends: true });
-        assert!(matches!(&counted[1], Reply::Rows(rows) if rows[0][0].to_string() == "1"), "the second insert undone: {counted:?}");
-        assert!(matches!(counted.as_slice(), [Reply::Description(_), Reply::Rows(_), Reply::Complete(Completed { active: false, .. })]));
-    }
-
-    /// Verifies: [EXTENSION] [DESIGN] RULES.md D45: a prepared query's
-    /// execution sends its rows with no Description; its cursor left open,
-    /// the transaction its request would end stays active, through the
-    /// fetches after; one whose rows are all sent ends it.
-    #[test]
-    fn a_cursor_left_open_keeps_the_transaction_its_request_would_end() {
-        let mut held = held();
-        run(&mut held, Work::Prepare(1, "SELECT K FROM T".into()));
-        run(&mut held, insert(3_i32, false));
-        run(&mut held, insert(4_i32, false));
-        let opened = run(&mut held, Work::Execute { statement: 1, values: Vec::new(), rows: 1, ends: true });
-        assert!(matches!(opened.as_slice(), [Reply::Rows(_), Reply::Suspended]), "no Description: {opened:?}");
-        assert!(held.session.transaction().is_some(), "its cursor open");
-        let rest = run(&mut held, Work::Fetch(1, 0));
-        assert!(matches!(rest.as_slice(), [Reply::Rows(_), Reply::Complete(Completed { active: true, .. })]), "{rest:?}");
-        assert!(completed(&run(&mut held, Work::Execute { statement: 1, values: Vec::new(), rows: 0, ends: true })[1..], false));
-    }
-}
+mod tests;

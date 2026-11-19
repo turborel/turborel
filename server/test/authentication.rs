@@ -86,9 +86,10 @@ fn a_mechanism_may_challenge_the_client() {
         mechanism: "echo".into(),
         initial: vec![],
         capabilities: vec![],
+        attributes: Vec::new(),
     });
     assert!(matches!(raw.receive(), Some(turborel_protocol::Reply::Challenge(_))));
-    raw.send(&Request::Query { sql: "SELECT 1".into(), ends: false });
+    raw.send(&Request::Query { sql: "SELECT 1".into(), ends: false, attributes: Vec::new(), multi: false });
     assert_eq!(state(&raw.refusal()), ("08006", -919), "a challenge is answered");
 }
 
@@ -106,6 +107,7 @@ fn a_client_is_refused_saying_why() {
         mechanism: mechanism.into(),
         initial: vec![],
         capabilities: vec![],
+        attributes: Vec::new(),
     };
     let (spoken, other) = (turborel_protocol::VERSION, turborel_protocol::VERSION.saturating_add(1));
     let refusals =

@@ -98,7 +98,10 @@ impl<S: Read + Write> Connection<S> {
             | Reply::Prepared { .. }
             | Reply::Description(_)
             | Reply::Rows(_)
-            | Reply::Suspended => Err(self.lose("[DESIGN] the server sent no Lob reply")),
+            | Reply::Suspended
+            | Reply::Notice(_)
+            | Reply::Status { .. }
+            | Reply::Pong => Err(self.lose("[DESIGN] the server sent no Lob reply")),
         }
     }
 
@@ -114,7 +117,10 @@ impl<S: Read + Write> Connection<S> {
             | Reply::Prepared { .. }
             | Reply::Description(_)
             | Reply::Rows(_)
-            | Reply::Suspended => Err(self.lose("[DESIGN] the server sent no completion")),
+            | Reply::Suspended
+            | Reply::Notice(_)
+            | Reply::Status { .. }
+            | Reply::Pong => Err(self.lose("[DESIGN] the server sent no completion")),
         }
     }
 }

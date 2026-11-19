@@ -54,7 +54,10 @@ fn polygon_interval_locations_match_all_ring_decisions() {
             for x in -2_i32..31_i32 {
                 for y in -2_i32..31_i32 {
                     let point = [f64::from(x) / 2.0_f64, f64::from(y) / 2.0_f64];
-                    assert!(locator.locate(point).unwrap() == engine_location(point, &shape), "point {point:?}, reversed {reversed}");
+                    assert!(
+                        locator.locate(point, &mut 0).unwrap() == engine_location(point, &shape),
+                        "point {point:?}, reversed {reversed}"
+                    );
                 }
             }
         }
@@ -85,12 +88,12 @@ fn polygon_interval_bounds_keep_extreme_ordinates() {
             // Rounding at subnormal scale bends the ring through the origin,
             // a polygon the locator never serves (`prepared.rs`).
             if valid(&shape) {
-                assert!(locator.locate(point).unwrap() == engine_location(point, &shape), "point {point:?} scale {scale}");
+                assert!(locator.locate(point, &mut 0).unwrap() == engine_location(point, &shape), "point {point:?} scale {scale}");
             }
         }
         if scale < f64::MAX {
             for y in [scale.next_up(), (-scale).next_down()] {
-                assert!(locator.locate([0.0_f64, y]).unwrap() == Location::Exterior);
+                assert_eq!(locator.locate([0.0_f64, y], &mut 0).unwrap(), Location::Exterior);
             }
         }
     }
@@ -142,10 +145,10 @@ fn polygon_interval_depth_is_bounded_by_representation_size() {
         })
         .collect();
     maxima(&mut edges, 0).unwrap();
-    assert!(in_ring([0.5_f64, 50_000.0_f64], &edges).unwrap() == Location::Boundary);
-    assert!(in_ring([0.5_f64, 50_000.5_f64], &edges).unwrap() == Location::Exterior);
+    assert_eq!(in_ring([0.5_f64, 50_000.0_f64], &edges, &mut 0).unwrap(), Location::Boundary);
+    assert_eq!(in_ring([0.5_f64, 50_000.5_f64], &edges, &mut 0).unwrap(), Location::Exterior);
     assert_eq!(maxima(&mut edges, LEVELS).unwrap_err().code, Code::Api);
-    assert_eq!(visit(&edges, &mut Ray::new([0.0_f64, 0.0_f64]), LEVELS).unwrap_err().code, Code::Api);
+    assert_eq!(visit(&edges, &mut Ray::new([0.0_f64, 0.0_f64]), LEVELS, &mut 0).unwrap_err().code, Code::Api);
     assert_eq!(maxima(&mut [], LEVELS).unwrap().to_bits(), f64::NEG_INFINITY.to_bits());
-    assert!(!visit(&[], &mut Ray::new([0.0_f64, 0.0_f64]), LEVELS).unwrap());
+    assert!(!visit(&[], &mut Ray::new([0.0_f64, 0.0_f64]), LEVELS, &mut 0).unwrap());
 }

@@ -1,11 +1,15 @@
 //! \[DESIGN\] Import (RULES.md D59): rows read from a `Source` and inserted
 //! into a table over a connection, through a prepared INSERT whose
 //! dynamic parameters take the table's columns' types [ISO/IEC 9075:1992
-//! §17.6 GR5], a batch of rows to each transaction. A source is any type
+//! §17.6 GR5], a batch of rows to each transaction: sent by bulk copy,
+//! with no round trip per row, where the server grants it, no bad row is
+//! to be skipped and no column is a large object's (RULES.md D195). A
+//! source is any type
 //! that yields records of values, one at a time, so memory is bounded by
 //! a record, whatever the source's size; `Delimited` reads CSV [RFC 4180]
 //! and tab-separated text.
 
+mod copied;
 mod delimited;
 mod insert;
 

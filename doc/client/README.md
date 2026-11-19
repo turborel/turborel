@@ -8,7 +8,10 @@ the library a program embeds the database by.
 ## Contents
 
 - [The turborel Command](01-turborel.md)
+- [Working in the turborel Command](05-turborel-commands.md)
 - [The Client Library](02-library.md)
+- [Settings, Pipelines and Pools](02-library-connections.md)
 - [The Embedded Library](03-embedding.md)
 - [Plug-ins](04-plugins.md)
 - [Packages and Registries](04-plugins-packages.md)
+- [The Native Protocol](05-protocol.md)
