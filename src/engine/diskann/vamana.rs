@@ -162,6 +162,10 @@ fn greedy(graph: &Graph, start: u32, x: &[f32], (list, vectors, metric): (usize,
         walk.frontier.take(1, &mut walk.batch);
         let Some(&Entry { distance, id: p, .. }) = walk.batch.first() else { return Ok(()) };
         walk.expanded.push(Candidate { distance, id: p, row: row(p) });
+        if metric.batches() {
+            expand_batched((graph.neighbours(p), x), (vectors, metric), walk)?;
+            continue;
+        }
         for &n in graph.neighbours(p) {
             if walk.visited.visit(n) {
                 let d = finite(metric.distance(x, vectors.row(row(n))?), "metric")?;
@@ -169,6 +173,17 @@ fn greedy(graph: &Graph, start: u32, x: &[f32], (list, vectors, metric): (usize,
             }
         }
     }
+}
+
+/// Adds to the frontier the neighbours `around` not yet visited, measured
+/// from `x` in one call of `metric` (`Metric::distances`).
+fn expand_batched((around, x): (&[u32], &[f32]), (vectors, metric): (Vectors<'_>, &dyn Metric), walk: &mut Walk) -> Result<()> {
+    let fresh: Vec<u32> = around.iter().copied().filter(|&n| walk.visited.visit(n)).collect();
+    let rows = fresh.iter().map(|&n| vectors.row(row(n))).collect::<Result<Vec<_>>>()?;
+    for (n, d) in fresh.into_iter().zip(metric.distances(x, &rows)) {
+        walk.frontier.add(finite(d, "metric")?, n);
+    }
+    Ok(())
 }
 
 /// Each node's R random distinct out-neighbours, or every other node if

@@ -126,6 +126,8 @@ version.
 A locking query reads base tables in its FROM clause, joined or not,
 through no grouping, DISTINCT, window or set operation. A view that reads
 one base table so may stand for it, and the rows locked are that table's.
+A partitioned table's rows are locked in the partitions that hold them,
+so a lock taken through the table holds against a read of the partition.
 A query of another shape, or of a derived table, is refused, SQLCODE
 -900. An unnamed cursor takes FOR UPDATE as a locking clause, as no
 positioned statement names it. A declared cursor's FOR UPDATE keeps its

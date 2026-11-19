@@ -9,6 +9,7 @@ One reference page for each statement, in alphabetical order.
 - [ALTER DATABASE](alter-database.md): hand the database on to another owner, or change the replica group's members
 - [ALTER DOMAIN](alter-domain.md): change a domain's default or constraints
 - [ALTER EMBEDDING MODEL](alter-embedding-model.md): change an embedding model's options
+- [ALTER EXTENSION](alter-extension.md): update an extension to another version
 - [ALTER INDEX](alter-index.md): change an index's options
 - [ALTER PROPERTY GRAPH](alter-property-graph.md): add or drop a graph's element tables, labels and properties, or compile it
 - [ALTER SEQUENCE](alter-sequence.md): change a sequence generator
@@ -17,6 +18,7 @@ One reference page for each statement, in alphabetical order.
 - [ALTER TYPE](alter-type.md): add or drop a structured type's attributes and methods
 - [ALTER USER](alter-user.md): change a user's password, or whether it may create roles
 - [ALTER XQUERY MODULE](alter-xquery-module.md): replace a registered XQuery module's text
+- [BACKUP DATABASE](backup-database.md): take a backup of the database while it serves *(extension)*
 - [BEGIN](begin.md): group statements with their own variables, conditions, cursors and handlers
 - [CALL](call.md): run an SQL-invoked procedure
 - [CANCEL CONNECTION](cancel-connection.md): cancel what a connection of the server runs
@@ -31,6 +33,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE COLLATION](create-collation.md): define a collation
 - [CREATE DOMAIN](create-domain.md): define a domain
 - [CREATE EMBEDDING MODEL](create-embedding-model.md): define an embedding model of a plug-in
+- [CREATE EXTENSION](create-extension.md): load an extension of an external plug-in
 - [CREATE FUNCTION](create-function.md): define an SQL-invoked function, or a polymorphic table function
 - [CREATE GRAPH](create-graph.md): create a GQL graph, typed by a graph type or open
 - [CREATE GRAPH TYPE](create-graph-type.md): define the node and edge types a typed GQL graph holds
@@ -43,6 +46,7 @@ One reference page for each statement, in alphabetical order.
 - [CREATE PROCEDURE](create-procedure.md): define an SQL-invoked procedure
 - [CREATE PROPERTY GRAPH](create-property-graph.md): define a property graph over tables
 - [CREATE REACHABILITY INDEX](create-reachability-index.md): keep which vertices a property graph's edge table leads to
+- [CREATE RESTORE POINT](create-restore-point.md): name a point of the log a restore may stop at *(extension)*
 - [CREATE ROLE](create-role.md): define a role
 - [CREATE SCHEMA](create-schema.md): define a schema
 - [CREATE SEQUENCE](create-sequence.md): define a sequence generator
@@ -70,6 +74,7 @@ One reference page for each statement, in alphabetical order.
 - [DROP COLLATION](drop-collation.md): drop a collation
 - [DROP DOMAIN](drop-domain.md): drop a domain
 - [DROP EMBEDDING MODEL](drop-embedding-model.md): drop an embedding model
+- [DROP EXTENSION](drop-extension.md): drop an extension
 - [DROP GRAPH](drop-graph.md): drop a GQL graph and its tables
 - [DROP GRAPH TYPE](drop-graph-type.md): drop a graph type
 - [DROP INDEX](drop-index.md): drop an index
@@ -114,6 +119,7 @@ One reference page for each statement, in alphabetical order.
 - [PREPARE](prepare.md): prepare a statement, by name
 - [RELEASE SAVEPOINT](release-savepoint.md): destroy a savepoint, keeping the changes since
 - [REPEAT](repeat.md): run statements until a condition is true
+- [RESCAN BACKUP TARGET](rescan-backup-target.md): find again the backups and archived segments a target holds *(extension)*
 - [RESIGNAL](resignal.md): raise again the condition a handler handles *(in a handler)*
 - [RETURN](return.md): give the value of an SQL-invoked function
 - [REVOKE](revoke.md): revoke privileges, or roles

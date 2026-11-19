@@ -24,6 +24,20 @@ fn main() -> ExitCode {
             println!("{}", turborel::product());
             ExitCode::SUCCESS
         }
+        Ok(Command::ExtensionHelp) => {
+            println!("{}", turborel_cli::extension::EXTENSION_USAGE);
+            ExitCode::SUCCESS
+        }
+        Ok(Command::Extension(invocation)) => {
+            let mut out = std::io::stdout().lock();
+            turborel_cli::extension::run(&invocation, &mut out).map_or_else(
+                |e| {
+                    eprintln!("turborel extension: {e}");
+                    ExitCode::FAILURE
+                },
+                |()| ExitCode::SUCCESS,
+            )
+        }
         Ok(Command::Run(options)) => session(&options).unwrap_or_else(|e| {
             eprintln!("turborel: {e}");
             ExitCode::FAILURE

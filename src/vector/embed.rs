@@ -19,7 +19,7 @@ mod model;
 mod routines;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
 pub use bind::{Configured, DATABASE_OPTIONS, DIMENSIONS, FILE, FORMAT, LAYOUT, SHAPE, VERSION, configure_shape, number_option};
 pub use hashed::{HASH_DENSE, HASH_DENSE_DIMS, HASH_SPARSE, HASH_SPARSE_DIMS, HashedEmbedder};
@@ -196,6 +196,10 @@ fn refused(detail: &str) -> SqlError {
 #[derive(Default)]
 pub struct Embedders {
     models: RwLock<Vec<Arc<dyn Embedder>>>,
+    /// \[EXTENSION\] The models of extensions, held by the states that
+    /// hold their extensions, newest last (RULES.md D169): a model of an
+    /// extension dropped or rolled back is gone as its last state is.
+    extension: RwLock<Vec<Weak<dyn Embedder>>>,
     /// The models of the catalog bound, each by what it was bound of
     /// (`bind.rs`).
     bound: Mutex<Vec<(String, Arc<BoundModel>)>>,
@@ -289,7 +293,24 @@ impl Embedders {
     /// SQLCODE -910 if the registry was poisoned.
     pub fn named(&self, name: &str) -> Result<Option<Arc<dyn Embedder>>> {
         let wanted = name.trim().to_uppercase();
-        Ok(read(&self.models)?.iter().find(|m| m.name() == wanted).cloned())
+        let registered = read(&self.models)?.iter().find(|m| m.name() == wanted).cloned();
+        let newest = || read(&self.extension).ok()?.iter().rev().filter_map(Weak::upgrade).find(|m| m.name() == wanted);
+        Ok(registered.or_else(newest))
+    }
+
+    /// Whether a model of `name` is built in or registered, not of an
+    /// extension.
+    pub fn is_registered(&self, name: &str) -> bool {
+        read(&self.models).is_ok_and(|all| all.iter().any(|m| m.name().eq_ignore_ascii_case(name.trim())))
+    }
+
+    /// \[EXTENSION\] Adds `model`, an extension's, held weakly: found by
+    /// name while a state holds its extension (RULES.md D169).
+    pub fn add_extension(&self, model: &Arc<dyn Embedder>) {
+        if let Ok(mut all) = self.extension.write() {
+            all.retain(|m| m.strong_count() > 0);
+            all.push(Arc::downgrade(model));
+        }
     }
 
     /// The names of the models, in the order registered.
@@ -298,7 +319,13 @@ impl Embedders {
     ///
     /// SQLCODE -910 if the registry was poisoned.
     pub fn names(&self) -> Result<Vec<String>> {
-        Ok(read(&self.models)?.iter().map(|m| m.name().to_owned()).collect())
+        let mut names: Vec<String> = read(&self.models)?.iter().map(|m| m.name().to_owned()).collect();
+        for m in read(&self.extension)?.iter().filter_map(Weak::upgrade) {
+            if !names.iter().any(|n| n == m.name()) {
+                names.push(m.name().to_owned());
+            }
+        }
+        Ok(names)
     }
 
     /// Notes that a column is embedded after commit, or of a model's

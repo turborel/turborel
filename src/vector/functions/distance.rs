@@ -87,13 +87,19 @@ impl Distance {
         }
     }
 
-    pub(super) fn call(self, args: &[Value], metrics: &Metrics) -> Result<Value> {
+    /// The metric a call of `args` names, and the position of its first
+    /// vector.
+    pub(super) fn chosen(self, args: &[Value]) -> Result<(String, usize)> {
         let named_first = matches!(self, Distance::VectorDistance) && matches!(args.first(), Some(Value::Char(_)));
-        let (name, first) = match (self.metric(), named_first) {
+        Ok(match (self.metric(), named_first) {
             (Some(fixed), _) => (fixed.to_owned(), 0),
             (None, true) => (text_at(args, 0)?.unwrap_or(COSINE).to_owned(), 1),
             (None, false) => (text_at(args, 2)?.unwrap_or(COSINE).to_owned(), 0),
-        };
+        })
+    }
+
+    pub(super) fn call(self, args: &[Value], metrics: &Metrics) -> Result<Value> {
+        let (name, first) = self.chosen(args)?;
         let found = metric_named(metrics, &name).ok_or_else(|| mismatch(&format!("unknown metric or distance function {name}")))?;
         let (a, b) = (vector_at(args, first)?, vector_at(args, first.saturating_add(1))?);
         let d = metric::distance(found.as_ref(), a, b)?;

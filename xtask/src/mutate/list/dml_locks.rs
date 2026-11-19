@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of locks and delta tables, in the order they run.
-pub const DML_LOCKS: [Mutation; 29] = [
+pub const DML_LOCKS: [Mutation; 33] = [
     Mutation {
         name: "dml-locks-writer-ignores-row-locks",
         package: Package::Core,
@@ -112,8 +112,8 @@ pub const DML_LOCKS: [Mutation; 29] = [
         package: Package::Core,
         breaks: "under FINAL TABLE a referential action changes the subject table",
         file: "src/db/integrity.rs",
-        original: "effects.restricted = c.restricted().map(|t| (t.clone(), crate::error::SqlState::MODIFY_DELTA_TABLE));",
-        replacement: "effects.restricted = c.restricted().map(|t| (t.clone(), crate::error::SqlState::MODIFY_DELTA_TABLE)).filter(|_| false);",
+        original: "effects.restricted = c.restricted().map(|t| (t, crate::error::SqlState::MODIFY_DELTA_TABLE));",
+        replacement: "effects.restricted = c.restricted().map(|t| (t, crate::error::SqlState::MODIFY_DELTA_TABLE)).filter(|_| false);",
         integration: &["delta_tables::final_table_refuses_a_referential_action_on_its_table_d183"],
         unit: &[],
     },
@@ -295,6 +295,46 @@ pub const DML_LOCKS: [Mutation; 29] = [
         original: "            deltas = q.deltas();",
         replacement: "            deltas = Vec::new();",
         integration: &["delta_placement::delta_tables_in_insert_and_merge_d189"],
+        unit: &[],
+    },
+    Mutation {
+        name: "dml-locks-partitions-unlocated",
+        package: Package::Core,
+        breaks: "a locking query of a partitioned table locks no row of its partitions",
+        file: "src/binder/locking.rs",
+        original: "            if chosen && !*located && !leaves.is_empty() {",
+        replacement: "            if chosen && !*located && leaves.is_empty() && leaves.len() > 1 {",
+        integration: &["partition_locks::for_update_locks_the_row_in_its_partition_d185"],
+        unit: &[],
+    },
+    Mutation {
+        name: "dml-locks-lock-table-partitions-skipped",
+        package: Package::Core,
+        breaks: "LOCK TABLE of a partitioned table leaves its partitions unlocked",
+        file: "src/db/unnamed/locking.rs",
+        original: "                subtables.extend(st.catalog.partitioning().descendants(&qn));",
+        replacement: "                subtables.extend(Vec::<QualifiedName>::new());",
+        integration: &["partition_locks::lock_table_locks_the_partitions_d186"],
+        unit: &[],
+    },
+    Mutation {
+        name: "dml-locks-delta-partitions-dropped",
+        package: Package::Core,
+        breaks: "a delta table of a partitioned table records no row of its partitions",
+        file: "src/db/delta.rs",
+        original: "    st.catalog.partitioning().descendants(base)",
+        replacement: "    Vec::new()",
+        integration: &["partition_locks::delta_tables_and_returning_route_to_partitions_d183"],
+        unit: &[],
+    },
+    Mutation {
+        name: "dml-locks-delta-move-unrecorded",
+        package: Package::Core,
+        breaks: "a row an UPDATE moves to another partition is missing from its delta table",
+        file: "src/db/integrity/changes.rs",
+        original: "        self.noted(to, Some(&old), Some(new))?;",
+        replacement: "",
+        integration: &["partition_locks::delta_tables_and_returning_route_to_partitions_d183"],
         unit: &[],
     },
 ];

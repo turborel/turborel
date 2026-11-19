@@ -3,7 +3,7 @@
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 11] {
+pub fn core() -> [&'static [Mutation]; 12] {
     [
         &super::MUTATIONS,
         &super::hash::HASH,
@@ -16,6 +16,7 @@ pub fn core() -> [&'static [Mutation]; 11] {
         &super::sql2023::SQL2023,
         &super::regex::REGEX,
         &super::SHADOW,
+        &super::backup::BACKUP,
     ]
 }
 
@@ -136,8 +137,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 }
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
-/// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, replication's and the server's.
-fn last() -> [&'static [Mutation]; 34] {
+/// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, external plug-ins' and
+/// packages', partitioning's, replication's and the server's.
+fn last() -> [&'static [Mutation]; 37] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -166,7 +168,10 @@ fn last() -> [&'static [Mutation]; 34] {
         &super::graph_table::statistics::GRAPH_STATISTICS,
         &super::graph_iterations::GRAPH_ITERATIONS,
         &super::check_rebind::CHECK_REBIND,
+        &super::plugins::PLUGINS,
+        &super::plugins::PACKAGES,
         &super::simple_features::SIMPLE_FEATURES,
+        &super::partitioning::PARTITIONING,
         &super::FILL,
         &super::ZONES,
         &super::STATS,

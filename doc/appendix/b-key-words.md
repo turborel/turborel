@@ -58,6 +58,12 @@ follows it, beginning a statement. DATABASE is that statement's
 only when a setting's name follows it; in `SET DATABASE = 1` it is
 the name of the setting SET sets.
 
+The words of the statements of backups, BACKUP, INCREMENTAL, LABEL,
+RESTORE, POINT, RESCAN and TARGET, are identifiers too, key words only
+where those statements read them: BACKUP DATABASE and RESCAN BACKUP
+begin a statement, and RESTORE POINT follows CREATE
+([BACKUP DATABASE](../sql/statements/backup-database.md)).
+
 SQL:2023 reserves ABSENT, ANY_VALUE, BEGIN_FRAME, BEGIN_PARTITION, BIGINT, BINARY, BOOLEAN, BTRIM, CONDITION, CUBE, CUME_DIST, CURRENT_ROW, CYCLE, DECFLOAT,
 DENSE_RANK, END_FRAME, END_PARTITION, EVERY, FILTER, FIRST_VALUE, FRAME_ROW, GREATEST, GROUPING, GROUPS, JSON_ARRAY, JSON_ARRAYAGG, JSON_EXISTS, JSON_OBJECT, JSON_OBJECTAGG, JSON_QUERY, JSON_VALUE, LAG, LAST_VALUE, LEAD, LEAST, LIKE_REGEX,
 LISTAGG, LPAD, LTRIM, NTH_VALUE, NTILE, OCCURRENCES_REGEX, OVER, PARTITION, PERCENTILE_CONT, PERCENTILE_DISC, PERCENT_RANK, POSITION_REGEX,
@@ -78,7 +84,9 @@ functions before a parenthesis, as the trims are. Within POSITION_REGEX,
 START and AFTER are words unless IN or FLAG follows, so
 `POSITION_REGEX(START IN S)` searches S for the value of a column START.
 PARTITION is read only where BY follows it after an operand of a join,
-so `FROM T PARTITION` still names T PARTITION.
+so `FROM T PARTITION` still names T PARTITION. In CREATE TABLE it is
+read before BY or OF, and in ALTER TABLE after ATTACH or DETACH, words
+read only there *(extension)*.
 In a GROUP BY, ROLLUP and CUBE are read only before a parenthesis, and
 GROUPING only before SETS, which SQL:2023 does not reserve. GROUPING is
 the grouping operation before a parenthesis in a value, so `GROUP BY

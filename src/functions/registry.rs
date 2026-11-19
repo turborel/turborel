@@ -195,6 +195,42 @@ impl Registry {
         Ok(())
     }
 
+    /// \[EXTENSION\] Takes away the scalar function `f`, the very one
+    /// added, as an extension dropped takes its own (RULES.md D169).
+    pub fn remove_scalar(&mut self, f: &Arc<dyn ScalarFunction>) {
+        let name = f.name().to_owned();
+        if let Some(all) = self.scalars.get_mut(&name) {
+            all.retain(|g| !std::ptr::addr_eq(Arc::as_ptr(&g.0), Arc::as_ptr(f)));
+            if all.is_empty() {
+                self.scalars.remove(&name);
+            }
+        }
+    }
+
+    /// \[EXTENSION\] Takes away the aggregate function `f`, the very one
+    /// added (RULES.md D169).
+    pub fn remove_aggregate(&mut self, f: &Arc<dyn AggregateFunction>) {
+        if self.aggregates.get(f.name()).is_some_and(|g| std::ptr::addr_eq(Arc::as_ptr(&g.0), Arc::as_ptr(f))) {
+            self.aggregates.remove(f.name());
+        }
+    }
+
+    /// \[EXTENSION\] Takes away the table function `f`, the very one added
+    /// (RULES.md D169).
+    pub fn remove_table(&mut self, f: &Arc<dyn TableFunction>) {
+        if self.tables.get(f.name()).is_some_and(|g| std::ptr::addr_eq(Arc::as_ptr(g), Arc::as_ptr(f))) {
+            self.tables.remove(f.name());
+        }
+    }
+
+    /// \[EXTENSION\] Takes away the procedure `p`, the very one added
+    /// (RULES.md D169).
+    pub fn remove_procedure(&mut self, p: &Arc<dyn Procedure>) {
+        if self.procedures.get(p.name()).is_some_and(|g| std::ptr::addr_eq(Arc::as_ptr(g), Arc::as_ptr(p))) {
+            self.procedures.remove(p.name());
+        }
+    }
+
     /// The table function named `name`, if there is one.
     pub fn table(&self, name: &str) -> Option<Arc<dyn TableFunction>> {
         self.tables.get(name).cloned()

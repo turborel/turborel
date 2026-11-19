@@ -160,6 +160,7 @@ pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
         | Plan::System { .. }
         | Plan::Values { .. }
         | Plan::Append { .. }
+        | Plan::MergeAppend { .. }
         | Plan::Sort { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)

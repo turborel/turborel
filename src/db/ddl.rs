@@ -161,6 +161,7 @@ impl State {
             | Change::Abort
             | Change::StatementUndone { .. }
             | Change::Checkpoint
+            | Change::RestorePoint { .. }
             | Change::Stale { .. }
             | Change::LobPut { .. }
             | Change::LobStale { .. }
@@ -199,6 +200,7 @@ impl State {
                 | Change::Abort
                 | Change::StatementUndone { .. }
                 | Change::Checkpoint
+                | Change::RestorePoint { .. }
                 | Change::Stale { .. }
                 | Change::LobPut { .. }
                 | Change::LobStale { .. }
@@ -313,6 +315,10 @@ impl Session {
     ) -> Result<Completion> {
         let schema = self.default_schema();
         self.prepare_change(st, tx, qn)?;
+        // [EXTENSION] the table attached or detached changed too (RULES.md D153).
+        if let AlterAction::AttachPartition { table, .. } | AlterAction::DetachPartition(table) = action {
+            self.prepare_change(st, tx, &qualify(table, &schema))?;
+        }
         // [DESIGN] Of a temporary table, no other transaction using an
         // instance of it meanwhile, nor one having written one since this
         // transaction's snapshot (RULES.md D49).
@@ -338,17 +344,29 @@ impl Session {
             // not the definition's (`db/temporary/reshape.rs`).
             (Some(reshape), _) => match temporary {
                 Some(_) => self.reshape_instances((st, &next), tx, (qn, action, reshape)),
-                None => copy_rows(st, &next, tx, qn, (action, reshape, self.effects(&next))),
+                // [EXTENSION] the entries of a partition's rows of its old
+                // storage taken from the global indexes over them, and those
+                // of its new made as they are copied (RULES.md D157).
+                None => st.unindex_partitions(tx, qn).and_then(|()| copy_rows(st, &next, tx, qn, (action, reshape, self.effects(&next)))),
             },
             // [§11.12 GR1] a default changes no row, nor does an option
-            // changed in place.
+            // changed in place, nor a partition detached.
             (None, AlterAction::AlterColumn { .. } | AlterAction::Storage(_)) => Ok(()),
+            // [EXTENSION] the rows detached out of the global indexes of
+            // the tree they leave (RULES.md D157).
+            (None, AlterAction::DetachPartition(table)) => st.unindex_partitions(tx, &qualify(table, &schema)),
             // [ISO/IEC 9075-2:2023 §14.10 GR5] Of a temporary table, the
             // session's rows deleted already (`db/truncate.rs`).
             (None, AlterAction::Truncate { .. }) => match temporary {
                 Some(_) => Ok(()),
-                None => emptied_rows(&next, tx, qn, self.effects(&next)),
+                None => st.unindex_partitions(tx, qn).and_then(|()| emptied_rows(&next, tx, qn, self.effects(&next))),
             },
+            // [EXTENSION] the rows attached held by their bounds (RULES.md D153).
+            (None, AlterAction::AttachPartition { table, .. }) => {
+                let child = qualify(table, &schema);
+                next.index_partitions(tx, &child)
+                    .and_then(|()| super::partitions::validate_attached(&next, tx, &child, self.effects(&next)))
+            }
             // [DESIGN] Of a temporary table, each session's rows, as it sees
             // them (`db/temporary/reshape.rs`).
             (None, _) => match temporary {
@@ -459,6 +477,8 @@ pub(super) fn copy_rows(
         | AlterAction::DropVersioning { .. }
         | AlterAction::RevertCollation(_)
         | AlterAction::Truncate { .. }
+        | AlterAction::AttachPartition { .. }
+        | AlterAction::DetachPartition(_)
         | AlterAction::Storage(_) => None,
     };
     let fill = added.as_ref().map(|c| default_value(c, effects.user().of(next.catalog.roles()), effects.now)).transpose()?;
@@ -503,6 +523,10 @@ pub(super) fn copy_rows(
 /// constraints: NOT NULL too, a PRIMARY KEY's columns not null [§11.7
 /// SR3a].
 pub(super) fn validate_rows(next: &Arc<State>, tx: &Txn, table: &QualifiedName, mut effects: Effects<'_>) -> Result<()> {
+    // [EXTENSION] a partitioned table's rows are its partitions' (RULES.md D153).
+    if next.catalog.partitioning().is_partitioned(table) {
+        return super::partitions::validate_attached(next, tx, table, effects);
+    }
     next.read_lock(tx, table)?;
     let desc = next.catalog.table(table).cloned().ok_or_else(|| api(format!("[DESIGN] no table {table}")))?;
     let columns: Vec<usize> = (0..desc.columns.len()).collect();

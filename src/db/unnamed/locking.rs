@@ -136,7 +136,12 @@ impl Session {
             };
             self.bound(st, &Params::new(), |b| binder::require(b.db, b.user.cell, desc, &needed, "EXTENSION; RULES.md D186")).or_at(*at)?;
             st.acquire_waiting(tx, &qn, mode, waits).or_at(*at)?;
-            let subtables = if *only { Vec::new() } else { crate::catalog::proper_subtables(&*st.catalog, &qn) };
+            // A typed table's subtables, and [EXTENSION] a partitioned
+            // table's partitions, every level down (RULES.md D186).
+            let mut subtables = if *only { Vec::new() } else { crate::catalog::proper_subtables(&*st.catalog, &qn) };
+            if !*only {
+                subtables.extend(st.catalog.partitioning().descendants(&qn));
+            }
             for sub in subtables {
                 st.acquire_waiting(tx, &sub, mode, waits).or_at(*at)?;
             }

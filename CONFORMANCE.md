@@ -4076,6 +4076,33 @@ ALTER DATABASE REPLICATION MEMBERS 'members'
 
 The view is INFORMATION_SCHEMA.REPLICAS, a server's.
 
+### Backups and recovery to a point in time
+
+Neither standard has these (RULES.md D160 to D166). They run outside a
+transaction, by the database's owner.
+
+```
+BACKUP DATABASE TO 'target' [INCREMENTAL [FROM 'id']] [LABEL 'label']
+CREATE RESTORE POINT name
+RESCAN BACKUP TARGET 'target'
+```
+
+| What | Behaviour |
+|---|---|
+| Online backup (D160) | A checkpoint, then the files in 64 KiB chunks and the log's records written meanwhile, while readers and writers go on. The manifest is written last, so a backup cut short is none. Also `Database::backup`. |
+| Incremental backup (D160) | The chunks whose digest differs from the parent's manifest. A restore follows the chain back to a full backup. |
+| Objects (D161) | Each a block file of format version 1, checksummed and passed through the database's encodings and keys, so an encrypted database's backup is encrypted. BACKUP.COMPRESSION puts LZ4 first. |
+| Verification (D161) | `Database::verify_backup` and `turboreld --verify-backup` read a chain, its chunks, image and records, restoring nothing. A failure is SQLSTATE TBB01. |
+| Restore (D162) | `Database::restore` and `turboreld --restore`, offline, into a staging directory renamed once whole. |
+| Archive of the log (D163) | ARCHIVE.MODE, TARGET, SEGMENT_BYTES, TIMEOUT_MS and RETENTION_SECONDS. A checkpoint keeps every record not archived. |
+| Recovery to a point in time (D164) | To a time, a position, a restore point or the archive's end. A target not reached is SQLSTATE TBB02. |
+| Timelines (D165) | A restore through the archive begins a timeline past every one the archive holds, and never writes over another's segments. |
+| Targets (D166) | `BackupTarget` (and `ArchiveTarget`, the same trait) and `TargetProvider`, object-safe, of strings, integers and byte chunks. The `dir` and `memory` providers are built in. |
+| History (D166) | Durable, in the database's directory. INFORMATION_SCHEMA.BACKUPS, ARCHIVED_SEGMENTS and RESTORE_POINTS show it to the owner, and a non-owner sees no rows. RESCAN BACKUP TARGET rebuilds it from a target. |
+
+BACKUP, INCREMENTAL, LABEL, RESTORE, POINT, RESCAN and TARGET are no key
+words. A backup is cancelled as a statement is.
+
 ### Settings
 
 These are RULES.md D36. INFORMATION_SCHEMA.SETTINGS lists every setting.
@@ -4119,6 +4146,22 @@ assertion, trigger, routine or generation expression reading the table
 names the column or its new name, or a view selects `*` of it, SQLCODE
 -103, as is one of a typed or system-versioned table.
 
+### Partitioned tables
+
+PARTITION BY and PARTITION OF of CREATE TABLE, ATTACH PARTITION and
+DETACH PARTITION of ALTER TABLE, and the views PARTITIONED_TABLES,
+PARTITIONS and PARTITION_INDEXES are extensions
+([Partitioned Tables](doc/sql/23-partitioning.md), RULES.md D153 to D159).
+
+| Use | Behaviour |
+|---|---|
+| Strategies | RANGE, LIST and HASH built in, others registered by `Database::register_partition_strategy`. A HASH table's moduli divide each other, and it has no DEFAULT partition. |
+| Rows | INSERT, UPDATE and MERGE route each row down the tree. A row no partition holds is SQLSTATE 23T01. A row whose key changes is moved, its row triggers fired as an update of the tables over both partitions. |
+| Reads | Partitions pruned by comparisons, IS NULL, IN and OR of the key with constants, and with a prepared statement's parameters as it runs. Reads in an order merged, nearest reads taken from each partition's index. Index nested-loop joins into a partitioned table, each probe routed to the partitions its values admit, or read through a global index. |
+| Keys | PRIMARY KEY and UNIQUE held across partitions, by each partition's index where the key holds the partition key, else by a global index over every partition's rows. Foreign keys to and from partitioned tables. CHECK constraints and defaults inherited. |
+| Indexes | Every method a template, made on each partition and adopted or built on ATTACH. A hybrid index of a MODEL keeps one table of chunks of the tree. A full-text rank uses the statistics of every partition. |
+| Tables | Temporary, system-versioned with a history per partition, and each partition of its own engine. Cursors over them updatable. Typed tables and node or edge tables are not partitioned. |
+
 ### Views of the running system
 
 | View | Shows |
@@ -4129,6 +4172,8 @@ names the column or its new name, or a view selects `*` of it, SQLCODE
 | MEMORY_RESERVATIONS | What holds its memory |
 | LOCKS | The locks held and sought |
 | GRAPH_ALGO_RUNS | The latest 1000 runs of graph algorithms |
+| EXTENSIONS, EXTENSION_OBJECTS, EXTENSION_PACKAGES | The extensions created, the objects their manifests declare, and the database's lock of their packages |
+| BACKUPS, ARCHIVED_SEGMENTS, RESTORE_POINTS | A database's backup history (RULES.md D166) |
 
 ### Plans
 
@@ -4170,6 +4215,29 @@ system tables, the log, file systems, encodings, hash functions and
 diagnostics. Most extension points are listed at the top of `src/db.rs`.
 Encodings and hash functions are in `src/db/formats.rs`, and file systems in
 `src/disk/io.rs`.
+
+### External plug-ins
+
+A plug-in may be a program of another party, run as processes of its own
+and spoken to in plug-in protocol 1 over their pipes (RULES.md D167 to
+D173, `src/plugin.rs`, [Plug-ins](doc/client/04-plugins.md)).
+
+| Mechanism | Behaviour |
+|---|---|
+| CREATE EXTENSION | `CREATE EXTENSION n [VERSION r] [FROM 'f']` loads the newest version installed under PLUGINS.DIRECTORIES that meets r, or the package file or directory f, creating the extensions it REQUIRES first. Its objects are the database's: scalar functions, aggregates, table functions, procedures, vector metrics, embedding models, authentication mechanisms, backup targets and partitioning strategies. The statement is logged with the manifest read and the extension kept in the catalog, so it is recovered, replicated and made again as the database opens. |
+| ALTER EXTENSION | `ALTER EXTENSION n UPDATE [TO r] [FROM 'f']` replaces it by another version, running the scripts of SQL its manifest names for the version it had, once each extension requiring it accepts the new version. |
+| DROP EXTENSION | RESTRICT, the default, is refused while an extension requiring it, or a view, generated column, constraint or routine calling one of its objects remains; CASCADE drops them first. |
+| Transactions | The three statements run in the session's transaction, and ROLLBACK undoes them, the processes of what is undone stopped. |
+| Privileges | Only the database's owner, or any user of a database with none, creates, updates or drops one; any user calls its objects. PLUGINS.DIRECTORIES, PLUGINS.TRUSTED_KEYS and PLUGINS.REQUIRE_SIGNED are a node's settings the host gives, which SQL may not set. |
+| Processes | At most PLUGINS.PROCESSES of an extension run at once. One that ends, breaks the protocol, runs past PLUGINS.CALL_TIMEOUT_MS or sends more than PLUGINS.MAX_MESSAGE_BYTES or PLUGINS.MAX_CALL_BYTES is stopped and its call fails, and the next call starts another. A statement cancelled sends CANCEL (D44). |
+| Calls | A function's rows, a metric's candidates and a model's texts are sent BATCH at a time, so a vector index search over a plug-in's metric is one call for many candidates. A function is DETERMINISTIC only as its manifest says. |
+| Errors | A program's SQLSTATE is kept if of class 22, 23, 38, 39, 42 or 2F, and is 38000 else; the database's own conditions of a plug-in are 38T01 to 38T09 ([SQLSTATE values](doc/appendix/a-sqlstate.md)). |
+| Plans | EXPLAIN ends with the plug-in calls a plan makes. |
+| Packages | A package is one file. Each entry carries its SHA-256 digest, and an optional Ed25519 signature covers the manifest and the digests; it is checked as it is installed and as each of its processes starts. |
+| Versions | Versions are semantic and ranges npm-style. Resolution picks the newest compatible set, backtracking where needed, and refuses cycles and conflicts with 38T09. |
+| Registries | Registries are static directories over HTTPS with a signed, expiring index, tried in priority order, a package pinned to one if asked. None is configured by default. |
+| Lock and cache | A lock file reproduces a set exactly, and downloaded packages are cached by digest. |
+| Command line | `turborel extension` has search, info, install, upgrade, remove, autoremove, list, verify, outdated, why, clean, lock export and import, pack, publish and keygen ([Packages and Registries](doc/client/04-plugins-packages.md)). |
 
 ### Function call syntax
 

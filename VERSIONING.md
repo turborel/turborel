@@ -79,6 +79,7 @@ version, and comes with a major release (see
 | Block file (the log's segments, the catalog file, the replication journal) | 1 | the file's header | `disk/block/format.rs`, `FORMAT_VERSION` |
 | Page file (tables and indexes) | 1 | the file's header | `disk/pager/format.rs`, `FORMAT_VERSION` |
 | Catalog and checkpoint image | 1 | the image's first byte | `db/image.rs`, `IMAGE_FORMAT` |
+| Partitioning descriptors, keys, bounds and index templates | 1 | the catalog image's, as part of it | `catalog/codec/partitions.rs` |
 | Log record | 1 | each record's first byte | `log/record.rs`, `RECORD_VERSION` |
 | Row store table | 1 | its meta page | `engine/rows/meta.rs`, `TABLE_FORMAT` |
 | Column store row group | 1 | its header's first byte | `engine/columns/group.rs`, `GROUP_FORMAT` |
@@ -107,6 +108,15 @@ version, and comes with a major release (see
 | Replication state in the journal | 1 | its first byte | `replication/src/vr/frame.rs`, `STATE_FORMAT` |
 | Replication connection | 1 | its hello, `TBREPL\0\x01` | `server/src/replication/net.rs` |
 | Native protocol | 1 | the client's Hello | `protocol/src/lib.rs`, `VERSION` |
+| Plug-in protocol | 1 | HELLO and WELCOME's first field | `plugin.rs`, `PROTOCOL` |
+| Plug-in manifest (`turborel-plugin.manifest`) | 1 | its PROTOCOL item | `plugin/manifest.rs` |
+| Extension package file | 1 | the byte after its magic `TBPKG\0` | `plugin/package/archive.rs`, `plugin/package.rs` `FORMAT` |
+| Installed package digests file (`turborel-package.digests`) | 1 | its first line | `plugin/package/install.rs` |
+| Registry index (`index`) | 1 | its first line | `plugin/package/index.rs` |
+| Extension lock file (`turborel-extensions.lock`) | 1 | its first line | `plugin/package/lock.rs` |
+| Backup manifest | 1 | the manifest's first byte | `backup/manifest.rs`, `MANIFEST_FORMAT` |
+| Archive layout and timeline history | 1 | the history's first byte | `backup/timeline.rs`, `ARCHIVE_FORMAT` |
+| Backup history entry | 1 | each entry's first byte | `backup/history.rs`, `HISTORY_FORMAT` |
 
 A server refuses a Hello of a protocol version it does not speak, saying
 which it does (SQLSTATE 08004).

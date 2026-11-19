@@ -35,6 +35,7 @@ mod drop;
 mod dynamic;
 mod embedding;
 mod expression;
+mod extension;
 mod generated;
 mod gql;
 mod graph;
@@ -48,6 +49,7 @@ mod locking;
 mod merge;
 mod modules;
 mod ordered;
+mod partitions;
 mod pattern;
 mod periods;
 mod privileges;
@@ -87,6 +89,7 @@ pub use expression::{
     CaseExpression, ColumnSpecification, DatetimeFunction, ExtractField, Predicate, RowValue, SearchCondition, Sign, Subquery, TruthValue,
     ValueExpression, WhenOperand,
 };
+pub use extension::{ExtensionDefinition, ExtensionRead, ExtensionStatement};
 pub use generated::{AlterColumnAction, ColumnGeneration, Overriding};
 pub use gql::{
     EdgeTypeDefinition, ExecuteGql, GqlCall, GqlClause, GqlComposite, GqlCondition, GqlExpression, GqlGraphDefinition, GqlLinear, GqlPage,
@@ -119,6 +122,7 @@ pub use locking::{LockTable, LockTableMode, LockWaits, LockingClause};
 pub use merge::{IntoProperty, MatchedAction, MergeInsert, MergeStatement, MergeWhen};
 pub use modules::ModuleDefinition;
 pub use ordered::{FetchFirst, FetchQuantity, OrderedQuery, RowCount};
+pub use partitions::{BoundDatum, BoundSpec, PartitionBy, PartitionKeyPart, PartitionOfClause, TablePartitioning};
 pub use pattern::{
     Definition, EmptyMatches, Logical, Measure, Navigation, PatternCommon, Physical, Quantified, RecognizedTable, RowPattern,
     RowPatternRecognition, RowsPerMatch, Semantics, SkipTo, Subset, WindowRecognition,

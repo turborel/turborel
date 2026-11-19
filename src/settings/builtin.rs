@@ -203,7 +203,7 @@ pub(super) fn builtin() -> Vec<Definition> {
     all.push(defined(
         ("JOBS.POLICY", Kind::Choice(&crate::threads::JobPolicy::WORDS), text("AUTOMATIC")),
         DATABASE,
-        "How the database's background work, its checkpoints, maintenance, syncs of the log (LOG.SYNC_AFTER_MS), read-ahead (STORAGE.READ_AHEAD_PAGES) and the writing of its files again in new formats (STORAGE.REKEY_BYTES_PER_SECOND), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.",
+        "How the database's background work, its checkpoints, maintenance, syncs of the log (LOG.SYNC_AFTER_MS), read-ahead (STORAGE.READ_AHEAD_PAGES), the writing of its files again in new formats (STORAGE.REKEY_BYTES_PER_SECOND) and the archiving of its log (ARCHIVE.MODE), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.",
     ));
     all.push(defined(
         ("FILES.MAX_OPEN", Kind::Integer { min: 0, max: i128::from(u32::MAX) }, whole(i128::try_from(crate::files::DEFAULT_MAX_OPEN).unwrap_or(1024))),
@@ -239,7 +239,8 @@ pub(super) fn builtin() -> Vec<Definition> {
 /// limits, GQL's session and the graph's later ones.
 fn last() -> impl Iterator<Item = Definition> {
     let graph = super::graph::definitions().into_iter().chain(super::graph::gql_session()).chain(super::graph::later());
-    super::vector::vector().into_iter().chain([static_typing(), super::graph::threads()]).chain(graph)
+    let (backup, plugins) = (super::backup::definitions(), super::plugins::definitions());
+    super::vector::vector().into_iter().chain([static_typing(), super::graph::threads()]).chain(graph).chain(plugins).chain(backup)
 }
 
 /// [XQuery §5.2.3] Whether the Static Typing Feature is in effect for the

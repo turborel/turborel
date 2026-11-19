@@ -4,10 +4,13 @@
 //! which every example of a page tested shows.
 //! The client runs with `--null NULL`, as the manual says its examples do.
 
+mod backup;
 mod embedding;
+mod extensions;
 mod hybrid;
 mod information;
 mod locks;
+mod partitioning;
 mod vector;
 mod xml;
 

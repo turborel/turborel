@@ -78,6 +78,6 @@ impl Leftovers {
         }
         let table = &w.bound.table;
         let mut rows = effects.before_insert(cx, table, self.rows)?;
-        rows.visit(&mut |row| effects.inserted(table, cx.st.insert_row(cx.tx, table, row)?, row))
+        rows.visit(&mut |row| cx.st.insert_routed(cx.tx, table, row).and_then(|(leaf, id)| effects.inserted(&leaf, id, row)))
     }
 }

@@ -25,12 +25,19 @@ kept with the database, which other nodes may share, but given as the
 node starts (`--set`, a configuration file, or before the program opens
 the database) and lasting while it runs. SET DATABASE changes it for the
 running database alone. INFORMATION_SCHEMA.SETTINGS shows such a value
-with VALUE_SOURCE NODE. No setting listed here is a node's.
+with VALUE_SOURCE NODE. The settings marked *node* here are the database's own of the kind: PLUGINS.DIRECTORIES, PLUGINS.TRUSTED_KEYS and PLUGINS.REQUIRE_SIGNED, which bound what the node runs, so only its operator sets them, never SQL.
 
 ## The database's settings
 
 | Setting | Default | Values | Takes effect | |
 |---|---|---|---|---|
+| ARCHIVE.MODE | OFF | ONE OF ON, OFF | at once |  |
+| ARCHIVE.RETENTION_SECONDS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| ARCHIVE.SEGMENT_BYTES | 16777216 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
+| ARCHIVE.TARGET | (empty) | TEXT OF AT MOST 4096 CHARACTERS | at once |  |
+| ARCHIVE.TIMELINE | 1 | INTEGER FROM 1 TO 4294967295 | at once |  |
+| ARCHIVE.TIMEOUT_MS | 60000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| BACKUP.COMPRESSION | OFF | ONE OF ON, OFF | at once |  |
 | CATALOG.COMPACT_AFTER_IMAGES | 64 | INTEGER FROM 1 TO 1000000 | at once |  |
 | CATALOG.NAME | TURBOREL | AN IDENTIFIER | at once |  |
 | CHECKPOINT.AFTER_BYTES | 1073741824 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
@@ -78,6 +85,17 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 | PLANNER.RANGE_SELECTIVITY | 3.333333333333333E-1 | NUMBER FROM 0E0 TO 1E0 | at once |  |
 | PLANNER.REORDER_GAIN | 9E-1 | NUMBER FROM 0E0 TO 9.99E-1 | at once |  |
 | PLANNER.SORT_COMPARE_COST | 1E-1 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |
+| PLUGINS.CALL_TIMEOUT_MS | 30000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| PLUGINS.CANCEL_GRACE_MS | 1000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| PLUGINS.DIRECTORIES | (empty) | TEXT OF AT MOST 65536 CHARACTERS | at once | *node* |
+| PLUGINS.MAX_CALL_BYTES | 67108864 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| PLUGINS.MAX_MESSAGE_BYTES | 16777216 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| PLUGINS.MEMORY_BYTES | 268435456 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| PLUGINS.PINS | (empty) | TEXT OF AT MOST 65536 CHARACTERS | at once |  |
+| PLUGINS.PROCESSES | 4 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| PLUGINS.REGISTRIES | (empty) | TEXT OF AT MOST 65536 CHARACTERS | at once |  |
+| PLUGINS.REQUIRE_SIGNED | OFF | ONE OF ON, OFF | at once | *node* |
+| PLUGINS.TRUSTED_KEYS | (empty) | TEXT OF AT MOST 65536 CHARACTERS | at once | *node* |
 | SESSION.COMMIT_AT_END | ON | ONE OF ON, OFF | at once | *session* |
 | SESSION.LANGUAGE | SQL | ONE OF SQL, GQL | at once | *session* |
 | SESSION.TIME_ZONE | +00:00 | A TIME ZONE DISPLACEMENT FROM -12:59 TO +14:00 | at once | *session* |
@@ -108,6 +126,13 @@ with VALUE_SOURCE NODE. No setting listed here is a node's.
 
 Each in a sentence:
 
+- **ARCHIVE.MODE**: Whether the log's records are archived to ARCHIVE.TARGET as they are made durable, for recovery to a point in time: ON; or not, OFF. While ON, a checkpoint keeps every record not yet archived.
+- **ARCHIVE.RETENTION_SECONDS**: The seconds an archived segment is kept, 0 for ever. An older one is removed once the newest backup no longer needs its records.
+- **ARCHIVE.SEGMENT_BYTES**: The bytes of records gathered before they are archived as one segment.
+- **ARCHIVE.TARGET**: Where the log is archived: a directory's path, or a location of a target provider's scheme, as scheme:rest; none if empty.
+- **ARCHIVE.TIMELINE**: The timeline the database's archived records are kept under: 1 for a database never restored, and a new one for each restore, set by the restore so it never writes over the archive of the database it was restored from.
+- **ARCHIVE.TIMEOUT_MS**: The most milliseconds a durable record waits to be archived, whatever ARCHIVE.SEGMENT_BYTES says; 0 archives every record as soon as the archiver runs.
+- **BACKUP.COMPRESSION**: Whether backups and archived segments pass through the LZ4 encoding, which must be registered, before the database's own encodings: ON; or not, OFF.
 - **CATALOG.COMPACT_AFTER_IMAGES**: The images the catalog file holds after which the next is written, alone, to the other file.
 - **CATALOG.NAME**: The name of the catalog the schemata are in, as the Information Schema gives it [ISO/IEC 9075:1992 §21.2.2].
 - **CHECKPOINT.AFTER_BYTES**: The bytes of the data file's side file, each page once however often it was written, after which the end of a transaction takes a checkpoint.
@@ -128,7 +153,7 @@ Each in a sentence:
 - **GRAPH.MAX_SEARCH_STATES**: The most states a GRAPH_TABLE's search makes, each a vertex reached at a place of its pattern; 0 for no limit. Reaching it does as GRAPH.ON_LIMIT says.
 - **GRAPH.ON_LIMIT**: What a GRAPH_TABLE's search does on reaching a limit: fails, SQLSTATE 54061, ERROR; or ends with the paths found, warning 01W61, TRUNCATE.
 - **GRAPH.PARALLEL_MIN_STATES**: The least states, estimated from the graph's size, a GRAPH_TABLE's search makes for it to run on the workers EXECUTOR.GRAPH_THREADS allows; a smaller one runs on the statement's thread alone; 0 for any search. Its results are the same either way.
-- **JOBS.POLICY**: How the database's background work, its checkpoints, maintenance, syncs of the log (LOG.SYNC_AFTER_MS), read-ahead (STORAGE.READ_AHEAD_PAGES) and the writing of its files again in new formats (STORAGE.REKEY_BYTES_PER_SECOND), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.
+- **JOBS.POLICY**: How the database's background work, its checkpoints, maintenance, syncs of the log (LOG.SYNC_AFTER_MS), read-ahead (STORAGE.READ_AHEAD_PAGES), the writing of its files again in new formats (STORAGE.REKEY_BYTES_PER_SECOND) and the archiving of its log (ARCHIVE.MODE), runs: on threads of its own as it comes due, AUTOMATIC; only when the program asks, MANUAL; or not until this changes, PAUSED.
 - **LOCKS.TIMEOUT_MS**: The milliseconds a statement waits for a lock or a row, under LOCKS.WAIT ON, before it is refused (SQLCODE -911); 0 for no limit.
 - **LOCKS.WAIT**: ON waits for a lock, or a row, another transaction holds until it ends; OFF refuses the statement at once. ON in a database a server serves.
 - **LOG.COMMIT_SYNC**: Whether a commit waits until its commit record is synced to the log, ON; or returns once the record is written, OFF: the transaction is then seen by others at once, and lost if the system fails before the log is next synced, by a commit of ON, a definition, a checkpoint, the database closing, or LOG.SYNC_AFTER_MS passing.
@@ -155,6 +180,17 @@ Each in a sentence:
 - **PLANNER.RANGE_SELECTIVITY**: The fraction of rows an order comparison, a pattern or a subquery keeps when the statistics do not tell.
 - **PLANNER.REORDER_GAIN**: A join order is taken over the FROM clause's if its estimated cost is less than this fraction of that order's.
 - **PLANNER.SORT_COMPARE_COST**: The cost of one comparison of a sort, a row read in sequence costing 1.
+- **PLUGINS.CALL_TIMEOUT_MS**: The milliseconds a call of a plug-in may take before its process is stopped and the call fails with SQLSTATE 38T02; 0 for no limit.
+- **PLUGINS.CANCEL_GRACE_MS**: The milliseconds a plug-in has to answer a cancelled call before its process is stopped.
+- **PLUGINS.DIRECTORIES**: The directories an extension's plug-in may be in, separated by ';', each holding any directory below it; empty, as it is until the host sets it, for none. The host sets it as the database opens; SQL may not.
+- **PLUGINS.MAX_CALL_BYTES**: The most bytes a plug-in sends in answer to one call, all its messages together; more stops its process, and the call fails with SQLSTATE 38T04.
+- **PLUGINS.MAX_MESSAGE_BYTES**: The most bytes of one message a plug-in sends; a longer one stops its process, and the call fails with SQLSTATE 38T04.
+- **PLUGINS.MEMORY_BYTES**: The memory a plug-in is told it may use, in its HELLO; a program that uses more is the operator's to stop, as the database makes no calls of the operating system to cap it.
+- **PLUGINS.PINS**: Packages each found only in one registry, written name=URL, separated by ';'.
+- **PLUGINS.PROCESSES**: The most processes of one extension running at once; a call waits for one to be free. 0 is taken as 1.
+- **PLUGINS.REGISTRIES**: The registries packages are found in, by priority, each an https URL of a directory holding an index, separated by ';'; empty, as no registry is run for all, for none.
+- **PLUGINS.REQUIRE_SIGNED**: Whether a package must be signed by a key of PLUGINS.TRUSTED_KEYS to be installed or loaded, ON, or may be unsigned, OFF. The host sets it; SQL may not.
+- **PLUGINS.TRUSTED_KEYS**: The Ed25519 public keys whose signatures on a package or a registry's index are trusted, each 64 hexadecimal digits, separated by ';', or '@' and a file of one a line. The host sets it; SQL may not.
 - **SESSION.COMMIT_AT_END**: Whether a transaction open when its session ends is committed, ON, or rolled back, OFF [X3.135-1986 §7.1 GR2].
 - **SESSION.LANGUAGE**: The language a session's direct statements are read in, SQL or GQL; in GQL each statement but SET is a GQL request.
 - **SESSION.TIME_ZONE**: The time zone displacement of an SQL-session, ±HH:MM from -12:59 to +14:00 [ISO/IEC 9075-2:2023 §4.7.2]: of CURRENT_TIME and CURRENT_TIMESTAMP, and implied by a time or timestamp without time zone.

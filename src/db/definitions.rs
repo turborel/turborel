@@ -194,6 +194,7 @@ impl Session {
                 Session::plugin_registered(st, statement, schema)?;
                 self.own_object(st, v.name(), (schema, "EXTENSION"))
             }
+            SchemaStatement::Extension(e) => Ok(super::extensions::extension_lock(&e.definition().name)),
             SchemaStatement::GraphType(t) => self.own_object(st, &t.name, (schema, "EXTENSION")),
             SchemaStatement::GqlGraph(g) => self.own_object(st, &g.name, (schema, "EXTENSION")),
             // [EXTENSION] as CREATE COLLATION [ISO/IEC 9075-2:2023 §11.43 SR1].
@@ -313,6 +314,7 @@ impl State {
             SchemaStatement::Graph(g) => self.create_graph(schema, g),
             SchemaStatement::AlterGraph(a) => self.alter_graph(schema, a),
             SchemaStatement::Vector(v) => self.vector_statement(schema, v),
+            SchemaStatement::Extension(e) => self.extension_statement(e),
             SchemaStatement::GraphType(t) => self.create_graph_type(schema, t),
             SchemaStatement::GqlGraph(g) => self.record_gql_graph(schema, g),
             SchemaStatement::XmlSchema(x) => self.create_xml_schema(schema, x),
@@ -352,14 +354,27 @@ impl State {
         if let Some((engine, _)) = placed {
             self.placement.insert(qn.clone(), engine.clone());
         }
-        let mut desc = self.table_described((schema, zone), t, placed)?;
+        // [EXTENSION] a partition's columns its parent's (RULES.md D153).
+        let mut desc = match t.partitioning.as_deref().and_then(|p| p.of.as_ref()) {
+            Some(of) => self.partition_described(schema, (t, of), placed)?,
+            None => self.table_described((schema, zone), t, placed)?,
+        };
         self.give_epochs(&mut desc, epochs)?;
         let mut catalog = self.catalog.duplicate();
         catalog.add_table(desc.clone());
+        let partition_locks = self.define_partitioning(&mut *catalog, (schema, zone), t, &desc)?;
         let mut built = self.place_table(&mut *catalog, &desc, made)?;
+        self.derive_indexes(&mut *catalog, &desc.name, (&mut built, made))?;
+        // [EXTENSION] the global indexes its keys need (RULES.md D157).
+        self.sync_globals(&mut *catalog, &desc.name, (&mut built, made, None))?;
         // [ISO/IEC 9075-2:2023 §11.3 GR1c] A system-versioned table, its
         // history made (RULES.md D82).
-        if t.versioning.is_some() {
+        // [EXTENSION] a partition of a system-versioned table, its own (RULES.md D159).
+        let of_versioned = catalog
+            .partitioning()
+            .of(&desc.name)
+            .is_some_and(|o| catalog.table(&super::write::system_time::history_name(&o.parent)).is_some());
+        if t.versioning.is_some() || of_versioned {
             built.tables.push(self.versioned_table(&mut *catalog, &desc, made).or_at(t.name.at)?);
         }
         self.catalog = Arc::from(catalog);
@@ -371,7 +386,8 @@ impl State {
                 reads.push(name);
             }
         }
-        let locks = in_schema(&qn, reads);
+        let mut locks = in_schema(&qn, reads);
+        locks.extend(partition_locks);
         Ok(Defined { made: Some(built), placed: Some((desc.engine, desc.generation)), locks, ..Defined::default() })
     }
 
@@ -418,7 +434,7 @@ impl State {
     /// That `qn` may name a table or view defined now: its schema exists,
     /// and holds no table or view of the name, as the Syntax Rule
     /// `rule_cited` says.
-    fn new_object(&self, qn: &QualifiedName, rule_cited: &str) -> Result<()> {
+    pub(super) fn new_object(&self, qn: &QualifiedName, rule_cited: &str) -> Result<()> {
         if !self.catalog.schema_exists(&qn.auth) {
             let msg = format!("[ISO/IEC 9075:1992 {rule_cited}] there is no schema {0}: CREATE SCHEMA AUTHORIZATION {0} first", qn.auth);
             return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::INVALID_SCHEMA_NAME));

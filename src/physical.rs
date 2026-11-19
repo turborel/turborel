@@ -16,6 +16,7 @@
 //! dropped if that is cheaper than scanning in any order and sorting.
 
 mod access;
+mod built;
 mod collated;
 mod cost;
 pub(crate) mod estimate;
@@ -43,6 +44,8 @@ pub use kept::{Place, ProbeSlot};
 pub(crate) use kept::{filled_plan, keepable, same_shape};
 
 use std::sync::Arc;
+
+use built::Built;
 
 use crate::catalog::QualifiedName;
 use crate::db::State;
@@ -291,6 +294,17 @@ pub enum Plan {
         /// The rows returned after them.
         right: Box<Plan>,
     },
+    /// \[EXTENSION\] The rows of each of `inputs`, each in the order of
+    /// `keys`, merged in that order: the partitions of a partitioned table
+    /// read (RULES.md D156).
+    MergeAppend {
+        /// The rows merged, each input in the order of `keys`.
+        inputs: Vec<Plan>,
+        /// The keys, most significant first.
+        keys: Vec<SortKey>,
+        /// What EXPLAIN shows of it: MergeAppend and the keys.
+        detail: String,
+    },
     /// The rows of `input` in the order of `keys` [X3.135-1986 §8.3 GR3b].
     Sort {
         /// The sort keys, most significant first.
@@ -378,18 +392,6 @@ pub struct PhysicalPlanner<'a> {
     first: Option<usize>,
     /// \[EXTENSION\] The FETCH FIRST whose count `first` is: its search.
     fetch: Option<&'a crate::logical::Fetch>,
-}
-
-/// A built plan, and whether its rows come out in the order that was asked for.
-struct Built {
-    plan: Plan,
-    ordered: bool,
-}
-
-impl Built {
-    fn unordered(plan: Plan) -> Built {
-        Built { plan, ordered: false }
-    }
 }
 
 /// One table to read: its name, how the operators over it are described

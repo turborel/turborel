@@ -59,9 +59,10 @@ impl Collector {
     }
 
     /// Of FINAL, the subject table, which none may change once the
-    /// statement's own changes are made [§7.6 GR5a].
-    pub(super) fn restricted(&self) -> Option<&QualifiedName> {
-        (self.0.result == DeltaResult::Final).then_some(&self.0.table)
+    /// statement's own changes are made [§7.6 GR5a], and the tables whose
+    /// rows are its rows, its subtables or partitions.
+    pub(super) fn restricted(&self) -> Option<Vec<QualifiedName>> {
+        (self.0.result == DeltaResult::Final).then(|| std::iter::once(self.0.table.clone()).chain(self.0.members.iter().cloned()).collect())
     }
 
     /// Records the row of `table` changed from `old` to `new`, if the
@@ -86,6 +87,16 @@ impl Collector {
         let shown: Row = self.0.map.iter().map(|&c| row.get(c).cloned().unwrap_or(crate::value::Value::Null)).collect();
         lock_builtin(&self.0.rows).push(shown)
     }
+}
+
+/// The tables whose rows a statement changing `base` changes as its own,
+/// a typed table's proper subtables [§14.9 GR4, §14.14 GR6], and
+/// \[EXTENSION\] a partitioned table's partitions (RULES.md D153).
+fn delta_members(st: &State, base: &QualifiedName) -> Vec<QualifiedName> {
+    if st.catalog.table(base).is_some_and(|t| t.typed.is_some()) {
+        return proper_subtables(&*st.catalog, base);
+    }
+    st.catalog.partitioning().descendants(base)
 }
 
 /// [ISO/IEC 9075-2:2023 §15.18 GR15, §15.21 GR6i] A change of `table`, of
@@ -195,8 +206,7 @@ impl Session {
         let name = qualify(subject, &self.default_schema());
         let (base, map, columns) = self.delta_subject(st, &name, params)?;
         self.may_run(st, &d.statement)?;
-        let members =
-            if st.catalog.table(&base).is_some_and(|t| t.typed.is_some()) { proper_subtables(&*st.catalog, &base) } else { Vec::new() };
+        let members = delta_members(st, &base);
         let rows = Mutex::new(HeldRows::new(st.list_space()));
         let gathered = Gathered { table: base, members, map, result: d.result, rows, claimed: AtomicBool::new(false) };
         let collector = Collector(Arc::new(gathered));
@@ -243,12 +253,12 @@ impl Session {
     /// The collector of the statement whose effects are made now, if one
     /// is a delta table's and none took it yet; else, of FINAL, the table
     /// none may change.
-    pub(super) fn delta_effects(&self) -> (Option<Collector>, Option<QualifiedName>) {
+    pub(super) fn delta_effects(&self) -> (Option<Collector>, Option<Vec<QualifiedName>>) {
         let inner = self.inner.borrow();
         let Some(c) = inner.delta.as_ref() else { return (None, None) };
         if c.claim() {
             return (Some(c.clone()), None);
         }
-        (None, c.restricted().cloned())
+        (None, c.restricted())
     }
 }

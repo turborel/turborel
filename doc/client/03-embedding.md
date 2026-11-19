@@ -982,6 +982,110 @@ Output:
 3 0E0
 ```
 
+### Partition strategies *(extension)*
+
+A partitioned table divides its rows among its partitions by the
+strategy PARTITION BY names ([Partitioned
+Tables](../sql/23-partitioning.md)). RANGE, LIST and HASH are built in.
+A program adds a strategy with `register_partition_strategy`, an
+implementation of `turborel::partition::PartitionStrategy`. Its name is a
+regular identifier in upper case, not one built in or registered
+already, or registering it fails with SQLCODE -910. A table may name it
+from then on. In a database opened without it, such a table keeps its
+rows and is read whole, and a row written to it fails with SQLCODE -103.
+
+The database owns the DEFAULT partition, which no strategy sees, and
+gives the strategy each partition's bound as its `bound` checked it.
+The strategy keeps this contract, which
+`test/integration/partitioning/contract.rs` checks of each built-in one.
+
+- `bound` accepts only the forms it reads, never DEFAULT, and gives a
+  bound the other methods take.
+- Of siblings whose bounds do not `overlaps`, `contains` is true of at
+  most one for a key, and `route` gives that one.
+- `admits` is true of every bound that contains a key meeting every
+  restriction a read gives. It may be true of others, never false of one
+  of these, so a read never misses a row.
+- Every method is deterministic, the same on any machine, as the rows a
+  partition holds depend on it, and none calls back into the database.
+
+This strategy sends a row to the partition of its key's parity:
+
+```rust
+use turborel::catalog::PartitionBound;
+use turborel::db::Database;
+use turborel::error::{Code, Result, SqlError};
+use turborel::partition::{PartitionStrategy, Restriction};
+use turborel::value::{DataType, Value};
+
+/// WITH (EVEN 1) holds the even keys, WITH (EVEN 0) the odd ones.
+#[derive(Debug)]
+struct Parity;
+
+/// Whether `bound` holds the even keys, if it is a bound of PARITY.
+fn even(bound: &PartitionBound) -> Option<bool> {
+    let PartitionBound::With(options) = bound else { return None };
+    options.first().map(|(_, v)| v.to_string() == "1")
+}
+
+impl PartitionStrategy for Parity {
+    fn name(&self) -> &str {
+        "PARITY"
+    }
+
+    fn check_key(&self, types: &[DataType]) -> Result<()> {
+        match types {
+            [DataType::Exact { scale: 0, .. }] => Ok(()),
+            _ => Err(SqlError::new(Code::SyntaxRule, "PARITY divides one whole number")),
+        }
+    }
+
+    fn bound(&self, _types: &[DataType], spec: PartitionBound) -> Result<PartitionBound> {
+        match even(&spec) {
+            Some(_) => Ok(spec),
+            None => Err(SqlError::new(Code::SyntaxRule, "PARITY takes WITH (EVEN 0) or WITH (EVEN 1)")),
+        }
+    }
+
+    fn overlaps(&self, a: &PartitionBound, b: &PartitionBound) -> Result<bool> {
+        Ok(even(a) == even(b))
+    }
+
+    fn contains(&self, bound: &PartitionBound, key: &[Value]) -> Result<bool> {
+        let key_even = key.first().and_then(|v| v.to_string().parse::<i64>().ok()).map(|k| k % 2 == 0);
+        Ok(key_even.is_some() && even(bound) == key_even)
+    }
+
+    fn admits(&self, bound: &PartitionBound, restrictions: &[Option<Restriction>]) -> Result<bool> {
+        let Some(Some(Restriction::Equal(values))) = restrictions.first() else { return Ok(true) };
+        Ok(values.iter().any(|v| self.contains(bound, std::slice::from_ref(v)).unwrap_or(true)))
+    }
+}
+
+fn main() -> Result<()> {
+    let db = Database::new();
+    db.register_partition_strategy(Box::new(Parity))?;
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN")?;
+    let ann = db.session("ANN");
+    ann.run("CREATE TABLE T (K INTEGER) PARTITION BY PARITY (K)")?;
+    ann.run("CREATE TABLE T_EVEN PARTITION OF T FOR VALUES WITH (EVEN 1)")?;
+    ann.run("CREATE TABLE T_ODD PARTITION OF T FOR VALUES WITH (EVEN 0)")?;
+    ann.run("INSERT INTO T VALUES (1), (2), (3), (4)")?;
+    let mut rows = ann.open_cursor("SELECT K FROM T_EVEN ORDER BY K")?;
+    while let Some(row) = rows.fetch()? {
+        println!("{}", row[0]);
+    }
+    Ok(())
+}
+```
+
+Output:
+
+```text
+2
+4
+```
+
 ## Spatial data *(extension)*
 
 The geometry types and their functions are built in, so every
@@ -1140,6 +1244,96 @@ each self-pair. Reference counts do not multiply the returned pairs.
 These are rectangle storage operations. An exact geometry predicate needs
 to test the candidate geometry, and rectangle containment has different
 boundary semantics from a geometry's topological ST_Contains operation.
+
+## Backups *(extension)*
+
+A database kept in a directory takes a backup while it serves with
+`Database::backup`, as [BACKUP DATABASE](../sql/statements/backup-database.md)
+does, and `verify_backup` checks one without restoring it. A database
+not yet opened restores one into a directory not there yet with
+`restore`, and is closed once it is done. A program then opens the
+directory as any other
+([Backups and Recovery](../operator/10-backups.md)).
+
+A target is a `turborel::backup::BackupTarget`, a store of named
+objects, and `ArchiveTarget` is the same trait, which the archive of the
+log writes to. A `TargetProvider` opens the targets of one scheme from
+their locations, and `register_target_provider` adds one to a database
+before it takes a backup or restores one. The built-in providers are
+`dir`, also of a location with no scheme, and `memory`, each location a
+store of its own for the database's life.
+
+The trait's methods take and give strings, integers and chunks of bytes
+alone, so a provider may hand the work to another process or a remote
+service, and it is safe to call as a `dyn` object. An upload is begun
+(`begin`), given its bytes in chunks (`write`), and then made an object
+durably (`finish`) or dropped (`abandon`). An object is read by ranges
+(`read`), listed by the prefix of its name (`list`) and removed
+(`remove`). An object exists once `finish` returns and never before, is
+never replaced, and its name is of parts each of letters, digits, `.`,
+`_` and `-`, joined by `/`. Its methods may be called from several
+threads at once and never call back into the database. The contract in
+full is the trait's own documentation.
+
+A provider whose targets are one store in memory, shared by two
+databases, so that the second restores the first's backup:
+
+```rust
+use std::sync::Arc;
+
+use turborel::backup::{BackupTarget, MemoryTarget, TargetProvider};
+use turborel::db::backup::{BackupOptions, RestoreOptions};
+use turborel::db::{Database, OpenOptions};
+use turborel::backup::seed::RecoveryTarget;
+use turborel::disk::io::{FileSystem, OsFileSystem};
+
+/// Every location of the scheme `vault` is the one store it holds.
+struct Vault(Arc<MemoryTarget>);
+
+impl TargetProvider for Vault {
+    fn scheme(&self) -> &'static str {
+        "vault"
+    }
+    fn open(&self, _location: &str) -> turborel::error::Result<Arc<dyn BackupTarget>> {
+        Ok(Arc::clone(&self.0) as Arc<dyn BackupTarget>)
+    }
+}
+
+fn main() -> Result<(), turborel::error::SqlError> {
+    let scratch = std::env::temp_dir().join(format!("turborel-embedding-backup-{}", std::process::id()));
+    let fs: Arc<dyn FileSystem> = Arc::new(OsFileSystem);
+    let vault = Arc::new(Vault(Arc::new(MemoryTarget::new("vault:main"))));
+
+    let db = Database::new();
+    db.register_target_provider(Arc::clone(&vault) as Arc<dyn TargetProvider>)?;
+    db.open_files(&fs, &scratch.join("db"), &OpenOptions::default())?;
+    db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER PRIMARY KEY)")?;
+    let s = db.session("APP");
+    s.run("INSERT INTO T VALUES (1), (2)")?;
+    s.run("COMMIT")?;
+    let taken = db.backup(&BackupOptions { location: "vault:main".into(), ..BackupOptions::default() })?;
+    assert_eq!(db.verify_backup("vault:main", &taken.id)?.backups, 1);
+
+    let restorer = Database::new();
+    restorer.register_target_provider(vault)?;
+    let options = RestoreOptions {
+        dir: scratch.join("back"),
+        location: "vault:main".into(),
+        backup: String::new(),
+        archive: None,
+        target: RecoveryTarget::End,
+        timeline: None,
+    };
+    assert_eq!(restorer.restore(&options)?.backup, taken.id);
+    let back = Database::new();
+    back.open_files(&fs, &scratch.join("back"), &OpenOptions::default())?;
+    let app = back.session("APP");
+    let mut rows = app.open_cursor("SELECT COUNT(*) FROM T")?;
+    assert_eq!(rows.fetch()?.map(|r| r[0].to_string()).as_deref(), Some("2"));
+    std::fs::remove_dir_all(&scratch).ok();
+    Ok(())
+}
+```
 
 ## See also
 

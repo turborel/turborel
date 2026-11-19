@@ -78,7 +78,7 @@ in a program that embeds turborel; see [DECLARE CURSOR](declare-cursor.md).
 Written with RETURNING and a select list *(extension)*, the statement is
 a query of the rows it changed, and a query reads them as a table written
 OLD TABLE, NEW TABLE or FINAL TABLE around the statement
-([Data Change Delta Tables](../24-delta-tables.md)).
+([Data Change Delta Tables](../25-delta-tables.md)).
 
 ## RULES
 
@@ -252,4 +252,4 @@ Features X082 and X132. TB911 is this implementation's own.
 [INSERT](insert.md), [DELETE](delete.md), [CREATE TRIGGER](create-trigger.md),
 [DECLARE CURSOR](declare-cursor.md), [SET TRANSACTION](set-transaction.md),
 [Changing Data](../../user/05-changing-data.md),
-[Data Change Delta Tables](../24-delta-tables.md)
+[Data Change Delta Tables](../25-delta-tables.md)

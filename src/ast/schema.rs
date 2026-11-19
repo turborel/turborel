@@ -129,6 +129,9 @@ pub enum SchemaStatement {
     /// \[EXTENSION\] A statement of an embedding model or a vector
     /// pipeline (`ast/embedding.rs`).
     Vector(Box<super::VectorStatement>),
+    /// \[EXTENSION\] CREATE EXTENSION or ALTER EXTENSION ... UPDATE
+    /// (RULES.md D168).
+    Extension(Box<super::ExtensionStatement>),
     /// \[EXTENSION\] CREATE GRAPH TYPE (graph standard §4.3).
     GraphType(Box<super::GraphTypeDefinition>),
     /// \[EXTENSION\] CREATE GRAPH, of a GQL graph typed or open (§4.3).
@@ -368,6 +371,8 @@ pub struct TableDefinition {
     pub versioning: Option<usize>,
     /// \[EXTENSION\] (§4.2) AS NODE or AS EDGE, if written, and where.
     pub graph: Option<(crate::catalog::NativeKind, usize)>,
+    /// \[EXTENSION\] Its PARTITION BY and PARTITION OF, if written (RULES.md D153).
+    pub partitioning: Option<Box<super::TablePartitioning>>,
 }
 
 /// \[EXTENSION\] `<table storage>` ::= \[USING `<engine name>`\] \[WITH

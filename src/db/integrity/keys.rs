@@ -7,7 +7,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::catalog::{ConstraintKind, IndexDesc, QualifiedName, TableDesc, proper_supertables};
+use crate::catalog::{ConstraintKind, IndexDesc, QualifiedName, TableDesc, global_index_name};
+use crate::db::partitions::dispatch::Dispatched;
 use crate::db::{State, api};
 use crate::error::{Code, Result, SqlError, Subject, fail};
 use crate::index::{Key, KeyOrder, Probe};
@@ -63,6 +64,10 @@ pub(in crate::db) struct KeyCheck<'s> {
     /// each row's key. Empty of another.
     family: Vec<QualifiedName>,
     keyed: Option<&'s IndexDesc>,
+    /// \[EXTENSION\] Of a constraint of a partitioned table a global index
+    /// holds, the index and its rows, read from their partitions (RULES.md
+    /// D157).
+    global: Option<(&'s IndexDesc, Dispatched)>,
 }
 
 impl<'s> KeyCheck<'s> {
@@ -86,13 +91,43 @@ impl<'s> KeyCheck<'s> {
         let (primary, nulls_distinct) = (*primary, *nulls_distinct);
         // The table whose constraint it is: `desc`'s, or a supertable's.
         let owner = std::iter::once(desc.name.clone())
-            .chain(proper_supertables(&*st.catalog, &desc.name))
+            .chain(st.above(&desc.name))
             .find(|t| st.catalog.table(t).is_some_and(|d| d.constraints.iter().any(|c| c.name == *name)))
             .unwrap_or_else(|| desc.name.clone());
-        let family: Vec<QualifiedName> = st.family(&owner).into_iter().filter(|t| *t != desc.name).collect();
+        let mut family: Vec<QualifiedName> = st.family(&owner).into_iter().filter(|t| *t != desc.name).collect();
+        // [EXTENSION] a key a partition's own unique index enforces for the
+        // whole tree, its rows' key in no other partition (RULES.md D157).
+        let partition = st.catalog.partitioning().of(&desc.name).is_some();
+        if !unique.is_empty() && partition {
+            family.clear();
+        }
+        // [EXTENSION] a key a global index holds for the tree, checked
+        // through it, not in each partition (RULES.md D157).
+        let template = global_index_name(&format!("{}.{}.{}", owner.auth, owner.ident, name.ident));
+        let global = st.catalog.index(&template).filter(|_| partition).map(|ix| (ix, Dispatched::of(st, &ix.table)));
+        if global.is_some() {
+            family.clear();
+        }
         let keyed = st.catalog.indexes(&owner).into_iter().find(|ix| ix.unique && ix.columns == key).or_else(|| unique.first().copied());
         let failed = None;
-        Ok(Some(KeyCheck { st, txn, desc, storage, name, columns, key, overlaps, primary, nulls_distinct, unique, failed, family, keyed }))
+        let check = KeyCheck {
+            st,
+            txn,
+            desc,
+            storage,
+            name,
+            columns,
+            key,
+            overlaps,
+            primary,
+            nulls_distinct,
+            unique,
+            failed,
+            family,
+            keyed,
+            global,
+        };
+        Ok(Some(check))
     }
 
     /// Whether it checks constraint `name`.
@@ -167,6 +202,9 @@ impl<'s> KeyCheck<'s> {
         if self.overlaps {
             return self.overlapping(key);
         }
+        if let Some((ix, rows)) = &self.global {
+            return self.global_duplicate(ix, rows, key);
+        }
         if !self.family.is_empty() {
             return self.family_duplicate(key);
         }
@@ -229,6 +267,21 @@ impl KeyCheck<'_> {
         for read in Arc::clone(self.storage).scan(self.txn.id, &all) {
             let (_, row) = read?;
             holders = holders.saturating_add(usize::from(overlap(&self.key_of(&row)?, key, self.columns.len())));
+            if holders > 1 {
+                return fail(Code::Constraint, duplicated(self.desc, self.name, self.columns));
+            }
+        }
+        Ok(())
+    }
+
+    /// \[EXTENSION\] `duplicate`, of a constraint a global index `ix`
+    /// holds. No two rows its entries name hold `key`, each read from its
+    /// partition in `rows` (RULES.md D157).
+    fn global_duplicate(&self, ix: &IndexDesc, rows: &Dispatched, key: &Key) -> Result<()> {
+        let mut holders = 0_usize;
+        for other in self.st.index_of(&ix.name)?.rows(key)? {
+            let newest = rows.newest(self.txn.id, other)?;
+            holders = holders.saturating_add(usize::from(holds(&newest, &|row| Ok(self.key_of(row)? == *key))?));
             if holders > 1 {
                 return fail(Code::Constraint, duplicated(self.desc, self.name, self.columns));
             }

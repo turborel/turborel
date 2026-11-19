@@ -17,7 +17,11 @@ use turboreld::{Command, Config, UserCommand, parse};
 fn config(line: &str) -> Config {
     let args: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
     match parse(&args).unwrap() {
-        Command::Serve(config) | Command::User(config, _) | Command::Reseal(config, _) | Command::Rekey(config) => config,
+        Command::Serve(config)
+        | Command::User(config, _)
+        | Command::Reseal(config, _)
+        | Command::Rekey(config)
+        | Command::Backup(config, _) => config,
         Command::Help | Command::Version => panic!("help"),
     }
 }

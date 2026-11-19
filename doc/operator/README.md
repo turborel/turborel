@@ -15,3 +15,4 @@ For whoever installs, runs and looks after a turborel server and its databases.
 - [Encryption](07-encryption.md)
 - [Diagnostics](08-diagnostics.md)
 - [Replication](09-replication.md) *(extension)*
+- [Backups and Recovery](10-backups.md) *(extension)*

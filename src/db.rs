@@ -7,9 +7,8 @@
 //!     CLOSE, COMMIT WORK, DELETE (positioned or searched), FETCH, INSERT,
 //!     OPEN, ROLLBACK WORK, SELECT ... INTO, UPDATE (positioned or searched).
 //!
-//! \[DESIGN\] A `Session` plays an application program bound to a `<module>`,
-//! with its authorization identifier, cursors and current transaction. The
-//! binding is left to the implementation [X3.135-1986 §3.4], as is this API.
+//! \[DESIGN\] A `Session` plays an application program bound to a `<module>`, with its authorization
+//! identifier, cursors and current transaction. The binding is left to the implementation [X3.135-1986 §3.4], as is this API.
 //!
 //! What SQL-86 leaves to the implementation is reached through Rust:
 //!
@@ -36,16 +35,15 @@
 //! | `StateSource`       | `Database::export`    | state transfer (RULES.md D57)    |
 //! | `Ranking`           | BM25                  | full-text Rank (RULES.md D87)    |
 //! | `VectorMetric`, `Quantizer` | COSINE and others; PQ, SQ8, BQ | VECTOR_DISTANCE, vector indexes (RULES.md D93) |
+//! | `PartitionStrategy` | RANGE, LIST, HASH     | partitioned tables (RULES.md D154) |
+//! | `BackupTarget`, `TargetProvider` | a directory, memory | backups and the archive (RULES.md D166) |
 //!
 //! Plus the settings (`settings.rs`, RULES.md D36), plug-ins' too, per database and session.
 //!
-//! \[DESIGN\] A `Database` is a cheap handle that sessions share, on any
-//! number of threads (RULES.md D27). Each statement runs against a snapshot
-//! of the definitions taken when it starts, holding no lock on them while it
-//! runs; the data is guarded by the storage engines and indexes, and its
-//! isolation by the engine, or by the transaction coordinator's table locks
-//! for an engine that leaves it to them (RULES.md D29). A `Session` is used
-//! by one thread at a time, and may move between threads between calls.
+//! \[DESIGN\] A `Database` is a cheap handle that sessions share, on any number of threads (RULES.md D27). Each statement runs
+//! against a snapshot of the definitions taken when it starts, holding no lock on them while it runs; the data is guarded by the
+//! storage engines and indexes, and its isolation by the engine, or by the transaction coordinator's table locks for an engine that
+//! leaves it to them (RULES.md D29). A `Session` is used by one thread at a time, and may move between threads between calls.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -64,6 +62,7 @@ mod area;
 mod assertions;
 mod assignment;
 mod background;
+pub mod backup;
 mod catalog_file;
 mod checkpoint;
 mod clock;
@@ -90,6 +89,7 @@ pub(crate) mod dynamic;
 mod execute;
 mod explain;
 mod export;
+mod extensions;
 mod files;
 mod formats;
 mod functions;
@@ -106,6 +106,7 @@ mod maintenance;
 mod merge;
 mod modules;
 mod nested;
+pub(crate) mod partitions;
 mod position;
 mod prepared;
 pub(crate) mod ptf;
@@ -171,15 +172,14 @@ use integrity::Deferral;
 pub use log_sync::SYNC_AFTER_MS;
 pub use session::TransactionMode;
 pub use standby::Standby;
-pub use stores::{CatalogStorage, CatalogStore, FileLogs, LogStorage, OpenedLog, StorePlace};
+pub use stores::{CatalogStorage, CatalogStore, FileLogs, LOG_DIR, LogStorage, OpenedLog, StorePlace};
 pub(crate) use {
     assignment::{assign_targets, assignment_type, check_targets},
     database::WeakDatabase,
     routines::run_unhosted,
     triggers::trigger_texts,
 };
-pub use {formats::FileFormats, image::IMAGE_FORMAT};
-pub use {indexes::AccuracyReport, recovery::RecoveryReport};
+pub use {formats::FileFormats, image::IMAGE_FORMAT, indexes::AccuracyReport, recovery::RecoveryReport};
 
 /// The state and transaction a statement runs in.
 #[derive(Clone, Copy)]
@@ -192,8 +192,7 @@ fn api(msg: impl Into<String>) -> SqlError {
     SqlError::new(Code::Api, msg)
 }
 
-/// \[DESIGN\] The table that `table`, written "AUTH.TABLE", names. The Rust
-/// API takes table names in this one form.
+/// \[DESIGN\] The table that `table`, written "AUTH.TABLE", names. The Rust API takes table names in this one form.
 ///
 /// # Errors
 ///
@@ -582,9 +581,10 @@ impl Drop for Session {
         let st = call.state();
         // Drop cannot return an error. A failed commit has rolled back, and a
         // failed undo has marked its tables damaged, so neither goes unnoticed.
-        let _ = match self.session_end(st) {
-            SessionEnd::Commit => self.commit_in(st),
-            SessionEnd::Rollback => self.rollback_in(st),
+        // Of a database closed, or whose files another opened since, it rolls back in memory (RULES.md D56).
+        let _ = match (self.session_end(st), st.files.is_fenced()) {
+            (SessionEnd::Commit, false) => self.commit_in(st),
+            (SessionEnd::Commit, true) | (SessionEnd::Rollback, _) => self.rollback_in(st),
         };
     }
 }

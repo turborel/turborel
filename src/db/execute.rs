@@ -316,9 +316,13 @@ impl Session {
         }
         let typed = cx.st.catalog.table(&w.bound.table).is_some_and(|d| d.typed.is_some());
         let members = if typed && !table.1 { proper_subtables(&*cx.st.catalog, &w.bound.table) } else { Vec::new() };
+        // [EXTENSION] of a partitioned table, the partitions its search condition admits (RULES.md D156).
+        let partitioned = cx.st.catalog.partitioning().is_partitioned(&w.bound.table);
+        let members = if partitioned { super::partitions::written_members(cx.st, &w.bound) } else { members };
         self.settle_cursors(cx.st, &w.bound.table);
         let mut effects = self.effects(cx.st);
-        let mut done = run(cx, w, &mut effects)?;
+        // A partitioned table holds no rows of its own, so its partitions are written.
+        let mut done = if partitioned { None } else { run(cx, w, &mut effects)? };
         for member in &members {
             let bound = |b: Context<'_>| bind_member_write(b, kind, (table.0, member), set, where_clause);
             let written = self.write_bound(cx.st, params, None, bound)?;
@@ -558,6 +562,7 @@ fn schema_target(s: &SchemaStatement) -> Option<&TableName> {
         | SchemaStatement::GqlGraph(_)
         | SchemaStatement::AlterGraph(_)
         | SchemaStatement::Vector(_)
+        | SchemaStatement::Extension(_)
         | SchemaStatement::XmlSchema(_)
         | SchemaStatement::XQueryModule(_)
         | SchemaStatement::AlterXQueryModule(_)

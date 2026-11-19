@@ -31,12 +31,17 @@ behind it, and each can be replaced or added to.
   control, a write-ahead log, checkpoints and recovery.
 - Savepoints, with SAVEPOINT, RELEASE SAVEPOINT and ROLLBACK TO SAVEPOINT
   at the savepoint levels of routines and ATOMIC blocks.
-- [Locks](doc/sql/23-locks.md): FOR UPDATE and FOR SHARE over joins with
+- [Locks](doc/sql/24-locks.md): FOR UPDATE and FOR SHARE over joins with
   NOWAIT and SKIP LOCKED, LOCK TABLE in eight modes, advisory locks, and
   INFORMATION_SCHEMA.LOCKS, deadlocks found at once.
-- [Data change delta tables](doc/sql/24-delta-tables.md), OLD, NEW and
+- [Data change delta tables](doc/sql/25-delta-tables.md), OLD, NEW and
   FINAL TABLE of INSERT, UPDATE, DELETE and MERGE, and RETURNING.
 - Row and columnar storage, chosen per table.
+- [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
+  or a strategy a plug-in registers, many levels deep, attached and
+  detached, rows routed and moved, reads pruned and merged in order, joins
+  routed by each probe, global indexes holding keys across partitions,
+  and every index method made on each partition.
 - Large objects up to 4G, stored, logged, read and sent a chunk at a
   time, and reached by locators.
 - Indexes as plug-ins. B-link trees, linear hash tables and R-trees over
@@ -90,6 +95,9 @@ behind it, and each can be replaced or added to.
   once a majority of servers holds it, so three servers survive losing one.
   Backups serve reads and elect a new primary within seconds, and a lost
   server catches up when it rejoins.
+- [Backups](doc/operator/10-backups.md), full and incremental, taken
+  online by BACKUP DATABASE, verified and restored offline, and recovery
+  to a point in time through an archive of the log, to pluggable targets.
 - Analytic SQL, with window functions, grouping sets, recursive queries
   with SEARCH and CYCLE, row pattern recognition (MATCH_RECOGNIZE), and
   the statistical set functions and math functions of T621.
@@ -114,6 +122,9 @@ behind it, and each can be replaced or added to.
   top-k by RRF or weighted scores.
 - Embedding models, pipelines that chunk and embed text, and columns
   embedded after commit.
+- [External plug-ins](doc/client/04-plugins.md): functions, metrics,
+  models and more from programs of other parties, run as processes of their
+  own, installed from signed packages and registries.
 - [Property graphs](doc/sql/20-property-graphs.md) over tables or
   queries' rows, queried by GRAPH_TABLE's path patterns through adjacency
   indexes, LINE_GRAPH among them.

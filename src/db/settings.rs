@@ -212,6 +212,8 @@ impl Database {
                 Some(Value::Exact(crate::value::Decimal::new(i128::try_from(made).unwrap_or(i128::MAX), 0))),
             );
         }
+        self.tell_extensions()?;
+        self.archive_settings_applied()?;
         self.configure_plugins()
     }
 

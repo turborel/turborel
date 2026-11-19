@@ -57,8 +57,13 @@ impl State {
     }
 
     /// Before reading a table, a lock in `mode` if its engine leaves
-    /// concurrency to the coordinator.
+    /// concurrency to the coordinator; of a partitioned table, of each
+    /// partition too.
     fn lock_to_read(&self, tx: &Txn, table: &QualifiedName, mode: LockMode) -> Result<()> {
+        // [EXTENSION] a partitioned table's rows are read in its partitions (RULES.md D156).
+        for child in self.catalog.partitioning().children(table) {
+            self.lock_to_read(tx, &child.table, mode)?;
+        }
         self.check_damaged(table)?;
         self.lock_of(table)?.check_generation(table, self.generation_of(table), tx)?;
         let caps = self.capabilities(table)?;

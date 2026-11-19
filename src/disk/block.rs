@@ -34,6 +34,7 @@ mod counts;
 mod cursor;
 mod fill;
 mod format;
+mod stream;
 mod tail;
 
 use std::borrow::Cow;
@@ -45,6 +46,7 @@ pub use counts::BlockCounts;
 use counts::{Counters, add};
 pub use cursor::Cursor;
 pub use format::{FORMAT_VERSION, HEADER_LEN};
+pub use stream::{Available, BlockReader, BlockWriter, STREAM_HEADER};
 pub(crate) use tail::damaged;
 
 use super::encoding::{Encoding, Pipeline};

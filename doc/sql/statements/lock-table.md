@@ -69,7 +69,8 @@ the statement is refused at once. A wait that would close a cycle of waits is a
 deadlock, and is refused at once. With NOWAIT the statement does not
 wait, and fails with SQLSTATE TBL01 if a lock is held against it.
 
-A typed table is locked with its subtables, unless ONLY is written. The
+A typed table is locked with its subtables, and a partitioned table with
+its partitions, unless ONLY is written. The
 tables are locked in the order written, so two transactions that lock
 the same tables in the same order never deadlock on them.
 
@@ -134,5 +135,5 @@ implementation's own (RULES.md D186).
 
 ## SEE ALSO
 
-[Locks](../23-locks.md), [SET TRANSACTION](set-transaction.md),
+[Locks](../24-locks.md), [SET TRANSACTION](set-transaction.md),
 [COMMIT](commit.md), [ROLLBACK](rollback.md)

@@ -49,7 +49,8 @@ impl PhysicalPlanner<'_> {
         let outer_rows = self.rows_of(outer)?;
         let mut best: Option<Choice> = None;
         for ix in self.db.catalog.indexes(read.table) {
-            if self.db.building.contains(&ix.name) || ix.is_collated() {
+            // [EXTENSION] a global index is probed by equalities alone (RULES.md D157).
+            if self.db.building.contains(&ix.name) || ix.is_collated() || crate::catalog::is_global_index(&ix.name) {
                 continue;
             }
             let Some(bindings) = self.coordinate_columns((outer, &read), ix, &comparisons) else { continue };

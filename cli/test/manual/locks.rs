@@ -12,7 +12,7 @@ use super::Client;
 fn the_lock_examples_run_as_printed() {
     let db = Database::new();
     let mut ann = Client::of(&db, "ANN");
-    assert!(ann.page("sql/23-locks.md") > 0, "it shows its examples' output");
+    assert!(ann.page("sql/24-locks.md") > 0, "it shows its examples' output");
 }
 
 /// Verifies: [EXTENSION] [DESIGN] RULES.md R-DOC-8, D186: the examples of
@@ -32,5 +32,5 @@ fn the_lock_table_examples_run_as_printed() {
 fn the_delta_table_examples_run_as_printed() {
     let db = Database::new();
     let mut ann = Client::of(&db, "ANN");
-    assert!(ann.page("sql/24-delta-tables.md") > 0, "it shows its examples' output");
+    assert!(ann.page("sql/25-delta-tables.md") > 0, "it shows its examples' output");
 }

@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, Weak};
 use std::time::Duration;
 
-use crate::disk::io::{DiskFile, Durability, FileLock, FileSystem, OpenMode};
+use crate::disk::io::{DiskFile, Durability, FileLock, FileSystem, Holding, OpenMode};
 use crate::error::{Code, Result, SqlError};
 use crate::sync::Signal;
 
@@ -63,6 +63,12 @@ pub struct Registry {
     waiting: Mutex<()>,
     /// Set as the database closes: no file is opened after.
     shut: AtomicBool,
+    /// Whether its directory's lock is still held, of a lock another
+    /// opener may take (`fence.rs`).
+    holding: RwLock<Option<Holding>>,
+    /// Set as it is closed or its lock is found taken: no file is changed
+    /// after (`fence.rs`).
+    fenced: AtomicBool,
     /// The files noted, not the database's (`noted.rs`).
     noted: Mutex<HashMap<u64, Weak<noted::Entry>>>,
     /// What it tells, and where (`told.rs`).
@@ -413,18 +419,22 @@ impl DiskFile for Managed {
         self.handle.with(self.id, Use::Read, |f| f.read_at(buf, offset))
     }
     fn write_all_at(&self, data: &[u8], offset: u64) -> Result<()> {
+        self.handle.registry.fenced(&self.handle.path)?;
         self.handle.write(self.id, |f| f.write_all_at(data, offset))
     }
     fn size(&self) -> Result<u64> {
         self.handle.with(self.id, Use::Read, |f| f.size())
     }
     fn set_size(&self, size: u64) -> Result<()> {
+        self.handle.registry.fenced(&self.handle.path)?;
         self.handle.write(self.id, |f| f.set_size(size))
     }
     fn sync(&self, durability: Durability) -> Result<()> {
+        self.handle.registry.fenced(&self.handle.path)?;
         self.handle.sync(self.id, durability)
     }
     fn reserve(&self, size: u64) -> Result<()> {
+        self.handle.registry.fenced(&self.handle.path)?;
         self.handle.with(self.id, Use::Write, |f| f.reserve(size))
     }
 }
@@ -456,6 +466,9 @@ impl FileManager {
 impl FileSystem for FileManager {
     fn open(&self, path: &Path, mode: OpenMode) -> Result<Box<dyn DiskFile>> {
         self.registry.refused(path)?;
+        if mode == OpenMode::CreateNew {
+            self.registry.fenced(path)?;
+        }
         let id = self.registry.next.fetch_add(1, Ordering::Relaxed);
         let failed = self.registry.admit(id);
         self.registry.tell_each(&failed);
@@ -481,11 +494,12 @@ impl FileSystem for FileManager {
         Ok(Box::new(Managed { id, handle }))
     }
     fn remove(&self, path: &Path) -> Result<()> {
+        self.registry.fenced(path)?;
         self.inner.remove(path)
     }
     /// A failure told to the database's sink, as no caller tells it.
     fn discard(&self, path: &Path) {
-        if let Err(e) = self.inner.remove(path) {
+        if let Err(e) = self.registry.fenced(path).and_then(|()| self.inner.remove(path)) {
             self.registry.tell_failed(&e);
         }
     }
@@ -502,11 +516,14 @@ impl FileSystem for FileManager {
         self.inner.sync_dir(path)
     }
     fn lock(&self, path: &Path) -> Result<FileLock> {
-        self.inner.lock(path)
+        let lock = self.inner.lock(path)?;
+        self.registry.hold(lock.holding());
+        Ok(lock)
     }
 }
 
 mod classes;
+mod fence;
 mod noted;
 pub mod plugins;
 mod told;

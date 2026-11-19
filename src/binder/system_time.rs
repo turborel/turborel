@@ -69,7 +69,7 @@ pub(super) fn system_time_source(
         all: true,
         compared: None,
         left: Box::new(scan(name.clone())),
-        right: Box::new(scan(history)),
+        right: Box::new(histories(b, name, history).into_iter().map(scan).reduce(union_all).unwrap_or_else(|| scan(history_name(name)))),
     };
     let plan = LogicalPlan::Filter { cond, input: Box::new(rows) };
     Ok((TableDesc { constraints: Vec::new(), ..desc }, Source::Derived(plan)))
@@ -182,4 +182,23 @@ fn outer(e: &Expr) -> bool {
     let mut found = matches!(e, Expr::Outer(..));
     e.for_each_child(&mut |child| found |= outer(child));
     found
+}
+
+/// \[EXTENSION\] The histories of `name`: its own, `history`, and of a
+/// partitioned table each of its partitions', where their historical
+/// rows are kept (RULES.md D159).
+fn histories(b: &Bounds<'_>, name: &QualifiedName, history: QualifiedName) -> Vec<QualifiedName> {
+    let mut all = vec![history];
+    for d in b.cx.db.catalog.partitioning().descendants(name) {
+        let of = history_name(&d);
+        if b.cx.db.catalog.table(&of).is_some() {
+            all.push(of);
+        }
+    }
+    all
+}
+
+/// The rows of `left`, then of `right`.
+fn union_all(left: LogicalPlan, right: LogicalPlan) -> LogicalPlan {
+    LogicalPlan::SetOp { op: SetOp::Union, all: true, compared: None, left: Box::new(left), right: Box::new(right) }
 }

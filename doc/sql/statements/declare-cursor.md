@@ -191,4 +191,4 @@ standard makes a cursor's statements `<directly executable statement>`s
 [OPEN](open.md), [FETCH](fetch.md), [CLOSE](close.md),
 [SELECT](select.md), [UPDATE](update.md), [DELETE](delete.md),
 [PREPARE](prepare.md), [ALLOCATE CURSOR](allocate-cursor.md),
-[Locks](../23-locks.md)
+[Locks](../24-locks.md)

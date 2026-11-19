@@ -52,6 +52,10 @@ impl PhysicalPlanner<'_> {
     /// index's rows and the guard's, under a filter of the conjuncts it
     /// does not answer (`filtered_read`); none if no index is chosen.
     pub(super) fn guarded_access(&self, read: TableRead<'_>, conds: Vec<Cond>, (want, guard): (&[SortKey], &LogicalPlan)) -> Option<Built> {
+        // [EXTENSION] a partitioned table's partitions are read by `access`.
+        if self.db.catalog.partitioning().is_partitioned(read.table) {
+            return None;
+        }
         let storage = self.db.storage_of(read.table).ok()?;
         let (built, indexed) = self.read_by(read, conds, (want, Some(guard)), &**storage);
         indexed.then_some(built)

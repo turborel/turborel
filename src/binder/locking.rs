@@ -12,10 +12,11 @@ use super::query::Nesting;
 use super::{Bound, Context, OutColumn};
 use crate::ast::{CursorSpecification, JoinKind, QueryExpression, QuerySpecification, TableReference};
 use crate::catalog::QualifiedName;
+use crate::db::State;
 use crate::error::{Code, Result, SqlError};
-use crate::logical::{Expr, LogicalPlan, map_cond_columns};
+use crate::logical::{Expr, LogicalPlan, SetOp, map_cond_columns};
 use crate::storage::ROW_ID;
-use crate::value::{DataType, MAX_EXACT_PRECISION, Spelled};
+use crate::value::{DataType, MAX_EXACT_PRECISION, Spelled, Value};
 
 /// \[EXTENSION\] A locking query bound: its rows, each its result's
 /// columns, then its sort's, then the ids of the rows it is made of, and
@@ -46,8 +47,9 @@ fn unlockable(why: &str) -> SqlError {
 pub fn bind_locking(cx: Context<'_>, c: &CursorSpecification, of: Option<&[(String, usize)]>) -> Result<Locking> {
     let spec = one_specification(&c.query).ok_or_else(|| unlockable("this one is a set operation, a VALUES or has a WITH clause"))?;
     let chosen = chosen_tables(spec, of)?;
+    let db = cx.db;
     let mut ordered = ordered_query(cx, &c.query, (&[], &Nesting::Query), true)?;
-    let mut found = Found { chosen, next: 0, tables: Vec::new() };
+    let mut found = Found { db, chosen, next: 0, tables: Vec::new() };
     let located = found.locate(&mut ordered.plan);
     if located.is_none() || found.next != found.chosen.len() {
         return Err(unlockable("this one groups, aggregates, or reads a view of several tables, a typed table or a derived table"));
@@ -124,14 +126,15 @@ fn exposed(item: &TableReference, names: &mut Vec<String>) -> Result<()> {
 
 /// How a locking query's plan is made to give the ids of its rows, for
 /// each table it reads, whether its rows are locked, the next to be met,
-/// and the tables met whose rows are.
-struct Found {
+/// and the tables met whose rows are, in the definitions `db`.
+struct Found<'a> {
+    db: &'a State,
     chosen: Vec<bool>,
     next: usize,
     tables: Vec<QualifiedName>,
 }
 
-impl Found {
+impl Found<'_> {
     /// Makes `plan` give, after its columns, the id of the row of each
     /// table whose rows are locked that it reads, in the order met, left to
     /// right, of scans, filters, projections, products and outer joins of
@@ -140,6 +143,10 @@ impl Found {
         if let LogicalPlan::Scan { table, names, located, .. } = plan {
             let chosen = *self.chosen.get(self.next)?;
             self.next = self.next.saturating_add(1);
+            let leaves = self.db.catalog.partitioning().leaves(table);
+            if chosen && !*located && !leaves.is_empty() {
+                return Some(self.partitions(plan, leaves));
+            }
             if chosen && !*located {
                 *located = true;
                 names.push(ROW_ID.to_owned());
@@ -158,6 +165,36 @@ impl Found {
             return Some(exprs.len());
         }
         self.joined(plan)
+    }
+
+    /// \[EXTENSION\] As `locate`, of `plan`, a scan of a partitioned table
+    /// (RULES.md D153): made the rows of each of its partitions `leaves`
+    /// in turn, each scanned giving its row's id, and each id in a column
+    /// of its partition's own after the table's columns, null in the
+    /// others'. So each partition is a table whose rows are locked, its
+    /// rows locked there, as its writers find them.
+    fn partitions(&mut self, plan: &mut LogicalPlan, leaves: Vec<QualifiedName>) -> usize {
+        let LogicalPlan::Scan { names, needed, .. } = plan else { return 0 };
+        let (width, count) = (names.len(), leaves.len());
+        let mut united: Option<LogicalPlan> = None;
+        for (at, leaf) in leaves.iter().enumerate() {
+            let names = names.iter().cloned().chain([ROW_ID.to_owned()]).collect();
+            let scan = LogicalPlan::Scan { table: leaf.clone(), names, needed: needed.clone(), located: true };
+            let ids = (0..count).map(|i| if i == at { Expr::Column(width) } else { Expr::Const(Value::Null) });
+            let exprs = (0..width).map(Expr::Column).chain(ids).collect();
+            let rows = LogicalPlan::Project { exprs, input: Box::new(scan) };
+            united = Some(match united {
+                None => rows,
+                Some(left) => {
+                    LogicalPlan::SetOp { op: SetOp::Union, all: true, compared: None, left: Box::new(left), right: Box::new(rows) }
+                }
+            });
+        }
+        self.tables.extend(leaves);
+        if let Some(united) = united {
+            *plan = united;
+        }
+        width.saturating_add(count)
     }
 
     /// As `locate`, of a product or an outer join, the ids its operands

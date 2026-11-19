@@ -132,6 +132,8 @@ impl State {
             | AlterAction::DropVersioning { .. }
             | AlterAction::RevertCollation(_)
             | AlterAction::Truncate { .. }
+            | AlterAction::AttachPartition { .. }
+            | AlterAction::DetachPartition(_)
             | AlterAction::Storage(_) => return Ok(()),
         };
         if desc.column_desc(column).is_some_and(|(_, c)| c.hidden()) {

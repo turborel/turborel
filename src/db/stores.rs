@@ -142,8 +142,12 @@ pub struct FileLogs {
 
 /// The directory of a `FileLogs` log at `place`.
 fn log_dir(place: &StorePlace<'_>) -> PathBuf {
-    place.dir.join("log")
+    place.dir.join(LOG_DIR)
 }
+
+/// \[DESIGN\] The directory of a database's directory the built-in file
+/// logs keep their segments in.
+pub const LOG_DIR: &str = "log";
 
 impl LogStorage for FileLogs {
     fn name(&self) -> &'static str {

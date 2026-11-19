@@ -21,6 +21,7 @@ mod columns;
 mod constraints;
 mod domains;
 mod embedding;
+mod extensions;
 mod graph_types;
 mod graphs;
 mod horizon;
@@ -29,6 +30,7 @@ mod keys;
 mod memory;
 mod modules;
 mod native;
+mod partitions;
 mod periods;
 mod privileges;
 mod roles;
@@ -48,6 +50,8 @@ pub use constraints::{ConstraintAttributes, ConstraintDesc, ConstraintKind, Fore
 pub use domains::{DomainDesc, UsageDesc, usage_held};
 pub use embedding::{Embeddings, ModelDesc, ModelOption, PipelineDesc, TRIGGER_SUFFIXES};
 pub(crate) use embedding::{embeddings, put_embeddings};
+pub use extensions::ExtensionDesc;
+pub(crate) use extensions::{extensions, put_extensions};
 pub use graph_types::{GqlCatalog, GqlGraphDesc, GraphTypeDesc};
 pub use graphs::{
     ElementKind, ElementTableDesc, EndpointDesc, Endpoints, GRAPH_INVALID, GraphDesc, GraphMode, LabelDesc, PropertyDesc, identifier,
@@ -60,6 +64,10 @@ pub use memory::MemoryCatalog;
 pub use modules::{ModuleDesc, module_of_schema, module_schema, routine_path};
 pub use native::{
     Connection, EDGE_ID, ElementId, FROM_ID, GraphColumn, ID_LENGTH, NODE_ID, NativeKind, PSEUDO_COLUMNS, SYS_GRAPH, TO_ID, id_type,
+};
+pub use partitions::{
+    DERIVED_SEPARATOR, IndexTemplate, MAX_PARTITION_DEPTH, PartitionBound, PartitionDesc, PartitionKey, PartitionOf, Partitioning,
+    RangeDatum, derived_index_name, global_index_name, is_global_index, tables_above, template_of,
 };
 pub use periods::PeriodDesc;
 pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, TypedActions, applicable, merged};
@@ -532,10 +540,19 @@ pub trait Catalog: Send + Sync {
     /// Make `embeddings` the embedding models and vector pipelines, in
     /// place of those there were.
     fn set_embeddings(&mut self, embeddings: Embeddings);
+    /// \[EXTENSION\] The extensions created, in the order made (RULES.md
+    /// D171).
+    fn extensions(&self) -> &[ExtensionDesc];
+    /// Make `extensions` the extensions, in place of those there were.
+    fn set_extensions(&mut self, extensions: Vec<ExtensionDesc>);
     /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §20.2, §20.3] The reference systems defined and geometry columns registered.
     fn spatial(&self) -> &SpatialCatalog;
     /// Make `spatial` the systems defined and the columns registered.
     fn set_spatial(&mut self, spatial: SpatialCatalog);
+    /// \[EXTENSION\] The partitioned tables and partitions (RULES.md D153).
+    fn partitioning(&self) -> &Partitioning;
+    /// The same, to change.
+    fn partitioning_mut(&mut self) -> &mut Partitioning;
     /// An independent copy of this catalog.
     fn duplicate(&self) -> Box<dyn Catalog>;
 }

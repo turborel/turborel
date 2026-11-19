@@ -25,7 +25,7 @@ use crate::value::{DataType, Value};
 
 mod advisory;
 mod any_value;
-pub use any_value::ANY_VALUE;
+pub use self::{advisory::ADVISORY_ALIASES, any_value::ANY_VALUE};
 pub(crate) use any_value::GroupValue;
 mod arrays;
 pub mod builtin;
@@ -35,7 +35,6 @@ pub use arrays::{
 };
 mod context;
 mod count;
-pub use advisory::ADVISORY_ALIASES;
 pub use context::{AppendedQuery, CallContext};
 use count::Count;
 mod distribution;
@@ -66,8 +65,7 @@ pub use multisets::{
 pub use numeric::{CEIL, CEILING, EXP, FLOOR, LN, Numeric, POWER, SQRT};
 mod octet_like;
 mod periods;
-pub use octet_like::OctetLike;
-pub use periods::PeriodTest;
+pub use self::{octet_like::OctetLike, periods::PeriodTest};
 pub mod lobs;
 pub use listagg::{LISTAGG, Listagg, ListaggSpec, MAX_LISTAGG_LENGTH, Truncation};
 mod json;
@@ -445,6 +443,14 @@ pub trait ScalarFunction: Send + Sync {
     /// As `call`'s.
     fn call_many(&self, rows: &[Vec<Value>]) -> Result<Vec<Value>> {
         rows.iter().map(|r| self.call(r)).collect()
+    }
+    /// \[DESIGN\] As `call_many`, ending as the statement is, so a plug-in's call is cancelled (RULES.md D44, D170).
+    ///
+    /// # Errors
+    ///
+    /// As `call_many`'s, or the statement's cancellation.
+    fn call_many_in(&self, rows: &[Vec<Value>], _statement: &dyn crate::exec::Subqueries) -> Result<Vec<Value>> {
+        self.call_many(rows)
     }
 }
 

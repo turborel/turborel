@@ -57,7 +57,11 @@ pub(super) fn bind_target(cx: Context<'_>, stmt: &MergeStatement, held: bool) ->
     // A source row no target row matches is joined to nulls, so a NOT
     // NULL column of T may be null in the rows bound over.
     let item = FromItem { correlation: stmt.correlation.as_ref().map(|(c, _)| c.clone()), nullable: true, ..alone };
-    let members = if held { Vec::new() } else { family_of(cx.db, (&name, &write.named, &write.source), stmt.only) };
+    let mut members = if held { Vec::new() } else { family_of(cx.db, (&name, &write.named, &write.source), stmt.only) };
+    // [EXTENSION] a partitioned table's rows are its partitions' (RULES.md D155).
+    if !held && !stmt.only && cx.db.catalog.partitioning().is_partitioned(&write.named.name) {
+        members = cx.db.catalog.partitioning().leaves(&write.named.name);
+    }
     Ok(Target { name, write, item, members })
 }
 

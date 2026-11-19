@@ -4,6 +4,7 @@
 //! results and secondary keys.
 
 mod approx;
+mod partitioned;
 mod safe;
 
 pub use approx::ApproximateRead;
@@ -230,17 +231,15 @@ impl PhysicalPlanner<'_> {
         if key.nulls_first && !(descending && excludes_nulls(condition, column)) {
             return None;
         }
-        let scanned = Scanned { table, needed, condition };
-        let ((index, position), approximate, cost) = self.nearest_index((&scanned, desc), column, &query, first)?;
         let detail = self.described(scan, |names| {
             let measure = render_expr(measure, names);
             condition.map_or_else(|| measure.clone(), |c| format!("{measure} where {}", crate::logical::render_cond(c, names)))
         });
         let read = NearestRead {
             table: table.clone(),
-            index: index.name.clone(),
-            position,
-            method: index.method.clone(),
+            index: String::new(),
+            position: 0,
+            method: String::new(),
             columns: needed.clone(),
             located: *located,
             width: scan.width(),
@@ -249,14 +248,16 @@ impl PhysicalPlanner<'_> {
             condition: condition.cloned(),
             first,
             detail,
-            cost,
-            approximate,
+            cost: 0.0,
+            approximate: None,
             scale,
         };
+        // [EXTENSION] of a partitioned table, each partition's (RULES.md D156).
+        let reads = self.nearest_reads(&read, column, &query)?;
         let projection = self.described(source, |names| exprs.iter().map(|e| render_expr(e, names)).collect::<Vec<_>>().join(", "));
         let mut exprs = exprs.clone();
-        *exprs.get_mut(key.column)? = Expr::Column(read.width);
-        Some(Plan::Project { exprs, detail: projection, input: Box::new(Plan::Nearest(Box::new(read))) })
+        *exprs.get_mut(key.column)? = Expr::Column(scan.width());
+        Some(Plan::Project { exprs, detail: projection, input: Box::new(reads) })
     }
 
     /// The index a nearest read takes, of those on `column`, with the
@@ -279,7 +280,8 @@ impl PhysicalPlanner<'_> {
         let mut approximate = None;
         for ix in self.db.catalog.indexes(scanned.table) {
             let Some(position) = ix.columns.iter().position(|c| *c == column) else { continue };
-            if ix.is_collated() || self.db.building.contains(&ix.name) {
+            // [EXTENSION] a global index is probed by equalities alone (RULES.md D157).
+            if ix.is_collated() || self.db.building.contains(&ix.name) || crate::catalog::is_global_index(&ix.name) {
                 continue;
             }
             let (Some(method), Some(types)) = (self.db.methods.get(&ix.method), ix.key_types(desc)) else { continue };

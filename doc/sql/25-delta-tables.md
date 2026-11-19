@@ -199,6 +199,10 @@ An UPDATE or DELETE of a typed table, its name written without ONLY,
 changes the rows of its subtables too. Its delta table holds those rows,
 each by its columns of the typed table.
 
+A statement of a partitioned table writes the rows of its partitions,
+and its delta table holds them. An UPDATE that moves a row to another
+partition gives it once, as updated.
+
 ## Rules
 
 1. OLD is refused of an INSERT, and of a MERGE that neither updates nor

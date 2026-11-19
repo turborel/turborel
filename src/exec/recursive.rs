@@ -211,6 +211,7 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
         Plan::Window { window, .. } => give(&mut window.input, work),
         Plan::Recognize { recognize, .. } => give(&mut recognize.input, work),
         Plan::Polymorphic(p) => p.inputs.iter_mut().for_each(|input| give(input, work)),
+        Plan::MergeAppend { inputs, .. } => inputs.iter_mut().for_each(|input| give(input, work)),
         Plan::Product { left, right }
         | Plan::HashJoin { left, right, .. }
         | Plan::OuterJoin { left, right, .. }

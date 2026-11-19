@@ -76,6 +76,7 @@ impl State {
             DropTarget::GqlGraph(qn) => self.drop_gql_graph(qn, cascade),
             DropTarget::XmlSchema(qn) => self.drop_xml_schema(qn, cascade),
             DropTarget::XQueryModule(qn) => self.drop_xquery_module(qn, cascade),
+            DropTarget::Extension(qn) => self.drop_extension(qn, cascade),
         }
     }
 
@@ -98,6 +99,8 @@ impl State {
         // [ISO/IEC 9075-2:2023 §11.31 SR6, GR1] its subtables first.
         let mut dropped = self.drop_pipelines_of(qn, cascade)?;
         dropped.absorb(self.drop_subtables(qn, cascade)?);
+        // [EXTENSION] its partitions, which hold its rows (RULES.md D153).
+        dropped.absorb(self.drop_partitions(qn, cascade)?);
         dropped.absorb(self.drop_dependents(qn, cascade, "§11.18 SR4")?);
         let mut catalog = self.catalog.duplicate();
         for ix in self.catalog.indexes(qn) {
@@ -106,6 +109,7 @@ impl State {
         }
         catalog.revoke_all(qn);
         catalog.remove_table(qn);
+        catalog.partitioning_mut().remove(qn);
         self.drop_history(&mut *catalog, qn, &mut dropped);
         let generation = self.generation_of(qn);
         self.retired.entry(qn.clone()).and_modify(|g| *g = (*g).max(generation)).or_insert(generation);
@@ -405,32 +409,7 @@ impl Session {
     /// first, then made once the locks of all it drops or changes are
     /// held, on the definitions then.
     fn drop_reverted(&self, st: &Arc<State>, tx: &Txn, target: &DropTarget, cascade: bool) -> Result<Completion> {
-        let reverting: Vec<(QualifiedName, Vec<QualifiedName>)> = match target {
-            DropTarget::Collation(qn) => vec![(qn.clone(), st.tables_of_collation(qn, None))],
-            // [§11.2 GR5] Its own tables go, those of other schemas revert.
-            DropTarget::Schema(auth) => {
-                st.schema_collations(auth).into_iter().map(|qn| (qn.clone(), st.tables_of_collation(&qn, Some(auth)))).collect()
-            }
-            DropTarget::Table(_)
-            | DropTarget::View(_)
-            | DropTarget::Domain(_)
-            | DropTarget::Assertion(_)
-            | DropTarget::Sequence(_)
-            | DropTarget::Type(_)
-            | DropTarget::Trigger(_)
-            | DropTarget::Routine(_)
-            | DropTarget::Module(_)
-            | DropTarget::Cast(_)
-            | DropTarget::Ordering(_)
-            | DropTarget::XmlSchema(_)
-            | DropTarget::XQueryModule(_)
-            | DropTarget::Transform(..)
-            | DropTarget::Graph(_)
-            | DropTarget::Model(_)
-            | DropTarget::Pipeline(_)
-            | DropTarget::GraphType(_)
-            | DropTarget::GqlGraph(_) => Vec::new(),
-        };
+        let reverting = reverting_of(st, target);
         if !reverting.is_empty() {
             // Refused before a row is copied: a statement undone takes
             // back its rows, not a table's new definition.
@@ -450,6 +429,13 @@ impl Session {
             wanted.sort();
             wanted.dedup();
             if wanted.is_empty() {
+                // [EXTENSION] a partition's rows out of the global indexes
+                // over them (RULES.md D157).
+                if let DropTarget::Table(qn) = target
+                    && fresh.catalog.partitioning().of(qn).is_some()
+                {
+                    fresh.unindex_partitions(tx, qn)?;
+                }
                 let change = Change::Drop { object: target.clone(), cascade };
                 self.stage(&fresh, tx, Changed { next: Arc::new(next), change, made: None })?;
                 return Ok(Completion::Success);
@@ -505,6 +491,7 @@ impl Session {
             DropObject::XmlSchema(name) => self.xml_schema_target(st, name),
             // [EXTENSION] as of a collation [ISO/IEC 9075-2:2023 §11.44 AR1].
             DropObject::XQueryModule(name) => Ok(DropTarget::XQueryModule(self.owned(st, name, "EXTENSION")?)),
+            DropObject::Extension(name, at) => self.extension_drop_target(name, *at),
             DropObject::Schema { catalog, name, at } => {
                 let ours = st.settings.get(CATALOG_NAME).to_string();
                 if let Some(other) = catalog.as_ref().filter(|c| **c != ours.trim_end()) {
@@ -551,5 +538,37 @@ impl Session {
             return fail(Code::Privilege, format!("[{cited}] {qn} is in a schema {} does not own", self.auth())).or_at(name.at);
         }
         Ok(qn)
+    }
+}
+
+/// The collations whose columns DROP of `target` reverts, in `st`, each
+/// with the tables of its columns that revert.
+fn reverting_of(st: &State, target: &DropTarget) -> Vec<(QualifiedName, Vec<QualifiedName>)> {
+    match target {
+        DropTarget::Collation(qn) => vec![(qn.clone(), st.tables_of_collation(qn, None))],
+        // [§11.2 GR5] Its own tables go, those of other schemas revert.
+        DropTarget::Schema(auth) => {
+            st.schema_collations(auth).into_iter().map(|qn| (qn.clone(), st.tables_of_collation(&qn, Some(auth)))).collect()
+        }
+        DropTarget::Table(_)
+        | DropTarget::View(_)
+        | DropTarget::Domain(_)
+        | DropTarget::Assertion(_)
+        | DropTarget::Sequence(_)
+        | DropTarget::Type(_)
+        | DropTarget::Trigger(_)
+        | DropTarget::Routine(_)
+        | DropTarget::Module(_)
+        | DropTarget::Cast(_)
+        | DropTarget::Ordering(_)
+        | DropTarget::XmlSchema(_)
+        | DropTarget::XQueryModule(_)
+        | DropTarget::Transform(..)
+        | DropTarget::Graph(_)
+        | DropTarget::Model(_)
+        | DropTarget::Extension(_)
+        | DropTarget::Pipeline(_)
+        | DropTarget::GraphType(_)
+        | DropTarget::GqlGraph(_) => Vec::new(),
     }
 }

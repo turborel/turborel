@@ -55,7 +55,7 @@ cursor named by an extended name, [ALLOCATE CURSOR](allocate-cursor.md).
 Written with RETURNING and a select list *(extension)*, the statement is
 a query of the rows it changed, and a query reads them as a table written
 OLD TABLE, NEW TABLE or FINAL TABLE around the statement
-([Data Change Delta Tables](../24-delta-tables.md)).
+([Data Change Delta Tables](../25-delta-tables.md)).
 
 ## RULES
 
@@ -151,4 +151,4 @@ implementation's own.
 
 [INSERT](insert.md), [UPDATE](update.md), [DROP TABLE](drop-table.md),
 [CREATE TRIGGER](create-trigger.md), [Constraints](../../user/07-constraints.md),
-[Data Change Delta Tables](../24-delta-tables.md)
+[Data Change Delta Tables](../25-delta-tables.md)

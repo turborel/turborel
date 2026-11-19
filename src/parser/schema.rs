@@ -291,8 +291,12 @@ impl Parser {
         }
         self.expect_kw(kw::TABLE)?;
         let name = self.table_name()?;
+        // [EXTENSION] a <partition of clause>: the parent's columns (RULES.md D153).
+        let of = self.partition_of()?;
         // [ISO/IEC 9075-2:2023 §11.3] a <typed table clause>.
-        let (elements, subquery, typed) = if self.accept_kw(kw::OF) {
+        let (elements, subquery, typed) = if of.is_some() {
+            (Vec::new(), None, None)
+        } else if self.accept_kw(kw::OF) {
             let (typed, elements) = self.typed_table_clause(kind.is_some())?;
             (elements, None, Some(typed))
         } else if self.at_native_kind() {
@@ -302,6 +306,7 @@ impl Parser {
             let (elements, subquery) = self.table_contents()?;
             (elements, subquery, None)
         };
+        let by = self.partition_by()?;
         let graph = self.native_kind();
         // [ISO/IEC 9075-2:2023 §11.3] WITH <system versioning clause>.
         let versioning = self.at_versioning(kw::WITH).then(|| self.here());
@@ -311,6 +316,7 @@ impl Parser {
             self.advance();
         }
         let on_commit = self.on_commit()?;
+        let partitioning = self.table_partitioning(of, by)?;
         // [§11.3 SR3] ON COMMIT only of a temporary table; [SR4] DELETE
         // ROWS if not written.
         let temporary = match (kind, on_commit) {
@@ -325,7 +331,7 @@ impl Parser {
         if self.accept_kw(kw::WITH) {
             storage.options = self.table_options()?;
         }
-        Ok(TableDefinition { name, temporary, elements, subquery, storage, typed, versioning, graph })
+        Ok(TableDefinition { name, temporary, elements, subquery, storage, typed, versioning, graph, partitioning })
     }
 
     /// [ISO/IEC 9075:1992 §13.11] `<temporary table declaration>` ::=
@@ -345,7 +351,7 @@ impl Parser {
         let delete_rows = self.on_commit()?.unwrap_or(true);
         let temporary = Some(Temporary { kind: TemporaryKind::Declared, delete_rows });
         let (storage, typed, versioning, graph) = (TableStorage::default(), None, None, None);
-        Ok(TableDefinition { name, temporary, elements, subquery: None, storage, typed, versioning, graph })
+        Ok(TableDefinition { name, temporary, elements, subquery: None, storage, typed, versioning, graph, partitioning: None })
     }
 
     /// [ISO/IEC 9075:1992 §11.3] `<table element list>` ::= ( `<table

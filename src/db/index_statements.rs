@@ -93,7 +93,7 @@ impl Session {
                     Some((given, at)) => method_named(st, given).or_at(*at)?,
                     None => BTREE_METHOD.to_owned(),
                 };
-                if st.catalog.index(name).is_some() {
+                if st.catalog.index(name).is_some() || st.template(name).is_some() {
                     return Err(refused(&format!("an index named {name} already exists"))).or_at(*name_at);
                 }
                 let options = options_of(st, &method, &storage.options)?;
@@ -139,6 +139,14 @@ impl Session {
     /// maintenance job runs it, until it has none to do; or its structure
     /// taken into memory or let go.
     fn maintain_index(&self, st: &State, ix: &IndexDesc, action: &IndexMaintenance) -> Result<()> {
+        // [EXTENSION] of a template, each index it made (RULES.md D158).
+        if st.catalog.index(&ix.name).is_none() && !matches!(action, IndexMaintenance::Rebuild(_)) {
+            for made in st.made_of_template(&ix.table, &ix.name) {
+                let one = st.catalog.index(&made).cloned().ok_or_else(|| refused(&format!("there is no index {made}")))?;
+                self.maintain_index(st, &one, action)?;
+            }
+            return Ok(());
+        }
         match action {
             IndexMaintenance::Rebuild(parameters) => {
                 let named: Vec<TableOptionValue> = parameters
@@ -176,7 +184,9 @@ impl Session {
 
     /// The index `name`, of a table whose schema its identifier owns.
     fn index_owned(&self, st: &State, name: &str) -> Result<IndexDesc> {
-        let ix = st.catalog.index(name).cloned().ok_or_else(|| refused(&format!("there is no index {name}")))?;
+        // [EXTENSION] a partitioned table's index is its template (RULES.md D158).
+        let ix = st.catalog.index(name).cloned().or_else(|| st.template_index(name));
+        let ix = ix.ok_or_else(|| refused(&format!("there is no index {name}")))?;
         self.owns(st, &ix.table)?;
         Ok(ix)
     }

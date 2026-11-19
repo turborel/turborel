@@ -99,6 +99,7 @@ impl Session {
             | SchemaStatement::GqlGraph(_)
             | SchemaStatement::AlterGraph(_)
             | SchemaStatement::Vector(_)
+            | SchemaStatement::Extension(_)
             | SchemaStatement::XmlSchema(_)
             | SchemaStatement::XQueryModule(_)
             | SchemaStatement::AlterXQueryModule(_)

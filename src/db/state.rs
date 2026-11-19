@@ -6,9 +6,10 @@ use crate::memory::{DEFAULT_BUDGET, MemoryBudget};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
+mod bare;
+
 use super::api;
 use super::files::Reopening;
-use super::sealing::DATABASE_OPTIONS;
 use super::users::Users;
 use crate::catalog::{Catalog, QualifiedName, TableDesc};
 use crate::disk::encoding::Encodings;
@@ -116,12 +117,20 @@ pub struct State {
     /// \[EXTENSION\] The rankings of full-text search (RULES.md D87),
     /// shared by every state.
     pub(crate) rankings: super::rankings::SharedRankings,
+    /// \[EXTENSION\] The partition strategies (RULES.md D154), shared
+    /// by every state.
+    pub(crate) strategies: super::partitions::SharedStrategies,
     /// \[EXTENSION\] The metrics and quantizers of VECTOR (RULES.md D93),
     /// shared by every state.
     pub(crate) vectors: super::vectors::SharedVectors,
     /// \[EXTENSION\] The model plug-ins registered and the models of the
     /// catalog bound to them, shared by every state (`db/embedding.rs`).
     pub(crate) embedders: Arc<crate::vector::embed::Embedders>,
+    /// \[EXTENSION\] The extensions created, by name, each with its
+    /// objects and processes (RULES.md D169).
+    pub(crate) extensions: Arc<BTreeMap<String, Arc<crate::plugin::Installed>>>,
+    /// \[DESIGN\] What extensions are given, shared by every state.
+    pub(crate) extension_host: Arc<crate::plugin::Host>,
     /// The collations there are, by name (RULES.md D60).
     pub(crate) collations: BTreeMap<String, Arc<dyn Collation>>,
     /// The clock the datetime value functions read (`clock.rs`).
@@ -173,58 +182,19 @@ pub struct State {
     pub(super) reopening: Option<Reopening>,
 }
 
+/// The default memory budget and the work areas within it.
+fn budgets() -> (Arc<MemoryBudget>, Arc<WorkAreas>) {
+    let memory = MemoryBudget::new(DEFAULT_BUDGET);
+    let work = Arc::new(WorkAreas::new(Arc::clone(&memory)));
+    (memory, work)
+}
+
 impl State {
     /// The state over `catalog`, with the built-in engines, index methods,
     /// set functions and optimizer rules, and nothing attached yet.
     pub(crate) fn with_builtins(catalog: Box<dyn Catalog>) -> State {
-        let memory = MemoryBudget::new(DEFAULT_BUDGET);
-        let work = Arc::new(WorkAreas::new(Arc::clone(&memory)));
-        let mut st = State {
-            generation: 0,
-            catalog: Arc::from(catalog),
-            engines: HashMap::new(),
-            table_options: vec![(DATABASE_OPTIONS.to_owned(), crate::storage::encodings_option())],
-            seals: Arc::default(),
-            index_options: Vec::new(),
-            methods: HashMap::new(),
-            placement: HashMap::new(),
-            hashes: crate::hash::crc::builtin(),
-            collations: crate::value::collation::builtin().into_iter().map(|c| (c.name().to_owned(), c)).collect(),
-            encodings: Arc::default(),
-            created: false,
-            retired: HashMap::new(),
-            stamp: crate::value::datetime::Now::default(),
-            settings: Settings::default(),
-            users: Users::default(),
-            system: crate::system::builtin(),
-            storage: MurmurMap::default(),
-            locks: MurmurMap::default(),
-            indexes: HashMap::new(),
-            functions: Registry::with_set_functions(),
-            xquery_functions: crate::xquery::Library::builtin(),
-            types: TypeRegistry::builtin(),
-            rankings: super::rankings::SharedRankings::default(),
-            vectors: super::vectors::SharedVectors::default(),
-            embedders: Arc::new(crate::vector::embed::Embedders::built_in()),
-            clock: Arc::new(crate::clock::SystemClock),
-            optimizer: Optimizer::with_builtin_rules(),
-            tx: Arc::new(Transactions::default()),
-            memory: Arc::clone(&memory),
-            pages: MemoryPages::new(crate::db::POOL_BYTES),
-            temporaries: Arc::default(),
-            sequences: Arc::default(),
-            work: Arc::clone(&work),
-            temp_lobs: Arc::new(crate::spill::TempLobStore::new(work)),
-            jobs: Arc::default(),
-            graph_runs: Arc::default(),
-            ahead: crate::disk::buffer::AheadReader::new(),
-            rekey: Arc::default(),
-            files: Arc::default(),
-            plugins: Arc::new(crate::files::plugins::PluginFiles::in_memory(Arc::clone(&memory))),
-            log: None,
-            reopening: None,
-            building: HashSet::new(),
-        };
+        let (memory, work) = budgets();
+        let mut st = State::bare(catalog, (&memory, work));
         st.attach_builtins(&memory);
         st
     }
@@ -414,9 +384,10 @@ impl State {
         self.catalog.as_ref()
     }
 
-    /// Rows currently stored in a table: a statistic for cost estimates.
+    /// Rows currently stored in a table, \[EXTENSION\] a partitioned one's
+    /// in its partitions: a statistic for cost estimates.
     pub fn row_count(&self, table: &QualifiedName) -> Option<usize> {
-        self.storage.get(table).map(|s| s.row_count())
+        self.catalog.partitioning().leaves(table).iter().map(|t| self.storage.get(t).map(|s| s.row_count())).sum()
     }
 
     /// What `table`'s engine knows of its rows, if anything (`stats.rs`).
@@ -486,115 +457,5 @@ impl State {
     }
 }
 
-// Unit tests: the lookups report a broken invariant instead of panicking
-// (RULES.md R-ERR-1, R-TEST-2 robustness).
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::catalog::{ColumnDesc, IndexDesc, MemoryCatalog};
-    use crate::error::Code;
-    use crate::value::Spelled;
-    use crate::value::{DataType, Decimal, Value};
-
-    fn table(engine: &str) -> TableDesc {
-        let column = ColumnDesc {
-            name: "K".into(),
-            data_type: DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric },
-            not_null: true,
-            default: None,
-            domain: None,
-            collation: None,
-            generated: None,
-        };
-        TableDesc {
-            periods: Vec::new(),
-            typed: None,
-            name: QualifiedName { auth: "A".into(), ident: "T".into() },
-            columns: vec![column],
-            constraints: vec![],
-            engine: engine.into(),
-            options: Vec::new(),
-            generation: 0,
-            temporary: None,
-        }
-    }
-
-    /// Verifies: [DESIGN] `storage_of` and `index_of` return SQLCODE -910 for a
-    /// table without storage and an index that does not exist.
-    #[test]
-    fn lookups_report_missing_objects() {
-        let mut catalog = MemoryCatalog::default();
-        catalog.create_schema("A", "A", vec![table(ROW_STORE)]);
-        let st = State::with_builtins(Box::new(catalog)); // nothing attached: the invariant is broken
-        let name = QualifiedName { auth: "A".into(), ident: "T".into() };
-        assert_eq!(st.storage_of(&name).err().map(|e| e.code), Some(Code::Api));
-        assert_eq!(st.index_of("NOPE").err().map(|e| e.code), Some(Code::Api));
-    }
-
-    /// A database with table A.T (K NOT NULL UNIQUE), one row inserted by an
-    /// open transaction, which is returned.
-    fn with_open_insert() -> (State, Txn, QualifiedName) {
-        let mut st = State::with_builtins(Box::new(MemoryCatalog::default()));
-        st.schema(
-            "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INT NOT NULL UNIQUE)",
-            (None, crate::value::datetime::Now::default()),
-            (None, &mut crate::db::sequences::Epochs::fresh()),
-        )
-        .unwrap();
-        let name = QualifiedName { auth: "A".into(), ident: "T".into() };
-        let tx = st.begin();
-        st.insert_row(&tx, &name, &vec![Value::Exact(Decimal::new(1, 0))]).unwrap();
-        (st, tx, name)
-    }
-
-    /// Verifies: [DESIGN] RULES.md D33: ROLLBACK undoes a change in the
-    /// storage and index it was made in, even when the definitions no
-    /// longer have them (as after a DROP TABLE): the row and its UNIQUE
-    /// entry are gone there, nothing is damaged, and the transaction ends.
-    #[test]
-    fn rollback_undoes_where_the_changes_were_made() {
-        let (mut st, tx, name) = with_open_insert();
-        let storage = Arc::clone(st.storage_of(&name).unwrap());
-        let index = st.indexes.values().next().map(Arc::clone).unwrap();
-        st.storage.remove(&name);
-        st.indexes.clear();
-        st.rollback(&tx).unwrap();
-        drop(tx);
-        assert_eq!((st.tx.active(), st.damaged_tables()), (0, vec![]));
-        assert_eq!(Arc::clone(&storage).scan(crate::txn::NO_TRANSACTION, &[0]).count(), 0, "the row undone");
-        assert_eq!(index.search(&crate::index::Probe::All, crate::index::KeyOrder::Ascending).count(), 0, "its entry undone");
-    }
-
-    /// Verifies: [DESIGN] attaching a catalog whose index names an index method
-    /// that is not built in fails with SQLCODE -910.
-    #[test]
-    fn attaching_an_unknown_index_method_fails() {
-        let mut catalog = MemoryCatalog::default();
-        catalog.create_schema("A", "A", vec![table(ROW_STORE)]);
-        let name = QualifiedName { auth: "A".into(), ident: "T".into() };
-        catalog.add_index(IndexDesc {
-            name: "I".into(),
-            table: name,
-            columns: vec![0],
-            method: "nope".into(),
-            unique: false,
-            options: Vec::new(),
-            collations: Vec::new(),
-            nulls: false,
-            expressions: Vec::new(),
-        });
-        let mut st = State::with_builtins(Box::new(catalog));
-        assert_eq!(st.attach_catalog_objects().err().map(|e| e.code), Some(Code::Api));
-    }
-
-    /// Verifies: [DESIGN] RULES.md D27: a statement whose snapshot predates a
-    /// change to its table's definitions (an index added) may not write the
-    /// table, which would skip the index: SQLCODE -911.
-    #[test]
-    fn a_writer_with_a_stale_snapshot_is_refused() {
-        let (st, tx, name) = with_open_insert();
-        st.lock_of(&name).unwrap().definitions_changed(st.generation.saturating_add(1));
-        let stale = st.insert_row(&tx, &name, &vec![Value::Exact(Decimal::new(2, 0))]);
-        assert_eq!(stale.err().map(|e| e.code), Some(Code::Conflict));
-    }
-}
+mod tests;

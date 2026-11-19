@@ -95,6 +95,7 @@ pub(super) fn of_statement(s: &SchemaStatement) -> Option<SqlState> {
         | SchemaStatement::GqlGraph(_)
         | SchemaStatement::AlterGraph(_)
         | SchemaStatement::Vector(_)
+        | SchemaStatement::Extension(_)
         | SchemaStatement::XmlSchema(_)
         | SchemaStatement::XQueryModule(_)
         | SchemaStatement::AlterXQueryModule(_)
@@ -120,6 +121,8 @@ pub(super) fn of_alter(a: &AlterAction) -> Option<SqlState> {
         | AlterAction::DropVersioning { .. }
         | AlterAction::RevertCollation(_)
         | AlterAction::Truncate { .. }
+        | AlterAction::AttachPartition { .. }
+        | AlterAction::DetachPartition(_)
         | AlterAction::Storage(_) => None,
     }
 }

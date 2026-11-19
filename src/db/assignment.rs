@@ -12,10 +12,10 @@ use crate::ast::{ParameterSpecification, TargetKind};
 use crate::binder::{OutColumn, ViewCheck};
 use crate::catalog::{CheckLevels, TableDesc};
 use crate::error::{At, Code, Result, SqlError, SqlState, Subject, fail_with};
-use crate::exec::{Drawn, Subqueries, eval, eval_cond};
+use crate::exec::{Drawn, HeldRows, Subqueries, eval, eval_cond};
 use crate::logical::{Cond, Expr, Truth, expr_columns};
 use crate::params::Params;
-use crate::storage::Row;
+use crate::storage::{Row, RowId};
 use crate::value::cast::cast;
 use crate::value::{DataType, Decimal, Value, assign};
 
@@ -89,6 +89,30 @@ pub(super) fn set_columns_of(set: &[(usize, Option<Expr>)], generated: &[(usize,
 pub(super) fn candidate(w: &Written, old: &Row, (assign_rule, subqueries): (&str, &dyn Subqueries)) -> Result<Row> {
     let assigned = Assigned { desc: &w.bound.desc, set: w.set(), generated: &w.bound.generated };
     assigned.candidate((old, old), (assign_rule, subqueries))
+}
+
+/// [ISO/IEC 9075:1992 §13.10 GR6] Each row of `objects` with the values
+/// the UPDATE `w` gives it, every value computed before any row is
+/// updated, as a subquery of one may read the table; \[EXTENSION\] not a
+/// row the statement moved there from another partition (RULES.md D155).
+///
+/// # Errors
+///
+/// As `candidate`; the spill area's.
+pub(super) fn changes_of(
+    st: &super::State,
+    w: &Written,
+    objects: HeldRows<(RowId, Row)>,
+    (effects, subqueries): (&super::integrity::Effects<'_>, &dyn Subqueries),
+) -> Result<HeldRows<(RowId, Row, Row)>> {
+    let mut changes = HeldRows::new(st.list_space());
+    for object in objects {
+        let (id, old) = object?;
+        if !effects.moved_in(&w.bound.table, id) {
+            changes.push((id, old.clone(), candidate(w, &old, ("ISO/IEC 9075:1992 §13.10 GR8", subqueries))?))?;
+        }
+    }
+    Ok(changes)
 }
 
 /// What an update assigns: the table's description, its `<set clause>`s,

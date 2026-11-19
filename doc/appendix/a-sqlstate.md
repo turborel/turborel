@@ -140,6 +140,7 @@ its own; class TB is turborel's own.
 | 2203G | SQL/JSON item cannot be cast to target type: JSON_VALUE of an item whose type does not cast to the returned type, as true to INTEGER |
 | 22W34 | Data exception: a CHEAPEST selector's COST of an edge that is negative or no number (GRF-0034) |
 | 23000 | Integrity constraint violation |
+| 23T01 | Integrity constraint violation: no partition holds the row, of a partitioned table, or a partition's bound does not hold a row written to it or attached *(extension)* |
 | 24000 | Invalid cursor state |
 | 25000 | Invalid transaction state |
 | 25006 | Invalid transaction state: read-only SQL-transaction, of TRUNCATE TABLE |
@@ -150,6 +151,7 @@ its own; class TB is turborel's own.
 | 2A000 | Syntax error or access rule violation in a direct SQL statement |
 | 2B000 | Dependent privilege descriptors still exist |
 | 2E000 | Invalid connection name |
+| 2F002 | SQL routine exception: modifying SQL-data not permitted, of a plug-in's procedure that does not say MODIFIES SQL DATA |
 | 2F005 | SQL routine exception: function executed no return statement, of a function whose body is no RETURN |
 | 2FF01 | SQL/MM Full-Text exception: invalid search expression, a pattern not of the [pattern language](../sql/09-fulltext-patterns.md) |
 | 2FF02 | SQL/MM Full-Text exception: invalid language specification, a language null, empty or unknown; of a spatial routine, SQL/MM Spatial exception: invalid argument |
@@ -199,6 +201,16 @@ its own; class TB is turborel's own.
 | 35000 | Invalid condition number |
 | 36002 | Cursor sensitivity exception: request failed, of TRUNCATE TABLE while a cursor of the transaction reads the table |
 | 37000 | Syntax error or access rule violation in a dynamic SQL statement |
+| 38000 | External routine exception: a plug-in's error of a class a routine may not raise |
+| 38T01 | External routine exception: a plug-in's process ended, crashed or closed a pipe; the next call starts another |
+| 38T02 | External routine exception: a plug-in's call ran past PLUGINS.CALL_TIMEOUT_MS, its process stopped |
+| 38T03 | External routine exception: a plug-in broke protocol 1, its process stopped |
+| 38T04 | External routine exception: a plug-in sent more than PLUGINS.MAX_MESSAGE_BYTES in a message or PLUGINS.MAX_CALL_BYTES in a call |
+| 38T05 | External routine exception: a plug-in cannot be started, its directory under none of PLUGINS.DIRECTORIES, its executable missing, or no cryptography given to check its package |
+| 38T06 | External routine exception: a manifest breaks a rule of format 1 |
+| 38T07 | External routine exception: a package's files are not those its digests name, or another of its version is installed |
+| 38T08 | External routine exception: a package or a registry's index is not signed by a trusted key, or the index has expired |
+| 38T09 | External routine exception: the packages required cannot be resolved, a cycle or a conflict of ranges |
 | 3B000 | Savepoint exception: the class of 3B001 and 3B002 |
 | 3B001 | Savepoint exception: invalid specification: RELEASE or ROLLBACK TO a savepoint not of the current savepoint level, or established before the atomic execution context running began |
 | 3B002 | Savepoint exception: too many: a transaction's 1,025th savepoint |
@@ -218,6 +230,8 @@ its own; class TB is turborel's own.
 | TB916 | Stored data failed its checksum or format |
 | TB918 | The memory budget is spent, a buffer pool has no frame free, or a recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | TB920 | The statement was cancelled |
+| TBB01 | A backup or an archived segment failed its checksum or format, its object named *(extension)* |
+| TBB02 | A restore's recovery target is not among the records the backup and the archive hold *(extension)* |
 | TBL01 | Lock not available: a lock NOWAIT asked for, of a row or a table, is held by another transaction (SQLCODE -911) |
 
 Statements are run directly, so an error of the rules of a statement's

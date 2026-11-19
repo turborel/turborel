@@ -371,8 +371,8 @@ pub const TEMPORAL: [Mutation; 51] = [
         package: Package::Core,
         breaks: "a part kept is written as no INSERT, its triggers and constraints passed by [§15.8 GR9c ii]",
         file: "src/db/write/portion.rs",
-        original: "rows.visit(&mut |row| effects.inserted(table, cx.st.insert_row(cx.tx, table, row)?, row))",
-        replacement: "rows.visit(&mut |row| cx.st.insert_row(cx.tx, table, row).map(drop))",
+        original: "rows.visit(&mut |row| cx.st.insert_routed(cx.tx, table, row).and_then(|(leaf, id)| effects.inserted(&leaf, id, row)))",
+        replacement: "rows.visit(&mut |row| cx.st.insert_routed(cx.tx, table, row).map(drop))",
         integration: &[
             "portions::a_part_kept_is_inserted_as_a_row_15_14",
             "portions::the_parts_kept_are_checked_as_the_statement_ends_15_8",

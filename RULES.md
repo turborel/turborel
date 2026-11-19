@@ -181,6 +181,27 @@ verification approach DO-178C expects (§8).
 | D150 | A reachability index prunes a search's starts by landmark labels |
 | D151 | A graph's statistics are made of its tables', and choose where a search starts |
 | D152 | A search expands a frontier at once and chooses MS-BFS and workers by cost |
+| D153 | A partitioned table is a base table of no rows, and its tree a catalog record |
+| D154 | Partition strategies are plug-ins, and the DEFAULT partition is the framework's |
+| D155 | A row goes down its tree to the partition that holds it, and moves when its key does |
+| D156 | A read of a partitioned table reads the partitions its conditions admit, each by its own paths |
+| D157 | A key holds across partitions by each partition's index, or by a global index if it lacks the partition key |
+| D158 | An index of a partitioned table is a template, made on each partition under a name that cannot collide |
+| D159 | A partitioning tree is logged as its statements, and its partitions keep their own histories |
+| D160 | A backup is a checkpoint's files, copied in chunks while the database serves, and the log written meanwhile |
+| D161 | A backup's objects are block files in the database's formats, so a backup is as checked and as sealed as its files |
+| D162 | A restore is offline, into a staging directory renamed once the database is whole |
+| D163 | The archive is the log's logical records, in segments by timeline, and a checkpoint keeps what the archive lacks |
+| D164 | Recovery stops at a time, a position, a restore point or the end, and a target not reached is refused |
+| D165 | A restore through the archive begins a timeline, and never writes over another's segments |
+| D166 | Targets are object stores behind one object-safe trait, and the history of backups is durable and rebuilt from them |
+| D167 | An external plug-in is a process spoken to in protocol 1 over its pipes |
+| D168 | An extension is a database object made of its manifest, logged with it |
+| D169 | An extension's objects are bridged onto the interfaces of their kinds |
+| D170 | A plug-in's processes are pooled, bounded in time and bytes, and restarted after a failure |
+| D171 | Extensions are versioned packages, resolved together and locked per database |
+| D172 | What a plug-in does is shown, and its errors keep their class |
+| D173 | Only the operator chooses what runs, and packages are checked by digest and signature |
 | D185 | Row locks are kept per table in stripes, and taken by a filter between a query's sort and its limit |
 | D186 | Table locks are held in any of eight modes, and the coordinator's own locks are three of them |
 | D187 | Advisory locks are kept by key in the transaction coordinator, held by a session or a transaction |
@@ -1689,7 +1710,10 @@ referential action that changes it is refused with SQLSTATE 27001
 which the trigger's 09000 tells, as 0W000 is told. The rows of a typed
 table's proper subtables that an UPDATE or DELETE of it reaches are
 recorded too, each by its superrow, the first columns of the subtable's
-row, which are the typed table's [§14.9 GR4, §14.14 GR6].
+row, which are the typed table's [§14.9 GR4, §14.14 GR6]. The rows a
+statement of a partitioned table writes to its partitions are recorded
+alike (D153), and a row an UPDATE moves to another partition is one row
+updated, not a row deleted and one inserted (`Effects::moved`).
 
 The query's rows are all read as the cursor opens, so an error of the
 query undoes the statement with it.
@@ -1949,6 +1973,16 @@ MEMORY.BUDGET_BYTES. On Unix, files are 0600 and directories 0700.
 While anything is encrypted (D48), events carry no statement text, so no
 value meant for an encrypted table reaches a log in the clear.
 INFORMATION_SCHEMA.FILES shows files to the database's owner.
+
+The manager fences a database's files (`files/fence.rs`). A file system
+may give the directory's lock to another opener while its holder still
+runs, as a crashed process's locks are given up. Its `FileLock` then
+carries a test of whether it is still held. Once the database has closed,
+or the test fails, every write, change of size, sync, creation and removal
+is refused (SQLCODE -915, or -910 once closed). A session of a fenced database rolls back as it
+ends, in memory only. Without the fence a stale session's commit was
+written at its log's old end, over records the next opener had written.
+The mutation `fence-ignores-a-taken-lock` checks it.
 
 #### D57. Replicated state is the log, the catalog and the durable files, as opaque bytes
 
@@ -6201,6 +6235,131 @@ refused with -103 (GRF-0070) where it cannot answer the pattern. EXPLAIN
 shows the choice and the estimate, from the row counts as the statement
 was bound; the executor chooses again from the counts as it runs.
 
+#### D167. An external plug-in is a process spoken to in protocol 1 over its pipes
+
+A plug-in of another party runs as processes of its own, started with
+`std::process`, never loaded into the database's address space, so a
+crash, a hang or a fault of memory fails its call and nothing else, and
+it may be written in any language (`src/plugin.rs`). The database writes
+to its standard input and reads its standard output in frames, a length
+of four bytes, a type and a body, of nine messages: HELLO, WELCOME, CALL,
+RESULT, ERROR, CANCEL, SHUTDOWN, SQL and SQL_DONE (`plugin/wire.rs`).
+Values cross as ten tags, a value of a type without one in its text form
+(`plugin/values.rs`), and each kind's operations have payloads of their
+own (`plugin/payload.rs`). Its standard error is kept, its last bytes
+told with a failure. The protocol is version 1 and so is every format of
+it. A program reads its pipes on threads `src/threads.rs` starts, as any
+other thread of the database is.
+
+#### D168. An extension is a database object made of its manifest, logged with it
+
+CREATE EXTENSION, ALTER EXTENSION ... UPDATE and DROP EXTENSION
+RESTRICT or CASCADE make, replace and drop an extension on the state of
+the session's transaction, as any definition is made
+(`db/extensions.rs`). Its manifest, format 1, is read by SQL's own
+tokens (`parser/manifest.rs`, `plugin/manifest.rs`). The session finds
+and checks the package first (`db/extensions/session.rs`) and logs the
+statement rewritten with what it read, the manifest as the hexadecimal
+of its UTF-8, its directory, signer and digest, so recovery and a
+replica make the extension of the log alone, and a statement that writes
+those clauses itself is refused. The catalog keeps each extension
+(`catalog/extensions.rs`), written in its image after the spatial
+catalog, and the database registers its objects again as it opens,
+starting no process until a call needs one. An extension's lock is a
+name of its own, outside every schema. What calls an extension's object
+depends on it, as on a routine, so DROP RESTRICT is refused while a
+view, generated column, constraint, routine or another extension
+requiring it remains, and CASCADE drops them first.
+
+#### D169. An extension's objects are bridged onto the interfaces of their kinds
+
+Each object a manifest declares implements the interface its kind
+already has (`plugin/bridge/`): a function `ScalarFunction`, batching
+BATCH rows a call and cancelled with its statement (D44); an aggregate
+`AggregateFunction`, its state the program's bytes, which the database
+keeps; a table function `TableFunction`, the queries it reads run by the
+statement; a procedure `Procedure`, its SQL run in the caller's
+transaction; a metric `VectorMetric`, whose many distances from one
+query are one call, so VECTOR_DISTANCE over a batch and a DiskANN search
+batch them; and a model `Embedder`. An authenticator is found by the
+server by its mechanism. A backup target's scheme is a `TargetProvider`
+(D166), which a location of that scheme opens when no registered provider
+has it. A partitioning strategy is written against the interface that
+feature takes (`bridge/pending.rs`). Functions are registered in the state's own
+registry, so a transaction rolled back leaves none. Metrics and models
+are held weakly in the shared registries and strongly by the state that
+holds the extension, so they go when it does. No two extensions, nor an
+extension and a built-in or registered object, share a name of a kind.
+
+#### D170. A plug-in's processes are pooled, bounded in time and bytes, and restarted after a failure
+
+An extension's pool starts processes as calls need them, at most
+PLUGINS.PROCESSES at once, each greeted by HELLO before its first call
+(`plugin/pool.rs`, `plugin/process.rs`). A process that ends, breaks
+the protocol, runs past PLUGINS.CALL_TIMEOUT_MS or sends more than
+PLUGINS.MAX_MESSAGE_BYTES in a message or PLUGINS.MAX_CALL_BYTES in a
+call is stopped and its call fails, and the next call starts another. A
+statement cancelled sends CANCEL and gives the program
+PLUGINS.CANCEL_GRACE_MS to answer before its process is stopped. Each
+frame read is reserved of the memory budget while it is held, and HELLO
+tells the program PLUGINS.MEMORY_BYTES, as capping a process's memory
+would need calls of the operating system the database does not make.
+A program starts in its directory with an environment of PATH and the
+temporary directory alone. A pool dropped, as the last state holding its
+extension is, sends SHUTDOWN and stops its processes.
+
+#### D171. Extensions are versioned packages, resolved together and locked per database
+
+An extension's VERSION is a semantic version and REQUIRES names another
+and an npm-style range of its versions, a prerelease taken only when
+asked for (`plugin/package/semver.rs`). Resolution picks the newest
+versions that meet every range, backtracking where a choice fails, and
+refuses a cycle, a conflict or a package missing with SQLSTATE 38T09
+(`plugin/package/resolve.rs`). CREATE EXTENSION creates the extensions
+required first, AS DEPENDENCY, keeping the versions the database has.
+The versions created are the database's lock, kept in its catalog and
+shown by INFORMATION_SCHEMA.EXTENSION_PACKAGES, which `turborel
+extension lock export` writes to a file and `install` reproduces
+exactly, each digest checked. ALTER EXTENSION ... UPDATE runs the
+scripts of SQL the new manifest names for the version it had, in the
+transaction, after each extension requiring it is checked to accept the
+new version.
+
+#### D172. What a plug-in does is shown, and its errors keep their class
+
+INFORMATION_SCHEMA.EXTENSIONS shows each extension, its version, signer,
+and its processes and calls since the database opened;
+EXTENSION_OBJECTS each object declared; EXTENSION_PACKAGES the lock
+(`system/extensions.rs`). EXPLAIN ends with the plug-in calls a plan
+makes. A program's ERROR keeps its SQLSTATE if of a class a routine may
+raise, 22, 23, 38, 39, 42 or 2F, and is 38000 else; the database's own
+conditions of a plug-in are of subclass 38T (`plugin/errors.rs`).
+
+#### D173. Only the operator chooses what runs, and packages are checked by digest and signature
+
+A program of an extension runs with the server's rights, so only the
+database's owner, or any user of a database with none, creates, updates
+or drops one, and its directory must be under one of
+PLUGINS.DIRECTORIES as it is loaded and as each process starts.
+PLUGINS.DIRECTORIES, PLUGINS.TRUSTED_KEYS and PLUGINS.REQUIRE_SIGNED
+are a node's settings the host gives, which SQL may not set. A package
+is turborel's own archive, format 1: each entry carries its SHA-256
+digest, and an optional Ed25519 signature covers the manifest and every
+path and digest (`plugin/package/archive.rs`). The core makes no
+cryptography (D26), so the host gives it one (`PackageCrypto`, which
+`turborel_protocol::packages` implements on aws-lc-rs), and a package is
+refused without it. A package installs into
+`<first PLUGINS.DIRECTORIES>/<NAME>/<version>/` with its digests and
+signature beside it, checked again each time its program starts; with
+PLUGINS.REQUIRE_SIGNED ON, an unsigned package, or one signed by a key
+not trusted, is refused with 38T08. A registry is static files, a signed
+index and its packages; a client trusts the index only when a key of
+PLUGINS.TRUSTED_KEYS signed it and it has not expired, and the digests
+it lists only then. Several registries are tried in the order of
+PLUGINS.REGISTRIES, a package pinned to one by PLUGINS.PINS, and none is
+configured by default. The command-line client fetches over HTTPS with
+rustls (`client/src/fetch.rs`); the server never fetches.
+
 #### D137. A geometry column's statistics are an envelope grid, its vertices and its clustering, and spatial probes are priced by them
 
 A geometry column's statistics are gathered in the pass that gathers the
@@ -6404,6 +6563,297 @@ allocated, as the B-link tree's do. `RTree::shape` reports nodes, bytes,
 fill and envelope overlap per level, which `bench/spatial_index.rs`
 prints after packed, inserted and aged loads.
 
+#### D153. A partitioned table is a base table of no rows, and its tree a catalog record
+
+PARTITION BY makes a partitioned table, and PARTITION OF a partition of
+one. Both are base tables of the catalog, so names, privileges, views,
+constraints and DROP TABLE treat them as any other. A partitioned table
+has storage of its engine that holds no row, and no index of its own.
+Its key, its strategy, its index templates (D158) and each partition's
+parent and bound are kept apart, in one catalog record, PARTITIONING
+(`catalog/partitions.rs`, `catalog/codec/partitions.rs`), of format
+version 1. Each partition has an id that orders its siblings and is
+never given again. A tree is at most 16 levels deep below its root.
+
+A partition takes its parent's columns, defaults, CHECK constraints and
+periods, and its own engine and options. ALTER TABLE changes no column
+or period of a table of a tree, and a partitioned table is given storage
+options and truncated through its partitions. A typed table is not
+partitioned, as its rows are its subtables' too, nor is a node or edge
+table, whose rows are its graph's. ATTACH PARTITION checks that the
+table has the parent's columns, in order, of one schema, temporary kind
+and periods, and system-versioned as the parent is, then checks each of
+its rows against the bound (D155). DETACH PARTITION and DROP TABLE of a
+partition are refused while a foreign key references the tree, whose
+rows they would take away. The Information Schema shows the trees in
+PARTITIONED_TABLES and PARTITIONS.
+
+#### D154. Partition strategies are plug-ins, and the DEFAULT partition is the framework's
+
+A strategy is a `PartitionStrategy` registered by its name, as an index
+method is (`partition.rs`). RANGE, LIST and HASH are built in. It checks
+a key's types and a bound, tells whether two siblings' bounds overlap
+and whether a bound holds a key, routes a key among siblings, and judges
+whether a bound may hold a row meeting a read's restrictions. The
+framework keeps the DEFAULT partition, which no strategy sees. HASH
+hashes a key's parts by their normalized bytes with MurmurHash3 x64 128
+and a fixed seed, the same on any machine, so a row's partition never
+depends on where it was written. A HASH bound's modulus divides or is
+divided by each sibling's, so the remainders of a tree cover each hash
+once when each modulus present is used. A tree whose strategy is not
+registered keeps its rows and is read whole, and a row written to it is
+refused. The contract is checked of each built-in strategy by
+`test/integration/partitioning/contract.rs`.
+
+#### D155. A row goes down its tree to the partition that holds it, and moves when its key does
+
+An INSERT, an UPDATE and a MERGE of a partitioned table route each row
+down its tree, at each level to the partition whose bound holds its key,
+else the DEFAULT, else nowhere, and the statement fails with SQLSTATE
+23T01 (`db/partitions/write.rs`). Each table's route is made once of a
+catalog and kept with it. A row written to a partition by name is
+checked against its bound and each of its ancestors'. An UPDATE or a
+MERGE that changes a row's key so another partition holds it deletes the
+row and inserts it where it is routed, its old version kept in its
+history if the table is system-versioned and the new one stamped as of
+now. A row moved is not changed again by the statement. A searched
+UPDATE or DELETE writes each partition its condition admits in turn, and
+a MERGE's target is its partitions, as a typed table's family is. A
+cursor of a partitioned table is updatable. It reads each partition by
+a plan of its own, as a typed table's cursor reads each subtable, and a
+positioned UPDATE or DELETE writes the row in the partition the cursor
+is on. A positioned UPDATE that changes the row's key so another
+partition holds it moves the row as a searched one does
+(`db/partitions/cursor.rs`).
+
+Row triggers of a table fire for the rows of the partitions under it, as
+a supertable's fire for its subtables' (D81). A row moved is an update
+of the tables both partitions are under, a deletion from those only its
+old partition is under, and an insertion into those only its new one is
+under.
+
+#### D156. A read of a partitioned table reads the partitions its conditions admit, each by its own paths
+
+The planner expands a read of a partitioned table into a read of each
+partition its conjuncts admit, each by its own indexes and statistics
+(`physical/access/partitioned.rs`). Comparisons of a key part with
+constants, IS NULL, IN and OR of equalities restrict the part
+(`partition/prune.rs`). Where every part is restricted to at most 64
+combinations of values, each is routed, and a partition is read only if
+one routes to it. Otherwise the strategy judges each bound and the
+DEFAULT is read. A prepared statement's slots restrict nothing, so a
+plan kept with them reads every partition. Its executions plan with
+their values until their plans take one shape, so a parameter of the key
+prunes as a constant does.
+
+A read in an order reads each partition in it, by an ordered path or a
+sort of its own, and merges them (`Plan::MergeAppend`, `exec/merged.rs`).
+A limit over the merge bounds each partition's sort, so ORDER BY with
+FETCH FIRST reads few rows of each. A nearest read of a partitioned
+table is a nearest read of each partition's index, appended, and the
+sort over them compares the exact measure of every candidate
+(`physical/nearest/partitioned.rs`). A read of row ids, of an UPDATE or
+DELETE, is of the partitioned table alone, whose statement writes each
+partition in turn. EXPLAIN shows the partitions read and the merge.
+
+A join whose equalities probe an index of a partitioned table's rows is
+an index nested-loop join into the partitioned table
+(`physical/indexed/routed.rs`, `exec/join/indexed/routed.rs`). The
+indexes it may probe are the table's global indexes (D157), one probe of
+every partition's rows, and the templates of the table and the tables
+above it (D158), which each partition has. A probe of a template's
+index is routed as its values are bound, to the partitions a read fixing
+those values would read, so the outer side's values prune the
+partitions at run time and a probe that fixes every partition key reads
+one partition's index. Each row found is read from the partition it is
+in. EXPLAIN shows the template's method followed by "each partition's,
+each probe routed to one", or by the number of partitions each probe
+reads. A FULL join and a join reading row ids do not probe a
+partitioned table. A subquery of an outer row's values is run with
+them, each read pruned by them as a constant prunes.
+
+#### D157. A key holds across partitions by each partition's index, or by a global index if it lacks the partition key
+
+A PRIMARY KEY or UNIQUE constraint of a partitioned table is a template
+(D158) made on each partition. Where the key holds every column of the
+partition key at every level, two rows of one key are of one partition,
+so each partition's unique index enforces it alone. Otherwise each
+partition's index of the key is not unique, and the table has a global
+index of the key, one index over the rows of every partition
+(`db/partitions/global.rs`). Its entry names a row by its partition's
+id and its id in the partition, packed into one row id, the partition's
+id in the 24 bits above the row's 40. A row or a partition past those
+bounds is refused with SQLCODE -900. The index lives on the partitioned
+table, named by the template's name and GLOBAL after two NUL
+characters, and is kept, checkpointed and reopened as any index. Its
+entries are written with each partition's rows, taken back with their
+versions, and mended by recovery with the rows of the partitions. A key
+is checked by probing it, each row it names read from its partition
+(`Dispatched`), as a typed table's is across its family. ATTACH adds the
+rows attached to it before they are checked, so a key another partition
+holds is refused and the statement undoes them. DETACH, TRUNCATE of a
+partition, a partition's new storage and DROP of a partition take their
+rows' entries out. An entry of a partition no longer in the tree names
+no row, as partition ids are never given again. A global index is made
+as a constraint or a partition makes one needed and dropped when none
+needs it. A temporary tree, whose rows are each session's own, has none,
+and its keys are checked across its partitions' indexes. Probing one
+index costs one descent, where checking each partition's costs one for
+each, so the global index is the cheaper at scale. A read whose
+equalities fix its columns reads the global index when it costs less
+than the partitions' paths. Foreign keys to and from a partitioned table
+find their rows through its partitions, and a partition's constraints
+are those of the tables above it.
+
+#### D158. An index of a partitioned table is a template, made on each partition under a name that cannot collide
+
+CREATE INDEX of a partitioned table records a template, its method,
+options, key and expressions, with the tree, and makes an index of it on
+each partition holding rows, now and as each is made or attached
+(`db/partitions/templates.rs`). Every index method serves as a template.
+The index of a template on a partition is named by the template's name,
+the partition's schema and its name, joined by NUL characters, which no
+name written holds, so two such names never meet and the template is
+found from the name (`derived_index_name`, `template_of`). Each is built
+as CREATE INDEX builds one while its partition is written, under the
+partitioned table's shared lock, then the template is logged. DROP INDEX
+and ALTER INDEX of a template drop or alter each index it made. ATTACH
+adopts an index of the table of the template's method, key, options and
+expressions, renamed, and builds one otherwise. DETACH keeps each index,
+renamed to the template's name and the table's after an underscore. A
+hybrid index of a MODEL on a partitioned table is a template, its
+full-text part made on each partition, and keeps one table of chunks of
+the tree's rows, keyed by the table's primary key, with the vector index
+of their embeddings. Its pipeline's triggers on the partitioned table
+fire for the rows of every partition, so the chunks follow rows written,
+moved and deleted, and HYBRID_SEARCH of the template reads every
+partition. A full-text index's ranking statistics are those of every
+index of its template together (`db/partitions/ranked.rs`), its
+documents and lengths summed and a term's documents summed, so Rank and
+a top-k's bounds score a row as an index of the table not partitioned
+would. The Information Schema maps each index to its template in
+PARTITION_INDEXES.
+
+#### D159. A partitioning tree is logged as its statements, and its partitions keep their own histories
+
+CREATE TABLE of a partitioned table or a partition, ATTACH and DETACH
+are logged as their text, and replayed as statements, so recovery makes
+the tree again with no record of its own. A checkpoint writes the
+PARTITIONING record with the catalog, at version 1. A template's CREATE
+INDEX is logged as an index's is, and its replay makes the template and
+each of its indexes. A partition of a system-versioned table is
+system-versioned, with a history of its own, where an UPDATE or DELETE
+of its rows keeps their old versions. FOR SYSTEM_TIME of the partitioned
+table reads its partitions and the union of their histories, so a row
+moved between partitions is read in each as it was. A global temporary
+partitioned table has partitions of its kind, each session's rows its
+own.
+
+#### D160. A backup is a checkpoint's files, copied in chunks while the database serves, and the log written meanwhile
+
+A backup is taken online, by BACKUP DATABASE, `Database::backup` or a
+client of the server, all through one path (`db/backup/take.rs`). It
+checkpoints, then exports the checkpoint's files while holding the
+checkpoint turn shared, so no later checkpoint frees a page it copies,
+while readers and writers go on. Each file is read in chunks of 64 KiB,
+each with its MurmurHash3 digest in the manifest. The checkpoint's image
+follows, and then the log's records from the image's recovery start to
+the log's end as the copy finishes, made durable first. The backup holds
+every transaction those records commit, and recovery from it is
+recovery after a crash at its end.
+
+An incremental backup writes only the chunks whose digest differs from
+the same chunk of the backup it follows, its parent, the newest in the
+target unless FROM names one. Its manifest names every chunk, each in
+the backup that holds it, so a restore reads a chain back to a full
+backup, of at most 10,000 backups. A digest is no proof, so verifying a
+chain checks each chunk read against the manifest that holds it.
+
+The manifest is written last. A backup without one is none, so a backup
+that fails, is cancelled or is cut short by a crash leaves nothing a
+restore would take. One that fails or is cancelled removes what it
+wrote. Cancellation is checked before each chunk and record, and once
+more before the manifest. Backups may run at once, each its own export
+and id, `B` and the start time's microseconds and a counter.
+
+#### D161. A backup's objects are block files in the database's formats, so a backup is as checked and as sealed as its files
+
+Every object a backup or the archive writes is a block file of format
+version 1 written as a stream (`disk/block/stream.rs`), each block with
+its digest by the database's checksum and passed through its encodings
+and keys as STORAGE.ENCODINGS names them now. A backup of an encrypted
+database is encrypted, and reading one needs the keys. With
+BACKUP.COMPRESSION ON the encoding of id 1, LZ4, comes first, and a
+backup is refused if none is registered. Verification (`verify.rs`)
+reads a chain's chunks, image and records without restoring, and checks
+each block's digest, each chunk's against its manifest, and that the
+records run unbroken from the backup's start to its stop. A failure is
+SQLSTATE TBB01, naming the object.
+
+#### D162. A restore is offline, into a staging directory renamed once the database is whole
+
+`Database::restore` and `turboreld --restore` restore into a directory
+not there yet, from a database that has opened none. The chain's chunks
+are assembled into `<dir>.restoring`, the backup's image recorded as the
+catalog in the formats it was written in, and the database recovered
+from the backup's records and, given an archive, its segments. A
+Restored entry is added to the history, the database checkpointed and
+closed, the staging directory renamed to the directory and its parent
+synced. A restore cut short leaves no database at the directory, and the
+next restore into it removes the staging directory left first.
+
+#### D163. The archive is the log's logical records, in segments by timeline, and a checkpoint keeps what the archive lacks
+
+While ARCHIVE.MODE is ON, the job `turborel-archive` reads the records
+made durable since the last archived (`Log::read_from`) and writes them
+to ARCHIVE.TARGET, a segment an object, named by its timeline and its
+first and last positions, once ARCHIVE.SEGMENT_BYTES gather or
+ARCHIVE.TIMEOUT_MS pass. A checkpoint truncates the log no further than
+the archive's last record (`Floor`, `db/files.rs`), so a target out of
+reach holds the log back and loses nothing. Before anything is
+archived, nothing is let go. A segment older than
+ARCHIVE.RETENTION_SECONDS is removed once its last record is before the
+start of the newest completed backup in the archive's target.
+
+#### D164. Recovery stops at a time, a position, a restore point or the end, and a target not reached is refused
+
+A restore recovers through `SeededLogs`, the backup's records and then
+the archive's segments along the timeline's ancestry, cut at the
+target (`backup/seed.rs`). A time stops before the first commit after
+it, a position after the record at or before it, a restore point after
+its record, and the end after the last record there is. CREATE RESTORE
+POINT writes a record naming the point and syncs it, and recovery after
+a crash passes over it. A restore whose target the records never
+reach is refused with SQLSTATE TBB02, and nothing is left.
+
+#### D165. A restore through the archive begins a timeline, and never writes over another's segments
+
+A timeline is the history of one database's records. A restore through
+the archive takes the archive's highest timeline plus one, writes its
+history there, naming its parent and where it branched, and sets the
+restored database's ARCHIVE.TIMELINE. The restored database archives
+under its timeline, never over the old one, which the first database
+may go on writing. A later restore follows the newest timeline, or the
+one asked, through its ancestors' segments up to each branch point.
+
+#### D166. Targets are object stores behind one object-safe trait, and the history of backups is durable and rebuilt from them
+
+A target (`backup/target.rs`) is a flat store of named objects, written
+by an upload begun, its chunks written, and finished or abandoned, read
+by ranges, listed by prefix and removed. Its methods take and give
+strings, integers and byte chunks alone, so a plug-in in another
+process can serve it, and `BackupTarget` is an extension point (R-SAFE-3)
+whose `ArchiveTarget` is the same trait. A `TargetProvider` opens the
+targets of a scheme, and `dir` and `memory` are built in.
+
+The database keeps a history of its backups, archived segments, restore
+points and restores, a block file under `plugins/turborel-backup/`,
+each entry appended and synced. INFORMATION_SCHEMA.BACKUPS,
+ARCHIVED_SEGMENTS and RESTORE_POINTS fold it, a backup recorded running
+and no longer under way shown INTERRUPTED. The database's owner sees
+them, and a non-owner sees no rows. RESCAN BACKUP TARGET reads a
+target's manifests and segments and records what the history lacks,
+and marks GONE each completed backup the target no longer holds.
 #### D185. Row locks are kept per table in stripes, and taken by a filter between a query's sort and its limit
 
 FOR UPDATE and FOR SHARE, NOWAIT and SKIP LOCKED are an extension. A row
@@ -6425,6 +6875,11 @@ READ COMMITTED the statement runs again at a new snapshot, at most 64
 times. At REPEATABLE READ and SERIALIZABLE it is refused, SQLCODE -911,
 as a write of the row would be. SKIP LOCKED passes over such a row.
 NOWAIT refuses a lock held against it with SQLSTATE TBL01, SQLCODE -911.
+
+A query of a partitioned table reads each partition in its place, by a
+scan giving its row ids, appended, each id in a column of its own. So
+each row is locked in the partition that holds it, under the key its
+writers take, and ROW SHARE is taken on each partition (D153).
 
 A query of a join locks the rows of each base table it reads, or of
 those OF names by the names its FROM clause exposes. The binder walks the
@@ -6476,7 +6931,8 @@ statement a mutex for a mode only LOCK TABLE could conflict with.
 
 LOCK TABLE is an extension. Its mode is the table lock mode of its name.
 ACCESS SHARE, ROW SHARE and SHARE need SELECT, a stronger mode DELETE. A
-typed table's subtables are locked unless ONLY is written. The tables are
+typed table's subtables, and a partitioned table's partitions at every
+level, are locked unless ONLY is written. The tables are
 locked in the order written, and those locked before a failure stay
 locked. Its command code is -42.
 

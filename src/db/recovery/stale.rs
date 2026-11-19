@@ -50,6 +50,7 @@ impl Database {
             | Change::Commit { .. }
             | Change::Abort
             | Change::Checkpoint
+            | Change::RestorePoint { .. }
             | Change::StatementUndone { .. }
             | Change::Schema { .. }
             | Change::Defined { .. }

@@ -69,6 +69,10 @@ fn schema_command(s: &SchemaStatement) -> Command {
         SchemaStatement::XmlSchema(_) => commands::CREATE_XML_SCHEMA,
         SchemaStatement::XQueryModule(_) => commands::CREATE_XQUERY_MODULE,
         SchemaStatement::AlterXQueryModule(_) => commands::ALTER_XQUERY_MODULE,
+        SchemaStatement::Extension(e) => match **e {
+            crate::ast::ExtensionStatement::Create(_) => commands::CREATE_EXTENSION,
+            crate::ast::ExtensionStatement::Update(_) => commands::ALTER_EXTENSION,
+        },
     }
 }
 
@@ -97,6 +101,7 @@ fn drop_command(object: &DropObject) -> Command {
         DropObject::GqlGraph(..) => commands::DROP_GRAPH,
         DropObject::XmlSchema(_) => commands::DROP_XML_SCHEMA,
         DropObject::XQueryModule(_) => commands::DROP_XQUERY_MODULE,
+        DropObject::Extension(..) => commands::DROP_EXTENSION,
     }
 }
 
@@ -182,5 +187,8 @@ fn user_command(u: &UserStatement) -> Command {
         UserStatement::Alter { .. } | UserStatement::RoleCreator { .. } => commands::ALTER_USER,
         UserStatement::Drop { .. } => commands::DROP_USER,
         UserStatement::Owner { .. } | UserStatement::Members { .. } => commands::ALTER_DATABASE,
+        UserStatement::Backup { .. } => commands::BACKUP_DATABASE,
+        UserStatement::RestorePoint { .. } => commands::CREATE_RESTORE_POINT,
+        UserStatement::Rescan { .. } => commands::RESCAN_BACKUP_TARGET,
     }
 }

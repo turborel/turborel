@@ -1,8 +1,9 @@
-//! The mutations `cargo xtask mutate` applies (RULES.md R-TEST-9), each breaking one mechanism and naming tests, by their full paths,
-//! that fail when it is broken. A new mechanism adds one; a change to a quoted snippet updates its mutation (`verify` refuses a stale one).
+//! The mutations `cargo xtask mutate` applies (RULES.md R-TEST-9), each breaking one mechanism and naming tests that fail when it is
+//! broken. A new mechanism adds one; a change to a quoted snippet updates its mutation (`verify` refuses a stale one).
 
 mod areas;
 mod array_targets;
+mod backup;
 mod bigint;
 mod bounded;
 mod check_rebind;
@@ -54,7 +55,9 @@ mod nulls;
 mod order_by;
 mod overloading;
 mod partitioned_joins;
+mod partitioning;
 mod patterns;
+mod plugins;
 mod predicates;
 mod projection;
 mod psm;
@@ -130,11 +133,8 @@ mod xquery_modules;
 mod xquery_statics;
 mod zones;
 
-pub use self::{kept::KEPT, vr::VR, waits::WAITS, zones::ZONES};
+pub use self::{collations::COLLATIONS, fill::FILL, kept::KEPT, readers::READERS, vr::VR, waits::WAITS, zones::ZONES};
 use super::{Mutation, Package};
-pub use collations::COLLATIONS;
-pub use fill::FILL;
-pub use readers::READERS;
 pub use reads::READS;
 pub use server::SERVER;
 pub use shadow::SHADOW;

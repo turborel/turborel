@@ -189,7 +189,7 @@ impl Written {
     /// # Errors
     ///
     /// As `eval_cond`.
-    fn holds_of(&self, row: &Row, runner: &Runner) -> Result<bool> {
+    pub(in crate::db) fn holds_of(&self, row: &Row, runner: &Runner) -> Result<bool> {
         let LogicalPlan::Filter { cond, .. } = &self.bound.rows else { return Ok(true) };
         let truth = match &self.values {
             Some(values) => eval_cond(&filled_cond(cond.clone(), values)?, row, runner)?,
@@ -230,9 +230,8 @@ impl Session {
         self.settle_cursors(st, &target.name);
         // [ISO/IEC 9075-2:2023 §15.11 GR4] its BEFORE triggers first.
         let mut rows = effects.before_insert(cx, &target.name, rows)?;
-        rows.visit(&mut |row| {
-            effects.inserted(&target.name, st.insert_row(tx, &target.name, row)?, row) // [X3.135-1986 §8.7 GR1c]
-        })?;
+        // [X3.135-1986 §8.7 GR1c], [EXTENSION] in the partition that holds it (RULES.md D155).
+        rows.visit(&mut |row| st.insert_routed(tx, &target.name, row).and_then(|(leaf, id)| effects.inserted(&leaf, id, row)))?;
         if !target.checks.is_empty() {
             let runner = Runner::new(st, tx.id);
             rows.visit(&mut |row| check_option(&target.checks, [row], ("X3.135-1986 §8.7 GR2", &runner)))?;
@@ -467,20 +466,17 @@ pub(super) fn update_rows(cx: StatementContext<'_>, w: Written, effects: &mut Ef
     let hosted = Hosted::new(effects.host, cx);
     let runner = hosted.runner();
     let mut leftovers = portion::Leftovers::of(st, &w)?;
-    // [ISO/IEC 9075:1992 §13.10 GR6] every value computed before any row
-    // is updated: a subquery of one may read the table.
-    let mut changes = HeldRows::new(st.list_space());
-    for object in objects {
-        let (id, old) = object?;
-        let new = candidate(&w, &old, ("ISO/IEC 9075:1992 §13.10 GR8", &hosted))?;
-        changes.push((id, old, new))?;
-    }
+    let changes = super::assignment::changes_of(st, &w, objects, (effects, &hosted))?;
     // [ISO/IEC 9075-2:2023 §15.14 GR5] its BEFORE triggers first.
     let mut changes = effects.before_update(cx, (&w.bound.table, &columns), changes)?;
     // A row another transaction changed is written in the version it
     // committed, if it is still one to change, its values computed from it.
     let mut again: HashMap<RowId, Option<Row>> = HashMap::new();
     changes.visit(&mut |(id, _, new)| {
+        // [EXTENSION] a row its key moves to another partition (RULES.md D155).
+        if st.moves((&w.bound.named, &w.bound.table), new) {
+            return super::partitions::move_row(cx, (&w, runner), (*id, new), (effects, &mut again));
+        }
         let mut recomputed = None;
         let mut recheck = |newest: &Row| {
             if !w.holds_of(newest, runner)? {

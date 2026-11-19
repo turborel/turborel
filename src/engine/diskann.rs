@@ -83,6 +83,17 @@ pub trait Metric: Send + Sync {
     fn normed(&self, a: Probe<'_>, b: Probe<'_>) -> f32 {
         self.distance(a.0, b.0)
     }
+    /// The distances from `a` to each of `many`, in order: `distance`'s,
+    /// in one call, as a plug-in's metric measures a node's neighbours in
+    /// one round trip. Default: `distance` of each.
+    fn distances(&self, a: &[f32], many: &[&[f32]]) -> Vec<f32> {
+        many.iter().map(|b| self.distance(a, b)).collect()
+    }
+    /// Whether `distances` is cheaper than `distance` of each, so a
+    /// search gathers a node's neighbours first. Default: no.
+    fn batches(&self) -> bool {
+        false
+    }
 }
 
 /// A vector and its squared norm.

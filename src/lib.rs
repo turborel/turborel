@@ -29,6 +29,7 @@
 //! The same form is used in error messages, so a user can look a rule up.
 
 pub mod ast;
+pub mod backup;
 pub mod binder;
 pub mod bytes;
 pub mod catalog;
@@ -54,8 +55,10 @@ pub mod memory;
 pub mod optimizer;
 pub mod params;
 pub mod parser;
+pub mod partition;
 pub mod pattern;
 pub mod physical;
+pub mod plugin;
 pub mod regex;
 pub mod settings;
 pub mod spatial;

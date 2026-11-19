@@ -136,6 +136,9 @@ impl State {
     /// SQLCODE -910 if there is no such index, table or method; the
     /// method's, making it; the table's, read.
     pub(super) fn replay_index_options(&mut self, name: &str, options: Vec<(String, Value)>) -> Result<()> {
+        if let Some((table, _)) = self.template(name).filter(|_| self.catalog.index(name).is_none()) {
+            return self.set_template(&table, name, Some(options));
+        }
         let ix = self.catalog.index(name).cloned().ok_or_else(|| api(format!("[EXTENSION] no index {name}")))?;
         if !needs_rebuild(&self.index_options_of(&ix.method), &ix.options, &options) {
             return self.set_index_options(name, options);
@@ -184,8 +187,12 @@ impl State {
     /// SQLCODE -910 if there is no such index, it enforces a UNIQUE
     /// constraint [X3.135-1986 §6.4 GR2], or it is being built.
     pub(super) fn drop_index(&mut self, name: &str) -> Result<()> {
+        if self.template(name).is_some() && self.catalog.index(name).is_none() {
+            return self.drop_template(name);
+        }
         let desc = self.catalog.index(name).ok_or_else(|| api(format!("[EXTENSION] no index {name}")))?;
-        if desc.unique {
+        // [EXTENSION] a global index enforces one too (RULES.md D157).
+        if desc.unique || crate::catalog::is_global_index(name) {
             return fail(
                 Code::Api,
                 format!("[EXTENSION] the index {name} enforces a UNIQUE constraint of {} [X3.135-1986 §6.4 GR2]", desc.table),
@@ -291,6 +298,10 @@ impl Database {
 
     /// `create_index`'s work, and CREATE INDEX's (`db/index_statements.rs`).
     pub(super) fn make_index(&self, spec: &IndexSpec) -> Result<()> {
+        // [EXTENSION] of a partitioned table, a template (RULES.md D158).
+        if self.snapshot()?.catalog.partitioning().is_partitioned(&spec.table) {
+            return self.make_template(spec);
+        }
         self.build_index(spec, &|st, tx| st.log_definition(Some(tx), spec.change()))
     }
 
@@ -298,7 +309,7 @@ impl Database {
     /// says, `ready` making the last change, with the gate open, once it is
     /// built: logging it, or putting it in another's place. If `ready`
     /// fails, the index is taken out.
-    fn build_index(&self, spec: &IndexSpec, ready: &dyn Fn(&mut State, &Txn) -> Result<()>) -> Result<()> {
+    pub(in crate::db) fn build_index(&self, spec: &IndexSpec, ready: &dyn Fn(&mut State, &Txn) -> Result<()>) -> Result<()> {
         let (name, qn) = (spec.name.as_str(), &spec.table);
         let current = self.snapshot()?;
         // [ISO/IEC 9075:1992 §4.9] Of a temporary table, only defined: each
@@ -362,6 +373,9 @@ impl Database {
     /// would deadlock.
     pub fn drop_index(&self, name: &str) -> Result<()> {
         let current = self.snapshot()?;
+        if let Some((table, _)) = current.template(name).filter(|_| current.catalog.index(name).is_none()) {
+            return self.drop_template_index((&table, name));
+        }
         let table = current.catalog.index(name).map(|ix| ix.table.clone()).ok_or_else(|| api(format!("[EXTENSION] no index {name}")))?;
         let tx = current.begin();
         current.acquire(&tx, &table, LockMode::AccessExclusive)?;
@@ -416,6 +430,9 @@ impl Database {
     /// As `alter_index`.
     pub(super) fn altered_index(&self, name: &str, given: &[(String, Option<Value>)], rebuilt: bool) -> Result<()> {
         let current = self.snapshot()?;
+        if let Some((table, _)) = current.template(name).filter(|_| current.catalog.index(name).is_none()) {
+            return self.alter_template((&table, name), given, rebuilt);
+        }
         let ix = current.catalog.index(name).cloned().ok_or_else(|| api(format!("[EXTENSION] no index {name}")))?;
         let declared = current.index_options_of(&ix.method);
         let mut options = ix.options.clone();

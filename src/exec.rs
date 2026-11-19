@@ -28,6 +28,7 @@ mod invoked;
 mod join;
 mod json_table;
 mod limit;
+mod merged;
 mod nearest;
 mod partition;
 mod pattern;
@@ -115,6 +116,7 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         // [X3.135-1986 §5.25 GR2] apply each <value expression> to each row.
         Plan::Project { .. } => projected,
         Plan::Append { .. } => appended,
+        Plan::MergeAppend { .. } => merged::merged,
         Plan::SetOp { .. } => set::operation,
         Plan::Values { .. } => set::values,
         Plan::System { .. } => system_plan,
@@ -163,6 +165,7 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::Aggregate { .. }
         | Plan::Project { .. }
         | Plan::Append { .. }
+        | Plan::MergeAppend { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }
