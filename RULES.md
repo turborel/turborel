@@ -256,6 +256,7 @@ verification approach DO-178C expects (§8).
 | D235 | A server stopping sends the replies in flight whole, and runs no request pipelined behind them |
 | D236 | The network benchmark is an example of the server's crate, on the shared harness |
 | D240 | A completion carries the server's time for its statement, and the waits it can measure for free |
+| D241 | The server ships as a container image, built by CI from the Dockerfile |
 | D245 | The plug-in SDK is a crate of its own |
 | D246 | A host plug-in's encodings and checksums take every page through the program |
 | D247 | A host plug-in's clock pushes its time, and the database reads its own copy |
@@ -429,6 +430,17 @@ The hook (`cargo xtask install-hooks`) runs before each commit. CI runs on
 Linux, macOS and Windows for every push and pull request, with coverage on
 Linux. We need both because a hook can be skipped and only checks one
 platform.
+
+#### D241. The server ships as a container image, built by CI from the Dockerfile
+
+The image holds `turboreld` and `turborel` on a distroless base, as a
+non-root user, for Linux x86-64 and arm64. CI (`image.yml`) builds it
+once a change on main has passed `verify`, each platform on a runner of
+its own architecture, and publishes it to ghcr.io as `nightly` and by
+commit, as the archives are. Its build stage is the official Rust image
+at the version `rust-toolchain.toml` pins, and the build fails if the two
+differ, so the compiler stays one configuration item (R-CM-1): a
+toolchain change moves both.
 
 #### D22. No instrumented MC/DC
 
@@ -8494,6 +8506,8 @@ clippy.toml             lint thresholds
 rustfmt.toml            formatting (D9)
 rust-toolchain.toml     pinned toolchain (D8)
 .cargo/config.toml      the `cargo xtask` alias
+Dockerfile              the server's image (D241)
+.dockerignore           what the image's build does not read
 README.md               what turborel is; how to build and test it
 RULES.md                this file
 CONFORMANCE.md          what is implemented of the standards, and the
@@ -8700,7 +8714,7 @@ Rust's short-circuit `&&` and `||`.
 | R-PROC-5 | A release's crates **shall** be published together at its number, from a pushed commit passing `cargo xtask verify --coverage`, dry run first, per VERSIONING.md. | review |
 | R-TOOL-1 | Project automation **shall** be Rust in `xtask/`, never shell scripts (D7). | review |
 | R-TOOL-2 | `xtask` **shall** follow these rules, use only std, and test its own decisions (`[TOOL]` requirements). | `xtask verify` |
-| R-CM-1 | The toolchain is pinned (D8); a change **shall** be its own commit, passing `cargo xtask verify --coverage`. | review |
+| R-CM-1 | The toolchain is pinned (D8), and the Dockerfile's build image with it (D241); a change **shall** be its own commit, changing both, passing `cargo xtask verify --coverage`. | review |
 | R-CM-2 | `Cargo.lock` and the baselines **shall** be under version control. | review |
 
 The review checklist:
