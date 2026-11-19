@@ -73,7 +73,7 @@ fn identifier(s: &str) -> Option<String> {
 
 /// SQLCODE 0, of `state`.
 fn done(state: SqlState) -> Completed {
-    Completed { sqlcode: 0, sqlstate: state.as_str().to_owned(), active: false }
+    Completed::of(0, state.as_str())
 }
 
 impl<C: Connector> Agent<C> {

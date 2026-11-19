@@ -1,21 +1,24 @@
 //! \[EXTENSION\] Prepared statements over a connection [ISO/IEC 9075:1992
 //! §17] (RULES.md D45): prepared once, their parameters' types and columns
 //! described; executed, or, a query, its cursor opened and its rows read
-//! a batch at a time, as often as asked.
+//! a batch at a time, as often as asked. Granted `cursors`, a statement
+//! has several cursors open at once, each numbered by the caller; granted
+//! `describe`, a statement or an open cursor is described again
+//! (RULES.md D188).
 
 use std::io::{Read, Write};
 
 use turborel::params::ParameterType;
 use turborel::storage::Row;
 use turborel::value::Value;
-use turborel_protocol::{Column, Completed, Reply, Request};
+use turborel_protocol::{Attributes, Column, Completed, Described, Reply, Request};
 
 use crate::connection::{Connection, Outcome, Result};
 
 /// A statement the server prepared, of a connection.
 #[derive(Debug, Clone)]
 pub struct Statement {
-    number: u32,
+    pub(crate) number: u32,
     parameters: Vec<ParameterType>,
     columns: Vec<Column>,
 }
@@ -41,15 +44,16 @@ pub struct Batch {
     pub more: bool,
 }
 
-/// The request that executes `statement` with `values`, at most `rows` of
-/// a query's rows sent, all if 0; the transaction ended with it if `ends`.
-fn execute_request(statement: &Statement, values: &[Value], rows: u32, ends: bool) -> Request {
-    Request::Execute { statement: statement.number, values: values.to_vec(), rows, ends }
+/// The request that executes `statement` with `values`, its cursor
+/// numbered `cursor`, at most `rows` of a query's rows sent, all if 0; the
+/// transaction ended with it if `ends`; carrying `attributes`.
+fn execute_request(statement: &Statement, (cursor, values): (u32, &[Value]), rows: u32, (ends, attributes): (bool, Attributes)) -> Request {
+    Request::Execute { statement: statement.number, cursor, values: values.to_vec(), rows, ends, attributes }
 }
 
 impl<S: Read + Write> Connection<S> {
     /// The server's Complete, after `request`.
-    fn completed(&mut self, request: &Request) -> Result<Completed> {
+    pub(crate) fn completed(&mut self, request: &Request) -> Result<Completed> {
         self.send(request)?;
         match self.receive()? {
             Reply::Complete(completed) => Ok(completed),
@@ -60,7 +64,10 @@ impl<S: Read + Write> Connection<S> {
             | Reply::Prepared { .. }
             | Reply::Description(_)
             | Reply::Rows(_)
-            | Reply::Suspended => Err(self.lose("[DESIGN] the server sent no completion")),
+            | Reply::Suspended
+            | Reply::Notice(_)
+            | Reply::Status { .. }
+            | Reply::Pong => Err(self.lose("[DESIGN] the server sent no completion")),
         }
     }
 
@@ -75,6 +82,11 @@ impl<S: Read + Write> Connection<S> {
         let number = self.next_statement;
         self.next_statement = self.next_statement.wrapping_add(1);
         self.send(&Request::Prepare { statement: number, sql: sql.to_owned() })?;
+        self.prepared()
+    }
+
+    /// The statement the server's Prepared describes.
+    fn prepared(&mut self) -> Result<Statement> {
         match self.receive()? {
             Reply::Prepared { statement, parameters, columns } => Ok(Statement { number: statement, parameters, columns }),
             Reply::Error(failure) => Err(self.failed(failure)),
@@ -84,7 +96,10 @@ impl<S: Read + Write> Connection<S> {
             | Reply::Description(_)
             | Reply::Rows(_)
             | Reply::Suspended
-            | Reply::Complete(_) => Err(self.lose("[DESIGN] the server sent no Prepared")),
+            | Reply::Complete(_)
+            | Reply::Notice(_)
+            | Reply::Status { .. }
+            | Reply::Pong => Err(self.lose("[DESIGN] the server sent no Prepared")),
         }
     }
 
@@ -97,7 +112,7 @@ impl<S: Read + Write> Connection<S> {
     /// The server's: SQLSTATE 07001 if `values` are not one for each
     /// parameter; the statement's; a connection failure.
     pub fn execute(&mut self, statement: &Statement, values: &[Value]) -> Result<Outcome> {
-        let request = execute_request(statement, values, 0, self.autocommit);
+        let request = execute_request(statement, (0, values), 0, (self.autocommit, self.told.attributes()));
         if statement.columns.is_empty() {
             return self.completed(&request).map(Outcome::Done);
         }
@@ -108,13 +123,33 @@ impl<S: Read + Write> Connection<S> {
 
     /// [§17.14] Opens the cursor of `statement`, a query, with `values`: at
     /// most `rows` of its rows, all if 0. The cursor is read within its
-    /// transaction, which `set_autocommit` leaves.
+    /// transaction, which `set_autocommit` leaves; but under autocommit,
+    /// the server granting `fetch-ends`, the transaction ends as the cursor
+    /// does: committed once its last row is read or it is closed, rolled
+    /// back if a fetch fails (RULES.md D199).
     ///
     /// # Errors
     ///
     /// The server's: 24000 if its cursor is open; those of `execute`.
     pub fn open_cursor(&mut self, statement: &Statement, values: &[Value], rows: u32) -> Result<Batch> {
-        self.send(&execute_request(statement, values, rows, false))?;
+        self.open_cursor_numbered((statement, 0), values, rows)
+    }
+
+    /// \[DESIGN\] RULES.md D188: opens the cursor numbered `at.1` of the
+    /// statement `at.0`, as `open_cursor` opens its one: a statement has
+    /// several open at once, each of its own number, once `cursors` is
+    /// granted; 0 is the one `open_cursor` opens.
+    ///
+    /// # Errors
+    ///
+    /// As `open_cursor`'s; a connection failure for a number other than 0
+    /// if `cursors` was not granted.
+    pub fn open_cursor_numbered(&mut self, (statement, cursor): (&Statement, u32), values: &[Value], rows: u32) -> Result<Batch> {
+        self.needs(cursor == 0, turborel_protocol::capability::CURSORS)?;
+        // Under autocommit, granted `fetch-ends`, the transaction ends as
+        // the cursor does (RULES.md D199).
+        let ends = self.autocommit && self.told.granted.has(turborel_protocol::capability::FETCH_ENDS);
+        self.send(&execute_request(statement, (cursor, values), rows, (ends, self.told.attributes())))?;
         let (fetched, more) = self.rows()?;
         Ok(Batch { rows: fetched, more })
     }
@@ -125,7 +160,18 @@ impl<S: Read + Write> Connection<S> {
     ///
     /// The server's: 24000 if its cursor is not open; a connection failure.
     pub fn fetch(&mut self, statement: &Statement, rows: u32) -> Result<Batch> {
-        self.send(&Request::Fetch { statement: statement.number, rows })?;
+        self.fetch_numbered((statement, 0), rows)
+    }
+
+    /// At most `rows` more rows of the cursor numbered `at.1` of the
+    /// statement `at.0`, all if 0 (`open_cursor_numbered`).
+    ///
+    /// # Errors
+    ///
+    /// As `fetch`'s.
+    pub fn fetch_numbered(&mut self, (statement, cursor): (&Statement, u32), rows: u32) -> Result<Batch> {
+        self.needs(cursor == 0, turborel_protocol::capability::CURSORS)?;
+        self.send(&Request::Fetch { statement: statement.number, cursor, rows })?;
         let (fetched, more) = self.rows()?;
         Ok(Batch { rows: fetched, more })
     }
@@ -136,7 +182,56 @@ impl<S: Read + Write> Connection<S> {
     ///
     /// The server's: 24000 if it is not open; a connection failure.
     pub fn close(&mut self, statement: &Statement) -> Result<()> {
-        self.completed(&Request::Close { statement: statement.number }).map(drop)
+        self.close_numbered((statement, 0))
+    }
+
+    /// Closes the cursor numbered `at.1` of the statement `at.0`.
+    ///
+    /// # Errors
+    ///
+    /// As `close`'s.
+    pub fn close_numbered(&mut self, (statement, cursor): (&Statement, u32)) -> Result<()> {
+        self.needs(cursor == 0, turborel_protocol::capability::CURSORS)?;
+        self.completed(&Request::Close { statement: statement.number, cursor }).map(drop)
+    }
+
+    /// \[DESIGN\] RULES.md D188: `statement` described again by the server:
+    /// its parameters' types and its columns, as they are now.
+    ///
+    /// # Errors
+    ///
+    /// The server's: 26000 if the statement is no more; a connection
+    /// failure if `describe` was not granted.
+    pub fn describe(&mut self, statement: &Statement) -> Result<Statement> {
+        self.needs(false, turborel_protocol::capability::DESCRIBE)?;
+        self.send(&Request::Describe(Described::Statement(statement.number)))?;
+        self.prepared()
+    }
+
+    /// \[DESIGN\] RULES.md D188: the columns of the open cursor numbered
+    /// `at.1` of the statement `at.0`.
+    ///
+    /// # Errors
+    ///
+    /// The server's: 24000 if it is not open; a connection failure if
+    /// `describe` was not granted.
+    pub fn describe_cursor(&mut self, (statement, cursor): (&Statement, u32)) -> Result<Vec<Column>> {
+        self.needs(false, turborel_protocol::capability::DESCRIBE)?;
+        self.send(&Request::Describe(Described::Cursor { statement: statement.number, cursor }))?;
+        match self.receive()? {
+            Reply::Description(columns) => Ok(columns),
+            Reply::Error(failure) => Err(self.failed(failure)),
+            Reply::Lob(_)
+            | Reply::Challenge(_)
+            | Reply::Ready { .. }
+            | Reply::Prepared { .. }
+            | Reply::Rows(_)
+            | Reply::Suspended
+            | Reply::Complete(_)
+            | Reply::Notice(_)
+            | Reply::Status { .. }
+            | Reply::Pong => Err(self.lose("[DESIGN] the server sent no Description")),
+        }
     }
 
     /// [§17.7] Destroys `statement`.

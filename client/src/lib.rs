@@ -7,16 +7,24 @@
 pub mod agent;
 mod cancel;
 pub mod connection;
+pub mod copy;
+pub mod export;
+mod frames;
 pub mod import;
 pub mod lobs;
 pub mod mechanism;
 #[cfg(any(windows, test))]
 mod pipe;
+pub mod session;
 pub mod statements;
 pub mod target;
 pub mod timeouts;
+pub mod told;
 
 pub use cancel::Canceller;
+/// The splitter of text into statements the server uses for a Query of
+/// several statements, for a program to split text alike.
+pub use turborel_protocol::split::Splitter;
 /// What a connection's results and failures are made of.
 pub use turborel_protocol::{Column, Completed, Failure};
 #[cfg(feature = "tls")]
