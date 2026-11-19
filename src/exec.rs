@@ -371,6 +371,7 @@ mod tests {
             cost: 0.0_f64,
             covering: false,
             located: false,
+            decided: None,
         };
         assert_eq!(code(execute(seq(), &st, NO_TRANSACTION)), Some(Code::Api));
         assert_eq!(code(execute(index(), &st, NO_TRANSACTION)), Some(Code::Api));

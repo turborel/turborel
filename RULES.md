@@ -2199,6 +2199,12 @@ life. Without the opt-in, or if an argument expression or any other part
 of the filter can raise, the planner reads the table whole. A lookup must
 not hide an error on a row it skips (D15).
 
+The executor checks the full WHERE condition on the rows a function
+lookup finds, but for a spatial conjunct a scan decides of each entry
+itself (D85, `Plan::IndexScan::decided`): the planner takes that
+conjunct from the filter, and the scan judges it of every entry, from
+the entry's point where the entry is one, else from its row.
+
 The index returns every matching inserted `(Key, RowId)` pair, each once.
 It may also return pairs that do not match, called extra candidates. The
 keys contain inserted values unless `Index::key_projection` explicitly
@@ -2376,7 +2382,13 @@ without binding plug-ins to one page cache. Each database has one budget in
 bytes, MEMORY.BUDGET_BYTES. Pools reserve from it, a reservation past it is
 refused (SQLCODE -918), and so is a page wanted from a full pool. Plug-ins
 get the budget when registered. INFORMATION_SCHEMA.MEMORY_RESERVATIONS shows
-each reservation to the database's owner.
+each reservation to the database's owner. Admission is one atomic total.
+The list behind that view is kept in 64 shards chosen by each
+reservation's number, and a reservation's size is an atomic of its own
+entry, so sessions reserving, resizing and releasing at once take no
+database-wide lock. The view merges the shards in creation order. A
+single list took a fifth of thread time in waits for four to eight
+sessions of nearest-neighbour queries.
 
 Undo is never refused by the budget, because a refusal would damage a table
 (D19). A failed statement's undo and a ROLLBACK reserve what they need even
@@ -2751,7 +2763,14 @@ Nearest-neighbour traversal expands the branch with the lowest distance
 bound next. Each arithmetic step of a branch bound rounds downward, so
 rounding cannot hide a nearer entry. Leaf rectangle distances and row
 identifiers order the results; every branch tied at that distance is
-expanded first. The frontier reserves memory before growing (D38), and
+expanded first. The frontier keeps each expanded node's items as one run,
+a binary heap built in place in linear time in an arena all runs share,
+and orders the runs by their nearest remaining item; it gives the order a
+single heap of every item would. A node then costs one heap build and one
+push rather than a logarithmic push per entry, and a leaf's entries past
+the search's end are never sifted. Pushing every entry made the frontier
+the largest cost of a ten-nearest query. The frontier reserves memory
+before growing (D38), and
 dropping the iterator releases it. A new entry behind the distance already
 returned is omitted, as concurrent inserts are optional to an index scan.
 This ordering is exact for indexed rectangles and points. A geometry
@@ -2861,9 +2880,27 @@ Orientation first tries Shewchuk's binary64 rounding-error bound
 ([reference implementation](https://www.cs.cmu.edu/afs/cs/project/quake/public/code/predicates.c),
 `ccwerrboundA`). It accepts a sign only when both products, the determinant
 and the error bound are normal, and the determinant's magnitude exceeds
-that bound. Other cases use outward-rounded intervals, then exact bounded
-integers on binary64's dyadic coordinates. No tolerance changes a
-topological decision, including at extreme exponents.
+that bound. When a product's two differences are exact, or one is an exact
+zero, the determinant is next decided exactly as a four-term
+floating-point expansion: each product split into its rounded value and
+the error a fused multiply-add gives, then Shewchuk's Two-Two-Diff and the
+sign of its largest nonzero term. The split is used only for products of
+magnitude between 2^-969 and the largest finite value over eight, so the
+error is a binary64 number and no sum overflows. Grid-aligned data, where
+collinear triples are common and the bound cannot prove a zero, takes this
+path without allocating. Other cases use outward-rounded intervals, then
+exact bounded integers on binary64's dyadic coordinates. No tolerance
+changes a topological decision, including at extreme exponents.
+Lines and polygon rings with at least 4,096 pairs of edges are compared
+through buckets of the same dyadic grid prepared polygons use, over the
+two envelopes' overlap, padded to a square where they touch along an
+axis-parallel line. One side's edges are filed under every cell they may
+touch, each edge of the other is tested exactly against the edges filed
+under its cells, and the first meeting ends the search. The cells an edge
+is said to touch include every cell it touches, so two edges that meet
+share a cell and no meeting pair is skipped; an edge whose envelope misses
+the overlap cannot meet the other side and is not filed. Where the grid
+declines, or with fewer pairs, every pair is tested as before.
 
 `ScalarFunction::spatial_operation` declares equivalent spatial semantics,
 including result types, NULL propagation and SRID errors. It is separate
@@ -2874,6 +2911,31 @@ constant or parameter, and every other conjunct must be non-raising.
 The full condition remains a residual. If a later parameter has a different
 SRID, the index returns all entries, including empties, so pruning cannot
 hide the runtime error. NULL and matching-SRID EMPTY queries return none.
+
+Under a projection or a grouping, which read known columns of the rows,
+a scan of a windowed spatial lookup, an intersection's, a relate's or a
+distance's (D135), decides its conjunct of each entry itself, and the
+filter no longer judges it (D34). An entry whose envelope is one
+point, not the origin an empty geometry projects to, is the closed point
+set of its row's geometry, whatever its kind, so the call's function
+decides the comparison from the point and the column's SRID
+(`ScalarFunction::point_compared`), raising a reference mismatch as the
+call would; any other entry's row is read and the conjunct judged of
+it. Where nothing else reads the column, a point entry decided true
+needs no row if every reader sees it (`TableStorage::visible_to_all`),
+as an index-only scan's entry needs none; else its row is read. Such a
+scan is priced as a covering scan. A prepared polygon decides
+"distance op constant" of a point by bounds its cells put on the
+distance (`prepared/cells/within.rs`): each cell's Chebyshev distance,
+in cells, to the nearest cell edges may touch, counted by a two-pass
+chamfer; a point's distance is at least a cell less than that, and at
+most two cells more along a diagonal, so where the bound lies below the
+constant by more than the measures' rounding, or above by more, as the
+nearest-edge search's reach bounds it, the comparison is decided
+without measuring. The same decision serves a filter's comparison of
+the call with a constant, either way round, a row at a time or over a
+batch (`ScalarFunction::call_compared`, `exec/eval.rs`,
+`exec/batch/judge/calls.rs`).
 An empty stored geometry projects to an origin rectangle, adding candidates
 but no false negatives. NULL keys are omitted. Readers compare the visible
 version's projection with the entry before evaluating the full condition.
@@ -2984,6 +3046,15 @@ or intermediate overflow. Final magnitudes remain approximate binary64
 values; underflow may round a positive distance to zero. Only a final
 minimum beyond the finite range raises SQLSTATE 22003, not an intermediate
 component distance. It is not a substitute for a topological predicate.
+Chains with at least 4,096 pairs of edges are measured by an expanding
+search: one chain's edge envelopes go into a packed hierarchy, and each
+edge of the other is measured only against edges whose envelopes come
+within the best measure so far, widened by 2^-20 of it plus 64 units in
+the last place of the largest coordinate, far more than any rounding of
+a measure. Every pair whose measure could be least is still measured, by
+the same per-pair measure, so the result is the nested loops' to the
+bit; where the search's arithmetic would leave the finite range, every
+pair is measured as before.
 
 Distance bounds round each positive operation down. The Euclidean term
 uses unscaled squares and a square root, combined with the greatest axis
@@ -3030,7 +3101,8 @@ PERCENT and other distance orders retain ordinary plans. Learned plans
 fill and prepare both their distance measure and full filter each run.
 
 Constant folding may replace a scalar call with its `specialize` result
-(D53). The replacement preserves its contracts and errors, remains correct
+(D53), in a condition, a select list or a set function's argument. The
+replacement preserves its contracts and errors, remains correct
 if given different arguments, and must not perform work with visible side
 effects. Retained state reserves memory from the supplied database budget
 (D38); failed preparation leaves the original call for runtime. Filling a
@@ -3058,9 +3130,76 @@ range contains its Y; the shared exact ray-crossing rule still decides
 boundary membership and shell-minus-hole interiors. These immutable trees
 reserve vector capacity before allocation, have depth bounded by the
 geometry coordinate limit, and decline independently when memory is short.
-The decoded operand remains usable without them. Distance reuses the
-prepared intersection decision, then keeps its ordinary separation kernel
-and result bounds; segment-distance pruning is not implied.
+The decoded operand remains usable without them.
+A Polygon or MultiPolygon operand of at least 32 edges also builds exact
+cell certificates, once it has located eight points per edge plus 256,
+or its interval trees have tested about 2,048 edges per edge, as rays
+across many teeth do first, the tests of later points estimated from
+those of the first 64, so an operand prepared for a few rows of a join
+never pays for them. Its
+envelope gets a grid of square cells whose side is a power of two, about
+64 cells per edge and at most 1,024 along an axis, their bounds 2^-8 of
+a cell past multiples of the side so round coordinates rarely fall on
+one. Cell bounds and row centres are exact, and a point's cell is found
+by an exact multiplication and a floor checked against the cell's exact
+lower bound, as subtracting the shift from a negative coordinate can
+round. A cell an edge may touch is a boundary cell:
+an edge within one row's height, or a vertical one, is marked over its
+exact extent, and any other over each row band's computed extent widened
+by a doubled bound on that computation's error. The grid is swept a row
+at a time from the edges that may touch that row, so only one row's
+crossings are held. Every other cell holds no boundary point and is
+labelled interior or exterior from the exact half-open crossings of its
+row's centre line, each placed in its column by exact orientation, by
+its slope where it meets a column's side, and so wholly left or right of
+the cell. Each ring's parity is kept, and shells,
+holes and parts combine as point location combines them, so a label never
+differs from location, valid topology or not. A point in a labelled cell
+is decided by one lookup. A boundary cell only one ring's edges may touch
+keeps that ring's side where the cell's right side meets the centre line,
+unless another part holds it whole or a hole's shell leaves it outside.
+A point in it is located from the edges whose envelopes meet the closed
+cell, found in a hierarchy of the operand's edges split at the median
+along the axis whose halves' envelopes overlap least, then whose halves
+are smaller, edges with equal centres ordered along the other axis,
+reserved from the budget the first time a point needs it. The point's
+half-open ray is replaced by
+a run right to the cell's side and a rise along it to the centre line,
+which cross a ring as often as the ray does, modulo two: the rise lies
+just left of the side, nearer to it than the run and the centre line lie
+above their heights, so no vertex lies on the path, and an edge through
+one of its corners is placed by its slope. A cell several rings' edges
+may touch, or whose one ring does not decide it alone, keeps a record:
+for each polygon of its rings whose shell touches or holds it, the
+shell's part, the first hole, in order, that holds it without touching
+it, and each touching ring's parity at the reference point. A polygon
+that holds the cell untouched makes it interior, and one whose untouched
+shell does not hold it is left out. A point in it follows each ring's
+parity apart along the same path, and the polygons combine as location
+combines them. A cell with more than 64 such rings, or whose row's
+rings outgrow the room to note them, leaves its points to the interval
+tree or the ring scan.
+Certificates decline when a cell
+would be within 256 units in the last place of the largest coordinate, a
+scaled coordinate would reach 2^44, the side would fall below 1e-280, or
+the budget refuses their cells.
+The same operands, from the second line, polygon or multi-part form of
+them they test, keep their edges filed in that grid over their envelope,
+as intersection tests file one side (above), reserved from the budget. Each
+operand then probes only the filed edges in the cells its own edges may
+touch, and decides as the unprepared relationship does: edges that meet,
+or a first vertex of either shape, part by part, not outside the other,
+the prepared polygon's points placed by its cells, interval tree or
+rings. Collections keep the general path. Distance reuses the
+prepared intersection decision and keeps its result bounds. From the
+seventeenth point it measures, such an operand finds a point's
+separation by searching the hierarchy of its edges for the nearest,
+depth first and nearer child first: a subtree or an edge is skipped
+only when its envelope misses the square within the best measure so
+far, widened as the chains' search widens it, or lies beyond that reach
+by squared distance with a factor of 1 + 2^-40 for that distance's
+rounding, so every edge whose measure could be least is measured and
+the minimum is the scan's to the bit.
 Spatial probes with equal declared semantics and deterministic
 functions have one learned plan shape even when preparation changes the
 function object. Ordinary function probes still require object identity;
@@ -6431,6 +6570,16 @@ sorts than a bottom-up one, still far below inserting. Hilbert order was
 the other choice. It needs the data's extent before the sort, or a curve
 over warped float bits, while STR needs only the count, which the first
 sort yields.
+
+A load whose entries the memory budget can hold is tiled in memory
+(`pack/held.rs`): the entries are gathered into a vector reserved of the
+budget, its room grown geometrically while the budget grants it, and
+each slab and run is a slice sorted in place, so no record is encoded,
+written to a work area or read back. Where the budget stops granting,
+the entries gathered go to the sorted spill ahead of the rest, within
+MEMORY.WORK_BYTES as above. Both tile the same tree. Measured on a
+million points (`bench/geometry.md`), the held load builds the index in
+0.6 s against 4.1 s through the spill.
 
 CREATE INDEX fills an index while writers keep it up to date (D27), so
 `Index::load_beside_writers` lets a method build beside them. The rtree

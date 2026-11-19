@@ -54,7 +54,9 @@ pub(super) struct Filtered<'a> {
 /// table's statistics give, no more than the access reads: a scan that
 /// skips the rows its conditions cannot match keeps the same rows of the
 /// fewer it reads, not a fraction of them again. Its long IN lists are
-/// judged by sets (`logical::judged_by_sets`).
+/// judged by sets (`logical::judged_by_sets`). Of no conjunct left, an
+/// index scan deciding its conjunct of each entry (RULES.md D85) shows
+/// the spatial note itself.
 pub(super) fn filtered(plan: Plan, conds: Vec<Cond>, with: &Filtered<'_>) -> Built {
     let kept = geometric::kept(&conds, with.known, with.windowed);
     let plan = match and_all(conds) {
@@ -65,7 +67,19 @@ pub(super) fn filtered(plan: Plan, conds: Vec<Cond>, with: &Filtered<'_>) -> Bui
             let detail = if with.note.is_empty() { shown } else { format!("{shown}  {}", with.note) };
             Plan::Filter { detail, cond: c, est, input: Box::new(plan) }
         }
-        None => plan,
+        None => noted(plan, with.note),
     };
     Built { plan, ordered: with.ordered }
+}
+
+/// `plan` shown with `note`, what EXPLAIN shows of the spatial probe
+/// priced, after its detail, if it is an index scan and there is a note.
+fn noted(mut plan: Plan, note: &str) -> Plan {
+    if let Plan::IndexScan { detail, .. } = &mut plan
+        && !note.is_empty()
+    {
+        detail.push_str("  ");
+        detail.push_str(note);
+    }
+    plan
 }

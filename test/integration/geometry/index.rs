@@ -60,7 +60,9 @@ fn geometry_index_filters_refine_candidates_and_equal_scans() {
         if at < 3 {
             let plan = a.physical_plan(&query, &Params::new()).unwrap();
             assert!(plan.contains("SHAPES_G"), "{plan}");
-            assert!(plan.contains("Filter"), "{plan}");
+            // The scan decides the conjunct of each entry under the
+            // projection, or a filter judges it (RULES.md D34, D85).
+            assert!(plan.contains("decided of each entry") || plan.contains("Filter"), "{plan}");
         }
         results.push(rows(&a, &query).unwrap());
     }
