@@ -19,8 +19,9 @@ use crate::plugin::values::{put_value, put_values, value};
 use crate::plugin::wire::{put_rows, rows};
 use crate::value::{DataType, Value};
 
-use super::pending::{PartitionBound, PartitionStrategy, RangeDatum, Restriction};
 use super::{Link, answer};
+use crate::catalog::{PartitionBound, RangeDatum};
+use crate::partition::{PartitionStrategy, Restriction};
 
 /// A plug-in's strategy.
 #[derive(Debug)]
@@ -166,10 +167,10 @@ impl PartitionStrategy for PluginStrategy {
         })?;
         answer(&got, |_| Ok(()))
     }
-    fn bound(&self, types: &[DataType], spec: &PartitionBound) -> Result<PartitionBound> {
+    fn bound(&self, types: &[DataType], spec: PartitionBound) -> Result<PartitionBound> {
         let got = self.ask(PARTITION_BOUND, |p| {
             put_strings(p, &type_names(types));
-            put_bound(p, spec)
+            put_bound(p, &spec)
         })?;
         answer(&got, bound)
     }

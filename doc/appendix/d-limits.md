@@ -11,6 +11,9 @@ SQLSTATE 0A000.
 | What | Limit |
 |---|---|
 | An identifier | 128 characters |
+| Levels of a partitioning tree below its root *(extension)* | 16 |
+| Partitions of a tree with a global index, by their ids *(extension)* | 16,777,216 |
+| Rows of a partition with a global index, by their ids *(extension)* | 1,099,511,627,776 |
 | CHARACTER and CHARACTER VARYING | 32,767 characters |
 | BINARY and BINARY VARYING | 32,767 octets |
 | CHARACTER LARGE OBJECT and BINARY LARGE OBJECT | 4G, 4,294,967,296 characters or octets |

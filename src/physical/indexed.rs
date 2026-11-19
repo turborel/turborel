@@ -21,6 +21,8 @@
 //! kind of the indexed column's, which the index places among its keys
 //! (`engine/key.rs` `anchor`), not compared with every key.
 
+use std::sync::Arc;
+
 use super::cost::HASH_ROW;
 use super::estimate::{self, Known};
 use super::join::Flip;
@@ -31,14 +33,16 @@ mod coordinates;
 mod expand;
 mod fan_out;
 mod probed;
+mod routed;
 mod spatial;
 use crate::catalog::{ColumnDesc, IndexDesc, QualifiedName};
-use crate::index::{IndexMethod, Probe};
+use crate::index::IndexMethod;
 use crate::logical::{Cond, Expr, LogicalPlan, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr, split_and};
 use crate::storage::cost_of;
 use crate::value::datetime::{Datetime, Moment};
 use crate::value::interval::Interval;
 use crate::value::{Binary, CompOp, DataType, Decimal, Value};
+use routed::Candidate;
 
 /// An index of the table an operand reads that a join's equalities probe:
 /// the table, its filter, the index, and of each of the index's first
@@ -192,13 +196,20 @@ impl PhysicalPlanner<'_> {
             Some((columns, _)) => keys.iter().map(|&(l, r)| columns.get(r).map(|&t| (l, t))).collect::<Option<_>>()?,
             None => keys.to_vec(),
         };
-        let (storage, desc) = (self.db.storage_of(table).ok()?, self.db.catalog.table(table)?);
+        let desc = self.db.catalog.table(table)?;
+        // [EXTENSION] a partitioned table's are its partitions' and its
+        // global ones (`indexed/routed.rs`, RULES.md D156).
+        let (storage, candidates) = if self.db.catalog.partitioning().is_partitioned(table) {
+            self.routed_candidates(table).filter(|_| !located)?
+        } else {
+            (Arc::clone(self.db.storage_of(table).ok()?), self.own_candidates(table))
+        };
         let (model, stats) = (self.db.cost(), self.db.statistics(table));
         let known = Known { stats: stats.as_deref(), cost: &model };
-        let (rows, columns) = (cost_of(storage.row_count()), expand::kept(&desc.columns, filter));
+        let (rows, columns) = (cost_of(self.db.row_count(table)?), expand::kept(&desc.columns, filter));
         let mut best: Option<Probing> = None;
-        for ix in self.db.catalog.indexes(table).into_iter().filter(|ix| !self.db.building.contains(&ix.name)) {
-            let (Some(kind), Ok(found)) = (self.db.methods.get(&ix.method), self.db.index_of(&ix.name)) else { continue };
+        for Candidate { ix, found, routing } in &candidates {
+            let Some(kind) = self.db.methods.get(&ix.method) else { continue };
             let Some(((used, at, types), reverse)) = expand::probed(ix, &columns, (&keys, of_kind), &**kind) else { continue };
             let whole = !reverse && used.len() == ix.columns.len();
             let by_columns = || {
@@ -208,36 +219,40 @@ impl PhysicalPlanner<'_> {
             };
             let probed: Vec<usize> = at.iter().filter_map(|&k| ix.columns.get(k).copied()).collect(); // `indexed/fan_out.rs`
             let fan_out = || self.edge_fan_out(table, &probed).unwrap_or_else(|| rows * by_columns());
-            let each = found.distinct_keys().filter(|_| whole).map_or_else(fan_out, |d| rows / d.max(1.0_f64));
-            let sample: Option<Vec<Value>> = types.iter().take(used.len()).map(sample).filter(|_| !reverse).collect();
-            let pages = sample
-                .and_then(|values| found.probe_pages(&Probe::Prefix { equal: values, then: None }))
-                .unwrap_or_else(|| (rows + 1.0_f64).log2());
+            let each = found.distinct_keys().filter(|_| whole && routing.is_none()).map_or_else(fan_out, |d| rows / d.max(1.0_f64));
+            let pages = Candidate::pages(&**found, (&types, used.len()), reverse, rows);
             let missed = found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost();
-            let cost = model.index_descent * pages + missed + each * storage.fetch_cost();
+            // Of each partition's index, each partition a probe is routed to probed.
+            let (partitions, shown) = routing.as_ref().map_or((1.0_f64, String::new()), |r| r.probes(&probed));
+            let cost = (model.index_descent * pages + missed) * partitions + each * storage.fetch_cost();
             if best.as_ref().is_none_or(|b| cost < b.cost) {
-                // A row's id follows its columns.
-                let width = desc.columns.len().saturating_add(usize::from(located));
-                let (index, method, positions) =
-                    (ix.name.clone(), expand::method_shown(ix, used.len(), reverse), reverse.then(|| at.clone()));
-                let (through, needed) = (through.clone(), needed.to_vec());
                 best = Some(Probing {
                     table: table.clone(),
                     filter: filter.cloned(),
-                    width,
-                    index,
-                    method,
+                    // A row's id follows its columns.
+                    width: desc.columns.len().saturating_add(usize::from(located)),
+                    index: ix.name.clone(),
+                    method: format!("{}{shown}", expand::method_shown(ix, used.len(), reverse)),
                     used,
                     each,
                     cost,
-                    through,
-                    needed,
+                    through: through.clone(),
+                    needed: needed.to_vec(),
                     located,
-                    positions,
+                    positions: reverse.then(|| at.clone()),
                 });
             }
         }
         best
+    }
+
+    /// The indexes of `table`, not partitioned, a probe may read: those
+    /// not being built.
+    fn own_candidates(&self, table: &QualifiedName) -> Vec<Candidate> {
+        let usable = self.db.catalog.indexes(table).into_iter().filter(|ix| !self.db.building.contains(&ix.name));
+        usable
+            .filter_map(|ix| Some(Candidate { ix: ix.clone(), found: Arc::clone(self.db.index_of(&ix.name).ok()?), routing: None }))
+            .collect()
     }
 
     /// The rows `plan` is estimated to give, if it reads tables, filters,
@@ -247,7 +262,7 @@ impl PhysicalPlanner<'_> {
     /// as join ordering takes it (`physical/order.rs`).
     pub(super) fn rows_of(&self, plan: &LogicalPlan) -> Option<f64> {
         match plan {
-            LogicalPlan::Scan { table, .. } => self.db.storage_of(table).ok().map(|s| cost_of(s.row_count())),
+            LogicalPlan::Scan { table, .. } => self.db.row_count(table).map(cost_of),
             LogicalPlan::Filter { cond, input } => {
                 let stats = if let LogicalPlan::Scan { table, .. } = &**input { self.db.statistics(table) } else { None };
                 let model = self.db.cost();
@@ -389,11 +404,12 @@ fn probed_columns(
 /// The cost the planner gave the read of a table `plan` is: of its scan,
 /// or of its index scans, filtered or not, and projected, as a derived table's
 /// columns are, which costs nothing beside the read.
-fn access_cost(plan: &Plan) -> Option<f64> {
+pub(super) fn access_cost(plan: &Plan) -> Option<f64> {
     match plan {
         Plan::SeqScan { cost, .. } | Plan::IndexScan { cost, .. } => Some(*cost),
         Plan::Filter { input, .. } | Plan::Project { input, .. } => access_cost(input),
         Plan::Append { left, right } => Some(access_cost(left)? + access_cost(right)?),
+        Plan::MergeAppend { inputs, .. } => inputs.iter().map(access_cost).sum(),
         Plan::Product { .. }
         | Plan::Nearest(_)
         | Plan::HashJoin { .. }

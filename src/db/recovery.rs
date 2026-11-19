@@ -478,10 +478,10 @@ impl State {
     /// of its images, in each index `kept` chooses.
     fn take_back_images(&self, change: &RowChange, kept: &impl Fn(&IndexDesc) -> bool) -> Result<()> {
         // A dropped table has no indexes left to mend (`Database::redo`).
-        for ix in self.catalog.indexes(&change.table).into_iter().filter(|ix| kept(ix)) {
-            let index = self.index_of(&ix.name)?;
-            for key in change.before.iter().chain(&change.after).filter_map(|r| key_of(r, ix)) {
-                take_back(&**index, &key, change.row)?;
+        for (ix, partition) in self.table_indexes(&change.table).into_iter().filter(|(ix, _)| kept(ix)) {
+            let (index, id) = (self.index_of(&ix.name)?, Self::entry_id(partition, change.row)?);
+            for key in change.before.iter().chain(&change.after).filter_map(|r| key_of(r, &ix)) {
+                take_back(&**index, &key, id)?;
             }
         }
         Ok(())
@@ -494,10 +494,10 @@ impl State {
             return Ok(());
         }
         let Some(now) = self.storage_of(&change.table)?.get(NO_TRANSACTION, change.row)? else { return Ok(()) };
-        for ix in self.catalog.indexes(&change.table).into_iter().filter(|ix| kept(ix)) {
-            let index = self.index_of(&ix.name)?;
-            if let Some(key) = key_of(&now, ix).filter(|k| index.rows(k).is_ok_and(|ids| !ids.contains(&change.row))) {
-                index.insert(key, change.row)?;
+        for (ix, partition) in self.table_indexes(&change.table).into_iter().filter(|(ix, _)| kept(ix)) {
+            let (index, id) = (self.index_of(&ix.name)?, Self::entry_id(partition, change.row)?);
+            if let Some(key) = key_of(&now, &ix).filter(|k| index.rows(k).is_ok_and(|ids| !ids.contains(&id))) {
+                index.insert(key, id)?;
             }
         }
         Ok(())
@@ -527,7 +527,12 @@ impl State {
     /// readers may still see: keys the index does not hold left out
     /// (`IndexDesc::holds`).
     fn entries_for<'a>(&self, ix: &'a IndexDesc, as_of: Timestamp) -> Result<impl Iterator<Item = Result<(Key, RowId)>> + 'a> {
-        let versions = Arc::clone(self.storage_of(&ix.table)?).versions(self.tx.horizon(), as_of, &ix.reads());
+        // [EXTENSION] a global index's, of its table's partitions (RULES.md D157).
+        let versions = if crate::catalog::is_global_index(&ix.name) {
+            self.global_versions(ix, as_of)?
+        } else {
+            Arc::clone(self.storage_of(&ix.table)?).versions(self.tx.horizon(), as_of, &ix.reads())
+        };
         Ok(versions.filter_map(move |read| {
             let keyed = read.and_then(|(id, row)| {
                 let key = ix

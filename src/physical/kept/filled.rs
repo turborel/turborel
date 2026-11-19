@@ -41,6 +41,10 @@ impl Filling<'_> {
         Ok(Plan::Nearest(read))
     }
 
+    fn plans(&self, plans: Vec<Plan>) -> Result<Vec<Plan>> {
+        plans.into_iter().map(|p| self.plan(p)).collect()
+    }
+
     fn plan(&self, plan: Plan) -> Result<Plan> {
         match plan {
             Plan::Project { exprs, detail, input } => {
@@ -73,10 +77,8 @@ impl Filling<'_> {
                 let fetch = limit.fetch.map(|f| Ok::<_, SqlError>(Fetch { count: self.expr(f.count)?, ..f })).transpose()?;
                 Ok(Plan::Limit { limit: Limit { offset, fetch }, input: Box::new(self.plan(*input)?) })
             }
-            Plan::Append { left, right } => {
-                let left = Box::new(self.plan(*left)?);
-                Ok(Plan::Append { left, right: Box::new(self.plan(*right)?) })
-            }
+            Plan::Append { left, right } => Ok(Plan::Append { left: Box::new(self.plan(*left)?), right: Box::new(self.plan(*right)?) }),
+            Plan::MergeAppend { inputs, keys, detail } => Ok(Plan::MergeAppend { inputs: self.plans(inputs)?, keys, detail }),
             Plan::Product { .. }
             | Plan::HashJoin { .. }
             | Plan::IndexJoin { .. }

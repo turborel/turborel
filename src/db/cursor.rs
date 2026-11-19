@@ -386,9 +386,17 @@ impl Session {
         let mut effects = self.effects(st);
         // [ISO/IEC 9075-2:2023 §15.14 GR5] its BEFORE triggers first.
         let new = effects.before_updated_row(cx, (table, &set_columns(w)), (id, &old, new))?;
-        st.update_row(tx, table, id, &new)?;
-        check_option(&w.bound.checks, [&new], ("X3.135-1986 §8.11 GR5", &runner))?;
-        effects.updated(table, id, (old, &new), &set_columns(w))?;
+        // [EXTENSION] a row its key takes out of its partition, moved to the
+        // one it is routed to (RULES.md D155, D156).
+        if st.moves((&w.bound.named, table), &new) {
+            let mut again = std::collections::HashMap::new();
+            super::partitions::move_row(cx, (w, runner.runner()), (id, &new), (&mut effects, &mut again))?;
+            check_option(&w.bound.checks, [&new], ("X3.135-1986 §8.11 GR5", &runner))?;
+        } else {
+            st.update_row(tx, table, id, &new)?;
+            check_option(&w.bound.checks, [&new], ("X3.135-1986 §8.11 GR5", &runner))?;
+            effects.updated(table, id, (old, &new), &set_columns(w))?;
+        }
         st.end_statement(tx, effects)?;
         self.changed_through(cursor, (table, id));
         Ok(Completion::Success)

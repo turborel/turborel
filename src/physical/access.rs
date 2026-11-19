@@ -8,6 +8,7 @@ mod geometric;
 mod guarded;
 mod json;
 mod keys;
+mod partitioned;
 mod predicate;
 mod scans;
 mod spatial;
@@ -180,6 +181,10 @@ impl PhysicalPlanner<'_> {
     /// Choose how to read one table: a sequential scan or an index path.
     /// If an order is wanted, unordered paths are charged for a later sort.
     pub(super) fn access(&self, read: TableRead<'_>, conds: Vec<Cond>, want: &[SortKey]) -> Built {
+        // [EXTENSION] a partitioned table's read is its partitions' (RULES.md D156).
+        if let Some(built) = self.partitioned(read, &conds, want) {
+            return built;
+        }
         let Ok(storage) = self.db.storage_of(read.table) else {
             // [DESIGN] A bound table has storage. If not, it is scanned anyway,
             // and the executor reports the missing storage (SQLCODE -910).
@@ -380,7 +385,8 @@ impl PhysicalPlanner<'_> {
         if storage.row_count() < POINT_ROWS {
             return None;
         }
-        let usable = |ix: &&_| ix_is_point(ix) && !self.db.building.contains(&ix.name);
+        let usable =
+            |ix: &&IndexDesc| ix_is_point(ix) && !self.db.building.contains(&ix.name) && !crate::catalog::is_global_index(&ix.name);
         self.db.catalog.indexes(read.table).into_iter().filter(usable).find_map(|ix| {
             let (kind, found, types) = (self.db.methods.get(&ix.method)?, self.db.index_of(&ix.name).ok()?, ix.key_types(desc)?);
             let served = served_by(compared, ix);

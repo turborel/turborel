@@ -32,6 +32,11 @@ behind it, and each can be replaced or added to.
 - Savepoints, with SAVEPOINT, RELEASE SAVEPOINT and ROLLBACK TO SAVEPOINT
   at the savepoint levels of routines and ATOMIC blocks.
 - Row and columnar storage, chosen per table.
+- [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
+  or a strategy a plug-in registers, many levels deep, attached and
+  detached, rows routed and moved, reads pruned and merged in order, joins
+  routed by each probe, global indexes holding keys across partitions,
+  and every index method made on each partition.
 - Large objects up to 4G, stored, logged, read and sent a chunk at a
   time, and reached by locators.
 - Indexes as plug-ins. B-link trees, linear hash tables and R-trees over

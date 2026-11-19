@@ -217,7 +217,16 @@ impl State {
             // removed, an entry not taken back owed (`txn/owed.rs`). A
             // failure leaves the rest of the garbage for a later call.
             lock.owed.retry(&|name, index| self.index_of(name).is_ok_and(|now| Arc::ptr_eq(now, index)));
+            // [EXTENSION] The global indexes over a partition's rows, whose
+            // entries go with its versions; one not taken back is passed
+            // over by every reader, which reads its row again (RULES.md D157).
+            let globals: OnceCell<Vec<Global>> = OnceCell::new();
+            let over = || {
+                let all = self.globals_over(table).into_iter();
+                all.filter_map(|(ix, partition)| Some((Arc::clone(self.index_of(&ix.name).ok()?), ix, partition))).collect()
+            };
             let _ = storage.gc(horizon, &mut |id, row| {
+                remove_global(globals.get_or_init(over), id, &row);
                 let found = found.get_or_init(of_table);
                 let indexes = indexes.get_or_init(|| found.iter().map(|&(_, index, ix)| (&**index, ix)).collect());
                 let failed = remove_entries(indexes, id, &row);
@@ -294,6 +303,21 @@ pub(crate) fn remove_entries(indexes: &[(&dyn Index, &IndexDesc)], id: RowId, ro
 
 /// An index of a table collected: its name, the index and its description.
 type Found<'a> = (&'a str, &'a Arc<dyn Index>, &'a IndexDesc);
+
+/// \[EXTENSION\] A global index over a partition's rows (RULES.md D157),
+/// its description, and the partition's id its entries carry.
+type Global = (Arc<dyn Index>, IndexDesc, u64);
+
+/// \[EXTENSION\] Removes the entries of row `id`, a version collected, of
+/// `row`, from the global indexes `globals` over its partition. One not
+/// taken back is passed over by every reader (RULES.md D157).
+fn remove_global(globals: &[Global], id: RowId, row: &Row) {
+    for (index, ix, partition) in globals {
+        if let (Some(key), Ok(entry)) = (ix.entry_of(row), crate::db::partitions::global::packed(*partition, id)) {
+            let _ = index.remove(&key, entry);
+        }
+    }
+}
 
 impl Transactions {
     /// Notes that `table`'s engine has maintenance due, for the

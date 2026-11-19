@@ -252,6 +252,7 @@ fn sort_of(plan: Plan) -> std::result::Result<(Vec<SortKey>, Plan), Box<Plan>> {
             | Plan::IndexScan { .. }
             | Plan::Filter { .. }
             | Plan::Append { .. }
+            | Plan::MergeAppend { .. }
             | Plan::Product { .. }
             | Plan::HashJoin { .. }
             | Plan::OuterJoin { .. }
@@ -290,6 +291,7 @@ fn layers_of(plan: Plan) -> (Vec<Vec<Expr>>, Plan) {
             | Plan::Limit { .. }
             | Plan::Filter { .. }
             | Plan::Append { .. }
+            | Plan::MergeAppend { .. }
             | Plan::Product { .. }
             | Plan::HashJoin { .. }
             | Plan::OuterJoin { .. }

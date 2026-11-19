@@ -982,6 +982,110 @@ Output:
 3 0E0
 ```
 
+### Partition strategies *(extension)*
+
+A partitioned table divides its rows among its partitions by the
+strategy PARTITION BY names ([Partitioned
+Tables](../sql/23-partitioning.md)). RANGE, LIST and HASH are built in.
+A program adds a strategy with `register_partition_strategy`, an
+implementation of `turborel::partition::PartitionStrategy`. Its name is a
+regular identifier in upper case, not one built in or registered
+already, or registering it fails with SQLCODE -910. A table may name it
+from then on. In a database opened without it, such a table keeps its
+rows and is read whole, and a row written to it fails with SQLCODE -103.
+
+The database owns the DEFAULT partition, which no strategy sees, and
+gives the strategy each partition's bound as its `bound` checked it.
+The strategy keeps this contract, which
+`test/integration/partitioning/contract.rs` checks of each built-in one.
+
+- `bound` accepts only the forms it reads, never DEFAULT, and gives a
+  bound the other methods take.
+- Of siblings whose bounds do not `overlaps`, `contains` is true of at
+  most one for a key, and `route` gives that one.
+- `admits` is true of every bound that contains a key meeting every
+  restriction a read gives. It may be true of others, never false of one
+  of these, so a read never misses a row.
+- Every method is deterministic, the same on any machine, as the rows a
+  partition holds depend on it, and none calls back into the database.
+
+This strategy sends a row to the partition of its key's parity:
+
+```rust
+use turborel::catalog::PartitionBound;
+use turborel::db::Database;
+use turborel::error::{Code, Result, SqlError};
+use turborel::partition::{PartitionStrategy, Restriction};
+use turborel::value::{DataType, Value};
+
+/// WITH (EVEN 1) holds the even keys, WITH (EVEN 0) the odd ones.
+#[derive(Debug)]
+struct Parity;
+
+/// Whether `bound` holds the even keys, if it is a bound of PARITY.
+fn even(bound: &PartitionBound) -> Option<bool> {
+    let PartitionBound::With(options) = bound else { return None };
+    options.first().map(|(_, v)| v.to_string() == "1")
+}
+
+impl PartitionStrategy for Parity {
+    fn name(&self) -> &str {
+        "PARITY"
+    }
+
+    fn check_key(&self, types: &[DataType]) -> Result<()> {
+        match types {
+            [DataType::Exact { scale: 0, .. }] => Ok(()),
+            _ => Err(SqlError::new(Code::SyntaxRule, "PARITY divides one whole number")),
+        }
+    }
+
+    fn bound(&self, _types: &[DataType], spec: PartitionBound) -> Result<PartitionBound> {
+        match even(&spec) {
+            Some(_) => Ok(spec),
+            None => Err(SqlError::new(Code::SyntaxRule, "PARITY takes WITH (EVEN 0) or WITH (EVEN 1)")),
+        }
+    }
+
+    fn overlaps(&self, a: &PartitionBound, b: &PartitionBound) -> Result<bool> {
+        Ok(even(a) == even(b))
+    }
+
+    fn contains(&self, bound: &PartitionBound, key: &[Value]) -> Result<bool> {
+        let key_even = key.first().and_then(|v| v.to_string().parse::<i64>().ok()).map(|k| k % 2 == 0);
+        Ok(key_even.is_some() && even(bound) == key_even)
+    }
+
+    fn admits(&self, bound: &PartitionBound, restrictions: &[Option<Restriction>]) -> Result<bool> {
+        let Some(Some(Restriction::Equal(values))) = restrictions.first() else { return Ok(true) };
+        Ok(values.iter().any(|v| self.contains(bound, std::slice::from_ref(v)).unwrap_or(true)))
+    }
+}
+
+fn main() -> Result<()> {
+    let db = Database::new();
+    db.register_partition_strategy(Box::new(Parity))?;
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN")?;
+    let ann = db.session("ANN");
+    ann.run("CREATE TABLE T (K INTEGER) PARTITION BY PARITY (K)")?;
+    ann.run("CREATE TABLE T_EVEN PARTITION OF T FOR VALUES WITH (EVEN 1)")?;
+    ann.run("CREATE TABLE T_ODD PARTITION OF T FOR VALUES WITH (EVEN 0)")?;
+    ann.run("INSERT INTO T VALUES (1), (2), (3), (4)")?;
+    let mut rows = ann.open_cursor("SELECT K FROM T_EVEN ORDER BY K")?;
+    while let Some(row) = rows.fetch()? {
+        println!("{}", row[0]);
+    }
+    Ok(())
+}
+```
+
+Output:
+
+```text
+2
+4
+```
+
 ## Spatial data *(extension)*
 
 The geometry types and their functions are built in, so every

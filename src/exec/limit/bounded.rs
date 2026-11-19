@@ -17,6 +17,10 @@ pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
             let most = if order.is_empty() || most.ties { before } else { Some(most.rows) };
             Plan::SeqScan { table, columns, rows, cost, order, backward, most, located }
         }
+        // Each partition gives no more rows than the merge may.
+        Plan::MergeAppend { inputs, keys, detail } => {
+            Plan::MergeAppend { inputs: inputs.into_iter().map(|p| bounded(p, most)).collect(), keys, detail }
+        }
         Plan::Project { exprs, detail, input } => {
             let input = if exprs.iter().any(Expr::can_raise) { input } else { Box::new(bounded(*input, most)) };
             Plan::Project { exprs, detail, input }

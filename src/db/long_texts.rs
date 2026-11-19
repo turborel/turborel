@@ -121,6 +121,8 @@ pub(super) fn of_alter(a: &AlterAction) -> Option<SqlState> {
         | AlterAction::DropVersioning { .. }
         | AlterAction::RevertCollation(_)
         | AlterAction::Truncate { .. }
+        | AlterAction::AttachPartition { .. }
+        | AlterAction::DetachPartition(_)
         | AlterAction::Storage(_) => None,
     }
 }

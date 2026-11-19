@@ -17,7 +17,7 @@ use super::super::entries::{Reading, fetch};
 use super::super::project::Columns;
 use super::super::read::Asked;
 use super::super::{RowIter, Runner, Subqueries, broken, eval_cond, execute, failed};
-use crate::catalog::{IndexDesc, KeyShape};
+use crate::catalog::{IndexDesc, KeyShape, QualifiedName};
 use crate::db::State;
 use crate::error::Result;
 use crate::functions::ScalarRef;
@@ -34,9 +34,11 @@ mod adaptive;
 mod paired;
 mod preserved;
 mod refined;
+mod routed;
 
 use preserved::Matched;
 use refined::Binding;
+use routed::{Opened, Routes};
 
 /// The rows of the index nested-loop join `plan`. Never inlined into
 /// `execute`, whose frame every level of a plan adds to the stack (RULES.md
@@ -53,12 +55,10 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
         return failed(broken("an index join is not one"));
     };
     let inner = matches!(outer, Preserved::Inner);
-    let opened = db.storage_of(&table).map(Arc::clone).and_then(|storage| {
-        let ix = db.catalog.index(&index).map(IndexDesc::key_shape).ok_or_else(|| broken(&format!("no index {index}")))?;
-        Ok((storage, Arc::clone(db.index_of(&index)?), ix, Matched::of(outer, &needed, db)?))
-    });
+    let opened = opened(db, &table, &index)
+        .and_then(|(storage, found, ix, routes)| Ok((storage, found, ix, routes, Matched::of(outer, &needed, db)?)));
     match opened {
-        Ok((storage, found, ix, matched)) => {
+        Ok((storage, found, ix, routes, matched)) => {
             let joined = IndexJoin {
                 left: Box::new(std::iter::empty()),
                 table: Probed {
@@ -69,6 +69,7 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
                     tx,
                     stop: db.tx.stop_of(tx),
                     located,
+                    routes,
                 },
                 budget: prepared::budget(db).filter(|_| matches!(probe, JoinProbe::Predicate { .. })).map(Arc::clone),
                 prepared: None,
@@ -86,6 +87,18 @@ pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Arc<S
         }
         Err(e) => failed(e),
     }
+}
+
+/// What an index join of `table` by `index` reads: the table's rows, the
+/// index, its key's shape, and \[EXTENSION\] of a partitioned table's
+/// template, the routes of its probes (`indexed/routed.rs`).
+fn opened(db: &Arc<State>, table: &QualifiedName, index: &str) -> Result<Opened> {
+    if let Some((storage, found, ix, routes)) = routed::opened(db, table, index)? {
+        return Ok((storage, found, ix, routes));
+    }
+    let storage = Arc::clone(db.storage_of(table)?);
+    let ix = db.catalog.index(index).map(IndexDesc::key_shape).ok_or_else(|| broken(&format!("no index {index}")))?;
+    Ok((storage, Arc::clone(db.index_of(index)?), ix, None))
 }
 
 /// `joined` driven by the rows of `left`, or, of a spatial join, perhaps
@@ -124,6 +137,9 @@ struct Probed {
     tx: TxId,
     stop: Option<Arc<Stop>>,
     located: bool,
+    /// \[EXTENSION\] Of a partitioned table's template, each partition's
+    /// index, a probe routed to those its values may be in.
+    routes: Option<Routes>,
 }
 
 impl Probed {
@@ -139,7 +155,10 @@ impl Probed {
         };
         Asked::of(&*self.index, &self.ix, &probe).record(&*self.storage, self.tx)?;
         self.reading.next_probe();
-        let entries = Arc::clone(&self.index).search(&probe, KeyOrder::Ascending);
+        let entries = match &self.routes {
+            Some(routes) => routes.search(&probe),
+            None => Arc::clone(&self.index).search(&probe, KeyOrder::Ascending),
+        };
         Ok(Box::new(checked(entries, self.stop.clone())))
     }
 

@@ -101,6 +101,8 @@ pub enum Extension {
     Embedder,
     /// \[EXTENSION\] An `XQueryFunction` (`Database::register_xquery_function`).
     XQueryFunction,
+    /// \[EXTENSION\] A `PartitionStrategy` (`Database::register_partition_strategy`).
+    PartitionStrategy,
 }
 
 /// \[DESIGN\] An event of the database's.

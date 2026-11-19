@@ -72,8 +72,10 @@ fn document_key(desc: &TableDesc, ix: &IndexDesc) -> Result<String> {
 impl Read {
     /// What `search` reads, of the hybrid index it names.
     pub(super) fn of(db: &State, search: &HybridSearch) -> Result<Read> {
-        let ix = db.catalog.index(&search.index).filter(|ix| ix.method == HYBRID_METHOD);
-        let ix = ix.ok_or_else(|| refused(format!("HYBRID_SEARCH's INDEX {} is no hybrid index", search.index)))?;
+        // [EXTENSION] of a partitioned table, its template, which each
+        // partition has (RULES.md D158).
+        let ix = db.catalog.index(&search.index).cloned().or_else(|| templated(db, &search.index)).filter(|ix| ix.method == HYBRID_METHOD);
+        let ix = &ix.ok_or_else(|| refused(format!("HYBRID_SEARCH's INDEX {} is no hybrid index", search.index)))?;
         let desc = db.catalog.table(&ix.table).ok_or_else(|| refused(format!("there is no table {}", ix.table)))?;
         let ranked = Ranked { table: written(&ix.table), key: document_key(desc, ix)?, text: column_name(desc, ix, 0)? };
         if embeds(&ix.method, &ix.options) {
@@ -111,6 +113,23 @@ impl Read {
         };
         Ok(Read { ranked, nearest, model: Some(string(&written(&pipeline.model))), chunks: Some(written(&chunks)) })
     }
+}
+
+/// The template `name` of a partitioned table, as the index it makes on
+/// each partition is, of the partitioned table; none if there is none.
+fn templated(db: &State, name: &str) -> Option<IndexDesc> {
+    let (table, t) = db.template(name)?;
+    Some(IndexDesc {
+        name: t.name,
+        table,
+        columns: t.columns,
+        method: t.method,
+        unique: t.unique,
+        options: t.options,
+        collations: Vec::new(),
+        nulls: t.nulls,
+        expressions: Vec::new(),
+    })
 }
 
 /// The text of the column CHUNK_ID of a table of chunks.

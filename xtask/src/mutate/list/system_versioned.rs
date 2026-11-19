@@ -246,7 +246,7 @@ pub const SYSTEM_VERSIONED: [Mutation; 34] = [
         package: Package::Core,
         breaks: "a reading FOR SYSTEM_TIME reads no historical row [§7.6 GR2c ii 1]",
         file: "src/binder/system_time.rs",
-        original: "right: Box::new(scan(history)),",
+        original: "right: Box::new(histories(b, name, history).into_iter().map(scan).reduce(union_all).unwrap_or_else(|| scan(history_name(name)))),",
         replacement: "right: Box::new(scan(name.clone())),",
         integration: &["system_time_queries::as_of_reads_the_rows_current_then", "system_time_queries::a_history_is_read_after_reopening"],
         unit: &[],

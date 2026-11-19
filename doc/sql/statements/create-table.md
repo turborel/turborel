@@ -10,10 +10,12 @@ CREATE TABLE: define a base table
 
 ```
 <table definition> ::=
-    CREATE [ { GLOBAL | LOCAL } TEMPORARY ] TABLE <table name> <table contents source>
+    CREATE [ { GLOBAL | LOCAL } TEMPORARY ] TABLE <table name> { <table contents source> | <partition of clause> }
     [ <graph table kind> ]
+    [ <partition by clause> ]
     [ WITH SYSTEM VERSIONING ]
     [ ON COMMIT { DELETE | PRESERVE } ROWS ]
+    [ <partition by clause> ]
     [ USING <engine name> ]
     [ WITH ( <table option> [ { , <table option> }... ] ) ]
 
@@ -23,6 +25,17 @@ CREATE TABLE: define a base table
     | [ ( <column name> [ { , <column name> }... ] ) ] AS ( <query expression> ) WITH [ NO ] DATA
 
 <graph table kind> ::= AS { NODE | EDGE }
+
+<partition by clause> ::= PARTITION BY <strategy> ( <key part> [ { , <key part> }... ] )
+
+<key part> ::= <column name> | ( <value expression> )
+
+<partition of clause> ::= PARTITION OF <table name> <partition bound>
+
+<partition bound> ::= DEFAULT
+    | FOR VALUES FROM ( <range datum> [ { , <range datum> }... ] ) TO ( <range datum> [ { , <range datum> }... ] )
+    | FOR VALUES IN ( <list value> [ { , <list value> }... ] )
+    | FOR VALUES WITH ( <option name> <literal> [ { , <option name> <literal> }... ] )
 
 <table element> ::= <column definition> | <table constraint definition> | <like clause> | <table period definition>
 
@@ -111,7 +124,18 @@ data types are in [Data Types](../02-data-types.md); a column may also
 be of a type a plug-in registers *(extension)*, written by its name and,
 in parentheses, one or two unsigned integers it takes.
 
+PARTITION BY and PARTITION OF are extensions, a `<partition by clause>`
+written once *(extension)*. PARTITION is read there only before BY or
+OF, and MINVALUE and MAXVALUE only within a bound.
+
 ## DESCRIPTION
+
+PARTITION BY makes a partitioned table, which holds no rows itself. Its
+rows are kept in its partitions, each in the one whose bound holds its
+key, by the strategy PARTITION BY names. PARTITION OF makes a partition of a
+partitioned table, of its columns, defaults, CHECK constraints and
+periods, and may partition it again. Both are described in
+[Partitioned Tables](../23-partitioning.md) *(extension)*.
 
 CREATE TABLE defines a base table: its columns, each of a data type or a
 domain, its constraints, and, *(extension)*, the storage engine that
@@ -438,6 +462,7 @@ names. The privileges the query of AS needs to be run.
 | 2A000 | -103 | A CONNECTION constraint names no node table of the schema, GRF-0004 *(extension)* |
 | 23000 | -201 | An edge's endpoint is no node, or of tables no CONNECTION constraint allows, GRF-0053 *(extension)* |
 | 23000 | -201 | A node deleted has edges no CONNECTION constraint deletes with it, GRF-0052 *(extension)* |
+| 2A000 | -103 | A partition bound overlaps another's, or is a second DEFAULT, a key part is not there or is collated, the strategy is not registered, or the table is typed or a node or edge table *(extension)* |
 
 Any error running the query of AS ... WITH DATA, or inserting its rows,
 is the statement's.
@@ -796,7 +821,8 @@ extensions. AS NODE, AS EDGE, the pseudo-columns and CONNECTION
 constraints are the property graph implementation standard's Mode B,
 §4.2, R5.1 for the identities and R12.1 and R12.2 for a node's edges and
 CONNECTION; the views GRAPH_TABLES and CONNECTION_CONSTRAINTS and the
-column IS_HIDDEN are this implementation's own. The XML options of a
+column IS_HIDDEN are this implementation's own. PARTITION BY and
+PARTITION OF are extensions. The XML options of a
 CHECK and of a generation expression are ISO/IEC 9075-14:2006 draft
 §12.1 and §12.2, Features X083 and X133.
 
@@ -806,4 +832,5 @@ CHECK and of a generation expression are ISO/IEC 9075-14:2006 draft
 [CREATE DOMAIN](create-domain.md), [CREATE INDEX](create-index.md),
 [CREATE SEQUENCE](create-sequence.md), [INSERT](insert.md),
 [CREATE PROPERTY GRAPH](create-property-graph.md),
+[Partitioned Tables](../23-partitioning.md),
 [Constraints](../../user/07-constraints.md)

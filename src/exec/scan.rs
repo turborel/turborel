@@ -178,7 +178,13 @@ pub(in crate::exec) fn asked(ix: &KeyShape, probe: Probe) -> Condition {
 /// D44). The rows are chosen by a condition: callers tell the table's
 /// engine (`TableStorage::read_by_condition`).
 pub(super) fn probe_index(db: &State, table: &QualifiedName, index: &str, probe: &Probe, reverse: bool) -> Result<Found> {
-    let storage = Arc::clone(db.storage_of(table)?);
+    // [EXTENSION] a global index's rows, each read from its partition
+    // (RULES.md D157).
+    let storage: Arc<dyn TableStorage> = if crate::catalog::is_global_index(index) {
+        Arc::new(crate::db::partitions::dispatch::Dispatched::of(db, table))
+    } else {
+        Arc::clone(db.storage_of(table)?)
+    };
     let ix =
         db.catalog.index(index).map(IndexDesc::key_shape).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no index {index}")))?;
     let order = if reverse { KeyOrder::Descending } else { KeyOrder::Ascending };

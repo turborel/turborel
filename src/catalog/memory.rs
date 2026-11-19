@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use super::{
     CastDesc, Catalog, CollationDesc, ConstraintDesc, DomainDesc, Embeddings, GqlCatalog, GraphDesc, IndexDesc, ModuleDesc, OrderingDesc,
-    PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SpatialCatalog, SqlRoutineDesc, StructuredDesc, TableDesc, TransformGroupDesc,
-    TriggerDesc, UserTypeDesc, ViewDesc, XQueryModuleDesc, XmlSchemaDesc,
+    Partitioning, PrivilegeDesc, QualifiedName, Roles, SequenceDesc, SpatialCatalog, SqlRoutineDesc, StructuredDesc, TableDesc,
+    TransformGroupDesc, TriggerDesc, UserTypeDesc, ViewDesc, XQueryModuleDesc, XmlSchemaDesc,
 };
 use crate::hash::murmur::MurmurMap;
 use crate::value::DataType;
@@ -52,6 +52,8 @@ pub struct MemoryCatalog {
     /// The spatial reference systems defined and the geometry columns
     /// registered.
     spatial: SpatialCatalog,
+    /// The partitioned tables and partitions.
+    partitioning: Partitioning,
     /// The extensions created.
     extensions: Vec<super::ExtensionDesc>,
 }
@@ -404,5 +406,11 @@ impl Catalog for MemoryCatalog {
     }
     fn gql_mut(&mut self) -> &mut GqlCatalog {
         &mut self.gql
+    }
+    fn partitioning(&self) -> &Partitioning {
+        &self.partitioning
+    }
+    fn partitioning_mut(&mut self) -> &mut Partitioning {
+        &mut self.partitioning
     }
 }

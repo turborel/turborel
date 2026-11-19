@@ -27,6 +27,8 @@ ALTER TABLE: change a base table
     | USING <engine name> [ WITH ( <table option> [ { , <table option> }... ] ) ]
     | RESEAL
     | RENAME [ COLUMN ] <column name> TO <column name>
+    | ATTACH PARTITION <table name> <partition bound>
+    | DETACH PARTITION <table name>
 
 <alter column action> ::=
       SET DEFAULT <default option>
@@ -49,8 +51,16 @@ ALTER TABLE: change a base table
 ```
 
 The `<column definition>`, `<default option>`, `<table constraint
-definition>`, `<table period definition>` and `<table option>` are those of
+definition>`, `<table period definition>`, `<partition bound>` and `<table option>` are those of
 [CREATE TABLE](create-table.md). One statement takes one action.
+ATTACH and DETACH are non-reserved words *(extension)*.
+
+ATTACH PARTITION makes a table a partition of the partitioned table, its
+rows checked against the bound, and DETACH PARTITION makes a partition a
+table of its own *(extension)*. A table of a partitioning tree has its
+columns and periods altered by no action, and a partitioned table is
+given storage options and truncated through its partitions
+([Partitioned Tables](../23-partitioning.md)).
 
 ## DESCRIPTION
 
@@ -249,6 +259,7 @@ says.
 | 3F000 | -103 | The schema of a constraint added does not exist |
 | 2A000 | -104 | Its user does not own the table's schema, or lacks a privilege a column or constraint needs |
 | 23000 | -201 | A row breaks the constraint added; a NOT NULL column added has no default, and the table has rows |
+| 23T01 | -201 | A row of a table attached is not one the bound holds *(extension)* |
 | 25000 | -917 | The transaction is READ ONLY |
 | 24000 | -501 | A cursor of the transaction reads the table |
 | TB911 | -911 | Another transaction has a session's rows of a temporary table open, or committed rows of it after the transaction began; another transaction holds a lock on the table |
@@ -404,11 +415,12 @@ period keeps of its columns §11.23 SR6 and §11.26 SR10. ADD and DROP
 SYSTEM VERSIONING are §11.29 and §11.30, Feature T180, the start given
 existing rows by ADD PERIOD FOR SYSTEM_TIME the transaction timestamp
 (IV181). SET,
-USING, RESEAL and RENAME COLUMN are extensions; SQL:2023 renames no
+USING, RESEAL, RENAME COLUMN, ATTACH PARTITION and DETACH PARTITION are extensions; SQL:2023 renames no
 column. SQL-86 has no ALTER TABLE.
 
 ## SEE ALSO
 
 [CREATE TABLE](create-table.md), [DROP TABLE](drop-table.md),
 [ALTER DOMAIN](alter-domain.md), [ALTER SEQUENCE](alter-sequence.md), [CREATE VIEW](create-view.md),
-[Temporary Tables](../../user/09-temporary-tables.md)
+[Temporary Tables](../../user/09-temporary-tables.md),
+[Partitioned Tables](../23-partitioning.md)

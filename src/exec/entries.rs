@@ -145,6 +145,7 @@ pub fn table_entries(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Entries> {
         | Plan::Values { .. }
         | Plan::System { .. }
         | Plan::Sort { .. }
+        | Plan::MergeAppend { .. }
         | Plan::Limit { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)

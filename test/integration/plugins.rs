@@ -97,8 +97,10 @@ fn metrics_and_models() {
 /// conversation with its program.
 #[test]
 fn authenticators_targets_and_strategies() {
+    use turborel::catalog::PartitionBound;
+    use turborel::partition::PartitionStrategy;
     use turborel::plugin::bridge::auth::{AuthStep, Connecting};
-    use turborel::plugin::bridge::pending::{PartitionBound, PartitionStrategy, TargetProvider};
+    use turborel::plugin::bridge::pending::TargetProvider;
     use turborel::value::{DataType, Spelled};
     let (scratch, db) = plugged("plugins-points");
     db.session("U").run("CREATE EXTENSION example").unwrap();
@@ -117,10 +119,32 @@ fn authenticators_targets_and_strategies() {
     let with = |r: i128| PartitionBound::With(vec![("MODULUS".into(), number(4)), ("REMAINDER".into(), number(r))]);
     let int = [DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer }];
     strategy.check_key(&int).unwrap();
-    let bounds = [strategy.bound(&int, &with(1)).unwrap(), strategy.bound(&int, &with(3)).unwrap()];
+    let bounds = [strategy.bound(&int, with(1)).unwrap(), strategy.bound(&int, with(3)).unwrap()];
     assert_eq!(strategy.route(&[&bounds[0], &bounds[1]], &[number(7)]).unwrap(), Some(1));
     assert!(!strategy.overlaps(&bounds[0], &bounds[1]).unwrap());
-    assert!(strategy.bound(&int, &with(9)).is_err(), "a remainder of 9 of 4");
+    assert!(strategy.bound(&int, with(9)).is_err(), "a remainder of 9 of 4");
+}
+
+/// Verifies: [EXTENSION] RULES.md D154, D169: an extension's partitioning
+/// strategy is named by PARTITION BY: its program checks the key and the
+/// bounds and routes each row, a read is pruned by it, and a row it routes
+/// nowhere fails with SQLSTATE 23T01.
+#[test]
+fn an_extension_serves_a_partitioning_strategy() {
+    let (_scratch, db) = plugged("plugins-strategy");
+    let s = db.session("U");
+    s.run("CREATE EXTENSION example").unwrap();
+    s.run("CREATE TABLE T (K INTEGER, V VARCHAR(10)) PARTITION BY MODULUS (K)").unwrap();
+    for r in [0, 1, 2] {
+        s.run(&format!("CREATE TABLE T{r} PARTITION OF T FOR VALUES WITH (MODULUS 4, REMAINDER {r})")).unwrap();
+    }
+    assert!(exec(&s, "CREATE TABLE T9 PARTITION OF T FOR VALUES WITH (MODULUS 4, REMAINDER 9)").is_err(), "its program refuses the bound");
+    s.run("INSERT INTO T VALUES (1, 'a'), (2, 'b'), (4, 'c'), (5, 'd')").unwrap();
+    assert_eq!(rows(&s, "SELECT K FROM T1 ORDER BY K").unwrap(), ["1", "5"]);
+    assert_eq!(rows(&s, "SELECT K FROM T ORDER BY K").unwrap(), ["1", "2", "4", "5"]);
+    let plan = s.physical_plan("SELECT V FROM T WHERE K = 6", &turborel::params::Params::new()).unwrap();
+    assert!(plan.contains("T2") && !plan.contains("T1") && !plan.contains("T0"), "{plan}");
+    assert_eq!(s.run("INSERT INTO T VALUES (3, 'e')").unwrap_err().sqlstate().as_str(), "23T01");
 }
 
 /// Verifies: [EXTENSION] RULES.md D168, D172: DROP EXTENSION RESTRICT is

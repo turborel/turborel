@@ -406,6 +406,10 @@ impl SqlState {
     /// Integrity constraint violation: restrict violation [ISO/IEC
     /// 9075-2:2023 §15.18 GR9a iv, GR10a iv].
     pub const RESTRICT_VIOLATION: SqlState = SqlState(*b"23001");
+    /// \[EXTENSION\] Integrity constraint violation: no partition holds
+    /// the row, of a partitioned table, or the partition written does not
+    /// (RULES.md D155).
+    pub const NO_PARTITION: SqlState = SqlState(*b"23T01");
     /// Triggered data change violation.
     pub const TRIGGERED_DATA_CHANGE_VIOLATION: SqlState = SqlState(*b"27000");
     /// Triggered action exception [ISO/IEC 9075-2:2023 §15.21 GR5b i 1,

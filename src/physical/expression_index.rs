@@ -139,7 +139,10 @@ pub(super) type Planned<'a> = (Cow<'a, TableDesc>, Vec<Cow<'a, IndexDesc>>, Keye
 fn planned<'a>(db: &'a State, table: &QualifiedName) -> Option<Planned<'a>> {
     let desc = db.catalog.table(table)?;
     let keyed = Keyed::of(db, table);
-    let indexes = db.catalog.indexes(table).into_iter().map(|ix| keyed.planned(desc, ix)).collect();
+    // [EXTENSION] A global index is a path of the partitioned table's read
+    // of its partitions' rows (`access/partitioned.rs`), not of its own.
+    let own = db.catalog.indexes(table).into_iter().filter(|ix| !crate::catalog::is_global_index(&ix.name));
+    let indexes = own.map(|ix| keyed.planned(desc, ix)).collect();
     if keyed.parts.is_empty() {
         return Some((Cow::Borrowed(desc), indexes, keyed));
     }

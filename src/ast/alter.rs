@@ -89,4 +89,14 @@ pub enum AlterAction {
     /// \[EXTENSION\] `<alter table storage>` ::= SET `<table options>` |
     /// USING `<engine name>` \[WITH `<table options>`\] (RULES.md D41)
     Storage(TableStorage),
+    /// \[EXTENSION\] ATTACH PARTITION `<table name>` `<partition bound
+    /// specification>` (RULES.md D153).
+    AttachPartition {
+        /// The table attached.
+        table: TableName,
+        /// The rows it holds.
+        bound: super::BoundSpec,
+    },
+    /// \[EXTENSION\] DETACH PARTITION `<table name>` (RULES.md D153).
+    DetachPartition(TableName),
 }

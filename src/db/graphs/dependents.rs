@@ -75,6 +75,8 @@ impl State {
             | AlterAction::DropVersioning { .. }
             | AlterAction::RevertCollation(_)
             | AlterAction::Truncate { .. }
+            | AlterAction::AttachPartition { .. }
+            | AlterAction::DetachPartition(_)
             | AlterAction::Storage(_) => None,
         };
         if let Some(refusal) = refused {

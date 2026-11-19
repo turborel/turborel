@@ -35,7 +35,9 @@
 //!           registered XML Schemas (count u32, each an XML Schema),
 //!           registered XQuery modules (count u32, each an XQuery module),
 //!           then the spatial reference systems defined and the geometry
-//!           columns registered (as `catalog/codec/spatial.rs` writes them)
+//!           columns registered (as `catalog/codec/spatial.rs` writes them),
+//!           then the partitioning descriptors (as
+//!           `catalog/codec/partitions.rs` writes them)
 //! ```
 
 pub(super) mod xml_schemas;
@@ -127,6 +129,8 @@ pub(super) struct Snapshot {
     /// The spatial reference systems defined and the geometry columns
     /// registered.
     spatial: crate::catalog::SpatialCatalog,
+    /// \[EXTENSION\] The partitioned tables and partitions (RULES.md D153).
+    partitioning: crate::catalog::Partitioning,
     /// \[EXTENSION\] The extensions created, in the order made.
     extensions: Vec<crate::catalog::ExtensionDesc>,
 }
@@ -154,7 +158,6 @@ impl Snapshot {
         let users = st.users.entries().map(|(n, v)| (n.clone(), v.clone())).collect();
         let assertions = st.catalog.assertions().into_iter().cloned().collect();
         let sequences: Vec<SequenceDesc> = st.catalog.sequences().into_iter().cloned().collect();
-        let user_types = st.catalog.user_types().into_iter().cloned().collect();
         let (epochs, counters) = settled_counters(st)?;
         Ok(Snapshot {
             schemas,
@@ -167,7 +170,7 @@ impl Snapshot {
             indexes,
             privileges,
             sequences,
-            user_types,
+            user_types: st.catalog.user_types().into_iter().cloned().collect(),
             settings: st.settings.database_values(),
             users,
             owner: st.users.owner().map(str::to_owned),
@@ -189,6 +192,7 @@ impl Snapshot {
             xml_schemas: st.catalog.xml_schemas().into_iter().cloned().collect(),
             xquery_modules: st.catalog.xquery_modules().into_iter().cloned().collect(),
             spatial: st.catalog.spatial().clone(),
+            partitioning: st.catalog.partitioning().clone(),
             extensions: st.catalog.extensions().to_vec(),
         })
     }
@@ -286,6 +290,7 @@ impl Snapshot {
         out.put_u32(count(self.xquery_modules.len()));
         self.xquery_modules.iter().for_each(|m| put_xquery_module(out, m));
         crate::catalog::codec::put_spatial(out, &self.spatial);
+        crate::catalog::codec::put_partitioning(out, &self.partitioning);
         crate::catalog::put_extensions(out, &self.extensions);
     }
 
@@ -330,6 +335,7 @@ impl Snapshot {
             xml_schemas: (0..r.u32()?).map(|_| xml_schema(r)).collect::<Result<_>>()?,
             xquery_modules: (0..r.u32()?).map(|_| xquery_module(r)).collect::<Result<_>>()?,
             spatial: crate::catalog::codec::spatial(r)?,
+            partitioning: crate::catalog::codec::partitioning(r)?,
             extensions: crate::catalog::extensions(r)?,
         })
     }
@@ -466,6 +472,7 @@ fn put_dependent(catalog: &mut dyn Catalog, snapshot: &Snapshot) {
     snapshot.graph_types.iter().cloned().for_each(|t| catalog.gql_mut().put_graph_type(t));
     snapshot.gql_graphs.iter().cloned().for_each(|g| catalog.gql_mut().put_gql_graph(g));
     catalog.set_spatial(snapshot.spatial.clone());
+    *catalog.partitioning_mut() = snapshot.partitioning.clone();
     catalog.set_extensions(snapshot.extensions.clone());
 }
 

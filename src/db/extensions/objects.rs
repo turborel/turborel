@@ -39,9 +39,8 @@ impl State {
                     self.unshared(installed, d.kind, &d.name, self.embedders.is_registered(&d.name))?;
                     self.embedders.add_extension(m);
                 }
-                Bridged::Authenticator(_) | Bridged::Target(_) | Bridged::Partition(_) => {
-                    self.unshared(installed, d.kind, &d.name, false)?;
-                }
+                Bridged::Partition(_) => self.unshared(installed, d.kind, &d.name, self.strategies.named(&d.name).is_some())?,
+                Bridged::Authenticator(_) | Bridged::Target(_) => self.unshared(installed, d.kind, &d.name, false)?,
             }
         }
         Ok(())

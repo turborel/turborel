@@ -45,7 +45,7 @@
 //!             each a name and str))
 //! index:      name (str), table name, positions, method (str), unique u8,
 //!             options
-//! spatial reference systems and geometry columns: catalog/codec/spatial.rs
+//! spatial reference systems, geometry columns, partitioning: catalog/codec/spatial.rs, catalog/codec/partitions.rs
 //! privilege:  grantor (str), grantee (0 PUBLIC, or 1 and str), table name,
 //!             select u8, delete u8, insert positions, update positions,
 //!             references positions, grantable u8
@@ -67,6 +67,7 @@ mod graph_types;
 mod graphs;
 mod indexes;
 mod objects;
+mod partitions;
 mod roles;
 mod routines;
 mod spatial;
@@ -82,6 +83,7 @@ pub(crate) use objects::{
     collation, put_collation, put_sequence, put_user_type, put_xml_schema, put_xquery_module, sequence, user_type, xml_schema,
     xquery_module,
 };
+pub(crate) use partitions::{partitioning, put_partitioning};
 pub(crate) use roles::{put_roles, roles};
 pub(crate) use routines::{module, put_module, put_routine, routine};
 pub(crate) use spatial::{put_spatial, put_spatial_change, spatial, spatial_change};

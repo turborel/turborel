@@ -67,6 +67,10 @@ impl State {
     /// concurrency to the coordinator, whose caller holds the table's
     /// exclusive lock (`Database::create_index`).
     pub(super) fn create_index(&mut self, spec: &IndexSpec) -> Result<()> {
+        // [EXTENSION] of a partitioned table, a template (RULES.md D158).
+        if self.catalog.partitioning().is_partitioned(&spec.table) {
+            return self.add_template(spec);
+        }
         let (index, ix, built) = self.define_index(spec)?;
         if !built {
             self.load_index(&*index, &ix, Timestamp::MAX)?;
@@ -278,6 +282,10 @@ impl State {
         if t.graph.is_some() && (t.typed.is_some() || t.subquery.is_some()) {
             return rule(format!("[EXTENSION] {} is a node or edge table (§4.2), defined by its elements alone", t.name.ident));
         }
+        // [EXTENSION] a partitioned table, or a partition, is defined alone (RULES.md D153).
+        if t.partitioning.is_some() && !matches!(within, Within::Session) {
+            return rule(format!("[EXTENSION] {} is partitioned or a partition, defined by CREATE TABLE alone", t.name.ident));
+        }
         if earlier.iter().any(|d| d.name.ident == t.name.ident) {
             return rule(format!("[X3.135-1986 §6.2 SR2] table {} is defined twice", t.name.ident));
         }
@@ -484,7 +492,10 @@ impl State {
                 .ok_or_else(|| api(format!("[DESIGN] no index method {}", self.constraint_method())))?,
         );
         let mut indexes = Vec::new();
-        for (k, cols) in (1..).zip(d.unique()) {
+        // [EXTENSION] a partitioned table holds no rows: its keys are its
+        // partitions' indexes' (RULES.md D157).
+        let partitioned = catalog.partitioning().is_partitioned(&d.name);
+        for (k, cols) in (1..).zip(d.unique()).filter(|_| !partitioned) {
             let name = constraint_index_name(&d.name, k);
             let index = IndexDesc {
                 name: name.clone(),

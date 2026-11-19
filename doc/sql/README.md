@@ -28,4 +28,5 @@ The language, element by element, and each statement on a reference page of its 
 - [Property Graphs](20-property-graphs.md)
 - [Graph Algorithms](21-graph-algorithms.md) *(extension)*
 - [Graph Compatibility Syntax](22-graph-compatibility.md) *(extension)*
+- [Partitioned Tables](23-partitioning.md) *(extension)*
 - [Statements](statements/README.md)

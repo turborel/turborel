@@ -30,6 +30,7 @@ mod keys;
 mod memory;
 mod modules;
 mod native;
+mod partitions;
 mod periods;
 mod privileges;
 mod roles;
@@ -63,6 +64,10 @@ pub use memory::MemoryCatalog;
 pub use modules::{ModuleDesc, module_of_schema, module_schema, routine_path};
 pub use native::{
     Connection, EDGE_ID, ElementId, FROM_ID, GraphColumn, ID_LENGTH, NODE_ID, NativeKind, PSEUDO_COLUMNS, SYS_GRAPH, TO_ID, id_type,
+};
+pub use partitions::{
+    DERIVED_SEPARATOR, IndexTemplate, MAX_PARTITION_DEPTH, PartitionBound, PartitionDesc, PartitionKey, PartitionOf, Partitioning,
+    RangeDatum, derived_index_name, global_index_name, is_global_index, tables_above, template_of,
 };
 pub use periods::PeriodDesc;
 pub use privileges::{Actions, Privilege, PrivilegeDesc, SYSTEM_GRANTOR, TypedActions, applicable, merged};
@@ -544,6 +549,10 @@ pub trait Catalog: Send + Sync {
     fn spatial(&self) -> &SpatialCatalog;
     /// Make `spatial` the systems defined and the columns registered.
     fn set_spatial(&mut self, spatial: SpatialCatalog);
+    /// \[EXTENSION\] The partitioned tables and partitions (RULES.md D153).
+    fn partitioning(&self) -> &Partitioning;
+    /// The same, to change.
+    fn partitioning_mut(&mut self) -> &mut Partitioning;
     /// An independent copy of this catalog.
     fn duplicate(&self) -> Box<dyn Catalog>;
 }

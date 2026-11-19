@@ -133,9 +133,8 @@ impl PhysicalPlanner<'_> {
             read
         };
         let LogicalPlan::Scan { table, .. } = read else { return None };
-        let storage = self.db.storage_of(table).ok()?;
         let stats = self.db.statistics(table);
-        let all = cost_of(storage.row_count());
+        let all = cost_of(self.db.row_count(table)?);
         let model = self.db.cost();
         let known = estimate::Known { stats: stats.as_deref(), cost: &model };
         Some((cond.map_or(all, |c| all * estimate::selectivity(c, known)), stats))

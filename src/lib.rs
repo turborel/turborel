@@ -54,6 +54,7 @@ pub mod memory;
 pub mod optimizer;
 pub mod params;
 pub mod parser;
+pub mod partition;
 pub mod pattern;
 pub mod physical;
 pub mod plugin;
