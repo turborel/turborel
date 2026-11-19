@@ -68,6 +68,10 @@ pub struct Graph {
     upper: Vec<u32>,
     /// Each node's first block in `upper`, or `NONE`.
     upper_at: Vec<u32>,
+    /// \[DESIGN\] How many of layer 0's lists hold each node, derived
+    /// from the lists and never stored, so that a back edge's reselection
+    /// keeps every node's last incoming edge (RULES.md D97, `shelter`).
+    incoming: Vec<u32>,
     /// The node searches start from, on the top layer; `NONE` if empty.
     pub entry: u32,
     /// The top layer.
@@ -105,6 +109,7 @@ impl Graph {
             links0: Vec::new(),
             upper: Vec::new(),
             upper_at: Vec::new(),
+            incoming: Vec::new(),
             entry: NONE,
             top: 0,
             by_hash: HashMap::new(),
@@ -236,25 +241,113 @@ impl Graph {
     /// if known.
     pub fn set_links_kept(&mut self, id: u32, level: u8, ids: &[u32], kept: Option<usize>) {
         let Some((up, start, width)) = self.span(id, level) else { return };
-        let array = if up { &mut self.upper } else { &mut self.links0 };
+        let Graph { upper, links0, incoming, .. } = self;
+        let array = if up { upper } else { links0 };
         let Some((degree, slots)) = array.get_mut(start..start.saturating_add(width)).and_then(<[u32]>::split_first_mut) else { return };
         let n = ids.len().min(slots.len());
+        if !up {
+            slots.iter().take(degree_of(*degree)).for_each(|e| tally(incoming, *e, false));
+            ids.iter().take(n).for_each(|e| tally(incoming, *e, true));
+        }
         let known = kept.map_or(0, |k| u32::try_from(k.min(n).saturating_add(1)).unwrap_or(0));
         *degree = u32::try_from(n).unwrap_or(0) | known.checked_shl(DEGREE_BITS).unwrap_or(0);
         slots.iter_mut().zip(ids).for_each(|(s, i)| *s = *i);
+    }
+
+    /// How many of layer 0's lists hold node `id`.
+    pub fn incoming(&self, id: u32) -> u32 {
+        self.incoming.get(slot(id)).copied().unwrap_or(0)
+    }
+
+    /// \[DESIGN\] Keeps every node's last incoming edge on layer 0 when
+    /// node `e`'s list `before` is chosen again as `ids`, nearest first,
+    /// with `new` a candidate it did not hold (RULES.md D97). A candidate
+    /// let go of that no other list leads to, a tombstone too unless
+    /// `live_only`, stays, `new` first, in place of the farthest
+    /// candidate chosen that another list leads to. An edge from one of
+    /// the candidate's own neighbours leads from its own reach alone, so
+    /// it does not count, else a pair could be cut off together. Whether
+    /// `ids` changed, and the candidates no place was left for, which the
+    /// caller links from elsewhere. Upper layers lead down to layer 0,
+    /// which holds every node, so their lists are not held.
+    pub fn shelter(
+        &self,
+        (e, level, new): (u32, u8, Option<u32>),
+        before: &[u32],
+        live_only: bool,
+        ids: &mut Vec<u32>,
+    ) -> (bool, Vec<u32>) {
+        let mut homeless = Vec::new();
+        if level != 0 {
+            return (false, homeless);
+        }
+        let mut changed = false;
+        for x in new.iter().chain(before).copied() {
+            if ids.contains(&x) || self.spare_edges(x, e, before.contains(&x)) > 0 || (live_only && !self.is_live(x)) {
+                continue;
+            }
+            if ids.len() >= self.m0 {
+                let Some(at) = ids.iter().rposition(|v| self.spare_edges(*v, e, before.contains(v)) > 0) else {
+                    homeless.push(x);
+                    continue;
+                };
+                ids.remove(at);
+            }
+            ids.push(x);
+            changed = true;
+        }
+        (changed, homeless)
+    }
+
+    /// Links node `x` from node `from` on layer 0, in place of the
+    /// farthest of its list another list leads to, if full (D97).
+    pub fn foster(&mut self, from: u32, x: u32) {
+        let mut ids = self.links(from, 0).to_vec();
+        if from == x || ids.contains(&x) {
+            return;
+        }
+        if ids.len() >= self.m0 {
+            let Some(at) = ids.iter().rposition(|v| self.spare_edges(*v, from, true) > 0) else { return };
+            ids.remove(at);
+        }
+        ids.push(x);
+        self.set_links(from, 0, &ids);
+    }
+
+    /// The edges on layer 0 into node `x` but from node `e`, whose list
+    /// holds it if `held`, and from its own neighbours.
+    fn spare_edges(&self, x: u32, e: u32, held: bool) -> u32 {
+        let mutual = self.links(x, 0).iter().filter(|y| **y != e && self.links(**y, 0).contains(&x)).count();
+        self.incoming(x).saturating_sub(u32::from(held)).saturating_sub(u32::try_from(mutual).unwrap_or(u32::MAX))
+    }
+
+    /// Counts again how many of layer 0's lists hold each node, as when
+    /// an image is read, whose lists name nodes not yet added.
+    pub fn recount(&mut self) {
+        self.incoming.clear();
+        self.incoming.resize(self.len(), 0);
+        let width = self.m0.saturating_add(1);
+        for list in self.links0.chunks_exact(width) {
+            let Some((degree, ids)) = list.split_first() else { continue };
+            ids.iter().take(degree_of(*degree)).for_each(|e| tally(&mut self.incoming, *e, true));
+        }
     }
 
     /// Adds `new` to node `id`'s neighbours on `level`, if it has room:
     /// whether it had.
     pub fn push_link(&mut self, id: u32, level: u8, new: u32) -> bool {
         let Some((up, start, width)) = self.span(id, level) else { return false };
-        let array = if up { &mut self.upper } else { &mut self.links0 };
+        let Graph { upper, links0, incoming, .. } = self;
+        let array = if up { upper } else { links0 };
         let Some((degree, slots)) = array.get_mut(start..start.saturating_add(width)).and_then(<[u32]>::split_first_mut) else {
             return false;
         };
         let at = degree_of(*degree);
         let Some(free) = slots.get_mut(at) else { return false };
         *free = new;
+        if !up {
+            tally(incoming, new, true);
+        }
         // The new neighbour was not weighed by the heuristic, so which of
         // the list it kept is no longer known.
         *degree = u32::try_from(at.saturating_add(1)).unwrap_or(0);
@@ -306,6 +399,7 @@ impl Graph {
         self.counts.push(count);
         self.levels.push(level);
         self.hashes.push(hash);
+        self.incoming.push(0);
         self.links0.resize(self.links0.len().saturating_add(self.m0.saturating_add(1)), 0);
         if level == 0 {
             self.upper_at.push(NONE);
@@ -380,6 +474,14 @@ const DEGREE_BITS: u32 = 16;
 /// The degree's bits.
 const DEGREE_MASK: u32 = (1 << DEGREE_BITS) - 1;
 
+/// Counts one list more holding node `id` in `incoming` if `up`, else
+/// one fewer.
+fn tally(incoming: &mut [u32], id: u32, up: bool) {
+    if let Some(n) = incoming.get_mut(slot(id)) {
+        *n = if up { n.saturating_add(1) } else { n.saturating_sub(1) };
+    }
+}
+
 /// The degree a list's first word holds.
 #[inline]
 fn degree_of(word: u32) -> usize {
@@ -391,5 +493,6 @@ pub const F32_BYTES: usize = 4;
 /// The bytes of a node id.
 const ID_BYTES: usize = 4;
 /// \[DESIGN\] A node's bytes besides its vector and lists: row, count,
-/// layer, hash, upper block, hash chain, and the hash map's share.
-const NODE_OVERHEAD: usize = 48;
+/// layer, hash, upper block, hash chain, incoming count, and the hash
+/// map's share.
+const NODE_OVERHEAD: usize = 52;
