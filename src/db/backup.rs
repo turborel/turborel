@@ -38,6 +38,9 @@ use crate::backup::history::BackupEntry;
 use crate::backup::object::{Reading, Writing};
 use crate::backup::{BackupTarget, TargetProvider, Targets, scheme_of};
 use crate::error::Result;
+use crate::plugin::bridge::archive::archive_targets;
+use crate::plugin::bridge::backup::PluginTargets;
+use crate::plugin::manifest::HostKind;
 use crate::log::Lsn;
 use crate::sync::lock_builtin;
 
@@ -123,19 +126,30 @@ impl Database {
     }
 
     /// \[EXTENSION\] The target at `location`, of the provider its scheme
-    /// names (RULES.md D166): one registered, else an extension's of that
-    /// scheme (D169), else none.
+    /// names (RULES.md D166): one registered, else a host plug-in's
+    /// archive of that scheme (D274), else an extension's (D169), else
+    /// none.
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if no provider has its scheme; the provider's.
     pub fn open_target(&self, location: &str) -> Result<Arc<dyn BackupTarget>> {
         let targets = &self.backups().targets;
-        let unserved = scheme_of(location).filter(|scheme| !targets.serves(scheme));
-        match unserved.map(|scheme| self.extension_target(scheme)).transpose()?.flatten() {
+        let Some(scheme) = scheme_of(location).filter(|scheme| !targets.serves(scheme)) else { return targets.open(location) };
+        if let Some(archive) = self.host_archive(scheme)? {
+            return archive.open(location);
+        }
+        match self.extension_target(scheme)? {
             Some(extension) => extension.open(location),
             None => targets.open(location),
         }
+    }
+
+    /// \[EXTENSION\] The archive of `scheme` a host plug-in declares, if
+    /// one does (RULES.md D274).
+    fn host_archive(&self, scheme: &str) -> Result<Option<PluginTargets>> {
+        let found = self.host_objects(HostKind::Archive)?.into_iter().find(|(d, _)| d.name.eq_ignore_ascii_case(scheme));
+        Ok(found.map(|(_, link)| archive_targets(&link)))
     }
 
     /// \[EXTENSION\] The backups under way.
