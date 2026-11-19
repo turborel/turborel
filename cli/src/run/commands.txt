@@ -31,7 +31,7 @@ Files and output
   \notee                 stop copying
   \import TABLE FILE [csv | tsv] [header] [delimiter C] [null TEXT] [batch N] [skip]
                          insert FILE's rows into TABLE
-  \export {TABLE | (QUERY)} FILE [csv | text] [header] [delimiter C] [null TEXT]
+  \export {TABLE | (QUERY)} FILE [csv | text | native] [header] [delimiter C] [null TEXT]
                          write a table's or a query's rows to FILE
 
 How results are written
