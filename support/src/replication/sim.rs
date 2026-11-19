@@ -37,7 +37,7 @@ use turborel::log::{Log, Lsn};
 use turborel_replication::{Driver, StateTransfer, WholeFiles};
 
 pub use checker::{Checker, Violation};
-pub use databases::{DatabaseReport, Replicas, simulate_databases};
+pub use databases::{DatabaseReport, Replicas, simulate_databases, simulate_databases_plugged};
 pub use epochs::Epochs;
 pub use ground::{Host, Runner};
 pub use network::{Link, Network, Weather};

@@ -26,8 +26,12 @@ use turborel::log::Lsn;
 use turborel::value::Value;
 use turborel_replication::{Driver, GroupLogs, PageDifferences, StateTransfer};
 
+mod report;
+
+pub use report::DatabaseReport;
+
 use super::super::group::Make;
-use super::{Host, Plan, Report, Rng, Runner, Violation, serving_primary};
+use super::{Host, Plan, Plug, Rng, Runner, Violation, serving_primary};
 use crate::database::{contents, number, rows};
 use crate::volatile::VolatileFileSystem;
 
@@ -73,30 +77,6 @@ enum Action {
     Setting,
 }
 
-/// What a run of real databases did.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct DatabaseReport {
-    /// What replication did.
-    pub replication: Report,
-    /// Transactions the primaries' databases committed.
-    pub committed: u64,
-    /// Commits left in doubt as their primary stopped serving or crashed.
-    pub in_doubt: u64,
-    /// Transactions open on a primary's database as it stopped or crashed.
-    pub interrupted: u64,
-    /// Databases promoted in a view after the first.
-    pub promoted: u64,
-    /// Checkpoints taken by following databases.
-    pub following_checkpoints: u64,
-    /// Databases opened again from their files after a crash.
-    pub reopened: u64,
-    /// Reads served by backups, each holding its snapshot a while.
-    pub backup_reads: u64,
-    /// Reconfigurations asked of a primary's database that were done.
-    pub reconfigured: u64,
-    /// Backups compared with the primary at the end.
-    pub compared: usize,
-}
 
 /// Each replica's file system, kept across its crashes, its database
 /// while it is up, and its session with a transaction open, serving, with
@@ -119,6 +99,9 @@ struct Kept {
     opened: u64,
     /// Transactions open as their database stopped serving or crashed.
     interrupted: u64,
+    /// \[EXTENSION\] Whether plug-ins serve the replicas, so a driver's
+    /// failure stops its node; and the nodes so stopped.
+    plugged: (bool, u64),
 }
 
 impl Files {
@@ -164,6 +147,12 @@ impl Host for Files {
             db.open_following(&fs, Path::new(DIR), &OpenOptions::default())
         })();
         let holds = opened.map_err(|e| format!("replica {}: its database did not open: {e}", index + 1))?;
+        if self.kept().plugged.0 {
+            let (files, stopping) = (self.clone(), db.clone());
+            driver.on_halt(Arc::new(move |why| {
+                files.kept().plugged.1 += u64::from(stopping.stop_node(&why.msg).is_ok());
+            }));
+        }
         self.kept().databases[index] = Some(db.clone());
         Ok((Arc::new(db), holds))
     }
@@ -216,7 +205,18 @@ impl Replicas {
     ///
     /// The first violation found.
     pub fn new(seed: u64, plan: &Plan, make: &Make) -> Result<Replicas, Violation> {
-        let runner = Runner::new(seed, *plan, make, Files::default())?;
+        Replicas::plugged(seed, plan, make, None)
+    }
+
+    /// A group as `new` makes one, its parts served by `plug`'s plug-ins.
+    ///
+    /// # Errors
+    ///
+    /// The first violation found.
+    pub fn plugged(seed: u64, plan: &Plan, make: &Make, plug: Option<Arc<Plug>>) -> Result<Replicas, Violation> {
+        let files = Files::default();
+        files.kept().plugged.0 = plug.is_some();
+        let runner = Runner::plugged(seed, *plan, (make, files), plug)?;
         Ok(Replicas { runner, rng: Rng::new(seed.rotate_left(32)), next: 0, report: DatabaseReport::default() })
     }
 
@@ -547,7 +547,9 @@ impl Replicas {
         }
         self.report.reopened = self.runner.host.kept().opened;
         self.report.interrupted = self.runner.host.kept().interrupted;
+        self.report.node_stops = self.runner.host.kept().plugged.1;
         self.report.replication = self.runner.world().finish()?;
+        self.report.replication.plugin_kills = self.runner.plugin_kills();
         Ok(self.report)
     }
 }
@@ -572,7 +574,18 @@ fn pick(rng: &mut Rng) -> Action {
 ///
 /// The first violation found, naming the seed.
 pub fn simulate_databases(seed: u64, plan: &Plan, make: &Make) -> Result<DatabaseReport, Violation> {
-    let mut replicas = Replicas::new(seed, plan, make)?;
+    simulate_databases_plugged(seed, plan, make, None)
+}
+
+/// Runs `plan` as `simulate_databases` does, the replicas' parts served
+/// by stand-in plug-ins as `plugging` says, each death stopping its node
+/// (`Database::stop_node`) as its replica crashes.
+///
+/// # Errors
+///
+/// The first violation found, naming the seed.
+pub fn simulate_databases_plugged(seed: u64, plan: &Plan, make: &Make, plugging: Option<super::Plugging>) -> Result<DatabaseReport, Violation> {
+    let mut replicas = Replicas::plugged(seed, plan, make, plugging.map(|p| Plug::new(p, seed)))?;
     replicas.run()?;
     replicas.compare()
 }

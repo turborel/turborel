@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use turborel_test_support::replication::Make;
 use turborel_test_support::replication::sim::plans;
-use turborel_test_support::replication::sim::{Part, Plan, Plugging, Report, simulate_plugged};
+use turborel_test_support::replication::sim::{Part, Plan, Plugging, Report, simulate_databases_plugged, simulate_plugged};
 
 use crate::common::make_vr;
 
@@ -71,4 +71,20 @@ fn a_plugin_transfer_killed_mid_fetch_begins_again() {
     let reports = sweep(&plans::retaining(), SEEDS_OF_TRANSFERS, plugging);
     assert!(reports.iter().map(|r| r.transfers).sum::<u64>() > 0, "no state transfer was installed");
     assert!(reports.iter().map(|r| r.plugin_kills).sum::<u64>() > 0, "no transfer was killed");
+}
+
+/// Verifies: [EXTENSION] RULES.md D270: real databases whose replicas'
+/// parts plug-ins serve: each death halts the driver, which stops its node
+/// (`Database::stop_node`), the replica crashing and made again from its
+/// files and journal; every backup ends holding what the primary holds.
+#[test]
+fn real_databases_stop_their_node_as_a_plugin_dies() {
+    let make: Make = Arc::new(make_vr);
+    let (mut stops, mut kills) = (0, 0);
+    for seed in 0..3 {
+        let report = simulate_databases_plugged(seed, &plans::databases(), &make, Some(Plugging::all(1, 0))).unwrap();
+        stops += report.node_stops;
+        kills += report.replication.plugin_kills;
+    }
+    assert!(kills > 0 && stops > 0, "kills {kills}, node stops {stops}");
 }

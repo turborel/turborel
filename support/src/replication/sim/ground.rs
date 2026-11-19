@@ -330,6 +330,11 @@ impl<H: Host + Clone + 'static> Runner<H> {
         self.ground.driver(index)
     }
 
+    /// The plug-ins' stand-ins killed so far, if plug-ins serve.
+    pub fn plugin_kills(&self) -> u64 {
+        self.ground.plug.as_ref().map_or(0, |p| p.kills())
+    }
+
     /// Every replica's standing, for a violation.
     pub fn standings(&self) -> String {
         self.ground.standings()
