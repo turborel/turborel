@@ -330,3 +330,80 @@ fn composite_kinds_compare_bucket_and_refuse_keys() {
     assert_eq!(code(ROW.params(&mut Reader::new(&[0, 0, 0, 0], "parameters"))), Some(Code::Corrupt), "no fields");
     assert_eq!(code(ARRAY.params(&mut Reader::new(&[0, 0, 0, 0], "parameters"))), Some(Code::Corrupt), "cardinality 0");
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §6.1] a binary large object type, a
+/// decimal floating-point type and a time type without time zone read
+/// back as written; a tag that names no type is SQLCODE -916.
+#[test]
+fn type_tags_read_back() {
+    let types = [
+        DataType::Lob { kind: crate::value::lob::LobKind::Binary, length: 100, units: crate::value::units::CharUnits::Characters },
+        DataType::DecFloat { precision: 16 },
+        DataType::Time { precision: 0, zoned: false },
+    ];
+    for t in types {
+        let mut out = Vec::new();
+        tags::put_type(&mut out, &t);
+        assert_eq!(tags::data_type(&mut Reader::new(&out, "type")).unwrap(), t);
+    }
+    assert_eq!(code(tags::data_type(&mut Reader::new(&[255], "type"))), Some(Code::Corrupt));
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §9.12 SR3, §6.13 GR5d, §4.10] no
+/// multiset is in a key (SQLCODE -910), nor cast to a type not a
+/// collection (SQLSTATE 22005); a row's null field keys as null and reads
+/// back so; a row of fields other than its type's is not stored; a
+/// distinct type's kind is USER-DEFINED.
+#[test]
+fn multisets_rows_and_distinct_kind() {
+    let n = |u: i128| Value::Exact(Decimal::new(u, 0));
+    let bags = DataType::multiset(DataType::Boolean);
+    let bag = Value::Multiset(vec![Value::Bool(true)].into());
+    assert_eq!(code(MULTISET.encode_key(&bag, &bags, &mut Vec::new())), Some(Code::Api));
+    assert_eq!(MULTISET.cast(bag, &DataType::Boolean).unwrap_err().sqlstate(), SqlState::ERROR_IN_ASSIGNMENT);
+    let field = |name: &str| Field {
+        name: name.into(),
+        data_type: DataType::Exact { precision: 5, scale: 0, spelled: Spelled::Integer },
+        unnamed: false,
+    };
+    let pair = DataType::row(vec![field("X"), field("Y")]);
+    let mut key = Vec::new();
+    ROW.encode_key(&Value::Row(vec![Value::Null, n(4)].into()), &pair, &mut key).unwrap();
+    let back = ROW.decode_key(&mut key.as_slice(), &pair).unwrap();
+    assert_eq!(back.to_literal(), Value::Row(vec![Value::Null, n(4)].into()).to_literal());
+    assert_eq!(code(ROW.encode_record(&Value::Row(vec![n(1)].into()), &pair)), Some(Code::Api));
+    assert_eq!(DISTINCT.name(), USER_DEFINED_NAME);
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §6.1 SR16, §4.2.2] a key of CHARACTER of
+/// a length in octets reads back as the padded string; a key of a length
+/// in characters holding fewer characters, or a units tag other than 0 or
+/// 1, is SQLCODE -916; the interval kinds are named INTERVAL.
+#[test]
+fn character_keys_of_units_and_interval_name() {
+    let octets = DataType::Character { length: 3, units: crate::value::units::CharUnits::Octets };
+    let mut key = Vec::new();
+    CHARACTER.encode_key(&Value::Char("ab".into()), &octets, &mut key).unwrap();
+    let back = CHARACTER.decode_key(&mut key.as_slice(), &octets).unwrap();
+    assert_eq!(CHARACTER.text(&back), "ab ");
+    let chars = DataType::character(3);
+    assert_eq!(code(CHARACTER.decode_key(&mut &b"ab"[..], &chars)), Some(Code::Corrupt));
+    assert_eq!(code(CHARACTER.params(&mut Reader::new(&[0, 0, 0, 3, 2], "parameters"))), Some(Code::Corrupt));
+    assert_eq!(INTERVAL_DAY_TIME.name(), "INTERVAL");
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §6.30 GR7, §9.2 GR3b xv, §4.17.2.3]
+/// DECFLOAT arithmetic with an approximate operand beyond its range is
+/// SQLSTATE 22003; a value not a number is not assigned to DECFLOAT
+/// (22005); a time type has no highest value, as only DATE and timestamps
+/// end a system-time period.
+#[test]
+fn decfloat_refusals_and_no_highest_time() {
+    let t = DataType::DecFloat { precision: 16 };
+    let one = DECFLOAT.cast(Value::Exact(Decimal::new(1, 0)), &t).unwrap();
+    let sum = decfloat_arith(crate::value::operators::ArithOp::Add, &Value::Approx(f64::INFINITY), &one);
+    assert_eq!(sum.unwrap_err().sqlstate(), SqlState::NUMERIC_VALUE_OUT_OF_RANGE);
+    assert_eq!(DECFLOAT.assign(Value::Bool(true), &t, "test").unwrap_err().sqlstate(), SqlState::ERROR_IN_ASSIGNMENT);
+    assert!(datetime::highest(&DataType::Time { precision: 0, zoned: false }).is_none());
+    assert!(datetime::highest(&DataType::Date).is_some());
+}
