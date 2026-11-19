@@ -8,7 +8,10 @@ alone; over TLS with its feature `tls`, trusting the platform's
 certificate authorities too with `system-roots`; and proving a password by
 SCRAM-SHA-256, or SCRAM-SHA-256-PLUS over TLS, with its feature `scram`. A program that embeds the
 database uses the crate `turborel` instead, and its `Database` and
-`Session` ([The Embedded Library](03-embedding.md)).
+`Session` ([The Embedded Library](03-embedding.md)). Settings read from
+outside the program, several servers, TLS by mode, pipelines, pools and
+the SCRAM key cache are in [Settings, Pipelines and
+Pools](02-library-connections.md).
 
 ## Connecting
 

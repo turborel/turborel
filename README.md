@@ -161,6 +161,9 @@ behind it, and each can be replaced or added to.
 - Library, embedded modes
 - A server over TCP, Unix sockets or Windows named pipes, with TLS,
   users and passwords, prepared statements and cancellation.
+- A [client library](doc/client/02-library-connections.md) that pipelines
+  requests, pools connections, fails over across servers, and takes its
+  settings from a URI, the environment, a service file or a password file.
 - Bounded memory with one budget over every cache, with sorts, joins and
   grouping that spill to disk.
 

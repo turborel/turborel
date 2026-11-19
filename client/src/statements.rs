@@ -43,7 +43,7 @@ pub struct Batch {
 
 /// The request that executes `statement` with `values`, at most `rows` of
 /// a query's rows sent, all if 0; the transaction ended with it if `ends`.
-fn execute_request(statement: &Statement, values: &[Value], rows: u32, ends: bool) -> Request {
+pub(crate) fn execute_request(statement: &Statement, values: &[Value], rows: u32, ends: bool) -> Request {
     Request::Execute { statement: statement.number, values: values.to_vec(), rows, ends }
 }
 
@@ -51,6 +51,11 @@ impl<S: Read + Write> Connection<S> {
     /// The server's Complete, after `request`.
     fn completed(&mut self, request: &Request) -> Result<Completed> {
         self.send(request)?;
+        self.completion()
+    }
+
+    /// The server's Complete, of a request sent.
+    pub(crate) fn completion(&mut self) -> Result<Completed> {
         match self.receive()? {
             Reply::Complete(completed) => Ok(completed),
             Reply::Error(failure) => Err(self.failed(failure)),
@@ -97,11 +102,20 @@ impl<S: Read + Write> Connection<S> {
     /// The server's: SQLSTATE 07001 if `values` are not one for each
     /// parameter; the statement's; a connection failure.
     pub fn execute(&mut self, statement: &Statement, values: &[Value]) -> Result<Outcome> {
-        let request = execute_request(statement, values, 0, self.autocommit);
+        self.send(&execute_request(statement, values, 0, self.autocommit))?;
+        self.execute_reply(statement)
+    }
+
+    /// The reply to an Execute of `statement` sent: a query's rows, all of
+    /// them, or another statement's completion.
+    ///
+    /// # Errors
+    ///
+    /// As `execute`'s.
+    pub(crate) fn execute_reply(&mut self, statement: &Statement) -> Result<Outcome> {
         if statement.columns.is_empty() {
-            return self.completed(&request).map(Outcome::Done);
+            return self.completion().map(Outcome::Done);
         }
-        self.send(&request)?;
         let (rows, _) = self.rows()?;
         Ok(Outcome::Rows { columns: statement.columns.clone(), rows })
     }

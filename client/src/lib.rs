@@ -2,16 +2,24 @@
 //! over the native wire protocol (`turborel_protocol`), on the standard
 //! library alone, for programs that connect to a server rather than embed
 //! the database; and, with the feature `tls`, over TLS, and with the
-//! feature `scram`, proving a password by SCRAM-SHA-256.
+//! feature `scram`, proving a password by SCRAM-SHA-256. Settings may come
+//! from outside the program (`settings`), name several servers
+//! (`failover`), and requests be pipelined (`pipeline`) and connections
+//! pooled (`pool`).
 
 pub mod agent;
 mod cancel;
 pub mod connection;
+mod failover;
 pub mod import;
 pub mod lobs;
 pub mod mechanism;
 #[cfg(any(windows, test))]
 mod pipe;
+pub mod pipeline;
+pub mod pool;
+pub mod role;
+pub mod settings;
 pub mod statements;
 pub mod target;
 pub mod timeouts;
