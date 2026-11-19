@@ -24,6 +24,6 @@ jobs:
         with:
           path-to-signatures: 'signatures/cla.json'
           path-to-document: 'https://github.com/turborel/turborel/blob/main/CLA.md'
-          branch: 'main'
+          branch: 'cla-signatures'
           allowlist: 'guycipher,dependabot[bot]'
           lock-pullrequest-aftermerge: false
