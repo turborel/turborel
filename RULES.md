@@ -6764,11 +6764,10 @@ applies the overlay (APPLY), BATCH rows a call, each call all or none.
 A refusal or a failed call puts back every row read and fails the
 commit. Reads merge the program's rows, a page of BATCH rows a SCAN or
 a GET a row read by id, with the transaction's overlay, and the ids a
-scan gives must ascend. The cost of a row is its share of a call. With
-BATCH 100 and a program that makes each APPLY durable, measured on a
-debug build of 20,000 rows, a commit costs about 10 microseconds a row
-more than the default engine's, a scan about 2 microseconds, and a read
-by id one round trip, about 0.25 milliseconds.
+scan gives must ascend. The cost of a row is its share of a call. A
+commit costs one GET of before-images and one APPLY per BATCH rows
+written, a scan one SCAN per BATCH rows, and a point read
+one round trip, a GET of its id.
 
 #### D225. A plug-in engine recovers from the log, and a process stopped fails the transaction writing it
 

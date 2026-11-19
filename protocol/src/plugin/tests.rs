@@ -266,7 +266,10 @@ fn frames_are_served() {
     let all = messages_of(&output);
     assert_eq!(all.len(), 3, "a RESULT, an ERROR, nothing after SHUTDOWN: {all:?}");
     let Message::Welcome(w) = &all[0] else { panic!("{all:?}") };
-    assert_eq!((w.protocol, w.capabilities.clone(), w.kinds.clone()), (1, vec!["batch".to_owned(), "cancel".to_owned()], vec![1, 4, 12, 13, 16, 18]));
+    assert_eq!(
+        (w.protocol, w.capabilities.clone(), w.kinds.clone()),
+        (1, vec!["batch".to_owned(), "cancel".to_owned()], vec![1, 4, 12, 13, 16, 18])
+    );
     assert!(matches!(&all[1], Message::Result { call: 1, .. }), "{all:?}");
     assert!(matches!(&all[2], Message::Error { call: 2, state, .. } if state == "38T04"), "{all:?}");
 }

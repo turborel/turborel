@@ -135,13 +135,18 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    json.into_iter().chain(xml).chain(last())
+    json.into_iter().chain(xml).chain(plugins()).chain(last())
+}
+
+/// External plug-ins' areas, in order: the plug-ins', the packages', the
+/// kinds' and the SDK's.
+fn plugins() -> [&'static [Mutation]; 4] {
+    [&super::plugins::PLUGINS, &super::plugins::PACKAGES, &super::plugins::kinds::PLUGIN_KINDS, &super::plugins::sdk::SDK]
 }
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
-/// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, external plug-ins', their kinds', the SDK's and
-/// packages', partitioning's, UUID's, the command-line client's, replication's, the server's and the client library's.
-fn last() -> [&'static [Mutation]; 48] {
+/// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, simple features', partitioning's, UUID's, the command-line client's, replication's, the server's and the client library's.
+fn last() -> [&'static [Mutation]; 45] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -177,10 +182,6 @@ fn last() -> [&'static [Mutation]; 48] {
         &super::graph_table::statistics::GRAPH_STATISTICS,
         &super::graph_iterations::GRAPH_ITERATIONS,
         &super::check_rebind::CHECK_REBIND,
-        &super::plugins::PLUGINS,
-        &super::plugins::PACKAGES,
-        &super::plugins::kinds::PLUGIN_KINDS,
-        &super::plugins::sdk::SDK,
         &super::simple_features::SIMPLE_FEATURES,
         &super::partitioning::PARTITIONING,
         &uuid::UUID,

@@ -280,11 +280,10 @@ process of the extension that stops while a transaction writes a table
 fails that transaction at commit with SQLSTATE 40001, to run again, so a
 program restarted never commits half of one.
 
-What a row costs is its share of a call. Measured on a debug build of
-20,000 rows with BATCH 100 and a program that makes each APPLY durable,
-a commit costs about 10 microseconds a row more than the default
-engine's, a scan about 2 microseconds a row more, and a read by id one
-round trip, about a quarter of a millisecond.
+What a row costs is its share of a call. A commit costs one GET of
+before-images and one APPLY per BATCH rows written. A scan costs one SCAN per BATCH rows, and a point read
+one round trip, a GET of its id. A larger BATCH spreads each call over
+more rows, at the cost of a larger message.
 
 ```sql
 CREATE TABLE T (K INTEGER, V VARCHAR(20)) USING FILES;
