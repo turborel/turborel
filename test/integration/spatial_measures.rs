@@ -85,18 +85,38 @@ fn runs_and_points_apart_make_a_collection() {
 #[test]
 fn arcs_are_located_by_their_length() {
     let (_db, a) = session();
-    let start = "(0.5857864376269049 1.414213562373095 1, ";
-    let end = ", 3.414213562373095 1.4142135623730951 3))";
+    let root = 2f64.sqrt();
     for text in [
         "CIRCULARSTRING M (0 0 0, 2 2 2, 4 0 4)",
         "MULTICURVE M (CIRCULARSTRING M (0 0 0, 2 2 2, 4 0 4))",
         "CURVEPOLYGON M (CIRCULARSTRING M (0 0 0, 2 2 2, 4 0 4, 2 -2 6, 0 0 8))",
     ] {
         let got = between(&a, text, ("1E0", "3E0"));
-        assert!(got.starts_with(&format!("MULTICURVE M ({start}")), "{text}: {got}");
-        assert!(got.ends_with(end), "{text}: {got}");
-        assert!(got.contains(", 1.9999999999999998 2 2, "), "{text}: {got}");
+        assert!(got.starts_with("MULTICURVE M (("), "{text}: {got}");
+        let points = points_of(&got);
+        assert!(near(points[0], [2.0 - root, root, 1.0]), "{text}: {got}");
+        assert!(near(points[points.len() - 1], [2.0 + root, root, 3.0]), "{text}: {got}");
+        assert!(points.iter().any(|&p| near(p, [2.0, 2.0, 2.0])), "{text}: {got}");
+        assert!(points.iter().all(|&[x, y, _]| ((x - 2.0).hypot(y) - 2.0).abs() < 1e-9), "{text}: {got}");
     }
+}
+
+/// The X Y M points of the text of a multicurve, in order.
+fn points_of(text: &str) -> Vec<[f64; 3]> {
+    let inner = text.trim_start_matches("MULTICURVE M ((").trim_end_matches("))");
+    inner
+        .split(", ")
+        .map(|point| {
+            let v: Vec<f64> = point.split(' ').map(|n| n.parse().unwrap()).collect();
+            [v[0], v[1], v[2]]
+        })
+        .collect()
+}
+
+/// Whether `a` and `b` agree to within the last digits that differ
+/// between platforms' trigonometry.
+fn near(a: [f64; 3], b: [f64; 3]) -> bool {
+    a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-9)
 }
 
 /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.15 Description
