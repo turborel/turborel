@@ -4,7 +4,7 @@
 
 ## NAME
 
-EXPLAIN: show how a query is planned
+EXPLAIN: show how a query is planned *(extension)*
 
 ## SYNOPSIS
 

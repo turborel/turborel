@@ -634,7 +634,7 @@ OK
 (1 row)
 ```
 
-## This implementation's own views
+## This implementation's own views *(extension)*
 
 | View | Columns | One row of each |
 |---|---|---|

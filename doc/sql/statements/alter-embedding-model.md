@@ -4,7 +4,7 @@
 
 ## NAME
 
-ALTER EMBEDDING MODEL: change an embedding model's options
+ALTER EMBEDDING MODEL: change an embedding model's options *(extension)*
 
 ## SYNOPSIS
 

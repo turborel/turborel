@@ -42,10 +42,10 @@ not in a program's procedures.
 **domain**: a data type with a default and constraints, that columns
 may be of. [CREATE DOMAIN](../sql/statements/create-domain.md).
 
-**engine**: what keeps a table's rows: the row store, `rowstore`, the
-default; the column store, `columnstore`, named by CREATE TABLE ...
-USING; or one a plug-in registers.
-[Table Options](g-table-options.md).
+**engine** *(extension)*: what keeps a table's rows: the row store,
+`rowstore`, the default; the column store, `columnstore`, named by
+CREATE TABLE ... USING; or one a plug-in registers. [Table
+Options](g-table-options.md).
 
 **extension**: what Turborel has that the standards do not, marked
 *(extension)* in this manual.
@@ -53,9 +53,9 @@ USING; or one a plug-in registers.
 **foreign key**: a constraint that a row's values match those of a row
 of another table, or its own.
 
-**index**: a structure that finds rows from column values. The built-in
-methods use B-link trees and hash tables for comparisons. A plug-in may
-also find rows for a function used in a WHERE filter.
+**index** *(extension)*: a structure that finds rows from column values.
+The built-in methods use B-link trees and hash tables for comparisons. A
+plug-in may also find rows for a function used in a WHERE filter.
 
 **Information Schema**: the schema INFORMATION_SCHEMA, of views that
 describe the database. [The Information Schema](../sql/07-information-schema.md).
@@ -73,8 +73,9 @@ of no rows.
 **owner**: of a schema, the authorization identifier it is of; of the
 database, the user who manages its users and settings.
 
-**plug-in**: code a program or the server registers with the database:
-a storage engine, an index method, a data type, a function, and more.
+**plug-in** *(extension)*: code a program or the server registers with
+the database: a storage engine, an index method, a data type, a
+function, and more.
 
 **privilege**: the right to do an action on an object: SELECT, INSERT,
 UPDATE, DELETE, REFERENCES or USAGE. [GRANT](../sql/statements/grant.md).
@@ -86,8 +87,8 @@ one owner. [CREATE SCHEMA](../sql/statements/create-schema.md).
 authorization identifier, a default schema, a time zone and settings
 of its own.
 
-**setting**: a named value that changes how the database or a session
-works. [Settings](c-settings.md).
+**setting** *(extension)*: a named value that changes how the database
+or a session works. [Settings](c-settings.md).
 
 **SQLSTATE**: the five characters of a statement's outcome.
 [SQLSTATE and SQLCODE](a-sqlstate.md).
@@ -101,8 +102,9 @@ all: begun by the first statement, ended by COMMIT or ROLLBACK.
 **unknown**: the truth of a comparison with a null, neither true nor
 false.
 
-**user**: a name a server's client may prove it is, by a password the
-database keeps a verifier of. [CREATE USER](../sql/statements/create-user.md).
+**user** *(extension)*: a name a server's client may prove it is, by a
+password the database keeps a verifier of. [CREATE
+USER](../sql/statements/create-user.md).
 
 **view**: a table whose rows are those of its query, found each time it
 is read. [CREATE VIEW](../sql/statements/create-view.md).

@@ -4,7 +4,7 @@
 
 ## NAME
 
-DROP EMBEDDING MODEL: drop an embedding model
+DROP EMBEDDING MODEL: drop an embedding model *(extension)*
 
 ## SYNOPSIS
 

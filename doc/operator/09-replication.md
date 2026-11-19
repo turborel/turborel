@@ -1,4 +1,4 @@
-# Replication
+# Replication *(extension)*
 
 [Contents](README.md)
 

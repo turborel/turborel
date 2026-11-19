@@ -217,7 +217,7 @@ SELECT P.ID, JT.SKU
 
 ## EXPLAIN
 
-EXPLAIN shows a JSON table by its row pattern, the number of its
+EXPLAIN *(extension)* shows a JSON table by its row pattern, the number of its
 columns, and its plan, the default one spelled out, a path of no name
 by its text.
 

@@ -1,4 +1,4 @@
-# Appendix C: Settings
+# Appendix C: Settings *(extension)*
 
 [Contents](README.md)
 

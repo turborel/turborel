@@ -1,4 +1,4 @@
-# Property Graphs *(extension)*
+# Property Graphs
 
 [Contents](README.md)
 
@@ -118,7 +118,7 @@ SELECT * FROM GRAPH_TABLE (BANK
 (1 row)
 ```
 
-ANY CHEAPEST keeps a path of least COST, the sum of its expression over
+ANY CHEAPEST *(extension)* keeps a path of least COST, the sum of its expression over
 the edges, which may not be negative. Here t5 costs 100 and every other
 transfer 1:
 
@@ -137,8 +137,9 @@ SELECT * FROM GRAPH_TABLE (BANK
 
 A WHERE after the pattern is the postfilter, tested of each whole match.
 A match of two path patterns joins them on the variables they share. The
-match mode REPEATABLE ELEMENTS, the default, keeps every join, and
-DIFFERENT EDGES only those binding no edge twice.
+match mode REPEATABLE ELEMENTS, the default, keeps every join,
+DIFFERENT EDGES only those binding no edge twice, and DIFFERENT
+VERTICES *(extension)* only those binding no vertex twice.
 
 ## Functions
 
@@ -217,8 +218,9 @@ SELECT PATH, TOTAL FROM GRAPH_TABLE (BANK
 (1 row)
 ```
 
-In such a WHERE, `PREV(v)` is the element v was bound to in the
-iteration before, null in the first, and `FIRST(v)` the one of the
+In such a WHERE, `PREV(v)` *(extension)* is the element v was bound to
+in the iteration before, null in the first, and `FIRST(v)`
+*(extension)* the one of the
 first. Each gives the element's identity, or a property written after
 it. Here each transfer is at least the one before:
 
@@ -340,7 +342,7 @@ SELECT * FROM GRAPH_TABLE (BANK
 
 Two path patterns that read each other's variables are SQLCODE -103.
 
-[NOT] EXISTS IN PATH p (pattern) matches a pattern along the path p
+[NOT] EXISTS IN PATH *(extension)* p (pattern) matches a pattern along the path p
 binds, in its order. Its variables are its own, and its WHERE clauses
 may read the match's. Here no transfer of the path is larger than the
 one after it:
@@ -364,7 +366,7 @@ SELECT * FROM GRAPH_TABLE (BANK
 
 ## Derived graphs
 
-LINE_GRAPH (g, label) is the graph whose vertices are g's edges of the
+LINE_GRAPH (g, label) *(extension)* is the graph whose vertices are g's edges of the
 label, with the label's properties. An edge FOLLOWS joins each to each
 that leaves the vertex it ends at. So a condition between consecutive
 edges becomes one between adjacent vertices:
@@ -489,7 +491,7 @@ turborel: SQLCODE -301 (SQLSTATE 22008): SCN -1 is out of range: an SCN is from 
 
 ## Limits
 
-A search is bounded by its OPTIONS, and else by the settings GRAPH.*
+A search is bounded by its OPTIONS *(extension)*, and else by the settings GRAPH.*
 ([Appendix C](../appendix/c-settings.md)). Passing a bound fails with
 SQLSTATE 54061, or ON LIMIT TRUNCATE ends the search with the paths it
 found and warning 01W61:
@@ -564,7 +566,7 @@ EXPLAIN SELECT * FROM GRAPH_TABLE (BANK
 A pattern whose edges close a cycle is matched by a worst-case optimal
 join: each next vertex is one of those every bound vertex tied to it
 reaches, the intersection of their neighbour lists. The hint NO_WCOJ
-joins it pairwise instead:
+*(extension)* joins it pairwise instead:
 
 ```sql
 SELECT * FROM GRAPH_TABLE (BANK
@@ -622,7 +624,7 @@ edge labels match between the labels of the node patterns beside them,
 once the graph's statistics count them, and from each start alone
 otherwise. It runs on the workers EXECUTOR.GRAPH_THREADS allows once its
 estimated states reach GRAPH.PARALLEL_MIN_STATES: in morsels of starts,
-or level by level from one start. PATH_ALGO picks the algorithm within
+or level by level from one start. PATH_ALGO *(extension)* picks the algorithm within
 the family the selector calls for, BFS or MSBFS of a shortest or ANY
 selector, DFS of every path, DIJKSTRA of CHEAPEST, and a hint that
 cannot answer the pattern is refused.
@@ -643,6 +645,6 @@ the answer is the same either way. GRAPH_START or GRAPH_DIRECTION
 
 ## EXPLAIN
 
-EXPLAIN shows each path pattern's automaton, the search chosen, and
+EXPLAIN *(extension)* shows each path pattern's automaton, the search chosen, and
 whether each edge table is followed through an adjacency index or by a
 scan.

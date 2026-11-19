@@ -4,7 +4,7 @@
 
 ## NAME
 
-DROP XQUERY MODULE: drop a registered XQuery module
+DROP XQUERY MODULE: drop a registered XQuery module *(extension)*
 
 ## SYNOPSIS
 
@@ -77,8 +77,9 @@ LOUD_LIB went with NOTES_LIB, as it imports it.
 
 ## STANDARD
 
-XQuery 1.0 §5.2.5 leaves where a module import finds its modules to the
-implementation; this statement is turborel's. See
+An extension. ISO/IEC 9075-14:2006 draft has no statement of XQuery
+modules. XQuery 1.0 §5.2.5 leaves where a module import finds its
+modules to the implementation; this statement is turborel's. See
 [CONFORMANCE.md](../../../CONFORMANCE.md#sqlxml).
 
 ## SEE ALSO

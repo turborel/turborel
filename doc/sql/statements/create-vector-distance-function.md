@@ -1,10 +1,10 @@
-# CREATE VECTOR DISTANCE FUNCTION *(extension)*
+# CREATE VECTOR DISTANCE FUNCTION
 
 [Statements](README.md)
 
 ## NAME
 
-CREATE VECTOR DISTANCE FUNCTION: define a metric of vectors in SQL
+CREATE VECTOR DISTANCE FUNCTION: define a metric of vectors in SQL *(extension)*
 
 ## SYNOPSIS
 

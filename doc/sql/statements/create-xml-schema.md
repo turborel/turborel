@@ -4,7 +4,7 @@
 
 ## NAME
 
-CREATE XML SCHEMA: register an XML Schema
+CREATE XML SCHEMA: register an XML Schema *(extension)*
 
 ## SYNOPSIS
 
@@ -126,9 +126,10 @@ registered XML Schema is of the namespace LOST imports, so its type
 
 ## STANDARD
 
-ISO/IEC 9075-14 §4.2.6 leaves how an XML Schema is registered to the
-implementation; this statement is turborel's. The registered XML Schema
-name is §5.2's. See [CONFORMANCE.md](../../../CONFORMANCE.md#sqlxml).
+An extension. ISO/IEC 9075-14 §4.2.6 leaves how an XML Schema is
+registered to the implementation; this statement is turborel's. The
+registered XML Schema name is §5.2's. See
+[CONFORMANCE.md](../../../CONFORMANCE.md#sqlxml).
 
 ## SEE ALSO
 

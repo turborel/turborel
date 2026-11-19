@@ -923,7 +923,7 @@ CREATE INDEX <index name> ON <table name> ( <XML column name> )
     USING { XML_PATH | XML_VALUE | XML_PROPERTY | XML_PRIMARY }
 ```
 
-An XML index keys the nodes of an XML column's values, so a query of a
+An XML index *(extension)* keys the nodes of an XML column's values, so a query of a
 path reads the rows whose values hold it, not every row
 ([CREATE INDEX](statements/create-index.md)). It keys each element and
 attribute below each item of a value: its path from the item, as names in
@@ -1285,9 +1285,9 @@ VALUES (XMLNAME_TO_IDENTIFIER('order_x0020_line'), XMLNAME_TO_IDENTIFIER('say_x0
 
 ## Mapping tables to XML
 
-XMLMAP maps a table, a schema or the catalog to XML, and to an XML
-Schema document that describes that XML, as SQL/XML defines the
-mappings. SQL/XML gives the mappings no syntax, so XMLMAP is
+XMLMAP *(extension)* maps a table, a schema or the catalog to XML, and
+to an XML Schema document that describes that XML, as SQL/XML defines
+the mappings. SQL/XML gives the mappings no syntax, so XMLMAP is
 turborel's own. Its clauses are written in this order, each at most
 once.
 

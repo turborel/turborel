@@ -29,7 +29,7 @@ MODULE CASCADE does; and its registered XML Schemas and XQuery modules,
 as DROP XML SCHEMA and DROP XQUERY MODULE CASCADE do. Either way, a module of another schema whose SCHEMA
 or PATH names it is dropped too ([CREATE MODULE](create-module.md)). A
 constraint named in the schema of a table or a domain of
-another schema is dropped too, as ALTER TABLE or ALTER DOMAIN DROP
+another schema is dropped too *(extension)*, as ALTER TABLE or ALTER DOMAIN DROP
 CONSTRAINT drops it; RESTRICT refuses the drop while there is one. So
 is a view, a routine or a trigger of another schema whose text maps the
 schema by `XMLMAP(SCHEMA ...)` ([XML values](../19-xml.md)), as DROP VIEW,

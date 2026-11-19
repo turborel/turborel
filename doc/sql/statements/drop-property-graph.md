@@ -20,7 +20,7 @@ DROP PROPERTY GRAPH: drop a property graph
 DROP PROPERTY GRAPH drops a graph and the privileges on it; no row of
 its tables changes. RESTRICT, the default, refuses the drop if a view
 or routine reads the graph, and CASCADE drops those too. IF EXISTS
-drops nothing, and raises nothing, if there is no graph of the name.
+*(extension)* drops nothing, and raises nothing, if there is no graph of the name.
 
 A graph goes too with a table it reads, when DROP TABLE drops it with
 CASCADE, and with its schema; RESTRICT refuses either.

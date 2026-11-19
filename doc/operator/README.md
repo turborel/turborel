@@ -9,9 +9,9 @@ For whoever installs, runs and looks after a turborel server and its databases.
 - [Installing](01-installing.md)
 - [Running the Server](02-turboreld.md)
 - [Databases](03-databases.md)
-- [Settings](04-settings.md)
-- [Users and Authentication](05-users.md)
+- [Settings](04-settings.md) *(extension)*
+- [Users and Authentication](05-users.md) *(extension)*
 - [Connections](06-network.md)
 - [Encryption](07-encryption.md)
 - [Diagnostics](08-diagnostics.md)
-- [Replication](09-replication.md)
+- [Replication](09-replication.md) *(extension)*

@@ -45,7 +45,7 @@ are all dropped is left with none.
 
 A change to a table a graph reads that breaks a rule of the graph,
 dropping the key it takes, say, leaves the graph INVALID. It is kept,
-but not queried until COMPILE checks it again, when the rules hold
+but not queried until COMPILE *(extension)* checks it again, when the rules hold
 once more. ALTER TABLE DROP COLUMN of a column a graph names is refused,
 or with CASCADE drops the graph; a column a graph names is not renamed.
 

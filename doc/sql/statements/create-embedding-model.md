@@ -4,7 +4,7 @@
 
 ## NAME
 
-CREATE EMBEDDING MODEL: define an embedding model of a plug-in
+CREATE EMBEDDING MODEL: define an embedding model of a plug-in *(extension)*
 
 ## SYNOPSIS
 

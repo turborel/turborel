@@ -52,7 +52,8 @@ rows of tables. Each element table is a base table or a view, named in
 the graph by its alias, its table's name if none is written. A vertex
 table's rows are vertices. An edge table's rows are edges, each from
 the vertex its SOURCE columns match to the one its DESTINATION columns
-match, or between them both ways if UNDIRECTED. No data is copied, as the
+match, or between them both ways if UNDIRECTED *(extension)*. No data
+is copied, as the
 graph reads its tables as they are.
 
 An element table's KEY tells its rows apart. Without one, it is the
@@ -70,13 +71,15 @@ DEFAULT LABEL is. A label shared by element tables has the same
 property names on each, and the types of a property under one label
 are of one type all can be cast to.
 
-ENFORCED MODE, the default, takes each key from one the table declares,
-and each endpoint from a foreign key it declares. TRUSTED MODE takes
+OPTIONS *(extension)* chooses a mode. ENFORCED MODE, the default,
+takes each key from one the table declares, and each endpoint from a
+foreign key it declares. TRUSTED MODE takes
 the keys and endpoints as written, the user vouching for them. An edge
 whose endpoint matches no vertex is then passed over by a query.
 
 The graph is its schema owner's. Defined with the owner's rights, a
-query of it needs SELECT on the graph alone; WITH INVOKER RIGHTS, it
+query of it needs SELECT on the graph alone; WITH INVOKER RIGHTS
+*(extension)*, it
 needs SELECT on each table it reads too.
 
 An element table may be a query in parentheses in place of a table,
@@ -87,8 +90,8 @@ KEY is written, and a graph of one is of TRUSTED MODE, ENFORCED being
 SQLCODE -103. The graph depends on the tables its queries read, as on
 its element tables.
 
-OR REPLACE replaces a graph of the name, keeping the privileges granted
-on it. IF NOT EXISTS leaves a graph of the name as it is.
+OR REPLACE *(extension)* replaces a graph of the name, keeping the
+privileges granted on it. IF NOT EXISTS *(extension)* leaves a graph of the name as it is.
 
 CREATE PROPERTY GRAPH runs within the session's transaction: ROLLBACK
 undoes it.

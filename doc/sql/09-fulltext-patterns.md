@@ -1,4 +1,4 @@
-# Full-Text Patterns *(extension)*
+# Full-Text Patterns
 
 [Contents](README.md)
 

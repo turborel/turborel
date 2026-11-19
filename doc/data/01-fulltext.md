@@ -98,7 +98,7 @@ SELECT ID, TEXT_MATCHES(BODY, 'can''t') AS MATCHED FROM TICKETS WHERE ID < 3 ORD
 ## Indexing
 
 Without an index, a search reads every ticket. An index of the method
-`fulltext` keeps each word's tickets, so a search reads those alone. It
+`fulltext` *(extension)* keeps each word's tickets, so a search reads those alone. It
 is kept up to date as tickets change, and the planner uses it when it
 costs less than reading the table, which these few tickets may not. An
 index is made outside a transaction, so the searches' is ended first:

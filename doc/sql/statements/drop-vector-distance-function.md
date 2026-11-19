@@ -1,10 +1,10 @@
-# DROP VECTOR DISTANCE FUNCTION *(extension)*
+# DROP VECTOR DISTANCE FUNCTION
 
 [Statements](README.md)
 
 ## NAME
 
-DROP VECTOR DISTANCE FUNCTION: drop a distance function
+DROP VECTOR DISTANCE FUNCTION: drop a distance function *(extension)*
 
 ## SYNOPSIS
 

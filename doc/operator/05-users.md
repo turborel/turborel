@@ -1,4 +1,4 @@
-# Users and Authentication
+# Users and Authentication *(extension)*
 
 [Contents](README.md)
 

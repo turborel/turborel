@@ -4,7 +4,7 @@
 
 ## NAME
 
-CREATE XQUERY MODULE: register an XQuery library module
+CREATE XQUERY MODULE: register an XQuery library module *(extension)*
 
 ## SYNOPSIS
 
@@ -106,9 +106,10 @@ no library module.
 
 ## STANDARD
 
-XQuery 1.0 §5.2.5 leaves where a module import finds its modules to the
-implementation, and ISO/IEC 9075-14 gives no statement for it; this
-statement is turborel's. See [CONFORMANCE.md](../../../CONFORMANCE.md#sqlxml).
+An extension. ISO/IEC 9075-14:2006 draft has no statement of XQuery
+modules. XQuery 1.0 §5.2.5 leaves where a module import finds its
+modules to the implementation; this statement is turborel's. See
+[CONFORMANCE.md](../../../CONFORMANCE.md#sqlxml).
 
 ## SEE ALSO
 

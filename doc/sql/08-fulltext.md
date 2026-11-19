@@ -1,4 +1,4 @@
-# Full-Text Search *(extension)*
+# Full-Text Search
 
 [Contents](README.md)
 
@@ -9,11 +9,11 @@ document matches a search pattern, and its Rank method scores how well.
 The pattern language has words, phrases, wild cards, stems, sound-alike
 and misspelt words, proximity, sentences and paragraphs, and thesauri,
 each on [Full-Text Patterns](09-fulltext-patterns.md). An index of the
-method `fulltext` finds the rows a search matches, and the best ranked
+method `fulltext` *(extension)* finds the rows a search matches, and the best ranked
 of them, without reading the table.
 
-TEXT_MATCHES, an extension of Turborel's own, finds the rows whose text
-holds every word of a search. For an introduction with complete
+TEXT_MATCHES *(extension)* finds the rows whose text holds every word
+of a search. For an introduction with complete
 examples, read the [Full-Text Guide](../data/01-fulltext.md).
 
 The examples on this page are run in order, by the user ANN, on a table
@@ -43,7 +43,7 @@ FULLTEXT holds a document of at most 32,767 characters and the name of
 its language. The value is kept inline in the row, so a longer text is
 refused with SQLSTATE 22001. Two values are equal if their language and
 text are, and values order by language, then by text in code point
-order, so a FULLTEXT column can be sorted, grouped and keyed.
+order *(extension)*, so a FULLTEXT column can be sorted, grouped and keyed.
 
 A value is made in one of three ways.
 
@@ -485,7 +485,8 @@ FULLTEXT.K1 sets how fast repeated occurrences stop adding weight, and
 FULLTEXT.B how much a long document is held back, from 0 for not at all
 to 1. Both change in place, without building the index again. With B 0,
 the two texts that mention `fox` once rank alike, whatever their length.
-FULLTEXT.RANKING names the ranking, BM25 or one a program registered:
+FULLTEXT.RANKING *(extension)* names the ranking, BM25 or one a program
+registered:
 
 ```sql
 COMMIT;
@@ -538,7 +539,7 @@ CREATE INDEX <index name> ON <table name> ( <column name> ) USING FULLTEXT
     [ WITH ( <index option> [ { , <index option> }... ] ) ]
 ```
 
-The index is of one column, a FULLTEXT column or a character string
+The index *(extension)* is of one column, a FULLTEXT column or a character string
 column with no collation. It holds each distinct text's words and their
 places in blocks, so it stays small and a search of a rare and a common
 word skips most of the common one's entries. A FULLTEXT document is read
@@ -573,8 +574,8 @@ reads the table.
 TEXT_MATCHES ( <document> , <words> )
 ```
 
-Both arguments are character strings, CHARACTER LARGE OBJECT values too,
-read a piece at a time. The result is BOOLEAN.
+TEXT_MATCHES *(extension)* takes two character strings, CHARACTER
+LARGE OBJECT values too, read a piece at a time. The result is BOOLEAN.
 
 - TRUE if the document holds every word of `<words>` that is not a stop
   word, FALSE if it lacks one.
