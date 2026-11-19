@@ -10,7 +10,8 @@ of a [reference type](#reference-types), or *(extension)* of a type a plug-in
 registers, written by its name and, in parentheses, one or two unsigned
 integers it takes; so may a domain.
 
-Such types are built in. FULLTEXT and FT_PATTERN are of
+Some such types are built in. [UUID](#uuids) is described below.
+FULLTEXT and FT_PATTERN are of
 [Full-Text Search](08-fulltext.md). ST_GEOMETRY, also named GEOMETRY,
 and its 26 subtypes, of points, curves, surfaces, solids and
 collections, are of [Spatial Data](10-spatial.md).
@@ -637,6 +638,47 @@ XML, XML(DOCUMENT), XML(CONTENT) and XML(SEQUENCE) hold XML documents
 and fragments of them. [XML Values](19-xml.md) describes them, and XMLPARSE,
 XMLDOCUMENT, XMLCAST, the publishing operators and XMLSERIALIZE, which
 make and write them.
+
+## UUIDs
+
+*(extension)* UUID holds a universally unique identifier of RFC 9562,
+16 octets. Its literal is `UUID '919108f7-52d1-4320-9bac-f847db4148a8'`.
+Text cast to UUID, or stored in a UUID column, is read in the hyphenated
+form, in upper or lower case, in braces, or as 32 hexadecimal digits
+with no hyphens. A binary string of 16 octets casts to UUID. A UUID
+casts to a character string as its hyphenated text in lower case, and to
+a binary string as its octets. Text that is no UUID's is refused with
+SQLSTATE 22018, as is a binary string of another length.
+
+UUIDs compare, sort and group by their octets, so they take a primary
+key, a unique constraint and an index of either method, B-link or hash.
+The Information Schema gives a UUID column's DATA_TYPE as UUID, its
+lengths and precisions null. [UUID_V4 and UUID_V7](04-expressions.md#uuid_v4-and-uuid_v7)
+make new UUIDs.
+
+```sql
+CREATE TABLE TICKETS (ID UUID PRIMARY KEY, SEAT VARCHAR(4));
+INSERT INTO TICKETS VALUES ('{919108F7-52D1-4320-9BAC-F847DB4148A8}', '12A'),
+    ('0f0e0d0c0b0a49088706050403020100', '3C');
+SELECT ID, SEAT FROM TICKETS ORDER BY ID;
+SELECT SEAT, CAST(ID AS VARBINARY(16)) FROM TICKETS WHERE ID = UUID '919108f7-52d1-4320-9bac-f847db4148a8';
+INSERT INTO TICKETS VALUES ('not-a-uuid', '1A');
+```
+
+```
+OK
+OK
+ ID                                   | SEAT
+--------------------------------------+------
+ 0f0e0d0c-0b0a-4908-8706-050403020100 | 3C
+ 919108f7-52d1-4320-9bac-f847db4148a8 | 12A
+(2 rows)
+ SEAT |
+------+----------------------------------
+ 12A  | 919108F752D143209BACF847DB4148A8
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22018): 'not-a-uuid' is not a UUID's text
+```
 
 ## Assignment and CAST
 

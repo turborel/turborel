@@ -364,6 +364,7 @@ mod unique_nulls;
 mod unnest;
 mod user_casts;
 mod users;
+mod uuids;
 mod varying;
 mod vector_hybrid;
 mod vector_indexes;

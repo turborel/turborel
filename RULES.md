@@ -199,6 +199,11 @@ verification approach DO-178C expects (§8).
 | D171 | Extensions are versioned packages, resolved together and locked per database |
 | D172 | What a plug-in does is shown, and its errors keep their class |
 | D173 | Only the operator chooses what runs, and packages are checked by digest and signature |
+| D180 | UUID is a built-in type of 16 octets, ordered, hashed and indexed by its octets |
+| D181 | A UUID's text is read in its common forms and written hyphenated in lower case |
+| D182 | UUID_V4 draws on the standard library's random hash keys, so the core keeps no dependency |
+| D183 | UUID_V7 takes the database's clock, and never sorts before the last one its database made |
+| D184 | The native protocol carries a UUID under a tag of its own |
 
 ### The project
 
@@ -6774,6 +6779,75 @@ and no longer under way shown INTERRUPTED. The database's owner sees
 them, and a non-owner sees no rows. RESCAN BACKUP TARGET reads a
 target's manifests and segments and records what the history lacks,
 and marks GONE each completed backup the target no longer holds.
+
+#### D180. UUID is a built-in type of 16 octets, ordered, hashed and indexed by its octets
+
+UUID [RFC 9562] is a type beyond the standard (D53), built in as VECTOR
+is (D93), so no plug-in is needed and a database holding one opens
+anywhere. The type registry holds its kind (`value/types/uuid.rs`), and
+the engine knows nothing else of it. A value is an extension value whose
+bytes are its 16 octets in the order RFC 9562 §4 writes them. Its order
+is those octets', unsigned, from the first, which is also its text's
+order, so a version 7 UUID sorts by its time. Its record and its index
+key are the 16 octets, fixed in width, so a key of it never begins
+another and both the btree and the hash method index it. The
+Information Schema gives its DATA_TYPE as UUID, with no length or
+precision. Its format is version 1 and is written nowhere, since a
+column's type names UUID.
+
+#### D181. A UUID's text is read in its common forms and written hyphenated in lower case
+
+CAST of a character string to UUID, and a string stored in a UUID column
+(`SqlType::assigns_text`), reads 32 hexadecimal digits in either case,
+its spaces trimmed, braced or not, with a hyphen allowed after any group
+of four digits but the last. So the hyphenated form, the braced form and
+the bare 32 digits all read. Its text is always the hyphenated form in
+lower case, 36 characters, which the command-line client sizes a column
+by. Text that is no UUID's is 22018. A binary string of 16 octets casts
+to UUID, one of another length is 22018, and a UUID casts to a binary
+string as its octets. Another type does not cast to it (22005).
+`UUID '...'` is a literal, CAST of its string, written so by a view's
+text. A UUID is comparable only with a UUID, so comparing one with text
+needs CAST.
+
+#### D182. UUID_V4 draws on the standard library's random hash keys, so the core keeps no dependency
+
+The core holds no dependency (D3), no unsafe code and no code of one
+operating system, so it reads no system generator itself. The standard
+library's `RandomState` does, once a thread, for its SipHash keys, and
+steps them by one for each state made. UUID_V4 makes a fresh state for
+each 64 bits it needs and hashes the word's index with it
+(`uuid/generate.rs`). The bits are unpredictable to one who does not know
+the keys, and two calls never share a key, but they are not a
+cryptographic generator's, so a UUID is an identifier and never a
+secret. No plug-in point was added for a source, since none is needed
+for that use. The version and variant are set as RFC 9562 §5.4 says.
+
+#### D183. UUID_V7 takes the database's clock, and never sorts before the last one its database made
+
+UUID_V7 lays out RFC 9562 §5.7's fields. Its first 48 bits are the
+milliseconds since 1970 of the clock the database reads (D54,
+`Database::set_clock`), and its 74 other bits random, as D182 draws them.
+The database keeps the last one it made, shared by every snapshot of its
+state. One that would not exceed it is that one plus one, its random
+bits then a counter, which is §6.2's method 2, so the UUIDs a database
+makes, and so a session's, sort in the order made, whatever the clock
+does. A call with no database, as a constant would be folded, reads the
+system clock and keeps no order. Neither function is deterministic,
+so neither is folded, and each row gets its own value. They take no
+argument, and their names say the version rather than borrowing another
+system's.
+
+#### D184. The native protocol carries a UUID under a tag of its own
+
+A type beyond the standard goes over the native protocol by its name,
+its text and its bytes, and a client without its kind holds it
+unregistered (D53). UUID has tag 27 instead, as a type with no
+parameters and as a value its kind's bytes, the count then the 16
+octets (`protocol/src/fields.rs`). A client then reads a UUID as a UUID
+with no type registry, and sends one back as a parameter the same way.
+This is part of protocol version 1, which stays 1 while turborel is in
+alpha.
 
 ## 2. Project layout
 

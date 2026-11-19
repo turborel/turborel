@@ -2,6 +2,9 @@
 
 use super::Mutation;
 
+// UUID's mutations, here as `list.rs` holds no more modules.
+pub mod uuid;
+
 /// The core's mutations, then those of the mechanisms beside it.
 pub fn core() -> [&'static [Mutation]; 12] {
     [
@@ -137,8 +140,8 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, external plug-ins' and
-/// packages', partitioning's, replication's and the server's.
-fn last() -> [&'static [Mutation]; 37] {
+/// packages', partitioning's, UUID's, replication's and the server's.
+fn last() -> [&'static [Mutation]; 38] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -171,6 +174,7 @@ fn last() -> [&'static [Mutation]; 37] {
         &super::plugins::PACKAGES,
         &super::simple_features::SIMPLE_FEATURES,
         &super::partitioning::PARTITIONING,
+        &uuid::UUID,
         &super::FILL,
         &super::ZONES,
         &super::STATS,
