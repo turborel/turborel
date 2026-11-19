@@ -264,6 +264,8 @@ impl Txn {
         self.shared.taking_changes().map_err(|e| refused(e.described()))?;
         let record = Record { tx: self.id, change: Change::Commit { at, wall } }.encode();
         let lsn = log.append(&record).map_err(|e| refused(format!("the commit record could not be written: {}", e.described())))?;
+        // [DESIGN] RULES.md D194: its position, for the client's read-after.
+        self.stop.served().committed_at(lsn.0);
         if !self.sync_commit.load(Ordering::Relaxed) {
             self.shared.note_unsynced(log, lsn);
             return Ok(Ok(()));

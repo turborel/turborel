@@ -2,8 +2,9 @@
 //! one whose work took DIAGNOSTICS.SLOW_STATEMENT_MS or longer becomes an
 //! `Event::SlowStatement`, with its text and who ran it; with no text while
 //! anything of the database is encrypted, so no value meant for an
-//! encrypted table reaches a log in the clear (RULES.md D56, D48). A
-//! statement's work
+//! encrypted table reaches a log in the clear (RULES.md D56, D48). It
+//! carries the trace context of the client's request running it, if the
+//! client gave one (RULES.md D191). A statement's work
 //! is its call; a cursor's, its opening and every fetch, not the time
 //! between, which is its client's. Nothing is timed while the setting is 0.
 
@@ -12,12 +13,15 @@ use std::time::{Duration, Instant};
 use super::{Database, State};
 use crate::diagnostics::Event;
 use crate::settings::SLOW_STATEMENT_MS;
+use crate::txn::Stop;
 
 /// A statement's work, timed.
 pub(super) struct Timed<T> {
     /// Its text, unless it is not to be told.
     text: Option<T>,
     user: String,
+    /// The trace context of the request it runs for.
+    trace: Option<String>,
     after: Duration,
     /// Since when it works, if it does now.
     since: Option<Instant>,
@@ -26,14 +30,16 @@ pub(super) struct Timed<T> {
 }
 
 impl<T: AsRef<str>> Timed<T> {
-    /// The work of the text `text` gives, run by `user`, timed from now,
-    /// if `st`'s DIAGNOSTICS.SLOW_STATEMENT_MS asks for it: the text is
-    /// taken only then, so a statement not timed copies none.
-    pub(super) fn of(st: &State, text: impl FnOnce() -> T, user: &str) -> Option<Timed<T>> {
+    /// The work of the text `text` gives, run by `user` for a request of
+    /// the trace context `stop` holds, timed from now, if `st`'s
+    /// DIAGNOSTICS.SLOW_STATEMENT_MS asks for it: the text and the context
+    /// are taken only then, so a statement not timed copies neither.
+    pub(super) fn of(st: &State, text: impl FnOnce() -> T, (user, stop): (&str, &Stop)) -> Option<Timed<T>> {
         let millis = u64::try_from(st.settings.integer(SLOW_STATEMENT_MS)).ok().filter(|&m| m > 0)?;
         let after = Duration::from_millis(millis);
         let text = st.spill_encodings().stages().is_empty().then(text);
-        Some(Timed { text, user: user.to_owned(), after, since: Some(Instant::now()), busy: Duration::ZERO })
+        let trace = stop.served().trace();
+        Some(Timed { text, user: user.to_owned(), trace, after, since: Some(Instant::now()), busy: Duration::ZERO })
     }
 
     /// Its work resumed.
@@ -54,7 +60,7 @@ impl<T: AsRef<str>> Timed<T> {
         if self.busy >= self.after {
             let millis = u64::try_from(self.busy.as_millis()).unwrap_or(u64::MAX);
             let statement = self.text.as_ref().map(|t| t.as_ref().to_owned());
-            db.emit(&Event::SlowStatement { user: self.user, millis, statement });
+            db.emit(&Event::SlowStatement { user: self.user, millis, statement, trace: self.trace });
         }
     }
 }

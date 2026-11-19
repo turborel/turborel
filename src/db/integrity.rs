@@ -451,7 +451,7 @@ impl State {
         let Some(table) = check.table() else { return self.check_assertion_whole(tx, check.constraint()) };
         let (Some(c), Some(desc)) = (self.constraint_of(check), self.catalog.table(table)) else { return Ok(()) };
         let broken = |e: SqlError| {
-            if e.code == Code::Constraint && e.subject.is_none() {
+            if e.code == Code::Constraint && e.about_nothing() {
                 e.about(Subject::constraint(c.name.parts(), desc.name.parts()))
             } else {
                 e

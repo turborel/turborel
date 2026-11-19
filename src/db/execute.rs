@@ -63,7 +63,7 @@ impl Session {
     pub(super) fn execute_as(&self, sql: &str, params: &mut Params, prepared: Option<(Command, &Plans)>) -> Result<Completion> {
         self.wait_if_hinted(sql)?;
         let mut call = self.enter()?;
-        call.timed = slow::Timed::of(call.state(), || sql, &self.auth());
+        call.timed = slow::Timed::of(call.state(), || sql, (&self.auth(), &self.stop));
         let keeping = prepared.map(|(_, plans)| self.keeping(call.state(), plans));
         let parsed = Self::parsed(&call, sql, params, keeping.as_ref()).and_then(|s| super::embedding::blob_given(s, params));
         // [ISO/IEC 9075:1992 §4.19] GET DIAGNOSTICS reads the area as the
