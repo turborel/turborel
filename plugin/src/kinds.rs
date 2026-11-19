@@ -298,7 +298,7 @@ pub trait XQueryFunction {
 /// program is asked only as a value is made (RULES.md D223).
 ///
 /// ```
-/// use turborel_protocol::plugin::{Answer, Harness, Made, Plugin, PluginError, Type};
+/// use turborel_plugin::{Answer, Harness, Made, Plugin, PluginError, Type};
 ///
 /// /// A temperature in whole kelvins, written `273K`.
 /// struct Kelvin;

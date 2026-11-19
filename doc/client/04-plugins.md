@@ -184,7 +184,7 @@ FUNCTION TWICE(INTEGER) RETURNS INTEGER DETERMINISTIC BATCH 100;
 
 ```rust
 use turborel::value::{Decimal, Value};
-use turborel_protocol::plugin::{Answer, Cx, Plugin, Scalar, serve};
+use turborel_plugin::{Answer, Cx, Plugin, Scalar, serve};
 
 struct Twice;
 
@@ -220,7 +220,7 @@ database makes it, its payload written and its answer read, so objects
 are tested with no database and no process:
 
 ```rust
-use turborel_protocol::plugin::{Answer, Collation, Harness, Plugin};
+use turborel_plugin::{Answer, Collation, Harness, Plugin};
 
 struct Lower;
 
@@ -234,7 +234,7 @@ let mut h = Harness::new(Plugin::new("1.0.0").collation("LOWER", Lower));
 assert_eq!(h.sort_keys("LOWER", &["B", "a"], false).unwrap(), [b"b".to_vec(), b"a".to_vec()]);
 ```
 
-The example in the source, `protocol/examples/plugin_example`, is
+The example in the source, `plugin/examples/plugin_example`, is
 built on the SDK and serves an object of every kind, the tests' plug-in.
 Each kind's trait follows, with the `Plugin` method that adds it.
 
@@ -432,7 +432,7 @@ fn main() {
 }
 ```
 
-The example in the source, `protocol/examples/plugin_example`, serves
+The example in the source, `plugin/examples/plugin_example`, serves
 the same through the SDK, with functions that fail as a program may.
 
 ## When a plug-in fails

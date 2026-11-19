@@ -1,4 +1,4 @@
-//! The example plug-in, `protocol/examples/plugin_example`, installed
+//! The example plug-in, `plugin/examples/plugin_example`, installed
 //! for the tests of extensions: its program, built with the tests, linked
 //! or copied into a directory of PLUGINS.DIRECTORIES beside the manifest
 //! a test writes.
@@ -44,7 +44,7 @@ pub fn program() -> PathBuf {
     let built = debug.join("examples").join(format!("plugin_example{}", std::env::consts::EXE_SUFFIX));
     assert!(
         built.exists(),
-        "{} is not built: cargo test --workspace builds it, or cargo build -p turborel-protocol --example plugin_example",
+        "{} is not built: cargo test --workspace builds it, or cargo build -p turborel-plugin --example plugin_example",
         built.display()
     );
     built

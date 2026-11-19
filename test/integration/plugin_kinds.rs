@@ -1,6 +1,6 @@
 //! \[EXTENSION\] The kinds of external plug-in of RULES.md D220 to D229,
 //! each served by a real process of the example plug-in
-//! (`protocol/examples/plugin_example`): rankings, quantizers,
+//! (`plugin/examples/plugin_example`): rankings, quantizers,
 //! collations, system tables, XQuery functions, types, credentials and
 //! sinks of events here; storage engines and index methods in
 //! `plugin_kinds/engines.rs` and `plugin_kinds/indexes.rs`.

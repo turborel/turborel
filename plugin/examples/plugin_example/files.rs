@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use turborel::bytes::{Put, Reader};
 use turborel::plugin::values::{put_values, values};
 use turborel::storage::{Row, RowId};
-use turborel_protocol::plugin::{Answer, Engine, Opened, PluginError};
+use turborel_plugin::{Answer, Engine, Opened, PluginError};
 
 /// A record of changes: count, then each id and its row or none.
 const CHANGES: u8 = 1;

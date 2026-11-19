@@ -1,6 +1,5 @@
 //! An external plug-in of turborel, whole, as `doc/client/04-plugins.md`
-//! shows it: a program built on the plug-in SDK (`turborel_protocol::
-//! plugin`) that serves an object of every kind a manifest declares,
+//! shows it: a program built on the plug-in SDK (`turborel_plugin`) that serves an object of every kind a manifest declares,
 //! speaking protocol 1 on its standard input and output. Its manifest,
 //! `turborel-plugin.manifest`, is as the tests' `fixture.rs` writes it.
 //!
@@ -20,7 +19,7 @@ mod indexes;
 mod later;
 mod services;
 
-use turborel_protocol::plugin::{Plugin, serve};
+use turborel_plugin::{Plugin, serve};
 
 /// The plug-in, every object by its name.
 fn plugin() -> Plugin {

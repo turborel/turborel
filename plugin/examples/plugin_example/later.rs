@@ -5,7 +5,7 @@ use std::io::Write;
 
 use turborel::fulltext::rank::{Corpus, InDocument, TermStats};
 use turborel::value::{Decimal, Value};
-use turborel_protocol::plugin::{
+use turborel_plugin::{
     Answer, Collation, Credentials, Diagnostics, Made, Plugin, PluginError, Quantizer, Ranking, SystemTable, Told, Trained, Training, Type,
     XQueryFunction,
 };

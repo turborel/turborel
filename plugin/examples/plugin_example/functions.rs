@@ -3,7 +3,7 @@
 use std::io::Write;
 
 use turborel::value::{Decimal, Value};
-use turborel_protocol::plugin::{Aggregate, Answer, Cx, Plugin, PluginError, Procedure, Scalar, TableFunction};
+use turborel_plugin::{Aggregate, Answer, Cx, Plugin, PluginError, Procedure, Scalar, TableFunction};
 
 /// The plug-in with them.
 pub fn with(plugin: Plugin) -> Plugin {

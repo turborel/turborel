@@ -20,7 +20,7 @@ type Sql = Box<dyn FnMut(&str, &[Value], bool) -> Answer<Vec<Vec<Value>>>>;
 /// A plug-in under test.
 ///
 /// ```
-/// use turborel_protocol::plugin::{Answer, Collation, Harness, Plugin};
+/// use turborel_plugin::{Answer, Collation, Harness, Plugin};
 ///
 /// struct Lower;
 ///

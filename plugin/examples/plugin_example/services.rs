@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use turborel::catalog::PartitionBound;
 use turborel::value::{Decimal, Value};
-use turborel_protocol::plugin::{
+use turborel_plugin::{
     Answer, Authenticator, Embedder, Exchange, Metric, PartitionStrategy, Plugin, PluginError, Step, Target, TargetStore, Upload, Who,
 };
 

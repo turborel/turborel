@@ -6733,7 +6733,7 @@ A point whose every use is in such a place, or that the database needs
 before any extension can exist, is refused, each for its reason in
 D229. The protocol stays version 1. New kinds are new codes and new
 payloads, which a program of version 1 that serves none of them never
-receives. The plug-in SDK (`turborel_protocol::plugin`) serves every
+receives. The plug-in SDK (`turborel_plugin`) serves every
 kind, one trait each, batching, errors, cancellation and limits handled
 for the author, with a harness that needs no database.
 

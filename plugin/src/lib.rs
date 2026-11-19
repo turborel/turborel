@@ -10,7 +10,7 @@
 //!
 //! ```no_run
 //! use turborel::value::Value;
-//! use turborel_protocol::plugin::{Answer, Cx, Plugin, Scalar, serve};
+//! use turborel_plugin::{Answer, Cx, Plugin, Scalar, serve};
 //!
 //! struct Twice;
 //!

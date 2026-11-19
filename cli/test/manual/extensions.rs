@@ -1,5 +1,5 @@
 //! The examples of extensions, run as printed: the example plug-in,
-//! `protocol/examples/plugin_example`, built with the tests, installed
+//! `plugin/examples/plugin_example`, built with the tests, installed
 //! under PLUGINS.DIRECTORIES of a database of its own for each page.
 
 use std::path::{Path, PathBuf};

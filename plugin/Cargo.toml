@@ -1,0 +1,18 @@
+[package]
+name = "turborel-plugin"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+description = "The turborel plug-in SDK: a program of another party serving turborel's external plug-ins over plug-in protocol 1, one trait per kind (RULES.md D167, D220)."
+license = "BSD-2-Clause-Patent"
+repository = "https://github.com/turborel/turborel"
+readme = "../README.md"
+keywords = ["database", "sql", "plugin", "turborel"]
+categories = ["database"]
+autotests = false
+
+[dependencies]
+turborel = { version = "0.0.0", path = ".." }
+
+[lints]
+workspace = true

@@ -248,7 +248,7 @@ pub fn stored(v: Value, t: &DataType) -> Result<Value> {
 mod tests;
 
 /// \[EXTENSION\] The coordinates of `v`, a vector, dense: what a plug-in
-/// reads of a vector it is given (`turborel_protocol::plugin`).
+/// reads of a vector it is given (`turborel_plugin`).
 pub fn coordinates(v: &Value) -> Option<Vec<f64>> {
     vector_of(v).map(|image| Vector::of(image).values())
 }

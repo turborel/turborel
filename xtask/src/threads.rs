@@ -23,7 +23,7 @@ const MAKERS: &[&str] = &[
     "src/graph/algo/parallel.rs",
     "server/src/runtime.rs",
     "cli/src/interrupt.rs",
-    "protocol/src/plugin/input.rs",
+    "plugin/src/input.rs",
 ];
 
 /// Checks that no production source but `MAKERS` starts a thread.

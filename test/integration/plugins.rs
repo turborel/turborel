@@ -1,5 +1,5 @@
 //! \[EXTENSION\] Extensions of external plug-ins (RULES.md D167 to D173),
-//! of the example plug-in (`protocol/examples/plugin_example`): CREATE, ALTER
+//! of the example plug-in (`plugin/examples/plugin_example`): CREATE, ALTER
 //! ... UPDATE and DROP EXTENSION, each kind of object called, the views
 //! of extensions and EXPLAIN. What a program that fails does is
 //! `plugin_failures.rs`'s.

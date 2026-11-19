@@ -26,9 +26,10 @@ use crate::error::{Error, Result};
 use crate::files;
 
 /// The packages whose coverage is measured.
-pub const PACKAGES: [&str; 9] = [
+pub const PACKAGES: [&str; 10] = [
     "turborel",
     "turborel-protocol",
+    "turborel-plugin",
     "turborel-client",
     "turborel-server",
     "turboreld",
@@ -38,9 +39,10 @@ pub const PACKAGES: [&str; 9] = [
     "turborel-replication",
 ];
 /// The measured sources, relative to the workspace root.
-const MEASURED_DIRS: [&str; 9] = [
+const MEASURED_DIRS: [&str; 10] = [
     files::LIBRARY_DIR,
     files::PROTOCOL_DIR,
+    files::PLUGIN_DIR,
     files::CLIENT_DIR,
     files::SERVER_DIR,
     files::PROGRAM_DIR,

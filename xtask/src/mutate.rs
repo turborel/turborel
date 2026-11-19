@@ -42,9 +42,8 @@ pub enum Package {
     Client,
     /// The command-line client, `turborel-cli`.
     Cli,
-    /// The plug-in SDK and the client protocol, `turborel-protocol`: its
-    /// unit tests alone.
-    Protocol,
+    /// The plug-in SDK, `turborel-plugin`: its unit tests alone.
+    Plugin,
 }
 
 /// \[TOOL\] The client's features its unit tests are built with: every
@@ -60,7 +59,7 @@ impl Package {
             Package::Server => "turborel-server",
             Package::Client => "turborel-client",
             Package::Cli => "turborel-cli",
-            Package::Protocol => "turborel-protocol",
+            Package::Plugin => "turborel-plugin",
         }
     }
 
@@ -69,7 +68,7 @@ impl Package {
         match self {
             Package::Core => "integration",
             Package::Replication => "replication",
-            Package::Server | Package::Client | Package::Protocol => "server",
+            Package::Server | Package::Client | Package::Plugin => "server",
             Package::Cli => "cli",
         }
     }
@@ -118,7 +117,7 @@ impl Target {
             Target::Integration => vec!["--test", package.integration()],
             Target::Unit => match package {
                 Package::Client => vec!["--lib", "--features", CLIENT_FEATURES],
-                Package::Core | Package::Replication | Package::Server | Package::Cli | Package::Protocol => vec!["--lib"],
+                Package::Core | Package::Replication | Package::Server | Package::Cli | Package::Plugin => vec!["--lib"],
             },
         }
     }
@@ -187,7 +186,7 @@ fn apply(source: &str, m: &Mutation) -> Result<String> {
 /// is not there.
 fn unmutated_problems(root: &Path, chosen: &[&Mutation]) -> Result<Vec<String>> {
     let mut problems = Vec::new();
-    for package in [Package::Core, Package::Replication, Package::Server, Package::Client, Package::Cli, Package::Protocol] {
+    for package in [Package::Core, Package::Replication, Package::Server, Package::Client, Package::Cli, Package::Plugin] {
         for target in [Target::Integration, Target::Unit] {
             let mut names: Vec<&str> = chosen.iter().filter(|m| m.package == package).flat_map(|m| m.tests(target)).copied().collect();
             names.sort_unstable();

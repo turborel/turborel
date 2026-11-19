@@ -11,7 +11,7 @@ use turborel::index::Probe;
 use turborel::plugin::values::{put_values, values};
 use turborel::storage::RowId;
 use turborel::value::{Value, compare};
-use turborel_protocol::plugin::{Answer, Entries, IndexMethod, Near, PluginError, Probed, Search, Write as Written, coordinates};
+use turborel_plugin::{Answer, Entries, IndexMethod, Near, PluginError, Probed, Search, Write as Written, coordinates};
 
 /// The method, of either name.
 pub struct Sorted;
