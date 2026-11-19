@@ -249,9 +249,11 @@ impl PhysicalPlanner<'_> {
     /// \[DESIGN\] The share of a path's `est` rows read, if it gives the
     /// order `want` asks: below a FETCH FIRST only as many as it reads
     /// (`PhysicalPlanner::first`), so the path costs that share of its
-    /// rows. A path in no order is read whole to be sorted.
+    /// rows. A path in no order is read whole to be sorted, and one below
+    /// WITH TIES is priced whole, its peers' count unknown.
     fn read_share(&self, want: &[SortKey], est: f64) -> f64 {
-        let asked = self.first.filter(|_| !want.is_empty());
+        let tied = self.fetch.is_some_and(|f| f.ties.is_some());
+        let asked = self.first.filter(|_| !want.is_empty() && !tied);
         asked.map_or(1.0_f64, |n| (cost_of(n) / est.max(1.0_f64)).min(1.0_f64))
     }
 

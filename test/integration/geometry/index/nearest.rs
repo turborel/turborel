@@ -72,7 +72,8 @@ fn nearest_geometry_null_tails_and_query_fallbacks_equal_scans() {
 
 /// Verifies: [DESIGN] D15, D85: pruning cannot hide an SRID mismatch,
 /// distance overflow, or errors in other projections or WHERE terms.
-/// Descending, NULLS FIRST, WITH TIES and PERCENT retain ordinary plans.
+/// NULLS FIRST, ascending or descending, and PERCENT retain ordinary
+/// plans (D135).
 #[test]
 fn nearest_geometry_preserves_runtime_errors_and_unsupported_orders() {
     let db = populated();
@@ -91,12 +92,8 @@ fn nearest_geometry_preserves_runtime_errors_and_unsupported_orders() {
         assert!(!a.physical_plan(query, &Params::new()).unwrap().contains("NearestScan"));
         assert_eq!(rows(&a, query).unwrap_err(), Code::Data);
     }
-    for order in [
-        "D DESC FETCH FIRST 1 ROW ONLY",
-        "D NULLS FIRST FETCH FIRST 1 ROW ONLY",
-        "D FETCH FIRST 1 ROW WITH TIES",
-        "D FETCH FIRST 1 PERCENT ROWS ONLY",
-    ] {
+    for order in ["D DESC NULLS FIRST FETCH FIRST 1 ROW ONLY", "D NULLS FIRST FETCH FIRST 1 ROW ONLY", "D FETCH FIRST 1 PERCENT ROWS ONLY"]
+    {
         let query = format!("SELECT ID, ST_DISTANCE(G, ST_POINT(5, 5, 4326)) AS D FROM SHAPES ORDER BY {order}");
         assert!(!a.physical_plan(&query, &Params::new()).unwrap().contains("NearestScan"));
         rows(&a, &query).unwrap();

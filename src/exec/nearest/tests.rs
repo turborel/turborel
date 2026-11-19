@@ -32,6 +32,7 @@ fn read(value: Value, first: usize) -> NearestRead {
         detail: String::new(),
         cost: 0.0,
         approximate: None,
+        scale: None,
     }
 }
 

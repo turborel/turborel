@@ -84,8 +84,9 @@ enforce one SRID. NULLs are omitted and empty values never intersect.
 envelopes within the limit. Inner and outer joins, LEFT, RIGHT and FULL,
 can also probe it from the other operand's geometry; the full ON
 condition checks every candidate pair, and an outer join keeps the rows
-no probe matched, with nulls. Ascending
-ST_DISTANCE with FETCH FIRST can also use this index, refining each
+no probe matched, with nulls. ST_DISTANCE ordered with FETCH FIRST,
+ascending or descending, with a unit or without, can also use this
+index, refining each
 candidate's geometry before deciding which rows to return. See
 [Spatial Data](../10-spatial.md#the-rtree-index-method) for its rules and the
 [Spatial Guide](../../data/02-spatial.md) for runnable examples.

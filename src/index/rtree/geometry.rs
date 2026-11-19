@@ -39,7 +39,12 @@ pub(super) fn nearest(tree: &RTree, query: &NearestQuery, srid: i32, budget: &Ar
         return Ok(None);
     }
     let Some(bounds) = geometry.bounds() else { return Ok(None) };
-    let Some(entries) = tree.nearest_candidates(bounds, crate::geometry::distance_domain()?, budget)? else { return Ok(None) };
+    // A farthest-first query's bounds are the negated upper bounds of its
+    // distances, the lower bounds of the negated call (D135).
+    let domain = crate::geometry::distance_domain()?;
+    let candidates =
+        if query.descending { tree.farthest_candidates(bounds, domain, budget)? } else { tree.nearest_candidates(bounds, domain, budget)? };
+    let Some(entries) = candidates else { return Ok(None) };
     let entries = entries.map(|entry| entry.map(|(distance, envelope, row)| (distance, probe::key(envelope, RECTANGLE_COLUMNS), row)));
     Ok(Some(Box::new(entries)))
 }

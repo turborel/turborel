@@ -4432,6 +4432,38 @@ omission of null rows assumes. EXPLAIN shows the outer joins as
 `LeftOuterIndexNestedLoop` and `FullOuterIndexNestedLoop`, and a
 distance window as `(ST_DISTANCE(column, value) * scale) <= limit`.
 
+A nearest read, `ORDER BY ST_DISTANCE(column, value, unit)` with FETCH
+FIRST, reads the index as one without a unit does. The index orders its
+candidates by bounds in the column's unit, and `NearestRead::bound`
+converts each by the unit's factors exactly as the measure is converted.
+That conversion never orders a greater distance below a lesser one, so a
+converted bound stays a bound of the measure, and a candidate tied with
+the last row kept is still read. A unit converts as the statement is
+planned or the read is a scan's. So is one that makes the greatest
+distance of the certified domain, half of the largest finite number,
+infinite, as FOOT does of a metre column, so that no converted bound or
+measure overflows where the scan's would not.
+
+The nearest read takes the rest of the orderings an incremental search
+can serve. FETCH FIRST WITH TIES gives it its count, as ONLY does,
+since its strict cutoff already keeps every row whose distance equals
+the last kept, among them the peers WITH TIES adds. A path read in
+order is still priced whole below WITH TIES. OFFSET, further sort keys
+and a filter were served before, the search going on until enough
+rows pass. `ORDER BY ST_DISTANCE(...) DESC NULLS LAST` reads the tree
+farthest first. Its priority is the negated upper bound of the
+distance between the rectangles (`Bounds::distance_upper_bound`), which
+shrinks with a child's rectangle, so the queue stays ordered. The
+stream's bounds are the lower bounds of the negated call, as a score's
+are (D87), and the same negated threshold cuts it off. PERCENT is
+refused, as its count is a share of every qualifying row, which only
+reading them all gives. NULLS FIRST is refused unless the filter
+excludes nulls, as before. A LATERAL derived table of a query is not in
+the grammar. A correlated subquery is bound to each outer row's values
+before it is planned (`Subquery::bound`), so a subquery ordered by the
+distance to its outer row's geometry gets a nearest read for each row,
+and an IN subquery gives each row's nearest few.
+
 ## 2. Project layout
 
 ```
