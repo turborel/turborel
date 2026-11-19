@@ -26,30 +26,19 @@ Each archive holds the two programs [What is installed](#what-is-installed)
 describes. As an alpha, a build may not open a database another made
 ([VERSIONING.md](../../VERSIONING.md#alpha)).
 
-### The image
+### The container image
 
-The same builds are published as a container image for Linux, x86-64
-and arm64, holding `turboreld` and `turborel` and nothing else: no
-shell, no package manager. `ghcr.io/turborel/turborel:nightly` is the
-latest, replaced at each build, and `ghcr.io/turborel/turborel:sha-<commit>`
-names the build of one commit of main, which stays. The server runs as
-PID 1, listens on every interface, and keeps its data under
-`/var/lib/turborel`, which should be a volume:
+The nightly is also a container image, `ghcr.io/turborel/turborel:nightly`,
+for Linux on x86-64 and arm64. It holds `turboreld` and `turborel` and
+nothing else. The data lives in `/var/lib/turborel`; keep it on a volume.
 
 ```
-docker run -d --name turborel -p 7422:7422 \
-  -v turborel:/var/lib/turborel ghcr.io/turborel/turborel:nightly
+docker run -d -p 7422:7422 -v turborel:/var/lib/turborel ghcr.io/turborel/turborel:nightly
 ```
 
-Any argument given after the image replaces the server's defaults
-([Running the Server](02-turboreld.md)). Port 7423 is replication
-between nodes, and is only published when the node replicates
-([Replication](09-replication.md)). The client in the image connects to
-it:
-
-```
-docker exec -it turborel turborel
-```
+Arguments after the image name go to `turboreld`
+([Running the Server](02-turboreld.md)). To stay on one build, use its
+tag `sha-<commit>` instead of `nightly`.
 
 ## Building from source
 
