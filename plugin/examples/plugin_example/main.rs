@@ -11,12 +11,14 @@
 //! of FILES (a log of the changes applied) and an index of SORTED or
 //! NEAR are a file each in the extension's directory, the program's
 //! working directory; the sink EVENTS appends what it is told to
-//! `events.log` there.
+//! `events.log` there. The host objects LOOP and KEPT serve replication
+//! (`replication.rs`).
 
 mod files;
 mod functions;
 mod indexes;
 mod later;
+mod replication;
 mod services;
 
 use turborel_plugin::{Plugin, serve};
@@ -26,6 +28,7 @@ fn plugin() -> Plugin {
     let plugin = functions::with(Plugin::new("1.0.0"));
     let plugin = services::with(plugin);
     let plugin = later::with(plugin);
+    let plugin = replication::with(plugin);
     plugin.engine("FILES", files::Files::default()).index_method("SORTED", indexes::Sorted).index_method("NEAR", indexes::Sorted)
 }
 
