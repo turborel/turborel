@@ -60,23 +60,20 @@ impl<'a> Call<'a> {
     }
 
     pub(super) fn in_order(self, batch: &Batch, rows: &[usize], temp: Option<&dyn TempLobs>) -> (Vec<usize>, Option<SqlError>) {
+        let Call { function, mut args, columns, comparison: (op, constant), reversed } = self;
         let mut kept = Vec::with_capacity(rows.len());
-        let mut args = self.args;
         // Resolve vectors once, rather than materializing an entire row
         // and cloning its arguments again for every call.
-        let columns: Vec<_> = self.columns.iter().map(|&(arg, column)| (arg, batch.values(column))).collect();
+        let columns: Vec<_> = columns.iter().map(|&(arg, column)| (arg, batch.values(column))).collect();
+        let turned = if reversed { op.flip() } else { op };
         for &row in rows {
             for &(arg, values) in &columns {
                 if let (Some(slot), Some(value)) = (args.get_mut(arg), values.get(row)) {
                     *slot = value;
                 }
             }
-            let compared = self.function.0.call_borrowed(&args, temp).and_then(|value| {
-                // Reading either large object can fail; keep the written
-                // operand order as well as the comparison's truth (D15).
-                let (left, right) = if self.reversed { (self.comparison.1, &value) } else { (&value, self.comparison.1) };
-                compared_read(left, self.comparison.0, right)
-            });
+            let compared =
+                decided(function, &args, turned, constant).unwrap_or_else(|| measured(function, &args, (op, constant), reversed, temp));
             match compared {
                 Ok(Truth::True) => kept.push(row),
                 Ok(Truth::False | Truth::Unknown) => {}
@@ -85,6 +82,30 @@ impl<'a> Call<'a> {
         }
         (kept, None)
     }
+}
+
+/// "`function(args) op value`", or the constant first if `reversed`, by
+/// the call's value. Reading either large object can fail; the written
+/// operand order is kept, as is the comparison's truth (D15).
+fn measured(
+    function: &ScalarRef,
+    args: &[&Value],
+    (op, value): (CompOp, &Value),
+    reversed: bool,
+    temp: Option<&dyn TempLobs>,
+) -> Result<Truth, SqlError> {
+    let made = function.0.call_borrowed(args, temp)?;
+    let (left, right) = if reversed { (value, &made) } else { (&made, value) };
+    compared_read(left, op, right)
+}
+
+/// "`function(args) op value`" decided by the function without the call's
+/// value, where it does (`ScalarFunction::call_compared`), `op` turned
+/// where the constant is written first; none to make the call and compare
+/// its value.
+fn decided(function: &ScalarRef, args: &[&Value], op: CompOp, value: &Value) -> Option<Result<Truth, SqlError>> {
+    let truth = |holds: Option<bool>| holds.map_or(Truth::Unknown, |holds| if holds { Truth::True } else { Truth::False });
+    Some(function.0.call_compared(args, op, value)?.map(truth))
 }
 
 #[cfg(test)]

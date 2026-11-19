@@ -1,9 +1,13 @@
 //! Exact orientation of finite binary64 coordinates. The common path
-//! first proves the determinant's sign with a rounding-error bound, then
-//! outward-rounded intervals. If neither proves a sign, bounded integer
-//! arithmetic determines it. There is no geometric tolerance.
+//! first proves the determinant's sign with a rounding-error bound. When
+//! the coordinate differences are exact, as on integer and other grids
+//! where degenerate triples are common, an exact floating-point expansion
+//! decides it without allocating (`expansion.rs`). Otherwise
+//! outward-rounded intervals, then bounded integer arithmetic determine
+//! it. There is no geometric tolerance.
 
 pub(super) mod distance;
+mod expansion;
 mod integer;
 
 use std::cmp::Ordering;
@@ -50,6 +54,9 @@ impl Interval {
 
 pub(super) fn orient([ax, ay]: Point, [bx, by]: Point, [cx, cy]: Point) -> Ordering {
     if let Some(sign) = filtered([ax, ay], [bx, by], [cx, cy]) {
+        return sign;
+    }
+    if let Some(sign) = expansion::sign([ax, ay], [bx, by], [cx, cy]) {
         return sign;
     }
     let left = Interval::difference(ax, cx).multiply(Interval::difference(by, cy));

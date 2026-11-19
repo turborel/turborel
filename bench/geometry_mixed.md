@@ -99,3 +99,40 @@ and read p99 fell in each case. Write p99 did not consistently improve:
 for example, eight-session filters rose from 137.9 to 145.3 µs, while
 eight-session nearest queries rose from 133.1 to 134.7 µs. Faster aggregate
 reads do not establish faster write tails under contention.
+
+## Reservations without a database-wide lock
+
+Profiling the nearest-neighbour suite on four to eight sessions found a
+fifth of thread time waiting on one lock: every memory reservation,
+resize and release took the budget's single list. The list is now kept
+in 64 shards chosen by reservation number, and each reservation updates
+its size through an atomic of its own entry (RULES.md D38). Admission
+still checks one atomic total, and INFORMATION_SCHEMA.MEMORY_RESERVATIONS
+lists the same entries in creation order.
+
+Measured on an Apple M4 (4 performance and 6 efficiency cores), Rust
+1.99.0, with no other benchmark or build running. The baseline is the
+parent commit:
+
+```text
+cargo xtask bench geometry_mixed --save p0-baseline
+cargo xtask bench geometry_mixed --save q7 --compare p0-baseline
+```
+
+| Workload | Sessions | Change reported by harness |
+|---|---:|---:|
+| Width-10 filters, 20% updates | 1 | -0.7%, within noise |
+| Width-10 filters, 20% updates | 4 | +49.6% |
+| Width-10 filters, 20% updates | 8 | +55.0% |
+| Nearest 10, 20% updates | 1 | +6.0% |
+| Nearest 10, 20% updates | 4 | +55.6% |
+| Nearest 10, 20% updates | 8 | +63.3% |
+
+On the same comparison, `geometry_nearest` moved +41.8% (points) and
++32.5% (rectangles) at eight sessions and +16.3% for rectangles at four;
+`geometry_sql` broad windows +22.5% at four sessions and narrow windows
++28.3% at eight. One-session cases stayed within noise in every suite.
+This machine has four performance cores: above four sessions the
+harness's fixed work per worker makes its slowest worker, often on an
+efficiency core, decide the time. Gains there are real but not linear
+scaling.
