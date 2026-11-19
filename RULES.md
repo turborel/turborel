@@ -4626,7 +4626,18 @@ its table whole, through a filter that cannot raise, or through a
 projection of its columns. The planner takes the traversal when every
 entry of both trees compared, and the outer row of each pair fetched,
 cost less than the probes' descents and the outer scan, and only when no
-order is asked of the join. An inner join needs nothing more. A LEFT
+order is asked of the join. It also needs both tables' statistics (D137)
+and their envelope grids to put the pairs at no more than a quarter an
+outer row (`EnvelopeStats::joined`, `PAIRED_MOST`). Two measurements on
+`bench/geometry_join/large.rs` set that bound. A pair cost the traversal
+3.7 µs when it paired from the parcels but 9.8 µs from the points,
+against about 5 µs for a probe's descent, so the traversal gains only at
+about one pair an outer row, and beyond that it ran up to 2.7 times
+slower than the probes. And the grid takes shapes as independent within
+a cell, so it estimated 0.92 pairs a parcel where tables sharing their
+positions made 4.0, and less still of shapes along one line. A quarter
+estimated stands for about one made. Without statistics, or above the
+bound, the join probes. An inner join needs nothing more. A LEFT
 join keeps the ids of the outer rows paired, charged to the memory
 budget, and then reads the outer table for the rows no pair kept. A
 RIGHT join is the LEFT join of its operands swapped, and a FULL join
