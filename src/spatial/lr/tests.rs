@@ -7,12 +7,31 @@
 use super::*;
 use crate::error::SqlState;
 use crate::geometry::model::{Body, Curve, Dims, Geom};
+use crate::spatial::formats::gml::Srs;
 
 mod build;
 mod formats;
 mod locating;
 mod paths;
+mod readers;
 mod types;
+
+/// Reference systems naming none: every sample is of SRID 0.
+struct NoSrs;
+
+impl Srs for NoSrs {
+    fn by_text(&self, _text: &str) -> Option<i32> {
+        None
+    }
+
+    fn by_code(&self, _authority: &str, _code: &str) -> Option<i32> {
+        None
+    }
+
+    fn name(&self, _srid: i32) -> Option<String> {
+        None
+    }
+}
 
 /// The unit every sample measures in.
 const METRE: &str = "metre";

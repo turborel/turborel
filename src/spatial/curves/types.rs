@@ -254,3 +254,38 @@ impl Curve {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.2.1.6] The four
+    /// coordinate dimensions follow the z and m flags, and a placement's
+    /// dimensions drop m.
+    #[test]
+    fn dimensions_follow_the_z_and_m_flags() {
+        assert_eq!(dims_of((false, false)), Dims::Xy);
+        assert_eq!(dims_of((true, false)), Dims::Xyz);
+        assert_eq!(dims_of((false, true)), Dims::Xym);
+        assert_eq!(dims_of((true, true)), Dims::Xyzm);
+        assert_eq!(without_m(Dims::Xyzm), Dims::Xyz);
+        assert_eq!(without_m(Dims::Xym), Dims::Xy);
+    }
+
+    /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.2.1.6] A point is
+    /// finite when every coordinate its dimensions name is; a coordinate
+    /// the dimensions lack is never read. MC/DC: z alone and m alone each
+    /// decide the outcome with the other held finite.
+    #[test]
+    fn a_point_is_finite_in_the_coordinates_its_dimensions_name() {
+        let bad_z = Coord::xyzm(1.0_f64, 2.0_f64, f64::NAN, 3.0_f64);
+        let bad_m = Coord::xyzm(1.0_f64, 2.0_f64, 3.0_f64, f64::INFINITY);
+        assert!(Coord::xyzm(1.0_f64, 2.0_f64, 3.0_f64, 4.0_f64).is_finite(Dims::Xyzm));
+        assert!(!bad_z.is_finite(Dims::Xyz));
+        assert!(bad_z.is_finite(Dims::Xym));
+        assert!(!bad_m.is_finite(Dims::Xym));
+        assert!(bad_m.is_finite(Dims::Xyz));
+        assert!(!Coord::xy(f64::NAN, 0.0_f64).is_finite(Dims::Xy));
+        assert!(!Coord::xy(0.0_f64, f64::NAN).is_finite(Dims::Xy));
+    }
+}

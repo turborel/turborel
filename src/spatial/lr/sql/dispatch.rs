@@ -316,3 +316,103 @@ impl ScalarFunction for LrFunction {
         self.fallback.as_ref().is_some_and(|f| f.batches())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The function there was before of a name: its calls give 7, and it
+    /// is index safe and of a vector metric.
+    struct Before;
+
+    impl ScalarFunction for Before {
+        fn name(&self) -> &'static str {
+            "ST_LRMID"
+        }
+
+        fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
+            Ok(DataType::Boolean)
+        }
+
+        fn call(&self, _args: &[Value]) -> Result<Value> {
+            Ok(Value::Approx(7.0_f64))
+        }
+
+        fn index_safe(&self, _args: &[KeyArgument<'_>]) -> bool {
+            true
+        }
+
+        fn vector_metric(&self, _constants: &[Option<&Value>]) -> Option<(String, usize)> {
+            Some(("l2".to_owned(), 3))
+        }
+
+        fn specialize(&self, _args: &[Option<&Value>], _budget: &Arc<MemoryBudget>) -> Option<ScalarRef> {
+            Some(ScalarRef(Arc::new(Before)))
+        }
+    }
+
+    /// Asserts `v` is the 7 the function there was before gives.
+    fn seven(v: &Value) {
+        let Value::Approx(x) = v else { panic!("{v:?}") };
+        assert_eq!(x.to_bits(), 7.0_f64.to_bits());
+    }
+
+    /// A call made where no database runs it.
+    struct Bare;
+
+    impl CallContext for Bare {
+        fn temp_lobs(&self) -> Option<&dyn TempLobs> {
+            None
+        }
+
+        fn ranking_statistics(&self, _index: &str) -> Result<Option<Arc<dyn crate::fulltext::rank::Statistics>>> {
+            Ok(None)
+        }
+
+        fn ranking(&self, _name: &str) -> Option<Arc<dyn crate::fulltext::rank::Ranking>> {
+            None
+        }
+
+        fn spatial(&self) -> Option<&crate::catalog::SpatialCatalog> {
+            None
+        }
+    }
+
+    /// Verifies: [ISO/IEC 9075-2:2023 §9.18 SR10b] A call of arguments no
+    /// routine of the name takes, with no function there was before, is
+    /// refused (SQLCODE -103), as its type and as its value.
+    #[test]
+    fn a_call_no_routine_takes_is_refused() {
+        let f = LrFunction::new("ST_LRMID", None);
+        assert_eq!(f.return_type(&[DataType::Boolean]).unwrap_err().code, Code::SyntaxRule);
+        assert_eq!(f.call(&[Value::Approx(1.0_f64)]).unwrap_err().code, Code::SyntaxRule);
+        assert!(!f.index_safe(&[KeyArgument { data_type: Some(&DataType::Boolean), constant: None }]));
+        assert!(f.vector_metric(&[]).is_none());
+        assert!(f.json_probe().is_none() && f.appended_query(&[]).is_none());
+    }
+
+    /// Verifies: [DESIGN] A call of no routine of §15 is the function's
+    /// there was before of the name: one call, in a context, a batch, its
+    /// index safety and vector metric, and its prepared form, which still
+    /// takes the routines of §15.
+    #[test]
+    fn other_calls_are_the_function_there_was_before() {
+        let f = LrFunction::new("ST_LRMID", Some(Arc::new(Before)));
+        let ints = [Value::Approx(1.0_f64)];
+        seven(&f.call_in(&ints, &Bare).unwrap());
+        let (value, warning) = f.call_warned(&ints, None).unwrap();
+        seven(&value);
+        assert!(warning.is_none());
+        let batch = f.call_many(&[ints.to_vec(), ints.to_vec()]).unwrap();
+        assert_eq!(batch.len(), 2);
+        batch.iter().for_each(seven);
+        let integer = [KeyArgument { data_type: Some(&DataType::Boolean), constant: None }];
+        assert!(f.index_safe(&integer));
+        assert_eq!(f.vector_metric(&[]), Some(("l2".to_owned(), 3)));
+        assert!(f.json_probe().is_none() && f.appended_query(&[]).is_none());
+        let prepared = f.specialize(&[Some(&Value::Approx(1.0_f64))], &MemoryBudget::new(1 << 20)).unwrap();
+        assert_eq!(prepared.0.name(), "ST_LRMID");
+        seven(&prepared.0.call(&ints).unwrap());
+        seven(&prepared.0.call(&[Value::Null]).unwrap());
+    }
+}

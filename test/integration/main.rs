@@ -272,6 +272,7 @@ mod spatial_lr;
 mod spatial_lr_elements;
 mod spatial_lr_formats;
 mod spatial_lr_routines;
+mod spatial_measures;
 mod spatial_methods;
 mod spatial_mutators;
 mod spatial_network;
