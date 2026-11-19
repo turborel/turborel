@@ -1,4 +1,4 @@
-# Spatial Data *(extension)*
+# Spatial Data
 
 [Contents](README.md)
 
@@ -10,7 +10,7 @@ functions read and write the well-known text (WKT) and binary (WKB)
 forms, observe a value's coordinates and bounds, relate two values by
 their intersection matrix, combine them, buffer and measure them, and
 measure the planar distance between them. An index of the method
-`rtree` on a GEOMETRY column finds the rows a relationship filter or
+`rtree` *(extension)* on a GEOMETRY column finds the rows a relationship filter or
 join matches, and the rows nearest a point, without reading the table.
 
 The types and their functions are built in, so every database has
@@ -187,17 +187,17 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): DISTINCT compares values of ST_GEOMETRY
 
 | Routine | Result |
 |---|---|
-| `ST_POINT(x, y [, srid])` | A point of two finite numbers, SRID 0 by default |
-| `ST_MAKEENVELOPE(min_x, min_y, max_x, max_y [, srid])` | A rectangular polygon of finite bounds, each minimum less than its maximum, SRID 0 by default |
+| `ST_POINT(x, y [, srid])` *(extension)* | A point of two finite numbers, SRID 0 by default |
+| `ST_MAKEENVELOPE(min_x, min_y, max_x, max_y [, srid])` *(extension)* | A rectangular polygon of finite bounds, each minimum less than its maximum, SRID 0 by default |
 | `ST_GEOMFROMTEXT(text [, srid])` | The geometry of a WKT text, a character string or CLOB, SRID 0 by default |
 | `ST_GEOMFROMWKB(binary [, srid])` | The geometry of a WKB string, a binary string or BLOB, of any type and coordinate dimension, SRID 0 by default |
 | `ST_ASTEXT(geometry)` | Its WKT, without its SRID, a CHARACTER LARGE OBJECT |
 | `ST_ASBINARY(geometry)` | Its little-endian WKB, without its SRID, a BINARY LARGE OBJECT |
 | `ST_SRID(geometry)` | Its SRID |
-| `ST_SETSRID(geometry, srid)` | The same coordinates with another SRID |
+| `ST_SETSRID(geometry, srid)` *(extension)* | The same coordinates with another SRID |
 | `ST_X(point)`, `ST_Y(point)` | Its X or Y, DOUBLE PRECISION; NULL of POINT EMPTY |
-| `ST_MINX(geometry)`, `ST_MAXX(geometry)` | Its least or greatest X, DOUBLE PRECISION; NULL of an empty value |
-| `ST_MINY(geometry)`, `ST_MAXY(geometry)` | Its least or greatest Y, DOUBLE PRECISION; NULL of an empty value |
+| `ST_MINX(geometry)`, `ST_MAXX(geometry)` *(extension)* | Its least or greatest X, DOUBLE PRECISION; NULL of an empty value |
+| `ST_MINY(geometry)`, `ST_MAXY(geometry)` *(extension)* | Its least or greatest Y, DOUBLE PRECISION; NULL of an empty value |
 | `ST_ISEMPTY(geometry)` | INTEGER 1 if it has no coordinates, else 0 |
 | `ST_GEOMETRYTYPE(geometry)` | Its most specific type's name, as `ST_Point` |
 | `ST_ORDERINGEQUALS(a, b)` | INTEGER 0 if `a` and `b` are equal by the ordering of the types, else 1 |
@@ -1278,7 +1278,7 @@ turborel: SQLCODE -301 (SQLSTATE 2FF72): [ISO/IEC 13249-3:2016 (DIS, SC32 N2593)
 CREATE INDEX <index name> ON <table name> ( <column name> ) USING RTREE
 ```
 
-An `rtree` index of one `GEOMETRY(srid)` column holds each value's
+An `rtree` index *(extension)* of one `GEOMETRY(srid)` column holds each value's
 envelope, its bounding rectangle, and omits NULLs. A column of plain
 GEOMETRY, which may mix SRIDs, cannot have one. The index is kept up to
 date as rows change, and it is made outside a transaction, so the one

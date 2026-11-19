@@ -64,7 +64,8 @@ GRANT gives each grantee privileges on a table, a view, a domain, a
 collation CREATE COLLATION made, a sequence generator, a user-defined
 type, a function a distinct type's definition made, a method, a function or procedure
 CREATE FUNCTION or CREATE PROCEDURE made, a module CREATE MODULE
-made, a registered XML Schema, or a registered XQuery module:
+made, a registered XML Schema *(extension)*, or a registered XQuery
+module *(extension)*:
 
 | Privilege | Lets its holder |
 |---|---|

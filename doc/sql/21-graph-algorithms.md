@@ -1,9 +1,9 @@
-# Graph Algorithms
+# Graph Algorithms *(extension)*
 
 [Contents](README.md)
 
 The functions of the schema GRAPH_ALGO run graph algorithms over a table
-of edges *(extension)*. Each is a table reference of the FROM clause, a
+of edges. Each is a table reference of the FROM clause, a
 row for each vertex and its value, so its result joins to the table the
 vertices' keys are of. INTO PROPERTY writes a result to a column of that
 table instead. The examples here make the tables of a small graph, the

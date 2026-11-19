@@ -1,4 +1,4 @@
-# Vectors
+# Vectors *(extension)*
 
 [Specialized Data](README.md)
 

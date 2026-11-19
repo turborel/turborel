@@ -1,4 +1,4 @@
-# Settings
+# Settings *(extension)*
 
 [Contents](README.md)
 

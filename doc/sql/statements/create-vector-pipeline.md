@@ -4,7 +4,7 @@
 
 ## NAME
 
-CREATE VECTOR PIPELINE: keep a table of embedded chunks in step with a table of texts
+CREATE VECTOR PIPELINE: keep a table of embedded chunks in step with a table of texts *(extension)*
 
 ## SYNOPSIS
 

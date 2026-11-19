@@ -1,4 +1,4 @@
-# Appendix G: Table Options
+# Appendix G: Table Options *(extension)*
 
 [Contents](README.md)
 

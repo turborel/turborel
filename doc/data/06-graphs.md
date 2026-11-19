@@ -62,7 +62,7 @@ OK
 ```
 
 The graph is ENFORCED, its keys and ends declared constraints, so as it
-committed TRANSFER was given an adjacency index, and a search follows a
+committed TRANSFER was given an adjacency index *(extension)*, and a search follows a
 transfer from either account without a join.
 
 ## Patterns
@@ -120,7 +120,7 @@ SELECT * FROM GRAPH_TABLE (BANK
 (2 rows)
 ```
 
-ANY CHEAPEST keeps the path of least cost, here of the smallest
+ANY CHEAPEST *(extension)* keeps the path of least cost, here of the smallest
 transfers' sum:
 
 ```sql

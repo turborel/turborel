@@ -4,7 +4,7 @@
 
 ## NAME
 
-EXECUTE GQL: run a GQL request on a graph
+EXECUTE GQL: run a GQL request on a graph *(extension)*
 
 ## SYNOPSIS
 

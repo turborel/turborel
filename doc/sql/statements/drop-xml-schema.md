@@ -4,7 +4,7 @@
 
 ## NAME
 
-DROP XML SCHEMA: drop a registered XML Schema
+DROP XML SCHEMA: drop a registered XML Schema *(extension)*
 
 ## SYNOPSIS
 
@@ -84,8 +84,8 @@ PRICES went with BASE, as it imports it.
 
 ## STANDARD
 
-ISO/IEC 9075-14 §4.2.6 leaves how an XML Schema is registered to the
-implementation; this statement is turborel's. See
+An extension. ISO/IEC 9075-14 §4.2.6 leaves how an XML Schema is
+registered to the implementation; this statement is turborel's. See
 [CONFORMANCE.md](../../../CONFORMANCE.md#sqlxml).
 
 ## SEE ALSO

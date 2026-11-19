@@ -4,7 +4,7 @@
 
 ## NAME
 
-DROP VECTOR PIPELINE: stop keeping a table of embedded chunks
+DROP VECTOR PIPELINE: stop keeping a table of embedded chunks *(extension)*
 
 ## SYNOPSIS
 

@@ -4,7 +4,7 @@
 
 ## NAME
 
-ALTER XQUERY MODULE: replace a registered XQuery module's text
+ALTER XQUERY MODULE: replace a registered XQuery module's text *(extension)*
 
 ## SYNOPSIS
 
@@ -102,9 +102,10 @@ calls, nor be dropped alone while ODD imports it.
 
 ## STANDARD
 
-XQuery 1.0 §5.2.5 leaves where a module import finds its modules to the
-implementation, and §4.11 allows a cycle of imports of modules of one
-namespace; this statement is turborel's. See
+An extension. ISO/IEC 9075-14:2006 draft has no statement of XQuery
+modules. XQuery 1.0 §5.2.5 leaves where a module import finds its
+modules to the implementation, and §4.11 allows a cycle of imports of
+modules of one namespace; this statement is turborel's. See
 [CONFORMANCE.md](../../../CONFORMANCE.md#sqlxml).
 
 ## SEE ALSO
