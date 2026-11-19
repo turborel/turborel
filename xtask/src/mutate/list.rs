@@ -7,6 +7,7 @@ mod backup;
 mod bigint;
 mod bounded;
 mod check_rebind;
+mod cli;
 mod collations;
 mod composite;
 mod contents;

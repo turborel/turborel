@@ -137,8 +137,8 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, external plug-ins' and
-/// packages', partitioning's, replication's and the server's.
-fn last() -> [&'static [Mutation]; 37] {
+/// packages', partitioning's, the command-line client's, replication's and the server's.
+fn last() -> [&'static [Mutation]; 38] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -171,6 +171,7 @@ fn last() -> [&'static [Mutation]; 37] {
         &super::plugins::PACKAGES,
         &super::simple_features::SIMPLE_FEATURES,
         &super::partitioning::PARTITIONING,
+        &super::cli::CLI,
         &super::FILL,
         &super::ZONES,
         &super::STATS,
