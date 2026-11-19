@@ -54,7 +54,7 @@ pub(super) struct Spec {
 /// The key of a group of `values`: by their sort keys where `spec` says, so
 /// values equal by a collation are of one group, which keeps the first's
 /// [ISO/IEC 9075:1992 §8.2 GR3d].
-fn group_key(spec: &Spec, values: &Row) -> Result<Vec<u8>> {
+pub(in crate::exec) fn group_key(spec: &Spec, values: &Row) -> Result<Vec<u8>> {
     if spec.collations.is_empty() {
         return Ok(norm_row(values));
     }

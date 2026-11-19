@@ -125,6 +125,7 @@ impl Plan {
                 writeln!(out, "{pad}{detail}")
             }
             Plan::Polymorphic(p) => writeln!(out, "{pad}Polymorphic table function {}", p.function()),
+            Plan::Parallel(p) => writeln!(out, "{pad}Parallel  (degree={})", p.degree),
         };
         self.write_inputs(out, depth.saturating_add(1));
     }
@@ -153,6 +154,7 @@ impl Plan {
                 left.write(out, depth);
                 right.write(out, depth);
             }
+            Plan::Parallel(p) => p.input.write(out, depth),
             Plan::Filter { input, .. }
             | Plan::Aggregate { input, .. }
             | Plan::Project { input, .. }

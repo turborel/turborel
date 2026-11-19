@@ -28,6 +28,7 @@ mod newest;
 mod options;
 mod region;
 mod rows;
+mod split;
 
 pub use batch::{BATCH_ROWS, Batch, Batches, Cell, Coded, Column, FIRST_BATCH_ROWS, Floats, Ints, Nulls, Ramp, Texts, batches_of};
 pub use condition::{Condition, Conjunct, Conjunction};
@@ -37,7 +38,8 @@ pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
 pub use region::Region;
 pub(crate) use region::{keyed_envelope, merged};
-pub use rows::{Near, ROW_ID, Row, RowId, Rows, ScanOrder, located, project, row_id_of};
+pub use rows::{LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, located, project, row_id_of};
+pub use split::Split;
 
 use std::sync::Arc;
 
@@ -46,10 +48,6 @@ use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
 use crate::stats::Statistics;
 use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxCapabilities, TxId};
-
-/// \[DESIGN\] What keeps and logs a table's large object's object
-/// (`TableStorage::keep_lobs`): given its id, its body and what keeps it.
-pub type LobLog<'a> = &'a mut dyn FnMut(u64, &[u8], &mut dyn FnMut() -> Result<()>) -> Result<()>;
 
 /// \[DESIGN\] The rows of one table. Row ids identify rows within the table.
 ///
@@ -163,6 +161,14 @@ pub trait TableStorage: Send + Sync {
             None => self.scan(tx, columns),
         };
         batches_of(rows, columns)
+    }
+    /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
+    /// `conditions`, split into morsels of about `rows` rows each, for
+    /// workers to read at once (RULES.md D290); none if it cannot split
+    /// them, or failed to, its scan then raising what failed. Default: none.
+    fn split(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, rows: usize) -> Option<Arc<dyn Split>> {
+        let _ = (tx, columns, conditions, rows);
+        None
     }
     /// \[DESIGN\] The columns, by their places, in whose order `scan_ordered`
     /// gives its rows, any first of them (RULES.md D31). Default: none.
@@ -544,7 +550,6 @@ pub trait TableStorage: Send + Sync {
     fn keep_lobs(&self, _tx: TxId, _replacing: Option<RowId>, _row: &mut Row, _log: LobLog<'_>) -> Result<()> {
         Ok(())
     }
-
     /// \[DESIGN\] Keeps object `id` of `body` as the log recorded it
     /// (`keep_lobs`), if it does not hold it: recovery replays it
     /// (RULES.md D25, D79).
@@ -555,11 +560,9 @@ pub trait TableStorage: Send + Sync {
     fn apply_lob(&self, id: u64, _body: &[u8]) -> Result<()> {
         Err(SqlError::new(Code::Api, format!("[DESIGN] the table keeps no large object, and is given object {id} of the log")))
     }
-
     /// \[DESIGN\] Notes the objects `ids` as awaiting collection when the
     /// checkpoint recovery began from was taken (`stale_lobs`).
     fn note_stale_lobs(&self, _ids: &[u64]) {}
-
     /// \[DESIGN\] Ends recovery: frees the large objects it left that no
     /// row's newest version names (RULES.md D79).
     ///
@@ -569,7 +572,6 @@ pub trait TableStorage: Send + Sync {
     fn recovered(&self) -> Result<()> {
         Ok(())
     }
-
     /// \[DESIGN\] The large objects awaiting collection, which a crash
     /// would leave kept: a checkpoint logs them, for recovery from it to
     /// free (RULES.md D79).
@@ -580,7 +582,6 @@ pub trait TableStorage: Send + Sync {
     fn stale_lobs(&self) -> Result<Vec<u64>> {
         Ok(Vec::new())
     }
-
     /// Undo every change `tx` made that the engine keeps itself, and forget
     /// the transaction. Also called after a failed `validate`.
     ///

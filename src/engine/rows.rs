@@ -52,6 +52,7 @@ mod options;
 mod recovery;
 mod scan;
 mod sealing;
+mod split;
 mod stats;
 mod store;
 mod table;
@@ -90,7 +91,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
 use crate::spill::WorkAreas;
 use crate::stats::Statistics;
-use crate::storage::{Condition, Conjunction, Near, Newest, Region, Row, RowId, Rows, ScanOrder, TableStorage};
+use crate::storage::{Condition, Conjunction, Near, Newest, Region, Row, RowId, Rows, ScanOrder, Split, TableStorage};
 use crate::txn::{Concurrency, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 
 /// The name of the row store.
@@ -277,6 +278,13 @@ impl TableStorage for RowTable {
     /// (`rows/gathered.rs`).
     fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Conjunction>) -> crate::storage::Batches {
         self.scan_batches_of(tx, columns, condition.cloned())
+    }
+
+    /// Split at row ids, of the column store at its groups' starts
+    /// (`rows/split.rs`).
+    fn split(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, rows: usize) -> Option<Arc<dyn Split>> {
+        let split: Arc<dyn Split> = Arc::new(self.split_of(tx, columns, conditions.cloned(), rows).ok()?);
+        Some(split)
     }
 
     /// Every table does: of the column store, its frozen rows straight

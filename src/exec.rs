@@ -30,6 +30,7 @@ mod json_table;
 mod limit;
 mod merged;
 mod nearest;
+mod parallel;
 mod partition;
 mod pattern;
 mod program;
@@ -146,6 +147,8 @@ pub fn execute(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Plan::Recognize { .. } => pattern::recognized,
         // [ISO/IEC 9075-2:2023 §9.25] its component procedures run as it opens.
         Plan::Polymorphic(..) => ptf::polymorphic,
+        // [DESIGN] by morsels on the workers (RULES.md D290).
+        Plan::Parallel(..) => parallel::parallel,
     };
     run(plan, db, tx)
 }
@@ -178,7 +181,8 @@ fn joined_plan(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         | Plan::Recognize { .. }
         | Plan::Polymorphic(..)
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => failed(broken("a join is not one")),
+        | Plan::Transition { .. }
+        | Plan::Parallel(..) => failed(broken("a join is not one")),
     }
 }
 

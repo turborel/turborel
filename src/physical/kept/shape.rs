@@ -52,6 +52,10 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
             same_shape(left, left2) && same_shape(right, right2)
         }
         Plan::MergeAppend { .. } => same_merge(one, other),
+        Plan::Parallel(p) => {
+            let Plan::Parallel(p2) = other else { return false };
+            p.degree == p2.degree && same_shape(&p.input, &p2.input)
+        }
         Plan::Product { .. }
         | Plan::HashJoin { .. }
         | Plan::IndexJoin { .. }

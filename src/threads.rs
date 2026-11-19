@@ -19,6 +19,7 @@
 
 mod morsels;
 mod pipes;
+mod pool;
 mod turn;
 mod worker;
 
@@ -28,6 +29,7 @@ use std::time::Duration;
 
 pub(crate) use morsels::morsels;
 pub(crate) use pipes::{pipe_reader, plugin_sender};
+pub(crate) use pool::{Pool, Task};
 pub(crate) use turn::{Hold, Turn, Turned};
 use worker::Worker;
 

@@ -15,6 +15,7 @@ mod builtin;
 mod configurable;
 mod extension;
 mod graph;
+mod executor;
 mod hosted;
 mod kind;
 mod plugins;
@@ -50,6 +51,9 @@ pub use extension::Owner;
 pub use graph::{
     DEFAULT_MAX_SEARCH_STATES, GRAPH_DETERMINISTIC_PATHS, GRAPH_MAX_PATH_LENGTH, GRAPH_MAX_PATHS_PER_PARTITION, GRAPH_MAX_SEARCH_STATES,
     GRAPH_ON_LIMIT, GRAPH_PARALLEL_MIN_STATES, TRUNCATE,
+};
+pub use executor::{
+    DEFAULT_MORSEL_ROWS, DEFAULT_PARALLEL_MIN_ROWS, EXECUTOR_DEGREE, EXECUTOR_MORSEL_ROWS, EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_WORKERS,
 };
 pub use hosted::PLUGINS_HOST;
 pub use kind::{Kind, column_list, column_names};
@@ -366,6 +370,15 @@ impl Settings {
         match self.values.get(key.0) {
             Some(Some(v)) => v,
             Some(None) | None => self.definition(key).map_or(&Value::Null, |d| &d.default),
+        }
+    }
+
+    /// \[DESIGN\] Sets the value of `key` to `value`, of its kind, in a
+    /// copy made for a part of a statement: a work area's share of a
+    /// parallel query's partitions (`exec/parallel.rs`).
+    pub(crate) fn set_key(&mut self, key: Key, value: Value) {
+        if let Some(slot) = self.values.get_mut(key.0) {
+            *slot = Some(value);
         }
     }
 

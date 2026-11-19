@@ -67,14 +67,14 @@ impl RowTable {
     /// The tree's entries in `ranges` of row ids, in order, each from its
     /// first id up to, not including, its end if it has one; read through
     /// `table`, which the scan holds.
-    fn ranged(table: &Arc<Self>, ranges: Vec<(RowId, Option<RowId>)>) -> Ranged {
+    pub(super) fn ranged(table: &Arc<Self>, ranges: Vec<(RowId, Option<RowId>)>) -> Ranged {
         let mut ranges = ranges.into_iter();
         let current = ranges.next().map(|range| Self::range(table, range));
         Ranged { table: Arc::clone(table), ranges, current }
     }
 
     /// The tree's entries from row `first` up to, not including, `end`.
-    fn range(table: &Arc<Self>, (first, end): (RowId, Option<RowId>)) -> Scan<TreeOf> {
+    pub(super) fn range(table: &Arc<Self>, (first, end): (RowId, Option<RowId>)) -> Scan<TreeOf> {
         let (low, high) = (key(first), end.map(key));
         let upper = high.as_ref().map_or(Bound::Unbounded, |h| Bound::Excluded(&h[..]));
         scan_of(TreeOf(Arc::clone(table)), Bound::Included(&low[..]), upper, Direction::Forward)

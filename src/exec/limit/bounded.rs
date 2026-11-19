@@ -21,6 +21,10 @@ pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
         Plan::MergeAppend { inputs, keys, detail } => {
             Plan::MergeAppend { inputs: inputs.into_iter().map(|p| bounded(p, most)).collect(), keys, detail }
         }
+        Plan::Parallel(mut p) => {
+            p.input = bounded(p.input, most);
+            Plan::Parallel(p)
+        }
         Plan::Project { exprs, detail, input } => {
             let input = if exprs.iter().any(Expr::can_raise) { input } else { Box::new(bounded(*input, most)) };
             Plan::Project { exprs, detail, input }

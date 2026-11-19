@@ -25,6 +25,7 @@ pub(crate) mod estimate;
 mod expression_index;
 mod grouping;
 mod indexed;
+mod inputs;
 mod join_probe;
 pub use join_probe::{Fields, JoinComparison, JoinProbe, Paired, Preserved, Spatial, Supplied, Unmatched};
 mod join;
@@ -35,6 +36,9 @@ mod nodes;
 pub(crate) use nearest::distance_call;
 pub use nearest::{ApproximateRead, NearestRead};
 mod order;
+mod parallel;
+pub use parallel::Parallel;
+pub(crate) use parallel::{parallel, workers_of};
 mod probe;
 mod project;
 mod raising;
@@ -382,6 +386,9 @@ pub enum Plan {
     /// component procedures run on its table arguments' rows, each read
     /// whole first (`exec/ptf.rs`).
     Polymorphic(Box<Polymorphic<Plan>>),
+    /// \[DESIGN\] Its input run by morsels on several threads at once
+    /// (`exec/parallel.rs`, RULES.md D290), giving its rows in its order.
+    Parallel(Box<Parallel>),
 }
 
 /// \[DESIGN\] Chooses a physical plan for a logical one, using the state's
