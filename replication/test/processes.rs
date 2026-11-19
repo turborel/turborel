@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 
 use turborel::db::{Database, ExportedFile, StateSource};
-use turborel::error::Result;
+use turborel::error::{Code, Result, SqlError};
 use turborel::files::FileOwner;
 use turborel::value::Value;
 use turborel_replication::plugin::{Plugged, PluginTransfer, plugged};
@@ -34,8 +34,9 @@ fn installed(scratch: &Scratch) -> PathBuf {
     let dir = scratch.path("repl");
     std::fs::create_dir_all(&dir).unwrap();
     let exe = format!("plugin_example{}", std::env::consts::EXE_SUFFIX);
-    let manifest =
-        format!("NAME REPL; VERSION '1.0.0'; PROTOCOL 1; EXECUTABLE '{exe}';\nHOST REPLICA TRANSPORT LOOP;\nHOST JOURNAL KEPT;\nHOST STATE TRANSFER SHIPPED;\n");
+    let manifest = format!(
+        "NAME REPL; VERSION '1.0.0'; PROTOCOL 1; EXECUTABLE '{exe}';\nHOST REPLICA TRANSPORT LOOP;\nHOST JOURNAL KEPT;\nHOST STATE TRANSFER SHIPPED;\n"
+    );
     std::fs::write(dir.join("turborel-plugin.manifest"), manifest).unwrap();
     if std::fs::hard_link(program(), dir.join(&exe)).is_err() {
         std::fs::copy(program(), dir.join(&exe)).unwrap();
@@ -122,32 +123,35 @@ impl StateSource for Held {
         &self.files
     }
     fn read(&mut self, file: usize, at: u64, into: &mut [u8]) -> Result<usize> {
-        let from = self.bytes.get(file).unwrap();
-        let rest = from.get(usize::try_from(at).unwrap()..).unwrap_or_default();
+        let from = self.bytes.get(file).map_or(&[][..], Vec::as_slice);
+        let rest = from.get(usize::try_from(at).unwrap_or(usize::MAX)..).unwrap_or_default();
         let n = rest.len().min(into.len());
-        into.get_mut(..n).unwrap().copy_from_slice(rest.get(..n).unwrap());
+        for (to, b) in into.iter_mut().zip(rest) {
+            *to = *b;
+        }
         Ok(n)
     }
 }
 
 /// `transfer` fetching `source` from itself, a request answered at a time,
-/// and the files it staged, read back.
+/// and the image and files it staged, read back.
 fn fetch_through(transfer: &PluginTransfer, source: &mut Held) -> Result<Vec<Vec<u8>>> {
+    let unanswered = || SqlError::new(Code::Api, "the transfer gave no request, or SHIPPED no answer");
     let mut fetching = transfer.begin(ReplicaId(2))?;
     loop {
-        let request = fetching.request().unwrap();
-        let answer = transfer.serve(source, (ReplicaId(1), 7), &request)?.unwrap();
+        let request = fetching.request().ok_or_else(unanswered)?;
+        let answer = transfer.serve(source, (ReplicaId(1), 7), &request)?.ok_or_else(unanswered)?;
         if fetching.take(&answer)? {
             break;
         }
     }
     let mut staged = fetching.fetched()?;
-    assert_eq!(staged.image(), b"image");
     let lengths: Vec<u64> = staged.files().iter().map(|f| f.length).collect();
-    let mut files = Vec::new();
+    let mut files = vec![staged.image().to_vec()];
     for (i, length) in lengths.into_iter().enumerate() {
-        let mut bytes = vec![0; usize::try_from(length).unwrap()];
-        assert_eq!(staged.read(i, 0, &mut bytes)?, bytes.len());
+        let mut bytes = vec![0; usize::try_from(length).unwrap_or(0)];
+        let read = staged.read(i, 0, &mut bytes)?;
+        bytes.truncate(read);
         files.push(bytes);
     }
     Ok(files)
@@ -175,8 +179,10 @@ fn a_transfer_killed_mid_chunk_stops_the_node_and_the_next_fetch_starts_clean() 
     assert!(transfer.begin(ReplicaId(2)).is_err(), "nothing more once the process died");
     drop((transfer, db));
     std::fs::remove_file(dir.join("crash.chunk")).unwrap();
-    let (_again, plugs) = node(&scratch, &dir);
-    let files = fetch_through(&plugs.transfer.unwrap(), &mut source).unwrap();
-    assert_eq!(files, source.bytes);
+    let (_again, restarted) = node(&scratch, &dir);
+    let staged = fetch_through(&restarted.transfer.unwrap(), &mut source).unwrap();
+    let mut expected = vec![b"image".to_vec()];
+    expected.extend(source.bytes.iter().cloned());
+    assert_eq!(staged, expected);
     assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 3, "only the new fetch's files are staged");
 }
