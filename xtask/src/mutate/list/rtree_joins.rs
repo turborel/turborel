@@ -2,17 +2,19 @@
 //! R-TEST-9, D138): spilled partitions that produce a pair in every cell
 //! or are never chosen, and traversals of two trees that drop the outer
 //! filter or a LEFT join's unpaired rows, record no outer read, take no
-//! account of order or cost, or are never offered a tree.
+//! account of order, cost or the pairs the statistics estimate, or are
+//! never offered a tree.
 
 use super::{Mutation, Package};
 
 const SPILLED: &str = "exec::join::indexed::adaptive::tests::outgrown_spatial_builds_are_partitioned_and_spilled";
 const EQUAL: &str = "geometry::index::joins::paired::synchronized_spatial_joins_equal_unindexed_products";
 const CHOSEN: &str = "geometry::index::joins::paired::synchronized_spatial_joins_are_chosen_by_cost_and_order";
+const FEW: &str = "geometry::index::joins::paired::synchronized_spatial_joins_need_few_pairs_by_the_statistics";
 const READS: &str = "geometry::index::joins::paired::synchronized_spatial_joins_record_serializable_reads";
 
 /// The mutations of spatial joins, in the order they run.
-pub const RTREE_JOINS: [Mutation; 8] = [
+pub const RTREE_JOINS: [Mutation; 9] = [
     Mutation {
         name: "partition-reference-ignored",
         package: Package::Core,
@@ -91,6 +93,16 @@ pub const RTREE_JOINS: [Mutation; 8] = [
         original: "        Some(Envelopes::new(self.tree.clone(), self.srid?))",
         replacement: "        Some(Envelopes::new(self.tree.clone(), self.srid?)).filter(|_| false)",
         integration: &[EQUAL],
+        unit: &[],
+    },
+    Mutation {
+        name: "traversal-pairs-unbounded",
+        package: Package::Core,
+        breaks: "a join the grids put at many pairs an outer row descends both trees",
+        file: "src/physical/indexed/spatial/paired.rs",
+        original: "        if each > PAIRED_MOST {",
+        replacement: "        if each > PAIRED_MOST * 1000.0_f64 {",
+        integration: &[FEW],
         unit: &[],
     },
 ];

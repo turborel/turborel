@@ -31,7 +31,7 @@ fn emptied_and_sparse_leaves_are_taken_out() {
             tree.remove(point(i), u64::from(i)).unwrap();
         }
     }
-    assert!(tree.reclaimed() > 0);
+    assert!(tree.reclaimed().0 > 0);
     let after = tree.shape().unwrap();
     assert!(after[0].nodes * 2 < before, "{before} {after:?}");
     let kept: Vec<u64> = (0..20_000_u32).filter(|&i| !removed.contains(&u64::from(i)) && i % 3 != 0).map(u64::from).collect();
@@ -79,7 +79,7 @@ fn a_paused_scan_survives_reclamation() {
                 tree.remove(point(i), u64::from(i)).unwrap();
             }
         }
-        assert!(tree.reclaimed() > 0);
+        assert!(tree.reclaimed().0 > 0);
         assert!(tree.inner.retired.load(Ordering::Relaxed) > 0);
         seen.extend(scan.map(|e| e.unwrap().1));
         let unique: BTreeSet<u64> = seen.iter().copied().collect();
@@ -139,7 +139,7 @@ fn concurrent_scans_neither_miss_nor_repeat_during_reclamation() {
                 .unwrap();
         }
     });
-    assert!(tree.reclaimed() > 0);
+    assert!(tree.reclaimed().0 > 0);
     assert_eq!(ids(&tree, None), stable.into_iter().collect::<Vec<_>>());
 }
 
@@ -151,7 +151,7 @@ fn writers_never_change_a_retired_leaf() {
     let tree = tree();
     fill(&tree, 0..2_000);
     let removed = remove_left(&tree, 0..2_000, 600.0_f64);
-    assert!(tree.reclaimed() > 0);
+    assert!(tree.reclaimed().0 > 0);
     for i in (0..2_000_u32).filter(|i| removed.contains(&u64::from(*i))) {
         tree.insert(point(i), u64::from(i)).unwrap();
     }

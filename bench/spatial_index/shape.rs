@@ -93,7 +93,8 @@ fn age(tree: &RTree, distribution: &str, rows: u64) {
 }
 
 fn print(label: &str, tree: &RTree) {
-    harness::note(&format!("{label}: reclaimed {} leaves", tree.reclaimed()));
+    let (reclaimed, narrowed) = tree.reclaimed();
+    harness::note(&format!("{label}: reclaimed {reclaimed} nodes, narrowed {narrowed} entries"));
     for level in tree.shape().unwrap() {
         harness::note(&format!(
             "  level {}: {} nodes, {} bytes in pages, {} used, fill {:.3}, overlap {:.1}",

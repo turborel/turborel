@@ -3337,7 +3337,8 @@ its own is in SQL/MM, and a distance compared `>` or `>=` reads the
 table. A join of two columns of one SRID,
 each with an R-tree, on ST_Intersects or a meeting relationship, may
 descend both trees together, pairing the entries whose envelopes meet,
-inner or outer, each pair rechecked against the visible rows, the outer
+inner or outer, when both tables' statistics put the pairs at a quarter
+an outer row or fewer, each pair rechecked against the visible rows, the outer
 operand's filter and the full condition
 (`physical/indexed/spatial/paired.rs`, `exec/join/indexed/paired.rs`,
 RULES.md D138).
@@ -3434,11 +3435,14 @@ coordinates and answers independent SQL comparisons (`index/rtree.rs`,
 from each outer row (`physical/indexed/coordinates.rs`). Single-column
 geometry indexes use the projection contract described above (D85).
 An `rtree` built over existing rows, by CREATE INDEX, a rebuild or
-recovery, is packed by Sort-Tile-Recursive through the sorted spill, and
-leaves that deletes empty or leave under two fifths full are taken out
-or copied into a merged node, their pages freed by epochs, so scans
-neither miss nor repeat an entry (`engine/rtree/pack.rs`,
-`engine/rtree/reclaim.rs`, `Index::load_beside_writers`, RULES.md D139).
+recovery, is packed by Sort-Tile-Recursive from the root down through
+the sorted spill. Nodes that deletes empty or leave under two fifths
+full, leaves and then the branches above them, are taken out or copied
+into a merged node, their pages freed by epochs, so scans neither miss
+nor repeat an entry. The ancestors' envelopes are then narrowed, and a
+root left with one child gives way to it (`engine/rtree/pack.rs`,
+`engine/rtree/reclaim.rs`, `engine/rtree/reclaim/narrow.rs`,
+`Index::load_beside_writers`, RULES.md D139).
 
 ```
 CREATE INDEX name ON table (columns) [USING method] [WITH (...)]

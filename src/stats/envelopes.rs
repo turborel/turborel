@@ -72,6 +72,26 @@ impl EnvelopeStats {
         (share * (1.0_f64 - self.empty)).clamp(0.0, 1.0)
     }
 
+    /// The share of `other`'s values a value of this column meets, on
+    /// average (RULES.md D138): each cell's share of a window of its mean
+    /// extent at its middle, as `meeting` estimates it, by the share of
+    /// this column's values in the cell. Empty values meet nothing.
+    pub fn joined(&self, other: &EnvelopeStats) -> f64 {
+        let Some(frame) = self.frame else { return 0.0_f64 };
+        let mut share = 0.0_f64;
+        for (at, cell) in self.cells.iter().enumerate().filter(|(_, cell)| cell.share > 0.0_f64) {
+            let (column, row) = (at.checked_rem(GRID_SIDE).unwrap_or_default(), at.checked_div(GRID_SIDE).unwrap_or_default());
+            let (x, y) = (span(frame, 0, column), span(frame, 1, row));
+            let middle = [f64::midpoint(x.0, x.1), f64::midpoint(y.0, y.1)];
+            let (across, up) = (cell.width / 2.0_f64, cell.height / 2.0_f64);
+            let Ok(window) = Bounds::new([middle[0] - across, middle[1] - up], [middle[0] + across, middle[1] + up]) else {
+                continue;
+            };
+            share += cell.share * other.meeting(window);
+        }
+        (share * (1.0_f64 - self.empty)).clamp(0.0, 1.0)
+    }
+
     /// The coordinates a non-null value holds, on average.
     pub fn vertices(&self) -> f64 {
         self.vertices

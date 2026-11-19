@@ -37,7 +37,7 @@ fn answers(session: &turborel::db::Session, table: &str) -> Vec<Vec<String>> {
 }
 
 /// Verifies: [DESIGN] D139: an rtree index made by CREATE INDEX over
-/// filled rows, packed bottom-up, and one filled row by row as rows are
+/// filled rows, packed, and one filled row by row as rows are
 /// inserted, give identical answers to every window, also after deletes
 /// that take leaves out of both, and the plan reads the index.
 #[test]
@@ -105,4 +105,36 @@ fn packed_builds_and_reclaimed_leaves_recover_after_a_crash() {
     session.run("INSERT INTO P VALUES (100000, 10, 10)").unwrap();
     session.commit().unwrap();
     assert_eq!(rows(&session, "SELECT ID FROM P WHERE X >= 9 AND X <= 11 AND Y >= 9 AND Y <= 11").unwrap(), ["100000"]);
+}
+
+/// Verifies: [DESIGN] D139: deletes that empty branches and shorten the
+/// tree, a checkpoint holding the shorter tree between them, then a crash,
+/// recover the index as the rows left it; it grows tall again as rows
+/// return and answers every window as a table without an index does.
+#[test]
+fn a_shortened_tree_recovers_after_a_crash() {
+    let scratch = Scratch::new("spatial-shrink-crash");
+    let dir = scratch.path("db");
+    let original = Database::new();
+    original.open_files(&after_crash(), &dir, &OpenOptions::default()).unwrap();
+    tables(&original);
+    original.create_index("P_XY", "S.P", &["X", "Y"], "rtree").unwrap();
+    spread(&original, "P");
+    let session = original.session("S");
+    session.run("DELETE FROM P WHERE ID >= 40").unwrap();
+    session.commit().unwrap();
+    original.checkpoint().unwrap();
+    session.run("DELETE FROM P WHERE ID >= 10").unwrap();
+    session.commit().unwrap();
+    drop((session, original));
+    let shortened = recovered(&dir);
+    let session = shortened.session("S");
+    assert_eq!(shortened.index_entries("P_XY").unwrap(), 10);
+    assert_eq!(rows(&session, "SELECT ID FROM P WHERE X >= 0 AND X <= 1000 AND Y >= 0 AND Y <= 1000 ORDER BY ID").unwrap().len(), 10);
+    session.run("DELETE FROM P").unwrap();
+    session.commit().unwrap();
+    spread(&shortened, "P");
+    spread(&shortened, "Q");
+    assert_eq!(answers(&session, "P"), answers(&session, "Q"));
+    assert_eq!(shortened.index_entries("P_XY").unwrap(), usize::try_from(ROWS).unwrap());
 }

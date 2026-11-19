@@ -1301,17 +1301,23 @@ turborel: SQLCODE -900 (SQLSTATE 0A000): the rtree index method needs GEOMETRY(s
 ```
 
 CREATE INDEX over rows already in the table builds the index whole. It
-sorts their envelopes by X, cuts them into slabs, sorts each slab by Y,
-and fills each node to nine tenths, from the leaves up
-(Sort-Tile-Recursive packing). The sorts spill to temporary files past
+sorts their envelopes by X, cuts them into slabs, sorts each slab by Y
+and cuts it into one run for each node under the root, then tiles each
+run the same way, down to leaves nine tenths full (Sort-Tile-Recursive
+packing, from the root down). So the nodes under any node tile its
+region and barely overlap. The sorts spill to temporary files past
 MEMORY.WORK_BYTES, so a large build stays within it. Rows that other
 transactions write while the build runs go into the index as usual and
 are moved into the packed tree before it takes the index's place.
 Recovery rebuilds an index the same way. A delete or update that leaves
 a node of the index empty, or under two fifths full, takes it out or
-merges it with a neighbour. Its page is freed for reuse once no query
-that began before can still read it, so a query running meanwhile
-neither misses a row nor sees one twice:
+merges it with a neighbour, and a node above left sparse by that goes
+the same way. The nodes above it shrink to what is left under them, so
+searches of an emptied region stop reading them, and when the top node
+keeps a single node under it, that one takes its place and the index
+grows shorter. A freed page is reused once no query that began before
+can still read it, so a query running meanwhile neither misses a row nor
+sees one twice:
 
 ```sql
 CREATE TABLE GRID (ID INTEGER PRIMARY KEY, SPOT GEOMETRY(0));
@@ -1589,8 +1595,12 @@ values that meet, whose two geometry columns have one SRID and each an
 for each row of the other. Pairs of tree nodes whose envelopes are apart
 are skipped whole, and each pair of entries whose envelopes meet is
 checked against the visible rows, the other side's filter and the whole
-condition. The planner takes it when no order is asked of the join and
-it costs less than the probes, as when both sides have many rows. EXPLAIN
+condition. The planner takes it when no order is asked of the join, it
+costs less than the probes, and both tables' statistics are gathered and
+put each row of one side at no more than a quarter of a row of the
+other, which, as the estimate runs low, stands for about one. A broader
+join probes, as a pair costs the traversal more than a probe's descent
+saves. EXPLAIN
 calls it `SynchronizedSpatialJoin`, naming both tables and indexes, and
 the line below it is the scan the probes would read instead. LEFT, RIGHT
 and FULL joins are taken too, the rows no pair kept then read with nulls.
@@ -1601,10 +1611,13 @@ CREATE TABLE BLOCKS (ID INTEGER PRIMARY KEY, AREA GEOMETRY(0));
 INSERT INTO STOPS WITH RECURSIVE N (I) AS (VALUES (CAST(0 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 39)
     SELECT A.I * 40 + B.I, ST_POINT(B.I, A.I) FROM N A, N B WHERE A.I < 25;
 INSERT INTO BLOCKS WITH RECURSIVE N (I) AS (VALUES (CAST(0 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 19)
-    SELECT A.I * 20 + B.I, ST_MAKEENVELOPE(B.I * 2, A.I * 2, B.I * 2 + 1, A.I * 2 + 1) FROM N A, N B WHERE A.I < 10;
+    SELECT A.I * 20 + B.I, ST_MAKEENVELOPE(B.I * 2 + 0.75, A.I * 2 + 0.75, B.I * 2 + 1.25, A.I * 2 + 1.25) FROM N A, N B WHERE A.I < 10;
 COMMIT;
 CREATE INDEX STOPS_SPOT ON STOPS (SPOT) USING RTREE;
 CREATE INDEX BLOCKS_AREA ON BLOCKS (AREA) USING RTREE;
+SELECT COUNT(*) FROM STOPS;
+SELECT COUNT(*) FROM BLOCKS;
+-- once the statistics are gathered:
 EXPLAIN SELECT B.ID, S.ID FROM BLOCKS B JOIN STOPS S ON ST_INTERSECTS(S.SPOT, B.AREA) = 1;
 SELECT COUNT(*) AS PAIRS, COUNT(S.ID) AS PAIRED FROM BLOCKS B LEFT JOIN STOPS S
     ON ST_INTERSECTS(S.SPOT, B.AREA) = 1 AND S.ID < 400;
@@ -1621,6 +1634,14 @@ OK
 OK
 OK
 OK
+
+----------------------
+                 1000
+(1 row)
+
+----------------------
+                  200
+(1 row)
  PLAN
 --------------------------------------------------------------
  -- bound:
@@ -1638,20 +1659,24 @@ OK
        Scan ANN.STOPS
  -- physical:
  Project B.ID, S.ID
-   SynchronizedSpatialJoin ANN.STOPS using STOPS_SPOT with ANN.BLOCKS using BLOCKS_AREA [rtree]: ST_INTERSECTS(S.SPOT, B.AREA) = 1  (est. rows each=111, cost=203071.8)
-     SeqScan ANN.BLOCKS  (rows=200, cost=200.0)
+   SynchronizedSpatialJoin ANN.BLOCKS using BLOCKS_AREA with ANN.STOPS using STOPS_SPOT [rtree]: ST_INTERSECTS(S.SPOT, B.AREA) = 1  (est. rows each=22, cost=237017.4)
+     SeqScan ANN.STOPS  (rows=1000, cost=1000.0)
 (17 rows)
                 PAIRS |               PAIRED
 ----------------------+----------------------
-                  500 |                  400
+                  200 |                  100
 (1 row, with a warning: SQLSTATE 01003)
 OK
 OK
 OK
 ```
 
-Each block holds four stops, and of the stops below 400 a hundred blocks
-hold none, so they are kept with a null, which COUNT(S.ID) eliminates.
+The counts ask the database's maintenance for the tables' statistics,
+and the EXPLAIN is run once it has gathered them. Before, the join has
+no estimate of its pairs and probes, here the product, as probing every
+stop for each block would cost more. Each block holds one stop, and the
+hundred blocks of the stops past 400 keep a null, which COUNT(S.ID)
+eliminates.
 
 A broad inner join that buffers one side to scan the other's table
 holds those rows within MEMORY.WORK_BYTES. Past it, they are written to

@@ -88,6 +88,7 @@ struct Inner {
     /// when there are some.
     retired: AtomicU64,
     reclaimed: AtomicU64,
+    narrowed: AtomicU64,
 }
 
 /// The meta page's fields.
@@ -181,6 +182,7 @@ impl RTree {
                 epochs: Epochs::new(),
                 retired: AtomicU64::new(0),
                 reclaimed: AtomicU64::new(0),
+                narrowed: AtomicU64::new(0),
             }),
         }
     }
@@ -196,10 +198,11 @@ impl RTree {
         (self.inner.splits.load(Ordering::Relaxed), self.inner.right_moves.load(Ordering::Relaxed))
     }
 
-    /// The leaves taken out or merged since this instance opened; an
-    /// observational counter, never search state.
-    pub fn reclaimed(&self) -> u64 {
-        self.inner.reclaimed.load(Ordering::Relaxed)
+    /// The nodes taken out or merged, and the ancestor entries narrowed,
+    /// since this instance opened; observational counters, never search
+    /// state.
+    pub fn reclaimed(&self) -> (u64, u64) {
+        (self.inner.reclaimed.load(Ordering::Relaxed), self.inner.narrowed.load(Ordering::Relaxed))
     }
 
     /// Counts an operation in the tree's epoch while the pin lives.

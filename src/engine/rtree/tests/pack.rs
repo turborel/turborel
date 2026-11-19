@@ -24,7 +24,8 @@ fn window(i: u32) -> Bounds {
 /// Verifies: [DESIGN] D139: a tree packed by Sort-Tile-Recursive through
 /// a spilled sort answers every window and the full scan exactly as one
 /// built entry by entry, with leaves near nine tenths full, fewer nodes
-/// and less leaf overlap than the inserted tree.
+/// and less leaf overlap than the inserted tree. Tiled from the root
+/// down, no two nodes of a level overlap, branches included.
 #[test]
 fn packed_and_inserted_trees_answer_alike() {
     let (packed, inserted) = (tree(), tree());
@@ -37,6 +38,7 @@ fn packed_and_inserted_trees_answer_alike() {
     let (p, n) = (packed.shape().unwrap(), inserted.shape().unwrap());
     assert!(p[0].fill > 0.85_f64 && p[0].fill <= 0.9_f64, "{p:?}");
     assert!(p[0].nodes < n[0].nodes && p[0].overlap < n[0].overlap, "{p:?} {n:?}");
+    assert!(p.iter().all(|level| level.overlap == 0.0_f64), "{p:?}");
     assert_eq!(p[0].entries, 20_000);
     assert_eq!(p.last().unwrap().nodes, 1);
 }

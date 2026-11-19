@@ -93,10 +93,12 @@ candidate's geometry before deciding which rows to return. See
 [Spatial Guide](../../data/02-spatial.md) for runnable examples.
 
 An `rtree` made over rows already in the table is built whole and packed
-from the leaves up, its nodes nine tenths full, its sorts spilling past
+from the root down, its nodes nine tenths full, its sorts spilling past
 MEMORY.WORK_BYTES. Rows written while it is built are kept. A node that
-deletes leave empty or under two fifths full is taken out or merged, and
-its space reused once no query can still read it (RULES.md D139). See
+deletes leave empty or under two fifths full is taken out or merged, the
+nodes above it too when that leaves them sparse, and its space reused
+once no query can still read it. The index grows shorter as it empties
+(RULES.md D139). See
 [Spatial Data](../10-spatial.md#the-rtree-index-method).
 
 A `fulltext` index takes one FULLTEXT column, or one character string

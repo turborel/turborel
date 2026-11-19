@@ -65,7 +65,8 @@ impl RTree {
             let Some((visit, path)) = self.descend(bounds)? else { continue };
             let held = self.inner.locks.lock(visit.id)?;
             let mut node = self.read(visit.id)?;
-            if node.stamp != visit.stamp || node.pending || node.retired {
+            let covered = self.covers(path.last(), visit.id, bounds)?;
+            if node.stamp != visit.stamp || node.pending || node.retired || !covered {
                 continue;
             }
             if node.entries.len() >= self.inner.capacity {
@@ -90,7 +91,8 @@ impl RTree {
                 self.finish_split(visit.id, path)?;
                 return Ok(None);
             }
-            if node.stamp != visit.stamp || node.retired {
+            let covered = self.covers(path.last(), visit.id, bounds)?;
+            if node.stamp != visit.stamp || node.retired || !covered {
                 return Ok(None);
             }
             if node.level != visit.level {
@@ -121,6 +123,10 @@ impl RTree {
         loop {
             let held = self.inner.locks.lock(id)?;
             let mut node = self.read(id)?;
+            if node.retired {
+                // Reclaimed since, so the caller descends again.
+                return Ok(());
+            }
             if !node.pending {
                 if node.entries.len() < self.inner.capacity {
                     return Ok(());
@@ -215,6 +221,9 @@ impl RTree {
             }
             let _parent = self.inner.locks.lock(parent.id)?;
             let mut above = self.read(parent.id)?;
+            if above.retired {
+                return Ok(Posted::Moved);
+            }
             if above.level != node.level.saturating_add(1) {
                 return Err(corrupt("a split's parent is at the wrong level"));
             }
@@ -249,8 +258,13 @@ impl RTree {
     /// A root may have grown after the writer remembered its path. Find
     /// its original child, not the geometrically cheapest parent: posting
     /// elsewhere would make a reader of the original entry miss the split.
+    /// Empty when `id` has become the root, the tree having shrunk to it.
     fn ancestry(&self, id: PageId, level: u8) -> Result<Vec<Visit>> {
-        let mut stack = vec![(self.root()?, Vec::new())];
+        let root = self.root()?;
+        if root.id == id {
+            return Ok(Vec::new());
+        }
+        let mut stack = vec![(root, Vec::new())];
         let mut visited = 0_u64;
         while let Some((visit, path)) = stack.pop() {
             visited = visited.saturating_add(1);
@@ -275,6 +289,18 @@ impl RTree {
             }
         }
         Err(corrupt("a split node has no parent"))
+    }
+}
+
+impl RTree {
+    /// Whether `parent`'s entry for `child`, read with `child` locked,
+    /// still covers `bounds`. A narrowing between enlarging it and locking
+    /// `child` may have dropped them (`reclaim/narrow.rs`). Not if the
+    /// entry moved in a split, which a new descent finds.
+    pub(super) fn covers(&self, parent: Option<&Visit>, child: PageId, bounds: Bounds) -> Result<bool> {
+        let Some(parent) = parent else { return Ok(true) };
+        let above = self.read(parent.id)?;
+        Ok(above.entries.iter().any(|e| e.id == child.0 && e.bounds.contains(bounds)))
     }
 }
 
