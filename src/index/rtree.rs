@@ -35,10 +35,10 @@ use std::sync::{Arc, Mutex};
 
 /// Four coordinates describe two lower and two upper bounds.
 const RECTANGLE_COLUMNS: usize = 4;
-/// Version of the method's locator, independent of the tree's pages.
+/// Version of the method's locator, independent of the tree's pages. A
+/// geometry column's locator, of the same version, also binds the enforced
+/// reference identifier, told apart by the column's type.
 const LOCATOR_VERSION: u8 = 1;
-/// Geometry locators also bind the enforced reference identifier.
-const GEOMETRY_LOCATOR_VERSION: u8 = 2;
 /// Bound planning work even when a probe matches most of the index.
 const MOST_COUNTED: usize = 1_000;
 
@@ -134,8 +134,7 @@ impl IndexMethod for RTreeMethod {
         let mut reader = Reader::new(locator, "R-tree index locator");
         let version = reader.u8()?;
         let width = usize::from(reader.u8()?);
-        let expected = if srid.is_some() { GEOMETRY_LOCATOR_VERSION } else { LOCATOR_VERSION };
-        if version != expected || width != columns.len() {
+        if version != LOCATOR_VERSION || width != columns.len() {
             return Err(reader.corrupt("its version or column count differs"));
         }
         if let Some(srid) = srid {
@@ -327,7 +326,7 @@ impl Index for RTreeIndex {
         Some(count)
     }
     fn locator(&self) -> Vec<u8> {
-        let version = if self.srid.is_some() { GEOMETRY_LOCATOR_VERSION } else { LOCATOR_VERSION };
+        let version = LOCATOR_VERSION;
         let mut bytes = vec![version, u8::try_from(self.width).unwrap_or_default()];
         if let Some(srid) = self.srid {
             bytes.put_u32(u32::try_from(srid).unwrap_or_default());

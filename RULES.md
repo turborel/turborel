@@ -2865,9 +2865,9 @@ the candidate count already observed; it is approximate planning input,
 never a bound used to skip or accept rows. Numeric coordinate probes retain
 their existing exact-count cutoff. Once the column's statistics are
 gathered, its envelope grid replaces this sample for broad windows (D137).
-Geometry index locators use version 2: version and width bytes, a u32 SRID
-and a u64 metadata page, all integers little-endian. Numeric locators keep
-version 1; tree page formats are unchanged.
+Geometry index locators use version 1, as numeric ones do, told apart by
+the column's type: version and width bytes, a u32 SRID and a u64 metadata
+page, all integers little-endian. Tree page formats are unchanged.
 
 An inner join on `ST_INTERSECTS(left, right) = 1` can probe one geometry
 index for each outer row. Both columns must enforce the same SRID, all

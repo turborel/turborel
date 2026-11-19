@@ -67,21 +67,45 @@ what the command-line client prints as a typed session begins.
 
 Each format is written with its version where it is kept, and checked when
 read. A version a release doesn't know is refused, never guessed at.
-During alpha a format may change without its version changing. From 1.0.0
+During alpha every version is 1, and a format may change without its
+version changing, so a database made by one build may not open with
+another. From 1.0.0
 a change that a reader of the version before cannot read takes a new
 version, and comes with a major release (see
 [Compatibility](#compatibility)).
 
 | Format | Version | Where it is written | Defined in |
 |---|---|---|---|
-| Block file (the log's segments) | 1 | the file's header | `disk/block/format.rs`, `FORMAT_VERSION` |
+| Block file (the log's segments, the catalog file, the replication journal) | 1 | the file's header | `disk/block/format.rs`, `FORMAT_VERSION` |
 | Page file (tables and indexes) | 1 | the file's header | `disk/pager/format.rs`, `FORMAT_VERSION` |
-| Catalog image | 1 | the image's first byte | `db/image.rs`, `IMAGE_FORMAT` |
+| Catalog and checkpoint image | 1 | the image's first byte | `db/image.rs`, `IMAGE_FORMAT` |
 | Log record | 1 | each record's first byte | `log/record.rs`, `RECORD_VERSION` |
 | Row store table | 1 | its meta page | `engine/rows/meta.rs`, `TABLE_FORMAT` |
 | Column store row group | 1 | its header's first byte | `engine/columns/group.rs`, `GROUP_FORMAT` |
 | B-link tree | 1 | its meta page | `engine/tree.rs`, `TREE_FORMAT` |
 | Hash index | 1 | its meta page | `engine/hash.rs`, `FORMAT` |
+| R-link tree, its meta page and nodes | 1 | each page | `engine/rtree.rs`, `META_VERSION`; `engine/rtree/node.rs`, `FORMAT` |
+| `rtree` index locator, numeric or geometry | 1 | the locator's first byte | `index/rtree.rs`, `LOCATOR_VERSION` |
+| `labels` and `reachability` index locators | 1 | the locator's first byte | `index/counted.rs` |
+| `adjacency` index locator | 1 | the locator's first byte | `index/adjacency/options.rs` |
+| `fulltext` index locator | 1 | the locator's first byte | `index/fulltext/options.rs` |
+| `json` index locator | 1 | the locator's first byte | `index/json/options.rs` |
+| Vector index locators (`diskann`, `hnsw`, `ivf`) | 1 | the locator's first byte | `index/vector/index.rs` |
+| `sparse` and hybrid index locators | 1 | the locator's first byte | `index/sparse/options.rs`, `index/vector/hybrid/options.rs` |
+| DiskANN meta page | 1 | its meta page | `engine/diskann/meta.rs` |
+| HNSW meta page and chain | 1 | each page | `engine/hnsw.rs`, `engine/hnsw/chain.rs` |
+| IVF meta page and lists | 1 | each page | `engine/ivf.rs`, `engine/ivf/lists.rs` |
+| Sparse index blocks and summaries | 1 | each block | `engine/sparse/block.rs`, `engine/sparse/keys.rs` |
+| VECTOR value and sparse vector image | 1 | the value's first byte | `vector.rs`, `VERSION`; `engine/sparse/vector.rs`, `IMAGE_VERSION` |
+| Vector parameters and quantizer codebooks | 1 | their first byte | `vector/params.rs`, `vector/quantizer.rs` |
+| JSON binary value | 1 | the value's first byte | `json/binary.rs` |
+| XML stored value | 1 | the value's first byte | `xml/stored.rs` |
+| FULLTEXT value and FT_PATTERN | 1 | the value's first byte | `fulltext/value.rs`, `fulltext/types/ft_pattern.rs` |
+| GEOMETRY payload, type descriptor and TIN element | 1 | the value's first byte | `geometry/model/payload.rs`, `geometry/reference.rs`, `geometry/tin_element.rs` |
+| Linear referencing values | 1 | the value's first byte | `spatial/lr/codec.rs` |
+| Encrypted page sealing | 1 | the sealed header | `aes/src/sealer.rs` |
+| Replication state in the journal | 1 | its first byte | `replication/src/vr/frame.rs`, `STATE_FORMAT` |
+| Replication connection | 1 | its hello, `TBREPL\0\x01` | `server/src/replication/net.rs` |
 | Native protocol | 1 | the client's Hello | `protocol/src/lib.rs`, `VERSION` |
 
 A server refuses a Hello of a protocol version it does not speak, saying
