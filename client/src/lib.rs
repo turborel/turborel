@@ -38,8 +38,6 @@ pub use turborel_protocol::split::Splitter;
 /// What a connection's results, failures, notices and server times are
 /// made of.
 pub use turborel_protocol::{Column, Completed, Diagnostics, Failure, Notice, Timing};
-#[cfg(feature = "tls")]
-pub mod fetch;
 /// The cryptography of extension packages (`turborel_protocol::packages`).
 #[cfg(feature = "tls")]
 pub use turborel_protocol::packages;

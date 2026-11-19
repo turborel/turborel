@@ -1,7 +1,7 @@
 //! \[DESIGN\] The settings of extensions from other parties, run as
 //! plug-in processes (RULES.md D170-D173): where a plug-in may be, how many
 //! of an extension's processes run, how long a call may take, how much a
-//! program may send and use, and how packages are trusted and found.
+//! program may send and use, and how packages are trusted.
 //!
 //! PLUGINS.DIRECTORIES, PLUGINS.TRUSTED_KEYS and PLUGINS.REQUIRE_SIGNED
 //! are the node's, given by the host as the database opens, and SQL may
@@ -32,10 +32,6 @@ pub const PLUGINS_MEMORY_BYTES: Key = Key(68);
 pub const PLUGINS_TRUSTED_KEYS: Key = Key(69);
 /// PLUGINS.REQUIRE_SIGNED.
 pub const PLUGINS_REQUIRE_SIGNED: Key = Key(70);
-/// PLUGINS.REGISTRIES.
-pub const PLUGINS_REGISTRIES: Key = Key(71);
-/// PLUGINS.PINS.
-pub const PLUGINS_PINS: Key = Key(72);
 
 /// The settings SQL may not set, the node's, which the host gives.
 pub const HOST_ONLY: [&str; 3] = ["PLUGINS.DIRECTORIES", "PLUGINS.TRUSTED_KEYS", "PLUGINS.REQUIRE_SIGNED"];
@@ -63,7 +59,7 @@ fn count(n: u64) -> crate::value::Value {
 }
 
 /// The settings of extensions, in the order of their keys.
-pub(super) fn definitions() -> [Definition; 11] {
+pub(super) fn definitions() -> [Definition; 9] {
     [
         node(
             ("PLUGINS.DIRECTORIES", LIST, text("")),
@@ -95,16 +91,11 @@ pub(super) fn definitions() -> [Definition; 11] {
         ),
         node(
             ("PLUGINS.TRUSTED_KEYS", LIST, text("")),
-            "The Ed25519 public keys whose signatures on a package or a registry's index are trusted, each 64 hexadecimal digits, separated by ';', or '@' and a file of one a line. The host sets it; SQL may not.",
+            "The Ed25519 public keys whose signatures on a package are trusted, each 64 hexadecimal digits, separated by ';', or '@' and a file of one a line. The host sets it; SQL may not.",
         ),
         node(
             ("PLUGINS.REQUIRE_SIGNED", Kind::Choice(SWITCHES), text(OFF)),
             "Whether a package must be signed by a key of PLUGINS.TRUSTED_KEYS to be installed or loaded, ON, or may be unsigned, OFF. The host sets it; SQL may not.",
         ),
-        database(
-            ("PLUGINS.REGISTRIES", LIST, text("")),
-            "The registries packages are found in, by priority, each an https URL of a directory holding an index, separated by ';'; empty, as no registry is run for all, for none.",
-        ),
-        database(("PLUGINS.PINS", LIST, text("")), "Packages each found only in one registry, written name=URL, separated by ';'."),
     ]
 }

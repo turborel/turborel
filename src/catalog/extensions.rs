@@ -25,8 +25,6 @@ pub struct ExtensionDesc {
     /// The SHA-256 digest of its package's manifest file, in hexadecimal,
     /// if it was installed from a package.
     pub digest: Option<String>,
-    /// The registry it came from, if one.
-    pub registry: Option<String>,
     /// Whether it was named by CREATE EXTENSION, not created only as
     /// another required it.
     pub explicit: bool,
@@ -55,7 +53,6 @@ pub(crate) fn put_extensions(out: &mut Vec<u8>, all: &[ExtensionDesc]) {
         out.put_str(&d.manifest);
         put_optional(out, d.signer.as_deref());
         put_optional(out, d.digest.as_deref());
-        put_optional(out, d.registry.as_deref());
         out.put_u8(u8::from(d.explicit));
     }
 }
@@ -75,7 +72,6 @@ pub(crate) fn extensions(r: &mut Reader<'_>) -> Result<Vec<ExtensionDesc>> {
                 manifest: r.str()?,
                 signer: optional(r)?,
                 digest: optional(r)?,
-                registry: optional(r)?,
                 explicit: r.u8()? != 0,
             })
         })
@@ -98,10 +94,9 @@ mod tests {
             manifest: "NAME GEO;".into(),
             signer: Some("ab".into()),
             digest: None,
-            registry: Some("https://r".into()),
             explicit: true,
         };
-        let two = ExtensionDesc { signer: None, registry: None, digest: Some("cd".into()), explicit: false, ..one.clone() };
+        let two = ExtensionDesc { signer: None, digest: Some("cd".into()), explicit: false, ..one.clone() };
         let mut out = Vec::new();
         put_extensions(&mut out, &[one.clone(), two.clone()]);
         let mut r = Reader::new(&out, "extensions");

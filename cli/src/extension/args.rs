@@ -7,91 +7,86 @@ use std::path::PathBuf;
 
 use turborel::plugin::limits::Directories;
 use turborel::plugin::package::Trust;
-use turborel::plugin::package::index::Registries;
 
 use super::Context;
 
 /// The usage text of `turborel extension`.
 pub const EXTENSION_USAGE: &str = "usage: turborel extension COMMAND [options]
 
-  search WORDS...        the packages of the registries whose names hold a word
-  info NAME              a package's versions, what each requires, and its signer
-  install [NAME[@RANGE] | FILE.tbpkg]...
-                         install packages and what they require; with none, install
-                         exactly what the lock names
-  upgrade [NAME]...      upgrade to the newest versions their ranges allow;
-                         --latest goes beyond the ranges
+Packages are .tbpkg files. turborel has no registry, so the operator copies them
+to the server's machine as they like.
+
+  install FILE|DIR...    install package files, or directories of them, choosing
+                         among them and the packages installed what each requires;
+                         with --lock, exactly what a lock names, from those files
   remove NAME            remove a package nothing installed requires
   autoremove             remove packages installed only as others' dependencies that
                          nothing requires now, and versions the lock does not name
   list                   the packages installed and locked
+  info NAME              a package's versions installed, what each requires, its
+                         signer and its license
+  license NAME           the text of a package's license
   verify                 check every file installed against its package's digests
                          and signature
-  outdated               the packages with newer versions, in their range and beyond
   why NAME               which packages required NAME
-  clean                  empty the cache of packages fetched
-  lock export FILE       write the lock to FILE
-  lock import FILE       install exactly what the lock FILE names, and keep it
-  pack DIR               build a package of the plug-in in DIR, signed with --key
-  publish DIR            pack DIR, signed with --key, into the registry directory
-                         --registry-dir, and sign its index again
-  keygen                 write a new signing key to --output and its public key to
-                         --output with .pub after
+  lock export FILE       write the lock, with each package's digest and license
+  new NAME               write a starter project of a plug-in on the plug-in SDK,
+                         into --dir (default NAME in lower case), serving an object
+                         of each --kind, scalar if none
+  pack [DIR]             build the package of the project in DIR (default .), signed
+                         with --key, written to --out
+  keygen                 write a new signing key to --out and its public key to
+                         --out with .pub after
 
 options:
   --set NAME=VALUE       a setting: PLUGINS.DIRECTORIES (the first is where packages
-                         are installed), PLUGINS.REGISTRIES, PLUGINS.PINS,
-                         PLUGINS.TRUSTED_KEYS, PLUGINS.REQUIRE_SIGNED (ON or OFF)
-  --cache DIR            where packages fetched are kept (default DIRECTORY/.cache)
-  --tls FILE             trust the registries' certificates of the PEM file FILE,
-                         instead of the platform's authorities
-  --latest               upgrade beyond the ranges asked for
-  --key FILE             the signing key of pack and publish
-  --output FILE          where pack and keygen write
-  --registry-dir DIR     the registry directory publish writes into
-  --expires-days DAYS    how long the index publish signs is trusted (default 30)
+                         are installed), PLUGINS.TRUSTED_KEYS, PLUGINS.REQUIRE_SIGNED
+                         (ON or OFF)
+  --lock FILE            the lock install reproduces
+  --kind KIND            a kind of object new serves: scalar, aggregate, table,
+                         procedure, metric, embedding, authenticator, target,
+                         partition, ranking, quantizer, collation, system-table,
+                         xquery, type, engine, index-method, credentials, diagnostics
+  --dir DIR              where new writes the project
+  --sdk DIR              a turborel source tree the project of new depends on by
+                         path; by default it depends on this release's crates
+  --key FILE             the signing key of pack
+  --out FILE             where pack and keygen write
 
 The environment variable TURBOREL_PLUGINS_DIRECTORIES gives PLUGINS.DIRECTORIES,
-and so on for each setting.";
+and so on for each setting. pack finds the program cargo built under
+CARGO_TARGET_DIR if it is set.";
 
 /// The settings `turborel extension` reads.
-const SETTINGS: [&str; 5] = ["PLUGINS.DIRECTORIES", "PLUGINS.REGISTRIES", "PLUGINS.PINS", "PLUGINS.TRUSTED_KEYS", "PLUGINS.REQUIRE_SIGNED"];
-/// The default of `--expires-days`.
-pub const DEFAULT_EXPIRES_DAYS: u64 = 30;
+const SETTINGS: [&str; 3] = ["PLUGINS.DIRECTORIES", "PLUGINS.TRUSTED_KEYS", "PLUGINS.REQUIRE_SIGNED"];
+/// The environment variable of where cargo builds.
+const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 
 /// A command of `turborel extension`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verb {
-    /// search.
-    Search,
-    /// info.
-    Info,
     /// install.
     Install,
-    /// upgrade.
-    Upgrade,
     /// remove.
     Remove,
     /// autoremove.
     Autoremove,
     /// list.
     List,
+    /// info.
+    Info,
+    /// license.
+    License,
     /// verify.
     Verify,
-    /// outdated.
-    Outdated,
     /// why.
     Why,
-    /// clean.
-    Clean,
     /// lock export.
     LockExport,
-    /// lock import.
-    LockImport,
+    /// new.
+    New,
     /// pack.
     Pack,
-    /// publish.
-    Publish,
     /// keygen.
     Keygen,
 }
@@ -105,41 +100,41 @@ pub struct Invocation {
     pub words: Vec<String>,
     /// What it works with.
     pub context: Context,
-    /// `--latest`.
-    pub latest: bool,
+    /// `--lock`.
+    pub lock: Option<PathBuf>,
+    /// Each `--kind`.
+    pub kinds: Vec<String>,
+    /// `--dir`.
+    pub dir: Option<PathBuf>,
+    /// `--sdk`.
+    pub sdk: Option<PathBuf>,
     /// `--key`.
     pub key: Option<PathBuf>,
-    /// `--output`.
-    pub output: Option<PathBuf>,
-    /// `--registry-dir`.
-    pub registry_dir: Option<PathBuf>,
-    /// `--expires-days`.
-    pub expires_days: u64,
+    /// `--out`.
+    pub out: Option<PathBuf>,
+    /// Where cargo builds, as CARGO_TARGET_DIR says, if it does.
+    pub target_dir: Option<PathBuf>,
 }
 
-/// The command `word` names, and the second word it takes, if any.
+/// The command `word` names, the second word taken if it has one.
 fn verb(word: &str, rest: &mut std::slice::Iter<'_, String>) -> Result<Verb, String> {
     let verbs = [
-        ("search", Verb::Search),
-        ("info", Verb::Info),
         ("install", Verb::Install),
-        ("upgrade", Verb::Upgrade),
         ("remove", Verb::Remove),
         ("autoremove", Verb::Autoremove),
         ("list", Verb::List),
+        ("info", Verb::Info),
+        ("license", Verb::License),
         ("verify", Verb::Verify),
-        ("outdated", Verb::Outdated),
         ("why", Verb::Why),
-        ("clean", Verb::Clean),
+        ("new", Verb::New),
         ("pack", Verb::Pack),
-        ("publish", Verb::Publish),
         ("keygen", Verb::Keygen),
     ];
     if word == "lock" {
         return match rest.next().map(String::as_str) {
             Some("export") => Ok(Verb::LockExport),
-            Some("import") => Ok(Verb::LockImport),
-            _ => Err("lock takes export or import".to_owned()),
+            Some(_) | None => Err("lock takes export; install --lock FILE installs what a lock names".to_owned()),
         };
     }
     verbs
@@ -147,14 +142,6 @@ fn verb(word: &str, rest: &mut std::slice::Iter<'_, String>) -> Result<Verb, Str
         .find(|(w, _)| *w == word)
         .map(|(_, v)| v)
         .ok_or_else(|| format!("{word} is no command of turborel extension; see turborel extension --help"))
-}
-
-/// The settings named so far.
-#[derive(Debug, Default)]
-struct Named {
-    settings: Vec<(String, String)>,
-    cache: Option<PathBuf>,
-    roots: Option<PathBuf>,
 }
 
 /// What `args`, the words after `extension`, ask for; `env` gives the
@@ -170,29 +157,30 @@ pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Op
         return Ok(None);
     }
     let verb = verb(first, &mut rest)?;
-    let mut named = Named::default();
+    let mut settings = Vec::new();
     let mut inv = Invocation {
         verb,
         words: Vec::new(),
-        context: empty_context(),
-        latest: false,
+        context: Context { directories: Directories::default(), trust: Trust::default(), cwd: PathBuf::from(".") },
+        lock: None,
+        kinds: Vec::new(),
+        dir: None,
+        sdk: None,
         key: None,
-        output: None,
-        registry_dir: None,
-        expires_days: DEFAULT_EXPIRES_DAYS,
+        out: None,
+        target_dir: env(CARGO_TARGET_DIR).map(PathBuf::from),
     };
     while let Some(arg) = rest.next() {
         let mut value = || rest.next().cloned().ok_or_else(|| format!("{arg} needs a value"));
         match arg.as_str() {
             "--help" => return Ok(None),
-            "--set" => named.settings.push(setting(&value()?)?),
-            "--cache" => named.cache = Some(PathBuf::from(value()?)),
-            "--tls" => named.roots = Some(PathBuf::from(value()?)),
-            "--latest" => inv.latest = true,
+            "--set" => settings.push(setting(&value()?)?),
+            "--lock" => inv.lock = Some(PathBuf::from(value()?)),
+            "--kind" => inv.kinds.push(value()?),
+            "--dir" => inv.dir = Some(PathBuf::from(value()?)),
+            "--sdk" => inv.sdk = Some(PathBuf::from(value()?)),
             "--key" => inv.key = Some(PathBuf::from(value()?)),
-            "--output" => inv.output = Some(PathBuf::from(value()?)),
-            "--registry-dir" => inv.registry_dir = Some(PathBuf::from(value()?)),
-            "--expires-days" => inv.expires_days = value()?.parse().map_err(|_| "--expires-days takes a number of days".to_owned())?,
+            "--out" => inv.out = Some(PathBuf::from(value()?)),
             other => {
                 if other.starts_with("--") {
                     return Err(format!("{other} is no option of turborel extension; see turborel extension --help"));
@@ -201,20 +189,9 @@ pub fn parse(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<Op
             }
         }
     }
-    inv.context = context(&named, env)?;
+    let cwd = inv.context.cwd.clone();
+    inv.context = context(&settings, env, cwd)?;
     Ok(Some(inv))
-}
-
-/// A context of no settings.
-fn empty_context() -> Context {
-    Context {
-        directories: Directories::default(),
-        registries: Registries::default(),
-        trust: Trust::default(),
-        cache: None,
-        roots: None,
-        allow_http: false,
-    }
 }
 
 /// `NAME=VALUE`, its name one of `SETTINGS`.
@@ -227,24 +204,19 @@ fn setting(text: &str) -> Result<(String, String), String> {
     Ok((name, value.trim().to_owned()))
 }
 
-/// The context `named` and `env` give, `--set` before the environment.
-fn context(named: &Named, env: &dyn Fn(&str) -> Option<String>) -> Result<Context, String> {
+/// The context `settings` and `env` give, `--set` before the environment,
+/// paths taken from `cwd`.
+fn context(settings: &[(String, String)], env: &dyn Fn(&str) -> Option<String>, cwd: PathBuf) -> Result<Context, String> {
     let get = |name: &str| -> String {
-        let set = named.settings.iter().rev().find(|(n, _)| n == name).map(|(_, v)| v.clone());
+        let set = settings.iter().rev().find(|(n, _)| n == name).map(|(_, v)| v.clone());
         set.or_else(|| env(&format!("TURBOREL_{}", name.replace('.', "_")))).unwrap_or_default()
     };
-    let [directories, registries, pins, keys, require] = SETTINGS;
+    let [directories, keys, require] = SETTINGS;
     let required = match get(require).to_ascii_uppercase().as_str() {
         "ON" | "TRUE" => true,
         "" | "OFF" | "FALSE" => false,
         other => return Err(format!("PLUGINS.REQUIRE_SIGNED is ON or OFF, not {other}")),
     };
-    Ok(Context {
-        directories: Directories::parse(&get(directories)),
-        registries: Registries::parse(&get(registries), &get(pins)).map_err(|e| e.to_string())?,
-        trust: Trust::parse(&get(keys), required).map_err(|e| e.to_string())?,
-        cache: named.cache.clone(),
-        roots: named.roots.clone(),
-        allow_http: false,
-    })
+    let trust = Trust::parse(&get(keys), required).map_err(|e| e.to_string())?;
+    Ok(Context { directories: Directories::parse(&get(directories)), trust, cwd })
 }

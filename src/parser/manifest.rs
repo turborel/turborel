@@ -10,6 +10,7 @@
 //!                    | REQUIRES <identifier> <character string literal>
 //!                    | TURBOREL <character string literal>
 //!                    | UPGRADE FROM <character string literal> SCRIPT <character string literal>
+//!                    | LICENSE [ FILE ] <character string literal>
 //!                    | <object declaration>
 //! <object declaration> ::=
 //!     FUNCTION <identifier> <parameters> RETURNS <data type> [ <determinism> ] [ BATCH <unsigned integer> ]
@@ -49,6 +50,8 @@ use crate::plugin::manifest::{Declared, Item, ObjectKind};
 const WORDS: [&str; 9] = ["NAME", "VERSION", "PROTOCOL", "EXECUTABLE", "FOR", "RETURNS", "BATCH", "DETERMINISTIC", "NOT"];
 /// The words of a package's items.
 const PACKAGE_WORDS: [&str; 5] = ["REQUIRES", "TURBOREL", "UPGRADE", "FROM", "SCRIPT"];
+/// The words of a package's license, LICENSE and LICENSE FILE.
+const LICENSE_WORDS: [&str; 2] = ["LICENSE", "FILE"];
 /// The word of RETURNS TABLE.
 const TABLE: &str = "TABLE";
 /// The words a declaration of each kind begins with, the second if it
@@ -129,8 +132,8 @@ impl Parser {
         }
     }
 
-    /// REQUIRES, TURBOREL or UPGRADE, the items of a package (design
-    /// document §13.2), if one is next.
+    /// REQUIRES, TURBOREL, LICENSE or UPGRADE, the items of a package
+    /// (design document §13.2, RULES.md D265), if one is next.
     fn package_item(&mut self) -> Option<Result<Item>> {
         let [requires, turborel, upgrade, from, script] = PACKAGE_WORDS;
         if self.accept_manifest_word(requires) {
@@ -138,6 +141,13 @@ impl Parser {
         }
         if self.accept_manifest_word(turborel) {
             return Some(self.character_string_literal("<version range>").map(Item::Turborel));
+        }
+        let [license, file] = LICENSE_WORDS;
+        if self.accept_manifest_word(license) {
+            if self.accept_manifest_word(file) {
+                return Some(self.character_string_literal("<license file>").map(Item::LicenseFile));
+            }
+            return Some(self.character_string_literal("<license expression>").map(Item::License));
         }
         if !self.accept_manifest_word(upgrade) {
             return None;
