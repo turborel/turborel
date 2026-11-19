@@ -4,9 +4,19 @@
 # installs that active toolchain.
 name: verify
 
+# A pull request is checked once, through pull_request, and main again once
+# it is merged. Pushing a branch with an open pull request starts no second
+# set of the same checks.
 on:
   push:
+    branches: [main]
   pull_request:
+
+# A newer push to a pull request replaces its checks still running. On main
+# every merge is checked to the end, since the nightly build waits on it.
+concurrency:
+  group: verify-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
