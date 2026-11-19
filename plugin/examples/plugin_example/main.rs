@@ -13,8 +13,9 @@
 //! working directory; the sink EVENTS appends what it is told to
 //! `events.log` there. The host objects (`host_small.rs`,
 //! `host_store.rs`, `host_net.rs`, and LOOP and KEPT in
-//! `replication.rs`, SHIPPED in `shipped.rs`) serve a host plug-in's
-//! manifest, which declares them alone.
+//! `replication.rs`, SHIPPED in `shipped.rs`, KEEP in `settings.rs`) serve
+//! a host plug-in's manifest, which declares them alone. SETTING_OF and RUN
+//! (`settings.rs`) read and write settings.
 
 mod files;
 mod functions;
@@ -25,6 +26,7 @@ mod indexes;
 mod later;
 mod replication;
 mod services;
+mod settings;
 mod sha256;
 mod shipped;
 
@@ -34,7 +36,7 @@ use turborel_plugin::{Plugin, serve};
 fn plugin() -> Plugin {
     let plugin = functions::with(Plugin::new("1.0.0"));
     let plugin = services::with(plugin);
-    let plugin = later::with(plugin);
+    let plugin = settings::with(later::with(plugin));
     let plugin = shipped::with(replication::with(host_net::with(host_store::with(host_small::with(plugin)))));
     plugin.engine("FILES", files::Files::default()).index_method("SORTED", indexes::Sorted).index_method("NEAR", indexes::Sorted)
 }

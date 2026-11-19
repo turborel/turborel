@@ -5,6 +5,7 @@
 //! one fails. Pages and checksums in `host_plugins/pages.rs`; the log,
 //! catalog, spill and file system in `host_plugins/stores.rs`.
 
+mod eviction;
 mod pages;
 mod stores;
 

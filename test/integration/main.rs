@@ -187,6 +187,7 @@ mod lob_types;
 mod log;
 mod log_durability;
 mod log_sync;
+mod manifest_settings;
 mod memory;
 mod merge;
 mod merge_concurrency;

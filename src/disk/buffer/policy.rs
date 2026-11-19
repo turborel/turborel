@@ -35,7 +35,7 @@ pub const DEFAULT_SAMPLE: u32 = 32;
 /// The weight of a page no range names: its score as computed.
 pub const NEUTRAL: u32 = 100;
 /// The pages evicted a report holds, the last.
-pub const EVICTED_KEPT: usize = 64;
+pub const EVICTED_KEPT: usize = 256;
 
 /// A range of pages of one file, and the weight the table gives them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

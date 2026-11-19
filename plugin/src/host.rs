@@ -4,10 +4,12 @@
 //! gives a trait of its own and serves it so, its payloads read and
 //! written as the database's `plugin::payload` gives them.
 
+mod eviction;
 mod files;
 mod small;
 mod stores;
 
+pub use eviction::{DEFAULT_SAMPLE, EvictionAdvisor, NEUTRAL, Policy, RANGES, Range, Report, Sampled, policies};
 pub use files::{Accept, Files, Mode};
 pub use small::{Checksum, Connections, Crypto, Job, Keys, PageEncoding, TimeSource};
 pub use stores::{CatalogKeeper, LogStore, Records, SpillStore};
