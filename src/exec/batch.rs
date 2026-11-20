@@ -25,6 +25,7 @@ mod judge;
 mod keyed;
 mod late;
 mod project;
+mod runtime;
 mod shaped;
 mod stream;
 
@@ -33,12 +34,12 @@ use std::sync::Arc;
 pub(crate) use count::storage_counted;
 use expr::Program;
 pub(super) use groups::morsel_groups;
-pub(super) use joined::rows_of;
+pub(super) use joined::{SharedTable, TABLE_ROW_BYTES, rows_of};
 pub(super) use keyed::{Keyed, KeyedBatches, kept, keyed, put_key, whole_width};
 pub(super) use late::{Deferred, resolved};
 use project::Place;
 pub(super) use project::{projectable, projected};
-pub(super) use shaped::{Shaped, filter_step, project_step, through};
+pub(super) use shaped::{Shaped, filter_step, probe_step, project_step, through};
 pub(super) use stream::Batches;
 
 use super::{Runner, eval, failed, warn};

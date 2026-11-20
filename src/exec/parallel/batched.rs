@@ -17,7 +17,7 @@ use std::sync::Arc;
 use super::pipeline::{Branch, Pipeline, Step};
 use crate::db::State;
 use crate::error::Result;
-use crate::exec::batch::{Batches, Deferred, Shaped, filter_step, project_step, resolved, rows_of, through};
+use crate::exec::batch::{Batches, Deferred, Shaped, filter_step, probe_step, project_step, resolved, rows_of, through};
 use crate::exec::broken;
 use crate::storage::Row;
 use crate::txn::TxId;
@@ -67,7 +67,12 @@ fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
                 shaped.push(made);
                 (layout, width) = (after, exprs.len());
             }
-            Step::Probe(_) => return None,
+            Step::Probe(table) => {
+                let left: Vec<usize> = table.keys().iter().map(|k| k.left).collect();
+                let made;
+                (made, layout, width) = probe_step(&table.shared, &left, (&layout, width))?;
+                shaped.push(made);
+            }
         }
     }
     Some((shaped, layout, width))

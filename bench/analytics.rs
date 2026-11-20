@@ -37,8 +37,10 @@
 //! summed, its zones settled and not, alone (`analytics/counts.rs`),
 //! to `decode`, the column store's decoding alone (`analytics/decode.rs`),
 //! to `grouping`, groupings on one thread alone (`analytics/grouping.rs`),
-//! or to `late`, a column store's selective queries, the columns they keep
-//! few rows of read late, alone (`analytics/late.rs`).
+//! to `joins`, hash joins and their runtime filters alone
+//! (`analytics/joins.rs`), or to `late`, a column store's selective
+//! queries, the columns they keep few rows of read late, alone
+//! (`analytics/late.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -64,6 +66,8 @@ mod graph;
 #[path = "analytics/grouping.rs"]
 mod grouping;
 mod harness;
+#[path = "analytics/joins.rs"]
+mod joins;
 #[path = "analytics/json.rs"]
 mod json;
 #[path = "analytics/late.rs"]
@@ -84,7 +88,7 @@ use turborel::db::{Database, Session};
 /// morsels, `distinct` for the DISTINCT set functions', `expressions`
 /// for expressions over vectors, `counts` for a
 /// row-store table's counts, `decode` for the column store's decoding,
-/// `grouping` for groupings on one thread, and
+/// `grouping` for groupings on one thread, `joins` for hash joins, and
 /// `late` for a column store's selective queries.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
@@ -135,6 +139,7 @@ fn main() {
     counts::workloads(&bench);
     decode::workloads(&bench);
     late::workloads(&bench);
+    joins::workloads(&bench);
 }
 
 /// Runs the workloads `only` names that need no table F, if it names
@@ -148,6 +153,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "decode" => decode::workloads,
         "parallel" => parallel::workloads,
         "late" => late::workloads,
+        "joins" => joins::workloads,
         _ => return false,
     };
     run(bench);

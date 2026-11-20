@@ -23,13 +23,14 @@ use super::joined;
 use super::judge::Judging;
 use super::late::{Deferred, resolved};
 use super::project::{computed, place_of};
+use super::runtime::{self, Told};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::Runner;
 use crate::logical::{Cond, Expr, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{Batch, Column, Sel};
+use crate::storage::{Batch, Column, Conjunct, Conjunction, Sel};
 use crate::txn::{TxId, checked};
 
 /// A batch, and the rows of it a filter kept, if one did.
@@ -233,6 +234,12 @@ pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> 
 ///
 /// As `open`.
 pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
+    if !deferred.told().is_empty() {
+        let (below, here) = runtime::taken(&plan, deferred.told(), db);
+        if !here.is_empty() {
+            return judged_above(plan, (db, tx), &deferred.clone().with_told(below), here);
+        }
+    }
     let made: Batched = match &plan {
         Plan::SeqScan { .. } => scan_batches,
         Plan::Filter { .. } => filter_batches,
@@ -272,6 +279,18 @@ fn none(_plan: Plan, _at: (&Arc<State>, TxId), _deferred: &Deferred) -> Result<B
     Err(crate::exec::broken("a plan that gives no batches"))
 }
 
+/// The batches of `plan`, a subtree that gives them, its scans told the
+/// filters `deferred` holds, each of `here` judged of the batches it
+/// gives (RULES.md D369).
+///
+/// # Errors
+///
+/// As `open`.
+fn judged_above(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred, here: Vec<Told>) -> Result<Batches> {
+    let columns = layout(&plan, db).map(|l| l.0).unwrap_or_default();
+    Ok(runtime::applied(batches_with(plan, (db, tx), deferred)?, here, &columns, db))
+}
+
 /// The batches of `scan`, a table's scan: in an order if it is in one.
 ///
 /// # Errors
@@ -279,7 +298,11 @@ fn none(_plan: Plan, _at: (&Arc<State>, TxId), _deferred: &Deferred) -> Result<B
 /// As `batches`.
 fn scan_batches(scan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::SeqScan { table, columns, order, .. } = &scan else { return Err(crate::exec::broken("a scan is not one")) };
-    if order.is_empty() { scan_of((table, columns, None), &deferred.late_of(columns), db, tx) } else { ordered_batches(scan, db, tx) }
+    if order.is_empty() {
+        scan_of((table, columns, None), (&deferred.late_of(columns), deferred.told()), db, tx)
+    } else {
+        ordered_batches(scan, db, tx)
+    }
 }
 
 /// The batches of `input` that `cond` keeps: of a scan's, its simple
@@ -291,11 +314,11 @@ fn scan_batches(scan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) 
 fn filter_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Filter { cond, input, .. } = plan else { return Err(crate::exec::broken("a filter is not one")) };
     let inner = *input;
-    let below = deferred.filtered(&cond);
+    let below = deferred.filtered(&cond).with_told(deferred.told().to_vec());
     let (inner, columns) = if let Plan::SeqScan { table, columns, order, .. } = &inner
         && order.is_empty()
     {
-        (scan_of((table, columns, Some(&cond)), &below.late_of(columns), db, tx)?, columns.clone())
+        (scan_of((table, columns, Some(&cond)), (&below.late_of(columns), below.told()), db, tx)?, columns.clone())
     } else {
         let columns = layout(&inner, db).map(|l| l.0).unwrap_or_default();
         (batches_with(inner, (db, tx), &below)?, columns)
@@ -313,6 +336,7 @@ fn projected_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Defer
     let input = *input;
     let columns = layout(&input, db).map(|l| l.0).unwrap_or_default();
     let below = if deferred.any() { deferred.projected(&exprs) } else { Deferred::default() };
+    let below = below.with_told(runtime::projected(&exprs, deferred.told()));
     let inner = batches_with(input, (db, tx), &below)?;
     if let Some(picks) = picked(&exprs, &columns) {
         return Ok(Box::new(inner.map(move |kept| kept.map(|(batch, rows)| (pick(batch, &picks), rows)))));
@@ -353,13 +377,25 @@ pub(super) fn pick(batch: Batch, picks: &[usize]) -> Batch {
     Batch { columns, rows: batch.rows }
 }
 
-/// A scan's batches (`scanned`), no row of them filtered yet, its columns
-/// of `late` given late (RULES.md D361).
-fn scan_of(scan: (&QualifiedName, &[usize], Option<&Cond>), late: &[usize], db: &Arc<State>, tx: TxId) -> Result<Batches> {
+/// A scan's batches (`scanned`), its columns of `late` given late
+/// (RULES.md D361), told the ranges of the runtime filters `told` as
+/// conjuncts, then judged by each of them, no row of them filtered by the
+/// condition yet (RULES.md D369).
+fn scan_of(
+    scan: (&QualifiedName, &[usize], Option<&Cond>),
+    (late, told): (&[usize], &[Told]),
+    db: &Arc<State>,
+    tx: TxId,
+) -> Result<Batches> {
     let storage = Arc::clone(db.storage_of(scan.0)?);
-    let pushed = scan.2.and_then(pushed_conjuncts);
+    let mut pushed = scan.2.and_then(pushed_conjuncts);
+    let ranges: Vec<Conjunct> = told.iter().flat_map(|t| t.filter.range_conjuncts(t.column)).collect();
+    if !ranges.is_empty() {
+        pushed.get_or_insert_with(|| Conjunction(Vec::new())).0.extend(ranges);
+    }
     let batches = storage.scan_batches(tx, scan.1, pushed.as_ref(), late);
-    Ok(Box::new(checked(batches, db.tx.stop_of(tx)).map(|b| b.map(|b| (b, None)))))
+    let batches: Batches = Box::new(checked(batches, db.tx.stop_of(tx)).map(|b| b.map(|b| (b, None))));
+    Ok(runtime::applied(batches, told.to_vec(), scan.1, db))
 }
 
 /// `inner`'s batches, each with the rows of those kept that `judging`

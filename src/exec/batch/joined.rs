@@ -29,6 +29,7 @@ mod outer;
 mod pairs;
 mod parted;
 mod probe;
+mod shared;
 
 use std::sync::Arc;
 
@@ -43,7 +44,9 @@ use crate::physical::Plan;
 use crate::storage::{Row, batches_of};
 use crate::txn::{TxId, checked};
 use crate::value::Value;
+pub(in crate::exec) use held::TABLE_ROW_BYTES;
 use probe::Kind;
+pub(in crate::exec) use shared::SharedTable;
 
 /// The operands of `plan`, if it is a join: a product, a hash join or an
 /// outer join.
@@ -155,6 +158,8 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: 
     if let Plan::HashJoin { left, right, keys, .. } = plan {
         let width = stream::layout(&left, db).map_or(0, |(_, width)| width);
         let below = if deferred.any() { deferred.left_of(&keys, width) } else { Deferred::default() };
+        // The filters told it reach it of its left's columns (`runtime::taken`).
+        let below = below.with_told(deferred.told().to_vec());
         return Ok(Box::new(checked(probe::probed((*left, *right, keys), (Kind::Inner, below), db, tx)?, stop)));
     }
     Ok(Box::new(checked(joined(plan, db, tx)?, stop)))

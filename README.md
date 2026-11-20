@@ -41,6 +41,8 @@ behind it, and each can be replaced or added to.
   filtered by pluggable kernels, and parallel morsels read by batch.
 - One table of groups with typed keys and columns of set functions'
   states, merged in parallel in waves, its hash keyed past long probes.
+- Hash joins probed a batch at a time in one tagged table, shared by
+  parallel morsels, telling the left's scan a range and Bloom filter.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH

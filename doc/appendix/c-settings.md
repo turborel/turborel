@@ -53,6 +53,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | EXECUTOR.MAX_ITERATIONS | 1000000 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
 | EXECUTOR.MORSEL_ROWS | 16384 | INTEGER FROM 1 TO 9223372036854775807 | at once | *session* |
 | EXECUTOR.PARALLEL_MIN_ROWS | 65536 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
+| EXECUTOR.RUNTIME_FILTERS | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.WORKERS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | FILES.MAX_OPEN | 1024 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | GQL.GRAPH | (empty) | TEXT OF AT MOST 257 CHARACTERS | at once | *session* |
@@ -158,6 +159,7 @@ Each in a sentence:
 - **EXECUTOR.MAX_ITERATIONS**: The most iterations a recursive query of WITH RECURSIVE takes, each evaluating its recursive elements once more, before it is refused (SQLCODE -918) as never reaching its fixpoint; 0 for no limit.
 - **EXECUTOR.MORSEL_ROWS**: The rows of a table, about, that a worker of a parallel query reads at a time, a morsel.
 - **EXECUTOR.PARALLEL_MIN_ROWS**: The least rows a table a query reads holds, as the planner estimates, for the query to read it on workers; a smaller one is read by the statement's own thread alone. 0 for any table.
+- **EXECUTOR.RUNTIME_FILTERS**: Whether a hash join, once it has built its right operand, tells the scan of its left operand the least and greatest of its keys and filters the rows read by a Bloom filter of them: ON; or not, OFF, as to compare the two. Its rows are the same either way.
 - **EXECUTOR.WORKERS**: The executor's workers, threads shared by every statement of the database that runs in parallel; 0, the default, for as many as the system says it runs at once.
 - **FILES.MAX_OPEN**: The most files of the database open at once, 0 for no limit: past it, the one used least recently is closed (one with writes not yet synced last, and synced first), and opened again as it is next used.
 - **GQL.GRAPH**: The property graph a GQL statement reads when it names none, as SESSION SET GRAPH sets it, named in the default schema if unqualified; empty for none.

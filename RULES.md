@@ -358,6 +358,8 @@ verification approach DO-178C expects (§8).
 | D363 | CASE evaluates each branch over the rows its WHEN keeps, and a function may give a body over vectors |
 | D366 | A column judged to keep few rows of a run is gathered at them from its decoded vector, and a morsel carries late columns as the serial scan does |
 | D367 | A row made of a batch makes each of its cells a value alone, not its columns' every value |
+| D368 | A hash join's right operand is put in one table of slots holding their rows side by side, tag bits in each slot's word, and probed a batch at a time |
+| D369 | A hash join tells its left operand a range and a Bloom filter of its built keys, judged at the scan, and a table of many equal hashes hashes its texts again by a keyed hash |
 | D370 | One estimator gives every plan node its rows, from the base tables under its columns |
 | D371 | The optimizer tries the rules again at a node a rule rewrote, within a budget of rewrites |
 | D372 | A grouping's rows are its groups, by Cardenas' formula over its columns' distinct values |
@@ -10025,6 +10027,86 @@ texts or datetimes makes a value of the row read alone. Reading a
 column's values instead made every row's value of the vector the first
 time any was read, which a projection of few kept rows paid for every
 row of the batch. The values are the same either way.
+
+#### D368. A hash join's right operand is put in one table of slots holding their rows side by side, tag bits in each slot's word, and probed a batch at a time
+
+A hash join of streams holds its right operand as one batch (D31) and
+puts it in a join's table (`exec/table/join.rs`). The table hashes a
+key a vector at a time (`join/keys.rs`), as the key's bucket says it
+matches (`value::key_bucket`). An exact number hashes by the bits of
+its nearest approximate number, so 2, 2.0 and 2.000 hash alike in a
+vector of integers of any scale, of approximate numbers or of values.
+A CHAR hashes less its trailing spaces. A null is a miss, and no row
+matches it, but of a key on which a null matches a null, where it
+hashes as one value.
+
+The table has a power of two slots, at least two a row, a slot the high
+bits of a hash. Each slot's word in a directory holds where its rows end
+and, above that, 16 tag bits, one set by four low bits of each of its
+rows' hashes. A probe whose bit is not set is turned away by that word
+alone. A slot's rows and their hashes lie side by side in two vectors,
+not chained one to the next, so a probe reads them in order. The rows
+of a slot are in the order they were built. A slot of more than eight
+rows is sorted by hash, stably, and searched, so a key of many rows
+costs a probe of another key in that slot no walk of them, and the rows
+of one key still come in build order. A probe compares a candidate's
+keys in place of the vectors that hold them (`join/equal.rs`), integers
+of two scales rescaled, and of any other pair of vectors as values
+(`value::key_equal`).
+
+Each batch of the left operand is hashed once and probes the table, its
+pairs gathered into batches of each side's vectors as they are, in the
+order of the left's rows and then of the build. An outer join's held
+right is probed by the hashes of each left batch too.
+
+A pipeline run in parallel (D292) builds one such table of its built
+operand, of the batches its morsels give in morsel order, put together
+by the statement's thread, which no thread writes again
+(`batch/joined/shared.rs`). Its morsels read by batch probe it a batch
+at a time, a step of their batches like a filter or a projection
+(`batch/shaped.rs`), so a pipeline with a hash join is read by batch
+as one without. A pipeline read by rows probes it a row at a time.
+
+A right operand past its work area is partitioned as before (D38). Each
+pair of partitions held in memory puts its right in a table and its
+left's rows probe it a batch at a time (`batch/joined/parted.rs`). A
+partition too large even partitioned again is built in a table of the
+spill area and probed a row at a time.
+
+#### D369. A hash join tells its left operand a range and a Bloom filter of its built keys, judged at the scan, and a table of many equal hashes hashes its texts again by a keyed hash
+
+An inner hash join of a held right operand makes runtime filters of its
+built keys (`exec/table/runtime.rs`). A key of integers of one scale,
+none null, gives the least and greatest. Any key of up to 4M built rows
+gives a blocked Bloom filter of 8 bits a row, each key setting 4 bits of
+one 512-bit block (`kernels/portable/bloom.rs`), so a probe of it reads
+one block. Its hash is the table's.
+
+The join tells the filters to its left operand's stream, each of the
+left column of its key (`batch/runtime.rs`). A filter whose condition
+cannot raise and reads no subquery, a projection that moves the column
+as it is, and the left operand of an inner hash join take them down
+toward the scan. A scan in no order adds the range to the conjuncts it
+judges, so a column store's zone maps and its kernels skip what lies
+outside it (D360), and judges the Bloom filter of each batch it gives
+before any column given late is decoded (D361). Any other operator
+judges the filters of the batches it gives. A filter dropping a row
+below an operator that could raise of it would hide the error the row
+path raises (D15), so no filter goes below one.
+
+A filter that keeps nearly every row costs more than it saves. Each
+counts the rows it judges and keeps of its first 16 batches, and stops
+judging if they kept more than nine in ten. The setting
+EXECUTOR.RUNTIME_FILTERS (ON by default) turns the filters off, for a
+session.
+
+A join's table counts the candidates of a probe's hash whose keys are
+not equal. Past 1024, as rows chosen to share a hash would make, it
+hashes its texts and other bytes again by SipHash keyed by the
+database's seed, as a table of groups does (D357), and is built again.
+A number, datetime or truth value hashes by a bijection of its bits,
+so two such keys of one hash are equal. A table a parallel pipeline
+shares, which no probe may build again, hashes texts so from the first.
 
 #### D370. One estimator gives every plan node its rows, from the base tables under its columns
 

@@ -17,26 +17,30 @@
 //! the column is decoded, later than the scan would have, which only an
 //! error of the stored data, never one of the data's values, can be.
 
+use super::runtime::Told;
 use super::stream::Batches;
 use crate::logical::{Cond, Expr, cond_columns, expr_columns};
 use crate::physical::JoinKey;
 
 /// \[DESIGN\] (RULES.md D361) What the operators above a subtree of a
 /// stream leave of its rows' columns unread before the stream is read
-/// whole, and whether one of them drops rows.
+/// whole, and whether one of them drops rows; and the runtime filters a
+/// hash join above tells it (RULES.md D369, `runtime.rs`).
 #[derive(Debug, Clone, Default)]
 pub(in crate::exec) struct Deferred {
     /// Whether an operator above drops rows.
     reduced: bool,
     /// The columns of the subtree's rows none above reads, ascending.
     unread: Vec<usize>,
+    /// The runtime filters told it, each of a column of its rows.
+    told: Vec<Told>,
 }
 
 impl Deferred {
     /// Of a stream read whole, its rows `width` columns wide: no column read
     /// yet, no row dropped.
     pub(in crate::exec) fn all(width: usize) -> Deferred {
-        Deferred { reduced: false, unread: (0..width).collect() }
+        Deferred { reduced: false, unread: (0..width).collect(), told: Vec::new() }
     }
 
     /// Whether it leaves any column unread.
@@ -53,7 +57,7 @@ impl Deferred {
         }
         let mut read = Vec::new();
         cond_columns(cond, &mut read);
-        Deferred { reduced: true, unread: without(&self.unread, &read) }
+        Deferred { reduced: true, unread: without(&self.unread, &read), told: Vec::new() }
     }
 
     /// Of a projection's input, `exprs` its expressions: a column one of
@@ -74,7 +78,7 @@ impl Deferred {
         }
         unread.sort_unstable();
         unread.dedup();
-        Deferred { reduced: self.reduced, unread: without(&unread, &read) }
+        Deferred { reduced: self.reduced, unread: without(&unread, &read), told: Vec::new() }
     }
 
     /// Of an inner hash join's left operand, `width` columns wide, `keys`
@@ -83,7 +87,17 @@ impl Deferred {
     pub(super) fn left_of(&self, keys: &[JoinKey], width: usize) -> Deferred {
         let read: Vec<usize> = keys.iter().map(|k| k.left).collect();
         let unread: Vec<usize> = self.unread.iter().copied().filter(|&c| c < width).collect();
-        Deferred { reduced: true, unread: without(&unread, &read) }
+        Deferred { reduced: true, unread: without(&unread, &read), told: Vec::new() }
+    }
+
+    /// The runtime filters told it.
+    pub(in crate::exec) fn told(&self) -> &[Told] {
+        &self.told
+    }
+
+    /// It, told `told` in place of the filters it was.
+    pub(in crate::exec) fn with_told(self, told: Vec<Told>) -> Deferred {
+        Deferred { told, ..self }
     }
 
     /// The columns of a scan of `columns` it gives late: those left unread,

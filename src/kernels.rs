@@ -81,6 +81,14 @@ pub trait Kernels: Send + Sync {
         portable::hash::hash_i64(values, seed, sel, out);
     }
 
+    /// Appends to `out` the place of each of `hashes` a blocked Bloom
+    /// filter of `words` may hold, in order (RULES.md D369): its block of
+    /// 8 words picked by a hash's high bits, four of its bits by its low
+    /// ones (`portable::bloom`).
+    fn bloom_probe(&self, words: &[u64], hashes: &[u64], out: &mut Vec<u32>) {
+        portable::bloom::bloom_probe(words, hashes, out);
+    }
+
     /// Appends to `out` the values from the `from`th to the `to`th of
     /// `bits` bits packed in `bytes`, as a chunk's frame of reference
     /// keeps them (RULES.md D352), each plus `least`, wrapping: none if
