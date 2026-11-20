@@ -344,3 +344,5 @@ fn licenses_are_read_packed_and_shown() {
     }
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+mod installed;

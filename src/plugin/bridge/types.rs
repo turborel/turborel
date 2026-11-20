@@ -180,3 +180,6 @@ impl PluginType {
 }
 
 mod kind;
+
+#[cfg(test)]
+mod tests;

@@ -220,3 +220,6 @@ fn set_types(inner: &[Vec<Typed>]) -> Result<()> {
     let clash = left.iter().zip(&right).any(|(a, b)| a.as_ref().zip(b.as_ref()).is_some_and(|(a, b)| !a.comparable(b)));
     if clash { Err(refused("the operands of a set operator are of types not comparable")) } else { Ok(()) }
 }
+
+#[cfg(test)]
+pub(super) mod tests;

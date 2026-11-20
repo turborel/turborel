@@ -221,6 +221,8 @@ mod plugin_archive;
 mod plugin_failures;
 mod plugin_files;
 mod plugin_kinds;
+mod plugin_partitions;
+mod plugin_plan_forms;
 mod plugin_planner;
 mod plugin_settings;
 mod plugins;
