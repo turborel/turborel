@@ -84,6 +84,7 @@ pub fn contract(kernels: &dyn Kernels) {
         aggregates(kernels, len);
     }
     unpacking(kernels);
+    normalizing(kernels);
 }
 
 /// Checks the selections of `kernels` of vectors of `len`.
@@ -181,4 +182,40 @@ fn unpacking(kernels: &dyn Kernels) {
         }
     }
     assert_eq!(kernels.unpack(&[0; 1024], (65, 0), (0, 64), &mut Vec::new()), None, "wider than 64 bits");
+}
+
+/// Checks the normal keys `kernels` writes of integers against each
+/// value's distance above the base written byte by byte, of every width,
+/// inverted and not, beside other fields left as they were; none of a
+/// value below the base or past the width, or a field past a key.
+fn normalizing(kernels: &dyn Kernels) {
+    let values: Vec<i64> = vec![i64::MIN, -300, -1, 0, 1, 255, 256, 65_535, 1 << 40, i64::MAX];
+    let rows: Vec<u32> = vec![9, 0, 3, 3, 7, 1];
+    for bytes in 1..=8_usize {
+        for invert in [false, true] {
+            let (width, at) = (bytes + 3, 2);
+            let base = i64::MIN;
+            let mut keys = vec![0xAB_u8; rows.len() * width];
+            let fits = rows.iter().all(|&r| bytes == 8 || values[r as usize].wrapping_sub(base).cast_unsigned() >> (bytes * 8) == 0);
+            let made = kernels.normalize_i64((&values, &rows), (base, bytes, invert), (width, at), &mut keys);
+            if !fits {
+                assert_eq!(made, None, "{bytes} bytes");
+                continue;
+            }
+            assert_eq!(made, Some(()), "{bytes} bytes");
+            for (key, &r) in keys.chunks(width).zip(&rows) {
+                let be = values[r as usize].wrapping_sub(base).cast_unsigned().to_be_bytes();
+                let want: Vec<u8> = be[8 - bytes..].iter().map(|b| if invert { !b } else { *b }).collect();
+                assert_eq!(&key[at..at + bytes], &want[..], "{bytes} bytes, inverted {invert}");
+                assert!(key[..at].iter().chain(&key[at + bytes..]).all(|&b| b == 0xAB), "other fields kept");
+            }
+        }
+    }
+    let mut keys = vec![0_u8; 8];
+    assert_eq!(kernels.normalize_i64((&[5, -1], &[1]), (0, 2, false), (8, 0), &mut keys), None, "below the base");
+    assert_eq!(kernels.normalize_i64((&[70_000], &[0]), (0, 2, false), (8, 0), &mut keys), None, "past the width");
+    assert_eq!(kernels.normalize_i64((&[1], &[0]), (0, 4, false), (8, 5), &mut keys), None, "past the key");
+    assert_eq!(kernels.normalize_i64((&[1], &[4]), (0, 4, false), (8, 0), &mut keys), None, "past the end");
+    assert_eq!(kernels.normalize_i64((&[0, 300], &[0, 1]), (0, 2, false), (2, 0), &mut keys[..4]), Some(()));
+    assert_eq!(&keys[..4], &[0, 0, 1, 44], "two keys of two bytes");
 }

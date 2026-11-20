@@ -25,7 +25,7 @@ fn counts_as_scanned(table: &Arc<RowTable>, readers: &[TxId]) {
 /// Has `table` sum up and settle its zones, of rows a reader at or after
 /// `horizon` may read, until none is due.
 fn settled(table: &RowTable, horizon: u64) {
-    while table.maintain(horizon).unwrap() {}
+    while table.maintain(horizon, true).unwrap() {}
 }
 
 /// Verifies: [DESIGN] RULES.md D351, D29: the count is the scan's for

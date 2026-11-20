@@ -11,11 +11,13 @@ pub(super) use call::out_column;
 mod call;
 mod define;
 mod dependents;
+mod kept;
 mod privileges;
 mod program;
 mod ptf;
 
 pub(super) use define::{Home, of_schema_routine};
+pub(super) use kept::KeptRoutines;
 pub(super) use program::atomic;
 pub(super) use program::{Hosted, hosted_rows};
 pub(crate) use program::{run_component, run_unhosted};

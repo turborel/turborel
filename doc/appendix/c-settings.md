@@ -74,6 +74,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | OPTIMIZER.CONSTANT_FOLDING | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.DISTINCT_AGGREGATES | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.ELIMINATE_JOINS | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.EXTREMES_BY_ORDER | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.FACTOR_DISJUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.HOIST_RAISING_EXPRESSIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.INLINE_FUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
@@ -185,6 +186,7 @@ Each in a sentence:
 - **OPTIMIZER.CONSTANT_FOLDING**: Whether the optimizer's rule constant_folding rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.DISTINCT_AGGREGATES**: Whether the optimizer's rule distinct_aggregates rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.ELIMINATE_JOINS**: Whether the optimizer's rule eliminate_joins rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.EXTREMES_BY_ORDER**: Whether the optimizer's rule extremes_by_order rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.FACTOR_DISJUNCTIONS**: Whether the optimizer's rule factor_disjunctions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.HOIST_RAISING_EXPRESSIONS**: Whether the optimizer's rule hoist_raising_expressions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.INLINE_FUNCTIONS**: Whether the optimizer's rule inline_functions rewrites plans: ON; or OFF, as to compare plans made without it.

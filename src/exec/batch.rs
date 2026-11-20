@@ -35,7 +35,7 @@ pub(crate) use count::storage_counted;
 use expr::Program;
 pub(super) use groups::morsel_groups;
 pub(super) use joined::rows_of;
-pub(super) use keyed::{Keyed, kept, put_key, whole_width};
+pub(super) use keyed::{Keyed, kept, put_key, topped, whole_width};
 pub(super) use late::{Deferred, resolved};
 use project::Place;
 pub(super) use project::{projectable, projected};

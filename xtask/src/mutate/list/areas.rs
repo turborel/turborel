@@ -23,9 +23,13 @@ mod insert_values;
 mod join_estimates;
 mod joins;
 mod late;
+mod oltp;
 mod parallel;
 mod rewrites;
+mod sorts;
 mod statistics;
+mod tpcc;
+mod txn_layer;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
 // modules.
 mod unnesting;
@@ -34,7 +38,7 @@ mod uuid;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 13] {
+pub fn core() -> [&'static [Mutation]; 16] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -49,6 +53,9 @@ pub fn core() -> [&'static [Mutation]; 13] {
         &super::regex::REGEX,
         &super::SHADOW,
         &super::backup::BACKUP,
+        &oltp::OLTP,
+        &tpcc::TPCC,
+        &txn_layer::TXN_LAYER,
     ]
 }
 
@@ -89,7 +96,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 42] {
+fn second() -> [&'static [Mutation]; 43] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -129,6 +136,7 @@ fn second() -> [&'static [Mutation]; 42] {
         &unnesting::UNNESTING,
         &insert_values::INSERT_VALUES,
         &expr::EXPR,
+        &sorts::SORTS,
         &estimates::ESTIMATES,
         &statistics::STATISTICS,
         &join_estimates::JOIN_ESTIMATES,

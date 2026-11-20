@@ -27,6 +27,8 @@
 mod exchange;
 mod inputs;
 
+use std::sync::OnceLock;
+
 use super::Plan;
 use crate::db::State;
 use crate::index::Probe;
@@ -64,10 +66,15 @@ struct Asked<'a> {
 /// The threads the system runs at once, as EXECUTOR.WORKERS of 0 asks.
 pub(crate) fn workers_of(db: &State) -> usize {
     match db.settings.count(EXECUTOR_WORKERS) {
-        0 => std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
+        0 => *SYSTEM_THREADS.get_or_init(|| std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)),
         n => n,
     }
 }
+
+/// \[DESIGN\] The threads the system runs at once, asked of it once
+/// (RULES.md D405): the asking reads files of the system's at each call,
+/// which a statement planned would pay each time.
+static SYSTEM_THREADS: OnceLock<usize> = OnceLock::new();
 
 impl<'a> Asked<'a> {
     /// What `db`'s settings ask.

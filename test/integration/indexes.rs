@@ -43,7 +43,7 @@ fn earlier_writers_run_again() {
     reader.commit().unwrap();
     assert_eq!(count(&reader, "SELECT ID FROM T WHERE F = 9"), 1);
     settle(&db);
-    assert_eq!(db.index_entries("T_F").unwrap(), 2, "rows 1 and 2; row 3's F is null");
+    assert_eq!(db.index_entries("T_F").unwrap(), 3, "rows 1 and 2, and row 3 of a null F (D403)");
 }
 
 /// Verifies: [EXTENSION] the build counts the versions that garbage
@@ -98,8 +98,8 @@ fn an_index_is_built_while_its_table_is_written() {
     }
     settle(&db);
     let s = db.session("APP");
-    // Rows of no F, which the index holds no entry of, so a value of F is
-    // few enough to probe for.
+    // Rows of no F, which the index holds entries of too (D403), and a
+    // value of F still few enough to probe for.
     let values: Vec<String> = (5000..7000).map(|i: i64| format!("({i}, 'Z', 0, NULL)")).collect();
     s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
     s.commit().unwrap();
@@ -110,8 +110,7 @@ fn an_index_is_built_while_its_table_is_written() {
         let by_scan = count(&s, &format!("SELECT ID FROM T WHERE F + 0 = {f}"));
         assert_eq!(by_index, by_scan, "F = {f}");
     }
-    let with_f = count(&s, "SELECT ID FROM T WHERE F IS NOT NULL");
-    assert_eq!(db.index_entries("T_F").unwrap(), with_f, "one entry per row");
+    assert_eq!(db.index_entries("T_F").unwrap(), count(&s, "SELECT ID FROM T"), "one entry per row");
 }
 
 /// Verifies: [EXTENSION] RULES.md D34, `Database::drop_index`: a dropped

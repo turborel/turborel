@@ -91,6 +91,7 @@ impl Session {
         if let Some(opened) = timed.as_mut() {
             opened.paused();
         }
+        self.replied(&tx, Ok(()))?;
         Ok(Cursor { columns, rows, db: self.db.clone(), stop: Arc::clone(&self.stop), timed, zone: self.now.get().zone })
     }
 }

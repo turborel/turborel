@@ -70,6 +70,23 @@ impl Session {
         Ok(tx)
     }
 
+    /// \[DESIGN\] `result`, told once every commit what the statement saw
+    /// past its snapshot rests on is durable (RULES.md D441): of `tx`, its
+    /// transaction, and of the one active now, should an SQL control
+    /// statement have begun another.
+    ///
+    /// # Errors
+    ///
+    /// `result`'s; SQLCODE -922 in its place if a failed sync of the log
+    /// left such a commit in doubt.
+    pub(super) fn replied<T>(&self, tx: &Txn, result: Result<T>) -> Result<T> {
+        let result = tx.replied(result);
+        match self.current_transaction() {
+            Some(now) => now.replied(result),
+            None => result,
+        }
+    }
+
     /// [ISO/IEC 9075-2:2023 §17.7, §17.8] COMMIT if `commit`, else
     /// ROLLBACK, run by an SQL control statement run directly: its
     /// transaction ended within it, every cursor of it not holdable closed

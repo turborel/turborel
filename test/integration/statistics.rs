@@ -209,10 +209,10 @@ fn tables_opened_have_statistics() {
     let meta = t.meta();
     drop(t);
     let again = RowTable::open(&files, meta, &types, TableOptions::default()).unwrap();
-    while again.maintain(u64::MAX).unwrap() {}
+    while again.maintain(u64::MAX, true).unwrap() {}
     assert!(again.statistics().is_none(), "not gathered until asked for, and asking makes no pass");
     assert!(again.maintenance_due(), "but makes them due");
-    while again.maintain(u64::MAX).unwrap() {}
+    while again.maintain(u64::MAX, true).unwrap() {}
     assert!(!again.maintenance_due());
     let stats = again.statistics().unwrap();
     assert_eq!((stats.rows(), stats.nulls(0)), (Some(30.0), Some(0.0)));
