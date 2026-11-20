@@ -155,8 +155,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     ];
     // The transport's, parallel queries', the client's step with its server
     // and the decode kernels' last, as `last` holds no more.
-    let after: [&'static [Mutation]; 4] =
-        [&super::transport::TRANSPORT, &parallel::PARALLEL, &client_sync::CLIENT_SYNC, &decode::DECODE];
+    let after: [&'static [Mutation]; 4] = [&super::transport::TRANSPORT, &parallel::PARALLEL, &client_sync::CLIENT_SYNC, &decode::DECODE];
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
 }
 
