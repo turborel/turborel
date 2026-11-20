@@ -36,7 +36,7 @@ fn maker(table: &RowTable, id: RowId) -> Maker {
     Version::parse(&table.tree.get(&key(id)).unwrap().unwrap()).unwrap().maker
 }
 
-/// Verifies: [DESIGN] RULES.md D29, D418: a commit is seen by snapshots at
+/// Verifies: [DESIGN] RULES.md D29, D440: a commit is seen by snapshots at
 /// or after its timestamp at once, through the status table, its version
 /// still naming the transaction; settling stamps it; a rolled-back
 /// transaction's version is never seen.
@@ -62,7 +62,7 @@ fn a_commit_is_seen_before_its_stamp() {
     assert_eq!(value(&table, 11, id).as_deref(), Some("new  "));
 }
 
-/// Verifies: [DESIGN] RULES.md D418: a writer replacing a version committed
+/// Verifies: [DESIGN] RULES.md D440: a writer replacing a version committed
 /// but not stamped appends it stamped, so a reader going back to it reads
 /// it as committed once its transaction's status is forgotten.
 #[test]

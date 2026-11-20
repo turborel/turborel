@@ -192,7 +192,7 @@ impl State {
             tries = tries.saturating_add(1);
             let waits = e.code == Code::Conflict && tx.lock_wait == LockWait::Wait && tries < MOST_CONFLICTS;
             if !waits || self.capabilities(table)?.concurrency == Concurrency::Coordinator {
-                return Err(e);
+                return Err(self.refused(tx, table, id, e));
             }
             let newest = self.storage_of(table)?.newest(tx.id, id)?;
             if let Some(writer) = newest.writer {
@@ -206,6 +206,9 @@ impl State {
                 continue;
             }
             // [§4.28] Committed since its one snapshot: what it read changed.
+            // [DESIGN] RULES.md D441: whether rechecked or refused, what it
+            // tells rests on that commit.
+            tx.depend(newest.stamp);
             let Some(check) = recheck.as_mut().filter(|_| !tx.one_snapshot()) else { return Err(e) };
             let Some(row) = newest.row else { return Ok(None) };
             write = match check(&row)? {
@@ -215,6 +218,17 @@ impl State {
             };
             seen = Some((newest.stamp, row));
         }
+    }
+
+    /// `e`, the refusal of a write of row `id` of `table`: a conflict is
+    /// told once the commit it met, if one did, is durable (RULES.md D441).
+    fn refused(&self, tx: &Txn, table: &QualifiedName, id: RowId, e: SqlError) -> SqlError {
+        if e.code == Code::Conflict
+            && let Ok(newest) = self.storage_of(table).and_then(|storage| storage.newest(tx.id, id))
+        {
+            tx.depend(newest.stamp);
+        }
+        e
     }
 
     /// `write` of row `id` once, over the version `seen` if given, with

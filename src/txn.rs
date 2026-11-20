@@ -86,6 +86,7 @@ use crate::sync::{Gate, lock, lock_builtin};
 mod access;
 mod capabilities;
 mod clock;
+mod durable;
 mod end;
 mod followed;
 mod lobs;
@@ -101,6 +102,7 @@ mod write;
 
 pub use capabilities::{Concurrency, Persistence, Policy, TxCapabilities, Undo};
 use clock::Clock;
+pub(crate) use durable::Committing;
 pub(crate) use end::remove_entries;
 pub(crate) use followed::{Followed, FollowedRecords, Following};
 pub use locks::Damage;
@@ -354,20 +356,6 @@ impl Default for Transactions {
     }
 }
 
-/// A commit under way, holding its timestamp: until it is dropped, no
-/// snapshot counts commits at or after its timestamp as ended.
-pub(crate) struct Committing<'a> {
-    shared: &'a Transactions,
-    /// Its commit timestamp.
-    pub(crate) at: Timestamp,
-}
-
-impl Drop for Committing<'_> {
-    fn drop(&mut self) {
-        self.shared.clock.end_commit(self.at);
-    }
-}
-
 impl Transactions {
     /// [X3.135-1986 §7.3 GR2a] a transaction is effectively initiated. Its id
     /// is new; 2^64 ids cannot run out in practice. Its snapshot is the
@@ -392,19 +380,8 @@ impl Transactions {
             running: Arc::new(Mutex::new(None)),
             stop,
             stamp: OnceLock::new(),
+            depends: AtomicU64::new(0),
         }
-    }
-
-    /// A commit timestamp, later than every one given out before, held
-    /// until the commit ends.
-    fn commit_timestamp(&self) -> Committing<'_> {
-        Committing { shared: self, at: self.clock.take_commit() }
-    }
-
-    /// Returns once every commit up to `at`, one ended, has ended too, so
-    /// a snapshot taken after counts it (`Clock::wait_stable`).
-    fn wait_stable(&self, at: Timestamp) {
-        self.clock.wait_stable(at);
     }
 
     /// The oldest snapshot any open transaction reads at, or, with none
@@ -497,6 +474,9 @@ pub(crate) struct Txn {
     /// [ISO/IEC 9075-2:2023 §4.44] Its transaction timestamp, in
     /// microseconds of UTC, once its first change set it (`Txn::stamp`).
     stamp: OnceLock<i64>,
+    /// The latest commit not yet durable it read past its snapshot
+    /// (`txn/durable.rs`), 0 for none.
+    depends: AtomicU64,
 }
 
 impl Txn {

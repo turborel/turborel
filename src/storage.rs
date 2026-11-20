@@ -439,7 +439,7 @@ pub trait TableStorage: Send + Sync {
     /// with no `validate` before: it read one committed state.
     fn commit(&self, _tx: TxId, _at: Timestamp) {}
     /// \[DESIGN\] After `commit`, the locks of `tx` released, and before a
-    /// checkpoint: writes in place what it made committed (RULES.md D418).
+    /// checkpoint: writes in place what it made committed (RULES.md D440).
     fn settle(&self, _tx: TxId) {}
     /// The log position before which every change of this table is
     /// durable in the engine itself, as of its last checkpoint: recovery

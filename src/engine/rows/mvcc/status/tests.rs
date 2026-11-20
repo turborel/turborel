@@ -1,6 +1,6 @@
 use super::*;
 
-/// Verifies: [DESIGN] RULES.md D418: a transaction is open until its
+/// Verifies: [DESIGN] RULES.md D440: a transaction is open until its
 /// commit's one store, then committed at its timestamp; one rolled back is
 /// forgotten and read as open; claiming again changes nothing.
 #[test]
@@ -17,7 +17,7 @@ fn a_commit_is_one_store() {
     assert_eq!(statuses.committed(7), None, "never claimed");
 }
 
-/// Verifies: [DESIGN] RULES.md D418: two transactions `SLOTS` apart share a
+/// Verifies: [DESIGN] RULES.md D440: two transactions `SLOTS` apart share a
 /// slot; the second waits on the map while the first is unstamped, or
 /// stamped but not yet before the horizon, and each reads as its own; the
 /// slot is claimed again once the horizon passes the first's mark, the
@@ -55,7 +55,7 @@ fn a_slot_is_claimed_again_only_past_the_horizon() {
     assert_eq!(statuses.overflowing.load(Ordering::SeqCst), 0, "b is past the horizon");
 }
 
-/// Verifies: [DESIGN] RULES.md D418: a commit stamped in one table of two
+/// Verifies: [DESIGN] RULES.md D440: a commit stamped in one table of two
 /// is not free until the second is stamped too, and a table with nothing
 /// to stamp counts as stamped.
 #[test]
@@ -75,7 +75,7 @@ fn every_table_of_a_commit_is_stamped_first() {
     assert_eq!(slot.pending.load(Ordering::SeqCst), 0, "never below none");
 }
 
-/// Verifies: [DESIGN] RULES.md D418: a transaction in the map commits,
+/// Verifies: [DESIGN] RULES.md D440: a transaction in the map commits,
 /// stamps and rolls back there as in a slot.
 #[test]
 fn the_map_keeps_statuses_as_slots_do() {

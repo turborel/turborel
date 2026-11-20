@@ -1,5 +1,5 @@
 //! \[DESIGN\] The statuses of a store's writing transactions (RULES.md D29,
-//! D418): which have committed, and when. A version a transaction wrote
+//! D440): which have committed, and when. A version a transaction wrote
 //! names it until the version is stamped with its commit timestamp, and a
 //! reader or writer that meets such a version asks here. So one store of
 //! the commit timestamp makes every version of a commit committed for every

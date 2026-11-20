@@ -1,5 +1,5 @@
 //! \[DESIGN\] A commit in a table, and the stamping of its versions after
-//! (RULES.md D29, D418). Commit stores the commit timestamp in the store's
+//! (RULES.md D29, D440). Commit stores the commit timestamp in the store's
 //! status table (`status.rs`), which makes every version the transaction
 //! wrote committed, and files what they superseded as garbage, without
 //! touching the tree. The versions still name the transaction; each is

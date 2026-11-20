@@ -1,11 +1,12 @@
-//! The mutations of the transaction layer (RULES.md R-TEST-9, D418 on):
-//! a commit's one store in the status table, and a version committed but
-//! not stamped appended stamped.
+//! The mutations of the transaction layer (RULES.md R-TEST-9, D440 on):
+//! a commit's one store in the status table, a version committed but not
+//! stamped appended stamped, snapshots at the durable timestamp, and a
+//! reply held for what it read past its snapshot.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the transaction layer whose removal must fail their tests.
-pub const TXN_LAYER: [Mutation; 2] = [
+pub const TXN_LAYER: [Mutation; 4] = [
     Mutation {
         name: "txn-commit-not-stored",
         package: Package::Core,
@@ -28,5 +29,25 @@ pub const TXN_LAYER: [Mutation; 2] = [
         replacement: "                let appended = if true {",
         integration: &[],
         unit: &["engine::rows::mvcc::stamps::tests::an_unstamped_version_is_appended_stamped"],
+    },
+    Mutation {
+        name: "txn-snapshot-at-stable",
+        package: Package::Core,
+        breaks: "a snapshot is taken at the stable timestamp, so it sees a commit not yet synced",
+        file: "src/txn/clock.rs",
+        original: "        stripe.oldest.store(0, Ordering::SeqCst);\n        let snapshot = self.durable.load(Ordering::SeqCst);",
+        replacement: "        stripe.oldest.store(0, Ordering::SeqCst);\n        let snapshot = self.stable.load(Ordering::SeqCst);",
+        integration: &[],
+        unit: &["txn::clock::tests::a_snapshot_waits_for_the_sync"],
+    },
+    Mutation {
+        name: "txn-dependency-not-marked",
+        package: Package::Core,
+        breaks: "a commit read past the snapshot is not marked, so a reply resting on it is not held",
+        file: "src/txn/durable.rs",
+        original: "            self.depends.fetch_max(at, Ordering::SeqCst);",
+        replacement: "",
+        integration: &["commit_visibility::a_reply_waits_for_the_commit_it_wrote_over"],
+        unit: &[],
     },
 ];

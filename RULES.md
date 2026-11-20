@@ -383,7 +383,8 @@ verification approach DO-178C expects (§8).
 | D415 | A statement's end looks for foreign keys and reading CHECKs only where a table has one, and reads a row once for its checks |
 | D416 | A local cursor of a kept procedure body keeps its specification and plan |
 | D417 | An update or delete takes the row it replaced from the write, not a read before it |
-| D418 | A commit is one store in a status table, and its versions are stamped after its locks are released |
+| D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
+| D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 
 ### The project
 
@@ -2267,8 +2268,9 @@ refused (SQLCODE -911), and commit checks that nothing read has changed.
 
 Commit is atomic across engines. Each validates at the commit timestamp and
 then commits at it. The built-in engines commit with one store in a status
-table and stamp their versions after the locks are released (D418). A commit returns only once every commit before it has
-ended, so its session's next snapshot counts it. A transaction that wrote
+table and stamp their versions after the locks are released (D440). The locks go before the commit record's sync, and
+snapshots read only commits made durable (D441). A commit returns only once every commit up to it is durable, so its
+session's next snapshot counts it. A transaction that wrote
 nothing commits at its snapshot, unchecked. Its end collects only the tables
 whose versions await collection, since it leaves no garbage of its own.
 
@@ -10758,7 +10760,7 @@ file log gives the end of its segment's blocks the group's sync made
 durable (`log/file/segments.rs`). A log syncing nothing, and the
 default, claim just past the record asked for.
 
-#### D418. A commit is one store in a status table, and its versions are stamped after its locks are released
+#### D440. A commit is one store in a status table, and its versions are stamped after its locks are released
 
 The row store stamped each changed row with its commit timestamp, a tree
 read and a tree write per row, after the sync of the commit record and
@@ -10799,6 +10801,59 @@ The semantics hold for these reasons.
   later collection, and its slot is kept until then.
 - Constraints, triggers, history tables, replication, DDL and recovery
   read versions only through who made them, so they are unchanged.
+
+#### D441. A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on
+
+A commit held its locks through the sync of its commit record. The next
+writer of a hot row waited for the whole sync, so a row took one commit
+per sync.
+
+A commit now writes its commit record, makes its changes committed in
+every engine, releases its locks and stamps its versions, and only then
+syncs the record (`txn/end.rs`). The clock keeps a second watermark
+beside the stable timestamp, the durable timestamp, below which every
+commit has ended and has its record synced or needs no sync
+(`txn/clock.rs`). Snapshots are taken at it, and the horizon is
+bounded by it. A commit returns once the durable timestamp reaches it.
+
+A transaction can learn of a commit past its snapshot in a few places.
+These are a READ COMMITTED write over a newer committed version, a
+uniqueness or referential check of the newest state, and a refusal
+(SQLCODE -911) that a newer commit caused, at a write or at commit.
+Each marks the commit it met (`Txn::depend`). No statement result, cursor
+or commit outcome reaches the session until the durable timestamp covers
+that mark (`txn/durable.rs`). A failed sync halts the durable timestamp,
+so every such wait ends with SQLCODE -922.
+
+The semantics hold for these reasons.
+
+- No snapshot sees a commit a crash could lose. The durable timestamp
+  passes a commit only once it and every commit before it have their
+  records synced. A crash loses only a suffix of the log, so what a
+  snapshot holds is a prefix recovery keeps.
+- What a transaction reads past its snapshot is never told before it is
+  durable. A write over such a version, or a check against it, puts the
+  transaction's own commit record after that commit's in the log, so a
+  crash that loses that commit loses this one too, and recovery undoes
+  both. Until the commit is durable nothing of the dependent reaches its
+  client.
+- Locks guard writers against writers. A writer released early writes
+  over committed versions, as it did after the sync before. Every
+  isolation level's rules on what a transaction reads are those of its
+  snapshot, so they are unchanged (anomaly matrix in
+  `test/integration/isolation_anomalies.rs`).
+- A failed sync leaves the commit in doubt as before. It never becomes
+  durable, so no snapshot counts it. A transaction that read past its
+  snapshot into it is told -922, and the database takes no change after
+  the failure, so none of them commits.
+- Its own session's next snapshot counts the commit, since the commit
+  returns only once the durable timestamp reaches it.
+- A checkpoint's image holds the commits the gate let finish, stamped.
+  The checkpoint syncs its own record, and every commit record before it
+  with it, so its image claims nothing the log could lose.
+- A commit with LOG.COMMIT_SYNC OFF, a commit that logged nothing and a
+  refused commit count as durable as they end, as they did when they
+  returned.
 
 ## 2. Project layout
 
