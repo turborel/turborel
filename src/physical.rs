@@ -47,10 +47,14 @@ mod probe;
 mod project;
 mod raising;
 mod recognized;
+mod robust;
 mod shown;
 pub(crate) mod spatial;
 
-pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
+pub use cost::{
+    CostModel, DEFAULT_EQUAL, DEFAULT_ESTIMATE_MARGIN, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE,
+    MOST_ESTIMATE_MARGIN,
+};
 pub use enumerate::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_LINEARIZED, ENUMERATIONS, GREEDY};
 pub use kept::{Place, ProbeSlot};
 pub(crate) use kept::{filled_plan, keepable, same_shape};

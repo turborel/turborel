@@ -11,7 +11,9 @@
 //! * An index nested-loop join, of an inner or LEFT join whose right
 //!   operand is one relation an index of whose table answers an equality:
 //!   each left row probes it (`physical/indexed.rs`). It keeps the left's
-//!   order.
+//!   order. Where both it and the hash join may be made, only the one of
+//!   least regret over the left's estimate and its pessimistic rows is
+//!   offered (`physical/robust.rs`, RULES.md D386).
 //! * A merge join, of an inner or LEFT join on an equality of columns
 //!   whose types order as they compare, if one operand has a plan in the
 //!   key's order, as Selinger et al., "Access Path Selection in a
@@ -26,6 +28,7 @@ use super::conflicts::Kind;
 use super::model::Order;
 use super::space::{Applied, Cand, Entry, Method, Space, Tree};
 use crate::physical::cost::HASH_ROW;
+use crate::physical::robust::{Linear, choose, pessimistic};
 
 /// A join's operands as it is costed: each side's entry.
 struct Sides<'e> {
@@ -53,11 +56,14 @@ impl Space<'_> {
                 out.push((Cand { cost, order, tree: 0 }, tree(Method::Nested, (cand.tree, build.tree))));
                 continue;
             }
-            let cost = base + build.cost + HASH_ROW * (left.rows + right.rows);
-            out.push((Cand { cost, order, tree: 0 }, tree(Method::Hash, (cand.tree, build.tree))));
-            if let Some(probe) = self.probe_cost(kind, &keys, r) {
-                out.push((Cand { cost: base + left.rows * probe, order, tree: 0 }, tree(Method::Index, (cand.tree, build.tree))));
-            }
+            let hash = Linear { fixed: build.cost + HASH_ROW * right.rows, per_row: HASH_ROW };
+            let probed = self.probe_cost(kind, &keys, r).map(|probe| Linear { fixed: 0.0_f64, per_row: probe });
+            let how = probed.map_or(Method::Hash, |index| self.robust(&sides, hash, index));
+            let cost = match how {
+                Method::Index => probed.unwrap_or(hash),
+                Method::Hash | Method::Merge(_) | Method::Nested => hash,
+            };
+            out.push((Cand { cost: base + cost.at(left.rows), order, tree: 0 }, tree(how, (cand.tree, build.tree))));
         }
         out.extend(
             self.merges(&sides, kind, &keys, rows).into_iter().map(|(cand, class, trees)| (cand, tree(Method::Merge(class), trees))),
@@ -65,9 +71,18 @@ impl Space<'_> {
         out
     }
 
+    /// Of a hash join costing `hash` and an index join costing `index`, of
+    /// the left's rows, the one of least regret over the left's estimate
+    /// and its pessimistic rows, its bound or its estimate times
+    /// PLANNER.ESTIMATE_MARGIN (`physical/robust.rs`).
+    fn robust(&self, sides: &Sides<'_>, hash: Linear, index: Linear) -> Method {
+        let worst = pessimistic(sides.left.rows, sides.left.upper, self.model.cost.estimate_margin);
+        choose(&[(Method::Hash, hash), (Method::Index, index)], (sides.left.rows, worst)).unwrap_or(Method::Hash)
+    }
+
     /// The equalities of a column of `l` and one of `r` the join judges,
     /// each as its left and right column.
-    fn keys(&self, applied: &Applied, (l, r): (Set, Set)) -> Vec<(usize, usize)> {
+    pub(super) fn keys(&self, applied: &Applied, (l, r): (Set, Set)) -> Vec<(usize, usize)> {
         let pairs: Vec<(usize, usize)> = match applied.op.and_then(|o| self.model.preds.get(o)).and_then(Option::as_ref) {
             Some(pred) => pred.keys.clone(),
             None => applied.conjuncts.iter().filter_map(|&c| self.model.conjuncts.get(c)?.key).collect(),

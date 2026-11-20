@@ -32,7 +32,7 @@ fn inner(rows: &[f64], edges: &[(usize, usize, f64)]) -> (Vec<Shape>, Model) {
         })
         .collect();
     let classes = Classes::new(edges.iter().map(|&(a, b, d)| vec![(a, d), (b, d)]).collect());
-    let rels = rows.iter().map(|&r| Rel { rows: r, reads: vec![(Order::None, r)], probes: Vec::new(), plans: Vec::new() }).collect();
+    let rels = rows.iter().map(|&r| Rel { rows: r, upper: f64::INFINITY, most: Vec::new(), reads: vec![(Order::None, r)], probes: Vec::new(), plans: Vec::new() }).collect();
     let model = Model {
         rels,
         conjuncts,

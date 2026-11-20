@@ -27,14 +27,18 @@
 //! distinct values among them, and a plan of nested groupings and outer
 //! joins would be estimated a number of times exponential in its depth.
 
+mod bounds;
+mod composite;
 mod groups;
 mod joins;
+mod keys;
 mod lineage;
 mod nodes;
 mod tables;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use super::{CostModel, PhysicalPlanner};
@@ -45,6 +49,7 @@ use crate::logical::LogicalPlan;
 use crate::stats::Statistics;
 use crate::storage::cost_of;
 
+pub(super) use composite::Member;
 pub(super) use joins::{Classes, find};
 
 // ---------------------------------------------------------------------------
@@ -97,6 +102,12 @@ impl Card {
     pub(super) fn kept(self, fraction: f64) -> Card {
         Card { rows: at_least_one(self.rows * fraction.clamp(0.0, 1.0), self.rows), upper: self.upper }
     }
+
+    /// It, at most `upper` (RULES.md D385).
+    pub(super) fn bounded(self, upper: f64) -> Card {
+        let upper = self.upper.min(upper);
+        Card { rows: self.rows.min(upper), upper }
+    }
 }
 
 /// `rows`, at least one if the input it is of, `of`, has one.
@@ -113,6 +124,8 @@ pub(super) struct Estimates<'a> {
     rows: RefCell<HashMap<QualifiedName, Option<f64>>>,
     /// Each index's distinct keys, by its name, as its sketch counts them.
     keys: RefCell<HashMap<String, Option<f64>>>,
+    /// Each table's unique keys and referential constraints, by its name.
+    table_keys: RefCell<HashMap<QualifiedName, Rc<keys::TableKeys>>>,
     /// Each node's estimate, by its address, for the asking under way.
     memo: RefCell<HashMap<usize, Card>>,
     /// The addresses of the nodes of the plan being planned, and the
@@ -128,8 +141,8 @@ impl<'a> Estimates<'a> {
     pub(super) fn new(db: &'a State) -> Estimates<'a> {
         let (stats, rows, keys) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
         let (memo, asking) = (RefCell::new(HashMap::new()), Cell::new(0));
-        let (planned, kept) = (HashSet::new(), RefCell::new(HashMap::new()));
-        Estimates { db, cost: db.cost(), stats, rows, keys, memo, asking, planned, kept }
+        let (planned, kept, table_keys) = (HashSet::new(), RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
+        Estimates { db, cost: db.cost(), stats, rows, keys, table_keys, memo, asking, planned, kept }
     }
 
     /// An estimator over `db` for the planning of `plan`, whose nodes live
