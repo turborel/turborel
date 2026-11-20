@@ -26,7 +26,8 @@ fn counted_table(sealed: bool) -> Database {
     db.schema(&format!("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER NOT NULL, S VARCHAR(1000)){with}")).unwrap();
     let a = db.session("A");
     for first in (0..ROWS).step_by(500) {
-        let values: Vec<String> = (first..first + 500).map(|k| format!("({k}, '{}')", format!("s{k} ").repeat(usize::try_from(k % 60).unwrap()))).collect();
+        let values: Vec<String> =
+            (first..first + 500).map(|k| format!("({k}, '{}')", format!("s{k} ").repeat(usize::try_from(k % 60).unwrap()))).collect();
         a.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
     }
     a.commit().unwrap();

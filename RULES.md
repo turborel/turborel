@@ -329,6 +329,8 @@ verification approach DO-178C expects (§8).
 | D334 | A database counts its transactions committed and rolled back, shown in INFORMATION_SCHEMA.SERVER |
 | D335 | A connection whose request runs is watched for its client gone |
 | D336 | A prepared CALL's output dynamic parameters are its columns, sent as a row |
+| D350 | A row-store batch scan reads each entry in place under its leaf's latch, copying only what it cannot read there |
+| D351 | A bare COUNT(*) of a row-store table sums its settled zones' rows and reads the rest in place |
 
 ### The project
 
@@ -9235,6 +9237,63 @@ added and protocol version 1 holds, and a client reading rows for a
 statement of columns reads them unchanged. EXECUTE puts them where its
 result using clause says and raises 07007 without one (§20.13 GR6,
 GR10). EXECUTE IMMEDIATE takes no such statement (§20.14 GR3).
+
+#### D350. A row-store batch scan reads each entry in place under its leaf's latch, copying only what it cannot read there
+
+A batch scan of a row-store table copied each entry's key and value out
+of its leaf, then copied the record of the version it saw, three
+allocations a row, which cost more than the visibility checks and the
+latching together. Now the tree shows a visitor each entry of a leaf
+under the leaf's latch, borrowed (`Scan::visit`). The visitor parses the
+newest version where it lies and, if the reader sees it, gathers the
+columns asked for straight into the batch's vectors, or with no column
+only counts the row. What cannot be read under a latch is handed back
+copied and read after the latch is released, as every row was read
+before. That covers a version the reader does not see as stamped, whose
+older versions are in the undo store or whose maker is a commit stamped
+late, looked up under a lock not taken under a latch. It covers a sealed
+record, opened by a plug-in's encodings (R-ERR-4), and a record whose
+columns asked for are out of line on other pages. The scan goes on past
+an entry handed back, or a batch filled, from the same leaf, and a leaf
+read again after a split still leads right to every key past it (Lehman
+and Yao, §4). Rows keep their row id order, so results and their order
+do not change. A table that freezes rows reads its tree through its own
+path and is not changed.
+
+#### D351. A bare COUNT(*) of a row-store table sums its settled zones' rows and reads the rest in place
+
+`TableStorage::count` gives counts of the rows a scan of the table with
+no condition would give the transaction, or none when the engine cannot
+count faster. Its default is none. The row store answers for a table
+that freezes no row and holds no group. Under each zone's lock it reads
+the zone's flag of rows every reader sees (D34) and its rows together. A
+write clears the flag under that lock before its index entries, and a
+sum up sets both, so a zone whose flag is set holds exactly those rows,
+committed at or before the horizon, none a deletion. The horizon is at or
+below every open snapshot, so every reader, at any isolation level,
+sees those rows and only those, and its own writes would have cleared
+the flag. Each such zone adds its rows. The ranges of every other zone
+and the ids past the last are read in place with no column (D350).
+Under SERIALIZABLE the read is noted as the whole table's, as a scan's
+with no condition is. Nothing is read or noted until the first count is
+asked for, so EXPLAIN can ask the storage whether it counts. A table
+that freezes rows is scanned, because a freeze takes out entries without
+a change of their zones, so their rows are no longer the tree's. Zone
+flags stay in memory, so a table opened reads its rows until the
+maintenance thread settles its zones.
+
+The executor feeds an aggregation of one group, whose set functions each
+count rows, over a bare scan in no order, not located and unfiltered,
+the storage's counts in place of the scan's batches, each looked at for
+a cancel as a batch is. COUNT of a column declared NOT NULL is left to
+the scan, as a deferred constraint may let a transaction hold a null
+until it commits. EXPLAIN adds the line `-- counted by storage: <table>`
+when a bare COUNT(*) at the top of the plan is counted so. Rejected: a
+stored row count per table, which is not any snapshot's; counts in the
+tree's nodes, which every insert must write and which are not any
+snapshot's either; zone flags kept on disk, which would need logging to
+stay right across a crash and which the maintenance thread rebuilds soon
+after a table opens.
 
 ## 2. Project layout
 

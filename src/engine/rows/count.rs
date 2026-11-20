@@ -50,7 +50,6 @@ fn rows_of(rows: usize) -> u64 {
     u64::try_from(rows).unwrap_or(u64::MAX)
 }
 
-
 // Unit tests: the count is the scan's for every reader, of zones settled
 // and not (RULES.md R-TEST-1, R-TEST-8).
 #[cfg(test)]

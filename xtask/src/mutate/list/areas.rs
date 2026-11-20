@@ -1,6 +1,9 @@
 //! Each area's mutations, in the order they run, after the core's.
 
 mod budget;
+// The count's, kept beside the other areas' files.
+#[path = "count.rs"]
+mod count;
 mod joins;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
 // modules.
@@ -65,7 +68,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 32] {
+fn second() -> [&'static [Mutation]; 33] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -98,6 +101,7 @@ fn second() -> [&'static [Mutation]; 32] {
         &super::vector_hybrid::VECTOR_HYBRID,
         &super::vector::VECTOR,
         &super::delta_tables::DELTA_TABLES,
+        &count::COUNT,
         &unnesting::UNNESTING,
     ]
 }
