@@ -198,10 +198,15 @@ $ turboreld --dir db --set STORAGE.CHECKSUM=CRC-32/ISCSI
 
 The engine's hash tables, Bloom filters, hash partitions and sketches
 hash by xxHash too, its values the reference implementation's on every
-machine, so a file hashed on one reads on any other. A program that
-links the crate `turborel-simd` and installs its kernels
-(`Database::set_kernels`) hashes long inputs on SSE2, AVX2, AVX-512 or
-NEON, whichever the processor has, to the same values.
+machine, so a file hashed on one reads on any other. XXH3's loops over
+long inputs are kernels too: `turboreld` registers those of the crate
+`turborel-simd`, which run them on SSE2, AVX2, AVX-512 or NEON,
+whichever the processor has, to the same values. EXECUTOR.KERNELS =
+'PORTABLE' sets them aside for a session:
+
+```sql
+SET EXECUTOR.KERNELS = 'PORTABLE';
+```
 
 xxHash is Yann Collet's, under the BSD 2-Clause license, which a binary
 distribution of Turborel reproduces:

@@ -276,6 +276,9 @@ struct Seen {
 /// fits the work area (`Runner::keep`).
 pub struct Runner {
     db: Arc<State>,
+    /// The kernels its batches run on, as EXECUTOR.KERNELS chose them as
+    /// it began (RULES.md D460).
+    kernels: Arc<dyn crate::kernels::Kernels>,
     tx: TxId,
     done: RefCell<HashMap<Run, SubqueryRows>>,
     /// The bytes `done` holds: its keys and entries, the rows held in
@@ -295,7 +298,7 @@ pub struct Runner {
 impl Runner {
     /// The kernels its database's batches run on (RULES.md D354).
     pub(crate) fn kernels(&self) -> &dyn crate::kernels::Kernels {
-        self.db.functions.kernels()
+        &*self.kernels
     }
 
     /// A runner for transaction `tx` in `db`.
@@ -303,6 +306,7 @@ impl Runner {
         let (done, seen) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
         Runner {
             db: Arc::clone(db),
+            kernels: crate::db::kernels::chosen(db),
             tx,
             done,
             kept: Cell::new(0),

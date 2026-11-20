@@ -5,7 +5,7 @@
 //! passing selection vectors between them in place of the rows copied.
 //!
 //! `Kernels` is an extension point (`db.rs`): the database holds one, the
-//! built-in `Portable` unless a plug-in's is set (`Database::set_kernels`),
+//! built-in `Portable` unless a plug-in's is set (`Database::register_kernels`),
 //! which may run the same primitives on wider instructions. Every method
 //! has its portable body as its default, so a set of kernels that predates
 //! a method still runs it, and every one must give what the portable body

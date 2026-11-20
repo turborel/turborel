@@ -9698,7 +9698,7 @@ rows a comparison with a constant is true of, of bits set, of a
 dictionary's codes kept, an exact sum, the extremes, a gather, the
 unpacking of a frame of reference's bit-packed values (D352). Each has a
 portable body, branch-free where a branch would be mispredicted, which is
-what a database runs unless it is given others (`Database::set_kernels`).
+what a database runs unless it is given others (`Database::register_kernels`).
 A crate of kernels for one processor's instructions implements the same
 trait and passes the same contract (`support/src/kernels.rs`), so the
 core keeps no unsafe code and no code of one system.
@@ -10577,13 +10577,27 @@ digest is 8 bytes, so a page's body is 4 bytes shorter and an index
 key's limit 1 byte. The CRCs remain built in for files that name them.
 The side files' framing is as it was.
 
-The loops of an input past 240 bytes, accumulate and scramble, are the
-`Kernels` seam's (`xxh3_accumulate`, `xxh3_scramble`), portable by
-default. The crate `turborel-simd`, outside the core as D3 asks, gives
-them on SSE2, AVX2, AVX-512 and NEON, the set chosen as it runs, each
-tested against the portable loops bit for bit by the kernels' contract.
-It is the only crate of the workspace that writes unsafe code, each
-block of it after a check of the processor's features.
+The loops of an input past 240 bytes, accumulate and scramble, are
+`Kernels` methods (`xxh3_accumulate`, `xxh3_scramble`) whose portable
+bodies are the core's. The crate `turborel-simd` (`simd/`), outside the
+core as D3 asks and depending on nothing but it, gives them on SSE2,
+AVX2, AVX-512 and NEON, a module for each level (`x86/`, `aarch64/`),
+each held to the portable bodies bit for bit by the kernels' contract.
+A `Simd` is made only of a level the processor has (`detect`,
+`with_level`), which every unsafe call of a `#[target_feature]` function
+rests on, a SAFETY comment on each block. It is the only crate that
+writes unsafe code, its own lints allowing it and denying an unsafe
+operation outside a block and a block without its comment.
+
+A database takes one registered set of kernels
+(`Database::register_kernels`, `db/kernels.rs`), before it opens its
+tables, as it takes an encoding; a second is refused (SQLCODE -910).
+`turboreld` registers `Simd::detect()`. EXECUTOR.KERNELS = 'PORTABLE'
+runs a session's statements on the portable bodies, to diagnose the
+registered set, which each statement chooses as it begins. Kernels are
+a built-in registration only: a call a batch across a process boundary
+would cost more than the kernel saves, so no out-of-process plug-in is
+one.
 
 ## 2. Project layout
 

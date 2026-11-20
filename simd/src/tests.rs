@@ -10,9 +10,9 @@ use super::*;
 /// and length.
 #[test]
 fn every_available_set_keeps_the_contract() {
-    for isa in Isa::all_available() {
-        let simd = Simd::of(isa).unwrap();
-        assert_eq!(simd.isa(), isa);
+    for level in Simd::levels() {
+        let simd = Simd::with_level(level).unwrap();
+        assert_eq!(simd.level(), level);
         turborel_test_support::kernels::contract(&simd);
     }
 }
@@ -20,31 +20,29 @@ fn every_available_set_keeps_the_contract() {
 /// Verifies: [DESIGN] RULES.md D460: the portable set is always there, the
 /// widest available is chosen, and a set the processor lacks is refused.
 #[test]
-fn sets_are_detected() {
-    let available = Isa::all_available();
-    assert_eq!(available[0], Isa::Scalar);
-    assert_eq!(Isa::detect(), *available.last().unwrap());
-    assert_eq!(Simd::detect().isa(), Isa::detect());
+fn levels_are_detected() {
+    let available = Simd::levels();
+    assert_eq!(available[0], Level::Portable);
+    assert_eq!(Simd::detect().level(), *available.last().unwrap());
     assert_eq!(Simd::detect().name(), SIMD);
-    for isa in [Isa::Sse2, Isa::Avx2, Isa::Avx512, Isa::Neon] {
-        assert_eq!(Simd::of(isa).is_some(), available.contains(&isa), "{isa:?}");
+    for level in [Level::Sse2, Level::Avx2, Level::Avx512, Level::Neon] {
+        assert_eq!(Simd::with_level(level).is_some(), available.contains(&level), "{level:?}");
     }
     #[cfg(target_arch = "x86_64")]
-    assert!(available.contains(&Isa::Sse2));
+    assert!(available.contains(&Level::Sse2));
     #[cfg(target_arch = "aarch64")]
-    assert!(available.contains(&Isa::Neon));
+    assert!(available.contains(&Level::Neon));
 }
 
-/// Verifies: [DESIGN] RULES.md D460: each set's loops, called directly,
-/// give the portable loops' accumulators over a whole 1 MiB input hashed
-/// block by block, and a set the processor lacks gives them too.
+/// Verifies: [DESIGN] RULES.md D460: each level's loops give the portable
+/// loops' hash of a whole 1 MiB input, block by block.
 #[test]
 fn each_set_hashes_a_large_input_as_the_portable_loops() {
     use turborel::hash::xxhash::{self, xxh3_64, xxh3_128};
     let input: Vec<u8> = (0..(1_u32 << 20_u32) + 13).map(|n| n.wrapping_mul(2_654_435_761).to_be_bytes()[0]).collect();
-    for isa in [Isa::Scalar, Isa::Sse2, Isa::Avx2, Isa::Avx512, Isa::Neon] {
-        let simd = Simd { isa };
-        assert_eq!(xxhash::xxh3_64_on(&simd, &input, 0), xxh3_64(&input), "{isa:?}");
-        assert_eq!(xxhash::xxh3_128_on(&simd, &input, 0), xxh3_128(&input), "{isa:?}");
+    for level in Simd::levels() {
+        let simd = Simd::with_level(level).unwrap();
+        assert_eq!(xxhash::xxh3_64_on(&simd, &input, 0), xxh3_64(&input), "{level:?}");
+        assert_eq!(xxhash::xxh3_128_on(&simd, &input, 0), xxh3_128(&input), "{level:?}");
     }
 }

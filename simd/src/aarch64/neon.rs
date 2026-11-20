@@ -1,7 +1,9 @@
 //! \[DESIGN\] XXH3's loops on AArch64 NEON (`xxhash.h`'s
 //! `XXH3_accumulate_512_neon` and `XXH3_scrambleAcc_neon`): each register
 //! holds two lanes, its input's halves swapped by `vextq_u64`, and a
-//! lane's 32-bit halves multiplied and added at once by `vmlal_u32`.
+//! lane's 32-bit halves multiplied and added at once by `vmlal_u32`. Each
+//! function here is called only by a `Simd` of NEON, which exists only
+//! where the processor has it.
 //!
 //! Ported from xxHash, whose notice it keeps, as its license asks:
 //!
@@ -44,32 +46,12 @@ use std::arch::aarch64::{
     vshrq_n_u64, vst1q_u64,
 };
 
-use turborel::hash::xxhash::{ACC_NB, SECRET_CONSUME_RATE, STRIPE_LEN, Scalar, Stripe, Stripes};
+use turborel::hash::xxhash::{ACC_NB, SECRET_CONSUME_RATE, STRIPE_LEN, Stripe};
 
 /// `XXH_PRIME32_1`, the scramble's multiplier.
 const PRIME32_1: u32 = 0x9E37_79B1;
 /// Lanes of a register.
 const LANES: usize = 2;
-
-/// Accumulates `stripes`, each by its key in `secret`.
-pub(super) fn accumulate(acc: &mut [u64; ACC_NB], stripes: &[Stripe], secret: &[u8]) {
-    if std::arch::is_aarch64_feature_detected!("neon") {
-        // SAFETY: the processor has NEON, checked above.
-        unsafe { accumulate_with_neon(acc, stripes, secret) }
-    } else {
-        Scalar.accumulate(acc, stripes, secret);
-    }
-}
-
-/// Scrambles `acc` by `key`.
-pub(super) fn scramble(acc: &mut [u64; ACC_NB], key: &Stripe) {
-    if std::arch::is_aarch64_feature_detected!("neon") {
-        // SAFETY: the processor has NEON, checked above.
-        unsafe { scramble_with_neon(acc, key) }
-    } else {
-        Scalar.scramble(acc, key);
-    }
-}
 
 /// The two little-endian words of each 16 bytes of `bytes`.
 fn words(bytes: &[u8; 64]) -> [[u64; LANES]; 4] {
@@ -105,8 +87,9 @@ fn store(acc: &mut [u64; ACC_NB], regs: [uint64x2_t; 4]) {
     }
 }
 
+/// Accumulates `stripes`, each by its key in `secret`.
 #[target_feature(enable = "neon")]
-fn accumulate_with_neon(acc: &mut [u64; ACC_NB], stripes: &[Stripe], secret: &[u8]) {
+pub(crate) fn xxh3_accumulate(acc: &mut [u64; ACC_NB], stripes: &[Stripe], secret: &[u8]) {
     let mut regs = loaded(acc);
     let keys = secret.windows(STRIPE_LEN).step_by(SECRET_CONSUME_RATE).filter_map(<[u8]>::first_chunk::<STRIPE_LEN>);
     for (stripe, key) in stripes.iter().zip(keys) {
@@ -121,8 +104,9 @@ fn accumulate_with_neon(acc: &mut [u64; ACC_NB], stripes: &[Stripe], secret: &[u
     store(acc, regs);
 }
 
+/// Scrambles `acc` by `key`.
 #[target_feature(enable = "neon")]
-fn scramble_with_neon(acc: &mut [u64; ACC_NB], key: &Stripe) {
+pub(crate) fn xxh3_scramble(acc: &mut [u64; ACC_NB], key: &Stripe) {
     let keys = words(key);
     let prime = vdup_n_u32(PRIME32_1);
     let mut regs = loaded(acc);

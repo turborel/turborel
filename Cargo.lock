@@ -833,6 +833,7 @@ dependencies = [
  "turborel-client",
  "turborel-lz4",
  "turborel-server",
+ "turborel-simd",
  "turborel-test-support",
 ]
 

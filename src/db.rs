@@ -38,7 +38,7 @@
 //! | `PartitionStrategy` | RANGE, LIST, HASH     | partitioned tables (RULES.md D154) |
 //! | `BackupTarget`, `TargetProvider` | a directory, memory | backups and the archive (RULES.md D166) |
 //! | `Eviction`          | CLOCK                 | the data file's buffer pool (`set_eviction`, RULES.md D283) |
-//! | `Kernels`           | `Portable`            | batches' primitives (`set_kernels`, RULES.md D354) |
+//! | `Kernels`           | `Portable`            | batches' primitives (`register_kernels`, RULES.md D354, D460) |
 //!
 //! Plus the settings (`settings.rs`, RULES.md D36), plug-ins' too, per database and session.
 //! \[DESIGN\] A `Database` is a cheap handle that sessions share, on any number of threads (RULES.md D27). Each statement runs
@@ -55,7 +55,6 @@ use crate::binder::OutColumn;
 use crate::catalog::{Authorization, QualifiedName};
 use crate::error::{Code, Result, SqlError, SqlState, fail};
 use crate::settings::{COMMIT_SYNC, LOCKS_TIMEOUT_MS, STATEMENT_TIMEOUT_MS};
-use crate::sync::lock_builtin;
 use crate::txn::{SessionEnd, Stop, TxId, Txn, Window};
 
 mod alter;
@@ -101,6 +100,7 @@ mod image;
 mod index_statements;
 mod indexes;
 mod integrity;
+pub(crate) mod kernels;
 mod lobs;
 mod log_sync;
 mod long_texts;
@@ -469,7 +469,7 @@ impl Session {
         }
         for rows in inner.anonymous.drain(..) {
             if let Some(rows) = rows.upgrade() {
-                *lock_builtin(&rows) = None;
+                *crate::sync::lock_builtin(&rows) = None;
             }
         }
         inner.tx.take()
