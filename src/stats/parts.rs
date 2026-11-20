@@ -59,7 +59,7 @@ impl Default for Sampling {
     }
 }
 /// The seed of a sample's random choices.
-const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+pub const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 
 /// A count of things as an `f64`; exact up to 2^32, and the most a `u32`
 /// holds past it.

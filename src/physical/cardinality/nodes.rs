@@ -93,12 +93,12 @@ impl Estimates<'_> {
         self.grouped(&all, 0, input, depth)
     }
 
-    /// The fraction of the rows `cond` keeps, over `over`'s columns, its
-    /// conjuncts taken as independent.
+    /// The fraction of the rows `cond` keeps, over `over`'s columns, the
+    /// conjuncts of each table together (`cardinality/tables.rs`).
     pub(super) fn selectivity(&self, cond: &Cond, over: Over<'_>) -> f64 {
         let mut conjuncts = Vec::new();
         split_and(cond.clone(), &mut conjuncts);
-        conjuncts.iter().map(|c| self.share(c, over)).product()
+        self.conjunction(&conjuncts, over)
     }
 
     /// The fraction of the rows the conjunct `c`, over `over`'s columns,
