@@ -30,11 +30,16 @@ use crate::storage::{Batches, Ramp, RowId};
 impl RowTable {
     /// The batches of the rows `reader` sees in `ranges` of row ids, each
     /// from its first id up to, not including, its end if it has one, of
-    /// `columns`, each record read in place where it can be.
-    pub(super) fn gathered_in(self: Arc<Self>, reader: Reader, columns: &[usize], ranges: Vec<(RowId, Option<RowId>)>) -> Batches {
+    /// `columns`, each record read in place where it can be, each batch of
+    /// the rows `ramp` gives it.
+    pub(super) fn gathered_in(
+        self: Arc<Self>,
+        (reader, mut ramp): (Reader, Ramp),
+        columns: &[usize],
+        ranges: Vec<(RowId, Option<RowId>)>,
+    ) -> Batches {
         let mut entries = Self::ranged(&self, ranges);
         let mut gathering = Gathering::new(self.format.types(), columns);
-        let mut ramp = Ramp::default();
         Box::new(iter::from_fn(move || {
             let rows = ramp.next_rows();
             if let Err(e) = self.fill(&mut entries, reader, (&mut gathering, rows)) {

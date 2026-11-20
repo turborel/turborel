@@ -67,7 +67,7 @@ fn records_gather_as_their_rows_decode() {
     assert_eq!(fixed.get(2), Some("éü    "), "padded by characters");
     let Column::Ints(numbers) = &batch.columns[1] else { panic!("integers") };
     assert_eq!((numbers.units.clone(), numbers.scale), (vec![-150_i64, 7_i64, 0_i64], 2_u32));
-    assert_eq!(numbers.nulls, Some(vec![false, false, true]), "kept from the first null on");
+    assert_eq!(numbers.nulls, Some(vec![false, false, true].into()), "kept from the first null on");
     let Column::Ints(lone) = &gathered((&format, &records[..1], &store), &[0]).columns[0] else { panic!("integers") };
     assert_eq!(lone.nulls, None, "no null, no bitmap");
 }

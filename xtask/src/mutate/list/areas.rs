@@ -1,5 +1,7 @@
 //! Each area's mutations, in the order they run, after the core's.
 
+mod altered_tables;
+mod batches;
 mod budget;
 // The count's, kept beside the other areas' files.
 mod client_sync;
@@ -11,6 +13,7 @@ mod declared_types;
 #[path = "decode.rs"]
 mod decode;
 mod distinct_aggregates;
+mod expr;
 // The estimator's, beside the areas as `list.rs` holds no more modules.
 #[path = "estimates.rs"]
 mod estimates;
@@ -80,7 +83,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 36] {
+fn second() -> [&'static [Mutation]; 38] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -105,6 +108,7 @@ fn second() -> [&'static [Mutation]; 36] {
         &super::temporal_references::TEMPORAL_REFERENCES,
         &super::system_versioned::SYSTEM_VERSIONED,
         &super::rename::RENAME,
+        &altered_tables::ALTERED_TABLES,
         &super::savepoints::SAVEPOINTS,
         &super::graph_catalog::GRAPH_CATALOG,
         &super::graph_native::GRAPH_NATIVE,
@@ -117,6 +121,7 @@ fn second() -> [&'static [Mutation]; 36] {
         &distinct_aggregates::DISTINCT_AGGREGATES,
         &unnesting::UNNESTING,
         &insert_values::INSERT_VALUES,
+        &expr::EXPR,
         &estimates::ESTIMATES,
     ]
 }
@@ -161,10 +166,16 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xml::XML,
     ];
     // The transport's, parallel queries', the client's step with its
-    // server, the decode kernels' and declared types' last, as `last` holds
-    // no more.
-    let after: [&'static [Mutation]; 5] =
-        [&super::transport::TRANSPORT, &parallel::PARALLEL, &client_sync::CLIENT_SYNC, &decode::DECODE, &declared_types::DECLARED_TYPES];
+    // server, the decode kernels', declared types' and batches' last, as
+    // `last` holds no more.
+    let after: [&'static [Mutation]; 6] = [
+        &super::transport::TRANSPORT,
+        &parallel::PARALLEL,
+        &client_sync::CLIENT_SYNC,
+        &decode::DECODE,
+        &declared_types::DECLARED_TYPES,
+        &batches::BATCHES,
+    ];
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
 }
 

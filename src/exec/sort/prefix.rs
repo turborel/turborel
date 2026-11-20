@@ -202,6 +202,8 @@ pub(super) fn prefix_of_cell(cell: Cell<'_>, order: SortOrder) -> Option<Prefix>
         Cell::Exact(units, scale) => prefix_of(&Value::Exact(Decimal::new(i128::from(units), scale)), order),
         Cell::Approx(f) => prefix_of(&Value::Approx(f), order),
         Cell::Text(t) => Some(finished((Kind::Char, text(t), t.len() <= PREFIX_BYTES), order)),
+        Cell::Datetime(d) => prefix_of(&Value::Datetime(d), order),
+        Cell::Bool(b) => prefix_of(&Value::Bool(b), order),
         Cell::Null => prefix_of(&Value::Null, order),
     }
 }

@@ -27,12 +27,16 @@ ALTER TABLE: change a base table
     | USING <engine name> [ WITH ( <table option> [ { , <table option> }... ] ) ]
     | RESEAL
     | RENAME [ COLUMN ] <column name> TO <column name>
+    | RENAME TO <table name>
     | ATTACH PARTITION <table name> <partition bound>
     | DETACH PARTITION <table name>
 
 <alter column action> ::=
       SET DEFAULT <default option>
     | DROP DEFAULT
+    | SET NOT NULL
+    | DROP NOT NULL
+    | SET DATA TYPE <data type>
     | <alter identity column option>...
     | SET GENERATED { ALWAYS | BY DEFAULT } [ <alter identity column option>... ]
     | DROP IDENTITY
@@ -77,6 +81,23 @@ grantee, with the same grant option.
 **ALTER COLUMN** sets the column's default, or drops it. No row changes;
 the new default is taken by the rows inserted later.
 
+SET NOT NULL gives the column a NOT NULL constraint, of a name the
+database makes, once no row holds a null in it; a row that does refuses
+it. A transaction that has written the table and not ended holds it, so
+the ALTER waits for it or is refused. Of a column already known not
+null it does nothing. DROP NOT NULL drops the column's NOT NULL
+constraints, and what depends on the key one made of a UNIQUE goes with
+them, as DROP CONSTRAINT CASCADE drops it; a NOT NULL of the column's
+domain stays.
+
+SET DATA TYPE gives the column a longer or more precise type of its
+kind: a longer string, a number of more digits or of a wider kind, a
+datetime of more fractional digits, an interval of wider fields. Every
+value it holds is one of the new type too. The rows are copied to
+storage made anew, a row at a time, and the table's indexes made again,
+so it takes as long as the table is large and holds no more of it in
+memory than a row.
+
 Of an identity column, ALTER COLUMN changes its generator's options as
 [ALTER SEQUENCE](alter-sequence.md) does, and SET GENERATED changes
 whether its values are always generated. RESTART starts the generator
@@ -100,6 +121,15 @@ COLUMNSTORE.ORDER, name it anew. A view, CHECK, assertion, trigger,
 routine or generation expression that reads the table and names the
 column, or its new name, refuses it, as does a view that selects `*`
 of the table: drop or change those first.
+
+**RENAME TO** *(extension)* gives the table a new name in its schema.
+Its rows, constraints, indexes, privileges and triggers stay its own,
+and a foreign key of another table references it by the new name. Its
+rows are copied to storage of the new name. Text that names the table,
+of a view, CHECK, domain constraint, assertion, trigger action,
+routine, property graph, generation expression or index expression, is
+not rewritten, so any refuses the rename: drop or change those first.
+An identity column's generator keeps the name it was made with.
 
 **DROP COLUMN** removes the column and its values; the columns after it
 move up one place. A table constraint that reads that column alone goes
@@ -241,6 +271,19 @@ writes it is refused (SQLSTATE TB911), or, after `SET LOCKS.WAIT =
     of the new name. It is no typed table and not system-versioned, and
     nothing the RENAME COLUMN paragraph above lists names the column or
     the new name.
+16. SET NOT NULL, DROP NOT NULL and SET DATA TYPE: the column is no
+    identity column. DROP NOT NULL: it is no column of the primary key
+    and bounds no period. SET DATA TYPE: the type is a predefined one,
+    no domain, of the column's kind, and no shorter, less precise, of no
+    lesser scale and of no narrower fields; the column is of no domain,
+    bounds no period, and is referenced by no CHECK that reads other
+    columns too, no assertion, trigger, routine, view or generation
+    expression.
+17. RENAME TO *(extension)*: the name is of the table's schema, and of
+    no table, view or property graph of it. The table is not typed,
+    temporary, system-versioned, partitioned or a partition, nor a node
+    or edge table, and nothing the RENAME TO paragraph above lists names
+    it.
 10. No cursor of the transaction reads the table.
 11. The transaction is not READ ONLY.
 
@@ -258,7 +301,7 @@ says.
 | 2A000 | -103 | A rule above is broken |
 | 3F000 | -103 | The schema of a constraint added does not exist |
 | 2A000 | -104 | Its user does not own the table's schema, or lacks a privilege a column or constraint needs |
-| 23000 | -201 | A row breaks the constraint added; a NOT NULL column added has no default, and the table has rows |
+| 23000 | -201 | A row breaks the constraint added; a NOT NULL column added has no default, and the table has rows; SET NOT NULL of a column a row holds a null in |
 | 23T01 | -201 | A row of a table attached is not one the bound holds *(extension)* |
 | 25000 | -917 | The transaction is READ ONLY |
 | 24000 | -501 | A cursor of the transaction reads the table |
@@ -403,6 +446,75 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.WHO names ANN.STAFF.FULL_NAME 
 (1 row)
 ```
 
+Of a table STOCK, a column's nullability and type changed, and changes
+refused:
+
+```sql
+CREATE TABLE STOCK (SKU INTEGER PRIMARY KEY, LABEL VARCHAR(8), QTY SMALLINT);
+INSERT INTO STOCK VALUES (1, 'bolt', 40), (2, NULL, 7);
+ALTER TABLE STOCK ALTER COLUMN LABEL SET NOT NULL;
+UPDATE STOCK SET LABEL = 'nut' WHERE SKU = 2;
+ALTER TABLE STOCK ALTER COLUMN LABEL SET NOT NULL;
+ALTER TABLE STOCK ALTER COLUMN QTY SET DATA TYPE INTEGER;
+ALTER TABLE STOCK ALTER COLUMN LABEL SET DATA TYPE VARCHAR(20);
+SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_NAME = 'STOCK' ORDER BY ORDINAL_POSITION;
+```
+
+```
+OK
+OK
+turborel: SQLCODE -201 (SQLSTATE 23000): column LABEL of ANN.STOCK is NOT NULL [X3.135-1986 §6.3 SR3, GR1]
+OK
+OK
+OK
+OK
+ COLUMN_NAME                                                  | DATA_TYPE                                                    | IS_NULLABLE
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ SKU                                                          | INTEGER                                                      | NO
+ LABEL                                                        | CHARACTER VARYING                                            | NO
+ QTY                                                          | INTEGER                                                      | YES
+(3 rows)
+```
+
+The first SET NOT NULL was refused, as row 2 held a null. A type that
+would not hold every value, or a column of the primary key, refuses
+the change:
+
+```sql
+ALTER TABLE STOCK ALTER COLUMN LABEL SET DATA TYPE VARCHAR(4);
+ALTER TABLE STOCK ALTER COLUMN QTY SET DATA TYPE CHAR(10);
+ALTER TABLE STOCK ALTER COLUMN SKU DROP NOT NULL;
+```
+
+```
+turborel: SQLCODE -103 (SQLSTATE 2A000): column LABEL of ANN.STOCK is of CHARACTER VARYING(20), which CHARACTER VARYING(4) may not replace [ISO/IEC 9075-2:2023 §11.19 SR15a] (at character 31)
+turborel: SQLCODE -103 (SQLSTATE 2A000): column QTY of ANN.STOCK is of INTEGER, which CHARACTER(10) may not replace [ISO/IEC 9075-2:2023 §11.19 SR15c] (at character 31)
+turborel: SQLCODE -103 (SQLSTATE 2A000): column SKU of ANN.STOCK is in its PRIMARY KEY, so it stays NOT NULL [ISO/IEC 9075-2:2023 §11.16 SR4] (at character 31)
+```
+
+STOCK renamed GOODS *(extension)*, once no view names it:
+
+```sql
+CREATE VIEW LOW AS SELECT SKU FROM STOCK WHERE QTY < 10;
+ALTER TABLE STOCK RENAME TO GOODS;
+DROP VIEW LOW CASCADE;
+ALTER TABLE STOCK RENAME TO GOODS;
+SELECT * FROM GOODS ORDER BY SKU;
+```
+
+```
+OK
+turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.LOW names ANN.STOCK in its text, so the table is renamed only once nothing does
+OK
+OK
+          SKU | LABEL                |          QTY
+--------------+----------------------+--------------
+            1 | bolt                 |           40
+            2 | nut                  |            7
+(2 rows)
+```
+
 ## STANDARD
 
 ISO/IEC 9075:1992 §11.10 to §11.17. A column dropped takes a table
@@ -414,9 +526,11 @@ PERIOD and DROP PERIOD are §11.27 and §11.28, Features T181 and T502, and what
 period keeps of its columns §11.23 SR6 and §11.26 SR10. ADD and DROP
 SYSTEM VERSIONING are §11.29 and §11.30, Feature T180, the start given
 existing rows by ADD PERIOD FOR SYSTEM_TIME the transaction timestamp
-(IV181). SET,
-USING, RESEAL, RENAME COLUMN, ATTACH PARTITION and DETACH PARTITION are extensions; SQL:2023 renames no
-column. SQL-86 has no ALTER TABLE.
+(IV181). SET NOT NULL and DROP NOT NULL are ISO/IEC 9075-2:2023 §11.15 and
+§11.16, Feature F383, and SET DATA TYPE §11.19, Feature F382. SET,
+USING, RESEAL, RENAME COLUMN, RENAME TO, ATTACH PARTITION and DETACH
+PARTITION are extensions; SQL:2023 renames no column or table. SQL-86
+has no ALTER TABLE.
 
 ## SEE ALSO
 

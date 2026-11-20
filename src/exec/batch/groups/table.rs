@@ -14,7 +14,7 @@ use crate::storage::Row;
 
 /// A group: its first row's number, its grouping values and its set
 /// functions.
-pub(super) type Held = (u64, Row, Vec<Box<dyn Accumulator>>);
+pub(in crate::exec) type Held = (u64, Row, Vec<Box<dyn Accumulator>>);
 
 /// The bytes `group` of key `key` holds, near enough: its key, its
 /// grouping values and its set functions' states.

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use super::RowTable;
 use super::mvcc::Read;
-use crate::storage::Counts;
+use crate::storage::{Counts, Ramp};
 use crate::txn::TxId;
 
 impl RowTable {
@@ -40,7 +40,7 @@ impl RowTable {
             Err(e) => return Box::new(iter::once(Err(e))),
         };
         let (settled, ranges) = self.zones.settled();
-        let read = self.gathered_in(reader, &[], ranges).map(|batch| batch.map(|b| rows_of(b.rows)));
+        let read = self.gathered_in((reader, Ramp::whole()), &[], ranges).map(|batch| batch.map(|b| rows_of(b.rows)));
         Box::new(iter::once(Ok(settled)).chain(read))
     }
 }

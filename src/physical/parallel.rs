@@ -15,10 +15,16 @@
 //! than the walk that finds it. So does one a serial scan by batch of a
 //! table kept by column serves better, with no hash join's probe nor
 //! window functions, while EXECUTOR.BATCHES is on, and a bare COUNT(*) its
-//! table's storage counts (RULES.md D351). An expression a worker cannot evaluate
-//! alone keeps its pipeline whole on the statement's thread: a subquery's,
-//! a routine's, NEXT VALUE FOR's, a parameter's.
+//! table's storage counts (RULES.md D351). So does a grouping or DISTINCT
+//! of so many groups, as the statistics estimate them, that grouping each
+//! morsel apart barely shrinks it, its exchange of pieces costing what its
+//! threads gain, and with it the stream it reads, whose rows a channel
+//! would carry to it one by one (`parallel/exchange.rs`, RULES.md D355).
+//! An expression a worker cannot evaluate alone keeps its pipeline whole on
+//! the statement's thread: a subquery's, a routine's, NEXT VALUE FOR's, a
+//! parameter's.
 
+mod exchange;
 mod inputs;
 
 use super::Plan;
@@ -82,6 +88,14 @@ impl<'a> Asked<'a> {
         }
         self.most.min(rows.div_ceil(self.morsel))
     }
+
+    /// \[DESIGN\] (RULES.md D355) Whether the part `plan` reading `rows`
+    /// rows, a grouping or DISTINCT, stays serial whole, its input too, as
+    /// its exchange of groups costs what its threads would gain.
+    fn kept_whole(self, plan: &Plan, rows: usize) -> bool {
+        let degree = self.most.min(rows.div_ceil(self.morsel));
+        rows >= self.least && exchange::outweighs(self.db, plan, rows, (self.morsel, degree))
+    }
 }
 
 /// `plan` with each part worth running in parallel marked so.
@@ -100,7 +114,11 @@ fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
     if depth >= MAX_DEPTH || crate::exec::storage_counted(plan, asked.db).is_some() {
         return;
     }
-    let degree = rooted(plan).map_or(1, |rows| asked.degree(plan, rows));
+    let rooted = rooted(plan);
+    if rooted.is_some_and(|rows| asked.kept_whole(plan, rows)) {
+        return;
+    }
+    let degree = rooted.map_or(1, |rows| asked.degree(plan, rows));
     let deeper = depth.saturating_add(1);
     if degree < 2 {
         // A limit of few rows over a stream reads too few for workers to

@@ -16,6 +16,10 @@ use crate::lexer::{Tok, delim, kw};
 const GENERATED: &str = "GENERATED";
 /// The `<non-reserved word>` of values always generated.
 const ALWAYS: &str = "ALWAYS";
+/// [§11.19] The `<non-reserved word>`s of SET DATA TYPE.
+const DATA: &str = "DATA";
+/// [§11.19] The second.
+const TYPE: &str = "TYPE";
 /// \[EXTENSION\] The words after a generation expression: its values
 /// kept, as every generated column's are; computed in the writing
 /// statement; or after commit (vector design §12.4).
@@ -154,21 +158,7 @@ impl Parser {
     /// The text is not one of those implemented.
     pub(super) fn alter_column_action(&mut self) -> Result<AlterColumnAction> {
         if self.accept_kw(kw::DROP) {
-            if self.accept_kw(kw::DEFAULT) {
-                return Ok(AlterColumnAction::DropDefault);
-            }
-            // [§11.21] DROP IDENTITY; [§11.22] DROP EXPRESSION.
-            if self.accept_kw(kw::IDENTITY) {
-                return Ok(AlterColumnAction::DropIdentity);
-            }
-            if self.accept_word(EXPRESSION) {
-                return Ok(AlterColumnAction::DropExpression);
-            }
-            // [§11.18] DROP SCOPE <drop behavior>.
-            if self.accept_word(SCOPE) {
-                return Ok(AlterColumnAction::DropScope(self.drop_behavior()?));
-            }
-            return Err(self.syntax("expected DEFAULT, IDENTITY, EXPRESSION or SCOPE"));
+            return self.drop_column_action();
         }
         // [§11.17] ADD SCOPE <table name>.
         if self.accept_kw(kw::ADD) {
@@ -177,10 +167,8 @@ impl Parser {
             }
             return Ok(AlterColumnAction::AddScope(self.table_name()?));
         }
-        if self.is_kw(kw::SET) && self.next_is_kw(kw::DEFAULT) {
-            self.advance();
-            self.advance();
-            return Ok(AlterColumnAction::SetDefault(self.default_option()?));
+        if let Some(action) = self.set_column_action()? {
+            return Ok(action);
         }
         // [§11.20] <set identity column generation clause> ::= SET GENERATED
         // { ALWAYS | BY DEFAULT }
@@ -204,6 +192,66 @@ impl Parser {
                 .syntax("expected SET DEFAULT, DROP DEFAULT, an <alter identity column specification>, DROP IDENTITY or DROP EXPRESSION"));
         }
         Ok(AlterColumnAction::Identity { always, options: Box::new(options) })
+    }
+
+    /// The `<alter column action>` DROP begins, after DROP.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -102 if it is not written so.
+    fn drop_column_action(&mut self) -> Result<AlterColumnAction> {
+        if self.accept_kw(kw::DEFAULT) {
+            return Ok(AlterColumnAction::DropDefault);
+        }
+        // [§11.16] DROP NOT NULL.
+        if self.accept_kw(kw::NOT) {
+            self.expect_kw(kw::NULL)?;
+            return Ok(AlterColumnAction::DropNotNull);
+        }
+        // [§11.21] DROP IDENTITY; [§11.22] DROP EXPRESSION.
+        if self.accept_kw(kw::IDENTITY) {
+            return Ok(AlterColumnAction::DropIdentity);
+        }
+        if self.accept_word(EXPRESSION) {
+            return Ok(AlterColumnAction::DropExpression);
+        }
+        // [§11.18] DROP SCOPE <drop behavior>.
+        if self.accept_word(SCOPE) {
+            return Ok(AlterColumnAction::DropScope(self.drop_behavior()?));
+        }
+        Err(self.syntax("expected DEFAULT, NOT NULL, IDENTITY, EXPRESSION or SCOPE"))
+    }
+
+    /// [§11.13] SET `<default clause>`, [§11.15] SET NOT NULL or [§11.19]
+    /// SET DATA TYPE `<data type>`, if one is next.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -102 if it is not written so.
+    fn set_column_action(&mut self) -> Result<Option<AlterColumnAction>> {
+        if !self.is_kw(kw::SET) {
+            return Ok(None);
+        }
+        if self.next_is_kw(kw::DEFAULT) {
+            self.advance();
+            self.advance();
+            return Ok(Some(AlterColumnAction::SetDefault(self.default_option()?)));
+        }
+        if self.next_is_kw(kw::NOT) {
+            self.advance();
+            self.advance();
+            self.expect_kw(kw::NULL)?;
+            return Ok(Some(AlterColumnAction::SetNotNull));
+        }
+        if let Tok::Identifier(w) = self.peek_at(1)
+            && w == DATA
+        {
+            self.advance();
+            self.advance();
+            self.expect_word(TYPE)?;
+            return Ok(Some(AlterColumnAction::SetDataType(self.type_name()?)));
+        }
+        Ok(None)
     }
 
     /// [ISO/IEC 9075-2:2023 §11.20] An `<alter identity column option>`, if

@@ -340,7 +340,7 @@ impl Probe {
 
     /// Probes with the rows of `batch` kept, `rows`, its joined rows put in
     /// batches; the rows joined before an error, then the error.
-    fn batch(&mut self, batch: &Batch, rows: Option<Vec<usize>>) {
+    fn batch(&mut self, batch: &Batch, rows: Option<crate::storage::Sel>) {
         let done = self.probe(batch, &kept_rows(rows, batch.rows));
         if self.out.settle(Some(batch), done) {
             self.state = Phase::Done;

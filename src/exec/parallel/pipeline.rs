@@ -20,6 +20,7 @@ use std::sync::Arc;
 use super::indexed::{self, Scanned};
 use super::probe::{Table, built};
 use super::{Held, Limit};
+use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::{Runner, broken, eval, eval_cond};
@@ -34,7 +35,7 @@ use crate::txn::TxId;
 const MAX_STEPS: usize = 1024;
 
 /// A step a row is taken through.
-enum Step {
+pub(super) enum Step {
     /// [X3.135-1986 §5.21 GR2] kept only if the condition is true of it.
     Filter(Cond),
     /// [X3.135-1986 §5.25 GR2] each expression of it.
@@ -45,15 +46,19 @@ enum Step {
 }
 
 /// The morsels of one table's split and the steps over its rows, the
-/// first applied first.
-struct Branch {
-    split: Arc<dyn Split>,
-    steps: Vec<Step>,
+/// first applied first; of a table's scan, the columns it reads and its
+/// width, which its batches hold (`parallel/batched.rs`).
+pub(super) struct Branch {
+    pub(super) split: Arc<dyn Split>,
+    pub(super) steps: Vec<Step>,
+    pub(super) scanned: Option<(Vec<usize>, usize)>,
 }
 
-/// A pipeline, its tables split.
+/// A pipeline, its tables split; and, if each of its morsels is read by
+/// batch, how (`parallel/batched.rs`).
 pub(super) struct Pipeline {
-    branches: Vec<Branch>,
+    pub(super) branches: Vec<Branch>,
+    pub(super) batched: Option<super::batched::ByBatch>,
 }
 
 impl Pipeline {
@@ -70,7 +75,8 @@ impl Pipeline {
         if !branched(plan, (db, tx, rows), limit, &mut branches)? {
             return Ok(Held::GaveWay);
         }
-        Ok(Held::Kept(Pipeline { branches }))
+        let batched = super::batched::by_batch(&branches, db);
+        Ok(Held::Kept(Pipeline { branches, batched }))
     }
 
     /// How many morsels it has.
@@ -101,6 +107,25 @@ impl Pipeline {
     }
 }
 
+/// Adds to `out` the branch of a scan of `columns` of `table`, filtered by
+/// `cond` if given, its conjuncts the engine can judge told it, in morsels
+/// of about `rows` rows: whether it could be split. A table of no storage
+/// of its own, as a view of the catalog's, is read alone.
+fn scan_branch(
+    db: &State,
+    (table, columns): (&QualifiedName, &[usize]),
+    (tx, rows): (TxId, usize),
+    cond: Option<&Cond>,
+    out: &mut Vec<Branch>,
+) -> bool {
+    let Ok(storage) = db.storage_of(table) else { return false };
+    let told = cond.and_then(pushed_conjuncts);
+    let Some(split) = split(storage, (tx, columns, told.as_ref(), rows)) else { return false };
+    let scanned = db.catalog.table(table).map(|t| (columns.to_vec(), t.columns.len()));
+    out.push(Branch { split, steps: cond.map(|c| Step::Filter(c.clone())).into_iter().collect(), scanned });
+    true
+}
+
 /// Adds the branches of `plan` to `out`, each split into morsels of about
 /// `rows` rows: whether each could be, and each built operand held.
 fn branched(plan: &Plan, (db, tx, rows): (&Arc<State>, TxId, usize), limit: &Limit, out: &mut Vec<Branch>) -> Result<bool> {
@@ -108,28 +133,18 @@ fn branched(plan: &Plan, (db, tx, rows): (&Arc<State>, TxId, usize), limit: &Lim
         return Ok(branched(left, (db, tx, rows), limit, out)? && branched(right, (db, tx, rows), limit, out)?);
     }
     if let Plan::SeqScan { table, columns, .. } = plan {
-        // A table of no storage of its own, as a view of the catalog's, is
-        // read alone.
-        let Ok(storage) = db.storage_of(table) else { return Ok(false) };
-        return Ok(split(storage, (tx, columns, None, rows)).is_some_and(|split| {
-            out.push(Branch { split, steps: Vec::new() });
-            true
-        }));
+        return Ok(scan_branch(db, (table, columns), (tx, rows), None, out));
     }
     if let Plan::IndexScan { table, index, probe, columns, covering, est, .. } = plan {
         let scanned = Scanned { table, index, probe, columns, covering: *covering };
         let Some(split) = indexed::split(db, tx, &scanned, (crate::physical::parallel_rows(*est), rows))? else { return Ok(false) };
-        out.push(Branch { split, steps: Vec::new() });
+        out.push(Branch { split, steps: Vec::new(), scanned: None });
         return Ok(true);
     }
     if let Plan::Filter { cond, input, .. } = plan
         && let Plan::SeqScan { table, columns, .. } = &**input
     {
-        let told = pushed_conjuncts(cond);
-        let Ok(storage) = db.storage_of(table) else { return Ok(false) };
-        let Some(split) = split(storage, (tx, columns, told.as_ref(), rows)) else { return Ok(false) };
-        out.push(Branch { split, steps: vec![Step::Filter(cond.clone())] });
-        return Ok(true);
+        return Ok(scan_branch(db, (table, columns), (tx, rows), Some(cond), out));
     }
     let (step, input) = if let Plan::Filter { cond, input, .. } = plan {
         (Step::Filter(cond.clone()), input)

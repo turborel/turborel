@@ -41,6 +41,10 @@ pub const RESEAL: &str = "RESEAL";
 /// `<column name>` TO `<column name>` (`db/alter/rename.rs`).
 const RENAME: &str = "RENAME";
 
+/// \[DESIGN\] What the log writes after RENAME TO `<table name>`, before
+/// the generation of the storage the table was given (RULES.md D402).
+pub const GENERATION: &str = "GENERATION";
+
 /// The key words after CREATE that begin a definition `schema_statement`
 /// reads.
 const DEFINED: [&str; 7] = [kw::TABLE, kw::VIEW, kw::GLOBAL, kw::LOCAL, kw::DOMAIN, kw::ASSERTION, kw::COLLATION];
@@ -354,7 +358,8 @@ impl Parser {
     }
 
     /// \[EXTENSION\] RENAME \[COLUMN\] `<column name>` TO `<column
-    /// name>`, if RENAME begins it (`db/alter/rename.rs`).
+    /// name>` (`db/alter/rename.rs`), or RENAME TO `<table name>`
+    /// (`db/alter/renamed.rs`), if RENAME begins it.
     ///
     /// # Errors
     ///
@@ -362,6 +367,13 @@ impl Parser {
     fn rename_action(&mut self) -> Result<Option<AlterAction>> {
         if !self.accept_word(RENAME) {
             return Ok(None);
+        }
+        if self.accept_kw(kw::TO) {
+            let to = self.table_name()?;
+            // Of the log alone: the generation the table's storage was given.
+            let logged = matches!(self.catalogs, super::Catalogs::Kept) && self.accept_word(GENERATION);
+            let generation = if logged { Some(self.unsigned_integer()?) } else { None };
+            return Ok(Some(AlterAction::RenameTable { to, generation }));
         }
         self.accept_kw(kw::COLUMN);
         let at = self.here();

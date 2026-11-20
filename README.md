@@ -36,6 +36,10 @@ behind it, and each can be replaced or added to.
   FINAL TABLE of INSERT, UPDATE, DELETE and MERGE.
 - Row and columnar storage, chosen per table.
 - DISTINCT set functions computed by two groupings, read by batches.
+- Batches of vectors with null bitmaps, dates and truth values among them,
+  filtered by pluggable kernels, and parallel morsels read by batch.
+- Expressions compiled once and evaluated a vector at a time, CASE by the
+  rows each WHEN keeps.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
   or a strategy a plug-in registers, many levels deep, attached and
   detached, rows routed and moved, reads pruned and merged in order, joins
@@ -185,7 +189,9 @@ behind it, and each can be replaced or added to.
 - Triggers before, after and instead of a change, for each row or
   statement, and roles with privileges granted and revoked.
 - Domains, assertions, temporary tables, scrollable cursors and dynamic SQL.
-- Columns renamed in place, without copying their rows.
+- Columns renamed in place, without copying their rows, and tables renamed.
+- A column's NOT NULL set or dropped and its data type widened, the rows
+  checked or copied a row at a time.
 - Import of CSV and tab-separated files through the client.
 - A command-line client with line editing, completion, describe commands,
   variables, scripting and seven output formats ([guide](doc/client/05-turborel-commands.md)).

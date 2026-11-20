@@ -28,11 +28,11 @@ use crate::error::Result;
 use crate::exec::Runner;
 use crate::logical::{Cond, Expr, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{Batch, Column};
+use crate::storage::{Batch, Column, Sel};
 use crate::txn::{TxId, checked};
 
 /// A batch, and the rows of it a filter kept, if one did.
-pub(in crate::exec) type Kept = (Batch, Option<Vec<usize>>);
+pub(in crate::exec) type Kept = (Batch, Option<Sel>);
 
 /// What a stream gives, a batch at a time.
 pub(in crate::exec) type Batches = Box<dyn Iterator<Item = Result<Kept>> + Send>;
@@ -125,7 +125,7 @@ fn appended_owned(plan: Plan) -> Vec<Plan> {
 
 /// The place among `columns` of each of `exprs`, if each is a column they
 /// hold.
-fn picked(exprs: &[Expr], columns: &[usize]) -> Option<Vec<usize>> {
+pub(super) fn picked(exprs: &[Expr], columns: &[usize]) -> Option<Vec<usize>> {
     exprs.iter().map(|e| if let Expr::Column(c) = e { columns.iter().position(|held| held == c) } else { None }).collect()
 }
 
@@ -312,7 +312,7 @@ fn appended_batches(chain: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
 
 /// `batch` with the vectors at `picks`, in order: each moved, or copied if
 /// a later pick takes it too.
-fn pick(batch: Batch, picks: &[usize]) -> Batch {
+pub(super) fn pick(batch: Batch, picks: &[usize]) -> Batch {
     let mut held: Vec<Option<Column>> = batch.columns.into_iter().map(Some).collect();
     let columns = picks
         .iter()
@@ -350,7 +350,7 @@ pub(super) fn scanned(
 /// then the error of the first row that raises one, so a reader that
 /// stops at one of those rows, as EXISTS does, sees what it would row by
 /// row (RULES.md D15).
-fn filtered(inner: Batches, (judging, runner): (Judging, Runner)) -> Batches {
+pub(super) fn filtered(inner: Batches, (judging, runner): (Judging, Runner)) -> Batches {
     Box::new(inner.flat_map(move |kept| {
         let judged = kept.map(|(batch, rows)| match judging.kept_of(&batch, rows.as_deref(), &runner) {
             Ok(judged) => vec![Ok((batch, Some(judged)))],

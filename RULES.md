@@ -348,6 +348,10 @@ verification approach DO-178C expects (§8).
 | D351 | A bare COUNT(*) of a row-store table sums its settled zones' rows and reads the rest in place |
 | D352 | A column chunk is decoded a block of 64 values at a time, and opened once for a group's runs |
 | D353 | ALP decimals are read by two multiplications with a stored pair of factors |
+| D354 | A batch keeps nulls as bitmaps, rows as selections, datetimes and truth values as vectors, its primitives in kernels |
+| D355 | A grouping of so many groups that its morsels barely shrink stays serial, by the cost of its exchange |
+| D362 | An expression of a batch's columns is compiled once and evaluated a vector at a time, a batch that would raise or warn evaluated again by rows |
+| D363 | CASE evaluates each branch over the rows its WHEN keeps, and a function may give a body over vectors |
 | D370 | One estimator gives every plan node its rows, from the base tables under its columns |
 | D371 | The optimizer tries the rules again at a node a rule rewrote, within a budget of rewrites |
 | D372 | A grouping's rows are its groups, by Cardenas' formula over its columns' distinct values |
@@ -359,6 +363,10 @@ verification approach DO-178C expects (§8).
 | D396 | A column's declared type is told in a Description's and a Prepared's tail, with `declared-types`, and values are written as ever |
 | D397 | Status CATALOG is never empty, as CATALOG.NAME takes no null |
 | D398 | The protocol's sample frames are a file its tests make from its encoders, and fail on any difference |
+| D399 | SET NOT NULL adds a named NOT NULL constraint, checked of the rows every snapshot sees under the table's lock |
+| D400 | DROP NOT NULL drops the column's own NOT NULL constraints, cascading, and leaves a domain's |
+| D401 | SET DATA TYPE widens only, copies the rows to a new storage generation and makes the indexes again |
+| D402 | A table is renamed into a new generation, refused while a text names it; its trigger's ON clause and generator follow |
 
 ### The project
 
@@ -9543,6 +9551,7 @@ again in one buffer for each value, so a value seen allocates nothing.
 The bag (`exec/work.rs`) looks a key up once if it holds it and twice if
 not, where it hashed every new key three times, which the set operations,
 recursive queries and window functions using it gain too.
+
 #### D350. A row-store batch scan reads each entry in place under its leaf's latch, copying only what it cannot read there
 
 A batch scan of a row-store table copied each entry's key and value out
@@ -9651,6 +9660,136 @@ allows. The new encoder sets bit 0x80 of the chunk's first byte, which is
 above every exponent, and writes f after it. A chunk without the bit was
 written before and is read by division, so an older file never reads
 wrongly and needs no migration.
+
+#### D354. A batch keeps nulls as bitmaps, rows as selections, datetimes and truth values as vectors, its primitives in kernels
+
+A batch's vectors mark their nulls in 64-bit words, least significant bit
+first (`storage/batch/mask.rs`), as a chunk of the column store keeps
+them, so a word of nulls is read once for 64 rows and a chunk's bitmap
+becomes a vector's without a loop over its bits. The rows an operator
+keeps of a batch are a selection of `u32` places, ascending
+(`storage/batch/sel.rs`), passed from one step to the next in place of
+the rows copied. One width serves every batch, since a join's held build
+side is one batch of all its rows. Datetimes are a vector of instants in
+UTC, in microseconds, with their zones if they keep them, and truth
+values are a bitmap, so a filter of a date leaves the row path. A frozen
+group's chunks are decoded straight into these shapes. A chunk's null
+bitmap is joined to the vector's a word at a time (`Mask::append`), a
+datetime column without a zone is read as its 8-byte instants, and a
+truth value column as its bits (`engine/columns/scan/truths.rs`).
+
+The loops over vectors are kernels (`src/kernels.rs`): a selection of the
+rows a comparison with a constant is true of, of bits set, of a
+dictionary's codes kept, an exact sum, the extremes, a gather, the
+unpacking of a frame of reference's bit-packed values (D352). Each has a
+portable body, branch-free where a branch would be mispredicted, which is
+what a database runs unless it is given others (`Database::set_kernels`).
+A crate of kernels for one processor's instructions implements the same
+trait and passes the same contract (`support/src/kernels.rs`), so the
+core keeps no unsafe code and no code of one system.
+
+A filter's conjuncts each narrow the selection the one before kept, so a
+later one reads only what survives. A filter one of whose conjuncts may
+raise an error judges each of them over every row and ANDs their masks,
+so the error a row raises is the one a row at a time raises, after the
+rows before it (D15). An exact constant of more fractional digits than
+the column's scale is folded to a bound of its units once a batch, `<`
+and `>=` by its ceiling, `<=` and `>` by its floor, so the comparison
+runs on the integers. An OR of conjuncts each judged over vectors ORs
+their masks.
+
+The morsels of a pipeline run in parallel (D290) are read by batch when
+every step of it is a filter or a projection the serial stream reads by
+batch (`exec/parallel/batched.rs`). A morsel's rows are read as the
+serial scan by batch reads its range (`Split::morsel_batches`) and taken
+through the same functions, so a worker costs a row what the statement's
+thread alone costs it. A grouping or DISTINCT over such a pipeline groups
+each morsel's batches as a grouping by batch groups them, and writes its
+groups as the pieces it merges (D293). A hash join's probe keeps its
+pipeline on rows.
+
+#### D355. A grouping of so many groups that its morsels barely shrink stays serial, by the cost of its exchange
+
+A grouping or DISTINCT run in parallel groups each morsel apart, writes
+each morsel's groups as pieces, and merges each partition's pieces into
+groups made anew (D293). A morsel of `m` rows of `G` groups, each as
+likely, holds `G (1 - (1 - 1/G)^m)` of them, as Cardenas (1975) counts
+the blocks a query touches. Of a thousand groups a morsel's few hundred
+pieces cost nothing beside its rows. Of two hundred thousand, nearly
+every row is a piece, written, moved between threads and merged.
+
+The planner prices the part in rows grouped (`physical/parallel/exchange.rs`).
+The threads share the rows and each piece's own work, its group made,
+its states written and merged, four rows' worth. A piece's bytes cross
+the memory the threads share, three quarters of a row whatever the
+threads, and the statement's thread orders each group by its first row
+alone, one row each. If that costs the serial grouping's rows as much,
+the part stays serial whole, the scan under it too, since a channel
+carrying its rows one by one to a serial grouping costs more than the
+serial scan by batch. The groups come from the statistics of the grouped
+columns, their distinct values multiplied, capped at the rows. A
+grouping of a column not a table's, or of a table of no statistics, has
+no estimate and runs in parallel, as before.
+
+The constants are measured, not derived. A grouping of keys unique to
+each row never gains, whatever the threads, as the ordering of its
+groups alone costs the serial grouping's rows. One of few groups gains
+by nearly the degree.
+
+#### D362. An expression of a batch's columns is compiled once and evaluated a vector at a time, a batch that would raise or warn evaluated again by rows
+
+A projection, a filter's conjunct or a set function's argument that
+reads only a batch's columns is compiled once for its operator into a
+tree of nodes (`exec/batch/expr.rs`). The tree is evaluated over each
+batch, a node once over the rows given, so its interpretation costs once
+a vector and not once a value. A node takes the shape of its operands'
+vectors. Exact numbers stay integers of a scale, sums and differences at
+the greater scale and products at the sum of the scales (X3.135-1986
+§5.9 SR4b, SR4c). Approximate numbers are `f64`s. Comparisons give truth
+values a bit a row, and AND, OR and NOT run on words of 64 rows by the
+three-valued tables (§5.18 GR2). Any other shape, a quotient, an
+interval, a datetime or a decimal floating-point number, applies the
+rule a row's evaluation applies to each value of its operands' vectors,
+so its values are a row's. A subquery, an outer reference, a sequence's
+next value or a call that needs the statement is evaluated a row at a
+time, inside the tree, and so is a subtree deeper than `MAX_DEPTH`.
+
+Integer arithmetic runs in `i64` with overflowing operations and a flag
+of the batch. An overflow, or a result of 18 digits or more, which no
+decimal holds (§5.9 GR6a), sets it, and a set flag gives no vector.
+Approximate arithmetic sets it of a divisor of 0 or a result not finite.
+A row that is null never sets it, its slot written 0. A row that would
+raise a warning gives no vector either, as the first warning raised is
+the one kept. A batch that gives no vector is evaluated again a row at a
+time, in order, so the error or warnings raised are those row by row
+raises, after the same rows (D15). A filter that can raise is judged
+over vectors only if every conjunct can be, and a batch of which one
+gives none is judged whole by rows.
+
+A vector path is pure. It writes nothing but its result, so evaluating
+a batch twice changes nothing, and a filter of a conjunct whose program
+gives none of a batch judges that conjunct by rows of the rows kept.
+
+#### D363. CASE evaluates each branch over the rows its WHEN keeps, and a function may give a body over vectors
+
+CASE takes the first WHEN true of each row (ISO/IEC 9075:1992 §6.9 GR2).
+Over vectors each WHEN is judged of the rows no WHEN before it took, and
+each THEN is evaluated over only the rows its WHEN took, the ELSE over
+the rest (`exec/batch/expr/case.rs`). A branch a row does not take is
+never evaluated of it, so a CASE that guards a division by 0 raises
+nothing, as row by row. The branches' vectors are scattered back to the
+rows' places, of one kind if all are, else as values. COALESCE and
+NULLIF are CASE and so evaluate alike.
+
+A scalar function may give a body over vectors
+(`ScalarFunction::eval_batch`), called once for the rows given with
+each argument a column or a constant. It gives what the function's call
+gives of each row, or nothing, so the call is made for each row's
+values, borrowed from the vectors. ABS of integers and approximate
+numbers, CHAR_LENGTH, OCTET_LENGTH, UPPER, LOWER and EXTRACT have one
+(`functions/over_vectors.rs`). Strings of a dictionary are folded or
+counted once an entry. A function that may warn has its body skipped
+and is called as a row's evaluation calls it.
 
 #### D370. One estimator gives every plan node its rows, from the base tables under its columns
 
@@ -9900,6 +10039,89 @@ tag, each tail field, each Status the reference names, a Notice and an
 Error with and without diagnostics, compressed frames, and the edges a
 decoder meets. A plug-in's type is read without its kind by a reader
 with no registry, so its sample is checked to decode alone.
+
+#### D399. SET NOT NULL adds a named NOT NULL constraint, checked of the rows every snapshot sees under the table's lock
+
+ALTER COLUMN … SET NOT NULL [ISO/IEC 9075-2:2023 §11.15, Feature F383]
+gives the column a NOT NULL constraint, a table constraint of a name the
+database makes, as a column definition's NOT NULL is, so the
+Information Schema shows it and DROP CONSTRAINT drops it. Of a column
+already known not null it does nothing [GR1]. The rows are checked as
+ADD CONSTRAINT checks them [ISO/IEC 9075:1992 §11.16 GR2]. The ALTER
+holds the table's exclusive lock, so no transaction writes the table
+while it runs, and one that has written it and not ended keeps the lock
+from it. A row any snapshot may see once the ALTER commits is a row
+committed before the lock is held, so the scan under it finds every
+null. A null fails the ALTER with SQLSTATE 23000, which changes nothing.
+The action is logged as written (D33), so recovery and a standby make
+the constraint again. The rows are not checked again there, as they
+were when it ran.
+
+#### D400. DROP NOT NULL drops the column's own NOT NULL constraints, cascading, and leaves a domain's
+
+ALTER COLUMN … DROP NOT NULL [§11.16] drops every NOT NULL constraint
+of the table on the column alone, as DROP CONSTRAINT … CASCADE does
+[GR1c], so what depends on the key it made of a UNIQUE goes with it. A
+NOT NULL of the column's domain is the domain's, and stays. The
+column's nullability is then that of what is left. It is refused of a
+column of the primary key [SR4], one that bounds an application-time
+period [SR3] or a system-time period [SR2], and of an identity column
+[§11.12 SR6]. A system-versioned table's columns are altered by no
+ALTER COLUMN (D83), so §11.12 SR2 refuses those first.
+
+#### D401. SET DATA TYPE widens only, copies the rows to a new storage generation and makes the indexes again
+
+ALTER COLUMN … SET DATA TYPE [§11.19, Feature F382] takes a predefined
+type of the same kind of no lesser length, precision, scale or
+qualifier [SR13 to SR15], so every value stored is assigned to it
+without loss. A column of a domain has the domain's type and is given
+no other, by design. The other refusals are the Syntax Rules': a
+self-referencing column [SR3], one that bounds a period [SR4, SR5], an
+identity column [§11.12 SR6], and one that a CHECK of more columns or
+an assertion [SR6], a trigger's column list or action [SR7], a
+routine's body [SR8], a view's query [SR9] or a generation expression
+[SR10] references. A routine's body is also read by its tokens, as a
+column's RENAME reads it, so a column its counting misses still
+refuses it.
+
+The new type changes the stored form of a value, so the table gets a
+new storage generation, as ADD COLUMN gives it (D33). Its rows are
+read a row at a time from a scan of the old one and inserted in the new
+one by the transaction's own logged writes, each value assigned to the
+new type [GR1], so no table's rows are held in memory. The copy fires
+no trigger, being no SQL-data change statement [§4.46.1]. Its indexes
+are made again over the new generation, and its CHECKs of the column
+alone bound again. ROLLBACK drops the new generation, recovery replays
+the copy's writes at the generation the ALTER's record names, and a
+standby applies the same records.
+
+#### D402. A table is renamed into a new generation, refused while a text names it; its trigger's ON clause and generator follow
+
+SQL:2023 renames no table [§11.10], so ALTER TABLE … RENAME TO … is an
+extension. The new name is of the table's schema and of no table, view
+or property graph of it [ISO/IEC 9075:1992 §11.3 SR2], else SQLCODE
+-103. Only the schema's owner alters the table [§11.10 AR1]. A log
+record of a row change names its table by its name, so the table is
+renamed into a new storage generation of the new name, its rows copied
+as SET DATA TYPE copies them (D401) and its indexes made again. The
+generation is written in the action logged, as GENERATION n, which only
+the log's parser reads, so recovery gives the table the generation it
+had though the names retired are not kept.
+
+Stored SQL text is not rewritten, as a column's RENAME rewrites none
+(D83). While a view, a CHECK or domain constraint that reads the table,
+an assertion, a trigger's action or condition, a routine, a property
+graph, a generation expression or an index expression names the table,
+the rename is refused, a test of the texts' tokens and so conservative.
+What refers to the table by its descriptor follows it: constraints and
+indexes keep their names, a foreign key of another table references the
+new name, privileges are held on it, and a trigger's subject table is
+it, the ON clause of its text written again so. An identity column's
+generator keeps the name it was made with (D63), so its values go on.
+A typed, temporary, system-versioned or partitioned table, a node or
+edge table, one a vector pipeline keeps and one of a column registered
+with a spatial or linear referencing system are known by name
+elsewhere, so none is renamed.
 
 ## 2. Project layout
 

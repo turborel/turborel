@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 35] = [
+pub const READS: [Mutation; 32] = [
     Mutation {
         name: "zone-write-visible",
         package: Package::Core,
@@ -125,36 +125,6 @@ pub const READS: [Mutation; 35] = [
         original: "                *end = at.saturating_add(1);",
         replacement: "                *end = at;",
         integration: &["batches::groups_of_runs_answer_as_row_by_row"],
-        unit: &[],
-    },
-    Mutation {
-        name: "runs-computed",
-        package: Package::Core,
-        breaks: "an expression of integers known as runs gives each run's value to its first row alone",
-        file: "src/exec/batch/vector/ints.rs",
-        original: "        units.resize(end, unit);",
-        replacement: "        units.resize(end, if units.is_empty() { unit } else { 0 });",
-        integration: &["batches::columns_of_runs_answer_as_row_by_row"],
-        unit: &[],
-    },
-    Mutation {
-        name: "runs-compared",
-        package: Package::Core,
-        breaks: "a comparison of two sides known as runs keeps the runs it should drop",
-        file: "src/exec/batch/judge/ints.rs",
-        original: "            if truth(start) {",
-        replacement: "            if !truth(start) {",
-        integration: &["batches::columns_of_runs_answer_as_row_by_row"],
-        unit: &[],
-    },
-    Mutation {
-        name: "runs-lane-nulls",
-        package: Package::Core,
-        breaks: "an expression of integers in runs with nulls among them gives a null row its run's value",
-        file: "src/exec/batch/vector/ints.rs",
-        original: "                ints.runs()?;",
-        replacement: "                ints.runs_of(rows)?;",
-        integration: &["batches::columns_of_runs_answer_as_row_by_row"],
         unit: &[],
     },
     Mutation {
@@ -292,8 +262,8 @@ pub const READS: [Mutation; 35] = [
         package: Package::Core,
         breaks: "a spilled sort's chunk writes no row of a vector of integers, numbers or strings null",
         file: "src/exec/sort/chunk.rs",
-        original: "            out.put_u8(u8::from(cell_kind(cell).is_none()));",
-        replacement: "            out.put_u8(u8::from(cell_kind(cell).is_none() && false));",
+        original: "        out.extend(Mask::from_bools(&cells().map(|c| cell_kind(c).is_none()).collect::<Vec<bool>>()).lsb_bytes());",
+        replacement: "        out.extend(Mask::none(rows.len()).lsb_bytes());",
         integration: &["spilling::operators_spill_and_give_the_same_rows"],
         unit: &["exec::sort::chunk::tests::chunks_keep_their_vectors_kinds"],
     },

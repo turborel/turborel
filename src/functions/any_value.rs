@@ -58,12 +58,12 @@ impl Accumulator for First {
     }
     /// The first value not null of those at `rows`, or of all, if it has
     /// none yet; it reads no further.
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+    fn update_many(&mut self, values: &[Value], rows: Option<&[u32]>) -> Result<()> {
         if self.first.is_some() {
             return Ok(());
         }
         let found = match rows {
-            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).find(|v| !v.is_null()),
+            Some(rows) => rows.iter().filter_map(|&r| values.get(crate::storage::mask::index(r))).find(|v| !v.is_null()),
             None => values.iter().find(|v| !v.is_null()),
         };
         self.first = found.cloned();
@@ -127,7 +127,7 @@ impl Accumulator for Kept {
     fn update(&mut self, v: &Value) -> Result<()> {
         self.0.update(v)
     }
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+    fn update_many(&mut self, values: &[Value], rows: Option<&[u32]>) -> Result<()> {
         self.0.update_many(values, rows)
     }
     fn write_state(&self, out: &mut Vec<u8>) -> bool {

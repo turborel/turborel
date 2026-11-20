@@ -36,6 +36,8 @@ pub(in crate::exec) fn put_key(cell: Cell<'_>, out: &mut Vec<u8>) {
         Cell::Exact(units, scale) => put_norm_exact(i128::from(units), scale, out),
         Cell::Approx(f) => put_norm_approx(f, out),
         Cell::Text(text) => put_norm_text(text, out),
+        Cell::Datetime(d) => put_norm(&Value::Datetime(d), out),
+        Cell::Bool(b) => put_norm(&Value::Bool(b), out),
         Cell::Null => put_norm(&Value::Null, out),
     }
 }
@@ -57,8 +59,8 @@ const KEY_BYTES: usize = 9;
 
 impl Keyed {
     /// The rows given of `batch`, `rows` or all, each keyed by every column.
-    fn of(batch: Batch, rows: Option<Vec<usize>>) -> Keyed {
-        let rows = rows.unwrap_or_else(|| (0..batch.rows).collect());
+    fn of(batch: Batch, rows: Option<crate::storage::Sel>) -> Keyed {
+        let rows = crate::storage::sel::places_of(rows, batch.rows);
         let width = batch.columns.len();
         let (mut keys, mut ends) = (Vec::with_capacity(rows.len().saturating_mul(width).saturating_mul(KEY_BYTES)), Vec::new());
         for &r in &rows {

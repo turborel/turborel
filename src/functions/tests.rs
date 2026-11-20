@@ -27,10 +27,10 @@ fn approximate_average() {
 
 /// The results of `function`'s accumulator of `result` fed `values`, at
 /// `rows` or all, a value at a time and a vector at a time.
-fn both_ways(function: &dyn AggregateFunction, result: DataType, (values, rows): (&[Value], Option<&[usize]>)) -> (String, String) {
+fn both_ways(function: &dyn AggregateFunction, result: DataType, (values, rows): (&[Value], Option<&[u32]>)) -> (String, String) {
     let mut one = function.accumulator(result.clone());
     let picked: Vec<&Value> = match rows {
-        Some(rows) => rows.iter().filter_map(|&r| values.get(r)).collect(),
+        Some(rows) => rows.iter().filter_map(|&r| values.get(crate::storage::mask::index(r))).collect(),
         None => values.iter().collect(),
     };
     let first = picked.iter().filter(|v| !v.is_null()).try_for_each(|v| one.update(v)).and_then(|()| one.finish());
@@ -60,7 +60,7 @@ fn set_functions_fed_vectors_total_as_values() {
     let exacts: Vec<Value> = mixed.iter().filter(|v| !matches!(v, Value::Approx(_))).cloned().collect();
     for (function, result) in functions {
         for values in [&mixed, &exacts] {
-            for rows in [None, Some(&[0_usize, 2, 3, 6][..]), Some(&[][..])] {
+            for rows in [None, Some(&[0_u32, 2, 3, 6][..]), Some(&[][..])] {
                 let (one, many) = both_ways(function, result.clone(), (values, rows));
                 assert_eq!(one, many, "{} of {values:?} at {rows:?}", function.name());
             }
@@ -110,11 +110,11 @@ fn an_accumulator_of_update_alone_is_fed_vectors() {
 fn set_functions_fed_floats_total_as_values() {
     let numbers = vec![1.5_f64, 0.0_f64, -2.25_f64, 0.1_f64, -0.0_f64, 7.0_f64, 0.0_f64];
     let nulls = vec![false, true, false, false, false, false, true];
-    let floats = Floats::new(numbers, Some(nulls));
+    let floats = Floats::new(numbers, Some(nulls.into()));
     let approx = DataType::Approximate { precision: DOUBLE_PRECISION, spelled: Spelled::Float };
     let functions: [&dyn AggregateFunction; 5] = [&Count, &Sum, &Avg, &Extreme { max: true }, &Extreme { max: false }];
     for function in functions {
-        for rows in [None, Some(&[0_usize, 2, 3, 4][..]), Some(&[1_usize, 6][..])] {
+        for rows in [None, Some(&[0_u32, 2, 3, 4][..]), Some(&[1_u32, 6][..])] {
             let mut by_values = function.accumulator(approx.clone());
             by_values.update(&Value::Approx(10.0_f64)).unwrap();
             by_values.update_many(floats.values(), rows).unwrap();
@@ -211,15 +211,15 @@ fn set_functions_fed_runs_total_as_each() {
     let numbers = DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 2, spelled: Spelled::Numeric };
     let units: Vec<i64> = [-4, -4, 2, 2, 2, 9].to_vec();
     let functions: [&dyn AggregateFunction; 5] = [&Count, &Sum, &Avg, &Extreme { max: true }, &Extreme { max: false }];
-    let fed = |function: &dyn AggregateFunction, ints: &Ints, rows: Option<&[usize]>| {
+    let fed = |function: &dyn AggregateFunction, ints: &Ints, rows: Option<&[u32]>| {
         let mut accumulator = function.accumulator(numbers.clone());
         format!("{:?}", accumulator.update_ints(ints, rows).and_then(|()| accumulator.finish()))
     };
-    for nulls in [None, Some(vec![true, false, false, true, false, true])] {
+    for nulls in [None, Some(vec![true, false, false, true, false, true].into())] {
         let plain = Ints::new(units.clone(), 2, nulls.clone());
         let runs = Ints::new(units.clone(), 2, nulls).with_runs(vec![2, 5, 6]);
         for function in functions {
-            for rows in [None, Some(&[0_usize, 3, 5][..]), Some(&[2_usize, 4][..]), Some(&[][..])] {
+            for rows in [None, Some(&[0_u32, 3, 5][..]), Some(&[2_u32, 4][..]), Some(&[][..])] {
                 assert_eq!(fed(function, &runs, rows), fed(function, &plain, rows), "{} at {rows:?}", function.name());
             }
         }

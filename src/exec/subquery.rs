@@ -293,6 +293,11 @@ pub struct Runner {
 }
 
 impl Runner {
+    /// The kernels its database's batches run on (RULES.md D354).
+    pub(crate) fn kernels(&self) -> &dyn crate::kernels::Kernels {
+        self.db.functions.kernels()
+    }
+
     /// A runner for transaction `tx` in `db`.
     pub fn new(db: &Arc<State>, tx: TxId) -> Runner {
         let (done, seen) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
