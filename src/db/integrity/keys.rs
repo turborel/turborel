@@ -103,8 +103,9 @@ impl<'s> KeyCheck<'s> {
         }
         // [EXTENSION] a key a global index holds for the tree, checked
         // through it, not in each partition (RULES.md D157).
-        let template = global_index_name(&format!("{}.{}.{}", owner.auth, owner.ident, name.ident));
-        let global = st.catalog.index(&template).filter(|_| partition).map(|ix| (ix, Dispatched::of(st, &ix.table)));
+        // Its name made only of a partition's (RULES.md D415).
+        let template = partition.then(|| global_index_name(&format!("{}.{}.{}", owner.auth, owner.ident, name.ident)));
+        let global = template.and_then(|t| st.catalog.index(&t)).map(|ix| (ix, Dispatched::of(st, &ix.table)));
         if global.is_some() {
             family.clear();
         }

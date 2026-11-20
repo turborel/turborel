@@ -4,6 +4,7 @@
 //! INSERT, searched UPDATE and searched DELETE in it keeping its plan.
 
 use turborel::db::{Database, Session};
+use turborel::value::{Decimal, Value};
 
 /// Schema A: S (W, I, Q), stock by warehouse and item, and H (W, I, WHEN_AT),
 /// a history; and P, a procedure that takes `n` of an item from stock,
@@ -229,4 +230,51 @@ fn a_kept_bodys_cursors_read_each_calls_rows() {
     read.sort();
     expected.sort();
     assert_eq!(read, expected);
+}
+
+/// Verifies: [DESIGN] RULES.md D418, a query of a kept body that joins two
+/// tables, a variable named for a column of each, learns its plan, its
+/// variable one slot, and every CALL reads the row its own values name:
+/// those whose values happen to be equal and those whose are not, before
+/// and after it is learned; and a prepared join learns its plan alike.
+#[test]
+fn a_kept_join_learns_its_plan_and_reads_each_calls_row() {
+    let (_db, a) = defined();
+    a.run("CREATE TABLE WH (W INTEGER NOT NULL PRIMARY KEY, TAX INTEGER)").unwrap();
+    a.run("INSERT INTO WH VALUES (1, 100), (2, 200)").unwrap();
+    a.run(
+        "CREATE PROCEDURE JOINED (IN WH_ID INTEGER, IN ITEM INTEGER) MODIFIES SQL DATA
+         BEGIN
+           DECLARE QT INTEGER;
+           DECLARE T INTEGER;
+           SELECT Q, TAX INTO QT, T FROM S, WH WHERE WH.W = WH_ID AND S.W = WH_ID AND I = ITEM;
+           INSERT INTO L VALUES (QT, T);
+         END",
+    )
+    .unwrap();
+    a.run("UPDATE S SET Q = I * 10 + W").unwrap();
+    a.commit().unwrap();
+    let calls: Vec<(i64, i64)> = (0..16_i64).map(|k| (1 + k % 2, 1 + (k * 7) % 50)).chain([(1, 1), (2, 2), (2, 1)]).collect();
+    let mut expected = Vec::new();
+    for (w, i) in &calls {
+        expected.push(format!("{},{}", i * 10 + w, w * 100));
+        a.run(&format!("CALL JOINED({w}, {i})")).unwrap();
+    }
+    a.commit().unwrap();
+    let mut read = rows(&a, "SELECT W, LOW FROM L");
+    read.sort();
+    expected.sort();
+    assert_eq!(read, expected);
+    let p = a.prepare("SELECT Q, TAX FROM S, WH WHERE WH.W = ? AND S.W = WH.W AND I = ?").unwrap();
+    for (w, i) in calls {
+        let mut c = a.open_prepared(&p, &[number(w), number(i)]).unwrap();
+        let row = c.fetch().unwrap().unwrap();
+        let shown: Vec<String> = row.iter().map(|v| v.to_string().trim_end().to_owned()).collect();
+        assert_eq!(shown, vec![(i * 10 + w).to_string(), (w * 100).to_string()]);
+    }
+}
+
+/// The exact number `n`.
+fn number(n: i64) -> Value {
+    Value::Exact(Decimal::new(i128::from(n), 0))
 }

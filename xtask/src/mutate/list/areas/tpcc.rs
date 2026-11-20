@@ -4,12 +4,14 @@
 //! with one run's values; a table changed keeping what the catalog knew
 //! of its constraints, a row's checks reading the row of another, and a
 //! kept body's cursors opening from one cursor's plan; a write giving
-//! the row it wrote as the row it replaced.
+//! the row it wrote as the row it replaced; a kept hash join's inner
+//! input left unfilled; a node's edges not acted on; a row drawing a
+//! generator's next value evaluated as one that reads nothing.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the order entry paths whose removal must fail their tests.
-pub const TPCC: [Mutation; 7] = [
+pub const TPCC: [Mutation; 10] = [
     Mutation {
         name: "tpcc-extreme-wrong-end",
         package: Package::Core,
@@ -78,6 +80,36 @@ pub const TPCC: [Mutation; 7] = [
         original: "        self.counted_change(tx);\n        self.replaced(id, replaced.as_deref())\n    }",
         replacement: "        self.counted_change(tx);\n        Ok(row)\n    }",
         integration: &["replaced_rows::each_write_replaces_the_row_it_found"],
+        unit: &[],
+    },
+    Mutation {
+        name: "tpcc-join-right-unfilled",
+        package: Package::Core,
+        breaks: "a kept hash join runs its inner input with its slots unfilled",
+        file: "src/physical/kept/filled.rs",
+        original: "return Ok(Plan::HashJoin { left: self.boxed(*left)?, right: self.boxed(*right)?, keys, detail, est });",
+        replacement: "return Ok(Plan::HashJoin { left: self.boxed(*left)?, right, keys, detail, est });",
+        integration: &["kept_routines::a_kept_join_learns_its_plan_and_reads_each_calls_row"],
+        unit: &[],
+    },
+    Mutation {
+        name: "tpcc-nodes-not-looked-for",
+        package: Package::Core,
+        breaks: "a statement's end skips referential actions where no table has a foreign key, though a node deleted has edges",
+        file: "src/db/integrity/actions.rs",
+        original: "        if !constrained.foreign_keys && !constrained.nodes {",
+        replacement: "        if !constrained.foreign_keys {",
+        integration: &["graph_native::statements::a_node_deleted_takes_or_keeps_its_edges_r12_1"],
+        unit: &[],
+    },
+    Mutation {
+        name: "tpcc-next-value-reads-nothing",
+        package: Package::Core,
+        breaks: "a row of VALUES drawing a generator's next value is evaluated alone, each name drawing its own value",
+        file: "src/logical/invoked.rs",
+        original: "if matches!(e, Expr::Subquery(..) | Expr::Invoked(_) | Expr::NextValue(_)) {",
+        replacement: "if matches!(e, Expr::Subquery(..) | Expr::Invoked(_)) {",
+        integration: &["sequences::one_value_a_row_6_14"],
         unit: &[],
     },
 ];

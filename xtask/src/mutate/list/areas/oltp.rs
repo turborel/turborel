@@ -112,7 +112,7 @@ pub const OLTP: [Mutation; 14] = [
         package: Package::Core,
         breaks: "a kept leaf's outer references all take the first slot's value",
         file: "src/db/routines/kept/leaves.rs",
-        original: "Expr::Dynamic(Slot { index, data_type",
+        original: "Expr::Dynamic(Slot { index: *at, data_type",
         replacement: "Expr::Dynamic(Slot { index: 0, data_type",
         integration: &["kept_routines::a_kept_leaf_reads_the_row_each_calls_values_name"],
         unit: &[],

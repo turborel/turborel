@@ -59,8 +59,8 @@ impl State {
         // [ISO/IEC 9075-2:2023 §4.25.1] one of a supertable checked of each
         // subtable's rows too; none looked for where no table has one
         // (RULES.md D415).
-        let reading = self.catalog.constrained().reading_checks;
-        for desc in self.catalog.tables().into_iter().filter(|_| reading) {
+        let reading = if self.catalog.constrained().reading_checks { self.catalog.tables() } else { Vec::new() };
+        for desc in reading {
             for c in self.constraints_of(&desc.name) {
                 let ConstraintKind::Check { reads, .. } = &c.kind else { continue };
                 if !reads.is_empty() && (changed.contains(&desc.name) || reads.iter().any(|t| changed.contains(t))) {

@@ -383,6 +383,8 @@ verification approach DO-178C expects (§8).
 | D415 | A statement's end looks for foreign keys and reading CHECKs only where a table has one, and reads a row once for its checks |
 | D416 | A local cursor of a kept procedure body keeps its specification and plan |
 | D417 | An update or delete takes the row it replaced from the write, not a read before it |
+| D418 | A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot |
+| D419 | A row of values that reads nothing is evaluated, not planned |
 | D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 
@@ -10699,7 +10701,11 @@ now keeps whether any table has a foreign key and whether any has a
 CHECK that reads tables (`Catalog::constrained`), found as first asked
 and again once a table is added, changed or removed
 (`catalog/memory.rs`), and a statement's end looks for either only where
-one exists (`db/integrity/gather.rs`, `State::written_by`). The checks
+one exists (`db/integrity/gather.rs`, `State::written_by`). It keeps
+whether any table is a node table too, and a statement's end looks for
+referential actions and a node's edges only where a table has a foreign
+key or is a node table (`db/integrity/actions.rs`). A unique key's
+check names a global index only of a partition's key. The checks
 of a row's NOT NULL, CHECK and foreign key constraints, which come one
 after another, each read the row again. The row read is kept for the
 next check of the same row (`Checking`), so a row is read once for them
@@ -10759,6 +10765,34 @@ their own, and the database can keep how far the log is durable. The
 file log gives the end of its segment's blocks the group's sync made
 durable (`log/file/segments.rs`). A log syncing nothing, and the
 default, claim just past the record asked for.
+
+#### D418. A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot
+
+A kept or learned plan held no join (D45), so a query joining two
+tables was optimized and planned at each run, prepared or a kept body's
+leaf (D414). And each outer reference of a leaf became a slot of its
+own, so a variable named for a column of each table, as an order
+entry's customer and warehouse are, was two slots the optimizer could
+not equate, while the plan made with the values equated the columns
+(D404). The plan with slots was a product, the one with values a hash
+join, and the query never learned. A leaf's outer references of one
+slot of the frame are now one slot of its plan (`kept/leaves.rs`), and a
+product, a hash join and an inner index join probing by the outer row's
+columns now have a shape (`physical/kept/shape.rs`) and are filled
+(`physical/kept/filled.rs`). An outer join, a set operation and the
+rest still keep no plan.
+
+#### D419. A row of values that reads nothing is evaluated, not planned
+
+An INSERT's VALUES and a CALL's arguments were a query, optimized,
+planned and run at each execution, though kept (D45, D406), to compute
+a row of a few expressions. Where no value of the rows holds a
+subquery, invokes a routine or draws a sequence generator's next value
+(`Expr::reads_nothing`), each row is now evaluated in turn
+(`routines/program/hosted.rs`, `hosted_rows`), as a row invoking a
+function that modifies SQL-data already was. The values and errors are
+those the query gave. A value that reads a table, or that draws the
+next value of a generator once a row, is still planned.
 
 #### D440. A commit is one store in a status table, and its versions are stamped after its locks are released
 
