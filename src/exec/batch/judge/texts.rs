@@ -61,6 +61,6 @@ pub(super) fn kept(judged: &Judged, texts: &Texts, over: Option<&[u32]>, kernels
             let equal = |s: &str| strings.iter().any(|c| compare_strings(s, c) == Ordering::Equal);
             Some(if *not { keep(&|s| !has_null && !equal(s)) } else { keep(&equal) })
         }
-        Judged::Compare(..) | Judged::Compared(..) | Judged::LikeOf(..) | Judged::Any(_) => None,
+        Judged::Compare(..) | Judged::Truth(..) | Judged::LikeOf(..) | Judged::Any(_) => None,
     }
 }

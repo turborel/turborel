@@ -7,11 +7,13 @@
 use super::shapes::shape;
 use super::{COUNTED, beside, binary_string, character, counted, named, no_units, text};
 use crate::error::{Code, Result, fail};
-use crate::functions::ScalarFunction;
 use crate::functions::lobs::ops::chars_before;
 use crate::functions::lobs::search::{Octets, find};
+use crate::functions::over_vectors::counted as counted_texts;
+use crate::functions::{Arg, ScalarFunction};
 use crate::lexer::kw;
 use crate::params::ParameterType;
+use crate::storage::Column;
 use crate::value::{BYTE_BITS, CharUnits, DataType, Value};
 
 /// [§6.6] `<position expression>`: POSITION(A IN B), called with A and B:
@@ -217,5 +219,16 @@ impl ScalarFunction for Length {
             }
         };
         Ok(counted(if matches!(self.unit, Unit::Bits) { octets.saturating_mul(u64::from(BYTE_BITS)) } else { octets }))
+    }
+    /// \[DESIGN\] (RULES.md D363) Of a vector of character strings, each
+    /// counted in characters or octets, as `call` counts it.
+    fn eval_batch(&self, args: &[Arg<'_>], _rows: usize) -> Option<Result<Column>> {
+        let [Arg::Column(Column::Texts(texts))] = args else { return None };
+        let made = match self.unit {
+            Unit::Characters => counted_texts(texts, |s| s.chars().count()),
+            Unit::Octets => counted_texts(texts, str::len),
+            Unit::Bits => return None,
+        };
+        Some(Ok(Column::Ints(made)))
     }
 }

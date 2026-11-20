@@ -12,6 +12,7 @@ mod declared_types;
 #[path = "decode.rs"]
 mod decode;
 mod distinct_aggregates;
+mod expr;
 mod insert_values;
 mod joins;
 mod parallel;
@@ -78,7 +79,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 35] {
+fn second() -> [&'static [Mutation]; 36] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -115,6 +116,7 @@ fn second() -> [&'static [Mutation]; 35] {
         &distinct_aggregates::DISTINCT_AGGREGATES,
         &unnesting::UNNESTING,
         &insert_values::INSERT_VALUES,
+        &expr::EXPR,
     ]
 }
 

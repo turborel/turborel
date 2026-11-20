@@ -65,6 +65,7 @@ mod backup_archive;
 mod backup_online;
 mod backup_targets;
 mod backups;
+mod batch_exprs;
 mod batch_joins;
 mod batch_kinds;
 mod batches;

@@ -350,6 +350,8 @@ verification approach DO-178C expects (§8).
 | D353 | ALP decimals are read by two multiplications with a stored pair of factors |
 | D354 | A batch keeps nulls as bitmaps, rows as selections, datetimes and truth values as vectors, its primitives in kernels |
 | D355 | A grouping of so many groups that its morsels barely shrink stays serial, by the cost of its exchange |
+| D362 | An expression of a batch's columns is compiled once and evaluated a vector at a time, a batch that would raise or warn evaluated again by rows |
+| D363 | CASE evaluates each branch over the rows its WHEN keeps, and a function may give a body over vectors |
 | D390 | A `?` in the rows of an INSERT takes its object column's type |
 | D391 | A `?` whose value its cast cuts warns 01004 |
 | D392 | A character large object a client writes is checked as each Append comes |
@@ -9727,6 +9729,61 @@ The constants are measured, not derived. A grouping of keys unique to
 each row never gains, whatever the threads, as the ordering of its
 groups alone costs the serial grouping's rows. One of few groups gains
 by nearly the degree.
+
+#### D362. An expression of a batch's columns is compiled once and evaluated a vector at a time, a batch that would raise or warn evaluated again by rows
+
+A projection, a filter's conjunct or a set function's argument that
+reads only a batch's columns is compiled once for its operator into a
+tree of nodes (`exec/batch/expr.rs`). The tree is evaluated over each
+batch, a node once over the rows given, so its interpretation costs once
+a vector and not once a value. A node takes the shape of its operands'
+vectors. Exact numbers stay integers of a scale, sums and differences at
+the greater scale and products at the sum of the scales (X3.135-1986
+§5.9 SR4b, SR4c). Approximate numbers are `f64`s. Comparisons give truth
+values a bit a row, and AND, OR and NOT run on words of 64 rows by the
+three-valued tables (§5.18 GR2). Any other shape, a quotient, an
+interval, a datetime or a decimal floating-point number, applies the
+rule a row's evaluation applies to each value of its operands' vectors,
+so its values are a row's. A subquery, an outer reference, a sequence's
+next value or a call that needs the statement is evaluated a row at a
+time, inside the tree, and so is a subtree deeper than `MAX_DEPTH`.
+
+Integer arithmetic runs in `i64` with overflowing operations and a flag
+of the batch. An overflow, or a result of 18 digits or more, which no
+decimal holds (§5.9 GR6a), sets it, and a set flag gives no vector.
+Approximate arithmetic sets it of a divisor of 0 or a result not finite.
+A row that is null never sets it, its slot written 0. A row that would
+raise a warning gives no vector either, as the first warning raised is
+the one kept. A batch that gives no vector is evaluated again a row at a
+time, in order, so the error or warnings raised are those row by row
+raises, after the same rows (D15). A filter that can raise is judged
+over vectors only if every conjunct can be, and a batch of which one
+gives none is judged whole by rows.
+
+A vector path is pure. It writes nothing but its result, so evaluating
+a batch twice changes nothing, and a filter of a conjunct whose program
+gives none of a batch judges that conjunct by rows of the rows kept.
+
+#### D363. CASE evaluates each branch over the rows its WHEN keeps, and a function may give a body over vectors
+
+CASE takes the first WHEN true of each row (ISO/IEC 9075:1992 §6.9 GR2).
+Over vectors each WHEN is judged of the rows no WHEN before it took, and
+each THEN is evaluated over only the rows its WHEN took, the ELSE over
+the rest (`exec/batch/expr/case.rs`). A branch a row does not take is
+never evaluated of it, so a CASE that guards a division by 0 raises
+nothing, as row by row. The branches' vectors are scattered back to the
+rows' places, of one kind if all are, else as values. COALESCE and
+NULLIF are CASE and so evaluate alike.
+
+A scalar function may give a body over vectors
+(`ScalarFunction::eval_batch`), called once for the rows given with
+each argument a column or a constant. It gives what the function's call
+gives of each row, or nothing, so the call is made for each row's
+values, borrowed from the vectors. ABS of integers and approximate
+numbers, CHAR_LENGTH, OCTET_LENGTH, UPPER, LOWER and EXTRACT have one
+(`functions/over_vectors.rs`). Strings of a dictionary are folded or
+counted once an entry. A function that may warn has its body skipped
+and is called as a row's evaluation calls it.
 
 #### D390. A `?` in the rows of an INSERT takes its object column's type
 
