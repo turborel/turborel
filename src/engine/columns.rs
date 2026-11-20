@@ -255,12 +255,7 @@ impl<'a> Chunk<'a> {
 
     /// As `ints`, of a dictionary whose entries as integers are `entries`
     /// if given, read once for the runs of a group (`prepared.rs`).
-    fn ints_with(
-        &self,
-        (from, to): (usize, usize),
-        (units, nulls): (&mut Vec<i64>, &mut Mask),
-        entries: Option<&[i64]>,
-    ) -> Option<()> {
+    fn ints_with(&self, (from, to): (usize, usize), (units, nulls): (&mut Vec<i64>, &mut Mask), entries: Option<&[i64]>) -> Option<()> {
         if to > self.count || from > to {
             return None;
         }

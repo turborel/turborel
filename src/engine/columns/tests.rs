@@ -428,15 +428,9 @@ fn chunks_of_runs_say_where_each_ends() {
 /// truth values.
 #[test]
 fn chunks_give_their_truth_values() {
-    let truths = |pattern: &dyn Fn(usize) -> Option<bool>| -> Vec<Value> {
-        (0..300).map(|n| pattern(n).map_or(Value::Null, Value::Bool)).collect()
-    };
-    let cases = [
-        truths(&|_| Some(true)),
-        truths(&|n| (n % 3 != 0).then_some(n % 2 == 0)),
-        truths(&|n| Some(n % 7 < 3)),
-        truths(&|_| None),
-    ];
+    let truths =
+        |pattern: &dyn Fn(usize) -> Option<bool>| -> Vec<Value> { (0..300).map(|n| pattern(n).map_or(Value::Null, Value::Bool)).collect() };
+    let cases = [truths(&|_| Some(true)), truths(&|n| (n % 3 != 0).then_some(n % 2 == 0)), truths(&|n| Some(n % 7 < 3)), truths(&|_| None)];
     for (values, compress) in cases.iter().flat_map(|v| [(v, false), (v, true)]) {
         let fields = Fields::of(&DataType::Boolean, values.iter().cloned()).unwrap();
         let bytes = fields.chunk(&DataType::Boolean, 0, (fields.len(), compress)).unwrap();

@@ -30,7 +30,8 @@ use crate::engine::columns::ahead::GroupAhead;
 use crate::engine::columns::group::{Group, Summary};
 use crate::engine::columns::prepared::Prepared;
 use crate::engine::columns::scan::{
-    Reading, bools, bools_at, datetimes, datetimes_at, floats, floats_at, ints, ints_at, read_candidates, texts, texts_at, values, values_at,
+    Reading, bools, bools_at, datetimes, datetimes_at, floats, floats_at, ints, ints_at, read_candidates, texts, texts_at, values,
+    values_at,
 };
 use crate::engine::rows::gathered::Gathering;
 use crate::engine::rows::mvcc::Reader;
