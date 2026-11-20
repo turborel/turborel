@@ -21,13 +21,13 @@ pub trait Split: Send + Sync {
     /// item, as of `TableStorage::scan`.
     fn morsel(&self, n: usize) -> Rows;
 
-    /// \[DESIGN\] (RULES.md D354) The rows of morsel `n` by batch, as the
-    /// scan by batch (`TableStorage::scan_batches`) reads them, of the
-    /// columns asked for alone, if its engine reads them so: none, the
-    /// default, if not. A morsel's batches hold the rows `morsel` gives, in
-    /// its order.
-    fn morsel_batches(&self, n: usize) -> Option<Batches> {
-        let _ = n;
+    /// \[DESIGN\] (RULES.md D354, D366) The rows of morsel `n` by batch, as
+    /// the scan by batch (`TableStorage::scan_batches`) reads them, of the
+    /// columns asked for alone, those of `late` late if it can, if its
+    /// engine reads them so: none, the default, if not. A morsel's batches
+    /// hold the rows `morsel` gives, in its order.
+    fn morsel_batches(&self, n: usize, late: &[usize]) -> Option<Batches> {
+        let _ = (n, late);
         None
     }
 }

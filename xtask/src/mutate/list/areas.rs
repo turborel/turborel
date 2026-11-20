@@ -19,6 +19,7 @@ mod expr;
 mod estimates;
 mod insert_values;
 mod joins;
+mod late;
 mod parallel;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
 // modules.
@@ -126,7 +127,7 @@ fn second() -> [&'static [Mutation]; 38] {
     ]
 }
 
-/// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's, the server's, the transport's and the decode kernels'.
+/// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's, the server's, the transport's, the decode kernels' and late materialization's.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     let json: [&'static [Mutation]; 16] = [
         &super::projection::PROJECTION,
@@ -166,15 +167,16 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xml::XML,
     ];
     // The transport's, parallel queries', the client's step with its
-    // server, the decode kernels', declared types' and batches' last, as
-    // `last` holds no more.
-    let after: [&'static [Mutation]; 6] = [
+    // server, the decode kernels', declared types', batches' and late
+    // materialization's last, as `last` holds no more.
+    let after: [&'static [Mutation]; 7] = [
         &super::transport::TRANSPORT,
         &parallel::PARALLEL,
         &client_sync::CLIENT_SYNC,
         &decode::DECODE,
         &declared_types::DECLARED_TYPES,
         &batches::BATCHES,
+        &late::LATE,
     ];
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
 }

@@ -28,8 +28,8 @@ mod rows;
 mod split;
 
 pub use batch::{
-    BATCH_ROWS, Batch, Batches, Bools, Cell, Coded, Column, Datetimes, FIRST_BATCH_ROWS, Floats, Ints, Mask, Nulls, Ramp, Sel, Texts,
-    batches_of, mask, sel,
+    BATCH_ROWS, Batch, Batches, Bools, Cell, Coded, Column, Datetimes, FIRST_BATCH_ROWS, Floats, Ints, Late, LateSource, Mask, Nulls, Ramp,
+    Sel, Texts, batches_of, bound, mask, sel,
 };
 pub use condition::{Condition, Conjunct, Conjunction};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
@@ -153,9 +153,9 @@ pub trait TableStorage: Send + Sync {
     /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no
     /// `conditions`, in no particular order, a batch of up to `BATCH_ROWS` of
     /// them at a time: the values of `columns`, a vector for each, in the
-    /// order asked (RULES.md D31). An engine that keeps columns gives them
-    /// without making each row. Default: `scan_where`'s rows, gathered.
-    fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>) -> Batches {
+    /// order asked (RULES.md D31), of `_late` late if it can (D361). Default:
+    /// `scan_where`'s rows, gathered, none late.
+    fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, _late: &[usize]) -> Batches {
         let rows = match conditions {
             Some(c) => self.scan_where(tx, columns, c),
             None => self.scan(tx, columns),

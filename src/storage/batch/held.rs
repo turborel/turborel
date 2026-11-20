@@ -57,6 +57,7 @@ impl Column {
             Column::Bools(b) => nulls(Some(&b.bits)).saturating_add(nulls(b.nulls.as_ref())),
             // None held, but as values once they are asked for.
             Column::Nulls(held) => held.rows.saturating_mul(size_of::<Value>()),
+            Column::Late(late) => late.bytes(),
             Column::Texts(texts) => {
                 let coded = texts.coded.as_ref().map_or(0, |c| {
                     let entries = c.entries.text.len().saturating_add(c.entries.ends.len().saturating_mul(size_of::<usize>()));
@@ -72,7 +73,13 @@ impl Column {
     fn scale(&self) -> Option<u32> {
         match self {
             Column::Ints(ints) => Some(ints.scale),
-            Column::Values(_) | Column::Floats(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Nulls(_) => None,
+            Column::Values(_)
+            | Column::Floats(_)
+            | Column::Texts(_)
+            | Column::Datetimes(_)
+            | Column::Bools(_)
+            | Column::Nulls(_)
+            | Column::Late(_) => None,
         }
     }
 
@@ -80,7 +87,13 @@ impl Column {
     fn unit_at(&self, r: usize) -> Option<i64> {
         match self {
             Column::Ints(ints) => Some(ints.units.get(r).copied().unwrap_or(0)),
-            Column::Values(_) | Column::Floats(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Nulls(_) => None,
+            Column::Values(_)
+            | Column::Floats(_)
+            | Column::Texts(_)
+            | Column::Datetimes(_)
+            | Column::Bools(_)
+            | Column::Nulls(_)
+            | Column::Late(_) => None,
         }
     }
 
@@ -94,6 +107,7 @@ impl Column {
             Column::Datetimes(d) => d.get(r).is_none(),
             Column::Bools(b) => b.get(r).is_none(),
             Column::Nulls(_) => true,
+            Column::Late(late) => late.made().is_none_or(|made| made.null_at(r)),
         }
     }
 
@@ -111,6 +125,7 @@ impl Column {
             Column::Datetimes(d) => d.get(r).map_or(Value::Null, Value::Datetime),
             Column::Bools(b) => b.get(r).map_or(Value::Null, Value::Bool),
             Column::Nulls(_) => Value::Null,
+            Column::Late(late) => late.values().get(r).cloned().unwrap_or(Value::Null),
         }
     }
 }

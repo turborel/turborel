@@ -172,7 +172,7 @@ pub(super) fn marks(column: &Column) -> Marks<'_> {
         | Column::Texts(Texts { nulls, .. })
         | Column::Datetimes(Datetimes { nulls, .. })
         | Column::Bools(Bools { nulls, .. }) => Marks::Of(nulls.as_ref()),
-        Column::Values(_) | Column::Nulls(_) => Marks::Values,
+        Column::Values(_) | Column::Nulls(_) | Column::Late(_) => Marks::Values,
     }
 }
 

@@ -32,7 +32,7 @@ use std::collections::HashMap;
 
 use super::alp::{Alp, Factors, Trials};
 use super::fsst::{Coded, Symbols, Table};
-use super::packed::{bits_for, get, pack, packed_len, unpack_words};
+use super::packed::{bits_for, dense, get, pack, packed_len, unpack_words};
 use super::runs::{Runs, runs_len};
 use super::{HEADER, WORD, corrupt, nulls_len, padded, read_word, too_large, word};
 use crate::error::Result;
@@ -443,7 +443,8 @@ impl Body<'_> {
     /// its entry's place among all those `ends` holds pushed to `codes`, 0
     /// of those `null` says are nulls (`Coded`): none if the encoding is
     /// not a dictionary. The codes from the first of `positions`, in
-    /// order, to the last are unpacked at once.
+    /// order, to the last are unpacked at once, unless they are too few of
+    /// that span (`packed::dense`), each then read alone.
     pub(super) fn coded(
         &self,
         positions: &[usize],
@@ -456,7 +457,16 @@ impl Body<'_> {
         text.push_str(&entries.text);
         ends.extend(entries.ends.iter().map(|&end| end.saturating_add(at)));
         let (Some(&first), Some(&last)) = (positions.first(), positions.last()) else { return Some(()) };
-        let mut held = Vec::with_capacity(last.checked_sub(first)?.saturating_add(1));
+        let span = last.checked_sub(first)?.saturating_add(1);
+        // Positions few of their span each read alone (RULES.md D360).
+        if !dense(positions.len(), span) {
+            for &n in positions {
+                let code = u32::try_from(get(packed, *bits, n)?).ok()?;
+                codes.push(if null(n) { 0 } else { base.checked_add(code)? });
+            }
+            return Some(());
+        }
+        let mut held = Vec::with_capacity(span);
         unpack_words(packed, (*bits, 0), (first, last.checked_add(1)?), &mut held)?;
         for &n in positions {
             let code = u32::try_from(*held.get(n.checked_sub(first)?)?).ok()?;

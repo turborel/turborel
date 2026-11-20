@@ -376,7 +376,7 @@ fn a_read_by_batch_misses_no_entry_taken_out() {
     let held = table.frozen.directory().unwrap();
     ended(&table, 1);
     assert_eq!(entries(&table), 5000, "kept for the directory held");
-    let mut batches = Arc::clone(&table).scan_batches(NO_TRANSACTION, &[0], None);
+    let mut batches = Arc::clone(&table).scan_batches(NO_TRANSACTION, &[0], None, &[]);
     let first = batches.next().unwrap().unwrap().rows;
     drop(held);
     table.retire_unread().unwrap();
@@ -418,7 +418,7 @@ fn groups_are_sorted_by_their_order() {
     assert_eq!(table.get(NO_TRANSACTION, ids[1234]).unwrap().map(|r| r[1].to_string()), Some("v1234".to_owned()));
     let in_order: Vec<String> = (0_i32..5_000_i32).map(|n| n.to_string()).collect();
     assert_eq!(scanned(&table, NO_TRANSACTION), in_order, "in row id order");
-    let batched: usize = Arc::clone(&table).scan_batches(NO_TRANSACTION, &[0], None).map(|b| b.unwrap().rows).sum();
+    let batched: usize = Arc::clone(&table).scan_batches(NO_TRANSACTION, &[0], None, &[]).map(|b| b.unwrap().rows).sum();
     assert_eq!(batched, 5000);
     changed(&table, (&ids[0..400], &ids[400..500]), 10);
     assert!(sorted_by_text(&table), "sorted as written again");
@@ -482,7 +482,8 @@ fn headers_are_read_as_they_are_needed() {
         Conjunction::of(Condition { columns: vec![0], probe: Probe::Compare { op: CompOp::Gt, value: Value::Exact(Decimal::new(n, 0)) } })
     };
     let rows = |c: &Conjunction| Arc::clone(&opened).scan_where(NO_TRANSACTION, &[0], c).count();
-    let batched = |c: &Conjunction| Arc::clone(&opened).scan_batches(NO_TRANSACTION, &[0], Some(c)).map(|b| b.unwrap().rows).sum::<usize>();
+    let batched =
+        |c: &Conjunction| Arc::clone(&opened).scan_batches(NO_TRANSACTION, &[0], Some(c), &[]).map(|b| b.unwrap().rows).sum::<usize>();
     // By batch, every row of the tree, for the filter to judge.
     assert_eq!((rows(&over(4500)), batched(&over(4500))), (499, 904), "the tree's rows only");
     assert_eq!(cold.headers.held(), (0, 0), "no group may match: no header read");
@@ -523,7 +524,7 @@ fn a_group_is_read_ahead_of_its_scan() {
     let misses = pool.counts().misses;
     let rows = crate::engine::columns::scan::rows(&group, &stored, &TYPES, &[0, 1], (0, group.rows)).unwrap();
     assert_eq!((rows.len(), pool.counts().misses), (2048_usize, misses), "found in the pool");
-    let batched = Arc::clone(&opened).scan_batches(NO_TRANSACTION, &[0, 1], None).map(|b| b.unwrap().rows).sum::<usize>();
+    let batched = Arc::clone(&opened).scan_batches(NO_TRANSACTION, &[0, 1], None, &[]).map(|b| b.unwrap().rows).sum::<usize>();
     assert_eq!(batched, 5000_usize);
 }
 
@@ -595,3 +596,5 @@ fn groups_are_written_again_when_their_layout_changes() {
     assert_eq!(layouts(&table), [false; 3], "the column layout again");
     assert_eq!(scanned(&table, NO_TRANSACTION), in_order);
 }
+
+mod morsels;
