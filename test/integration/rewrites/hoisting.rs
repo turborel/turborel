@@ -117,3 +117,35 @@ fn outer_joins_keep_their_rows_hoisted() {
         left(&s, HOIST_RAISING_EXPRESSIONS, sql);
     }
 }
+
+/// Verifies: [EXTENSION] [GS §23.1]; [DESIGN] RULES.md D373: a part that
+/// needs a guard over an operand that is a table function is not hoisted,
+/// as the guard would evaluate the function again; the query runs WCC
+/// once, one row of GRAPH_ALGO_RUNS, its rows alike with the rule on and
+/// off. A part over a plain table beside it still is.
+#[test]
+fn a_guard_never_evaluates_a_table_function_again() {
+    let db = turborel::db::Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION G \
+         CREATE TABLE V (ID INTEGER, NAME VARCHAR(10)) \
+         CREATE TABLE E (SRC INTEGER, DST INTEGER)",
+    )
+    .unwrap();
+    let s = db.session("G");
+    s.run("INSERT INTO V VALUES (1, '1'), (2, '2'), (3, '3'), (4, '4'), (5, '5')").unwrap();
+    s.run("INSERT INTO E VALUES (1, 2), (2, 3), (3, 1), (3, 4)").unwrap();
+    s.commit().unwrap();
+    let runs = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.GRAPH_ALGO_RUNS WHERE ALGORITHM = 'WCC'";
+    let count = |s: &turborel::db::Session| crate::common::rows(s, runs).unwrap();
+    let sql = "SELECT V.ID, W.COMPONENT FROM V JOIN GRAPH_ALGO.WCC(TABLE (E)) AS W ON W.VERTEX = CAST(V.NAME AS INTEGER) WHERE V.ID < 5";
+    assert!(!super::rewritten(&s, HOIST_RAISING_EXPRESSIONS, sql), "{}", plan(&s, sql));
+    assert_eq!(count(&s), ["0"]);
+    let found = crate::common::rows(&s, sql).unwrap();
+    assert_eq!(found.len(), 4, "{found:?}");
+    assert_eq!(count(&s), ["1"], "one run of WCC");
+    compared(&s, HOIST_RAISING_EXPRESSIONS, sql);
+    let plain = "SELECT V.ID, E.DST FROM V JOIN E ON E.SRC = CAST(V.NAME AS INTEGER) WHERE V.ID < 5";
+    assert!(super::rewritten(&s, HOIST_RAISING_EXPRESSIONS, plain), "{}", plan(&s, plain));
+    compared(&s, HOIST_RAISING_EXPRESSIONS, plain);
+}
