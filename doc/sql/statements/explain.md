@@ -341,6 +341,43 @@ OK
 (17 rows)
 ```
 
+A query that reads only the employees, of a LEFT join to their
+department on its key, which the rule eliminate_joins removes: each
+employee joins at most one department, and nothing above reads it
+([How joins are planned](../06-queries.md#how-joins-are-planned-extension)):
+
+```sql
+CREATE TABLE DEPT (ID INTEGER PRIMARY KEY, NAME VARCHAR(10));
+CREATE TABLE EMP (ID INTEGER PRIMARY KEY, DEPT INTEGER NOT NULL REFERENCES DEPT, PAY INTEGER);
+INSERT INTO DEPT VALUES (1, 'north'), (2, 'south');
+INSERT INTO EMP VALUES (1, 1, 100), (2, 2, 200), (3, 2, 300);
+COMMIT;
+EXPLAIN SELECT E.ID, E.PAY FROM EMP E LEFT JOIN DEPT D ON E.DEPT = D.ID;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+ PLAN
+---------------------------------------
+ -- bound:
+ Project E.ID, E.PAY
+   Left outer join on E.DEPT = D.ID
+     Scan ANN.EMP
+     Scan ANN.DEPT
+ -- rules: eliminate_joins
+ -- optimized:
+ Project E.ID, E.PAY
+   Scan ANN.EMP
+ -- physical:
+ Project E.ID, E.PAY
+   SeqScan ANN.EMP  (rows=3, cost=3.0)
+(12 rows)
+```
+
 ## STANDARD
 
 EXPLAIN is an extension of turborel. No part of ISO/IEC 9075 shows how

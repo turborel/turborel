@@ -23,6 +23,7 @@ mod join_table;
 mod joins;
 mod late;
 mod parallel;
+mod rewrites;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
 // modules.
 mod unnesting;
@@ -86,7 +87,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 38] {
+fn second() -> [&'static [Mutation]; 39] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -122,6 +123,7 @@ fn second() -> [&'static [Mutation]; 38] {
         &super::delta_tables::DELTA_TABLES,
         &count::COUNT,
         &distinct_aggregates::DISTINCT_AGGREGATES,
+        &rewrites::REWRITES,
         &unnesting::UNNESTING,
         &insert_values::INSERT_VALUES,
         &expr::EXPR,
