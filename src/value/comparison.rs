@@ -520,6 +520,10 @@ fn compare_magnitudes(a: &str, b: &str) -> Ordering {
         .then_with(|| a_frac.trim_end_matches('0').cmp(b_frac.trim_end_matches('0')))
 }
 
+// Unit tests: comparisons across kinds of value, and nested too deep.
+#[cfg(test)]
+mod kinds;
+
 // Unit tests: comparison decisions (RULES.md R-TEST-1, R-TEST-8).
 #[cfg(test)]
 mod tests {

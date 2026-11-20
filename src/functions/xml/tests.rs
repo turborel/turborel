@@ -63,3 +63,16 @@ fn xml_functions_refuse_arguments_of_other_types() {
     };
     assert_eq!(XmlSerialize(serialization).call(&[number]).unwrap_err().sqlcode(), -910_i32);
 }
+
+/// Verifies: [DESIGN] RULES.md D15, XMLPARSE takes text of at most
+/// turborel's limit of 64 MiB: longer text is refused with SQLCODE -900
+/// before it is parsed; the text of an octet string is none, as it is
+/// parsed by its encoding.
+#[test]
+fn text_past_the_limit_is_refused() {
+    let long = Value::Char("a".repeat(MAX_INPUT.saturating_add(1)));
+    let e = parser(Syntax::Content).call(&[long]).unwrap_err();
+    assert!(e.code == Code::Unsupported && e.to_string().contains("beyond turborel's limits"), "{e}");
+    assert_eq!(xml_text(&Value::Binary(Binary::new(b"<a/>".to_vec()))).unwrap(), None);
+    assert_eq!(xml_text(&Value::Char("<a/>".to_owned())).unwrap().as_deref(), Some("<a/>"));
+}

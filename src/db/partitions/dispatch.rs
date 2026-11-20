@@ -84,3 +84,7 @@ impl TableStorage for Dispatched {
         self.leaves.values().next().map_or(DEFAULT_FETCH_COST, |s| s.fetch_cost())
     }
 }
+
+// Unit tests: rows read from the partition their id names, writes refused.
+#[cfg(test)]
+mod tests;
