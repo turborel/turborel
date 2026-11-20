@@ -84,8 +84,8 @@ pub type Counts = Box<dyn Iterator<Item = Result<u64>> + Send>;
 pub type LobLog<'a> = &'a mut dyn FnMut(u64, &[u8], &mut dyn FnMut() -> Result<()>) -> Result<()>;
 
 /// Makes row `id` of `table` hold `row`, or be absent, through `get`,
-/// `update`, `restore` and `delete` outside any transaction: the default
-/// `TableStorage::apply`.
+/// `update`, `restore` and `delete` outside any transaction, as the
+/// default `TableStorage::apply` does.
 ///
 /// # Errors
 ///

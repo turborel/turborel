@@ -1,5 +1,5 @@
 //! \[DESIGN\] A bare COUNT(*) of a row-store table counted by its storage
-//! from its settled zones (RULES.md D350, D351): the count a scan makes,
+//! from its settled zones (RULES.md D350, D351), the count a scan makes,
 //! at every isolation level, of rows committed, uncommitted, deleted and
 //! committed after a snapshot, of sealed rows too, and noted by EXPLAIN.
 
@@ -102,3 +102,4 @@ fn explain_notes_a_count_by_the_storage() {
     assert!(!noted(&a, "SELECT COUNT(*) FROM T"));
     assert_eq!(count(&a), "3000", "scanned row by row");
 }
+

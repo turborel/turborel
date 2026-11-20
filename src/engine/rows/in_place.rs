@@ -1,4 +1,4 @@
-//! \[DESIGN\] A row table's batches read in place (RULES.md D350): each
+//! \[DESIGN\] A row table's batches read in place (RULES.md D350). Each
 //! row's newest version read where it lies in its leaf, under the leaf's
 //! latch (`tree/scan/visit.rs`), and the columns asked for gathered
 //! straight from its record into their vectors (`gathered.rs`), so a row
@@ -6,7 +6,7 @@
 //! count of rows reads no column at all.
 //!
 //! What cannot be read under a latch is copied out and read after it, as
-//! a scan of copies reads every row: a version the reader does not see,
+//! a scan of copies reads every row. That is a version the reader does not see,
 //! whose older ones are in the undo store, or whose maker is to be looked
 //! up in the table of late stamps, whose lock is not taken under a latch;
 //! a sealed record, opened by its encodings, a plug-in's call (RULES.md
@@ -30,7 +30,7 @@ use crate::storage::{Batches, Ramp, RowId};
 impl RowTable {
     /// The batches of the rows `reader` sees in `ranges` of row ids, each
     /// from its first id up to, not including, its end if it has one, of
-    /// `columns`: each record read in place where it can be.
+    /// `columns`, each record read in place where it can be.
     pub(super) fn gathered_in(self: Arc<Self>, reader: Reader, columns: &[usize], ranges: Vec<(RowId, Option<RowId>)>) -> Batches {
         let mut entries = Self::ranged(&self, ranges);
         let mut gathering = Gathering::new(self.format.types(), columns);
@@ -65,7 +65,7 @@ impl RowTable {
     }
 
     /// What a scan does with a row's newest version, `newest`, under its
-    /// leaf's latch: gathers the row `reader` sees into `gathering`, unless
+    /// leaf's latch. It gathers the row `reader` sees into `gathering`, unless
     /// it holds `rows` already, or the row is read after the latch (see the
     /// module's documentation).
     fn in_place(&self, newest: &[u8], reader: Reader, (gathering, rows): (&mut Gathering, usize)) -> Result<Visit> {
@@ -73,7 +73,7 @@ impl RowTable {
             return Ok(Visit::Stop);
         }
         let version = Version::parse(newest)?;
-        // Its maker as stamped: a commit stamped late is read after the latch.
+        // Its maker as stamped, so a commit stamped late is read after the latch.
         if !reader.sees(version.maker) {
             return Ok(Visit::Later);
         }

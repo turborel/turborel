@@ -1,5 +1,5 @@
 //! \[DESIGN\] A row table's rows counted from its zones (RULES.md D351,
-//! `TableStorage::count`): the rows of each zone whose rows every reader
+//! `TableStorage::count`). The rows of each zone whose rows every reader
 //! sees alone (`zones/visible.rs`) taken from the zone, and those of every
 //! other zone, and past the last, read in place with no column
 //! (`rows/in_place.rs`), so the count is the one a scan of the rows the
@@ -19,8 +19,8 @@ use crate::storage::Counts;
 use crate::txn::TxId;
 
 impl RowTable {
-    /// The counts `TableStorage::count` gives of the rows `tx` sees: none
-    /// of a table that freezes rows or holds groups. Nothing is read, nor
+    /// The counts `TableStorage::count` gives of the rows `tx` sees, or
+    /// none of a table that freezes rows or holds groups. Nothing is read, nor
     /// the read noted, until the first count is asked for.
     pub(super) fn count_of(self: Arc<Self>, tx: TxId) -> Option<Counts> {
         let freezes = self.frozen.columns().is_some();
@@ -31,9 +31,9 @@ impl RowTable {
         Some(Box::new(iter::from_fn(move || started.get_or_insert_with(|| Arc::clone(&self).counts(tx)).next())))
     }
 
-    /// The counts of the rows `tx` sees: of the zones settled, then of the
-    /// batches of the rest read with no column. The read noted first, of
-    /// the whole table, as a scan's with no condition is (`rows/mvcc.rs`).
+    /// The counts of the rows `tx` sees, of the zones settled, then of the
+    /// batches of the rest read with no column. The read is noted first,
+    /// of the whole table, as a scan's with no condition is (`rows/mvcc.rs`).
     fn counts(self: Arc<Self>, tx: TxId) -> Counts {
         let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, || Read::All).map(|()| reader)) {
             Ok(reader) => reader,

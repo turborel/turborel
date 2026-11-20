@@ -1,5 +1,5 @@
 //! \[DESIGN\] A bare COUNT(*) of a table answered by the table's storage
-//! (RULES.md D351, `TableStorage::count`): an aggregation of one group
+//! (RULES.md D351, `TableStorage::count`). An aggregation of one group
 //! whose set functions each count rows [X3.135-1986 §5.8 GR4b], of a scan
 //! of one table in no order, with no filter and no row id, is fed the
 //! counts the storage gives in place of the scan's batches, each read
@@ -20,7 +20,7 @@ use crate::storage::Row;
 use crate::txn::{NO_TRANSACTION, TxId, checked};
 
 /// The table whose rows the aggregation `read` reads of `input` would
-/// count alone: of one group, each of its set functions counting rows, of
+/// count alone, of one group, each of its set functions counting rows, of
 /// a bare scan of the table.
 pub(super) fn counted_table<'p>(read: &Read, input: &'p Plan) -> Option<&'p QualifiedName> {
     if !read.groups.is_empty() || !read.taken.iter().all(|t| matches!(t, Taken::Count)) {
@@ -45,7 +45,7 @@ pub(super) fn counted(table: &QualifiedName, aggs: &[AggCall], db: &Arc<State>, 
 /// \[DESIGN\] The table whose rows the bare COUNT(*) at the top of `plan`
 /// counts by its storage, under the projections, sorts, limits and
 /// filters of its one row, if it is read by batches and the storage
-/// counts: as EXPLAIN notes it (`db/explain.rs`). Asking the storage reads
+/// counts, as EXPLAIN notes it (`db/explain.rs`). Asking the storage reads
 /// nothing, its counts being read once asked for.
 pub(crate) fn storage_counted<'p>(plan: &'p Plan, db: &State) -> Option<&'p QualifiedName> {
     let mut top = plan;
@@ -78,7 +78,7 @@ mod tests {
     /// Decision `!groups.is_empty() || !all counting`: neither (counted)
     /// against groups alone (scanned) shows the groups' condition; a set
     /// function of a column alone (scanned) shows the counting's. The
-    /// scan's: a located scan, or one in an order, is not bare.
+    /// scan's, a located scan or one in an order is not bare.
     #[test]
     fn only_a_bare_count_is_counted_by_the_storage() {
         let read = |groups: Vec<usize>, taken: Vec<Taken>| Read { taken, groups };

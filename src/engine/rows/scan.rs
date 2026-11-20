@@ -199,8 +199,8 @@ impl RowTable {
 
     /// The batches of the rows `tx` sees, of `columns`, of only the zones
     /// `condition` may match, if given, as `scan_rows` reads a table that
-    /// holds no group, leaving every row to the filter: each record read in
-    /// place where it can be, its columns decoded straight into their
+    /// holds no group, leaving every row to the filter. Each record is read
+    /// in place where it can be, its columns decoded straight into their
     /// vectors (`rows/in_place.rs`).
     fn gathered(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Conjunction>) -> Batches {
         let read = || condition.cloned().map_or(Read::All, Read::Condition);

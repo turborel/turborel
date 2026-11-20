@@ -44,7 +44,7 @@ pub enum Visited {
 
 /// What a visit read of a leaf.
 struct Shown {
-    /// The key to go on past: of the last entry taken or wanted out.
+    /// The key to go on past, of the last entry taken or wanted out.
     resume: Option<Vec<u8>>,
     /// The entry wanted out, if one was.
     later: Option<Entry>,
@@ -61,7 +61,7 @@ fn shown(leaf: &Node<'_>, (lower, upper): (&Bound<Vec<u8>>, &Bound<Vec<u8>>), f:
         return Err(corrupt("a leaf's neighbour is not a leaf"));
     }
     let mut shown = Shown { resume: None, later: None, whole: true, further: leaf.right };
-    // Taken out of the tree: its range is in the node its link leads to.
+    // Taken out of the tree, its range is in the node its link leads to.
     if leaf.deleted {
         return Ok(shown);
     }
@@ -140,7 +140,7 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
                     Bound::Included(key) | Bound::Excluded(key) => Target::Key(key),
                     Bound::Unbounded => Target::First,
                 };
-                // A lookup: its first descent, to a key.
+                // A lookup is its first descent, to a key.
                 let tallied = self.last.is_none() && matches!(target, Target::Key(_));
                 let mut path = Path { tallied, ..Path::default() };
                 tree.descend(target, 0, &mut path, |leaf| shown(leaf, bounds, f)).map(Some)

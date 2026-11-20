@@ -32,6 +32,15 @@ the FROM clause's order, as one estimated no cheaper by
 PLANNER.REORDER_GAIN does, has no note. A merge join shows as
 `MergeJoin`, or `LeftMergeJoin` of a LEFT join, with its key.
 
+A query that only counts a table's rows, `SELECT COUNT(*) FROM T` with
+no WHERE clause or grouping, may be answered by the table's storage
+without reading each row. The row store sums the rows of the blocks of
+rows every transaction sees alike, and reads only the others, so the
+count is the one a scan makes at any isolation level. The plan then ends
+with a line `-- counted by storage:` naming the table. A table of the
+column store, and any query with EXECUTOR.BATCHES OFF, is counted by its
+scan and has no such line.
+
 EXPLAIN is direct SQL, as a query is. The `turborel` client shows its
 rows as it shows a query's. A program reaches the same text by the
 library's `Session::explain` ([The Embedded Library](../../client/03-embedding.md#reading-rows)),
@@ -95,6 +104,33 @@ OK
  Project PARTS.ID
    IndexScan ANN.PARTS using PARTS_NAME [btree]: PARTS.NAME = 'part 7'  (est. rows=1, cost=20.6)
 (12 rows)
+```
+
+A count of the rows of PARTS, a table of the row store, which its
+storage counts:
+
+```sql
+EXPLAIN SELECT COUNT(*) FROM PARTS;
+```
+
+```
+ PLAN
+------------------------------------------------
+ -- bound:
+ Project COUNT(*)
+   Aggregate group by [] computing [COUNT(*)]
+     Scan ANN.PARTS
+ -- rules: none
+ -- optimized:
+ Project COUNT(*)
+   Aggregate group by [] computing [COUNT(*)]
+     Scan ANN.PARTS
+ -- physical:
+ Project COUNT(*)
+   Aggregate group by [] computing [COUNT(*)]
+     SeqScan ANN.PARTS  (rows=1000, cost=800.0)
+ -- counted by storage: ANN.PARTS
+(14 rows)
 ```
 
 Three tables joined, their joins ordered by enumeration. The note on

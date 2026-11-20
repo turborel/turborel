@@ -202,10 +202,10 @@ pub trait TableStorage: Send + Sync {
         false
     }
     /// \[DESIGN\] (RULES.md D350) The rows `scan_batches` gives `tx` with
-    /// no conditions, counted faster than read: counts that sum to how
-    /// many, read once first asked for, each a cancel looked at before, as
-    /// a batch is, and the read noted as the scan's. None if it cannot
-    /// count them faster, the caller then scanning. Default: none.
+    /// no conditions, counted faster than read. The counts sum to how many,
+    /// read once first asked for, each a cancel looked at before, as a
+    /// batch is, and the read noted as the scan's. None if it cannot count
+    /// them faster, the caller then scanning. Default none.
     fn count(self: Arc<Self>, _tx: TxId) -> Option<Counts> {
         None
     }

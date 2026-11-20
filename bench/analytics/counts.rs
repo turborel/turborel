@@ -12,7 +12,7 @@ use turborel::threads::JobPolicy;
 const ROWS: u64 = 200_000;
 /// Rows each INSERT of the setup writes.
 const PER_INSERT: u64 = 500;
-/// The row ids of a zone (`engine/rows/zones.rs`): a change of one row
+/// The row ids of a zone (`engine/rows/zones.rs`). A change of one row
 /// of each leaves every zone unsettled.
 const ZONE_ROWS: u64 = 1_024;
 

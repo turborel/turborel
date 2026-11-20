@@ -1,5 +1,5 @@
 //! The mutations of the row store's count and its scans read in place
-//! (RULES.md R-TEST-9, D350, D351): the zones counted by their flag, none
+//! (RULES.md R-TEST-9, D350, D351), the zones counted by their flag, none
 //! counted twice, the read noted, a table that freezes left to its scan,
 //! what the scan reads in place and what after its leaf's latch, where a
 //! visit goes on, and the aggregations the executor counts so.
