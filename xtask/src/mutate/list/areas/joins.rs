@@ -2,8 +2,10 @@
 //! conflict rule dropped, an implied equality counted again, the floor
 //! of one row lost, a csg-cmp pair enumerated twice, the budget ignored,
 //! the gain ignored, a merge join offered with both operands sorted, its
-//! runs read again for each left row, its unmatched LEFT rows lost, and
-//! a conjunct over an outer join's nulls placed below it.
+//! runs read again for each left row, its unmatched LEFT rows lost, a
+//! conjunct over an outer join's nulls placed below it, an OR's repeated
+//! equality left in it, the OR implied of a table not added, and an
+//! index prefix counted past the limit guessed below the count.
 
 use super::super::{Mutation, Package};
 
@@ -15,11 +17,15 @@ const MODEL_FILE: &str = "src/physical/enumerate/model.rs";
 const DRIVER_FILE: &str = "src/physical/enumerate.rs";
 /// The merge join's executor.
 const MERGE_FILE: &str = "src/exec/join/merge.rs";
+/// The rule factoring disjunctions.
+const DISJUNCTIONS_FILE: &str = "src/optimizer/disjunctions.rs";
+/// The integration test of an OR whose operands repeat a join's equality.
+const SHAPED_OR: &str = "benchmark_shapes::an_equality_each_disjunct_repeats_joins";
 /// The merge join's integration test.
 const MERGED: &str = "join_enumeration::merge_joins_pair_runs_of_equal_keys";
 
 /// Mechanisms of join enumeration whose removal must fail its tests.
-pub const JOINS: [Mutation; 10] = [
+pub const JOINS: [Mutation; 13] = [
     Mutation {
         name: "joins-conflict-rule",
         package: Package::Core,
@@ -118,6 +124,36 @@ pub const JOINS: [Mutation; 10] = [
         original: "if !pending.iter().all(preserved) {",
         replacement: "if pending.iter().all(preserved) && pending.is_empty() && !pending.is_empty() {",
         integration: &["join_enumeration::random_chains_agree_with_the_greedy_order"],
+        unit: &[],
+    },
+    Mutation {
+        name: "joins-or-not-factored",
+        package: Package::Core,
+        breaks: "an equality each operand of an OR holds stays in each, so its tables are multiplied",
+        file: DISJUNCTIONS_FILE,
+        original: "    if common.is_empty() {",
+        replacement: "    if common.is_empty() || !common.is_empty() {",
+        integration: &[SHAPED_OR],
+        unit: &[],
+    },
+    Mutation {
+        name: "joins-implied-or-lost",
+        package: Package::Core,
+        breaks: "no table is filtered first by the OR of its own conjuncts",
+        file: DISJUNCTIONS_FILE,
+        original: "if !filtered.contains(&key(&own)) {",
+        replacement: "if filtered.contains(&key(&own)) {",
+        integration: &[SHAPED_OR],
+        unit: &[],
+    },
+    Mutation {
+        name: "joins-prefix-floor",
+        package: Package::Core,
+        breaks: "an index prefix counted past the limit is guessed to find fewer rows than were counted",
+        file: "src/physical/access.rs",
+        original: "let guessed = || by_keys().unwrap_or(share).max(floor);",
+        replacement: "let guessed = || by_keys().unwrap_or(share).max(0.0_f64);",
+        integration: &["benchmark_shapes::a_longer_equal_prefix_is_read"],
         unit: &[],
     },
 ];
