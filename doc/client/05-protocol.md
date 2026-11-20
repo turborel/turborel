@@ -541,7 +541,10 @@ octets from octet `from`, counting from 0, or characters where the flag
 is 1, and is answered with a Lob reply of its data. Create makes an
 empty large object and is answered with a Lob reply of its locator.
 Append adds octets to one Create made. A character one may split a
-character between two Appends. Free ends a locator, and Hold keeps it
+character between two Appends. Its octets are checked as UTF-8 as each
+Append comes, and one that is not is refused with 22021 by its Append.
+After that every Append to it is refused, and so is its use. One that
+ends within a character is refused, 22021, where it is used. Free ends a locator, and Hold keeps it
 valid past its transaction's commit. Append, Free and Hold are answered
 with a Complete.
 

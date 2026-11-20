@@ -161,10 +161,10 @@ fn a_function_gives_its_parameters_their_types() {
     assert_eq!(p.parameters(), [ParameterType::Varying]);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR5o, p, u, w; §17.10]: a
-/// `?` of a table value constructor takes the type of the first row's
-/// value in its place that is not one [o]; one in its place in every row
-/// of an INSERT's, the column's [p]; an UPDATE's SET `?` its column's [w];
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR5u, w; §17.10]
+/// [ISO/IEC 9075-2:2023 §20.7 GR5a xix 1 A] RULES.md D390: a `?` of an
+/// INSERT's table value constructor takes its column's type, whatever the
+/// other rows hold; an UPDATE's SET `?` its column's [w];
 /// SET SCHEMA's, CHARACTER VARYING [u]; each executed as often as asked,
 /// its completion as `execute` gives it; a schema definition, prepared, is
 /// processed as `direct` does.
@@ -173,9 +173,9 @@ fn prepared_writes_take_their_columns_types() {
     let (db, s) = session();
     let shown = |p: &turborel::db::Prepared| p.parameters().iter().map(|t| t.clone().data_type().to_string()).collect::<Vec<_>>();
     let insert = s.prepare("INSERT INTO T VALUES (?, ?, ?), (5, 'EVE', ?)").unwrap();
-    assert_eq!(shown(&insert), ["NUMERIC(1,0)", "CHARACTER(3)", "DECIMAL(5,2)", "DECIMAL(5,2)"], "[o], and [p] for the third");
+    assert_eq!(shown(&insert), ["INTEGER", "CHARACTER(5)", "DECIMAL(5,2)", "DECIMAL(5,2)"], "xix 1 A");
     let all_dynamic = s.prepare("INSERT INTO T VALUES (?, ?, ?)").unwrap();
-    assert_eq!(shown(&all_dynamic), ["INTEGER", "CHARACTER(5)", "DECIMAL(5,2)"], "[p]");
+    assert_eq!(shown(&all_dynamic), ["INTEGER", "CHARACTER(5)", "DECIMAL(5,2)"], "xix 1 A");
     s.execute_prepared(&insert, &[int(4), text("DAN"), Value::Approx(4.25), int(5)]).unwrap();
     let update = s.prepare("UPDATE T SET A = ? WHERE K = ?").unwrap();
     s.execute_prepared(&update, &[Value::Null, int(4)]).unwrap();

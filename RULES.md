@@ -348,6 +348,9 @@ verification approach DO-178C expects (§8).
 | D351 | A bare COUNT(*) of a row-store table sums its settled zones' rows and reads the rest in place |
 | D352 | A column chunk is decoded a block of 64 values at a time, and opened once for a group's runs |
 | D353 | ALP decimals are read by two multiplications with a stored pair of factors |
+| D390 | A `?` in the rows of an INSERT takes its object column's type |
+| D391 | A `?` whose value its cast cuts warns 01004 |
+| D392 | A character large object a client writes is checked as each Append comes |
 | D393 | A reply value the client cannot take fails its request alone, the rest of its replies read past; a malformed frame loses the connection |
 | D394 | Terminate waits at most its limit on a stream that bounds itself, a program's own too, and reads past a Notice to its Error |
 
@@ -9643,6 +9646,51 @@ allows. The new encoder sets bit 0x80 of the chunk's first byte, which is
 above every exponent, and writes f after it. A chunk without the bit was
 written before and is read by division, so an older file never reads
 wrongly and needs no migration.
+
+#### D390. A `?` in the rows of an INSERT takes its object column's type
+
+A `?` in a row of an INSERT's VALUES, or of VALUES in a query expression
+an INSERT simply contains, as an operand of UNION ALL too, takes the type
+of the object column it lands in, whatever the other rows hold
+(ISO/IEC 9075-2:2023 §20.7 GR5a xix 1 A). The type §9.5
+gives the column's values is taken only by a `?` of VALUES outside an
+INSERT (§20.7 GR5a xix 1 B, §7.3 SR3). A value bound beside a shorter
+literal in another row is so never cut to that literal's length
+(`binder/set_operations.rs`). Each row's value is then assigned to its
+column (§14.11 SR16, §9.2), which raises 22001 for any character other
+than a space past the column's length, in whichever row or operand it
+stands. The rows' common type has the greatest of their lengths (§9.5
+SR3a, SR3b), so no literal is cut to another's length before that.
+
+#### D391. A `?` whose value its cast cuts warns 01004
+
+A `?`'s value is cast to the type its context gives it (§20.11 GR6c ii
+2 B). That is its object column's as an INSERT's or an UPDATE's value
+(§20.7 GR5a xix 1 A, xxvi), the type §9.5 gives the other operand as a
+comparison's (xxi), and its parameter's as a CALL's argument (xxx). A
+string longer than that type is cut, with the warning string data,
+right truncation, 01004 (§6.13 GR11d ii, GR12d ii, GR13), and a
+comparison compares the value cut. The
+binder keeps the warning with the constant (`Expr::Warned`), and so does
+a kept plan's slot as it is filled (`logical/dynamic.rs`), so the
+statement completes with 01004 and the cut is never silent. A value
+that fits raises nothing. The cast stays a cast and not a store
+assignment, as the standard says, so 22001 is raised only by the
+assignment of a value longer than its column, as a literal's is.
+
+#### D392. A character large object a client writes is checked as each Append comes
+
+A character large object a client makes by its locator (D79) is checked
+as UTF-8 as each Append brings octets, with what is left of a character
+the Append before began, so a character split between two Appends is
+taken (`db/lobs/writing.rs`). An octet that is not UTF-8 is refused
+with 22021 by the Append that sends it, which the client's finish sends
+for what it holds. Once one Append is refused, every later one is, and
+so is the value's use, with that error, so no part of a refused value
+is ever stored. The protocol has no request that ends a value, so a
+value that ends within a character is refused, 22021, as it is used. A
+character large object never holds what is not UTF-8, which every read
+of it relies on (§4.2.1).
 
 #### D393. A reply value the client cannot take fails its request alone, the rest of its replies read past; a malformed frame loses the connection
 

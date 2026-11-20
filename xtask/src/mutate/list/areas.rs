@@ -10,6 +10,7 @@ mod count;
 #[path = "decode.rs"]
 mod decode;
 mod distinct_aggregates;
+mod insert_values;
 mod joins;
 mod parallel;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
@@ -75,7 +76,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 34] {
+fn second() -> [&'static [Mutation]; 35] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -111,6 +112,7 @@ fn second() -> [&'static [Mutation]; 34] {
         &count::COUNT,
         &distinct_aggregates::DISTINCT_AGGREGATES,
         &unnesting::UNNESTING,
+        &insert_values::INSERT_VALUES,
     ]
 }
 

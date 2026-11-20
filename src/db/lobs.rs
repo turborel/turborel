@@ -162,7 +162,8 @@ impl Session {
     /// # Errors
     ///
     /// SQLSTATE 0F001 if it names none; 22021 if a value a client made of
-    /// a character large object is not UTF-8.
+    /// a character large object ends within a character; the error an
+    /// `append_lob` of it was refused with.
     pub fn located(&self, locator: u32) -> Result<Lob> {
         self.locators.borrow_mut().value(locator).cloned()
     }
@@ -180,7 +181,9 @@ impl Session {
     /// # Errors
     ///
     /// SQLSTATE 0F001 if it names no large object being made; 22001 if it
-    /// grows past the longest; 22021 if a character one is not UTF-8.
+    /// grows past the longest; 22021 if a character one is not UTF-8,
+    /// checked across the calls (RULES.md D392); a call's before, if one
+    /// was refused, as the value is then never made.
     pub fn append_lob(&self, locator: u32, bytes: &[u8]) -> Result<()> {
         let temp = self.db.snapshot()?.temp_lobs.clone();
         match self.locators.borrow_mut().entries.get_mut(&locator) {
