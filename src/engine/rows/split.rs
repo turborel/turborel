@@ -142,8 +142,9 @@ impl Split for RowSplit {
     /// range decoded straight into vectors, as its scan by batch reads them
     /// (`rows/scan.rs`); of the column store, its groups within the range
     /// read a vector at a time from their chunks, then its tree's rows of
-    /// the range (`frozen/batches.rs`).
-    fn morsel_batches(&self, n: usize) -> Option<Batches> {
+    /// the range (`frozen/batches.rs`), its columns of `late` as their
+    /// places (`frozen/late.rs`).
+    fn morsel_batches(&self, n: usize, late: &[usize]) -> Option<Batches> {
         let range = self.range(n)?;
         let asked = self.columns.get(..self.asked)?.to_vec();
         let Some(directory) = &self.directory else {
@@ -152,6 +153,6 @@ impl Split for RowSplit {
         let inside = |e: &&Arc<super::frozen::Entry>| e.summary.first >= range.0 && range.1.is_none_or(|end| e.summary.last < end);
         let part = Arc::new(Directory { groups: directory.groups.iter().filter(inside).cloned().collect() });
         let what = (asked, self.condition.clone());
-        Some(Box::new(Batched::within(Arc::clone(&self.table), (self.reader, part), what, range)))
+        Some(Box::new(Batched::within(Arc::clone(&self.table), (self.reader, part), what, range).with_late(late)))
     }
 }

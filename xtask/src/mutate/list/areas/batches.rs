@@ -16,7 +16,7 @@ pub const BATCHES: [Mutation; 8] = [
         name: "batches-fold-less-by-floor",
         package: Package::Core,
         breaks: "`<` of a constant not divided by the scale folds by its ceiling",
-        file: "src/exec/batch/judge/ints.rs",
+        file: "src/storage/batch/bound.rs",
         original: "        (CompOp::Lt | CompOp::Ge, _) => bounded(op, ceil),",
         replacement: "        (CompOp::Lt | CompOp::Ge, _) => bounded(op, floor),",
         integration: &[],

@@ -8,6 +8,19 @@ mod blocks;
 
 pub(crate) use blocks::unpack_words;
 
+/// \[DESIGN\] (RULES.md D360) How many times the span from the first to
+/// the last of the positions asked of a chunk may be to their count and
+/// still be unpacked whole, a block of 64 at a time: past it each is read
+/// alone (`get`). A value read alone costs about as much as eight
+/// unpacked in a block, so one in 8 is where the two cost alike.
+pub(super) const DENSE_SPAN: usize = 8;
+
+/// Whether `count` positions asked of a span of `span` are read by
+/// unpacking the span whole (`DENSE_SPAN`).
+pub(super) fn dense(count: usize, span: usize) -> bool {
+    count.saturating_mul(DENSE_SPAN) >= span
+}
+
 /// The bytes a window of one value is read from: a value of 64 bits at
 /// any bit's offset lies in 9 of them.
 const WINDOW: usize = 16;

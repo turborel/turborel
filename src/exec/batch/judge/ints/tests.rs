@@ -1,7 +1,7 @@
 //! Unit tests of an exact constant folded to a column's scale (`ints.rs`).
 
 use super::*;
-use crate::value::Decimal;
+use crate::value::{CompOp, Decimal};
 
 fn exact(units: i128, scale: u32) -> Value {
     Value::Exact(Decimal::new(units, scale))

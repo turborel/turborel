@@ -13,10 +13,11 @@
 
 use std::sync::Arc;
 
+use super::super::late::Deferred;
 use super::super::stream::{self, Batches, Kept};
 use super::held::{self, HeldRight, Read, Rest};
 use super::pairs::{Out, kept_rows};
-use super::{gathered, in_order, left_batches, narrow_rows, parted};
+use super::{gathered, in_order, left_batches, left_late_batches, narrow_rows, parted};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::join::{Built, Full, Right, partitioned_joined};
@@ -38,12 +39,18 @@ pub(super) enum Kind {
 }
 
 /// The batches of a hash join of `left` and `right` on `keys`, as `kind`
-/// says.
+/// says, the left's columns `deferred` leaves unread given late while the
+/// right is held (RULES.md D361), gathered through the join as places.
 ///
 /// # Errors
 ///
 /// The right operand's; the spill area's; a key the left's batches lack.
-pub(super) fn probed((left, right, keys): (Plan, Plan, Vec<JoinKey>), kind: Kind, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+pub(super) fn probed(
+    (left, right, keys): (Plan, Plan, Vec<JoinKey>),
+    (kind, deferred): (Kind, Deferred),
+    db: &Arc<State>,
+    tx: TxId,
+) -> Result<Batches> {
     let (left_columns, _) = stream::layout(&left, db).unwrap_or_default();
     let (right_columns, _) = stream::layout(&right, db).unwrap_or_default();
     let mut work = Work::of(db, tx);
@@ -63,7 +70,7 @@ pub(super) fn probed((left, right, keys): (Plan, Plan, Vec<JoinKey>), kind: Kind
         Read::Held(held) => {
             let out = Out::over(left_columns.len(), Arc::clone(&held.batch));
             let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };
-            let left = left_batches(left, db, tx)?;
+            let left = left_late_batches(left, (db, tx), &deferred)?;
             return Ok(Box::new(Probe { left, joined, right: Holding::Vectors(held), places, out, _work: work }));
         }
         Read::Rest(rest) => rest,

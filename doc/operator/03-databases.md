@@ -62,7 +62,9 @@ go. A scan reads ahead, the pages it will read next brought into the
 pool while it reads those before: a scan of a table of the built-in row
 store, or of a B-tree index, the pages after the one it reads, as rows
 inserted in key order lay them; a scan of a column store table's frozen
-groups, the pages of the chunks it will read. Those not in the pool,
+groups, the pages of the chunks it will read of the columns it decodes
+at once, a column decoded later of the rows a filter or a join kept
+being read as it is decoded. Those not in the pool,
 STORAGE.READ_AHEAD_PAGES of them at once (32 by default, 0 for none), at
 most an eighth of the pool's pages, are read by the database's job
 `turborel-read-ahead` ([Background work](#background-work)), each run
