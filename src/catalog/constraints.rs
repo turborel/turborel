@@ -219,22 +219,27 @@ impl TableDesc {
 
 /// \[DESIGN\] What a statement's end looks for over every table of a
 /// catalog, found once for its tables (RULES.md D415): whether one has a
-/// foreign key, whose referenced rows a change may break, and whether one
+/// foreign key, whose referenced rows a change may break, whether one
 /// has a CHECK constraint that reads tables, which a change of them may
-/// break.
+/// break, and whether one is a node table, whose rows deleted may have
+/// edges to act on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Constrained {
     /// A table has a foreign key.
     pub foreign_keys: bool,
     /// A table has a CHECK constraint that reads tables.
     pub reading_checks: bool,
+    /// A table is a node table.
+    pub nodes: bool,
 }
 
 impl Constrained {
     /// Of the tables `tables`.
     pub fn of<'a>(tables: impl Iterator<Item = &'a TableDesc>) -> Constrained {
         let mut found = Constrained::default();
-        for c in tables.flat_map(|t| t.constraints.iter()) {
+        let tables: Vec<&TableDesc> = tables.collect();
+        found.nodes = tables.iter().any(|t| t.native() == Some(super::NativeKind::Node));
+        for c in tables.iter().flat_map(|t| t.constraints.iter()) {
             found.foreign_keys |= matches!(c.kind, ConstraintKind::ForeignKey(_));
             if let ConstraintKind::Check { reads, .. } = &c.kind {
                 found.reading_checks |= !reads.is_empty();

@@ -180,6 +180,7 @@ mod information_schema;
 mod information_timestamps;
 mod information_usage;
 mod insert_values;
+mod inserted_values;
 mod intervals;
 mod isolation;
 mod join_enumeration;

@@ -522,11 +522,13 @@ mod tests {
         assert_eq!(filled_plan(low_of_prefix, &[int(1)]).unwrap_err().code, Code::Api, "a bound of no range");
         let sorted = Plan::Sort { keys: Vec::new(), detail: String::new(), input: Box::new(scan("I", Probe::All, Vec::new())), most: None };
         assert!(filled_plan(Plan::Distinct { input: Box::new(sorted), est: 0.0_f64 }, &[]).is_ok());
-        let other = Plan::Product {
-            left: Box::new(scan("I", Probe::All, Vec::new())),
-            right: Box::new(scan("I", Probe::All, Vec::new())),
-            est: 0.0_f64,
-        };
+        let probed =
+            || scan("I", Probe::Prefix { equal: vec![Value::Null], then: None }, vec![ProbeSlot { place: Place::Key(0), slot: slot(0) }]);
+        let product = Plan::Product { left: Box::new(probed()), right: Box::new(probed()), est: 0.0_f64 };
+        let Plan::Product { right, .. } = filled_plan(product, &[int(3)]).unwrap() else { panic!("not a product") };
+        let Plan::IndexScan { probe: right, .. } = *right else { panic!("not a scan") };
+        assert!(same(&right, &Probe::Prefix { equal: vec![int(3)], then: None }), "a product's inputs filled (D418)");
+        let other = Plan::Values { rows: Vec::new(), detail: String::new() };
         assert_eq!(filled_plan(other, &[]).unwrap_err().code, Code::Api);
     }
 

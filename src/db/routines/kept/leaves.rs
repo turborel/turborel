@@ -180,29 +180,34 @@ impl Subqueries for KeptRuns<'_> {
 /// of values, each outer reference of which names a slot of the frame.
 fn made(st: &State, leaf: &Leaf) -> LeafPlans {
     let query = &leaf.query;
-    let Some(types) = query.outer.iter().map(slot_type).collect::<Option<Vec<DataType>>>() else { return LeafPlans::new() };
+    let Some(slots) = query.outer.iter().map(frame_slot).collect::<Option<Vec<(usize, DataType)>>>() else { return LeafPlans::new() };
     let LogicalPlan::Values { rows, .. } = &query.plan else {
-        return kept(st, query, &types).map(|p| (query.id(), p)).into_iter().collect();
+        return kept(st, query, &slots).map(|p| (query.id(), p)).into_iter().collect();
     };
     let mut found = Vec::new();
     rows.iter().flatten().for_each(|e| scalar_subqueries(e, &mut found));
     found
         .into_iter()
         .filter_map(|s| {
-            let named = s.outer.iter().map(|e| outer_type(e, &types)).collect::<Option<Vec<DataType>>>()?;
+            let named = s.outer.iter().map(|e| outer_slot(e, &slots)).collect::<Option<Vec<(usize, DataType)>>>()?;
             kept(st, s, &named).map(|p| (s.id(), p))
         })
         .collect()
 }
 
-/// `query` planned with its outer references slots of `types`, if it has
-/// no slot of its own: its plan kept if it is one probe fixing a whole
-/// unique key, else learning.
-fn kept(st: &State, query: &Subquery, types: &[DataType]) -> Option<LeafPlan> {
+/// `query` planned with its outer references slots, each of the frame's
+/// slot and type of `slots`, if it has no slot of its own: its plan kept
+/// if it is one probe fixing a whole unique key, else learning. Outer
+/// references of one slot of the frame are one slot of the plan, so a
+/// variable named twice is one value, as the optimizer sees it
+/// (RULES.md D418).
+fn kept(st: &State, query: &Subquery, slots: &[(usize, DataType)]) -> Option<LeafPlan> {
     if filled(query.plan.clone(), &[]).is_err() {
         return None;
     }
-    let slotted = map_plan_exprs(query.plan.clone(), &mut |e| slotted(e, types));
+    let first = |frame: usize| slots.iter().position(|(f, _)| *f == frame);
+    let places: Vec<(usize, DataType)> = slots.iter().map(|(frame, t)| (first(*frame).unwrap_or_default(), t.clone())).collect();
+    let slotted = map_plan_exprs(query.plan.clone(), &mut |e| slotted(e, &places));
     let (optimized, _, physical) = plan(st, slotted.clone());
     let kept = if keepable(&physical, st) {
         Physical::Fixed(Arc::new(physical), optimized.tables().into(), None)
@@ -221,22 +226,24 @@ fn scalar_subqueries<'e>(e: &'e Expr, found: &mut Vec<&'e Subquery>) {
     e.for_each_child(&mut |child| scalar_subqueries(child, found));
 }
 
-/// The type of `e`, if it is a slot of the frame.
-fn slot_type(e: &Expr) -> Option<DataType> {
-    if let Expr::Dynamic(slot) = e { Some(slot.data_type.clone()) } else { None }
+/// The frame's slot `e` is, and its type, if it is one.
+fn frame_slot(e: &Expr) -> Option<(usize, DataType)> {
+    if let Expr::Dynamic(slot) = e { Some((slot.index, slot.data_type.clone())) } else { None }
 }
 
-/// The type of `e`, an outer reference of a subquery of a leaf's row, if
-/// it names an outer reference of the leaf, of `types`.
-fn outer_type(e: &Expr, types: &[DataType]) -> Option<DataType> {
-    if let Expr::Outer(at, _) = e { types.get(*at).cloned() } else { None }
+/// The frame's slot and type of `e`, an outer reference of a subquery of
+/// a leaf's row, if it names an outer reference of the leaf, of `slots`.
+fn outer_slot(e: &Expr, slots: &[(usize, DataType)]) -> Option<(usize, DataType)> {
+    if let Expr::Outer(at, _) = e { slots.get(*at).cloned() } else { None }
 }
 
-/// `e`, each outer reference a slot of the same place, of its type of
-/// `types`.
-fn slotted(e: Expr, types: &[DataType]) -> Expr {
+/// `e`, each outer reference the slot of `places` of its place, of its
+/// type there.
+fn slotted(e: Expr, places: &[(usize, DataType)]) -> Expr {
     if let Expr::Outer(index, name) = e {
-        return types.get(index).map_or(Expr::Outer(index, name), |t| Expr::Dynamic(Slot { index, data_type: t.clone(), at: 0 }));
+        return places
+            .get(index)
+            .map_or(Expr::Outer(index, name), |(at, t)| Expr::Dynamic(Slot { index: *at, data_type: t.clone(), at: 0 }));
     }
-    e.map_children(&mut |child| slotted(child, types))
+    e.map_children(&mut |child| slotted(child, places))
 }
