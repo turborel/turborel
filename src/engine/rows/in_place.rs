@@ -91,4 +91,4 @@ impl RowTable {
 // Unit tests: batches read in place are those of the rows the reader sees,
 // as a scan of copies gives them (RULES.md R-TEST-1, R-TEST-8).
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

@@ -57,3 +57,36 @@ pub(crate) fn storage_counted<'p>(plan: &'p Plan, db: &State) -> Option<&'p Qual
     let counts = super::super::batched(db) && Arc::clone(db.storage_of(table).ok()?).count(NO_TRANSACTION).is_some();
     counts.then_some(table)
 }
+
+// Unit tests: which aggregations are counted by the storage (RULES.md
+// R-TEST-1, R-TEST-8).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::QualifiedName;
+
+    /// A scan of T, located or not, in the order of `order`.
+    fn scan(located: bool, order: Vec<usize>) -> Plan {
+        let table = QualifiedName { auth: "A".into(), ident: "T".into() };
+        Plan::SeqScan { table, columns: vec![], rows: 0, cost: 0.0_f64, order, backward: false, most: None, located }
+    }
+
+    /// Verifies: [DESIGN] RULES.md D351: an aggregation is counted by the
+    /// storage only of one group, each set function counting rows, of a
+    /// bare scan.
+    ///
+    /// Decision `!groups.is_empty() || !all counting`: neither (counted)
+    /// against groups alone (scanned) shows the groups' condition; a set
+    /// function of a column alone (scanned) shows the counting's. The
+    /// scan's: a located scan, or one in an order, is not bare.
+    #[test]
+    fn only_a_bare_count_is_counted_by_the_storage() {
+        let read = |groups: Vec<usize>, taken: Vec<Taken>| Read { taken, groups };
+        let bare = scan(false, Vec::new());
+        assert!(counted_table(&read(Vec::new(), vec![Taken::Count, Taken::Count]), &bare).is_some());
+        assert!(counted_table(&read(vec![0], vec![Taken::Count]), &bare).is_none());
+        assert!(counted_table(&read(Vec::new(), vec![Taken::Count, Taken::Column(0)]), &bare).is_none());
+        assert!(counted_table(&read(Vec::new(), vec![Taken::Count]), &scan(true, Vec::new())).is_none());
+        assert!(counted_table(&read(Vec::new(), vec![Taken::Count]), &scan(false, vec![0])).is_none());
+    }
+}
