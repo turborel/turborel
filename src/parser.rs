@@ -7,7 +7,7 @@
 //!
 //! Syntax that is valid SQL but not implemented reports `Code::Unsupported` rather than a misleading syntax error.
 
-pub use ddl::{RESEAL, REVERT_COLLATION, method_of_type, option_of};
+pub use ddl::{GENERATION, RESEAL, REVERT_COLLATION, method_of_type, option_of};
 pub use domains::VALUE_COLUMN;
 pub(crate) use dynamic::descriptor_type;
 pub use graph::{Declared, Degree, Exposed, Exposure, exposure, in_path_patterns, normalize, normalize_within, parenthesized_exposure};

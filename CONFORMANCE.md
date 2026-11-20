@@ -245,7 +245,7 @@ there only the statements whose operands may be `<literal>`s are of use.
 | When constraints are checked | §14.2 | At the end of each statement. Deferred ones, by SET CONSTRAINTS or INITIALLY DEFERRED, at commit. |
 | Defaults | §11.5 | A literal, NULL, USER, CURRENT_USER, CURRENT_ROLE, SESSION_USER, SYSTEM_USER, or a datetime value function. Used by INSERT, DEFAULT VALUES, `SET ... = DEFAULT`, columns added, and the referential action SET DEFAULT. |
 | DROP SCHEMA, DROP TABLE, DROP VIEW | §11.2, §11.18, §11.20 | CASCADE and RESTRICT, inside transactions (RULES.md D33). DROP SCHEMA RESTRICT is refused, and CASCADE drops them, while constraints named in the schema are of tables or domains of another (D47). RESTRICT is refused while the schema holds a collation [§11.2 SR3]. |
-| ALTER TABLE | §11.10–§11.17 | ADD and DROP COLUMN, ALTER COLUMN defaults, ADD and DROP CONSTRAINT, CASCADE and RESTRICT, inside transactions (D33). |
+| ALTER TABLE | §11.10–§11.17, §11.19 | ADD and DROP COLUMN, ALTER COLUMN defaults, nullability and data type ([Altered columns](#altered-columns)), ADD and DROP CONSTRAINT, CASCADE and RESTRICT, inside transactions (D33). |
 | Views | §11.19, §11.11 GR2 | Of any query expression. WITH LOCAL or CASCADED CHECK OPTION, checked against every view an update spans [GR11]. A view keeps the columns it saw when defined, whatever columns are added later. |
 | CREATE TABLE, CREATE VIEW, GRANT, REVOKE on their own | §11.3, §11.19, §11.36, §11.37, §20.1 | In a transaction (RULES.md D33, D47). |
 
@@ -959,6 +959,22 @@ COLUMNS that describe identity and generation are an extension, named as
 that part names them, the generator's options as text. GENERATED, ALWAYS,
 EXPRESSION and OVERRIDING are non-reserved words, and SYSTEM, which
 SQL:2023 reserves and SQL-92 does not, stays an identifier too.
+
+### Altered columns
+
+Features F383 (set column not null clause) and F382 (alter column data
+type). Each is an ALTER TABLE action logged as written (RULES.md D33),
+so ROLLBACK undoes it and recovery and a standby apply it again.
+
+| Feature | Rules | What turborel does |
+|---|---|---|
+| SET NOT NULL | §11.15 GR1 | Adds a NOT NULL constraint of a name of its own, which the Information Schema shows, once no row any snapshot may see holds a null, else SQLSTATE 23000. The ALTER holds the table's exclusive lock, so a transaction that has written the table and not ended keeps it waiting. Of a column known not null it does nothing (RULES.md D399). |
+| DROP NOT NULL | §11.16 SR2 to SR4, GR1, §11.12 SR6 | Drops the column's own NOT NULL constraints with CASCADE, a domain's left. Refused of a primary key's column, one that bounds a period, and an identity column, SQLCODE -103 (RULES.md D400). |
+| SET DATA TYPE | §11.19 SR3 to SR15, GR1 | A predefined type of the column's kind, no shorter, less precise or of a lesser scale or qualifier, else SQLCODE -103, as is a column a CHECK of more columns, an assertion, a trigger, a routine, a view or a generation expression references, a self-referencing column, one that bounds a period, and an identity column. The rows are copied to a new storage generation, each value assigned to the new type, and the indexes made again (RULES.md D401). |
+
+A column of a domain is given no other data type, as it has its
+domain's. A system-versioned table's columns are altered by none of
+these [§11.12 SR2].
 
 ### TRUNCATE TABLE
 
@@ -4217,6 +4233,18 @@ assertion, trigger, routine or generation expression reading the table
 names the column or its new name, or a view selects `*` of it, SQLCODE
 -103, as is one of a typed or system-versioned table.
 
+RENAME TO gives a table a new name of its schema (RULES.md D402), which
+SQL:2023 has no statement for [§11.10]. A name a table, view or
+property graph of the schema has is SQLCODE -103, and only the schema's
+owner renames the table [§11.10 AR1]. The rows are copied to a new
+storage generation of the new name. Constraints, indexes, privileges,
+foreign keys of other tables and the table's triggers follow it, and its
+identity column's generator keeps its name and goes on. It is refused
+while a view, CHECK, domain constraint, assertion, trigger, routine,
+property graph, generation expression or index expression names the
+table, SQLCODE -103, as is a typed, temporary, system-versioned,
+partitioned, node or edge table.
+
 ### Partitioned tables
 
 PARTITION BY and PARTITION OF of CREATE TABLE, ATTACH PARTITION and
@@ -4391,6 +4419,8 @@ parts: `cargo xtask features` writes their rows from it, and
 | T174 | Identity columns | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
 | T175 | Generated columns | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
 | T178 | Identity columns: simple restart option | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
+| F382 | Alter column data type | [Altered columns](#altered-columns) |
+| F383 | Set column not null clause | [Altered columns](#altered-columns) |
 | F384 | Drop identity property clause | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
 | F385 | Drop column generation expression clause | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
 | F386 | Set identity column generation clause | [Identity columns and generated columns](#identity-columns-and-generated-columns) |
