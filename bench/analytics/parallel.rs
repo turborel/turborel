@@ -24,7 +24,7 @@ const PER_INSERT: u64 = 1_000;
 
 /// Queries of `{t}`, each with the name it is reported by.
 const QUERIES: [(&str, &str); 10] = [
-    ("COUNT by a filter of 2,000,000 rows", "SELECT COUNT(*), SUM(A) FROM {t} WHERE B % 10 < 3"),
+    ("COUNT by a filter of 2,000,000 rows", "SELECT COUNT(*), SUM(A) FROM {t} WHERE MOD(B, 10) < 3"),
     ("GROUP BY 1,000 groups", "SELECT G, COUNT(*), SUM(A), AVG(B) FROM {t} GROUP BY G"),
     ("GROUP BY 200,000 groups", "SELECT H, COUNT(*), SUM(A) FROM {t} GROUP BY H"),
     ("DISTINCT of 200,000 rows", "SELECT DISTINCT H FROM {t}"),
@@ -48,8 +48,9 @@ fn database() -> (Database, Session) {
     .unwrap();
     let s = db.session("B");
     for first in (0..ROWS).step_by(PER_INSERT as usize) {
-        let values: Vec<String> =
-            (first..first + PER_INSERT).map(|k| format!("({k}, {}, {}, {}, {})", k % 1_000, k * 7_919 % 200_000, k % 97, k * 104_729 % ROWS)).collect();
+        let values: Vec<String> = (first..first + PER_INSERT)
+            .map(|k| format!("({k}, {}, {}, {}, {})", k % 1_000, k * 7_919 % 200_000, k % 97, k * 104_729 % ROWS))
+            .collect();
         for table in ["P", "PC"] {
             s.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
         }
@@ -92,7 +93,9 @@ pub fn workloads(bench: &Bench) {
         }
         s.run("SET EXECUTOR.DEGREE = 1").unwrap();
         s.run("SET MEMORY.WORK_BYTES = 4194304").unwrap();
-        for (name, sql) in QUERIES.iter().filter(|(n, _)| n.starts_with("GROUP") || n.starts_with("ORDER BY, every") || n.starts_with("hash")) {
+        for (name, sql) in
+            QUERIES.iter().filter(|(n, _)| n.starts_with("GROUP") || n.starts_with("ORDER BY, every") || n.starts_with("hash"))
+        {
             let sql = sql.replace("{t}", table);
             bench.measure(Case::new(format!("{name}{label}, 4 MiB work area"), "rows"), || {
                 fetched(&s, &sql);
