@@ -22,6 +22,7 @@
 //! draw a value of a sequence generator or invoke a routine, which it
 //! would move between plans and evaluate of other rows.
 
+mod copies;
 mod levels;
 #[cfg(test)]
 mod tests;

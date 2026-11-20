@@ -192,15 +192,28 @@ fn collations_decide_what_is_distinct_10_9() {
 
 /// Verifies: [DESIGN] RULES.md D340-D342: EXPLAIN shows the rule fired,
 /// the two groupings, the parts of the functions without DISTINCT, and
-/// of more than one slot the copies of each row.
+/// of more than one slot the copies of each row: of a table read again
+/// for each, else of a collection derived table.
 #[test]
 fn explain_shows_the_two_groupings() {
     let (_db, a) = tables();
     let plan = a.explain("SELECT G, COUNT(DISTINCT X), COUNT(DISTINCT S), COUNT(*) FROM T GROUP BY G", &Params::new()).unwrap();
     let physical = plan.split("-- physical:").nth(1).unwrap();
     assert_eq!(physical.matches("Aggregate").count(), 2, "{plan}");
-    for shown in ["PARTIAL COUNT(*)", "COPY", "COUNT(DISTINCT T.X)"] {
+    for shown in ["PARTIAL COUNT(*)", "Append", "COUNT(DISTINCT T.X)"] {
         assert!(physical.contains(shown), "{shown} in {plan}");
+    }
+    let filtered = a.explain("SELECT COUNT(DISTINCT X) FILTER (WHERE K > 2), COUNT(DISTINCT S) FROM T", &Params::new()).unwrap();
+    assert!(filtered.contains("COPY") && !filtered.contains("Append"), "{filtered}");
+    let joined_sql = "SELECT COUNT(DISTINCT T.X), COUNT(DISTINCT E.S) FROM T, E";
+    let joined = a.explain(joined_sql, &Params::new()).unwrap();
+    assert!(joined.contains("COPY") && !joined.contains("Append"), "{joined}");
+    let queried = "SELECT G, COUNT(DISTINCT X), COUNT(DISTINCT S) FROM T WHERE K < (SELECT COUNT(*) FROM E) + 10 \
+                   AND CASE WHEN EXISTS (SELECT * FROM E) THEN FALSE ELSE TRUE END GROUP BY G";
+    let plan = a.explain(queried, &Params::new()).unwrap();
+    assert!(plan.contains("COPY") && !plan.contains("Append"), "{plan}");
+    for sql in [queried, joined_sql, "SELECT COUNT(DISTINCT X), SUM(Y), COUNT(DISTINCT S) FROM T WHERE X > 0"] {
+        assert_ne!(alike(&a, sql), "", "{sql}");
     }
     let single = a.explain("SELECT COUNT(DISTINCT X) FROM C", &Params::new()).unwrap();
     assert!(!single.contains("COPY"), "{single}");

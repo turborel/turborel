@@ -2,8 +2,9 @@
 //! functions (RULES.md D340, D342), from the bottom:
 //!
 //! - of more than one copy (`Shape::copies`), each row made once for
-//!   each, a marker after its columns, 1 to their number, by a collection
-//!   derived table of the markers, so the rows are read once;
+//!   each, a marker after its columns, 1 to their number: by reading the
+//!   rows again for each (`copies.rs`), or else by a collection derived
+//!   table of the markers, so the rows are read once;
 //! - of a slot with a filter, the filter's truth of each row, of its own
 //!   copy alone, in a projection of the columns used, so it is evaluated
 //!   once a row as before [ISO/IEC 9075-2:2023 §10.9 GR4a];
@@ -24,7 +25,7 @@
 //! the first comes of its first row. Groups of no rows, of empty
 //! grouping sets [§7.13 GR2a], are the second's alone.
 
-use super::{Shape, Slot};
+use super::{Shape, Slot, copies};
 use crate::functions::{AggregateRef, Merged, PART_TYPE, PARTIAL, Partial};
 use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Unnest, expr_columns, map_cond_columns, map_expr_columns};
 use crate::storage::Row;
@@ -54,7 +55,7 @@ pub(super) fn regrouped(grouping: &Grouping<'_>, aggs: Vec<AggCall>, input: Logi
 }
 
 /// The marker `n`, an exact number of scale 0.
-fn marker(n: usize) -> Expr {
+pub(super) fn marker(n: usize) -> Expr {
     Expr::Const(Value::Exact(Decimal::new(i128::try_from(n).unwrap_or(i128::MAX), 0)))
 }
 
@@ -70,17 +71,17 @@ fn when(guard: Cond, e: Expr, otherwise: Value) -> Expr {
 }
 
 /// Where each column of the plans between the two groupings is.
-struct Layout {
+pub(super) struct Layout {
     /// The columns of the rows (and the marker) used, in order.
-    used: Vec<usize>,
+    pub(super) used: Vec<usize>,
     /// The marker's column of the rows, if there is more than one copy.
-    marker: Option<usize>,
+    pub(super) marker: Option<usize>,
     /// The copy whose rows the functions without DISTINCT take.
-    plain: usize,
+    pub(super) plain: usize,
     /// Of each slot, its filter's truth's place among the truths.
-    truths: Vec<Option<usize>>,
+    pub(super) truths: Vec<Option<usize>>,
     /// The number of grouping columns.
-    width: usize,
+    pub(super) width: usize,
 }
 
 impl Layout {
@@ -113,9 +114,10 @@ impl Layout {
 
 /// The two groupings computing `shape` of `input` under `grouping`.
 pub(super) fn two_levels(grouping: &Grouping<'_>, shape: &Shape, input: LogicalPlan) -> LogicalPlan {
-    let copies = shape.copies();
-    let (rows, layout) = laid_out(grouping, shape, input, copies);
-    let projected = valued(rows, &layout, &shape.slots);
+    let (projected, layout) = copies::appended(grouping.groups, shape, &input).unwrap_or_else(|| {
+        let (rows, layout) = laid_out(grouping, shape, input, shape.copies());
+        (valued(rows, &layout, &shape.slots), layout)
+    });
     let inner = first(grouping, shape, &layout, projected);
     let mut aggs = Vec::new();
     let parts = layout.width.saturating_add(layout.marked()).saturating_add(layout.truth_count()).saturating_add(shape.slots.len());
