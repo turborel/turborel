@@ -34,6 +34,9 @@ pub struct Registry {
     /// run on (`kernels.rs`, RULES.md D354): the portable ones unless the
     /// database is given others.
     kernels: Arc<dyn crate::kernels::Kernels>,
+    /// \[DESIGN\] The seed groupings hash their keys by, drawn at random as
+    /// the database opens (RULES.md D357).
+    seed: crate::exec::Seed,
 }
 
 /// A set function a `Registry` holds as the standard defines it, no
@@ -117,7 +120,7 @@ impl Registry {
             .map(|f| (f.name().to_owned(), f))
             .collect();
         let kernels: Arc<dyn crate::kernels::Kernels> = Arc::new(crate::kernels::Portable);
-        Registry { scalars, aggregates, standard, tables, procedures, kernels }
+        Registry { scalars, aggregates, standard, tables, procedures, kernels, seed: crate::exec::Seed::default() }
     }
 
     /// The kernels batches run on.
@@ -128,6 +131,11 @@ impl Registry {
     /// The kernels batches run on, shared, for what holds them past a call.
     pub(crate) fn kernels_shared(&self) -> Arc<dyn crate::kernels::Kernels> {
         Arc::clone(&self.kernels)
+    }
+
+    /// The seed groupings hash their keys by (RULES.md D357).
+    pub(crate) fn seed(&self) -> &crate::exec::Seed {
+        &self.seed
     }
 
     /// Runs batches on `kernels` from now on.

@@ -9,6 +9,7 @@
 //! but of any exponent. GR2b ii sets no range for AVG's sum, so AVG
 //! judges its mean alone.
 
+use super::columnar::Summed;
 use super::floats::{self, Wide};
 use super::{Accumulator, ints};
 use crate::bytes::Reader;
@@ -111,6 +112,17 @@ impl SumAcc {
     /// No value yet, of a result of type `result`.
     pub(super) fn new(result: DataType) -> SumAcc {
         SumAcc { total: Total::Empty, result }
+    }
+
+    /// Of total `summed` so far, as a grouping keeps it in a column
+    /// (RULES.md D356), of a result of type `result`.
+    pub(super) fn of(summed: Summed, result: DataType) -> SumAcc {
+        let total = match summed {
+            Summed::Empty => Total::Empty,
+            Summed::Exact(d) => Total::Exact(d),
+            Summed::Approx(w) => Total::Approx(w),
+        };
+        SumAcc { total, result }
     }
 }
 
@@ -260,6 +272,12 @@ impl AvgAcc {
     /// No value yet, of a result of type `result`.
     pub(super) fn new(result: DataType) -> AvgAcc {
         AvgAcc { sum: SumAcc::new(result.clone()), count: 0, result }
+    }
+
+    /// Of total `summed` of `count` values so far, as a grouping keeps them
+    /// in columns (RULES.md D356), of a result of type `result`.
+    pub(super) fn of(summed: Summed, count: i128, result: DataType) -> AvgAcc {
+        AvgAcc { sum: SumAcc::of(summed, result.clone()), count, result }
     }
 }
 

@@ -2,9 +2,10 @@
 //! reads them whole: a sort (`exec/sort/vectors.rs`), and EXCEPT and
 //! INTERSECT (`exec/set.rs`). A stream whose batches hold every column of
 //! its rows, in order, gives its batches as they are, each with the rows a
-//! filter kept; EXCEPT and INTERSECT are given each row's key too, made
-//! straight from the vectors (`put_key`), as grouping makes it, and make a
-//! row of the values only of a row they keep or write.
+//! filter kept; EXCEPT and INTERSECT key each row in a table of groups
+//! (`exec/set/tabled.rs`), or, past their work area, by bytes made straight
+//! from the vectors (`put_key`), as grouping makes them, and make a row of
+//! the values only of a row they keep or write.
 
 use std::sync::Arc;
 
@@ -60,7 +61,7 @@ const KEY_BYTES: usize = 9;
 
 impl Keyed {
     /// The rows given of `batch`, `rows` or all, each keyed by every column.
-    fn of(batch: Batch, rows: Option<crate::storage::Sel>) -> Keyed {
+    pub(in crate::exec) fn of(batch: Batch, rows: Option<crate::storage::Sel>) -> Keyed {
         let rows = crate::storage::sel::places_of(rows, batch.rows);
         let width = batch.columns.len();
         let (mut keys, mut ends) = (Vec::with_capacity(rows.len().saturating_mul(width).saturating_mul(KEY_BYTES)), Vec::new());
@@ -90,20 +91,6 @@ impl Keyed {
         let r = self.rows.get(n).copied().unwrap_or(usize::MAX);
         (0..self.batch.columns.len()).map(|at| self.batch.cell(at, r).to_value()).collect()
     }
-}
-
-/// A stream's batches, each keyed (`Keyed`).
-pub(in crate::exec) type KeyedBatches = Box<dyn Iterator<Item = Result<Keyed>> + Send>;
-
-/// The batches of `plan`, a stream whose batches hold every column of its
-/// rows (`whole_width`), as `tx` sees them, each row keyed.
-///
-/// # Errors
-///
-/// As `stream::open`.
-pub(in crate::exec) fn keyed(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<KeyedBatches> {
-    let stream = stream::open(plan, db, tx)?;
-    Ok(Box::new(stream.batches.map(|kept| kept.map(|(batch, rows)| Keyed::of(batch, rows)))))
 }
 
 /// The batches of `plan`, a stream whose batches hold every column of its

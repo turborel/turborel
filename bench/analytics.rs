@@ -34,11 +34,12 @@
 //! set functions' alone, to `expressions`, expressions evaluated a
 //! vector at a time alone (`analytics/expressions.rs`), to `counts`, a
 //! row-store table counted and
-//! summed, its zones settled and not, alone (`analytics/counts.rs`), to
-//! `decode`, the column store's decoding alone (`analytics/decode.rs`), to
-//! `late`, a column store's selective queries, the columns they keep few
-//! rows of read late, alone (`analytics/late.rs`), or to `sorts`, ORDER BY
-//! and top-N alone (`analytics/sorts.rs`).
+//! summed, its zones settled and not, alone (`analytics/counts.rs`),
+//! to `decode`, the column store's decoding alone (`analytics/decode.rs`),
+//! to `grouping`, groupings on one thread alone (`analytics/grouping.rs`),
+//! to `late`, a column store's selective queries, the columns they keep
+//! few rows of read late, alone (`analytics/late.rs`), or to `sorts`,
+//! ORDER BY and top-N alone (`analytics/sorts.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -61,6 +62,8 @@ mod distinct;
 mod expressions;
 #[path = "analytics/graph.rs"]
 mod graph;
+#[path = "analytics/grouping.rs"]
+mod grouping;
 mod harness;
 #[path = "analytics/json.rs"]
 mod json;
@@ -84,8 +87,8 @@ use turborel::db::{Database, Session};
 /// morsels, `distinct` for the DISTINCT set functions', `expressions`
 /// for expressions over vectors, `counts` for a
 /// row-store table's counts, `decode` for the column store's decoding,
-/// `late` for a column store's selective queries, `sorts` for ORDER BY
-/// and top-N.
+/// `grouping` for groupings on one thread, `late` for a column store's
+/// selective queries, `sorts` for ORDER BY and top-N.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -101,6 +104,10 @@ fn main() {
     let bench = Bench::new("analytics");
     let only = std::env::var(ONLY_VAR).unwrap_or_default();
     if alone(&bench, &only) {
+        return;
+    }
+    if only == "grouping" {
+        grouping::workloads(&bench);
         return;
     }
     let db = database();
@@ -127,6 +134,7 @@ fn main() {
     social::workloads(&bench);
     unnesting::workloads(&bench);
     parallel::workloads(&bench);
+    grouping::workloads(&bench);
     counts::workloads(&bench);
     decode::workloads(&bench);
     late::workloads(&bench);
