@@ -21,7 +21,7 @@ use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::{Result, SqlError};
 use crate::graph::algo::{Algorithm, Arguments, Control, Input, Memory, Sizes, run};
-use crate::settings::{GRAPH_THREADS, MEMORY_WORK_BYTES, work_bytes};
+use crate::settings::{GRAPH_THREADS, MEMORY_WORK_BYTES, held_bytes};
 use crate::storage::Row;
 use crate::system::{GraphRun, Status};
 use crate::txn::TxId;
@@ -115,7 +115,7 @@ impl GraphCall {
             None => (rows.first().map_or(&[][..], Vec::as_slice), if self.vertices { rows.get(1).map(Vec::as_slice) } else { None }),
         };
         let input = Input { edges, vertices, cost: cost.as_deref().map(|c| self.cost_column(c)).transpose()? };
-        let memory = Memory::new(work_bytes(db.settings.get(MEMORY_WORK_BYTES)));
+        let memory = Memory::new(held_bytes(db.settings.get(MEMORY_WORK_BYTES)));
         let stop = db.tx.stop_of(tx);
         let cancel = || stop.as_ref().map_or(Ok(()), |s| s.check());
         run(self.algorithm, &arguments, &input, &Control::new(threads, &memory, &cancel))

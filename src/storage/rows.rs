@@ -8,6 +8,10 @@ use crate::error::{Code, Result, SqlError};
 use crate::txn::TxId;
 use crate::value::{Decimal, Value};
 
+/// \[DESIGN\] What keeps and logs a table's large object's object
+/// (`TableStorage::keep_lobs`): given its id, its body and what keeps it.
+pub type LobLog<'a> = &'a mut dyn FnMut(u64, &[u8], &mut dyn FnMut() -> Result<()>) -> Result<()>;
+
 /// A row: one value per column, in column order.
 pub type Row = Vec<Value>;
 

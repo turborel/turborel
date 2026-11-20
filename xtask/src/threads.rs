@@ -11,13 +11,14 @@ use crate::files;
 /// What makes a thread, or a runtime of threads.
 const STARTS: &[&str] = &["thread::spawn", "thread::Builder", "Builder::new_multi_thread", "Builder::new_current_thread", "Runtime::new("];
 
-/// The places that may: the database's jobs' threads, a path search's
-/// scoped workers, the readers of plug-in processes' pipes, the graph
+/// The places that may: the database's jobs' threads, the executor's
+/// workers, a path search's scoped workers, the readers of plug-in processes' pipes, the graph
 /// algorithms' scoped workers, the server's runtime, the command-line
 /// client's thread hearing Ctrl-C, and the plug-in SDK's reader of a
 /// plug-in's standard input, in the plug-in's own process.
 const MAKERS: &[&str] = &[
     "src/threads/worker.rs",
+    "src/threads/pool.rs",
     "src/threads/morsels.rs",
     "src/threads/pipes.rs",
     "src/graph/algo/parallel.rs",

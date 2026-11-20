@@ -2,7 +2,7 @@
 //! yet ended (RULES.md D38, D57; `db/standby.rs`): each as its log holds
 //! it, sealed or not, with its position, in a list that spills
 //! (`spill/list.rs`), so a long transaction of the primary is held in a
-//! work area's bytes (MEMORY.WORK_BYTES), as its undo entries are on the
+//! work area's bytes (`settings::held_bytes`), as its undo entries are on the
 //! primary. Kept sealed, a row of an encrypted table is held, and written
 //! to a spill area, no more plainly than its log holds it.
 //!

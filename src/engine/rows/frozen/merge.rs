@@ -74,7 +74,32 @@ impl Merged {
         columns: Vec<usize>,
         condition: Option<Conjunction>,
     ) -> Merged {
-        let delta = RowTable::entries(&table).peekable();
+        let delta = RowTable::entries(&table);
+        Merged::of_delta(table, (merging, directory), (columns, condition), delta)
+    }
+
+    /// As `new`, of the rows of ids from `first` up to, not including,
+    /// `end`, if given, alone: a morsel of a split scan (RULES.md D290),
+    /// whose `directory` holds only the groups within them.
+    pub(in crate::engine::rows) fn within(
+        table: Arc<RowTable>,
+        (merging, directory): (Merging, Arc<Directory>),
+        (columns, condition): (Vec<usize>, Option<Conjunction>),
+        range: (RowId, Option<RowId>),
+    ) -> Merged {
+        let delta = RowTable::range(&table, range);
+        Merged::of_delta(table, (merging, directory), (columns, condition), delta)
+    }
+
+    /// The merge of `delta`, the tree's entries it reads, and the groups of
+    /// `directory`.
+    fn of_delta(
+        table: Arc<RowTable>,
+        (merging, directory): (Merging, Arc<Directory>),
+        (columns, condition): (Vec<usize>, Option<Conjunction>),
+        delta: Scan<TreeOf>,
+    ) -> Merged {
+        let delta = delta.peekable();
         Merged {
             table,
             merging,

@@ -9,11 +9,10 @@
 //!     can use to find rows, and whether it gives key order (`IndexMethod`),
 //!   * the remaining weights live in a `CostModel` the user can change.
 //!
-//! "Interesting orders" (System R: Selinger et al., "Access Path Selection in a
-//! Relational Database Management System", SIGMOD 1979): when a Sort is
-//! required, the order is passed down through operators that preserve it.
-//! A table access may then choose an ordered index path, and the Sort is
-//! dropped if that is cheaper than scanning in any order and sorting.
+//! "Interesting orders" (System R: Selinger et al., "Access Path Selection in a Relational Database
+//! Management System", SIGMOD 1979): when a Sort is required, the order is passed down through
+//! operators that preserve it. A table access may then choose an ordered index path, and the Sort
+//! is dropped if that is cheaper than scanning in any order and sorting.
 
 mod access;
 mod built;
@@ -38,6 +37,9 @@ mod nodes;
 pub(crate) use nearest::distance_call;
 pub use nearest::{ApproximateRead, NearestRead};
 mod order;
+mod parallel;
+pub use parallel::Parallel;
+pub(crate) use parallel::{parallel, rows_of as parallel_rows, workers_of};
 mod probe;
 mod project;
 mod raising;
@@ -388,6 +390,8 @@ pub enum Plan {
     /// component procedures run on its table arguments' rows, each read
     /// whole first (`exec/ptf.rs`).
     Polymorphic(Box<Polymorphic<Plan>>),
+    /// \[DESIGN\] Its input run by morsels on threads at once, its rows in order (RULES.md D290).
+    Parallel(Box<Parallel>),
 }
 
 /// \[DESIGN\] Chooses a physical plan for a logical one, using the state's

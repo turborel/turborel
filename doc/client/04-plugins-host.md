@@ -169,7 +169,7 @@ SDK's traits are `LogStore` and `CatalogKeeper`.
 HOST SPILL <name>
 ```
 
-A sort, a hash join or a grouping past MEMORY.WORK_BYTES spills to the
+A sort, a hash join or a grouping past its grant of MEMORY.WORK_BYTES spills to the
 program. Each spill area keeps one process while it lives. A run is
 pushed a batch at a time and read back 1024 records a call, and a
 table's read of a key is one call. The SDK's trait is `SpillStore`.

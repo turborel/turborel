@@ -218,6 +218,7 @@ mod numeric_functions;
 mod order_by;
 mod ordered_joins;
 mod pages;
+mod parallel;
 mod partial_groups;
 mod partition_deltas;
 mod partitioned_joins;

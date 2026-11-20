@@ -292,6 +292,16 @@ verification approach DO-178C expects (§8).
 | D282 | A plug-in reads the settings a call runs with in a SETTINGS frame before it, and writes none but its own |
 | D283 | BUFFER EVICTION programs the pool's evictor, never called by the pool, and its death stops the node |
 | D284 | An eviction policy is weights of one score, read with no lock, with ranges weighed and pages kept |
+| D290 | A query runs by morsels on a shared pool of workers, the statement's thread among them |
+| D291 | The planner marks a part parallel by its rows, and EXPLAIN shows it |
+| D292 | A pipeline's morsels are its table's parts, and a hash join builds and probes by them |
+| D293 | Grouping and DISTINCT pre-aggregate by morsel and merge by partition |
+| D294 | A sort sorts morsels into runs and merges them by ranges |
+| D295 | Window functions, EXCEPT and INTERSECT run per partition of their key |
+| D296 | Every worker reads the statement's snapshot, and a part gives the rows its plan alone gives |
+| D297 | An index range scan splits at the B-link tree's inner keys |
+| D298 | An operator is granted part of the memory budget, up to MEMORY.WORK_BYTES |
+| D299 | Data changes stay serial, their reads may run in parallel |
 | D300 | Joins are ordered by dynamic programming over connected subgraphs, bushy trees among them |
 | D301 | Outer joins are reordered where the conflict rules of CD-C allow, and nowhere else |
 | D302 | Join rows are estimated from distinct values, by classes of equalities, at least one row |
@@ -2607,8 +2617,8 @@ Undo is never refused by the budget, because a refusal would damage a table
 (D19). A failed statement's undo and a ROLLBACK reserve what they need even
 past the limit.
 
-An operator holding rows keeps up to MEMORY.WORK_BYTES in memory, then
-spills to a temporary pager file whose buffer pool is its area. Areas come
+An operator holding rows keeps up to its work grant in memory (D298),
+then spills to a temporary pager file whose buffer pool is its area. Areas come
 from the `Spill` extension point. A spill file's creation isn't made
 durable, because nothing reads it after a crash. Spill files live in `tmp/`
 of a database's directory, cleared at open, and pass through encodings
@@ -8552,6 +8562,168 @@ frame in the sample is evictable, so a hint never wedges the pool. A
 policy pushed reweighs each frame once, and a page placed later takes
 its range's weight as it is placed. The score is computed per victim
 from atomics, so the hot path takes no lock and never calls the program.
+
+#### D290. A query runs by morsels on a shared pool of workers, the statement's thread among them
+
+Leis, Boncz, Kemper and Neumann, "Morsel-Driven Parallelism: A
+NUMA-Aware Query Evaluation Framework for the Many-Core Age" (2014),
+run a pipeline on small parts of its input, morsels, each taken by
+whichever thread is free, so the work balances itself without a
+partitioning chosen ahead. Turborel does the same. The thread manager
+owns one pool of workers per database (`threads/pool.rs`), named
+`turborel-exec-<n>` and sized by EXECUTOR.WORKERS, 0 being the
+machine's available parallelism. No query starts a thread. A part run
+in parallel offers its morsels to the pool and its own thread claims
+them too while it waits, so a part never waits on a worker that waits
+on it, and a full pool slows a query without stopping it. Each claim
+takes the next morsel by one atomic, which is the work stealing of the
+paper with a shared counter for the queues. A run takes at most
+EXECUTOR.DEGREE threads and stays at most twice its degree of morsels
+ahead of the one its consumer reads, so its held results stay bounded.
+Dispatch ignores NUMA nodes, as the code is portable and has no
+OS-specific placement.
+
+No operator passes rows to another between threads. A morsel goes
+through its whole pipeline on the thread that took it, and the
+operator ending the pipeline merges what each morsel made, so there is
+no exchange operator to plan or tune. Results are given in morsel
+order, which is the order the plan alone gives.
+
+#### D291. The planner marks a part parallel by its rows, and EXPLAIN shows it
+
+After the physical plan is chosen, one pass (`physical/parallel.rs`)
+marks each part worth running in parallel with a `Parallel` node and
+its degree, which EXPLAIN shows as `Parallel  (degree=n)`. A part is a
+pipeline of table scans, index range scans, filters, projections,
+hash joins' probes and UNION ALL, or one operator ending one, a
+grouping whose set functions keep states that merge, DISTINCT, a sort,
+window functions of a partitioning, EXCEPT or INTERSECT. The degree
+is the rows the part's tables held at planning divided by
+EXECUTOR.MORSEL_ROWS, capped by EXECUTOR.DEGREE and the workers. A part
+reading fewer than EXECUTOR.PARALLEL_MIN_ROWS rows, as a point query
+does, keeps its plan unchanged, so OLTP statements pay only for the
+walk. An expression a worker cannot evaluate alone keeps its pipeline
+on the statement's thread, a subquery's, a routine's, NEXT VALUE FOR's
+and an outer reference's among them, as do located scans, scans in a
+key order and a limit of few rows over an unfiltered stream. While
+EXECUTOR.BATCHES is on, a part reading a column store table with no
+hash join's probe and no window functions stays serial too, since
+the serial scan by batch makes no rows and outruns workers that make
+each. A join or window over one still runs in parallel.
+
+#### D292. A pipeline's morsels are its table's parts, and a hash join builds and probes by them
+
+An engine splits a scan into morsels by `TableStorage::split`. The row
+store cuts its frozen groups and its tree of row ids into ranges of
+about EXECUTOR.MORSEL_ROWS rows (`engine/rows/split.rs`), each read
+with the reader and the group directory taken once for the whole scan,
+so every morsel sees the snapshot the scan would. An engine that cannot
+split gives way to the serial plan. A morsel's rows go through the
+pipeline's steps one row at a time (`exec/parallel/pipeline.rs`). A
+hash join's built operand, if it is itself a large pipeline, is read
+by morsels, each splitting its rows into 64 partitions by key hash,
+and each partition's table is then built by a task of its own, as
+Leis et al. build into a shared table. Its probe is a step of the
+probing pipeline. A smaller operand is built on the statement's
+thread. The partitions keep each key's rows in build order, so a probe
+gives each row's matches in the order the serial join gives them.
+
+#### D293. Grouping and DISTINCT pre-aggregate by morsel and merge by partition
+
+Each morsel groups its own rows, writes each set function's state
+(`Accumulator::write_state`) and splits its groups into 64 partitions
+by key. Each partition is then merged by a task of its own
+(`Accumulator::merge`), taking the pieces in morsel order so each set
+function sees its values in the order it would alone. Each group is
+numbered by its first row's morsel and place, after the seeds, and the
+groups are given in that order, the order the serial grouping gives.
+DISTINCT is grouping by every column. A grouping with DISTINCT set
+functions, inverse distribution functions or a function keeping no
+mergeable state stays serial. Floating sums merged from partial sums
+may differ in their last bits from a serial sum, which SQL leaves
+implementation-dependent, and is the one difference allowed.
+
+#### D294. A sort sorts morsels into runs and merges them by ranges
+
+Each morsel's rows are sorted by a thread into a run, stable. Up to 64
+keys sampled of each run cut the runs into ranges, four per thread,
+and each range of every run is merged by a task of its own, a tie
+taken from the earlier run, so peers keep their input order as the
+serial sort keeps them. Ranges are given in order. A sort of its first
+rows keeps only those of each run. One whose limit keeps ties stays
+serial.
+
+#### D295. Window functions, EXCEPT and INTERSECT run per partition of their key
+
+A window's rows are read by morsels into 64 partitions by the hash of
+its partitioning, and EXCEPT's and INTERSECT's by the hash of their
+compared columns, so rows taken together share a partition. Each
+partition, held in a list that spills, runs through the serial
+operator on a thread of its own (`exec/parallel/partitioned.rs`). The
+outputs are merged back into serial order, a window's by its sort
+keys, a set operation's by the place each first operand's row carried
+through it. UNION is DISTINCT over UNION ALL and needs nothing more.
+
+#### D296. Every worker reads the statement's snapshot, and a part gives the rows its plan alone gives
+
+Every worker reads with the statement's transaction, so it sees one
+snapshot and the transaction's own uncommitted writes (D29). Each
+morsel checks the statement's cancellation as it starts (D44). A
+morsel's panic or error is recorded with its number, no morsel after
+the first failed one starts, and the error raised is the first in row
+order, after the rows before it, as the serial plan raises it. A part
+holds one work grant (D298), shared by its threads and split across
+its partitions' operators. A part that would hold more, or whose table
+cannot be split, gives way to its serial plan. It gives way as soon
+as what its first morsels hold, as much again for every morsel left,
+would pass the grant, so a grouping of many groups wastes a few
+morsels' work, not all of it. The serial plan spills, reading
+its rows again in the same snapshot. Results never depend on the
+degree, the morsel size or the timing of workers.
+
+#### D297. An index range scan splits at the B-link tree's inner keys
+
+An index range scan runs by morsels when its index can cut its range
+(`Index::ranges`). The B-link tree cuts at the keys of its highest
+inner level holding enough within the range (`engine/tree/cuts.rs`),
+read down from the root to the level above the leaves. A split or a
+merge running beside it can only make the parts uneven, since any
+sorted keys cut a range into parts holding each entry once (Lehman and
+Yao 1981, §4). Each part is scanned as the serial scan reads, leaf by
+leaf, and its rows fetched and checked the same way. Parts are in key
+order, so the rows come in the scan's order. A backward scan, one
+deciding entries itself (D85) and a located one stay serial.
+
+#### D298. An operator is granted part of the memory budget, up to MEMORY.WORK_BYTES
+
+A fixed small work area made large operators spill while the budget
+sat unused. An operator now takes a grant as it starts
+(`spill/grant.rs`), half of the budget left free, at most
+MEMORY.WORK_BYTES, default 256 MiB, reserved until it ends. Each grant
+after takes half of what is left, so the grants of all statements
+together never pass the budget however many sessions run, and they
+shrink as sessions grow. Where half the free budget is under 4 MiB an
+operator holds 4 MiB unreserved, as every operator did before grants,
+and a ceiling set below 4 MiB is held as set, so a session can still
+ask for small areas. A spill area's pool is at most 4 MiB, as rows are
+held of the grant, not the pool. The operators of a parallel part
+run inside the statement's grant, each given its share, and reserve
+nothing again, so one statement never takes the budget twice and its
+spill areas still find room. What holds rows outside operators,
+a cursor's read ahead, a change's chosen rows, temporary tables'
+pages, takes no grant and holds at most the lesser of
+MEMORY.WORK_BYTES and 4 MiB. Spilling never changes an answer, so a
+grant changes speed, not results.
+
+#### D299. Data changes stay serial, their reads may run in parallel
+
+INSERT, UPDATE, DELETE and MERGE write on the statement's thread. They
+choose every row before changing any (D38), so the query choosing
+them may run in parallel as any query does and still never sees the
+statement's own changes. Writing from several threads would need the
+undo log, locks, constraint checks and triggers to take one
+statement's work from many threads, for a gain only on bulk changes,
+and is left serial.
 
 #### D300. Joins are ordered by dynamic programming over connected subgraphs, bushy trees among them
 

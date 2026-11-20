@@ -13,6 +13,7 @@
 mod backup;
 mod builtin;
 mod configurable;
+mod executor;
 mod extension;
 mod graph;
 mod hosted;
@@ -47,6 +48,9 @@ pub use builtin::{
 };
 use builtin::{builtin, whole};
 pub use configurable::Configurable;
+pub use executor::{
+    DEFAULT_MORSEL_ROWS, DEFAULT_PARALLEL_MIN_ROWS, EXECUTOR_DEGREE, EXECUTOR_MORSEL_ROWS, EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_WORKERS,
+};
 pub use extension::Owner;
 pub use graph::{
     DEFAULT_MAX_SEARCH_STATES, GRAPH_DETERMINISTIC_PATHS, GRAPH_MAX_PATH_LENGTH, GRAPH_MAX_PATHS_PER_PARTITION, GRAPH_MAX_SEARCH_STATES,
@@ -164,6 +168,14 @@ pub fn pool_bytes(value: &Value) -> usize {
 /// The bytes a value of MEMORY.WORK_BYTES says.
 pub fn work_bytes(value: &Value) -> usize {
     bytes(value, crate::spill::DEFAULT_WORK_MEMORY)
+}
+
+/// \[DESIGN\] (RULES.md D298) The bytes held in memory by what holds rows
+/// apart from a query's operators, as a cursor's read ahead or a change's
+/// chosen rows, of a value of MEMORY.WORK_BYTES: at most `WORK_FLOOR`, as
+/// they take no grant.
+pub fn held_bytes(value: &Value) -> usize {
+    work_bytes(value).min(crate::spill::WORK_FLOOR)
 }
 
 /// The bytes a value of SPILL.BATCH_BYTES says.
@@ -368,6 +380,15 @@ impl Settings {
         match self.values.get(key.0) {
             Some(Some(v)) => v,
             Some(None) | None => self.definition(key).map_or(&Value::Null, |d| &d.default),
+        }
+    }
+
+    /// \[DESIGN\] Sets the value of `key` to `value`, of its kind, in a
+    /// copy made for a part of a statement: a work area's share of a
+    /// parallel query's partitions (`exec/parallel.rs`).
+    pub(crate) fn set_key(&mut self, key: Key, value: Value) {
+        if let Some(slot) = self.values.get_mut(key.0) {
+            *slot = Some(value);
         }
     }
 

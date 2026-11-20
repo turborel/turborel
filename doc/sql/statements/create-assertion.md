@@ -132,7 +132,8 @@ their whole rows. Not of SUM or AVG of approximate numbers there; where
 a set function's argument may be null, it is checked whole unless a
 warning is raised. An outer join, UNION, EXCEPT or INTERSECT, a
 grouping of a join, and COUNT or a greatest reached of a join, are
-checked whole; so is a change of more rows than MEMORY.WORK_BYTES holds.
+checked whole; so is a change of more rows than the lesser of MEMORY.WORK_BYTES
+and 4 MiB holds.
 A deferred assertion of one `NOT EXISTS`, or of conjuncts each
 `NOT EXISTS` or MAX or MIN bounded whose conditions raise no error and
 whose `x` is never null, is checked from each row the transaction wrote

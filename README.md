@@ -202,7 +202,9 @@ behind it, and each can be replaced or added to.
 - [CALL](doc/sql/statements/call.md) prepared with `?` for OUT and INOUT
   parameters, their values returned as a row over the protocol.
 - Bounded memory with one budget over every cache, with sorts, joins and
-  grouping that spill to disk.
+  grouping granted their share of it and spilling to disk past it.
+- [Parallel queries](doc/operator/04-settings.md#parallel-queries) run by
+  morsels on a shared pool of workers, the same rows on any number of threads.
 
 ## Quick start
 

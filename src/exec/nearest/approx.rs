@@ -183,7 +183,7 @@ fn order(a: &(f64, RowId, Row), b: &(f64, RowId, Row)) -> Ordering {
 impl Kept {
     fn new(db: &State) -> Option<Kept> {
         let held = db.memory.reserve(0, RESERVATION).ok()?;
-        Some(Kept { rows: Vec::new(), qualified: 0, bytes: 0, limit: Work::new(db).limit(), held })
+        Some(Kept { rows: Vec::new(), qualified: 0, bytes: 0, limit: Work::ceiling_of(db), held })
     }
 
     /// Takes a qualifying row; false if it cannot be afforded.

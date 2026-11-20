@@ -58,7 +58,7 @@ pub struct Limits {
 /// without one.
 #[derive(Clone, Debug)]
 pub struct Area {
-    /// The bytes it holds without reserving, MEMORY.WORK_BYTES.
+    /// The bytes it holds without reserving, `settings::held_bytes`.
     pub work: usize,
     /// The budget it reserves of past them.
     pub budget: Option<Arc<MemoryBudget>>,
