@@ -118,3 +118,22 @@ fn conjuncts_no_sample_answers_combine_by_backoff() {
     let (low, high) = if a < c { (a, c) } else { (c, a) };
     assert!((got - low * high.sqrt()).abs() < 1e-9_f64, "{got}");
 }
+
+/// Verifies: [DESIGN] RULES.md D382, rare equalities: of two correlated
+/// columns (D = A mod 100), equalities too rare for the sample to count,
+/// one row in 1,000, are estimated by the columns' joint distinct values
+/// within two times of the truth, where backoff is ten times below it;
+/// a combination the sample never holds, of columns whose every
+/// combination it saw more than once, keeps no row; one that may exist
+/// unseen keeps at most the empty sample's bound.
+#[test]
+fn rare_equalities_are_estimated_by_joint_distinct_values() {
+    let stats = correlated(20_000);
+    let truth = 1.0_f64 / 1_000.0_f64;
+    let got = share(&stats, &[eq(0, 15), eq(3, 15)]);
+    assert!(got / truth < 2.0_f64 && truth / got < 2.0_f64, "{got} for {truth}");
+    assert!(share(&stats, &[eq(1, 2), eq(2, 3), eq(3, 12)]) > 0.0_f64, "a combination seen");
+    assert_eq!(share(&stats, &[eq(1, 2), eq(3, 13)]), 0.0_f64, "never together: B is D mod 10");
+    let unseen = share(&stats, &[eq(0, 15), eq(3, 16)]);
+    assert!(unseen <= 3.0_f64 / 1_024.0_f64, "{unseen}");
+}

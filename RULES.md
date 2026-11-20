@@ -10197,7 +10197,17 @@ each of its conjuncts can be, deterministic and of no subquery, routine,
 sequence value or `?` not yet given (`physical/estimate/sampled.rs`). Of
 n rows, k kept give k/n when k is at least 8. Fewer give the synopses'
 estimate, at most (k + 3)/n, the bound an empty sample allows
-(Hertzschuch et al., SIGMOD 2021). A row whose evaluation fails counts as
+(Hertzschuch et al., SIGMOD 2021). Of fewer, equalities of two or more
+columns with constants not common take the columns' joint distinct
+values in the sample instead, scaled to the table as a column's are
+(`physical/estimate/joint.rs`): a combination the sample holds keeps the
+rows present over them, where the product of each column's share takes
+every pair as possible and falls ten times and more below the truth of
+correlated columns. A combination the sample does not hold keeps, by
+Good and Turing, the share of rows of combinations seen once among the
+combinations never seen, so values that never go together, of columns
+whose every combination the sample saw more than once, keep no row. A
+row whose evaluation fails counts as
 kept and nothing is raised, as planning raises nothing of a condition
 the statement evaluates (D15). The sample answers a city and its country,
 a column compared with another and a pattern with a leading wildcard,

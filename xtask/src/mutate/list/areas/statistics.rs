@@ -1,7 +1,8 @@
 //! The mutations of the statistics of RULES.md D381 to D383 (R-TEST-9):
 //! the common values ignored, a run's repeats counted each, the bounds
 //! kept after rows are written, the sample's count replaced by the
-//! synopses', conjuncts multiplied, a LIKE's prefix ignored, an index's
+//! synopses', a rare combination's joint distinct values ignored, an
+//! unseen one's share ignored, conjuncts multiplied, a LIKE's prefix ignored, an index's
 //! range share lost and an index's joint distinct keys ignored.
 
 use super::super::{Mutation, Package};
@@ -11,8 +12,13 @@ const SELECTIVITY_FILE: &str = "src/stats/selectivity.rs";
 /// The planner's estimator of a condition.
 const ESTIMATE_FILE: &str = "src/physical/estimate.rs";
 
+/// Equalities' joint distinct values in the sample.
+const JOINT_FILE: &str = "src/physical/estimate/joint.rs";
+/// The test of rare equalities.
+const RARE: &str = "physical::estimate::tests::rare_equalities_are_estimated_by_joint_distinct_values";
+
 /// Mechanisms of the statistics whose removal must fail their tests.
-pub const STATISTICS: [Mutation; 8] = [
+pub const STATISTICS: [Mutation; 10] = [
     Mutation {
         name: "statistics-common-ignored",
         package: Package::Core,
@@ -95,5 +101,25 @@ pub const STATISTICS: [Mutation; 8] = [
         replacement: "self.exact(&columns).and(None).or_else(",
         integration: &[],
         unit: &["index::blink::tests::an_indexs_columns_are_as_distinct_as_its_keys"],
+    },
+    Mutation {
+        name: "statistics-joint-seen-ignored",
+        package: Package::Core,
+        breaks: "equalities too rare for the sample to count take their columns' joint distinct values",
+        file: JOINT_FILE,
+        original: "        return Some(present / n / scaled.max(1.0_f64));",
+        replacement: "        return None;",
+        integration: &[],
+        unit: &[RARE],
+    },
+    Mutation {
+        name: "statistics-joint-unseen-ignored",
+        package: Package::Core,
+        breaks: "a combination the sample never holds, of columns it saw whole, keeps no row",
+        file: JOINT_FILE,
+        original: "    Some(if unseen < 1.0_f64 { 0.0_f64 } else { once / n / unseen })",
+        replacement: "    None",
+        integration: &[],
+        unit: &[RARE],
     },
 ];

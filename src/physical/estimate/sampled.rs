@@ -5,8 +5,9 @@
 //! with no prefix, a function of a column, an OR across columns), is
 //! evaluated on the sample's rows: k of n kept give k/n when k is at
 //! least `SAMPLE_HITS`; fewer say only that the share is small, and the
-//! estimate is the synopses', at most (k + `EMPTY_BOUND`)/n, the bound an
-//! empty sample allows (Hertzschuch et al., "Small selectivities
+//! estimate is that of the equalities' joint distinct values in the
+//! sample (`estimate/joint.rs`), else the synopses', at most
+//! (k + `EMPTY_BOUND`)/n, the bound an empty sample allows (Hertzschuch et al., "Small selectivities
 //! matter", SIGMOD 2021).
 //!
 //! Only conjuncts the sample can tell are evaluated: deterministic, of
@@ -53,9 +54,10 @@ pub(super) fn eligible<'a>(conds: &[&Cond], known: Known<'a>) -> Option<&'a RowS
     (large && told && (together || conds.iter().any(|c| !answered(c)))).then_some(sample)
 }
 
-/// The share of rows `conds` keep, by `sample`, `synopses` their
-/// estimate otherwise.
-pub(super) fn kept(conds: &[&Cond], sample: &RowSample, synopses: f64) -> f64 {
+/// The share of rows `conds` keep, by `sample`: of too few kept rows to
+/// count, `rare`'s estimate if it gives one, else `synopses`, at most the
+/// bound the sample allows.
+pub(super) fn kept(conds: &[&Cond], sample: &RowSample, synopses: f64, rare: impl FnOnce() -> Option<f64>) -> f64 {
     let rows = sample.rows();
     let n = cost_of(rows.len()).max(1.0_f64);
     let hits = rows
@@ -65,7 +67,7 @@ pub(super) fn kept(conds: &[&Cond], sample: &RowSample, synopses: f64) -> f64 {
     if hits >= SAMPLE_HITS {
         return cost_of(hits) / n;
     }
-    synopses.min(cost_of(hits.saturating_add(EMPTY_BOUND)) / n)
+    rare().unwrap_or(synopses).min(cost_of(hits.saturating_add(EMPTY_BOUND)) / n)
 }
 
 /// Whether a column's synopsis answers `c`: a comparison, an IN or a
