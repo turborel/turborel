@@ -87,6 +87,8 @@ mod session;
 mod stored;
 mod target;
 mod triggers;
+#[cfg(test)]
+mod truncated;
 mod users;
 mod vectors;
 

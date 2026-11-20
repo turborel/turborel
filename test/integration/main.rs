@@ -31,6 +31,7 @@
 
 mod adjacency_index;
 mod collated_indexes;
+mod collation_derivation;
 mod collation_usage;
 mod collations;
 mod common;
@@ -86,6 +87,7 @@ mod datetimes;
 mod ddl;
 mod decfloat;
 mod defaults;
+mod defaults_kept;
 mod deferred;
 mod delta_placement;
 mod delta_tables;
@@ -174,6 +176,7 @@ mod json_index;
 mod json_table;
 mod json_type;
 mod kept_plans;
+mod kept_set_plans;
 mod language;
 mod language_collations;
 mod length_units;
