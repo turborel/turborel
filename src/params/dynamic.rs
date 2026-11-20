@@ -120,7 +120,7 @@ impl Params {
     /// # Errors
     ///
     /// SQLCODE -910 if it has no such parameter.
-    pub(super) fn set_dynamic(&mut self, index: usize, value: Value) -> Result<()> {
+    pub(crate) fn set_dynamic(&mut self, index: usize, value: Value) -> Result<()> {
         let slot = self.dynamic.as_mut().and_then(|d| d.values.as_mut()).and_then(|v| v.get_mut(index));
         let slot = slot.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] there is no dynamic value {index}")))?;
         *slot = value;

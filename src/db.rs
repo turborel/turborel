@@ -168,7 +168,7 @@ pub use users::Credentials;
 pub const REKEY_BYTES_PER_SECOND: u64 = 8 << 20;
 pub use checkpoint::OVERDUE;
 pub use completion::{Completion, SQLCODE_NO_DATA};
-pub use database::Database;
+pub use database::{Database, EndedCounts, TransactionsEnded};
 pub use export::{ExportedFile, RECORDS_FILE, StateSource, decode_records};
 pub use files::{CHECKPOINT_AFTER, CHECKPOINT_BYTES, OpenOptions, Opened, POOL_BYTES};
 use integrity::Deferral;

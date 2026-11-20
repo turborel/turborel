@@ -199,6 +199,8 @@ behind it, and each can be replaced or added to.
 - A [client library](doc/client/02-library-connections.md) that pipelines
   requests, pools connections, fails over across servers, and takes its
   settings from a URI, the environment, a service file or a password file.
+- [CALL](doc/sql/statements/call.md) prepared with `?` for OUT and INOUT
+  parameters, their values returned as a row over the protocol.
 - Bounded memory with one budget over every cache, with sorts, joins and
   grouping that spill to disk.
 

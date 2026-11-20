@@ -398,6 +398,16 @@ pub fn current(moment: Moment, precision: u32, now: Now) -> Value {
     Value::Datetime(d.truncated(precision))
 }
 
+/// [ISO/IEC 9075-2:2023 §6.43 SR2, SR3] `now`'s instant as a value of
+/// `moment`, a time or a timestamp, WITHOUT TIME ZONE, of `precision`:
+/// LOCALTIME or LOCALTIMESTAMP, CURRENT_TIME or CURRENT_TIMESTAMP CAST
+/// so, its fields those shown in the session's displacement, which it
+/// keeps as a datetime without time zone does [§4.7.2].
+pub fn current_local(moment: Moment, precision: u32, now: Now) -> Value {
+    let instant = Datetime { moment: Moment::Timestamp, utc: now.utc, zone: now.zone, zoned: true, precision: 6 };
+    Value::Datetime(Datetime::of_local(moment, instant.local(), now.zone, false, precision).truncated(precision))
+}
+
 /// [ISO/IEC 9075-2:2023 §4.17.2.3] The highest value of `t`, DATE or a
 /// timestamp type, a system-time period end column's of a current system
 /// row: 9999-12-31, and of a timestamp its last instant of its precision,

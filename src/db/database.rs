@@ -6,9 +6,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock, Weak};
 use std::thread::{self, ThreadId};
 
+pub(super) mod ended;
 mod handles;
 mod service;
 
+pub use ended::{EndedCounts, TransactionsEnded};
 use handles::Program;
 pub(crate) use handles::WeakDatabase;
 
@@ -85,6 +87,9 @@ struct Shared {
     /// none is rolled back or built on before recovery decides it
     /// (RULES.md D25).
     in_doubt: Mutex<Vec<Arc<Txn>>>,
+    /// Its transactions committed and rolled back, as its snapshots share
+    /// them (`database/ended.rs`).
+    ended: Arc<ended::Ended>,
     /// How it was first opened from its files, to open it again in place
     /// (`db/standby/reopen.rs`).
     opening: Mutex<Option<Arc<super::standby::Opening>>>,
@@ -141,6 +146,7 @@ impl Database {
             in_doubt: Mutex::new(Vec::new()),
             opening: Mutex::new(None),
             service: AtomicU64::new(0),
+            ended: Arc::default(),
         });
         db.serve_read_ahead();
         db
@@ -175,12 +181,6 @@ impl Database {
             return fail(Code::Api, "[DESIGN] the database is closed");
         }
         Ok(Arc::clone(&*read(&self.0.current)?))
-    }
-
-    /// Holds `tx`, in doubt, until the database is dropped (RULES.md D25).
-    pub(super) fn hold_in_doubt(&self, tx: Arc<Txn>) {
-        // Entries are added whole, so a poisoned list is whole.
-        self.0.in_doubt.lock().unwrap_or_else(PoisonError::into_inner).push(tx);
     }
 
     /// The files it was opened from, if any.

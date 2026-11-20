@@ -15,10 +15,12 @@
 //!
 //! The same preparation serves PREPARE in SQL text (`db/dynamic.rs`).
 
+mod outputs;
 mod plans;
 
 use std::sync::Arc;
 
+use outputs::Outputs;
 pub(super) use plans::{Keeping, KeptPlan, Plans};
 
 use super::area::commands::{self, Command};
@@ -70,6 +72,9 @@ pub struct Prepared {
     /// prepared: its Syntax Rules were applied then, so a later SET
     /// COLLATION changes no statement prepared.
     collation: Option<QualifiedName>,
+    /// [ISO/IEC 9075-2:2023 §20.7 GR7a] Of a CALL, its output dynamic
+    /// parameters (`prepared/outputs.rs`).
+    outputs: Outputs,
 }
 
 impl Prepared {
@@ -79,13 +84,16 @@ impl Prepared {
     }
 
     /// [§17.9 GR4] Its `<dynamic parameter specification>`s' types, in the
-    /// order written, each possibly null \[GR4e ii\].
+    /// order written, each possibly null \[GR4e ii\]: its input ones, of a
+    /// CALL not those of output parameters alone [ISO/IEC 9075-2:2023
+    /// §20.10 GR5].
     pub fn parameters(&self) -> &[ParameterType] {
         &self.parameters
     }
 
     /// [§17.9 GR3] The columns of its result, of a `<dynamic select
-    /// statement>`; none of another.
+    /// statement>`; of a CALL, one for each output dynamic parameter
+    /// [ISO/IEC 9075-2:2023 §20.10 GR6]; none of another.
     pub fn columns(&self) -> &[OutColumn] {
         &self.columns
     }
@@ -94,6 +102,12 @@ impl Prepared {
     /// none.
     pub(crate) fn key(&self) -> &DescribedKey {
         &self.key
+    }
+
+    /// Whether it has output dynamic parameters, of a CALL, whose values an
+    /// execution gives back [ISO/IEC 9075-2:2023 §20.7 GR7a].
+    pub fn has_outputs(&self) -> bool {
+        !self.outputs.places.is_empty()
     }
 
     /// Whether it is a `<dynamic select statement>`, opened as a cursor.
@@ -278,6 +292,7 @@ impl Session {
             .implying(implicit.clone());
         let mut single_row = false;
         let mut key = DescribedKey::Unknown;
+        let mut outputs = Outputs::default();
         let (columns, params) = match kind {
             Kind::Query => {
                 let spec = parser.cursor_specification()?;
@@ -303,19 +318,18 @@ impl Session {
                 let stmt = parser.sql_statement()?;
                 // [ISO/IEC 9075-14:2006 draft §14.3 to §14.7] its XML options in scope.
                 let params = Params::preparing(parser.dynamic_parameters()).with_xml_options(stmt.xml_options());
-                self.bind_only(st, &stmt, &params)?;
-                (Vec::new(), params)
+                if let SqlStatement::Call(call) = &stmt {
+                    outputs = self.call_outputs(st, call, &params)?;
+                } else {
+                    self.bind_only(st, &stmt, &params)?;
+                }
+                (outputs.columns.clone(), params)
             }
         };
-        let parameters = params.dynamic_types().into_iter().collect::<Option<Vec<_>>>().ok_or_else(|| {
-            SqlError::new(
-                Code::SyntaxRule,
-                "[ISO/IEC 9075:1992 §17.6 GR4] a <dynamic parameter specification> takes no type where it stands",
-            )
-            .with_state(SqlState::DYNAMIC_SYNTAX_ERROR)
-        })?;
+        let parameters = input_types(&params, &outputs)?;
         let collation = self.collation.borrow().clone();
-        Ok(Prepared { collation, sql: sql.to_owned(), kind, parameters, columns, key, plans: Arc::default(), single_row, cursor, implicit })
+        let plans = Arc::default();
+        Ok(Prepared { collation, sql: sql.to_owned(), kind, parameters, columns, key, plans, single_row, cursor, implicit, outputs })
     }
 
     /// INSERT `ins`, bound as `bind_only` binds it: its target, and its
@@ -342,15 +356,6 @@ impl Session {
         (kind, table, set, cond): (WriteKind, SearchedTarget<'_>, &[SetClause], Option<&SearchCondition>),
     ) -> Result<()> {
         self.bound(st, params, |cx| bind_searched_write(cx, kind, table, set, cond)).map(drop)
-    }
-
-    /// `call` bound as `bind_only` binds it: of a procedure written in
-    /// Rust, its arguments alone.
-    fn call_only(&self, st: &State, call: &crate::ast::CallStatement, params: &Params) -> Result<()> {
-        if let Some(p) = Session::rust_procedure(st, call) {
-            return self.bound(st, params, |cx| super::routines::rust_arguments(cx, &*p, call)).map(drop);
-        }
-        self.bound(st, params, |cx| State::bind_call(cx, call)).map(drop)
     }
 
     /// `stmt`, a positioned UPDATE or DELETE, bound as `bind_only` binds it.
@@ -425,7 +430,7 @@ impl Session {
             SqlStatement::Dynamic(_) | SqlStatement::Execute(_) => return Err(not_preparable("an <SQL dynamic statement>")),
             SqlStatement::ExecuteGql(_) => return Err(not_preparable("EXECUTE GQL")),
             SqlStatement::DeclareTable(_) => return Err(not_preparable("a <temporary table declaration>")),
-            SqlStatement::Call(call) => self.call_only(st, call, params)?,
+            SqlStatement::Call(call) => drop(self.call_outputs(st, call, params)?),
             // [ISO/IEC 9075-2:2023 §16.2 SR1] only in a function's body.
             SqlStatement::Return(r) => return Err(super::routines::return_outside(r)),
             SqlStatement::Commit
@@ -473,6 +478,17 @@ impl Session {
     /// for each parameter [§17.9 GR5a]; CAST's [§17.9 GR5f]; the
     /// statement's.
     pub fn execute_prepared(&self, p: &Prepared, values: &[Value]) -> Result<Completion> {
+        self.execute_prepared_out(p, values).map(|(c, _)| c)
+    }
+
+    /// \[EXTENSION\] [ISO/IEC 9075-2:2023 §20.7 GR7a] `execute_prepared`,
+    /// and the values of `p`'s output dynamic parameters, of a CALL, in the
+    /// order of its columns; none of another statement.
+    ///
+    /// # Errors
+    ///
+    /// As `execute_prepared`.
+    pub fn execute_prepared_out(&self, p: &Prepared, values: &[Value]) -> Result<(Completion, Vec<Value>)> {
         if p.kind == Kind::Query {
             let msg = "[ISO/IEC 9075:1992 §17.10 GR2] a <cursor specification> is opened, not executed".to_owned();
             return Err(dynamic(SqlState::CURSOR_SPECIFICATION_NOT_EXECUTED, msg));
@@ -481,7 +497,7 @@ impl Session {
         // is the value it names.
         let values = self.unlocated(values)?;
         Self::values_for(p, &values)?;
-        self.run_prepared(p, values, commands::EXECUTE)
+        self.run_prepared_out(p, values, commands::EXECUTE)
     }
 
     /// `run`'s, bound under the collation `p` was prepared with.
@@ -498,14 +514,20 @@ impl Session {
     /// as it was prepared [§17.6 GR2]; or a schema definition as `direct`
     /// runs it.
     pub(super) fn run_prepared(&self, p: &Prepared, values: Vec<Value>, via: Command) -> Result<Completion> {
+        self.run_prepared_out(p, values, via).map(|(c, _)| c)
+    }
+
+    /// `run_prepared`, and the values of `p`'s output dynamic parameters
+    /// (`prepared/outputs.rs`).
+    pub(super) fn run_prepared_out(&self, p: &Prepared, values: Vec<Value>, via: Command) -> Result<(Completion, Vec<Value>)> {
         if p.kind == Kind::Schema {
-            return self.direct(&p.sql).map(|_| Completion::Success);
+            return self.direct(&p.sql).map(|_| (Completion::Success, Vec::new()));
         }
-        let mut params = Params::executing(values).implying(p.implicit.clone());
+        let mut params = Params::executing(p.outputs.expanded(values)).implying(p.implicit.clone());
         self.inner.borrow_mut().dynamic.positioned.clone_from(&p.cursor);
         let done = self.as_prepared(p, || self.execute_as(&p.sql, &mut params, Some((via, &p.plans))));
         self.inner.borrow_mut().dynamic.positioned = None;
-        done
+        Ok((done?, p.outputs.values(&params)))
     }
 
     /// \[EXTENSION\] [ISO/IEC 9075:1992 §17.14] Opens `p`, a query, as an
@@ -527,4 +549,13 @@ impl Session {
         // statement>.
         self.as_prepared(p, || self.open_with((commands::DYNAMIC_OPEN, commands::SELECT_CURSOR), |call| self.open_kept(call, p, &params)))
     }
+}
+
+/// The types of the input dynamic parameters of `params`, those not
+/// `outputs`; each shall take one where it stands.
+fn input_types(params: &Params, outputs: &Outputs) -> Result<Vec<ParameterType>> {
+    params.dynamic_types().into_iter().collect::<Option<Vec<_>>>().map(|all| outputs.inputs(all)).ok_or_else(|| {
+        SqlError::new(Code::SyntaxRule, "[ISO/IEC 9075:1992 §17.6 GR4] a <dynamic parameter specification> takes no type where it stands")
+            .with_state(SqlState::DYNAMIC_SYNTAX_ERROR)
+    })
 }

@@ -75,6 +75,10 @@ impl Transport for Holding {
     fn direct(&mut self) -> Option<&mut dyn crate::transport::Direct> {
         self.inner.direct()
     }
+
+    fn watch(&self) -> Option<crate::transport::Watch> {
+        self.inner.watch()
+    }
 }
 
 impl AsyncRead for Holding {

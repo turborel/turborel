@@ -385,14 +385,16 @@ is open cannot be replaced (SQLSTATE 24000).
 ```text
 Execute 'E'
   statement      u32
-  values         row, one value for each parameter
+  values         row, one value for each input parameter
   rows           u32, the most rows sent now; 0 for all
   ends           flag
   tail           1 attributes, 3 cursor
 ```
 
 Executes a prepared statement. A statement other than a query is answered
-with a Complete. A query opens its cursor and sends at most `rows` rows,
+with a Complete. A CALL with a `?` for an OUT or INOUT parameter first
+sends one Rows reply of one row, of the columns Prepared gave, holding the
+value each such parameter had once the procedure ran. A query opens its cursor and sends at most `rows` rows,
 in Rows replies, of the columns Prepared gave, with no Description. If
 the cursor has more, Suspended follows and the cursor stays open.
 Otherwise a Complete follows and the cursor is closed.
@@ -608,11 +610,16 @@ product is told only to a client authenticated.
 Prepared 'P'
   statement      u32
   parameters     a list of parameter
-  columns        a list of column, none of a statement not a query
+  columns        a list of column
 ```
 
-A statement prepared, or described. The parameters come in the order of
-their `?` marks.
+A statement prepared, or described. The parameters are its inputs, in
+the order of their `?` marks. The columns are a query's, or of a CALL
+one for each `?` that is the argument of an OUT or INOUT parameter, in
+the order of the procedure's parameters, named and typed as each; a
+statement of neither has none. A `?` of an OUT parameter is no input, so
+it has no parameter; one of an INOUT parameter is both, so it has one,
+and a column.
 
 ### Description 'D'
 

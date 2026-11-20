@@ -15,13 +15,17 @@ use crate::value::interval::Qualifier;
 use crate::value::{ArithOp, CompOp};
 
 /// [ISO/IEC 9075:1992 §6.8] A `<datetime value function>`: CURRENT_DATE,
-/// CURRENT_TIME or CURRENT_TIMESTAMP, of a precision if written.
+/// CURRENT_TIME or CURRENT_TIMESTAMP, or [ISO/IEC 9075-2:2023 §6.43]
+/// LOCALTIME or LOCALTIMESTAMP, of a precision if written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DatetimeFunction {
     /// Which: of a date, a time or a timestamp.
     pub moment: Moment,
     /// The `<time precision>` or `<timestamp precision>`, if written.
     pub precision: Option<u32>,
+    /// Whether it is LOCALTIME or LOCALTIMESTAMP, WITHOUT TIME ZONE
+    /// [§6.43 SR2, SR3].
+    pub local: bool,
 }
 
 /// [ISO/IEC 9075:1992 §6.6] An `<extract field>`.

@@ -16,7 +16,7 @@ use crate::logical::Expr;
 use crate::value::Spelled;
 use crate::value::datetime::{Clocked, Datetime, Field, MAX_TIME_PRECISION, MICROS_PER_SECOND, Moment, Now, Written};
 use crate::value::interval::{MAX_LEADING_PRECISION, Qualifier, field_name};
-use crate::value::types::datetime::{cast_at, current};
+use crate::value::types::datetime::{cast_at, current, current_local};
 use crate::value::{DataType, Decimal, SMALLINT_PRECISION, Value, pow10};
 
 /// [ISO/IEC 9075:1992 §6.1 SR25] The `<time precision>` implied: 0.
@@ -293,10 +293,12 @@ fn has(moment: Moment, field: Field) -> bool {
 }
 
 /// [ISO/IEC 9075:1992 §6.8 SR1] The type of `f`: of a type WITH TIME
-/// ZONE, of the precision written or the one implied [§6.1 SR25].
+/// ZONE, of the precision written or the one implied [§6.1 SR25]; of
+/// LOCALTIME or LOCALTIMESTAMP, WITHOUT TIME ZONE [ISO/IEC 9075-2:2023
+/// §6.43 SR2, SR3].
 pub fn function_type(f: DatetimeFunction) -> DataType {
     let implied = if f.moment == Moment::Time { TIME_PRECISION } else { TIMESTAMP_PRECISION };
-    type_of(f.moment, f.precision.unwrap_or(implied), true)
+    type_of(f.moment, f.precision.unwrap_or(implied), !f.local)
 }
 
 /// The value of the `<datetime literal>` `w`, of the displacement `zone`
@@ -309,16 +311,20 @@ pub fn literal_value(w: &Written, zone: i16) -> Value {
 impl Binder<'_> {
     /// [ISO/IEC 9075:1992 §6.8] CURRENT_DATE, CURRENT_TIME or
     /// CURRENT_TIMESTAMP: the statement's instant, a constant of it [GR3];
-    /// in no constraint [§11.9 SR5, §11.34 SR6].
+    /// [ISO/IEC 9075-2:2023 §6.43 SR2, SR3] LOCALTIME or LOCALTIMESTAMP,
+    /// that instant CAST to a time or timestamp WITHOUT TIME ZONE; in no
+    /// constraint [§11.9 SR5, §11.34 SR6].
     pub(super) fn datetime_function(&self, f: DatetimeFunction) -> Result<(Expr, DataType)> {
         if self.purpose.constrains() {
             return Err(rule(
-                "[ISO/IEC 9075:1992 §11.9 SR5, §11.34 SR6] a constraint's condition shall not contain CURRENT_DATE, CURRENT_TIME or CURRENT_TIMESTAMP",
+                "[ISO/IEC 9075:1992 §11.9 SR5, §11.34 SR6] a constraint's condition shall not contain CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP, LOCALTIME or LOCALTIMESTAMP",
             ));
         }
         let t = function_type(f);
         let precision = if let DataType::Time { precision, .. } | DataType::Timestamp { precision, .. } = t { precision } else { 0 };
-        Ok((Expr::Const(current(f.moment, precision, self.now.instant())), t))
+        let now = self.now.instant();
+        let value = if f.local { current_local(f.moment, precision, now) } else { current(f.moment, precision, now) };
+        Ok((Expr::Const(value), t))
     }
 
     /// [ISO/IEC 9075:1992 §6.6] EXTRACT (`field` FROM `source`), its source
