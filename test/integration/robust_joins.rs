@@ -13,20 +13,21 @@ use crate::common::{exec, sorted};
 /// The rows of each table.
 const ROWS: i32 = 6_000;
 
-/// Schema J: L of `ROWS` rows, K from 0, G of ten values; R of as many,
+/// Schema J: L of `ROWS` rows, K from 0 and F the same, F filtered so
+/// that no filter is implied on the join's key; R of as many,
 /// K indexed but not unique; U of as many, K its primary key.
 fn tables() -> Database {
     let db = Database::new();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION J
-           CREATE TABLE L (K INTEGER NOT NULL, G INTEGER NOT NULL)
+           CREATE TABLE L (K INTEGER NOT NULL, F INTEGER NOT NULL)
            CREATE TABLE R (K INTEGER NOT NULL, V INTEGER)
            CREATE TABLE U (K INTEGER NOT NULL PRIMARY KEY, V INTEGER)",
     )
     .unwrap();
     let s = db.session("J");
     let values = |of: &dyn Fn(i32) -> String| (0..ROWS).map(of).collect::<Vec<_>>().join(", ");
-    s.run(&format!("INSERT INTO L VALUES {}", values(&|k| format!("({k}, {})", k % 10)))).unwrap();
+    s.run(&format!("INSERT INTO L VALUES {}", values(&|k| format!("({k}, {k})")))).unwrap();
     for table in ["R", "U"] {
         s.run(&format!("INSERT INTO {table} VALUES {}", values(&|k| format!("({k}, {})", k % 7)))).unwrap();
     }
@@ -62,7 +63,7 @@ fn the_margin_hands_a_risky_index_join_to_the_hash_join() {
     for how in ["ADAPTIVE", "GREEDY"] {
         let mut decided = false;
         for n in [25, 50, 100, 200, 400, 800, 1_600, 3_200] {
-            let sql = format!("SELECT L.K, R.V FROM L, R WHERE L.K = R.K AND L.K < {n}");
+            let sql = format!("SELECT L.K, R.V FROM L, R WHERE L.K = R.K AND L.F < {n}");
             let (trusting, rows) = planned(&s, &sql, ("1", how));
             let (wary, same) = planned(&s, &sql, ("8", how));
             assert_eq!(rows, same, "{how} {n}");
@@ -82,7 +83,7 @@ fn a_small_left_probing_a_key_stays_an_index_join() {
     let db = tables();
     let s = db.session("J");
     for how in ["ADAPTIVE", "GREEDY"] {
-        let sql = "SELECT L.K, U.V FROM L, U WHERE L.K = U.K AND L.K < 5";
+        let sql = "SELECT L.K, U.V FROM L, U WHERE L.K = U.K AND L.F < 5";
         let (probed, rows) = planned(&s, sql, ("8", how));
         assert!(probed, "{how}");
         assert_eq!(rows, ["0,0", "1,1", "2,2", "3,3", "4,4"], "{how}");

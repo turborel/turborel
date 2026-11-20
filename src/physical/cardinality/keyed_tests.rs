@@ -8,14 +8,15 @@ use super::joins::Classes;
 use crate::db::{Database, Session};
 
 /// Schema H, shaped as an order's lines and a part's offers: PS of 800
-/// rows, each of 200 parts offered by 4 of 20 suppliers, its key both;
-/// LI of 2,000 lines, each of one offer, with no constraint; LF the same
-/// lines, referencing PS; P of 200 parts, its key PK. Statistics gathered.
+/// rows, each of 200 parts offered by 4 of 20 suppliers, its key both,
+/// QTY each offer's number; LI of 2,000 lines, each of one offer, with
+/// no constraint; LF the same lines, referencing PS; P of 200 parts, its
+/// key PK. Statistics gathered.
 fn database() -> (Database, Session) {
     let db = Database::new();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION H
-           CREATE TABLE PS (PK INTEGER NOT NULL, SK INTEGER NOT NULL, PRIMARY KEY (PK, SK))
+           CREATE TABLE PS (PK INTEGER NOT NULL, SK INTEGER NOT NULL, QTY INTEGER NOT NULL, PRIMARY KEY (PK, SK))
            CREATE TABLE LI (OK INTEGER NOT NULL, PK INTEGER NOT NULL, SK INTEGER NOT NULL)
            CREATE TABLE LF (OK INTEGER NOT NULL, PK INTEGER NOT NULL, SK INTEGER NOT NULL,
              FOREIGN KEY (PK, SK) REFERENCES PS (PK, SK))
@@ -28,7 +29,7 @@ fn database() -> (Database, Session) {
         let (part, nth) = (i.rem_euclid(200_i32), i.div_euclid(200_i32).rem_euclid(4_i32));
         (part, part.wrapping_add(nth.wrapping_mul(5_i32)).rem_euclid(20_i32))
     };
-    s.run(&format!("INSERT INTO PS VALUES {}", rows(800_i32, &|i| format!("({}, {})", offer(i).0, offer(i).1)))).unwrap();
+    s.run(&format!("INSERT INTO PS VALUES {}", rows(800_i32, &|i| format!("({}, {}, {i})", offer(i).0, offer(i).1)))).unwrap();
     for table in ["LI", "LF"] {
         s.run(&format!("INSERT INTO {table} VALUES {}", rows(2_000_i32, &|i| format!("({i}, {}, {})", offer(i).0, offer(i).1)))).unwrap();
     }
@@ -78,9 +79,9 @@ fn a_join_on_a_composite_key_keeps_each_line_once() {
 #[test]
 fn a_join_on_a_referential_constraint_is_exact() {
     let (_db, s) = database();
-    let sql = "SELECT * FROM LF, PS WHERE LF.PK = PS.PK AND LF.SK = PS.SK AND PS.PK < 100";
+    let sql = "SELECT * FROM LF, PS WHERE LF.PK = PS.PK AND LF.SK = PS.SK AND PS.QTY < 400";
     let (rows, _) = card(&s, sql);
-    let truth = count(&s, "SELECT COUNT(*) FROM LF, PS WHERE LF.PK = PS.PK AND LF.SK = PS.SK AND PS.PK < 100");
+    let truth = count(&s, "SELECT COUNT(*) FROM LF, PS WHERE LF.PK = PS.PK AND LF.SK = PS.SK AND PS.QTY < 400");
     assert!(close(rows, truth), "{rows} of {truth}");
 }
 
@@ -186,11 +187,12 @@ fn an_estimate_is_clamped_to_its_bound() {
 
 /// Verifies: [DESIGN] RULES.md D385: rows written since the statistics
 /// pass may all hold one value, so the bound of an equality to it and of
-/// a join on it stays above the rows they give.
+/// a join on it stays above the rows they give; fewer rows are written
+/// than call for another pass (STATISTICS.REFRESH_ROWS).
 #[test]
 fn a_table_changed_since_its_pass_keeps_its_bound() {
     let (_db, s) = database();
-    let more: Vec<String> = (0_i32..300_i32).map(|i| format!("({}, 7)", i.wrapping_add(1_000_i32))).collect();
+    let more: Vec<String> = (0_i32..60_i32).map(|i| format!("({}, 7)", i.wrapping_add(1_000_i32))).collect();
     s.run(&format!("INSERT INTO P VALUES {}", more.join(", "))).unwrap();
     s.commit().unwrap();
     let sevens = count(&s, "SELECT COUNT(*) FROM P WHERE SZ = 7");

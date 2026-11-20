@@ -41,7 +41,7 @@ pub(super) fn origin(plan: &LogicalPlan, column: usize) -> Option<Origin<'_>> {
 
 /// The node `plan`'s column `column` comes from and its place there: the
 /// node itself, of a table's scan; its input, of a node passing columns on.
-pub(super) fn step(plan: &LogicalPlan, column: usize) -> Option<(&LogicalPlan, usize)> {
+fn step(plan: &LogicalPlan, column: usize) -> Option<(&LogicalPlan, usize)> {
     match plan {
         LogicalPlan::Scan { .. } => Some((plan, column)),
         LogicalPlan::Filter { input, .. }

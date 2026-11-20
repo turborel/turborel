@@ -61,7 +61,8 @@ behind it, and each can be replaced or added to.
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
   queries of a hundred tables, on statistics of most common values, a
-  sample of rows for correlated conditions and indexes' joint key counts.
+  sample of rows for correlated conditions and indexes' joint key counts,
+  joins estimated by keys and bounded, index joins chosen robustly.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.
