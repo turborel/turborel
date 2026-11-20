@@ -344,9 +344,21 @@ verification approach DO-178C expects (§8).
 | D342 | DISTINCT functions of several arguments make each row once for each argument, marked, not one grouping each joined back |
 | D343 | A DISTINCT function's filter is a truth of each row, grouped by, and its argument is computed of the rows it admits |
 | D344 | A DISTINCT function the rule leaves keeps its own way, its bag of values keyed once and looked up once |
+| D350 | A row-store batch scan reads each entry in place under its leaf's latch, copying only what it cannot read there |
+| D351 | A bare COUNT(*) of a row-store table sums its settled zones' rows and reads the rest in place |
+| D352 | A column chunk is decoded a block of 64 values at a time, and opened once for a group's runs |
+| D353 | ALP decimals are read by two multiplications with a stored pair of factors |
 | D373 | A part of a condition that can raise, or a sort key, of one operand of a join is computed as that operand's column, over a guard when it can raise; declared types tell what cannot |
 | D374 | A filter goes into a set operation's operands and below a window's partitions, and FETCH FIRST into UNION ALL's operands, when the rows are the same |
 | D375 | A join is removed when it gives each row of the other operand once and nothing above reads it, by a unique key or a referential constraint not deferrable |
+| D390 | A `?` in the rows of an INSERT takes its object column's type |
+| D391 | A `?` whose value its cast cuts warns 01004 |
+| D392 | A character large object a client writes is checked as each Append comes |
+| D393 | A reply value the client cannot take fails its request alone, the rest of its replies read past; a malformed frame loses the connection |
+| D394 | Terminate waits at most its limit on a stream that bounds itself, a program's own too, and reads past a Notice to its Error |
+| D396 | A column's declared type is told in a Description's and a Prepared's tail, with `declared-types`, and values are written as ever |
+| D397 | Status CATALOG is never empty, as CATALOG.NAME takes no null |
+| D398 | The protocol's sample frames are a file its tests make from its encoders, and fail on any difference |
 
 ### The project
 
@@ -8706,11 +8718,15 @@ deciding entries itself (D85) and a located one stay serial.
 
 A fixed small work area made large operators spill while the budget
 sat unused. An operator now takes a grant as it starts
-(`spill/grant.rs`), half of the budget left free, at most
-MEMORY.WORK_BYTES, default 256 MiB, reserved until it ends. Each grant
-after takes half of what is left, so the grants of all statements
-together never pass the budget however many sessions run, and they
-shrink as sessions grow. Where half the free budget is under 4 MiB an
+(`spill/grant.rs`), at most MEMORY.WORK_BYTES, default 256 MiB,
+reserved until it ends. Grants share half the budget, and the other
+half is kept for what reserves beside them, spill areas' pools first,
+so a statement holding hundreds of operators at once, as an XMLMAP of
+the catalog does, still finds room to spill. A grant is half of the
+grants' share left free. Each grant after takes half of what is left, so
+the grants of all statements together never pass their share however
+many sessions run, and they shrink as sessions grow. Where half of that
+share left free is under 4 MiB an
 operator holds 4 MiB unreserved, as every operator did before grants,
 and a ceiling set below 4 MiB is held as set, so a session can still
 ask for small areas. A spill area's pool is at most 4 MiB, as rows are
@@ -9528,6 +9544,114 @@ again in one buffer for each value, so a value seen allocates nothing.
 The bag (`exec/work.rs`) looks a key up once if it holds it and twice if
 not, where it hashed every new key three times, which the set operations,
 recursive queries and window functions using it gain too.
+#### D350. A row-store batch scan reads each entry in place under its leaf's latch, copying only what it cannot read there
+
+A batch scan of a row-store table copied each entry's key and value out
+of its leaf, then copied the record of the version it saw, three
+allocations a row, which cost more than the visibility checks and the
+latching together. Now the tree shows a visitor each entry of a leaf
+under the leaf's latch, borrowed (`Scan::visit`). The visitor parses the
+newest version where it lies and, if the reader sees it, gathers the
+columns asked for straight into the batch's vectors, or with no column
+only counts the row. What cannot be read under a latch is handed back
+copied and read after the latch is released, as every row was read
+before. That covers a version the reader does not see as stamped, whose
+older versions are in the undo store or whose maker is a commit stamped
+late, looked up under a lock not taken under a latch. It covers a sealed
+record, opened by a plug-in's encodings (R-ERR-4), and a record whose
+columns asked for are out of line on other pages. The scan goes on past
+an entry handed back, or a batch filled, from the same leaf, and a leaf
+read again after a split still leads right to every key past it (Lehman
+and Yao, §4). Rows keep their row id order, so results and their order
+do not change. A table that freezes rows reads its tree through its own
+path and is not changed.
+
+#### D351. A bare COUNT(*) of a row-store table sums its settled zones' rows and reads the rest in place
+
+`TableStorage::count` gives counts of the rows a scan of the table with
+no condition would give the transaction, or none when the engine cannot
+count faster. Its default is none. The row store answers for a table
+that freezes no row and holds no group. Under each zone's lock it reads
+the zone's flag of rows every reader sees (D34) and its rows together. A
+write clears the flag under that lock before its index entries, and a
+sum up sets both, so a zone whose flag is set holds exactly those rows,
+committed at or before the horizon, none a deletion. The horizon is at or
+below every open snapshot, so every reader, at any isolation level,
+sees those rows and only those, and its own writes would have cleared
+the flag. Each such zone adds its rows. The ranges of every other zone
+and the ids past the last are read in place with no column (D350).
+Under SERIALIZABLE the read is noted as the whole table's, as a scan's
+with no condition is. Nothing is read or noted until the first count is
+asked for, so EXPLAIN can ask the storage whether it counts. A table
+that freezes rows is scanned, because a freeze takes out entries without
+a change of their zones, so their rows are no longer the tree's. Zone
+flags stay in memory, so a table opened reads its rows until the
+maintenance thread settles its zones.
+
+The executor feeds an aggregation of one group, whose set functions each
+count rows, over a bare scan in no order, not located and unfiltered,
+the storage's counts in place of the scan's batches, each looked at for
+a cancel as a batch is. COUNT of a column declared NOT NULL is left to
+the scan, as a deferred constraint may let a transaction hold a null
+until it commits. EXPLAIN adds the line `-- counted by storage: <table>`
+when a bare COUNT(*) at the top of the plan is counted so. The planner
+never runs such a count in parallel (D291), as the zone count is faster
+than any split of the table into morsels. Rejected: a
+stored row count per table, which is not any snapshot's; counts in the
+tree's nodes, which every insert must write and which are not any
+snapshot's either; zone flags kept on disk, which would need logging to
+stay right across a crash and which the maintenance thread rebuilds soon
+after a table opens.
+
+#### D352. A column chunk is decoded a block of 64 values at a time, and opened once for a group's runs
+
+Bit-packed values (frames of reference, dictionary codes, run ends, ALP
+digits) are read 64 at a time by a routine of their width, after Lemire
+and Boytsov 2015. A block of 64 values of w bits is exactly 8 × w bytes,
+read as w little-endian words. The routine is one function generic over
+the width, and a macro makes a table of it for each width from 0 to 64,
+so every shift and mask is a constant the compiler unrolls. A frame's
+least is added as each value is read, wrapping, since a difference is
+below 2^64 and the value it gives was an integer of 64 bits. The values
+before the first whole block and after the last are read one at a time.
+The packed format, horizontal and from the least significant bit, is
+unchanged. A vertical layout interleaved for SIMD lanes would be a format
+change whose gain needs SIMD, and a later kernel can shuffle the
+horizontal one.
+
+A batch scan of the column store reads a group in runs of at most a
+vector of rows, and a compressed chunk holds many more. Each run used to
+reopen, unseal and parse every chunk it touched. The scan now keeps each
+chunk it opens, by its column and first row, as its bytes opened, its
+FSST table read, and a dictionary's entries made integers or text once.
+The runs after parse its few header bytes alone. Runs come in order, so
+a chunk ended before the one asked for is let go then, a column keeps at
+most 64 chunks, and every chunk goes when the next group is taken up.
+What is held is about one run's chunks a column, so no work grant is
+charged for it. A run of runs unpacks only the ends and values of the
+runs it covers, and a chunk's null bitmap is read a byte at a time.
+
+#### D353. ALP decimals are read by two multiplications with a stored pair of factors
+
+A chunk of approximate numbers as decimals keeps a pair of factors e and
+f, f at most e, and each value is n × 10^f × 10^-e, two multiplications
+by tabled powers, as the ALP paper decodes. A division by 10^e, as
+before, is correctly rounded but several times slower. The multiplication
+is not always correctly rounded (3 × 0.1 is 0.30000000000000004), so the
+encoder keeps a value as a decimal only when those same two
+multiplications give it back bit for bit, and any other value is an
+exception kept as it is. A value read is therefore always the one
+written. The pair is the one of the first 64 values that leaves fewest
+exceptions, then takes fewest bits, then has the least e, then the least
+f. An n of magnitude below 2^51 becomes an f64 by adding it to the bits
+of 2^52 + 2^51 and subtracting that number, which is exact and
+branch-free.
+
+This changes the chunk's format and keeps its version, 1, as alpha
+allows. The new encoder sets bit 0x80 of the chunk's first byte, which is
+above every exponent, and writes f after it. A chunk without the bit was
+written before and is read by division, so an older file never reads
+wrongly and needs no migration.
 
 #### D373. A part of a condition that can raise, or a sort key, of one operand of a join is computed as that operand's column, over a guard when it can raise; declared types tell what cannot
 
@@ -9632,6 +9756,180 @@ and those conjuncts are removed (`optimizer/elimination/referential.rs`).
 The constraint, the NOT NULL and the referenced key are not deferrable
 and of no period, and the columns of no collation. The rule is
 `eliminate_joins`.
+
+#### D390. A `?` in the rows of an INSERT takes its object column's type
+
+A `?` in a row of an INSERT's VALUES, or of VALUES in a query expression
+an INSERT simply contains, as an operand of UNION ALL too, takes the type
+of the object column it lands in, whatever the other rows hold
+(ISO/IEC 9075-2:2023 §20.7 GR5a xix 1 A). The type §9.5
+gives the column's values is taken only by a `?` of VALUES outside an
+INSERT (§20.7 GR5a xix 1 B, §7.3 SR3). A value bound beside a shorter
+literal in another row is so never cut to that literal's length
+(`binder/set_operations.rs`). Each row's value is then assigned to its
+column (§14.11 SR16, §9.2), which raises 22001 for any character other
+than a space past the column's length, in whichever row or operand it
+stands. The rows' common type has the greatest of their lengths (§9.5
+SR3a, SR3b), so no literal is cut to another's length before that.
+
+#### D391. A `?` whose value its cast cuts warns 01004
+
+A `?`'s value is cast to the type its context gives it (§20.11 GR6c ii
+2 B). That is its object column's as an INSERT's or an UPDATE's value
+(§20.7 GR5a xix 1 A, xxvi), the type §9.5 gives the other operand as a
+comparison's (xxi), and its parameter's as a CALL's argument (xxx). A
+string longer than that type is cut, with the warning string data,
+right truncation, 01004 (§6.13 GR11d ii, GR12d ii, GR13), and a
+comparison compares the value cut. The
+binder keeps the warning with the constant (`Expr::Warned`), and so does
+a kept plan's slot as it is filled (`logical/dynamic.rs`), so the
+statement completes with 01004 and the cut is never silent. A value
+that fits raises nothing. The cast stays a cast and not a store
+assignment, as the standard says, so 22001 is raised only by the
+assignment of a value longer than its column, as a literal's is.
+
+#### D392. A character large object a client writes is checked as each Append comes
+
+A character large object a client makes by its locator (D79) is checked
+as UTF-8 as each Append brings octets, with what is left of a character
+the Append before began, so a character split between two Appends is
+taken (`db/lobs/writing.rs`). An octet that is not UTF-8 is refused
+with 22021 by the Append that sends it, which the client's finish sends
+for what it holds. Once one Append is refused, every later one is, and
+so is the value's use, with that error, so no part of a refused value
+is ever stored. The protocol has no request that ends a value, so a
+value that ends within a character is refused, 22021, as it is used. A
+character large object never holds what is not UTF-8, which every read
+of it relies on (§4.2.1).
+
+#### D393. A reply value the client cannot take fails its request alone, the rest of its replies read past; a malformed frame loses the connection
+
+A reply's frame is read whole by its length before it is decoded, so a
+value in it the client cannot take leaves the stream in step. Damaged
+JSON, JSON nested too deep, a truth byte other than 0 or 1, a units byte
+of neither kind and a malformed condition of a Complete are such values.
+They fail with the value's own SQLCODE, -916 or another not of class 08.
+The client kept the connection then but left the rest of the request's
+replies unread, so the next request took a stale Complete as its own.
+
+Losing the connection would be safe but costs a session for a value
+that one statement held. So the client fails the request with the
+value's error and first reads past the rest of its replies, up to the
+one that ends them, each taken as ever (a Notice to its handler, a
+Status to the settings, the last reply's state noted). Which reply is
+last is told by its kind, by the order a statement's replies keep. A
+Description, Rows, a Notice or a Status has more after it, a Complete
+has if its tail says more (tag 5), and any other reply is the last
+(`Reply::ends_request`). A Describe of a cursor is answered by a
+Description alone, which its reader knows (`Answer::One`). A Complete
+that does not decode whole still gives its head, its SQLCODE, SQLSTATE,
+whether a transaction is active and whether more follow. They come
+before a condition, the one field of it the client may fail to take
+(`Reply::completed_head`). So the session's state is noted as the whole
+Complete would note it. The rule is one place, the reading of a frame
+(`frames.rs`), so a statement's rows, a cursor's batches, a Complete's
+conditions, LOB reads, pipelines and imports all follow it.
+
+A frame that is itself malformed loses the connection (SQLSTATE 08006),
+as the protocol says. A header too long, a body cut short, a compressed
+frame that does not inflate, a kind no reply has, a flag neither 0 nor
+1, a string not UTF-8, a tail out of order or bytes after the last
+field are such frames. Its own decoding reports each of them as class
+08, so the connection is lost by the error's class alone. The protocol
+stays version 1, as nothing it sends changes.
+
+#### D394. Terminate waits at most its limit on a stream that bounds itself, a program's own too, and reads past a Notice to its Error
+
+Terminate waits for the server to close, so a commit at the session's
+end that fails is reported. A stream's waits are bounded on the stream
+itself (`Bound`, D42), never through a second handle on its socket. A
+connection the client makes knows its stream's type and bounds the wait
+at the read timeout, else TERMINATE_WITHIN. A stream given to
+`Connection::open` is any type that reads and writes, and was not
+bounded, so Terminate waited on it without limit.
+
+The standard library cannot bound a blocking read of a stream it does
+not know. A thread reading for it would need the stream to be `Send`,
+could not be stopped once the limit ran out, and would be a thread the
+client starts outside the thread manager (R-SAFE-5). So the bound stays
+the stream's own, and `Connection::open_within` takes any stream that
+implements `Bound`, a program's own type too, its waits bounded as
+`Timeouts` say and Terminate's as above. A stream given to `open` waits
+as its maker set it, Terminate's answer too, and the manual says so. A
+named pipe on Windows, which the standard library cannot bound, is
+bounded only as it opens.
+
+What the server sends before it closes is read a frame at a time, each
+of at most the longest reply taken. A Notice, a Status or a Pong is
+read past, an Error is reported, and any other reply loses the
+connection as an answer Terminate does not have. The client had read
+the bytes whole and decoded them as one reply, so a Notice before the
+Error left bytes after it and failed with SQLSTATE 08006 in place of
+the Error.
+
+#### D396. A column's declared type is told in a Description's and a Prepared's tail, with `declared-types`, and values are written as ever
+
+A data type's tag says how a column's values are written, and one tag
+stands for several declared types. SMALLINT, INTEGER, BIGINT, DECIMAL
+and NUMERIC are all exact numeric, tag 2, as their descriptors keep
+the name apart [ISO/IEC 9075:1992 §6.1, §21.3.5] (`Spelled`). REAL, DOUBLE
+PRECISION and FLOAT are all approximate numeric, tag 3, and a distinct
+type goes as its source type (D69). Every other tag is one type. A
+client was told INTEGER as DECIMAL(10, 0), and a program showing its
+columns showed it so.
+
+A tag of its own for each name would change what a client of today
+reads of every number, and values of one type would be written under
+several tags. So the tags stay, and the declared type is told beside
+them. With the capability `declared-types` (D185) a Description and a
+Prepared end with tail tag 19, a count, then of each column its type's
+name, as the Information Schema's DATA_TYPE gives it, and its type as
+SQL writes it (`declared.rs`). The name serves a program that shows a
+type's name, and the text one that shows it whole, a distinct type's
+schema and name or an array's element too. A client not granted it is
+sent the columns alone, the bytes of before, and a Rows reply is the
+same bytes either way. The protocol stays version 1.
+
+The server tells it only to a client granted it, so it is decided once
+where the columns are described (`described` in `native/requests.rs`).
+The client library asks for it by default, as for every capability but
+compression, and a column's `type_written` gives the declared type where
+told, else the type its tag says. The command-line client's `\gdesc`
+prepares a statement, shows each column's name and that text, and runs
+nothing.
+
+#### D397. Status CATALOG is never empty, as CATALOG.NAME takes no null
+
+The protocol's reference said Status CATALOG is empty if CATALOG.NAME
+is null. CATALOG.NAME is an identifier setting (`Kind::Identifier`).
+Its value, or its default, set to a null is refused (SQLCODE -910),
+and so is one of spaces alone or longer than an identifier, so it is
+always 1 to 128 characters. A reset gives it its default, TURBOREL,
+again. So a null never reaches the Status, and the reference says the
+value is never empty. The general rule of a Status, empty for a null,
+stays for the settings a session may set, which can be null.
+
+#### D398. The protocol's sample frames are a file its tests make from its encoders, and fail on any difference
+
+A driver written to the protocol's reference needs frames to test its
+decoder with, and frames written by hand drift from what the code
+sends. So the frames beside the reference
+(`doc/client/05-protocol-frames.tsv`) are made by a test of the
+protocol crate from the encoders the server and the client use
+(`tests/frames.rs`). Each frame is decoded again and must encode to the
+same bytes, and the test fails if the file differs, leaving the frames
+it should hold in the temporary directory to copy over. The repository
+has no mode that writes a checked-in file from a test, so none is added.
+
+The file is plain text with fixed fields, so a decoder in any language
+reads it without a parser. Each line is a frame, its direction, a
+unique name, the capabilities it needs, its bytes in hexadecimal and
+what it means, apart by tabs, and a line beginning with `#` is a
+comment. It covers every request and reply, every value and data type
+tag, each tail field, each Status the reference names, a Notice and an
+Error with and without diagnostics, compressed frames, and the edges a
+decoder meets. A plug-in's type is read without its kind by a reader
+with no registry, so its sample is checked to decode alone.
 
 ## 2. Project layout
 

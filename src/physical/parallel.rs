@@ -14,7 +14,8 @@
 //! as a point query does, its plan unchanged, so it costs nothing more
 //! than the walk that finds it. So does one a serial scan by batch of a
 //! table kept by column serves better, with no hash join's probe nor
-//! window functions, while EXECUTOR.BATCHES is on. An expression a worker cannot evaluate
+//! window functions, while EXECUTOR.BATCHES is on, and a bare COUNT(*) its
+//! table's storage counts (RULES.md D351). An expression a worker cannot evaluate
 //! alone keeps its pipeline whole on the statement's thread: a subquery's,
 //! a routine's, NEXT VALUE FOR's, a parameter's.
 
@@ -94,7 +95,9 @@ pub(crate) fn parallel(db: &State, mut plan: Plan) -> Plan {
 
 /// Marks the parts of `plan`, `depth` below the root.
 fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
-    if depth >= MAX_DEPTH {
+    // A bare COUNT(*) its table's storage counts, faster than any split,
+    // stays whole (RULES.md D351).
+    if depth >= MAX_DEPTH || crate::exec::storage_counted(plan, asked.db).is_some() {
         return;
     }
     let degree = rooted(plan).map_or(1, |rows| asked.degree(plan, rows));

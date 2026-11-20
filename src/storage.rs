@@ -38,7 +38,7 @@ pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
 pub use region::Region;
 pub(crate) use region::{keyed_envelope, merged};
-pub use rows::{LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, located, project, row_id_of};
+pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, located, project, row_id_of};
 pub use split::Split;
 
 use std::sync::Arc;
@@ -55,11 +55,11 @@ use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxCapabilities, TxId};
 /// `test/integration/contracts.rs`):
 /// * `insert` returns an id that no live row has and that no deleted row ever
 ///   had, so the undo log's `restore` can never collide with a newer row.
-/// * `get` returns exactly the live row with that id; `scan` yields every live
-///   row once, with its id, in an order of the engine's choosing; `row_count`
-///   is the number of live rows. An engine that cannot read a row (an I/O
-///   error, a corrupt page) says so with an error, from `get` or as the
-///   scan's next item, never by leaving the row out.
+/// * `get` returns exactly the live row with that id; `scan` yields every live row once, with its
+///   id, in an order of the engine's choosing; `row_count` is the number of live rows; `count`'s
+///   counts sum to the rows `scan_batches` gives. An engine that cannot read a row (an I/O error,
+///   a corrupt page) says so with an error, from `get` or as the scan's next item, never by
+///   leaving the row out.
 /// * `update` and `delete` change a live row and fail, changing nothing, for
 ///   an id that is not live. `restore` makes a deleted row live again under
 ///   its old id.
@@ -209,6 +209,12 @@ pub trait TableStorage: Send + Sync {
     /// its batches being its rows gathered, read ahead for nothing.
     fn reads_by_batch(&self) -> bool {
         false
+    }
+    /// \[DESIGN\] (RULES.md D351) Counts that sum to the rows `scan_batches`
+    /// gives `tx` with no conditions, read once asked for, the read noted as
+    /// the scan's. None if it cannot count faster. Default none.
+    fn count(self: Arc<Self>, _tx: TxId) -> Option<Counts> {
+        None
     }
     /// \[DESIGN\] Whether it keeps its rows by column, so a serial scan by
     /// batch outruns workers making rows (RULES.md D291). Default: false.
@@ -483,12 +489,7 @@ pub trait TableStorage: Send + Sync {
     ///
     /// The engine's, if it cannot store or remove the row.
     fn apply(&self, id: RowId, row: Option<Row>) -> Result<()> {
-        match (row, self.get(NO_TRANSACTION, id)?.is_some()) {
-            (Some(row), true) => self.update(NO_TRANSACTION, id, row),
-            (Some(row), false) => self.restore(NO_TRANSACTION, id, row),
-            (None, true) => self.delete(NO_TRANSACTION, id),
-            (None, false) => Ok(()),
-        }
+        rows::applied(self, id, row)
     }
     /// Garbage collection of versions: removes the versions of rows that no
     /// transaction reading at or after `horizon` can read, and gives each

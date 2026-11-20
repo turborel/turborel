@@ -166,3 +166,88 @@ fn values_sent_whole_and_binary_values_written_in_pieces() {
     assert_eq!(all, octets);
     c.terminate().unwrap();
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §20.7 GR5a xix 1 A, §14.11 SR16]
+/// RULES.md D390: over a connection, a 4 MiB BLOB and an 80 KB CLOB bound
+/// to the `?`s of the first row of an INSERT's VALUES, beside a second row
+/// of X'0102' and 'short', are stored whole and read back octet for octet.
+/// Regression test: they were cut to two octets and five characters.
+#[test]
+fn bound_values_beside_shorter_literals_store_whole() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE SCANS (ID INTEGER, B BLOB(10M), C CLOB(1M))").unwrap();
+    let server = start(&db, &[]);
+    let mut c = server.connect("X");
+    let blob: Vec<u8> = (0..4_u32 << 20).map(|i| u8::try_from(i % 251).unwrap()).collect();
+    let clob = text(80_000);
+    let p = c.prepare("INSERT INTO SCANS VALUES (1, ?, ?), (2, X'0102', 'short')").unwrap();
+    assert_eq!(done(&c.execute(&p, &[Value::Lob(Lob::of_octets(&blob)), Value::Lob(Lob::of_text(&clob))]).unwrap()), 0);
+    let Outcome::Rows { rows, .. } = c.query("SELECT B, C FROM SCANS ORDER BY ID").unwrap() else { panic!("no rows") };
+    let mut read = Vec::new();
+    for v in rows.iter().flatten() {
+        let Value::Lob(l) = v else { panic!("{v:?}") };
+        let mut all = Vec::new();
+        c.lob_reader(l).read_to_end(&mut all).unwrap();
+        read.push(all);
+    }
+    assert_eq!(read, [blob, clob.into_bytes(), vec![1, 2], b"short".to_vec()]);
+    c.terminate().unwrap();
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §4.2.1]; [DESIGN] RULES.md D79, D392: a
+/// CLOB written in pieces is checked as each Append comes, across their
+/// boundaries. An octet not UTF-8 makes the finish that sends it fail with
+/// SQLSTATE 22021, and one in an earlier Append fails that write and
+/// every later Append, and the value's use, so no part of it is ever
+/// stored. A value ending within a character is refused, 22021, as it
+/// is used. Regression test: invalid octets were taken, and an Append
+/// refused left the rest to be stored.
+#[test]
+fn a_character_value_written_in_pieces_must_be_utf8() {
+    let db = database();
+    let server = start(&db, &[]);
+    let mut c = server.connect("X");
+    let mut writer = c.create_lob(LobKind::Character).unwrap();
+    writer.write_all(&[b'a', 0xFF, 0xFE]).unwrap();
+    assert_eq!(state(&writer.finish().unwrap_err()).0, "22021", "refused at the finish");
+    let mut long = vec![b'a'; 300_000];
+    long[150_000] = 0xFF;
+    let mut writer = c.create_lob(LobKind::Character).unwrap();
+    assert!(writer.write_all(&long).is_err(), "refused by its Append");
+    writer.write_all(b"more").unwrap();
+    assert!(writer.flush().is_err(), "and every one after");
+    let refused = writer.finish().unwrap();
+    let p = c.prepare("INSERT INTO T VALUES (?, ?)").unwrap();
+    let key = Value::Exact(Decimal::new(1, 0));
+    assert_eq!(state(&c.execute(&p, &[key.clone(), Value::Lob(refused)]).unwrap_err()).0, "22021", "and its use");
+    let mut writer = c.create_lob(LobKind::Character).unwrap();
+    writer.write_all(&[b'a', 0xC3]).unwrap();
+    let cut = writer.finish().unwrap();
+    assert_eq!(state(&c.execute(&p, &[key, Value::Lob(cut)]).unwrap_err()).0, "22021", "cut at its end");
+    assert_eq!(rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["0"]);
+    c.terminate().unwrap();
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §4.2.1]; [DESIGN] RULES.md D79, D392: a
+/// character of two, three and four octets split between two Appends,
+/// each flushed alone, is taken whole, and the CLOB reads back as written.
+#[test]
+fn a_character_split_between_appends_is_taken() {
+    let db = database();
+    let server = start(&db, &[]);
+    let mut c = server.connect("X");
+    let written = "aé€😀b";
+    let bytes = written.as_bytes();
+    let mut writer = c.create_lob(LobKind::Character).unwrap();
+    for piece in [&bytes[..2], &bytes[2..5], &bytes[5..8], &bytes[8..]] {
+        writer.write_all(piece).unwrap();
+        writer.flush().unwrap();
+    }
+    let made = writer.finish().unwrap();
+    insert(&mut c, 1, made);
+    let read = clob(&mut c, 1);
+    let mut all = Vec::new();
+    c.lob_reader(&read).read_to_end(&mut all).unwrap();
+    assert_eq!(all, bytes);
+    c.terminate().unwrap();
+}

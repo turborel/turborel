@@ -15,10 +15,12 @@ use std::mem;
 use std::sync::Arc;
 use std::time::Instant;
 
+use turborel::binder::OutColumn;
 use turborel::db::{Completion, Cursor, Database, Direct, Prepared, Session};
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::storage::Row;
 use turborel::value::Value;
+use turborel_protocol::capability::DECLARED_TYPES;
 use turborel_protocol::{Attributes, Capabilities, Column, Completed, Described, Failure, LobRequest, Reply, Timing, row_size};
 
 use super::copy::{self, Copy};
@@ -173,13 +175,18 @@ fn not_open() -> SqlError {
     cursor_state("[ISO/IEC 9075:1992 §13.3 GR1, §13.4 GR1] the cursor is not open")
 }
 
-/// The reply that describes `prepared`, statement `n`.
-fn prepared_reply(n: u32, prepared: &Prepared) -> Reply {
-    Reply::Prepared {
-        statement: n,
-        parameters: prepared.parameters().to_vec(),
-        columns: prepared.columns().iter().map(Column::from).collect(),
-    }
+/// The reply that describes `prepared`, statement `n`, to a client
+/// granted `granted`.
+fn prepared_reply(n: u32, prepared: &Prepared, granted: Capabilities) -> Reply {
+    Reply::Prepared { statement: n, parameters: prepared.parameters().to_vec(), columns: described(prepared.columns(), granted) }
+}
+
+/// \[DESIGN\] RULES.md D396: the columns `of`, each with its declared
+/// type only if the client was granted `declared-types`, so a client that
+/// was not reads them as ever.
+fn described(of: &[OutColumn], granted: Capabilities) -> Vec<Column> {
+    let declared = granted.has(DECLARED_TYPES);
+    of.iter().map(Column::from).map(|c| if declared { c.with_declared() } else { c }).collect()
 }
 
 /// A request's replies: those gathered, and what a batch's worth is sent
@@ -413,7 +420,7 @@ impl Held {
             Direct::Done(completion) => Ok(Reply::Complete(completion.into())),
             Direct::Rows(cursor) => {
                 let mut open = Open::new(cursor, self.session.warning());
-                describe(&open.cursor, out);
+                describe(&open.cursor, self.granted, out);
                 send_rows(&self.session, &mut open, 0, out).map(|ended| ended.reply())
             }
         }
@@ -423,10 +430,10 @@ impl Held {
     /// parameters and columns, or an open cursor, its columns.
     fn describe(&self, what: Described) -> Result<Reply> {
         match what {
-            Described::Statement(n) => self.statements.get(&n).map(|p| prepared_reply(n, p)).ok_or_else(|| no_statement(n)),
+            Described::Statement(n) => self.statements.get(&n).map(|p| prepared_reply(n, p, self.granted)).ok_or_else(|| no_statement(n)),
             Described::Cursor { statement, cursor } => {
                 let open = self.cursors.get(&(statement, cursor)).ok_or_else(not_open)?;
-                Ok(Reply::Description(open.cursor.columns.iter().map(Column::from).collect()))
+                Ok(Reply::Description(described(&open.cursor.columns, self.granted)))
             }
         }
     }
@@ -450,7 +457,7 @@ impl Held {
             return Err(SqlError::new(Code::Resources, msg));
         }
         let prepared = self.session.prepare(sql)?;
-        let reply = prepared_reply(n, &prepared);
+        let reply = prepared_reply(n, &prepared, self.granted);
         self.statements.insert(n, prepared);
         Ok(reply)
     }
@@ -532,9 +539,10 @@ impl Ended {
     }
 }
 
-/// Gathers the columns of `cursor`'s rows.
-fn describe(cursor: &Cursor, out: &mut Outgoing<'_>) {
-    out.gathered.push(Reply::Description(cursor.columns.iter().map(Column::from).collect()));
+/// Gathers the columns of `cursor`'s rows, as a client granted `granted`
+/// is told them.
+fn describe(cursor: &Cursor, granted: Capabilities, out: &mut Outgoing<'_>) {
+    out.gathered.push(Reply::Description(described(&cursor.columns, granted)));
 }
 
 /// Gathers at most `limit` rows of `open`, all if 0, sent ahead in batches

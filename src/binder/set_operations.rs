@@ -240,10 +240,14 @@ impl Binder<'_> {
         check_assignment(&o.desc, &t.clone(), assign)?;
         Ok((e, Some(t)))
     }
-    /// [ISO/IEC 9075:1992 §17.6 GR5o, p] The type a `<dynamic parameter
-    /// specification>` in each column of `rows` takes: the first row's whose
-    /// value there is not one; or, if each is, the column's an INSERT
-    /// inserts into, of `objects`; else none \[GR4j\].
+    /// [ISO/IEC 9075-2:2023 §20.7 GR5a xix] The type a `<dynamic parameter
+    /// specification>` in each column of `rows` takes. Of the rows an INSERT
+    /// inserts into `objects`, it is the object column's \[xix 1 A\], whatever
+    /// the other rows hold, so a value bound to it is never cut to a
+    /// shorter literal's length (RULES.md D390). Else it is the type §9.5
+    /// gives the column's values \[xix 1 B\], taken as the first row's
+    /// whose value there is not one [ISO/IEC 9075:1992 §17.6 GR5o, p]; none
+    /// if each is \[GR4j\].
     pub(super) fn dynamic_types(&self, rows: &[ValuesRow], objects: Option<&[ObjectColumn]>) -> Result<Vec<Option<DataType>>> {
         let degree = rows.iter().map(|r| r.elements.len()).max().unwrap_or(0);
         let scope = Scope::Rows("[X3.135-1986 §5.8 SR1] a set function needs an argument source");
@@ -258,8 +262,11 @@ impl Binder<'_> {
                 taken.push(None);
                 continue;
             }
-            let by_row = deciding(rows, k).map(|v| self.value_expression(v, scope)).transpose()?.map(|(_, t)| t);
-            taken.push(by_row.or_else(|| objects.and_then(|o| o.get(k)).map(|o| o.desc.data_type.clone())));
+            if let Some(object) = objects.and_then(|o| o.get(k)) {
+                taken.push(Some(object.desc.data_type.clone()));
+                continue;
+            }
+            taken.push(deciding(rows, k).map(|v| self.value_expression(v, scope)).transpose()?.map(|(_, t)| t));
         }
         Ok(taken)
     }

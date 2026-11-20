@@ -57,9 +57,13 @@ pub const FETCH_ENDS: &str = "fetch-ends";
 /// A Complete carries each condition its statement raised, in place of a
 /// Notice for each.
 pub const CONDITIONS: &str = "conditions";
+/// \[DESIGN\] A Description's and a Prepared's columns carry the type each
+/// was declared with, as INTEGER, which its tag alone does not tell
+/// (RULES.md D396).
+pub const DECLARED_TYPES: &str = "declared-types";
 
 /// Every capability of version 1, in the order of their bits.
-pub const ALL: [&str; 18] = [
+pub const ALL: [&str; 19] = [
     NOTICES,
     STATUS,
     DIAGNOSTICS,
@@ -78,6 +82,7 @@ pub const ALL: [&str; 18] = [
     GENERATED,
     FETCH_ENDS,
     CONDITIONS,
+    DECLARED_TYPES,
 ];
 
 /// \[DESIGN\] A set of capabilities, one bit for each of `ALL`.

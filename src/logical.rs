@@ -27,7 +27,7 @@ mod subquery;
 mod window;
 
 pub use counterparts::BaseColumn;
-pub use dynamic::{filled, filled_cond, filled_expr};
+pub use dynamic::{filled, filled_cond, filled_expr, warned};
 pub use expr::{
     Cond, DomainChecks, Expr, Quantifier, Slot, Truth, and_all, cond_columns, expr_columns, map_cond_columns, map_cond_exprs,
     map_expr_columns, or_all, split_and,

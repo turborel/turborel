@@ -31,6 +31,10 @@ use crate::disk::buffer::Ahead;
 use crate::disk::pager::PageId;
 use crate::error::Result;
 
+mod visit;
+
+pub use visit::{Visit, Visited};
+
 /// The order a scan returns entries in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -135,6 +139,25 @@ struct Taken {
     further: Option<PageId>,
 }
 
+/// The place of `leaf`'s first entry at or above `lower`.
+fn start_of(leaf: &Node<'_>, lower: &Bound<Vec<u8>>) -> Result<usize> {
+    Ok(match lower {
+        Bound::Unbounded => 0,
+        Bound::Included(b) => leaf.search(b)?.unwrap_or_else(|at| at),
+        Bound::Excluded(b) => leaf.search(b)?.map_or_else(|at| at, |at| at.saturating_add(1)),
+    })
+}
+
+/// `leaf`'s right neighbour, if keys past its high key may be within
+/// `upper`.
+fn further_of(leaf: &Node<'_>, upper: &Bound<Vec<u8>>) -> Option<PageId> {
+    let past = |high: &[u8]| match upper {
+        Bound::Unbounded => true,
+        Bound::Included(b) | Bound::Excluded(b) => high < b.as_slice(),
+    };
+    leaf.right.filter(|_| leaf.high.is_some_and(past))
+}
+
 /// How many of `leaf`'s entries are within the bounds, found by their
 /// places, no entry copied, and its right neighbour, as `take`'s.
 fn tally(leaf: &Node<'_>, lower: &Bound<Vec<u8>>, upper: &Bound<Vec<u8>>) -> Result<(usize, Option<PageId>)> {
@@ -144,21 +167,13 @@ fn tally(leaf: &Node<'_>, lower: &Bound<Vec<u8>>, upper: &Bound<Vec<u8>>) -> Res
     if leaf.deleted {
         return Ok((0, leaf.right));
     }
-    let start = match lower {
-        Bound::Unbounded => 0,
-        Bound::Included(b) => leaf.search(b)?.unwrap_or_else(|at| at),
-        Bound::Excluded(b) => leaf.search(b)?.map_or_else(|at| at, |at| at.saturating_add(1)),
-    };
+    let start = start_of(leaf, lower)?;
     let end = match upper {
         Bound::Unbounded => leaf.len(),
         Bound::Included(b) => leaf.search(b)?.map_or_else(|at| at, |at| at.saturating_add(1)),
         Bound::Excluded(b) => leaf.search(b)?.unwrap_or_else(|at| at),
     };
-    let past = |high: &[u8]| match upper {
-        Bound::Unbounded => true,
-        Bound::Included(b) | Bound::Excluded(b) => high < b.as_slice(),
-    };
-    Ok((end.saturating_sub(start), leaf.right.filter(|_| leaf.high.is_some_and(past))))
+    Ok((end.saturating_sub(start), further_of(leaf, upper)))
 }
 
 /// Takes what is wanted from `leaf`.
@@ -170,24 +185,15 @@ fn take(leaf: &Node<'_>, lower: &Bound<Vec<u8>>, upper: &Bound<Vec<u8>>) -> Resu
     if leaf.deleted {
         return Ok(Taken { found: Vec::new(), further: leaf.right });
     }
-    let start = match lower {
-        Bound::Unbounded => 0,
-        Bound::Included(b) => leaf.search(b)?.unwrap_or_else(|at| at),
-        Bound::Excluded(b) => leaf.search(b)?.map_or_else(|at| at, |at| at.saturating_add(1)),
-    };
     let mut found = Vec::new();
-    for at in start..leaf.len() {
+    for at in start_of(leaf, lower)?..leaf.len() {
         let (key, value) = leaf.entry(at)?;
         if !below(key, upper) {
             break;
         }
         found.push((key.to_vec(), value.to_vec()));
     }
-    let past = |high: &[u8]| match upper {
-        Bound::Unbounded => true,
-        Bound::Included(b) | Bound::Excluded(b) => high < b.as_slice(),
-    };
-    Ok(Taken { found, further: leaf.right.filter(|_| leaf.high.is_some_and(past)) })
+    Ok(Taken { found, further: further_of(leaf, upper) })
 }
 
 impl<T: Deref<Target = BLinkTree>> Scan<T> {

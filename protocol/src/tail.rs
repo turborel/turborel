@@ -24,6 +24,8 @@
 //! 17 conditions   count u32, then each condition, the body of an Error
 //! 18 time         u64 each: the server's microseconds for the statement,
 //!                 of them queued for a worker, of them waiting for locks
+//! 19 declared     count u32, then each column's declared type, its name
+//!                 and as SQL writes it, strings (`declared.rs`)
 //! ```
 
 use turborel::bytes::{Put, Reader};
@@ -52,6 +54,8 @@ pub(crate) const GENERATED: u8 = 16;
 pub(crate) const CONDITIONS: u8 = 17;
 /// The server's time for a statement, of a Complete.
 pub(crate) const TIME: u8 = 18;
+/// The columns' declared types, of a Description or a Prepared.
+pub(crate) const DECLARED: u8 = 19;
 
 /// \[DESIGN\] The most attributes a message takes.
 pub const MAX_ATTRIBUTES: usize = 32;

@@ -18,7 +18,7 @@ use crate::functions::{
     regex_function, trim_named, width_bucket,
 };
 use crate::lexer::kw;
-use crate::logical::{AggCall, Expr, Slot, render_expr};
+use crate::logical::{AggCall, Expr, Slot, render_expr, warned};
 use crate::params::ParameterType;
 use crate::value::{DataType, Value, collation::CollationRef};
 
@@ -50,10 +50,11 @@ impl Binder<'_> {
             return Ok((Expr::Const(empty), t.clone()));
         }
         if let Some((index, at)) = dynamic_of(e) {
-            let (value, t) = self.params.dynamic_typed(index, Some(taken)).or_at(at)?;
+            let (value, t, warning) = self.params.dynamic_warned(index, Some(taken)).or_at(at)?;
             // Of a statement to be kept, a slot its value fills as each
-            // execution begins (RULES.md D45).
-            let bound = if self.params.slots() { Expr::Dynamic(Slot { index, data_type: t.clone(), at }) } else { Expr::Const(value) };
+            // execution begins (RULES.md D45); else its value, with the
+            // warning its cast raised (RULES.md D391).
+            let bound = if self.params.slots() { Expr::Dynamic(Slot { index, data_type: t.clone(), at }) } else { warned(value, warning) };
             return Ok((bound, t));
         }
         self.value_expression(e, scope)

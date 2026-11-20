@@ -284,7 +284,7 @@ pub(crate) fn put_column(b: &mut Vec<u8>, c: &Column) {
 
 pub(crate) fn column(r: &mut Reader<'_>) -> Result<Column> {
     let name = if flag(r)? { Some(r.str()?) } else { None };
-    Ok(Column { name, data_type: data_type(r)?, not_null: flag(r)? })
+    Ok(Column { name, data_type: data_type(r)?, not_null: flag(r)?, declared: None })
 }
 
 /// [ISO/IEC 9075:1992 §17.9 GR4] A dynamic parameter's type: CHARACTER

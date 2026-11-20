@@ -196,13 +196,18 @@ statement's outcome, as the client library exposes it, follows.
 | `describe`, `cursors` | §17.7, §17.13, §13.1 to §13.4 | A statement or an open cursor described again, and several cursors of one statement open at once (D188). |
 | `fetch-ends` | §4.28 | A cursor opened under autocommit commits as its last row is sent or it is closed, and rolls back as its rows fail (D199). |
 | `copy` | §13.8 GR4b iii | Rows copied in, each value assigned as INSERT assigns it, all or nothing (D195). |
+| `declared-types` | ISO/IEC 9075:1992 §6.1, §21.3.5 | A column described carries the type it was declared with, its DATA_TYPE name as its data type descriptor keeps it and the type as SQL writes it, so INTEGER is told apart from the exact numeric type it is (D396). |
 | `status`, `ping`, `reset`, `change-user`, `query-attributes`, `connection-attributes`, `multi-statement`, `compression`, `commit-position` | none | Extensions of the protocol, RULES.md D189 to D194 and D196. |
 
 ### Dynamic SQL
 
 Prepared statements come in two forms, both with `<dynamic parameter
 specification>`s [§6.2]. Their types are deduced as §17.6 GR5 says, and
-refused where it gives none [GR4].
+refused where it gives none [GR4]. A `?` in a row of an INSERT's VALUES
+takes its object column's type, whatever the other rows hold [ISO/IEC
+9075-2:2023 §20.7 GR5a xix 1 A] (RULES.md D390). A value is cast to its
+`?`'s type, a string too long cut with 01004 [§20.11 GR6c ii 2 B]
+(RULES.md D391).
 
 | Form | Rules | What turborel does |
 |---|---|---|
@@ -619,7 +624,7 @@ in memory, in the log or on the wire. RULES.md D79 says how.
 | Feature | Rules | What turborel does |
 |---|---|---|
 | CHARACTER LARGE OBJECT, NATIONAL CHARACTER LARGE OBJECT, BINARY LARGE OBJECT | §5.2 SR10, §6.1 SR1, SR10 to SR13, SR17 | CLOB, CHAR LARGE OBJECT, NCLOB, NCHAR LARGE OBJECT and BLOB too. A `<large object length>` of digits, with K, M or G as one token or two, of CHARACTERS or OCTETS of a CLOB. 4G if none is written (ID068), the longest (IL042, IL002, IL004), so T, P or more than 4G is SQLCODE -900, and 0 is -103. NATIONAL CHARACTER LARGE OBJECT is CHARACTER LARGE OBJECT, SQL_TEXT the one character set. |
-| Assignment and CAST | §6.13 SR7, GR10 to GR13, §9.1, §9.2 GR3b, GR3e | To and from the strings of its family alone, else SQLCODE -103. Stored, a value longer than its site is 22001 unless what is past it is spaces, which are cut. Retrieved or cast, it is cut with 01004 unless what is cut is spaces. A dynamic parameter's value is cast to its type [§17.9 GR5g]. |
+| Assignment and CAST | §6.13 SR7, GR10 to GR13, §9.1, §9.2 GR3b, GR3e | To and from the strings of its family alone, else SQLCODE -103. Stored, a value longer than its site is 22001 unless what is past it is spaces, which are cut. Retrieved or cast, it is cut with 01004 unless what is cut is spaces. A dynamic parameter's value is cast to its type [§17.9 GR5g], with 01004 if it is cut (RULES.md D391). |
 | Comparing | §4.1, §8.2, §9.11, §9.12 SR3, §9.14 SR3 | Equality alone. `=`, `<>`, IN, a quantified `=`, MATCH, EXISTS of an equality and a join's equality read both operands a chunk at a time. ORDER BY, GROUP BY, DISTINCT, a set operation not ALL, MAX, MIN, `<`, UNIQUE, and a key of a constraint or an index refuse one, SQLCODE -103. |
 | `\|\|` | §6.32 SR3b i, SR6a i, GR2, GR3 | Of a large object and a string of its family, a large object of the sum of their lengths up to 4G, joined without a copy. |
 | CHAR_LENGTH, OCTET_LENGTH | §6.30 GR4, GR5 | From the value's counts, nothing read. |
@@ -629,7 +634,7 @@ in memory, in the log or on the wire. RULES.md D79 says how.
 | LIKE | §8.5 GR3d, GR4 | A CLOB or BLOB match value read a chunk at a time, under a collation of one character at a time too. Under a collation of contractions (IA060), a pattern, escape or match value longer than a chunk is SQLCODE -900, SQLSTATE 0A000, and so is a pattern or escape of a large object longer than one. SIMILAR is not implemented (T141). |
 | Regular expressions | §6.31 GR18, GR19, §6.33 GR4b, GR9b, §8.7 | LIKE_REGEX, OCCURRENCES_REGEX, POSITION_REGEX, SUBSTRING_REGEX and TRANSLATE_REGEX read a CLOB subject a chunk at a time, and SUBSTRING_REGEX and TRANSLATE_REGEX of one are CLOBs. A pattern, flag or replacement longer than a chunk is SQLCODE -900. |
 | LISTAGG | §10.9 SR11d, GR11g | Of CLOBs, CHARACTER VARYING of 32,767 characters (IA044), a longer value 22001 or left out under TRUNCATE. |
-| Locators | §4.37.5, §14.17, §14.18 | A session's four-octet integer (UV065) of a value sent to a client or made by one a piece at a time. Valid until its transaction ends, FREE LOCATOR ending it sooner and HOLD LOCATOR keeping it past a commit. A rollback ends every one. FREE and HOLD take dynamic parameters [SR1]. One not valid is 0F001. |
+| Locators | §4.37.5, §14.17, §14.18 | A session's four-octet integer (UV065) of a value sent to a client or made by one a piece at a time. Valid until its transaction ends, FREE LOCATOR ending it sooner and HOLD LOCATOR keeping it past a commit. A rollback ends every one. FREE and HOLD take dynamic parameters [SR1]. One not valid is 0F001. A character one a client makes is checked as UTF-8 as each Append comes, across Appends, else 22021 (RULES.md D392). |
 | Descriptor areas | §20.1 Table 30 | TYPE 30 of BINARY LARGE OBJECT, 40 of CHARACTER LARGE OBJECT, LENGTH its length and OCTET_LENGTH its length in octets. The locator types 31 and 41 are not used, as no host language is. |
 | Information Schema | 92 §21 | DATA_TYPE 'CHARACTER LARGE OBJECT' or 'BINARY LARGE OBJECT'. |
 | Stored | RULES.md D79 | In chunks of 256 KiB, logged and checkpointed by chunk, collected with the versions that name them; a distinct type's as its source's. One inside an array, a multiset, a row or a structured value is held whole in that value's row, at most a chunk, a longer one SQLCODE -900. The column store refuses a large object column, and one of a type holding a large object. |

@@ -72,7 +72,9 @@ impl Files for Pass {
         if durability == 0 {
             return Ok(());
         }
-        opened(path, false)?.sync_all().map_err(|e| failed(&e))
+        // Opened for writing, as some systems flush a file only through a
+        // handle that may write it, and refuse a read-only one.
+        opened(path, true)?.sync_all().map_err(|e| failed(&e))
     }
     fn remove(&mut self, path: &str) -> Answer<()> {
         std::fs::remove_file(path).map_err(|e| failed(&e))

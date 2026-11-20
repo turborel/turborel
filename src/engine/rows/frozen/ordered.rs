@@ -23,6 +23,7 @@ use std::sync::Arc;
 use super::Directory;
 use super::merge::VECTOR_ROWS;
 use crate::engine::columns::group::Group;
+use crate::engine::columns::prepared::Prepared;
 use crate::engine::columns::scan::{read_candidates, values};
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::{RowTable, row_id};
@@ -64,11 +65,13 @@ impl Part {
     }
 }
 
-/// A sorted group's runs left to read, and its rows' ids.
+/// A sorted group's runs left to read, its rows' ids, and the chunks its
+/// runs have opened (`columns/prepared.rs`).
 struct Unread {
     group: Arc<Group>,
     ids: Vec<RowId>,
     runs: VecDeque<(u32, u32)>,
+    prepared: Prepared,
 }
 
 /// Where rows come from, each in the order of the keys: the part read
@@ -191,7 +194,7 @@ impl Ordered {
             let ids = group.row_ids(&pages)?;
             let runs: VecDeque<(u32, u32)> = read_candidates(&group, &pages, self.condition.as_ref())?.into_iter().collect();
             let in_order = group.order.starts_with(&self.decoded_keys());
-            let mut runs = Unread { group, ids, runs };
+            let mut runs = Unread { group, ids, runs, prepared: Prepared::default() };
             let part = if in_order { Part::default() } else { self.drained(&mut runs)? };
             self.sources.push(Source { part, runs: in_order.then_some(runs) });
         }
@@ -269,7 +272,7 @@ impl Ordered {
         while let Some((from, to)) = next_part(&mut runs.runs, self.backward) {
             let mut part = Part::default();
             for &c in &self.decoded {
-                let found = types.get(c).map(|t| values(&runs.group, &pages, (c, t), (from, to))).transpose()?;
+                let found = types.get(c).map(|t| values(&runs.group, (&pages, &mut runs.prepared), (c, t), (from, to))).transpose()?;
                 part.values.push(found.unwrap_or_default());
             }
             let (first, last) = (usize::try_from(from).unwrap_or(usize::MAX), usize::try_from(to).unwrap_or(usize::MAX));
