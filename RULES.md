@@ -8568,9 +8568,18 @@ their results on the grouping columns. It reads the input once for each
 argument, which a correlated, nondeterministic or costly input forbids
 or makes dear, and it needs a join on the grouping columns that treats
 nulls and collations as grouping does, and keeps the groups' order. The
-copies read the input once and keep every group in one grouping, at the
-price of rows made once for each slot, which a collection derived table
-makes on the row path. One slot, the usual case, makes no copies.
+copies keep every group in one grouping, and a collection derived table
+reads the input once, at the price of rows made on the row path.
+
+Rows a table's scan gives, filtered and projected by expressions that
+give the same value of a row each time, are the same however often they
+are read. Of such rows, and slots without a filter, each copy reads them
+again (`optimizer/distinct_aggregates/copies.rs`): a UNION ALL of a
+projection of each, of the columns used, its marker and each slot's
+value, the argument or a null constant. Those are columns and constants,
+which the batch path takes, so the first grouping is fed by batches. A
+filtered slot, a join or another input keeps the collection derived
+table. One slot, the usual case, makes no copies.
 
 #### D343. A DISTINCT function's filter is a truth of each row, grouped by, and its argument is computed of the rows it admits
 

@@ -1,7 +1,7 @@
 //! The mutations of DISTINCT set functions computed by two groupings
 //! (RULES.md R-TEST-9, D340 to D344): the rule's place among the rules,
 //! MAX and MIN without DISTINCT, the slots, the marker of each copy, the
-//! filter's truth, the copy of the functions computed whole, the parts
+//! filter's truth, the copies read again, the copy of the functions computed whole, the parts
 //! merged and given, and the bag of values a function took.
 
 use super::super::{Mutation, Package};
@@ -11,7 +11,7 @@ const ALIKE: &str = "distinct_aggregates::distinct_functions_alike_with_and_with
 
 /// Mechanisms whose removal must fail the DISTINCT set functions'
 /// requirements.
-pub const DISTINCT_AGGREGATES: [Mutation; 11] = [
+pub const DISTINCT_AGGREGATES: [Mutation; 13] = [
     Mutation {
         name: "distinct-aggregates-unregistered",
         package: Package::Core,
@@ -80,6 +80,26 @@ pub const DISTINCT_AGGREGATES: [Mutation; 11] = [
         original: "    let plain = if shape.copies() > shape.slots.len() { copies } else { 1 };",
         replacement: "    let plain = 1;",
         integration: &[ALIKE],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-aggregates-copy-of-every-slot",
+        package: Package::Core,
+        breaks: "a copy read again gives the value of its own slot alone",
+        file: "src/optimizer/distinct_aggregates/copies.rs",
+        original: "            exprs.push(if s.saturating_add(1) == n { slot.arg.clone() } else { Expr::Const(Value::Null) });",
+        replacement: "            exprs.push(slot.arg.clone());",
+        integration: &[ALIKE],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-aggregates-scan-not-reread",
+        package: Package::Core,
+        breaks: "a table's scan is read again for each copy",
+        file: "src/optimizer/distinct_aggregates/copies.rs",
+        original: "        LogicalPlan::Scan { located, .. } => !located,",
+        replacement: "        LogicalPlan::Scan { .. } => false,",
+        integration: &["distinct_aggregates::explain_shows_the_two_groupings"],
         unit: &[],
     },
     Mutation {
