@@ -47,7 +47,7 @@ type Parts = Vec<HeldRows<Row>>;
 ///
 /// As reading the stream fails.
 pub(super) fn windowed(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) -> Result<Held<RowIter>> {
-    let Plan::Window { window, detail } = plan else { return Err(broken("not a window run in parallel")) };
+    let Plan::Window { window, detail, .. } = plan else { return Err(broken("not a window run in parallel")) };
     let Plan::Sort { keys, input, .. } = &window.input else { return Err(broken("a window run in parallel reads no sort")) };
     let columns = window.partition.clone();
     let key = move |row: &Row| columns.iter().map(|&c| row.get(c).cloned()).collect();
@@ -57,7 +57,7 @@ pub(super) fn windowed(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize
     let sort_keys = keys.clone();
     let each = move |rows: TransitionRows| {
         let sorted = Plan::Sort { keys: sort_keys.clone(), detail: String::new(), input: Box::new(Plan::Transition { rows }), most: None };
-        Plan::Window { window: Box::new(shape.with_input(|()| sorted)), detail: detail.clone() }
+        Plan::Window { window: Box::new(shape.with_input(|()| sorted)), detail: detail.clone(), est: 0.0_f64 }
     };
     let outs = per_part(parts, (db, tx, degree), (each, limit.most()))?;
     Ok(Held::Kept(limit.keeping(Box::new(merge_by(&outs, &keys).into_iter().map(Ok)))))
@@ -71,7 +71,7 @@ pub(super) fn windowed(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize
 ///
 /// As reading the operands fails.
 pub(super) fn set_operation(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) -> Result<Held<RowIter>> {
-    let Plan::SetOp { op, all, compared, left, right } = plan else { return Err(broken("not a set operation run in parallel")) };
+    let Plan::SetOp { op, all, compared, left, right, .. } = plan else { return Err(broken("not a set operation run in parallel")) };
     let n = *compared;
     let key = move |row: &Row| Some(row.get(..n.unwrap_or(row.len()).min(row.len()))?.to_vec());
     // One grant, half of it each operand's.
@@ -86,7 +86,7 @@ pub(super) fn set_operation(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: 
     let each = move |rows: TransitionRows, p: usize| {
         let taken = rights.get(p).and_then(|r| r.lock().unwrap_or_else(PoisonError::into_inner).take());
         let built = Box::new(Plan::Transition { rows: TransitionRows::with(taken.unwrap_or_else(|| HeldRows::new(ListSpace::default()))) });
-        Plan::SetOp { op, all, compared: compared_of, left: Box::new(Plan::Transition { rows }), right: built }
+        Plan::SetOp { op, all, compared: compared_of, left: Box::new(Plan::Transition { rows }), right: built, est: 0.0_f64 }
     };
     let outs = per_part_numbered(parts, (db, tx, degree), (each, limit.most()))?;
     let place = SortKey::new(width, crate::value::SortOrder::of(false, None));

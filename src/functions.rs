@@ -20,6 +20,7 @@ use std::sync::Arc;
 use crate::error::Result;
 use crate::json::Warned;
 use crate::params::ParameterType;
+use crate::storage::Column;
 use crate::value::{CompOp, DataType, Value};
 
 mod accumulator;
@@ -66,6 +67,7 @@ pub use numeric::{
     ABS, ACOS, ASIN, ATAN, CEIL, CEILING, COS, COSH, EXP, FLOOR, LN, LOG, LOG10, MOD, Numeric, POWER, SIN, SINH, SQRT, TAN, TANH, Trig,
 };
 mod octet_like;
+pub(crate) mod over_vectors;
 mod partial;
 #[cfg(test)]
 pub(crate) use partial::MERGED;
@@ -128,6 +130,17 @@ pub use xml::{
 pub use xml::{Evaluation, RegularColumn, TableColumn, XmlExistsOf, XmlFilter, XmlQueryOf, XmlRowsOf, XmlTableOf};
 pub use xml::{IDENTIFIER_TO_XMLNAME, IDENTIFIER_TO_XMLNAME_FULLY, XMLNAME_TO_IDENTIFIER};
 
+/// \[DESIGN\] An argument of a call over vectors (RULES.md D363,
+/// `ScalarFunction::eval_batch`): a vector of a value a row, or a
+/// constant, every row's.
+#[derive(Debug, Clone, Copy)]
+pub enum Arg<'a> {
+    /// A vector of a value a row.
+    Column(&'a Column),
+    /// A constant.
+    Const(&'a Value),
+}
+
 /// \[EXTENSION\] A function callable with the opt-in call syntax.
 ///
 /// Contract (RULES.md R-SAFE-3):
@@ -141,6 +154,10 @@ pub use xml::{IDENTIFIER_TO_XMLNAME, IDENTIFIER_TO_XMLNAME_FULLY, XMLNAME_TO_IDE
 ///   CHARACTER no longer than its length, a number within its precision and
 ///   scale. A longer string is a data exception when stored.
 /// * `deterministic` is true only if equal arguments always give equal results.
+/// * `eval_batch`, if it gives a vector, gives each row the value `call`
+///   gives of that row's arguments, of the kind any vector may be; it
+///   gives an error only if some row's `call` would raise one, which is
+///   then raised by calling the rows one by one (RULES.md D363).
 /// * Of a name, several functions are registered only if each declares the
 ///   types of its parameters (`parameter_types`) and no call could have
 ///   two of them as its subject (RULES.md D74).
@@ -478,6 +495,16 @@ pub trait ScalarFunction: Send + Sync {
     /// As `call_many`'s, or the statement's cancellation.
     fn call_many_in(&self, rows: &[Vec<Value>], _statement: &dyn crate::exec::Subqueries) -> Result<Vec<Value>> {
         self.call_many(rows)
+    }
+    /// \[DESIGN\] (RULES.md D363) The values of a call of each of `rows`
+    /// rows, its arguments `args`, each a vector of `rows` values or a
+    /// constant, if the function has a body over vectors: a vector of
+    /// `rows` values, each the one `call` gives of that row's arguments,
+    /// or an error if a row's call would raise one, so the rows are then
+    /// called one by one, in order. None, and each row is called, by
+    /// default. Never called of a function that `warns`.
+    fn eval_batch(&self, _args: &[Arg<'_>], _rows: usize) -> Option<Result<Column>> {
+        None
     }
 }
 

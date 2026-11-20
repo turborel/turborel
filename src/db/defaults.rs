@@ -281,8 +281,15 @@ impl State {
             AlterColumnAction::Identity { .. } | AlterColumnAction::DropIdentity | AlterColumnAction::DropExpression => {
                 self.alter_generation((qn, c), (action, at), epochs)?;
             }
-            AlterColumnAction::AddScope(_) | AlterColumnAction::DropScope(_) | AlterColumnAction::Rename(_) => {
-                return Err(crate::db::api("[DESIGN] a scope is altered by db/alter/scope.rs, a name by db/alter/rename.rs"));
+            AlterColumnAction::AddScope(_)
+            | AlterColumnAction::DropScope(_)
+            | AlterColumnAction::Rename(_)
+            | AlterColumnAction::SetNotNull
+            | AlterColumnAction::DropNotNull
+            | AlterColumnAction::SetDataType(_) => {
+                return Err(crate::db::api(
+                    "[DESIGN] a scope is altered by db/alter/scope.rs, a name by db/alter/rename.rs, a NOT NULL by db/alter/nullability.rs, a type by db/alter/retype.rs",
+                ));
             }
         }
         let mut catalog = self.catalog.duplicate();

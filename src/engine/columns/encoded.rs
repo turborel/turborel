@@ -486,6 +486,17 @@ impl Body<'_> {
         u16::try_from(get(codes, *bits, n)?).ok()
     }
 
+    /// \[DESIGN\] (RULES.md D354) The field of the `n`th value as written,
+    /// of any encoding that keeps its fields whole: fixed, varying,
+    /// constant or dictionary, as a truth value's byte is kept.
+    pub(super) fn whole_field(&self, n: usize) -> Option<&[u8]> {
+        if let Body::Fixed { width, values } = self {
+            let at = n.checked_mul(*width)?;
+            return values.get(at..at.checked_add(*width)?);
+        }
+        self.field(n)
+    }
+
     /// The field of the `n`th value of a varying, constant or dictionary
     /// encoding, as written.
     fn field(&self, n: usize) -> Option<&[u8]> {

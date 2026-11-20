@@ -24,6 +24,7 @@ use super::fsst::Symbols;
 use super::group::{Pages, Seal, Zone};
 use super::{Chunk, padding};
 use crate::error::Result;
+use crate::storage::Mask;
 use crate::value::DataType;
 
 /// \[DESIGN\] The most chunks of a column held: a run of 2,048 rows spans
@@ -135,7 +136,7 @@ fn open<S: Seal>(pages: &Pages<'_, S>, (zone, t): (&Zone, &DataType), mut bytes:
 
 impl Chunk<'_> {
     /// As `ints`, of what is made of it once, `made`.
-    pub(super) fn ints_made(&self, (from, to): (usize, usize), outs: (&mut Vec<i64>, &mut Vec<bool>), made: &Made) -> Option<()> {
+    pub(super) fn ints_made(&self, (from, to): (usize, usize), outs: (&mut Vec<i64>, &mut Mask), made: &Made) -> Option<()> {
         self.ints_with((from, to), outs, made.words.as_deref())
     }
 
@@ -144,7 +145,7 @@ impl Chunk<'_> {
     pub(super) fn coded_made(
         &self,
         positions: &[usize],
-        outs: (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Vec<bool>),
+        outs: (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Mask),
         made: &Made,
     ) -> Option<()> {
         self.coded_with(positions, outs, made.entries.as_ref()?)

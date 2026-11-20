@@ -30,23 +30,23 @@ impl Accumulator for CountAcc {
         self.0 = self.0.saturating_add(1);
         Ok(())
     }
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+    fn update_many(&mut self, values: &[Value], rows: Option<&[u32]>) -> Result<()> {
         let counted = match rows {
-            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).filter(|v| !v.is_null()).count(),
+            Some(rows) => rows.iter().filter_map(|&r| values.get(crate::storage::mask::index(r))).filter(|v| !v.is_null()).count(),
             None => values.iter().filter(|v| !v.is_null()).count(),
         };
         self.update_rows(counted)
     }
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
+    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>) -> Result<()> {
         self.update_rows(ints::count(ints, rows))
     }
-    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
+    fn update_floats(&mut self, floats: &Floats, rows: Option<&[u32]>) -> Result<()> {
         self.update_rows(floats::count(floats, rows))
     }
     /// Its texts counted, none made a value.
-    fn update_texts(&mut self, texts: &Texts, rows: Option<&[usize]>) -> Result<()> {
+    fn update_texts(&mut self, texts: &Texts, rows: Option<&[u32]>) -> Result<()> {
         let counted = match rows {
-            Some(rows) => rows.iter().filter(|&&n| texts.get(n).is_some()).count(),
+            Some(rows) => rows.iter().filter(|&&n| texts.get(crate::storage::mask::index(n)).is_some()).count(),
             None => (0..texts.len()).filter(|&n| texts.get(n).is_some()).count(),
         };
         self.update_rows(counted)

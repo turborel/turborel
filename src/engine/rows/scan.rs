@@ -11,7 +11,7 @@ use super::mvcc::Read;
 use super::{RowTable, key, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, Visit, Visited, scan_of};
 use crate::error::Result;
-use crate::storage::{Batches, Conjunction, Near, Row, RowId, Rows, ScanOrder, batches_of};
+use crate::storage::{Batches, Conjunction, Near, Ramp, Row, RowId, Rows, ScanOrder, batches_of};
 use crate::txn::TxId;
 
 /// A table's tree, reached through the table, so a scan that owns the
@@ -209,6 +209,6 @@ impl RowTable {
             Err(e) => return Box::new(iter::once(Err(e))),
         };
         let ranges = self.zones.ranges(condition);
-        self.gathered_in(reader, columns, ranges)
+        self.gathered_in((reader, Ramp::default()), columns, ranges)
     }
 }

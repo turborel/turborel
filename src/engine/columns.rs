@@ -33,7 +33,10 @@ pub mod prepared;
 mod runs;
 pub mod scan;
 
+pub(crate) use packed::unpack_words;
+
 use crate::error::{Code, Result, SqlError};
+use crate::storage::Mask;
 use crate::value::{CharUnits, DataType, Value};
 
 use encoded::{Body, Entries, Sizer};
@@ -246,18 +249,13 @@ impl<'a> Chunk<'a> {
     /// number's units or an approximate number's bits, as integers pushed
     /// to `units`, and whether each is null to `nulls`
     /// (`encoded::Body::ints`): none if its encoding does not hold them.
-    pub fn ints(&self, (from, to): (usize, usize), (units, nulls): (&mut Vec<i64>, &mut Vec<bool>)) -> Option<()> {
+    pub fn ints(&self, (from, to): (usize, usize), (units, nulls): (&mut Vec<i64>, &mut Mask)) -> Option<()> {
         self.ints_with((from, to), (units, nulls), None)
     }
 
     /// As `ints`, of a dictionary whose entries as integers are `entries`
     /// if given, read once for the runs of a group (`prepared.rs`).
-    fn ints_with(
-        &self,
-        (from, to): (usize, usize),
-        (units, nulls): (&mut Vec<i64>, &mut Vec<bool>),
-        entries: Option<&[i64]>,
-    ) -> Option<()> {
+    fn ints_with(&self, (from, to): (usize, usize), (units, nulls): (&mut Vec<i64>, &mut Mask), entries: Option<&[i64]>) -> Option<()> {
         if to > self.count || from > to {
             return None;
         }
@@ -266,22 +264,38 @@ impl<'a> Chunk<'a> {
         Some(())
     }
 
-    /// Whether each of its values at positions `from` to `to` is null,
-    /// pushed to `nulls`: none at once if no bit of the range's bytes is
-    /// set, else each byte's eight bits at once.
-    fn nulls_of(&self, (from, to): (usize, usize), nulls: &mut Vec<bool>) {
+    /// \[DESIGN\] (RULES.md D354) Whether each of its values at positions
+    /// `from` to `to` is null, its bitmap's bits added to `nulls` as they
+    /// are, a word at a time (`Mask::append`): none set at once if no bit
+    /// of the range's bytes is.
+    fn nulls_of(&self, (from, to): (usize, usize), nulls: &mut Mask) {
         let (first, last) = (bit_of(from).0, bit_of(to.saturating_add(BITS.saturating_sub(1))).0);
-        let bytes = self.nulls.get(first..last).unwrap_or_default();
         let count = to.saturating_sub(from);
-        if bytes.iter().all(|&b| b == 0) {
-            nulls.resize(nulls.len().saturating_add(count), false);
+        if self.nulls.get(first..last).unwrap_or_default().iter().all(|&b| b == 0) {
+            nulls.extend_unset(count);
             return;
         }
-        let skip = usize::from(bit_of(from).1);
-        let bits = bytes
-            .iter()
-            .flat_map(|&b| (0..BITS).map(move |bit| b.checked_shr(u32::try_from(bit).unwrap_or(u32::MAX)).unwrap_or(0) & 1 != 0));
-        nulls.extend(bits.skip(skip).take(count));
+        nulls.append(&Mask::from_lsb_bytes(self.nulls, from, count));
+    }
+
+    /// \[DESIGN\] (RULES.md D354) Its values at positions `from` to `to`,
+    /// truth values, each true one's bit added to `bits`, a null's unset,
+    /// and whether each is null to `nulls` (`nulls_of`): none if a value
+    /// not null is not a truth value as a record writes it.
+    pub fn bools(&self, (from, to): (usize, usize), (bits, nulls): (&mut Mask, &mut Mask)) -> Option<()> {
+        if to > self.count || from > to {
+            return None;
+        }
+        for n in from..to {
+            if self.is_null(n) {
+                bits.push(false);
+                continue;
+            }
+            let Some(Value::Bool(truth)) = DataType::Boolean.decode_record(self.body.whole_field(n)?) else { return None };
+            bits.push(truth);
+        }
+        self.nulls_of((from, to), nulls);
+        Some(())
     }
 
     /// \[DESIGN\] Where each run of one value among its positions `from`
@@ -303,14 +317,14 @@ impl<'a> Chunk<'a> {
     pub fn texts(
         &self,
         (from, to): (usize, usize),
-        (text, ends, nulls): (&mut String, &mut Vec<usize>, &mut Vec<bool>),
+        (text, ends, nulls): (&mut String, &mut Vec<usize>, &mut Mask),
         t: &DataType,
     ) -> Option<()> {
         if to > self.count {
             return None;
         }
         self.body.texts((from, to), (text, ends), (|n| self.is_null(n), padding(t)?))?;
-        nulls.extend((from..to).map(|n| self.is_null(n)));
+        self.nulls_of((from, to), nulls);
         Some(())
     }
 
@@ -321,7 +335,7 @@ impl<'a> Chunk<'a> {
     pub fn coded(
         &self,
         positions: &[usize],
-        (text, ends, codes, nulls): (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Vec<bool>),
+        (text, ends, codes, nulls): (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Mask),
         t: &DataType,
     ) -> Option<()> {
         self.coded_with(positions, (text, ends, codes, nulls), &self.body.entry_texts(padding(t)?)?)
@@ -332,14 +346,16 @@ impl<'a> Chunk<'a> {
     fn coded_with(
         &self,
         positions: &[usize],
-        (text, ends, codes, nulls): (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Vec<bool>),
+        (text, ends, codes, nulls): (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Mask),
         entries: &Entries,
     ) -> Option<()> {
         if positions.iter().any(|&n| n >= self.count) {
             return None;
         }
         self.body.coded(positions, (text, ends, codes), (|n| self.is_null(n), entries))?;
-        nulls.extend(positions.iter().map(|&n| self.is_null(n)));
+        for &n in positions {
+            nulls.push(self.is_null(n));
+        }
         Some(())
     }
 

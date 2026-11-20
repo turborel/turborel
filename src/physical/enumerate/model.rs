@@ -5,22 +5,20 @@
 //! operators, all from the statistics as the planner reads them.
 //!
 //! The rows of a join are those of its operands times the fraction its
-//! predicates keep. An equality of two columns keeps one pair in as many
-//! as the more distinct of them has values (Selinger et al., 1979, §4,
-//! F = 1/MAX(ICARD)). Equalities chained through one value, as `a = b`,
-//! `b = c` and `a = c` are, form a class, and a set's class keeps one row
-//! in as many as each of its columns but the least distinct has values, so
-//! an equality the others imply, which predicate transitivity adds, is
-//! not counted again. Other conjuncts are taken as independent, as the
-//! filters of a table are (`physical/estimate.rs`). A join is estimated to
-//! give at least one row, if its operands' product has one, so no estimate
-//! of zero makes every join over it free (Leis et al., "How Good Are Query
-//! Optimizers, Really?", 2015, §3.4).
+//! predicates keep, its equalities by classes (`physical/cardinality/joins.rs`,
+//! the formula every estimate of a join uses, RULES.md D370). Other
+//! conjuncts are taken as independent, as the filters of a table are
+//! (`physical/estimate.rs`). A join is estimated to give at least one row,
+//! if its operands' product has one, so no estimate of zero makes every
+//! join over it free (Leis et al., "How Good Are Query Optimizers,
+//! Really?", 2015, §3.4).
 
 use super::bits::{Set, bit, members};
 use super::conflicts::Kind;
 use super::space::Applied;
 use crate::physical::CostModel;
+use crate::physical::Plan;
+use crate::physical::cardinality::Classes;
 
 /// An order of a plan's rows: none, ascending by the columns of a class,
 /// or the order asked of the chain.
@@ -38,6 +36,9 @@ pub(super) struct Rel {
     pub(super) rows: f64,
     /// The costs of reading it: in no order, then in each order it gives.
     pub(super) reads: Vec<(Order, f64)>,
+    /// The plan of each of those reads, kept for the realized plan, which
+    /// takes the one its order asks rather than building it again.
+    pub(super) plans: Vec<(Order, Plan)>,
     /// Of its columns, by the chain's places, those an index of its table
     /// answers an equality of, and the cost of each probe.
     pub(super) probes: Vec<(usize, f64)>,
@@ -73,9 +74,8 @@ pub(super) struct Model {
     pub(super) preds: Vec<Option<Pred>>,
     /// Of each operator, its kind.
     pub(super) kinds: Vec<Kind>,
-    /// Of each class, its members: a relation and its column's distinct
-    /// values, one for each relation.
-    pub(super) classes: Vec<Vec<(usize, f64)>>,
+    /// The classes of the inner joins' equalities, of relations.
+    pub(super) classes: Classes,
     /// Of each column a key of some join uses, by the chain's places, its
     /// class of orders, and whether a merge join may join by it.
     pub(super) orders: Vec<(usize, usize, bool)>,
@@ -134,14 +134,13 @@ impl Model {
     /// equalities of the classes keep: of each class, one in as many as
     /// each of its members in `s` but the least distinct has values.
     fn class_fraction(&self, s: Set) -> f64 {
-        self.classes
-            .iter()
-            .map(|members| {
-                let mut distinct: Vec<f64> = members.iter().filter(|(rel, _)| bit(*rel) & s != 0).map(|(_, d)| d.max(1.0_f64)).collect();
-                distinct.sort_by(f64::total_cmp);
-                distinct.iter().skip(1).map(|d| 1.0_f64 / d).product::<f64>()
-            })
-            .product()
+        self.classes.fraction(|rel| bit(rel) & s != 0)
+    }
+
+    /// The plan read of relation `rel` in the order `order`, if the model
+    /// made one.
+    pub(super) fn plan_of(&self, rel: usize, order: Order) -> Option<&Plan> {
+        self.rels.get(rel)?.plans.iter().find(|(o, _)| *o == order).map(|(_, plan)| plan)
     }
 
     /// The rows of the join of `left` and `right`, each a set and its

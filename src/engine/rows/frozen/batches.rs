@@ -29,7 +29,10 @@ use super::merge::VECTOR_ROWS;
 use crate::engine::columns::ahead::GroupAhead;
 use crate::engine::columns::group::{Group, Summary};
 use crate::engine::columns::prepared::Prepared;
-use crate::engine::columns::scan::{Reading, floats, floats_at, ints, ints_at, read_candidates, texts, texts_at, values, values_at};
+use crate::engine::columns::scan::{
+    Reading, bools, bools_at, datetimes, datetimes_at, floats, floats_at, ints, ints_at, read_candidates, texts, texts_at, values,
+    values_at,
+};
 use crate::engine::rows::gathered::Gathering;
 use crate::engine::rows::mvcc::Reader;
 use crate::engine::rows::scan::TreeOf;
@@ -96,6 +99,20 @@ impl Batched {
             prepared: Prepared::default(),
             ramp: Ramp::default(),
         }
+    }
+
+    /// As `new`, of the rows of ids from `first` up to, not including,
+    /// `end`, if given, alone: a morsel of a split scan (RULES.md D290,
+    /// D354), whose `directory` holds only the groups within them, its
+    /// tree's rows those of the range, each batch of them whole.
+    pub(in crate::engine::rows) fn within(
+        table: Arc<RowTable>,
+        (reader, directory): (Reader, Arc<Directory>),
+        (columns, condition): (Vec<usize>, Option<Conjunction>),
+        range: (RowId, Option<RowId>),
+    ) -> Batched {
+        let delta = Some(RowTable::range(&table, range));
+        Batched { delta, ramp: Ramp::whole(), ..Batched::new(table, (reader, directory), columns, condition) }
     }
 
     /// Takes up the next group, its runs a vector at most each, and the
@@ -283,6 +300,12 @@ fn run_column(
     if let Some(floats) = floats(group, (pages, &mut *prepared), (c, t), (from, to))? {
         return Ok(Column::Floats(floats));
     }
+    if let Some(datetimes) = datetimes(group, (pages, &mut *prepared), (c, t), (from, to))? {
+        return Ok(Column::Datetimes(datetimes));
+    }
+    if let Some(bools) = bools(group, (pages, &mut *prepared), (c, t), (from, to))? {
+        return Ok(Column::Bools(bools));
+    }
     if let Some(texts) = texts(group, (pages, &mut *prepared), (c, t), (from, to))? {
         return Ok(Column::Texts(texts));
     }
@@ -301,6 +324,12 @@ fn positions_column(
     }
     if let Some(floats) = floats_at(group, (pages, &mut *prepared), (c, t), positions)? {
         return Ok(Column::Floats(floats));
+    }
+    if let Some(datetimes) = datetimes_at(group, (pages, &mut *prepared), (c, t), positions)? {
+        return Ok(Column::Datetimes(datetimes));
+    }
+    if let Some(bools) = bools_at(group, (pages, &mut *prepared), (c, t), positions)? {
+        return Ok(Column::Bools(bools));
     }
     if let Some(texts) = texts_at(group, (pages, &mut *prepared), (c, t), positions)? {
         return Ok(Column::Texts(texts));

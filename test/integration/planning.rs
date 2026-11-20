@@ -456,7 +456,9 @@ fn conditions_move_into_outer_joins_7_5() {
     let lj = "SELECT T.ID, CODE FROM T LEFT JOIN U ON T.ID = U.ID";
     let cases: [(String, &[&str], &str); 12] = [
         (format!("{lj} WHERE T.ID > 1"), &["2,NULL", "3,NULL"], "LeftOuter"),
-        (format!("{lj} WHERE U.CODE = 'B'"), &["1,B  "], "IndexNestedLoop APP.T"),
+        // A filter keeps at least one row (RULES.md D370), and one probe of
+        // T's index costs more than reading T's three rows.
+        (format!("{lj} WHERE U.CODE = 'B'"), &["1,B  "], "HashJoin T.ID = U.ID"),
         (format!("{lj} WHERE U.CODE IS NULL"), &["2,NULL", "3,NULL"], "LeftOuterJoin"),
         (format!("{lj} WHERE COALESCE(U.CODE, 'Z') = 'Z'"), &["2,NULL", "3,NULL"], "LeftOuterJoin"),
         (format!("{lj} WHERE T.ID = 1 OR U.CODE = 'B'"), &["1,A  ", "1,B  "], "LeftOuterJoin"),

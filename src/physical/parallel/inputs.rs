@@ -21,7 +21,7 @@ impl Plan {
             | Plan::IndexJoin { left: input, .. }
             | Plan::Aggregate { input, .. }
             | Plan::Project { input, .. }
-            | Plan::Distinct { input }
+            | Plan::Distinct { input, .. }
             | Plan::Sort { input, .. }
             | Plan::Limit { input, .. } => each(input),
             Plan::Unnest(u) => each(&mut u.input),
@@ -34,11 +34,11 @@ impl Plan {
                 each(&mut m.left);
                 each(&mut m.right);
             }
-            Plan::Product { left, right }
+            Plan::Product { left, right, .. }
             | Plan::HashJoin { left, right, .. }
             | Plan::OuterJoin { left, right, .. }
             | Plan::SetOp { left, right, .. }
-            | Plan::Append { left, right } => {
+            | Plan::Append { left, right, .. } => {
                 each(left);
                 each(right);
             }

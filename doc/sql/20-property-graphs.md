@@ -510,12 +510,14 @@ turborel: SQLCODE -900 (SQLSTATE 54061): [GS §20] GRF-0061: the path search pas
 ## Plans
 
 A pattern of no quantifier is a join of its element tables, which the
-planner orders by its estimates like any other join. Each edge is read
+planner orders by its estimates like any other join. An edge may be read
 through its adjacency index from the vertex bound before it, shown as
 Expand, or from its destination, shown as Expand (reverse), or between
-two bound vertices, shown as ExpandInto. An edge table of no adjacency
-index is read whole once in each join, so a pattern needing more than
-four such reads is searched instead:
+two bound vertices, shown as ExpandInto, where the probes cost less than
+reading the edge table. A graph as small as BANK is read whole and hash
+joined, as one probe costs more than its few rows. An edge table of no
+adjacency index is read whole once in each join, so a pattern needing
+more than four such reads is searched instead:
 
 ```sql
 SELECT * FROM GRAPH_TABLE (BANK
@@ -532,7 +534,7 @@ EXPLAIN SELECT * FROM GRAPH_TABLE (BANK
  Mike                 |            8
 (1 row)
  PLAN
---------------------------------------------------------------
+-----------------------------------------------------
  -- bound:
  Project OWNER
    Project OWNER
@@ -556,11 +558,14 @@ EXPLAIN SELECT * FROM GRAPH_TABLE (BANK
          Scan ANN.ACCOUNT
  -- physical:
  Project OWNER
-   IndexNestedLoop ANN.ACCOUNT using ANN.ACCOUNT.UNIQUE1 [btree]: SRC = ID  (est. rows each=1, cost=0.6)
-     Expand (reverse) ANN.TRANSFER using BANK_TRANSFER_ADJACENCY [adjacency]: ID = DST  (est. rows each=0, cost=0.5)
-       Filter OWNER = 'Mike'  (est. rows=0)
-         SeqScan ANN.ACCOUNT  (rows=4, cost=4.0)
-(27 rows)
+   HashJoin ID = SRC
+     SeqScan ANN.ACCOUNT  (rows=4, cost=4.0)
+     Project ID, OWNER, ID, SRC, DST, AMOUNT
+       HashJoin DST = ID
+         SeqScan ANN.TRANSFER  (rows=5, cost=5.0)
+         Filter OWNER = 'Mike'  (est. rows=0)
+           SeqScan ANN.ACCOUNT  (rows=4, cost=4.0)
+(30 rows)
 ```
 
 A pattern whose edges close a cycle is matched by a worst-case optimal

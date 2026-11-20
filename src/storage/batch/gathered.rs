@@ -4,7 +4,7 @@
 //! integers, numbers or texts is gathered as one of the same kind, so what
 //! reads it after a join reads it as from the scan, no value made.
 
-use super::{Coded, Column, Floats, Ints, Texts};
+use super::{Coded, Column, Floats, Ints, Mask, Texts};
 use crate::value::Value;
 
 impl Column {
@@ -25,6 +25,8 @@ impl Column {
                 Column::Floats(Floats::new(numbers, nulls(picks, |r| floats.is_null(r))))
             }
             Column::Texts(texts) => Column::Texts(texts_gathered(texts, picks)),
+            Column::Datetimes(datetimes) => Column::Datetimes(datetimes.gathered(picks)),
+            Column::Bools(bools) => Column::Bools(bools.gathered(picks)),
             Column::Nulls(_) => Column::nulls(picks.len()),
         }
     }
@@ -38,9 +40,14 @@ impl Column {
 
 /// Whether the row each of `picks` names is null, as `null` says, or it
 /// names none; none if no row is null.
-fn nulls(picks: &[Option<usize>], null: impl Fn(usize) -> bool) -> Option<Vec<bool>> {
-    let made: Vec<bool> = picks.iter().map(|p| p.is_none_or(&null)).collect();
-    made.contains(&true).then_some(made)
+pub(super) fn nulls(picks: &[Option<usize>], null: impl Fn(usize) -> bool) -> Option<Mask> {
+    let mut made = Mask::none(picks.len());
+    for (n, p) in picks.iter().enumerate() {
+        if p.is_none_or(&null) {
+            made.set(n);
+        }
+    }
+    made.any().then_some(made)
 }
 
 /// The texts of `texts` at `picks`: of a store's dictionaries, each row's
@@ -49,7 +56,7 @@ fn texts_gathered(texts: &Texts, picks: &[Option<usize>]) -> Texts {
     let null = nulls(picks, |r| texts.is_null(r) || r >= texts.len());
     if let Some(coded) = &texts.coded {
         let codes = picks.iter().map(|p| p.and_then(|r| coded.codes.get(r)).copied().unwrap_or(0)).collect();
-        return Texts::coded(Coded { codes, entries: coded.entries.clone() }, null);
+        return Texts::coded(Coded { codes, entries: std::sync::Arc::clone(&coded.entries) }, null);
     }
     let (mut text, mut ends) = (String::new(), Vec::with_capacity(picks.len()));
     for p in picks {

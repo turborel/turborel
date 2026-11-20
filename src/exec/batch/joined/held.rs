@@ -110,11 +110,11 @@ pub(super) fn read(right: Plan, keys: &[JoinKey], limit: usize, (db, tx): (&Arc<
     let (mut parts, mut bytes) = (Vec::new(), 0_usize);
     for kept in batches.by_ref() {
         let (batch, rows) = kept?;
-        let rows = rows.unwrap_or_else(|| (0..batch.rows).collect());
+        let rows = crate::storage::sel::places_of(rows, batch.rows);
         bytes = bytes.saturating_add(batch.bytes()).saturating_add(rows.len().saturating_mul(size_of::<usize>()));
         parts.push((batch, rows));
         if bytes > limit {
-            let read: Vec<Result<Kept>> = parts.into_iter().map(|(part, chosen)| Ok((part, Some(chosen)))).collect();
+            let read: Vec<Result<Kept>> = parts.into_iter().map(|(part, chosen)| Ok((part, Some(chosen.into_iter().collect())))).collect();
             return Ok(Read::Rest(Rest { batches: Box::new(read.into_iter().chain(batches)), columns, width }));
         }
     }
@@ -161,6 +161,8 @@ fn equal(v: &Value, cell: Cell<'_>, nulls: bool) -> Result<bool> {
     }
     match cell {
         Cell::Value(w) => key_equal(v, w, nulls),
-        Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) | Cell::Null => key_equal(v, &cell.to_value(), nulls),
+        Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) | Cell::Datetime(_) | Cell::Bool(_) | Cell::Null => {
+            key_equal(v, &cell.to_value(), nulls)
+        }
     }
 }

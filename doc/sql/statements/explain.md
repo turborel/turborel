@@ -260,12 +260,13 @@ OK
                  Project S.DEPT, TRAILING_SPACES(S.DEPT)
                    SeqScan ANN.STAFF  (rows=4, cost=3.8)
                Project S.DEPT, TRAILING_SPACES(S.DEPT), T.ID, T.NAME, T.DEPT, T.SALARY, TRUE
-                 HashJoin S.DEPT = T.DEPT
-                   Distinct
-                     Project S.DEPT, TRAILING_SPACES(S.DEPT)
-                       SeqScan ANN.STAFF  (rows=4, cost=3.8)
-                   SeqScan ANN.STAFF  (rows=4, cost=3.6)
-(50 rows)
+                 Project S.DEPT, TRAILING_SPACES(S.DEPT), T.ID, T.NAME, T.DEPT, T.SALARY
+                   HashJoin T.DEPT = S.DEPT
+                     SeqScan ANN.STAFF  (rows=4, cost=3.6)
+                     Distinct
+                       Project S.DEPT, TRAILING_SPACES(S.DEPT)
+                         SeqScan ANN.STAFF  (rows=4, cost=3.8)
+(51 rows)
 ```
 
 Set functions of all the table's rows, read in morsels of 256 rows

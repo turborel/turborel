@@ -23,11 +23,12 @@ pub(super) mod shapes;
 
 use std::sync::Arc;
 
-use super::ScalarFunction;
 use super::lobs::ops::{concatenation, fold, within_octets};
+use super::{Arg, ScalarFunction};
 use crate::error::{Code, Result, SqlState, fail, fail_with};
 use crate::lexer::kw;
 use crate::params::ParameterType;
+use crate::storage::Column;
 use crate::value::lob::{Lob, LobKind, TempLobs};
 use crate::value::{Binary, DataType, Decimal, MAX_BINARY_LENGTH, MAX_CHARACTER_LENGTH, MAX_EXACT_PRECISION, Value};
 use crate::value::{CharUnits, Spelled};
@@ -518,5 +519,11 @@ impl ScalarFunction for Fold {
             return Ok(Value::Lob(fold(l, self.upper, temp)?));
         }
         Ok(text(s)?.map_or(Value::Null, |s| Value::Char(if self.upper { s.to_ascii_uppercase() } else { s.to_ascii_lowercase() })))
+    }
+    /// \[DESIGN\] (RULES.md D363) Of a vector of character strings, its
+    /// text folded whole (`over_vectors::folded`).
+    fn eval_batch(&self, args: &[Arg<'_>], _rows: usize) -> Option<Result<Column>> {
+        let [Arg::Column(Column::Texts(texts))] = args else { return None };
+        Some(Ok(Column::Texts(super::over_vectors::folded(texts, self.upper))))
     }
 }

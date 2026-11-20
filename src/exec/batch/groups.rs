@@ -17,8 +17,11 @@
 //! (`Accumulator::merge`), so each set function takes its values in the
 //! order it would without them.
 
+mod morsel;
 mod spilled;
 mod table;
+
+pub(in crate::exec) use morsel::morsel_groups;
 
 use std::sync::Arc;
 
@@ -30,10 +33,12 @@ use crate::exec::work::Work;
 use crate::exec::{RowIter, Runner};
 use crate::functions::Accumulator;
 use crate::logical::AggCall;
-use crate::storage::{Batch, Cell, Column, Row};
+use crate::storage::sel::rows_of;
+use crate::storage::{Batch, Cell, Column, Row, Sel};
 use crate::txn::TxId;
 use spilled::{Overflow, Piece, Queued};
-use table::{Held, Table};
+pub(in crate::exec) use table::Held;
+use table::Table;
 
 /// The rows or pieces groups partly made take each, on average, for a
 /// grouping to go on making them: past fewer, its pieces, each costing
@@ -86,8 +91,8 @@ pub(super) fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>,
     let mut rows = 0_u64;
     for kept in batches {
         let (batch, given) = kept?;
-        groups.feed((&batch, given.as_deref()), Numbers::From(rows), how, &mut work)?;
-        rows = rows.saturating_add(u64::try_from(given.as_ref().map_or(batch.rows, Vec::len)).unwrap_or(u64::MAX));
+        groups.feed((&batch, given.as_ref().map(Sel::as_slice)), Numbers::From(rows), how, &mut work)?;
+        rows = rows.saturating_add(u64::try_from(given.as_ref().map_or(batch.rows, Sel::len)).unwrap_or(u64::MAX));
     }
     let (held, overflow, _) = groups.finished(&mut work)?;
     spilled::merged(held, overflow, how, &mut work)
@@ -97,7 +102,7 @@ pub(super) fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>,
 /// place among the rows given and in the batch, gathered by group in order:
 /// the places among those given, those in the batch, and where each
 /// group's end.
-fn gathered(placed: &[(usize, usize, usize)], groups: usize) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+fn gathered(placed: &[(usize, usize, usize)], groups: usize) -> (Vec<u32>, Vec<u32>, Vec<usize>) {
     // Already gathered, each group's rows after the last's, as of runs.
     if placed.is_sorted_by_key(|&(slot, ..)| slot) {
         let mut ends = vec![0_usize; groups];
@@ -106,7 +111,7 @@ fn gathered(placed: &[(usize, usize, usize)], groups: usize) -> (Vec<usize>, Vec
                 *end = at.saturating_add(1);
             }
         }
-        return (placed.iter().map(|&(_, n, _)| n).collect(), placed.iter().map(|&(.., r)| r).collect(), ends);
+        return (rows_of(placed.iter().map(|&(_, n, _)| n)), rows_of(placed.iter().map(|&(.., r)| r)), ends);
     }
     let mut ends = vec![0_usize; groups];
     for &(slot, ..) in placed {
@@ -124,11 +129,11 @@ fn gathered(placed: &[(usize, usize, usize)], groups: usize) -> (Vec<usize>, Vec
             first
         })
         .collect();
-    let (mut given, mut read_rows) = (vec![0_usize; placed.len()], vec![0_usize; placed.len()]);
+    let (mut given, mut read_rows) = (vec![0_u32; placed.len()], vec![0_u32; placed.len()]);
     for &(slot, n, r) in placed {
         let Some(to) = next.get_mut(slot) else { continue };
         if let (Some(g), Some(b)) = (given.get_mut(*to), read_rows.get_mut(*to)) {
-            (*g, *b) = (n, r);
+            (*g, *b) = (place(n), place(r));
         }
         *to = to.saturating_add(1);
     }
@@ -140,7 +145,7 @@ fn gathered(placed: &[(usize, usize, usize)], groups: usize) -> (Vec<usize>, Vec
 /// where each run of its rows `rows`, or all, ends among them, the rows of
 /// each run alike, so of one group: none of another grouping, nor of a
 /// null among the runs, of the null group.
-fn run_ends(batch: &Batch, groups: &[usize], rows: Option<&[usize]>) -> Option<Vec<usize>> {
+fn run_ends(batch: &Batch, groups: &[usize], rows: Option<&[u32]>) -> Option<Vec<usize>> {
     let [at] = groups else { return None };
     let Some(Column::Ints(ints)) = batch.columns.get(*at) else { return None };
     ints.runs()?;
@@ -159,6 +164,11 @@ fn run_ends(batch: &Batch, groups: &[usize], rows: Option<&[usize]>) -> Option<V
             })
             .collect(),
     )
+}
+
+/// The place `r` of a batch as a row of a selection: every place fits.
+fn place(r: usize) -> u32 {
+    u32::try_from(r).unwrap_or(u32::MAX)
 }
 
 /// A group of a grouping: one held, or one partly made, by its place.
@@ -243,15 +253,15 @@ impl Groups {
     /// past the work area are written, by batch, in `work`, for their
     /// groups to be made after, or their groups made partly, written as
     /// pieces in `work` once those are full.
-    fn feed(&mut self, (batch, rows): (&Batch, Option<&[usize]>), numbers: Numbers<'_>, how: Grouping<'_>, work: &mut Work) -> Result<()> {
+    fn feed(&mut self, (batch, rows): (&Batch, Option<&[u32]>), numbers: Numbers<'_>, how: Grouping<'_>, work: &mut Work) -> Result<()> {
         let lanes = lanes(&how.read.taken, batch, rows);
         let mut segment: Segment = (Vec::new(), Vec::new());
         // Of a grouping by one column of runs, a row of the run of the row
         // before it goes to that row's group, no key made.
         let mut ends = run_ends(batch, &how.read.groups, rows).into_iter().flatten();
         let (mut boundary, mut last) = (0_usize, None);
-        for n in 0..rows.map_or(batch.rows, <[usize]>::len) {
-            let r = rows.map_or(Some(n), |rows| rows.get(n).copied()).unwrap_or(n);
+        for n in 0..rows.map_or(batch.rows, <[u32]>::len) {
+            let r = crate::storage::sel::nth(rows, n);
             if n >= boundary {
                 boundary = ends.next().unwrap_or(n.saturating_add(1));
             } else if let Some(target) = last {

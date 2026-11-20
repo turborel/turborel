@@ -119,6 +119,6 @@ impl Out {
 
 /// The places in a batch of the rows a filter kept of it, `rows`, or of
 /// all its `count` rows.
-pub(super) fn kept_rows(rows: Option<Vec<usize>>, count: usize) -> Vec<usize> {
-    rows.unwrap_or_else(|| (0..count).collect())
+pub(super) fn kept_rows(rows: Option<crate::storage::Sel>, count: usize) -> Vec<usize> {
+    crate::storage::sel::places_of(rows, count)
 }

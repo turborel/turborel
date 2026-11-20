@@ -14,11 +14,8 @@
 //! engine with its own concurrency control (say, multi-versioning) can show
 //! each transaction what it should see.
 //!
-//! Two engines are built in, one code (`engine/rows.rs`, RULES.md D31):
-//! "rowstore", the default, and "columnstore", which freezes its tables'
-//! rows into groups of each column's values. Both isolate transactions
-//! themselves, with versions, and undo their own changes; a database made
-//! with `Database::new` keeps them in memory.
+//! Two engines of one code are built in (`engine/rows.rs`, RULES.md D31),
+//! "rowstore", the default, and "columnstore", freezing rows by column.
 
 mod batch;
 mod condition;
@@ -30,7 +27,10 @@ mod region;
 mod rows;
 mod split;
 
-pub use batch::{BATCH_ROWS, Batch, Batches, Cell, Coded, Column, FIRST_BATCH_ROWS, Floats, Ints, Nulls, Ramp, Texts, batches_of};
+pub use batch::{
+    BATCH_ROWS, Batch, Batches, Bools, Cell, Coded, Column, Datetimes, FIRST_BATCH_ROWS, Floats, Ints, Mask, Nulls, Ramp, Sel, Texts,
+    batches_of, mask, sel,
+};
 pub use condition::{Condition, Conjunct, Conjunction};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;

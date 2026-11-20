@@ -161,7 +161,7 @@ impl PhysicalPlanner<'_> {
         let limits = (self.setting(DP_BUDGET), self.setting(LINEARIZED_RELATIONS));
         let algorithm = adaptive(&mut space, limits);
         let Some(best) = space.chosen(graph.all(), wanted) else { return Outcome::Greedy };
-        if best.cost >= self.db.cost().reorder_gain * written {
+        if best.cost >= self.weights().reorder_gain * written {
             return Outcome::Kept;
         }
         let cx = Context { query: &query, model: &model, space: &space, want };

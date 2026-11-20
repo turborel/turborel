@@ -48,6 +48,7 @@ pub mod graph;
 pub mod hash;
 pub mod index;
 pub mod json;
+pub mod kernels;
 pub mod lexer;
 pub mod log;
 pub mod logical;

@@ -40,7 +40,7 @@ pub const PARALLEL: [Mutation; 13] = [
         package: Package::Core,
         breaks: "a filter over a table split into morsels keeps every row its scan reads",
         file: "src/exec/parallel/pipeline.rs",
-        original: "steps: vec![Step::Filter(cond.clone())]",
+        original: "steps: cond.map(|c| Step::Filter(c.clone())).into_iter().collect()",
         replacement: "steps: Vec::new()",
         integration: &[SAME_ROWS],
         unit: &[],

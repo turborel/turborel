@@ -42,7 +42,7 @@ impl PhysicalPlanner<'_> {
         self.db.index_of(&choice.read.index).ok()?.envelopes()?;
         let ix = self.db.catalog.indexes(read.table).into_iter().find(|ix| self.traversable(ix, binding.outer))?;
         let probed = self.db.catalog.indexes(&choice.read.table).into_iter().find(|p| p.name == choice.read.index)?;
-        let (outer_stats, inner_stats) = (self.db.statistics(read.table)?, self.db.statistics(&choice.read.table)?);
+        let (outer_stats, inner_stats) = (self.statistics(read.table)?, self.statistics(&choice.read.table)?);
         let (from, to) = (ix.columns.first().copied()?, probed.columns.first().copied()?);
         let each = cost_of(self.db.storage_of(&choice.read.table).ok()?.row_count())
             * (1.0_f64 - inner_stats.nulls(to).unwrap_or(0.0_f64))
@@ -73,17 +73,17 @@ impl PhysicalPlanner<'_> {
     /// traversal saves, as the pairs' fetches of the inner table are the
     /// same either way.
     fn probes_cost(&self, outer: &LogicalPlan, read: &Read<'_>, choice: &Choice) -> Option<f64> {
-        let model = self.db.cost();
+        let model = self.weights();
         let inner = cost_of(self.db.storage_of(&choice.read.table).ok()?.row_count());
         let scan = self.db.storage_of(read.table).ok()?.scan_cost(read.needed);
-        Some(self.rows_of(outer)? * model.index_descent * (inner + 1.0_f64).log2() + scan)
+        Some(self.rows_of(outer) * model.index_descent * (inner + 1.0_f64).log2() + scan)
     }
 
     /// Every entry of both trees compared, the outer rows of the pairs
     /// fetched, and of an outer join the outer table read again for the
     /// rows no pair kept.
     fn traversal_cost(&self, read: &Read<'_>, choice: &Choice) -> Option<f64> {
-        let model = self.db.cost();
+        let model = self.weights();
         let storage = self.db.storage_of(read.table).ok()?;
         let outer = cost_of(storage.row_count());
         let inner = cost_of(self.db.storage_of(&choice.read.table).ok()?.row_count());

@@ -50,7 +50,7 @@ fn sorted(keys: &[SortKey], input: Batches, work: &mut Work) -> Result<RowIter> 
     let (mut held, mut runs) = (Held::default(), Vec::new());
     for kept in input {
         let (batch, rows) = kept?;
-        let rows = rows.unwrap_or_else(|| (0..batch.rows).collect());
+        let rows = crate::storage::sel::places_of(rows, batch.rows);
         if let Some(k) = keys.iter().find(|k| k.column >= batch.columns.len()).filter(|_| !rows.is_empty()) {
             return Err(broken(&format!("sort column {} is not in the rows sorted", k.column)));
         }
@@ -207,7 +207,9 @@ fn cell_cmp(x: Cell<'_>, y: Cell<'_>) -> Ordering {
             }
         }
         (Cell::Value(v), Cell::Value(w)) => sort_cmp(v, w),
-        (Cell::Exact(..) | Cell::Value(_) | Cell::Approx(_) | Cell::Text(_) | Cell::Null, _) => sort_cmp(&x.to_value(), &y.to_value()),
+        (Cell::Exact(..) | Cell::Value(_) | Cell::Approx(_) | Cell::Text(_) | Cell::Datetime(_) | Cell::Bool(_) | Cell::Null, _) => {
+            sort_cmp(&x.to_value(), &y.to_value())
+        }
     }
 }
 

@@ -48,7 +48,7 @@ use probe::Kind;
 /// outer join.
 pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
     match plan {
-        Plan::Product { left, right } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => Some((left, right)),
+        Plan::Product { left, right, .. } | Plan::HashJoin { left, right, .. } | Plan::OuterJoin { left, right, .. } => Some((left, right)),
         Plan::SeqScan { .. }
         | Plan::Nearest(_)
         | Plan::IndexScan { .. }
@@ -204,7 +204,7 @@ fn no_join(_plan: Plan, _db: &Arc<State>, _tx: TxId) -> Result<Batches> {
 ///
 /// As `batches`.
 fn product_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
-    let Plan::Product { left, right } = plan else { return no_join(plan, db, tx) };
+    let Plan::Product { left, right, .. } = plan else { return no_join(plan, db, tx) };
     nested::multiplied((*left, *right), db, tx)
 }
 
@@ -267,11 +267,10 @@ fn narrow_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// The rows of `batches`, those a filter kept of each, each of `width`
 /// columns, the values of a batch's vectors at `columns`, the others null.
-pub(super) fn rows_of(batches: Batches, columns: Vec<usize>, width: usize) -> RowIter {
+pub(in crate::exec) fn rows_of(batches: Batches, columns: Vec<usize>, width: usize) -> RowIter {
     Box::new(batches.flat_map(move |kept| match kept {
         Ok((batch, rows)) => {
-            let made: Vec<Result<Row>> = rows
-                .unwrap_or_else(|| (0..batch.rows).collect())
+            let made: Vec<Result<Row>> = crate::storage::sel::places_of(rows, batch.rows)
                 .into_iter()
                 .map(|r| {
                     let mut row = vec![Value::Null; width];
@@ -320,7 +319,7 @@ fn in_order(plan: &Plan) -> bool {
         Plan::SeqScan { order, .. } => !order.is_empty(),
         Plan::Filter { input, .. } | Plan::Project { input, .. } => in_order(input),
         Plan::Product { left, .. } | Plan::HashJoin { left, .. } | Plan::OuterJoin { left, .. } => in_order(left),
-        Plan::Append { left, right } => in_order(left) || in_order(right),
+        Plan::Append { left, right, .. } => in_order(left) || in_order(right),
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
@@ -372,8 +371,8 @@ mod tests {
         };
         let values = || Box::new(Plan::Values { rows: Vec::new(), detail: String::new() });
         assert!(!in_order(&scan()));
-        assert!(in_order(&Plan::Append { left: scan(), right: values() }));
-        assert!(in_order(&Plan::Append { left: values(), right: scan() }));
-        assert!(!in_order(&Plan::Append { left: scan(), right: scan() }));
+        assert!(in_order(&Plan::Append { left: scan(), right: values(), est: 0.0_f64 }));
+        assert!(in_order(&Plan::Append { left: values(), right: scan(), est: 0.0_f64 }));
+        assert!(!in_order(&Plan::Append { left: scan(), right: scan(), est: 0.0_f64 }));
     }
 }

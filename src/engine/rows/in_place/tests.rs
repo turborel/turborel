@@ -11,7 +11,7 @@ use crate::engine::rows::{RowTable, TableFiles, TableOptions, key};
 use crate::error::Code;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::log::MemoryLog;
-use crate::storage::{Row, RowId, TableStorage};
+use crate::storage::{Ramp, Row, RowId, TableStorage};
 use crate::txn::{NO_TRANSACTION, TxId};
 use crate::value::{DataType, Decimal, Spelled, Value};
 
@@ -58,7 +58,7 @@ pub(in crate::engine::rows) fn scanned(table: &Arc<RowTable>, tx: TxId, columns:
 fn in_place(table: &Arc<RowTable>, tx: TxId, columns: &[usize]) -> Vec<Vec<String>> {
     let reader = table.reader(tx).unwrap();
     let mut read = Vec::new();
-    for batch in Arc::clone(table).gathered_in(reader, columns, vec![(0, None)]) {
+    for batch in Arc::clone(table).gathered_in((reader, Ramp::default()), columns, vec![(0, None)]) {
         let batch = batch.unwrap();
         read.extend((0..batch.rows).map(|r| (0..columns.len()).map(|c| batch.cell(c, r).to_value().to_string()).collect()));
     }
@@ -112,6 +112,6 @@ fn a_malformed_version_fails_a_scan_in_place() {
     let ids = filled(&table, 40);
     table.tree.replace(&key(ids[30]), &[0xff]).unwrap();
     let reader = table.reader(NO_TRANSACTION).unwrap();
-    let failed = Arc::clone(&table).gathered_in(reader, &[0], vec![(0, None)]).find_map(Result::err);
+    let failed = Arc::clone(&table).gathered_in((reader, Ramp::default()), &[0], vec![(0, None)]).find_map(Result::err);
     assert_eq!(failed.map(|e| e.code), Some(Code::Corrupt));
 }

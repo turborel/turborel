@@ -1,8 +1,10 @@
 //! \[EXTENSION\] ALTER TABLE [ISO/IEC 9075:1992 §11.10]: ADD COLUMN
 //! [§11.11] and DROP COLUMN [§11.15]; ALTER COLUMN [§11.12]
-//! (`db/defaults.rs`); ADD and DROP of a table constraint [§11.16, §11.17]
-//! (`db/alter/constraints.rs`); and the table's storage
-//! (`db/alter/storage.rs`); in a transaction (`db/ddl.rs`).
+//! (`db/defaults.rs`), its nullability and data type [ISO/IEC 9075-2:2023
+//! §11.15, §11.16, §11.19] (`nullability.rs`, `retype.rs`); ADD and DROP
+//! of a table constraint [§11.16, §11.17] (`db/alter/constraints.rs`); the
+//! table's storage (`db/alter/storage.rs`); and RENAME TO (`renamed.rs`);
+//! in a transaction (`db/ddl.rs`).
 //!
 //! A column added or dropped gives the table a new generation of its storage
 //! (`TableDesc::generation`), and its rows are copied there, each with the
@@ -25,14 +27,18 @@ mod columns;
 mod constraints;
 mod depending;
 mod identity;
+mod nullability;
 mod periods;
 mod rename;
+mod renamed;
+mod retype;
 mod scope;
 mod storage;
 mod truncate;
 mod versioning;
 
 pub(super) use depending::{Cause, Dependent, depends};
+pub(super) use renamed::{logged_rename, renamed_by, renamed_to};
 pub(super) use storage::value_of;
 
 use std::cmp::Ordering;
@@ -103,13 +109,17 @@ pub(super) enum Reshape {
     /// period, two columns added last, if none; else removed, at these
     /// positions, the second's once the first is gone.
     Two(Option<[usize; 2]>),
+    /// [ISO/IEC 9075-2:2023 §11.19 GR1] The column at this position of a
+    /// new declared type, its values assigned to it as they are copied
+    /// (`db/ddl.rs`).
+    Retype(usize),
 }
 
 impl Reshape {
     /// `row`, reshaped.
     pub(super) fn row(self, mut row: Row) -> Row {
         match self {
-            Reshape::Keep => {}
+            Reshape::Keep | Reshape::Retype(_) => {}
             Reshape::Append => row.push(Value::Null),
             Reshape::Remove(at) => {
                 if at < row.len() {
@@ -127,7 +137,7 @@ impl Reshape {
         let gone = match self {
             Reshape::Remove(gone) => gone,
             Reshape::Two(Some([first, second])) => return Reshape::Remove(first).moved(at).and_then(|m| Reshape::Remove(second).moved(m)),
-            Reshape::Keep | Reshape::Append | Reshape::Two(None) => return Some(at),
+            Reshape::Keep | Reshape::Append | Reshape::Two(None) | Reshape::Retype(_) => return Some(at),
         };
         match at.cmp(&gone) {
             Ordering::Less => Some(at),
@@ -180,16 +190,8 @@ impl State {
                 let (dropped, built, reshape) = self.alter_columns((qn, names, zone), action, (made, epochs))?;
                 Ok((dropped, built, Some(reshape)))
             }
-            AlterAction::AlterColumn { column, at, action: a @ (AlterColumnAction::AddScope(_) | AlterColumnAction::DropScope(_)) } => {
-                Ok((self.alter_scope((qn, names), column, a).or_at(*at)?, Made::default(), None))
-            }
-            AlterAction::AlterColumn { column, at, action: AlterColumnAction::Rename(to) } => {
-                self.rename_column(qn, column, to).or_at(*at)?;
-                Ok((Dropped::default(), Made::default(), None))
-            }
-            AlterAction::AlterColumn { column, at, action } => {
-                self.alter_column((qn, zone), (column, *at), (action, epochs)).or_at(*at)?;
-                Ok((Dropped::default(), Made::default(), None))
+            AlterAction::AlterColumn { column, at, action: a } => {
+                self.column_action((qn, names, zone), (column, *at), (a, action, made, epochs)).or_at(*at)
             }
             AlterAction::AddConstraint(c) => Ok((Dropped::default(), self.add_constraint((qn, names), c, (made, tx)).or_at(c.at)?, None)),
             AlterAction::DropConstraint { name, behavior } => {
@@ -212,6 +214,7 @@ impl State {
             AlterAction::Truncate { restart } => self.truncate_rows(qn, *restart, (action, made, epochs)),
             AlterAction::AttachPartition { table, bound } => self.attach_partition((qn, names, zone), (table, bound), (made, tx)),
             AlterAction::DetachPartition(table) => self.detach_partition((qn, names), table, tx),
+            AlterAction::RenameTable { to, generation } => self.rename_table(qn, (to, *generation), made),
         };
         // [EXTENSION] The property graphs that read it (§4.1 R4.7).
         let (mut dropped, mut built, reshape) = altered?;
@@ -222,6 +225,34 @@ impl State {
         dropped.absorb(self.graphs_altered(qn, action)?);
         self.refresh_sys_graphs()?;
         Ok((dropped, built, reshape))
+    }
+
+    /// [ISO/IEC 9075:1992 §11.12] The `<alter column action>` `a` of
+    /// column `column` of `qn`, the action `action`, written at `at`.
+    fn column_action(
+        &mut self,
+        (qn, names, zone): (&QualifiedName, &str, i16),
+        (column, at): (&str, usize),
+        (a, action, made, epochs): (&AlterColumnAction, &AlterAction, Option<&Made>, &mut Epochs),
+    ) -> Result<(Dropped, Made, Option<Reshape>)> {
+        match a {
+            AlterColumnAction::AddScope(_) | AlterColumnAction::DropScope(_) => {
+                Ok((self.alter_scope((qn, names), column, a)?, Made::default(), None))
+            }
+            AlterColumnAction::Rename(to) => self.rename_column(qn, column, to).map(|()| (Dropped::default(), Made::default(), None)),
+            AlterColumnAction::SetNotNull | AlterColumnAction::DropNotNull => {
+                Ok((self.alter_nullability((qn, names), column, a)?, Made::default(), None))
+            }
+            AlterColumnAction::SetDataType(t) => self.retype_column((qn, names), (column, t), (made, action)),
+            AlterColumnAction::SetDefault(_)
+            | AlterColumnAction::DropDefault
+            | AlterColumnAction::Identity { .. }
+            | AlterColumnAction::DropIdentity
+            | AlterColumnAction::DropExpression => {
+                self.alter_column((qn, zone), (column, at), (a, epochs))?;
+                Ok((Dropped::default(), Made::default(), None))
+            }
+        }
     }
 
     /// [ISO/IEC 9075-2:2023 §11.44 GR2] The columns of `qn` of collation
@@ -269,6 +300,7 @@ impl State {
             | AlterAction::Truncate { .. }
             | AlterAction::AttachPartition { .. }
             | AlterAction::DetachPartition(_)
+            | AlterAction::RenameTable { .. }
             | AlterAction::Storage(_) => {
                 return Err(api("[DESIGN] not a column action"));
             }
@@ -480,7 +512,8 @@ impl State {
                 | AlterAction::Truncate { .. }
                 | AlterAction::AttachPartition { .. }
                 | AlterAction::DetachPartition(_)
-                | AlterAction::Storage(_) => api("[DESIGN] a default, a constraint, the storage or its rows change no view"),
+                | AlterAction::RenameTable { .. }
+                | AlterAction::Storage(_) => api("[DESIGN] a default, a type, a constraint, the storage or its rows change no view"),
             });
         };
         let mut gone: Vec<QualifiedName> = broken.clone();

@@ -61,11 +61,11 @@ pub(super) fn filtered(plan: Plan, conds: Vec<Cond>, with: &Filtered<'_>) -> Bui
     let kept = geometric::kept(&conds, with.known, with.windowed);
     let plan = match and_all(conds) {
         Some(c) => {
-            let est = Some((with.read * kept).min(with.most));
+            let est = (with.read * kept).min(with.most);
             let c = judged_by_sets(c);
             let shown = with.shown.text(|names| render_cond(&c, names));
             let detail = if with.note.is_empty() { shown } else { format!("{shown}  {}", with.note) };
-            Plan::Filter { detail, cond: c, est, input: Box::new(plan) }
+            Plan::Filter { detail, cond: c, est, of_read: true, input: Box::new(plan) }
         }
         None => noted(plan, with.note),
     };
