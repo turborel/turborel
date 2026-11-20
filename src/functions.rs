@@ -25,6 +25,13 @@ use crate::value::{CompOp, DataType, Value};
 
 mod accumulator;
 pub use accumulator::Accumulator;
+mod columnar;
+pub use columnar::Columnar;
+pub(crate) use columnar::{
+    Kind as ColumnarKind, NO_FLOATS, Summed, avg_acc, avg_finished, count_acc, count_finished, extreme_acc, plus_float, sum_acc,
+    sum_finished,
+};
+pub(crate) use floats::Wide;
 mod any_value;
 pub use any_value::ANY_VALUE;
 pub(crate) use any_value::GroupValue;
@@ -550,6 +557,14 @@ pub trait AggregateFunction: Send + Sync {
     /// not. None where it takes none, where it is refused \[GR4\]. By
     /// default none.
     fn parameter_type(&self, _position: usize) -> Option<ParameterType> {
+        None
+    }
+    /// \[DESIGN\] (RULES.md D356) Which built-in set function it is, if it
+    /// is one a grouping keeps in columns of states, a slot a group, in
+    /// place of an accumulator a group. Only the core's COUNT, SUM, AVG,
+    /// MAX and MIN tell one, as only the core makes a `Columnar`. Default:
+    /// none.
+    fn columnar(&self) -> Option<Columnar> {
         None
     }
 }

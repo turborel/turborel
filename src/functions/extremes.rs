@@ -1,6 +1,7 @@
 //! MAX and MIN, the set functions that keep the best value of a group
 //! [X3.135-1986 §5.8].
 
+use super::columnar::{Columnar, Kind};
 use super::{Accumulator, AggregateFunction, floats, ints};
 use crate::bytes::Reader;
 use crate::error::{Code, Result, SqlError};
@@ -25,17 +26,28 @@ impl AggregateFunction for Extreme {
         arg.ok_or_else(|| SqlError::new(Code::SyntaxRule, format!("[X3.135-1986 §5.8 F] {} takes an argument", self.name())))
     }
     fn accumulator(&self, result: DataType) -> Box<dyn Accumulator> {
-        Box::new(ExtremeAcc { best: Value::Null, max: self.max, written: !matches!(result, DataType::Extension(_)) })
+        ExtremeAcc::of(self.max, Value::Null, &result)
+    }
+    fn columnar(&self) -> Option<Columnar> {
+        Some(Columnar(if self.max { Kind::Max } else { Kind::Min }))
     }
 }
 
 /// The best value so far; whether it keeps the greatest; and whether its
 /// state is written (`Accumulator::write_state`): not of a plug-in's type,
 /// whose values are read back only through the types registered.
-struct ExtremeAcc {
+pub(super) struct ExtremeAcc {
     best: Value,
     max: bool,
     written: bool,
+}
+
+impl ExtremeAcc {
+    /// MAX's accumulator, if `max`, or MIN's, of result type `result`, the
+    /// best value so far `best`, null of none.
+    pub(super) fn of(max: bool, best: Value, result: &DataType) -> Box<dyn Accumulator> {
+        Box::new(ExtremeAcc { best, max, written: !matches!(result, DataType::Extension(_)) })
+    }
 }
 
 impl Accumulator for ExtremeAcc {
