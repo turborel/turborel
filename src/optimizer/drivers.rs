@@ -38,6 +38,19 @@ fn restarted(optimizer: &Optimizer, mut plan: LogicalPlan, ctx: &RuleContext<'_>
     (plan, super::DEFAULT_MAX_PASSES)
 }
 
+/// `plan`, a plan's debug text, its subqueries' numbers taken out: each
+/// rewrite that makes a guard numbers its subquery anew.
+fn unnumbered(plan: &str) -> String {
+    let mut out = String::new();
+    let mut rest = plan;
+    while let Some(at) = rest.find("id: ") {
+        out.push_str(&rest[..at]);
+        rest = rest[at + 4..].trim_start_matches(|c: char| c.is_ascii_digit());
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Queries that fire every built-in rule: inlining, unnesting, folding,
 /// simplifying, merging filters, pushing them through projections,
 /// DISTINCT, products and outer joins, factoring ORs, transitivity,
@@ -76,7 +89,7 @@ fn the_local_fixpoint_reaches_the_same_plan() {
         let ctx = RuleContext { db: &st };
         let (local, trace) = st.optimizer.optimize(bound.clone(), &ctx);
         let (restarted_plan, passes) = restarted(&st.optimizer, bound, &ctx);
-        assert_eq!(format!("{local:?}"), format!("{restarted_plan:?}"), "{sql}");
+        assert_eq!(unnumbered(&format!("{local:?}")), unnumbered(&format!("{restarted_plan:?}")), "{sql}");
         assert!(!trace.is_empty() || passes == 1, "{sql}");
     }
 }
