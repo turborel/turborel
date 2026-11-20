@@ -8705,11 +8705,15 @@ deciding entries itself (D85) and a located one stay serial.
 
 A fixed small work area made large operators spill while the budget
 sat unused. An operator now takes a grant as it starts
-(`spill/grant.rs`), half of the budget left free, at most
-MEMORY.WORK_BYTES, default 256 MiB, reserved until it ends. Each grant
-after takes half of what is left, so the grants of all statements
-together never pass the budget however many sessions run, and they
-shrink as sessions grow. Where half the free budget is under 4 MiB an
+(`spill/grant.rs`), at most MEMORY.WORK_BYTES, default 256 MiB,
+reserved until it ends. Grants share half the budget, and the other
+half is kept for what reserves beside them, spill areas' pools first,
+so a statement holding hundreds of operators at once, as an XMLMAP of
+the catalog does, still finds room to spill. A grant is half of the
+grants' share left free. Each grant after takes half of what is left, so
+the grants of all statements together never pass their share however
+many sessions run, and they shrink as sessions grow. Where half of that
+share left free is under 4 MiB an
 operator holds 4 MiB unreserved, as every operator did before grants,
 and a ceiling set below 4 MiB is held as set, so a session can still
 ask for small areas. A spill area's pool is at most 4 MiB, as rows are

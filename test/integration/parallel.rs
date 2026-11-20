@@ -8,6 +8,7 @@ use turborel::db::{Database, Session};
 use turborel::error::Code;
 use turborel::params::Params;
 use turborel::threads::JobPolicy;
+use turborel::value::{Decimal, Value};
 
 use crate::common::{exec, rows};
 
@@ -20,6 +21,9 @@ const ROWS: i64 = 6000;
 fn tables() -> (Database, Session) {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
+    // Four workers whatever the machine's cores, so a degree of 4 is not
+    // cut to fewer.
+    db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE R (K INTEGER PRIMARY KEY, G INTEGER, S VARCHAR(20), N INTEGER)
