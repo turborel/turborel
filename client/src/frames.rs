@@ -87,7 +87,10 @@ impl<S: Read + Write> Connection<S> {
             Reply::Description(_) => (self.active, self.warning) = (true, None),
             // A locator is valid within a transaction alone.
             Reply::Rows(_) | Reply::Suspended | Reply::Lob(_) => self.active = true,
-            Reply::Challenge(_) | Reply::Ready { .. } | Reply::Prepared { .. } | Reply::Notice(_) | Reply::Status { .. } | Reply::Pong => {}
+            // Ready ends a login or a ChangeUser, which renews the session
+            // as Reset does, its transaction rolled back.
+            Reply::Ready { .. } => (self.active, self.warning) = (false, None),
+            Reply::Challenge(_) | Reply::Prepared { .. } | Reply::Notice(_) | Reply::Status { .. } | Reply::Pong => {}
         }
         reply
     }
