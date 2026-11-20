@@ -30,6 +30,7 @@
 mod bounds;
 mod composite;
 mod groups;
+mod injected;
 mod joins;
 mod keys;
 mod lineage;
@@ -51,6 +52,7 @@ use crate::storage::cost_of;
 
 pub(super) use composite::Member;
 pub(in crate::physical) use groups::cardenas;
+pub use injected::Injected;
 pub(super) use joins::{Classes, find};
 
 // ---------------------------------------------------------------------------

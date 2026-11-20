@@ -53,7 +53,10 @@ fn inner(rows: &[f64], edges: &[(usize, usize, f64)]) -> (Vec<Shape>, Model) {
         spans: (0..n).map(|r| (r, 1)).collect(),
         cost: CostModel::default(),
         want_class: None,
+        injected: Vec::new(),
+        implied: Vec::new(),
     };
+    let model = Model { implied: model.key_classes(), ..model };
     (shapes, model)
 }
 
@@ -191,4 +194,20 @@ fn the_switch_adapts_to_the_budget() {
     let mut guided = Space::new(&g, &model);
     assert_eq!(adaptive(&mut guided, (10_usize, 8_usize)), Algorithm::GooDp);
     assert!(guided.chosen(g.all(), Order::None).unwrap().cost >= optimum * 0.999_999_f64);
+}
+
+/// Verifies: [DESIGN] RULES.md D387: the keys of a chain of inner joins
+/// make one class of the columns they make equal, and two relations it
+/// joins through a third take the key it implies, the left's column first;
+/// a chain with an outer join takes none.
+#[test]
+fn a_class_implies_keys_of_relations_no_conjunct_joins() {
+    let (_, model) = inner(&[10.0_f64, 10.0_f64, 1000.0_f64], &[(0, 2, 10.0_f64), (1, 2, 10.0_f64)]);
+    assert_eq!(model.implied, vec![vec![0, 1, 2]]);
+    assert_eq!(model.implied_keys((bit(1), bit(0))), vec![(1, 0)]);
+    assert_eq!(model.implied_keys((bit(0), bit(1) | bit(2))), vec![(0, 1)]);
+    let mut outer = model;
+    outer.kinds = vec![Kind::Left, Kind::Inner];
+    outer.implied = outer.key_classes();
+    assert_eq!(outer.implied_keys((bit(0), bit(1))), Vec::new());
 }

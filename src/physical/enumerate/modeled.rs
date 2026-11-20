@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 
+use super::bits::bit;
 use super::extract::Query;
 use super::model::{Conj, Model, Order, Pred, Rel};
 use crate::logical::LogicalPlan;
@@ -94,8 +95,26 @@ impl PhysicalPlanner<'_> {
         let Classed { orders, classes, .. } = classed;
         let leaves: Vec<&LogicalPlan> = q.leaves.iter().map(|l| &l.plan).collect();
         let joins = self.estimating(|e| e.asked(|| e.keyed_classes(&leaves, &classes)));
-        let mut model = Model { rels: Vec::new(), conjuncts, preds, kinds, classes: joins, orders, spans, cost, want_class };
+        let injected = self
+            .injected_sets(q.leaves.iter().map(|l| &l.plan))
+            .into_iter()
+            .map(|(rels, rows)| (rels.into_iter().fold(0, |s, r| s | bit(r)), rows))
+            .collect();
+        let mut model = Model {
+            rels: Vec::new(),
+            conjuncts,
+            preds,
+            kinds,
+            classes: joins,
+            orders,
+            spans,
+            cost,
+            want_class,
+            injected,
+            implied: Vec::new(),
+        };
         model.rels = (0..q.leaves.len()).map(|r| self.rel(q, r, (&model, want))).collect::<Option<_>>()?;
+        model.implied = model.key_classes();
         Some(model)
     }
 

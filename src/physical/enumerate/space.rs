@@ -134,12 +134,16 @@ pub(super) struct Space<'m> {
     pub(super) trees: Vec<Tree>,
     /// The joins tried that the operators allowed: the work done.
     pub(super) pairs: usize,
+    /// Whether it costs the FROM clause's tree, which is planned as
+    /// written, a product where no conjunct reads both operands, so no
+    /// join of it judges the keys its classes imply (RULES.md D387).
+    pub(super) written: bool,
 }
 
 impl<'m> Space<'m> {
     /// The table of `graph`'s relations alone, each with its reads.
     pub(super) fn new(graph: &'m Graph, model: &'m Model) -> Space<'m> {
-        let mut space = Space { graph, model, table: HashMap::default(), trees: Vec::new(), pairs: 0 };
+        let mut space = Space { graph, model, table: HashMap::default(), trees: Vec::new(), pairs: 0, written: false };
         for rel in 0..graph.n {
             let upper = model.rels.get(rel).map_or(f64::INFINITY, |r| r.upper);
             let mut entry = Entry { rows: model.rows(rel), upper, cands: Vec::new() };
@@ -198,7 +202,7 @@ impl<'m> Space<'m> {
     /// The rows of the join of `s1` and `s2` applying `applied`, and its
     /// bound, if both have entries: the set's, if it has one already, so
     /// that every plan of a set is costed by the same rows; else of this
-    /// pair, the rows at most the bound.
+    /// pair, the rows at most the bound, unless they were given.
     pub(super) fn rows_of(&self, applied: &Applied) -> Option<(f64, f64)> {
         let s = applied.left | applied.right;
         if let Some(entry) = self.table.get(&s) {
@@ -209,6 +213,11 @@ impl<'m> Space<'m> {
         let kind = applied.op.map_or(Kind::Inner, |o| self.model.kind_of(o));
         let keys = self.keys(applied, (applied.left, applied.right));
         let upper = self.model.joined_upper((applied.left, left.upper), (applied.right, right.upper), (kind, &keys));
+        // Rows given in place of the estimate are true, whatever the bound
+        // (RULES.md D377).
+        if self.model.injected.iter().any(|&(given, _)| given == s) {
+            return Some((rows, upper.max(rows)));
+        }
         Some((rows.min(upper), upper))
     }
 

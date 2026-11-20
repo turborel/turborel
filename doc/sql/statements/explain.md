@@ -4,13 +4,13 @@
 
 ## NAME
 
-EXPLAIN: show how a query is planned *(extension)*
+EXPLAIN: show how a query is planned, or run it and count what each step did *(extension)*
 
 ## SYNOPSIS
 
 ```
 <explain statement> ::=
-    EXPLAIN <cursor specification>
+    EXPLAIN [ ANALYZE ] <cursor specification>
 ```
 
 ## DESCRIPTION
@@ -29,7 +29,9 @@ plan so made notes the order taken, as nested pairs of its tables, and
 the algorithm that found it, DPccp or DPhyp of a query small enough to
 search whole, linearized DP or GOO-DP of a larger one. A plan that keeps
 the FROM clause's order, as one estimated no cheaper by
-PLANNER.REORDER_GAIN does, has no note. A merge join shows as
+PLANNER.REORDER_GAIN does, has no note. Two tables equalities join only
+through a third, as `A.K = C.K AND B.K = C.K` do, may be joined first,
+by the key those imply, `A.K = B.K`, never by a product. A merge join shows as
 `MergeJoin`, or `LeftMergeJoin` of a LEFT join, with its key.
 
 A part of the physical plan run on several threads at once is headed
@@ -56,17 +58,50 @@ EXPLAIN is not a key word. A table may be named EXPLAIN, and EXPLAIN is
 read as this statement only before SELECT, VALUES, TABLE, WITH or a
 parenthesis.
 
+### EXPLAIN ANALYZE
+
+EXPLAIN ANALYZE runs the query, reads all its rows and drops them. It
+shows the physical plan, and each operator's line is followed by what
+the operator did. An operator whose line has no estimate gets one first,
+as `(est. rows=E)`. Then comes `(actual rows=N)`, the rows it gave.
+`loops=L` is added when it was opened more than once, as the inner input
+of a nested loop is. An index nested loop adds `probes=P`, one probe for
+each row of its outer input. An operator that never ran shows
+`(never run)`, as does a scan whose storage counted its table. A last
+line gives the query's rows.
+
+Each operator's time, its inputs' among it, is added as `time=X ms` when
+the database's clock moved while the query ran. A clock that stands
+still, as tests give, shows no time, and so do the examples below. An
+operator of a part run on several threads counts its rows over all the
+threads. Its pipeline's steps have no time of their own.
+
+The query runs in the session's transaction and takes the locks a cursor
+of it would take, so it changes nothing a query would not. A query that
+raises an exception makes EXPLAIN ANALYZE raise it. A program reaches
+the same text by `Session::explain_analyze`, and each operator's line,
+estimate, rows, loops and time by `Session::analyzed`. A program may
+also give the planner its own row counts in place of the estimates, with
+`Session::with_cardinalities`, to test its plans ([The Embedded Library](../../client/03-embedding.md#reading-rows)).
+
+ANALYZE is not a key word either. It is read as this option only right
+after EXPLAIN and before a query's first token. Before a parenthesis it
+is read so only when the next token begins a query too. A table named
+ANALYZE is read as before.
+
 ## RULES
 
 1. The query is one a cursor could be declared for, FOR UPDATE aside, as
    for a query run directly.
 2. It is bound as a query run then would be, so it refers only to tables
    and columns that exist.
+3. EXPLAIN ANALYZE takes only a query. A data change statement after it
+   is refused as after EXPLAIN.
 
 ## PRIVILEGES
 
 Those the query needs. EXPLAIN reads no row, but binding the query
-checks them.
+checks them. EXPLAIN ANALYZE reads the rows, as the query would.
 
 ## ERRORS
 
@@ -74,6 +109,7 @@ checks them.
 |---|---|---|
 | 2A000 | -103 | The query refers to a table or column that does not exist, or is otherwise invalid |
 | 42000 | -104 | Its user lacks a privilege the query needs |
+| any | any | EXPLAIN ANALYZE raises any exception the query raises as it runs |
 
 ## EXAMPLES
 
@@ -381,11 +417,50 @@ OK
 (12 rows)
 ```
 
+A join of SALES and PARTS, run on one thread. Each row of SALES probes
+the index of PARTS's key:
+
+```sql
+SET EXECUTOR.DEGREE = 1;
+EXPLAIN ANALYZE SELECT S.REGION, P.NAME FROM SALES S, PARTS P WHERE P.ID = S.CUSTOMER;
+```
+
+```
+OK
+ PLAN
+--------------------------------------------------------------
+ -- physical:
+ Project S.REGION, P.NAME  (est. rows=4)  (actual rows=4)
+   IndexNestedLoop ANN.PARTS using ANN.PARTS.UNIQUE1 [btree]: S.CUSTOMER = P.ID  (est. rows each=1, cost=82.4)  (actual rows=4, probes=4)
+     SeqScan ANN.SALES  (rows=4, cost=3.7)  (actual rows=4)
+ -- ran: 4 rows
+(5 rows)
+```
+
+A query that stops after its first rows, its scan reading 16 of the
+1000 rows it holds. Read by batches, the scan counts the rows of each
+batch it gave, which may be more than the operator above it took:
+
+```sql
+EXPLAIN ANALYZE SELECT ID FROM PARTS FETCH FIRST 3 ROWS ONLY;
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- physical:
+ Limit fetch 3  (est. rows=3)  (actual rows=3)
+   Project PARTS.ID  (est. rows=1000)  (actual rows=3)
+     SeqScan ANN.PARTS  (rows=1000, cost=900.0)  (actual rows=16)
+ -- ran: 3 rows
+(5 rows)
+```
+
 ## STANDARD
 
 EXPLAIN is an extension of turborel. No part of ISO/IEC 9075 shows how
 a statement is planned. In GET DIAGNOSTICS it is COMMAND_FUNCTION
-`EXPLAIN`, code -14.
+`EXPLAIN`, code -14, with or without ANALYZE.
 
 ## SEE ALSO
 

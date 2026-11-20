@@ -14,6 +14,8 @@ use super::stream::{Batches, filtered, pick, picked};
 use crate::db::State;
 use crate::exec::Runner;
 use crate::logical::{Cond, Expr};
+use crate::physical::NodeCount;
+use crate::storage::Sel;
 use crate::txn::TxId;
 
 /// A step of a pipeline over its batches.
@@ -25,6 +27,9 @@ pub(in crate::exec) enum Shaped {
     Pick(Vec<usize>),
     /// [X3.135-1986 §5.25 GR2] each expression evaluated of its vectors.
     Compute(Vec<Place>),
+    /// \[EXTENSION\] the rows kept counted, a batch at a time, as a
+    /// counted operator's (RULES.md D378).
+    Count(Arc<NodeCount>),
 }
 
 /// The step of a filter by `cond` over batches of `layout`, the columns of
@@ -55,5 +60,13 @@ pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&A
             Box::new(inner.map(move |kept| kept.map(|(batch, rows)| (pick(batch, &picks), rows))))
         }
         Shaped::Compute(places) => computed(inner, places.clone(), Runner::new(db, tx)),
+        Shaped::Count(count) => {
+            let count = Arc::clone(count);
+            Box::new(inner.inspect(move |kept| {
+                if let Ok((batch, rows)) = kept {
+                    count.stepped(u64::try_from(rows.as_ref().map_or(batch.rows, Sel::len)).unwrap_or(u64::MAX));
+                }
+            }))
+        }
     })
 }

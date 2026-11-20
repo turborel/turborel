@@ -81,11 +81,16 @@ impl Space<'_> {
     }
 
     /// The equalities of a column of `l` and one of `r` the join judges,
-    /// each as its left and right column.
+    /// each as its left and right column, an inner join's those its keys
+    /// imply among them (RULES.md D387).
     pub(super) fn keys(&self, applied: &Applied, (l, r): (Set, Set)) -> Vec<(usize, usize)> {
-        let pairs: Vec<(usize, usize)> = match applied.op.and_then(|o| self.model.preds.get(o)).and_then(Option::as_ref) {
-            Some(pred) => pred.keys.clone(),
-            None => applied.conjuncts.iter().filter_map(|&c| self.model.conjuncts.get(c)?.key).collect(),
+        let pairs: Vec<(usize, usize)> = if let Some(pred) = applied.op.and_then(|o| self.model.preds.get(o)).and_then(Option::as_ref) {
+            pred.keys.clone()
+        } else {
+            let stated: Vec<(usize, usize)> = applied.conjuncts.iter().filter_map(|&c| self.model.conjuncts.get(c)?.key).collect();
+            // A join of the FROM clause's tree is planned as written, and
+            // one a conjunct reads is no product (RULES.md D387).
+            if self.written || !applied.conjuncts.is_empty() { stated } else { self.model.implied_keys((l, r)) }
         };
         pairs
             .into_iter()
