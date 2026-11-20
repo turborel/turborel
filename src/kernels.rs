@@ -74,6 +74,13 @@ pub trait Kernels: Send + Sync {
         portable::gather::gather_i64(values, sel, out);
     }
 
+    /// Appends to `out` the hash of each of `values` at `sel`, or of all,
+    /// by `seed`, as a grouping's table hashes a word (RULES.md D356):
+    /// MurmurHash3's finalizer of the value's bits after the seed is added.
+    fn hash_i64(&self, values: &[i64], seed: u64, sel: Option<&[u32]>, out: &mut Vec<u64>) {
+        portable::hash::hash_i64(values, seed, sel, out);
+    }
+
     /// Appends to `out` the values from the `from`th to the `to`th of
     /// `bits` bits packed in `bytes`, as a chunk's frame of reference
     /// keeps them (RULES.md D352), each plus `least`, wrapping: none if
