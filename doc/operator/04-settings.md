@@ -221,13 +221,15 @@ many as the workers, 1 for its own thread alone. The planner runs a
 part on several only if its tables hold at least
 EXECUTOR.PARALLEL_MIN_ROWS rows, so a query of a few rows, as one by a
 key, stays on its own thread. A grouping or DISTINCT of so many
-groups, as ANALYZE's statistics estimate them, that each morsel holds
+groups, as the optimizer estimates them, that each morsel holds
 nearly as many groups as rows runs on several only when enough threads
 share its work. Its morsels' groups are merged a few morsels at a time,
-so it holds about what its groups hold. A scan, grouping or sort of a column
+so it holds about what its groups hold, and a morsel of few groups is
+merged on the statement's thread at once. A scan or sort of a column
 store table stays on it too while EXECUTOR.BATCHES is on, since its
-scan by batch is faster alone; a join or window functions over one
-still run in parallel. A bare COUNT(*) of a row store table stays on
+scan by batch is faster alone; a join, window functions, a grouping or
+DISTINCT over one still run in parallel, a grouping a batch at a time
+on each thread. A bare COUNT(*) of a row store table stays on
 it as well, since its storage counts it faster than any split.
 [EXPLAIN](../sql/statements/explain.md)
 shows the part and its degree. The rows, and their order, are the same
@@ -287,9 +289,9 @@ them a row at a time.
 A grouping or DISTINCT run in parallel groups each morsel apart, then
 merges the groups each morsel made. Of very many groups, each morsel's
 groups are nearly as many as its rows, so the merge costs more than the
-threads save. The planner estimates the groups from the table's
-statistics, and keeps such a grouping, and the scan under it, on the
-statement's thread. A grouping it has no estimate of runs in parallel.
+threads save. The planner takes the groups the optimizer estimates from
+the table's statistics, and keeps such a grouping, and the scan under
+it, on the statement's thread.
 
 ```sql
 CREATE SCHEMA AUTHORIZATION ANN

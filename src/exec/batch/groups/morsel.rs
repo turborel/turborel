@@ -2,7 +2,7 @@
 //! its batches' rows grouped as a grouping by batch groups them
 //! (`groups.rs`), in the executor's table (`exec/table.rs`), each batch's
 //! keys hashed a vector at a time and each set function's states fed in
-//! one loop, no row made; held whole, as a grouping run in parallel charges
+//! one loop, no row made, a run of a column kept as runs taken whole; held whole, as a grouping run in parallel charges
 //! what each morsel's groups hold to its grant once they are made
 //! (`parallel/grouped.rs`).
 
@@ -36,10 +36,17 @@ pub(in crate::exec) fn morsel_groups(
         let rows = rows.as_ref().map(Sel::as_slice);
         let count = rows.map_or(batch.rows, <[u32]>::len);
         hash_rows(&batch, (&read.groups, rows), (seed, runner.kernels()), &mut hashes);
+        // Of a grouping by one column of runs, a row of the run of the row
+        // before it goes to that row's group, no key compared (`run_ends`).
+        let mut ends = super::run_ends(&batch, &read.groups, rows).into_iter().flatten();
+        let (mut boundary, mut g) = (0_usize, 0_u32);
         for (n, &hash) in hashes.iter().enumerate() {
             let r = nth(rows, n);
-            let first_row = number.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
-            let g = table.found_or_made(hash, Key::Row(&batch, &read.groups, r), first_row);
+            if n >= boundary {
+                boundary = ends.next().unwrap_or(n.saturating_add(1));
+                let first_row = number.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+                g = table.found_or_made(hash, Key::Row(&batch, &read.groups, r), first_row);
+            }
             table.take(g, (n, r));
         }
         let lanes = lanes(&read.taken, &batch, rows);

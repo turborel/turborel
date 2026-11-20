@@ -10,6 +10,12 @@
 //! its groups hold and one wave, not every morsel's groups at once. The
 //! last wave finishes each partition's groups, in the order of their first
 //! rows.
+//!
+//! A morsel of few groups beside its rows, as few as the statement's
+//! thread merges while the others group the next morsels, is merged there
+//! straight into one table, with no partition's thread to wake nor table
+//! to make; the morsels after it of many groups take that table to the
+//! partitions first, so each partition still merges its morsels in order.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -26,8 +32,39 @@ use crate::exec::{Runner, broken};
 use crate::storage::Row;
 use crate::txn::TxId;
 
+/// \[DESIGN\] The rows of a morsel each of its groups stands for, on each
+/// thread, at least, for the statement's thread to merge the morsel's
+/// table itself: merging a group costs about what grouping a row or two
+/// does, so the statement's thread merges a morsel's groups in the time the
+/// threads group the rows of the next morsel each.
+const DIRECT_ROWS: usize = 2;
+
 /// A partition's groups between waves, frozen; none before its first.
 type Frozen = Arc<Vec<Mutex<Option<Made>>>>;
+
+/// What a morsel hands over: its groups whole, few beside its rows, for
+/// the statement's thread to merge; or split among the partitions.
+enum Handed {
+    Whole(Made),
+    Parted(Arc<Made>),
+}
+
+/// A grouping's waves as its morsels come: the partitions' groups frozen,
+/// the wave not yet merged, the table the statement's thread merges, and
+/// the bytes each holds of the grant.
+struct Waves<'a> {
+    grouping: &'a Arc<Grouping>,
+    run: (&'a Arc<State>, TxId, usize),
+    limit: &'a Limit,
+    frozen: Frozen,
+    wave: Vec<Arc<Made>>,
+    wave_bytes: usize,
+    parts_bytes: usize,
+    /// Whether the partitions merged a wave.
+    waved: bool,
+    direct: Option<GroupTable>,
+    direct_bytes: usize,
+}
 
 /// The groups of each partition of `grouping`'s pipeline, each finished
 /// with its number, in the order of their first rows, made on up to
@@ -48,30 +85,112 @@ pub(super) fn waved(
         let runner = Runner::new(&db_for, tx);
         let read = making.read.as_ref().ok_or_else(|| broken("a grouping by batch reads no batch"))?;
         let batches = pipeline.morsel_kept(m, (&db_for, tx))?;
-        let made = morsel_groups(read, &making.spec.aggs, batches, (&runner, first_of(&making, m), &making.seed))?.made(PARTS)?;
-        let bytes = made.bytes();
-        Ok((Arc::new(made), bytes))
+        let table = morsel_groups(read, &making.spec.aggs, batches, (&runner, first_of(&making, m), &making.seed))?;
+        if table.len().saturating_mul(DIRECT_ROWS).saturating_mul(degree) <= table.taken {
+            return table.frozen().map(Handed::Whole);
+        }
+        table.made(PARTS).map(|made| Handed::Parted(Arc::new(made)))
     });
     let frozen: Frozen = Arc::new((0..PARTS).map(|_| Mutex::new(None)).collect());
-    let (mut wave, mut wave_bytes, mut parts_bytes) = (Vec::new(), 0_usize, 0_usize);
+    let mut waves = Waves {
+        grouping,
+        run: (db, tx, degree),
+        limit,
+        frozen,
+        wave: Vec::new(),
+        wave_bytes: 0,
+        parts_bytes: 0,
+        waved: false,
+        direct: None,
+        direct_bytes: 0,
+    };
     for morsel in Morsels::start(db, tx, (count, degree), work) {
-        let (made, bytes) = morsel?;
-        if !limit.take(bytes) {
-            return Ok(Held::GaveWay);
-        }
-        wave.push(made);
-        wave_bytes = wave_bytes.saturating_add(bytes);
-        if wave_bytes.saturating_mul(2) < limit.most().saturating_sub(parts_bytes) {
-            continue;
-        }
-        let held = frozen_wave((grouping, &frozen), std::mem::take(&mut wave), (db, tx, degree))?;
-        limit.give(wave_bytes.saturating_add(parts_bytes));
-        (wave_bytes, parts_bytes) = (0, held);
-        if !limit.take(held) {
+        let held = match morsel? {
+            Handed::Whole(made) => waves.direct(&made)?,
+            Handed::Parted(made) => waves.flushed()? && waves.parted(made)?,
+        };
+        if !held {
             return Ok(Held::GaveWay);
         }
     }
-    finished_wave((grouping, &frozen), wave, (db, tx, degree)).map(Held::Kept)
+    waves.finished()
+}
+
+impl Waves<'_> {
+    /// Merges `made`, a morsel's groups whole, into the statement thread's
+    /// table: whether the grant holds what that table holds.
+    ///
+    /// # Errors
+    ///
+    /// As `GroupTable::absorb_whole`.
+    fn direct(&mut self, made: &Made) -> Result<bool> {
+        let grouping = self.grouping;
+        let width = grouping.read.as_ref().map_or(0, |read| read.groups.len());
+        let table = self.direct.get_or_insert_with(|| GroupTable::new(width, &grouping.spec.aggs, &grouping.seed, usize::MAX));
+        table.absorb_whole(made)?;
+        let bytes = table.bytes();
+        let more = bytes.saturating_sub(self.direct_bytes);
+        self.direct_bytes = bytes;
+        Ok(self.limit.take(more))
+    }
+
+    /// The statement thread's table, if any, handed to the partitions as a
+    /// morsel's groups are, before the morsels after it: whether the grant
+    /// holds it.
+    ///
+    /// # Errors
+    ///
+    /// As `GroupTable::made`, or merging a wave.
+    fn flushed(&mut self) -> Result<bool> {
+        let Some(table) = self.direct.take() else { return Ok(true) };
+        let made = table.made(PARTS)?;
+        self.limit.give(self.direct_bytes);
+        self.direct_bytes = 0;
+        self.parted(Arc::new(made))
+    }
+
+    /// Adds `made`, split among the partitions, to the wave, and merges the
+    /// wave once it holds half the room left of the grant: whether the
+    /// grant holds what is held.
+    ///
+    /// # Errors
+    ///
+    /// As merging a partition fails.
+    fn parted(&mut self, made: Arc<Made>) -> Result<bool> {
+        let bytes = made.bytes();
+        if !self.limit.take(bytes) {
+            return Ok(false);
+        }
+        self.wave.push(made);
+        self.wave_bytes = self.wave_bytes.saturating_add(bytes);
+        if self.wave_bytes.saturating_mul(2) < self.limit.most().saturating_sub(self.parts_bytes) {
+            return Ok(true);
+        }
+        let held = frozen_wave((self.grouping, &self.frozen), std::mem::take(&mut self.wave), self.run)?;
+        self.limit.give(self.wave_bytes.saturating_add(self.parts_bytes));
+        (self.wave_bytes, self.parts_bytes, self.waved) = (0, held, true);
+        Ok(self.limit.take(held))
+    }
+
+    /// Each partition's groups finished, in the order of their first rows:
+    /// of the statement thread's table alone if no morsel went to the
+    /// partitions, else of the last wave, that table in it.
+    ///
+    /// # Errors
+    ///
+    /// As finishing a group, or merging a partition, fails.
+    fn finished(mut self) -> Result<Runs> {
+        if !self.waved && self.wave.is_empty() {
+            let Some(table) = self.direct.take() else { return Ok(Held::Kept(Vec::new())) };
+            let mut groups = table.finished()?;
+            groups.sort_unstable_by_key(|g| g.0);
+            return Ok(Held::Kept(vec![groups]));
+        }
+        if !self.flushed()? {
+            return Ok(Held::GaveWay);
+        }
+        finished_wave((self.grouping, &self.frozen), self.wave, self.run).map(Held::Kept)
+    }
 }
 
 /// The table of partition `p` of `grouping`: its groups `frozen` after the

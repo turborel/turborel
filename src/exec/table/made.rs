@@ -118,20 +118,35 @@ impl GroupTable {
     /// As `Accumulator::merge`; a sum past 128 bits.
     pub(in crate::exec) fn absorb(&mut self, made: &Made, part: usize) -> Result<()> {
         for &i in made.parts.get(part).map_or(&[][..], Vec::as_slice) {
-            let i = crate::storage::mask::index(i);
-            let (Some(&hash), Some(&first)) = (made.hashes.get(i), made.firsts.get(i)) else { continue };
-            let key = Key::Group(&made.keys, i);
-            let g = match self.find(hash, key) {
-                Some(g) => g,
-                None => self.make(hash, key, first),
-            };
-            let g = crate::storage::mask::index(g);
-            if let Some(held) = self.firsts.get_mut(g) {
-                *held = (*held).min(first);
-            }
-            for ((states, agg), sent) in self.states.iter_mut().zip(&self.aggs).zip(&made.states) {
-                states.merge((g, agg), (sent, i))?;
-            }
+            self.absorb_one(made, crate::storage::mask::index(i))?;
+        }
+        Ok(())
+    }
+
+    /// Merges every group of `made`, frozen whole, into its own, in their
+    /// order, as `absorb` merges a partition's.
+    ///
+    /// # Errors
+    ///
+    /// As `absorb`.
+    pub(in crate::exec) fn absorb_whole(&mut self, made: &Made) -> Result<()> {
+        (0..made.hashes.len()).try_for_each(|i| self.absorb_one(made, i))
+    }
+
+    /// Merges group `i` of `made` into its own.
+    fn absorb_one(&mut self, made: &Made, i: usize) -> Result<()> {
+        let (Some(&hash), Some(&first)) = (made.hashes.get(i), made.firsts.get(i)) else { return Ok(()) };
+        let key = Key::Group(&made.keys, i);
+        let g = match self.find(hash, key) {
+            Some(g) => g,
+            None => self.make(hash, key, first),
+        };
+        let g = crate::storage::mask::index(g);
+        if let Some(held) = self.firsts.get_mut(g) {
+            *held = (*held).min(first);
+        }
+        for ((states, agg), sent) in self.states.iter_mut().zip(&self.aggs).zip(&made.states) {
+            states.merge((g, agg), (sent, i))?;
         }
         Ok(())
     }

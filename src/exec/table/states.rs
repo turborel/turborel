@@ -34,7 +34,7 @@ pub(in crate::exec) use typed::Typed;
 const STATE_BYTES: usize = crate::exec::group::STATE_BYTES;
 
 /// The states of one set function of a table's groups.
-pub(super) enum States {
+pub(in crate::exec) enum States {
     Typed(Typed),
     Boxed(Boxed),
 }

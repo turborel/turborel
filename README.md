@@ -39,7 +39,8 @@ behind it, and each can be replaced or added to.
 - Batches of vectors with null bitmaps, dates and truth values among them,
   filtered by pluggable kernels, and parallel morsels read by batch.
 - One table of groups with typed keys and columns of set functions'
-  states, merged in parallel in waves, its hash keyed past long probes.
+  states, merged in parallel in waves, of the column store too, its hash
+  keyed past long probes; EXCEPT and INTERSECT counted in it.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH

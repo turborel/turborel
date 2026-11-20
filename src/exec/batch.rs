@@ -33,7 +33,7 @@ pub(crate) use count::storage_counted;
 use expr::Program;
 pub(super) use groups::morsel_groups;
 pub(super) use joined::rows_of;
-pub(super) use keyed::{Keyed, KeyedBatches, kept, keyed, put_key, whole_width};
+pub(super) use keyed::{Keyed, kept, put_key, whole_width};
 use project::Place;
 pub(super) use project::{projectable, projected};
 pub(super) use shaped::{Shaped, filter_step, project_step, through};
