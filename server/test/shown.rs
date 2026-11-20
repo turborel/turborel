@@ -32,6 +32,35 @@ fn a_server_shows_its_connections_to_the_owner() {
     assert_eq!(rows(&other.query(counts).unwrap()), Vec::<String>::new());
 }
 
+/// Verifies: [DESIGN] RULES.md D334, D43: INFORMATION_SCHEMA.SERVER shows
+/// the database's owner its transactions committed and rolled back since
+/// it was opened, of every session, embedded or served, each counted as
+/// its diagnostics area counts it; `Database::transactions_ended` gives
+/// the same counts. Another user sees none.
+#[test]
+fn a_server_counts_the_transactions_ended() {
+    let db = Database::new();
+    db.create_user("OWNER", b"x").unwrap();
+    db.set_owner("OWNER").unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER)").unwrap();
+    let server = start(&db, &[]);
+    let mut owner = server.connect("OWNER");
+    let mut other = server.connect("X");
+    let before = db.transactions_ended();
+    let embedded = db.session("X");
+    embedded.run("INSERT INTO T VALUES (1)").unwrap();
+    embedded.commit().unwrap();
+    embedded.run("INSERT INTO T VALUES (2)").unwrap();
+    embedded.rollback().unwrap();
+    other.query("INSERT INTO T VALUES (3)").unwrap();
+    other.query("ROLLBACK").unwrap();
+    let ended = db.transactions_ended();
+    assert_eq!((ended.committed, ended.rolled_back), (before.committed + 1, before.rolled_back + 2));
+    let counts = "SELECT COMMITTED, ROLLED_BACK FROM INFORMATION_SCHEMA.SERVER";
+    assert_eq!(rows(&owner.query(counts).unwrap()), [format!("{},{}", ended.committed, ended.rolled_back)]);
+    assert_eq!(rows(&other.query(counts).unwrap()), Vec::<String>::new(), "not the owner");
+}
+
 /// Times a client connects and ends its connection.
 const ENDED: u32 = 300;
 

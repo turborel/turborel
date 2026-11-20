@@ -15,13 +15,16 @@
 //! Rules are storage-agnostic. Anything that depends on engines, indexes or
 //! costs belongs in physical.rs.
 
+mod disjunctions;
 mod distinct_aggregates;
 mod folding;
+mod inlining;
 mod outer;
 pub(crate) mod plugged;
 pub(crate) mod prepared;
 mod raising;
 mod transitivity;
+pub(crate) mod unnesting;
 mod views;
 
 use std::collections::HashSet;
@@ -30,6 +33,8 @@ use std::sync::Arc;
 use crate::db::State;
 use crate::logical::{Cond, Expr, LogicalPlan, Truth, and_all, cond_columns, map_cond_columns, split_and};
 use crate::settings::{Key, OPTIMIZER_MAX_PASSES};
+pub use inlining::{INLINE_FUNCTIONS, InlineFunctions};
+pub use unnesting::{UNNEST_SUBQUERIES, UnnestSubqueries};
 
 /// The names of the built-in rules, as EXPLAIN shows them and their
 /// settings name them (`switch_name`).
@@ -45,6 +50,7 @@ pub const PUSH_HAVING_INTO_WHERE: &str = "push_having_into_where";
 /// See [`CONSTANT_FOLDING`].
 pub const REMOVE_REDUNDANT_DISTINCT: &str = "remove_redundant_distinct";
 
+pub use disjunctions::{FACTOR_DISJUNCTIONS, FactorDisjunctions};
 pub use distinct_aggregates::{DISTINCT_AGGREGATES, DistinctAggregates};
 pub use folding::ConstantFolding;
 pub use outer::{PUSH_FILTER_INTO_OUTER_JOIN, PushFilterIntoOuterJoin};
@@ -125,12 +131,16 @@ impl Optimizer {
     /// An optimizer with the built-in rules.
     pub fn with_builtin_rules() -> Optimizer {
         let mut o = Optimizer::empty();
+        // Before the others, which then move the conditions they make.
+        o.add(Box::new(InlineFunctions));
+        o.add(Box::new(UnnestSubqueries));
         o.add(Box::new(ConstantFolding));
         o.add(Box::new(SimplifyConditions));
         o.add(Box::new(MergeFilters));
         o.add(Box::new(PushFilterThroughProject));
         o.add(Box::new(PushFilterThroughDistinct));
         // Before the conjuncts are pushed apart.
+        o.add(Box::new(FactorDisjunctions));
         o.add(Box::new(PredicateTransitivity));
         o.add(Box::new(PushRaisingFilterIntoProduct));
         o.add(Box::new(PushFilterIntoProduct));
@@ -172,10 +182,20 @@ impl Optimizer {
 
     /// Rewrite to a fixpoint, by the rules `ctx`'s settings leave on.
     /// Returns the plan and the names of the rules that fired, in order.
-    pub fn optimize(&self, mut plan: LogicalPlan, ctx: &RuleContext<'_>) -> (LogicalPlan, Vec<&'static str>) {
+    pub fn optimize(&self, plan: LogicalPlan, ctx: &RuleContext<'_>) -> (LogicalPlan, Vec<&'static str>) {
+        self.optimize_except(plan, ctx, &[])
+    }
+
+    /// As `optimize`, the rules named in `except` left off too.
+    pub fn optimize_except(&self, mut plan: LogicalPlan, ctx: &RuleContext<'_>, except: &[&str]) -> (LogicalPlan, Vec<&'static str>) {
         let mut trace = Vec::new();
         let settings = &ctx.db.settings;
-        let on: Vec<&dyn Rule> = self.rules.iter().filter(|r| r.switch.is_none_or(|k| settings.is_on(k))).map(|r| &*r.rule).collect();
+        let on: Vec<&dyn Rule> = self
+            .rules
+            .iter()
+            .filter(|r| r.switch.is_none_or(|k| settings.is_on(k)) && !except.contains(&r.rule.name()))
+            .map(|r| &*r.rule)
+            .collect();
         // A safety net against rules that keep undoing each other.
         let passes = usize::try_from(settings.integer(OPTIMIZER_MAX_PASSES)).unwrap_or(DEFAULT_MAX_PASSES);
         for _ in 0..passes {

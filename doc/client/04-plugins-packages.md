@@ -127,17 +127,17 @@ in neither place is refused. With `--key` the package is signed. The
 signature covers the manifest and every file's path and digest, so no
 file can be changed or added without breaking it. The package is
 written to `--out`, or into DIR as its name in lower case, `-`, its
-version and `.tbpkg`.
+version and `.tbx`.
 
 ```
-$ turborel extension pack geo_tools --key author.key --out packages/geo_tools-1.4.0.tbpkg
-packed GEO_TOOLS 1.4.0 into packages/geo_tools-1.4.0.tbpkg, signed by ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c, license MIT (text in LICENSE)
+$ turborel extension pack geo_tools --key author.key --out packages/geo_tools-1.4.0.tbx
+packed GEO_TOOLS 1.4.0 into packages/geo_tools-1.4.0.tbx, signed by ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c, license MIT (text in LICENSE)
 $ cat units/turborel-plugin.manifest
 NAME units; VERSION '2.1.0'; PROTOCOL 1; EXECUTABLE 'bin/units';
 FUNCTION KM(DOUBLE PRECISION) RETURNS DOUBLE PRECISION DETERMINISTIC;
-$ turborel extension pack units --out packages/units-2.1.0.tbpkg
+$ turborel extension pack units --out packages/units-2.1.0.tbx
 warning: the manifest declares no LICENSE; operators will be told the package has none
-packed UNITS 2.1.0 into packages/units-2.1.0.tbpkg, unsigned, no license declared
+packed UNITS 2.1.0 into packages/units-2.1.0.tbx, unsigned, no license declared
 ```
 
 ## For operators
@@ -156,7 +156,7 @@ written `_`.
 
 ### Installing
 
-`install FILE...` takes package files, or directories whose `.tbpkg`
+`install FILE...` takes package files, or directories whose `.tbx`
 files it takes. It resolves the whole set again. The packages of the
 files given that no other file given requires are asked for by name,
 with a caret range of their version, as are the packages asked for by
@@ -169,11 +169,11 @@ installed meets is refused with SQLSTATE 38T09, naming it and the
 package file to add.
 
 ```
-$ turborel extension install packages/geo_tools-1.4.0.tbpkg --set PLUGINS.DIRECTORIES=plugins
+$ turborel extension install packages/geo_tools-1.4.0.tbx --set PLUGINS.DIRECTORIES=plugins
 turborel extension: SQLCODE -301 (SQLSTATE 38T09): the packages cannot be resolved: GEO_TOOLS 1.4.0 requires UNITS ^2.0.0, and no version of it found meets that; add a package file of UNITS of a version in ^2.0.0
-$ turborel extension install packages/geo_tools-1.4.0.tbpkg packages/units-2.1.0.tbpkg --set PLUGINS.DIRECTORIES=plugins
-installed UNITS 2.1.0 from packages/units-2.1.0.tbpkg, no license declared
-installed GEO_TOOLS 1.4.0 from packages/geo_tools-1.4.0.tbpkg, license MIT (text in LICENSE)
+$ turborel extension install packages/geo_tools-1.4.0.tbx packages/units-2.1.0.tbx --set PLUGINS.DIRECTORIES=plugins
+installed UNITS 2.1.0 from packages/units-2.1.0.tbx, no license declared
+installed GEO_TOOLS 1.4.0 from packages/geo_tools-1.4.0.tbx, license MIT (text in LICENSE)
 ```
 
 A newer version moves on in the same way, its file given. A dependency
@@ -208,9 +208,9 @@ neither installed nor given is refused with 38T09.
 ```
 $ turborel extension lock export servers.lock --set PLUGINS.DIRECTORIES=plugins
 wrote the lock to servers.lock
-$ turborel extension install --lock servers.lock packages/geo_tools-1.4.0.tbpkg packages/units-2.1.0.tbpkg --set PLUGINS.DIRECTORIES=replica
-installed GEO_TOOLS 1.4.0 from packages/geo_tools-1.4.0.tbpkg, license MIT (text in LICENSE)
-installed UNITS 2.1.0 from packages/units-2.1.0.tbpkg, no license declared
+$ turborel extension install --lock servers.lock packages/geo_tools-1.4.0.tbx packages/units-2.1.0.tbx --set PLUGINS.DIRECTORIES=replica
+installed GEO_TOOLS 1.4.0 from packages/geo_tools-1.4.0.tbx, license MIT (text in LICENSE)
+installed UNITS 2.1.0 from packages/units-2.1.0.tbx, no license declared
 ```
 
 Each database records the version of each extension it created, as

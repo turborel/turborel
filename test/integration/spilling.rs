@@ -342,6 +342,8 @@ fn kept_subquery_rows_stay_within_the_work_area() {
     const CORRELATED: &str = "SELECT K FROM R WHERE K * 7 IN (SELECT G FROM U WHERE U.K >= R.K)";
     let db = Database::new();
     filled(&db);
+    // The subquery run for each set of outer values, not unnested.
+    crate::common::set_rule(&db, turborel::optimizer::UNNEST_SUBQUERIES, false);
     let s = db.session("S");
     let in_memory = rows(&s, CORRELATED).unwrap();
     assert_ne!(in_memory, Vec::<String>::new());

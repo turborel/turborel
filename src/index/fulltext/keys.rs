@@ -4,6 +4,8 @@
 //!
 //! * `C`: the documents indexed, their lengths summed, and the next
 //!   document number to give.
+//! * `L` language name: nothing; a language of a document indexed other
+//!   than the index's, kept once one is (`languages.rs`).
 //! * `D` row, document hash: the versions of the row holding the document,
 //!   its number, and its length in words that are not stop words.
 //! * `H` document hash, row: nothing; it finds the rows of a document.
@@ -43,8 +45,15 @@ pub(super) const HASHED: u8 = b'H';
 pub(super) const STATISTIC: u8 = b'S';
 /// The tag of a term found by its stem.
 pub(super) const STEM: u8 = b'W';
+/// The tag of a language of the index's documents.
+pub(super) const LANGUAGE: u8 = b'L';
 /// The key of the index's totals.
 pub(super) const COUNTS_KEY: [u8; 1] = *b"C";
+/// The key of a language of the index's documents, by its name.
+pub(super) fn language_key(name: &str) -> Vec<u8> {
+    [&[LANGUAGE][..], name.as_bytes()].concat()
+}
+
 /// The byte that ends a term or a stem in a key.
 const END: u8 = 0;
 

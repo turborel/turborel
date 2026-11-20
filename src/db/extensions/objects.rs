@@ -10,7 +10,8 @@
 //! shared registries, held weakly; collations, system tables and XQuery
 //! functions in the state's own, which each state copies; credentials
 //! and sinks of events are found through the state's extensions, and at
-//! most one extension brings credentials (D222).
+//! most one extension brings credentials (D222). A language is named in
+//! the whole process (D328), held weakly, so it goes as its extension.
 
 use std::sync::Arc;
 
@@ -18,6 +19,8 @@ use super::super::State;
 use super::refused;
 use crate::error::Result;
 use crate::fulltext::rank::Ranking;
+use crate::fulltext::text::served::ServedLanguage;
+use crate::plugin::bridge::language::PluginLanguage;
 use crate::plugin::bridge::xquery::PluginXQuery;
 use crate::plugin::{Bridged, Declared, Installed, ObjectKind};
 use crate::system::SystemTable;
@@ -63,7 +66,8 @@ impl State {
                 | Bridged::Credentials(_)
                 | Bridged::Type(_)
                 | Bridged::Engine(_)
-                | Bridged::IndexMethod(_) => self.register_object(installed, d, b)?,
+                | Bridged::IndexMethod(_)
+                | Bridged::Language(_) => self.register_object(installed, d, b)?,
             }
         }
         Ok(())
@@ -105,6 +109,7 @@ impl State {
                 self.types.add_kind(t.kind())?;
             }
             Bridged::Engine(_) | Bridged::IndexMethod(_) => self.register_storage(installed, d, b)?,
+            Bridged::Language(l) => self.register_language(installed, d, l)?,
             Bridged::Scalar(_)
             | Bridged::Aggregate(_)
             | Bridged::Table(_)
@@ -118,6 +123,15 @@ impl State {
             | Bridged::Rule(_) => {}
         }
         Ok(())
+    }
+
+    /// Registers `l`, the language `d` of `installed` declares, in the
+    /// whole process (RULES.md D328).
+    fn register_language(&self, installed: &Installed, d: &Declared, l: &Arc<PluginLanguage>) -> Result<()> {
+        self.unshared(installed, d.kind, &d.name, false)?;
+        let l = Arc::clone(l);
+        let l: Arc<dyn ServedLanguage> = l;
+        crate::fulltext::text::served::register(&d.name, &installed.manifest.name, &l).map(drop)
     }
 
     /// That no other extension brings the database's credentials.
@@ -212,7 +226,8 @@ impl State {
                 | Bridged::Quantizer(_)
                 | Bridged::Credentials(_)
                 | Bridged::Diagnostics(_)
-                | Bridged::Rule(_) => {}
+                | Bridged::Rule(_)
+                | Bridged::Language(_) => {}
             }
         }
     }

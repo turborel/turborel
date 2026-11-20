@@ -5,6 +5,7 @@
 
 use turborel::db::{Database, Session};
 
+mod languages;
 mod methods;
 mod patterns;
 mod ranking;

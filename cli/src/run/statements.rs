@@ -9,7 +9,7 @@ use std::time::Duration;
 use turborel::storage::Row;
 use turborel_client::agent::{Agent, Connector};
 use turborel_client::capability::PING;
-use turborel_client::connection::{Connection, Sink, Streamed};
+use turborel_client::connection::{Connection, Outcome, Sink, Streamed};
 use turborel_client::export::ExportFormat;
 use turborel_client::import::{self, Cause, Delimited, Import, ImportError, Imported, Rejected};
 use turborel_client::{Canceller, Failure, Notice, Timing};
@@ -130,6 +130,17 @@ fn fetched<S: Read + Write>(
         return None;
     }
     sink.columns(statement.columns());
+    // [ISO/IEC 9075-2:2023 §20.7 GR7a] a CALL's output dynamic parameters
+    // come as a row as it is executed, no cursor's.
+    if is_call(sql) {
+        let outcome = connection.execute(&statement, &[]);
+        drop(connection.deallocate(statement));
+        return Some(outcome.map(|o| {
+            let Outcome::Rows { rows: row, .. } = o else { return Streamed::Rows(0) };
+            sink.rows(&row);
+            Streamed::Rows(u64::try_from(row.len()).unwrap_or(u64::MAX))
+        }));
+    }
     let mut count = 0_u64;
     let mut take = |batch: &[Row], into: &mut dyn Sink| {
         count = count.saturating_add(u64::try_from(batch.len()).unwrap_or(u64::MAX));
@@ -149,6 +160,23 @@ fn fetched<S: Read + Write>(
     drop(connection.deallocate(statement));
     Some(read.map(|()| Streamed::Rows(count)))
 }
+
+/// Whether `sql` is a CALL that may have output dynamic parameters, one
+/// with a `?`, which only a statement prepared takes, so it is run as
+/// `fetched` runs it, its outputs shown as a row [ISO/IEC 9075-2:2023
+/// §20.7 GR7a].
+pub(super) fn calls_out(sql: &str) -> bool {
+    is_call(sql) && sql.contains('?')
+}
+
+/// Whether `sql` is a CALL [ISO/IEC 9075-2:2023 §16.1]: its first word.
+fn is_call(sql: &str) -> bool {
+    let first = sql.trim_start().split(|c: char| !c.is_ascii_alphabetic()).next().unwrap_or_default();
+    first.eq_ignore_ascii_case(CALL)
+}
+
+/// [ISO/IEC 9075-2:2023 §16.1] The key word CALL begins.
+const CALL: &str = "CALL";
 
 /// `timing`, the server's report of a statement's time, as the timing
 /// line shows it: its waits for locks among the whole, and its wait for

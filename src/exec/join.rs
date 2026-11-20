@@ -6,15 +6,18 @@
 //! read again for each left row, from a run of the spill area once it
 //! outgrows the work area (`exec/join/rescan.rs`); and an outer join's is
 //! either (`exec/join/outer.rs`); an index nested-loop join holds nothing,
-//! each left row probing an index (`exec/join/indexed.rs`).
+//! each left row probing an index (`exec/join/indexed.rs`); a merge join
+//! holds the run of right rows of one key (`exec/join/merge.rs`).
 
 mod indexed;
+mod merge;
 mod outer;
 mod partitioned;
 mod rescan;
 
 pub(super) use indexed::indexed;
 pub(super) use indexed::projected as indexed_projected;
+pub(super) use merge::merged;
 pub(super) use outer::outer;
 pub(in crate::exec) use outer::{Holding, Joining, Prepared, Spec, prepared, spec_of};
 pub use partitioned::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};

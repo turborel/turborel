@@ -2,15 +2,19 @@
 
 mod budget;
 mod distinct_aggregates;
-// UUID's mutations, here as `list.rs` holds no more modules.
+mod joins;
+// Unnesting's and UUID's mutations, here as `list.rs` holds no more
+// modules.
+mod unnesting;
 mod uuid;
 
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 12] {
+pub fn core() -> [&'static [Mutation]; 13] {
     [
         &super::MUTATIONS,
+        &super::assertions::ASSERTIONS,
         &super::hash::HASH,
         &super::rekey::REKEY,
         &super::KEPT,
@@ -61,8 +65,8 @@ fn first() -> [&'static [Mutation]; 25] {
     ]
 }
 
-/// The second half of the areas, in order.
-fn second() -> [&'static [Mutation]; 32] {
+/// The second half of the areas, in order, unnesting's last.
+fn second() -> [&'static [Mutation]; 33] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -96,12 +100,13 @@ fn second() -> [&'static [Mutation]; 32] {
         &super::vector::VECTOR,
         &super::delta_tables::DELTA_TABLES,
         &distinct_aggregates::DISTINCT_AGGREGATES,
+        &unnesting::UNNESTING,
     ]
 }
 
 /// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's and the server's.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
-    let json: [&'static [Mutation]; 15] = [
+    let json: [&'static [Mutation]; 16] = [
         &super::projection::PROJECTION,
         &super::json::JSON,
         &super::json_path::JSON_PATH,
@@ -110,6 +115,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::expression_index::EXPRESSION_INDEX,
         &super::json_table::JSON_TABLE,
         &super::fulltext::FULLTEXT,
+        &super::fulltext_languages::FULLTEXT_LANGUAGES,
         &super::sqlmm_fulltext::SQLMM_FULLTEXT,
         &super::t621::T621,
         &super::graph_syntax::GRAPH_SYNTAX,
@@ -161,8 +167,9 @@ fn plugins() -> [&'static [Mutation]; 9] {
 
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, simple features', partitioning's, UUID's,
-/// the command-line client's, replication's, the server's, the native protocol's and the client library's.
-fn last() -> [&'static [Mutation]; 46] {
+/// the command-line client's, replication's, the server's, the native protocol's, the client library's,
+/// join enumeration's and the standard's gaps a benchmark found.
+fn last() -> [&'static [Mutation]; 48] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -210,5 +217,7 @@ fn last() -> [&'static [Mutation]; 46] {
         &super::SERVER,
         &super::server::native::NATIVE,
         &super::client::CLIENT,
+        &joins::JOINS,
+        &super::std_gaps::STD_GAPS,
     ]
 }

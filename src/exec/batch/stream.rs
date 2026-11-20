@@ -73,6 +73,7 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         | Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
+        | Plan::MergeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
@@ -142,6 +143,7 @@ pub(super) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
+        | Plan::MergeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
@@ -213,6 +215,7 @@ pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> 
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
+        | Plan::MergeJoin(_)
         | Plan::Aggregate { .. }
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }

@@ -125,11 +125,13 @@ impl Session {
     }
 
     /// [ISO/IEC 9075-2:2023 §23.1 GR2h, GR2i] The session's transaction
-    /// ended, committed or not, counted in the area.
+    /// ended, committed or not, counted in the area and in its database's
+    /// counts (`database/ended.rs`).
     pub(super) fn transaction_ended(&self, committed: bool) {
         let ended = &mut self.inner.borrow_mut().area.ended;
         let count = if committed { &mut ended.committed } else { &mut ended.rolled_back };
         *count = count.saturating_add(1);
+        self.db.count_ended(committed);
     }
 
     /// [ISO/IEC 9075-2:2023 §23.1 GR2h, GR2i] A commit whose outcome is

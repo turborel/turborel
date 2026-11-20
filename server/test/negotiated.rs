@@ -133,7 +133,10 @@ fn a_session_is_pinged_reset_and_changed() {
     assert_ne!(c.setting("SESSION.TIME_ZONE"), Some("+03:00"), "settings as at login");
     assert_eq!(state(&c.execute(&statement, &[]).unwrap_err()).0, "26000", "prepared statements gone");
     assert_eq!(rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["0"]);
+    c.query("INSERT INTO T VALUES (2)").unwrap();
+    assert!(c.in_transaction());
     c.change_user("Y", &mut Trust).unwrap();
+    assert!(!c.in_transaction(), "renewed as Reset renews it, its transaction rolled back");
     assert_eq!(c.authorization(), "Y");
     assert_eq!(c.setting("AUTHORIZATION"), Some("Y"));
     assert_eq!(state(&c.query("SELECT K FROM X.T").unwrap_err()).0, "2A000", "Y holds no privilege on X.T");

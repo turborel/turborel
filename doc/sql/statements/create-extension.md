@@ -29,7 +29,7 @@ VERSION takes, `*` if none is written. The extensions its manifest
 REQUIRES are created first, each at the newest version that meets every
 range asked of it, unless the database has one of that name already,
 whose version then must meet it. FROM names a package file, ending
-`.tbpkg`, which is installed first, or a directory under one of
+`.tbx`, which is installed first, or a directory under one of
 PLUGINS.DIRECTORIES that holds a manifest.
 
 The extension's directory is checked as it is loaded and as each of its

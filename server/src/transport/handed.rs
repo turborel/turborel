@@ -16,7 +16,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::runtime::Handle;
 
-use super::{Direct, Transport};
+use super::{Direct, Transport, Watch};
 
 /// A socket of the standard library's, as a thread reads and writes it,
 /// and as the runtime does once it is registered.
@@ -69,6 +69,12 @@ pub trait Socket: Read + Write + Send + Unpin + Sized + 'static {
     ///
     /// The write's.
     fn write_vectored_now(registered: &Self::Registered, bufs: &[io::IoSlice<'_>]) -> io::Result<usize>;
+    /// A copy of `registered`'s socket, to watch its peer (`Watch`).
+    ///
+    /// # Errors
+    ///
+    /// The system's, if it cannot be copied.
+    fn copied(registered: &Self::Registered) -> io::Result<socket2::Socket>;
 }
 
 impl Socket for std::net::TcpStream {
@@ -101,6 +107,10 @@ impl Socket for std::net::TcpStream {
 
     fn write_vectored_now(registered: &tokio::net::TcpStream, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
         registered.try_write_vectored(bufs)
+    }
+
+    fn copied(registered: &tokio::net::TcpStream) -> io::Result<socket2::Socket> {
+        socket2::SockRef::from(registered).try_clone()
     }
 }
 
@@ -136,6 +146,10 @@ impl Socket for std::os::unix::net::UnixStream {
     fn write_vectored_now(registered: &tokio::net::UnixStream, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
         registered.try_write_vectored(bufs)
     }
+
+    fn copied(registered: &tokio::net::UnixStream) -> io::Result<socket2::Socket> {
+        socket2::SockRef::from(registered).try_clone()
+    }
 }
 
 /// Who has the stream.
@@ -160,6 +174,9 @@ pub struct Handed<S: Socket> {
     timeout: Option<Duration>,
     /// The runtime the stream is registered with, as it is handed back.
     runtime: Handle,
+    /// A watch on its peer, made as it is taken, unless its socket could
+    /// not be copied (RULES.md D335).
+    watch: Option<Watch>,
 }
 
 /// One millisecond: the finest a socket's wait is set in.
@@ -184,7 +201,8 @@ impl<S: Socket> Handed<S> {
     /// Called outside a runtime.
     pub fn new(registered: S::Registered) -> io::Result<Handed<S>> {
         let runtime = Handle::try_current().map_err(io::Error::other)?;
-        Ok(Handed { held: Held::Runtime(registered), timeout: None, runtime })
+        let watch = S::copied(&registered).ok().map(Watch::of);
+        Ok(Handed { held: Held::Runtime(registered), timeout: None, runtime, watch })
     }
 
     /// Hands the stream to a thread, if the runtime has it: it waits from
@@ -322,6 +340,10 @@ impl<S: Socket> Transport for Handed<S> {
     fn direct(&mut self) -> Option<&mut dyn Direct> {
         Some(self)
     }
+
+    fn watch(&self) -> Option<Watch> {
+        self.watch.clone()
+    }
 }
 
 #[cfg(test)]
@@ -424,6 +446,10 @@ mod tests {
         fn write_vectored_now(registered: &Told, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
             registered.note("written now, vectored");
             Ok(bufs.iter().map(|b| b.len()).sum())
+        }
+
+        fn copied(_registered: &Told) -> io::Result<socket2::Socket> {
+            Err(ErrorKind::Unsupported.into())
         }
     }
 

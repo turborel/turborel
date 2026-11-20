@@ -29,7 +29,6 @@ use std::sync::Arc;
 
 use super::FullTextIndex;
 use super::cursor::{Cursor, Docs, Every, Terms};
-use super::document::LANGUAGES;
 use super::document::hash_key;
 use super::keys::Doc;
 use super::matcher::{Matcher, positive_matchers};
@@ -328,12 +327,12 @@ impl FullTextIndex {
     ) -> Result<Option<NeighbourEntries>> {
         let Some(text) = crate::fulltext::types::pattern_of(pattern) else { return Ok(None) };
         let mut matchers: Vec<Matcher> = Vec::new();
-        for language in LANGUAGES {
+        for language in self.languages().iter() {
             let Ok(read) = parse(text, language) else { return Ok(None) };
             if contains(&read, std::iter::empty(), language).is_err() {
                 return Ok(None);
             }
-            for matcher in positive_matchers(&read) {
+            for matcher in positive_matchers(&read)? {
                 if !matchers.contains(&matcher) {
                     matchers.push(matcher);
                 }

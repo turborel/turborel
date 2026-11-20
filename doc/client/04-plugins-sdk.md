@@ -52,8 +52,9 @@ than once, as `--kind aggregate --kind metric`. It takes `scalar`,
 `aggregate`, `table`, `procedure`, `metric`, `embedding`,
 `authenticator`, `target`, `partition`, `ranking`, `quantizer`,
 `collation`, `system-table`, `xquery`, `type`, `engine`,
-`index-method`, `credentials` and `diagnostics`, and the project then
-serves a small object of each ([Kinds of Plug-in](04-plugins-kinds.md)).
+`index-method`, `credentials`, `diagnostics` and `language`, and the
+project then serves a small object of each ([Kinds of
+Plug-in](04-plugins-kinds.md)). The language cuts text at white space.
 `--sdk DIR` makes the project depend on a turborel source tree at DIR
 by path instead of on the release's crates.
 
@@ -111,8 +112,8 @@ project.
 author.key` wrote. Give operators the public key it printed.
 
 ```
-$ turborel extension pack hello --key author.key --out hello-0.1.0.tbpkg
-packed HELLO 0.1.0 into hello-0.1.0.tbpkg, signed by ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c, license LicenseRef-Proprietary (text in LICENSE)
+$ turborel extension pack hello --key author.key --out hello-0.1.0.tbx
+packed HELLO 0.1.0 into hello-0.1.0.tbx, signed by ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c, license LicenseRef-Proprietary (text in LICENSE)
 ```
 
 ## Installing
@@ -122,8 +123,8 @@ trusting the author's key. Install tells the package's license, and
 never refuses one for its license.
 
 ```
-$ turborel extension install hello-0.1.0.tbpkg --set PLUGINS.DIRECTORIES=plugins --set PLUGINS.TRUSTED_KEYS=ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c --set PLUGINS.REQUIRE_SIGNED=ON
-installed HELLO 0.1.0 from hello-0.1.0.tbpkg, license LicenseRef-Proprietary (text in LICENSE)
+$ turborel extension install hello-0.1.0.tbx --set PLUGINS.DIRECTORIES=plugins --set PLUGINS.TRUSTED_KEYS=ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c --set PLUGINS.REQUIRE_SIGNED=ON
+installed HELLO 0.1.0 from hello-0.1.0.tbx, license LicenseRef-Proprietary (text in LICENSE)
 ```
 
 A user then makes the extension in a database and calls its function.

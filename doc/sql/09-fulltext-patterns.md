@@ -136,11 +136,18 @@ name stands just before its opening quote, as `NONE "searching"`. Words
 in another language than the document's are compared by their
 normalized text, each side's stop words and stems its own. An unknown
 name is SQLSTATE 2FF02. The examples under
-[Stems and topics](#stems-and-topics) search in NONE.
+[Stems and topics](#stems-and-topics) search in NONE. The
+[languages](08-fulltext.md#languages) are listed with the full-text type.
+
+In Chinese, Japanese, Korean, Thai, Lao, Khmer and Burmese a word is
+read as the overlapping pairs of its letters, so `"東京都"` is the
+phrase of `東京` and `京都`. A word of one letter in these languages
+matches every word of the document holding that letter.
 
 ### Stop words
 
-A stop word may stand anywhere a word may, and is never 2FF01. A
+Stop words are those of the word's language, Snowball's list where it
+has one. A stop word may stand anywhere a word may, and is never 2FF01. A
 pattern every word of which is a stop word is 2FF03. A stop word by
 itself matches nothing, so `"the" | "cat"` finds what `"cat"` finds.
 Inside a phrase, a stop word matches any stop word of the document,
@@ -183,7 +190,8 @@ SELECT ID FROM NOTES WHERE BODY.Contains('"the" | "cat"') = 1 ORDER BY ID;
 ## Stems and topics
 
 `STEMMED FORM OF "word"`, or `FORM OF "word"`, matches every word of the
-document with the same stem. In English it is the Porter2 stem, so
+document with the same stem, by the Snowball stemmer of the document's
+[language](08-fulltext.md#languages). In English it is Snowball's English stem, so
 `search` finds `search`, `searching` and `searched`. A stemmed word or
 phrase takes no wild card or escape. A word in NONE is not stemmed, so
 `NONE "searching"` finds only the note that says `searching`.

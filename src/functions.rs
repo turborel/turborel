@@ -62,7 +62,9 @@ pub use multisets::{
     COLLECT, ELEMENT, ElementOfMultiset, FUSION, Gathering, INTERSECTION, IsASet, MEMBER, MemberOf, MultisetAggregate, MultisetCombination,
     MultisetOf, SUBMULTISET, SetOf, SubmultisetOf,
 };
-pub use numeric::{CEIL, CEILING, EXP, FLOOR, LN, Numeric, POWER, SQRT};
+pub use numeric::{
+    ABS, ACOS, ASIN, ATAN, CEIL, CEILING, COS, COSH, EXP, FLOOR, LN, LOG, LOG10, MOD, Numeric, POWER, SIN, SINH, SQRT, TAN, TANH, Trig,
+};
 mod octet_like;
 mod partial;
 #[cfg(test)]

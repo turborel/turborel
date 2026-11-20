@@ -31,17 +31,27 @@ The simplest values are:
   CURRENT_ROLE the role, while SESSION_USER stays the session's;
 - CURRENT_DATE, CURRENT_TIME(p) and CURRENT_TIMESTAMP(p), the instant
   the statement began, the last two WITH TIME ZONE, in the session's;
+  LOCALTIME(p) and LOCALTIMESTAMP(p), the same instant WITHOUT TIME
+  ZONE, its fields in the session's time zone, of precision 0 and 6 if
+  none is written. Standing alone or before their precision they are
+  these functions, so a column of either name is written qualified or
+  in double quotes;
 - in a program, a parameter, or a `?` of a prepared statement;
 - a scalar subquery: a query of one column, in parentheses, its value
   that of its one row, or null if it has none. A second row is refused.
 
 ```sql
+VALUES (LOCALTIMESTAMP = CAST(CURRENT_TIMESTAMP AS TIMESTAMP WITHOUT TIME ZONE));
 VALUES (USER, CURRENT_USER, SESSION_USER, SYSTEM_USER);
 SELECT NAME FROM STAFF WHERE SALARY = (SELECT MAX(SALARY) FROM STAFF);
 SELECT NAME FROM STAFF WHERE ID = (SELECT ID FROM STAFF);
 ```
 
 ```
+
+-------
+ TRUE
+(1 row)
      |     |     |
 -----+-----+-----+-----
  ANN | ANN | ANN | ANN
@@ -103,6 +113,12 @@ The numeric functions:
 | POWER(x, y), SQRT(x) | x raised to the power y, and the square root of x, POWER(x, 0.5) |
 | FLOOR(x) | the greatest whole number not above x |
 | CEILING(x), CEIL(x) | the least whole number not below x |
+| ABS(x) | the absolute value of x, of x's type |
+| MOD(n, m) | the remainder of n divided by m, of n's sign |
+| SIN(x), COS(x), TAN(x) | the sine, cosine and tangent of x radians |
+| SINH(x), COSH(x), TANH(x) | the hyperbolic sine, cosine and tangent of x |
+| ASIN(x), ACOS(x), ATAN(x) | the angle in radians whose sine, cosine or tangent x is |
+| LOG(b, x), LOG10(x) | the logarithm of x to the base b, and to the base 10 |
 
 WIDTH_BUCKET cuts the range from b1 to b2 into n buckets of equal width
 and gives the bucket x falls in, from 1. A value before b1 is in bucket
@@ -162,6 +178,34 @@ VALUES (SQRT(-1));
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 2201E): the natural logarithm is of a number above 0 [ISO/IEC 9075-2:2023 §6.31 GR12b]
 turborel: SQLCODE -301 (SQLSTATE 2201F): a negative base is raised only to a whole number [ISO/IEC 9075-2:2023 §6.31 GR14e]
+```
+
+ABS is of its operand's type. MOD takes exact numbers of scale 0, and
+is of the divisor's type, or DECFLOAT(34) if either is a DECFLOAT; a
+divisor of 0 is refused (SQLSTATE 22012, SQLCODE -301). The
+trigonometric functions, LOG and LOG10 are DOUBLE PRECISION, or
+DECFLOAT(34) if an operand is DECFLOAT. ASIN and ACOS of a number below
+−1 or above 1 are refused (22003), as LOG of an argument of 0 or below,
+or of a base of 0 or below or of 1. Each is null if an operand is.
+
+```sql
+VALUES (ABS(-7), ABS(-2.50), MOD(7, -2), MOD(-7, 2), MOD(CAST(7.5 AS DECFLOAT), 2));
+VALUES (SIN(0), COS(0), ATAN(1) * 4, LOG(2, 8), LOG10(1000));
+VALUES (MOD(7, 0));
+VALUES (LOG(1, 8));
+```
+
+```
+     |       |     |     |
+-----+-------+-----+-----+---------------------------------------------
+   7 |  2.50 |   1 |  -1 |                                         1.5
+(1 row)
+                          |                          |                          |                          |
+--------------------------+--------------------------+--------------------------+--------------------------+--------------------------
+                      0E0 |                      1E0 |      3.141592653589793E0 |                      3E0 |                      3E0
+(1 row)
+turborel: SQLCODE -301 (SQLSTATE 22012): the divisor of MOD shall not be 0 [ISO/IEC 9075-2:2023 §6.31 GR9b]
+turborel: SQLCODE -301 (SQLSTATE 22003): the result is out of range [ISO/IEC 9075-2:2023 §6.31 GR11c]
 ```
 
 ## String expressions

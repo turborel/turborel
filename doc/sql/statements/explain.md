@@ -22,6 +22,16 @@ bound comes first, then the rewrite rules that changed it, then the plan
 they left, and last the physical plan that runs, with the indexes it
 reads and how it joins.
 
+The joins of three or more tables are ordered by enumeration, each
+join's method chosen with the order, unless PLANNER.JOIN_ENUMERATION is
+GREEDY ([Settings](../../appendix/c-settings.md)). The top join of a
+plan so made notes the order taken, as nested pairs of its tables, and
+the algorithm that found it, DPccp or DPhyp of a query small enough to
+search whole, linearized DP or GOO-DP of a larger one. A plan that keeps
+the FROM clause's order, as one estimated no cheaper by
+PLANNER.REORDER_GAIN does, has no note. A merge join shows as
+`MergeJoin`, or `LeftMergeJoin` of a LEFT join, with its key.
+
 EXPLAIN is direct SQL, as a query is. The `turborel` client shows its
 rows as it shows a query's. A program reaches the same text by the
 library's `Session::explain` ([The Embedded Library](../../client/03-embedding.md#reading-rows)),
@@ -87,6 +97,136 @@ OK
 (12 rows)
 ```
 
+Three tables joined, their joins ordered by enumeration. The note on
+the top join gives the order chosen, the offers of the suppliers in Oslo
+first, then their parts by the index of its key, and the algorithm that
+chose it:
+
+```sql
+CREATE TABLE SUPPLIERS (ID INTEGER PRIMARY KEY, CITY VARCHAR(20));
+INSERT INTO SUPPLIERS VALUES (1, 'Oslo'), (2, 'Lima'), (3, 'Pune'), (4, 'Kyiv'), (5, 'Oslo'),
+  (6, 'Lima'), (7, 'Pune'), (8, 'Kyiv'), (9, 'Rome'), (10, 'Rome');
+CREATE TABLE OFFERS (PART INTEGER, SUPPLIER INTEGER, PRICE INTEGER);
+INSERT INTO OFFERS
+  WITH RECURSIVE N (I) AS (VALUES (CAST(1 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 5000)
+  SELECT I - I / 1000 * 1000 + 1, I - I / 10 * 10 + 1, I FROM N;
+COMMIT;
+EXPLAIN SELECT PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE FROM PARTS, OFFERS, SUPPLIERS
+  WHERE PARTS.ID = OFFERS.PART AND OFFERS.SUPPLIER = SUPPLIERS.ID AND SUPPLIERS.CITY = 'Oslo';
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE
+   Filter PARTS.ID = OFFERS.PART AND OFFERS.SUPPLIER = SUPPLIERS.ID AND SUPPLIERS.CITY = 'Oslo'
+     Product
+       Product
+         Scan ANN.PARTS
+         Scan ANN.OFFERS
+       Scan ANN.SUPPLIERS
+ -- rules: push_filter_into_product
+ -- optimized:
+ Project PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE
+   Filter OFFERS.SUPPLIER = SUPPLIERS.ID
+     Product
+       Filter PARTS.ID = OFFERS.PART
+         Product
+           Scan ANN.PARTS
+           Scan ANN.OFFERS
+       Filter SUPPLIERS.CITY = 'Oslo'
+         Scan ANN.SUPPLIERS
+ -- physical:
+ Project PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE
+   IndexNestedLoop ANN.PARTS using ANN.PARTS.UNIQUE1 [btree]: OFFERS.PART = PARTS.ID  (join order by DPccp: ((OFFERS SUPPLIERS) PARTS))  (est. rows each=1, cost=20.6)
+     HashJoin OFFERS.SUPPLIER = SUPPLIERS.ID
+       SeqScan ANN.OFFERS  (rows=5000, cost=5000.0)
+       Filter SUPPLIERS.CITY = 'Oslo'  (est. rows=0)
+         SeqScan ANN.SUPPLIERS  (rows=10, cost=10.0)
+(26 rows)
+```
+
+A correlated subquery unnested ([Query Expressions](../06-queries.md#correlated-subqueries)),
+over STAFF of [Value Expressions](../04-expressions.md). The rule
+`unnest_subqueries` made the subquery a grouping of each department's
+salaries, joined with the outer rows by their departments. Each
+department is taken once, as a value and the count of its trailing
+spaces. The subquery has one row for each department, a set function of
+no grouping, so its value is read as it is, with no SINGLE:
+
+```sql
+CREATE TABLE STAFF (ID INTEGER PRIMARY KEY, NAME VARCHAR(30), DEPT CHAR(3), SALARY DECIMAL(9,2));
+INSERT INTO STAFF VALUES (1, 'Ada', 'ENG', 7200), (2, 'Grace', 'ENG', 8100),
+                         (3, 'Edsger', 'OPS', 5400), (4, 'Barbara', NULL, NULL);
+COMMIT;
+EXPLAIN SELECT NAME FROM STAFF S WHERE SALARY > (SELECT AVG(SALARY) FROM STAFF T WHERE T.DEPT = S.DEPT);
+```
+
+```
+OK
+OK
+OK
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project S.NAME
+   Filter S.SALARY > (<subquery>).1
+     Scan ANN.STAFF
+     Subquery
+       Project AVG(T.SALARY)
+         Aggregate group by [] computing [AVG(T.SALARY)]
+           Filter T.DEPT = S.DEPT
+             Scan ANN.STAFF
+ -- rules: unnest_subqueries
+ -- optimized:
+ Project S.NAME
+   Project S.ID, S.NAME, S.DEPT, S.SALARY
+     Filter S.SALARY > AVG(T.SALARY)
+       Left outer join on NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))
+         Project S.ID, S.NAME, S.DEPT, S.SALARY, S.DEPT, TRAILING_SPACES(S.DEPT)
+           Scan ANN.STAFF
+         Project S.DEPT, TRAILING_SPACES(S.DEPT), 1, AVG(T.SALARY)
+           Project S.DEPT, TRAILING_SPACES(S.DEPT), AVG(T.SALARY)
+             Aggregate group by [S.DEPT, TRAILING_SPACES(S.DEPT)] computing [AVG(T.SALARY)]
+               Left outer join on NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))
+                 Distinct
+                   Project S.DEPT, TRAILING_SPACES(S.DEPT)
+                     Scan ANN.STAFF
+                 Project S.DEPT, TRAILING_SPACES(S.DEPT), T.ID, T.NAME, T.DEPT, T.SALARY, TRUE
+                   Filter T.DEPT = S.DEPT
+                     Product
+                       Distinct
+                         Project S.DEPT, TRAILING_SPACES(S.DEPT)
+                           Scan ANN.STAFF
+                       Scan ANN.STAFF
+ -- physical:
+ Project S.NAME
+   Filter S.SALARY > AVG(T.SALARY)
+     LeftOuterJoin NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))  (hashed on S.DEPT IS NOT DISTINCT FROM S.DEPT AND TRAILING_SPACES(S.DEPT) IS NOT DISTINCT FROM TRAILING_SPACES(S.DEPT))
+       Project S.ID, S.NAME, S.DEPT, S.SALARY, S.DEPT, TRAILING_SPACES(S.DEPT)
+         SeqScan ANN.STAFF  (rows=4, cost=3.8)
+       Project S.DEPT, TRAILING_SPACES(S.DEPT), 1, AVG(T.SALARY)
+         Project S.DEPT, TRAILING_SPACES(S.DEPT), AVG(T.SALARY)
+           Aggregate group by [S.DEPT, TRAILING_SPACES(S.DEPT)] computing [AVG(T.SALARY)]
+             LeftOuterJoin NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))  (hashed on S.DEPT IS NOT DISTINCT FROM S.DEPT AND TRAILING_SPACES(S.DEPT) IS NOT DISTINCT FROM TRAILING_SPACES(S.DEPT))
+               Distinct
+                 Project S.DEPT, TRAILING_SPACES(S.DEPT)
+                   SeqScan ANN.STAFF  (rows=4, cost=3.8)
+               Project S.DEPT, TRAILING_SPACES(S.DEPT), T.ID, T.NAME, T.DEPT, T.SALARY, TRUE
+                 HashJoin S.DEPT = T.DEPT
+                   Distinct
+                     Project S.DEPT, TRAILING_SPACES(S.DEPT)
+                       SeqScan ANN.STAFF  (rows=4, cost=3.8)
+                   SeqScan ANN.STAFF  (rows=4, cost=3.6)
+(50 rows)
+```
+
 A query of a DISTINCT set function, which the rule distinct_aggregates
 computes by two groupings. The first groups the rows by REGION and
 CUSTOMER and makes SUM in parts, and the second groups those groups by
@@ -135,4 +275,4 @@ a statement is planned. In GET DIAGNOSTICS it is COMMAND_FUNCTION
 ## SEE ALSO
 
 [SELECT](select.md), [DECLARE CURSOR](declare-cursor.md),
-[CREATE INDEX](create-index.md)
+[CREATE INDEX](create-index.md), [SET](set-setting.md)

@@ -146,6 +146,11 @@ impl Wire {
         self.max_body = max_body;
     }
 
+    /// A watch on its peer, if its transport has one (RULES.md D335).
+    pub(super) fn watch(&self) -> Option<crate::transport::Watch> {
+        self.transport.watch()
+    }
+
     /// Whether a thread can read and write it apart from the runtime.
     pub(super) fn is_direct(&mut self) -> bool {
         self.transport.direct().is_some()

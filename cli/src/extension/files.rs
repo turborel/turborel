@@ -1,5 +1,5 @@
 //! \[EXTENSION\] The package files given to `install` (RULES.md D261):
-//! each file named, and each `.tbpkg` file of a directory named, read
+//! each file named, and each `.tbx` file of a directory named, read
 //! and its entries' digests checked, and the versions they hold as a
 //! source resolution chooses from, beside the packages installed.
 
@@ -31,7 +31,7 @@ pub(super) struct Given {
 }
 
 /// The package files `words` name: each a file, or a directory whose
-/// `.tbpkg` files are taken, in the order of their names. One file twice
+/// `.tbx` files are taken, in the order of their names. One file twice
 /// is taken once.
 ///
 /// # Errors

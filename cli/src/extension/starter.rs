@@ -59,7 +59,7 @@ pub(super) fn new(inv: &Invocation, typed: &str, out: &mut dyn Write) -> Result<
         (MANIFEST_FILE, manifest(&starting)),
         (LICENSE_FILE, license_text(&starting)),
         ("README.md", readme(&starting)),
-        (".gitignore", "/target\n*.tbpkg\n".to_owned()),
+        (".gitignore", "/target\n*.tbx\n".to_owned()),
     ];
     for (path, text) in &files {
         let file = path.split('/').fold(at.clone(), |p, part| p.join(part));
@@ -226,19 +226,19 @@ fn readme(s: &Starting<'_>) -> String {
          ## Test\n\nThe tests run the plug-in on the SDK's harness, in their own process,\nwith no database.\n\n    cargo test\n\n\
          ## Pack\n\nChoose a license first: put its text in `{LICENSE_FILE}` and its SPDX\nexpression in the manifest's LICENSE.\n\n\
          \x20   turborel extension pack . --key author.key\n\n\
-         This writes `{krate}-{FIRST_VERSION}.tbpkg`, signed if `--key` names a key\n\
+         This writes `{krate}-{FIRST_VERSION}.tbx`, signed if `--key` names a key\n\
          `turborel extension keygen --out author.key` made.\n\n\
          ## Install\n\nOn the server's machine, into its plug-in directory:\n\n\
          {}",
         if hosted {
             format!(
-                "\x20   turborel extension install {krate}-{FIRST_VERSION}.tbpkg --set PLUGINS.DIRECTORIES=/srv/turborel/plugins\n\n\
+                "\x20   turborel extension install {krate}-{FIRST_VERSION}.tbx --set PLUGINS.DIRECTORIES=/srv/turborel/plugins\n\n\
                  It is a host plug-in, which the node starts before the database opens:\n\n\
                  \x20   turboreld --set \"PLUGINS.HOST={name}=/srv/turborel/plugins/{name}/{FIRST_VERSION}\"\n"
             )
         } else {
             format!(
-                "\x20   turborel extension install {krate}-{FIRST_VERSION}.tbpkg --set PLUGINS.DIRECTORIES=/srv/turborel/plugins\n\n\
+                "\x20   turborel extension install {krate}-{FIRST_VERSION}.tbx --set PLUGINS.DIRECTORIES=/srv/turborel/plugins\n\n\
                  Then, as the database's owner:\n\n    CREATE EXTENSION {name};{call}\n"
             )
         }

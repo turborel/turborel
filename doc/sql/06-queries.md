@@ -233,6 +233,38 @@ SELECT S.NAME, D.DEPT, S.SALARY FROM DEPT D LEFT JOIN STAFF S PARTITION BY (NAME
 (8 rows)
 ```
 
+### How joins are planned *(extension)*
+
+The rows of a join are the standard's whatever order its tables are read
+in, so the planner chooses the order, and the method of each join, that
+it estimates cheapest. Of three or more tables it searches every order
+that keeps the query's result, bushy ones among them, where one join's
+result is joined with another's. Inner joins are reordered freely, and
+an outer join where its rows are kept, such as a LEFT join moved below
+an inner join of its preserved side. The search is exact for a query of
+up to 13 tables, or more while their connected subsets number no more
+than PLANNER.DP_BUDGET, and past that it is narrowed to orders near a
+greedy one, so a query of a hundred tables is still planned at once.
+Each join is a hash join, building the smaller side, an index
+nested-loop join probing the other table's index, or a merge join where
+a side is read in its key's order already and that order pays, as when
+the query asks for it. The rows of each set of tables are estimated
+from the distinct values of the joined columns, an equality that others
+imply counted once. A query with a condition that can raise an error, as
+a division can, is planned in the greedy order described next, which
+keeps the errors raised the same whatever the order.
+
+An equality repeated in each operand of an OR joins its tables as if
+written once, so `(P.K = L.K AND P.B = 'B1') OR (P.K = L.K AND P.B =
+'B2')` is a join on `P.K = L.K`, not a product filtered afterward. Each
+table is also filtered first by the OR of its own conditions, here
+`P.B = 'B1' OR P.B = 'B2'`. OPTIMIZER.FACTOR_DISJUNCTIONS turns this off.
+
+SET PLANNER.JOIN_ENUMERATION = 'GREEDY' plans a session's joins in a
+left-deep order instead, each next join the cheapest, as to compare the
+two. EXPLAIN shows the order and the algorithm chosen
+([EXPLAIN](statements/explain.md)).
+
 ## UNNEST
 
 UNNEST in the FROM clause gives the elements of arrays as rows, a row of
@@ -582,6 +614,40 @@ SELECT DEPT, COUNT(*) AS N, SUM(SALARY) AS TOTAL, GROUPING(DEPT) AS G
  NULL |                    1 |                 NULL |                    0
  NULL |                    4 |             20700.00 |                    1
 (4 rows, with a warning: SQLSTATE 01003)
+```
+
+### Correlated subqueries
+
+A subquery that refers to a column of the query around it is
+correlated, and its value is the one it has for that row's values
+[X3.135-1986 §5.21 GR3]. turborel unnests it as it optimizes the query.
+The subquery is computed once, for every set of values of the outer
+columns at a time, and joined with the outer rows, rather than run for
+each of them. Its rows, nulls and errors are those it would have run
+for each row. A scalar subquery of two rows for a row still fails with
+SQLCODE -811, and COUNT of a row with no match is still 0. A function
+that returns one value from a subquery of its parameters is unnested
+the same way, inlined where it is invoked.
+
+A subquery stays nested if it invokes a function that is not
+deterministic or that may change data, takes a sequence's next value, is
+of UNIQUE or MATCH, or stands where a CASE may leave it unevaluated and
+can raise an error. [EXPLAIN](statements/explain.md) shows which
+subqueries were unnested, and the settings OPTIMIZER.UNNEST_SUBQUERIES
+and OPTIMIZER.INLINE_FUNCTIONS turn the rewrites off
+([Settings](../appendix/c-settings.md)).
+
+```sql
+SELECT NAME, (SELECT COUNT(*) FROM STAFF T WHERE T.DEPT = S.DEPT) AS PEERS FROM STAFF S
+    WHERE EXISTS (SELECT * FROM DEPT WHERE DEPT.DEPT = S.DEPT) ORDER BY NAME;
+```
+
+```
+ NAME                           |                PEERS
+--------------------------------+----------------------
+ Ada                            |                    2
+ Grace                          |                    2
+(2 rows)
 ```
 
 ## The select list
