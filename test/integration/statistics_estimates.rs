@@ -129,3 +129,30 @@ fn a_range_past_the_greatest_value_keeps_rows_once_written() {
     s.commit().unwrap();
     assert!(estimated(&s, past).0 >= 1.0, "once written");
 }
+
+/// Verifies: [DESIGN] RULES.md D381, growth: of a key whose greatest
+/// value rose at each of the last two passes that found it changed, a
+/// pass between them finding the same, a range past it, once rows
+/// are written since, is estimated at the share written since, near the
+/// rows it keeps.
+#[test]
+fn a_growing_keys_range_past_its_greatest_keeps_the_rows_written_since() {
+    let db = database("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE G (ID INTEGER, V INTEGER)", &[]);
+    let s = db.session("APP");
+    let insert = |from: u32, to: u32| {
+        let rows: Vec<String> = (from..to).map(|i| format!("({i}, {})", i % 7)).collect();
+        for chunk in rows.chunks(500) {
+            s.run(&format!("INSERT INTO G VALUES {}", chunk.join(", "))).unwrap();
+        }
+        s.commit().unwrap();
+    };
+    for round in 0..3_u32 {
+        insert(round * 2_000, (round + 1) * 2_000);
+        // A second pass soon after, as maintenance and ANALYZE may make.
+        db.analyze("APP.G").unwrap();
+        db.analyze("APP.G").unwrap();
+    }
+    insert(6_000, 6_500);
+    let (past, plan) = estimated(&s, "SELECT * FROM G WHERE ID >= 6000");
+    assert!(within(past, 500.0, 2.0), "{past}\n{plan}");
+}

@@ -199,14 +199,15 @@ fn database_settings_outlive_the_database() {
 
 /// Verifies: [DESIGN] RULES.md D36: what the planner guesses when the
 /// statistics do not tell is the database's settings, PLANNER.*: a pattern
-/// keeps PLANNER.RANGE_SELECTIVITY of the rows, a third until it is set; a
+/// with no prefix, of a table too small for its sample (D382), keeps
+/// PLANNER.RANGE_SELECTIVITY of the rows, a third until it is set; a
 /// fraction is taken only from 0 to 1, the reordering gain only below 1,
 /// whether set or changed in the cost model.
 #[test]
 fn the_planners_guesses_are_settings() {
     let db = crate::common::big();
     let s = db.session("APP");
-    let plan = || s.explain("SELECT ID FROM T WHERE NAME LIKE 'N%'", &turborel::params::Params::new()).unwrap();
+    let plan = || s.explain("SELECT ID FROM T WHERE NAME LIKE '%N'", &turborel::params::Params::new()).unwrap();
     assert!(plan().contains("(est. rows=20)"), "{}", plan());
     db.set_setting("PLANNER.RANGE_SELECTIVITY", &Value::Approx(0.5)).unwrap();
     assert!(plan().contains("(est. rows=30)"), "{}", plan());

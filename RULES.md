@@ -10150,8 +10150,10 @@ The row store answers with the rows written since the pass and the rows
 it holds now (`stats/since.rs`). Once rows were written, the least and
 greatest values are no longer bounds, so a range past the greatest keeps
 at least what an equality would. A column whose greatest value rose at
-each of the last two passes grows with insertion, and a range past it
-keeps the share of rows written since. A column whose distinct values
+each of the last two passes that found it changed grows with insertion,
+and a range past it keeps the share of rows written since. A pass that
+finds the same greatest value, as one soon after another may, keeps the
+count. A column whose distinct values
 were within 5% of its rows is a key, and its distinct values grow with
 the rows.
 

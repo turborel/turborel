@@ -161,14 +161,19 @@ impl Gathered {
     }
 }
 
-/// Notes in `stats` of each column whether its greatest value rose past
-/// `previous`'s, the last pass's, at how many passes in a row.
+/// Notes in `stats` of each column at how many passes in a row its
+/// greatest value rose past `previous`'s, the last pass's. A pass that
+/// finds the same greatest value keeps the count, as one soon after
+/// another, by maintenance and then by ANALYZE, says nothing of growth.
 fn risen(stats: &mut TableStats, previous: Option<&TableStats>) {
     let Some(previous) = previous else { return };
     for (column, before) in stats.columns.iter_mut().zip(&previous.columns) {
-        let rose =
-            column.max.as_ref().zip(before.max.as_ref()).is_some_and(|(now, then)| compare(now, then) == Some(std::cmp::Ordering::Greater));
-        column.rises = if rose { before.rises.saturating_add(1).min(GROWING) } else { 0 };
+        let order = column.max.as_ref().zip(before.max.as_ref()).and_then(|(now, then)| compare(now, then));
+        column.rises = match order {
+            Some(std::cmp::Ordering::Greater) => before.rises.saturating_add(1).min(GROWING),
+            Some(std::cmp::Ordering::Equal) => before.rises,
+            Some(std::cmp::Ordering::Less) | None => 0,
+        };
     }
 }
 
@@ -333,7 +338,8 @@ mod tests {
     /// Verifies: [DESIGN] RULES.md D381: a pass notes of each column at
     /// how many passes in a row its greatest value rose, so a column
     /// growing with insertion is known after two, and one that did not
-    /// rise is not; the statistics read after rows are written answer
+    /// rise is not; a pass finding the same greatest value keeps the
+    /// count; the statistics read after rows are written answer
     /// by the change, a range past the greatest value keeping the share
     /// written since.
     #[test]
@@ -350,6 +356,7 @@ mod tests {
             assert_eq!(stats.columns[0].rises, u8::try_from(round).unwrap());
             assert_eq!(stats.columns[1].rises, 0, "its greatest value did not rise");
         }
+        assert_eq!(table.gather().unwrap().columns[0].rises, 2, "a pass finding the same greatest keeps the count");
         for n in 0..120 {
             table.insert(NO_TRANSACTION, vec![value(30_000 + n), value(1), value(0)]).unwrap();
         }
