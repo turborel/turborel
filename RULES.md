@@ -312,6 +312,13 @@ verification approach DO-178C expects (§8).
 | D327 | A document's language is its FullText value's or its index's, TEXT_MATCHES's its index's; no language is detected |
 | D328 | A plug-in serves a language by the LANGUAGE kind, named where a built-in one is, a batch a call |
 | D329 | A single letter of a bigram language matches the bigrams holding it, and thesaurus terms are joined back |
+| D330 | LOCALTIME and LOCALTIMESTAMP are words, read as the functions only standing alone |
+| D331 | The trigonometric and logarithm functions are found in double precision |
+| D332 | MOD of DECFLOAT operands is exact, and of a non-whole one too |
+| D333 | ABS never raises 22003 |
+| D334 | A database counts its transactions committed and rolled back, shown in INFORMATION_SCHEMA.SERVER |
+| D335 | A connection whose request runs is watched for its client gone |
+| D336 | A prepared CALL's output dynamic parameters are its columns, sent as a row |
 
 ### The project
 
