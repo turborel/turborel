@@ -9,7 +9,7 @@ use turborel::value::types::{self, Field, Structured, UdtName};
 use turborel::value::xml::XmlValue;
 use turborel::value::{Binary, DataType, Decimal, Value};
 
-use super::{FAILED, every_reply, kind_of, reply_round_trip, unframed};
+use super::{FAILED, every_reply, kind_of, reply_round_trip, request_round_trip, unframed};
 use crate::*;
 
 /// Columns of the types whose fields nest: an array, a row, a multiset,
@@ -70,5 +70,64 @@ fn every_prefix_of_a_reply_is_refused() {
             let cut = Reply::decode(kind, &body[..end]).err().map(|e| kind_of(&e));
             assert_eq!(cut, Some(FAILED), "{reply:?} cut at {end} of {}", body.len());
         }
+    }
+}
+
+/// Requests whose fields are counted, nested or of large objects.
+fn counted_requests() -> Vec<Request> {
+    vec![
+        Request::ChangeUser { user: "Y".into(), mechanism: "password".into(), initial: vec![1, 2, 3] },
+        Request::CopyIn { table: "T".into(), columns: vec!["A".into(), "B".into()], ends: true },
+        Request::CopyData(nested_rows()),
+        Request::Describe(Described::Cursor { statement: 3, cursor: 4 }),
+        Request::Lob(LobRequest::Read { locator: 7, from: 1, count: 9, characters: true }),
+        Request::Lob(LobRequest::Create(LobKind::Binary)),
+        Request::Lob(LobRequest::Append { locator: 7, bytes: vec![1, 2] }),
+        Request::Lob(LobRequest::Free(7)),
+        Request::Lob(LobRequest::Hold(7)),
+    ]
+}
+
+/// Verifies: [DESIGN] RULES.md D42, D45, D195: every request of counted
+/// or nested fields, and every large object request and reply, reads
+/// back as written; cut short anywhere in its body it is refused as a
+/// connection failure (SQLCODE -919, SQLSTATE 08006), as is one of a
+/// kind of large object, a large object request or a reply there is not.
+#[test]
+fn every_prefix_of_a_request_is_refused() {
+    let request = |request: Request, back: usize, to: u8| {
+        let mut bytes = Vec::new();
+        request.encode(&mut bytes);
+        let at = bytes.len() - back;
+        bytes[at] = to;
+        let (kind, body) = unframed(&bytes, MAX_BODY).unwrap();
+        Request::decode(kind, body).err().map(|e| kind_of(&e))
+    };
+    assert_eq!(request(Request::Lob(LobRequest::Create(LobKind::Binary)), 1, 9), Some(FAILED), "no kind of large object is 9");
+    assert_eq!(request(Request::Lob(LobRequest::Free(7)), 5, 99), Some(FAILED), "no Lob request is of kind 99");
+    let mut located = Vec::new();
+    Reply::Lob(LobReply::Locator(7)).encode(&mut located);
+    let at = located.len() - 5;
+    located[at] = 99;
+    let (kind, body) = unframed(&located, MAX_BODY).unwrap();
+    assert_eq!(Reply::decode(kind, body).err().map(|e| kind_of(&e)), Some(FAILED), "no Lob reply is of kind 99");
+    for reply in [Reply::Lob(LobReply::Data(vec![0, 1, 2])), Reply::Lob(LobReply::Locator(9))] {
+        reply_round_trip(&reply);
+        cut_short(&|b| reply.encode(b), |k, b| Reply::decode(k, b).map(drop));
+    }
+    for counted in counted_requests() {
+        request_round_trip(&counted);
+        cut_short(&|b| counted.encode(b), |k, b| Request::decode(k, b).map(drop));
+    }
+}
+
+/// Checks that the message `encode` writes, its body cut short anywhere,
+/// is refused by `decode` as a connection failure.
+fn cut_short(encode: &dyn Fn(&mut Vec<u8>), decode: fn(u8, &[u8]) -> Result<()>) {
+    let mut bytes = Vec::new();
+    encode(&mut bytes);
+    let (kind, body) = unframed(&bytes, MAX_BODY).unwrap();
+    for end in 0..body.len() {
+        assert_eq!(decode(kind, &body[..end]).err().map(|e| kind_of(&e)), Some(FAILED), "kind {kind} cut at {end}");
     }
 }
