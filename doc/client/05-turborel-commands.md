@@ -380,6 +380,26 @@ from 52000.00 to 61000.00
 OK
 ```
 
+`\gdesc` describes the statement begun, or the last, without running
+it. It shows each column of the statement's result, its name and its
+type as it was declared, as the server tells it to a client that asks
+for declared types, which this one does. A statement with no result
+shows no columns.
+
+```sql
+SELECT ID, NAME, SALARY, CAST(ID AS SMALLINT) AS SHORT FROM STAFF \gdesc
+```
+
+```
+ Column | Type
+--------+-----------------------
+ ID     | INTEGER
+ NAME   | CHARACTER VARYING(20)
+ SALARY | DECIMAL(9,2)
+ SHORT  | SMALLINT
+(4 rows)
+```
+
 `\watch SECONDS COUNT` runs the statement again every SECONDS, 2 by
 default, COUNT times or until Ctrl-C or a failure. It writes a line
 before each run.

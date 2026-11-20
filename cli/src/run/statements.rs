@@ -6,13 +6,15 @@ use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::time::Duration;
 
+use turborel::error::{Code, SqlError};
 use turborel::storage::Row;
+use turborel::value::{DataType, Value};
 use turborel_client::agent::{Agent, Connector};
 use turborel_client::capability::PING;
 use turborel_client::connection::{Connection, Outcome, Sink, Streamed};
 use turborel_client::export::ExportFormat;
 use turborel_client::import::{self, Cause, Delimited, Import, ImportError, Imported, Rejected};
-use turborel_client::{Canceller, Failure, Notice, Timing};
+use turborel_client::{Canceller, Column, Failure, Notice, Timing};
 
 use crate::timing::ServerTime;
 
@@ -40,6 +42,17 @@ pub trait Statements {
     ///
     /// The statement's failure.
     fn fetch_into(&mut self, sql: &str, rows: u32, sink: &mut dyn Sink) -> Result<Streamed, Failure>;
+
+    /// Describes `sql` without running it, to `sink`: a row of each
+    /// column of its result, its name and its type, as declared where the
+    /// server tells it (RULES.md D396). Fails where nothing prepares it.
+    ///
+    /// # Errors
+    ///
+    /// The statement's failure to be prepared.
+    fn describe_into(&mut self, _sql: &str, _sink: &mut dyn Sink) -> Result<Streamed, Failure> {
+        Err(Failure::from(&SqlError::new(Code::Api, "[DESIGN] these statements are not prepared, so none is described")))
+    }
 
     /// What cancels the statement running, if anything can.
     fn canceller(&self) -> Option<Canceller>;
@@ -161,6 +174,37 @@ fn fetched<S: Read + Write>(
     Some(read.map(|()| Streamed::Rows(count)))
 }
 
+/// The headings of a description's two columns.
+const DESCRIBED: [&str; 2] = ["Column", "Type"];
+
+/// Describes `sql`, prepared over `connection` and never run, to `sink`:
+/// a row of each column, its name and its type as SQL writes it, as it
+/// was declared where the server tells it (RULES.md D396).
+fn described<S: Read + Write>(connection: &mut Connection<S>, sql: &str, sink: &mut dyn Sink) -> Result<Streamed, Failure> {
+    let statement = connection.prepare(sql)?;
+    let rows: Vec<Row> =
+        statement.columns().iter().map(|c| vec![Value::Char(c.name.clone().unwrap_or_default()), Value::Char(c.type_written())]).collect();
+    // Nothing of it ran; a failure to free its number changes nothing
+    // described.
+    drop(connection.deallocate(statement));
+    let widest = |at: usize| {
+        let longest = rows.iter().filter_map(|r| r.get(at)).map(|v| v.to_string().chars().count()).max().unwrap_or(1);
+        u32::try_from(longest.max(1)).unwrap_or(u32::MAX)
+    };
+    let headings = DESCRIBED.iter().enumerate();
+    let columns: Vec<Column> = headings
+        .map(|(at, name)| Column {
+            name: Some((*name).to_owned()),
+            data_type: DataType::varying(widest(at)),
+            not_null: true,
+            declared: None,
+        })
+        .collect();
+    sink.columns(&columns);
+    sink.rows(&rows);
+    Ok(Streamed::Rows(u64::try_from(rows.len()).unwrap_or(u64::MAX)))
+}
+
 /// Whether `sql` is a CALL that may have output dynamic parameters, one
 /// with a `?`, which only a statement prepared takes, so it is run as
 /// `fetched` runs it, its outputs shown as a row [ISO/IEC 9075-2:2023
@@ -245,6 +289,10 @@ impl<S: Read + Write> Statements for Connection<S> {
         fetched(self, sql, rows, sink).unwrap_or_else(|| Connection::query_into(self, sql, sink))
     }
 
+    fn describe_into(&mut self, sql: &str, sink: &mut dyn Sink) -> Result<Streamed, Failure> {
+        described(self, sql, sink)
+    }
+
     fn canceller(&self) -> Option<Canceller> {
         Connection::canceller(self)
     }
@@ -309,6 +357,10 @@ impl<C: Connector> Statements for Agent<C> {
         }
         let current = self.current()?;
         fetched(current, sql, rows, sink).unwrap_or_else(|| current.query_into(sql, sink))
+    }
+
+    fn describe_into(&mut self, sql: &str, sink: &mut dyn Sink) -> Result<Streamed, Failure> {
+        described(self.current()?, sql, sink)
     }
 
     fn canceller(&self) -> Option<Canceller> {

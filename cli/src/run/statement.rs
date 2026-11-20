@@ -28,11 +28,13 @@ pub(super) struct How {
     pub(super) target: Target,
     /// Whether expanded, whatever the layout says.
     pub(super) expanded: bool,
+    /// Whether the statement is described, not run (`\gdesc`).
+    pub(super) described: bool,
 }
 
 impl Default for How {
     fn default() -> How {
-        How { target: Target::Default, expanded: false }
+        How { target: Target::Default, expanded: false, described: false }
     }
 }
 
@@ -148,9 +150,10 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         // A CALL of `?`s fetched as a statement prepared, all at once.
         let fetch = self.vars.number(vars::FETCH_COUNT).filter(|n| *n > 0).or_else(|| super::statements::calls_out(sql).then_some(0));
         let mut printer = Printer::new(&mut out, &self.layout, width, how.expanded);
-        let streamed = match fetch {
-            Some(rows) => self.connection.fetch_into(sql, rows, &mut printer),
-            None => self.connection.query_into(sql, &mut printer),
+        let streamed = match (how.described, fetch) {
+            (true, _) => self.connection.describe_into(sql, &mut printer),
+            (false, Some(rows)) => self.connection.fetch_into(sql, rows, &mut printer),
+            (false, None) => self.connection.query_into(sql, &mut printer),
         };
         let state = match streamed.map_err(Wrong::Failed)? {
             Streamed::Rows(count) => {

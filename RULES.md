@@ -353,6 +353,9 @@ verification approach DO-178C expects (§8).
 | D392 | A character large object a client writes is checked as each Append comes |
 | D393 | A reply value the client cannot take fails its request alone, the rest of its replies read past; a malformed frame loses the connection |
 | D394 | Terminate waits at most its limit on a stream that bounds itself, a program's own too, and reads past a Notice to its Error |
+| D396 | A column's declared type is told in a Description's and a Prepared's tail, with `declared-types`, and values are written as ever |
+| D397 | Status CATALOG is never empty, as CATALOG.NAME takes no null |
+| D398 | The protocol's sample frames are a file its tests make from its encoders, and fail on any difference |
 
 ### The project
 
@@ -9756,6 +9759,70 @@ connection as an answer Terminate does not have. The client had read
 the bytes whole and decoded them as one reply, so a Notice before the
 Error left bytes after it and failed with SQLSTATE 08006 in place of
 the Error.
+
+#### D396. A column's declared type is told in a Description's and a Prepared's tail, with `declared-types`, and values are written as ever
+
+A data type's tag says how a column's values are written, and one tag
+stands for several declared types. SMALLINT, INTEGER, BIGINT, DECIMAL
+and NUMERIC are all exact numeric, tag 2, as their descriptors keep
+the name apart [ISO/IEC 9075:1992 §6.1, §21.3.5] (`Spelled`). REAL, DOUBLE
+PRECISION and FLOAT are all approximate numeric, tag 3, and a distinct
+type goes as its source type (D69). Every other tag is one type. A
+client was told INTEGER as DECIMAL(10, 0), and a program showing its
+columns showed it so.
+
+A tag of its own for each name would change what a client of today
+reads of every number, and values of one type would be written under
+several tags. So the tags stay, and the declared type is told beside
+them. With the capability `declared-types` (D185) a Description and a
+Prepared end with tail tag 19, a count, then of each column its type's
+name, as the Information Schema's DATA_TYPE gives it, and its type as
+SQL writes it (`declared.rs`). The name serves a program that shows a
+type's name, and the text one that shows it whole, a distinct type's
+schema and name or an array's element too. A client not granted it is
+sent the columns alone, the bytes of before, and a Rows reply is the
+same bytes either way. The protocol stays version 1.
+
+The server tells it only to a client granted it, so it is decided once
+where the columns are described (`described` in `native/requests.rs`).
+The client library asks for it by default, as for every capability but
+compression, and a column's `type_written` gives the declared type where
+told, else the type its tag says. The command-line client's `\gdesc`
+prepares a statement, shows each column's name and that text, and runs
+nothing.
+
+#### D397. Status CATALOG is never empty, as CATALOG.NAME takes no null
+
+The protocol's reference said Status CATALOG is empty if CATALOG.NAME
+is null. CATALOG.NAME is an identifier setting (`Kind::Identifier`).
+Its value, or its default, set to a null is refused (SQLCODE -910),
+and so is one of spaces alone or longer than an identifier, so it is
+always 1 to 128 characters. A reset gives it its default, TURBOREL,
+again. So a null never reaches the Status, and the reference says the
+value is never empty. The general rule of a Status, empty for a null,
+stays for the settings a session may set, which can be null.
+
+#### D398. The protocol's sample frames are a file its tests make from its encoders, and fail on any difference
+
+A driver written to the protocol's reference needs frames to test its
+decoder with, and frames written by hand drift from what the code
+sends. So the frames beside the reference
+(`doc/client/05-protocol-frames.tsv`) are made by a test of the
+protocol crate from the encoders the server and the client use
+(`tests/frames.rs`). Each frame is decoded again and must encode to the
+same bytes, and the test fails if the file differs, leaving the frames
+it should hold in the temporary directory to copy over. The repository
+has no mode that writes a checked-in file from a test, so none is added.
+
+The file is plain text with fixed fields, so a decoder in any language
+reads it without a parser. Each line is a frame, its direction, a
+unique name, the capabilities it needs, its bytes in hexadecimal and
+what it means, apart by tabs, and a line beginning with `#` is a
+comment. It covers every request and reply, every value and data type
+tag, each tail field, each Status the reference names, a Notice and an
+Error with and without diagnostics, compressed frames, and the edges a
+decoder meets. A plug-in's type is read without its kind by a reader
+with no registry, so its sample is checked to decode alone.
 
 ## 2. Project layout
 

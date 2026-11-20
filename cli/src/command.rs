@@ -85,6 +85,9 @@ pub enum Command {
     Gset(String),
     /// `\gexec` runs each value of a query's result as a statement.
     Gexec,
+    /// `\gdesc` describes a statement's result, its columns' names and
+    /// types, without running it.
+    Gdesc,
     /// `\watch [SECONDS [COUNT]]` runs the statement again and again.
     Watch {
         /// The interval between runs.

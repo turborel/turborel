@@ -196,6 +196,7 @@ statement's outcome, as the client library exposes it, follows.
 | `describe`, `cursors` | §17.7, §17.13, §13.1 to §13.4 | A statement or an open cursor described again, and several cursors of one statement open at once (D188). |
 | `fetch-ends` | §4.28 | A cursor opened under autocommit commits as its last row is sent or it is closed, and rolls back as its rows fail (D199). |
 | `copy` | §13.8 GR4b iii | Rows copied in, each value assigned as INSERT assigns it, all or nothing (D195). |
+| `declared-types` | ISO/IEC 9075:1992 §6.1, §21.3.5 | A column described carries the type it was declared with, its DATA_TYPE name as its data type descriptor keeps it and the type as SQL writes it, so INTEGER is told apart from the exact numeric type it is (D396). |
 | `status`, `ping`, `reset`, `change-user`, `query-attributes`, `connection-attributes`, `multi-statement`, `compression`, `commit-position` | none | Extensions of the protocol, RULES.md D189 to D194 and D196. |
 
 ### Dynamic SQL

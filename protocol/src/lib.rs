@@ -96,8 +96,9 @@
 //! server      'C' challenge: bytes
 //!             'R' ready: authorization identifier, key, capabilities, the
 //!                 server's product and version
-//!             'P' prepared: statement u32, parameters, columns
-//!             'D' description: columns
+//!             'P' prepared: statement u32, parameters, columns; tail:
+//!                 declared
+//!             'D' description: columns; tail: declared
 //!             'B' rows: each row's values
 //!             'S' suspended
 //!             'K' complete: sqlcode i32 as u32; sqlstate, a string of 5;
@@ -112,6 +113,7 @@
 
 pub mod capability;
 pub mod compress;
+mod declared;
 pub mod der;
 mod diagnostics;
 mod fields;
@@ -133,6 +135,7 @@ use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::value::DataType;
 
 pub use capability::Capabilities;
+pub use declared::Declared;
 pub use diagnostics::{Diagnostics, ERROR, FATAL, NOTICE, Notice, WARNING};
 pub use fields::row_size;
 pub use lobs::{LobReply, LobRequest};
@@ -179,11 +182,31 @@ pub struct Column {
     pub data_type: DataType,
     /// Whether it is constrained NOT NULL.
     pub not_null: bool,
+    /// \[DESIGN\] With `declared-types`, the type it was declared with, as
+    /// INTEGER of an exact numeric type (RULES.md D396). Its tail.
+    pub declared: Option<Declared>,
 }
 
 impl From<&OutColumn> for Column {
+    /// Without its declared type, as a client not granted
+    /// `declared-types` is told.
     fn from(c: &OutColumn) -> Column {
-        Column { name: c.name.clone(), data_type: c.data_type.clone(), not_null: c.not_null }
+        Column { name: c.name.clone(), data_type: c.data_type.clone(), not_null: c.not_null, declared: None }
+    }
+}
+
+impl Column {
+    /// \[DESIGN\] RULES.md D396: it, with its declared type.
+    #[must_use]
+    pub fn with_declared(self) -> Column {
+        let declared = Some(Declared::of(&self.data_type));
+        Column { declared, ..self }
+    }
+
+    /// Its type as SQL writes it, as it was declared if told, else as its
+    /// tag and parameters say, so INTEGER is NUMERIC(10,0).
+    pub fn type_written(&self) -> String {
+        self.declared.as_ref().map_or_else(|| self.data_type.to_string(), |d| d.written.clone())
     }
 }
 

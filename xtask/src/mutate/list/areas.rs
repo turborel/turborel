@@ -5,6 +5,7 @@ mod budget;
 mod client_sync;
 #[path = "count.rs"]
 mod count;
+mod declared_types;
 // The decode kernels' mutations, beside the areas as `list.rs` holds no
 // more modules.
 #[path = "decode.rs"]
@@ -155,9 +156,16 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    // The transport's, parallel queries', the client's step with its server
-    // and the decode kernels' last, as `last` holds no more.
-    let after: [&'static [Mutation]; 4] = [&super::transport::TRANSPORT, &parallel::PARALLEL, &client_sync::CLIENT_SYNC, &decode::DECODE];
+    // The transport's, parallel queries', the client's step with its
+    // server, the decode kernels' and declared types' last, as `last` holds
+    // no more.
+    let after: [&'static [Mutation]; 5] = [
+        &super::transport::TRANSPORT,
+        &parallel::PARALLEL,
+        &client_sync::CLIENT_SYNC,
+        &decode::DECODE,
+        &declared_types::DECLARED_TYPES,
+    ];
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
 }
 

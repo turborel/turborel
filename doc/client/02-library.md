@@ -175,6 +175,22 @@ if let Outcome::Rows { rows, .. } = conn.execute(&by_id, &[Value::Exact(Decimal:
 }
 ```
 
+A `Column`, of a statement's `columns` or of `Outcome::Rows`, has its
+name, its `data_type` and whether it is NOT NULL. A type's tag can stand
+for several declared types, so an INTEGER column's `data_type` is an
+exact numeric type of precision 10 and scale 0. Granted
+`declared-types`, which `connect` asks for, its `declared` holds the
+type it was declared with, its name as the Information Schema gives it
+and the type as SQL writes it. `type_written` gives the declared type
+where the server told it, else the type its tag says.
+
+```rust
+let typed = conn.prepare("VALUES (CAST(1 AS INTEGER), CAST(2.5 AS DECIMAL(9,2)))")?;
+// typed.columns()[0].type_written(): "INTEGER"
+// typed.columns()[1].type_written(): "DECIMAL(9,2)"
+// without declared-types granted, "NUMERIC(10,0)" and "NUMERIC(9,2)"
+```
+
 A prepared statement stays valid across transactions. A query, an
 INSERT, and a searched or positioned UPDATE or DELETE keep their plan
 between executions, each execution putting its values in it; the plan

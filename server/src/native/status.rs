@@ -26,7 +26,8 @@ pub const AUTHORIZATION: &str = "AUTHORIZATION";
 pub const SCHEMA: &str = "SCHEMA";
 /// The status of whether the session's transaction is READ ONLY: YES or NO.
 pub const READ_ONLY: &str = "READ_ONLY";
-/// The status of the database's catalog name.
+/// The status of the database's catalog name, an identifier, never null
+/// nor empty, as CATALOG.NAME takes no other value (RULES.md D397).
 pub const CATALOG: &str = "CATALOG";
 /// The status of whether the session's user is the database's owner: YES
 /// or NO.
@@ -170,5 +171,29 @@ mod tests {
         assert_eq!(told(&status.changed(&session)), [zone], "back to the database's");
         session.direct("SET SCHEMA 'Y'").unwrap();
         assert_eq!(told(&status.changed(&session)), [(SCHEMA.to_owned(), "Y".to_owned())]);
+    }
+
+    /// The value of CATALOG `status` tells as `session` begins.
+    fn catalog(status: &mut Status, session: &Session) -> String {
+        told(&status.begun(session)).into_iter().find(|(n, _)| n == CATALOG).map(|(_, v)| v).unwrap()
+    }
+
+    /// Verifies: [DESIGN] RULES.md D190, D397: CATALOG is told as the
+    /// setting CATALOG.NAME, which is never null nor empty: TURBOREL by
+    /// default; a null, as its value or its default, refused, and so a
+    /// name of spaces alone; a name set told; a reset gives TURBOREL again.
+    #[test]
+    fn the_catalog_is_never_null() {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION X").unwrap();
+        let mut status = Status::default();
+        assert_eq!(catalog(&mut status, &db.session("X")), "TURBOREL");
+        assert_eq!(db.set_setting(CATALOG_NAME, &Value::Null).unwrap_err().sqlcode(), -910_i32);
+        assert_eq!(db.set_setting_default(CATALOG_NAME, &Value::Null).unwrap_err().sqlcode(), -910_i32);
+        assert!(db.set_setting(CATALOG_NAME, &Value::Char("  ".into())).is_err(), "nor empty");
+        db.set_setting(CATALOG_NAME, &Value::Char("SALES".into())).unwrap();
+        assert_eq!(catalog(&mut status, &db.session("X")), "SALES");
+        db.reset_setting(CATALOG_NAME).unwrap();
+        assert_eq!(catalog(&mut status, &db.session("X")), "TURBOREL");
     }
 }
