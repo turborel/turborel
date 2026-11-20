@@ -127,6 +127,14 @@ enum Physical {
     Fixed(Box<Plan>, Arc<[QualifiedName]>, Option<Arc<[usize]>>),
 }
 
+/// What `Keeping::written` finds kept of a write's object rows' plan,
+/// once tried: as `Physical` holds it.
+enum WriteFound {
+    Varies,
+    Learning(Learning),
+    Fixed(Box<Plan>, Arc<[QualifiedName]>, Option<Arc<[usize]>>),
+}
+
 /// A query's columns, its physical plan, and the tables it reads.
 pub(in crate::db) type Opened = (Vec<OutColumn>, Plan, Arc<[QualifiedName]>);
 
@@ -317,27 +325,56 @@ impl Keeping<'_> {
 
     /// `w`, a kept UPDATE or DELETE, filled with `values`: its object rows
     /// by its physical plan made once with its slots, kept, if its paths
-    /// follow no value (`physical::keepable`); else by its logical plan,
-    /// planned as it runs.
+    /// follow no value (`physical::keepable`) or it learned them (RULES.md
+    /// D422) and no table it reads has moved since; else, while it learns
+    /// or once it stopped, planned with `values` as it runs.
     ///
     /// # Errors
     ///
     /// As `Written::filled`; SQLCODE -910 if a lock is poisoned.
     fn written(&self, w: Arc<BoundWrite>, values: &[Value]) -> Result<Written> {
-        let fixed = |k: &Kept| match &k.physical {
+        let budget = crate::optimizer::prepared::budget(self.st);
+        let found = |k: &Kept| match &k.physical {
             Physical::Untried => None,
-            Physical::Fixed(plan, reads, _) => Some(Some(((**plan).clone(), Arc::clone(reads)))),
-            Physical::Varies | Physical::Learning(_) => Some(None),
+            Physical::Fixed(plan, reads, rows) => Some(WriteFound::Fixed(plan.clone(), Arc::clone(reads), rows.clone())),
+            Physical::Learning(learning) => Some(WriteFound::Learning(learning.clone())),
+            Physical::Varies => Some(WriteFound::Varies),
         };
-        if let Some(kept) = self.kept(fixed)? {
-            return Written::filled(w, kept, values, crate::optimizer::prepared::budget(self.st));
+        match self.kept(found)? {
+            Some(WriteFound::Varies) => Written::filled(w, None, values, budget),
+            Some(WriteFound::Learning(learning)) => self.learn_write(w, learning, values),
+            Some(WriteFound::Fixed(plan, reads, rows)) => {
+                if rows.is_some_and(|rows| moved(self.st, &reads, &rows)) {
+                    return self.learn_write(w, Learning::default(), values);
+                }
+                Written::filled(w, Some((*plan, reads)), values, budget)
+            }
+            None => {
+                let (_, _, plan) = super::super::plan_rows(self.st, w.rows.clone());
+                if !keepable(&plan, self.st) {
+                    return self.learn_write(w, Learning::default(), values);
+                }
+                let reads: Arc<[QualifiedName]> = w.rows.tables().into();
+                self.keep(|k| k.physical = Physical::Fixed(Box::new(plan.clone()), Arc::clone(&reads), None))?;
+                Written::filled(w, Some((plan, reads)), values, budget)
+            }
         }
-        let (_, _, plan) = super::super::plan_rows(self.st, w.rows.clone());
+    }
+
+    /// An execution of `w`, a kept UPDATE or DELETE learning its object
+    /// rows' plan as a query does (`learn`, RULES.md D422): planned with
+    /// `values`, which it runs, and with its slots.
+    ///
+    /// # Errors
+    ///
+    /// As `written`.
+    fn learn_write(&self, w: Arc<BoundWrite>, was: Learning, values: &[Value]) -> Result<Written> {
+        let (_, _, plan) = super::super::plan_rows(self.st, filled(w.rows.clone(), values)?);
         let reads: Arc<[QualifiedName]> = w.rows.tables().into();
-        let kept = keepable(&plan, self.st).then_some((plan, reads));
-        let physical = kept.as_ref().map_or(Physical::Varies, |(p, r)| Physical::Fixed(Box::new(p.clone()), Arc::clone(r), None));
+        let learned = was.after(&plan, super::super::plan_rows_slotted(self.st, w.rows.clone(), values));
+        let physical = learned.kept(&reads, rows_of(self.st, &reads));
         self.keep(|k| k.physical = physical)?;
-        Written::filled(w, kept, values, crate::optimizer::prepared::budget(self.st))
+        Written::filled(w, Some((plan, reads)), values, crate::optimizer::prepared::budget(self.st))
     }
 
     /// An execution of a query learning its plan, which `was` says: its
