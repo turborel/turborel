@@ -28,6 +28,14 @@ const MOST_GROUPED: usize = 6;
 /// The share of rows the conjuncts `conds`, over one table's columns,
 /// keep together, by what is `known`.
 pub fn conjunction(conds: &[Cond], known: Known<'_>) -> f64 {
+    // One conjunct a synopsis answers is never asked of the sample, nor
+    // combined with another: its own estimate, found without walking it
+    // for the sample's sake.
+    if let [only] = conds
+        && sampled::answered(only)
+    {
+        return selectivity(only, known);
+    }
     let all: Vec<&Cond> = conds.iter().collect();
     let width = known.stats.and_then(|s| s.sample()).and_then(|s| s.rows().first()).map_or(0, Vec::len);
     let (told, untold): (Vec<&Cond>, Vec<&Cond>) = all.iter().copied().partition(|c| sampled::evaluable(c, width));

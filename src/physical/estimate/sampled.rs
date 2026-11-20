@@ -86,12 +86,12 @@ pub(super) fn answered(c: &Cond) -> bool {
         Cond::In(e, _) | Cond::IsNull(e, _) => matches!(e, Expr::Column(_)),
         Cond::Like(..) => super::like::whole(c),
         Cond::Not(a) => answered(a),
-        Cond::Or(a, b) => {
+        Cond::Or(..) => {
             let mut columns = Vec::new();
             cond_columns(c, &mut columns);
             columns.sort_unstable();
             columns.dedup();
-            answered(a) && answered(b) && columns.len() <= 1
+            columns.len() <= 1 && disjuncts_answered(c)
         }
         Cond::And(a, b) => answered(a) && answered(b),
         Cond::Distinct(..)
@@ -101,6 +101,29 @@ pub(super) fn answered(c: &Cond) -> bool {
         | Cond::Unique(..)
         | Cond::Match { .. }
         | Cond::Value(_) => false,
+    }
+}
+
+/// Whether a synopsis answers each disjunct of the OR `c`, its columns
+/// already found one: the disjuncts' own ORs are not asked for their
+/// columns again, so an IN list written as a chain of ORs is walked once.
+fn disjuncts_answered(c: &Cond) -> bool {
+    match c {
+        Cond::Or(a, b) => disjuncts_answered(a) && disjuncts_answered(b),
+        Cond::Const(_)
+        | Cond::Compare(..)
+        | Cond::In(..)
+        | Cond::IsNull(..)
+        | Cond::Like(..)
+        | Cond::Not(_)
+        | Cond::And(..)
+        | Cond::Distinct(..)
+        | Cond::Exists(_)
+        | Cond::Quantified(..)
+        | Cond::Is(..)
+        | Cond::Unique(..)
+        | Cond::Match { .. }
+        | Cond::Value(_) => answered(c),
     }
 }
 
