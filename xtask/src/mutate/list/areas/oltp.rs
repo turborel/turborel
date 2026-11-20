@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 5] = [
+pub const OLTP: [Mutation; 7] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -55,6 +55,26 @@ pub const OLTP: [Mutation; 5] = [
         original: "snapshot.memory.set_limit(crate::settings::budget_bytes(values.get(crate::settings::MEMORY_BUDGET_BYTES)));",
         replacement: "snapshot.memory.set_limit(recorded(\"MEMORY.BUDGET_BYTES\").map_or(crate::memory::DEFAULT_BUDGET, |v| crate::settings::budget_bytes(&v)));",
         integration: &["creation::the_budget_given_as_the_database_opens_holds_its_pool"],
+        unit: &[],
+    },
+    Mutation {
+        name: "oltp-kept-body-never-stale",
+        package: Package::Core,
+        breaks: "a procedure's kept program is run after a definition it was bound with changed",
+        file: "src/db/routines/kept.rs",
+        original: ".filter(|(key, _)| key.holds(st, session))",
+        replacement: ".filter(|(key, _)| key.holds(st, session) || true)",
+        integration: &["kept_routines::a_kept_body_is_bound_again_as_definitions_change"],
+        unit: &[],
+    },
+    Mutation {
+        name: "oltp-kept-body-holding-instant",
+        package: Package::Core,
+        breaks: "a procedure's program bound with the instant of one CALL is kept for the next",
+        file: "src/db/routines/kept.rs",
+        original: "        if !held {",
+        replacement: "        if !held || true {",
+        integration: &["kept_routines::a_body_that_reads_the_instant_takes_each_calls"],
         unit: &[],
     },
 ];

@@ -186,6 +186,7 @@ mod json_index;
 mod json_table;
 mod json_type;
 mod kept_plans;
+mod kept_routines;
 mod kept_set_plans;
 mod language;
 mod language_collations;

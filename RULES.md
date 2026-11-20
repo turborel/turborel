@@ -9873,6 +9873,22 @@ each statement's end to find the constraints a change may break, sort
 by a name made once for each entry, not at each comparison
 (`catalog/memory.rs`).
 
+#### D406. A procedure's body is kept between CALLs
+
+A CALL read the procedure's text again and bound its body again, and
+each INSERT, UPDATE and DELETE in it was bound and planned again as it
+ran, though the body and the definitions it reads seldom change. A
+session keeps each procedure's text read while it stays the same, and
+its body's program (D76) with what it was bound with, as a prepared
+statement keeps its plan (D45): the snapshot's generation, the
+catalog, the authorization, the schema, the time zone and the session's
+own settings. A CALL that finds any of them changed binds the body
+again, so its rules are checked against the definitions of then. A
+binding that reads the statement's instant holds it, and is not kept.
+Each INSERT, searched UPDATE and searched DELETE of a program kept
+keeps its plan as a prepared statement's does, its SQL parameters and
+variables slots each execution fills (`db/routines/kept.rs`).
+
 ## 2. Project layout
 
 ```
