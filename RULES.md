@@ -10488,6 +10488,19 @@ from the side file instead, and cuts the file no lower than the limit a
 read takes, so what is read of the file is what the lock saw
 (`disk/shadow/file.rs`).
 
+#### D410. A log's sync tells how far the log is durable
+
+A transaction that commits waits for its commit record to be durable,
+and the file log groups those waits into one sync (D25), which makes
+durable every record appended before it began, often other
+transactions' commit records too. `Log::sync_reached` syncs as `sync`
+does and gives the position before which every record is now durable,
+so those transactions can know their records durable without a sync of
+their own, and the database can keep how far the log is durable. The
+file log gives the end of its segment's blocks the group's sync made
+durable (`log/file/segments.rs`). A log syncing nothing, and the
+default, claim just past the record asked for.
+
 ## 2. Project layout
 
 ```

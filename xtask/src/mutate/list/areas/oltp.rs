@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 13] = [
+pub const OLTP: [Mutation; 14] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -136,5 +136,15 @@ pub const OLTP: [Mutation; 13] = [
         replacement: "                        runs.push((base, at, to));",
         integration: &[],
         unit: &["disk::shadow::tests::a_read_takes_the_files_runs_around_what_was_written"],
+    },
+    Mutation {
+        name: "oltp-sync-reached-asked",
+        package: Package::Core,
+        breaks: "a file log's grouped sync claims only the record asked for, not every record it made durable",
+        file: "src/log/file.rs",
+        original: "        self.sync_through(&segment, id, durability).map(|end| lsn(number, end))",
+        replacement: "        self.sync_through(&segment, id, durability).map(|_| Lsn(through.0.saturating_add(1)))",
+        integration: &["log::a_sync_reports_the_position_it_made_durable"],
+        unit: &[],
     },
 ];
