@@ -72,7 +72,7 @@ pub const READERS: [Mutation; 10] = [
         name: "kept-after-commit",
         package: Package::Core,
         breaks: "read-only path: a transaction's bookkeeping not marked ended as it commits",
-        file: "src/engine/rows/mvcc/commit.rs",
+        file: "src/engine/rows/mvcc/stamps.rs",
         original: "            open.ended = true;",
         replacement: "            open.ended = false;",
         integration: &[],

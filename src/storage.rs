@@ -1,6 +1,5 @@
 //! \[DESIGN\] Row storage. "The physical representation of a value is implementor-defined" [X3.135-1986 §4.2], so
 //! how rows are kept is an extension point.
-//!
 //! A `StorageEngine` makes a `TableStorage` for each base table. An engine hands back rows by id, scans them,
 //! prices those operations, and declares what it can do inside a transaction. The planner, executor and
 //! transaction coordinator never know which engine they are talking to.
@@ -9,7 +8,6 @@
 //! Every data method takes the `TxId`, which is also the transaction's logical start timestamp, and commit hands
 //! each engine the transaction's commit timestamp (RULES.md D29), so an engine with its own concurrency control
 //! (say, multi-versioning) can show each transaction what it should see.
-//!
 //! Two engines of one code are built in (`engine/rows.rs`, RULES.md D31), "rowstore", the default, and
 //! "columnstore", freezing rows by column.
 
@@ -66,8 +64,7 @@ use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxCapabilities, TxId};
 ///   while its stamp is the one given (SQLCODE -911 otherwise); and if it declares itself serializable, refuses
 ///   at `validate` a transaction that read what a transaction committed meanwhile changed (SQLCODE -911), of
 ///   the reads it was told are checked (`read_mode`).
-/// * Methods may be called from several threads at once (`Send + Sync`): an implementation guards its own
-///   state.
+/// * Methods may be called from several threads at once (`Send + Sync`); an implementation guards its state.
 /// * No method may call back into the `Database` or its sessions (RULES.md R-ERR-4); the `Database` docs say
 ///   what happens if one does.
 pub trait TableStorage: Send + Sync {
@@ -441,6 +438,9 @@ pub trait TableStorage: Send + Sync {
     /// `validate`. A transaction that wrote nothing commits at its snapshot,
     /// with no `validate` before: it read one committed state.
     fn commit(&self, _tx: TxId, _at: Timestamp) {}
+    /// \[DESIGN\] After `commit`, the locks of `tx` released, and before a
+    /// checkpoint: writes in place what it made committed (RULES.md D440).
+    fn settle(&self, _tx: TxId) {}
     /// The log position before which every change of this table is
     /// durable in the engine itself, as of its last checkpoint: recovery
     /// redoes and undoes from there (RULES.md D25, `db/recovery.rs`).

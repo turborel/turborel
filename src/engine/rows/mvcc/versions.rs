@@ -19,6 +19,10 @@ impl RowTable {
     pub(in crate::engine::rows) fn insert_version(&self, tx: TxId, id: RowId, record: &[u8]) -> Result<bool> {
         let maker = if tx == NO_TRANSACTION { Maker::Committed(0) } else { Maker::Open(tx) };
         let version = Version { maker, deleted: false, older: None, record }.encode();
+        if tx != NO_TRANSACTION {
+            // Claimed before its first version is in the tree (`status.rs`).
+            self.versions.statuses.claim(tx);
+        }
         if !self.tree.insert(&key(id), &version)? {
             return Ok(false);
         }
@@ -57,6 +61,7 @@ impl RowTable {
         let snapshot = lock_builtin(&open).snapshot;
         let k = key(id);
         let Some((newest, thawed)) = self.newest_or_frozen(id)? else { return no_row(id) };
+        self.versions.statuses.claim(tx);
         let (older, appended) = self.older_of((tx, snapshot), id, &newest, past)?;
         let (dropped, added) = self.owned_change(id, Version::parse(&newest)?.record, record)?;
         if let Err(e) = self.owns(tx, &added) {
@@ -115,7 +120,14 @@ impl RowTable {
                 if version.deleted {
                     return no_row(id);
                 }
-                let appended = self.undo.append(newest)?;
+                // A version committed but not yet stamped is appended
+                // stamped, as only the newest version is ever stamped
+                // (`stamps.rs`).
+                let appended = if version.maker == Maker::Committed(at) {
+                    self.undo.append(newest)?
+                } else {
+                    self.undo.append(&Version { maker: Maker::Committed(at), ..version }.encode())?
+                };
                 Ok((Some(appended), Some(appended)))
             }
         }

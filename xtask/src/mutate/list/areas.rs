@@ -27,6 +27,7 @@ mod parallel;
 mod rewrites;
 mod sorts;
 mod tpcc;
+mod txn_layer;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
 // modules.
 mod unnesting;
@@ -35,7 +36,7 @@ mod uuid;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 15] {
+pub fn core() -> [&'static [Mutation]; 16] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -52,6 +53,7 @@ pub fn core() -> [&'static [Mutation]; 15] {
         &super::backup::BACKUP,
         &oltp::OLTP,
         &tpcc::TPCC,
+        &txn_layer::TXN_LAYER,
     ]
 }
 
@@ -92,7 +94,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 40] {
+fn second() -> [&'static [Mutation]; 41] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
