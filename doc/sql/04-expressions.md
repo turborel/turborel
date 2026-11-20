@@ -474,6 +474,15 @@ completes with a warning, SQLSTATE 01003, null value eliminated in set
 function: so does the scalar subquery above, as Barbara's salary is
 null.
 
+A query of DISTINCT set functions is computed by two groupings. Its rows
+are grouped first by its grouping columns and each DISTINCT argument,
+then those groups by its grouping columns alone, so it is read by
+batches as any grouping is. The results, their order and the warnings
+are those of the query as written, a FILTER clause and grouping sets
+included. EXPLAIN names the rule that does so, distinct_aggregates
+([EXPLAIN](statements/explain.md#examples)), and the setting
+OPTIMIZER.DISTINCT_AGGREGATES turns it off.
+
 SUM is refused, SQLSTATE 22003, only if its total does not fit its
 type, whatever order the rows are read in: past 18 digits of exact
 numbers, the range of approximate ones or of DECFLOAT, or an interval's

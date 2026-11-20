@@ -207,48 +207,53 @@ impl Bag {
 
     /// Adds `more` to the count of `key`.
     pub(super) fn add_count(&mut self, key: &[u8], more: u64) -> Result<()> {
-        let n = self.count(key)?;
-        self.set(key, (n, n.saturating_add(more)))
+        self.change(key, |n| n.saturating_add(more)).map(drop)
     }
 
     /// Adds `key` if it is not in the bag; whether it was not.
     pub(super) fn add_new(&mut self, key: &[u8]) -> Result<bool> {
-        if self.count(key)? > 0 {
-            return Ok(false);
-        }
-        self.set(key, (0, 1))?;
-        Ok(true)
+        Ok(self.change(key, |n| n.max(1))? == 0)
     }
 
     /// Adds one to the count of `key`; whether it was 0.
     pub(super) fn raise(&mut self, key: &[u8]) -> Result<bool> {
-        let n = self.count(key)?;
-        self.set(key, (n, n.saturating_add(1)))?;
-        Ok(n == 0)
+        Ok(self.change(key, |n| n.saturating_add(1))? == 0)
     }
 
     /// Takes one from the count of `key`, if it is above 0; whether it is
     /// 0 now, one taken.
     pub(super) fn lower(&mut self, key: &[u8]) -> Result<bool> {
-        let n = self.count(key)?;
-        if n == 0 {
-            return Ok(false);
-        }
-        self.set(key, (n, n.saturating_sub(1)))?;
-        Ok(n == 1)
+        Ok(self.change(key, |n| n.saturating_sub(1))? == 1)
     }
 
     /// Takes one from the count of `key`, if it is above 0; whether it was.
     pub(super) fn take(&mut self, key: &[u8]) -> Result<bool> {
-        let n = self.count(key)?;
-        if n == 0 {
-            return Ok(false);
-        }
-        self.set(key, (n, n.saturating_sub(1)))?;
-        Ok(true)
+        Ok(self.change(key, |n| n.saturating_sub(1))? > 0)
     }
 
-    /// Changes the count of `key` from `was` to `now`.
+    /// Changes the count of `key` to `now` of it; the count it was. In
+    /// memory a key held is looked up once and one not twice, its bytes
+    /// made only then, and one whose count stays 0 is not added.
+    fn change(&mut self, key: &[u8], now: impl FnOnce(u64) -> u64) -> Result<u64> {
+        if self.table.is_some() {
+            let was = self.count(key)?;
+            self.set(key, (was, now(was)))?;
+            return Ok(was);
+        }
+        if let Some(n) = self.counts.get_mut(key) {
+            let was = *n;
+            *n = now(was);
+            return Ok(was);
+        }
+        let count = now(0);
+        if count > 0 {
+            self.set(key, (0, count))?;
+        }
+        Ok(0)
+    }
+
+    /// Changes the count of `key` from `was` to `now`: in memory, of a
+    /// key not held (`change`).
     fn set(&mut self, key: &[u8], (was, now): (u64, u64)) -> Result<()> {
         if let Some(table) = &mut self.table {
             if was > 0 {
@@ -256,16 +261,8 @@ impl Bag {
             }
             return if now > 0 { table.insert(key, &now.to_le_bytes()) } else { Ok(()) };
         }
-        // A key held already keeps its bytes: none made of it again.
-        match self.counts.get_mut(key) {
-            Some(n) => *n = now,
-            None => {
-                self.counts.insert(key.to_vec(), now);
-            }
-        }
-        if was == 0 {
-            self.bytes = self.bytes.saturating_add(key.len()).saturating_add(ENTRY_BYTES);
-        }
+        self.counts.insert(key.to_vec(), now);
+        self.bytes = self.bytes.saturating_add(key.len()).saturating_add(ENTRY_BYTES);
         if self.bytes > self.work.limit() { self.spill() } else { Ok(()) }
     }
 

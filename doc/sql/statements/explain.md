@@ -87,6 +87,45 @@ OK
 (12 rows)
 ```
 
+A query of a DISTINCT set function, which the rule distinct_aggregates
+computes by two groupings. The first groups the rows by REGION and
+CUSTOMER and makes SUM in parts, and the second groups those groups by
+REGION, counting each CUSTOMER once and merging the parts of SUM
+([Set functions](../04-expressions.md#set-functions)):
+
+```sql
+CREATE TABLE SALES (REGION VARCHAR(10), CUSTOMER INTEGER, AMOUNT DECIMAL(9, 2));
+INSERT INTO SALES VALUES ('north', 1, 10.00), ('north', 1, 5.00), ('north', 2, 7.50), ('south', 3, 2.25);
+COMMIT;
+EXPLAIN SELECT REGION, COUNT(DISTINCT CUSTOMER), SUM(AMOUNT) FROM SALES GROUP BY REGION;
+```
+
+```
+OK
+OK
+OK
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project SALES.REGION, COUNT(DISTINCT SALES.CUSTOMER), SUM(SALES.AMOUNT)
+   Aggregate group by [SALES.REGION] computing [COUNT(DISTINCT SALES.CUSTOMER), SUM(SALES.AMOUNT)]
+     Scan ANN.SALES
+ -- rules: distinct_aggregates
+ -- optimized:
+ Project SALES.REGION, COUNT(DISTINCT SALES.CUSTOMER), SUM(SALES.AMOUNT)
+   Aggregate group by [SALES.REGION] computing [COUNT(DISTINCT SALES.CUSTOMER), SUM(SALES.AMOUNT)]
+     Aggregate group by [SALES.REGION, SALES.CUSTOMER] computing [PARTIAL SUM(SALES.AMOUNT)]
+       Project SALES.REGION, SALES.AMOUNT, SALES.CUSTOMER
+         Scan ANN.SALES
+ -- physical:
+ Project SALES.REGION, COUNT(DISTINCT SALES.CUSTOMER), SUM(SALES.AMOUNT)
+   Aggregate group by [SALES.REGION] computing [COUNT(DISTINCT SALES.CUSTOMER), SUM(SALES.AMOUNT)]
+     Aggregate group by [SALES.REGION, SALES.CUSTOMER] computing [PARTIAL SUM(SALES.AMOUNT)]
+       Project SALES.REGION, SALES.AMOUNT, SALES.CUSTOMER
+         SeqScan ANN.SALES  (rows=4, cost=4.0)
+(17 rows)
+```
+
 ## STANDARD
 
 EXPLAIN is an extension of turborel. No part of ISO/IEC 9075 shows how

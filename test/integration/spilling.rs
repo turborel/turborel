@@ -7,11 +7,12 @@ use std::sync::{Arc, Mutex};
 use turborel::db::{Database, OpenOptions, Session};
 use turborel::error::{Code, SqlError};
 use turborel::memory::MemoryBudget;
+use turborel::optimizer::DISTINCT_AGGREGATES;
 use turborel::spill::{Area, PagedSpill, Records, Spill, SpillArea, SpillRun, SpillTable, TempFiles};
 use turborel::txn::Stop;
 use turborel::value::{Decimal, Value};
 
-use crate::common::{Counted, Scratch, exec, os, rows, sorted};
+use crate::common::{Counted, Scratch, exec, os, rows, set_rule, sorted};
 
 /// The smallest MEMORY.WORK_BYTES, 64 KiB.
 pub(crate) const SMALL: usize = 64 << 10;
@@ -355,8 +356,9 @@ fn kept_subquery_rows_stay_within_the_work_area() {
     assert!(most - reserved <= 2 * SMALL, "{} bytes of areas at once", most - reserved);
 }
 
-/// Verifies: [DESIGN] RULES.md D38: a grouping of DISTINCT set functions
-/// splits its work area in two, half for its groups and half for the bag
+/// Verifies: [DESIGN] RULES.md D38, D344: a grouping of DISTINCT set
+/// functions, the rule computing them by two groupings turned off, splits
+/// its work area in two, half for its groups and half for the bag
 /// of the values they took, each spilling to an area of its half, so the
 /// two hold no more than MEMORY.WORK_BYTES; the rows are those it gives
 /// unspilled. The rows of the query, read as its cursor opens as its set
@@ -368,6 +370,7 @@ fn a_grouping_shares_its_work_area_with_its_distinct_values() {
     const GROUPED: &str = "SELECT S, COUNT(DISTINCT G), COUNT(DISTINCT K) FROM T GROUP BY S";
     let db = Database::new();
     filled(&db);
+    set_rule(&db, DISTINCT_AGGREGATES, false);
     let s = db.session("S");
     let in_memory = rows(&s, GROUPED).unwrap();
     let counted = Counted::default();

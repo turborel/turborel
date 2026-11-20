@@ -284,6 +284,7 @@ subquery, including over outer references [SR4, SR5].
 | Case | Outcome | Rules |
 |---|---|---|
 | One that eliminates a null | Warning 01003, read by batches or row by row | GR1b |
+| DISTINCT | Each value once, computed by two groupings whose results, order and warnings are those of the values taken once, a FILTER's rows alone (RULES.md D340-D343) | GR2 |
 | SUM | Its total alone is judged against the range of its result, 22003 out of it, whatever order the rows come in | GR2b iv |
 | AVG | Its mean is judged the same way | GR2b ii |
 

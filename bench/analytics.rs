@@ -19,14 +19,16 @@
 //! 400,000 rows, by its key, far more groups than the work area holds,
 //! and by 50,000 keys of 8 rows past 64 KiB, made partly as pieces, then
 //! of WC; and set functions of a column of runs of one value, RC's
-//! S, filtered by it and not. Rates are of the tables' rows read, but the key's, of
+//! S, filtered by it and not; and DISTINCT set functions of F and FC
+//! (`analytics/distinct.rs`). Rates are of the tables' rows read, but the key's, of
 //! queries. JSON_VALUE of a member of the JSON type and of JSON text is
 //! measured too (`analytics/json.rs`), path search on a graph of a
 //! million edges (`analytics/graph.rs`), and GRAPH_TABLE queries on an
 //! LDBC SNB-style social network (`analytics/social.rs`). Run with `cargo
 //! xtask bench`, on the harness (RULES.md R-BENCH-1); with `ONLY_VAR` set
-//! to `social`, the social network's workloads alone, or to `graph`, path
-//! search's on a graph in memory alone.
+//! to `social`, the social network's workloads alone, to `graph`, path
+//! search's on a graph in memory alone, or to `distinct`, the DISTINCT
+//! set functions' alone.
 
 #![allow(
     clippy::unwrap_used,
@@ -39,6 +41,8 @@
     reason = "benchmark code: a failure ends the run (RULES.md R-DEV-3)"
 )]
 
+#[path = "analytics/distinct.rs"]
+mod distinct;
 #[path = "analytics/graph.rs"]
 mod graph;
 mod harness;
@@ -51,7 +55,8 @@ use harness::{Bench, Case, scatter};
 use turborel::db::{Database, Session};
 
 /// The variable naming the workloads run alone: `social` for the social
-/// network's, `graph` for path search's on a graph in memory.
+/// network's, `graph` for path search's on a graph in memory, `distinct`
+/// for the DISTINCT set functions'.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -76,8 +81,17 @@ fn main() {
     }
     let db = database();
     let s = db.session("B");
-    measure(&bench, &s, ("F", "W", ""));
-    measure(&bench, &s, ("FC", "WC", " (columnstore)"));
+    let tables = [("F", "W", ""), ("FC", "WC", " (columnstore)")];
+    if only == "distinct" {
+        for (table, _, label) in tables {
+            distinct::workloads(&bench, &s, (table, label));
+        }
+        return;
+    }
+    for (table, keyed, label) in tables {
+        measure(&bench, &s, (table, keyed, label));
+        distinct::workloads(&bench, &s, (table, label));
+    }
     of_runs(&bench, &s);
     json::workloads(&bench);
     graph::workloads(&bench);

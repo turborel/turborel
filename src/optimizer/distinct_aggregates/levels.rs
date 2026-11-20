@@ -25,7 +25,7 @@
 //! grouping sets [§7.13 GR2a], are the second's alone.
 
 use super::{Shape, Slot};
-use crate::functions::{AggregateRef, MERGED, Merged, PART_TYPE, PARTIAL, Partial};
+use crate::functions::{AggregateRef, Merged, PART_TYPE, PARTIAL, Partial};
 use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Unnest, expr_columns, map_cond_columns, map_expr_columns};
 use crate::storage::Row;
 use crate::value::collation::CollationRef;
@@ -129,7 +129,7 @@ pub(super) fn two_levels(grouping: &Grouping<'_>, shape: &Shape, input: LogicalP
             let filter = layout.marker.map(|_| marked(layout.width, layout.plain));
             let arg = Some(Expr::Column(part));
             part = part.saturating_add(1);
-            AggCall { func, arg, filter, label: format!("{MERGED} {}", a.label), ..a.clone() }
+            AggCall { func, arg, filter, ..a.clone() }
         });
     }
     let groups: Vec<usize> = (0..layout.width).collect();
@@ -148,14 +148,17 @@ fn laid_out(grouping: &Grouping<'_>, shape: &Shape, input: LogicalPlan, copies: 
             a.exprs().into_iter().for_each(|e| expr_columns(e, &mut used));
         }
     }
-    for slot in &shape.slots {
+    // The arguments are computed of the rows, but past the truths'
+    // projection, which must hold their columns.
+    let filtered = shape.slots.iter().any(|s| s.filter.is_some());
+    for slot in shape.slots.iter().filter(|_| filtered) {
         expr_columns(&slot.arg, &mut used);
     }
     used.sort_unstable();
     used.dedup();
     let plain = if shape.copies() > shape.slots.len() { copies } else { 1 };
     let mut layout = Layout { used, marker, plain, truths: Vec::new(), width: grouping.groups.len() };
-    if shape.slots.iter().all(|s| s.filter.is_none()) {
+    if !filtered {
         return (rows, layout);
     }
     let mut exprs: Vec<Expr> = layout.used.iter().map(|&c| Expr::Column(c)).collect();

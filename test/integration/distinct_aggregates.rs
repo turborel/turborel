@@ -191,15 +191,15 @@ fn collations_decide_what_is_distinct_10_9() {
 }
 
 /// Verifies: [DESIGN] RULES.md D340-D342: EXPLAIN shows the rule fired,
-/// the two groupings, the parts of the functions without DISTINCT and
-/// their merge, and of more than one slot the copies of each row.
+/// the two groupings, the parts of the functions without DISTINCT, and
+/// of more than one slot the copies of each row.
 #[test]
 fn explain_shows_the_two_groupings() {
     let (_db, a) = tables();
     let plan = a.explain("SELECT G, COUNT(DISTINCT X), COUNT(DISTINCT S), COUNT(*) FROM T GROUP BY G", &Params::new()).unwrap();
     let physical = plan.split("-- physical:").nth(1).unwrap();
     assert_eq!(physical.matches("Aggregate").count(), 2, "{plan}");
-    for shown in ["PARTIAL COUNT(*)", "MERGED COUNT(*)", "COPY", "COUNT(DISTINCT T.X)"] {
+    for shown in ["PARTIAL COUNT(*)", "COPY", "COUNT(DISTINCT T.X)"] {
         assert!(physical.contains(shown), "{shown} in {plan}");
     }
     let single = a.explain("SELECT COUNT(DISTINCT X) FROM C", &Params::new()).unwrap();
@@ -247,3 +247,4 @@ fn window_distinct_functions_keep_their_results() {
     let sql = "SELECT K, COUNT(DISTINCT X) OVER (PARTITION BY G), COUNT(DISTINCT X) OVER (ORDER BY K ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM T WHERE K < 8 ORDER BY K";
     assert_eq!(rows(&a, sql).unwrap(), ["1,2,1", "2,2,1", "3,2,2", "4,2,2", "5,2,2", "6,2,1", "7,2,2"]);
 }
+
