@@ -48,3 +48,6 @@ fn partitioned(c: &Cond, partition: &[usize]) -> bool {
     cond_columns(c, &mut columns);
     columns.iter().all(|col| partition.contains(col)) && alike(c)
 }
+
+#[cfg(test)]
+mod tests;

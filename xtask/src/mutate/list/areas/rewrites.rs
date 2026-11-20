@@ -81,8 +81,8 @@ pub const REWRITES: [Mutation; 12] = [
         file: "src/optimizer/windows.rs",
         original: "        if down.is_empty() || keep.iter().any(Cond::can_raise) {",
         replacement: "        if down.is_empty() {",
-        integration: &["rewrites::pushdown::filters_go_below_window_partitions"],
-        unit: &[],
+        integration: &[],
+        unit: &["optimizer::windows::tests::conjuncts_of_the_partition_go_below"],
     },
     Mutation {
         name: "rewrites-window-any-column",
