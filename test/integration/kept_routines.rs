@@ -176,3 +176,57 @@ fn a_kept_leaf_learns_its_plan_and_reads_each_calls_rows() {
     expected.sort();
     assert_eq!(read, expected);
 }
+
+/// Verifies: [ISO/IEC 9075-4:2006 draft §12.2, §14.13]; [DESIGN] RULES.md
+/// D416, a local cursor and a FOR statement's cursor of a kept body, each
+/// opened from the specification and plan it keeps, read the rows each
+/// CALL's values name: before the stock changes, after it changes, and
+/// after an index is made over what they read.
+#[test]
+fn a_kept_bodys_cursors_read_each_calls_rows() {
+    let (_db, a) = defined();
+    a.run("UPDATE S SET Q = MOD(I * 7, 30) + W").unwrap();
+    a.run(
+        "CREATE PROCEDURE LOWS (IN WH INTEGER, IN BELOW INTEGER) MODIFIES SQL DATA
+         BEGIN
+           DECLARE N INTEGER DEFAULT 0;
+           DECLARE FIRST_I INTEGER;
+           DECLARE ITEM INTEGER;
+           DECLARE C CURSOR FOR SELECT I FROM S WHERE W = WH AND Q < BELOW ORDER BY I;
+           SET N = (SELECT COUNT(*) FROM S WHERE W = WH AND Q < BELOW);
+           IF N > 0 THEN
+             OPEN C;
+             FETCH C INTO FIRST_I;
+             CLOSE C;
+           END IF;
+           SET N = 0;
+           FOR R AS SELECT Q FROM S WHERE W = WH AND Q >= BELOW DO
+             SET N = N + R.Q;
+           END FOR;
+           INSERT INTO L VALUES (FIRST_I, N);
+         END",
+    )
+    .unwrap();
+    a.commit().unwrap();
+    let mut expected = Vec::new();
+    for round in 0..3_i64 {
+        if round == 1 {
+            a.run("UPDATE S SET Q = Q + 3 WHERE MOD(I, 4) = 0").unwrap();
+        }
+        if round == 2 {
+            a.commit().unwrap();
+            a.run("CREATE INDEX S_WQ ON S (W, Q)").unwrap();
+        }
+        for (w, below) in (0..8_i64).map(|k| (1 + k % 2, 4 + (k * 11) % 27)) {
+            let first = rows(&a, &format!("SELECT MIN(I) FROM S WHERE W = {w} AND Q < {below}"));
+            let sum = rows(&a, &format!("SELECT COALESCE(SUM(Q), 0) FROM S WHERE W = {w} AND Q >= {below}"));
+            expected.push(format!("{},{}", first.join(""), sum.join("")));
+            a.run(&format!("CALL LOWS({w}, {below})")).unwrap();
+        }
+    }
+    a.commit().unwrap();
+    let mut read = rows(&a, "SELECT W, LOW FROM L");
+    read.sort();
+    expected.sort();
+    assert_eq!(read, expected);
+}

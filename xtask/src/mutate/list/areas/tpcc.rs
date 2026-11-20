@@ -2,12 +2,13 @@
 //! D420): MIN and MAX read from the wrong end of the rows sorted, and of a
 //! column that may hold a null; a kept body's leaf keeping the plan made
 //! with one run's values; a table changed keeping what the catalog knew
-//! of its constraints, and a row's checks reading the row of another.
+//! of its constraints, a row's checks reading the row of another, and a
+//! kept body's cursors opening from one cursor's plan.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the order entry paths whose removal must fail their tests.
-pub const TPCC: [Mutation; 5] = [
+pub const TPCC: [Mutation; 6] = [
     Mutation {
         name: "tpcc-extreme-wrong-end",
         package: Package::Core,
@@ -56,6 +57,16 @@ pub const TPCC: [Mutation; 5] = [
         original: "if read.as_ref().is_none_or(|(t, at, _)| t != table || *at != id) {",
         replacement: "if read.as_ref().is_none_or(|(t, _, _)| t != table) {",
         integration: &["statement_ends::each_row_is_checked_of_its_own_values"],
+        unit: &[],
+    },
+    Mutation {
+        name: "tpcc-cursors-share-plans",
+        package: Package::Core,
+        breaks: "every local cursor of a kept body opens from the first cursor's specification and plan",
+        file: "src/db/routines/kept.rs",
+        original: "        self.cursors.get(at)\n",
+        replacement: "        self.cursors.get(at.min(0))\n",
+        integration: &["kept_routines::a_kept_bodys_cursors_read_each_calls_rows"],
         unit: &[],
     },
 ];

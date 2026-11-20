@@ -11,7 +11,8 @@
 //! its SQL parameters and variables slots each execution fills; each leaf
 //! that is one probe of a unique key keeps its physical plan, and each
 //! other leaf over the frame's slots learns one (`kept/leaves.rs`,
-//! RULES.md D408, D414).
+//! RULES.md D408, D414). Each local cursor keeps its specification and
+//! plan as a prepared cursor does, opened from them (RULES.md D416).
 
 mod leaves;
 
@@ -24,7 +25,7 @@ use crate::ast::{RoutineDefinition, SqlStatement};
 use crate::binder::{definition_of, sql_statement};
 use crate::catalog::{QualifiedName, SqlRoutineDesc};
 use crate::error::Result;
-use crate::logical::{Contained, Program};
+use crate::logical::{Contained, Cursor, Program};
 use crate::sync::lock;
 use leaves::KeptLeaves;
 pub(in crate::db) use leaves::KeptRuns;
@@ -48,6 +49,8 @@ pub(in crate::db) struct KeptRoutine {
 pub(in crate::db) struct KeptProgram {
     pub(in crate::db) program: Arc<Program>,
     plans: Arc<[Plans]>,
+    /// The plans its local cursors keep, by their number (RULES.md D416).
+    cursors: Arc<[Plans]>,
     /// The plans its leaves keep (`kept/leaves.rs`).
     pub(in crate::db) leaves: Arc<KeptLeaves>,
 }
@@ -56,7 +59,15 @@ impl KeptProgram {
     /// `program`, its statements keeping no plan yet.
     pub(in crate::db) fn of(program: Program) -> KeptProgram {
         let plans = program.contained().iter().map(|_| Plans::default()).collect();
-        KeptProgram { program: Arc::new(program), plans, leaves: Arc::default() }
+        let cursors = program.cursors.iter().map(|_| Plans::default()).collect();
+        KeptProgram { program: Arc::new(program), plans, cursors, leaves: Arc::default() }
+    }
+
+    /// The plans the local cursor `c` of its program keeps, if it is one of
+    /// its own.
+    pub(in crate::db) fn cursor_plans(&self, c: &Cursor) -> Option<&Plans> {
+        let at = self.program.cursors.iter().position(|own| std::ptr::eq(own, c))?;
+        self.cursors.get(at)
     }
 
     /// The plans the statement `c` of its program keeps, if it is one of

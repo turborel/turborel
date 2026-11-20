@@ -193,7 +193,14 @@ impl Host for SessionHost<'_, '_> {
 
     fn open(&mut self, key: &str, cursor: &Cursor, frame: &mut Params) -> Result<()> {
         frame.set_routine(Arc::clone(&cursor.scope));
-        self.with(|cx| self.session.open_local(cx, key, cursor, frame))
+        // [DESIGN] A local cursor of a program kept, opened from the
+        // specification and plan it keeps (RULES.md D416).
+        let kept = self.kept.and_then(|k| k.cursor_plans(cursor));
+        let session = self.session;
+        self.with(|cx| {
+            let keeping = kept.map(|plans| session.keeping(cx.st, plans));
+            session.open_local(cx, (key, cursor), frame, keeping.as_ref())
+        })
     }
 
     fn fetch(&mut self, key: &str, orientation: &FetchOrientation, frame: &Params) -> Result<Option<Row>> {

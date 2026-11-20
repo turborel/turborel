@@ -377,6 +377,7 @@ verification approach DO-178C expects (§8).
 | D413 | MIN or MAX of a column known not null is read from the first row in order |
 | D414 | Every query of a kept procedure body over its variables learns its plan with slots |
 | D415 | A statement's end looks for foreign keys and reading CHECKs only where a table has one, and reads a row once for its checks |
+| D416 | A local cursor of a kept procedure body keeps its specification and plan |
 
 ### The project
 
@@ -10538,6 +10539,18 @@ of a row's NOT NULL, CHECK and foreign key constraints, which come one
 after another, each read the row again. The row read is kept for the
 next check of the same row (`Checking`), so a row is read once for them
 all.
+
+#### D416. A local cursor of a kept procedure body keeps its specification and plan
+
+A local cursor, declared or a FOR statement's, was opened from its text
+at each OPEN: parsed, bound, optimized and planned again, though its
+procedure's body was kept (D406). An order status opens one at each
+call, and that took nearly half of it. Each local cursor of a program
+kept now keeps its parsed specification and its plan, its variables
+slots, as a prepared cursor does (D45, `KeptProgram::cursor_plans`), and
+OPEN fills the plan with the frame's values. Its physical plan is kept
+or learned as a prepared query's is, and all of it is made again once a
+definition, the session's authorization, schema or time zone changes.
 
 ## 2. Project layout
 
