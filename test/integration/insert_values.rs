@@ -118,11 +118,13 @@ fn assignment_past_the_length_is_refused_9_2() {
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM SCANS").unwrap(), ["0"]);
 }
 
-/// Verifies: [ISO/IEC 9075-2:2023 §20.11 GR6c ii 2 B, §6.13 GR12d ii,
-/// GR13b ii] RULES.md D391: a `?`'s value longer than its type is cast to
-/// it, cut, with the warning string data, right truncation (01004), in a
-/// row of one or of several, executed again from its kept plan too, so
-/// the cut is never silent; one that fits raises none. Regression test: the warning was dropped.
+/// Verifies: [ISO/IEC 9075-2:2023 §20.11 GR6c ii 2 B, §20.7 GR5a xxx,
+/// §6.13 GR12d ii, GR13b ii] RULES.md D391: a `?`'s value longer than its
+/// type is cast to it, cut, with the warning string data, right truncation
+/// (01004), in a row of one or of several, executed again from its kept
+/// plan too, and as a CALL's argument, of its parameter's type, so the cut
+/// is never silent; one that fits raises none. Regression test: the
+/// warning was dropped.
 #[test]
 fn a_parameter_cut_by_its_cast_is_warned_of_20_11() {
     let db = scans();
@@ -130,14 +132,19 @@ fn a_parameter_cut_by_its_cast_is_warned_of_20_11() {
     let warned = Completion::Warning(SqlState::STRING_TRUNCATED);
     let p = s.prepare("INSERT INTO SCANS (ID, V) VALUES (1, ?)").unwrap();
     for value in ["abcdef", "uvwxyz"] {
-        assert_eq!(s.execute_prepared(&p, &[Value::Char(value.into())]).unwrap(), warned, "bound, then a kept plan's slot");
+        assert_eq!(s.execute_prepared(&p, &[Value::Char(value.into())]).unwrap(), warned, "each execution");
     }
     let p = s.prepare("INSERT INTO SCANS (ID, VB) VALUES (2, X'01'), (3, ?)").unwrap();
     assert_eq!(s.execute_prepared(&p, &[Value::Binary(Binary::new(vec![1, 2, 3, 4]))]).unwrap(), warned);
+    // A CALL's argument is bound as a constant, the procedure's parameter
+    // of its type [§20.7 GR5a xxx].
+    s.run("CREATE PROCEDURE P (IN X VARCHAR(3)) MODIFIES SQL DATA INSERT INTO SCANS (ID, V) VALUES (0, X)").unwrap();
+    let p = s.prepare("CALL P(?)").unwrap();
+    assert_eq!(s.execute_prepared(&p, &[Value::Char("klmnop".into())]).unwrap(), warned, "a CALL's argument");
     let p = s.prepare("INSERT INTO SCANS (ID, V) VALUES (4, ?)").unwrap();
     assert_eq!(s.execute_prepared(&p, &[Value::Char("ab".into())]).unwrap(), Completion::Success);
     assert_eq!(
         rows(&s, "SELECT ID, V, OCTET_LENGTH(VB) FROM SCANS ORDER BY ID, V").unwrap(),
-        ["1,abc,NULL", "1,uvw,NULL", "2,NULL,1", "3,NULL,3", "4,ab,NULL"]
+        ["0,klm,NULL", "1,abc,NULL", "1,uvw,NULL", "2,NULL,1", "3,NULL,3", "4,ab,NULL"]
     );
 }

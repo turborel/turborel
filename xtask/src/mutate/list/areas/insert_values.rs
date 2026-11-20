@@ -1,7 +1,7 @@
 //! The mutations of an INSERT's rows (RULES.md R-TEST-9, D390, D391): a
 //! `?` typed by another row's literal, not its object column, and a `?`
-//! cut by its cast without the warning, bound as a constant or filled in
-//! a kept plan's slot.
+//! cut by its cast without the warning, bound as a constant, as a CALL's
+//! argument is, or filled in a kept plan's slot.
 
 use super::super::{Mutation, Package};
 

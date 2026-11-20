@@ -9547,14 +9547,18 @@ SR3a, SR3b), so no literal is cut to another's length before that.
 #### D391. A `?` whose value its cast cuts warns 01004
 
 A `?`'s value is cast to the type its context gives it (§20.11 GR6c ii
-2 B). A string longer than that type is cut, with the warning string
-data, right truncation, 01004 (§6.13 GR11d ii, GR12d ii, GR13). The
+2 B). That is its object column's as an INSERT's or an UPDATE's value
+(§20.7 GR5a xix 1 A, xxvi), the type §9.5 gives the other operand as a
+comparison's (xxi), and its parameter's as a CALL's argument (xxx). A
+string longer than that type is cut, with the warning string data,
+right truncation, 01004 (§6.13 GR11d ii, GR12d ii, GR13), and a
+comparison compares the value cut. The
 binder keeps the warning with the constant (`Expr::Warned`), and so does
 a kept plan's slot as it is filled (`logical/dynamic.rs`), so the
 statement completes with 01004 and the cut is never silent. A value
 that fits raises nothing. The cast stays a cast and not a store
 assignment, as the standard says, so 22001 is raised only by the
-assignment of a value longer than its column.
+assignment of a value longer than its column, as a literal's is.
 
 #### D392. A character large object a client writes is checked as each Append comes
 

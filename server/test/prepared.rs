@@ -396,3 +396,40 @@ fn rows_of_a_data_change_statement_are_sent() {
     let Outcome::Rows { rows: left, .. } = c.query("SELECT K FROM T ORDER BY K").unwrap() else { panic!("rows") };
     assert_eq!(keys(&left), ["7", "12"]);
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §20.11 GR6c ii 2 B, §20.7 GR5a xix 1 A,
+/// xxi, xxvi, §6.13 GR12d ii, §9.2 GR3b v] RULES.md D391: over a
+/// connection, a `?`'s value longer than the type its place gives it is
+/// cast to that type, cut, and the statement completes with the warning
+/// 01004, executed again from its kept plan too. That is so of an
+/// INSERT's value and an UPDATE's, of the column's type, and of a
+/// comparison operand, of the other operand's, whose cut value is the one
+/// compared. A literal of the same length is assigned, not cast, and is
+/// refused with 22001. A value that fits raises no warning. Regression
+/// test: the value was cut with SQLSTATE 00000.
+#[test]
+fn a_parameter_cut_to_its_type_warns() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE V (K INTEGER, S VARCHAR(5))").unwrap();
+    let server = start(&db, &[]);
+    let mut c = server.connect("X");
+    let text = |s: &str| Value::Char(s.into());
+    let insert = c.prepare("INSERT INTO V VALUES (?, ?)").unwrap();
+    for k in 1..=2 {
+        done(&c.execute(&insert, &[int(k), text("abcdefgh")]).unwrap());
+        assert_eq!(c.warning(), Some("01004"), "insert {k}");
+    }
+    done(&c.execute(&insert, &[int(3), text("abc")]).unwrap());
+    assert_eq!(c.warning(), None, "it fits");
+    assert_eq!(state(&c.query("INSERT INTO V VALUES (4, 'abcdefgh')").unwrap_err()).0, "22001");
+    let update = c.prepare("UPDATE V SET S = ? WHERE K = 3").unwrap();
+    done(&c.execute(&update, &[text("uvwxyz")]).unwrap());
+    assert_eq!(c.warning(), Some("01004"), "update");
+    let compared = c.prepare("SELECT K FROM V WHERE S = ? ORDER BY K").unwrap();
+    for _ in 0..2 {
+        assert_eq!(rows(&c.execute(&compared, &[text("abcdefgh")]).unwrap()), ["1", "2"]);
+        assert_eq!(c.warning(), Some("01004"), "compared");
+    }
+    assert_eq!(rows(&c.query("SELECT S FROM V ORDER BY K").unwrap()), ["abcde", "abcde", "uvwxy"]);
+    c.terminate().unwrap();
+}
