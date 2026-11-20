@@ -2,7 +2,8 @@
 //! D219). `\g` and `\G` run it, or the last statement if none is begun,
 //! its results sent elsewhere or expanded; `\gset` stores its one row's
 //! columns as variables; `\gexec` runs each value of its result as a
-//! statement; `\watch` runs it again and again; `\e` edits it.
+//! statement; `\gdesc` describes its result without running it (D396);
+//! `\watch` runs it again and again; `\e` edits it.
 
 use std::path::Path;
 use std::process::Command as Program;
@@ -36,7 +37,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
     /// sent to `target`, expanded if `expanded`.
     pub(super) fn go(&mut self, splitter: &mut Splitter, target: Target, expanded: bool) -> Next {
         let Some(sql) = self.begun(splitter, "g") else { return Next::Go };
-        self.statement_as(&sql, self.typing, &How { target, expanded })
+        self.statement_as(&sql, self.typing, &How { target, expanded, described: false })
     }
 
     /// `\gset` stores the statement's one row, each column as the variable
@@ -77,6 +78,14 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
             }
         }
         Next::Go
+    }
+
+    /// `\gdesc` describes the statement begun, or the last, without
+    /// running it. It shows each column of its result, its name and its
+    /// type as it was declared, where the server tells it (RULES.md D396).
+    pub(super) fn gdesc(&mut self, splitter: &mut Splitter) -> Next {
+        let Some(sql) = self.begun(splitter, "gdesc") else { return Next::Go };
+        self.statement_as(&sql, self.typing, &How { described: true, ..How::default() })
     }
 
     /// `\watch` runs the statement every `every`, `count` times if given,

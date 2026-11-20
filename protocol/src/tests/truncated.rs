@@ -15,7 +15,7 @@ use crate::*;
 /// Columns of the types whose fields nest: an array, a row, a multiset,
 /// a large object and a type beyond the standard with parameters.
 fn nested_columns() -> Vec<Column> {
-    let column = |name: &str, data_type: DataType| Column { name: Some(name.into()), data_type, not_null: true };
+    let column = |name: &str, data_type: DataType| Column { name: Some(name.into()), data_type, not_null: true, declared: None };
     let field = |name: &str, data_type: DataType| Field { name: name.into(), data_type, unnamed: false };
     vec![
         column("A", DataType::array(DataType::array(DataType::Boolean, 2), 3)),

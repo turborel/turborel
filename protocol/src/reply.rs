@@ -12,6 +12,7 @@ use turborel::error::Result;
 use turborel::params::ParameterType;
 use turborel::storage::Row;
 
+use crate::declared::{declared, put_declared};
 use crate::diagnostics::Notice;
 use crate::fields::{
     column, counted, failure, flag, parameter, put_column, put_count, put_failure, put_flag, put_parameter, put_row, put_strs, row, strs,
@@ -154,8 +155,8 @@ impl Reply {
                 let key = <[u8; KEY_BYTES]>::try_from(r.take(KEY_BYTES)?).map_err(|_| r.corrupt("a key is cut short"))?;
                 Reply::Ready { authorization, key: CancelKey(key), capabilities: strs(&mut r)?, server: r.str()? }
             }
-            PREPARED => Reply::Prepared { statement: r.u32()?, parameters: counted(&mut r, parameter)?, columns: counted(&mut r, column)? },
-            DESCRIPTION => Reply::Description(counted(&mut r, column)?),
+            PREPARED => Reply::Prepared { statement: r.u32()?, parameters: counted(&mut r, parameter)?, columns: columns(&mut r)? },
+            DESCRIPTION => Reply::Description(columns(&mut r)?),
             ROWS => Reply::Rows(counted(&mut r, row)?),
             SUSPENDED => Reply::Suspended,
             COMPLETE => Reply::Complete(completed(&mut r)?),
@@ -212,11 +213,20 @@ impl Reply {
     }
 }
 
+/// Columns, then the tail of their declared types, if any has one.
 fn put_columns(b: &mut Vec<u8>, columns: &[Column]) {
     put_count(b, columns.len());
     for c in columns {
         put_column(b, c);
     }
+    put_declared(b, columns);
+}
+
+/// The columns `put_columns` wrote, each with its declared type if told.
+fn columns(r: &mut Reader<'_>) -> Result<Vec<Column>> {
+    let mut all = counted(r, column)?;
+    declared(r, &mut all)?;
+    Ok(all)
 }
 
 /// A Complete's body, its tail of a commit's position, more replies to

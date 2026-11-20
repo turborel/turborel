@@ -3,6 +3,8 @@
 //! connection failures (RULES.md R-TEST-1, R-TEST-2).
 
 mod added;
+mod declared;
+mod frames;
 mod geometry;
 mod truncated;
 mod uuid;
@@ -135,23 +137,30 @@ fn edge_rows() -> Vec<Row> {
     ]
 }
 
+/// A nullable column of `data_type`, named `name` if it has one, its
+/// declared type not told.
+fn column(name: Option<&str>, data_type: DataType) -> Column {
+    Column { name: name.map(Into::into), data_type, not_null: false, declared: None }
+}
+
 /// One reply of every kind, with fields at their edges.
 fn every_reply() -> Vec<Reply> {
+    let interval = || DataType::Interval(Qualifier::new(Field::Day, Field::Second, 9, 2));
     let columns = vec![
-        Column { name: Some("K".into()), data_type: DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric }, not_null: true },
-        Column { name: None, data_type: DataType::character(4), not_null: false },
-        Column { name: Some("F".into()), data_type: DataType::Approximate { precision: 53, spelled: Spelled::Float }, not_null: false },
-        Column { name: Some("B".into()), data_type: DataType::Binary { length: 10 }, not_null: false },
-        Column { name: Some("V".into()), data_type: DataType::VarBinary { length: 3 }, not_null: false },
-        Column { name: Some("L".into()), data_type: DataType::Boolean, not_null: false },
-        Column { name: Some("D".into()), data_type: DataType::Date, not_null: false },
-        Column { name: Some("T".into()), data_type: DataType::Time { precision: 2, zoned: false }, not_null: false },
-        Column { name: Some("Z".into()), data_type: DataType::Time { precision: 0, zoned: true }, not_null: false },
-        Column { name: Some("S".into()), data_type: DataType::Timestamp { precision: 6, zoned: false }, not_null: false },
-        Column { name: Some("W".into()), data_type: DataType::Timestamp { precision: 3, zoned: true }, not_null: false },
-        Column { name: Some("I".into()), data_type: DataType::Interval(Qualifier::new(Field::Day, Field::Second, 9, 2)), not_null: false },
-        Column { name: Some("I".into()), data_type: DataType::Interval(Qualifier::new(Field::Day, Field::Second, 9, 2)), not_null: false },
-        Column { name: Some("M".into()), data_type: DataType::multiset(DataType::multiset(DataType::character(2))), not_null: false },
+        Column { not_null: true, ..column(Some("K"), DataType::Exact { precision: 9, scale: 2, spelled: Spelled::Numeric }) },
+        column(None, DataType::character(4)),
+        column(Some("F"), DataType::Approximate { precision: 53, spelled: Spelled::Float }),
+        column(Some("B"), DataType::Binary { length: 10 }),
+        column(Some("V"), DataType::VarBinary { length: 3 }),
+        column(Some("L"), DataType::Boolean),
+        column(Some("D"), DataType::Date),
+        column(Some("T"), DataType::Time { precision: 2, zoned: false }),
+        column(Some("Z"), DataType::Time { precision: 0, zoned: true }),
+        column(Some("S"), DataType::Timestamp { precision: 6, zoned: false }),
+        column(Some("W"), DataType::Timestamp { precision: 3, zoned: true }),
+        column(Some("I"), interval()),
+        column(Some("I"), interval()),
+        column(Some("M"), DataType::multiset(DataType::multiset(DataType::character(2)))),
     ];
     let cited = Failure {
         sqlcode: -103,
@@ -269,7 +278,7 @@ fn a_failure_says_what_its_error_says() {
 fn later_types_and_values_read_back_as_written() {
     use turborel::value::DecFloat;
     use turborel::value::lob::{Lob, LobKind};
-    let column = |name: &str, data_type: DataType| Column { name: Some(name.into()), data_type, not_null: false };
+    let column = |name: &str, data_type: DataType| Column { name: Some(name.into()), data_type, not_null: false, declared: None };
     let field = |name: &str, data_type: DataType| turborel::value::types::Field { name: name.into(), data_type, unnamed: false };
     let columns = vec![
         column("D", DataType::DecFloat { precision: 34 }),
@@ -315,7 +324,7 @@ fn xml_types_and_values_read_back_as_written() {
     use turborel::value::types::XmlSchemaNamed;
     use turborel::value::xml::{Typing, XmlType, XmlValue};
     use turborel::xml::{Sequence, Syntax, Whitespace, parse};
-    let column = |name: &str, x: XmlType| Column { name: Some(name.into()), data_type: DataType::Xml(x), not_null: false };
+    let column = |name: &str, x: XmlType| Column { name: Some(name.into()), data_type: DataType::Xml(x), not_null: false, declared: None };
     let types = [
         XmlType::Sequence,
         XmlType::Document(Typing::Untyped),

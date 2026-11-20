@@ -169,6 +169,21 @@ fn results_become_variables_and_statements() {
     assert_eq!(watched.out, "watch every 0 s, run 1\n5\nwatch every 0 s, run 2\n5\n");
 }
 
+/// Verifies: [DESIGN] RULES.md D396: `\gdesc` describes the statement
+/// begun without running it, each column's name and declared type, the
+/// client asking for declared types; a statement that cannot be prepared
+/// is told as a failure.
+#[test]
+fn gdesc_shows_declared_types_without_running() {
+    let (_db, server) = served();
+    let described = script(&server, &["-A"], "SELECT K, S, CAST(K AS SMALLINT) AS N FROM T \\gdesc\nDELETE FROM T WHERE K = 1 \\gdesc\n");
+    assert_eq!(described.out, "Column|Type\nK|INTEGER\nS|CHARACTER VARYING(5)\nN|SMALLINT\n(3 rows)\nColumn|Type\n(0 rows)\n");
+    let rows = script(&server, &["-q", "-t", "-A"], "SELECT COUNT(*) FROM T;\n");
+    assert_eq!(rows.out, "2\n", "nothing ran");
+    let wrong = script(&server, &[], "SELECT NOTHING FROM T \\gdesc\n");
+    assert!(wrong.err.contains("SQLSTATE 37000"), "{}", wrong.err);
+}
+
 /// Verifies: [DESIGN] RULES.md D219: SAFE_UPDATES refuses an UPDATE
 /// without WHERE, before it is sent; `\delimiter` ends statements with
 /// another text, so a semicolon may be within one.

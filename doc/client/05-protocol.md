@@ -299,6 +299,7 @@ connection. A message with an empty tail is its first form exactly.
 | 16 | generated | a list of strings | Complete |
 | 17 | conditions | a list, each a failure as bytes | Complete |
 | 18 | time | total, queued, locks, each `u64` | Complete |
+| 19 | declared | a count `u32`, then of each column its type's name and its type as SQL writes it, strings | Prepared, Description |
 
 A message takes at most 32 attributes. A name is 1 to 64 bytes and a
 value at most 1024. More fails the connection.
@@ -384,6 +385,7 @@ mechanism of its own ([Plug-ins](04-plugins.md)).
 | `generated-values` | a Complete of an INSERT carries the identity values it generated, tag 16 |
 | `fetch-ends` | an Execute that ends the transaction ends it with its cursor, as the last row is fetched or the cursor closed |
 | `conditions` | a Complete carries its statement's conditions, tag 17, in place of Notices |
+| `declared-types` | a Prepared and a Description carry each column's declared type, tag 19 |
 
 The server ignores a name it does not know. A client never sends a
 request, or a tail field, of a capability it was not granted. One that
@@ -694,6 +696,7 @@ Prepared 'P'
   statement      u32
   parameters     a list of parameter
   columns        a list of column
+  tail           19 declared
 ```
 
 A statement prepared, or described. The parameters are its inputs, in
@@ -709,10 +712,50 @@ and a column.
 ```text
 Description 'D'
   columns        a list of column
+  tail           19 declared
 ```
 
 The columns of the rows that follow a Query, or of an open cursor that
 Describe asked of.
+
+#### Declared types
+
+A data type's tag can stand for several declared types. SMALLINT,
+INTEGER, BIGINT, DECIMAL and NUMERIC are all an exact numeric type of
+tag 2, and INTEGER is written as precision 10 and scale 0. REAL, DOUBLE
+PRECISION and FLOAT are all an approximate numeric type of tag 3. A
+distinct type is written as its source type. Every other tag is one
+type. With `declared-types` granted, a Prepared or a Description of one
+column or more ends with tag 19, which names the type each column was
+declared with, in the columns' order.
+
+```text
+declared
+  count          u32, the columns'
+  name           string, as the Information Schema's DATA_TYPE gives it
+  written        string, the whole type as SQL writes it
+                 (name and written again for each column)
+```
+
+| Declared as | Tag | Name | Written |
+|---|---|---|---|
+| SMALLINT | 2 | SMALLINT | SMALLINT |
+| INTEGER | 2 | INTEGER | INTEGER |
+| BIGINT | 2 | BIGINT | BIGINT |
+| DECIMAL(9,2) | 2 | DECIMAL | DECIMAL(9,2) |
+| NUMERIC(5) | 2 | NUMERIC | NUMERIC(5,0) |
+| REAL | 3 | REAL | REAL |
+| DOUBLE PRECISION | 3 | DOUBLE PRECISION | DOUBLE PRECISION |
+| FLOAT(20) | 3 | FLOAT | FLOAT(24) |
+| S.MONEY, a distinct type | its source's | USER-DEFINED | S.MONEY |
+| INTEGER ARRAY[3] | 16 | ARRAY | INTEGER ARRAY[3] |
+| any other | its own | its name, as DATE | as SQL writes it, as TIME(3) |
+
+FLOAT(20) holds the values of FLOAT(24), so that is its type. The
+values are written as ever, by their own tags, whether or not the
+capability was granted. A client not granted it is sent the columns
+alone, byte for byte as before. The tag tells a client how to read a
+column's values, and the declared type is what it shows of the column.
 
 ### Rows 'B'
 
@@ -832,7 +875,7 @@ TRANSACTION.ISOLATION among them.
 | SCHEMA | the session's default schema | if the statement changed it, as SET SCHEMA does |
 | READ_ONLY | YES if the session's transaction is READ ONLY, else NO | if the statement changed it, as SET TRANSACTION or the end of a transaction does |
 | SERVER_READ_ONLY | YES if the server takes no changes, as a replica following its group does, else NO | if it changed by the time the statement completed, as a promotion changes it |
-| CATALOG | the name of the database's catalog, the setting CATALOG.NAME; empty if it is null | never |
+| CATALOG | the name of the database's catalog, the setting CATALOG.NAME, an identifier of 1 to 128 characters; never empty, as the setting takes no null | never |
 | OWNER | YES if the session's current authorization identifier is the database's owner, else NO | if the statement changed AUTHORIZATION and this changed with it |
 
 After a statement the server sends a Status only of what the statement
@@ -958,6 +1001,40 @@ A malformed message, a request not granted, a frame too long, or a
 request out of turn fails the connection with SQLCODE -919 and SQLSTATE
 08006. The server sends that Error and closes.
 [Appendix A](../appendix/a-sqlstate.md) lists every SQLSTATE.
+
+## Sample frames
+
+The file [05-protocol-frames.tsv](05-protocol-frames.tsv) beside this
+page holds sample frames for a decoder to test with. The protocol's own
+tests make it from the encoders the server and the client use, and fail
+if the file says otherwise, so it is always what the code sends. It has
+every request and reply, every data type and value tag, each tail
+field, each Status this page names, Notices and Errors with and without
+their conditions, compressed frames, and the edges a decoder meets,
+such as an empty string, a null, the longest attribute, the most
+attributes, an empty batch and a Complete that says more follow.
+
+The file is UTF-8 text, one frame a line. A line that begins with `#`
+is a comment. Every other line has five fields apart by one tab each,
+and no field holds a tab.
+
+| Field | Holds |
+|---|---|
+| direction | `client` or `server`, the side that sends the frame |
+| name | the sample's name, unique in the file, as `value-uuid` |
+| needs | the capabilities that must be granted for the frame to be sent, apart by commas, or `-` for none |
+| hex | the whole frame, its five-byte header too, two upper-case hexadecimal digits to a byte |
+| means | what the frame decodes to, in words |
+
+A line of the file reads as follows, its tabs shown here as spaces.
+
+```text
+server  pong  ping  4700000000  Pong, a header alone
+```
+
+A compressed frame's sample holds the `z` frame as sent. Its meaning
+names the kind and length of the frame it holds, and the frame it
+inflates to is that of the sample its meaning describes.
 
 ## A worked example
 

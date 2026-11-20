@@ -7,7 +7,7 @@ use turborel::value::{DataType, Decimal, Spelled};
 use super::*;
 
 fn column(name: Option<&str>, data_type: DataType) -> Column {
-    Column { name: name.map(str::to_owned), data_type, not_null: false }
+    Column { name: name.map(str::to_owned), data_type, not_null: false, declared: None }
 }
 
 /// Two columns, a name and a number, and two rows, one of a null.
