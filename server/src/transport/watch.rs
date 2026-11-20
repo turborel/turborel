@@ -1,13 +1,13 @@
-//! \[DESIGN\] A watch on a connection's peer (RULES.md D335): a copy of
-//! its socket, never read, only looked at, so the connection's task finds
+//! \[DESIGN\] A watch on a connection's peer (RULES.md D335). It is a copy
+//! of its socket, never read, only looked at, so the connection's task finds
 //! a client gone while a worker runs its statement, the stream lent to
 //! the worker (`native.rs`), and has it cancelled (RULES.md D44).
 //!
-//! A look peeks at the socket's next byte, taking nothing: none, as the
+//! A look peeks at the socket's next byte, taking nothing. None, as the
 //! client closed its end, or an error, as a connection reset, is the
-//! client gone; a byte is a request sent ahead, which tells nothing, so
+//! client gone. A byte is a request sent ahead, which tells nothing, so
 //! it is looked at again. The copy shares the socket's mode, so a look
-//! waits as long as a read of the worker's would, a moment at most: it
+//! waits as long as a read of the worker's would, a moment at most, so it
 //! is made on a thread of the blocking pool, not the runtime's.
 //!
 //! A client that sent a request ahead and then closed is found only as
@@ -45,7 +45,7 @@ impl Watch {
             tokio::time::sleep(every).await;
             let watch = self.clone();
             // A look whose thread was lost tells the peer is gone no more
-            // than it tells it is not: looked at again.
+            // than it tells it is not, so it is looked at again.
             if tokio::task::spawn_blocking(move || watch.gone()).await.unwrap_or(false) {
                 return;
             }

@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use tokio::sync::watch;
 
 use turborel::catalog::ColumnDesc;
-use turborel::db::ServedConnections;
+use turborel::db::{EndedCounts, ServedConnections};
 use turborel::error::Result;
 use turborel::storage::Row;
 use turborel::system::{Seen, SystemTable};
@@ -338,7 +338,7 @@ impl SystemTable for Connections {
 }
 
 /// \[EXTENSION\] INFORMATION_SCHEMA.SERVER.
-pub(crate) struct Server(pub(crate) Arc<Shown>);
+pub(crate) struct Server(pub(crate) Arc<Shown>, pub(crate) EndedCounts);
 
 impl SystemTable for Server {
     fn name(&self) -> &'static str {
@@ -359,7 +359,7 @@ impl SystemTable for Server {
         let shown = &self.0;
         let connections = u64::try_from(shown.locked().len()).unwrap_or(u64::MAX);
         let read = |n: &AtomicU64| count(n.load(Ordering::Relaxed));
-        let ended = seen.state.transactions_ended();
+        let ended = self.1.now();
         Ok(vec![vec![
             read(&shown.busy),
             read(&shown.waiting),

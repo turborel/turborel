@@ -10,7 +10,7 @@ pub(super) mod ended;
 mod handles;
 mod service;
 
-pub use ended::TransactionsEnded;
+pub use ended::{EndedCounts, TransactionsEnded};
 use handles::Program;
 pub(crate) use handles::WeakDatabase;
 
@@ -130,7 +130,7 @@ impl Database {
         // Its backups' views read what its background work keeps (RULES.md D166).
         let backups = Arc::default();
         crate::system::backup_tables(&mut state.system, &backups);
-        let (background, ended) = (Background::over(Arc::clone(&state.jobs), backups), Arc::clone(&state.ended));
+        let background = Background::over(Arc::clone(&state.jobs), backups);
         let db = Program::over(|program| Shared {
             current: RwLock::new(Arc::new(state)),
             changing: Mutex::new(None),
@@ -146,7 +146,7 @@ impl Database {
             in_doubt: Mutex::new(Vec::new()),
             opening: Mutex::new(None),
             service: AtomicU64::new(0),
-            ended,
+            ended: Arc::default(),
         });
         db.serve_read_ahead();
         db

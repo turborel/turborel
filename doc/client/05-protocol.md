@@ -393,8 +393,8 @@ Execute 'E'
 
 Executes a prepared statement. A statement other than a query is answered
 with a Complete. A CALL with a `?` for an OUT or INOUT parameter first
-sends one Rows reply of one row, of the columns Prepared gave: the value
-each such parameter had once the procedure ran. A query opens its cursor and sends at most `rows` rows,
+sends one Rows reply of one row, of the columns Prepared gave, holding the
+value each such parameter had once the procedure ran. A query opens its cursor and sends at most `rows` rows,
 in Rows replies, of the columns Prepared gave, with no Description. If
 the cursor has more, Suspended follows and the cursor stays open.
 Otherwise a Complete follows and the cursor is closed.

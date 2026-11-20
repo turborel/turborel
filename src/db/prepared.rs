@@ -326,14 +326,7 @@ impl Session {
                 (outputs.columns.clone(), params)
             }
         };
-        let parameters =
-            params.dynamic_types().into_iter().collect::<Option<Vec<_>>>().map(|all| outputs.inputs(all)).ok_or_else(|| {
-                SqlError::new(
-                    Code::SyntaxRule,
-                    "[ISO/IEC 9075:1992 §17.6 GR4] a <dynamic parameter specification> takes no type where it stands",
-                )
-                .with_state(SqlState::DYNAMIC_SYNTAX_ERROR)
-            })?;
+        let parameters = input_types(&params, &outputs)?;
         let collation = self.collation.borrow().clone();
         let plans = Arc::default();
         Ok(Prepared { collation, sql: sql.to_owned(), kind, parameters, columns, key, plans, single_row, cursor, implicit, outputs })
@@ -556,4 +549,13 @@ impl Session {
         // statement>.
         self.as_prepared(p, || self.open_with((commands::DYNAMIC_OPEN, commands::SELECT_CURSOR), |call| self.open_kept(call, p, &params)))
     }
+}
+
+/// The types of the input dynamic parameters of `params`, those not
+/// `outputs`; each shall take one where it stands.
+fn input_types(params: &Params, outputs: &Outputs) -> Result<Vec<ParameterType>> {
+    params.dynamic_types().into_iter().collect::<Option<Vec<_>>>().map(|all| outputs.inputs(all)).ok_or_else(|| {
+        SqlError::new(Code::SyntaxRule, "[ISO/IEC 9075:1992 §17.6 GR4] a <dynamic parameter specification> takes no type where it stands")
+            .with_state(SqlState::DYNAMIC_SYNTAX_ERROR)
+    })
 }

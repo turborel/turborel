@@ -202,17 +202,25 @@ impl Parser {
         }
     }
 
-    /// A `<primary>` that starts with an `<identifier>`: a function call, a
-    /// `<parameter specification>`, or a `<column specification>`.
-    fn identifier_primary(&mut self) -> Result<ValueExpression> {
+    /// CURRENT_ROLE, LOCALTIME or LOCALTIMESTAMP standing alone, if next.
+    fn role_or_local_datetime(&mut self) -> Result<Option<ValueExpression>> {
         // [ISO/IEC 9075-2:2023 §6.4] CURRENT_ROLE standing alone.
         if self.at_current_role() {
-            return Ok(ValueExpression::Value(self.value_specification()?));
+            return Ok(Some(ValueExpression::Value(self.value_specification()?)));
         }
         // [ISO/IEC 9075-2:2023 §6.43] LOCALTIME or LOCALTIMESTAMP.
         if self.at_local_datetime().is_some() {
             let f = self.datetime_value_function()?.ok_or_else(|| self.syntax("expected a <datetime value function>"))?;
-            return Ok(ValueExpression::Datetime(f));
+            return Ok(Some(ValueExpression::Datetime(f)));
+        }
+        Ok(None)
+    }
+
+    /// A `<primary>` that starts with an `<identifier>`: a function call, a
+    /// `<parameter specification>`, or a `<column specification>`.
+    fn identifier_primary(&mut self) -> Result<ValueExpression> {
+        if let Some(special) = self.role_or_local_datetime()? {
+            return Ok(special);
         }
         if let Some(special) = self.composite_pattern_or_aggregate()? {
             return Ok(special);

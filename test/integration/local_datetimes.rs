@@ -1,5 +1,5 @@
 //! LOCALTIME and LOCALTIMESTAMP [ISO/IEC 9075-2:2023 §6.43] (Feature
-//! F051-07, F051-08): the statement's instant CAST to a time or timestamp
+//! F051-07, F051-08), the statement's instant CAST to a time or timestamp
 //! WITHOUT TIME ZONE, in the session's time zone displacement, of the
 //! precision written; defaults of them [§11.5]; and the words still names
 //! of columns where a period follows, or delimited.

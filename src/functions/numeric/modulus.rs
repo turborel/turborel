@@ -4,7 +4,7 @@
 //!
 //! Of exact operands, of scale 0 \[SR12\], R is found exactly. Of a
 //! DECFLOAT operand it is found exactly too, of the operands' digits at
-//! the lesser of their exponents: a dividend's exponent past the
+//! the lesser of their exponents. A dividend's exponent past the
 //! divisor's is taken by modular arithmetic, so 1E100 is divided as
 //! itself. Of DECFLOAT operands that are not whole numbers, which GR9c
 //! gives no R of scale 0, R is the same remainder, of the smaller
@@ -33,15 +33,13 @@ pub(super) fn remainder(n: &Value, m: &Value) -> Result<Value> {
     if sign(m)? == Ordering::Equal {
         return by_zero();
     }
-    match (n, m) {
-        (Value::Exact(a), Value::Exact(b)) => exact(*a, *b),
-        _ => {
-            let (Some(a), Some(b)) = (decfloat(n), decfloat(m)) else {
-                return fail(Code::Api, "[DESIGN] MOD is of exact numbers of scale 0 or decimal floating-point numbers");
-            };
-            decimal(a, b).map(Value::DecFloat).map_or_else(|| out_of_range("§6.31 GR9c"), Ok)
-        }
+    if let (Value::Exact(a), Value::Exact(b)) = (n, m) {
+        return exact(*a, *b);
     }
+    let (Some(a), Some(b)) = (decfloat(n), decfloat(m)) else {
+        return fail(Code::Api, "[DESIGN] MOD is of exact numbers of scale 0 or decimal floating-point numbers");
+    };
+    decimal(a, b).map(Value::DecFloat).map_or_else(|| out_of_range("§6.31 GR9c"), Ok)
 }
 
 /// The number `v` as DECFLOAT: an exact number or a DECFLOAT.
@@ -65,7 +63,7 @@ fn exact(n: Decimal, m: Decimal) -> Result<Value> {
 }
 
 /// [§6.31 GR9c] The remainder of `n` by `m`, not 0, as DECFLOAT values
-/// `c` × 10^`e`: of their digits at the lesser exponent, of `n`'s sign.
+/// `c` × 10^`e`, of their digits at the lesser exponent, of `n`'s sign.
 fn decimal(n: DecFloat, m: DecFloat) -> Option<DecFloat> {
     let (en, em) = (i64::from(n.exponent()), i64::from(m.exponent()));
     let divisor = m.coefficient().unsigned_abs();
@@ -74,7 +72,7 @@ fn decimal(n: DecFloat, m: DecFloat) -> Option<DecFloat> {
         let shift = u32::try_from(en.checked_sub(em)?).ok()?;
         times_mod(n.coefficient().unsigned_abs().checked_rem(divisor)?, power_mod(shift, divisor), divisor)
     } else {
-        // M's digits at N's exponent: past 128 bits, M is greater than N,
+        // M's digits at N's exponent. Past 128 bits M is greater than N,
         // which is then the remainder.
         let shift = u32::try_from(em.checked_sub(en)?).ok()?;
         let scaled = pow10(shift).and_then(|p| u128::try_from(p).ok()).and_then(|p| divisor.checked_mul(p));
@@ -86,7 +84,7 @@ fn decimal(n: DecFloat, m: DecFloat) -> Option<DecFloat> {
 }
 
 /// `a` × `b` mod `m`, each of `a` and `b` less than `m`, which is below
-/// 2^127, without forming the product: doubled and added a bit of `b` at
+/// 2^127, without forming the product, doubled and added a bit of `b` at
 /// a time, each sum less than 2`m`.
 fn times_mod(a: u128, b: u128, m: u128) -> u128 {
     let mut product = 0_u128;

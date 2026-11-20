@@ -28,7 +28,7 @@ CALL is in, or, in a BEFORE row trigger, a column of its new transition
 variable. Of the last two it may be one element of the
 array, `P[i]` or `N.C[i]`, as [CREATE PROCEDURE](create-procedure.md)
 says. Of a CALL prepared, the target may be a `?`, a dynamic parameter
-of the parameter's type: an output, and of an INOUT parameter an input
+of the parameter's type, an output, and of an INOUT parameter an input
 too. An OUT parameter starts null. An INOUT
 parameter starts with its target's value. Once the body has run, the
 value of each OUT and INOUT parameter is assigned to its target, as

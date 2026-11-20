@@ -161,7 +161,7 @@ fn fetched<S: Read + Write>(
     Some(read.map(|()| Streamed::Rows(count)))
 }
 
-/// Whether `sql` is a CALL that may have output dynamic parameters: one
+/// Whether `sql` is a CALL that may have output dynamic parameters, one
 /// with a `?`, which only a statement prepared takes, so it is run as
 /// `fetched` runs it, its outputs shown as a row [ISO/IEC 9075-2:2023
 /// §20.7 GR7a].

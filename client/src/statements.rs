@@ -24,7 +24,7 @@ pub struct Statement {
 }
 
 impl Statement {
-    /// [§17.9 GR4] Its dynamic parameters' types, in order: its input
+    /// [§17.9 GR4] Its dynamic parameters' types, in order, its input
     /// ones, of a CALL not those of output parameters alone.
     pub fn parameters(&self) -> &[ParameterType] {
         &self.parameters

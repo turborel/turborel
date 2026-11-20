@@ -188,7 +188,7 @@ fn a_connection_idle_in_a_transaction_is_closed() {
 const MANY: usize = 1000;
 
 /// The most a session waits for the lock of a statement whose client is
-/// gone: far longer than finding it gone takes, so the wait is bounded
+/// gone, far longer than finding it gone takes, so the wait is bounded
 /// only for a server that never finds it.
 const LOCK_WAIT_MS: u32 = 60_000;
 

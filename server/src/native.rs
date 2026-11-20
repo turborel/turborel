@@ -68,7 +68,7 @@ use crate::transport::{Transport, Watch};
 /// nothing (RULES.md D44). As often as a wait for a lock looks.
 const CANCEL_AGAIN: std::time::Duration = std::time::Duration::from_millis(20);
 /// \[DESIGN\] How often a connection whose request runs is looked at for
-/// its client gone (RULES.md D335): a request answered sooner is never
+/// its client gone (RULES.md D335). A request answered sooner is never
 /// looked at.
 const LOOK_AGAIN: std::time::Duration = std::time::Duration::from_millis(100);
 /// \[DESIGN\] How long a refused connection is held after its refusal,

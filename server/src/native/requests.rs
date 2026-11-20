@@ -458,7 +458,7 @@ impl Held {
     /// [§17.10, §17.14] Executes statement `at.0` with `values`; a
     /// query's cursor opened as `at.1`, of `attributes`, the transaction
     /// ending as it does if `ends`, at most `rows` of it sent, of the
-    /// columns Prepared gave: no Description. A CALL's output dynamic
+    /// columns Prepared gave, with no Description. A CALL's output dynamic
     /// parameters are sent as a row of those columns before its Complete.
     fn execute(
         &mut self,

@@ -1,16 +1,15 @@
-//! \[EXTENSION\] A database's transactions ended (RULES.md D334): how many
+//! \[EXTENSION\] A database's transactions ended (RULES.md D334), how many
 //! committed and how many rolled back since it was opened, of every
 //! session, each counted as its session's diagnostics area counts it
 //! [ISO/IEC 9075-2:2023 §23.1 GR2h, GR2i]; those in doubt, held until it
 //! is dropped (RULES.md D25), counted neither. Opened again in place, it
-//! counts on. Its snapshots share the counts, so a system table reads
-//! them, as INFORMATION_SCHEMA.SERVER does.
+//! counts on. A handle to the counts reads them as they grow, as
+//! INFORMATION_SCHEMA.SERVER does.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError};
 
 use super::Database;
-use crate::db::State;
 use crate::txn::Txn;
 
 /// The counts of transactions ended.
@@ -38,11 +37,16 @@ impl Ended {
     }
 }
 
-impl State {
+/// A database's counts of transactions ended, read as they grow, by a
+/// handle that keeps no more of the database alive.
+#[derive(Clone)]
+pub struct EndedCounts(Arc<Ended>);
+
+impl EndedCounts {
     /// How many transactions the database committed and rolled back since
     /// it was opened, of every session.
-    pub fn transactions_ended(&self) -> TransactionsEnded {
-        self.ended.read()
+    pub fn now(&self) -> TransactionsEnded {
+        self.0.read()
     }
 }
 
@@ -60,6 +64,11 @@ impl Database {
     /// opened, of every session.
     pub fn transactions_ended(&self) -> TransactionsEnded {
         self.0.ended.read()
+    }
+
+    /// Its counts of transactions ended, as a handle that reads them.
+    pub fn ended_counts(&self) -> EndedCounts {
+        EndedCounts(Arc::clone(&self.0.ended))
     }
 
     /// Holds `tx`, in doubt, until the database is dropped (RULES.md D25).

@@ -85,7 +85,7 @@ struct Outputs {
 
 impl Outputs {
     /// The output parameter `p`, the `k`-th, from 0, assigned to `t` in
-    /// `cx`: a `?` of `p`'s type [§20.7 SR5a].
+    /// `cx`, a `?` typed as `p` is [§20.7 SR5a].
     fn push(&mut self, cx: Context<'_>, (k, p): (usize, &SqlParameter), t: Target) -> Result<()> {
         match t {
             Target::Spec(spec) => self.targets.push((k, spec)),
@@ -233,35 +233,35 @@ impl State {
 }
 
 /// [ISO/IEC 9075-2:2023 §9.18 SR9h iii, iv] The value the `k`-th
-/// parameter `p` of `desc`, from 0, is given by its argument `a`, bound in
+/// parameter `p` of `desc`, from 0, is given by its argument `given`, bound in
 /// `cx`, as its mode allows; the target of an output one kept in
 /// `outputs`.
 fn argument(
     cx: Context<'_>,
     (desc, k, p): (&SqlRoutineDesc, usize, &SqlParameter),
-    a: &SqlArgument,
+    given: &SqlArgument,
     outputs: &mut Outputs,
 ) -> Result<Expr> {
-    let target = match a {
+    let target = match given {
         SqlArgument::Value(v) => target_of(cx, v).map(Target::Spec).or_else(|| dynamic_of(v).map(Target::Dynamic)),
         SqlArgument::Default(_) | SqlArgument::Null(_) => None,
     };
-    match (p.mode, a, target) {
+    match (p.mode, given, target) {
         (ParameterMode::In, SqlArgument::Value(v), _) => input(cx, p, v),
         (ParameterMode::In, SqlArgument::Default(at) | SqlArgument::Null(at), _) => defaulted("T522", 6, *at),
         (ParameterMode::InOut, SqlArgument::Default(at), _) => defaulted("T523", 7, *at),
-        (ParameterMode::Out, _, Some(t)) => {
-            outputs.push(cx, (k, p), t)?;
+        (ParameterMode::Out, _, Some(to)) => {
+            outputs.push(cx, (k, p), to)?;
             Ok(Expr::Const(Value::Null))
         }
-        (ParameterMode::InOut, SqlArgument::Value(v), Some(t)) => {
+        (ParameterMode::InOut, SqlArgument::Value(v), Some(to)) => {
             let value = input(cx, p, v)?;
-            outputs.push(cx, (k, p), t)?;
+            outputs.push(cx, (k, p), to)?;
             Ok(value)
         }
         (ParameterMode::Out, _, None)
         | (ParameterMode::InOut, SqlArgument::Value(_), None)
-        | (ParameterMode::InOut, SqlArgument::Null(_), _) => no_target(desc, (k, p.mode == ParameterMode::InOut), a),
+        | (ParameterMode::InOut, SqlArgument::Null(_), _) => no_target(desc, (k, p.mode == ParameterMode::InOut), given),
     }
 }
 

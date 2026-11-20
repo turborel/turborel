@@ -61,7 +61,7 @@ fn a_prepared_call_sends_its_outputs_as_a_row() {
     let Outcome::Rows { rows: bumped, .. } = c.execute(&bump, &[int(4)]).unwrap() else { panic!("rows") };
     assert_eq!(bumped[0].iter().map(ToString::to_string).collect::<Vec<_>>(), ["7", "X"]);
     let add = c.prepare("CALL ADD_ROW(?)").unwrap();
-    assert!(add.columns().is_empty());
+    assert_eq!(add.columns().len(), 0);
     assert!(matches!(c.execute(&add, &[int(4)]).unwrap(), Outcome::Done(_)));
 }
 

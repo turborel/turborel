@@ -69,7 +69,7 @@ impl Parser {
     }
 
     /// Whether LOCALTIME or LOCALTIMESTAMP is next, as
-    /// `datetime_value_function` reads it: its token as wide as the word,
+    /// `datetime_value_function` reads it, its token as wide as the word,
     /// so not delimited by double quotes, and no period after it; and
     /// which.
     pub(super) fn at_local_datetime(&self) -> Option<Moment> {

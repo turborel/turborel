@@ -9,7 +9,7 @@
 //! [§20.10]; its input parameters are the other `?`s and those of
 //! parameters both input and output, which DESCRIBE INPUT describes and
 //! an execution gives values for. An execution gives back the output
-//! parameters' values, in the order of the columns: a server sends them
+//! parameters' values, in the order of the columns. A server sends them
 //! as a row, and EXECUTE puts them where its `<result using clause>` says
 //! \[§20.13 GR10\].
 
@@ -40,7 +40,7 @@ impl Outputs {
     }
 
     /// `values`, one for each input parameter, with the null value in the
-    /// place of each output parameter alone: one for each `?`.
+    /// place of each output parameter alone, one for each `?`.
     pub(super) fn expanded(&self, values: Vec<Value>) -> Vec<Value> {
         if self.only.is_empty() {
             return values;

@@ -9,7 +9,7 @@ use turborel::error::{Code, SqlState};
 
 use crate::common::{code, fetched, rows};
 
-/// Schema A: T, of one row: a SMALLINT S of its least value, an INTEGER
+/// Schema A with T, of one row, a SMALLINT S of its least value, an INTEGER
 /// I, a NUMERIC(5, 2) N, a DOUBLE PRECISION F, a DECFLOAT D and a null
 /// INTEGER Z.
 fn one() -> (Database, Session) {
@@ -78,7 +78,7 @@ fn modulus_6_31() {
     assert_eq!(of(&a, "MOD(D, 2), MOD(CAST('1E100' AS DECFLOAT), 7), MOD(CAST(7.5 AS DECFLOAT), 2)"), "-1,4,1.5");
     assert_eq!(
         of(&a, "MOD(CAST(5 AS DECFLOAT), CAST('1E40' AS DECFLOAT)), MOD(CAST('-12E3' AS DECFLOAT), CAST('7E2' AS DECFLOAT))"),
-        "5,-1E2"
+        "5,-100"
     );
     assert_eq!(state_of(&a, "MOD(I, 0)"), Some(SqlState::DIVISION_BY_ZERO));
     assert_eq!(state_of(&a, "MOD(D, CAST(0 AS DECFLOAT))"), Some(SqlState::DIVISION_BY_ZERO));
@@ -109,7 +109,7 @@ fn syntax_rules_6_31() {
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §6.31 SR13, GR10] each trigonometric
-/// function of an angle in radians: of an exact or approximate operand
+/// function of an angle in radians, of an exact or approximate operand
 /// DOUBLE PRECISION (IV144), of a DECFLOAT one DECFLOAT(34) (IV143); null
 /// of null; ASIN and ACOS of a value below −1 or above 1 raise 22003, as
 /// does COSH past the range of a double.

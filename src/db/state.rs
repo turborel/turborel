@@ -161,9 +161,6 @@ pub struct State {
     /// Its background work's jobs, shared by every snapshot (`threads.rs`,
     /// RULES.md D55).
     pub(crate) jobs: Arc<crate::threads::Jobs>,
-    /// Its counts of transactions ended, shared by every snapshot
-    /// (`database/ended.rs`).
-    pub(in crate::db) ended: Arc<super::database::ended::Ended>,
     /// The latest runs of the graph algorithms, shared by every snapshot
     /// (`system/graph_runs.rs`).
     pub(crate) graph_runs: Arc<crate::system::GraphRuns>,

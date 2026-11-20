@@ -8519,9 +8519,9 @@ SIN, COS, TAN, SINH, COSH, TANH, ASIN, ACOS, ATAN, LOG and LOG10
 precision functions, as LN, EXP and POWER are. Of a DECFLOAT operand the
 result is DECFLOAT(34) (IV141, IV143) of the double's 16 digits, and a
 logarithm of a DECFLOAT is found through its decimal exponent, so an
-argument past a double's range has one. LOG of base 10 uses the base-10
-logarithm and of base 2 the base-2 one, so a power of either base is a
-whole number. A result past a double's range raises 22003, as a cosh of
+argument past a double's range has one. LOG is the quotient of the
+base-10 logarithms of its argument and its base, so a power of 10 or of
+2 comes out a whole number. A result past a double's range raises 22003, as a cosh of
 1000 does.
 
 #### D332. MOD of DECFLOAT operands is exact, and of a non-whole one too
@@ -8548,8 +8548,9 @@ ABS of the least SMALLINT, −32768, is 32768, a SMALLINT of 5 digits.
 
 Each session counts the transactions it ended in its diagnostics area
 (§23.1 GR2h, GR2i). The same count goes into two atomic counters of the
-database, which every snapshot of its definitions shares, so a system
-table reads them with no lock. A transaction in doubt (D25) is counted
+database, held beside its definitions and not in them, so a system
+table reads them with no lock through a handle, `Database::ended_counts`,
+that keeps nothing else of the database alive. A transaction in doubt (D25) is counted
 neither way. The counts run from the database's opening, go on when it
 is opened again in place (D57), and are not kept in its files.
 INFORMATION_SCHEMA.SERVER shows them to the database's owner alone as

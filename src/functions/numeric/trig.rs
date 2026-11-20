@@ -2,12 +2,12 @@
 //! logarithm function>` LOG of Feature T623 and the `<common logarithm>`
 //! LOG10 of Feature T624 [ISO/IEC 9075-2:2023 §6.31 GR10, GR11, SR15].
 //!
-//! \[DESIGN\] Each is found in double precision, as LN is: of a DECFLOAT
+//! \[DESIGN\] Each is found in double precision, as LN is. Of a DECFLOAT
 //! operand through its decimal exponent where that keeps a value past a
 //! double's range (the logarithms), kept to the 16 digits a double holds.
-//! LOG of base 10, and so LOG10, is found by the base-10 logarithm, and of
-//! base 2 by the base-2 one, so a power of either base is a whole number
-//! (RULES.md D331).
+//! LOG is the quotient of the base-10 logarithms of its argument and its
+//! base, so a power of 10 or of 2 comes out a whole number (RULES.md
+//! D331).
 
 use std::cmp::Ordering;
 
@@ -40,8 +40,6 @@ pub const LOG10: &str = "LOG10";
 
 /// [§6.31 SR15] The base LOG10 is LOG of.
 const TEN: i128 = 10;
-/// The base whose logarithm is found by the base-2 function.
-const TWO: i128 = 2;
 /// [§6.31 GR10b i 1, ii 1] The least value ASIN and ACOS take; 1 the
 /// greatest.
 const LEAST_SINE: i128 = -1;
@@ -118,8 +116,8 @@ fn result(x: f64, decimal: bool, why: &str) -> Result<Value> {
     if decimal { decimal::of_double(x).map_or_else(|| out_of_range(why), Ok) } else { Ok(value) }
 }
 
-/// [§6.31 GR10] `t` of `v`, not null: of ACOS or ASIN, 22003 if `v` is
-/// below −1 or above 1 \[GR10b i 1, ii 1\].
+/// [§6.31 GR10] `t` of `v`, not null, and of ACOS or ASIN 22003 if `v`
+/// is below −1 or above 1 \[GR10b i 1, ii 1\].
 pub(super) fn trigonometric(t: Trig, v: &Value) -> Result<Value> {
     let inverse = matches!(t, Trig::Asin | Trig::Acos);
     let outside = || compare(v, &whole(LEAST_SINE)) == Some(Ordering::Less) || compare(v, &whole(1)) == Some(Ordering::Greater);
@@ -141,14 +139,7 @@ pub(super) fn logarithm(base: &Value, argument: &Value) -> Result<Value> {
         return out_of_range("§6.31 GR11c");
     }
     let decimal = matches!(argument, Value::DecFloat(_)) || matches!(base, Value::DecFloat(_));
-    let x = if equals(base, TEN) {
-        decimal::log10(argument)?
-    } else if equals(base, TWO) && !matches!(argument, Value::DecFloat(_)) {
-        double(argument)?.log2()
-    } else {
-        decimal::log10(argument)? / decimal::log10(base)?
-    };
-    result(x, decimal, "§6.31 GR11d")
+    result(decimal::log10(argument)? / decimal::log10(base)?, decimal, "§6.31 GR11d")
 }
 
 /// [§6.31 SR15] LOG10 ( `argument` ), LOG ( 10, `argument` ).
