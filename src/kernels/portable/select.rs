@@ -126,7 +126,11 @@ fn selected<T: Copy, H: Holds<T>>(values: &[T], c: T, (nulls, sel): Given<'_>, o
         let truth = |r: u32| values.get(index(r)).is_some_and(|&v| H::holds(v, c)) && !nulls.is_some_and(|m| m.get(index(r)));
         return compacted(sel.iter().map(|&r| (r, truth(r))), sel.len(), out);
     }
-    let words = nulls.map_or(&[][..], |m| m.words());
+    // No nulls: each row judged alone, no bit read.
+    let Some(nulls) = nulls else {
+        return compacted((0_u32..).zip(values).map(|(r, &v)| (r, H::holds(v, c))), values.len(), out);
+    };
+    let words = nulls.words();
     let mut word = 0_u64;
     let rows = (0_u32..).zip(values).enumerate().map(|(n, (r, &v))| {
         if n & (WORD_BITS - 1) == 0 {

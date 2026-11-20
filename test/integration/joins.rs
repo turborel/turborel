@@ -53,13 +53,19 @@ fn joins() -> Database {
 }
 
 /// The rows of `sql`, sorted, checked against those of `nested`, the same
-/// query planned as a nested loop; and the plan of `sql`. No ORDER BY is
-/// written, so the rows may come in any order.
+/// query planned as a nested loop, its equality made of approximate
+/// arithmetic that can raise and left where it is (RULES.md D373); and the
+/// plan of `sql`. No ORDER BY is written, so the rows may come in any
+/// order.
 fn same_rows(s: &Session, sql: &str, nested: &str) -> (Vec<String>, String) {
-    let (found, reference) = (sorted(s, sql), sorted(s, nested));
+    let found = sorted(s, sql);
+    exec(s, "SET OPTIMIZER.HOIST_RAISING_EXPRESSIONS = 'OFF'").unwrap();
+    let reference = sorted(s, nested);
+    let nested_plan = s.physical_plan(nested, &Params::new()).unwrap();
+    exec(s, "SET OPTIMIZER.HOIST_RAISING_EXPRESSIONS = 'ON'").unwrap();
     assert_eq!(found, reference, "{sql}");
     let plan = s.physical_plan(sql, &Params::new()).unwrap();
-    assert!(!s.physical_plan(nested, &Params::new()).unwrap().contains("HashJoin"), "{nested} is a nested loop");
+    assert!(!nested_plan.contains("HashJoin"), "{nested} is a nested loop");
     (found, plan)
 }
 
@@ -73,18 +79,18 @@ fn equalities_are_hash_joins() {
     let db = joins();
     let s = db.session("J");
     let cases = [
-        ("SELECT A.N, B.N FROM A, B WHERE A.K = B.K", "SELECT A.N, B.N FROM A, B WHERE A.K + 0 = B.K", 5),
-        ("SELECT A.N, B.N FROM A, B WHERE B.K = A.K", "SELECT A.N, B.N FROM A, B WHERE B.K + 0 = A.K", 5),
-        ("SELECT A.N, E.N FROM A, E WHERE A.K = E.K", "SELECT A.N, E.N FROM A, E WHERE A.K + 0 = E.K", 3),
+        ("SELECT A.N, B.N FROM A, B WHERE A.K = B.K", "SELECT A.N, B.N FROM A, B WHERE A.K + 0E0 = B.K", 5),
+        ("SELECT A.N, B.N FROM A, B WHERE B.K = A.K", "SELECT A.N, B.N FROM A, B WHERE B.K + 0E0 = A.K", 5),
+        ("SELECT A.N, E.N FROM A, E WHERE A.K = E.K", "SELECT A.N, E.N FROM A, E WHERE A.K + 0E0 = E.K", 3),
         ("SELECT C.N, D.N FROM C, D WHERE C.S = D.S", "SELECT C.N, D.N FROM C, D WHERE C.S = D.S AND C.N + D.N > 0", 3),
         (
             "SELECT A.N, B.N FROM A, B WHERE A.K = B.K AND (A.N = 1 OR B.N = 50)",
-            "SELECT A.N, B.N FROM A, B WHERE A.K + 0 = B.K AND (A.N = 1 OR B.N = 50)",
+            "SELECT A.N, B.N FROM A, B WHERE A.K + 0E0 = B.K AND (A.N = 1 OR B.N = 50)",
             3,
         ),
         (
             "SELECT A.N, B.N, E.N FROM A, B, E WHERE A.K = B.K AND B.K = E.K",
-            "SELECT A.N, B.N, E.N FROM A, B, E WHERE A.K + 0 = B.K AND B.K = E.K",
+            "SELECT A.N, B.N, E.N FROM A, B, E WHERE A.K + 0E0 = B.K AND B.K = E.K",
             4,
         ),
     ];
@@ -117,7 +123,7 @@ fn products_are_joined_in_the_cheapest_order() {
     let db = large_and_small();
     let s = db.session("J");
     let sql = "SELECT T.V, U.W, S.K FROM T, U, S WHERE T.K = S.K AND U.K = S.K";
-    let nested = "SELECT T.V, U.W, S.K FROM T, U, S WHERE T.K + 0 = S.K AND U.K = S.K";
+    let nested = "SELECT T.V, U.W, S.K FROM T, U, S WHERE T.K + 0E0 = S.K AND U.K = S.K";
     let (found, plan) = same_rows(&s, sql, nested);
     assert_eq!(found, vec!["10,15,5", "14,21,7"]);
     assert!(!plan.contains("NestedLoop"), "T and U are not paired: {plan}");
@@ -139,12 +145,15 @@ fn comparisons_carry_across_equalities() {
     let db = large_and_small();
     db.create_index("U_K", "J.U", &["K"], "btree").unwrap();
     let s = db.session("J");
-    let (found, plan) =
-        same_rows(&s, "SELECT T.V, U.W FROM T, U WHERE T.K = U.K AND T.K = 7", "SELECT T.V, U.W FROM T, U WHERE T.K + 0 = U.K AND T.K = 7");
+    let (found, plan) = same_rows(
+        &s,
+        "SELECT T.V, U.W FROM T, U WHERE T.K = U.K AND T.K = 7",
+        "SELECT T.V, U.W FROM T, U WHERE T.K + 0E0 = U.K AND T.K = 7",
+    );
     assert_eq!(found, vec!["14,21"]);
     assert!(plan.contains("J.U using U_K") && plan.contains("U.K = 7"), "{plan}");
     let (found, plan) =
-        same_rows(&s, "SELECT U.W FROM T, U WHERE U.K = T.K AND 298 <= T.K", "SELECT U.W FROM T, U WHERE U.K + 0 = T.K AND 298 <= T.K");
+        same_rows(&s, "SELECT U.W FROM T, U WHERE U.K = T.K AND 298 <= T.K", "SELECT U.W FROM T, U WHERE U.K + 0E0 = T.K AND 298 <= T.K");
     assert_eq!(found, vec!["894", "897"]);
     assert!(plan.contains("U.K >= 298"), "{plan}");
 }
@@ -210,11 +219,11 @@ fn the_operand_of_fewer_rows_is_built() {
     let db = built_operands();
     let s = db.session("J");
     let cases = [
-        ("SELECT * FROM SMALL, BIG WHERE SMALL.K = BIG.K", "SELECT * FROM SMALL, BIG WHERE SMALL.K + 0 = BIG.K", 15),
-        ("SELECT * FROM BIG, SMALL WHERE BIG.K = SMALL.K", "SELECT * FROM BIG, SMALL WHERE BIG.K + 0 = SMALL.K", 15),
+        ("SELECT * FROM SMALL, BIG WHERE SMALL.K = BIG.K", "SELECT * FROM SMALL, BIG WHERE SMALL.K + 0E0 = BIG.K", 15),
+        ("SELECT * FROM BIG, SMALL WHERE BIG.K = SMALL.K", "SELECT * FROM BIG, SMALL WHERE BIG.K + 0E0 = SMALL.K", 15),
         (
             "SELECT * FROM SMALL, BIG WHERE SMALL.K = BIG.K AND SMALL.W < BIG.V",
-            "SELECT * FROM SMALL, BIG WHERE SMALL.K + 0 = BIG.K AND SMALL.W < BIG.V",
+            "SELECT * FROM SMALL, BIG WHERE SMALL.K + 0E0 = BIG.K AND SMALL.W < BIG.V",
             7,
         ),
     ];

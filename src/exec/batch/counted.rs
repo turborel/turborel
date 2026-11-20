@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use super::late::Deferred;
 use super::stream::{self, Batches, Kept};
 use crate::db::State;
 use crate::error::Result;
@@ -14,14 +15,15 @@ use crate::physical::{Counted, Plan};
 use crate::storage::Sel;
 use crate::txn::TxId;
 
-/// The batches of `plan`, a counted operator, counted.
+/// The batches of `plan`, a counted operator, counted, its scans' columns
+/// `deferred` leaves unread given late as its input's are.
 ///
 /// # Errors
 ///
 /// As its input's batches; SQLCODE -910 if it is not counted.
-pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+pub(super) fn batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Counted(c) = plan else { return Err(broken("a counted operator is not one")) };
-    Ok(through(*c, db, |input| Ok((stream::batches(input, db, tx)?, ())))?.0)
+    Ok(through(*c, db, |input| Ok((stream::batches_with(input, (db, tx), deferred)?, ())))?.0)
 }
 
 /// The batches `run` gives of `c`'s operator, with what else it gives,

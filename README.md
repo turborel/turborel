@@ -34,7 +34,8 @@ behind it, and each can be replaced or added to.
   at the savepoint levels of routines and ATOMIC blocks.
 - [Data change delta tables](doc/sql/24-delta-tables.md), OLD, NEW and
   FINAL TABLE of INSERT, UPDATE, DELETE and MERGE.
-- Row and columnar storage, chosen per table.
+- Row and columnar storage, chosen per table, the columnar store's filters
+  judged in place and its other columns decoded of the rows kept alone.
 - DISTINCT set functions computed by two groupings, read by batches.
 - Batches of vectors with null bitmaps, dates and truth values among them,
   filtered by pluggable kernels, and parallel morsels read by batch.
@@ -63,6 +64,9 @@ behind it, and each can be replaced or added to.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.
+- Joins removed on unique and foreign keys, filters and FETCH FIRST moved
+  into set operations and below windows, and parts of conditions that can
+  raise computed on the table they read, so joins over them are reordered.
 - [SQL/XML](doc/sql/19-xml.md): an XML type kept in tables, in arrays,
   multisets, rows and distinct and structured types too, its values parsed
   from XML 1.0 and 1.1 text and serialized back, XMLDOCUMENT, XMLCAST, IS

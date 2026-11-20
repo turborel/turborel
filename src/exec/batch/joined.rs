@@ -32,6 +32,7 @@ mod probe;
 
 use std::sync::Arc;
 
+use super::late::Deferred;
 use super::stream::{self, Batches};
 use crate::db::State;
 use crate::error::Result;
@@ -144,17 +145,24 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
 
 /// The batches of the join `plan`, one of streams (`layout`), each made
 /// only while the statement is not cancelled (RULES.md D44): a join of
-/// operands held in memory reads no table as it makes them.
+/// operands held in memory reads no table as it makes them. The columns of
+/// an inner hash join's left operand `deferred` leaves unread, but its
+/// keys, are given late (RULES.md D361).
 ///
 /// # Errors
 ///
 /// A table's storage missing; the right operand's errors.
-pub(super) fn batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+pub(super) fn batches_with(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
     let stop = db.tx.stop_of(tx);
+    if let Plan::HashJoin { left, right, keys, .. } = plan {
+        let width = stream::layout(&left, db).map_or(0, |(_, width)| width);
+        let below = if deferred.any() { deferred.left_of(&keys, width) } else { Deferred::default() };
+        return Ok(Box::new(checked(probe::probed((*left, *right, keys), (Kind::Inner, below), db, tx)?, stop)));
+    }
     Ok(Box::new(checked(joined(plan, db, tx)?, stop)))
 }
 
-/// `batches`' work: the join's batches, of a function for each kind of
+/// `batches_with`'s work: the join's batches, of a function for each kind of
 /// join, chosen by reference and handed the plan at one call, so this
 /// frame, which each level of a chain of joins adds to the stack, holds no
 /// copy of a plan for each (RULES.md R-CF-6).
@@ -205,7 +213,7 @@ fn no_join(_plan: Plan, _db: &Arc<State>, _tx: TxId) -> Result<Batches> {
 ///
 /// # Errors
 ///
-/// As `batches`.
+/// As `batches_with`.
 fn product_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     let Plan::Product { left, right, .. } = plan else { return no_join(plan, db, tx) };
     nested::multiplied((*left, *right), db, tx)
@@ -215,10 +223,10 @@ fn product_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
 ///
 /// # Errors
 ///
-/// As `batches`.
+/// As `batches_with`.
 fn hash_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     let Plan::HashJoin { left, right, keys, .. } = plan else { return no_join(plan, db, tx) };
-    probe::probed((*left, *right, keys), Kind::Inner, db, tx)
+    probe::probed((*left, *right, keys), (Kind::Inner, Deferred::default()), db, tx)
 }
 
 /// The batches of `plan`, an outer join of streams: a LEFT one probing, if
@@ -226,13 +234,13 @@ fn hash_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
 ///
 /// # Errors
 ///
-/// As `batches`.
+/// As `batches_with`.
 fn outer_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
     let Plan::OuterJoin { kind, left, right, keys, cond, own, widths, .. } = plan else {
         return Err(crate::exec::broken("an outer join is not one"));
     };
     if kind == OuterJoin::Left && own.is_none() && cond.as_ref().is_none_or(|c| !c.can_raise()) {
-        return probe::probed((*left, *right, keys), Kind::Left(cond, widths), db, tx);
+        return probe::probed((*left, *right, keys), (Kind::Left(cond, widths), Deferred::default()), db, tx);
     }
     outer::joined(Joining { kind, keys, cond, own, widths }, (*left, *right), db, tx)
 }
@@ -246,7 +254,7 @@ fn operand_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         return execute(plan, db, tx);
     }
     let (columns, width) = stream::layout(&plan, db).unwrap_or_default();
-    match stream::batches(plan, db, tx) {
+    match stream::whole_batches(plan, db, tx) {
         Ok(batches) => rows_of(batches, columns, width),
         Err(e) => failed(e),
     }
@@ -262,7 +270,7 @@ fn narrow_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         return Box::new(rows.map(move |r| r.map(|row| columns.iter().map(|&c| row.get(c).cloned().unwrap_or(Value::Null)).collect())));
     }
     let width = columns.len();
-    match stream::batches(plan, db, tx) {
+    match stream::whole_batches(plan, db, tx) {
         Ok(batches) => rows_of(batches, (0..width).collect(), width),
         Err(e) => failed(e),
     }
@@ -305,8 +313,19 @@ pub(super) fn gathered(rows: RowIter, columns: &[usize]) -> Batches {
 ///
 /// As `stream::batches`.
 fn left_batches(plan: Plan, db: &Arc<State>, tx: TxId) -> Result<Batches> {
+    left_late_batches(plan, (db, tx), &Deferred::default())
+}
+
+/// As `left_batches`, its columns `deferred` leaves unread given late
+/// where it says rows are dropped above (RULES.md D361), unless its rows
+/// are gathered in an order.
+///
+/// # Errors
+///
+/// As `stream::batches`.
+fn left_late_batches(plan: Plan, (db, tx): (&Arc<State>, TxId), deferred: &Deferred) -> Result<Batches> {
     if !in_order(&plan) {
-        return stream::batches(plan, db, tx);
+        return stream::batches_with(plan, (db, tx), deferred);
     }
     let columns = stream::layout(&plan, db).map(|l| l.0).unwrap_or_default();
     Ok(gathered(execute(plan, db, tx), &columns))

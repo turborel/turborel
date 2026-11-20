@@ -177,7 +177,8 @@ impl RowTable {
     /// (`rows/frozen/batches.rs`), any other its tree's records, each
     /// column decoded straight into its vector (`gathered.rs`); one that
     /// no longer freezes but still holds groups its scan's rows, gathered.
-    pub(super) fn scan_batches_of(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Conjunction>) -> Batches {
+    /// The frozen rows' columns of `late` are given late (RULES.md D361).
+    pub(super) fn scan_batches_of(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Conjunction>, late: &[usize]) -> Batches {
         let freezes = self.frozen.columns().is_some();
         if !freezes && self.frozen.directory().is_ok_and(|directory| directory.groups.is_empty()) {
             return self.gathered(tx, columns, condition.as_ref());
@@ -192,7 +193,7 @@ impl RowTable {
             Err(e) => return Box::new(iter::once(Err(e))),
         };
         match self.frozen.directory() {
-            Ok(directory) => Box::new(Batched::new(Arc::clone(&self), (reader, directory), columns.to_vec(), condition)),
+            Ok(directory) => Box::new(Batched::new(Arc::clone(&self), (reader, directory), columns.to_vec(), condition).with_late(late)),
             Err(e) => Box::new(iter::once(Err(e))),
         }
     }

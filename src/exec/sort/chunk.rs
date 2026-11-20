@@ -251,6 +251,7 @@ mod tests {
                 Column::Texts(_) => "texts",
                 Column::Values(_) => "values",
                 Column::Nulls(_) => "nulls",
+                Column::Late(_) => "late",
             })
             .collect();
         let back: Vec<(u8, u64)> = read.tags.iter().copied().zip(read.prefixes.iter().copied()).collect();

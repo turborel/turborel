@@ -11,13 +11,19 @@
 //! A conjunct goes down into an outer join's preserved operand only
 //! (the optimizer's `push_filter_into_outer_join` has moved the rest
 //! where they may go). One that would have to stay over an outer join, a
-//! condition that can raise an error (RULES.md D15), or an equality of
+//! condition that can raise an error (RULES.md D15) by the declared types
+//! of the columns it reads (`logical/raises.rs`, D373), or an equality of
 //! collated sort keys (`physical/collated.rs`) leaves the chain to the
-//! plan it was given.
+//! plan it was given. The optimizer makes the parts of conditions that
+//! can raise or are sort keys, of one operand alone, columns of that
+//! operand (`optimizer/hoisting.rs`), so what is left is of two.
 
 use super::bits::{Set, bit, members};
 use super::conflicts::{Kind, Shape};
-use crate::logical::{Cond, Expr, LogicalPlan, OuterJoin, and_all, cond_columns, map_cond_columns, split_and};
+use crate::catalog::Catalog;
+use crate::logical::{
+    Cond, Expr, LogicalPlan, OuterJoin, Types, and_all, cond_can_raise_typed, cond_columns, map_cond_columns, plan_column_type, split_and,
+};
 use crate::optimizer::is_guarded;
 
 /// A relation of the chain: its plan, its own filter's conjuncts within,
@@ -83,16 +89,17 @@ pub(super) fn is_chain(plan: &LogicalPlan) -> bool {
     }
 }
 
-/// Whether `c` cannot be moved: it can raise an error, or compares sort keys.
-fn fixed(c: &Cond) -> bool {
+/// Whether `c`, over the chain's columns of the types `types` gives,
+/// cannot be moved: it can raise an error, or compares sort keys.
+fn fixed(c: &Cond, types: Types<'_>) -> bool {
     let mut keyed = false;
     c.for_each_expr(&mut |e| keyed = keyed || matches!(e, Expr::SortKey(..)));
-    keyed || c.can_raise()
+    keyed || cond_can_raise_typed(c, types)
 }
 
 /// The chain `plan`, its columns beginning at `start`, its relations
-/// added to `leaves`.
-fn raw(plan: &LogicalPlan, start: usize, leaves: &mut Vec<Leaf>, depth: usize) -> Option<Raw> {
+/// added to `leaves`, the chain's columns of the types `types` gives.
+fn raw(plan: &LogicalPlan, (start, types): (usize, Types<'_>), leaves: &mut Vec<Leaf>, depth: usize) -> Option<Raw> {
     if depth > super::bits::MAX_RELATIONS.saturating_mul(2) {
         return None;
     }
@@ -100,8 +107,8 @@ fn raw(plan: &LogicalPlan, start: usize, leaves: &mut Vec<Leaf>, depth: usize) -
     let deeper = depth.saturating_add(1);
     match plan {
         LogicalPlan::Product { left, right } => {
-            let l = raw(left, start, leaves, deeper)?;
-            Some(Raw::Product(Box::new(l), Box::new(raw(right, start.saturating_add(left.width()), leaves, deeper)?)))
+            let l = raw(left, (start, types), leaves, deeper)?;
+            Some(Raw::Product(Box::new(l), Box::new(raw(right, (start.saturating_add(left.width()), types), leaves, deeper)?)))
         }
         LogicalPlan::Filter { cond, input } => {
             if !is_chain(plan) {
@@ -109,17 +116,17 @@ fn raw(plan: &LogicalPlan, start: usize, leaves: &mut Vec<Leaf>, depth: usize) -
             }
             let mut conds = Vec::new();
             split_and(shifted(cond), &mut conds);
-            if conds.iter().any(fixed) {
+            if conds.iter().any(|c| fixed(c, types)) {
                 return None;
             }
-            Some(Raw::Filtered(conds, Box::new(raw(input, start, leaves, deeper)?)))
+            Some(Raw::Filtered(conds, Box::new(raw(input, (start, types), leaves, deeper)?)))
         }
         LogicalPlan::OuterJoin { kind, cond, left, right } => {
-            if fixed(cond) {
+            if fixed(&shifted(cond), types) {
                 return None;
             }
-            let l = raw(left, start, leaves, deeper)?;
-            let r = raw(right, start.saturating_add(left.width()), leaves, deeper)?;
+            let l = raw(left, (start, types), leaves, deeper)?;
+            let r = raw(right, (start.saturating_add(left.width()), types), leaves, deeper)?;
             Some(match kind {
                 OuterJoin::Left => Raw::Outer(Kind::Left, shifted(cond), Box::new(l), Box::new(r)),
                 OuterJoin::Right => Raw::Outer(Kind::Left, shifted(cond), Box::new(r), Box::new(l)),
@@ -152,10 +159,11 @@ fn leaf(plan: &LogicalPlan, start: usize, leaves: &mut Vec<Leaf>) -> Raw {
 }
 
 /// The initial operator tree of the chain `plan`, if its conjuncts may all
-/// be placed.
-pub(super) fn extract(plan: &LogicalPlan) -> Option<Query> {
+/// be placed, its columns' types those `catalog` declares.
+pub(super) fn extract(plan: &LogicalPlan, catalog: &dyn Catalog) -> Option<Query> {
     let mut query = Query { width: plan.width(), ..Query::default() };
-    let tree = raw(plan, 0, &mut query.leaves, 0)?;
+    let types = |c: usize| plan_column_type(plan, c, catalog);
+    let tree = raw(plan, (0, &types), &mut query.leaves, 0)?;
     let mut filters: Vec<Vec<Cond>> = vec![Vec::new(); query.leaves.len()];
     query.place(tree, Vec::new(), &mut filters)?;
     for (leaf, conds) in query.leaves.iter_mut().zip(filters) {

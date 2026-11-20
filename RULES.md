@@ -350,11 +350,18 @@ verification approach DO-178C expects (§8).
 | D353 | ALP decimals are read by two multiplications with a stored pair of factors |
 | D354 | A batch keeps nulls as bitmaps, rows as selections, datetimes and truth values as vectors, its primitives in kernels |
 | D355 | A grouping of so many groups that its morsels barely shrink stays serial, by the cost of its exchange |
+| D360 | A column store's scan judges the conjuncts it is told of their own columns, then decodes the others at the rows kept alone |
+| D361 | A column no operator reads before a filter or an inner join drops rows is carried as its rows' places and decoded of the rows kept |
 | D362 | An expression of a batch's columns is compiled once and evaluated a vector at a time, a batch that would raise or warn evaluated again by rows |
 | D363 | CASE evaluates each branch over the rows its WHEN keeps, and a function may give a body over vectors |
+| D366 | A column judged to keep few rows of a run is gathered at them from its decoded vector, and a morsel carries late columns as the serial scan does |
+| D367 | A row made of a batch makes each of its cells a value alone, not its columns' every value |
 | D370 | One estimator gives every plan node its rows, from the base tables under its columns |
 | D371 | The optimizer tries the rules again at a node a rule rewrote, within a budget of rewrites |
 | D372 | A grouping's rows are its groups, by Cardenas' formula over its columns' distinct values |
+| D373 | A part of a condition that can raise, or a sort key, of one operand of a join is computed as that operand's column, over a guard when it can raise; declared types tell what cannot |
+| D374 | A filter goes into a set operation's operands and below a window's partitions, and FETCH FIRST into UNION ALL's operands, when the rows are the same |
+| D375 | A join is removed when it gives each row of the other operand once and nothing above reads it, by a unique key or a referential constraint not deferrable |
 | D376 | EXPLAIN ANALYZE runs a query and shows each operator's rows beside its estimate |
 | D377 | Cardinalities may be given the planner through the library in place of its estimates, to test it |
 | D378 | An operator is counted by a wrapper only an analyzed plan holds, a batch at a time and once a thread, timed by the database's clock |
@@ -9739,6 +9746,97 @@ each row never gains, whatever the threads, as the ordering of its
 groups alone costs the serial grouping's rows. One of few groups gains
 by nearly the degree.
 
+#### D360. A column store's scan judges the conjuncts it is told of their own columns, then decodes the others at the rows kept alone
+
+A filter over a scan of the column store tells the scan the simple
+conjuncts of its condition (D15), and the scan judges them itself, a run
+of a frozen group at a time, before it decodes the columns the filter
+does not read (`engine/columns/judged.rs`). This is late
+materialization in the scan, as Abadi, Myers, DeWitt and Madden,
+"Materialization Strategies in a Column-Oriented DBMS" (ICDE 2007),
+describe it. A conjunct of one column, a comparison with a constant, IS
+NULL, IN, NOT IN or an OR of these, of exact or approximate numbers,
+datetimes without a zone, truth values or character strings, is judged
+over that column's vector. Integers compare by the kernel, the constant
+folded once to their scale (`storage/batch/bound.rs`, shared with the
+filter), and integers read as runs with no null among them are judged
+once a run. A dictionary's texts are judged once an entry, its rows then
+by their codes. Anything else is judged a value at a time by
+`Conjunct::matches_key`, so what the scan keeps is what the conjunct
+keeps. The engine has no database to ask for its kernels, so the scan
+runs the portable ones.
+
+A VARCHAR column whose chunks are coded by a table of symbols is judged
+in place, no text decoded. FSST (Boncz, Neumann and Leis, PVLDB 2020,
+§5) encodes the constant and compares code strings, which holds only for
+strings compared octet by octet. SQL pads the shorter string with spaces
+(X3.135-1986 §5.11 GR5), so `'a'` equals `'a '`. Each text's symbols are
+compared instead with the constant's bytes as they are read, padded with
+spaces, the first byte that differs deciding (`Symbols::compare_padded`).
+Codes that are malformed where they are read fall back to decoding the
+chunk, which raises what is malformed as before.
+
+The rows kept are intersected with those the delta tree has no entry
+for, and the filter still judges every row the scan gives. A scan is
+told only conjuncts of a condition that cannot raise an error, so a row
+left out here is one the filter would leave out, and an error is raised
+as a row at a time raises it. A run of which one row in eight or more
+is kept is decoded whole, the columns decoded to judge it given as they
+are, every column with them (D361 gives none late), and the filter
+selects of it, since so many rows cost as little decoded whole as at
+their places. If the tree shadows some of its rows,
+it is decoded at the kept rows instead. Otherwise the places of the kept
+rows are held across the group's runs, and a batch is decoded of them once they make half a batch
+or the group ends, so a selective filter gives full batches rather than
+a few rows each.
+
+A column is decoded at its kept places alone (`columns/scan/positions.rs`).
+Places one after another are read as a range. Places that are at least
+one in eight of their span decode the span and pick from it, as a block
+of 64 values costs little more than one (D352). Sparser places are read
+one value at a time, a frame of reference's bits unpacked at the place
+alone (`Body::int_at`), a dictionary's codes too.
+
+#### D361. A column no operator reads before a filter or an inner join drops rows is carried as its rows' places and decoded of the rows kept
+
+A stream read by batches gives a scan's column late when no operator of
+the stream reads it before the stream is read whole, and a filter or an
+inner hash join of whose left operand it is lies above the scan
+(`exec/batch/late.rs`). The analysis walks the plan from the top. A
+filter reads the columns of its condition, all of them if it has a
+subquery. A projection of columns passes each on to the column it moves,
+and one that computes an expression reads every column. A join reads its
+keys. A late column is a `Column::Late` (`storage/batch/late.rs`),
+which holds the places of its rows in their frozen group, the source
+that decodes them, and, once a join gathered it, which place each row
+is. A join gathers
+the places, never a value. As the stream is read whole, by a grouping, a
+sort, a projection or the rows made of it, each batch's late columns are
+decoded of the rows kept alone (`Batch::resolve`), each place once and in
+ascending order, the others left null.
+
+The source holds the frozen group and the directory's entry of it, so
+the group's pages are not freed while a batch holding its rows lives
+(`engine/rows/frozen/late.rs`). A group is replaced, never changed, so
+what is decoded later is what the scan would have decoded then. The
+source keeps the chunks its last decoding opened, so the batches of a
+scan, decoded in its order, open each chunk about once (D352). A
+decoding takes them out and puts them back, never holding a lock while
+a page is unsealed (R-ERR-4), and a decoding on another thread at once
+opens its own. A damaged page is
+reported as its column is decoded, which only an error of the stored
+data, never one of a value, can be. A reader that reads a late column
+before it is resolved, which the executor does not plan, gets it decoded
+whole.
+
+A stream with no operator that drops rows decodes every column at once,
+as Abadi and others find early materialization faster where most rows
+are kept. A join's build side, a product, an outer join, a union and a
+part run in parallel decode their columns as before, since their rows
+are held, moved between threads, or kept in an order a late column's
+places would not follow. The first rows of a sort (FETCH FIRST) are kept
+by the row path, which reads every column.
+
 #### D362. An expression of a batch's columns is compiled once and evaluated a vector at a time, a batch that would raise or warn evaluated again by rows
 
 A projection, a filter's conjunct or a set function's argument that
@@ -9793,6 +9891,50 @@ numbers, CHAR_LENGTH, OCTET_LENGTH, UPPER, LOWER and EXTRACT have one
 (`functions/over_vectors.rs`). Strings of a dictionary are folded or
 counted once an entry. A function that may warn has its body skipped
 and is called as a row's evaluation calls it.
+
+#### D366. A column judged to keep few rows of a run is gathered at them from its decoded vector, and a morsel carries late columns as the serial scan does
+
+A column store's scan decodes a column whole to judge a conjunct of it
+(D360). When the run keeps few rows, the scan holds their places until
+they make half a batch. It now also holds that column's values of
+those rows, gathered from the vector it decoded, an integer vector of
+one scale or a vector of approximate numbers
+(`frozen/batches/pending.rs`). The batch made of the rows held takes
+the column as held and decodes only the others at the places. A column
+the filter reads is so decoded once a run, to judge it, and not again
+at the rows kept. A column of another kind, or one a run judged without
+decoding it (texts compared in place), is decoded at the places as
+before. A run whose rows the tree shadows gathers its kept rows the
+same way.
+
+Judging a run costs no more than the comparison. A conjunct the kernel
+judges makes no list of the run's rows first; the list is made only of
+integers known as runs, judged once a run, or of rows judged one at a
+time. The kernel judges a vector with no nulls without reading a bitmap
+(`kernels/portable/select.rs`). A group's row ids are read only if the
+tree holds an entry for one of its rows, as only those are told apart
+by id.
+
+A morsel of a parallel scan read by batch (D354) is told its late
+columns too (`Split::morsel_batches`). They are the columns of the
+branch's scan no step reads before a filter drops rows, found as the
+serial stream finds them (D361), walking the branch's steps from its
+end (`parallel/batched.rs`). The batches a morsel's steps keep are
+resolved before its rows are made or its groups fed, each late column
+decoded of the rows still kept. So a worker decodes what the
+statement's thread alone would. The planner still runs a column store's
+scan by batch on one thread where it serves better (D291); a pipeline
+it runs by morsels reads its late columns so.
+
+#### D367. A row made of a batch makes each of its cells a value alone, not its columns' every value
+
+A projection read by batches (`exec/batch/project.rs`) and a filter
+judged a row at a time (`exec/batch/judge.rs`) make each row's values
+of the batch's cells (`Batch::cell`). A vector of integers, numbers,
+texts or datetimes makes a value of the row read alone. Reading a
+column's values instead made every row's value of the vector the first
+time any was read, which a projection of few kept rows paid for every
+row of the batch. The values are the same either way.
 
 #### D370. One estimator gives every plan node its rows, from the base tables under its columns
 
@@ -9868,6 +10010,113 @@ adds one. DISTINCT is the grouping of all its columns. UNION estimates
 its distinct values with the formula over the sum of both sides'
 distinct values. INTERSECT is at most the smaller side's distinct values
 and EXCEPT at most the left's.
+#### D373. A part of a condition that can raise, or a sort key, of one operand of a join is computed as that operand's column, over a guard when it can raise; declared types tell what cannot
+
+A conjunct over two operands of a product that can raise is evaluated
+on the rows of the product (D15), so it held the chain as written and
+the join order was not enumerated. The rule `hoist_raising_expressions`
+(`optimizer/hoisting.rs`) takes each maximal part of such a conjunct
+that reads one operand and can raise by its declared types, or is a sort
+key of a collation, and computes it as a column after that operand's
+own. A part that cannot raise by its types is left in place, as the
+enumeration judges its conjunct movable already, and an expression
+written to keep a join a nested loop keeps it so. The conjunct
+reads the column and, when nothing else in it can raise, may then be
+evaluated wherever the enumeration puts it.
+
+A part that can raise is computed over a guard of the other operands,
+the product of the operand and a filter of EXISTS of each other operand
+over a VALUES of one row. The part is so evaluated on the rows of the
+operand exactly when the product has a row, and raises of the same rows
+it would of the product [X3.135-1986 §5.20 GR2b]. An operand of an
+outer reference, or of no column, takes no guard, and its conjunct is
+left. A sort key cannot raise and needs no guard, as evaluating it of
+more rows or fewer changes nothing.
+
+The search goes only into what is evaluated whenever the condition is,
+never into a CASE's results or later conditions [ISO/IEC 9075:1992 §6.9
+GR1, GR2] nor a subquery, and takes nothing that draws a sequence value,
+invokes a routine, calls a function that is not deterministic or warns,
+which computed once a row of the operand would happen fewer times. Of a
+LEFT, RIGHT or FULL join's ON, a raising part of the operand that
+supplies nulls is taken over a guard of the other, as of a product. A
+sort key of a preserved operand is taken with no guard, and a raising
+part of it never, as its rows are kept whatever the ON gives [§7.5 GR1c,
+GR5]. A LEFT join of a
+chain of products whose ON reads one operand of the chain alone, and
+cannot raise, is moved onto that operand within the chain first, which
+gives the same rows, so the unnested `SINGLE` of a scalar subquery is
+hoisted onto the operand it reads.
+
+Whether an expression can raise is judged by the declared types of its
+columns (`logical/raises.rs`). A sum or difference of exact numbers whose
+digits before the point, one more than the larger's, and after it, the
+larger scale, are 18 or fewer cannot raise, nor a product of 18 or fewer
+digits in all [X3.135-1986 §5.9 SR4b, GR6a], nor a quotient by a
+constant of magnitude at least 1 whose digits and the dividend's scale
+are 18 or fewer, nor a CAST that widens. Anything else, an approximate
+number among it, a column of no known type, or more than 18 digits, can.
+The enumeration's leaves (`physical/enumerate/extract.rs`) use the same
+judgement, so a conjunct of such arithmetic no longer holds a chain.
+
+#### D374. A filter goes into a set operation's operands and below a window's partitions, and FETCH FIRST into UNION ALL's operands, when the rows are the same
+
+A row of UNION ALL is a row of one operand, so a filter over it keeps the
+same rows filtered in each operand, and raises of the same rows. Of UNION,
+INTERSECT and EXCEPT, with ALL or not, rows not distinct are taken as
+one [ISO/IEC 9075-2:2023 §7.17 GR3b iii]. A filter that treats rows not
+distinct alike (`views.rs` `alike`) keeps all of such a set or none, so
+filtering the operands first keeps the same rows. One that can tell them
+apart, as LIKE tells trailing spaces, is left above all but UNION ALL.
+Of INTERSECT and EXCEPT a filter that can raise is left too, as a row
+the operation drops would raise in the operand. A set operation by a
+collation's sort keys is left, its values not the keys. The rule is
+`push_filter_through_set_operation` (`optimizer/setops.rs`).
+
+A window function's value of a row is of the rows of its window
+partition alone, those not distinct from it in the partitioning columns
+[§7.15 GR3, §4.17.15]. A conjunct over the partitioning columns alone that
+treats rows not distinct alike keeps a whole partition or none, so the
+values of the partitions kept are the same of the rows filtered first.
+Rule `push_filter_through_window` (`optimizer/windows.rs`) moves such
+conjuncts below the window, unless a conjunct left above can raise, as
+it would then be evaluated of fewer rows.
+
+FETCH FIRST n ROWS ONLY after OFFSET m of UNION ALL, sorted or not, takes
+m + n rows at most, each the first m + n of its operand by the same order
+or any of them unsorted [§7.17 GR6, GR7]. Rule `push_limit_through_union`
+(`optimizer/limits.rs`) puts each operand under such a limit, and its
+sort, and keeps the outer limit. A count that is not a constant of at
+least 1, WITH TIES, which takes the peers of the last row [§10.10 GR1h,
+GR1i], PERCENT and an approximate FETCH are left, as is UNION, whose
+rows not distinct would be taken as one after the operands' limits.
+
+#### D375. A join is removed when it gives each row of the other operand once and nothing above reads it, by a unique key or a referential constraint not deferrable
+
+A LEFT join gives each row of its left operand once when at most one row
+of the right satisfies the ON for it [ISO/IEC 9075:1992 §7.5 GR1c]. When
+the right is a table, filtered or not, whose ON equates each column of
+a unique key of it to a value of the left alone, a column or an
+expression of its columns, no two of its rows match a left row. If nothing above reads the right's columns, the join is the
+left operand (`optimizer/elimination.rs`), and a RIGHT join mirrors it.
+The key must hold whenever a statement reads it, so its constraint is
+not deferrable, and neither is the NOT NULL or PRIMARY KEY of each of
+its columns, as a deferred constraint may be violated until checked
+[ISO/IEC 9075-2:2023 §4.25.2, §4.25.3.2]. Its columns are of no
+collation of their own, which could equate values the key keeps apart,
+and the table has no period. The ON and the filter must neither raise,
+by their declared types, nor draw a sequence value, as they are no
+longer evaluated.
+
+An inner join of a chain of products whose conjuncts equate the columns
+of a referential constraint to the referenced columns, the referencing
+ones NOT NULL, gives each row of the referencing table exactly one row
+of the referenced [§4.25.3.3, §11.8 SR4, SR5]. When the referenced
+table is unfiltered, read nowhere else and nothing above reads it, it
+and those conjuncts are removed (`optimizer/elimination/referential.rs`).
+The constraint, the NOT NULL and the referenced key are not deferrable
+and of no period, and the columns of no collation. The rule is
+`eliminate_joins`.
 
 #### D376. EXPLAIN ANALYZE runs a query and shows each operator's rows beside its estimate
 

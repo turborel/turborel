@@ -19,6 +19,7 @@ mod pattern;
 mod program;
 mod ptf;
 mod pushed;
+mod raises;
 mod render;
 mod sets;
 mod subqueries;
@@ -46,6 +47,7 @@ pub(crate) use program::{
 };
 pub use ptf::Polymorphic;
 pub use pushed::{compared_with_constant, disjuncts, in_list, like_bounds, pushed_conjuncts};
+pub use raises::{MAX_JUDGED_DEPTH, Types, can_raise_typed, cond_can_raise_typed, plan_column_type};
 pub use render::{column_name, render_cond, render_expr, render_keys};
 pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};
 pub use subquery::{Decorrelated, Subquery, bound_expr, map_plan_exprs, plan_has_outer};

@@ -24,6 +24,7 @@ mod groups;
 mod joined;
 mod judge;
 mod keyed;
+mod late;
 mod project;
 mod shaped;
 mod stream;
@@ -35,6 +36,7 @@ use expr::Program;
 pub(super) use groups::{Held, morsel_groups};
 pub(super) use joined::rows_of;
 pub(super) use keyed::{Keyed, KeyedBatches, kept, keyed, put_key, whole_width};
+pub(super) use late::{Deferred, resolved};
 use project::Place;
 pub(super) use project::{projectable, projected};
 pub(super) use shaped::{Shaped, filter_step, project_step, through};
@@ -249,6 +251,7 @@ fn marked(nulls: Option<&Mask>, rows: Option<&[u32]>) -> bool {
 fn column_nulled(column: &Column, rows: Option<&[u32]>) -> bool {
     match column {
         Column::Values(values) => values_nulled(values, rows),
+        Column::Late(late) => values_nulled(late.values(), rows),
         Column::Ints(Ints { nulls, .. })
         | Column::Floats(Floats { nulls, .. })
         | Column::Texts(Texts { nulls, .. })
@@ -334,7 +337,7 @@ fn fed_column(state: &mut Box<dyn Accumulator>, column: &Column, rows: Option<&[
         Column::Floats(floats) => state.update_floats(floats, rows),
         Column::Values(values) => state.update_many(values, rows),
         Column::Texts(texts) => state.update_texts(texts, rows),
-        Column::Datetimes(_) | Column::Bools(_) => state.update_many(column.values(), rows),
+        Column::Datetimes(_) | Column::Bools(_) | Column::Late(_) => state.update_many(column.values(), rows),
         // Every value null, none taken.
         Column::Nulls(_) => Ok(()),
     }

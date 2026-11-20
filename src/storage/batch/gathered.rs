@@ -28,6 +28,7 @@ impl Column {
             Column::Datetimes(datetimes) => Column::Datetimes(datetimes.gathered(picks)),
             Column::Bools(bools) => Column::Bools(bools.gathered(picks)),
             Column::Nulls(_) => Column::nulls(picks.len()),
+            Column::Late(late) => Column::Late(late.gathered(picks)),
         }
     }
 
