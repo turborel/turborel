@@ -267,3 +267,6 @@ fn expr(r: &mut Reader<'_>, depth: usize) -> Result<Expression> {
         other => return Err(violation(&format!("no expression is of code {other}"))),
     })
 }
+
+#[cfg(test)]
+mod tests;
