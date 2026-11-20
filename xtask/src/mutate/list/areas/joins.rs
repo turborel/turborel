@@ -117,7 +117,7 @@ pub const JOINS: [Mutation; 10] = [
         file: "src/physical/enumerate/extract.rs",
         original: "if !pending.iter().all(preserved) {",
         replacement: "if pending.iter().all(preserved) && pending.is_empty() && !pending.is_empty() {",
-        integration: &["join_enumeration::outer_joins_keep_their_rows_reordered"],
+        integration: &["join_enumeration::random_chains_agree_with_the_greedy_order"],
         unit: &[],
     },
 ];

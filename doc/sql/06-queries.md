@@ -254,6 +254,12 @@ imply counted once. A query with a condition that can raise an error, as
 a division can, is planned in the greedy order described next, which
 keeps the errors raised the same whatever the order.
 
+An equality repeated in each operand of an OR joins its tables as if
+written once, so `(P.K = L.K AND P.B = 'B1') OR (P.K = L.K AND P.B =
+'B2')` is a join on `P.K = L.K`, not a product filtered afterward. Each
+table is also filtered first by the OR of its own conditions, here
+`P.B = 'B1' OR P.B = 'B2'`. OPTIMIZER.FACTOR_DISJUNCTIONS turns this off.
+
 SET PLANNER.JOIN_ENUMERATION = 'GREEDY' plans a session's joins in a
 left-deep order instead, each next join the cheapest, as to compare the
 two. EXPLAIN shows the order and the algorithm chosen

@@ -62,6 +62,7 @@ mod backup_targets;
 mod backups;
 mod batch_joins;
 mod batches;
+mod benchmark_shapes;
 mod bigint;
 mod binary;
 mod bitemporal;

@@ -2477,6 +2477,18 @@ chooses each join's method with its order (D300 to D309). The greedy
 left-deep order described here plans the rest, and every chain while
 PLANNER.JOIN_ENUMERATION is GREEDY.
 
+The rule factor_disjunctions takes a conjunct out of a disjunction when
+each of its operands holds it, an equality matched in either order. So
+`(a AND x) OR (a AND y)` becomes `a AND (x OR y)`, and `a OR (a AND x)`
+becomes `a`, as AND distributes over OR and absorbs it in three-valued
+logic too. A join's equality repeated in each operand of an OR then joins
+its tables instead of their product being filtered. Of each table of a
+product whose conjuncts appear in every operand, the rule also adds the
+OR of those conjuncts, implied by the whole, for the table to be filtered
+before the join. A table filtered by that OR already is skipped, so the
+rule stops once its conjunct has been pushed down. Neither change applies
+to a condition that can raise an error (D15).
+
 #### D36. Settings
 
 A server's behaviour must be visible and changeable without rebuilding it,
@@ -8582,6 +8594,15 @@ it free, which Leis et al., "How Good Are Query Optimizers, Really?",
 lowered by the filters over it, since a key column keeps its
 distinctness under any filter and independence is the only assumption
 that holds for both.
+
+A relation's read is estimated the same way. An index counts the entries
+a probe selects up to a limit (`index/blink.rs`). Past the limit the
+planner falls back to the table's statistics, and the estimate is never
+fewer than the count already made (`BTreeMethod::MOST_COUNTED`). A guess that
+treats an index's first columns as independent can be a hundred times
+too few where they go together, as a warehouse and a district do. Then a
+shorter key prefix would win over a longer index prefix that matches the
+query better.
 
 #### D303. Each join's method is chosen with its order, and a merge join is one of them
 
