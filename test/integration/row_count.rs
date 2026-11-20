@@ -110,4 +110,3 @@ fn explain_notes_a_count_by_the_storage() {
     assert!(!noted(&a, "SELECT COUNT(*) FROM T"));
     assert_eq!(count(&a), "3000", "scanned row by row");
 }
-
