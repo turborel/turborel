@@ -229,28 +229,41 @@ impl State {
         seen: Option<&(Timestamp, Row)>,
     ) -> Result<(Row, Option<QualifiedName>)> {
         let storage = self.storage_of(table)?;
-        let old = match seen {
-            Some((_, row)) => row.clone(),
-            None => storage.get(tx.id, id)?.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no row {id} in {table}")))?,
-        };
-        let history = match system.map(|s| s.judge(&old)).transpose()? {
-            Some((Changed::Kept, history)) => history.cloned(),
-            Some((Changed::InPlace, _)) | None => None,
-        };
         let new = match write {
             Write::Update(row) => Some(row.clone()),
             Write::Delete => None,
         };
-        match (new, seen) {
-            (new, Some((stamp, _))) => storage.write_newest(tx.id, id, new, *stamp)?,
-            (Some(new), None) => storage.update(tx.id, id, new)?,
-            (None, None) => storage.delete(tx.id, id)?,
-        }
+        // The row replaced, as the write found it, not read before it
+        // (RULES.md D417); of a system-time period, read first, so the
+        // period refuses the write before it is made.
+        let (old, history) = match (seen, system) {
+            (Some((stamp, row)), _) => {
+                let history = Self::history_of(system, row)?;
+                storage.write_newest(tx.id, id, new, *stamp)?;
+                (row.clone(), history)
+            }
+            (None, Some(_)) => {
+                let row = storage.get(tx.id, id)?.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no row {id} in {table}")))?;
+                let history = Self::history_of(system, &row)?;
+                (storage.replace(tx.id, id, new)?, history)
+            }
+            (None, None) => (storage.replace(tx.id, id, new)?, None),
+        };
         match write {
             Write::Update(row) => self.updated(tx, (table, id), (&old, row))?,
             Write::Delete => self.deleted(tx, table, id, &old)?,
         }
         Ok((old, history))
+    }
+
+    /// The history `old`, a row about to be replaced, is kept in, if
+    /// `system`, of its table's system-time period, says it is
+    /// [ISO/IEC 9075-2:2023 §15.14 GR10a iii].
+    fn history_of(system: Option<&Stamp>, old: &Row) -> Result<Option<QualifiedName>> {
+        Ok(match system.map(|s| s.judge(old)).transpose()? {
+            Some((Changed::Kept, history)) => history.cloned(),
+            Some((Changed::InPlace, _)) | None => None,
+        })
     }
 
     /// Of row `id` of `table` made `row` from `old`: what undoes it, its

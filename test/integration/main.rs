@@ -283,6 +283,7 @@ mod rekeying;
 mod renamed_columns;
 mod renamed_tables;
 mod reopen;
+mod replaced_rows;
 mod replicated_state;
 mod restrict;
 mod revoke;

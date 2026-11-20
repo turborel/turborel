@@ -1,21 +1,17 @@
-//! \[DESIGN\] Row storage. "The physical representation of a value is
-//! implementor-defined" [X3.135-1986 §4.2], so how rows are kept is an
-//! extension point.
+//! \[DESIGN\] Row storage. "The physical representation of a value is implementor-defined" [X3.135-1986 §4.2], so
+//! how rows are kept is an extension point.
 //!
-//! A `StorageEngine` makes a `TableStorage` for each base table. An engine
-//! hands back rows by id, scans them, prices those operations, and declares
-//! what it can do inside a transaction. The planner, executor and transaction
-//! coordinator never know which engine they are talking to.
+//! A `StorageEngine` makes a `TableStorage` for each base table. An engine hands back rows by id, scans them,
+//! prices those operations, and declares what it can do inside a transaction. The planner, executor and
+//! transaction coordinator never know which engine they are talking to.
 //!
-//! Every method takes `&self`: an engine guards its own state, which is the
-//! shape a thread-safe engine needs. Every data method takes the `TxId`,
-//! which is also the transaction's logical start timestamp, and commit hands
-//! each engine the transaction's commit timestamp (RULES.md D29), so an
-//! engine with its own concurrency control (say, multi-versioning) can show
-//! each transaction what it should see.
+//! Every method takes `&self`: an engine guards its own state, which is the shape a thread-safe engine needs.
+//! Every data method takes the `TxId`, which is also the transaction's logical start timestamp, and commit hands
+//! each engine the transaction's commit timestamp (RULES.md D29), so an engine with its own concurrency control
+//! (say, multi-versioning) can show each transaction what it should see.
 //!
-//! Two engines of one code are built in (`engine/rows.rs`, RULES.md D31),
-//! "rowstore", the default, and "columnstore", freezing rows by column.
+//! Two engines of one code are built in (`engine/rows.rs`, RULES.md D31), "rowstore", the default, and
+//! "columnstore", freezing rows by column.
 
 mod batch;
 mod condition;
@@ -51,35 +47,29 @@ use crate::txn::{NO_TRANSACTION, ReadMode, Timestamp, TxCapabilities, TxId};
 
 /// \[DESIGN\] The rows of one table. Row ids identify rows within the table.
 ///
-/// Contract (RULES.md R-SAFE-3; checked for the built-in engines by
-/// `test/integration/contracts.rs`):
-/// * `insert` returns an id that no live row has and that no deleted row ever
-///   had, so the undo log's `restore` can never collide with a newer row.
-/// * `get` returns exactly the live row with that id; `scan` yields every live row once, with its
-///   id, in an order of the engine's choosing; `row_count` is the number of live rows; `count`'s
-///   counts sum to the rows `scan_batches` gives. An engine that cannot read a row (an I/O error,
-///   a corrupt page) says so with an error, from `get` or as the scan's next item, never by
-///   leaving the row out.
-/// * `update` and `delete` change a live row and fail, changing nothing, for
-///   an id that is not live. `restore` makes a deleted row live again under
-///   its old id.
+/// Contract (RULES.md R-SAFE-3; checked for the built-in engines by `test/integration/contracts.rs`):
+/// * `insert` returns an id that no live row has and that no deleted row ever had, so the undo log's `restore`
+///   can never collide with a newer row.
+/// * `get` returns exactly the live row with that id; `scan` yields every live row once, with its id, in an
+///   order of the engine's choosing; `row_count` is the number of live rows; `count`'s counts sum to the rows
+///   `scan_batches` gives. An engine that cannot read a row (an I/O error, a corrupt page) says so with an
+///   error, from `get` or as the scan's next item, never by leaving the row out.
+/// * `update` and `delete` change a live row and fail, changing nothing, for an id that is not live. `restore`
+///   makes a deleted row live again under its old id.
 /// * An engine declaring `Concurrency::Coordinator` may ignore `tx`.
 /// * Costs are finite and not negative.
-/// * Undo (`rollback_to`, `rollback`) reports any failure (RULES.md D19), and
-///   `commit` does not fail after a successful `validate`.
-/// * An engine declaring `Concurrency::Engine` shows transaction `tx` the
-///   rows committed at timestamps before `tx`, and its own changes; it
-///   refuses a write to a row another open transaction wrote; `newest`
-///   names that transaction and stamps the newest committed version, and
-///   `write_newest` writes over that version only while its stamp is the
-///   one given (SQLCODE -911 otherwise); and if it
-///   declares itself serializable, refuses at `validate` a transaction that
-///   read what a transaction committed meanwhile changed (SQLCODE -911),
-///   of the reads it was told are checked (`read_mode`).
-/// * Methods may be called from several threads at once (`Send + Sync`): an
-///   implementation guards its own state.
-/// * No method may call back into the `Database` or its sessions (RULES.md
-///   R-ERR-4); the `Database` docs say what happens if one does.
+/// * Undo (`rollback_to`, `rollback`) reports any failure (RULES.md D19), and `commit` does not fail after a
+///   successful `validate`.
+/// * An engine declaring `Concurrency::Engine` shows transaction `tx` the rows committed at timestamps before
+///   `tx`, and its own changes; it refuses a write to a row another open transaction wrote; `newest` names that
+///   transaction and stamps the newest committed version, and `write_newest` writes over that version only
+///   while its stamp is the one given (SQLCODE -911 otherwise); and if it declares itself serializable, refuses
+///   at `validate` a transaction that read what a transaction committed meanwhile changed (SQLCODE -911), of
+///   the reads it was told are checked (`read_mode`).
+/// * Methods may be called from several threads at once (`Send + Sync`): an implementation guards its own
+///   state.
+/// * No method may call back into the `Database` or its sessions (RULES.md R-ERR-4); the `Database` docs say
+///   what happens if one does.
 pub trait TableStorage: Send + Sync {
     /// Adds `row` and returns its new id.
     ///
@@ -93,6 +83,16 @@ pub trait TableStorage: Send + Sync {
     ///
     /// No live row has that id, or the engine cannot store the row.
     fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()>;
+    /// \[DESIGN\] As `update` with `row`, or `delete` with none: the row replaced, as `tx` saw it, which
+    /// an engine may find as it writes (RULES.md D417). Default: the row read, then written.
+    ///
+    /// # Errors
+    ///
+    /// As `update` and `delete`; SQLCODE -910 if there is no such row.
+    fn replace(&self, tx: TxId, id: RowId, row: Option<Row>) -> Result<Row> {
+        let old = self.get(tx, id)?.ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no row {id}")))?;
+        row.map_or_else(|| self.delete(tx, id), |row| self.update(tx, id, row)).map(|()| old)
+    }
     /// Removes the live row `id`.
     ///
     /// # Errors

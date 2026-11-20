@@ -3,12 +3,13 @@
 //! column that may hold a null; a kept body's leaf keeping the plan made
 //! with one run's values; a table changed keeping what the catalog knew
 //! of its constraints, a row's checks reading the row of another, and a
-//! kept body's cursors opening from one cursor's plan.
+//! kept body's cursors opening from one cursor's plan; a write giving
+//! the row it wrote as the row it replaced.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the order entry paths whose removal must fail their tests.
-pub const TPCC: [Mutation; 6] = [
+pub const TPCC: [Mutation; 7] = [
     Mutation {
         name: "tpcc-extreme-wrong-end",
         package: Package::Core,
@@ -67,6 +68,16 @@ pub const TPCC: [Mutation; 6] = [
         original: "        self.cursors.get(at)\n",
         replacement: "        self.cursors.get(at.min(0))\n",
         integration: &["kept_routines::a_kept_bodys_cursors_read_each_calls_rows"],
+        unit: &[],
+    },
+    Mutation {
+        name: "tpcc-replaced-is-new",
+        package: Package::Core,
+        breaks: "an update gives the row it wrote as the row it replaced, so undo, triggers and indexes see the new row",
+        file: "src/engine/rows/mvcc/write.rs",
+        original: "        self.counted_change(tx);\n        self.replaced(id, replaced.as_deref())\n    }",
+        replacement: "        self.counted_change(tx);\n        Ok(row)\n    }",
+        integration: &["replaced_rows::each_write_replaces_the_row_it_found"],
         unit: &[],
     },
 ];

@@ -378,6 +378,7 @@ verification approach DO-178C expects (§8).
 | D414 | Every query of a kept procedure body over its variables learns its plan with slots |
 | D415 | A statement's end looks for foreign keys and reading CHECKs only where a table has one, and reads a row once for its checks |
 | D416 | A local cursor of a kept procedure body keeps its specification and plan |
+| D417 | An update or delete takes the row it replaced from the write, not a read before it |
 
 ### The project
 
@@ -10551,6 +10552,22 @@ slots, as a prepared cursor does (D45, `KeptProgram::cursor_plans`), and
 OPEN fills the plan with the frame's values. Its physical plan is kept
 or learned as a prepared query's is, and all of it is made again once a
 definition, the session's authorization, schema or time zone changes.
+
+#### D417. An update or delete takes the row it replaced from the write, not a read before it
+
+Each UPDATE or DELETE of a row read the row once more before writing it
+(`State::write_once`), for its undo, its log record, its index entries
+and its triggers, and the row store's write then found the row's newest
+version again to write over it. Each read is a descent of the table's
+tree, and decoding the row. `TableStorage::replace` now writes a row and
+gives the row it replaced, and the row store decodes it from the version
+its write found and replaced (`engine/rows/mvcc/write.rs`), so the row is
+found once. The row is the one the transaction saw, its own version or
+the committed one its snapshot shows, as the write refuses any other
+(SQLCODE -911); its values out of line are freed only as the transaction
+ends. Another engine reads the row and writes it, as before. A row of a
+system-time period is read first still, so that its period refuses a
+write before it is made.
 
 ## 2. Project layout
 
