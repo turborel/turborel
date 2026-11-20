@@ -165,6 +165,12 @@ impl KeyCounts {
         u64::try_from(sum).unwrap_or_default()
     }
 
+    /// The live entries, if every key the index holds was counted: none
+    /// of an opened index before its pass.
+    pub(crate) fn entries(&self) -> Option<u64> {
+        self.complete.load(Ordering::Acquire).then(|| self.live())
+    }
+
     /// Counts an entry of key `key`, in bytes, added.
     pub(crate) fn added(&self, key: &[u8]) {
         let (register, rank) = placed(hash_of(key));
