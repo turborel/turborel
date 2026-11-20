@@ -74,12 +74,19 @@ fn main() {
 fn maps(bench: &Bench) {
     let (murmur, xxh3) = (MurmurBuildHasher::default(), Xxh3BuildHasher::default());
     let words = Words::new(0x5EED);
-    let name = "PUBLIC.ORDER_LINE_ITEMS_";
+    let (short, name) = ("ORDER_LINE", "PUBLIC.ORDER_LINE_ITEMS_");
     let keys = |label: &str| Case::new(label.to_string(), "keys");
+    let wide = |n: u64| -> [u8; 64] { std::array::from_fn(|i| (n as u8).wrapping_add(i as u8)) };
+    bench.measure(keys("map key u64, MurmurHasher"), || each(|n| murmur.hash_one(n)));
+    bench.measure(keys("map key u64, Xxh3Hasher"), || each(|n| xxh3.hash_one(n)));
     bench.measure(keys("map key (u64, u64), MurmurHasher"), || each(|n| murmur.hash_one((n, n ^ 7))));
     bench.measure(keys("map key (u64, u64), Xxh3Hasher"), || each(|n| xxh3.hash_one((n, n ^ 7))));
-    bench.measure(keys("map key name, MurmurHasher"), || each(|n| murmur.hash_one((name, n))));
-    bench.measure(keys("map key name, Xxh3Hasher"), || each(|n| xxh3.hash_one((name, n))));
+    bench.measure(keys("map key short name, MurmurHasher"), || each(|n| murmur.hash_one(&short[..10 - (n & 1) as usize])));
+    bench.measure(keys("map key short name, Xxh3Hasher"), || each(|n| xxh3.hash_one(&short[..10 - (n & 1) as usize])));
+    bench.measure(keys("map key (name, u64), MurmurHasher"), || each(|n| murmur.hash_one((name, n))));
+    bench.measure(keys("map key (name, u64), Xxh3Hasher"), || each(|n| xxh3.hash_one((name, n))));
+    bench.measure(keys("map key 64 bytes, MurmurHasher"), || each(|n| murmur.hash_one(wide(n))));
+    bench.measure(keys("map key 64 bytes, Xxh3Hasher"), || each(|n| xxh3.hash_one(wide(n))));
     bench.measure(keys("word, fmix64"), || each(|n| turborel::hash::murmur::fmix64(0x5EED ^ n)));
     bench.measure(keys("word, XXH3 Words"), || each(|n| words.hash(n)));
 }

@@ -1,16 +1,19 @@
 //! \[DESIGN\] XXH3-64 as a `std::hash::Hasher` (RULES.md D460): its value
 //! is exactly XXH3-64 of the bytes written, by its seed, every integer
 //! written little-endian, so a hash is the same on every machine and may
-//! be kept. The bytes of a key wait in a buffer of 64 on the stack, so a
-//! key of a few words is one short input's few multiplications; a longer
-//! key streams.
+//! be kept. The bytes of a key wait in a buffer of 128 on the stack, an
+//! integer stored at its width, and `finish` hashes them once by XXH3's
+//! own paths of 0 to 16 and 17 to 128 bytes, called straight: a key of a
+//! word or two is a few multiplications. Only a key past 128 bytes
+//! streams.
 
 use std::hash::{BuildHasher, Hasher};
 
-use super::{Xxh3, xxh3_64_with_seed};
+use super::Xxh3;
+use super::long::hash64_short_key;
 
-/// Bytes a hasher holds before it streams.
-const INLINE: usize = 64;
+/// Bytes a hasher holds before it streams: the most XXH3's mid path takes.
+const INLINE: usize = 128;
 
 /// \[DESIGN\] A `Hasher` whose value is XXH3-64 of the bytes written.
 #[derive(Clone)]
@@ -24,6 +27,7 @@ pub struct Xxh3Hasher {
 
 impl Xxh3Hasher {
     /// A hasher of no bytes, by `seed`.
+    #[inline]
     pub fn with_seed(seed: u64) -> Xxh3Hasher {
         Xxh3Hasher { seed, inline: [0; INLINE], len: 0, streamed: None }
     }
@@ -52,6 +56,7 @@ impl Default for Xxh3Hasher {
 }
 
 impl Hasher for Xxh3Hasher {
+    #[inline]
     fn write(&mut self, bytes: &[u8]) {
         if let Some(state) = &mut self.streamed {
             state.update(bytes);
@@ -68,29 +73,36 @@ impl Hasher for Xxh3Hasher {
         state.update(bytes);
         self.streamed = Some(state);
     }
+    #[inline]
     fn write_u8(&mut self, n: u8) {
         self.fixed(n.to_le_bytes());
     }
+    #[inline]
     fn write_u16(&mut self, n: u16) {
         self.fixed(n.to_le_bytes());
     }
+    #[inline]
     fn write_u32(&mut self, n: u32) {
         self.fixed(n.to_le_bytes());
     }
+    #[inline]
     fn write_u64(&mut self, n: u64) {
         self.fixed(n.to_le_bytes());
     }
+    #[inline]
     fn write_u128(&mut self, n: u128) {
         self.fixed(n.to_le_bytes());
     }
     /// A `usize` as 8 bytes, so a hash is the same of every word width.
+    #[inline]
     fn write_usize(&mut self, n: usize) {
         self.fixed(u64::try_from(n).unwrap_or(u64::MAX).to_le_bytes());
     }
+    #[inline]
     fn finish(&self) -> u64 {
         match &self.streamed {
             Some(state) => state.digest64(),
-            None => xxh3_64_with_seed(self.inline.get(..self.len).unwrap_or_default(), self.seed),
+            None => hash64_short_key(self.inline.get(..self.len).unwrap_or_default(), self.seed),
         }
     }
 }
@@ -111,6 +123,7 @@ impl Xxh3BuildHasher {
 
 impl BuildHasher for Xxh3BuildHasher {
     type Hasher = Xxh3Hasher;
+    #[inline]
     fn build_hasher(&self) -> Xxh3Hasher {
         Xxh3Hasher::with_seed(self.seed)
     }
