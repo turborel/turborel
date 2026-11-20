@@ -9,6 +9,7 @@ use turborel::db::{Database, Session};
 use turborel::error::Code;
 use turborel::params::Params;
 use turborel::threads::JobPolicy;
+use turborel::value::{Decimal, Value};
 
 use crate::common::{both_ways, exec, rows};
 
@@ -30,6 +31,9 @@ fn row(k: i64) -> String {
 fn tables() -> (Database, Session) {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
+    // Four workers whatever the machine's cores, so a degree of 4 is not
+    // cut to fewer.
+    db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE R (K INTEGER PRIMARY KEY, D DATE, T TIMESTAMP, B BOOLEAN, F DOUBLE PRECISION, N INTEGER)
@@ -171,6 +175,9 @@ fn sorted_rows(r: Result<Vec<String>, Code>) -> Result<Vec<String>, Code> {
 fn groupings_of_many_groups_stay_serial() {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
+    // Four workers whatever the machine's cores, so a degree of 4 is not
+    // cut to fewer.
+    db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE H (K INTEGER, G INTEGER, U INTEGER)").unwrap();
     let a = db.session("A");
     for first in (0..40_000).step_by(1000) {
