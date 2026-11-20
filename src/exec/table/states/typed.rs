@@ -253,13 +253,13 @@ fn source_of<'a>(batch: &'a Batch, take: &Taken, lane: Option<&'a Fed<'_>>) -> O
             Some(Column::Ints(ints)) => Some(Source::Read(ints)),
             Some(Column::Values(values)) => Some(Source::Values(values)),
             Some(Column::Nulls(_)) => Some(Source::Nulls),
-            Some(Column::Floats(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_)) | None => None,
+            Some(Column::Floats(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Late(_)) | None => None,
         },
         (Taken::Expr(_), Some(Fed::Made(column))) => match column {
             Column::Ints(ints) => Some(Source::Given(ints)),
             Column::Values(values) => Some(Source::GivenValues(values)),
             Column::Nulls(_) => Some(Source::Nulls),
-            Column::Floats(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) => None,
+            Column::Floats(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Late(_) => None,
         },
         (Taken::Expr(_), Some(Fed::Const(v))) => Some(Source::Const(v)),
         (Taken::Expr(_), None) | (Taken::Count, _) => None,
@@ -276,6 +276,7 @@ fn null_in(column: &Column, n: usize) -> bool {
         Column::Datetimes(datetimes) => datetimes.get(n).is_none(),
         Column::Bools(bools) => bools.get(n).is_none(),
         Column::Nulls(_) => true,
+        Column::Late(late) => late.values().get(n).is_none_or(Value::is_null),
     }
 }
 
@@ -500,7 +501,7 @@ impl Approx {
                 eliminated(!pending.groups.is_empty(), runner);
                 true
             }
-            Some(Column::Ints(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_)) | None => false,
+            Some(Column::Ints(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Late(_)) | None => false,
         }
     }
 
