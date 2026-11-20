@@ -87,6 +87,9 @@ behind it, and each can be replaced or added to.
   block-compressed postings.
 - [SQL/MM Full-Text](doc/sql/08-fulltext.md), its FULLTEXT type, CONTAINS
   patterns and thesauri, ranked by BM25 or a ranking of your own.
+- [Full text in 43 languages](doc/sql/08-fulltext.md#languages), stemmed by
+  Snowball's own stemmers, with CJK and Thai read as character bigrams,
+  and more served by plug-ins, as dictionary segmenters.
 - Collations, from binary order through case-insensitive to the Unicode
   Collation Algorithm and CLDR's tailorings for 48 languages, so text sorts
   and compares as its readers expect.

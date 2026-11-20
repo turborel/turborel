@@ -102,7 +102,7 @@ fn second() -> [&'static [Mutation]; 32] {
 
 /// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's and the server's.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
-    let json: [&'static [Mutation]; 15] = [
+    let json: [&'static [Mutation]; 16] = [
         &super::projection::PROJECTION,
         &super::json::JSON,
         &super::json_path::JSON_PATH,
@@ -111,6 +111,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::expression_index::EXPRESSION_INDEX,
         &super::json_table::JSON_TABLE,
         &super::fulltext::FULLTEXT,
+        &super::fulltext_languages::FULLTEXT_LANGUAGES,
         &super::sqlmm_fulltext::SQLMM_FULLTEXT,
         &super::t621::T621,
         &super::graph_syntax::GRAPH_SYNTAX,

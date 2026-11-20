@@ -167,3 +167,23 @@ fn an_optimizer_rule_names_its_phase_and_passes() {
     assert_eq!(state_of(of("OPTIMIZER RULE R PASSES 0;")), "38T06");
     assert_eq!(of("OPTIMIZER RULE R(INTEGER);").err().map(|e| e.code), Some(Code::Syntax));
 }
+
+/// Verifies: [EXTENSION] RULES.md D328: a language is kind 39, what it
+/// SERVES of SEGMENT, STEM and STOP, LIKE a built-in language if written;
+/// one serving nothing or a part there is not, named as a built-in
+/// language, or LIKE a language not built in is refused.
+#[test]
+fn a_language_names_what_it_serves() {
+    let m = of("LANGUAGE ZH SERVES (SEGMENT, STOP) LIKE CHINESE BATCH 8; LANGUAGE S SERVES (STEM);").unwrap();
+    assert_eq!(m.kinds(), [39]);
+    let (zh, s) = (&m.objects[0], &m.objects[1]);
+    assert_eq!(
+        (zh.kind, zh.supports.as_slice(), zh.like.as_deref(), zh.batch),
+        (ObjectKind::Language, &["SEGMENT".to_owned(), "STOP".to_owned()][..], Some("CHINESE"), Some(8))
+    );
+    assert_eq!((s.supports.as_slice(), s.like.as_deref()), (&["STEM".to_owned()][..], None));
+    for wrong in ["LANGUAGE ZH SERVES (CUT);", "LANGUAGE english SERVES (STEM);", "LANGUAGE ZH SERVES (STEM) LIKE KLINGON;"] {
+        assert_eq!(state_of(of(wrong)), "38T06", "{wrong}");
+    }
+    assert_eq!(of("LANGUAGE ZH;").err().map(|e| e.code), Some(Code::Syntax));
+}

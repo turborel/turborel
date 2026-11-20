@@ -33,6 +33,7 @@ pub mod hosted;
 pub mod index;
 mod kinds;
 mod known;
+pub mod language;
 pub mod metric;
 pub mod partition;
 pub mod procedure;

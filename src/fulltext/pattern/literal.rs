@@ -18,7 +18,7 @@
 use crate::error::Result;
 use crate::fulltext::pattern::lex::invalid;
 use crate::fulltext::pattern::{Literal, Mask, MaskChar, Part};
-use crate::fulltext::{Language, is_stop, normalize, tokenize};
+use crate::fulltext::{Language, is_stop, normalize_in, tokenize};
 
 /// The wild card for any characters, none too [§5.3.1 NOTE 12].
 const ANY: char = '%';
@@ -70,7 +70,7 @@ pub(super) fn literal(written: Written<'_>, language: Language, stemmed: bool) -
         if phrase && optional {
             parts.push(Part::Optional);
         } else if chars.iter().any(|c| matches!(c, MaskChar::Literal(_))) {
-            parts.push(Part::Word(normalized(&chars)));
+            parts.push(Part::Word(normalized(&chars, language)));
         } else {
             return Err(invalid(
                 written.at,
@@ -144,21 +144,21 @@ fn piece(c: char) -> Piece {
 }
 
 /// `chars` normalized: each run of characters between wild cards
-/// normalized as a document's words are [§4.5].
-fn normalized(chars: &[MaskChar]) -> Mask {
+/// normalized as a document's words are in `language` [§4.5].
+fn normalized(chars: &[MaskChar], language: Language) -> Mask {
     let mut out = Vec::with_capacity(chars.len());
     let mut run = String::new();
     for c in chars {
         match c {
             MaskChar::Literal(c) => run.push(*c),
             MaskChar::One | MaskChar::Any => {
-                out.extend(normalize(&run).chars().map(MaskChar::Literal));
+                out.extend(normalize_in(language, &run).chars().map(MaskChar::Literal));
                 run.clear();
                 out.push(*c);
             }
         }
     }
-    out.extend(normalize(&run).chars().map(MaskChar::Literal));
+    out.extend(normalize_in(language, &run).chars().map(MaskChar::Literal));
     Mask(out)
 }
 

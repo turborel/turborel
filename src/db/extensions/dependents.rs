@@ -52,7 +52,8 @@ fn column_needs(c: &ColumnDesc, d: &Declared, collations: &[String]) -> bool {
         | ObjectKind::IndexMethod
         | ObjectKind::Credentials
         | ObjectKind::Diagnostics
-        | ObjectKind::Rule => false,
+        | ObjectKind::Rule
+        | ObjectKind::Language => false,
     }
 }
 
@@ -61,7 +62,7 @@ fn index_needs(ix: &IndexDesc, d: &Declared) -> bool {
     let named = |v: &Value| if let Value::Char(s) = v { s.trim().eq_ignore_ascii_case(&d.name) } else { false };
     match d.kind {
         ObjectKind::IndexMethod => ix.method == d.name,
-        ObjectKind::Ranking | ObjectKind::Quantizer => ix.options.iter().any(|(_, v)| named(v)),
+        ObjectKind::Ranking | ObjectKind::Quantizer | ObjectKind::Language => ix.options.iter().any(|(_, v)| named(v)),
         ObjectKind::Scalar
         | ObjectKind::Aggregate
         | ObjectKind::Table

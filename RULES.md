@@ -302,6 +302,16 @@ verification approach DO-178C expects (§8).
 | D317 | EXPLAIN shows the unnested plan, and both rules have their own settings |
 | D318 | Side effects, non-deterministic functions, UNIQUE, MATCH and a few operators keep a subquery nested |
 | D319 | A binding is a value with its trailing spaces, of a plain type, and bindings match as not distinct |
+| D320 | A language stems by Snowball's own program, run by an interpreter of the Snowball language |
+| D321 | A language is a built-in profile of normalization, stems, stop words and cutting, named in English |
+| D322 | French, Italian, Catalan and Irish take elisions off their words, and Catalan joins a middle dot |
+| D323 | Scripts written without spaces are read as character bigrams; no dictionary segmentation is built in |
+| D324 | A full-text index keeps the languages of its documents, and a search reads a pattern in each |
+| D325 | A stemmed language keeps accents and composes its words, and Turkish folds the dotted and dotless I |
+| D326 | Each stemmer is tested on a sample of Snowball's own vocabulary or on the project's own list, the whole checked outside the tree |
+| D327 | A document's language is its FullText value's or its index's, TEXT_MATCHES's its index's; no language is detected |
+| D328 | A plug-in serves a language by the LANGUAGE kind, named where a built-in one is, a batch a call |
+| D329 | A single letter of a bigram language matches the bigrams holding it, and thesaurus terms are joined back |
 
 ### The project
 
@@ -6776,7 +6786,8 @@ the list to the directory.
 An extension may serve, besides the kinds of D169, a ranking (kind 10),
 a quantizer (11), a collation (12), a system table (13), an XQuery
 function (14), a type (15), a storage engine (16), an index method
-(17), credentials (18) and a sink of events (19), each declared by its
+(17), credentials (18), a sink of events (19), an optimizer rule (37,
+D275) and a language of full-text search (39, D328), each declared by its
 manifest and bridged onto the trait the in-process point already has
 (`plugin/bridge/`), with payloads of their own (`plugin/payload/`). The
 rule of them all is that a call crosses a pipe and costs a round trip,
@@ -8700,6 +8711,221 @@ one. So each binding must be known, from the tables the plan reads, to
 be of a predefined type other than a large object, made of columns by
 arithmetic, casts and sort keys (`optimizer/unnesting/typed.rs`). Any
 other binding keeps its subquery nested.
+
+### Full-text languages
+
+#### D320. A language stems by Snowball's own program, run by an interpreter of the Snowball language
+
+SQL/MM Full-Text leaves stems implementation-defined [ISO/IEC 13249-2:2002
+(CD, SC32 N0640) §4.2.3.4]. Every language Snowball 3.2.0 has a stemmer
+for stems by that stemmer's own program, kept as Snowball wrote it in
+`src/fulltext/text/snowball/algorithms`, under Snowball's BSD license,
+whose notice is kept beside the programs and in the documentation.
+`fulltext/text/snowball.rs` is an interpreter of the Snowball language
+(lexer, parser and machine) following the semantics of Snowball's own
+code generators and runtime. It works over characters, so a cursor, a
+limit, `size` and `len` count characters. A program is read the first
+time its language stems a word and kept for the process. A run that
+goes deeper than 400 calls, takes more than 2^22 steps or meets an
+error leaves the word as it is, so a damaged program never stops a
+statement. Translating 35 programs into Rust by hand would have been
+35 places to drift from Snowball, and each later Snowball release
+would be a rewrite. The interpreter is one place, and a program is
+data. ENGLISH stems by Snowball's English program too, which replaces
+the Porter2 code written before. That code differed from Snowball's
+English stemmer on 57 of the 42,649 words of its vocabulary, and
+Snowball's program matches all of them. Snowball's Porter, Dutch
+Porter, Lovins and Early Modern English stemmers are left out, as
+older or special forms of languages already stemmed. The whole of
+Snowball's vocabularies, all 35 languages and Arabic's 9.2 million
+words included, was run through the interpreter locally against
+Snowball's own output, and every word matched, 100%. The vocabularies
+stay outside the tree (D326).
+
+#### D321. A language is a built-in profile of normalization, stems, stop words and cutting, named in English
+
+A language is one of 43 profiles in `fulltext/text/language.rs`: NONE,
+ENGLISH, the 34 other languages Snowball stems, and CHINESE, JAPANESE,
+KOREAN, THAI, LAO, KHMER and BURMESE. A profile gives the language's
+normalization (D325), its Snowball program if it has one, its stop
+words, how its text is cut into words (D323), its elisions (D322) and
+whether a middle dot joins. A language is named by its English name in
+upper case, in any case where written, as FULLTEXT(text, language), a
+pattern's `<language specification>` and FULLTEXT.LANGUAGE name it
+[§5.1.9, §5.3.1 Description 3c]. An unknown name is SQLSTATE 2FF02. A
+language's stop words are Snowball's list for it where Snowball has one
+(17 languages), kept in `src/fulltext/text/stop` with Snowball's
+notice, and none elsewhere. A list is normalized as its language
+normalizes words, so a word and its list compare alike. An index may
+still name its own list or none (FULLTEXT.STOP_WORDS), normalized in
+its language.
+
+#### D322. French, Italian, Catalan and Irish take elisions off their words, and Catalan joins a middle dot
+
+In these four languages an article, preposition or pronoun elided before
+an apostrophe is written on the word after it, as `l'homme`. The
+tokenizer takes it off when the letters before the word's first
+apostrophe are one of the language's elisions, and the word's offset and
+length move past it, so `l'école` is the word `école` and a search for
+`école` finds it. The French and Italian elisions are those their
+Snowball stemmers take off themselves, the Irish those of Irish's stemmer
+(`b'`, `d'`, `m'`), and the Catalan ones its articles and weak pronouns
+(`d'`, `l'`, `m'`, `n'`, `s'`, `t'`). Snowball's French and Italian
+stemmers already take an elision off a word they are given, so the
+tokenizer doing it first changes no stem but makes the word without it
+the one indexed, matched and counted. In Catalan a middle dot (U+00B7)
+between two letters joins them, so `col·lecció` is one word, as its
+stemmer reads it. Other languages keep an apostrophe inside a word, as
+English `don't`.
+
+#### D323. Scripts written without spaces are read as character bigrams; no dictionary segmentation is built in
+
+Chinese, Japanese, Thai, Lao, Khmer and Burmese are written without
+spaces between words, and Korean's spaces fall between phrases. In
+these seven languages a run of the letters of these scripts
+(ideographs, kana with the prolonged sound mark, Hangul, and the
+letters of the Thai, Lao, Myanmar and Khmer blocks), each letter with
+the marks after it, is read as its overlapping pairs: `東京都` is
+`東京` and `京都`, each a word with its own ordinal, offset and length.
+A run of one letter is a word of one letter. Letters of other scripts
+and digits are cut as elsewhere, and a change of script ends a word.
+Other languages read each ideograph and kana as a word alone, as
+before, and a Thai run as one word. A pattern's word is cut the same
+way, so a word of three or more letters is a phrase of its pairs, and
+the index needs no other entry. Segmenting by a dictionary would find
+real words, but no dictionary of usable size and license fits in the
+tree. The open Chinese and Japanese dictionaries are tens of megabytes
+and under licenses this project does not take, and Thai, Lao, Khmer
+and Burmese need dictionaries of their own as well. Bigrams need no
+data, find every word a dictionary would (at the price of some false
+matches across word boundaries, which a phrase of pairs narrows), and
+cost one entry per letter.
+
+#### D324. A full-text index keeps the languages of its documents, and a search reads a pattern in each
+
+A FullText value names its own language [§5.1.1], so an index's
+documents may be in several, while a pattern's word that names none is
+of its document's language [§5.3.1 Description 3c]. The index keeps an
+`L` entry, keyed by the language's name, for each language of a
+document it holds other than its own, written with the first such
+document and never taken back. The set is read into memory as the
+index opens, so it is a superset of the languages its documents are in.
+A search reads the pattern in each language of the set, and plans the
+union. A FORM OF word matches a term whose stem in one of those
+languages is the word's stem, and RANK, which knows the document's
+language, matches in that language alone. A word may go unposted only
+if it is a stop word of one of the set's languages. The stem entries
+are used when every document is in the index's language, and the
+dictionary is read otherwise. An index whose documents are all in its
+language reads one language, as before. The `L` entry is a new kind in
+the index's tree, with no change to its format version (alpha).
+
+#### D325. A stemmed language keeps accents and composes its words, and Turkish folds the dotted and dotless I
+
+NONE and ENGLISH normalize as before [§4.5], by simple case folding,
+canonical decomposition, folding again and taking nonspacing marks
+out, so `Résumé` is `resume`. A stemmed language's stemmer reads
+accents (`é` and `e` are different letters to the French stemmer, `й`
+and `и` to the Russian one), so its words are simply case folded and
+composed to NFC, accents kept. U+2019 is still written as an
+apostrophe. Turkish folds `I` to dotless `ı` and `İ` to `i` before
+case folding, its word composed first so `I` with a combining dot is
+`İ`. The seven languages read as bigrams fold and compose for
+compatibility (NFKC), so full-width Latin and half-width katakana are
+one with their usual forms. Each normalization was checked against the
+whole vocabulary of each language. Normalizing changed 25,261 Greek
+words (final `ς` folds to `σ`) and 51 capitalized Irish ones, and
+stemming each gives the stem of the word as Snowball's vocabulary
+writes it, the Irish ones in lower case.
+
+#### D326. Each stemmer is tested on a sample of Snowball's own vocabulary or on the project's own list, the whole checked outside the tree
+
+Snowball's vocabularies hold from 4,000 to 9.2 million words a language,
+too many to keep in the tree. `src/fulltext/text/snowball/vocabulary`
+keeps, for the 14 languages whose vocabulary is Snowball's own (BSD),
+every k-th word of it from the first with its stem from Snowball's
+output, k chosen for about 1000 words. Each file's header says its k
+and its whole size, so the sample can be made again. For the 21
+languages whose vocabulary Snowball took from another source
+(Wikipedia, corpora, a spelling dictionary, a GPL list), no word of
+that vocabulary is kept. Each has a list of the project's own instead,
+under the repository's license: 138 to 167 words written for it, rarer
+inflected forms of the language's words and words built to reach its
+stemmer's suffix rules, none of them a word of Snowball's vocabulary of
+the language. Each word carries the stem the interpreter gives it. The
+unit test stems every word of every file and matches all of them. For
+the own lists that guards the interpreter against change, and their
+agreement with Snowball itself rests on the full run of D320, made
+locally before commit.
+
+#### D327. A document's language is its FullText value's or its index's; no language is detected
+
+The standard gives a FullText value its language as data
+[§5.1.1, §5.1.9], so a document's language is given per row, and a
+character string an index reads is in the index's FULLTEXT.LANGUAGE.
+Nothing guesses a language from the text. Detection is unreliable on
+short texts, needs per-language data of its own, and a wrong guess
+would silently change a document's stems and stop words, which an
+index then keeps.
+
+TEXT_MATCHES, an extension the standard does not have, reads both its
+character strings in the FULLTEXT.LANGUAGE of the full-text index of
+the document's column, whose name the binder gives it as it gives
+CONTAINS and RANK theirs (D87), and else in FT_DefaultLanguage,
+ENGLISH. SQL/MM ties a language to FullText values and to a pattern's
+words [§4.4] and says nothing of TEXT_MATCHES, so it follows the rule a
+character string has under CONTAINS. An index reads its strings in its
+language, and its search must too, or an index in FRENCH would post
+words its own TEXT_MATCHES never asks for. A FULLTEXT value names its
+own language and is searched by CONTAINS.
+
+#### D328. A plug-in serves a language by the LANGUAGE kind, named where a built-in one is, a batch a call
+
+A LANGUAGE object of an extension (kind 39) serves a language of
+full-text search. SERVES names what it does of SEGMENT (text cut into
+words, each its offset and length in characters), STEM and STOP (its
+stop words), and LIKE names the built-in language whose other parts it
+keeps, NONE unless written. So a plug-in may cut Chinese or Japanese
+into dictionary words and keep no stemmer. Dictionary segmentation is
+served this way and is not built in. A plug-in's author may use a
+dictionary of a permissive license, as jieba's dictionary (MIT) for
+Chinese or IPADIC for Japanese; these are examples of what is
+possible, and none is shipped. A Snowball program given as data stays
+possible inside a plug-in.
+
+Its calls are batches. A document read is one SEGMENT call, and its
+words not yet stemmed one STEM call more if the plug-in stems; the stop
+words are one STOP call as the extension is registered. A stem is kept
+once answered, as a language is deterministic. BATCH bounds the
+documents or words of a call, 256 unless written. A pattern's word is
+cut by the same plug-in. A document a plug-in cuts is held whole while
+it is read, unlike the built-in tokenizer's stream, and its words'
+sentences and paragraphs are those the built-in rules give at their
+offsets.
+
+It is named wherever a built-in language is: an index's
+FULLTEXT.LANGUAGE, FULLTEXT(text, language) and a pattern's language
+specification. Its name is checked against the built-in ones, which
+win, by the manifest (38T06) and again as it is registered. A language
+is named in the whole process, as the tokenizer reads text with no
+database at hand, so a name is the first registering extension's while
+one of its registrations lives, and a process knows at most 21 served
+names, the bits of a set of languages past the 43 built-in ones. An
+index naming it holds its extension (DROP EXTENSION RESTRICT is
+refused), and a name no extension serves now is 2FF02. A failed call
+follows the extension kinds' rules (D170): the statement fails with its
+class 38 error, and the next call starts another process.
+
+#### D329. A single letter of a bigram language matches the bigrams holding it, and thesaurus terms are joined back
+
+A document of a bigram language holds a single letter as a word only
+when the letter stands alone, so a pattern's word of one letter in such
+a language matches every word holding it, as `%京%` would, in CONTAINS
+and RANK, and an index finds its terms from the dictionary. A thesaurus
+holds terms as written, while a pattern's word of a bigram language is
+its pairs, so the pairs of a run are joined back into it (`東京 京都`
+into `東京都`) before the thesaurus is asked, and the terms it gives are
+cut into pairs again in the pattern's language.
 
 ## 2. Project layout
 
