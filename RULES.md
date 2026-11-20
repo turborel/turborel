@@ -374,6 +374,7 @@ verification approach DO-178C expects (§8).
 | D400 | DROP NOT NULL drops the column's own NOT NULL constraints, cascading, and leaves a domain's |
 | D401 | SET DATA TYPE widens only, copies the rows to a new storage generation and makes the indexes again |
 | D402 | A table is renamed into a new generation, refused while a text names it; its trigger's ON clause and generator follow |
+| D413 | MIN or MAX of a column known not null is read from the first row in order |
 
 ### The project
 
@@ -10479,6 +10480,27 @@ as before. The plans are made again when the body is bound again, so a
 dropped index or a table made again is seen; a leaf first planned over
 a table too small for an unpriced probe keeps no plan until then
 (`routines/kept/leaves.rs`).
+
+### Order entry execution
+
+#### D413. MIN or MAX of a column known not null is read from the first row in order
+
+An order entry's delivery takes the least new order of each district by
+MIN over the district's rows, and the aggregation read every one of
+them, several hundred, though the table's key gives them in order of
+the number asked for. So an aggregation without grouping columns whose
+one set function is MIN or MAX of an exact numeric column known not
+null, over a table's rows filtered by a condition that cannot raise, is
+rewritten to aggregate its rows sorted by the column under FETCH FIRST
+1 ROW ONLY (rule `extremes_by_order`, `optimizer/extremes.rs`). The
+planner reads such rows from an index whose first columns the filter
+fixes and whose next is the column, and stops at the first; else a sort
+of the first row holds one. A column that may hold a null is left, as
+its nulls eliminated raise a warning [ISO/IEC 9075-2:2023 §10.9 GR7a]
+that the rows sorted would not, and so are a condition that may raise,
+whose rows a stopped read would evaluate fewer of. Only exact numbers
+are taken, whose values alike are one value, as the sort and MIN each
+keep the first of rows alike.
 
 ## 2. Project layout
 
