@@ -169,8 +169,9 @@ impl State {
         if let (Some(stamp), Write::Update(row)) = (&stamp, &mut write) {
             stamp.put(row);
         }
-        let mut seen: Option<(Timestamp, Row)> = None;
-        let mut tries = 0_usize;
+        // The version it rechecked, and its turn behind the row's earlier
+        // waiters (RULES.md D442).
+        let (mut seen, mut tries, mut turn): (Option<(Timestamp, Row)>, usize, _) = (None, 0, None);
         loop {
             if let Write::Update(row) = &mut write {
                 self.keep_lobs(tx, table, Some(id), row)?;
@@ -180,6 +181,7 @@ impl State {
                 let _gate = self.tx.gate.enter();
                 self.write_once(tx, (table, id), (&write, stamp.as_ref()), seen.as_ref())
             };
+            drop(turn.take());
             let e = match attempt {
                 Ok((old, history)) => {
                     if let (Some(history), Some(stamp)) = (history, &stamp) {
@@ -192,11 +194,11 @@ impl State {
             tries = tries.saturating_add(1);
             let waits = e.code == Code::Conflict && tx.lock_wait == LockWait::Wait && tries < MOST_CONFLICTS;
             if !waits || self.capabilities(table)?.concurrency == Concurrency::Coordinator {
-                return Err(e);
+                return Err(self.refused(tx, table, id, e));
             }
             let newest = self.storage_of(table)?.newest(tx.id, id)?;
             if let Some(writer) = newest.writer {
-                self.wait_for_writer(tx, table, writer)?;
+                turn = tx.wait_for_row(&format_args!("a row of {table}"), writer)?;
                 seen = None;
                 continue;
             }
@@ -206,6 +208,9 @@ impl State {
                 continue;
             }
             // [§4.28] Committed since its one snapshot: what it read changed.
+            // [DESIGN] RULES.md D441: whether rechecked or refused, what it
+            // tells rests on that commit.
+            tx.depend(newest.stamp);
             let Some(check) = recheck.as_mut().filter(|_| !tx.one_snapshot()) else { return Err(e) };
             let Some(row) = newest.row else { return Ok(None) };
             write = match check(&row)? {
@@ -215,6 +220,17 @@ impl State {
             };
             seen = Some((newest.stamp, row));
         }
+    }
+
+    /// `e`, the refusal of a write of row `id` of `table`: a conflict is
+    /// told once the commit it met, if one did, is durable (RULES.md D441).
+    fn refused(&self, tx: &Txn, table: &QualifiedName, id: RowId, e: SqlError) -> SqlError {
+        if e.code == Code::Conflict
+            && let Ok(newest) = self.storage_of(table).and_then(|storage| storage.newest(tx.id, id))
+        {
+            tx.depend(newest.stamp);
+        }
+        e
     }
 
     /// `write` of row `id` once, over the version `seen` if given, with

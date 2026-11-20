@@ -469,6 +469,10 @@ impl TableStorage for RowTable {
         self.note_commit(at);
     }
 
+    fn settle(&self, tx: TxId) {
+        self.settle_open(tx);
+    }
+
     fn rollback(&self, tx: TxId) -> Result<()> {
         self.end_open(tx)
     }

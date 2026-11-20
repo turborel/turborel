@@ -386,6 +386,9 @@ verification approach DO-178C expects (§8).
 | D418 | A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot |
 | D419 | A row of values that reads nothing is evaluated, not planned |
 | D420 | A fixed-length character string already of its type's length is cast and assigned without a copy |
+| D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
+| D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
+| D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 
 ### The project
 
@@ -2268,8 +2271,10 @@ rolled back. If it committed, a transaction reading at one snapshot is
 refused (SQLCODE -911), and commit checks that nothing read has changed.
 
 Commit is atomic across engines. Each validates at the commit timestamp and
-then commits at it. A commit returns only once every commit before it has
-ended, so its session's next snapshot counts it. A transaction that wrote
+then commits at it. The built-in engines commit with one store in a status
+table and stamp their versions after the locks are released (D440). The locks go before the commit record's sync, and
+snapshots read only commits made durable (D441). A commit returns only once every commit up to it is durable, so its
+session's next snapshot counts it. A transaction that wrote
 nothing commits at its snapshot, unchecked. Its end collects only the tables
 whose versions await collection, since it leaves no garbage of its own.
 
@@ -10763,7 +10768,6 @@ the committed one its snapshot shows, as the write refuses any other
 ends. Another engine reads the row and writes it, as before. A row of a
 system-time period is read first still, so that its period refuses a
 write before it is made.
-
 #### D418. A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot
 
 A kept or learned plan held no join (D45), so a query joining two
@@ -10801,6 +10805,135 @@ length. An order entry's line assigns a district's 24 characters into a
 variable at each line, and the copies were a fiftieth of it. A value of
 the type's length is now kept as it is (`types/character.rs`), the value
 the cut and the padding would give.
+
+#### D440. A commit is one store in a status table, and its versions are stamped after its locks are released
+
+The row store stamped each changed row with its commit timestamp, a tree
+read and a tree write per row, after the sync of the commit record and
+before the transaction's locks were released. A hot row, such as an order
+entry's warehouse, stayed owned through all of it.
+
+Each store now keeps the statuses of its writing transactions
+(`engine/rows/mvcc/status.rs`), a fixed array of slots read without a
+lock. A transaction claims its slot before its first version is written.
+Commit stores the commit timestamp there. That one store makes every
+version it wrote committed for every reader and writer of the store, and
+the garbage is filed without touching the tree. The versions are stamped
+once the locks are released, still inside the checkpoint gate
+(`TableStorage::settle`). A writer that replaces a version not yet stamped
+appends it to the undo store stamped, so only a row's newest version is
+ever unstamped. A stamp replaces an entry only as it read it.
+
+The semantics hold for these reasons.
+
+- Before the store every version of the transaction reads as open, which
+  only the transaction sees. After it, all read as committed at its
+  timestamp. The stable timestamp passes the commit only after the store,
+  as before, so no snapshot sees part of a commit.
+- A reader at a snapshot gets the same answer from a slot as from a stamp.
+- A rollback forgets the slot. Its versions read as open either way, and
+  are taken out as before. Savepoints are unchanged.
+- A slot is claimed again only once no transaction can hold a version it
+  read before the stamping. Its mark is the latest snapshot any
+  transaction joined a table of the store at once the stamping ended, and
+  never before the commit timestamp. A horizon past the mark finds every
+  such transaction ended, and the commit's phase 2 done in every table.
+  Only a read outside any transaction can meet a forgotten transaction. It
+  reads the version as open, as it did when a stamp was written after its
+  read.
+- The stamping ends before the gate opens, so a checkpoint's image holds
+  stamps, or the versions of open transactions, which recovery resolves
+  by the log as before. A version that cannot be stamped is stamped by a
+  later collection, and its slot is kept until then.
+- Constraints, triggers, history tables, replication, DDL and recovery
+  read versions only through who made them, so they are unchanged.
+
+#### D441. A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on
+
+A commit held its locks through the sync of its commit record. The next
+writer of a hot row waited for the whole sync, so a row took one commit
+per sync.
+
+A commit now writes its commit record, makes its changes committed in
+every engine, releases its locks and stamps its versions, and only then
+syncs the record (`txn/end.rs`). The clock keeps a second watermark
+beside the stable timestamp, the durable timestamp, below which every
+commit has ended and has its record synced or needs no sync
+(`txn/clock.rs`). Snapshots are taken at it, and the horizon is
+bounded by it. A commit returns once the durable timestamp reaches it.
+
+A transaction can learn of a commit past its snapshot in a few places.
+These are a READ COMMITTED write over a newer committed version, a
+uniqueness or referential check of the newest state, and a refusal
+(SQLCODE -911) that a newer commit caused, at a write or at commit.
+Each marks the commit it met (`Txn::depend`). No statement result, cursor
+or commit outcome reaches the session until the durable timestamp covers
+that mark (`txn/durable.rs`). A failed sync halts the durable timestamp,
+so every such wait ends with SQLCODE -922.
+
+The semantics hold for these reasons.
+
+- No snapshot sees a commit a crash could lose. The durable timestamp
+  passes a commit only once it and every commit before it have their
+  records synced. A crash loses only a suffix of the log, so what a
+  snapshot holds is a prefix recovery keeps.
+- What a transaction reads past its snapshot is never told before it is
+  durable. A write over such a version, or a check against it, puts the
+  transaction's own commit record after that commit's in the log, so a
+  crash that loses that commit loses this one too, and recovery undoes
+  both. Until the commit is durable nothing of the dependent reaches its
+  client.
+- Locks guard writers against writers. A writer released early writes
+  over committed versions, as it did after the sync before. Every
+  isolation level's rules on what a transaction reads are those of its
+  snapshot, so they are unchanged (anomaly matrix in
+  `test/integration/isolation_anomalies.rs`).
+- A failed sync leaves the commit in doubt as before. It never becomes
+  durable, so no snapshot counts it. A transaction that read past its
+  snapshot into it is told -922, and the database takes no change after
+  the failure, so none of them commits.
+- Its own session's next snapshot counts the commit, since the commit
+  returns only once the durable timestamp reaches it.
+- A checkpoint's image holds the commits the gate let finish, stamped.
+  The checkpoint syncs its own record, and every commit record before it
+  with it, so its image claims nothing the log could lose.
+- A commit with LOG.COMMIT_SYNC OFF, a commit that logged nothing and a
+  refused commit count as durable as they end, as they did when they
+  returned.
+
+#### D442. Row waits queue on the writer's own end in order, and shared table locks are held in stripes
+
+A row's second writer waited on its table's lock, which the first held
+shared to its end. Every release of the lock woke every waiter of the
+table, and they raced for the row. Every writer of a hot table also took
+the lock's one list of holders twice.
+
+Each open transaction now has an end of its own (`txn/row_waits.rs`).
+A writer that meets a row another open transaction changed takes a
+ticket on that transaction's end and waits. When it ends, the waiters go
+on one at a time in ticket order, each once the one before has tried its
+write again. A shared hold of a table's lock is taken in one of sixteen
+stripes, chosen by the transaction's id, while no exclusive request
+blocks them (`txn/locks/fast.rs`). An exclusive request marks the lock
+blocked under its holders' lock, then waits for the stripes to hold no
+one else.
+
+The semantics hold for these reasons.
+
+- A waiter goes on only once the writer it waited for has ended, as
+  before, and then writes as D28 and D29 say. The order among waiters
+  changes only which of them writes first, which no isolation level
+  fixes.
+- Every row wait is in the graph of who waits for whom, as a lock wait
+  is, so a cycle through row waits and lock waits is refused at once. An
+  exclusive request names the stripes' holders in the graph too.
+- A shared request reads the blocked mark under its stripe's lock, and
+  the exclusive request reads the stripes after setting the mark. So
+  either the shared request takes the slow path, or the exclusive request
+  sees its hold and waits for it. No shared and exclusive hold are ever
+  granted together.
+- A waiter that gives up, cancelled or timed out, gives up its ticket, so
+  the waiters behind it are not held.
 
 ## 2. Project layout
 

@@ -23,9 +23,9 @@ impl RowTable {
     /// read at a time.
     pub(in crate::engine::rows) fn collect(&self, horizon: Timestamp, removed: Removed<'_>) -> Result<()> {
         // Noted before anything is released (`RowTable::unpinned`).
-        self.versions.collected.fetch_max(horizon, Ordering::SeqCst);
+        self.collected_at(horizon);
         self.collect_undone();
-        let late = !self.versions.late.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty();
+        let late = self.stamps_left();
         let due = self.versions.garbage_due.load(Ordering::SeqCst).min(self.versions.validated_due.load(Ordering::SeqCst));
         if !late && horizon < due {
             return self.undo.truncate();
@@ -114,7 +114,7 @@ impl RowTable {
         !lock_builtin(&self.versions.garbage).is_empty()
             || !lock_builtin(&self.versions.undone).is_empty()
             || !lock_builtin(&self.versions.validated).is_empty()
-            || !self.versions.late.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty()
+            || self.stamps_left()
     }
 
     /// Adds `dead`, garbage once the horizon reaches `at`.
@@ -242,25 +242,6 @@ impl RowTable {
         let gone = removed(id, self.decode(id, version.record, None)?);
         self.free_values(id, version.record);
         Ok(gone)
-    }
-
-    /// Stamps what commits could not, and forgets each transaction once all
-    /// its rows are.
-    fn stamp_late(&self) {
-        let late: Vec<(TxId, Timestamp, Option<Vec<RowId>>)> = self
-            .versions
-            .late
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-            .map(|(&tx, (at, ids))| (tx, *at, ids.clone()))
-            .collect();
-        // A commit whose rows could not be read back stays late.
-        for (tx, at, ids) in late.into_iter().filter_map(|(tx, at, ids)| Some((tx, at, ids?))) {
-            if ids.iter().all(|&id| self.stamp(tx, id, at).is_ok()) {
-                self.versions.late.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&tx);
-            }
-        }
     }
 
     /// Counts a change undone: an insert taken out, or a deletion put back.
