@@ -403,7 +403,7 @@ pub(super) fn seen_column(batch: &Batch, at: usize, rows: &[usize]) -> Option<Fo
         Column::Texts(t) => {
             whole(Seen::Text { longest: longest_text(t) }, t.nulls.as_ref().is_some_and(|n| rows.iter().any(|&r| n.get(r))))
         }
-        Column::Values(_) => rows.iter().try_fold(Found::default(), |found, &r| with(Some(found), seen_cell(batch.cell(at, r)))),
+        Column::Values(_) | Column::Late(_) => rows.iter().try_fold(Found::default(), |found, &r| with(Some(found), seen_cell(batch.cell(at, r)))),
     }
 }
 

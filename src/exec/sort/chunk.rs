@@ -332,6 +332,7 @@ mod tests {
                 Column::Texts(_) => "texts",
                 Column::Values(_) => "values",
                 Column::Nulls(_) => "nulls",
+                Column::Late(_) => "late",
             })
             .collect();
         assert!(read.batch.rows == 0 || (read.layout, read.truncates, read.width) == (3, true, 2));

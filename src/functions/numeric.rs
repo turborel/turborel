@@ -201,7 +201,7 @@ impl ScalarFunction for Numeric {
         match column {
             Column::Ints(ints) => over_vectors::absolute_ints(ints).map(|made| Ok(Column::Ints(made))),
             Column::Floats(floats) => over_vectors::absolute_floats(floats).map(|made| Ok(Column::Floats(made))),
-            Column::Values(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Nulls(_) => None,
+            Column::Values(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Nulls(_) | Column::Late(_) => None,
         }
     }
 

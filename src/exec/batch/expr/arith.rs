@@ -42,7 +42,8 @@ pub(super) fn negated(x: &Vector<'_>, count: usize) -> Option<Vector<'static>> {
     match x.column() {
         Some(Column::Ints(ints)) => return super::ints::negated(ints).map(|ints| Vector::Owned(Column::Ints(ints))),
         Some(Column::Floats(floats)) => return Some(Vector::Owned(Column::Floats(super::floats::negated(floats)))),
-        Some(Column::Values(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Nulls(_)) | None => {}
+        Some(Column::Values(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Nulls(_) | Column::Late(_))
+        | None => {}
     }
     if let Vector::Const(v) = x {
         return Some(Vector::Const(v.negate()));

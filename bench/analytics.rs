@@ -35,8 +35,10 @@
 //! vector at a time alone (`analytics/expressions.rs`), to `counts`, a
 //! row-store table counted and
 //! summed, its zones settled and not, alone (`analytics/counts.rs`), to
-//! `decode`, the column store's decoding alone (`analytics/decode.rs`),
-//! or to `sorts`, ORDER BY and top-N alone (`analytics/sorts.rs`).
+//! `decode`, the column store's decoding alone (`analytics/decode.rs`), to
+//! `late`, a column store's selective queries, the columns they keep few
+//! rows of read late, alone (`analytics/late.rs`), or to `sorts`, ORDER BY
+//! and top-N alone (`analytics/sorts.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -62,6 +64,8 @@ mod graph;
 mod harness;
 #[path = "analytics/json.rs"]
 mod json;
+#[path = "analytics/late.rs"]
+mod late;
 #[path = "analytics/parallel.rs"]
 mod parallel;
 #[path = "analytics/social.rs"]
@@ -80,7 +84,8 @@ use turborel::db::{Database, Session};
 /// morsels, `distinct` for the DISTINCT set functions', `expressions`
 /// for expressions over vectors, `counts` for a
 /// row-store table's counts, `decode` for the column store's decoding,
-/// `sorts` for ORDER BY and top-N.
+/// `late` for a column store's selective queries, `sorts` for ORDER BY
+/// and top-N.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -124,6 +129,7 @@ fn main() {
     parallel::workloads(&bench);
     counts::workloads(&bench);
     decode::workloads(&bench);
+    late::workloads(&bench);
     sorts::workloads(&bench);
 }
 
@@ -137,6 +143,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "counts" => counts::workloads,
         "decode" => decode::workloads,
         "parallel" => parallel::workloads,
+        "late" => late::workloads,
         "sorts" => sorts::workloads,
         _ => return false,
     };

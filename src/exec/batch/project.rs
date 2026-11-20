@@ -163,7 +163,9 @@ impl Projected {
         }
         let r = self.kept.get(self.next).copied().unwrap_or_default();
         self.next = self.next.saturating_add(1);
-        let value = |at: &usize| self.batch.value(*at, r).unwrap_or(&Value::Null);
+        // [DESIGN] (RULES.md D367) A cell of the row alone made a value, its
+        // vector's other rows not made values.
+        let value = |at: &usize| self.batch.cell(*at, r).to_value();
         let mut row = Vec::with_capacity(self.places.len());
         for (n, place) in self.places.iter().enumerate() {
             if let Some(v) = self.ahead.get(n).and_then(Option::as_ref).and_then(|values| values.get(self.next.saturating_sub(1))) {
@@ -171,13 +173,13 @@ impl Projected {
                 continue;
             }
             row.push(match place {
-                Place::Column(at) => value(at).clone(),
+                Place::Column(at) => value(at),
                 Place::Const(v) => v.clone(),
                 // Its values in a row kept, each written over.
                 Place::Expr(program) => {
                     self.scratch.resize(program.inputs.len(), Value::Null);
                     for (slot, at) in self.scratch.iter_mut().zip(&program.inputs) {
-                        slot.clone_from(value(at));
+                        *slot = value(at);
                     }
                     eval(&program.expr, &self.scratch, &self.runner)?
                 }

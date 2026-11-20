@@ -75,7 +75,7 @@ pub(in crate::exec::sort) fn encode_batch(layout: &Layout, batch: &Batch, rows: 
                     put(key, field, utc.map_or(Val::Null, |&u| Val::Int(Ints::Instant(d.moment), i128::from(u), 0)))?;
                 }
             }
-            Column::Bools(_) | Column::Values(_) | Column::Nulls(_) => {
+            Column::Bools(_) | Column::Values(_) | Column::Nulls(_) | Column::Late(_) => {
                 for (key, &r) in slots {
                     put(key, field, val_of(batch.cell(field.column, r))?)?;
                 }

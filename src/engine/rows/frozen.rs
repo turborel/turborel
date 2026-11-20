@@ -29,6 +29,7 @@
 
 mod batches;
 mod freeze;
+mod late;
 mod merge;
 mod ordered;
 mod rewrite;

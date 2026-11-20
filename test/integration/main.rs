@@ -196,6 +196,7 @@ mod kept_set_plans;
 mod kernels;
 mod language;
 mod language_collations;
+mod late_columns;
 mod length_units;
 mod listagg;
 mod lob_composites;
