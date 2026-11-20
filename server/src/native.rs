@@ -377,9 +377,9 @@ async fn run(wire: Wire, (services, present, peer): (&Services, &Present, &Peer)
     let slot = Slot::new();
     let mut running = Running::new(services, present, login.user.as_deref());
     let serves = Serves { db: services.database().clone(), requests: Arc::clone(services.requests()) };
-    let mut held = Held::new(session, serves, granted);
-    held.status = told;
-    let mut lent = Lent::new(held, wire);
+    let mut fresh = Held::new(session, serves, granted);
+    fresh.status = told;
+    let mut lent = Lent::new(fresh, wire);
     let ended = loop {
         let work = match next_work(&mut lent, (services, present), login.user.as_deref()).await {
             Ok(Next::Work(work)) => work,
