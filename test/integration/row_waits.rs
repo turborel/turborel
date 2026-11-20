@@ -181,6 +181,10 @@ fn until_waiting(db: &Database, n: usize) {
 /// Verifies: [DESIGN] RULES.md D28, D442: writers waiting for one row go on
 /// in the order they began to wait: once the first writer commits, the
 /// first waiter writes, and the second writes over its change.
+/// Regression test: a waiter gave its turn up after its first try, which
+/// its statement's snapshot, past, refused, so the next waiter could write
+/// before its second; and a waiter was counted as waiting before it took
+/// its place in line.
 #[test]
 fn waiters_for_a_row_go_on_in_the_order_they_waited() {
     let db = database();
