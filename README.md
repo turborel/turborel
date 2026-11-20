@@ -39,6 +39,9 @@ behind it, and each can be replaced or added to.
 - DISTINCT set functions computed by two groupings, read by batches.
 - Batches of vectors with null bitmaps, dates and truth values among them,
   filtered by pluggable kernels, and parallel morsels read by batch.
+- One table of groups with typed keys and columns of set functions'
+  states, merged in parallel in waves, of the column store too, its hash
+  keyed past long probes; EXCEPT and INTERSECT counted in it.
 - Expressions compiled once and evaluated a vector at a time, CASE by the
   rows each WHEN keeps.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
@@ -57,7 +60,8 @@ behind it, and each can be replaced or added to.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
-  queries of a hundred tables.
+  queries of a hundred tables, on statistics of most common values, a
+  sample of rows for correlated conditions and indexes' joint key counts.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.

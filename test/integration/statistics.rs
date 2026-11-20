@@ -73,9 +73,10 @@ pub(crate) fn added(db: &Database, ids: impl Iterator<Item = u32>, grade: impl F
 /// Verifies: [DESIGN] RULES.md D31, estimates: with the row store's
 /// statistics, EXPLAIN shows the rows a filter keeps: equality shares the
 /// rows among the distinct values; an order follows the histogram; IS NULL
-/// and IS NOT NULL the fraction NULL; OR, AND and NOT combine their parts
-/// as independent; a comparison with the column on the right is turned
-/// around; one the statistics cannot price takes a default.
+/// and IS NOT NULL the fraction NULL; OR and NOT combine their parts as
+/// independent, AND is counted on the table's sample, here the whole
+/// table (D382), as is a comparison of columns; a comparison with the
+/// column on the right is turned around.
 #[test]
 fn filters_are_estimated_from_statistics() {
     let db = graded(1000);
@@ -89,12 +90,13 @@ fn filters_are_estimated_from_statistics() {
     assert!(near(est("NOTE IS NULL"), 250.0, 1.0));
     assert!(near(est("NOTE IS NOT NULL"), 750.0, 1.0));
     assert!(near(est("GRADE = 3 OR GRADE = 4"), 190.0, 10.0));
-    assert!(near(est("GRADE = 3 AND ID < 500"), 50.0, 5.0));
+    assert!(near(est("GRADE = 3 AND ID < 500"), 50.0, 5.0), "{:?}", est("GRADE = 3 AND ID < 500"));
     assert!(near(est("NOT GRADE = 3"), 900.0, 5.0));
     assert!(near(est("GRADE = 42"), 0.0, 0.0), "outside the values");
-    assert!(near(est("GRADE = ID"), 10.0, 0.0), "a comparison of columns: one row in a hundred");
-    assert!(near(est("GRADE < ID"), 1000.0 / 3.0, 1.0), "a third");
-    assert!(near(est("GRADE <> ID"), 990.0, 0.0));
+    // Comparisons of columns, counted on the sample: GRADE is ID of IDs 1 to 9.
+    assert!(near(est("GRADE = ID"), 9.0, 0.5), "{:?}", est("GRADE = ID"));
+    assert!(near(est("GRADE < ID"), 991.0, 0.5));
+    assert!(near(est("GRADE <> ID"), 991.0, 0.5));
 }
 
 /// The rows the Filter of "SELECT ID FROM T WHERE ID > `id`" keeps.

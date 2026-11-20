@@ -50,6 +50,7 @@ use crate::stats::Statistics;
 use crate::storage::cost_of;
 
 pub(super) use composite::Member;
+pub(in crate::physical) use groups::cardenas;
 pub(super) use joins::{Classes, find};
 
 // ---------------------------------------------------------------------------

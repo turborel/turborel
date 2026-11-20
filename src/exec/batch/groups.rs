@@ -1,9 +1,11 @@
-//! \[DESIGN\] Groups made by batch (RULES.md D31, D38): held in the work
-//! area, in the order their first rows came, each its grouping values and
-//! its set functions; each row's key made of the vectors in a kept buffer
-//! (`put_key`), an integer's of a fixed width; each group's rows of a
-//! batch gathered in order by a counting sort into one buffer, its set
-//! functions fed them a vector at a time. Past the work area, the rows of
+//! \[DESIGN\] Groups made by batch (RULES.md D31, D38, D356): held in the
+//! work area in the executor's table (`exec/table.rs`), in the order their
+//! first rows came, each its grouping values and its set functions; each
+//! batch's keys hashed a vector at a time, each row's group found or made
+//! by its key in the vectors, no key copied unless its group is new, and
+//! each set function's states fed the batch's rows in one loop, or each
+//! group's rows gathered in order and fed to its accumulator a vector at
+//! a time. Past the work area, the rows of
 //! the groups not held are written by batch: of each batch, those of each
 //! partition one record, of their vectors (`spilled.rs`). Each partition
 //! is grouped again the same way. Of one that outgrows the work area
@@ -19,26 +21,23 @@
 
 mod morsel;
 mod spilled;
-mod table;
 
 pub(in crate::exec) use morsel::morsel_groups;
 
 use std::sync::Arc;
 
-use super::{Batches, Read, fed_group, lanes, put_key};
+use super::{Batches, Fed, Read, lanes};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::group::Finished;
+use crate::exec::table::{GroupTable, Key, Seed, hash_rows};
 use crate::exec::work::Work;
 use crate::exec::{RowIter, Runner};
-use crate::functions::Accumulator;
 use crate::logical::AggCall;
-use crate::storage::sel::rows_of;
-use crate::storage::{Batch, Cell, Column, Row, Sel};
+use crate::storage::sel::nth;
+use crate::storage::{Batch, Column, Row, Sel};
 use crate::txn::TxId;
 use spilled::{Overflow, Piece, Queued};
-pub(in crate::exec) use table::Held;
-use table::Table;
 
 /// The rows or pieces groups partly made take each, on average, for a
 /// grouping to go on making them: past fewer, its pieces, each costing
@@ -47,13 +46,14 @@ use table::Table;
 const PARTIAL_GAIN: usize = 4;
 
 /// What a grouping groups and computes: what it reads of each batch, its
-/// set functions, what hears their warnings, and whether it makes groups
-/// partly before they spill.
+/// set functions, what hears their warnings, what its keys are hashed by,
+/// and whether it makes groups partly before they spill.
 #[derive(Clone, Copy)]
 struct Grouping<'a> {
     read: &'a Read,
     aggs: &'a [AggCall],
     runner: &'a Runner,
+    seed: &'a Seed,
     partial: bool,
 }
 
@@ -83,11 +83,11 @@ impl Numbers<'_> {
 pub(super) fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>, TxId), batches: Batches) -> Result<RowIter> {
     let (mut work, runner) = (Work::of(db, tx), Runner::new(db, tx));
     let partial = aggs.iter().all(|a| a.func.0.accumulator(a.result.clone()).write_state(&mut Vec::new()));
-    let how = Grouping { read, aggs, runner: &runner, partial };
+    let how = Grouping { read, aggs, runner: &runner, seed: db.functions.seed(), partial };
     // Rows past the work area are written by batch, the cheapest to read
     // back once; groups are made partly only of a partition that outgrows
     // it again, whose rows would be written again (`spilled::regrouped`).
-    let mut groups = Groups::new(work.limit(), Overflow::Partitions(None), false);
+    let mut groups = Groups::new(how, work.limit(), Overflow::Partitions(None), false);
     let mut rows = 0_u64;
     for kept in batches {
         let (batch, given) = kept?;
@@ -96,48 +96,6 @@ pub(super) fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Arc<State>,
     }
     let (held, overflow, _) = groups.finished(&mut work)?;
     spilled::merged(held, overflow, how, &mut work)
-}
-
-/// The rows `placed`, each its group's place among `groups` of them, its
-/// place among the rows given and in the batch, gathered by group in order:
-/// the places among those given, those in the batch, and where each
-/// group's end.
-fn gathered(placed: &[(usize, usize, usize)], groups: usize) -> (Vec<u32>, Vec<u32>, Vec<usize>) {
-    // Already gathered, each group's rows after the last's, as of runs.
-    if placed.is_sorted_by_key(|&(slot, ..)| slot) {
-        let mut ends = vec![0_usize; groups];
-        for (at, &(slot, ..)) in placed.iter().enumerate() {
-            if let Some(end) = ends.get_mut(slot) {
-                *end = at.saturating_add(1);
-            }
-        }
-        return (rows_of(placed.iter().map(|&(_, n, _)| n)), rows_of(placed.iter().map(|&(.., r)| r)), ends);
-    }
-    let mut ends = vec![0_usize; groups];
-    for &(slot, ..) in placed {
-        if let Some(end) = ends.get_mut(slot) {
-            *end = end.saturating_add(1);
-        }
-    }
-    let mut at = 0_usize;
-    let mut next: Vec<usize> = ends
-        .iter_mut()
-        .map(|end| {
-            let first = at;
-            at = at.saturating_add(*end);
-            *end = at;
-            first
-        })
-        .collect();
-    let (mut given, mut read_rows) = (vec![0_u32; placed.len()], vec![0_u32; placed.len()]);
-    for &(slot, n, r) in placed {
-        let Some(to) = next.get_mut(slot) else { continue };
-        if let (Some(g), Some(b)) = (given.get_mut(*to), read_rows.get_mut(*to)) {
-            (*g, *b) = (place(n), place(r));
-        }
-        *to = to.saturating_add(1);
-    }
-    (given, read_rows, ends)
 }
 
 /// \[DESIGN\] (RULES.md D31) Of a grouping by `groups`, one column of
@@ -166,16 +124,11 @@ fn run_ends(batch: &Batch, groups: &[usize], rows: Option<&[u32]>) -> Option<Vec
     )
 }
 
-/// The place `r` of a batch as a row of a selection: every place fits.
-fn place(r: usize) -> u32 {
-    u32::try_from(r).unwrap_or(u32::MAX)
-}
-
-/// A group of a grouping: one held, or one partly made, by its place.
+/// A group of a grouping: one held, or one partly made, by its number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Target {
-    Held(usize),
-    Partial(usize),
+    Held(u32),
+    Partial(u32),
 }
 
 /// Where a row or piece goes: to a group; to be written, a row by batch,
@@ -191,15 +144,13 @@ enum Placed {
     Split,
 }
 
-/// The groups of a batch's rows, in the order they came, and of each row
-/// its group's place among them, its place among those given and in the
-/// batch.
-type Segment = (Vec<Target>, Vec<(usize, usize, usize)>);
+/// A key to place, and its hash.
+type Hashed<'a> = (u64, Key<'a>);
 
 /// Groups being made, in the work area.
 struct Groups {
     /// The groups held, while they fit the work area.
-    held: Table,
+    held: GroupTable,
     /// The work area's bytes.
     limit: usize,
     /// Whether, the set functions writing their states, the work area is
@@ -207,9 +158,11 @@ struct Groups {
     splits: bool,
     /// The groups partly made of the rows past them, in the other half,
     /// if the set functions write their states.
-    partial: Option<Table>,
-    /// The key of the row being grouped.
+    partial: Option<GroupTable>,
+    /// The bytes of the key of a row or piece written past the work area.
     key: Vec<u8>,
+    /// The hash of each row of the batch being grouped.
+    hashes: Vec<u64>,
     /// Where the rows or pieces of groups past the work area go.
     overflow: Overflow,
     /// The rows of the batch being grouped to be written there: each one's
@@ -228,23 +181,23 @@ struct Groups {
 }
 
 impl Groups {
-    /// No groups yet, held while they take no more than `limit` bytes; if
-    /// groups may be made `partial`ly, the area split once they fill it;
-    /// what is past them written to `overflow`.
-    fn new(limit: usize, overflow: Overflow, partial: bool) -> Groups {
-        let (key, pending, scratch) = (Vec::new(), Vec::new(), Vec::new());
+    /// No groups yet of the grouping `how`, held while they take no more
+    /// than `limit` bytes; if groups may be made `partial`ly, the area
+    /// split once they fill it; what is past them written to `overflow`.
+    fn new(how: Grouping<'_>, limit: usize, overflow: Overflow, partial: bool) -> Groups {
         Groups {
-            held: Table::new(limit),
+            held: GroupTable::new(how.read.groups.len(), how.aggs, how.seed, limit),
             limit,
             splits: partial,
             partial: None,
-            key,
+            key: Vec::new(),
+            hashes: Vec::new(),
             overflow,
-            pending,
+            pending: Vec::new(),
             queued: Queued::default(),
             spilled: false,
             pieced: false,
-            scratch,
+            scratch: Vec::new(),
         }
     }
 
@@ -255,116 +208,68 @@ impl Groups {
     /// pieces in `work` once those are full.
     fn feed(&mut self, (batch, rows): (&Batch, Option<&[u32]>), numbers: Numbers<'_>, how: Grouping<'_>, work: &mut Work) -> Result<()> {
         let lanes = lanes(&how.read.taken, batch, rows);
-        let mut segment: Segment = (Vec::new(), Vec::new());
+        hash_rows(batch, (&how.read.groups, rows), (how.seed, how.runner.kernels()), &mut self.hashes);
         // Of a grouping by one column of runs, a row of the run of the row
-        // before it goes to that row's group, no key made.
+        // before it goes to that row's group, no key compared.
         let mut ends = run_ends(batch, &how.read.groups, rows).into_iter().flatten();
         let (mut boundary, mut last) = (0_usize, None);
         for n in 0..rows.map_or(batch.rows, <[u32]>::len) {
-            let r = crate::storage::sel::nth(rows, n);
+            let r = nth(rows, n);
             if n >= boundary {
                 boundary = ends.next().unwrap_or(n.saturating_add(1));
             } else if let Some(target) = last {
-                self.took(target, (n, r), (how, &mut segment));
+                self.take(target, (n, r));
                 continue;
             }
-            // The key made in a buffer kept, no value copied unless its
-            // group is new, nor made of an integer.
-            self.key.clear();
-            for &at in &how.read.groups {
-                put_key(batch.cell(at, r), &mut self.key);
-            }
-            let values = || how.read.groups.iter().map(|&at| batch.cell(at, r).to_value()).collect();
-            let mut placed = self.place((numbers.of(n), Some(r)), values, how, work)?;
+            let hashed = (self.hashes.get(n).copied().unwrap_or(0), Key::Row(batch, &how.read.groups, r));
+            let mut placed = self.place(hashed, (numbers.of(n), Some(r)), work)?;
             while let Placed::Full | Placed::Split = placed {
                 // The rows given so far fed, so the pieces written hold them.
-                self.fed((batch, &lanes), &mut segment, how)?;
+                self.fed(batch, &lanes, how)?;
                 self.make_room(placed, work)?;
-                placed = self.place((numbers.of(n), Some(r)), values, how, work)?;
-            }
-            if let (Placed::Into(target), false) = (placed, how.aggs.is_empty()) {
-                let slot = self.slot_of(target, &mut segment.0);
-                segment.1.push((slot, n, r));
+                placed = self.place(hashed, (numbers.of(n), Some(r)), work)?;
             }
             last = if let Placed::Into(target) = placed { Some(target) } else { None };
+            if let Some(target) = last {
+                self.take(target, (n, r));
+            }
         }
         self.overflow.write(batch, (&mut self.pending, &mut self.queued), work)?;
-        self.fed((batch, &lanes), &mut segment, how)
+        self.fed(batch, &lanes, how)
     }
 
-    /// Takes the `n`th row given, `r`, into group `target`, the group of
-    /// the row before it, of the same run: counted as taken, and noted in
-    /// `segment` to be fed, if `how` computes set functions.
-    fn took(&mut self, target: Target, (n, r): (usize, usize), (how, segment): (Grouping<'_>, &mut Segment)) {
-        let (table, _) = table_in((&mut self.held, &mut self.partial), target);
-        if let Some(table) = table {
-            table.taken = table.taken.saturating_add(1);
-        }
-        if !how.aggs.is_empty() {
-            let slot = self.slot_of(target, &mut segment.0);
-            segment.1.push((slot, n, r));
+    /// Takes the `n`th row given, at `r` of its batch, into group `target`.
+    fn take(&mut self, target: Target, (n, r): (usize, usize)) {
+        match (target, &mut self.partial) {
+            (Target::Held(g), _) => self.held.take(g, (n, r)),
+            (Target::Partial(g), Some(partial)) => partial.take(g, (n, r)),
+            (Target::Partial(_), None) => {}
         }
     }
 
-    /// Feeds each group of `segment` its rows of `batch`, gathered in
-    /// order, a counting sort into one buffer, a vector at a time; and
-    /// empties it.
-    fn fed(&mut self, (batch, lanes): (&Batch, &[Option<super::Fed<'_>>]), segment: &mut Segment, how: Grouping<'_>) -> Result<()> {
-        let (groups, placed) = segment;
-        let (given, read_rows, ends) = gathered(placed, groups.len());
-        let mut from = 0;
-        for (&target, &end) in groups.iter().zip(&ends) {
-            let (table, at) = table_in((&mut self.held, &mut self.partial), target);
-            let Some(table) = table else { continue };
-            if let Some(slot) = table.slots.get_mut(at) {
-                *slot = 0;
-            }
-            let (these, read_these) = (given.get(from..end).unwrap_or_default(), read_rows.get(from..end).unwrap_or_default());
-            from = end;
-            let Some((_, _, states)) = table.groups.get_mut(at) else { continue };
-            fed_group(states, (&how.read.taken, &mut self.scratch, how.runner), (batch, lanes), (these, read_these))?;
+    /// Feeds the rows taken of `batch` to their groups' set functions, of
+    /// `lanes` where evaluated by vectors, as `how` says.
+    fn fed(&mut self, batch: &Batch, lanes: &[Option<Fed<'_>>], how: Grouping<'_>) -> Result<()> {
+        let taken = (how.read.taken.as_slice(), lanes);
+        self.held.feed(batch, taken, (&mut self.scratch, how.runner))?;
+        match &mut self.partial {
+            Some(partial) => partial.feed(batch, taken, (&mut self.scratch, how.runner)),
+            None => Ok(()),
         }
-        groups.clear();
-        placed.clear();
-        Ok(())
-    }
-
-    /// The place of group `target` among `groups`, the groups the batch
-    /// has rows of, added if it is new.
-    fn slot_of(&mut self, target: Target, groups: &mut Vec<Target>) -> usize {
-        let (Some(table), at) = table_in((&mut self.held, &mut self.partial), target) else { return 0 };
-        if table.slots.len() <= at {
-            table.slots.resize(at.saturating_add(1), 0);
-        }
-        let Some(slot) = table.slots.get_mut(at) else { return 0 };
-        if let Some(found) = slot.checked_sub(1) {
-            return found;
-        }
-        groups.push(target);
-        *slot = groups.len();
-        groups.len().saturating_sub(1)
     }
 
     /// Where the row `r` of a batch, or a piece (no `r`), the `number`th,
-    /// of the key made and grouping `values`, goes: its group held, or made
-    /// while those held fit, so a grouping holds one at least; past them,
-    /// as `past` says.
-    #[expect(
-        clippy::inline_always,
-        reason = "R-DEV-1: a step of every row grouped, kept inline: as a call it adds a call a row, which a grouping's instructions show"
-    )]
-    #[inline(always)]
-    fn place(&mut self, (number, r): (u64, Option<usize>), values: impl Fn() -> Row, how: Grouping<'_>, work: &mut Work) -> Result<Placed> {
-        let at = if let Some(at) = self.held.get(&self.key) {
-            at
-        } else {
-            if self.spilled || self.held.full() {
-                return self.past(number, (r, values), how, work);
-            }
-            self.held.add(&self.key, fresh(number, values(), how))
-        };
-        self.held.taken = self.held.taken.saturating_add(1);
-        Ok(Placed::Into(Target::Held(at)))
+    /// of key and hash `hashed`, goes: its group held, or made while those
+    /// held fit, so a grouping holds one at least; past them, as `past`
+    /// says.
+    fn place(&mut self, hashed: Hashed<'_>, (number, r): (u64, Option<usize>), work: &mut Work) -> Result<Placed> {
+        if let Some(g) = self.held.find(hashed.0, hashed.1) {
+            return Ok(Placed::Into(Target::Held(g)));
+        }
+        if self.spilled || self.held.full() {
+            return self.past(hashed, (number, r), work);
+        }
+        Ok(Placed::Into(Target::Held(self.held.make(hashed.0, hashed.1, number))))
     }
 
     /// Where a row or piece of a group not held goes: nowhere till the
@@ -372,32 +277,26 @@ impl Groups {
     /// it; its group partly made, or none while those are full; else a row
     /// is to be written (`pending`), its partition found in `work`, and a
     /// piece passed on.
-    #[expect(
-        clippy::inline_always,
-        reason = "R-DEV-1: a step of every row grouped, kept inline: as a call it adds a call a row, which a grouping's instructions show"
-    )]
-    #[inline(always)]
-    fn past(&mut self, number: u64, (r, values): (Option<usize>, impl Fn() -> Row), how: Grouping<'_>, work: &mut Work) -> Result<Placed> {
+    fn past(&mut self, (hash, key): Hashed<'_>, (number, r): (u64, Option<usize>), work: &mut Work) -> Result<Placed> {
         if self.splits {
             return Ok(Placed::Split);
         }
         self.spilled = true;
         let Some(partial) = &mut self.partial else {
             let Some(r) = r else { return Ok(Placed::Passed) };
+            self.key.clear();
+            key.put(self.held.width(), &mut self.key);
             let part = self.overflow.part_of(&self.key, work)?;
             self.pending.push((part, r, number));
             return Ok(Placed::Written);
         };
-        let at = if let Some(at) = partial.get(&self.key) {
-            at
-        } else {
-            if partial.full() {
-                return Ok(Placed::Full);
-            }
-            partial.add(&self.key, fresh(number, values(), how))
-        };
-        partial.taken = partial.taken.saturating_add(1);
-        Ok(Placed::Into(Target::Partial(at)))
+        if let Some(g) = partial.find(hash, key) {
+            return Ok(Placed::Into(Target::Partial(g)));
+        }
+        if partial.full() {
+            return Ok(Placed::Full);
+        }
+        Ok(Placed::Into(Target::Partial(partial.make(hash, key, number))))
     }
 
     /// Takes in `piece`, as `how` says: merged into its group, held or
@@ -405,28 +304,28 @@ impl Groups {
     /// made written in `work` once full.
     fn absorb(&mut self, piece: &Piece, how: Grouping<'_>, work: &mut Work) -> Result<()> {
         self.pieced = true;
-        self.key.clear();
-        for v in &piece.values {
-            put_key(Cell::Value(v), &mut self.key);
-        }
-        let values = || piece.values.clone();
-        let mut placed = self.place((piece.first, None), values, how, work)?;
+        let key = Key::Values(&piece.values);
+        let hashed = (crate::exec::table::hash_values(how.seed, &piece.values), key);
+        let mut placed = self.place(hashed, (piece.first, None), work)?;
         while let Placed::Full | Placed::Split = placed {
             self.make_room(placed, work)?;
-            placed = self.place((piece.first, None), values, how, work)?;
+            placed = self.place(hashed, (piece.first, None), work)?;
         }
         // Groups not made partly: a piece of one not held goes on.
         if placed == Placed::Passed {
+            self.key.clear();
+            key.put(self.held.width(), &mut self.key);
             return self.overflow.write_piece(&self.key, piece, &mut self.queued, work);
         }
-        let Placed::Into(target) = placed else { return Err(spilled::lost()) };
-        let (table, at) = table_in((&mut self.held, &mut self.partial), target);
-        let Some((first, _, states)) = table.and_then(|t| t.groups.get_mut(at)) else { return Err(spilled::lost()) };
-        *first = (*first).min(piece.first);
-        for (state, written) in states.iter_mut().zip(&piece.states) {
-            state.merge(written)?;
-        }
-        Ok(())
+        let (table, g) = match (placed, &mut self.partial) {
+            (Placed::Into(Target::Held(g)), _) => (&mut self.held, g),
+            (Placed::Into(Target::Partial(g)), Some(partial)) => (partial, g),
+            (Placed::Into(Target::Partial(_)), None) | (Placed::Written | Placed::Passed | Placed::Full | Placed::Split, _) => {
+                return Err(spilled::lost());
+            }
+        };
+        table.took();
+        table.merge_written(g, (piece.first, &piece.states))
     }
 
     /// Makes room for what `placed` found none for: writes the groups
@@ -441,13 +340,16 @@ impl Groups {
     /// partly made; else none is made partly, and rows past them written.
     fn split(&mut self, work: &mut Work) -> Result<()> {
         (self.splits, self.spilled) = (false, true);
-        if self.held.taken < self.held.groups.len().saturating_mul(PARTIAL_GAIN) {
+        if self.held.taken < self.held.len().saturating_mul(PARTIAL_GAIN) {
             return Ok(());
         }
-        for (key, group) in self.held.split_off(self.held.groups.len().div_ceil(2)) {
-            self.overflow.write_group((&key, &group), &mut self.queued, work)?;
+        let half = self.held.len().div_ceil(2);
+        for g in half..self.held.len() {
+            self.overflow.write_group((&self.held, g), &mut self.queued, work)?;
         }
-        self.partial = Some(Table::new(self.limit.saturating_sub(self.held.bytes())));
+        self.held.truncate(half);
+        let room = self.limit.saturating_sub(self.held.bytes());
+        self.partial = Some(GroupTable::new(self.held.width(), self.held.aggs(), self.held.seed(), room));
         Ok(())
     }
 
@@ -456,13 +358,15 @@ impl Groups {
     /// then on if they took fewer than `PARTIAL_GAIN` rows or pieces each,
     /// as a piece is written in place of no more rows.
     fn flush(&mut self, work: &mut Work) -> Result<()> {
-        let Some(partial) = &mut self.partial else { return Ok(()) };
-        let gained = partial.taken >= partial.groups.len().saturating_mul(PARTIAL_GAIN);
-        for (key, group) in partial.drained() {
-            self.overflow.write_group((&key, &group), &mut self.queued, work)?;
+        let Self { partial, overflow, queued, .. } = self;
+        let Some(table) = partial else { return Ok(()) };
+        let gained = table.taken >= table.len().saturating_mul(PARTIAL_GAIN);
+        for g in 0..table.len() {
+            overflow.write_group((table, g), queued, work)?;
         }
+        table.truncate(0);
         if !gained {
-            self.partial = None;
+            *partial = None;
         }
         Ok(())
     }
@@ -474,37 +378,12 @@ impl Groups {
     fn finished(mut self, work: &mut Work) -> Result<(Finished, Overflow, bool)> {
         self.flush(work)?;
         self.overflow.write_queued(&mut self.queued, work)?;
+        let mut held = self.held.finished()?;
         // Groups made of pieces are made in the order pieces come, not of
         // their first rows: put in that order, as the merge reads them.
-        let mut groups = self.held.into_groups();
         if self.pieced {
-            groups.sort_by_key(|g| g.0);
+            held.sort_by_key(|g| g.0);
         }
-        let held = groups
-            .into_iter()
-            .map(|(first, mut row, states)| {
-                for state in &states {
-                    row.push(state.finish()?);
-                }
-                Ok((first, row))
-            })
-            .collect::<Result<_>>()?;
         Ok((held, self.overflow, self.partial.is_some()))
     }
-}
-
-/// The table of `target`, of the groups `held` and those `partial`ly
-/// made, if it has one, and its place there.
-fn table_in<'t>((held, partial): (&'t mut Table, &'t mut Option<Table>), target: Target) -> (Option<&'t mut Table>, usize) {
-    match target {
-        Target::Held(at) => (Some(held), at),
-        Target::Partial(at) => (partial.as_mut(), at),
-    }
-}
-
-/// A new group, the `number`th row its first, of grouping values `values`,
-/// its set functions those of `how`, fed nothing.
-fn fresh(number: u64, values: Row, how: Grouping<'_>) -> Held {
-    let states: Vec<Box<dyn Accumulator>> = how.aggs.iter().map(|a| a.func.0.accumulator(a.result.clone())).collect();
-    (number, values, states)
 }

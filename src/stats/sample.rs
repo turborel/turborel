@@ -15,6 +15,9 @@
 //! the empty one of its kind, so a sample of long values takes a bounded
 //! memory; a pattern is judged on what is kept.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use crate::storage::Row;
 use crate::value::Value;
 use crate::value::lob::Lob;
@@ -32,21 +35,53 @@ pub const ROW_CHARACTERS: usize = 256;
 /// \[DESIGN\] The most octets of a binary string a sampled row keeps.
 pub const ROW_OCTETS: u32 = 256;
 
-/// A sample of a table's rows.
-#[derive(Debug, Clone, Default)]
+/// \[DESIGN\] The most answers a sample remembers: past them it forgets
+/// all and begins again.
+pub const REMEMBERED: usize = 1_024;
+
+/// A sample of a table's rows, and the answers asked of it.
+#[derive(Debug, Default)]
 pub struct RowSample {
     rows: Vec<Row>,
+    /// What was found of it, by the question's key (`remembered`).
+    answers: Mutex<HashMap<u64, f64>>,
+}
+
+impl Clone for RowSample {
+    fn clone(&self) -> RowSample {
+        RowSample::of_rows(self.rows.clone())
+    }
 }
 
 impl RowSample {
     /// A sample of `rows`, as an engine that keeps its own gives them.
     pub fn of_rows(rows: Vec<Row>) -> RowSample {
-        RowSample { rows }
+        RowSample { rows, answers: Mutex::default() }
     }
 
     /// Its rows.
     pub fn rows(&self) -> &[Row] {
         &self.rows
+    }
+
+    /// The answer to the question of key `key`, by `find` the first time
+    /// it is asked, remembered after: the sample never changes, and the
+    /// planner asks the same of it for each plan it weighs and each
+    /// statement it plans, where evaluating up to `SAMPLE_ROWS` rows each
+    /// time would cost more than the rest of planning. At most
+    /// `REMEMBERED` answers are kept.
+    pub fn remembered(&self, key: u64, find: impl FnOnce() -> f64) -> f64 {
+        if let Some(answer) = self.answers.lock().ok().and_then(|a| a.get(&key).copied()) {
+            return answer;
+        }
+        let answer = find();
+        if let Ok(mut answers) = self.answers.lock() {
+            if answers.len() >= REMEMBERED {
+                answers.clear();
+            }
+            answers.insert(key, answer);
+        }
+        answer
     }
 }
 
@@ -88,7 +123,7 @@ impl RowReservoir {
 
     /// The sample, if any row was added.
     pub fn finish(self) -> Option<RowSample> {
-        (!self.rows.is_empty()).then_some(RowSample { rows: self.rows })
+        (!self.rows.is_empty()).then(|| RowSample::of_rows(self.rows))
     }
 }
 

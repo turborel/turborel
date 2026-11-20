@@ -3,14 +3,23 @@
 //! only strings that begin with them, which lie in the range from the
 //! prefix up to the prefix with its last character the next: that
 //! range's share, by the column's common values and histogram, times
-//! `LIKE_REST` for what the rest of the pattern asks, unless the rest is
-//! `%` alone, which asks nothing. Any other pattern no synopsis answers;
-//! the sample does if it can (`estimate/sampled.rs`), else the default.
+//! what the rest of the pattern asks, unless the rest is `%` alone, which
+//! asks nothing: the share of the sampled strings with the prefix that
+//! the whole pattern keeps, if the sample holds enough of them, else
+//! `LIKE_REST`. A range narrower than a histogram's
+//! bucket keeps at least an equality's share. Of a pattern whose rest
+//! asks more, or with no prefix, the sample answers if it can
+//! (`estimate/sampled.rs`), else this estimate or the default.
 
 use std::cmp::Ordering;
 
+use super::fingerprint::key_of;
+use super::sampled::{SAMPLE_HITS, as_given, remembered_as};
 use super::{Known, compare};
+use crate::exec::{NoSubqueries, eval_cond};
+use crate::logical::Truth;
 use crate::logical::{Cond, Expr};
+use crate::storage::{Row, cost_of};
 use crate::value::{CompOp, Value};
 use crate::value::{constant_prefix, constant_rest_is_any};
 
@@ -27,8 +36,41 @@ pub(super) fn selectivity(c: &Cond, known: Known<'_>) -> Option<f64> {
     let Prefixed { column, pattern, escape, prefix } = prefixed(c)?;
     let from = compare((column, CompOp::Ge, &Value::Char(prefix.clone())), known);
     let past = next_prefix(&prefix).map_or(0.0_f64, |next| compare((column, CompOp::Ge, &Value::Char(next)), known));
-    let rest = if constant_rest_is_any(pattern, escape) { 1.0_f64 } else { LIKE_REST };
-    Some(((from - past).max(0.0_f64) * rest).clamp(0.0, 1.0))
+    let rest = if constant_rest_is_any(pattern, escape) { 1.0_f64 } else { sampled_rest(c, column, &prefix, known).unwrap_or(LIKE_REST) };
+    // A range narrower than a histogram's bucket shows no share of it; it
+    // keeps at least what an equality with the prefix would.
+    let equal = compare((column, CompOp::Eq, &Value::Char(prefix)), known);
+    Some(((from - past).max(equal).max(0.0_f64) * rest).clamp(0.0, 1.0))
+}
+
+/// Of the sampled strings of `column` beginning with `prefix`, the share
+/// the LIKE `c` keeps, if the table's sample holds at least
+/// `SAMPLE_HITS` of them: what the rest of the pattern asks, `_` and
+/// characters after a `%` among it, which no synopsis tells.
+fn sampled_rest(c: &Cond, column: usize, prefix: &str, known: Known<'_>) -> Option<f64> {
+    let sample = known.stats?.sample()?;
+    as_given(sample.remembered(key_of("like", &[c], &|_| {}), || remembered_as(rest_of(c, column, prefix, sample.rows()))))
+}
+
+/// `sampled_rest`, found from the sampled rows `rows`.
+fn rest_of(c: &Cond, column: usize, prefix: &str, rows: &[Row]) -> Option<f64> {
+    let begun: Vec<&Row> = rows.iter().filter(|row| row.get(column).and_then(text).is_some_and(|s| s.starts_with(prefix))).collect();
+    if begun.len() < SAMPLE_HITS {
+        return None;
+    }
+    let kept = begun.iter().filter(|row| matches!(eval_cond(c, row, &NoSubqueries), Ok(Truth::True))).count();
+    Some(cost_of(kept) / cost_of(begun.len()))
+}
+
+/// The string `v` holds, if it is one.
+fn text(v: &Value) -> Option<&str> {
+    if let Value::Char(s) = v { Some(s) } else { None }
+}
+
+/// Whether `c` is a LIKE whose prefix answers it whole, the rest of its
+/// pattern `%` alone.
+pub(super) fn whole(c: &Cond) -> bool {
+    prefixed(c).is_some_and(|p| constant_rest_is_any(p.pattern, p.escape))
 }
 
 /// A LIKE of a column and a constant pattern that begins with

@@ -117,7 +117,8 @@ fn selections(kernels: &dyn Kernels, len: usize) {
     }
 }
 
-/// Checks the sums, extremes and gathers of `kernels` of vectors of `len`.
+/// Checks the sums, extremes, gathers and hashes of `kernels` of vectors
+/// of `len`.
 fn aggregates(kernels: &dyn Kernels, len: usize) {
     let i = ints(len);
     for (nulls, sel) in givens(len) {
@@ -134,6 +135,12 @@ fn aggregates(kernels: &dyn Kernels, len: usize) {
         let mut out = vec![5];
         kernels.gather_i64(&i, &rows, &mut out);
         assert_eq!(out[1..], held[..], "gather_i64 of {len}");
+        let seed = 0x5EED_u64.wrapping_mul(len as u64 + 1);
+        let given: Vec<i64> = sel.as_deref().map_or_else(|| i.clone(), |s| s.iter().map(|&r| i[r as usize]).collect());
+        let hashes: Vec<u64> = given.iter().map(|&v| turborel::hash::murmur::fmix64(seed ^ v.cast_unsigned())).collect();
+        let mut out = vec![7];
+        kernels.hash_i64(&i, seed, sel.as_deref(), &mut out);
+        assert_eq!(out[1..], hashes[..], "hash_i64 of {len}");
     }
 }
 

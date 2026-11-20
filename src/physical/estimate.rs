@@ -11,6 +11,8 @@
 
 mod backoff;
 mod conjunction;
+mod fingerprint;
+mod joint;
 mod like;
 mod sampled;
 
@@ -92,3 +94,8 @@ fn default_compare(op: CompOp, guess: &CostModel) -> f64 {
         CompOp::Lt | CompOp::Le | CompOp::Gt | CompOp::Ge => guess.range_selectivity,
     }
 }
+
+// Unit tests: a conjunction on the sample, by ranges and by backoff
+// (RULES.md R-TEST-1, R-TEST-8).
+#[cfg(test)]
+mod tests;

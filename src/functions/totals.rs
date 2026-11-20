@@ -3,6 +3,7 @@
 //! element-wise VECTOR_SUM and VECTOR_AVG (design document §6.5, RULES.md
 //! D93), so `AVG(v)` gives a centroid.
 
+use super::columnar::{Columnar, Kind};
 use super::sum::{AvgAcc, SumAcc};
 use super::{Accumulator, AggregateFunction};
 use crate::error::{Code, Result, fail};
@@ -82,6 +83,9 @@ impl AggregateFunction for Sum {
         }
         Box::new(SumAcc::new(result))
     }
+    fn columnar(&self) -> Option<Columnar> {
+        Some(Columnar(Kind::Sum))
+    }
 }
 
 /// AVG. [ISO/IEC 9075:1992 §6.5 GR2b ii] the average, which alone shall be within range (`sum.rs`): SQL-92 drops
@@ -133,5 +137,8 @@ impl AggregateFunction for Avg {
             return Aggregate::Avg.accumulator(result);
         }
         Box::new(AvgAcc::new(result))
+    }
+    fn columnar(&self) -> Option<Columnar> {
+        Some(Columnar(Kind::Avg))
     }
 }

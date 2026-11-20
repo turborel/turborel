@@ -9,12 +9,15 @@
 //!   keys the index counts (`Statistics::group_distinct`), which counts
 //!   correlated columns once;
 //! * conjuncts that go together, or that no synopsis answers, are
-//!   evaluated on the table's sample of rows (`estimate/sampled.rs`);
+//!   evaluated on the table's sample of rows (`estimate/sampled.rs`),
+//!   and equalities of several columns too rare for it to count by
+//!   their joint distinct values in it (`estimate/joint.rs`);
 //! * the factors left are combined by exponential backoff
 //!   (`estimate/backoff.rs`).
 
-use super::{Known, backoff, sampled, selectivity};
+use super::{Known, backoff, joint, sampled, selectivity};
 use crate::logical::{Cond, compared_with_constant, cond_columns};
+use crate::stats::RowSample;
 use crate::value::{CompOp, Value};
 
 /// \[DESIGN\] The most columns of equalities whose sets an index's key
@@ -31,7 +34,8 @@ pub fn conjunction(conds: &[Cond], known: Known<'_>) -> f64 {
     if let Some(sample) = sampled::eligible(&told, known) {
         let synopses = backoff::combined(&factors(&told, known));
         let mut shares = factors(&untold, known);
-        shares.push(sampled::kept(&told, sample, synopses));
+        let of = known.stats.and_then(crate::stats::Statistics::rows).unwrap_or(0.0_f64);
+        shares.push(sampled::kept(&told, (sample, of), synopses, || rare(&told, sample, known)));
         return backoff::combined(&shares).clamp(0.0, 1.0);
     }
     backoff::combined(&factors(&all, known)).clamp(0.0, 1.0)
@@ -141,4 +145,26 @@ fn same(a: &Value, b: &Value) -> bool {
 /// Whether the set `mask` has its member `at`.
 fn has(mask: usize, at: usize) -> bool {
     u32::try_from(at).ok().and_then(|at| mask.checked_shr(at)).is_some_and(|m| m & 1 == 1)
+}
+
+/// Of `conds`, which the sample keeps too few rows of to count, the share
+/// they keep with their equalities of two or more columns with constants
+/// not common taken by those columns' joint distinct values in `sample`,
+/// the others by backoff; none if fewer than two columns have one.
+fn rare(conds: &[&Cond], sample: &RowSample, known: Known<'_>) -> Option<f64> {
+    let (mut columns, mut values, mut others) = (Vec::new(), Vec::new(), Vec::new());
+    for &c in conds {
+        match compared_with_constant(c).filter(|&(column, ..)| single_equality(&[c], known) && !columns.contains(&column)) {
+            Some((column, _, value)) => {
+                columns.push(column);
+                values.push(value);
+            }
+            None => others.push(c),
+        }
+    }
+    if columns.len() < 2 {
+        return None;
+    }
+    let share = joint::share(&columns, &values, sample, known.stats?.rows()?)?;
+    Some(share * backoff::combined(&factors(&others, known)))
 }

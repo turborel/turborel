@@ -51,7 +51,7 @@ const TINY: f64 = f64::from_bits(123_u64 << 52);
 /// rest are added to `small`, which cannot either. Of values all such,
 /// the total is the plain sum's, in the same order.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Wide {
+pub(crate) struct Wide {
     big: f64,
     small: f64,
 }
@@ -59,11 +59,11 @@ pub(super) struct Wide {
 impl Wide {
     /// No value yet: each part -0, which adds to any value as nothing,
     /// so a sum of -0s is -0.
-    pub(super) const EMPTY: Wide = Wide { big: -0.0_f64, small: -0.0_f64 };
+    pub(crate) const EMPTY: Wide = Wide { big: -0.0_f64, small: -0.0_f64 };
 
     /// The sum with `f` added.
     #[must_use]
-    pub(super) fn with(self, f: f64) -> Wide {
+    pub(crate) fn with(self, f: f64) -> Wide {
         if f.abs() >= TINY { Wide { big: self.big + f * UNSHIFT, ..self } } else { Wide { small: self.small + f, ..self } }
     }
 
