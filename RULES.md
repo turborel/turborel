@@ -385,6 +385,7 @@ verification approach DO-178C expects (§8).
 | D417 | An update or delete takes the row it replaced from the write, not a read before it |
 | D418 | A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot |
 | D419 | A row of values that reads nothing is evaluated, not planned |
+| D420 | A fixed-length character string already of its type's length is cast and assigned without a copy |
 | D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
 | D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
@@ -10652,6 +10653,34 @@ dropped index or a table made again is seen; a leaf first planned over
 a table too small for an unpriced probe keeps no plan until then
 (`routines/kept/leaves.rs`).
 
+#### D409. A shadowed file is read outside its lock, each run of the file's granules at once
+
+A read of a shadowed file (D30) held the file's lock while it read each
+granule, one call of 4 KiB at a time, so every write, which takes the
+lock alone to append to the side file, waited for the reads under way,
+and every read for that write. Under a write load the threads spent
+more time waiting for that lock than reading. A read now copies under
+the lock what was written since the last commit, held or in the side
+files, and finds the rest to be the file's; it then lets the lock go and
+reads each run of the file's granules with one call. A commit writes
+into the file only granules the sealed batch holds, which a read copies
+from the side file instead, and cuts the file no lower than the limit a
+read takes, so what is read of the file is what the lock saw
+(`disk/shadow/file.rs`).
+
+#### D410. A log's sync tells how far the log is durable
+
+A transaction that commits waits for its commit record to be durable,
+and the file log groups those waits into one sync (D25), which makes
+durable every record appended before it began, often other
+transactions' commit records too. `Log::sync_reached` syncs as `sync`
+does and gives the position before which every record is now durable,
+so those transactions can know their records durable without a sync of
+their own, and the database can keep how far the log is durable. The
+file log gives the end of its segment's blocks the group's sync made
+durable (`log/file/segments.rs`). A log syncing nothing, and the
+default, claim just past the record asked for.
+
 ### Order entry execution
 
 #### D413. MIN or MAX of a column known not null is read from the first row in order
@@ -10739,34 +10768,6 @@ the committed one its snapshot shows, as the write refuses any other
 ends. Another engine reads the row and writes it, as before. A row of a
 system-time period is read first still, so that its period refuses a
 write before it is made.
-#### D409. A shadowed file is read outside its lock, each run of the file's granules at once
-
-A read of a shadowed file (D30) held the file's lock while it read each
-granule, one call of 4 KiB at a time, so every write, which takes the
-lock alone to append to the side file, waited for the reads under way,
-and every read for that write. Under a write load the threads spent
-more time waiting for that lock than reading. A read now copies under
-the lock what was written since the last commit, held or in the side
-files, and finds the rest to be the file's; it then lets the lock go and
-reads each run of the file's granules with one call. A commit writes
-into the file only granules the sealed batch holds, which a read copies
-from the side file instead, and cuts the file no lower than the limit a
-read takes, so what is read of the file is what the lock saw
-(`disk/shadow/file.rs`).
-
-#### D410. A log's sync tells how far the log is durable
-
-A transaction that commits waits for its commit record to be durable,
-and the file log groups those waits into one sync (D25), which makes
-durable every record appended before it began, often other
-transactions' commit records too. `Log::sync_reached` syncs as `sync`
-does and gives the position before which every record is now durable,
-so those transactions can know their records durable without a sync of
-their own, and the database can keep how far the log is durable. The
-file log gives the end of its segment's blocks the group's sync made
-durable (`log/file/segments.rs`). A log syncing nothing, and the
-default, claim just past the record asked for.
-
 #### D418. A kept plan may hold an inner join, and a variable named twice in a kept body's query is one slot
 
 A kept or learned plan held no join (D45), so a query joining two
@@ -10794,6 +10795,16 @@ subquery, invokes a routine or draws a sequence generator's next value
 function that modifies SQL-data already was. The values and errors are
 those the query gave. A value that reads a table, or that draws the
 next value of a generator once a row, is still planned.
+
+#### D420. A fixed-length character string already of its type's length is cast and assigned without a copy
+
+A CHARACTER value cast or assigned to a CHARACTER type was cut to the
+type's length and padded again into a new string, though every value
+read of a column of the type, or of a variable of it, already has that
+length. An order entry's line assigns a district's 24 characters into a
+variable at each line, and the copies were a fiftieth of it. A value of
+the type's length is now kept as it is (`types/character.rs`), the value
+the cut and the padding would give.
 
 #### D440. A commit is one store in a status table, and its versions are stamped after its locks are released
 
