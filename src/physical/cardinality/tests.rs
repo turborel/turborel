@@ -192,7 +192,8 @@ fn equal(c: usize, v: i128) -> Cond {
 /// A guard of no columns, of the shape `optimizer::raising` makes, or of
 /// `width` columns.
 fn guard(width: usize) -> LogicalPlan {
-    let values = LogicalPlan::Values { rows: vec![vec![Expr::Const(Value::Null); width]], types: vec![crate::value::DataType::Boolean; width] };
+    let values =
+        LogicalPlan::Values { rows: vec![vec![Expr::Const(Value::Null); width]], types: vec![crate::value::DataType::Boolean; width] };
     LogicalPlan::Filter { cond: Cond::Const(Truth::True), input: Box::new(values) }
 }
 
@@ -210,7 +211,10 @@ fn a_guarded_operand_is_estimated_as_its_operand() {
     let (_db, s) = database();
     let st = state(&s);
     let est = Estimates::new(&st);
-    let guarded = |g: LogicalPlan| LogicalPlan::Filter { cond: equal(1, 3), input: Box::new(LogicalPlan::Product { left: Box::new(scan("T", 2)), right: Box::new(g) }) };
+    let guarded = |g: LogicalPlan| LogicalPlan::Filter {
+        cond: equal(1, 3),
+        input: Box::new(LogicalPlan::Product { left: Box::new(scan("T", 2)), right: Box::new(g) }),
+    };
     assert!(near(est.rows(&guarded(guard(0))), 100.0), "{}", est.rows(&guarded(guard(0))));
     // A guard of a column is a relation of one row joined, its filter a third.
     assert!(est.rows(&guarded(guard(1))) < 100.0_f64);
@@ -254,7 +258,12 @@ fn defaults_of_what_has_no_count() {
     let (_db, s) = database();
     let st = state(&s);
     let est = Estimates::new(&st);
-    let missing = LogicalPlan::Scan { table: QualifiedName { auth: "E".into(), ident: "NONE".into() }, names: vec![], needed: vec![], located: false };
+    let missing = LogicalPlan::Scan {
+        table: QualifiedName { auth: "E".into(), ident: "NONE".into() },
+        names: vec![],
+        needed: vec![],
+        located: false,
+    };
     assert!((est.rows(&missing) - UNKNOWN_ROWS).abs() < f64::EPSILON);
     let unnested = rows(&s, "SELECT * FROM V, UNNEST(ARRAY[1, 2]) AS A(X)");
     assert!(near(unnested, 10.0 * UNNEST_FANOUT), "{unnested}");

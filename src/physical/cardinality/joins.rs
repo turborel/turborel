@@ -171,7 +171,6 @@ impl Estimates<'_> {
         };
         Some(1.0_f64 / distinct(*a).max(distinct(*b)).max(1.0_f64))
     }
-
 }
 
 /// The width of the chain's columns.

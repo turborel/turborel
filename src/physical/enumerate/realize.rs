@@ -216,7 +216,13 @@ impl PhysicalPlanner<'_> {
     /// An outer join, hashed on its equalities: the operand of fewer rows
     /// built unless the left's order was chosen, a LEFT join so the RIGHT
     /// join of its operands swapped.
-    fn outer_realized(&self, cx: &Context<'_>, kind: Kind, (l, r): (Realized, Realized), (conds, rows, est): (&[Cond], (f64, f64), f64)) -> Realized {
+    fn outer_realized(
+        &self,
+        cx: &Context<'_>,
+        kind: Kind,
+        (l, r): (Realized, Realized),
+        (conds, rows, est): (&[Cond], (f64, f64), f64),
+    ) -> Realized {
         let swap = rows.0 < rows.1 && (kind == Kind::Full || l.order == Order::None);
         let of = match (kind, swap) {
             (Kind::Full, true | false) => OuterJoin::Full,

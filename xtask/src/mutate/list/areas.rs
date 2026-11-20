@@ -80,7 +80,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 35] {
+fn second() -> [&'static [Mutation]; 36] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -117,6 +117,7 @@ fn second() -> [&'static [Mutation]; 35] {
         &distinct_aggregates::DISTINCT_AGGREGATES,
         &unnesting::UNNESTING,
         &insert_values::INSERT_VALUES,
+        &estimates::ESTIMATES,
     ]
 }
 
@@ -189,8 +190,8 @@ fn plugins() -> [&'static [Mutation]; 9] {
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, simple features', partitioning's, UUID's,
 /// the memory budget's,
 /// the command-line client's, replication's, the server's, the native protocol's, the client library's,
-/// join enumeration's, the estimator's and the standard's gaps a benchmark found.
-fn last() -> [&'static [Mutation]; 49] {
+/// join enumeration's and the standard's gaps a benchmark found.
+fn last() -> [&'static [Mutation]; 48] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -239,7 +240,6 @@ fn last() -> [&'static [Mutation]; 49] {
         &super::server::native::NATIVE,
         &super::client::CLIENT,
         &joins::JOINS,
-        &estimates::ESTIMATES,
         &super::std_gaps::STD_GAPS,
     ]
 }

@@ -229,7 +229,12 @@ fn nodes(plan: &LogicalPlan) -> usize {
 /// each rewrite. Every rewrite spends one of `budget`, the optimization's,
 /// so rules that undo each other stop once it is spent. The walk recurs
 /// only into the plan's depth; each node's rounds are a loop.
-fn pass(on: &[&dyn Rule], plan: LogicalPlan, (ctx, budget): (&RuleContext<'_>, &mut usize), trace: &mut Vec<&'static str>) -> (LogicalPlan, bool) {
+fn pass(
+    on: &[&dyn Rule],
+    plan: LogicalPlan,
+    (ctx, budget): (&RuleContext<'_>, &mut usize),
+    trace: &mut Vec<&'static str>,
+) -> (LogicalPlan, bool) {
     let mut changed = false;
     let mut plan = plan.map_inputs(|input| {
         let (p, c) = pass(on, input, (ctx, &mut *budget), trace);

@@ -218,7 +218,8 @@ impl PhysicalPlanner<'_> {
             };
             let probed: Vec<usize> = at.iter().filter_map(|&k| ix.columns.get(k).copied()).collect(); // `indexed/fan_out.rs`
             let fan_out = || self.edge_fan_out(table, &probed).unwrap_or_else(|| rows * by_columns());
-            let each = (whole && routing.is_none()).then(|| self.index_keys(&ix.name, &**found)).flatten().map_or_else(fan_out, |d| rows / d.max(1.0_f64));
+            let keys_counted = (whole && routing.is_none()).then(|| self.index_keys(&ix.name, &**found)).flatten();
+            let each = keys_counted.map_or_else(fan_out, |d| rows / d.max(1.0_f64));
             let pages = Candidate::pages(&**found, (&types, used.len()), reverse, rows);
             let missed = found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost();
             // Of each partition's index, each partition a probe is routed to probed.

@@ -57,6 +57,11 @@ impl Filling<'_> {
     }
 
     /// The part run in parallel `p`, its plan filled.
+    /// `plan` filled, boxed.
+    fn boxed(&self, plan: Plan) -> Result<Box<Plan>> {
+        Ok(Box::new(self.plan(plan)?))
+    }
+
     fn parallel(&self, mut p: Box<crate::physical::Parallel>) -> Result<Plan> {
         p.input = self.plan(p.input)?;
         Ok(Plan::Parallel(p))
@@ -94,7 +99,7 @@ impl Filling<'_> {
                 let fetch = limit.fetch.map(|f| Ok::<_, SqlError>(Fetch { count: self.expr(f.count)?, ..f })).transpose()?;
                 Ok(Plan::Limit { limit: Limit { offset, fetch }, input: Box::new(self.plan(*input)?), est })
             }
-            Plan::Append { left, right, est } => Ok(Plan::Append { left: Box::new(self.plan(*left)?), right: Box::new(self.plan(*right)?), est }),
+            Plan::Append { left, right, est } => Ok(Plan::Append { left: Box::new(self.plan(*left)?), right: self.boxed(*right)?, est }),
             Plan::Parallel(p) => self.parallel(p),
             Plan::MergeAppend { inputs, keys, detail } => Ok(Plan::MergeAppend { inputs: self.plans(inputs)?, keys, detail }),
             Plan::Product { .. }

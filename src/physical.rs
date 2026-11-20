@@ -552,7 +552,6 @@ impl<'a> PhysicalPlanner<'a> {
         let detail = self.described(input, |names| render_cond(&cond, names));
         Built { plan: Plan::Filter { cond, detail, est, of_read: false, input: Box::new(b.plan) }, ordered: b.ordered }
     }
-
 }
 
 /// `want`, if each of its keys is of a product's left operand, `width`

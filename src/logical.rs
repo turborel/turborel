@@ -536,7 +536,10 @@ impl LogicalPlan {
             LogicalPlan::Window(w) => w.input.width().saturating_add(w.calls.len()),
             LogicalPlan::Recognize(_) => self.names().len(),
             LogicalPlan::Values { types, .. } => types.len(),
-            LogicalPlan::Filter { input, .. } | LogicalPlan::Distinct { input } | LogicalPlan::Sort { input, .. } | LogicalPlan::Limit { input, .. } => input.width(),
+            LogicalPlan::Filter { input, .. }
+            | LogicalPlan::Distinct { input }
+            | LogicalPlan::Sort { input, .. }
+            | LogicalPlan::Limit { input, .. } => input.width(),
         }
     }
 

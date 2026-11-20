@@ -122,7 +122,12 @@ impl PhysicalPlanner<'_> {
 /// The hash join of `left` and `right` on `keys`, the left `width` columns
 /// wide, its rows filtered by the rest of the condition, `rest`, over its
 /// pairs' columns, described as `shown` says.
-pub(super) fn hashed((left, right): (Plan, Plan), keys: Vec<JoinKey>, rest: Vec<Cond>, (width, shown, est): (usize, Shown<'_>, f64)) -> Plan {
+pub(super) fn hashed(
+    (left, right): (Plan, Plan),
+    keys: Vec<JoinKey>,
+    rest: Vec<Cond>,
+    (width, shown, est): (usize, Shown<'_>, f64),
+) -> Plan {
     let detail = shown.text(|names| keys_detail(&keys, names, width));
     let join = Plan::HashJoin { left: Box::new(left), right: Box::new(right), keys, detail, est };
     match and_all(rest).map(judged_by_sets) {
@@ -347,12 +352,8 @@ impl PhysicalPlanner<'_> {
             let flipped = flip.names(shown);
             let of_flipped = Shown::of(flipped.as_deref());
             let detail = of_flipped.text(|names| render_cond(&flip.cond(cond.clone()), names));
-            let join = hashed_outer(
-                OuterJoin::Left,
-                (r.plan, l.plan),
-                parted.flipped(flip),
-                ((flip.right_width, width), detail, of_flipped, est),
-            );
+            let join =
+                hashed_outer(OuterJoin::Left, (r.plan, l.plan), parted.flipped(flip), ((flip.right_width, width), detail, of_flipped, est));
             return Built::unordered(flip.restored(join, of_flipped));
         }
         let shown_cond = shown.text(|names| render_cond(cond, names));
