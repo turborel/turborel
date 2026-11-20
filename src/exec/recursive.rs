@@ -78,8 +78,10 @@ pub(super) fn recursive(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
         Fixpoint::Whole(plans) => whole(member, &plans, db, tx),
         Fixpoint::Delta { anchor, step, distinct } => delta((*anchor, &step), distinct, db, tx),
     };
+    // Each row read while the statement is not cancelled, as a work table's
+    // is, so a query reading the result many times, as a product does, stops.
     match found {
-        Ok(rows) => Box::new(rows.into_iter()),
+        Ok(rows) => Box::new(checked(rows.into_iter(), db.tx.stop_of(tx))),
         Err(e) => failed(e),
     }
 }
