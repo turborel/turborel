@@ -35,6 +35,7 @@ behind it, and each can be replaced or added to.
 - [Data change delta tables](doc/sql/24-delta-tables.md), OLD, NEW and
   FINAL TABLE of INSERT, UPDATE, DELETE and MERGE.
 - Row and columnar storage, chosen per table.
+- DISTINCT set functions computed by two groupings, read by batches.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
   or a strategy a plug-in registers, many levels deep, attached and
   detached, rows routed and moved, reads pruned and merged in order, joins

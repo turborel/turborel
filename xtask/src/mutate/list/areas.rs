@@ -1,6 +1,7 @@
 //! Each area's mutations, in the order they run, after the core's.
 
 mod budget;
+mod distinct_aggregates;
 mod joins;
 mod parallel;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
@@ -66,7 +67,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 32] {
+fn second() -> [&'static [Mutation]; 33] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -99,6 +100,7 @@ fn second() -> [&'static [Mutation]; 32] {
         &super::vector_hybrid::VECTOR_HYBRID,
         &super::vector::VECTOR,
         &super::delta_tables::DELTA_TABLES,
+        &distinct_aggregates::DISTINCT_AGGREGATES,
         &unnesting::UNNESTING,
     ]
 }

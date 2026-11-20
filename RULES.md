@@ -339,6 +339,11 @@ verification approach DO-178C expects (§8).
 | D334 | A database counts its transactions committed and rolled back, shown in INFORMATION_SCHEMA.SERVER |
 | D335 | A connection whose request runs is watched for its client gone |
 | D336 | A prepared CALL's output dynamic parameters are its columns, sent as a row |
+| D340 | DISTINCT set functions are computed by two groupings, the rows grouped by their arguments first |
+| D341 | A set function without DISTINCT beside them is computed in parts, merged by its state or given whole |
+| D342 | DISTINCT functions of several arguments make each row once for each argument, marked, not one grouping each joined back |
+| D343 | A DISTINCT function's filter is a truth of each row, grouped by, and its argument is computed of the rows it admits |
+| D344 | A DISTINCT function the rule leaves keeps its own way, its bag of values keyed once and looked up once |
 
 ### The project
 
@@ -9406,6 +9411,120 @@ added and protocol version 1 holds, and a client reading rows for a
 statement of columns reads them unchanged. EXECUTE puts them where its
 result using clause says and raises 07007 without one (§20.13 GR6,
 GR10). EXECUTE IMMEDIATE takes no such statement (§20.14 GR3).
+
+#### D340. DISTINCT set functions are computed by two groupings, the rows grouped by their arguments first
+
+A DISTINCT set function takes each value of its argument once
+[ISO/IEC 9075-2:2023 §10.9 GR7b i]. The executor kept, for each
+value of each group of each such function, a key in a bag of half the
+work area, built of three allocated parts and hashed three times, and a
+DISTINCT function sent its whole aggregation off the batch path, so it
+ran far slower than a grouping by its argument.
+
+The optimizer rule DISTINCT_AGGREGATES (`optimizer/distinct_aggregates.rs`)
+rewrites such an aggregation into two. The first groups the rows by the
+grouping columns and each DISTINCT argument. The second groups those
+groups by the grouping columns alone and gives each DISTINCT function,
+now without DISTINCT, the value of its argument of each group. Both are
+groupings the batch path makes where their input gives batches, with one
+key a row. A null of the argument is a group of the first, which the
+second takes out with the warning of §10.9 GR7a, as before. The values
+reach the function in the order their first rows came, each the first
+row's, so SUM and AVG add them as before, approximate numbers too. Groups
+of the second come in the order of their first rows. Groups of empty
+grouping sets are the second's alone, so of no rows COUNT is 0 and the
+others null. A collation's DISTINCT compares sort keys
+(`binder/expression.rs`), which the first grouping groups by, and a
+grouping by a collation keeps it in both.
+
+MAX and MIN lose DISTINCT, which does not change their result, a tie
+keeping the first value either way. The rule leaves an aggregation of an
+inverse distribution function, whose values the grouping sorts, and one
+whose set functions invoke a routine or draw a value of a sequence
+generator, which it would evaluate in another plan. Its setting,
+OPTIMIZER.DISTINCT_AGGREGATES, turns it off, as every rule's does (D35).
+
+#### D341. A set function without DISTINCT beside them is computed in parts, merged by its state or given whole
+
+A function without DISTINCT of the same aggregation must see every row
+of its group, but the first grouping splits a group by the DISTINCT
+arguments. It is computed there as a part (`functions/partial.rs`), a
+binary string never null. The part is the function's state where the
+function writes one (`Accumulator::write_state`, D38), and the second
+grouping merges the parts in the order they come. Every built-in state
+is of a total whose result does not depend on that order, which is why
+it is written at all.
+
+A function writing no state, as a sum of approximate numbers or a
+plug-in's, is computed whole instead. Each row is then made once more,
+marked as the copy of such functions (D342), whose first-level group is
+every row of its group, so the part is the function's result, judged
+there once, and the second grouping gives it. Its arithmetic and its
+errors are those of one grouping. A result a table may keep apart, a
+large object or an XML value, would be named in the part by an id alone,
+so an aggregation of such a function is left alone.
+
+#### D342. DISTINCT functions of several arguments make each row once for each argument, marked, not one grouping each joined back
+
+Functions of one argument and one filter share a slot. Of more than one
+slot, the first grouping must keep each slot's values apart, so each row
+is made once for each slot by a collection derived table of the markers
+1 to their number, as grouping sets are (`binder/grouping_sets.rs`). A slot's value
+column is its argument of the rows of its marker and null of the
+others, and the first grouping groups by the marker too. The second
+grouping gives each DISTINCT function the groups of its marker alone,
+and the functions without DISTINCT the parts of the first marker's rows,
+which are every row, or of their own marker's if computed whole.
+
+The other way is one two-level grouping for each argument and a join of
+their results on the grouping columns. It reads the input once for each
+argument, which a correlated, nondeterministic or costly input forbids
+or makes dear, and it needs a join on the grouping columns that treats
+nulls and collations as grouping does, and keeps the groups' order. The
+copies keep every group in one grouping, and a collection derived table
+reads the input once, at the price of rows made on the row path.
+
+Rows a table's scan gives, filtered and projected by expressions that
+give the same value of a row each time, are the same however often they
+are read. Of such rows, and slots without a filter, each copy reads them
+again (`optimizer/distinct_aggregates/copies.rs`): a UNION ALL of a
+projection of each, of the columns used, its marker and each slot's
+value, the argument or a null constant. Those are columns and constants,
+which the batch path takes, so the first grouping is fed by batches. A
+filtered slot, a join or another input keeps the collection derived
+table. One slot, the usual case, makes no copies.
+
+#### D343. A DISTINCT function's filter is a truth of each row, grouped by, and its argument is computed of the rows it admits
+
+A function's filter admits the rows it is true of [§10.9 GR4a], and an
+argument is not computed of the others. Of a slot with a filter, a
+projection computes the filter's truth of each row of its copy once, a
+BOOLEAN column, and the slot's value is its argument of the rows that
+truth admits, null of the others. The first grouping groups by the
+truth, and the second gives the function the groups the truth admitted.
+A null of rows the filter did not admit so neither reaches the function
+nor warns, and a division the filter guards raises nothing. Each
+expression is evaluated once a row, as before, so an error is raised of
+the rows it was (D15). A function without DISTINCT keeps its own filter
+in the first grouping, joined to its copy's marker by a CASE, so the
+filter is evaluated only of its copy's rows.
+
+#### D344. A DISTINCT function the rule leaves keeps its own way, its bag of values keyed once and looked up once
+
+Once the rule applies, no DISTINCT function remains where the batch path
+could take its aggregation. What it leaves is an inverse distribution
+function, a filter or an invoked routine, each of which keeps the
+aggregation on rows already, the rule turned off, and window functions,
+whose frames the rule does not rewrite. So the batch path takes no
+DISTINCT function. Its states would need a set of values for each group
+of each function, which is the executor's hash table to come.
+
+What stays on rows costs less. The key of a value taken, the group's
+key, the function's place and the value's normalized bytes, is made
+again in one buffer for each value, so a value seen allocates nothing.
+The bag (`exec/work.rs`) looks a key up once if it holds it and twice if
+not, where it hashed every new key three times, which the set operations,
+recursive queries and window functions using it gain too.
 
 ## 2. Project layout
 
