@@ -24,7 +24,7 @@ use super::{Built, CostModel, PhysicalPlanner, ProbeSlot, TableRead};
 use crate::catalog::{ColumnDesc, IndexDesc};
 use crate::engine::key::restores;
 use crate::error::Result;
-use crate::index::{Index, IndexMethod, Probe};
+use crate::index::{BTREE_METHOD, BTreeMethod, Index, IndexMethod, Probe};
 use crate::logical::{Cond, SortKey, and_all, filled_cond, pushed_conjuncts};
 use crate::storage::{TableStorage, cost_of};
 use crate::value::{CompOp, DataType, Value};
@@ -298,7 +298,8 @@ impl PhysicalPlanner<'_> {
         }
         let (all, cost) = (cost_of(storage.row_count()), self.db.cost());
         let distinct = || self.db.distinct_keys(read.table, on.found);
-        let (est, probed_cost) = priced((on.found, &distinct), &c, (all, on.types.len(), cost.index_descent), storage);
+        let most = (ix.method == BTREE_METHOD).then_some(BTreeMethod::MOST_COUNTED);
+        let (est, probed_cost) = priced((on.found, &distinct, most), &c, (all, on.types.len(), cost.index_descent), storage);
         // Of a covering index, the rows its table says every reader
         // sees are made of their entries, not fetched (RULES.md D34); nor
         // are the entries a scan decides reading no column of their rows,
@@ -444,11 +445,14 @@ pub(super) fn ix_is_point(ix: &IndexDesc) -> bool {
 /// a level of a tree costing `descent`: the index's count of each probe's
 /// if cheap; else, for an equality on all its columns, the rows over its
 /// distinct keys, `distinct` asks the index for (`State::distinct_keys`);
-/// else the guess, shared by the probes. Its pages to find the entries, if
+/// else the guess, shared by the probes. Of a probe of keys an index
+/// stopped counting at `most`, either is no fewer (RULES.md D302),
+/// as a guess of independent columns may be far fewer where an index's
+/// first columns go together. Its pages to find the entries, if
 /// it knows, else a tree's levels; and those the pool misses, as the
 /// table's fetches' pages missed cost.
 fn priced(
-    (index, distinct): (&dyn Index, &dyn Fn() -> Option<f64>),
+    (index, distinct, most): (&dyn Index, &dyn Fn() -> Option<f64>, Option<usize>),
     c: &Candidate,
     (all, width, descent): (f64, usize, f64),
     storage: &dyn TableStorage,
@@ -462,7 +466,9 @@ fn priced(
         // A broad spatial window is estimated by the column's statistics,
         // not by sampling the tree (`geometric::Stated`, RULES.md D137).
         let counted = || index.estimate(probe).map(cost_of);
-        est += geometric::Stated::rows(c.stated.as_ref()).or_else(counted).or_else(by_keys).unwrap_or(share);
+        let floor = most.filter(|_| keyed(probe)).map_or(0.0_f64, |most| cost_of(most.saturating_add(1)));
+        let guessed = || by_keys().unwrap_or(share).max(floor);
+        est += geometric::Stated::rows(c.stated.as_ref()).or_else(counted).unwrap_or_else(guessed);
         found += index.probe_pages(probe).map_or(levels, |pages| descent * pages) + missed;
     }
     (est, found + est * storage.fetch_cost())
@@ -474,6 +480,15 @@ fn priced(
 fn covers(method: &dyn IndexMethod, (columns, types): (&[usize], &[DataType]), needed: &[usize]) -> bool {
     let restored = |c: &usize| columns.iter().position(|k| k == c).and_then(|at| types.get(at)).is_some_and(restores);
     method.restores_keys() && needed.iter().all(restored)
+}
+
+/// Whether `probe` reads the keys of a value or a range of them, which an
+/// index counts.
+fn keyed(probe: &Probe) -> bool {
+    match probe {
+        Probe::Compare { .. } | Probe::Prefix { .. } | Probe::Range { .. } => true,
+        Probe::All | Probe::Columns(_) | Probe::Predicate { .. } | Probe::Xml(_) => false,
+    }
 }
 
 /// Whether `probe` holds every column of an index `width` columns wide

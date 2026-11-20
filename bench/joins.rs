@@ -5,8 +5,11 @@
 //! LEFT, IN and < ALL over a subquery (`exec/subquery/quantified.rs`), a
 //! correlated EXISTS subquery, decorrelated (`exec/subquery.rs`), and IN
 //! lists of constants of several lengths, judged one after another or by
-//! a set (`logical/sets.rs`). Run with `cargo xtask bench`, on the harness
-//! (RULES.md R-BENCH-1).
+//! a set (`logical/sets.rs`); and the 100 queries of a join-order
+//! workload over an IMDB-shaped schema (`bench/joins/imdb.rs`), planned alone and planned and run, their joins
+//! enumerated and ordered greedily (PLANNER.JOIN_ENUMERATION, RULES.md
+//! D308). Run with `cargo xtask bench`, on the harness (RULES.md
+//! R-BENCH-1).
 
 #![allow(
     clippy::unwrap_used,
@@ -20,13 +23,18 @@
 )]
 
 mod harness;
+#[path = "joins/imdb.rs"]
+mod imdb;
 
 use harness::{Bench, Case};
 use turborel::db::{Database, Session};
+use turborel::params::Params;
 
 /// Rows in each of the large tables T and U, and in the small one S.
 const ROWS: u64 = 2_000;
 const SMALL: u64 = 20;
+/// Titles of the join-order workload's database.
+const TITLES: u64 = 2_000;
 
 fn main() {
     let bench = Bench::new("joins");
@@ -65,6 +73,30 @@ fn main() {
     bench.measure(Case::new("correlated EXISTS, 2,000 x 2,000 rows", "rows"), || {
         joined(&s, "SELECT T.V FROM T WHERE EXISTS (SELECT * FROM U WHERE U.K = T.K AND U.G = 3)")
     });
+    workload(&bench);
+}
+
+/// The join-order workload's queries over its database of `TITLES`
+/// titles, planned, then planned and run, by each join enumeration.
+fn workload(bench: &Bench) {
+    let db = imdb::load(TITLES);
+    let s = db.session("IMDB");
+    let queries = imdb::queries();
+    for word in ["ADAPTIVE", "GREEDY"] {
+        s.execute(&format!("SET PLANNER.JOIN_ENUMERATION = '{word}'"), &mut Params::new()).unwrap();
+        bench.measure(Case::new(format!("join-order workload, 100 queries planned, {word}"), "queries"), || {
+            for (_, sql) in &queries {
+                s.physical_plan(sql, &Params::new()).unwrap();
+            }
+            queries.len() as u64
+        });
+        bench.measure(Case::new(format!("join-order workload, 100 queries run, {word}"), "queries"), || {
+            for (_, sql) in &queries {
+                joined(&s, sql);
+            }
+            queries.len() as u64
+        });
+    }
 }
 
 /// The rows of `sql`, each fetched, counted.

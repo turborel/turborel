@@ -48,6 +48,10 @@ behind it, and each can be replaced or added to.
   own options, and a cost-based planner chooses among them for filters
   and inner joins. Zone maps and Bloom filters skip what a scan cannot
   match.
+- [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
+  by dynamic programming, DPccp and DPhyp, outer joins reordered where
+  sound, hash, merge and index joins chosen with the order, adaptive to
+  queries of a hundred tables.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.

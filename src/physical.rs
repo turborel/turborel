@@ -20,6 +20,7 @@ mod built;
 mod collated;
 mod cost;
 mod decided;
+mod enumerate;
 pub use decided::Decided;
 pub(crate) mod estimate;
 mod expression_index;
@@ -30,6 +31,8 @@ pub use join_probe::{Fields, JoinComparison, JoinProbe, Paired, Preserved, Spati
 mod join;
 pub use join::JoinKey;
 mod kept;
+mod merged;
+pub use merged::MergeJoin;
 mod nearest;
 mod nodes;
 pub(crate) use nearest::distance_call;
@@ -43,6 +46,7 @@ mod shown;
 pub(crate) mod spatial;
 
 pub use cost::{CostModel, DEFAULT_EQUAL, DEFAULT_INDEX_DESCENT, DEFAULT_NULL, DEFAULT_RANGE, DEFAULT_REORDER_GAIN, DEFAULT_SORT_COMPARE};
+pub use enumerate::{ADAPTIVE, DEFAULT_DP_BUDGET, DEFAULT_LINEARIZED, ENUMERATIONS, GREEDY};
 pub use kept::{Place, ProbeSlot};
 pub(crate) use kept::{filled_plan, keepable, same_shape};
 
@@ -240,6 +244,8 @@ pub enum Plan {
         /// The condition, as text.
         detail: String,
     },
+    /// \[DESIGN\] A merge join (`physical/merged.rs`, RULES.md D303).
+    MergeJoin(Box<MergeJoin>),
     /// Groups and their set functions [X3.135-1986 §5.22, §5.8].
     Aggregate {
         /// The grouping columns of `input`.
@@ -444,13 +450,10 @@ impl<'a> PhysicalPlanner<'a> {
     }
 
     /// Build `logical`, preferring output ordered by the keys `want`, if
-    /// any, where that pays, its products joined in the cheapest order
-    /// (`physical/order.rs`).
+    /// any, where that pays, its joins enumerated (`physical/enumerate.rs`)
+    /// or ordered greedily (`physical/order.rs`).
     fn build(&self, logical: &LogicalPlan, want: &[SortKey]) -> Built {
-        match self.join_order(logical, want) {
-            Some(reordered) => self.build_node(&reordered, want),
-            None => self.build_node(logical, want),
-        }
+        self.ordered_joins(logical, want)
     }
 
     /// Build `logical` as it is: a chain of products below it is not

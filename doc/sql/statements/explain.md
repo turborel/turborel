@@ -22,6 +22,16 @@ bound comes first, then the rewrite rules that changed it, then the plan
 they left, and last the physical plan that runs, with the indexes it
 reads and how it joins.
 
+The joins of three or more tables are ordered by enumeration, each
+join's method chosen with the order, unless PLANNER.JOIN_ENUMERATION is
+GREEDY ([Settings](../../appendix/c-settings.md)). The top join of a
+plan so made notes the order taken, as nested pairs of its tables, and
+the algorithm that found it, DPccp or DPhyp of a query small enough to
+search whole, linearized DP or GOO-DP of a larger one. A plan that keeps
+the FROM clause's order, as one estimated no cheaper by
+PLANNER.REORDER_GAIN does, has no note. A merge join shows as
+`MergeJoin`, or `LeftMergeJoin` of a LEFT join, with its key.
+
 EXPLAIN is direct SQL, as a query is. The `turborel` client shows its
 rows as it shows a query's. A program reaches the same text by the
 library's `Session::explain` ([The Embedded Library](../../client/03-embedding.md#reading-rows)),
@@ -85,6 +95,61 @@ OK
  Project PARTS.ID
    IndexScan ANN.PARTS using PARTS_NAME [btree]: PARTS.NAME = 'part 7'  (est. rows=1, cost=20.6)
 (12 rows)
+```
+
+Three tables joined, their joins ordered by enumeration. The note on
+the top join gives the order chosen, the offers of the suppliers in Oslo
+first, then their parts by the index of its key, and the algorithm that
+chose it:
+
+```sql
+CREATE TABLE SUPPLIERS (ID INTEGER PRIMARY KEY, CITY VARCHAR(20));
+INSERT INTO SUPPLIERS VALUES (1, 'Oslo'), (2, 'Lima'), (3, 'Pune'), (4, 'Kyiv'), (5, 'Oslo'),
+  (6, 'Lima'), (7, 'Pune'), (8, 'Kyiv'), (9, 'Rome'), (10, 'Rome');
+CREATE TABLE OFFERS (PART INTEGER, SUPPLIER INTEGER, PRICE INTEGER);
+INSERT INTO OFFERS
+  WITH RECURSIVE N (I) AS (VALUES (CAST(1 AS INTEGER)) UNION ALL SELECT I + 1 FROM N WHERE I < 5000)
+  SELECT I - I / 1000 * 1000 + 1, I - I / 10 * 10 + 1, I FROM N;
+COMMIT;
+EXPLAIN SELECT PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE FROM PARTS, OFFERS, SUPPLIERS
+  WHERE PARTS.ID = OFFERS.PART AND OFFERS.SUPPLIER = SUPPLIERS.ID AND SUPPLIERS.CITY = 'Oslo';
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE
+   Filter PARTS.ID = OFFERS.PART AND OFFERS.SUPPLIER = SUPPLIERS.ID AND SUPPLIERS.CITY = 'Oslo'
+     Product
+       Product
+         Scan ANN.PARTS
+         Scan ANN.OFFERS
+       Scan ANN.SUPPLIERS
+ -- rules: push_filter_into_product
+ -- optimized:
+ Project PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE
+   Filter OFFERS.SUPPLIER = SUPPLIERS.ID
+     Product
+       Filter PARTS.ID = OFFERS.PART
+         Product
+           Scan ANN.PARTS
+           Scan ANN.OFFERS
+       Filter SUPPLIERS.CITY = 'Oslo'
+         Scan ANN.SUPPLIERS
+ -- physical:
+ Project PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE
+   IndexNestedLoop ANN.PARTS using ANN.PARTS.UNIQUE1 [btree]: OFFERS.PART = PARTS.ID  (join order by DPccp: ((OFFERS SUPPLIERS) PARTS))  (est. rows each=1, cost=20.6)
+     HashJoin OFFERS.SUPPLIER = SUPPLIERS.ID
+       SeqScan ANN.OFFERS  (rows=5000, cost=5000.0)
+       Filter SUPPLIERS.CITY = 'Oslo'  (est. rows=0)
+         SeqScan ANN.SUPPLIERS  (rows=10, cost=10.0)
+(26 rows)
 ```
 
 A correlated subquery unnested ([Query Expressions](../06-queries.md#correlated-subqueries)),
@@ -171,4 +236,4 @@ a statement is planned. In GET DIAGNOSTICS it is COMMAND_FUNCTION
 ## SEE ALSO
 
 [SELECT](select.md), [DECLARE CURSOR](declare-cursor.md),
-[CREATE INDEX](create-index.md)
+[CREATE INDEX](create-index.md), [SET](set-setting.md)
