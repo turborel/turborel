@@ -22,14 +22,11 @@ use std::sync::Arc;
 use super::keys::{DocHash, HASH_BYTES};
 use crate::error::{Code, Result, SqlError};
 use crate::fulltext::text::{StopWords, Tokens, tokenize_with};
-use crate::fulltext::{Language, Token};
+use crate::fulltext::{Language, Languages, Token};
 use crate::hash::murmur::murmur3_x64_128;
 use crate::index::{Key, KeyProjection};
 use crate::value::lob::{LobChars, LobKind};
 use crate::value::{Binary, Value};
-
-/// The languages the tokenizer knows.
-pub(crate) const LANGUAGES: [Language; 2] = [Language::English, Language::None];
 
 /// \[DESIGN\] The seed of the document hash: fixed, so the hash is the
 /// same in every run. Its bytes spell "FTX1".
@@ -175,6 +172,16 @@ pub(super) fn tokens_of<'v>(value: &'v Value, reading: &Reading) -> Result<Optio
     Ok(Some((language, tokenize_with(document.chars, language, &reading.stop))))
 }
 
+/// The language the document `value` is read in as `reading` says: a
+/// FullText value's own, else the index's; none if it is null.
+///
+/// # Errors
+///
+/// As `value::document`.
+pub(super) fn language_of(value: &Value, reading: &Reading) -> Result<Option<Language>> {
+    Ok(crate::fulltext::value::document(value)?.map(|document| document.language.unwrap_or(reading.language)))
+}
+
 /// The hash of the document `value` read as `reading` says, or none if
 /// it is null.
 ///
@@ -228,9 +235,10 @@ impl Reading {
     }
 
     /// Whether the normalized word `word` may go unposted: a stop word of
-    /// a document in some language, as a FullText value names its own.
-    pub fn may_stop(&self, word: &str) -> bool {
-        LANGUAGES.iter().any(|language| self.stop.contains(*language, word))
+    /// a document in one of `languages`, those of the index's documents,
+    /// as a FullText value names its own.
+    pub fn may_stop(&self, word: &str, languages: Languages) -> bool {
+        languages.iter().any(|language| self.stop.contains(language, word))
     }
 }
 

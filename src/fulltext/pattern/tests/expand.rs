@@ -146,3 +146,17 @@ fn failures_and_many_terms() {
     assert_eq!(pattern.words().len(), 1_001);
     assert!(contains(&pattern, "see term999".chars().map(Ok), Language::English).unwrap());
 }
+
+/// Verifies: [ISO/IEC 13249-2:2002 §6.13.5] [EXTENSION] RULES.md D329: a
+/// term of a language read as bigrams is asked of the thesaurus as
+/// written, its pairs joined back, and its terms match as pairs again.
+#[test]
+fn bigram_terms_are_joined_back() {
+    let double = Double { entries: vec![("CITY", Relation::Synonym, "東京都", vec!["首都"])], levels: RefCell::default() };
+    let pattern = parse("THESAURUS \"CITY\" EXPAND SYNONYM TERM OF \"東京都\"", Language::Japanese).unwrap().expanded(&double).unwrap();
+    for document in ["東京都に住む", "首都で働く"] {
+        assert!(contains(&pattern, document.chars().map(Ok), Language::Japanese).unwrap(), "{document}");
+    }
+    assert!(!contains(&pattern, "京都に行く".chars().map(Ok), Language::Japanese).unwrap());
+    assert_eq!(double.levels.borrow().len(), 1);
+}

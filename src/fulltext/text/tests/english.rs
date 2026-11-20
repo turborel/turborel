@@ -1,12 +1,12 @@
-//! Unit tests of the English stemmer, Porter2, against the stems its
-//! published definition gives.
+//! Unit tests of the English stemmer, Snowball's English algorithm, against
+//! the stems its published definition and vocabulary give.
 
 use crate::fulltext::text::{Language, stem};
 
 /// Checks each word of `pairs` stems to its stem.
 fn check(pairs: &[(&str, &str)]) {
     for (word, expected) in pairs {
-        assert_eq!(stem(Language::English, word), *expected, "{word}");
+        assert_eq!(stem(Language::English, word).unwrap(), *expected, "{word}");
     }
 }
 

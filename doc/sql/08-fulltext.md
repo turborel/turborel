@@ -54,8 +54,9 @@ A value is made in one of three ways.
 - `CAST(text AS FULLTEXT)`, in the default language. A CLOB is read a
   character at a time up to the limit.
 
-The language is ENGLISH by default, or NONE. ENGLISH stems words by
-Porter2 and has Snowball's 174 stop words. NONE stems nothing and has no
+The language is ENGLISH by default, or another of the 43
+[languages](#languages). ENGLISH stems words by Snowball's English
+stemmer and has Snowball's 174 stop words. NONE stems nothing and has no
 stop words. A language name is read in any case, its trailing spaces
 not counting. A null, empty or unknown name raises SQLSTATE 2FF02
 before any value is made. A null text gives the null value.
@@ -543,7 +544,9 @@ The index *(extension)* is of one column, a FULLTEXT column or a character strin
 column with no collation. It holds each distinct text's words and their
 places in blocks, so it stays small and a search of a rare and a common
 word skips most of the common one's entries. A FULLTEXT document is read
-in its own language, a character string in FULLTEXT.LANGUAGE.
+in its own language, a character string in FULLTEXT.LANGUAGE. The index
+notes each language its FullText documents are in, and reads a pattern
+in each of them.
 
 The index finds the rows of `CONTAINS(column, pattern) = 1`, of
 `column.Contains(pattern) = 1` and of `TEXT_MATCHES(column, words)`,
@@ -559,7 +562,7 @@ are encrypted too, as the index keeps the table's words
 
 | Option | Default | Values | A change |
 |---|---|---|---|
-| FULLTEXT.LANGUAGE | ENGLISH | ENGLISH or NONE, the language a character string column is read in | builds the index again |
+| FULLTEXT.LANGUAGE | ENGLISH | One of the [languages](#languages), the one a character string column is read in | builds the index again |
 | FULLTEXT.STOP_WORDS | DEFAULT | DEFAULT for the language's list, NONE, or words written with commas | builds the index again |
 | FULLTEXT.K1 | 1.2 | 0 to 1000 | takes effect at once |
 | FULLTEXT.B | 0.75 | 0 to 1 | takes effect at once |
@@ -585,7 +588,38 @@ LARGE OBJECT values too, read a piece at a time. The result is BOOLEAN.
 
 Words are matched as written, after normalization. TEXT_MATCHES does
 not stem, so `invoice` does not find `invoices`. It reads both arguments
-in English, whatever an index's FULLTEXT.LANGUAGE.
+in the FULLTEXT.LANGUAGE of the full-text index of the document's
+column, by the index and by a scan alike, and in ENGLISH when the
+column has no index. A FULLTEXT document names its own language and is
+searched by CONTAINS. In FRENCH an elided article is taken off, so
+`école` finds `l'école`, which in ENGLISH is one word:
+
+```sql
+CREATE TABLE FR (ID INTEGER NOT NULL UNIQUE, BODY VARCHAR(100));
+INSERT INTO FR VALUES (1, 'Les enfants de l''école'), (2, 'Le village');
+COMMIT;
+SELECT ID FROM FR WHERE TEXT_MATCHES(BODY, 'ÉCOLE enfants');
+COMMIT;
+CREATE INDEX FR_BODY ON FR (BODY) USING fulltext WITH (FULLTEXT.LANGUAGE = FRENCH);
+COMMIT;
+SELECT ID FROM FR WHERE TEXT_MATCHES(BODY, 'ÉCOLE enfants');
+```
+
+```
+OK
+OK
+OK
+           ID
+--------------
+(0 rows)
+OK
+OK
+OK
+           ID
+--------------
+            1
+(1 row)
+```
 
 ## How text is read
 
@@ -594,16 +628,201 @@ leaves each rule to the implementation, and these are Turborel's.
 
 | Unit | Rule |
 |---|---|
-| Word | A run of letters, numbers and marks. An underscore joins two runs, and an apostrophe between letters joins them, so `can't` is one word. Each Han, Hiragana or Katakana character is a word by itself |
+| Word | A run of letters, numbers and marks. An underscore joins two runs, and an apostrophe between letters joins them, so `can't` is one word. Each Han, Hiragana or Katakana character is a word by itself, but in the languages read as bigrams |
+| Elision | In French, Italian, Catalan and Irish an elided article or pronoun is taken off its word, so `l'école` is `école`. In Catalan a middle dot joins letters, so `col·lecció` is one word |
+| Bigrams | In Chinese, Japanese, Korean, Thai, Lao, Khmer and Burmese a run of their letters is read as its overlapping pairs, each a word, a letter with its marks. One letter alone is a word |
 | Sentence | Ends after `.`, `!` or `?` when a blank, a line end or the end of the text follows, so `3.14` ends none. The full-width terminators end one by themselves |
 | Paragraph | Ends at two line ends in a row, or at U+2029. It ends the sentence too |
-| Normalized word | Case folded, accents taken off, the right single quotation mark made an apostrophe, so `Résumé` is `resume` |
-| Stem | In English, the word's Porter2 stem, so `searching` and `searched` are `search`. In NONE, the word |
-| Stop word | In English, one of Snowball's 174, as `the` and `can't`. A stop word keeps its place, so distances stay right, but is never looked up |
+| Normalized word | In ENGLISH and NONE, case folded, accents taken off, the right single quotation mark made an apostrophe, so `Résumé` is `resume`. In a stemmed language, case folded with accents kept, so `Élève` is `élève`; Turkish folds `I` to `ı` and `İ` to `i`. In a bigram language, full-width and half-width forms made one |
+| Stem | The word's stem by the language's Snowball stemmer, so in English `searching` and `searched` are `search`. In NONE and the bigram languages, the word |
+| Stop word | One of the language's Snowball list, as English `the` and `can't`. A stop word keeps its place, so distances stay right, but is never looked up |
 
 A word is kept to its first 256 characters, and a term in the index to
 its first 255 bytes. A longer word is found by that prefix and checked
 against the row.
+
+## Languages
+
+A FULLTEXT value names its language, and a document is read by that
+language's rules. These are the 43 languages the tokenizer knows. A
+stemmed language stems by Snowball's own stemmer for it, run as
+Snowball's program, and has Snowball's stop words where Snowball has a
+list. Chinese, Japanese, Korean, Thai, Lao, Khmer and Burmese are
+written without spaces between words, so a run of their letters is read
+as its overlapping pairs, each a word. No language is guessed from a
+text; a value without one is in ENGLISH.
+
+| Language | Stemmer | Stop words | Words |
+|---|---|---|---|
+| NONE | None | None | Words, accents taken off |
+| ARABIC | Snowball's Arabic | None | Words, accents kept |
+| ARMENIAN | Snowball's Armenian | None | Words, accents kept |
+| BASQUE | Snowball's Basque | None | Words, accents kept |
+| CATALAN | Snowball's Catalan | None | Words, accents kept, elisions taken off, `l·l` joined |
+| CZECH | Snowball's Czech | None | Words, accents kept |
+| DANISH | Snowball's Danish | Snowball's list | Words, accents kept |
+| DUTCH | Snowball's Dutch | Snowball's list | Words, accents kept |
+| ENGLISH | Snowball's English | Snowball's list | Words, accents taken off |
+| ESPERANTO | Snowball's Esperanto | None | Words, accents kept |
+| ESTONIAN | Snowball's Estonian | None | Words, accents kept |
+| FINNISH | Snowball's Finnish | Snowball's list | Words, accents kept |
+| FRENCH | Snowball's French | Snowball's list | Words, accents kept, elisions taken off |
+| GERMAN | Snowball's German | Snowball's list | Words, accents kept |
+| GREEK | Snowball's Greek | None | Words, accents kept |
+| HINDI | Snowball's Hindi | None | Words, accents kept |
+| HUNGARIAN | Snowball's Hungarian | Snowball's list | Words, accents kept |
+| INDONESIAN | Snowball's Indonesian | Snowball's list | Words, accents kept |
+| IRISH | Snowball's Irish | Snowball's list | Words, accents kept, elisions taken off |
+| ITALIAN | Snowball's Italian | Snowball's list | Words, accents kept, elisions taken off |
+| LITHUANIAN | Snowball's Lithuanian | None | Words, accents kept |
+| NEPALI | Snowball's Nepali | None | Words, accents kept |
+| NORWEGIAN | Snowball's Norwegian | Snowball's list | Words, accents kept |
+| PERSIAN | Snowball's Persian | None | Words, accents kept |
+| POLISH | Snowball's Polish | None | Words, accents kept |
+| PORTUGUESE | Snowball's Portuguese | Snowball's list | Words, accents kept |
+| ROMANIAN | Snowball's Romanian | None | Words, accents kept |
+| RUSSIAN | Snowball's Russian | Snowball's list | Words, accents kept |
+| SERBIAN | Snowball's Serbian | None | Words, accents kept |
+| SESOTHO | Snowball's Sesotho | Snowball's list | Words, accents kept |
+| SPANISH | Snowball's Spanish | Snowball's list | Words, accents kept |
+| SWEDISH | Snowball's Swedish | Snowball's list | Words, accents kept |
+| TAMIL | Snowball's Tamil | None | Words, accents kept |
+| TURKISH | Snowball's Turkish | None | Words, accents kept, `I` folded to `ı`, `İ` to `i` |
+| UKRAINIAN | Snowball's Ukrainian | Snowball's list | Words, accents kept |
+| YIDDISH | Snowball's Yiddish | None | Words, accents kept |
+| CHINESE | None | None | Character bigrams, full-width forms made one |
+| JAPANESE | None | None | Character bigrams, full-width forms made one |
+| KOREAN | None | None | Character bigrams, full-width forms made one |
+| THAI | None | None | Character bigrams, full-width forms made one |
+| LAO | None | None | Character bigrams, full-width forms made one |
+| KHMER | None | None | Character bigrams, full-width forms made one |
+| BURMESE | None | None | Character bigrams, full-width forms made one |
+
+Each value is read in its own language, and a pattern's word naming no
+language is read in its document's. French takes `l'` off `l'école`,
+German stems `Kinder` to `kind`, and Japanese is read as pairs:
+
+```sql
+CREATE TABLE NOTES (ID INTEGER PRIMARY KEY, BODY FULLTEXT);
+INSERT INTO NOTES VALUES
+    (1, FULLTEXT('Les enfants jouaient dans l''école.', 'FRENCH')),
+    (2, FULLTEXT('Die Kinder spielten im Garten.', 'GERMAN')),
+    (3, FULLTEXT('東京都庁は新宿にあります。', 'JAPANESE')),
+    (4, FULLTEXT('İstanbul ılık bir şehir.', 'TURKISH'));
+COMMIT;
+SELECT ID, BODY.TokenizeAndStem() AS STEMS FROM NOTES ORDER BY ID;
+```
+
+```
+OK
+OK
+OK
+           ID | STEMS
+--------------+--------------------------------------------------------------
+            1 | ARRAY['enfant', 'jou', 'écol']
+            2 | ARRAY['kind', 'spielt', 'gart']
+            3 | ARRAY['東京', '京都', '都庁', '庁は', 'は新', '新宿', '宿に', 'にあ', 'あり', 'りま', 'ます']
+            4 | ARRAY['istanbul', 'ılık', 'bir', 'şehir']
+(4 rows)
+```
+
+A stemmed word matches in each document's language. A word of several
+Japanese letters is the phrase of its pairs, and a single letter matches
+every pair holding it. In Turkish `İ` is the capital of `i` and `I` of
+`ı`, so `"İSTANBUL"` finds the city and `"ISTANBUL"` does not:
+
+```sql
+SELECT ID FROM NOTES WHERE BODY.Contains('FORM OF "école" | FORM OF "Kind"') = 1 ORDER BY ID;
+SELECT ID FROM NOTES WHERE BODY.Contains('"京都"') = 1;
+SELECT ID FROM NOTES WHERE BODY.Contains('"新"') = 1;
+SELECT ID FROM NOTES WHERE BODY.Contains('"İSTANBUL" & "ILIK"') = 1;
+SELECT ID FROM NOTES WHERE BODY.Contains('"ISTANBUL"') = 1;
+```
+
+```
+           ID
+--------------
+            1
+            2
+(2 rows)
+           ID
+--------------
+            3
+(1 row)
+           ID
+--------------
+            3
+(1 row)
+           ID
+--------------
+            4
+(1 row)
+           ID
+--------------
+(0 rows)
+```
+
+A full-text index reads each FullText document in its language too, and
+notes the languages its documents are in, so a search reads its pattern
+in each of them.
+
+### Languages plug-ins serve *(extension)*
+
+An extension may serve a language of its own under a name no built-in
+language has, by a LANGUAGE object ([Kinds of
+Plug-in](../client/04-plugins-kinds.md)). It is named where a built-in
+language is, in FULLTEXT.LANGUAGE, `FULLTEXT(text, language)` and a
+pattern's language specification. The program may cut text into words,
+stem words and give stop words, and leave any of them to a built-in
+language. Cutting Chinese or Japanese into dictionary words is served
+this way, and the database ships no dictionary. A plug-in's author may
+use one under a permissive license, as jieba's dictionary (MIT) for
+Chinese or IPADIC for Japanese.
+
+A document in such a language costs one call to cut and, if the
+program stems, one call more for the words not stemmed before, and a
+pattern's words are cut by the same program. A failed call fails the
+statement with an error of class 38, and the next call starts the
+program again.
+
+### Snowball's license
+
+The stemmers' programs and the stop-word lists are Snowball's
+(snowballstem.org), kept unchanged in the source tree under
+`src/fulltext/text`. They are distributed under this notice:
+
+```
+Copyright (c) 2001, Dr Martin Porter
+Copyright (c) 2002, Richard Boulton
+Copyright (c) 2004,2005, Richard Boulton
+Copyright (c) 2013, Yoshiki Shibukawa
+Copyright (c) 2006-2025, Olly Betts
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+  1. Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+  2. Redistributions in binary form must reproduce the above copyright notice,
+     this list of conditions and the following disclaimer in the documentation
+     and/or other materials provided with the distribution.
+  3. Neither the name of the Snowball project nor the names of its contributors
+     may be used to endorse or promote products derived from this software
+     without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
 
 ## The Full-Text Information Schema
 

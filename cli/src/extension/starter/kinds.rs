@@ -28,7 +28,7 @@ pub(in crate::extension) struct Starter {
 pub(in crate::extension) const DEFAULT_KIND: &str = "scalar";
 
 /// Every kind, in the order of their codes.
-pub(in crate::extension) const STARTERS: [Starter; 19] = [
+pub(in crate::extension) const STARTERS: [Starter; 20] = [
     Starter {
         word: "scalar",
         code: 1,
@@ -491,5 +491,34 @@ impl Diagnostics for Events {
 }
 ",
         added: ".diagnostics(\"EVENTS\", Events)",
+    },
+    Starter {
+        word: "language",
+        code: 39,
+        declaration: "LANGUAGE SPACED SERVES (SEGMENT) LIKE NONE",
+        uses: &["turborel_plugin::Language"],
+        source: "/// SPACED: a language of full-text search whose words are the runs of
+/// characters between white space; NONE's stems and stop words.
+struct Spaced;
+
+impl Language for Spaced {
+    fn segment(&mut self, text: &str) -> Answer<Vec<(u32, u32)>> {
+        let mut words = Vec::new();
+        let mut start = None;
+        for (at, c) in (0_u32..).zip(text.chars().chain([' '])) {
+            match (c.is_whitespace(), start) {
+                (false, None) => start = Some(at),
+                (true, Some(from)) => {
+                    words.push((from, at.saturating_sub(from)));
+                    start = None;
+                }
+                (false, Some(_)) | (true, None) => {}
+            }
+        }
+        Ok(words)
+    }
+}
+",
+        added: ".language(\"SPACED\", Spaced)",
     },
 ];

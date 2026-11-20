@@ -28,69 +28,49 @@
 //! - Places. Every word, stop words too, has an ordinal from 1, so
 //!   distances stay right [§5.1.5 DR7-DR9]. A word's offset and length are
 //!   in characters, as written, and stop at `u32::MAX`.
-//! - Normalization [§4.5]. Each character is simply case folded,
-//!   canonically decomposed, folded again and its nonspacing marks (Mn)
-//!   taken out, and U+2019 becomes U+0027: `Résumé` is `resume`.
-//! - Stop words [§4.4.2, §5.1.5 DR6]. English has the Snowball list
-//!   (`stop.rs`), NONE none. An index may name its own list or none
-//!   (`StopWords`). Stop words are tokens all the same, marked `stop`, so
-//!   the index keeps their places.
-//! - Stems [§4.2.3.4]. English stems by Porter2 (`porter2.rs`); NONE's
-//!   stem of a word is the word.
+//! - Languages [§4.4]. Each language has its own normalization, stems,
+//!   stop words and cutting into words (`language.rs`, RULES.md D321): a
+//!   pattern's word in its language, a document's word in its.
+//! - Normalization [§4.5]. In NONE and ENGLISH each character is simply
+//!   case folded, canonically decomposed, folded again and its nonspacing
+//!   marks (Mn) taken out, and U+2019 becomes U+0027: `Résumé` is
+//!   `resume`. In a stemmed language a word is case folded and composed
+//!   (NFC), its accents kept for its stemmer; in one read as bigrams it is
+//!   composed for compatibility (NFKC), so full-width forms are one.
+//! - Elisions. In French, Italian, Catalan and Irish, an article or
+//!   pronoun elided before an apostrophe is taken off its word.
+//! - Bigrams. In Chinese, Japanese, Korean, Thai, Lao, Khmer and Burmese,
+//!   a run of the letters of the scripts written without spaces is read
+//!   as its overlapping bigrams, each a word, one letter alone a word of
+//!   one (D323).
+//! - Stop words [§4.4.2, §5.1.5 DR6]. A language has Snowball's list if
+//!   Snowball has one (`stop.rs`), NONE none. An index may name its own
+//!   list or none (`StopWords`). Stop words are tokens all the same,
+//!   marked `stop`, so the index keeps their places.
+//! - Stems [§4.2.3.4]. A language stems by its Snowball program
+//!   (`snowball.rs`, D320); NONE's stem of a word, and that of a language
+//!   read as bigrams, is the word.
+//! - Served languages. A language a plug-in serves (`served.rs`, RULES.md
+//!   D328) has a document read whole and cut by one call, its words'
+//!   sentences and paragraphs those the rules above give, and its words
+//!   stemmed a batch a call.
 
 mod kind;
-mod porter2;
+mod language;
 mod segment;
+pub mod served;
+mod snowball;
 mod stop;
 #[cfg(test)]
 mod tests;
 
+pub use language::{Language, Languages};
 pub use segment::MAX_WORD_CHARS;
 pub use stop::StopWords;
 
-use crate::error::{Code, Result, SqlError, SqlState};
+use crate::error::Result;
 use kind::tables;
 use segment::Segmenter;
-
-/// A language the tokenizer knows [§4.4]: what words it stems and which
-/// it takes for stop words.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Language {
-    /// English: Porter2 stems and English stop words.
-    English,
-    /// No language: no stem but the word, and no stop words.
-    None,
-}
-
-/// The name of `Language::English`.
-const ENGLISH: &str = "ENGLISH";
-/// The name of `Language::None`.
-const NONE: &str = "NONE";
-
-impl Language {
-    /// The language named `name`, its case not counting.
-    ///
-    /// # Errors
-    ///
-    /// SQLSTATE 2FF02 if the tokenizer knows none of that name
-    /// [§5.1.9 GR].
-    pub fn named(name: &str) -> Result<Language> {
-        match name.to_ascii_uppercase().as_str() {
-            ENGLISH => Ok(Language::English),
-            NONE => Ok(Language::None),
-            other => Err(SqlError::new(Code::Data, format!("[ISO/IEC 13249-2:2002 §5.1.9] no language is named {other}"))
-                .with_state(SqlState::INVALID_LANGUAGE_SPECIFICATION)),
-        }
-    }
-
-    /// Its name.
-    pub fn name(self) -> &'static str {
-        match self {
-            Language::English => ENGLISH,
-            Language::None => NONE,
-        }
-    }
-}
 
 /// A word of a document and where it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +96,9 @@ pub struct Tokens<I> {
     chars: I,
     segmenter: Segmenter,
     done: bool,
+    /// Of a language a plug-in cuts into words: the language, its stop
+    /// words, and the tokens of the document once it is read whole.
+    served: Option<(Language, StopWords, Option<std::vec::IntoIter<Token>>)>,
 }
 
 /// The tokens of the characters `chars` of a document in `language`, read
@@ -127,7 +110,27 @@ pub fn tokenize<I: Iterator<Item = Result<char>>>(chars: I, language: Language) 
 /// The tokens of the characters `chars` of a document in `language`, as
 /// `tokenize` reads them, each marked `stop` by the stop words `stop`.
 pub fn tokenize_with<I: Iterator<Item = Result<char>>>(chars: I, language: Language, stop: &StopWords) -> Tokens<I> {
-    Tokens { chars, segmenter: Segmenter::new(language, stop.clone()), done: false }
+    let served = language.served_segments().then(|| (language, stop.clone(), None));
+    Tokens { chars, segmenter: Segmenter::new(language, stop.clone()), done: false, served }
+}
+
+impl<I: Iterator<Item = Result<char>>> Tokens<I> {
+    /// The next token of a document a plug-in cuts into words: the
+    /// document read whole and cut at the first.
+    fn next_served(&mut self) -> Option<Result<Token>> {
+        let (language, stop, read) = self.served.as_mut()?;
+        if read.is_none() {
+            let text: Result<String> = self.chars.by_ref().collect();
+            match text.and_then(|text| served::tokens(&text, *language, stop)) {
+                Ok(tokens) => *read = Some(tokens.into_iter()),
+                Err(e) => {
+                    self.done = true;
+                    return Some(Err(e));
+                }
+            }
+        }
+        read.as_mut()?.next().map(Ok)
+    }
 }
 
 impl<I: Iterator<Item = Result<char>>> Iterator for Tokens<I> {
@@ -136,6 +139,9 @@ impl<I: Iterator<Item = Result<char>>> Iterator for Tokens<I> {
     fn next(&mut self) -> Option<Result<Token>> {
         if self.done {
             return None;
+        }
+        if self.served.is_some() {
+            return self.next_served();
         }
         let tables = match tables() {
             Ok(tables) => tables,
@@ -162,32 +168,79 @@ impl<I: Iterator<Item = Result<char>>> Iterator for Tokens<I> {
     }
 }
 
-/// `word` normalized [§4.5]: each character simply case folded,
-/// canonically decomposed and folded again, nonspacing marks taken out,
-/// U+2019 written U+0027.
+/// `word` normalized [§4.5] as NONE and ENGLISH normalize: each
+/// character simply case folded, canonically decomposed and folded again,
+/// nonspacing marks taken out, U+2019 written U+0027.
 pub fn normalize(word: &str) -> String {
+    normalize_in(Language::None, word)
+}
+
+/// `word` normalized [§4.5] as `language` normalizes its words.
+pub fn normalize_in(language: Language, word: &str) -> String {
     match tables() {
-        Ok(tables) => tables.normalize(word),
+        Ok(tables) => tables.normalize_as(language.profile().fold, word),
         // The tables are compiled in and checked by the tests; were one
         // damaged, `tokenize` reports it, and this falls back to lower case.
         Err(_) => word.to_lowercase(),
     }
 }
 
-/// The stem of the normalized word `word` in `language` [§4.2.3.4]:
-/// Porter2 for English, the word itself for NONE.
-pub fn stem(language: Language, word: &str) -> String {
-    match language {
-        Language::English => porter2::stem(word),
-        Language::None => word.to_owned(),
-    }
+/// The stem of the word `word`, normalized in `language`, in that
+/// language [§4.2.3.4]: by its Snowball stemmer, the word itself in NONE
+/// and in a language read as bigrams; by its plug-in, if one stems it.
+///
+/// # Errors
+///
+/// A served language's call's (`served.rs`).
+pub fn stem(language: Language, word: &str) -> Result<String> {
+    let mut got = stems(language, &[word])?;
+    Ok(got.pop().unwrap_or_else(|| word.to_owned()))
 }
 
-/// Whether the normalized word `word` is a stop word of `language`
-/// [§4.4.2]: the Snowball list for English, none for NONE.
-pub fn is_stop(language: Language, word: &str) -> bool {
-    match language {
-        Language::English => stop::is_english_stop(word),
-        Language::None => false,
+/// The stems of the words `words`, as `stem` gives each: of a language a
+/// plug-in stems, one call for all of them that it has not stemmed yet.
+///
+/// # Errors
+///
+/// As `stem`.
+pub fn stems(language: Language, words: &[&str]) -> Result<Vec<String>> {
+    if let Language::Served(slot) = language
+        && language.served_stems()
+    {
+        return served::stems(slot, words);
     }
+    Ok(match language.stemmer() {
+        Some(stemmer) => words.iter().map(|word| stemmer.stem(word)).collect(),
+        None => words.iter().map(|word| (*word).to_owned()).collect(),
+    })
+}
+
+/// Whether the word `word`, normalized in `language`, is a stop word of
+/// that language [§4.4.2]: Snowball's list of it, none if Snowball has
+/// none.
+pub fn is_stop(language: Language, word: &str) -> bool {
+    if let Some(served) = language.serving()
+        && let Some(list) = served.stop_words()
+    {
+        return list.binary_search_by(|listed| listed.as_str().cmp(word)).is_ok();
+    }
+    stop_list(language).binary_search_by(|listed| listed.as_str().cmp(word)).is_ok()
+}
+
+/// The stop words of `language`, normalized in it, sorted, each once.
+fn stop_list(language: Language) -> &'static [String] {
+    language.stop_list(|listed| normalize_in(language, listed))
+}
+
+/// Whether the normalized word `word` is a single letter, with its marks,
+/// of a script `language` reads as bigrams: one a document holds alone or
+/// inside a bigram (D323).
+pub fn is_single_letter(language: Language, word: &str) -> bool {
+    if !language.reads_bigrams() {
+        return false;
+    }
+    let Ok(tables) = tables() else { return false };
+    let mut letters = word.chars().filter(|c| !tables.is_mark(*c));
+    let first = letters.next();
+    letters.next().is_none() && first.is_some_and(|c| tables.is_unit(c))
 }

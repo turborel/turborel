@@ -9,10 +9,12 @@
 
 use std::sync::OnceLock;
 
+use super::language::Fold;
 use crate::error::Result;
 use crate::regex::class::CharSet;
 use crate::regex::unicode::{CATEGORIES, Table};
 use crate::value::collation::table::Table as Collation;
+use crate::xquery::library::{Form, normalized};
 
 // General Categories [Unicode 13.0 §4.5], by their names in `CATEGORIES`.
 
@@ -54,6 +56,40 @@ const IDEOGRAPHS: [(u32, u32); 12] = [
     (0x2_F800, 0x2_FA1F),
     (0x3_0000, 0x3_134F),
 ];
+
+/// The blocks of the scripts written without spaces between words, whose
+/// letters a language read as bigrams takes for letters to pair
+/// (RULES.md D323) [Unicode 13.0 Blocks.txt]: Thai, Lao, Myanmar, Hangul
+/// Jamo, Khmer, Khmer Symbols, Bopomofo, Hangul Compatibility Jamo,
+/// Bopomofo Extended, Hangul Jamo Extended-A, Myanmar Extended-B, Myanmar
+/// Extended-A, Hangul Syllables, Hangul Jamo Extended-B, and the
+/// halfwidth Hangul of Halfwidth and Fullwidth Forms.
+const NO_SPACE_BLOCKS: [(u32, u32); 15] = [
+    (0x0E00, 0x0E7F),
+    (0x0E80, 0x0EFF),
+    (0x1000, 0x109F),
+    (0x1100, 0x11FF),
+    (0x1780, 0x17FF),
+    (0x19E0, 0x19FF),
+    (0x3100, 0x312F),
+    (0x3130, 0x318F),
+    (0x31A0, 0x31BF),
+    (0xA960, 0xA97F),
+    (0xA9E0, 0xA9FF),
+    (0xAA60, 0xAA7F),
+    (0xAC00, 0xD7AF),
+    (0xD7B0, 0xD7FF),
+    (0xFFA0, 0xFFDC),
+];
+
+/// LATIN CAPITAL LETTER I, which Turkish folds to dotless `ı`.
+const CAPITAL_I: char = 'I';
+/// LATIN SMALL LETTER DOTLESS I.
+const DOTLESS_I: char = '\u{131}';
+/// LATIN CAPITAL LETTER I WITH DOT ABOVE, which Turkish folds to `i`.
+const DOTTED_CAPITAL_I: char = '\u{130}';
+/// LATIN SMALL LETTER I.
+const SMALL_I: char = 'i';
 
 // Characters the tokenizer treats apart from their category.
 
@@ -163,8 +199,22 @@ fn places(names: &[&str]) -> Vec<usize> {
 
 /// Whether `c` lies in one of the `IDEOGRAPHS` blocks.
 fn in_ideograph_block(c: char) -> bool {
+    in_blocks(c, &IDEOGRAPHS)
+}
+
+/// Whether `c` lies in one of `blocks`.
+fn in_blocks(c: char, blocks: &[(u32, u32)]) -> bool {
     let code = u32::from(c);
-    IDEOGRAPHS.iter().any(|&(first, last)| first <= code && code <= last)
+    blocks.iter().any(|&(first, last)| first <= code && code <= last)
+}
+
+/// `c` as Turkish folds it before case folding: `I` to `ı`, `İ` to `i`.
+fn turkish(c: char) -> char {
+    match c {
+        CAPITAL_I => DOTLESS_I,
+        DOTTED_CAPITAL_I => SMALL_I,
+        other => other,
+    }
 }
 
 impl Tables {
@@ -267,6 +317,46 @@ impl Tables {
                 out.push(if folded == RIGHT_QUOTE { APOSTROPHE } else { folded });
             }
         }
+    }
+}
+
+impl Tables {
+    /// Whether `c` is a letter a language read as bigrams pairs: a letter
+    /// of an ideograph or kana block, among them the prolonged sound mark,
+    /// or of a script written without spaces (D323).
+    pub(super) fn is_unit(&self, c: char) -> bool {
+        self.letters.contains(c) && (in_ideograph_block(c) || in_blocks(c, &NO_SPACE_BLOCKS))
+    }
+
+    /// Whether `c` is a mark (M*).
+    pub(super) fn is_mark(&self, c: char) -> bool {
+        self.marks.contains(c)
+    }
+
+    /// `word` normalized as `fold` says [§4.5].
+    pub(super) fn normalize_as(&self, fold: Fold, word: &str) -> String {
+        match fold {
+            Fold::Strip => self.normalize(word),
+            Fold::Keep => self.composed(word, false, Form::Nfc),
+            Fold::Turkish => self.composed(word, true, Form::Nfc),
+            Fold::Width => self.composed(word, false, Form::Nfkc),
+        }
+    }
+
+    /// `word` simply case folded, `I` and `İ` first as Turkish folds them
+    /// if `dotted`, U+2019 written U+0027, then in the normalization
+    /// form `form`. Turkish folds the word composed, so `I` and a combining
+    /// dot above are `İ`.
+    fn composed(&self, word: &str, dotted: bool, form: Form) -> String {
+        let source = if dotted { normalized(word, Form::Nfc).unwrap_or_else(|_| word.to_owned()) } else { word.to_owned() };
+        let folded: String = source
+            .chars()
+            .map(|c| {
+                let c = self.collation.fold(if dotted { turkish(c) } else { c });
+                if c == RIGHT_QUOTE { APOSTROPHE } else { c }
+            })
+            .collect();
+        normalized(&folded, form).unwrap_or(folded)
     }
 }
 
