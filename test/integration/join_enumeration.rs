@@ -187,7 +187,8 @@ fn a_grouping_among_the_relations_is_enumerated() {
     let plan = s.explain(sql, &Params::new()).unwrap();
     assert!(plan.contains("(join order by DPccp: "), "{plan}");
     assert_ne!(agree(&s, sql), Vec::<String>::new());
-    let built = s.explain("SELECT A.V, G.N FROM A, (SELECT X, COUNT(*) AS N FROM C GROUP BY X) AS G WHERE A.V = G.X", &Params::new()).unwrap();
+    let built =
+        s.explain("SELECT A.V, G.N FROM A, (SELECT X, COUNT(*) AS N FROM C GROUP BY X) AS G WHERE A.V = G.X", &Params::new()).unwrap();
     let physical = built.split("-- physical:").last().unwrap_or_default();
     let (join, grouping) = (physical.find("HashJoin").unwrap_or(usize::MAX), physical.find("Aggregate").unwrap_or(0));
     let table = physical.find("SeqScan Q.A").unwrap_or(0);
