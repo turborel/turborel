@@ -19,6 +19,9 @@
 //! kept, and nothing is raised: planning raises nothing of a condition
 //! the statement evaluates (RULES.md D15).
 
+use std::fmt::{self, Debug};
+use std::hash::{DefaultHasher, Hasher};
+
 use super::Known;
 use crate::exec::{NoSubqueries, eval_cond};
 use crate::logical::{Cond, Expr, Truth, compared_with_constant, cond_columns};
@@ -59,16 +62,19 @@ pub(super) fn eligible<'a>(conds: &[&Cond], known: Known<'a>) -> Option<&'a RowS
 pub(super) fn kept(conds: &[&Cond], (sample, of): (&RowSample, f64), synopses: f64, rare: impl FnOnce() -> Option<f64>) -> f64 {
     let rows = sample.rows();
     let n = cost_of(rows.len()).max(1.0_f64);
-    let hits = rows
-        .iter()
-        .filter(|row| conds.iter().all(|c| !matches!(eval_cond(c, row, &NoSubqueries), Ok(Truth::False | Truth::Unknown))))
-        .count();
+    let hits = sample.remembered(key_of("kept", &conds), || {
+        cost_of(
+            rows.iter()
+                .filter(|row| conds.iter().all(|c| !matches!(eval_cond(c, row, &NoSubqueries), Ok(Truth::False | Truth::Unknown))))
+                .count(),
+        )
+    });
     // The share of the table the sample is.
     let whole = (n / of.max(1.0_f64)).min(1.0_f64);
-    if hits >= SAMPLE_HITS || whole >= 1.0_f64 {
-        return cost_of(hits) / n;
+    if hits >= cost_of(SAMPLE_HITS) || whole >= 1.0_f64 {
+        return hits / n;
     }
-    let bound = (cost_of(hits) + cost_of(EMPTY_BOUND) * (1.0_f64 - whole)) / n;
+    let bound = (hits + cost_of(EMPTY_BOUND) * (1.0_f64 - whole)) / n;
     rare().unwrap_or(synopses).min(bound)
 }
 
@@ -132,4 +138,33 @@ fn evaluable_expr(e: &Expr, width: usize) -> bool {
     let mut children = own;
     e.for_each_child(&mut |child| children = children && evaluable_expr(child, width));
     children
+}
+
+/// The key under which the sample remembers the answer to the question
+/// `tag` of `parts` (`RowSample::remembered`): a hash of their form.
+pub(super) fn key_of(tag: &str, parts: &dyn Debug) -> u64 {
+    let mut hashing = Hashing(DefaultHasher::new());
+    hashing.0.write(tag.as_bytes());
+    fmt::write(&mut hashing, format_args!("{parts:?}")).map_or(0, |()| hashing.0.finish())
+}
+
+/// A hasher written to as text.
+struct Hashing(DefaultHasher);
+
+impl fmt::Write for Hashing {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0.write(s.as_bytes());
+        Ok(())
+    }
+}
+
+/// The answer `answer`, an option, as the sample remembers it: none as
+/// less than nothing.
+pub(super) fn remembered_as(answer: Option<f64>) -> f64 {
+    answer.unwrap_or(-1.0_f64)
+}
+
+/// The answer `remembered` as it was given.
+pub(super) fn as_given(remembered: f64) -> Option<f64> {
+    (remembered >= 0.0_f64).then_some(remembered)
 }

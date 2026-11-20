@@ -269,18 +269,40 @@ const PLACED_CHARACTERS: usize = 4;
 /// Where the string `value` lies between the strings `low` and `high`, a
 /// bucket's bounds, from 0 to 1, if all three are strings: their first
 /// `PLACED_CHARACTERS` characters past the bounds' common prefix read as
-/// the digits of a fraction in the base of the greatest of them. So a
-/// range of strings narrower than a bucket, as of a LIKE's prefix, keeps
-/// its part of the bucket, not none.
+/// the digits of a fraction, each character its place in the range the
+/// bounds' characters span (`span`), above the end of a string, which is
+/// least. The range is that of the bounds alone, so a string and the
+/// next prefix past it are placed alike. So a range of strings narrower
+/// than a bucket, as of a LIKE's prefix, keeps its part of the bucket.
 fn string_within(low: &Value, high: &Value, value: &Value) -> Option<f64> {
     let (Value::Char(l), Value::Char(h), Value::Char(v)) = (low, high, value) else { return None };
     let common = l.chars().zip(h.chars()).take_while(|(a, b)| a == b).count();
-    let digits = |s: &str| s.chars().skip(common).take(PLACED_CHARACTERS).map(u32::from).collect::<Vec<u32>>();
-    let (l, h, v) = (digits(l), digits(h), digits(v));
-    let base = f64::from(l.iter().chain(&h).chain(&v).copied().max().unwrap_or(0).saturating_add(1));
-    let fraction = |d: &[u32]| d.iter().rev().fold(0.0_f64, |f, &c| (f + f64::from(c)) / base);
+    let past = |s: &str| s.chars().skip(common).take(PLACED_CHARACTERS).map(u32::from).collect::<Vec<u32>>();
+    let (l, h, v) = (past(l), past(h), past(v));
+    let (least, most) = span(l.iter().chain(&h).copied())?;
+    // Digits 1 up to the span's width, 0 the end of a string.
+    let width = most.saturating_sub(least).saturating_add(1);
+    let base = f64::from(width.saturating_add(1));
+    let digit = |c: u32| f64::from(c.clamp(least, most).saturating_sub(least).saturating_add(1));
+    let fraction = |d: &[u32]| d.iter().rev().fold(0.0_f64, |f, &c| (f + digit(c)) / base);
     let (l, h, v) = (fraction(&l), fraction(&h), fraction(&v));
     (h > l).then(|| ((v - l) / (h - l)).clamp(0.0, 1.0))
+}
+
+/// The least and greatest of `chars`, widened to the digits, the small
+/// letters or the capitals when they lie among one of those.
+fn span(chars: impl Iterator<Item = u32>) -> Option<(u32, u32)> {
+    let (mut least, mut most) = (u32::MAX, 0_u32);
+    for c in chars {
+        least = least.min(c);
+        most = most.max(c);
+    }
+    if least > most {
+        return None;
+    }
+    let class =
+        [('0', '9'), ('a', 'z'), ('A', 'Z')].into_iter().map(|(a, z)| (u32::from(a), u32::from(z))).find(|&(a, z)| a <= least && most <= z);
+    Some(class.unwrap_or((least, most)))
 }
 
 impl Histogram {

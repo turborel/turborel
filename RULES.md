@@ -10326,7 +10326,9 @@ prefix that the whole pattern keeps, if the sample holds at least 8 of
 them, as no synopsis tells how often characters follow others, else a
 quarter. Within a histogram's bucket a string is placed by its first
 four characters past the bucket's bounds' common prefix, read as a
-fraction, so a prefix narrower than a bucket keeps its part of it
+fraction whose digits are each character's place among those the
+bounds span, widened to the digits or the letters when the bounds' lie
+among them, so a prefix narrower than a bucket keeps its part of it
 (`stats/parts.rs`).
 
 A B-link index counts the entries of a range of keys it need not check
@@ -10366,7 +10368,12 @@ three, the bound an empty sample allows (Hertzschuch et al., SIGMOD
 2021), narrowed as the sample nears the whole table. The sample costs at
 most 1,024 evaluations however large the table, so small tables are
 sampled too, where the sample is most of the table and a conjunction
-that keeps no row is estimated to keep none. Of fewer, equalities of two or more
+that keeps no row is estimated to keep none. The sample remembers what
+was asked of it, up to 1,024 answers by a hash of the conjuncts' form,
+as the planner asks the same of each plan it weighs and of each
+statement it plans again: it never changes, so an answer holds until the
+next pass replaces it. An index remembers its distinct keys' estimate
+until a register of its sketch is raised. Of fewer, equalities of two or more
 columns with constants not common take the columns' joint distinct
 values in the sample instead, scaled to the table as a column's are
 (`physical/estimate/joint.rs`): a combination the sample holds keeps the

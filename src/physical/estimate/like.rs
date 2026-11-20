@@ -13,7 +13,7 @@
 
 use std::cmp::Ordering;
 
-use super::sampled::SAMPLE_HITS;
+use super::sampled::{SAMPLE_HITS, as_given, key_of, remembered_as};
 use super::{Known, compare};
 use crate::exec::{NoSubqueries, eval_cond};
 use crate::logical::Truth;
@@ -47,7 +47,12 @@ pub(super) fn selectivity(c: &Cond, known: Known<'_>) -> Option<f64> {
 /// `SAMPLE_HITS` of them: what the rest of the pattern asks, `_` and
 /// characters after a `%` among it, which no synopsis tells.
 fn sampled_rest(c: &Cond, column: usize, prefix: &str, known: Known<'_>) -> Option<f64> {
-    let rows = known.stats?.sample()?.rows();
+    let sample = known.stats?.sample()?;
+    as_given(sample.remembered(key_of("like", c), || remembered_as(rest_of(c, column, prefix, sample.rows()))))
+}
+
+/// `sampled_rest`, found from the sampled rows `rows`.
+fn rest_of(c: &Cond, column: usize, prefix: &str, rows: &[Row]) -> Option<f64> {
     let begun: Vec<&Row> = rows.iter().filter(|row| row.get(column).and_then(text).is_some_and(|s| s.starts_with(prefix))).collect();
     if begun.len() < SAMPLE_HITS {
         return None;
