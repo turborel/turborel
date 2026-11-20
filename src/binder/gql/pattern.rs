@@ -155,7 +155,15 @@ impl Lowering<'_> {
         let mut i = span.start;
         while i < span.end {
             let (written, next) = match fillers.iter().find(|(s, _, _)| *s == i) {
-                Some((_, e, text)) => (text.clone(), *e),
+                // An empty filler, of `()` or `[]`, goes before its
+                // closing token, which is kept.
+                Some((_, e, text)) => {
+                    if *e == i {
+                        (format!("{text} {}", self.text.written(i)), i.saturating_add(1))
+                    } else {
+                        (text.clone(), *e)
+                    }
+                }
                 None => token(self.text, i, &scope)?,
             };
             let next = next.max(i.saturating_add(1));
