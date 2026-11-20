@@ -140,8 +140,10 @@ EXPLAIN SELECT COUNT(*) FROM PARTS;
 
 Three tables joined, their joins ordered by enumeration. The note on
 the top join gives the order chosen, the offers of the suppliers in Oslo
-first, then their parts by the index of its key, and the algorithm that
-chose it:
+joined first, and the algorithm that chose it. Their parts are then
+hashed rather than probed by the index of their key: the offers could
+be many times more than estimated, and so many probes would cost more
+than reading the parts once (PLANNER.ESTIMATE_MARGIN):
 
 ```sql
 CREATE TABLE SUPPLIERS (ID INTEGER PRIMARY KEY, CITY VARCHAR(20));
@@ -185,12 +187,13 @@ OK
          Scan ANN.SUPPLIERS
  -- physical:
  Project PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE
-   IndexNestedLoop ANN.PARTS using ANN.PARTS.UNIQUE1 [btree]: OFFERS.PART = PARTS.ID  (join order by DPccp: ((OFFERS SUPPLIERS) PARTS))  (est. rows each=1, cost=20.6)
+   HashJoin PARTS.ID = OFFERS.PART  (join order by DPccp: (PARTS (OFFERS SUPPLIERS)))
+     SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
      HashJoin OFFERS.SUPPLIER = SUPPLIERS.ID
        SeqScan ANN.OFFERS  (rows=5000, cost=5000.0)
        Filter SUPPLIERS.CITY = 'Oslo'  (est. rows=0)
          SeqScan ANN.SUPPLIERS  (rows=10, cost=10.0)
-(26 rows)
+(27 rows)
 ```
 
 A correlated subquery unnested ([Query Expressions](../06-queries.md#correlated-subqueries)),
