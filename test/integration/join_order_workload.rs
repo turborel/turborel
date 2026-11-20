@@ -1,6 +1,7 @@
-//! The Join Order Benchmark (RULES.md D308): each of its 113 queries over
-//! a small generated database of its schema gives the same rows with its
-//! joins enumerated as ordered greedily [X3.135-1986 §5.20 GR2b, §5.22].
+//! The join-order workload over an IMDB-shaped schema (RULES.md D308):
+//! each of its 100 queries over a small generated database gives the same
+//! rows with its joins enumerated as ordered greedily [X3.135-1986 §5.20
+//! GR2b, §5.22].
 //! The database and the queries are the joins benchmark's.
 
 use turborel::db::Session;
@@ -19,7 +20,7 @@ fn planned(s: &Session, word: &str, sql: &str) -> Vec<String> {
     sorted(s, sql)
 }
 
-/// Verifies: [DESIGN] RULES.md D300-D304, D308: all 113 queries give the
+/// Verifies: [DESIGN] RULES.md D300-D304, D308: all 100 queries give the
 /// greedy order's rows planned adaptively, and the data, skewed and
 /// correlated, gives a fifth of them rows to find even at this size.
 #[test]
@@ -27,7 +28,7 @@ fn every_query_agrees_with_the_greedy_order() {
     let db = imdb::load(TITLES);
     let s = db.session("IMDB");
     let queries = imdb::queries();
-    assert_eq!(queries.len(), 113);
+    assert_eq!(queries.len(), 100);
     let mut found = 0;
     for (name, sql) in queries {
         let adaptive = planned(&s, "ADAPTIVE", sql);
@@ -36,5 +37,5 @@ fn every_query_agrees_with_the_greedy_order() {
             found += 1;
         }
     }
-    assert!(found >= 20, "{found} of 113 queries found rows");
+    assert!(found >= 20, "{found} of 100 queries found rows");
 }

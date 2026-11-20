@@ -170,7 +170,7 @@ mod information_usage;
 mod intervals;
 mod isolation;
 mod join_enumeration;
-mod join_order_benchmark;
+mod join_order_workload;
 mod joined_tables;
 mod joins;
 mod json_conformance;

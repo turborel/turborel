@@ -1,12 +1,11 @@
-//! The Join Order Benchmark of Leis et al., "How Good Are Query
-//! Optimizers, Really?", 2015: its 113 queries (`job.sql`, `!=` written
-//! `<>`, an IN list of one value an equality, and the names `at` and
-//! `character`, reserved words, `att` and `character_name`) over a
-//! generated database of its schema, the shape of the IMDB data it was
-//! made for (RULES.md D308). The joins benchmark times them
+//! A join-order workload over an IMDB-shaped schema (RULES.md D308): 100
+//! queries of the project's own (`workload.sql`), each a star or a chain
+//! of 4 to 17 tables joined by their foreign keys, with selective filters
+//! and MIN of a few columns, over a database generated in the shape of
+//! the public IMDB data. The joins benchmark times them
 //! (`bench/joins.rs`); the integration tests check that every query gives
 //! the same rows however its joins are ordered
-//! (`test/integration/join_order_benchmark.rs`).
+//! (`test/integration/join_order_workload.rs`).
 //!
 //! The data is made from a fixed seed, so every run reads the same rows.
 //! Its sizes follow IMDB's ratios to the number of titles, and it is
@@ -23,7 +22,7 @@ use std::collections::HashMap;
 use turborel::db::Database;
 
 /// The queries, each after a line naming it.
-pub const QUERIES: &str = include_str!("job.sql");
+pub const QUERIES: &str = include_str!("workload.sql");
 
 /// The tables, as the benchmark's `schema.sql` declares them, `text` as a
 /// varying string.
