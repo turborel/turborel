@@ -120,8 +120,8 @@ pub const RTREE: [Mutation; 16] = [
         package: Package::Core,
         breaks: "a coordinate or geometry join probe fails to record its serializable read predicate",
         file: "src/exec/join/indexed.rs",
-        original: "Asked::of(&*self.index, &self.ix, &probe).record(&*self.storage, self.tx)?;",
-        replacement: "if matches!(binding, JoinProbe::Prefix(_)) { Asked::of(&*self.index, &self.ix, &probe).record(&*self.storage, self.tx)?; }",
+        original: "Asked::of(&*self.index, &self.ix, probe).record(&*self.storage, self.tx)?;",
+        replacement: "if matches!(probe, Probe::Prefix { .. } | Probe::Compare { .. }) { Asked::of(&*self.index, &self.ix, probe).record(&*self.storage, self.tx)?; }",
         integration: &[
             "spatial_index::joins::spatial_joins_track_empty_probe_phantoms",
             "geometry::index::joins::geometry_joins_track_empty_probe_phantoms",
