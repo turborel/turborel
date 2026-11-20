@@ -137,10 +137,11 @@ impl State {
 
     /// `ix`, on columns of `table`, with what it derives from the table:
     /// what its key is collated by, and whether it holds keys with a null,
-    /// as the index of a UNIQUE NULLS NOT DISTINCT constraint does. Not
-    /// another index on its columns: made and dropped apart from the
-    /// constraint, it would hold them or not as the constraint was when it
-    /// was made, and be read as the constraint is now. Its key's
+    /// as the index of a UNIQUE NULLS NOT DISTINCT constraint does, and a
+    /// B-tree index not a constraint's (RULES.md D403). Not another unique
+    /// index on its columns: made and dropped apart from the constraint,
+    /// it would hold them or not as the constraint was when it was made,
+    /// and be read as the constraint is now. Its key's
     /// expressions are bound over the table's row as it is (`bound_keys`).
     ///
     /// # Errors
@@ -162,6 +163,10 @@ impl State {
         // A hybrid index's parts each hold their own column's value, so it
         // is given keys with a null too (`index/vector/hybrid/index.rs`).
         let nulls = nulls || (ix.method == crate::index::vector::hybrid::HYBRID_METHOD && ix.columns.len() == 2);
+        // A B-tree index not a constraint's holds them as well, so a probe
+        // of its first columns finds the rows of a null in the others
+        // (RULES.md D403).
+        let nulls = nulls || (!ix.unique && ix.method == crate::index::BTREE_METHOD);
         Ok(IndexDesc { collations, nulls, ..ix })
     }
 

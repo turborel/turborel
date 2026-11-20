@@ -20,6 +20,7 @@ mod estimates;
 mod insert_values;
 mod joins;
 mod late;
+mod oltp;
 mod parallel;
 mod rewrites;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
@@ -30,7 +31,7 @@ mod uuid;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 13] {
+pub fn core() -> [&'static [Mutation]; 14] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -45,6 +46,7 @@ pub fn core() -> [&'static [Mutation]; 13] {
         &super::regex::REGEX,
         &super::SHADOW,
         &super::backup::BACKUP,
+        &oltp::OLTP,
     ]
 }
 

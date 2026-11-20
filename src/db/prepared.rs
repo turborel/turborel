@@ -21,7 +21,7 @@ mod plans;
 use std::sync::Arc;
 
 use outputs::Outputs;
-pub(super) use plans::{Keeping, KeptPlan, Plans};
+pub(super) use plans::{Keeping, KeptPlan, Key, Plans};
 
 use super::area::commands::{self, Command};
 use super::collations::Collating;

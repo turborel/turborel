@@ -828,7 +828,7 @@ AS is refused in a CREATE SCHEMA.
 
 #### D66. A key of NULLS NOT DISTINCT holds its nulls in its index
 
-An index holds no key with a null, as no comparison with a null is true
+A constraint's index holds no key with a null, as no comparison with a null is true
 [X3.135-1986 §5.11 GR2], so a key of NULLS DISTINCT, the default, needs
 none to find its duplicates. A key of NULLS NOT DISTINCT [ISO/IEC
 9075-2:2023 §11.7] counts a null as a value, so its index holds every key,
@@ -840,9 +840,10 @@ time.
 
 Whether an index holds nulls is decided in one place, from the table's
 constraints, and every path that adds or removes an entry asks it
-(`catalog/keys.rs`). Only the constraint's own index holds them, or one
-built again to take its place, as each is made and dropped with the
-constraint. A key with a null sorts before every value, so a probe whose
+(`catalog/keys.rs`). Of the constraints' indexes, only the constraint's
+own holds them, or one built again to take its place, as each is made
+and dropped with the constraint. A B-tree index CREATE INDEX makes
+holds them too (D403). A key with a null sorts before every value, so a probe whose
 range is open below starts after them, and the `Index` contract says no
 comparison probe selects one. A function lookup may return a null key as
 an extra candidate; the executor checks the row against the whole WHERE
@@ -10378,6 +10379,106 @@ A typed, temporary, system-versioned or partitioned table, a node or
 edge table, one a vector pipeline keeps and one of a column registered
 with a spatial or linear referencing system are known by name
 elsewhere, so none is renamed.
+
+### OLTP paths
+
+#### D403. A B-tree index not a constraint's holds keys with a null
+
+An index that holds no key with a null (D66) misses the rows of a null
+in any of its columns, so a probe of its first columns was refused
+whenever a later column could be null. An index on a customer's
+warehouse, district, last and first names could then never answer a
+search by the last name, as the first name may be null, and every such
+search read the whole table. So a B-tree index made by CREATE INDEX
+holds every key, a null in it or not, and a probe of its first columns
+is taken whatever the others may hold (`db/collations.rs`,
+`physical/access/predicate.rs`, `physical/indexed.rs`). A probe still
+selects no null in the columns it compares, as a null sorts before
+every value and the `Index` contract asks. A constraint's index is
+unchanged, as its duplicates are found by probes of its whole key. Its
+entries keep a null before every value, where SQL may want it after,
+so the planner keeps the sort an ORDER BY asks for whenever a column
+the probe does not compare may be null (`surviving_nulls`). An index
+made before this decision lacks those entries, so a database made
+before it is loaded again.
+
+#### D404. Columns of two tables equal to one value are equated for a join
+
+A join of two tables each filtered by one value, such as a stock
+level's order lines and stock rows of one warehouse, holds the two
+columns equal, though no conjunct says so. Without that equality the
+join could not probe the stock table's key, whose first column is the
+warehouse, and hashed every stock row of the warehouse instead. So
+predicate transitivity (D35) adds `a = b` where a filter over a product
+holds `a = v` and `b = v`, `a` and `b` of different tables and `v` one
+exact number or one `?` of exact numeric type
+(`optimizer/transitivity/joined.rs`). A column compared with an exact
+number is of a numeric type, so the equality added compares without
+error and keeps the rows the two keep. The join then probes the index
+by both columns, as it would by any other equality of theirs.
+
+#### D405. A statement planned asks the system nothing
+
+Planning a statement asked the system how many threads it runs, to
+size parallel parts (D291), and the asking opens and reads files of the
+system's each time, about a dozen calls. It is asked once, as the
+system's threads do not change while the database runs
+(`physical/parallel.rs`). The catalog's lists sorted by name, read at
+each statement's end to find the constraints a change may break, are
+sorted once: the catalog keeps its tables' names in that order, sorted
+as first asked and again once a table is added or removed
+(`catalog/memory.rs`).
+
+#### D406. A procedure's body is kept between CALLs
+
+A CALL read the procedure's text again and bound its body again, and
+each INSERT, UPDATE and DELETE in it was bound and planned again as it
+ran, though the body and the definitions it reads seldom change. A
+session keeps each procedure's text read while it stays the same, and
+its body's program (D76) with what it was bound with, as a prepared
+statement keeps its plan (D45): the snapshot's generation, the
+catalog, the authorization, the schema, the time zone and the session's
+own settings. A CALL that finds any of them changed binds the body
+again, so its rules are checked against the definitions of then. A
+binding that reads the statement's instant holds it, and is not kept.
+Each INSERT, searched UPDATE and searched DELETE of a program kept
+keeps its plan as a prepared statement's does, its SQL parameters and
+variables slots each execution fills (`db/routines/kept.rs`).
+
+#### D407. A table's statistics are gathered no more often than their cost allows
+
+The row store gathers a table's statistics again once its changes pass
+a tenth of its rows and 50 more (D31), so each change costs about ten
+rows read by a later pass. A table written fast, as the stock, customer
+and order tables of an order entry load are, had its statistics
+gathered again every second or two, and the maintenance thread spent
+about a third of the server's time reading rows for them. A pass now
+also waits fifty times as long as the last one took, so a table's
+passes take at most a fiftieth of one thread's time
+(`engine/rows/stats.rs`, `PASS_SPACING`). A table whose changes
+outnumber the rows of its last pass, as one loaded after it was made,
+is not made to wait, nor one whose statistics a plan asked for first.
+The table stays due while it waits, and the maintenance job looks at
+it again a second later. `Database::maintain` and `Database::analyze`
+gather at once, as asked (`TableStorage::maintain`, `now`).
+
+#### D408. A kept procedure body keeps the plans of its point reads
+
+A procedure body kept between CALLs (D406) still ran each of its
+leaves, the values, conditions and queries over its variables (D76),
+as a new subquery, optimized and planned with the variables' values as
+constants. An order entry body reads a row by its whole primary key a
+dozen times, and planning those reads cost about as much as running
+them. A leaf of a kept body whose outer references are each a variable
+or parameter, or each subquery of a leaf's row of values whose outer
+references name those, is now planned once with each reference a slot
+of the variable's type. A plan that is one probe of a whole unique key
+is kept with the body and filled with the values at each run, as a
+prepared statement's is (D45, `physical/kept.rs`). Any other leaf runs
+as before. The plans are made again when the body is bound again, so a
+dropped index or a table made again is seen; a leaf first planned over
+a table too small for an unpriced probe keeps no plan until then
+(`routines/kept/leaves.rs`).
 
 ## 2. Project layout
 
