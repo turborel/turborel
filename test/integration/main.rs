@@ -318,6 +318,7 @@ mod select_into;
 mod sequences;
 mod served;
 mod set_statements;
+mod set_tables;
 mod settings;
 mod short_name_views;
 mod simple_features;

@@ -1,6 +1,7 @@
 //! COUNT [X3.135-1986 §5.8], its accumulator counting the values that are
 //! not null, of any batch form.
 
+use super::columnar::{Columnar, Kind};
 use super::{Accumulator, AggregateFunction, floats, ints};
 use crate::error::{Code, Result, fail};
 use crate::lexer::kw;
@@ -21,9 +22,13 @@ impl AggregateFunction for Count {
     fn accumulator(&self, _result: DataType) -> Box<dyn Accumulator> {
         Box::new(CountAcc(0))
     }
+    fn columnar(&self) -> Option<Columnar> {
+        Some(Columnar(Kind::Count))
+    }
 }
 
-struct CountAcc(i128);
+/// COUNT's accumulator: how many so far.
+pub(super) struct CountAcc(pub(super) i128);
 
 impl Accumulator for CountAcc {
     fn update(&mut self, _v: &Value) -> Result<()> {

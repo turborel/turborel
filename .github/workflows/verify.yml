@@ -6,11 +6,13 @@ name: verify
 
 # A pull request is checked once, through pull_request, and main again once
 # it is merged. Pushing a branch with an open pull request starts no second
-# set of the same checks.
+# set of the same checks. A branch with no pull request is checked on demand
+# through workflow_dispatch (`gh workflow run verify.yml --ref BRANCH`).
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # A newer push to a branch or a pull request replaces its checks still
 # running, so only the latest commit is checked.
