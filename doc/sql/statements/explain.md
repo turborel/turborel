@@ -269,10 +269,10 @@ OK
 ```
 
 Set functions of all the table's rows, read in morsels of 256 rows
-on up to four threads:
+on up to two threads:
 
 ```sql
-SET EXECUTOR.DEGREE = 4;
+SET EXECUTOR.DEGREE = 2;
 SET EXECUTOR.MORSEL_ROWS = 256;
 SET EXECUTOR.PARALLEL_MIN_ROWS = 0;
 EXPLAIN SELECT SUM(ID), MAX(NAME) FROM PARTS;
@@ -295,7 +295,7 @@ OK
      Scan ANN.PARTS
  -- physical:
  Project SUM(PARTS.ID), MAX(PARTS.NAME)
-   Parallel  (degree=4)
+   Parallel  (degree=2)
      Aggregate group by [] computing [SUM(PARTS.ID), MAX(PARTS.NAME)]
        SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
 (14 rows)

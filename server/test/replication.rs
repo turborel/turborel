@@ -306,7 +306,10 @@ fn nodes_are_added_and_removed_by_reconfiguration() {
         serving.replica.transport().members(),
         serving.kept.all()
     );
-    serving.db.session("OWNER").run(&format!("ALTER DATABASE REPLICATION MEMBERS '{}'", members(&kept))).unwrap();
+    // The primary may be deposed as the members settle, so the change goes
+    // to whichever node serves when it is made.
+    let change = format!("ALTER DATABASE REPLICATION MEMBERS '{}'", members(&kept));
+    on_primary(&nodes, |db| db.session("OWNER").run(&change).map(drop).map_err(|e| e.code));
     let second = nodes.iter().find(|n| n.replica.transport().me() == ReplicaId(2)).unwrap();
     assert!(eventually(|| second.kept.all().iter().any(|e| e.contains("Removed"))), "{:?}", second.kept.all());
     assert_eq!(second.rows("SELECT K FROM T").err(), Some(Code::TransactionState), "retired: not even a read");

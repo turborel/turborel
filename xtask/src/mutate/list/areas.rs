@@ -6,11 +6,13 @@ mod budget;
 mod client_sync;
 #[path = "count.rs"]
 mod count;
+mod declared_types;
 // The decode kernels' mutations, beside the areas as `list.rs` holds no
 // more modules.
 #[path = "decode.rs"]
 mod decode;
 mod distinct_aggregates;
+mod insert_values;
 mod joins;
 mod parallel;
 // Unnesting's and UUID's mutations, here as `list.rs` holds no more
@@ -76,7 +78,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 34] {
+fn second() -> [&'static [Mutation]; 35] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -112,6 +114,7 @@ fn second() -> [&'static [Mutation]; 34] {
         &count::COUNT,
         &distinct_aggregates::DISTINCT_AGGREGATES,
         &unnesting::UNNESTING,
+        &insert_values::INSERT_VALUES,
     ]
 }
 
@@ -155,9 +158,16 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xml::XML,
     ];
     // The transport's, parallel queries', the client's step with its
-    // server, the decode kernels' and batches' last, as `last` holds no more.
-    let after: [&'static [Mutation]; 5] =
-        [&super::transport::TRANSPORT, &parallel::PARALLEL, &client_sync::CLIENT_SYNC, &decode::DECODE, &batches::BATCHES];
+    // server, the decode kernels', declared types' and batches' last, as
+    // `last` holds no more.
+    let after: [&'static [Mutation]; 6] = [
+        &super::transport::TRANSPORT,
+        &parallel::PARALLEL,
+        &client_sync::CLIENT_SYNC,
+        &decode::DECODE,
+        &declared_types::DECLARED_TYPES,
+        &batches::BATCHES,
+    ];
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(after)
 }
 

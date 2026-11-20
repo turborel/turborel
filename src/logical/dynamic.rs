@@ -11,8 +11,18 @@
 use std::sync::Arc;
 
 use super::{AggCall, Cond, Distribution, Expr, LogicalPlan, Slot, Subquery};
-use crate::error::{At, Code, Result, SqlError};
-use crate::value::{Value, cast};
+use crate::error::{At, Code, Result, SqlError, SqlState};
+use crate::params::conformed;
+use crate::value::Value;
+
+/// [ISO/IEC 9075:1992 §3.3.4.1] The constant `value` of a `?`, raising
+/// `warning` as it is evaluated if its cast raised one (RULES.md D391).
+pub fn warned(value: Value, warning: Option<SqlState>) -> Expr {
+    match warning {
+        Some(state) => Expr::Warned(Box::new(Expr::Const(value)), state),
+        None => Expr::Const(value),
+    }
+}
 
 /// `plan`, each slot filled with its value of `values`, by place.
 ///
@@ -67,8 +77,8 @@ impl Filling<'_> {
             self.fail(SqlError::new(Code::Api, missing));
             return Expr::Dynamic(slot);
         };
-        match cast(value, &slot.data_type).or_at(slot.at) {
-            Ok(v) => Expr::Const(v),
+        match conformed(value, &slot.data_type).or_at(slot.at) {
+            Ok((v, warning)) => warned(v, warning),
             Err(e) => {
                 self.fail(e);
                 Expr::Dynamic(slot)

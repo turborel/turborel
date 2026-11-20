@@ -278,6 +278,9 @@ mod tests {
         client.sock.shutdown(Shutdown::Both).unwrap();
         let direct = server.direct().unwrap();
         direct.wait(BROUGHT).unwrap();
-        assert_eq!(direct.read(&mut [0_u8; 4]).unwrap_err().kind(), ErrorKind::UnexpectedEof);
+        // The system says how the socket ended, cut short or reset; either
+        // way the read fails.
+        let kind = direct.read(&mut [0_u8; 4]).unwrap_err().kind();
+        assert!(matches!(kind, ErrorKind::UnexpectedEof | ErrorKind::ConnectionReset), "{kind:?}");
     }
 }

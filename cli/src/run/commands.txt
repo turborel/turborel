@@ -9,6 +9,7 @@ The statement begun
   \gx [FILE | |PROGRAM]  as \g, its rows expanded
   \gset [PREFIX]         run it, its one row's columns stored as variables
   \gexec                 run it, then each value of its result as a statement
+  \gdesc                 its result's columns and their declared types, not run
   \watch [SECONDS [COUNT]]
                          run it again every SECONDS (2), COUNT times or until Ctrl-C
   \e [FILE]              edit it, or FILE, in the editor
