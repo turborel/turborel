@@ -353,6 +353,7 @@ mod spilled_rows;
 mod spilled_sorts;
 mod spilling;
 mod standby;
+mod statement_ends;
 mod statements;
 mod statistical_set_functions;
 mod statistics;

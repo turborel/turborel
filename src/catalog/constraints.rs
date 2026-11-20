@@ -216,3 +216,30 @@ impl TableDesc {
         }
     }
 }
+
+/// \[DESIGN\] What a statement's end looks for over every table of a
+/// catalog, found once for its tables (RULES.md D415): whether one has a
+/// foreign key, whose referenced rows a change may break, and whether one
+/// has a CHECK constraint that reads tables, which a change of them may
+/// break.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Constrained {
+    /// A table has a foreign key.
+    pub foreign_keys: bool,
+    /// A table has a CHECK constraint that reads tables.
+    pub reading_checks: bool,
+}
+
+impl Constrained {
+    /// Of the tables `tables`.
+    pub fn of<'a>(tables: impl Iterator<Item = &'a TableDesc>) -> Constrained {
+        let mut found = Constrained::default();
+        for c in tables.flat_map(|t| t.constraints.iter()) {
+            found.foreign_keys |= matches!(c.kind, ConstraintKind::ForeignKey(_));
+            if let ConstraintKind::Check { reads, .. } = &c.kind {
+                found.reading_checks |= !reads.is_empty();
+            }
+        }
+        found
+    }
+}

@@ -57,8 +57,10 @@ impl State {
         }
         self.unique_checks(effects, &changed, &mut out)?;
         // [ISO/IEC 9075-2:2023 §4.25.1] one of a supertable checked of each
-        // subtable's rows too.
-        for desc in self.catalog.tables() {
+        // subtable's rows too; none looked for where no table has one
+        // (RULES.md D415).
+        let reading = self.catalog.constrained().reading_checks;
+        for desc in self.catalog.tables().into_iter().filter(|_| reading) {
             for c in self.constraints_of(&desc.name) {
                 let ConstraintKind::Check { reads, .. } = &c.kind else { continue };
                 if !reads.is_empty() && (changed.contains(&desc.name) || reads.iter().any(|t| changed.contains(t))) {
@@ -116,7 +118,11 @@ impl State {
         // [ISO/IEC 9075-2:2023 §4.17.9] a row of a subtable of the referenced
         // table is a superrow's of it; and a child's foreign keys are its
         // own and its supertables'. The row's id is of the referenced table's
-        // row alone.
+        // row alone. None is looked for where no table has a foreign key
+        // (RULES.md D415).
+        if !self.catalog.constrained().foreign_keys {
+            return Ok(());
+        }
         for child in self.catalog.tables() {
             for (name, fk) in self.foreign_keys_of(&child.name).into_iter().filter(|(_, fk)| self.reaches(table, &fk.table)) {
                 // [ISO/IEC 9075-2:2023 §11.8 SR18a i] of a temporal one,

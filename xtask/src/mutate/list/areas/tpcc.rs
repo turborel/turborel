@@ -1,12 +1,13 @@
 //! The mutations of the order entry paths (RULES.md R-TEST-9, D413 to
 //! D420): MIN and MAX read from the wrong end of the rows sorted, and of a
 //! column that may hold a null; a kept body's leaf keeping the plan made
-//! with one run's values.
+//! with one run's values; a table changed keeping what the catalog knew
+//! of its constraints, and a row's checks reading the row of another.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the order entry paths whose removal must fail their tests.
-pub const TPCC: [Mutation; 3] = [
+pub const TPCC: [Mutation; 5] = [
     Mutation {
         name: "tpcc-extreme-wrong-end",
         package: Package::Core,
@@ -35,6 +36,26 @@ pub const TPCC: [Mutation; 3] = [
         original: "            Learned::Kept(slotted) => Physical::Fixed(Arc::from(slotted), Arc::clone(&reads), Some(rows_of(st, &reads))),",
         replacement: "            Learned::Kept(_) => Physical::Fixed(Arc::new(custom.clone()), Arc::clone(&reads), Some(rows_of(st, &reads))),",
         integration: &["kept_routines::a_kept_leaf_learns_its_plan_and_reads_each_calls_rows"],
+        unit: &[],
+    },
+    Mutation {
+        name: "tpcc-constrained-kept-over-change",
+        package: Package::Core,
+        breaks: "a table changed by ALTER TABLE keeps what the catalog knew of foreign keys, so one added is never checked",
+        file: "src/catalog/memory.rs",
+        original: "            self.table_order = OnceLock::new();\n        }\n        self.constrained = OnceLock::new();",
+        replacement: "            self.table_order = OnceLock::new();\n        }",
+        integration: &["statement_ends::constraints_added_after_statements_ended_without_any_are_checked"],
+        unit: &[],
+    },
+    Mutation {
+        name: "tpcc-check-reads-another-row",
+        package: Package::Core,
+        breaks: "a row's checks reuse the row the last check of the table read, of another row",
+        file: "src/db/integrity.rs",
+        original: "if read.as_ref().is_none_or(|(t, at, _)| t != table || *at != id) {",
+        replacement: "if read.as_ref().is_none_or(|(t, _, _)| t != table) {",
+        integration: &["statement_ends::each_row_is_checked_of_its_own_values"],
         unit: &[],
     },
 ];

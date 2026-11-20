@@ -376,6 +376,7 @@ verification approach DO-178C expects (§8).
 | D402 | A table is renamed into a new generation, refused while a text names it; its trigger's ON clause and generator follow |
 | D413 | MIN or MAX of a column known not null is read from the first row in order |
 | D414 | Every query of a kept procedure body over its variables learns its plan with slots |
+| D415 | A statement's end looks for foreign keys and reading CHECKs only where a table has one, and reads a row once for its checks |
 
 ### The project
 
@@ -10518,6 +10519,25 @@ at each run. One whose plans keep changing stops learning after
 gains or loses rows as its statistics would be gathered again for has
 it learn again (`routines/kept/leaves.rs`). Its plans are the body's,
 made again when the body is bound again (D406).
+
+#### D415. A statement's end looks for foreign keys and reading CHECKs only where a table has one, and reads a row once for its checks
+
+Each statement's end looked over every table of the catalog for the
+CHECK constraints that read tables, and, for each row it updated or
+deleted, over every table again for the foreign keys that reference it,
+each table's own and its supertables' gathered anew. A cursor settled
+before a change looked over them once more for referential actions. An
+order entry's new order ends two dozen statements, and those looks took
+about a twentieth of it, though its tables have neither. The catalog
+now keeps whether any table has a foreign key and whether any has a
+CHECK that reads tables (`Catalog::constrained`), found as first asked
+and again once a table is added, changed or removed
+(`catalog/memory.rs`), and a statement's end looks for either only where
+one exists (`db/integrity/gather.rs`, `State::written_by`). The checks
+of a row's NOT NULL, CHECK and foreign key constraints, which come one
+after another, each read the row again. The row read is kept for the
+next check of the same row (`Checking`), so a row is read once for them
+all.
 
 ## 2. Project layout
 
