@@ -14,6 +14,7 @@ mod formats;
 mod locating;
 mod paths;
 mod readers;
+mod truncated;
 mod types;
 
 /// Reference systems naming none: every sample is of SRID 0.

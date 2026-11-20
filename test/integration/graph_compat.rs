@@ -9,6 +9,7 @@ use turborel::db::{Database, Session};
 
 mod cypher_clauses;
 mod front_ends;
+mod match_forms;
 mod oracle;
 mod reachability;
 

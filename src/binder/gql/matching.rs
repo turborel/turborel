@@ -87,7 +87,9 @@ fn columns(graph: &Graph, b: &Bound) -> Vec<String> {
 }
 
 /// The label set of element variable `x`, `|A|B|`: of an open graph its
-/// LABELS; else of each label `labels` names, whether `x` has it.
+/// LABELS; else of each label `labels` names, whether `x` has it. Each
+/// CASE's empty arm is of varying length, so the CASE is too and a label
+/// `x` lacks adds no padding [ISO/IEC 9075-2:2023 §9.5 SR3a iii 2].
 fn label_set(graph: &Graph, x: &str, labels: &[String]) -> String {
     if graph.open {
         return format!("{x}.\"LABELS\"");
@@ -95,7 +97,7 @@ fn label_set(graph: &Graph, x: &str, labels: &[String]) -> String {
     let mut parts = vec![string(super::LABEL_BAR)];
     for l in labels {
         let has = string(&format!("{l}{}", super::LABEL_BAR));
-        parts.push(format!("CASE WHEN {x} IS LABELED {} THEN {has} ELSE '' END", identifier(l)));
+        parts.push(format!("CASE WHEN {x} IS LABELED {} THEN {has} ELSE CAST('' AS {}) END", identifier(l), super::LABELS_TYPE));
     }
     format!("CAST({} AS {})", parts.join(" || "), super::LABELS_TYPE)
 }

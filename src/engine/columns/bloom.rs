@@ -286,4 +286,39 @@ mod tests {
         assert!(holds(&[0; 16], Some(past), &[]), "past its page's end");
         pages.free(&written);
     }
+
+    /// Verifies: [DESIGN] RULES.md D31, Bloom filters: a filter holds a
+    /// value of every kind a bucket is made of (binary strings, truth
+    /// values, datetimes, intervals, rows, arrays and multisets), each
+    /// found again; values of different kinds whose bytes are alike are
+    /// told apart by their kinds' tags; an array holding the null value
+    /// hashes to nothing.
+    #[test]
+    fn filters_hold_values_of_every_kind() {
+        use crate::value::datetime::{Datetime, Field, Moment};
+        use crate::value::interval::{Interval, Qualifier, unit};
+        use crate::value::{Binary, Bucket};
+        let day = Interval { units: unit(Field::Day), qualifier: Qualifier::new(Field::Day, Field::Day, 9, 0) };
+        let values = vec![
+            Value::Binary(Binary::new(vec![1, 2])),
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Datetime(Datetime::of_local(Moment::Date, 0, 0, false, 0)),
+            Value::Interval(day),
+            Value::Row(vec![Value::Char("x".into()), int(1)].into()),
+            Value::Array(vec![int(1), int(2)].into()),
+            Value::Multiset(vec![int(1), int(2), int(1)].into()),
+        ];
+        let filter = filter_of(&values, FILTER_BYTES);
+        for v in &values {
+            let hash = hashed(v).unwrap_or_else(|| panic!("{v:?} has a hash"));
+            assert!(may_hold(&filter, hash), "{v:?}");
+        }
+        let hashes: Vec<(u64, u64)> = values.iter().filter_map(hashed).collect();
+        for (n, h) in hashes.iter().enumerate() {
+            assert!(!hashes[n + 1..].contains(h), "{:?} is told apart", values[n]);
+        }
+        assert!(matches!(bucket(&values[0]), Some(Bucket::Binary(_))));
+        assert_eq!(hashed(&Value::Array(vec![int(1), Value::Null].into())), None, "an array holding the null value equals nothing");
+    }
 }

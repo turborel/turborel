@@ -205,7 +205,9 @@ impl<'a> Node<'a> {
         let count = word_at(self.body(), 0)?;
         let first = self.first()?;
         let mut at = first;
-        let mut members = Vec::with_capacity(count);
+        // A count read from damaged octets may be far beyond what the body
+        // holds, so room is made for no more members than it has octets.
+        let mut members = Vec::with_capacity(count.min(self.body().len()));
         for _ in 0..count {
             let (key, value) = member_at(self.body(), at)?;
             at = at.saturating_add(WORD).saturating_add(key.len()).saturating_add(value.length()?);
@@ -348,7 +350,7 @@ impl<'a> Node<'a> {
     fn check_members(&self, depth: usize) -> Result<()> {
         let count = word_at(self.body(), 0)?;
         let first = self.first()?;
-        let mut starts = Vec::with_capacity(count);
+        let mut starts = Vec::with_capacity(count.min(self.body().len()));
         let mut at = 0_usize;
         for _ in 0..count {
             let (key, value) = member_at(self.body(), first.saturating_add(at))?;

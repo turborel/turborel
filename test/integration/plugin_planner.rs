@@ -15,7 +15,7 @@ use crate::plugins::fixture::{allow, install, manifest};
 /// A scratch directory whose plug-ins hold PLANNER at 1.0.0 of `objects`,
 /// and a database in memory allowed it, PLANNER created by U, who owns
 /// T (A, B) of 20 rows, A from 1 to 20 and B its remainder by 4.
-fn planner(test: &str, objects: &str) -> (Scratch, Database) {
+pub(crate) fn planner(test: &str, objects: &str) -> (Scratch, Database) {
     let scratch = Scratch::new(test);
     let root = scratch.path("plugins");
     install(&root, ("PLANNER", "1.0.0"), &manifest("PLANNER", "1.0.0", "", objects));

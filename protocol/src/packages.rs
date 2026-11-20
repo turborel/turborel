@@ -118,4 +118,22 @@ mod package_tests {
         let seed = unhex_array(key.file_text().trim()).unwrap();
         assert_eq!(SigningKey::of_seed(seed).unwrap().public_key(), key.public_key());
     }
+
+    /// Verifies: [EXTENSION] design document §13.4: a key shows its public
+    /// key alone, never its seed; a key file that cannot be read, or holds
+    /// no seed in hexadecimal, is refused (SQLCODE -915, -301).
+    #[test]
+    fn a_key_shows_no_secret_and_a_bad_file_is_refused() {
+        let key = SigningKey::of_seed([7; SEED_LEN]).unwrap();
+        let shown = format!("{key:?}");
+        assert_eq!(shown, format!("SigningKey({})", hex(&key.public_key())));
+        assert!(!shown.contains(&hex(&[7; SEED_LEN])), "{shown}");
+        let dir = std::env::temp_dir().join(format!("turborel-protocol-key-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(SigningKey::read(&dir.join("none")).unwrap_err().sqlcode(), -915_i32);
+        let bad = dir.join("bad");
+        std::fs::write(&bad, "not hex\n").unwrap();
+        assert_eq!(SigningKey::read(&bad).unwrap_err().sqlcode(), -301_i32);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

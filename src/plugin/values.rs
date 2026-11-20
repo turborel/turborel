@@ -247,6 +247,9 @@ pub fn stored(v: Value, t: &DataType) -> Result<Value> {
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod carried;
+
 /// \[EXTENSION\] The coordinates of `v`, a vector, dense: what a plug-in
 /// reads of a vector it is given (`turborel_plugin`).
 pub fn coordinates(v: &Value) -> Option<Vec<f64>> {

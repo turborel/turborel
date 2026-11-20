@@ -4,6 +4,8 @@
 use super::*;
 use crate::error::SqlState;
 
+mod truncated;
+
 /// A placement at `location`, of no reference direction.
 fn at(location: &[f64]) -> Placement {
     Placement { location: location.to_vec(), directions: Vec::new() }

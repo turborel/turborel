@@ -1,5 +1,8 @@
 //! Unit tests of `turboreld`'s command line (RULES.md R-TEST-1, R-TEST-2).
 
+use turborel::backup::seed::RecoveryTarget;
+use turborel::log::Lsn;
+
 use super::*;
 
 fn args(line: &str) -> Vec<String> {
@@ -99,4 +102,38 @@ fn user_commands_are_read_after_the_database() {
     for wrong in ["", "add", "add a b", "remove bob", "list all", "add bob --admin"] {
         assert!(read(wrong).unwrap_err().contains("user takes"), "{wrong}");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D42, D43: each option that takes a value
+/// is refused without it, saying so; a user command whose words are
+/// wrong is refused after the database is named, as is `rekey` given a
+/// word.
+#[test]
+fn options_without_their_values_are_refused() {
+    let wrong = |line: &str| parse(&args(line)).unwrap_err();
+    for option in ["--set", "--log", "--keys", "--checksum-key", "--owner", "--config"] {
+        assert_eq!(wrong(&format!("--memory {option}")), format!("{option} needs a value"), "{option}");
+    }
+    assert!(wrong("--dir /db user remove bob").contains("user takes"));
+    assert_eq!(wrong("--dir /db rekey now"), "rekey takes nothing, not now");
+}
+
+/// Verifies: [DESIGN] RULES.md D42: `--restore` takes `--until-lsn` with
+/// a position and `--backup` with an id, and `--verify-backup` a
+/// `--backup`; a position that is no number, a timestamp that is none,
+/// or an option without its value is refused, saying why.
+#[test]
+fn backup_options_are_read_or_refused() {
+    let Command::Backup(_, restore) = parse(&args("--dir /db --restore /b --backup 7 --until-lsn 42")).unwrap() else {
+        panic!("a restore")
+    };
+    let wanted =
+        BackupCommand::Restore { location: "/b".into(), backup: "7".into(), archive: None, target: RecoveryTarget::Position(Lsn(42)) };
+    assert_eq!(restore, wanted);
+    let Command::Backup(_, verify) = parse(&args("--verify-backup /b --backup 3")).unwrap() else { panic!("a verify") };
+    assert_eq!(verify, BackupCommand::Verify { location: "/b".into(), backup: "3".into() });
+    let wrong = |line: &str| parse(&args(line)).unwrap_err();
+    assert_eq!(wrong("--dir /db --restore /b --until-lsn x"), "--until-lsn takes a position, not x");
+    assert!(wrong("--dir /db --restore /b --archive /a --until-time noon").starts_with("--until-time takes a timestamp"));
+    assert_eq!(wrong("--dir /db --restore /b --backup"), "--backup needs a value");
 }

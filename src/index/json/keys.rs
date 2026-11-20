@@ -206,4 +206,27 @@ mod tests {
         assert_eq!(count_of(&count_value(9)).unwrap(), 9);
         assert_eq!(count_of(&versions_value(3)).unwrap(), 3);
     }
+
+    /// Verifies: [DESIGN] a json index's entries, R-ERR-2: a document key,
+    /// a hashed key, a posting key and a count cut short, or a count of
+    /// a length that is neither four nor eight, are refused with SQLCODE
+    /// -916.
+    #[test]
+    fn malformed_entries_are_refused() {
+        let d = doc(&[7; HASH_BYTES], 42);
+        let keys = [document_key(42, &[7; HASH_BYTES]), hashed_key(&[7; HASH_BYTES], 42), posting_key(&[1; TERM_BYTES], &d)];
+        for cut in 0..keys[0].len() {
+            assert_eq!(document_of(&keys[0][..cut]).unwrap_err().sqlcode(), -916_i32, "cut at {cut}");
+        }
+        for cut in 0..ROW_BYTES {
+            assert_eq!(hashed_row(&keys[1][..cut]).unwrap_err().sqlcode(), -916_i32, "cut at {cut}");
+        }
+        for cut in 0..keys[2].len() {
+            assert_eq!(posting_doc(&keys[2][..cut]).unwrap_err().sqlcode(), -916_i32, "cut at {cut}");
+        }
+        assert_eq!(document_of(&[keys[0].as_slice(), &[0]].concat()).unwrap_err().sqlcode(), -916_i32);
+        for n in [0, 3, 5, 9] {
+            assert_eq!(count_of(&vec![0; n]).unwrap_err().sqlcode(), -916_i32, "{n} bytes");
+        }
+    }
 }

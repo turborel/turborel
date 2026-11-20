@@ -13,6 +13,8 @@ use crate::memory::MemoryBudget;
 use crate::storage::{Condition, Conjunct, Conjunction};
 use crate::value::{CompOp, Decimal, Spelled};
 
+mod truncated;
+
 const INTEGER: DataType = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
 const TEXT: DataType = DataType::varying(100);
 const TYPES: [DataType; 3] = [INTEGER, TEXT, INTEGER];

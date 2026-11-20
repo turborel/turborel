@@ -5,6 +5,7 @@
 
 mod angles;
 mod directions;
+mod geodesic_cases;
 mod geodesics;
 mod limits;
 mod polygons;

@@ -6540,7 +6540,8 @@ frame read is reserved of the memory budget while it is held, and HELLO
 tells the program PLUGINS.MEMORY_BYTES, as capping a process's memory
 would need calls of the operating system the database does not make.
 A program starts in its directory with an environment of PATH and the
-temporary directory alone. A pool dropped, as the last state holding its
+temporary directory alone, and the coverage profile's path when there
+is one, so the measured tests measure the programs they run. A pool dropped, as the last state holding its
 extension is, sends SHUTDOWN and stops its processes.
 
 #### D171. Extensions are versioned packages, resolved together and locked per database

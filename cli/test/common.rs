@@ -67,3 +67,54 @@ pub fn plugin_example() -> std::path::PathBuf {
     assert!(built.exists(), "{} is not built: cargo test --workspace builds it", built.display());
     built
 }
+
+/// What a script run printed and told, and how it ended.
+pub struct Script {
+    pub outcome: turborel_cli::Outcome,
+    pub out: String,
+    pub err: String,
+}
+
+/// What reads a password typed.
+pub type Typed = dyn FnMut(&str) -> std::io::Result<String>;
+
+/// What a session's terminal has, owned by the test: its screen, a line
+/// editor, what reads a password, and the environment.
+#[derive(Default)]
+pub struct Seat {
+    pub screen: Option<turborel_cli::Screen>,
+    pub editor: Option<Box<dyn turborel_cli::Lines>>,
+    pub secret: Option<Box<Typed>>,
+    /// The environment's variables the command line is read with.
+    pub environment: Vec<(&'static str, String)>,
+}
+
+/// Runs `text` as standard input, `typed` if so, at `seat`, with the
+/// command line `args` besides the connection's to `server` as X, over an
+/// SQL-agent as the program does.
+pub fn session(server: &Running, args: &[&str], text: &str, typed: bool, mut seat: Seat) -> Script {
+    let port = server.address.port().to_string();
+    let mut line: Vec<String> = ["-U", "X", "-p", port.as_str()].iter().map(|a| (*a).to_owned()).collect();
+    line.extend(args.iter().map(|a| (*a).to_owned()));
+    let environment = std::mem::take(&mut seat.environment);
+    let env = |name: &str| environment.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone());
+    let Ok(turborel_cli::Command::Run(options)) = turborel_cli::parse(&line, &env) else { panic!("{line:?}") };
+    let connection = turborel_cli::connect(&options, || Ok(String::new())).unwrap();
+    let mut agent = Agent::connected(Dialer::new((*options).clone(), Box::new(|| Ok(String::new()))), connection);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let mut input = text.as_bytes();
+    let terminal = Terminal {
+        screen: seat.screen,
+        editor: seat.editor.as_deref_mut().map(|e| e as &mut dyn turborel_cli::Lines),
+        secret: seat.secret.as_deref_mut().map(|s| s as &mut dyn FnMut(&str) -> std::io::Result<String>),
+    };
+    let io = Io { input: &mut input, typed, out: &mut out, err: &mut err, interrupts: None, terminal };
+    let outcome = turborel_cli::outcome(&mut agent, &options, io);
+    agent.terminate().unwrap();
+    Script { outcome, out: String::from_utf8(out).unwrap(), err: String::from_utf8(err).unwrap() }
+}
+
+/// Runs `text` as a script, not typed, as `session` does.
+pub fn script(server: &Running, args: &[&str], text: &str) -> Script {
+    session(server, args, text, false, Seat::default())
+}

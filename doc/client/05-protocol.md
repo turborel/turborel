@@ -114,6 +114,7 @@ distinct type is written as its source type.
 | 24 | reference type | the referenced type's names, as a structured type's; then scoped `u8`, and if 1 the scope's schema and name |
 | 25 | JSON | nothing |
 | 26 | XML | primary modifier `u8` (0 DOCUMENT, 1 CONTENT, 2 SEQUENCE), secondary `u8` (0 UNTYPED, 1 ANY, 2 XMLSCHEMA); of XMLSCHEMA, the schema's schema and name, then its namespace and its element, each `u8` 0 for none or 1 and a string |
+| 27 | UUID | nothing |
 
 An interval's fields are numbered 0 YEAR, 1 MONTH, 2 DAY, 3 HOUR, 4
 MINUTE and 5 SECOND. A plug-in's type a client does not have is read by
@@ -133,9 +134,9 @@ value is written with tag 1, as a CHARACTER value is.
 | 3 | approximate number | the bits of an IEEE 754 double, `u64` |
 | 4 | a plug-in's value | its type's name, string; its text, string; its bytes, bytes |
 | 6 | binary string | bytes |
-| 8 | date | as a timestamp |
-| 9 | time | as a timestamp |
-| 11 | timestamp | zoned `u8`; precision `u8`; the zone's displacement in minutes, the `i16`'s bits in the low half of a `u32`; the instant, microseconds in UTC, `i64 as u64` |
+| 8 | date | as a timestamp, the instant its midnight's |
+| 9 | time | as a timestamp, the instant microseconds from midnight UTC, within a day |
+| 11 | timestamp | zoned `u8`; precision `u8`; the zone's displacement in minutes, the `i16`'s bits in the low half of a `u32`; the instant, microseconds in UTC from 0001-01-01 00:00:00, `i64 as u64` |
 | 13 | interval | its qualifier, as the INTERVAL type writes it; then units `i128`, months of a year-month interval, microseconds of a day-time one |
 | 14 | truth value | `u8`, 0 false, 1 true; unknown is null |
 | 15 | decimal floating point | coefficient `i128`, then exponent `i32 as u32` |
@@ -148,6 +149,7 @@ value is written with tag 1, as a CHARACTER value is.
 | 24 | reference | bytes |
 | 25 | JSON | its stored form, bytes |
 | 26 | XML | its serialization as CONTENT, string |
+| 27 | UUID | its 16 octets, bytes |
 
 The zoned byte of a datetime is 1 for a type WITH TIME ZONE. Without a
 zone, the displacement is the one the value is shown in. A large object
