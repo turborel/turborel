@@ -435,12 +435,11 @@ OK
 ```
 
 A query that stops after its first rows, its scan reading 16 of the
-1000 rows it holds. Read by batches, the scan and the filter count the
-rows of each batch they gave, which may be more than the operator above
-them took:
+1000 rows it holds. Read by batches, the scan counts the rows of each
+batch it gave, which may be more than the operator above it took:
 
 ```sql
-EXPLAIN ANALYZE SELECT ID FROM PARTS WHERE ID > 10 FETCH FIRST 3 ROWS ONLY;
+EXPLAIN ANALYZE SELECT ID FROM PARTS FETCH FIRST 3 ROWS ONLY;
 ```
 
 ```
@@ -448,11 +447,10 @@ EXPLAIN ANALYZE SELECT ID FROM PARTS WHERE ID > 10 FETCH FIRST 3 ROWS ONLY;
 --------------------------------------------------------------
  -- physical:
  Limit fetch 3  (est. rows=3)  (actual rows=3)
-   Project PARTS.ID  (est. rows=989)  (actual rows=3)
-     Filter PARTS.ID > 10  (est. rows=989)  (actual rows=6)
-       SeqScan ANN.PARTS  (rows=1000, cost=900.0)  (actual rows=16)
+   Project PARTS.ID  (est. rows=1000)  (actual rows=3)
+     SeqScan ANN.PARTS  (rows=1000, cost=900.0)  (actual rows=16)
  -- ran: 3 rows
-(6 rows)
+(5 rows)
 ```
 
 ## STANDARD
