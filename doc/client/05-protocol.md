@@ -147,7 +147,7 @@ value is written with tag 1, as a CHARACTER value is.
 | 22 | multiset | a list of values, in no set order |
 | 23 | structured value | its most specific type's schema and name, strings; then its attributes, a list of values |
 | 24 | reference | bytes |
-| 25 | JSON | its stored form, bytes |
+| 25 | JSON | its stored form, bytes, as [JSON values](#json-values) says |
 | 26 | XML | its serialization as CONTENT, string |
 | 27 | UUID | its 16 octets, bytes |
 
@@ -157,6 +157,82 @@ of at most SERVER.LOB_INLINE_BYTES, 64 KiB by default, comes whole. A
 longer one comes by a locator, which the client reads with Lob requests,
 and which lasts until its transaction ends. A client always sends a
 large object whole, or as a locator it made with Lob requests.
+
+### JSON values
+
+A JSON value is sent as the database stores it, a document of a typed
+binary tree, never as JSON text. A document is a version octet, 1, then
+its root node. A node is a tag octet, then its body. Integers are
+little-endian, as everywhere in the protocol.
+
+| Tag | Node | Body |
+|---|---|---|
+| 0 | null | nothing |
+| 1 | false | nothing |
+| 2 | true | nothing |
+| 3 | integer | the number, `i64` |
+| 4 | decimal | units `i64`, then scale `u8`; the number is units divided by ten to the scale |
+| 5 | wide decimal | units `i128`, then scale `u32`, read as a decimal's |
+| 6 | decimal floating point | coefficient `i128`, then exponent `i32`; the number is the coefficient times ten to the exponent |
+| 7 | approximate number | the bits of an IEEE 754 double, `u64` |
+| 8 | string | its length in octets, `u32`, then its UTF-8 |
+| 9 | datetime | moment `u8` (0 date, 1 time, 2 timestamp); the instant, microseconds in UTC, `i64`; the zone's displacement in minutes, `i16`; zoned `u8`; precision `u8` |
+| 10 | array | count `u32`; size `u32`; an offset `u32` of each element; the elements |
+| 11 | object | count `u32`; size `u32`; an offset `u32` of each member, in key order; the members, in the order written |
+
+An exact number is written in the narrowest of its three nodes. One of
+scale 0 whose units an `i64` holds is an integer, one of another scale
+a `u8` holds whose units an `i64` holds is a decimal, and any other a
+wide decimal. A decimal keeps the scale it was written with, so 1.50 is
+units 150 and scale 2. A datetime is the instant of a date's midnight,
+of a time within its day, or of a timestamp, counted as the Values
+table says, and its zoned octet is 1 for one WITH TIME ZONE.
+
+An array's or an object's count is its elements or members. Its size is
+the octets of its elements or members, after its offsets, so a reader
+skips a node it does not need without reading inside it. Each offset
+counts octets from the first element or member, so the first offset of
+an array is 0.
+
+A member is its key's length in octets, `u32`, the key's UTF-8, then
+its value's node. An object keeps its members in the order they were
+written, those of one key too, and JSON text written from it keeps
+that order. Its offsets are a directory sorted by key, comparing the
+keys' UTF-8 octet by octet, which is the order of Unicode code points,
+and members of one key in the order written. A reader finds a key by a
+binary search of the directory, and the first member of a key written
+is the one a member accessor takes. A reader that only lists the
+members reads them in place after the offsets, in their written order.
+
+The value `{"a":[1,"x"]}` is these 51 octets, in hexadecimal:
+
+```text
+01                  version 1
+0B                  object
+  01 00 00 00         count 1
+  25 00 00 00         size 37
+  00 00 00 00         offset of key "a", 0
+  01 00 00 00 61      key "a"
+  0A                  array
+    02 00 00 00         count 2
+    0F 00 00 00         size 15
+    00 00 00 00         offset of element 1, 0
+    09 00 00 00         offset of element 2, 9
+    03                  integer
+      01 00 00 00 00 00 00 00   1
+    08                  string
+      01 00 00 00 78            "x"
+```
+
+In `{"b":1,"a":2}` the members stay in that order, and the directory
+puts `a` first. Its offsets are `0E 00 00 00`, member `a` at 14, then
+`00 00 00 00`, member `b` at 0.
+
+A server checks a document it receives whole before it uses it, every
+node within its container, every string UTF-8 and every offset at an
+element or member. A document of another version or a damaged one is
+refused with SQLCODE -916. Arrays and objects nest at most 128 deep,
+and a document is at most 256 MiB.
 
 ### Composite fields
 
@@ -729,12 +805,30 @@ Status 'T'
   value          string, as SQL writes it; empty for a null
 ```
 
-With `status`. A setting of the session. At login and after Reset or
-ChangeUser the server sends one for each of AUTHORIZATION, SCHEMA,
-READ_ONLY (YES or NO), SERVER_VERSION, and every setting a session may
-set for itself, SESSION.TIME_ZONE and TRANSACTION.ISOLATION among them.
-After a statement it sends one for each of these the statement changed.
-A setting reset is sent again at the database's value.
+With `status`. A setting of the session. At login, before Ready, and
+after Reset or ChangeUser, before the reply that ends it, the server
+sends one of each name below, in the table's order, then one of every
+setting a session may set for itself, SESSION.TIME_ZONE and
+TRANSACTION.ISOLATION among them.
+
+| Name | Value | Sent again after a statement |
+|---|---|---|
+| SERVER_VERSION | the server's product, `turborel`, its version and, in parentheses, its codename | never |
+| AUTHORIZATION | the session's current authorization identifier | if the statement changed it, as SET SESSION AUTHORIZATION does |
+| SCHEMA | the session's default schema | if the statement changed it, as SET SCHEMA does |
+| READ_ONLY | YES if the session's transaction is READ ONLY, else NO | if the statement changed it, as SET TRANSACTION or the end of a transaction does |
+| SERVER_READ_ONLY | YES if the server takes no changes, as a replica following its group does, else NO | if it changed by the time the statement completed, as a promotion changes it |
+| CATALOG | the name of the database's catalog, the setting CATALOG.NAME; empty if it is null | never |
+| OWNER | YES if the session's current authorization identifier is the database's owner, else NO | if the statement changed AUTHORIZATION and this changed with it |
+
+After a statement the server sends a Status only of what the statement
+changed, before the statement's completion, and none for a statement
+that changed nothing. A setting the session set for itself is sent at
+its new value, and one it reset is sent again at the database's value.
+After Reset or ChangeUser every name is sent again, changed or not. A
+client that keeps the last value of each name has the session's
+settings with no query, and tells a primary from a replica by
+SERVER_READ_ONLY.
 
 ### Pong 'G'
 
