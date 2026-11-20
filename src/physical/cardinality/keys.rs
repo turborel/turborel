@@ -83,7 +83,8 @@ impl Estimates<'_> {
             return keys;
         }
         let db = self.db();
-        let indexed = db.catalog.indexes(table).into_iter().filter(|ix| ix.unique && ix.expressions.is_empty()).map(|ix| ix.columns.clone());
+        let indexed =
+            db.catalog.indexes(table).into_iter().filter(|ix| ix.unique && ix.expressions.is_empty()).map(|ix| ix.columns.clone());
         let keys = Rc::new(db.catalog.table(table).map(|desc| TableKeys::of(desc, indexed)).unwrap_or_default());
         self.table_keys.borrow_mut().insert(table.clone(), Rc::clone(&keys));
         keys
@@ -101,14 +102,19 @@ impl Estimates<'_> {
                 }
                 LogicalPlan::Filter { input, .. } | LogicalPlan::Sort { input, .. } | LogicalPlan::Limit { input, .. } => at = input,
                 LogicalPlan::Project { exprs, input } => {
-                    columns = columns.iter().map(|&c| if let Some(Expr::Column(i)) = exprs.get(c) { Some(*i) } else { None }).collect::<Option<_>>()?;
+                    columns = columns
+                        .iter()
+                        .map(|&c| if let Some(Expr::Column(i)) = exprs.get(c) { Some(*i) } else { None })
+                        .collect::<Option<_>>()?;
                     at = input;
                 }
                 LogicalPlan::Aggregate { groups, seeds, .. } => {
                     let all = !groups.is_empty() && seeds.is_empty() && (0..groups.len()).all(|g| columns.contains(&g));
                     return all.then(|| self.card_at(at, 1).rows);
                 }
-                LogicalPlan::Distinct { input } => return (0..input.width()).all(|c| columns.contains(&c)).then(|| self.card_at(at, 1).rows),
+                LogicalPlan::Distinct { input } => {
+                    return (0..input.width()).all(|c| columns.contains(&c)).then(|| self.card_at(at, 1).rows);
+                }
                 LogicalPlan::Product { .. }
                 | LogicalPlan::OuterJoin { .. }
                 | LogicalPlan::SetOp { .. }

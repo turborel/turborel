@@ -106,7 +106,10 @@ impl CostModel {
             }
         }
         if !(1.0_f64..=MOST_ESTIMATE_MARGIN).contains(&self.estimate_margin) {
-            return fail(Code::Api, format!("[DESIGN] estimate_margin is {}; it is from 1 to {MOST_ESTIMATE_MARGIN}", self.estimate_margin));
+            return fail(
+                Code::Api,
+                format!("[DESIGN] estimate_margin is {}; it is from 1 to {MOST_ESTIMATE_MARGIN}", self.estimate_margin),
+            );
         }
         Ok(())
     }

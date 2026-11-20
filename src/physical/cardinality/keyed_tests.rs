@@ -126,7 +126,8 @@ fn bounds_are_never_below_the_true_rows() {
         for table in ["A", "B", "C"] {
             let n = random.next(80).wrapping_add(1);
             let domain = random.next(12).wrapping_add(1);
-            let values: Vec<String> = (0..n).map(|_| format!("({}, {})", random.next(domain).min(random.next(domain)), random.next(6))).collect();
+            let values: Vec<String> =
+                (0..n).map(|_| format!("({}, {})", random.next(domain).min(random.next(domain)), random.next(6))).collect();
             s.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
         }
         s.commit().unwrap();
@@ -153,8 +154,9 @@ fn bounds_are_never_below_the_true_rows() {
 /// each pair's factor counted once both its relations are in.
 #[test]
 fn corrected_pairs_give_one_answer_for_every_order() {
-    let classes = Classes::new(vec![vec![(0, 200.0_f64), (1, 200.0_f64)], vec![(0, 20.0_f64), (1, 20.0_f64)], vec![(1, 50.0_f64), (2, 50.0_f64)]])
-        .with_pairs(vec![(0, 1, 5.0_f64)]);
+    let classes =
+        Classes::new(vec![vec![(0, 200.0_f64), (1, 200.0_f64)], vec![(0, 20.0_f64), (1, 20.0_f64)], vec![(1, 50.0_f64), (2, 50.0_f64)]])
+            .with_pairs(vec![(0, 1, 5.0_f64)]);
     let rows = [2_000.0_f64, 800.0_f64, 50.0_f64];
     let fraction = |set: &[usize]| classes.fraction(|r| set.contains(&r));
     let joined = |order: [usize; 3]| {

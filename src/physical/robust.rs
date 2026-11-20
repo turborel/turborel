@@ -102,7 +102,8 @@ mod tests {
         // Index cheaper at the bound only, its probes cheaper than hashing
         // but begun dearer: its regret at 1 row, 1,600.3 / 1,500.5, is less
         // than the hash join's at 3,000, 3,000 / 2,500, so the index join.
-        let cheap_probes = [("hash", Linear { fixed: 1_500.0_f64, per_row: 0.5_f64 }), ("index", Linear { fixed: 1_600.0_f64, per_row: 0.3_f64 })];
+        let cheap_probes =
+            [("hash", Linear { fixed: 1_500.0_f64, per_row: 0.5_f64 }), ("index", Linear { fixed: 1_600.0_f64, per_row: 0.3_f64 })];
         assert_eq!(choose(&cheap_probes, (1.0_f64, 3_000.0_f64)), Some("index"));
         // Of equal regret, the first.
         let same = [("a", Linear { fixed: 1.0_f64, per_row: 1.0_f64 }), ("b", Linear { fixed: 1.0_f64, per_row: 1.0_f64 })];

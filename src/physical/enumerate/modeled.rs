@@ -16,9 +16,9 @@ use std::collections::HashMap;
 
 use super::extract::Query;
 use super::model::{Conj, Model, Order, Pred, Rel};
+use crate::logical::LogicalPlan;
 use crate::logical::{Cond, Expr, SortKey, split_and};
 use crate::physical::PhysicalPlanner;
-use crate::logical::LogicalPlan;
 use crate::physical::cardinality::{Card, Member, find};
 use crate::physical::estimate::{self, Known};
 use crate::physical::indexed::{access_cost, reads_table};

@@ -26,8 +26,8 @@ use std::sync::Arc;
 
 use super::cost::HASH_ROW;
 use super::estimate::Known;
-use super::robust::{Linear, choose, pessimistic};
 use super::join::Flip;
+use super::robust::{Linear, choose, pessimistic};
 use super::shown::Shown;
 use super::{JoinComparison, JoinProbe, PhysicalPlanner, Plan, Preserved};
 

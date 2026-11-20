@@ -88,7 +88,10 @@ fn contained(r: Joint, s: Joint) -> (Joint, Joint) {
 fn linked(members: &[Vec<Member>]) -> Vec<(usize, usize)> {
     let mut linked: Vec<(usize, usize)> = Vec::new();
     let pairs = members.iter().flat_map(|class| {
-        class.iter().enumerate().flat_map(move |(i, a)| class.iter().skip(i.saturating_add(1)).map(move |b| (a.rel.min(b.rel), a.rel.max(b.rel))))
+        class
+            .iter()
+            .enumerate()
+            .flat_map(move |(i, a)| class.iter().skip(i.saturating_add(1)).map(move |b| (a.rel.min(b.rel), a.rel.max(b.rel))))
     });
     for pair in pairs {
         if pair.0 != pair.1 && !linked.contains(&pair) {
