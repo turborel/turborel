@@ -252,7 +252,12 @@ impl<'a> Chunk<'a> {
 
     /// As `ints`, of a dictionary whose entries as integers are `entries`
     /// if given, read once for the runs of a group (`prepared.rs`).
-    fn ints_with(&self, (from, to): (usize, usize), (units, nulls): (&mut Vec<i64>, &mut Vec<bool>), entries: Option<&[i64]>) -> Option<()> {
+    fn ints_with(
+        &self,
+        (from, to): (usize, usize),
+        (units, nulls): (&mut Vec<i64>, &mut Vec<bool>),
+        entries: Option<&[i64]>,
+    ) -> Option<()> {
         if to > self.count || from > to {
             return None;
         }
@@ -273,7 +278,9 @@ impl<'a> Chunk<'a> {
             return;
         }
         let skip = usize::from(bit_of(from).1);
-        let bits = bytes.iter().flat_map(|&b| (0..BITS).map(move |bit| b.checked_shr(u32::try_from(bit).unwrap_or(u32::MAX)).unwrap_or(0) & 1 != 0));
+        let bits = bytes
+            .iter()
+            .flat_map(|&b| (0..BITS).map(move |bit| b.checked_shr(u32::try_from(bit).unwrap_or(u32::MAX)).unwrap_or(0) & 1 != 0));
         nulls.extend(bits.skip(skip).take(count));
     }
 

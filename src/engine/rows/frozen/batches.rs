@@ -271,7 +271,12 @@ impl Batched {
 /// Column `c`, of type `t`, of the rows at positions `from` to `to` of
 /// `group`: as integers, approximate numbers or text if it is of them,
 /// else as values.
-fn run_column(group: &Group, (pages, prepared): Reading<'_, '_, Sealing>, (c, t): (usize, &DataType), (from, to): (u32, u32)) -> Result<Column> {
+fn run_column(
+    group: &Group,
+    (pages, prepared): Reading<'_, '_, Sealing>,
+    (c, t): (usize, &DataType),
+    (from, to): (u32, u32),
+) -> Result<Column> {
     if let Some(ints) = ints(group, (pages, &mut *prepared), (c, t), (from, to))? {
         return Ok(Column::Ints(ints));
     }
@@ -285,7 +290,12 @@ fn run_column(group: &Group, (pages, prepared): Reading<'_, '_, Sealing>, (c, t)
 }
 
 /// As `run_column`, of the rows at `positions`.
-fn positions_column(group: &Group, (pages, prepared): Reading<'_, '_, Sealing>, (c, t): (usize, &DataType), positions: &[u32]) -> Result<Column> {
+fn positions_column(
+    group: &Group,
+    (pages, prepared): Reading<'_, '_, Sealing>,
+    (c, t): (usize, &DataType),
+    positions: &[u32],
+) -> Result<Column> {
     if let Some(ints) = ints_at(group, (pages, &mut *prepared), (c, t), positions)? {
         return Ok(Column::Ints(ints));
     }

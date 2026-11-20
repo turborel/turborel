@@ -304,7 +304,9 @@ impl<'a> Coded<'a> {
     pub(super) fn parse(rest: &'a [u8], count: usize, given: Option<(&'a Symbols, usize)>) -> Result<Coded<'a>> {
         let (symbols, table) = match given {
             Some((symbols, table)) => (Held::Given(symbols), table),
-            None => Symbols::read(rest).map(|(s, table)| (Held::Read(Box::new(s)), table)).ok_or_else(|| corrupt("its table is malformed"))?,
+            None => {
+                Symbols::read(rest).map(|(s, table)| (Held::Read(Box::new(s)), table)).ok_or_else(|| corrupt("its table is malformed"))?
+            }
         };
         let len = count.checked_add(1).and_then(|n| n.checked_mul(WORD)).ok_or_else(|| corrupt("its count is too large"))?;
         let offsets = rest.get(table..table.saturating_add(len)).ok_or_else(|| corrupt("it is too short"))?;

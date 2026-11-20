@@ -78,19 +78,18 @@ impl Prepared {
     ) -> Result<T> {
         let first = zone.run.first;
         let kept = self.columns.entry(column).or_default();
-        let at = match kept.iter().position(|h| h.first == first) {
-            Some(at) => at,
-            None => {
-                while kept.front().is_some_and(|h| h.end <= first) || kept.len() >= KEPT {
-                    kept.pop_front();
-                }
-                kept.push_back(open(pages, zone, t)?);
-                #[cfg(test)]
-                {
-                    self.opened = self.opened.saturating_add(1);
-                }
-                kept.len().saturating_sub(1)
+        let at = if let Some(at) = kept.iter().position(|h| h.first == first) {
+            at
+        } else {
+            while kept.front().is_some_and(|h| h.end <= first) || kept.len() >= KEPT {
+                kept.pop_front();
             }
+            kept.push_back(open(pages, zone, t)?);
+            #[cfg(test)]
+            {
+                self.opened = self.opened.saturating_add(1);
+            }
+            kept.len().saturating_sub(1)
         };
         let held = kept.get(at).ok_or_else(|| super::corrupt("a chunk held is gone"))?;
         let chunk = Chunk::parse_with(&held.bytes, held.table.as_ref().map(|(s, len)| (&**s, *len)))?;

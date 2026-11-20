@@ -398,7 +398,6 @@ impl Body<'_> {
     }
 }
 
-
 impl Body<'_> {
     /// \[DESIGN\] Where each run of one value among positions `from` to
     /// `to` ends, past `base`, pushed to `ends`: of runs, theirs; of a

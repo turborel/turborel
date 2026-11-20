@@ -106,7 +106,7 @@ fn second() -> [&'static [Mutation]; 32] {
     ]
 }
 
-/// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's and the server's.
+/// and T621's, then the spatial areas', the planar engine's, the memory budget's, replication's, the server's, the transport's and the decode kernels'.
 pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     let json: [&'static [Mutation]; 16] = [
         &super::projection::PROJECTION,
@@ -145,8 +145,8 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
         &super::xquery_modules::XQUERY_MODULES,
         &super::xml::XML,
     ];
-    // The transport's last, as `last` holds no more.
-    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain([&super::transport::TRANSPORT[..]])
+    // The transport's and the decode kernels' last, as `last` holds no more.
+    json.into_iter().chain(xml).chain(plugins()).chain(last()).chain([&super::transport::TRANSPORT[..], &decode::DECODE[..]])
 }
 
 /// External plug-ins' areas, in order: the plug-ins', the packages', the
@@ -170,8 +170,8 @@ fn plugins() -> [&'static [Mutation]; 9] {
 /// The last areas, in order: graph compatibility's, the spatial areas', the planar engine's, the
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, simple features', partitioning's, UUID's,
 /// the command-line client's, replication's, the server's, the native protocol's, the client library's,
-/// join enumeration's, the standard's gaps a benchmark found and the decode kernels'.
-fn last() -> [&'static [Mutation]; 49] {
+/// join enumeration's and the standard's gaps a benchmark found.
+fn last() -> [&'static [Mutation]; 48] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -221,6 +221,5 @@ fn last() -> [&'static [Mutation]; 49] {
         &super::client::CLIENT,
         &joins::JOINS,
         &super::std_gaps::STD_GAPS,
-        &decode::DECODE,
     ]
 }

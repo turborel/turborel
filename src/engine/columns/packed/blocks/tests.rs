@@ -75,7 +75,7 @@ fn blocks_sweep_of_fixed_seeds() {
         state ^= state << 17_u32;
         state
     };
-    for _ in 0..400 {
+    for _ in 0_u32..400_u32 {
         let bits = u32::try_from(next() % 65).unwrap();
         let count = usize::try_from(next() % 700).unwrap();
         let values: Vec<u64> = (0..count).map(|_| next() & mask(bits)).collect();
