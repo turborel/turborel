@@ -76,6 +76,10 @@ fn modulus_6_31() {
     assert_eq!(of(&a, "MOD(7, 2), MOD(I, 2), MOD(7, -2), MOD(I, -2), MOD(6, 3), MOD(1, 7)"), "1,-1,1,-1,0,1");
     assert_eq!(of(&a, "MOD(CAST(S AS INTEGER), -1), MOD(Z, 2), MOD(2, Z)"), "0,NULL,NULL");
     assert_eq!(of(&a, "MOD(D, 2), MOD(CAST('1E100' AS DECFLOAT), 7), MOD(CAST(7.5 AS DECFLOAT), 2)"), "-1,4,1.5");
+    assert_eq!(
+        of(&a, "MOD(CAST(5 AS DECFLOAT), CAST('1E40' AS DECFLOAT)), MOD(CAST('-12E3' AS DECFLOAT), CAST('7E2' AS DECFLOAT))"),
+        "5,-1E2"
+    );
     assert_eq!(state_of(&a, "MOD(I, 0)"), Some(SqlState::DIVISION_BY_ZERO));
     assert_eq!(state_of(&a, "MOD(D, CAST(0 AS DECFLOAT))"), Some(SqlState::DIVISION_BY_ZERO));
     assert_eq!(of(&a, "MOD(Z, 0)"), "NULL", "a null operand first [GR9a]");

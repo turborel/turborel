@@ -69,9 +69,6 @@ pub enum Trig {
 }
 
 impl Trig {
-    /// Each, in the order of §6.31's Format.
-    pub const EVERY: [Trig; 9] = [Trig::Sin, Trig::Cos, Trig::Tan, Trig::Sinh, Trig::Cosh, Trig::Tanh, Trig::Asin, Trig::Acos, Trig::Atan];
-
     /// Its name.
     pub fn name(self) -> &'static str {
         match self {

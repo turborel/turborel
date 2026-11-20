@@ -270,3 +270,21 @@ SELECT WORKERS_BUSY, STATEMENTS_WAITING, CONNECTIONS, REFUSED, CLOSED_UNTOLD FRO
                     1 |                    0 |                    1 |                    0 |                    0
 (1 row)
 ```
+
+SERVER counts the database's transactions too, committed and rolled
+back, since it was opened, of every session, served or embedded, each
+counted as GET DIAGNOSTICS counts its session's. Of the server above,
+the owner's two earlier statements committed, after a rollback:
+
+```sql
+ROLLBACK;
+SELECT COMMITTED, ROLLED_BACK FROM INFORMATION_SCHEMA.SERVER;
+```
+
+```
+OK
+            COMMITTED |          ROLLED_BACK
+----------------------+----------------------
+                    2 |                    1
+(1 row)
+```

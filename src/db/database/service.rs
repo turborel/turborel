@@ -46,8 +46,10 @@ impl Database {
     /// it was first opened from its files: its files given up, its
     /// transactions in doubt let go, as recovery from its files decides
     /// them, and the sessions of earlier services refused from now on.
-    pub(in crate::db) fn restart_service(&self, state: State) -> Result<()> {
+    /// Its counts of transactions ended go on (`ended.rs`).
+    pub(in crate::db) fn restart_service(&self, mut state: State) -> Result<()> {
         let _turn = self.take_turn()?;
+        state.ended = Arc::clone(&self.0.ended);
         *lock(&self.0.files)? = None;
         lock(&self.0.in_doubt)?.clear();
         self.0.service.fetch_add(1, Ordering::AcqRel);
