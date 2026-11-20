@@ -6,10 +6,12 @@
 //!
 //! What is written goes to a side file beside it (its name and `.shadow0`
 //! or `.shadow1`), a block file of checksummed blocks (`disk/block.rs`),
-//! never to the file itself: each write puts, for every granule of
-//! `GRANULE` bytes it touches, the granule's new content over its block
-//! there, or appends one if it has none, and reads see the newest, so a
-//! side file holds a granule once however often it is written. A side
+//! never to the file itself. A write puts the whole granules of `GRANULE`
+//! bytes it covers, a page written back, as one block, its run, over the
+//! run's block if it has one, and each granule it touches in part as a
+//! block of its own; reads see the newest, taken from a block with one
+//! read and no checksum, as the file's own bytes are (RULES.md D471), so
+//! a side file holds a page once however often it is written. A side
 //! file is made at the first block appended to it. Nothing about it needs
 //! syncing until its commit, as what is not committed is thrown away.
 //!
@@ -52,7 +54,7 @@
 //!
 //! ```text
 //! block:  kind u8, then
-//!   0 granule:  number u64, content (GRANULE bytes)
+//!   0 granules: first number u64, content (whole GRANULEs, at least one)
 //!   1 size:     size u64
 //!   2 commit:   (nothing)
 //!   3 limit:    size u64

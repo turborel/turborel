@@ -37,6 +37,7 @@ mod fill;
 mod format;
 mod stream;
 mod tail;
+mod trusted;
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -430,34 +431,6 @@ impl BlockFile {
         add(&self.counters.appended_bytes, payload.len());
         add(&self.counters.stored_bytes, stored.len());
         Ok(BlockId(start))
-    }
-
-    /// Writes `payload`, as long as the block's, over block `id`. A crash
-    /// can tear it among valid blocks, which an append cannot, so this is
-    /// for a file thrown away unless synced whole (`disk/shadow.rs`).
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -915 if the block cannot be read or written, which leaves
-    /// the file refusing appends; -916 if its length is not the payload's.
-    pub fn overwrite(&self, id: BlockId, payload: &[u8]) -> Result<()> {
-        let stored = self.pipeline.encode(0, payload)?;
-        let frame = format::frame(&*self.hash, &stored, self.options.max_block)?;
-        if self.failed.load(Ordering::SeqCst) {
-            return Err(self.broken());
-        }
-        let mut length = [0; format::LEN_BYTES];
-        self.file.read_exact_at(&mut length, id.0)?;
-        if frame.get(..format::LEN_BYTES) != Some(&length[..]) {
-            let msg = format!("[DESIGN] the block at offset {} of {} is of another length", id.0, self.path.display());
-            return Err(SqlError::new(Code::Corrupt, msg));
-        }
-        let written = self.file.write_all_at(&frame, id.0);
-        if written.is_err() {
-            self.failed.store(true, Ordering::SeqCst);
-            self.wake();
-        }
-        written
     }
 
     /// Makes the appended blocks durable as `durability` says.

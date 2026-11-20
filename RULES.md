@@ -379,6 +379,7 @@ verification approach DO-178C expects (§8).
 | D401 | SET DATA TYPE widens only, copies the rows to a new storage generation and makes the indexes again |
 | D402 | A table is renamed into a new generation, refused while a text names it; its trigger's ON clause and generator follow |
 | D470 | A transaction's log records are held until its commit and written with its commit record in one write |
+| D471 | A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it |
 
 ### The project
 
@@ -10694,6 +10695,25 @@ the records from it undone, as before, by the position a write noted
 for it. Conflicting changes are ordered by their commits (D29), and
 so are their records. A definition a transaction logs apart from its
 records writes them first (`txn/pending.rs`).
+
+#### D471. A side file holds each page written back whole as one block, read back unchecked, checked where a crash leaves it
+
+A shadow file's side file (D30) held each 4 KiB granule as its own
+block, so a page written back took two or more blocks, and every read
+of it from the side file read and checksummed each block apart, then
+the pager checksummed the page again. A write of whole granules now
+goes as one block, its run, written over in place while it stays one
+run; a granule written in part takes a block of its own.
+
+The writer knows where each granule's content lies in its side file,
+so a read takes it with one positional read and no checksum
+(`disk/block/trusted.rs`), as a read of the file's own bytes does: what
+it holds is checked where it is used, as a page by its own checksum
+over its body and number. Every block is still framed and checksummed
+as it is written, so as a file is opened a block torn or changed before
+a commit block is refused, and a side file cut short has no commit
+block and is thrown away. An overwrite takes the length it writes over
+from the writer, not from the file.
 
 ## 2. Project layout
 

@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 17] = [
+pub const OLTP: [Mutation; 19] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -176,5 +176,28 @@ pub const OLTP: [Mutation; 17] = [
         replacement: "            held.bytes > HELD_BYTES",
         integration: &["recovery::a_forced_engine_has_uncommitted_changes_undone"],
         unit: &[],
+    },
+    Mutation {
+        name: "oltp-run-read-from-run-start",
+        package: Package::Core,
+        breaks: "a granule read from a run of granules is read from where the run starts, so every granule after a run's first reads as the first",
+        file: "src/disk/shadow/side.rs",
+        original: "        blocks.read_payload_at(spot.block, spot.within(number).saturating_add(within), out)?;",
+        replacement: "        blocks.read_payload_at(spot.block, spot.within(spot.first).saturating_add(within), out)?;",
+        integration: &[],
+        unit: &[
+            "disk::shadow::tests::runs::a_page_written_whole_takes_one_block",
+            "disk::shadow::tests::a_read_takes_the_files_runs_around_what_was_written",
+        ],
+    },
+    Mutation {
+        name: "oltp-run-overwritten-when-broken",
+        package: Package::Core,
+        breaks: "a run whose granules were since written apart is written over in place, before their later blocks, so a commit copied after a crash takes the older content of the later blocks",
+        file: "src/disk/shadow/side.rs",
+        original: "            spot.first == first && spot.count == count && numbers.clone().all(|n| self.granules.get(&n) == Some(spot))",
+        replacement: "            spot.first == first && spot.count == count",
+        integration: &[],
+        unit: &["disk::shadow::tests::runs::a_page_written_whole_takes_one_block"],
     },
 ];
