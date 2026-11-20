@@ -196,7 +196,7 @@ fn fed_group(
             (Taken::Expr(program), None) => {
                 for &r in read_rows {
                     let v = evaluated((&program.expr, &program.inputs), (scratch, runner), |at, slot| {
-                        put_cell(batch.cell(at, index(r)), slot)
+                        put_cell(batch.cell(at, index(r)), slot);
                     })?;
                     eliminated(v.is_null(), runner);
                     if !v.is_null() {

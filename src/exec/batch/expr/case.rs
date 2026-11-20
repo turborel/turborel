@@ -33,9 +33,9 @@ pub(super) fn case<'a>((whens, otherwise): (&[(Node, Node)], &Node), cx: &Cx<'a>
         let truths = logic::truths(within(when, &left, cx)?, left.len());
         let (taken, rest): (Vec<u32>, Vec<u32>) = left.iter().enumerate().fold((Vec::new(), Vec::new()), |(mut t, mut r), (k, &p)| {
             if truths.bits.get(k) {
-                t.push(p)
+                t.push(p);
             } else {
-                r.push(p)
+                r.push(p);
             }
             (t, r)
         });

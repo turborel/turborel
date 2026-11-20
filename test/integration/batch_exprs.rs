@@ -18,13 +18,13 @@ const ROWS: i64 = 5000;
 /// scale 2, F an approximate number, S a string null every 7th, D a date,
 /// B a truth value null every 5th.
 fn row(k: i64) -> String {
-    let n = if k % 11 == 0 { "NULL".to_owned() } else { (k * 7919 % 2000 - 1000).to_string() };
-    let e = format!("{}.{:02}", k % 300 - 150, k % 100);
-    let s =
-        if k % 7 == 0 { "NULL".to_owned() } else { format!("'{}x{}'", ["ab", "Cd", "", "eFg"][usize::try_from(k % 4).unwrap()], k % 9) };
-    let d = format!("DATE '{}-{:02}-{:02}'", 2000 + k % 20, 1 + k % 12, 1 + k % 28);
-    let b = ["TRUE", "FALSE", "TRUE", "FALSE", "NULL"][usize::try_from(k % 5).unwrap()];
-    format!("({k}, {n}, {e}, {}E-1, {s}, {d}, {b})", k % 77 - 30)
+    let number = if k % 11 == 0 { "NULL".to_owned() } else { (k * 7919 % 2000 - 1000).to_string() };
+    let decimal = format!("{}.{:02}", k % 300 - 150, k % 100);
+    let word = ["ab", "Cd", "", "eFg"][usize::try_from(k % 4).unwrap()];
+    let string = if k % 7 == 0 { "NULL".to_owned() } else { format!("'{word}x{}'", k % 9) };
+    let date = format!("DATE '{}-{:02}-{:02}'", 2000 + k % 20, 1 + k % 12, 1 + k % 28);
+    let truth = ["TRUE", "FALSE", "TRUE", "FALSE", "NULL"][usize::try_from(k % 5).unwrap()];
+    format!("({k}, {number}, {decimal}, {}E-1, {string}, {date}, {truth})", k % 77 - 30)
 }
 
 /// Tables R, of the row store, and C, of the column store, alike: written,

@@ -91,42 +91,19 @@ const KEYS: u64 = 400_000;
 fn main() {
     let bench = Bench::new("analytics");
     let only = std::env::var(ONLY_VAR).unwrap_or_default();
-    if only == "social" {
-        social::workloads(&bench);
-        return;
-    }
-    if only == "graph" {
-        graph::workloads(&bench);
-        return;
-    }
-    if only == "unnesting" {
-        unnesting::workloads(&bench);
-        return;
-    }
-    if only == "counts" {
-        counts::workloads(&bench);
-        return;
-    }
-    if only == "decode" {
-        decode::workloads(&bench);
-        return;
-    }
-    if only == "parallel" {
-        parallel::workloads(&bench);
+    if alone(&bench, &only) {
         return;
     }
     let db = database();
     let s = db.session("B");
     let tables = [("F", "W", ""), ("FC", "WC", " (columnstore)")];
-    if only == "distinct" {
+    if only == "distinct" || only == "expressions" {
         for (table, _, label) in tables {
-            distinct::workloads(&bench, &s, (table, label));
-        }
-        return;
-    }
-    if only == "expressions" {
-        for (table, _, label) in tables {
-            expressions::workloads(&bench, &s, (table, label));
+            if only == "distinct" {
+                distinct::workloads(&bench, &s, (table, label));
+            } else {
+                expressions::workloads(&bench, &s, (table, label));
+            }
         }
         return;
     }
@@ -143,6 +120,22 @@ fn main() {
     parallel::workloads(&bench);
     counts::workloads(&bench);
     decode::workloads(&bench);
+}
+
+/// Runs the workloads `only` names that need no table F, if it names
+/// one: whether it did.
+fn alone(bench: &Bench, only: &str) -> bool {
+    let run: fn(&Bench) = match only {
+        "social" => social::workloads,
+        "graph" => graph::workloads,
+        "unnesting" => unnesting::workloads,
+        "counts" => counts::workloads,
+        "decode" => decode::workloads,
+        "parallel" => parallel::workloads,
+        _ => return false,
+    };
+    run(bench);
+    true
 }
 
 /// Measures set functions of RC, a column store table whose S is sorted,
