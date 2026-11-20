@@ -14,8 +14,8 @@ fn arith(a: Expr, op: ArithOp, b: Expr) -> Expr {
 /// A batch of two columns of integers, of scales 0 and 2, nulls among
 /// them, and one of values.
 fn batch() -> Batch {
-    let first = Ints::new(vec![3, -7, 0, 12, 0, 999], 0, Some(vec![false, false, false, false, true, false]));
-    let second = Ints::new(vec![150, 25, -1, 0, 7, 0], 2, Some(vec![false, false, false, false, false, true]));
+    let first = Ints::new(vec![3, -7, 0, 12, 0, 999], 0, Some(vec![false, false, false, false, true, false].into()));
+    let second = Ints::new(vec![150, 25, -1, 0, 7, 0], 2, Some(vec![false, false, false, false, false, true].into()));
     let values = (0..6).map(|n| Value::Exact(Decimal::new(n, 0))).collect();
     Batch { columns: vec![Column::Ints(first), Column::Ints(second), Column::Values(values)], rows: 6 }
 }
@@ -43,13 +43,13 @@ fn integers_evaluated_as_their_values_are() {
         arith(arith(a.clone(), ArithOp::Mul, exact(5, 1)), ArithOp::Sub, exact(-3, 0)),
         arith(Expr::Neg(Box::new(a.clone())), ArithOp::Add, arith(b.clone(), ArithOp::Mul, b.clone())),
     ];
-    for rows in [None, Some(&[0_usize, 2, 4, 5][..])] {
+    for rows in [None, Some(&[0_u32, 2, 4, 5][..])] {
         for e in &alike {
             let evaluated = lane(e, &inputs, &batch, rows);
             assert!(evaluated.is_some(), "{e:?} as integers");
             let made = evaluated.unwrap();
             let by_values = crate::exec::batch::vector::lane(e, &inputs, &batch, rows).unwrap();
-            let count = rows.map_or(batch.rows, <[usize]>::len);
+            let count = rows.map_or(batch.rows, <[u32]>::len);
             let expected: Vec<String> = (0..count).map(|n| by_values.at(n).to_string()).collect();
             let found: Vec<String> = made.values().iter().map(ToString::to_string).collect();
             assert_eq!(found, expected, "{e:?} of {rows:?}");

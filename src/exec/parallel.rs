@@ -26,6 +26,7 @@
 //! statement's snapshot, as does a part of a table its engine cannot
 //! split.
 
+mod batched;
 mod grouped;
 mod indexed;
 mod partitioned;
@@ -139,7 +140,7 @@ fn streamed(plan: &Plan, (db, tx): (&Arc<State>, TxId), degree: usize) -> Result
     let Held::Kept(pipeline) = Pipeline::of(plan, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
     let (pipeline, db_for) = (Arc::new(pipeline), Arc::clone(db));
     let count = pipeline.count();
-    let work = Box::new(move |m: usize| pipeline.morsel(m, &Runner::new(&db_for, tx)));
+    let work = Box::new(move |m: usize| pipeline.morsel_rows(m, (&db_for, tx), &Runner::new(&db_for, tx)));
     Ok(Held::Kept(Box::new(Streamed::of(db, tx, Morsels::start(db, tx, (count, degree), work)))))
 }
 

@@ -31,7 +31,8 @@ use crate::value::Value;
 /// What an expression of the projection gives: the value of the column at
 /// this place of a batch, a constant, or an expression of a row of the
 /// values at these places, its columns those of the row.
-pub(super) enum Place {
+#[derive(Clone)]
+pub(in crate::exec) enum Place {
     Column(usize),
     Const(Value),
     Expr(Expr, Vec<usize>),
@@ -153,7 +154,7 @@ impl Projected {
     fn step(&mut self) -> Result<Option<Row>> {
         while self.next >= self.kept.len() {
             let Some((batch, rows)) = self.batches.next().transpose()? else { return Ok(None) };
-            self.kept = rows.unwrap_or_else(|| (0..batch.rows).collect());
+            self.kept = crate::storage::sel::places_of(rows, batch.rows);
             let ahead = |place: &Place| match place {
                 Place::Expr(e, inputs) => batched((e, inputs), (&batch, &self.kept), &self.runner).and_then(Result::ok),
                 Place::Column(_) | Place::Const(_) => None,
@@ -211,8 +212,8 @@ pub(super) fn computed(batches: Batches, places: Vec<Place>, runner: Runner) -> 
 
 /// The vectors of `places` of the rows `rows` of `batch`, or all, a batch
 /// of them alone, its warnings heard by `runner`.
-fn by_vectors(batch: &Batch, rows: Option<&[usize]>, (places, runner): (&[Place], &Runner)) -> Result<Batch> {
-    let given: Vec<usize> = rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec);
+fn by_vectors(batch: &Batch, rows: Option<&[u32]>, (places, runner): (&[Place], &Runner)) -> Result<Batch> {
+    let given: Vec<usize> = (0..rows.map_or(batch.rows, <[u32]>::len)).map(|n| crate::storage::sel::nth(rows, n)).collect();
     let gathered = |at: usize| Column::Values(given.iter().map(|&r| batch.cell(at, r).to_value()).collect());
     let mut columns = Vec::with_capacity(places.len());
     for place in places {
@@ -241,7 +242,7 @@ fn by_vectors(batch: &Batch, rows: Option<&[usize]>, (places, runner): (&[Place]
 /// `runner`.
 fn expr_vector(
     (e, inputs): (&Expr, &[usize]),
-    (batch, rows, given): (&Batch, Option<&[usize]>, &[usize]),
+    (batch, rows, given): (&Batch, Option<&[u32]>, &[usize]),
     runner: &Runner,
 ) -> Result<Column> {
     if let Some(ints) = vector::ints::lane(e, inputs, batch, rows) {
@@ -315,10 +316,10 @@ fn evaluated_of((e, inputs): (&Expr, &[usize]), (batch, r): (&Batch, usize), (sc
 /// The rows `rows` of `batch`, or all, each of the values of `places`,
 /// evaluated a row at a time in order, until one raises an error: a batch
 /// of those before it, and the error, if one did.
-fn by_rows(batch: &Batch, rows: Option<&[usize]>, (places, runner): (&[Place], &Runner)) -> (Batch, Option<SqlError>) {
+fn by_rows(batch: &Batch, rows: Option<&[u32]>, (places, runner): (&[Place], &Runner)) -> (Batch, Option<SqlError>) {
     let mut out = Batch::empty(places.len());
     let mut scratch = Vec::new();
-    for r in rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec) {
+    for r in (0..rows.map_or(batch.rows, <[u32]>::len)).map(|n| crate::storage::sel::nth(rows, n)) {
         let row: Result<Vec<Value>> = places
             .iter()
             .map(|place| match place {

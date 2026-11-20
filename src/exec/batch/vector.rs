@@ -26,7 +26,7 @@ static NULL: Value = Value::Null;
 /// in place, of those rows or all; ones made, one a row given; or a
 /// constant, every row's.
 pub(super) enum Lane<'b> {
-    Column(&'b [Value], Option<&'b [usize]>),
+    Column(&'b [Value], Option<&'b [u32]>),
     Made(Vec<Value>),
     Const(&'b Value),
 }
@@ -35,7 +35,7 @@ impl Lane<'_> {
     /// The value of the `n`th row given.
     pub(super) fn at(&self, n: usize) -> &Value {
         match self {
-            Lane::Column(values, rows) => rows.map_or(Some(n), |r| r.get(n).copied()).and_then(|r| values.get(r)).unwrap_or(&NULL),
+            Lane::Column(values, rows) => values.get(crate::storage::sel::nth(*rows, n)).unwrap_or(&NULL),
             Lane::Made(values) => values.get(n).unwrap_or(&NULL),
             Lane::Const(v) => v,
         }
@@ -45,15 +45,15 @@ impl Lane<'_> {
 /// The values of `e` over the rows `rows` of `batch`, or all, each column
 /// `c` of `e` the vector at `inputs[c]`: none if `e` is not evaluated by
 /// vectors or raises an error of one of them.
-pub(super) fn lane<'b>(e: &'b Expr, inputs: &[usize], batch: &'b Batch, rows: Option<&'b [usize]>) -> Option<Lane<'b>> {
+pub(super) fn lane<'b>(e: &'b Expr, inputs: &[usize], batch: &'b Batch, rows: Option<&'b [u32]>) -> Option<Lane<'b>> {
     made(e, (inputs, batch, rows), DEPTH)?.ok()
 }
 
 /// `lane`'s work, of an expression up to `depth` deep: none if it is not
 /// evaluated by vectors, else its values or the first error of them.
-fn made<'b>(e: &'b Expr, (inputs, batch, rows): (&[usize], &'b Batch, Option<&'b [usize]>), depth: usize) -> Option<Result<Lane<'b>>> {
+fn made<'b>(e: &'b Expr, (inputs, batch, rows): (&[usize], &'b Batch, Option<&'b [u32]>), depth: usize) -> Option<Result<Lane<'b>>> {
     let deeper = depth.checked_sub(1)?;
-    let count = rows.map_or(batch.rows, <[usize]>::len);
+    let count = rows.map_or(batch.rows, <[u32]>::len);
     Some(match e {
         Expr::Column(c) => Ok(Lane::Column(batch.columns.get(*inputs.get(*c)?)?.values(), rows)),
         Expr::Const(v) => Ok(Lane::Const(v)),

@@ -188,7 +188,7 @@ fn texts_of(t: &DataType, values: &[Value], (from, to): (usize, usize)) -> Optio
     let chunk = Chunk::parse(&bytes).unwrap();
     let (mut text, mut ends, mut nulls) = (String::new(), Vec::new(), Vec::new());
     chunk.texts((from, to), (&mut text, &mut ends, &mut nulls), t)?;
-    let texts = crate::storage::Texts::new(text, ends, nulls.contains(&true).then_some(nulls));
+    let texts = crate::storage::Texts::new(text, ends, crate::storage::mask::mask_of(&nulls));
     let made = (0..texts.len()).map(|n| texts.get(n).map_or_else(|| "NULL".to_owned(), str::to_owned)).collect();
     let read = (from..to).map(|n| chunk.value(n, t).unwrap().to_string()).collect();
     Some((made, read))
@@ -240,8 +240,8 @@ fn coded_of(t: &DataType, values: &[Value], positions: &[usize]) -> Option<(Vec<
     let chunk = Chunk::parse(&bytes).unwrap();
     let (mut text, mut ends, mut codes, mut nulls) = (String::new(), Vec::new(), Vec::new(), Vec::new());
     chunk.coded(positions, (&mut text, &mut ends, &mut codes, &mut nulls), t)?;
-    let dictionary = crate::storage::Coded { codes, entries: crate::storage::Texts::new(text, ends, None) };
-    let texts = crate::storage::Texts::coded(dictionary, nulls.contains(&true).then_some(nulls));
+    let dictionary = crate::storage::Coded { codes, entries: std::sync::Arc::new(crate::storage::Texts::new(text, ends, None)) };
+    let texts = crate::storage::Texts::coded(dictionary, crate::storage::mask::mask_of(&nulls));
     let made = (0..texts.len()).map(|n| texts.get(n).map_or_else(|| "NULL".to_owned(), str::to_owned)).collect();
     let read = positions.iter().map(|&n| chunk.value(n, t).unwrap().to_string()).collect();
     Some((made, read))

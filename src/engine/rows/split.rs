@@ -11,11 +11,11 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use super::frozen::{Directory, Merged, Merging};
+use super::frozen::{Batched, Directory, Merged, Merging};
 use super::mvcc::{Read, Reader};
 use super::{RowTable, row_id};
 use crate::error::Result;
-use crate::storage::{Conjunction, RowId, Rows, Split};
+use crate::storage::{Batches, Conjunction, Ramp, RowId, Rows, Split};
 use crate::txn::TxId;
 
 /// A row table's scan split at row ids.
@@ -24,6 +24,8 @@ pub(super) struct RowSplit {
     reader: Reader,
     /// The columns decoded: those asked for, then the condition's.
     columns: Vec<usize>,
+    /// How many of `columns` were asked for, the batches' vectors.
+    asked: usize,
     condition: Option<Conjunction>,
     /// The groups as they were when it was split, if it reads any.
     directory: Option<Arc<Directory>>,
@@ -45,6 +47,7 @@ impl RowTable {
     pub(super) fn split_of(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Conjunction>, rows: usize) -> Result<RowSplit> {
         let reader = self.reader(tx)?;
         self.note_read(tx, || condition.clone().map_or(Read::All, Read::Condition))?;
+        let asked = columns.len();
         let mut columns = columns.to_vec();
         columns.extend(condition.iter().flat_map(Conjunction::columns));
         let directory = self.frozen.directory()?;
@@ -52,7 +55,7 @@ impl RowTable {
         let cuts = self.cuts(&directory, rows.max(1));
         let zones = if reads_groups { Vec::new() } else { self.zones.ranges(condition.as_ref()) };
         let directory = reads_groups.then_some(directory);
-        Ok(RowSplit { table: self, reader, columns, condition, directory, zones, cuts })
+        Ok(RowSplit { table: self, reader, columns, asked, condition, directory, zones, cuts })
     }
 
     /// Where morsels of about `rows` rows each begin, after the first: at
@@ -91,9 +94,8 @@ impl RowSplit {
         Some((first, self.cuts.get(n).copied()))
     }
 
-    /// The rows of the tree in `range` that its reader sees, of the zones
-    /// the condition may match.
-    fn tree_rows(&self, (first, end): (RowId, Option<RowId>)) -> Rows {
+    /// The ranges of the zones the condition may match within `range`.
+    fn zones_within(&self, (first, end): (RowId, Option<RowId>)) -> Vec<(RowId, Option<RowId>)> {
         let within = |(from, to): &(RowId, Option<RowId>)| {
             let from = (*from).max(first);
             let to = match (*to, end) {
@@ -102,7 +104,13 @@ impl RowSplit {
             };
             to.is_none_or(|t| from < t).then_some((from, to))
         };
-        let ranges: Vec<(RowId, Option<RowId>)> = self.zones.iter().filter_map(within).collect();
+        self.zones.iter().filter_map(within).collect()
+    }
+
+    /// The rows of the tree in `range` that its reader sees, of the zones
+    /// the condition may match.
+    fn tree_rows(&self, range: (RowId, Option<RowId>)) -> Rows {
+        let ranges = self.zones_within(range);
         let (table, reader, columns) = (Arc::clone(&self.table), self.reader, self.columns.clone());
         Box::new(RowTable::ranged(&self.table, ranges).filter_map(move |entry| {
             let found = entry.and_then(|(key, newest)| {
@@ -128,5 +136,23 @@ impl Split for RowSplit {
         let part = Arc::new(Directory { groups });
         let what = (self.columns.clone(), self.condition.clone());
         Box::new(Merged::within(Arc::clone(&self.table), (Merging::Seen(self.reader), part), what, range))
+    }
+
+    /// Of a table of the row store, its tree's records in the morsel's
+    /// range decoded straight into vectors, as its scan by batch reads them
+    /// (`rows/scan.rs`); of the column store, its groups within the range
+    /// read a vector at a time from their chunks, then its tree's rows of
+    /// the range (`frozen/batches.rs`).
+    fn morsel_batches(&self, n: usize) -> Option<Batches> {
+        let range = self.range(n)?;
+        let asked = self.columns.get(..self.asked)?.to_vec();
+        let Some(directory) = &self.directory else {
+            let entries = RowTable::ranged(&self.table, self.zones_within(range));
+            return Some(Arc::clone(&self.table).gathered_of((self.reader, entries), &asked, Ramp::whole()));
+        };
+        let inside = |e: &&Arc<super::frozen::Entry>| e.summary.first >= range.0 && range.1.is_none_or(|end| e.summary.last < end);
+        let part = Arc::new(Directory { groups: directory.groups.iter().filter(inside).cloned().collect() });
+        let what = (asked, self.condition.clone());
+        Some(Box::new(Batched::within(Arc::clone(&self.table), (self.reader, part), what, range)))
     }
 }

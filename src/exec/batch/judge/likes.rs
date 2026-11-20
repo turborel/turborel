@@ -78,7 +78,7 @@ fn text_of<'b>(operand: &'b Operand, batch: &'b Batch, r: usize) -> Text<'b> {
                 Text::Other
             }
         }
-        Cell::Exact(..) | Cell::Approx(_) => Text::Other,
+        Cell::Exact(..) | Cell::Approx(_) | Cell::Datetime(_) | Cell::Bool(_) => Text::Other,
     }
 }
 

@@ -344,6 +344,8 @@ verification approach DO-178C expects (§8).
 | D342 | DISTINCT functions of several arguments make each row once for each argument, marked, not one grouping each joined back |
 | D343 | A DISTINCT function's filter is a truth of each row, grouped by, and its argument is computed of the rows it admits |
 | D344 | A DISTINCT function the rule leaves keeps its own way, its bag of values keyed once and looked up once |
+| D354 | A batch keeps nulls as bitmaps, rows as selections, datetimes and truth values as vectors, its primitives in kernels |
+| D355 | A grouping of so many groups that its morsels barely shrink stays serial, by the cost of its exchange |
 
 ### The project
 
@@ -9525,6 +9527,76 @@ again in one buffer for each value, so a value seen allocates nothing.
 The bag (`exec/work.rs`) looks a key up once if it holds it and twice if
 not, where it hashed every new key three times, which the set operations,
 recursive queries and window functions using it gain too.
+
+#### D354. A batch keeps nulls as bitmaps, rows as selections, datetimes and truth values as vectors, its primitives in kernels
+
+A batch's vectors mark their nulls in 64-bit words, least significant bit
+first (`storage/batch/mask.rs`), as a chunk of the column store keeps
+them, so a word of nulls is read once for 64 rows and a chunk's bitmap
+becomes a vector's without a loop over its bits. The rows an operator
+keeps of a batch are a selection of `u32` places, ascending
+(`storage/batch/sel.rs`), passed from one step to the next in place of
+the rows copied. One width serves every batch, since a join's held build
+side is one batch of all its rows. Datetimes are a vector of instants in
+UTC, in microseconds, with their zones if they keep them, and truth
+values are a bitmap, so a filter of a date leaves the row path.
+
+The loops over vectors are kernels (`src/kernels.rs`): a selection of the
+rows a comparison with a constant is true of, of bits set, of a
+dictionary's codes kept, an exact sum, the extremes, a gather. Each has a
+portable body, branch-free where a branch would be mispredicted, which is
+what a database runs unless it is given others (`Database::set_kernels`).
+A crate of kernels for one processor's instructions implements the same
+trait and passes the same contract (`support/src/kernels.rs`), so the
+core keeps no unsafe code and no code of one system.
+
+A filter's conjuncts each narrow the selection the one before kept, so a
+later one reads only what survives. A filter one of whose conjuncts may
+raise an error judges each of them over every row and ANDs their masks,
+so the error a row raises is the one a row at a time raises, after the
+rows before it (D15). An exact constant of more fractional digits than
+the column's scale is folded to a bound of its units once a batch, `<`
+and `>=` by its ceiling, `<=` and `>` by its floor, so the comparison
+runs on the integers. An OR of conjuncts each judged over vectors ORs
+their masks.
+
+The morsels of a pipeline run in parallel (D290) are read by batch when
+every step of it is a filter or a projection the serial stream reads by
+batch (`exec/parallel/batched.rs`). A morsel's rows are read as the
+serial scan by batch reads its range (`Split::morsel_batches`) and taken
+through the same functions, so a worker costs a row what the statement's
+thread alone costs it. A grouping or DISTINCT over such a pipeline groups
+each morsel's batches as a grouping by batch groups them, and writes its
+groups as the pieces it merges (D293). A hash join's probe keeps its
+pipeline on rows.
+
+#### D355. A grouping of so many groups that its morsels barely shrink stays serial, by the cost of its exchange
+
+A grouping or DISTINCT run in parallel groups each morsel apart, writes
+each morsel's groups as pieces, and merges each partition's pieces into
+groups made anew (D293). A morsel of `m` rows of `G` groups, each as
+likely, holds `G (1 - (1 - 1/G)^m)` of them, as Cardenas (1975) counts
+the blocks a query touches. Of a thousand groups a morsel's few hundred
+pieces cost nothing beside its rows. Of two hundred thousand, nearly
+every row is a piece, written, moved between threads and merged.
+
+The planner prices the part in rows grouped (`physical/parallel/exchange.rs`).
+The threads share the rows and each piece's own work, its group made,
+its states written and merged, four rows' worth. A piece's bytes cross
+the memory the threads share, three quarters of a row whatever the
+threads, and the statement's thread orders each group by its first row
+alone, one row each. If that costs the serial grouping's rows as much,
+the part stays serial whole, the scan under it too, since a channel
+carrying its rows one by one to a serial grouping costs more than the
+serial scan by batch. The groups come from the statistics of the grouped
+columns, their distinct values multiplied, capped at the rows. A
+grouping of a column not a table's, or of a table of no statistics, has
+no estimate and runs in parallel, as before.
+
+The constants are measured, not derived. A grouping of keys unique to
+each row never gains, whatever the threads, as the ordering of its
+groups alone costs the serial grouping's rows. One of few groups gains
+by nearly the degree.
 
 ## 2. Project layout
 

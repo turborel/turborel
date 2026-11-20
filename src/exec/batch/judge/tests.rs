@@ -2,7 +2,9 @@
 
 use super::*;
 use crate::exec::NoSubqueries;
+use crate::kernels::Portable;
 use crate::storage::Floats;
+use crate::storage::mask::index;
 use crate::value::{ArithOp, Decimal};
 
 /// The set of `values`, as an IN list's (`logical/sets.rs`).
@@ -40,9 +42,8 @@ fn or(a: Cond, b: Cond) -> Cond {
 /// Verifies: [DESIGN] RULES.md D31, filters by batch: the conjuncts
 /// comparing a column the batch holds with a constant, a constant first
 /// turned around, testing it for null, or testing it IN or NOT IN a list
-/// of constants are judged over vectors; the others, an OR of two columns,
-/// and those of a column the batch lacks, are the rest; a filter that can
-/// raise an error is all rest.
+/// of constants, or an OR of conjuncts each judged so, are judged over
+/// vectors; those of a column the batch lacks are the rest.
 #[test]
 fn conjuncts_judged_over_vectors() {
     let list = or(
@@ -59,7 +60,8 @@ fn conjuncts_judged_over_vectors() {
     );
     let (judged, rest) = split(&cond, &[4, 2]);
     let shown: Vec<String> = judged.iter().map(|j| format!("{j:?}")).collect();
-    assert_eq!(shown.len(), 5, "{shown:?}");
+    assert_eq!(shown.len(), 6, "{shown:?}");
+    assert!(shown[5].starts_with("Any("), "an OR of two columns: {shown:?}");
     assert!(shown[1].contains("Compare(0, Gt"), "turned around: {shown:?}");
     assert!(shown[2].starts_with("IsNull(1, true)"), "{shown:?}");
     assert!(shown[3].starts_with("In(0,") && shown[4].ends_with("true)"), "{shown:?}");
@@ -91,25 +93,25 @@ fn comparisons_that_cannot_raise_are_judged_over_integers() {
     let (judged, rest) = split(&cond, &[4, 2]);
     assert!(matches!(judged.as_slice(), [Judged::Compared(..), Judged::Compared(..)]), "{judged:?}");
     assert!(matches!(rest, Some(Cond::Compare(..))), "the column the batch lacks");
-    let first = crate::storage::Ints::new(vec![150, -20, 0, 7, 300], 2, Some(vec![false, false, false, true, false]));
+    let first = crate::storage::Ints::new(vec![150, -20, 0, 7, 300], 2, Some(vec![false, false, false, true, false].into()));
     let second = crate::storage::Ints::new(vec![1, -1, 0, 5, 4], 0, None);
     let of_values = Batch { columns: vec![Column::from(first.values().to_vec()), Column::from(second.values().to_vec())], rows: 5 };
     let of_ints = Batch { columns: vec![Column::Ints(first), Column::Ints(second)], rows: 5 };
-    let all: Vec<usize> = (0..5).collect();
-    let by_values = |j: &Judged| -> Vec<usize> {
+    let all: Vec<u32> = (0..5).collect();
+    let by_values = |j: &Judged| -> Vec<u32> {
         let Judged::Compared(.., conjunct) = j else { panic!("{j:?}") };
         let Cond::Compare(a, op, b) = &**conjunct else { panic!("{conjunct:?}") };
         let at = |e: &Expr, n: usize| {
             if let Expr::Neg(inner) = e { at_column(inner, n, &of_values).negate() } else { at_column(e, n, &of_values) }
         };
-        all.iter().copied().filter(|&n| compared(&at(a, n), *op, &at(b, n)) == Truth::True).collect()
+        all.iter().copied().filter(|&n| compared(&at(a, index(n)), *op, &at(b, index(n))) == Truth::True).collect()
     };
-    assert_eq!(judged[0].kept(&of_ints, &all, &NoSubqueries), Some(vec![0, 1]), "1.50 > 1, -0.20 > -1");
+    assert_eq!(judged[0].kept(&of_ints, Some(&all), &NoSubqueries, &Portable), Some(vec![0, 1]), "1.50 > 1, -0.20 > -1");
     for j in &judged {
-        assert_eq!(j.kept(&of_ints, &all, &NoSubqueries), Some(by_values(j)), "{j:?}");
-        assert_eq!(j.kept(&of_values, &all, &NoSubqueries), None, "{j:?}: no integers of values");
+        assert_eq!(j.kept(&of_ints, Some(&all), &NoSubqueries, &Portable), Some(by_values(j)), "{j:?}");
+        assert_eq!(j.kept(&of_values, Some(&all), &NoSubqueries, &Portable), None, "{j:?}: no integers of values");
     }
-    assert_eq!(judged[0].kept(&of_ints, &[1, 4], &NoSubqueries), Some(vec![1]), "of the rows given");
+    assert_eq!(judged[0].kept(&of_ints, Some(&[1, 4]), &NoSubqueries, &Portable), Some(vec![1]), "of the rows given");
 }
 
 /// The value of column `e` of row `n` of `batch`, its first column column
@@ -181,10 +183,10 @@ fn conjuncts_judged_over_integers_keep_what_values_keep() {
     let ints = crate::storage::Ints::new(
         vec![-150, 0, 151, 250, 0, 99_999, 150, -1],
         2,
-        Some(vec![false, false, false, false, true, false, false, false]),
+        Some(vec![false, false, false, false, true, false, false, false].into()),
     );
     let values = ints.values().to_vec();
-    let all: Vec<usize> = (0..values.len()).collect();
+    let all: Vec<u32> = rows_of(0..values.len());
     let constants = [exact(15, 1), exact(1510, 3), exact(-2, 0), exact(0, 0), exact(1505, 3), exact(99_999, 2)];
     let mut judged = Vec::new();
     for c in &constants {
@@ -202,15 +204,23 @@ fn conjuncts_judged_over_integers_keep_what_values_keep() {
         judged.push(Judged::IsNull(0, not));
     }
     for j in &judged {
-        let by_values: Vec<usize> = all.iter().copied().filter(|&n| j.keeps(&values[n])).collect();
-        assert_eq!(ints::kept(j, &ints, &all), Some(by_values), "{j:?}");
+        let by_values: Vec<u32> = all.iter().copied().filter(|&n| j.keeps(&values[index(n)])).collect();
+        assert_eq!(ints::kept(j, &ints, Some(&all), &Portable), Some(by_values), "{j:?}");
     }
-    let some: Vec<usize> = vec![1, 3, 4];
-    assert_eq!(ints::kept(&Judged::Compare(0, CompOp::Gt, exact(0, 0)), &ints, &some), Some(vec![3]), "of the rows kept before");
-    assert_eq!(ints::kept(&Judged::Compare(0, CompOp::Eq, Value::Approx(1.5)), &ints, &all), None, "approximate");
-    assert_eq!(ints::kept(&Judged::Compare(0, CompOp::Eq, exact(i128::MAX, 0)), &ints, &all), None, "too large to scale");
-    assert_eq!(ints::kept(&Judged::In(0, set(vec![Value::Approx(1.5)]), false), &ints, &all), None, "a list of an approximate");
-    assert_eq!(ints::kept(&Judged::Like(0, None), &ints, &all), None, "LIKE");
+    let some: Vec<u32> = vec![1, 3, 4];
+    assert_eq!(
+        ints::kept(&Judged::Compare(0, CompOp::Gt, exact(0, 0)), &ints, Some(&some), &Portable),
+        Some(vec![3]),
+        "of the rows kept before"
+    );
+    assert_eq!(ints::kept(&Judged::Compare(0, CompOp::Eq, Value::Approx(1.5)), &ints, Some(&all), &Portable), None, "approximate");
+    assert_eq!(ints::kept(&Judged::Compare(0, CompOp::Eq, exact(i128::MAX, 0)), &ints, Some(&all), &Portable), None, "too large to scale");
+    assert_eq!(
+        ints::kept(&Judged::In(0, set(vec![Value::Approx(1.5)]), false), &ints, Some(&all), &Portable),
+        None,
+        "a list of an approximate"
+    );
+    assert_eq!(ints::kept(&Judged::Like(0, None), &ints, Some(&all), &Portable), None, "LIKE");
 }
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.11 GR5, §5.13, §5.14,
@@ -232,9 +242,9 @@ fn conjuncts_judged_over_texts_keep_what_values_keep() {
     ends.push(text.len());
     let mut nulls = vec![false; words.len()];
     nulls.push(true);
-    let texts = crate::storage::Texts::new(text, ends, Some(nulls));
+    let texts = crate::storage::Texts::new(text, ends, Some(nulls.into()));
     let values = texts.values().to_vec();
-    let all: Vec<usize> = (0..values.len()).collect();
+    let all: Vec<u32> = rows_of(0..values.len());
     let char_of = |s: &str| Value::Char(s.to_owned());
     let mut judged = vec![
         Judged::Like(0, constant_pattern(&char_of("a%"), None).unwrap()),
@@ -261,17 +271,17 @@ fn conjuncts_judged_over_texts_keep_what_values_keep() {
     }
     let entry_of_row = vec![0, 1, 2, 3, 4, 5, 6, 0];
     let by_entry = crate::storage::Texts::coded(
-        crate::storage::Coded { codes: entry_of_row, entries: crate::storage::Texts::new(entry_text, entry_ends, None) },
+        crate::storage::Coded { codes: entry_of_row, entries: Arc::new(crate::storage::Texts::new(entry_text, entry_ends, None)) },
         texts.nulls.clone(),
     );
     for j in &judged {
-        let by_values: Vec<usize> = all.iter().copied().filter(|&n| j.keeps(&values[n])).collect();
-        assert_eq!(texts::kept(j, &texts, &all).as_ref(), Some(&by_values), "{j:?}");
-        assert_eq!(texts::kept(j, &by_entry, &all), Some(by_values), "{j:?}, coded");
+        let by_values: Vec<u32> = all.iter().copied().filter(|&n| j.keeps(&values[index(n)])).collect();
+        assert_eq!(texts::kept(j, &texts, Some(&all), &Portable).as_ref(), Some(&by_values), "{j:?}");
+        assert_eq!(texts::kept(j, &by_entry, Some(&all), &Portable), Some(by_values), "{j:?}, coded");
     }
-    assert_eq!(texts::kept(&Judged::Compare(0, CompOp::Eq, number(1)), &texts, &all), None, "a number");
+    assert_eq!(texts::kept(&Judged::Compare(0, CompOp::Eq, number(1)), &texts, Some(&all), &Portable), None, "a number");
     for list in [vec![number(1)], long(vec![number(1)], |n| char_of(&format!("x{n}")))] {
-        assert_eq!(texts::kept(&Judged::In(0, set(list), false), &texts, &all), None, "a list holding a number");
+        assert_eq!(texts::kept(&Judged::In(0, set(list), false), &texts, Some(&all), &Portable), None, "a list holding a number");
     }
 }
 
@@ -284,7 +294,7 @@ fn conjuncts_judged_over_texts_keep_what_values_keep() {
 #[test]
 fn conjuncts_judged_over_floats_keep_as_values() {
     let numbers = vec![1.5_f64, 0.0_f64, -2.25_f64, -0.0_f64, 3.0_f64, 7.0_f64];
-    let floats = Floats::new(numbers, Some(vec![false, true, false, false, false, false]));
+    let floats = Floats::new(numbers, Some(vec![false, true, false, false, false, false].into()));
     let of_floats = Batch { columns: vec![Column::Floats(floats.clone())], rows: 6 };
     let of_values = Batch { columns: vec![Column::from(floats.values().to_vec())], rows: 6 };
     let mut judged = vec![
@@ -304,11 +314,15 @@ fn conjuncts_judged_over_floats_keep_as_values() {
             Judged::Compare(0, op, Value::Approx(1.5_f64)),
         ]);
     }
-    let over: Vec<usize> = (0..6).collect();
+    let over: Vec<u32> = (0..6).collect();
     for j in &judged {
-        assert_eq!(j.kept(&of_floats, &over, &NoSubqueries), j.kept(&of_values, &over, &NoSubqueries), "{j:?}");
+        assert_eq!(
+            j.kept(&of_floats, Some(&over), &NoSubqueries, &Portable),
+            j.kept(&of_values, Some(&over), &NoSubqueries, &Portable),
+            "{j:?}"
+        );
     }
-    assert_eq!(floats::kept(&Judged::Like(0, None), &floats, &over), None, "not of numbers");
+    assert_eq!(kinds::floats(&Judged::Like(0, None), &floats, Some(&over), &Portable), None, "not of numbers");
 }
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.14]: a LIKE of a
@@ -348,14 +362,14 @@ fn liked_rows() -> ([Batch; 2], [Vec<Value>; 3]) {
         *end = end.checked_add(s.len()).unwrap();
         Some(*end)
     });
-    let texts = crate::storage::Texts::new(strings.concat(), ends.collect(), Some(vec![false, false, false, true, false, false]));
+    let texts = crate::storage::Texts::new(strings.concat(), ends.collect(), Some(vec![false, false, false, true, false, false].into()));
     let of_texts = Batch { columns: vec![Column::Texts(texts), Column::from(patterns.clone()), Column::from(escapes.clone())], rows: 6 };
     ([of_values, of_texts], [nulled, patterns, escapes])
 }
 
 /// The rows of `values`, strings, patterns and escapes, a row's LIKE
 /// keeps, escaped by the third if `with_escape`.
-fn liked_by_rows([strings, patterns, escapes]: &[Vec<Value>; 3], with_escape: bool) -> Vec<usize> {
+fn liked_by_rows([strings, patterns, escapes]: &[Vec<Value>; 3], with_escape: bool) -> Vec<u32> {
     let keeps = |n: usize| {
         let escape = match crate::exec::eval::like_escape(with_escape.then(|| &escapes[n])) {
             Ok(crate::exec::eval::Escape::None) => None,
@@ -364,7 +378,7 @@ fn liked_by_rows([strings, patterns, escapes]: &[Vec<Value>; 3], with_escape: bo
         };
         crate::exec::eval::like_truth(&strings[n], &patterns[n], (escape, &NoSubqueries)).unwrap() == Truth::True
     };
-    (0..strings.len()).filter(|&n| keeps(n)).collect()
+    rows_of((0..strings.len()).filter(|&n| keeps(n)))
 }
 
 /// Verifies: [X3.135-1986 §5.14 GR4, GR5, ISO/IEC 9075:1992 §8.5 GR1-GR3]
@@ -376,19 +390,19 @@ fn liked_by_rows([strings, patterns, escapes]: &[Vec<Value>; 3], with_escape: bo
 #[test]
 fn likes_of_patterns_not_constant_keep_what_rows_keep() {
     let (batches, values) = liked_rows();
-    let all: Vec<usize> = (0..6).collect();
+    let all: Vec<u32> = (0..6).collect();
     for batch in &batches {
         let plain = Judged::LikeOf(0, Operand::At(1), None);
-        assert_eq!(plain.kept(batch, &all, &NoSubqueries), Some(liked_by_rows(&values, false)), "no escape");
+        assert_eq!(plain.kept(batch, Some(&all), &NoSubqueries, &Portable), Some(liked_by_rows(&values, false)), "no escape");
         let by_column = Judged::LikeOf(0, Operand::At(1), Some(Operand::At(2)));
-        assert_eq!(by_column.kept(batch, &all, &NoSubqueries), Some(liked_by_rows(&values, true)), "escaped");
+        assert_eq!(by_column.kept(batch, Some(&all), &NoSubqueries, &Portable), Some(liked_by_rows(&values, true)), "escaped");
         let doubled = Judged::LikeOf(0, Operand::At(1), Some(Operand::Const(text("!!"))));
-        assert_eq!(doubled.kept(batch, &all, &NoSubqueries), None, "an escape of two characters");
+        assert_eq!(doubled.kept(batch, Some(&all), &NoSubqueries, &Portable), None, "an escape of two characters");
         let unpartitioned = Judged::LikeOf(0, Operand::Const(text("a!x")), Some(Operand::Const(text("!"))));
-        assert_eq!(unpartitioned.kept(batch, &all, &NoSubqueries), None, "no partitioning");
+        assert_eq!(unpartitioned.kept(batch, Some(&all), &NoSubqueries, &Portable), None, "no partitioning");
         let numbered = Judged::LikeOf(0, Operand::Const(number(1)), None);
-        assert_eq!(numbered.kept(batch, &[0], &NoSubqueries), None, "a number");
-        assert_eq!(numbered.kept(batch, &[3], &NoSubqueries), Some(vec![]), "a null first: unknown");
+        assert_eq!(numbered.kept(batch, Some(&[0]), &NoSubqueries, &Portable), None, "a number");
+        assert_eq!(numbered.kept(batch, Some(&[3]), &NoSubqueries, &Portable), Some(vec![]), "a null first: unknown");
     }
 }
 
@@ -399,7 +413,7 @@ fn likes_of_patterns_not_constant_keep_what_rows_keep() {
 #[test]
 fn integers_judged_once_a_run_keep_what_each_keeps() {
     let units: Vec<i64> = [3, 3, 3, 7, 7, 10, 10, 10, 10, 12].to_vec();
-    let some_null = Some(vec![false, true, false, false, false, false, true, true, false, false]);
+    let some_null = Some(vec![false, true, false, false, false, false, true, true, false, false].into());
     for nulls in [None, some_null] {
         judged_alike(&units, nulls);
     }
@@ -407,11 +421,11 @@ fn integers_judged_once_a_run_keep_what_each_keeps() {
 
 /// Checks that each conjunct keeps of `units`, null where `nulls` says, in
 /// runs, what it keeps of them one by one.
-fn judged_alike(units: &[i64], nulls: Option<Vec<bool>>) {
+fn judged_alike(units: &[i64], nulls: Option<Mask>) {
     let plain = crate::storage::Ints::new(units.to_vec(), 0, nulls.clone());
     let runs = crate::storage::Ints::new(units.to_vec(), 0, nulls).with_runs(vec![3, 5, 9, 10]);
-    let all: Vec<usize> = (0..10).collect();
-    let some = vec![1, 3, 6, 9];
+    let all: Vec<u32> = (0..10).collect();
+    let some: Vec<u32> = vec![1, 3, 6, 9];
     let mut judged = Vec::new();
     for c in [number(3), number(7), number(8), number(12)] {
         for op in [CompOp::Eq, CompOp::Ne, CompOp::Lt, CompOp::Le, CompOp::Gt, CompOp::Ge] {
@@ -424,7 +438,7 @@ fn judged_alike(units: &[i64], nulls: Option<Vec<bool>>) {
     }
     for j in &judged {
         for rows in [&all, &some] {
-            assert_eq!(ints::kept(j, &runs, rows), ints::kept(j, &plain, rows), "{j:?} of {rows:?}");
+            assert_eq!(ints::kept(j, &runs, Some(rows), &Portable), ints::kept(j, &plain, Some(rows), &Portable), "{j:?} of {rows:?}");
         }
     }
 }

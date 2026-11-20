@@ -47,6 +47,10 @@ mod database;
 /// build of itself.
 #[path = "../../support/src/types.rs"]
 mod ident;
+/// The contract every implementation of the kernels keeps, written once
+/// in `support/` for a kernel crate's tests too (RULES.md R-TEST-10).
+#[path = "../../support/src/kernels.rs"]
+mod kernel_contract;
 #[path = "../../support/src/logs.rs"]
 mod logs;
 
@@ -62,6 +66,7 @@ mod backup_online;
 mod backup_targets;
 mod backups;
 mod batch_joins;
+mod batch_kinds;
 mod batches;
 mod benchmark_shapes;
 mod bigint;
@@ -184,6 +189,7 @@ mod json_table;
 mod json_type;
 mod kept_plans;
 mod kept_set_plans;
+mod kernels;
 mod language;
 mod language_collations;
 mod length_units;

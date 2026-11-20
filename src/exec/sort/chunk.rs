@@ -2,7 +2,8 @@
 //! Each record of a run is a chunk of its rows, in their order: their
 //! count and width; each row's head, the tag and the prefix of its first
 //! key (`merge.rs`), as two vectors; then each column, a byte of its kind,
-//! a byte saying whether it has nulls and then, if it has, a byte a row,
+//! a byte saying whether it has nulls and then, if it has, a bit a row,
+//! least significant first (`Mask::lsb_bytes`),
 //! and its vector: of exact numbers of one scale fitting 64 bits, the
 //! scale and each row's units; of approximate numbers, each row's bits; of
 //! character strings, each row's length, then their bytes. A column of
@@ -16,7 +17,8 @@
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::spill::SpilledLobs;
-use crate::storage::{Batch, Cell, Column, Floats, Ints, Texts};
+use crate::storage::mask::lsb_len;
+use crate::storage::{Batch, Cell, Column, Floats, Ints, Mask, Texts};
 use crate::value::Value;
 use crate::value::types::TypeRegistry;
 
@@ -72,7 +74,9 @@ fn cell_kind(cell: Cell<'_>) -> Option<(u8, u32)> {
         Cell::Value(Value::Exact(d)) => Some(i64::try_from(d.units).map_or((VALUES, 0_u32), |_| (INTS, d.scale))),
         Cell::Approx(_) | Cell::Value(Value::Approx(_)) => Some((FLOATS, 0_u32)),
         Cell::Text(_) | Cell::Value(Value::Char(_)) => Some((TEXTS, 0_u32)),
-        Cell::Value(
+        Cell::Datetime(_)
+        | Cell::Bool(_)
+        | Cell::Value(
             Value::DecFloat(_)
             | Value::Binary(_)
             | Value::Lob(_)
@@ -116,16 +120,16 @@ fn put_column(rows: &[Pick<'_>], at: usize, out: &mut Vec<u8>, lobs: &SpilledLob
         for cell in cells() {
             match cell {
                 Cell::Value(v) => lobs.put_value(out, v),
-                made @ (Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) | Cell::Null) => lobs.put_value(out, &made.to_value()),
+                made @ (Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) | Cell::Datetime(_) | Cell::Bool(_) | Cell::Null) => {
+                    lobs.put_value(out, &made.to_value());
+                }
             }
         }
         return;
     }
     if cells().any(|c| cell_kind(c).is_none()) {
         out.put_u8(1);
-        for cell in cells() {
-            out.put_u8(u8::from(cell_kind(cell).is_none()));
-        }
+        out.extend(Mask::from_bools(&cells().map(|c| cell_kind(c).is_none()).collect::<Vec<bool>>()).lsb_bytes());
     } else {
         out.put_u8(0);
     }
@@ -145,7 +149,7 @@ fn units(cell: Cell<'_>) -> i64 {
     match cell {
         Cell::Exact(units, _) => units,
         Cell::Value(Value::Exact(d)) => i64::try_from(d.units).unwrap_or(0),
-        Cell::Value(_) | Cell::Approx(_) | Cell::Text(_) | Cell::Null => 0,
+        Cell::Value(_) | Cell::Approx(_) | Cell::Text(_) | Cell::Datetime(_) | Cell::Bool(_) | Cell::Null => 0,
     }
 }
 
@@ -154,7 +158,7 @@ fn number(cell: Cell<'_>) -> f64 {
     match cell {
         Cell::Approx(f) => f,
         Cell::Value(Value::Approx(f)) => *f,
-        Cell::Value(_) | Cell::Exact(..) | Cell::Text(_) | Cell::Null => 0.0_f64,
+        Cell::Value(_) | Cell::Exact(..) | Cell::Text(_) | Cell::Datetime(_) | Cell::Bool(_) | Cell::Null => 0.0_f64,
     }
 }
 
@@ -163,7 +167,7 @@ fn text(cell: Cell<'_>) -> &str {
     match cell {
         Cell::Text(t) => t,
         Cell::Value(Value::Char(s)) => s,
-        Cell::Value(_) | Cell::Exact(..) | Cell::Approx(_) | Cell::Null => "",
+        Cell::Value(_) | Cell::Exact(..) | Cell::Approx(_) | Cell::Datetime(_) | Cell::Bool(_) | Cell::Null => "",
     }
 }
 
@@ -195,7 +199,7 @@ fn column(reader: &mut Reader<'_>, rows: usize, lobs: &SpilledLobs) -> Result<Co
     if kind == VALUES {
         return Ok(Column::Values((0..rows).map(|_| lobs.value(reader)).collect::<Result<Vec<Value>>>()?));
     }
-    let nulls = if reader.u8()? == 0 { None } else { Some(reader.take(rows)?.iter().map(|&b| b != 0).collect()) };
+    let nulls = if reader.u8()? == 0 { None } else { Some(Mask::from_lsb_bytes(reader.take(lsb_len(rows))?, 0, rows)) };
     if kind == INTS {
         let scale = reader.u32()?;
         let units = (0..rows).map(|_| reader.u64().map(u64::cast_signed)).collect::<Result<Vec<i64>>>()?;
@@ -242,6 +246,8 @@ mod tests {
             .map(|c| match c {
                 Column::Ints(_) => "ints",
                 Column::Floats(_) => "floats",
+                Column::Datetimes(_) => "datetimes",
+                Column::Bools(_) => "bools",
                 Column::Texts(_) => "texts",
                 Column::Values(_) => "values",
                 Column::Nulls(_) => "nulls",
@@ -263,14 +269,17 @@ mod tests {
     #[test]
     fn chunks_keep_their_vectors_kinds() {
         let exact = |n: i128, scale: u32| Value::Exact(Decimal::new(n, scale));
-        let texts = Texts::new("abcde".to_owned(), vec![1_usize, 1_usize, 5_usize], Some(vec![false, true, false]));
+        let texts = Texts::new("abcde".to_owned(), vec![1_usize, 1_usize, 5_usize], Some(vec![false, true, false].into()));
         let coded = Texts::coded(
-            crate::storage::Coded { codes: vec![1_u32, 0_u32, 1_u32], entries: Texts::new("xy".to_owned(), vec![1_usize, 2_usize], None) },
+            crate::storage::Coded {
+                codes: vec![1_u32, 0_u32, 1_u32],
+                entries: std::sync::Arc::new(Texts::new("xy".to_owned(), vec![1_usize, 2_usize], None)),
+            },
             None,
         );
         let batch = Batch {
             columns: vec![
-                Column::Ints(Ints::new(vec![150_i64, 0_i64, -3_i64], 2_u32, Some(vec![false, true, false]))),
+                Column::Ints(Ints::new(vec![150_i64, 0_i64, -3_i64], 2_u32, Some(vec![false, true, false].into()))),
                 Column::Values(vec![exact(7_i128, 1_u32), Value::Null, exact(-2_i128, 1_u32)]),
                 Column::Floats(Floats::new(vec![1.5_f64, -0.0_f64, 2.0_f64], None)),
                 Column::Texts(texts),

@@ -267,11 +267,10 @@ fn narrow_rows(plan: Plan, db: &Arc<State>, tx: TxId) -> RowIter {
 
 /// The rows of `batches`, those a filter kept of each, each of `width`
 /// columns, the values of a batch's vectors at `columns`, the others null.
-pub(super) fn rows_of(batches: Batches, columns: Vec<usize>, width: usize) -> RowIter {
+pub(in crate::exec) fn rows_of(batches: Batches, columns: Vec<usize>, width: usize) -> RowIter {
     Box::new(batches.flat_map(move |kept| match kept {
         Ok((batch, rows)) => {
-            let made: Vec<Result<Row>> = rows
-                .unwrap_or_else(|| (0..batch.rows).collect())
+            let made: Vec<Result<Row>> = crate::storage::sel::places_of(rows, batch.rows)
                 .into_iter()
                 .map(|r| {
                     let mut row = vec![Value::Null; width];

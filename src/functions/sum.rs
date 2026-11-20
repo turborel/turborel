@@ -121,7 +121,7 @@ impl Accumulator for SumAcc {
     }
     /// Exact numbers summed as decimals in place, nothing cloned; others
     /// by `update`.
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+    fn update_many(&mut self, values: &[Value], rows: Option<&[u32]>) -> Result<()> {
         let mut add = |v: &Value| match (&mut self.total, v) {
             (Total::Exact(sum), Value::Exact(d)) => {
                 *sum = sum.wide_add(*d).map_or_else(beyond, Ok)?;
@@ -130,13 +130,13 @@ impl Accumulator for SumAcc {
             (_, _) => self.update(v),
         };
         match rows {
-            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).try_for_each(&mut add),
+            Some(rows) => rows.iter().filter_map(|&r| values.get(crate::storage::mask::index(r))).try_for_each(&mut add),
             None => values.iter().try_for_each(&mut add),
         }
     }
     /// The integers added to the sum as integers, of one scale; else, or
     /// if 128 bits cannot hold the sum, as decimals, which raise of it.
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
+    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>) -> Result<()> {
         let start = match &self.total {
             Total::Empty => Some(0),
             Total::Exact(d) => (d.scale == ints.scale).then_some(d.units),
@@ -150,7 +150,7 @@ impl Accumulator for SumAcc {
         Ok(())
     }
     /// The numbers added as `f64`s, in order, as `update` adds them.
-    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
+    fn update_floats(&mut self, floats: &Floats, rows: Option<&[u32]>) -> Result<()> {
         let mut sum = match &self.total {
             Total::Empty => Wide::EMPTY,
             Total::Approx(w) => *w,
@@ -268,19 +268,19 @@ impl Accumulator for AvgAcc {
         self.count = self.count.saturating_add(1);
         self.sum.update(v)
     }
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+    fn update_many(&mut self, values: &[Value], rows: Option<&[u32]>) -> Result<()> {
         let counted = match rows {
-            Some(rows) => rows.iter().filter_map(|&r| values.get(r)).filter(|v| !v.is_null()).count(),
+            Some(rows) => rows.iter().filter_map(|&r| values.get(crate::storage::mask::index(r))).filter(|v| !v.is_null()).count(),
             None => values.iter().filter(|v| !v.is_null()).count(),
         };
         self.count = self.count.saturating_add(i128::try_from(counted).unwrap_or(i128::MAX));
         self.sum.update_many(values, rows)
     }
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
+    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>) -> Result<()> {
         self.count = self.count.saturating_add(i128::try_from(ints::count(ints, rows)).unwrap_or(i128::MAX));
         self.sum.update_ints(ints, rows)
     }
-    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
+    fn update_floats(&mut self, floats: &Floats, rows: Option<&[u32]>) -> Result<()> {
         self.count = self.count.saturating_add(i128::try_from(floats::count(floats, rows)).unwrap_or(i128::MAX));
         self.sum.update_floats(floats, rows)
     }

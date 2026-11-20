@@ -10,25 +10,34 @@ use std::cmp::Ordering;
 
 use super::Judged;
 use super::ints::holds;
-use crate::storage::Texts;
+use crate::kernels::Kernels;
+use crate::storage::mask::index;
+use crate::storage::sel::rows_of;
+use crate::storage::{Mask, Texts};
 use crate::value::{Value, compare_strings};
 
-/// The rows of `kept` that `judged` keeps of `texts`, if it is judged of
-/// text.
-pub(super) fn kept(judged: &Judged, texts: &Texts, kept: &[usize]) -> Option<Vec<usize>> {
-    let keep = |f: &dyn Fn(&str) -> bool| -> Vec<usize> {
-        // Of a store's dictionaries, judged once of each entry, then of
-        // each row by its entry.
+/// The rows of `over`, or of all, that `judged` keeps of `texts`, if it is
+/// judged of text: of a store's dictionaries, each entry judged once into
+/// a mask of the entries kept, the rows then by the kernel `select_codes`.
+pub(super) fn kept(judged: &Judged, texts: &Texts, over: Option<&[u32]>, kernels: &dyn Kernels) -> Option<Vec<u32>> {
+    let keep = |f: &dyn Fn(&str) -> bool| -> Vec<u32> {
+        let mut out = Vec::new();
         if let Some(coded) = &texts.coded {
-            let entries: Vec<bool> = (0..coded.entries.len()).map(|e| coded.entries.get(e).is_some_and(f)).collect();
-            let of = |n: usize| coded.codes.get(n).and_then(|&c| usize::try_from(c).ok()).and_then(|c| entries.get(c).copied());
-            return kept.iter().copied().filter(|&n| !texts.is_null(n) && of(n).unwrap_or(false)).collect();
+            let mut entries = Mask::none(coded.entries.len());
+            for e in 0..coded.entries.len() {
+                if coded.entries.get(e).is_some_and(f) {
+                    entries.set(e);
+                }
+            }
+            kernels.select_codes(&coded.codes, entries.words(), (texts.nulls.as_ref(), over), &mut out);
+            return out;
         }
-        kept.iter().copied().filter(|&n| texts.get(n).is_some_and(f)).collect()
+        let rows = over.map_or_else(|| rows_of(0..texts.len()), <[u32]>::to_vec);
+        rows.into_iter().filter(|&n| texts.get(index(n)).is_some_and(f)).collect()
     };
     match judged {
         // [X3.135-1986 §5.15 GR2-GR4] never unknown.
-        Judged::IsNull(_, not) => Some(kept.iter().copied().filter(|&n| texts.get(n).is_none() != *not).collect()),
+        Judged::IsNull(_, not) => Some(super::kinds::nulls_kept(texts.nulls.as_ref(), (texts.len(), over), *not, kernels)),
         // [X3.135-1986 §5.14 GR4, GR5] unknown of a null.
         Judged::Like(_, pattern) => Some(pattern.as_ref().map_or_else(Vec::new, |pattern| keep(&|s| pattern.matches(s)))),
         Judged::Compare(_, op, Value::Char(constant)) => Some(keep(&|s| holds(*op, Some(compare_strings(s, constant))))),
@@ -52,6 +61,6 @@ pub(super) fn kept(judged: &Judged, texts: &Texts, kept: &[usize]) -> Option<Vec
             let equal = |s: &str| strings.iter().any(|c| compare_strings(s, c) == Ordering::Equal);
             Some(if *not { keep(&|s| !has_null && !equal(s)) } else { keep(&equal) })
         }
-        Judged::Compare(..) | Judged::Compared(..) | Judged::LikeOf(..) => None,
+        Judged::Compare(..) | Judged::Compared(..) | Judged::LikeOf(..) | Judged::Any(_) => None,
     }
 }

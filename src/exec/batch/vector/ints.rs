@@ -18,7 +18,7 @@ use crate::value::{ArithOp, MAX_EXACT_PRECISION, Value, pow10};
 /// read in place, of those rows or all; a constant; or ones made, one a
 /// row given.
 pub(in crate::exec::batch) enum Lane<'b> {
-    Column(&'b Ints, Option<&'b [usize]>),
+    Column(&'b Ints, Option<&'b [u32]>),
     Const(i64, u32),
     Made(Ints),
 }
@@ -62,7 +62,7 @@ impl Lane<'_> {
     pub(in crate::exec::batch) fn unit(&self, n: usize) -> Option<i64> {
         let of = |ints: &Ints, r: usize| (!ints.is_null(r)).then(|| ints.units.get(r).copied()).flatten();
         match self {
-            Lane::Column(ints, rows) => of(ints, rows.map_or(Some(n), |r| r.get(n).copied())?),
+            Lane::Column(ints, rows) => of(ints, crate::storage::sel::nth(*rows, n)),
             Lane::Const(u, _) => Some(*u),
             Lane::Made(ints) => of(ints, n),
         }
@@ -103,8 +103,8 @@ fn shaped(e: &Expr, depth: usize) -> bool {
 /// `c` of `e` the vector at `inputs[c]`, if `e` is of columns of integers
 /// and exact constants, and computes, of those rows, nothing past the
 /// digits of a decimal; of a column alone, its integers given again.
-pub(in crate::exec::batch) fn lane(e: &Expr, inputs: &[usize], batch: &Batch, rows: Option<&[usize]>) -> Option<Ints> {
-    let count = rows.map_or(batch.rows, <[usize]>::len);
+pub(in crate::exec::batch) fn lane(e: &Expr, inputs: &[usize], batch: &Batch, rows: Option<&[u32]>) -> Option<Ints> {
+    let count = rows.map_or(batch.rows, <[u32]>::len);
     match lane_of(e, inputs, batch, rows)? {
         Lane::Made(ints) => Some(ints),
         // A column whole is its vector, copied, no row looked at.
@@ -115,28 +115,28 @@ pub(in crate::exec::batch) fn lane(e: &Expr, inputs: &[usize], batch: &Batch, ro
 
 /// As `lane`, its integers as `e` gives them: a column's read in place, a
 /// constant once, none made but of the operations of `e`.
-pub(in crate::exec::batch) fn lane_of<'b>(e: &'b Expr, inputs: &[usize], batch: &'b Batch, rows: Option<&'b [usize]>) -> Option<Lane<'b>> {
+pub(in crate::exec::batch) fn lane_of<'b>(e: &'b Expr, inputs: &[usize], batch: &'b Batch, rows: Option<&'b [u32]>) -> Option<Lane<'b>> {
     made(e, (inputs, batch, rows), super::DEPTH)
 }
 
 /// `lane`'s work, of an expression up to `depth` deep.
-fn made<'b>(e: &'b Expr, (inputs, batch, rows): (&[usize], &'b Batch, Option<&'b [usize]>), depth: usize) -> Option<Lane<'b>> {
+fn made<'b>(e: &'b Expr, (inputs, batch, rows): (&[usize], &'b Batch, Option<&'b [u32]>), depth: usize) -> Option<Lane<'b>> {
     let deeper = depth.checked_sub(1)?;
     match e {
         Expr::Column(c) => match batch.columns.get(*inputs.get(*c)?)? {
             Column::Ints(ints) => Some(Lane::Column(ints, rows)),
-            Column::Values(_) | Column::Floats(_) | Column::Texts(_) | Column::Nulls(_) => None,
+            Column::Values(_) | Column::Floats(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Nulls(_) => None,
         },
         Expr::Const(Value::Exact(d)) => Some(Lane::Const(i64::try_from(d.units).ok()?, d.scale)),
         // [X3.135-1986 §5.9 GR4]
         Expr::Neg(operand) => {
             let x = made(operand, (inputs, batch, rows), deeper)?;
-            let count = rows.map_or(batch.rows, <[usize]>::len);
+            let count = rows.map_or(batch.rows, <[u32]>::len);
             Some(Lane::Made(each((count, x.run_ends(count)), x.scale(), |n| Some(x.unit(n).map(i64::wrapping_neg)))?))
         }
         Expr::Arith(left, op, right) => {
             let operands = (made(left, (inputs, batch, rows), deeper)?, made(right, (inputs, batch, rows), deeper)?);
-            arithmetic(*op, (&operands.0, &operands.1), rows.map_or(batch.rows, <[usize]>::len)).map(Lane::Made)
+            arithmetic(*op, (&operands.0, &operands.1), rows.map_or(batch.rows, <[u32]>::len)).map(Lane::Made)
         }
         Expr::Const(_)
         | Expr::Call(..)
@@ -224,7 +224,7 @@ fn each((count, ends): (usize, Option<Vec<usize>>), scale: u32, f: impl Fn(usize
             (None, Some(_)) => {}
         }
     }
-    Some(Ints::new(units, scale, nulls))
+    Some(Ints::new(units, scale, nulls.map(crate::storage::Mask::from)))
 }
 
 /// `each`'s integers of rows in runs ending at `ends`, `f` asked of each

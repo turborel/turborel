@@ -83,7 +83,9 @@ const QUERIES: [&str; 17] = [
     "SELECT COUNT(*), SUM(N), AVG(N), MIN(K), MAX(S) FROM {t}",
     "SELECT COUNT(*), SUM(N) FROM {t} WHERE G = 99",
     "SELECT S, COUNT(*) FROM {t} WHERE N > 500 GROUP BY S",
-    "SELECT DISTINCT G, S FROM {t}",
+    // Of S grouped by an expression, no estimate of its groups keeps it
+    // serial (RULES.md D355).
+    "SELECT DISTINCT G, S || '' FROM {t}",
     "SELECT K, S, N FROM {t} ORDER BY S, N DESC",
     "SELECT K, G, S FROM {t} ORDER BY G",
     "SELECT K, N FROM {t} ORDER BY N, K FETCH FIRST 7 ROWS ONLY",
@@ -205,7 +207,13 @@ fn parallel_parts_see_their_transactions_writes() {
 fn a_part_past_its_work_area_gives_way() {
     let (_db, a) = tables();
     exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
-    for sql in ["SELECT K, COUNT(*), SUM(N) FROM R GROUP BY K", "SELECT DISTINCT K, S FROM C", "SELECT K, S FROM R ORDER BY S DESC, K"] {
+    // Grouped by expressions' values, of groups not estimated, so not kept serial
+    // by their exchange (RULES.md D355).
+    for sql in [
+        "SELECT J, COUNT(*), SUM(N) FROM (SELECT K + 0 AS J, N FROM R) AS T GROUP BY J",
+        "SELECT DISTINCT K + 0, S FROM C",
+        "SELECT K, S FROM R ORDER BY S DESC, K",
+    ] {
         let (alone, together, marked) = both(&a, sql);
         assert!(marked, "{sql}");
         // Given way, it runs by batch, its rows in no order.

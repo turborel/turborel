@@ -12,7 +12,8 @@ use super::corrupt;
 use crate::engine::columns::{padded, padding};
 use crate::engine::record::{RecordFormat, Reference};
 use crate::error::Result;
-use crate::storage::{Batch, Column, Ints, Texts};
+use crate::storage::{Batch, Bools, Column, Datetimes, Ints, Mask, Texts};
+use crate::value::datetime::Moment;
 use crate::value::{DataType, Value};
 
 /// Bytes of an exact number's field in a record.
@@ -25,6 +26,10 @@ enum Gathered {
     /// Character strings, as their text, padded to `pad` characters if
     /// given.
     Texts { text: String, ends: Vec<usize>, pad: Option<usize>, nulls: Nulls },
+    /// Datetimes of a type, as their instants (`storage::Datetimes`).
+    Datetimes(Box<(DataType, Datetimes)>, Nulls),
+    /// Truth values, a bit each (`storage::Bools`).
+    Bools(Mask, Nulls),
     /// Values of any other type, or of a column the table lacks.
     Values(Vec<Value>),
 }
@@ -66,12 +71,24 @@ impl Gathering {
     fn vector(t: Option<&DataType>) -> Gathered {
         match t {
             Some(DataType::Exact { scale, .. }) => Gathered::Ints { units: Vec::new(), scale: *scale, nulls: Nulls::default() },
+            Some(DataType::Boolean) => Gathered::Bools(Mask::none(0), Nulls::default()),
+            Some(t @ DataType::Date) => Self::datetimes(t, (Moment::Date, false, 0)),
+            Some(t @ DataType::Time { precision, zoned }) => Self::datetimes(t, (Moment::Time, *zoned, *precision)),
+            Some(t @ DataType::Timestamp { precision, zoned }) => Self::datetimes(t, (Moment::Timestamp, *zoned, *precision)),
             Some(other) => match padding(other) {
                 Some(pad) => Gathered::Texts { text: String::new(), ends: Vec::new(), pad, nulls: Nulls::default() },
                 None => Gathered::Values(Vec::new()),
             },
             None => Gathered::Values(Vec::new()),
         }
+    }
+
+    /// The vector a datetime column of type `t` is gathered into, of the
+    /// fields, zone and precision `(moment, zoned, precision)`.
+    fn datetimes(t: &DataType, (moment, zoned, precision): (Moment, bool, u32)) -> Gathered {
+        let shape = (moment, zoned, u8::try_from(precision).unwrap_or(u8::MAX));
+        let made = Datetimes::new(Vec::new(), zoned.then(Vec::new), shape, None);
+        Gathered::Datetimes(Box::new((t.clone(), made)), Nulls::default())
     }
 
     /// How many rows it holds.
@@ -112,6 +129,20 @@ impl Gathering {
                     ends.push(text.len());
                     nulls.push(rows, field.is_none());
                 }
+                Gathered::Datetimes(held, nulls) => {
+                    let d = datetime_of(format.bytes_with(record, at, fetch)?.as_deref(), &held.0, at)?;
+                    let made = &mut held.1;
+                    made.utc.push(d.map_or(0, |d| d.utc));
+                    if let Some(zones) = &mut made.zones {
+                        zones.push(d.map_or(0, |d| d.zone));
+                    }
+                    nulls.push(rows, d.is_none());
+                }
+                Gathered::Bools(bits, nulls) => {
+                    let b = bool_of(format.bytes_with(record, at, fetch)?.as_deref(), at)?;
+                    bits.push(b.unwrap_or(false));
+                    nulls.push(rows, b.is_none());
+                }
                 Gathered::Values(values) => {
                     let mut value = [if at < format.columns() { format.column_with(record, at, fetch)? } else { Value::Null }];
                     if let (Some(lobs), [v]) = (lobs, &value)
@@ -135,10 +166,19 @@ impl Gathering {
             .columns
             .iter_mut()
             .map(|(_, vector)| match vector {
-                Gathered::Ints { units, scale, nulls } => Column::Ints(Ints::new(std::mem::take(units), *scale, nulls.0.take())),
-                Gathered::Texts { text, ends, nulls, .. } => {
-                    Column::Texts(Texts::new(std::mem::take(text), std::mem::take(ends), nulls.0.take()))
+                Gathered::Ints { units, scale, nulls } => {
+                    Column::Ints(Ints::new(std::mem::take(units), *scale, nulls.0.take().map(Mask::from)))
                 }
+                Gathered::Texts { text, ends, nulls, .. } => {
+                    Column::Texts(Texts::new(std::mem::take(text), std::mem::take(ends), nulls.0.take().map(Mask::from)))
+                }
+                Gathered::Datetimes(held, nulls) => {
+                    let made = &mut held.1;
+                    let shape = (made.moment, made.zoned, made.precision);
+                    let zones = made.zones.as_mut().map(std::mem::take);
+                    Column::Datetimes(Datetimes::new(std::mem::take(&mut made.utc), zones, shape, nulls.0.take().map(Mask::from)))
+                }
+                Gathered::Bools(bits, nulls) => Column::Bools(Bools::new(std::mem::take(bits), nulls.0.take().map(Mask::from))),
                 Gathered::Values(values) => Column::Values(std::mem::take(values)),
             })
             .collect();
@@ -148,5 +188,32 @@ impl Gathering {
 
 // Unit tests: records gathered as their rows decode, malformed fields
 // refused (RULES.md R-TEST-1, R-TEST-2).
+/// The datetime of type `t` a record's `field` of column `at` holds, none
+/// if null.
+///
+/// # Errors
+///
+/// SQLCODE -916 if it is not a value of the type.
+fn datetime_of(field: Option<&[u8]>, t: &DataType, at: usize) -> Result<Option<crate::value::Datetime>> {
+    let Some(f) = field else { return Ok(None) };
+    match t.decode_record(f) {
+        Some(Value::Datetime(d)) => Ok(Some(d)),
+        Some(_) | None => Err(corrupt(&format!("column {at} is not a value of its type"))),
+    }
+}
+
+/// The truth value a record's `field` of column `at` holds, none if null.
+///
+/// # Errors
+///
+/// SQLCODE -916 if it is not a truth value.
+fn bool_of(field: Option<&[u8]>, at: usize) -> Result<Option<bool>> {
+    let Some(f) = field else { return Ok(None) };
+    match DataType::Boolean.decode_record(f) {
+        Some(Value::Bool(b)) => Ok(Some(b)),
+        Some(_) | None => Err(corrupt(&format!("column {at} is not a value of its type"))),
+    }
+}
+
 #[cfg(test)]
 mod tests;

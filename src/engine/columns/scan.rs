@@ -7,7 +7,8 @@
 use super::group::{Group, PART_ROWS, Pages, Seal, Zone};
 use super::{Chunk, bloom, padding};
 use crate::error::Result;
-use crate::storage::{Coded, Conjunct, Conjunction, Floats, Ints, Row, Texts};
+use crate::storage::{Coded, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask, Row, Texts};
+use crate::value::datetime::Moment;
 use crate::value::{DataType, Value};
 
 /// The runs of positions of `group`'s rows that each of `conditions` may
@@ -175,8 +176,8 @@ type Words = Option<(Vec<i64>, Vec<bool>)>;
 type RunWords = ((Vec<i64>, Vec<bool>), Option<Vec<usize>>);
 
 /// Of nulls, none if none is null.
-fn nulls_of(nulls: Vec<bool>) -> Option<Vec<bool>> {
-    nulls.contains(&true).then_some(nulls)
+fn nulls_of(nulls: &[bool]) -> Option<Mask> {
+    crate::storage::mask::mask_of(nulls)
 }
 
 /// `word`, an approximate number's 8 bytes as a signed integer, as the
@@ -196,7 +197,7 @@ fn float_of(word: i64) -> f64 {
 pub fn ints<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), (from, to): (u32, u32)) -> Result<Option<Ints>> {
     let DataType::Exact { scale, .. } = t else { return Ok(None) };
     Ok(words(group, pages, column, (from, to))?.map(|((units, nulls), runs)| {
-        let ints = Ints::new(units, *scale, nulls_of(nulls));
+        let ints = Ints::new(units, *scale, nulls_of(&nulls));
         match runs {
             Some(ends) => ints.with_runs(ends),
             None => ints,
@@ -219,7 +220,7 @@ pub fn floats<S: Seal>(
 ) -> Result<Option<Floats>> {
     let DataType::Approximate { .. } = t else { return Ok(None) };
     Ok(words(group, pages, column, (from, to))?
-        .map(|((words, nulls), _)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(nulls))))
+        .map(|((words, nulls), _)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(&nulls))))
 }
 
 /// \[DESIGN\] As `ints_at`, as approximate numbers, as `floats` gives
@@ -236,7 +237,72 @@ pub fn floats_at<S: Seal>(
 ) -> Result<Option<Floats>> {
     let DataType::Approximate { .. } = t else { return Ok(None) };
     Ok(words_at(group, pages, column, positions)?
-        .map(|(words, nulls)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(nulls))))
+        .map(|(words, nulls)| Floats::new(words.into_iter().map(float_of).collect(), nulls_of(&nulls))))
+}
+
+/// \[DESIGN\] (RULES.md D354) The fields, zone and precision of a datetime
+/// type without a time zone, which a record writes as its instant's
+/// microseconds in 8 bytes; none of any other type.
+fn datetime_shape(t: &DataType) -> Option<(Moment, bool, u8)> {
+    let (moment, precision) = match t {
+        DataType::Date => (Moment::Date, 0),
+        DataType::Time { precision, zoned: false } => (Moment::Time, *precision),
+        DataType::Timestamp { precision, zoned: false } => (Moment::Timestamp, *precision),
+        DataType::Time { zoned: true, .. }
+        | DataType::Timestamp { zoned: true, .. }
+        | DataType::Character { .. }
+        | DataType::Varying { .. }
+        | DataType::Exact { .. }
+        | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
+        | DataType::Lob { .. }
+        | DataType::Boolean
+        | DataType::Interval(_)
+        | DataType::Array(_)
+        | DataType::Multiset(_)
+        | DataType::Structured(_)
+        | DataType::Reference(_)
+        | DataType::Row(_)
+        | DataType::Distinct(_)
+        | DataType::Json
+        | DataType::Xml(_)
+        | DataType::Extension(_) => return None,
+    };
+    Some((moment, false, u8::try_from(precision).ok()?))
+}
+
+/// \[DESIGN\] As `ints`, as datetimes (`storage::Datetimes`), if `t` is a
+/// datetime type without a time zone (`datetime_shape`).
+///
+/// # Errors
+///
+/// As `rows`.
+pub fn datetimes<S: Seal>(
+    group: &Group,
+    pages: &Pages<'_, S>,
+    (column, t): (usize, &DataType),
+    (from, to): (u32, u32),
+) -> Result<Option<Datetimes>> {
+    let Some(shape) = datetime_shape(t) else { return Ok(None) };
+    Ok(words(group, pages, column, (from, to))?.map(|((utc, nulls), _)| Datetimes::new(utc, None, shape, nulls_of(&nulls))))
+}
+
+/// \[DESIGN\] As `ints_at`, as datetimes, as `datetimes` gives those of a
+/// run.
+///
+/// # Errors
+///
+/// As `rows`.
+pub fn datetimes_at<S: Seal>(
+    group: &Group,
+    pages: &Pages<'_, S>,
+    (column, t): (usize, &DataType),
+    positions: &[u32],
+) -> Result<Option<Datetimes>> {
+    let Some(shape) = datetime_shape(t) else { return Ok(None) };
+    Ok(words_at(group, pages, column, positions)?.map(|(utc, nulls)| Datetimes::new(utc, None, shape, nulls_of(&nulls))))
 }
 
 /// The 8-byte fields of column `column` of the rows at positions `from` to
@@ -281,7 +347,7 @@ fn words<S: Seal>(group: &Group, pages: &Pages<'_, S>, column: usize, (from, to)
 /// As `rows`.
 pub fn ints_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usize, &DataType), positions: &[u32]) -> Result<Option<Ints>> {
     let DataType::Exact { scale, .. } = t else { return Ok(None) };
-    Ok(words_at(group, pages, column, positions)?.map(|(units, nulls)| Ints::new(units, *scale, nulls_of(nulls))))
+    Ok(words_at(group, pages, column, positions)?.map(|(units, nulls)| Ints::new(units, *scale, nulls_of(&nulls))))
 }
 
 /// The 8-byte fields of column `column` of the rows at `positions`, in
@@ -358,8 +424,7 @@ pub fn texts_at<S: Seal>(group: &Group, pages: &Pages<'_, S>, (column, t): (usiz
     if ends.len() != positions.len() {
         return Ok(None);
     }
-    let nulls = nulls.contains(&true).then_some(nulls);
-    Ok(Some(Texts::new(text, ends, nulls)))
+    Ok(Some(Texts::new(text, ends, nulls_of(&nulls))))
 }
 
 /// \[DESIGN\] The values at `positions` of a column whose chunks are
@@ -387,8 +452,7 @@ fn coded_at<S: Seal>((zones, t): (&[Zone], &DataType), pages: &Pages<'_, S>, pos
     if codes.len() != positions.len() {
         return Ok(None);
     }
-    let nulls = nulls.contains(&true).then_some(nulls);
-    Ok(Some(Texts::coded(Coded { codes, entries: Texts::new(text, ends, None) }, nulls)))
+    Ok(Some(Texts::coded(Coded { codes, entries: std::sync::Arc::new(Texts::new(text, ends, None)) }, nulls_of(&nulls))))
 }
 
 /// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
@@ -424,8 +488,7 @@ pub fn texts<S: Seal>(
     if ends.len() != count {
         return Ok(None);
     }
-    let nulls = nulls.contains(&true).then_some(nulls);
-    Ok(Some(Texts::new(text, ends, nulls)))
+    Ok(Some(Texts::new(text, ends, nulls_of(&nulls))))
 }
 
 /// The values of column `column`, of type `t`, of the rows at `positions`

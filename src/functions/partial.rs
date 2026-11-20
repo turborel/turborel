@@ -84,16 +84,16 @@ impl Accumulator for PartAcc {
     fn update(&mut self, v: &Value) -> Result<()> {
         self.0.update(v)
     }
-    fn update_many(&mut self, values: &[Value], rows: Option<&[usize]>) -> Result<()> {
+    fn update_many(&mut self, values: &[Value], rows: Option<&[u32]>) -> Result<()> {
         self.0.update_many(values, rows)
     }
-    fn update_ints(&mut self, ints: &Ints, rows: Option<&[usize]>) -> Result<()> {
+    fn update_ints(&mut self, ints: &Ints, rows: Option<&[u32]>) -> Result<()> {
         self.0.update_ints(ints, rows)
     }
-    fn update_floats(&mut self, floats: &Floats, rows: Option<&[usize]>) -> Result<()> {
+    fn update_floats(&mut self, floats: &Floats, rows: Option<&[u32]>) -> Result<()> {
         self.0.update_floats(floats, rows)
     }
-    fn update_texts(&mut self, texts: &Texts, rows: Option<&[usize]>) -> Result<()> {
+    fn update_texts(&mut self, texts: &Texts, rows: Option<&[u32]>) -> Result<()> {
         self.0.update_texts(texts, rows)
     }
     fn update_rows(&mut self, rows: usize) -> Result<()> {

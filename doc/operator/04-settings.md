@@ -259,6 +259,50 @@ Data changes write on the statement's own thread. The query choosing
 the rows an INSERT, UPDATE, DELETE or MERGE changes may run in
 parallel, as any query does.
 
+### Batches and morsels
+
+While EXECUTOR.BATCHES is on, a query reads its tables a batch of up to
+2,048 rows at a time, each column a vector: integers, approximate
+numbers, strings, dates and timestamps, and truth values each kept as
+their own kind, their nulls as bits. A filter comparing such a column
+with a constant, testing it for null, or an OR of such tests, judges a
+whole vector at once. A part run in parallel reads each morsel the same
+way, its filters, projections and grouping done a batch at a time, so a
+thread of a parallel query costs a row what the statement's own thread
+alone does. A part whose morsels pass through a hash join's probe reads
+them a row at a time.
+
+A grouping or DISTINCT run in parallel groups each morsel apart, then
+merges the groups each morsel made. Of very many groups, each morsel's
+groups are nearly as many as its rows, so the merge costs more than the
+threads save. The planner estimates the groups from the table's
+statistics, and keeps such a grouping, and the scan under it, on the
+statement's thread. A grouping it has no estimate of runs in parallel.
+
+```sql
+CREATE SCHEMA AUTHORIZATION ANN
+    CREATE TABLE VISITS (K INTEGER, VISITED DATE, PAID BOOLEAN);
+INSERT INTO ANN.VISITS VALUES (1, DATE '2026-01-05', TRUE), (2, DATE '2026-02-10', FALSE),
+    (3, DATE '2026-03-15', NULL), (4, DATE '2026-03-20', TRUE);
+SET EXECUTOR.PARALLEL_MIN_ROWS = 0;
+SELECT PAID, COUNT(*) AS N FROM ANN.VISITS WHERE VISITED >= DATE '2026-02-01' OR PAID = TRUE
+    GROUP BY PAID ORDER BY PAID;
+SET EXECUTOR.PARALLEL_MIN_ROWS TO DEFAULT;
+```
+
+```
+OK
+OK
+OK
+ PAID  |                    N
+-------+----------------------
+ FALSE |                    1
+ TRUE  |                    2
+ NULL  |                    1
+(3 rows)
+OK
+```
+
 ## Settings of plug-ins
 
 An extension's manifest may declare settings of its own, and a host

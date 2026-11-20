@@ -22,14 +22,18 @@ mod joined;
 mod judge;
 mod keyed;
 mod project;
+mod shaped;
 mod stream;
 mod vector;
 
 use std::sync::Arc;
 
+pub(super) use groups::{Held, morsel_groups};
+pub(super) use joined::rows_of;
 pub(super) use keyed::{Keyed, KeyedBatches, kept, keyed, put_key, whole_width};
 use project::Place;
 pub(super) use project::{projectable, projected};
+pub(super) use shaped::{Shaped, filter_step, project_step, through};
 pub(super) use stream::Batches;
 use vector::Lane;
 
@@ -39,7 +43,8 @@ use crate::error::{Result, SqlState};
 use crate::functions::Accumulator;
 use crate::logical::{AggCall, Expr};
 use crate::physical::Plan;
-use crate::storage::{Batch, Cell, Column, Floats, Ints, Row, Texts};
+use crate::storage::mask::index;
+use crate::storage::{Batch, Bools, Cell, Column, Datetimes, Floats, Ints, Mask, Row, Sel, Texts};
 use crate::txn::TxId;
 use crate::value::Value;
 
@@ -56,7 +61,7 @@ enum Taken {
 
 /// What an aggregation read by batches reads: what each set function
 /// takes, and where each grouping column is in a batch.
-struct Read {
+pub(in crate::exec) struct Read {
     taken: Vec<Taken>,
     groups: Vec<usize>,
 }
@@ -77,6 +82,15 @@ fn taken(aggs: &[AggCall], columns: &[usize]) -> Option<Vec<Taken>> {
             (Some(_), true) | (None, true) => None,
         })
         .collect()
+}
+
+/// \[DESIGN\] (RULES.md D354) What a grouping by `groups`, columns of the
+/// rows, computing `aggs`, reads of batches whose vectors hold the columns
+/// `layout`, if it reads them so: each grouping column one of them, each
+/// set function as `taken` admits.
+pub(in crate::exec) fn read_for(groups: &[usize], aggs: &[AggCall], layout: &[usize]) -> Option<Read> {
+    let at = groups.iter().map(|g| layout.iter().position(|c| c == g)).collect::<Option<Vec<_>>>()?;
+    Some(Read { taken: taken(aggs, layout)?, groups: at })
 }
 
 /// What `plan` reads, if it is an aggregation read by batches: of a
@@ -154,7 +168,7 @@ fn fed_group(
     states: &mut [Box<dyn Accumulator>],
     (taken, scratch, runner): (&[Taken], &mut Row, &Runner),
     (batch, lanes): (&Batch, &[Option<Fed<'_>>]),
-    (given, read_rows): (&[usize], &[usize]),
+    (given, read_rows): (&[u32], &[u32]),
 ) -> Result<()> {
     for ((state, take), lane) in states.iter_mut().zip(taken).zip(lanes) {
         eliminated(group_nulled((take, lane), batch, (given, read_rows)), runner);
@@ -167,6 +181,7 @@ fn fed_group(
                 Some(Column::Floats(floats)) => state.update_floats(floats, Some(read_rows))?,
                 Some(Column::Values(values)) => state.update_many(values, Some(read_rows))?,
                 Some(Column::Texts(texts)) => state.update_texts(texts, Some(read_rows))?,
+                Some(column @ (Column::Datetimes(_) | Column::Bools(_))) => state.update_many(column.values(), Some(read_rows))?,
                 // Every value null, none taken.
                 Some(Column::Nulls(_)) | None => {}
             },
@@ -180,7 +195,7 @@ fn fed_group(
             }
             (Taken::Expr(e, inputs), None) => {
                 for &r in read_rows {
-                    let v = evaluated((e, inputs), (scratch, runner), |at, slot| put_cell(batch.cell(at, r), slot))?;
+                    let v = evaluated((e, inputs), (scratch, runner), |at, slot| put_cell(batch.cell(at, index(r)), slot))?;
                     eliminated(v.is_null(), runner);
                     if !v.is_null() {
                         state.update(&v)?;
@@ -213,29 +228,28 @@ fn eliminated(any: bool, runner: &Runner) {
 }
 
 /// Whether any of `values` at `rows`, or any at all, is null.
-fn values_nulled(values: &[Value], rows: Option<&[usize]>) -> bool {
+fn values_nulled(values: &[Value], rows: Option<&[u32]>) -> bool {
     match rows {
-        Some(rows) => rows.iter().any(|&r| values.get(r).is_some_and(Value::is_null)),
+        Some(rows) => rows.iter().any(|&r| values.get(index(r)).is_some_and(Value::is_null)),
         None => values.iter().any(Value::is_null),
     }
 }
 
 /// Whether any of the rows `rows`, or any at all, is null, as `nulls`
 /// marks them, if any is.
-fn marked(nulls: Option<&[bool]>, rows: Option<&[usize]>) -> bool {
-    nulls.is_some_and(|marks| match rows {
-        Some(rows) => rows.iter().any(|&r| marks.get(r).copied().unwrap_or(false)),
-        None => marks.contains(&true),
-    })
+fn marked(nulls: Option<&Mask>, rows: Option<&[u32]>) -> bool {
+    nulls.is_some_and(|marks| marks.any_of(rows))
 }
 
 /// Whether any of the rows `rows` of `column`, or any at all, is null.
-fn column_nulled(column: &Column, rows: Option<&[usize]>) -> bool {
+fn column_nulled(column: &Column, rows: Option<&[u32]>) -> bool {
     match column {
         Column::Values(values) => values_nulled(values, rows),
-        Column::Ints(Ints { nulls, .. }) | Column::Floats(Floats { nulls, .. }) | Column::Texts(Texts { nulls, .. }) => {
-            marked(nulls.as_deref(), rows)
-        }
+        Column::Ints(Ints { nulls, .. })
+        | Column::Floats(Floats { nulls, .. })
+        | Column::Texts(Texts { nulls, .. })
+        | Column::Datetimes(Datetimes { nulls, .. })
+        | Column::Bools(Bools { nulls, .. }) => marked(nulls.as_ref(), rows),
         Column::Nulls(nulls) => rows.map_or(nulls.rows > 0, |r| !r.is_empty()),
     }
 }
@@ -249,12 +263,12 @@ fn lane_nulled(lane: &Lane<'_>, mut given: impl Iterator<Item = usize>) -> bool 
 /// vectors, takes a null of the rows of one group of `batch`: the `given`th
 /// of those given, the rows `read_rows` of the batch. One evaluated a row
 /// at a time is told as it is.
-fn group_nulled((take, lane): (&Taken, &Option<Fed<'_>>), batch: &Batch, (given, read_rows): (&[usize], &[usize])) -> bool {
+fn group_nulled((take, lane): (&Taken, &Option<Fed<'_>>), batch: &Batch, (given, read_rows): (&[u32], &[u32])) -> bool {
     match (take, lane) {
         (Taken::Count, _) | (Taken::Expr(..), None) => false,
         (Taken::Column(c), _) => batch.columns.get(*c).is_some_and(|column| column_nulled(column, Some(read_rows))),
-        (Taken::Expr(..), Some(Fed::Ints(ints))) => marked(ints.nulls.as_deref(), Some(given)),
-        (Taken::Expr(..), Some(Fed::Values(lane))) => lane_nulled(lane, given.iter().copied()),
+        (Taken::Expr(..), Some(Fed::Ints(ints))) => marked(ints.nulls.as_ref(), Some(given)),
+        (Taken::Expr(..), Some(Fed::Values(lane))) => lane_nulled(lane, given.iter().map(|&n| index(n))),
     }
 }
 
@@ -262,7 +276,7 @@ fn group_nulled((take, lane): (&Taken, &Option<Fed<'_>>), batch: &Batch, (given,
 fn put_cell(cell: Cell<'_>, slot: &mut Value) {
     match cell {
         Cell::Value(v) => slot.clone_from(v),
-        made @ (Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_)) => *slot = made.to_value(),
+        made @ (Cell::Exact(..) | Cell::Approx(_) | Cell::Text(_) | Cell::Datetime(_) | Cell::Bool(_)) => *slot = made.to_value(),
         Cell::Null => *slot = Value::Null,
     }
 }
@@ -273,7 +287,7 @@ fn read_all(read: &Read, aggs: &[AggCall], batches: Batches, runner: &Runner) ->
     let mut states: Vec<Box<dyn Accumulator>> = aggs.iter().map(|a| a.func.0.accumulator(a.result.clone())).collect();
     for kept in batches {
         let (batch, rows) = kept?;
-        fed(&batch, (&read.taken, runner), rows.as_deref(), &mut states)?;
+        fed(&batch, (&read.taken, runner), rows.as_ref().map(Sel::as_slice), &mut states)?;
     }
     states.iter().map(|s| s.finish()).collect()
 }
@@ -281,11 +295,11 @@ fn read_all(read: &Read, aggs: &[AggCall], batches: Batches, runner: &Runner) ->
 /// Feeds `states`, as `taken` says, the rows of `batch` at `rows`, or all:
 /// each a vector at a time (`Accumulator::update_many`, `update_rows`);
 /// the warnings raised heard by `runner`.
-fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[usize]>, states: &mut [Box<dyn Accumulator>]) -> Result<()> {
+fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[u32]>, states: &mut [Box<dyn Accumulator>]) -> Result<()> {
     for (state, take) in states.iter_mut().zip(taken) {
         match take {
             // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
-            Taken::Count => state.update_rows(rows.map_or(batch.rows, <[usize]>::len))?,
+            Taken::Count => state.update_rows(rows.map_or(batch.rows, <[u32]>::len))?,
             // [X3.135-1986 §5.8 GR1] nulls taken out.
             Taken::Column(at) => {
                 eliminated(batch.columns.get(*at).is_some_and(|column| column_nulled(column, rows)), runner);
@@ -294,6 +308,7 @@ fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[usize
                     Some(Column::Floats(floats)) => state.update_floats(floats, rows)?,
                     Some(Column::Values(values)) => state.update_many(values, rows)?,
                     Some(Column::Texts(texts)) => state.update_texts(texts, rows)?,
+                    Some(column @ (Column::Datetimes(_) | Column::Bools(_))) => state.update_many(column.values(), rows)?,
                     // Every value null, none taken.
                     Some(Column::Nulls(_)) => {}
                     None => state.update_many(&[], rows)?,
@@ -304,7 +319,7 @@ fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[usize
             Taken::Expr(e, inputs) => match vector::ints::lane(e, inputs, batch, rows) {
                 // Of integers, as integers (`vector/ints.rs`).
                 Some(ints) => {
-                    eliminated(marked(ints.nulls.as_deref(), None), runner);
+                    eliminated(marked(ints.nulls.as_ref(), None), runner);
                     state.update_ints(&ints, None)?;
                 }
                 None => fed_by_vector(batch, (e, inputs, runner), rows, state)?,
@@ -320,10 +335,10 @@ fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[usize
 fn fed_by_vector(
     batch: &Batch,
     (e, inputs, runner): (&Expr, &[usize], &Runner),
-    rows: Option<&[usize]>,
+    rows: Option<&[u32]>,
     state: &mut Box<dyn Accumulator>,
 ) -> Result<()> {
-    let count = rows.map_or(batch.rows, <[usize]>::len);
+    let count = rows.map_or(batch.rows, <[u32]>::len);
     let Some(lane) = vector::lane(e, inputs, batch, rows) else { return fed_by_rows(batch, (e, inputs, runner), rows, state) };
     eliminated(lane_nulled(&lane, 0..count), runner);
     match lane {
@@ -339,13 +354,13 @@ fn fed_by_vector(
 fn fed_by_rows(
     batch: &Batch,
     (e, inputs, runner): (&Expr, &[usize], &Runner),
-    rows: Option<&[usize]>,
+    rows: Option<&[u32]>,
     state: &mut Box<dyn Accumulator>,
 ) -> Result<()> {
     let mut scratch = Vec::new();
     let value = |at: usize, r: usize| batch.value(at, r).unwrap_or(&Value::Null);
-    let mut values = Vec::with_capacity(rows.map_or(batch.rows, <[usize]>::len));
-    for r in rows.map_or_else(|| (0..batch.rows).collect(), <[usize]>::to_vec) {
+    let mut values = Vec::with_capacity(rows.map_or(batch.rows, <[u32]>::len));
+    for r in (0..rows.map_or(batch.rows, <[u32]>::len)).map(|n| crate::storage::sel::nth(rows, n)) {
         values.push(evaluated((e, inputs), (&mut scratch, runner), |at, slot| slot.clone_from(value(at, r)))?);
     }
     eliminated(values_nulled(&values, None), runner);
@@ -355,7 +370,7 @@ fn fed_by_rows(
 /// The values of each of `taken` that is an expression of the rows `rows`
 /// of `batch`, or all, evaluated a vector at a time, where it is
 /// (`vector.rs`).
-fn lanes<'b>(taken: &'b [Taken], batch: &'b Batch, rows: Option<&'b [usize]>) -> Vec<Option<Fed<'b>>> {
+fn lanes<'b>(taken: &'b [Taken], batch: &'b Batch, rows: Option<&'b [u32]>) -> Vec<Option<Fed<'b>>> {
     let fed = |e: &'b Expr, inputs: &'b [usize]| {
         vector::ints::lane(e, inputs, batch, rows).map(Fed::Ints).or_else(|| vector::lane(e, inputs, batch, rows).map(Fed::Values))
     };

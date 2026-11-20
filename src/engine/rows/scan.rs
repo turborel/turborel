@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::frozen::{Batched, Merged, Merging, Ordered};
 use super::gathered::Gathering;
-use super::mvcc::Read;
+use super::mvcc::{Read, Reader};
 use super::{RowTable, key, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, scan_of};
 use crate::error::Result;
@@ -190,9 +190,15 @@ impl RowTable {
             Ok(reader) => reader,
             Err(e) => return Box::new(iter::once(Err(e))),
         };
-        let mut entries = Self::ranged(&self, self.zones.ranges(condition));
+        let entries = Self::ranged(&self, self.zones.ranges(condition));
+        self.gathered_of((reader, entries), columns, Ramp::default())
+    }
+
+    /// The batches of the rows `reader` sees of `entries`, of `columns`,
+    /// each record's columns decoded straight into their vectors, each
+    /// batch's rows as `ramp` says.
+    pub(super) fn gathered_of(self: Arc<Self>, (reader, mut entries): (Reader, Ranged), columns: &[usize], mut ramp: Ramp) -> Batches {
         let mut gathering = Gathering::new(self.format.types(), columns);
-        let mut ramp = Ramp::default();
         Box::new(iter::from_fn(move || {
             let rows = ramp.next_rows();
             while gathering.rows() < rows {
