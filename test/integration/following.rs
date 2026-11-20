@@ -103,6 +103,8 @@ fn a_following_database_recovers_from_its_checkpoint_alone() {
     assert_eq!(db.schema("CREATE SCHEMA AUTHORIZATION B CREATE TABLE S (K INTEGER)").err().map(|e| e.code), Some(Code::TransactionState));
     let open = primary.session("APP");
     exec(&open, "INSERT INTO T VALUES (5, 'five')").unwrap();
+    // Written, as a checkpoint writes an open transaction's records (RULES.md D470).
+    primary.write_held().unwrap();
     let first_open = last(&log);
     committed(&primary, &["INSERT INTO T VALUES (3, 'three')"]);
     give(&db, &log, holds, last(&log));
@@ -134,6 +136,7 @@ fn a_following_checkpoint_waits_for_its_image() {
     let primary = primary(&log);
     let open = primary.session("APP");
     exec(&open, "INSERT INTO T VALUES (5, 'five')").unwrap();
+    primary.write_held().unwrap();
     committed(&primary, &["INSERT INTO T VALUES (3, 'three')"]);
     let (db, holds) = following(&fs, &log);
     give(&db, &log, holds, last(&log));

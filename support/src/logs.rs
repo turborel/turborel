@@ -174,6 +174,9 @@ pub struct Watched {
     pub told: Mutex<Vec<Durability>>,
     /// Appends that still succeed before the rest fail, if set.
     pub appends_left: Mutex<Option<usize>>,
+    /// Of each run of records appended together (`Log::append_all`), how
+    /// many it held, in order.
+    pub runs: Mutex<Vec<usize>>,
 }
 
 impl Watched {
@@ -188,6 +191,7 @@ impl Watched {
             follows: false,
             told: Mutex::default(),
             appends_left: Mutex::default(),
+            runs: Mutex::default(),
         }
     }
 }
@@ -217,6 +221,14 @@ impl Log for Watched {
         }
         drop(left);
         self.inner.append(record)
+    }
+    fn append_all(&self, records: &[Vec<u8>]) -> Result<Vec<Lsn>> {
+        if self.fail_appends.load(Ordering::SeqCst) || self.appends_left.lock().unwrap().is_some() {
+            // Failing part way, as `append` of each fails.
+            return records.iter().map(|record| self.append(record)).collect();
+        }
+        self.runs.lock().unwrap().push(records.len());
+        self.inner.append_all(records)
     }
     fn sync(&self, through: Lsn) -> Result<()> {
         if self.fail_syncs.load(Ordering::SeqCst) {
@@ -257,10 +269,10 @@ pub fn kinds(log: &dyn Log) -> Vec<String> {
     records(log).iter().map(|(_, r)| format!("{:?}", r.change).split([' ', '{']).next().unwrap().to_owned()).collect()
 }
 
-/// A transaction's inserts, updates and deletes, logged to `log` as they
-/// are made, with their row ids and images, then its commit record with its
-/// commit timestamp, all under its transaction id; COMMIT returns once the
-/// commit record is synced.
+/// A transaction's inserts, updates and deletes, logged to `log` with
+/// their row ids and images, then its commit record with its commit
+/// timestamp, all under its transaction id, in one run of records
+/// (RULES.md D470); COMMIT returns once the commit record is synced.
 pub fn a_commit_is_its_record_made_durable(log: Arc<dyn Log>) {
     let (db, log) = logged(log);
     let s = db.session("APP");
@@ -268,8 +280,10 @@ pub fn a_commit_is_its_record_made_durable(log: Arc<dyn Log>) {
     s.run("UPDATE T SET NAME = 'X' WHERE ID = 10").unwrap();
     s.run("DELETE FROM T WHERE ID = 1").unwrap();
     let tx = s.transaction().unwrap();
+    assert!(records(&*log).is_empty(), "held until the commit");
     s.commit().unwrap();
     assert_eq!(kinds(&*log), ["Insert", "Update", "Delete", "Commit"]);
+    assert_eq!(*log.runs.lock().unwrap(), [4], "one run");
     let all = records(&*log);
     assert!(all.iter().all(|(_, r)| r.tx == tx));
     let (commit_lsn, commit) = all.last().unwrap();
@@ -312,9 +326,10 @@ pub fn a_commit_need_not_wait_for_the_log(log: Arc<dyn Log>) {
     assert_eq!(maybe.map_err(|e| e.sqlcode()), Err(-910_i32));
 }
 
-/// A rolled-back transaction logs its changes to `log`, then an abort
-/// record, and syncs nothing; a transaction that changed nothing logs
-/// nothing, and its commit syncs nothing.
+/// A rolled-back transaction whose changes were all held logs nothing to
+/// `log` (RULES.md D470); one whose changes a checkpoint wrote logs them,
+/// then an abort record; neither syncs; a transaction that changed nothing
+/// logs nothing, and its commit syncs nothing.
 pub fn rollbacks_and_reads_are_logged_as_needed(log: Arc<dyn Log>) {
     let (db, log) = logged(log);
     let s = db.session("APP");
@@ -323,13 +338,19 @@ pub fn rollbacks_and_reads_are_logged_as_needed(log: Arc<dyn Log>) {
     assert!(records(&*log).is_empty(), "a read-only transaction logs nothing");
     s.run("INSERT INTO T (ID) VALUES (11)").unwrap();
     s.rollback().unwrap();
+    assert!(records(&*log).is_empty(), "held, and dropped");
+    s.run("INSERT INTO T (ID) VALUES (11)").unwrap();
+    db.write_held().unwrap();
+    s.rollback().unwrap();
     assert_eq!(kinds(&*log), ["Insert", "Abort"]);
     assert!(log.synced.lock().unwrap().is_empty());
 }
 
-/// A statement that fails after changing rows is undone, and logged to
-/// `log` as undone from its first change, so recovery does not replay what
-/// it cancelled; the transaction goes on and commits.
+/// A statement that fails after changing rows is undone: its records,
+/// held, are dropped (RULES.md D470); changes rolled back to a savepoint
+/// whose records were written, as a checkpoint writes them, are logged to
+/// `log` as undone from the first, so recovery does not replay what was
+/// cancelled; the transaction goes on and commits.
 pub fn a_failed_statement_is_logged_undone(log: Arc<dyn Log>) {
     let (db, log) = logged(log);
     let s = db.session("APP");
@@ -337,9 +358,15 @@ pub fn a_failed_statement_is_logged_undone(log: Arc<dyn Log>) {
     // T.ID is UNIQUE: the row is inserted, found a duplicate, and undone.
     assert_eq!(s.run("INSERT INTO T (ID) VALUES (10)").err().map(|e| e.code), Some(Code::Constraint));
     s.commit().unwrap();
+    assert_eq!(kinds(&*log), ["Insert", "Commit"], "the undone statement's records dropped");
+    s.run("SAVEPOINT A").unwrap();
+    s.run("INSERT INTO T (ID) VALUES (20)").unwrap();
+    db.write_held().unwrap();
+    s.run("ROLLBACK TO SAVEPOINT A").unwrap();
+    s.commit().unwrap();
     let all = records(&*log);
-    assert_eq!(kinds(&*log), ["Insert", "Insert", "StatementUndone", "Commit"]);
-    assert!(matches!(all[2].1.change, Change::StatementUndone { from } if from == all[1].0), "undone from its own first change");
+    assert_eq!(kinds(&*log), ["Insert", "Commit", "Insert", "StatementUndone", "Commit"]);
+    assert!(matches!(all[3].1.change, Change::StatementUndone { from } if from == all[2].0), "undone from its own first change");
 }
 
 /// A `<schema>` and an index are logged to `log`, and synced, before they
@@ -412,7 +439,9 @@ pub fn a_crashed_database_recovers_what_was_committed(kind: &dyn LogKind, dir: &
     let (back, report) = recovered(kind.open(dir));
     assert_eq!(sorted(&back.session("A"), "SELECT K, V FROM T"), expected);
     assert_eq!(expected, ["1,v1  ", "2,new ", "4,v4  ", "5,v5  "]);
-    assert_eq!((report.definitions, report.committed, report.not_committed), (2, 3, 2), "the rollback and the open transaction did not");
+    // RULES.md D470: the rollback and the open transaction held their
+    // records, so neither reached the log.
+    assert_eq!((report.definitions, report.committed, report.not_committed), (2, 3, 0));
     assert_eq!(rows(&back.session("A"), "SELECT K FROM T WHERE V = 'new'"), Ok(vec!["2".into()]), "the index works");
     let b = back.session("A");
     assert_eq!(b.run("INSERT INTO T VALUES (1, 'x')").err().map(|e| e.code), Some(Code::Constraint), "UNIQUE is back");

@@ -29,7 +29,8 @@ behind it, and each can be replaced or added to.
   [CONFORMANCE.md](CONFORMANCE.md), whose claimed features SQL_FEATURES shows.
 - Transactions at READ COMMITTED by default, or up to SERIALIZABLE, that run
   on many threads at once and survive a crash with multi-version concurrency
-  control, a write-ahead log, checkpoints and recovery.
+  control, a write-ahead log written once per transaction at its commit,
+  checkpoints and recovery.
 - Savepoints, with SAVEPOINT, RELEASE SAVEPOINT and ROLLBACK TO SAVEPOINT
   at the savepoint levels of routines and ATOMIC blocks.
 - [Data change delta tables](doc/sql/24-delta-tables.md), OLD, NEW and

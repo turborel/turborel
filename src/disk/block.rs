@@ -30,6 +30,7 @@
 //! A read takes the first `FIRST_READ` bytes of a block at once, so a small
 //! block is read in one call; a larger one takes a second for the rest.
 
+mod batch;
 mod counts;
 mod cursor;
 mod fill;

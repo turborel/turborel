@@ -162,6 +162,12 @@ waits for it. Each is told to the diagnostics, `checkpoint_taken`. One
 that fails leaves the changes since the last counted, so the next is due
 as soon as a transaction ends.
 
+A transaction holds its log records in memory until it commits, then
+writes them with its commit record in one write; one that rolls back
+before any was written writes nothing. A checkpoint first writes the
+records every open transaction holds, and a transaction holding more
+than 1 MiB writes them as it goes.
+
 The log is kept from the last checkpoint, or from the first change of
 the oldest transaction still open, whichever is earlier. While
 checkpoints are refused (a table damaged, a failed sync of the log),

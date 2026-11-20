@@ -1,4 +1,4 @@
-//! The mutations of the OLTP paths (RULES.md R-TEST-9, D403 to D412): a
+//! The mutations of the OLTP paths (RULES.md R-TEST-9, D403 to D412, D470): a
 //! B-tree index made by CREATE INDEX holding no key with a null, the sort
 //! an ORDER BY asks dropped where a null key survives a probe, and the
 //! equality of two columns equal to one number or one `?` not added.
@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 14] = [
+pub const OLTP: [Mutation; 17] = [
     Mutation {
         name: "oltp-null-keys-not-held",
         package: Package::Core,
@@ -145,6 +145,36 @@ pub const OLTP: [Mutation; 14] = [
         original: "        self.sync_through(&segment, id, durability).map(|end| lsn(number, end))",
         replacement: "        self.sync_through(&segment, id, durability).map(|_| Lsn(through.0.saturating_add(1)))",
         integration: &["log::a_sync_reports_the_position_it_made_durable"],
+        unit: &[],
+    },
+    Mutation {
+        name: "oltp-held-not-written-at-checkpoint",
+        package: Package::Core,
+        breaks: "a checkpoint takes the log's end before the records open transactions hold are written, so its image holds changes logged after it",
+        file: "src/db/checkpoint.rs",
+        original: "        self.tx.write_held()?;",
+        replacement: "",
+        integration: &["held_records::a_checkpoint_mid_transaction_recovers_what_committed"],
+        unit: &[],
+    },
+    Mutation {
+        name: "oltp-held-undone-kept",
+        package: Package::Core,
+        breaks: "a statement undone while its records are held keeps its first record, which its commit writes",
+        file: "src/txn/pending.rs",
+        original: "                held.truncate_from(if still { n } else { base });",
+        replacement: "                held.truncate_from(if still { n.saturating_add(1) } else { base });",
+        integration: &["durability::a_failed_statement_is_logged_undone"],
+        unit: &[],
+    },
+    Mutation {
+        name: "oltp-held-forced-engine",
+        package: Package::Core,
+        breaks: "a transaction writing a table of an engine that makes its own writes durable holds its records, so a crash leaves those writes with no record to undo them",
+        file: "src/txn/pending.rs",
+        original: "            held.bytes > HELD_BYTES || st.forced",
+        replacement: "            held.bytes > HELD_BYTES",
+        integration: &["recovery::a_forced_engine_has_uncommitted_changes_undone"],
         unit: &[],
     },
 ];
