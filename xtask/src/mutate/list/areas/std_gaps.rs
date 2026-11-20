@@ -4,7 +4,7 @@
 //! dynamic parameters, the database's counts of transactions ended, and
 //! a statement cancelled once its client is gone.
 
-use super::{Mutation, Package};
+use super::super::{Mutation, Package};
 
 /// The test of MOD.
 const MODULUS: &str = "modulus_and_trigonometry::modulus_6_31";

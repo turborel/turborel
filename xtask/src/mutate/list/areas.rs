@@ -1,8 +1,9 @@
 //! Each area's mutations, in the order they run, after the core's.
 
 mod budget;
-// Unnesting's and UUID's mutations, here as `list.rs` holds no more
-// modules.
+// Unnesting's, UUID's and the standard's gaps' mutations, here as
+// `list.rs` holds no more modules.
+mod std_gaps;
 mod unnesting;
 mod uuid;
 
@@ -213,6 +214,6 @@ fn last() -> [&'static [Mutation]; 47] {
         &super::SERVER,
         &super::server::native::NATIVE,
         &super::client::CLIENT,
-        &super::std_gaps::STD_GAPS,
+        &std_gaps::STD_GAPS,
     ]
 }

@@ -100,7 +100,6 @@ mod sql2023;
 mod sqlmm_fulltext;
 mod stamps;
 mod stats;
-mod std_gaps;
 mod structured;
 mod system_versioned;
 mod t621;
