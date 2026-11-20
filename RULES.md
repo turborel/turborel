@@ -292,6 +292,16 @@ verification approach DO-178C expects (§8).
 | D282 | A plug-in reads the settings a call runs with in a SETTINGS frame before it, and writes none but its own |
 | D283 | BUFFER EVICTION programs the pool's evictor, never called by the pool, and its death stops the node |
 | D284 | An eviction policy is weights of one score, read with no lock, with ranges weighed and pages kept |
+| D310 | Correlated subqueries are unnested as the plan is optimized, by the dependent join of Neumann and Kemper |
+| D311 | Unnesting takes the subqueries of a WHERE, a HAVING or a select list that are always evaluated, or that cannot raise |
+| D312 | The general case pushes the dependent join with the domain of bindings down every operator |
+| D313 | An unnested subquery is joined to the outer rows with one counted row for each binding, so a scalar subquery of two rows still fails |
+| D314 | Simple unnesting pulls equalities up, and only from a subquery no part of which can raise |
+| D315 | A quantified comparison is EXISTS where unknown is false, and counted where it is not |
+| D316 | An SQL function that returns one value is inlined when it is deterministic and reads no more than SQL-data |
+| D317 | EXPLAIN shows the unnested plan, and both rules have their own settings |
+| D318 | Side effects, non-deterministic functions, UNIQUE, MATCH and a few operators keep a subquery nested |
+| D319 | A binding is a value with its trailing spaces, of a plain type, and bindings match as not distinct |
 
 ### The project
 
@@ -8498,6 +8508,198 @@ frame in the sample is evictable, so a hint never wedges the pool. A
 policy pushed reweighs each frame once, and a page placed later takes
 its range's weight as it is placed. The score is computed per victim
 from atomics, so the hot path takes no lock and never calls the program.
+
+#### D310. Correlated subqueries are unnested as the plan is optimized, by the dependent join of Neumann and Kemper
+
+A correlated subquery is "effectively executed for each row" its
+predicate is applied to [X3.135-1986 §5.21 GR3, §5.23 GR4]. Run that way,
+a query costs as many runs of the subquery as its rows have bindings,
+each one optimized and planned (D35). The rule `unnest_subqueries`
+(`optimizer/unnesting.rs`) instead rewrites the node that uses the
+subquery into ordinary joins, so the subquery is computed once. It
+follows Thomas Neumann and Alfons Kemper, "Unnesting Arbitrary Queries"
+(BTW 2015), and Thomas Neumann, "Improving Unnesting of Complex Queries"
+(BTW 2025). The single join and the mark join of Thomas Neumann, Viktor
+Leis and Alfons Kemper, "The Complete Story of Joins (in HyPer)" (BTW
+2017), shape how a scalar subquery and EXISTS read their join (D313).
+
+The rule runs first among the built-in rules, after the inlining of
+functions (D316), so the others then move the conditions it makes as
+they move any. It takes one subquery at a time and leaves the subqueries
+of that subquery to its next pass, which unnests them top down as the
+2025 paper's §3 asks. A domain is then never pushed across another's
+dependent join, which would need the cross product the paper warns of.
+The runtime decorrelation of D35 stays for the subqueries left nested
+(D318).
+
+#### D311. Unnesting takes the subqueries of a WHERE, a HAVING or a select list that are always evaluated, or that cannot raise
+
+The rule starts at a filter or a projection. A subquery there is
+evaluated for every row unless it stands where a CASE may not reach,
+which is a result, a WHEN condition after the first, or the ELSE
+[ISO/IEC 9075:1992 §6.9 GR2]. AND and OR evaluate both operands (D15).
+Unnesting computes the subquery for every binding of the node's rows, so
+a conditional one is unnested only if no part of it can raise. It also
+reads every row of the subquery for each binding. IN, SOME and ALL read
+every row too, but EXISTS may stop at its deciding row and a scalar
+subquery at its second (D15), so either is unnested only if its plan
+cannot raise, or, of a scalar subquery, if it is a grouping of one row
+that reads all its input anyway. A subquery used in two places is
+unnested if every use reads its one row or one place uses it whole.
+
+An uncorrelated IN or SOME comparison that is a conjunct of WHERE or
+HAVING is taken too. Made EXISTS of a subquery that compares the values
+with its rows (D315), it becomes a semi join on them.
+
+#### D312. The general case pushes the dependent join with the domain of bindings down every operator
+
+D is the set of the distinct bindings of the node's rows, the magic set
+of the 2015 paper's §3.2. The dependent join of D with the subquery's
+plan moves down it, operator by operator, until what it reaches reads no
+outer reference and becomes D's product with it
+(`optimizer/unnesting/domain.rs`). The plan made gives D's columns
+first, and each outer reference becomes the column of D of its slot.
+
+A filter, a projection and DISTINCT keep D's columns. A grouping groups
+by them too. A grouping of no grouping columns has a row even of no
+rows, so it is computed over the left outer join of D with its rows,
+each set function taking only the rows the join found, by a marker that
+is null on the row of nulls. A binding with no rows then has its group,
+COUNT of it 0, which is the COUNT bug of Werner Kiessling, "On Semantic
+Reefs and Efficient Processing of Correlation Queries with Aggregates"
+(VLDB 1985) handled. A product or an inner join gives D to the side that
+reads outer references, or to both, joined on D. An outer join gives D
+to its preserved side alone when only that side reads them, else to
+both, joined on D in its condition, a FULL join's binding that of
+whichever side the row has. A set operator gives D to both operands and
+compares its columns with theirs. A window partitions by D too. ORDER BY
+with OFFSET or FETCH FIRST of constant counts keeps each binding's rows
+by ROW_NUMBER partitioned by D (the 2025 paper's §4.4). A VALUES of one
+row becomes a projection of D, and a collection derived table moves
+over D's product with its input.
+
+A plan made of more than MAX_DOMAINS (4) copies of D is not made, as
+each copy reads the outer rows again. A join condition that can raise
+is not pushed into, as it would then be judged on pairs of bindings.
+
+D of a product whose one side holds every binding is made of that side
+alone, with a row that the other side has rows, so D has the same
+bindings without the product being made.
+
+#### D313. An unnested subquery is joined to the outer rows with one counted row for each binding, so a scalar subquery of two rows still fails
+
+The node's rows, each with its binding's keys, are LEFT joined with a
+row for each binding the subquery has rows for
+(`optimizer/unnesting/joined.rs`). A row whose binding has none is kept,
+its columns null, and a WHERE that rejects those nulls makes the join
+inner or anti (`PushFilterIntoOuterJoin`). EXISTS reads a marker of the
+binding's row. A scalar subquery reads the count of its rows and the
+first row's values, kept by the internal set function SINGLE_VALUE. The
+internal function SINGLE raises SQLCODE -811 where the count is past 1,
+evaluated where the subquery stood [ISO/IEC 9075:1992 §7.11 GR1], so the
+error comes from the same rows as before and not from bindings no row
+reads. A binding with no row reads nulls [§6.11 GR2], or, of a subquery
+made a grouping by its keys (D314), the value its select list has over
+no row. A subquery of one row for each binding, a set function of no
+grouping under projections, needs no count, and its value is read as
+it is. With no SINGLE that can raise, the WHERE's other conjuncts may
+then move below the join (D15), so a join of the node's tables beside
+the subquery stays a join.
+
+#### D314. Simple unnesting pulls equalities up, and only from a subquery no part of which can raise
+
+A subquery correlated only by equalities of its own columns with outer
+references has them pulled up through filters, projections, DISTINCT and
+groupings (`optimizer/unnesting/simple.rs`; the 2015 paper's §3.1 and
+§4). It is then computed once for every value of those columns, grouped
+by them where it was grouped, and joined to the outer rows by plain
+equality, a null matching none, without D. A grouping of no grouping
+columns becomes a grouping by the keys, its value over no rows given
+where the join finds no row. A HAVING over it is not pulled through.
+
+The subquery is then computed for values no outer row has, so no part of
+it may raise (D15). Its set functions may be COUNT, MAX and MIN alone,
+which cannot raise on arguments that cannot. Every other subquery takes
+the general case (D312), which evaluates it for the outer rows'
+bindings and no others.
+
+#### D315. A quantified comparison is EXISTS where unknown is false, and counted where it is not
+
+A quantified comparison that is a conjunct of WHERE or HAVING decides
+only whether a row is kept, and there unknown and false are alike
+[X3.135-1986 §5.16 GR2, §5.21 GR2]. SOME becomes EXISTS of the rows the
+comparison holds for, and ALL becomes NOT EXISTS of those it does not
+hold for, `(x θ y) IS NOT TRUE`, so a null among them still rejects the
+row. Elsewhere, the subquery is counted for each binding, the rows the
+comparison is true or false of and those it leaves unknown, and a CASE
+of the counts gives the truth value §5.16 GR2 gives. A row comparison is
+taken for = and <> alone, the AND and the OR of each pair's
+[ISO/IEC 9075:1992 §8.2 GR7].
+
+#### D316. An SQL function that returns one value is inlined when it is deterministic and reads no more than SQL-data
+
+A function's body is bound as a subquery of its parameters (D73), and
+its correlated subquery runs for each invocation. The rule
+`inline_functions` (`optimizer/inlining.rs`) replaces an invocation by
+the value its body returns, each parameter its argument stored in the
+parameter's type and the value stored in the result type, the same
+assignments that invoking it makes [ISO/IEC 9075-2:2023 §9.18 GR4a ii,
+GR10a iii]. Its subquery is then one of the invoking plan, and D310
+unnests it.
+
+The body is a `<return statement>` of one value, or a compound statement
+of that statement alone, of no variable, cursor or handler. The function
+is deterministic, possibly modifies no SQL-data, is no null-call function
+and no method, and its arguments are deterministic. Every parameter is
+read where nothing may leave it unread, so each argument's error is
+raised as invoking the function raised it before its body ran [§9.18
+GR4]. Any other function is invoked as before.
+
+#### D317. EXPLAIN shows the unnested plan, and both rules have their own settings
+
+EXPLAIN lists `inline_functions` and `unnest_subqueries` among the rules
+applied, and the optimized and physical plans show the joins made, the
+COUNT(*) and SINGLE_VALUE of each binding, and SINGLE where the
+subquery stood. OPTIMIZER.UNNEST_SUBQUERIES and OPTIMIZER.INLINE_FUNCTIONS,
+ON by default, switch the rules as every rule's setting does (D35). With
+both OFF a subquery runs for each binding as before.
+
+#### D318. Side effects, non-deterministic functions, UNIQUE, MATCH and a few operators keep a subquery nested
+
+Unnesting changes how often and for which rows each part of a subquery
+runs, so it applies only where that can't be seen. A subquery stays
+nested if it or its outer expressions invoke a function that is not
+deterministic or that may modify SQL-data, take a sequence's next value
+or read a located table (`optimizer/unnesting/pure.rs`). The general
+case also needs the node's rows to be such, as D reads them again.
+UNIQUE and MATCH stay nested, as do a recursive query, a row pattern, a
+polymorphic table function, GRAPH_TABLE, a grouping with seeds, FETCH
+WITH TIES, PERCENT, APPROX or EXACT, and a conditional subquery that can
+raise (D311). So do the subqueries of a plan whose rows are a table's,
+read with their ids to change them, as the object rows of a searched
+UPDATE or DELETE and an updatable cursor's are, since a join would make
+the plan no access to that table (`db/compiled.rs`, `plan_rows`). Each
+runs as D35 runs it.
+
+#### D319. A binding is a value with its trailing spaces, of a plain type, and bindings match as not distinct
+
+Two strings that differ in trailing spaces alone compare equal, yet a
+subquery that returns its outer reference returns each as it is. D's
+DISTINCT would merge them, so each binding is the outer value and
+the count of its trailing spaces, given by the internal function
+TRAILING_SPACES. Bindings match as IS NOT DISTINCT FROM matches them
+[ISO/IEC 9075-2:2023 §8.15], so a null binding is one binding, run as a
+nested subquery runs for a null. The simple case (D314) compares the
+subquery's own columns with outer values by equality, as the subquery
+did, and needs neither.
+
+D is made distinct and joined by hashing, which see a value's form. A
+large object is grouped by its identity, not its value [ISO/IEC
+9075-2:2023 §9.12 SR3], and a constructed or user-defined type may hold
+one. So each binding must be known, from the tables the plan reads, to
+be of a predefined type other than a large object, made of columns by
+arithmetic, casts and sort keys (`optimizer/unnesting/typed.rs`). Any
+other binding keeps its subquery nested.
 
 ## 2. Project layout
 

@@ -322,7 +322,7 @@ impl Keeping<'_> {
         if let Some(kept) = self.kept(fixed)? {
             return Written::filled(w, kept, values, crate::optimizer::prepared::budget(self.st));
         }
-        let (_, _, plan) = super::super::plan(self.st, w.rows.clone());
+        let (_, _, plan) = super::super::plan_rows(self.st, w.rows.clone());
         let reads: Arc<[QualifiedName]> = w.rows.tables().into();
         let kept = keepable(&plan, self.st).then_some((plan, reads));
         let physical = kept.as_ref().map_or(Physical::Varies, |(p, r)| Physical::Fixed(Box::new(p.clone()), Arc::clone(r), None));
