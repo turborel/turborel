@@ -8601,12 +8601,9 @@ reads. A binding with no row reads nulls [§6.11 GR2], or, of a subquery
 made a grouping by its keys (D314), the value its select list has over
 no row. A subquery of one row for each binding, a set function of no
 grouping under projections, needs no count, and its value is read as
-it is.
-
-A WHERE's conjuncts that do not use the subquery are applied below the
-join, so that their equalities still join the node's tables and the
-join reads only the rows they keep. That evaluates the others on fewer
-rows, so it is done only when no conjunct can raise (D15).
+it is. With no SINGLE that can raise, the WHERE's other conjuncts may
+then move below the join (D15), so a join of the node's tables beside
+the subquery stays a join.
 
 #### D314. Simple unnesting pulls equalities up, and only from a subquery no part of which can raise
 

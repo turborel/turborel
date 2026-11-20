@@ -3,8 +3,8 @@
 //! bug in both cases, bindings merged by their trailing spaces, ALL
 //! counted as SOME, a conditional subquery that can raise unnested, OFFSET
 //! kept for its own row, and functions inlined that are not deterministic
-//! or that leave a parameter unread, and a join's equality left above the
-//! subquery's join, a product.
+//! or that leave a parameter unread, and a join beside a
+//! subquery left a product.
 
 use super::super::{Mutation, Package};
 
@@ -18,7 +18,7 @@ const JOINED: &str = "decorrelation::tpch::a_join_beside_a_correlated_subquery_s
 const INLINED: &str = "decorrelation::functions::functions_are_inlined_and_unnested";
 
 /// The mutations of unnesting and inlining.
-pub const UNNESTING: [Mutation; 11] = [
+pub const UNNESTING: [Mutation; 12] = [
     Mutation {
         name: "unnest-two-rows-pass",
         package: Package::Core,
@@ -120,12 +120,22 @@ pub const UNNESTING: [Mutation; 11] = [
         unit: &[],
     },
     Mutation {
-        name: "unnest-join-kept-above",
+        name: "unnest-unique-counted",
         package: Package::Core,
-        breaks: "a WHERE's conjuncts that do not use the subquery stay above its join, so the node's tables are a product",
+        breaks: "a subquery of one row for each binding is read through SINGLE, which can raise, so the WHERE's join stays above it, a product",
         file: "src/optimizer/unnesting/joined.rs",
-        original: "if plain.is_empty() || using.is_empty() || plain.iter().chain(&using).any(Cond::can_raise) {",
-        replacement: "if !plain.is_empty() || using.is_empty() || plain.iter().chain(&using).any(Cond::can_raise) {",
+        original: "let one = if self.unique {",
+        replacement: "let one = if self.unique && self.base == 0 {",
+        integration: &[JOINED],
+        unit: &[],
+    },
+    Mutation {
+        name: "unnest-domain-of-product",
+        package: Package::Core,
+        breaks: "D of a product whose one side holds the bindings is made of the whole product",
+        file: "src/optimizer/unnesting/domain.rs",
+        original: "let (side, other, keys) = if read.iter().all(|&c| c < lw) {",
+        replacement: "let (side, other, keys) = if read.is_empty() && read.iter().all(|&c| c < lw) {",
         integration: &[JOINED],
         unit: &[],
     },

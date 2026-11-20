@@ -84,7 +84,9 @@ pub(super) fn pushed(sub: &Subquery, rows: &LogicalPlan) -> Option<Bound> {
 fn narrowed(rows: &LogicalPlan, keys: Vec<Expr>) -> (LogicalPlan, Vec<Expr>) {
     let LogicalPlan::Product { left, right } = rows else { return (rows.clone(), keys) };
     let mut read = Vec::new();
-    keys.iter().for_each(|k| expr_columns(k, &mut read));
+    for k in &keys {
+        expr_columns(k, &mut read);
+    }
     let lw = left.width();
     let (side, other, keys) = if read.iter().all(|&c| c < lw) {
         (left, right, keys)
