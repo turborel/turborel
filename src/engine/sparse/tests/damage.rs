@@ -3,6 +3,9 @@
 
 use super::*;
 use crate::engine::sparse::block::Quantization;
+use crate::engine::sparse::keys::{
+    block_key, block_of, bounds_of, count_of, count_value, document_key, document_of, summary_key, summary_of, summary_value,
+};
 use crate::error::Code;
 
 /// A block of rows far apart and alike, each weight distinct.
@@ -78,4 +81,37 @@ fn every_image_prefix_is_refused() {
         assert!(SparseVector::from_image(&image[..cut]).is_err(), "cut at {cut}");
     }
     assert!(SparseVector::from_image(&[image, vec![0]].concat()).is_err());
+}
+
+/// Verifies: [DESIGN] the sparse index's keys, R-ERR-2: a document, block
+/// and dimension key, a bounds value and a count read back as written;
+/// cut short, followed by a byte, or of another tag, each is refused
+/// with SQLCODE -916.
+#[test]
+fn keys_read_back_and_malformed_ones_are_refused() {
+    let hash = [9_u8; 16];
+    let document = document_key(&hash, u64::MAX);
+    let block = block_key(7, 1_u64 << 40_u32);
+    let summary = summary_key(7);
+    let bounds = summary_value(2.5, -1.0);
+    assert_eq!(document_of(&document).unwrap(), (hash, u64::MAX));
+    assert_eq!(block_of(&block).unwrap(), (7, 1_u64 << 40_u32));
+    assert_eq!(summary_of(&summary).unwrap(), 7);
+    assert_eq!(bounds_of(&bounds).unwrap(), (2.5, -1.0));
+    assert_eq!(count_of(&count_value(3)).unwrap(), 3);
+    let corrupt = |r: Result<()>| assert_eq!(r.unwrap_err().code, Code::Corrupt);
+    let all = |b: &[u8]| -> [Result<()>; 5] {
+        [document_of(b).map(drop), block_of(b).map(drop), summary_of(b).map(drop), bounds_of(b).map(drop), count_of(b).map(drop)]
+    };
+    for (n, whole) in [document, block, summary, bounds, count_value(3)].into_iter().enumerate() {
+        for cut in 0..whole.len() {
+            corrupt(all(&whole[..cut]).into_iter().nth(n).unwrap());
+        }
+        corrupt(all(&[whole.as_slice(), &[0]].concat()).into_iter().nth(n).unwrap());
+        let mut tag = whole.clone();
+        tag[0] = tag[0].wrapping_add(1);
+        if n < 4 {
+            corrupt(all(&tag).into_iter().nth(n).unwrap());
+        }
+    }
 }
