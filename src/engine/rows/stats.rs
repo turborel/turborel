@@ -52,12 +52,9 @@ const SAMPLE_SEED: u64 = 0x2545_F491_4F6C_DD1D;
 
 /// Whether a sampled pass of a table of `rows` rows reads the run of row
 /// ids `chunk`: with a chance of `SAMPLED_ROWS` in `rows`, by a hash of
-/// the run (SplitMix64's finalizer), the same each time.
+/// the run (XXH3-64 of its number, RULES.md D460), the same each time.
 fn sampled(chunk: u64, rows: u64) -> bool {
-    let mut z = chunk ^ SAMPLE_SEED;
-    z = (z ^ (z >> 30_u32)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27_u32)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^= z >> 31_u32;
+    let z = crate::hash::xxhash::Words::new(SAMPLE_SEED).hash(chunk);
     z.checked_rem(rows).is_none_or(|r| r < SAMPLED_ROWS)
 }
 

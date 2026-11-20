@@ -17,6 +17,7 @@
 
 pub mod portable;
 
+use crate::hash::xxhash::{self, Stripes as _};
 use crate::storage::Mask;
 use crate::value::CompOp;
 
@@ -88,6 +89,29 @@ pub trait Kernels: Send + Sync {
     /// of 64 values are what wider instructions unpack at once.
     fn unpack(&self, bytes: &[u8], (bits, least): (u32, i64), (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
         portable::unpack::unpack(bytes, (bits, least), (from, to), out)
+    }
+    /// XXH3's accumulation of `stripes` into `acc`, the `n`th keyed by the
+    /// 64 bytes of `secret` at `8 n` (`hash::xxhash::Stripes::accumulate`,
+    /// RULES.md D460): the loop of a long input's hash that wider
+    /// instructions run.
+    fn xxh3_accumulate(&self, acc: &mut [u64; xxhash::ACC_NB], stripes: &[xxhash::Stripe], secret: &[u8]) {
+        xxhash::Scalar.accumulate(acc, stripes, secret);
+    }
+    /// XXH3's scramble of `acc` by `key`, the secret's last 64 bytes
+    /// (`hash::xxhash::Stripes::scramble`).
+    fn xxh3_scramble(&self, acc: &mut [u64; xxhash::ACC_NB], key: &xxhash::Stripe) {
+        xxhash::Scalar.scramble(acc, key);
+    }
+}
+
+/// A database's kernels run XXH3's long inputs' loops: XXH3 of a vector's
+/// long values hashes by `hash::xxhash::xxh3_64_on(kernels, ...)`.
+impl xxhash::Stripes for dyn Kernels + '_ {
+    fn accumulate(&self, acc: &mut [u64; xxhash::ACC_NB], stripes: &[xxhash::Stripe], secret: &[u8]) {
+        self.xxh3_accumulate(acc, stripes, secret);
+    }
+    fn scramble(&self, acc: &mut [u64; xxhash::ACC_NB], key: &xxhash::Stripe) {
+        self.xxh3_scramble(acc, key);
     }
 }
 

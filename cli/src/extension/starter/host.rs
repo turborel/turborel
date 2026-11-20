@@ -96,19 +96,23 @@ impl PageEncoding for Plain {
     Starter {
         word: "hash-function",
         code: 21,
-        declaration: "HOST HASH FUNCTION FNV (ID = 60001, LENGTH = 8)",
-        uses: &["turborel_plugin::host::Checksum"],
-        source: "/// FNV: FNV-1a of 64 bits, its digest eight bytes.
-struct Fnv;
+        declaration: "HOST HASH FUNCTION XXH64 (ID = 60001, LENGTH = 8)",
+        uses: &["turborel_plugin::host::Checksum", "turborel::hash::xxhash::Xxh64"],
+        source: "/// XXH64: xxHash's 64-bit function of the parts, seed 0, its digest
+/// eight bytes, big-endian.
+struct Xxh64Sum;
 
-impl Checksum for Fnv {
+impl Checksum for Xxh64Sum {
     fn hash(&mut self, parts: &[Vec<u8>]) -> Vec<u8> {
-        let digest = parts.iter().flatten().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3));
-        digest.to_le_bytes().to_vec()
+        let mut state = Xxh64::new(0);
+        for part in parts {
+            state.update(part);
+        }
+        state.digest().to_be_bytes().to_vec()
     }
 }
 ",
-        added: ".host_checksum(\"FNV\", Fnv)",
+        added: ".host_checksum(\"XXH64\", Xxh64Sum)",
     },
     Starter {
         word: "clock",

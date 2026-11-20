@@ -120,7 +120,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | SPILL.PARTITION_DEPTH | 8 | INTEGER FROM 0 TO 64 | at once | *session* |
 | SQL.FUNCTION_CALLS | ON | ONE OF ON, OFF | at once | *session* |
 | STATEMENT.TIMEOUT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
-| STORAGE.CHECKSUM | CRC-32/ISCSI | A HASH FUNCTION | when the database is made |  |
+| STORAGE.CHECKSUM | XXH3_64 | A HASH FUNCTION | when the database is made |  |
 | STORAGE.CHECKSUM_KEY | (empty) | TEXT OF AT MOST 64 CHARACTERS | at once |  |
 | STORAGE.ENCODINGS | (empty) | ENCODINGS, BY COMMAS | at once |  |
 | STORAGE.PAGE_BYTES | 8192 | INTEGER FROM 4096 TO 65536 | when the database is made |  |

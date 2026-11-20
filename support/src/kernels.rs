@@ -84,6 +84,45 @@ pub fn contract(kernels: &dyn Kernels) {
         aggregates(kernels, len);
     }
     unpacking(kernels);
+    xxh3_stripes(kernels);
+}
+
+/// Bytes of a fixed pattern, each of the low byte of an odd multiple.
+fn pattern(len: usize, salt: u64) -> Vec<u8> {
+    (0..len as u64).map(|n| (n.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(salt) >> 56) as u8).collect()
+}
+
+/// Checks XXH3's long inputs' loops of `kernels` against the portable ones
+/// (RULES.md D460): of 0 to 40 stripes, of secrets of the least length, the
+/// default's and longer, from every accumulator state; and the hashes they
+/// make of every length to past two blocks.
+fn xxh3_stripes(kernels: &dyn Kernels) {
+    use turborel::hash::xxhash::{self, ACC_NB, SECRET_SIZE_MIN, STRIPE_LEN, Scalar, Stripes};
+    let input = pattern(40 * STRIPE_LEN, 1);
+    let (stripes, _) = input.as_chunks::<STRIPE_LEN>();
+    for secret_len in [SECRET_SIZE_MIN, 192, 400] {
+        let secret = pattern(secret_len, 2);
+        let usable = (secret_len - STRIPE_LEN) / 8 + 1;
+        for count in 0..=usable.min(stripes.len()) {
+            let start: [u64; ACC_NB] = std::array::from_fn(|n| u64::MAX.rotate_left(n as u32 * 9) ^ count as u64);
+            let (mut want, mut got) = (start, start);
+            Scalar.accumulate(&mut want, &stripes[..count], &secret);
+            kernels.xxh3_accumulate(&mut got, &stripes[..count], &secret);
+            assert_eq!(got, want, "xxh3_accumulate of {count} stripes, secret {secret_len}");
+            let key = secret.last_chunk::<STRIPE_LEN>().unwrap();
+            Scalar.scramble(&mut want, key);
+            kernels.xxh3_scramble(&mut got, key);
+            assert_eq!(got, want, "xxh3_scramble after {count} stripes, secret {secret_len}");
+        }
+    }
+    let long = pattern(2 * 1024 + 300, 3);
+    for len in (0..=long.len()).filter(|n| *n < 300 || n % 61 == 0 || n % 1024 < 2) {
+        for seed in [0, 0x9E37_79B1] {
+            let data = &long[..len];
+            assert_eq!(xxhash::xxh3_64_on(kernels, data, seed), xxhash::xxh3_64_with_seed(data, seed), "XXH3-64 of {len}");
+            assert_eq!(xxhash::xxh3_128_on(kernels, data, seed), xxhash::xxh3_128_with_seed(data, seed), "XXH3-128 of {len}");
+        }
+    }
 }
 
 /// Checks the selections of `kernels` of vectors of `len`.
