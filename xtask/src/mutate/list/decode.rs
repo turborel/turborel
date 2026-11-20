@@ -2,7 +2,7 @@
 //! block's value that runs past its word given the wrong rest, ALP's
 //! header bit not written, a decimal kept that its factors do not give
 //! back, an n made an `f64` off by one ulp, the cache of opened chunks
-//! keyed by zone alone, not column too, and a chunk still needed let go.
+//! keyed by zone alone, not column too, and a chunk opened never found again.
 
 use super::super::{Mutation, Package};
 
@@ -74,12 +74,12 @@ pub const DECODE: [Mutation; 6] = [
         unit: &[OPENED_ONCE, "engine::columns::prepared::tests::positions_read_through_the_cache"],
     },
     Mutation {
-        name: "decode-cache-let-go-early",
+        name: "decode-cache-never-kept",
         package: Package::Core,
-        breaks: "a chunk still read by the runs after is let go, so it is opened again for each",
+        breaks: "a chunk opened is never found again, so each run opens and parses it anew",
         file: PREPARED_FILE,
-        original: "while kept.front().is_some_and(|h| h.end <= first) || kept.len() >= KEPT {",
-        replacement: "while kept.front().is_some_and(|h| h.end >= first) || kept.len() >= KEPT {",
+        original: "if let Some(at) = kept.iter().position(|h| h.first == first) {",
+        replacement: "if let Some(at) = kept.iter().position(|h| h.first == first && h.end < first) {",
         integration: &[],
         unit: &[OPENED_ONCE],
     },

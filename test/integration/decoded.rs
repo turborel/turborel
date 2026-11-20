@@ -12,7 +12,7 @@ use crate::common::sorted;
 /// The rows of each table.
 const ROWS: i64 = 6000;
 
-/// Row `k`'s values: a frame of 19 bits, one of 61, a dictionary of 40
+/// Row `k`'s values: a frame of 19 bits, one of 60 of 18 digits, a dictionary of 40
 /// numbers far apart, runs, a decimal of two digits or an exception, a
 /// CHARACTER text of 25 values and a VARCHAR text of each row; every
 /// 13th value but K's null.
@@ -28,8 +28,8 @@ fn row(k: i64) -> String {
     format!(
         "({k}, {}, {}, {}, {}, {}, {}, {})",
         null((k * 7919 % 500_000).to_string()),
-        null((k * 104_729 % 1_000_000_007 * 1_000_000_007 - 4_611_686_018_427_387_904).to_string()),
-        null((k % 40 * 1_000_000_000_039 - 4_500_000_000_000_000_000_i64).to_string()),
+        null((k * 104_729 % 1_000_000_007 * 997_000_000 - 498_500_000_000_000_000).to_string()),
+        null((k % 40 * 10_000_000_000_039 - 400_000_000_000_000_000_i64).to_string()),
         null(k.checked_div(600).unwrap().to_string()),
         null(p),
         null(format!("'n{}'", k % 25)),
@@ -40,7 +40,7 @@ fn row(k: i64) -> String {
 /// The queries each table answers alike, `{t}` its name.
 const QUERIES: [&str; 6] = [
     "SELECT * FROM {t}",
-    "SELECT SUM(A), SUM(D), SUM(R), MIN(B), MAX(B), COUNT(P) FROM {t}",
+    "SELECT SUM(A), SUM(R), MIN(B), MAX(B), MIN(D), MAX(D), COUNT(P) FROM {t}",
     "SELECT K, P FROM {t} WHERE P > 0.0E0",
     "SELECT K, T, U FROM {t} WHERE T = 'n7' OR U LIKE 'customer1%'",
     "SELECT T, COUNT(*), SUM(A) FROM {t} GROUP BY T",
@@ -48,8 +48,8 @@ const QUERIES: [&str; 6] = [
 ];
 
 /// Verifies: [EXTENSION] RULES.md D352, D353, decoding: a table of the
-/// column store, frozen, of integers in frames of odd widths, near the
-/// extremes, in a dictionary and in runs, of approximate numbers as
+/// column store, frozen, of integers in frames of odd widths, of 18
+/// digits, in a dictionary and in runs, of approximate numbers as
 /// decimals and exceptions (-0, the greatest, the least denormal, a
 /// third), of CHARACTER and VARCHAR texts, nulls among them all, answers
 /// as a table of the row store, whole and once updates leave some of its
@@ -79,7 +79,7 @@ fn every_encoding_decodes_as_written() {
         assert_eq!(sorted(&a, &q.replace("{t}", "CD")), sorted(&a, &q.replace("{t}", "RD")), "{q}");
     }
     for table in ["RD", "CD"] {
-        a.run(&format!("UPDATE {table} SET A = A + 1 WHERE K / 97 * 97 = K")).unwrap();
+        a.run(&format!("UPDATE {table} SET A = A + 1 WHERE MOD(K, 97) = 0")).unwrap();
     }
     a.commit().unwrap();
     for q in QUERIES {
