@@ -8,15 +8,18 @@
 //! ends: work that reads them as integers or as text reads no value made;
 //! any other reads them as values, made the first time it asks.
 
+pub mod bound;
 mod gathered;
 mod held;
 mod kinds;
+mod late;
 pub mod mask;
 pub mod sel;
 
 use std::sync::OnceLock;
 
 pub use self::kinds::{Bools, Datetimes};
+pub use self::late::{Late, LateSource};
 pub use self::mask::Mask;
 pub use self::sel::Sel;
 use super::{Row, Rows};
@@ -86,6 +89,9 @@ pub enum Column {
     /// Nulls, as many as it says, none held: as of a column a projection
     /// names that its input does not read.
     Nulls(Nulls),
+    /// A column store's frozen values not yet decoded (RULES.md D361),
+    /// decoded as an operator reads them (`Batch::resolve`).
+    Late(Late),
 }
 
 /// \[DESIGN\] A vector of nulls, none held: its values made only if they
@@ -350,6 +356,7 @@ impl Column {
             Column::Datetimes(datetimes) => datetimes.values(),
             Column::Bools(bools) => bools.values(),
             Column::Nulls(nulls) => nulls.values(),
+            Column::Late(late) => late.values(),
         }
     }
 
@@ -387,6 +394,10 @@ impl Column {
                 *self = Column::Values(vec![Value::Null; nulls.rows]);
                 self.values_mut()
             }
+            Column::Late(late) => {
+                *self = Column::Values(late.values().to_vec());
+                self.values_mut()
+            }
         }
     }
 
@@ -400,6 +411,7 @@ impl Column {
             Column::Datetimes(datetimes) => datetimes.into_values(),
             Column::Bools(bools) => bools.into_values(),
             Column::Nulls(nulls) => vec![Value::Null; nulls.rows],
+            Column::Late(late) => late.values().to_vec(),
         }
     }
 }
@@ -506,14 +518,24 @@ impl Batch {
     /// vector of integers, numbers or texts.
     pub fn cell(&self, at: usize, r: usize) -> Cell<'_> {
         match self.columns.get(at) {
-            Some(Column::Values(values)) => values.get(r).map_or(Cell::Null, Cell::Value),
-            Some(Column::Ints(ints)) => ints.units.get(r).filter(|_| !ints.is_null(r)).map_or(Cell::Null, |&u| Cell::Exact(u, ints.scale)),
-            Some(Column::Floats(floats)) => floats.get(r).map_or(Cell::Null, Cell::Approx),
-            Some(Column::Texts(texts)) => texts.get(r).map_or(Cell::Null, Cell::Text),
-            Some(Column::Datetimes(datetimes)) => datetimes.get(r).map_or(Cell::Null, Cell::Datetime),
-            Some(Column::Bools(bools)) => bools.get(r).map_or(Cell::Null, Cell::Bool),
-            Some(Column::Nulls(_)) | None => Cell::Null,
+            Some(Column::Late(late)) => late.made().map_or(Cell::Null, |made| cell_of(made, r)),
+            Some(column) => cell_of(column, r),
+            None => Cell::Null,
         }
+    }
+}
+
+/// The value of row `r` of `column`, read in place: of a late column not
+/// decoded, a null (`Batch::cell` decodes it first).
+fn cell_of(column: &Column, r: usize) -> Cell<'_> {
+    match column {
+        Column::Values(values) => values.get(r).map_or(Cell::Null, Cell::Value),
+        Column::Ints(ints) => ints.units.get(r).filter(|_| !ints.is_null(r)).map_or(Cell::Null, |&u| Cell::Exact(u, ints.scale)),
+        Column::Floats(floats) => floats.get(r).map_or(Cell::Null, Cell::Approx),
+        Column::Texts(texts) => texts.get(r).map_or(Cell::Null, Cell::Text),
+        Column::Datetimes(datetimes) => datetimes.get(r).map_or(Cell::Null, Cell::Datetime),
+        Column::Bools(bools) => bools.get(r).map_or(Cell::Null, Cell::Bool),
+        Column::Nulls(_) | Column::Late(_) => Cell::Null,
     }
 }
 

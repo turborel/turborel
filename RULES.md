@@ -354,8 +354,12 @@ verification approach DO-178C expects (§8).
 | D357 | A table of groups whose probe passes 128 slots hashes its keys by SipHash keyed by the database's seed |
 | D358 | A grouping or DISTINCT of the column store runs in parallel by morsels of its frozen groups |
 | D359 | EXCEPT and INTERSECT count their second operand's rows in the table of groups |
+| D360 | A column store's scan judges the conjuncts it is told of their own columns, then decodes the others at the rows kept alone |
+| D361 | A column no operator reads before a filter or an inner join drops rows is carried as its rows' places and decoded of the rows kept |
 | D362 | An expression of a batch's columns is compiled once and evaluated a vector at a time, a batch that would raise or warn evaluated again by rows |
 | D363 | CASE evaluates each branch over the rows its WHEN keeps, and a function may give a body over vectors |
+| D366 | A column judged to keep few rows of a run is gathered at them from its decoded vector, and a morsel carries late columns as the serial scan does |
+| D367 | A row made of a batch makes each of its cells a value alone, not its columns' every value |
 | D370 | One estimator gives every plan node its rows, from the base tables under its columns |
 | D371 | The optimizer tries the rules again at a node a rule rewrote, within a budget of rewrites |
 | D372 | A grouping's rows are its groups, by Cardenas' formula over its columns' distinct values |
@@ -9896,6 +9900,97 @@ accumulator, so it goes to the threads that read the operator's rows
 (`GroupTable<()>`). In parallel (D295) each partition counts in a table
 of its own.
 
+#### D360. A column store's scan judges the conjuncts it is told of their own columns, then decodes the others at the rows kept alone
+
+A filter over a scan of the column store tells the scan the simple
+conjuncts of its condition (D15), and the scan judges them itself, a run
+of a frozen group at a time, before it decodes the columns the filter
+does not read (`engine/columns/judged.rs`). This is late
+materialization in the scan, as Abadi, Myers, DeWitt and Madden,
+"Materialization Strategies in a Column-Oriented DBMS" (ICDE 2007),
+describe it. A conjunct of one column, a comparison with a constant, IS
+NULL, IN, NOT IN or an OR of these, of exact or approximate numbers,
+datetimes without a zone, truth values or character strings, is judged
+over that column's vector. Integers compare by the kernel, the constant
+folded once to their scale (`storage/batch/bound.rs`, shared with the
+filter), and integers read as runs with no null among them are judged
+once a run. A dictionary's texts are judged once an entry, its rows then
+by their codes. Anything else is judged a value at a time by
+`Conjunct::matches_key`, so what the scan keeps is what the conjunct
+keeps. The engine has no database to ask for its kernels, so the scan
+runs the portable ones.
+
+A VARCHAR column whose chunks are coded by a table of symbols is judged
+in place, no text decoded. FSST (Boncz, Neumann and Leis, PVLDB 2020,
+§5) encodes the constant and compares code strings, which holds only for
+strings compared octet by octet. SQL pads the shorter string with spaces
+(X3.135-1986 §5.11 GR5), so `'a'` equals `'a '`. Each text's symbols are
+compared instead with the constant's bytes as they are read, padded with
+spaces, the first byte that differs deciding (`Symbols::compare_padded`).
+Codes that are malformed where they are read fall back to decoding the
+chunk, which raises what is malformed as before.
+
+The rows kept are intersected with those the delta tree has no entry
+for, and the filter still judges every row the scan gives. A scan is
+told only conjuncts of a condition that cannot raise an error, so a row
+left out here is one the filter would leave out, and an error is raised
+as a row at a time raises it. A run of which one row in eight or more
+is kept is decoded whole, the columns decoded to judge it given as they
+are, every column with them (D361 gives none late), and the filter
+selects of it, since so many rows cost as little decoded whole as at
+their places. If the tree shadows some of its rows,
+it is decoded at the kept rows instead. Otherwise the places of the kept
+rows are held across the group's runs, and a batch is decoded of them once they make half a batch
+or the group ends, so a selective filter gives full batches rather than
+a few rows each.
+
+A column is decoded at its kept places alone (`columns/scan/positions.rs`).
+Places one after another are read as a range. Places that are at least
+one in eight of their span decode the span and pick from it, as a block
+of 64 values costs little more than one (D352). Sparser places are read
+one value at a time, a frame of reference's bits unpacked at the place
+alone (`Body::int_at`), a dictionary's codes too.
+
+#### D361. A column no operator reads before a filter or an inner join drops rows is carried as its rows' places and decoded of the rows kept
+
+A stream read by batches gives a scan's column late when no operator of
+the stream reads it before the stream is read whole, and a filter or an
+inner hash join of whose left operand it is lies above the scan
+(`exec/batch/late.rs`). The analysis walks the plan from the top. A
+filter reads the columns of its condition, all of them if it has a
+subquery. A projection of columns passes each on to the column it moves,
+and one that computes an expression reads every column. A join reads its
+keys. A late column is a `Column::Late` (`storage/batch/late.rs`),
+which holds the places of its rows in their frozen group, the source
+that decodes them, and, once a join gathered it, which place each row
+is. A join gathers
+the places, never a value. As the stream is read whole, by a grouping, a
+sort, a projection or the rows made of it, each batch's late columns are
+decoded of the rows kept alone (`Batch::resolve`), each place once and in
+ascending order, the others left null.
+
+The source holds the frozen group and the directory's entry of it, so
+the group's pages are not freed while a batch holding its rows lives
+(`engine/rows/frozen/late.rs`). A group is replaced, never changed, so
+what is decoded later is what the scan would have decoded then. The
+source keeps the chunks its last decoding opened, so the batches of a
+scan, decoded in its order, open each chunk about once (D352). A
+decoding takes them out and puts them back, never holding a lock while
+a page is unsealed (R-ERR-4), and a decoding on another thread at once
+opens its own. A damaged page is
+reported as its column is decoded, which only an error of the stored
+data, never one of a value, can be. A reader that reads a late column
+before it is resolved, which the executor does not plan, gets it decoded
+whole.
+
+A stream with no operator that drops rows decodes every column at once,
+as Abadi and others find early materialization faster where most rows
+are kept. A join's build side, a product, an outer join, a union and a
+part run in parallel decode their columns as before, since their rows
+are held, moved between threads, or kept in an order a late column's
+places would not follow. The first rows of a sort (FETCH FIRST) are kept
+by the row path, which reads every column.
+
 #### D362. An expression of a batch's columns is compiled once and evaluated a vector at a time, a batch that would raise or warn evaluated again by rows
 
 A projection, a filter's conjunct or a set function's argument that
@@ -9950,6 +10045,50 @@ numbers, CHAR_LENGTH, OCTET_LENGTH, UPPER, LOWER and EXTRACT have one
 (`functions/over_vectors.rs`). Strings of a dictionary are folded or
 counted once an entry. A function that may warn has its body skipped
 and is called as a row's evaluation calls it.
+
+#### D366. A column judged to keep few rows of a run is gathered at them from its decoded vector, and a morsel carries late columns as the serial scan does
+
+A column store's scan decodes a column whole to judge a conjunct of it
+(D360). When the run keeps few rows, the scan holds their places until
+they make half a batch. It now also holds that column's values of
+those rows, gathered from the vector it decoded, an integer vector of
+one scale or a vector of approximate numbers
+(`frozen/batches/pending.rs`). The batch made of the rows held takes
+the column as held and decodes only the others at the places. A column
+the filter reads is so decoded once a run, to judge it, and not again
+at the rows kept. A column of another kind, or one a run judged without
+decoding it (texts compared in place), is decoded at the places as
+before. A run whose rows the tree shadows gathers its kept rows the
+same way.
+
+Judging a run costs no more than the comparison. A conjunct the kernel
+judges makes no list of the run's rows first; the list is made only of
+integers known as runs, judged once a run, or of rows judged one at a
+time. The kernel judges a vector with no nulls without reading a bitmap
+(`kernels/portable/select.rs`). A group's row ids are read only if the
+tree holds an entry for one of its rows, as only those are told apart
+by id.
+
+A morsel of a parallel scan read by batch (D354) is told its late
+columns too (`Split::morsel_batches`). They are the columns of the
+branch's scan no step reads before a filter drops rows, found as the
+serial stream finds them (D361), walking the branch's steps from its
+end (`parallel/batched.rs`). The batches a morsel's steps keep are
+resolved before its rows are made or its groups fed, each late column
+decoded of the rows still kept. So a worker decodes what the
+statement's thread alone would. The planner still runs a column store's
+scan by batch on one thread where it serves better (D291); a pipeline
+it runs by morsels reads its late columns so.
+
+#### D367. A row made of a batch makes each of its cells a value alone, not its columns' every value
+
+A projection read by batches (`exec/batch/project.rs`) and a filter
+judged a row at a time (`exec/batch/judge.rs`) make each row's values
+of the batch's cells (`Batch::cell`). A vector of integers, numbers,
+texts or datetimes makes a value of the row read alone. Reading a
+column's values instead made every row's value of the vector the first
+time any was read, which a projection of few kept rows paid for every
+row of the batch. The values are the same either way.
 
 #### D370. One estimator gives every plan node its rows, from the base tables under its columns
 

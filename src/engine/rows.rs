@@ -277,9 +277,16 @@ impl TableStorage for RowTable {
     /// A table of the column store gives its frozen rows without making
     /// each (`rows/frozen/batches.rs`); its tree's rows, and a table of the
     /// row store its rows, each record decoded straight into the vectors
-    /// (`rows/gathered.rs`).
-    fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Conjunction>) -> crate::storage::Batches {
-        self.scan_batches_of(tx, columns, condition.cloned())
+    /// (`rows/gathered.rs`); its frozen rows' columns of `late` as their
+    /// places (`rows/frozen/late.rs`).
+    fn scan_batches(
+        self: Arc<Self>,
+        tx: TxId,
+        columns: &[usize],
+        condition: Option<&Conjunction>,
+        late: &[usize],
+    ) -> crate::storage::Batches {
+        self.scan_batches_of(tx, columns, condition.cloned(), late)
     }
 
     /// Split at row ids, of the column store at its groups' starts

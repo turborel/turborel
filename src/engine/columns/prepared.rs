@@ -140,6 +140,16 @@ impl Chunk<'_> {
         self.ints_with((from, to), outs, made.words.as_deref())
     }
 
+    /// \[DESIGN\] (RULES.md D360) Its value at position `n`, of 8 bytes, as
+    /// an integer, read alone (`encoded::Body::int_at`), of what is made of
+    /// it once, `made`: none if its encoding does not hold it.
+    pub(super) fn int_made(&self, n: usize, made: &Made) -> Option<i64> {
+        if n >= self.count {
+            return None;
+        }
+        self.body.int_at(n, made.words.as_deref())
+    }
+
     /// As `coded`, of what is made of it once, `made`: none if it is not
     /// a dictionary of texts.
     pub(super) fn coded_made(

@@ -123,7 +123,7 @@ fn column_kind(c: &Column) -> Option<Kind> {
         Column::Floats(_) => Kind::Floats,
         Column::Texts(_) => Kind::Texts,
         Column::Nulls(_) => return None,
-        Column::Values(_) | Column::Datetimes(_) | Column::Bools(_) => Kind::Values,
+        Column::Values(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Late(_) => Kind::Values,
     })
 }
 

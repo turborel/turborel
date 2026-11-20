@@ -5,7 +5,7 @@
 //! of its own, a dictionary's codes unpacked so and gathered from its
 //! entries read once, runs, decimals and fixed fields each as theirs.
 
-use super::super::packed::unpack_words;
+use super::super::packed::{get, unpack_words};
 use super::{Body, FRAMED, WORD, between, integer};
 
 impl Body<'_> {
@@ -35,6 +35,31 @@ impl Body<'_> {
                 out.extend(std::iter::repeat_n(integer(field).unwrap_or(0), count));
                 Some(())
             }
+            Body::Fixed { .. } | Body::Varying { .. } | Body::Fsst(_) => None,
+        }
+    }
+
+    /// \[DESIGN\] (RULES.md D360) The value at position `n`, of 8 bytes,
+    /// as `ints` gives it, read alone: of a frame of reference or a
+    /// dictionary, its bits alone unpacked; of runs, its run found. For
+    /// positions too few of a span to unpack it whole (`packed::DENSE_SPAN`).
+    pub(in crate::engine::columns) fn int_at(&self, n: usize, entries: Option<&[i64]>) -> Option<i64> {
+        match self {
+            Body::Frame { least, bits, deltas } => get(deltas, *bits, n).map(|d| least.wrapping_add(i64::from_le_bytes(d.to_le_bytes()))),
+            Body::Runs(runs) => runs.field(n).map(i64::from_le_bytes),
+            Body::Alp(alp) => alp.field(n).map(i64::from_le_bytes),
+            Body::Dictionary { bits, codes, .. } => {
+                let code = usize::try_from(get(codes, *bits, n)?).ok()?;
+                match entries {
+                    Some(words) => words.get(code).copied(),
+                    None => self.entry_words()?.get(code).copied(),
+                }
+            }
+            Body::Fixed { width: FRAMED, values } => {
+                values.get(n.checked_mul(FRAMED)?..n.checked_add(1)?.checked_mul(FRAMED)?).and_then(integer)
+            }
+            // None if every value is null, its field empty.
+            Body::Constant { field } => Some(integer(field).unwrap_or(0)),
             Body::Fixed { .. } | Body::Varying { .. } | Body::Fsst(_) => None,
         }
     }

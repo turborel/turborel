@@ -86,7 +86,7 @@ impl Judged {
             Some(Column::Datetimes(column)) => kinds::datetimes(self, column, over, kernels),
             Some(Column::Bools(column)) => kinds::bools(self, column, over, kernels),
             Some(Column::Texts(column)) => texts::kept(self, column, over, kernels),
-            Some(Column::Values(_) | Column::Nulls(_)) | None => None,
+            Some(Column::Values(_) | Column::Nulls(_) | Column::Late(_)) | None => None,
         };
         if typed.is_some() {
             return typed;
@@ -240,9 +240,10 @@ impl Judging {
         let mut row = vec![Value::Null; self.width];
         let mut out = Vec::with_capacity(rows.len());
         for &r in rows {
-            for (vector, &c) in batch.columns.iter().zip(&self.columns) {
-                if let (Some(slot), Some(v)) = (row.get_mut(c), vector.values().get(r)) {
-                    slot.clone_from(v);
+            // Each cell of the row alone made a value (RULES.md D367).
+            for (at, &c) in self.columns.iter().enumerate().take(batch.columns.len()) {
+                if let Some(slot) = row.get_mut(c) {
+                    *slot = batch.cell(at, r).to_value();
                 }
             }
             match eval_cond(cond, &row, runner) {

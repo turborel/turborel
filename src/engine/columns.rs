@@ -28,6 +28,7 @@ pub mod cache;
 mod encoded;
 mod fsst;
 pub mod group;
+pub mod judged;
 mod packed;
 pub mod prepared;
 mod runs;

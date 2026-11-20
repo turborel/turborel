@@ -36,7 +36,9 @@
 //! row-store table counted and
 //! summed, its zones settled and not, alone (`analytics/counts.rs`),
 //! to `decode`, the column store's decoding alone (`analytics/decode.rs`),
-//! or to `grouping`, groupings on one thread alone (`analytics/grouping.rs`).
+//! to `grouping`, groupings on one thread alone (`analytics/grouping.rs`),
+//! or to `late`, a column store's selective queries, the columns they keep
+//! few rows of read late, alone (`analytics/late.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -64,6 +66,8 @@ mod grouping;
 mod harness;
 #[path = "analytics/json.rs"]
 mod json;
+#[path = "analytics/late.rs"]
+mod late;
 #[path = "analytics/parallel.rs"]
 mod parallel;
 #[path = "analytics/social.rs"]
@@ -80,7 +84,8 @@ use turborel::db::{Database, Session};
 /// morsels, `distinct` for the DISTINCT set functions', `expressions`
 /// for expressions over vectors, `counts` for a
 /// row-store table's counts, `decode` for the column store's decoding,
-/// `grouping` for groupings on one thread.
+/// `grouping` for groupings on one thread, `late` for a column store's
+/// selective queries.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
 /// Rows in the table F.
@@ -129,6 +134,7 @@ fn main() {
     grouping::workloads(&bench);
     counts::workloads(&bench);
     decode::workloads(&bench);
+    late::workloads(&bench);
 }
 
 /// Runs the workloads `only` names that need no table F, if it names
@@ -141,6 +147,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "counts" => counts::workloads,
         "decode" => decode::workloads,
         "parallel" => parallel::workloads,
+        "late" => late::workloads,
         _ => return false,
     };
     run(bench);
