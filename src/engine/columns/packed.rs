@@ -1,7 +1,12 @@
 //! \[DESIGN\] Integers bit-packed (RULES.md D31): each of `bits` bits, one
 //! after another from the least significant bit of the first byte, so a
 //! frame of reference's differences take the bits their span needs, not
-//! whole bytes.
+//! whole bytes. Ranges of values are read a block of 64 at a time
+//! (`blocks.rs`).
+
+mod blocks;
+
+pub(super) use blocks::unpack_words;
 
 /// The bytes a window of one value is read from: a value of 64 bits at
 /// any bit's offset lies in 9 of them.
@@ -69,7 +74,7 @@ pub(super) fn unpack(bytes: &[u8], bits: u32, (from, to): (usize, usize), mut ea
 }
 
 /// A mask of the lowest `bits` bits.
-fn mask(bits: u32) -> u64 {
+pub(super) fn mask(bits: u32) -> u64 {
     if bits >= u64::BITS { u64::MAX } else { (1_u64 << bits).saturating_sub(1) }
 }
 

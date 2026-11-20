@@ -346,6 +346,8 @@ verification approach DO-178C expects (§8).
 | D344 | A DISTINCT function the rule leaves keeps its own way, its bag of values keyed once and looked up once |
 | D350 | A row-store batch scan reads each entry in place under its leaf's latch, copying only what it cannot read there |
 | D351 | A bare COUNT(*) of a row-store table sums its settled zones' rows and reads the rest in place |
+| D352 | A column chunk is decoded a block of 64 values at a time, and opened once for a group's runs |
+| D353 | ALP decimals are read by two multiplications with a stored pair of factors |
 | D393 | A reply value the client cannot take fails its request alone, the rest of its replies read past; a malformed frame loses the connection |
 | D394 | Terminate waits at most its limit on a stream that bounds itself, a program's own too, and reads past a Notice to its Error |
 
@@ -9591,6 +9593,56 @@ tree's nodes, which every insert must write and which are not any
 snapshot's either; zone flags kept on disk, which would need logging to
 stay right across a crash and which the maintenance thread rebuilds soon
 after a table opens.
+
+#### D352. A column chunk is decoded a block of 64 values at a time, and opened once for a group's runs
+
+Bit-packed values (frames of reference, dictionary codes, run ends, ALP
+digits) are read 64 at a time by a routine of their width, after Lemire
+and Boytsov 2015. A block of 64 values of w bits is exactly 8 × w bytes,
+read as w little-endian words. The routine is one function generic over
+the width, and a macro makes a table of it for each width from 0 to 64,
+so every shift and mask is a constant the compiler unrolls. A frame's
+least is added as each value is read, wrapping, since a difference is
+below 2^64 and the value it gives was an integer of 64 bits. The values
+before the first whole block and after the last are read one at a time.
+The packed format, horizontal and from the least significant bit, is
+unchanged. A vertical layout interleaved for SIMD lanes would be a format
+change whose gain needs SIMD, and a later kernel can shuffle the
+horizontal one.
+
+A batch scan of the column store reads a group in runs of at most a
+vector of rows, and a compressed chunk holds many more. Each run used to
+reopen, unseal and parse every chunk it touched. The scan now keeps each
+chunk it opens, by its column and first row, as its bytes opened, its
+FSST table read, and a dictionary's entries made integers or text once.
+The runs after parse its few header bytes alone. Runs come in order, so
+a chunk ended before the one asked for is let go then, a column keeps at
+most 64 chunks, and every chunk goes when the next group is taken up.
+What is held is about one run's chunks a column, so no work grant is
+charged for it. A run of runs unpacks only the ends and values of the
+runs it covers, and a chunk's null bitmap is read a byte at a time.
+
+#### D353. ALP decimals are read by two multiplications with a stored pair of factors
+
+A chunk of approximate numbers as decimals keeps a pair of factors e and
+f, f at most e, and each value is n × 10^f × 10^-e, two multiplications
+by tabled powers, as the ALP paper decodes. A division by 10^e, as
+before, is correctly rounded but several times slower. The multiplication
+is not always correctly rounded (3 × 0.1 is 0.30000000000000004), so the
+encoder keeps a value as a decimal only when those same two
+multiplications give it back bit for bit, and any other value is an
+exception kept as it is. A value read is therefore always the one
+written. The pair is the one of the first 64 values that leaves fewest
+exceptions, then takes fewest bits, then has the least e, then the least
+f. An n of magnitude below 2^51 becomes an f64 by adding it to the bits
+of 2^52 + 2^51 and subtracting that number, which is exact and
+branch-free.
+
+This changes the chunk's format and keeps its version, 1, as alpha
+allows. The new encoder sets bit 0x80 of the chunk's first byte, which is
+above every exponent, and writes f after it. A chunk without the bit was
+written before and is read by division, so an older file never reads
+wrongly and needs no migration.
 
 #### D393. A reply value the client cannot take fails its request alone, the rest of its replies read past; a malformed frame loses the connection
 
