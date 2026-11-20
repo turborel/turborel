@@ -6,7 +6,8 @@
 //! operand through its decimal exponent where that keeps a value past a
 //! double's range (the logarithms), kept to the 16 digits a double holds.
 //! LOG of base 10, and so LOG10, is found by the base-10 logarithm, and of
-//! base 2 by the base-2 one, so a power of either base is a whole number.
+//! base 2 by the base-2 one, so a power of either base is a whole number
+//! (RULES.md D331).
 
 use std::cmp::Ordering;
 

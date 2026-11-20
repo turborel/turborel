@@ -8,7 +8,7 @@
 //! divisor's is taken by modular arithmetic, so 1E100 is divided as
 //! itself. Of DECFLOAT operands that are not whole numbers, which GR9c
 //! gives no R of scale 0, R is the same remainder, of the smaller
-//! exponent (CONFORMANCE.md, Readings of ambiguous text).
+//! exponent (RULES.md D332; CONFORMANCE.md, Readings of ambiguous text).
 
 use std::cmp::Ordering;
 

@@ -1,4 +1,5 @@
-//! [ISO/IEC 9075-2:2023 §20.7 GR7a, §20.10, §20.13 GR6, GR10] The output
+//! [ISO/IEC 9075-2:2023 §20.7 GR7a, §20.10, §20.13 GR6, GR10] (RULES.md
+//! D336) The output
 //! dynamic parameters of a prepared CALL: each `?` that is the argument
 //! of an output parameter, or of one both input and output, of the
 //! parameter's type [§20.7 SR5a].

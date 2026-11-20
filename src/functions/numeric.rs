@@ -274,7 +274,7 @@ fn sign(v: &Value) -> Result<Ordering> {
 /// \[GR8c\]. −N is a value of N's type, so GR8c's 22003 is never raised:
 /// an exact type here is of a decimal precision, as many digits either
 /// side of 0, which an `i128` holds negated; an approximate and a
-/// decimal floating-point type are as wide either side.
+/// decimal floating-point type are as wide either side (RULES.md D333).
 fn absolute(v: &Value) -> Result<Value> {
     if sign(v)? != Ordering::Less {
         return Ok(v.clone());
