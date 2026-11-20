@@ -72,7 +72,7 @@ pub(super) fn pushed(sub: &Subquery, rows: &LogicalPlan) -> Option<Bound> {
     let projected = LogicalPlan::Project { exprs: keys.clone(), input: Box::new(rows.clone()) };
     let domain = Domain { plan: LogicalPlan::Distinct { input: Box::new(projected) }, width: keys.len(), copies: Cell::new(0) };
     let plan = domain.over(&sub.plan)?;
-    Some(Bound { plan, keys, not_distinct: true, defaults: None })
+    Some(Bound { plan, keys, not_distinct: true, defaults: None, unique: super::one_row(&sub.plan) })
 }
 
 /// `e`, of a row whose columns follow `by` others, each outer reference

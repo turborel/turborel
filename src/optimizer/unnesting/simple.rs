@@ -52,7 +52,8 @@ pub(super) fn pulled(sub: &Subquery, functions: &Registry) -> Option<Bound> {
     let order = (own..width).chain(0..own).map(Expr::Column).collect();
     let plan = LogicalPlan::Project { exprs: order, input: Box::new(pulled.plan) };
     let keys = pulled.keys.into_iter().map(|e| outer_bound(e, &sub.outer)).collect();
-    Some(Bound { plan, keys, not_distinct: false, defaults: pulled.defaults })
+    let unique = pulled.defaults.is_some();
+    Some(Bound { plan, keys, not_distinct: false, defaults: pulled.defaults, unique })
 }
 
 /// `e`, over outer reference slots, over the rows the subquery is

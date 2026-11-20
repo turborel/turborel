@@ -301,7 +301,7 @@ verification approach DO-178C expects (§8).
 | D316 | An SQL function that returns one value is inlined when it is deterministic and reads no more than SQL-data |
 | D317 | EXPLAIN shows the unnested plan, and both rules have their own settings |
 | D318 | Side effects, non-deterministic functions, UNIQUE, MATCH and a few operators keep a subquery nested |
-| D319 | A binding is a value with its trailing spaces, and bindings match as not distinct |
+| D319 | A binding is a value with its trailing spaces, of a plain type, and bindings match as not distinct |
 
 ### The project
 
@@ -8538,9 +8538,13 @@ evaluated for every row unless it stands where a CASE may not reach,
 which is a result, a WHEN condition after the first, or the ELSE
 [ISO/IEC 9075:1992 §6.9 GR2]. AND and OR evaluate both operands (D15).
 Unnesting computes the subquery for every binding of the node's rows, so
-a conditional one is unnested only if no part of it can raise. A
-subquery used in two places is unnested if every use reads its one row
-or one place uses it whole.
+a conditional one is unnested only if no part of it can raise. It also
+reads every row of the subquery for each binding. IN, SOME and ALL read
+every row too, but EXISTS may stop at its deciding row and a scalar
+subquery at its second (D15), so either is unnested only if its plan
+cannot raise, or, of a scalar subquery, if it is a grouping of one row
+that reads all its input anyway. A subquery used in two places is
+unnested if every use reads its one row or one place uses it whole.
 
 An uncorrelated IN or SOME comparison that is a conjunct of WHERE or
 HAVING is taken too. Made EXISTS of a subquery that compares the values
@@ -8662,9 +8666,13 @@ case also needs the node's rows to be such, as D reads them again.
 UNIQUE and MATCH stay nested, as do a recursive query, a row pattern, a
 polymorphic table function, GRAPH_TABLE, a grouping with seeds, FETCH
 WITH TIES, PERCENT, APPROX or EXACT, and a conditional subquery that can
-raise (D311). Each runs as D35 runs it.
+raise (D311). So do the subqueries of a plan whose rows are a table's,
+read with their ids to change them, as the object rows of a searched
+UPDATE or DELETE and an updatable cursor's are, since a join would make
+the plan no access to that table (`db/compiled.rs`, `plan_rows`). Each
+runs as D35 runs it.
 
-#### D319. A binding is a value with its trailing spaces, and bindings match as not distinct
+#### D319. A binding is a value with its trailing spaces, of a plain type, and bindings match as not distinct
 
 Two strings that differ in trailing spaces alone compare equal, yet a
 subquery that returns its outer reference returns each as it is. D's
@@ -8675,6 +8683,14 @@ TRAILING_SPACES. Bindings match as IS NOT DISTINCT FROM matches them
 nested subquery runs for a null. The simple case (D314) compares the
 subquery's own columns with outer values by equality, as the subquery
 did, and needs neither.
+
+D is made distinct and joined by hashing, which see a value's form. A
+large object is grouped by its identity, not its value [ISO/IEC
+9075-2:2023 §9.12 SR3], and a constructed or user-defined type may hold
+one. So each binding must be known, from the tables the plan reads, to
+be of a predefined type other than a large object, made of columns by
+arithmetic, casts and sort keys (`optimizer/unnesting/typed.rs`). Any
+other binding keeps its subquery nested.
 
 ## 2. Project layout
 

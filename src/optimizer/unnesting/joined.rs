@@ -35,7 +35,7 @@ pub(super) fn rewritten(node: &Node<'_>, target: &Target, bound: Bound, function
     let k = bound.keys.len();
     let rows = node.input();
     let w = rows.width();
-    let per = per_binding(&target.how, bound.plan, k, functions)?;
+    let per = if bound.unique && matches!(target.how, How::Value) { counted_once(bound.plan, k)? } else { per_binding(&target.how, bound.plan, k, functions)? };
     let mut exprs: Vec<Expr> = (0..w).map(Expr::Column).collect();
     exprs.extend(bound.keys.iter().cloned());
     let keyed = LogicalPlan::Project { exprs, input: Box::new(rows.clone()) };
@@ -88,6 +88,17 @@ fn per_binding(how: &How, plan: LogicalPlan, k: usize, functions: &Registry) -> 
         }
     };
     Some(LogicalPlan::Aggregate { groups: (0..k).collect(), collations: Vec::new(), aggs, seeds: Vec::new(), input: Box::new(plan) })
+}
+
+/// The rows of `plan`, its `k` key columns first and one row at most of
+/// each binding, as `per_binding` gives them of a scalar subquery: the
+/// keys, a count of 1, then the values.
+fn counted_once(plan: LogicalPlan, k: usize) -> Option<LogicalPlan> {
+    let width = plan.width();
+    let mut exprs: Vec<Expr> = (0..k).map(Expr::Column).collect();
+    exprs.push(Expr::Const(Value::Exact(Decimal::new(1, 0))));
+    exprs.extend((k..width).map(Expr::Column));
+    (k <= width).then(|| LogicalPlan::Project { exprs, input: Box::new(plan) })
 }
 
 /// COUNT(*) of the rows `filter` is true of, or of all.

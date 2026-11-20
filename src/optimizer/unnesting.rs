@@ -119,6 +119,9 @@ pub(super) struct Bound {
     /// The value of each of its columns for a binding with no row, of a
     /// subquery made a grouping (`simple.rs`).
     defaults: Option<Vec<Expr>>,
+    /// Whether it has one row at most of each binding, a grouping by its
+    /// keys, so no count of them is needed.
+    unique: bool,
 }
 
 /// The node `node` with the subquery `found` unnested, if it can be.
