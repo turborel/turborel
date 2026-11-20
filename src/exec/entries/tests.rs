@@ -23,12 +23,14 @@ fn projected_probes_renew_locality_without_dropping_read_state() {
         let projection = projected.then_some(identity);
         let mut reading = Reading {
             columns: Some(vec![0]),
+            needed: Some(vec![0]),
             near: Near {
                 leaf: Some((7, 9)),
                 misses: 8,
                 at: Some(3),
                 bytes: vec![1, 2, 3],
                 open: Some((NO_TRANSACTION, 4, Arc::clone(&bookkeeping))),
+                zone: None,
             },
             projection,
         };

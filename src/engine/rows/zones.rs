@@ -165,6 +165,10 @@ pub(super) struct Zones {
     stale: AtomicUsize,
     /// The zones unsettled.
     unsettled: AtomicUsize,
+    /// How many times a zone's visible flag was written (`change`,
+    /// `RowTable::settle`), so a reader keeping one zone's flag knows it
+    /// stale (`visible_near`).
+    changed: AtomicU64,
     /// The zone a sum up looks from, so zones a reader keeps stale do not
     /// keep the others waiting.
     next_sum: AtomicUsize,
@@ -273,6 +277,7 @@ impl Zones {
             map: RwLock::new(Map::default()),
             stale: AtomicUsize::new(0),
             unsettled: AtomicUsize::new(0),
+            changed: AtomicU64::new(0),
             next_sum: AtomicUsize::new(0),
             born: Instant::now(),
             rest_until: AtomicU64::new(0),
@@ -329,6 +334,7 @@ impl Zones {
         zone.changes = zone.changes.saturating_add(1);
         if let Some(flag) = map.visible.get(at) {
             flag.store(false, AtomicOrdering::Release);
+            self.changed.fetch_add(1, AtomicOrdering::AcqRel);
         }
         if !zone.unsettled {
             zone.unsettled = true;

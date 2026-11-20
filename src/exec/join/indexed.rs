@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use super::super::entries::{Reading, fetch};
+use super::super::entries::{Reading, fetch, fetch_judged};
 use super::super::project::Columns;
 use super::super::read::Asked;
 use super::super::{RowIter, Runner, Subqueries, broken, eval_cond, execute, failed};
@@ -165,8 +165,20 @@ impl Probed {
     /// The row of the entry `(key, id)`, if the version `tx` sees has it,
     /// followed by its id if located.
     fn row(&mut self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
+        self.row_read(entry, false)
+    }
+
+    /// As `row`, of a join that judges its condition of each row it pairs
+    /// (`IndexJoin::paired`), the entry then unchecked against a row every
+    /// reader sees one version of (`entries::fetch_judged`).
+    fn row_judged(&mut self, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
+        self.row_read(entry, true)
+    }
+
+    fn row_read(&mut self, entry: Result<(Key, RowId)>, judged: bool) -> Result<Option<Row>> {
         let (key, id) = entry?;
-        let found = fetch(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), &key)?;
+        let read = if judged { fetch_judged } else { fetch };
+        let found = read(&*self.storage, &self.ix, &mut self.reading, (self.tx, id), &key)?;
         Ok(found.map(|(_, mut row)| {
             if self.located {
                 row.push(storage::located(id));
@@ -255,7 +267,12 @@ impl IndexJoin {
     /// `l` joined with the row of `entry`, if the version read has it and
     /// the condition is true of the pair.
     fn paired(&mut self, l: &Row, entry: Result<(Key, RowId)>) -> Result<Option<Row>> {
-        let Some(r) = self.table.row(entry)? else { return Ok(None) };
+        // A predicate probe's entries are candidates (RULES.md D34), judged by
+        // the refinement or by the condition, which refuses an extra one; a
+        // key probe's are matches the condition does not repeat.
+        let judged = matches!(self.probe, JoinProbe::Predicate { .. })
+            && (self.refinement.is_some() || self.prepared.is_some() || self.cond.is_some());
+        let Some(r) = (if judged { self.table.row_judged(entry) } else { self.table.row(entry) })? else { return Ok(None) };
         if let (Some(output), Some((binding, function))) = (&self.output, &self.refinement) {
             let kept = binding.intersects(l, &r, function, self.runner.temp_lobs())?;
             return kept.then(|| output.pair(l, &r)).transpose();

@@ -434,6 +434,11 @@ impl TableStorage for RowTable {
         self.zones.visible(id)
     }
 
+    /// Its zones' (`rows/zones/visible.rs`).
+    fn visible_to_all_near(&self, id: RowId, near: &mut Near) -> bool {
+        self.zones.visible_near(id, near)
+    }
+
     /// Its zones' (`rows/zones.rs`).
     fn visible_share(&self) -> Option<f64> {
         Some(self.zones.visible_share())

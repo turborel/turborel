@@ -2495,7 +2495,11 @@ A comparison scan is index-only when every column it reads is in the key,
 of a type the key codec gives back exactly (`engine::key::restores`). A versioned
 engine keeps an entry per version, so a row is made from its entry only
 where every reader sees that row's one version
-(`TableStorage::visible_to_all`). An entry that collection fails to take
+(`TableStorage::visible_to_all`); a scan reading rows in id order asks it
+of each row with what it keeps of the last (`visible_to_all_near`), which
+the row store answers from the zone kept while no zone's flag has been
+written, so readers on many threads do not take its lock a row at a
+time. An entry that collection fails to take
 back is owed (`txn/owed.rs`), and a close owing any is not clean.
 
 `CREATE INDEX`, `DROP INDEX` and `ALTER INDEX` are extensions, run by the
@@ -3190,7 +3194,17 @@ decides the comparison from the point and the column's SRID
 call would; any other entry's row is read and the conjunct judged of
 it. Where nothing else reads the column, a point entry decided true
 needs no row if every reader sees it (`TableStorage::visible_to_all`),
-as an index-only scan's entry needs none; else its row is read. Such a
+as an index-only scan's entry needs none; else its row is read. Of a
+point entry decided true whose row every reader sees, the row is read
+of the statement's columns alone, the key's left undecoded and the entry
+unchecked, being the one version's, as an index-only scan trusts its
+entry; any other row an index finds is read with the key's columns and
+checked against its entry, as an index may give extra candidates. A
+join probing a spatial predicate, which judges it of each row paired,
+leaves the entry of a row every reader sees unchecked the same way. A
+spatial join's pass over the table (D138) decides a row whose geometry
+is one point of each region its envelope meets from the point, instead
+of calling the function on the row for each. Such a
 scan is priced as a covering scan. A prepared polygon decides
 "distance op constant" of a point by bounds its cells put on the
 distance (`prepared/cells/within.rs`): each cell's Chebyshev distance,
@@ -3388,7 +3402,9 @@ owner. A single rectangular ring can locate points through its closed
 envelope. Recognition requires four distinct axis-aligned corners and
 closure, in either ring direction; holes, diagonal edges and collapsed
 rectangles retain general point location. It uses no area arithmetic or
-tolerance, including for subnormal and extreme coordinates.
+tolerance, including for subnormal and extreme coordinates. A recognized
+rectangle is valid by its shape, so its preparation skips the exact
+self-meeting test every other polygon takes before it may locate points.
 Polygon and MultiPolygon operands with at least one ring of 64
 edges can also keep a Y-interval tree for each ring. The threshold follows
 the crossover the geometry benchmark measures (`bench/geometry.rs`); shorter boundaries retain

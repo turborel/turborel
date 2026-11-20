@@ -33,6 +33,9 @@ use turborel::value::{Decimal, Value};
 
 const THREADS: [usize; 3] = [1, 4, 8];
 const QUERIES: usize = 16;
+/// Queries per worker, `QUERIES` unless `TURBOREL_GEOMETRY_QUERIES` says otherwise, as
+/// the nearest bench reads `TURBOREL_NEAREST_QUERIES`.
+const QUERIES_VAR: &str = "TURBOREL_GEOMETRY_QUERIES";
 const MIXED_OPERATIONS: u64 = 100;
 const WRITE_EVERY: u64 = 5;
 
@@ -43,11 +46,13 @@ fn main() {
         return;
     }
     let db = database();
-    validate_filters(&db, (THREADS[2] * QUERIES) as u64);
+    let count = std::env::var(QUERIES_VAR).map_or(QUERIES, |s| s.parse::<usize>().unwrap().max(1));
+    let suffix = if count == QUERIES { String::new() } else { format!(", {count} queries/worker") };
+    validate_filters(&db, (THREADS[2] * count) as u64);
     for width in [10_u64, 500] {
         for threads in THREADS {
-            bench.measure_sampled(Case::new(format!("{ROWS} points, width {width}"), "queries").threads(threads), || {
-                queries(&db, threads, width)
+            bench.measure_sampled(Case::new(format!("{ROWS} points, width {width}{suffix}"), "queries").threads(threads), || {
+                queries(&db, threads, width, count)
             });
         }
     }
@@ -63,16 +68,16 @@ fn main() {
     harness::note(&format!("selective plan:\n{plan}"));
 }
 
-fn queries(db: &Database, threads: usize, width: u64) -> Vec<Duration> {
+fn queries(db: &Database, threads: usize, width: u64, count: usize) -> Vec<Duration> {
     let start = Barrier::new(threads);
-    let samples = Mutex::new(Vec::with_capacity(threads * QUERIES));
+    let samples = Mutex::new(Vec::with_capacity(threads * count));
     on_threads(threads, |thread| {
         let a = db.session("B");
         let query = a.prepare(SELECT).unwrap();
-        let mut own = Vec::with_capacity(QUERIES);
+        let mut own = Vec::with_capacity(count);
         start.wait();
-        for n in 0..QUERIES {
-            let value = window((thread * QUERIES + n) as u64, width);
+        for n in 0..count {
+            let value = window((thread * count + n) as u64, width);
             let now = Instant::now();
             let mut cursor = a.open_prepared(&query, &[value]).unwrap();
             while let Some(row) = cursor.fetch().unwrap() {

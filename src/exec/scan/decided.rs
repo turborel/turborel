@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use super::super::entries::{Reading, fetch};
+use super::super::entries::{Reading, fetch, fetch_decided};
 use super::super::{Runner, eval_cond};
 use crate::catalog::{KeyShape, QualifiedName};
 use crate::db::State;
@@ -71,10 +71,10 @@ impl Deciding {
         match self.of_entry(key) {
             Some(Err(error)) => Err(error),
             Some(Ok(Some(true))) => {
-                if let Some(width) = self.width.filter(|_| self.unread && storage.visible_to_all(id)) {
+                if let Some(width) = self.width.filter(|_| self.unread && reading.visible_to_all(storage, id)) {
                     return Ok(Some(vec![Value::Null; width]));
                 }
-                Ok(fetch(storage, ix, reading, (tx, id), key)?.map(|(_, row)| row))
+                Ok(fetch_decided(storage, ix, reading, (tx, id), key)?.map(|(_, row)| row))
             }
             Some(Ok(Some(false) | None)) => Ok(None),
             None => {

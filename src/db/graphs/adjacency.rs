@@ -83,9 +83,15 @@ impl Session {
     ///
     /// Those of COMMIT, and of CREATE ADJACENCY INDEX.
     pub(in crate::db) fn committing(&self, st: &Arc<State>) -> Result<()> {
+        // A graph created is one the state holds, so a state holding none
+        // commits without a snapshot of the published catalog to compare.
+        let graphs = st.catalog.graphs();
+        if graphs.is_empty() {
+            return self.commit_in(st);
+        }
         let published = self.db.snapshot()?;
         let created: Vec<QualifiedName> =
-            st.catalog.graphs().into_iter().filter(|g| published.catalog.graph(&g.name) != Some(*g)).map(|g| g.name.clone()).collect();
+            graphs.into_iter().filter(|g| published.catalog.graph(&g.name) != Some(*g)).map(|g| g.name.clone()).collect();
         self.commit_in(st)?;
         if created.is_empty() {
             return Ok(());

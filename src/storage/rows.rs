@@ -72,6 +72,10 @@ pub struct Near {
     /// The reading transaction, the table and its bookkeeping there, found
     /// by the last read (`rows/mvcc/open.rs`).
     pub(crate) open: Option<(TxId, usize, Arc<dyn Any + Send + Sync>)>,
+    /// The zone of the last `visible_to_all_near`: the first row id of
+    /// it, the count of flag changes it was read at, and its answer
+    /// (`rows/zones/visible.rs`).
+    pub(crate) zone: Option<(RowId, u64, bool)>,
 }
 
 /// \[DESIGN\] Rows a table gives, with their ids, read as they are pulled.
