@@ -10325,8 +10325,11 @@ right truncation, 01004 (§6.13 GR11d ii, GR12d ii, GR13), and a
 comparison compares the value cut. The
 binder keeps the warning with the constant (`Expr::Warned`), and so does
 a kept plan's slot as it is filled (`logical/dynamic.rs`), so the
-statement completes with 01004 and the cut is never silent. A value
-that fits raises nothing. The cast stays a cast and not a store
+statement completes with 01004 and the cut is never silent. Such a
+constant counts as raising, as an expression that can raise an error
+does (D15), so a cursor whose plan holds one reads its rows at OPEN and
+completes with 01004 however far it is fetched, with ORDER BY or
+without. A value that fits raises nothing. The cast stays a cast and not a store
 assignment, as the standard says, so 22001 is raised only by the
 assignment of a value longer than its column, as a literal's is.
 

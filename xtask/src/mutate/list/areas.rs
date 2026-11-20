@@ -24,6 +24,7 @@ mod late;
 mod oltp;
 mod parallel;
 mod rewrites;
+mod set_types;
 mod studio;
 mod tpcc;
 mod txn_layer;
@@ -94,7 +95,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 39] {
+fn second() -> [&'static [Mutation]; 40] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -133,6 +134,7 @@ fn second() -> [&'static [Mutation]; 39] {
         &rewrites::REWRITES,
         &unnesting::UNNESTING,
         &insert_values::INSERT_VALUES,
+        &set_types::SET_TYPES,
         &expr::EXPR,
         &estimates::ESTIMATES,
     ]
