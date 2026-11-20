@@ -62,8 +62,7 @@ fn a_correlated_conjunction_is_estimated_on_the_sample() {
 /// Verifies: [DESIGN] RULES.md D382, MC/DC of the sample's eligibility,
 /// each condition shown to decide alone against the case that samples
 /// (two conjuncts of two columns of a table of 20,000 rows with a
-/// sample): a table of 5,000 rows, under `SAMPLED_FROM` (not sampled), no sample
-/// (not), one conjunct a synopsis answers (not) and a conjunct not
+/// sample): no sample (not), one conjunct a synopsis answers (not) and a conjunct not
 /// evaluable, of a `?` (not); a lone conjunct no synopsis answers, a
 /// comparison of two columns, is sampled.
 #[test]
@@ -72,7 +71,6 @@ fn the_sample_is_asked_only_of_what_it_can_answer() {
     let large = correlated(20_000);
     let (a, b) = (eq(0, 5), eq(1, 5));
     assert!(eligible(&[&a, &b], known(&large, &cost)).is_some(), "sampled");
-    assert!(eligible(&[&a, &b], known(&correlated(5_000), &cost)).is_none(), "too small");
     let unsampled = TableStats { sample: None, ..large.clone() };
     assert!(eligible(&[&a, &b], known(&unsampled, &cost)).is_none(), "no sample");
     assert!(eligible(&[&a], known(&large, &cost)).is_none(), "one conjunct a synopsis answers");
@@ -108,11 +106,11 @@ fn bounds_of_one_column_are_one_range() {
 }
 
 /// Verifies: [DESIGN] RULES.md D382, backoff: of conjuncts on two
-/// columns no sample answers, the most selective counts whole and the
+/// columns of a table that keeps no sample, the most selective counts whole and the
 /// other by its square root.
 #[test]
 fn conjuncts_no_sample_answers_combine_by_backoff() {
-    let stats = correlated(5_000);
+    let stats = TableStats { sample: None, ..correlated(5_000) };
     let (a, c) = (stats.selectivity(0, CompOp::Lt, &number(100)).unwrap(), stats.selectivity(2, CompOp::Eq, &number(3)).unwrap());
     let got = share(&stats, &[op(0, CompOp::Lt, 100), eq(2, 3)]);
     let (low, high) = if a < c { (a, c) } else { (c, a) };
@@ -136,4 +134,18 @@ fn rare_equalities_are_estimated_by_joint_distinct_values() {
     assert_eq!(share(&stats, &[eq(1, 2), eq(3, 13)]), 0.0_f64, "never together: B is D mod 10");
     let unseen = share(&stats, &[eq(0, 15), eq(3, 16)]);
     assert!(unseen <= 3.0_f64 / 1_024.0_f64, "{unseen}");
+}
+
+/// Verifies: [DESIGN] RULES.md D382, a small table: of a table its sample
+/// holds whole, a conjunction is its share of the sample however few rows
+/// it keeps, none if none; of a sample of half a table, a conjunction it
+/// keeps no row of is bounded by 3(1 - 1/2)/n, below the rule of three.
+#[test]
+fn a_sample_of_the_whole_table_is_exact() {
+    let small = correlated(1_000);
+    assert_eq!(share(&small, &[eq(0, 5), eq(2, 5)]), 1.0_f64 / 1_000.0_f64, "one row of 1,000: A = 5 is row 5, of C = 5");
+    assert_eq!(share(&small, &[eq(0, 5), eq(2, 6)]), 0.0_f64);
+    let half = correlated(2_048);
+    let none = share(&half, &[op(0, CompOp::Lt, 10), eq(2, 3), op(3, CompOp::Gt, 50)]);
+    assert!(none <= 1.5_f64 / 1_024.0_f64 + 1e-12_f64, "{none}");
 }

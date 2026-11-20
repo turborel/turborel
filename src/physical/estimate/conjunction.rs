@@ -34,7 +34,8 @@ pub fn conjunction(conds: &[Cond], known: Known<'_>) -> f64 {
     if let Some(sample) = sampled::eligible(&told, known) {
         let synopses = backoff::combined(&factors(&told, known));
         let mut shares = factors(&untold, known);
-        shares.push(sampled::kept(&told, sample, synopses, || rare(&told, sample, known)));
+        let of = known.stats.and_then(crate::stats::Statistics::rows).unwrap_or(0.0_f64);
+        shares.push(sampled::kept(&told, (sample, of), synopses, || rare(&told, sample, known)));
         return backoff::combined(&shares).clamp(0.0, 1.0);
     }
     backoff::combined(&factors(&all, known)).clamp(0.0, 1.0)

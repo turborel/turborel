@@ -156,3 +156,39 @@ fn a_growing_keys_range_past_its_greatest_keeps_the_rows_written_since() {
     let (past, plan) = estimated(&s, "SELECT * FROM G WHERE ID >= 6000");
     assert!(within(past, 500.0, 2.0), "{past}\n{plan}");
 }
+
+/// Verifies: [DESIGN] RULES.md D381, LIKE: a prefix narrower than a
+/// histogram's bucket keeps its part of the bucket, placed by its
+/// characters; a pattern with `_` after its prefix keeps the share of the
+/// sampled strings with the prefix that it keeps, near its rows, not a
+/// quarter of the prefix's.
+#[test]
+fn narrow_prefixes_and_single_character_wildcards_are_estimated() {
+    let rows = (0..20_000).map(|i| format!("({i}, 'name{}')", i % 2_000)).collect();
+    let db = database("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE N (ID INTEGER, S VARCHAR(20))", &[("N", rows)]);
+    db.maintain().unwrap();
+    let s = db.session("APP");
+    // name123 and name1230 to name1239: 11 values of 10 rows each.
+    let (narrow, plan) = estimated(&s, "SELECT * FROM N WHERE S LIKE 'name123%'");
+    assert!(within(narrow, 110.0, 3.0), "{narrow}\n{plan}");
+    // name409 to name499 by tens: 10 values.
+    let (wild, plan) = estimated(&s, "SELECT * FROM N WHERE S LIKE 'name4_9'");
+    assert!(within(wild, 100.0, 2.5), "{wild}\n{plan}");
+}
+
+/// Verifies: [DESIGN] RULES.md D382, a small table: of a table its sample
+/// holds whole, a conjunction of columns that never go together is
+/// estimated to keep no row, and one that keeps a few rows near them.
+#[test]
+fn a_small_tables_conjunction_is_counted_on_its_sample() {
+    let rows = (0..800).map(|i| format!("({i}, {}, {})", i % 8, i % 40)).collect();
+    let db = database("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE P (ID INTEGER, B INTEGER, S INTEGER)", &[("P", rows)]);
+    db.maintain().unwrap();
+    let s = db.session("APP");
+    // S mod 8 is B, so B = 1 and S < 1 never hold together.
+    let (none, plan) = estimated(&s, "SELECT * FROM P WHERE B = 1 AND S < 1");
+    assert!(none < 1.0, "{none}\n{plan}");
+    let (few, plan) = estimated(&s, "SELECT * FROM P WHERE B = 1 AND S < 10");
+    // S of 1 and 9: 2 of its 40 values.
+    assert!(within(few, 40.0, 1.2), "{few}\n{plan}");
+}

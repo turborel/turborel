@@ -10320,10 +10320,14 @@ the rows.
 A LIKE whose constant pattern begins with characters keeps the strings
 from that prefix up to the next one, by the common values and the
 histogram, never less than an equality with the prefix keeps, and a
-quarter of them if the rest of the pattern asks more than `%`
-(`physical/estimate/like.rs`). A pattern whose rest asks more is
-evaluated on the table's sample when it can be (D382), as no synopsis
-tells how often characters follow others.
+part of them if the rest of the pattern asks more than `%`
+(`physical/estimate/like.rs`): the share of the sampled strings with the
+prefix that the whole pattern keeps, if the sample holds at least 8 of
+them, as no synopsis tells how often characters follow others, else a
+quarter. Within a histogram's bucket a string is placed by its first
+four characters past the bucket's bounds' common prefix, read as a
+fraction, so a prefix narrower than a bucket keeps its part of it
+(`stats/parts.rs`).
 
 A B-link index counts the entries of a range of keys it need not check
 up to 128 of them. Past that it descends to each bound, taking at each
@@ -10350,14 +10354,19 @@ The planner estimates a table's conjuncts together
 (`physical/estimate/conjunction.rs`). Those on one column are one range,
 so a BETWEEN keeps the rows between its bounds and not the product of
 each half. Equalities with constants whose columns an index's key
-answers are one factor (D383). Of a table of at least 10,000 rows, a
-conjunction of two or more conjuncts over two or more columns, or with a
-conjunct no column's synopsis answers, is evaluated on the sample when
-each of its conjuncts can be, deterministic and of no subquery, routine,
-sequence value or `?` not yet given (`physical/estimate/sampled.rs`). Of
-n rows, k kept give k/n when k is at least 8. Fewer give the synopses'
-estimate, at most (k + 3)/n, the bound an empty sample allows
-(Hertzschuch et al., SIGMOD 2021). Of fewer, equalities of two or more
+answers are one factor (D383). A conjunction of two or more conjuncts
+over two or more columns, or with a conjunct no column's synopsis
+answers, is evaluated on the sample when each of its conjuncts can be,
+deterministic and of no subquery, routine, sequence value or `?` not yet
+given (`physical/estimate/sampled.rs`). Of n rows, k kept give k/n when
+k is at least 8 or the sample is the whole table, which it is of a table
+of up to 1,024 rows. Fewer give the synopses' estimate, at most
+(k + 3(1 - f))/n of a sample of the share f of the table: the rule of
+three, the bound an empty sample allows (Hertzschuch et al., SIGMOD
+2021), narrowed as the sample nears the whole table. The sample costs at
+most 1,024 evaluations however large the table, so small tables are
+sampled too, where the sample is most of the table and a conjunction
+that keeps no row is estimated to keep none. Of fewer, equalities of two or more
 columns with constants not common take the columns' joint distinct
 values in the sample instead, scaled to the table as a column's are
 (`physical/estimate/joint.rs`): a combination the sample holds keeps the

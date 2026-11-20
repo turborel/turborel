@@ -261,6 +261,28 @@ fn position(value: &Value) -> Option<f64> {
     value.kind()?.position(value)
 }
 
+/// \[DESIGN\] The characters past a bucket's common prefix by which a
+/// string is placed within it: four tell a place to within a part in
+/// billions of a bucket of letters.
+const PLACED_CHARACTERS: usize = 4;
+
+/// Where the string `value` lies between the strings `low` and `high`, a
+/// bucket's bounds, from 0 to 1, if all three are strings: their first
+/// `PLACED_CHARACTERS` characters past the bounds' common prefix read as
+/// the digits of a fraction in the base of the greatest of them. So a
+/// range of strings narrower than a bucket, as of a LIKE's prefix, keeps
+/// its part of the bucket, not none.
+fn string_within(low: &Value, high: &Value, value: &Value) -> Option<f64> {
+    let (Value::Char(l), Value::Char(h), Value::Char(v)) = (low, high, value) else { return None };
+    let common = l.chars().zip(h.chars()).take_while(|(a, b)| a == b).count();
+    let digits = |s: &str| s.chars().skip(common).take(PLACED_CHARACTERS).map(u32::from).collect::<Vec<u32>>();
+    let (l, h, v) = (digits(l), digits(h), digits(v));
+    let base = f64::from(l.iter().chain(&h).chain(&v).copied().max().unwrap_or(0).saturating_add(1));
+    let fraction = |d: &[u32]| d.iter().rev().fold(0.0_f64, |f, &c| (f + f64::from(c)) / base);
+    let (l, h, v) = (fraction(&l), fraction(&h), fraction(&v));
+    (h > l).then(|| ((v - l) / (h - l)).clamp(0.0, 1.0))
+}
+
 impl Histogram {
     /// The histogram of `sorted`, non-null values in ascending order, of
     /// at most `buckets` buckets.
@@ -287,7 +309,8 @@ impl Histogram {
     /// The fraction of the values below `value`, if the histogram has any:
     /// whole buckets below it, and within its bucket, a share interpolated
     /// between the bounds for a kind with a position (`SqlType::position`:
-    /// numbers, datetimes, intervals), half for others, as strings.
+    /// numbers, datetimes, intervals), of strings by their characters
+    /// past the bounds' common prefix (`string_within`), half for others.
     pub fn below(&self, value: &Value) -> Option<f64> {
         let (first, last) = (self.bounds.first()?, self.bounds.last()?);
         let buckets = self.bounds.len().saturating_sub(1);
@@ -304,7 +327,11 @@ impl Histogram {
             (Some(l), Some(h), Some(v)) => Some((l, h, v)),
             (None, _, _) | (_, None, _) | (_, _, None) => None,
         };
-        let within = span.filter(|(l, h, _)| h > l).map_or(0.5_f64, |(l, h, v)| ((v - l) / (h - l)).clamp(0.0, 1.0));
+        let within = span
+            .filter(|(l, h, _)| h > l)
+            .map(|(l, h, v)| ((v - l) / (h - l)).clamp(0.0, 1.0))
+            .or_else(|| self.bounds.get(lower).zip(self.bounds.get(upper)).and_then(|(l, h)| string_within(l, h, value)))
+            .unwrap_or(0.5_f64);
         let index = |n: usize| count(u64::try_from(n).unwrap_or(u64::MAX));
         Some(((index(lower) + within) / index(buckets)).clamp(0.0, 1.0))
     }
