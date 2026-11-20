@@ -64,6 +64,7 @@ fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
                 shaped.push(made);
                 (layout, width) = (after, exprs.len());
             }
+            Step::Count(count) => shaped.push(Shaped::Count(Arc::clone(count))),
             Step::Probe(_) => return None,
         }
     }

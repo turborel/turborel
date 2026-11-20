@@ -9,7 +9,8 @@
 //! workload over an IMDB-shaped schema (`bench/joins/imdb.rs`), planned alone and planned and run, their joins
 //! enumerated and ordered greedily (PLANNER.JOIN_ENUMERATION, RULES.md
 //! D308). Run with `cargo xtask bench`, on the harness (RULES.md
-//! R-BENCH-1).
+//! R-BENCH-1). Given `estimates` or `true-cardinalities` as an argument, it
+//! reports the workload's q-errors instead (`bench/joins/qerror.rs`).
 
 #![allow(
     clippy::unwrap_used,
@@ -25,6 +26,8 @@
 mod harness;
 #[path = "joins/imdb.rs"]
 mod imdb;
+#[path = "joins/qerror.rs"]
+mod qerror;
 
 use harness::{Bench, Case};
 use turborel::db::{Database, Session};
@@ -37,6 +40,9 @@ const SMALL: u64 = 20;
 const TITLES: u64 = 2_000;
 
 fn main() {
+    if qerror::run(TITLES) {
+        return;
+    }
     let bench = Bench::new("joins");
     let db = database();
     let s = db.session("B");

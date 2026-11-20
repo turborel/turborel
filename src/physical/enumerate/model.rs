@@ -87,6 +87,9 @@ pub(super) struct Model {
     pub(super) want_class: Option<usize>,
     /// The weights.
     pub(super) cost: CostModel,
+    /// \[EXTENSION\] The rows given of sets of its relations in place of
+    /// their estimates (`physical/cardinality/injected.rs`, RULES.md D377).
+    pub(super) injected: Vec<(Set, f64)>,
 }
 
 impl Model {
@@ -146,6 +149,9 @@ impl Model {
     /// The rows of the join of `left` and `right`, each a set and its
     /// rows, applying `applied`.
     pub(super) fn joined_rows(&self, (s1, r1): (Set, f64), (s2, r2): (Set, f64), applied: &Applied) -> f64 {
+        if let Some(&(_, given)) = self.injected.iter().find(|(s, _)| *s == s1 | s2) {
+            return given;
+        }
         let product = r1 * r2;
         let fraction = if let Some(pred) = applied.op.and_then(|o| self.preds.get(o)).and_then(Option::as_ref) {
             pred.fraction

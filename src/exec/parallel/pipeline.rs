@@ -25,7 +25,7 @@ use crate::db::State;
 use crate::error::Result;
 use crate::exec::{Runner, broken, eval, eval_cond};
 use crate::logical::{Cond, Expr, Truth, pushed_conjuncts};
-use crate::physical::Plan;
+use crate::physical::{NodeCount, Plan};
 use crate::settings::EXECUTOR_MORSEL_ROWS;
 use crate::storage::{Conjunction, Row, Split};
 use crate::txn::TxId;
@@ -43,6 +43,9 @@ pub(super) enum Step {
     /// [X3.135-1986 §5.20 GR2b] joined with each row of the built operand
     /// whose keys equal its own.
     Probe(Arc<Table>),
+    /// \[EXTENSION\] counted, as the rows of a counted operator, each
+    /// morsel's added once (RULES.md D378).
+    Count(Arc<NodeCount>),
 }
 
 /// The morsels of one table's split and the steps over its rows, the
@@ -95,10 +98,11 @@ impl Pipeline {
         for branch in &self.branches {
             let morsels = branch.split.morsels();
             if at < morsels {
-                let mut out = Vec::new();
+                let (mut out, mut tally) = (Vec::new(), vec![0_u64; branch.steps.len()]);
                 for read in branch.split.morsel(at) {
-                    feed(&branch.steps, read?.1, runner, &mut out)?;
+                    feed(&branch.steps, (&mut tally, read?.1), runner, &mut out)?;
                 }
+                counted(&branch.steps, &tally);
                 return Ok(out);
             }
             at = at.saturating_sub(morsels);
@@ -142,14 +146,23 @@ fn branched(plan: &Plan, (db, tx, rows): (&Arc<State>, TxId, usize), limit: &Lim
         return Ok(true);
     }
     if let Plan::Filter { cond, input, .. } = plan
-        && let Plan::SeqScan { table, columns, .. } = &**input
+        && let Plan::SeqScan { table, columns, .. } = input.bare()
     {
-        return Ok(scan_branch(db, (table, columns), (tx, rows), Some(cond), out));
+        let split = scan_branch(db, (table, columns), (tx, rows), Some(cond), out);
+        // [EXTENSION] a counted scan's rows counted before the filter's step (RULES.md D378).
+        if let (true, Plan::Counted(c), Some(branch)) = (split, &**input, out.last_mut()) {
+            c.count.opened();
+            branch.steps.insert(0, Step::Count(Arc::clone(&c.count)));
+        }
+        return Ok(split);
     }
-    let (step, input) = if let Plan::Filter { cond, input, .. } = plan {
+    let (step, input): (Step, &Plan) = if let Plan::Filter { cond, input, .. } = plan {
         (Step::Filter(cond.clone()), input)
     } else if let Plan::Project { exprs, input, .. } = plan {
         (Step::Project(exprs.clone()), input)
+    } else if let Plan::Counted(c) = plan {
+        c.count.opened();
+        (Step::Count(Arc::clone(&c.count)), &c.input)
     } else if let Plan::HashJoin { left, right, keys, .. } = plan {
         match built(right, keys, (db, tx), limit)? {
             Held::Kept(table) => (Step::Probe(table), left),
@@ -180,6 +193,16 @@ fn copied(step: &Step) -> Step {
         Step::Filter(c) => Step::Filter(c.clone()),
         Step::Project(e) => Step::Project(e.clone()),
         Step::Probe(t) => Step::Probe(Arc::clone(t)),
+        Step::Count(c) => Step::Count(Arc::clone(c)),
+    }
+}
+
+/// Adds to each counted step of `steps` the rows `tally` counted of it.
+fn counted(steps: &[Step], tally: &[u64]) {
+    for (step, &rows) in steps.iter().zip(tally) {
+        if let Step::Count(count) = step {
+            count.stepped(rows);
+        }
     }
 }
 
@@ -193,23 +216,36 @@ fn split(
 }
 
 /// Takes `row` through `steps`, the first first, adding each row it gives
-/// to `out`.
-fn feed(steps: &[Step], row: Row, runner: &Runner, out: &mut Vec<Row>) -> Result<()> {
+/// to `out`, and to `tally`, a count for each step, the rows that reach a
+/// counted one.
+fn feed(steps: &[Step], (tally, row): (&mut [u64], Row), runner: &Runner, out: &mut Vec<Row>) -> Result<()> {
     let Some((step, rest)) = steps.split_first() else {
         out.push(row);
         return Ok(());
     };
+    let (seen, later) = match tally.split_first_mut() {
+        Some((seen, later)) => (Some(seen), later),
+        None => (None, &mut [][..]),
+    };
     match step {
         Step::Filter(cond) => {
             if eval_cond(cond, &row, runner)? == Truth::True {
-                feed(rest, row, runner, out)?;
+                feed(rest, (later, row), runner, out)?;
             }
             Ok(())
         }
         Step::Project(exprs) => {
             let projected = exprs.iter().map(|e| eval(e, &row, runner)).collect::<Result<Row>>()?;
-            feed(rest, projected, runner, out)
+            feed(rest, (later, projected), runner, out)
         }
-        Step::Probe(table) => table.each_match(&row, |r| feed(rest, row.iter().chain(r.iter()).cloned().collect(), runner, out)),
+        Step::Probe(table) => {
+            table.each_match(&row, |r| feed(rest, (&mut *later, row.iter().chain(r.iter()).cloned().collect()), runner, out))
+        }
+        Step::Count(_) => {
+            if let Some(seen) = seen {
+                *seen = seen.saturating_add(1);
+            }
+            feed(rest, (later, row), runner, out)
+        }
     }
 }

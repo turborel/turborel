@@ -18,6 +18,7 @@
 //! (`keyed.rs`).
 
 mod count;
+mod counted;
 mod expr;
 mod groups;
 mod joined;

@@ -248,7 +248,8 @@ fn annotate(plan: &mut Plan, note: &str) {
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
-        | Plan::Polymorphic(..) => {}
+        | Plan::Polymorphic(..)
+        | Plan::Counted(_) => {}
     }
 }
 

@@ -26,7 +26,8 @@ pub(super) fn counted_table<'p>(read: &Read, input: &'p Plan) -> Option<&'p Qual
     if !read.groups.is_empty() || !read.taken.iter().all(|t| matches!(t, Taken::Count)) {
         return None;
     }
-    let Plan::SeqScan { table, order, located: false, .. } = input else { return None };
+    // [EXTENSION] of a counted scan too (RULES.md D378).
+    let Plan::SeqScan { table, order, located: false, .. } = input.bare() else { return None };
     order.is_empty().then_some(table)
 }
 

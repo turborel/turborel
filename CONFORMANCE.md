@@ -4284,6 +4284,14 @@ gives them. EXPLAIN is no key word. It is read as the statement only
 before SELECT, VALUES, TABLE, WITH or a parenthesis, so a table may be
 named EXPLAIN (`db/explain.rs`).
 
+`EXPLAIN ANALYZE <cursor specification>` runs the query in the session's
+transaction, reads its rows and drops them, and gives the physical plan
+with each operator's estimate, the rows it gave, the times it was opened
+and its time by the database's clock (RULES.md D376, D378). ANALYZE is
+no key word either. The library's `Session::analyzed` gives each
+operator's counts, and `Session::with_cardinalities` gives the planner
+row counts in place of its estimates (D377, `db/explain/analyzed.rs`).
+
 ### Plug-ins
 
 Plug-ins cover storage engines, index methods, functions, optimizer rules,

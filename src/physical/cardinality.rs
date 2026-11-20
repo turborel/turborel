@@ -28,6 +28,7 @@
 //! joins would be estimated a number of times exponential in its depth.
 
 mod groups;
+mod injected;
 mod joins;
 mod lineage;
 mod nodes;
@@ -44,6 +45,7 @@ use crate::logical::LogicalPlan;
 use crate::stats::Statistics;
 use crate::storage::cost_of;
 
+pub use injected::Injected;
 pub(super) use joins::{Classes, find};
 
 // ---------------------------------------------------------------------------

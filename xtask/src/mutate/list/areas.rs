@@ -1,6 +1,7 @@
 //! Each area's mutations, in the order they run, after the core's.
 
 mod altered_tables;
+mod analyze;
 mod batches;
 mod budget;
 // The count's, kept beside the other areas' files.
@@ -83,7 +84,7 @@ fn first() -> [&'static [Mutation]; 25] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 38] {
+fn second() -> [&'static [Mutation]; 39] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -123,6 +124,7 @@ fn second() -> [&'static [Mutation]; 38] {
         &insert_values::INSERT_VALUES,
         &expr::EXPR,
         &estimates::ESTIMATES,
+        &analyze::ANALYZE,
     ]
 }
 

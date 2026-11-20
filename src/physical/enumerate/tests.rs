@@ -43,6 +43,7 @@ fn inner(rows: &[f64], edges: &[(usize, usize, f64)]) -> (Vec<Shape>, Model) {
         spans: (0..n).map(|r| (r, 1)).collect(),
         cost: CostModel::default(),
         want_class: None,
+        injected: Vec::new(),
     };
     (shapes, model)
 }

@@ -63,7 +63,8 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => false,
+        | Plan::Transition { .. }
+        | Plan::Counted(_) => false,
     }
 }
 

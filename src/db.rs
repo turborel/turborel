@@ -46,9 +46,11 @@
 //! storage engines and indexes, and its isolation by the engine, or by the transaction coordinator's table locks for an engine that
 //! leaves it to them (RULES.md D29). A `Session` is used by one thread at a time, and may move between threads between calls.
 
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, Weak};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    sync::{Arc, Mutex, Weak},
+};
 
 use self::area::commands;
 use crate::binder::OutColumn;
@@ -263,6 +265,8 @@ struct SessionState {
     /// records the rows of its delta table, if a query reads it
     /// (`db/delta.rs`).
     delta: Option<delta::Collector>,
+    /// \[EXTENSION\] The rows it gave in place of estimates (`db/explain/injected.rs`).
+    injected: Option<Arc<crate::physical::Injected>>,
 }
 
 /// \[DESIGN\] An application program bound to a `<module>`: an authorization
