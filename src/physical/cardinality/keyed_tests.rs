@@ -108,7 +108,7 @@ impl Seeded {
         self.0 ^= self.0 << 13_u32;
         self.0 ^= self.0 >> 7_u32;
         self.0 ^= self.0 << 17_u32;
-        self.0 % n
+        self.0.checked_rem(n).unwrap_or(0)
     }
 }
 
