@@ -63,7 +63,10 @@ impl State {
             | AlterColumnAction::Identity { .. }
             | AlterColumnAction::DropIdentity
             | AlterColumnAction::DropExpression
-            | AlterColumnAction::Rename(_) => None,
+            | AlterColumnAction::Rename(_)
+            | AlterColumnAction::SetNotNull
+            | AlterColumnAction::DropNotNull
+            | AlterColumnAction::SetDataType(_) => None,
         };
         let changed = DataType::reference((*r.referenced).clone(), scope);
         let old = r.scope.as_ref().map(|s| QualifiedName { auth: s.schema.clone(), ident: s.name.clone() });

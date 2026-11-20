@@ -123,6 +123,7 @@ pub(super) fn of_alter(a: &AlterAction) -> Option<SqlState> {
         | AlterAction::Truncate { .. }
         | AlterAction::AttachPartition { .. }
         | AlterAction::DetachPartition(_)
+        | AlterAction::RenameTable { .. }
         | AlterAction::Storage(_) => None,
     }
 }

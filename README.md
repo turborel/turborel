@@ -185,7 +185,9 @@ behind it, and each can be replaced or added to.
 - Triggers before, after and instead of a change, for each row or
   statement, and roles with privileges granted and revoked.
 - Domains, assertions, temporary tables, scrollable cursors and dynamic SQL.
-- Columns renamed in place, without copying their rows.
+- Columns renamed in place, without copying their rows, and tables renamed.
+- A column's NOT NULL set or dropped and its data type widened, the rows
+  checked or copied a row at a time.
 - Import of CSV and tab-separated files through the client.
 - A command-line client with line editing, completion, describe commands,
   variables, scripting and seven output formats ([guide](doc/client/05-turborel-commands.md)).
