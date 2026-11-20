@@ -11,6 +11,7 @@ use super::super::{RowTable, key};
 use super::{Map, SAMPLED, ZONE_ROWS, Zone, Zones, joined, past, zone_at};
 use crate::engine::tree::Direction;
 use crate::error::Result;
+use crate::storage::Near;
 use crate::storage::RowId;
 use crate::sync::{lock_builtin, read};
 use crate::txn::Timestamp;
@@ -44,6 +45,25 @@ impl Zones {
     /// (see the module's documentation).
     pub(in crate::engine::rows) fn visible(&self, id: RowId) -> bool {
         read(&self.map).is_ok_and(|map| map.visible.get(zone_at(id)).is_some_and(|flag| flag.load(AtomicOrdering::Acquire)))
+    }
+
+    /// `visible` of row `id`, answered from the zone `near` keeps of the
+    /// last call while no zone's flag has been written since (`changed`),
+    /// so a scan reading rows in id order takes the map's lock once a
+    /// zone, not once a row, which readers on many threads would wait on
+    /// one another for. A flag is cleared, and the count bumped, under the
+    /// zone's lock before the row's index entries are written (`change`),
+    /// so an entry a reader finds of a version it may not see is never
+    /// answered from a flag kept before that write.
+    pub(in crate::engine::rows) fn visible_near(&self, id: RowId, near: &mut Near) -> bool {
+        let changed = self.changed.load(AtomicOrdering::Acquire);
+        let first = id.checked_div(ZONE_ROWS).and_then(|zone| zone.checked_mul(ZONE_ROWS)).unwrap_or(id);
+        if let Some((_, _, visible)) = near.zone.filter(|&(kept, at, _)| kept == first && at == changed) {
+            return visible;
+        }
+        let visible = self.visible(id);
+        near.zone = Some((first, changed, visible));
+        visible
     }
 
     /// The rows of the zones whose rows every reader sees alone, summed,
@@ -125,6 +145,7 @@ impl RowTable {
         let collected = map.pending.get(at).is_some_and(|p| p.load(AtomicOrdering::Acquire) == 0);
         if let Some(flag) = map.visible.get(at) {
             flag.store(seen == Seen::Visible && collected, AtomicOrdering::Release);
+            self.zones.changed.fetch_add(1, AtomicOrdering::AcqRel);
         }
         zone.unsettled = false;
         self.zones.unsettled.fetch_sub(1, AtomicOrdering::AcqRel);

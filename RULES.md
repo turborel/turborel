@@ -2495,7 +2495,11 @@ A comparison scan is index-only when every column it reads is in the key,
 of a type the key codec gives back exactly (`engine::key::restores`). A versioned
 engine keeps an entry per version, so a row is made from its entry only
 where every reader sees that row's one version
-(`TableStorage::visible_to_all`). An entry that collection fails to take
+(`TableStorage::visible_to_all`); a scan reading rows in id order asks it
+of each row with what it keeps of the last (`visible_to_all_near`), which
+the row store answers from the zone kept while no zone's flag has been
+written, so readers on many threads do not take its lock a row at a
+time. An entry that collection fails to take
 back is owed (`txn/owed.rs`), and a close owing any is not clean.
 
 `CREATE INDEX`, `DROP INDEX` and `ALTER INDEX` are extensions, run by the
@@ -3388,9 +3392,7 @@ owner. A single rectangular ring can locate points through its closed
 envelope. Recognition requires four distinct axis-aligned corners and
 closure, in either ring direction; holes, diagonal edges and collapsed
 rectangles retain general point location. It uses no area arithmetic or
-tolerance, including for subnormal and extreme coordinates. A recognized
-rectangle is valid by its shape, so its preparation skips the exact
-self-meeting test every other polygon takes before it may locate points.
+tolerance, including for subnormal and extreme coordinates.
 Polygon and MultiPolygon operands with at least one ring of 64
 edges can also keep a Y-interval tree for each ring. The threshold follows
 the crossover the geometry benchmark measures (`bench/geometry.rs`); shorter boundaries retain

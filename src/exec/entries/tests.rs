@@ -29,6 +29,7 @@ fn projected_probes_renew_locality_without_dropping_read_state() {
                 at: Some(3),
                 bytes: vec![1, 2, 3],
                 open: Some((NO_TRANSACTION, 4, Arc::clone(&bookkeeping))),
+                zone: None,
             },
             projection,
         };

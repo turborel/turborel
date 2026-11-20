@@ -14,6 +14,7 @@ use crate::error::Code;
 use crate::hash::crc::{CRC32_ISCSI, Crc};
 use crate::index::Probe;
 use crate::log::{Log, MemoryLog};
+use crate::storage::Near;
 use crate::storage::{Condition, Conjunct, Conjunction, Row, RowId, TableStorage};
 use crate::sync::lock_builtin;
 use crate::txn::NO_TRANSACTION;
@@ -518,6 +519,29 @@ fn a_write_inside_its_zones_bounds_stales_nothing() {
     table.begin(11, 3).unwrap();
     table.delete(11, ids[0]).unwrap();
     assert!(stale(&table), "the least value deleted");
+}
+
+/// Verifies: [DESIGN] RULES.md D34, zone maps: a reader asking of rows in
+/// id order with what it keeps is answered of the zone kept, and a write
+/// in the zone, which clears its flag before the row's index entries are
+/// written, is seen by the next ask, whatever the reader kept; a row of
+/// another zone is asked of its own.
+#[test]
+fn a_kept_zone_flag_answers_until_a_write_clears_it() {
+    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
+    let ids: Vec<RowId> = (0..100).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
+    let far = ids[0] + ZONE_ROWS * 3;
+    summed(&table, 1);
+    let mut near = Near::default();
+    assert!(table.zones.visible_near(ids[0], &mut near), "settled visible");
+    assert_eq!(near.zone.map(|(first, _, visible)| (first, visible)), Some((ids[0] - ids[0] % ZONE_ROWS, true)));
+    assert!(table.zones.visible_near(ids[99], &mut near), "the zone kept answers");
+    assert!(!table.zones.visible_near(far, &mut near), "a zone not made is not visible");
+    assert!(table.zones.visible_near(ids[50], &mut near), "the first zone asked again");
+    table.begin(10, 1).unwrap();
+    table.delete(10, ids[40]).unwrap();
+    assert!(!table.zones.visible_near(ids[0], &mut near), "the write cleared the flag the reader kept");
+    assert!(!table.zones.visible(ids[0]));
 }
 
 /// Verifies: [DESIGN] RULES.md D31, D34, zone maps: a zone a write left
