@@ -68,6 +68,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | MEMORY.BUDGET_BYTES | 1073741824 | INTEGER FROM 1048576 TO 9223372036854775807 | at once |  |
 | MEMORY.WORK_BYTES | 4194304 | INTEGER FROM 65536 TO 9223372036854775807 | at once | *session* |
 | OPTIMIZER.CONSTANT_FOLDING | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.INLINE_FUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.MAX_PASSES | 64 | INTEGER FROM 1 TO 1000000 | at once |  |
 | OPTIMIZER.MERGE_FILTERS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PREDICATE_TRANSITIVITY | ON | ONE OF ON, OFF | at once | *session* |
@@ -79,6 +80,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | OPTIMIZER.PUSH_RAISING_FILTER_INTO_PRODUCT | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.REMOVE_REDUNDANT_DISTINCT | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.SIMPLIFY_CONDITIONS | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.UNNEST_SUBQUERIES | ON | ONE OF ON, OFF | at once | *session* |
 | PLANNER.EQUAL_SELECTIVITY | 1E-2 | NUMBER FROM 0E0 TO 1E0 | at once |  |
 | PLANNER.INDEX_DESCENT_COST | 6E0 | NUMBER FROM 0E0 TO 1.7976931348623157E308 | at once |  |
 | PLANNER.NULL_FRACTION | 1E-2 | NUMBER FROM 0E0 TO 1E0 | at once |  |
@@ -162,6 +164,7 @@ Each in a sentence:
 - **MEMORY.BUDGET_BYTES**: The bytes the database's buffer pools, work areas and caches may reserve in all, with the files of a database kept in memory, its pages, temporary tables and spills; lowering it takes back none they hold.
 - **MEMORY.WORK_BYTES**: The bytes a sort, hash join, adaptive spatial join, grouping, DISTINCT, EXCEPT or INTERSECT holds in memory before it spills to a work area of as many, reserved of MEMORY.BUDGET_BYTES; so too a cursor's rows read ahead of its fetches or kept to scroll among; the rows an INSERT, UPDATE or DELETE chooses before changing any, what it did, kept for its constraints' checks (a deferred one's until made), and what its referential actions keep; and a session's temporary tables' pages, the rest in a spill file.
 - **OPTIMIZER.CONSTANT_FOLDING**: Whether the optimizer's rule constant_folding rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.INLINE_FUNCTIONS**: Whether the optimizer's rule inline_functions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.MAX_PASSES**: The most passes the optimizer makes over a plan.
 - **OPTIMIZER.MERGE_FILTERS**: Whether the optimizer's rule merge_filters rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.PREDICATE_TRANSITIVITY**: Whether the optimizer's rule predicate_transitivity rewrites plans: ON; or OFF, as to compare plans made without it.
@@ -173,6 +176,7 @@ Each in a sentence:
 - **OPTIMIZER.PUSH_RAISING_FILTER_INTO_PRODUCT**: Whether the optimizer's rule push_raising_filter_into_product rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.REMOVE_REDUNDANT_DISTINCT**: Whether the optimizer's rule remove_redundant_distinct rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.SIMPLIFY_CONDITIONS**: Whether the optimizer's rule simplify_conditions rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.UNNEST_SUBQUERIES**: Whether the optimizer's rule unnest_subqueries rewrites plans: ON; or OFF, as to compare plans made without it.
 - **PLANNER.EQUAL_SELECTIVITY**: The fraction of rows an equality keeps when the statistics do not tell.
 - **PLANNER.INDEX_DESCENT_COST**: The cost of one level of an index descent, its page held by the buffer pool, a row read in sequence costing 1.
 - **PLANNER.NULL_FRACTION**: The fraction of a column's values taken to be null when the statistics do not tell.

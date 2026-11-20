@@ -9,7 +9,7 @@ use crate::binder::{DescribedKey, OutColumn, described_key, family_in, member_pl
 use crate::catalog::QualifiedName;
 use crate::error::{Result, Warnings};
 use crate::logical::LogicalPlan;
-use crate::optimizer::plugged;
+use crate::optimizer::{INLINE_FUNCTIONS, UNNEST_SUBQUERIES, plugged};
 use crate::params::Params;
 use crate::physical::{PhysicalPlanner, Plan};
 use crate::value::Value;
@@ -31,6 +31,19 @@ pub(super) struct Compiled {
 pub(super) fn plan(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
     planned(st, logical, PhysicalPlanner::new(st), None)
 }
+
+/// As `plan`, of a plan whose rows are a table's, read with their ids to
+/// change them: its subqueries left nested and its functions invoked, so
+/// the plan stays an access to that table (RULES.md D318).
+pub(super) fn plan_rows(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
+    let (optimized, trace) = plugged::optimize(st, logical, (None, ROW_ACCESS_OFF));
+    let physical = PhysicalPlanner::new(st).plan(&optimized);
+    (optimized, trace, physical)
+}
+
+/// The rules a plan of a table's rows read with their ids is optimized
+/// without, which would join other tables' rows with them.
+const ROW_ACCESS_OFF: &[&str] = &[UNNEST_SUBQUERIES, INLINE_FUNCTIONS];
 
 /// As `plan`, an extension's optimizer rule skipped raising its warning
 /// to `heard` (RULES.md D277).
@@ -59,7 +72,7 @@ fn planned(
     planner: PhysicalPlanner<'_>,
     heard: Option<&Warnings>,
 ) -> (LogicalPlan, Vec<&'static str>, Plan) {
-    let (optimized, trace) = plugged::optimize(st, logical, heard);
+    let (optimized, trace) = plugged::optimize(st, logical, (heard, &[]));
     let physical = planner.plan(&optimized);
     (optimized, trace, physical)
 }
@@ -104,7 +117,7 @@ impl Session {
             }
             None => members,
         };
-        let (optimized, trace, physical) = plan(st, logical);
+        let (optimized, trace, physical) = plan_rows(st, logical);
         let c = Compiled { columns, key: None, bound: String::new(), trace, optimized, physical };
         let Some(table) = only_table(&c.optimized) else { return Ok(None) };
         // [ISO/IEC 9075-2:2023 §7.16 SR25c] every result column has a
@@ -115,7 +128,7 @@ impl Session {
         }
         let mut subtables = Vec::new();
         for (member, other) in members.iter().skip(1).zip(others) {
-            let (best, _, run) = plan(st, other);
+            let (best, _, run) = plan_rows(st, other);
             if only_table(&best).as_ref() != Some(member) {
                 return Ok(None);
             }
