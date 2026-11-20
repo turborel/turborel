@@ -3,6 +3,8 @@
 use super::*;
 use crate::index::xml::{Method, VALUE_PREFIX_BYTES};
 
+mod truncated;
+
 /// Verifies: [DESIGN] RULES.md D106: ordinals compare as bytes as the
 /// numbers they write, their end below every one, and read back.
 #[test]

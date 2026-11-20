@@ -6,6 +6,7 @@ mod functions;
 mod kernels;
 mod quantizers;
 mod text;
+mod truncated;
 
 use super::*;
 use crate::bytes::Reader;

@@ -4,6 +4,8 @@ use crate::spatial::curves::types::{Coord, Curve, Dims};
 use crate::spatial::formats::samples::values;
 use crate::spatial::formats::tree::{Body, Surface};
 
+mod truncated;
+
 /// A catalog of two systems.
 struct Catalog;
 

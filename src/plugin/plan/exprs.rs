@@ -233,3 +233,6 @@ fn literal(data_type: &str, value: &Value) -> Result<Expr> {
     let typed: Typed = Some(t.clone());
     Ok(if same(&of_value(&v), &typed) { Expr::Const(v) } else { Expr::Cast(Box::new(Expr::Const(v)), t) })
 }
+
+#[cfg(test)]
+mod tests;

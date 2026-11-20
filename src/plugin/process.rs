@@ -29,8 +29,11 @@ const TAIL_BYTES: usize = 4096;
 const ERROR_CHUNK: usize = 512;
 /// The environment variables a program is given, of the database's: what
 /// a program needs to find others and a temporary directory on the three
-/// platforms, and nothing that may hold a secret.
-const KEPT_ENVIRONMENT: [&str; 5] = ["PATH", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP"];
+/// platforms, and nothing that may hold a secret. `LLVM_PROFILE_FILE`
+/// names where a program built with coverage writes its profile, so a
+/// plug-in run by the measured tests is measured too (R-COV); a program
+/// built without coverage never reads it.
+const KEPT_ENVIRONMENT: [&str; 6] = ["PATH", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP", "LLVM_PROFILE_FILE"];
 /// What a reservation of a frame's bytes is called.
 const FRAME_RESERVED: &str = "a plug-in's message";
 

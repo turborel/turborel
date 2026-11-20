@@ -25,7 +25,7 @@ const BACKUP: ReplicaId = ReplicaId(2);
 
 /// A database in `fs` at `dir`, with `rows` rows of T committed and a
 /// checkpoint taken.
-fn filled(fs: &Arc<dyn FileSystem>, dir: &str, rows: i32) -> Database {
+pub(crate) fn filled(fs: &Arc<dyn FileSystem>, dir: &str, rows: i32) -> Database {
     let db = Database::new();
     db.open_files(fs, Path::new(dir), &OpenOptions::default()).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER NOT NULL UNIQUE, S CHAR(200))").unwrap();

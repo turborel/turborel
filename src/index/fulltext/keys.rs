@@ -418,3 +418,7 @@ pub(super) fn take_varint(bytes: &[u8]) -> Result<(u64, &[u8])> {
     }
     Err(corrupt())
 }
+
+// Unit tests: the entries' layout written and read (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

@@ -269,3 +269,6 @@ pub fn put_f32s(out: &mut Vec<u8>, all: &[f32]) {
 pub fn f32s(r: &mut Reader<'_>) -> Result<Vec<f32>> {
     (0..r.u32()?).map(|_| r.u32().map(f32::from_bits)).collect()
 }
+
+#[cfg(test)]
+mod tests;
