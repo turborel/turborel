@@ -95,6 +95,7 @@ mod logging;
 mod marks;
 mod owed;
 mod reading;
+mod row_waits;
 mod savepoints;
 mod stop;
 mod undo;
@@ -292,6 +293,9 @@ pub(crate) struct Transactions {
     /// What cancels the statements of each open transaction, for a plan's
     /// scans to look at (`txn/stop.rs`).
     stops: Stops,
+    /// The end of each open transaction, which waiters for its rows queue
+    /// on (`txn/row_waits.rs`).
+    ends: row_waits::Ends,
     /// The lock of each name a transaction defines, a table's or a view's,
     /// or grants or revokes privileges on (`db/definitions.rs`): the
     /// table's own once it is published, so the two are one.
@@ -351,6 +355,7 @@ impl Default for Transactions {
             noted: AtomicBool::new(false),
             folds: Mutex::new(BTreeSet::new()),
             stops: Stops::default(),
+            ends: row_waits::Ends::default(),
             names: Mutex::new(HashMap::new()),
         }
     }
@@ -366,6 +371,7 @@ impl Transactions {
         let (id, snapshot) = self.clock.begin();
         self.active.fetch_add(1, Ordering::SeqCst);
         self.stops.insert(id, Arc::clone(&stop));
+        self.ends.begin(id);
         Txn {
             id,
             snapshot: AtomicU64::new(snapshot),
@@ -545,6 +551,8 @@ impl Txn {
         for table in held {
             table.release(self.id);
         }
+        // [DESIGN] RULES.md D442: the waiters for its rows go on, in turn.
+        self.shared.ends.end(self.id);
         let pinned = mem::take(&mut lock_builtin(&self.state).pinned);
         if self.open.swap(false, Ordering::AcqRel) {
             self.shared.clock.end(self.id, self.snapshot());

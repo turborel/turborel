@@ -169,8 +169,9 @@ impl State {
         if let (Some(stamp), Write::Update(row)) = (&stamp, &mut write) {
             stamp.put(row);
         }
-        let mut seen: Option<(Timestamp, Row)> = None;
-        let mut tries = 0_usize;
+        // The version it rechecked, and its turn behind the row's earlier
+        // waiters (RULES.md D442).
+        let (mut seen, mut tries, mut turn): (Option<(Timestamp, Row)>, usize, _) = (None, 0, None);
         loop {
             if let Write::Update(row) = &mut write {
                 self.keep_lobs(tx, table, Some(id), row)?;
@@ -180,6 +181,7 @@ impl State {
                 let _gate = self.tx.gate.enter();
                 self.write_once(tx, (table, id), (&write, stamp.as_ref()), seen.as_ref())
             };
+            drop(turn.take());
             let e = match attempt {
                 Ok((old, history)) => {
                     if let (Some(history), Some(stamp)) = (history, &stamp) {
@@ -196,7 +198,7 @@ impl State {
             }
             let newest = self.storage_of(table)?.newest(tx.id, id)?;
             if let Some(writer) = newest.writer {
-                self.wait_for_writer(tx, table, writer)?;
+                turn = tx.wait_for_row(&format_args!("a row of {table}"), writer)?;
                 seen = None;
                 continue;
             }

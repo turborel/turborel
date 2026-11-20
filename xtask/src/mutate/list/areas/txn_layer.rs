@@ -1,12 +1,13 @@
 //! The mutations of the transaction layer (RULES.md R-TEST-9, D440 on):
 //! a commit's one store in the status table, a version committed but not
-//! stamped appended stamped, snapshots at the durable timestamp, and a
-//! reply held for what it read past its snapshot.
+//! stamped appended stamped, snapshots at the durable timestamp, a reply
+//! held for what it read past its snapshot, and an exclusive request
+//! waiting for the shared holds in stripes.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the transaction layer whose removal must fail their tests.
-pub const TXN_LAYER: [Mutation; 4] = [
+pub const TXN_LAYER: [Mutation; 5] = [
     Mutation {
         name: "txn-commit-not-stored",
         package: Package::Core,
@@ -48,6 +49,16 @@ pub const TXN_LAYER: [Mutation; 4] = [
         original: "            self.depends.fetch_max(at, Ordering::SeqCst);",
         replacement: "",
         integration: &["commit_visibility::a_reply_waits_for_the_commit_it_wrote_over"],
+        unit: &[],
+    },
+    Mutation {
+        name: "txn-stripes-not-waited",
+        package: Package::Core,
+        breaks: "an exclusive request does not wait for the shared holds taken in stripes",
+        file: "src/txn/locks.rs",
+        original: "        let fast = if striped { lk.fast.others(tx.id) } else { Vec::new() };",
+        replacement: "        let fast: Vec<Holder> = Vec::new();",
+        integration: &["row_waits::a_definition_waits_for_holds_in_stripes_and_its_deadlock_is_refused"],
         unit: &[],
     },
 ];

@@ -1,9 +1,10 @@
 //! A row's second writer under LOCKS.WAIT ON [ISO/IEC 9075:1992 §4.28;
-//! RULES.md D28, D29]: it waits for the first to end; at READ COMMITTED it
+//! RULES.md D28, D29, D442]: it waits for the first to end, on the first's
+//! own end, behind the writers that waited before it; at READ COMMITTED it
 //! then writes the version the first committed if its search condition
 //! still holds, and at REPEATABLE READ or SERIALIZABLE it is refused unless
 //! the first rolled back. A wait that would deadlock, or lasts past
-//! LOCKS.TIMEOUT_MS, is refused.
+//! LOCKS.TIMEOUT_MS, is refused, a table's lock held in stripes too.
 
 use std::thread;
 
@@ -166,4 +167,64 @@ fn a_row_wait_past_its_timeout_is_refused() {
     waiter.run("SET LOCKS.WAIT = 'OFF'").unwrap();
     waiter.rollback().unwrap();
     assert_eq!(waiter.run("UPDATE T SET V = 12 WHERE K = 1").map_err(|e| e.code), Err(Code::Conflict), "no wait");
+}
+
+/// Waits until `n` statements of `db` wait, for ten seconds at most.
+fn until_waiting(db: &Database, n: usize) {
+    let began = std::time::Instant::now();
+    while db.waiting_statements().unwrap() < n {
+        assert!(began.elapsed().as_secs() < 10, "{n} statements never waited");
+        thread::yield_now();
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D28, D442: writers waiting for one row go on
+/// in the order they began to wait: once the first writer commits, the
+/// first waiter writes, and the second writes over its change.
+#[test]
+fn waiters_for_a_row_go_on_in_the_order_they_waited() {
+    let db = database();
+    let first = db.session("A");
+    first.run("UPDATE T SET V = 0 WHERE K = 1").unwrap();
+    let waiter = |n: i32| {
+        let s = db.session("A");
+        s.run("SET TRANSACTION ISOLATION LEVEL READ COMMITTED").unwrap();
+        thread::spawn(move || {
+            s.run(&format!("UPDATE T SET V = V * 10 + {n} WHERE K = 1")).unwrap();
+            thread::sleep(std::time::Duration::from_millis(20));
+            s.commit().unwrap();
+        })
+    };
+    let one = waiter(1);
+    until_waiting(&db, 1);
+    let two = waiter(2);
+    until_waiting(&db, 2);
+    first.commit().unwrap();
+    one.join().unwrap();
+    two.join().unwrap();
+    assert_eq!(value(&db.session("A"), 1), "12", "the first waiter wrote first");
+}
+
+/// Verifies: [DESIGN] RULES.md D27, D442: a change of a table's definitions
+/// waits for the writers whose shared holds of its lock are in stripes, and
+/// a writer that would then wait for its row is refused the deadlock
+/// (SQLCODE -911); once it rolls back the change goes on.
+#[test]
+fn a_definition_waits_for_holds_in_stripes_and_its_deadlock_is_refused() {
+    let db = database();
+    let (a, b) = (db.session("A"), db.session("A"));
+    a.run("UPDATE T SET V = 11 WHERE K = 1").unwrap();
+    b.run("UPDATE T SET V = 21 WHERE K = 2").unwrap();
+    let altering = thread::spawn(move || {
+        let done = b.run("ALTER TABLE T ADD COLUMN W INTEGER").map(drop).map_err(|e| e.code);
+        (done, b)
+    });
+    until_waiting(&db, 1);
+    assert!(!altering.is_finished(), "the change waits for the first writer");
+    assert_eq!(a.run("UPDATE T SET V = 22 WHERE K = 2").map(drop).map_err(|e| e.code), Err(Code::Conflict));
+    a.rollback().unwrap();
+    let (done, b) = altering.join().unwrap();
+    assert_eq!(done, Ok(()));
+    b.commit().unwrap();
+    assert_eq!(rows(&db.session("A"), "SELECT V, W FROM T WHERE K = 2").unwrap(), ["21,NULL"]);
 }

@@ -387,6 +387,7 @@ verification approach DO-178C expects (§8).
 | D419 | A row of values that reads nothing is evaluated, not planned |
 | D440 | A commit is one store in a status table, and its versions are stamped after its locks are released |
 | D441 | A commit releases its locks before its sync; snapshots read at the durable timestamp, and replies wait for what they rest on |
+| D442 | Row waits queue on the writer's own end in order, and shared table locks are held in stripes |
 
 ### The project
 
@@ -10888,6 +10889,40 @@ The semantics hold for these reasons.
 - A commit with LOG.COMMIT_SYNC OFF, a commit that logged nothing and a
   refused commit count as durable as they end, as they did when they
   returned.
+
+#### D442. Row waits queue on the writer's own end in order, and shared table locks are held in stripes
+
+A row's second writer waited on its table's lock, which the first held
+shared to its end. Every release of the lock woke every waiter of the
+table, and they raced for the row. Every writer of a hot table also took
+the lock's one list of holders twice.
+
+Each open transaction now has an end of its own (`txn/row_waits.rs`).
+A writer that meets a row another open transaction changed takes a
+ticket on that transaction's end and waits. When it ends, the waiters go
+on one at a time in ticket order, each once the one before has tried its
+write again. A shared hold of a table's lock is taken in one of sixteen
+stripes, chosen by the transaction's id, while no exclusive request
+blocks them (`txn/locks/fast.rs`). An exclusive request marks the lock
+blocked under its holders' lock, then waits for the stripes to hold no
+one else.
+
+The semantics hold for these reasons.
+
+- A waiter goes on only once the writer it waited for has ended, as
+  before, and then writes as D28 and D29 say. The order among waiters
+  changes only which of them writes first, which no isolation level
+  fixes.
+- Every row wait is in the graph of who waits for whom, as a lock wait
+  is, so a cycle through row waits and lock waits is refused at once. An
+  exclusive request names the stripes' holders in the graph too.
+- A shared request reads the blocked mark under its stripe's lock, and
+  the exclusive request reads the stripes after setting the mark. So
+  either the shared request takes the slow path, or the exclusive request
+  sees its hold and waits for it. No shared and exclusive hold are ever
+  granted together.
+- A waiter that gives up, cancelled or timed out, gives up its ticket, so
+  the waiters behind it are not held.
 
 ## 2. Project layout
 
