@@ -97,3 +97,44 @@ fn ordpaths_and_counts_read_back() {
     assert_eq!(after(&[1, 0xFF]), Bound::Excluded(vec![2]));
     assert_eq!(after(&[0xFF]), Bound::Unbounded);
 }
+
+/// Checks `result` is the error of a malformed key, SQLCODE -916.
+fn malformed<T: std::fmt::Debug>(what: &str, result: Result<T>) {
+    assert_eq!(result.expect_err(what).sqlcode(), -916_i32, "{what}");
+}
+
+/// Verifies: [DESIGN] RULES.md D106: an entry of each method cut short
+/// anywhere within its fields, a string value or a pathed entry cut
+/// short, a value of no kind, an ordinal longer than eight octets and a
+/// string of a bad end are each a malformed key, SQLCODE -916, never a
+/// panic.
+#[test]
+fn keys_cut_short_are_malformed() {
+    let value = string_value(b"x\0y", VALUE_PREFIX_BYTES);
+    let number = number_value(2.5);
+    let ordpath = [ordinal_of(1), ordinal_of(300)].concat();
+    for v in [&value, &number] {
+        let node = Node { path: 70_000, kind: ELEMENT, value: v, ordpath: &ordpath };
+        for method in [Method::Path, Method::Value, Method::Property, Method::Primary] {
+            let key = entry(method, &node, 77);
+            let fields_end = if method == Method::Primary { key.len() } else { key.len().saturating_sub(ordpath.len().saturating_add(1)) };
+            for cut in 0..fields_end {
+                malformed(&format!("{method:?} cut at {cut}"), parse_entry(method, &key[..cut]));
+            }
+        }
+        let pathed_key = pathed(&node, 77);
+        let at = [vec![PATHED], 77_u64.to_be_bytes().to_vec(), ordinal_of(70_000)].concat().len();
+        assert_eq!(pathed_fields(&pathed_key, at).unwrap(), (v.as_slice(), ordpath.as_slice()));
+        for cut in at..pathed_key.len() {
+            malformed(&format!("pathed cut at {cut}"), pathed_fields(&pathed_key[..cut], at));
+        }
+    }
+    for cut in 1..value.len() {
+        malformed(&format!("text cut at {cut}"), text_of(&value[..cut]));
+    }
+    malformed("a number's text", text_of(&number));
+    malformed("a bad end", text_of(&[STRING, b'a', 0, 7]));
+    malformed("a value of no kind", Cursor { bytes: &[9], at: 0 }.value());
+    malformed("an ordinal of nine octets", Cursor { bytes: &[9, 1, 2, 3, 4, 5, 6, 7, 8, 9], at: 0 }.ordinal());
+    malformed("past the end", Cursor { bytes: &[1], at: 1 }.take(usize::MAX));
+}
