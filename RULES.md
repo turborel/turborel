@@ -9577,7 +9577,9 @@ the storage's counts in place of the scan's batches, each looked at for
 a cancel as a batch is. COUNT of a column declared NOT NULL is left to
 the scan, as a deferred constraint may let a transaction hold a null
 until it commits. EXPLAIN adds the line `-- counted by storage: <table>`
-when a bare COUNT(*) at the top of the plan is counted so. Rejected: a
+when a bare COUNT(*) at the top of the plan is counted so. The planner
+never runs such a count in parallel (D291), as the zone count is faster
+than any split of the table into morsels. Rejected: a
 stored row count per table, which is not any snapshot's; counts in the
 tree's nodes, which every insert must write and which are not any
 snapshot's either; zone flags kept on disk, which would need logging to

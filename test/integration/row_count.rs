@@ -7,6 +7,7 @@ use turborel::db::{Database, Session};
 use turborel::error::Code;
 use turborel::params::Params;
 use turborel::threads::JobPolicy;
+use turborel::value::{Decimal, Value};
 
 use crate::common::{RunLength, Scramble, exec, rows};
 
@@ -81,12 +82,14 @@ fn a_count_is_the_scans_at_every_isolation_level() {
 }
 
 /// Verifies: [EXTENSION] [DESIGN] RULES.md D351: EXPLAIN notes the table
-/// a bare COUNT(*) counts by its storage, under a projection too; of a
+/// a bare COUNT(*) counts by its storage, under a projection too, and
+/// never runs it in parallel; of a
 /// count under a filter, a grouping, a count of a column, a table of the
 /// column store or with EXECUTOR.BATCHES OFF, it notes none.
 #[test]
 fn explain_notes_a_count_by_the_storage() {
     let db = counted_table(false);
+    db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION C CREATE TABLE U (K INTEGER) USING columnstore").unwrap();
     let a = db.session("A");
     let explained = |s: &Session, sql: &str| s.explain(sql, &Params::new()).unwrap();
@@ -96,6 +99,11 @@ fn explain_notes_a_count_by_the_storage() {
     for sql in ["SELECT COUNT(*) FROM T WHERE K > 1", "SELECT K, COUNT(*) FROM T GROUP BY K", "SELECT COUNT(K) FROM T"] {
         assert!(!noted(&a, sql), "{sql}");
     }
+    a.run("SET EXECUTOR.PARALLEL_MIN_ROWS = 1").unwrap();
+    a.run("SET EXECUTOR.MORSEL_ROWS = 100").unwrap();
+    let plan = explained(&a, "SELECT COUNT(*) FROM T");
+    assert!(!plan.contains("Parallel") && plan.contains("-- counted by storage: A.T"), "never split: {plan}");
+    assert!(explained(&a, "SELECT SUM(K) FROM T").contains("Parallel"), "a sum is split");
     let c = db.session("C");
     assert!(!explained(&c, "SELECT COUNT(*) FROM U").contains("counted by storage"));
     a.run("SET EXECUTOR.BATCHES = 'OFF'").unwrap();

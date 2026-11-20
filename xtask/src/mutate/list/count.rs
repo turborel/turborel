@@ -2,7 +2,8 @@
 //! (RULES.md R-TEST-9, D350, D351), the zones counted by their flag, none
 //! counted twice, the read noted, a table that freezes left to its scan,
 //! what the scan reads in place and what after its leaf's latch, where a
-//! visit goes on, and the aggregations the executor counts so.
+//! visit goes on, the aggregations the executor counts so, and their
+//! staying off the parallel path.
 
 use super::super::{Mutation, Package};
 
@@ -15,7 +16,7 @@ const IN_PLACE: &str = "engine::rows::in_place::tests::batches_read_in_place_are
 const VISITED: &str = "engine::tree::tests::a_visit_reads_what_a_scan_gives";
 
 /// Mechanisms whose removal must fail the count's requirements.
-pub const COUNT: [Mutation; 11] = [
+pub const COUNT: [Mutation; 12] = [
     Mutation {
         name: "count-zone-flag",
         package: Package::Core,
@@ -125,5 +126,15 @@ pub const COUNT: [Mutation; 11] = [
         replacement: "let Plan::SeqScan { table, order, .. } = input",
         integration: &[],
         unit: &["exec::batch::count::tests::only_a_bare_count_is_counted_by_the_storage"],
+    },
+    Mutation {
+        name: "count-parallel",
+        package: Package::Core,
+        breaks: "a bare COUNT(*) the storage counts is planned in parallel, its scan split into morsels",
+        file: "src/physical/parallel.rs",
+        original: "    if depth >= MAX_DEPTH || crate::exec::storage_counted(plan, asked.db).is_some() {",
+        replacement: "    if depth >= MAX_DEPTH {",
+        integration: &["row_count::explain_notes_a_count_by_the_storage"],
+        unit: &[],
     },
 ];
