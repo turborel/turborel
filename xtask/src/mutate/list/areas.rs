@@ -2,9 +2,9 @@
 
 mod budget;
 // The count's, kept beside the other areas' files.
+mod client_sync;
 #[path = "count.rs"]
 mod count;
-mod client_sync;
 mod distinct_aggregates;
 mod joins;
 mod parallel;

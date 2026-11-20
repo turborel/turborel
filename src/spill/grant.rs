@@ -104,7 +104,7 @@ mod tests {
         let small = grant_of(&budget, 1024_usize);
         assert_eq!((small.bytes, small.reserved()), (1024_usize, false));
         let rest: Vec<_> = (0_u16..300).map(|_| grant_of(&budget, usize::MAX)).collect();
-        assert!(budget.reserved() <= budget.limit() / 2, "half kept");
+        assert!(budget.reserved() <= budget.limit() >> 1_u32, "half kept");
         assert!(budget.reserve(WORK_FLOOR, "a spill area").is_ok(), "a spill area finds room");
         assert_eq!(rest.last().map(|g| (g.bytes, g.reserved())), Some((WORK_FLOOR, false)), "the floor, unreserved");
         drop((first, second, third, rest));
